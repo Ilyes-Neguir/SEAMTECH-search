@@ -1,0 +1,20 @@
+{
+  "root_paths": [
+    "C:\\\\Path\\\\To\\\\SEAMTECH\\\\DesignFiles"
+  ],
+  "database_path": "data/search.db",
+  "host": "127.0.0.1",
+  "port": 8000,
+  "excluded_names": [
+    ".git",
+    "__pycache__",
+    "node_modules",
+    "Thumbs.db"
+  ],
+  "excluded_extensions": [
+    ".tmp",
+    ".bak"
+  ],
+  "max_extract_chars": 200000
+}
+

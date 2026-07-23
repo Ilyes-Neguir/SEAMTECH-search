@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SEAMTECH Search</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <h1>SEAMTECH Search</h1>
+          <p>Internal design folder search</p>
+        </div>
+      </header>
+
+      <section class="search-panel">
+        <form id="search-form" class="search-form">
+          <input id="query" name="q" type="search" placeholder="Enter client reference, plan number, project name..." autocomplete="off" autofocus />
+          <button type="submit">Search</button>
+        </form>
+        <div id="status" class="status"></div>
+      </section>
+
+      <section id="results" class="results"></section>
+    </main>
+    <script src="/static/app.js"></script>
+  </body>
+</html>
+

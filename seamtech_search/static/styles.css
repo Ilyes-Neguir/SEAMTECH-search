@@ -1,0 +1,147 @@
+:root {
+  color-scheme: light;
+  font-family: Arial, Helvetica, sans-serif;
+  background: #f4f6f8;
+  color: #17202a;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+.shell {
+  width: min(1120px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 28px 0 48px;
+}
+
+.topbar {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  margin-bottom: 22px;
+}
+
+h1 {
+  margin: 0;
+  font-size: 30px;
+  line-height: 1.1;
+}
+
+p {
+  margin: 6px 0 0;
+  color: #5b6673;
+}
+
+.search-panel {
+  background: #ffffff;
+  border: 1px solid #dfe5ec;
+  border-radius: 8px;
+  padding: 18px;
+}
+
+.search-form {
+  display: grid;
+  grid-template-columns: 1fr 120px;
+  gap: 12px;
+}
+
+input,
+button {
+  min-height: 44px;
+  border-radius: 6px;
+  font-size: 15px;
+}
+
+input {
+  border: 1px solid #c8d1dc;
+  padding: 0 14px;
+}
+
+button {
+  border: 0;
+  background: #1f6feb;
+  color: #ffffff;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+button.secondary {
+  min-height: 34px;
+  background: #edf2f7;
+  color: #1d2733;
+  padding: 0 10px;
+}
+
+.status {
+  min-height: 22px;
+  margin-top: 12px;
+  color: #5b6673;
+}
+
+.results {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.result {
+  background: #ffffff;
+  border: 1px solid #dfe5ec;
+  border-radius: 8px;
+  padding: 14px;
+}
+
+.result-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.result-title {
+  margin: 0;
+  font-size: 17px;
+}
+
+.badge {
+  flex: 0 0 auto;
+  height: 26px;
+  border-radius: 999px;
+  padding: 5px 10px;
+  background: #eef2f6;
+  color: #405064;
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.path {
+  margin-top: 8px;
+  color: #354253;
+  overflow-wrap: anywhere;
+}
+
+.meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  color: #667385;
+  font-size: 13px;
+}
+
+@media (max-width: 700px) {
+  .search-form {
+    grid-template-columns: 1fr;
+  }
+
+  .result-header,
+  .meta {
+    align-items: start;
+    flex-direction: column;
+  }
+}
+
