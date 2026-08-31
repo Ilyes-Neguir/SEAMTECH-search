@@ -61,8 +61,9 @@ def run_index(config_path: str, rebuild: bool = False) -> None:
     changed = 0
     started_at = time.perf_counter()
     scan_id = index.start_scan()
+    existing_metadata = index.existing_metadata()
     try:
-        for document in crawl(config):
+        for document in crawl(config, existing_metadata):
             scanned += 1
             seen.add(document.path_key)
             batch.append(document)

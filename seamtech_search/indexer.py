@@ -21,7 +21,9 @@ CREATE TABLE IF NOT EXISTS documents (
     extension TEXT NOT NULL,
     size INTEGER NOT NULL,
     modified_at REAL NOT NULL,
-    is_dir INTEGER NOT NULL
+    is_dir INTEGER NOT NULL,
+    extractor_version INTEGER NOT NULL DEFAULT 0,
+    content_hash TEXT NOT NULL DEFAULT ''
 );
 
 CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
@@ -55,7 +57,9 @@ CREATE TABLE IF NOT EXISTS documents (
     modified_at DOUBLE PRECISION NOT NULL,
     is_dir BOOLEAN NOT NULL,
     content TEXT NOT NULL DEFAULT '',
-    search_vector TSVECTOR NOT NULL DEFAULT ''::tsvector
+    search_vector TSVECTOR NOT NULL DEFAULT ''::tsvector,
+    extractor_version INTEGER NOT NULL DEFAULT 0,
+    content_hash TEXT NOT NULL DEFAULT ''
 );
 
 CREATE INDEX IF NOT EXISTS idx_documents_search_vector ON documents USING GIN(search_vector);
@@ -109,6 +113,8 @@ class SearchIndex:
                         cursor.execute("DROP TABLE IF EXISTS documents")
                     cursor.execute(POSTGRES_SCHEMA)
                     cursor.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS content TEXT NOT NULL DEFAULT ''")
+                    cursor.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS extractor_version INTEGER NOT NULL DEFAULT 0")
+                    cursor.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS content_hash TEXT NOT NULL DEFAULT ''")
             else:
                 if rebuild:
                     connection.executescript(
@@ -118,6 +124,7 @@ class SearchIndex:
                         """
                     )
                 connection.executescript(SQLITE_SCHEMA)
+                self._ensure_documents_columns(connection)
                 self._ensure_fts_schema(connection)
 
     def start_scan(self) -> int:
@@ -157,6 +164,30 @@ class SearchIndex:
                     return dict(row) if row else None
             row = connection.execute("SELECT * FROM scan_runs ORDER BY id DESC LIMIT 1").fetchone()
             return dict(row) if row else None
+
+    def _ensure_documents_columns(self, connection: sqlite3.Connection) -> None:
+        columns = {row["name"] for row in connection.execute("PRAGMA table_info(documents)").fetchall()}
+        if "extractor_version" not in columns:
+            connection.execute("ALTER TABLE documents ADD COLUMN extractor_version INTEGER NOT NULL DEFAULT 0")
+        if "content_hash" not in columns:
+            connection.execute("ALTER TABLE documents ADD COLUMN content_hash TEXT NOT NULL DEFAULT ''")
+
+    def existing_metadata(self) -> dict[str, tuple[int, float, int]]:
+        """path_key -> (size, modified_at, extractor_version) for every indexed file.
+
+        Used before a scan starts so the crawler can skip re-extracting
+        files whose metadata and extractor version haven't changed.
+        """
+        if self.is_postgres:
+            with self.connect() as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute("SELECT path_key, size, modified_at, extractor_version FROM documents WHERE is_dir = false")
+                    return {row[0]: (int(row[1]), float(row[2]), int(row[3])) for row in cursor.fetchall()}
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT path_key, size, modified_at, extractor_version FROM documents WHERE is_dir = 0"
+            ).fetchall()
+            return {row["path_key"]: (int(row["size"]), float(row["modified_at"]), int(row["extractor_version"])) for row in rows}
 
     def _ensure_fts_schema(self, connection: sqlite3.Connection) -> None:
         row = connection.execute(
@@ -208,10 +239,15 @@ class SearchIndex:
         with self.connect() as connection:
             for document in documents:
                 existing = connection.execute(
-                    "SELECT id, size, modified_at FROM documents WHERE path_key = ?",
+                    "SELECT id, size, modified_at, extractor_version FROM documents WHERE path_key = ?",
                     (document.path_key,),
                 ).fetchone()
-                if existing and existing["size"] == document.size and existing["modified_at"] == document.modified_at:
+                if (
+                    existing
+                    and existing["size"] == document.size
+                    and existing["modified_at"] == document.modified_at
+                    and existing["extractor_version"] == document.extractor_version
+                ):
                     continue
 
                 if existing:
@@ -220,7 +256,7 @@ class SearchIndex:
                         """
                         UPDATE documents
                         SET path = ?, name = ?, parent_path = ?, extension = ?, size = ?,
-                            modified_at = ?, is_dir = ?
+                            modified_at = ?, is_dir = ?, extractor_version = ?, content_hash = ?
                         WHERE id = ?
                         """,
                         _document_values(document) + (row_id,),
@@ -230,9 +266,10 @@ class SearchIndex:
                     cursor = connection.execute(
                         """
                         INSERT INTO documents (
-                            path_key, path, name, parent_path, extension, size, modified_at, is_dir
+                            path_key, path, name, parent_path, extension, size, modified_at, is_dir,
+                            extractor_version, content_hash
                         )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (document.path_key,) + _document_values(document),
                     )
@@ -267,6 +304,8 @@ class SearchIndex:
                 document.is_dir,
                 document.searchable_text,
                 document.searchable_text,
+                document.extractor_version,
+                document.content_hash,
             )
             for document in documents
         ]
@@ -278,7 +317,8 @@ class SearchIndex:
                     cursor,
                     """
                     INSERT INTO documents (
-                        path_key, path, name, parent_path, extension, size, modified_at, is_dir, content, search_vector
+                        path_key, path, name, parent_path, extension, size, modified_at, is_dir, content, search_vector,
+                        extractor_version, content_hash
                     )
                     VALUES %s
                     ON CONFLICT (path_key) DO UPDATE SET
@@ -290,15 +330,18 @@ class SearchIndex:
                         modified_at = EXCLUDED.modified_at,
                         is_dir = EXCLUDED.is_dir,
                         content = EXCLUDED.content,
-                        search_vector = EXCLUDED.search_vector
+                        search_vector = EXCLUDED.search_vector,
+                        extractor_version = EXCLUDED.extractor_version,
+                        content_hash = EXCLUDED.content_hash
                     WHERE documents.size <> EXCLUDED.size
                        OR documents.modified_at <> EXCLUDED.modified_at
                        OR documents.path <> EXCLUDED.path
+                       OR documents.extractor_version <> EXCLUDED.extractor_version
                     """,
                     values,
                     template=(
                         "(%s, %s, %s, %s, %s, %s, %s, %s, %s, "
-                        "to_tsvector('simple', coalesce(%s, '')))"
+                        "to_tsvector('simple', coalesce(%s, '')), %s, %s)"
                     ),
                 )
                 return cursor.rowcount
@@ -506,7 +549,7 @@ class SearchIndex:
         }
 
 
-def _document_values(document: Document) -> tuple[str, str, str, str, int, float, int]:
+def _document_values(document: Document) -> tuple[str, str, str, str, int, float, int, int, str]:
     return (
         str(document.path),
         document.name,
@@ -515,6 +558,8 @@ def _document_values(document: Document) -> tuple[str, str, str, str, int, float
         document.size,
         document.modified_at,
         1 if document.is_dir else 0,
+        document.extractor_version,
+        document.content_hash,
     )
 
 
