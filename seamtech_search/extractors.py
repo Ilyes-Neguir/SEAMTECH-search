@@ -4,6 +4,11 @@ import re
 from pathlib import Path
 from zipfile import BadZipFile, ZipFile
 
+# Bump this whenever extraction logic changes for any format. The indexer
+# uses it (alongside size/modified_at) to decide whether a previously
+# indexed file needs to be re-extracted even though it hasn't changed on
+# disk, so old content isn't silently kept forever after a parser fix.
+CURRENT_EXTRACTOR_VERSION = 1
 
 TEXT_EXTENSIONS = {
     ".txt", ".csv", ".tsv", ".md", ".log", ".json", ".xml", ".html", ".htm",
