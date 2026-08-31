@@ -60,7 +60,9 @@ def create_app(config: AppConfig) -> FastAPI:
         _require_auth(config, token)
         try:
             started_at = time.perf_counter()
-            results = index.search(q, limit=limit, offset=offset)
+            raw_results = index.search(q, limit=limit + 1, offset=offset)
+            results = raw_results[:limit]
+            has_more = len(raw_results) > limit
             elapsed = time.perf_counter() - started_at
             metrics["search_requests"] += 1
             metrics["last_search_seconds"] = elapsed
@@ -71,7 +73,7 @@ def create_app(config: AppConfig) -> FastAPI:
         except Exception as exc:
             metrics["search_errors"] += 1
             raise HTTPException(status_code=500, detail="Search service failure.") from exc
-        return {"query": q, "count": len(results), "offset": offset, "limit": limit, "has_more": len(results) == limit, "results": results}
+        return {"query": q, "count": len(results), "offset": offset, "limit": limit, "has_more": has_more, "results": results}
 
     @app.get("/metrics")
     def get_metrics() -> dict[str, object]:
