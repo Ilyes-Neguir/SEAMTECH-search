@@ -8,6 +8,7 @@ const previewDialog = document.querySelector("#preview-dialog");
 const previewTitle = document.querySelector("#preview-title");
 const previewBody = document.querySelector("#preview-body");
 const previewClose = document.querySelector("#preview-close");
+const clearQuery = document.querySelector("#clear-query");
 const pageSize = 50;
 let currentOffset = 0;
 let currentQuery = "";
@@ -15,6 +16,21 @@ let hasMore = false;
 
 loadHealth();
 previewClose.addEventListener("click", () => previewDialog.close());
+clearQuery.addEventListener("click", () => {
+  input.value = "";
+  clearQuery.hidden = true;
+  input.focus();
+});
+input.addEventListener("input", () => {
+  clearQuery.hidden = !input.value;
+});
+document.querySelectorAll("[data-suggestion]").forEach((button) => {
+  button.addEventListener("click", () => {
+    input.value = button.dataset.suggestion;
+    clearQuery.hidden = false;
+    form.requestSubmit();
+  });
+});
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
   currentQuery = input.value.trim();
