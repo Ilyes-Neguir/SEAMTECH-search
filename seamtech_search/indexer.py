@@ -322,16 +322,18 @@ class SearchIndex:
                 connection.execute("DELETE FROM documents WHERE id = ?", (row_id,))
             return len(missing)
 
-    def search(self, query: str, limit: int = 50) -> list[dict[str, Any]]:
+    def search(self, query: str, limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
         clean_query = query.strip()
         if not clean_query:
             return []
 
+        if offset < 0:
+            raise ValueError("offset must be non-negative")
         if self.is_postgres:
-            return self._search_postgres(clean_query, limit)
-        return self._search_sqlite(clean_query, limit)
+            return self._search_postgres(clean_query, limit, offset)
+        return self._search_sqlite(clean_query, limit, offset)
 
-    def _search_sqlite(self, clean_query: str, limit: int) -> list[dict[str, Any]]:
+    def _search_sqlite(self, clean_query: str, limit: int, offset: int) -> list[dict[str, Any]]:
         fts_query = _build_fts_query(clean_query)
         with self.connect() as connection:
             rows = connection.execute(
@@ -363,7 +365,7 @@ class SearchIndex:
                         ELSE 3
                     END,
                     score
-                LIMIT ?
+                LIMIT ? OFFSET ?
                 """,
                 (
                     clean_query,
@@ -374,12 +376,13 @@ class SearchIndex:
                     f"%{clean_query}%",
                     f"%{clean_query}%",
                     limit,
+                    offset,
                 ),
             ).fetchall()
 
         return [dict(row) for row in rows]
 
-    def _search_postgres(self, clean_query: str, limit: int) -> list[dict[str, Any]]:
+    def _search_postgres(self, clean_query: str, limit: int, offset: int) -> list[dict[str, Any]]:
         like_query = f"%{clean_query}%"
         with self.connect() as connection:
             import psycopg2.extras
@@ -421,7 +424,7 @@ class SearchIndex:
                             ELSE 3
                         END,
                         score DESC
-                    LIMIT %s
+                    LIMIT %s OFFSET %s
                     """,
                     (
                         clean_query,
@@ -432,6 +435,7 @@ class SearchIndex:
                         like_query,
                         like_query,
                         limit,
+                        offset,
                     ),
                 )
                 return [dict(row) for row in cursor.fetchall()]

@@ -54,12 +54,13 @@ def create_app(config: AppConfig) -> FastAPI:
     def search(
         q: str = Query(..., min_length=1, max_length=500),
         limit: int = Query(50, ge=1, le=200),
+        offset: int = Query(0, ge=0, le=1_000_000),
         token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
     ) -> dict[str, object]:
         _require_auth(config, token)
         try:
             started_at = time.perf_counter()
-            results = index.search(q, limit=limit)
+            results = index.search(q, limit=limit, offset=offset)
             elapsed = time.perf_counter() - started_at
             metrics["search_requests"] += 1
             metrics["last_search_seconds"] = elapsed
@@ -70,7 +71,7 @@ def create_app(config: AppConfig) -> FastAPI:
         except Exception as exc:
             metrics["search_errors"] += 1
             raise HTTPException(status_code=500, detail="Search service failure.") from exc
-        return {"query": q, "count": len(results), "results": results}
+        return {"query": q, "count": len(results), "offset": offset, "limit": limit, "has_more": len(results) == limit, "results": results}
 
     @app.get("/metrics")
     def get_metrics() -> dict[str, object]:

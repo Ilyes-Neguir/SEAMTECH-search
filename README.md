@@ -109,12 +109,12 @@ http://127.0.0.1:8000
 ```text
 GET /health
 GET /metrics
-GET /search?q=REFERENCE&limit=50
+GET /search?q=REFERENCE&limit=50&offset=0
 GET /preview?path=C:\Path\To\File.pdf
 POST /open?path=C:\Path\To\File.pdf
 ```
 
-Search results include the file/folder name, full path, parent path, extension, size, modified date, folder/file type, match type (`exact_name`, `name`, `path`, or `content`), and a highlighted snippet.
+Search results include the file/folder name, full path, parent path, extension, size, modified date, folder/file type, match type (`exact_name`, `name`, `path`, or `content`), and a highlighted snippet. The API supports bounded pagination with `limit` and `offset` and returns `has_more`.
 
 `/preview` and `/open` only allow paths inside configured `root_paths`. When `auth_token` is configured, search, preview and open require the `X-SEAMTECH-TOKEN` header. Set `allow_network_access` only when a protected deployment boundary is in place; the token is an interim boundary, not a replacement for enterprise SSO and per-folder authorization.
 
