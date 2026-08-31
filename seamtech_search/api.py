@@ -4,8 +4,9 @@ import os
 import shutil
 import time
 from pathlib import Path
+from typing import Annotated
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -15,8 +16,9 @@ from .indexer import SearchIndex
 
 
 def create_app(config: AppConfig) -> FastAPI:
-    app = FastAPI(title="SEAMTECH Search", version="0.1.0")
+    app = FastAPI(title="SEAMTECH Search", version="0.2.0")
     index = SearchIndex(config.database_path, config.database_url)
+    index.initialize()
     static_dir = Path(__file__).parent / "static"
     metrics = {
         "search_requests": 0,
@@ -24,7 +26,6 @@ def create_app(config: AppConfig) -> FastAPI:
         "last_search_seconds": 0.0,
         "slowest_search_seconds": 0.0,
     }
-
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
     @app.get("/")
@@ -46,13 +47,16 @@ def create_app(config: AppConfig) -> FastAPI:
             "documents": stats.total_documents,
             "files": stats.files,
             "folders": stats.folders,
+            "last_scan": index.latest_scan(),
         }
 
     @app.get("/search")
     def search(
-        q: str = Query(..., min_length=1),
+        q: str = Query(..., min_length=1, max_length=500),
         limit: int = Query(50, ge=1, le=200),
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
     ) -> dict[str, object]:
+        _require_auth(config, token)
         try:
             started_at = time.perf_counter()
             results = index.search(q, limit=limit)
@@ -60,20 +64,24 @@ def create_app(config: AppConfig) -> FastAPI:
             metrics["search_requests"] += 1
             metrics["last_search_seconds"] = elapsed
             metrics["slowest_search_seconds"] = max(float(metrics["slowest_search_seconds"]), elapsed)
+        except (ValueError, RuntimeError) as exc:
+            metrics["search_errors"] += 1
+            raise HTTPException(status_code=400, detail="Invalid search query.") from exc
         except Exception as exc:
             metrics["search_errors"] += 1
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+            raise HTTPException(status_code=500, detail="Search service failure.") from exc
         return {"query": q, "count": len(results), "results": results}
 
     @app.get("/metrics")
     def get_metrics() -> dict[str, object]:
-        return {
-            **metrics,
-            "health": health(),
-        }
+        return {**metrics, "health": health()}
 
     @app.get("/preview")
-    def preview(path: str = Query(..., min_length=1)) -> dict[str, object]:
+    def preview(
+        path: str = Query(..., min_length=1, max_length=4_096),
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+    ) -> dict[str, object]:
+        _require_auth(config, token)
         target = _validated_path(path, config)
         if target.is_dir():
             children = sorted(target.iterdir(), key=lambda item: (not item.is_dir(), item.name.lower()))
@@ -82,17 +90,11 @@ def create_app(config: AppConfig) -> FastAPI:
                 "name": target.name,
                 "is_dir": True,
                 "children": [
-                    {
-                        "name": child.name,
-                        "path": str(child),
-                        "is_dir": child.is_dir(),
-                        "size": _safe_size(child),
-                    }
+                    {"name": child.name, "path": str(child), "is_dir": child.is_dir(), "size": _safe_size(child)}
                     for child in children[:200]
                 ],
             }
-
-        text = extract_text(target, max_chars=25_000)
+        text = extract_text(target, max_chars=25_000, max_file_size_bytes=config.max_file_size_bytes)
         return {
             "path": str(target),
             "name": target.name,
@@ -103,17 +105,26 @@ def create_app(config: AppConfig) -> FastAPI:
         }
 
     @app.post("/open")
-    def open_path(path: str = Query(..., min_length=1)) -> dict[str, object]:
+    def open_path(
+        path: str = Query(..., min_length=1, max_length=4_096),
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+    ) -> dict[str, object]:
+        _require_auth(config, token)
         target = _validated_path(path, config)
         try:
             os.startfile(str(target))  # type: ignore[attr-defined]
         except AttributeError as exc:
             raise HTTPException(status_code=501, detail="Open path is only supported on Windows hosts.") from exc
         except OSError as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+            raise HTTPException(status_code=500, detail="The operating system could not open this path.") from exc
         return {"opened": str(target), "is_dir": target.is_dir()}
 
     return app
+
+
+def _require_auth(config: AppConfig, token: str | None) -> None:
+    if config.auth_token and token != config.auth_token:
+        raise HTTPException(status_code=401, detail="Authentication required.")
 
 
 def _validated_path(path: str, config: AppConfig) -> Path:

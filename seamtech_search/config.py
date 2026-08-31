@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 def default_config_path(project_root: str | Path | None = None) -> Path:
@@ -20,14 +20,34 @@ def default_config_path(project_root: str | Path | None = None) -> Path:
 
 
 class AppConfig(BaseModel):
-    root_paths: list[Path]
+    root_paths: list[Path] = Field(min_length=1)
     database_path: Path = Path("data/search.db")
     database_url: str | None = None
     host: str = "127.0.0.1"
-    port: int = 8000
+    port: int = Field(default=8000, ge=1, le=65535)
     excluded_names: set[str] = Field(default_factory=set)
     excluded_extensions: set[str] = Field(default_factory=set)
-    max_extract_chars: int = 200_000
+    max_extract_chars: int = Field(default=200_000, ge=1_000, le=2_000_000)
+    max_file_size_bytes: int = Field(default=512 * 1024 * 1024, ge=1)
+    extraction_timeout_seconds: int = Field(default=60, ge=1, le=3_600)
+    allow_network_access: bool = False
+    auth_token: str | None = None
+
+    @field_validator("root_paths")
+    @classmethod
+    def reject_duplicate_roots(cls, value: list[Path]) -> list[Path]:
+        if len({str(path).lower() for path in value}) != len(value):
+            raise ValueError("root_paths must not contain duplicates")
+        return value
+
+    @model_validator(mode="after")
+    def validate_network_policy(self) -> "AppConfig":
+        local_hosts = {"127.0.0.1", "localhost", "::1"}
+        if self.host not in local_hosts and not self.allow_network_access:
+            raise ValueError("non-local host requires allow_network_access=true")
+        if self.allow_network_access and not self.auth_token:
+            raise ValueError("auth_token is required when allow_network_access is enabled")
+        return self
 
     @classmethod
     def load(cls, path: str | Path | None = None) -> "AppConfig":
@@ -42,17 +62,12 @@ class AppConfig(BaseModel):
 
         if os.environ.get("SEAMTECH_DATABASE_URL"):
             data["database_url"] = os.environ["SEAMTECH_DATABASE_URL"]
+        if os.environ.get("SEAMTECH_AUTH_TOKEN"):
+            data["auth_token"] = os.environ["SEAMTECH_AUTH_TOKEN"]
 
         config = cls.model_validate(data)
 
-        # Determine the base path for resolving relative paths
-        # If config is in a 'config' subdirectory, resolve relative to project root
-        # Otherwise, resolve relative to the config file's directory
-        if config_path.parent.name == "config":
-            base_path = config_path.parent.parent  # project root
-        else:
-            base_path = config_path.parent  # config directory
-
+        base_path = config_path.parent.parent if config_path.parent.name == "config" else config_path.parent
         config.root_paths = [
             root_path if root_path.is_absolute() else base_path / root_path
             for root_path in config.root_paths

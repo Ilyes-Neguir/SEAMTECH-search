@@ -4,9 +4,9 @@ services:
     environment:
       POSTGRES_DB: seamtech_search
       POSTGRES_USER: seamtech
-      POSTGRES_PASSWORD: seamtech
-    ports:
-      - "5432:5432"
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the environment}
+    expose:
+      - "5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -18,7 +18,7 @@ services:
   web:
     build: .
     environment:
-      SEAMTECH_DATABASE_URL: postgresql://seamtech:seamtech@postgres:5432/seamtech_search
+      SEAMTECH_DATABASE_URL: postgresql://seamtech:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the environment}@postgres:5432/seamtech_search
     depends_on:
       postgres:
         condition: service_healthy

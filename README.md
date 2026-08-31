@@ -21,7 +21,9 @@ The system scans Windows folders, extracts searchable metadata/text, stores it i
 - Incremental indexing using file size and modified time
 - Batched indexing with progress logs
 
-OCR is not included in v1. Add it later after the normal indexed search works with real data.
+OCR is not included in the base image. Scanned PDFs and images require an OCR-enabled deployment and should be validated against factory data before being marked content-searchable.
+
+The extractor provides bounded content search for PDF, DOCX, common structured/text formats, OOXML documents such as XLSX/PPTX, and ZIP member manifests. Other files remain metadata-searchable. This is intentionally an explicit support boundary: proprietary CAD and vendor formats require dedicated parsers or licensed SDKs.
 
 ## Local Setup
 
@@ -50,7 +52,7 @@ For production, set `database_url` to PostgreSQL in `config/config.json`:
 
 ```json
 {
-  "database_url": "postgresql://seamtech:seamtech@localhost:5432/seamtech_search"
+  "database_url": "postgresql://seamtech:${POSTGRES_PASSWORD}@localhost:5432/seamtech_search"
 }
 ```
 
@@ -114,13 +116,16 @@ POST /open?path=C:\Path\To\File.pdf
 
 Search results include the file/folder name, full path, parent path, extension, size, modified date, folder/file type, match type (`exact_name`, `name`, `path`, or `content`), and a highlighted snippet.
 
-`/preview` and `/open` only allow paths inside configured `root_paths`.
+`/preview` and `/open` only allow paths inside configured `root_paths`. When `auth_token` is configured, search, preview and open require the `X-SEAMTECH-TOKEN` header. Set `allow_network_access` only when a protected deployment boundary is in place; the token is an interim boundary, not a replacement for enterprise SSO and per-folder authorization.
+
+An indexing run aborts without removing old records if a configured root is unavailable or traversal reports an error. Successful runs record their status and counters in the `scan_runs` table.
 
 ## Docker Deployment
 
-Create `config/config.json`, then start PostgreSQL and the web app:
+Set a strong `POSTGRES_PASSWORD` environment variable and create `config/config.json`, then start PostgreSQL and the web app:
 
 ```powershell
+$env:POSTGRES_PASSWORD = "use-a-secret-value"
 docker compose up --build
 ```
 
@@ -145,13 +150,13 @@ python -m seamtech_search serve --config config/config.json
 Back up PostgreSQL:
 
 ```powershell
-.\scripts\backup_postgres.ps1 -DatabaseUrl "postgresql://seamtech:seamtech@localhost:5432/seamtech_search"
+.\scripts\backup_postgres.ps1 -DatabaseUrl "postgresql://seamtech:$env:POSTGRES_PASSWORD@localhost:5432/seamtech_search"
 ```
 
 Restore PostgreSQL:
 
 ```powershell
-.\scripts\restore_postgres.ps1 -BackupFile data/backups/seamtech-search-YYYYMMDD-HHMMSS.dump -DatabaseUrl "postgresql://seamtech:seamtech@localhost:5432/seamtech_search"
+.\scripts\restore_postgres.ps1 -BackupFile data/backups/seamtech-search-YYYYMMDD-HHMMSS.dump -DatabaseUrl "postgresql://seamtech:$env:POSTGRES_PASSWORD@localhost:5432/seamtech_search"
 ```
 
 Back up or restore the SQLite fallback database:

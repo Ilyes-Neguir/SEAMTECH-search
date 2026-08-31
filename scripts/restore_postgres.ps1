@@ -1,7 +1,8 @@
 param(
     [Parameter(Mandatory = $true)]
     [string]$BackupFile,
-    [string]$DatabaseUrl = "postgresql://seamtech:seamtech@localhost:5432/seamtech_search"
+    [Parameter(Mandatory = $true)]
+    [string]$DatabaseUrl
 )
 
 $ErrorActionPreference = "Stop"

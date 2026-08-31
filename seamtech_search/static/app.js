@@ -1,5 +1,6 @@
 const form = document.querySelector("#search-form");
 const input = document.querySelector("#query");
+const tokenInput = document.querySelector("#access-token");
 const statusEl = document.querySelector("#status");
 const resultsEl = document.querySelector("#results");
 const indexSummaryEl = document.querySelector("#index-summary");
@@ -21,7 +22,7 @@ form.addEventListener("submit", async (event) => {
   resultsEl.innerHTML = "";
 
   try {
-    const response = await fetch(`/search?q=${encodeURIComponent(query)}&limit=50`);
+    const response = await fetch(`/search?q=${encodeURIComponent(query)}&limit=50`, { headers: authHeaders() });
     if (!response.ok) throw new Error(await response.text());
     const payload = await response.json();
     renderResults(payload.results);
@@ -106,7 +107,7 @@ async function loadPreview(path) {
   previewDialog.showModal();
 
   try {
-    const response = await fetch(`/preview?path=${encodeURIComponent(path)}`);
+    const response = await fetch(`/preview?path=${encodeURIComponent(path)}`, { headers: authHeaders() });
     if (!response.ok) throw new Error(await response.text());
     const payload = await response.json();
     previewTitle.textContent = payload.name || payload.path;
@@ -122,7 +123,7 @@ async function openPath(path, button) {
   const label = button.textContent;
   button.textContent = "Opening...";
   try {
-    const response = await fetch(`/open?path=${encodeURIComponent(path)}`, { method: "POST" });
+    const response = await fetch(`/open?path=${encodeURIComponent(path)}`, { method: "POST", headers: authHeaders() });
     if (!response.ok) throw new Error(await response.text());
     button.textContent = "Opened";
   } catch (error) {
@@ -189,6 +190,11 @@ function formatBytes(bytes) {
     unit += 1;
   }
   return `${value.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
+}
+
+function authHeaders() {
+  const token = tokenInput.value.trim();
+  return token ? { "X-SEAMTECH-TOKEN": token } : {};
 }
 
 function escapeHtml(value) {

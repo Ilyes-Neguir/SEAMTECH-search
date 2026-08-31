@@ -38,13 +38,13 @@ SEAMTECH Search has been upgraded from a local prototype into a deployable inter
 Production should use PostgreSQL:
 
 ```text
-postgresql://seamtech:seamtech@localhost:5432/seamtech_search
+postgresql://seamtech:${POSTGRES_PASSWORD}@localhost:5432/seamtech_search
 ```
 
 The Docker deployment overrides this to use the Compose service hostname:
 
 ```text
-postgresql://seamtech:seamtech@postgres:5432/seamtech_search
+postgresql://seamtech:${POSTGRES_PASSWORD}@postgres:5432/seamtech_search
 ```
 
 When `database_url` is not configured, the app uses the SQLite `database_path`. This keeps local development simple and keeps the test suite fast.
@@ -66,7 +66,7 @@ Recommended scheduled indexing command:
 Recommended PostgreSQL backup command:
 
 ```powershell
-.\scripts\backup_postgres.ps1 -DatabaseUrl "postgresql://seamtech:seamtech@localhost:5432/seamtech_search"
+.\scripts\backup_postgres.ps1 -DatabaseUrl "postgresql://seamtech:$env:POSTGRES_PASSWORD@localhost:5432/seamtech_search"
 ```
 
 ## Verification
@@ -92,3 +92,10 @@ Additional smoke checks completed:
 - The Windows Open File/Open Folder feature uses `os.startfile`, so it is intended for a Windows host where the server has access to the searched folders.
 - If the app is run inside Docker, file opening happens inside the container context and is not the recommended mode for desktop file launching.
 - OCR is not included. Scanned PDFs without embedded text will not produce rich previews until OCR is added.
+
+
+## Implementation update — version 0.2.0
+
+The current working tree adds bounded extraction for structured text, OOXML and ZIP manifests; explicit file-size and network-policy configuration; token protection for search, preview and open; safe scan-abort behavior when configured roots cannot be fully traversed; durable scan status records; connection timeouts; safer SQLite FTS tokenization; and browser token/header support. The automated suite now contains 14 tests, with Python compilation and JavaScript syntax checks passing.
+
+This remains production-oriented rather than universally production-certified. Enterprise SSO, per-folder ACL inheritance, OCR, proprietary CAD parsers, PostgreSQL integration testing, real factory-share testing and a representative 50 GB benchmark still require the factory environment and security decisions.

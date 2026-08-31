@@ -9,14 +9,20 @@ from .extractors import extract_text
 from .models import Document
 
 
+class ScanIncompleteError(RuntimeError):
+    """Raised when a scan cannot prove that all configured roots were traversed."""
+
+
 def crawl(config: AppConfig) -> Iterator[Document]:
     for root in config.root_paths:
         root_path = Path(root)
-        if not root_path.exists():
-            print(f"Warning: root path does not exist: {root_path}")
-            continue
+        if not root_path.exists() or not root_path.is_dir():
+            raise ScanIncompleteError(f"Configured root is unavailable or not a directory: {root_path}")
 
-        for current_root, dir_names, file_names in os.walk(root_path):
+        def on_walk_error(error: OSError) -> None:
+            raise ScanIncompleteError(f"Unable to traverse {error.filename or root_path}: {error}") from error
+
+        for current_root, dir_names, file_names in os.walk(root_path, onerror=on_walk_error, followlinks=False):
             current = Path(current_root)
             dir_names[:] = [
                 name for name in dir_names if not _is_excluded(name, Path(name), config)
@@ -44,11 +50,10 @@ def _document_from_path(path: Path, config: AppConfig, is_dir: bool) -> Document
         stat = path.stat()
         size = 0 if is_dir else stat.st_size
         modified_at = stat.st_mtime
-    except OSError:
-        size = 0
-        modified_at = 0
+    except OSError as exc:
+        raise ScanIncompleteError(f"Unable to stat {path}: {exc}") from exc
 
-    text = "" if is_dir else extract_text(path, config.max_extract_chars)
+    text = "" if is_dir else extract_text(path, config.max_extract_chars, config.max_file_size_bytes)
     return Document(
         path=path,
         name=path.name,
@@ -59,4 +64,3 @@ def _document_from_path(path: Path, config: AppConfig, is_dir: bool) -> Document
         is_dir=is_dir,
         text=text,
     )
-

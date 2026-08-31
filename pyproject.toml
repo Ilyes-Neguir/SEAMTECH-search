@@ -1,7 +1,7 @@
 [project]
 name = "seamtech-search"
-version = "0.1.0"
-description = "Internal search prototype for SEAMTECH design folders"
+version = "0.2.0"
+description = "Production-oriented internal search service for SEAMTECH factory files"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi==0.116.1",
@@ -15,6 +15,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest==8.4.1",
+    "httpx==0.28.1",
 ]
 
 [tool.setuptools]

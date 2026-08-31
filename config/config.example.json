@@ -16,5 +16,9 @@
     ".tmp",
     ".bak"
   ],
-  "max_extract_chars": 200000
+  "max_extract_chars": 200000,
+  "max_file_size_bytes": 536870912,
+  "extraction_timeout_seconds": 60,
+  "allow_network_access": false,
+  "auth_token": null
 }

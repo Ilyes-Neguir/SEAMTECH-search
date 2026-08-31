@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
@@ -29,6 +30,17 @@ CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
     extension,
     content
 );
+
+CREATE TABLE IF NOT EXISTS scan_runs (
+    id INTEGER PRIMARY KEY,
+    started_at TEXT NOT NULL,
+    finished_at TEXT,
+    status TEXT NOT NULL,
+    scanned INTEGER NOT NULL DEFAULT 0,
+    changed INTEGER NOT NULL DEFAULT 0,
+    removed INTEGER NOT NULL DEFAULT 0,
+    error TEXT
+);
 """
 
 POSTGRES_SCHEMA = """
@@ -48,6 +60,17 @@ CREATE TABLE IF NOT EXISTS documents (
 
 CREATE INDEX IF NOT EXISTS idx_documents_search_vector ON documents USING GIN(search_vector);
 CREATE INDEX IF NOT EXISTS idx_documents_path_key ON documents(path_key);
+
+CREATE TABLE IF NOT EXISTS scan_runs (
+    id BIGSERIAL PRIMARY KEY,
+    started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    finished_at TIMESTAMPTZ,
+    status TEXT NOT NULL,
+    scanned BIGINT NOT NULL DEFAULT 0,
+    changed BIGINT NOT NULL DEFAULT 0,
+    removed BIGINT NOT NULL DEFAULT 0,
+    error TEXT
+);
 """
 
 
@@ -73,8 +96,8 @@ class SearchIndex:
         if self.database_url:
             import psycopg2
 
-            return psycopg2.connect(self.database_url)
-        connection = sqlite3.connect(self.database_path)
+            return psycopg2.connect(self.database_url, connect_timeout=10)
+        connection = sqlite3.connect(self.database_path, timeout=30)
         connection.row_factory = sqlite3.Row
         return connection
 
@@ -96,6 +119,44 @@ class SearchIndex:
                     )
                 connection.executescript(SQLITE_SCHEMA)
                 self._ensure_fts_schema(connection)
+
+    def start_scan(self) -> int:
+        with self.connect() as connection:
+            if self.is_postgres:
+                with connection.cursor() as cursor:
+                    cursor.execute("INSERT INTO scan_runs (started_at, status) VALUES (now(), 'running') RETURNING id")
+                    return int(cursor.fetchone()[0])
+            cursor = connection.execute(
+                "INSERT INTO scan_runs (started_at, status) VALUES (datetime('now'), 'running')"
+            )
+            return int(cursor.lastrowid)
+
+    def finish_scan(self, scan_id: int, status: str, scanned: int, changed: int, removed: int, error: str | None = None) -> None:
+        if status not in {"completed", "failed"}:
+            raise ValueError("scan status must be completed or failed")
+        with self.connect() as connection:
+            if self.is_postgres:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        "UPDATE scan_runs SET finished_at=now(), status=%s, scanned=%s, changed=%s, removed=%s, error=%s WHERE id=%s",
+                        (status, scanned, changed, removed, error, scan_id),
+                    )
+            else:
+                connection.execute(
+                    "UPDATE scan_runs SET finished_at=datetime('now'), status=?, scanned=?, changed=?, removed=?, error=? WHERE id=?",
+                    (status, scanned, changed, removed, error, scan_id),
+                )
+
+    def latest_scan(self) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            if self.is_postgres:
+                import psycopg2.extras
+                with connection.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
+                    cursor.execute("SELECT * FROM scan_runs ORDER BY id DESC LIMIT 1")
+                    row = cursor.fetchone()
+                    return dict(row) if row else None
+            row = connection.execute("SELECT * FROM scan_runs ORDER BY id DESC LIMIT 1").fetchone()
+            return dict(row) if row else None
 
     def _ensure_fts_schema(self, connection: sqlite3.Connection) -> None:
         row = connection.execute(
@@ -242,8 +303,8 @@ class SearchIndex:
                 )
                 return cursor.rowcount
 
-    def remove_missing(self, seen_path_keys: set[str]) -> int:
-        if not seen_path_keys:
+    def remove_missing(self, seen_path_keys: set[str], scan_complete: bool = False) -> int:
+        if not seen_path_keys and not scan_complete:
             return 0
         if self.is_postgres:
             with self.connect() as connection:
@@ -454,7 +515,8 @@ def _document_values(document: Document) -> tuple[str, str, str, str, int, float
 
 
 def _build_fts_query(query: str) -> str:
-    terms = [term.replace('"', "") for term in query.split() if term.strip()]
+    # FTS5 syntax is not exposed to users; tokenize input and quote every token.
+    terms = [term for term in re.findall(r"[\w]+", query, flags=re.UNICODE) if term.upper() not in {"AND", "OR", "NOT"}]
     if not terms:
         return '""'
     return " OR ".join(f'"{term}"*' for term in terms)

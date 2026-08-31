@@ -9,7 +9,7 @@ import uvicorn
 
 from .api import create_app
 from .config import AppConfig, default_config_path
-from .crawler import crawl
+from .crawler import ScanIncompleteError, crawl
 from .indexer import SearchIndex
 
 LOGGER = logging.getLogger("seamtech_search")
@@ -60,21 +60,31 @@ def run_index(config_path: str, rebuild: bool = False) -> None:
     scanned = 0
     changed = 0
     started_at = time.perf_counter()
-    for document in crawl(config):
-        scanned += 1
-        seen.add(document.path_key)
-        batch.append(document)
-        if len(batch) >= BATCH_SIZE:
-            changed += index.upsert_documents(batch)
-            batch.clear()
-        if scanned % 500 == 0:
-            elapsed = max(time.perf_counter() - started_at, 0.001)
-            LOGGER.info("Scanned %s items, updated %s items, %.1f items/sec", scanned, changed, scanned / elapsed)
+    scan_id = index.start_scan()
+    try:
+        for document in crawl(config):
+            scanned += 1
+            seen.add(document.path_key)
+            batch.append(document)
+            if len(batch) >= BATCH_SIZE:
+                changed += index.upsert_documents(batch)
+                batch.clear()
+            if scanned % 500 == 0:
+                elapsed = max(time.perf_counter() - started_at, 0.001)
+                LOGGER.info("Scanned %s items, updated %s items, %.1f items/sec", scanned, changed, scanned / elapsed)
+    except Exception as exc:
+        index.finish_scan(scan_id, "failed", scanned, changed, 0, type(exc).__name__ + ": " + str(exc))
+        if isinstance(exc, ScanIncompleteError):
+            LOGGER.exception("Indexing aborted because the scan was incomplete; existing index was preserved")
+        else:
+            LOGGER.exception("Indexing failed; existing index was preserved")
+        raise
 
     if batch:
         changed += index.upsert_documents(batch)
 
-    removed = index.remove_missing(seen)
+    removed = index.remove_missing(seen, scan_complete=True)
+    index.finish_scan(scan_id, "completed", scanned, changed, removed)
     elapsed = max(time.perf_counter() - started_at, 0.001)
     LOGGER.info(
         "Indexing complete. scanned=%s updated=%s removed=%s elapsed_seconds=%.2f items_per_second=%.1f",

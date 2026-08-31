@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -17,7 +18,7 @@ class Document:
 
     @property
     def path_key(self) -> str:
-        return str(self.path.resolve()).lower()
+        return os.path.normcase(str(self.path.resolve()))
 
     @property
     def searchable_text(self) -> str:

@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from seamtech_search.config import AppConfig, default_config_path
 
 
@@ -10,6 +12,13 @@ def test_default_config_path_prefers_project_config_directory(tmp_path: Path) ->
     (config_dir / "config.json").write_text('{"root_paths": []}', encoding="utf-8")
 
     assert default_config_path(project_dir) == config_dir / "config.json"
+
+
+def test_network_host_requires_explicit_policy(tmp_path: Path) -> None:
+    with pytest.raises(ValueError):
+        AppConfig(root_paths=[tmp_path], host="0.0.0.0")
+    config = AppConfig(root_paths=[tmp_path], host="0.0.0.0", allow_network_access=True, auth_token="secret")
+    assert config.allow_network_access is True
 
 
 def test_config_in_config_directory_resolves_paths_from_project_root(tmp_path: Path) -> None:
