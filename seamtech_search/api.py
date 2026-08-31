@@ -22,8 +22,16 @@ def create_app(config: AppConfig) -> FastAPI:
         return FileResponse(static_dir / "index.html")
 
     @app.get("/health")
-    def health() -> dict[str, str]:
-        return {"status": "ok"}
+    def health() -> dict[str, object]:
+        index.initialize()
+        stats = index.stats()
+        return {
+            "status": "ok",
+            "database_path": str(config.database_path),
+            "documents": stats.total_documents,
+            "files": stats.files,
+            "folders": stats.folders,
+        }
 
     @app.get("/search")
     def search(
@@ -37,4 +45,3 @@ def create_app(config: AppConfig) -> FastAPI:
         return {"query": q, "count": len(results), "results": results}
 
     return app
-

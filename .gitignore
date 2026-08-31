@@ -2,6 +2,8 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.pytest-cache-codex/
+.codex-tmp/
 .mypy_cache/
 .ruff_cache/
 data/
@@ -10,4 +12,3 @@ config.json
 *.db
 *.db-shm
 *.db-wal
-

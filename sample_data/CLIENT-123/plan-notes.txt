@@ -1,0 +1,4 @@
+Client reference CLIENT-123
+Project: Main sail reinforcement
+Plan number: PLAN-2026-001
+This sample text file is used to test SEAMTECH Search before connecting real Windows shared folders.

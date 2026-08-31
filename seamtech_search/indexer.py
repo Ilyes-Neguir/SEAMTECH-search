@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -26,11 +27,16 @@ CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
     name,
     path,
     extension,
-    content,
-    content='documents',
-    content_rowid='id'
+    content
 );
 """
+
+
+@dataclass(frozen=True)
+class IndexStats:
+    total_documents: int
+    files: int
+    folders: int
 
 
 class SearchIndex:
@@ -53,6 +59,42 @@ class SearchIndex:
                     """
                 )
             connection.executescript(SCHEMA)
+            self._ensure_fts_schema(connection)
+
+    def _ensure_fts_schema(self, connection: sqlite3.Connection) -> None:
+        row = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'documents_fts'"
+        ).fetchone()
+        sql = row["sql"] if row else ""
+        if "content='documents'" not in sql:
+            return
+
+        connection.execute("DROP TABLE documents_fts")
+        connection.execute(
+            """
+            CREATE VIRTUAL TABLE documents_fts USING fts5(
+                name,
+                path,
+                extension,
+                content
+            )
+            """
+        )
+        rows = connection.execute(
+            """
+            SELECT id, name, path, extension
+            FROM documents
+            ORDER BY id
+            """
+        ).fetchall()
+        for row in rows:
+            connection.execute(
+                """
+                INSERT INTO documents_fts(rowid, name, path, extension, content)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (row["id"], row["name"], row["path"], row["extension"], ""),
+            )
 
     def upsert_document(self, document: Document) -> bool:
         with self.connect() as connection:
@@ -130,6 +172,12 @@ class SearchIndex:
                     d.size,
                     d.modified_at,
                     d.is_dir,
+                    CASE
+                        WHEN lower(d.name) = lower(?) THEN 'exact_name'
+                        WHEN lower(d.name) LIKE lower(?) THEN 'name'
+                        WHEN lower(d.path) LIKE lower(?) THEN 'path'
+                        ELSE 'content'
+                    END AS match_type,
                     bm25(documents_fts) AS score
                 FROM documents_fts
                 JOIN documents d ON d.id = documents_fts.rowid
@@ -144,10 +192,36 @@ class SearchIndex:
                     score
                 LIMIT ?
                 """,
-                (fts_query, clean_query, f"%{clean_query}%", f"%{clean_query}%", limit),
+                (
+                    clean_query,
+                    f"%{clean_query}%",
+                    f"%{clean_query}%",
+                    fts_query,
+                    clean_query,
+                    f"%{clean_query}%",
+                    f"%{clean_query}%",
+                    limit,
+                ),
             ).fetchall()
 
         return [dict(row) for row in rows]
+
+    def stats(self) -> IndexStats:
+        with self.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT
+                    COUNT(*) AS total_documents,
+                    SUM(CASE WHEN is_dir = 0 THEN 1 ELSE 0 END) AS files,
+                    SUM(CASE WHEN is_dir = 1 THEN 1 ELSE 0 END) AS folders
+                FROM documents
+                """
+            ).fetchone()
+        return IndexStats(
+            total_documents=int(row["total_documents"] or 0),
+            files=int(row["files"] or 0),
+            folders=int(row["folders"] or 0),
+        )
 
 
 def _document_values(document: Document) -> tuple[str, str, str, str, int, float, int]:
@@ -167,4 +241,3 @@ def _build_fts_query(query: str) -> str:
     if not terms:
         return '""'
     return " OR ".join(f'"{term}"*' for term in terms)
-

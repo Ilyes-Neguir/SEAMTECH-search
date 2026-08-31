@@ -1,0 +1,4 @@
+Client reference CLIENT-456
+Project: Cover design update
+Plan number: PLAN-2026-002
+The crawler indexes file names, folder paths, metadata, and readable document text.
