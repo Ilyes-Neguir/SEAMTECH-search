@@ -26,6 +26,7 @@ def test_search_finds_indexed_document(tmp_path: Path) -> None:
     assert len(results) == 1
     assert results[0]["name"] == "CLIENT-123-plan.pdf"
     assert results[0]["match_type"] == "name"
+    assert "<mark>CLIENT" in results[0]["snippet"]
 
 
 def test_unchanged_document_is_not_reindexed(tmp_path: Path) -> None:

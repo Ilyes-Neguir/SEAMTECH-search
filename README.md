@@ -1,8 +1,8 @@
 # SEAMTECH Search
 
-Internal search prototype for SEAMTECH design and technical folders.
+Internal search application for SEAMTECH design and technical folders.
 
-The system scans Windows folders, extracts searchable metadata/text, stores it in a SQLite FTS5 index, and exposes a simple FastAPI web interface for quickly finding references.
+The system scans Windows folders, extracts searchable metadata/text, stores it in PostgreSQL for production, and exposes a simple FastAPI web interface for quickly finding references.
 
 ## Features
 
@@ -11,14 +11,19 @@ The system scans Windows folders, extracts searchable metadata/text, stores it i
 - Search by filename, folder name, path, extension, and extracted document text
 - PDF text extraction with `pypdf`
 - DOCX text extraction with `python-docx`
-- SQLite FTS5 full-text search
+- PostgreSQL full-text search for production
+- SQLite fallback for local tests or quick prototypes
 - FastAPI `/search` and `/health` endpoints
 - Simple browser interface
+- Highlighted search snippets
+- File preview for extracted TXT/PDF/DOCX text
+- Folder preview plus Open File/Open Folder actions on Windows
 - Incremental indexing using file size and modified time
+- Batched indexing with progress logs
 
 OCR is not included in v1. Add it later after the normal indexed search works with real data.
 
-## Setup
+## Local Setup
 
 ```powershell
 python -m venv .venv
@@ -41,34 +46,54 @@ Example:
 }
 ```
 
+For production, set `database_url` to PostgreSQL in `config/config.json`:
+
+```json
+{
+  "database_url": "postgresql://seamtech:seamtech@localhost:5432/seamtech_search"
+}
+```
+
+If `database_url` is empty or missing, the app uses `database_path` as a SQLite fallback for local development.
+
+## Desktop Launcher
+
+Double-click the `SEAMTECH Search` Desktop shortcut, or run:
+
+```powershell
+.\SEAMTECH Search.cmd
+```
+
+The launcher starts the server in the background, waits for the health endpoint, and opens the browser at `http://127.0.0.1:8000`.
+
 ## Index Files
 
 ```powershell
-python -m seamtech_search index --config config.json
+python -m seamtech_search index --config config/config.json
 ```
 
 Force a complete rebuild:
 
 ```powershell
-python -m seamtech_search index --config config.json --rebuild
+python -m seamtech_search index --config config/config.json --rebuild
 ```
 
 Show database statistics:
 
 ```powershell
-python -m seamtech_search stats --config config.json
+python -m seamtech_search stats --config config/config.json
 ```
 
 Test a search from the terminal:
 
 ```powershell
-python -m seamtech_search search CLIENT-123 --config config.json
+python -m seamtech_search search CLIENT-123 --config config/config.json
 ```
 
 ## Run The Web App
 
 ```powershell
-python -m seamtech_search serve --config config.json
+python -m seamtech_search serve --config config/config.json
 ```
 
 Open:
@@ -81,10 +106,60 @@ http://127.0.0.1:8000
 
 ```text
 GET /health
+GET /metrics
 GET /search?q=REFERENCE&limit=50
+GET /preview?path=C:\Path\To\File.pdf
+POST /open?path=C:\Path\To\File.pdf
 ```
 
-Search results include the file/folder name, full path, parent path, extension, size, modified date, folder/file type, and match type (`exact_name`, `name`, `path`, or `content`).
+Search results include the file/folder name, full path, parent path, extension, size, modified date, folder/file type, match type (`exact_name`, `name`, `path`, or `content`), and a highlighted snippet.
+
+`/preview` and `/open` only allow paths inside configured `root_paths`.
+
+## Docker Deployment
+
+Create `config/config.json`, then start PostgreSQL and the web app:
+
+```powershell
+docker compose up --build
+```
+
+Run indexing from the host machine when the host has access to the Windows shared folders:
+
+```powershell
+.\scripts\run_indexing.ps1 -Config config/config.json
+```
+
+Schedule that command in Windows Task Scheduler. For a full service install, point NSSM at:
+
+```text
+python -m seamtech_search serve --config config/config.json
+```
+
+## Monitoring And Maintenance
+
+- `/health` checks database connectivity, database integrity/size, disk capacity, and index counts.
+- `/metrics` reports search request count, error count, last search time, slowest search time, and current health.
+- `scripts/run_indexing.ps1` writes a timestamped indexing transcript into `logs/` and exits non-zero on failure, so Task Scheduler can alert on failed runs.
+
+Back up PostgreSQL:
+
+```powershell
+.\scripts\backup_postgres.ps1 -DatabaseUrl "postgresql://seamtech:seamtech@localhost:5432/seamtech_search"
+```
+
+Restore PostgreSQL:
+
+```powershell
+.\scripts\restore_postgres.ps1 -BackupFile data/backups/seamtech-search-YYYYMMDD-HHMMSS.dump -DatabaseUrl "postgresql://seamtech:seamtech@localhost:5432/seamtech_search"
+```
+
+Back up or restore the SQLite fallback database:
+
+```powershell
+.\scripts\backup_sqlite.ps1
+.\scripts\restore_sqlite.ps1 -BackupFile data/backups/search-YYYYMMDD-HHMMSS.db
+```
 
 ## Tests
 
@@ -95,7 +170,7 @@ pytest
 ## Project Structure
 
 - `config/`: runtime and example configuration files
-- `data/`: SQLite index and generated runtime data
+- `data/`: generated runtime data and local SQLite fallback index
 - `logs/`: application logs
 - `sample_data/`: sample content for local development
 - `scripts/`: setup and maintenance helpers
@@ -104,4 +179,4 @@ pytest
 
 ## Recommended Deployment
 
-Run this on one internal server or VM that can access the shared Windows folders. Keep the SQLite index on the server, not inside the searched folders. Use Task Scheduler or NSSM to run indexing regularly.
+Run this on one internal server or VM that can access the shared Windows folders. Use PostgreSQL as the production index store and schedule indexing with Task Scheduler or NSSM.

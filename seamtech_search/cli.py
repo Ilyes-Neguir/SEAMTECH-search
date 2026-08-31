@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import logging
+import time
 from collections.abc import Sequence
 
 import uvicorn
@@ -10,8 +12,12 @@ from .config import AppConfig, default_config_path
 from .crawler import crawl
 from .indexer import SearchIndex
 
+LOGGER = logging.getLogger("seamtech_search")
+BATCH_SIZE = 250
+
 
 def main(argv: Sequence[str] | None = None) -> None:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     parser = argparse.ArgumentParser(prog="seamtech-search")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -46,27 +52,43 @@ def main(argv: Sequence[str] | None = None) -> None:
 
 def run_index(config_path: str, rebuild: bool = False) -> None:
     config = AppConfig.load(config_path)
-    index = SearchIndex(config.database_path)
+    index = SearchIndex(config.database_path, config.database_url)
     index.initialize(rebuild=rebuild)
 
     seen: set[str] = set()
+    batch = []
     scanned = 0
     changed = 0
+    started_at = time.perf_counter()
     for document in crawl(config):
         scanned += 1
         seen.add(document.path_key)
-        if index.upsert_document(document):
-            changed += 1
+        batch.append(document)
+        if len(batch) >= BATCH_SIZE:
+            changed += index.upsert_documents(batch)
+            batch.clear()
         if scanned % 500 == 0:
-            print(f"Scanned {scanned} items, updated {changed} items...")
+            elapsed = max(time.perf_counter() - started_at, 0.001)
+            LOGGER.info("Scanned %s items, updated %s items, %.1f items/sec", scanned, changed, scanned / elapsed)
+
+    if batch:
+        changed += index.upsert_documents(batch)
 
     removed = index.remove_missing(seen)
-    print(f"Done. Scanned: {scanned}. Updated: {changed}. Removed: {removed}.")
+    elapsed = max(time.perf_counter() - started_at, 0.001)
+    LOGGER.info(
+        "Indexing complete. scanned=%s updated=%s removed=%s elapsed_seconds=%.2f items_per_second=%.1f",
+        scanned,
+        changed,
+        removed,
+        elapsed,
+        scanned / elapsed,
+    )
 
 
 def run_search(config_path: str, query: str, limit: int = 10) -> None:
     config = AppConfig.load(config_path)
-    index = SearchIndex(config.database_path)
+    index = SearchIndex(config.database_path, config.database_url)
     results = index.search(query, limit=limit)
     for result in results:
         print(f"{result['match_type']:>10}  {result['name']}")
@@ -76,7 +98,7 @@ def run_search(config_path: str, query: str, limit: int = 10) -> None:
 
 def run_stats(config_path: str) -> None:
     config = AppConfig.load(config_path)
-    index = SearchIndex(config.database_path)
+    index = SearchIndex(config.database_path, config.database_url)
     index.initialize()
     stats = index.stats()
     print(f"Documents: {stats.total_documents}")

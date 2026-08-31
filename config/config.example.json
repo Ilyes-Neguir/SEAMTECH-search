@@ -2,6 +2,7 @@
   "root_paths": [
     "C:\\\\Path\\\\To\\\\SEAMTECH\\\\DesignFiles"
   ],
+  "database_url": null,
   "database_path": "data/search.db",
   "host": "127.0.0.1",
   "port": 8000,
@@ -17,4 +18,3 @@
   ],
   "max_extract_chars": 200000
 }
-

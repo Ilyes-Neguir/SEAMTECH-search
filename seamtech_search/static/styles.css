@@ -146,13 +146,124 @@ button.secondary {
   overflow-wrap: anywhere;
 }
 
+.hierarchy {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+  color: #4d5a68;
+  font-size: 13px;
+}
+
+.hierarchy span {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hierarchy span::after {
+  content: "\\";
+  margin-left: 6px;
+  color: #91a0af;
+}
+
+.hierarchy span:last-child::after {
+  content: "";
+}
+
+.snippet {
+  margin-top: 10px;
+  padding: 10px;
+  border-left: 3px solid #1f6feb;
+  background: #f7fafc;
+  color: #253244;
+  line-height: 1.45;
+}
+
+mark {
+  background: #ffe58f;
+  color: inherit;
+  padding: 1px 2px;
+}
+
 .meta {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
   margin-top: 10px;
   color: #667385;
   font-size: 13px;
+}
+
+.preview-dialog {
+  width: min(900px, calc(100% - 32px));
+  max-height: 82vh;
+  border: 1px solid #cfd8e3;
+  border-radius: 8px;
+  padding: 0;
+}
+
+.preview-dialog::backdrop {
+  background: rgb(23 32 42 / 52%);
+}
+
+.preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px;
+  border-bottom: 1px solid #dfe5ec;
+}
+
+.preview-header h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.preview-body {
+  padding: 14px;
+  overflow: auto;
+  max-height: calc(82vh - 64px);
+}
+
+.preview-path {
+  margin-bottom: 12px;
+  color: #5b6673;
+  overflow-wrap: anywhere;
+}
+
+pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.folder-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.folder-list li {
+  display: grid;
+  grid-template-columns: 80px 1fr auto;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid #edf2f7;
+}
+
+.folder-item-type {
+  color: #667385;
+  font-size: 12px;
+  text-transform: uppercase;
 }
 
 @media (max-width: 700px) {
@@ -169,5 +280,9 @@ button.secondary {
   .meta {
     align-items: start;
     flex-direction: column;
+  }
+
+  .folder-list li {
+    grid-template-columns: 1fr;
   }
 }

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,7 @@ def default_config_path(project_root: str | Path | None = None) -> Path:
 class AppConfig(BaseModel):
     root_paths: list[Path]
     database_path: Path = Path("data/search.db")
+    database_url: str | None = None
     host: str = "127.0.0.1"
     port: int = 8000
     excluded_names: set[str] = Field(default_factory=set)
@@ -37,6 +39,9 @@ class AppConfig(BaseModel):
                 config_path = (Path.cwd() / config_path).resolve()
         with config_path.open("r", encoding="utf-8") as file:
             data: dict[str, Any] = json.load(file)
+
+        if os.environ.get("SEAMTECH_DATABASE_URL"):
+            data["database_url"] = os.environ["SEAMTECH_DATABASE_URL"]
 
         config = cls.model_validate(data)
 
