@@ -35,7 +35,7 @@ def test_postgres_initialize_upsert_search_and_health(tmp_path: Path) -> None:
 
         stats = index.stats()
         assert stats.files >= 1
-        assert index.health_details()["database"] == "postgres"
+        assert index.health_details()["backend"] == "postgresql"
     finally:
         with index.connect() as connection:
             with connection.cursor() as cursor:

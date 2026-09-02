@@ -47,6 +47,11 @@ if (-not $authToken -or $authToken -eq "change-me") {
     Set-EnvValue "SEAMTECH_AUTH_TOKEN" $authToken
 }
 
+Set-Content -Path $EnvFile -Value @(
+    "POSTGRES_PASSWORD=$password",
+    "SEAMTECH_AUTH_TOKEN=$authToken"
+) -Encoding ascii
+
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     throw "Docker Desktop is required for automatic PostgreSQL setup. Install Docker Desktop and run the launcher again."
 }
