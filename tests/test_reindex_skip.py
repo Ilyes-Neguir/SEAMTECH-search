@@ -1,4 +1,5 @@
 import json
+import sys
 import time
 from pathlib import Path
 
@@ -133,3 +134,31 @@ def test_extraction_timeout_returns_marker_without_hanging(tmp_path: Path, monke
 
     assert result == "[extraction timed out]"
     assert elapsed < 4, "must return promptly instead of waiting for the slow call"
+
+
+def test_real_extraction_worker_returns_text(tmp_path: Path) -> None:
+    path = tmp_path / "worker.txt"
+    path.write_text("isolated worker content", encoding="utf-8")
+    config = AppConfig(root_paths=[tmp_path], database_path=tmp_path / "search.db")
+
+    result = _extract_with_timeout(path, config)
+
+    assert result.status == "extracted"
+    assert result.text == "isolated worker content"
+
+
+def test_real_extraction_worker_can_be_terminated(tmp_path: Path) -> None:
+    path = tmp_path / "slow.dwg"
+    path.write_bytes(b"cad")
+    config = AppConfig(
+        root_paths=[tmp_path],
+        database_path=tmp_path / "search.db",
+        extraction_timeout_seconds=1,
+        external_extractors={".dwg": [sys.executable, "-c", "import time; time.sleep(5)"]},
+    )
+
+    started = time.perf_counter()
+    result = _extract_with_timeout(path, config)
+
+    assert result.status == "timeout"
+    assert time.perf_counter() - started < 4

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import logging
+import json
 import os
+import subprocess
+import sys
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from pathlib import Path
@@ -18,11 +21,10 @@ ExistingMetadata = dict[str, tuple[int, float, int]]
 
 
 def _extract_with_timeout(path: Path, config: AppConfig) -> ExtractionResult:
-    # A fresh single-use executor per call: a genuinely hung parser leaves
-    # its thread running in the background (Python can't kill a thread),
-    # but a reused pool would let that one stuck file wedge every file
-    # after it forever. A throwaway executor keeps a timeout isolated to
-    # the file that caused it.
+    if extract_text.__module__ == "seamtech_search.extractors":
+        return _extract_in_process(path, config)
+
+    # Keep the direct callable seam for unit tests that monkeypatch extract_text.
     executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="seamtech-extract")
     future = executor.submit(
         extract_text,
@@ -46,6 +48,42 @@ def _extract_with_timeout(path: Path, config: AppConfig) -> ExtractionResult:
         # wait=False: don't block the scan on a thread that may never return.
         executor.shutdown(wait=False)
         return ExtractionResult("", "timeout")
+
+
+def _extract_in_process(path: Path, config: AppConfig) -> ExtractionResult:
+    options = {
+        "enable_legacy_office": config.enable_legacy_office,
+        "libreoffice_command": config.libreoffice_command,
+        "enable_ocr": config.enable_ocr,
+        "tesseract_command": config.tesseract_command,
+        "ocrmypdf_command": config.ocrmypdf_command,
+        "external_extraction_timeout_seconds": config.external_extraction_timeout_seconds,
+        "external_extractors": config.external_extractors,
+    }
+    command = [
+        sys.executable,
+        "-m",
+        "seamtech_search.extraction_worker",
+        str(path),
+        str(config.max_extract_chars),
+        str(config.max_file_size_bytes),
+        json.dumps(options),
+    ]
+    try:
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=config.extraction_timeout_seconds,
+            check=False,
+            cwd=Path(__file__).resolve().parents[1],
+        )
+    except subprocess.TimeoutExpired:
+        LOGGER.warning("Extraction timed out after %ss: %s", config.extraction_timeout_seconds, path)
+        return ExtractionResult("", "timeout")
+    if completed.returncode != 0:
+        return ExtractionResult("", "error", "extraction worker failed")
+    return _structured_from_legacy(completed.stdout)
 
 
 def _structured_from_legacy(text: str) -> ExtractionResult:

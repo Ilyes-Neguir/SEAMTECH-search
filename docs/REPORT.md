@@ -16,7 +16,6 @@ SEAMTECH Search is a deployable internal search application. PostgreSQL is the n
 - Hardened search snippets by rendering highlight markup as safe React text and aligned live API fields with the frontend contract.
 - Protected root, health and metrics endpoints when authentication is configured, enabled strict frontend type checking, and required PostgreSQL for scheduled indexing.
 - Added scan snapshots that restore the previous document index after a failed indexing run.
-- Added authenticated operational endpoints, strict frontend type checking, and scheduled PostgreSQL enforcement.
 - Kept SQLite support for local development and tests.
 - Added PostgreSQL full-text search using `tsvector`, GIN indexing, ranking, and highlighted snippets.
 - Added highlighted snippets to SQLite search results.
@@ -84,7 +83,7 @@ Recommended PostgreSQL backup command:
 The local verification suite passes:
 
 ```text
-27 passed, 1 skipped (PostgreSQL integration requires a configured database URL)
+29 passed, 1 skipped (PostgreSQL integration requires a configured database URL)
 ```
 
 Additional smoke checks completed:
@@ -102,11 +101,12 @@ Additional smoke checks completed:
 - The Windows Open File/Open Folder feature uses `os.startfile`, so it is intended for a Windows host where the server has access to the searched folders.
 - If the app is run inside Docker, file opening happens inside the container context and is not the recommended mode for desktop file launching.
 - OCR, LibreOffice, and external CAD/vendor parsers are optional and require their tools to be installed and explicitly enabled.
-- A live PostgreSQL integration run and representative 50 GB benchmark still require the target deployment environment.
+- The PostgreSQL integration test is ready but requires a valid target database URL; the benchmark has been smoke-tested locally and still requires a representative 50 GB share.
+- Built-in extraction runs in a terminable worker process; external parser processes remain bounded by their configured timeout.
 
 
 ## Implementation update — version 0.2.0
 
-The current working tree adds bounded extraction for structured text, OOXML and ZIP manifests; explicit file-size and network-policy configuration; token protection for search, preview and open; safe scan-abort behavior when configured roots cannot be fully traversed; durable scan status records; connection timeouts; safer SQLite FTS tokenization; browser token/header support; and structured extraction status for unsupported, skipped, failed and timed-out files. The automated suite now contains 24 passing tests plus one opt-in PostgreSQL integration test, with Python compilation and the Next.js production build passing.
+The current working tree adds bounded extraction for structured text, OOXML and ZIP manifests; explicit file-size and network-policy configuration; token protection for search, preview and open; safe scan-abort behavior when configured roots cannot be fully traversed; durable scan status records; connection timeouts; safer SQLite FTS tokenization; browser token/header support; structured extraction status for unsupported, skipped, failed and timed-out files; and process-isolated extraction workers. The automated suite now contains 29 passing tests plus one opt-in PostgreSQL integration test, with Python compilation and the Next.js production build passing.
 
-This remains production-oriented rather than universally production-certified. Enterprise SSO, per-folder ACL inheritance, process-isolated extraction, a live PostgreSQL environment, real factory-share testing and a representative 50 GB benchmark still require the factory environment and security decisions.
+This remains production-oriented rather than universally production-certified. Enterprise SSO, per-folder ACL inheritance, a live PostgreSQL environment, real factory-share testing and a representative 50 GB benchmark still require the factory environment and security decisions.
