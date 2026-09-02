@@ -2,6 +2,8 @@
 
 Internal search application for SEAMTECH design and technical folders.
 
+For the complete academic and technical presentation, see [docs/PROJECT_REPORT.md](docs/PROJECT_REPORT.md).
+
 The system scans Windows folders, extracts searchable metadata/text, stores it in PostgreSQL for production, and exposes a simple FastAPI web interface for quickly finding references.
 
 ## Features

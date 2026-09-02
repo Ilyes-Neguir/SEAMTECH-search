@@ -22,3 +22,4 @@
   a full production-style stack in one command
 - SEAMTECH Search.cmd: Windows launcher used by the Desktop shortcut
 - tests/test_postgres_integration.py: opt-in PostgreSQL schema, indexing, search and health integration test
+- docs/PROJECT_REPORT.md: complete technical, operational, testing and deployment report
