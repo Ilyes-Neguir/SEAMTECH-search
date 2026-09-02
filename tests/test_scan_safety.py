@@ -68,3 +68,19 @@ def test_concurrent_scan_is_rejected(tmp_path: Path) -> None:
         with pytest.raises(ScanAlreadyRunningError):
             with index.scan_lock():
                 pass
+
+
+def test_scan_snapshot_restores_documents_after_failure(tmp_path: Path) -> None:
+    index = SearchIndex(tmp_path / "search.db")
+    index.initialize(rebuild=True)
+    path = tmp_path / "existing.txt"
+    document = Document(path, path.name, tmp_path, ".txt", 1, 1.0, False, "original")
+    index.upsert_document(document)
+
+    with pytest.raises(RuntimeError):
+        with index.scan_snapshot():
+            index.upsert_document(Document(path, path.name, tmp_path, ".txt", 2, 2.0, False, "changed"))
+            raise RuntimeError("simulated scan failure")
+
+    assert index.search("original")
+    assert not index.search("changed")

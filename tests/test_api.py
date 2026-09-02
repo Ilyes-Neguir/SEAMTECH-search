@@ -16,7 +16,8 @@ def test_configured_token_protects_search(tmp_path: Path) -> None:
 
     assert client.get("/search?q=client").status_code == 401
     assert client.get("/search?q=client", headers={"X-SEAMTECH-TOKEN": "secret"}).status_code == 200
-    assert client.get("/health").status_code == 200
+    assert client.get("/health").status_code == 401
+    assert client.get("/health", headers={"X-SEAMTECH-TOKEN": "secret"}).status_code == 200
 
 
 def test_search_pagination_contract(tmp_path: Path) -> None:

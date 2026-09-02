@@ -36,7 +36,7 @@ export function IndexStatus() {
             {data.files.toLocaleString()} files · {data.folders.toLocaleString()} folders
           </span>
           {data.last_scan && (
-            <span className="hidden md:inline">Last scan {formatDateTime(data.last_scan)}</span>
+            <span className="hidden md:inline">Last scan {formatDateTime(data.last_scan.started_at)}</span>
           )}
         </>
       )}

@@ -54,7 +54,8 @@ def run_index(config_path: str, rebuild: bool = False) -> dict[str, float | int]
     config = AppConfig.load(config_path)
     index = SearchIndex(config.database_path, config.database_url)
     with index.scan_lock():
-        return _run_index(index, config, rebuild)
+        with index.scan_snapshot():
+            return _run_index(index, config, rebuild)
 
 
 def _run_index(index: SearchIndex, config: AppConfig, rebuild: bool = False) -> dict[str, float | int]:

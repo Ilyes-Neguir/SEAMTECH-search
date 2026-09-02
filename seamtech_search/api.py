@@ -23,11 +23,13 @@ def create_app(config: AppConfig) -> FastAPI:
         "slowest_search_seconds": 0.0,
     }
     @app.get("/")
-    def root() -> dict[str, str]:
+    def root(token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None) -> dict[str, str]:
+        _require_auth(config, token)
         return {"service": "seamtech-search-api", "health": "/health", "docs": "/docs"}
 
     @app.get("/health")
-    def health() -> dict[str, object]:
+    def health(token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None) -> dict[str, object]:
+        _require_auth(config, token)
         index.initialize()
         stats = index.stats()
         health_details = index.health_details()
@@ -70,8 +72,9 @@ def create_app(config: AppConfig) -> FastAPI:
         return {"query": q, "count": len(results), "offset": offset, "limit": limit, "has_more": has_more, "results": results}
 
     @app.get("/metrics")
-    def get_metrics() -> dict[str, object]:
-        return {**metrics, "health": health()}
+    def get_metrics(token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None) -> dict[str, object]:
+        _require_auth(config, token)
+        return {**metrics, "health": health(token)}
 
     @app.get("/preview")
     def preview(

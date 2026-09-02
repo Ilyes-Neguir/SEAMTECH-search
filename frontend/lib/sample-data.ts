@@ -197,5 +197,12 @@ export const SAMPLE_STATS = {
   documents: SAMPLE_FILES.length,
   files: SAMPLE_FILES.filter((f) => !f.is_dir).length,
   folders: SAMPLE_FILES.filter((f) => f.is_dir).length,
-  last_scan: "2026-08-25T18:04:00Z",
+  last_scan: {
+    started_at: "2026-08-25T18:04:00Z",
+    finished_at: "2026-08-25T18:04:12Z",
+    status: "completed",
+    scanned: SAMPLE_FILES.length,
+    changed: SAMPLE_FILES.length,
+    removed: 0,
+  },
 }

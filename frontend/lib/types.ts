@@ -3,6 +3,16 @@
 export type MatchType = "exact_name" | "name" | "path" | "content"
 export type ExtractionStatus = "extracted" | "unavailable" | "skipped" | "error" | "timeout" | "not_applicable"
 
+export interface ScanSummary {
+  started_at: string
+  finished_at?: string | null
+  status: string
+  scanned: number
+  changed: number
+  removed: number
+  error?: string | null
+}
+
 export interface SearchResult {
   name: string
   path: string
@@ -50,7 +60,7 @@ export interface HealthResponse {
   documents: number
   files: number
   folders: number
-  last_scan: string | null
+  last_scan: ScanSummary | null
   disk_free_bytes?: number
   disk_total_bytes?: number
 }

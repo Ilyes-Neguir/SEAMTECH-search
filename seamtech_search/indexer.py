@@ -194,6 +194,63 @@ class SearchIndex:
             except FileNotFoundError:
                 pass
 
+    @contextmanager
+    def scan_snapshot(self) -> Iterator[None]:
+        if self.is_postgres:
+            backup_table = f"scan_backup_documents_{os.getpid()}"
+            with self.connect() as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute("DROP TABLE IF EXISTS " + backup_table)
+                    cursor.execute("SELECT to_regclass('public.documents')")
+                    has_documents = cursor.fetchone()[0] is not None
+                    if has_documents:
+                        cursor.execute(f"CREATE TABLE {backup_table} AS TABLE documents")
+            try:
+                yield
+            except Exception:
+                if has_documents:
+                    with self.connect() as connection:
+                        with connection.cursor() as cursor:
+                            cursor.execute("TRUNCATE TABLE documents")
+                            cursor.execute(f"INSERT INTO documents SELECT * FROM {backup_table}")
+                raise
+            finally:
+                with self.connect() as connection:
+                    with connection.cursor() as cursor:
+                        cursor.execute("DROP TABLE IF EXISTS " + backup_table)
+            return
+
+        backup_path = self.database_path.with_suffix(self.database_path.suffix + ".scan-backup")
+        backup_path.unlink(missing_ok=True)
+        source = sqlite3.connect(self.database_path)
+        backup = sqlite3.connect(backup_path)
+        try:
+            source.backup(backup)
+        finally:
+            backup.close()
+            source.close()
+        try:
+            yield
+        except Exception:
+            with self.connect() as connection:
+                scan_runs = connection.execute("SELECT * FROM scan_runs ORDER BY id").fetchall()
+            source = sqlite3.connect(backup_path)
+            target = sqlite3.connect(self.database_path)
+            try:
+                source.backup(target)
+            finally:
+                target.close()
+                source.close()
+            with self.connect() as connection:
+                connection.execute("DELETE FROM scan_runs")
+                connection.executemany(
+                    "INSERT INTO scan_runs (id, started_at, finished_at, status, scanned, changed, removed, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    [tuple(row) for row in scan_runs],
+                )
+            raise
+        finally:
+            backup_path.unlink(missing_ok=True)
+
     def start_scan(self) -> int:
         with self.connect() as connection:
             if self.is_postgres:
@@ -460,10 +517,10 @@ class SearchIndex:
                 SELECT
                     d.path,
                     d.name,
-                    d.parent_path,
+                    d.parent_path AS parent,
                     d.extension,
                     d.size,
-                    d.modified_at,
+                    d.modified_at AS modified,
                     d.is_dir,
                     d.extraction_status,
                     d.extraction_detail,
@@ -517,10 +574,10 @@ class SearchIndex:
                     SELECT
                         d.path,
                         d.name,
-                        d.parent_path,
+                        d.parent_path AS parent,
                         d.extension,
                         d.size,
-                        d.modified_at,
+                        d.modified_at AS modified,
                         d.is_dir,
                         d.extraction_status,
                         d.extraction_detail,

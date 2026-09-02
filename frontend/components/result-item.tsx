@@ -32,6 +32,21 @@ function extractionLabel(status?: SearchResult["extraction_status"]) {
   return status.replace("_", " ")
 }
 
+function renderSnippet(snippet: string) {
+  let highlighted = false
+  return snippet.split(/(<mark>|<\/mark>|<em>|<\/em>)/g).map((part, index) => {
+    if (part === "<mark>" || part === "<em>") {
+      highlighted = true
+      return null
+    }
+    if (part === "</mark>" || part === "</em>") {
+      highlighted = false
+      return null
+    }
+    return highlighted ? <mark key={index}>{part}</mark> : <span key={index}>{part}</span>
+  })
+}
+
 interface ResultItemProps {
   result: SearchResult
   selected: boolean
@@ -88,9 +103,9 @@ export function ResultItem({ result, selected, onSelect, onOpen }: ResultItemPro
         {showSnippet && (
           <p
             className="snippet mt-1.5 line-clamp-2 text-[13px] leading-relaxed text-muted-foreground"
-            // Snippet HTML is highlight markup (<mark>) generated server-side from indexed content.
-            dangerouslySetInnerHTML={{ __html: result.snippet }}
-          />
+          >
+            {renderSnippet(result.snippet)}
+          </p>
         )}
 
         <div className="mt-1.5 flex items-center gap-3 text-[11px] text-muted-foreground">
