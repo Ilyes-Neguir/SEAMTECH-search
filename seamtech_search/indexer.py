@@ -113,8 +113,23 @@ class SearchIndex:
                         cursor.execute("DROP TABLE IF EXISTS documents")
                     cursor.execute(POSTGRES_SCHEMA)
                     cursor.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS content TEXT NOT NULL DEFAULT ''")
+                    cursor.execute(
+                        "ALTER TABLE documents ADD COLUMN IF NOT EXISTS search_vector TSVECTOR NOT NULL DEFAULT ''::tsvector"
+                    )
                     cursor.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS extractor_version INTEGER NOT NULL DEFAULT 0")
                     cursor.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS content_hash TEXT NOT NULL DEFAULT ''")
+                    cursor.execute(
+                        """
+                        UPDATE documents
+                        SET search_vector = to_tsvector(
+                            'simple',
+                            concat_ws(E'\\n', name, path, extension, content)
+                        )
+                        WHERE search_vector = ''::tsvector
+                        """
+                    )
+                    cursor.execute("CREATE INDEX IF NOT EXISTS idx_documents_search_vector ON documents USING GIN(search_vector)")
+                    cursor.execute("CREATE INDEX IF NOT EXISTS idx_documents_path_key ON documents(path_key)")
             else:
                 if rebuild:
                     connection.executescript(

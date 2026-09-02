@@ -2,11 +2,13 @@
 
 ## Summary
 
-SEAMTECH Search has been upgraded from a local prototype into a deployable internal search application. The main production database path is now PostgreSQL, while SQLite remains available as a local development fallback. The web interface now helps users inspect results directly with highlighted snippets, previews, and Windows open actions.
+SEAMTECH Search is a deployable internal search application. PostgreSQL is the normal runtime database, while SQLite remains available only as an explicit local/test fallback. The web interface helps users inspect results directly with highlighted snippets, previews, and Windows open actions.
 
 ## Implemented Work
 
 - Added PostgreSQL support through `database_url`.
+- Added automatic local PostgreSQL provisioning for the Windows launcher with ignored generated credentials.
+- Added an opt-in PostgreSQL integration test covering schema initialization, indexing, search, statistics and health.
 - Kept SQLite support for local development and tests.
 - Added PostgreSQL full-text search using `tsvector`, GIN indexing, ranking, and highlighted snippets.
 - Added highlighted snippets to SQLite search results.
@@ -30,15 +32,15 @@ SEAMTECH Search has been upgraded from a local prototype into a deployable inter
 - `seamtech_search/extractors.py`: extracts text from PDF, DOCX, and plain text files.
 - `seamtech_search/indexer.py`: owns database initialization, indexing, search, stats, health details, and backend selection.
 - `seamtech_search/api.py`: exposes the FastAPI web app, search, preview, open, health, and metrics endpoints.
-- `seamtech_search/static/`: contains the browser interface.
+- `frontend/`: contains the Next.js browser interface and server-side API proxy routes.
 - `scripts/`: contains operational scripts for launch, indexing, backup, and restore.
 
 ## Database Strategy
 
-Production should use PostgreSQL:
+Normal deployments use PostgreSQL:
 
 ```text
-postgresql://seamtech:${POSTGRES_PASSWORD}@localhost:5432/seamtech_search
+postgresql://seamtech:${POSTGRES_PASSWORD}@localhost:5433/seamtech_search
 ```
 
 The Docker deployment overrides this to use the Compose service hostname:
@@ -47,7 +49,7 @@ The Docker deployment overrides this to use the Compose service hostname:
 postgresql://seamtech:${POSTGRES_PASSWORD}@postgres:5432/seamtech_search
 ```
 
-When `database_url` is not configured, the app uses the SQLite `database_path`. This keeps local development simple and keeps the test suite fast.
+When `database_url` is not configured, the app uses the SQLite `database_path` only as an explicit local/test fallback. The Windows launcher provisions PostgreSQL and sets `SEAMTECH_DATABASE_URL` automatically.
 
 ## Operations
 
@@ -74,7 +76,7 @@ Recommended PostgreSQL backup command:
 The local verification suite passes:
 
 ```text
-5 passed
+20 passed, 1 skipped (PostgreSQL integration requires a configured database URL)
 ```
 
 Additional smoke checks completed:
@@ -88,7 +90,7 @@ Additional smoke checks completed:
 
 ## Known Deployment Notes
 
-- PostgreSQL must be running before production indexing or serving with `database_url`.
+- PostgreSQL must be reachable before production indexing or serving with `database_url`; the Windows launcher handles this automatically through Docker Desktop.
 - The Windows Open File/Open Folder feature uses `os.startfile`, so it is intended for a Windows host where the server has access to the searched folders.
 - If the app is run inside Docker, file opening happens inside the container context and is not the recommended mode for desktop file launching.
 - OCR is not included. Scanned PDFs without embedded text will not produce rich previews until OCR is added.
@@ -98,4 +100,4 @@ Additional smoke checks completed:
 
 The current working tree adds bounded extraction for structured text, OOXML and ZIP manifests; explicit file-size and network-policy configuration; token protection for search, preview and open; safe scan-abort behavior when configured roots cannot be fully traversed; durable scan status records; connection timeouts; safer SQLite FTS tokenization; and browser token/header support. The automated suite now contains 14 tests, with Python compilation and JavaScript syntax checks passing.
 
-This remains production-oriented rather than universally production-certified. Enterprise SSO, per-folder ACL inheritance, OCR, proprietary CAD parsers, PostgreSQL integration testing, real factory-share testing and a representative 50 GB benchmark still require the factory environment and security decisions.
+This remains production-oriented rather than universally production-certified. Enterprise SSO, per-folder ACL inheritance, OCR, proprietary CAD parsers, a live PostgreSQL environment, real factory-share testing and a representative 50 GB benchmark still require the factory environment and security decisions.

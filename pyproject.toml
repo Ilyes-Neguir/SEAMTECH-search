@@ -9,7 +9,7 @@ dependencies = [
     "pydantic==2.11.7",
     "pypdf==5.8.0",
     "python-docx==1.2.0",
-    "psycopg2-binary==2.9.9",
+    "psycopg2-binary==2.9.10",
 ]
 
 [project.optional-dependencies]
@@ -27,3 +27,6 @@ include = ["seamtech_search*"]
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+markers = [
+    "postgres: requires a running PostgreSQL database configured by SEAMTECH_TEST_DATABASE_URL",
+]

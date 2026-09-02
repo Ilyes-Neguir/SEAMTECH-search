@@ -16,6 +16,8 @@ $StandaloneServer = Join-Path $StandaloneRoot "server.js"
 
 Set-Location $ProjectRoot
 
+. (Join-Path $PSScriptRoot "ensure_postgres.ps1")
+
 try {
     Invoke-WebRequest -Uri "$BackendUrl/health" -UseBasicParsing -TimeoutSec 2 | Out-Null
 } catch {

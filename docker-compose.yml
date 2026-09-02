@@ -5,8 +5,8 @@ services:
       POSTGRES_DB: seamtech_search
       POSTGRES_USER: seamtech
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the environment}
-    expose:
-      - "5432"
+    ports:
+      - "5433:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:

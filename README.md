@@ -36,7 +36,7 @@ pip install -r requirements.txt
 python scripts/bootstrap.py
 ```
 
-The repository now keeps runtime configuration in the `config/` directory. A ready-to-edit example is available at `config/config.example.json`, and the CLI will use `config/config.json` automatically when it exists.
+The repository now keeps runtime configuration in the `config/` directory. A ready-to-edit PostgreSQL example is available at `config/config.example.json`, and the CLI will use `config/config.json` automatically when it exists.
 For real SEAMTECH data, edit `config/config.json` and replace `root_paths` with the Windows shared folders to index.
 
 Example:
@@ -54,11 +54,23 @@ For production, set `database_url` to PostgreSQL in `config/config.json`:
 
 ```json
 {
-  "database_url": "postgresql://seamtech:${POSTGRES_PASSWORD}@localhost:5432/seamtech_search"
+  "database_url": "postgresql://seamtech:${POSTGRES_PASSWORD}@localhost:5433/seamtech_search"
 }
 ```
 
-If `database_url` is empty or missing, the app uses `database_path` as a SQLite fallback for local development.
+PostgreSQL is the required database for normal deployments. SQLite remains available only as an explicit local/test fallback by setting `database_path` and leaving `database_url` empty.
+
+To run PostgreSQL locally with Docker and make it reachable from Windows host tools:
+
+```powershell
+Copy-Item .env.example .env
+# edit .env and replace both change-me values
+docker compose up -d postgres
+$env:SEAMTECH_TEST_DATABASE_URL = "postgresql://seamtech:YOUR_PASSWORD@127.0.0.1:5433/seamtech_search"
+pytest -q -m postgres
+```
+
+The PostgreSQL integration test is skipped when `SEAMTECH_TEST_DATABASE_URL` is not set. The desktop launcher creates `.env`, generates local credentials, starts Docker Desktop and PostgreSQL automatically, and passes the connection URL to the backend without exposing it in the browser. The same connection URL can be placed in `config/config.json` as `database_url` for manual indexing and serving.
 
 ## Desktop Launcher
 
@@ -68,7 +80,7 @@ Double-click the `SEAMTECH Search` Desktop shortcut, or run:
 .\SEAMTECH Search.cmd
 ```
 
-The launcher starts the FastAPI backend in the background, waits for its health endpoint, ensures the Next.js frontend has a production standalone build, starts that frontend on port 3000, and opens the browser at `http://127.0.0.1:3000`. Node.js and pnpm are required on the Windows host for the first launch so the frontend can be built; subsequent launches reuse the prebuilt standalone server and do not rebuild it.
+The launcher starts or reuses PostgreSQL, starts the FastAPI backend in the background, waits for its health endpoint, ensures the Next.js frontend has a production build, starts that frontend on port 3000 (or 3001 when port 3000 is occupied), and opens the browser at the selected local URL. Docker Desktop, Node.js and pnpm are required on the Windows host; credentials are generated automatically on first launch and stored only in the ignored `.env` file.
 
 ## Index Files
 
@@ -141,7 +153,7 @@ Then create `config/config.json` (see the example above) with your real `root_pa
 
 `SEAMTECH_AUTH_TOKEN` is required in Docker: compose runs the backend with `SEAMTECH_HOST=0.0.0.0` and `SEAMTECH_ALLOW_NETWORK_ACCESS=true` so the `frontend` container can reach `web` over the internal Docker network (a container bound to `127.0.0.1` is only reachable from inside itself), and `AppConfig` requires a token whenever the host is non-local. The same token is shared by both containers server-to-server; it's still never sent to the browser. For a native/single-host run (no Docker), leave `config/config.json`'s `host` at `127.0.0.1` and skip this — the env override only applies to the containers it's set for.
 
-Run indexing from the host machine when the host has access to the Windows shared folders:
+Run indexing from the host machine when the host has access to the Windows shared folders. The launcher has already prepared PostgreSQL automatically; for a scheduled job, set `SEAMTECH_DATABASE_URL` from the generated local configuration or use a managed PostgreSQL connection:
 
 ```powershell
 .\scripts\run_indexing.ps1 -Config config/config.json

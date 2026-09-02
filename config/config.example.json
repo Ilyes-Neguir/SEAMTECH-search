@@ -2,8 +2,7 @@
   "root_paths": [
     "C:\\\\Path\\\\To\\\\SEAMTECH\\\\DesignFiles"
   ],
-  "database_url": null,
-  "database_path": "data/search.db",
+  "database_url": "postgresql://seamtech:CHANGE_ME@127.0.0.1:5433/seamtech_search",
   "host": "127.0.0.1",
   "port": 8000,
   "excluded_names": [

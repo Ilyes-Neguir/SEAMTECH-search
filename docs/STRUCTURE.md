@@ -1,10 +1,11 @@
 # Project structure
 
 - config/: runtime and example configuration files
-- data/: generated runtime data, backups, and local SQLite fallback index
+- data/: generated runtime data and backups; SQLite is retained only for tests/local fallback
 - logs/: application logs
 - sample_data/: sample content for local development
 - scripts/: setup, launch, indexing, backup, and restore scripts
+- scripts/ensure_postgres.ps1: generates local credentials and starts the PostgreSQL container for the Windows launcher
 - seamtech_search/: Python package containing the crawler, indexer, API and CLI.
 - frontend/: the only web UI, used by both Docker and the native desktop launcher.
   Talks to the backend only through its own
@@ -20,3 +21,4 @@
 - docker-compose.yml: PostgreSQL, the FastAPI backend, and the frontend —
   a full production-style stack in one command
 - SEAMTECH Search.cmd: Windows launcher used by the Desktop shortcut
+- tests/test_postgres_integration.py: opt-in PostgreSQL schema, indexing, search and health integration test
