@@ -8,7 +8,8 @@ $ConfigPath = Join-Path $ProjectRoot $Config
 $VenvPython = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
 $Python = if (Test-Path $VenvPython) { $VenvPython } else { "python" }
 $BackendUrl = "http://127.0.0.1:8000"
-$FrontendUrl = "http://127.0.0.1:3000"
+$FrontendPort = 3000
+$FrontendUrl = "http://127.0.0.1:$FrontendPort"
 $FrontendRoot = Join-Path $ProjectRoot "frontend"
 $StandaloneRoot = Join-Path $FrontendRoot ".next\standalone"
 $StandaloneServer = Join-Path $StandaloneRoot "server.js"
@@ -20,7 +21,7 @@ try {
 } catch {
     Start-Process `
         -FilePath $Python `
-        -ArgumentList @("-m", "seamtech_search", "serve", "--config", $ConfigPath) `
+        -ArgumentList @("-m", "seamtech_search", "serve", "--config", $Config) `
         -WorkingDirectory $ProjectRoot `
         -WindowStyle Hidden
 
@@ -57,6 +58,10 @@ if (-not (Test-Path $StandaloneServer)) {
     throw "The Next.js standalone build did not produce $StandaloneServer."
 }
 
+if (-not (Get-Command pnpm -ErrorAction SilentlyContinue)) {
+    throw "pnpm is required to start the frontend. Install Node.js and pnpm, then run the launcher again."
+}
+
 $FrontendStatic = Join-Path $FrontendRoot ".next\static"
 $FrontendPublic = Join-Path $FrontendRoot "public"
 $StandaloneStatic = Join-Path $StandaloneRoot ".next\static"
@@ -70,12 +75,16 @@ Copy-Item -Path (Join-Path $FrontendPublic "*") -Destination $StandalonePublic -
 try {
     Invoke-WebRequest -Uri "$FrontendUrl/api/health" -UseBasicParsing -TimeoutSec 2 | Out-Null
 } catch {
+    if (Get-NetTCPConnection -LocalPort $FrontendPort -State Listen -ErrorAction SilentlyContinue) {
+        $FrontendPort = 3001
+        $FrontendUrl = "http://127.0.0.1:$FrontendPort"
+    }
     $env:SEAMTECH_API_URL = $BackendUrl
-    $env:PORT = "3000"
+    $env:PORT = "$FrontendPort"
     Start-Process `
-        -FilePath "node" `
-        -ArgumentList @("server.js") `
-        -WorkingDirectory $StandaloneRoot `
+        -FilePath "cmd.exe" `
+        -ArgumentList @("/c", "pnpm start") `
+        -WorkingDirectory $FrontendRoot `
         -WindowStyle Hidden
 
     $frontendReady = $false

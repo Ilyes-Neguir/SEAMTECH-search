@@ -15,8 +15,8 @@ export const metadata: Metadata = {
     'Search the SEAMTECH archive of sails, patterns, datasheets and client orders by name, folder path or document content.',
   generator: 'v0.app',
   icons: {
-    icon: [{ url: '/icon.svg', type: 'image/svg+xml' }],
-    apple: '/icon.svg',
+    icon: [{ url: '/seamtech-logo.png', type: 'image/png' }],
+    apple: '/seamtech-logo.png',
   },
 }
 
