@@ -7,9 +7,6 @@ from pathlib import Path
 from typing import Annotated
 
 from fastapi import FastAPI, Header, HTTPException, Query
-from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
-
 from .config import AppConfig
 from .extractors import extract_text
 from .indexer import SearchIndex
@@ -19,18 +16,15 @@ def create_app(config: AppConfig) -> FastAPI:
     app = FastAPI(title="SEAMTECH Search", version="0.2.0")
     index = SearchIndex(config.database_path, config.database_url)
     index.initialize()
-    static_dir = Path(__file__).parent / "static"
     metrics = {
         "search_requests": 0,
         "search_errors": 0,
         "last_search_seconds": 0.0,
         "slowest_search_seconds": 0.0,
     }
-    app.mount("/static", StaticFiles(directory=static_dir), name="static")
-
     @app.get("/")
-    def home() -> FileResponse:
-        return FileResponse(static_dir / "index.html")
+    def root() -> dict[str, str]:
+        return {"service": "seamtech-search-api", "health": "/health", "docs": "/docs"}
 
     @app.get("/health")
     def health() -> dict[str, object]:

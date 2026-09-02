@@ -68,7 +68,7 @@ Double-click the `SEAMTECH Search` Desktop shortcut, or run:
 .\SEAMTECH Search.cmd
 ```
 
-The launcher starts the server in the background, waits for the health endpoint, and opens the browser at `http://127.0.0.1:8000`.
+The launcher starts the FastAPI backend in the background, waits for its health endpoint, ensures the Next.js frontend has a production standalone build, starts that frontend on port 3000, and opens the browser at `http://127.0.0.1:3000`. Node.js and pnpm are required on the Windows host for the first launch so the frontend can be built; subsequent launches reuse the prebuilt standalone server and do not rebuild it.
 
 ## Index Files
 
@@ -94,17 +94,13 @@ Test a search from the terminal:
 python -m seamtech_search search CLIENT-123 --config config/config.json
 ```
 
-## Run The Web App
+## Run The Backend API
 
 ```powershell
 python -m seamtech_search serve --config config/config.json
 ```
 
-Open:
-
-```text
-http://127.0.0.1:8000
-```
+The command serves the FastAPI backend at `http://127.0.0.1:8000`. To use the browser interface on a Windows host, run `SEAMTECH Search.cmd`; the launcher starts the Next.js frontend and opens `http://127.0.0.1:3000`.
 
 ## API
 
@@ -195,8 +191,8 @@ pytest
 - `logs/`: application logs
 - `sample_data/`: sample content for local development
 - `scripts/`: setup and maintenance helpers
-- `seamtech_search/`: Python package containing the crawler, indexer, API and CLI. Includes `seamtech_search/static/`, a zero-dependency built-in browser UI (plain HTML/JS, no Node.js required) served at `/` — this is what the `SEAMTECH Search.cmd` desktop launcher opens for the native single-Windows-host deployment.
-- `frontend/`: Next.js web UI for the Docker/multi-host deployment (see below for how it talks to the backend). This is a separate, richer UI, not a replacement for `seamtech_search/static/` — the built-in UI stays so the simplest deployment path (`SEAMTECH Search.cmd`) keeps working without needing Node.js/pnpm at all.
+- `seamtech_search/`: Python package containing the crawler, indexer, API and CLI.
+- `frontend/`: the only web UI, used by both Docker and the native desktop launcher. Its server-side `app/api/*` routes proxy requests to the FastAPI backend without exposing backend credentials to the browser.
 - `tests/`: regression tests
 
 ## Recommended Deployment
