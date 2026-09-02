@@ -21,6 +21,9 @@ dev = [
 [tool.setuptools]
 include-package-data = true
 
+[tool.setuptools.packages.find]
+include = ["seamtech_search*"]
+
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]

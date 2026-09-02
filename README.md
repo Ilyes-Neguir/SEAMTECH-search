@@ -130,12 +130,20 @@ An indexing run aborts without removing old records if a configured root is unav
 
 ## Docker Deployment
 
-Set a strong `POSTGRES_PASSWORD` environment variable and create `config/config.json`, then start PostgreSQL and the web app:
+`docker compose up` starts three services: `postgres`, the FastAPI backend (`web`), and the Next.js `frontend`. Copy `.env.example` to `.env` and fill in real values first:
 
 ```powershell
-$env:POSTGRES_PASSWORD = "use-a-secret-value"
+Copy-Item .env.example .env
+# edit .env: set POSTGRES_PASSWORD and SEAMTECH_AUTH_TOKEN to real secrets
 docker compose up --build
 ```
+
+Then create `config/config.json` (see the example above) with your real `root_paths` before indexing.
+
+- Frontend: `http://localhost:3000` — the UI to use day to day.
+- Backend API: `http://localhost:8000` — exposed for direct API access/debugging; the frontend never needs this URL from the browser, since it proxies server-side.
+
+`SEAMTECH_AUTH_TOKEN` is required in Docker: compose runs the backend with `SEAMTECH_HOST=0.0.0.0` and `SEAMTECH_ALLOW_NETWORK_ACCESS=true` so the `frontend` container can reach `web` over the internal Docker network (a container bound to `127.0.0.1` is only reachable from inside itself), and `AppConfig` requires a token whenever the host is non-local. The same token is shared by both containers server-to-server; it's still never sent to the browser. For a native/single-host run (no Docker), leave `config/config.json`'s `host` at `127.0.0.1` and skip this — the env override only applies to the containers it's set for.
 
 Run indexing from the host machine when the host has access to the Windows shared folders:
 
@@ -187,7 +195,8 @@ pytest
 - `logs/`: application logs
 - `sample_data/`: sample content for local development
 - `scripts/`: setup and maintenance helpers
-- `seamtech_search/`: Python package containing the crawler, indexer, API and CLI
+- `seamtech_search/`: Python package containing the crawler, indexer, API and CLI. Includes `seamtech_search/static/`, a zero-dependency built-in browser UI (plain HTML/JS, no Node.js required) served at `/` — this is what the `SEAMTECH Search.cmd` desktop launcher opens for the native single-Windows-host deployment.
+- `frontend/`: Next.js web UI for the Docker/multi-host deployment (see below for how it talks to the backend). This is a separate, richer UI, not a replacement for `seamtech_search/static/` — the built-in UI stays so the simplest deployment path (`SEAMTECH Search.cmd`) keeps working without needing Node.js/pnpm at all.
 - `tests/`: regression tests
 
 ## Recommended Deployment

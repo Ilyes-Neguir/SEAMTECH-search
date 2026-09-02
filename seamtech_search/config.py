@@ -64,6 +64,16 @@ class AppConfig(BaseModel):
             data["database_url"] = os.environ["SEAMTECH_DATABASE_URL"]
         if os.environ.get("SEAMTECH_AUTH_TOKEN"):
             data["auth_token"] = os.environ["SEAMTECH_AUTH_TOKEN"]
+        if os.environ.get("SEAMTECH_HOST"):
+            data["host"] = os.environ["SEAMTECH_HOST"]
+        if os.environ.get("SEAMTECH_PORT"):
+            data["port"] = int(os.environ["SEAMTECH_PORT"])
+        if os.environ.get("SEAMTECH_ALLOW_NETWORK_ACCESS"):
+            data["allow_network_access"] = os.environ["SEAMTECH_ALLOW_NETWORK_ACCESS"].strip().lower() in {
+                "1",
+                "true",
+                "yes",
+            }
 
         config = cls.model_validate(data)
 

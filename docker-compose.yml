@@ -19,6 +19,14 @@ services:
     build: .
     environment:
       SEAMTECH_DATABASE_URL: postgresql://seamtech:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the environment}@postgres:5432/seamtech_search
+      # config/config.json (or config.example.json) defaults host to 127.0.0.1,
+      # which is only reachable from inside this same container. The frontend
+      # service below talks to this one over the Docker network as "web:8000",
+      # and the host port mapping needs it too, so both require binding on
+      # every interface here. See seamtech_search/config.py's env overrides.
+      SEAMTECH_HOST: "0.0.0.0"
+      SEAMTECH_ALLOW_NETWORK_ACCESS: "true"
+      SEAMTECH_AUTH_TOKEN: ${SEAMTECH_AUTH_TOKEN:?Set SEAMTECH_AUTH_TOKEN in the environment}
     depends_on:
       postgres:
         condition: service_healthy
@@ -30,6 +38,25 @@ services:
       - ./data:/app/data
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  frontend:
+    build: ./frontend
+    environment:
+      # Server-side only (frontend/lib/backend.ts) — never sent to the
+      # browser. The Next.js API routes under app/api/* proxy to this URL,
+      # so the FastAPI backend itself never needs CORS configured.
+      SEAMTECH_API_URL: http://web:8000
+      SEAMTECH_AUTH_TOKEN: ${SEAMTECH_AUTH_TOKEN:?Set SEAMTECH_AUTH_TOKEN in the environment}
+    depends_on:
+      web:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]
       interval: 30s
       timeout: 10s
       retries: 3

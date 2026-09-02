@@ -40,3 +40,22 @@ def test_config_in_config_directory_resolves_paths_from_project_root(tmp_path: P
 
     assert config.root_paths == [project_dir / "sample_data"]
     assert config.database_path == project_dir / "data" / "search.db"
+
+
+def test_env_overrides_host_port_and_network_access(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    config_file = config_dir / "config.json"
+    config_file.write_text('{"root_paths": ["sample_data"]}', encoding="utf-8")
+
+    monkeypatch.setenv("SEAMTECH_HOST", "0.0.0.0")
+    monkeypatch.setenv("SEAMTECH_PORT", "9000")
+    monkeypatch.setenv("SEAMTECH_ALLOW_NETWORK_ACCESS", "true")
+    monkeypatch.setenv("SEAMTECH_AUTH_TOKEN", "secret")
+
+    config = AppConfig.load(config_file)
+
+    assert config.host == "0.0.0.0"
+    assert config.port == 9000
+    assert config.allow_network_access is True
+    assert config.auth_token == "secret"
