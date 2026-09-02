@@ -59,3 +59,11 @@ def test_env_overrides_host_port_and_network_access(tmp_path: Path, monkeypatch:
     assert config.port == 9000
     assert config.allow_network_access is True
     assert config.auth_token == "secret"
+
+
+def test_optional_extraction_tools_default_to_disabled(tmp_path: Path) -> None:
+    config = AppConfig(root_paths=[tmp_path])
+
+    assert config.enable_legacy_office is False
+    assert config.enable_ocr is False
+    assert config.external_extraction_timeout_seconds == 120

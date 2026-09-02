@@ -5,7 +5,7 @@ import pytest
 
 from seamtech_search.cli import run_index
 from seamtech_search.crawler import ScanIncompleteError
-from seamtech_search.indexer import SearchIndex
+from seamtech_search.indexer import ScanAlreadyRunningError, SearchIndex
 from seamtech_search.models import Document
 
 
@@ -60,3 +60,11 @@ def test_successful_scan_records_completion(tmp_path: Path) -> None:
     assert latest is not None
     assert latest["status"] == "completed"
     assert latest["scanned"] >= 2
+
+
+def test_concurrent_scan_is_rejected(tmp_path: Path) -> None:
+    index = SearchIndex(tmp_path / "search.db")
+    with index.scan_lock():
+        with pytest.raises(ScanAlreadyRunningError):
+            with index.scan_lock():
+                pass

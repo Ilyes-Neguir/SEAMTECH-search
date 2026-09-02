@@ -1,6 +1,7 @@
 // Contract mirrors the SEAMTECH Search FastAPI backend (see repo README + api.py).
 
 export type MatchType = "exact_name" | "name" | "path" | "content"
+export type ExtractionStatus = "extracted" | "unavailable" | "skipped" | "error" | "timeout" | "not_applicable"
 
 export interface SearchResult {
   name: string
@@ -12,6 +13,8 @@ export interface SearchResult {
   is_dir: boolean
   match_type: MatchType
   snippet: string // may contain <mark>/<em> highlight tags
+  extraction_status?: ExtractionStatus
+  extraction_detail?: string
 }
 
 export interface SearchResponse {
@@ -38,6 +41,8 @@ export interface PreviewResponse {
   size?: number
   text?: string
   children?: PreviewChild[]
+  extraction_status?: ExtractionStatus
+  extraction_detail?: string
 }
 
 export interface HealthResponse {

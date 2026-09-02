@@ -50,9 +50,14 @@ def main(argv: Sequence[str] | None = None) -> None:
         run_server(args.config)
 
 
-def run_index(config_path: str, rebuild: bool = False) -> None:
+def run_index(config_path: str, rebuild: bool = False) -> dict[str, float | int]:
     config = AppConfig.load(config_path)
     index = SearchIndex(config.database_path, config.database_url)
+    with index.scan_lock():
+        return _run_index(index, config, rebuild)
+
+
+def _run_index(index: SearchIndex, config: AppConfig, rebuild: bool = False) -> dict[str, float | int]:
     index.initialize(rebuild=rebuild)
 
     seen: set[str] = set()
@@ -95,6 +100,13 @@ def run_index(config_path: str, rebuild: bool = False) -> None:
         elapsed,
         scanned / elapsed,
     )
+    return {
+        "scanned": scanned,
+        "changed": changed,
+        "removed": removed,
+        "elapsed_seconds": round(elapsed, 3),
+        "items_per_second": round(scanned / elapsed, 2),
+    }
 
 
 def run_search(config_path: str, query: str, limit: int = 10) -> None:

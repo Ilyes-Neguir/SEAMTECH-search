@@ -45,3 +45,24 @@ def test_local_mode_allows_search_without_token(tmp_path: Path) -> None:
     config = AppConfig(root_paths=[root], database_path=tmp_path / "search.db")
     client = TestClient(create_app(config))
     assert client.get("/search?q=client").status_code == 200
+
+
+def test_search_exposes_extraction_status(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    database = tmp_path / "search.db"
+    index = SearchIndex(database)
+    index.initialize(rebuild=True)
+    path = root / "drawing.dwg"
+    index.upsert_document(
+        Document(
+            path, path.name, root, ".dwg", 10, 1.0, False,
+            extraction_status="unavailable", extraction_detail="unsupported file type",
+        )
+    )
+    client = TestClient(create_app(AppConfig(root_paths=[root], database_path=database)))
+
+    result = client.get("/search?q=drawing").json()["results"][0]
+
+    assert result["extraction_status"] == "unavailable"
+    assert result["extraction_detail"] == "unsupported file type"

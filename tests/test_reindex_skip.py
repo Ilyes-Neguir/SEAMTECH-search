@@ -8,6 +8,7 @@ import seamtech_search.crawler as crawler_module
 from seamtech_search.cli import run_index
 from seamtech_search.config import AppConfig
 from seamtech_search.crawler import _extract_with_timeout, crawl
+from seamtech_search.extractors import CURRENT_EXTRACTOR_VERSION
 from seamtech_search.indexer import SearchIndex
 
 
@@ -42,7 +43,11 @@ def test_unchanged_file_skips_extraction(tmp_path: Path, monkeypatch: pytest.Mon
     # Second pass with metadata reflecting what's now stored: same size/mtime/version.
     stat = (root / "reference.txt").stat()
     existing = {
-        str((root / "reference.txt").resolve()).lower(): (stat.st_size, stat.st_mtime, 1),
+        str((root / "reference.txt").resolve()).lower(): (
+            stat.st_size,
+            stat.st_mtime,
+            CURRENT_EXTRACTOR_VERSION,
+        ),
     }
     calls.clear()
     documents = list(crawl(config, existing))

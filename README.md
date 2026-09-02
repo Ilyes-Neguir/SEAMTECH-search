@@ -27,6 +27,23 @@ OCR is not included in the base image. Scanned PDFs and images require an OCR-en
 
 The extractor provides bounded content search for PDF, DOCX, common structured/text formats, OOXML documents such as XLSX/PPTX, and ZIP member manifests. Other files remain metadata-searchable. This is intentionally an explicit support boundary: proprietary CAD and vendor formats require dedicated parsers or licensed SDKs.
 
+Every indexed file has an extraction status: `extracted`, `unavailable`, `skipped`, `error`, `timeout`, or `not_applicable` for folders. Unsupported files remain searchable by metadata, while extraction details are exposed separately instead of being inserted into searchable content. The extractor version is bumped when this contract changes, so the next scan refreshes older records.
+
+Optional Phase 4 extractors are disabled by default. Set `enable_legacy_office` to `true` when LibreOffice/`soffice` is installed to extract `.doc`, `.xls`, and `.ppt` files. Set `enable_ocr` to `true` when Tesseract and OCRmyPDF are installed to extract images and scanned PDFs. Missing tools produce a clear `unavailable` status and never stop the scan.
+
+Vendor and CAD parsers are configured explicitly per extension through `external_extractors`. Each value is an argument array; the indexed file path is appended automatically, and the command runs without a shell. For example:
+
+```json
+{
+  "external_extractors": {
+    ".dwg": ["C:\\Tools\\dwg-to-text.exe"],
+    ".step": ["C:\\Tools\\cad-parser.exe", "--format", "step"]
+  }
+}
+```
+
+Only install and configure trusted parser executables. A parser that is missing, returns an error, or exceeds the extraction timeout remains metadata-searchable with a transparent status.
+
 ## Local Setup
 
 ```powershell
@@ -93,6 +110,14 @@ Force a complete rebuild:
 ```powershell
 python -m seamtech_search index --config config/config.json --rebuild
 ```
+
+Indexing runs are single-owner: a second indexing process exits without changing the index while another scan is active. Measure a representative folder share with:
+
+```powershell
+python scripts/benchmark_indexing.py --config config/config.json
+```
+
+Use `--rebuild` only for a deliberate full reindex. The benchmark reports scanned items, changed records, removed records, elapsed seconds, and items per second. Record results by file count, extension mix, storage type, and network location before scaling to the full archive.
 
 Show database statistics:
 

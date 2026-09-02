@@ -69,6 +69,13 @@ export function PreviewPanel({ result, onClose, onOpen }: PreviewPanelProps) {
         <Meta label="Modified" value={formatDateTime(result.modified)} />
       </div>
 
+      {!result.is_dir && data?.extraction_status && data.extraction_status !== "extracted" && (
+        <div className="border-b border-border px-4 py-3 text-xs text-amber-300">
+          Content status: {data.extraction_status.replace("_", " ")}
+          {data.extraction_detail ? ` (${data.extraction_detail})` : ""}
+        </div>
+      )}
+
       <div className="border-b border-border p-4">
         <div className="mb-1 flex items-center justify-between">
           <span className="text-[11px] uppercase tracking-wide text-muted-foreground">Full path</span>

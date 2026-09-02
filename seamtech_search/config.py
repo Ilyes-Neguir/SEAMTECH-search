@@ -30,6 +30,13 @@ class AppConfig(BaseModel):
     max_extract_chars: int = Field(default=200_000, ge=1_000, le=2_000_000)
     max_file_size_bytes: int = Field(default=512 * 1024 * 1024, ge=1)
     extraction_timeout_seconds: int = Field(default=60, ge=1, le=3_600)
+    enable_legacy_office: bool = False
+    libreoffice_command: str = "soffice"
+    enable_ocr: bool = False
+    tesseract_command: str = "tesseract"
+    ocrmypdf_command: str = "ocrmypdf"
+    external_extraction_timeout_seconds: int = Field(default=120, ge=1, le=3_600)
+    external_extractors: dict[str, list[str]] = Field(default_factory=dict)
     allow_network_access: bool = False
     auth_token: str | None = None
 
@@ -87,5 +94,9 @@ class AppConfig(BaseModel):
         config.excluded_extensions = {
             extension.lower() if extension.startswith(".") else f".{extension.lower()}"
             for extension in config.excluded_extensions
+        }
+        config.external_extractors = {
+            extension.lower() if extension.startswith(".") else f".{extension.lower()}": command
+            for extension, command in config.external_extractors.items()
         }
         return config

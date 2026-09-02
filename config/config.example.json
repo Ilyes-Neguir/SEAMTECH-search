@@ -18,6 +18,13 @@
   "max_extract_chars": 200000,
   "max_file_size_bytes": 536870912,
   "extraction_timeout_seconds": 60,
+  "enable_legacy_office": false,
+  "libreoffice_command": "soffice",
+  "enable_ocr": false,
+  "tesseract_command": "tesseract",
+  "ocrmypdf_command": "ocrmypdf",
+  "external_extraction_timeout_seconds": 120,
+  "external_extractors": {},
   "allow_network_access": false,
   "auth_token": null
 }

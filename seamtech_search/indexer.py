@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import re
 import sqlite3
+import os
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 from .models import Document
 
@@ -23,7 +25,9 @@ CREATE TABLE IF NOT EXISTS documents (
     modified_at REAL NOT NULL,
     is_dir INTEGER NOT NULL,
     extractor_version INTEGER NOT NULL DEFAULT 0,
-    content_hash TEXT NOT NULL DEFAULT ''
+    content_hash TEXT NOT NULL DEFAULT '',
+    extraction_status TEXT NOT NULL DEFAULT 'extracted',
+    extraction_detail TEXT NOT NULL DEFAULT ''
 );
 
 CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
@@ -59,7 +63,9 @@ CREATE TABLE IF NOT EXISTS documents (
     content TEXT NOT NULL DEFAULT '',
     search_vector TSVECTOR NOT NULL DEFAULT ''::tsvector,
     extractor_version INTEGER NOT NULL DEFAULT 0,
-    content_hash TEXT NOT NULL DEFAULT ''
+    content_hash TEXT NOT NULL DEFAULT '',
+    extraction_status TEXT NOT NULL DEFAULT 'extracted',
+    extraction_detail TEXT NOT NULL DEFAULT ''
 );
 
 CREATE INDEX IF NOT EXISTS idx_documents_search_vector ON documents USING GIN(search_vector);
@@ -83,6 +89,10 @@ class IndexStats:
     total_documents: int
     files: int
     folders: int
+
+
+class ScanAlreadyRunningError(RuntimeError):
+    """Raised when another indexing process already owns the scan lock."""
 
 
 class SearchIndex:
@@ -118,6 +128,8 @@ class SearchIndex:
                     )
                     cursor.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS extractor_version INTEGER NOT NULL DEFAULT 0")
                     cursor.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS content_hash TEXT NOT NULL DEFAULT ''")
+                    cursor.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS extraction_status TEXT NOT NULL DEFAULT 'extracted'")
+                    cursor.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS extraction_detail TEXT NOT NULL DEFAULT ''")
                     cursor.execute(
                         """
                         UPDATE documents
@@ -141,6 +153,46 @@ class SearchIndex:
                 connection.executescript(SQLITE_SCHEMA)
                 self._ensure_documents_columns(connection)
                 self._ensure_fts_schema(connection)
+
+    @contextmanager
+    def scan_lock(self) -> Iterator[None]:
+        if self.is_postgres:
+            with self.connect() as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute("SELECT pg_try_advisory_lock(748321)")
+                    acquired = bool(cursor.fetchone()[0])
+                    if not acquired:
+                        raise ScanAlreadyRunningError("Another indexing scan is already running")
+                    try:
+                        yield
+                    finally:
+                        cursor.execute("SELECT pg_advisory_unlock(748321)")
+            return
+
+        lock_path = self.database_path.with_suffix(self.database_path.suffix + ".scan.lock")
+        while True:
+            try:
+                lock_handle = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                break
+            except FileExistsError as exc:
+                try:
+                    lock_pid = int(lock_path.read_text(encoding="ascii"))
+                    os.kill(lock_pid, 0)
+                except (FileNotFoundError, ProcessLookupError, ValueError):
+                    lock_path.unlink(missing_ok=True)
+                    continue
+                except PermissionError:
+                    pass
+                raise ScanAlreadyRunningError("Another indexing scan is already running") from exc
+        try:
+            os.write(lock_handle, str(os.getpid()).encode("ascii"))
+            yield
+        finally:
+            os.close(lock_handle)
+            try:
+                lock_path.unlink()
+            except FileNotFoundError:
+                pass
 
     def start_scan(self) -> int:
         with self.connect() as connection:
@@ -186,6 +238,10 @@ class SearchIndex:
             connection.execute("ALTER TABLE documents ADD COLUMN extractor_version INTEGER NOT NULL DEFAULT 0")
         if "content_hash" not in columns:
             connection.execute("ALTER TABLE documents ADD COLUMN content_hash TEXT NOT NULL DEFAULT ''")
+        if "extraction_status" not in columns:
+            connection.execute("ALTER TABLE documents ADD COLUMN extraction_status TEXT NOT NULL DEFAULT 'extracted'")
+        if "extraction_detail" not in columns:
+            connection.execute("ALTER TABLE documents ADD COLUMN extraction_detail TEXT NOT NULL DEFAULT ''")
 
     def existing_metadata(self) -> dict[str, tuple[int, float, int]]:
         """path_key -> (size, modified_at, extractor_version) for every indexed file.
@@ -271,7 +327,8 @@ class SearchIndex:
                         """
                         UPDATE documents
                         SET path = ?, name = ?, parent_path = ?, extension = ?, size = ?,
-                            modified_at = ?, is_dir = ?, extractor_version = ?, content_hash = ?
+                            modified_at = ?, is_dir = ?, extractor_version = ?, content_hash = ?,
+                            extraction_status = ?, extraction_detail = ?
                         WHERE id = ?
                         """,
                         _document_values(document) + (row_id,),
@@ -282,9 +339,9 @@ class SearchIndex:
                         """
                         INSERT INTO documents (
                             path_key, path, name, parent_path, extension, size, modified_at, is_dir,
-                            extractor_version, content_hash
+                            extractor_version, content_hash, extraction_status, extraction_detail
                         )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (document.path_key,) + _document_values(document),
                     )
@@ -321,6 +378,8 @@ class SearchIndex:
                 document.searchable_text,
                 document.extractor_version,
                 document.content_hash,
+                document.extraction_status,
+                document.extraction_detail,
             )
             for document in documents
         ]
@@ -333,7 +392,7 @@ class SearchIndex:
                     """
                     INSERT INTO documents (
                         path_key, path, name, parent_path, extension, size, modified_at, is_dir, content, search_vector,
-                        extractor_version, content_hash
+                        extractor_version, content_hash, extraction_status, extraction_detail
                     )
                     VALUES %s
                     ON CONFLICT (path_key) DO UPDATE SET
@@ -347,7 +406,9 @@ class SearchIndex:
                         content = EXCLUDED.content,
                         search_vector = EXCLUDED.search_vector,
                         extractor_version = EXCLUDED.extractor_version,
-                        content_hash = EXCLUDED.content_hash
+                        content_hash = EXCLUDED.content_hash,
+                        extraction_status = EXCLUDED.extraction_status,
+                        extraction_detail = EXCLUDED.extraction_detail
                     WHERE documents.size <> EXCLUDED.size
                        OR documents.modified_at <> EXCLUDED.modified_at
                        OR documents.path <> EXCLUDED.path
@@ -356,7 +417,7 @@ class SearchIndex:
                     values,
                     template=(
                         "(%s, %s, %s, %s, %s, %s, %s, %s, %s, "
-                        "to_tsvector('simple', coalesce(%s, '')), %s, %s)"
+                        "to_tsvector('simple', coalesce(%s, '')), %s, %s, %s, %s)"
                     ),
                 )
                 return cursor.rowcount
@@ -404,6 +465,8 @@ class SearchIndex:
                     d.size,
                     d.modified_at,
                     d.is_dir,
+                    d.extraction_status,
+                    d.extraction_detail,
                     snippet(documents_fts, 3, '<mark>', '</mark>', '...', 24) AS snippet,
                     CASE
                         WHEN lower(d.name) = lower(?) THEN 'exact_name'
@@ -459,6 +522,8 @@ class SearchIndex:
                         d.size,
                         d.modified_at,
                         d.is_dir,
+                        d.extraction_status,
+                        d.extraction_detail,
                         ts_headline(
                             'simple',
                             concat_ws(E'\n', d.name, d.path, d.extension, d.content),
@@ -564,7 +629,7 @@ class SearchIndex:
         }
 
 
-def _document_values(document: Document) -> tuple[str, str, str, str, int, float, int, int, str]:
+def _document_values(document: Document) -> tuple[str, str, str, str, int, float, int, int, str, str, str]:
     return (
         str(document.path),
         document.name,
@@ -575,6 +640,8 @@ def _document_values(document: Document) -> tuple[str, str, str, str, int, float
         1 if document.is_dir else 0,
         document.extractor_version,
         document.content_hash,
+        document.extraction_status,
+        document.extraction_detail,
     )
 
 

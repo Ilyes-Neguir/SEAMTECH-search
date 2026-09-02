@@ -26,6 +26,12 @@ class Document:
     # Hash of the extracted text (not the raw file). Computed only when
     # extraction actually runs, so it costs nothing on skipped files.
     content_hash: str = ""
+    extraction_status: str = "not_applicable"
+    extraction_detail: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.is_dir and self.extraction_status == "not_applicable":
+            object.__setattr__(self, "extraction_status", "extracted")
 
     @staticmethod
     def hash_text(text: str) -> str:

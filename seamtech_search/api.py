@@ -8,7 +8,7 @@ from typing import Annotated
 
 from fastapi import FastAPI, Header, HTTPException, Query
 from .config import AppConfig
-from .extractors import extract_text
+from .extractors import extract_file
 from .indexer import SearchIndex
 
 
@@ -86,19 +86,34 @@ def create_app(config: AppConfig) -> FastAPI:
                 "path": str(target),
                 "name": target.name,
                 "is_dir": True,
+                "extraction_status": "not_applicable",
+                "extraction_detail": "",
                 "children": [
                     {"name": child.name, "path": str(child), "is_dir": child.is_dir(), "size": _safe_size(child)}
                     for child in children[:200]
                 ],
             }
-        text = extract_text(target, max_chars=25_000, max_file_size_bytes=config.max_file_size_bytes)
+        extraction = extract_file(
+            target,
+            max_chars=25_000,
+            max_file_size_bytes=config.max_file_size_bytes,
+            enable_legacy_office=config.enable_legacy_office,
+            libreoffice_command=config.libreoffice_command,
+            enable_ocr=config.enable_ocr,
+            tesseract_command=config.tesseract_command,
+            ocrmypdf_command=config.ocrmypdf_command,
+            external_extraction_timeout_seconds=config.external_extraction_timeout_seconds,
+            external_extractors=config.external_extractors,
+        )
         return {
             "path": str(target),
             "name": target.name,
             "is_dir": False,
             "extension": target.suffix.lower(),
             "size": target.stat().st_size,
-            "text": text or "Preview is not available for this file type. Use Open File instead.",
+            "text": extraction.text,
+            "extraction_status": extraction.status,
+            "extraction_detail": extraction.detail,
         }
 
     @app.post("/open")

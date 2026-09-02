@@ -27,6 +27,11 @@ function iconFor(r: SearchResult) {
   return File
 }
 
+function extractionLabel(status?: SearchResult["extraction_status"]) {
+  if (!status || status === "extracted" || status === "not_applicable") return null
+  return status.replace("_", " ")
+}
+
 interface ResultItemProps {
   result: SearchResult
   selected: boolean
@@ -69,6 +74,11 @@ export function ResultItem({ result, selected, onSelect, onOpen }: ResultItemPro
         <div className="flex items-center gap-2">
           <h3 className="truncate text-[15px] font-medium text-foreground">{result.name}</h3>
           <MatchBadge type={result.match_type} />
+          {extractionLabel(result.extraction_status) && (
+            <span className="shrink-0 text-[10px] uppercase tracking-wide text-amber-300">
+              {extractionLabel(result.extraction_status)}
+            </span>
+          )}
         </div>
 
         <p className="mt-0.5 truncate font-mono text-xs text-muted-foreground" title={result.parent}>

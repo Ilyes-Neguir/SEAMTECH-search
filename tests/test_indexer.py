@@ -27,6 +27,29 @@ def test_search_finds_indexed_document(tmp_path: Path) -> None:
     assert results[0]["name"] == "CLIENT-123-plan.pdf"
     assert results[0]["match_type"] == "name"
     assert "<mark>CLIENT" in results[0]["snippet"]
+    assert results[0]["extraction_status"] == "extracted"
+
+
+def test_extraction_status_is_persisted(tmp_path: Path) -> None:
+    index = SearchIndex(tmp_path / "search.db")
+    index.initialize(rebuild=True)
+    file_path = tmp_path / "drawing.dwg"
+    document = Document(
+        path=file_path,
+        name=file_path.name,
+        parent_path=file_path.parent,
+        extension=".dwg",
+        size=6,
+        modified_at=1.0,
+        is_dir=False,
+        extraction_status="unavailable",
+        extraction_detail="unsupported file type",
+    )
+
+    assert index.upsert_document(document) is True
+    result = index.search("drawing")[0]
+    assert result["extraction_status"] == "unavailable"
+    assert result["extraction_detail"] == "unsupported file type"
 
 
 def test_unchanged_document_is_not_reindexed(tmp_path: Path) -> None:

@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from pathlib import Path
 
 from .config import AppConfig
-from .extractors import CURRENT_EXTRACTOR_VERSION, extract_text
+from .extractors import CURRENT_EXTRACTOR_VERSION, ExtractionResult, extract_text
 from .models import Document
 
 LOGGER = logging.getLogger("seamtech_search")
@@ -17,23 +17,47 @@ LOGGER = logging.getLogger("seamtech_search")
 ExistingMetadata = dict[str, tuple[int, float, int]]
 
 
-def _extract_with_timeout(path: Path, config: AppConfig) -> str:
+def _extract_with_timeout(path: Path, config: AppConfig) -> ExtractionResult:
     # A fresh single-use executor per call: a genuinely hung parser leaves
     # its thread running in the background (Python can't kill a thread),
     # but a reused pool would let that one stuck file wedge every file
     # after it forever. A throwaway executor keeps a timeout isolated to
     # the file that caused it.
     executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="seamtech-extract")
-    future = executor.submit(extract_text, path, config.max_extract_chars, config.max_file_size_bytes)
+    future = executor.submit(
+        extract_text,
+        path,
+        config.max_extract_chars,
+        config.max_file_size_bytes,
+        enable_legacy_office=config.enable_legacy_office,
+        libreoffice_command=config.libreoffice_command,
+        enable_ocr=config.enable_ocr,
+        tesseract_command=config.tesseract_command,
+        ocrmypdf_command=config.ocrmypdf_command,
+        external_extraction_timeout_seconds=config.external_extraction_timeout_seconds,
+        external_extractors=config.external_extractors,
+    )
     try:
         result = future.result(timeout=config.extraction_timeout_seconds)
         executor.shutdown(wait=False)
-        return result
+        return _structured_from_legacy(result)
     except FutureTimeoutError:
         LOGGER.warning("Extraction timed out after %ss: %s", config.extraction_timeout_seconds, path)
         # wait=False: don't block the scan on a thread that may never return.
         executor.shutdown(wait=False)
-        return "[extraction timed out]"
+        return ExtractionResult("", "timeout")
+
+
+def _structured_from_legacy(text: str) -> ExtractionResult:
+    if text.startswith("[extraction skipped:"):
+        return ExtractionResult("", "skipped", text[len("[extraction skipped:") : -1].strip())
+    if text.startswith("[extraction unavailable:"):
+        return ExtractionResult("", "unavailable", text[len("[extraction unavailable:") : -1].strip())
+    if text.startswith("[extraction error:"):
+        return ExtractionResult("", "error", text[len("[extraction error:") : -1].strip())
+    if text == "[extraction timed out]":
+        return ExtractionResult("", "timeout")
+    return ExtractionResult(text, "extracted")
 
 
 class ScanIncompleteError(RuntimeError):
@@ -85,6 +109,8 @@ def _document_from_path(
 
     text = ""
     content_hash = ""
+    extraction_status = "not_applicable" if is_dir else "extracted"
+    extraction_detail = ""
     if not is_dir:
         path_key = os.path.normcase(str(path.resolve()))
         existing = existing_metadata.get(path_key)
@@ -95,7 +121,10 @@ def _document_from_path(
             and existing[2] == CURRENT_EXTRACTOR_VERSION
         )
         if not unchanged:
-            text = _extract_with_timeout(path, config)
+            result = _extract_with_timeout(path, config)
+            text = result.text
+            extraction_status = result.status
+            extraction_detail = result.detail
             content_hash = Document.hash_text(text)
 
     return Document(
@@ -108,4 +137,6 @@ def _document_from_path(
         is_dir=is_dir,
         text=text,
         content_hash=content_hash,
+        extraction_status=extraction_status,
+        extraction_detail=extraction_detail,
     )
