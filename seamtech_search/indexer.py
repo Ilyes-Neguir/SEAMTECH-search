@@ -27,7 +27,8 @@ CREATE TABLE IF NOT EXISTS documents (
     extractor_version INTEGER NOT NULL DEFAULT 0,
     content_hash TEXT NOT NULL DEFAULT '',
     extraction_status TEXT NOT NULL DEFAULT 'extracted',
-    extraction_detail TEXT NOT NULL DEFAULT ''
+    extraction_detail TEXT NOT NULL DEFAULT '',
+    category TEXT NOT NULL DEFAULT 'storage_direct'
 );
 
 CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
@@ -47,6 +48,14 @@ CREATE TABLE IF NOT EXISTS scan_runs (
     removed INTEGER NOT NULL DEFAULT 0,
     error TEXT
 );
+
+CREATE TABLE IF NOT EXISTS imports (
+    id TEXT PRIMARY KEY,
+    source_path TEXT NOT NULL,
+    status TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
 """
 
 POSTGRES_SCHEMA = """
@@ -65,7 +74,8 @@ CREATE TABLE IF NOT EXISTS documents (
     extractor_version INTEGER NOT NULL DEFAULT 0,
     content_hash TEXT NOT NULL DEFAULT '',
     extraction_status TEXT NOT NULL DEFAULT 'extracted',
-    extraction_detail TEXT NOT NULL DEFAULT ''
+    extraction_detail TEXT NOT NULL DEFAULT '',
+    category TEXT NOT NULL DEFAULT 'storage_direct'
 );
 
 CREATE INDEX IF NOT EXISTS idx_documents_search_vector ON documents USING GIN(search_vector);
@@ -80,6 +90,14 @@ CREATE TABLE IF NOT EXISTS scan_runs (
     changed BIGINT NOT NULL DEFAULT 0,
     removed BIGINT NOT NULL DEFAULT 0,
     error TEXT
+);
+
+CREATE TABLE IF NOT EXISTS imports (
+    id TEXT PRIMARY KEY,
+    source_path TEXT NOT NULL,
+    status TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 """
 
@@ -130,6 +148,10 @@ class SearchIndex:
                     cursor.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS content_hash TEXT NOT NULL DEFAULT ''")
                     cursor.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS extraction_status TEXT NOT NULL DEFAULT 'extracted'")
                     cursor.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS extraction_detail TEXT NOT NULL DEFAULT ''")
+                    cursor.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'storage_direct'")
+                    cursor.execute(
+                        "UPDATE documents SET category = CASE WHEN is_dir = false THEN CASE WHEN lower(extension) = '.pdf' THEN 'analyzed' ELSE 'storage_direct' END ELSE 'folder' END"
+                    )
                     cursor.execute(
                         """
                         UPDATE documents
@@ -299,6 +321,11 @@ class SearchIndex:
             connection.execute("ALTER TABLE documents ADD COLUMN extraction_status TEXT NOT NULL DEFAULT 'extracted'")
         if "extraction_detail" not in columns:
             connection.execute("ALTER TABLE documents ADD COLUMN extraction_detail TEXT NOT NULL DEFAULT ''")
+        if "category" not in columns:
+            connection.execute("ALTER TABLE documents ADD COLUMN category TEXT NOT NULL DEFAULT 'storage_direct'")
+        connection.execute(
+            "UPDATE documents SET category = CASE WHEN is_dir = 0 THEN CASE WHEN lower(extension) = '.pdf' THEN 'analyzed' ELSE 'storage_direct' END ELSE 'folder' END"
+        )
 
     def existing_metadata(self) -> dict[str, tuple[int, float, int]]:
         """path_key -> (size, modified_at, extractor_version) for every indexed file.
@@ -385,7 +412,7 @@ class SearchIndex:
                         UPDATE documents
                         SET path = ?, name = ?, parent_path = ?, extension = ?, size = ?,
                             modified_at = ?, is_dir = ?, extractor_version = ?, content_hash = ?,
-                            extraction_status = ?, extraction_detail = ?
+                            extraction_status = ?, extraction_detail = ?, category = ?
                         WHERE id = ?
                         """,
                         _document_values(document) + (row_id,),
@@ -396,9 +423,9 @@ class SearchIndex:
                         """
                         INSERT INTO documents (
                             path_key, path, name, parent_path, extension, size, modified_at, is_dir,
-                            extractor_version, content_hash, extraction_status, extraction_detail
+                            extractor_version, content_hash, extraction_status, extraction_detail, category
                         )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (document.path_key,) + _document_values(document),
                     )
@@ -437,6 +464,7 @@ class SearchIndex:
                 document.content_hash,
                 document.extraction_status,
                 document.extraction_detail,
+                document.category,
             )
             for document in documents
         ]
@@ -449,7 +477,7 @@ class SearchIndex:
                     """
                     INSERT INTO documents (
                         path_key, path, name, parent_path, extension, size, modified_at, is_dir, content, search_vector,
-                        extractor_version, content_hash, extraction_status, extraction_detail
+                        extractor_version, content_hash, extraction_status, extraction_detail, category
                     )
                     VALUES %s
                     ON CONFLICT (path_key) DO UPDATE SET
@@ -465,7 +493,8 @@ class SearchIndex:
                         extractor_version = EXCLUDED.extractor_version,
                         content_hash = EXCLUDED.content_hash,
                         extraction_status = EXCLUDED.extraction_status,
-                        extraction_detail = EXCLUDED.extraction_detail
+                        extraction_detail = EXCLUDED.extraction_detail,
+                        category = EXCLUDED.category
                     WHERE documents.size <> EXCLUDED.size
                        OR documents.modified_at <> EXCLUDED.modified_at
                        OR documents.path <> EXCLUDED.path
@@ -474,7 +503,7 @@ class SearchIndex:
                     values,
                     template=(
                         "(%s, %s, %s, %s, %s, %s, %s, %s, %s, "
-                        "to_tsvector('simple', coalesce(%s, '')), %s, %s, %s, %s)"
+                        "to_tsvector('simple', coalesce(%s, '')), %s, %s, %s, %s, %s)"
                     ),
                 )
                 return cursor.rowcount
@@ -524,6 +553,7 @@ class SearchIndex:
                     d.is_dir,
                     d.extraction_status,
                     d.extraction_detail,
+                    d.category,
                     snippet(documents_fts, 3, '<mark>', '</mark>', '...', 24) AS snippet,
                     CASE
                         WHEN lower(d.name) = lower(?) THEN 'exact_name'
@@ -581,6 +611,7 @@ class SearchIndex:
                         d.is_dir,
                         d.extraction_status,
                         d.extraction_detail,
+                        d.category,
                         ts_headline(
                             'simple',
                             concat_ws(E'\n', d.name, d.path, d.extension, d.content),
@@ -686,7 +717,7 @@ class SearchIndex:
         }
 
 
-def _document_values(document: Document) -> tuple[str, str, str, str, int, float, int, int, str, str, str]:
+def _document_values(document: Document) -> tuple[str, str, str, str, int, float, int, int, str, str, str, str]:
     return (
         str(document.path),
         document.name,
@@ -699,6 +730,7 @@ def _document_values(document: Document) -> tuple[str, str, str, str, int, float
         document.content_hash,
         document.extraction_status,
         document.extraction_detail,
+        document.category,
     )
 
 

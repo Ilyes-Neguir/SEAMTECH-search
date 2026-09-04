@@ -9,6 +9,7 @@ import { SearchBar } from "@/components/search-bar"
 import { ResultsList } from "@/components/results-list"
 import { PreviewPanel } from "@/components/preview-panel"
 import { cn } from "@/lib/utils"
+import { ImportPanel } from "@/components/import-panel"
 
 export default function Page() {
   const { query, results, hasMore, loading, loadingMore, searched, error, run, loadMore } = useSearch()
@@ -68,6 +69,8 @@ export default function Page() {
           </div>
         </div>
       </header>
+
+      <ImportPanel />
 
       {/* Body */}
       <main className="mx-auto flex w-full max-w-6xl flex-1 gap-0 px-4 sm:px-6">

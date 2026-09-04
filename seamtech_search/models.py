@@ -28,10 +28,19 @@ class Document:
     content_hash: str = ""
     extraction_status: str = "not_applicable"
     extraction_detail: str = ""
+    category: str = ""
 
     def __post_init__(self) -> None:
         if not self.is_dir and self.extraction_status == "not_applicable":
             object.__setattr__(self, "extraction_status", "extracted")
+        if not self.category:
+            object.__setattr__(self, "category", self.classify(self.extension, self.is_dir))
+
+    @staticmethod
+    def classify(extension: str, is_dir: bool) -> str:
+        if is_dir:
+            return "folder"
+        return "analyzed" if extension.lower() == ".pdf" else "storage_direct"
 
     @staticmethod
     def hash_text(text: str) -> str:
@@ -50,4 +59,3 @@ class Document:
             self.text,
         ]
         return "\n".join(part for part in parts if part)
-

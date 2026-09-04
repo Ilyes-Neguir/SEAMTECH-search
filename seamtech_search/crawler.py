@@ -14,6 +14,7 @@ from .extractors import CURRENT_EXTRACTOR_VERSION, ExtractionResult, extract_tex
 from .models import Document
 
 LOGGER = logging.getLogger("seamtech_search")
+TECHNICAL_PDF_ANCHORS = ("fiche de fabrication", "quantité", "quantity", "cotes", "mesures finies", "material", "matière")
 
 # path_key -> (size, modified_at, extractor_version) for everything already
 # in the index, so unchanged files can skip extraction entirely.
@@ -149,6 +150,7 @@ def _document_from_path(
     content_hash = ""
     extraction_status = "not_applicable" if is_dir else "extracted"
     extraction_detail = ""
+    category = Document.classify("" if is_dir else path.suffix, is_dir)
     if not is_dir:
         path_key = os.path.normcase(str(path.resolve()))
         existing = existing_metadata.get(path_key)
@@ -164,6 +166,9 @@ def _document_from_path(
             extraction_status = result.status
             extraction_detail = result.detail
             content_hash = Document.hash_text(text)
+            if path.suffix.lower() == ".pdf":
+                normalized = " ".join(text.lower().split())
+                category = "technical_pdf" if sum(anchor in normalized for anchor in TECHNICAL_PDF_ANCHORS) >= 2 else "plan_pdf"
 
     return Document(
         path=path,
@@ -177,4 +182,5 @@ def _document_from_path(
         content_hash=content_hash,
         extraction_status=extraction_status,
         extraction_detail=extraction_detail,
+        category=category,
     )

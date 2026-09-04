@@ -7,9 +7,15 @@ from pathlib import Path
 from typing import Annotated
 
 from fastapi import FastAPI, Header, HTTPException, Query
+from pydantic import BaseModel, Field
 from .config import AppConfig
 from .extractors import extract_file
 from .indexer import SearchIndex
+from .import_pipeline import get_import, import_folder
+
+
+class ImportRequest(BaseModel):
+    source_path: str = Field(min_length=1, max_length=4_096)
 
 
 def create_app(config: AppConfig) -> FastAPI:
@@ -133,6 +139,43 @@ def create_app(config: AppConfig) -> FastAPI:
         except OSError as exc:
             raise HTTPException(status_code=500, detail="The operating system could not open this path.") from exc
         return {"opened": str(target), "is_dir": target.is_dir()}
+
+    @app.post("/imports")
+    def create_import(
+        request: ImportRequest,
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+    ) -> dict[str, object]:
+        _require_auth(config, token)
+        try:
+            result = import_folder(Path(request.source_path), config, index)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {
+            "import_id": result.import_id,
+            "source_path": result.source_path,
+            "status": result.status,
+            "files_detected": result.files_detected,
+            "analyzed_files": result.analyzed_files,
+            "technical_pdf": result.technical_pdf,
+            "data": result.data,
+            "report_path": result.report_path,
+            "upload_status": result.upload_status,
+            "warnings": result.warnings,
+            "files": [file.__dict__ for file in result.files],
+        }
+
+    @app.get("/imports/{import_id}")
+    def read_import(
+        import_id: str,
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+    ) -> dict[str, object]:
+        _require_auth(config, token)
+        result = get_import(index, import_id)
+        if result is None:
+            raise HTTPException(status_code=404, detail="Import not found.")
+        return result
 
     return app
 

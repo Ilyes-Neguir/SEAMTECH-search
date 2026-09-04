@@ -62,6 +62,35 @@ def test_successful_scan_records_completion(tmp_path: Path) -> None:
     assert latest["scanned"] >= 2
 
 
+def test_scan_classifies_pdfs_for_analysis_and_other_files_for_direct_storage(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    nested = root / "nested"
+    nested.mkdir(parents=True)
+    (root / "drawing.PDF").write_bytes(b"not a real pdf")
+    (nested / "model.dwg").write_bytes(b"cad data")
+    (nested / "notes.txt").write_text("notes", encoding="utf-8")
+    database = tmp_path / "search.db"
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps({"root_paths": [str(root)], "database_path": str(database)}),
+        encoding="utf-8",
+    )
+
+    run_index(str(config_path))
+
+    index = SearchIndex(database)
+    with index.connect() as connection:
+        rows = connection.execute(
+            "SELECT name, category FROM documents WHERE is_dir = 0 ORDER BY name"
+        ).fetchall()
+
+    assert [(row["name"], row["category"]) for row in rows] == [
+        ("drawing.PDF", "plan_pdf"),
+        ("model.dwg", "storage_direct"),
+        ("notes.txt", "storage_direct"),
+    ]
+
+
 def test_concurrent_scan_is_rejected(tmp_path: Path) -> None:
     index = SearchIndex(tmp_path / "search.db")
     with index.scan_lock():

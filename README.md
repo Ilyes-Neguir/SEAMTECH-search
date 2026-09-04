@@ -24,6 +24,8 @@ The system scans Windows folders, extracts searchable metadata/text, stores it i
 - Content re-extraction is version-gated: bumping `CURRENT_EXTRACTOR_VERSION` in `extractors.py` forces every file to be re-parsed on the next scan even if nothing changed on disk, so a parser fix actually reaches the index
 - Per-file extraction timeout: a hung or pathological file is marked `[extraction timed out]` instead of stalling the whole scan
 - Batched indexing with progress logs
+- Reference-folder import workflow with deterministic technical-PDF detection, structured extraction, validation warnings, and generated technical reports
+- PDF classification distinguishes technical sail-information PDFs from plan PDFs; plans and non-PDF files remain storage-only
 
 OCR is not included in the base image. Scanned PDFs and images require an OCR-enabled deployment and should be validated against factory data before being marked content-searchable.
 
@@ -149,7 +151,13 @@ GET /metrics
 GET /search?q=REFERENCE&limit=50&offset=0
 GET /preview?path=C:\Path\To\File.pdf
 POST /open?path=C:\Path\To\File.pdf
+POST /imports  `{ "source_path": "C:\\Path\\To\\Reference" }`
+GET /imports/{import_id}
 ```
+
+The import endpoint requires a server-accessible folder inside a configured `root_path`. It recursively scans the folder, analyzes only PDFs with the confirmed sail-manufacturing text anchors, stores plan PDFs and other files without content extraction, indexes the detected files, and generates a report under `data/reports/`. Original source files are never moved or modified. If multiple technical PDFs are found, the first deterministic path-sorted match is selected and the response is marked with a warning for review.
+
+OneDrive upload is optional until Microsoft Graph credentials are configured. Set `SEAMTECH_GRAPH_ACCESS_TOKEN` and `SEAMTECH_ONEDRIVE_DRIVE_ID` in the backend environment; without them, reports are generated locally and the import response reports `pending_not_configured`. A failed configured upload reports `pending_retry` and does not fail the import.
 
 Search results include the file/folder name, full path, parent path, extension, size, modified date, folder/file type, match type (`exact_name`, `name`, `path`, or `content`), and a highlighted snippet. The API supports bounded pagination with `limit` and `offset` and returns `has_more`.
 
