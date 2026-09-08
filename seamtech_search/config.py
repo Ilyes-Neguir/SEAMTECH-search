@@ -39,6 +39,7 @@ class AppConfig(BaseModel):
     external_extractors: dict[str, list[str]] = Field(default_factory=dict)
     allow_network_access: bool = False
     auth_token: str | None = None
+    onedrive_max_retries: int = Field(default=3, ge=0, le=10)
 
     @field_validator("root_paths")
     @classmethod
@@ -81,6 +82,8 @@ class AppConfig(BaseModel):
                 "true",
                 "yes",
             }
+        if os.environ.get("SEAMTECH_UPLOAD_MAX_RETRIES"):
+            data["onedrive_max_retries"] = int(os.environ["SEAMTECH_UPLOAD_MAX_RETRIES"])
 
         config = cls.model_validate(data)
 

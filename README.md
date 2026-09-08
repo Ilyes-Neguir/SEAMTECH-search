@@ -24,7 +24,10 @@ The system scans Windows folders, extracts searchable metadata/text, stores it i
 - Content re-extraction is version-gated: bumping `CURRENT_EXTRACTOR_VERSION` in `extractors.py` forces every file to be re-parsed on the next scan even if nothing changed on disk, so a parser fix actually reaches the index
 - Per-file extraction timeout: a hung or pathological file is marked `[extraction timed out]` instead of stalling the whole scan
 - Batched indexing with progress logs
-- Reference-folder import workflow with deterministic technical-PDF detection, structured extraction, validation warnings, and generated technical reports
+- Reference-folder import workflow with deterministic technical-PDF detection, structured extraction, validation warnings, and generated technical reports (PDF + Word)
+- Two-phase import: scan a folder to list every technical-PDF candidate, then confirm the one to process
+- Manual correction of extracted fields with report regeneration and re-upload
+- Drag-and-drop / folder upload staging for browsers without direct share access
 - PDF classification distinguishes technical sail-information PDFs from plan PDFs; plans and non-PDF files remain storage-only
 
 OCR is not included in the base image. Scanned PDFs and images require an OCR-enabled deployment and should be validated against factory data before being marked content-searchable.
@@ -151,13 +154,24 @@ GET /metrics
 GET /search?q=REFERENCE&limit=50&offset=0
 GET /preview?path=C:\Path\To\File.pdf
 POST /open?path=C:\Path\To\File.pdf
-POST /imports  `{ "source_path": "C:\\Path\\To\\Reference" }`
+POST /imports          `{ "source_path": "C:\\Path\\To\\Reference" }`
+POST /imports/scan     `{ "source_path": "C:\\Path\\To\\Reference" }`
+POST /imports/confirm  `{ "source_path": "...", "technical_pdf": "C:\\...\\sheet.pdf" }`
+POST /imports/upload   multipart files + folder name (browser drag & drop staging)
 GET /imports/{import_id}
+PATCH /imports/{import_id}  `{ "reference": "...", "dimensions": { "length": 99 } }`
+POST /imports/{import_id}/retry-upload
 ```
 
-The import endpoint requires a server-accessible folder inside a configured `root_path`. It recursively scans the folder, analyzes only PDFs with the confirmed sail-manufacturing text anchors, stores plan PDFs and other files without content extraction, indexes the detected files, and generates a report under `data/reports/`. Original source files are never moved or modified. If multiple technical PDFs are found, the first deterministic path-sorted match is selected and the response is marked with a warning for review.
+The import endpoints require a server-accessible folder inside a configured `root_path` (or a staged upload folder). They recursively scan the folder, analyze only PDFs with the confirmed sail-manufacturing text anchors, store plan PDFs and other files without content extraction, index the detected files, and generate PDF + Word reports under `data/reports/`. Original source files are never moved or modified. Dimensions are stored both raw and normalized to millimetres.
 
-OneDrive upload is optional until Microsoft Graph credentials are configured. Set `SEAMTECH_GRAPH_ACCESS_TOKEN` and `SEAMTECH_ONEDRIVE_DRIVE_ID` in the backend environment; without them, reports are generated locally and the import response reports `pending_not_configured`. A failed configured upload reports `pending_retry` and does not fail the import.
+Preferred flow is two-phase: `POST /imports/scan` lists every technical-PDF candidate with its matched anchors, then `POST /imports/confirm` processes the user-selected one. `POST /imports` keeps the one-shot behaviour (first deterministic path-sorted match wins, flagged with a warning) and now also returns the candidate list.
+
+`PATCH /imports/{import_id}` applies a manual correction: the merged data is re-validated, both reports are regenerated, and the OneDrive upload is re-attempted. `POST /imports/upload` stages browser drag-and-drop bytes in an isolated server directory and returns scan candidates for confirmation.
+
+OneDrive upload is optional until Microsoft Graph credentials are configured. Set `SEAMTECH_GRAPH_ACCESS_TOKEN` and `SEAMTECH_ONEDRIVE_DRIVE_ID` in the backend environment; without them, reports are generated locally and the import response reports `pending_not_configured`. Each import uploads three files (source PDF, PDF report, Word report) with exponential-backoff retries (`onedrive_max_retries`, default 3, overridable via `SEAMTECH_UPLOAD_MAX_RETRIES`). A failed configured upload reports `pending_retry`, never fails the import, and can be re-attempted later via the retry endpoint.
+
+Import records are stored as `JSONB` on PostgreSQL (migrated automatically from legacy `TEXT` rows) and as JSON text on the SQLite fallback; `GET /imports/{import_id}` returns the same JSON shape on both backends.
 
 Search results include the file/folder name, full path, parent path, extension, size, modified date, folder/file type, match type (`exact_name`, `name`, `path`, or `content`), and a highlighted snippet. The API supports bounded pagination with `limit` and `offset` and returns `has_more`.
 

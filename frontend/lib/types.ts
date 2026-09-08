@@ -64,3 +64,81 @@ export interface HealthResponse {
   disk_free_bytes?: number
   disk_total_bytes?: number
 }
+
+export interface ImportCandidate {
+  path: string
+  name: string
+  size: number
+  anchors_matched: string[]
+  anchor_count: number
+}
+
+export interface ImportFileInfo {
+  path: string
+  name: string
+  category: string
+  size: number
+  extension: string
+  extraction_status: string
+  report_path?: string | null
+  upload_status?: string
+}
+
+export interface ImportDimensions {
+  length?: number | null
+  width?: number | null
+  height?: number | null
+  unit?: string | null
+  length_mm?: number | null
+  width_mm?: number | null
+  height_mm?: number | null
+  unit_normalized?: string | null
+}
+
+export interface ImportData {
+  reference?: string | null
+  material?: string | null
+  dimensions?: ImportDimensions | null
+  quantity?: number | null
+  description?: string | null
+  extraction_status: string
+  confidence: number
+  warnings: string[]
+}
+
+export interface ImportResultPayload {
+  import_id: string
+  source_path: string
+  status: string
+  files_detected: number
+  analyzed_files: number
+  technical_pdf?: string | null
+  data?: ImportData | null
+  report_path?: string | null
+  report_docx_path?: string | null
+  upload_status: string
+  warnings: string[]
+  files: ImportFileInfo[]
+  candidates: ImportCandidate[]
+}
+
+export interface ImportScanPayload {
+  source_path: string
+  staged_path?: string
+  files_detected: number
+  candidates: ImportCandidate[]
+  warnings: string[]
+}
+
+export interface ImportCorrection {
+  reference?: string
+  material?: string
+  quantity?: number
+  description?: string
+  dimensions?: {
+    length?: number
+    width?: number
+    height?: number
+    unit?: string
+  }
+}

@@ -96,7 +96,7 @@ CREATE TABLE IF NOT EXISTS imports (
     id TEXT PRIMARY KEY,
     source_path TEXT NOT NULL,
     status TEXT NOT NULL,
-    payload TEXT NOT NULL,
+    payload JSONB NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 """
@@ -164,6 +164,17 @@ class SearchIndex:
                     )
                     cursor.execute("CREATE INDEX IF NOT EXISTS idx_documents_search_vector ON documents USING GIN(search_vector)")
                     cursor.execute("CREATE INDEX IF NOT EXISTS idx_documents_path_key ON documents(path_key)")
+                    cursor.execute(
+                        """
+                        SELECT data_type FROM information_schema.columns
+                        WHERE table_name = 'imports' AND column_name = 'payload'
+                        """
+                    )
+                    payload_type = (cursor.fetchone() or ("jsonb",))[0]
+                    if payload_type == "text":
+                        # Legacy installs stored the import payload as TEXT;
+                        # migrate in place to JSONB (all rows are JSON docs).
+                        cursor.execute("ALTER TABLE imports ALTER COLUMN payload TYPE JSONB USING payload::jsonb")
             else:
                 if rebuild:
                     connection.executescript(

@@ -12,7 +12,10 @@ from zipfile import BadZipFile, ZipFile
 # uses it (alongside size/modified_at) to decide whether a previously
 # indexed file needs to be re-extracted even though it hasn't changed on
 # disk, so old content isn't silently kept forever after a parser fix.
-CURRENT_EXTRACTOR_VERSION = 3
+#
+# v4: PDF extraction moved to pdfplumber (layout-aware text + tables) with
+# pypdf kept as a fallback, so every PDF is re-parsed on the next scan.
+CURRENT_EXTRACTOR_VERSION = 4
 
 EXTRACTION_STATUSES = {"extracted", "unavailable", "skipped", "error", "timeout", "not_applicable"}
 
@@ -199,6 +202,51 @@ def _extract_with_ocrmypdf(path: Path, max_chars: int, command: str, timeout: in
 
 
 def _extract_pdf(path: Path, max_chars: int) -> str:
+    """Extract PDF text with pdfplumber first, pypdf as a fallback.
+
+    pdfplumber is layout-aware (word coordinates) and also yields tables,
+    which is what the fixed-template technical sheets need. Any pdfplumber
+    failure (missing dependency, malformed file) falls back to pypdf so a
+    parser regression can never make a previously readable PDF unreadable.
+    """
+    plumber_text = _extract_pdf_with_plumber(path, max_chars)
+    if plumber_text is not None:
+        return plumber_text
+    return _extract_pdf_with_pypdf(path, max_chars)
+
+
+def _extract_pdf_with_plumber(path: Path, max_chars: int) -> str | None:
+    """Return extracted text, an unavailable marker, or None to fall back."""
+    try:
+        import pdfplumber
+    except ImportError:
+        return None
+    try:
+        chunks: list[str] = []
+        total = 0
+        with pdfplumber.open(str(path)) as pdf:
+            for page in pdf.pages:
+                text = page.extract_text(x_tolerance=2, y_tolerance=2) or ""
+                try:
+                    for table in page.extract_tables() or []:
+                        rows = [" | ".join(cell.strip() if cell else "" for cell in row) for row in table]
+                        rows = [row for row in rows if row.strip(" |")]
+                        if rows:
+                            text += "\n" + "\n".join(rows)
+                except Exception:
+                    pass  # Tables are a bonus; plain text is still usable.
+                if text.strip():
+                    chunks.append(text)
+                    total += len(text)
+                if total >= max_chars:
+                    break
+    except Exception:
+        return None  # Let the pypdf fallback try instead.
+    text = "\n".join(chunks)[:max_chars].strip()
+    return text or "[extraction unavailable: PDF contains no embedded text]"
+
+
+def _extract_pdf_with_pypdf(path: Path, max_chars: int) -> str:
     from pypdf import PdfReader
 
     reader = PdfReader(str(path), strict=False)

@@ -2,21 +2,61 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import shutil
 import time
+import uuid
+from dataclasses import asdict
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
-from fastapi import FastAPI, Header, HTTPException, Query
+from fastapi import FastAPI, File, Form, Header, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 from .config import AppConfig
 from .extractors import extract_file
 from .indexer import SearchIndex
-from .import_pipeline import get_import, import_folder
+from .import_pipeline import (
+    ImportResult,
+    correct_import,
+    get_import,
+    import_folder,
+    retry_upload,
+    scan_folder,
+    staging_root,
+)
 
 
 class ImportRequest(BaseModel):
     source_path: str = Field(min_length=1, max_length=4_096)
+
+
+class ImportScanRequest(BaseModel):
+    source_path: str = Field(min_length=1, max_length=4_096)
+
+
+class ImportConfirmRequest(BaseModel):
+    source_path: str = Field(min_length=1, max_length=4_096)
+    technical_pdf: str = Field(min_length=1, max_length=4_096)
+
+
+class DimensionsCorrection(BaseModel):
+    length: float | None = None
+    width: float | None = None
+    height: float | None = None
+    unit: str | None = Field(default=None, max_length=8)
+
+
+class ImportCorrectionRequest(BaseModel):
+    reference: str | None = Field(default=None, max_length=500)
+    material: str | None = Field(default=None, max_length=500)
+    quantity: int | None = Field(default=None, ge=0)
+    description: str | None = Field(default=None, max_length=2_000)
+    dimensions: DimensionsCorrection | None = None
+
+
+def _import_payload(result: ImportResult) -> dict[str, Any]:
+    payload = asdict(result)
+    return payload
 
 
 def create_app(config: AppConfig) -> FastAPI:
@@ -156,19 +196,77 @@ def create_app(config: AppConfig) -> FastAPI:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return {
-            "import_id": result.import_id,
-            "source_path": result.source_path,
-            "status": result.status,
-            "files_detected": result.files_detected,
-            "analyzed_files": result.analyzed_files,
-            "technical_pdf": result.technical_pdf,
-            "data": result.data,
-            "report_path": result.report_path,
-            "upload_status": result.upload_status,
-            "warnings": result.warnings,
-            "files": [file.__dict__ for file in result.files],
-        }
+        return _import_payload(result)
+
+    @app.post("/imports/scan")
+    async def scan_import(
+        request: ImportScanRequest,
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+    ) -> dict[str, object]:
+        """Phase 1: read-only scan returning technical-PDF candidates."""
+        _require_auth(config, token)
+        try:
+            return await asyncio.to_thread(scan_folder, Path(request.source_path), config)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/imports/confirm")
+    async def confirm_import(
+        request: ImportConfirmRequest,
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+    ) -> dict[str, object]:
+        """Phase 2: run the full import for the user-selected PDF."""
+        _require_auth(config, token)
+        try:
+            result = await asyncio.to_thread(
+                import_folder, Path(request.source_path), config, index, Path(request.technical_pdf)
+            )
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return _import_payload(result)
+
+    @app.post("/imports/upload")
+    async def upload_import(
+        files: Annotated[list[UploadFile], File(min_length=1, max_length=500)],
+        folder: Annotated[str, Form(max_length=128)] = "upload",
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+    ) -> dict[str, object]:
+        """Stage browser drag-and-drop files, then scan for candidates.
+
+        Each file's upload filename may carry a relative path
+        (``REF001/sheet.pdf``) so folder structure survives the transfer.
+        Source shares are untouched: bytes land in an isolated staging
+        directory that is only ever read by the import pipeline.
+        """
+        _require_auth(config, token)
+        safe_folder = re.sub(r"[^\w\-. ]", "_", folder.strip() or "upload").strip(" .") or "upload"
+        staged = staging_root(config) / f"{uuid.uuid4().hex}_{safe_folder}"
+        staged.mkdir(parents=True, exist_ok=True)
+        try:
+            for upload in files:
+                relative = _safe_relative_path(upload.filename or "file")
+                target = staged / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                size = 0
+                with target.open("wb") as handle:
+                    while chunk := await upload.read(1024 * 1024):
+                        size += len(chunk)
+                        if size > config.max_file_size_bytes:
+                            raise HTTPException(status_code=413, detail=f"File too large: {upload.filename}")
+                        handle.write(chunk)
+                await upload.close()
+            result = await asyncio.to_thread(scan_folder, staged, config)
+        except HTTPException:
+            shutil.rmtree(staged, ignore_errors=True)
+            raise
+        except (PermissionError, ValueError) as exc:
+            shutil.rmtree(staged, ignore_errors=True)
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"staged_path": str(staged), **result}
 
     @app.get("/imports/{import_id}")
     def read_import(
@@ -181,7 +279,41 @@ def create_app(config: AppConfig) -> FastAPI:
             raise HTTPException(status_code=404, detail="Import not found.")
         return result
 
+    @app.patch("/imports/{import_id}")
+    async def patch_import(
+        import_id: str,
+        request: ImportCorrectionRequest,
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+    ) -> dict[str, object]:
+        """Apply a manual correction: re-validate, regenerate both reports, re-upload."""
+        _require_auth(config, token)
+        corrections = request.model_dump(exclude_none=True)
+        try:
+            return await asyncio.to_thread(correct_import, index, config, import_id, corrections)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Import not found.") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/imports/{import_id}/retry-upload")
+    async def retry_import_upload(
+        import_id: str,
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+    ) -> dict[str, object]:
+        _require_auth(config, token)
+        try:
+            return await asyncio.to_thread(retry_upload, index, config, import_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Import not found.") from exc
+
     return app
+
+
+def _safe_relative_path(filename: str) -> Path:
+    """Turn an upload filename into a staging-relative path (no escapes)."""
+    parts = [part for part in Path(filename.replace("\\", "/")).parts if part not in ("", ".", "..", "/")]
+    cleaned = [re.sub(r"[^\w\-+. ]", "_", part).strip(" .") or "file" for part in parts]
+    return Path(*cleaned) if cleaned else Path("file")
 
 
 def _require_auth(config: AppConfig, token: str | None) -> None:

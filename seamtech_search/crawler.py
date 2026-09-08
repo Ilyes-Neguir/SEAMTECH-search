@@ -9,12 +9,14 @@ from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from pathlib import Path
 
+from .anchors import TECHNICAL_ANCHORS, classify_pdf_text
 from .config import AppConfig
 from .extractors import CURRENT_EXTRACTOR_VERSION, ExtractionResult, extract_text
 from .models import Document
 
 LOGGER = logging.getLogger("seamtech_search")
-TECHNICAL_PDF_ANCHORS = ("fiche de fabrication", "quantité", "quantity", "cotes", "mesures finies", "material", "matière")
+# Backwards-compatible alias; the canonical constant lives in anchors.py.
+TECHNICAL_PDF_ANCHORS = TECHNICAL_ANCHORS
 
 # path_key -> (size, modified_at, extractor_version) for everything already
 # in the index, so unchanged files can skip extraction entirely.
@@ -167,8 +169,7 @@ def _document_from_path(
             extraction_detail = result.detail
             content_hash = Document.hash_text(text)
             if path.suffix.lower() == ".pdf":
-                normalized = " ".join(text.lower().split())
-                category = "technical_pdf" if sum(anchor in normalized for anchor in TECHNICAL_PDF_ANCHORS) >= 2 else "plan_pdf"
+                category = classify_pdf_text(text)
 
     return Document(
         path=path,
