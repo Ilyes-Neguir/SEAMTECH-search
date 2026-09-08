@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import shutil
 import time
@@ -141,13 +142,16 @@ def create_app(config: AppConfig) -> FastAPI:
         return {"opened": str(target), "is_dir": target.is_dir()}
 
     @app.post("/imports")
-    def create_import(
+    async def create_import(
         request: ImportRequest,
         token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
     ) -> dict[str, object]:
         _require_auth(config, token)
         try:
-            result = import_folder(Path(request.source_path), config, index)
+            # PDF parsing, report generation, indexing, and Graph uploads are
+            # synchronous and may include retry back-off. Keep them off the
+            # event loop so imports do not block unrelated async requests.
+            result = await asyncio.to_thread(import_folder, Path(request.source_path), config, index)
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
         except ValueError as exc:

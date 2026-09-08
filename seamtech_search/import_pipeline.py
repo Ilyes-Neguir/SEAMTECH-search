@@ -76,7 +76,9 @@ FIELD_PATTERNS: dict[str, tuple[str, ...]] = {
     "reference": (r"reference\s*[:\-]?\s*([^\n]+)", r"référence\s*[:\-]?\s*([^\n]+)", r"(?:fichier|commande)\s+([A-Z0-9][A-Z0-9_-]+)"),
     "material": (r"material\s*[:\-]?\s*([^\n]+)", r"mati(?:è|e)re\s*[:\-]?\s*([^\n]+)", r"tissu\(s\)\s*:\s*([^\n]+)"),
     "quantity": (r"quantity\s*[:\-]?\s*(\d+)", r"quantit(?:y|é)\s*[:\-]?\s*(\d+)"),
-    "description": (r"description\s*[:\-]?\s*([^\n]+)", r"fiche de fabrication\s*[\"']?([^\n\"']+)"),
+    # ``\s`` includes newlines. Restrict the separator after a label to
+    # horizontal whitespace so a bare header cannot capture the next field.
+    "description": (r"description[^\S\r\n]*[:\-]?[^\S\r\n]*([^\n]+)", r"fiche de fabrication[^\S\r\n]*[\"']?([^\n\"']+)"),
 }
 DIMENSION_PATTERN = re.compile(r"(\d+(?:[.,]\d+)?)\s*[x×]\s*(\d+(?:[.,]\d+)?)(?:\s*[x×]\s*(\d+(?:[.,]\d+)?))?\s*(mm|cm|m)?", re.I)
 
