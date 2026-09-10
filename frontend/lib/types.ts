@@ -2,6 +2,7 @@
 
 export type MatchType = "exact_name" | "name" | "path" | "content"
 export type ExtractionStatus = "extracted" | "unavailable" | "skipped" | "error" | "timeout" | "not_applicable"
+export type OneDriveStatus = "uploaded" | "pending_retry" | "pending_reauth" | "pending_not_configured" | "not_applicable" | "not_configured"
 
 export interface ScanSummary {
   started_at: string
@@ -73,6 +74,22 @@ export interface ImportCandidate {
   anchor_count: number
 }
 
+export interface ExcelSheetSummary {
+  name: string
+  max_row: number
+  max_column: number
+  headers: string[]
+  sample_rows: Record<string, string>[]
+}
+
+export interface ExcelSummary {
+  path: string
+  name: string
+  sheet_names: string[]
+  total_sheets: number
+  sheets: ExcelSheetSummary[]
+}
+
 export interface ImportFileInfo {
   path: string
   name: string
@@ -113,6 +130,8 @@ export interface ImportResultPayload {
   files_detected: number
   analyzed_files: number
   technical_pdf?: string | null
+  excel_file?: string | null
+  excel_summary?: ExcelSummary | null
   data?: ImportData | null
   report_path?: string | null
   report_docx_path?: string | null
@@ -120,6 +139,7 @@ export interface ImportResultPayload {
   warnings: string[]
   files: ImportFileInfo[]
   candidates: ImportCandidate[]
+  excel_candidates?: ImportCandidate[]
 }
 
 export interface ImportScanPayload {
@@ -127,6 +147,7 @@ export interface ImportScanPayload {
   staged_path?: string
   files_detected: number
   candidates: ImportCandidate[]
+  excel_candidates?: ImportCandidate[]
   warnings: string[]
 }
 
@@ -141,4 +162,32 @@ export interface ImportCorrection {
     height?: number
     unit?: string
   }
+}
+
+export interface ImportJobPayload {
+  id?: string
+  job_id?: string
+  import_id?: string
+  status: "pending" | "running" | "completed" | "failed" | "cancelled" | "needs_review" | "needs_confirmation"
+  progress: number
+  stage: string
+  source_path?: string
+  error?: string | null
+  result?: ImportResultPayload | null
+  created_at?: string
+  updated_at?: string
+  // Merged top-level fields
+  data?: ImportData | null
+  technical_pdf?: string | null
+  excel_file?: string | null
+  excel_summary?: ExcelSummary | null
+  report_path?: string | null
+  report_docx_path?: string | null
+  upload_status?: string
+  warnings?: string[]
+  files?: ImportFileInfo[]
+  candidates?: ImportCandidate[]
+  excel_candidates?: ImportCandidate[]
+  files_detected?: number
+  analyzed_files?: number
 }

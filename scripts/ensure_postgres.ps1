@@ -86,9 +86,11 @@ try {
 
 Push-Location $ProjectRoot
 try {
-    docker compose -f $ComposeFile up -d --wait postgres
+    docker compose -f $ComposeFile up -d --wait postgres minio redis
 } finally {
     Pop-Location
 }
 
 $env:SEAMTECH_DATABASE_URL = "postgresql://seamtech:$password@127.0.0.1:5433/seamtech_search"
+$env:SEAMTECH_S3_ENDPOINT_URL = "http://127.0.0.1:9000"
+$env:SEAMTECH_REDIS_URL = "redis://127.0.0.1:6379/0"

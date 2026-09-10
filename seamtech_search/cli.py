@@ -11,6 +11,7 @@ from .api import create_app
 from .config import AppConfig, default_config_path
 from .crawler import ScanIncompleteError, crawl
 from .indexer import SearchIndex
+from .retention import run_retention_cleanup
 
 LOGGER = logging.getLogger("seamtech_search")
 BATCH_SIZE = 250
@@ -35,6 +36,9 @@ def main(argv: Sequence[str] | None = None) -> None:
     stats_parser = subparsers.add_parser("stats", help="Show index statistics")
     stats_parser.add_argument("--config", default=str(default_config))
 
+    cleanup_parser = subparsers.add_parser("cleanup", help="Run retention cleanup policies")
+    cleanup_parser.add_argument("--config", default=str(default_config))
+
     serve_parser = subparsers.add_parser("serve", help="Run the FastAPI web server")
     serve_parser.add_argument("--config", default=str(default_config))
 
@@ -46,16 +50,32 @@ def main(argv: Sequence[str] | None = None) -> None:
         run_search(args.config, args.query, args.limit)
     elif args.command == "stats":
         run_stats(args.config)
+    elif args.command == "cleanup":
+        run_cleanup(args.config)
     elif args.command == "serve":
         run_server(args.config)
 
 
+def _build_index(config: AppConfig) -> SearchIndex:
+    return SearchIndex(
+        config.database_path,
+        config.database_url,
+        pool_min=config.pool_min,
+        pool_max=config.pool_max,
+        pool_timeout=config.pool_timeout,
+        statement_timeout_ms=config.statement_timeout_ms,
+    )
+
+
 def run_index(config_path: str, rebuild: bool = False) -> dict[str, float | int]:
     config = AppConfig.load(config_path)
-    index = SearchIndex(config.database_path, config.database_url)
-    with index.scan_lock():
-        with index.scan_snapshot():
-            return _run_index(index, config, rebuild)
+    index = _build_index(config)
+    try:
+        with index.scan_lock():
+            with index.scan_snapshot():
+                return _run_index(index, config, rebuild)
+    finally:
+        index.close()
 
 
 def _run_index(index: SearchIndex, config: AppConfig, rebuild: bool = False) -> dict[str, float | int]:
@@ -67,7 +87,7 @@ def _run_index(index: SearchIndex, config: AppConfig, rebuild: bool = False) -> 
     changed = 0
     started_at = time.perf_counter()
     scan_id = index.start_scan()
-    existing_metadata = index.existing_metadata()
+    existing_metadata = index.stored_manifest()
     try:
         for document in crawl(config, existing_metadata):
             scanned += 1
@@ -112,22 +132,42 @@ def _run_index(index: SearchIndex, config: AppConfig, rebuild: bool = False) -> 
 
 def run_search(config_path: str, query: str, limit: int = 10) -> None:
     config = AppConfig.load(config_path)
-    index = SearchIndex(config.database_path, config.database_url)
-    results = index.search(query, limit=limit)
-    for result in results:
-        print(f"{result['match_type']:>10}  {result['name']}")
-        print(f"            {result['path']}")
-    print(f"{len(results)} result(s).")
+    index = _build_index(config)
+    try:
+        results = index.search(query, limit=limit)
+        for result in results:
+            print(f"{result['match_type']:>10}  {result['name']}")
+            print(f"            {result['path']}")
+        print(f"{len(results)} result(s).")
+    finally:
+        index.close()
 
 
 def run_stats(config_path: str) -> None:
     config = AppConfig.load(config_path)
-    index = SearchIndex(config.database_path, config.database_url)
-    index.initialize()
-    stats = index.stats()
-    print(f"Documents: {stats.total_documents}")
-    print(f"Files:     {stats.files}")
-    print(f"Folders:   {stats.folders}")
+    index = _build_index(config)
+    try:
+        index.initialize()
+        stats = index.stats()
+        print(f"Documents: {stats.total_documents}")
+        print(f"Files:     {stats.files}")
+        print(f"Folders:   {stats.folders}")
+    finally:
+        index.close()
+
+
+def run_cleanup(config_path: str) -> dict[str, int]:
+    config = AppConfig.load(config_path)
+    index = _build_index(config)
+    try:
+        index.initialize()
+        summary = run_retention_cleanup(config, index)
+        print(f"Pruned reports:        {summary['pruned_reports']}")
+        print(f"Pruned staged uploads: {summary['pruned_staged_uploads']}")
+        print(f"Pruned audit log rows: {summary['pruned_audit_logs']}")
+        return summary
+    finally:
+        index.close()
 
 
 def run_server(config_path: str) -> None:

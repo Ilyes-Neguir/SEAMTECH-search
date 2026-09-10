@@ -1,20 +1,25 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import re
 import shutil
 import time
 import uuid
+from collections import defaultdict
+from contextlib import asynccontextmanager
 from dataclasses import asdict
 from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import FastAPI, File, Form, Header, HTTPException, Query, UploadFile
+from fastapi import FastAPI, File, Form, Header, HTTPException, Query, Request, Response, UploadFile
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+
+from .audit import actor_fingerprint, get_audit_logs, record_audit_event
 from .config import AppConfig
 from .extractors import extract_file
-from .indexer import SearchIndex
 from .import_pipeline import (
     ImportResult,
     correct_import,
@@ -24,10 +29,27 @@ from .import_pipeline import (
     scan_folder,
     staging_root,
 )
+from .indexer import SearchIndex
+from .jobs import (
+    ImportCancelledError,
+    cancel_job,
+    clear_job_cancel,
+    create_job,
+    get_job,
+    make_cancel_checker,
+    recover_stale_jobs,
+    update_job,
+)
+from .redis_store import RedisStore
+from .retention import InsufficientStorageError, ensure_free_space, run_retention_cleanup
+from .worker import start_background_worker, stop_background_worker
+
+logger = logging.getLogger("seamtech_search.api")
 
 
 class ImportRequest(BaseModel):
     source_path: str = Field(min_length=1, max_length=4_096)
+    excel_file: str | None = Field(default=None, max_length=4_096)
 
 
 class ImportScanRequest(BaseModel):
@@ -37,6 +59,7 @@ class ImportScanRequest(BaseModel):
 class ImportConfirmRequest(BaseModel):
     source_path: str = Field(min_length=1, max_length=4_096)
     technical_pdf: str = Field(min_length=1, max_length=4_096)
+    excel_file: str | None = Field(default=None, max_length=4_096)
 
 
 class DimensionsCorrection(BaseModel):
@@ -55,20 +78,130 @@ class ImportCorrectionRequest(BaseModel):
 
 
 def _import_payload(result: ImportResult) -> dict[str, Any]:
-    payload = asdict(result)
-    return payload
+    return asdict(result)
 
 
 def create_app(config: AppConfig) -> FastAPI:
-    app = FastAPI(title="SEAMTECH Search", version="0.2.0")
-    index = SearchIndex(config.database_path, config.database_url)
+    local_hosts = {"127.0.0.1", "localhost", "::1"}
+    if config.host not in local_hosts and config.auth_token and not config.behind_tls_proxy:
+        raise ValueError("token authentication over non-local host requires behind_tls_proxy=true")
+
+    index = SearchIndex(
+        config.database_path,
+        config.database_url,
+        pool_min=config.pool_min,
+        pool_max=config.pool_max,
+        pool_timeout=config.pool_timeout,
+        statement_timeout_ms=config.statement_timeout_ms,
+    )
+
+    redis_store = RedisStore(config=config)
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        index.initialize()
+        recovered = recover_stale_jobs(index)
+        if recovered > 0:
+            logger.info("Recovered %d stale import jobs on startup", recovered)
+        start_background_worker(config, index, redis_store)
+        yield
+        stop_background_worker()
+        index.close()
+
+    app = FastAPI(title="SEAMTECH Search", version="0.4.0", lifespan=lifespan)
     index.initialize()
+
+    request_timestamps: dict[str, list[float]] = defaultdict(list)
+    rate_limit_lock = asyncio.Lock()
+
     metrics = {
         "search_requests": 0,
         "search_errors": 0,
         "last_search_seconds": 0.0,
         "slowest_search_seconds": 0.0,
     }
+
+    # ---------------------------------------------------------------------------
+    # Middleware: X-Request-ID & Sliding-Window Rate Limiter
+    # ---------------------------------------------------------------------------
+
+    @app.middleware("http")
+    async def request_context_and_rate_limit(request: Request, call_next):
+        request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+        request.state.request_id = request_id
+
+        path = request.url.path
+        exempt_paths = {"/live", "/ready", "/health", "/metrics", "/docs", "/openapi.json"}
+
+        if path not in exempt_paths:
+            client_ip = request.client.host if request.client else "127.0.0.1"
+            auth_header = request.headers.get("X-SEAMTECH-TOKEN")
+            client_key = f"{client_ip}:{auth_header or 'anon'}"
+
+            is_limited, retry_after = False, 0
+            if redis_store.is_configured():
+                is_limited, retry_after = redis_store.check_rate_limit(client_key, config.rate_limit_per_minute)
+
+            if not is_limited and not redis_store.is_configured():
+                now = time.time()
+                cutoff = now - 60.0
+                async with rate_limit_lock:
+                    window = [ts for ts in request_timestamps[client_key] if ts > cutoff]
+                    if len(window) >= config.rate_limit_per_minute:
+                        oldest = window[0]
+                        retry_after = max(1, int(60.0 - (now - oldest)) + 1)
+                        request_timestamps[client_key] = window
+                        is_limited = True
+                    else:
+                        window.append(now)
+                        request_timestamps[client_key] = window
+
+            if is_limited:
+                actor = actor_fingerprint(auth_header, client_ip)
+                record_audit_event(
+                    index,
+                    action="rate_limit_exceeded",
+                    actor=actor,
+                    resource=path,
+                    status="429",
+                    details={"request_id": request_id, "retry_after": retry_after},
+                )
+                return JSONResponse(
+                    status_code=429,
+                    content={"detail": "Too Many Requests. Rate limit exceeded."},
+                    headers={"Retry-After": str(retry_after), "X-Request-ID": request_id},
+                )
+
+        response: Response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
+        return response
+
+    # ---------------------------------------------------------------------------
+    # Probes
+    # ---------------------------------------------------------------------------
+
+    @app.get("/live")
+    def live_probe() -> dict[str, str]:
+        return {"status": "alive"}
+
+    @app.get("/ready")
+    def ready_probe() -> dict[str, str]:
+        try:
+            with index.connect() as conn:
+                if index.is_postgres:
+                    with conn.cursor() as cursor:
+                        cursor.execute("SELECT 1")
+                else:
+                    conn.execute("SELECT 1")
+            return {"status": "ready"}
+        except Exception as exc:
+            logger.error("Readiness check failed: %s", exc)
+            raise HTTPException(status_code=503, detail="Database not ready") from exc
+
+    # ---------------------------------------------------------------------------
+    # Core API Endpoints
+    # ---------------------------------------------------------------------------
+
     @app.get("/")
     def root(token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None) -> dict[str, str]:
         _require_auth(config, token)
@@ -91,16 +224,21 @@ def create_app(config: AppConfig) -> FastAPI:
             "files": stats.files,
             "folders": stats.folders,
             "last_scan": index.latest_scan(),
+            "redis_connected": redis_store.ping() if redis_store.is_configured() else None,
+            "storage_backend": config.storage_backend,
+            "s3_configured": bool(config.s3_endpoint_url or config.s3_access_key),
         }
 
     @app.get("/search")
     def search(
+        request: Request,
         q: str = Query(..., min_length=1, max_length=500),
         limit: int = Query(50, ge=1, le=200),
         offset: int = Query(0, ge=0, le=1_000_000),
         token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
     ) -> dict[str, object]:
         _require_auth(config, token)
+        actor = actor_fingerprint(token, request.client.host if request.client else None)
         try:
             started_at = time.perf_counter()
             raw_results = index.search(q, limit=limit + 1, offset=offset)
@@ -110,13 +248,34 @@ def create_app(config: AppConfig) -> FastAPI:
             metrics["search_requests"] += 1
             metrics["last_search_seconds"] = elapsed
             metrics["slowest_search_seconds"] = max(float(metrics["slowest_search_seconds"]), elapsed)
+            record_audit_event(
+                index,
+                action="search",
+                actor=actor,
+                resource=q,
+                status="success",
+                details={"limit": limit, "offset": offset, "count": len(results)},
+            )
         except (ValueError, RuntimeError) as exc:
             metrics["search_errors"] += 1
+            record_audit_event(
+                index, action="search", actor=actor, resource=q, status="error", details={"error": str(exc)}
+            )
             raise HTTPException(status_code=400, detail="Invalid search query.") from exc
         except Exception as exc:
             metrics["search_errors"] += 1
+            record_audit_event(
+                index, action="search", actor=actor, resource=q, status="error", details={"error": str(exc)}
+            )
             raise HTTPException(status_code=500, detail="Search service failure.") from exc
-        return {"query": q, "count": len(results), "offset": offset, "limit": limit, "has_more": has_more, "results": results}
+        return {
+            "query": q,
+            "count": len(results),
+            "offset": offset,
+            "limit": limit,
+            "has_more": has_more,
+            "results": results,
+        }
 
     @app.get("/metrics")
     def get_metrics(token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None) -> dict[str, object]:
@@ -181,68 +340,267 @@ def create_app(config: AppConfig) -> FastAPI:
             raise HTTPException(status_code=500, detail="The operating system could not open this path.") from exc
         return {"opened": str(target), "is_dir": target.is_dir()}
 
+    # ---------------------------------------------------------------------------
+    # Import Endpoints (Async jobs by default, sync with ?wait=true)
+    # ---------------------------------------------------------------------------
+
+    def _execute_import_background(
+        job_id: str,
+        source_path: Path,
+        selected_pdf: Path | None = None,
+        selected_excel: Path | None = None,
+    ) -> None:
+        def progress_cb(stage: str, percent: int) -> None:
+            update_job(index, job_id, status="running", progress=percent, stage=stage)
+
+        cancel_check = make_cancel_checker(job_id)
+
+        try:
+            update_job(index, job_id, status="running", progress=5, stage="starting")
+            result = import_folder(
+                source=source_path,
+                config=config,
+                index=index,
+                selected_pdf=selected_pdf,
+                import_id=job_id,
+                progress_callback=progress_cb,
+                cancel_check=cancel_check,
+                selected_excel=selected_excel,
+            )
+            if cancel_check():
+                raise ImportCancelledError("Job was cancelled by user")
+            final_payload = _import_payload(result)
+            final_status = "completed" if result.status == "completed" else result.status
+            update_job(
+                index,
+                job_id,
+                status=final_status,
+                progress=100,
+                stage="done",
+                result=final_payload,
+            )
+        except ImportCancelledError:
+            update_job(index, job_id, status="cancelled", stage="cancelled", error="Job was cancelled by user")
+        except InsufficientStorageError as exc:
+            update_job(index, job_id, status="failed", stage="failed", error=str(exc))
+        except Exception as exc:
+            logger.exception("Import job %s failed: %s", job_id, exc)
+            update_job(index, job_id, status="failed", stage="failed", error=str(exc))
+        finally:
+            clear_job_cancel(job_id)
+
     @app.post("/imports")
     async def create_import(
-        request: ImportRequest,
+        request_body: ImportRequest,
+        request: Request,
+        wait: bool = Query(False),
         token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
-    ) -> dict[str, object]:
+    ) -> Response:
         _require_auth(config, token)
+        actor = actor_fingerprint(token, request.client.host if request.client else None)
+        source = Path(request_body.source_path)
+        excel_path = Path(request_body.excel_file) if request_body.excel_file else None
+
         try:
-            # PDF parsing, report generation, indexing, and Graph uploads are
-            # synchronous and may include retry back-off. Keep them off the
-            # event loop so imports do not block unrelated async requests.
-            result = await asyncio.to_thread(import_folder, Path(request.source_path), config, index)
-        except PermissionError as exc:
-            raise HTTPException(status_code=403, detail=str(exc)) from exc
+            ensure_free_space(config.database_path.parent, config.min_free_bytes)
+        except InsufficientStorageError as exc:
+            record_audit_event(
+                index,
+                action="import_create",
+                actor=actor,
+                resource=str(source),
+                status="507",
+                details={"error": str(exc)},
+            )
+            raise HTTPException(status_code=507, detail=str(exc)) from exc
+
+        job_id = uuid.uuid4().hex
+
+        if wait:
+            try:
+                result = await asyncio.to_thread(
+                    import_folder, source, config, index, None, job_id, None, None, excel_path
+                )
+                payload = _import_payload(result)
+                record_audit_event(
+                    index,
+                    action="import_create",
+                    actor=actor,
+                    resource=job_id,
+                    status="success",
+                    details={"sync": True},
+                )
+                return JSONResponse(status_code=200, content=payload)
+            except InsufficientStorageError as exc:
+                record_audit_event(index, action="import_create", actor=actor, resource=job_id, status="507")
+                raise HTTPException(status_code=507, detail=str(exc)) from exc
+            except PermissionError as exc:
+                record_audit_event(index, action="import_create", actor=actor, resource=job_id, status="403")
+                raise HTTPException(status_code=403, detail=str(exc)) from exc
+            except ValueError as exc:
+                record_audit_event(index, action="import_create", actor=actor, resource=job_id, status="400")
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        try:
+            resolved = Path(request_body.source_path).expanduser().resolve()
+            if not resolved.exists() or not resolved.is_dir():
+                raise ValueError("Import path must be an existing directory")
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return _import_payload(result)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+        create_job(index, job_id, request_body.source_path, status="pending", stage="queued")
+        if redis_store.is_configured() and redis_store.ping():
+            task_payload = {
+                "job_id": job_id,
+                "source_path": request_body.source_path,
+                "selected_pdf": None,
+                "selected_excel": request_body.excel_file,
+            }
+            redis_store.set_job(
+                job_id,
+                {"id": job_id, "status": "pending", "progress": 0, "stage": "queued", "source_path": request_body.source_path},
+            )
+            redis_store.enqueue_task("imports", task_payload)
+        else:
+            asyncio.create_task(asyncio.to_thread(_execute_import_background, job_id, source, None, excel_path))
+
+        record_audit_event(
+            index,
+            action="import_create",
+            actor=actor,
+            resource=job_id,
+            status="accepted",
+            details={"async": True},
+        )
+
+        return JSONResponse(
+            status_code=202,
+            content={
+                "job_id": job_id,
+                "id": job_id,
+                "import_id": job_id,
+                "status": "pending",
+                "progress": 0,
+                "stage": "queued",
+                "source_path": request_body.source_path,
+            },
+        )
 
     @app.post("/imports/scan")
     async def scan_import(
-        request: ImportScanRequest,
+        request_body: ImportScanRequest,
+        request: Request,
         token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
     ) -> dict[str, object]:
-        """Phase 1: read-only scan returning technical-PDF candidates."""
         _require_auth(config, token)
+        actor = actor_fingerprint(token, request.client.host if request.client else None)
         try:
-            return await asyncio.to_thread(scan_folder, Path(request.source_path), config)
+            res = await asyncio.to_thread(scan_folder, Path(request_body.source_path), config)
+            record_audit_event(
+                index, action="import_scan", actor=actor, resource=request_body.source_path, status="success"
+            )
+            return res
         except PermissionError as exc:
+            record_audit_event(
+                index, action="import_scan", actor=actor, resource=request_body.source_path, status="403"
+            )
             raise HTTPException(status_code=403, detail=str(exc)) from exc
         except ValueError as exc:
+            record_audit_event(
+                index, action="import_scan", actor=actor, resource=request_body.source_path, status="400"
+            )
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.post("/imports/confirm")
     async def confirm_import(
-        request: ImportConfirmRequest,
+        request_body: ImportConfirmRequest,
+        request: Request,
+        wait: bool = Query(True),
         token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
-    ) -> dict[str, object]:
-        """Phase 2: run the full import for the user-selected PDF."""
+    ) -> Response:
         _require_auth(config, token)
+        actor = actor_fingerprint(token, request.client.host if request.client else None)
+        source = Path(request_body.source_path)
+        technical_pdf = Path(request_body.technical_pdf)
+        excel_path = Path(request_body.excel_file) if request_body.excel_file else None
+
         try:
-            result = await asyncio.to_thread(
-                import_folder, Path(request.source_path), config, index, Path(request.technical_pdf)
+            ensure_free_space(config.database_path.parent, config.min_free_bytes)
+        except InsufficientStorageError as exc:
+            record_audit_event(index, action="import_confirm", actor=actor, resource=str(source), status="507")
+            raise HTTPException(status_code=507, detail=str(exc)) from exc
+
+        job_id = uuid.uuid4().hex
+
+        if wait:
+            try:
+                result = await asyncio.to_thread(
+                    import_folder, source, config, index, technical_pdf, job_id, None, None, excel_path
+                )
+                payload = _import_payload(result)
+                record_audit_event(index, action="import_confirm", actor=actor, resource=job_id, status="success")
+                return JSONResponse(status_code=200, content=payload)
+            except PermissionError as exc:
+                raise HTTPException(status_code=403, detail=str(exc)) from exc
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        create_job(index, job_id, request_body.source_path, status="pending", stage="queued")
+        if redis_store.is_configured() and redis_store.ping():
+            task_payload = {
+                "job_id": job_id,
+                "source_path": request_body.source_path,
+                "selected_pdf": str(technical_pdf),
+                "selected_excel": str(excel_path) if excel_path else None,
+            }
+            redis_store.set_job(
+                job_id,
+                {"id": job_id, "status": "pending", "progress": 0, "stage": "queued", "source_path": request_body.source_path},
             )
-        except PermissionError as exc:
-            raise HTTPException(status_code=403, detail=str(exc)) from exc
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return _import_payload(result)
+            redis_store.enqueue_task("imports", task_payload)
+        else:
+            asyncio.create_task(
+                asyncio.to_thread(_execute_import_background, job_id, source, technical_pdf, excel_path)
+            )
+        record_audit_event(
+            index,
+            action="import_confirm",
+            actor=actor,
+            resource=job_id,
+            status="accepted",
+            details={"async": True},
+        )
+        return JSONResponse(
+            status_code=202,
+            content={
+                "job_id": job_id,
+                "id": job_id,
+                "import_id": job_id,
+                "status": "pending",
+                "progress": 0,
+                "stage": "queued",
+                "source_path": request_body.source_path,
+            },
+        )
 
     @app.post("/imports/upload")
     async def upload_import(
+        request: Request,
         files: Annotated[list[UploadFile], File(min_length=1, max_length=500)],
         folder: Annotated[str, Form(max_length=128)] = "upload",
         token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
     ) -> dict[str, object]:
-        """Stage browser drag-and-drop files, then scan for candidates.
-
-        Each file's upload filename may carry a relative path
-        (``REF001/sheet.pdf``) so folder structure survives the transfer.
-        Source shares are untouched: bytes land in an isolated staging
-        directory that is only ever read by the import pipeline.
-        """
         _require_auth(config, token)
+        actor = actor_fingerprint(token, request.client.host if request.client else None)
+
+        try:
+            ensure_free_space(config.database_path.parent, config.min_free_bytes)
+        except InsufficientStorageError as exc:
+            record_audit_event(index, action="import_upload", actor=actor, status="507")
+            raise HTTPException(status_code=507, detail=str(exc)) from exc
+
         safe_folder = re.sub(r"[^\w\-. ]", "_", folder.strip() or "upload").strip(" .") or "upload"
         staged = staging_root(config) / f"{uuid.uuid4().hex}_{safe_folder}"
         staged.mkdir(parents=True, exist_ok=True)
@@ -260,6 +618,7 @@ def create_app(config: AppConfig) -> FastAPI:
                         handle.write(chunk)
                 await upload.close()
             result = await asyncio.to_thread(scan_folder, staged, config)
+            record_audit_event(index, action="import_upload", actor=actor, resource=str(staged), status="success")
         except HTTPException:
             shutil.rmtree(staged, ignore_errors=True)
             raise
@@ -274,43 +633,127 @@ def create_app(config: AppConfig) -> FastAPI:
         token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
     ) -> dict[str, object]:
         _require_auth(config, token)
-        result = get_import(index, import_id)
-        if result is None:
-            raise HTTPException(status_code=404, detail="Import not found.")
-        return result
+        if redis_store.is_configured():
+            cached = redis_store.get_job(import_id)
+            if cached and cached.get("status") in ("running", "pending", "completed", "cancelled"):
+                res_data = cached.get("result") or {}
+                return {**cached, **res_data, "job_id": cached.get("id", import_id)}
+
+        job = get_job(index, import_id)
+        record = get_import(index, import_id)
+        if job is not None:
+            if job["status"] == "cancelled":
+                return job
+            if record is not None:
+                return {**job, **record, "job_id": job["id"], "status": record.get("status", job["status"])}
+            result_data = job.get("result") or {}
+            combined = {**job, **result_data}
+            combined["job_id"] = job["id"]
+            combined["status"] = job["status"]
+            combined["progress"] = job["progress"]
+            combined["stage"] = job["stage"]
+            if job.get("error"):
+                combined["error"] = job["error"]
+            return combined
+        if record is not None:
+            return record
+
+        raise HTTPException(status_code=404, detail="Import not found.")
+
+    @app.post("/imports/{import_id}/cancel")
+    def cancel_import_job(
+        import_id: str,
+        request: Request,
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+    ) -> dict[str, object]:
+        _require_auth(config, token)
+        actor = actor_fingerprint(token, request.client.host if request.client else None)
+        updated = cancel_job(index, import_id)
+        record_audit_event(
+            index,
+            action="import_cancel",
+            actor=actor,
+            resource=import_id,
+            status="success" if updated else "404",
+        )
+        if updated is None:
+            rec = get_import(index, import_id)
+            if rec is None:
+                raise HTTPException(status_code=404, detail="Import not found.")
+            return {"job_id": import_id, "status": "cancelled"}
+        return updated
 
     @app.patch("/imports/{import_id}")
     async def patch_import(
         import_id: str,
-        request: ImportCorrectionRequest,
+        request_body: ImportCorrectionRequest,
+        request: Request,
         token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
     ) -> dict[str, object]:
-        """Apply a manual correction: re-validate, regenerate both reports, re-upload."""
         _require_auth(config, token)
-        corrections = request.model_dump(exclude_none=True)
+        actor = actor_fingerprint(token, request.client.host if request.client else None)
+        corrections = request_body.model_dump(exclude_none=True)
         try:
-            return await asyncio.to_thread(correct_import, index, config, import_id, corrections)
+            res = await asyncio.to_thread(correct_import, index, config, import_id, corrections)
+            record_audit_event(index, action="import_correct", actor=actor, resource=import_id, status="success")
+            return res
         except KeyError as exc:
+            record_audit_event(index, action="import_correct", actor=actor, resource=import_id, status="404")
             raise HTTPException(status_code=404, detail="Import not found.") from exc
         except ValueError as exc:
+            record_audit_event(index, action="import_correct", actor=actor, resource=import_id, status="400")
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.post("/imports/{import_id}/retry-upload")
     async def retry_import_upload(
         import_id: str,
+        request: Request,
         token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
     ) -> dict[str, object]:
         _require_auth(config, token)
+        actor = actor_fingerprint(token, request.client.host if request.client else None)
         try:
-            return await asyncio.to_thread(retry_upload, index, config, import_id)
+            res = await asyncio.to_thread(retry_upload, index, config, import_id)
+            record_audit_event(index, action="import_retry_upload", actor=actor, resource=import_id, status="success")
+            return res
         except KeyError as exc:
+            record_audit_event(index, action="import_retry_upload", actor=actor, resource=import_id, status="404")
             raise HTTPException(status_code=404, detail="Import not found.") from exc
+
+    # ---------------------------------------------------------------------------
+    # Maintenance & Audit Endpoints
+    # ---------------------------------------------------------------------------
+
+    @app.post("/maintenance/cleanup")
+    async def maintenance_cleanup(
+        request: Request,
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+    ) -> dict[str, object]:
+        _require_auth(config, token)
+        actor = actor_fingerprint(token, request.client.host if request.client else None)
+        res = await asyncio.to_thread(run_retention_cleanup, config, index)
+        record_audit_event(index, action="maintenance_cleanup", actor=actor, status="success", details=res)
+        return {"status": "ok", "cleanup": res}
+
+    @app.get("/audit")
+    def list_audit_events(
+        limit: int = Query(50, ge=1, le=200),
+        offset: int = Query(0, ge=0, le=1_000_000),
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+    ) -> dict[str, object]:
+        _require_auth(config, token)
+        logs = get_audit_logs(index, limit=limit, offset=offset)
+        return {
+            "count": len(logs),
+            "offset": offset,
+            "limit": limit,
+            "results": logs,
+        }
 
     return app
 
 
 def _safe_relative_path(filename: str) -> Path:
-    """Turn an upload filename into a staging-relative path (no escapes)."""
     parts = [part for part in Path(filename.replace("\\", "/")).parts if part not in ("", ".", "..", "/")]
     cleaned = [re.sub(r"[^\w\-+. ]", "_", part).strip(" .") or "file" for part in parts]
     return Path(*cleaned) if cleaned else Path("file")

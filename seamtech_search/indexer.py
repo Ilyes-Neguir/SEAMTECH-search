@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import logging
+import os
 import re
 import sqlite3
-import os
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator
 
 from .models import Document
+
+logger = logging.getLogger("seamtech_search.indexer")
 
 
 SQLITE_SCHEMA = """
@@ -56,6 +59,30 @@ CREATE TABLE IF NOT EXISTS imports (
     payload TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS import_jobs (
+    id TEXT PRIMARY KEY,
+    status TEXT NOT NULL,
+    progress INTEGER NOT NULL DEFAULT 0,
+    stage TEXT NOT NULL DEFAULT '',
+    source_path TEXT NOT NULL DEFAULT '',
+    error TEXT,
+    result TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS audit_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TEXT NOT NULL,
+    actor TEXT NOT NULL,
+    action TEXT NOT NULL,
+    resource TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'success',
+    details TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp ON audit_log(timestamp);
 """
 
 POSTGRES_SCHEMA = """
@@ -99,6 +126,30 @@ CREATE TABLE IF NOT EXISTS imports (
     payload JSONB NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE TABLE IF NOT EXISTS import_jobs (
+    id TEXT PRIMARY KEY,
+    status TEXT NOT NULL,
+    progress INTEGER NOT NULL DEFAULT 0,
+    stage TEXT NOT NULL DEFAULT '',
+    source_path TEXT NOT NULL DEFAULT '',
+    error TEXT,
+    result JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS audit_log (
+    id BIGSERIAL PRIMARY KEY,
+    timestamp TIMESTAMPTZ NOT NULL DEFAULT now(),
+    actor TEXT NOT NULL,
+    action TEXT NOT NULL,
+    resource TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'success',
+    details JSONB NOT NULL DEFAULT '{}'::jsonb
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp ON audit_log(timestamp);
 """
 
 
@@ -114,24 +165,99 @@ class ScanAlreadyRunningError(RuntimeError):
 
 
 class SearchIndex:
-    def __init__(self, database_path: Path, database_url: str | None = None):
-        self.database_path = database_path
+    def __init__(
+        self,
+        database_path: Path,
+        database_url: str | None = None,
+        pool_min: int = 1,
+        pool_max: int = 10,
+        pool_timeout: float = 30.0,
+        statement_timeout_ms: int = 5000,
+    ) -> None:
+        self.database_path = Path(database_path)
         self.database_url = database_url
+        self.pool_min = pool_min
+        self.pool_max = pool_max
+        self.pool_timeout = pool_timeout
+        self.statement_timeout_ms = statement_timeout_ms
+        self._pool: Any = None
         if not self.is_postgres:
             self.database_path.parent.mkdir(parents=True, exist_ok=True)
+        else:
+            self._init_pool()
 
     @property
     def is_postgres(self) -> bool:
         return bool(self.database_url)
 
-    def connect(self) -> Any:
-        if self.database_url:
-            import psycopg2
+    def _init_pool(self) -> None:
+        if self.is_postgres and self.database_url:
+            try:
+                import psycopg2.pool
 
-            return psycopg2.connect(self.database_url, connect_timeout=10)
+                options = f"-c statement_timeout={self.statement_timeout_ms}"
+                self._pool = psycopg2.pool.ThreadedConnectionPool(
+                    minconn=self.pool_min,
+                    maxconn=self.pool_max,
+                    dsn=self.database_url,
+                    options=options,
+                )
+            except Exception as exc:
+                logger.warning("Could not initialize psycopg2 ThreadedConnectionPool: %s", exc)
+                self._pool = None
+
+    @contextmanager
+    def connect(self) -> Iterator[Any]:
+        if self.is_postgres:
+            if self._pool is None and self.database_url:
+                self._init_pool()
+            if self._pool is not None:
+                conn = self._pool.getconn()
+                try:
+                    yield conn
+                    conn.commit()
+                except Exception:
+                    conn.rollback()
+                    raise
+                finally:
+                    self._pool.putconn(conn)
+                return
+            else:
+                import psycopg2
+
+                conn = psycopg2.connect(
+                    self.database_url,
+                    connect_timeout=10,
+                    options=f"-c statement_timeout={self.statement_timeout_ms}",
+                )
+                try:
+                    yield conn
+                    conn.commit()
+                except Exception:
+                    conn.rollback()
+                    raise
+                finally:
+                    conn.close()
+                return
+
         connection = sqlite3.connect(self.database_path, timeout=30)
         connection.row_factory = sqlite3.Row
-        return connection
+        try:
+            yield connection
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+    def close(self) -> None:
+        if self._pool is not None:
+            try:
+                self._pool.closeall()
+            except Exception:
+                pass
+            self._pool = None
 
     def initialize(self, rebuild: bool = False) -> None:
         with self.connect() as connection:
@@ -142,15 +268,33 @@ class SearchIndex:
                     cursor.execute(POSTGRES_SCHEMA)
                     cursor.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS content TEXT NOT NULL DEFAULT ''")
                     cursor.execute(
-                        "ALTER TABLE documents ADD COLUMN IF NOT EXISTS search_vector TSVECTOR NOT NULL DEFAULT ''::tsvector"
+                        "ALTER TABLE documents ADD COLUMN IF NOT EXISTS "
+                        "search_vector TSVECTOR NOT NULL DEFAULT ''::tsvector"
                     )
-                    cursor.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS extractor_version INTEGER NOT NULL DEFAULT 0")
-                    cursor.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS content_hash TEXT NOT NULL DEFAULT ''")
-                    cursor.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS extraction_status TEXT NOT NULL DEFAULT 'extracted'")
-                    cursor.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS extraction_detail TEXT NOT NULL DEFAULT ''")
-                    cursor.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'storage_direct'")
                     cursor.execute(
-                        "UPDATE documents SET category = CASE WHEN is_dir = false THEN CASE WHEN lower(extension) = '.pdf' THEN 'analyzed' ELSE 'storage_direct' END ELSE 'folder' END"
+                        "ALTER TABLE documents ADD COLUMN IF NOT EXISTS extractor_version INTEGER NOT NULL DEFAULT 0"
+                    )
+                    cursor.execute(
+                        "ALTER TABLE documents ADD COLUMN IF NOT EXISTS content_hash TEXT NOT NULL DEFAULT ''"
+                    )
+                    cursor.execute(
+                        "ALTER TABLE documents ADD COLUMN IF NOT EXISTS "
+                        "extraction_status TEXT NOT NULL DEFAULT 'extracted'"
+                    )
+                    cursor.execute(
+                        "ALTER TABLE documents ADD COLUMN IF NOT EXISTS extraction_detail TEXT NOT NULL DEFAULT ''"
+                    )
+                    cursor.execute(
+                        "ALTER TABLE documents ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'storage_direct'"
+                    )
+                    cursor.execute(
+                        """
+                        UPDATE documents SET category = CASE
+                            WHEN is_dir = false THEN
+                                CASE WHEN lower(extension) = '.pdf' THEN 'analyzed' ELSE 'storage_direct' END
+                            ELSE 'folder'
+                        END
+                        """
                     )
                     cursor.execute(
                         """
@@ -162,7 +306,9 @@ class SearchIndex:
                         WHERE search_vector = ''::tsvector
                         """
                     )
-                    cursor.execute("CREATE INDEX IF NOT EXISTS idx_documents_search_vector ON documents USING GIN(search_vector)")
+                    cursor.execute(
+                        "CREATE INDEX IF NOT EXISTS idx_documents_search_vector ON documents USING GIN(search_vector)"
+                    )
                     cursor.execute("CREATE INDEX IF NOT EXISTS idx_documents_path_key ON documents(path_key)")
                     cursor.execute(
                         """
@@ -172,8 +318,6 @@ class SearchIndex:
                     )
                     payload_type = (cursor.fetchone() or ("jsonb",))[0]
                     if payload_type == "text":
-                        # Legacy installs stored the import payload as TEXT;
-                        # migrate in place to JSONB (all rows are JSON docs).
                         cursor.execute("ALTER TABLE imports ALTER COLUMN payload TYPE JSONB USING payload::jsonb")
             else:
                 if rebuild:
@@ -255,13 +399,8 @@ class SearchIndex:
 
         backup_path = self.database_path.with_suffix(self.database_path.suffix + ".scan-backup")
         backup_path.unlink(missing_ok=True)
-        source = sqlite3.connect(self.database_path)
-        backup = sqlite3.connect(backup_path)
-        try:
-            source.backup(backup)
-        finally:
-            backup.close()
-            source.close()
+        with sqlite3.connect(self.database_path) as source, sqlite3.connect(backup_path) as target:
+            source.backup(target)
         try:
             yield
         except Exception:
@@ -277,7 +416,7 @@ class SearchIndex:
             with self.connect() as connection:
                 connection.execute("DELETE FROM scan_runs")
                 connection.executemany(
-                    "INSERT INTO scan_runs (id, started_at, finished_at, status, scanned, changed, removed, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO scan_runs VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                     [tuple(row) for row in scan_runs],
                 )
             raise
@@ -288,39 +427,82 @@ class SearchIndex:
         with self.connect() as connection:
             if self.is_postgres:
                 with connection.cursor() as cursor:
-                    cursor.execute("INSERT INTO scan_runs (started_at, status) VALUES (now(), 'running') RETURNING id")
+                    cursor.execute("INSERT INTO scan_runs (status) VALUES ('running') RETURNING id")
                     return int(cursor.fetchone()[0])
             cursor = connection.execute(
                 "INSERT INTO scan_runs (started_at, status) VALUES (datetime('now'), 'running')"
             )
             return int(cursor.lastrowid)
 
-    def finish_scan(self, scan_id: int, status: str, scanned: int, changed: int, removed: int, error: str | None = None) -> None:
+    def finish_scan(
+        self, scan_id: int, status: str, scanned: int, changed: int, removed: int, error: str | None = None
+    ) -> None:
         if status not in {"completed", "failed"}:
             raise ValueError("scan status must be completed or failed")
         with self.connect() as connection:
             if self.is_postgres:
                 with connection.cursor() as cursor:
                     cursor.execute(
-                        "UPDATE scan_runs SET finished_at=now(), status=%s, scanned=%s, changed=%s, removed=%s, error=%s WHERE id=%s",
+                        """
+                        UPDATE scan_runs
+                        SET finished_at = now(), status = %s, scanned = %s, changed = %s, removed = %s, error = %s
+                        WHERE id = %s
+                        """,
                         (status, scanned, changed, removed, error, scan_id),
                     )
-            else:
-                connection.execute(
-                    "UPDATE scan_runs SET finished_at=datetime('now'), status=?, scanned=?, changed=?, removed=?, error=? WHERE id=?",
-                    (status, scanned, changed, removed, error, scan_id),
-                )
+                return
+            connection.execute(
+                """
+                UPDATE scan_runs
+                SET finished_at = datetime('now'), status = ?, scanned = ?, changed = ?, removed = ?, error = ?
+                WHERE id = ?
+                """,
+                (status, scanned, changed, removed, error, scan_id),
+            )
 
     def latest_scan(self) -> dict[str, Any] | None:
         with self.connect() as connection:
             if self.is_postgres:
                 import psycopg2.extras
+
                 with connection.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
                     cursor.execute("SELECT * FROM scan_runs ORDER BY id DESC LIMIT 1")
                     row = cursor.fetchone()
-                    return dict(row) if row else None
+                    if not row:
+                        return None
+                    return {
+                        "id": row["id"],
+                        "started_at": row["started_at"].isoformat() if row["started_at"] else None,
+                        "finished_at": row["finished_at"].isoformat() if row["finished_at"] else None,
+                        "status": row["status"],
+                        "scanned": row["scanned"],
+                        "changed": row["changed"],
+                        "removed": row["removed"],
+                        "error": row["error"],
+                    }
+
             row = connection.execute("SELECT * FROM scan_runs ORDER BY id DESC LIMIT 1").fetchone()
-            return dict(row) if row else None
+            if not row:
+                return None
+            return dict(row)
+
+    def stored_manifest(self) -> dict[str, tuple[int, float, int]]:
+        """Return a mapping of path_key -> (size, modified_at, extractor_version)."""
+        if self.is_postgres:
+            with self.connect() as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        "SELECT path_key, size, modified_at, extractor_version FROM documents WHERE is_dir = false"
+                    )
+                    return {row[0]: (int(row[1]), float(row[2]), int(row[3])) for row in cursor.fetchall()}
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT path_key, size, modified_at, extractor_version FROM documents WHERE is_dir = 0"
+            ).fetchall()
+            return {
+                row["path_key"]: (int(row["size"]), float(row["modified_at"]), int(row["extractor_version"]))
+                for row in rows
+            }
 
     def _ensure_documents_columns(self, connection: sqlite3.Connection) -> None:
         columns = {row["name"] for row in connection.execute("PRAGMA table_info(documents)").fetchall()}
@@ -334,60 +516,33 @@ class SearchIndex:
             connection.execute("ALTER TABLE documents ADD COLUMN extraction_detail TEXT NOT NULL DEFAULT ''")
         if "category" not in columns:
             connection.execute("ALTER TABLE documents ADD COLUMN category TEXT NOT NULL DEFAULT 'storage_direct'")
-        connection.execute(
-            "UPDATE documents SET category = CASE WHEN is_dir = 0 THEN CASE WHEN lower(extension) = '.pdf' THEN 'analyzed' ELSE 'storage_direct' END ELSE 'folder' END"
-        )
-
-    def existing_metadata(self) -> dict[str, tuple[int, float, int]]:
-        """path_key -> (size, modified_at, extractor_version) for every indexed file.
-
-        Used before a scan starts so the crawler can skip re-extracting
-        files whose metadata and extractor version haven't changed.
-        """
-        if self.is_postgres:
-            with self.connect() as connection:
-                with connection.cursor() as cursor:
-                    cursor.execute("SELECT path_key, size, modified_at, extractor_version FROM documents WHERE is_dir = false")
-                    return {row[0]: (int(row[1]), float(row[2]), int(row[3])) for row in cursor.fetchall()}
-        with self.connect() as connection:
-            rows = connection.execute(
-                "SELECT path_key, size, modified_at, extractor_version FROM documents WHERE is_dir = 0"
-            ).fetchall()
-            return {row["path_key"]: (int(row["size"]), float(row["modified_at"]), int(row["extractor_version"])) for row in rows}
-
-    def _ensure_fts_schema(self, connection: sqlite3.Connection) -> None:
-        row = connection.execute(
-            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'documents_fts'"
-        ).fetchone()
-        sql = row["sql"] if row else ""
-        if "content='documents'" not in sql:
-            return
-
-        connection.execute("DROP TABLE documents_fts")
-        connection.execute(
-            """
-            CREATE VIRTUAL TABLE documents_fts USING fts5(
-                name,
-                path,
-                extension,
-                content
-            )
-            """
-        )
-        rows = connection.execute(
-            """
-            SELECT id, name, path, extension
-            FROM documents
-            ORDER BY id
-            """
-        ).fetchall()
-        for row in rows:
             connection.execute(
                 """
+                UPDATE documents SET category = CASE
+                    WHEN is_dir = 0 THEN
+                        CASE WHEN lower(extension) = '.pdf' THEN 'analyzed' ELSE 'storage_direct' END
+                    ELSE 'folder'
+                END
+                """
+            )
+
+    def _ensure_fts_schema(self, connection: sqlite3.Connection) -> None:
+        schema = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'documents_fts'"
+        ).fetchone()
+        if schema and "content" not in schema[0]:
+            connection.executescript(
+                """
+                DROP TABLE documents_fts;
+                CREATE VIRTUAL TABLE documents_fts USING fts5(
+                    name,
+                    path,
+                    extension,
+                    content
+                );
                 INSERT INTO documents_fts(rowid, name, path, extension, content)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (row["id"], row["name"], row["path"], row["extension"], ""),
+                SELECT id, name, path, extension, '' FROM documents;
+                """
             )
 
     def upsert_document(self, document: Document) -> bool:
@@ -506,15 +661,12 @@ class SearchIndex:
                         extraction_status = EXCLUDED.extraction_status,
                         extraction_detail = EXCLUDED.extraction_detail,
                         category = EXCLUDED.category
-                    WHERE documents.size <> EXCLUDED.size
-                       OR documents.modified_at <> EXCLUDED.modified_at
-                       OR documents.path <> EXCLUDED.path
-                       OR documents.extractor_version <> EXCLUDED.extractor_version
                     """,
                     values,
                     template=(
                         "(%s, %s, %s, %s, %s, %s, %s, %s, %s, "
-                        "to_tsvector('simple', coalesce(%s, '')), %s, %s, %s, %s, %s)"
+                        "to_tsvector('simple', concat_ws(E'\\n', %s, %s, %s, %s)), "
+                        "%s, %s, %s, %s, %s)"
                     ),
                 )
                 return cursor.rowcount
@@ -625,7 +777,7 @@ class SearchIndex:
                         d.category,
                         ts_headline(
                             'simple',
-                            concat_ws(E'\n', d.name, d.path, d.extension, d.content),
+                            concat_ws(E'\\n', d.name, d.path, d.extension, d.content),
                             search.query,
                             'StartSel=<mark>, StopSel=</mark>, MaxWords=24, MinWords=8, ShortWord=2'
                         ) AS snippet,

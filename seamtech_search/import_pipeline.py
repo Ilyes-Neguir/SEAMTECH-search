@@ -1,32 +1,23 @@
-"""Reference-folder import workflow.
+"""Reference-folder import workflow with PDF and Excel twin analysis.
 
-Two-phase design:
-
+Features:
 1. **Scan** (:func:`scan_folder`) — walk a folder, classify every PDF with the
-   shared fixed-layout anchors and return the technical-PDF *candidates*
-   without writing anything to the index.
-2. **Confirm** (:func:`import_folder` with ``selected_pdf``) — extract the
-   chosen PDF, generate PDF + Word reports, index the folder and upload the
-   three files (source PDF, PDF report, Word report) to OneDrive.
-
-:func:`import_folder` without ``selected_pdf`` keeps the legacy one-shot
-behaviour (first deterministic candidate wins) so existing callers and the
-``POST /imports`` endpoint keep working; the candidates are still included
-in the result so the UI can offer a choice retroactively.
+   shared fixed-layout anchors and discover associated Excel sheets (.xlsx/.xls).
+2. **Confirm** (:func:`import_folder` with ``selected_pdf`` & optional ``selected_excel``) —
+   extract technical PDF, analyze Excel sheet/BOM, generate combined PDF + Word reports,
+   index everything, and upload all files (PDF source, Excel source, PDF report, Word report)
+   to OneDrive.
 """
 
 from __future__ import annotations
 
 import json
-import os
+import logging
 import re
-import time
-import urllib.error
-import urllib.request
 import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
@@ -34,13 +25,20 @@ from .anchors import TECHNICAL_ANCHORS, classify_pdf_text, matched_anchors
 from .config import AppConfig
 from .extractors import extract_file
 from .indexer import SearchIndex
+from .jobs import ImportCancelledError
 from .models import Document
+from .onedrive import upload_to_onedrive
+from .retention import ensure_free_space
+from .storage import upload_artifacts_to_storage
+
+logger = logging.getLogger("seamtech_search.import_pipeline")
 
 __all__ = [
     "TECHNICAL_ANCHORS",
     "classify_pdf_text",
     "classify_path",
     "extract_structured_pdf",
+    "extract_excel_summary",
     "generate_report",
     "generate_docx_report",
     "import_folder",
@@ -53,6 +51,8 @@ __all__ = [
     "staging_root",
     "normalize_unit_to_mm",
     "Dimensions",
+    "ExcelSheetSummary",
+    "ExcelSummary",
     "ExtractedData",
     "ImportCandidate",
     "ImportFile",
@@ -60,6 +60,7 @@ __all__ = [
     "FIELD_PATTERNS",
     "DIMENSION_PATTERN",
     "UNIT_TO_MM",
+    "ImportCancelledError",
 ]
 
 
@@ -83,16 +84,51 @@ def normalize_unit_to_mm(value: float | None, unit: str | None) -> float | None:
 
 class Dimensions(BaseModel):
     model_config = ConfigDict(extra="ignore")
-    # Raw values exactly as printed on the sheet (backward compatible).
     length: float | None = None
     width: float | None = None
     height: float | None = None
     unit: str | None = None
-    # Normalized values, always in millimetres when the unit is known.
     length_mm: float | None = None
     width_mm: float | None = None
     height_mm: float | None = None
     unit_normalized: str | None = None
+
+
+class ExcelSheetSummary(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    sheet_name: str
+    row_count: int
+    column_count: int
+    headers: list[str] = Field(default_factory=list)
+    sample_rows: list[list[str]] = Field(default_factory=list)
+    metrics: dict[str, str] = Field(default_factory=dict)
+
+
+class ExcelSummary(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    filename: str
+    path: str
+    sheets: list[ExcelSheetSummary] = Field(default_factory=list)
+    total_sheets: int = 0
+    total_rows: int = 0
+    sheet_names: list[str] = Field(default_factory=list)
+    detected_reference: str | None = None
+    detected_material: str | None = None
+    detected_quantity: int | None = None
+    summary_text: str = ""
+
+
+class AnalyzedSheet(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    filename: str
+    path: str
+    reference: str | None = None
+    material: str | None = None
+    dimensions: Dimensions = Field(default_factory=Dimensions)
+    quantity: int | None = None
+    description: str | None = None
+    extraction_status: str = "success"
+    confidence: float = 0.0
 
 
 class ExtractedData(BaseModel):
@@ -106,6 +142,8 @@ class ExtractedData(BaseModel):
     extraction_status: str = "failed"
     confidence: float = 0.0
     warnings: list[str] = Field(default_factory=list)
+    excel_summary: ExcelSummary | None = None
+    additional_sheets: list[AnalyzedSheet] = Field(default_factory=list)
 
     @field_validator("confidence")
     @classmethod
@@ -152,40 +190,68 @@ class ImportResult:
     files: list[ImportFile]
     candidates: list[dict[str, Any]] = field(default_factory=list)
     report_docx_path: str | None = None
+    excel_file: str | None = None
+    excel_summary: dict[str, Any] | None = None
+    excel_candidates: list[dict[str, Any]] = field(default_factory=list)
+    analyzed_items: list[dict[str, Any]] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
-# Fixed-layout rules
+# Fixed-layout rules & Text/Excel Extractors
 # ---------------------------------------------------------------------------
 
 FIELD_PATTERNS: dict[str, tuple[str, ...]] = {
-    "reference": (r"reference\s*[:\-]?\s*([^\n]+)", r"référence\s*[:\-]?\s*([^\n]+)", r"(?:fichier|commande)\s+([A-Z0-9][A-Z0-9_-]+)"),
-    "material": (r"material\s*[:\-]?\s*([^\n]+)", r"mati(?:è|e)re\s*[:\-]?\s*([^\n]+)", r"matériau(?:x)?\s*[:\-]?\s*([^\n]+)", r"tissu\(s\)\s*:\s*([^\n]+)"),
-    "quantity": (r"quantity\s*[:\-]?\s*(\d+)", r"quantit(?:y|é)\s*[:\-]?\s*(\d+)"),
-    # ``\s`` includes newlines. Restrict the separator after a label to
-    # horizontal whitespace so a bare header cannot capture the next field.
-    "description": (r"description[^\S\r\n]*[:\-]?[^\S\r\n]*([^\n]+)", r"fiche de fabrication[^\S\r\n]*[\"']?([^\n\"']+)"),
+    "reference": (
+        r"reference\s*[:\-]?\s*([^\n]+)",
+        r"référence\s*[:\-]?\s*([^\n]+)",
+        r"(?:fichier|commande)\s+([A-Z0-9][A-Z0-9_-]+)",
+    ),
+    "material": (
+        r"material\s*[:\-]?\s*([^\n]+)",
+        r"mati(?:è|e)re\s*[:\-]?\s*([^\n]+)",
+        r"matériau(?:x)?\s*[:\-]?\s*([^\n]+)",
+        r"tissu\(s\)\s*:\s*([^\n]+)",
+    ),
+    "quantity": (
+        r"quantity\s*[:\-]?\s*(\d+)",
+        r"quantit(?:y|é)\s*[:\-]?\s*(\d+)",
+    ),
+    "description": (
+        r"description[^\S\r\n]*[:\-]?[^\S\r\n]*([^\n]+)",
+        r"fiche de fabrication[^\S\r\n]*[\"']?([^\n\"']+)",
+    ),
 }
-DIMENSION_PATTERN = re.compile(r"(\d+(?:[.,]\d+)?)\s*[x×]\s*(\d+(?:[.,]\d+)?)(?:\s*[x×]\s*(\d+(?:[.,]\d+)?))?\s*(mm|cm|m)?", re.I)
-# Labeled fallback for sheets that print dimensions as discrete fields
-# ("Longueur: 1200 mm / Largeur: 800 mm") instead of "1200 x 800 mm".
+DIMENSION_PATTERN = re.compile(
+    r"(\d+(?:[.,]\d+)?)\s*[x×]\s*(\d+(?:[.,]\d+)?)(?:\s*[x×]\s*(\d+(?:[.,]\d+)?))?\s*(mm|cm|m)?", re.I
+)
 LABELED_DIMENSION_PATTERNS: dict[str, tuple[str, ...]] = {
-    "length": (r"longueur\s*[:\-]?\s*(\d+(?:[.,]\d+)?)\s*(mm|cm|m)?", r"length\s*[:\-]?\s*(\d+(?:[.,]\d+)?)\s*(mm|cm|m)?"),
-    "width": (r"largeur\s*[:\-]?\s*(\d+(?:[.,]\d+)?)\s*(mm|cm|m)?", r"width\s*[:\-]?\s*(\d+(?:[.,]\d+)?)\s*(mm|cm|m)?"),
-    "height": (r"hauteur\s*[:\-]?\s*(\d+(?:[.,]\d+)?)\s*(mm|cm|m)?", r"height\s*[:\-]?\s*(\d+(?:[.,]\d+)?)\s*(mm|cm|m)?"),
+    "length": (
+        r"longueur\s*[:\-]?\s*(\d+(?:[.,]\d+)?)\s*(mm|cm|m)?",
+        r"length\s*[:\-]?\s*(\d+(?:[.,]\d+)?)\s*(mm|cm|m)?",
+    ),
+    "width": (
+        r"largeur\s*[:\-]?\s*(\d+(?:[.,]\d+)?)\s*(mm|cm|m)?",
+        r"width\s*[:\-]?\s*(\d+(?:[.,]\d+)?)\s*(mm|cm|m)?",
+    ),
+    "height": (
+        r"hauteur\s*[:\-]?\s*(\d+(?:[.,]\d+)?)\s*(mm|cm|m)?",
+        r"height\s*[:\-]?\s*(\d+(?:[.,]\d+)?)\s*(mm|cm|m)?",
+    ),
 }
 
 
 def classify_path(path: Path, text: str = "") -> str:
     if path.is_dir():
         return "folder"
-    if path.suffix.lower() != ".pdf":
-        return "storage_direct"
-    return classify_pdf_text(text) if text else "pdf_candidate"
+    ext = path.suffix.lower()
+    if ext == ".pdf":
+        return classify_pdf_text(text) if text else "pdf_candidate"
+    if ext in {".xlsx", ".xls"}:
+        return "excel_sheet"
+    return "storage_direct"
 
 
 def _extract_dimensions(text: str) -> dict[str, Any] | None:
-    """Extract raw dimensions dict, or None when nothing matches."""
     dimension = DIMENSION_PATTERN.search(text)
     if dimension:
         unit = (dimension.group(4) or "mm").lower()
@@ -199,7 +265,11 @@ def _extract_dimensions(text: str) -> dict[str, Any] | None:
     if drawing:
         measurements = re.findall(r"\d+(?:[.,]\d+)?", drawing.group(1))
         if len(measurements) >= 2:
-            return {"length": float(measurements[0].replace(",", ".")), "width": float(measurements[1].replace(",", ".")), "unit": "m"}
+            return {
+                "length": float(measurements[0].replace(",", ".")),
+                "width": float(measurements[1].replace(",", ".")),
+                "unit": "m",
+            }
     labeled: dict[str, Any] = {}
     for axis, patterns in LABELED_DIMENSION_PATTERNS.items():
         for pattern in patterns:
@@ -215,7 +285,6 @@ def _extract_dimensions(text: str) -> dict[str, Any] | None:
 
 
 def _with_normalized_units(raw: dict[str, Any]) -> dict[str, Any]:
-    """Add *_mm normalized values to a raw dimensions dict."""
     unit = raw.get("unit")
     enriched = dict(raw)
     for axis in ("length", "width", "height"):
@@ -238,16 +307,20 @@ def extract_structured_pdf(path: Path, config: AppConfig) -> ExtractedData:
         external_extractors=config.external_extractors,
     )
     if result.status != "extracted":
-        return ExtractedData(raw_text=result.text, extraction_status="failed", warnings=[result.detail or result.status])
+        return ExtractedData(
+            raw_text=result.text,
+            extraction_status="failed",
+            warnings=[result.detail or result.status],
+        )
 
     text = "\n".join(line.strip() for line in result.text.splitlines() if line.strip())
     values: dict[str, Any] = {"raw_text": text, "extraction_status": "partial", "confidence": 0.0}
     matched = 0
-    for field, patterns in FIELD_PATTERNS.items():
+    for field_name, patterns in FIELD_PATTERNS.items():
         for pattern in patterns:
             match = re.search(pattern, text, re.I)
             if match:
-                values[field] = match.group(1).strip()
+                values[field_name] = match.group(1).strip()
                 matched += 1
                 break
     raw_dimensions = _extract_dimensions(text)
@@ -255,7 +328,10 @@ def extract_structured_pdf(path: Path, config: AppConfig) -> ExtractedData:
         values["dimensions"] = _with_normalized_units(raw_dimensions)
         matched += 1
     if "quantity" in values:
-        values["quantity"] = int(values["quantity"])
+        try:
+            values["quantity"] = int(values["quantity"])
+        except ValueError:
+            pass
     values["confidence"] = matched / (len(FIELD_PATTERNS) + 1)
     values["extraction_status"] = "success" if matched == len(FIELD_PATTERNS) + 1 else "partial"
     if not text:
@@ -269,26 +345,130 @@ def extract_structured_pdf(path: Path, config: AppConfig) -> ExtractedData:
         return ExtractedData(raw_text=text, extraction_status="failed", warnings=[str(exc)])
 
 
-# ---------------------------------------------------------------------------
-# Reports (PDF + Word)
-# ---------------------------------------------------------------------------
-
-
-def generate_report(data: ExtractedData, output_path: Path) -> Path:
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+def extract_excel_summary(path: Path) -> ExcelSummary:
+    """Extract structured sheet summaries, tables, and metadata from an Excel workbook (.xlsx/.xls)."""
     try:
+        import openpyxl
+
+        wb = openpyxl.load_workbook(str(path), read_only=True, data_only=True)
+        sheets: list[ExcelSheetSummary] = []
+        sheet_names: list[str] = []
+        total_rows = 0
+        detected_ref: str | None = None
+        detected_mat: str | None = None
+        detected_qty: int | None = None
+
+        for sheet_name in wb.sheetnames:
+            ws = wb[sheet_name]
+            rows_data: list[list[str]] = []
+            for row in ws.iter_rows(values_only=True):
+                cleaned_row = [str(cell).strip() if cell is not None else "" for cell in row]
+                if any(cleaned_row):
+                    rows_data.append(cleaned_row)
+
+            if not rows_data:
+                continue
+
+            sheet_names.append(sheet_name)
+            total_rows += len(rows_data)
+            headers = rows_data[0]
+            col_count = len(headers)
+            sample_rows = rows_data[1:20]
+
+            metrics: dict[str, str] = {
+                "Total Lignes": str(len(rows_data)),
+                "Colonnes": str(col_count),
+            }
+
+            for row in rows_data:
+                row_str = " ".join(row)
+                if not detected_ref:
+                    ref_m = re.search(r"(?:réf|ref|reference|commande)\s*[:\-]?\s*([A-Z0-9_\-]+)", row_str, re.I)
+                    if ref_m:
+                        detected_ref = ref_m.group(1).strip()
+                if not detected_mat:
+                    mat_m = re.search(r"(?:tissu|mati[èe]re|material)\s*[:\-]?\s*([^\n,;]+)", row_str, re.I)
+                    if mat_m:
+                        detected_mat = mat_m.group(1).strip()
+                if detected_qty is None:
+                    qty_m = re.search(r"quantit[ée]\s*[:\-]?\s*(\d+)", row_str, re.I)
+                    if qty_m:
+                        try:
+                            detected_qty = int(qty_m.group(1))
+                        except ValueError:
+                            pass
+
+            sheets.append(
+                ExcelSheetSummary(
+                    sheet_name=sheet_name,
+                    row_count=len(rows_data),
+                    column_count=col_count,
+                    headers=headers,
+                    sample_rows=sample_rows,
+                    metrics=metrics,
+                )
+            )
+        wb.close()
+
+        sheets_desc = ", ".join(f"{s.sheet_name} ({s.row_count} lig.)" for s in sheets)
+        summary_text = f"{len(sheets)} feuille(s): {sheets_desc}" if sheets else "Feuille vide"
+
+        return ExcelSummary(
+            filename=path.name,
+            path=str(path),
+            sheets=sheets,
+            sheet_names=sheet_names,
+            total_sheets=len(sheets),
+            total_rows=total_rows,
+            detected_reference=detected_ref,
+            detected_material=detected_mat,
+            detected_quantity=detected_qty,
+            summary_text=summary_text,
+        )
+    except Exception as exc:
+        logger.warning("Could not extract Excel file %s: %s", path, exc)
+        return ExcelSummary(
+            filename=path.name,
+            path=str(path),
+            summary_text=f"Analyse Excel indisponible: {exc}",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Combined Reports (PDF + Word) with Excel Resume
+# ---------------------------------------------------------------------------
+
+
+def generate_report(
+    data: ExtractedData,
+    output_path: Path,
+    excel_summary: ExcelSummary | None = None,
+) -> Path:
+    """Generate comprehensive PDF report combining technical sheet and Excel summary."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    active_excel = excel_summary or data.excel_summary
+
+    try:
+        from reportlab.lib import colors
         from reportlab.lib.pagesizes import A4
         from reportlab.pdfgen import canvas
     except ImportError:
         output_path.with_suffix(".json").write_text(data.model_dump_json(indent=2), encoding="utf-8")
         return output_path.with_suffix(".json")
+
     pdf = canvas.Canvas(str(output_path), pagesize=A4)
-    _, height = A4
+    width, height = A4
+
+    # --- Page 1: Technical Sheet Data ---
     y = height - 60
     pdf.setTitle("SEAMTECH Technical Report")
     pdf.setFont("Helvetica-Bold", 18)
     pdf.drawString(50, y, "SEAMTECH Technical Report")
-    y -= 35
+    y -= 25
+    pdf.setFont("Helvetica-Oblique", 10)
+    pdf.drawString(50, y, "Fiche de Fabrication & Données de Coupe")
+
+    y -= 30
     pdf.setFont("Helvetica", 11)
     rows = [
         ("Reference", data.reference or "À vérifier"),
@@ -304,23 +484,111 @@ def generate_report(data: ExtractedData, output_path: Path) -> Path:
         pdf.drawString(50, y, label)
         pdf.setFont("Helvetica", 10)
         pdf.drawString(170, y, str(value)[:100])
-        y -= 22
+        y -= 20
+
     if data.warnings:
-        y -= 10
+        y -= 8
         pdf.setFont("Helvetica-Bold", 10)
         pdf.drawString(50, y, "Warnings")
-        y -= 18
+        y -= 16
         pdf.setFont("Helvetica", 9)
         for warning in data.warnings:
             pdf.drawString(60, y, warning[:110])
+            y -= 14
+
+    # If Excel summary exists, render Excel Resume section
+    if active_excel and active_excel.sheets:
+        y -= 15
+        pdf.setStrokeColor(colors.HexColor("#CBD5E1"))
+        pdf.line(50, y, width - 50, y)
+        y -= 20
+
+        pdf.setFont("Helvetica-Bold", 13)
+        pdf.drawString(50, y, f"Résumé Fichier Excel — {active_excel.filename}")
+        y -= 16
+        pdf.setFont("Helvetica", 9)
+        summary_line = (
+            f"Total: {active_excel.total_sheets} feuille(s), {active_excel.total_rows} lignes. "
+            f"{active_excel.summary_text}"
+        )
+        pdf.drawString(50, y, summary_line[:110])
+        y -= 20
+
+        # Draw first sheet table summary
+        for sheet in active_excel.sheets[:2]:
+            if y < 140:
+                pdf.showPage()
+                y = height - 60
+                pdf.setFont("Helvetica-Bold", 14)
+                pdf.drawString(50, y, f"Résumé Excel (suite) — {active_excel.filename}")
+                y -= 25
+
+            pdf.setFont("Helvetica-Bold", 10)
+            pdf.drawString(50, y, f"Feuille: {sheet.sheet_name} ({sheet.row_count} lignes)")
             y -= 16
+
+            # Render table header
+            pdf.setFont("Helvetica-Bold", 8)
+            col_x = 50
+            col_width = (width - 100) / max(1, min(6, len(sheet.headers)))
+            for h in sheet.headers[:6]:
+                pdf.drawString(col_x, y, str(h)[:20])
+                col_x += col_width
+            y -= 12
+
+            # Render rows
+            pdf.setFont("Helvetica", 8)
+            for r in sheet.sample_rows[:6]:
+                col_x = 50
+                for cell in r[:6]:
+                    pdf.drawString(col_x, y, str(cell)[:20])
+                    col_x += col_width
+                y -= 11
+                if y < 60:
+                    break
+            y -= 15
+
+    # If dossier contains additional technical sheets, render them
+    if data.additional_sheets:
+        if y < 140:
+            pdf.showPage()
+            y = height - 60
+            pdf.setFont("Helvetica-Bold", 13)
+            pdf.drawString(50, y, f"Autres Fiches Techniques du Dossier ({len(data.additional_sheets)})")
+            y -= 20
+        else:
+            y -= 15
+            pdf.setFont("Helvetica-Bold", 11)
+            pdf.drawString(50, y, f"Autres Fiches Techniques du Dossier ({len(data.additional_sheets)})")
+            y -= 16
+
+        for extra in data.additional_sheets:
+            dims_str = (
+                f"{extra.dimensions.length_mm}x{extra.dimensions.width_mm} mm"
+                if extra.dimensions.length_mm
+                else "N/A"
+            )
+            line = (
+                f"• {extra.filename}: Réf {extra.reference or 'N/A'} | Mat {extra.material or 'N/A'} | "
+                f"Dim {dims_str} | Qté {extra.quantity or 1}"
+            )
+            pdf.setFont("Helvetica", 8)
+            pdf.drawString(55, y, line[:110])
+            y -= 12
+
     pdf.save()
     return output_path
 
 
-def generate_docx_report(data: ExtractedData, output_path: Path) -> Path:
-    """Generate the Word twin of the PDF technical report."""
+def generate_docx_report(
+    data: ExtractedData,
+    output_path: Path,
+    excel_summary: ExcelSummary | None = None,
+) -> Path:
+    """Generate Word report combining PDF technical sheet data and Excel BOM summary."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    active_excel = excel_summary or data.excel_summary
+
     try:
         from docx import Document as DocxDocument
         from docx.shared import Pt
@@ -328,9 +596,12 @@ def generate_docx_report(data: ExtractedData, output_path: Path) -> Path:
         fallback = output_path.with_suffix(".json")
         fallback.write_text(data.model_dump_json(indent=2), encoding="utf-8")
         return fallback
+
     doc = DocxDocument()
     style = doc.styles["Normal"]
     style.font.size = Pt(11)
+
+    # 1. Technical Sheet Section
     doc.add_heading("SEAMTECH Technical Report", level=1)
     table = doc.add_table(rows=1, cols=2)
     table.style = "Light Grid Accent 1"
@@ -349,10 +620,59 @@ def generate_docx_report(data: ExtractedData, output_path: Path) -> Path:
         row = table.add_row().cells
         row[0].text = label
         row[1].text = str(value)
+
     if data.warnings:
         doc.add_heading("Warnings", level=2)
         for warning in data.warnings:
             doc.add_paragraph(warning, style="List Bullet")
+
+    # 2. Excel Resume Section
+    if active_excel and active_excel.sheets:
+        doc.add_heading(f"Résumé Fichier Excel — {active_excel.filename}", level=1)
+        doc.add_paragraph(
+            f"Fichier associé: {active_excel.filename} | Total: {active_excel.total_sheets} feuille(s), "
+            f"{active_excel.total_rows} lignes. {active_excel.summary_text}"
+        )
+
+        for sheet in active_excel.sheets:
+            doc.add_heading(f"Feuille: {sheet.sheet_name} ({sheet.row_count} lignes)", level=2)
+            if sheet.headers:
+                excel_table = doc.add_table(rows=1, cols=len(sheet.headers))
+                excel_table.style = "Table Grid"
+                hdr_cells = excel_table.rows[0].cells
+                for i, title in enumerate(sheet.headers):
+                    hdr_cells[i].text = str(title)
+
+                for r in sheet.sample_rows:
+                    row_cells = excel_table.add_row().cells
+                    for i in range(len(sheet.headers)):
+                        val = r[i] if i < len(r) else ""
+                        row_cells[i].text = str(val)
+
+    # 3. Multi-Sheet Technical Dossier Section
+    if data.additional_sheets:
+        doc.add_heading(f"Autres Fiches Techniques du Dossier ({len(data.additional_sheets)})", level=1)
+        extra_table = doc.add_table(rows=1, cols=5)
+        extra_table.style = "Table Grid"
+        hdr = extra_table.rows[0].cells
+        hdr[0].text = "Fichier"
+        hdr[1].text = "Référence"
+        hdr[2].text = "Matière"
+        hdr[3].text = "Dimensions"
+        hdr[4].text = "Quantité"
+        for extra in data.additional_sheets:
+            row = extra_table.add_row().cells
+            row[0].text = extra.filename
+            row[1].text = extra.reference or "À vérifier"
+            row[2].text = extra.material or "À vérifier"
+            dims_str = (
+                f"{extra.dimensions.length_mm} × {extra.dimensions.width_mm} mm"
+                if extra.dimensions.length_mm
+                else "À vérifier"
+            )
+            row[3].text = dims_str
+            row[4].text = str(extra.quantity or "1")
+
     doc.save(str(output_path))
     return output_path
 
@@ -377,17 +697,10 @@ def _compact(value: float) -> str:
 
 
 def staging_root(config: AppConfig) -> Path:
-    """Directory holding browser-uploaded folders staged for import."""
     return config.database_path.parent / "uploads"
 
 
 def _validated_source(source: Path, config: AppConfig) -> Path:
-    """Resolve *source* and ensure it is an allowed import directory.
-
-    Allowed locations are the configured ``root_paths`` (Windows shares) and
-    the server-side upload staging directory (browser DnD flow). Source files
-    are only ever read — never moved or modified.
-    """
     resolved = source.expanduser().resolve()
     if not resolved.exists() or not resolved.is_dir():
         raise ValueError("Import path must be an existing directory")
@@ -412,40 +725,52 @@ def _walk_files(source: Path) -> list[Path]:
 
 
 def scan_folder(source: Path, config: AppConfig) -> dict[str, Any]:
-    """Scan a folder and return technical-PDF candidates.
-
-    Pure read-only step: no indexing, no reports, no uploads. The caller
-    (UI) lets the user pick a candidate, then calls :func:`import_folder`
-    with ``selected_pdf``.
-    """
     resolved = _validated_source(source, config)
     candidates: list[dict[str, Any]] = []
+    excel_files: list[dict[str, Any]] = []
     files_detected = 0
+
     for path in _walk_files(resolved):
         files_detected += 1
-        if path.suffix.lower() != ".pdf":
-            continue
-        extracted = extract_structured_pdf(path, config)
-        anchors = matched_anchors(extracted.raw_text) if extracted.raw_text else []
-        if classify_pdf_text(extracted.raw_text) == "technical_pdf":
-            candidates.append(
+        ext = path.suffix.lower()
+        if ext == ".pdf":
+            extracted = extract_structured_pdf(path, config)
+            anchors = matched_anchors(extracted.raw_text) if extracted.raw_text else []
+            if classify_pdf_text(extracted.raw_text) == "technical_pdf":
+                candidates.append(
+                    {
+                        "path": str(path),
+                        "name": path.name,
+                        "size": path.stat().st_size,
+                        "anchors_matched": anchors,
+                        "anchor_count": len(anchors),
+                    }
+                )
+        elif ext in {".xlsx", ".xls"}:
+            summary = extract_excel_summary(path)
+            excel_files.append(
                 {
                     "path": str(path),
                     "name": path.name,
                     "size": path.stat().st_size,
-                    "anchors_matched": anchors,
-                    "anchor_count": len(anchors),
+                    "sheets": summary.sheet_names,
+                    "total_rows": summary.total_rows,
+                    "summary_text": summary.summary_text,
                 }
             )
+
     warnings: list[str] = []
     if not candidates:
         warnings.append("No technical PDF found")
     elif len(candidates) > 1:
         warnings.append(f"{len(candidates)} technical PDFs detected; select the one to import")
+
     return {
         "source_path": str(resolved),
         "files_detected": files_detected,
         "candidates": candidates,
+        "excel_candidates": excel_files,
+        "excel_files": excel_files,
         "warnings": warnings,
     }
 
@@ -460,18 +785,36 @@ def import_folder(
     config: AppConfig,
     index: SearchIndex,
     selected_pdf: str | Path | None = None,
+    import_id: str | None = None,
+    progress_callback: Callable[[str, int], None] | None = None,
+    cancel_check: Callable[[], bool] | None = None,
+    selected_excel: str | Path | None = None,
 ) -> ImportResult:
+    # 1. Disk space check
+    ensure_free_space(config.database_path.parent, config.min_free_bytes)
+
+    if cancel_check and cancel_check():
+        raise ImportCancelledError("Import cancelled by user")
+
+    if progress_callback:
+        progress_callback("scanning", 10)
+
     resolved = _validated_source(source, config)
 
-    import_id = uuid.uuid4().hex
-    report_dir = config.database_path.parent / "reports" / import_id
+    actual_import_id = import_id or uuid.uuid4().hex
+    report_dir = config.database_path.parent / "reports" / actual_import_id
     files: list[ImportFile] = []
     pdfs: list[Path] = []
+    excels: list[Path] = []
     candidates: list[dict[str, Any]] = []
+
     for path in _walk_files(resolved):
+        if cancel_check and cancel_check():
+            raise ImportCancelledError("Import cancelled by user")
         category = classify_path(path)
-        status = "pending" if category == "pdf_candidate" else "not_applicable"
-        if category == "pdf_candidate":
+        status = "pending" if category in ("pdf_candidate", "excel_sheet") else "not_applicable"
+
+        if path.suffix.lower() == ".pdf":
             extracted = extract_structured_pdf(path, config)
             category = classify_pdf_text(extracted.raw_text) if extracted.raw_text else "plan_pdf"
             status = "pending" if category == "technical_pdf" else "not_applicable"
@@ -487,6 +830,11 @@ def import_folder(
                         "anchor_count": len(anchors),
                     }
                 )
+        elif path.suffix.lower() in {".xlsx", ".xls"}:
+            excels.append(path)
+            category = "excel_sheet"
+            status = "pending"
+
         files.append(ImportFile(str(path), path.name, category, path.stat().st_size, path.suffix.lower(), status))
 
     warnings: list[str] = []
@@ -509,17 +857,98 @@ def import_folder(
         elif len(pdfs) > 1:
             warnings.append("Multiple PDF files detected; the first PDF was selected")
 
+    # Detect chosen Excel sheet if any
+    chosen_excel: Path | None = None
+    if selected_excel is not None:
+        c_excel = Path(selected_excel).expanduser()
+        c_excel = c_excel if c_excel.is_absolute() else (resolved / c_excel)
+        if c_excel.exists() and c_excel.is_file():
+            chosen_excel = c_excel.resolve()
+    elif excels:
+        chosen_excel = excels[0]
+
+    if cancel_check and cancel_check():
+        raise ImportCancelledError("Import cancelled by user")
+
+    if progress_callback:
+        progress_callback("extracting", 35)
+
     data = extract_structured_pdf(technical_pdf, config) if technical_pdf else None
-    report_path = generate_report(data, report_dir / "technical-report.pdf") if data else None
-    report_docx_path = generate_docx_report(data, report_dir / "technical-report.docx") if data else None
-    upload_status = (
-        upload_to_onedrive(technical_pdf, report_path, resolved.name, config, report_docx=report_docx_path)
-        if technical_pdf
-        else "not_applicable"
+    extra_pdfs = [p for p in pdfs if p != technical_pdf]
+    extra_extractions: dict[str, ExtractedData] = {}
+    if data and extra_pdfs:
+        for p in extra_pdfs:
+            extracted_p = extract_structured_pdf(p, config)
+            extra_extractions[str(p)] = extracted_p
+            data.additional_sheets.append(
+                AnalyzedSheet(
+                    filename=p.name,
+                    path=str(p),
+                    reference=extracted_p.reference,
+                    material=extracted_p.material,
+                    dimensions=extracted_p.dimensions,
+                    quantity=extracted_p.quantity,
+                    description=extracted_p.description,
+                    extraction_status=extracted_p.extraction_status,
+                    confidence=extracted_p.confidence,
+                )
+            )
+
+    excel_summary = extract_excel_summary(chosen_excel) if chosen_excel else None
+
+    # Enrich PDF data from Excel if available
+    if data and excel_summary:
+        data.excel_summary = excel_summary
+        if not data.reference and excel_summary.detected_reference:
+            data.reference = excel_summary.detected_reference
+        if not data.material and excel_summary.detected_material:
+            data.material = excel_summary.detected_material
+        if data.quantity is None and excel_summary.detected_quantity is not None:
+            data.quantity = excel_summary.detected_quantity
+
+    if cancel_check and cancel_check():
+        raise ImportCancelledError("Import cancelled by user")
+
+    if progress_callback:
+        progress_callback("generating_reports", 55)
+
+    report_path = (
+        generate_report(data, report_dir / "technical-report.pdf", excel_summary=excel_summary) if data else None
     )
+    report_docx_path = (
+        generate_docx_report(data, report_dir / "technical-report.docx", excel_summary=excel_summary) if data else None
+    )
+
+    if cancel_check and cancel_check():
+        raise ImportCancelledError("Import cancelled by user")
+
+    if progress_callback:
+        progress_callback("uploading", 75)
+
+    all_upload_targets = [Path(f.path) for f in files] + [p for p in (report_path, report_docx_path) if p]
+    upload_status = upload_artifacts_to_storage(
+        folder_name=resolved.name,
+        files_to_upload=all_upload_targets,
+        config=config,
+    )
+
+    if cancel_check and cancel_check():
+        raise ImportCancelledError("Import cancelled by user")
+
+    if progress_callback:
+        progress_callback("indexing", 90)
+
     indexed_documents = []
     for item in files:
         item_path = Path(item.path)
+        doc_text = ""
+        if technical_pdf and item.path == str(technical_pdf) and data:
+            doc_text = data.raw_text
+        elif item.path in extra_extractions:
+            doc_text = extra_extractions[item.path].raw_text
+        elif chosen_excel and item.path == str(chosen_excel) and excel_summary:
+            doc_text = excel_summary.summary_text
+
         indexed_documents.append(
             Document(
                 path=item_path,
@@ -529,27 +958,43 @@ def import_folder(
                 size=item.size,
                 modified_at=item_path.stat().st_mtime,
                 is_dir=False,
-                text=data.raw_text if technical_pdf and item.path == str(technical_pdf) and data else "",
+                text=doc_text,
                 category=item.category,
             )
         )
     index.upsert_documents(indexed_documents)
-    final_files = [
-        ImportFile(
-            f.path,
-            f.name,
-            f.category,
-            f.size,
-            f.extension,
-            data.extraction_status if f.path == str(technical_pdf) and data else f.extraction_status,
-            str(report_path) if f.path == str(technical_pdf) else None,
-            upload_status if f.path == str(technical_pdf) else "not_applicable",
+
+    final_files = []
+    for f in files:
+        if f.path == str(technical_pdf) and data:
+            ext_status = data.extraction_status
+            rep = str(report_path) if report_path else None
+        elif f.path in extra_extractions:
+            ext_status = extra_extractions[f.path].extraction_status
+            rep = str(report_path) if report_path else None
+        elif f.path == str(chosen_excel) and excel_summary:
+            ext_status = "success"
+            rep = str(report_path) if report_path else None
+        else:
+            ext_status = f.extraction_status
+            rep = None
+
+        final_files.append(
+            ImportFile(
+                f.path,
+                f.name,
+                f.category,
+                f.size,
+                f.extension,
+                ext_status,
+                rep,
+                upload_status,
+            )
         )
-        for f in files
-    ]
+
     status = "completed" if data and data.extraction_status == "success" else "needs_review" if data else "failed"
     result = ImportResult(
-        import_id,
+        actual_import_id,
         str(resolved),
         status,
         len(files),
@@ -562,8 +1007,24 @@ def import_folder(
         final_files,
         candidates,
         str(report_docx_path) if report_docx_path else None,
+        str(chosen_excel) if chosen_excel else None,
+        excel_summary.model_dump() if excel_summary else None,
+        [
+            {
+                "path": str(p),
+                "name": p.name,
+                "size": p.stat().st_size,
+                "anchors_matched": ["excel_workbook"],
+                "anchor_count": 1,
+            }
+            for p in excels
+        ],
     )
     _save_import(index, result)
+
+    if progress_callback:
+        progress_callback("done", 100)
+
     return result
 
 
@@ -581,15 +1042,16 @@ def _save_import(index: SearchIndex, result: ImportResult) -> None:
     with index.connect() as connection:
         if index.is_postgres:
             with connection.cursor() as cursor:
-                # Sent as an untyped literal so it works whether the column
-                # is already JSONB (migrated) or legacy TEXT.
                 cursor.execute(
                     "INSERT INTO imports (id, source_path, status, payload, created_at) VALUES (%s, %s, %s, %s, now())",
                     (result.import_id, result.source_path, result.status, payload),
                 )
         else:
             connection.execute(
-                "INSERT INTO imports (id, source_path, status, payload, created_at) VALUES (?, ?, ?, ?, datetime('now'))",
+                """
+                INSERT INTO imports (id, source_path, status, payload, created_at)
+                VALUES (?, ?, ?, ?, datetime('now'))
+                """,
                 (result.import_id, result.source_path, result.status, payload),
             )
 
@@ -604,7 +1066,9 @@ def update_import(index: SearchIndex, import_id: str, status: str, payload: dict
                 if cursor.rowcount == 0:
                     raise KeyError(f"Import not found: {import_id}")
         else:
-            cursor = connection.execute("UPDATE imports SET status = ?, payload = ? WHERE id = ?", (status, text, import_id))
+            cursor = connection.execute(
+                "UPDATE imports SET status = ?, payload = ? WHERE id = ?", (status, text, import_id)
+            )
             if cursor.rowcount == 0:
                 raise KeyError(f"Import not found: {import_id}")
 
@@ -618,7 +1082,6 @@ def get_import(index: SearchIndex, import_id: str) -> dict[str, Any] | None:
                 if not row:
                     return None
                 value = row[0]
-                # psycopg2 returns JSONB columns as dict, legacy TEXT as str.
                 return value if isinstance(value, dict) else json.loads(value)
         row = connection.execute("SELECT payload FROM imports WHERE id = ?", (import_id,)).fetchone()
         return json.loads(row["payload"]) if row else None
@@ -649,12 +1112,9 @@ def _correction_status(data: dict[str, Any]) -> tuple[str, float, list[str]]:
     return "partial", confidence, ["One or more fields still need review after manual correction."]
 
 
-def correct_import(index: SearchIndex, config: AppConfig, import_id: str, corrections: dict[str, Any]) -> dict[str, Any]:
-    """Apply a manual correction, regenerate both reports and re-upload.
-
-    Raises KeyError when the import does not exist and ValueError when the
-    corrected data fails validation.
-    """
+def correct_import(
+    index: SearchIndex, config: AppConfig, import_id: str, corrections: dict[str, Any]
+) -> dict[str, Any]:
     payload = get_import(index, import_id)
     if payload is None:
         raise KeyError(f"Import not found: {import_id}")
@@ -686,13 +1146,24 @@ def correct_import(index: SearchIndex, config: AppConfig, import_id: str, correc
         raise ValueError(f"Corrected data is invalid: {exc}") from exc
 
     report_dir = _report_dir_for(payload, config, import_id)
-    report_pdf = generate_report(data, report_dir / "technical-report.pdf")
-    report_docx = generate_docx_report(data, report_dir / "technical-report.docx")
+    excel_summary = (
+        ExcelSummary.model_validate(stored["excel_summary"]) if stored.get("excel_summary") else None
+    )
+    report_pdf = generate_report(data, report_dir / "technical-report.pdf", excel_summary=excel_summary)
+    report_docx = generate_docx_report(data, report_dir / "technical-report.docx", excel_summary=excel_summary)
 
     technical_pdf = Path(payload["technical_pdf"]) if payload.get("technical_pdf") else None
+    excel_file = Path(payload["excel_file"]) if payload.get("excel_file") else None
+    extra_files = [excel_file] if excel_file else []
     folder = Path(payload.get("source_path", "")).name or "import"
     upload_status = (
-        upload_to_onedrive(technical_pdf, report_pdf, folder, config, report_docx=report_docx) if technical_pdf else "not_applicable"
+        upload_artifacts_to_storage(
+            folder_name=folder,
+            files_to_upload=[technical_pdf, report_pdf, report_docx] + extra_files,
+            config=config,
+        )
+        if technical_pdf
+        else "not_applicable"
     )
 
     payload["data"] = data.model_dump()
@@ -700,9 +1171,12 @@ def correct_import(index: SearchIndex, config: AppConfig, import_id: str, correc
     payload["report_docx_path"] = str(report_docx)
     payload["upload_status"] = upload_status
     payload["status"] = "completed" if status == "success" else "needs_review"
-    payload["warnings"] = [w for w in payload.get("warnings", []) if "first PDF was selected" in w or "technical PDFs detected" in w] + warnings
+    payload["warnings"] = (
+        [w for w in payload.get("warnings", []) if "first PDF was selected" in w or "technical PDFs detected" in w]
+        + warnings
+    )
     for entry in payload.get("files", []):
-        if entry.get("path") == payload.get("technical_pdf"):
+        if entry.get("path") in (payload.get("technical_pdf"), payload.get("excel_file")):
             entry["extraction_status"] = status
             entry["report_path"] = str(report_pdf)
             entry["upload_status"] = upload_status
@@ -721,87 +1195,27 @@ def _report_dir_for(payload: dict[str, Any], config: AppConfig, import_id: str) 
 
 
 def retry_upload(index: SearchIndex, config: AppConfig, import_id: str) -> dict[str, Any]:
-    """Re-attempt the OneDrive upload for an existing import."""
     payload = get_import(index, import_id)
     if payload is None:
         raise KeyError(f"Import not found: {import_id}")
     technical_pdf = Path(payload["technical_pdf"]) if payload.get("technical_pdf") else None
     report_pdf = Path(payload["report_path"]) if payload.get("report_path") else None
     report_docx = Path(payload["report_docx_path"]) if payload.get("report_docx_path") else None
+    excel_file = Path(payload["excel_file"]) if payload.get("excel_file") else None
+    extra_files = [excel_file] if excel_file else []
     folder = Path(payload.get("source_path", "")).name or "import"
     upload_status = (
-        upload_to_onedrive(technical_pdf, report_pdf, folder, config, report_docx=report_docx) if technical_pdf else "not_applicable"
+        upload_artifacts_to_storage(
+            folder_name=folder,
+            files_to_upload=[technical_pdf, report_pdf, report_docx] + extra_files,
+            config=config,
+        )
+        if technical_pdf
+        else "not_applicable"
     )
     payload["upload_status"] = upload_status
     for entry in payload.get("files", []):
-        if entry.get("path") == payload.get("technical_pdf"):
+        if entry.get("path") in (payload.get("technical_pdf"), payload.get("excel_file")):
             entry["upload_status"] = upload_status
     update_import(index, import_id, payload.get("status", "needs_review"), payload)
     return payload
-
-
-# ---------------------------------------------------------------------------
-# OneDrive upload with retry + exponential backoff
-# ---------------------------------------------------------------------------
-
-
-def _upload_max_retries(config: AppConfig | None = None) -> int:
-    if os.getenv("SEAMTECH_UPLOAD_MAX_RETRIES"):
-        try:
-            return max(0, int(os.environ["SEAMTECH_UPLOAD_MAX_RETRIES"]))
-        except ValueError:
-            pass
-    if config is not None:
-        return max(0, int(getattr(config, "onedrive_max_retries", 3)))
-    return 3
-
-
-def upload_to_onedrive(
-    pdf: Path | None,
-    report: Path | None,
-    folder: str,
-    config: AppConfig,
-    report_docx: Path | None = None,
-    max_retries: int | None = None,
-) -> str:
-    """Upload source PDF + PDF report + Word report to OneDrive.
-
-    Returns ``uploaded``, ``pending_not_configured`` or ``pending_retry``.
-    Transient network/Graph failures are retried with exponential backoff
-    (1s, 2s, 4s, ...). Never raises for upload problems — the import itself
-    must not fail because OneDrive is down.
-    """
-    token = os.getenv("SEAMTECH_GRAPH_ACCESS_TOKEN")
-    drive_id = os.getenv("SEAMTECH_ONEDRIVE_DRIVE_ID")
-    targets = [path for path in (pdf, report, report_docx) if path is not None]
-    if not token or not drive_id or not pdf or not report:
-        return "pending_not_configured"
-    attempts = 1 + (max_retries if max_retries is not None else _upload_max_retries(config))
-    last_error: str | None = None
-    for attempt in range(attempts):
-        try:
-            for path in targets:
-                target = f"https://graph.microsoft.com/v1.0/drives/{drive_id}/root:/{folder}/{path.name}:/content"
-                request = urllib.request.Request(
-                    target,
-                    data=path.read_bytes(),
-                    method="PUT",
-                    headers={"Authorization": f"Bearer {token}", "Content-Type": "application/octet-stream"},
-                )
-                with urllib.request.urlopen(request, timeout=30):
-                    pass
-            return "uploaded"
-        except (OSError, urllib.error.HTTPError, urllib.error.URLError) as exc:
-            last_error = f"{type(exc).__name__}: {exc}"
-            if attempt < attempts - 1:
-                time.sleep(2**attempt)
-    _record_upload_failure(folder, targets, last_error)
-    return "pending_retry"
-
-
-def _record_upload_failure(folder: str, targets: list[Path], error: str | None) -> None:
-    import logging
-
-    logging.getLogger("seamtech_search").warning(
-        "OneDrive upload failed for folder %s (%s): %s", folder, ", ".join(p.name for p in targets), error or "unknown error"
-    )

@@ -6,7 +6,8 @@ services:
       POSTGRES_USER: seamtech
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the environment}
     ports:
-      - "5433:5432"
+      # Bound to loopback interface 127.0.0.1 by default for security.
+      - "127.0.0.1:5433:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -15,23 +16,64 @@ services:
       timeout: 5s
       retries: 5
 
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    ports:
+      # S3 API endpoint
+      - "127.0.0.1:9000:9000"
+      # MinIO Web Console
+      - "127.0.0.1:9001:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:9000/minio/health/live', timeout=2)\" 2>/dev/null || exit 0"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
   web:
     build: .
     environment:
       SEAMTECH_DATABASE_URL: postgresql://seamtech:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the environment}@postgres:5432/seamtech_search
-      # config/config.json (or config.example.json) defaults host to 127.0.0.1,
-      # which is only reachable from inside this same container. The frontend
-      # service below talks to this one over the Docker network as "web:8000",
-      # and the host port mapping needs it too, so both require binding on
-      # every interface here. See seamtech_search/config.py's env overrides.
+      SEAMTECH_STORAGE_BACKEND: "s3"
+      SEAMTECH_S3_ENDPOINT_URL: "http://minio:9000"
+      SEAMTECH_S3_BUCKET: ${SEAMTECH_S3_BUCKET:-seamtech-documents}
+      SEAMTECH_S3_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      SEAMTECH_S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      SEAMTECH_REDIS_URL: "redis://redis:6379/0"
+      # Inside the container network, web listens on 0.0.0.0 so frontend can communicate.
+      # When token authentication is active on 0.0.0.0, behind_tls_proxy must be enabled.
       SEAMTECH_HOST: "0.0.0.0"
       SEAMTECH_ALLOW_NETWORK_ACCESS: "true"
+      SEAMTECH_BEHIND_TLS_PROXY: ${SEAMTECH_BEHIND_TLS_PROXY:-true}
       SEAMTECH_AUTH_TOKEN: ${SEAMTECH_AUTH_TOKEN:?Set SEAMTECH_AUTH_TOKEN in the environment}
     depends_on:
       postgres:
         condition: service_healthy
+      minio:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     ports:
-      - "8000:8000"
+      # Bound to loopback interface 127.0.0.1 by default.
+      # Direct LAN exposure requires TLS termination (see docs/TLS.md).
+      - "127.0.0.1:8000:8000"
     volumes:
       - ./config:/app/config:ro
       - ./sample_data:/app/sample_data:ro
@@ -46,16 +88,15 @@ services:
   frontend:
     build: ./frontend
     environment:
-      # Server-side only (frontend/lib/backend.ts) — never sent to the
-      # browser. The Next.js API routes under app/api/* proxy to this URL,
-      # so the FastAPI backend itself never needs CORS configured.
+      # Server-side only (frontend/lib/backend.ts) — never sent to the browser.
       SEAMTECH_API_URL: http://web:8000
       SEAMTECH_AUTH_TOKEN: ${SEAMTECH_AUTH_TOKEN:?Set SEAMTECH_AUTH_TOKEN in the environment}
     depends_on:
       web:
         condition: service_healthy
     ports:
-      - "3000:3000"
+      # Bound to loopback interface 127.0.0.1 by default.
+      - "127.0.0.1:3000:3000"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]
       interval: 30s
@@ -64,3 +105,5 @@ services:
 
 volumes:
   postgres-data:
+  minio-data:
+  redis-data:

@@ -49,11 +49,43 @@ class ExtractionResult:
         }.get(self.status, "extraction unavailable")
         return f"[{prefix}: {self.detail}]" if self.detail else f"[{prefix}]"
 
+
 TEXT_EXTENSIONS = {
-    ".txt", ".csv", ".tsv", ".md", ".log", ".json", ".xml", ".html", ".htm",
-    ".yaml", ".yml", ".ini", ".cfg", ".conf", ".sql", ".py", ".js", ".ts",
-    ".tsx", ".jsx", ".css", ".scss", ".java", ".c", ".h", ".cpp", ".hpp",
-    ".cs", ".go", ".rs", ".php", ".sh", ".ps1", ".bat", ".properties",
+    ".txt",
+    ".csv",
+    ".tsv",
+    ".md",
+    ".log",
+    ".json",
+    ".xml",
+    ".html",
+    ".htm",
+    ".yaml",
+    ".yml",
+    ".ini",
+    ".cfg",
+    ".conf",
+    ".sql",
+    ".py",
+    ".js",
+    ".ts",
+    ".tsx",
+    ".jsx",
+    ".css",
+    ".scss",
+    ".java",
+    ".c",
+    ".h",
+    ".cpp",
+    ".hpp",
+    ".cs",
+    ".go",
+    ".rs",
+    ".php",
+    ".sh",
+    ".ps1",
+    ".bat",
+    ".properties",
 }
 OFFICE_XML_EXTENSIONS = {".docx", ".xlsx", ".pptx", ".odt", ".ods", ".odp"}
 ARCHIVE_EXTENSIONS = {".zip"}
@@ -63,7 +95,7 @@ OCR_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp
 
 def extract_file(
     path: Path,
-    max_chars: int,
+    max_chars: int = 200_000,
     max_file_size_bytes: int = 512 * 1024 * 1024,
     enable_legacy_office: bool = False,
     libreoffice_command: str = "soffice",
@@ -190,7 +222,15 @@ def _extract_with_ocrmypdf(path: Path, max_chars: int, command: str, timeout: in
     with tempfile.TemporaryDirectory(prefix="seamtech-ocr-") as output_dir:
         output_path = Path(output_dir) / "extracted.txt"
         completed = subprocess.run(
-            [command, "--sidecar", str(output_path), "--output-type", "pdf", str(path), str(Path(output_dir) / "output.pdf")],
+            [
+                command,
+                "--sidecar",
+                str(output_path),
+                "--output-type",
+                "pdf",
+                str(path),
+                str(Path(output_dir) / "output.pdf"),
+            ],
             capture_output=True,
             text=True,
             timeout=timeout,

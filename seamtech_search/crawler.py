@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-import logging
 import json
+import logging
 import os
 import subprocess
 import sys
 from collections.abc import Iterator
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from pathlib import Path
 
 from .anchors import TECHNICAL_ANCHORS, classify_pdf_text
@@ -117,9 +118,7 @@ def crawl(config: AppConfig, existing_metadata: ExistingMetadata | None = None) 
 
         for current_root, dir_names, file_names in os.walk(root_path, onerror=on_walk_error, followlinks=False):
             current = Path(current_root)
-            dir_names[:] = [
-                name for name in dir_names if not _is_excluded(name, Path(name), config)
-            ]
+            dir_names[:] = [name for name in dir_names if not _is_excluded(name, Path(name), config)]
 
             yield _document_from_path(current, config, is_dir=True, existing_metadata=existing_metadata)
 
@@ -138,9 +137,7 @@ def _is_excluded(name: str, path: Path, config: AppConfig) -> bool:
     return path.suffix.lower() in config.excluded_extensions
 
 
-def _document_from_path(
-    path: Path, config: AppConfig, is_dir: bool, existing_metadata: ExistingMetadata
-) -> Document:
+def _document_from_path(path: Path, config: AppConfig, is_dir: bool, existing_metadata: ExistingMetadata) -> Document:
     try:
         stat = path.stat()
         size = 0 if is_dir else stat.st_size

@@ -1,7 +1,7 @@
 "use client"
 
-import { useRef, useState } from "react"
-import type { ImportCorrection, ImportResultPayload, ImportScanPayload } from "@/lib/types"
+import { useRef, useState, useEffect } from "react"
+import type { ImportCorrection, ImportJobPayload, ImportResultPayload, ImportScanPayload } from "@/lib/types"
 import { CorrectionForm } from "@/components/correction-form"
 
 interface DroppedFile {
@@ -40,22 +40,57 @@ function formatBytes(size: number): string {
   return `${(size / (1024 * 1024)).toFixed(1)} MB`
 }
 
+function formatStage(stage: string): string {
+  switch (stage) {
+    case "starting":
+    case "queued":
+      return "Preparing import…"
+    case "scanning":
+      return "Scanning files…"
+    case "extracting":
+      return "Extracting technical & Excel data…"
+    case "generating_reports":
+      return "Generating PDF & Word reports…"
+    case "uploading":
+      return "Uploading to OneDrive…"
+    case "indexing":
+      return "Updating search index…"
+    case "done":
+      return "Completed"
+    default:
+      return stage ? `${stage}…` : "Processing…"
+  }
+}
+
 export function ImportPanel() {
   const [sourcePath, setSourcePath] = useState("")
   const [scan, setScan] = useState<ImportScanPayload | null>(null)
-  const [selected, setSelected] = useState<string | null>(null)
+  const [selectedPdf, setSelectedPdf] = useState<string | null>(null)
+  const [selectedExcel, setSelectedExcel] = useState<string | null>(null)
   const [result, setResult] = useState<ImportResultPayload | null>(null)
+  const [activeJob, setActiveJob] = useState<ImportJobPayload | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [dragActive, setDragActive] = useState(false)
   const [dropped, setDropped] = useState<DroppedFile[]>([])
   const filesInput = useRef<HTMLInputElement>(null)
   const folderInput = useRef<HTMLInputElement>(null)
+  const pollTimerRef = useRef<NodeJS.Timeout | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (pollTimerRef.current) {
+        clearInterval(pollTimerRef.current)
+      }
+    }
+  }, [])
 
   function resetAfterScan(next: ImportScanPayload) {
     setScan(next)
-    setSelected(next.candidates[0]?.path ?? null)
+    setSelectedPdf(next.candidates[0]?.path ?? null)
+    setSelectedExcel(next.excel_candidates?.[0]?.path ?? null)
     setResult(null)
+    setActiveJob(null)
   }
 
   async function callJson(url: string, method: string, body?: unknown) {
@@ -67,6 +102,38 @@ export function ImportPanel() {
     const payload = await response.json().catch(() => ({}))
     if (!response.ok) throw new Error(payload?.detail ?? "Request failed.")
     return payload
+  }
+
+  function startPollingJob(jobId: string) {
+    if (pollTimerRef.current) clearInterval(pollTimerRef.current)
+
+    pollTimerRef.current = setInterval(async () => {
+      try {
+        const payload: ImportJobPayload = await callJson(`/api/imports/${encodeURIComponent(jobId)}`, "GET")
+        setActiveJob(payload)
+
+        if (payload.status === "completed") {
+          if (pollTimerRef.current) clearInterval(pollTimerRef.current)
+          setResult(payload.result || (payload as unknown as ImportResultPayload))
+          setActiveJob(null)
+          setScan(null)
+          setSelectedPdf(null)
+          setSelectedExcel(null)
+        } else if (payload.status === "failed") {
+          if (pollTimerRef.current) clearInterval(pollTimerRef.current)
+          setError(payload.error || "Import job failed.")
+          setActiveJob(null)
+        } else if (payload.status === "cancelled") {
+          if (pollTimerRef.current) clearInterval(pollTimerRef.current)
+          setActiveJob(null)
+          setError("Import was cancelled by user.")
+        }
+      } catch (err) {
+        if (pollTimerRef.current) clearInterval(pollTimerRef.current)
+        setError(err instanceof Error ? err.message : "Error polling job status.")
+        setActiveJob(null)
+      }
+    }, 500)
   }
 
   async function run(label: string, fn: () => Promise<void>) {
@@ -81,6 +148,19 @@ export function ImportPanel() {
     }
   }
 
+  const cancelActiveJob = async () => {
+    if (!activeJob?.id && !activeJob?.job_id && !activeJob?.import_id) return
+    const id = activeJob.id || activeJob.job_id || activeJob.import_id
+    try {
+      await callJson(`/api/imports/${encodeURIComponent(id!)}/cancel`, "POST")
+      if (pollTimerRef.current) clearInterval(pollTimerRef.current)
+      setActiveJob(null)
+      setError("Import job cancelled.")
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to cancel import job.")
+    }
+  }
+
   const scanFolder = () =>
     run("scan", async () => {
       const payload = (await callJson("/api/imports/scan", "POST", { source_path: sourcePath.trim() })) as ImportScanPayload
@@ -89,20 +169,45 @@ export function ImportPanel() {
 
   const quickImport = () =>
     run("import", async () => {
-      const payload = (await callJson("/api/imports", "POST", { source_path: sourcePath.trim() })) as ImportResultPayload
-      setResult(payload)
-      setScan(null)
-      setSelected(null)
+      const payload = await callJson("/api/imports", "POST", { source_path: sourcePath.trim() })
+      if (payload.job_id || payload.id) {
+        const jobId = payload.job_id || payload.id
+        setActiveJob({
+          id: jobId,
+          status: payload.status || "pending",
+          progress: payload.progress || 0,
+          stage: payload.stage || "queued",
+          source_path: sourcePath.trim(),
+        })
+        startPollingJob(jobId)
+      } else {
+        setResult(payload as ImportResultPayload)
+        setScan(null)
+        setSelectedPdf(null)
+        setSelectedExcel(null)
+      }
     })
 
   const confirmImport = () =>
     run("confirm", async () => {
-      if (!scan || !selected) return
-      const payload = (await callJson("/api/imports/confirm", "POST", {
+      if (!scan || !selectedPdf) return
+      const payload = await callJson("/api/imports/confirm", "POST", {
         source_path: scan.staged_path ?? scan.source_path,
-        technical_pdf: selected,
-      })) as ImportResultPayload
-      setResult(payload)
+        technical_pdf: selectedPdf,
+        excel_file: selectedExcel || undefined,
+      })
+      if (payload.job_id || payload.id) {
+        const jobId = payload.job_id || payload.id
+        setActiveJob({
+          id: jobId,
+          status: payload.status || "pending",
+          progress: payload.progress || 0,
+          stage: payload.stage || "queued",
+        })
+        startPollingJob(jobId)
+      } else {
+        setResult(payload as ImportResultPayload)
+      }
     })
 
   const uploadAndScan = () =>
@@ -133,8 +238,9 @@ export function ImportPanel() {
       setResult(payload)
     })
 
-  const loading = busy !== null
+  const loading = busy !== null || activeJob !== null
   const candidates = scan?.candidates ?? []
+  const excelCandidates = scan?.excel_candidates ?? []
   const effectiveSource = scan?.staged_path ?? scan?.source_path ?? ""
 
   return (
@@ -168,13 +274,42 @@ export function ImportPanel() {
             disabled={!sourcePath.trim() || loading}
             onClick={quickImport}
           >
-            {busy === "import" ? "Processing…" : "Quick import"}
+            {busy === "import" || activeJob ? "Processing…" : "Quick import"}
           </button>
         </div>
         <p className="mt-2 text-xs text-muted-foreground">
-          The server must have access to this folder. Scan first to choose between technical PDFs, or quick-import to
-          take the first match.
+          The server must have access to this folder. Scan first to choose between technical PDFs and Excel sheets, or quick-import to take the first matches.
         </p>
+
+        {/* Active Job Progress Panel */}
+        {activeJob && (
+          <div className="mt-4 rounded-md border border-primary/40 bg-primary/5 p-4 text-sm shadow-sm">
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex items-center gap-2">
+                <span className="relative flex h-3 w-3">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-3 w-3 bg-primary"></span>
+                </span>
+                <span className="font-semibold text-primary">{formatStage(activeJob.stage)}</span>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="font-mono text-xs text-muted-foreground">{activeJob.progress}%</span>
+                <button
+                  className="rounded border border-destructive/60 bg-background px-3 py-1 text-xs font-medium text-destructive hover:bg-destructive/10"
+                  onClick={cancelActiveJob}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+            <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-muted">
+              <div
+                className="h-full bg-primary transition-all duration-300 ease-out"
+                style={{ width: `${Math.max(5, activeJob.progress)}%` }}
+              />
+            </div>
+          </div>
+        )}
 
         {/* Drag & drop */}
         <div
@@ -282,33 +417,37 @@ export function ImportPanel() {
 
         {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
 
-        {/* Candidates */}
+        {/* Scan Candidates */}
         {scan && (
-          <div className="mt-4 rounded-md border border-border bg-background p-4 text-sm">
+          <div className="mt-4 space-y-4 rounded-md border border-border bg-background p-4 text-sm">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
               <p className="font-medium">
-                {candidates.length} technical PDF{candidates.length === 1 ? "" : "s"} in{" "}
-                <span className="font-mono text-xs">{effectiveSource}</span>
+                Candidates in <span className="font-mono text-xs">{effectiveSource}</span>
               </p>
               <span className="text-xs text-muted-foreground">{scan.files_detected} files scanned</span>
             </div>
-            {scan.warnings?.length > 0 && <p className="mt-2 text-warning">{scan.warnings.join(" ")}</p>}
-            {candidates.length > 0 ? (
-              <>
-                <ul className="mt-3 space-y-2">
+            {scan.warnings?.length > 0 && <p className="text-warning">{scan.warnings.join(" ")}</p>}
+
+            {/* Technical PDFs */}
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+                1. Select Technical PDF ({candidates.length} detected)
+              </p>
+              {candidates.length > 0 ? (
+                <ul className="space-y-2">
                   {candidates.map((candidate) => (
                     <li key={candidate.path}>
                       <label
                         className={`flex cursor-pointer items-start gap-3 rounded-md border p-3 ${
-                          selected === candidate.path ? "border-primary bg-primary/5" : "border-border"
+                          selectedPdf === candidate.path ? "border-primary bg-primary/5" : "border-border"
                         }`}
                       >
                         <input
                           type="radio"
                           name="technical-pdf"
                           className="mt-1"
-                          checked={selected === candidate.path}
-                          onChange={() => setSelected(candidate.path)}
+                          checked={selectedPdf === candidate.path}
+                          onChange={() => setSelectedPdf(candidate.path)}
                         />
                         <span className="min-w-0">
                           <span className="block truncate font-medium">{candidate.name}</span>
@@ -321,19 +460,71 @@ export function ImportPanel() {
                     </li>
                   ))}
                 </ul>
-                <div className="mt-3 flex justify-end">
-                  <button
-                    className="min-h-10 rounded-md bg-primary px-5 text-sm font-semibold text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50"
-                    disabled={!selected || loading}
-                    onClick={confirmImport}
-                  >
-                    {busy === "confirm" ? "Processing…" : "Import selected PDF"}
-                  </button>
-                </div>
-              </>
-            ) : (
-              <p className="mt-2 text-sm text-muted-foreground">No technical PDF found in this folder.</p>
+              ) : (
+                <p className="text-xs text-muted-foreground">No technical PDF found in this folder.</p>
+              )}
+            </div>
+
+            {/* Excel Files */}
+            {excelCandidates.length > 0 && (
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+                  2. Select Excel Sheet / BOM (Optional, {excelCandidates.length} detected)
+                </p>
+                <ul className="space-y-2">
+                  <li>
+                    <label
+                      className={`flex cursor-pointer items-start gap-3 rounded-md border p-2.5 ${
+                        selectedExcel === null ? "border-primary bg-primary/5" : "border-border"
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="excel-file"
+                        className="mt-0.5"
+                        checked={selectedExcel === null}
+                        onChange={() => setSelectedExcel(null)}
+                      />
+                      <span className="text-xs font-medium text-muted-foreground">None (do not import Excel sheet)</span>
+                    </label>
+                  </li>
+                  {excelCandidates.map((candidate) => (
+                    <li key={candidate.path}>
+                      <label
+                        className={`flex cursor-pointer items-start gap-3 rounded-md border p-3 ${
+                          selectedExcel === candidate.path ? "border-primary bg-primary/5" : "border-border"
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="excel-file"
+                          className="mt-1"
+                          checked={selectedExcel === candidate.path}
+                          onChange={() => setSelectedExcel(candidate.path)}
+                        />
+                        <span className="min-w-0">
+                          <span className="block truncate font-medium">{candidate.name}</span>
+                          <span className="block truncate font-mono text-xs text-muted-foreground">{candidate.path}</span>
+                          <span className="mt-1 block text-xs text-muted-foreground">
+                            Excel workbook ({formatBytes(candidate.size)})
+                          </span>
+                        </span>
+                      </label>
+                    </li>
+                  ))}
+                </ul>
+              </div>
             )}
+
+            <div className="flex justify-end pt-2">
+              <button
+                className="min-h-10 rounded-md bg-primary px-5 text-sm font-semibold text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={!selectedPdf || loading}
+                onClick={confirmImport}
+              >
+                {busy === "confirm" || activeJob ? "Processing…" : "Import Selected Files"}
+              </button>
+            </div>
           </div>
         )}
 
@@ -360,11 +551,26 @@ export function ImportPanel() {
               )}
             </div>
             {result.technical_pdf && (
-              <p className="mt-2 truncate font-mono text-xs text-muted-foreground">{result.technical_pdf}</p>
+              <p className="mt-2 truncate font-mono text-xs text-muted-foreground">PDF: {result.technical_pdf}</p>
+            )}
+            {result.excel_file && (
+              <p className="mt-1 truncate font-mono text-xs text-muted-foreground">Excel: {result.excel_file}</p>
             )}
             {result.warnings?.length > 0 && <p className="mt-3 text-warning">{result.warnings.join(" ")}</p>}
+            
+            {/* Reauth required alert */}
+            {result.upload_status === "pending_reauth" && (
+              <div className="mt-3 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">
+                <strong>OneDrive Authentication Required:</strong> The Microsoft Graph client credentials or refresh token is missing, expired, or invalid.
+              </div>
+            )}
+
+            {/* Technical Sheet PDF Extracted Metadata */}
             {result.data && (
               <div className="mt-3 overflow-x-auto">
+                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">
+                  Fiche Technique Extraction
+                </p>
                 <table className="w-full text-left text-xs">
                   <tbody>
                     {(
@@ -399,6 +605,54 @@ export function ImportPanel() {
                 </table>
               </div>
             )}
+
+            {/* Excel Sheet Summary Display */}
+            {result.excel_summary && (
+              <div className="mt-4 rounded border border-border/80 bg-muted/20 p-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    Excel Workbook Summary ({result.excel_summary.name})
+                  </p>
+                  <span className="text-xs font-medium text-muted-foreground">
+                    {result.excel_summary.total_sheets} sheet{result.excel_summary.total_sheets === 1 ? "" : "s"}
+                  </span>
+                </div>
+                {result.excel_summary.sheets.map((sheet) => (
+                  <div key={sheet.name} className="mt-2">
+                    <p className="text-xs font-medium text-foreground">
+                      Sheet: <span className="font-semibold">{sheet.name}</span> ({sheet.max_row} rows × {sheet.max_column} cols)
+                    </p>
+                    {sheet.sample_rows && sheet.sample_rows.length > 0 && (
+                      <div className="mt-1 overflow-x-auto">
+                        <table className="w-full text-left text-xs border border-border/40">
+                          <thead className="bg-muted/60">
+                            <tr>
+                              {sheet.headers.map((h, i) => (
+                                <th key={i} className="p-1.5 font-semibold text-muted-foreground border-b border-border/40">
+                                  {h}
+                                </th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {sheet.sample_rows.map((row, rIdx) => (
+                              <tr key={rIdx} className="border-t border-border/20 hover:bg-muted/30">
+                                {sheet.headers.map((h, cIdx) => (
+                                  <td key={cIdx} className="p-1.5 font-mono text-[11px]">
+                                    {row[h] || "—"}
+                                  </td>
+                                ))}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
             {result.upload_status === "pending_retry" && (
               <div className="mt-3 flex justify-end">
                 <button
