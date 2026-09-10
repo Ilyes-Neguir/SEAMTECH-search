@@ -1,32 +1,39 @@
 # Changelog
 
-## 0.4.0 — Production Hardening & Async Job Architecture
+## 0.4.0 — Decoupled Cloud-Native Architecture & Production Hardening
 
-Production-readiness hardening across the backend and frontend for local workshop pilot and LAN/TLS deployment.
+Major architectural transformation from local/OneDrive storage to a decoupled, cloud-native architecture with S3-compatible object storage, Redis task queues, sliding-window rate limiting, and multi-technical-PDF extraction.
 
-### Backend
+### Cloud-Native Storage & Stateless VPS
 
-- **Async Job Architecture** (`seamtech_search/jobs.py`): Default `POST /imports` returns `202 Accepted` with a job ID. Progress is polled via `GET /imports/{id}`, and running jobs can be cooperatively cancelled via `POST /imports/{id}/cancel`. Legacy synchronous behavior is preserved with `?wait=true`. Stale running/pending jobs are automatically recovered on server restart.
-- **Dedicated Microsoft Graph Client** (`seamtech_search/onedrive.py`): Full OAuth2 refresh-token lifecycle using raw `urllib` calls (no SDK dependencies). Features proactive token refresh, `0600` token cache permissions, rotated-token persistence, and explicit `pending_reauth` status (human credential refresh needed) distinct from transient `pending_retry`.
-- **Database Connection Pooling** (`seamtech_search/indexer.py`): Implemented `ThreadedConnectionPool` for PostgreSQL with statement timeouts (`statement_timeout_ms`). Added pooled connection context managers and schema tables for `import_jobs` and `audit_log` across both SQLite and PostgreSQL.
-- **Retention & Disk Guard** (`seamtech_search/retention.py`): Pre-flight disk space guard checks available bytes (`min_free_bytes`) and raises HTTP 507 Insufficient Storage when storage is low. Automated retention cleanup prunes old reports (default 90d), staged uploads (default 7d), and audit records (default 365d) via `POST /maintenance/cleanup` or CLI `cleanup`.
-- **Append-Only Audit Logging** (`seamtech_search/audit.py`): Records all mutating operations and search queries. Actor tokens are safely fingerprinted (SHA-256 hash prefix) so secrets are never logged. Accessible via `GET /audit`.
-- **Rate Limiting & Probes** (`seamtech_search/api.py`): Sliding-window rate limiter (default 600 req/min) returning HTTP 429 with `Retry-After` headers. `X-Request-ID` middleware for end-to-end tracing. Health probes `/live` and `/ready` for container orchestrators.
-- **TLS Enforcement**: Non-local network binding with token authentication requires `behind_tls_proxy=true` to prevent plaintext credential exposure on LAN networks.
+- **S3 / MinIO / Cloudflare R2 Storage** (`seamtech_search/storage.py`): Object storage client supporting MinIO, Cloudflare R2, and AWS S3 with bucket auto-provisioning, multi-part uploads, and secure presigned URL generation.
+- **Stateless Scratch Purging**: Uploads and raw staged files are immediately cleared from host disk after S3 upload, preventing local disk accumulation and ensuring zero customer data loss on VPS restarts.
+- **Dossier Upload Pipeline**: Uploads all technical drawing sheets, Excel BOM spreadsheets, and both generated PDF/Word synthesis reports under standardized S3 object keys.
 
-### Frontend
+### Asynchronous Queue & Distributed Rate Limiting
 
-- **Import Panel**: Integrated job polling with live stage progress bar, cancel action, and dedicated `pending_reauth` alert banner when Microsoft Graph credentials expire.
-- **Proxy Endpoints**: Added `/api/imports/[id]/cancel` Next.js proxy route.
-- **Type Definitions**: Added `ImportJobPayload` and `OneDriveStatus` types.
+- **Redis Task Queue & Fast-Path Cache** (`seamtech_search/redis_store.py`): Replaced in-memory thread loops with Redis `RPUSH` / `BLPOP` FIFO queues. Caches job progress in Redis keys (`seamtech:job:{id}`) with 24-hour TTL to prevent database bottlenecks during frontend polling.
+- **Dedicated Worker Loop** (`seamtech_search/worker.py`): Background worker daemon managing task execution, progress stage reporting, artifact uploads, and scratch directory cleanup.
+- **Sliding-Window Rate Limiting**: Distributed rate limiter enforcing 600 req/min via Redis sorted sets (`ZADD`, `ZREMRANGEBYSCORE`, `ZCARD`) with HTTP 429 and `Retry-After` headers; container probe endpoints are exempt.
 
-### Infrastructure, Tooling & Tests
+### Multi-Technical-PDF Analysis & Dual Reporting
 
-- **Ruff**: Configured standard `[tool.ruff]` linting (py312, line-length 120, E/F/I rules) with a clean pass across the entire codebase.
-- **Docker Compose Hardening**: Default port mappings bound to `127.0.0.1` on loopback.
-- **CI / CD Workflow**: Upgraded GitHub Actions matrix for Python 3.12 and 3.13, live PostgreSQL service container smoke step, ruff check, and Playwright E2E job.
-- **E2E Testing**: Added Playwright test scaffolding and specs (`search.spec.ts`, `import.spec.ts`).
-- **Test Suite**: 75 passed, 1 skipped unit & integration test suite covering pooling, OneDrive flows, fixtures, jobs API, and retention.
+- **Multi-Sheet Technical Extraction** (`seamtech_search/import_pipeline.py`): Extracted parameters across all secondary technical PDF sheets into `additional_sheets` and `analyzed_items`.
+- **Synchronized Dual Synthesis Reports**: Produces branded PDF reports (`reportlab`) and editable Word DOCX reports (`python-docx`) detailing primary and secondary technical sheets and BOM tables.
+- **Tabular BOM Extraction**: Layout-aware table extraction using `openpyxl` with automatic unit and dimension normalization.
+
+### Security, Auditing & TLS Hardening
+
+- **Append-Only Audit Logging** (`seamtech_search/audit.py`): Immutable audit logging for mutating operations and search queries. Actor tokens are SHA-256 fingerprinted so secrets are never logged. Accessible via `GET /audit`.
+- **Non-Local TLS Enforcement**: Refuses non-localhost binding when authentication is enabled unless `behind_tls_proxy=true`.
+- **Pre-Flight Disk Guard** (`seamtech_search/retention.py`): Verifies available storage against `min_free_bytes` (1 GB) before accepting uploads.
+- **Database Connection Pooling** (`seamtech_search/indexer.py`): Implemented `ThreadedConnectionPool` for PostgreSQL with statement timeouts (`statement_timeout_ms`).
+
+### Frontend & Infrastructure
+
+- **Next.js 16 Web UI**: Dynamic candidate selection with anchor evidence, live stage progress polling, cancellation controls, and direct presigned download links.
+- **Docker Compose**: Multi-container stack orchestration for PostgreSQL 16 (5433), MinIO S3 (9000/9001), Redis 7 (6379), FastAPI Backend (8000), and Next.js Frontend (3000).
+- **Test Suite**: 93 automated tests (91 passed, 2 skipped live daemon markers) and clean `ruff` linter pass.
 
 ---
 

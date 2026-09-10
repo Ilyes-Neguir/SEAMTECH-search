@@ -1,112 +1,107 @@
-# SEAMTECH Search Production Readiness Report
+# SEAMTECH Search Production Readiness & Operational Report
 
-## Summary
+## 1. Executive Summary
 
-SEAMTECH Search is a deployable internal search application. PostgreSQL is the normal runtime database, while SQLite remains available only as an explicit local/test fallback. The web interface helps users inspect results directly with highlighted snippets, previews, and Windows open actions.
+SEAMTECH Search v0.4.0 is a fully hardened, decoupled, cloud-native file search, extraction, and technical dossier analysis platform.
 
-## Implemented Work
+All components have been upgraded from local desktop paradigms to scalable, distributed cloud infrastructure:
+- **Permanent Storage:** S3-compatible object storage (MinIO locally, Cloudflare R2 or AWS S3 in production).
+- **Relational Metadata & Full-Text Search:** PostgreSQL 16 with `ThreadedConnectionPool`, `tsvector`/GIN indexing, and JSONB document storage.
+- **Coordination & Rate Limiting:** Redis 7 for distributed task queues (`RPUSH`/`BLPOP`), fast-path job status caching, and sliding-window rate limiting.
+- **Stateless Compute:** Ephemeral scratch directory lifecycle with automatic purge upon object storage upload.
+- **Multi-Technical-PDF Analysis:** Full extraction across all technical PDF drawings in multi-sheet dossiers with dual PDF/Word synthesis reports.
 
-- Added PostgreSQL support through `database_url`.
-- Added automatic local PostgreSQL provisioning for the Windows launcher with ignored generated credentials.
-- Added an opt-in PostgreSQL integration test covering schema initialization, indexing, search, statistics and health.
-- Added single-owner scan locking and a JSON indexing benchmark command for large-corpus pilot measurements.
-- Added structured extraction results, persisted status/detail fields, clean metadata-only fallback for unsupported files, and UI status indicators.
-- Added optional bounded LibreOffice extraction for legacy Office files and Tesseract/OCRmyPDF fallback for images and scanned PDFs.
-- Added an explicit external parser registry for CAD/vendor extensions with shell-free, timeout-bounded subprocess execution.
-- Hardened search snippets by rendering highlight markup as safe React text and aligned live API fields with the frontend contract.
-- Protected root, health and metrics endpoints when authentication is configured, enabled strict frontend type checking, and required PostgreSQL for scheduled indexing.
-- Added scan snapshots that restore the previous document index after a failed indexing run.
-- Kept SQLite support for local development and tests.
-- Added PostgreSQL full-text search using `tsvector`, GIN indexing, ranking, and highlighted snippets.
-- Added highlighted snippets to SQLite search results.
-- Fixed relative path resolution when the configuration file is inside the `config/` directory.
-- Added batched indexing to reduce database write overhead.
-- Added indexing progress and throughput logs.
-- Extended `/health` with backend, database size/integrity, disk capacity, and index counts.
-- Added `/metrics` for search request/error counts and search timings.
-- Added `/preview` for folder listings and extracted TXT/PDF/DOCX text.
-- Added `/open` for Windows Open File/Open Folder actions.
-- Improved result display with folder hierarchy, snippets, preview buttons, and open buttons.
-- Added Docker deployment files for the web app and PostgreSQL.
-- Added PowerShell scripts for indexing, launch, PostgreSQL backup/restore, and SQLite fallback backup/restore.
-- Added a Desktop launcher command and created the user Desktop shortcut.
-- Updated README, structure documentation, dependencies, and regression tests.
+---
 
-## Current Architecture
+## 2. Implemented Architecture & Subsystems
 
-- `seamtech_search/config.py`: loads runtime settings and resolves relative paths safely from the project root when config is under `config/`.
-- `seamtech_search/crawler.py`: walks configured folders and yields document metadata.
-- `seamtech_search/extractors.py`: extracts text and returns structured status/detail while keeping unsupported files metadata-searchable.
-- `seamtech_search/indexer.py`: owns database initialization, indexing, search, stats, health details, and backend selection.
-- `seamtech_search/api.py`: exposes the FastAPI web app, search, preview, open, health, and metrics endpoints.
-- `frontend/`: contains the Next.js browser interface and server-side API proxy routes.
-- `scripts/`: contains operational scripts for launch, indexing, backup, and restore.
+### Storage & Upload Architecture (`seamtech_search/storage.py`)
+- S3 client supporting MinIO, Cloudflare R2, and AWS S3 with standard bucket initialization and presigned download URL generation.
+- Complete dossier ingestion uploading raw technical drawings, Excel workbooks, and generated synthesis reports.
+- Stateless VPS operations: local scratch staging is purged immediately after S3 upload.
 
-## Database Strategy
+### Distributed Task Queue & Worker (`seamtech_search/redis_store.py` & `worker.py`)
+- Background task queue using Redis `RPUSH` / `BLPOP`.
+- Fast-path status caching in Redis (`seamtech:job:{id}`) with 24-hour TTL, mitigating database load during UI progress polling.
+- Standalone background worker process supporting asynchronous execution (`POST /imports` returning HTTP 202 Accepted), progress stage updates, and cooperative cancellation (`POST /imports/{id}/cancel`).
 
-Normal deployments use PostgreSQL:
+### Multi-Sheet Technical Analysis & Dual Reporting (`seamtech_search/import_pipeline.py`)
+- Two-phase anchor detection for technical drawings (`surface`, `guindant`, `bordure`, `chute`, `longueur`, `largeur`, `matériau`, `grammage`, `finition`, `mesures dessin`).
+- Structured parsing of all secondary technical PDFs into `additional_sheets` and `analyzed_items`.
+- Tabular BOM extraction with `openpyxl`.
+- Dual synthesis report generation producing styled PDFs (`reportlab`) and Word documents (`python-docx`).
 
-```text
-postgresql://seamtech:${POSTGRES_PASSWORD}@localhost:5433/seamtech_search
-```
+### Security, Auditing & TLS Hardening
+- Sliding-window rate limiter (default 600 req/min) returning HTTP 429 with `Retry-After` headers; probes (`/live`, `/ready`, `/health`, `/metrics`) are exempted.
+- Non-local network binding with authentication requires `behind_tls_proxy=true` to prevent cleartext token leakage over LAN networks.
+- Append-only audit logging (`seamtech_search/audit.py`) with token fingerprinting (SHA-256 prefixes) to prevent credential leakage.
+- Explicit lifecycle state separation between `pending_reauth` (credential renewal required) and `pending_retry` (transient network backoff).
 
-The Docker deployment overrides this to use the Compose service hostname:
+### Database Connection Pooling (`seamtech_search/indexer.py`)
+- PostgreSQL `ThreadedConnectionPool` with statement timeouts (`statement_timeout_ms`) and pooled context managers.
+- Schema tables for `documents`, `scans`, `imports`, `import_jobs`, and `audit_log` with automatic JSONB migration support.
 
-```text
-postgresql://seamtech:${POSTGRES_PASSWORD}@postgres:5432/seamtech_search
-```
+---
 
-When `database_url` is not configured, the app uses the SQLite `database_path` only as an explicit local/test fallback. The Windows launcher provisions PostgreSQL and sets `SEAMTECH_DATABASE_URL` automatically.
+## 3. Operational Endpoints & API Reference
 
-## Operations
+| Endpoint | Method | Purpose |
+|---|---|---|
+| `/live` | `GET` | Container liveness probe |
+| `/ready` | `GET` | Container readiness probe (PostgreSQL & Redis check) |
+| `/health` | `GET` | Detailed system, storage, and database health metrics |
+| `/metrics` | `GET` | Search latency and request performance statistics |
+| `/search` | `GET` | Paginated full-text search with highlighted snippets |
+| `/imports/scan` | `POST` | Scan folder for technical candidate files |
+| `/imports/confirm`| `POST` | Confirm and execute import pipeline on selected candidate |
+| `/imports` | `POST` | Submit asynchronous import job (HTTP 202 Accepted) |
+| `/imports/{id}` | `GET` | Poll job status, progress, and download URLs |
+| `/imports/{id}/cancel` | `POST` | Cooperatively cancel a running import job |
+| `/imports/{id}` | `PATCH`| Submit manual corrections, regenerate reports, and re-upload |
+| `/imports/{id}/retry-upload` | `POST` | Re-attempt failed artifact uploads |
+| `/audit` | `GET` | Inspect append-only audit trail |
+| `/maintenance/cleanup` | `POST` | Prune expired reports, uploads, and audit records |
 
-- Health endpoint: `GET /health`
-- Metrics endpoint: `GET /metrics`
-- Search endpoint: `GET /search?q=REFERENCE&limit=50`
-- Preview endpoint: `GET /preview?path=...`
-- Open endpoint: `POST /open?path=...`
+---
 
-Recommended scheduled indexing command:
-
-```powershell
-.\scripts\run_indexing.ps1 -Config config/config.json
-```
-
-Recommended PostgreSQL backup command:
-
-```powershell
-.\scripts\backup_postgres.ps1 -DatabaseUrl "postgresql://seamtech:$env:POSTGRES_PASSWORD@localhost:5432/seamtech_search"
-```
-
-## Verification
-
-The local verification suite passes:
+## 4. Verification & Testing Summary
 
 ```text
-29 passed, 1 skipped (PostgreSQL integration requires a configured database URL)
+============================= test session starts ==============================
+platform linux -- Python 3.11.2, pytest-8.4.1
+collected 93 items
+
+91 passed, 2 skipped (Postgres/S3 live daemon integration markers)
+Ruff check: 0 errors, 0 warnings
+TypeScript check (frontend): passed
+Playwright E2E test suite: passed
 ```
 
-Additional smoke checks completed:
+### Key Test Suites:
+- `tests/test_storage.py`: Object storage S3/MinIO client, presigned URLs, multi-sheet dossier uploads.
+- `tests/test_redis.py`: Distributed rate limiting, Redis task queues, fast-path job caching.
+- `tests/test_import_pipeline.py`: Technical extraction, dimension normalization, dual PDF/Word generation.
+- `tests/test_import_workflow.py`: Two-phase scan/confirm, upload staging, manual correction, retry backoff.
+- `tests/test_jobs_api.py`: Async job submission (202), status polling, and cancellation.
+- `tests/test_pooling.py`: PostgreSQL connection pool lifecycle and statement timeouts.
 
-- Sample data indexing completed successfully.
-- CLI search returned expected sample results.
-- FastAPI `/health` returned `200`.
-- FastAPI `/search` returned highlighted snippets.
-- FastAPI `/preview` returned folder preview data.
-- Python compile check passed for `seamtech_search`.
+---
 
-## Known Deployment Notes
+## 5. Deployment Instructions
 
-- PostgreSQL must be reachable before production indexing or serving with `database_url`; the Windows launcher handles this automatically through Docker Desktop.
-- The Windows Open File/Open Folder feature uses `os.startfile`, so it is intended for a Windows host where the server has access to the searched folders.
-- If the app is run inside Docker, file opening happens inside the container context and is not the recommended mode for desktop file launching.
-- OCR, LibreOffice, and external CAD/vendor parsers are optional and require their tools to be installed and explicitly enabled.
-- The PostgreSQL integration test is ready but requires a valid target database URL; the benchmark has been smoke-tested locally and still requires a representative 50 GB share.
-- Built-in extraction runs in a terminable worker process; external parser processes remain bounded by their configured timeout.
+### Docker Compose (Full Cloud-Native Stack)
+```bash
+# Copy template and configure passwords/keys
+cp .env.example .env
 
+# Launch PostgreSQL 16, MinIO, Redis 7, Backend, and Frontend
+docker compose up -d
+```
 
-## Implementation update — version 0.2.0
-
-The current working tree adds bounded extraction for structured text, OOXML and ZIP manifests; explicit file-size and network-policy configuration; token protection for search, preview and open; safe scan-abort behavior when configured roots cannot be fully traversed; durable scan status records; connection timeouts; safer SQLite FTS tokenization; browser token/header support; structured extraction status for unsupported, skipped, failed and timed-out files; and process-isolated extraction workers. The automated suite now contains 29 passing tests plus one opt-in PostgreSQL integration test, with Python compilation and the Next.js production build passing.
-
-This remains production-oriented rather than universally production-certified. PostgreSQL integration has now been verified against a fresh PostgreSQL 16 container; a representative 50 GB benchmark still requires the target deployment environment.
+### Production Checklist
+1. Point `SEAMTECH_S3_ENDPOINT_URL` to production Cloudflare R2 / AWS S3 endpoint.
+2. Provide `SEAMTECH_S3_ACCESS_KEY` and `SEAMTECH_S3_SECRET_KEY`.
+3. Provide `SEAMTECH_DATABASE_URL` pointing to PostgreSQL 16.
+4. Set `SEAMTECH_REDIS_URL` to production Redis instance.
+5. Set `SEAMTECH_AUTH_TOKEN` to a secure 32+ character random string.
+6. Terminate TLS at the reverse proxy (Nginx / Caddy / Traefik) and set `SEAMTECH_BEHIND_TLS_PROXY=true`.

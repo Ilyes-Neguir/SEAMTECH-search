@@ -1,113 +1,185 @@
 # SEAMTECH Search
 
-Internal search and reference-folder ingestion application for SEAMTECH design and technical fabrication files.
+[![CI](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/workflows/ci.yml/badge.svg)](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.116.1-009688.svg)](https://fastapi.tiangolo.com/)
+[![Next.js](https://img.shields.io/badge/Next.js-16.3.3-black.svg)](https://nextjs.org/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-336791.svg)](https://www.postgresql.org/)
+[![Redis](https://img.shields.io/badge/Redis-7.0-DC382D.svg)](https://redis.io/)
+[![MinIO / S3](https://img.shields.io/badge/Storage-S3%20%2F%20MinIO%20%2F%20R2-orange.svg)](https://min.io/)
 
-For the complete academic and technical presentation, see [docs/PROJECT_REPORT.md](docs/PROJECT_REPORT.md).
+Internal search engine, technical reference folder ingestion platform, and manufacturing dossier analysis engine for SEAMTECH design and fabrication files.
 
-## Cloud-Native Architecture (Decoupled Storage & Compute)
-
-The architecture is designed to be **stateless and resilient**:
-
-```
-[User Browser]
-      │
-      ▼ (Uploads / Scans Reference: PDF + Excel)
-[FastAPI Server & Next.js on VPS01]
-      │
-      ├───► 1. Background Jobs & Rate Limiting via [Redis]
-      ├───► 2. Raw Files & Generated Reports (PDF + Word) stored in [MinIO / Cloudflare R2 / AWS S3]
-      └───► 3. Search Index, BOM Metadata, and FTS stored in [PostgreSQL]
-```
-
-- **Object Storage (MinIO locally / Cloudflare R2 or AWS S3 in prod)**: Houses all raw technical drawings, Excel workbooks, and generated PDF/Word reports with presigned URL streaming.
-- **Task Queue & Cache (Redis)**: Handles distributed background job tickets, progress caching, and sliding-window rate limiting.
-- **Database (PostgreSQL)**: Stores document indexes, extracted fabrication metadata (dimensions, materials, quantities, bill of materials), and append-only audit logs.
-- **Stateless Host/VPS**: No permanent customer files reside on the VPS disk. If VPS01 crashes or is reprovisioned, all documents and metadata remain 100% safe.
+For the comprehensive technical and operational report, see [docs/PROJECT_REPORT.md](docs/PROJECT_REPORT.md).
 
 ---
 
-## Features
+## 🏗️ Cloud-Native Architecture (Decoupled Storage & Compute)
 
-- **Recursive folder crawling** & metadata indexing for engineering files.
-- **Twin PDF & Excel BOM Extraction**: Extracts technical sail parameters and Excel Bill-of-Materials tables (`openpyxl`).
-- **Dual-Format Report Generation**: Produces styled technical reports in both **PDF** (`reportlab`) and **Word DOCX** (`python-docx`).
-- **S3 / MinIO / Cloudflare R2 Integration**: S3-compatible object storage for all imported artifacts with zero local disk retention.
-- **Redis Queue & Rate Limiter**: Distributed sliding-window rate limiting and async job coordination.
-- **PostgreSQL Full-Text Search**: Production-grade search vectors, indexing, and connection pooling.
-- **Async Import Pipeline**: `POST /imports` (HTTP 202 Accepted) with progress polling and cooperative cancellation (`POST /imports/{id}/cancel`).
-- **Audit Logging**: Secure audit trail (`GET /audit`) with actor token fingerprinting.
-- **Health Probes**: Container-ready `/live`, `/ready`, and `/health` endpoints.
+The system is designed as a **stateless, resilient, cloud-native architecture**:
+
+```
+                       ┌────────────────────────────┐
+                       │    Web Browser / Client    │
+                       └──────────────┬─────────────┘
+                                      │ (HTTPS)
+                                      ▼
+                       ┌────────────────────────────┐
+                       │    Next.js 16 Frontend     │
+                       │  (Authenticated API Proxy) │
+                       └──────────────┬─────────────┘
+                                      │ (Internal HTTP)
+                                      ▼
+                       ┌────────────────────────────┐
+                       │    FastAPI API Gateway     │
+                       │  - Rate Limiter (Sliding)  │
+                       │  - Probes & Audit Trails   │
+                       └──────┬──────────────┬──────┘
+                              │              │
+         ┌────────────────────┘              └────────────────────┐
+         ▼                                                        ▼
+┌────────────────────────────┐                              ┌────────────────────────────┐
+│      Redis 7 Cluster       │                              │       PostgreSQL 16        │
+│ - Task Queue (RPUSH/BLPOP) │                              │ - Full-Text Search (GIN)   │
+│ - Fast-Path Job Cache      │                              │ - JSONB Document Payloads  │
+│ - Sliding-Window Limiter   │                              │ - Connection Pooling       │
+└─────────────┬──────────────┘                              │ - Append-Only Audit Log    │
+              │                                             └────────────────────────────┘
+              ▼                                                           ▲
+┌────────────────────────────┐                                            │
+│  Pipeline Worker Daemon    │────────────────────────────────────────────┘
+│  - Multi-Sheet Extraction  │
+│  - Dual PDF/DOCX Reports   │
+│  - Scratch Staging Purge   │
+└─────────────┬──────────────┘
+              │
+              ▼ (S3 API Upload / Presigned URLs)
+┌───────────────────────────────────────────────────────────┐
+│     Object Storage (MinIO / Cloudflare R2 / AWS S3)       │
+│     - Raw Technical PDFs & Excel Sheets                   │
+│     - Generated PDF & Word DOCX Synthesis Reports         │
+└───────────────────────────────────────────────────────────┘
+```
+
+- **Object Storage (MinIO / Cloudflare R2 / AWS S3):** Stores all permanent assets (PDF drawings, Excel workbooks, and generated synthesis reports). Download links are provided via time-limited presigned URLs.
+- **Task Queue & Cache (Redis 7):** Handles asynchronous job dispatching, fast-path job status caching (24h TTL), and distributed sliding-window rate limiting.
+- **Database (PostgreSQL 16):** Stores document indexes, full-text search vectors (`tsvector` with GIN indexing), dynamic fabrication metadata in `JSONB`, and append-only audit logs.
+- **Stateless Host/VPS:** Scratch directories are purged immediately upon upload to object storage. If the container or host restarts, no customer data is lost.
 
 ---
 
-## Local Development with Docker (MinIO + PostgreSQL + Redis)
+## ✨ Features
 
-Run the full cloud-native stack locally in Docker:
-
-```powershell
-Copy-Item .env.example .env
-# Start PostgreSQL (5433), MinIO S3 (9000 API, 9001 Web Console), and Redis (6379)
-docker compose up -d postgres minio redis
-```
-
-- **MinIO Console**: `http://localhost:9001` (User: `minioadmin` / Password: `minioadmin`)
-- **MinIO S3 Endpoint**: `http://localhost:9000`
-- **PostgreSQL**: `localhost:5433` (DB: `seamtech_search`)
-- **Redis**: `localhost:6379`
-
-### Environment Configuration
-
-Configure `config/config.json` or pass environment variables:
-
-```json
-{
-  "database_url": "postgresql://seamtech:CHANGE_ME@127.0.0.1:5433/seamtech_search",
-  "storage_backend": "s3",
-  "s3_endpoint_url": "http://127.0.0.1:9000",
-  "s3_bucket": "seamtech-documents",
-  "s3_access_key": "minioadmin",
-  "s3_secret_key": "minioadmin",
-  "redis_url": "redis://127.0.0.1:6379/0"
-}
-```
+- **Multi-Technical-PDF Dossier Analysis:** Automatically analyzes and extracts dimensions and technical specifications across **all** secondary technical sheets within a folder.
+- **Twin PDF & Excel BOM Parsing:** Layout-aware extraction using `pdfplumber` and tabular BOM component extraction using `openpyxl`.
+- **Dual Synthesis Reports:** Automatically produces synchronized, styled **PDF** (`reportlab`) and editable **Word DOCX** (`python-docx`) summary reports.
+- **S3 / MinIO / Cloudflare R2 Storage:** S3-compatible object storage with automatic bucket provisioning and presigned URL streaming.
+- **Asynchronous Pipeline & Worker:** Fast `POST /imports` (HTTP 202 Accepted) with background task queues and cooperative cancellation (`POST /imports/{id}/cancel`).
+- **Distributed Sliding-Window Rate Limiting:** Enforces 600 req/min limits with automatic HTTP 429 and `Retry-After` headers.
+- **Append-Only Audit Logging:** Immutable audit trail (`GET /audit`) with SHA-256 token fingerprinting.
+- **Health Probes:** Production-ready container endpoints (`/live`, `/ready`, `/health`, `/metrics`).
+- **Security & TLS Guard:** Enforces TLS reverse proxying for non-local network bindings.
 
 ---
 
-## Local Setup (Native Python)
+## 🚀 Quickstart with Docker Compose
 
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-python scripts/bootstrap.py
+To start the complete stack locally (PostgreSQL 16, MinIO S3, Redis 7, FastAPI Backend, and Next.js Frontend):
+
+```bash
+# 1. Clone the repository and configure environment variables
+cp .env.example .env
+
+# 2. Launch the entire containerized stack
+docker compose up -d
 ```
 
-Run tests:
+### Services & Web Consoles
 
-```powershell
+| Service | Host URL | Credentials |
+|---|---|---|
+| **Next.js Frontend** | `http://localhost:3000` | Authenticated via backend |
+| **FastAPI Backend** | `http://localhost:8000` | API Docs at `/docs` |
+| **MinIO Web Console** | `http://localhost:9001` | User: `minioadmin` / Pass: `minioadmin` |
+| **MinIO S3 Endpoint**| `http://localhost:9000` | S3 API endpoint |
+| **PostgreSQL 16** | `localhost:5433` | User: `seamtech` / DB: `seamtech_search` |
+| **Redis 7** | `localhost:6379` | Standard Redis port |
+
+---
+
+## ⚙️ Configuration Reference
+
+Configuration can be supplied via `config/config.json` or environment variables:
+
+| Setting | Environment Variable | Default | Description |
+|---|---|---|---|
+| `database_url` | `SEAMTECH_DATABASE_URL` | `postgresql://...` | PostgreSQL connection string |
+| `storage_backend` | `SEAMTECH_STORAGE_BACKEND` | `s3` | Storage backend (`s3` or `local`) |
+| `s3_endpoint_url` | `SEAMTECH_S3_ENDPOINT_URL` | `http://127.0.0.1:9000` | S3 API endpoint URL (MinIO / R2 / AWS) |
+| `s3_bucket` | `SEAMTECH_S3_BUCKET` | `seamtech-documents` | S3 bucket name |
+| `s3_access_key` | `SEAMTECH_S3_ACCESS_KEY` | `minioadmin` | S3 Access Key / Token ID |
+| `s3_secret_key` | `SEAMTECH_S3_SECRET_KEY` | `minioadmin` | S3 Secret Access Key |
+| `redis_url` | `SEAMTECH_REDIS_URL` | `redis://127.0.0.1:6379/0` | Redis connection URL |
+| `auth_token` | `SEAMTECH_AUTH_TOKEN` | `""` | Shared API token |
+| `behind_tls_proxy` | `SEAMTECH_BEHIND_TLS_PROXY` | `false` | Enables network binding behind TLS proxy |
+| `rate_limit_per_minute` | `SEAMTECH_RATE_LIMIT_PER_MINUTE` | `600` | Max requests per minute per IP |
+| `min_free_bytes` | `SEAMTECH_MIN_FREE_BYTES` | `1073741824` | 1 GB disk floor for staging safety |
+
+---
+
+## 🛠️ API Reference Summary
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/live` | Liveness probe (200 OK) |
+| `GET` | `/ready` | Readiness probe (verifies PostgreSQL and Redis) |
+| `GET` | `/health` | Detailed system, database, and storage metrics |
+| `GET` | `/metrics` | Request timings and error rates |
+| `GET` | `/search?q={query}` | Full-text search with highlighted snippets |
+| `POST` | `/imports/scan` | Two-phase scan for candidate files in a folder |
+| `POST` | `/imports/confirm` | Confirm candidate selection and run extraction |
+| `POST` | `/imports` | Asynchronous import (returns HTTP 202 Accepted) |
+| `GET` | `/imports/{id}` | Poll import job status and progress |
+| `POST` | `/imports/{id}/cancel` | Cooperatively cancel a running import job |
+| `PATCH` | `/imports/{id}` | Update parameters, regenerate reports, and re-upload |
+| `POST` | `/imports/{id}/retry-upload`| Retry failed upload to S3/OneDrive |
+| `GET` | `/audit` | Query append-only audit trail |
+| `POST` | `/maintenance/cleanup` | Execute storage retention cleanup |
+
+---
+
+## 🧪 Testing & Verification
+
+Run the full automated test suite:
+
+```bash
+# Run all unit and integration tests
 pytest
+
+# Run linter
+ruff check .
 ```
 
-Run FastAPI Backend:
+To run end-to-end tests:
 
-```powershell
-python -m seamtech_search serve --config config/config.json
-```
-
-Run Next.js Frontend:
-
-```powershell
+```bash
 cd frontend
-npm run dev
+pnpm exec playwright test
 ```
 
 ---
 
-## Production Deployment (Cloudflare R2 + PostgreSQL + Redis on VPS)
+## 📚 Documentation
 
-When deploying to production VPS:
-1. Point `SEAMTECH_S3_ENDPOINT_URL` to your Cloudflare R2 endpoint: `https://<ACCOUNT_ID>.r2.cloudflarestorage.com`.
-2. Set `SEAMTECH_S3_ACCESS_KEY` and `SEAMTECH_S3_SECRET_KEY` from Cloudflare R2 API Tokens.
-3. Set `SEAMTECH_DATABASE_URL` to your PostgreSQL database.
-4. Set `SEAMTECH_REDIS_URL` to your Redis container or managed Redis.
-5. Launch via `docker compose up --build -d`.
+Detailed technical guides and operational specifications are available in `docs/`:
+- **[PROJECT_REPORT.md](docs/PROJECT_REPORT.md):** Complete technical, architectural, and business report.
+- **[REPORT.md](docs/REPORT.md):** Production readiness report and deployment runbook.
+- **[STRUCTURE.md](docs/STRUCTURE.md):** Repository structure and component layout.
+- **[IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md):** Architecture roadmap and milestone status.
+- **[TLS.md](docs/TLS.md):** Production TLS reverse-proxy hardening guide.
+
+---
+
+## 📄 License
+
+Internal Proprietary — SEAMTECH. All Rights Reserved.
