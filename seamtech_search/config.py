@@ -39,7 +39,47 @@ class AppConfig(BaseModel):
     external_extractors: dict[str, list[str]] = Field(default_factory=dict)
     allow_network_access: bool = False
     auth_token: str | None = None
+    behind_tls_proxy: bool = False
+    rate_limit_per_minute: int = Field(default=600, ge=1)
+
+    # Retention settings
+    reports_retention_days: int = Field(default=90, ge=1)
+    staged_retention_days: int = Field(default=7, ge=1)
+    audit_retention_days: int = Field(default=365, ge=1)
+    min_free_bytes: int = Field(default=1024 * 1024 * 1024, ge=0)
+
+    # Storage backend selection: "s3" (MinIO / Cloudflare R2 / AWS S3) or "onedrive" or "local"
+    storage_backend: str = Field(default="s3")
+
+    # S3 / MinIO / Cloudflare R2 settings
+    s3_endpoint_url: str | None = None
+    s3_bucket: str = Field(default="seamtech-documents")
+    s3_access_key: str | None = None
+    s3_secret_key: str | None = None
+    s3_region: str = Field(default="us-east-1")
+    s3_force_path_style: bool = True
+    s3_prefix: str = ""
+    delete_local_after_upload: bool = False
+
+    # Redis settings
+    redis_url: str | None = None
+
+    # OneDrive settings (legacy / alternative)
+    onedrive_client_id: str | None = None
+    onedrive_client_secret: str | None = None
+    onedrive_tenant_id: str | None = None
+    onedrive_refresh_token: str | None = None
+    onedrive_access_token: str | None = None
+    onedrive_token_cache_path: Path | None = None
+    onedrive_drive_id: str | None = None
+    onedrive_remote_folder: str | None = None
     onedrive_max_retries: int = Field(default=3, ge=0, le=10)
+
+    # Database connection pool settings
+    pool_min: int = Field(default=1, ge=1)
+    pool_max: int = Field(default=10, ge=1)
+    pool_timeout: float = Field(default=30.0, ge=0.1)
+    statement_timeout_ms: int = Field(default=5000, ge=100)
 
     @field_validator("root_paths")
     @classmethod
@@ -55,6 +95,8 @@ class AppConfig(BaseModel):
             raise ValueError("non-local host requires allow_network_access=true")
         if self.allow_network_access and not self.auth_token:
             raise ValueError("auth_token is required when allow_network_access is enabled")
+        if self.host not in local_hosts and self.auth_token and not self.behind_tls_proxy:
+            raise ValueError("token authentication over non-local host requires behind_tls_proxy=true")
         return self
 
     @classmethod
@@ -65,9 +107,14 @@ class AppConfig(BaseModel):
             config_path = Path(path).expanduser()
             if not config_path.is_absolute():
                 config_path = (Path.cwd() / config_path).resolve()
+
+        if not config_path.exists():
+            raise FileNotFoundError(f"Configuration file not found: {config_path}")
+
         with config_path.open("r", encoding="utf-8") as file:
             data: dict[str, Any] = json.load(file)
 
+        # Environment variable overrides
         if os.environ.get("SEAMTECH_DATABASE_URL"):
             data["database_url"] = os.environ["SEAMTECH_DATABASE_URL"]
         if os.environ.get("SEAMTECH_AUTH_TOKEN"):
@@ -82,18 +129,89 @@ class AppConfig(BaseModel):
                 "true",
                 "yes",
             }
+        if os.environ.get("SEAMTECH_BEHIND_TLS_PROXY"):
+            data["behind_tls_proxy"] = os.environ["SEAMTECH_BEHIND_TLS_PROXY"].strip().lower() in {
+                "1",
+                "true",
+                "yes",
+            }
+        if os.environ.get("SEAMTECH_RATE_LIMIT_PER_MINUTE"):
+            data["rate_limit_per_minute"] = int(os.environ["SEAMTECH_RATE_LIMIT_PER_MINUTE"])
         if os.environ.get("SEAMTECH_UPLOAD_MAX_RETRIES"):
             data["onedrive_max_retries"] = int(os.environ["SEAMTECH_UPLOAD_MAX_RETRIES"])
+        if os.environ.get("SEAMTECH_STORAGE_BACKEND"):
+            data["storage_backend"] = os.environ["SEAMTECH_STORAGE_BACKEND"]
+        if os.environ.get("SEAMTECH_S3_ENDPOINT_URL"):
+            data["s3_endpoint_url"] = os.environ["SEAMTECH_S3_ENDPOINT_URL"]
+        if os.environ.get("SEAMTECH_S3_BUCKET"):
+            data["s3_bucket"] = os.environ["SEAMTECH_S3_BUCKET"]
+        if os.environ.get("SEAMTECH_S3_ACCESS_KEY"):
+            data["s3_access_key"] = os.environ["SEAMTECH_S3_ACCESS_KEY"]
+        if os.environ.get("SEAMTECH_S3_SECRET_KEY"):
+            data["s3_secret_key"] = os.environ["SEAMTECH_S3_SECRET_KEY"]
+        if os.environ.get("SEAMTECH_S3_REGION"):
+            data["s3_region"] = os.environ["SEAMTECH_S3_REGION"]
+        if os.environ.get("SEAMTECH_S3_FORCE_PATH_STYLE"):
+            data["s3_force_path_style"] = os.environ["SEAMTECH_S3_FORCE_PATH_STYLE"].strip().lower() in {
+                "1",
+                "true",
+                "yes",
+            }
+        if os.environ.get("SEAMTECH_S3_PREFIX"):
+            data["s3_prefix"] = os.environ["SEAMTECH_S3_PREFIX"]
+        if os.environ.get("SEAMTECH_REDIS_URL"):
+            data["redis_url"] = os.environ["SEAMTECH_REDIS_URL"]
+        if os.environ.get("SEAMTECH_DELETE_LOCAL_AFTER_UPLOAD"):
+            data["delete_local_after_upload"] = os.environ["SEAMTECH_DELETE_LOCAL_AFTER_UPLOAD"].strip().lower() in {
+                "1",
+                "true",
+                "yes",
+            }
+        if os.environ.get("SEAMTECH_ONEDRIVE_CLIENT_ID"):
+            data["onedrive_client_id"] = os.environ["SEAMTECH_ONEDRIVE_CLIENT_ID"]
+        if os.environ.get("SEAMTECH_ONEDRIVE_CLIENT_SECRET"):
+            data["onedrive_client_secret"] = os.environ["SEAMTECH_ONEDRIVE_CLIENT_SECRET"]
+        if os.environ.get("SEAMTECH_ONEDRIVE_TENANT_ID"):
+            data["onedrive_tenant_id"] = os.environ["SEAMTECH_ONEDRIVE_TENANT_ID"]
+        if os.environ.get("SEAMTECH_ONEDRIVE_REFRESH_TOKEN"):
+            data["onedrive_refresh_token"] = os.environ["SEAMTECH_ONEDRIVE_REFRESH_TOKEN"]
+        if os.environ.get("SEAMTECH_ONEDRIVE_ACCESS_TOKEN"):
+            data["onedrive_access_token"] = os.environ["SEAMTECH_ONEDRIVE_ACCESS_TOKEN"]
+        elif os.environ.get("SEAMTECH_GRAPH_ACCESS_TOKEN"):
+            data["onedrive_access_token"] = os.environ["SEAMTECH_GRAPH_ACCESS_TOKEN"]
+        if os.environ.get("SEAMTECH_ONEDRIVE_TOKEN_CACHE_PATH"):
+            data["onedrive_token_cache_path"] = os.environ["SEAMTECH_ONEDRIVE_TOKEN_CACHE_PATH"]
+        if os.environ.get("SEAMTECH_ONEDRIVE_DRIVE_ID"):
+            data["onedrive_drive_id"] = os.environ["SEAMTECH_ONEDRIVE_DRIVE_ID"]
+        if os.environ.get("SEAMTECH_ONEDRIVE_REMOTE_FOLDER"):
+            data["onedrive_remote_folder"] = os.environ["SEAMTECH_ONEDRIVE_REMOTE_FOLDER"]
+        if os.environ.get("SEAMTECH_REPORTS_RETENTION_DAYS"):
+            data["reports_retention_days"] = int(os.environ["SEAMTECH_REPORTS_RETENTION_DAYS"])
+        if os.environ.get("SEAMTECH_STAGED_RETENTION_DAYS"):
+            data["staged_retention_days"] = int(os.environ["SEAMTECH_STAGED_RETENTION_DAYS"])
+        if os.environ.get("SEAMTECH_AUDIT_RETENTION_DAYS"):
+            data["audit_retention_days"] = int(os.environ["SEAMTECH_AUDIT_RETENTION_DAYS"])
+        if os.environ.get("SEAMTECH_MIN_FREE_BYTES"):
+            data["min_free_bytes"] = int(os.environ["SEAMTECH_MIN_FREE_BYTES"])
+        if os.environ.get("SEAMTECH_POOL_MIN"):
+            data["pool_min"] = int(os.environ["SEAMTECH_POOL_MIN"])
+        if os.environ.get("SEAMTECH_POOL_MAX"):
+            data["pool_max"] = int(os.environ["SEAMTECH_POOL_MAX"])
+        if os.environ.get("SEAMTECH_POOL_TIMEOUT"):
+            data["pool_timeout"] = float(os.environ["SEAMTECH_POOL_TIMEOUT"])
+        if os.environ.get("SEAMTECH_STATEMENT_TIMEOUT_MS"):
+            data["statement_timeout_ms"] = int(os.environ["SEAMTECH_STATEMENT_TIMEOUT_MS"])
 
         config = cls.model_validate(data)
 
         base_path = config_path.parent.parent if config_path.parent.name == "config" else config_path.parent
         config.root_paths = [
-            root_path if root_path.is_absolute() else base_path / root_path
-            for root_path in config.root_paths
+            root_path if root_path.is_absolute() else base_path / root_path for root_path in config.root_paths
         ]
         if not config.database_path.is_absolute():
             config.database_path = base_path / config.database_path
+        if config.onedrive_token_cache_path and not config.onedrive_token_cache_path.is_absolute():
+            config.onedrive_token_cache_path = base_path / config.onedrive_token_cache_path
         config.excluded_extensions = {
             extension.lower() if extension.startswith(".") else f".{extension.lower()}"
             for extension in config.excluded_extensions

@@ -28,10 +28,12 @@ def test_incomplete_scan_preserves_existing_index(tmp_path: Path) -> None:
 
     config_path = tmp_path / "config.json"
     config_path.write_text(
-        json.dumps({
-            "root_paths": [str(tmp_path / "unavailable-share")],
-            "database_path": str(database),
-        }),
+        json.dumps(
+            {
+                "root_paths": [str(tmp_path / "unavailable-share")],
+                "database_path": str(database),
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -80,9 +82,7 @@ def test_scan_classifies_pdfs_for_analysis_and_other_files_for_direct_storage(tm
 
     index = SearchIndex(database)
     with index.connect() as connection:
-        rows = connection.execute(
-            "SELECT name, category FROM documents WHERE is_dir = 0 ORDER BY name"
-        ).fetchall()
+        rows = connection.execute("SELECT name, category FROM documents WHERE is_dir = 0 ORDER BY name").fetchall()
 
     assert [(row["name"], row["category"]) for row in rows] == [
         ("drawing.PDF", "plan_pdf"),

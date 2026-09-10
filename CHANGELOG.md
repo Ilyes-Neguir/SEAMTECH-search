@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.4.0 — Production Hardening & Async Job Architecture
+
+Production-readiness hardening across the backend and frontend for local workshop pilot and LAN/TLS deployment.
+
+### Backend
+
+- **Async Job Architecture** (`seamtech_search/jobs.py`): Default `POST /imports` returns `202 Accepted` with a job ID. Progress is polled via `GET /imports/{id}`, and running jobs can be cooperatively cancelled via `POST /imports/{id}/cancel`. Legacy synchronous behavior is preserved with `?wait=true`. Stale running/pending jobs are automatically recovered on server restart.
+- **Dedicated Microsoft Graph Client** (`seamtech_search/onedrive.py`): Full OAuth2 refresh-token lifecycle using raw `urllib` calls (no SDK dependencies). Features proactive token refresh, `0600` token cache permissions, rotated-token persistence, and explicit `pending_reauth` status (human credential refresh needed) distinct from transient `pending_retry`.
+- **Database Connection Pooling** (`seamtech_search/indexer.py`): Implemented `ThreadedConnectionPool` for PostgreSQL with statement timeouts (`statement_timeout_ms`). Added pooled connection context managers and schema tables for `import_jobs` and `audit_log` across both SQLite and PostgreSQL.
+- **Retention & Disk Guard** (`seamtech_search/retention.py`): Pre-flight disk space guard checks available bytes (`min_free_bytes`) and raises HTTP 507 Insufficient Storage when storage is low. Automated retention cleanup prunes old reports (default 90d), staged uploads (default 7d), and audit records (default 365d) via `POST /maintenance/cleanup` or CLI `cleanup`.
+- **Append-Only Audit Logging** (`seamtech_search/audit.py`): Records all mutating operations and search queries. Actor tokens are safely fingerprinted (SHA-256 hash prefix) so secrets are never logged. Accessible via `GET /audit`.
+- **Rate Limiting & Probes** (`seamtech_search/api.py`): Sliding-window rate limiter (default 600 req/min) returning HTTP 429 with `Retry-After` headers. `X-Request-ID` middleware for end-to-end tracing. Health probes `/live` and `/ready` for container orchestrators.
+- **TLS Enforcement**: Non-local network binding with token authentication requires `behind_tls_proxy=true` to prevent plaintext credential exposure on LAN networks.
+
+### Frontend
+
+- **Import Panel**: Integrated job polling with live stage progress bar, cancel action, and dedicated `pending_reauth` alert banner when Microsoft Graph credentials expire.
+- **Proxy Endpoints**: Added `/api/imports/[id]/cancel` Next.js proxy route.
+- **Type Definitions**: Added `ImportJobPayload` and `OneDriveStatus` types.
+
+### Infrastructure, Tooling & Tests
+
+- **Ruff**: Configured standard `[tool.ruff]` linting (py312, line-length 120, E/F/I rules) with a clean pass across the entire codebase.
+- **Docker Compose Hardening**: Default port mappings bound to `127.0.0.1` on loopback.
+- **CI / CD Workflow**: Upgraded GitHub Actions matrix for Python 3.12 and 3.13, live PostgreSQL service container smoke step, ruff check, and Playwright E2E job.
+- **E2E Testing**: Added Playwright test scaffolding and specs (`search.spec.ts`, `import.spec.ts`).
+- **Test Suite**: 75 passed, 1 skipped unit & integration test suite covering pooling, OneDrive flows, fixtures, jobs API, and retention.
+
+---
+
 ## 0.3.0 — Import workflow completion
 
 Closes every gap from the import-pipeline audit; the search/crawl core is

@@ -1,5 +1,5 @@
-from pathlib import Path
 import sys
+from pathlib import Path
 from zipfile import ZipFile
 
 from seamtech_search.extractors import extract_file, extract_text

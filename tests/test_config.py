@@ -17,8 +17,16 @@ def test_default_config_path_prefers_project_config_directory(tmp_path: Path) ->
 def test_network_host_requires_explicit_policy(tmp_path: Path) -> None:
     with pytest.raises(ValueError):
         AppConfig(root_paths=[tmp_path], host="0.0.0.0")
-    config = AppConfig(root_paths=[tmp_path], host="0.0.0.0", allow_network_access=True, auth_token="secret")
+
+    # Token auth over non-local host requires behind_tls_proxy=True
+    with pytest.raises(ValueError, match="behind_tls_proxy"):
+        AppConfig(root_paths=[tmp_path], host="0.0.0.0", allow_network_access=True, auth_token="secret")
+
+    config = AppConfig(
+        root_paths=[tmp_path], host="0.0.0.0", allow_network_access=True, auth_token="secret", behind_tls_proxy=True
+    )
     assert config.allow_network_access is True
+    assert config.behind_tls_proxy is True
 
 
 def test_config_in_config_directory_resolves_paths_from_project_root(tmp_path: Path) -> None:
@@ -52,6 +60,9 @@ def test_env_overrides_host_port_and_network_access(tmp_path: Path, monkeypatch:
     monkeypatch.setenv("SEAMTECH_PORT", "9000")
     monkeypatch.setenv("SEAMTECH_ALLOW_NETWORK_ACCESS", "true")
     monkeypatch.setenv("SEAMTECH_AUTH_TOKEN", "secret")
+    monkeypatch.setenv("SEAMTECH_BEHIND_TLS_PROXY", "true")
+    monkeypatch.setenv("SEAMTECH_RATE_LIMIT_PER_MINUTE", "1200")
+    monkeypatch.setenv("SEAMTECH_MIN_FREE_BYTES", "0")
 
     config = AppConfig.load(config_file)
 
@@ -59,6 +70,9 @@ def test_env_overrides_host_port_and_network_access(tmp_path: Path, monkeypatch:
     assert config.port == 9000
     assert config.allow_network_access is True
     assert config.auth_token == "secret"
+    assert config.behind_tls_proxy is True
+    assert config.rate_limit_per_minute == 1200
+    assert config.min_free_bytes == 0
 
 
 def test_optional_extraction_tools_default_to_disabled(tmp_path: Path) -> None:
@@ -67,3 +81,9 @@ def test_optional_extraction_tools_default_to_disabled(tmp_path: Path) -> None:
     assert config.enable_legacy_office is False
     assert config.enable_ocr is False
     assert config.external_extraction_timeout_seconds == 120
+
+
+def test_missing_config_file_fails_fast(tmp_path: Path) -> None:
+    non_existent = tmp_path / "does_not_exist.json"
+    with pytest.raises(FileNotFoundError, match="Configuration file not found"):
+        AppConfig.load(non_existent)

@@ -1,57 +1,79 @@
 # SEAMTECH Search
 
-Internal search application for SEAMTECH design and technical folders.
+Internal search and reference-folder ingestion application for SEAMTECH design and technical fabrication files.
 
 For the complete academic and technical presentation, see [docs/PROJECT_REPORT.md](docs/PROJECT_REPORT.md).
 
-The system scans Windows folders, extracts searchable metadata/text, stores it in PostgreSQL for production, and exposes a simple FastAPI web interface for quickly finding references.
+## Cloud-Native Architecture (Decoupled Storage & Compute)
+
+The architecture is designed to be **stateless and resilient**:
+
+```
+[User Browser]
+      │
+      ▼ (Uploads / Scans Reference: PDF + Excel)
+[FastAPI Server & Next.js on VPS01]
+      │
+      ├───► 1. Background Jobs & Rate Limiting via [Redis]
+      ├───► 2. Raw Files & Generated Reports (PDF + Word) stored in [MinIO / Cloudflare R2 / AWS S3]
+      └───► 3. Search Index, BOM Metadata, and FTS stored in [PostgreSQL]
+```
+
+- **Object Storage (MinIO locally / Cloudflare R2 or AWS S3 in prod)**: Houses all raw technical drawings, Excel workbooks, and generated PDF/Word reports with presigned URL streaming.
+- **Task Queue & Cache (Redis)**: Handles distributed background job tickets, progress caching, and sliding-window rate limiting.
+- **Database (PostgreSQL)**: Stores document indexes, extracted fabrication metadata (dimensions, materials, quantities, bill of materials), and append-only audit logs.
+- **Stateless Host/VPS**: No permanent customer files reside on the VPS disk. If VPS01 crashes or is reprovisioned, all documents and metadata remain 100% safe.
+
+---
 
 ## Features
 
-- Recursive folder crawling
-- File and folder metadata indexing
-- Search by filename, folder name, path, extension, and extracted document text
-- PDF text extraction with `pypdf`
-- DOCX text extraction with `python-docx`
-- PostgreSQL full-text search for production
-- SQLite fallback for local tests or quick prototypes
-- FastAPI `/search` and `/health` endpoints
-- Simple browser interface
-- Highlighted search snippets
-- File preview for extracted TXT/PDF/DOCX text
-- Folder preview plus Open File/Open Folder actions on Windows
-- Incremental indexing: unchanged files (same size, modified time, and extractor version) are never re-extracted, only re-stat'd
-- Content re-extraction is version-gated: bumping `CURRENT_EXTRACTOR_VERSION` in `extractors.py` forces every file to be re-parsed on the next scan even if nothing changed on disk, so a parser fix actually reaches the index
-- Per-file extraction timeout: a hung or pathological file is marked `[extraction timed out]` instead of stalling the whole scan
-- Batched indexing with progress logs
-- Reference-folder import workflow with deterministic technical-PDF detection, structured extraction, validation warnings, and generated technical reports (PDF + Word)
-- Two-phase import: scan a folder to list every technical-PDF candidate, then confirm the one to process
-- Manual correction of extracted fields with report regeneration and re-upload
-- Drag-and-drop / folder upload staging for browsers without direct share access
-- PDF classification distinguishes technical sail-information PDFs from plan PDFs; plans and non-PDF files remain storage-only
+- **Recursive folder crawling** & metadata indexing for engineering files.
+- **Twin PDF & Excel BOM Extraction**: Extracts technical sail parameters and Excel Bill-of-Materials tables (`openpyxl`).
+- **Dual-Format Report Generation**: Produces styled technical reports in both **PDF** (`reportlab`) and **Word DOCX** (`python-docx`).
+- **S3 / MinIO / Cloudflare R2 Integration**: S3-compatible object storage for all imported artifacts with zero local disk retention.
+- **Redis Queue & Rate Limiter**: Distributed sliding-window rate limiting and async job coordination.
+- **PostgreSQL Full-Text Search**: Production-grade search vectors, indexing, and connection pooling.
+- **Async Import Pipeline**: `POST /imports` (HTTP 202 Accepted) with progress polling and cooperative cancellation (`POST /imports/{id}/cancel`).
+- **Audit Logging**: Secure audit trail (`GET /audit`) with actor token fingerprinting.
+- **Health Probes**: Container-ready `/live`, `/ready`, and `/health` endpoints.
 
-OCR is not included in the base image. Scanned PDFs and images require an OCR-enabled deployment and should be validated against factory data before being marked content-searchable.
+---
 
-The extractor provides bounded content search for PDF, DOCX, common structured/text formats, OOXML documents such as XLSX/PPTX, and ZIP member manifests. Other files remain metadata-searchable. This is intentionally an explicit support boundary: proprietary CAD and vendor formats require dedicated parsers or licensed SDKs.
+## Local Development with Docker (MinIO + PostgreSQL + Redis)
 
-Every indexed file has an extraction status: `extracted`, `unavailable`, `skipped`, `error`, `timeout`, or `not_applicable` for folders. Unsupported files remain searchable by metadata, while extraction details are exposed separately instead of being inserted into searchable content. The extractor version is bumped when this contract changes, so the next scan refreshes older records.
+Run the full cloud-native stack locally in Docker:
 
-Optional Phase 4 extractors are disabled by default. Set `enable_legacy_office` to `true` when LibreOffice/`soffice` is installed to extract `.doc`, `.xls`, and `.ppt` files. Set `enable_ocr` to `true` when Tesseract and OCRmyPDF are installed to extract images and scanned PDFs. Missing tools produce a clear `unavailable` status and never stop the scan.
+```powershell
+Copy-Item .env.example .env
+# Start PostgreSQL (5433), MinIO S3 (9000 API, 9001 Web Console), and Redis (6379)
+docker compose up -d postgres minio redis
+```
 
-Vendor and CAD parsers are configured explicitly per extension through `external_extractors`. Each value is an argument array; the indexed file path is appended automatically, and the command runs without a shell. For example:
+- **MinIO Console**: `http://localhost:9001` (User: `minioadmin` / Password: `minioadmin`)
+- **MinIO S3 Endpoint**: `http://localhost:9000`
+- **PostgreSQL**: `localhost:5433` (DB: `seamtech_search`)
+- **Redis**: `localhost:6379`
+
+### Environment Configuration
+
+Configure `config/config.json` or pass environment variables:
 
 ```json
 {
-  "external_extractors": {
-    ".dwg": ["C:\\Tools\\dwg-to-text.exe"],
-    ".step": ["C:\\Tools\\cad-parser.exe", "--format", "step"]
-  }
+  "database_url": "postgresql://seamtech:CHANGE_ME@127.0.0.1:5433/seamtech_search",
+  "storage_backend": "s3",
+  "s3_endpoint_url": "http://127.0.0.1:9000",
+  "s3_bucket": "seamtech-documents",
+  "s3_access_key": "minioadmin",
+  "s3_secret_key": "minioadmin",
+  "redis_url": "redis://127.0.0.1:6379/0"
 }
 ```
 
-Only install and configure trusted parser executables. A parser that is missing, returns an error, or exceeds the extraction timeout remains metadata-searchable with a transparent status.
+---
 
-## Local Setup
+## Local Setup (Native Python)
 
 ```powershell
 python -m venv .venv
@@ -60,211 +82,32 @@ pip install -r requirements.txt
 python scripts/bootstrap.py
 ```
 
-The repository now keeps runtime configuration in the `config/` directory. A ready-to-edit PostgreSQL example is available at `config/config.example.json`, and the CLI will use `config/config.json` automatically when it exists.
-For real SEAMTECH data, edit `config/config.json` and replace `root_paths` with the Windows shared folders to index.
-
-Example:
-
-```json
-{
-  "root_paths": [
-    "\\\\SERVER\\SEAMTECH\\DesignFiles",
-    "D:\\SEAMTECH\\Clients"
-  ]
-}
-```
-
-For production, set `database_url` to PostgreSQL in `config/config.json`:
-
-```json
-{
-  "database_url": "postgresql://seamtech:${POSTGRES_PASSWORD}@localhost:5433/seamtech_search"
-}
-```
-
-PostgreSQL is the required database for normal deployments. SQLite remains available only as an explicit local/test fallback by setting `database_path` and leaving `database_url` empty.
-
-To run PostgreSQL locally with Docker and make it reachable from Windows host tools:
-
-```powershell
-Copy-Item .env.example .env
-# edit .env and replace both change-me values
-docker compose up -d postgres
-$env:SEAMTECH_TEST_DATABASE_URL = "postgresql://seamtech:YOUR_PASSWORD@127.0.0.1:5433/seamtech_search"
-pytest -q -m postgres
-```
-
-The PostgreSQL integration test is skipped when `SEAMTECH_TEST_DATABASE_URL` is not set. The desktop launcher creates `.env`, generates local credentials, starts Docker Desktop and PostgreSQL automatically, and passes the connection URL to the backend without exposing it in the browser. The same connection URL can be placed in `config/config.json` as `database_url` for manual indexing and serving.
-
-## Desktop Launcher
-
-Double-click the `SEAMTECH Search` Desktop shortcut, or run:
-
-```powershell
-.\SEAMTECH Search.cmd
-```
-
-The launcher starts or reuses PostgreSQL, starts the FastAPI backend in the background, waits for its health endpoint, ensures the Next.js frontend has a production build, starts that frontend on port 3000 (or 3001 when port 3000 is occupied), and opens the browser at the selected local URL. Docker Desktop, Node.js and pnpm are required on the Windows host; credentials are generated automatically on first launch and stored only in the ignored `.env` file.
-
-## Index Files
-
-```powershell
-python -m seamtech_search index --config config/config.json
-```
-
-Force a complete rebuild:
-
-```powershell
-python -m seamtech_search index --config config/config.json --rebuild
-```
-
-Indexing runs are single-owner: a second indexing process exits without changing the index while another scan is active. Measure a representative folder share with:
-
-```powershell
-python scripts/benchmark_indexing.py --config config/config.json
-```
-
-Use `--rebuild` only for a deliberate full reindex. The benchmark reports scanned items, changed records, removed records, elapsed seconds, and items per second. Record results by file count, extension mix, storage type, and network location before scaling to the full archive.
-
-Show database statistics:
-
-```powershell
-python -m seamtech_search stats --config config/config.json
-```
-
-Test a search from the terminal:
-
-```powershell
-python -m seamtech_search search CLIENT-123 --config config/config.json
-```
-
-## Run The Backend API
-
-```powershell
-python -m seamtech_search serve --config config/config.json
-```
-
-The command serves the FastAPI backend at `http://127.0.0.1:8000`. To use the browser interface on a Windows host, run `SEAMTECH Search.cmd`; the launcher starts the Next.js frontend and opens `http://127.0.0.1:3000`.
-
-## API
-
-```text
-GET /health
-GET /metrics
-GET /search?q=REFERENCE&limit=50&offset=0
-GET /preview?path=C:\Path\To\File.pdf
-POST /open?path=C:\Path\To\File.pdf
-POST /imports          `{ "source_path": "C:\\Path\\To\\Reference" }`
-POST /imports/scan     `{ "source_path": "C:\\Path\\To\\Reference" }`
-POST /imports/confirm  `{ "source_path": "...", "technical_pdf": "C:\\...\\sheet.pdf" }`
-POST /imports/upload   multipart files + folder name (browser drag & drop staging)
-GET /imports/{import_id}
-PATCH /imports/{import_id}  `{ "reference": "...", "dimensions": { "length": 99 } }`
-POST /imports/{import_id}/retry-upload
-```
-
-The import endpoints require a server-accessible folder inside a configured `root_path` (or a staged upload folder). They recursively scan the folder, analyze only PDFs with the confirmed sail-manufacturing text anchors, store plan PDFs and other files without content extraction, index the detected files, and generate PDF + Word reports under `data/reports/`. Original source files are never moved or modified. Dimensions are stored both raw and normalized to millimetres.
-
-Preferred flow is two-phase: `POST /imports/scan` lists every technical-PDF candidate with its matched anchors, then `POST /imports/confirm` processes the user-selected one. `POST /imports` keeps the one-shot behaviour (first deterministic path-sorted match wins, flagged with a warning) and now also returns the candidate list.
-
-`PATCH /imports/{import_id}` applies a manual correction: the merged data is re-validated, both reports are regenerated, and the OneDrive upload is re-attempted. `POST /imports/upload` stages browser drag-and-drop bytes in an isolated server directory and returns scan candidates for confirmation.
-
-OneDrive upload is optional until Microsoft Graph credentials are configured. Set `SEAMTECH_GRAPH_ACCESS_TOKEN` and `SEAMTECH_ONEDRIVE_DRIVE_ID` in the backend environment; without them, reports are generated locally and the import response reports `pending_not_configured`. Each import uploads three files (source PDF, PDF report, Word report) with exponential-backoff retries (`onedrive_max_retries`, default 3, overridable via `SEAMTECH_UPLOAD_MAX_RETRIES`). A failed configured upload reports `pending_retry`, never fails the import, and can be re-attempted later via the retry endpoint.
-
-Import records are stored as `JSONB` on PostgreSQL (migrated automatically from legacy `TEXT` rows) and as JSON text on the SQLite fallback; `GET /imports/{import_id}` returns the same JSON shape on both backends.
-
-Search results include the file/folder name, full path, parent path, extension, size, modified date, folder/file type, match type (`exact_name`, `name`, `path`, or `content`), and a highlighted snippet. The API supports bounded pagination with `limit` and `offset` and returns `has_more`.
-
-`/preview` and `/open` only allow paths inside configured `root_paths`. When `auth_token` is configured, search, preview and open require the `X-SEAMTECH-TOKEN` header. Set `allow_network_access` only when a protected deployment boundary is in place; the token is an interim boundary, not a replacement for enterprise SSO and per-folder authorization.
-
-`auth_token` is a single shared secret for the whole deployment: anyone holding it can search and open anything under every configured `root_path`. This is an intentional, accepted trade-off for a single trusted internal team; it does **not** provide per-client or per-folder access separation. If that separation is ever needed, this is the first thing to redesign — rotate the token periodically (`SEAMTECH_AUTH_TOKEN` env var overrides the config file) and treat it as a shared team secret, not a per-user credential.
-
-### Search backend contract
-
-SQLite (FTS5, `bm25` ranking, prefix-OR token matching) and PostgreSQL (`plainto_tsquery`, `ts_rank_cd`) do not guarantee identical result ordering or matches for the same query — they are two different full-text engines, not two drivers for the same one. **PostgreSQL is the contractual backend**: its behavior is what a production deployment should be validated against. SQLite is for local development and the test suite only; don't use it to sanity-check production search behavior, and don't expect query-for-query parity between the two.
-
-An indexing run aborts without removing old records if a configured root is unavailable or traversal reports an error. Successful runs record their status and counters in the `scan_runs` table.
-
-## Docker Deployment
-
-`docker compose up` starts three services: `postgres`, the FastAPI backend (`web`), and the Next.js `frontend`. Copy `.env.example` to `.env` and fill in real values first:
-
-```powershell
-Copy-Item .env.example .env
-# edit .env: set POSTGRES_PASSWORD and SEAMTECH_AUTH_TOKEN to real secrets
-docker compose up --build
-```
-
-Then create `config/config.json` (see the example above) with your real `root_paths` before indexing.
-
-- Frontend: `http://localhost:3000` — the UI to use day to day.
-- Backend API: `http://localhost:8000` — exposed for direct API access/debugging; the frontend never needs this URL from the browser, since it proxies server-side.
-
-`SEAMTECH_AUTH_TOKEN` is required in Docker: compose runs the backend with `SEAMTECH_HOST=0.0.0.0` and `SEAMTECH_ALLOW_NETWORK_ACCESS=true` so the `frontend` container can reach `web` over the internal Docker network (a container bound to `127.0.0.1` is only reachable from inside itself), and `AppConfig` requires a token whenever the host is non-local. The same token is shared by both containers server-to-server; it's still never sent to the browser. For a native/single-host run (no Docker), leave `config/config.json`'s `host` at `127.0.0.1` and skip this — the env override only applies to the containers it's set for.
-
-Run indexing from the host machine when the host has access to the Windows shared folders. The launcher has already prepared PostgreSQL automatically; for a scheduled job, set `SEAMTECH_DATABASE_URL` from the generated local configuration or use a managed PostgreSQL connection:
-
-```powershell
-.\scripts\run_indexing.ps1 -Config config/config.json
-```
-
-Schedule that command in Windows Task Scheduler. For a full service install, point NSSM at:
-
-```text
-python -m seamtech_search serve --config config/config.json
-```
-
-## Monitoring And Maintenance
-
-- `/health` checks database connectivity, database integrity/size, disk capacity, and index counts.
-- `/metrics` reports search request count, error count, last search time, slowest search time, and current health.
-- `scripts/run_indexing.ps1` writes a timestamped indexing transcript into `logs/` and exits non-zero on failure, so Task Scheduler can alert on failed runs.
-
-Back up PostgreSQL:
-
-```powershell
-.\scripts\backup_postgres.ps1 -DatabaseUrl "postgresql://seamtech:$env:POSTGRES_PASSWORD@localhost:5432/seamtech_search"
-```
-
-Restore PostgreSQL:
-
-```powershell
-.\scripts\restore_postgres.ps1 -BackupFile data/backups/seamtech-search-YYYYMMDD-HHMMSS.dump -DatabaseUrl "postgresql://seamtech:$env:POSTGRES_PASSWORD@localhost:5432/seamtech_search"
-```
-
-Back up or restore the SQLite fallback database:
-
-```powershell
-.\scripts\backup_sqlite.ps1
-.\scripts\restore_sqlite.ps1 -BackupFile data/backups/search-YYYYMMDD-HHMMSS.db
-```
-
-## Tests
+Run tests:
 
 ```powershell
 pytest
 ```
 
-## Project Structure
-
-- `config/`: runtime and example configuration files
-- `data/`: generated runtime data and local SQLite fallback index
-- `logs/`: application logs
-- `sample_data/`: sample content for local development
-- `scripts/`: setup and maintenance helpers
-- `seamtech_search/`: Python package containing the crawler, indexer, API and CLI.
-- `frontend/`: the only web UI, used by both Docker and the native desktop launcher. Its server-side `app/api/*` routes proxy requests to the FastAPI backend without exposing backend credentials to the browser.
-- `tests/`: regression tests
-
-## Recommended Deployment
-
-**Supported topology: a single Windows host or VM with direct access to the shared folders, running both indexing and the web server.** This matches the `.cmd` launcher and PowerShell scripts already in this repo and keeps indexing, preview, and "Open File" operating against the same filesystem view — there is no split between where files are indexed and where they're opened from.
+Run FastAPI Backend:
 
 ```powershell
-python -m seamtech_search index --config config/config.json   # scheduled via Task Scheduler
-python -m seamtech_search serve --config config/config.json   # run as a service (e.g. via NSSM)
+python -m seamtech_search serve --config config/config.json
 ```
 
-Use PostgreSQL (see Docker Deployment) as the index store once the corpus outgrows the SQLite fallback; SQLite remains fine for a single small deployment or local testing.
+Run Next.js Frontend:
 
-The Docker/Postgres path in this repo is kept as an option for a Linux-hosted deployment, but it comes with a real limitation: the container has no access to the Windows shares, so indexing still has to run from a Windows host (see `scripts/run_indexing.ps1`) against the same Postgres instance, and `/open` (which calls `os.startfile`) only works when the *serving* process itself is a Windows host — it will return `501 Not Implemented` from inside the Linux container. Only choose this topology if you specifically need Postgres running on separate infrastructure from the Windows indexing host; otherwise the single-Windows-host setup above is simpler and has fewer moving parts.
+```powershell
+cd frontend
+npm run dev
+```
+
+---
+
+## Production Deployment (Cloudflare R2 + PostgreSQL + Redis on VPS)
+
+When deploying to production VPS:
+1. Point `SEAMTECH_S3_ENDPOINT_URL` to your Cloudflare R2 endpoint: `https://<ACCOUNT_ID>.r2.cloudflarestorage.com`.
+2. Set `SEAMTECH_S3_ACCESS_KEY` and `SEAMTECH_S3_SECRET_KEY` from Cloudflare R2 API Tokens.
+3. Set `SEAMTECH_DATABASE_URL` to your PostgreSQL database.
+4. Set `SEAMTECH_REDIS_URL` to your Redis container or managed Redis.
+5. Launch via `docker compose up --build -d`.

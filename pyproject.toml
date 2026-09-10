@@ -1,17 +1,20 @@
 [project]
 name = "seamtech-search"
-version = "0.2.0"
-description = "Production-oriented internal search service for SEAMTECH factory files"
-requires-python = ">=3.11"
+version = "0.4.0"
+description = "Fast, secure search and indexing engine for technical fabrication files"
+readme = "README.md"
+requires-python = ">=3.10"
 dependencies = [
     "fastapi==0.116.1",
     "uvicorn[standard]==0.35.0",
     "pydantic==2.11.7",
     "pypdf==5.8.0",
-    "pdfplumber==0.11.10",
     "python-docx==1.2.0",
     "python-multipart==0.0.20",
     "reportlab==4.4.3",
+    "openpyxl==3.1.5",
+    "boto3==1.35.90",
+    "redis==5.2.1",
     "psycopg2-binary==2.9.10",
 ]
 
@@ -19,17 +22,22 @@ dependencies = [
 dev = [
     "pytest==8.4.1",
     "httpx==0.28.1",
+    "ruff>=0.5.0",
 ]
-
-[tool.setuptools]
-include-package-data = true
-
-[tool.setuptools.packages.find]
-include = ["seamtech_search*"]
 
 [tool.pytest.ini_options]
-pythonpath = ["."]
 testpaths = ["tests"]
+python_files = ["test_*.py"]
+pythonpath = ["."]
 markers = [
-    "postgres: requires a running PostgreSQL database configured by SEAMTECH_TEST_DATABASE_URL",
+    "postgres: tests requiring a live PostgreSQL instance",
+    "s3: tests requiring a live S3 or MinIO instance",
 ]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+ignore = ["E501"]

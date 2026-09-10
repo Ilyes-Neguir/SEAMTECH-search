@@ -8,7 +8,6 @@ all exercised against actual files — not mocks.
 from __future__ import annotations
 
 import io
-import json
 import urllib.error
 from pathlib import Path
 
@@ -26,7 +25,6 @@ from seamtech_search.import_pipeline import (
     upload_to_onedrive,
 )
 from seamtech_search.indexer import SearchIndex
-
 
 TECHNICAL_LINES = [
     "FICHE DE FABRICATION",
@@ -263,7 +261,7 @@ def test_api_correction_regenerates_reports(tmp_path: Path) -> None:
     root = tmp_path / "roots"
     source = make_source(tmp_path)
     client = _client(tmp_path, root)
-    created = client.post("/imports", json={"source_path": str(source)}).json()
+    created = client.post("/imports?wait=true", json={"source_path": str(source)}).json()
     import_id = created["import_id"]
 
     response = client.patch(
@@ -286,7 +284,7 @@ def test_api_correction_rejects_unknown_fields(tmp_path: Path) -> None:
     root = tmp_path / "roots"
     source = make_source(tmp_path)
     client = _client(tmp_path, root)
-    created = client.post("/imports", json={"source_path": str(source)}).json()
+    created = client.post("/imports?wait=true", json={"source_path": str(source)}).json()
 
     # Unknown keys are dropped by the request model; send a raw invalid payload
     # through the lower-level function path instead is covered below; here an
@@ -306,7 +304,7 @@ def test_api_retry_upload_without_credentials(tmp_path: Path) -> None:
     root = tmp_path / "roots"
     source = make_source(tmp_path)
     client = _client(tmp_path, root)
-    created = client.post("/imports", json={"source_path": str(source)}).json()
+    created = client.post("/imports?wait=true", json={"source_path": str(source)}).json()
 
     response = client.post(f"/imports/{created['import_id']}/retry-upload")
     assert response.status_code == 200
@@ -345,7 +343,7 @@ def test_upload_sends_all_three_files_with_retry(monkeypatch, tmp_path: Path) ->
     monkeypatch.setenv("SEAMTECH_GRAPH_ACCESS_TOKEN", "token")
     monkeypatch.setenv("SEAMTECH_ONEDRIVE_DRIVE_ID", "drive")
     sleeps: list[float] = []
-    monkeypatch.setattr("seamtech_search.import_pipeline.time.sleep", lambda seconds: sleeps.append(seconds))
+    monkeypatch.setattr("seamtech_search.onedrive.time.sleep", lambda seconds: sleeps.append(seconds))
 
     calls: list[str] = []
 
@@ -362,7 +360,7 @@ def test_upload_sends_all_three_files_with_retry(monkeypatch, tmp_path: Path) ->
             raise urllib.error.URLError("boom")
         return _Probe()
 
-    monkeypatch.setattr("seamtech_search.import_pipeline.urllib.request.urlopen", fake_urlopen)
+    monkeypatch.setattr("seamtech_search.onedrive.urllib.request.urlopen", fake_urlopen)
 
     pdf = _touch(tmp_path / "sheet.pdf")
     report = _touch(tmp_path / "technical-report.pdf")
@@ -382,14 +380,14 @@ def test_upload_sends_all_three_files_with_retry(monkeypatch, tmp_path: Path) ->
 def test_upload_gives_up_and_reports_pending_retry(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("SEAMTECH_GRAPH_ACCESS_TOKEN", "token")
     monkeypatch.setenv("SEAMTECH_ONEDRIVE_DRIVE_ID", "drive")
-    monkeypatch.setattr("seamtech_search.import_pipeline.time.sleep", lambda seconds: None)
+    monkeypatch.setattr("seamtech_search.onedrive.time.sleep", lambda seconds: None)
     calls: list[str] = []
 
     def always_fail(request, timeout=30):
         calls.append(request.full_url)
         raise urllib.error.URLError("down")
 
-    monkeypatch.setattr("seamtech_search.import_pipeline.urllib.request.urlopen", always_fail)
+    monkeypatch.setattr("seamtech_search.onedrive.urllib.request.urlopen", always_fail)
     pdf = _touch(tmp_path / "sheet.pdf")
     report = _touch(tmp_path / "technical-report.pdf")
     config = AppConfig(root_paths=[tmp_path])
