@@ -66,8 +66,9 @@ jobs:
       - uses: pnpm/action-setup@v4
         with:
           version: 9
-      - name: Install dependencies
-        run: pnpm install
+      # Keep this first: it fails fast when package.json and pnpm-lock.yaml diverge.
+      - name: Verify pnpm-lock.yaml is in sync
+        run: pnpm install --frozen-lockfile
       - name: Type check
         run: pnpm exec tsc --noEmit
       - name: Build
@@ -92,7 +93,8 @@ jobs:
           pip install -r requirements.txt
       - name: Install frontend dependencies
         working-directory: frontend
-        run: pnpm install
+        # Keep this frozen install so package.json/lockfile drift fails before Playwright setup.
+        run: pnpm install --frozen-lockfile
       - name: Install Playwright Chromium
         working-directory: frontend
         run: pnpm exec playwright install --with-deps chromium
