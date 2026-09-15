@@ -665,7 +665,7 @@ class SearchIndex:
                     values,
                     template=(
                         "(%s, %s, %s, %s, %s, %s, %s, %s, %s, "
-                        "to_tsvector('simple', concat_ws(E'\\n', %s, %s, %s, %s)), "
+                        "to_tsvector('simple', %s), "
                         "%s, %s, %s, %s, %s)"
                     ),
                 )
