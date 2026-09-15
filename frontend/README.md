@@ -16,6 +16,10 @@ pnpm install
 pnpm dev
 ```
 
+After any change to `frontend/package.json`, run `pnpm install` without
+`--frozen-lockfile` and commit the regenerated `pnpm-lock.yaml` before pushing;
+otherwise the `frontend` and `e2e` CI jobs will fail during installation.
+
 Open http://localhost:3000. By default this uses sample data. To point it at
 a real backend running locally:
 
