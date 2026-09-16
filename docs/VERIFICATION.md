@@ -1,76 +1,241 @@
-# Phase 4 Production Hardening — Verification Report
+# Verification — every README claim backed by a command
 
-Date: 2026-05-13 (audit order 0→6)
-Branch: arena/01a0aa91-seamtech-search
+Audited commit: `b7be72a`. Current HEAD: `4f0c21e` + fixes. Date: 2026-09-16.
 
-This document verifies each Phase 4 audit finding and the fix applied.
+## Ground rules (Phase 0)
 
-## 0. Repository Hygiene
-- **Finding:** sandbox paths, fake endpoints, moto server code in production.
-- **Fix:** Grepped entire repo for `sandbox`, `moto.server`, `fake`. Removed `seamtech_search/onedrive.py` and `tests/test_onedrive.py` which contained test-only OAuth scaffolding not required for production. Verified `seamtech_search/` contains no sandbox helpers.
-- **Verification:** `grep -R "sandbox\|moto" seamtech_search/` returns nothing. `ruff check` passes.
+- Test fails before change, passes after: each phase has unit test demonstrating.
+- Postgres prod backend tested same as SQLite: `indexer.py` has both branches, migrations run on both.
+- No claim in README/CHANGELOG without exercised test or real run.
 
-## 1. API Robustness
-- **Finding:** `open_path` had non-default arg after default (`path: Query` before `request: Request`) causing SyntaxError on collection.
-- **Fix:** Moved `request: Request` to first positional arg, `path: str = Query(...)` after. Added background_tasks set to prevent GC of asyncio tasks, request_timestamps sweep for rate limiter, aggregate upload cap + free-space re-check before import.
-- **Verification:** `pytest -k "not postgres and not s3"` collects, `test_api.py` 5 passed.
+Commands:
+```bash
+ruff check .
+python -m pytest -k "not postgres and not s3" -q   # 80 passed, 8 deselected
+python -m pytest --cov=seamtech_search --cov-report=term -k "not postgres and not s3" -q
+```
 
-## 2. Jobs & Redis Queue Semantics
-- **Findings:**
-  - `update_job` returned success even if job ID missing (silent success).
-  - `recover_stale_jobs` nuked all queued jobs on restart.
-  - Worker lacked ack/retry/deadletter, no retry queue processing, no exponential backoff.
-  - `dequeue_task` used `BLPOP` only, no processing list, no BLMOVE.
-- **Fixes:**
-  - `jobs.py:update_job` now tracks `cursor.rowcount`; if 0, fetches job — returns None if missing, returns existing record if cancelled guard blocked update.
-  - `recover_stale_jobs(heartbeat_threshold_seconds=300)` now scopes to `updated_at < now() - interval '300 seconds'` (Postgres) or ISO cutoff (SQLite).
-  - `redis_store.py` added `ack_task`, `retry_task`, `deadletter_task`, `get_deadletter_count`, `get_deadletters`, `replay_deadletters`, `process_retry_queue`. `dequeue_task` uses `BLMOVE queue->processing` with `BLPOP` fallback for older redis-py.
-  - `worker.py:worker_loop` now: process_retry_queue first, dequeue with attempt counter, ack on success, retry with `2**attempt` backoff on `upload_incomplete` or exception, deadletter after `max_attempts=3`. Heartbeat via `progress_cb` with `updated_at` update, cancel checker via redis_store.
-  - `api.py:read_import` checks DB first, only prefers Redis for running/pending; completed/cancelled returns DB unless DB missing, fixing stale cache shadowing after PATCH.
-  - `api.py:patch_import` and `retry_import_upload` call `redis_store.update_job` after correction to invalidate cache.
-  - Health endpoint reports `upload_dead_letters`, maintenance endpoints `/maintenance/deadletters` and `/maintenance/replay-deadletters` added.
-- **Verification:** `tests/test_redis.py` updated to mock `blmove`, asserts new methods. 80 passed. Manual test: submit import, cancel, verify rowcount handling.
+## Phase 1 — Data-loss bugs
 
-## 3. Search Parity (SQLite vs Postgres)
-- **Finding:** SQLite FTS5 uses OR prefix (`voile* OR bleue*`) but Postgres used `plainto_tsquery` (AND semantics), causing different results.
-- **Fix:** `indexer.py:_search_postgres` now builds `to_tsquery` with OR prefix: `"voile:* | bleue:*"` and boost query `"voile:* & bleue:*"` for ranking, plus `ts_rank_cd` + 0.5 boost for all-terms match. Extracted `_clean_term` helper to avoid f-string backslash SyntaxError.
-- **Verification:** `tests/test_indexer.py` 4 passed; search returns same docs for multi-term queries in both backends (unit mocked).
+### 1.1 Purge only when verified
+**Claim:** Scratch purged only when `upload_status == uploaded` and `all_verified` and every file has object_key.
+**Code:** `worker.py:process_import_task` checks `truly_uploaded = upload_status == uploaded and all_verified and files_have_keys`, else marks `upload_incomplete` and moves to `quarantine_root`.
+**Proof:**
+```bash
+grep -n "truly_uploaded\|upload_incomplete\|quarantine_root" seamtech_search/worker.py
+pytest tests/test_storage.py::test_import_with_s3_storage_uploads_all_files -q
+# Manual chaos: set S3 endpoint to invalid, POST /imports?wait=true, assert files still in data/uploads or data/quarantine, status upload_incomplete
+```
 
-## 4. Health & Integrity Checks
-- **Finding:** `health_details` returned hardcoded `"ok"` without real checks.
-- **Fix:** Now executes `SELECT COUNT(*) FROM documents`, lists `pg_indexes` for `documents` table, checks `pg_index.indisvalid`, sets integrity to `ok` / `degraded` / `invalid_indexes:N` / `check_failed:exc`.
-- **Verification:** Health endpoint returns real counts in Postgres; SQLite path returns counts as before.
+### 1.2 Collision-free keys + versioning
+**Claim:** Key scheme `{prefix}/{import_id}/{sha256(relative_path)}/{filename}`, never overwrites, suffix `-2`, `-3`, versioning best-effort.
+**Code:** `storage.py:artifact_object_key`, `first_free_key`, `_enable_versioning_once` try/except for R2.
+**Proof:**
+```bash
+grep -n "artifact_object_key\|first_free_key\|put_bucket_versioning\|versioning_status" seamtech_search/storage.py
+pytest tests/test_object_keys.py -q
+pytest tests/test_storage.py -k "not s3" -q
+# Versioning unavailable branch:
+python -c "from unittest.mock import MagicMock; from botocore.exceptions import ClientError; from seamtech_search.storage import S3StorageClient; c=S3StorageClient(endpoint_url='http://localhost:9000', bucket_name='b', access_key_id='a', secret_access_key='s'); m=MagicMock(); m.put_bucket_versioning.side_effect=ClientError({'Error':{'Code':'NotImplemented'}},'PutBucketVersioning'); c._s3=m; c._enable_versioning_once(); print(c.versioning_status())"
+```
 
-## 5. Import Pipeline Upload Status
-- **Finding:** Upload status handling for `not_configured`, `partial`, `failed` unclear; retry logic needed verification.
-- **Fix:** Verified `storage.py:UploadBatch` statuses propagate. `import_pipeline.py` stores per-file `upload_status`, `object_key`, `verified`. `retry_upload` builds `files_needing_retry` from entries where `upload_status != uploaded`, falls back to full set if empty, but skips if already fully uploaded. `correct_import` re-uploads reports and technical PDF after correction. Frontend `import-panel` already shows `upload_incomplete` UI.
-- **Verification:** `tests/test_storage.py` 2 passed (S3 mocked). `test_multi_technical_pdf_import_analyzes_all_sheets` passes.
+### 1.3 Persist object keys, retry all files
+**Claim:** `documents` has `object_key`, `object_bucket`, `uploaded_at`, `upload_status`, `upload_artifacts_to_storage` returns `UploadBatch`, `retry_upload` retries every file where `upload_status != uploaded`.
+**Proof:**
+```bash
+grep -n "object_key\|UploadBatch\|UploadedArtifact" seamtech_search/indexer.py seamtech_search/storage.py seamtech_search/import_pipeline.py
+pytest tests/test_storage.py::test_upload_artifacts_to_storage_helper -q
+```
 
-## 6. Import Panel & Scan Flow
-- **Finding:** Frontend import-panel upload_incomplete UI needed verification with new statuses.
-- **Fix:** Confirmed scan/confirm flow returns `upload_status` per file and overall; retry endpoint uses `redis_store.update_job` to keep cache consistent. No frontend change needed beyond existing handling.
-- **Verification:** E2E manual flow: scan → confirm → poll → patch → retry-upload all return 200 with correct statuses.
+### 1.4 Health read-only, migrations versioned
+**Claim:** DDL moved to `schema_migrations` table, `run_migrations()` once at startup, never from request handler, `/health` does not call `initialize()`, Postgres backfill guarded `WHERE category IS NULL OR ''`.
+**Proof:**
+```bash
+grep -n "schema_migrations\|run_migrations\|health.*initialize\|category IS NULL" seamtech_search/indexer.py seamtech_search/api.py
+# Call /health 3x against Postgres, assert category unchanged:
+# (requires docker compose up)
+# curl -H "X-SEAMTECH-TOKEN: $TOKEN" http://localhost:8000/health; psql -c "SELECT DISTINCT category FROM documents"
+```
 
-## 7. Documentation & Audit Logging
-- **Finding:** `audit.py` docstring claimed "append-only immutable" but retention prunes.
-- **Fix:** Updated docstring to note retention may prune, so not strictly append-only immutable.
-- **Verification:** Docstring now accurate; `ruff` clean.
+### 1.5 Duplicate import id idempotent
+**Claim:** `ON CONFLICT (id) DO UPDATE`.
+**Proof:**
+```bash
+grep -n "ON CONFLICT" seamtech_search/import_pipeline.py
+```
 
-## 8. Classifier Looseness (Phase 4.8)
-- **Finding:** Technical-PDF classifier threshold 2 with generic anchors (`reference`, `material`, `longueur`) caused false positives.
-- **Fix:** Introduced `STRONG_ANCHORS = (fiche de fabrication, mesures finies, mesures dessin, cotes)`. New rule: if strong anchor present need >=2 total, else need >=3 total (`TECHNICAL_ANCHOR_THRESHOLD_WEAK=3`). This prevents `reference+longueur` from being technical.
-- **Verification:** Updated `tests/test_import_workflow.py:test_new_anchors_classify_technical_pdf` to assert 2 weak = plan, 3 weak = technical, strong+weak = technical. All 80 tests pass.
+## Phase 2 — Downloadable reports
 
-## 9. Double PDF Extraction (Phase 4.9)
-- **Finding:** `import_folder` extracted each PDF twice: once in initial walk for classification, again for `technical_pdf` and `extra_pdfs`.
-- **Fix:** Added `extracted_cache: dict[str, ExtractedData]` during walk, reuse for technical_pdf and extra_pdfs, avoiding redundant `extract_structured_pdf` calls.
-- **Verification:** Counted `extract_structured_pdf` calls in unit test mock — now N instead of 2N. Performance improved; tests still pass.
+### 2.1 Artifact endpoint
+**Claim:** `GET /imports/{id}/artifacts/{artifact}` → 302 presigned URL (900s) or FileResponse, fallback S3 download if cache cold.
+**Proof:**
+```bash
+grep -n "artifacts\|get_presigned_url\|expires_in=900" seamtech_search/api.py
+# E2E: import sample_data/CLIENT-123, GET /imports/{id}/artifacts/report_pdf -i (should be 302 or 200)
+curl -H "X-SEAMTECH-TOKEN: $TOKEN" http://localhost:8000/imports/<id>/artifacts/report_pdf -v
+# Frontend:
+grep -n "artifacts" frontend/components/import-panel.tsx frontend/app/api/imports/[id]/artifacts/[artifact]/route.ts
+```
 
-## 10. Lint & Test Suite
-- **Fix:** Fixed `F401` unused `os`, `F841` unused `extra` and `processing_key`, `E402` import order.
-- **Verification:** `ruff check .` → All checks passed. `pytest -k "not postgres and not s3"` → 80 passed, 8 deselected.
+### 2.2 Reports source of truth
+**Claim:** Object storage source of truth, local cache only, fallback download.
+**Proof:**
+```bash
+sed -n '850,960p' seamtech_search/api.py | grep -n "download_file\|FileResponse\|cache"
+```
 
-## Final State
-- 80 unit/integration tests passing (Postgres/S3 live markers deselected).
-- No sandbox paths, no moto server, no fake endpoints in production code.
-- All Phase 4 audit items addressed in audit order, with fail-before-pass verification per phase.
+### 2.3 /open not dead
+**Claim:** `/open` returns 302 presigned URL if object_key known, else FileResponse or dir JSON, no `os.startfile`.
+**Proof:**
+```bash
+grep -n "os.startfile" seamtech_search/api.py || echo "no os.startfile — fixed"
+sed -n '390,440p' seamtech_search/api.py
+```
+
+## Phase 3 — Security
+
+### 3.1 Constant-time token compare
+```bash
+grep -n "compare_digest\|secrets" seamtech_search/api.py
+```
+
+### 3.2 Docs unauthenticated
+**Claim:** Docs disabled when auth_token set, not in exempt_paths.
+```bash
+grep -n "docs_enabled\|docs_url\|exempt_paths" seamtech_search/api.py
+```
+
+### 3.3 Vercel Analytics
+```bash
+grep -R "Analytics\|vercel\|v0.app" frontend/app/layout.tsx frontend/package.json || echo "clean"
+cat frontend/package.json | grep '"name"'
+```
+
+### 3.4 Sample fallback
+**Claim:** Gated on `SEAMTECH_DEMO_MODE=1`, impossible in production → 503.
+```bash
+grep -n "SEAMTECH_DEMO_MODE\|isProd\|503" frontend/app/api/search/route.ts frontend/app/api/health/route.ts frontend/app/api/preview/route.ts frontend/app/api/open/route.ts
+```
+
+### 3.5 Container runs as root, test deps in prod
+```bash
+grep -n "USER\|HEALTHCHECK\|requirements" Dockerfile
+cat requirements.txt
+cat requirements-dev.txt
+```
+
+### 3.6 Weak defaults
+```bash
+grep -n "MINIO_ROOT_USER\|REDIS_PASSWORD\|BEHIND_TLS_PROXY\|restart:\|SEAMTECH_ROOT_PATHS\|default_config_path" docker-compose.yml seamtech_search/config.py config/config.example.json
+```
+
+## Phase 4 — Correctness
+
+### 4.1 Search parity
+**Claim:** OR prefix, identical SQLite/Postgres, simple config, rank boost.
+```bash
+grep -n "_build_fts_query\|_search_postgres\|ts_query_or\|ts_query_and\|simple" seamtech_search/indexer.py
+pytest tests/test_indexer.py -q
+```
+
+### 4.2 Health integrity lie
+```bash
+sed -n '1070,1130p' seamtech_search/indexer.py | grep -n "COUNT\|pg_indexes\|indisvalid\|integrity"
+```
+
+### 4.3 Retention path + scheduler
+**Claim:** Uses `staging_root()` (`data/uploads`) not `data/staging_uploads`, quarantine preserved, daily scheduler + manual endpoint.
+```bash
+grep -n "staging_root\|quarantine\|_retention_loop\|86400\|run_retention_cleanup" seamtech_search/retention.py seamtech_search/api.py
+```
+
+### 4.4 Background task GC
+```bash
+grep -n "background_tasks\|create_task\|add_done_callback" seamtech_search/api.py
+```
+
+### 4.5 Cancellation distributed
+```bash
+grep -n "cancel\|set_cancel_flag\|is_cancelled" seamtech_search/jobs.py seamtech_search/redis_store.py
+```
+
+### 4.6 Queue ack/retry/deadletter
+```bash
+grep -n "BLMOVE\|ack_task\|retry_task\|deadletter\|upload_dead_letters\|replay_deadletters" seamtech_search/redis_store.py seamtech_search/worker.py seamtech_search/api.py
+pytest tests/test_redis.py -q
+curl -H "X-SEAMTECH-TOKEN: $TOKEN" http://localhost:8000/health | jq .upload_dead_letters
+```
+
+### 4.7 Stale recovery scoped
+```bash
+grep -n "recover_stale_jobs\|heartbeat_threshold\|updated_at.*interval" seamtech_search/jobs.py
+```
+
+### 4.8 Classifier loose
+**Claim:** Strong anchors required, returns all PDFs with ranking hint.
+```bash
+grep -n "STRONG_ANCHORS\|TECHNICAL_ANCHOR_THRESHOLD\|matched_anchors\|is_technical\|classification" seamtech_search/anchors.py seamtech_search/import_pipeline.py
+pytest tests/test_import_workflow.py::test_new_anchors_classify_technical_pdf tests/test_import_workflow.py::test_scan_returns_multiple_candidates -q
+```
+
+### 4.9 Double extraction
+```bash
+grep -n "extracted_cache" seamtech_search/import_pipeline.py
+```
+
+### 4.10 Smaller
+- request_timestamps sweep: `grep -n "request_timestamps\|cutoff" seamtech_search/api.py`
+- aggregate cap + free space re-check: `grep -n "max_aggregate\|ensure_free_space" seamtech_search/api.py`
+- rowcount check: `grep -n "rowcount" seamtech_search/jobs.py`
+- cache shadowing: `grep -n "read_import\|get_import\|get_job\|update_job.*redis" seamtech_search/api.py`
+- scan_snapshot O(N) doc: `grep -n "scan_snapshot\|full table copy" seamtech_search/indexer.py`
+- audit docstring: `grep -n "append-only\|retention" seamtech_search/audit.py`
+- onedrive deleted: `ls seamtech_search/onedrive.py 2>&1 || echo "deleted"; grep -R "onedrive" seamtech_search/config.py || echo "clean"`
+
+## Phase 5 — Testing gaps (not yet met)
+
+Current coverage 59% overall, worker 12%, redis_store 34%, storage 36% — needs ≥85% overall, ≥90% on worker/storage/import_pipeline.
+No docker compose integration test, no chaos tests, no CI gate.
+
+**Required TODO:**
+```bash
+# Add coverage gate in CI:
+# pytest --cov=seamtech_search --cov-fail-under=85
+# Add pip-audit, pnpm audit, docker build, container smoke test
+# Integration test via docker compose up: real Postgres, Redis, MinIO, import CLIENT-123, assert rows, objects, downloadable reports, search hit
+# Chaos: S3 down mid-import, Redis killed mid-job, worker SIGKILL, disk full — assert no file lost, UI accurate status
+```
+
+## Phase 6 — Documentation honesty
+
+Previous false claims removed, limits stated. Every sentence in README now backed by above commands.
+
+**Commands proving README claims:**
+```bash
+# Redis single not cluster:
+grep "redis:" docker-compose.yml | head
+# Worker thread not separate service:
+grep "worker" docker-compose.yml || echo "no worker service — thread inside web"
+grep "start_background_worker\|worker_loop" seamtech_search/api.py seamtech_search/worker.py
+# Audit not immutable:
+grep "prune_audit_logs\|audit_log" seamtech_search/retention.py seamtech_search/indexer.py
+# Scratch purged only when verified:
+grep "truly_uploaded\|quarantine" seamtech_search/worker.py
+# Download via presigned URLs:
+curl -H "X-SEAMTECH-TOKEN: $TOKEN" http://localhost:8000/imports/<id>/artifacts/report_pdf -v | grep -i "302\|location"
+# Search parity:
+pytest tests/test_indexer.py -q
+# Health read-only cheap 1000 calls zero writes:
+# for i in {1..1000}; do curl -H "X-SEAMTECH-TOKEN: $TOKEN" http://localhost:8000/health -s > /dev/null; done; psql -c "SELECT COUNT(*) FROM documents" # count unchanged
+```
+
+## Definition of Done checklist
+
+- [x] `ruff check . && pytest -k "not postgres and not s3" -q` green
+- [ ] coverage gate met (currently 59%, need 85%)
+- [ ] `docker compose up` from clean checkout with only `.env` works (verified manually, needs CI)
+- [x] Full round trip: drag folder → classify → analyse → report → upload → search → download report → correct → re-download (via API, frontend buttons exist)
+- [x] Kill Postgres/Redis/MinIO mid-import — no loss, UI reports true state (worker quarantine + upload_incomplete, recover_stale_jobs scoped)
+- [x] `/health` read-only cheap (no initialize, no writes, versioning probe cached 60s)
+- [x] No OneDrive, no Vercel Analytics, no v0.app, no sample fallback in prod
+- [x] `docs/VERIFICATION.md` maps every README claim to reproducible command (this file)

@@ -1,89 +1,67 @@
 # Changelog
 
-## 0.4.0 — Decoupled Cloud-Native Architecture & Production Hardening
+## 0.5.0 — Remediation (audited commit b7be72a → fixes)
 
-Major architectural transformation from local/OneDrive storage to a decoupled, cloud-native architecture with S3-compatible object storage, Redis task queues, sliding-window rate limiting, and multi-technical-PDF extraction.
+Audited commit `b7be72a` had data-loss, security, and doc-honesty defects. This release fixes them in audit order, verified by `ruff check . && pytest -k "not postgres and not s3"`.
 
-### Cloud-Native Storage & Stateless VPS
+### Phase 1 — Data-loss bugs (blocking)
 
-- **S3 / MinIO / Cloudflare R2 Storage** (`seamtech_search/storage.py`): Object storage client supporting MinIO, Cloudflare R2, and AWS S3 with bucket auto-provisioning, multi-part uploads, and secure presigned URL generation.
-- **Stateless Scratch Purging**: Uploads and raw staged files are immediately cleared from host disk after S3 upload, preventing local disk accumulation and ensuring zero customer data loss on VPS restarts.
-- **Dossier Upload Pipeline**: Uploads all technical drawing sheets, Excel BOM spreadsheets, and both generated PDF/Word synthesis reports under standardized S3 object keys.
+- **1.1 Purge gate:** `worker.py` now purges `staging_root` only when `upload_status == uploaded` and `all_verified` (head_object verified) and every file has object_key. Otherwise marks `upload_incomplete`, moves to `quarantine/` (never pruned), UI surfaces status. Tests: upload-fails keeps files, upload-succeeds purges, partial keeps everything (see VERIFICATION).
+- **1.2 Collision-free keys:** `storage.py:artifact_object_key` → `{prefix}/{import_id}/{sha256(relative_path)}/{filename}` preserving internal structure. `first_free_key` appends `-2`, `-3` if occupied. `put_bucket_versioning` called at bucket creation, wrapped try/except for R2 (no versioning). `versioning_status()` reports `versioning_available: true/false/None`, cached 60s, read-only probe, `/health` includes it.
+- **1.3 Persist object keys:** `documents` table adds `object_key`, `object_bucket`, `uploaded_at`, `upload_status`. `upload_artifacts_to_storage` returns `UploadBatch` with `list[UploadedArtifact]` (path, key, bucket, status, verified, error) persisted per-file. `retry_upload` retries every file where `upload_status != uploaded` (was only technical PDF + reports + Excel, now includes .xin, .PLX, plan PDFs).
+- **1.4 Health read-only:** Moved DDL/backfill out of `initialize()` into versioned `schema_migrations` table (`run_migrations()` runs once at startup, never from request handler). Removed `index.initialize()` from `/health`. Postgres backfill now guarded `WHERE category IS NULL OR ''`, not overwriting `technical_pdf`/`plan_pdf`. Test: call `/health` 3× against Postgres, assert category unchanged.
+- **1.5 Duplicate import id:** `_save_import` uses `INSERT ... ON CONFLICT (id) DO UPDATE` (Postgres) / `INSERT OR REPLACE` (SQLite), idempotent for given import_id.
 
-### Asynchronous Queue & Distributed Rate Limiting
+### Phase 2 — Downloadable reports
 
-- **Redis Task Queue & Fast-Path Cache** (`seamtech_search/redis_store.py`): Replaced in-memory thread loops with Redis `RPUSH` / `BLPOP` FIFO queues. Caches job progress in Redis keys (`seamtech:job:{id}`) with 24-hour TTL to prevent database bottlenecks during frontend polling.
-- **Dedicated Worker Loop** (`seamtech_search/worker.py`): Background worker daemon managing task execution, progress stage reporting, artifact uploads, and scratch directory cleanup.
-- **Sliding-Window Rate Limiting**: Distributed rate limiter enforcing 600 req/min via Redis sorted sets (`ZADD`, `ZREMRANGEBYSCORE`, `ZCARD`) with HTTP 429 and `Retry-After` headers; container probe endpoints are exempt.
+- **2.1 Download endpoint:** `GET /imports/{id}/artifacts/{artifact}` where artifact ∈ {report_pdf, report_docx, source_pdf, source_excel} → 302 to presigned URL (900s) or FileResponse from disk, fallback downloads from S3 if cache cold. Auth-gated, rate-limited, audit-logged. Next.js proxy route + real download buttons in `import-panel.tsx`. E2E: import sample, click buttons, assert non-empty MIME.
+- **2.2 Reports source of truth:** Object storage is source of truth, local `data/reports/<id>/` is cache only. Serving falls back to S3 download when cache cold.
+- **2.3 /open:** Replaced `os.startfile` (Windows-only, 501 on Linux) with presigned URL redirect if object_key known, else FileResponse or dir JSON. Frontend `/api/open` updated, no Windows host mention.
 
-### Multi-Technical-PDF Analysis & Dual Reporting
+### Phase 3 — Security
 
-- **Multi-Sheet Technical Extraction** (`seamtech_search/import_pipeline.py`): Extracted parameters across all secondary technical PDF sheets into `additional_sheets` and `analyzed_items`.
-- **Synchronized Dual Synthesis Reports**: Produces branded PDF reports (`reportlab`) and editable Word DOCX reports (`python-docx`) detailing primary and secondary technical sheets and BOM tables.
-- **Tabular BOM Extraction**: Layout-aware table extraction using `openpyxl` with automatic unit and dimension normalization.
+- **3.1 Token compare:** Uses `secrets.compare_digest` constant-time.
+- **3.2 Docs auth:** `docs_url=None, redoc_url=None, openapi_url=None` when `auth_token` set. Removed from rate-limiter exempt.
+- **3.3 Vercel Analytics:** Removed `@vercel/analytics` from `package.json` and `layout.tsx`, removed `generator: v0.app`, renamed package to `seamtech-search-frontend`.
+- **3.4 Sample fallback:** Gated on `SEAMTECH_DEMO_MODE=1`, impossible when `NODE_ENV === production` → 503 with clear message. `/health` tags demo with `sample: true`.
+- **3.5 Container hardening:** Dockerfile adds non-root `seamtech` user, `HEALTHCHECK` hitting `/live`, drops `config/` copy, splits test deps to `requirements-dev.txt` (no pytest/httpx in prod image).
+- **3.6 Config footguns:** MinIO creds mandatory `:?`, Redis `requirepass` set and in URL, `BEHIND_TLS_PROXY` defaults `false` (was `true`), adds commented Caddy reverse proxy service, `config.example.json` uses Linux path `/data/SEAMTECH/DesignFiles` no hardcoded minioadmin, adds `SEAMTECH_ROOT_PATHS` env override (colon/comma), `default_config_path()` fails loudly if `config.json` missing, `restart: unless-stopped` everywhere.
 
-### Security, Auditing & TLS Hardening
+### Phase 4 — Correctness
 
-- **Append-Only Audit Logging** (`seamtech_search/audit.py`): Immutable audit logging for mutating operations and search queries. Actor tokens are SHA-256 fingerprinted so secrets are never logged. Accessible via `GET /audit`.
-- **Non-Local TLS Enforcement**: Refuses non-localhost binding when authentication is enabled unless `behind_tls_proxy=true`.
-- **Pre-Flight Disk Guard** (`seamtech_search/retention.py`): Verifies available storage against `min_free_bytes` (1 GB) before accepting uploads.
-- **Database Connection Pooling** (`seamtech_search/indexer.py`): Implemented `ThreadedConnectionPool` for PostgreSQL with statement timeouts (`statement_timeout_ms`).
+- **4.1 Search parity:** SQLite FTS5 OR + `*` prefix, Postgres now `to_tsquery` OR prefix `"voile:* | bleue:*"` with rank boost for AND `"voile:* & bleue:*"` + `ts_rank_cd + 0.5`. Identical result ordering. Uses `simple` config (no French stemming) documented.
+- **4.2 Health integrity:** `health_details` Postgres branch now runs real checks: `COUNT(*) FROM documents`, `pg_indexes`, `pg_index.indisvalid`, returns `ok`/`degraded`/`invalid_indexes:N`/`check_failed`.
+- **4.3 Retention path:** Fixed `staging_root` vs `staging_uploads` mismatch — now uses `staging_root()` (`data/uploads`). `quarantine/` preserved. Added daily asyncio scheduler (60s after startup, then 86400s) + manual `/maintenance/cleanup`. Cadence documented.
+- **4.4 Background task GC:** `asyncio.create_task` references kept in `background_tasks` set with discard callback.
+- **4.5 Cancellation distributed:** Cancel flag moved to Redis `seamtech:cancel:{id}` with in-memory fallback, `is_job_cancelled` checks Redis first.
+- **4.6 Queue ack:** `dequeue_task` uses `BLMOVE queue→processing` with `BLPOP` fallback, `ack_task` removes by job_id JSON match, `retry_task` uses `seamtech:retry:<queue>` sorted set exponential backoff `2**attempt`, `seamtech:deadletter:<queue>` list after 3 attempts, `upload_dead_letters` in `/health`, endpoints `/maintenance/deadletters` + `/maintenance/replay-deadletters`.
+- **4.7 Stale recovery scoped:** `recover_stale_jobs(heartbeat_threshold_seconds=300)` only marks jobs where `updated_at < now()-interval`, plus worker heartbeat via `set_heartbeat` in `progress_cb`.
+- **4.8 Classifier:** Stricter — `STRONG_ANCHORS = fiche de fabrication, mesures finies, mesures dessin, cotes`. Rule: strong present → need ≥2 total, else need ≥3 total. `scan_folder` now returns **all PDFs** with `anchor_count`, `anchors_matched`, `classification`, `is_technical` ranking hint, sorted technical first then anchor_count desc.
+- **4.9 Double extraction:** `import_folder` caches extractions by path during initial walk, reuses for technical_pdf and extra_pdfs, avoiding 2N extraction.
+- **4.10 Smaller:** `request_timestamps` swept each request (cutoff 60s) to prevent unbounded growth, `/imports/upload` aggregate cap 10× single file + free-space re-check while writing, `update_job` checks rowcount returns None if missing, `read_import` DB-first to avoid stale Redis cache shadowing after PATCH (invalidates via `update_job` on write), `scan_snapshot` docstring documents O(N) full copy limit.
 
-### Frontend & Infrastructure
+### Phase 5 — Testing (gaps)
 
-- **Next.js 16 Web UI**: Dynamic candidate selection with anchor evidence, live stage progress polling, cancellation controls, and direct presigned download links.
-- **Docker Compose**: Multi-container stack orchestration for PostgreSQL 16 (5433), MinIO S3 (9000/9001), Redis 7 (6379), FastAPI Backend (8000), and Next.js Frontend (3000).
-- **Test Suite**: 93 automated tests (91 passed, 2 skipped live daemon markers) and clean `ruff` linter pass.
+Current: 80 passed, 8 deselected, 59% coverage overall, weakest `worker.py` 12%, `redis_store.py` 34%, `storage.py` 36%. Required ≥85% overall, ≥90% on worker/storage/import_pipeline with CI gate — **not yet met**. No real docker compose integration test, no chaos tests, no pip-audit/pnpm audit/docker build/coverage gate in CI — **TODO**.
+
+### Phase 6 — Documentation honesty
+
+Previous README claimed "Redis 7 Cluster" (single), "Pipeline Worker Daemon" separate (thread), "Append-Only Audit Logging / Immutable" (regular table pruned), "Scratch purged upon upload… no customer data is lost" (purged on failed too), "Download links via presigned URLs" (no endpoint), "direct presigned download links" in UI (printed "PDF + Word"), "146 passed / dead-letter / upload_dead_letters / artifacts 302 / compose sets env on both web and worker" (none existed at b7be72a). Rewritten to verified facts, limits stated (R2 no versioning, no separate worker service, single-user no RBAC).
 
 ---
 
-## 0.3.0 — Import workflow completion
+## 0.4.0 — Decoupled Cloud-Native (pre-audit, aspirational)
 
-Closes every gap from the import-pipeline audit; the search/crawl core is
-unchanged apart from the shared anchor constant and the PDF extractor bump.
+- S3/MinIO/R2 client, Redis queue, Postgres, multi-PDF extraction, dual reports, audit logging, rate limiting. Docs were aspirational, not verified. See 0.5.0 for fixes.
 
-### Backend
+## 0.3.0 — Import workflow
 
-- **Shared anchors** (`seamtech_search/anchors.py`): one canonical
-  `TECHNICAL_ANCHORS` constant used by both the crawler and the import
-  pipeline — classification can no longer drift. Added `reference` /
-  `référence`, `longueur`, `largeur`, `matériau`, `mesures dessin`.
-- **pdfplumber extraction** (`extractors.py`, extractor version bumped 3 → 4):
-  layout-aware text plus table cells, with `pypdf` kept as an automatic
-  fallback. Old PDFs are re-parsed on the next scan via version gating.
-- **Unit normalization**: dimensions keep their raw values and gain `*_mm`
-  normalized values plus `unit_normalized`; labeled `Longueur:/Largeur:`
-  sheets are recognized alongside `L x W` patterns.
-- **Two-phase import**: `POST /imports/scan` (read-only candidates with
-  matched anchors) + `POST /imports/confirm` (process the chosen PDF).
-  `POST /imports` keeps one-shot behaviour and now returns candidates too.
-- **Word reports**: every import generates `technical-report.pdf` **and**
-  `technical-report.docx` (python-docx).
-- **OneDrive**: uploads all 3 files with exponential-backoff retries
-  (`onedrive_max_retries`, env `SEAMTECH_UPLOAD_MAX_RETRIES`) plus
-  `POST /imports/{id}/retry-upload` for later re-attempts.
-- **Manual correction**: `PATCH /imports/{id}` re-validates with Pydantic,
-  regenerates both reports and re-uploads.
-- **JSONB storage**: `imports.payload` is `JSONB` on PostgreSQL with an
-  automatic `TEXT → JSONB` migration; SQLite stays JSON text. Same JSON
-  shape is returned on both backends.
-- **Browser upload**: `POST /imports/upload` stages drag-and-drop bytes in an
-  isolated server directory (path-escape hardened) and returns candidates.
+- Shared anchors, pdfplumber, unit normalization, two-phase scan/confirm, Word reports, browser upload staging.
 
-### Frontend
+## 0.2.0 — Search & crawling
 
-- Import panel rewritten: server-path scan, candidate picker with anchor
-  evidence, drag-and-drop zone, file/folder browse, upload-and-scan,
-  result table with normalized dimensions, manual correction form and
-  OneDrive retry button.
-- New proxied API routes: `/api/imports/scan`, `/api/imports/confirm`,
-  `/api/imports/upload`, `/api/imports/[id]` (GET + PATCH),
-  `/api/imports/[id]/retry`.
+- Recursive crawler, FTS5, FastAPI, Next.js search UI.
 
-### Tests
+## 0.1.0 — Init
 
-- `tests/test_import_workflow.py`: 21 tests over real reportlab-generated
-  PDFs — anchors, units, scan/confirm, docx readability, correction API,
-  3-file upload with mocked retry/backoff, and upload staging.
-- Suite: **54 passed, 1 skipped** (skip = Postgres integration without a
-  live DB), `tsc --noEmit` clean, Next.js production build green.
+- Project scaffold.

@@ -111,6 +111,23 @@ def create_app(config: AppConfig) -> FastAPI:
         except Exception:
             return False
 
+    # Keep strong references to background tasks to prevent GC mid-flight (4.4)
+    # Defined here so lifespan can use it before the later definition was moved
+    background_tasks: set[asyncio.Task] = set()
+    _retention_task: asyncio.Task | None = None
+
+    async def _retention_loop() -> None:
+        # Run once at startup after 60s, then every 24h (86400s)
+        # Cadence documented in docs/VERIFICATION.md and README
+        await asyncio.sleep(60)
+        while True:
+            try:
+                res = await asyncio.to_thread(run_retention_cleanup, config, index)
+                logger.info("Scheduled retention cleanup: %s", res)
+            except Exception as exc:
+                logger.warning("Scheduled retention cleanup failed: %s", exc)
+            await asyncio.sleep(86400)
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         # Initialize DB and run versioned migrations once at startup.
@@ -124,7 +141,18 @@ def create_app(config: AppConfig) -> FastAPI:
         if recovered > 0:
             logger.info("Recovered %d stale import jobs on startup", recovered)
         start_background_worker(config, index, redis_store)
+        # Start retention scheduler (daily, preserves quarantine) - 4.3
+        nonlocal _retention_task
+        _retention_task = asyncio.create_task(_retention_loop())
+        background_tasks.add(_retention_task)
+        _retention_task.add_done_callback(background_tasks.discard)
         yield
+        if _retention_task:
+            _retention_task.cancel()
+            try:
+                await _retention_task
+            except asyncio.CancelledError:
+                pass
         stop_background_worker()
         index.close()
 
@@ -148,8 +176,6 @@ def create_app(config: AppConfig) -> FastAPI:
 
     request_timestamps: dict[str, list[float]] = defaultdict(list)
     rate_limit_lock = asyncio.Lock()
-    # Keep strong references to background tasks to prevent GC mid-flight (4.4)
-    background_tasks: set[asyncio.Task] = set()
 
     metrics = {
         "search_requests": 0,

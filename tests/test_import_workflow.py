@@ -162,10 +162,17 @@ def test_scan_returns_multiple_candidates(tmp_path: Path) -> None:
     result = scan_folder(source, config)
 
     assert result["files_detected"] == 4
-    assert len(result["candidates"]) == 2
-    assert result["candidates"][0]["name"] == "a-technical.pdf"
-    assert result["candidates"][0]["anchor_count"] >= 2
-    assert "fiche de fabrication" in result["candidates"][0]["anchors_matched"]
+    # Returns ALL PDFs with anchor score as ranking hint (4.8), not just technical
+    assert len(result["candidates"]) == 3
+    technical = [c for c in result["candidates"] if c.get("is_technical")]
+    assert len(technical) == 2
+    names = {c["name"] for c in technical}
+    assert names == {"a-technical.pdf", "b-technical.pdf"}
+    assert all(c["anchor_count"] >= 2 for c in technical)
+    assert any("fiche de fabrication" in c["anchors_matched"] for c in technical)
+    plan = [c for c in result["candidates"] if not c.get("is_technical")]
+    assert len(plan) == 1
+    assert plan[0]["name"] == "c-plan.pdf"
     assert any("select" in warning for warning in result["warnings"])
 
 
@@ -253,9 +260,12 @@ def test_api_scan_and_confirm(tmp_path: Path) -> None:
 
     scan = client.post("/imports/scan", json={"source_path": str(source)})
     assert scan.status_code == 200
-    assert len(scan.json()["candidates"]) == 2
+    # Now returns ALL PDFs with ranking hint
+    assert len(scan.json()["candidates"]) == 3
+    technical = [c for c in scan.json()["candidates"] if c.get("is_technical")]
+    assert len(technical) == 2
 
-    chosen = scan.json()["candidates"][1]["path"]
+    chosen = technical[1]["path"]
     confirm = client.post("/imports/confirm", json={"source_path": str(source), "technical_pdf": chosen})
     assert confirm.status_code == 200
     body = confirm.json()

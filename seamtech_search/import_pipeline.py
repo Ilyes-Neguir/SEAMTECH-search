@@ -745,16 +745,19 @@ def scan_folder(source: Path, config: AppConfig) -> dict[str, Any]:
         if ext == ".pdf":
             extracted = extract_structured_pdf(path, config)
             anchors = matched_anchors(extracted.raw_text) if extracted.raw_text else []
-            if classify_pdf_text(extracted.raw_text) == "technical_pdf":
-                candidates.append(
-                    {
-                        "path": str(path),
-                        "name": path.name,
-                        "size": path.stat().st_size,
-                        "anchors_matched": anchors,
-                        "anchor_count": len(anchors),
-                    }
-                )
+            classification = classify_pdf_text(extracted.raw_text) if extracted.raw_text else "plan_pdf"
+            # Return ALL PDFs with anchor score as ranking hint (4.8), not filter
+            candidates.append(
+                {
+                    "path": str(path),
+                    "name": path.name,
+                    "size": path.stat().st_size,
+                    "anchors_matched": anchors,
+                    "anchor_count": len(anchors),
+                    "classification": classification,
+                    "is_technical": classification == "technical_pdf",
+                }
+            )
         elif ext in {".xlsx", ".xls"}:
             summary = extract_excel_summary(path)
             excel_files.append(
@@ -769,10 +772,15 @@ def scan_folder(source: Path, config: AppConfig) -> dict[str, Any]:
             )
 
     warnings: list[str] = []
+    technical_count = sum(1 for c in candidates if c.get("is_technical"))
     if not candidates:
-        warnings.append("No technical PDF found")
-    elif len(candidates) > 1:
-        warnings.append(f"{len(candidates)} technical PDFs detected; select the one to import")
+        warnings.append("No PDF found")
+    elif technical_count == 0:
+        warnings.append("No technical PDF found — all PDFs listed with anchor scores for manual selection")
+    elif technical_count > 1:
+        warnings.append(f"{technical_count} technical PDFs detected; select the one to import")
+    # Sort candidates by technical first, then anchor_count descending (ranking hint)
+    candidates.sort(key=lambda c: (not c.get("is_technical", False), -c.get("anchor_count", 0), c.get("name", "")))
 
     return {
         "source_path": str(resolved),

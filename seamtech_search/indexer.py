@@ -549,6 +549,13 @@ class SearchIndex:
 
     @contextmanager
     def scan_snapshot(self) -> Iterator[None]:
+        """Snapshot documents table for rollback on scan failure.
+
+        Note: this does a full table copy (CREATE TABLE AS / sqlite backup).
+        Acceptable for <100k docs (current scale), but at larger scale should
+        be replaced by a transaction with savepoint instead of full copy.
+        Documented limit: O(N) storage/time per scan.
+        """
         if self.is_postgres:
             backup_table = f"scan_backup_documents_{os.getpid()}"
             with self.connect() as connection:
