@@ -18,7 +18,10 @@ test.describe("Import Workflow", () => {
 
     // Candidates section should appear with technical PDF option
     await expect(page.getByText(/technical PDF/i)).toBeVisible({ timeout: 10000 })
-    await expect(page.getByText(/fiche-technique\.pdf/i)).toBeVisible()
+    // Assert the scanned PDF candidate itself. The regex matched two nodes (the
+    // candidate's file name and its full server path), so require the exact file
+    // name shown in the candidate list instead of any text containing it.
+    await expect(page.getByText("fiche-technique.pdf", { exact: true })).toBeVisible()
 
     // Click import selected PDF / files
     const importSelectedBtn = page.getByRole("button", { name: /Import (selected PDF|Selected Files)/i })
