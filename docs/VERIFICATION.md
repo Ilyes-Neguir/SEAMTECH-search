@@ -11,8 +11,9 @@ Audited commit: `b7be72a`. Current HEAD: `4f0c21e` + fixes. Date: 2026-09-16.
 Commands:
 ```bash
 ruff check .
-python -m pytest -k "not postgres and not s3" -q   # 80 passed, 8 deselected
-python -m pytest --cov=seamtech_search --cov-report=term -k "not postgres and not s3" -q
+python -m pytest -k "not postgres and not s3" -q   # 156 passed, 2 skipped, 16 deselected
+python -m pytest -k "not s3" -q --cov=seamtech_search --cov-report=json:coverage.json
+python scripts/coverage_gate.py coverage.json      # exit 1 on any threshold breach
 ```
 
 ## Phase 1 — Data-loss bugs
@@ -192,18 +193,28 @@ grep -n "extracted_cache" seamtech_search/import_pipeline.py
 - audit docstring: `grep -n "append-only\|retention" seamtech_search/audit.py`
 - onedrive deleted: `ls seamtech_search/onedrive.py 2>&1 || echo "deleted"; grep -R "onedrive" seamtech_search/config.py || echo "clean"`
 
-## Phase 5 — Testing gaps (not yet met)
+## Phase 5 — Testing gaps (met)
 
-Current coverage 59% overall, worker 12%, redis_store 34%, storage 36% — needs ≥85% overall, ≥90% on worker/storage/import_pipeline.
-No docker compose integration test, no chaos tests, no CI gate.
+Coverage 89% overall (selection `-k "not s3"`, live-Postgres self-skips without `SEAMTECH_TEST_DATABASE_URL`); api 87%, import_pipeline 90%, indexer 90%, jobs 94%, redis_store 92%, storage 97%, worker 92%.
 
-**Required TODO:**
 ```bash
-# Add coverage gate in CI:
-# pytest --cov=seamtech_search --cov-fail-under=85
-# Add pip-audit, pnpm audit, docker build, container smoke test
-# Integration test via docker compose up: real Postgres, Redis, MinIO, import CLIENT-123, assert rows, objects, downloadable reports, search hit
-# Chaos: S3 down mid-import, Redis killed mid-job, worker SIGKILL, disk full — assert no file lost, UI accurate status
+# Real CI gate: reads coverage.json, exits 1 on any breach (itself unit-tested):
+python -m pytest -k "not s3" -q --cov=seamtech_search --cov-report=json:coverage.json
+python scripts/coverage_gate.py coverage.json
+python -m pytest tests/test_coverage_gate.py -q   # gate can fail: breach/missing-file/missing-module cases
+
+# Security audits that can fail the build (no `|| echo`):
+pip-audit --desc
+pnpm --dir frontend audit --prod --audit-level=high
+
+# Docker compose integration test (strict mode in CI):
+SEAMTECH_INTEGRATION_STRICT=1 pytest tests/test_integration_docker.py -v
+
+# Chaos (assertions that can actually fail):
+python -m pytest tests/test_chaos.py -v
+#   - S3 down mid-import: upload_incomplete + all artifacts failed + quarantine byte-for-byte
+#   - worker SIGKILL as a real subprocess (os.kill SIGKILL, exit -9): job stuck running, recovered once, files preserved
+#   - Redis killed mid-job, disk full (507, no purge), versioning unavailable, rate-limit fallback
 ```
 
 ## Phase 6 — Documentation honesty
@@ -232,8 +243,8 @@ pytest tests/test_indexer.py -q
 ## Definition of Done checklist
 
 - [x] `ruff check . && pytest -k "not postgres and not s3" -q` green
-- [ ] coverage gate met (currently 59%, need 85%)
-- [ ] `docker compose up` from clean checkout with only `.env` works (verified manually, needs CI)
+- [x] coverage gate met (89% overall, ≥85%) and enforced in CI by `scripts/coverage_gate.py` (reads `coverage.json`, exits 1 on breach, unit-tested)
+- [x] `docker compose up` from clean checkout with only `.env` works (image seeds `config.json`; smoke test in CI requires `/live` to answer)
 - [x] Full round trip: drag folder → classify → analyse → report → upload → search → download report → correct → re-download (via API, frontend buttons exist)
 - [x] Kill Postgres/Redis/MinIO mid-import — no loss, UI reports true state (worker quarantine + upload_incomplete, recover_stale_jobs scoped)
 - [x] `/health` read-only cheap (no initialize, no writes, versioning probe cached 60s)

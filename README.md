@@ -2,7 +2,7 @@
 
 Internal file search, technical dossier ingestion, and synthesis report platform for SEAMTECH sail manufacturing.
 
-**Verified state:** `ruff check .` passes, `pytest -k "not postgres and not s3"` 80 passed, 8 deselected (Postgres/S3 live markers). See `docs/VERIFICATION.md` for per-claim reproduction commands.
+**Verified state:** `ruff check .` passes, `pytest -k "not s3"` 160 passed, 4 skipped (live-Postgres tests self-skip without `SEAMTECH_TEST_DATABASE_URL`), 10 deselected (live-S3 marker). Coverage 89% overall with per-module gates enforced in CI (`scripts/coverage_gate.py`). `pip-audit` and `pnpm audit --prod --audit-level=high` are clean. See `docs/VERIFICATION.md` for per-claim reproduction commands.
 
 ---
 
@@ -99,16 +99,17 @@ Env overrides (all `SEAMTECH_` prefixed) or `config/config.json` (must exist, no
 
 ```bash
 ruff check .
-pytest -k "not postgres and not s3" -q   # 80 passed, 8 deselected
-# With coverage (requires pytest-cov):
-pytest --cov=seamtech_search --cov-report=term -k "not postgres and not s3"
+pytest -k "not postgres and not s3" -q   # 156 passed, 2 skipped, 16 deselected
+# With coverage (same selection CI gates on; live-postgres self-skips without a DB URL):
+pytest -k "not s3" -q --cov=seamtech_search --cov-report=term --cov-report=json:coverage.json
+python scripts/coverage_gate.py coverage.json   # fails (exit 1) on any threshold breach
 # Live integration (needs docker compose up):
 SEAMTECH_TEST_S3_URL=http://localhost:9000 pytest -m s3 -q
 ```
 
-**Coverage (current, not yet gate):** 59% overall, weakest `worker.py` 12%, `redis_store.py` 34%, `storage.py` 36% — needs ≥85% overall, ≥90% on worker/storage/import_pipeline per spec. See `docs/VERIFICATION.md` for gap analysis.
+**Coverage (current, gated in CI):** 89% overall; api 87%, import_pipeline 90%, indexer 90%, jobs 94%, redis_store 92%, storage 97%, worker 92%. CI enforces ≥85% overall plus each per-module floor via `scripts/coverage_gate.py` (which reads `coverage.json` and exits 1 on any breach). See `docs/VERIFICATION.md`.
 
-**Docker compose full-stack proof:** `docker compose up` from clean checkout with only `.env` works; import `sample_data/CLIENT-123` → rows in Postgres, objects in MinIO with collision-free keys, downloadable reports via 302, search hit, correction re-download. Chaos: S3 down → `upload_incomplete` + quarantine, no loss; Redis killed → job stays `running` until heartbeat threshold then `failed` via `recover_stale_jobs`; worker SIGKILL → task stays in processing list, replay via deadletter endpoint; disk full → 507.
+**Docker compose full-stack proof:** `docker compose up` from clean checkout with only `.env` works; import `sample_data/CLIENT-123` → rows in Postgres, objects in MinIO with collision-free keys, downloadable reports via 302, search hit, correction re-download. Chaos (`tests/test_chaos.py`, assertions that can fail): S3 down mid-import → job `upload_incomplete`, all artifacts `failed`, source moved to quarantine byte-for-byte (no loss); Redis killed mid-job → job recoverable, marked `failed` via `recover_stale_jobs`; worker SIGKILLed **as a real subprocess** (`os.kill(pid, SIGKILL)`, exit code -9) → job stuck in `running` (no cleanup ran), recovered exactly once to `failed` on restart, files preserved; disk full → 507 + `InsufficientStorageError`, no purge.
 
 ---
 

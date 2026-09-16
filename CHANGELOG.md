@@ -42,7 +42,25 @@ Audited commit `b7be72a` had data-loss, security, and doc-honesty defects. This 
 
 ### Phase 5 — Testing (gaps)
 
-Current: 80 passed, 8 deselected, 59% coverage overall, weakest `worker.py` 12%, `redis_store.py` 34%, `storage.py` 36%. Required ≥85% overall, ≥90% on worker/storage/import_pipeline with CI gate — **not yet met**. No real docker compose integration test, no chaos tests, no pip-audit/pnpm audit/docker build/coverage gate in CI — **TODO**.
+**Met.** Coverage: 89% overall (SQLite + mocked-postgres selection, `-k "not s3"`), api 87%, import_pipeline 90%, indexer 90%, jobs 94%, redis_store 92%, storage 97%, worker 92%. Enforced in CI by `scripts/coverage_gate.py`, which reads `coverage.json` and exits 1 when the overall 85% floor or any per-module threshold is breached — the gate logic is itself unit-tested (`tests/test_coverage_gate.py`, including the one-decimal rounding boundary).
+
+Chaos tests (`tests/test_chaos.py`) with assertions that can actually fail: S3 down mid-import (job `upload_incomplete`, all artifacts failed, source quarantined byte-for-byte), Redis killed mid-job (stale recovery, exact error message), worker **SIGKILLed as a real subprocess** (`os.kill(pid, SIGKILL)`, exit code -9, job stuck in `running`, recovered exactly once on restart, files preserved), disk full (507 + `InsufficientStorageError`, no purge), S3 versioning unavailable (R2), Redis rate-limit fallback.
+
+Docker compose integration test (`tests/test_integration_docker.py`) with strict mode in CI (`SEAMTECH_INTEGRATION_STRICT=1`): backends that CI health-checked must actually work.
+
+CI integrity — every check can now fail (no `|| echo` masking anywhere):
+- Coverage gate is the real script above (was a heredoc that loaded coverage and printed a static "passed" message).
+- `pip-audit` (full environment) and `pnpm audit --prod --audit-level=high` fail the build on findings; the vulnerable deps they exposed were upgraded (see Phase 3 addendum below) instead of being ignored.
+- Docker smoke test requires the container to start and `/live` to answer (was `docker ps | grep || echo`).
+- Integration job waits up to 300s for Postgres/Redis/MinIO to be genuinely reachable using the app's own clients, runs pytest without swallowing failures, always tears the infra down.
+- `docker-compose.yml` minio healthcheck was a no-op (`python3` does not exist in the minio image, `|| exit 0` hid it); now a real `wget` probe of `/minio/health/live`.
+- `config/config.json` is seeded from `config.example.json` in the Docker image — the server refuses to start without it (by design) and the image never shipped one, so the container always crashed at boot (hidden by the old smoke test).
+- CLI no longer crashes at parse time when `config/config.json` is absent (`default_config_path()` was resolved eagerly for the argparse default, killing every `--config` invocation too — this is what took the e2e backend down in CI); the file check happens at load time with the same clear error.
+- `httpx==0.28.1` restored to `requirements.txt` (it had been dropped, so the SQLite/API suite could not run in CI at all).
+- `frontend/package.json` pins `packageManager: pnpm@9.15.9` so the Docker build (corepack) uses the same pnpm as CI — pnpm ≥10 ignores `pnpm.overrides` in `package.json`, which broke the frozen install.
+- `shadcn` moved to devDependencies (code-gen CLI, not shipped); `next` 16.3.3→16.3.5; patch-level overrides for `nanoid`/`browserslist`/`baseline-browser-mapping` (next's transitive CVEs). `pnpm audit --prod`: no known vulnerabilities.
+
+Phase 3 addendum (security): fastapi 0.116.1→0.141.1 (starlette 0.47.3→1.6.0 — Host-header auth-bypass PYSEC-2026-161 + Range ReDoS), pypdf 5.8.0→6.19.0, python-multipart 0.0.20→0.0.32 (path traversal + DoS), pytest 8.4.1→9.1.1 — so `pip-audit` can pass honestly.
 
 ### Phase 6 — Documentation honesty
 

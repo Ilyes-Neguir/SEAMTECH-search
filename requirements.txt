@@ -9,4 +9,5 @@ reportlab==4.4.3
 openpyxl==3.1.5
 boto3==1.35.90
 redis==5.2.1
+httpx==0.28.1
 psycopg2-binary==2.9.10

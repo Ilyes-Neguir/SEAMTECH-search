@@ -148,11 +148,15 @@ jobs:
           docker --version
           docker compose version
       - name: Start infra services
+        # SEAMTECH_AUTH_TOKEN is required to PARSE the compose file (the web/
+        # frontend services declare ${SEAMTECH_AUTH_TOKEN:?...}) even though we
+        # only start the infra services here.
         env:
           POSTGRES_PASSWORD: test_password
           MINIO_ROOT_USER: minioadmin
           MINIO_ROOT_PASSWORD: minioadmin123
           REDIS_PASSWORD: redis_test_password
+          SEAMTECH_AUTH_TOKEN: test-token-123
         run: docker compose up -d postgres redis minio
       - name: Wait for services to be reachable
         # Hard wait with a real timeout, probing each backend the same way the

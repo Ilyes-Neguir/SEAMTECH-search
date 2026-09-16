@@ -4,11 +4,12 @@ import argparse
 import logging
 import time
 from collections.abc import Sequence
+from pathlib import Path
 
 import uvicorn
 
 from .api import create_app
-from .config import AppConfig, default_config_path
+from .config import AppConfig
 from .crawler import ScanIncompleteError, crawl
 from .indexer import SearchIndex
 from .retention import run_retention_cleanup
@@ -22,7 +23,11 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="seamtech-search")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    default_config = default_config_path()
+    # Only the *path* is needed as the argparse default; whether the file
+    # exists is enforced later by AppConfig.load, which raises a clear error.
+    # (Resolving it eagerly here used to crash every CLI invocation — including
+    # ones passing an explicit --config — when config/config.json was absent.)
+    default_config = Path(__file__).resolve().parents[1] / "config" / "config.json"
 
     index_parser = subparsers.add_parser("index", help="Scan folders and update the search index")
     index_parser.add_argument("--config", default=str(default_config))
