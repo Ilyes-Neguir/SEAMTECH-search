@@ -31,7 +31,11 @@ CREATE TABLE IF NOT EXISTS documents (
     content_hash TEXT NOT NULL DEFAULT '',
     extraction_status TEXT NOT NULL DEFAULT 'extracted',
     extraction_detail TEXT NOT NULL DEFAULT '',
-    category TEXT NOT NULL DEFAULT 'storage_direct'
+    category TEXT NOT NULL DEFAULT 'storage_direct',
+    object_key TEXT,
+    object_bucket TEXT,
+    uploaded_at REAL,
+    upload_status TEXT NOT NULL DEFAULT 'not_configured'
 );
 
 CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
@@ -102,7 +106,11 @@ CREATE TABLE IF NOT EXISTS documents (
     content_hash TEXT NOT NULL DEFAULT '',
     extraction_status TEXT NOT NULL DEFAULT 'extracted',
     extraction_detail TEXT NOT NULL DEFAULT '',
-    category TEXT NOT NULL DEFAULT 'storage_direct'
+    category TEXT NOT NULL DEFAULT 'storage_direct',
+    object_key TEXT,
+    object_bucket TEXT,
+    uploaded_at DOUBLE PRECISION,
+    upload_status TEXT NOT NULL DEFAULT 'not_configured'
 );
 
 CREATE INDEX IF NOT EXISTS idx_documents_search_vector ON documents USING GIN(search_vector);
@@ -259,6 +267,63 @@ class SearchIndex:
                 pass
             self._pool = None
 
+    def _ensure_documents_columns_postgres(self, cursor: Any) -> None:
+        """DDL migration for PostgreSQL — kept out of ``initialize`` body."""
+        cursor.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS content TEXT NOT NULL DEFAULT ''")
+        cursor.execute(
+            "ALTER TABLE documents ADD COLUMN IF NOT EXISTS search_vector TSVECTOR NOT NULL DEFAULT ''::tsvector"
+        )
+        cursor.execute(
+            "ALTER TABLE documents ADD COLUMN IF NOT EXISTS extractor_version INTEGER NOT NULL DEFAULT 0"
+        )
+        cursor.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS content_hash TEXT NOT NULL DEFAULT ''")
+        cursor.execute(
+            "ALTER TABLE documents ADD COLUMN IF NOT EXISTS extraction_status TEXT NOT NULL DEFAULT 'extracted'"
+        )
+        cursor.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS extraction_detail TEXT NOT NULL DEFAULT ''")
+        cursor.execute(
+            "ALTER TABLE documents ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'storage_direct'"
+        )
+        cursor.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS object_key TEXT")
+        cursor.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS object_bucket TEXT")
+        cursor.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS uploaded_at DOUBLE PRECISION")
+        cursor.execute(
+            "ALTER TABLE documents ADD COLUMN IF NOT EXISTS upload_status TEXT NOT NULL DEFAULT 'not_configured'"
+        )
+        cursor.execute(
+            """
+            UPDATE documents SET category = CASE
+                WHEN is_dir = false THEN
+                    CASE WHEN lower(extension) = '.pdf' THEN 'analyzed' ELSE 'storage_direct' END
+                ELSE 'folder'
+            END
+            WHERE category IS NULL OR category = ''
+            """
+        )
+        cursor.execute(
+            """
+            UPDATE documents
+            SET search_vector = to_tsvector(
+                'simple',
+                concat_ws(E'\\n', name, path, extension, content)
+            )
+            WHERE search_vector = ''::tsvector
+            """
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_documents_search_vector ON documents USING GIN(search_vector)"
+        )
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_documents_path_key ON documents(path_key)")
+        cursor.execute(
+            """
+            SELECT data_type FROM information_schema.columns
+            WHERE table_name = 'imports' AND column_name = 'payload'
+            """
+        )
+        payload_type = (cursor.fetchone() or ("jsonb",))[0]
+        if payload_type == "text":
+            cursor.execute("ALTER TABLE imports ALTER COLUMN payload TYPE JSONB USING payload::jsonb")
+
     def initialize(self, rebuild: bool = False) -> None:
         with self.connect() as connection:
             if self.is_postgres:
@@ -266,59 +331,7 @@ class SearchIndex:
                     if rebuild:
                         cursor.execute("DROP TABLE IF EXISTS documents")
                     cursor.execute(POSTGRES_SCHEMA)
-                    cursor.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS content TEXT NOT NULL DEFAULT ''")
-                    cursor.execute(
-                        "ALTER TABLE documents ADD COLUMN IF NOT EXISTS "
-                        "search_vector TSVECTOR NOT NULL DEFAULT ''::tsvector"
-                    )
-                    cursor.execute(
-                        "ALTER TABLE documents ADD COLUMN IF NOT EXISTS extractor_version INTEGER NOT NULL DEFAULT 0"
-                    )
-                    cursor.execute(
-                        "ALTER TABLE documents ADD COLUMN IF NOT EXISTS content_hash TEXT NOT NULL DEFAULT ''"
-                    )
-                    cursor.execute(
-                        "ALTER TABLE documents ADD COLUMN IF NOT EXISTS "
-                        "extraction_status TEXT NOT NULL DEFAULT 'extracted'"
-                    )
-                    cursor.execute(
-                        "ALTER TABLE documents ADD COLUMN IF NOT EXISTS extraction_detail TEXT NOT NULL DEFAULT ''"
-                    )
-                    cursor.execute(
-                        "ALTER TABLE documents ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'storage_direct'"
-                    )
-                    cursor.execute(
-                        """
-                        UPDATE documents SET category = CASE
-                            WHEN is_dir = false THEN
-                                CASE WHEN lower(extension) = '.pdf' THEN 'analyzed' ELSE 'storage_direct' END
-                            ELSE 'folder'
-                        END
-                        """
-                    )
-                    cursor.execute(
-                        """
-                        UPDATE documents
-                        SET search_vector = to_tsvector(
-                            'simple',
-                            concat_ws(E'\\n', name, path, extension, content)
-                        )
-                        WHERE search_vector = ''::tsvector
-                        """
-                    )
-                    cursor.execute(
-                        "CREATE INDEX IF NOT EXISTS idx_documents_search_vector ON documents USING GIN(search_vector)"
-                    )
-                    cursor.execute("CREATE INDEX IF NOT EXISTS idx_documents_path_key ON documents(path_key)")
-                    cursor.execute(
-                        """
-                        SELECT data_type FROM information_schema.columns
-                        WHERE table_name = 'imports' AND column_name = 'payload'
-                        """
-                    )
-                    payload_type = (cursor.fetchone() or ("jsonb",))[0]
-                    if payload_type == "text":
-                        cursor.execute("ALTER TABLE imports ALTER COLUMN payload TYPE JSONB USING payload::jsonb")
+                    self._ensure_documents_columns_postgres(cursor)
             else:
                 if rebuild:
                     connection.executescript(
@@ -525,6 +538,14 @@ class SearchIndex:
                 END
                 """
             )
+        if "object_key" not in columns:
+            connection.execute("ALTER TABLE documents ADD COLUMN object_key TEXT")
+        if "object_bucket" not in columns:
+            connection.execute("ALTER TABLE documents ADD COLUMN object_bucket TEXT")
+        if "uploaded_at" not in columns:
+            connection.execute("ALTER TABLE documents ADD COLUMN uploaded_at REAL")
+        if "upload_status" not in columns:
+            connection.execute("ALTER TABLE documents ADD COLUMN upload_status TEXT NOT NULL DEFAULT 'not_configured'")
 
     def _ensure_fts_schema(self, connection: sqlite3.Connection) -> None:
         schema = connection.execute(
@@ -578,7 +599,8 @@ class SearchIndex:
                         UPDATE documents
                         SET path = ?, name = ?, parent_path = ?, extension = ?, size = ?,
                             modified_at = ?, is_dir = ?, extractor_version = ?, content_hash = ?,
-                            extraction_status = ?, extraction_detail = ?, category = ?
+                            extraction_status = ?, extraction_detail = ?, category = ?,
+                            object_key = ?, object_bucket = ?, uploaded_at = ?, upload_status = ?
                         WHERE id = ?
                         """,
                         _document_values(document) + (row_id,),
@@ -589,9 +611,10 @@ class SearchIndex:
                         """
                         INSERT INTO documents (
                             path_key, path, name, parent_path, extension, size, modified_at, is_dir,
-                            extractor_version, content_hash, extraction_status, extraction_detail, category
+                            extractor_version, content_hash, extraction_status, extraction_detail, category,
+                            object_key, object_bucket, uploaded_at, upload_status
                         )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (document.path_key,) + _document_values(document),
                     )
@@ -631,6 +654,10 @@ class SearchIndex:
                 document.extraction_status,
                 document.extraction_detail,
                 document.category,
+                document.object_key,
+                document.object_bucket,
+                document.uploaded_at,
+                document.upload_status,
             )
             for document in documents
         ]
@@ -643,7 +670,8 @@ class SearchIndex:
                     """
                     INSERT INTO documents (
                         path_key, path, name, parent_path, extension, size, modified_at, is_dir, content, search_vector,
-                        extractor_version, content_hash, extraction_status, extraction_detail, category
+                        extractor_version, content_hash, extraction_status, extraction_detail, category,
+                        object_key, object_bucket, uploaded_at, upload_status
                     )
                     VALUES %s
                     ON CONFLICT (path_key) DO UPDATE SET
@@ -660,13 +688,17 @@ class SearchIndex:
                         content_hash = EXCLUDED.content_hash,
                         extraction_status = EXCLUDED.extraction_status,
                         extraction_detail = EXCLUDED.extraction_detail,
-                        category = EXCLUDED.category
+                        category = EXCLUDED.category,
+                        object_key = EXCLUDED.object_key,
+                        object_bucket = EXCLUDED.object_bucket,
+                        uploaded_at = EXCLUDED.uploaded_at,
+                        upload_status = EXCLUDED.upload_status
                     """,
                     values,
                     template=(
                         "(%s, %s, %s, %s, %s, %s, %s, %s, %s, "
                         "to_tsvector('simple', %s), "
-                        "%s, %s, %s, %s, %s)"
+                        "%s, %s, %s, %s, %s, %s, %s, %s, %s)"
                     ),
                 )
                 return cursor.rowcount
@@ -880,7 +912,9 @@ class SearchIndex:
         }
 
 
-def _document_values(document: Document) -> tuple[str, str, str, str, int, float, int, int, str, str, str, str]:
+def _document_values(
+    document: Document,
+) -> tuple[str, str, str, str, int, float, int, int, str, str, str, str, str | None, str | None, float | None, str]:
     return (
         str(document.path),
         document.name,
@@ -894,6 +928,10 @@ def _document_values(document: Document) -> tuple[str, str, str, str, int, float
         document.extraction_status,
         document.extraction_detail,
         document.category,
+        document.object_key,
+        document.object_bucket,
+        document.uploaded_at,
+        document.upload_status,
     )
 
 

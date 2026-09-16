@@ -88,14 +88,39 @@ def process_import_task(
                 {"status": final_status, "progress": 100, "stage": "done", "result": final_payload},
             )
 
-        # Ephemeral scratch cleanup: if staged from browser upload or delete_local_after_upload is True, purge scratch
+        # Ephemeral scratch cleanup: only when every artifact is verified in object
+        # storage (or when storage is not configured, where there is nothing to lose).
+        # This prevents data loss if an upload fails or is partial.
         staging_dir = staging_root(config)
         try:
             resolved_source = source_path.expanduser().resolve()
             resolved_staging = staging_dir.resolve()
-            if config.delete_local_after_upload or resolved_source.parent == resolved_staging:
-                logger.info("Purging local staged scratch directory %s to keep VPS disk stateless", resolved_source)
-                shutil.rmtree(resolved_source, ignore_errors=True)
+            is_staged = resolved_source.parent == resolved_staging
+            should_purge = config.delete_local_after_upload or is_staged
+            if should_purge:
+                # Gate on all_verified when S3 is configured; otherwise allow purge.
+                all_verified = getattr(result, "all_verified", False)
+                upload_status = getattr(result, "upload_status", "not_configured")
+                if all_verified or upload_status in ("not_configured", "not_applicable", "uploaded"):
+                    # For uploaded status we still require all_verified unless storage is not configured.
+                    if upload_status == "uploaded" and not all_verified:
+                        logger.warning(
+                            "Skipping purge of %s: upload_status=uploaded but not all artifacts verified",
+                            resolved_source,
+                        )
+                    else:
+                        logger.info(
+                            "Purging local staged scratch directory %s to keep VPS disk stateless",
+                            resolved_source,
+                        )
+                        shutil.rmtree(resolved_source, ignore_errors=True)
+                else:
+                    logger.warning(
+                        "Skipping purge of %s: upload_status=%s all_verified=%s — keeping scratch for retry",
+                        resolved_source,
+                        upload_status,
+                        all_verified,
+                    )
         except Exception as cleanup_err:
             logger.warning("Failed to purge scratch directory %s: %s", source_path, cleanup_err)
 

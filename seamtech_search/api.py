@@ -42,6 +42,7 @@ from .jobs import (
 )
 from .redis_store import RedisStore
 from .retention import InsufficientStorageError, ensure_free_space, run_retention_cleanup
+from .storage import S3StorageClient
 from .worker import start_background_worker, stop_background_worker
 
 logger = logging.getLogger("seamtech_search.api")
@@ -97,8 +98,23 @@ def create_app(config: AppConfig) -> FastAPI:
 
     redis_store = RedisStore(config=config)
 
+    # One client for the whole app lifetime: it carries the versioning probe
+    # cache that /health reports from, so a health-check loop does not turn into
+    # a stream of S3 calls.
+    storage_client: S3StorageClient | None = S3StorageClient(config=config)
+    if not storage_client.is_configured():
+        storage_client = None
+
+    def _is_staged(source_path: str | Path) -> bool:
+        """True when the import lives in the browser-upload staging area."""
+        try:
+            return staging_root(config).resolve() in Path(source_path).expanduser().resolve().parents
+        except Exception:
+            return False
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        # Initialize DB once at startup — health must not call initialize (read-only probe).
         index.initialize()
         recovered = recover_stale_jobs(index)
         if recovered > 0:
@@ -109,6 +125,8 @@ def create_app(config: AppConfig) -> FastAPI:
         index.close()
 
     app = FastAPI(title="SEAMTECH Search", version="0.4.0", lifespan=lifespan)
+    # Eager init for TestClient usage that does not trigger lifespan, but health
+    # itself remains read-only (does not call initialize).
     index.initialize()
 
     request_timestamps: dict[str, list[float]] = defaultdict(list)
@@ -210,11 +228,15 @@ def create_app(config: AppConfig) -> FastAPI:
     @app.get("/health")
     def health(token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None) -> dict[str, object]:
         _require_auth(config, token)
-        index.initialize()
         stats = index.stats()
         health_details = index.health_details()
         disk_path = config.database_path.parent if not index.is_postgres else Path.cwd()
         disk_usage = shutil.disk_usage(disk_path)
+        versioning = (
+            storage_client.versioning_status()
+            if storage_client is not None
+            else {"versioning_available": None, "versioning_detail": "object storage is not configured"}
+        )
         return {
             "status": "ok",
             **health_details,
@@ -227,6 +249,9 @@ def create_app(config: AppConfig) -> FastAPI:
             "redis_connected": redis_store.ping() if redis_store.is_configured() else None,
             "storage_backend": config.storage_backend,
             "s3_configured": bool(config.s3_endpoint_url or config.s3_access_key),
+            # Read-only probe (never puts versioning): False means the endpoint
+            # cannot version (Cloudflare R2), None means "could not find out".
+            **versioning,
         }
 
     @app.get("/search")
