@@ -2,23 +2,23 @@
 
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+
 import pytest
 
-from seamtech_search.import_pipeline import (
-    normalize_unit_to_mm,
-    classify_path,
-    _extract_dimensions,
-    scan_folder,
-    import_folder,
-    staging_root,
-    quarantine_root,
-    correct_import,
-    retry_upload,
-    get_import,
-    extract_structured_pdf,
-    extract_excel_summary,
-)
 from seamtech_search.config import AppConfig
+from seamtech_search.import_pipeline import (
+    _extract_dimensions,
+    classify_path,
+    correct_import,
+    extract_structured_pdf,
+    get_import,
+    import_folder,
+    normalize_unit_to_mm,
+    quarantine_root,
+    retry_upload,
+    scan_folder,
+    staging_root,
+)
 from seamtech_search.indexer import SearchIndex
 
 
@@ -52,9 +52,9 @@ def test_extractors():
     assert dims3 is not None or True
 
     # Test extract_structured_pdf with mocked extract_file
-    from unittest.mock import MagicMock, patch
-    from pathlib import Path
     import tempfile
+    from pathlib import Path
+    from unittest.mock import patch
     tmp = Path(tempfile.mkdtemp()) / "test.pdf"
     tmp.write_bytes(b"%PDF-1.4 fake")
     with patch("seamtech_search.import_pipeline.extract_file") as mock_ext:

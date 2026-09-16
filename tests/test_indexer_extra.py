@@ -1,10 +1,10 @@
 """Extra indexer coverage for postgres branches and sqlite edge cases."""
 
+import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
-import time
 
-from seamtech_search.indexer import SearchIndex, SearchIndex as SI
+from seamtech_search.indexer import SearchIndex
 from seamtech_search.models import Document
 
 

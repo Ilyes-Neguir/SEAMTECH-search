@@ -2,18 +2,13 @@
 
 from __future__ import annotations
 
-import json
-import time
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 
-from seamtech_search.config import AppConfig
 from seamtech_search.api import create_app
-from seamtech_search.indexer import SearchIndex
-from seamtech_search.jobs import create_job
+from seamtech_search.config import AppConfig
 
 
 def make_cfg(tmp_path: Path, **extra) -> AppConfig:
@@ -231,7 +226,7 @@ def test_upload_validation(tmp_path: Path):
     assert r.status_code == 422
 
     # Valid small file
-    from tests.test_import_workflow import make_pdf_bytes, TECHNICAL_LINES
+    from tests.test_import_workflow import TECHNICAL_LINES, make_pdf_bytes
     r2 = client.post(
         "/imports/upload",
         files=[("files", ("a.pdf", make_pdf_bytes(TECHNICAL_LINES), "application/pdf"))],

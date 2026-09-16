@@ -3,31 +3,31 @@
 from __future__ import annotations
 
 import json
-import time
 import threading
+import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 
-from seamtech_search.config import AppConfig
 from seamtech_search.api import create_app
+from seamtech_search.config import AppConfig
 from seamtech_search.indexer import SearchIndex, _build_fts_query
+from seamtech_search.jobs import (
+    cancel_job,
+    clear_job_cancel,
+    create_job,
+    get_job,
+    is_job_cancelled,
+    make_cancel_checker,
+    recover_stale_jobs,
+    register_job_cancel,
+    update_job,
+)
 from seamtech_search.models import Document
 from seamtech_search.redis_store import RedisStore
 from seamtech_search.storage import S3StorageClient, StorageError
-from seamtech_search.jobs import (
-    create_job,
-    get_job,
-    update_job,
-    cancel_job,
-    recover_stale_jobs,
-    register_job_cancel,
-    is_job_cancelled,
-    clear_job_cancel,
-    make_cancel_checker,
-)
 
 
 def make_cfg(tmp_path: Path, **extra):
@@ -50,7 +50,7 @@ def test_storage_make_client_probe_and_error(tmp_path: Path):
         assert c is not None
 
     # _get_client success
-    with patch.object(client, "_make_client", return_value=MagicMock()) as mk:
+    with patch.object(client, "_make_client", return_value=MagicMock()):
         c2 = client._get_client()
         assert c2 is not None
         c3 = client._get_client()
@@ -286,7 +286,7 @@ def test_jobs_full(tmp_path: Path):
 
     stale_id = "stale-job"
     create_job(idx, stale_id, "/tmp/src")
-    from datetime import datetime, timezone, timedelta
+    from datetime import datetime, timedelta, timezone
     old = (datetime.now(timezone.utc) - timedelta(seconds=1000)).isoformat()
     with idx.connect() as conn:
         conn.execute("UPDATE import_jobs SET updated_at = ?, status='running' WHERE id = ?", (old, stale_id))
@@ -302,8 +302,8 @@ def test_jobs_full(tmp_path: Path):
 # worker: cover remaining lines
 # ------------------------------------------------------------------
 def test_worker_remaining(tmp_path: Path):
-    from seamtech_search.worker import worker_loop, start_background_worker, stop_background_worker
     from seamtech_search.config import AppConfig
+    from seamtech_search.worker import start_background_worker, stop_background_worker, worker_loop
 
     cfg = AppConfig(root_paths=[tmp_path], database_path=tmp_path / "db.db", min_free_bytes=0, redis_url="redis://localhost:6379/0")
     idx = SearchIndex(cfg.database_path)
@@ -432,7 +432,7 @@ def test_api_remaining_branches(tmp_path: Path):
     for _ in range(5):
         r_live = client_rl.get("/live")
         assert r_live.status_code == 200
-    r_s1 = client_rl.get("/search?q=test")
+    client_rl.get("/search?q=test")
     r_s2 = client_rl.get("/search?q=test2")
     assert r_s2.status_code in (200, 429)
 
@@ -586,8 +586,8 @@ def test_indexer_remaining(tmp_path: Path):
 # import_pipeline: cover remaining branches
 # ------------------------------------------------------------------
 def test_import_pipeline_remaining(tmp_path: Path):
-    from seamtech_search.import_pipeline import scan_folder, import_folder, staging_root
     from seamtech_search.config import AppConfig
+    from seamtech_search.import_pipeline import import_folder, scan_folder, staging_root
 
     cfg = AppConfig(root_paths=[tmp_path], database_path=tmp_path / "pip.db", min_free_bytes=0)
 

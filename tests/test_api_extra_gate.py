@@ -1,14 +1,13 @@
 """Extra api coverage to push to 85%."""
 
+import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
-import time
 
-import pytest
 from fastapi.testclient import TestClient
 
-from seamtech_search.config import AppConfig
 from seamtech_search.api import create_app
+from seamtech_search.config import AppConfig
 from seamtech_search.indexer import SearchIndex
 
 
@@ -67,13 +66,12 @@ def test_api_imports_confirm_and_artifacts(tmp_path: Path):
     # /imports/{id}/artifacts with S3 presigned
     cfg_art = make_cfg(tmp_path, database_path=tmp_path / "art.db", s3_endpoint_url="http://localhost:9000", s3_bucket="b", s3_access_key="a", s3_secret_key="s")
     app_art = create_app(cfg_art)
-    client_art = TestClient(app_art, follow_redirects=False)
+    TestClient(app_art, follow_redirects=False)
 
     # Create import record with artifacts
     idx = SearchIndex(cfg_art.database_path)
     idx.initialize(rebuild=True)
-    from seamtech_search.import_pipeline import ImportResult, ImportFile
-    import json, uuid
+    import json
     from datetime import datetime, timezone
     # Manually insert import record
     payload = {
@@ -157,7 +155,7 @@ def test_api_imports_confirm_and_artifacts(tmp_path: Path):
 def test_api_upload_aggregate_and_free_space(tmp_path: Path):
     cfg = make_cfg(tmp_path, database_path=tmp_path / "agg.db", max_file_size_bytes=100)
     app = create_app(cfg)
-    client = TestClient(app)
+    TestClient(app)
 
     # Aggregate too large: 2 files each 60 bytes, max aggregate is 10*100=1000, so need bigger
     # Actually aggregate cap is 10x single file = 1000, so 2*60=120 <1000, not too large
@@ -271,7 +269,6 @@ def test_api_open_with_s3_object_key(tmp_path: Path):
     f.write_text("content")
 
     from seamtech_search.models import Document
-    import time
     doc = Document(
         path=f,
         name="file.txt",

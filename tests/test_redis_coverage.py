@@ -104,6 +104,7 @@ def test_dequeue_blmove_blpop():
 
 def test_redis_unconfigured_and_ping():
     from pathlib import Path
+
     from seamtech_search.config import AppConfig
     cfg = AppConfig(root_paths=[Path(".")], min_free_bytes=0)
     store = RedisStore(config=cfg)

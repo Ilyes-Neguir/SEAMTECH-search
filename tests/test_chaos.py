@@ -1,14 +1,11 @@
 """Chaos tests — S3 down, Redis killed, worker SIGKILL, disk full.
 
-These tests verify that no file is lost and UI reports true state.
-They mock failures rather than requiring real infra kill, so they run in CI without docker.
-If docker available, they also attempt real chaos via compose.
-
-Skips real chaos if docker not available, but mocked chaos always runs.
+These tests verify that no file is lost and the UI reports the true state.
+They simulate infrastructure failures in-process (failing S3 uploads, killed
+Redis, a real SIGKILLed worker subprocess, exhausted disk) so they run in CI
+without any external infrastructure.
 """
 
-import shutil
-import subprocess
 import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -17,7 +14,7 @@ import pytest
 
 from seamtech_search.config import AppConfig
 from seamtech_search.indexer import SearchIndex
-from seamtech_search.jobs import create_job, get_job, ImportCancelledError
+from seamtech_search.jobs import create_job, get_job
 from seamtech_search.redis_store import RedisStore
 from seamtech_search.storage import S3StorageClient
 
@@ -29,34 +26,61 @@ def make_cfg(tmp_path: Path, **extra):
 
 
 def test_chaos_s3_down_mid_import(tmp_path: Path):
-    """S3 down mid-import: files should remain, status upload_incomplete, quarantine."""
-    from seamtech_search.import_pipeline import import_folder
-    from seamtech_search.extractors import ExtractionResult
+    """S3 down mid-import: the most critical data-loss scenario of the audit.
 
-    cfg = make_cfg(tmp_path, s3_endpoint_url="http://localhost:9000", s3_bucket="b", s3_access_key="a", s3_secret_key="s")
+    Runs the real worker task handler with S3 configured but every upload
+    failing, and asserts the exact state "no data lost" means:
+
+    - the job ends ``upload_incomplete`` (never ``completed`` — the files were
+      not in the bucket — and never a silent ``failed`` with nothing left)
+    - every artifact is reported ``failed`` (nothing was uploaded)
+    - the source folder is moved to quarantine and its content is preserved
+      byte-for-byte (no purge, no truncation)
+    """
+    from seamtech_search.import_pipeline import quarantine_root
+    from seamtech_search.worker import process_import_task
+
+    cfg = make_cfg(
+        tmp_path,
+        s3_endpoint_url="http://localhost:9000",
+        s3_bucket="b",
+        s3_access_key="a",
+        s3_secret_key="s",
+    )
     idx = SearchIndex(cfg.database_path)
     idx.initialize(rebuild=True)
 
+    job_id = "chaos-s3-down"
+    create_job(idx, job_id, str(tmp_path), status="running", stage="extracting")
+
     src = tmp_path / "src"
-    src.mkdir(exist_ok=True)
-    (src / "file.pdf").write_bytes(b"%PDF-1.4 fake")
+    src.mkdir()
+    pdf_bytes = b"%PDF-1.4 fake technical sheet"
+    (src / "file.pdf").write_bytes(pdf_bytes)
+    (src / "notes.txt").write_text("do not lose me")
 
-    # Mock S3 client to fail upload
-    with patch("seamtech_search.storage.S3StorageClient.upload_file", side_effect=Exception("S3 down")):
-        with patch("seamtech_search.import_pipeline.extract_file") as mock_ext:
-            mock_ext.return_value = ExtractionResult(text="extracted", status="extracted", detail="")
-            result = import_folder(src, cfg, idx, import_id="chaos-s3-down")
-            # Should not be completed with uploaded, should be failed or upload_incomplete or completed with not_configured fallback?
-            # With mocked upload failure, status should be failed or partial
-            assert result.status in ("failed", "partial", "completed", "upload_incomplete")
-            # Files should still exist (no purge)
-            assert src.exists()
+    # S3 is configured, but the endpoint is down: every upload attempt raises.
+    with patch.object(S3StorageClient, "upload_file", side_effect=Exception("S3 down")):
+        result = process_import_task({"job_id": job_id, "source_path": str(src)}, cfg, idx)
 
-    # Verify quarantine if upload failed
-    from seamtech_search.import_pipeline import quarantine_root
-    q_root = quarantine_root(cfg)
-    # Quarantine may or may not have files depending on implementation, but src should still exist or be in quarantine
-    assert src.exists() or (q_root.exists() and any(q_root.iterdir())) or True
+    # 1. Job state: upload_incomplete — the precise status, not a union of all.
+    assert result["status"] == "upload_incomplete"
+    job = get_job(idx, job_id)
+    assert job["status"] == "upload_incomplete"
+    assert job["stage"] == "upload_incomplete"
+
+    # 2. Nothing was uploaded: every artifact in the payload is failed.
+    assert result["artifacts"], "expected upload artifacts in the result payload"
+    for artifact in result["artifacts"]:
+        assert artifact["status"] == "failed"
+
+    # 3. No data loss: the source is moved to quarantine, content intact.
+    assert not src.exists()
+    q_dir = quarantine_root(cfg) / f"{job_id}_src"
+    assert q_dir.is_dir()
+    assert (q_dir / "file.pdf").read_bytes() == pdf_bytes
+    assert (q_dir / "notes.txt").read_text() == "do not lose me"
+    assert Path(result["quarantine_path"]) == q_dir
 
 
 def test_chaos_redis_killed_mid_job(tmp_path: Path):
@@ -77,8 +101,9 @@ def test_chaos_redis_killed_mid_job(tmp_path: Path):
     mock_redis.ping.return_value = False
 
     # The job should still be in DB and recoverable
+    from datetime import datetime, timedelta, timezone
+
     from seamtech_search.jobs import recover_stale_jobs
-    from datetime import datetime, timezone, timedelta
 
     old = (datetime.now(timezone.utc) - timedelta(seconds=1000)).isoformat()
     with idx.connect() as conn:
@@ -91,59 +116,125 @@ def test_chaos_redis_killed_mid_job(tmp_path: Path):
     assert "Server restarted" in fetched["error"]
 
 
+# Child process for the SIGKILL test: behaves like a worker that is mid-import
+# (job visible as running in the DB) and then simply stops being alive.
+_WORKER_CHILD_SCRIPT = """\
+import os
+import sys
+import time
+from pathlib import Path
+
+db_path, pid_file, job_id = sys.argv[1], sys.argv[2], sys.argv[3]
+
+from seamtech_search.indexer import SearchIndex
+from seamtech_search.jobs import get_job
+
+idx = SearchIndex(Path(db_path))
+job = get_job(idx, job_id)
+assert job is not None and job["status"] == "running", f"unexpected job state: {job}"
+
+Path(pid_file).write_text(str(os.getpid()))
+time.sleep(60)  # simulates mid-import work; the parent will SIGKILL us
+"""
+
+
 def test_chaos_worker_sigkill(tmp_path: Path):
-    """Worker SIGKILL: job should be marked failed on restart, files preserved."""
-    from seamtech_search.worker import process_import_task, worker_loop
-    import seamtech_search.worker as wmod
-    import threading
+    """A real worker subprocess is SIGKILLed mid-job.
+
+    Unlike a graceful stop (setting ``_worker_running = False``), SIGKILL is
+    uncatchable, so no cleanup code runs. This exercises the crash path
+    end-to-end: a real subprocess, a real ``os.kill(pid, SIGKILL)``, and the
+    real stale-job recovery routine. Every assertion can fail:
+
+    - the child must die *from* SIGKILL (exit code -9), not from a clean exit
+    - the crash must leave the job stuck in ``running`` (no cleanup ran)
+    - restart recovery must mark exactly that job ``failed`` with the
+      documented error message
+    - the imported files must survive on disk, byte-for-byte
+    """
+    import os
+    import signal
+    import subprocess
+    import sys
+
+    from seamtech_search.jobs import recover_stale_jobs
+
+    if sys.platform == "win32":
+        pytest.skip("SIGKILL is not available on Windows")
 
     cfg = make_cfg(tmp_path)
     idx = SearchIndex(cfg.database_path)
     idx.initialize(rebuild=True)
 
-    # Create a job that would be running
     job_id = "chaos-worker-sigkill"
     create_job(idx, job_id, str(tmp_path), status="running", stage="extracting")
 
-    # Simulate worker killed: _worker_running set to False abruptly
-    wmod._worker_running = True
-    # Start worker loop that will be killed
-    mock_redis = MagicMock()
-    mock_redis.is_configured.return_value = True
-    mock_redis.ping.return_value = True
-    mock_redis.dequeue_task.return_value = None
-    mock_redis.process_retry_queue.return_value = 0
+    # Files the "worker" is importing: must survive the crash untouched.
+    src = tmp_path / "src"
+    src.mkdir()
+    pdf_bytes = b"%PDF-1.4 fake"
+    (src / "file.pdf").write_bytes(pdf_bytes)
 
-    def kill_soon():
-        time.sleep(0.2)
-        wmod._worker_running = False
+    script = tmp_path / "worker_child.py"
+    script.write_text(_WORKER_CHILD_SCRIPT, encoding="utf-8")
+    pid_file = tmp_path / "worker.pid"
 
-    t = threading.Thread(target=kill_soon, daemon=True)
-    t.start()
+    env = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parent.parent))
+    proc = subprocess.Popen(
+        [sys.executable, str(script), str(cfg.database_path), str(pid_file), job_id],
+        cwd=str(Path(__file__).resolve().parent.parent),
+        env=env,
+    )
     try:
-        worker_loop(cfg, idx, mock_redis)
-    except Exception:
-        pass
-    t.join(timeout=2)
-    wmod._worker_running = False
+        # Wait until the child reports its pid — it has reached the "working" state.
+        deadline = time.time() + 15
+        while not pid_file.exists():
+            if proc.poll() is not None:
+                raise AssertionError(f"worker child exited before being ready (rc={proc.returncode})")
+            if time.time() > deadline:
+                raise AssertionError("worker child did not report its pid in time")
+            time.sleep(0.05)
+        pid = int(pid_file.read_text().strip())
+        os.kill(pid, signal.SIGKILL)
+        rc = proc.wait(timeout=15)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
 
-    # After SIGKILL, job should be recoverable as stale
-    from datetime import datetime, timezone, timedelta
-    old = (datetime.now(timezone.utc) - timedelta(seconds=1000)).isoformat()
+    # 1. The child must have died from SIGKILL itself — not a clean exit.
+    assert rc == -signal.SIGKILL
+
+    # 2. SIGKILL cannot run cleanup: the job is stuck in running.
+    stuck = get_job(idx, job_id)
+    assert stuck["status"] == "running"
+
+    # 3. On restart, stale recovery marks exactly this job failed. A restart
+    #    happens long after the crash, so age the heartbeat before recovering
+    #    (with the routine's default 300s threshold, as on server startup).
+    from datetime import datetime, timedelta, timezone
+
+    old = (datetime.now(timezone.utc) - timedelta(seconds=600)).isoformat()
     with idx.connect() as conn:
         conn.execute("UPDATE import_jobs SET updated_at = ? WHERE id = ?", (old, job_id))
 
-    from seamtech_search.jobs import recover_stale_jobs
-    recovered = recover_stale_jobs(idx, heartbeat_threshold_seconds=100)
-    assert recovered >= 0  # May be 1 if old
+    recovered = recover_stale_jobs(idx)
+    assert recovered == 1
+    job = get_job(idx, job_id)
+    assert job["status"] == "failed"
+    assert job["stage"] == "failed"
+    assert job["error"] == "Server restarted while job was running"
+
+    # 4. No data loss: the imported file is still on disk, unmodified.
+    assert (src / "file.pdf").read_bytes() == pdf_bytes
 
 
 def test_chaos_disk_full(tmp_path: Path):
     """Disk full: ensure_free_space should raise InsufficientStorageError and import should fail with 507, no partial purge."""
-    from seamtech_search.retention import ensure_free_space, InsufficientStorageError
-    from seamtech_search.import_pipeline import import_folder
-    from seamtech_search.api import create_app
     from fastapi.testclient import TestClient
+
+    from seamtech_search.api import create_app
+    from seamtech_search.import_pipeline import import_folder
+    from seamtech_search.retention import InsufficientStorageError, ensure_free_space
 
     cfg = make_cfg(tmp_path, min_free_bytes=10**18)  # Require huge free space
 
@@ -190,8 +281,9 @@ def test_chaos_s3_versioning_unavailable(tmp_path: Path):
 
 def test_chaos_redis_rate_limit_fallback(tmp_path: Path):
     """Redis down during rate limiting: should fallback to in-memory and not crash."""
-    from seamtech_search.api import create_app
     from fastapi.testclient import TestClient
+
+    from seamtech_search.api import create_app
 
     cfg = make_cfg(tmp_path, rate_limit_per_minute=1)
     # Mock Redis to fail ping but not rate limit

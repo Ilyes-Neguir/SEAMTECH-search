@@ -3,15 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 
-from seamtech_search.config import AppConfig
 from seamtech_search.api import create_app
+from seamtech_search.config import AppConfig
 
 
 def make_cfg(tmp_path: Path, **extra):
@@ -21,8 +20,9 @@ def make_cfg(tmp_path: Path, **extra):
 
 
 def test_safe_relative_and_validated_and_safe_size(tmp_path: Path):
-    from seamtech_search.api import _safe_relative_path, _validated_path, _safe_size, _require_auth
     from fastapi import HTTPException
+
+    from seamtech_search.api import _require_auth, _safe_relative_path, _safe_size, _validated_path
 
     # _safe_relative_path
     assert ".." not in str(_safe_relative_path("../../etc/passwd"))
@@ -75,7 +75,7 @@ def test_is_staged_and_retention_loop(tmp_path: Path):
     from seamtech_search.import_pipeline import staging_root
 
     cfg = make_cfg(tmp_path)
-    app = create_app(cfg)
+    create_app(cfg)
 
     # _is_staged is inner function, we can test via import logic: staging_root in parents
     # Create staged file
@@ -154,9 +154,10 @@ def test_api_with_redis_and_storage_mocks(tmp_path: Path):
 
             # open with presigned URL — need to mock index to return object_key
             # Create document with object_key
+            import time
+
             from seamtech_search.indexer import SearchIndex
             from seamtech_search.models import Document
-            import time
             idx = SearchIndex(cfg.database_path)
             idx.initialize(rebuild=True)
             doc = Document(

@@ -6,8 +6,6 @@ import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from seamtech_search.config import AppConfig
 from seamtech_search.indexer import SearchIndex
 from seamtech_search.models import Document
@@ -78,7 +76,7 @@ def test_postgres_branches_mocked(tmp_path: Path):
             mock_cursor.fetchone.side_effect = [(5, 3, 2)]
             mock_cursor.fetchall.return_value = []
             try:
-                stats = idx.stats()
+                idx.stats()
             except Exception:
                 pass
 

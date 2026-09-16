@@ -7,12 +7,10 @@ from dataclasses import replace
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from seamtech_search.config import AppConfig
 from seamtech_search.import_pipeline import ImportFile, ImportResult, quarantine_root, staging_root
 from seamtech_search.indexer import SearchIndex
-from seamtech_search.worker import process_import_task, worker_loop, start_background_worker, stop_background_worker
+from seamtech_search.worker import process_import_task, start_background_worker, stop_background_worker, worker_loop
 
 
 def make_config(tmp_path: Path, extra: dict | None = None) -> AppConfig:
@@ -143,7 +141,7 @@ def test_cancelled_and_exception(tmp_path: Path) -> None:
     from seamtech_search.import_pipeline import ImportCancelledError
 
     with patch("seamtech_search.worker.import_folder", side_effect=ImportCancelledError("cancel")):
-        with patch("seamtech_search.worker.update_job") as mock_update:
+        with patch("seamtech_search.worker.update_job"):
             payload = {"job_id": "job-123", "source_path": str(src)}
             out = process_import_task(payload, cfg, idx, redis_store=None)
             assert out["status"] == "cancelled"
@@ -173,7 +171,7 @@ def test_with_redis_store(tmp_path: Path) -> None:
     with patch("seamtech_search.worker.import_folder", return_value=result):
         with patch("seamtech_search.worker.update_job"):
             payload = {"job_id": "job-123", "source_path": str(src)}
-            out = process_import_task(payload, cfg, idx, redis_store=mock_redis)
+            process_import_task(payload, cfg, idx, redis_store=mock_redis)
             assert mock_redis.update_job.call_count >= 1
 
 
@@ -216,7 +214,7 @@ def test_start_stop_worker(tmp_path: Path) -> None:
     mock_redis2 = MagicMock()
     mock_redis2.is_configured.return_value = True
     mock_redis2.ping.return_value = True
-    with patch("seamtech_search.worker.worker_loop") as mock_loop:
+    with patch("seamtech_search.worker.worker_loop"):
         start_background_worker(cfg, idx, mock_redis2)
         time.sleep(0.1)
         stop_background_worker()

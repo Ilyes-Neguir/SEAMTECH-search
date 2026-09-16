@@ -1,13 +1,11 @@
 """Cover jobs.py postgres branches."""
 
-from unittest.mock import MagicMock, patch
 from pathlib import Path
-
-import pytest
+from unittest.mock import MagicMock, patch
 
 from seamtech_search.config import AppConfig
 from seamtech_search.indexer import SearchIndex
-from seamtech_search.jobs import create_job, get_job, update_job, cancel_job, recover_stale_jobs
+from seamtech_search.jobs import cancel_job, create_job, get_job, recover_stale_jobs, update_job
 
 
 def make_cfg(tmp_path: Path):

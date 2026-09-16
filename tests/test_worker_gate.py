@@ -1,17 +1,16 @@
 """Cover worker.py to 90%."""
 
+import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
-import time
 
 from seamtech_search.config import AppConfig
 from seamtech_search.indexer import SearchIndex
 from seamtech_search.redis_store import RedisStore
-from seamtech_search.models import Document
 
 
 def make_import_result(status="completed", upload_status="uploaded", all_verified=True, files=None, import_id="test"):
-    from seamtech_search.import_pipeline import ImportResult, ImportFile
+    from seamtech_search.import_pipeline import ImportResult
     if files is None:
         files = []
     return ImportResult(
@@ -30,9 +29,9 @@ def make_import_result(status="completed", upload_status="uploaded", all_verifie
     )
 
 def test_process_import_task_branches(tmp_path: Path):
-    from seamtech_search.worker import process_import_task
-    from seamtech_search.jobs import clear_job_cancel
     from seamtech_search.import_pipeline import ImportFile
+    from seamtech_search.jobs import clear_job_cancel
+    from seamtech_search.worker import process_import_task
 
     for jid in ["j1", "j2", "j3", "j4", "j5", "j6", "j7", "j8"]:
         clear_job_cancel(jid)
@@ -141,9 +140,10 @@ def test_process_import_task_branches(tmp_path: Path):
 
 
 def test_worker_loop_branches(tmp_path: Path):
-    from seamtech_search.worker import worker_loop
-    import seamtech_search.worker as wmod
     import threading
+
+    import seamtech_search.worker as wmod
+    from seamtech_search.worker import worker_loop
 
     cfg = AppConfig(root_paths=[tmp_path], database_path=tmp_path / "db_loop.db", min_free_bytes=0)
     idx = SearchIndex(cfg.database_path)

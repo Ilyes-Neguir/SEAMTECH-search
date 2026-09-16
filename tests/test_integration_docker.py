@@ -28,6 +28,11 @@ if DOCKER_AVAILABLE:
 
 pytestmark = pytest.mark.skipif(not (DOCKER_AVAILABLE and COMPOSE_AVAILABLE), reason="Docker not available in this environment")
 
+# Strict mode (set by CI, where the infra services are brought up first and
+# health-checked): backends that are supposed to be reachable must actually
+# work — a failure there is a real failure, not a "may not be ready" skip.
+STRICT = os.environ.get("SEAMTECH_INTEGRATION_STRICT", "").strip().lower() in {"1", "true", "yes"}
+
 
 def _wait_for_postgres(url: str, timeout: int = 30):
     import psycopg2
@@ -85,9 +90,10 @@ def test_docker_compose_infra(tmp_path: Path):
     ]
 
     # Test Postgres backend
+    import uuid
+
     from seamtech_search.indexer import SearchIndex
     from seamtech_search.models import Document
-    import uuid
 
     pg_connected = False
     for pg_url in postgres_urls:
@@ -116,11 +122,15 @@ def test_docker_compose_infra(tmp_path: Path):
                 pg_connected = True
                 break
             except Exception as e:
+                if STRICT:
+                    pytest.fail(f"Postgres backend broken in strict mode ({pg_url}): {e}")
                 print(f"Postgres test failed for {pg_url}: {e}")
                 continue
 
     # If no postgres available, skip postgres part but don't fail whole test
     if not pg_connected:
+        if STRICT:
+            pytest.fail("Postgres not reachable, but strict mode expects the compose infra to be up")
         pytest.skip("Postgres not reachable in integration test")
 
     # Test Redis backend
@@ -145,10 +155,14 @@ def test_docker_compose_infra(tmp_path: Path):
                 redis_connected = True
                 break
             except Exception as e:
+                if STRICT:
+                    pytest.fail(f"Redis backend broken in strict mode ({r_url}): {e}")
                 print(f"Redis test failed for {r_url}: {e}")
                 continue
 
     if not redis_connected:
+        if STRICT:
+            pytest.fail("Redis not reachable, but strict mode expects the compose infra to be up")
         pytest.skip("Redis not reachable in integration test")
 
     # Test S3/MinIO backend if available
@@ -181,18 +195,24 @@ def test_docker_compose_infra(tmp_path: Path):
                 # Cleanup
                 client.delete_file(key)
             except Exception as e:
+                if STRICT:
+                    # CI health-checked MinIO before this step ran: an S3
+                    # failure here is a real failure, not "may not be ready".
+                    pytest.fail(f"S3/MinIO backend broken in strict mode ({s3_endpoint}): {e}")
                 print(f"S3 test failed: {e}")
                 # Don't fail, S3 may not be ready
-                pass
     except Exception as e:
+        if STRICT:
+            pytest.fail(f"S3 client creation failed in strict mode: {e}")
         print(f"S3 client creation failed: {e}")
 
 
 def test_api_with_real_backends(tmp_path: Path):
     """Test API endpoints with real backends if available."""
-    from seamtech_search.config import AppConfig
-    from seamtech_search.api import create_app
     from fastapi.testclient import TestClient
+
+    from seamtech_search.api import create_app
+    from seamtech_search.config import AppConfig
 
     # Use tmp_path as root and sqlite for simplicity, but with redis/s3 if available
     cfg = AppConfig(

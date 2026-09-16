@@ -20,7 +20,7 @@ def make_cfg(tmp_path: Path, **extra):
 
 
 def test_audit_full(tmp_path: Path):
-    from seamtech_search.audit import record_audit_event, get_audit_logs, actor_fingerprint
+    from seamtech_search.audit import actor_fingerprint, get_audit_logs, record_audit_event
 
     cfg = make_cfg(tmp_path)
     idx = SearchIndex(cfg.database_path)
@@ -61,6 +61,7 @@ def test_audit_full(tmp_path: Path):
 
 def test_config_env_and_validators(tmp_path: Path):
     import os
+
     from seamtech_search.config import AppConfig, default_config_path
 
     # default_config_path fails loudly when missing
@@ -117,8 +118,9 @@ def test_config_env_and_validators(tmp_path: Path):
 
 
 def test_cli_functions(tmp_path: Path):
-    from seamtech_search.cli import _build_index, run_stats, run_cleanup, run_search, run_index
     import json
+
+    from seamtech_search.cli import _build_index, run_cleanup, run_index, run_search, run_stats
 
     cfg = make_cfg(tmp_path)
     idx = _build_index(cfg)
@@ -148,6 +150,7 @@ def test_cli_functions(tmp_path: Path):
 
     # run_index — mock crawl to avoid heavy work
     from unittest.mock import patch
+
     from seamtech_search.crawler import ScanIncompleteError
 
     with patch("seamtech_search.cli.crawl", return_value=[]):
@@ -169,7 +172,7 @@ def test_cli_functions(tmp_path: Path):
 
 
 def test_extractors_branches(tmp_path: Path):
-    from seamtech_search.extractors import extract_file, ExtractionResult, CURRENT_EXTRACTOR_VERSION
+    from seamtech_search.extractors import CURRENT_EXTRACTOR_VERSION, ExtractionResult, extract_file
 
     # txt
     f = tmp_path / "a.txt"
@@ -219,7 +222,7 @@ def test_extractors_branches(tmp_path: Path):
 
 
 def test_crawler_branches(tmp_path: Path):
-    from seamtech_search.crawler import crawl, _is_excluded, ScanIncompleteError
+    from seamtech_search.crawler import ScanIncompleteError, _is_excluded, crawl
 
     cfg = make_cfg(tmp_path)
     src = tmp_path / "src"
@@ -238,6 +241,7 @@ def test_crawler_branches(tmp_path: Path):
 
     # crawl
     from unittest.mock import patch
+
     from seamtech_search.extractors import ExtractionResult as ER
 
     def fake_extract(path, config):
@@ -269,7 +273,6 @@ def test_crawler_branches(tmp_path: Path):
 
 def test_models_and_others(tmp_path: Path):
     from seamtech_search.models import Document
-    import time
 
     doc = Document(
         path=tmp_path / "a.pdf",
@@ -293,5 +296,3 @@ def test_models_and_others(tmp_path: Path):
     assert Document.classify("", True) == "folder"
 
     # Test __main__ and extraction_worker already covered elsewhere, but import
-    import seamtech_search.__main__
-    import seamtech_search.extraction_worker

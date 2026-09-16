@@ -1,19 +1,16 @@
 """Cover remaining api.py branches to reach 85%."""
 
+import asyncio
 from pathlib import Path
 from unittest.mock import MagicMock, patch
-import time
-import asyncio
 
-import pytest
 from fastapi.testclient import TestClient
 
-from seamtech_search.config import AppConfig
 from seamtech_search.api import create_app
+from seamtech_search.config import AppConfig
 from seamtech_search.indexer import SearchIndex
 from seamtech_search.jobs import create_job, get_job
 from seamtech_search.retention import InsufficientStorageError
-from seamtech_search.jobs import ImportCancelledError
 
 
 def make_cfg(tmp_path: Path, **extra):
@@ -38,17 +35,17 @@ def test_lifespan_and_retention(tmp_path: Path):
 
     # Test retention_loop success and failure
     cfg2 = make_cfg(tmp_path, database_path=tmp_path / "ret.db")
-    app2 = create_app(cfg2)
+    create_app(cfg2)
     # Access _retention_loop via closure? It's inside create_app, we can test directly by calling it
     # We'll create a mock retention loop function similar to the one in api.py
     # Instead test that lifespan creates retention task
     with patch("seamtech_search.api.run_retention_cleanup", return_value={"pruned": 1}):
-        with patch("seamtech_search.api.asyncio.sleep", side_effect=[None, asyncio.CancelledError]) as mock_sleep:
+        with patch("seamtech_search.api.asyncio.sleep", side_effect=[None, asyncio.CancelledError]):
             # Simulate _retention_loop
             async def fake_retention():
                 await asyncio.sleep(60)
                 try:
-                    res = await asyncio.to_thread(lambda: {"pruned": 1})
+                    await asyncio.to_thread(lambda: {"pruned": 1})
                 except Exception:
                     pass
                 await asyncio.sleep(86400)

@@ -11,7 +11,17 @@ import pytest
 
 from seamtech_search.config import AppConfig
 from seamtech_search.indexer import SearchIndex
-from seamtech_search.jobs import create_job, get_job, update_job, cancel_job, recover_stale_jobs, register_job_cancel, is_job_cancelled, clear_job_cancel, make_cancel_checker
+from seamtech_search.jobs import (
+    cancel_job,
+    clear_job_cancel,
+    create_job,
+    get_job,
+    is_job_cancelled,
+    make_cancel_checker,
+    recover_stale_jobs,
+    register_job_cancel,
+    update_job,
+)
 from seamtech_search.models import Document
 
 
@@ -150,9 +160,16 @@ def test_indexer_full(tmp_path: Path):
 
 
 def test_retention_and_audit_and_config(tmp_path: Path):
-    from seamtech_search.retention import ensure_free_space, InsufficientStorageError, prune_reports, prune_staged_uploads, prune_audit_logs, run_retention_cleanup
-    from seamtech_search.audit import record_audit_event, get_audit_logs, actor_fingerprint
-    from seamtech_search.import_pipeline import staging_root, quarantine_root
+    from seamtech_search.audit import actor_fingerprint, get_audit_logs, record_audit_event
+    from seamtech_search.import_pipeline import quarantine_root, staging_root
+    from seamtech_search.retention import (
+        InsufficientStorageError,
+        ensure_free_space,
+        prune_audit_logs,
+        prune_reports,
+        prune_staged_uploads,
+        run_retention_cleanup,
+    )
 
     cfg = make_cfg(tmp_path, reports_retention_days=1, staged_retention_days=1, audit_retention_days=1)
     base = tmp_path / "data"
@@ -222,8 +239,8 @@ def test_retention_and_audit_and_config(tmp_path: Path):
 
 
 def test_extractors_and_crawler(tmp_path: Path):
-    from seamtech_search.extractors import extract_file, ExtractionResult
     from seamtech_search.crawler import crawl
+    from seamtech_search.extractors import ExtractionResult, extract_file
 
     cfg = make_cfg(tmp_path)
     # Create some files
@@ -240,7 +257,6 @@ def test_extractors_and_crawler(tmp_path: Path):
     assert res2.status in ("error", "skipped", "unavailable")
 
     # crawler — mock extraction to avoid subprocess timeout
-    from seamtech_search.crawler import _extract_with_timeout
     from seamtech_search.extractors import ExtractionResult as ER
 
     def fake_extract(path, config):
@@ -259,9 +275,8 @@ def test_extractors_and_crawler(tmp_path: Path):
 
 
 def test_cli_and_main_and_extraction_worker(tmp_path: Path):
-    from seamtech_search.cli import main as cli_main, run_stats, run_cleanup, run_search, run_index, _build_index
-    from seamtech_search.config import AppConfig
-    import tempfile
+
+    from seamtech_search.cli import _build_index, run_cleanup, run_stats
 
     # Test _build_index
     cfg = make_cfg(tmp_path)
@@ -287,9 +302,11 @@ def test_cli_and_main_and_extraction_worker(tmp_path: Path):
     from unittest.mock import patch
     with patch("sys.argv", ["extraction_worker", str(tmp_path / "a.txt"), "1000", "1000000", "{}"]):
         (tmp_path / "a.txt").write_text("test content")
-        from seamtech_search.extraction_worker import main as ew_main
         # Capture stdout
-        import io, sys
+        import io
+        import sys
+
+        from seamtech_search.extraction_worker import main as ew_main
         old_stdout = sys.stdout
         sys.stdout = io.StringIO()
         try:

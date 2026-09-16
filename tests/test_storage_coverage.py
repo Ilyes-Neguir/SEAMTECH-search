@@ -235,5 +235,5 @@ def test_upload_artifacts_branches(tmp_path: Path):
 
     with patch("seamtech_search.storage.S3StorageClient.upload_file", return_value="k") as mock_up:
         with patch("seamtech_search.storage.S3StorageClient.object_exists", return_value=True):
-            batch6 = upload_artifacts_to_storage("folder", [f1, f1], cfg3, import_id="id", source_root=tmp_path)
+            upload_artifacts_to_storage("folder", [f1, f1], cfg3, import_id="id", source_root=tmp_path)
             assert mock_up.call_count == 1

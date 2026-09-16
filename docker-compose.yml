@@ -31,11 +31,14 @@ services:
       - "127.0.0.1:9001:9001"
     volumes:
       - minio-data:/data
+    # Real liveness probe: the minio image has no python3, so the previous
+    # check could never detect a broken server (`|| exit 0` hid it).
+    # busybox wget exits non-zero when /minio/health/live does not answer.
     healthcheck:
-      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:9000/minio/health/live', timeout=2)\" 2>/dev/null || exit 0"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9000/minio/health/live"]
       interval: 10s
       timeout: 5s
-      retries: 3
+      retries: 5
 
   redis:
     image: redis:7-alpine

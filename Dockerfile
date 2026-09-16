@@ -10,8 +10,15 @@ RUN groupadd -r seamtech && useradd -r -g seamtech -d /app -s /bin/false seamtec
 
 COPY requirements.txt pyproject.toml README.md ./
 COPY seamtech_search ./seamtech_search
+COPY config ./config
 
 RUN pip install --no-cache-dir -r requirements.txt
+
+# The server refuses to start without config/config.json (by design, to avoid
+# silent misconfiguration on the desktop app). Container deployments configure
+# the app through SEAMTECH_* environment variables, which override the values
+# below — so seed the baseline from the committed example.
+RUN cp config/config.example.json config/config.json
 
 # Healthcheck hits the liveness probe
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
