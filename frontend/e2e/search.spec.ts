@@ -22,8 +22,11 @@ test.describe("Search Workflow", () => {
     // Click on result to open preview panel
     await firstResult.click()
 
-    // Expect preview panel to display metadata or text
-    const previewPanel = page.locator("aside, [aria-label='Preview']")
+    // Expect preview panel to display metadata or text.
+    // Target the panel's complementary landmark: the previous selector
+    // ("aside, [aria-label='Preview']") also matched the per-row "Preview"
+    // buttons rendered by result-item.tsx, i.e. 6 unrelated elements.
+    const previewPanel = page.getByRole("complementary")
     await expect(previewPanel).toBeVisible()
   })
 })
