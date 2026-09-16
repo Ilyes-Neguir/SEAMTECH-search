@@ -21,7 +21,15 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // Sample fallback
+  const demoMode = process.env.SEAMTECH_DEMO_MODE === "1"
+  const isProd = process.env.NODE_ENV === "production"
+  if (!demoMode || isProd) {
+    return NextResponse.json(
+      { detail: "Backend not configured. Set SEAMTECH_API_URL or enable SEAMTECH_DEMO_MODE=1 for demo." },
+      { status: 503 },
+    )
+  }
+
   const file = SAMPLE_FILES.find((f) => f.path === path)
   if (!file) return NextResponse.json({ detail: "Path does not exist." }, { status: 404 })
 
@@ -35,7 +43,7 @@ export async function GET(req: NextRequest) {
       is_dir: true,
       children: children.map((c) => ({ name: c.name, path: c.path, is_dir: c.is_dir, size: c.size })),
     }
-    return NextResponse.json(payload)
+    return NextResponse.json({ ...(payload as any), demo: true })
   }
 
   const payload: PreviewResponse = {
@@ -46,5 +54,5 @@ export async function GET(req: NextRequest) {
     size: file.size,
     text: file.content ?? "Preview is not available for this file type. Use Open File instead.",
   }
-  return NextResponse.json(payload)
+  return NextResponse.json({ ...(payload as any), demo: true })
 }

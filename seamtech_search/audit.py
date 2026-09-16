@@ -1,8 +1,10 @@
-"""Append-only audit logging module.
+"""Audit logging module.
 
 Records all mutating operations (and queries where configured).
 Actors are always token fingerprints or 'local'/'anonymous' — raw secrets are never persisted.
 Writes are best-effort so audit failures never block business operations.
+Note: retention policy may prune old audit entries (see retention.py), so this is not strictly
+append-only immutable — it is a regular table with configurable retention.
 """
 
 from __future__ import annotations

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import re
 import shutil
 import time
@@ -14,7 +13,7 @@ from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import FastAPI, File, Form, Header, HTTPException, Query, Request, Response, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
 from .audit import actor_fingerprint, get_audit_logs, record_audit_event
@@ -114,8 +113,13 @@ def create_app(config: AppConfig) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        # Initialize DB once at startup — health must not call initialize (read-only probe).
+        # Initialize DB and run versioned migrations once at startup.
+        # Health must not call initialize (read-only probe).
         index.initialize()
+        try:
+            index.run_migrations()
+        except Exception as exc:
+            logger.warning("Schema migrations failed: %s", exc)
         recovered = recover_stale_jobs(index)
         if recovered > 0:
             logger.info("Recovered %d stale import jobs on startup", recovered)
@@ -124,13 +128,28 @@ def create_app(config: AppConfig) -> FastAPI:
         stop_background_worker()
         index.close()
 
-    app = FastAPI(title="SEAMTECH Search", version="0.4.0", lifespan=lifespan)
+    # In production (auth_token set), disable public docs to avoid API surface disclosure
+    docs_enabled = not bool(config.auth_token)
+    app = FastAPI(
+        title="SEAMTECH Search",
+        version="0.4.0",
+        lifespan=lifespan,
+        docs_url="/docs" if docs_enabled else None,
+        redoc_url="/redoc" if docs_enabled else None,
+        openapi_url="/openapi.json" if docs_enabled else None,
+    )
     # Eager init for TestClient usage that does not trigger lifespan, but health
     # itself remains read-only (does not call initialize).
     index.initialize()
+    try:
+        index.run_migrations()
+    except Exception:
+        pass
 
     request_timestamps: dict[str, list[float]] = defaultdict(list)
     rate_limit_lock = asyncio.Lock()
+    # Keep strong references to background tasks to prevent GC mid-flight (4.4)
+    background_tasks: set[asyncio.Task] = set()
 
     metrics = {
         "search_requests": 0,
@@ -149,7 +168,8 @@ def create_app(config: AppConfig) -> FastAPI:
         request.state.request_id = request_id
 
         path = request.url.path
-        exempt_paths = {"/live", "/ready", "/health", "/metrics", "/docs", "/openapi.json"}
+        # /docs and /openapi.json are NOT exempt — they are disabled in prod or require auth
+        exempt_paths = {"/live", "/ready", "/health", "/metrics"}
 
         if path not in exempt_paths:
             client_ip = request.client.host if request.client else "127.0.0.1"
@@ -164,7 +184,16 @@ def create_app(config: AppConfig) -> FastAPI:
                 now = time.time()
                 cutoff = now - 60.0
                 async with rate_limit_lock:
-                    window = [ts for ts in request_timestamps[client_key] if ts > cutoff]
+                    # Sweep old entries to prevent unbounded growth (4.10)
+                    for k in list(request_timestamps.keys()):
+                        ts_list = request_timestamps[k]
+                        filtered = [ts for ts in ts_list if ts > cutoff]
+                        if filtered:
+                            request_timestamps[k] = filtered
+                        else:
+                            del request_timestamps[k]
+
+                    window = [ts for ts in request_timestamps.get(client_key, []) if ts > cutoff]
                     if len(window) >= config.rate_limit_per_minute:
                         oldest = window[0]
                         retry_after = max(1, int(60.0 - (now - oldest)) + 1)
@@ -237,6 +266,13 @@ def create_app(config: AppConfig) -> FastAPI:
             if storage_client is not None
             else {"versioning_available": None, "versioning_detail": "object storage is not configured"}
         )
+        deadletter_count = 0
+        try:
+            if redis_store.is_configured():
+                deadletter_count = redis_store.get_deadletter_count("imports")
+        except Exception:
+            deadletter_count = 0
+
         return {
             "status": "ok",
             **health_details,
@@ -249,6 +285,7 @@ def create_app(config: AppConfig) -> FastAPI:
             "redis_connected": redis_store.ping() if redis_store.is_configured() else None,
             "storage_backend": config.storage_backend,
             "s3_configured": bool(config.s3_endpoint_url or config.s3_access_key),
+            "upload_dead_letters": deadletter_count,
             # Read-only probe (never puts versioning): False means the endpoint
             # cannot version (Cloudflare R2), None means "could not find out".
             **versioning,
@@ -352,18 +389,53 @@ def create_app(config: AppConfig) -> FastAPI:
 
     @app.post("/open")
     def open_path(
+        request: Request,
         path: str = Query(..., min_length=1, max_length=4_096),
         token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
-    ) -> dict[str, object]:
+    ) -> Response:
         _require_auth(config, token)
+        actor = actor_fingerprint(token, request.client.host if request.client else None)
         target = _validated_path(path, config)
+
+        # Try to find object storage key for this path
+        object_key = None
         try:
-            os.startfile(str(target))  # type: ignore[attr-defined]
-        except AttributeError as exc:
-            raise HTTPException(status_code=501, detail="Open path is only supported on Windows hosts.") from exc
-        except OSError as exc:
-            raise HTTPException(status_code=500, detail="The operating system could not open this path.") from exc
-        return {"opened": str(target), "is_dir": target.is_dir()}
+            with index.connect() as conn:
+                if index.is_postgres:
+                    with conn.cursor() as cursor:
+                        cursor.execute("SELECT object_key FROM documents WHERE path_key = %s", (str(target.resolve()),))
+                        row = cursor.fetchone()
+                        if row and row[0]:
+                            object_key = row[0]
+                else:
+                    row = conn.execute("SELECT object_key FROM documents WHERE path_key = ?", (str(target.resolve()),)).fetchone()
+                    if row and row["object_key"]:
+                        object_key = row["object_key"]
+        except Exception:
+            pass
+
+        if storage_client is not None and object_key:
+            try:
+                url = storage_client.get_presigned_url(object_key, expires_in=900)
+                record_audit_event(
+                    index, action="open", actor=actor, resource=str(target), status="302", details={"object_key": object_key}
+                )
+                return RedirectResponse(url=url, status_code=302)
+            except Exception as exc:
+                logger.warning("Failed presigned URL for open %s: %s", target, exc)
+
+        # Fallback: serve file directly if it exists locally
+        if target.exists() and target.is_file():
+            record_audit_event(index, action="open", actor=actor, resource=str(target), status="200")
+            return FileResponse(path=target, filename=target.name)
+
+        # For directories, return listing instead of trying OS open
+        if target.exists() and target.is_dir():
+            record_audit_event(index, action="open", actor=actor, resource=str(target), status="200")
+            return JSONResponse({"opened": str(target), "is_dir": True, "note": "Directory listing via /preview"})
+
+        record_audit_event(index, action="open", actor=actor, resource=str(target), status="404")
+        raise HTTPException(status_code=404, detail="Path not found.")
 
     # ---------------------------------------------------------------------------
     # Import Endpoints (Async jobs by default, sync with ?wait=true)
@@ -489,7 +561,9 @@ def create_app(config: AppConfig) -> FastAPI:
             )
             redis_store.enqueue_task("imports", task_payload)
         else:
-            asyncio.create_task(asyncio.to_thread(_execute_import_background, job_id, source, None, excel_path))
+            task = asyncio.create_task(asyncio.to_thread(_execute_import_background, job_id, source, None, excel_path))
+            background_tasks.add(task)
+            task.add_done_callback(background_tasks.discard)
 
         record_audit_event(
             index,
@@ -586,9 +660,11 @@ def create_app(config: AppConfig) -> FastAPI:
             )
             redis_store.enqueue_task("imports", task_payload)
         else:
-            asyncio.create_task(
+            task = asyncio.create_task(
                 asyncio.to_thread(_execute_import_background, job_id, source, technical_pdf, excel_path)
             )
+            background_tasks.add(task)
+            task.add_done_callback(background_tasks.discard)
         record_audit_event(
             index,
             action="import_confirm",
@@ -629,6 +705,8 @@ def create_app(config: AppConfig) -> FastAPI:
         safe_folder = re.sub(r"[^\w\-. ]", "_", folder.strip() or "upload").strip(" .") or "upload"
         staged = staging_root(config) / f"{uuid.uuid4().hex}_{safe_folder}"
         staged.mkdir(parents=True, exist_ok=True)
+        total_size = 0
+        max_aggregate = config.max_file_size_bytes * 10  # aggregate cap: 10x single file
         try:
             for upload in files:
                 relative = _safe_relative_path(upload.filename or "file")
@@ -638,8 +716,16 @@ def create_app(config: AppConfig) -> FastAPI:
                 with target.open("wb") as handle:
                     while chunk := await upload.read(1024 * 1024):
                         size += len(chunk)
+                        total_size += len(chunk)
                         if size > config.max_file_size_bytes:
                             raise HTTPException(status_code=413, detail=f"File too large: {upload.filename}")
+                        if total_size > max_aggregate:
+                            raise HTTPException(status_code=413, detail="Aggregate upload too large")
+                        # Re-check free space while writing (4.10)
+                        try:
+                            ensure_free_space(config.database_path.parent, config.min_free_bytes)
+                        except InsufficientStorageError as exc:
+                            raise HTTPException(status_code=507, detail=str(exc)) from exc
                         handle.write(chunk)
                 await upload.close()
             result = await asyncio.to_thread(scan_folder, staged, config)
@@ -658,14 +744,22 @@ def create_app(config: AppConfig) -> FastAPI:
         token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
     ) -> dict[str, object]:
         _require_auth(config, token)
+        # Check DB first for completed/corrected records to avoid stale Redis cache shadowing (4.10)
+        record = get_import(index, import_id)
+        job = get_job(index, import_id)
+
         if redis_store.is_configured():
             cached = redis_store.get_job(import_id)
-            if cached and cached.get("status") in ("running", "pending", "completed", "cancelled"):
-                res_data = cached.get("result") or {}
-                return {**cached, **res_data, "job_id": cached.get("id", import_id)}
+            if cached:
+                # For running/pending, prefer Redis fast-path
+                if cached.get("status") in ("running", "pending"):
+                    res_data = cached.get("result") or {}
+                    return {**cached, **res_data, "job_id": cached.get("id", import_id)}
+                # For completed/cancelled, if DB has newer corrected data, prefer DB
+                if cached.get("status") in ("completed", "cancelled") and record is None:
+                    res_data = cached.get("result") or {}
+                    return {**cached, **res_data, "job_id": cached.get("id", import_id)}
 
-        job = get_job(index, import_id)
-        record = get_import(index, import_id)
         if job is not None:
             if job["status"] == "cancelled":
                 return job
@@ -720,6 +814,12 @@ def create_app(config: AppConfig) -> FastAPI:
         corrections = request_body.model_dump(exclude_none=True)
         try:
             res = await asyncio.to_thread(correct_import, index, config, import_id, corrections)
+            # Invalidate Redis cache so corrected DB record is not shadowed (4.10)
+            if redis_store.is_configured():
+                try:
+                    redis_store.update_job(import_id, {"result": res, "status": res.get("status", "completed")})
+                except Exception:
+                    pass
             record_audit_event(index, action="import_correct", actor=actor, resource=import_id, status="success")
             return res
         except KeyError as exc:
@@ -739,15 +839,158 @@ def create_app(config: AppConfig) -> FastAPI:
         actor = actor_fingerprint(token, request.client.host if request.client else None)
         try:
             res = await asyncio.to_thread(retry_upload, index, config, import_id)
+            if redis_store.is_configured():
+                try:
+                    redis_store.update_job(import_id, {"result": res, "status": res.get("status", "completed")})
+                except Exception:
+                    pass
             record_audit_event(index, action="import_retry_upload", actor=actor, resource=import_id, status="success")
             return res
         except KeyError as exc:
             record_audit_event(index, action="import_retry_upload", actor=actor, resource=import_id, status="404")
             raise HTTPException(status_code=404, detail="Import not found.") from exc
 
+    @app.get("/imports/{import_id}/artifacts/{artifact}")
+    def get_import_artifact(
+        import_id: str,
+        artifact: str,
+        request: Request,
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+    ) -> Response:
+        _require_auth(config, token)
+        actor = actor_fingerprint(token, request.client.host if request.client else None)
+
+        allowed = {"report_pdf", "report_docx", "source_pdf", "source_excel"}
+        if artifact not in allowed:
+            raise HTTPException(status_code=400, detail=f"Unknown artifact. Allowed: {', '.join(sorted(allowed))}")
+
+        payload = get_import(index, import_id)
+        if payload is None:
+            record_audit_event(index, action="artifact_download", actor=actor, resource=f"{import_id}/{artifact}", status="404")
+            raise HTTPException(status_code=404, detail="Import not found.")
+
+        # Resolve file path and object key from payload
+        file_path: Path | None = None
+        object_key: str | None = None
+        filename: str = ""
+        media_type: str = "application/octet-stream"
+
+        if artifact == "report_pdf":
+            file_path = Path(payload["report_path"]) if payload.get("report_path") else None
+            filename = "technical-report.pdf"
+            media_type = "application/pdf"
+            # Try to find object_key from artifacts list
+            for art in payload.get("artifacts", []):
+                if art.get("name") == "technical-report.pdf" and art.get("key"):
+                    object_key = art["key"]
+                    break
+        elif artifact == "report_docx":
+            file_path = Path(payload["report_docx_path"]) if payload.get("report_docx_path") else None
+            filename = "technical-report.docx"
+            media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            for art in payload.get("artifacts", []):
+                if art.get("name") == "technical-report.docx" and art.get("key"):
+                    object_key = art["key"]
+                    break
+        elif artifact == "source_pdf":
+            file_path = Path(payload["technical_pdf"]) if payload.get("technical_pdf") else None
+            filename = Path(file_path).name if file_path else "source.pdf"
+            media_type = "application/pdf"
+            # Find in files list
+            for f in payload.get("files", []):
+                if f.get("path") == payload.get("technical_pdf") and f.get("object_key"):
+                    object_key = f["object_key"]
+                    break
+        elif artifact == "source_excel":
+            file_path = Path(payload["excel_file"]) if payload.get("excel_file") else None
+            filename = Path(file_path).name if file_path else "source.xlsx"
+            media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            for f in payload.get("files", []):
+                if f.get("path") == payload.get("excel_file") and f.get("object_key"):
+                    object_key = f["object_key"]
+                    break
+
+        # If S3 configured and we have object key, redirect to presigned URL (expiry <=15 min)
+        if storage_client is not None and object_key:
+            try:
+                url = storage_client.get_presigned_url(object_key, expires_in=900)
+                record_audit_event(
+                    index,
+                    action="artifact_download",
+                    actor=actor,
+                    resource=f"{import_id}/{artifact}",
+                    status="302",
+                    details={"object_key": object_key, "filename": filename},
+                )
+                return RedirectResponse(url=url, status_code=302)
+            except Exception as exc:
+                logger.warning("Failed to generate presigned URL for %s: %s", object_key, exc)
+                # Fall back to local file if available
+
+        # Fallback: serve from local disk (cache) or download from S3 to cache
+        if file_path and file_path.exists():
+            record_audit_event(
+                index,
+                action="artifact_download",
+                actor=actor,
+                resource=f"{import_id}/{artifact}",
+                status="200",
+                details={"path": str(file_path), "filename": filename},
+            )
+            return FileResponse(path=file_path, filename=filename, media_type=media_type)
+
+        # If local cache cold but we have object_key, try to download from S3 to cache dir
+        if storage_client is not None and object_key and file_path:
+            try:
+                file_path.parent.mkdir(parents=True, exist_ok=True)
+                storage_client.download_file(object_key, file_path)
+                if file_path.exists():
+                    record_audit_event(
+                        index,
+                        action="artifact_download",
+                        actor=actor,
+                        resource=f"{import_id}/{artifact}",
+                        status="200",
+                        details={"object_key": object_key, "filename": filename, "cache": "miss_downloaded"},
+                    )
+                    return FileResponse(path=file_path, filename=filename, media_type=media_type)
+            except Exception as exc:
+                logger.warning("Failed to download %s from storage: %s", object_key, exc)
+
+        record_audit_event(index, action="artifact_download", actor=actor, resource=f"{import_id}/{artifact}", status="404")
+        raise HTTPException(status_code=404, detail="Artifact not found. It may not have been generated or uploaded yet.")
+
     # ---------------------------------------------------------------------------
     # Maintenance & Audit Endpoints
     # ---------------------------------------------------------------------------
+
+    @app.post("/maintenance/replay-deadletters")
+    def replay_deadletters(
+        request: Request,
+        limit: int = Query(10, ge=1, le=100),
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+    ) -> dict[str, object]:
+        _require_auth(config, token)
+        actor = actor_fingerprint(token, request.client.host if request.client else None)
+        if not redis_store.is_configured():
+            raise HTTPException(status_code=503, detail="Redis not configured")
+        count = redis_store.replay_deadletters("imports", limit=limit)
+        record_audit_event(
+            index, action="replay_deadletters", actor=actor, status="success", details={"replayed": count}
+        )
+        return {"status": "ok", "replayed": count}
+
+    @app.get("/maintenance/deadletters")
+    def list_deadletters(
+        request: Request,
+        limit: int = Query(50, ge=1, le=200),
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+    ) -> dict[str, object]:
+        _require_auth(config, token)
+        if not redis_store.is_configured():
+            raise HTTPException(status_code=503, detail="Redis not configured")
+        dead = redis_store.get_deadletters("imports", limit=limit)
+        return {"count": len(dead), "results": dead}
 
     @app.post("/maintenance/cleanup")
     async def maintenance_cleanup(
@@ -785,7 +1028,14 @@ def _safe_relative_path(filename: str) -> Path:
 
 
 def _require_auth(config: AppConfig, token: str | None) -> None:
-    if config.auth_token and token != config.auth_token:
+    if not config.auth_token:
+        return
+    if token is None:
+        raise HTTPException(status_code=401, detail="Authentication required.")
+    import secrets
+
+    # Constant-time comparison to prevent timing attacks
+    if not secrets.compare_digest(token.encode("utf-8"), config.auth_token.encode("utf-8")):
         raise HTTPException(status_code=401, detail="Authentication required.")
 
 

@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -210,9 +211,6 @@ def test_multi_technical_pdf_import_analyzes_all_sheets(tmp_path: Path) -> None:
     # Verify report generated successfully
     assert result.report_path and Path(result.report_path).exists()
     assert result.report_docx_path and Path(result.report_docx_path).exists()
-
-
-import os
 
 
 @pytest.mark.s3

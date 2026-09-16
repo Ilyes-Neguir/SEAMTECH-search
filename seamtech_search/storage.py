@@ -594,27 +594,16 @@ def upload_artifacts_to_storage(
                 artifact.error = str(exc)
             artifacts.append(artifact)
 
-        status = "uploaded" if all(a.status == "uploaded" and a.verified for a in artifacts) else "pending_retry"
-        # Special case: if the endpoint cannot be reached, object_exists returns False
-        # for every file, but we should not report pending_retry if upload itself failed?
-        # The above logic already covers it: failed status -> pending_retry
+        if not artifacts:
+            return UploadBatch(status="not_applicable")
+
+        if all(a.status == "uploaded" and a.verified for a in artifacts):
+            status = "uploaded"
+        elif any(a.status == "uploaded" for a in artifacts):
+            status = "partial"
+        else:
+            status = "failed"
+
         return UploadBatch(status=status, artifacts=artifacts)
 
-    # 2. If OneDrive is configured (fallback / alternative)
-    from .onedrive import OneDriveClient
-
-    onedrive_client = OneDriveClient(config=config)
-    if onedrive_client.is_configured():
-        onedrive_status = onedrive_client.upload_files(valid_files, folder_name)
-        artifacts = [
-            UploadedArtifact(
-                path=str(p),
-                name=p.name,
-                status="uploaded" if onedrive_status == "uploaded" else onedrive_status,
-                verified=False,  # OneDrive has no head_object verification in this path
-            )
-            for p in valid_files
-        ]
-        return UploadBatch(status=onedrive_status, artifacts=artifacts)
-
-    return UploadBatch(status="pending_not_configured")
+    return UploadBatch(status="not_configured")

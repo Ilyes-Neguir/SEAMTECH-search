@@ -29,7 +29,16 @@ TECHNICAL_ANCHORS: tuple[str, ...] = (
     "largeur",
 )
 
+# Anchors that are highly specific to SEAMTECH fabrication sheets.
+STRONG_ANCHORS: tuple[str, ...] = (
+    "fiche de fabrication",
+    "mesures finies",
+    "mesures dessin",
+    "cotes",
+)
+
 TECHNICAL_ANCHOR_THRESHOLD = 2
+TECHNICAL_ANCHOR_THRESHOLD_WEAK = 3
 
 
 def normalize_text(text: str) -> str:
@@ -46,7 +55,17 @@ def matched_anchors(text: str) -> list[str]:
 def classify_pdf_text(text: str) -> str:
     """Classify PDF text as ``technical_pdf`` or ``plan_pdf``.
 
-    Deterministic rule: at least :data:`TECHNICAL_ANCHOR_THRESHOLD` distinct
-    anchors must be present. Empty/anchor-less text is a plan PDF.
+    Stricter rule than the original threshold-2 check:
+    - At least 2 distinct anchors, with at least one strong anchor (fiche de fabrication,
+      mesures finies/dessin, cotes), OR
+    - At least 3 distinct anchors if no strong anchor is present.
+    This prevents generic PDFs containing only e.g. 'reference' + 'longueur' from
+    being misclassified as technical.
     """
-    return "technical_pdf" if len(matched_anchors(text)) >= TECHNICAL_ANCHOR_THRESHOLD else "plan_pdf"
+    anchors = matched_anchors(text)
+    if not anchors:
+        return "plan_pdf"
+    has_strong = any(s in anchors for s in STRONG_ANCHORS)
+    if has_strong:
+        return "technical_pdf" if len(anchors) >= TECHNICAL_ANCHOR_THRESHOLD else "plan_pdf"
+    return "technical_pdf" if len(anchors) >= TECHNICAL_ANCHOR_THRESHOLD_WEAK else "plan_pdf"

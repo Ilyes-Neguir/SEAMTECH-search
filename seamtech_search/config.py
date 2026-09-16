@@ -12,10 +12,13 @@ def default_config_path(project_root: str | Path | None = None) -> Path:
     root = Path(project_root).resolve() if project_root is not None else Path(__file__).resolve().parents[1]
     config_dir = root / "config"
     config_file = config_dir / "config.json"
-    if config_file.exists():
-        return config_file
-    if (config_dir / "config.example.json").exists():
-        return config_dir / "config.example.json"
+    # Fail loudly if config.json is missing — do not silently fall back to example (booby trap in prod)
+    if not config_file.exists():
+        raise FileNotFoundError(
+            f"Configuration file not found: {config_file}. "
+            f"Copy {config_dir / 'config.example.json'} to {config_file} and edit it, "
+            f"or set SEAMTECH_ROOT_PATHS and other env vars."
+        )
     return config_file
 
 
@@ -48,7 +51,7 @@ class AppConfig(BaseModel):
     audit_retention_days: int = Field(default=365, ge=1)
     min_free_bytes: int = Field(default=1024 * 1024 * 1024, ge=0)
 
-    # Storage backend selection: "s3" (MinIO / Cloudflare R2 / AWS S3) or "onedrive" or "local"
+    # Storage backend selection: "s3" (MinIO / Cloudflare R2 / AWS S3) or "local"
     storage_backend: str = Field(default="s3")
 
     # S3 / MinIO / Cloudflare R2 settings
@@ -63,17 +66,6 @@ class AppConfig(BaseModel):
 
     # Redis settings
     redis_url: str | None = None
-
-    # OneDrive settings (legacy / alternative)
-    onedrive_client_id: str | None = None
-    onedrive_client_secret: str | None = None
-    onedrive_tenant_id: str | None = None
-    onedrive_refresh_token: str | None = None
-    onedrive_access_token: str | None = None
-    onedrive_token_cache_path: Path | None = None
-    onedrive_drive_id: str | None = None
-    onedrive_remote_folder: str | None = None
-    onedrive_max_retries: int = Field(default=3, ge=0, le=10)
 
     # Database connection pool settings
     pool_min: int = Field(default=1, ge=1)
@@ -119,6 +111,13 @@ class AppConfig(BaseModel):
             data["database_url"] = os.environ["SEAMTECH_DATABASE_URL"]
         if os.environ.get("SEAMTECH_AUTH_TOKEN"):
             data["auth_token"] = os.environ["SEAMTECH_AUTH_TOKEN"]
+        if os.environ.get("SEAMTECH_ROOT_PATHS"):
+            raw = os.environ["SEAMTECH_ROOT_PATHS"].strip()
+            # Support colon or comma separated
+            sep = "," if "," in raw else ":" if ":" in raw else None
+            parts = [p.strip() for p in raw.split(sep)] if sep else [raw] if raw else []
+            data["root_paths"] = [p for p in parts if p]
+
         if os.environ.get("SEAMTECH_HOST"):
             data["host"] = os.environ["SEAMTECH_HOST"]
         if os.environ.get("SEAMTECH_PORT"):
@@ -137,8 +136,6 @@ class AppConfig(BaseModel):
             }
         if os.environ.get("SEAMTECH_RATE_LIMIT_PER_MINUTE"):
             data["rate_limit_per_minute"] = int(os.environ["SEAMTECH_RATE_LIMIT_PER_MINUTE"])
-        if os.environ.get("SEAMTECH_UPLOAD_MAX_RETRIES"):
-            data["onedrive_max_retries"] = int(os.environ["SEAMTECH_UPLOAD_MAX_RETRIES"])
         if os.environ.get("SEAMTECH_STORAGE_BACKEND"):
             data["storage_backend"] = os.environ["SEAMTECH_STORAGE_BACKEND"]
         if os.environ.get("SEAMTECH_S3_ENDPOINT_URL"):
@@ -167,24 +164,6 @@ class AppConfig(BaseModel):
                 "true",
                 "yes",
             }
-        if os.environ.get("SEAMTECH_ONEDRIVE_CLIENT_ID"):
-            data["onedrive_client_id"] = os.environ["SEAMTECH_ONEDRIVE_CLIENT_ID"]
-        if os.environ.get("SEAMTECH_ONEDRIVE_CLIENT_SECRET"):
-            data["onedrive_client_secret"] = os.environ["SEAMTECH_ONEDRIVE_CLIENT_SECRET"]
-        if os.environ.get("SEAMTECH_ONEDRIVE_TENANT_ID"):
-            data["onedrive_tenant_id"] = os.environ["SEAMTECH_ONEDRIVE_TENANT_ID"]
-        if os.environ.get("SEAMTECH_ONEDRIVE_REFRESH_TOKEN"):
-            data["onedrive_refresh_token"] = os.environ["SEAMTECH_ONEDRIVE_REFRESH_TOKEN"]
-        if os.environ.get("SEAMTECH_ONEDRIVE_ACCESS_TOKEN"):
-            data["onedrive_access_token"] = os.environ["SEAMTECH_ONEDRIVE_ACCESS_TOKEN"]
-        elif os.environ.get("SEAMTECH_GRAPH_ACCESS_TOKEN"):
-            data["onedrive_access_token"] = os.environ["SEAMTECH_GRAPH_ACCESS_TOKEN"]
-        if os.environ.get("SEAMTECH_ONEDRIVE_TOKEN_CACHE_PATH"):
-            data["onedrive_token_cache_path"] = os.environ["SEAMTECH_ONEDRIVE_TOKEN_CACHE_PATH"]
-        if os.environ.get("SEAMTECH_ONEDRIVE_DRIVE_ID"):
-            data["onedrive_drive_id"] = os.environ["SEAMTECH_ONEDRIVE_DRIVE_ID"]
-        if os.environ.get("SEAMTECH_ONEDRIVE_REMOTE_FOLDER"):
-            data["onedrive_remote_folder"] = os.environ["SEAMTECH_ONEDRIVE_REMOTE_FOLDER"]
         if os.environ.get("SEAMTECH_REPORTS_RETENTION_DAYS"):
             data["reports_retention_days"] = int(os.environ["SEAMTECH_REPORTS_RETENTION_DAYS"])
         if os.environ.get("SEAMTECH_STAGED_RETENTION_DAYS"):
@@ -210,8 +189,6 @@ class AppConfig(BaseModel):
         ]
         if not config.database_path.is_absolute():
             config.database_path = base_path / config.database_path
-        if config.onedrive_token_cache_path and not config.onedrive_token_cache_path.is_absolute():
-            config.onedrive_token_cache_path = base_path / config.onedrive_token_cache_path
         config.excluded_extensions = {
             extension.lower() if extension.startswith(".") else f".{extension.lower()}"
             for extension in config.excluded_extensions

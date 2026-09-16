@@ -27,7 +27,6 @@ from .extractors import extract_file
 from .indexer import SearchIndex
 from .jobs import ImportCancelledError
 from .models import Document
-from .onedrive import upload_to_onedrive
 from .retention import ensure_free_space
 from .storage import UploadBatch, upload_artifacts_to_storage
 
@@ -47,8 +46,8 @@ __all__ = [
     "update_import",
     "correct_import",
     "retry_upload",
-    "upload_to_onedrive",
     "staging_root",
+    "quarantine_root",
     "normalize_unit_to_mm",
     "Dimensions",
     "ExcelSheetSummary",
@@ -160,7 +159,7 @@ class ImportFile:
     extension: str
     extraction_status: str
     report_path: str | None = None
-    upload_status: str = "not_configured"
+    upload_status: str = "pending"
     object_key: str | None = None
     object_bucket: str | None = None
     uploaded_at: float | None = None
@@ -705,6 +704,11 @@ def staging_root(config: AppConfig) -> Path:
     return config.database_path.parent / "uploads"
 
 
+def quarantine_root(config: AppConfig) -> Path:
+    """Directory for imports whose S3 upload failed — never swept by retention."""
+    return config.database_path.parent / "quarantine"
+
+
 def _validated_source(source: Path, config: AppConfig) -> Path:
     resolved = source.expanduser().resolve()
     if not resolved.exists() or not resolved.is_dir():
@@ -812,6 +816,8 @@ def import_folder(
     pdfs: list[Path] = []
     excels: list[Path] = []
     candidates: list[dict[str, Any]] = []
+    # Cache extractions to avoid extracting each PDF twice (Phase 4.9)
+    extracted_cache: dict[str, ExtractedData] = {}
 
     for path in _walk_files(resolved):
         if cancel_check and cancel_check():
@@ -821,6 +827,7 @@ def import_folder(
 
         if path.suffix.lower() == ".pdf":
             extracted = extract_structured_pdf(path, config)
+            extracted_cache[str(path)] = extracted
             category = classify_pdf_text(extracted.raw_text) if extracted.raw_text else "plan_pdf"
             status = "pending" if category == "technical_pdf" else "not_applicable"
             if category == "technical_pdf":
@@ -878,12 +885,17 @@ def import_folder(
     if progress_callback:
         progress_callback("extracting", 35)
 
-    data = extract_structured_pdf(technical_pdf, config) if technical_pdf else None
+    if technical_pdf:
+        cached = extracted_cache.get(str(technical_pdf))
+        data = cached if cached is not None else extract_structured_pdf(technical_pdf, config)
+    else:
+        data = None
     extra_pdfs = [p for p in pdfs if p != technical_pdf]
     extra_extractions: dict[str, ExtractedData] = {}
     if data and extra_pdfs:
         for p in extra_pdfs:
-            extracted_p = extract_structured_pdf(p, config)
+            cached_p = extracted_cache.get(str(p))
+            extracted_p = cached_p if cached_p is not None else extract_structured_pdf(p, config)
             extra_extractions[str(p)] = extracted_p
             data.additional_sheets.append(
                 AnalyzedSheet(
@@ -1273,10 +1285,6 @@ def retry_upload(index: SearchIndex, config: AppConfig, import_id: str) -> dict[
     # Reports are not in files list; retry them if overall status not uploaded or they are missing from verified set
     # If no specific files, fall back to full set (backward compat)
     if not files_needing_retry:
-        # If everything was already uploaded, nothing to do, but still attempt reports if needed
-        extra = []
-        if payload.get("upload_status") != "uploaded":
-            extra = [p for p in (report_pdf, report_docx) if p]
         files_needing_retry = [technical_pdf, report_pdf, report_docx] + ([excel_file] if excel_file else [])
         files_needing_retry = [p for p in files_needing_retry if p is not None]
         # If previous upload was fully successful, keep empty to avoid redundant upload

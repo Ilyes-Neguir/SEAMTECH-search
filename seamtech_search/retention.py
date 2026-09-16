@@ -92,6 +92,9 @@ def prune_staged_uploads(staging_dir: str | Path, max_age_days: int) -> int:
     pruned_count = 0
 
     for child in staging_path.iterdir():
+        # Never delete quarantine even if it lives inside staging (defensive)
+        if child.name == "quarantine":
+            continue
         try:
             if child.stat().st_mtime < cutoff_seconds:
                 if child.is_dir():
@@ -124,17 +127,24 @@ def prune_audit_logs(index: SearchIndex, max_age_days: int) -> int:
 def run_retention_cleanup(config: AppConfig, index: SearchIndex) -> dict[str, int]:
     """Execute all retention cleanup policies and return a summary of deleted artifacts."""
     base_dir = config.database_path.parent
-    staging_dir = base_dir / "staging_uploads"
+    # Fixed: use actual staging_root (data/uploads) not data/staging_uploads
+    from .import_pipeline import quarantine_root, staging_root
+
+    staging_dir = staging_root(config)
+    quarantine_dir = quarantine_root(config)
 
     pruned_rep = prune_reports(base_dir, config.reports_retention_days)
     pruned_stg = prune_staged_uploads(staging_dir, config.staged_retention_days)
+    # Never prune quarantine — failed uploads must be preserved for manual retry
+    # Ensure quarantine dir exists but is excluded from staged pruning
     pruned_aud = prune_audit_logs(index, config.audit_retention_days)
 
     logger.info(
-        "Retention cleanup completed: %d reports, %d staged uploads, %d audit log rows removed.",
+        "Retention cleanup completed: %d reports, %d staged uploads, %d audit log rows removed (quarantine preserved at %s).",
         pruned_rep,
         pruned_stg,
         pruned_aud,
+        quarantine_dir,
     )
 
     return {

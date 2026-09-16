@@ -28,27 +28,54 @@ class ImportCancelledError(Exception):
     """Raised when an import job is cooperatively cancelled during execution."""
 
 
-def register_job_cancel(job_id: str) -> None:
-    """Flag a job ID as cancelled in memory for active worker threads."""
+def register_job_cancel(job_id: str, redis_store: Any | None = None) -> None:
+    """Flag a job ID as cancelled — Redis first, memory fallback (4.5)."""
+    if redis_store is not None:
+        try:
+            from .redis_store import RedisStore
+
+            if isinstance(redis_store, RedisStore) and redis_store.is_configured():
+                redis_store.set_cancel_flag(job_id)
+        except Exception:
+            pass
     with _cancellation_lock:
         _cancelled_job_ids.add(job_id)
 
 
-def is_job_cancelled(job_id: str) -> bool:
-    """Check whether a job has received a cancellation request."""
+def is_job_cancelled(job_id: str, redis_store: Any | None = None) -> bool:
+    """Check whether a job has received a cancellation request — Redis first."""
+    if redis_store is not None:
+        try:
+            from .redis_store import RedisStore
+
+            if isinstance(redis_store, RedisStore) and redis_store.is_configured():
+                if redis_store.is_cancelled(job_id):
+                    return True
+        except Exception:
+            pass
     with _cancellation_lock:
         return job_id in _cancelled_job_ids
 
 
-def clear_job_cancel(job_id: str) -> None:
+def clear_job_cancel(job_id: str, redis_store: Any | None = None) -> None:
     """Clean up cancellation flag once job finishes or exits."""
+    if redis_store is not None:
+        try:
+            from .redis_store import RedisStore
+
+            if isinstance(redis_store, RedisStore) and redis_store.is_configured():
+                redis_store.clear_cancel_flag(job_id)
+                redis_store.set_heartbeat(job_id, ttl_seconds=1)  # clear heartbeat by short TTL
+        except Exception:
+            pass
     with _cancellation_lock:
         _cancelled_job_ids.discard(job_id)
 
 
-def make_cancel_checker(job_id: str) -> Callable[[], bool]:
+def make_cancel_checker(job_id: str, redis_store: Any | None = None) -> Callable[[], bool]:
     """Return a zero-argument callable that returns True if job_id was cancelled."""
-    return lambda: is_job_cancelled(job_id)
+    # Capture redis_store if provided, else check memory only
+    return lambda: is_job_cancelled(job_id, redis_store)
 
 
 def create_job(
@@ -130,6 +157,7 @@ def update_job(
     if not fields:
         return get_job(index, job_id)
 
+    rowcount = 0
     with index.connect() as conn:
         if index.is_postgres:
             import psycopg2.extras
@@ -149,13 +177,24 @@ def update_job(
 
             with conn.cursor() as cursor:
                 cursor.execute(sql, pg_values)
+                rowcount = cursor.rowcount
         else:
             set_clauses = [f"{f} = ?" for f in fields]
             set_clauses.append("updated_at = ?")
             extra_where = "" if status == "cancelled" else " AND status != 'cancelled'"
             sql = f"UPDATE import_jobs SET {', '.join(set_clauses)} WHERE id = ?{extra_where}"
             sqlite_values = list(values) + [now_iso, job_id]
-            conn.execute(sql, sqlite_values)
+            cur = conn.execute(sql, sqlite_values)
+            rowcount = cur.rowcount
+
+    # 4.10: check rowcount — if 0 and job does not exist, return None (do not silently succeed)
+    if rowcount == 0:
+        existing = get_job(index, job_id)
+        if existing is None:
+            logger.warning("update_job: job %s not found", job_id)
+            return None
+        # If job exists but was not updated due to cancelled guard, return existing
+        return existing
 
     return get_job(index, job_id)
 
@@ -226,8 +265,11 @@ def cancel_job(index: SearchIndex, job_id: str) -> dict[str, Any] | None:
     )
 
 
-def recover_stale_jobs(index: SearchIndex) -> int:
-    """Mark running/pending jobs from prior crashed/restarted processes as failed."""
+def recover_stale_jobs(index: SearchIndex, heartbeat_threshold_seconds: int = 300) -> int:
+    """Mark running/pending jobs from prior crashed/restarted processes as failed.
+
+    Scoped to jobs whose updated_at is older than heartbeat_threshold (4.7).
+    """
     with index.connect() as conn:
         if index.is_postgres:
             with conn.cursor() as cursor:
@@ -239,11 +281,16 @@ def recover_stale_jobs(index: SearchIndex) -> int:
                         error = 'Server restarted while job was running',
                         updated_at = now()
                     WHERE status IN ('pending', 'running')
-                    """
+                      AND updated_at < now() - (%s || ' seconds')::interval
+                    """,
+                    (str(heartbeat_threshold_seconds),),
                 )
                 count = cursor.rowcount
         else:
+            from datetime import timedelta
+
             now_iso = datetime.now(timezone.utc).isoformat()
+            cutoff = (datetime.now(timezone.utc) - timedelta(seconds=heartbeat_threshold_seconds)).isoformat()
             cursor = conn.execute(
                 """
                 UPDATE import_jobs
@@ -252,8 +299,9 @@ def recover_stale_jobs(index: SearchIndex) -> int:
                     error = 'Server restarted while job was running',
                     updated_at = ?
                 WHERE status IN ('pending', 'running')
+                  AND updated_at < ?
                 """,
-                (now_iso,),
+                (now_iso, cutoff),
             )
             count = cursor.rowcount
 

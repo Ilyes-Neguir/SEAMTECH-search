@@ -33,7 +33,7 @@ class Document:
     object_key: str | None = None
     object_bucket: str | None = None
     uploaded_at: float | None = None
-    upload_status: str = "not_configured"
+    upload_status: str = "pending"
 
     def __post_init__(self) -> None:
         if not self.is_dir and self.extraction_status == "not_applicable":

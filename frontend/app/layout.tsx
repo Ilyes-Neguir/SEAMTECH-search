@@ -1,4 +1,3 @@
-import { Analytics } from '@vercel/analytics/next'
 import type { Metadata, Viewport } from 'next'
 import './globals.css'
 
@@ -13,7 +12,6 @@ export const metadata: Metadata = {
   title: 'SEAMTECH Search — Internal File Search',
   description:
     'Search the SEAMTECH archive of sails, patterns, datasheets and client orders by name, folder path or document content.',
-  generator: 'v0.app',
   icons: {
     icon: [{ url: '/seamtech-logo.png', type: 'image/png' }],
     apple: '/seamtech-logo.png',
@@ -32,10 +30,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className="antialiased font-sans">
-        {children}
-        {process.env.NODE_ENV === 'production' && <Analytics />}
-      </body>
+      <body className="antialiased font-sans">{children}</body>
     </html>
   )
 }
