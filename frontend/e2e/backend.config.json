@@ -1,5 +1,5 @@
 {
-  "root_paths": ["../sample_data"],
+  "root_paths": ["../../sample_data"],
   "database_path": "e2e-data/search.db",
   "host": "127.0.0.1",
   "port": 8123,
