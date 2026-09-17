@@ -115,7 +115,7 @@ jobs:
             -e SEAMTECH_MIN_FREE_BYTES=0 \
             seamtech-search:ci
           ready=0
-          for i in $(seq 1 30); do
+          for i in $(seq 1 45); do
             if curl -fsS http://127.0.0.1:8000/live > /dev/null 2>&1; then
               ready=1
               break
@@ -123,8 +123,13 @@ jobs:
             sleep 2
           done
           if [ "$ready" -ne 1 ]; then
-            echo "smoke test failed: /live never answered" >&2
-            docker logs seamtech-ci >&2
+            echo "smoke test failed: /live never answered within 90s" >&2
+            state=$(docker inspect --format 'state={{.State.Status}} exit={{.State.ExitCode}} oom={{.State.OOMKilled}}' seamtech-ci 2>&1)
+            logtail=$(docker logs --tail 40 seamtech-ci 2>&1)
+            echo "container: $state" >&2
+            echo "$logtail" >&2
+            # Surface the real failure in the run annotations as well.
+            echo "::error title=smoke-test-failed::$state ::$(echo "$logtail" | tail -12 | tr '\n' ' | ')"
             docker rm -f seamtech-ci
             exit 1
           fi
@@ -157,7 +162,17 @@ jobs:
           MINIO_ROOT_PASSWORD: minioadmin123
           REDIS_PASSWORD: redis_test_password
           SEAMTECH_AUTH_TOKEN: test-token-123
-        run: docker compose up -d postgres redis minio
+        run: |
+          # Validate interpolation/schema up front so a config error fails
+          # here with a clear message instead of deep in `up`.
+          docker compose config --quiet
+          if ! out=$(docker compose up -d postgres redis minio 2>&1); then
+            echo "$out"
+            # Surface the real failure in the run annotations as well.
+            echo "::error title=compose-up-failed::$(echo "$out" | tail -15 | tr '\n' ' | ')"
+            exit 1
+          fi
+          docker compose ps
       - name: Wait for services to be reachable
         # Hard wait with a real timeout, probing each backend the same way the
         # app does (psycopg2 / redis-py / the MinIO liveness endpoint). If a
