@@ -18,7 +18,10 @@ services:
       retries: 5
 
   minio:
-    image: minio/minio:latest
+    # MinIO removed minio/minio from Docker Hub on 2026-09-11 (anonymous
+    # pulls now 404/401); quay.io/minio is their current official
+    # distribution with the same tags.
+    image: quay.io/minio/minio:latest
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:

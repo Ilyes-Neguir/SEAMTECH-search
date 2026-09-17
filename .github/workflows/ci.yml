@@ -111,6 +111,8 @@ jobs:
           docker run -d --name seamtech-ci -p 8000:8000 \
             -e SEAMTECH_AUTH_TOKEN=test-token \
             -e SEAMTECH_HOST=0.0.0.0 \
+            -e SEAMTECH_ALLOW_NETWORK_ACCESS=true \
+            -e SEAMTECH_BEHIND_TLS_PROXY=true \
             -e SEAMTECH_ROOT_PATHS=/tmp \
             -e SEAMTECH_MIN_FREE_BYTES=0 \
             seamtech-search:ci
