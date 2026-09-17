@@ -59,6 +59,8 @@ CI integrity — every check can now fail (no `|| echo` masking anywhere):
 - `httpx==0.28.1` restored to `requirements.txt` (it had been dropped, so the SQLite/API suite could not run in CI at all).
 - `frontend/package.json` pins `packageManager: pnpm@9.15.9` so the Docker build (corepack) uses the same pnpm as CI — pnpm ≥10 ignores `pnpm.overrides` in `package.json`, which broke the frozen install.
 - `shadcn` moved to devDependencies (code-gen CLI, not shipped); `next` 16.3.3→16.3.5; patch-level overrides for `nanoid`/`browserslist`/`baseline-browser-mapping` (next's transitive CVEs). `pnpm audit --prod`: no known vulnerabilities.
+- `minio/minio` repointed to `quay.io/minio/minio` — MinIO removed its images from Docker Hub on 2026-09-11, so `docker compose up` failed with a misleading "pull access denied / docker login" (the repository is simply gone; quay.io is MinIO's current official distribution, same tags).
+- Docker smoke test now sets `SEAMTECH_ALLOW_NETWORK_ACCESS=true` and `SEAMTECH_BEHIND_TLS_PROXY=true`: it binds `0.0.0.0` (the port mapping needs it), which trips the app's network-exposure config guards — the container exited at startup with "non-local host requires allow_network_access=true".
 
 Phase 3 addendum (security): fastapi 0.116.1→0.141.1 (starlette 0.47.3→1.6.0 — Host-header auth-bypass PYSEC-2026-161 + Range ReDoS), pypdf 5.8.0→6.19.0, python-multipart 0.0.20→0.0.32 (path traversal + DoS), pytest 8.4.1→9.1.1 — so `pip-audit` can pass honestly.
 
