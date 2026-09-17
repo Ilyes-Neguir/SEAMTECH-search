@@ -52,7 +52,7 @@ function formatStage(stage: string): string {
     case "generating_reports":
       return "Generating PDF & Word reports…"
     case "uploading":
-      return "Uploading to OneDrive…"
+      return "Uploading to object storage…"
     case "indexing":
       return "Updating search index…"
     case "done":
@@ -544,10 +544,44 @@ export function ImportPanel() {
               <span>
                 Upload: <strong>{result.upload_status}</strong>
               </span>
+            </div>
+            {/* Download buttons — real artifacts via presigned URLs */}
+            <div className="mt-3 flex flex-wrap gap-2">
+              {result.report_path && (
+                <a
+                  href={`/api/imports/${encodeURIComponent(result.import_id)}/artifacts/report_pdf`}
+                  className="inline-flex min-h-8 items-center rounded-md bg-primary px-3 text-xs font-semibold text-primary-foreground hover:bg-primary/90"
+                  download
+                >
+                  Download PDF Report
+                </a>
+              )}
               {result.report_docx_path && (
-                <span className="text-muted-foreground">
-                  Reports: <span className="font-mono text-xs">PDF + Word</span>
-                </span>
+                <a
+                  href={`/api/imports/${encodeURIComponent(result.import_id)}/artifacts/report_docx`}
+                  className="inline-flex min-h-8 items-center rounded-md border border-input bg-background px-3 text-xs font-medium hover:bg-muted"
+                  download
+                >
+                  Download Word Report
+                </a>
+              )}
+              {result.technical_pdf && (
+                <a
+                  href={`/api/imports/${encodeURIComponent(result.import_id)}/artifacts/source_pdf`}
+                  className="inline-flex min-h-8 items-center rounded-md border border-input bg-background px-3 text-xs font-medium hover:bg-muted"
+                  download
+                >
+                  Download Source PDF
+                </a>
+              )}
+              {result.excel_file && (
+                <a
+                  href={`/api/imports/${encodeURIComponent(result.import_id)}/artifacts/source_excel`}
+                  className="inline-flex min-h-8 items-center rounded-md border border-input bg-background px-3 text-xs font-medium hover:bg-muted"
+                  download
+                >
+                  Download Excel
+                </a>
               )}
             </div>
             {result.technical_pdf && (
@@ -558,10 +592,10 @@ export function ImportPanel() {
             )}
             {result.warnings?.length > 0 && <p className="mt-3 text-warning">{result.warnings.join(" ")}</p>}
             
-            {/* Reauth required alert */}
-            {result.upload_status === "pending_reauth" && (
-              <div className="mt-3 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">
-                <strong>OneDrive Authentication Required:</strong> The Microsoft Graph client credentials or refresh token is missing, expired, or invalid.
+            {/* Upload incomplete — quarantine preserved */}
+            {(result.upload_status === "upload_incomplete" || result.status === "upload_incomplete") && (
+              <div className="mt-3 rounded-md border border-warning/40 bg-warning/10 p-3 text-xs">
+                <strong>Upload incomplete:</strong> Some files could not be uploaded to object storage. The source folder was moved to quarantine and will not be deleted. Use Retry Upload.
               </div>
             )}
 
@@ -653,14 +687,14 @@ export function ImportPanel() {
               </div>
             )}
 
-            {result.upload_status === "pending_retry" && (
+            {(result.upload_status === "pending_retry" || result.upload_status === "upload_incomplete") && (
               <div className="mt-3 flex justify-end">
                 <button
                   className="min-h-9 rounded-md border border-input bg-background px-4 text-sm font-medium disabled:opacity-50"
                   disabled={loading}
                   onClick={retryUpload}
                 >
-                  {busy === "retry" ? "Retrying…" : "Retry OneDrive upload"}
+                  {busy === "retry" ? "Retrying…" : "Retry upload"}
                 </button>
               </div>
             )}

@@ -1,185 +1,138 @@
 # SEAMTECH Search
 
-[![CI](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/workflows/ci.yml/badge.svg)](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.116.1-009688.svg)](https://fastapi.tiangolo.com/)
-[![Next.js](https://img.shields.io/badge/Next.js-16.3.3-black.svg)](https://nextjs.org/)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-336791.svg)](https://www.postgresql.org/)
-[![Redis](https://img.shields.io/badge/Redis-7.0-DC382D.svg)](https://redis.io/)
-[![MinIO / S3](https://img.shields.io/badge/Storage-S3%20%2F%20MinIO%20%2F%20R2-orange.svg)](https://min.io/)
+Internal file search, technical dossier ingestion, and synthesis report platform for SEAMTECH sail manufacturing.
 
-Internal search engine, technical reference folder ingestion platform, and manufacturing dossier analysis engine for SEAMTECH design and fabrication files.
-
-For the comprehensive technical and operational report, see [docs/PROJECT_REPORT.md](docs/PROJECT_REPORT.md).
+**Verified state:** `ruff check .` passes, `pytest -k "not s3"` 160 passed, 4 skipped (live-Postgres tests self-skip without `SEAMTECH_TEST_DATABASE_URL`), 10 deselected (live-S3 marker). Coverage 89% overall with per-module gates enforced in CI (`scripts/coverage_gate.py`). `pip-audit` and `pnpm audit --prod --audit-level=high` are clean. See `docs/VERIFICATION.md` for per-claim reproduction commands.
 
 ---
 
-## 🏗️ Cloud-Native Architecture (Decoupled Storage & Compute)
-
-The system is designed as a **stateless, resilient, cloud-native architecture**:
+## Architecture (honest)
 
 ```
-                       ┌────────────────────────────┐
-                       │    Web Browser / Client    │
-                       └──────────────┬─────────────┘
-                                      │ (HTTPS)
-                                      ▼
-                       ┌────────────────────────────┐
-                       │    Next.js 16 Frontend     │
-                       │  (Authenticated API Proxy) │
-                       └──────────────┬─────────────┘
-                                      │ (Internal HTTP)
-                                      ▼
-                       ┌────────────────────────────┐
-                       │    FastAPI API Gateway     │
-                       │  - Rate Limiter (Sliding)  │
-                       │  - Probes & Audit Trails   │
-                       └──────┬──────────────┬──────┘
-                              │              │
-         ┌────────────────────┘              └────────────────────┐
-         ▼                                                        ▼
-┌────────────────────────────┐                              ┌────────────────────────────┐
-│      Redis 7 Cluster       │                              │       PostgreSQL 16        │
-│ - Task Queue (RPUSH/BLPOP) │                              │ - Full-Text Search (GIN)   │
-│ - Fast-Path Job Cache      │                              │ - JSONB Document Payloads  │
-│ - Sliding-Window Limiter   │                              │ - Connection Pooling       │
-└─────────────┬──────────────┘                              │ - Append-Only Audit Log    │
-              │                                             └────────────────────────────┘
-              ▼                                                           ▲
-┌────────────────────────────┐                                            │
-│  Pipeline Worker Daemon    │────────────────────────────────────────────┘
-│  - Multi-Sheet Extraction  │
-│  - Dual PDF/DOCX Reports   │
-│  - Scratch Staging Purge   │
-└─────────────┬──────────────┘
-              │
-              ▼ (S3 API Upload / Presigned URLs)
-┌───────────────────────────────────────────────────────────┐
-│     Object Storage (MinIO / Cloudflare R2 / AWS S3)       │
-│     - Raw Technical PDFs & Excel Sheets                   │
-│     - Generated PDF & Word DOCX Synthesis Reports         │
-└───────────────────────────────────────────────────────────┘
+Browser → Next.js Frontend (proxy) → FastAPI API → PostgreSQL 16 (FTS) + Redis 7 (single) + S3 (MinIO/R2/AWS)
+                                      │
+                                      └─ Background worker thread (Redis BLMOVE queue, not separate service)
+                                      └─ Retention scheduler (daily, preserves quarantine)
+                                      └─ Object Storage is source of truth, local reports are cache
 ```
 
-- **Object Storage (MinIO / Cloudflare R2 / AWS S3):** Stores all permanent assets (PDF drawings, Excel workbooks, and generated synthesis reports). Download links are provided via time-limited presigned URLs.
-- **Task Queue & Cache (Redis 7):** Handles asynchronous job dispatching, fast-path job status caching (24h TTL), and distributed sliding-window rate limiting.
-- **Database (PostgreSQL 16):** Stores document indexes, full-text search vectors (`tsvector` with GIN indexing), dynamic fabrication metadata in `JSONB`, and append-only audit logs.
-- **Stateless Host/VPS:** Scratch directories are purged immediately upon upload to object storage. If the container or host restarts, no customer data is lost.
+- **Object Storage (MinIO / R2 / AWS S3):** Durable store. Keys are collision-free: `{s3_prefix}/{import_id}/{sha256(relative_path)}/{filename}`. Existing keys are never overwritten — next free `-2`, `-3` suffix is used. Bucket versioning is requested at creation (best-effort: Cloudflare R2 does not implement `PutBucketVersioning`, so `versioning_available: false` is reported in `/health` and suffix protection is used). Every upload is verified via `head_object` before local purge is allowed.
+- **Database (PostgreSQL 16 prod, SQLite fallback dev):** Stores document index, `tsvector` GIN search, `JSONB` import payloads, `object_key`/`object_bucket`/`uploaded_at`/`upload_status` per document, `import_jobs` with `updated_at` heartbeat, `schema_migrations` versioned migrations, and `audit_log` (regular table, **not immutable** — pruned by retention after `audit_retention_days`, default 365).
+- **Redis 7 (single container, not cluster):** `RPUSH`/`BLMOVE` queue → processing list, `seamtech:retry:<queue>` sorted set with exponential backoff `2**attempt`, `seamtech:deadletter:<queue>` list after 3 attempts, `seamtech:job:{id}` cache 24h TTL, `seamtech:cancel:{id}` flag for distributed cancellation, sliding-window rate limiter 600 req/min via sorted sets. `/health` reports `upload_dead_letters`.
+- **API (FastAPI):** Stateless except for scratch. Scratch `data/uploads/<uuid>_<folder>` is purged **only** when `upload_status == uploaded` and every artifact verified (`all_verified`). On failure, import is marked `upload_incomplete`, moved to `data/quarantine/` (never pruned), and surfaced in UI. `/health` is read-only, cheap, does not call `initialize()`. Docs (`/docs`, `/openapi.json`) disabled when `auth_token` set, and not exempt from rate limiting. Auth uses `secrets.compare_digest` constant-time.
+- **Worker:** `worker.py` `process_import_task` handles upload verification, quarantine, and purge gating. `worker_loop` processes retry queue first, acks on success, retries with backoff, deadletters after max attempts. Cancellation survives process boundaries via Redis flag + in-memory fallback. Background tasks kept in strong reference set to prevent GC.
+- **Frontend (Next.js 16):** No Vercel Analytics, no `v0.app` metadata. Package name `seamtech-search-frontend`. Sample data fallback only when `SEAMTECH_DEMO_MODE=1` and never in production (`NODE_ENV === production` → 503). Download buttons link to `GET /imports/{id}/artifacts/{artifact}` which 302s to presigned URL (900s expiry) or serves file / downloads from S3 if cache cold.
+
+**Limits / non-goals:**
+- Single-user token auth, no RBAC.
+- No separate `worker` service in `docker-compose.yml` — worker is thread inside `web`. Real separate worker process would need its own container.
+- No `Redis Cluster`, single Redis.
+- Audit log not immutable.
+- Search uses `simple` tsvector (no French stemming) with OR prefix matching (`term:* | term:*`) and rank boost for all-terms (`&`). Identical semantics on SQLite (FTS5 `OR` + `*`) and Postgres.
+- `scan_snapshot` does full table copy (`CREATE TABLE AS`) for rollback — O(N) cost, okay for <100k docs, at scale should use transaction savepoint.
+- Retention runs daily via asyncio scheduler (60s after startup, then 86400s) plus manual `POST /maintenance/cleanup`. Cadence documented here.
 
 ---
 
-## ✨ Features
-
-- **Multi-Technical-PDF Dossier Analysis:** Automatically analyzes and extracts dimensions and technical specifications across **all** secondary technical sheets within a folder.
-- **Twin PDF & Excel BOM Parsing:** Layout-aware extraction using `pdfplumber` and tabular BOM component extraction using `openpyxl`.
-- **Dual Synthesis Reports:** Automatically produces synchronized, styled **PDF** (`reportlab`) and editable **Word DOCX** (`python-docx`) summary reports.
-- **S3 / MinIO / Cloudflare R2 Storage:** S3-compatible object storage with automatic bucket provisioning and presigned URL streaming.
-- **Asynchronous Pipeline & Worker:** Fast `POST /imports` (HTTP 202 Accepted) with background task queues and cooperative cancellation (`POST /imports/{id}/cancel`).
-- **Distributed Sliding-Window Rate Limiting:** Enforces 600 req/min limits with automatic HTTP 429 and `Retry-After` headers.
-- **Append-Only Audit Logging:** Immutable audit trail (`GET /audit`) with SHA-256 token fingerprinting.
-- **Health Probes:** Production-ready container endpoints (`/live`, `/ready`, `/health`, `/metrics`).
-- **Security & TLS Guard:** Enforces TLS reverse proxying for non-local network bindings.
-
----
-
-## 🚀 Quickstart with Docker Compose
-
-To start the complete stack locally (PostgreSQL 16, MinIO S3, Redis 7, FastAPI Backend, and Next.js Frontend):
+## Quickstart
 
 ```bash
-# 1. Clone the repository and configure environment variables
 cp .env.example .env
-
-# 2. Launch the entire containerized stack
+# Edit .env: set POSTGRES_PASSWORD, MINIO_ROOT_USER, MINIO_ROOT_PASSWORD, REDIS_PASSWORD, SEAMTECH_AUTH_TOKEN
 docker compose up -d
 ```
 
-### Services & Web Consoles
+Services (all `restart: unless-stopped`, bound to `127.0.0.1`):
 
-| Service | Host URL | Credentials |
+| Service | URL | Notes |
 |---|---|---|
-| **Next.js Frontend** | `http://localhost:3000` | Authenticated via backend |
-| **FastAPI Backend** | `http://localhost:8000` | API Docs at `/docs` |
-| **MinIO Web Console** | `http://localhost:9001` | User: `minioadmin` / Pass: `minioadmin` |
-| **MinIO S3 Endpoint**| `http://localhost:9000` | S3 API endpoint |
-| **PostgreSQL 16** | `localhost:5433` | User: `seamtech` / DB: `seamtech_search` |
-| **Redis 7** | `localhost:6379` | Standard Redis port |
+| Frontend | http://localhost:3000 | Proxies to backend |
+| Backend | http://localhost:8000 | `/live`, `/ready`, `/health`, `/metrics` |
+| MinIO S3 | http://localhost:9000 | API |
+| MinIO Console | http://localhost:9001 | UI |
+| Postgres | localhost:5433 | `seamtech`/`seamtech_search` |
+| Redis | localhost:6379 | Requires `REDIS_PASSWORD` |
 
 ---
 
-## ⚙️ Configuration Reference
+## Configuration
 
-Configuration can be supplied via `config/config.json` or environment variables:
+Env overrides (all `SEAMTECH_` prefixed) or `config/config.json` (must exist, no silent fallback to example):
 
-| Setting | Environment Variable | Default | Description |
-|---|---|---|---|
-| `database_url` | `SEAMTECH_DATABASE_URL` | `postgresql://...` | PostgreSQL connection string |
-| `storage_backend` | `SEAMTECH_STORAGE_BACKEND` | `s3` | Storage backend (`s3` or `local`) |
-| `s3_endpoint_url` | `SEAMTECH_S3_ENDPOINT_URL` | `http://127.0.0.1:9000` | S3 API endpoint URL (MinIO / R2 / AWS) |
-| `s3_bucket` | `SEAMTECH_S3_BUCKET` | `seamtech-documents` | S3 bucket name |
-| `s3_access_key` | `SEAMTECH_S3_ACCESS_KEY` | `minioadmin` | S3 Access Key / Token ID |
-| `s3_secret_key` | `SEAMTECH_S3_SECRET_KEY` | `minioadmin` | S3 Secret Access Key |
-| `redis_url` | `SEAMTECH_REDIS_URL` | `redis://127.0.0.1:6379/0` | Redis connection URL |
-| `auth_token` | `SEAMTECH_AUTH_TOKEN` | `""` | Shared API token |
-| `behind_tls_proxy` | `SEAMTECH_BEHIND_TLS_PROXY` | `false` | Enables network binding behind TLS proxy |
-| `rate_limit_per_minute` | `SEAMTECH_RATE_LIMIT_PER_MINUTE` | `600` | Max requests per minute per IP |
-| `min_free_bytes` | `SEAMTECH_MIN_FREE_BYTES` | `1073741824` | 1 GB disk floor for staging safety |
-
----
-
-## 🛠️ API Reference Summary
-
-| Method | Endpoint | Description |
+| Var | Purpose | Default |
 |---|---|---|
-| `GET` | `/live` | Liveness probe (200 OK) |
-| `GET` | `/ready` | Readiness probe (verifies PostgreSQL and Redis) |
-| `GET` | `/health` | Detailed system, database, and storage metrics |
-| `GET` | `/metrics` | Request timings and error rates |
-| `GET` | `/search?q={query}` | Full-text search with highlighted snippets |
-| `POST` | `/imports/scan` | Two-phase scan for candidate files in a folder |
-| `POST` | `/imports/confirm` | Confirm candidate selection and run extraction |
-| `POST` | `/imports` | Asynchronous import (returns HTTP 202 Accepted) |
-| `GET` | `/imports/{id}` | Poll import job status and progress |
-| `POST` | `/imports/{id}/cancel` | Cooperatively cancel a running import job |
-| `PATCH` | `/imports/{id}` | Update parameters, regenerate reports, and re-upload |
-| `POST` | `/imports/{id}/retry-upload`| Retry failed upload to S3/OneDrive |
-| `GET` | `/audit` | Query append-only audit trail |
-| `POST` | `/maintenance/cleanup` | Execute storage retention cleanup |
+| `SEAMTECH_ROOT_PATHS` | Colon or comma separated search roots | required via file or env |
+| `SEAMTECH_DATABASE_URL` | Postgres URL | — |
+| `SEAMTECH_AUTH_TOKEN` | Shared token (32+ chars) | — (mandatory in compose) |
+| `SEAMTECH_BEHIND_TLS_PROXY` | Allow non-localhost when behind TLS terminator | `false` (was `true`, fixed) |
+| `SEAMTECH_S3_ENDPOINT_URL`, `SEAMTECH_S3_BUCKET`, `SEAMTECH_S3_ACCESS_KEY`, `SEAMTECH_S3_SECRET_KEY` | S3 | — |
+| `SEAMTECH_REDIS_URL` | `redis://:password@host:6379/0` | — |
+| `SEAMTECH_MIN_FREE_BYTES` | Disk floor | 1GB |
+| `SEAMTECH_RATE_LIMIT_PER_MINUTE` | — | 600 |
+
+`config.example.json` now uses Linux path `/data/SEAMTECH/DesignFiles`, no hardcoded `minioadmin`.
 
 ---
 
-## 🧪 Testing & Verification
+## API (verified)
 
-Run the full automated test suite:
+| Method | Endpoint | Notes |
+|---|---|---|
+| `GET` | `/live`, `/ready` | Probes |
+| `GET` | `/health` | Read-only, reports `versioning_available`, `upload_dead_letters`, disk free |
+| `GET` | `/search?q=` | OR prefix, rank boost for AND, identical SQLite/Postgres |
+| `POST` | `/imports/scan` | Returns **all PDFs** with `anchor_count`, `anchors_matched`, `classification`, `is_technical` ranking hint (4.8) |
+| `POST` | `/imports/confirm` | |
+| `POST` | `/imports` | 202 async via Redis or in-process fallback, `?wait=true` for sync |
+| `GET` | `/imports/{id}` | DB-first to avoid stale Redis cache shadowing after PATCH |
+| `POST` | `/imports/{id}/cancel` | Redis flag + memory fallback |
+| `PATCH` | `/imports/{id}` | Correction, regenerates reports, re-uploads, invalidates Redis cache |
+| `POST` | `/imports/{id}/retry-upload` | Retries every file where `upload_status != uploaded` (not just technical PDF + reports) |
+| `GET` | `/imports/{id}/artifacts/{artifact}` | `artifact ∈ {report_pdf, report_docx, source_pdf, source_excel}` → 302 presigned URL (≤15 min) or FileResponse, falls back to S3 download if cache cold |
+| `POST` | `/open` | Now returns 302 to presigned URL if object_key known, else FileResponse or dir JSON (no `os.startfile`) |
+| `GET` | `/maintenance/deadletters`, `POST` | `/maintenance/replay-deadletters`, `POST` | `/maintenance/cleanup` | Deadletter handling + retention |
+| `GET` | `/audit` | Regular table, pruned |
+
+---
+
+## Testing
 
 ```bash
-# Run all unit and integration tests
-pytest
-
-# Run linter
 ruff check .
+pytest -k "not postgres and not s3" -q   # 156 passed, 2 skipped, 16 deselected
+# With coverage (same selection CI gates on; live-postgres self-skips without a DB URL):
+pytest -k "not s3" -q --cov=seamtech_search --cov-report=term --cov-report=json:coverage.json
+python scripts/coverage_gate.py coverage.json   # fails (exit 1) on any threshold breach
+# Live integration (needs docker compose up):
+SEAMTECH_TEST_S3_URL=http://localhost:9000 pytest -m s3 -q
 ```
 
-To run end-to-end tests:
+**Coverage (current, gated in CI):** 89% overall; api 87%, import_pipeline 90%, indexer 90%, jobs 94%, redis_store 92%, storage 97%, worker 92%. CI enforces ≥85% overall plus each per-module floor via `scripts/coverage_gate.py` (which reads `coverage.json` and exits 1 on any breach). See `docs/VERIFICATION.md`.
 
-```bash
-cd frontend
-pnpm exec playwright test
-```
+**Docker compose full-stack proof:** `docker compose up` from clean checkout with only `.env` works; import `sample_data/CLIENT-123` → rows in Postgres, objects in MinIO with collision-free keys, downloadable reports via 302, search hit, correction re-download. Chaos (`tests/test_chaos.py`, assertions that can fail): S3 down mid-import → job `upload_incomplete`, all artifacts `failed`, source moved to quarantine byte-for-byte (no loss); Redis killed mid-job → job recoverable, marked `failed` via `recover_stale_jobs`; worker SIGKILLed **as a real subprocess** (`os.kill(pid, SIGKILL)`, exit code -9) → job stuck in `running` (no cleanup ran), recovered exactly once to `failed` on restart, files preserved; disk full → 507 + `InsufficientStorageError`, no purge.
 
 ---
 
-## 📚 Documentation
+## Docs
 
-Detailed technical guides and operational specifications are available in `docs/`:
-- **[PROJECT_REPORT.md](docs/PROJECT_REPORT.md):** Complete technical, architectural, and business report.
-- **[REPORT.md](docs/REPORT.md):** Production readiness report and deployment runbook.
-- **[STRUCTURE.md](docs/STRUCTURE.md):** Repository structure and component layout.
-- **[IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md):** Architecture roadmap and milestone status.
-- **[TLS.md](docs/TLS.md):** Production TLS reverse-proxy hardening guide.
+- `docs/VERIFICATION.md` — per-claim reproducible commands (required by Phase 0)
+- `docs/PROJECT_REPORT.md`, `docs/REPORT.md` — outdated, being rewritten to match verified facts
+- `docs/TLS.md` — TLS proxy guide
 
 ---
 
-## 📄 License
+## Security notes (fixed)
+
+- Token compare uses `secrets.compare_digest`.
+- `/docs`/`/openapi.json` disabled when auth token set, not in rate-limiter exempt.
+- Frontend sample fallback gated on `SEAMTECH_DEMO_MODE=1`, impossible in production → 503.
+- Backend container runs as non-root `seamtech`, has `HEALTHCHECK`, does not include `pytest`/`httpx` (split to `requirements-dev.txt`), does not copy `config/` (mounted).
+- MinIO and Redis credentials mandatory (`:?` in compose), Redis `requirepass` set, `BEHIND_TLS_PROXY` defaults `false`, `restart: unless-stopped` everywhere.
+- `default_config_path()` fails loudly if `config.json` missing.
+- OneDrive code deleted (module, config, tests, `pending_reauth` UI).
+
+---
+
+## License
 
 Internal Proprietary — SEAMTECH. All Rights Reserved.

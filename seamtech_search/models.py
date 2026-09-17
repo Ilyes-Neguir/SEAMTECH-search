@@ -29,6 +29,11 @@ class Document:
     extraction_status: str = "not_applicable"
     extraction_detail: str = ""
     category: str = ""
+    # Object storage persistence (1.3): where this artifact lives in S3/MinIO/R2.
+    object_key: str | None = None
+    object_bucket: str | None = None
+    uploaded_at: float | None = None
+    upload_status: str = "pending"
 
     def __post_init__(self) -> None:
         if not self.is_dir and self.extraction_status == "not_applicable":

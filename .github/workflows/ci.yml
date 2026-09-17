@@ -40,14 +40,27 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt -r requirements-local.txt ruff
+          # Upgrade setuptools too: pip-audit below scans the whole
+          # environment, and old bootstrap setuptools carries CVEs.
+          python -m pip install --upgrade pip setuptools
+          pip install -r requirements.txt -r requirements-local.txt ruff pytest-cov pip-audit
       - name: Ruff lint check
         run: ruff check .
       - name: Compile Python
         run: python -m compileall -q seamtech_search
       - name: Run SQLite suite
-        run: pytest -q
+        run: pytest -q -k "not postgres and not s3"
+      - name: Run coverage
+        # Same selection as the suite above plus the mocked-postgres coverage
+        # tests; live-postgres tests self-skip here (no SEAMTECH_TEST_DATABASE_URL).
+        run: pytest -k "not s3" -q --cov=seamtech_search --cov-report=term-missing --cov-report=json:coverage.json
+      - name: Coverage gate (overall + per-module)
+        # Real gate: reads coverage.json, compares every Phase 1 module against
+        # its threshold, exits 1 on any breach. Enforced by tests/test_coverage_gate.py.
+        run: python scripts/coverage_gate.py coverage.json
+      - name: Pip audit (security)
+        # No `|| echo`: a known vulnerability in a pinned dependency fails CI.
+        run: pip-audit --desc
       - name: Run PostgreSQL integration suite
         env:
           SEAMTECH_TEST_DATABASE_URL: postgresql://seamtech:seamtech_test_password@localhost:5432/seamtech_search_test
@@ -66,13 +79,184 @@ jobs:
       - uses: pnpm/action-setup@v4
         with:
           version: 9
-      # Keep this first: it fails fast when package.json and pnpm-lock.yaml diverge.
       - name: Verify pnpm-lock.yaml is in sync
         run: pnpm install --frozen-lockfile
       - name: Type check
         run: pnpm exec tsc --noEmit
+      - name: Pnpm audit (production dependencies)
+        # No `|| echo`: a high-severity vulnerability in anything the app ships
+        # (production dependency tree) fails CI. Dev-only tooling (shadcn CLI)
+        # is deliberately out of scope: its transitive CVEs never reach the
+        # deployed app.
+        run: pnpm audit --prod --audit-level=high
       - name: Build
         run: pnpm build
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build backend image
+        run: |
+          docker build -t seamtech-search:ci -f Dockerfile .
+      - name: Build frontend image
+        run: |
+          docker build -t seamtech-search-frontend:ci frontend/
+      - name: Smoke test container
+        # The container must actually start AND the liveness probe must answer.
+        # Any failure (image broken, app crash, port never up) fails this step.
+        run: |
+          docker run -d --name seamtech-ci -p 8000:8000 \
+            -e SEAMTECH_AUTH_TOKEN=test-token \
+            -e SEAMTECH_HOST=0.0.0.0 \
+            -e SEAMTECH_ALLOW_NETWORK_ACCESS=true \
+            -e SEAMTECH_BEHIND_TLS_PROXY=true \
+            -e SEAMTECH_ROOT_PATHS=/tmp \
+            -e SEAMTECH_MIN_FREE_BYTES=0 \
+            seamtech-search:ci
+          ready=0
+          for i in $(seq 1 45); do
+            if curl -fsS http://127.0.0.1:8000/live > /dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            sleep 2
+          done
+          if [ "$ready" -ne 1 ]; then
+            echo "smoke test failed: /live never answered within 90s" >&2
+            state=$(docker inspect --format 'state={{.State.Status}} exit={{.State.ExitCode}} oom={{.State.OOMKilled}}' seamtech-ci 2>&1)
+            logtail=$(docker logs --tail 40 seamtech-ci 2>&1)
+            echo "container: $state" >&2
+            echo "$logtail" >&2
+            # Surface the real failure in the run annotations as well.
+            echo "::error title=smoke-test-failed::$state ::$(echo "$logtail" | tail -12 | tr '\n' ' | ')"
+            docker rm -f seamtech-ci
+            exit 1
+          fi
+          docker logs seamtech-ci
+          docker stop seamtech-ci
+          docker rm seamtech-ci
+
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-local.txt
+      - name: Check docker availability
+        run: |
+          docker --version
+          docker compose version
+      - name: Start infra services
+        # SEAMTECH_AUTH_TOKEN is required to PARSE the compose file (the web/
+        # frontend services declare ${SEAMTECH_AUTH_TOKEN:?...}) even though we
+        # only start the infra services here.
+        env:
+          POSTGRES_PASSWORD: test_password
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: minioadmin123
+          REDIS_PASSWORD: redis_test_password
+          SEAMTECH_AUTH_TOKEN: test-token-123
+        run: |
+          # Validate interpolation/schema up front so a config error fails
+          # here with a clear message instead of deep in `up`.
+          docker compose config --quiet
+          if ! out=$(docker compose up -d postgres redis minio 2>&1); then
+            echo "$out"
+            # Surface the real failure in the run annotations as well.
+            echo "::error title=compose-up-failed::$(echo "$out" | tail -15 | tr '\n' ' | ')"
+            exit 1
+          fi
+          docker compose ps
+      - name: Wait for services to be reachable
+        # Hard wait with a real timeout, probing each backend the same way the
+        # app does (psycopg2 / redis-py / the MinIO liveness endpoint). If a
+        # service never comes up, the job fails here with its logs instead of
+        # the integration suite silently skipping.
+        env:
+          POSTGRES_PASSWORD: test_password
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: minioadmin123
+          REDIS_PASSWORD: redis_test_password
+        run: |
+          python - << 'PY'
+          import subprocess
+          import sys
+          import time
+          import urllib.request
+
+          deadline = time.time() + 300
+          state = {}
+
+          def probe_postgres() -> bool:
+              import psycopg2
+
+              conn = psycopg2.connect(
+                  "postgresql://seamtech:test_password@127.0.0.1:5433/seamtech_search",
+                  connect_timeout=3,
+              )
+              conn.close()
+              return True
+
+          def probe_redis() -> bool:
+              import redis
+
+              return redis.from_url("redis://:redis_test_password@127.0.0.1:6379/0", socket_connect_timeout=3, socket_timeout=3).ping()
+
+          def probe_minio() -> bool:
+              with urllib.request.urlopen("http://127.0.0.1:9000/minio/health/live", timeout=3) as resp:
+                  return resp.getcode() == 200
+
+          probes = {"postgres": probe_postgres, "redis": probe_redis, "minio": probe_minio}
+          while True:
+              for name, probe in probes.items():
+                  if state.get(name):
+                      continue
+                  try:
+                      state[name] = bool(probe())
+                  except Exception:
+                      state[name] = False
+              if all(state.values()):
+                  print("All services reachable:", state)
+                  break
+              if time.time() > deadline:
+                  print(f"Services not reachable in time: {state}", file=sys.stderr)
+                  subprocess.run(["docker", "compose", "logs", "--tail", "50"])
+                  sys.exit(1)
+              time.sleep(5)
+          PY
+      - name: Run docker compose integration test
+        env:
+          POSTGRES_PASSWORD: test_password
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: minioadmin123
+          REDIS_PASSWORD: redis_test_password
+          SEAMTECH_AUTH_TOKEN: test-token-123
+          SEAMTECH_S3_BUCKET: seamtech-documents
+          # CI guarantees the infra is healthy above: the test must not swallow
+          # failures of backends that are supposed to be up.
+          SEAMTECH_INTEGRATION_STRICT: "1"
+        run: |
+          # Infra is bound to 127.0.0.1 by docker-compose.yml, so point the
+          # test at those ports (same host, same loopback).
+          export SEAMTECH_REDIS_URL="redis://:redis_test_password@127.0.0.1:6379/0"
+          export SEAMTECH_S3_ENDPOINT_URL="http://127.0.0.1:9000"
+          export SEAMTECH_S3_ACCESS_KEY="minioadmin"
+          export SEAMTECH_S3_SECRET_KEY="minioadmin123"
+          set +e
+          pytest tests/test_integration_docker.py -v
+          rc=$?
+          set -e
+          # Always tear the infra down, success or failure.
+          docker compose down -v
+          exit "$rc"
 
   e2e:
     runs-on: ubuntu-latest
@@ -93,7 +277,6 @@ jobs:
           pip install -r requirements.txt
       - name: Install frontend dependencies
         working-directory: frontend
-        # Keep this frozen install so package.json/lockfile drift fails before Playwright setup.
         run: pnpm install --frozen-lockfile
       - name: Install Playwright Chromium
         working-directory: frontend

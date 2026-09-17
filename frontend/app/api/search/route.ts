@@ -25,8 +25,17 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // Sample fallback
+  // Sample fallback — only allowed when explicitly in demo mode and never in production
+  const demoMode = process.env.SEAMTECH_DEMO_MODE === "1"
+  const isProd = process.env.NODE_ENV === "production"
+  if (!demoMode || isProd) {
+    return NextResponse.json(
+      { detail: "Backend not configured. Set SEAMTECH_API_URL or enable SEAMTECH_DEMO_MODE=1 for demo." },
+      { status: 503 },
+    )
+  }
+
   const { results, has_more } = searchSample(q, limit, offset)
   const payload: SearchResponse = { query: q, count: results.length, offset, limit, has_more, results }
-  return NextResponse.json(payload)
+  return NextResponse.json({ ...payload, demo: true })
 }

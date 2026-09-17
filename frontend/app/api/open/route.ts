@@ -13,17 +13,33 @@ export async function POST(req: NextRequest) {
         method: "POST",
         headers: authHeaders(),
         cache: "no-store",
+        redirect: "manual",
       })
-      return NextResponse.json(await res.json(), { status: res.status })
+      // If backend returns redirect to presigned URL, forward it
+      if (res.status >= 300 && res.status < 400) {
+        const location = res.headers.get("location")
+        if (location) {
+          return NextResponse.json({ url: location, redirect: true }, { status: 200 })
+        }
+      }
+      const body = await res.json().catch(() => ({}))
+      return NextResponse.json(body, { status: res.status })
     } catch {
       return NextResponse.json({ detail: "Could not reach the SEAMTECH backend." }, { status: 502 })
     }
   }
 
-  // Sample fallback: opening a file on the host only works against the real
-  // Windows-hosted backend, so make the boundary explicit here.
+  const demoMode = process.env.SEAMTECH_DEMO_MODE === "1"
+  const isProd = process.env.NODE_ENV === "production"
+  if (!demoMode || isProd) {
+    return NextResponse.json(
+      { detail: "Backend not configured. Set SEAMTECH_API_URL or enable SEAMTECH_DEMO_MODE=1 for demo." },
+      { status: 503 },
+    )
+  }
+
   return NextResponse.json(
-    { detail: "Open File/Folder requires the SEAMTECH backend running on the Windows host." },
+    { detail: "Open File/Folder requires the SEAMTECH backend. In demo mode this is not available." },
     { status: 501 },
   )
 }

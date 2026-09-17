@@ -150,7 +150,65 @@ class RedisStore:
             return None
 
     # ---------------------------------------------------------------------------
-    # Task Queue (RPUSH / BLPOP)
+    # Cancellation (Redis with DB fallback) — 4.5
+    # ---------------------------------------------------------------------------
+
+    def set_cancel_flag(self, job_id: str, ttl_seconds: int = 86400) -> bool:
+        client = self._get_client()
+        if client is None:
+            return False
+        try:
+            client.set(f"seamtech:cancel:{job_id}", "1", ex=ttl_seconds)
+            return True
+        except Exception as exc:
+            logger.warning("Failed to set cancel flag in Redis %s: %s", job_id, exc)
+            return False
+
+    def is_cancelled(self, job_id: str) -> bool:
+        client = self._get_client()
+        if client is None:
+            return False
+        try:
+            return bool(client.exists(f"seamtech:cancel:{job_id}"))
+        except Exception:
+            return False
+
+    def clear_cancel_flag(self, job_id: str) -> bool:
+        client = self._get_client()
+        if client is None:
+            return False
+        try:
+            client.delete(f"seamtech:cancel:{job_id}")
+            return True
+        except Exception:
+            return False
+
+    # ---------------------------------------------------------------------------
+    # Heartbeat — 4.7
+    # ---------------------------------------------------------------------------
+
+    def set_heartbeat(self, job_id: str, ttl_seconds: int = 300) -> bool:
+        client = self._get_client()
+        if client is None:
+            return False
+        try:
+            client.set(f"seamtech:heartbeat:{job_id}", str(time.time()), ex=ttl_seconds)
+            return True
+        except Exception:
+            return False
+
+    def get_heartbeat(self, job_id: str) -> float | None:
+        client = self._get_client()
+        if client is None:
+            return None
+        try:
+            val = client.get(f"seamtech:heartbeat:{job_id}")
+            return float(val) if val else None
+        except Exception:
+            return None
+
+    # ---------------------------------------------------------------------------
+    # Task Queue with acknowledgement, retry and dead-letter — 4.6
     # ---------------------------------------------------------------------------
 
     def enqueue_task(self, queue_name: str, payload: dict[str, Any]) -> bool:
@@ -158,6 +216,9 @@ class RedisStore:
         if client is None:
             return False
         try:
+            # Include attempt count
+            payload = dict(payload)
+            payload.setdefault("attempt", 0)
             client.rpush(f"seamtech:queue:{queue_name}", json.dumps(payload, ensure_ascii=False))
             return True
         except Exception as exc:
@@ -169,11 +230,149 @@ class RedisStore:
         if client is None:
             return None
         try:
-            res = client.blpop(f"seamtech:queue:{queue_name}", timeout=timeout)
-            if res:
-                _, item = res
-                return json.loads(item)
-            return None
+            # Use BLMOVE to move from queue to processing list for ack semantics
+            # Fallback to BLPOP if BLMOVE not available (older redis-py)
+            processing_key = f"seamtech:processing:{queue_name}"
+            try:
+                item = client.blmove(f"seamtech:queue:{queue_name}", processing_key, timeout=timeout)
+                if item:
+                    return json.loads(item)
+                return None
+            except AttributeError:
+                # blmove not available, fallback
+                res = client.blpop(f"seamtech:queue:{queue_name}", timeout=timeout)
+                if res:
+                    _, item = res
+                    # Also push to processing for tracking
+                    try:
+                        client.rpush(processing_key, item)
+                    except Exception:
+                        pass
+                    return json.loads(item)
+                return None
         except Exception as exc:
             logger.error("Failed to dequeue task from Redis %s: %s", queue_name, exc)
             return None
+
+    def ack_task(self, queue_name: str, payload: dict[str, Any]) -> bool:
+        client = self._get_client()
+        if client is None:
+            return False
+        try:
+            processing_key = f"seamtech:processing:{queue_name}"
+            # Remove one occurrence of this payload from processing list
+            # We need to match the exact JSON; simpler: lrem by value
+            item = json.dumps(payload, ensure_ascii=False)
+            # Try to remove the exact item, if not found try with attempt field variations
+            removed = client.lrem(processing_key, 1, item)
+            if removed == 0:
+                # Try to remove any item with same job_id
+                job_id = payload.get("job_id")
+                if job_id:
+                    # Scan processing list for job_id
+                    items = client.lrange(processing_key, 0, -1)
+                    for it in items:
+                        try:
+                            data = json.loads(it)
+                            if data.get("job_id") == job_id:
+                                client.lrem(processing_key, 1, it)
+                                break
+                        except Exception:
+                            continue
+            return True
+        except Exception as exc:
+            logger.warning("Failed to ack task %s: %s", queue_name, exc)
+            return False
+
+    def retry_task(self, queue_name: str, payload: dict[str, Any], delay_seconds: int = 0) -> bool:
+        client = self._get_client()
+        if client is None:
+            return False
+        try:
+            retry_key = f"seamtech:retry:{queue_name}"
+            # Remove from processing
+            self.ack_task(queue_name, payload)
+            # Increment attempt
+            new_payload = dict(payload)
+            new_payload["attempt"] = new_payload.get("attempt", 0) + 1
+            if delay_seconds > 0:
+                score = time.time() + delay_seconds
+                client.zadd(retry_key, {json.dumps(new_payload, ensure_ascii=False): score})
+            else:
+                client.rpush(f"seamtech:queue:{queue_name}", json.dumps(new_payload, ensure_ascii=False))
+            return True
+        except Exception as exc:
+            logger.error("Failed to retry task %s: %s", queue_name, exc)
+            return False
+
+    def deadletter_task(self, queue_name: str, payload: dict[str, Any]) -> bool:
+        client = self._get_client()
+        if client is None:
+            return False
+        try:
+            dead_key = f"seamtech:deadletter:{queue_name}"
+            self.ack_task(queue_name, payload)
+            client.rpush(dead_key, json.dumps(payload, ensure_ascii=False))
+            return True
+        except Exception as exc:
+            logger.error("Failed to deadletter task %s: %s", queue_name, exc)
+            return False
+
+    def get_deadletter_count(self, queue_name: str) -> int:
+        client = self._get_client()
+        if client is None:
+            return 0
+        try:
+            return int(client.llen(f"seamtech:deadletter:{queue_name}"))
+        except Exception:
+            return 0
+
+    def get_deadletters(self, queue_name: str, limit: int = 100) -> list[dict[str, Any]]:
+        client = self._get_client()
+        if client is None:
+            return []
+        try:
+            items = client.lrange(f"seamtech:deadletter:{queue_name}", 0, limit - 1)
+            return [json.loads(i) for i in items]
+        except Exception:
+            return []
+
+    def replay_deadletters(self, queue_name: str, limit: int = 100) -> int:
+        client = self._get_client()
+        if client is None:
+            return 0
+        try:
+            dead_key = f"seamtech:deadletter:{queue_name}"
+            queue_key = f"seamtech:queue:{queue_name}"
+            count = 0
+            for _ in range(limit):
+                item = client.lpop(dead_key)
+                if not item:
+                    break
+                client.rpush(queue_key, item)
+                count += 1
+            return count
+        except Exception as exc:
+            logger.error("Failed to replay deadletters %s: %s", queue_name, exc)
+            return 0
+
+    def process_retry_queue(self, queue_name: str) -> int:
+        client = self._get_client()
+        if client is None:
+            return 0
+        try:
+            retry_key = f"seamtech:retry:{queue_name}"
+            queue_key = f"seamtech:queue:{queue_name}"
+            now = time.time()
+            items = client.zrangebyscore(retry_key, 0, now, start=0, num=100)
+            if not items:
+                return 0
+            pipe = client.pipeline()
+            for item in items:
+                pipe.zrem(retry_key, item)
+                pipe.rpush(queue_key, item)
+            pipe.execute()
+            return len(items)
+        except Exception as exc:
+            logger.warning("Failed to process retry queue %s: %s", queue_name, exc)
+            return 0

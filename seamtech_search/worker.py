@@ -5,7 +5,7 @@ Handles decoupled task execution:
 - Runs extraction, analysis, and report generation
 - Uploads all raw documents and reports to S3/MinIO/Cloudflare R2
 - Updates job state in Redis cache and PostgreSQL
-- Purges temporary scratch/staging directories to keep VPS01 disk completely clean
+- Purges temporary scratch/staging directories only when every artifact is verified
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from .import_pipeline import ImportCancelledError, import_folder, staging_root
+from .import_pipeline import ImportCancelledError, import_folder, quarantine_root, staging_root
 from .jobs import clear_job_cancel, make_cancel_checker, update_job
 from .redis_store import RedisStore
 
@@ -43,11 +43,12 @@ def process_import_task(
     selected_pdf = Path(payload["selected_pdf"]) if payload.get("selected_pdf") else None
     selected_excel = Path(payload["selected_excel"]) if payload.get("selected_excel") else None
 
-    cancel_check = make_cancel_checker(job_id)
+    cancel_check = make_cancel_checker(job_id, redis_store)
 
     def progress_cb(stage: str, percent: int) -> None:
         update_job(index, job_id, status="running", progress=percent, stage=stage)
         if redis_store and redis_store.is_configured():
+            redis_store.set_heartbeat(job_id)
             redis_store.update_job(job_id, {"status": "running", "progress": percent, "stage": stage})
 
     try:
@@ -72,32 +73,107 @@ def process_import_task(
         from dataclasses import asdict
 
         final_payload = asdict(result)
-        final_status = "completed" if result.status == "completed" else result.status
+
+        # Determine if upload is truly complete: status == uploaded AND every file has verified key
+        all_verified = getattr(result, "all_verified", False)
+        upload_status = getattr(result, "upload_status", "not_configured")
+        files_have_keys = True
+        if result.files:
+            for f in result.files:
+                # ImportFile dataclass
+                key = getattr(f, "object_key", None)
+                if not key:
+                    files_have_keys = False
+                    break
+
+        truly_uploaded = upload_status == "uploaded" and all_verified and files_have_keys
+
+        if truly_uploaded:
+            final_status = "completed" if result.status == "completed" else result.status
+        elif upload_status in ("not_configured", "not_applicable"):
+            final_status = "completed" if result.status == "completed" else result.status
+        else:
+            # Upload failed or partial — mark upload_incomplete, keep files, move to quarantine
+            final_status = "upload_incomplete"
+            final_payload["status"] = "upload_incomplete"
+            final_payload["upload_status"] = "upload_incomplete"
+            logger.warning(
+                "Import %s upload incomplete (status=%s all_verified=%s) — moving to quarantine",
+                job_id,
+                upload_status,
+                all_verified,
+            )
+            try:
+                q_root = quarantine_root(config)
+                q_root.mkdir(parents=True, exist_ok=True)
+                resolved_source = source_path.expanduser().resolve()
+                if resolved_source.exists():
+                    dest = q_root / f"{job_id}_{resolved_source.name}"
+                    counter = 1
+                    original_dest = dest
+                    while dest.exists():
+                        counter += 1
+                        dest = original_dest.parent / f"{original_dest.name}-{counter}"
+                    shutil.move(str(resolved_source), str(dest))
+                    logger.info("Moved failed import %s to quarantine %s", job_id, dest)
+                    final_payload["quarantine_path"] = str(dest)
+            except Exception as q_err:
+                logger.warning("Failed to quarantine %s: %s", source_path, q_err)
 
         update_job(
             index,
             job_id,
             status=final_status,
             progress=100,
-            stage="done",
+            stage="done" if final_status != "upload_incomplete" else "upload_incomplete",
             result=final_payload,
         )
         if redis_store and redis_store.is_configured():
             redis_store.update_job(
                 job_id,
-                {"status": final_status, "progress": 100, "stage": "done", "result": final_payload},
+                {
+                    "status": final_status,
+                    "progress": 100,
+                    "stage": "done" if final_status != "upload_incomplete" else "upload_incomplete",
+                    "result": final_payload,
+                },
             )
 
-        # Ephemeral scratch cleanup: if staged from browser upload or delete_local_after_upload is True, purge scratch
-        staging_dir = staging_root(config)
-        try:
-            resolved_source = source_path.expanduser().resolve()
-            resolved_staging = staging_dir.resolve()
-            if config.delete_local_after_upload or resolved_source.parent == resolved_staging:
-                logger.info("Purging local staged scratch directory %s to keep VPS disk stateless", resolved_source)
-                shutil.rmtree(resolved_source, ignore_errors=True)
-        except Exception as cleanup_err:
-            logger.warning("Failed to purge scratch directory %s: %s", source_path, cleanup_err)
+        # Ephemeral scratch cleanup: only when truly uploaded and verified
+        if truly_uploaded or upload_status in ("not_configured", "not_applicable"):
+            staging_dir = staging_root(config)
+            try:
+                if final_status == "upload_incomplete":
+                    # Already quarantined, skip purge
+                    pass
+                else:
+                    resolved_source = source_path.expanduser().resolve()
+                    # Source may have been moved to quarantine already if incomplete, but we are in complete branch
+                    if not resolved_source.exists():
+                        # Already purged or moved, nothing to do
+                        pass
+                    else:
+                        try:
+                            resolved_staging = staging_dir.resolve()
+                            is_staged = resolved_staging in resolved_source.parents or resolved_source.parent == resolved_staging
+                        except Exception:
+                            is_staged = False
+                        should_purge = config.delete_local_after_upload or is_staged
+                        if should_purge:
+                            logger.info(
+                                "Purging local staged scratch directory %s to keep VPS disk stateless",
+                                resolved_source,
+                            )
+                            shutil.rmtree(resolved_source, ignore_errors=True)
+            except Exception as cleanup_err:
+                logger.warning("Failed to purge scratch directory %s: %s", source_path, cleanup_err)
+        else:
+            logger.warning(
+                "Skipping purge of %s: upload_status=%s all_verified=%s — keeping for retry/quarantine",
+                source_path,
+                upload_status,
+                all_verified,
+            )
 
         return final_payload
 
@@ -113,21 +189,48 @@ def process_import_task(
             redis_store.update_job(job_id, {"status": "failed", "stage": "failed", "error": str(exc)})
         return {"job_id": job_id, "status": "failed", "error": str(exc)}
     finally:
-        clear_job_cancel(job_id)
+        clear_job_cancel(job_id, redis_store)
 
 
 def worker_loop(config: AppConfig, index: SearchIndex, redis_store: RedisStore) -> None:
-    """Continuous polling worker loop consuming tasks from Redis queue."""
+    """Continuous polling worker loop consuming tasks from Redis queue with ack/retry/deadletter."""
     global _worker_running
     _worker_running = True
     logger.info("SEAMTECH Redis background worker started (queue: seamtech:queue:imports)")
+    max_attempts = 3
 
     while _worker_running:
         try:
+            # Process delayed retry queue first
+            try:
+                redis_store.process_retry_queue("imports")
+            except Exception:
+                pass
+
             task = redis_store.dequeue_task("imports", timeout=2)
             if task:
-                logger.info("Worker received import task for job %s", task.get("job_id"))
-                process_import_task(task, config, index, redis_store)
+                job_id = task.get("job_id", "unknown")
+                attempt = task.get("attempt", 0)
+                logger.info("Worker received import task for job %s (attempt %s)", job_id, attempt)
+                try:
+                    result = process_import_task(task, config, index, redis_store)
+                    # Ack on success
+                    redis_store.ack_task("imports", task)
+                    # If upload_incomplete, treat as failure for retry logic
+                    if result.get("status") == "upload_incomplete" and attempt < max_attempts:
+                        delay = 2 ** attempt  # exponential backoff
+                        logger.info("Job %s upload incomplete, retrying in %s seconds (attempt %s)", job_id, delay, attempt + 1)
+                        redis_store.retry_task("imports", task, delay_seconds=delay)
+                    elif result.get("status") in ("failed", "upload_incomplete") and attempt >= max_attempts:
+                        logger.warning("Job %s failed after %s attempts, moving to deadletter", job_id, attempt + 1)
+                        redis_store.deadletter_task("imports", task)
+                except Exception as task_exc:
+                    logger.exception("Task %s failed with exception: %s", job_id, task_exc)
+                    if attempt < max_attempts:
+                        delay = 2 ** attempt
+                        redis_store.retry_task("imports", task, delay_seconds=delay)
+                    else:
+                        redis_store.deadletter_task("imports", task)
         except Exception as exc:
             logger.error("Error in Redis worker loop: %s", exc)
             time.sleep(1.0)

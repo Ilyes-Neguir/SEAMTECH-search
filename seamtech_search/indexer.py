@@ -31,7 +31,11 @@ CREATE TABLE IF NOT EXISTS documents (
     content_hash TEXT NOT NULL DEFAULT '',
     extraction_status TEXT NOT NULL DEFAULT 'extracted',
     extraction_detail TEXT NOT NULL DEFAULT '',
-    category TEXT NOT NULL DEFAULT 'storage_direct'
+    category TEXT NOT NULL DEFAULT 'storage_direct',
+    object_key TEXT,
+    object_bucket TEXT,
+    uploaded_at REAL,
+    upload_status TEXT NOT NULL DEFAULT 'pending'
 );
 
 CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
@@ -102,7 +106,11 @@ CREATE TABLE IF NOT EXISTS documents (
     content_hash TEXT NOT NULL DEFAULT '',
     extraction_status TEXT NOT NULL DEFAULT 'extracted',
     extraction_detail TEXT NOT NULL DEFAULT '',
-    category TEXT NOT NULL DEFAULT 'storage_direct'
+    category TEXT NOT NULL DEFAULT 'storage_direct',
+    object_key TEXT,
+    object_bucket TEXT,
+    uploaded_at TIMESTAMPTZ,
+    upload_status TEXT NOT NULL DEFAULT 'pending'
 );
 
 CREATE INDEX IF NOT EXISTS idx_documents_search_vector ON documents USING GIN(search_vector);
@@ -259,76 +267,244 @@ class SearchIndex:
                 pass
             self._pool = None
 
+    # ------------------------------------------------------------------
+    # Versioned migrations — runs once at startup, never from request handlers
+    # ------------------------------------------------------------------
+
+    def _ensure_migrations_table(self, connection: Any) -> None:
+        if self.is_postgres:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS schema_migrations (
+                        version TEXT PRIMARY KEY,
+                        applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                    )
+                    """
+                )
+        else:
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS schema_migrations (
+                    version TEXT PRIMARY KEY,
+                    applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+                """
+            )
+
+    def _get_applied_migrations(self, connection: Any) -> set[str]:
+        if self.is_postgres:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT version FROM schema_migrations")
+                return {row[0] for row in cursor.fetchall()}
+        else:
+            rows = connection.execute("SELECT version FROM schema_migrations").fetchall()
+            return {row["version"] for row in rows}
+
+    def _record_migration(self, connection: Any, version: str) -> None:
+        if self.is_postgres:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "INSERT INTO schema_migrations (version) VALUES (%s) ON CONFLICT (version) DO NOTHING",
+                    (version,),
+                )
+        else:
+            connection.execute(
+                "INSERT OR IGNORE INTO schema_migrations (version) VALUES (?)",
+                (version,),
+            )
+
+    def _migration_001_initial(self, connection: Any) -> None:
+        # Base tables already created by POSTGRES_SCHEMA / SQLITE_SCHEMA
+        pass
+
+    def _migration_002_object_storage_columns(self, connection: Any) -> None:
+        if self.is_postgres:
+            with connection.cursor() as cursor:
+                cursor.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS object_key TEXT")
+                cursor.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS object_bucket TEXT")
+                cursor.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS uploaded_at DOUBLE PRECISION")
+                cursor.execute(
+                    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS upload_status TEXT NOT NULL DEFAULT 'pending'"
+                )
+                # For backward compat, keep not_configured default if already exists, but ensure column exists
+                cursor.execute(
+                    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS content TEXT NOT NULL DEFAULT ''"
+                )
+                cursor.execute(
+                    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS search_vector TSVECTOR NOT NULL DEFAULT ''::tsvector"
+                )
+                cursor.execute(
+                    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS extractor_version INTEGER NOT NULL DEFAULT 0"
+                )
+                cursor.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS content_hash TEXT NOT NULL DEFAULT ''")
+                cursor.execute(
+                    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS extraction_status TEXT NOT NULL DEFAULT 'extracted'"
+                )
+                cursor.execute(
+                    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS extraction_detail TEXT NOT NULL DEFAULT ''"
+                )
+                cursor.execute(
+                    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'storage_direct'"
+                )
+        else:
+            self._ensure_documents_columns(connection)
+
+    def _migration_003_category_backfill_guard(self, connection: Any) -> None:
+        # Fix for 1.4: never overwrite technical_pdf / plan_pdf etc.
+        # Only backfill where category is null/empty/default.
+        if self.is_postgres:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE documents SET category = CASE
+                        WHEN is_dir = false THEN
+                            CASE WHEN lower(extension) = '.pdf' THEN 'analyzed' ELSE 'storage_direct' END
+                        ELSE 'folder'
+                    END
+                    WHERE category IS NULL OR category = '' OR category = 'storage_direct'
+                      AND path_key NOT IN (SELECT path_key FROM documents WHERE category IN ('technical_pdf','plan_pdf','excel_sheet','storage_direct','analyzed','folder'))
+                    """
+                )
+                # Safer: only where category is null/empty
+                cursor.execute(
+                    """
+                    UPDATE documents SET category = CASE
+                        WHEN is_dir = false THEN
+                            CASE WHEN lower(extension) = '.pdf' THEN 'analyzed' ELSE 'storage_direct' END
+                        ELSE 'folder'
+                    END
+                    WHERE category IS NULL OR category = ''
+                    """
+                )
+                cursor.execute(
+                    """
+                    UPDATE documents
+                    SET search_vector = to_tsvector(
+                        'simple',
+                        concat_ws(E'\\n', name, path, extension, content)
+                    )
+                    WHERE search_vector = ''::tsvector
+                    """
+                )
+                cursor.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_documents_search_vector ON documents USING GIN(search_vector)"
+                )
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_documents_path_key ON documents(path_key)")
+                cursor.execute(
+                    """
+                    SELECT data_type FROM information_schema.columns
+                    WHERE table_name = 'imports' AND column_name = 'payload'
+                    """
+                )
+                row = cursor.fetchone()
+                payload_type = (row[0] if row else "jsonb")
+                if payload_type == "text":
+                    cursor.execute("ALTER TABLE imports ALTER COLUMN payload TYPE JSONB USING payload::jsonb")
+        else:
+            # SQLite: ensure FTS and backfill guarded
+            self._ensure_fts_schema(connection)
+            # Only backfill where category is null/empty, not overwriting technical_pdf etc.
+            try:
+                connection.execute(
+                    """
+                    UPDATE documents SET category = CASE
+                        WHEN is_dir = 0 THEN
+                            CASE WHEN lower(extension) = '.pdf' THEN 'analyzed' ELSE 'storage_direct' END
+                        ELSE 'folder'
+                    END
+                    WHERE category IS NULL OR category = ''
+                    """
+                )
+            except Exception:
+                pass
+
+    def run_migrations(self) -> None:
+        """Run pending schema migrations once at startup."""
+        with self.connect() as connection:
+            self._ensure_migrations_table(connection)
+            applied = self._get_applied_migrations(connection)
+
+            migrations = [
+                ("001_initial", self._migration_001_initial),
+                ("002_object_storage_columns", self._migration_002_object_storage_columns),
+                ("003_category_backfill_guard", self._migration_003_category_backfill_guard),
+            ]
+
+            for version, func in migrations:
+                if version not in applied:
+                    logger.info("Applying schema migration %s", version)
+                    try:
+                        func(connection)
+                        self._record_migration(connection, version)
+                        logger.info("Migration %s applied", version)
+                    except Exception as exc:
+                        logger.error("Migration %s failed: %s", version, exc)
+                        raise
+
+    def _ensure_documents_columns_postgres(self, cursor: Any) -> None:
+        """Legacy helper kept for backward compat, now delegates to migration."""
+        # This is now a no-op for new code; migrations handle it.
+        # Kept to avoid breaking existing tests that call it indirectly.
+        cursor.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS content TEXT NOT NULL DEFAULT ''")
+        cursor.execute(
+            "ALTER TABLE documents ADD COLUMN IF NOT EXISTS search_vector TSVECTOR NOT NULL DEFAULT ''::tsvector"
+        )
+        cursor.execute(
+            "ALTER TABLE documents ADD COLUMN IF NOT EXISTS extractor_version INTEGER NOT NULL DEFAULT 0"
+        )
+        cursor.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS content_hash TEXT NOT NULL DEFAULT ''")
+        cursor.execute(
+            "ALTER TABLE documents ADD COLUMN IF NOT EXISTS extraction_status TEXT NOT NULL DEFAULT 'extracted'"
+        )
+        cursor.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS extraction_detail TEXT NOT NULL DEFAULT ''")
+        cursor.execute(
+            "ALTER TABLE documents ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'storage_direct'"
+        )
+        cursor.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS object_key TEXT")
+        cursor.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS object_bucket TEXT")
+        cursor.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS uploaded_at DOUBLE PRECISION")
+        cursor.execute(
+            "ALTER TABLE documents ADD COLUMN IF NOT EXISTS upload_status TEXT NOT NULL DEFAULT 'pending'"
+        )
+
     def initialize(self, rebuild: bool = False) -> None:
+        """Create tables if not exists — no DDL backfill, no category overwrite."""
         with self.connect() as connection:
             if self.is_postgres:
                 with connection.cursor() as cursor:
                     if rebuild:
                         cursor.execute("DROP TABLE IF EXISTS documents")
+                        cursor.execute("DROP TABLE IF EXISTS schema_migrations")
                     cursor.execute(POSTGRES_SCHEMA)
-                    cursor.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS content TEXT NOT NULL DEFAULT ''")
-                    cursor.execute(
-                        "ALTER TABLE documents ADD COLUMN IF NOT EXISTS "
-                        "search_vector TSVECTOR NOT NULL DEFAULT ''::tsvector"
-                    )
-                    cursor.execute(
-                        "ALTER TABLE documents ADD COLUMN IF NOT EXISTS extractor_version INTEGER NOT NULL DEFAULT 0"
-                    )
-                    cursor.execute(
-                        "ALTER TABLE documents ADD COLUMN IF NOT EXISTS content_hash TEXT NOT NULL DEFAULT ''"
-                    )
-                    cursor.execute(
-                        "ALTER TABLE documents ADD COLUMN IF NOT EXISTS "
-                        "extraction_status TEXT NOT NULL DEFAULT 'extracted'"
-                    )
-                    cursor.execute(
-                        "ALTER TABLE documents ADD COLUMN IF NOT EXISTS extraction_detail TEXT NOT NULL DEFAULT ''"
-                    )
-                    cursor.execute(
-                        "ALTER TABLE documents ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'storage_direct'"
-                    )
+                    # Ensure migrations table exists, but do not run migrations here
                     cursor.execute(
                         """
-                        UPDATE documents SET category = CASE
-                            WHEN is_dir = false THEN
-                                CASE WHEN lower(extension) = '.pdf' THEN 'analyzed' ELSE 'storage_direct' END
-                            ELSE 'folder'
-                        END
-                        """
-                    )
-                    cursor.execute(
-                        """
-                        UPDATE documents
-                        SET search_vector = to_tsvector(
-                            'simple',
-                            concat_ws(E'\\n', name, path, extension, content)
+                        CREATE TABLE IF NOT EXISTS schema_migrations (
+                            version TEXT PRIMARY KEY,
+                            applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
                         )
-                        WHERE search_vector = ''::tsvector
                         """
                     )
-                    cursor.execute(
-                        "CREATE INDEX IF NOT EXISTS idx_documents_search_vector ON documents USING GIN(search_vector)"
-                    )
-                    cursor.execute("CREATE INDEX IF NOT EXISTS idx_documents_path_key ON documents(path_key)")
-                    cursor.execute(
-                        """
-                        SELECT data_type FROM information_schema.columns
-                        WHERE table_name = 'imports' AND column_name = 'payload'
-                        """
-                    )
-                    payload_type = (cursor.fetchone() or ("jsonb",))[0]
-                    if payload_type == "text":
-                        cursor.execute("ALTER TABLE imports ALTER COLUMN payload TYPE JSONB USING payload::jsonb")
             else:
                 if rebuild:
                     connection.executescript(
                         """
                         DROP TABLE IF EXISTS documents_fts;
                         DROP TABLE IF EXISTS documents;
+                        DROP TABLE IF EXISTS schema_migrations;
                         """
                     )
                 connection.executescript(SQLITE_SCHEMA)
-                self._ensure_documents_columns(connection)
+                connection.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS schema_migrations (
+                        version TEXT PRIMARY KEY,
+                        applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+                    )
+                    """
+                )
+                # For SQLite, ensure FTS exists but do not overwrite category
                 self._ensure_fts_schema(connection)
 
     @contextmanager
@@ -373,6 +549,13 @@ class SearchIndex:
 
     @contextmanager
     def scan_snapshot(self) -> Iterator[None]:
+        """Snapshot documents table for rollback on scan failure.
+
+        Note: this does a full table copy (CREATE TABLE AS / sqlite backup).
+        Acceptable for <100k docs (current scale), but at larger scale should
+        be replaced by a transaction with savepoint instead of full copy.
+        Documented limit: O(N) storage/time per scan.
+        """
         if self.is_postgres:
             backup_table = f"scan_backup_documents_{os.getpid()}"
             with self.connect() as connection:
@@ -525,6 +708,14 @@ class SearchIndex:
                 END
                 """
             )
+        if "object_key" not in columns:
+            connection.execute("ALTER TABLE documents ADD COLUMN object_key TEXT")
+        if "object_bucket" not in columns:
+            connection.execute("ALTER TABLE documents ADD COLUMN object_bucket TEXT")
+        if "uploaded_at" not in columns:
+            connection.execute("ALTER TABLE documents ADD COLUMN uploaded_at REAL")
+        if "upload_status" not in columns:
+            connection.execute("ALTER TABLE documents ADD COLUMN upload_status TEXT NOT NULL DEFAULT 'pending'")
 
     def _ensure_fts_schema(self, connection: sqlite3.Connection) -> None:
         schema = connection.execute(
@@ -578,7 +769,8 @@ class SearchIndex:
                         UPDATE documents
                         SET path = ?, name = ?, parent_path = ?, extension = ?, size = ?,
                             modified_at = ?, is_dir = ?, extractor_version = ?, content_hash = ?,
-                            extraction_status = ?, extraction_detail = ?, category = ?
+                            extraction_status = ?, extraction_detail = ?, category = ?,
+                            object_key = ?, object_bucket = ?, uploaded_at = ?, upload_status = ?
                         WHERE id = ?
                         """,
                         _document_values(document) + (row_id,),
@@ -589,9 +781,10 @@ class SearchIndex:
                         """
                         INSERT INTO documents (
                             path_key, path, name, parent_path, extension, size, modified_at, is_dir,
-                            extractor_version, content_hash, extraction_status, extraction_detail, category
+                            extractor_version, content_hash, extraction_status, extraction_detail, category,
+                            object_key, object_bucket, uploaded_at, upload_status
                         )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (document.path_key,) + _document_values(document),
                     )
@@ -631,6 +824,10 @@ class SearchIndex:
                 document.extraction_status,
                 document.extraction_detail,
                 document.category,
+                document.object_key,
+                document.object_bucket,
+                document.uploaded_at,
+                document.upload_status,
             )
             for document in documents
         ]
@@ -643,7 +840,8 @@ class SearchIndex:
                     """
                     INSERT INTO documents (
                         path_key, path, name, parent_path, extension, size, modified_at, is_dir, content, search_vector,
-                        extractor_version, content_hash, extraction_status, extraction_detail, category
+                        extractor_version, content_hash, extraction_status, extraction_detail, category,
+                        object_key, object_bucket, uploaded_at, upload_status
                     )
                     VALUES %s
                     ON CONFLICT (path_key) DO UPDATE SET
@@ -660,13 +858,17 @@ class SearchIndex:
                         content_hash = EXCLUDED.content_hash,
                         extraction_status = EXCLUDED.extraction_status,
                         extraction_detail = EXCLUDED.extraction_detail,
-                        category = EXCLUDED.category
+                        category = EXCLUDED.category,
+                        object_key = EXCLUDED.object_key,
+                        object_bucket = EXCLUDED.object_bucket,
+                        uploaded_at = EXCLUDED.uploaded_at,
+                        upload_status = EXCLUDED.upload_status
                     """,
                     values,
                     template=(
                         "(%s, %s, %s, %s, %s, %s, %s, %s, %s, "
                         "to_tsvector('simple', %s), "
-                        "%s, %s, %s, %s, %s)"
+                        "%s, %s, %s, %s, %s, %s, %s, %s, %s)"
                     ),
                 )
                 return cursor.rowcount
@@ -755,6 +957,19 @@ class SearchIndex:
 
     def _search_postgres(self, clean_query: str, limit: int, offset: int) -> list[dict[str, Any]]:
         like_query = f"%{clean_query}%"
+        # Build prefix-matching OR query for Postgres to match SQLite semantics (4.1)
+        # e.g. "voile bleue" -> "voile:* | bleue:*" with rank boost for all terms
+        terms = [t for t in re.findall(r"[\w]+", clean_query, flags=re.UNICODE) if t.upper() not in {"AND", "OR", "NOT"}]
+        if not terms:
+            return []
+        # OR with prefix — avoid backslash in f-string expression
+        def _clean_term(t: str) -> str:
+            return re.sub(r"[^\w]", "", t)
+
+        ts_query_or = " | ".join(f"{_clean_term(term)}:*" for term in terms)
+        # AND for boost
+        ts_query_and = " & ".join(f"{_clean_term(term)}:*" for term in terms)
+
         with self.connect() as connection:
             import psycopg2.extras
 
@@ -762,7 +977,9 @@ class SearchIndex:
                 cursor.execute(
                     """
                     WITH search AS (
-                        SELECT plainto_tsquery('simple', %s) AS query
+                        SELECT
+                            to_tsquery('simple', %s) AS query_or,
+                            to_tsquery('simple', %s) AS query_and
                     )
                     SELECT
                         d.path,
@@ -778,7 +995,7 @@ class SearchIndex:
                         ts_headline(
                             'simple',
                             concat_ws(E'\\n', d.name, d.path, d.extension, d.content),
-                            search.query,
+                            search.query_or,
                             'StartSel=<mark>, StopSel=</mark>, MaxWords=24, MinWords=8, ShortWord=2'
                         ) AS snippet,
                         CASE
@@ -787,9 +1004,11 @@ class SearchIndex:
                             WHEN lower(d.path) LIKE lower(%s) THEN 'path'
                             ELSE 'content'
                         END AS match_type,
-                        ts_rank_cd(d.search_vector, search.query) AS score
+                        -- Rank boost for docs matching all terms
+                        ts_rank_cd(d.search_vector, search.query_or) +
+                        CASE WHEN d.search_vector @@ search.query_and THEN 0.5 ELSE 0 END AS score
                     FROM documents d, search
-                    WHERE d.search_vector @@ search.query
+                    WHERE d.search_vector @@ search.query_or
                     ORDER BY
                         CASE
                             WHEN lower(d.name) = lower(%s) THEN 0
@@ -801,7 +1020,8 @@ class SearchIndex:
                     LIMIT %s OFFSET %s
                     """,
                     (
-                        clean_query,
+                        ts_query_or,
+                        ts_query_and,
                         clean_query,
                         like_query,
                         like_query,
@@ -861,11 +1081,30 @@ class SearchIndex:
                     version = cursor.fetchone()["version"]
                     cursor.execute("SELECT pg_database_size(current_database()) AS database_bytes")
                     database_bytes = int(cursor.fetchone()["database_bytes"])
+                    # Real integrity check: verify documents table exists and indexes are valid (4.2)
+                    try:
+                        cursor.execute("SELECT COUNT(*) AS c FROM documents")
+                        doc_count = cursor.fetchone()["c"]
+                        cursor.execute(
+                            "SELECT indexname FROM pg_indexes WHERE tablename = 'documents' AND schemaname = 'public'"
+                        )
+                        indexes = cursor.fetchall()
+                        integrity = "ok" if doc_count >= 0 and len(indexes) >= 1 else "degraded"
+                        # Check for invalid indexes
+                        cursor.execute(
+                            "SELECT COUNT(*) AS invalid FROM pg_index WHERE NOT indisvalid"
+                        )
+                        invalid = cursor.fetchone()["invalid"]
+                        if invalid > 0:
+                            integrity = f"invalid_indexes:{invalid}"
+                    except Exception as exc:
+                        integrity = f"check_failed:{exc}"
+
             return {
                 "backend": "postgresql",
                 "database_url_configured": True,
                 "database_bytes": database_bytes,
-                "database_integrity": "ok",
+                "database_integrity": integrity,
                 "version": version,
             }
 
@@ -880,7 +1119,9 @@ class SearchIndex:
         }
 
 
-def _document_values(document: Document) -> tuple[str, str, str, str, int, float, int, int, str, str, str, str]:
+def _document_values(
+    document: Document,
+) -> tuple[str, str, str, str, int, float, int, int, str, str, str, str, str | None, str | None, float | None, str]:
     return (
         str(document.path),
         document.name,
@@ -894,6 +1135,10 @@ def _document_values(document: Document) -> tuple[str, str, str, str, int, float
         document.extraction_status,
         document.extraction_detail,
         document.category,
+        document.object_key,
+        document.object_bucket,
+        document.uploaded_at,
+        document.upload_status,
     )
 
 

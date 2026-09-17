@@ -14,6 +14,15 @@ export async function GET() {
     }
   }
 
+  const demoMode = process.env.SEAMTECH_DEMO_MODE === "1"
+  const isProd = process.env.NODE_ENV === "production"
+  if (!demoMode || isProd) {
+    return NextResponse.json(
+      { detail: "Backend not configured. Set SEAMTECH_API_URL or enable SEAMTECH_DEMO_MODE=1 for demo." },
+      { status: 503 },
+    )
+  }
+
   const payload: HealthResponse = {
     status: "ok",
     documents: SAMPLE_STATS.documents,
@@ -21,5 +30,5 @@ export async function GET() {
     folders: SAMPLE_STATS.folders,
     last_scan: SAMPLE_STATS.last_scan,
   }
-  return NextResponse.json({ ...payload, sample: true })
+  return NextResponse.json({ ...payload, sample: true, demo: true })
 }

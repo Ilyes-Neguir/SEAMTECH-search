@@ -27,9 +27,8 @@ from .extractors import extract_file
 from .indexer import SearchIndex
 from .jobs import ImportCancelledError
 from .models import Document
-from .onedrive import upload_to_onedrive
 from .retention import ensure_free_space
-from .storage import upload_artifacts_to_storage
+from .storage import UploadBatch, upload_artifacts_to_storage
 
 logger = logging.getLogger("seamtech_search.import_pipeline")
 
@@ -47,8 +46,8 @@ __all__ = [
     "update_import",
     "correct_import",
     "retry_upload",
-    "upload_to_onedrive",
     "staging_root",
+    "quarantine_root",
     "normalize_unit_to_mm",
     "Dimensions",
     "ExcelSheetSummary",
@@ -160,7 +159,10 @@ class ImportFile:
     extension: str
     extraction_status: str
     report_path: str | None = None
-    upload_status: str = "not_configured"
+    upload_status: str = "pending"
+    object_key: str | None = None
+    object_bucket: str | None = None
+    uploaded_at: float | None = None
 
 
 @dataclass(frozen=True)
@@ -194,6 +196,8 @@ class ImportResult:
     excel_summary: dict[str, Any] | None = None
     excel_candidates: list[dict[str, Any]] = field(default_factory=list)
     analyzed_items: list[dict[str, Any]] = field(default_factory=list)
+    all_verified: bool = False
+    artifacts: list[dict[str, Any]] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -700,6 +704,11 @@ def staging_root(config: AppConfig) -> Path:
     return config.database_path.parent / "uploads"
 
 
+def quarantine_root(config: AppConfig) -> Path:
+    """Directory for imports whose S3 upload failed — never swept by retention."""
+    return config.database_path.parent / "quarantine"
+
+
 def _validated_source(source: Path, config: AppConfig) -> Path:
     resolved = source.expanduser().resolve()
     if not resolved.exists() or not resolved.is_dir():
@@ -736,16 +745,19 @@ def scan_folder(source: Path, config: AppConfig) -> dict[str, Any]:
         if ext == ".pdf":
             extracted = extract_structured_pdf(path, config)
             anchors = matched_anchors(extracted.raw_text) if extracted.raw_text else []
-            if classify_pdf_text(extracted.raw_text) == "technical_pdf":
-                candidates.append(
-                    {
-                        "path": str(path),
-                        "name": path.name,
-                        "size": path.stat().st_size,
-                        "anchors_matched": anchors,
-                        "anchor_count": len(anchors),
-                    }
-                )
+            classification = classify_pdf_text(extracted.raw_text) if extracted.raw_text else "plan_pdf"
+            # Return ALL PDFs with anchor score as ranking hint (4.8), not filter
+            candidates.append(
+                {
+                    "path": str(path),
+                    "name": path.name,
+                    "size": path.stat().st_size,
+                    "anchors_matched": anchors,
+                    "anchor_count": len(anchors),
+                    "classification": classification,
+                    "is_technical": classification == "technical_pdf",
+                }
+            )
         elif ext in {".xlsx", ".xls"}:
             summary = extract_excel_summary(path)
             excel_files.append(
@@ -760,10 +772,15 @@ def scan_folder(source: Path, config: AppConfig) -> dict[str, Any]:
             )
 
     warnings: list[str] = []
+    technical_count = sum(1 for c in candidates if c.get("is_technical"))
     if not candidates:
-        warnings.append("No technical PDF found")
-    elif len(candidates) > 1:
-        warnings.append(f"{len(candidates)} technical PDFs detected; select the one to import")
+        warnings.append("No PDF found")
+    elif technical_count == 0:
+        warnings.append("No technical PDF found — all PDFs listed with anchor scores for manual selection")
+    elif technical_count > 1:
+        warnings.append(f"{technical_count} technical PDFs detected; select the one to import")
+    # Sort candidates by technical first, then anchor_count descending (ranking hint)
+    candidates.sort(key=lambda c: (not c.get("is_technical", False), -c.get("anchor_count", 0), c.get("name", "")))
 
     return {
         "source_path": str(resolved),
@@ -807,6 +824,8 @@ def import_folder(
     pdfs: list[Path] = []
     excels: list[Path] = []
     candidates: list[dict[str, Any]] = []
+    # Cache extractions to avoid extracting each PDF twice (Phase 4.9)
+    extracted_cache: dict[str, ExtractedData] = {}
 
     for path in _walk_files(resolved):
         if cancel_check and cancel_check():
@@ -816,6 +835,7 @@ def import_folder(
 
         if path.suffix.lower() == ".pdf":
             extracted = extract_structured_pdf(path, config)
+            extracted_cache[str(path)] = extracted
             category = classify_pdf_text(extracted.raw_text) if extracted.raw_text else "plan_pdf"
             status = "pending" if category == "technical_pdf" else "not_applicable"
             if category == "technical_pdf":
@@ -873,12 +893,17 @@ def import_folder(
     if progress_callback:
         progress_callback("extracting", 35)
 
-    data = extract_structured_pdf(technical_pdf, config) if technical_pdf else None
+    if technical_pdf:
+        cached = extracted_cache.get(str(technical_pdf))
+        data = cached if cached is not None else extract_structured_pdf(technical_pdf, config)
+    else:
+        data = None
     extra_pdfs = [p for p in pdfs if p != technical_pdf]
     extra_extractions: dict[str, ExtractedData] = {}
     if data and extra_pdfs:
         for p in extra_pdfs:
-            extracted_p = extract_structured_pdf(p, config)
+            cached_p = extracted_cache.get(str(p))
+            extracted_p = cached_p if cached_p is not None else extract_structured_pdf(p, config)
             extra_extractions[str(p)] = extracted_p
             data.additional_sheets.append(
                 AnalyzedSheet(
@@ -926,11 +951,18 @@ def import_folder(
         progress_callback("uploading", 75)
 
     all_upload_targets = [Path(f.path) for f in files] + [p for p in (report_path, report_docx_path) if p]
-    upload_status = upload_artifacts_to_storage(
+    upload_batch = upload_artifacts_to_storage(
         folder_name=resolved.name,
         files_to_upload=all_upload_targets,
         config=config,
+        import_id=actual_import_id,
+        source_root=resolved,
     )
+    upload_status = upload_batch.status
+    upload_status_by_path = {a.path: a.status for a in upload_batch.artifacts}
+    artifact_by_path = {a.path: a for a in upload_batch.artifacts}
+    # Use wall-clock for uploaded_at; tests mock object_exists so time is fine.
+    import time as _time
 
     if cancel_check and cancel_check():
         raise ImportCancelledError("Import cancelled by user")
@@ -949,6 +981,12 @@ def import_folder(
         elif chosen_excel and item.path == str(chosen_excel) and excel_summary:
             doc_text = excel_summary.summary_text
 
+        artifact = artifact_by_path.get(item.path)
+        obj_key = artifact.key if artifact else None
+        obj_bucket = artifact.bucket if artifact else None
+        obj_status = artifact.status if artifact else upload_status_by_path.get(item.path, upload_status)
+        uploaded_at = _time.time() if obj_status == "uploaded" else None
+
         indexed_documents.append(
             Document(
                 path=item_path,
@@ -960,6 +998,10 @@ def import_folder(
                 is_dir=False,
                 text=doc_text,
                 category=item.category,
+                object_key=obj_key,
+                object_bucket=obj_bucket,
+                uploaded_at=uploaded_at,
+                upload_status=obj_status,
             )
         )
     index.upsert_documents(indexed_documents)
@@ -979,37 +1021,46 @@ def import_folder(
             ext_status = f.extraction_status
             rep = None
 
+        artifact = artifact_by_path.get(f.path)
+        per_file_status = upload_status_by_path.get(f.path, upload_status)
+        obj_key = artifact.key if artifact else None
+        obj_bucket = artifact.bucket if artifact else None
+        uploaded_at = _time.time() if per_file_status == "uploaded" else None
+
         final_files.append(
             ImportFile(
-                f.path,
-                f.name,
-                f.category,
-                f.size,
-                f.extension,
-                ext_status,
-                rep,
-                upload_status,
+                path=f.path,
+                name=f.name,
+                category=f.category,
+                size=f.size,
+                extension=f.extension,
+                extraction_status=ext_status,
+                report_path=rep,
+                upload_status=per_file_status,
+                object_key=obj_key,
+                object_bucket=obj_bucket,
+                uploaded_at=uploaded_at,
             )
         )
 
     status = "completed" if data and data.extraction_status == "success" else "needs_review" if data else "failed"
     result = ImportResult(
-        actual_import_id,
-        str(resolved),
-        status,
-        len(files),
-        len(pdfs),
-        str(technical_pdf) if technical_pdf else None,
-        data.model_dump() if data else None,
-        str(report_path) if report_path else None,
-        upload_status,
-        warnings + (data.warnings if data else []),
-        final_files,
-        candidates,
-        str(report_docx_path) if report_docx_path else None,
-        str(chosen_excel) if chosen_excel else None,
-        excel_summary.model_dump() if excel_summary else None,
-        [
+        import_id=actual_import_id,
+        source_path=str(resolved),
+        status=status,
+        files_detected=len(files),
+        analyzed_files=len(pdfs),
+        technical_pdf=str(technical_pdf) if technical_pdf else None,
+        data=data.model_dump() if data else None,
+        report_path=str(report_path) if report_path else None,
+        upload_status=upload_status,
+        warnings=warnings + (data.warnings if data else []),
+        files=final_files,
+        candidates=candidates,
+        report_docx_path=str(report_docx_path) if report_docx_path else None,
+        excel_file=str(chosen_excel) if chosen_excel else None,
+        excel_summary=excel_summary.model_dump() if excel_summary else None,
+        excel_candidates=[
             {
                 "path": str(p),
                 "name": p.name,
@@ -1019,6 +1070,8 @@ def import_folder(
             }
             for p in excels
         ],
+        all_verified=upload_batch.all_verified,
+        artifacts=[a.to_dict() for a in upload_batch.artifacts],
     )
     _save_import(index, result)
 
@@ -1043,7 +1096,14 @@ def _save_import(index: SearchIndex, result: ImportResult) -> None:
         if index.is_postgres:
             with connection.cursor() as cursor:
                 cursor.execute(
-                    "INSERT INTO imports (id, source_path, status, payload, created_at) VALUES (%s, %s, %s, %s, now())",
+                    """
+                    INSERT INTO imports (id, source_path, status, payload, created_at)
+                    VALUES (%s, %s, %s, %s, now())
+                    ON CONFLICT (id) DO UPDATE SET
+                        source_path = EXCLUDED.source_path,
+                        status = EXCLUDED.status,
+                        payload = EXCLUDED.payload
+                    """,
                     (result.import_id, result.source_path, result.status, payload),
                 )
         else:
@@ -1051,6 +1111,10 @@ def _save_import(index: SearchIndex, result: ImportResult) -> None:
                 """
                 INSERT INTO imports (id, source_path, status, payload, created_at)
                 VALUES (?, ?, ?, ?, datetime('now'))
+                ON CONFLICT(id) DO UPDATE SET
+                    source_path = excluded.source_path,
+                    status = excluded.status,
+                    payload = excluded.payload
                 """,
                 (result.import_id, result.source_path, result.status, payload),
             )
@@ -1156,20 +1220,27 @@ def correct_import(
     excel_file = Path(payload["excel_file"]) if payload.get("excel_file") else None
     extra_files = [excel_file] if excel_file else []
     folder = Path(payload.get("source_path", "")).name or "import"
-    upload_status = (
+    upload_batch = (
         upload_artifacts_to_storage(
             folder_name=folder,
             files_to_upload=[technical_pdf, report_pdf, report_docx] + extra_files,
             config=config,
+            import_id=import_id,
+            source_root=payload.get("source_path") or None,
         )
         if technical_pdf
-        else "not_applicable"
+        else UploadBatch(status="not_applicable")
     )
+    upload_status = upload_batch.status
+    status_by_path = {a.path: a.status for a in upload_batch.artifacts}
+    artifact_by_path = {a.path: a for a in upload_batch.artifacts}
 
     payload["data"] = data.model_dump()
     payload["report_path"] = str(report_pdf)
     payload["report_docx_path"] = str(report_docx)
     payload["upload_status"] = upload_status
+    payload["all_verified"] = upload_batch.all_verified
+    payload["artifacts"] = [a.to_dict() for a in upload_batch.artifacts]
     payload["status"] = "completed" if status == "success" else "needs_review"
     payload["warnings"] = (
         [w for w in payload.get("warnings", []) if "first PDF was selected" in w or "technical PDFs detected" in w]
@@ -1179,7 +1250,15 @@ def correct_import(
         if entry.get("path") in (payload.get("technical_pdf"), payload.get("excel_file")):
             entry["extraction_status"] = status
             entry["report_path"] = str(report_pdf)
-            entry["upload_status"] = upload_status
+        # per-file upload status
+        p = entry.get("path")
+        if p in status_by_path:
+            entry["upload_status"] = status_by_path[p]
+            artifact = artifact_by_path.get(p)
+            if artifact:
+                entry["object_key"] = artifact.key
+                entry["object_bucket"] = artifact.bucket
+                entry["verified"] = artifact.verified
     update_import(index, import_id, payload["status"], payload)
     return payload
 
@@ -1202,20 +1281,63 @@ def retry_upload(index: SearchIndex, config: AppConfig, import_id: str) -> dict[
     report_pdf = Path(payload["report_path"]) if payload.get("report_path") else None
     report_docx = Path(payload["report_docx_path"]) if payload.get("report_docx_path") else None
     excel_file = Path(payload["excel_file"]) if payload.get("excel_file") else None
-    extra_files = [excel_file] if excel_file else []
+
+    # Build list of files that still need upload (status != uploaded)
+    files_needing_retry: list[Path] = []
+    for entry in payload.get("files", []):
+        if entry.get("upload_status") != "uploaded":
+            p = Path(entry.get("path", ""))
+            if p.exists() or entry.get("path") in (payload.get("technical_pdf"), payload.get("excel_file")):
+                # Use the stored path even if file no longer exists locally; upload will fail and be reported
+                files_needing_retry.append(Path(entry["path"]))
+    # Reports are not in files list; retry them if overall status not uploaded or they are missing from verified set
+    # If no specific files, fall back to full set (backward compat)
+    if not files_needing_retry:
+        files_needing_retry = [technical_pdf, report_pdf, report_docx] + ([excel_file] if excel_file else [])
+        files_needing_retry = [p for p in files_needing_retry if p is not None]
+        # If previous upload was fully successful, keep empty to avoid redundant upload
+        if payload.get("upload_status") == "uploaded" and all(
+            e.get("upload_status") == "uploaded" for e in payload.get("files", [])
+        ):
+            files_needing_retry = []
+    else:
+        # Also include reports if they exist and need retry
+        for rep in (report_pdf, report_docx):
+            if rep and rep not in files_needing_retry:
+                files_needing_retry.append(rep)
+
     folder = Path(payload.get("source_path", "")).name or "import"
-    upload_status = (
+    upload_batch = (
         upload_artifacts_to_storage(
             folder_name=folder,
-            files_to_upload=[technical_pdf, report_pdf, report_docx] + extra_files,
+            files_to_upload=files_needing_retry,
             config=config,
+            import_id=import_id,
+            source_root=payload.get("source_path") or None,
         )
-        if technical_pdf
-        else "not_applicable"
+        if files_needing_retry
+        else UploadBatch(status="uploaded" if payload.get("upload_status") == "uploaded" else "not_applicable")
     )
+    upload_status = upload_batch.status
+    artifact_by_path = {a.path: a for a in upload_batch.artifacts}
+    status_by_path = {a.path: a.status for a in upload_batch.artifacts}
+
     payload["upload_status"] = upload_status
+    # Update per-file statuses with new results
     for entry in payload.get("files", []):
-        if entry.get("path") in (payload.get("technical_pdf"), payload.get("excel_file")):
-            entry["upload_status"] = upload_status
+        p = entry.get("path")
+        if p in status_by_path:
+            entry["upload_status"] = status_by_path[p]
+            artifact = artifact_by_path.get(p)
+            if artifact:
+                entry["object_key"] = artifact.key
+                entry["object_bucket"] = artifact.bucket
+                entry["verified"] = artifact.verified
+        # If file was already uploaded and not retried, keep its existing status
+
+    # Update top-level artifacts for completeness
+    payload["artifacts"] = [a.to_dict() for a in upload_batch.artifacts]
+    payload["all_verified"] = upload_batch.all_verified
+
     update_import(index, import_id, payload.get("status", "needs_review"), payload)
     return payload

@@ -1,6 +1,7 @@
 services:
   postgres:
     image: postgres:16
+    restart: unless-stopped
     environment:
       POSTGRES_DB: seamtech_search
       POSTGRES_USER: seamtech
@@ -17,11 +18,15 @@ services:
       retries: 5
 
   minio:
-    image: minio/minio:latest
+    # MinIO removed minio/minio from Docker Hub on 2026-09-11 (anonymous
+    # pulls now 404/401); quay.io/minio is their current official
+    # distribution with the same tags.
+    image: quay.io/minio/minio:latest
+    restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?Set MINIO_ROOT_USER in the environment}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in the environment}
     ports:
       # S3 API endpoint
       - "127.0.0.1:9000:9000"
@@ -29,40 +34,49 @@ services:
       - "127.0.0.1:9001:9001"
     volumes:
       - minio-data:/data
+    # Real liveness probe: the minio image has no python3, so the previous
+    # check could never detect a broken server (`|| exit 0` hid it).
+    # busybox wget exits non-zero when /minio/health/live does not answer.
     healthcheck:
-      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:9000/minio/health/live', timeout=2)\" 2>/dev/null || exit 0"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9000/minio/health/live"]
       interval: 10s
       timeout: 5s
-      retries: 3
+      retries: 5
 
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?Set REDIS_PASSWORD in the environment}", "--appendonly", "yes"]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in the environment}
     ports:
       - "127.0.0.1:6379:6379"
     volumes:
       - redis-data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 3
 
   web:
     build: .
+    restart: unless-stopped
     environment:
       SEAMTECH_DATABASE_URL: postgresql://seamtech:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the environment}@postgres:5432/seamtech_search
       SEAMTECH_STORAGE_BACKEND: "s3"
       SEAMTECH_S3_ENDPOINT_URL: "http://minio:9000"
       SEAMTECH_S3_BUCKET: ${SEAMTECH_S3_BUCKET:-seamtech-documents}
-      SEAMTECH_S3_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
-      SEAMTECH_S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
-      SEAMTECH_REDIS_URL: "redis://redis:6379/0"
+      SEAMTECH_S3_ACCESS_KEY: ${MINIO_ROOT_USER:?Set MINIO_ROOT_USER in the environment}
+      SEAMTECH_S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in the environment}
+      SEAMTECH_REDIS_URL: "redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in the environment}@redis:6379/0"
       # Inside the container network, web listens on 0.0.0.0 so frontend can communicate.
-      # When token authentication is active on 0.0.0.0, behind_tls_proxy must be enabled.
       SEAMTECH_HOST: "0.0.0.0"
       SEAMTECH_ALLOW_NETWORK_ACCESS: "true"
-      SEAMTECH_BEHIND_TLS_PROXY: ${SEAMTECH_BEHIND_TLS_PROXY:-true}
+      # Default to false — set to true only when behind a real TLS terminator (see docs/TLS.md)
+      SEAMTECH_BEHIND_TLS_PROXY: ${SEAMTECH_BEHIND_TLS_PROXY:-false}
       SEAMTECH_AUTH_TOKEN: ${SEAMTECH_AUTH_TOKEN:?Set SEAMTECH_AUTH_TOKEN in the environment}
+      SEAMTECH_ROOT_PATHS: ${SEAMTECH_ROOT_PATHS:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -75,7 +89,6 @@ services:
       # Direct LAN exposure requires TLS termination (see docs/TLS.md).
       - "127.0.0.1:8000:8000"
     volumes:
-      - ./config:/app/config:ro
       - ./sample_data:/app/sample_data:ro
       - ./logs:/app/logs
       - ./data:/app/data
@@ -87,6 +100,7 @@ services:
 
   frontend:
     build: ./frontend
+    restart: unless-stopped
     environment:
       # Server-side only (frontend/lib/backend.ts) — never sent to the browser.
       SEAMTECH_API_URL: http://web:8000
@@ -103,7 +117,21 @@ services:
       timeout: 10s
       retries: 3
 
+  # Optional reverse proxy for TLS termination (Caddy) — uncomment when deploying behind TLS
+  # caddy:
+  #   image: caddy:2-alpine
+  #   restart: unless-stopped
+  #   ports:
+  #     - "80:80"
+  #     - "443:443"
+  #   volumes:
+  #     - ./Caddyfile:/etc/caddy/Caddyfile:ro
+  #     - caddy-data:/data
+  #     - caddy-config:/config
+
 volumes:
   postgres-data:
   minio-data:
   redis-data:
+  # caddy-data:
+  # caddy-config:

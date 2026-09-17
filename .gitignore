@@ -17,3 +17,5 @@ config.json
 *.tsbuildinfo
 e2e-data/
 package-lock.json
+.coverage
+coverage.json
