@@ -21,6 +21,25 @@ def test_configured_token_protects_search(tmp_path: Path) -> None:
     assert client.get("/health", headers={"X-SEAMTECH-TOKEN": "secret"}).status_code == 200
 
 
+def test_upload_over_file_cap_is_rejected_with_actionable_message(tmp_path: Path) -> None:
+    """A dossier over the upload cap must get a clear 413, not an opaque 422.
+
+    FastAPI's File(max_length=...) answered "List should have at most 500
+    items after validation" — nobody who hands over a 600-file dossier learns
+    what to do from that.
+    """
+    from seamtech_search.api import MAX_UPLOAD_FILES
+
+    config = AppConfig(root_paths=[tmp_path], database_path=tmp_path / "search.db", min_free_bytes=0)
+    client = TestClient(create_app(config))
+    files = [("files", (f"batch/{i:03d}.txt", b"x", "text/plain")) for i in range(MAX_UPLOAD_FILES + 1)]
+    response = client.post("/imports/upload", files=files, data={"folder": "cap"})
+    assert response.status_code == 413
+    detail = response.json()["detail"]
+    assert str(MAX_UPLOAD_FILES) in detail
+    assert "batches" in detail
+
+
 def test_search_pagination_contract(tmp_path: Path) -> None:
     root = tmp_path / "root"
     root.mkdir()

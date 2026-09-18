@@ -76,8 +76,10 @@ def prune_reports(base_dir: str | Path, max_age_days: int) -> int:
             try:
                 if not os.listdir(root):
                     os.rmdir(root)
-            except OSError:
-                pass
+            except OSError as exc:
+                # Best-effort cleanup of an empty directory; harmless if it
+                # stays, but not silently.
+                logger.debug("Could not remove empty report directory %s: %s", root, exc)
 
     return pruned_count
 

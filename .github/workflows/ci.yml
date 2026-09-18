@@ -43,17 +43,113 @@ jobs:
           # Upgrade setuptools too: pip-audit below scans the whole
           # environment, and old bootstrap setuptools carries CVEs.
           python -m pip install --upgrade pip setuptools
-          pip install -r requirements.txt -r requirements-local.txt ruff pytest-cov pip-audit
+          # Single source of truth: requirements-dev.txt includes
+          # requirements.txt and pins pytest/pytest-cov/ruff/pip-audit/PyYAML
+          # once each. Installing several files that re-declared the same
+          # packages is how pytest ended up at both 8.4.1 and 9.1.1.
+          pip install -r requirements-dev.txt
       - name: Ruff lint check
         run: ruff check .
       - name: Compile Python
         run: python -m compileall -q seamtech_search
       - name: Run SQLite suite
-        run: pytest -q -k "not postgres and not s3"
+        run: |
+          set -uo pipefail
+          # tee rather than `out=$(...)`: output streams to the job log as it is
+          # produced, and PIPESTATUS keeps pytest's exit code (pipefail alone
+          # would report tee's).
+          # GitHub runs `run:` steps with `bash -e`, so a non-zero pytest exit
+          # kills the script on the spot -- before any diagnostic below it runs.
+          # That is why earlier versions of these steps left nothing behind but
+          # GitHub's generic "Process completed with exit code 1", with the log
+          # blob host unreachable and the artifact on the same blocked host.
+          # errexit is disabled only around the command whose failure we handle
+          # ourselves, and restored immediately after.
+          set +e
+          pytest -q -rf -k "not postgres and not s3" 2>&1 | tee /tmp/sqlite.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            # Annotation payloads are stripped to printable ASCII and capped.
+            # A previous version embedded raw pytest output and GitHub kept no
+            # annotation at all, which left a failing step with nothing readable
+            # behind it once the log blob host turned out to be unreachable.
+            echo "::error title=sqlite-suite-failed::$(grep -E '^(FAILED|ERROR)' /tmp/sqlite.log | head -25 | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 1500)"
+            echo "::error title=sqlite-suite-tail::$(tail -40 /tmp/sqlite.log | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 1800)"
+            exit "$rc"
+          fi
+      - name: Run PostgreSQL integration suite (must actually run, not self-skip)
+        # Audit issue #5b: these tests `pytest.skip()` when
+        # SEAMTECH_TEST_DATABASE_URL is unset, so a typo in the service name, a
+        # port change, or a dropped env block would turn the whole Postgres
+        # suite into skips while CI still reported green. The guard below fails
+        # the job unless a non-zero number of Postgres tests PASSED and none
+        # were skipped.
+        #
+        # Runs BEFORE the coverage step on purpose. The coverage step selects
+        # `-k "not s3"`, which includes these same live-postgres tests plus the
+        # mocked ones; when both ran together a failure in either was
+        # indistinguishable. Separating them means a red coverage step with a
+        # green Postgres step points at coverage/mocked tests, and vice versa.
+        env:
+          SEAMTECH_TEST_DATABASE_URL: postgresql://seamtech:seamtech_test_password@localhost:5432/seamtech_search_test
+        run: |
+          set -uo pipefail
+          # GitHub runs `run:` steps with `bash -e`, so a non-zero pytest exit
+          # kills the script on the spot -- before any diagnostic below it runs.
+          # That is why earlier versions of these steps left nothing behind but
+          # GitHub's generic "Process completed with exit code 1", with the log
+          # blob host unreachable and the artifact on the same blocked host.
+          # errexit is disabled only around the command whose failure we handle
+          # ourselves, and restored immediately after.
+          set +e
+          pytest -m postgres -v -rf 2>&1 | tee /tmp/pg.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            echo "::error title=postgres-suite-failed::$(grep -E '^(FAILED|ERROR)' /tmp/pg.log | head -25 | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 1500)"
+            echo "::error title=postgres-suite-tail::$(tail -45 /tmp/pg.log | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 1800)"
+            exit "$rc"
+          fi
+          summary=$(tail -1 /tmp/pg.log)
+          passed=$(echo "$summary" | grep -oE '[0-9]+ passed' | grep -oE '[0-9]+' || echo 0)
+          skipped=$(echo "$summary" | grep -oE '[0-9]+ skipped' | grep -oE '[0-9]+' || echo 0)
+          echo "Postgres suite summary: passed=$passed skipped=$skipped"
+          if [ "${passed:-0}" -eq 0 ]; then
+            echo "::error title=postgres-suite-did-not-run::0 Postgres tests passed - nothing was collected or everything skipped"
+            exit 1
+          fi
+          if [ "${skipped:-0}" -ne 0 ]; then
+            echo "::error title=postgres-tests-skipped::$skipped Postgres test(s) skipped even though SEAMTECH_TEST_DATABASE_URL is set"
+            exit 1
+          fi
       - name: Run coverage
-        # Same selection as the suite above plus the mocked-postgres coverage
-        # tests; live-postgres tests self-skip here (no SEAMTECH_TEST_DATABASE_URL).
-        run: pytest -k "not s3" -q --cov=seamtech_search --cov-report=term-missing --cov-report=json:coverage.json
+        # Same selection as the SQLite suite above, plus the mocked-postgres
+        # coverage tests AND the live-postgres tests. SEAMTECH_TEST_DATABASE_URL
+        # used to be absent here, so every `-m postgres` test silently skipped
+        # out of the coverage run and the Postgres-only branches in indexer.py
+        # were measured as uncovered (audit issue #5b). The postgres service is
+        # already declared on this job, so point the tests at it.
+        env:
+          SEAMTECH_TEST_DATABASE_URL: postgresql://seamtech:seamtech_test_password@localhost:5432/seamtech_search_test
+        run: |
+          set -uo pipefail
+          # GitHub runs `run:` steps with `bash -e`, so a non-zero pytest exit
+          # kills the script on the spot -- before any diagnostic below it runs.
+          # That is why earlier versions of these steps left nothing behind but
+          # GitHub's generic "Process completed with exit code 1", with the log
+          # blob host unreachable and the artifact on the same blocked host.
+          # errexit is disabled only around the command whose failure we handle
+          # ourselves, and restored immediately after.
+          set +e
+          pytest -k "not s3" -q -rf --cov=seamtech_search --cov-report=term-missing --cov-report=json:coverage.json 2>&1 | tee /tmp/cov.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            echo "::error title=coverage-suite-failed::$(grep -E '^(FAILED|ERROR)' /tmp/cov.log | head -25 | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 1500)"
+            echo "::error title=coverage-suite-tail::$(tail -45 /tmp/cov.log | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 1800)"
+            exit "$rc"
+          fi
       - name: Coverage gate (overall + per-module)
         # Real gate: reads coverage.json, compares every Phase 1 module against
         # its threshold, exits 1 on any breach. Enforced by tests/test_coverage_gate.py.
@@ -61,10 +157,21 @@ jobs:
       - name: Pip audit (security)
         # No `|| echo`: a known vulnerability in a pinned dependency fails CI.
         run: pip-audit --desc
-      - name: Run PostgreSQL integration suite
-        env:
-          SEAMTECH_TEST_DATABASE_URL: postgresql://seamtech:seamtech_test_password@localhost:5432/seamtech_search_test
-        run: pytest -m postgres -v
+      - name: Upload pytest logs
+        # The job-log blob host (productionresultssa*.blob.core.windows.net) is
+        # unreachable from some networks, which is how a failing step ended up
+        # with no readable diagnostics at all. Artifacts are served from a
+        # different host, so this is a second channel for the same information.
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-pytest-logs-${{ matrix.python-version }}
+          path: |
+            /tmp/sqlite.log
+            /tmp/pg.log
+            /tmp/cov.log
+          if-no-files-found: ignore
+          retention-days: 5
 
   frontend:
     runs-on: ubuntu-latest
@@ -149,7 +256,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt -r requirements-local.txt
+          pip install -r requirements-dev.txt
       - name: Check docker availability
         run: |
           docker --version
@@ -164,6 +271,11 @@ jobs:
           MINIO_ROOT_PASSWORD: minioadmin123
           REDIS_PASSWORD: redis_test_password
           SEAMTECH_AUTH_TOKEN: test-token-123
+          # Required by docker-compose.yml since the UI sign-in gate (audit
+          # issue #5, Option B): ${VAR:?...} makes `docker compose config` fail
+          # without them, even when only the infra services are started.
+          SEAMTECH_UI_PASSWORD: ci-ui-password
+          SEAMTECH_SESSION_SECRET: ci-session-secret-not-for-production
         run: |
           # Validate interpolation/schema up front so a config error fails
           # here with a clear message instead of deep in `up`.
@@ -185,6 +297,9 @@ jobs:
           MINIO_ROOT_USER: minioadmin
           MINIO_ROOT_PASSWORD: minioadmin123
           REDIS_PASSWORD: redis_test_password
+          SEAMTECH_AUTH_TOKEN: test-token-123
+          SEAMTECH_UI_PASSWORD: ci-ui-password
+          SEAMTECH_SESSION_SECRET: ci-session-secret-not-for-production
         run: |
           python - << 'PY'
           import subprocess
@@ -242,6 +357,11 @@ jobs:
           MINIO_ROOT_PASSWORD: minioadmin123
           REDIS_PASSWORD: redis_test_password
           SEAMTECH_AUTH_TOKEN: test-token-123
+          # Required by docker-compose.yml since the UI sign-in gate (audit
+          # issue #5, Option B): ${VAR:?...} makes `docker compose config` fail
+          # without them, even when only the infra services are started.
+          SEAMTECH_UI_PASSWORD: ci-ui-password
+          SEAMTECH_SESSION_SECRET: ci-session-secret-not-for-production
           SEAMTECH_S3_BUCKET: seamtech-documents
         run: |
           set -euo pipefail
@@ -249,7 +369,15 @@ jobs:
             echo "$out"
             echo "::error title=full-stack-boot-failed::$(echo "$out" | tail -20 | tr '\n' ' | ')"
             docker compose ps
-            docker compose logs --no-color --tail 80 web frontend
+            web_logs=$(docker compose logs --no-color --tail 120 web 2>&1 || true)
+            echo "$web_logs"
+            front_logs=$(docker compose logs --no-color --tail 60 frontend 2>&1 || true)
+            echo "$front_logs"
+            # The compose output above says *that* web is unhealthy but never why.
+            # Its own logs are the only thing that explains a crash loop, so
+            # repeat them as annotations where they stay readable.
+            echo "::error title=web-container-logs::$(echo "$web_logs" | tail -40 | tr '\n' ' | ')"
+            echo "::error title=frontend-container-logs::$(echo "$front_logs" | tail -20 | tr '\n' ' | ')"
             exit 1
           fi
 
@@ -310,6 +438,11 @@ jobs:
           MINIO_ROOT_PASSWORD: minioadmin123
           REDIS_PASSWORD: redis_test_password
           SEAMTECH_AUTH_TOKEN: test-token-123
+          # Required by docker-compose.yml since the UI sign-in gate (audit
+          # issue #5, Option B): ${VAR:?...} makes `docker compose config` fail
+          # without them, even when only the infra services are started.
+          SEAMTECH_UI_PASSWORD: ci-ui-password
+          SEAMTECH_SESSION_SECRET: ci-session-secret-not-for-production
           SEAMTECH_S3_BUCKET: seamtech-documents
           # CI guarantees the infra is healthy above: the test must not swallow
           # failures of backends that are supposed to be up.

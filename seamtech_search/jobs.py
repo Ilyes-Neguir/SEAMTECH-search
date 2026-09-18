@@ -36,8 +36,10 @@ def register_job_cancel(job_id: str, redis_store: Any | None = None) -> None:
 
             if isinstance(redis_store, RedisStore) and redis_store.is_configured():
                 redis_store.set_cancel_flag(job_id)
-        except Exception:
-            pass
+        except Exception as exc:
+            # In-memory cancellation still works in THIS process; other worker
+            # processes would miss the request, so log it.
+            logger.warning("Could not set Redis cancel flag for job %s (memory fallback only): %s", job_id, exc)
     with _cancellation_lock:
         _cancelled_job_ids.add(job_id)
 
@@ -51,8 +53,10 @@ def is_job_cancelled(job_id: str, redis_store: Any | None = None) -> bool:
             if isinstance(redis_store, RedisStore) and redis_store.is_configured():
                 if redis_store.is_cancelled(job_id):
                     return True
-        except Exception:
-            pass
+        except Exception as exc:
+            # Hot path (checked per poll): the in-memory set is still
+            # consulted, so log at debug to avoid spamming during an outage.
+            logger.debug("Could not check Redis cancel flag for job %s: %s", job_id, exc)
     with _cancellation_lock:
         return job_id in _cancelled_job_ids
 
@@ -66,8 +70,10 @@ def clear_job_cancel(job_id: str, redis_store: Any | None = None) -> None:
             if isinstance(redis_store, RedisStore) and redis_store.is_configured():
                 redis_store.clear_cancel_flag(job_id)
                 redis_store.set_heartbeat(job_id, ttl_seconds=1)  # clear heartbeat by short TTL
-        except Exception:
-            pass
+        except Exception as exc:
+            # Housekeeping: a leftover flag expires via Redis TTL and job ids
+            # are unique, so a failure here is non-fatal — but visible.
+            logger.debug("Could not clear Redis cancel flag for job %s: %s", job_id, exc)
     with _cancellation_lock:
         _cancelled_job_ids.discard(job_id)
 

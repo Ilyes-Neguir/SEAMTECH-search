@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 import shutil
 import subprocess
@@ -7,6 +8,8 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from zipfile import BadZipFile, ZipFile
+
+logger = logging.getLogger("seamtech_search.extractors")
 
 # Bump this whenever extraction logic changes for any format. The indexer
 # uses it (alongside size/modified_at) to decide whether a previously
@@ -255,6 +258,23 @@ def _extract_pdf(path: Path, max_chars: int) -> str:
     return _extract_pdf_with_pypdf(path, max_chars)
 
 
+def _table_row_already_in_text(cells: list[str], normalized_text: str) -> bool:
+    """True when every non-empty cell of a table row already appears in the
+    page text (whitespace-insensitive).
+
+    pdfplumber's ``extract_text`` emits the words inside table cells as part of
+    the page text, so re-appending the same row via ``extract_tables`` would
+    store the document's content twice. Comparison is done on the normalized
+    (whitespace-collapsed) page text; a row whose cells are all present adds
+    nothing, while a row that introduces new content (e.g. a table the
+    plain-text layer mangled) is kept.
+    """
+    cells = [cell.strip() for cell in cells if cell and cell.strip()]
+    if not cells:
+        return True
+    return all(" ".join(cell.split()) in normalized_text for cell in cells)
+
+
 def _extract_pdf_with_plumber(path: Path, max_chars: int) -> str | None:
     """Return extracted text, an unavailable marker, or None to fall back."""
     try:
@@ -268,13 +288,25 @@ def _extract_pdf_with_plumber(path: Path, max_chars: int) -> str | None:
             for page in pdf.pages:
                 text = page.extract_text(x_tolerance=2, y_tolerance=2) or ""
                 try:
+                    # extract_text() already yields the words inside table
+                    # cells, so a table row whose cells all appear in the page
+                    # text would only duplicate content: every document stored
+                    # twice over, index inflated, field regexes double-matching.
+                    # Keep only the rows that add new information (e.g. pages
+                    # where the plain-text layer garbles the table layout).
+                    normalized = " ".join(text.split())
                     for table in page.extract_tables() or []:
-                        rows = [" | ".join(cell.strip() if cell else "" for cell in row) for row in table]
-                        rows = [row for row in rows if row.strip(" |")]
-                        if rows:
-                            text += "\n" + "\n".join(rows)
-                except Exception:
-                    pass  # Tables are a bonus; plain text is still usable.
+                        fresh_rows = [
+                            " | ".join(cell.strip() if cell else "" for cell in cells)
+                            for cells in table
+                            if not _table_row_already_in_text(cells, normalized)
+                        ]
+                        fresh_rows = [row for row in fresh_rows if row.strip(" |")]
+                        if fresh_rows:
+                            text += "\n" + "\n".join(fresh_rows)
+                except Exception as exc:
+                    # Tables are a bonus; plain text is still usable.
+                    logger.debug("Table extraction failed for %s: %s", path.name, exc)
                 if text.strip():
                     chunks.append(text)
                     total += len(text)

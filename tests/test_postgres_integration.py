@@ -16,7 +16,8 @@ def test_postgres_initialize_upsert_search_and_health(tmp_path: Path) -> None:
 
     index = SearchIndex(tmp_path / "unused.db", database_url)
     index.initialize()
-    path = tmp_path / f"postgres-integration-{uuid.uuid4().hex}.txt"
+    marker = uuid.uuid4().hex
+    path = tmp_path / f"postgres-integration-{marker}.txt"
     document = Document(
         path=path,
         name=path.name,
@@ -25,12 +26,22 @@ def test_postgres_initialize_upsert_search_and_health(tmp_path: Path) -> None:
         size=42,
         modified_at=1000.0,
         is_dir=False,
-        text="PostgreSQL integration search marker",
+        text=f"PostgreSQL integration search marker {marker}",
     )
 
     try:
         assert index.upsert_document(document) is True
-        results = index.search("PostgreSQL integration search marker")
+        # Search a token unique to THIS run, not a fixed phrase.
+        # _search_postgres matches with `search_vector @@ query_or`, so a
+        # multi-word query ORs its terms and matches any row in the database
+        # containing any of them. These tests share one PostgreSQL server for
+        # the whole CI job, and since the dedicated `-m postgres` step now runs
+        # before the coverage step they execute twice against it -- so a fixed
+        # phrase like "PostgreSQL integration search marker" also matched the
+        # row the earlier step had inserted under a different uuid, and the
+        # exact-equality assertion below failed on a healthy index. Uniqueness
+        # has to live in the searched text, not just in the filename.
+        results = index.search(marker, limit=200)
         assert [result["name"] for result in results] == [path.name]
 
         stats = index.stats()
@@ -50,8 +61,9 @@ def test_postgres_batch_upsert_searches_documents_and_preserves_categories(tmp_p
 
     index = SearchIndex(tmp_path / "unused.db", database_url)
     index.initialize()
-    analyzed_path = tmp_path / f"batch-analyzed-{uuid.uuid4().hex}.pdf"
-    storage_path = tmp_path / f"batch-storage-{uuid.uuid4().hex}.txt"
+    marker = uuid.uuid4().hex
+    analyzed_path = tmp_path / f"batch-analyzed-{marker}.pdf"
+    storage_path = tmp_path / f"batch-storage-{marker}.txt"
     documents = [
         Document(
             path=analyzed_path,
@@ -61,7 +73,7 @@ def test_postgres_batch_upsert_searches_documents_and_preserves_categories(tmp_p
             size=101,
             modified_at=1001.0,
             is_dir=False,
-            text="analysismarker unique analyzed content",
+            text=f"analysismarker{marker} unique analyzed content",
             category="analyzed",
         ),
         Document(
@@ -72,7 +84,7 @@ def test_postgres_batch_upsert_searches_documents_and_preserves_categories(tmp_p
             size=202,
             modified_at=1002.0,
             is_dir=False,
-            text="storagemarker unique storage content",
+            text=f"storagemarker{marker} unique storage content",
             category="storage_direct",
         ),
     ]
@@ -80,11 +92,14 @@ def test_postgres_batch_upsert_searches_documents_and_preserves_categories(tmp_p
     try:
         assert index.upsert_documents(documents) == 2
 
-        analyzed_results = index.search("analysismarker")
+        # Unique per run for the same reason as the test above: these are single
+        # tokens, but they were still fixed strings, so the second execution in
+        # the same job matched the rows the first one had inserted.
+        analyzed_results = index.search(f"analysismarker{marker}", limit=200)
         assert [result["name"] for result in analyzed_results] == [analyzed_path.name]
         assert analyzed_results[0]["category"] == "analyzed"
 
-        storage_results = index.search("storagemarker")
+        storage_results = index.search(f"storagemarker{marker}", limit=200)
         assert [result["name"] for result in storage_results] == [storage_path.name]
         assert storage_results[0]["category"] == "storage_direct"
     finally:

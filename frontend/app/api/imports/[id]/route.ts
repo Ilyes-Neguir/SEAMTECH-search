@@ -1,7 +1,12 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { backendBase, authHeaders } from "@/lib/backend"
+import { requireAuth } from "@/lib/auth"
+
+export const dynamic = "force-dynamic"
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const denied = await requireAuth()
+  if (denied) return denied
   const { id } = await params
   const base = backendBase()
   if (!base) return NextResponse.json({ detail: "Import requires a configured backend." }, { status: 503 })
@@ -17,6 +22,8 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const denied = await requireAuth()
+  if (denied) return denied
   const { id } = await params
   const payload = await req.json().catch(() => null)
   if (!payload || typeof payload !== "object") {

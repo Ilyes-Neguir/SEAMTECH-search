@@ -3,6 +3,7 @@
 import { useRef, useState, useEffect } from "react"
 import type { ImportCorrection, ImportJobPayload, ImportResultPayload, ImportScanPayload } from "@/lib/types"
 import { CorrectionForm } from "@/components/correction-form"
+import { authedFetch } from "@/lib/authed-fetch"
 
 interface DroppedFile {
   file: File
@@ -94,7 +95,7 @@ export function ImportPanel() {
   }
 
   async function callJson(url: string, method: string, body?: unknown) {
-    const response = await fetch(url, {
+    const response = await authedFetch(url, {
       method,
       headers: body !== undefined ? { "Content-Type": "application/json" } : undefined,
       body: body !== undefined ? JSON.stringify(body) : undefined,
@@ -217,7 +218,7 @@ export function ImportPanel() {
       const top = dropped[0].rel.includes("/") ? dropped[0].rel.split("/")[0] : "upload"
       form.append("folder", top)
       for (const item of dropped) form.append("files", item.file, item.rel)
-      const response = await fetch("/api/imports/upload", { method: "POST", body: form })
+      const response = await authedFetch("/api/imports/upload", { method: "POST", body: form })
       const payload = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(payload?.detail ?? "Upload failed.")
       resetAfterScan(payload as ImportScanPayload)

@@ -21,17 +21,23 @@ def make_cfg(tmp_path: Path, **extra):
 
 def test_lifespan_and_retention(tmp_path: Path):
     cfg = make_cfg(tmp_path, database_path=tmp_path / "life.db")
-    # Mock run_migrations to raise, and recover_stale_jobs to return 1, and start_background_worker
-    with patch("seamtech_search.api.SearchIndex.run_migrations", side_effect=Exception("mig fail")):
-        with patch("seamtech_search.api.recover_stale_jobs", return_value=1):
-            with patch("seamtech_search.api.start_background_worker"):
-                with patch("seamtech_search.api.stop_background_worker"):
-                    with patch("seamtech_search.api.asyncio.sleep", side_effect=asyncio.CancelledError):
-                        app = create_app(cfg)
-                        # Use TestClient as context manager to trigger lifespan
-                        with TestClient(app) as client:
-                            r = client.get("/live")
-                            assert r.status_code == 200
+    # Mock recover_stale_jobs to return 1, and start_background_worker.
+    #
+    # This used to also patch run_migrations to raise and then assert /live still
+    # returned 200 -- it was written to cover the `except Exception` branch, and
+    # in doing so asserted that the API serves traffic against a half-migrated
+    # schema. That branch is gone: migration failures are fatal at startup (audit
+    # medium pile), and tests/test_startup_migration_failure.py covers both the
+    # failure and the healthy path. Migrations are left to really run here.
+    with patch("seamtech_search.api.recover_stale_jobs", return_value=1):
+        with patch("seamtech_search.api.start_background_worker"):
+            with patch("seamtech_search.api.stop_background_worker"):
+                with patch("seamtech_search.api.asyncio.sleep", side_effect=asyncio.CancelledError):
+                    app = create_app(cfg)
+                    # Use TestClient as context manager to trigger lifespan
+                    with TestClient(app) as client:
+                        r = client.get("/live")
+                        assert r.status_code == 200
 
     # Test retention_loop success and failure
     cfg2 = make_cfg(tmp_path, database_path=tmp_path / "ret.db")

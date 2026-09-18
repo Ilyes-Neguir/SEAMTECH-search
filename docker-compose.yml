@@ -21,7 +21,16 @@ services:
     # MinIO removed minio/minio from Docker Hub on 2026-09-11 (anonymous
     # pulls now 404/401); quay.io/minio is their current official
     # distribution with the same tags.
-    image: quay.io/minio/minio:latest
+    #
+    # Pinned to an explicit release rather than :latest. Checked against the
+    # quay.io tag list on 2026-09-18: `latest`, `latest-cicd` and
+    # RELEASE.2025-09-07T16-13-09Z are all the SAME manifest digest
+    # (sha256:14cea493d9a3...), so this pin does not move the version under
+    # test -- it only makes it immutable and reproducible. MinIO's community
+    # tags stopped advancing when the project went source-only; the newer
+    # `.hotfix.*` tags on quay.io come from the paid stream and are
+    # deliberately not used here.
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
@@ -34,15 +43,24 @@ services:
       - "127.0.0.1:9001:9001"
     volumes:
       - minio-data:/data
-    # Weakest available check: the MinIO image has no HTTP client (wget/curl)
-    # for this probe. This only proves that the process is alive; it does not
-    # prove that the S3 API answers. Keep it honest rather than masking a
-    # failed HTTP probe with `|| exit 0`.
+    # `mc ready local` is MinIO's own documented in-container healthcheck
+    # (docs/orchestration/docker-compose/docker-compose.yaml) and the one its
+    # maintainers direct people to: the server image ships `mc` with a
+    # pre-configured `local` alias but has no curl/wget, so an HTTP probe from
+    # inside the container is not possible. /minio/health/* is for callers
+    # OUTSIDE the container, which is what the CI integration job's Python
+    # probe uses against 127.0.0.1:9000.
+    #
+    # This replaces `test -d /proc/1`, which could never fail: it proved PID 1
+    # existed, not that the S3 API could serve a request. The `web` service
+    # waits on `condition: service_healthy`, so a real probe means the API no
+    # longer starts against an object store that is up but not ready.
     healthcheck:
-      test: ["CMD", "test", "-d", "/proc/1"]
-      interval: 10s
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
       timeout: 5s
       retries: 5
+      start_period: 15s
 
   redis:
     image: redis:7-alpine
@@ -76,6 +94,20 @@ services:
       SEAMTECH_ALLOW_NETWORK_ACCESS: "true"
       # The documented office deployment is served through a TLS terminator.
       # Override to false only when the service is strictly localhost-only.
+      #
+      # This default MUST stay true. create_app() refuses to start when
+      # host is not loopback, an auth token is set, and behind_tls_proxy is
+      # false:
+      #   raise ValueError("token authentication over non-local host
+      #                     requires behind_tls_proxy=true")
+      # The container listens on 0.0.0.0 so `frontend` can reach it over the
+      # compose network (it is published only on 127.0.0.1 below), so with a
+      # token configured this guard always applies. Flipping the default to
+      # false made web raise inside create_app() -- before uvicorn started --
+      # so the container exited, never became healthy, and
+      # `docker compose up -d web frontend` failed with "dependency failed to
+      # start". Note the frontend service below deliberately defaults this to
+      # false; see the comment there. The two are not a typo to harmonise.
       SEAMTECH_BEHIND_TLS_PROXY: ${SEAMTECH_BEHIND_TLS_PROXY:-true}
       SEAMTECH_AUTH_TOKEN: ${SEAMTECH_AUTH_TOKEN:?Set SEAMTECH_AUTH_TOKEN in the environment}
       SEAMTECH_ROOT_PATHS: ${SEAMTECH_ROOT_PATHS:-}
@@ -107,6 +139,27 @@ services:
       # Server-side only (frontend/lib/backend.ts) — never sent to the browser.
       SEAMTECH_API_URL: http://web:8000
       SEAMTECH_AUTH_TOKEN: ${SEAMTECH_AUTH_TOKEN:?Set SEAMTECH_AUTH_TOKEN in the environment}
+      # UI sign-in (frontend/lib/auth.ts). Audit issue #5, Option B: the
+      # frontend used to forward SEAMTECH_AUTH_TOKEN for anyone who could reach
+      # it, with no login at all. SEAMTECH_UI_PASSWORD is the single shared
+      # operator password; SEAMTECH_SESSION_SECRET signs the httpOnly session
+      # cookie. Both are required — with no password configured the login
+      # endpoint fails closed (503) rather than letting everyone in.
+      SEAMTECH_UI_PASSWORD: ${SEAMTECH_UI_PASSWORD:?Set SEAMTECH_UI_PASSWORD in the environment}
+      SEAMTECH_SESSION_SECRET: ${SEAMTECH_SESSION_SECRET:?Set SEAMTECH_SESSION_SECRET in the environment}
+      SEAMTECH_SESSION_HOURS: ${SEAMTECH_SESSION_HOURS:-12}
+      # Marks the session cookie Secure when a TLS terminator is in front.
+      #
+      # Deliberately defaults to false here while `web` above defaults to true.
+      # shouldMarkCookieSecure() (frontend/lib/auth.ts) also honours
+      # SEAMTECH_SECURE_COOKIES and the request's own x-forwarded-proto, so TLS
+      # deployments still get Secure cookies -- but the default compose
+      # deployment publishes on loopback over plain HTTP, where a Secure cookie
+      # would be dropped by the browser and sign-in (audit issue #5) would not
+      # work at all. web's flag gates a different thing: whether token auth may
+      # run on a non-loopback bind. Set SEAMTECH_BEHIND_TLS_PROXY explicitly to
+      # give both services the same value.
+      SEAMTECH_BEHIND_TLS_PROXY: ${SEAMTECH_BEHIND_TLS_PROXY:-false}
     depends_on:
       web:
         condition: service_healthy
@@ -114,6 +167,9 @@ services:
       # Bound to loopback interface 127.0.0.1 by default.
       - "127.0.0.1:3000:3000"
     healthcheck:
+      # /api/health is the one unauthenticated route: it answers with a static
+      # liveness payload (no archive counts) so this probe keeps working
+      # without a session cookie. See frontend/app/api/health/route.ts.
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]
       interval: 30s
       timeout: 10s

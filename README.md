@@ -38,7 +38,8 @@ Browser → Next.js Frontend (proxy) → FastAPI API → PostgreSQL 16 (FTS) + R
 
 ```bash
 cp .env.example .env
-# Edit .env: set POSTGRES_PASSWORD, MINIO_ROOT_USER, MINIO_ROOT_PASSWORD, REDIS_PASSWORD, SEAMTECH_AUTH_TOKEN
+# Edit .env: set POSTGRES_PASSWORD, MINIO_ROOT_USER, MINIO_ROOT_PASSWORD, REDIS_PASSWORD,
+#            SEAMTECH_AUTH_TOKEN, SEAMTECH_UI_PASSWORD, SEAMTECH_SESSION_SECRET
 docker compose up -d
 ```
 
@@ -46,7 +47,7 @@ Services (all `restart: unless-stopped`, bound to `127.0.0.1`):
 
 | Service | URL | Notes |
 |---|---|---|
-| Frontend | http://localhost:3000 | Proxies to backend |
+| Frontend | http://localhost:3000 | Proxies to backend; sign-in required at `/login` |
 | Backend | http://localhost:8000 | `/live`, `/ready`, `/health`, `/metrics` |
 | MinIO S3 | http://localhost:9000 | API |
 | MinIO Console | http://localhost:9001 | UI |
@@ -63,8 +64,12 @@ Env overrides (all `SEAMTECH_` prefixed) or `config/config.json` (must exist, no
 |---|---|---|
 | `SEAMTECH_ROOT_PATHS` | Colon or comma separated search roots | required via file or env |
 | `SEAMTECH_DATABASE_URL` | Postgres URL | — |
-| `SEAMTECH_AUTH_TOKEN` | Shared token (32+ chars) | — (mandatory in compose) |
-| `SEAMTECH_BEHIND_TLS_PROXY` | Allow non-localhost when behind TLS terminator | `false` (was `true`, fixed) |
+| `SEAMTECH_AUTH_TOKEN` | Shared **server-to-server** token (32+ chars), never sent to the browser | — (mandatory in compose) |
+| `SEAMTECH_UI_PASSWORD` | Password the operator types at `/login` | — (mandatory in compose; unset ⇒ login fails closed with 503) |
+| `SEAMTECH_SESSION_SECRET` | HMAC key signing the httpOnly session cookie | — (mandatory in compose) |
+| `SEAMTECH_SESSION_HOURS` | Session lifetime | `12` |
+| `SEAMTECH_SECURE_COOKIES` | Force the `Secure` cookie flag | auto from TLS proxy / `X-Forwarded-Proto` |
+| `SEAMTECH_BEHIND_TLS_PROXY` | Allow non-localhost binding with token auth when a TLS terminator is in front | config default `false`; compose: web `true`, frontend `false` (different purposes — see `docs/TLS.md`) |
 | `SEAMTECH_S3_ENDPOINT_URL`, `SEAMTECH_S3_BUCKET`, `SEAMTECH_S3_ACCESS_KEY`, `SEAMTECH_S3_SECRET_KEY` | S3 | — |
 | `SEAMTECH_REDIS_URL` | `redis://:password@host:6379/0` | — |
 | `SEAMTECH_MIN_FREE_BYTES` | Disk floor | 1GB |
@@ -126,10 +131,15 @@ SEAMTECH_TEST_S3_URL=http://localhost:9000 pytest -m s3 -q
 - Token compare uses `secrets.compare_digest`.
 - `/docs`/`/openapi.json` disabled when auth token set, not in rate-limiter exempt.
 - Frontend sample fallback gated on `SEAMTECH_DEMO_MODE=1`, impossible in production → 503.
-- Backend container runs as non-root `seamtech`, has `HEALTHCHECK`, does not include `pytest`/`httpx` (split to `requirements-dev.txt`), does not copy `config/` (mounted).
-- MinIO and Redis credentials mandatory (`:?` in compose), Redis `requirepass` set, `BEHIND_TLS_PROXY` defaults `false`, `restart: unless-stopped` everywhere.
+- Backend container runs as non-root `seamtech`, has `HEALTHCHECK`, does not include `pytest`/`httpx` (split to `requirements-dev.txt`), copies `config/` and seeds `config/config.json` from `config.example.json` at build time (see `Dockerfile`).
+- MinIO and Redis credentials mandatory (`:?` in compose), Redis `requirepass` set, `BEHIND_TLS_PROXY` is `false` in app config and `true` for the web service in compose (the office deployment sits behind a TLS terminator and web must bind `0.0.0.0` so the frontend container can reach it — the backend refuses non-loopback bind + token + `false`), `restart: unless-stopped` everywhere.
 - `default_config_path()` fails loudly if `config.json` missing.
 - OneDrive code deleted (module, config, tests, `pending_reauth` UI).
+- **The UI requires sign-in.** Every route under `frontend/app/api/*` returns `401` without a valid
+  httpOnly session cookie, and `app/page.tsx` redirects to `/login`. Previously the frontend
+  forwarded `SEAMTECH_AUTH_TOKEN` for anyone who could reach it, with no login at all. See
+  [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#authentication) for the decision and the two deliberate
+  exceptions (`/api/auth/*`, and `/api/health`'s count-free liveness payload).
 
 ---
 
