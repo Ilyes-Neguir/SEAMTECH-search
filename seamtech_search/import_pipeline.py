@@ -545,6 +545,96 @@ def extract_excel_summary(path: Path) -> ExcelSummary:
 # ---------------------------------------------------------------------------
 
 
+# --- PDF report layout -----------------------------------------------------
+#
+# `generate_report` used to hard-truncate everything it drew: field values at
+# `str(value)[:100]`, warnings at `[:110]`, the Excel summary at `[:110]`, table
+# cells at `[:20]`. The cut was silent -- a long description ended mid-word with
+# no ellipsis and nothing recorded that content had been lost. Worse, the
+# warnings and additional-sheets loops decremented `y` on every line without
+# ever comparing it to the bottom margin, so a sheet with enough warnings drew
+# them straight off the page and they vanished from the PDF entirely. The Excel
+# row loop did check, but answered with `break`, silently dropping the rows it
+# had not yet drawn.
+#
+# Values are now word-wrapped to the printable width, table cells are fitted
+# with a visible ellipsis, and every loop that walks down the page starts a new
+# page instead of overflowing or truncating.
+_PDF_MARGIN_X = 50
+_PDF_BOTTOM_MARGIN = 55
+_PDF_TOP_OFFSET = 60
+_ELLIPSIS = "..."
+
+
+def _pdf_wrap(pdf: Any, text: str, font_name: str, font_size: float, max_width: float) -> list[str]:
+    """Word-wrap `text` into lines no wider than `max_width` in the given font.
+
+    Measures with the canvas' own `stringWidth`, so wrapping follows the width
+    actually rendered rather than a guessed character count -- which is why the
+    old `[:100]` limits were both too generous for wide glyphs and too strict
+    for narrow ones. Tokens longer than the whole width (a long reference code,
+    an unbroken path) are split across lines rather than dropped.
+    """
+    lines: list[str] = []
+    for paragraph in str(text).splitlines() or [""]:
+        current = ""
+        for word in paragraph.split():
+            candidate = f"{current} {word}" if current else word
+            if pdf.stringWidth(candidate, font_name, font_size) <= max_width:
+                current = candidate
+                continue
+            if current:
+                lines.append(current)
+                current = ""
+            while word and pdf.stringWidth(word, font_name, font_size) > max_width:
+                cut = len(word)
+                while cut > 1 and pdf.stringWidth(word[:cut], font_name, font_size) > max_width:
+                    cut -= 1
+                lines.append(word[:cut])
+                word = word[cut:]
+            current = word
+        lines.append(current)
+    return lines
+
+
+def _pdf_fit(pdf: Any, text: str, font_name: str, font_size: float, max_width: float) -> str:
+    """Truncate to `max_width` with a visible ellipsis.
+
+    For table cells only: the column width is fixed by the number of headers, so
+    wrapping there would desynchronise cells across rows. Unlike the old `[:20]`
+    the cut is by measured width and is visible in the output.
+    """
+    value = str(text)
+    if pdf.stringWidth(value, font_name, font_size) <= max_width:
+        return value
+    while value and pdf.stringWidth(value + _ELLIPSIS, font_name, font_size) > max_width:
+        value = value[:-1]
+    return value + _ELLIPSIS
+
+
+def _pdf_ensure_room(
+    pdf: Any,
+    y: float,
+    needed: float,
+    height: float,
+    title: str | None = None,
+    title_size: float = 13,
+) -> float:
+    """Return a usable `y`, starting a new page when `needed` would overflow.
+
+    `showPage` resets the font, so callers must set it again afterwards.
+    """
+    if y - needed >= _PDF_BOTTOM_MARGIN:
+        return y
+    pdf.showPage()
+    y = height - _PDF_TOP_OFFSET
+    if title:
+        pdf.setFont("Helvetica-Bold", title_size)
+        pdf.drawString(_PDF_MARGIN_X, y, title)
+        y -= 22
+    return y
+
+
 def generate_report(
     data: ExtractedData,
     output_path: Path,
@@ -585,22 +675,37 @@ def generate_report(
         ("Status", data.extraction_status),
         ("Confidence", f"{data.confidence:.0%}"),
     ]
+    value_x = 170
+    value_width = width - value_x - _PDF_MARGIN_X
     for label, value in rows:
+        wrapped = _pdf_wrap(pdf, value, "Helvetica", 10, value_width)
+        y = _pdf_ensure_room(pdf, y, 12 * len(wrapped) + 8, height)
         pdf.setFont("Helvetica-Bold", 10)
-        pdf.drawString(50, y, label)
+        pdf.drawString(_PDF_MARGIN_X, y, label)
         pdf.setFont("Helvetica", 10)
-        pdf.drawString(170, y, str(value)[:100])
-        y -= 20
+        for offset, line in enumerate(wrapped):
+            pdf.drawString(value_x, y - offset * 12, line)
+        # 12pt per line plus 8pt of leading: identical to the old fixed 20pt
+        # step for single-line values, so ordinary reports look unchanged.
+        y -= 12 * len(wrapped) + 8
 
     if data.warnings:
         y -= 8
+        # Room for the heading plus the first line before drawing either.
+        y = _pdf_ensure_room(pdf, y, 40, height)
         pdf.setFont("Helvetica-Bold", 10)
-        pdf.drawString(50, y, "Warnings")
+        pdf.drawString(_PDF_MARGIN_X, y, "Warnings")
         y -= 16
-        pdf.setFont("Helvetica", 9)
+        warning_width = width - 60 - _PDF_MARGIN_X
         for warning in data.warnings:
-            pdf.drawString(60, y, warning[:110])
-            y -= 14
+            for line in _pdf_wrap(pdf, warning, "Helvetica", 9, warning_width):
+                # Page-break guard. Without it this loop walked `y` below the
+                # bottom margin and the remaining warnings were drawn off the
+                # page, so they disappeared from the PDF without any error.
+                y = _pdf_ensure_room(pdf, y, 14, height)
+                pdf.setFont("Helvetica", 9)
+                pdf.drawString(60, y, line)
+                y -= 14
 
     # If Excel summary exists, render Excel Resume section
     if active_excel and active_excel.sheets:
@@ -617,8 +722,13 @@ def generate_report(
             f"Total: {active_excel.total_sheets} feuille(s), {active_excel.total_rows} lignes. "
             f"{active_excel.summary_text}"
         )
-        pdf.drawString(50, y, summary_line[:110])
-        y -= 20
+        summary_width = width - 2 * _PDF_MARGIN_X
+        for line in _pdf_wrap(pdf, summary_line, "Helvetica", 9, summary_width):
+            y = _pdf_ensure_room(pdf, y, 12, height)
+            pdf.setFont("Helvetica", 9)
+            pdf.drawString(_PDF_MARGIN_X, y, line)
+            y -= 12
+        y -= 8
 
         # Draw first sheet table summary
         for sheet in active_excel.sheets[:2]:
@@ -633,25 +743,32 @@ def generate_report(
             pdf.drawString(50, y, f"Feuille: {sheet.sheet_name} ({sheet.row_count} lignes)")
             y -= 16
 
+            # Cells are fitted to the measured column width with a visible
+            # ellipsis. A fixed-width column cannot wrap without
+            # desynchronising cells across rows, but `[:20]` cut by character
+            # count regardless of how wide the text rendered, and cut silently.
+            col_width = (width - 2 * _PDF_MARGIN_X) / max(1, min(6, len(sheet.headers)))
+            cell_pad = 4
+
             # Render table header
-            pdf.setFont("Helvetica-Bold", 8)
-            col_x = 50
-            col_width = (width - 100) / max(1, min(6, len(sheet.headers)))
+            col_x = _PDF_MARGIN_X
             for h in sheet.headers[:6]:
-                pdf.drawString(col_x, y, str(h)[:20])
+                pdf.setFont("Helvetica-Bold", 8)
+                pdf.drawString(col_x, y, _pdf_fit(pdf, h, "Helvetica-Bold", 8, col_width - cell_pad))
                 col_x += col_width
             y -= 12
 
-            # Render rows
-            pdf.setFont("Helvetica", 8)
+            # Render rows. This loop used to end with `if y < 60: break`, which
+            # silently discarded every row not yet drawn; rows now continue onto
+            # a new page.
             for r in sheet.sample_rows[:6]:
-                col_x = 50
+                y = _pdf_ensure_room(pdf, y, 11, height)
+                pdf.setFont("Helvetica", 8)
+                col_x = _PDF_MARGIN_X
                 for cell in r[:6]:
-                    pdf.drawString(col_x, y, str(cell)[:20])
+                    pdf.drawString(col_x, y, _pdf_fit(pdf, cell, "Helvetica", 8, col_width - cell_pad))
                     col_x += col_width
                 y -= 11
-                if y < 60:
-                    break
             y -= 15
 
     # If dossier contains additional technical sheets, render them
@@ -678,9 +795,14 @@ def generate_report(
                 f"• {extra.filename}: Réf {extra.reference or 'N/A'} | Mat {extra.material or 'N/A'} | "
                 f"Dim {dims_str} | Qté {extra.quantity or 1}"
             )
-            pdf.setFont("Helvetica", 8)
-            pdf.drawString(55, y, line[:110])
-            y -= 12
+            sheet_width = width - 55 - _PDF_MARGIN_X
+            for wrapped in _pdf_wrap(pdf, line, "Helvetica", 8, sheet_width):
+                # No page-break guard existed here at all: a dossier with enough
+                # extra sheets ran the list off the bottom of the page.
+                y = _pdf_ensure_room(pdf, y, 12, height)
+                pdf.setFont("Helvetica", 8)
+                pdf.drawString(55, y, wrapped)
+                y -= 12
 
     pdf.save()
     return output_path
