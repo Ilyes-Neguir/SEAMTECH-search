@@ -107,6 +107,17 @@ services:
       # Server-side only (frontend/lib/backend.ts) — never sent to the browser.
       SEAMTECH_API_URL: http://web:8000
       SEAMTECH_AUTH_TOKEN: ${SEAMTECH_AUTH_TOKEN:?Set SEAMTECH_AUTH_TOKEN in the environment}
+      # UI sign-in (frontend/lib/auth.ts). Audit issue #5, Option B: the
+      # frontend used to forward SEAMTECH_AUTH_TOKEN for anyone who could reach
+      # it, with no login at all. SEAMTECH_UI_PASSWORD is the single shared
+      # operator password; SEAMTECH_SESSION_SECRET signs the httpOnly session
+      # cookie. Both are required — with no password configured the login
+      # endpoint fails closed (503) rather than letting everyone in.
+      SEAMTECH_UI_PASSWORD: ${SEAMTECH_UI_PASSWORD:?Set SEAMTECH_UI_PASSWORD in the environment}
+      SEAMTECH_SESSION_SECRET: ${SEAMTECH_SESSION_SECRET:?Set SEAMTECH_SESSION_SECRET in the environment}
+      SEAMTECH_SESSION_HOURS: ${SEAMTECH_SESSION_HOURS:-12}
+      # Marks the session cookie Secure when a TLS terminator is in front.
+      SEAMTECH_BEHIND_TLS_PROXY: ${SEAMTECH_BEHIND_TLS_PROXY:-false}
     depends_on:
       web:
         condition: service_healthy
@@ -114,6 +125,9 @@ services:
       # Bound to loopback interface 127.0.0.1 by default.
       - "127.0.0.1:3000:3000"
     healthcheck:
+      # /api/health is the one unauthenticated route: it answers with a static
+      # liveness payload (no archive counts) so this probe keeps working
+      # without a session cookie. See frontend/app/api/health/route.ts.
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]
       interval: 30s
       timeout: 10s

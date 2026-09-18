@@ -1,8 +1,9 @@
 import { test, expect } from "@playwright/test"
+import { signIn } from "./helpers"
 
 test.describe("Search Workflow", () => {
   test("should search for documents and display results with preview", async ({ page }) => {
-    await page.goto("/")
+    await signIn(page)
 
     // Find search input and type query
     const searchInput = page.getByPlaceholder(/Search files, folders/i)

@@ -6,9 +6,10 @@ import { useState } from "react"
 import type { PreviewResponse, SearchResult } from "@/lib/types"
 import { formatBytes, formatDateTime } from "@/lib/format"
 import { cn } from "@/lib/utils"
+import { authedFetch } from "@/lib/authed-fetch"
 
 const fetcher = (url: string) =>
-  fetch(url).then(async (r) => {
+  authedFetch(url).then(async (r) => {
     const body = await r.json()
     if (!r.ok) throw new Error(body?.detail ?? "Preview failed.")
     return body as PreviewResponse

@@ -164,6 +164,11 @@ jobs:
           MINIO_ROOT_PASSWORD: minioadmin123
           REDIS_PASSWORD: redis_test_password
           SEAMTECH_AUTH_TOKEN: test-token-123
+          # Required by docker-compose.yml since the UI sign-in gate (audit
+          # issue #5, Option B): ${VAR:?...} makes `docker compose config` fail
+          # without them, even when only the infra services are started.
+          SEAMTECH_UI_PASSWORD: ci-ui-password
+          SEAMTECH_SESSION_SECRET: ci-session-secret-not-for-production
         run: |
           # Validate interpolation/schema up front so a config error fails
           # here with a clear message instead of deep in `up`.
@@ -185,6 +190,9 @@ jobs:
           MINIO_ROOT_USER: minioadmin
           MINIO_ROOT_PASSWORD: minioadmin123
           REDIS_PASSWORD: redis_test_password
+          SEAMTECH_AUTH_TOKEN: test-token-123
+          SEAMTECH_UI_PASSWORD: ci-ui-password
+          SEAMTECH_SESSION_SECRET: ci-session-secret-not-for-production
         run: |
           python - << 'PY'
           import subprocess
@@ -242,6 +250,11 @@ jobs:
           MINIO_ROOT_PASSWORD: minioadmin123
           REDIS_PASSWORD: redis_test_password
           SEAMTECH_AUTH_TOKEN: test-token-123
+          # Required by docker-compose.yml since the UI sign-in gate (audit
+          # issue #5, Option B): ${VAR:?...} makes `docker compose config` fail
+          # without them, even when only the infra services are started.
+          SEAMTECH_UI_PASSWORD: ci-ui-password
+          SEAMTECH_SESSION_SECRET: ci-session-secret-not-for-production
           SEAMTECH_S3_BUCKET: seamtech-documents
         run: |
           set -euo pipefail
@@ -310,6 +323,11 @@ jobs:
           MINIO_ROOT_PASSWORD: minioadmin123
           REDIS_PASSWORD: redis_test_password
           SEAMTECH_AUTH_TOKEN: test-token-123
+          # Required by docker-compose.yml since the UI sign-in gate (audit
+          # issue #5, Option B): ${VAR:?...} makes `docker compose config` fail
+          # without them, even when only the infra services are started.
+          SEAMTECH_UI_PASSWORD: ci-ui-password
+          SEAMTECH_SESSION_SECRET: ci-session-secret-not-for-production
           SEAMTECH_S3_BUCKET: seamtech-documents
           # CI guarantees the infra is healthy above: the test must not swallow
           # failures of backends that are supposed to be up.

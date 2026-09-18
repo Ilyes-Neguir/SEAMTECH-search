@@ -34,7 +34,8 @@ notepad .env
 ```
 
 Edit `.env` before starting the stack. Set unique, long values for all required
-secrets; add `REDIS_PASSWORD`, which is required by `docker-compose.yml`:
+secrets; add `REDIS_PASSWORD`, which is required by `docker-compose.yml`, and the
+two UI sign-in values described under [Authentication](#authentication):
 
 ```dotenv
 POSTGRES_PASSWORD=<long-random-postgres-password>
@@ -42,8 +43,16 @@ MINIO_ROOT_USER=<long-random-minio-user>
 MINIO_ROOT_PASSWORD=<long-random-minio-password>
 REDIS_PASSWORD=<long-random-redis-password>
 SEAMTECH_AUTH_TOKEN=<long-random-shared-token>
+SEAMTECH_UI_PASSWORD=<the password the operator types at /login>
+SEAMTECH_SESSION_SECRET=<long-random-cookie-signing-key>
 SEAMTECH_S3_BUCKET=seamtech-documents
 SEAMTECH_ROOT_PATHS=/app/data/DesignFiles
+```
+
+Generate the random ones in PowerShell:
+
+```powershell
+-join ((48..57)+(65..90)+(97..122) | Get-Random -Count 48 | ForEach-Object {[char]$_})
 ```
 
 `SEAMTECH_ROOT_PATHS` is a path inside the container, not a Windows path. Put the
@@ -72,6 +81,63 @@ payload. If a service is unhealthy, inspect its logs before restarting it:
 docker compose logs --tail 100 web frontend postgres minio redis
 docker compose ps
 ```
+
+## Authentication
+
+**Decision (audit issue #5): Option B — the UI has real sign-in.** This is
+stated explicitly rather than left implicit, because the audit found the
+frontend forwarding `SEAMTECH_AUTH_TOKEN` to the backend for *anyone* who could
+reach it, with no login screen at all.
+
+How it works:
+
+- `/login` collects a single shared operator password (`SEAMTECH_UI_PASSWORD`)
+  and `POST`s it to `/api/auth/login`.
+- On success the frontend sets an **httpOnly, SameSite=Lax** session cookie
+  (`seamtech_session`) containing an HMAC-SHA256-signed token
+  (`v1.<issuedAt>.<expiresAt>.<signature>`), signed with
+  `SEAMTECH_SESSION_SECRET`. The cookie is unreadable from JavaScript, so an
+  XSS bug cannot exfiltrate it. Sessions are stateless — no table, no Redis.
+- Every route under `frontend/app/api/*` calls `requireAuth()` first and returns
+  `401` without a valid session, so the backend token is never forwarded on an
+  unauthenticated caller's behalf.
+- `app/page.tsx` is a server component that redirects to `/login` when the
+  session is missing, so the search screen is never rendered either.
+- Sessions last `SEAMTECH_SESSION_HOURS` (default 12). Any `401` received by the
+  UI sends the operator back to `/login` with a `?next=` return path.
+- Failed sign-ins are throttled in memory: 5 attempts per 5 minutes, then a
+  5-minute lockout. This is per-process, not distributed — adequate for one
+  operator on one container, and not a substitute for network-level controls.
+
+Two routes are intentionally **not** gated:
+
+| Route | Why |
+| --- | --- |
+| `/api/auth/*` | `login` creates the session; `logout` must work when already signed out; `session` only reports whether the caller is authenticated. |
+| `/api/health` | Target of the compose healthcheck and the CI probe. Unauthenticated callers get a static liveness payload only — **no** archive counts and **no** backend call — so the probe works without a session and leaks nothing. |
+
+Required environment:
+
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `SEAMTECH_UI_PASSWORD` | yes | The shared password typed at `/login`. Unset ⇒ login returns `503` and nobody gets in (fails closed). |
+| `SEAMTECH_SESSION_SECRET` | yes | Signs the session cookie. Unset ⇒ a random per-process secret is used and sessions die on restart; a warning is logged. |
+| `SEAMTECH_SESSION_HOURS` | no | Session lifetime, default `12`. |
+| `SEAMTECH_SECURE_COOKIES` | no | Force the `Secure` cookie flag. Otherwise it is set automatically when `SEAMTECH_BEHIND_TLS_PROXY=true` or the request arrived over HTTPS. |
+
+`docker-compose.yml` requires `SEAMTECH_UI_PASSWORD` and
+`SEAMTECH_SESSION_SECRET` with `${VAR:?...}`, so `docker compose up` refuses to
+start until they are set. Rotating `SEAMTECH_SESSION_SECRET` signs everybody out
+immediately; rotating `SEAMTECH_UI_PASSWORD` takes effect on the next sign-in.
+
+**Why not Option A (localhost-only)?** The compose file already binds every
+published port to `127.0.0.1`, so Option A's binding change was already in
+place, and `SEAMTECH_HOST=0.0.0.0` inside the `web` container is *required* for
+the `frontend` container to reach it over the Docker network — removing it
+breaks the stack rather than hardening it. That would have left only a README
+warning, while this document and [TLS.md](TLS.md) both describe exposing the app
+to the office LAN and to a VPS behind Caddy. Sign-in is the control that makes
+those deployments safe; a warning does not.
 
 ## Office LAN access
 

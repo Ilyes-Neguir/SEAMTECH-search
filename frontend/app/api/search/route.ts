@@ -2,8 +2,13 @@ import { type NextRequest, NextResponse } from "next/server"
 import { backendBase, authHeaders } from "@/lib/backend"
 import { searchSample } from "@/lib/sample-data"
 import type { SearchResponse } from "@/lib/types"
+import { requireAuth } from "@/lib/auth"
+
+export const dynamic = "force-dynamic"
 
 export async function GET(req: NextRequest) {
+  const denied = await requireAuth()
+  if (denied) return denied
   const { searchParams } = new URL(req.url)
   const q = (searchParams.get("q") ?? "").trim()
   const limit = Math.min(Math.max(Number(searchParams.get("limit") ?? 25), 1), 200)
