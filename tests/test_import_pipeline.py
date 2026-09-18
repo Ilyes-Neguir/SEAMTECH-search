@@ -42,6 +42,59 @@ def test_description_header_does_not_capture_following_line(monkeypatch, tmp_pat
     assert result.reference == "7792-SO-GV"
 
 
+def test_field_capture_stops_at_next_column_not_end_of_line(monkeypatch, tmp_path: Path) -> None:
+    """Regression test for the field-bleed bug found auditing against a real
+    two-column fabrication sheet: pdfplumber's coordinate-aware text
+    extraction leaves a multi-space gap between adjacent columns, and a
+    greedy `([^\\n]+)` capture used to swallow the whole rest of the line."""
+    _extract_with_text(
+        monkeypatch,
+        "FICHE DE FABRICATION\n"
+        "Reference    REF-2026-778     Client     NAUTIC SARL\n"
+        "Matériau     Dacron Pro 340   Quantite   2\n"
+        "Description  Grand voile lattee   Date   01/09/2026\n"
+        "Longueur     12   m\n"
+        "Largeur      4.2   m\n",
+    )
+
+    result = extract_structured_pdf(tmp_path / "tech.pdf", AppConfig(root_paths=[tmp_path]))
+
+    assert result.reference == "REF-2026-778"
+    assert result.material == "Dacron Pro 340"
+    assert result.description == "Grand voile lattee"
+    assert result.dimensions.length == 12.0
+    assert result.dimensions.width == 4.2
+    assert result.dimensions.unit == "m"
+    assert result.dimensions.length_mm == 12000.0
+
+
+def test_bare_dimension_with_no_unit_is_not_assumed_to_be_mm(monkeypatch, tmp_path: Path) -> None:
+    """A bare 'N x M' with no unit and no longueur/largeur label anywhere
+    (e.g. a scale note) must not be silently normalized as millimetres."""
+    _extract_with_text(monkeypatch, "FICHE DE FABRICATION\nEchelle 12 x 4\nReference: REF-1\n")
+
+    result = extract_structured_pdf(tmp_path / "tech.pdf", AppConfig(root_paths=[tmp_path]))
+
+    assert result.dimensions.unit is None
+    assert result.dimensions.length_mm is None
+    assert any("unité non détectée" in w for w in result.warnings)
+
+
+def test_labelled_dimension_wins_over_unrelated_naked_number_pair(monkeypatch, tmp_path: Path) -> None:
+    """A labelled 'longueur/largeur' must be used even if an unrelated bare
+    'N x M' (a date, a part code) appears earlier in the document."""
+    _extract_with_text(
+        monkeypatch,
+        "FICHE DE FABRICATION\nDate 01x09\nLongueur: 3000 mm\nLargeur: 1500 mm\n",
+    )
+
+    result = extract_structured_pdf(tmp_path / "tech.pdf", AppConfig(root_paths=[tmp_path]))
+
+    assert result.dimensions.length == 3000.0
+    assert result.dimensions.width == 1500.0
+    assert result.dimensions.unit == "mm"
+
+
 def test_extract_excel_summary(tmp_path: Path) -> None:
     wb_path = tmp_path / "test_bom.xlsx"
     wb = openpyxl.Workbook()

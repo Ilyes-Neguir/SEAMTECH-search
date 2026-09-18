@@ -81,10 +81,13 @@ IIS, or Nginx) in front of `http://127.0.0.1:3000` and give users an HTTPS URL.
 Forward the original `Host` and `X-Forwarded-Proto` headers. Install the issuing
 CA certificate on office client machines when using an internal certificate.
 
-The compose default for `SEAMTECH_BEHIND_TLS_PROXY` is `true` because the
- documented office deployment has this TLS boundary. Do not use that setting as
-a reason to expose port 8000 directly. If this machine is strictly localhost-only,
-set `SEAMTECH_BEHIND_TLS_PROXY=false` in `.env`.
+The compose default for `SEAMTECH_BEHIND_TLS_PROXY` is `false` (secure by
+default for a localhost-only install). If you put this behind a real TLS
+terminator as described above, set `SEAMTECH_BEHIND_TLS_PROXY=true` in `.env`
+so the app trusts the proxy's forwarded headers. Do not set it to `true`
+unless a TLS proxy is actually in front of the app — doing so on an exposed,
+un-proxied port lets forwarded-header spoofing bypass the app's own scheme
+checks.
 
 See [TLS.md](TLS.md) for Caddy, Nginx, and Cloudflare Tunnel examples. The
 reverse proxy should publish only the frontend; keep PostgreSQL, Redis, MinIO,

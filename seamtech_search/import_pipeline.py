@@ -204,34 +204,83 @@ class ImportResult:
 # Fixed-layout rules & Text/Excel Extractors
 # ---------------------------------------------------------------------------
 
+# Words that mark the start of the NEXT column/field on a fixed-layout sheet.
+# When pdfplumber flattens a table row (or a multi-column line) into a single
+# line of text, a greedy `([^\n]+)` capture has no way to know where one
+# field ends and the next begins, so it swallows the whole rest of the line —
+# this is what let "reference" absorb "Client NAUTIC SARL" in production
+# documents that the synthetic test fixture never exercised. `_FIELD_STOP` is
+# a lookahead every field capture must respect: stop at a table-cell pipe
+# (from `_extract_pdf_with_plumber`'s `" | ".join(...)`), a run of 2+ spaces
+# (the column gap pdfplumber's coordinate-aware text extraction leaves
+# between adjacent columns), the start of another known label, a newline, or
+# end of string — whichever comes first.
+_FIELD_LABEL_WORDS: tuple[str, ...] = (
+    "reference",
+    "référence",
+    "material",
+    "matière",
+    "matériau",
+    "matériaux",
+    "tissu",
+    "quantity",
+    "quantité",
+    "description",
+    "longueur",
+    "largeur",
+    "hauteur",
+    "length",
+    "width",
+    "height",
+    "client",
+    "date",
+    "commande",
+)
+_FIELD_STOP = (
+    r"(?=\s{2,}"  # column gap
+    r"|\s*\|"  # table-cell separator
+    r"|\s+(?:" + "|".join(_FIELD_LABEL_WORDS) + r")\s*[:\-]?\s*\S"  # next label starting
+    r"|\n|$)"
+)
+
 FIELD_PATTERNS: dict[str, tuple[str, ...]] = {
     "reference": (
-        r"reference\s*[:\-]?\s*([^\n]+)",
-        r"référence\s*[:\-]?\s*([^\n]+)",
+        r"reference\s*[:\-]?\s*([^\n]+?)" + _FIELD_STOP,
+        r"référence\s*[:\-]?\s*([^\n]+?)" + _FIELD_STOP,
         r"(?:fichier|commande)\s+([A-Z0-9][A-Z0-9_-]+)",
     ),
     "material": (
-        r"material\s*[:\-]?\s*([^\n]+)",
-        r"mati(?:è|e)re\s*[:\-]?\s*([^\n]+)",
-        r"matériau(?:x)?\s*[:\-]?\s*([^\n]+)",
-        r"tissu\(s\)\s*:\s*([^\n]+)",
+        r"material\s*[:\-]?\s*([^\n]+?)" + _FIELD_STOP,
+        r"mati(?:è|e)re\s*[:\-]?\s*([^\n]+?)" + _FIELD_STOP,
+        r"matériau(?:x)?\s*[:\-]?\s*([^\n]+?)" + _FIELD_STOP,
+        r"tissu\(s\)\s*:\s*([^\n]+?)" + _FIELD_STOP,
     ),
     "quantity": (
         r"quantity\s*[:\-]?\s*(\d+)",
         r"quantit(?:y|é)\s*[:\-]?\s*(\d+)",
     ),
     "description": (
-        r"description[^\S\r\n]*[:\-]?[^\S\r\n]*([^\n]+)",
-        r"fiche de fabrication[^\S\r\n]*[\"']?([^\n\"']+)",
+        r"description[^\S\r\n]*[:\-]?[^\S\r\n]*([^\n]+?)" + _FIELD_STOP,
+        r"fiche de fabrication[^\S\r\n]*[\"']?([^\n\"']+?)" + _FIELD_STOP,
     ),
 }
+# Anything captured for a non-description field that still contains another
+# label word, or that runs suspiciously long for what should be a short
+# value, is treated as a probable bleed rather than a trustworthy match —
+# see `_looks_bled`.
+_LABEL_WORD_RE = re.compile(r"\b(?:" + "|".join(_FIELD_LABEL_WORDS) + r")\b", re.I)
+_MAX_PLAUSIBLE_FIELD_LENGTH = 120
+
 DIMENSION_PATTERN = re.compile(
     r"(\d+(?:[.,]\d+)?)\s*[x×]\s*(\d+(?:[.,]\d+)?)(?:\s*[x×]\s*(\d+(?:[.,]\d+)?))?\s*(mm|cm|m)?", re.I
 )
 LABELED_DIMENSION_PATTERNS: dict[str, tuple[str, ...]] = {
+    # "length" patterns carry an extra optional group: some sheets write
+    # "longueur: 2 x 1.5 m" (length and width paired on the same labelled
+    # line) rather than separate "longueur:"/"largeur:" lines.
     "length": (
-        r"longueur\s*[:\-]?\s*(\d+(?:[.,]\d+)?)\s*(mm|cm|m)?",
-        r"length\s*[:\-]?\s*(\d+(?:[.,]\d+)?)\s*(mm|cm|m)?",
+        r"longueur\s*[:\-]?\s*(\d+(?:[.,]\d+)?)(?:\s*[x×]\s*(\d+(?:[.,]\d+)?))?\s*(mm|cm|m)?",
+        r"length\s*[:\-]?\s*(\d+(?:[.,]\d+)?)(?:\s*[x×]\s*(\d+(?:[.,]\d+)?))?\s*(mm|cm|m)?",
     ),
     "width": (
         r"largeur\s*[:\-]?\s*(\d+(?:[.,]\d+)?)\s*(mm|cm|m)?",
@@ -256,15 +305,37 @@ def classify_path(path: Path, text: str = "") -> str:
 
 
 def _extract_dimensions(text: str) -> dict[str, Any] | None:
-    dimension = DIMENSION_PATTERN.search(text)
-    if dimension:
-        unit = (dimension.group(4) or "mm").lower()
-        return {
-            "length": float(dimension.group(1).replace(",", ".")),
-            "width": float(dimension.group(2).replace(",", ".")),
-            "height": float(dimension.group(3).replace(",", ".")) if dimension.group(3) else None,
-            "unit": unit,
-        }
+    # 1. Labelled dimensions ("longueur:", "width:", ...) win first. They're
+    #    the only signal that's actually tied to a dimension by the document
+    #    itself, so they must be checked before the naked "N x M" pattern
+    #    below, which will happily match a date or a part code anywhere in
+    #    the page and previously ran first, silently overriding these.
+    labeled: dict[str, Any] = {}
+    paired_width: float | None = None
+    for axis, patterns in LABELED_DIMENSION_PATTERNS.items():
+        for pattern in patterns:
+            match = re.search(pattern, text, re.I)
+            if match:
+                labeled[axis] = float(match.group(1).replace(",", "."))
+                if axis == "length":
+                    if match.group(2):
+                        paired_width = float(match.group(2).replace(",", "."))
+                    found_unit = (match.group(3) or "").strip().lower() or None
+                else:
+                    found_unit = (match.group(2) or "").strip().lower() or None
+                if "unit" not in labeled and found_unit:
+                    labeled["unit"] = found_unit
+                break
+    if "width" not in labeled and paired_width is not None:
+        labeled["width"] = paired_width
+    if "length" in labeled or "width" in labeled:
+        # Unit genuinely absent from the document: report it as unknown
+        # rather than assuming "mm", which previously turned a 12m x 4m sail
+        # into 12mm x 4mm with no indication anything was guessed.
+        labeled.setdefault("unit", None)
+        return labeled
+
+    # 2. "mesures dessin" free-form measurement list — unit is always metres.
     drawing = re.search(r"mesures dessin\s+((?:\d+(?:[.,]\d+)?\s*m\s*){2,})", text, re.I)
     if drawing:
         measurements = re.findall(r"\d+(?:[.,]\d+)?", drawing.group(1))
@@ -274,18 +345,24 @@ def _extract_dimensions(text: str) -> dict[str, Any] | None:
                 "width": float(measurements[1].replace(",", ".")),
                 "unit": "m",
             }
-    labeled: dict[str, Any] = {}
-    for axis, patterns in LABELED_DIMENSION_PATTERNS.items():
-        for pattern in patterns:
-            match = re.search(pattern, text, re.I)
-            if match:
-                labeled[axis] = float(match.group(1).replace(",", "."))
-                labeled.setdefault("unit", (match.group(2) or "mm").lower())
-                break
-    if "length" in labeled or "width" in labeled:
-        labeled.setdefault("unit", "mm")
-        return labeled
+
+    # 3. Last resort: a bare "N x M [unit]" anywhere in the text. Weakest
+    #    signal (no label ties it to a dimension at all), so an absent unit
+    #    is reported as unknown instead of assumed.
+    dimension = DIMENSION_PATTERN.search(text)
+    if dimension:
+        return {
+            "length": float(dimension.group(1).replace(",", ".")),
+            "width": float(dimension.group(2).replace(",", ".")),
+            "height": float(dimension.group(3).replace(",", ".")) if dimension.group(3) else None,
+            "unit": (dimension.group(4) or "").strip().lower() or None,
+        }
     return None
+
+
+def _looks_bled(value: str) -> bool:
+    """True if a captured field value probably swallowed a neighbouring column."""
+    return bool(_LABEL_WORD_RE.search(value)) or len(value) > _MAX_PLAUSIBLE_FIELD_LENGTH
 
 
 def _with_normalized_units(raw: dict[str, Any]) -> dict[str, Any]:
@@ -319,30 +396,55 @@ def extract_structured_pdf(path: Path, config: AppConfig) -> ExtractedData:
 
     text = "\n".join(line.strip() for line in result.text.splitlines() if line.strip())
     values: dict[str, Any] = {"raw_text": text, "extraction_status": "partial", "confidence": 0.0}
+    warnings: list[str] = []
     matched = 0
+    suspect = 0
     for field_name, patterns in FIELD_PATTERNS.items():
         for pattern in patterns:
             match = re.search(pattern, text, re.I)
             if match:
-                values[field_name] = match.group(1).strip()
-                matched += 1
+                value = match.group(1).strip()
+                values[field_name] = value
+                # "description" is expected to be a free sentence, so the
+                # bleed heuristic (built from short-field label words) would
+                # false-positive on it constantly; every other field should
+                # be a short atomic value and is checked.
+                if field_name != "description" and _looks_bled(value):
+                    suspect += 1
+                    warnings.append(f"{field_name}: à vérifier — valeur suspecte ({value!r})")
+                else:
+                    matched += 1
                 break
     raw_dimensions = _extract_dimensions(text)
+    total_checks = len(FIELD_PATTERNS) + 1  # +1 for dimensions
     if raw_dimensions:
         values["dimensions"] = _with_normalized_units(raw_dimensions)
-        matched += 1
+        if raw_dimensions.get("unit") is None:
+            suspect += 1
+            warnings.append("dimensions: unité non détectée — valeurs non converties en mm, à vérifier")
+        else:
+            matched += 1
     if "quantity" in values:
         try:
             values["quantity"] = int(values["quantity"])
         except ValueError:
             pass
-    values["confidence"] = matched / (len(FIELD_PATTERNS) + 1)
-    values["extraction_status"] = "success" if matched == len(FIELD_PATTERNS) + 1 else "partial"
+    # Confidence only credits fields that passed the sanity check. A field
+    # that matched a regex but looks bled counts against completeness the
+    # same as a field that never matched at all — it is not usable data.
+    values["confidence"] = matched / total_checks
     if not text:
         values["extraction_status"] = "failed"
-        values["warnings"] = ["No extractable text found; OCR may be required."]
-    elif values["extraction_status"] == "partial":
-        values["warnings"] = ["One or more configured fields were not found."]
+        warnings = ["No extractable text found; OCR may be required."]
+    elif suspect:
+        values["extraction_status"] = "partial"
+    elif matched < total_checks:
+        values["extraction_status"] = "partial"
+        warnings.append("One or more configured fields were not found.")
+    else:
+        values["extraction_status"] = "success"
+    if warnings:
+        values["warnings"] = warnings
     try:
         return ExtractedData.model_validate(values)
     except ValidationError as exc:
