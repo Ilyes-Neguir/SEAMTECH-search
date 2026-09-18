@@ -55,17 +55,55 @@ jobs:
       - name: Run SQLite suite
         run: |
           set -uo pipefail
-          out=$(pytest -q -k "not postgres and not s3" 2>&1)
-          rc=$?
-          echo "$out"
+          # tee rather than `out=$(...)`: output streams to the job log as it is
+          # produced, and PIPESTATUS keeps pytest's exit code (pipefail alone
+          # would report tee's).
+          pytest -q -rf -k "not postgres and not s3" 2>&1 | tee /tmp/sqlite.log
+          rc=${PIPESTATUS[0]}
           if [ "$rc" -ne 0 ]; then
-            # Job logs are not always retrievable (the results blob host can be
-            # unreachable from some networks), so repeat the failing test names
-            # as a run annotation where they stay readable.
-            failures=$(echo "$out" | grep -E '^(FAILED|ERROR)' | head -20 | tr '\n' ' | ')
-            echo "::error title=sqlite-suite-failed::${failures:-no FAILED lines; see tail}"
-            echo "::error title=sqlite-suite-tail::$(echo "$out" | tail -35 | tr '\n' ' | ')"
+            # Annotation payloads are stripped to printable ASCII and capped.
+            # A previous version embedded raw pytest output and GitHub kept no
+            # annotation at all, which left a failing step with nothing readable
+            # behind it once the log blob host turned out to be unreachable.
+            echo "::error title=sqlite-suite-failed::$(grep -E '^(FAILED|ERROR)' /tmp/sqlite.log | head -25 | tr -cd '[:print:]\n' | tr '\n' ';' | head -c 1500)"
+            echo "::error title=sqlite-suite-tail::$(tail -40 /tmp/sqlite.log | tr -cd '[:print:]\n' | tr '\n' ';' | head -c 1800)"
             exit "$rc"
+          fi
+      - name: Run PostgreSQL integration suite (must actually run, not self-skip)
+        # Audit issue #5b: these tests `pytest.skip()` when
+        # SEAMTECH_TEST_DATABASE_URL is unset, so a typo in the service name, a
+        # port change, or a dropped env block would turn the whole Postgres
+        # suite into skips while CI still reported green. The guard below fails
+        # the job unless a non-zero number of Postgres tests PASSED and none
+        # were skipped.
+        #
+        # Runs BEFORE the coverage step on purpose. The coverage step selects
+        # `-k "not s3"`, which includes these same live-postgres tests plus the
+        # mocked ones; when both ran together a failure in either was
+        # indistinguishable. Separating them means a red coverage step with a
+        # green Postgres step points at coverage/mocked tests, and vice versa.
+        env:
+          SEAMTECH_TEST_DATABASE_URL: postgresql://seamtech:seamtech_test_password@localhost:5432/seamtech_search_test
+        run: |
+          set -uo pipefail
+          pytest -m postgres -v -rf 2>&1 | tee /tmp/pg.log
+          rc=${PIPESTATUS[0]}
+          if [ "$rc" -ne 0 ]; then
+            echo "::error title=postgres-suite-failed::$(grep -E '^(FAILED|ERROR)' /tmp/pg.log | head -25 | tr -cd '[:print:]\n' | tr '\n' ';' | head -c 1500)"
+            echo "::error title=postgres-suite-tail::$(tail -45 /tmp/pg.log | tr -cd '[:print:]\n' | tr '\n' ';' | head -c 1800)"
+            exit "$rc"
+          fi
+          summary=$(tail -1 /tmp/pg.log)
+          passed=$(echo "$summary" | grep -oE '[0-9]+ passed' | grep -oE '[0-9]+' || echo 0)
+          skipped=$(echo "$summary" | grep -oE '[0-9]+ skipped' | grep -oE '[0-9]+' || echo 0)
+          echo "Postgres suite summary: passed=$passed skipped=$skipped"
+          if [ "${passed:-0}" -eq 0 ]; then
+            echo "::error title=postgres-suite-did-not-run::0 Postgres tests passed - nothing was collected or everything skipped"
+            exit 1
+          fi
+          if [ "${skipped:-0}" -ne 0 ]; then
+            echo "::error title=postgres-tests-skipped::$skipped Postgres test(s) skipped even though SEAMTECH_TEST_DATABASE_URL is set"
+            exit 1
           fi
       - name: Run coverage
         # Same selection as the SQLite suite above, plus the mocked-postgres
@@ -78,13 +116,11 @@ jobs:
           SEAMTECH_TEST_DATABASE_URL: postgresql://seamtech:seamtech_test_password@localhost:5432/seamtech_search_test
         run: |
           set -uo pipefail
-          out=$(pytest -k "not s3" -q --cov=seamtech_search --cov-report=term-missing --cov-report=json:coverage.json 2>&1)
-          rc=$?
-          echo "$out"
+          pytest -k "not s3" -q -rf --cov=seamtech_search --cov-report=term-missing --cov-report=json:coverage.json 2>&1 | tee /tmp/cov.log
+          rc=${PIPESTATUS[0]}
           if [ "$rc" -ne 0 ]; then
-            failures=$(echo "$out" | grep -E '^(FAILED|ERROR)' | head -20 | tr '\n' ' | ')
-            echo "::error title=coverage-suite-failed::${failures:-no FAILED lines; see tail}"
-            echo "::error title=coverage-suite-tail::$(echo "$out" | tail -35 | tr '\n' ' | ')"
+            echo "::error title=coverage-suite-failed::$(grep -E '^(FAILED|ERROR)' /tmp/cov.log | head -25 | tr -cd '[:print:]\n' | tr '\n' ';' | head -c 1500)"
+            echo "::error title=coverage-suite-tail::$(tail -45 /tmp/cov.log | tr -cd '[:print:]\n' | tr '\n' ';' | head -c 1800)"
             exit "$rc"
           fi
       - name: Coverage gate (overall + per-module)
@@ -94,38 +130,21 @@ jobs:
       - name: Pip audit (security)
         # No `|| echo`: a known vulnerability in a pinned dependency fails CI.
         run: pip-audit --desc
-      - name: Run PostgreSQL integration suite (must actually run, not self-skip)
-        # Audit issue #5b: these tests `pytest.skip()` when
-        # SEAMTECH_TEST_DATABASE_URL is unset, so a typo in the service name, a
-        # port change, or a dropped env block would turn the whole Postgres
-        # suite into skips while CI still reported green. The guard below fails
-        # the job unless a non-zero number of Postgres tests PASSED and none
-        # were skipped.
-        env:
-          SEAMTECH_TEST_DATABASE_URL: postgresql://seamtech:seamtech_test_password@localhost:5432/seamtech_search_test
-        run: |
-          set -uo pipefail
-          out=$(pytest -m postgres -v 2>&1)
-          rc=$?
-          echo "$out"
-          if [ "$rc" -ne 0 ]; then
-            failures=$(echo "$out" | grep -E '^(FAILED|ERROR)' | head -20 | tr '\n' ' | ')
-            echo "::error title=postgres-suite-failed::${failures:-no FAILED lines; see tail} (pytest -m postgres exited $rc)"
-            echo "::error title=postgres-suite-tail::$(echo "$out" | tail -35 | tr '\n' ' | ')"
-            exit "$rc"
-          fi
-          summary=$(echo "$out" | tail -1)
-          passed=$(echo "$summary" | grep -oE '[0-9]+ passed' | grep -oE '[0-9]+' || echo 0)
-          skipped=$(echo "$summary" | grep -oE '[0-9]+ skipped' | grep -oE '[0-9]+' || echo 0)
-          echo "Postgres suite summary: passed=$passed skipped=$skipped"
-          if [ "${passed:-0}" -eq 0 ]; then
-            echo "::error title=postgres-suite-did-not-run::0 Postgres tests passed - nothing was collected or everything skipped"
-            exit 1
-          fi
-          if [ "${skipped:-0}" -ne 0 ]; then
-            echo "::error title=postgres-tests-skipped::$skipped Postgres test(s) skipped even though SEAMTECH_TEST_DATABASE_URL is set"
-            exit 1
-          fi
+      - name: Upload pytest logs
+        # The job-log blob host (productionresultssa*.blob.core.windows.net) is
+        # unreachable from some networks, which is how a failing step ended up
+        # with no readable diagnostics at all. Artifacts are served from a
+        # different host, so this is a second channel for the same information.
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-pytest-logs-${{ matrix.python-version }}
+          path: |
+            /tmp/sqlite.log
+            /tmp/pg.log
+            /tmp/cov.log
+          if-no-files-found: ignore
+          retention-days: 5
 
   frontend:
     runs-on: ubuntu-latest
