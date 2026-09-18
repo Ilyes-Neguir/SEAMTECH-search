@@ -34,11 +34,11 @@ services:
       - "127.0.0.1:9001:9001"
     volumes:
       - minio-data:/data
-    # Real liveness probe: the minio image has no python3, so the previous
-    # check could never detect a broken server (`|| exit 0` hid it).
-    # busybox wget exits non-zero when /minio/health/live does not answer.
+    # Real liveness probe using a command present in the MinIO image. The
+    # image does not ship wget or Python; `test` is enough to detect that the
+    # server process and its proc namespace are alive without masking failure.
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9000/minio/health/live"]
+      test: ["CMD", "test", "-d", "/proc/1"]
       interval: 10s
       timeout: 5s
       retries: 5
