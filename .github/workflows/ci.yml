@@ -58,8 +58,17 @@ jobs:
           # tee rather than `out=$(...)`: output streams to the job log as it is
           # produced, and PIPESTATUS keeps pytest's exit code (pipefail alone
           # would report tee's).
+          # GitHub runs `run:` steps with `bash -e`, so a non-zero pytest exit
+          # kills the script on the spot -- before any diagnostic below it runs.
+          # That is why earlier versions of these steps left nothing behind but
+          # GitHub's generic "Process completed with exit code 1", with the log
+          # blob host unreachable and the artifact on the same blocked host.
+          # errexit is disabled only around the command whose failure we handle
+          # ourselves, and restored immediately after.
+          set +e
           pytest -q -rf -k "not postgres and not s3" 2>&1 | tee /tmp/sqlite.log
           rc=${PIPESTATUS[0]}
+          set -e
           if [ "$rc" -ne 0 ]; then
             # Annotation payloads are stripped to printable ASCII and capped.
             # A previous version embedded raw pytest output and GitHub kept no
@@ -86,8 +95,17 @@ jobs:
           SEAMTECH_TEST_DATABASE_URL: postgresql://seamtech:seamtech_test_password@localhost:5432/seamtech_search_test
         run: |
           set -uo pipefail
+          # GitHub runs `run:` steps with `bash -e`, so a non-zero pytest exit
+          # kills the script on the spot -- before any diagnostic below it runs.
+          # That is why earlier versions of these steps left nothing behind but
+          # GitHub's generic "Process completed with exit code 1", with the log
+          # blob host unreachable and the artifact on the same blocked host.
+          # errexit is disabled only around the command whose failure we handle
+          # ourselves, and restored immediately after.
+          set +e
           pytest -m postgres -v -rf 2>&1 | tee /tmp/pg.log
           rc=${PIPESTATUS[0]}
+          set -e
           if [ "$rc" -ne 0 ]; then
             echo "::error title=postgres-suite-failed::$(grep -E '^(FAILED|ERROR)' /tmp/pg.log | head -25 | tr -cd '[:print:]\n' | tr '\n' ';' | head -c 1500)"
             echo "::error title=postgres-suite-tail::$(tail -45 /tmp/pg.log | tr -cd '[:print:]\n' | tr '\n' ';' | head -c 1800)"
@@ -116,8 +134,17 @@ jobs:
           SEAMTECH_TEST_DATABASE_URL: postgresql://seamtech:seamtech_test_password@localhost:5432/seamtech_search_test
         run: |
           set -uo pipefail
+          # GitHub runs `run:` steps with `bash -e`, so a non-zero pytest exit
+          # kills the script on the spot -- before any diagnostic below it runs.
+          # That is why earlier versions of these steps left nothing behind but
+          # GitHub's generic "Process completed with exit code 1", with the log
+          # blob host unreachable and the artifact on the same blocked host.
+          # errexit is disabled only around the command whose failure we handle
+          # ourselves, and restored immediately after.
+          set +e
           pytest -k "not s3" -q -rf --cov=seamtech_search --cov-report=term-missing --cov-report=json:coverage.json 2>&1 | tee /tmp/cov.log
           rc=${PIPESTATUS[0]}
+          set -e
           if [ "$rc" -ne 0 ]; then
             echo "::error title=coverage-suite-failed::$(grep -E '^(FAILED|ERROR)' /tmp/cov.log | head -25 | tr -cd '[:print:]\n' | tr '\n' ';' | head -c 1500)"
             echo "::error title=coverage-suite-tail::$(tail -45 /tmp/cov.log | tr -cd '[:print:]\n' | tr '\n' ';' | head -c 1800)"
