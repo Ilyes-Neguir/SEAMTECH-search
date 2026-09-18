@@ -232,6 +232,77 @@ jobs:
                   sys.exit(1)
               time.sleep(5)
           PY
+      - name: Boot documented stack (web + frontend) and wait for healthy
+        # Prove the one-command office deployment, not only the individual
+        # images. Both application services must report healthy before the
+        # browser-facing health route is checked through the real chain.
+        env:
+          POSTGRES_PASSWORD: test_password
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: minioadmin123
+          REDIS_PASSWORD: redis_test_password
+          SEAMTECH_AUTH_TOKEN: test-token-123
+          SEAMTECH_S3_BUCKET: seamtech-documents
+        run: |
+          set -euo pipefail
+          if ! out=$(docker compose up -d --build web frontend 2>&1); then
+            echo "$out"
+            echo "::error title=full-stack-boot-failed::$(echo "$out" | tail -20 | tr '\n' ' | ')"
+            docker compose ps
+            docker compose logs --no-color --tail 80 web frontend
+            exit 1
+          fi
+
+          deadline=$((SECONDS + 300))
+          while true; do
+            all_healthy=1
+            unhealthy=""
+            for service in web frontend; do
+              container=$(docker compose ps -q "$service")
+              if [ -z "$container" ]; then
+                all_healthy=0
+                unhealthy="$unhealthy $service (not created)"
+                continue
+              fi
+              health=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}no-healthcheck{{end}}' "$container")
+              state=$(docker inspect --format '{{.State.Status}}' "$container")
+              case "$health" in
+                healthy)
+                  ;;
+                unhealthy|dead|exited)
+                  echo "${service}: state=${state} health=${health}"
+                  unhealthy="$unhealthy $service (state=${state}, health=${health})"
+                  all_healthy=0
+                  ;;
+                *)
+                  all_healthy=0
+                  ;;
+              esac
+            done
+
+            if [ "$all_healthy" -eq 1 ]; then
+              echo "web and frontend are healthy"
+              break
+            fi
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "full-stack boot timed out or became unhealthy:$unhealthy" >&2
+              docker compose ps >&2
+              logs=$(docker compose logs --no-color --tail 100 web frontend 2>&1)
+              echo "$logs" >&2
+              echo "::error title=full-stack-health-failed::$(echo "$logs" | tail -30 | tr '\n' ' | ')"
+              exit 1
+            fi
+            sleep 5
+          done
+
+          if ! curl -fsS http://127.0.0.1:3000/api/health; then
+            echo >&2
+            logs=$(docker compose logs --no-color --tail 100 web frontend 2>&1)
+            echo "$logs" >&2
+            echo "::error title=frontend-health-route-failed::$(echo "$logs" | tail -30 | tr '\n' ' | ')"
+            exit 1
+          fi
+          echo
       - name: Run docker compose integration test
         env:
           POSTGRES_PASSWORD: test_password

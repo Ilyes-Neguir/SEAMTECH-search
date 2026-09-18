@@ -73,8 +73,9 @@ services:
       # Inside the container network, web listens on 0.0.0.0 so frontend can communicate.
       SEAMTECH_HOST: "0.0.0.0"
       SEAMTECH_ALLOW_NETWORK_ACCESS: "true"
-      # Default to false — set to true only when behind a real TLS terminator (see docs/TLS.md)
-      SEAMTECH_BEHIND_TLS_PROXY: ${SEAMTECH_BEHIND_TLS_PROXY:-false}
+      # The documented office deployment is served through a TLS terminator.
+      # Override to false only when the service is strictly localhost-only.
+      SEAMTECH_BEHIND_TLS_PROXY: ${SEAMTECH_BEHIND_TLS_PROXY:-true}
       SEAMTECH_AUTH_TOKEN: ${SEAMTECH_AUTH_TOKEN:?Set SEAMTECH_AUTH_TOKEN in the environment}
       SEAMTECH_ROOT_PATHS: ${SEAMTECH_ROOT_PATHS:-}
     depends_on:
