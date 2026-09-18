@@ -43,13 +43,28 @@ jobs:
           # Upgrade setuptools too: pip-audit below scans the whole
           # environment, and old bootstrap setuptools carries CVEs.
           python -m pip install --upgrade pip setuptools
-          pip install -r requirements.txt -r requirements-local.txt ruff pytest-cov pip-audit
+          # Single source of truth: requirements-dev.txt includes
+          # requirements.txt and pins pytest/pytest-cov/ruff/pip-audit/PyYAML
+          # once each. Installing several files that re-declared the same
+          # packages is how pytest ended up at both 8.4.1 and 9.1.1.
+          pip install -r requirements-dev.txt
       - name: Ruff lint check
         run: ruff check .
       - name: Compile Python
         run: python -m compileall -q seamtech_search
       - name: Run SQLite suite
-        run: pytest -q -k "not postgres and not s3"
+        run: |
+          set -uo pipefail
+          out=$(pytest -q -k "not postgres and not s3" 2>&1)
+          rc=$?
+          echo "$out"
+          if [ "$rc" -ne 0 ]; then
+            # Job logs are not always retrievable (the results blob host can be
+            # unreachable from some networks), so repeat the failing test names
+            # as a run annotation where they stay readable.
+            echo "::error title=sqlite-suite-failed::$(echo "$out" | grep -E '^(FAILED|ERROR)' | head -30 | tr '\n' ' | ')"
+            exit "$rc"
+          fi
       - name: Run coverage
         # Same selection as the SQLite suite above, plus the mocked-postgres
         # coverage tests AND the live-postgres tests. SEAMTECH_TEST_DATABASE_URL
@@ -59,7 +74,15 @@ jobs:
         # already declared on this job, so point the tests at it.
         env:
           SEAMTECH_TEST_DATABASE_URL: postgresql://seamtech:seamtech_test_password@localhost:5432/seamtech_search_test
-        run: pytest -k "not s3" -q --cov=seamtech_search --cov-report=term-missing --cov-report=json:coverage.json
+        run: |
+          set -uo pipefail
+          out=$(pytest -k "not s3" -q --cov=seamtech_search --cov-report=term-missing --cov-report=json:coverage.json 2>&1)
+          rc=$?
+          echo "$out"
+          if [ "$rc" -ne 0 ]; then
+            echo "::error title=coverage-suite-failed::$(echo "$out" | grep -E '^(FAILED|ERROR)' | head -30 | tr '\n' ' | ')"
+            exit "$rc"
+          fi
       - name: Coverage gate (overall + per-module)
         # Real gate: reads coverage.json, compares every Phase 1 module against
         # its threshold, exits 1 on any breach. Enforced by tests/test_coverage_gate.py.
@@ -82,7 +105,7 @@ jobs:
           rc=$?
           echo "$out"
           if [ "$rc" -ne 0 ]; then
-            echo "::error title=postgres-suite-failed::pytest -m postgres exited $rc"
+            echo "::error title=postgres-suite-failed::$(echo "$out" | grep -E '^(FAILED|ERROR)' | head -30 | tr '\n' ' | ') (pytest -m postgres exited $rc)"
             exit "$rc"
           fi
           summary=$(echo "$out" | tail -1)
@@ -181,7 +204,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt -r requirements-local.txt
+          pip install -r requirements-dev.txt
       - name: Check docker availability
         run: |
           docker --version

@@ -21,7 +21,16 @@ services:
     # MinIO removed minio/minio from Docker Hub on 2026-09-11 (anonymous
     # pulls now 404/401); quay.io/minio is their current official
     # distribution with the same tags.
-    image: quay.io/minio/minio:latest
+    #
+    # Pinned to an explicit release rather than :latest. Checked against the
+    # quay.io tag list on 2026-09-18: `latest`, `latest-cicd` and
+    # RELEASE.2025-09-07T16-13-09Z are all the SAME manifest digest
+    # (sha256:14cea493d9a3...), so this pin does not move the version under
+    # test -- it only makes it immutable and reproducible. MinIO's community
+    # tags stopped advancing when the project went source-only; the newer
+    # `.hotfix.*` tags on quay.io come from the paid stream and are
+    # deliberately not used here.
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
@@ -34,15 +43,24 @@ services:
       - "127.0.0.1:9001:9001"
     volumes:
       - minio-data:/data
-    # Weakest available check: the MinIO image has no HTTP client (wget/curl)
-    # for this probe. This only proves that the process is alive; it does not
-    # prove that the S3 API answers. Keep it honest rather than masking a
-    # failed HTTP probe with `|| exit 0`.
+    # `mc ready local` is MinIO's own documented in-container healthcheck
+    # (docs/orchestration/docker-compose/docker-compose.yaml) and the one its
+    # maintainers direct people to: the server image ships `mc` with a
+    # pre-configured `local` alias but has no curl/wget, so an HTTP probe from
+    # inside the container is not possible. /minio/health/* is for callers
+    # OUTSIDE the container, which is what the CI integration job's Python
+    # probe uses against 127.0.0.1:9000.
+    #
+    # This replaces `test -d /proc/1`, which could never fail: it proved PID 1
+    # existed, not that the S3 API could serve a request. The `web` service
+    # waits on `condition: service_healthy`, so a real probe means the API no
+    # longer starts against an object store that is up but not ready.
     healthcheck:
-      test: ["CMD", "test", "-d", "/proc/1"]
-      interval: 10s
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
       timeout: 5s
       retries: 5
+      start_period: 15s
 
   redis:
     image: redis:7-alpine

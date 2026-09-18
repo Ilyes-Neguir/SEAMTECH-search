@@ -19,11 +19,18 @@ dependencies = [
     "psycopg2-binary==2.9.10",
 ]
 
+# Mirrors requirements-dev.txt exactly. tests/test_requirements_consistency.py
+# enforces that these two lists (and requirements.txt vs [project].dependencies)
+# cannot drift apart again — that drift is how pytest ended up pinned at both
+# 8.4.1 and 9.1.1 in the same repository.
 [project.optional-dependencies]
 dev = [
     "pytest==9.1.1",
+    "pytest-cov==7.1.0",
     "httpx==0.28.1",
     "ruff>=0.5.0",
+    "pip-audit>=2.7.0",
+    "PyYAML==6.0.3",
 ]
 
 [tool.pytest.ini_options]
