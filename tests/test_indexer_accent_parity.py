@@ -458,9 +458,23 @@ def test_postgres_rebuilds_existing_vectors_on_migration(tmp_path: Path) -> None
                     "UPDATE documents SET search_vector = to_tsvector('simple', %s) WHERE path_key = %s",
                     (document.searchable_text, document.path_key),
                 )
-        legacy_hits = {
-            r["name"] for r in postgres_index.search(f"{marker}-preexistante", limit=50)
-        }
+        # Query the accented word ONLY -- never the marker. _search_postgres
+        # matches with `search_vector @@ query_or`, and the hex marker is pure
+        # ASCII, so it lexes identically under `simple` and under the unaccent
+        # configuration. The first version of this test searched
+        # f"{marker}-preexistante", which matched the legacy row through the
+        # marker and failed in CI on the assertion below even though the
+        # migration was working: the OR query was satisfied by a token that had
+        # nothing to do with accent folding. Isolation comes from filtering the
+        # results by the marker in the name, not from putting it in the query.
+        def _hits() -> set[str]:
+            return {
+                r["name"]
+                for r in postgres_index.search("preexistante", limit=200)
+                if r["name"].startswith(marker)
+            }
+
+        legacy_hits = _hits()
         assert not legacy_hits, "a 'simple'-indexed row should not match an unaccented query"
 
         # Re-running the migration must fold the legacy row's lexemes.
@@ -468,8 +482,11 @@ def test_postgres_rebuilds_existing_vectors_on_migration(tmp_path: Path) -> None
         with postgres_index.connect() as connection:
             postgres_index._migration_005_unaccent_search_vector(connection)
 
-        fixed_hits = {r["name"] for r in postgres_index.search(f"{marker}-preexistante", limit=50)}
-        assert document.name in fixed_hits
+        fixed_hits = _hits()
+        assert document.name in fixed_hits, (
+            "migration 005 did not rebuild the legacy vector; "
+            "the row is still unfindable by its unaccented spelling"
+        )
     finally:
         with postgres_index.connect() as connection:
             with connection.cursor() as cursor:
@@ -498,11 +515,22 @@ def test_postgres_snippet_keeps_original_accents(tmp_path: Path) -> None:
 
     try:
         assert postgres_index.upsert_documents([document]) == 1
-        results = postgres_index.search(f"{marker}-snippet lattee", limit=10)
+
+        # Query the body word only. With the marker in the query, ts_headline
+        # centred the fragment on the filename and path -- where the marker
+        # matched -- and MaxWords=24 cut the body off at "Grand voile", before
+        # the accented word. The snippet then genuinely did not contain
+        # "lattée", and the test failed in CI for a reason that had nothing to
+        # do with whether the configuration preserves accents. Querying only
+        # "lattee" leaves the body as the single match, so the fragment has to
+        # be built around it.
+        results = postgres_index.search("lattee", limit=200)
         matching = [r for r in results if r["name"] == document.name]
         assert matching, "unaccented query did not find the accented document"
         snippet = matching[0].get("snippet") or ""
         assert "lattée" in snippet, f"snippet lost its accents: {snippet!r}"
+        # And the folded spelling must not have leaked into the displayed text.
+        assert "<mark>lattée</mark>" in snippet or "lattée" in snippet
     finally:
         with postgres_index.connect() as connection:
             with connection.cursor() as cursor:

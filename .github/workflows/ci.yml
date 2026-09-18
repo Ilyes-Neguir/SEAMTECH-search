@@ -74,8 +74,8 @@ jobs:
             # A previous version embedded raw pytest output and GitHub kept no
             # annotation at all, which left a failing step with nothing readable
             # behind it once the log blob host turned out to be unreachable.
-            echo "::error title=sqlite-suite-failed::$(grep -E '^(FAILED|ERROR)' /tmp/sqlite.log | head -25 | tr -cd '[:print:]\n' | tr '\n' ';' | head -c 1500)"
-            echo "::error title=sqlite-suite-tail::$(tail -40 /tmp/sqlite.log | tr -cd '[:print:]\n' | tr '\n' ';' | head -c 1800)"
+            echo "::error title=sqlite-suite-failed::$(grep -E '^(FAILED|ERROR)' /tmp/sqlite.log | head -25 | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 1500)"
+            echo "::error title=sqlite-suite-tail::$(tail -40 /tmp/sqlite.log | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 1800)"
             exit "$rc"
           fi
       - name: Run PostgreSQL integration suite (must actually run, not self-skip)
@@ -107,8 +107,8 @@ jobs:
           rc=${PIPESTATUS[0]}
           set -e
           if [ "$rc" -ne 0 ]; then
-            echo "::error title=postgres-suite-failed::$(grep -E '^(FAILED|ERROR)' /tmp/pg.log | head -25 | tr -cd '[:print:]\n' | tr '\n' ';' | head -c 1500)"
-            echo "::error title=postgres-suite-tail::$(tail -45 /tmp/pg.log | tr -cd '[:print:]\n' | tr '\n' ';' | head -c 1800)"
+            echo "::error title=postgres-suite-failed::$(grep -E '^(FAILED|ERROR)' /tmp/pg.log | head -25 | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 1500)"
+            echo "::error title=postgres-suite-tail::$(tail -45 /tmp/pg.log | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 1800)"
             exit "$rc"
           fi
           summary=$(tail -1 /tmp/pg.log)
@@ -146,8 +146,8 @@ jobs:
           rc=${PIPESTATUS[0]}
           set -e
           if [ "$rc" -ne 0 ]; then
-            echo "::error title=coverage-suite-failed::$(grep -E '^(FAILED|ERROR)' /tmp/cov.log | head -25 | tr -cd '[:print:]\n' | tr '\n' ';' | head -c 1500)"
-            echo "::error title=coverage-suite-tail::$(tail -45 /tmp/cov.log | tr -cd '[:print:]\n' | tr '\n' ';' | head -c 1800)"
+            echo "::error title=coverage-suite-failed::$(grep -E '^(FAILED|ERROR)' /tmp/cov.log | head -25 | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 1500)"
+            echo "::error title=coverage-suite-tail::$(tail -45 /tmp/cov.log | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 1800)"
             exit "$rc"
           fi
       - name: Coverage gate (overall + per-module)
