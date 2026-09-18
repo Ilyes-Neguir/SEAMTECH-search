@@ -479,43 +479,62 @@ class SearchIndex:
 
         Returns True when the accent-folding configuration is available.
 
-        `CREATE EXTENSION` needs privileges the database role may not have (on
-        managed Postgres, for instance). A failure there is contained with a
-        SAVEPOINT so it cannot abort the surrounding transaction, is logged,
-        and leaves the index working on the plain `simple` configuration —
-        accent parity with SQLite is lost, but search still functions.
+        Everything here is wrapped in a SAVEPOINT. Two reasons: `CREATE
+        EXTENSION` needs privileges the database role may not have (managed
+        Postgres), and a DDL failure aborts the surrounding transaction, which
+        would leave every later statement in the same transaction failing. On
+        any failure this logs at ERROR and degrades to the plain `simple`
+        configuration: accent parity with SQLite is lost, but the app still
+        starts and search still works. tests/test_indexer_accent_parity.py
+        fails loudly if CI ever takes that degraded path.
         """
         with connection.cursor() as cursor:
             cursor.execute("SAVEPOINT seamtech_unaccent")
             try:
-                # `unaccent` is a trusted extension from PostgreSQL 13 onward,
-                # so the database owner can install it without superuser.
+                # `unaccent` is a trusted extension, so a non-superuser with
+                # CREATE privilege on the database can install it.
                 cursor.execute("CREATE EXTENSION IF NOT EXISTS unaccent")
+
+                cursor.execute(
+                    "SELECT 1 FROM pg_ts_config WHERE cfgname = %s AND cfgnamespace = current_schema()::regnamespace",
+                    (PG_UNACCENT_CONFIG,),
+                )
+                if cursor.fetchone() is None:
+                    # Postgres has no CREATE TEXT SEARCH CONFIGURATION IF NOT
+                    # EXISTS, hence the catalog check. COPY = simple keeps the
+                    # same parser and stopword behaviour; the ALTER then chains
+                    # `unaccent` in front of `simple` for word-like tokens.
+                    #
+                    # This is the exact recipe from the PostgreSQL 16 docs
+                    # (F.48. unaccent, "Usage"). The grammar is
+                    # `ALTER MAPPING FOR <token types> WITH <dictionaries>`;
+                    # there is no `FOR ... TO ...` form, and `ALTER MAPPING`
+                    # (not `ADD MAPPING`) is required because COPY = simple
+                    # already installed mappings for these token types.
+                    cursor.execute(
+                        f"CREATE TEXT SEARCH CONFIGURATION {PG_UNACCENT_CONFIG} (COPY = simple)"
+                    )
+                    cursor.execute(
+                        f"ALTER TEXT SEARCH CONFIGURATION {PG_UNACCENT_CONFIG} "
+                        "ALTER MAPPING FOR hword, hword_part, word "
+                        "WITH unaccent, simple"
+                    )
+                    logger.info(
+                        "Created text-search configuration %s (unaccent + simple)", PG_UNACCENT_CONFIG
+                    )
                 cursor.execute("RELEASE SAVEPOINT seamtech_unaccent")
             except Exception as exc:
                 cursor.execute("ROLLBACK TO SAVEPOINT seamtech_unaccent")
                 cursor.execute("RELEASE SAVEPOINT seamtech_unaccent")
-                logger.warning(
-                    "Could not create the unaccent extension (%s); Postgres search will not "
-                    "fold accents and will disagree with the SQLite backend on accented terms.",
+                logger.error(
+                    "Could not set up accent-folding full-text search (%s). Postgres search "
+                    "falls back to the %r configuration, so accented and unaccented queries "
+                    "will NOT return the same rows as the SQLite backend.",
                     exc,
+                    PG_FALLBACK_CONFIG,
                 )
                 self._pg_ts_config = PG_FALLBACK_CONFIG
                 return False
-
-            cursor.execute(
-                "SELECT 1 FROM pg_ts_config WHERE cfgname = %s AND cfgnamespace = current_schema()::regnamespace",
-                (PG_UNACCENT_CONFIG,),
-            )
-            if cursor.fetchone() is None:
-                # Postgres has no CREATE TEXT SEARCH CONFIGURATION IF NOT EXISTS,
-                # hence the catalog check above. COPY = simple keeps the same
-                # parser and stopword behaviour, then chains unaccent in front.
-                cursor.execute(f"CREATE TEXT SEARCH CONFIGURATION {PG_UNACCENT_CONFIG} (COPY = simple)")
-                cursor.execute(
-                    f"ALTER TEXT SEARCH CONFIGURATION {PG_UNACCENT_CONFIG} FOR ANY TO unaccent, simple"
-                )
-                logger.info("Created text-search configuration %s (unaccent + simple)", PG_UNACCENT_CONFIG)
 
             # Read the catalog back rather than trusting the branch above, so
             # the cached configuration name is always one Postgres agrees

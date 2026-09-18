@@ -275,9 +275,71 @@ def test_ensure_unaccent_config_creates_configuration_when_absent(tmp_path: Path
     with index.connect() as connection:
         assert index._ensure_unaccent_config(connection) is True
 
-    joined = "\n".join(cursor.sql)
+    joined = " ".join(" ".join(sql.split()) for sql in cursor.sql)
     assert f"CREATE TEXT SEARCH CONFIGURATION {PG_UNACCENT_CONFIG} (COPY = simple)" in joined
-    assert f"ALTER TEXT SEARCH CONFIGURATION {PG_UNACCENT_CONFIG} FOR ANY TO unaccent, simple" in joined
+    assert (
+        f"ALTER TEXT SEARCH CONFIGURATION {PG_UNACCENT_CONFIG} "
+        "ALTER MAPPING FOR hword, hword_part, word WITH unaccent, simple"
+    ) in joined
+
+
+def test_unaccent_ddl_uses_postgres_documented_grammar(tmp_path: Path, monkeypatch) -> None:
+    """Regression guard for a real CI failure caused by invented SQL grammar.
+
+    The first implementation of this migration used
+    `ALTER TEXT SEARCH CONFIGURATION ... FOR ANY TO unaccent, simple`. That form
+    does not exist: PostgreSQL 16's ALTER TEXT SEARCH CONFIGURATION synopsis
+    only offers ADD/ALTER/DROP MAPPING ... WITH ..., and the unaccent chapter
+    (F.48, "Usage") gives the recipe as
+
+        CREATE TEXT SEARCH CONFIGURATION fr ( COPY = french );
+        ALTER TEXT SEARCH CONFIGURATION fr
+            ALTER MAPPING FOR hword, hword_part, word
+            WITH unaccent, french_stem;
+
+    The bogus statement raised a syntax error inside initialize(), which is not
+    wrapped in a try/except, so the web container crashed on startup and the
+    whole compose stack never became healthy. Mocked cursors happily recorded
+    the invalid SQL and every test still passed -- which is why the grammar is
+    now asserted explicitly rather than left to a live database to reject.
+    """
+    cursor = _AbsentThenPresentCursor()
+    index = _postgres_index(tmp_path, monkeypatch, cursor)
+
+    with index.connect() as connection:
+        index._ensure_unaccent_config(connection)
+
+    alter_statements = [
+        " ".join(sql.split()) for sql in cursor.sql if sql.strip().upper().startswith("ALTER TEXT SEARCH")
+    ]
+    assert alter_statements, "no ALTER TEXT SEARCH CONFIGURATION statement was issued"
+    for statement in alter_statements:
+        assert "ALTER MAPPING FOR" in statement, statement
+        assert " WITH " in statement, statement
+        # The grammar that broke CI must never come back.
+        assert " TO " not in statement, f"invalid ALTER TEXT SEARCH CONFIGURATION grammar: {statement}"
+        assert "ADD MAPPING" not in statement, (
+            "ADD MAPPING errors when the mapping already exists, and COPY = simple installs it"
+        )
+
+
+def test_unaccent_setup_degrades_instead_of_crashing_on_bad_ddl(tmp_path: Path, monkeypatch) -> None:
+    """A DDL error must not escape initialize() and take the whole app down."""
+
+    class _BadGrammarCursor(_RecordingCursor):
+        def execute(self, sql: str, params: Any = None) -> None:
+            self.sql.append(sql)
+            if sql.strip().upper().startswith("ALTER TEXT SEARCH"):
+                raise RuntimeError('syntax error at or near "TO"')
+
+    cursor = _BadGrammarCursor()
+    index = _postgres_index(tmp_path, monkeypatch, cursor)
+
+    with index.connect() as connection:
+        assert index._ensure_unaccent_config(connection) is False
+
+    assert index._pg_ts_config == PG_FALLBACK_CONFIG
+    assert any("ROLLBACK TO SAVEPOINT" in s.upper() for s in cursor.sql)
 
 
 def test_ts_config_constants_are_the_only_allowed_values() -> None:
