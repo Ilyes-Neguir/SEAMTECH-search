@@ -62,7 +62,9 @@ jobs:
             # Job logs are not always retrievable (the results blob host can be
             # unreachable from some networks), so repeat the failing test names
             # as a run annotation where they stay readable.
-            echo "::error title=sqlite-suite-failed::$(echo "$out" | grep -E '^(FAILED|ERROR)' | head -30 | tr '\n' ' | ')"
+            failures=$(echo "$out" | grep -E '^(FAILED|ERROR)' | head -20 | tr '\n' ' | ')
+            echo "::error title=sqlite-suite-failed::${failures:-no FAILED lines; see tail}"
+            echo "::error title=sqlite-suite-tail::$(echo "$out" | tail -35 | tr '\n' ' | ')"
             exit "$rc"
           fi
       - name: Run coverage
@@ -80,7 +82,9 @@ jobs:
           rc=$?
           echo "$out"
           if [ "$rc" -ne 0 ]; then
-            echo "::error title=coverage-suite-failed::$(echo "$out" | grep -E '^(FAILED|ERROR)' | head -30 | tr '\n' ' | ')"
+            failures=$(echo "$out" | grep -E '^(FAILED|ERROR)' | head -20 | tr '\n' ' | ')
+            echo "::error title=coverage-suite-failed::${failures:-no FAILED lines; see tail}"
+            echo "::error title=coverage-suite-tail::$(echo "$out" | tail -35 | tr '\n' ' | ')"
             exit "$rc"
           fi
       - name: Coverage gate (overall + per-module)
@@ -105,7 +109,9 @@ jobs:
           rc=$?
           echo "$out"
           if [ "$rc" -ne 0 ]; then
-            echo "::error title=postgres-suite-failed::$(echo "$out" | grep -E '^(FAILED|ERROR)' | head -30 | tr '\n' ' | ') (pytest -m postgres exited $rc)"
+            failures=$(echo "$out" | grep -E '^(FAILED|ERROR)' | head -20 | tr '\n' ' | ')
+            echo "::error title=postgres-suite-failed::${failures:-no FAILED lines; see tail} (pytest -m postgres exited $rc)"
+            echo "::error title=postgres-suite-tail::$(echo "$out" | tail -35 | tr '\n' ' | ')"
             exit "$rc"
           fi
           summary=$(echo "$out" | tail -1)
@@ -317,7 +323,15 @@ jobs:
             echo "$out"
             echo "::error title=full-stack-boot-failed::$(echo "$out" | tail -20 | tr '\n' ' | ')"
             docker compose ps
-            docker compose logs --no-color --tail 80 web frontend
+            web_logs=$(docker compose logs --no-color --tail 120 web 2>&1 || true)
+            echo "$web_logs"
+            front_logs=$(docker compose logs --no-color --tail 60 frontend 2>&1 || true)
+            echo "$front_logs"
+            # The compose output above says *that* web is unhealthy but never why.
+            # Its own logs are the only thing that explains a crash loop, so
+            # repeat them as annotations where they stay readable.
+            echo "::error title=web-container-logs::$(echo "$web_logs" | tail -40 | tr '\n' ' | ')"
+            echo "::error title=frontend-container-logs::$(echo "$front_logs" | tail -20 | tr '\n' ' | ')"
             exit 1
           fi
 

@@ -26,3 +26,11 @@ pip-audit>=2.7.0
 # invariants (pinned image tags, non-trivial healthchecks, loopback-only ports,
 # mandatory UI sign-in secrets) are checked even where Docker is unavailable.
 PyYAML==6.0.3
+
+# Embeds libpg_query -- PostgreSQL's own parser -- so
+# tests/test_postgres_sql_grammar.py validates the grammar of every statement
+# the indexer emits without needing a running server. Added after an invented
+# `ALTER TEXT SEARCH CONFIGURATION ... FOR ANY TO ...` passed every mocked test,
+# then crashed web at startup in CI; mocked cursors cannot tell valid SQL from
+# nonsense. Test-only, never imported by seamtech_search/.
+pglast==8.4
