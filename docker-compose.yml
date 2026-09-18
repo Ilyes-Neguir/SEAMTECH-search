@@ -94,7 +94,21 @@ services:
       SEAMTECH_ALLOW_NETWORK_ACCESS: "true"
       # The documented office deployment is served through a TLS terminator.
       # Override to false only when the service is strictly localhost-only.
-      SEAMTECH_BEHIND_TLS_PROXY: ${SEAMTECH_BEHIND_TLS_PROXY:-false}
+      #
+      # This default MUST stay true. create_app() refuses to start when
+      # host is not loopback, an auth token is set, and behind_tls_proxy is
+      # false:
+      #   raise ValueError("token authentication over non-local host
+      #                     requires behind_tls_proxy=true")
+      # The container listens on 0.0.0.0 so `frontend` can reach it over the
+      # compose network (it is published only on 127.0.0.1 below), so with a
+      # token configured this guard always applies. Flipping the default to
+      # false made web raise inside create_app() -- before uvicorn started --
+      # so the container exited, never became healthy, and
+      # `docker compose up -d web frontend` failed with "dependency failed to
+      # start". Note the frontend service below deliberately defaults this to
+      # false; see the comment there. The two are not a typo to harmonise.
+      SEAMTECH_BEHIND_TLS_PROXY: ${SEAMTECH_BEHIND_TLS_PROXY:-true}
       SEAMTECH_AUTH_TOKEN: ${SEAMTECH_AUTH_TOKEN:?Set SEAMTECH_AUTH_TOKEN in the environment}
       SEAMTECH_ROOT_PATHS: ${SEAMTECH_ROOT_PATHS:-}
     depends_on:
@@ -135,6 +149,16 @@ services:
       SEAMTECH_SESSION_SECRET: ${SEAMTECH_SESSION_SECRET:?Set SEAMTECH_SESSION_SECRET in the environment}
       SEAMTECH_SESSION_HOURS: ${SEAMTECH_SESSION_HOURS:-12}
       # Marks the session cookie Secure when a TLS terminator is in front.
+      #
+      # Deliberately defaults to false here while `web` above defaults to true.
+      # shouldMarkCookieSecure() (frontend/lib/auth.ts) also honours
+      # SEAMTECH_SECURE_COOKIES and the request's own x-forwarded-proto, so TLS
+      # deployments still get Secure cookies -- but the default compose
+      # deployment publishes on loopback over plain HTTP, where a Secure cookie
+      # would be dropped by the browser and sign-in (audit issue #5) would not
+      # work at all. web's flag gates a different thing: whether token auth may
+      # run on a non-loopback bind. Set SEAMTECH_BEHIND_TLS_PROXY explicitly to
+      # give both services the same value.
       SEAMTECH_BEHIND_TLS_PROXY: ${SEAMTECH_BEHIND_TLS_PROXY:-false}
     depends_on:
       web:

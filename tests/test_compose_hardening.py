@@ -160,10 +160,38 @@ def test_required_secrets_are_mandatory_in_compose(services: dict) -> None:
     assert not problems, f"secrets not mandatory via ${{VAR:?...}}: {problems}"
 
 
-def test_tls_proxy_defaults_to_false(services: dict) -> None:
-    """Audit issue #7: secure by default for a localhost-only install."""
-    value = str(services["web"]["environment"]["SEAMTECH_BEHIND_TLS_PROXY"])
-    assert value.endswith(":-false}"), value
+def test_tls_proxy_defaults_let_web_boot(services: dict) -> None:
+    """Web defaults to true, frontend to false -- and that split is required.
+
+    This test used to assert web defaults to `:-false}`, citing audit issue #7
+    ("secure by default for a localhost-only install"). That was wrong, and it
+    codified a broken deployment: both AppConfig and create_app refuse
+    host 0.0.0.0 + auth token + behind_tls_proxy=false, so the default made web
+    raise *before* uvicorn bound a port. The container exited, never became
+    healthy, and `docker compose up -d web frontend` failed with "dependency
+    failed to start". A static assertion written to match the file as it
+    happened to be cannot catch that -- tests/test_compose_web_boot.py boots the
+    real app from this compose file and does.
+
+    Issue #7's localhost-only guarantee comes from the published ports being
+    bound to 127.0.0.1, asserted by test_published_ports_are_bound_to_loopback.
+    This variable describes whether a TLS terminator sits in front, and the
+    documented office deployment has one -- which is also what lets web serve
+    token auth on a non-loopback bind.
+
+    The frontend's opposite default is deliberate, not drift: it drives the
+    session cookie's Secure flag (frontend/lib/auth.ts shouldMarkCookieSecure),
+    and the default compose install serves plain HTTP on loopback, where a
+    Secure cookie is dropped by the browser and sign-in silently fails. It still
+    detects TLS per request via x-forwarded-proto, and SEAMTECH_SECURE_COOKIES
+    forces it. Setting SEAMTECH_BEHIND_TLS_PROXY explicitly gives both services
+    the same value.
+    """
+    web = str(services["web"]["environment"]["SEAMTECH_BEHIND_TLS_PROXY"])
+    assert web.endswith(":-true}"), web
+
+    frontend = str(services["frontend"]["environment"]["SEAMTECH_BEHIND_TLS_PROXY"])
+    assert frontend.endswith(":-false}"), frontend
 
 
 def test_web_and_frontend_build_from_the_repository(services: dict) -> None:
