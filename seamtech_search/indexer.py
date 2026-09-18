@@ -109,7 +109,7 @@ CREATE TABLE IF NOT EXISTS documents (
     category TEXT NOT NULL DEFAULT 'storage_direct',
     object_key TEXT,
     object_bucket TEXT,
-    uploaded_at TIMESTAMPTZ,
+    uploaded_at DOUBLE PRECISION,
     upload_status TEXT NOT NULL DEFAULT 'pending'
 );
 
@@ -419,6 +419,31 @@ class SearchIndex:
             except Exception:
                 pass
 
+    def _migration_004_uploaded_at_epoch(self, connection: Any) -> None:
+        """Store upload times as Unix epoch seconds, matching Document.uploaded_at."""
+        if not self.is_postgres:
+            return
+
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT data_type
+                FROM information_schema.columns
+                WHERE table_schema = current_schema()
+                  AND table_name = 'documents'
+                  AND column_name = 'uploaded_at'
+                """
+            )
+            row = cursor.fetchone()
+            if row and row[0] in {"timestamp with time zone", "timestamp without time zone"}:
+                cursor.execute(
+                    """
+                    ALTER TABLE documents
+                    ALTER COLUMN uploaded_at TYPE DOUBLE PRECISION
+                    USING EXTRACT(EPOCH FROM uploaded_at)
+                    """
+                )
+
     def run_migrations(self) -> None:
         """Run pending schema migrations once at startup."""
         with self.connect() as connection:
@@ -429,6 +454,7 @@ class SearchIndex:
                 ("001_initial", self._migration_001_initial),
                 ("002_object_storage_columns", self._migration_002_object_storage_columns),
                 ("003_category_backfill_guard", self._migration_003_category_backfill_guard),
+                ("004_uploaded_at_epoch", self._migration_004_uploaded_at_epoch),
             ]
 
             for version, func in migrations:
