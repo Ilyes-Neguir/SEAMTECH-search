@@ -2,7 +2,6 @@
 
 export type MatchType = "exact_name" | "name" | "path" | "content"
 export type ExtractionStatus = "extracted" | "unavailable" | "skipped" | "error" | "timeout" | "not_applicable"
-export type OneDriveStatus = "uploaded" | "pending_retry" | "pending_reauth" | "pending_not_configured" | "not_applicable" | "not_configured"
 
 export interface ScanSummary {
   started_at: string

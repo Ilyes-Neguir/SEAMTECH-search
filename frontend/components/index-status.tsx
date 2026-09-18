@@ -5,13 +5,26 @@ import { Database, Circle } from "lucide-react"
 import type { HealthResponse } from "@/lib/types"
 import { formatDateTime } from "@/lib/format"
 import { cn } from "@/lib/utils"
+import { authedFetch } from "@/lib/authed-fetch"
 
-const fetcher = (url: string) => fetch(url).then((r) => r.json())
+const fetcher = (url: string) => authedFetch(url).then((r) => r.json())
 
 export function IndexStatus() {
-  const { data } = useSWR<HealthResponse & { sample?: boolean }>("/api/health", fetcher, {
-    refreshInterval: 60_000,
-  })
+  const { data } = useSWR<Partial<HealthResponse> & { sample?: boolean; authenticated?: boolean }>(
+    "/api/health",
+    fetcher,
+    {
+      refreshInterval: 60_000,
+    },
+  )
+
+  // /api/health returns a minimal liveness payload when the session has
+  // expired, so the archive counts may legitimately be absent here. Narrowing
+  // all three at once keeps the render branch type-safe.
+  const counts =
+    typeof data?.documents === "number" && typeof data.files === "number" && typeof data.folders === "number"
+      ? { documents: data.documents, files: data.files, folders: data.folders }
+      : null
 
   const online = data?.status === "ok"
 
@@ -26,16 +39,16 @@ export function IndexStatus() {
         {data?.sample && <span className="text-primary/80">(sample data)</span>}
       </span>
 
-      {data && (
+      {counts && (
         <>
           <span className="inline-flex items-center gap-1.5">
             <Database className="size-3.5" aria-hidden />
-            {data.documents.toLocaleString()} indexed
+            {counts.documents.toLocaleString()} indexed
           </span>
           <span className="hidden sm:inline">
-            {data.files.toLocaleString()} files · {data.folders.toLocaleString()} folders
+            {counts.files.toLocaleString()} files · {counts.folders.toLocaleString()} folders
           </span>
-          {data.last_scan && (
+          {data?.last_scan && (
             <span className="hidden md:inline">Last scan {formatDateTime(data.last_scan.started_at)}</span>
           )}
         </>

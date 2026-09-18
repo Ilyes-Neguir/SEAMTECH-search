@@ -73,7 +73,6 @@ SEAMTECH-search/
 │   ├── indexer.py                  # PostgreSQL/SQLite database manager, pooling, and FTS
 │   ├── jobs.py                     # Asynchronous job state manager and recovery
 │   ├── models.py                   # Pydantic data schemas for documents and search results
-│   ├── onedrive.py                 # Microsoft Graph OAuth2 client with token lifecycle
 │   ├── redis_store.py              # Redis task queues, sliding-window rate limiting, and job cache
 │   ├── retention.py                # Storage retention manager and pre-flight disk guard
 │   ├── storage.py                  # S3-compatible object storage client (MinIO, R2, AWS S3)
@@ -86,7 +85,6 @@ SEAMTECH-search/
 │   ├── test_import_workflow.py     # Two-phase scan/confirm, corrections, and retry backoff tests
 │   ├── test_indexer.py             # Database operations, search rankings, and schema tests
 │   ├── test_jobs_api.py            # Async jobs API, 202 acceptance, and cooperative cancellation
-│   ├── test_onedrive.py            # Microsoft Graph authentication and upload retry tests
 │   ├── test_pooling.py             # PostgreSQL connection pooling and timeout tests
 │   ├── test_postgres_integration.py# Live PostgreSQL integration test
 │   ├── test_redis.py               # Redis rate limiting, task queues, and fast-path cache tests

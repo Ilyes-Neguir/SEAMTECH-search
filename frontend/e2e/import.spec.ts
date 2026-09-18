@@ -1,11 +1,12 @@
 import { test, expect } from "@playwright/test"
+import { signIn } from "./helpers"
 import path from "path"
 
 test.describe("Import Workflow", () => {
   const sampleFolder = path.resolve(__dirname, "../../sample_data/CLIENT-123")
 
   test("should scan folder and confirm import of technical PDF", async ({ page }) => {
-    await page.goto("/")
+    await signIn(page)
 
     const input = page.getByPlaceholder(/Server folder path/i)
     await expect(input).toBeVisible()
@@ -33,7 +34,7 @@ test.describe("Import Workflow", () => {
   })
 
   test("should execute quick import with async job progress", async ({ page }) => {
-    await page.goto("/")
+    await signIn(page)
 
     const input = page.getByPlaceholder(/Server folder path/i)
     await expect(input).toBeVisible()

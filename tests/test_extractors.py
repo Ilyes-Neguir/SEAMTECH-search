@@ -1,6 +1,10 @@
+import io
 import sys
 from pathlib import Path
 from zipfile import ZipFile
+
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
 
 from seamtech_search.extractors import extract_file, extract_text
 from seamtech_search.indexer import _build_fts_query
@@ -65,6 +69,38 @@ def test_configured_external_parser_extracts_content(tmp_path: Path) -> None:
 
     assert result.status == "extracted"
     assert result.text.strip() == "CAD CONTENT"
+
+
+def test_pdf_table_rows_are_not_duplicated_in_extracted_text(tmp_path: Path) -> None:
+    """Audit 4f: extract_text() already yields the words inside table cells.
+
+    Re-appending the same rows from extract_tables() stored every document
+    twice over, inflating the index and letting field regexes double-match.
+    Rows whose cells all appear in the page text must not be appended again.
+    """
+    pdf_path = tmp_path / "table.pdf"
+    buffer = io.BytesIO()
+    c = canvas.Canvas(buffer, pagesize=A4)
+    c.drawString(72, 780, "FICHE TECHNIQUE")
+    # Ruled 2x2 table so pdfplumber's default "lines" strategy detects it.
+    y0, y1 = 700, 740
+    x0, xm, x1 = 72, 200, 328
+    for x in (x0, xm, x1):
+        c.line(x, y0, x, y1)
+    for y in (y0, (y0 + y1) / 2, y1):
+        c.line(x0, y, x1, y)
+    c.drawString(x0 + 8, y0 + 8, "UniqueCellAlpha")
+    c.drawString(xm + 8, y0 + 8, "UniqueCellBeta")
+    c.save()
+    pdf_path.write_bytes(buffer.getvalue())
+
+    result = extract_file(pdf_path, max_chars=20_000)
+
+    assert result.status == "extracted"
+    # The body line and each table cell appear exactly once: nothing doubled.
+    assert result.text.count("FICHE TECHNIQUE") == 1
+    assert result.text.count("UniqueCellAlpha") == 1
+    assert result.text.count("UniqueCellBeta") == 1
 
 
 def test_fts_query_quotes_user_tokens() -> None:

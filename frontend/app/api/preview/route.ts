@@ -2,8 +2,13 @@ import { type NextRequest, NextResponse } from "next/server"
 import { backendBase, authHeaders } from "@/lib/backend"
 import { SAMPLE_FILES } from "@/lib/sample-data"
 import type { PreviewResponse } from "@/lib/types"
+import { requireAuth } from "@/lib/auth"
+
+export const dynamic = "force-dynamic"
 
 export async function GET(req: NextRequest) {
+  const denied = await requireAuth()
+  if (denied) return denied
   const { searchParams } = new URL(req.url)
   const path = searchParams.get("path") ?? ""
   if (!path) return NextResponse.json({ detail: "Path is required." }, { status: 400 })

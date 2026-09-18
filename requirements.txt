@@ -1,3 +1,11 @@
+# Runtime dependencies — this is the only list the Docker image installs
+# (Dockerfile: `pip install --no-cache-dir -r requirements.txt`).
+#
+# Every package here is declared EXACTLY once across the repo. Test and lint
+# tooling lives in requirements-dev.txt; requirements-local.txt is an alias for
+# it. That is deliberate: these three files used to re-declare the same
+# packages at different versions (pytest 8.4.1 vs 9.1.1, a second copy of every
+# runtime pin), so which version you got depended on which file you installed.
 fastapi==0.141.1
 uvicorn[standard]==0.35.0
 pydantic==2.11.7
@@ -9,5 +17,4 @@ reportlab==4.4.3
 openpyxl==3.1.5
 boto3==1.35.90
 redis==5.2.1
-httpx==0.28.1
 psycopg2-binary==2.9.10

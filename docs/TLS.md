@@ -18,7 +18,7 @@ SEAMTECH Search enforces a strict network security policy:
 
 | Setting / Env Variable | Description | Default |
 |------------------------|-------------|---------|
-| `behind_tls_proxy` / `SEAMTECH_BEHIND_TLS_PROXY` | Informs backend that an upstream reverse proxy terminates TLS. | `false` |
+| `behind_tls_proxy` / `SEAMTECH_BEHIND_TLS_PROXY` | Informs backend that an upstream reverse proxy terminates TLS. | `false` in config; compose sets `true` for the web service (office deployment is behind a TLS terminator and web must bind `0.0.0.0`) and `false` for the frontend (controls the cookie `Secure` flag) |
 | `allow_network_access` / `SEAMTECH_ALLOW_NETWORK_ACCESS` | Allows binding to non-local IP addresses. | `false` |
 | `auth_token` / `SEAMTECH_AUTH_TOKEN` | Bearer token required when network access is enabled. | `null` |
 

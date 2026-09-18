@@ -25,7 +25,7 @@ Audited commit `b7be72a` had data-loss, security, and doc-honesty defects. This 
 - **3.3 Vercel Analytics:** Removed `@vercel/analytics` from `package.json` and `layout.tsx`, removed `generator: v0.app`, renamed package to `seamtech-search-frontend`.
 - **3.4 Sample fallback:** Gated on `SEAMTECH_DEMO_MODE=1`, impossible when `NODE_ENV === production` → 503 with clear message. `/health` tags demo with `sample: true`.
 - **3.5 Container hardening:** Dockerfile adds non-root `seamtech` user, `HEALTHCHECK` hitting `/live`, drops `config/` copy, splits test deps to `requirements-dev.txt` (no pytest/httpx in prod image).
-- **3.6 Config footguns:** MinIO creds mandatory `:?`, Redis `requirepass` set and in URL, `BEHIND_TLS_PROXY` defaults `false` (was `true`), adds commented Caddy reverse proxy service, `config.example.json` uses Linux path `/data/SEAMTECH/DesignFiles` no hardcoded minioadmin, adds `SEAMTECH_ROOT_PATHS` env override (colon/comma), `default_config_path()` fails loudly if `config.json` missing, `restart: unless-stopped` everywhere.
+- **3.6 Config footguns:** MinIO creds mandatory `:?`, Redis `requirepass` set and in URL, `BEHIND_TLS_PROXY` is `false` in app config — compose sets `true` for the web service because the documented deployment sits behind a TLS terminator and web must bind `0.0.0.0` (the backend refuses non-loopback bind + token + `false`), adds commented Caddy reverse proxy service, `config.example.json` uses Linux path `/data/SEAMTECH/DesignFiles` no hardcoded minioadmin, adds `SEAMTECH_ROOT_PATHS` env override (colon/comma), `default_config_path()` fails loudly if `config.json` missing, `restart: unless-stopped` everywhere.
 
 ### Phase 4 — Correctness
 

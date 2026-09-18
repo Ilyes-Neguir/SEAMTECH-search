@@ -1,7 +1,12 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { backendBase, authHeaders } from "@/lib/backend"
+import { requireAuth } from "@/lib/auth"
+
+export const dynamic = "force-dynamic"
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string; artifact: string }> }) {
+  const denied = await requireAuth()
+  if (denied) return denied
   const { id, artifact } = await params
   const allowed = ["report_pdf", "report_docx", "source_pdf", "source_excel"]
   if (!allowed.includes(artifact)) {

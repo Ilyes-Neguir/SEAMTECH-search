@@ -14,6 +14,33 @@ from .models import Document
 logger = logging.getLogger("seamtech_search.indexer")
 
 
+# ---------------------------------------------------------------------------
+# Postgres accent folding (audit issue #5b)
+# ---------------------------------------------------------------------------
+# The SQLite backend indexes into an FTS5 table with the DEFAULT tokenizer,
+# which folds diacritics: a search for "lattee" finds a document containing
+# "lattée" and vice versa (verified on SQLite 3.40.1; `unicode61
+# remove_diacritics 0` would NOT fold, but that is not what the schema uses).
+#
+# Postgres was using `to_tsvector('simple', ...)`, and the `simple`
+# configuration only lowercases — it never strips accents. So the same query
+# returned different rows depending on which backend the deployment used:
+# accented French fabric sheets ("lattée", "élève", "référence") were
+# unfindable by their unaccented spelling on Postgres but findable on SQLite.
+#
+# The fix is a text-search configuration that chains the `unaccent` dictionary
+# in front of `simple`, rather than calling `unaccent()` on the text directly.
+# Doing it as a configuration means `ts_headline` still lexizes the ORIGINAL
+# text, so snippets keep their accents in the UI while matching folded query
+# terms — calling `unaccent()` on the text would have stripped accents out of
+# every displayed snippet.
+PG_UNACCENT_CONFIG = "seamtech_unaccent"
+PG_FALLBACK_CONFIG = "simple"
+# Both names are internal constants interpolated into SQL; they never carry
+# user input. `_postgres_ts_config` returns one of exactly these two values.
+PG_TS_CONFIGS = (PG_UNACCENT_CONFIG, PG_FALLBACK_CONFIG)
+
+
 SQLITE_SCHEMA = """
 PRAGMA journal_mode=WAL;
 
@@ -189,6 +216,9 @@ class SearchIndex:
         self.pool_timeout = pool_timeout
         self.statement_timeout_ms = statement_timeout_ms
         self._pool: Any = None
+        # Resolved Postgres text-search configuration name, cached per index
+        # instance. See `_postgres_ts_config`.
+        self._pg_ts_config: str | None = None
         if not self.is_postgres:
             self.database_path.parent.mkdir(parents=True, exist_ok=True)
         else:
@@ -263,8 +293,8 @@ class SearchIndex:
         if self._pool is not None:
             try:
                 self._pool.closeall()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Error while closing Postgres connection pool: %s", exc)
             self._pool = None
 
     # ------------------------------------------------------------------
@@ -416,8 +446,10 @@ class SearchIndex:
                     WHERE category IS NULL OR category = ''
                     """
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                # A failed backfill leaves categories wrong on disk; that is a
+                # data problem a startup must announce, not a silent pass.
+                logger.warning("Category backfill failed during migration 003 (SQLite): %s", exc)
 
     def _migration_004_uploaded_at_epoch(self, connection: Any) -> None:
         """Store upload times as Unix epoch seconds, matching Document.uploaded_at."""
@@ -444,6 +476,127 @@ class SearchIndex:
                     """
                 )
 
+    def _ensure_unaccent_config(self, connection: Any) -> bool:
+        """Idempotently install `unaccent` and a text-search config that uses it.
+
+        Returns True when the accent-folding configuration is available.
+
+        Everything here is wrapped in a SAVEPOINT. Two reasons: `CREATE
+        EXTENSION` needs privileges the database role may not have (managed
+        Postgres), and a DDL failure aborts the surrounding transaction, which
+        would leave every later statement in the same transaction failing. On
+        any failure this logs at ERROR and degrades to the plain `simple`
+        configuration: accent parity with SQLite is lost, but the app still
+        starts and search still works. tests/test_indexer_accent_parity.py
+        fails loudly if CI ever takes that degraded path.
+        """
+        with connection.cursor() as cursor:
+            cursor.execute("SAVEPOINT seamtech_unaccent")
+            try:
+                # `unaccent` is a trusted extension, so a non-superuser with
+                # CREATE privilege on the database can install it.
+                cursor.execute("CREATE EXTENSION IF NOT EXISTS unaccent")
+
+                cursor.execute(
+                    "SELECT 1 FROM pg_ts_config WHERE cfgname = %s AND cfgnamespace = current_schema()::regnamespace",
+                    (PG_UNACCENT_CONFIG,),
+                )
+                if cursor.fetchone() is None:
+                    # Postgres has no CREATE TEXT SEARCH CONFIGURATION IF NOT
+                    # EXISTS, hence the catalog check. COPY = simple keeps the
+                    # same parser and stopword behaviour; the ALTER then chains
+                    # `unaccent` in front of `simple` for word-like tokens.
+                    #
+                    # This is the exact recipe from the PostgreSQL 16 docs
+                    # (F.48. unaccent, "Usage"). The grammar is
+                    # `ALTER MAPPING FOR <token types> WITH <dictionaries>`;
+                    # there is no `FOR ... TO ...` form, and `ALTER MAPPING`
+                    # (not `ADD MAPPING`) is required because COPY = simple
+                    # already installed mappings for these token types.
+                    cursor.execute(
+                        f"CREATE TEXT SEARCH CONFIGURATION {PG_UNACCENT_CONFIG} (COPY = simple)"
+                    )
+                    cursor.execute(
+                        f"ALTER TEXT SEARCH CONFIGURATION {PG_UNACCENT_CONFIG} "
+                        "ALTER MAPPING FOR hword, hword_part, word "
+                        "WITH unaccent, simple"
+                    )
+                    logger.info(
+                        "Created text-search configuration %s (unaccent + simple)", PG_UNACCENT_CONFIG
+                    )
+                cursor.execute("RELEASE SAVEPOINT seamtech_unaccent")
+            except Exception as exc:
+                cursor.execute("ROLLBACK TO SAVEPOINT seamtech_unaccent")
+                cursor.execute("RELEASE SAVEPOINT seamtech_unaccent")
+                logger.error(
+                    "Could not set up accent-folding full-text search (%s). Postgres search "
+                    "falls back to the %r configuration, so accented and unaccented queries "
+                    "will NOT return the same rows as the SQLite backend.",
+                    exc,
+                    PG_FALLBACK_CONFIG,
+                )
+                self._pg_ts_config = PG_FALLBACK_CONFIG
+                return False
+
+            # Read the catalog back rather than trusting the branch above, so
+            # the cached configuration name is always one Postgres agrees
+            # exists. This is what `_postgres_ts_config` will return.
+            cursor.execute(
+                "SELECT 1 FROM pg_ts_config WHERE cfgname = %s AND cfgnamespace = current_schema()::regnamespace",
+                (PG_UNACCENT_CONFIG,),
+            )
+            self._pg_ts_config = PG_UNACCENT_CONFIG if cursor.fetchone() is not None else PG_FALLBACK_CONFIG
+            return self._pg_ts_config == PG_UNACCENT_CONFIG
+
+    def _postgres_ts_config(self, connection: Any) -> str:
+        """Name of the text-search configuration to use, resolved once and cached.
+
+        Falls back to `simple` when the accent-folding configuration is absent
+        (unprivileged role, or a database created before migration 005).
+        """
+        if self._pg_ts_config is not None:
+            return self._pg_ts_config
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT 1 FROM pg_ts_config WHERE cfgname = %s AND cfgnamespace = current_schema()::regnamespace",
+                (PG_UNACCENT_CONFIG,),
+            )
+            available = cursor.fetchone() is not None
+        self._pg_ts_config = PG_UNACCENT_CONFIG if available else PG_FALLBACK_CONFIG
+        if not available:
+            logger.warning(
+                "Text-search configuration %s is missing; using %r, so accented and unaccented "
+                "queries will NOT return the same rows as the SQLite backend.",
+                PG_UNACCENT_CONFIG,
+                PG_FALLBACK_CONFIG,
+            )
+        return self._pg_ts_config
+
+    def _migration_005_unaccent_search_vector(self, connection: Any) -> None:
+        """Make Postgres accent parity match SQLite's accent-folding FTS5 index."""
+        if not self.is_postgres:
+            return
+
+        if not self._ensure_unaccent_config(connection):
+            # Nothing to rebuild: the vectors are already `simple`, and
+            # `_postgres_ts_config` will keep resolving to `simple`.
+            return
+
+        with connection.cursor() as cursor:
+            # Rebuild EVERY vector, not just the empty ones: rows indexed before
+            # this migration carry `simple` lexemes and would otherwise stay
+            # unfindable by their unaccented spelling forever.
+            cursor.execute(
+                f"""
+                UPDATE documents
+                SET search_vector = to_tsvector(
+                    '{PG_UNACCENT_CONFIG}',
+                    concat_ws(E'\\n', name, path, extension, content)
+                )
+                """
+            )
+            logger.info("Rebuilt %d search vector(s) with accent folding", cursor.rowcount)
+
     def run_migrations(self) -> None:
         """Run pending schema migrations once at startup."""
         with self.connect() as connection:
@@ -455,6 +608,7 @@ class SearchIndex:
                 ("002_object_storage_columns", self._migration_002_object_storage_columns),
                 ("003_category_backfill_guard", self._migration_003_category_backfill_guard),
                 ("004_uploaded_at_epoch", self._migration_004_uploaded_at_epoch),
+                ("005_unaccent_search_vector", self._migration_005_unaccent_search_vector),
             ]
 
             for version, func in migrations:
@@ -512,6 +666,14 @@ class SearchIndex:
                         )
                         """
                     )
+                # Idempotent, so it is safe (and necessary) outside
+                # run_migrations: the Postgres integration tests call
+                # initialize() alone, and a database restored from a dump may
+                # already have the table but not the extension. Without this
+                # the accent-parity behaviour would silently depend on which
+                # entry point happened to run first. It also caches the
+                # resolved configuration name for `_postgres_ts_config`.
+                self._ensure_unaccent_config(connection)
             else:
                 if rebuild:
                     connection.executescript(
@@ -861,6 +1023,11 @@ class SearchIndex:
             with connection.cursor() as cursor:
                 import psycopg2.extras
 
+                # One of the two internal constants in PG_TS_CONFIGS, never
+                # user input, so interpolating it into the template is safe.
+                ts_config = self._postgres_ts_config(connection)
+                assert ts_config in PG_TS_CONFIGS, f"unexpected ts config {ts_config!r}"
+
                 psycopg2.extras.execute_values(
                     cursor,
                     """
@@ -893,7 +1060,7 @@ class SearchIndex:
                     values,
                     template=(
                         "(%s, %s, %s, %s, %s, %s, %s, %s, %s, "
-                        "to_tsvector('simple', %s), "
+                        f"to_tsvector('{ts_config}', %s), "
                         "%s, %s, %s, %s, %s, %s, %s, %s, %s)"
                     ),
                 )
@@ -999,13 +1166,19 @@ class SearchIndex:
         with self.connect() as connection:
             import psycopg2.extras
 
+            # Accent-folding configuration when available, else 'simple'. Both
+            # the query and the headline must use the SAME configuration as the
+            # stored search_vector or nothing matches.
+            ts_config = self._postgres_ts_config(connection)
+            assert ts_config in PG_TS_CONFIGS, f"unexpected ts config {ts_config!r}"
+
             with connection.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
                 cursor.execute(
-                    """
+                    f"""
                     WITH search AS (
                         SELECT
-                            to_tsquery('simple', %s) AS query_or,
-                            to_tsquery('simple', %s) AS query_and
+                            to_tsquery('{ts_config}', %s) AS query_or,
+                            to_tsquery('{ts_config}', %s) AS query_and
                     )
                     SELECT
                         d.path,
@@ -1018,9 +1191,19 @@ class SearchIndex:
                         d.extraction_status,
                         d.extraction_detail,
                         d.category,
+                        -- Headline the content column only: it is the exact
+                        -- text the search_vector was built from (searchable
+                        -- text = name + path + extension + text), which is
+                        -- also what SQLite headlines via snippet(documents_fts, 3, ...).
+                        -- Prepending name/path/extension again duplicated those
+                        -- tokens and made the ts_headline fragment selector pick
+                        -- a fragment that cut off before the content match,
+                        -- silently dropping the matched (accented) words.
+                        -- Note: keep this comment free of apostrophes; the
+                        -- grammar test walks string literals naively.
                         ts_headline(
-                            'simple',
-                            concat_ws(E'\\n', d.name, d.path, d.extension, d.content),
+                            '{ts_config}',
+                            d.content,
                             search.query_or,
                             'StartSel=<mark>, StopSel=</mark>, MaxWords=24, MinWords=8, ShortWord=2'
                         ) AS snippet,

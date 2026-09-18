@@ -152,31 +152,16 @@ Every imported folder or dossier automatically generates two synchronized profes
 
 ## 6. Verification, Testing & Quality Assurance
 
-The codebase adheres to rigorous testing standards across multiple layers:
-
-```text
-============================= test session starts ==============================
-platform linux -- Python 3.11.2, pytest-8.4.1
-collected 93 items
-
-tests/test_api.py ..................................................... [ 10%]
-tests/test_config.py .................................................. [ 20%]
-tests/test_extractors.py .............................................. [ 30%]
-tests/test_import_pipeline.py ......................................... [ 40%]
-tests/test_import_workflow.py ......................................... [ 55%]
-tests/test_indexer.py ................................................. [ 65%]
-tests/test_jobs_api.py ................................................ [ 75%]
-tests/test_onedrive.py ................................................ [ 80%]
-tests/test_pooling.py ................................................. [ 85%]
-tests/test_redis.py ................................................... [ 90%]
-tests/test_scan_safety.py ............................................. [ 95%]
-tests/test_storage.py ................................................. [100%]
-
-=================== 91 passed, 2 skipped (Postgres/S3 live) in 5.4s ============
-```
+The codebase adheres to rigorous testing standards across multiple layers. The
+full suite runs on every push (`.github/workflows/ci.yml`): the SQLite and
+live-Postgres test selections, a per-module coverage gate
+(`scripts/coverage_gate.py`), `ruff check .`, `pip-audit`, the Docker image
+builds, the documented `docker compose` deployment, and the Playwright E2E
+suite. (An earlier version of this document pasted a raw pytest transcript;
+transcripts go stale, so CI is the source of truth.)
 
 ### Verification Matrix:
-- **Unit & Pipeline Tests:** 91 passing tests verifying S3 client, Redis queue, rate limiting, connection pooling, multi-sheet PDF extraction, ReportLab PDF generation, python-docx Word report generation, and retention cleanup.
+- **Unit & Pipeline Tests:** automated suite verifying S3 client, Redis queue, rate limiting, connection pooling, multi-sheet PDF extraction, ReportLab PDF generation, python-docx Word report generation, accent parity across SQLite/Postgres, and retention cleanup (count and result in CI, not hardcoded here).
 - **Static Analysis & Linting:** `ruff check .` with 0 warnings or errors across the entire codebase.
 - **End-to-End Testing (Playwright):** Automated tests in `frontend/e2e/` verifying search workflow, folder scanning, file upload, and report viewing.
 - **Type Safety:** Full TypeScript strict checking (`tsc --noEmit`) and Pydantic v2 data models.

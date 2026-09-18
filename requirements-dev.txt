@@ -1,4 +1,36 @@
+# Development, test and CI tooling. Single source of truth: nothing here is
+# declared in any other requirements file, and every runtime package comes in
+# through the include below at exactly one version.
 -r requirements.txt
-pytest==8.4.1
+
+# ONE pytest version for the whole repo. This file pinned 8.4.1 while
+# requirements-local.txt and pyproject.toml pinned 9.1.1 — the audit's
+# "conflicting requirements pins" finding. 9.1.1 is what the suite is
+# verified against (see README "Verified state").
+pytest==9.1.1
+pytest-cov==7.1.0
+
+# fastapi.testclient (Starlette) requires httpx; nothing in seamtech_search/
+# imports it, so it is test-only and must NOT be in requirements.txt — the
+# Docker image installs that file, and README documents the image as carrying
+# no pytest/httpx. It was previously pinned here AND in requirements.txt, which
+# is what made that README claim false. Dropping it once broke CI, so it is
+# pinned here rather than left implicit.
 httpx==0.28.1
+
+# Lint and security scanning, both run as hard gates in CI (no `|| echo`).
 ruff>=0.5.0
+pip-audit>=2.7.0
+
+# Parses docker-compose.yml in tests/test_compose_hardening.py so the compose
+# invariants (pinned image tags, non-trivial healthchecks, loopback-only ports,
+# mandatory UI sign-in secrets) are checked even where Docker is unavailable.
+PyYAML==6.0.3
+
+# Embeds libpg_query -- PostgreSQL's own parser -- so
+# tests/test_postgres_sql_grammar.py validates the grammar of every statement
+# the indexer emits without needing a running server. Added after an invented
+# `ALTER TEXT SEARCH CONFIGURATION ... FOR ANY TO ...` passed every mocked test,
+# then crashed web at startup in CI; mocked cursors cannot tell valid SQL from
+# nonsense. Test-only, never imported by seamtech_search/.
+pglast==8.4

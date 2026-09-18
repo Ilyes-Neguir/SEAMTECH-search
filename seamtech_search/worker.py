@@ -204,8 +204,10 @@ def worker_loop(config: AppConfig, index: SearchIndex, redis_store: RedisStore) 
             # Process delayed retry queue first
             try:
                 redis_store.process_retry_queue("imports")
-            except Exception:
-                pass
+            except Exception as exc:
+                # Repeated every loop; a transient Redis failure is retried on
+                # the next pass, so keep it at debug level.
+                logger.debug("Could not process retry queue this pass: %s", exc)
 
             task = redis_store.dequeue_task("imports", timeout=2)
             if task:

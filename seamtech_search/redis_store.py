@@ -246,8 +246,10 @@ class RedisStore:
                     # Also push to processing for tracking
                     try:
                         client.rpush(processing_key, item)
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        # The task is still processed; only its processing-key
+                        # tracking is lost, so this is debug-level visibility.
+                        logger.debug("Could not track task in processing key %s: %s", processing_key, exc)
                     return json.loads(item)
                 return None
         except Exception as exc:

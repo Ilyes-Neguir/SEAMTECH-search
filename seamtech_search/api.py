@@ -46,6 +46,12 @@ from .worker import start_background_worker, stop_background_worker
 
 logger = logging.getLogger("seamtech_search.api")
 
+# Hard cap on the number of files accepted by /imports/upload. Enforced as an
+# explicit check (not FastAPI's File(max_length=...)) so a dossier over the cap
+# gets a clear, actionable 413 message instead of an opaque 422 validation
+# error. Bump consciously: staging writes every file to disk before scanning.
+MAX_UPLOAD_FILES = 500
+
 
 class ImportRequest(BaseModel):
     source_path: str = Field(min_length=1, max_length=4_096)
@@ -79,6 +85,34 @@ class ImportCorrectionRequest(BaseModel):
 
 def _import_payload(result: ImportResult) -> dict[str, Any]:
     return asdict(result)
+
+
+def _initialize_schema(index: SearchIndex, stage: str) -> None:
+    """Initialize the schema and run migrations, failing loudly if they do not.
+
+    Both call sites used to swallow failures -- the lifespan logged a warning and
+    carried on, `create_app` had a bare `except Exception: pass` -- so the API
+    could come up against a half-migrated schema. Every later query then failed
+    in a way that pointed at the query rather than at the schema, and nothing in
+    the logs said a migration had been skipped. Migration failures are now fatal
+    at startup: a container that refuses to start is diagnosable, one that
+    silently serves a wrong schema is not.
+
+    Failures that are *expected* to be survivable degrade inside the migration
+    instead of raising. See SearchIndex._ensure_unaccent_config, which falls back
+    to the plain `simple` text-search configuration when the database role cannot
+    CREATE EXTENSION, so a privilege gap costs accent-insensitive search rather
+    than the whole service.
+    """
+    index.initialize()
+    try:
+        index.run_migrations()
+    except Exception as exc:
+        logger.exception("Schema migrations failed during %s; refusing to start", stage)
+        raise RuntimeError(
+            f"Schema migrations failed during {stage}: {exc}. Refusing to start against a "
+            "half-migrated schema; the underlying database error is logged above."
+        ) from exc
 
 
 def create_app(config: AppConfig) -> FastAPI:
@@ -132,11 +166,7 @@ def create_app(config: AppConfig) -> FastAPI:
     async def lifespan(app: FastAPI):
         # Initialize DB and run versioned migrations once at startup.
         # Health must not call initialize (read-only probe).
-        index.initialize()
-        try:
-            index.run_migrations()
-        except Exception as exc:
-            logger.warning("Schema migrations failed: %s", exc)
+        _initialize_schema(index, "startup")
         recovered = recover_stale_jobs(index)
         if recovered > 0:
             logger.info("Recovered %d stale import jobs on startup", recovered)
@@ -168,11 +198,7 @@ def create_app(config: AppConfig) -> FastAPI:
     )
     # Eager init for TestClient usage that does not trigger lifespan, but health
     # itself remains read-only (does not call initialize).
-    index.initialize()
-    try:
-        index.run_migrations()
-    except Exception:
-        pass
+    _initialize_schema(index, "app construction")
 
     request_timestamps: dict[str, list[float]] = defaultdict(list)
     rate_limit_lock = asyncio.Lock()
@@ -437,8 +463,10 @@ def create_app(config: AppConfig) -> FastAPI:
                     row = conn.execute("SELECT object_key FROM documents WHERE path_key = ?", (str(target.resolve()),)).fetchone()
                     if row and row["object_key"]:
                         object_key = row["object_key"]
-        except Exception:
-            pass
+        except Exception as exc:
+            # Falling back to the local file is fine, but a DB error here is a
+            # signal of a broken schema/index and must not vanish silently.
+            logger.warning("Could not look up object_key for %s: %s", target, exc)
 
         if storage_client is not None and object_key:
             try:
@@ -715,12 +743,20 @@ def create_app(config: AppConfig) -> FastAPI:
     @app.post("/imports/upload")
     async def upload_import(
         request: Request,
-        files: Annotated[list[UploadFile], File(min_length=1, max_length=500)],
+        files: Annotated[list[UploadFile], File(min_length=1)],
         folder: Annotated[str, Form(max_length=128)] = "upload",
         token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
     ) -> dict[str, object]:
         _require_auth(config, token)
         actor = actor_fingerprint(token, request.client.host if request.client else None)
+        if len(files) > MAX_UPLOAD_FILES:
+            raise HTTPException(
+                status_code=413,
+                detail=(
+                    f"Too many files: {len(files)} uploaded, maximum is {MAX_UPLOAD_FILES} per upload. "
+                    "Split the folder into several batches and upload them separately."
+                ),
+            )
 
         try:
             ensure_free_space(config.database_path.parent, config.min_free_bytes)
@@ -844,8 +880,11 @@ def create_app(config: AppConfig) -> FastAPI:
             if redis_store.is_configured():
                 try:
                     redis_store.update_job(import_id, {"result": res, "status": res.get("status", "completed")})
-                except Exception:
-                    pass
+                except Exception as exc:
+                    # DB record is already corrected; a failed cache refresh
+                    # leaves a stale cached copy visible until it expires, so
+                    # make the failure visible rather than swallowing it.
+                    logger.warning("Could not refresh Redis cache for import %s after correction: %s", import_id, exc)
             record_audit_event(index, action="import_correct", actor=actor, resource=import_id, status="success")
             return res
         except KeyError as exc:
@@ -868,8 +907,11 @@ def create_app(config: AppConfig) -> FastAPI:
             if redis_store.is_configured():
                 try:
                     redis_store.update_job(import_id, {"result": res, "status": res.get("status", "completed")})
-                except Exception:
-                    pass
+                except Exception as exc:
+                    # Same stale-cache trade-off as import_correct: the DB
+                    # record is already updated, but a failed refresh means the
+                    # old cached copy can shadow it until it expires.
+                    logger.warning("Could not refresh Redis cache for import %s after retry-upload: %s", import_id, exc)
             record_audit_event(index, action="import_retry_upload", actor=actor, resource=import_id, status="success")
             return res
         except KeyError as exc:

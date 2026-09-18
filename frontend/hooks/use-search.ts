@@ -2,6 +2,7 @@
 
 import { useCallback, useRef, useState } from "react"
 import type { SearchResponse, SearchResult } from "@/lib/types"
+import { authedFetch } from "@/lib/authed-fetch"
 
 const LIMIT = 25
 
@@ -26,7 +27,7 @@ const initial: State = {
 }
 
 async function fetchSearch(q: string, offset: number): Promise<SearchResponse> {
-  const res = await fetch(`/api/search?q=${encodeURIComponent(q)}&limit=${LIMIT}&offset=${offset}`)
+  const res = await authedFetch(`/api/search?q=${encodeURIComponent(q)}&limit=${LIMIT}&offset=${offset}`)
   const body = await res.json()
   if (!res.ok) throw new Error(body?.detail ?? "Search request failed.")
   return body as SearchResponse
