@@ -51,8 +51,14 @@ jobs:
       - name: Run SQLite suite
         run: pytest -q -k "not postgres and not s3"
       - name: Run coverage
-        # Same selection as the suite above plus the mocked-postgres coverage
-        # tests; live-postgres tests self-skip here (no SEAMTECH_TEST_DATABASE_URL).
+        # Same selection as the SQLite suite above, plus the mocked-postgres
+        # coverage tests AND the live-postgres tests. SEAMTECH_TEST_DATABASE_URL
+        # used to be absent here, so every `-m postgres` test silently skipped
+        # out of the coverage run and the Postgres-only branches in indexer.py
+        # were measured as uncovered (audit issue #5b). The postgres service is
+        # already declared on this job, so point the tests at it.
+        env:
+          SEAMTECH_TEST_DATABASE_URL: postgresql://seamtech:seamtech_test_password@localhost:5432/seamtech_search_test
         run: pytest -k "not s3" -q --cov=seamtech_search --cov-report=term-missing --cov-report=json:coverage.json
       - name: Coverage gate (overall + per-module)
         # Real gate: reads coverage.json, compares every Phase 1 module against
@@ -61,10 +67,36 @@ jobs:
       - name: Pip audit (security)
         # No `|| echo`: a known vulnerability in a pinned dependency fails CI.
         run: pip-audit --desc
-      - name: Run PostgreSQL integration suite
+      - name: Run PostgreSQL integration suite (must actually run, not self-skip)
+        # Audit issue #5b: these tests `pytest.skip()` when
+        # SEAMTECH_TEST_DATABASE_URL is unset, so a typo in the service name, a
+        # port change, or a dropped env block would turn the whole Postgres
+        # suite into skips while CI still reported green. The guard below fails
+        # the job unless a non-zero number of Postgres tests PASSED and none
+        # were skipped.
         env:
           SEAMTECH_TEST_DATABASE_URL: postgresql://seamtech:seamtech_test_password@localhost:5432/seamtech_search_test
-        run: pytest -m postgres -v
+        run: |
+          set -uo pipefail
+          out=$(pytest -m postgres -v 2>&1)
+          rc=$?
+          echo "$out"
+          if [ "$rc" -ne 0 ]; then
+            echo "::error title=postgres-suite-failed::pytest -m postgres exited $rc"
+            exit "$rc"
+          fi
+          summary=$(echo "$out" | tail -1)
+          passed=$(echo "$summary" | grep -oE '[0-9]+ passed' | grep -oE '[0-9]+' || echo 0)
+          skipped=$(echo "$summary" | grep -oE '[0-9]+ skipped' | grep -oE '[0-9]+' || echo 0)
+          echo "Postgres suite summary: passed=$passed skipped=$skipped"
+          if [ "${passed:-0}" -eq 0 ]; then
+            echo "::error title=postgres-suite-did-not-run::0 Postgres tests passed - nothing was collected or everything skipped"
+            exit 1
+          fi
+          if [ "${skipped:-0}" -ne 0 ]; then
+            echo "::error title=postgres-tests-skipped::$skipped Postgres test(s) skipped even though SEAMTECH_TEST_DATABASE_URL is set"
+            exit 1
+          fi
 
   frontend:
     runs-on: ubuntu-latest
