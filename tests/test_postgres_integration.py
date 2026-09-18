@@ -94,3 +94,47 @@ def test_postgres_batch_upsert_searches_documents_and_preserves_categories(tmp_p
                     "DELETE FROM documents WHERE path_key = ANY(%s)",
                     ([document.path_key for document in documents],),
                 )
+
+
+@pytest.mark.postgres
+def test_postgres_upsert_document_with_uploaded_at_roundtrips(tmp_path: Path) -> None:
+    database_url = os.environ.get("SEAMTECH_TEST_DATABASE_URL")
+    if not database_url:
+        pytest.skip("Set SEAMTECH_TEST_DATABASE_URL to run PostgreSQL integration tests")
+
+    index = SearchIndex(tmp_path / "unused.db", database_url)
+    index.initialize()
+    index.run_migrations()
+    path = tmp_path / f"postgres-uploaded-at-{uuid.uuid4().hex}.txt"
+    uploaded_at = 1_700_000_000.25
+    document = Document(
+        path=path,
+        name=path.name,
+        parent_path=path.parent,
+        extension=".txt",
+        size=7,
+        modified_at=1000.0,
+        is_dir=False,
+        text="uploaded at roundtrip marker",
+        object_key="imports/test/uploaded-at.txt",
+        object_bucket="seamtech-documents",
+        uploaded_at=uploaded_at,
+        upload_status="uploaded",
+    )
+
+    try:
+        assert index.upsert_document(document) is True
+        with index.connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT uploaded_at, pg_typeof(uploaded_at)::text FROM documents WHERE path_key = %s",
+                    (document.path_key,),
+                )
+                stored, column_type = cursor.fetchone()
+
+        assert column_type == "double precision"
+        assert stored == pytest.approx(uploaded_at)
+    finally:
+        with index.connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("DELETE FROM documents WHERE path_key = %s", (document.path_key,))

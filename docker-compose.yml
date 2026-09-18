@@ -34,11 +34,12 @@ services:
       - "127.0.0.1:9001:9001"
     volumes:
       - minio-data:/data
-    # Real liveness probe: the minio image has no python3, so the previous
-    # check could never detect a broken server (`|| exit 0` hid it).
-    # busybox wget exits non-zero when /minio/health/live does not answer.
+    # Weakest available check: the MinIO image has no HTTP client (wget/curl)
+    # for this probe. This only proves that the process is alive; it does not
+    # prove that the S3 API answers. Keep it honest rather than masking a
+    # failed HTTP probe with `|| exit 0`.
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9000/minio/health/live"]
+      test: ["CMD", "test", "-d", "/proc/1"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -73,8 +74,9 @@ services:
       # Inside the container network, web listens on 0.0.0.0 so frontend can communicate.
       SEAMTECH_HOST: "0.0.0.0"
       SEAMTECH_ALLOW_NETWORK_ACCESS: "true"
-      # Default to false — set to true only when behind a real TLS terminator (see docs/TLS.md)
-      SEAMTECH_BEHIND_TLS_PROXY: ${SEAMTECH_BEHIND_TLS_PROXY:-false}
+      # The documented office deployment is served through a TLS terminator.
+      # Override to false only when the service is strictly localhost-only.
+      SEAMTECH_BEHIND_TLS_PROXY: ${SEAMTECH_BEHIND_TLS_PROXY:-true}
       SEAMTECH_AUTH_TOKEN: ${SEAMTECH_AUTH_TOKEN:?Set SEAMTECH_AUTH_TOKEN in the environment}
       SEAMTECH_ROOT_PATHS: ${SEAMTECH_ROOT_PATHS:-}
     depends_on:
@@ -93,7 +95,7 @@ services:
       - ./logs:/app/logs
       - ./data:/app/data
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', headers={'X-SEAMTECH-TOKEN': os.environ['SEAMTECH_AUTH_TOKEN']}, timeout=5)\""]
+      test: ["CMD", "python", "-c", "import os, urllib.request; request = urllib.request.Request('http://127.0.0.1:8000/health', headers={'X-SEAMTECH-TOKEN': os.environ['SEAMTECH_AUTH_TOKEN']}); urllib.request.urlopen(request, timeout=5)"]
       interval: 30s
       timeout: 10s
       retries: 3
