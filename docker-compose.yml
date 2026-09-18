@@ -34,9 +34,10 @@ services:
       - "127.0.0.1:9001:9001"
     volumes:
       - minio-data:/data
-    # Real liveness probe using a command present in the MinIO image. The
-    # image does not ship wget or Python; `test` is enough to detect that the
-    # server process and its proc namespace are alive without masking failure.
+    # Weakest available check: the MinIO image has no HTTP client (wget/curl)
+    # for this probe. This only proves that the process is alive; it does not
+    # prove that the S3 API answers. Keep it honest rather than masking a
+    # failed HTTP probe with `|| exit 0`.
     healthcheck:
       test: ["CMD", "test", "-d", "/proc/1"]
       interval: 10s
