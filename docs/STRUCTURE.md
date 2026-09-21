@@ -79,7 +79,8 @@ SEAMTECH-search/
 │   │   ├── normalisation.py        # French formats: 6,60 m→6.6, g/m², mm, FR dates, booleans, référentiel name splitting
 │   │   ├── anomalies.py            # RG16 coherence checks independent of confidence (ranges, surface ratio, ordering)
 │   │   ├── persistance.py          # Single-transaction write, statut a_valider (RG3), RG11 idempotence, seuils routing
-│   │   └── cli.py                  # Demo CLI: extraire (read-only), ecrire (transactional), init, banc (gabarit_test)
+│   │   ├── cli.py                  # Demo CLI: extraire (read-only), ecrire (transactional), init, banc (gabarit_test)
+│   │   └── routes.py               # Lot B.2 HTTP routes (§17.11): field traceability + gabarit registry (read/publish only)
 │   ├── extraction_worker.py        # Process-isolated extraction helper
 │   ├── extractors.py               # Text, PDF (pdfplumber/pypdf), XLSX (openpyxl), DOCX extractors
 │   ├── import_pipeline.py          # Two-phase dossier import, multi-sheet analysis, PDF/DOCX generation

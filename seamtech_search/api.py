@@ -1086,6 +1086,12 @@ def create_app(config: AppConfig) -> FastAPI:
             "results": logs,
         }
 
+    # Lot B.2 (§17.11) : traçabilité des champs et registre de gabarits —
+    # lecture et publication uniquement, aucune écriture de fiche par ces routes.
+    from seamtech_search.fiches.routes import enregistrer_routes_fiches
+
+    enregistrer_routes_fiches(app, index, config, _require_auth)
+
     return app
 
 

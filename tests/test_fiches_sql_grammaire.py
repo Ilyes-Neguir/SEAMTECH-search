@@ -13,18 +13,16 @@ import pglast
 import pytest
 
 import seamtech_search.fiches.persistance as persistance
+import seamtech_search.fiches.routes as routes
 
 
 @pytest.mark.parametrize(
-    "nom_constante",
-    [
-        nom
-        for nom in dir(persistance)
-        if nom.startswith("_SQL_") or nom.startswith("SQL_")
-    ],
+    "module, nom_constante",
+    [(persistance, nom) for nom in dir(persistance) if nom.startswith("_SQL_") or nom.startswith("SQL_")]
+    + [(routes, nom) for nom in dir(routes) if nom.startswith("_SQL_") or nom.startswith("SQL_")],
 )
-def test_instruction_valide_pglast(nom_constante: str) -> None:
-    sql = getattr(persistance, nom_constante)
+def test_instruction_valide_pglast(module: object, nom_constante: str) -> None:
+    sql = getattr(module, nom_constante)
     assert isinstance(sql, str) and sql.strip(), f"{nom_constante} vide"
     grammaire = sql.replace("%s", "NULL")
     pglast.parse_sql(grammaire)

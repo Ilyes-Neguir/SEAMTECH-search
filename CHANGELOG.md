@@ -1,3 +1,17 @@
+## Unreleased — Lot B.2 : endpoints de traçabilité et registre de gabarits (`lot-b2/endpoints-tracabilite`)
+
+- Rattrapage du §17.11 (l'écart « pas de route HTTP au Lot B » venait de la consigne, pas du plan) :
+  `GET /fiches/{code}/champs` (forme exacte de `fiche_champ_extrait` : valeur brute/normalisée,
+  méthode, confiance, page, **zone**, version de gabarit, corrections — l'écran Fiche du lot D
+  consommera cette route), `GET /gabarits`, `GET /gabarits/{code}/versions`,
+  `POST /gabarits/{code}/versions` (publie max+1, **jamais destructif** : les versions précédentes
+  restent consultables, désactivées) et `POST /gabarits/detecter` (détection sur PDF multipart,
+  **aucune écriture** ; une non-détection est un résultat « reprise_complete », pas une erreur).
+- PostgreSQL uniquement (§17.1) : 503 documenté sans `database_url`. Aucune écriture de fiche par
+  ces routes. SQL validés pglast (test étendu au module `routes`).
+- Tests : 18 (unitaire sur index simulé, TestClient 503/auth, live PostgreSQL flux complet) ;
+  `docs/API.md` créé ; tableau des endpoints du README complété.
+
 ## Unreleased — Lot B, corrections de la 2e revue (constats A, B, C) (`lot-b/extraction-fiche`)
 
 - **Constat A — tolérance surface NOMMÉE et FIGÉE** : facteur = SPA/(½·SLU·SLE) accepté dans

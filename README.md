@@ -98,7 +98,10 @@ Env overrides (all `SEAMTECH_` prefixed) or `config/config.json` (must exist, no
 | `GET` | `/maintenance/deadletters`, `POST` | `/maintenance/replay-deadletters`, `POST` | `/maintenance/cleanup` | Deadletter handling + retention |
 | `GET` | `/audit` | Regular table, pruned |
 
----
+---| `GET` | `/fiches/{code}/champs` | Lot B.2 — trace par champ : valeur brute/normalisée, méthode, confiance, page, zone PDF, version de gabarit, corrections (PostgreSQL requis, 503 sinon) |
+| `GET` | `/gabarits`, `/gabarits/{code}/versions` | Lot B.2 — registre des gabarits d'extraction, toutes versions (une version publiée reste lisible) |
+| `POST` | `/gabarits/{code}/versions` | Lot B.2 — publie une NOUVELLE version (max+1, jamais destructif : les précédentes passent inactives) |
+| `POST` | `/gabarits/detecter` | Lot B.2 — détection sur un PDF multipart, sans aucune écriture en base ; non-détection = `reprise_complete` |
 
 ## Testing
 
