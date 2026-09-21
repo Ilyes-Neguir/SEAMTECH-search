@@ -45,9 +45,12 @@ def test_unchanged_file_skips_extraction(tmp_path: Path, monkeypatch: pytest.Mon
     # Second pass with metadata reflecting what's now stored: same size/mtime/version.
     stat = (root / "reference.txt").stat()
     existing = {
-        # même normalisation que le crawler (os.path.normcase : identité sous
-        # Linux, minuscules sous Windows) — un .lower() ici ferait échouer la
-        # suite dès qu'un chemin de workspace contient une majuscule.
+        # Cette clé reproduit VOLONTAIREMENT la fonction de clé du produit :
+        # seamtech_search/crawler.py:154 (os.path.normcase(str(path.resolve())))
+        # et seamtech_search/models.py:56 — identité sous Linux, minuscules sous
+        # Windows. Si vous changez la fonction de clé du crawler, changez ICI
+        # aussi (c'est le test qui la suit) — un .lower() sur le chemin complet
+        # ferait échouer la suite dès qu'un workspace contient une majuscule.
         os.path.normcase(str((root / "reference.txt").resolve())): (
             stat.st_size,
             stat.st_mtime,
