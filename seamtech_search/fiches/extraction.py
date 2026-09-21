@@ -268,6 +268,28 @@ def _localiser_mots(page: PageAnalysee, valeur: str) -> list[Mot]:
 # Conversion d'une valeur brute selon le type déclaré par la règle
 # ---------------------------------------------------------------------------
 
+def compter_par_palier(fiche: FicheExtraite) -> dict[str, int]:
+    """Comptes PAR PALIER de l'échelle ORDINALE de confiance (docs/CONTROLES_RG16.md).
+
+    Le tableau de bord qualité (lot E) affichera ces comptes — JAMAIS une
+    « confiance moyenne » : moyenner des paliers de décision n'a aucun sens et
+    produirait un chiffre faux pour le commanditaire.
+    """
+    comptes = {"certain": 0, "lu": 0, "decompose": 0, "partiel": 0}
+    for champ in fiche.tous_les_champs():
+        if champ.valeur_normalisee is None:
+            continue
+        if champ.confiance >= CONFIANCE_CERTAIN:
+            comptes["certain"] += 1
+        elif champ.confiance >= CONFIANCE_LUE:
+            comptes["lu"] += 1
+        elif champ.confiance >= 0.85:
+            comptes["decompose"] += 1
+        else:
+            comptes["partiel"] += 1
+    return comptes
+
+
 def _consommation_totale(type_declare: str, brut: str) -> bool:
     """Vrai quand la chaîne brute EST le format attendu, en entier (fullmatch)
     — pas une extraction partielle au sein d'une chaîne plus riche."""

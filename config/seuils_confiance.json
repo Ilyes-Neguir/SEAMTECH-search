@@ -1,5 +1,8 @@
 {
   "version": 1,
+  "calibre": false,
+  "calibre_le": null,
+  "fiches_reelles_utilisees": 0,
   "documentation": {
     "role": "Seuils de passage direct par famille de champs (plan v3.0 §10.3). Un champ dont l'indice de confiance est supérieur ou égal au seuil de sa famille peut être validé sans relecture (voie « passage direct ») ; en dessous, il part en relecture ciblée ; gabarit inconnu ou trop de champs incertains → reprise complète.",
     "etat": "CONSOMMÉ depuis le lot B : le routage du §10.3 (passage direct / relecture ciblée / reprise complète) lit ce fichier via seamtech_search.fiches.persistance.charger_seuils (surcharge : variable d'environnement SEAMTECH_SEUILS_CONFIANCE). Les valeurs restent les points de départ du §10.3 : le CALIBRAGE réel se fera en Tâche 3, sur 20-30 fiches de vérité terrain puis les corrections des opérateurs (Phase 2). Depuis la correction du plafond de confiance (constat B de revue, échelle à paliers 0,99/0,90/0,85 — voir docs/CONTROLES_RG16.md), la reconstruction 7792 atteint la voie « passage direct » à ces seuils ; cela ne préjuge pas des fiches réelles, seules les Tâche 3+ décident.",

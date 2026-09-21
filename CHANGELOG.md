@@ -1,3 +1,21 @@
+## Unreleased — Garde-fous de la revue du 21/09 (verrou de calibration, échelle ordinale, dette surface)
+
+- **Verrou de calibration** (Tâche 1a) : `config/seuils_confiance.json` porte `calibre: false`,
+  `calibre_le: null`, `fiches_reelles_utilisees: 0` ; `verifier_autorisation_validation_lot()`
+  répond « interdit » tant que la calibration n'a pas eu lieu (défaut sûr : fichier absent =
+  non calibré), avec acquittement humain explicite prévu — la future `POST /validation/lot`
+  (lot D) renverra son message en 409. Testé (`TestVerrouCalibration`) : interdit / acquitté /
+  calibré / fichier absent.
+- **Échelle ORDINALE, pas probabiliste** (Tâche 1b) : `docs/CONTROLES_RG16.md` §4 — les paliers
+  0,99/0,90/0,85 sont des paliers de décision ; le tableau de bord (lot E) affichera des
+  **comptes par palier** (`compter_par_palier()`, testé), jamais une « confiance moyenne » ;
+  `score_qualite` reste un indicateur brut par fiche, jamais agrégé en moyenne de flotte.
+- **Tolérance surface = filtre de grosses erreurs** (Tâche 1c, dette documentée) : §5 du même
+  document — resserrage par type de voile dès les fiches réelles, pas avant (le facteur réel de
+  la fiche de référence est 0,8655).
+- Correctif normcase : le commentaire du test pointe désormais les call-sites exacts
+  (`crawler.py:154`, `models.py:56`) sur la branche `fix/test-normcase-basetemp` (`ce44507`).
+
 ## Unreleased — Lot B.2 : endpoints de traçabilité et registre de gabarits (`lot-b2/endpoints-tracabilite`)
 
 - Rattrapage du §17.11 (l'écart « pas de route HTTP au Lot B » venait de la consigne, pas du plan) :

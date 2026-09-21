@@ -181,3 +181,64 @@ class TestPlafondDeConfiance:
         la calibration réelle reste l'affaire de la Tâche 3."""
         decision = routage(fiche_7792, charger_seuils(SEUILS_REELS))
         assert decision["voie"] == "passage_direct", decision
+
+
+class TestVerrouCalibration:
+    """Tâche 1a : le verrou de calibration protège la future validation groupée."""
+
+    def test_seuils_non_calibres_interdits(self) -> None:
+        from seamtech_search.fiches.persistance import lire_etat_calibration, verifier_autorisation_validation_lot
+
+        verif = lire_etat_calibration(RACINE / "config/seuils_confiance.json")
+        assert verif["calibre"] is False and verif["fiches_reelles_utilisees"] == 0
+        autorise, motif = verifier_autorisation_validation_lot(RACINE / "config/seuils_confiance.json")
+        assert autorise is False
+        assert "NON calibrés" in motif and "acquittement" in motif  # prêt pour un 409
+
+    def test_acquittement_humain_explicite_debloque(self) -> None:
+        from seamtech_search.fiches.persistance import verifier_autorisation_validation_lot
+
+        autorise, motif = verifier_autorisation_validation_lot(RACINE / "config/seuils_confiance.json", acquittement_humain=True)
+        assert autorise is True and "acquittement" in motif.lower()
+
+    def test_seuils_calibres_autorises(self, tmp_path: Path) -> None:
+        import json
+
+        from seamtech_search.fiches.persistance import verifier_autorisation_validation_lot
+
+        chemin = tmp_path / "seuils.json"
+        chemin.write_text(
+            json.dumps({"calibre": True, "calibre_le": "2026-10-01", "fiches_reelles_utilisees": 24, "familles": {}}),
+            encoding="utf-8",
+        )
+        autorise, motif = verifier_autorisation_validation_lot(chemin)
+        assert autorise is True and "24" in motif
+
+    def test_fichier_absent_est_non_calibre(self, tmp_path: Path) -> None:
+        from seamtech_search.fiches.persistance import verifier_autorisation_validation_lot
+
+        autorise, motif = verifier_autorisation_validation_lot(tmp_path / "absent.json")
+        assert autorise is False  # défaut sûr : pas de preuve = interdit
+
+
+class TestComptesParPalier:
+    """Tâche 1b : l'échelle est ordinale — le tableau de bord comptera par palier."""
+
+    def test_comptes_par_palier_pas_de_moyenne(self, fiche_7792) -> None:
+        from seamtech_search.fiches.extraction import compter_par_palier
+
+        comptes = compter_par_palier(fiche_7792)
+        assert set(comptes) == {"certain", "lu", "decompose", "partiel"}
+        assert sum(comptes.values()) == len([c for c in fiche_7792.tous_les_champs() if c.valeur_normalisee is not None])
+        assert comptes["certain"] > 0  # les lectures déterministes de la reconstruction
+
+    def test_paliers_ordinnaux_separes(self) -> None:
+        from seamtech_search.fiches.extraction import compter_par_palier
+        from seamtech_search.fiches.modeles import ChampExtrait
+
+        fiche = FicheExtraite(code="PALIERS")
+        for conf, etiquette in ((0.99, "certain"), (0.90, "lu"), (0.85, "decompose"), (0.50, "partiel")):
+            champ = ChampExtrait(champ=f"c{conf}", valeur_brute="x", valeur_normalisee="x", confiance=conf)
+            fiche.champs.append(champ)
+        comptes = compter_par_palier(fiche)
+        assert comptes == {"certain": 1, "lu": 1, "decompose": 1, "partiel": 1}

@@ -125,6 +125,55 @@ def charger_seuils(chemin: Path | str | None = None) -> dict[str, float]:
     return familles
 
 
+def lire_etat_calibration(chemin: Path | str | None = None) -> dict[str, object]:
+    """État de calibration des seuils (clé « calibre » du JSON, Tâche 1a de la
+    revue du 21/09). Fichier absent ou clé absente ⇒ NON calibré (défaut sûr :
+    l'absence de preuve de calibration n'est jamais traitée comme une preuve)."""
+    chemin_resolu = Path(chemin or os.environ.get("SEAMTECH_SEUILS_CONFIANCE") or CHEMIN_SEUILS_DEFAUT)
+    if not chemin_resolu.is_file():
+        return {"calibre": False, "calibre_le": None, "fiches_reelles_utilisees": 0, "source": str(chemin_resolu)}
+    donnees = json.loads(chemin_resolu.read_text(encoding="utf-8"))
+    return {
+        "calibre": bool(donnees.get("calibre", False)),
+        "calibre_le": donnees.get("calibre_le"),
+        "fiches_reelles_utilisees": int(donnees.get("fiches_reelles_utilisees", 0)),
+        "source": str(chemin_resolu),
+    }
+
+
+def verifier_autorisation_validation_lot(
+    chemin: Path | str | None = None,
+    acquittement_humain: bool = False,
+) -> tuple[bool, str]:
+    """Garde-fou de la future validation groupée (POST /validation/lot, lot D).
+
+    Répond « interdit » tant que les seuils ne sont pas calibrés sur des fiches
+    réelles (``calibre: false``) — sauf acquittement humain EXPLICITE passé à
+    l'appel. Sans ce verrou, une première validation groupée de 10 000 fiches
+    pourrait entériner une erreur systématique du gabarit (le passage direct
+    existe précisément pour éviter la relecture). La réponse est prête pour un
+    HTTP 409 : la route du lot D n'a qu'à la retourner telle quelle.
+    """
+    etat = lire_etat_calibration(chemin)
+    if etat["calibre"]:
+        return True, (
+            f"Seuils calibrés sur {etat['fiches_reelles_utilisees']} fiche(s) réelle(s) "
+            f"({etat['calibre_le']}) : validation groupée autorisée."
+        )
+    if acquittement_humain:
+        LOGGER.warning(
+            "Validation groupée avec acquittement humain EXPLICITE alors que les seuils ne "
+            "sont pas calibrés (0 fiche réelle) — conséquence : la traçabilité de l'acquittement "
+            "est à la charge de l'appelant."
+        )
+        return True, "Acquittement humain explicite : validation groupée autorisée malgré des seuils non calibrés."
+    return False, (
+        "Seuils NON calibrés (0 fiche réelle, reconstruction et génois synthétiques seulement) : "
+        "validation groupée interdite. Calibrer config/seuils_confiance.json sur les fiches "
+        "terrain (Tâche 3 du plan) ou fournir un acquittement humain explicite."
+    )
+
+
 def famille_du_champ(champ: str) -> str:
     """Famille de routage d'un champ (noms du fichier seuils_confiance.json)."""
     if champ.startswith("cotes."):

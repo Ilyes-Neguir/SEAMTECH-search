@@ -51,3 +51,40 @@ bout-en-bout : la reconstruction 7792 passe `passage_direct` aux seuils
 actuels (`TestPlafondDeConfiance::test_routage_passage_direct_aux_seuils_reels`).
 La **calibration** réelle des seuils reste l'affaire de la Tâche 3 (fiches
 réelles) : les valeurs actuelles sont les points de départ du §10.3.
+
+## 4. L'échelle de confiance est ORDINALE, pas probabiliste (Tâche 1b, revue du 21/09)
+
+Les valeurs 0,99 / 0,90 / 0,85 sont des **paliers de décision**, pas des
+probabilités : elles signifient « lecture déterministe », « lecture avec
+ambiguïté résiduelle », « sous-valeur de décomposition » — rien d'autre.
+
+Conséquences impératives :
+- le tableau de bord qualité (lot E) affichera des **comptes par palier**
+  (`compter_par_palier()` — certain / lu / décomposé / partiel), **jamais une
+  « confiance moyenne »** : moyenner des paliers n'a aucun sens et donnerait un
+  chiffre faux au commanditaire ;
+- `fiche.score_qualite` (colonne du Lot A) reste un indicateur brut de suivi
+  par fiche, à ne JAMAIS agréger en moyenne de flotte ;
+- les seuils de `config/seuils_confiance.json` comparent des paliers, ils ne
+  « convertissent » pas l'échelle en probabilité de justesse.
+
+## 5. Tolérance surface : un filtre de grosses erreurs (Tâche 1c — dette documentée)
+
+La bande [0,55 ; 1,30] est un **filtre de grosses erreurs**, pas un contrôle de
+justesse : elle attrape une surface incompatibles avec les cotes (faute de
+frappe, mauvaise colonne), elle ne garantit PAS que la surface imprimée est
+correcte. **Dette** : dès réception des fiches réelles, mesurer la distribution
+du facteur SPA/(½·SLU·SLE) **par type de voile**, puis resserrer la bande par
+famille (portant symétrique, asymétrique, ronds de chute…). Aucun resserrement
+avant ces données : un filtre trop serré signalerait la fiche de référence
+elle-même (facteur réel 0,8655).
+
+## 6. Verrou de calibration (Tâche 1a)
+
+`config/seuils_confiance.json` porte désormais `"calibre": false` +
+`"fiches_reelles_utilisees": 0`. Le garde-fou
+`verifier_autorisation_validation_lot()` (`seamtech_search/fiches/persistance.py`)
+répond « interdit » tant que la calibration n'a pas eu lieu — la future route
+`POST /validation/lot` (lot D) devra le consommer et renvoyer **409** avec son
+message, ou exiger un acquittement humain explicite (paramètre prévu). Testé :
+`TestVerrouCalibration`.
