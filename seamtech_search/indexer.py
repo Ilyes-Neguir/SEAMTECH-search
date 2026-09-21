@@ -707,6 +707,17 @@ class SearchIndex:
         with connection.cursor() as cursor:
             cursor.execute(schema_metier.SQL_010_LOTS_INGESTION)
 
+    def _migration_011_pieces_catalogue_documents(self, connection: Any) -> None:
+        if not self.is_postgres:
+            logger.warning(
+                "Migration 011_pieces_catalogue_documents ignorée : la couche métier est "
+                "PostgreSQL uniquement (décision §17.1) — conséquence : les pièces jointes "
+                "restent hors catalogue documents en mode SQLite."
+            )
+            return
+        with connection.cursor() as cursor:
+            cursor.execute(schema_metier.SQL_011_PIECES_CATALOGUE_DOCUMENTS)
+
     def run_migrations(self) -> None:
         """Run pending schema migrations once at startup."""
         with self.connect() as connection:
@@ -725,6 +736,7 @@ class SearchIndex:
                 ("008_ml_corpus", self._migration_008_ml_corpus),
                 ("009_qualite_et_gabarits", self._migration_009_qualite_et_gabarits),
                 ("010_lots_ingestion", self._migration_010_lots_ingestion),
+                ("011_pieces_catalogue_documents", self._migration_011_pieces_catalogue_documents),
             ]
 
             for version, func in migrations:

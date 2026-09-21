@@ -120,3 +120,23 @@ SEAMTECH-search/
 ├── requirements-local.txt          # Development dependencies
 └── requirements.txt                # Production Python dependencies
 ```
+
+## Pièces jointes : une seule description par fichier (décision revue 21/09, RG12)
+
+Un fichier déposé est décrit **UNE FOIS**, dans `documents` (catalogue du crawler) :
+`role` = `croquis` / `photo` / `plan` / `piece_jointe` (défaut du dépôt), `content` = métadonnées
+seulement (« pièce jointe (…) de la fiche X — non analysée »), `extraction_status='metadata'`,
+`path_key = os.path.normcase(chemin résolu)` — la MÊME clé que le crawler, donc un futur passage
+réconcilie la ligne au lieu de la dupliquer. `fiche_piece_jointe` (migration 011 : colonne
+`id_document`) est la table de LIEN fiche ↔ document, avec chemin/rôle/empreinte pour la
+traçabilité du lien. Conséquence : la recherche plein-texte (lot E) trouve les croquis par leur
+nom et par le code de leur fiche (testé dans `tests/test_pieces_jointes_documents.py`).
+
+## Deux dossiers, la même fiche (décision revue 21/09)
+
+Déposer un second dossier portant une fiche du même code REMPLACE la fiche (RG11, uniquement si
+`a_valider` ; une fiche `valide` est intouchable). Le remplacement est fait **SUR PLACE** :
+`id_fiche` est conservé, seules les données d'extraction sont rafraîchies
+(`_TABLES_FILLES_RAFRAICHIES` dans `fiches/persistance.py`) ; `fiche_piece_jointe`, `fiche_lien`
+et `fiche_validation` survivent — le lien du premier dossier n'est jamais cassé, et
+`lot_dossier.id_fiche` ne devient jamais orphelin. Test figé : `TestDeuxDossiersMemeFiche`.

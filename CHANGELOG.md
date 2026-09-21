@@ -29,6 +29,36 @@
   `tests/test_lot_ingestion.py` (6 : cycle 100 interrompu/repris, rejeu, erreurs de lot, pont
   import_pipeline, thread de fond) — PostgreSQL réel (`-m postgres`).
 
+# Unreleased — Micro-correctifs de la revue du 21/09 (`fix/micro-correctifs-revue-2109`)
+
+- **Baseline de non-régression rectifiée (Fait 1)** : les rapports précédents sous-comptaient
+  2 skips (tests Docker, présents depuis main) — la vraie ligne est **487/3 → 506/3** (Lot C),
+  l'addition devient exacte : 487 + 19 = 506, skips constants. Après micro-correctifs :
+  **510/3** (+4 : 3 tests des deux décisions + 1 test pglast auto-paramétré sur `_SQL_FICHE_UPD`).
+- **pip-audit audite les dépendances DÉCLARÉES (Fait 2)** : `pip-audit -r requirements.txt`
+  (CI mis à jour). Le bare `pip-audit` scannait l'environnement ambiant et remontait tornado 6.5.7
+  — outillage Jupyter du bac à sable, **non déclaré** par le projet. Vérifié : `pip-audit -r
+  requirements.txt` → « No known vulnerabilities found ». Pas de branche corrective tornado
+  (elle n'avait pas d'objet).
+- **Identité du fichier de vérité (Fait 3)** : contrôle exécuté et collé dans
+  `docs/verite_terrain/EMPREINTES.md` — le fichier réellement donné au gabarit est bien une fiche
+  d'1 page (`9bbc9f50…`, reconstruction documentée), le fichier de 455 226 o était **le plan**
+  (61 pages, `848ba6a1…`). L'empreinte de la reconstruction est désormais visible à côté de la
+  référence commanditaire (`43afc51e…`, original non reçu — voir blocage fiches réelles).
+- **RG12, pièces jointes — DÉCISION : une seule description par fichier, dans `documents`**.
+  Le dépôt (Lot C) écrit la ligne `documents` (nouvelle colonne `role`, migration 011 ;
+  `path_key = os.path.normcase(chemin résolu)` — la même clé que le crawler ⇒ réconciliation au
+  futur passage, jamais duplication ; `extraction_status='metadata'`, contenu indexé = métadonnées
+  seulement). `fiche_piece_jointe` devient le LIEN (colonne `id_document`). Conséquence exigée et
+  testée (`tests/test_pieces_jointes_documents.py`) : la pièce déposée est **retrouvable** par
+  plein-texte (nom du fichier, code de la fiche) — la recherche du lot E trouvera les croquis.
+- **Deux dossiers, la même fiche — DÉCISION : remplacement SUR PLACE (id_fiche conservé)**.
+  `_ecrire_fiche_dans` ne fait plus delete + réinsertion : les enfants d'extraction sont
+  rafraîchis (`_TABLES_FILLES_RAFRAICHIES`), mais `fiche_piece_jointe`, `fiche_lien` et
+  `fiche_validation` **survivent** — les pièces du premier dossier restent attachées quand un
+  second dépose le même code, et `lot_dossier.id_fiche` ne devient jamais orphelin. Test figé
+  inclus.
+
 ## Unreleased — Garde-fous de la revue du 21/09 (verrou de calibration, échelle ordinale, dette surface)
 
 - **Verrou de calibration** (Tâche 1a) : `config/seuils_confiance.json` porte `calibre: false`,

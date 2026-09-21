@@ -26,7 +26,7 @@ from __future__ import annotations
 from typing import Any
 
 # Version du schéma métier — incrémentée à chaque nouvelle migration.
-VERSION_SCHEMA_METIER = "010_lots_ingestion"
+VERSION_SCHEMA_METIER = "011_pieces_catalogue_documents"
 
 # Marqueur injecté par le code au moment de la migration (constat 1 de revue) :
 # le nom de la configuration de recherche effective — 'seamtech_unaccent' ou
@@ -637,12 +637,25 @@ CREATE TABLE IF NOT EXISTS fiche_piece_jointe (
 CREATE INDEX IF NOT EXISTS idx_piece_fiche ON fiche_piece_jointe (id_fiche);
 """
 
+# 011 — Décision revue (pièces jointes, RG12) : un fichier est décrit UNE FOIS,
+# dans `documents` (catalogue unique du crawler, métadonnées indexées plein-texte) ;
+# `fiche_piece_jointe` devient une table de LIEN (id_fiche ↔ id_document) qui garde
+# chemin/rôle/empreinte pour la traçabilité du lien. Le dépôt (Lot C) écrit la ligne
+# documents avec path_key = os.path.normcase(chemin résolu) — la même clé que le
+# crawler — pour qu'un futur passage réconcilie au lieu de dupliquer.
+SQL_011_PIECES_CATALOGUE_DOCUMENTS = """
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS role TEXT;
+ALTER TABLE fiche_piece_jointe ADD COLUMN IF NOT EXISTS id_document BIGINT REFERENCES documents(id);
+CREATE INDEX IF NOT EXISTS idx_piece_document ON fiche_piece_jointe (id_document);
+"""
+
 MIGRATIONS_METIER: tuple[tuple[str, str], ...] = (
     ("006_fiche_technique", SQL_006_FICHE_TECHNIQUE),
     ("007_recherche_index", SQL_007_RECHERCHE_INDEX),
     ("008_ml_corpus", SQL_008_ML_CORPUS),
     ("009_qualite_et_gabarits", SQL_009_QUALITE_ET_GABARITS),
     ("010_lots_ingestion", SQL_010_LOTS_INGESTION),
+    ("011_pieces_catalogue_documents", SQL_011_PIECES_CATALOGUE_DOCUMENTS),
 )
 
 

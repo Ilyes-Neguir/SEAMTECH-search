@@ -38,6 +38,28 @@ SEUIL_GABARIT_TEST = 0.90
 _SQL_EXISTE_FICHE = "SELECT id_fiche, statut FROM fiche WHERE code = %s"
 _SQL_LIRE_STATUT = "SELECT statut FROM fiche WHERE id_fiche = %s"
 _SQL_SUPPRIMER_FICHE = "DELETE FROM fiche WHERE id_fiche = %s"
+# Remplacement SUR PLACE (décision revue 21/09 — « deux dossiers, la même fiche ») :
+# seules les données d'extraction sont rafraîchies ; fiche_piece_jointe, fiche_lien
+# et fiche_validation (historique) survivent au remplacement.
+_TABLES_FILLES_RAFRAICHIES = (
+    "fiche_cotes",
+    "fiche_materiau",
+    "fiche_galon",
+    "fiche_jonction",
+    "fiche_finition",
+    "fiche_option",
+    "fiche_renfort",
+    "fiche_mesure_libre",
+    "fiche_champ_extrait",
+    "fiche_anomalie",
+)
+_SQL_FICHE_UPD = (
+    "UPDATE fiche SET code = %s, titre = %s, id_type_voile = %s, gamme = %s, atelier = %s, "
+    "id_bateau = %s, id_client = %s, id_commande = %s, quantite = %s, tissu_texte = %s, "
+    "montage_type = %s, montage_fil = %s, notes = %s, dessinateur = %s, date_dessin = %s, "
+    "date_edition = %s, fichier_source = %s, id_gabarit = %s, statut = %s, score_qualite = %s "
+    "WHERE id_fiche = %s"
+)
 _SQL_ID_GABARIT = "SELECT id_gabarit FROM gabarit WHERE code = %s AND version = %s"
 _SQL_CLIENT = "SELECT id_client FROM client WHERE nom = %s AND chantier IS NOT DISTINCT FROM %s"
 _SQL_CLIENT_INS = "INSERT INTO client (nom, chantier) VALUES (%s, %s) RETURNING id_client"
@@ -306,6 +328,7 @@ def ecrire_fiche(index: Any, fiche: FicheExtraite, connexion: Any = None) -> tup
 
 def _ecrire_fiche_dans(index: Any, fiche: FicheExtraite, connexion: Any) -> tuple[int, str]:
     action = "creee"
+    id_fiche: int | None = None  # positionné tôt si remplacement sur place
     if True:  # bloc conservé pour indentation stable du corps historique
         with connexion.cursor() as cursor:
             cursor.execute(_SQL_EXISTE_FICHE, (fiche.code,))
@@ -319,9 +342,15 @@ def _ecrire_fiche_dans(index: Any, fiche: FicheExtraite, connexion: Any) -> tupl
                         id_existante,
                     )
                     return id_existante, "conservee_validee"
-                cursor.execute(_SQL_SUPPRIMER_FICHE, (id_existante,))  # cascades : enfants + champs extraits
+                # Remplacement SUR PLACE : l'id_fiche est conservé (pièces jointes,
+                # liens fiche↔fiche et journal de validation des autres dossiers
+                # restent attachés) ; un delete + réinsertion casserait ces liens
+                # par cascade et rendrait lot_dossier.id_fiche orphelin.
+                id_fiche = id_existante
+                for table in _TABLES_FILLES_RAFRAICHIES:
+                    cursor.execute(f"DELETE FROM {table} WHERE id_fiche = %s", (id_fiche,))
                 action = "remplacee"
-                LOGGER.info("Fiche %s (a_valider) remplacée par la nouvelle extraction (RG11).", fiche.code)
+                LOGGER.info("Fiche %s (a_valider) remplacée sur place par la nouvelle extraction (RG11, id conservé).", fiche.code)
 
             id_type_voile = _id_type_voile(cursor, fiche)
             id_client = None
@@ -346,9 +375,7 @@ def _ecrire_fiche_dans(index: Any, fiche: FicheExtraite, connexion: Any) -> tupl
                 ligne = cursor.fetchone()
                 id_gabarit = int(ligne[0]) if ligne else None
 
-            cursor.execute(
-                _SQL_FICHE_INS,
-                (
+            parametres_fiche = (
                     fiche.code,
                     fiche.titre,
                     id_type_voile,
@@ -369,9 +396,12 @@ def _ecrire_fiche_dans(index: Any, fiche: FicheExtraite, connexion: Any) -> tupl
                     id_gabarit,
                     "a_valider",  # RG3 : jamais « valide » à l'arrivée
                     fiche.score_qualite(),
-                ),
             )
-            id_fiche = int(cursor.fetchone()[0])
+            if id_fiche is None:
+                cursor.execute(_SQL_FICHE_INS, parametres_fiche)
+                id_fiche = int(cursor.fetchone()[0])
+            else:
+                cursor.execute(_SQL_FICHE_UPD, parametres_fiche + (id_fiche,))
 
             for cotes in fiche.cotes:
                 cursor.execute(

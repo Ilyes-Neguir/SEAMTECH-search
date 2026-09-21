@@ -157,7 +157,10 @@ jobs:
         run: python scripts/coverage_gate.py coverage.json
       - name: Pip audit (security)
         # No `|| echo`: a known vulnerability in a pinned dependency fails CI.
-        run: pip-audit --desc
+        # Audit the DECLARED dependencies (revue 21/09, Fait 2): `pip-audit`
+        # bare scans the ambient environment, where sandbox tooling (Jupyter
+        # stack → tornado) shows up as noise that the project never declares.
+        run: pip-audit -r requirements.txt --desc
       - name: Upload pytest logs
         # The job-log blob host (productionresultssa*.blob.core.windows.net) is
         # unreachable from some networks, which is how a failing step ended up

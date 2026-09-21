@@ -34,6 +34,7 @@ from typing import Any
 from seamtech_search.fiches.extraction import extraire_fiche
 from seamtech_search.fiches.gabarits import GabaritDef, charger_gabarits
 from seamtech_search.fiches.persistance import ecrire_fiche
+from seamtech_search.indexer import PG_UNACCENT_CONFIG
 
 LOGGER = logging.getLogger("seamtech_search.fiches.depot")
 
@@ -78,9 +79,22 @@ _SQL_DEJA_TRAITE = (
     "SELECT id_lot_dossier, id_lot FROM lot_dossier WHERE cle_idempotence = %s "
     "AND statut = 'traite' ORDER BY id_lot_dossier LIMIT 1"
 )
+_SQL_DOCUMENT_UPSERT = (
+    "INSERT INTO documents (path_key, path, name, parent_path, extension, size, modified_at, "
+    "is_dir, content, content_hash, extraction_status, role) "
+    "VALUES (%s, %s, %s, %s, %s, %s, %s, FALSE, %s, %s, 'metadata', %s) "
+    "ON CONFLICT (path_key) DO UPDATE SET role = EXCLUDED.role, content_hash = EXCLUDED.content_hash, "
+    "size = EXCLUDED.size, modified_at = EXCLUDED.modified_at, content = EXCLUDED.content "
+    "RETURNING id"
+)
+# Même expression que l'indexeur (RG12 : contenu indexé = métadonnées seulement).
+_SQL_DOCUMENT_VECTOR = (
+    f"UPDATE documents SET search_vector = to_tsvector('{PG_UNACCENT_CONFIG}', "
+    "concat_ws(E'\\n', name, path, extension, content)) WHERE id = %s"
+)
 _SQL_PIECE_INS = (
-    "INSERT INTO fiche_piece_jointe (id_fiche, chemin, role, empreinte_sha256, taille_octets) "
-    "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (id_fiche, chemin, empreinte_sha256) DO NOTHING"
+    "INSERT INTO fiche_piece_jointe (id_fiche, id_document, chemin, role, empreinte_sha256, taille_octets) "
+    "VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (id_fiche, chemin, empreinte_sha256) DO NOTHING"
 )
 _SQL_COMPTE_FICHES = "SELECT COUNT(*) FROM fiche"
 _SQL_COMPTE_PIECES = "SELECT COUNT(*) FROM fiche_piece_jointe"
@@ -297,13 +311,44 @@ def deposer_dossier(index: Any, dossier: Path, gabarits: list[GabaritDef] | None
             with connexion.cursor() as cursor:
                 fiche = extraire_fiche(plan.pdf_fiche, gabarits=gabarits, gabarit_code=plan.gabarit_code)
                 id_fiche, action = ecrire_fiche(index, fiche, connexion=connexion)
-                cursor.executemany(
-                    _SQL_PIECE_INS,
-                    [
-                        (id_fiche, str(piece.chemin), piece.role, piece.empreinte_sha256, piece.taille_octets)
-                        for piece in plan.pieces
-                    ],
-                )
+                for piece in plan.pieces:
+                    chemin_piece = Path(piece.chemin)
+                    # RG12 — décision revue 21/09 : le fichier est décrit UNE FOIS,
+                    # dans `documents` (métadonnées indexées), path_key = normcase
+                    # (même clé que le crawler ⇒ réconciliation, jamais duplication) ;
+                    # fiche_piece_jointe est le LIEN fiche ↔ document.
+                    contenu = (
+                        f"pièce jointe ({piece.role}) de la fiche {fiche.code} — "
+                        "non analysée (RG12 : métadonnées seulement)"
+                    )
+                    cursor.execute(
+                        _SQL_DOCUMENT_UPSERT,
+                        (
+                            os.path.normcase(str(chemin_piece.resolve())),
+                            str(chemin_piece),
+                            chemin_piece.name,
+                            str(chemin_piece.parent),
+                            chemin_piece.suffix.lower(),
+                            piece.taille_octets or (chemin_piece.stat().st_size if chemin_piece.exists() else 0),
+                            chemin_piece.stat().st_mtime if chemin_piece.exists() else 0.0,
+                            contenu,
+                            piece.empreinte_sha256,
+                            piece.role,
+                        ),
+                    )
+                    id_document = cursor.fetchone()[0]
+                    cursor.execute(_SQL_DOCUMENT_VECTOR, (id_document,))
+                    cursor.execute(
+                        _SQL_PIECE_INS,
+                        (
+                            id_fiche,
+                            id_document,
+                            str(piece.chemin),
+                            piece.role,
+                            piece.empreinte_sha256,
+                            piece.taille_octets,
+                        ),
+                    )
     except Exception as erreur:
         LOGGER.exception(
             "Échec d'écriture du dossier %s : %s: %s — conséquence : RIEN n'est persisté (transaction annulée), dossier listé en échec.",
