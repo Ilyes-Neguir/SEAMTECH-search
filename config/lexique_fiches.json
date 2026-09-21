@@ -1,6 +1,6 @@
 {
-  "version": 1,
-  "description": "Lexique de détection structurelle des fiches techniques (Phase 0, PR 1). Utilisé par scripts/inventaire_archive.py pour la double vue de recensement : un PDF est « candidat fiche » s'il combine suffisamment de termes de ce lexique ET une structure de tableau détectable. Ce fichier est lu au moment de l'exécution : ajouter un terme ici (valeur normalisée sans accents, minuscule conseillée — la normalisation est appliquée à la lecture) prend effet sans redéploiement. Le vocabulaire de départ provient des seules fiches réellement disponibles à ce jour : la fixture sample_data/CLIENT-123, la reconstruction de la fiche de référence 7792-SO (§13 du plan v3.0) et les fiches génois de démonstration. Les vraies fiches apporteront du vocabulaire inconnu : enrichir la liste plutôt que modifier le code.",
+  "version": 2,
+  "description": "Lexique de détection structurelle des fiches techniques (Phase 0, PR 1). Utilisé par scripts/inventaire_archive.py pour la double vue de recensement : un PDF est « candidat fiche » s'il combine suffisamment de termes de ce lexique ET une structure de tableau détectable. Seuils : deux voies d'admission (vocabulaire fort seul, ou vocabulaire minimum + structure de tableau ; constat 2 de revue). Tolérance au pluriel appliquée aux termes mono-mots (constat 3). Ce fichier est lu au moment de l'exécution : ajouter un terme ici (valeur normalisée sans accents, minuscule conseillée — la normalisation est appliquée à la lecture) prend effet sans redéploiement. Le vocabulaire de départ provient des seules fiches réellement disponibles à ce jour : la fixture sample_data/CLIENT-123, la reconstruction de la fiche de référence 7792-SO (§13 du plan v3.0) et les fiches génois de démonstration. Les vraies fiches apporteront du vocabulaire inconnu : enrichir la liste plutôt que modifier le code.",
   "vocabulaire_cotes": [
     "fiche de fabrication",
     "fiche technique",
@@ -46,12 +46,14 @@
     "atelier",
     "dimensions",
     "longueur",
-    "largeur"
+    "largeur",
+    "grand voile"
   ],
   "seuils": {
     "vocabulaire_min": 2,
     "nb_colonnes_min": 3,
-    "nb_lignes_min": 3
+    "nb_lignes_min": 3,
+    "vocabulaire_fort": 5
   },
   "ponderations": {
     "vocabulaire": 0.6,

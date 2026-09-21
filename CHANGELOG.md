@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased — Correctifs de revue, constats 1, 2 et 3
+
+Branche `lot-a/fix-privileges-et-lexique`. Le constat 1 (privilèges PostgreSQL) est corrigé
+directement sur `lot-a/schema-metier` (seul endroit où `schema_metier.py` existe) — voir son
+CHANGELOG. L'ordre de fusion PR 1 → préparation → correctif → Lot A est inchangé.
+
+- **Constat 2 — fiches mono-colonne** : deuxième voie d'admission
+  `candidat = (nb_termes ≥ vocabulaire_fort) OU (nb_termes ≥ vocabulaire_min ET structure détectée)`,
+  seuil `vocabulaire_fort` (défaut 5) lu depuis le lexique JSON (cohérence fort ≥ min validée au
+  chargement). Le motif d'exclusion nomme l'échec de CHACUNE des deux voies. Une fiche
+  « Libellé : valeur » riche (15 termes, une seule colonne détectée) est désormais candidate ; une
+  fiche mono-colonne à 2 termes reste exclue, avec l'explication des deux échecs.
+- **Constat 3 — singulier/pluriel** : tolérance BIDIRECTIONNELLE sur les termes mono-mots
+  (« jonction » du lexique trouve « Jonctions », « epaisseurs » du lexique trouve « Epaisseur 01 » —
+  le cas exact de la revue) ; expressions multi-mots toujours exactes ; variante « grand voile »
+  (sans trait d'union) ajoutée au lexique, l'entrée avec trait d'union continuant de matcher.
+  Mesure rejouée sur la reconstruction 7792 : **30/45 → 31/45 termes** (gain « Jonctions
+  horizontales » ; la reconstruction imprime les pluriels — les formes singulières de la fiche
+  réelle sont couvertes par les tests unitaires des deux sens).
+- **Points mineurs** : le rapport d'inventaire n'embarque plus de chemin absolu du lexique
+  (chemin relatif au dépôt + empreinte SHA-256 du fichier — deux machines produisent des rapports
+  comparables) ; `docs/STRUCTURE.md` liste `detection_fiches.py` et `lexique.py`
+  (`schema_metier.py` documenté sur la branche Lot A) ; `/health` — `extensions.applicables`
+  aligné côté PostgreSQL (fait sur Lot A).
+- **9 nouveaux tests** ; suite complète : 328 passés / 9 ignorés ; ruff propre ; aucune dépendance.
+
 ## Unreleased — Préparation du lot B (`phase0/preparation-lot-b`)
 
 - **Modèle de vérité terrain** (`docs/verite_terrain/modele_verite_terrain.json`) — documenté, prêt à

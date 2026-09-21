@@ -70,6 +70,8 @@ SEAMTECH-search/
 │   ├── cli.py                      # Command-line interface subcommands (serve, index, stats, cleanup)
 │   ├── config.py                   # Pydantic v2 configuration models and env parsing
 │   ├── crawler.py                  # Directory crawler with symlink safety and batched traversal
+│   ├── detection_fiches.py         # Structural fiche detection (lexicon + table grid, explainable verdict)
+│   ├── lexique.py                  # Configurable fiche lexicon loader (config/lexique_fiches.json)
 │   ├── extraction_worker.py        # Process-isolated extraction helper
 │   ├── extractors.py               # Text, PDF (pdfplumber/pypdf), XLSX (openpyxl), DOCX extractors
 │   ├── import_pipeline.py          # Two-phase dossier import, multi-sheet analysis, PDF/DOCX generation

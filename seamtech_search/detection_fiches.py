@@ -103,7 +103,16 @@ def detecter_fiche(
     texte_page = normaliser_terme(" ".join(str(mot.get("text", "")) for mot in mots))
     trouves: list[str] = []
     for terme in lexique.vocabulaire_normalise:
-        motif = r"(?<![a-z0-9])" + re.escape(terme) + r"(?![a-z0-9])"
+        # Constat 3 de revue : tolérance au pluriel pour les termes mono-mot,
+        # dans les DEUX sens — « jonction » (lexique) trouve « Jonctions »
+        # (fiche) et « epaisseurs » (lexique) trouve « Epaisseur 01 » (fiche).
+        # Les termes multi-mots restent appariés exactement (aucune tolérance
+        # silencieuse sur les expressions).
+        if " " in terme:
+            motif = r"(?<![a-z0-9])" + re.escape(terme) + r"(?![a-z0-9])"
+        else:
+            base = terme[:-1] if terme.endswith("s") and len(terme) >= 4 else terme
+            motif = r"(?<![a-z0-9])" + re.escape(base) + r"s?(?![a-z0-9])"
         if re.search(motif, texte_page):
             trouves.append(terme)
 
@@ -115,20 +124,34 @@ def detecter_fiche(
     structure_ok = bool(grille_tracee) or (
         nb_colonnes >= lexique.seuils.nb_colonnes_min and nb_lignes >= lexique.seuils.nb_lignes_min
     )
-    vocabulaire_ok = len(trouves) >= lexique.seuils.vocabulaire_min
+    nb_termes = len(trouves)
+    # Constat 2 de revue : deux voies d'admission. La voie « vocabulaire fort »
+    # évite de déplacer l'angle mort d'origine sur les fiches mono-colonne
+    # (« Libellé : valeur » une par ligne : une seule colonne détectée).
+    vocabulaire_fort_ok = nb_termes >= lexique.seuils.vocabulaire_fort
+    vocabulaire_ok = nb_termes >= lexique.seuils.vocabulaire_min
+    est_candidat = vocabulaire_fort_ok or (vocabulaire_ok and structure_ok)
 
-    score = lexique.ponderations.vocabulaire * min(1.0, len(trouves) / SATURATION_VOCABULAIRE) + (
+    score = lexique.ponderations.vocabulaire * min(1.0, nb_termes / SATURATION_VOCABULAIRE) + (
         lexique.ponderations.structure_tableau if structure_ok else 0.0
     )
 
     motif = ""
-    if not vocabulaire_ok:
-        motif = f"vocabulaire insuffisant ({len(trouves)}/{lexique.seuils.vocabulaire_min})"
-    elif not structure_ok:
-        motif = f"structure de tableau non détectée (colonnes {nb_colonnes}, lignes {nb_lignes}, grille {grille_tracee})"
+    if not est_candidat:
+        # Le motif nomme l'échec de CHACUNE des deux voies (constat 2 de revue).
+        voies = []
+        if vocabulaire_ok:
+            voies.append(
+                f"structure de tableau non détectée (colonnes {nb_colonnes}, lignes {nb_lignes}, grille {grille_tracee})"
+            )
+        else:
+            voies.append(f"vocabulaire insuffisant ({nb_termes}/{lexique.seuils.vocabulaire_min})")
+        if not vocabulaire_fort_ok:
+            voies.append(f"voie vocabulaire fort manquée ({nb_termes}/{lexique.seuils.vocabulaire_fort})")
+        motif = " ; ".join(voies)
 
     return ResultatDetection(
-        est_candidat=vocabulaire_ok and structure_ok,
+        est_candidat=est_candidat,
         score=score,
         vocabulaire_trouve=tuple(trouves),
         nb_colonnes=nb_colonnes,

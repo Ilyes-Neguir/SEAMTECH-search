@@ -19,7 +19,7 @@ import logging
 import unicodedata
 from pathlib import Path
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 LOGGER = logging.getLogger("seamtech_search.lexique")
 
@@ -36,11 +36,24 @@ def normaliser_terme(terme: str) -> str:
 
 
 class SeuilsStructure(BaseModel):
-    """Seuils de la détection structurelle (documentés dans le lexique JSON)."""
+    """Seuils de la détection structurelle (documentés dans le lexique JSON).
+
+    Deux voies d'admission (constat 2 de revue) : un PDF est candidat si le
+    vocabulaire est FORT (``vocabulaire_fort`` termes, défaut 5) — même sans
+    structure de tableau détectable (fiches mono-colonne « Libellé : valeur »)
+    — ou si vocabulaire ≥ ``vocabulaire_min`` (défaut 2) ET structure vue.
+    """
 
     vocabulaire_min: int = Field(default=2, ge=1)
+    vocabulaire_fort: int = Field(default=5, ge=1)
     nb_colonnes_min: int = Field(default=3, ge=1)
     nb_lignes_min: int = Field(default=3, ge=1)
+
+    @model_validator(mode="after")
+    def _coherence(self) -> "SeuilsStructure":
+        if self.vocabulaire_fort < self.vocabulaire_min:
+            raise ValueError("vocabulaire_fort doit être ≥ vocabulaire_min")
+        return self
 
 
 class PonderationsStructure(BaseModel):

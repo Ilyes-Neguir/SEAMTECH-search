@@ -454,11 +454,22 @@ def construire_section_detection(
             **ligne.detection.composantes(),
         }
 
+    # Chemin stable entre machines (constat mineur de revue) : relatif au
+    # dépôt si possible, sinon nom seul ; l'empreinte du fichier lève toute
+    # ambiguïté sur la version du lexique qui a produit le rapport.
+    chemin = Path(chemin_lexique)
+    racine_depot = Path(__file__).resolve().parent.parent
+    try:
+        affichage = str(chemin.resolve().relative_to(racine_depot))
+    except ValueError:
+        affichage = chemin.name
+    empreinte_lexique = hashlib.sha256(chemin.read_bytes()).hexdigest()
     return {
         "lexique": {
             "version": lexique.version,
             "nb_termes": lexique.nb_termes,
-            "fichier": chemin_lexique,
+            "fichier": affichage,
+            "empreinte_sha256": empreinte_lexique,
         },
         "nb_candidats": len(candidats),
         "candidats": [entree(ligne) for ligne in sorted(candidats, key=lambda item: -item.detection.score)[:50]],

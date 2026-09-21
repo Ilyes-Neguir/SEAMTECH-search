@@ -243,6 +243,8 @@ def test_inventaire_rapporte_deux_vues_et_les_desaccords(tmp_path: Path) -> None
     donnees = json.loads((sortie / "inventaire.json").read_text(encoding="utf-8"))
     detection = donnees["detection_structurelle"]
     assert detection["lexique"]["nb_termes"] >= 20
+    assert detection["lexique"]["fichier"] == "config/lexique_fiches.json", "chemin relatif au dépôt, stable entre machines"
+    assert len(detection["lexique"]["empreinte_sha256"]) == 64
     assert detection["nb_candidats"] == 1
     assert detection["candidats"][0]["chemin"].endswith("fiche-genois.pdf")
     desaccords = detection["desaccords"]
@@ -327,3 +329,156 @@ def test_empreinte_sans_dimensions_comportement_historique() -> None:
     assert empreinte is not None
     # Sans dimensions de page : quantification absolue (pas de 6 pt).
     assert inventory.empreinte_gabarit(mots) == empreinte
+
+
+# ---------------------------------------------------------------------------
+# Constat 2 de revue — fiches mono-colonne (deux voies d'admission).
+# ---------------------------------------------------------------------------
+
+
+def _mots_colonne_unique(termes: list[str]) -> list[dict[str, Any]]:
+    """« Libellé : valeur » une par ligne : tous les libellés au même x0."""
+    mots: list[dict[str, Any]] = []
+    for index, terme in enumerate(termes):
+        mots.append({"text": terme, "x0": 50.0, "top": 740.0 - index * 18.0})
+        mots.append({"text": "valeur", "x0": 200.0, "top": 740.0 - index * 18.0})
+    return mots
+
+
+def test_fiche_mono_colonne_riche_candidate_par_voie_vocabulaire_fort(lexique_defaut: Any) -> None:
+    """15 termes du lexique, une seule colonne détectée → candidate quand même."""
+    from seamtech_search.detection_fiches import detecter_fiche
+
+    termes = ["guindant", "chute", "bordure", "surface", "tissu", "quantite", "client", "galon"]
+    mots = _mots_colonne_unique(termes)
+    resultat = detecter_fiche(mots, 612.0, 792.0, False, lexique_defaut)
+    assert resultat.nb_colonnes < lexique_defaut.seuils.nb_colonnes_min
+    assert resultat.nb_lignes >= lexique_defaut.seuils.nb_lignes_min
+    assert resultat.est_candidat, "la voie vocabulaire fort doit admettre les fiches mono-colonne"
+    assert resultat.motif_exclusion == ""
+
+
+def test_fiche_mono_colonne_pauvre_exclue_avec_les_deux_voies(lexique_defaut: Any) -> None:
+    """2 termes, une seule colonne : ni la voie forte ni la voie structure ne passe."""
+    from seamtech_search.detection_fiches import detecter_fiche
+
+    mots = _mots_colonne_unique(["guindant", "chute"])
+    resultat = detecter_fiche(mots, 612.0, 792.0, False, lexique_defaut)
+    assert not resultat.est_candidat
+    assert "structure de tableau non détectée" in resultat.motif_exclusion, "voie faible : échec sur la structure"
+    assert "voie vocabulaire fort manquée (2/5)" in resultat.motif_exclusion, "voie forte : échec sur le vocabulaire"
+
+
+def test_fiche_structure_requise_sous_le_seuil_fort(lexique_defaut: Any) -> None:
+    """3-4 termes (≥ min, < fort) sans structure : exclu, les DEUX voies citées."""
+    from seamtech_search.detection_fiches import detecter_fiche
+
+    mots = _mots_colonne_unique(["guindant", "chute", "bordure", "surface"])
+    mots[-1]["x0"] = 260.0  # casse l'alignement colonne sans créer de tableau
+    resultat = detecter_fiche(mots, 612.0, 792.0, False, lexique_defaut)
+    assert not resultat.est_candidat
+    assert "voie vocabulaire fort manquée" in resultat.motif_exclusion
+    assert "structure de tableau non détectée" in resultat.motif_exclusion
+
+
+def test_seuil_fort_lu_depuis_le_lexique_seulement(tmp_path: Path, lexique_defaut: Any) -> None:
+    """Le seuil fort vient du fichier de configuration, pas du code."""
+    donnees = json.loads((REPO_ROOT / "config" / "lexique_fiches.json").read_text(encoding="utf-8"))
+    donnees["seuils"]["vocabulaire_fort"] = 7
+    chemin = tmp_path / "lexique-fort7.json"
+    chemin.write_text(json.dumps(donnees, ensure_ascii=False), encoding="utf-8")
+
+    from seamtech_search.detection_fiches import detecter_fiche
+    from seamtech_search.lexique import charger_lexique
+
+    lexique_7 = charger_lexique(chemin)
+    mots = _mots_colonne_unique(["guindant", "chute", "bordure", "surface", "tissu", "quantite"])
+    # 6 termes : candidat au seuil par défaut (5), exclu au seuil 7.
+    assert detecter_fiche(mots, 612.0, 792.0, False, lexique_defaut).est_candidat
+    assert not detecter_fiche(mots, 612.0, 792.0, False, lexique_7).est_candidat
+
+
+def test_seuil_fort_inferieur_au_minimum_refuse(tmp_path: Path) -> None:
+    donnees = json.loads((REPO_ROOT / "config" / "lexique_fiches.json").read_text(encoding="utf-8"))
+    donnees["seuils"]["vocabulaire_fort"] = 1
+    donnees["seuils"]["vocabulaire_min"] = 2
+    chemin = tmp_path / "lexique-incoherent.json"
+    chemin.write_text(json.dumps(donnees, ensure_ascii=False), encoding="utf-8")
+
+    from seamtech_search.lexique import charger_lexique
+
+    with pytest.raises(ValueError, match="vocabulaire_fort"):
+        charger_lexique(chemin)
+
+
+# ---------------------------------------------------------------------------
+# Constat 3 de revue — singulier/pluriel et variantes d'écriture.
+# ---------------------------------------------------------------------------
+
+
+def test_appariement_tolere_le_pluriel_mono_mot(lexique_defaut: Any) -> None:
+    from seamtech_search.detection_fiches import detecter_fiche
+
+    # Termes du lexique au singulier (« jonction »), texte au pluriel.
+    mots = [
+        {"text": "Jonctions", "x0": 50.0, "top": 700.0},
+        {"text": "horizontales", "x0": 140.0, "top": 700.0},
+        {"text": "Epaisseur", "x0": 50.0, "top": 680.0},
+        {"text": "01", "x0": 140.0, "top": 680.0},
+        {"text": "Finition", "x0": 50.0, "top": 660.0},
+        {"text": "oeillet", "x0": 140.0, "top": 660.0},
+    ]
+    resultat = detecter_fiche(mots, 612.0, 792.0, False, lexique_defaut)
+    assert "jonction" in resultat.vocabulaire_trouve
+    assert "epaisseurs" in resultat.vocabulaire_trouve, "lexique pluriel ↔ texte singulier"
+    assert "finitions" in resultat.vocabulaire_trouve, "lexique pluriel ↔ texte singulier"
+
+
+def test_le_pluriel_ne_colle_pas_aux_mots_voisins(lexique_defaut: Any) -> None:
+    """La tolérance s? ne doit pas faire matcher un préfixe d'un autre mot."""
+    from seamtech_search.detection_fiches import detecter_fiche
+
+    # « mesures » seul ne doit PAS déclencher « mesures finies » (multi-mot),
+    # et un mot comme « surfaçage » ne doit pas matcher « surface ».
+    mots = [
+        {"text": "Surfacage", "x0": 50.0, "top": 700.0},
+        {"text": "mesures", "x0": 50.0, "top": 680.0},
+    ]
+    resultat = detecter_fiche(mots, 612.0, 792.0, False, lexique_defaut)
+    assert "surface" not in resultat.vocabulaire_trouve
+    assert "mesures finies" not in resultat.vocabulaire_trouve
+
+
+def test_grand_voile_avec_et_sans_trait_d_union(lexique_defaut: Any) -> None:
+    from seamtech_search.detection_fiches import detecter_fiche
+
+    mots = [
+        {"text": "Grand voile", "x0": 50.0, "top": 700.0},
+        {"text": "guindant", "x0": 50.0, "top": 680.0},
+    ]
+    resultat = detecter_fiche(mots, 612.0, 792.0, False, lexique_defaut)
+    assert "grand voile" in resultat.vocabulaire_trouve, "la variante sans trait d'union (constat 3) doit matcher"
+
+    mots = [
+        {"text": "Grand-voile", "x0": 50.0, "top": 700.0},
+        {"text": "guindant", "x0": 50.0, "top": 680.0},
+    ]
+    resultat = detecter_fiche(mots, 612.0, 792.0, False, lexique_defaut)
+    assert "grand-voile" in resultat.vocabulaire_trouve, "l'entrée d'origine (avec trait d'union) doit continuer à matcher"
+
+
+def test_mesure_appariement_7792_avant_apres(lexique_defaut: Any) -> None:
+    """Mesure rejouée sur la fiche de référence (constat 3).
+
+    Avant correctif : 30/45 termes trouvés sur la reconstruction 7792 ; la
+    revue mesurait 25/45 sur la fiche réelle. Après tolérance au pluriel :
+    « Jonctions horizontales » (libellé pluriel) est couvert par le terme
+    singulier du lexique. Ce test épingle les formes réparées ; le chiffre
+    complet figure dans le compte rendu de la PR.
+    """
+    page = inventory.analyser_page_pdf(FIXTURE_7792)
+    from seamtech_search.detection_fiches import detecter_fiche
+
+    resultat = detecter_fiche(page.mots, page.largeur, page.hauteur, page.grille_tracee, lexique_defaut)
+    assert len(resultat.vocabulaire_trouve) == 31, "30 avant correctif ; 31 après (gain : jonction)"
+    assert "jonction" in resultat.vocabulaire_trouve
