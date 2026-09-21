@@ -592,6 +592,24 @@ def _traiter_epaisseurs(fiche: FicheExtraite, brut: str, base: ChampExtrait) -> 
     base.confiance = max(base.confiance, 0.85)
 
 
+def _traiter_tissu_principal(fiche: FicheExtraite, brut: str, base: ChampExtrait, contexte: dict) -> None:
+    """« Tissu : Dacron 260 » → fiche_materiau (rôle tissu_principal) + fiche.tissu_texte.
+
+    Réservé aux gabarits dont l'ancre désigne VRAIMENT le tissu principal
+    (génois) ; la fiche 7792 garde « Tissu(s) » en texte libre — son contenu
+    (« Voir avec JFC suivant stock ») n'est pas un matériau.
+    """
+    valeur = brut.strip()
+    if not valeur:
+        return
+    fiche.tissu_texte = valeur
+    base.valeur_normalisee = valeur
+    base.confiance = max(base.confiance, 0.9)
+    materiau = Materiau(role="tissu_principal", designation=valeur, grammage_g_m2=norm.grammage_g_m2(valeur))
+    materiau.champs.append(_reprendre_base(fiche, base, table_cible="fiche_materiau", colonne_cible="tissu_principal"))
+    fiche.materiaux.append(materiau)
+
+
 def _traiter_notes(fiche: FicheExtraite, brut: str, base: ChampExtrait) -> None:
     """Notes libres + extraction des renforts qu'elles décrivent (RG16-safe)."""
     fiche.notes = brut.strip() or None
@@ -640,6 +658,7 @@ TRAITEMENTS = {
     "finitions": lambda fiche, brut, base, contexte: _traiter_finitions(fiche, brut, base),
     "options": lambda fiche, brut, base, contexte: _traiter_options(fiche, brut, base),
     "epaisseurs": lambda fiche, brut, base, contexte: _traiter_epaisseurs(fiche, brut, base),
+    "tissu_principal": lambda fiche, brut, base, contexte: _traiter_tissu_principal(fiche, brut, base, contexte),
     "notes": lambda fiche, brut, base, contexte: _traiter_notes(fiche, brut, base),
 }
 
@@ -744,8 +763,10 @@ def _lire_cote(pages: list[PageAnalysee], ancres: list[str]) -> tuple[str | None
 
 
 def _ranger_cote(fiche: FicheExtraite, cible: str, valeur: object, champ: ChampExtrait) -> None:
-    _, _, colonne = cible.split(".")
-    jeu = "finie"
+    """Range une cote nommée ; le JEU vient de la cible (« cotes.dessin.* » ou
+    « cotes.finie.* ») — le gabarit 7792 ne lit que « finies », la fiche
+    n'imprimant que le jeu « Cotes — Mesures Finies »."""
+    _, jeu, colonne = cible.split(".")
     cotes = next((c for c in fiche.cotes if c.jeu == jeu), None)
     if cotes is None:
         cotes = Cotes(jeu=jeu)

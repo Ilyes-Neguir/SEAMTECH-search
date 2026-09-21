@@ -435,9 +435,9 @@ def _valeur_extraite(fiche: FicheExtraite, cible: str) -> object:
     if cible == "date_edition":
         return fiche.date_edition
     if cible.startswith("cotes."):
-        _, _, colonne = cible.split(".")
-        finie = next((c for c in fiche.cotes if c.jeu == "finie"), None)
-        return getattr(finie, colonne, None) if finie else None
+        _, jeu, colonne = cible.split(".")
+        jeu_cotes = next((c for c in fiche.cotes if c.jeu == jeu), None)
+        return getattr(jeu_cotes, colonne, None) if jeu_cotes else None
     morceaux = cible.split(".")
     if morceaux[0] == "materiau" and len(morceaux) >= 3 and morceaux[1] == "epaisseur":
         niveau = int(morceaux[2])

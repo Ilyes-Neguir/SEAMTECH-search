@@ -24,6 +24,13 @@
   normalisée, méthode, confiance, page, zone, version de gabarit), fiche_mesure_libre,
   fiche_anomalie ; référentiels client/bateau/type_voile/materiau résolus ou créés.
   PostgreSQL uniquement (§17.1). Aucune dépendance nouvelle.
+- **Jeux de cotes et rôles complets** (complément de périmètre) : le JEU d'une cote vient de sa
+  cible de gabarit (`cotes.dessin.*` autant que `cotes.finie.*` — le gabarit 7792 ne lit que
+  « finies », la fiche n'imprimant qu'elles) ; `fiche_materiau` alimente le **tissu principal**
+  quand le gabarit désigne l'ancre comme matériau réel (démontré sur le génois : « Tissu :
+  Dacron 260 » → `fiche_materiau` rôle `tissu_principal`, la fiche 7792 gardant « Tissu(s) » en
+  texte libre — son contenu n'est pas un matériau). Le rôle `cache_insignia` est prêt au même
+  titre, sans donnée dans les fiches disponibles.
 - **Tests** : 51 unitaires extraction/normalisation/RG16/routage, 12 live PostgreSQL
   (transaction, idempotence RG11, fiche validée jamais écrasée), grammaire pglast de
   chaque écriture SQL, banc moteur gabarit bout-en-bout. Branché sur Lot A (dépendance

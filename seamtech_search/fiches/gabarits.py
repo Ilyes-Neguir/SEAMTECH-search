@@ -193,7 +193,7 @@ GABARIT_GENOIS = GabaritDef(
         RegleChamp(cible="cotes.finie.sf_m", ancres=["bordure"], type="decimal_m"),
         RegleChamp(cible="cotes.finie.spa_m2", ancres=["surface"], type="decimal_m"),
         RegleChamp(cible="fiche.designation", ancres=["génois", "genoa"], type="texte", traitement="designation"),
-        RegleChamp(cible="fiche.tissu_texte", ancres=["tissu"], type="texte", stop=["surface", "guindant"]),
+        RegleChamp(cible="materiau.tissu_principal", ancres=["tissu"], type="texte", stop=["surface", "guindant"], traitement="tissu_principal"),
     ],
 )
 

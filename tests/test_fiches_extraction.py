@@ -154,6 +154,16 @@ class TestVarianteGenois:
         assert finie.slu_m == 8.2 and finie.sf_m == 3.9 and finie.spa_m2 == 18.2
         assert fiche_genois.tissu_texte == "Dacron 260"
 
+    def test_genois_tissu_principal_dans_fiche_materiau(self, fiche_genois: FicheExtraite) -> None:
+        """« Tissu : Dacron 260 » alimente fiche_materiau (rôle tissu_principal)."""
+        tissu = next(m for m in fiche_genois.materiaux if m.role == "tissu_principal")
+        assert tissu.designation == "Dacron 260"
+        assert tissu.grammage_g_m2 is None  # « 260 » seul n'est pas un grammage g/m²
+        trace = tissu.champs[0]
+        assert trace.table_cible == "fiche_materiau" and trace.zone is not None
+        # la fiche garde aussi le texte brut (fiche.tissu_texte)
+        assert fiche_genois.tissu_texte == "Dacron 260"
+
     def test_genois_sans_anomalie_rg16(self, fiche_genois: FicheExtraite) -> None:
         # la surface d'une interface ne suit pas le ratio des portants :
         # le contrôle croisé ne doit pas la condamner à tort.
@@ -249,3 +259,38 @@ class TestRoutageSeuils:
     def test_gabarit_inconnu_reprise_complete(self) -> None:
         fiche = extraire_avec_filet(PDF_GENOIS, [GABARIT_PORTANT])
         assert routage(fiche)["voie"] == "reprise_complete"
+
+
+class TestJeuxDeCotes:
+    """« fiche_cotes (jeux dessin et finie) » : le JEU vient de la cible du
+    gabarit — la fiche 7792 n'imprimant que « Mesures Finies », la règle
+    générale est prouvée par un gabarit de test qui lit le même ancre en jeu
+    « dessin », puis par la lecture de vérité par jeu."""
+
+    def test_regle_cotes_jeu_dessin(self) -> None:
+        from seamtech_search.fiches.gabarits import GabaritDef, RegleChamp
+
+        gabarit = GabaritDef(
+            code="TEST_DESSIN",
+            ancres_detection=["voile de portant"],
+            champs=[RegleChamp(cible="cotes.dessin.slu_m", ancres=["guindant (slu)"], type="decimal_m")],
+        )
+        fiche = extraire_fiche(PDF_7792, gabarits=[gabarit])
+        dessin = next(c for c in fiche.cotes if c.jeu == "dessin")
+        assert dessin.slu_m == 6.6
+        trace = dessin.champs[0]
+        assert trace.champ == "cotes.dessin.slu_m" and trace.table_cible == "fiche_cotes"
+
+    def test_verite_lisible_sur_les_deux_jeux(self) -> None:
+        fiche = FicheExtraite(
+            code="X",
+            cotes=[
+                Cotes(jeu="dessin", slu_m=6.8, sf_m=3.2),
+                Cotes(jeu="finie", slu_m=6.6, sf_m=3.08),
+            ],
+        )
+        taux, ecarts = evaluer_verite(
+            fiche,
+            {"cotes.dessin.slu_m": 6.8, "cotes.dessin.sf_m": 3.2, "cotes.finie.slu_m": 6.6, "cotes.finie.sf_m": 3.08},
+        )
+        assert taux == 1.0 and not ecarts
