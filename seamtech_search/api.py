@@ -208,6 +208,10 @@ def create_app(config: AppConfig) -> FastAPI:
         "search_errors": 0,
         "last_search_seconds": 0.0,
         "slowest_search_seconds": 0.0,
+        # Lot E (§17.2) : compteur hybride + suivi des recherches sans
+        # résultat (matière première de l'amélioration du lexique, Phase 3).
+        "recherche_requests": 0,
+        "recherche_sans_resultat": 0,
     }
 
     # ---------------------------------------------------------------------------
@@ -1091,6 +1095,14 @@ def create_app(config: AppConfig) -> FastAPI:
     from seamtech_search.fiches.routes import enregistrer_routes_fiches
 
     enregistrer_routes_fiches(app, index, config, _require_auth)
+
+    # Lot E (§17.2, §17.5) : recherche hybride des fiches — GET /recherche et
+    # GET /recherche/suggestions. L'existant (/search fichiers) n'est pas touché.
+    # encode_requete=None : la branche vectorielle reste dormante tant que le
+    # Lot F (encodeur local) n'est pas livré ; le RRF lexical est déjà actif.
+    from seamtech_search.recherche import enregistrer_routes_recherche
+
+    enregistrer_routes_recherche(app, index, config, _require_auth, metriques=metrics)
 
     return app
 

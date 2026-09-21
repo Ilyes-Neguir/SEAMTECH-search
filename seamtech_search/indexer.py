@@ -718,6 +718,37 @@ class SearchIndex:
         with connection.cursor() as cursor:
             cursor.execute(schema_metier.SQL_011_PIECES_CATALOGUE_DOCUMENTS)
 
+    def _migration_012_recherche_hybride(self, connection: Any) -> None:
+        if not self.is_postgres:
+            logger.warning(
+                "Migration 012_recherche_hybride ignorée : la couche métier est "
+                "PostgreSQL uniquement (décision §17.1) — conséquence : aucune recherche "
+                "hybride de fiches en mode SQLite."
+            )
+            return
+        with connection.cursor() as cursor:
+            # Même dégradation gracieuse que 007 : le cœur (index de facettes,
+            # suivi des recherches sans résultat, rafraîchissement global,
+            # backfill) s'applique toujours ; les index trigrammes des
+            # référentiels (suggestions tolérantes aux fautes) sont omis si
+            # pg_trgm ne peut pas s'installer, avec avertissement journalisé.
+            config = self._postgres_ts_config(connection)
+            cursor.execute(
+                schema_metier.SQL_012_RECHERCHE_HYBRIDE.replace(schema_metier.MARQUEUR_TS_CONFIG, config)
+            )
+            cursor.execute("SAVEPOINT seamtech_012_trgm")
+            try:
+                cursor.execute(schema_metier.SQL_012_TRGM)
+                cursor.execute("RELEASE SAVEPOINT seamtech_012_trgm")
+            except Exception as exc:
+                cursor.execute("ROLLBACK TO SAVEPOINT seamtech_012_trgm")
+                logger.warning(
+                    "pg_trgm indisponible (%s) — conséquence : index trigrammes des référentiels "
+                    "omis ; les suggestions par préfixe restent opérationnelles, la tolérance aux "
+                    "fautes dans les suggestions est désactivée.",
+                    exc,
+                )
+
     def run_migrations(self) -> None:
         """Run pending schema migrations once at startup."""
         with self.connect() as connection:
@@ -737,6 +768,7 @@ class SearchIndex:
                 ("009_qualite_et_gabarits", self._migration_009_qualite_et_gabarits),
                 ("010_lots_ingestion", self._migration_010_lots_ingestion),
                 ("011_pieces_catalogue_documents", self._migration_011_pieces_catalogue_documents),
+                ("012_recherche_hybride", self._migration_012_recherche_hybride),
             ]
 
             for version, func in migrations:

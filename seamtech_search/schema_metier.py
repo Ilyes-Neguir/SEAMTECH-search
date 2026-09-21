@@ -26,7 +26,7 @@ from __future__ import annotations
 from typing import Any
 
 # Version du schéma métier — incrémentée à chaque nouvelle migration.
-VERSION_SCHEMA_METIER = "011_pieces_catalogue_documents"
+VERSION_SCHEMA_METIER = "012_recherche_hybride"
 
 # Marqueur injecté par le code au moment de la migration (constat 1 de revue) :
 # le nom de la configuration de recherche effective — 'seamtech_unaccent' ou
@@ -439,7 +439,8 @@ BEGIN
     SET champs_texte = agg.texte,
         search_vector =
             setweight(to_tsvector('__TS_CONFIG__',
-                                  coalesce(f.code, '') || ' ' || coalesce(f.titre, '')), 'A')
+                                  regexp_replace(coalesce(f.code, ''), '[-_/]+', ' ', 'g')
+                                  || ' ' || coalesce(f.titre, '')), 'A')
             || setweight(to_tsvector('__TS_CONFIG__', agg.secondaire), 'B')
             || setweight(to_tsvector('__TS_CONFIG__', coalesce(f.notes, '')), 'C')
     FROM (
@@ -649,6 +650,104 @@ ALTER TABLE fiche_piece_jointe ADD COLUMN IF NOT EXISTS id_document BIGINT REFER
 CREATE INDEX IF NOT EXISTS idx_piece_document ON fiche_piece_jointe (id_document);
 """
 
+# 012 — Lot E : recherche hybride (plan v3.0 §17.2, §17.5, §11).
+# Le cœur : index d'axes de facettes, suivi des recherches sans résultat,
+# fonction de rafraîchissement GLOBALE (un seul UPDATE ensembliste — la
+# culture « jamais en boucle ligne par ligne » de la fonction par fiche) et
+# backfill des fiches déjà validées. Les index trigrammes des référentiels
+# (suggestions tolérantes aux fautes) vivent dans SQL_012_TRGM, dégradable
+# sous SAVEPOINT exactement comme SQL_007_TRGM (constat 1 de revue).
+SQL_012_RECHERCHE_HYBRIDE = """
+-- ============================================================================
+-- 012_recherche_hybride — Lot E : facettes, suivi, rafraîchissement global
+-- ============================================================================
+
+-- Axes de facettes de GET /recherche : type de voile / client / bateau sont
+-- déjà indexés (006) ; la matière passe par fiche_materiau et l'année par
+-- date_edition (idx_fiche_edition existe depuis 006).
+CREATE INDEX IF NOT EXISTS idx_fiche_materiau_materiau ON fiche_materiau (id_materiau);
+CREATE INDEX IF NOT EXISTS idx_fiche_gamme ON fiche (gamme);
+
+-- Suivi des recherches SANS RÉSULTAT (critère de sortie Phase 3 : elles sont
+-- comptabilisées pour améliorer le lexique). Index partiel : le comptage et
+-- l'extraction des requêtes mortes ne parcourent jamais le journal entier.
+CREATE INDEX IF NOT EXISTS idx_recherche_log_sans_resultat
+    ON recherche_log (created_at) WHERE nb_resultats = 0;
+
+-- Rafraîchissement GLOBAL du texte de recherche : un seul UPDATE ensembliste
+-- (même agrégation pondérée A/B/C que rafraichir_texte_recherche_fiche, sans
+-- filtre par id). Sert au backfill de cette migration et aux futures
+-- réindexations — jamais de boucle ligne par ligne sur la table.
+CREATE OR REPLACE FUNCTION rafraichir_texte_recherche_toutes()
+RETURNS INTEGER
+LANGUAGE plpgsql
+AS $fn$
+DECLARE
+    nb INTEGER;
+BEGIN
+    UPDATE fiche f
+    SET champs_texte = agg.texte,
+        search_vector =
+            setweight(to_tsvector('__TS_CONFIG__',
+                                  regexp_replace(coalesce(f.code, ''), '[-_/]+', ' ', 'g')
+                                  || ' ' || coalesce(f.titre, '')), 'A')
+            || setweight(to_tsvector('__TS_CONFIG__', agg.secondaire), 'B')
+            || setweight(to_tsvector('__TS_CONFIG__', coalesce(f.notes, '')), 'C')
+    FROM (
+        SELECT f2.id_fiche AS id_fiche,
+               concat_ws(' | ',
+                         f2.code, f2.titre, f2.gamme, f2.segment,
+                         (SELECT tv.libelle FROM type_voile tv WHERE tv.id_type_voile = f2.id_type_voile),
+                         (SELECT c.nom FROM client c WHERE c.id_client = f2.id_client),
+                         (SELECT b.nom || ' ' || coalesce(b.taille, '') FROM bateau b WHERE b.id_bateau = f2.id_bateau),
+                         (SELECT string_agg(m.designation_texte, ' ') FROM fiche_materiau m WHERE m.id_fiche = f2.id_fiche),
+                         (SELECT string_agg(concat_ws(' ', g.couleur, g.matiere), ' ') FROM fiche_galon g WHERE g.id_fiche = f2.id_fiche),
+                         (SELECT string_agg(j.description, ' ') FROM fiche_jonction j WHERE j.id_fiche = f2.id_fiche),
+                         (SELECT string_agg(fi.valeur_texte, ' ') FROM fiche_finition fi WHERE fi.id_fiche = f2.id_fiche)
+               ) AS texte,
+               concat_ws(' ',
+                         f2.gamme, f2.segment,
+                         (SELECT tv.libelle FROM type_voile tv WHERE tv.id_type_voile = f2.id_type_voile),
+                         (SELECT c.nom FROM client c WHERE c.id_client = f2.id_client),
+                         (SELECT b.nom || ' ' || coalesce(b.taille, '') FROM bateau b WHERE b.id_bateau = f2.id_bateau),
+                         (SELECT string_agg(m.designation_texte, ' ') FROM fiche_materiau m WHERE m.id_fiche = f2.id_fiche),
+                         (SELECT string_agg(concat_ws(' ', g.couleur, g.matiere), ' ') FROM fiche_galon g WHERE g.id_fiche = f2.id_fiche),
+                         (SELECT string_agg(j.description, ' ') FROM fiche_jonction j WHERE j.id_fiche = f2.id_fiche),
+                         (SELECT string_agg(fi.valeur_texte, ' ') FROM fiche_finition fi WHERE fi.id_fiche = f2.id_fiche)
+               ) AS secondaire
+        FROM fiche f2
+    ) AS agg
+    WHERE f.id_fiche = agg.id_fiche;
+    GET DIAGNOSTICS nb = ROW_COUNT;
+    RETURN nb;
+END
+$fn$;
+
+-- Backfill : les fiches déjà validées deviennent cherchables immédiatement
+-- (aucune fiche réelle en production aujourd'hui — la migration est correcte
+-- par construction le jour où il y en a). DO : pas de lignes retournées.
+DO $seamtech_backfill$
+BEGIN
+    PERFORM rafraichir_texte_recherche_toutes();
+END
+$seamtech_backfill$;
+"""
+
+# Volet dégradable de 012 : index trigrammes des RÉFÉRENTIELS pour les
+# suggestions tolérantes aux fautes (« monofim » propose Monofilm). Petites
+# tables, mais l'index sert l'opérateur % ; sans privilège CREATE ou sans
+# pg_trgm, le SAVEPOINT de l'indexeur omet ce volet avec avertissement —
+# les suggestions par préfixe restent opérationnelles.
+SQL_012_TRGM = """
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
+CREATE INDEX IF NOT EXISTS idx_type_voile_libelle_trgm ON type_voile USING GIN (libelle gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_client_nom_trgm        ON client     USING GIN (nom gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_bateau_nom_trgm        ON bateau     USING GIN (nom gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_materiau_nom_trgm      ON materiau   USING GIN (nom gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_fiche_gamme_trgm       ON fiche      USING GIN (gamme gin_trgm_ops);
+"""
+
 MIGRATIONS_METIER: tuple[tuple[str, str], ...] = (
     ("006_fiche_technique", SQL_006_FICHE_TECHNIQUE),
     ("007_recherche_index", SQL_007_RECHERCHE_INDEX),
@@ -656,6 +755,7 @@ MIGRATIONS_METIER: tuple[tuple[str, str], ...] = (
     ("009_qualite_et_gabarits", SQL_009_QUALITE_ET_GABARITS),
     ("010_lots_ingestion", SQL_010_LOTS_INGESTION),
     ("011_pieces_catalogue_documents", SQL_011_PIECES_CATALOGUE_DOCUMENTS),
+    ("012_recherche_hybride", SQL_012_RECHERCHE_HYBRIDE),
 )
 
 

@@ -323,8 +323,16 @@ def valider_fiche(index: Any, code: str, utilisateur: str | None, commentaire: s
                 raise HTTPException(status_code=409, detail=f"Fiche {code} en statut « {statut} » : seule une fiche a_valider peut être validée{conseil}")
             id_utilisateur = _resoudre_utilisateur(cursor, utilisateur)
             cursor.execute("UPDATE fiche SET statut = 'valide', updated_at = now() WHERE id_fiche = %s", (id_fiche,))
+            # Lot E : la validation est LE moment où la fiche devient cherchable —
+            # le texte de recherche pondéré (A/B/C) est rempli ici, dans la même
+            # transaction (migration 007 : « appelée à la VALIDATION d'une fiche »).
+            cursor.execute("SELECT rafraichir_texte_recherche_fiche(%s)", (id_fiche,))
             _jouter_journal(cursor, id_fiche, id_utilisateur, "valider", statut, "valide", commentaire)
-            LOGGER.info("Fiche %s VALIDÉE par %s — conséquence : verrou RG11 (aucune ré-extraction ne l'écrase).", code, utilisateur)
+            LOGGER.info(
+                "Fiche %s VALIDÉE par %s — conséquence : verrou RG11 (aucune ré-extraction ne l'écrase) "
+                "et texte de recherche pondéré rafraîchi (visible par GET /recherche).",
+                code, utilisateur,
+            )
             return {"code": code, "statut": "valide"}
 
 
@@ -450,6 +458,9 @@ def valider_lot(
                     ignorees.append({"code": code, "raison": f"statut « {statut} » — rouvrez d'abord"})
                     continue
                 cursor.execute("UPDATE fiche SET statut = 'valide', updated_at = now() WHERE id_fiche = %s", (id_fiche,))
+                # Lot E : chaque fiche validée en lot devient cherchable (même
+                # rafraîchissement que la validation individuelle, même transaction).
+                cursor.execute("SELECT rafraichir_texte_recherche_fiche(%s)", (id_fiche,))
                 _jouter_journal(cursor, id_fiche, id_utilisateur, "valider", statut, "valide", commentaire or "validation en lot")
                 validees.append(code)
     LOGGER.info(
