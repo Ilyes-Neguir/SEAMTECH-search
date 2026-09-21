@@ -199,7 +199,7 @@ def test_seuil_atteint_code_zero(echantillon: Path, tmp_path: Path) -> None:
 
 
 def test_cle_de_verite_sans_pdf(echantillon: Path, tmp_path: Path, capsys) -> None:
-    verite = {"fiche-complete.pdf": VERITE_COMPLETE, "fiche-absente.pdf": {"attendu": {"reference": "X"}}}
+    verite = {"fiche-complete.pdf": VERITE_COMPLETE, "fiche-absente.pdf": {"attendu": {"reference": "REF-ABSENTE-1"}}}
     code = lancer_mesure(echantillon, tmp_path, verite)
 
     assert code == 0
@@ -329,3 +329,76 @@ def test_agregation_exclut_absences_attendues() -> None:
 def test_normalisation_valeur_sans_accents_et_espaces() -> None:
     assert harness.normaliser_valeur("Épaisses  Lattée") == "epaisses lattee"
     assert harness.normaliser_valeur(6.6) == "6.6"
+
+# ---------------------------------------------------------------------------
+# Vérité terrain : contrôle de format (un rapport bâti sur une vérité
+# partielle serait trompeur) + fixtures de référence livrées.
+# ---------------------------------------------------------------------------
+
+CHEMIN_MODELE = Path(harness.REPO_ROOT) / "docs" / "verite_terrain" / "modele_verite_terrain.json"
+CHEMIN_VERITE_7792 = Path(harness.REPO_ROOT) / "docs" / "verite_terrain" / "7792-SO_ffab.json"
+FIXTURE_7792 = Path(harness.REPO_ROOT) / "sample_data" / "CLIENT-7792-SO" / "fiche-7792-SO_ffab.pdf"
+
+
+def test_le_modele_vide_est_refuse() -> None:
+    """Le template documenté, non rempli, doit être refusé par le contrôle."""
+    with pytest.raises(ValueError) as erreur:
+        harness.charger_verite(CHEMIN_MODELE)
+    assert "placeholder" in str(erreur.value)
+
+
+def test_les_placeholders_sont_refuses_champ_par_champ(tmp_path: Path) -> None:
+    for placeholder in ("...", "à remplir", "todo", "?", "TBD"):
+        verite = {"f.pdf": {"attendu": {"reference": placeholder, "quantity": 1}}}
+        chemin = tmp_path / "verite.json"
+        chemin.write_text(json.dumps(verite, ensure_ascii=False), encoding="utf-8")
+        with pytest.raises(ValueError, match="placeholder"):
+            harness.charger_verite(chemin)
+
+
+def test_attendu_tout_null_est_refuse(tmp_path: Path) -> None:
+    verite = {"f.pdf": {"attendu": {"reference": None, "quantity": None}}}
+    chemin = tmp_path / "verite.json"
+    chemin.write_text(json.dumps(verite), encoding="utf-8")
+    with pytest.raises(ValueError, match="tout-null"):
+        harness.charger_verite(chemin)
+
+
+def test_null_sur_un_champ_seul_est_accepte(tmp_path: Path) -> None:
+    """null = absence attendue : vérité légitime sur un champ, refusée seulement si tout-null."""
+    verite = {"f.pdf": {"attendu": {"reference": "R-1", "quantity": None}}}
+    chemin = tmp_path / "verite.json"
+    chemin.write_text(json.dumps(verite), encoding="utf-8")
+    assert harness.charger_verite(chemin)["f.pdf"]["attendu"]["quantity"] is None
+
+
+def test_cles_de_documentation_ignorees() -> None:
+    """Les clés « _documentation » ne sont pas des fiches à mesurer."""
+    verite = harness.charger_verite(CHEMIN_VERITE_7792)
+    assert "_documentation" in verite  # présente mais ignorée
+    fiches = [cle for cle in verite if not cle.startswith("_")]
+    assert fiches == ["fiche-7792-SO_ffab.pdf"]
+
+
+def test_verite_7792_sert_de_reference_mesurable(tmp_path: Path) -> None:
+    """La fiche de référence n°2 est mesurable de bout en bout par le banc.
+
+    On épingle la MÉCANIQUE (une fiche mesurée, agrégée par gabarit), pas les
+    taux actuels : le lot B va les améliorer, ce test doit rester vert avant
+    comme après.
+    """
+    code = harness.main(
+        [
+            "validate_extraction.py",
+            str(FIXTURE_7792),
+            "--verite",
+            str(CHEMIN_VERITE_7792),
+            "--sortie-json",
+            str(tmp_path / "mesure-7792.json"),
+        ]
+    )
+    assert code == 0
+    mesure = json.loads((tmp_path / "mesure-7792.json").read_text(encoding="utf-8"))
+    assert mesure["meta"]["nb_fiches"] == 1
+    assert "spi_asymetrique_ref" in mesure["par_gabarit"]
+    assert set(mesure["par_champ"]) == {"description", "dimensions.length", "dimensions.width", "material", "quantity", "reference"}

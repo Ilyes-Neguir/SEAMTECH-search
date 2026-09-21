@@ -1,0 +1,28 @@
+{
+  "_documentation": {
+    "usage": "Modèle de vérité terrain pour le banc de mesure (scripts/validate_extraction.py --verite). COPIEZ ce fichier, remplissez-le pour chaque fiche réelle reçue, puis lancez : python scripts/validate_extraction.py DOSSIER_FICHES --verite ce-fichier.json --sortie-json mesure.json",
+    "refus_partiel": "Le contrôle de format refuse un fichier incomplet (placeholders « ... », « à remplir », « todo », « ? », attendu vide, tout-null) : un rapport de calibration bâti sur une vérité partielle serait trompeur.",
+    "cles": "Une clé par PDF mesuré, avec son NOM DE FICHIER (ou son chemin relatif). Le rapprochement se fait par nom.",
+    "gabarit": "Nom libre de la variante de mise en page (ex. spi_asymetrique_v1) : les taux sont aussi agrégés par gabarit.",
+    "attendu.reference": "Code fiche exact imprimé sur le PDF (ex. 7792-SO).",
+    "attendu.material": "Matière/tissu principal tel qu'imprimé (ex. Monofilm K903).",
+    "attendu.quantity": "Entier.",
+    "attendu.description": "Désignation libre imprimée.",
+    "attendu.dimensions": "{length, width, height, unit} : cotes principales dans unit (m|cm|mm). La comparaison est faite en millimètres avec tolérance (1 mm ou 0,1 %). Mettez null aux champs inexistants sur la fiche : une absence attendue est une vérité légitime.",
+    "champs_mesures": "Les champs mesurés aujourd'hui sont ceux de l'extraction héritée (reference, material, quantity, description, dimensions). Le lot B étendra le banc au schéma métier complet (cotes nommées, galons, jonctions, options...)."
+  },
+  "NOM-DU-FICHIER-REEL.pdf": {
+    "gabarit": "a_remplir",
+    "attendu": {
+      "reference": "...",
+      "material": "...",
+      "quantity": "...",
+      "description": "...",
+      "dimensions": {
+        "length": "...",
+        "width": "...",
+        "unit": "m"
+      }
+    }
+  }
+}

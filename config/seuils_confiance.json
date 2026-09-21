@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "documentation": {
+    "role": "Seuils de passage direct par famille de champs (plan v3.0 §10.3). Un champ dont l'indice de confiance est supérieur ou égal au seuil de sa famille peut être validé sans relecture (voie « passage direct ») ; en dessous, il part en relecture ciblée ; gabarit inconnu ou trop de champs incertains → reprise complète.",
+    "etat": "PRÉPARÉ, NON CONSOMMÉ : ces seuils ne sont lus par aucun chemin d'exécution aujourd'hui. Le lot B (extraction de la fiche) les chargera via SEAMTECH_SEUILS_CONFIANCE (chemin du fichier, défaut : config/seuils_confiance.json) et les CALIBRERA sur les premières fiches réelles (20-30 fiches de vérité terrain, puis corrections des opérateurs en Phase 2). Ne pas brancher avant : des seuils non calibrés créent un faux sentiment de fiabilité.",
+    "calibration": "Les valeurs ci-dessous sont les points de départ du §10.3, pas des valeurs définitives."
+  },
+  "familles": {
+    "structurels": {
+      "note": "Ces valeurs structurent tout le reste (rattachement, recherche, référentiels) : une erreur ici se propage. Seuil très élevé.",
+      "champs": ["code_fiche", "numero_commande", "client", "bateau", "type_voile"],
+      "seuil_passage_direct": 0.98
+    },
+    "cotes": {
+      "note": "Données techniques chiffrées : une cote fausse est une pièce fabriquée au mauvais format. En plus du seuil, contrôle croisé RG16 (surface cohérente avec les cotes, plages par type de voile, unités).",
+      "champs": [
+        "cotes.slu_m",
+        "cotes.sle_m",
+        "cotes.sf_m",
+        "cotes.shw_m",
+        "cotes.spa_m2",
+        "cotes.tetiere_cm",
+        "cotes.poids_kg",
+        "distance_cosse_mm"
+      ],
+      "seuil_passage_direct": 0.95,
+      "controle_croise": "RG16"
+    },
+    "materiaux": {
+      "note": "Servent à la recherche et aux rapprochements de référentiel ; une valeur incertaine est signalée. Seuil moyen à élevé.",
+      "champs": ["materiaux", "galons", "epaisseurs"],
+      "seuil_passage_direct": 0.85
+    },
+    "finitions_options": {
+      "note": "Erreur visible et généralement rattrapable en atelier. Seuil moyen.",
+      "champs": ["finitions", "options", "montage"],
+      "seuil_passage_direct": 0.8
+    },
+    "notes_libres": {
+      "note": "Texte libre : la valeur est conservée telle quelle, jamais « devinée ». Seuil faible — la confiance ne s'applique qu'à la présence, pas au contenu.",
+      "champs": ["notes", "remarques"],
+      "seuil_passage_direct": 0.5
+    }
+  },
+  "routage": {
+    "passage_direct": "tous les champs ≥ seuil de leur famille ET aucune anomalie (RG16) détectée",
+    "relecture_ciblee": "quelques champs sous leur seuil → seuls ces champs sont présentés à l'opérateur",
+    "reprise_complete": "gabarit non reconnu, PDF illisible, ou trop de champs incertains"
+  }
+}

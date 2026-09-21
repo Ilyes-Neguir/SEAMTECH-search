@@ -1,0 +1,21 @@
+{
+  "_documentation": {
+    "fiche": "Fiche de référence n°2 — 7792-SO (spi asymétrique). Valeurs issues du §13 du plan v3.0 (table de correspondance PDF → base), qui fait foi.",
+    "fixture": "sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf est une RECONSTRUCTION (mise en page approximée, valeurs exactes du §13) : le PDF réel la remplacera dès réception, sans changer ce fichier.",
+    "remarque_cotes": "Les cotes nommées du PDF (SLU, SLE, SF, SHW, SPA) relèvent du lot B (fiche_cotes). Le banc actuel ne mesure que les champs hérités : length/width portent ici SLU (6,60 m) et SF (3,08 m) à titre de cibles de lecture, en attendant le banc du lot B."
+  },
+  "fiche-7792-SO_ffab.pdf": {
+    "gabarit": "spi_asymetrique_ref",
+    "attendu": {
+      "reference": "7792-SO",
+      "material": "Monofilm K903",
+      "quantity": 1,
+      "description": "Spi Asymétrique Medium Régate",
+      "dimensions": {
+        "length": 6.6,
+        "width": 3.08,
+        "unit": "m"
+      }
+    }
+  }
+}

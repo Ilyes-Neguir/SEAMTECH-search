@@ -146,8 +146,34 @@ def normaliser_valeur(valeur: Any) -> str:
     return " ".join(unicodedata.normalize("NFD", str(valeur)).encode("ascii", "ignore").decode().lower().split())
 
 
+# Valeurs de remplissage refusées : un rapport bâti sur une vérité partielle
+# serait trompeur — le contrôle refuse explicitement les gabarits non remplis.
+PLACEHOLDERS_VERITE = {"", "...", "à remplir", "a remplir", "à compléter", "todo", "tbd", "x", "?"}
+
+
+def _verifier_valeur_concrete(chemin_entree: str, champ: str, valeur: Any) -> None:
+    if valeur is None:
+        return  # null = absence attendue, c'est une valeur de vérité légitime
+    if isinstance(valeur, str) and normaliser_valeur(valeur) in PLACEHOLDERS_VERITE:
+        raise ValueError(
+            f'Vérité terrain incomplète : "{chemin_entree}" → "{champ}" contient le '
+            f'placeholder {valeur!r}. Remplissez la vraie valeur lue sur la fiche '
+            "(voir docs/verite_terrain/modele_verite_terrain.json), ou mettez null "
+            "si l'absence est la valeur attendue."
+        )
+    if isinstance(valeur, dict):
+        for sous_champ, sous_valeur in valeur.items():
+            _verifier_valeur_concrete(chemin_entree, f"{champ}.{sous_champ}", sous_valeur)
+
+
 def charger_verite(chemin: Path) -> dict[str, dict[str, Any]]:
-    """Charge le JSON de vérité terrain et valide sa forme minimale."""
+    """Charge le JSON de vérité terrain et refuse un fichier incomplet.
+
+    Contrôles (un rapport de calibration bâti sur une vérité partielle serait
+    trompeur) : objet JSON non vide ; chaque entrée porte "attendu" ; chaque
+    "attendu" contient AU MOINS UN champ attendu non null ; aucune valeur
+    placeholder ("...", "à remplir", "todo", "?", …).
+    """
     with chemin.open("r", encoding="utf-8") as fichier:
         donnees = json.load(fichier)
     if not isinstance(donnees, dict) or not donnees:
@@ -156,10 +182,26 @@ def charger_verite(chemin: Path) -> dict[str, dict[str, Any]]:
             '({"fiche.pdf": {"gabarit": "...", "attendu": {...}}}).'
         )
     for cle, spec in donnees.items():
+        if cle.startswith("_"):
+            continue  # clés de documentation (voir modele_verite_terrain.json)
         if not isinstance(spec, dict) or "attendu" not in spec:
             raise ValueError(
-                f'Verité terrain invalide pour "{cle}" : entrée "attendu" manquante.'
+                f'Vérité terrain invalide pour "{cle}" : entrée "attendu" manquante.'
             )
+        attendu = spec["attendu"]
+        if not isinstance(attendu, dict) or not attendu:
+            raise ValueError(
+                f'Vérité terrain incomplète pour "{cle}" : "attendu" doit être un '
+                "objet non vide (au moins un champ attendu, ou null pour une absence)."
+            )
+        concrets = [champ for champ, valeur in attendu.items() if valeur is not None]
+        if not concrets:
+            raise ValueError(
+                f'Vérité terrain incomplète pour "{cle}" : tous les champs attendus '
+                "sont null — une vérité tout-null ne mesure rien."
+            )
+        for champ, valeur in attendu.items():
+            _verifier_valeur_concrete(cle, champ, valeur)
     return donnees
 
 
