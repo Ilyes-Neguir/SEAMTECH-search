@@ -1,8 +1,9 @@
 {
   "_documentation": {
-    "fiche": "Fiche de référence n°2 — 7792-SO (spi asymétrique). Valeurs issues du §13 du plan v3.0 (table de correspondance PDF → base), qui fait foi.",
-    "fixture": "sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf est une RECONSTRUCTION (mise en page approximée, valeurs exactes du §13) : le PDF réel la remplacera dès réception, sans changer ce fichier.",
-    "remarque_cotes": "Les cotes nommées du PDF (SLU, SLE, SF, SHW, SPA) relèvent du lot B (fiche_cotes). Le banc actuel ne mesure que les champs hérités : length/width portent ici SLU (6,60 m) et SF (3,08 m) à titre de cibles de lecture, en attendant le banc du lot B."
+    "fiche": "Fiche de référence n°2 — 7792-SO (spi asymétrique). Valeurs issues du §13 du plan v3.0 (table de correspondance PDF → base), confirmées champ par champ sur le DOCUMENT CLIENT RÉEL reçu le 21/09.",
+    "fixture": "sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf est le DOCUMENT CLIENT RÉEL (166 990 o, 1 page, 842×595 paysage, SHA-256 43afc51e55ae598d3eaffc3096f0e7ddaa00e8ddc579ae315bb31b4dbf1c1f40), reçu du commanditaire le 21/09 et remplacé à la place de l'ancienne reconstruction. Le gabarit FICHE_PORTANT_V1 v2 est réglé sur ce document.",
+    "mesure": "Mesuré sur ce document réel le 21/09 : 6/6 = 100 % (moteur gabarit, validate_extraction.py), banc gabarit_test 31/31 = 100 %, routage passage_direct. Jamais de taux publié sur reconstruction.",
+    "remarque_cotes": "Les cotes nommées du PDF (SLU, SLE, SF, SHW, SPA) relèvent du lot B (fiche_cotes). Le banc ne mesure que les champs hérités : length/width portent SLU (6,60 m) et SF (3,08 m), lus sur la ligne « Mesures Finies » du document réel."
   },
   "fiche-7792-SO_ffab.pdf": {
     "gabarit": "spi_asymetrique_ref",

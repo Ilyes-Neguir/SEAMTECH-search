@@ -34,6 +34,12 @@ Vérité terrain écrite à la main d'après la fiche (fixture de référence du
 | --- | --- | --- |
 | reference · material · quantity · description · dimensions.length · dimensions.width | **6/6 = 100 %** | **69 ms/fiche** |
 
+> **Portée de ce chiffre (correction du 21/09) :** il est mesuré sur la fixture
+> SYNTHÉTIQUE du dépôt (`sample_data/CLIENT-123`), pas sur un document client réel.
+> Sur la vraie fiche 7792-SO, l'audit indépendant mesure 1/6 (16,7 %) avant réglage
+> du gabarit. Un taux sur fixture synthétique est un test d'ingénierie, jamais une
+> validation — voir `docs/DETECTION_FICHES.md`, règle du document réel.
+
 ### 2.2 Inventaire sur une archive de démonstration (synthétique, 10 fichiers)
 
 Construite hors dépôt (`~/essai_phase0/archive-demo`) pour éprouver le pipeline complet : 2 familles de

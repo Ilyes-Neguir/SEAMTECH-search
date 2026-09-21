@@ -229,7 +229,9 @@ def routage(fiche: FicheExtraite, seuils: dict[str, float] | None = None) -> dic
         if champ.valeur_normalisee is not None and champ.confiance < seuils.get(famille_du_champ(champ.champ), 0.9)
     ]
     codes_attendus = {"fiche.code", "fiche.client", "cotes.finie.slu_m", "cotes.finie.sf_m"}
-    lus = {champ.champ for champ in fiche.champs}
+    # tous_les_champs() : les cotes lues en grille vivent dans cotes[*].champs,
+    # pas en tête de fiche — les compter ailleurs serait les déclarer absentes.
+    lus = {champ.champ for champ in fiche.tous_les_champs()}
     manquants = len([cible for cible in codes_attendus if cible not in lus])
     if fiche.anomalies:
         return {
@@ -517,12 +519,15 @@ VERITE_7792: dict[str, object] = {
     "cotes.finie.sf_m": 3.08,
     "cotes.finie.shw_m": 3.14,
     "cotes.finie.spa_m2": 15.71,
-    "cotes.finie.tetiere_cm": 3.0,
-    "cotes.finie.poids_kg": 0.7,
+    # Le document réel n'imprime têtière/poids que sur la ligne « Mesures
+    # Dessin » ; la ligne « Mesures Finies » ne les porte pas (RG5/RG6 : la
+    # vérité suit le document, pas l'ancienne reconstruction §13).
+    "cotes.dessin.tetiere_cm": 3.0,
+    "cotes.dessin.poids_kg": 0.7,
     "materiau.epaisseur.1": "Monofilm K903",
     "materiau.epaisseur.1.mesure_mm": 190.0,
     "galon.guindant": "Bleu",
-    "galon.chute": "Rouge · Blanc",
+    "galon.chute": "Rouge",
     "jonction.laizes.nb_zigzag": 1,
     "jonction.laizes.nb_points": 6,
     "jonction.laizes.espacement_mm": 15.0,
@@ -612,21 +617,32 @@ def evaluer_verite(fiche: FicheExtraite, attendu: dict[str, object]) -> tuple[fl
 
 
 def initialiser_verite_7792(index: Any, chemin_pdf: Path | None = None) -> None:
-    """Enregistre la vérité 7792 dans ``gabarit_test`` (non-régression du gabarit)."""
+    """Enregistre la vérité 7792 dans ``gabarit_test`` (non-régression du gabarit).
+
+    Vérité mesurée sur le DOCUMENT CLIENT RÉEL (reçu le 21/09, SHA-256
+    43afc51e…) — plus sur la reconstruction. La version enregistrée suit la
+    version ACTIVE du gabarit portant (v2 : géométrie du document réel) ; les
+    lignes des versions antérieures pour ce fichier sont purgées pour que la
+    lecture par (code_gabarit, nom_fichier) reste sans ambiguïté."""
     empreinte = None
     if chemin_pdf is not None and Path(chemin_pdf).is_file():
         empreinte = hashlib.sha256(Path(chemin_pdf).read_bytes()).hexdigest()
     with index.connect() as connexion:
         with connexion.cursor() as cursor:
             cursor.execute(
+                "DELETE FROM gabarit_test WHERE code_gabarit = %s AND nom_fichier = %s",
+                ("FICHE_PORTANT_V1", "fiche-7792-SO_ffab.pdf"),
+            )
+            cursor.execute(
                 _SQL_GABARIT_TEST_INS,
                 (
                     "FICHE_PORTANT_V1",
-                    1,
+                    2,
                     "fiche-7792-SO_ffab.pdf",
                     empreinte,
                     json.dumps(VERITE_7792, ensure_ascii=False),
-                    "Vérité §13 du plan v3.0 — à étendre avec les fiches réelles (Tâche 3).",
+                    "Vérité mesurée sur le document client réel 7792-SO (21/09), "
+                    "réglage gabarit v2 — jamais de valeur inventée (RG6).",
                 ),
             )
 

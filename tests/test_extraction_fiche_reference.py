@@ -57,8 +57,12 @@ class TestFiche7792Verite:
         assert finie.sf_m == 3.08
         assert finie.shw_m == 3.14
         assert finie.spa_m2 == 15.71
-        assert finie.tetiere_cm == 3.0
-        assert finie.poids_kg == 0.7
+        # Le document réel n'imprime têtière/poids QUE sur la ligne
+        # « Mesures Dessin » (la ligne « Mesures Finies » ne les porte pas) :
+        # la vérité suit le document, pas l'ancienne reconstruction.
+        dessin = next(c for c in fiche_7792.cotes if c.jeu == "dessin")
+        assert dessin.tetiere_cm == 3.0
+        assert dessin.poids_kg == 0.7
 
     def test_materiaux_epaisseurs(self, fiche_7792: FicheExtraite) -> None:
         niveau_1 = next(m for m in fiche_7792.materiaux if m.niveau == 1)
@@ -67,15 +71,21 @@ class TestFiche7792Verite:
         niveau_2 = next(m for m in fiche_7792.materiaux if m.niveau == 2)
         assert niveau_2.grammage_g_m2 == 270.0
         niveau_3 = next(m for m in fiche_7792.materiaux if m.niveau == 3)
-        assert niveau_3.designation is None and niveau_3.mesure_mm == 220.0
+        assert niveau_3.designation is None and niveau_3.mesure_mm == 260.0
+        assert niveau_3.grammage_g_m2 == 210.0
+        niveau_4 = next(m for m in fiche_7792.materiaux if m.niveau == 4)
+        assert niveau_4.designation is None and niveau_4.mesure_mm == 300.0
+        assert niveau_4.grammage_g_m2 == 170.0
 
     def test_galons_deux_bandes(self, fiche_7792: FicheExtraite) -> None:
         guindant = next(g for g in fiche_7792.galons if g.bande == "guindant")
         assert guindant.couleur == "Bleu"
         assert guindant.largeur_mm == 50.0
         assert guindant.matiere == "Nylon" and guindant.grammage_g_m2 == 65.0
+        # Le document réel n'imprime que « Galon - Rouge » sur la chute
+        # (pas de seconde couleur).
         chute = next(g for g in fiche_7792.galons if g.bande == "chute")
-        assert chute.couleur == "Rouge · Blanc" and chute.largeur_mm == 50.0
+        assert chute.couleur == "Rouge" and chute.largeur_mm == 50.0
 
     def test_jonctions_et_surplus(self, fiche_7792: FicheExtraite) -> None:
         laizes = next(j for j in fiche_7792.jonctions if j.nature == "laizes")
@@ -127,23 +137,33 @@ class TestTracabilite:
             assert 0.0 <= champ.confiance <= 1.0
 
 class TestJeuxDeCotes:
-    """« fiche_cotes (jeux dessin et finie) » : le JEU vient de la cible du
-    gabarit — la fiche 7792 n'imprimant que « Mesures Finies », la règle
-    générale est prouvée par un gabarit de test qui lit le même ancre en jeu
-    « dessin », puis par la lecture de vérité par jeu."""
+    """« fiche_cotes (jeux dessin et finie) » : le document réel imprime les
+    DEUX lignes « Mesures Dessin » et « Mesures Finies » ; la grille tracée
+    les lit chacune sous son jeu. Un gabarit minimal (une seule règle de
+    grille) prouve que la lecture ne dépend pas du gabarit complet."""
 
     def test_regle_cotes_jeu_dessin(self) -> None:
 
         gabarit = GabaritDef(
             code="TEST_DESSIN",
             ancres_detection=["voile de portant"],
-            champs=[RegleChamp(cible="cotes.dessin.slu_m", ancres=["guindant (slu)"], type="decimal_m")],
+            champs=[
+                RegleChamp(
+                    cible="cotes.dessin.slu_m",
+                    ancres=["guindant (slu)"],
+                    type="texte",
+                    traitement="grille_cotes",
+                )
+            ],
         )
         fiche = extraire_fiche(PDF_7792, gabarits=[gabarit])
         dessin = next(c for c in fiche.cotes if c.jeu == "dessin")
         assert dessin.slu_m == 6.6
-        trace = dessin.champs[0]
-        assert trace.champ == "cotes.dessin.slu_m" and trace.table_cible == "fiche_cotes"
+        assert dessin.tetiere_cm == 3.0
+        finie = next(c for c in fiche.cotes if c.jeu == "finie")
+        assert finie.slu_m == 6.6 and finie.spa_m2 == 15.71
+        trace = next(c for c in dessin.champs if c.champ == "cotes.dessin.slu_m")
+        assert trace.table_cible == "fiche_cotes"
 
     def test_verite_lisible_sur_les_deux_jeux(self) -> None:
         fiche = FicheExtraite(

@@ -41,7 +41,9 @@ def fiche_genois():
 class TestDetectionGabarit:
     def test_7792_reconnu_comme_portant(self, fiche_7792: FicheExtraite) -> None:
         assert fiche_7792.gabarit_code == "FICHE_PORTANT_V1"
-        assert fiche_7792.gabarit_version == 1
+        # Version 2 : gabarit réglé sur la géométrie du document client réel
+        # 7792-SO (ligne de titre unique, grille de cotes, blocs en zones).
+        assert fiche_7792.gabarit_version == 2
 
     def test_genois_reconnu_comme_genois(self, fiche_genois: FicheExtraite) -> None:
         # « fiche de fabrication » est commune aux deux variantes : les ancres

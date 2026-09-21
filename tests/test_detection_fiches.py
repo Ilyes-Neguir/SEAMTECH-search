@@ -470,15 +470,17 @@ def test_grand_voile_avec_et_sans_trait_d_union(lexique_defaut: Any) -> None:
 def test_mesure_appariement_7792_avant_apres(lexique_defaut: Any) -> None:
     """Mesure rejouée sur la fiche de référence (constat 3).
 
-    Avant correctif : 30/45 termes trouvés sur la reconstruction 7792 ; la
-    revue mesurait 25/45 sur la fiche réelle. Après tolérance au pluriel :
-    « Jonctions horizontales » (libellé pluriel) est couvert par le terme
-    singulier du lexique. Ce test épingle les formes réparées ; le chiffre
-    complet figure dans le compte rendu de la PR.
+    Mesure sur le DOCUMENT CLIENT RÉEL 7792-SO (reçu le 21/09, SHA-256
+    43afc51e…) : 27 termes du lexique y sont trouvés — chiffre mesuré le
+    21/09/2026, qui remplace l'ancien 31 obtenu sur la reconstruction (la
+    mise en page réelle n'imprime pas tous les libellés de la reconstruction,
+    p. ex. « désignation »). La tolérance au pluriel reste vérifiée :
+    « Jonction verticale » (libellé réel) est couvert par le terme singulier
+    du lexique.
     """
     page = inventory.analyser_page_pdf(FIXTURE_7792)
     from seamtech_search.detection_fiches import detecter_fiche
 
     resultat = detecter_fiche(page.mots, page.largeur, page.hauteur, page.grille_tracee, lexique_defaut)
-    assert len(resultat.vocabulaire_trouve) == 31, "30 avant correctif ; 31 après (gain : jonction)"
+    assert len(resultat.vocabulaire_trouve) == 27, "mesuré sur le document réel 7792-SO le 21/09/2026"
     assert "jonction" in resultat.vocabulaire_trouve

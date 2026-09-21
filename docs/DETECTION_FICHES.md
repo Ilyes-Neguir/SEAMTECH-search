@@ -1,5 +1,34 @@
 # Détection structurelle des fiches — lexique configurable et double vue (PR 1)
 
+## Règle du document réel (ajout du 21/09, après audit indépendant)
+
+**Un gabarit n'est « fait » que s'il est mesuré sur un document réel ; le taux
+publié est celui du document réel — jamais celui d'une reconstruction ou d'une
+fixture synthétique.**
+
+L'audit indépendant du 21/09 l'a mesuré sur pièce : le gabarit `FICHE_PORTANT_V1`
+lisait 100 % des champs de la RECONSTRUCTION de la fiche 7792-SO (fixture du
+dépôt, 2 483 o) mais seulement **1/6 (16,7 %)** du document client réel
+(166 990 o, paysage, grille tracée de 89 formes) — la reconstruction n'avait ni
+la géométrie, ni la grille, ni la mise en page du vrai document. **Appliqué le
+21/09 : le document réel a remplacé la reconstruction comme fixture, le gabarit
+v2 a été réglé sur sa géométrie et mesuré sur lui — 6/6 = 100 % (vérité
+terrain) et banc 31/31 = 100 % ; voir `docs/verite_terrain/EMPREINTES.md`.**
+Les taux sur fixture restent utiles comme **tests d'ingénierie**
+(non-régression du moteur) ; ils ne valident rien. Conséquences opératoires :
+
+- la cible ≥ 90 % du plan (§17.14) s'évalue et se publie sur le document réel ;
+- le banc de non-régression utilise le document réel comme référence dès qu'il
+  est au dépôt, et doit échouer si la fiche réelle régresse ;
+- toute annonce de taux doit dire sur QUEL document il est mesuré ; à défaut de
+  document réel pour une variante (ex. le génois, dont la fixture
+  `sample_data/CLIENT-GENOA/fiche-genois.pdf` est SYNTHÉTIQUE), l'écrire
+  explicitement : « taux synthétique, non validé sur document réel » ;
+- un gabarit se règle sur la géométrie réelle (grilles tracées, alignements de
+  colonnes) — pas sur des coordonnées en dur valables pour un seul fichier, et
+  jamais par invention de valeur (RG6 : ce qui n'est pas reconnu est conservé,
+  pas deviné).
+
 ## Le problème corrigé
 
 La Phase 0 a mesuré un angle mort : le recensement des fiches s'appuyait sur le seul classifieur du

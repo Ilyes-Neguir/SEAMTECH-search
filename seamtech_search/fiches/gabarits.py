@@ -179,6 +179,60 @@ GABARIT_PORTANT = GabaritDef(
     ],
 )
 
+# ---------------------------------------------------------------------------
+# Version 2 du gabarit portant — réglée sur la géométrie du DOCUMENT CLIENT
+# RÉEL 7792-SO (166 990 o, 842×595 paysage, grille tracée de 89 formes),
+# reçu le 21/09 (SHA-256 43afc51e…). Les règles v1 (lignes « label : valeur »
+# de la reconstruction) sont conservées en tête : elles continuent de lire
+# les fixtures synthétiques ; les règles v2 ne déclenchent que sur la
+# géométrie réelle (ancre propre, et « premier lu gagne » dans le moteur).
+# Le gabarit reste un registre versionné en base — pas de coordonnées dures.
+# ---------------------------------------------------------------------------
+
+_REGLES_TETE_V1 = (
+    "fiche.titre", "fiche.code", "fiche.atelier", "fiche.designation",
+    "fiche.bateau", "fiche.client", "fiche.commande", "fiche.quantite",
+    "fiche.tissu_texte", "fiche.dessinateur", "fiche.montage",
+    "fiche.fichier_source",
+)
+
+GABARIT_PORTANT_V2 = GabaritDef(
+    code=CODE_GABARIT_PORTANT,
+    version=2,
+    description=(
+        "Fiche « Voile de portant » v2 — géométrie du document client réel "
+        "7792-SO (ligne de titre unique, grille de cotes à colonnes, blocs "
+        "épaisseurs/galons/finitions) ; englobe et prolonge les règles v1."
+    ),
+    ancres_detection=list(GABARIT_PORTANT.ancres_detection),
+    champs=(
+        [regle for regle in GABARIT_PORTANT.champs if regle.cible in _REGLES_TETE_V1]
+        + [
+            # Ligne de titre réelle : « Spi Asymétrique … pour 29er (15') de
+            # Sailonet (Cruette) 7792-SO » → désignation, bateau, client, code.
+            RegleChamp(cible="traitement:ligne_titre_portant", ancres=["spi asymétrique"], type="texte"),
+            # Tête du document réel.
+            RegleChamp(cible="fiche.atelier", ancres=["découpe et fabrication"], type="texte", stop=["fichier"]),
+            RegleChamp(cible="fiche.commande", ancres=["(commande", "commande"], type="texte", traitement="commande", stop=["dessiné", "quantité"]),
+            RegleChamp(cible="fiche.dessinateur", ancres=["dessiné par"], type="texte", traitement="dessinateur", stop=["fichier"]),
+            RegleChamp(cible="fiche.montage_fil", ancres=["montage en fil:", "fil:"], type="texte", traitement="montage_fil"),
+            RegleChamp(cible="traitement:fichier_edite", ancres=["fichier"], type="texte"),
+            # Grille de cotes tracée : en-tête 7 colonnes, lignes « Mesures
+            # Dessin » / « Mesures Finies » — les deux jeux de fiche_cotes.
+            RegleChamp(cible="traitement:grille_cotes", ancres=["guindant (slu)"], type="texte"),
+            # Blocs en zones : épaisseurs (01→10), galons par bande, finitions.
+            RegleChamp(cible="traitement:epaisseurs_grille", ancres=["epaisseur 01"], type="texte"),
+            RegleChamp(cible="traitement:galons_grille", ancres=["galon"], type="texte"),
+            RegleChamp(cible="traitement:finitions_grille", ancres=["finition"], type="texte"),
+            RegleChamp(cible="traitement:jonctions_grille", ancres=["laizes"], type="texte"),
+            RegleChamp(cible="traitement:options_grille", ancres=["emmagasineur", "chaussette"], type="texte"),
+            RegleChamp(cible="traitement:options_lignes", ancres=["velcro", "retenue", "protection"], type="texte"),
+            RegleChamp(cible="traitement:renforts_note", ancres=["renforts", "renfort"], type="texte"),
+        ]
+        + [regle for regle in GABARIT_PORTANT.champs if regle.cible not in _REGLES_TETE_V1]
+    ),
+)
+
 GABARIT_GENOIS = GabaritDef(
     code=CODE_GABARIT_GENOIS,
     version=VERSION_COURANTE,
@@ -197,11 +251,25 @@ GABARIT_GENOIS = GabaritDef(
     ],
 )
 
-GABARITS_EMBARQUES: tuple[GabaritDef, ...] = (GABARIT_PORTANT, GABARIT_GENOIS)
+# Ordre significatif : à score d'ancres égal, la version la plus récente
+# d'un code gagne la détection (v2 devant v1).
+GABARITS_EMBARQUES: tuple[GabaritDef, ...] = (GABARIT_PORTANT_V2, GABARIT_PORTANT, GABARIT_GENOIS)
 
 
 def initialiser_gabarits(index: Any) -> None:
-    """Enregistre les gabarits embarqués en base (idempotent, appelé par le CLI)."""
+    """Enregistre les gabarits embarqués en base (idempotent, appelé par le
+    CLI). Par code, seule la version la plus récente reste ACTIVE — les
+    versions antérieures demeurent au registre, consultables (RG11 : une
+    fiche validée sous une ancienne version n'est jamais ré-analysée)."""
     for gabarit in GABARITS_EMBARQUES:
         enregistrer_gabarit(index, gabarit)
         LOGGER.info("Gabarit enregistré : %s v%d", gabarit.code, gabarit.version)
+    codes = {gabarit.code for gabarit in GABARITS_EMBARQUES}
+    with index.connect() as connection:
+        with connection.cursor() as cursor:
+            for code in sorted(codes):
+                cursor.execute(
+                    "UPDATE gabarit SET actif = false WHERE code = %s AND version < ("
+                    "   SELECT max(version) FROM gabarit WHERE code = %s)",
+                    (code, code),
+                )

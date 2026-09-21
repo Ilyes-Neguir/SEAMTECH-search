@@ -1,3 +1,37 @@
+## Unreleased — Tâche 2 : gabarit portant réglé sur la vraie fiche 7792-SO (`arena/01a0c56d-seamtech-search`)
+
+- **Fixture remplacée par le document client RÉEL** : la reconstruction 2 483 o
+  cède la place au PDF reçu du commanditaire le 21/09 — SHA-256
+  `43afc51e55ae598d3eaffc3096f0e7ddaa00e8ddc579ae315bb31b4dbf1c1f40`,
+  166 990 o, 1 page, 842 × 595 paysage (preuves dans
+  `docs/verite_terrain/EMPREINTES.md`) ; la note « RECONSTRUCTION » est retirée
+  de `docs/verite_terrain/7792-SO_ffab.json`.
+- **Gabarit `FICHE_PORTANT_V1` v2 dans le registre JSONB** (aucune coordonnée
+  en dur) : ligne de titre unique (désignation + bateau + client + code rejeté
+  à droite), grille de cotes tracée à colonnes alignées (jeux « dessin » et
+  « finie »), blocs épaisseurs / galons / finitions / jonctions / options /
+  renforts lus en zones ; règle « premier lu gagne » entre règles v1
+  (reconstruction) et v2 (document réel), gardes anti-doublon par groupe.
+  Correctifs moteur : mots d'une ligne re-triés en ordre de lecture (les tops
+  pdfplumber varient sur une même ligne visuelle), ancres multi-mots sautées
+  intégralement, traces fantômes de cotes non convertissables supprimées,
+  repli désignation réservé au cas « ancre réellement trouvée ».
+- **Mesures sur le document réel (21/09)** : `validate_extraction.py --moteur
+  gabarit` **6/6 = 100 %** (avant réglage : 1/6 = 16,7 %) ; banc
+  `gabarit_test` **31/31 = 100 %** (seuil 90 %) ; `cli extraire` : routage
+  **passage_direct**, score qualité 0,93, ~172 ms/fiche. La vérité du banc a
+  été corrigée pour suivre le document réel (têtière/poids imprimés seulement
+  sur « Mesures Dessin » ; galon de chute « Rouge ») — aucune valeur inventée
+  (RG6). Le banc échoue désormais si la fiche RÉELLE régresse.
+- **Tests** : pytest **468 passés / 91 sautés, 0 échec** ; les assertions
+  jusque-là calées sur la reconstruction (cotes finie, galon chute, mesure
+  d'appariement 31 termes → 27 mesurés sur le réel, version gabarit) sont
+  réépinglées sur les valeurs du document réel.
+- **Règle permanente ajoutée** (`docs/DETECTION_FICHES.md`) : un gabarit n'est
+  « fait » que s'il est mesuré sur un document réel ; le taux publié est celui
+  du document réel — jamais celui d'une reconstruction. La fixture génois
+  reste SYNTHÉTIQUE : son taux n'est pas une validation sur document réel.
+
 ## Unreleased — Lot E : recherche hybride des fiches (`arena/01a0c56d-seamtech-search`)
 
 - **Moteur hybride (plan §10 / §17.6)** : lexical tsvector pondéré A/B/C + trigrammes
@@ -55,8 +89,13 @@
 - **Chiffres** : pytest **510/3 → 528/3** (+18) ; ruff OK ; tsc OK ; `pnpm build` OK ; e2e par
   défaut **22 passed / 3 skipped** (validation ignorée sans env) ; e2e live **3 passed** (7,4 s ;
   ≤ 1,3 s par parcours — objectif < 2 min largement tenu) ; §17.14 mesuré côté extraction :
-  **7/7 attendus lus = 100 %** (seuil ≥ 90 %). **Avertissement : 54 ms/dossier = plancher sur
-  fixtures minuscules** ; de vrais dossiers (scans, Mo) seront plus lents.
+  **7/7 attendus lus = 100 %** (seuil ≥ 90 %). **CORRECTION (audit indépendant du 21/09) :
+  ce 7/7 était mesuré sur la RECONSTRUCTION 2 483 o de la fiche 7792-SO, pas sur le
+  document client réel ; sur le document réel, l'audit mesurait 1/6 (16,7 %) avant réglage.
+  RE-MESURÉ le 21/09 après réglage du gabarit v2 sur le document réel : 6/6 = 100 %
+  (voir section Tâche 2 ci-dessus).** **Avertissement :
+  54 ms/dossier = plancher sur fixtures minuscules** ; de vrais dossiers (scans, Mo)
+  seront plus lents.
 - **Correctif test** : `test_reindex_skip` — clé normalisée via `os.path.normcase` (comme le
   crawler) au lieu de `.lower()` ; un basetemp contenant une majuscule cassait le test.
 
@@ -197,6 +236,12 @@
   **16,7 % (1/6) → 100 % (6/6)** sur la vérité 7792 (champs hérités) ; le banc
   `gabarit_test` (vérité §13 en base, 31 champs nommés dont cotes SLU/SLE/SF/SHW/SPA,
   galons, jonctions, finitions, options, renforts) tourne à 100 % via le CLI `banc`.
+  **CORRECTION (audit indépendant du 21/09) : ces taux étaient mesurés sur la
+  RECONSTRUCTION de la fiche 7792-SO (fixture du dépôt), pas sur le document client
+  réel — sur celui-ci, l'audit mesurait 1/6 (16,7 %) avant réglage. RE-MESURÉ le
+  21/09 sur le document réel après réglage du gabarit v2 : 6/6 = 100 % et banc
+  31/31 = 100 % (section Tâche 2 ci-dessus) ; les taux sur reconstruction restent
+  des tests d'ingénierie, pas une validation.**
   Seuils `config/seuils_confiance.json` désormais **consommés** pour le routage
   (passage direct / relecture ciblée / reprise complète) — points de départ, à calibrer
   sur fiches réelles (Tâche 3).
