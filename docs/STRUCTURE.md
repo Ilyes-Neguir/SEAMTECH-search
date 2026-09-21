@@ -72,6 +72,14 @@ SEAMTECH-search/
 │   ├── crawler.py                  # Directory crawler with symlink safety and batched traversal
 │   ├── detection_fiches.py         # Structural fiche detection (lexicon + table grid, explainable verdict)
 │   ├── lexique.py                  # Configurable fiche lexicon loader (config/lexique_fiches.json)
+│   ├── fiches/                     # Lot B — gabarit-driven fabrication-sheet extraction (French domain)
+│   │   ├── modeles.py              # FicheExtraite + per-value traceability (ChampExtrait: method, confidence, page, zone)
+│   │   ├── gabarits.py             # Gabarit registry + anchor detection + embedded FICHE_PORTANT_V1 / FICHE_GENOIS_V1 rules
+│   │   ├── extraction.py           # pdfplumber engine: words/lines/tables → rules → traced values; RG6 leftover capture
+│   │   ├── normalisation.py        # French formats: 6,60 m→6.6, g/m², mm, FR dates, booleans, référentiel name splitting
+│   │   ├── anomalies.py            # RG16 coherence checks independent of confidence (ranges, surface ratio, ordering)
+│   │   ├── persistance.py          # Single-transaction write, statut a_valider (RG3), RG11 idempotence, seuils routing
+│   │   └── cli.py                  # Demo CLI: extraire (read-only), ecrire (transactional), init, banc (gabarit_test)
 │   ├── extraction_worker.py        # Process-isolated extraction helper
 │   ├── extractors.py               # Text, PDF (pdfplumber/pypdf), XLSX (openpyxl), DOCX extractors
 │   ├── import_pipeline.py          # Two-phase dossier import, multi-sheet analysis, PDF/DOCX generation

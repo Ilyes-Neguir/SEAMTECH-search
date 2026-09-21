@@ -1,3 +1,34 @@
+## Unreleased — Lot B : extraction structurée de la fiche technique (`lot-b/extraction-fiche`)
+
+- **Paquet `seamtech_search/fiches/`** — lecture pilotée par gabarit (plan v3.0 §10, §13) :
+  `gabarits.py` (registre en base `gabarit`, détection par ancres normalisées, règles JSONB),
+  `extraction.py` (pdfplumber : mots, lignes, tableaux réglés ; chaque valeur porte méthode,
+  confiance, page et **zone** dans le PDF), `normalisation.py` (6,60 m → 6.600 ; g/m² et gr/m² ;
+  mm ; dates françaises), `anomalies.py` (contrôles RG16 indépendants de la confiance),
+  `persistance.py` (écriture en UNE transaction, statut `a_valider` — jamais valide, RG11),
+  `cli.py` (démo `extraire`/`ecrire`/`init`/`banc`).
+- **Deux gabarits embarqués**, issus du vocabulaire réel des fiches disponibles :
+  `FICHE_PORTANT_V1` (réf. 7792-SO, tableau réglé de cotes) et `FICHE_GENOIS_V1`
+  (mono-colonne) — le génois est le test de généralisation ; une fiche hors gabarits
+  part en reprise complète avec conservation des libellés connus (RG6).
+- **Mesure** : banc hérité `validate_extraction --verite` muni de `--moteur gabarit` :
+  **16,7 % (1/6) → 100 % (6/6)** sur la vérité 7792 (champs hérités) ; le banc
+  `gabarit_test` (vérité §13 en base, 31 champs nommés dont cotes SLU/SLE/SF/SHW/SPA,
+  galons, jonctions, finitions, options, renforts) tourne à 100 % via le CLI `banc`.
+  Seuils `config/seuils_confiance.json` désormais **consommés** pour le routage
+  (passage direct / relecture ciblée / reprise complète) — points de départ, à calibrer
+  sur fiches réelles (Tâche 3).
+- **Écritures** : fiche, fiche_cotes (jeu finie), fiche_materiau (épaisseurs 01→10),
+  fiche_galon (guindant/chute/bordure), fiche_jonction (laizes, horizontale, verticale,
+  surplus), fiche_finition, fiche_option, fiche_renfort, fiche_champ_extrait (valeur brute,
+  normalisée, méthode, confiance, page, zone, version de gabarit), fiche_mesure_libre,
+  fiche_anomalie ; référentiels client/bateau/type_voile/materiau résolus ou créés.
+  PostgreSQL uniquement (§17.1). Aucune dépendance nouvelle.
+- **Tests** : 51 unitaires extraction/normalisation/RG16/routage, 12 live PostgreSQL
+  (transaction, idempotence RG11, fiche validée jamais écrasée), grammaire pglast de
+  chaque écriture SQL, banc moteur gabarit bout-en-bout. Branché sur Lot A (dépendance
+  documentée dans le message du commit de fusion).
+
 # Changelog
 
 ## Unreleased — Correctifs de revue, constats 1, 2 et 3

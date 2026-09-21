@@ -402,3 +402,61 @@ def test_verite_7792_sert_de_reference_mesurable(tmp_path: Path) -> None:
     assert mesure["meta"]["nb_fiches"] == 1
     assert "spi_asymetrique_ref" in mesure["par_gabarit"]
     assert set(mesure["par_champ"]) == {"description", "dimensions.length", "dimensions.width", "material", "quantity", "reference"}
+
+
+# ---------------------------------------------------------------------------
+# Moteur « gabarit » (lot B) : le banc mesure aussi le nouveau moteur.
+# ---------------------------------------------------------------------------
+
+
+def test_moteur_gabarit_lecture_integrale_7792(tmp_path: Path, capsys) -> None:
+    """Le moteur gabarit lit 6/6 champs hérités sur la fixture 7792 (§13).
+
+    Baseline « avant » (moteur heuristique, préparation lot B) : 16,7 % (1/6).
+    """
+    racine = Path(__file__).resolve().parent.parent
+    verite = racine / "docs/verite_terrain/7792-SO_ffab.json"
+    code = harness.main(
+        [
+            "validate_extraction.py",
+            str(racine / "sample_data/CLIENT-7792-SO"),
+            "--verite",
+            str(verite),
+            "--moteur",
+            "gabarit",
+            "--sortie-json",
+            str(tmp_path / "mesure.json"),
+        ]
+    )
+    assert code == 0
+    mesure = json.loads((tmp_path / "mesure.json").read_text(encoding="utf-8"))
+    assert mesure["global"]["taux_ok"] == 1.0
+    sortie = capsys.readouterr().out
+    assert "16.7" not in sortie  # la baseline est battue
+    assert "100.0 %" in sortie
+
+
+def test_moteur_gabarit_inconnu_conserve_valeurs_et_avertit(tmp_path: Path) -> None:
+    """Un PDF hors gabarits ne fait pas planter le banc : statut gabarit_inconnu
+    + avertissement RG6 (mesures libres), le rapport reste exploitable."""
+    racine = Path(__file__).resolve().parent.parent
+    code = harness.main(
+        [
+            "validate_extraction.py",
+            str(racine / "sample_data/CLIENT-123"),
+            "--verite",
+            ecrire_verite(tmp_path, {"fiche-technique.pdf": {"attendu": {"reference": "REF-ABSENTE-1"}}}),
+            "--moteur",
+            "gabarit",
+            "--sortie-json",
+            str(tmp_path / "mesure.json"),
+        ]
+    )
+    mesure = json.loads((tmp_path / "mesure.json").read_text(encoding="utf-8"))
+    fiche = mesure["fiches"][0]
+    assert fiche["extraction_status"] == "gabarit_inconnu"
+    assert any("gabarit inconnu" in a for a in fiche.get("avertissements", []))
+    verdicts = {v["champ"]: v["verdict"] for v in fiche["champs"]}
+    assert verdicts["reference"] == "MANQUANT"  # la valeur n'est pas INVENTÉE
+    assert code in (0, 1)  # le taux peut être faible : ce n'est pas un crash
+

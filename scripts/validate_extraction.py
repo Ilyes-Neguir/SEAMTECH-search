@@ -357,10 +357,60 @@ def apparier_verite(documents: list[Path], verite: dict[str, dict[str, Any]]) ->
     return appariements
 
 
+def extraire_via_gabarit(chemin: Path, config: Any) -> Any:
+    """Moteur « gabarit » (lot B) vu du banc : FicheExtraite → ExtractedData.
+
+    Mappage sur les clés héritées du modèle de vérité terrain (§13) :
+    reference←fiche.code, material←désignation du tissu principal (ici
+    épaisseur 01 nommée, sinon tissu_texte), quantity←fiche.quantite,
+    description←type de voile + gamme, dimensions←SLU/SF du jeu « finie »
+    (cibles provisoires du fichier de vérité, en attendant les cotes nommées
+    du banc lot B). Le lot B lit en réalité bien plus (cotes nommées, galons,
+    jonctions…) : c'est mesuré au banc gabarit_test (CLI ``banc``).
+    """
+    from seamtech_search.fiches.extraction import extraire_avec_filet
+    from seamtech_search.fiches.gabarits import GABARITS_EMBARQUES
+    from seamtech_search.import_pipeline import Dimensions, ExtractedData
+
+    fiche = extraire_avec_filet(chemin, list(GABARITS_EMBARQUES))
+    finie = next((c for c in fiche.cotes if c.jeu == "finie"), None)
+    slu = finie.slu_m if finie else None
+    sf = finie.sf_m if finie else None
+    designation = next(
+        (m.designation for m in fiche.materiaux if m.designation and m.role == "epaisseur"),
+        None,
+    ) or fiche.tissu_texte
+    description = " ".join(morceau for morceau in (fiche.type_voile_libelle, fiche.gamme) if morceau) or None
+    avertissements = [f"RG16 {anomalie.code} : {anomalie.message}" for anomalie in fiche.anomalies]
+    if fiche.gabarit_code is None:
+        avertissements.append("gabarit inconnu : valeurs conservées en mesures libres (RG6)")
+    if fiche.mesures_libres:
+        avertissements.append(f"{len(fiche.mesures_libres)} mesure(s) libre(s) conservée(s)")
+    return ExtractedData(
+        reference=fiche.code,
+        material=designation,
+        quantity=fiche.quantite,
+        description=description,
+        dimensions=Dimensions(
+            length=slu,
+            width=sf,
+            unit="m" if (slu or sf) else None,
+            length_mm=round(slu * 1000.0, 1) if slu else None,  # comparaison du banc en mm (§13)
+            width_mm=round(sf * 1000.0, 1) if sf else None,
+            unit_normalized="mm" if (slu or sf) else None,
+        ),
+        raw_text="",
+        extraction_status="success" if fiche.gabarit_code else "gabarit_inconnu",
+        confidence=fiche.score_qualite() or 0.0,
+        warnings=avertissements,
+    )
+
+
 def mesurer_echantillon(
     documents: list[Path],
     verite: dict[str, dict[str, Any]],
     config: Any,
+    moteur: str = "heuristique",
 ) -> dict[str, Any]:
     """Mesure le taux de lecture correcte champ par champ sur l'échantillon."""
     appariements = apparier_verite(documents, verite)
@@ -371,7 +421,10 @@ def mesurer_echantillon(
     for chemin, cle, spec in appariements:
         debut = time.perf_counter()
         try:
-            data = extract_structured_pdf(chemin, config)
+            if moteur == "gabarit":
+                data = extraire_via_gabarit(chemin, config)
+            else:
+                data = extract_structured_pdf(chemin, config)
         except Exception as exc:  # noqa: BLE001 - le harnais ne doit pas mourir sur un mauvais PDF
             LOGGER.error(
                 "Extraction en échec (%s) : %s: %s — conséquence : tous les champs attendus comptés MANQUANT.",
@@ -566,7 +619,7 @@ def executer_mode_mesure(arguments: argparse.Namespace) -> int:
     # les PDF mesurés viennent souvent du même dossier.
     dossiers = sorted({str(document.parent) for document in documents})
     config = AppConfig(root_paths=[Path(dossier) for dossier in dossiers])
-    mesure = mesurer_echantillon(documents, verite, config)
+    mesure = mesurer_echantillon(documents, verite, config, moteur=getattr(arguments, "moteur", "heuristique"))
     if mesure["meta"]["nb_fiches"] == 0:
         print(
             "ERREUR : aucune fiche de vérité terrain n'a été retrouvée dans les PDF découverts "
@@ -610,6 +663,12 @@ def main(argv: list[str]) -> int:
         help="JSON de vérité terrain {\"fiche.pdf\": {\"gabarit\": ..., \"attendu\": {...}}} → mode mesure",
     )
     parseur.add_argument("--sortie-json", default=None, help="écrire le rapport de mesure en JSON (mode --verite)")
+    parseur.add_argument(
+        "--moteur",
+        choices=("heuristique", "gabarit"),
+        default="heuristique",
+        help="moteur de lecture pour --verite : heuristique (défaut, avant lot B) ou gabarit (lot B)",
+    )
     parseur.add_argument(
         "--seuil",
         type=float,
