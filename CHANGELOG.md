@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased — Préparation du lot B (`phase0/preparation-lot-b`)
+
+- **Modèle de vérité terrain** (`docs/verite_terrain/modele_verite_terrain.json`) — documenté, prêt à
+  remplir dès réception des fiches réelles (format du mode `--verite`).
+- **Contrôle de format** dans `charger_verite` : refuse un fichier incomplet — placeholders (« ... »,
+  « à remplir », « todo », « ? », « x »), `attendu` vide ou tout-null. Un rapport de calibration bâti
+  sur une vérité partielle serait trompeur. Les clés `_documentation` sont ignorées (métadonnées).
+- **Fiche de référence n°2** — `docs/verite_terrain/7792-SO_ffab.json` : valeurs attendues du §13 du
+  plan v3.0 pour la fixture `sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf` (reconstruction ; le
+  PDF réel la remplacera sans changer le JSON). Mesure baseline au banc (`--verite`) :
+  **16,7 % de champs corrects (1/6), 84 ms** — la justification chiffrée du lot B (les motifs hérités
+  lisent la quantité, ratent la référence réelle, bavent sur la matière, ignorent les cotes nommées).
+- **`config/seuils_confiance.json`** — seuils de passage direct par famille du §10.3 (structurels
+  0,98 ; cotes 0,95 + contrôle croisé RG16 ; matériaux 0,85 ; finitions/options 0,80 ; notes 0,50),
+  routage des trois voies. État honnête : PRÉPARÉ, NON CONSOMMÉ — le lot B les chargera (variable
+  `SEAMTECH_SEUILS_CONFIANCE`) et les calibrera sur fiches réelles.
+- **6 nouveaux tests** (contrôle de format, template refusé, vérité 7792 mesurable de bout en bout).
+
 ## Unreleased — Phase 0 (inventaire de l'archive & banc d'essai d'extraction)
 
 Branche `phase0/inventaire-banc-essai` sur `4efe2ad`. Rapport complet : `docs/PHASE0_RAPPORT.md`.
