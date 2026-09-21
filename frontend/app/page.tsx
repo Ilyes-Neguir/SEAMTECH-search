@@ -1,8 +1,9 @@
 import { redirect } from "next/navigation"
 
-// Accueil : la porte d'entrée est l'écran Recherche (lot D).
+// Accueil : l'entrée historique de la Phase 0 (recherche fichiers). La
+// recherche hybride des fiches vit sur /recherche (lot E).
 export const dynamic = "force-dynamic"
 
 export default function Page() {
-  redirect("/recherche")
+  redirect("/fichiers")
 }

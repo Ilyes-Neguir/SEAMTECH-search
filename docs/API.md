@@ -6,6 +6,38 @@ de couche §17.1) : sans `database_url`, elles répondent **503** avec l'explica
 Authentification : mêmes règles que le reste de l'API (en-tête `X-SEAMTECH-TOKEN`
 quand `SEAMTECH_AUTH_TOKEN` est configuré).
 
+## Recherche hybride des fiches (Lot E, plan v3.0 §10 / §17.6)
+
+La recherche « comme Google » des fiches validées. La route Phase 0 `GET /search`
+(recherche fichiers) reste intacte ; `/recherche` est la ressource fiches.
+
+| Route | Rôle |
+|---|---|
+| `GET /recherche?q=&type_voile=&client=&bateau=&matiere=&gamme=&annee=&annee_min=&annee_max=&inclure_a_valider=&limit=&offset=` | Recherche hybride : lexical tsvector pondéré A/B/C + trigrammes (volet dégradable) + texte des PDF (chunks/documents) + vecteurs (dormants, activables par injection `encode_requete`), fusionnés par **RRF k=60**. Par défaut : fiches `valide` seulement. Réponse : `{requete, nb_resultats, resultats:[{code, titre, type_voile, client, bateau, gamme, statut, annee, extrait, score, sources}], facettes:{groupe:[{valeur, effectif}]}, sources_actives, sans_resultat, duree_ms}`. |
+| `GET /recherche/suggestions?prefix=&limite=` | Suggestions au fil de la frappe : **valeurs réellement présentes seulement** (référentiels, codes, gammes) par préfixe, complétées par tolérance aux fautes trigrammes sur les référentiels si le préfixe ne donne rien. Réponse : `{prefixe, suggestions:[{nature, valeur}]}`. |
+
+**Comportements** :
+
+- **Facettes à compteurs** : chaque axe (type de voile, client, bateau, matière,
+  gamme, année) compte les résultats filtrés par le texte et par les AUTRES
+  filtres — jamais par son propre filtre (comportement standard d'un moteur
+  généraliste : on peut changer son choix sans perdre les autres valeurs).
+- **Codes** : les séparateurs `-_/` sont normalisés en espaces côté requête ET
+  côté index — `0701-GV-001` se trouve tel quel, le tiret n'est jamais lu comme
+  une exclusion.
+- **Tolérance aux fautes** : filet trigrammes sur les requêtes d'un seul mot
+  (`monofime` → Monofilm) ; seuil 0,30 ; indexable (GIN trigrammes, migration 007).
+- **Synonymes** : table `synonyme` (terme → canonique), rafraîchie toutes les 30 s.
+- **Journal** : TOUTES les recherches sont écrites dans `recherche_log` ;
+  `nb_resultats = 0` marque la recherche sans résultat (index partiel, migration
+  012) — critère de sortie Phase 3, matière première de l'amélioration du lexique.
+- **Métriques** : `GET /metriques` expose `recherche_requests` et
+  `recherche_sans_resultat`.
+- **Vecteurs dormants** : la source vectorielle ne s'active que si un appelant
+  injecte `encode_requete` (aucun modèle embarqué, aucun appel réseau — §17.2).
+- **Sans PostgreSQL** : 503 propre avec l'explication (comme les autres routes
+  fiche), jamais de bascule silencieuse SQLite.
+
 Aucune de ces routes n'écrit de fiche : elles lisent, détectent et publient des gabarits.
 
 ## Traçabilité

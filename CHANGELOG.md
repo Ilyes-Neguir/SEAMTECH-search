@@ -1,3 +1,38 @@
+## Unreleased — Lot E : recherche hybride des fiches (`arena/01a0c56d-seamtech-search`)
+
+- **Moteur hybride (plan §10 / §17.6)** : lexical tsvector pondéré A/B/C + trigrammes
+  (volet dégradable) + texte des PDF (chunks/documents) + vecteurs dormants (activables
+  par injection `encode_requete`, aucun modèle embarqué), fusionnés par **RRF k=60**.
+  `rafraichir_texte_recherche_fiche()` est désormais appelée dans la MÊME transaction que
+  `valider_fiche()` et `valider_lot()` ; migration 012 : index facettes/trgm référentiels,
+  index partiel sans-résultat, `rafraichir_texte_recherche_toutes()` (backfill ensembliste).
+- **`GET /recherche`** : filtres (type de voile, client, bateau, matière, gamme, année ±
+  bornes), facettes à compteurs excluant chacune son propre filtre (comportement moteur
+  généraliste), portée par défaut `valide` (`inclure_a_valider` pour élargir), page/offset,
+  durée et sources actives dans la réponse. **`GET /recherche/suggestions`** : valeurs
+  RÉELLEMENT présentes seulement (préfixe sur référentiels/codes/gammes + tolérance faute).
+  La route Phase 0 `GET /search` (fichiers) reste intacte.
+- **Qualité mesurée** : codes trouvés malgré les séparateurs (`0701-GV-001`, normalisés
+  côté vecteur ET requête), synonymes en table (foc → tourmentin), fautes tolérées
+  (`monofime` → Monofilm, seuil trigrammes 0,30). Tolérance aux fautes = filet mono-mot
+  uniquement : mesuré à 10 000 fiches, l'extraction trigrammes multi-mots coûte 260 à
+  340 ms pour un apport nul ; mono-mot, 20 à 40 ms grâce aux index GIN (planificateur
+  corrigé par SET LOCAL transactionnel — 1,7 ms d'index contre 44 ms de balayage,
+  EXPLAIN à l'appui). Classement `ts_rank_cd` drapeau 16 (normalisation sous-linéaire).
+- **Journal et métriques** : toutes les recherches écrites dans `recherche_log` ;
+  `nb_resultats = 0` comptabilisé (critère de sortie Phase 3) ; `recherche_requests` et
+  `recherche_sans_resultat` exposées aux métriques. 503 propre sans PostgreSQL.
+- **Frontend** : écran Recherche rebranché sur `/api/recherche` (suggestions au fil de la
+  frappe, facettes cliquables, badges de sources) ; l'écran Phase 0 de recherche fichiers
+  déménage sur **`/fichiers`** (entrée nav ajoutée, accueil redirigé), e2e
+  `search.spec.ts` ajusté en conséquence.
+- **Chiffres** : pytest **528/3 → 556/3** (+28 : `test_recherche_hybride.py` +
+  `test_facettes_et_suggestions.py`, conftest partagé) ; rappel@10 = **50/50** sur le jeu
+  de référence (p50 6,9 ms, p95 7,9 ms) ; charge 1 500 fiches p95 **42,8 ms** ;
+  couverture porte OK (**90,1 %** global, `recherche.py` 95 %) ; ruff OK ; `pnpm build`
+  OK. Porte Playwright : Chromium impossible à télécharger dans le sandbox (CDN bloqués,
+  apt indisponible) — non mesurée ici, à passer en CI.
+
 ## Unreleased — Lot D : interface 5 écrans + e2e live PostgreSQL (`lot-d/interface-5-ecrans`)
 
 - **5 écrans** (zéro ressource externe, poste hors ligne) : Recherche (existante), Dossiers,

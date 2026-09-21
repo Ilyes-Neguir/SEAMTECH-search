@@ -1,12 +1,12 @@
 import { redirect } from "next/navigation"
-import { SearchApp } from "@/components/search-app"
+import { RechercheFichesApp } from "@/components/recherche-fiches-app"
 import { isAuthenticated } from "@/lib/auth"
 
-// Écran Recherche (lot D) : consomme l'existant (Phase 0) — sera rebranché sur
-// la recherche hybride /recherche au lot E (§17.6).
+// Écran Recherche (lot E) : recherche hybride des fiches techniques.
+// L'écran Phase 0 de recherche fichiers vit sur /fichiers.
 export const dynamic = "force-dynamic"
 
 export default async function Page() {
   if (!(await isAuthenticated())) redirect("/login?next=/recherche")
-  return <SearchApp />
+  return <RechercheFichesApp />
 }

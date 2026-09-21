@@ -4,12 +4,13 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { ClipboardCheck, FilePlus2, FolderOpen, LogOut, Search } from "lucide-react"
+import { ClipboardCheck, FilePlus2, FolderOpen, FolderSearch, LogOut, Search } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 const LIENS = [
   { href: "/recherche", libelle: "Recherche", icone: Search },
   { href: "/dossiers", libelle: "Dossiers", icone: FolderOpen },
+  { href: "/fichiers", libelle: "Fichiers", icone: FolderSearch },
   { href: "/nouveau", libelle: "Nouveau dossier", icone: FilePlus2 },
   { href: "/validation", libelle: "Validation", icone: ClipboardCheck },
 ]
