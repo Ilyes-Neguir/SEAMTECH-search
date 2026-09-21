@@ -22,8 +22,9 @@ psycopg2-binary==2.9.10
 # classifieur maison. SANS PyTorch (postes 8 Go, décision commanditaire 21/09) :
 # onnxruntime pour l'inférence, tokenizers pour la tokenisation, numpy pour le
 # classifieur et la normalisation. Les poids du modèle NE SONT PAS dans le
-# dépôt (~130 Mo) : `python -m seamtech_search.ml.telecharger` les récupère
-# explicitement (action opérateur, jamais au runtime).
+# dépôt (465 Mo mesurés : modèle non quantifié 448 Mo + tokenizer 17 Mo) :
+# `python -m seamtech_search.ml.telecharger` les récupère explicitement
+# (action opérateur, jamais au runtime).
 numpy==2.4.6
 onnxruntime==1.30.0
 tokenizers==0.23.2

@@ -9,32 +9,41 @@ lot (marginal à 8 Go : 2-10 jetons/s en Q4 — plan §17.14 Phase 4 reporté à
 - **La source `vecteurs` du Lot E est activée** : elle était écrite et dormante
   (`recherche.py::_source_vecteurs`, cosine pgvector). Nouveau paquet
   `seamtech_search/ml/` : encodeur ONNX e5 (charge `model.onnx` +
-  `tokenizer.json` depuis le disque — poids JAMAIS au dépôt, ~130 Mo ;
+  `tokenizer.json` depuis le disque — poids JAMAIS au dépôt : **465 Mo**
+  mesurés par l'audit indépendant du 22/09 — modèle `onnx/model.onnx`
+  470 268 510 o non quantifié + tokenizer 17 082 730 o ;
   `python -m seamtech_search.ml.telecharger` = action opérateur explicite,
   aucun téléchargement au runtime), peuplement idempotent
   (chunk « résumé de champs » par fiche validée + documents rattachés),
   câblage `encode_requete` sur `GET /recherche` (dégradé propre : sans poids,
   la recherche reste lexicale/trigrammes/texte, sans erreur).
-- **Mesures d'activation (publiées avant/après)** — avec l'encodeur de repli
-  déterministe (le bac à sable n'a PAS accès à Hugging Face ; les chiffres e5
-  seront produits en CI par l'étape de téléchargement dédiée, cache inclus) :
-  * jeu synthétique 50 requêtes : rappel@10 **50/50 avant → 50/50 après** ;
-    p95 **9,1 → 9,4 ms** ; coût de génération **0,6 ms/fiche** (repli) ;
-  * jeu réel 13 requêtes : **13/13 avant → 13/13 après** (non-régression
-    assertée par `tests/test_modele_maison.py`) ;
-  * après peuplement, `sources_actives` contient bien `vecteurs` ;
-  * apport du repli sur ces jeux : NUL (le lexical sature déjà) — annoncé
-    comme tel ; l'apport sémantique de e5 se mesurera sur un vrai fonds.
+- **Mesures d'activation (publiées avant/après, DEUX colonnes)** : le bac à
+  sable de développement n'a pas accès à Hugging Face — la colonne « repli »
+  est l'encodeur déterministe de TEST (jamais annoncée seule) ; la colonne
+  « e5 réel » a été mesurée par l'audit indépendant du 22/09 avec les vrais
+  poids, et re-mesurée en continu par la CI (poids en cache).
+  * rappel@10, jeu synthétique 50 requêtes : **50/50 avant → 50/50 après**
+    (identique aux deux encodeurs — non-régression assertée) ;
+  * p95 recherche : repli **9,1 → 9,4 ms** ; **e5 réel 13,1 → 27,7 ms**
+    (audit ; le vecteur ajoute une source, la latence double — accepté) ;
+  * coût de génération d'embeddings : repli **0,6 ms/fiche** ;
+    **e5 réel 12,67 ms/fiche** (78,9 fiches/s sur 2 vCPU, audit) ;
+  * peuplement e5 réel de 12 fiches : 234,1 ms (audit) ;
+  * jeu réel 13 requêtes : **13/13 avant → 13/13 après** ;
+  * après peuplement, `sources_actives` contient bien `vecteurs` (les deux
+    encodeurs) ; apport au rappel : NUL sur ces jeux saturés par le lexical —
+    annoncé ; l'apport sémantique se mesurera sur un vrai fonds.
 - **Premier modèle maison : classifieur du type de voile** (spi/génois/foc/
   grand-voile), centroïdes cosine sur embeddings, numpy seul. Il ne REMPLACE
   pas les règles (§10.4) : mesuré CONTRE elles sur le même jeu
   (`seamtech_search/ml/classifieur.py::mesurer` publie toujours les deux
-  exactitudes). Sur le corpus synthétique reproductible + pièges sans mot-clé
-  + noyau réel (la vraie 7792-SO, évaluation seulement, n=49) : modèle
-  **98,0 %** vs règles **34,7 %** (repli ; les règles = mots-clés sur texte
-  libre — sur une fiche bien formée la règle gagne, sur du texte libre sans
-  mot-clé le modèle récupère 32/32 échecs). Sérialisation JSON + rechargement
-  vérifiés (prédictions identiques).
+  exactitudes), n=49 (synthétique + pièges sans mot-clé + noyau réel en
+  évaluation seulement) :
+  * **repli déterministe : 98,0 %** (48/49), récupère 32/32 échecs des règles ;
+  * **e5 réel : 93,9 %** (46/49), récupère 29/32 échecs des règles (audit) ;
+  * règles seules : **34,7 %** (mots-clés sur texte libre — sur une fiche bien
+    formée la règle gagne ; sur du texte libre sans mot-clé, le modèle).
+  Sérialisation JSON + rechargement vérifiés (prédictions identiques).
 - **Endpoints (§17.5)** : `GET/POST /ml/modeles` (registre `ml_modele`,
   migration 008 existante), `POST /ml/entrainer` (verrou fichier exclusif →
   409 si un entraînement tourne ; version précédente CONSERVÉE et désactivée ;
@@ -46,13 +55,9 @@ lot (marginal à 8 Go : 2-10 jetons/s en Q4 — plan §17.14 Phase 4 reporté à
   test e5 réel, exécuté en CI où les poids sont téléchargés ; il ÉCHOUE si la
   variable est positionnée mais les poids absents — jamais de skip masqué ;
   le téléchargeur est testé SANS réseau, primitives HTTP simulées). Portes :
-  pytest **596 passés / 4 sautés, 0 échec**, ruff, pip-audit, couverture
-  89,9 % + seuils par module.
-- **Honnêtetés maintenues** : le corpus d'entraînement est SYNTHÉTIQUE (noyau
-  réel d'UNE fiche en évaluation seulement) ; l'ordre de grandeur du benchmark
-  « synthétique ≈ 70 %, +100 réels ≈ 87 % » reste à re-mesurer sur fiches
-  réelles ; dépendances ajoutées à requirements.txt uniquement (numpy 2.4.6,
-  onnxruntime 1.30.0, tokenizers 0.23.2), pip-audit : aucune vulnérabilité.
+  pytest **596 passés / 4 sautés, 0 échec**, `-m postgres` **113 passés /
+  1 sauté** (le saut = test e5 réel sans poids hors CI), ruff, pip-audit,
+  couverture 89,9 % + seuils par module.
 
 ## Unreleased — Clôture Phase 1 : e2e live sur le document réel, chrono < 2 min, réparations (`arena/01a0c56d-seamtech-search`)
 
@@ -69,9 +74,15 @@ lot (marginal à 8 Go : 2-10 jetons/s en Q4 — plan §17.14 Phase 4 reporté à
   dessin ×6 / finie ×5, 4 matériaux, 3 galons, 4 jonctions, 3 finitions,
   8 options, 3 renforts), valeurs spot mesurées en base le 21/09
   (`cotes.finie.slu_m` = 6.6 ; `galon.guindant` = « 50.0 mm | 65.0 g/m² »),
-  correction RG11 puis validation. Le chrono ouverture→validation est publié
-  en annotation `mesure-phase1` et le test échoue au-delà de 120 s : c'est la
-  part machine du critère « validation < 2 minutes » (§17.14).
+  correction RG11 puis validation. Le chrono ouverture→validation est asserté
+  < 120 s dans le test ; depuis le 22/09 la CI l'extrait du rapport JSON
+  Playwright et le publie en `::notice mesure-phase1`, avec double garde-fou :
+  les 3 tests live doivent réellement s'exécuter (0 saut toléré) et
+  l'annotation doit exister. Correction d'honnêteté (audit indépendant du
+  22/09) : avant ce mécanisme, seul le « vert sous 120 s » était prouvé — le
+  reporter `list` n'imprime jamais les annotations de test, et les annonces
+  « valeur visible dans l'onglet Actions » décrivaient quelque chose qui
+  n'existait pas.
 - **La porte Playwright porte le document réel en CI** : le job e2e reçoit un
   service PostgreSQL (pgvector/pg16), un `pnpm build` (le mode live démarre
   `next start`) et un pas live dédié (`SEAMTECH_E2E_DATABASE_URL`). La suite

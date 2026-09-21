@@ -1,12 +1,18 @@
 # Mesure « validation < 2 minutes » — critère de sortie Phase 1 (§17.14)
 
-Statut au 21/09/2026 : **mesure scriptée VERTE en CI** (run 35663655264,
-job e2e, commit ce1964d) — le parcours ouverture→validation de la vraie fiche
-7792-SO est passé sous l'assertion des 120 000 ms ; la valeur exacte en ms est
-publiée en annotation `mesure-phase1` du rapport Playwright (visible dans
-l'onglet Actions du run — non extractible du bac à sable, journaux CI
-inaccessibles depuis celui-ci) ; **mesure humaine : procédure fournie,
-chiffres non mesurés**.
+Statut au 22/09/2026 : **mesure scriptée VERTE en CI** (run 35663655264,
+job e2e) — le parcours ouverture→validation de la vraie fiche 7792-SO tient
+sous l'assertion des 120 000 ms. **Correction d'honnêteté (audit indépendant
+du 22/09)** : sur les runs antérieurs, la valeur en ms n'était traçable NULLE
+PART — le reporter `list` de Playwright n'imprime jamais les annotations de
+test (banc minimal reproduit), le run n'avait aucun artefact et l'API GitHub
+aucune annotation de test ; l'annonce « visible dans l'onglet Actions »
+décrivait quelque chose qui n'existait pas. Depuis le 22/09, la CI extrait le
+chrono du rapport JSON et le publie en `::notice mesure-phase1`, avec
+garde-fou : 3 tests live réellement exécutés (0 saut) et annotation exigée.
+**Mesure humaine : procédure fournie, chiffres non mesurés (0/3 fiches) — la
+Phase 1 n'est pas close au sens de l'acceptation tant que ce tableau est
+vide.**
 
 Le critère complet de la Phase 1 est : « une fiche entre en base par
 l'interface, validée, avec traçabilité complète — ≥ 90 % des champs lus
@@ -24,8 +30,11 @@ réels, correction RG11, validation < 2 min ».
 - Fin du chrono : apparition du message de confirmation de validation.
 - Entre les deux : affichage des 48 champs réels (comptages assertés),
   relecture/correction d'un champ (RG11), validation individuelle.
-- Le chiffre est publié en annotation de test (`mesure-phase1`) et le test
-  échoue au-delà de 120 000 ms.
+- Le test échoue au-delà de 120 000 ms ; la valeur exacte est poussée en
+  annotation `mesure-phase1`, extraite du rapport JSON par l'étape CI
+  (`--reporter=list,json` + lecture de `report.json`) et publiée en
+  `::notice` — c'est ce mécanisme qui rend le chiffre lisible dans les
+  journaux du run (le reporter `list` seul ne l'imprime pas).
 
 C'est le temps de RENDU + TRAITEMENT, pas le temps de lecture humain — il
 borne la part machine du parcours. Il est rejoué à chaque CI sur la base

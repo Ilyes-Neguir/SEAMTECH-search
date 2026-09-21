@@ -544,4 +544,50 @@ jobs:
         working-directory: frontend
         env:
           SEAMTECH_E2E_DATABASE_URL: postgresql://seamtech:seamtech_test_password@localhost:5432/seamtech_search_test
-        run: pnpm exec playwright test e2e/validation.spec.ts
+        run: |
+          # --reporter=list,json : le reporter « list » n'imprime JAMAIS les
+          # annotations de test (vérifié par banc minimal le 22/09) ; le chrono
+          # ouverture→validation (annotation mesure-phase1) est donc extrait du
+          # rapport JSON et publié en ::notice — c'est le seul mécanisme qui le
+          # rende lisible dans les journaux CI. Les deux garde-fous reproduisent
+          # ceux de l'étape PostgreSQL : les 3 tests live doivent RÉELLEMENT
+          # s'exécuter (aucun saut toléré) et le chrono doit avoir été produit.
+          set -uo pipefail
+          set +e
+          pnpm exec playwright test e2e/validation.spec.ts --reporter=list,json
+          rc=$?
+          set -e
+          [ "$rc" -eq 0 ] || exit "$rc"
+          python - <<'PY'
+          import json
+          d = json.load(open("report.json"))
+
+          def iterer_specs(suite):
+              yield from suite.get("specs", [])
+              for enfant in suite.get("suites", []):
+                  yield from iterer_specs(enfant)
+
+          stats = d["stats"]
+          passes = stats["expected"] + stats.get("flaky", 0)
+          sautes = stats.get("skipped", 0)
+          if sautes or passes != 3:
+              raise SystemExit(
+                  f"GARDE-FOU live e2e : attendu 3 tests passés, 0 sautés — mesuré "
+                  f"{passes} passés, {sautes} sautés. Les tests live ne doivent jamais "
+                  "s'ignorer silencieusement."
+              )
+          mesures = [
+              a
+              for s in d["suites"]
+              for spec in iterer_specs(s)
+              for t in spec.get("tests", [])
+              for a in t.get("annotations", [])
+              if a.get("type") == "mesure-phase1"
+          ]
+          if not mesures:
+              raise SystemExit(
+                  "GARDE-FOU chrono : annotation mesure-phase1 absente — le chrono "
+                  "ouverture→validation de la vraie fiche n'a pas été produit."
+              )
+          print("::notice title=mesure-phase1::" + mesures[0]["description"])
+          PY
