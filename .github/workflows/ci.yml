@@ -544,6 +544,12 @@ jobs:
         working-directory: frontend
         env:
           SEAMTECH_E2E_DATABASE_URL: postgresql://seamtech:seamtech_test_password@localhost:5432/seamtech_search_test
+          # Le reporter « json » passé en CLI écrit sur STDOUT par défaut ;
+          # c'est cette variable qui le fait écrire dans un fichier (doc
+          # Playwright). Sans elle, report.json n'existe pas et le parseur
+          # ci-dessous échoue (mesuré au run 35665977190, étape de 6 s verte
+          # côté tests).
+          PLAYWRIGHT_JSON_OUTPUT_NAME: report.json
         run: |
           # --reporter=list,json : le reporter « list » n'imprime JAMAIS les
           # annotations de test (vérifié par banc minimal le 22/09) ; le chrono
@@ -560,6 +566,13 @@ jobs:
           [ "$rc" -eq 0 ] || exit "$rc"
           python - <<'PY'
           import json
+          import os
+
+          if not os.path.exists("report.json"):
+              raise SystemExit(
+                  "GARDE-FOU live e2e : report.json absent — PLAYWRIGHT_JSON_OUTPUT_NAME "
+                  "doit être positionné pour que le reporter json écrive un fichier."
+              )
           d = json.load(open("report.json"))
 
           def iterer_specs(suite):

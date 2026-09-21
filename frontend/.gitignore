@@ -12,6 +12,7 @@ node_modules
 .next/
 test-results/
 playwright-report/
+report.json
 .DS_Store
 .live-pg-run.json
 .live-pg-seed.lock
