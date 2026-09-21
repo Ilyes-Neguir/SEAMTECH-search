@@ -1,3 +1,30 @@
+## Unreleased — Lot B, corrections de la 2e revue (constats A, B, C) (`lot-b/extraction-fiche`)
+
+- **Constat A — tolérance surface NOMMÉE et FIGÉE** : facteur = SPA/(½·SLU·SLE) accepté dans
+  [0,55 ; 1,30] (=[−45 % ; +30 %]), couvrant la formule équilatérale du tableur (√3/4 → 0,866) et le
+  triangle quelconque (1,0). Mesure revue : la fiche de référence (SLU 6,60 / SLE 5,50 / SPA 15,71,
+  écart −13,4 %) n'est PAS signalée ; SPA 9,0 et 25,4 le sont. Tests figés `TestToleranceSurfaceFigee`,
+  documentation `docs/CONTROLES_RG16.md`.
+- **Constat B — plafond de confiance corrigé (échelle, pas seuils)** : échelle à paliers
+  **0,99 / 0,90 / 0,85** — 0,99 = ancre exacte + valeur intégralement bornée + format entièrement
+  consommé (ou texte à borne naturelle) ; troncature par libellé stop → 0,90. Le palier haut dépasse
+  le seuil structurel 0,98 : « passage direct » est atteignable par construction (§17.14). Preuves
+  testées : champs parfaitement ancrés ≥ 0,98 ; cotes ≥ 0,95 ; reconstruction 7792 en
+  `passage_direct` aux seuils réels du dépôt. Les renforts passent en famille « matériaux »
+  (objets physiques, pas champs structurels).
+- **Constat C — noms de fichiers de test alignés sur le §17.11** : `test_extraction_fiche_reference.py`,
+  `test_detection_gabarit.py`, `test_normalisation_unites.py`, `test_anomalies_coherence.py`
+  (+ `test_fiches_persistance.py`, `test_fiches_cli.py`, `test_fiches_sql_grammaire.py`).
+- **Correctif d'une ligne hors lot** (constat D de revue) : `fix/test-normcase-basetemp` (base main,
+  commit `eb3c96a`) — `tests/test_reindex_skip.py` utilise `os.path.normcase` au lieu de `.lower()`,
+  preuve : suite verte avec un basetemp à majuscules. Référence de non-régression corrigée :
+  **265/9 sur main** (le « 262 » du §17.13 du plan était erroné ; aucune occurrence de « 262 »
+  dans le dépôt — vérifié par grep).
+- **Delta de tests du Lot B, en une ligne** : 92 tests nouveaux par rapport au correctif
+  (422 = 328 + 92, dont 2 ignorés devenus passés une fois le serveur PostgreSQL démarré) ;
+  compteur de cette révision : voir section Lot B ci-dessous (les tests du plafond et de la
+  tolérance s'ajoutent au delta).
+
 ## Unreleased — Lot B : extraction structurée de la fiche technique (`lot-b/extraction-fiche`)
 
 - **Paquet `seamtech_search/fiches/`** — lecture pilotée par gabarit (plan v3.0 §10, §13) :

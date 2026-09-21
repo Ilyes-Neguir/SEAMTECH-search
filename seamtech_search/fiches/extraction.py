@@ -168,9 +168,14 @@ def _indice_ancre(ligne: Ligne, ancre_norm: str) -> int | None:
     return None
 
 
-def _mots_valeur(ligne: Ligne, debut_ancre: int, ancres_stop: list[str]) -> list[Mot]:
+def _mots_valeur(ligne: Ligne, debut_ancre: int, ancres_stop: list[str]) -> tuple[list[Mot], bool]:
     """Mots de la valeur : après le « : » qui suit l'ancre, jusqu'au prochain
-    libellé (ancres_stop) ou à une rupture de colonne marquée."""
+    libellé (ancres_stop) ou à une rupture de colonne marquée.
+
+    Retourne (mots, borne_naturelle) : la borne est « naturelle » quand la
+    lecture s'est arrêtée en fin de ligne ou sur un changement de colonne
+    (valeur intégralement délimitée) ; elle est « tronquée » quand un libellé
+    stop a coupé la valeur (ambiguïté résiduelle → confiance réduite)."""
     mots = ligne.mots
     # saute l'ancre puis cherche les deux-points qui la suivent
     deux_points = None
@@ -186,12 +191,13 @@ def _mots_valeur(ligne: Ligne, debut_ancre: int, ancres_stop: list[str]) -> list
         debut = debut_ancre + 1
         for curseur in range(debut, len(mots)):
             if curseur > debut and mots[curseur].x0 - mots[curseur - 1].x1 > GAP_COLONNE_PT:
-                return mots[debut:curseur]
+                return mots[debut:curseur], True
             reste = " ".join(m.normalise for m in mots[curseur : curseur + 3])
             if any(reste.startswith(normaliser_terme(stop)) for stop in ancres_stop):
-                return mots[debut:curseur]
-        return mots[debut:]
+                return mots[debut:curseur], False
+        return mots[debut:], True
     fin = len(mots)
+    borne_naturelle = True
     for curseur in range(deux_points + 1, len(mots)):
         mot = mots[curseur]
         if curseur > deux_points + 1 and mot.x0 - mots[curseur - 1].x1 > GAP_COLONNE_PT:
@@ -200,8 +206,9 @@ def _mots_valeur(ligne: Ligne, debut_ancre: int, ancres_stop: list[str]) -> list
         reste = " ".join(m.normalise for m in mots[curseur : curseur + 3])
         if any(reste.startswith(normaliser_terme(stop)) for stop in ancres_stop):
             fin = curseur
+            borne_naturelle = False  # troncature par libellé : ambiguïté résiduelle
             break
-    return mots[deux_points + 1 : fin]
+    return mots[deux_points + 1 : fin], borne_naturelle
 
 
 def _zone_des_mots(mots: list[Mot]) -> Zone | None:
@@ -261,6 +268,13 @@ def _localiser_mots(page: PageAnalysee, valeur: str) -> list[Mot]:
 # Conversion d'une valeur brute selon le type déclaré par la règle
 # ---------------------------------------------------------------------------
 
+def _consommation_totale(type_declare: str, brut: str) -> bool:
+    """Vrai quand la chaîne brute EST le format attendu, en entier (fullmatch)
+    — pas une extraction partielle au sein d'une chaîne plus riche."""
+    motif = _MOTIFS_CONSOMMATION.get(type_declare)
+    return motif is not None and motif.match(brut.strip()) is not None
+
+
 CONVERTISSEURS: dict[str, type] = {
     "texte": lambda brut: brut,
     "entier": norm.extraire_entier,
@@ -273,16 +287,42 @@ CONVERTISSEURS: dict[str, type] = {
 }
 
 
+# Échelle de confiance (docs/CONTROLES_RG16.md) :
+#   0,99 — lecture déterministe : ancre exacte, valeur intégralement bornée
+#          (fin de ligne, changement de colonne ou cellule de tableau) ET
+#          format intégralement consommé par le convertisseur du type ;
+#   0,90 — lecture correcte mais ambigüité résiduelle (troncature par libellé
+#          stop, extraction partielle du format) ;
+#   0,85 — sous-valeurs de décompositions structurées (galons, jonctions,
+#          épaisseurs, finitions, options) ;
+#   0,70 et 0,50-0,60 — reconnaissons partielles, présences douteuses.
+# Le palier 0,99 doit rester AU-DESSUS du seuil structurel le plus strict
+# (0,98 dans config/seuils_confiance.json) : sans cela la voie « passage
+# direct » serait morte par construction (§17.14 vise ≥ 50 % en Phase 2).
+CONFIANCE_CERTAIN = 0.99
+CONFIANCE_LUE = 0.90
+
+_MOTIFS_CONSOMMATION: dict[str, re.Pattern[str]] = {
+    "decimal_m": re.compile(r"^-?\d+(?:[.,]\d+)?\s*(?:m[²23]?|cm|mm|kg)?\s*$", re.I),
+    "decimal_mm": re.compile(r"^-?\d+(?:[.,]\d+)?\s*(?:mm|cm|m)?\s*$", re.I),
+    "decimal": re.compile(r"^-?\d+(?:[.,]\d+)?\s*(?:m[²23]?|cm|mm|kg|g)?\s*$", re.I),
+    "entier": re.compile(r"^\s*\d+\s*$"),
+    "grammage": re.compile(r"^\s*\d+(?:[.,]\d+)?\s*(?:g|gr)\s*/\s*m\s*[²2^]?\s*$", re.I),
+    "date_fr": re.compile(r"^\s*\d{1,2}\s+[a-zéûôà]+\s+\d{4}\s*$", re.I),
+    "booleen": re.compile(r"^\s*(?:oui|non)\s*$", re.I),
+}
+
+
 def _confiance_type(type_declare: str, brut: str, normalise: object) -> float:
     """Confiance selon la qualité du format : format attendu = 0,9 ;
     valeur présente mais non convertible dans le type attendu = 0,5."""
     if normalise is None or normalise == "":
         return 0.5
     if type_declare == "texte" or type_declare == "date_fr":
-        return 0.9
+        return CONFIANCE_LUE
     attendu = CONVERTISSEURS.get(type_declare)
     if attendu is not None and attendu(brut) is not None:
-        return 0.9
+        return CONFIANCE_LUE
     return 0.5
 
 
@@ -300,7 +340,7 @@ def _traiter_titre(fiche: FicheExtraite, brut: str, base: ChampExtrait) -> None:
         fiche.titre = brut.strip()
         base.valeur_normalisee = fiche.titre
     if fiche.titre:
-        base.confiance = max(base.confiance, 0.9)
+        base.confiance = max(base.confiance, CONFIANCE_CERTAIN)
 
 
 def _traiter_designation(fiche: FicheExtraite, brut: str, base: ChampExtrait, fallback: str | None = None) -> None:
@@ -319,7 +359,8 @@ def _traiter_designation(fiche: FicheExtraite, brut: str, base: ChampExtrait, fa
             if reste:
                 fiche.gamme = reste
             base.valeur_normalisee = f"{libelle} | {reste}" if reste else libelle
-            base.confiance = max(base.confiance, 0.9)
+            # type reconnu parmi les motifs connus : lecture déterministe
+            base.confiance = max(base.confiance, CONFIANCE_CERTAIN)
             return
     fiche.gamme = fiche.gamme or valeur
     base.valeur_normalisee = valeur
@@ -332,7 +373,7 @@ def _traiter_support(fiche: FicheExtraite, brut: str, base: ChampExtrait) -> Non
     fiche.bateau_taille = taille
     if nom:
         base.valeur_normalisee = f"{nom} | {taille}" if taille else nom
-        base.confiance = max(base.confiance, 0.9)
+        base.confiance = max(base.confiance, CONFIANCE_CERTAIN)
 
 
 def _traiter_client(fiche: FicheExtraite, brut: str, base: ChampExtrait) -> None:
@@ -341,14 +382,14 @@ def _traiter_client(fiche: FicheExtraite, brut: str, base: ChampExtrait) -> None
     fiche.client_chantier = chantier
     if nom:
         base.valeur_normalisee = f"{nom} | {chantier}" if chantier else nom
-        base.confiance = max(base.confiance, 0.9)
+        base.confiance = max(base.confiance, CONFIANCE_CERTAIN)
 
 
 def _traiter_commande(fiche: FicheExtraite, brut: str, base: ChampExtrait) -> None:
     if brut.strip():
         fiche.commande_numero = brut.strip()
         base.valeur_normalisee = fiche.commande_numero
-        base.confiance = max(base.confiance, 0.9)
+        base.confiance = max(base.confiance, CONFIANCE_CERTAIN)
 
 
 def _traiter_dessinateur(fiche: FicheExtraite, brut: str, base: ChampExtrait) -> None:
@@ -676,16 +717,19 @@ def _executer_regle(fiche: FicheExtraite, regle, pages: list[PageAnalysee]) -> N
     brut: str | None = None
     mots_valeur: list[Mot] = []
     numero_page = 0
+    borne_naturelle = True
     if cible.startswith("cotes."):
-        brut, mots_valeur = _lire_cote(pages, regle.ancres)
+        brut, mots_valeur, borne_naturelle = _lire_cote(pages, regle.ancres)
     else:
         for ancre in regle.ancres:
             trouve = _trouver_ligne(pages, normaliser_terme(ancre))
             if trouve is None:
                 continue
             page, ligne, indice = trouve
-            mots_valeur = _mots_valeur(ligne, indice, list(regle.stop) + list(regle.ancres))
+            mots_valeur, borne_naturelle = _mots_valeur(ligne, indice, list(regle.stop) + list(regle.ancres))
             brut = " ".join(mot.texte for mot in mots_valeur).strip() if mots_valeur else ""
+            if brut:
+                break
             numero_page = page.numero
             if brut:
                 break
@@ -695,10 +739,17 @@ def _executer_regle(fiche: FicheExtraite, regle, pages: list[PageAnalysee]) -> N
         else:
             LOGGER.debug("Champ non lu : %s (ancres %s) — absent du rapport, à relire.", cible, regle.ancres)
         return
-    _construire_et_ranger(fiche, regle, brut.strip(), numero_page, mots_valeur)
+    _construire_et_ranger(fiche, regle, brut.strip(), numero_page, mots_valeur, borne_naturelle)
 
 
-def _construire_et_ranger(fiche: FicheExtraite, regle, brut: str, numero_page: int, mots_valeur: list[Mot]) -> None:
+def _construire_et_ranger(
+    fiche: FicheExtraite,
+    regle,
+    brut: str,
+    numero_page: int,
+    mots_valeur: list[Mot],
+    borne_naturelle: bool = True,
+) -> None:
     """Construit le ChampExtrait d'une lecture réussie puis range la valeur
     (cote, traitement structuré, ou champ simple de tête)."""
     cible = regle.cible
@@ -709,6 +760,10 @@ def _construire_et_ranger(fiche: FicheExtraite, regle, brut: str, numero_page: i
         if convertisseur is not None:
             normalise = convertisseur(brut)
     confiance = _confiance_type(regle.type if traitement is None else "texte", brut, normalise)
+    if confiance == CONFIANCE_LUE and borne_naturelle and (
+        regle.type == "texte" or _consommation_totale(regle.type, brut)
+    ):
+        confiance = CONFIANCE_CERTAIN  # lecture déterministe, sans ambiguïté
     champ = ChampExtrait(
         champ=cible,
         valeur_brute=brut or None,
@@ -746,20 +801,22 @@ def _executer_regle_traitement(fiche: FicheExtraite, regle, brut: str, numero_pa
     _construire_et_ranger(fiche, regle, brut, numero_page, mots_valeur)
 
 
-def _lire_cote(pages: list[PageAnalysee], ancres: list[str]) -> tuple[str | None, list[Mot]]:
-    """Cote nommée : d'abord dans les tableaux réglés, sinon en ligne."""
+def _lire_cote(pages: list[PageAnalysee], ancres: list[str]) -> tuple[str | None, list[Mot], bool]:
+    """Cote nommée : d'abord dans les tableaux réglés (cellule entière, borne
+    toujours naturelle), sinon en ligne (borne du _mots_valeur)."""
     trouve = _valeur_de_tableau(pages, ancres)
     if trouve is not None:
-        return trouve
+        brut, mots = trouve
+        return brut, mots, True
     for ancre in ancres:
         position = _trouver_ligne(pages, normaliser_terme(ancre))
         if position is None:
             continue
         page, ligne, indice = position
-        mots = _mots_valeur(ligne, indice, [])
+        mots, naturelle = _mots_valeur(ligne, indice, [])
         if mots:
-            return " ".join(mot.texte for mot in mots), mots
-    return None, []
+            return " ".join(mot.texte for mot in mots), mots, naturelle
+    return None, [], True
 
 
 def _ranger_cote(fiche: FicheExtraite, cible: str, valeur: object, champ: ChampExtrait) -> None:
@@ -785,7 +842,7 @@ def _collecter_libres(fiche: FicheExtraite, pages: list[PageAnalysee], ancres_co
                 if mot.texte != ":" or indice == 0:
                     continue
                 libelle = " ".join(m.texte for m in ligne.mots[max(0, indice - 3) : indice])
-                valeur_mots = _mots_valeur(ligne, indice - 1, [])
+                valeur_mots, _borne = _mots_valeur(ligne, indice - 1, [])
                 valeur = " ".join(m.texte for m in valeur_mots).strip()
                 lib_norm = normaliser_terme(libelle)
                 if not valeur or not lib_norm:

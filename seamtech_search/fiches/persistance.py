@@ -129,7 +129,9 @@ def famille_du_champ(champ: str) -> str:
     """Famille de routage d'un champ (noms du fichier seuils_confiance.json)."""
     if champ.startswith("cotes."):
         return "cotes"
-    if champ.startswith(("materiau.", "galon.", "jonction.")):
+    if champ.startswith(("materiau.", "galon.", "jonction.", "renfort")):
+        # renforts = objets physiques (œillets, sangles) : famille matériaux,
+        # pas champs structurels — un œillet mal lu ne corrompt pas le rattachement.
         return "materiaux"
     if champ.startswith(("finition.", "option.", "options")) or champ in ("fiche.montage", "fiche.dessinateur", "fiche.fichier_source"):
         return "finitions_options"

@@ -68,6 +68,9 @@ def _rapport(fiche: FicheExtraite, seuils: dict[str, float] | None = None) -> st
         for cotes in fiche.cotes:
             valeurs = {k: getattr(cotes, k) for k in ("slu_m", "sle_m", "sf_m", "shw_m", "spa_m2", "tetiere_cm", "poids_kg") if getattr(cotes, k) is not None}
             lignes.append(f"  jeu {cotes.jeu} : {valeurs}")
+            for champ in cotes.champs:
+                zone = f"p{champ.page + 1} {champ.zone.en_dict()}" if champ.zone else "sans zone"
+                lignes.append(f"    {champ.champ:<34} {str(champ.valeur_normalisee)[:32]:<32} conf={champ.confiance:.2f}  {zone}")
     for etiquette, groupe in (
         ("Matériaux", fiche.materiaux),
         ("Galons", fiche.galons),
