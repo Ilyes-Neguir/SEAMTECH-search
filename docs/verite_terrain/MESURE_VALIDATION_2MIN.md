@@ -1,18 +1,19 @@
 # Mesure « validation < 2 minutes » — critère de sortie Phase 1 (§17.14)
 
-Statut au 22/09/2026 : **mesure scriptée VERTE en CI** (run 35663655264,
-job e2e) — le parcours ouverture→validation de la vraie fiche 7792-SO tient
-sous l'assertion des 120 000 ms. **Correction d'honnêteté (audit indépendant
-du 22/09)** : sur les runs antérieurs, la valeur en ms n'était traçable NULLE
-PART — le reporter `list` de Playwright n'imprime jamais les annotations de
-test (banc minimal reproduit), le run n'avait aucun artefact et l'API GitHub
-aucune annotation de test ; l'annonce « visible dans l'onglet Actions »
-décrivait quelque chose qui n'existait pas. Depuis le 22/09, la CI extrait le
-chrono du rapport JSON et le publie en `::notice mesure-phase1`, avec
-garde-fou : 3 tests live réellement exécutés (0 saut) et annotation exigée.
-**Mesure humaine : procédure fournie, chiffres non mesurés (0/3 fiches) — la
-Phase 1 n'est pas close au sens de l'acceptation tant que ce tableau est
-vide.**
+Statut au 22/09/2026 : **mesure scriptée VERTE en CI et CHRONO PUBLIÉ**
+(run 35666837231, commit 6c5b0ae) — parcours ouverture→validation de la vraie
+fiche 7792-SO : **351 ms** (critère < 120 000 ms), valeur lisible en
+annotation `mesure-phase1` du job e2e. **Correction d'honnêteté (audit
+indépendant du 22/09)** : sur les runs antérieurs, la valeur en ms n'était
+traçable NULLE PART — le reporter `list` de Playwright n'imprime jamais les
+annotations de test (banc minimal reproduit), le run n'avait aucun artefact et
+l'API GitHub aucune annotation de test ; l'annonce « visible dans l'onglet
+Actions » décrivait quelque chose qui n'existait pas. Depuis le 22/09, la CI
+extrait le chrono du rapport JSON (`PLAYWRIGHT_JSON_OUTPUT_NAME=report.json`)
+et le publie en `::notice mesure-phase1`, avec garde-fou : 3 tests live
+réellement exécutés (0 saut) et annotation exigée. **Mesure humaine :
+procédure fournie, chiffres non mesurés (0/3 fiches) — la Phase 1 n'est pas
+close au sens de l'acceptation tant que ce tableau est vide.**
 
 Le critère complet de la Phase 1 est : « une fiche entre en base par
 l'interface, validée, avec traçabilité complète — ≥ 90 % des champs lus

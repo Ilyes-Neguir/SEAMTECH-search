@@ -76,13 +76,16 @@ lot (marginal à 8 Go : 2-10 jetons/s en Q4 — plan §17.14 Phase 4 reporté à
   (`cotes.finie.slu_m` = 6.6 ; `galon.guindant` = « 50.0 mm | 65.0 g/m² »),
   correction RG11 puis validation. Le chrono ouverture→validation est asserté
   < 120 s dans le test ; depuis le 22/09 la CI l'extrait du rapport JSON
-  Playwright et le publie en `::notice mesure-phase1`, avec double garde-fou :
-  les 3 tests live doivent réellement s'exécuter (0 saut toléré) et
-  l'annotation doit exister. Correction d'honnêteté (audit indépendant du
-  22/09) : avant ce mécanisme, seul le « vert sous 120 s » était prouvé — le
-  reporter `list` n'imprime jamais les annotations de test, et les annonces
-  « valeur visible dans l'onglet Actions » décrivaient quelque chose qui
-  n'existait pas.
+  Playwright (`PLAYWRIGHT_JSON_OUTPUT_NAME=report.json`) et le publie en
+  `::notice mesure-phase1`, avec double garde-fou : les 3 tests live doivent
+  réellement s'exécuter (0 saut toléré) et l'annotation doit exister. Valeur
+  mesurée publiée (run 35666837231) : **351 ms**. Correction d'honnêteté
+  (audit indépendant du 22/09) : avant ce mécanisme, seul le « vert sous
+  120 s » était prouvé — le reporter `list` n'imprime jamais les annotations
+  de test, et les annonces « valeur visible dans l'onglet Actions »
+  décrivaient quelque chose qui n'existait pas. (Précision : ce chrono est la
+  part machine — rendu + traitement + validation ; la part humaine, 3 fiches
+  chrono à la main, reste non mesurée 0/3.)
 - **La porte Playwright porte le document réel en CI** : le job e2e reçoit un
   service PostgreSQL (pgvector/pg16), un `pnpm build` (le mode live démarre
   `next start`) et un pas live dédié (`SEAMTECH_E2E_DATABASE_URL`). La suite
