@@ -1,6 +1,9 @@
 services:
   postgres:
-    image: postgres:16
+    # Image pgvector (Lot A) : fournit PostgreSQL 16 + l'extension `vector`
+    # requise par la couche métier « fiches » (migration 006). unaccent reste
+    # disponible (contrib inclus dans l'image).
+    image: pgvector/pgvector:pg16
     restart: unless-stopped
     environment:
       POSTGRES_DB: seamtech_search

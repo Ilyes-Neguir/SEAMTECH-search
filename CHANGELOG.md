@@ -1,5 +1,49 @@
 # Changelog
 
+## Unreleased — Lot A : schéma métier & migrations 006-009 (`lot-a/schema-metier`)
+
+- **Image PostgreSQL → `pgvector/pgvector:pg16`** (docker-compose + service PostgreSQL du job
+  d'intégration CI). `unaccent` et la configuration `seamtech_unaccent` (migration 005) restent
+  disponibles dans cette image — vérifié par les tests live (`to_tsvector('seamtech_unaccent', …)`
+  toujours opérationnel après migrations).
+- **`seamtech_search/schema_metier.py` (nouveau)** — SQL des quatre migrations, transcrit du §6.2 du
+  plan v3.0, rendu idempotent (`IF NOT EXISTS` partout) :
+  - `006_fiche_technique` : extension `vector` ; référentiels (client, bateau, type_voile, materiau,
+    utilisateur, gabarit) ; commande, fiche (+index), fiche_cotes, fiche_materiau, fiche_galon,
+    fiche_jonction, fiche_finition, fiche_option, fiche_renfort, fiche_mesure_libre, fiche_lien,
+    fiche_champ_extrait (+index partiel corrige), fiche_validation, fiche_anomalie, chunk (embedding
+    `vector(384)`, tsv généré sur `seamtech_unaccent`) ; extension de `documents` (id_fiche, role,
+    embedding, traite_le) ; vue `v_fiche_recherche`. 21 tables.
+  - `007_recherche_index` : extension `pg_trgm` ; `fiche.champs_texte` + `fiche.search_vector` ; index
+    GIN plein-texte et trigrammes (code, titre, champs_texte) ; fonction
+    `rafraichir_texte_recherche_fiche(BIGINT)` (pondération A=code+titre, B=référentiels et champs
+    structurés, C=notes — appelée à la validation d'une fiche, jamais en boucle) ; synonyme ;
+    recherche_log.
+  - `008_ml_corpus` : ml_modele, ml_exemple (origine synthetique|reel), ml_run. Aucun modèle binaire
+    en base : seul le chemin du fichier est stocké.
+  - `009_qualite_et_gabarits` : gabarit_test (valeurs attendues en JSONB) ; vue `v_qualite` (passage
+    direct, corrections, validations) ; reprise idempotente des index fiche(statut) et
+    fiche_champ_extrait(corrige).
+- **Décision actée dans le code (§17.1)** : couche métier PostgreSQL uniquement — sur SQLite,
+  006-009 ne font rien (warning + migration enregistrée). Commentaire en tête de module et sur chaque
+  migration pour éviter toute « restauration de parité SQLite ». Test de décision
+  `test_sqlite_ne_recoit_pas_la_couche_metier`.
+- **Tout le SQL validé par pglast** : le harnais `tests/test_postgres_sql_grammar.py` parcourt
+  `run_migrations()` et parse chaque émission avec libpg_query — les quatre nouveaux scripts sont
+  couverts automatiquement.
+- **/health enrichi** : `schema_migrations` (versions appliquées), `schema_metier_a_jour`, et présence
+  EFFECTIVE des extensions (`vector`, `pg_trgm`, `unaccent` via `pg_extension`). Le diagnostic échoué
+  dégrade la réponse (warning journalisé), jamais le service.
+- **Tests** — `tests/test_migrations_metier.py` (8, marqueur `postgres`, base jetable par test) :
+  base vide → 27 tables métier créées ; idempotence (rejeu sans effet) ; capacités réelles
+  (`SELECT '[1,2,3]'::vector`, similarité pg_trgm, `seamtech_unaccent`) ; insertion fiche +
+  `v_fiche_recherche` + `v_qualite` + fonction 007 ; `/health` ; démarrage réel de l'application
+  (TestClient, `/ready` + `/health`) sur base métier ; mesure de taille. Le tout-SQLite reste vert.
+- **Mesures (PostgreSQL 17.11 + pgvector 0.8, serveur local — la CI rejoue sur l'image pg16)** :
+  migrations 006-009 sur base vide : **0,09 s** ; schéma métier créé (tables vides, index inclus) :
+  **~728 ko** ; suite live `-m postgres` : 13 passés.
+- Aucune dépendance Python ajoutée (pgvector et pg_trgm sont des extensions PostgreSQL).
+
 ## 0.5.0 — Remediation (audited commit b7be72a → fixes)
 
 Audited commit `b7be72a` had data-loss, security, and doc-honesty defects. This release fixes them in audit order, verified by `ruff check . && pytest -k "not postgres and not s3"`.

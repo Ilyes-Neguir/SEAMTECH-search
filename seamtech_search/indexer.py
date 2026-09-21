@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator
 
+from . import schema_metier
 from .models import Document
 
 logger = logging.getLogger("seamtech_search.indexer")
@@ -597,6 +598,57 @@ class SearchIndex:
             )
             logger.info("Rebuilt %d search vector(s) with accent folding", cursor.rowcount)
 
+    # ------------------------------------------------------------------
+    # Migrations 006-009 — couche métier « fiche technique » (Lot A).
+    # DÉCISION §17.1 du plan v3.0 : PostgreSQL UNIQUEMENT. Sur SQLite ces
+    # migrations ne font rien (warning journalisé, migration enregistrée) :
+    # le mode SQLite reste supporté pour l'indexation de fichiers héritée,
+    # pas pour les fiches. Ne pas « rétablir la parité SQLite ».
+    # ------------------------------------------------------------------
+
+    def _migration_006_fiche_technique(self, connection: Any) -> None:
+        if not self.is_postgres:
+            logger.warning(
+                "Migration 006_fiche_technique ignorée : la couche métier est PostgreSQL uniquement "
+                "(décision §17.1) — conséquence : aucune table de fiches en mode SQLite."
+            )
+            return
+        with connection.cursor() as cursor:
+            # chunk.tsv référence la configuration seamtech_unaccent : garantir
+            # qu'elle existe avant le script (idempotent, repli gracieux).
+            self._ensure_unaccent_config(connection)
+            cursor.execute(schema_metier.SQL_006_FICHE_TECHNIQUE)
+
+    def _migration_007_recherche_index(self, connection: Any) -> None:
+        if not self.is_postgres:
+            logger.warning(
+                "Migration 007_recherche_index ignorée : la couche métier est PostgreSQL uniquement "
+                "(décision §17.1) — conséquence : aucun index de recherche de fiches en mode SQLite."
+            )
+            return
+        with connection.cursor() as cursor:
+            cursor.execute(schema_metier.SQL_007_RECHERCHE_INDEX)
+
+    def _migration_008_ml_corpus(self, connection: Any) -> None:
+        if not self.is_postgres:
+            logger.warning(
+                "Migration 008_ml_corpus ignorée : la couche métier est PostgreSQL uniquement "
+                "(décision §17.1) — conséquence : aucun corpus ML en mode SQLite."
+            )
+            return
+        with connection.cursor() as cursor:
+            cursor.execute(schema_metier.SQL_008_ML_CORPUS)
+
+    def _migration_009_qualite_et_gabarits(self, connection: Any) -> None:
+        if not self.is_postgres:
+            logger.warning(
+                "Migration 009_qualite_et_gabarits ignorée : la couche métier est PostgreSQL uniquement "
+                "(décision §17.1) — conséquence : aucune vue qualité en mode SQLite."
+            )
+            return
+        with connection.cursor() as cursor:
+            cursor.execute(schema_metier.SQL_009_QUALITE_ET_GABARITS)
+
     def run_migrations(self) -> None:
         """Run pending schema migrations once at startup."""
         with self.connect() as connection:
@@ -609,6 +661,11 @@ class SearchIndex:
                 ("003_category_backfill_guard", self._migration_003_category_backfill_guard),
                 ("004_uploaded_at_epoch", self._migration_004_uploaded_at_epoch),
                 ("005_unaccent_search_vector", self._migration_005_unaccent_search_vector),
+                # Couche métier « fiches » — PostgreSQL uniquement (§17.1).
+                ("006_fiche_technique", self._migration_006_fiche_technique),
+                ("007_recherche_index", self._migration_007_recherche_index),
+                ("008_ml_corpus", self._migration_008_ml_corpus),
+                ("009_qualite_et_gabarits", self._migration_009_qualite_et_gabarits),
             ]
 
             for version, func in migrations:
@@ -1309,22 +1366,42 @@ class SearchIndex:
                     except Exception as exc:
                         integrity = f"check_failed:{exc}"
 
+            # Diagnostic Lot A : version de schéma appliquée + présence
+            # EFFECTIVE des extensions (pg_extension, pas la configuration).
+            metier: dict[str, Any] = {"schema_migrations": [], "schema_metier_a_jour": False, "extensions": {}}
+            try:
+                with connection.cursor() as cursor:
+                    metier = schema_metier.diagnostic_metier(cursor)
+            except Exception as exc:
+                # Conséquence : /health reste répondant, mais signale que le
+                # diagnostic métier est indisponible (base non migrée ?).
+                logger.warning("Diagnostic schéma métier indisponible dans /health : %s", exc)
+                metier = {"diagnostic": "indisponible", **metier}
+
             return {
                 "backend": "postgresql",
                 "database_url_configured": True,
                 "database_bytes": database_bytes,
                 "database_integrity": integrity,
                 "version": version,
+                "schema_migrations": metier.get("schema_migrations", []),
+                "schema_metier_a_jour": metier.get("schema_metier_a_jour", False),
+                "extensions": metier.get("extensions", {}),
             }
 
         with self.connect() as connection:
             integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
+            versions = [row["version"] for row in connection.execute("SELECT version FROM schema_migrations").fetchall()]
         return {
             "backend": "sqlite",
             "database_path": str(self.database_path),
             "database_exists": self.database_path.exists(),
             "database_bytes": self.database_path.stat().st_size if self.database_path.exists() else 0,
             "database_integrity": integrity,
+            "schema_migrations": versions,
+            # Couche métier PostgreSQL uniquement (§17.1) : extensions non applicables.
+            "schema_metier_a_jour": False,
+            "extensions": {"vector": False, "pg_trgm": False, "unaccent": False, "applicables": False},
         }
 
 

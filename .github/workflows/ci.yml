@@ -12,7 +12,8 @@ jobs:
         python-version: ["3.11", "3.12", "3.13"]
     services:
       postgres:
-        image: postgres:16
+        # Lot A : image pgvector (extension `vector` pour la couche métier).
+        image: pgvector/pgvector:pg16
         env:
           POSTGRES_USER: seamtech
           POSTGRES_PASSWORD: seamtech_test_password

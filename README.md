@@ -9,7 +9,7 @@ Internal file search, technical dossier ingestion, and synthesis report platform
 ## Architecture (honest)
 
 ```
-Browser → Next.js Frontend (proxy) → FastAPI API → PostgreSQL 16 (FTS) + Redis 7 (single) + S3 (MinIO/R2/AWS)
+Browser → Next.js Frontend (proxy) → FastAPI API → PostgreSQL 16 + pgvector (FTS + métier) + Redis 7 (single) + S3 (MinIO/R2/AWS)
                                       │
                                       └─ Background worker thread (Redis BLMOVE queue, not separate service)
                                       └─ Retention scheduler (daily, preserves quarantine)
@@ -17,7 +17,7 @@ Browser → Next.js Frontend (proxy) → FastAPI API → PostgreSQL 16 (FTS) + R
 ```
 
 - **Object Storage (MinIO / R2 / AWS S3):** Durable store. Keys are collision-free: `{s3_prefix}/{import_id}/{sha256(relative_path)}/{filename}`. Existing keys are never overwritten — next free `-2`, `-3` suffix is used. Bucket versioning is requested at creation (best-effort: Cloudflare R2 does not implement `PutBucketVersioning`, so `versioning_available: false` is reported in `/health` and suffix protection is used). Every upload is verified via `head_object` before local purge is allowed.
-- **Database (PostgreSQL 16 prod, SQLite fallback dev):** Stores document index, `tsvector` GIN search, `JSONB` import payloads, `object_key`/`object_bucket`/`uploaded_at`/`upload_status` per document, `import_jobs` with `updated_at` heartbeat, `schema_migrations` versioned migrations, and `audit_log` (regular table, **not immutable** — pruned by retention after `audit_retention_days`, default 365).
+- **Database (PostgreSQL 16 via `pgvector/pgvector:pg16` — Lot A requires the `vector` extension; SQLite fallback for the legacy file index only, the fiche layer is PostgreSQL-only per plan §17.1):** Stores document index, `tsvector` GIN search, `JSONB` import payloads, `object_key`/`object_bucket`/`uploaded_at`/`upload_status` per document, `import_jobs` with `updated_at` heartbeat, `schema_migrations` versioned migrations, and `audit_log` (regular table, **not immutable** — pruned by retention after `audit_retention_days`, default 365).
 - **Redis 7 (single container, not cluster):** `RPUSH`/`BLMOVE` queue → processing list, `seamtech:retry:<queue>` sorted set with exponential backoff `2**attempt`, `seamtech:deadletter:<queue>` list after 3 attempts, `seamtech:job:{id}` cache 24h TTL, `seamtech:cancel:{id}` flag for distributed cancellation, sliding-window rate limiter 600 req/min via sorted sets. `/health` reports `upload_dead_letters`.
 - **API (FastAPI):** Stateless except for scratch. Scratch `data/uploads/<uuid>_<folder>` is purged **only** when `upload_status == uploaded` and every artifact verified (`all_verified`). On failure, import is marked `upload_incomplete`, moved to `data/quarantine/` (never pruned), and surfaced in UI. `/health` is read-only, cheap, does not call `initialize()`. Docs (`/docs`, `/openapi.json`) disabled when `auth_token` set, and not exempt from rate limiting. Auth uses `secrets.compare_digest` constant-time.
 - **Worker:** `worker.py` `process_import_task` handles upload verification, quarantine, and purge gating. `worker_loop` processes retry queue first, acks on success, retries with backoff, deadletters after max attempts. Cancellation survives process boundaries via Redis flag + in-memory fallback. Background tasks kept in strong reference set to prevent GC.
