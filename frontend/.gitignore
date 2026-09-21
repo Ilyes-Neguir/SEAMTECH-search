@@ -5,13 +5,13 @@ __v0_jsx-dev-runtime.ts
 .snowflake/
 .v0-trash/
 .vercel/
-
 # Environment variables
 .env*.local
-
 # Common ignores
 node_modules
 .next/
 test-results/
 playwright-report/
 .DS_Store
+.live-pg-run.json
+.live-pg-seed.lock

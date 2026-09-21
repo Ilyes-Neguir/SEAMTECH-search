@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -44,7 +45,10 @@ def test_unchanged_file_skips_extraction(tmp_path: Path, monkeypatch: pytest.Mon
     # Second pass with metadata reflecting what's now stored: same size/mtime/version.
     stat = (root / "reference.txt").stat()
     existing = {
-        str((root / "reference.txt").resolve()).lower(): (
+        # même normalisation que le crawler (os.path.normcase : no-op sur
+        # Linux, .lower() casserait la clé dès qu'un segment du basetemp
+        # contient une majuscule — ex. .pytest_tmpD1)
+        os.path.normcase(str((root / "reference.txt").resolve())): (
             stat.st_size,
             stat.st_mtime,
             CURRENT_EXTRACTOR_VERSION,

@@ -380,7 +380,15 @@ def deposer_dossier(index: Any, dossier: Path, gabarits: list[GabaritDef] | None
         len(plan.pieces),
         id_lot_local,
     )
-    return {"statut": "traite", "fiche": fiche.code, "raison": None, "pieces": len(plan.pieces), "id_lot": id_lot_local}
+    # raison : l'action d'écriture quand elle porte information (remplacee,
+    # conservee_validee) ; None pour une création (rien à signaler).
+    return {
+        "statut": "traite",
+        "fiche": fiche.code,
+        "raison": None if action == "creee" else action,
+        "pieces": len(plan.pieces),
+        "id_lot": id_lot_local,
+    }
 
 
 def creer_lot(index: Any, racine: Path, notes: str | None = None) -> int:

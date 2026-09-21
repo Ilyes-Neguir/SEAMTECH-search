@@ -302,6 +302,11 @@ def re_sub_code(texte: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", norm.sans_accents(texte)).strip("_")
 
 
+class ErreurVerrouRG11(ValueError):
+    """RG11 : une valeur corrigée (ou validée) par un humain ne peut pas être
+    écrasée par une ré-extraction — le dépôt liste le dossier en échec."""
+
+
 def ecrire_fiche(index: Any, fiche: FicheExtraite, connexion: Any = None) -> tuple[int, str]:
     """Écrit la fiche et ses dépendances en UNE transaction PostgreSQL.
 
@@ -342,6 +347,27 @@ def _ecrire_fiche_dans(index: Any, fiche: FicheExtraite, connexion: Any) -> tupl
                         id_existante,
                     )
                     return id_existante, "conservee_validee"
+                # Verrou RG11 (lot D) : une valeur corrigée par un humain n'est
+                # JAMAIS écrasée — si des champs sont corrigés, la ré-extraction
+                # est REFUSÉE (le dépôt listera le dossier en échec avec cette
+                # raison) ; POST /fiches/{code}/rouvrir avec effacer_corrections
+                # lève le verrou explicitement.
+                cursor.execute(
+                    "SELECT COUNT(*) FROM fiche_champ_extrait WHERE id_fiche = %s AND corrige",
+                    (id_existante,),
+                )
+                nb_corriges = int(cursor.fetchone()[0])
+                if nb_corriges > 0:
+                    LOGGER.warning(
+                        "Fiche %s (id %d) porte %d champ(s) corrigé(s) par un humain : ré-extraction REFUSÉE (RG11) — "
+                        "conséquence : le dépôt de ce dossier échoue, la fiche reste intacte ; "
+                        "rouvrir avec effacer_corrections pour lever le verrou explicitement.",
+                        fiche.code, id_existante, nb_corriges,
+                    )
+                    raise ErreurVerrouRG11(
+                        f"RG11 : la fiche {fiche.code} porte {nb_corriges} champ(s) corrigé(s) par un humain — "
+                        "ré-extraction refusée ; rouvrir avec effacer_corrections pour lever le verrou."
+                    )
                 # Remplacement SUR PLACE : l'id_fiche est conservé (pièces jointes,
                 # liens fiche↔fiche et journal de validation des autres dossiers
                 # restent attachés) ; un delete + réinsertion casserait ces liens

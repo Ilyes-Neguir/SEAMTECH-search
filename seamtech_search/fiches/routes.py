@@ -33,8 +33,15 @@ from seamtech_search.fiches.depot import (
     executer_lot,
     lister_lots,
 )
-from seamtech_search.fiches.extraction import ExtractionImpossible, analyser_pdf, texte_normalise
+from seamtech_search.fiches.extraction import (
+    CONFIANCE_CERTAIN,
+    CONFIANCE_LUE,
+    ExtractionImpossible,
+    analyser_pdf,
+    texte_normalise,
+)
 from seamtech_search.fiches.gabarits import GabaritInconnu, charger_gabarits, detecter_gabarit
+from seamtech_search.fiches.persistance import verifier_autorisation_validation_lot
 
 LOGGER = logging.getLogger("seamtech_search.fiches.routes")
 
@@ -202,6 +209,338 @@ def detecter_pdf(index: Any, chemin_pdf: Path) -> dict[str, Any]:
     }
 
 
+
+
+# ---------------------------------------------------------------------------
+# Lot D — workflow de validation (§17.5) : corriger / valider / rejeter /
+# rouvrir, file de validation, validation groupée (verrou de calibration).
+# Règles non négociables : comptes PAR PALIER (jamais de « confiance moyenne »),
+# aucune écriture « valide » sans décision explicite (RG3), une valeur corrigée
+# par un humain n'est jamais écrasée (RG11).
+# ---------------------------------------------------------------------------
+
+_SQL_JOURNAL = (
+    "INSERT INTO fiche_validation (id_fiche, id_utilisateur, action, etat_avant, etat_apres, commentaire) "
+    "VALUES (%s, %s, %s, %s, %s, %s)"
+)
+
+
+def _resoudre_utilisateur(cursor: Any, identifiant: str | None) -> int | None:
+    """Résout (ou crée, rôle opérateur) l'identifiant d'opérateur : le journal
+    de validation doit porter QUI a décidé (traçabilité §10.1)."""
+    if not identifiant:
+        return None
+    cursor.execute("SELECT id_utilisateur FROM utilisateur WHERE identifiant = %s", (identifiant,))
+    ligne = cursor.fetchone()
+    if ligne is not None:
+        return int(ligne[0])
+    cursor.execute("INSERT INTO utilisateur (identifiant) VALUES (%s) RETURNING id_utilisateur", (identifiant,))
+    LOGGER.info("Utilisateur « %s » créé (rôle opérateur) — première action de validation.", identifiant)
+    return int(cursor.fetchone()[0])
+
+
+def _jouter_journal(
+    cursor: Any, id_fiche: int, id_utilisateur: int | None, action: str,
+    avant: str | None, apres: str | None, commentaire: str | None,
+) -> None:
+    cursor.execute(_SQL_JOURNAL, (id_fiche, id_utilisateur, action, avant, apres, commentaire))
+
+
+def _fiche_statut(cursor: Any, code: str) -> tuple[int, str]:
+    cursor.execute("SELECT id_fiche, statut FROM fiche WHERE code = %s", (code,))
+    ligne = cursor.fetchone()
+    if ligne is None:
+        raise HTTPException(status_code=404, detail=f"Fiche {code} inconnue.")
+    return int(ligne[0]), str(ligne[1])
+
+
+def corriger_champ(
+    index: Any, code: str, champ: str, valeur: str, utilisateur: str | None,
+    rang: int | None = None, commentaire: str | None = None,
+) -> dict[str, Any]:
+    """Corrige UN champ (RG11 : refusé sur une fiche validée ; la correction
+    est tracée sur la ligne fiche_champ_extrait ET au journal)."""
+    if not champ:
+        raise HTTPException(status_code=422, detail="Préciser le champ à corriger.")
+    if valeur is None:
+        raise HTTPException(status_code=422, detail="Préciser la valeur corrigée.")
+    with index.connect() as connexion:
+        with connexion.cursor() as cursor:
+            id_fiche, statut = _fiche_statut(cursor, code)
+            if statut == "valide":
+                raise HTTPException(
+                    status_code=409,
+                    detail="RG11 : fiche validée — rouvrez-la d'abord (POST /fiches/{code}/rouvrir) avant de corriger.",
+                )
+            cursor.execute(
+                "SELECT id_champ, rang, valeur_brute, valeur_normalisee FROM fiche_champ_extrait "
+                "WHERE id_fiche = %s AND champ = %s ORDER BY rang",
+                (id_fiche, champ),
+            )
+            lignes = cursor.fetchall()
+            if not lignes:
+                raise HTTPException(status_code=404, detail=f"Champ « {champ} » inconnu sur la fiche {code}.")
+            rangs = [None if x[1] is None else int(x[1]) for x in lignes]
+            if rang is None:
+                if len(lignes) > 1:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"Champ « {champ} » présent {len(lignes)} fois — préciser rang ({rangs}).",
+                    )
+                ligne_cible = lignes[0]
+            else:
+                correspondantes = [x for x in lignes if x[1] is not None and int(x[1]) == rang]
+                if not correspondantes:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Champ « {champ} » rang {rang} inconnu (rangs : {rangs}).",
+                    )
+                ligne_cible = correspondantes[0]
+            rang_cible = None if ligne_cible[1] is None else int(ligne_cible[1])
+            id_champ, brute, avant = int(ligne_cible[0]), ligne_cible[2], ligne_cible[3]
+            id_utilisateur = _resoudre_utilisateur(cursor, utilisateur)
+            cursor.execute(
+                "UPDATE fiche_champ_extrait SET valeur_normalisee = %s, corrige = TRUE, corrige_par = %s, corrige_le = now() "
+                "WHERE id_champ = %s",
+                (str(valeur), id_utilisateur, id_champ),
+            )
+            _jouter_journal(cursor, id_fiche, id_utilisateur, "corriger", statut, statut,
+                            commentaire or f"{champ} (rang {rang_cible if rang_cible is not None else '—'}) : {avant!r} → {str(valeur)!r}")
+            LOGGER.info(
+                "Champ %s (rang %s) de %s corrigé : %r → %r — conséquence : corrige=TRUE, verrou RG11 armé sur cette fiche.",
+                champ, rang_cible, code, avant, str(valeur),
+            )
+            return {"code": code, "champ": champ, "rang": rang_cible, "valeur_brute": brute, "avant": avant, "apres": str(valeur)}
+
+
+def valider_fiche(index: Any, code: str, utilisateur: str | None, commentaire: str | None = None) -> dict[str, Any]:
+    """a_valider → valide (RG3 : c'est une DÉCISION explicite, jamais un effet de bord)."""
+    with index.connect() as connexion:
+        with connexion.cursor() as cursor:
+            id_fiche, statut = _fiche_statut(cursor, code)
+            if statut != "a_valider":
+                conseil = " — rouvrez-la d'abord (POST /fiches/{code}/rouvrir)." if statut == "rejete" else ""
+                raise HTTPException(status_code=409, detail=f"Fiche {code} en statut « {statut} » : seule une fiche a_valider peut être validée{conseil}")
+            id_utilisateur = _resoudre_utilisateur(cursor, utilisateur)
+            cursor.execute("UPDATE fiche SET statut = 'valide', updated_at = now() WHERE id_fiche = %s", (id_fiche,))
+            _jouter_journal(cursor, id_fiche, id_utilisateur, "valider", statut, "valide", commentaire)
+            LOGGER.info("Fiche %s VALIDÉE par %s — conséquence : verrou RG11 (aucune ré-extraction ne l'écrase).", code, utilisateur)
+            return {"code": code, "statut": "valide"}
+
+
+def rejeter_fiche(index: Any, code: str, utilisateur: str | None, motif: str) -> dict[str, Any]:
+    """a_valider → rejete (motif OBLIGATOIRE — un rejet sans raison n'est pas traçable)."""
+    if not motif or not motif.strip():
+        raise HTTPException(status_code=422, detail="Motif OBLIGATOIRE pour rejeter une fiche (traçabilité).")
+    with index.connect() as connexion:
+        with connexion.cursor() as cursor:
+            id_fiche, statut = _fiche_statut(cursor, code)
+            if statut != "a_valider":
+                raise HTTPException(status_code=409, detail=f"Fiche {code} en statut « {statut} » : seule une fiche a_valider peut être rejetée.")
+            id_utilisateur = _resoudre_utilisateur(cursor, utilisateur)
+            cursor.execute("UPDATE fiche SET statut = 'rejete', updated_at = now() WHERE id_fiche = %s", (id_fiche,))
+            _jouter_journal(cursor, id_fiche, id_utilisateur, "rejeter", statut, "rejete", motif.strip())
+            LOGGER.info("Fiche %s rejetée par %s (motif : %s).", code, utilisateur, motif.strip())
+            return {"code": code, "statut": "rejete"}
+
+
+def rouvrir_fiche(
+    index: Any, code: str, utilisateur: str | None, commentaire: str | None = None,
+    effacer_corrections: bool = False,
+) -> dict[str, Any]:
+    """valide/rejete → a_valider. Avec effacer_corrections=true : lève le verrou
+    RG11 en EFFAÇANT explicitement les corrections humaines (acquittement)."""
+    with index.connect() as connexion:
+        with connexion.cursor() as cursor:
+            id_fiche, statut = _fiche_statut(cursor, code)
+            if statut == "a_valider" and not effacer_corrections:
+                raise HTTPException(status_code=409, detail=f"Fiche {code} déjà a_valider.")
+            corrections_effacees = False
+            if effacer_corrections:
+                cursor.execute(
+                    "UPDATE fiche_champ_extrait SET corrige = FALSE, corrige_par = NULL, corrige_le = NULL WHERE id_fiche = %s AND corrige",
+                    (id_fiche,),
+                )
+                corrections_effacees = cursor.rowcount > 0
+            if statut != "a_valider":
+                cursor.execute("UPDATE fiche SET statut = 'a_valider', updated_at = now() WHERE id_fiche = %s", (id_fiche,))
+            id_utilisateur = _resoudre_utilisateur(cursor, utilisateur)
+            motif_journal = commentaire or ""
+            if corrections_effacees:
+                motif_journal = (motif_journal + " ; " if motif_journal else "") + "corrections humaines effacées (verrou RG11 levé explicitement)"
+            _jouter_journal(cursor, id_fiche, id_utilisateur, "rouvrir", statut, "a_valider", motif_journal or None)
+            LOGGER.info("Fiche %s rouverte (%s → a_valider) par %s%s — conséquence : ré-extraction possible.", code, statut, utilisateur, " avec effacement des corrections" if corrections_effacees else "")
+            return {"code": code, "statut": "a_valider", "corrections_effacees": corrections_effacees}
+
+
+def fichier_validation(index: Any, gabarit: str | None = None, anomalie: str | None = None) -> list[dict[str, Any]]:
+    """File des fiches a_valider, triée par confiance croissante (les plus
+    incertaines d'abord). Comptes PAR PALIER — JAMAIS de « confiance moyenne »."""
+    # ordre exact des %s dans le SQL : certain (>= CERTAIN), lu (>= LUE ET < CERTAIN),
+    # décomposé (>= 0,85 ET < LUE), partiel (< 0,85 ou sans confiance)
+    parametres: list[Any] = [CONFIANCE_CERTAIN, CONFIANCE_LUE, CONFIANCE_CERTAIN, 0.85, CONFIANCE_LUE, 0.85]
+    filtres = ""
+    if gabarit:
+        filtres += " AND g.code = %s"
+        parametres.append(gabarit)
+    if anomalie:
+        filtres += " AND EXISTS (SELECT 1 FROM fiche_anomalie a WHERE a.id_fiche = f.id_fiche AND a.code = %s)"
+        parametres.append(anomalie)
+    sql = (
+        # mêmes sémantiques que compter_par_palier : seuls les champs NOTÉS
+        # (valeur_normalisee présente) comptent ; confiance absente = palier partiel
+        "SELECT f.code, COALESCE(f.titre, ''), f.score_qualite, COALESCE(g.code, ''), "
+        "COUNT(c.id_champ) FILTER (WHERE c.valeur_normalisee IS NOT NULL), "
+        "COUNT(c.id_champ) FILTER (WHERE c.valeur_normalisee IS NOT NULL AND c.confiance >= %s), "
+        "COUNT(c.id_champ) FILTER (WHERE c.valeur_normalisee IS NOT NULL AND c.confiance >= %s AND c.confiance < %s), "
+        # palier « décomposé » : même borne 0,85 que compter_par_palier (échelle ordinale §4)
+        "COUNT(c.id_champ) FILTER (WHERE c.valeur_normalisee IS NOT NULL AND c.confiance >= %s AND c.confiance < %s), "
+        "COUNT(c.id_champ) FILTER (WHERE c.valeur_normalisee IS NOT NULL AND (c.confiance < %s OR c.confiance IS NULL)), "
+        "MIN(c.confiance) FILTER (WHERE c.valeur_normalisee IS NOT NULL) "
+        "FROM fiche f "
+        "LEFT JOIN fiche_champ_extrait c ON c.id_fiche = f.id_fiche "
+        "LEFT JOIN gabarit g ON g.id_gabarit = f.id_gabarit "
+        "WHERE f.statut = 'a_valider'" + filtres + " "
+        "GROUP BY f.id_fiche, g.code "
+        "ORDER BY MIN(c.confiance) ASC NULLS LAST, f.code"
+    )
+    with index.connect() as connexion:
+        with connexion.cursor() as cursor:
+            cursor.execute(sql, tuple(parametres))
+            lignes = cursor.fetchall()
+    return [
+        {
+            "code": ligne[0],
+            "titre": ligne[1],
+            "score_qualite": float(ligne[2]) if ligne[2] is not None else None,
+            "gabarit": ligne[3],
+            "nb_champs": int(ligne[4]),
+            # échelle ORDINALE : des comptes par palier, jamais une moyenne
+            "paliers": {"certain": int(ligne[5]), "lu": int(ligne[6]), "decompose": int(ligne[7]), "partiel": int(ligne[8])},
+            "confiance_min": float(ligne[9]) if ligne[9] is not None else None,
+        }
+        for ligne in lignes
+    ]
+
+
+def valider_lot(
+    index: Any, codes: list[str], utilisateur: str | None,
+    acquittement_humain: bool = False, commentaire: str | None = None,
+) -> dict[str, Any]:
+    """Validation GROUPÉE — la seule opération qui peut entériner une erreur
+    systématique sur 10 000 fiches : verrou de calibration OBLIGATOIRE
+    (409 tant que calibre:false, sauf acquittement humain explicite).
+    Un code ignoré est un RÉSULTAT avec raison ; le lot n'est pas cassé."""
+    autorise, message = verifier_autorisation_validation_lot(None, acquittement_humain)
+    if not autorise:
+        raise HTTPException(status_code=409, detail=message)
+    with index.connect() as connexion:
+        with connexion.cursor() as cursor:
+            id_utilisateur = _resoudre_utilisateur(cursor, utilisateur)
+            validees: list[str] = []
+            ignorees: list[dict[str, str]] = []
+            for code in codes:
+                cursor.execute("SELECT id_fiche, statut FROM fiche WHERE code = %s", (code,))
+                ligne = cursor.fetchone()
+                if ligne is None:
+                    ignorees.append({"code": code, "raison": "fiche inconnue"})
+                    continue
+                id_fiche, statut = int(ligne[0]), str(ligne[1])
+                if statut != "a_valider":
+                    ignorees.append({"code": code, "raison": f"statut « {statut} » — rouvrez d'abord"})
+                    continue
+                cursor.execute("UPDATE fiche SET statut = 'valide', updated_at = now() WHERE id_fiche = %s", (id_fiche,))
+                _jouter_journal(cursor, id_fiche, id_utilisateur, "valider", statut, "valide", commentaire or "validation en lot")
+                validees.append(code)
+    LOGGER.info(
+        "Validation en lot : %d validée(s), %d ignorée(s) (utilisateur %s, acquittement=%s) — conséquence : les fiches validées sont verrouillées (RG11).",
+        len(validees), len(ignorees), utilisateur, acquittement_humain,
+    )
+    return {"nb_validees": len(validees), "validees": validees, "nb_ignorees": len(ignorees), "ignorees": ignorees}
+
+
+
+
+def liste_fiches(index: Any, statut: str | None = None, page: int = 1, taille: int = 50) -> dict[str, Any]:
+    """Écran Dossiers (lot D) : liste paginée + facettes (compteurs par statut)."""
+    page = max(1, page)
+    taille = min(max(1, taille), 200)
+    filtre = "WHERE f.statut = %s" if statut else ""
+    parametres: tuple[Any, ...] = (statut, taille, (page - 1) * taille) if statut else (taille, (page - 1) * taille)
+    with index.connect() as connexion:
+        with connexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT f.code, COALESCE(f.titre, ''), f.statut, f.score_qualite, COALESCE(g.code, ''), "
+                "COALESCE(c.nom, ''), COALESCE(b.nom, ''), COALESCE(b.taille, '') "
+                "FROM fiche f LEFT JOIN gabarit g ON g.id_gabarit = f.id_gabarit "
+                "LEFT JOIN client c ON c.id_client = f.id_client "
+                "LEFT JOIN bateau b ON b.id_bateau = f.id_bateau "
+                + filtre
+                + " ORDER BY f.updated_at DESC, f.code LIMIT %s OFFSET %s",
+                parametres,
+            )
+            lignes = cursor.fetchall()
+            cursor.execute("SELECT statut, COUNT(*) FROM fiche GROUP BY statut")
+            facettes = {str(s): int(n) for s, n in cursor.fetchall()}
+            where_total = "WHERE statut = %s" if statut else ""
+            cursor.execute(f"SELECT COUNT(*) FROM fiche {where_total}", (statut,) if statut else ())
+            total = int(cursor.fetchone()[0])
+    return {
+        "total": total,
+        "page": page,
+        "facettes": facettes,
+        "fiches": [
+            {
+                "code": ligne[0], "titre": ligne[1], "statut": ligne[2],
+                "score_qualite": float(ligne[3]) if ligne[3] is not None else None,
+                "gabarit": ligne[4], "client": ligne[5], "bateau": ligne[6], "bateau_taille": ligne[7],
+            }
+            for ligne in lignes
+        ],
+    }
+
+
+def pieces_de_fiche(index: Any, code: str) -> dict[str, Any]:
+    """Pièces jointes de la fiche, avec leur description `documents` (RG12 :
+    une seule description par fichier — le lien porte id_document) ; et le
+    chemin du PDF source de la fiche (visionneuse de l'écran Fiche/Validation)."""
+    with index.connect() as connexion:
+        with connexion.cursor() as cursor:
+            cursor.execute("SELECT id_fiche, fichier_source FROM fiche WHERE code = %s", (code,))
+            ligne = cursor.fetchone()
+            if ligne is None:
+                raise HTTPException(status_code=404, detail=f"Fiche {code} inconnue.")
+            cursor.execute(
+                "SELECT p.chemin, p.role, p.empreinte_sha256, p.taille_octets, d.id, d.name "
+                "FROM fiche_piece_jointe p LEFT JOIN documents d ON d.id = p.id_document "
+                "WHERE p.id_fiche = %s ORDER BY p.chemin",
+                (int(ligne[0]),),
+            )
+            lignes = cursor.fetchall()
+            # Le chemin d'archive du PDF de la fiche : première moitié de la clé
+            # d'idempotence du dernier dépôt traite (normcase(chemin) | SHA-256).
+            cursor.execute(
+                "SELECT split_part(cle_idempotence, '|', 1) FROM lot_dossier "
+                "WHERE id_fiche = %s AND statut = 'traite' AND cle_idempotence IS NOT NULL "
+                "ORDER BY traite_le DESC LIMIT 1",
+                (int(ligne[0]),),
+            )
+            pdf_source = cursor.fetchone()
+    return {
+        "fichier_source": ligne[1],
+        "pdf_source": pdf_source[0] if pdf_source and pdf_source[0] else None,
+        "pieces": [
+            {
+                "chemin": piece[0], "role": piece[1], "empreinte_sha256": piece[2],
+                "taille_octets": int(piece[3]) if piece[3] is not None else None,
+                "id_document": int(piece[4]) if piece[4] is not None else None,
+                "nom": piece[5],
+            }
+            for piece in lignes
+        ],
+    }
+
+
 def enregistrer_routes_fiches(app: Any, index: Any, config: Any, verifier_auth: Any) -> None:
     """Branche les routes du Lot B.2 dans l'application FastAPI existante."""
 
@@ -336,3 +675,85 @@ def enregistrer_routes_fiches(app: Any, index: Any, config: Any, verifier_auth: 
                 os.unlink(chemin)
             except OSError:
                 LOGGER.warning("Fichier temporaire de detection non supprimé : %s (conséquence : résidu disque).", chemin)
+
+    @app.post("/fiches/{code}/corriger")
+    def route_corriger_champ(
+        code: str,
+        corps: dict[str, Any],
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+    ) -> dict[str, Any]:
+        verifier_auth(config, token)
+        _exiger_postgres(index)
+        return corriger_champ(
+            index, code,
+            corps.get("champ"), corps.get("valeur"), corps.get("utilisateur"),
+            rang=corps.get("rang"), commentaire=corps.get("commentaire"),
+        )
+
+    @app.post("/fiches/{code}/valider")
+    def route_valider_fiche(
+        code: str,
+        corps: dict[str, Any],
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+    ) -> dict[str, Any]:
+        verifier_auth(config, token)
+        _exiger_postgres(index)
+        return valider_fiche(index, code, corps.get("utilisateur"), corps.get("commentaire"))
+
+    @app.post("/fiches/{code}/rejeter")
+    def route_rejeter_fiche(
+        code: str,
+        corps: dict[str, Any],
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+    ) -> dict[str, Any]:
+        verifier_auth(config, token)
+        _exiger_postgres(index)
+        return rejeter_fiche(index, code, corps.get("utilisateur"), corps.get("motif") or "")
+
+    @app.post("/fiches/{code}/rouvrir")
+    def route_rouvrir_fiche(
+        code: str,
+        corps: dict[str, Any],
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+    ) -> dict[str, Any]:
+        verifier_auth(config, token)
+        _exiger_postgres(index)
+        return rouvrir_fiche(index, code, corps.get("utilisateur"), corps.get("commentaire"), bool(corps.get("effacer_corrections")))
+
+    @app.get("/validation/file")
+    def route_fichier_validation(
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+        gabarit: str | None = None,
+        anomalie: str | None = None,
+    ) -> list[dict[str, Any]]:
+        verifier_auth(config, token)
+        _exiger_postgres(index)
+        return fichier_validation(index, gabarit=gabarit, anomalie=anomalie)
+
+    @app.post("/validation/lot")
+    def route_valider_lot(
+        corps: dict[str, Any],
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+    ) -> dict[str, Any]:
+        verifier_auth(config, token)
+        _exiger_postgres(index)
+        codes = [str(c) for c in (corps.get("codes") or [])]
+        if not codes:
+            raise HTTPException(status_code=422, detail="Liste « codes » vide — rien à valider.")
+        return valider_lot(index, codes, corps.get("utilisateur"), acquittement_humain=bool(corps.get("acquittement_humain")), commentaire=corps.get("commentaire"))
+    @app.get("/fiches")
+    def route_liste_fiches(
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+        statut: str | None = None,
+        page: int = 1,
+        taille: int = 50,
+    ) -> dict[str, Any]:
+        verifier_auth(config, token)
+        _exiger_postgres(index)
+        return liste_fiches(index, statut=statut, page=page, taille=taille)
+
+    @app.get("/fiches/{code}/pieces")
+    def route_pieces_fiche(code: str, token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None) -> dict[str, Any]:
+        verifier_auth(config, token)
+        _exiger_postgres(index)
+        return pieces_de_fiche(index, code)
