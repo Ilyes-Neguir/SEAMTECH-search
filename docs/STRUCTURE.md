@@ -7,6 +7,7 @@ SEAMTECH-search/
 │   └── config.json                 # Active local configuration (gitignored)
 ├── docs/                           # Comprehensive technical and operational documentation
 │   ├── PROJECT_REPORT.md           # Full technical, architectural, and business report
+│   ├── PHASE0_RAPPORT.md           # Phase 0 report: delivered instruments, measured numbers, blockers
 │   ├── REPORT.md                   # Production readiness and operations summary
 │   ├── STRUCTURE.md                # Repository layout and component directory
 │   ├── IMPLEMENTATION_PLAN.md      # Architecture roadmap and deliverable checklist
@@ -54,10 +55,12 @@ SEAMTECH-search/
 │   ├── benchmark_indexing.py       # Performance and throughput benchmarking utility
 │   ├── bootstrap.py                # Environment bootstrap helper
 │   ├── ensure_postgres.ps1         # Auto-provisioning script for local PostgreSQL container
+│   ├── inventaire_archive.py       # Phase 0 read-only archive inventory (types, years, duplicates, scans, fiche locations, gabarit families)
 │   ├── restore_postgres.ps1        # PostgreSQL database restore script
 │   ├── restore_sqlite.ps1          # SQLite fallback database restore script
 │   ├── run_indexing.ps1            # Scheduled directory indexing script
-│   └── start_seamtech_search.ps1   # Native desktop launcher script
+│   ├── start_seamtech_search.ps1   # Native desktop launcher script
+│   └── validate_extraction.py      # Extraction harness: historical per-document review + Phase 0 field-by-field measurement against a ground-truth JSON (--verite)
 ├── seamtech_search/                # Core Python package
 │   ├── __init__.py                 # Package version and export definitions (v0.4.0)
 │   ├── __main__.py                 # CLI execution entry point

@@ -116,6 +116,41 @@ SEAMTECH_TEST_S3_URL=http://localhost:9000 pytest -m s3 -q
 
 **Docker compose full-stack proof:** `docker compose up` from clean checkout with only `.env` works; import `sample_data/CLIENT-123` → rows in Postgres, objects in MinIO with collision-free keys, downloadable reports via 302, search hit, correction re-download. Chaos (`tests/test_chaos.py`, assertions that can fail): S3 down mid-import → job `upload_incomplete`, all artifacts `failed`, source moved to quarantine byte-for-byte (no loss); Redis killed mid-job → job recoverable, marked `failed` via `recover_stale_jobs`; worker SIGKILLed **as a real subprocess** (`os.kill(pid, SIGKILL)`, exit code -9) → job stuck in `running` (no cleanup ran), recovered exactly once to `failed` on restart, files preserved; disk full → 507 + `InsufficientStorageError`, no purge.
 
+## Phase 0 tools — archive inventory & extraction bench (real, tested)
+
+Two read-only instruments for the fiche-technique refonte (plan v3.0). Both are proven never to modify the
+scanned tree: tests hash every file (size + SHA-256 + mtime) before/after a run.
+
+**`scripts/inventaire_archive.py` — archive inventory (Phase 0).** Walks one or more roots read-only and
+reports: folder/file counts, per-type and per-year volumes (file mtime), probable duplicates (size +
+SHA-256, capped at `--limite-empreinte` Mo), native PDFs vs probable scans (`unavailable: no embedded
+text` marker from the extractor, OCR deliberately off), probable fiche-technique locations (existing
+anchor classifier), and gabarit families (fingerprint of alphabetic labels + quantized positions, exact
+grouping then Jaccard ≥ 0.85 merge). Writes `inventaire.json` + two CSVs (`;`-separated, utf-8-sig) to an
+output dir that must live **outside** the scanned roots — refused otherwise. No network, no OCR, no
+dependency added.
+
+```bash
+python scripts/inventaire_archive.py D:/SEAMTECH/DesignFiles --sortie ./rapports/inv-01
+python scripts/inventaire_archive.py ./sample_data --sortie /tmp/inv --sans-empreintes
+```
+
+**`scripts/validate_extraction.py --verite truth.json` — extraction bench, field by field (Phase 0).**
+Compares `extract_structured_pdf` output against a hand-written ground-truth JSON
+(`{"fiche.pdf": {"gabarit": ..., "attendu": {"reference": ..., "dimensions": {"length": 6.6, "unit": "m"}}}}`),
+prints per-field verdicts (OK / ECART / MANQUANT / SUSPECT / INATTENDU / OK_ABSENCE) and per-field /
+per-gabarit / global correct-read rates with timing; `--sortie-json` exports the calibration report,
+`--seuil X` turns the global rate into a hard gate. Dimensions are compared in millimetres (1 mm or 0.1 %
+tolerance) so unit rendering cannot fake a miss. The report refuses to be written inside the measured
+sheets' folders. Without `--verite`, the harness keeps its historical per-document review behavior
+(pinned by existing tests). The plan v3.0's `benchmark_gabarit.py` is realized as this mode rather than a
+second script.
+
+Known gap measured during Phase 0: sheets whose labels are outside the current `TECHNICAL_ANCHORS`
+vocabulary (e.g. `Guindant`, `Bordure`, `Tissu` on genoa variants) are classified `plan_pdf` today — the
+anchor list must be extended against real sheets in lot B. See `docs/PHASE0_RAPPORT.md` for measured
+numbers.
+
 ---
 
 ## Docs

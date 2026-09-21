@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased — Phase 0 (inventaire de l'archive & banc d'essai d'extraction)
+
+Branche `phase0/inventaire-banc-essai` sur `4efe2ad`. Rapport complet : `docs/PHASE0_RAPPORT.md`.
+
+- **`scripts/inventaire_archive.py` (nouveau)** — inventaire en lecture seule d'une arborescence :
+  comptages, volumes par type et par année (mtime), doublons probables (taille + SHA-256, plafonnés par
+  `--limite-empreinte`), part de scans probables (marqueur « no embedded text » de l'extracteur, OCR
+  désactivé), localisation probable des fiches techniques (classifieur d'ancres existant), familles de
+  gabarits par empreinte de libellés alphabétiques + positions quantifiées (regroupement exact puis
+  fusion Jaccard ≥ 0,85). Sorties : console + `inventaire.json` + 2 CSV (`;`, utf-8-sig). Refus d'écrire
+  le rapport dans une racine analysée. Aucune dépendance ajoutée, aucun appel réseau.
+- **`scripts/validate_extraction.py` (étendu, rétrocompatible)** — mode `--verite` : mesure champ par
+  champ du taux de lecture correcte contre un JSON de vérité terrain, verdicts OK/ECART/MANQUANT/
+  SUSPECT/INATTENDU/OK_ABSENCE, agrégats par champ / par gabarit / global, temps par fiche, export JSON
+  (`--sortie-json`) et garde (`--seuil`). Cotes comparées en mm (tolérance 1 mm ou 0,1 %). Réalise le
+  `benchmark_gabarit.py` prévu au plan v3.0 §17.8 comme mode du harnais existant. Le mode historique
+  (revue par document) est inchangé et toujours épinglé par ses tests.
+- **Tests** — `tests/test_inventaire_archive.py` (14) prouve la non-modification de l'archive par
+  empreintes avant/après + 12 erreurs d'usage couvertes ; `tests/test_validate_extraction_mesure.py` (19)
+  épingle verdicts, tolérances, agrégats, gardes et refus de sortie. Suite complète : 298 passés /
+  9 ignorés (265 préexistants restants verts), ruff propre, pip-audit propre sur les requirements,
+  gate de couverture atteint.
+- **Constat mesuré (lot B)** — les fiches dont les libellés sortent du vocabulaire d'ancres actuel
+  (`Guindant`, `Bordure`, `Tissu`…) sont classées `plan_pdf` aujourd'hui : `TECHNICAL_ANCHORS` devra être
+  étendu sur fiches réelles ; documenté dans README et `docs/PHASE0_RAPPORT.md`.
+
 ## 0.5.0 — Remediation (audited commit b7be72a → fixes)
 
 Audited commit `b7be72a` had data-loss, security, and doc-honesty defects. This release fixes them in audit order, verified by `ruff check . && pytest -k "not postgres and not s3"`.
