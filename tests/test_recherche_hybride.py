@@ -14,6 +14,13 @@ Ce qui est prouvé ici :
   le câblage validation → cherchable, le journal des recherches
   (sans-résultat inclus), et le jeu de 50 requêtes de référence
   (critère de sortie Phase 3 : 100 % de rappel, < 100 ms).
+
+⚠️ ÉTIQUETAGE (Tâche 3) : le corpus de ce fichier est SYNTHÉTIQUE — 12 fiches
+valides semées en fixture, et les 50 requêtes de référence sont construites sur
+ce seed. Le rappel 50/50 prouve l'architecture, PAS le fonds réel. La recherche
+sur le fonds réel (vraie fiche 7792-SO, jeu de requêtes réel) est mesurée dans
+``tests/test_recherche_fonds_reel.py`` et documentée dans
+``docs/verite_terrain/JEU_REQUETES_REELLES.md``.
 """
 
 from __future__ import annotations
@@ -237,7 +244,9 @@ def test_pagination_offset_limit(base_recherche: dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 
 def _jeu_50_requetes() -> list[tuple[str, str]]:
-    """50 couples (requête, code attendu) construits sur le corpus semé."""
+    """50 couples (requête, code attendu) construits sur le corpus SYNTHÉTIQUE
+    semé en fixture. Ce jeu mesure l'architecture, pas le fonds réel — le jeu
+    de requêtes RÉEL est joué dans ``tests/test_recherche_fonds_reel.py``."""
     jeu: list[tuple[str, str]] = []
     for (code, titre, *_reste) in FICHES_CORPUS:
         if _reste[-1] != "valide":
@@ -282,8 +291,11 @@ def _jeu_50_requetes() -> list[tuple[str, str]]:
 @pytest.mark.postgres
 def test_jeu_50_requetes_reference_100_pourcent(base_recherche: dict[str, Any]) -> None:
     """Sortie Phase 3 : 100 % des résultats attendus retrouvés (rappel@10),
-    temps de réponse < 100 ms. Chiffres MESURÉS sur le corpus de test —
-    l'échelle réelle (10 000 fiches) reste à re-mesurer sur données réelles."""
+    temps de réponse < 100 ms. Chiffres MESURÉS sur le corpus SYNTHÉTIQUE de
+    test (12 fiches seed) — ils prouvent l'architecture, pas le fonds réel :
+    la re-mesure sur la vraie fiche 7792-SO est dans
+    ``tests/test_recherche_fonds_reel.py`` ; l'échelle 10 000 fiches reste à
+    re-mesurer sur données réelles."""
     index = base_recherche["index"]
     avec_synonyme = False
     manquants: list[str] = []

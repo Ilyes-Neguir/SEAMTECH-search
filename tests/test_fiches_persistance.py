@@ -121,13 +121,16 @@ class TestEcritureTransactionnelle:
         ecrire_fiche(base_fiches["index"], fiche_7792)
         comptes = _comptes(base_fiches["index"], fiche_7792.code)
         assert comptes["fiche"] == 1
-        assert comptes["cotes"] == 1  # jeu « finie »
-        assert comptes["materiaux"] == 3  # épaisseurs 01-03 lues sur la fixture
-        assert comptes["galons"] == 2  # guindant + chute
-        assert comptes["jonctions"] == 3  # laizes + horizontale + surplus
+        # Document RÉEL : les deux jeux de cotes sont imprimés.
+        assert comptes["cotes"] == 2  # jeux « dessin » + « finie »
+        assert comptes["materiaux"] == 4  # épaisseurs 01-04 du bloc réel
+        assert comptes["galons"] == 3  # guindant + chute + bordure
+        assert comptes["jonctions"] == 4  # laizes + horizontale + verticale + surplus
         assert comptes["finitions"] == 3  # amure + écoute + drisse
-        assert comptes["options"] == 3  # emmagasineur + velcro + anti-UV
-        assert comptes["renforts"] == 1
+        # Colonne centrale (emmagasineur, bout de manœuvre, chaussette, sac,
+        # v-trim) + bloc velcro/retenue/anti-UV.
+        assert comptes["options"] == 8
+        assert comptes["renforts"] == 3  # note « 2 x œillets… + dacron + dacron »
         assert comptes["champs"] == len(fiche_7792.tous_les_champs())
         assert comptes["anomalies"] == 0
 
@@ -142,7 +145,7 @@ class TestEcritureTransactionnelle:
                 )
                 zone, version, methode, confiance, page = cursor.fetchone()
         assert zone is not None and zone["page"] == 0 and zone["x1"] > zone["x0"]
-        assert version == 1
+        assert version == 2  # gabarit réglé sur le document réel (Tâche 2)
         assert methode == "gabarit" and float(confiance) > 0.5 and page == 0
 
     def test_referentiels_resolus_ou_crees(self, base_fiches, fiche_7792) -> None:

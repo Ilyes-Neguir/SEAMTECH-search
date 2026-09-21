@@ -26,7 +26,7 @@ from __future__ import annotations
 from typing import Any
 
 # Version du schéma métier — incrémentée à chaque nouvelle migration.
-VERSION_SCHEMA_METIER = "012_recherche_hybride"
+VERSION_SCHEMA_METIER = "013_recherche_fonds_reel"
 
 # Marqueur injecté par le code au moment de la migration (constat 1 de revue) :
 # le nom de la configuration de recherche effective — 'seamtech_unaccent' ou
@@ -748,6 +748,113 @@ CREATE INDEX IF NOT EXISTS idx_materiau_nom_trgm      ON materiau   USING GIN (n
 CREATE INDEX IF NOT EXISTS idx_fiche_gamme_trgm       ON fiche      USING GIN (gamme gin_trgm_ops);
 """
 
+# ---------------------------------------------------------------------------
+# 013 — Recherche sur le FONDS RÉEL (Tâche 3)
+# Le rejeu du jeu de requêtes réel sur la vraie fiche 7792-SO (21/09) a
+# mesuré deux angles morts du vecteur de recherche :
+#   * « cruette » (raison sociale du client Sailonet) — le chantier du client
+#     n'était pas agrégé au texte ;
+#   * « spi sailonet 2026 » (combinaison opérateur type + client + année) —
+#     l'année d'édition n'était pas tokenisée dans le vecteur.
+# Les DEUX valeurs sont pourtant lues par l'extraction et présentes en base ;
+# elles sont ajoutées au texte pondéré (poids B, comme les autres champs
+# métier). L'architecture du lot E (A/B/C, RRF, facettes) est inchangée.
+# ---------------------------------------------------------------------------
+SQL_013_RECHERCHE_FONDS_REEL = """
+CREATE OR REPLACE FUNCTION rafraichir_texte_recherche_fiche(p_id_fiche BIGINT)
+RETURNS void
+LANGUAGE plpgsql
+AS $fn$
+BEGIN
+    UPDATE fiche f
+    SET champs_texte = agg.texte,
+        search_vector =
+            setweight(to_tsvector('__TS_CONFIG__',
+                                  regexp_replace(coalesce(f.code, ''), '[-_/]+', ' ', 'g')
+                                  || ' ' || coalesce(f.titre, '')), 'A')
+            || setweight(to_tsvector('__TS_CONFIG__', agg.secondaire), 'B')
+            || setweight(to_tsvector('__TS_CONFIG__', coalesce(f.notes, '')), 'C')
+    FROM (
+        SELECT f2.id_fiche AS id_fiche,
+               concat_ws(' | ',
+                         f2.code, f2.titre, f2.gamme, f2.segment,
+                         coalesce(to_char(f2.date_edition, 'YYYY'), ''),
+                         (SELECT tv.libelle FROM type_voile tv WHERE tv.id_type_voile = f2.id_type_voile),
+                         (SELECT c.nom || ' ' || coalesce(c.chantier, '') FROM client c WHERE c.id_client = f2.id_client),
+                         (SELECT b.nom || ' ' || coalesce(b.taille, '') FROM bateau b WHERE b.id_bateau = f2.id_bateau),
+                         (SELECT string_agg(m.designation_texte, ' ') FROM fiche_materiau m WHERE m.id_fiche = f2.id_fiche),
+                         (SELECT string_agg(concat_ws(' ', g.couleur, g.matiere), ' ') FROM fiche_galon g WHERE g.id_fiche = f2.id_fiche),
+                         (SELECT string_agg(j.description, ' ') FROM fiche_jonction j WHERE j.id_fiche = f2.id_fiche),
+                         (SELECT string_agg(fi.valeur_texte, ' ') FROM fiche_finition fi WHERE fi.id_fiche = f2.id_fiche)
+               ) AS texte,
+               concat_ws(' ',
+                         f2.gamme, f2.segment,
+                         coalesce(to_char(f2.date_edition, 'YYYY'), ''),
+                         (SELECT tv.libelle FROM type_voile tv WHERE tv.id_type_voile = f2.id_type_voile),
+                         (SELECT c.nom || ' ' || coalesce(c.chantier, '') FROM client c WHERE c.id_client = f2.id_client),
+                         (SELECT b.nom || ' ' || coalesce(b.taille, '') FROM bateau b WHERE b.id_bateau = f2.id_bateau),
+                         (SELECT string_agg(m.designation_texte, ' ') FROM fiche_materiau m WHERE m.id_fiche = f2.id_fiche),
+                         (SELECT string_agg(concat_ws(' ', g.couleur, g.matiere), ' ') FROM fiche_galon g WHERE g.id_fiche = f2.id_fiche),
+                         (SELECT string_agg(j.description, ' ') FROM fiche_jonction j WHERE j.id_fiche = f2.id_fiche),
+                         (SELECT string_agg(fi.valeur_texte, ' ') FROM fiche_finition fi WHERE fi.id_fiche = f2.id_fiche)
+               ) AS secondaire
+        FROM fiche f2
+        WHERE f2.id_fiche = p_id_fiche
+    ) AS agg
+    WHERE f.id_fiche = agg.id_fiche;
+END;
+$fn$;
+
+-- Variante ensembliste (backfill / réindexation) : même agrégation que la
+-- fonction ci-dessus, sur toutes les fiches VALIDÉES.
+CREATE OR REPLACE FUNCTION rafraichir_texte_recherche_toutes()
+RETURNS INTEGER
+LANGUAGE plpgsql
+AS $fn$
+DECLARE
+    nb INTEGER;
+BEGIN
+    UPDATE fiche f
+    SET champs_texte = agg.texte,
+        search_vector =
+            setweight(to_tsvector('__TS_CONFIG__',
+                                  regexp_replace(coalesce(f.code, ''), '[-_/]+', ' ', 'g')
+                                  || ' ' || coalesce(f.titre, '')), 'A')
+            || setweight(to_tsvector('__TS_CONFIG__', agg.secondaire), 'B')
+            || setweight(to_tsvector('__TS_CONFIG__', coalesce(f.notes, '')), 'C')
+    FROM (
+        SELECT f2.id_fiche AS id_fiche,
+               concat_ws(' | ',
+                         f2.code, f2.titre, f2.gamme, f2.segment,
+                         coalesce(to_char(f2.date_edition, 'YYYY'), ''),
+                         (SELECT tv.libelle FROM type_voile tv WHERE tv.id_type_voile = f2.id_type_voile),
+                         (SELECT c.nom || ' ' || coalesce(c.chantier, '') FROM client c WHERE c.id_client = f2.id_client),
+                         (SELECT b.nom || ' ' || coalesce(b.taille, '') FROM bateau b WHERE b.id_bateau = f2.id_bateau),
+                         (SELECT string_agg(m.designation_texte, ' ') FROM fiche_materiau m WHERE m.id_fiche = f2.id_fiche),
+                         (SELECT string_agg(concat_ws(' ', g.couleur, g.matiere), ' ') FROM fiche_galon g WHERE g.id_fiche = f2.id_fiche),
+                         (SELECT string_agg(j.description, ' ') FROM fiche_jonction j WHERE j.id_fiche = f2.id_fiche),
+                         (SELECT string_agg(fi.valeur_texte, ' ') FROM fiche_finition fi WHERE fi.id_fiche = f2.id_fiche)
+               ) AS texte,
+               concat_ws(' ',
+                         f2.gamme, f2.segment,
+                         coalesce(to_char(f2.date_edition, 'YYYY'), ''),
+                         (SELECT tv.libelle FROM type_voile tv WHERE tv.id_type_voile = f2.id_type_voile),
+                         (SELECT c.nom || ' ' || coalesce(c.chantier, '') FROM client c WHERE c.id_client = f2.id_client),
+                         (SELECT b.nom || ' ' || coalesce(b.taille, '') FROM bateau b WHERE b.id_bateau = f2.id_bateau),
+                         (SELECT string_agg(m.designation_texte, ' ') FROM fiche_materiau m WHERE m.id_fiche = f2.id_fiche),
+                         (SELECT string_agg(concat_ws(' ', g.couleur, g.matiere), ' ') FROM fiche_galon g WHERE g.id_fiche = f2.id_fiche),
+                         (SELECT string_agg(j.description, ' ') FROM fiche_jonction j WHERE j.id_fiche = f2.id_fiche),
+                         (SELECT string_agg(fi.valeur_texte, ' ') FROM fiche_finition fi WHERE fi.id_fiche = f2.id_fiche)
+               ) AS secondaire
+        FROM fiche f2
+    ) AS agg
+    WHERE f.id_fiche = agg.id_fiche;
+    GET DIAGNOSTICS nb = ROW_COUNT;
+    RETURN nb;
+END;
+$fn$;
+"""
+
 MIGRATIONS_METIER: tuple[tuple[str, str], ...] = (
     ("006_fiche_technique", SQL_006_FICHE_TECHNIQUE),
     ("007_recherche_index", SQL_007_RECHERCHE_INDEX),
@@ -756,6 +863,7 @@ MIGRATIONS_METIER: tuple[tuple[str, str], ...] = (
     ("010_lots_ingestion", SQL_010_LOTS_INGESTION),
     ("011_pieces_catalogue_documents", SQL_011_PIECES_CATALOGUE_DOCUMENTS),
     ("012_recherche_hybride", SQL_012_RECHERCHE_HYBRIDE),
+    ("013_recherche_fonds_reel", SQL_013_RECHERCHE_FONDS_REEL),
 )
 
 

@@ -749,6 +749,22 @@ class SearchIndex:
                     exc,
                 )
 
+    def _migration_013_recherche_fonds_reel(self, connection: Any) -> None:
+        """Tâche 3 : le rejeu du jeu de requêtes RÉEL sur la vraie fiche
+        7792-SO a mesuré deux angles morts du vecteur — la raison sociale du
+        client (« cruette ») et l'année d'édition (« spi sailonet 2026 »).
+        Les deux sont ajoutées au texte pondéré (poids B)."""
+        if not self.is_postgres:
+            logger.info(
+                "Migration 013 (recherche fonds réel) ignorée en mode SQLite — PostgreSQL uniquement (§17.1)."
+            )
+            return
+        with connection.cursor() as cursor:
+            config = self._postgres_ts_config(connection)
+            cursor.execute(
+                schema_metier.SQL_013_RECHERCHE_FONDS_REEL.replace(schema_metier.MARQUEUR_TS_CONFIG, config)
+            )
+
     def run_migrations(self) -> None:
         """Run pending schema migrations once at startup."""
         with self.connect() as connection:
@@ -769,6 +785,7 @@ class SearchIndex:
                 ("010_lots_ingestion", self._migration_010_lots_ingestion),
                 ("011_pieces_catalogue_documents", self._migration_011_pieces_catalogue_documents),
                 ("012_recherche_hybride", self._migration_012_recherche_hybride),
+                ("013_recherche_fonds_reel", self._migration_013_recherche_fonds_reel),
             ]
 
             for version, func in migrations:

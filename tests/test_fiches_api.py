@@ -256,17 +256,23 @@ class TestRoutesLivePostgreSQL:
         assert {"FICHE_PORTANT_V1", "FICHE_GENOIS_V1"} <= codes
 
     def test_versions_et_publication_non_destructive(self, client_live: TestClient) -> None:
+        # Le registre ensemence désormais v1 + v2 (v2 = gabarit réglé sur le
+        # document réel, Tâche 2) : deux versions déjà lisibles avant tout POST.
         avant = client_live.get("/gabarits/FICHE_PORTANT_V1/versions").json()
-        assert len(avant) == 1
+        assert len(avant) == 2
+        assert [v["version"] for v in avant] == [1, 2]
+        assert avant[0]["actif"] is False  # v1 : lisible, désactivée
+        assert avant[1]["actif"] is True  # v2 : la seule active
         reponse = client_live.post(
             "/gabarits/FICHE_PORTANT_V1/versions",
-            json={"description": "v2 de test", "ancres_detection": ["voile de portant", "spi"], "regles": {"fiche.code": {"ancres": ["code fiche"]}}},
+            json={"description": "v3 de test", "ancres_detection": ["voile de portant", "spi"], "regles": {"fiche.code": {"ancres": ["code fiche"]}}},
         )
         assert reponse.status_code == 201, reponse.text
         apres = client_live.get("/gabarits/FICHE_PORTANT_V1/versions").json()
-        assert [v["version"] for v in apres] == [1, 2]
+        assert [v["version"] for v in apres] == [1, 2, 3]
         assert apres[0]["actif"] is False  # v1 : lisible, désactivée — jamais supprimée
-        assert apres[1]["actif"] is True  # v2 : la seule active
+        assert apres[1]["actif"] is False  # v2 : désactivée par la publication de v3
+        assert apres[2]["actif"] is True  # v3 : la seule active
 
     def test_detection_sans_ecriture(self, client_live: TestClient, base_live: dict) -> None:
         reponse = client_live.post(

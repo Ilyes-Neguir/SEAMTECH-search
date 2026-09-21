@@ -1,3 +1,35 @@
+## Unreleased — Tâche 3 : recherche re-mesurée sur le fonds réel (`arena/01a0c56d-seamtech-search`)
+
+- **Étiquetage honnête des mesures du Lot E** : le jeu de 50 requêtes de
+  `tests/test_recherche_hybride.py` est SYNTHÉTIQUE — construit sur 12 fiches
+  seedées en fixture ; il prouve l'architecture, pas le fonds réel. Les mesures
+  de coût des trigrammes « à 10 000 fiches » du Lot E sont également
+  synthétiques (corpus généré). Les deux sont désormais annoncés comme tels
+  dans le code (docstrings) et dans `docs/verite_terrain/JEU_REQUETES_REELLES.md`.
+- **Migration 013 — recherche sur le fonds réel** : le rejeu du jeu de requêtes
+  RÉEL sur la vraie fiche 7792-SO a mesuré deux angles morts du vecteur hérité
+  du Lot E : « cruette » (la raison sociale du client n'était pas agrégée) et
+  « spi sailonet 2026 » (l'année d'édition n'était pas tokenisée). Les deux
+  valeurs étaient extraites et présentes en base ; `coalesce(c.chantier,'')` et
+  `to_char(f.date_edition,'YYYY')` sont ajoutés au texte pondéré (poids B) des
+  DEUX fonctions de rafraîchissement (`rafraichir_texte_recherche_fiche` et
+  `…_toutes`). Architecture RRF / facettes / A-B-C inchangée.
+- **Mesures sur le fonds réel (21/09)** : la vraie fiche 7792-SO entrée par le
+  pipeline réglé (extraction gabarit v2 → écriture RG3 → validation) —
+  rappel du jeu réel **11/13 avant** la migration 013 (les deux trous ci-dessus),
+  **13/13 après**, toutes au rang 1 ; p50 = 7,1 ms, p95 = 7,6 ms ; facettes à
+  vide = exactement les 6 valeurs de la fiche (type Spi Asymétrique, client
+  Sailonet, bateau 29er 15', gamme Medium Régate, année 2026, matière
+  Monofilm K903). Compte rendu complet dans
+  `docs/verite_terrain/JEU_REQUETES_REELLES.md`. La montée en charge (50
+  requêtes sur plus de fiches, puis les 10 000 fiches réelles) reste à
+  re-mesurer quand le fonds existera — non mesuré à ce jour.
+- **Tests** : nouveau `tests/test_recherche_fonds_reel.py` (marque
+  `-m postgres` : fonds réel = la seule vraie fiche, jeu réel de 13 requêtes,
+  facettes exactes, régression migration 013) ; pytest **559 passés /
+  3 sautés, 0 échec** ; ruff OK ; porte de couverture : 88,1 % global et tous
+  les seuils par module respectés.
+
 ## Unreleased — Tâche 2 : gabarit portant réglé sur la vraie fiche 7792-SO (`arena/01a0c56d-seamtech-search`)
 
 - **Fixture remplacée par le document client RÉEL** : la reconstruction 2 483 o
@@ -49,7 +81,8 @@
 - **Qualité mesurée** : codes trouvés malgré les séparateurs (`0701-GV-001`, normalisés
   côté vecteur ET requête), synonymes en table (foc → tourmentin), fautes tolérées
   (`monofime` → Monofilm, seuil trigrammes 0,30). Tolérance aux fautes = filet mono-mot
-  uniquement : mesuré à 10 000 fiches, l'extraction trigrammes multi-mots coûte 260 à
+  uniquement : mesuré à 10 000 fiches — CORRECTION Tâche 3 : ce corpus est
+  SYNTHÉTIQUE (généré), l'extraction trigrammes multi-mots coûte 260 à
   340 ms pour un apport nul ; mono-mot, 20 à 40 ms grâce aux index GIN (planificateur
   corrigé par SET LOCAL transactionnel — 1,7 ms d'index contre 44 ms de balayage,
   EXPLAIN à l'appui). Classement `ts_rank_cd` drapeau 16 (normalisation sous-linéaire).
@@ -62,7 +95,9 @@
   `search.spec.ts` ajusté en conséquence.
 - **Chiffres** : pytest **528/3 → 556/3** (+28 : `test_recherche_hybride.py` +
   `test_facettes_et_suggestions.py`, conftest partagé) ; rappel@10 = **50/50** sur le jeu
-  de référence (p50 6,9 ms, p95 7,9 ms) ; charge 1 500 fiches p95 **42,8 ms** ;
+  de référence (p50 6,9 ms, p95 7,9 ms) — CORRECTION Tâche 3 : ce jeu et ce corpus
+  (12 fiches seedées) sont SYNTHÉTIQUES ; le rejeu sur le fonds réel est dans
+  `tests/test_recherche_fonds_reel.py` ; charge 1 500 fiches p95 **42,8 ms** ;
   couverture porte OK (**90,1 %** global, `recherche.py` 95 %) ; ruff OK ; `pnpm build`
   OK. Porte Playwright : Chromium impossible à télécharger dans le sandbox (CDN bloqués,
   apt indisponible) — non mesurée ici, à passer en CI.
