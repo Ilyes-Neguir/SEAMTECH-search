@@ -468,6 +468,23 @@ jobs:
 
   e2e:
     runs-on: ubuntu-latest
+    # Service PostgreSQL pour l'e2e « live » (validation sur la vraie fiche) :
+    # même image que le job backend — l'utilisateur est superutilisateur, ce
+    # qui autorise le seed à créer/recréer la base jetable e2e_*.
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: seamtech
+          POSTGRES_PASSWORD: seamtech_test_password
+          POSTGRES_DB: seamtech_search_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -489,6 +506,21 @@ jobs:
       - name: Install Playwright Chromium
         working-directory: frontend
         run: pnpm exec playwright install --with-deps chromium
-      - name: Run E2E tests
+      - name: Run E2E tests (suite par défaut, SQLite)
         working-directory: frontend
         run: pnpm test:e2e
+      # Clôture Phase 1 (Tâche 2 du 21/09) : le parcours de validation est
+      # rejoué EN CONDITIONS RÉELLES — base PostgreSQL jetable, trois dossiers
+      # déposés par le pipeline (dont la vraie fiche 7792-SO), front de
+      # production (next start). Sans SEAMTECH_E2E_DATABASE_URL la spec
+      # validation s'ignorait : la porte Playwright ne prouvait rien sur le
+      # document réel. Le chrono « ouverture → validation < 2 min » (§17.14)
+      # est publié en annotation du test (mesure-phase1).
+      - name: Build production frontend (mode live = next start)
+        working-directory: frontend
+        run: pnpm build
+      - name: Run live E2E validation (PostgreSQL + vraie fiche)
+        working-directory: frontend
+        env:
+          SEAMTECH_E2E_DATABASE_URL: postgresql://seamtech:seamtech_test_password@localhost:5432/seamtech_search_test
+        run: pnpm exec playwright test e2e/validation.spec.ts

@@ -1,3 +1,45 @@
+## Unreleased — Clôture Phase 1 : e2e live sur le document réel, chrono < 2 min, réparations (`arena/01a0c56d-seamtech-search`)
+
+- **Réparation CI (mesurée en échec sur 85a9685)** : `tests/test_lot_ingestion.py`
+  codait en dur `/home/user/.pytest_lot_archive_*` — PermissionError sur le
+  runner GitHub qui n'a ni ce domicile ni les droits. Remplacé par
+  `tempfile.mkdtemp` (portable).
+- **L'e2e live exerce désormais la VRAIE fiche** : le seed
+  (`frontend/e2e/seed-live-pg.py`) dépose les trois dossiers par le pipeline
+  réel, dont `sample_data/CLIENT-7792-SO` (166 990 o) ; la spec
+  `validation.spec.ts` est réécrite pour le gabarit v2 — sélection des fiches
+  PAR CODE (l'ordre de file dépend de la confiance minimale : 7792-SO est en
+  tête avec 0,850, mesuré), comptages réels assertés (2 jeux de cotes
+  dessin ×6 / finie ×5, 4 matériaux, 3 galons, 4 jonctions, 3 finitions,
+  8 options, 3 renforts), valeurs spot mesurées en base le 21/09
+  (`cotes.finie.slu_m` = 6.6 ; `galon.guindant` = « 50.0 mm | 65.0 g/m² »),
+  correction RG11 puis validation. Le chrono ouverture→validation est publié
+  en annotation `mesure-phase1` et le test échoue au-delà de 120 s : c'est la
+  part machine du critère « validation < 2 minutes » (§17.14).
+- **La porte Playwright porte le document réel en CI** : le job e2e reçoit un
+  service PostgreSQL (pgvector/pg16), un `pnpm build` (le mode live démarre
+  `next start`) et un pas live dédié (`SEAMTECH_E2E_DATABASE_URL`). La suite
+  par défaut (SQLite, 22 passed / 3 skipped) reste inchangée et tourne avant.
+- **Procédure de mesure humaine** (`docs/verite_terrain/MESURE_VALIDATION_2MIN.md`) :
+  3 fiches chrono à la main, tableau à remplir par un opérateur ; tant qu'une
+  case est vide, le chiffre humain est « non mesuré ».
+- **Couverture 88,1 % → 90,4 %** : précision honnête — la baisse ne venait
+  PAS de la migration 013 (son code est couvert à 100 % par les deux suites)
+  mais des gestionnaires v1 dormants depuis la v2 (~230 lignes dans
+  `extraction.py`, 79 %). Nouveau `tests/test_traitements_v1.py` (25 tests
+  synthétiques sur chaînes, étiquetés comme tels) : `extraction.py` remonte à
+  90 %. Un comportement de docstring contredit par la mesure y est tracé
+  (« - » n'est pas un séparateur de `scinder_sur_tirets`).
+- **Portes** : pytest **584 passés / 3 sautés, 0 échec** ; ruff OK ;
+  pip-audit : aucune vulnérabilité connue ; porte de couverture 90,4 % global
+  + tous seuils par module ; `pnpm build` OK ; Playwright porté par la CI
+  (Chromium indisponible dans le bac à sable — aucun substitut local).
+- **Honnêteté maintenue** : le gabarit génois reste réglé sur une fixture
+  SYNTHÉTIQUE (`docs/DETECTION_FICHES.md` : « taux synthétique, non validé sur
+  document réel ») ; la fiche e2e `CLIENT-E2E-TROIS` (1 589 o) reste en jeu
+  car le parcours rejet/lot en dépend — elle n'est pas présentée comme un
+  document réel.
+
 ## Unreleased — Tâche 3 : recherche re-mesurée sur le fonds réel (`arena/01a0c56d-seamtech-search`)
 
 - **Étiquetage honnête des mesures du Lot E** : le jeu de 50 requêtes de

@@ -73,7 +73,12 @@ def base_lot() -> Iterator[dict[str, Any]]:
     index.initialize()
     index.run_migrations()
     initialiser_gabarits(index)
-    archive = Path(f"/home/user/.pytest_lot_archive_{nom_base}")
+    # Chemin PORTABLE : jamais de domicile codé en dur — le bac à sable local
+    # et le runner GitHub n'ont ni le même /home ni les mêmes droits.
+    # (Échec mesuré en CI le 21/09 : PermissionError sur /home/user.)
+    import tempfile
+
+    archive = Path(tempfile.mkdtemp(prefix=f"pytest_lot_archive_{nom_base}_"))
     _construire_archive(archive)
     try:
         yield {"index": index, "url": url_base, "archive": archive}
