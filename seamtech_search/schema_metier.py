@@ -28,6 +28,12 @@ from typing import Any
 # Version du schéma métier — incrémentée à chaque nouvelle migration.
 VERSION_SCHEMA_METIER = "009_qualite_et_gabarits"
 
+# Marqueur injecté par le code au moment de la migration (constat 1 de revue) :
+# le nom de la configuration de recherche effective — 'seamtech_unaccent' ou
+# 'simple' en repli — résolu via SearchIndex._postgres_ts_config(). Le SQL ne
+# doit JAMAIS référencer la configuration en dur.
+MARQUEUR_TS_CONFIG = "__TS_CONFIG__"
+
 # Tables créées par les migrations 006-009 (contrôlées par les tests de schéma
 # et exposées en agrégat par le diagnostic /health).
 TABLES_METIER: tuple[str, ...] = (
@@ -340,9 +346,12 @@ CREATE TABLE IF NOT EXISTS fiche_anomalie (
 );
 
 -- ---------- Recherche vectorielle (chunks) ----------
--- NB : la colonne générée tsv référence la configuration seamtech_unaccent
--- créée par initialize() (migration 005) — voir l'ordre d'exécution en tête
--- de module.
+-- NB (correctif de revue, constat 1) : le nom de la configuration de recherche
+-- est injecté par le code au moment de la migration (marqueur __TS_CONFIG__
+-- remplacé par 'seamtech_unaccent' ou, si le rôle ne peut pas l'installer,
+-- par 'simple' — même dégradation gracieuse que la migration 005 pour
+-- documents.search_vector). Le DDL ci-dessous NE suppose PAS que la
+-- configuration existe.
 CREATE TABLE IF NOT EXISTS chunk (
     id_chunk     BIGSERIAL PRIMARY KEY,
     id_document  BIGINT REFERENCES documents(id) ON DELETE CASCADE,
@@ -351,7 +360,7 @@ CREATE TABLE IF NOT EXISTS chunk (
     contenu      TEXT NOT NULL,
     embedding    vector(384),
     tsv          tsvector GENERATED ALWAYS AS
-                 (to_tsvector('seamtech_unaccent', contenu)) STORED,
+                 (to_tsvector('__TS_CONFIG__', contenu)) STORED,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -388,11 +397,24 @@ LEFT JOIN bateau     b  ON b.id_bateau      = f.id_bateau
 LEFT JOIN fiche_cotes cd ON cd.id_fiche = f.id_fiche AND cd.jeu = 'finie';
 """
 
+# Constat 1 de revue (volet pg_trgm) : le cœur de 007 est séparable des index
+# trigrammes. Sans le privilège CREATE sur la base, `pg_trgm` ne s'installe
+# pas (même « trusted ») : le cœur s'applique quand même, seuls les index de
+# tolérance aux fautes sont omis (avertissement + conséquence journalisés).
+SQL_007_TRGM = """
+-- Tolérance aux fautes (pg_trgm) : « monofim » trouve Monofilm.
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
+CREATE INDEX IF NOT EXISTS idx_fiche_code_trgm    ON fiche USING GIN (code gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_fiche_titre_trgm   ON fiche USING GIN (titre gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_fiche_champs_trgm  ON fiche USING GIN (champs_texte gin_trgm_ops);
+"""
+
 SQL_007_RECHERCHE_INDEX = """
 -- ============================================================================
--- 007_recherche_index — index « à la Google » (plan v3.0 §11, §17.3)
+-- 007_recherche_index — cœur « à la Google » (plan v3.0 §11, §17.3)
+-- (les index trigrammes vivent dans SQL_007_TRGM, dégradable, voir ci-dessus)
 -- ============================================================================
-CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
 -- Texte de recherche par fiche : agrégat PONDÉRÉ rempli par la fonction
 -- rafraichir_texte_recherche_fiche(), appelée à la VALIDATION d'une fiche
@@ -401,9 +423,6 @@ ALTER TABLE fiche ADD COLUMN IF NOT EXISTS champs_texte TEXT NOT NULL DEFAULT ''
 ALTER TABLE fiche ADD COLUMN IF NOT EXISTS search_vector TSVECTOR;
 
 CREATE INDEX IF NOT EXISTS idx_fiche_search       ON fiche USING GIN(search_vector);
-CREATE INDEX IF NOT EXISTS idx_fiche_code_trgm    ON fiche USING GIN (code gin_trgm_ops);
-CREATE INDEX IF NOT EXISTS idx_fiche_titre_trgm   ON fiche USING GIN (titre gin_trgm_ops);
-CREATE INDEX IF NOT EXISTS idx_fiche_champs_trgm  ON fiche USING GIN (champs_texte gin_trgm_ops);
 
 -- Pondération : A = code + titre (le plus fort) ; B = client, bateau, type de
 -- voile, matériaux, galons, jonctions, finitions ; C = notes (texte libre).
@@ -415,10 +434,10 @@ BEGIN
     UPDATE fiche f
     SET champs_texte = agg.texte,
         search_vector =
-            setweight(to_tsvector('seamtech_unaccent',
+            setweight(to_tsvector('__TS_CONFIG__',
                                   coalesce(f.code, '') || ' ' || coalesce(f.titre, '')), 'A')
-            || setweight(to_tsvector('seamtech_unaccent', agg.secondaire), 'B')
-            || setweight(to_tsvector('seamtech_unaccent', coalesce(f.notes, '')), 'C')
+            || setweight(to_tsvector('__TS_CONFIG__', agg.secondaire), 'B')
+            || setweight(to_tsvector('__TS_CONFIG__', coalesce(f.notes, '')), 'C')
     FROM (
         SELECT f2.id_fiche AS id_fiche,
                concat_ws(' | ',
@@ -580,5 +599,8 @@ def diagnostic_metier(cursor: Any) -> dict[str, Any]:  # noqa: ANN401 - curseur 
             "vector": "vector" in presentes,
             "pg_trgm": "pg_trgm" in presentes,
             "unaccent": "unaccent" in presentes,
+            # Symétrie avec la branche SQLite de health_details : sur
+            # PostgreSQL, les extensions sont applicables (c'est le backend).
+            "applicables": True,
         },
     }

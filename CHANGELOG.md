@@ -44,6 +44,22 @@
   **~728 ko** ; suite live `-m postgres` : 13 passés.
 - Aucune dépendance Python ajoutée (pgvector et pg_trgm sont des extensions PostgreSQL).
 
+### Constat 1 de revue — privilèges PostgreSQL (correctif appliqué sur cette branche)
+
+- La configuration de recherche n'est plus référencée en dur dans le DDL : marqueur `__TS_CONFIG__`
+  injecté au moment de la migration avec la configuration EFFECTIVE (`seamtech_unaccent`, repli
+  `simple` — même dégradation gracieuse que la migration 005). Vise `chunk.tsv` (006) et la fonction
+  de rafraîchissement (007). Un rôle sans privilège ne bloque donc PLUS le démarrage sur ce point.
+- `vector` (extension non « trusted ») restant obligatoire, son échec de création reste fatal mais
+  porte désormais un message actionnable (image pgvector/pgvector:pg16 ou préinstallation par
+  l'administrateur) — testé contre un rôle réellement non superutilisateur.
+- `pg_trgm` (« trusted » mais exigeant CREATE sur la base) : les index trigrammes deviennent
+  dégradables — cœur de 007 appliqué, index omis avec avertissement et conséquence journalisés.
+- `/health` : clé `extensions.applicables` ajoutée côté PostgreSQL (symétrie avec la branche SQLite).
+- Nouveaux tests : échec actionnable (live), migrations passant avec rôle limité + vector
+  préinstallé (live), injection `simple` validée pglast (unitaire). Doc : `docs/DEPLOYMENT.md`
+  (section « Privilèges PostgreSQL requis par la couche métier »).
+
 ## 0.5.0 — Remediation (audited commit b7be72a → fixes)
 
 Audited commit `b7be72a` had data-loss, security, and doc-honesty defects. This release fixes them in audit order, verified by `ruff check . && pytest -k "not postgres and not s3"`.

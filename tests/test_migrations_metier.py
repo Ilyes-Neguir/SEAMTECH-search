@@ -190,7 +190,7 @@ def test_health_expose_schema_et_extensions(base_metier: dict[str, Any]) -> None
     migrations = details["schema_migrations"]
     assert {"006_fiche_technique", "007_recherche_index", "008_ml_corpus", "009_qualite_et_gabarits"} <= set(migrations)
     assert details["schema_metier_a_jour"] is True
-    assert details["extensions"] == {"vector": True, "pg_trgm": True, "unaccent": True}
+    assert details["extensions"] == {"vector": True, "pg_trgm": True, "unaccent": True, "applicables": True}
 
 
 @pytest.mark.postgres
@@ -246,5 +246,171 @@ def test_demarrage_application_sur_base_metier(base_metier: dict[str, Any]) -> N
         assert {"006_fiche_technique", "007_recherche_index", "008_ml_corpus", "009_qualite_et_gabarits"} <= set(
             corps["schema_migrations"]
         )
-        assert corps["extensions"] == {"vector": True, "pg_trgm": True, "unaccent": True}
+        assert corps["extensions"] == {"vector": True, "pg_trgm": True, "unaccent": True, "applicables": True}
         _ = index  # la base jetable est nettoyée par le fixture
+
+# ---------------------------------------------------------------------------
+# Constat 1 de revue — privilèges PostgreSQL.
+# Sur ce serveur de référence : `vector` n'est PAS une extension « trusted »
+# (refusée à un rôle non superutilisateur), `pg_trgm` et `unaccent` le sont.
+# Les deux tests live prouvent les deux branches attendues par la revue :
+# (a) sans privilège ni préinstallation → échec AVEC message actionnable ;
+# (b) vector préinstallé par l'administrateur → les migrations passent, et la
+#     configuration de recherche se résout dynamiquement (`seamtech_unaccent`
+#     si le rôle peut l'installer, sinon dégradation `simple` — même choix de
+#     conception que la migration 005) au lieu de faire échouer le démarrage.
+# ---------------------------------------------------------------------------
+
+ROLE_LIMITE = "seamtech_limite"
+MOT_DE_PASSE_LIMITE = "limite_test"
+
+
+def _role_limite_existe(url_admin: str) -> None:
+    import psycopg2
+    from psycopg2 import sql
+    from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
+
+    admin = psycopg2.connect(url_admin)
+    admin.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
+    try:
+        with admin.cursor() as cursor:
+            cursor.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (ROLE_LIMITE,))
+            if cursor.fetchone() is None:
+                cursor.execute(
+                    sql.SQL("CREATE ROLE {} LOGIN PASSWORD %s NOSUPERUSER").format(sql.Identifier(ROLE_LIMITE)),
+                    (MOT_DE_PASSE_LIMITE,),
+                )
+    finally:
+        admin.close()
+
+
+def _base_limite(url_admin: str, revoke_create: bool) -> str:
+    """Base possédée par le rôle limité ; révoque éventuellement CREATE (base)."""
+    import psycopg2
+    from psycopg2 import sql
+    from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
+
+    nom_base = f"limite_{uuid.uuid4().hex[:10]}"
+    admin = psycopg2.connect(url_admin)
+    admin.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
+    try:
+        with admin.cursor() as cursor:
+            cursor.execute(
+                sql.SQL("CREATE DATABASE {} OWNER {}").format(
+                    sql.Identifier(nom_base), sql.Identifier(ROLE_LIMITE)
+                )
+            )
+            if revoke_create:
+                cursor.execute(
+                    sql.SQL("REVOKE CREATE ON DATABASE {} FROM {}").format(
+                        sql.Identifier(nom_base), sql.Identifier(ROLE_LIMITE)
+                    )
+                )
+    finally:
+        admin.close()
+    return nom_base
+
+
+def _installer_extension(url_admin: str, nom_base: str, extension: str) -> None:
+    """(Super)administrateur : préinstalle une extension DANS la base jetable."""
+    import psycopg2
+    from psycopg2 import sql
+    from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
+
+    admin = psycopg2.connect(f"{url_admin.rsplit('/', 1)[0]}/{nom_base}")
+    admin.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
+    try:
+        with admin.cursor() as cursor:
+            cursor.execute(sql.SQL("CREATE EXTENSION IF NOT EXISTS {}").format(sql.Identifier(extension)))
+    finally:
+        admin.close()
+
+
+def _detruire_base(url_admin: str, nom_base: str) -> None:
+    import psycopg2
+    from psycopg2 import sql
+    from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
+
+    admin = psycopg2.connect(url_admin)
+    admin.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
+    try:
+        with admin.cursor() as cursor:
+            cursor.execute(sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(nom_base)))
+    finally:
+        admin.close()
+
+
+def _url_limite(url_admin: str, nom_base: str) -> str:
+    hote = url_admin.split("@", 1)[1].split("/", 1)[0]
+    return f"postgresql://{ROLE_LIMITE}:{MOT_DE_PASSE_LIMITE}@{hote}/{nom_base}"
+
+
+@pytest.mark.postgres
+def test_role_sans_privilege_echec_actionnable() -> None:
+    """(a) Rôle sans privilège, vector non préinstallé : échec avec l'action exacte."""
+    url_admin = os.environ.get("SEAMTECH_TEST_DATABASE_URL", "")
+    if not url_admin:
+        pytest.skip("Set SEAMTECH_TEST_DATABASE_URL to run PostgreSQL integration tests")
+    _role_limite_existe(url_admin)
+    nom_base = _base_limite(url_admin, revoke_create=False)
+    try:
+        index = SearchIndex(Path(f"/tmp/unused-{nom_base}.db"), _url_limite(url_admin, nom_base))
+        index.initialize()
+        with pytest.raises(RuntimeError) as attrape:
+            index.run_migrations()
+        message = str(attrape.value)
+        assert "CREATE EXTENSION vector" in message
+        assert "pgvector/pgvector:pg16" in message, "le message doit nommer l'image à utiliser"
+        assert "administrateur" in message
+    finally:
+        _detruire_base(url_admin, nom_base)
+
+
+@pytest.mark.postgres
+def test_role_limite_migrations_passent_si_vector_preinstalle() -> None:
+    """(b) vector préinstallé : les migrations passent pour un rôle limité, et
+    chunk.tsv utilise la configuration RÉSOLUE (simple en repli) au lieu de
+    faire échouer le démarrage — le bug exact du constat 1."""
+    url_admin = os.environ.get("SEAMTECH_TEST_DATABASE_URL", "")
+    if not url_admin:
+        pytest.skip("Set SEAMTECH_TEST_DATABASE_URL to run PostgreSQL integration tests")
+    _role_limite_existe(url_admin)
+    nom_base = _base_limite(url_admin, revoke_create=True)
+    _installer_extension(url_admin, nom_base, "vector")
+    try:
+        index = SearchIndex(Path(f"/tmp/unused-{nom_base}.db"), _url_limite(url_admin, nom_base))
+        index.initialize()
+        index.run_migrations()  # ne doit PAS lever (c'est le bug du constat 1)
+
+        with index.connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT generation_expression FROM information_schema.columns "
+                    "WHERE table_name = 'chunk' AND column_name = 'tsv'"
+                )
+                expression = cursor.fetchone()[0]
+                cursor.execute("SELECT to_regclass('public.fiche') IS NOT NULL")
+                assert cursor.fetchone()[0] is True
+        config_utilisee = "seamtech_unaccent" if "seamtech_unaccent" in expression else "simple"
+        print(f"\n[constat 1] migrations passées avec rôle limité ; chunk.tsv utilise {config_utilisee!r}")
+        assert config_utilisee in ("seamtech_unaccent", "simple")
+    finally:
+        _detruire_base(url_admin, nom_base)
+
+
+def test_injection_configuration_simple_valide_pglast() -> None:
+    """Unitaire (sans serveur) : la variante dégradée `simple` est du SQL valide.
+
+    Filet anti-régression : si quelqu'un recode la configuration en dur dans le
+    SQL, ce test et le marqueur le font échouer à la grammaire ou au marqueur.
+    """
+    import pglast
+
+    script = schema_metier.SQL_006_FICHE_TECHNIQUE.replace(schema_metier.MARQUEUR_TS_CONFIG, "simple")
+    assert "to_tsvector('simple'" in script
+    pglast.parse_sql(script)
+    fonction = schema_metier.SQL_007_RECHERCHE_INDEX.replace(schema_metier.MARQUEUR_TS_CONFIG, "simple")
+    pglast.parse_sql(fonction)
+    pglast.parse_sql(
+        schema_metier.SQL_006_FICHE_TECHNIQUE.replace(schema_metier.MARQUEUR_TS_CONFIG, "seamtech_unaccent")
+    )

@@ -614,10 +614,36 @@ class SearchIndex:
             )
             return
         with connection.cursor() as cursor:
-            # chunk.tsv référence la configuration seamtech_unaccent : garantir
-            # qu'elle existe avant le script (idempotent, repli gracieux).
+            # Constat 1 de revue : la configuration de recherche effective est
+            # résolue ICI (dégradation gracieuse vers 'simple' si le rôle ne
+            # peut pas installer unaccent — même choix que la migration 005)
+            # et injectée dans le DDL de chunk.tsv. Le script ne suppose jamais
+            # que 'seamtech_unaccent' existe.
             self._ensure_unaccent_config(connection)
-            cursor.execute(schema_metier.SQL_006_FICHE_TECHNIQUE)
+            config = self._postgres_ts_config(connection)
+            script = schema_metier.SQL_006_FICHE_TECHNIQUE.replace(
+                schema_metier.MARQUEUR_TS_CONFIG, config
+            )
+            try:
+                cursor.execute(script)
+            except Exception as exc:
+                # `vector` n'est pas une extension « trusted » : sans
+                # superutilisateur ni préinstallation, le CREATE EXTENSION
+                # échoue au niveau du serveur. La couche métier ne peut pas se
+                # dégrader silencieusement (colonnes vector(384) obligatoires),
+                # donc l'échec reste fatal — mais il porte l'action exacte.
+                if getattr(exc, "sqlstate", None) == "42501" or "permission denied" in str(exc).lower():
+                    logger.error("Migration 006 bloquée par les privilèges PostgreSQL : %s", exc)
+                    raise RuntimeError(
+                        "Migration 006_fiche_technique impossible : le rôle PostgreSQL n'a pas le "
+                        "privilège de créer l'extension 'vector' (requis par les colonnes vector(384) "
+                        "de la couche métier). Actions possibles : (1) utiliser l'image "
+                        "pgvector/pgvector:pg16 (compose et CI la fournissent) avec le rôle "
+                        "superutilisateur du conteneur ; ou (2) demander à l'administrateur de "
+                        "préinstaller l'extension dans la base : CREATE EXTENSION vector;. "
+                        f"Erreur serveur : {exc}"
+                    ) from exc
+                raise
 
     def _migration_007_recherche_index(self, connection: Any) -> None:
         if not self.is_postgres:
@@ -627,7 +653,29 @@ class SearchIndex:
             )
             return
         with connection.cursor() as cursor:
-            cursor.execute(schema_metier.SQL_007_RECHERCHE_INDEX)
+            # Constat 1 de revue (volet pg_trgm) : les index trigrammes sont
+            # dégradables — sans le privilège CREATE sur la base, pg_trgm ne
+            # s'installe pas et seuls les index de tolérance aux fautes sont
+            # omis (avertissement + conséquence journalisés). Le cœur (colonne
+            # de recherche pondérée, fonction, synonymes, journal) s'applique.
+            config = self._postgres_ts_config(connection)
+            # D'abord le cœur : les index trigrammes ciblent fiche.champs_texte,
+            # qui n'existe pas avant lui.
+            cursor.execute(
+                schema_metier.SQL_007_RECHERCHE_INDEX.replace(schema_metier.MARQUEUR_TS_CONFIG, config)
+            )
+            cursor.execute("SAVEPOINT seamtech_pg_trgm")
+            try:
+                cursor.execute(schema_metier.SQL_007_TRGM)
+                cursor.execute("RELEASE SAVEPOINT seamtech_pg_trgm")
+            except Exception as exc:
+                cursor.execute("ROLLBACK TO SAVEPOINT seamtech_pg_trgm")
+                logger.warning(
+                    "pg_trgm indisponible (%s) — conséquence : index trigrammes omis, la tolérance "
+                    "aux fautes (« monofim » → Monofilm) est désactivée ; la recherche plein-texte "
+                    "et la recherche par mots-clés restent opérationnelles.",
+                    exc,
+                )
 
     def _migration_008_ml_corpus(self, connection: Any) -> None:
         if not self.is_postgres:

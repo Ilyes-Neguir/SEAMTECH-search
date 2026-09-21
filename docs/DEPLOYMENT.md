@@ -226,3 +226,36 @@ new stack has passed the frontend health check and a representative search.
 
 For a clean diagnostic report, collect `docker compose ps` and the relevant
 service logs; do not include `.env` or credentials in bug reports.
+
+## Privilèges PostgreSQL requis par la couche métier (Lot A, migrations 006-009)
+
+La couche métier « fiches » (migrations 006-009) exige deux capacités du rôle PostgreSQL, par ordre de
+préférence :
+
+1. **Image préconfigurée (recommandé)** : `pgvector/pgvector:pg16` (docker-compose et CI la fournissent)
+   avec le rôle superutilisateur du conteneur (`POSTGRES_USER`) — `CREATE EXTENSION` réussit alors
+   directement.
+2. **Extensions préinstallées par l'administrateur** (hébergement managé, rôle non superutilisateur) :
+   demander à l'administrateur d'exécuter, une fois par base :
+   `CREATE EXTENSION vector;` — obligatoire (les colonnes `vector(384)` de `chunk` et `documents`
+   ne peuvent pas se dégrader) ;
+   `CREATE EXTENSION pg_trgm;` — recommandé (tolérance aux fautes) ;
+   `CREATE EXTENSION unaccent;` — recommandé (recherche insensible aux accents, migration 005).
+
+Comportements constatés et testés (`tests/test_migrations_metier.py`) :
+
+- **`vector` non disponible** (extension non « trusted » : refusée à un rôle non superutilisateur) :
+  la migration 006 échoue FATALEMENT avec un message actionnable nommant les deux actions ci-dessus.
+  C'est voulu : sans `vector`, il n'existe pas de schéma métier possible ; les migrations restent
+  fatales au démarrage (choix durci du dépôt).
+- **`pg_trgm` non installable** (extension « trusted », mais le privilège CREATE sur la base manque) :
+  la migration 007 continue SANS les index trigrammes et journalise l'avertissement
+  « pg_trgm indisponible … tolérance aux fautes désactivée » — la recherche plein-texte et les
+  mots-clés restent opérationnelles.
+- **`unaccent` non installable** : la configuration de recherche effective se résout au démarrage et
+  se dégrade vers `simple` (choix de conception de `main`, migration 005) ; la colonne générée
+  `chunk.tsv` reçoit la configuration EFFECTIVE injectée au moment de la migration — jamais un nom
+  en dur. Vérification : `test_role_limite_migrations_passent_si_vector_preinstalle`.
+
+Diagnostic : `/health` expose `schema_migrations`, `schema_metier_a_jour` et la présence effective
+(`pg_extension`) de `vector` / `pg_trgm` / `unaccent` — c'est l'indicateur « installation à jour ».
