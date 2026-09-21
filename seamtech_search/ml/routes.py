@@ -101,7 +101,10 @@ def enregistrer_routes_ml(
     racine_verite: Path,
 ) -> None:
     modeles_dir = Path(modeles_dir)
-    modeles_dir.mkdir(parents=True, exist_ok=True)
+    # PAS de mkdir ici : au démarrage le dossier des modèles peut être en
+    # lecture seule (conteneur non-root, volume monté) — mesuré en échec le
+    # 21/09 (PermissionError /app/data/modeles au boot Docker). La création se
+    # fait au moment d'écrire, avec un refus explicite si non inscriptible.
 
     @app.get("/ml/modeles")
     def route_ml_modeles(token: str | None = Header(None, alias="X-SEAMTECH-TOKEN")) -> dict[str, Any]:
@@ -173,13 +176,30 @@ def enregistrer_routes_ml(
         _verifier_auth(config, verifier_auth, token)
         _exiger_postgres(index)
         chemin_verrou = modeles_dir / FICHIER_VERROU
-        with chemin_verrou.open("w") as verrou:
+        try:
+            modeles_dir.mkdir(parents=True, exist_ok=True)
+            handle_verrou = chemin_verrou.open("w")
+        except OSError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    f"Le dossier des modèles {modeles_dir} n'est pas inscriptible — "
+                    "un entraînement ne peut pas y être sauvegardé. Montez un volume "
+                    "inscriptible ou définissez SEAMTECH_ML_MODELE_DIR."
+                ),
+            ) from exc
+        with handle_verrou as verrou:
             try:
                 fcntl.flock(verrou.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             except OSError as exc:
                 raise HTTPException(status_code=409, detail="Un entraînement est déjà en cours (verrou exclusif).") from exc
             try:
                 return _entrainer(index, modeles_dir, racine_verite, corps)
+            except OSError as exc:
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"Échec d'écriture du modèle dans {modeles_dir} : {exc}",
+                ) from exc
             finally:
                 fcntl.flock(verrou.fileno(), fcntl.LOCK_UN)
 
