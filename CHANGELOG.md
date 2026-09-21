@@ -1,3 +1,30 @@
+## Unreleased — Lot D : interface 5 écrans + e2e live PostgreSQL (`lot-d/interface-5-ecrans`)
+
+- **5 écrans** (zéro ressource externe, poste hors ligne) : Recherche (existante), Dossiers,
+  Nouveau dossier, Validation, Fiche — brut + normalisé côte à côte, comptes PAR PALIER (jamais de
+  « confiance moyenne »), PdfViewer pdf.js bundlé (`pdf.worker.min.mjs` local), pièces RG12 ; nav
+  globale, portes authentifiées, accueil → /recherche ; 11 proxys `app/api/*`.
+- **Workflow de validation (§17.5)** : file, correction (RG11 : une valeur corrigée par un humain
+  n'est plus jamais écrasée), validation individuelle, rejet à motif obligatoire, rouvrir ;
+  validation en lot avec **verrou de calibration** — refus 409 sans acquittement humain EXPLICITE,
+  décision traçée au journal.
+- **`GET /fiches/{code}/pieces` : `pdf_source`** (chemin du PDF fiche = `split_part` de
+  `cle_idempotence` du dernier `lot_dossier` traité) pour ouvrir le lecteur au bon document.
+- **E2E live** : `validation.spec.ts` (3 parcours — rejet à motif, correction + validation
+  individuelle, lot avec verrou puis acquittement) sur une base PostgreSQL jetable créée par run
+  (`e2e/seed-live-pg.py` : migrations + gabarits + 3 dossiers ; idempotence par
+  `SEAMTECH_E2E_RUN_ID` hérité par les workers, verrou fichier, décisions journalisées sur
+  stderr) ; front de PRODUCTION (`next start`) en mode live : `next dev` dépasse 1 Go de RSS et
+  meurt par OOM sur les machines à 2 Go. Fixture `live-fixtures/CLIENT-E2E-TROIS` (0902-MM, forgée
+  depuis CLIENT-GENOA). Sans `SEAMTECH_E2E_DATABASE_URL`, la suite par défaut est inchangée.
+- **Chiffres** : pytest **510/3 → 528/3** (+18) ; ruff OK ; tsc OK ; `pnpm build` OK ; e2e par
+  défaut **22 passed / 3 skipped** (validation ignorée sans env) ; e2e live **3 passed** (7,4 s ;
+  ≤ 1,3 s par parcours — objectif < 2 min largement tenu) ; §17.14 mesuré côté extraction :
+  **7/7 attendus lus = 100 %** (seuil ≥ 90 %). **Avertissement : 54 ms/dossier = plancher sur
+  fixtures minuscules** ; de vrais dossiers (scans, Mo) seront plus lents.
+- **Correctif test** : `test_reindex_skip` — clé normalisée via `os.path.normcase` (comme le
+  crawler) au lieu de `.lower()` ; un basetemp contenant une majuscule cassait le test.
+
 ## Unreleased — Lot C : dépôt d'un dossier complet, lots suivis et reprenables (`lot-c/ingestion-files`)
 
 - **Porte A (plan §9.1)** : `POST /imports/dossier` — la fiche PDF du dossier est reconnue
