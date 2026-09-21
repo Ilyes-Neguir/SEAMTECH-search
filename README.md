@@ -124,9 +124,11 @@ scanned tree: tests hash every file (size + SHA-256 + mtime) before/after a run.
 **`scripts/inventaire_archive.py` — archive inventory (Phase 0).** Walks one or more roots read-only and
 reports: folder/file counts, per-type and per-year volumes (file mtime), probable duplicates (size +
 SHA-256, capped at `--limite-empreinte` Mo), native PDFs vs probable scans (`unavailable: no embedded
-text` marker from the extractor, OCR deliberately off), probable fiche-technique locations (existing
-anchor classifier), and gabarit families (fingerprint of alphabetic labels + quantized positions, exact
-grouping then Jaccard ≥ 0.85 merge). Writes `inventaire.json` + two CSVs (`;`-separated, utf-8-sig) to an
+text` marker from the extractor, OCR deliberately off), and TWO fiche views: (a) the existing anchor
+classifier, (b) structural detection from the configurable lexicon `config/lexique_fiches.json`
+(vocabulary + detected table grid, explained score) — plus a `desaccords` section listing documents the
+current classifier misses (the Phase 0 blind spot). Gabarit families use alphabetic-label fingerprints
+with page-relative positions, exact grouping then Jaccard ≥ 0.85 merge. See `docs/DETECTION_FICHES.md`. Writes `inventaire.json` + two CSVs (`;`-separated, utf-8-sig) to an
 output dir that must live **outside** the scanned roots — refused otherwise. No network, no OCR, no
 dependency added.
 
@@ -146,10 +148,10 @@ sheets' folders. Without `--verite`, the harness keeps its historical per-docume
 (pinned by existing tests). The plan v3.0's `benchmark_gabarit.py` is realized as this mode rather than a
 second script.
 
-Known gap measured during Phase 0: sheets whose labels are outside the current `TECHNICAL_ANCHORS`
-vocabulary (e.g. `Guindant`, `Bordure`, `Tissu` on genoa variants) are classified `plan_pdf` today — the
-anchor list must be extended against real sheets in lot B. See `docs/PHASE0_RAPPORT.md` for measured
-numbers.
+Phase 0 blind spot (now covered): sheets whose labels sit outside `TECHNICAL_ANCHORS` (e.g. `Guindant`,
+`Bordure`, `Tissu` on genoa variants) are classified `plan_pdf` by the current classifier. The structural
+detection above catches them and the inventory lists the disagreements. Measured numbers:
+`docs/PHASE0_RAPPORT.md`.
 
 ---
 

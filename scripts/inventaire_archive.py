@@ -57,7 +57,9 @@ if str(REPO_ROOT) not in sys.path:
 
 from seamtech_search.anchors import classify_pdf_text  # noqa: E402
 from seamtech_search.config import AppConfig  # noqa: E402
+from seamtech_search.detection_fiches import ResultatDetection, detecter_fiche  # noqa: E402
 from seamtech_search.extractors import extract_file  # noqa: E402
+from seamtech_search.lexique import CHEMIN_LEXIQUE_PAR_DEFAUT, LexiqueFiches, charger_lexique  # noqa: E402
 
 LOGGER = logging.getLogger("seamtech_search.inventaire")
 
@@ -108,12 +110,14 @@ class LigneFichier:
     taille: int
     annee: int
     extension: str
-    categorie_pdf: str = ""  # technique | plan | scan_probable | erreur_extraction | ""
+    categorie_pdf: str = ""  # technique | plan | scan_probable | erreur_extraction | "" (vue classifieur)
     statut_extraction: str = ""  # statut brut d'ExtractionResult pour les PDF
     detail: str = ""
     temps_extraction_ms: int = 0
+    detection: ResultatDetection | None = None  # vue structurelle (PDF natifs uniquement)
     empreinte: str = ""  # sha256 du contenu ("" si non calculée)
     groupe_doublon: int = 0  # 0 = pas un doublon ; sinon numéro de groupe (>= 1)
+
 
 
 @dataclass
@@ -153,17 +157,23 @@ def empreinte_sha256(chemin: Path, limite_octets: int) -> str:
     return digest.hexdigest()
 
 
-def analyser_pdf(chemin: Path, config: AppConfig) -> tuple[str, str, str, int, list[dict[str, Any]]]:
-    """Classe un PDF (technique / plan / scan probable / erreur) et rend les mots.
+@dataclass
+class PageDetectee:
+    """Contenu positionnel de la page 1 d'un PDF natif (lecture seule)."""
 
-    Retourne ``(categorie, statut, detail, temps_ms, mots_page1)``. Les mots de
-    la première page ne sont remplis que pour un PDF classé technique (ils
-    servent à l'empreinte de gabarit) ; ``mots_page1`` est vide sinon.
+    mots: list[dict[str, Any]] = field(default_factory=list)
+    largeur: float = 0.0
+    hauteur: float = 0.0
+    grille_tracee: bool = False  # vraie grille lignes/rects vue par pdfplumber
 
-    Un PDF « unavailable » portant la mention « no embedded text » (le
-    marqueur déjà produit par l'extracteur du dépôt) est un scan probable :
-    l'image n'a pas de couche texte, et l'OCR est volontairement désactivé
-    ici (les fiches récentes portent leur texte, cf. plan v3.0 §16).
+
+def analyser_pdf(chemin: Path, config: AppConfig) -> tuple[str, str, str, int, PageDetectee]:
+    """Classe un PDF (vue classifieur) et rend sa page 1 pour la vue structurelle.
+
+    Retourne ``(categorie, statut, detail, temps_ms, page)``. ``page`` porte les
+    mots positionnés, les dimensions et la présence d'une grille tracée pour
+    TOUS les PDF natifs (technique comme plan) : la détection structurelle ne
+    doit pas hériter de l'angle mort du classifieur.
     """
     debut = time.perf_counter()
     resultat = extract_file(
@@ -174,53 +184,64 @@ def analyser_pdf(chemin: Path, config: AppConfig) -> tuple[str, str, str, int, l
     )
     temps_ms = int((time.perf_counter() - debut) * 1000)
     if resultat.status == "unavailable" and "no embedded text" in (resultat.detail or "").lower():
-        return "scan_probable", resultat.status, resultat.detail, temps_ms, []
+        return "scan_probable", resultat.status, resultat.detail, temps_ms, PageDetectee()
     if resultat.status != "extracted":
         LOGGER.warning(
             "Extraction impossible (%s) : %s — conséquence : PDF compté en erreur, hors fiches et hors scans.",
             chemin,
             resultat.detail or resultat.status,
         )
-        return "erreur_extraction", resultat.status, resultat.detail, temps_ms, []
+        return "erreur_extraction", resultat.status, resultat.detail, temps_ms, PageDetectee()
     texte = resultat.text
     if not texte.strip():
         # Filet de sécurité : extrait mais vide, même conclusion qu'un scan.
-        return "scan_probable", resultat.status, "", temps_ms, []
-    if classify_pdf_text(texte) == "technical_pdf":
-        mots = mots_page_pdf(chemin)
-        return "technique", resultat.status, "", temps_ms, mots
-    return "plan", resultat.status, "", temps_ms, []
+        return "scan_probable", resultat.status, "", temps_ms, PageDetectee()
+    categorie = "technique" if classify_pdf_text(texte) == "technical_pdf" else "plan"
+    return categorie, resultat.status, "", temps_ms, analyser_page_pdf(chemin)
 
 
-def mots_page_pdf(chemin: Path, numero_page: int = 0) -> list[dict[str, Any]]:
-    """Mots (texte + position) d'une page via pdfplumber, en lecture seule.
+def analyser_page_pdf(chemin: Path, numero_page: int = 0) -> PageDetectee:
+    """Mots, dimensions et grille tracée d'une page via pdfplumber (lecture seule).
 
-    Un échec ici n'empêche pas l'inventaire : la fiche reste classée
-    « technique » mais sort des familles de gabarits, avec un avertissement.
+    Un échec ici n'empêche pas l'inventaire : le PDF garde sa classification
+    par le texte, mais sort de la vue structurelle, avec un avertissement.
     """
     try:
         import pdfplumber  # import paresseux : inutile si aucune fiche technique
     except ImportError as exc:  # pragma: no cover - dépend de l'installation
         LOGGER.error(
-            "pdfplumber indisponible (%s) — conséquence : empreintes de gabarit absentes du rapport.",
+            "pdfplumber indisponible (%s) — conséquence : détection structurelle et empreintes de gabarit absentes.",
             exc,
         )
-        return []
+        return PageDetectee()
     try:
         with pdfplumber.open(chemin) as pdf:
             if numero_page >= len(pdf.pages):
-                return []
-            return pdf.pages[numero_page].extract_words() or []
+                return PageDetectee()
+            page = pdf.pages[numero_page]
+            mots = page.extract_words() or []
+            tables = page.extract_tables() or []
+            grille = any(
+                (cellule or "").strip() for table in tables for ligne in table for cellule in ligne
+            )
+            return PageDetectee(
+                mots=mots,
+                largeur=float(page.width or 0.0),
+                hauteur=float(page.height or 0.0),
+                grille_tracee=grille,
+            )
     except Exception as exc:  # noqa: BLE001 - un PDF corrompu ne doit pas tuer l'inventaire
         LOGGER.warning(
-            "Lecture des positions impossible (%s) : %s — conséquence : fiche hors familles de gabarits.",
+            "Lecture des positions impossible (%s) : %s — conséquence : fiche hors vue structurelle et hors familles.",
             chemin,
             exc,
         )
-        return []
+        return PageDetectee()
 
 
-def empreinte_gabarit(mots: list[dict[str, Any]]) -> dict[str, Any] | None:
+def empreinte_gabarit(
+    mots: list[dict[str, Any]], largeur_page: float = 0.0, hauteur_page: float = 0.0
+) -> dict[str, Any] | None:
     """Empreinte structurelle d'une fiche à partir des mots de sa page 1.
 
     Deux niveaux :
@@ -256,8 +277,12 @@ def empreinte_gabarit(mots: list[dict[str, Any]]) -> dict[str, Any] | None:
         if len(normalise) >= 3 and alpha.isalpha():
             libelles.add(normalise)
             try:
-                position_x = int(round(float(mot.get("x0", 0.0)) / BUCKET_POSITION_PT))
-                position_y = int(round(float(mot.get("top", 0.0)) / BUCKET_POSITION_PT))
+                if largeur_page > 0 and hauteur_page > 0:
+                    position_x = int(float(mot.get("x0", 0.0)) / largeur_page * 50)
+                    position_y = int(float(mot.get("top", 0.0)) / hauteur_page * 50)
+                else:
+                    position_x = int(round(float(mot.get("x0", 0.0)) / BUCKET_POSITION_PT))
+                    position_y = int(round(float(mot.get("top", 0.0)) / BUCKET_POSITION_PT))
             except (TypeError, ValueError):
                 LOGGER.debug("Position illisible pour un mot de l'empreinte ; mot gardé sans position.")
                 position_x, position_y = -1, -1
@@ -360,8 +385,10 @@ class RapportInventaire:
     doublons_fichiers_redondants: int = 0
     doublons_octets_redondants: int = 0
     fichiers_non_empreintes: int = 0
+    nb_candidats_structurels: int = 0
     localisations_fiches: list[dict[str, Any]] = field(default_factory=list)
     familles: list[FamilleGabarit] = field(default_factory=list)
+    section_detection: dict[str, Any] = field(default_factory=dict)
     erreurs: list[str] = field(default_factory=list)
     duree_secondes: float = 0.0
 
@@ -394,10 +421,56 @@ class RapportInventaire:
                 "nb": self.pdf_techniques,
                 "localisations_principales": self.localisations_fiches[:10],
             },
+            "detection_structurelle": self.section_detection,
             "familles_gabarits": [famille.vers_dict() for famille in self.familles],
             "erreurs": self.erreurs[:MAX_ERREURS_JSON],
             "erreurs_supprimees": max(0, len(self.erreurs) - MAX_ERREURS_JSON),
         }
+
+
+def construire_section_detection(
+    lignes: list[LigneFichier], lexique: LexiqueFiches, chemin_lexique: str
+) -> dict[str, Any]:
+    """Section « detection_structurelle » du rapport : candidats + désaccords.
+
+    Le livrable anti-angle-mort : les documents que la détection structurelle
+    voit comme fiches alors que le classifieur actuel les range ailleurs
+    (``rates_par_le_classifieur``), et l'inverse (fiches du classifieur sans
+    structure détectable). Chaque entrée est expliquée (score, termes).
+    """
+    candidats = [ligne for ligne in lignes if ligne.detection is not None and ligne.detection.est_candidat]
+    rates = [ligne for ligne in candidats if ligne.categorie_pdf != "technique"]
+    techniques_sans_structure = [
+        ligne
+        for ligne in lignes
+        if ligne.categorie_pdf == "technique" and ligne.detection is not None and not ligne.detection.est_candidat
+    ]
+
+    def entree(ligne: LigneFichier) -> dict[str, Any]:
+        assert ligne.detection is not None  # filtré par les appelants
+        return {
+            "chemin": ligne.chemin,
+            "categorie_classifieur": ligne.categorie_pdf,
+            **ligne.detection.composantes(),
+        }
+
+    return {
+        "lexique": {
+            "version": lexique.version,
+            "nb_termes": lexique.nb_termes,
+            "fichier": chemin_lexique,
+        },
+        "nb_candidats": len(candidats),
+        "candidats": [entree(ligne) for ligne in sorted(candidats, key=lambda item: -item.detection.score)[:50]],
+        "desaccords": {
+            "nb_rates_par_le_classifieur": len(rates),
+            "rates_par_le_classifieur": [
+                entree(ligne) for ligne in sorted(rates, key=lambda item: -item.detection.score)[:50]
+            ],
+            "nb_techniques_sans_structure": len(techniques_sans_structure),
+            "techniques_sans_structure": [entree(ligne) for ligne in techniques_sans_structure[:50]],
+        },
+    }
 
 
 def scanner_archive(
@@ -405,11 +478,14 @@ def scanner_archive(
     config: AppConfig,
     limite_empreinte: int,
     sans_empreintes: bool,
+    lexique: LexiqueFiches,
+    chemin_lexique: str = "",
 ) -> tuple[RapportInventaire, list[LigneFichier], list[tuple[str, dict[str, Any]]]]:
     """Parcourt les racines en lecture seule et agrège les statistiques.
 
     Retourne ``(rapport, lignes, empreintes_familles)`` où *empreintes_familles*
-    associe chaque fiche technique détectée à son empreinte de gabarit.
+    associe chaque fiche (candidate structurelle ou technique au sens du
+    classifieur) à son empreinte de gabarit.
     """
     rapport = RapportInventaire(racines=[str(racine) for racine in racines])
     lignes: list[LigneFichier] = []
@@ -460,16 +536,23 @@ def scanner_archive(
                     extension=extension,
                 )
                 if extension == ".pdf":
-                    categorie, statut, detail, temps_ms, mots = analyser_pdf(chemin, config)
+                    categorie, statut, detail, temps_ms, page = analyser_pdf(chemin, config)
                     ligne.categorie_pdf = categorie
                     ligne.statut_extraction = statut
                     ligne.detail = detail
                     ligne.temps_extraction_ms = temps_ms
                     types_pdf[categorie] += 1
-                    if categorie == "technique":
-                        empreinte = empreinte_gabarit(mots)
-                        if empreinte is not None:
-                            empreintes_familles.append((ligne.chemin, empreinte))
+                    if page.mots:
+                        # Vue structurelle, indépendante du classifieur : c'est
+                        # elle qui protège le recensement de l'angle mort
+                        # constaté en Phase 0 (variantes hors vocabulaire).
+                        ligne.detection = detecter_fiche(
+                            page.mots, page.largeur, page.hauteur, page.grille_tracee, lexique
+                        )
+                        if ligne.detection.est_candidat or categorie == "technique":
+                            empreinte = empreinte_gabarit(page.mots, page.largeur, page.hauteur)
+                            if empreinte is not None:
+                                empreintes_familles.append((ligne.chemin, empreinte))
                 if not sans_empreintes:
                     try:
                         ligne.empreinte = empreinte_sha256(chemin, limite_empreinte)
@@ -488,6 +571,10 @@ def scanner_archive(
     rapport.pdf_plans = types_pdf["plan"]
     rapport.pdf_scans_probables = types_pdf["scan_probable"]
     rapport.pdf_erreurs = types_pdf["erreur_extraction"]
+    rapport.nb_candidats_structurels = sum(
+        1 for ligne in lignes if ligne.detection is not None and ligne.detection.est_candidat
+    )
+    rapport.section_detection = construire_section_detection(lignes, lexique, chemin_lexique)
     return rapport, lignes, empreintes_familles
 
 
@@ -556,6 +643,8 @@ def exporter_rapports(rapport: RapportInventaire, lignes: list[LigneFichier], so
                 "annee",
                 "extension",
                 "categorie_pdf",
+                "candidat_fiche",
+                "score_fiche",
                 "statut_extraction",
                 "detail",
                 "temps_extraction_ms",
@@ -570,6 +659,8 @@ def exporter_rapports(rapport: RapportInventaire, lignes: list[LigneFichier], so
                     ligne.annee,
                     ligne.extension,
                     ligne.categorie_pdf,
+                    int(ligne.detection.est_candidat) if ligne.detection else "",
+                    round(ligne.detection.score, 3) if ligne.detection else "",
                     ligne.statut_extraction,
                     ligne.detail,
                     ligne.temps_extraction_ms,
@@ -632,6 +723,32 @@ def afficher_rapport(rapport: RapportInventaire, chemins_sortie: list[Path]) -> 
             f"  (fichiers non empreintés au-delà de la limite : {rapport.fichiers_non_empreintes:,})".replace(",", " ")
         )
     print()
+    desaccords = rapport.section_detection.get("desaccords", {})
+    nb_rates = desaccords.get("nb_rates_par_le_classifieur", 0)
+    print(
+        f"Détection structurelle (vue indépendante du classifieur) : "
+        f"{rapport.nb_candidats_structurels:,} candidat(s) fiche,".replace(",", " ")
+        + f" lexique « {rapport.section_detection.get('lexique', {}).get('fichier', '?')} »"
+    )
+    if nb_rates:
+        print(
+            f"  ⚠ DÉSACCORDS : {nb_rates:,} document(s) vus comme fiches par la détection".replace(",", " ")
+            + " mais classés autrement par le classifieur actuel :"
+        )
+        for entree in desaccords.get("rates_par_le_classifieur", [])[:5]:
+            print(
+                f"    - {entree['chemin']} (classé « {entree['categorie_classifieur']} »,"
+                + f" score {entree['score']:.2f}, termes : {', '.join(entree['vocabulaire_trouve'][:6])})"
+            )
+        if nb_rates > 5:
+            print(f"    … et {nb_rates - 5} autres (voir inventaire.json → detection_structurelle)")
+    nb_sans_structure = desaccords.get("nb_techniques_sans_structure", 0)
+    if nb_sans_structure:
+        print(
+            f"  ⚠ {nb_sans_structure:,} fiche(s) du classifieur sans structure de tableau détectable".replace(",", " ")
+            + " (à examiner : gabarit atypique ?)"
+        )
+    print()
     if rapport.localisations_fiches:
         print("Localisation probable des fiches techniques :")
         for localisation in rapport.localisations_fiches[:5]:
@@ -683,6 +800,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="ne calcule aucune empreinte (détection des doublons désactivée)",
     )
+    parseur.add_argument(
+        "--lexique",
+        default=None,
+        help="chemin du lexique de fiches JSON (défaut : config/lexique_fiches.json du dépôt)",
+    )
     parseur.add_argument("--silencieux", action="store_true", help="ne journaliser que les avertissements")
     # Convention du dépôt (voir validate_extraction.py) : argv[0] est le nom du
     # script, comme lors d'un appel en ligne de commande.
@@ -691,6 +813,15 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(
         level=logging.WARNING if arguments.silencieux else logging.INFO,
         format="%(levelname)s %(name)s: %(message)s",
+    )
+
+    try:
+        lexique = charger_lexique(arguments.lexique)
+    except (FileNotFoundError, ValueError) as erreur:
+        print(f"ERREUR : {erreur}", file=sys.stderr)
+        return 2
+    chemin_lexique = (
+        str(Path(arguments.lexique).expanduser().resolve()) if arguments.lexique else str(CHEMIN_LEXIQUE_PAR_DEFAUT)
     )
 
     racines: list[Path] = []
@@ -719,6 +850,8 @@ def main(argv: list[str] | None = None) -> int:
         config,
         limite_empreinte=arguments.limite_empreinte * 1024 * 1024,
         sans_empreintes=arguments.sans_empreintes,
+        lexique=lexique,
+        chemin_lexique=chemin_lexique,
     )
     rapport.duree_secondes = time.perf_counter() - debut
 

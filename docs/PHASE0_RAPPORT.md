@@ -58,6 +58,12 @@ que la Phase 0 doit révéler : la liste `TECHNICAL_ANCHORS` devra être étendu
 fiches (à caler sur les 20-30 fiches réelles, voir blocage n°1), et le lot B s'appuiera sur les gabarits
 (ancres de variante) plutôt que sur la seule classification actuelle.
 
+> **Mise à jour (PR 1, branche `phase0/fix-classement-fiches`)** : le constat du §2.3 est traité —
+> détection structurelle indépendante du classifieur (lexique configurable `config/lexique_fiches.json`
+> + structure de tableau), double vue et section « désaccords » dans l'inventaire. Voir
+> `docs/DETECTION_FICHES.md`. La fiche génois de démonstration est désormais vue comme candidate et
+> listée dans les désaccords ; les familles de gabarits passent de 1 (vue classifieur seule) à 3.
+
 ## 3. Vérifications d'état exécutées
 
 | Contrôle | Résultat |

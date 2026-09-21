@@ -4,6 +4,27 @@
 
 Branche `phase0/inventaire-banc-essai` sur `4efe2ad`. Rapport complet : `docs/PHASE0_RAPPORT.md`.
 
+### PR 1 — Correctif du classement des fiches (`phase0/fix-classement-fiches`)
+
+- **Détection structurelle (`seamtech_search/detection_fiches.py`, nouveau)** — un PDF est « candidat
+  fiche » s'il combine assez de vocabulaire de cotes (lexique) ET une structure de tableau (grille
+  tracée vue par pdfplumber ou grille inférée des positions). Verdict expliqué : termes, colonnes,
+  lignes, grille, score pondéré, motif d'exclusion. Scans et non-PDF exclus.
+- **Lexique configurable (`config/lexique_fiches.json`, nouveau ; `seamtech_search/lexique.py`)** — le
+  vocabulaire n'est plus codé en dur ; ajout à chaud sans redéploiement (`--lexique` pour un chemin
+  alternatif), échec bruyant si le fichier est absent/invalide. Vocabulaire de départ bâti sur les
+  fiches disponibles (fixture CLIENT-123, reconstruction 7792-SO §13, fiche génois).
+- **Double vue de l'inventaire** — `scripts/inventaire_archive.py` rapporte (a) la classification
+  actuelle, (b) la détection structurelle, plus la section `desaccords` (documents ratés par le
+  classifieur actuel ; fiches sans structure détectable). CSV : colonnes `candidat_fiche`, `score_fiche`.
+- **Empreintes de gabarit en positions relatives à la page** (pas de 2 %) quand les dimensions sont
+  connues : un même gabarit sur deux formats de page reste dans la même famille.
+- **Fixtures** — `sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf` (reconstruction des valeurs §13 du
+  plan, documentée comme telle) et `sample_data/CLIENT-GENOA/fiche-genois.pdf` (reproduction du point
+  mort : classée `plan_pdf` par le classifieur, candidate par la détection).
+- **15 nouveaux tests** (`tests/test_detection_fiches.py`) ; suite complète 313 passés / 9 ignorés ;
+  l'archive reste rigoureusement inchangée (empreintes avant/après). Doc : `docs/DETECTION_FICHES.md`.
+
 - **`scripts/inventaire_archive.py` (nouveau)** — inventaire en lecture seule d'une arborescence :
   comptages, volumes par type et par année (mtime), doublons probables (taille + SHA-256, plafonnés par
   `--limite-empreinte`), part de scans probables (marqueur « no embedded text » de l'extracteur, OCR
