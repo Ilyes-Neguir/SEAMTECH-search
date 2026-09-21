@@ -27,6 +27,11 @@ La recherche « comme Google » des fiches validées. La route Phase 0 `GET /sea
   une exclusion.
 - **Tolérance aux fautes** : filet trigrammes sur les requêtes d'un seul mot
   (`monofime` → Monofilm) ; seuil 0,30 ; indexable (GIN trigrammes, migration 007).
+  Limite connue : la comparaison trigrammes est littérale — un mot fautif SANS
+  ses accents (`genios`) n'est pas rattrapé ; la requête accentuée correcte
+  (`génois`) passe par le lexical. Plier les accents exigerait un index
+  d'expression `unaccent()` (fonction STABLE, non IMMUTABLE) : hors périmètre
+  Lot E, documenté pour la suite.
 - **Synonymes** : table `synonyme` (terme → canonique), rafraîchie toutes les 30 s.
 - **Journal** : TOUTES les recherches sont écrites dans `recherche_log` ;
   `nb_resultats = 0` marque la recherche sans résultat (index partiel, migration
