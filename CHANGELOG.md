@@ -1,3 +1,34 @@
+## Unreleased — Lot C : dépôt d'un dossier complet, lots suivis et reprenables (`lot-c/ingestion-files`)
+
+- **Porte A (plan §9.1)** : `POST /imports/dossier` — la fiche PDF du dossier est reconnue
+  (meilleur `score_detection`), extraite par le moteur du lot B, les autres PDF du dossier sont
+  rattachés comme pièces jointes (`fiche_piece_jointe`, migration 010), et **fiche + pièces sont
+  écrites en UNE transaction** (rappel de `ecrire_fiche(connexion=…)` — réutilisation, aucun commit
+  interne ; `except` hors du `with` ⇒ rollback intégral). Arrivée : `a_valider`, jamais valide (RG3).
+- **Idempotence en base** : clé = chemin normalisé (`os.path.normcase`, même normalisation que le
+  crawler) + SHA-256 ; **index unique partiel** `uq_lot_dossier_traite ON (cle_idempotence)
+  WHERE statut='traite'` ⇒ rejouer un dossier ou un lot entier = `deja_traite`, **0 nouvelle fiche,
+  0 nouveau rattachement** (testé). Les échecs, eux, restent retentables.
+- **Lots suivis et reprenables** : `lot_import`/`lot_dossier` (migration 010, pglast validée) ;
+  `POST /imports/dossier/lot` (thread in-process **sans Redis**, header `X-SEAMTECH-BACKGROUND`),
+  `GET /lots`, `GET /lots/{id}` (progression, **dossiers avec leur raison d'échec** — fiche non
+  reconnue, gabarit inconnu avec scores, PDF illisible, déjà traité — et **fichiers restants**).
+  Écart documenté : `/imports/{id}` reste l'import unitaire Phase 0 ⇒ consultation sous `/lots*`.
+  Un refus est un **résultat** tracé avec raison (jamais un compteur nu, jamais une erreur 500) :
+  un dossier refusé ne fait pas échouer le lot.
+- **Cas réel, interruption, reprise, débit MESURÉ** (test lot de 100 dossiers : 20 portants,
+  20 génois, 60 dossiers sans fiche identifiable) : interruption à mi-parcours → reprise sans
+  doublon ni manquant ; rejeu complet = 0 nouveau ; RG13 : archive source intacte (empreintes
+  avant/après égales). **Débit mesuré : 54 ms/dossier → 10 000 dossiers ≈ 9 min** (tâche de fond).
+- **« Étendre, ne pas réécrire »** : `import_pipeline.py` reçoit un pont mince
+  (`importer_dossier_complet`, `importer_lot_dossiers`) qui délègue au dépôt Lot C — la porte B
+  (import unitaire Phase 0) reste inchangée ; un seul pipeline, trois portes.
+- **CLI** : `deposer DOSSIER --database-url` et `lot RACINE --database-url [--interrompre-apres N]`
+  (reprise = rappeler).
+- Tests : `tests/test_depot_transactionnel.py` (13, fichier imposé §17.2) +
+  `tests/test_lot_ingestion.py` (6 : cycle 100 interrompu/repris, rejeu, erreurs de lot, pont
+  import_pipeline, thread de fond) — PostgreSQL réel (`-m postgres`).
+
 ## Unreleased — Garde-fous de la revue du 21/09 (verrou de calibration, échelle ordinale, dette surface)
 
 - **Verrou de calibration** (Tâche 1a) : `config/seuils_confiance.json` porte `calibre: false`,

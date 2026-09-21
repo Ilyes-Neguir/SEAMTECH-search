@@ -148,6 +148,38 @@ def _cmd_banc(arguments: argparse.Namespace) -> int:
     return 0 if resultat["conforme"] else 1
 
 
+def _cmd_deposer(arguments: argparse.Namespace) -> int:
+    from seamtech_search.fiches.depot import deposer_dossier, etat_lot
+
+    index = _index(arguments.database_url)
+    resultat = deposer_dossier(index, Path(arguments.dossier))
+    print(f"Dossier : {arguments.dossier}")
+    print(f"  statut : {resultat['statut']}" + (f" — {resultat['raison']}" if resultat["raison"] else ""))
+    if resultat.get("fiche"):
+        print(f"  fiche  : {resultat['fiche']} ({resultat['pieces']} pièce(s) jointe(s))")
+    if resultat.get("id_lot"):
+        etat = etat_lot(index, int(resultat["id_lot"]))
+        print(f"  lot    : #{etat['id_lot']} {etat['statut']} — {etat['nb_traites']}/{etat['nb_dossiers']} traité(s)")
+    return 0 if resultat["statut"] in ("traite", "deja_traite") else 1
+
+
+def _cmd_lot(arguments: argparse.Namespace) -> int:
+    from seamtech_search.fiches.depot import creer_lot, executer_lot
+
+    index = _index(arguments.database_url)
+    id_lot = creer_lot(index, Path(arguments.racine))
+    print(f"Lot #{id_lot} créé ({arguments.racine}).")
+    etat = executer_lot(index, id_lot, interrompre_apres=arguments.interrompre_apres)
+    print(
+        f"  statut : {etat['statut']} — {etat['nb_traites']} traité(s), {etat['nb_echecs']} échec(s), "
+        f"{len(etat['restants'])} restant(s)"
+    )
+    for dossier in etat["dossiers"]:
+        if dossier["statut"] == "echec":
+            print(f"    ÉCHEC {dossier['chemin_dossier']} : {dossier['raison']}")
+    return 0 if etat["statut"] == "termine" else 1
+
+
 def principal(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="seamtech_search.fiches", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sous = parser.add_subparsers(dest="commande", required=True)
@@ -166,6 +198,15 @@ def principal(argv: list[str] | None = None) -> int:
     init.add_argument("--database-url", required=True)
     init.add_argument("--pdf", default=None, help="chemin du PDF 7792 (empreinte SHA-256 enregistrée)")
 
+    deposer = sous.add_parser("deposer", help="Lot C : dépose UN dossier (fiche + pièces jointes, lot suivi)")
+    deposer.add_argument("dossier")
+    deposer.add_argument("--database-url", required=True)
+
+    lot = sous.add_parser("lot", help="Lot C : crée et exécute un lot (une racine, un sous-dossier par affaire)")
+    lot.add_argument("racine")
+    lot.add_argument("--database-url", required=True)
+    lot.add_argument("--interrompre-apres", type=int, default=None, help="interruption volontaire (tests de reprise)")
+
     banc = sous.add_parser("banc", help="non-régression : fiche extraite vs vérité gabarit_test")
     banc.add_argument("chemin")
     banc.add_argument("--database-url", required=True)
@@ -180,6 +221,8 @@ def principal(argv: list[str] | None = None) -> int:
             "ecrire": _cmd_ecrire,
             "init": _cmd_init,
             "banc": _cmd_banc,
+            "deposer": _cmd_deposer,
+            "lot": _cmd_lot,
         }[arguments.commande](arguments)
     except Exception as erreur:
         LOGGER.exception("Échec du traitement (conséquence : rien n'a été écrit).")

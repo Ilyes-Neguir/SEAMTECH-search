@@ -280,8 +280,13 @@ def re_sub_code(texte: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", norm.sans_accents(texte)).strip("_")
 
 
-def ecrire_fiche(index: Any, fiche: FicheExtraite) -> tuple[int, str]:
+def ecrire_fiche(index: Any, fiche: FicheExtraite, connexion: Any = None) -> tuple[int, str]:
     """Écrit la fiche et ses dépendances en UNE transaction PostgreSQL.
+
+    ``connexion`` : réutilise la connexion d'un APPELANT (Lot C : fiche + pièces
+    jointes + ligne de lot dans LA MÊME transaction) — dans ce cas aucun commit
+    n'est fait ici : le gestionnaire de l'appelant fait foi. Sinon une
+    connexion est ouverte et committée comme avant.
 
     Retourne (id_fiche, action) avec action parmi :
     - ``creee`` : première écriture ;
@@ -293,8 +298,15 @@ def ecrire_fiche(index: Any, fiche: FicheExtraite) -> tuple[int, str]:
     """
     if not fiche.code:
         raise ValueError("Fiche sans code : écriture refusée (reprise complète requise avant stockage).")
+    if connexion is not None:
+        return _ecrire_fiche_dans(index, fiche, connexion)
+    with index.connect() as connexion_ext:
+        return _ecrire_fiche_dans(index, fiche, connexion_ext)
+
+
+def _ecrire_fiche_dans(index: Any, fiche: FicheExtraite, connexion: Any) -> tuple[int, str]:
     action = "creee"
-    with index.connect() as connexion:
+    if True:  # bloc conservé pour indentation stable du corps historique
         with connexion.cursor() as cursor:
             cursor.execute(_SQL_EXISTE_FICHE, (fiche.code,))
             existante = cursor.fetchone()

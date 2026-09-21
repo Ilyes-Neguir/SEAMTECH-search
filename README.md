@@ -89,6 +89,9 @@ Env overrides (all `SEAMTECH_` prefixed) or `config/config.json` (must exist, no
 | `POST` | `/imports/scan` | Returns **all PDFs** with `anchor_count`, `anchors_matched`, `classification`, `is_technical` ranking hint (4.8) |
 | `POST` | `/imports/confirm` | |
 | `POST` | `/imports` | 202 async via Redis or in-process fallback, `?wait=true` for sync |
+| `POST` | `/imports/dossier` | Lot C — porte A : deposit a complete fabrication folder → fiche `a_valider` + attachments, one transaction, idempotent (refusal = traced result with reason, never a 500) |
+| `POST` | `/imports/dossier/lot` | Lot C — door A bis: background batch of folders (in-process thread, no Redis); resumable by calling again |
+| `GET` | `/lots`, `/lots/{id}` | Lot C — batch progress, per-folder status **with failure reasons**, remaining files (`/imports/{id}` stays Phase-0 single import) |
 | `GET` | `/imports/{id}` | DB-first to avoid stale Redis cache shadowing after PATCH |
 | `POST` | `/imports/{id}/cancel` | Redis flag + memory fallback |
 | `PATCH` | `/imports/{id}` | Correction, regenerates reports, re-uploads, invalidates Redis cache |

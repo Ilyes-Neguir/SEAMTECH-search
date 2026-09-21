@@ -52,6 +52,8 @@ def test_le_statut_arrivee_est_a_valider_dans_le_code() -> None:
     """RG3 : le statut d'arrivée est écrit en dur comme a_valider — jamais valide."""
     import inspect
 
-    source = inspect.getsource(persistance.ecrire_fiche)
+    # ecrire_fiche est une enveloppe fine (lot C : connexion externe) — le littéral
+    # RG3 vit dans le corps réel d'écriture, _ecrire_fiche_dans.
+    source = inspect.getsource(persistance._ecrire_fiche_dans)
     assert '"a_valider"' in source or "'a_valider'" in source
     assert '"valide"' not in source.replace("'valide'", "") or "conservee_validee" in source

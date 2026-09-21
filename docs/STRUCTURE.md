@@ -80,7 +80,8 @@ SEAMTECH-search/
 │   │   ├── anomalies.py            # RG16 coherence checks independent of confidence (ranges, surface ratio, ordering)
 │   │   ├── persistance.py          # Single-transaction write, statut a_valider (RG3), RG11 idempotence, seuils routing
 │   │   ├── cli.py                  # Demo CLI: extraire (read-only), ecrire (transactional), init, banc (gabarit_test)
-│   │   └── routes.py               # Lot B.2 HTTP routes (§17.11): field traceability + gabarit registry (read/publish only)
+│   │   ├── routes.py               # Lot B.2 HTTP routes (§17.11): field traceability + gabarit registry (read/publish only)
+│   │   └── depot.py                # Lot C — folder deposit engine: scan, one-transaction write, traced/resumable/idempotent batches (migration 010 tables)
 │   ├── extraction_worker.py        # Process-isolated extraction helper
 │   ├── extractors.py               # Text, PDF (pdfplumber/pypdf), XLSX (openpyxl), DOCX extractors
 │   ├── import_pipeline.py          # Two-phase dossier import, multi-sheet analysis, PDF/DOCX generation
@@ -106,6 +107,8 @@ SEAMTECH-search/
 │   ├── test_sample_fixture.py      # Sample fixture ingestion verification tests
 │   ├── test_scan_safety.py         # Directory boundary, symlink, and scan safety tests
 │   └── test_storage.py             # S3/MinIO client, presigned URLs, and live integration tests
+│   ├── test_depot_transactionnel.py  # Lot C — imposed §17.2: scanner, all-or-nothing, replay, RG13 archive (18 live tests with test_lot_ingestion.py)
+│   ├── test_lot_ingestion.py         # Lot C — 100-folder lot interrupted/resumed, replay, measured throughput (54 ms/folder → 10k ≈ 9 min)
 ├── .env.example                    # Template for environment variables
 ├── .github/workflows/ci.yml        # GitHub Actions CI pipeline with Postgres/Redis services
 ├── .gitignore                      # Git exclusion rules

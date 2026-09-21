@@ -25,6 +25,14 @@ from typing import Annotated, Any
 
 from fastapi import File, Header, HTTPException, UploadFile
 
+from seamtech_search.fiches.depot import (
+    DepotImpossible,
+    creer_lot,
+    deposer_dossier,
+    etat_lot,
+    executer_lot,
+    lister_lots,
+)
 from seamtech_search.fiches.extraction import ExtractionImpossible, analyser_pdf, texte_normalise
 from seamtech_search.fiches.gabarits import GabaritInconnu, charger_gabarits, detecter_gabarit
 
@@ -226,6 +234,80 @@ def enregistrer_routes_fiches(app: Any, index: Any, config: Any, verifier_auth: 
             list(corps.get("ancres_detection") or []),
             dict(corps.get("regles") or {}),
         )
+
+    @app.post("/imports/dossier", status_code=201)
+    def route_deposer_dossier(
+        corps: dict[str, Any],
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+    ) -> dict[str, Any]:
+        """Dépose UN dossier (immédiat, synchrone) : fiche extraite + pièces
+        jointes rattachées + lot suivi. L'archive est LUE, jamais modifiée.
+        Corps : {"dossier": "/chemin/du/dossier"}."""
+        verifier_auth(config, token)
+        _exiger_postgres(index)
+        dossier = str(corps.get("dossier") or "").strip()
+        if not dossier:
+            raise HTTPException(status_code=422, detail='Corps attendu : {"dossier": "/chemin/du/dossier"}.')
+        try:
+            resultat = deposer_dossier(index, Path(dossier))
+        except DepotImpossible as erreur:
+            raise HTTPException(status_code=422, detail=str(erreur)) from erreur
+        lot = etat_lot(index, int(resultat.get("id_lot") or 0)) if resultat.get("id_lot") else None
+        return {**resultat, "lot": lot}
+
+    @app.post("/imports/dossier/lot", status_code=202)
+    def route_creer_lot(
+        corps: dict[str, Any],
+        fond: Annotated[bool, Header(alias="X-SEAMTECH-BACKGROUND")] = True,
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+    ) -> dict[str, Any]:
+        """Crée un lot multi-dossiers (une racine, un sous-dossier par affaire).
+
+        Sans Redis : traitement en tâche de fond IN-PROCESS (thread, état en
+        base, consultable par GET /lots/{id}) par défaut — X-SEAMTECH-BACKGROUND:
+        false force le traitement synchrone (jeux de test, petits lots)."""
+        verifier_auth(config, token)
+        _exiger_postgres(index)
+        racine = str(corps.get("racine") or "").strip()
+        if not racine:
+            raise HTTPException(status_code=422, detail='Corps attendu : {"racine": "/chemin/de/la/racine"}.')
+        try:
+            id_lot = creer_lot(index, Path(racine), notes=corps.get("notes"))
+        except DepotImpossible as erreur:
+            raise HTTPException(status_code=422, detail=str(erreur)) from erreur
+        if fond:
+            import threading
+
+            thread = threading.Thread(
+                target=executer_lot,
+                args=(index, id_lot),
+                name=f"lot-{id_lot}",
+                daemon=True,
+            )
+            thread.start()
+            LOGGER.info("Lot #%d en tâche de fond (in-process, sans Redis).", id_lot)
+            return {"id_lot": id_lot, "statut": "en_cours", "traitement": "fond"}
+        return {"id_lot": id_lot, "statut": "termine", "traitement": "synchrone", "etat": executer_lot(index, id_lot)}
+
+    @app.get("/lots")
+    def route_lots(token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None) -> list[dict[str, Any]]:
+        """Liste des lots d'ingestion (progression). NB : les chemins /imports/
+        {id} sont déjà affectés aux imports de documents (Phase 0) — les lots du
+        Lot C sont consultables sous /lots (écart documenté dans docs/API.md)."""
+        verifier_auth(config, token)
+        _exiger_postgres(index)
+        return lister_lots(index)
+
+    @app.get("/lots/{id_lot}")
+    def route_lot(id_lot: int, token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None) -> dict[str, Any]:
+        """État complet d'un lot : progression, dossiers, échecs avec raisons,
+        fichiers restants (consultable pendant le traitement en fond)."""
+        verifier_auth(config, token)
+        _exiger_postgres(index)
+        try:
+            return etat_lot(index, id_lot)
+        except DepotImpossible as erreur:
+            raise HTTPException(status_code=404, detail=str(erreur)) from erreur
 
     @app.post("/gabarits/detecter")
     async def route_detecter(

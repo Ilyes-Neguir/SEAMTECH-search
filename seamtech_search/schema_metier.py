@@ -26,7 +26,7 @@ from __future__ import annotations
 from typing import Any
 
 # Version du schéma métier — incrémentée à chaque nouvelle migration.
-VERSION_SCHEMA_METIER = "009_qualite_et_gabarits"
+VERSION_SCHEMA_METIER = "010_lots_ingestion"
 
 # Marqueur injecté par le code au moment de la migration (constat 1 de revue) :
 # le nom de la configuration de recherche effective — 'seamtech_unaccent' ou
@@ -69,6 +69,10 @@ TABLES_METIER: tuple[str, ...] = (
     "ml_run",
     # 009 — qualité
     "gabarit_test",
+    # 010 — ingestion & lots (Lot C) : 30 tables métier (27 du Lot A + 3)
+    "lot_import",
+    "lot_dossier",
+    "fiche_piece_jointe",
 )
 
 SQL_006_FICHE_TECHNIQUE = """
@@ -573,11 +577,72 @@ FROM fiche f;
 
 # Les quatre migrations, dans l'ordre d'exécution. Structure consommée par
 # SearchIndex.run_migrations() et par le test de grammaire pglast.
+SQL_010_LOTS_INGESTION = """
+-- ============================================================================
+-- 010_lots_ingestion — dépôt de dossiers, lots suivis et reprenables (Lot C,
+-- plan v3.0 §17.2, §11, §12.2). Idempotent, ordonné, PostgreSQL uniquement.
+-- ============================================================================
+-- Un lot = une opération de dépôt (une racine d'archive désignée, ou un
+-- dossier unique). L'état vit en BASE : consultable et reprenable sans Redis.
+CREATE TABLE IF NOT EXISTS lot_import (
+    id_lot         BIGSERIAL PRIMARY KEY,
+    dossier_racine TEXT NOT NULL,
+    statut         TEXT NOT NULL DEFAULT 'en_cours'
+                   CHECK (statut IN ('en_cours','termine','interrompu')),
+    nb_dossiers    INTEGER NOT NULL DEFAULT 0,
+    nb_traites     INTEGER NOT NULL DEFAULT 0,
+    nb_echecs      INTEGER NOT NULL DEFAULT 0,
+    cree_le        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    termine_le     TIMESTAMPTZ,
+    notes          TEXT
+);
+
+-- Une ligne par dossier du lot. La clé d'idempotence = chemin normalisé
+-- (os.path.normcase, même fonction que le crawler) + SHA-256 du PDF de fiche ;
+-- l'unicité ne porte que sur les dossiers TRAITÉS (index unique partiel) :
+-- un échec reste retentable à la reprise, un succès n'est jamais refait.
+CREATE TABLE IF NOT EXISTS lot_dossier (
+    id_lot_dossier  BIGSERIAL PRIMARY KEY,
+    id_lot          BIGINT NOT NULL REFERENCES lot_import(id_lot) ON DELETE CASCADE,
+    chemin_dossier  TEXT NOT NULL,
+    cle_idempotence TEXT,
+    statut          TEXT NOT NULL DEFAULT 'en_attente'
+                    CHECK (statut IN ('en_attente','traite','echec')),
+    raison          TEXT,
+    id_fiche        BIGINT REFERENCES fiche(id_fiche) ON DELETE SET NULL,
+    nb_pieces       INTEGER NOT NULL DEFAULT 0,
+    traite_le       TIMESTAMPTZ,
+    UNIQUE (id_lot, chemin_dossier)
+);
+CREATE INDEX IF NOT EXISTS idx_lot_dossier_cle
+    ON lot_dossier (cle_idempotence) WHERE cle_idempotence IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_lot_dossier_traite
+    ON lot_dossier (cle_idempotence) WHERE statut = 'traite' AND cle_idempotence IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_lot_dossier_statut ON lot_dossier (statut);
+
+-- Pièces jointes rattachées à une fiche (croquis, plans, fichiers de
+-- production) : fiche_lien relie des FICHES entre elles (clés NOT NULL vers
+-- fiche) ; les fichiers non-fiche du dossier vont ICI — MLD honnête, même
+-- mécanisme de migration.
+CREATE TABLE IF NOT EXISTS fiche_piece_jointe (
+    id_piece       BIGSERIAL PRIMARY KEY,
+    id_fiche       BIGINT NOT NULL REFERENCES fiche(id_fiche) ON DELETE CASCADE,
+    chemin         TEXT NOT NULL,
+    role           TEXT NOT NULL DEFAULT 'piece_jointe',
+    empreinte_sha256 TEXT NOT NULL,
+    taille_octets  BIGINT,
+    cree_le        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (id_fiche, chemin, empreinte_sha256)
+);
+CREATE INDEX IF NOT EXISTS idx_piece_fiche ON fiche_piece_jointe (id_fiche);
+"""
+
 MIGRATIONS_METIER: tuple[tuple[str, str], ...] = (
     ("006_fiche_technique", SQL_006_FICHE_TECHNIQUE),
     ("007_recherche_index", SQL_007_RECHERCHE_INDEX),
     ("008_ml_corpus", SQL_008_ML_CORPUS),
     ("009_qualite_et_gabarits", SQL_009_QUALITE_ET_GABARITS),
+    ("010_lots_ingestion", SQL_010_LOTS_INGESTION),
 )
 
 

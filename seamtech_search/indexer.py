@@ -697,6 +697,16 @@ class SearchIndex:
         with connection.cursor() as cursor:
             cursor.execute(schema_metier.SQL_009_QUALITE_ET_GABARITS)
 
+    def _migration_010_lots_ingestion(self, connection: Any) -> None:
+        if not self.is_postgres:
+            logger.warning(
+                "Migration 010_lots_ingestion ignorée : la couche métier est PostgreSQL uniquement "
+                "(décision §17.1) — conséquence : aucun lot d'ingestion en mode SQLite."
+            )
+            return
+        with connection.cursor() as cursor:
+            cursor.execute(schema_metier.SQL_010_LOTS_INGESTION)
+
     def run_migrations(self) -> None:
         """Run pending schema migrations once at startup."""
         with self.connect() as connection:
@@ -714,6 +724,7 @@ class SearchIndex:
                 ("007_recherche_index", self._migration_007_recherche_index),
                 ("008_ml_corpus", self._migration_008_ml_corpus),
                 ("009_qualite_et_gabarits", self._migration_009_qualite_et_gabarits),
+                ("010_lots_ingestion", self._migration_010_lots_ingestion),
             ]
 
             for version, func in migrations:
