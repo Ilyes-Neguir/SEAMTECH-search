@@ -1,8 +1,12 @@
 # Mesure « validation < 2 minutes » — critère de sortie Phase 1 (§17.14)
 
-Statut au 21/09/2026 : **mesure scriptée en attente de CI** (la porte
-Playwright tourne sur GitHub, pas dans le bac à sable — Chromium y est
-indisponible) ; **mesure humaine : procédure fournie, chiffres non mesurés**.
+Statut au 21/09/2026 : **mesure scriptée VERTE en CI** (run 35663655264,
+job e2e, commit ce1964d) — le parcours ouverture→validation de la vraie fiche
+7792-SO est passé sous l'assertion des 120 000 ms ; la valeur exacte en ms est
+publiée en annotation `mesure-phase1` du rapport Playwright (visible dans
+l'onglet Actions du run — non extractible du bac à sable, journaux CI
+inaccessibles depuis celui-ci) ; **mesure humaine : procédure fournie,
+chiffres non mesurés**.
 
 Le critère complet de la Phase 1 est : « une fiche entre en base par
 l'interface, validée, avec traçabilité complète — ≥ 90 % des champs lus
