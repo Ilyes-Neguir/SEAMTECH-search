@@ -1,3 +1,59 @@
+## Unreleased — Lot F : IA locale — vecteurs activés, classifieur mesuré (`arena/01a0c56d-seamtech-search`)
+
+**Décision matériel (commanditaire, 21/09) : 8 Go de RAM.** Conséquences
+appliquées : onnxruntime + tokenizers + numpy, JAMAIS de PyTorch ; e5-small
+multilingue (384 dimensions) ; l'assistant conversationnel 7B est ÉCARTÉ de ce
+lot (marginal à 8 Go : 2-10 jetons/s en Q4 — plan §17.14 Phase 4 reporté à une
+éventuelle machine 16 Go).
+
+- **La source `vecteurs` du Lot E est activée** : elle était écrite et dormante
+  (`recherche.py::_source_vecteurs`, cosine pgvector). Nouveau paquet
+  `seamtech_search/ml/` : encodeur ONNX e5 (charge `model.onnx` +
+  `tokenizer.json` depuis le disque — poids JAMAIS au dépôt, ~130 Mo ;
+  `python -m seamtech_search.ml.telecharger` = action opérateur explicite,
+  aucun téléchargement au runtime), peuplement idempotent
+  (chunk « résumé de champs » par fiche validée + documents rattachés),
+  câblage `encode_requete` sur `GET /recherche` (dégradé propre : sans poids,
+  la recherche reste lexicale/trigrammes/texte, sans erreur).
+- **Mesures d'activation (publiées avant/après)** — avec l'encodeur de repli
+  déterministe (le bac à sable n'a PAS accès à Hugging Face ; les chiffres e5
+  seront produits en CI par l'étape de téléchargement dédiée, cache inclus) :
+  * jeu synthétique 50 requêtes : rappel@10 **50/50 avant → 50/50 après** ;
+    p95 **9,1 → 9,4 ms** ; coût de génération **0,6 ms/fiche** (repli) ;
+  * jeu réel 13 requêtes : **13/13 avant → 13/13 après** (non-régression
+    assertée par `tests/test_modele_maison.py`) ;
+  * après peuplement, `sources_actives` contient bien `vecteurs` ;
+  * apport du repli sur ces jeux : NUL (le lexical sature déjà) — annoncé
+    comme tel ; l'apport sémantique de e5 se mesurera sur un vrai fonds.
+- **Premier modèle maison : classifieur du type de voile** (spi/génois/foc/
+  grand-voile), centroïdes cosine sur embeddings, numpy seul. Il ne REMPLACE
+  pas les règles (§10.4) : mesuré CONTRE elles sur le même jeu
+  (`seamtech_search/ml/classifieur.py::mesurer` publie toujours les deux
+  exactitudes). Sur le corpus synthétique reproductible + pièges sans mot-clé
+  + noyau réel (la vraie 7792-SO, évaluation seulement, n=49) : modèle
+  **98,0 %** vs règles **34,7 %** (repli ; les règles = mots-clés sur texte
+  libre — sur une fiche bien formée la règle gagne, sur du texte libre sans
+  mot-clé le modèle récupère 32/32 échecs). Sérialisation JSON + rechargement
+  vérifiés (prédictions identiques).
+- **Endpoints (§17.5)** : `GET/POST /ml/modeles` (registre `ml_modele`,
+  migration 008 existante), `POST /ml/entrainer` (verrou fichier exclusif →
+  409 si un entraînement tourne ; version précédente CONSERVÉE et désactivée ;
+  sans poids e5 : 422 expliquant la commande de téléchargement, pas de repli
+  silencieux ; repli possible seulement sur demande explicite, étiqueté
+  AVERTISSEMENT dans la réponse), `POST /ml/peupler`. 503 propre hors
+  PostgreSQL, comme le reste de la couche métier.
+- **Fichier imposé §17.11** : `tests/test_modele_maison.py` (12 tests + le
+  test e5 réel, exécuté en CI où les poids sont téléchargés ; il ÉCHOUE si la
+  variable est positionnée mais les poids absents — jamais de skip masqué ;
+  le téléchargeur est testé SANS réseau, primitives HTTP simulées). Portes :
+  pytest **596 passés / 4 sautés, 0 échec**, ruff, pip-audit, couverture
+  89,9 % + seuils par module.
+- **Honnêtetés maintenues** : le corpus d'entraînement est SYNTHÉTIQUE (noyau
+  réel d'UNE fiche en évaluation seulement) ; l'ordre de grandeur du benchmark
+  « synthétique ≈ 70 %, +100 réels ≈ 87 % » reste à re-mesurer sur fiches
+  réelles ; dépendances ajoutées à requirements.txt uniquement (numpy 2.4.6,
+  onnxruntime 1.30.0, tokenizers 0.23.2), pip-audit : aucune vulnérabilité.
+
 ## Unreleased — Clôture Phase 1 : e2e live sur le document réel, chrono < 2 min, réparations (`arena/01a0c56d-seamtech-search`)
 
 - **Réparation CI (mesurée en échec sur 85a9685)** : `tests/test_lot_ingestion.py`

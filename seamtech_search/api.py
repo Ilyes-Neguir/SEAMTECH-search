@@ -1098,13 +1098,52 @@ def create_app(config: AppConfig) -> FastAPI:
 
     # Lot E (§17.2, §17.5) : recherche hybride des fiches — GET /recherche et
     # GET /recherche/suggestions. L'existant (/search fichiers) n'est pas touché.
-    # encode_requete=None : la branche vectorielle reste dormante tant que le
-    # Lot F (encodeur local) n'est pas livré ; le RRF lexical est déjà actif.
+    # Lot F : l'encodeur e5 ONNX est chargé s'il est sur le disque (poids
+    # téléchargés explicitement — jamais au runtime) ; sinon encode_requete
+    # reste None et la branche vectorielle demeure dormante, sans erreur.
     from seamtech_search.recherche import enregistrer_routes_recherche
 
-    enregistrer_routes_recherche(app, index, config, _require_auth, metriques=metrics)
+    encodeur_ml = _charger_encodeur_ml(config)
+    enregistrer_routes_recherche(
+        app,
+        index,
+        config,
+        _require_auth,
+        metriques=metrics,
+        encode_requete=encodeur_ml.vecteur_requete if encodeur_ml is not None else None,
+    )
+
+    from seamtech_search.ml.routes import enregistrer_routes_ml
+
+    enregistrer_routes_ml(
+        app,
+        index,
+        config,
+        _require_auth,
+        modeles_dir=_dossier_modeles_ml(config),
+        racine_verite=Path(__file__).resolve().parents[1],
+    )
 
     return app
+
+
+def _dossier_modeles_ml(config: AppConfig) -> Path:
+    """Dossier des poids/modèles : <data>/modeles, surclassable par env."""
+    import os
+
+    surclasse = os.environ.get("SEAMTECH_ML_MODELE_DIR")
+    if surclasse:
+        return Path(surclasse)
+    return Path(config.database_path).resolve().parent / "modeles"
+
+
+def _charger_encodeur_ml(config: AppConfig) -> Any:
+    from seamtech_search.ml.encodeur import charger_encodeur
+
+    encodeur = charger_encodeur(_dossier_modeles_ml(config))
+    if encodeur is not None:
+        logger.info("Encodeur ML actif : %s (source vecteurs activée).", encodeur.nom)
+    return encodeur
 
 
 def _safe_relative_path(filename: str) -> Path:

@@ -17,6 +17,11 @@ dependencies = [
     "boto3==1.35.90",
     "redis==5.2.1",
     "psycopg2-binary==2.9.10",
+    # Lot F — IA locale (plan v3.0 §10.4) : embeddings ONNX e5-small 384 et
+    # classifieur maison. SANS PyTorch (postes 8 Go, décision 21/09).
+    "numpy==2.4.6",
+    "onnxruntime==1.30.0",
+    "tokenizers==0.23.2",
 ]
 
 # Mirrors requirements-dev.txt exactly. tests/test_requirements_consistency.py

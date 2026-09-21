@@ -34,6 +34,12 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+    env:
+      # Lot F : répertoire des poids e5-small ONNX. Positionné au niveau du job
+      # pour que la suite PostgreSQL ET la couverture le voient. Le test e5
+      # réel s'exécute alors (sinon il échoue LOUDLY si la variable est mise
+      # mais les poids absents — jamais de skip silencieux).
+      SEAMTECH_ML_E5_DIR: /home/runner/.cache/seamtech-e5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -49,6 +55,21 @@ jobs:
           # once each. Installing several files that re-declared the same
           # packages is how pytest ended up at both 8.4.1 and 9.1.1.
           pip install -r requirements-dev.txt
+      - name: Cache e5-small ONNX weights (Lot F)
+        uses: actions/cache@v4
+        with:
+          path: /home/runner/.cache/seamtech-e5
+          key: seamtech-e5-small-onnx-v1
+      - name: Download e5-small ONNX (action opérateur explicite, Lot F)
+        run: |
+          # Pas de téléchargement au runtime : cette étape est l'unique point
+          # d'entrée des poids, mise en cache pour les re-runs. Un échec ici
+          # rend le job rouge avec la raison — jamais de repli silencieux.
+          if [ -f "$SEAMTECH_ML_E5_DIR/model.onnx" ] && [ -f "$SEAMTECH_ML_E5_DIR/tokenizer.json" ]; then
+            echo "e5-small déjà en cache."
+          else
+            python -m seamtech_search.ml.telecharger --dossier "$SEAMTECH_ML_E5_DIR"
+          fi
       - name: Ruff lint check
         run: ruff check .
       - name: Compile Python
