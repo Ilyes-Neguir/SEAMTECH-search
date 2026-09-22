@@ -113,6 +113,7 @@ def test_lots_stats(base_recherche):
             assert "total_dossiers" in res
 
 
+@pytest.mark.perf
 def test_qualite_perf_1000_fiches(base_recherche):
     """Requêtes <100ms sur 1000 fiches — mesure n+p50/p95."""
     import json
