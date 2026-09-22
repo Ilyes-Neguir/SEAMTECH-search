@@ -150,6 +150,11 @@ jobs:
           fi
           echo "::notice title=suite-postgres::pytest -m \"postgres and not perf\" : passed=$passed skipped=$skipped"
       - name: Run latency criteria (perf — sans instrumentation, p50/p95/max publiés)
+        # Une seule version de la matrice (audit du 22/09) : la latence ne
+        # dépend pas de la version de Python ; exécuter l'étape 3 fois
+        # triplait le risque de flake par construction et publiait 9 notices
+        # identiques. Le reste de la matrice continue de tout exécuter.
+        if: matrix.python-version == '3.12'
         # Audit indépendant du 22/09 : le critère p95 < 100 ms était évalué
         # DANS l'étape de couverture (--cov) sur runner partagé → flake mesuré
         # à 108,8 ms (run push 35715779367, même SHA vert en pull_request).
@@ -215,6 +220,16 @@ jobs:
             if m["p95_ms"] >= seuil:
                 raise SystemExit(
                     f"GARDE-FOU perf : {m['nom']} : p95 = {m['p95_ms']:.1f} ms ≥ {seuil:.0f} ms{etiquette}"
+                )
+            # Alerte de dérive (audit du 22/09) : le plafond anti-flake ne
+            # doit pas AVEUGLER la porte — une régression réelle (p95 passant
+            # de ~9 à ~200 ms) passerait verte sous 250 ms. Signal publié
+            # SANS faire échouer : la dérive devient lisible avant de casser.
+            if m["p95_ms"] > 50.0 or m["p95_ms"] > 10 * m["p50_ms"]:
+                print(
+                    f"::warning title=perf-derive::{m['nom']} : p95 = {m['p95_ms']:.1f} ms "
+                    f"> 50 ms ou > 10 × p50 ({m['p50_ms']:.1f} ms) — dérive possible "
+                    f"(n'entraîne pas l'échec ; borne anti-flake {seuil:.0f} ms conservée)"
                 )
             print(
                 f"::notice title=perf-latence::{m['nom']} : p50 = {m['p50_ms']:.1f} ms, "

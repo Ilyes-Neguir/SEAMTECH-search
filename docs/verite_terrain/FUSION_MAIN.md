@@ -38,7 +38,9 @@ git merge --no-ff "$TETE" -m "Consolidation Phase 1 → Lot F : pile complète"
 - Pousser : `git push origin main`.
 - **Contrôles post-fusion** (dans l'ordre) :
   1. `find .github -type f` → exactement `.github/workflows/ci.yml` ;
-  2. `git ls-files | wc -l` → 255 (mesuré) ;
+  2. `git ls-files | wc -l` → **259** (mesuré le 22/09 sur la tête de
+     consolidation : 167 sur main + 92 ; la mesure intermédiaire à 64e090c
+     était 255 — quatre fichiers de consolidation sont venus depuis) ;
   3. le run **push** sur main doit être VERT — c'est lui qui protège la
      branche (un run pull_request vert ne suffit pas : le run push 35715779367
      était rouge alors que le pull_request du même SHA était vert) ;
@@ -121,29 +123,29 @@ et le nom du client sont exposés. À terme : remplacer la fiche réelle par un
 
 ## 4. Répétition générale du 22/09 — sorties brutes
 
-Clone jetable depuis le vrai remote, AUCUNE écriture sur origin :
+**Répétition n°2 (tête de consolidation, état final du lot)** — clone jetable
+depuis le vrai remote, AUCUNE écriture sur origin :
 
 ```
 $ git clone --quiet https://github.com/Ilyes-Neguir/SEAMTECH-search /tmp/fusion-repetition
-$ cd /tmp/fusion-repetition
-$ git log --oneline -1 origin/main
+$ git remote add local <dépôt de travail> && git fetch local arena/01a0c56d-seamtech-search
+$ git checkout main && git log --oneline -1
 c69dd18 Add files via upload
 $ git ls-files | wc -l
 167                                        # fichiers sur main avant fusion
-$ git checkout --quiet main
-$ git merge --no-ff origin/arena/01a0c56d-seamtech-search -m "REPETITION GENERALE (non poussée)"
-Merge made by the 'ort' strategy.
- 108 files changed, 19266 insertions(+), 25 deletions(-)   # 0 conflit
+$ git merge --no-ff local/arena/01a0c56d-seamtech-search -m "REPETITION GENERALE 2"
+Merge made by the 'ort' strategy.          # 0 conflit
 $ git ls-files | wc -l
-255                                        # fichiers après fusion
+259                                        # fichiers après fusion (167 + 92)
+$ git diff --diff-filter=D --name-only HEAD^1 HEAD | wc -l
+0                                          # aucune suppression
 $ find .github -type f
 .github/workflows/ci.yml                   # exactement UN workflow, au bon endroit
-$ ls *.pdf sample_data/CLIENT-7792-SO/*.pdf
-7792-SO_ffab.pdf                           # le doublon (venu de main)
-sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf
-$ sha256sum 7792-SO_ffab.pdf sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf
-43afc51e55ae…  les deux                    # byte-identiques (166 990 o)
 ```
+
+**Répétition n°1 (état 64e090c, pré-consolidation)** — mêmes conclusions :
+0 conflit, 167 → **255** fichiers, un seul ci.yml, doublon PDF racine
+byte-identique à la copie `sample_data/` (sha256 `43afc51e55ae…`, 166 990 o) :
 
 Suites exécutées SUR LE RÉSULTAT FUSIONNÉ (PostgreSQL 16.2 + pgvector +
 pg_trgm + unaccent, SEAMTECH_TEST_DATABASE_URL positionné) :

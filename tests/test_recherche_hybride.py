@@ -397,12 +397,19 @@ def test_charge_modeste_1500_fiches(base_recherche: dict[str, Any]) -> None:
     extrait = _jeu_50_requetes()[:12]
     for requete, _attendu in extrait:  # chauffe : premier passage jeté
         rechercher_fiches(index, requete=requete, limit=10)
+    # Durcissement de la mesure (audit indépendant du 22/09) : à n = 12,
+    # sorted(...)[int(n*0.95)-1] désigne le DEUXIÈME PIRE échantillon — pas un
+    # percentile ; le verdict ne tenait qu'à une paire d'échantillons bruyants
+    # (run vert 35721947520 : p95 = 40,3 ms mais max = 111,2 ms). 5 passages
+    # mesurés amènent n = 60 : le p95 redevient un vrai percentile.
+    n_passages = 5
     durees_ms: list[float] = []
-    for requete, attendu in extrait:
-        debut = time.perf_counter()
-        reponse = rechercher_fiches(index, requete=requete, limit=10)
-        durees_ms.append((time.perf_counter() - debut) * 1000.0)
-        assert attendu in codes(reponse), f"à 1 500 fiches, {requete!r} doit toujours retrouver {attendu}"
+    for _ in range(n_passages):
+        for requete, attendu in extrait:
+            debut = time.perf_counter()
+            reponse = rechercher_fiches(index, requete=requete, limit=10)
+            durees_ms.append((time.perf_counter() - debut) * 1000.0)
+            assert attendu in codes(reponse), f"à 1 500 fiches, {requete!r} doit toujours retrouver {attendu}"
     p50 = statistics.median(durees_ms)
     p95 = sorted(durees_ms)[int(len(durees_ms) * 0.95) - 1]
     seuil = seuil_perf_p95_ms()

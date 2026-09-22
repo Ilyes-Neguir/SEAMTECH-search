@@ -169,12 +169,18 @@ def test_perf_p95_fonds_reel(fonds_reel: dict[str, Any]) -> None:
     index = fonds_reel["index"]
     for requete, _nature in JEU_REQUETES_REELLES:  # chauffe : premier passage jeté
         _retrouver(index, requete)
+    # Durcissement de la mesure (audit indépendant du 22/09) : à n = 13,
+    # sorted(...)[int(n*0.95)-1] désigne le DEUXIÈME PIRE échantillon — pas un
+    # percentile. 5 passages mesurés amènent n = 65 : le p95 redevient un vrai
+    # percentile.
+    n_passages = 5
     durees_ms: list[float] = []
-    for requete, nature in JEU_REQUETES_REELLES:
-        debut = time.perf_counter()
-        rang, _codes = _retrouver(index, requete)
-        durees_ms.append((time.perf_counter() - debut) * 1000.0)
-        assert rang == 1, f"{requete!r} ({nature}) : la seule fiche du fonds doit être au rang 1, trouvée au rang {rang}"
+    for _ in range(n_passages):
+        for requete, nature in JEU_REQUETES_REELLES:
+            debut = time.perf_counter()
+            rang, _codes = _retrouver(index, requete)
+            durees_ms.append((time.perf_counter() - debut) * 1000.0)
+            assert rang == 1, f"{requete!r} ({nature}) : la seule fiche du fonds doit être au rang 1, trouvée au rang {rang}"
     p50 = statistics.median(durees_ms)
     p95 = sorted(durees_ms)[int(len(durees_ms) * 0.95) - 1]
     seuil = seuil_perf_p95_ms()
