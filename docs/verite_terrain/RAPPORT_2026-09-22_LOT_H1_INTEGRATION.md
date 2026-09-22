@@ -135,7 +135,7 @@ Dans `docs/verite_terrain/RECETTE_HUMAINE.md`, la mention extrapolée « doublon
 
 ### 4.2. Réparation de la base et statut PR
 - **Constat sur la base** : Le dernier commit de la branche de base `origin/arena/01a0c56d-seamtech-search` (`f42e29b`) présentait un job `sauvegarde` en échec en CI (run push `35731753595` bloqué à l'étape 10 GARDE-FOU car `test_sauvegarde_unites.py` n'avait pas le marqueur `sauvegarde`, causant une collecte de 7 tests < 19 requis).
-- **Rôle de PR #21** : Notre PR apporte la réparation de ce job (`pytestmark = pytest.mark.sauvegarde`, tests de rétention locale, garde-fou `collectés == exécutés` sans filtres restrictifs). Les runs de validation de PR (testant la combinaison `base + head`) sont 100 % VERTS (8/8 jobs), démontrant la résolution du problème de la base.
+- **Rôle de PR #21** : Notre PR apporte la réparation de ce job (`pytestmark = pytest.mark.sauvegarde`, tests de rétention locale, garde-fou `collectés == exécutés` sans filtres restrictifs). Les runs de validation de PR (testant la combinaison `base + head`, ex. runs `35738011591`, `35738944082`, `35742670756`) sont 100 % VERTS (8/8 jobs), démontrant la résolution du problème de la base.
 - **Vérification API GitHub** :
 ```bash
 gh pr view 21 --json number,title,state,mergeable,mergeStateStatus,baseRefName,headRefName,headRefOid
@@ -145,7 +145,7 @@ Sortie brute :
 {
   "baseRefName": "arena/01a0c56d-seamtech-search",
   "headRefName": "arena/01a0c90e-seamtech-search",
-  "headRefOid": "ad55bfb6188e63b65288b8e05cbafb54e3a6c221",
+  "headRefOid": "1e85b8660b647ac865b7e297702794b9ee00d4fa",
   "mergeStateStatus": "CLEAN",
   "mergeable": "MERGEABLE",
   "number": 21,
@@ -304,6 +304,8 @@ Statut global : **SUCCESS (8/8 jobs verts)**
 ### 6.3. Runs ultérieurs consécutifs vérifiés 100 % verts (8/8 jobs)
 - **Push Run #35738937509** (`ad55bfb`) : **8/8 jobs verts**, job `sauvegarde` : 23/23 tests passés, restauration 50 000 fiches en **1,34 s**.
 - **Pull Request Run #35738944082** (PR #21 sur `ad55bfb`) : **8/8 jobs verts**, job `sauvegarde` : 23/23 tests passés, restauration 50 000 fiches en **0,99 s**.
+- **Push Run #35742665674** (`1e85b86`) : **8/8 jobs verts**, job `sauvegarde` : 23/23 tests passés, restauration 50 000 fiches en **1,01 s** (dump 560 568 o).
+- **Pull Request Run #35742670756** (PR #21 sur `1e85b86`) : **8/8 jobs verts**, job `sauvegarde` : 23/23 tests passés, restauration 50 000 fiches en **0,99 s** (dump 560 567 o).
 
 ---
 
