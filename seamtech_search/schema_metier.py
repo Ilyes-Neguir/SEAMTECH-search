@@ -863,8 +863,13 @@ SQL_014_FACETTE_DIMENSION = """
 -- Les valeurs sont déjà normalisées en unités métier (m, m², cm, kg) lors
 -- de l'extraction — aucune conversion à la lecture.
 -- Index pour le filtre par plage (cote=...&min=...&max=...).
+-- Ancienne vue avait 6 colonnes cotes (sans tetiere_cm) : CREATE OR REPLACE
+-- échoue avec « cannot change name of view column poids_kg to tetiere_cm »
+-- (colonne 6 change de nom). On DROP puis CREATE pour autoriser le changement
+-- d'ordre/nom — idempotent et sans dépendance (v_qualite est indépendante).
 -- ============================================================================
-CREATE OR REPLACE VIEW v_fiche_recherche AS
+DROP VIEW IF EXISTS v_fiche_recherche;
+CREATE VIEW v_fiche_recherche AS
 SELECT f.id_fiche,
        f.code,
        f.titre,
