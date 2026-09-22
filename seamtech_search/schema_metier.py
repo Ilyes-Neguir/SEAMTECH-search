@@ -26,7 +26,7 @@ from __future__ import annotations
 from typing import Any
 
 # Version du schéma métier — incrémentée à chaque nouvelle migration.
-VERSION_SCHEMA_METIER = "014_facette_dimension"
+VERSION_SCHEMA_METIER = "015_qualite_gabarit_brouillon"
 
 # Marqueur injecté par le code au moment de la migration (constat 1 de revue) :
 # le nom de la configuration de recherche effective — 'seamtech_unaccent' ou
@@ -896,6 +896,49 @@ CREATE INDEX IF NOT EXISTS idx_fiche_cotes_tetiere_cm ON fiche_cotes(tetiere_cm)
 CREATE INDEX IF NOT EXISTS idx_fiche_cotes_poids_kg ON fiche_cotes(poids_kg);
 """
 
+SQL_015_QUALITE_GABARIT_BROUILLON = """
+-- ============================================================================
+-- 015_qualite_gabarit_brouillon — Lot K : tableau qualité + gabarit brouillon
+-- - Index pour qualité : accélère GROUP BY sur champs corrigés, recherche_log
+--   par canal (filtres->>'canal'), fiche_validation par action, fiche_anomalie
+--   par code, etc. Toutes les requêtes qualité doivent rester <100 ms sur
+--   1 000 fiches (mesuré p50/p95).
+-- - Table gabarit_brouillon : brouillons de gabarits produits depuis un PDF
+--   variante inconnue (K.2). Un brouillon NON validé ne doit JAMAIS servir à
+--   l'extraction réelle — garde-fou : charger_gabarits() ne lit que gabarit
+--   WHERE actif, jamais gabarit_brouillon. La publication copie le brouillon
+--   vers gabarit comme nouvelle version active (registre existant, pas parallèle).
+-- ============================================================================
+
+-- Index qualité (si absents)
+CREATE INDEX IF NOT EXISTS idx_champ_champ ON fiche_champ_extrait(champ);
+CREATE INDEX IF NOT EXISTS idx_champ_corrige_champ ON fiche_champ_extrait(champ, corrige);
+CREATE INDEX IF NOT EXISTS idx_validation_action ON fiche_validation(action);
+CREATE INDEX IF NOT EXISTS idx_validation_fiche_action ON fiche_validation(id_fiche, action);
+CREATE INDEX IF NOT EXISTS idx_anomalie_code ON fiche_anomalie(code);
+CREATE INDEX IF NOT EXISTS idx_recherche_log_canal ON recherche_log((filtres->>'canal'));
+CREATE INDEX IF NOT EXISTS idx_recherche_log_created ON recherche_log(created_at DESC);
+
+-- Table brouillons gabarits
+CREATE TABLE IF NOT EXISTS gabarit_brouillon (
+    id_brouillon     BIGSERIAL PRIMARY KEY,
+    code             TEXT NOT NULL,
+    description      TEXT,
+    regles           JSONB NOT NULL DEFAULT '{}'::jsonb,
+    ancres_detection TEXT[] NOT NULL DEFAULT '{}',
+    zones            JSONB NOT NULL DEFAULT '[]'::jsonb,
+    confiance        JSONB NOT NULL DEFAULT '{}'::jsonb,
+    statut           TEXT NOT NULL DEFAULT 'brouillon' CHECK (statut IN ('brouillon','valide','rejete')),
+    source_pdf_sha256 TEXT,
+    source_pdf_nom   TEXT,
+    cree_par         BIGINT REFERENCES utilisateur(id_utilisateur) ON DELETE SET NULL,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_brouillon_code ON gabarit_brouillon(code);
+CREATE INDEX IF NOT EXISTS idx_brouillon_statut ON gabarit_brouillon(statut);
+"""
+
 MIGRATIONS_METIER: tuple[tuple[str, str], ...] = (
     ("006_fiche_technique", SQL_006_FICHE_TECHNIQUE),
     ("007_recherche_index", SQL_007_RECHERCHE_INDEX),
@@ -906,6 +949,7 @@ MIGRATIONS_METIER: tuple[tuple[str, str], ...] = (
     ("012_recherche_hybride", SQL_012_RECHERCHE_HYBRIDE),
     ("013_recherche_fonds_reel", SQL_013_RECHERCHE_FONDS_REEL),
     ("014_facette_dimension", SQL_014_FACETTE_DIMENSION),
+    ("015_qualite_gabarit_brouillon", SQL_015_QUALITE_GABARIT_BROUILLON),
 )
 
 

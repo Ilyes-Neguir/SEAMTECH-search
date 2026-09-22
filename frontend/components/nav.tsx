@@ -1,10 +1,10 @@
 "use client"
 
-// Barre de navigation commune aux 5 écrans (lot D) + déconnexion.
+// Barre de navigation commune aux 7 écrans (lot D + K) + déconnexion.
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { ClipboardCheck, FilePlus2, FolderOpen, FolderSearch, LogOut, Search } from "lucide-react"
+import { BarChart3, ClipboardCheck, FilePlus2, FolderOpen, FolderSearch, LogOut, Search, Shapes } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 const LIENS = [
@@ -13,6 +13,8 @@ const LIENS = [
   { href: "/fichiers", libelle: "Fichiers", icone: FolderSearch },
   { href: "/nouveau", libelle: "Nouveau dossier", icone: FilePlus2 },
   { href: "/validation", libelle: "Validation", icone: ClipboardCheck },
+  { href: "/qualite", libelle: "Qualité", icone: BarChart3 },
+  { href: "/gabarits", libelle: "Gabarits", icone: Shapes },
 ]
 
 export function Nav() {
