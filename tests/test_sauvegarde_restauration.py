@@ -35,7 +35,7 @@ from seamtech_search.sauvegarde import (
 )
 from tests.test_sauvegarde_unites import S3EnMemoire
 
-pytestmark = pytest.mark.postgres
+pytestmark = [pytest.mark.postgres, pytest.mark.sauvegarde]
 
 URL_PG = os.environ.get("SEAMTECH_TEST_DATABASE_URL", "")
 

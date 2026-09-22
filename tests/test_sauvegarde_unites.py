@@ -23,6 +23,8 @@ from seamtech_search.sauvegarde import (
     inventorier_archive,
 )
 
+pytestmark = pytest.mark.sauvegarde
+
 
 class S3EnMemoire:
     """Client S3 factice pour les tests (mêmes méthodes que S3StorageClient)."""
@@ -156,6 +158,62 @@ def test_retention_conserver_zero_ne_detruit_pas_tout() -> None:
     _semer_sauvegardes(client, 3)
     appliquer_retention(client, conserver=0)
     assert any(c.endswith(".dump") for c in client.list_keys(sauvegarde.PREFIXE_SAUVEGARDES))
+
+
+def test_retention_locale_conserve_les_n_dernieres(tmp_path: Path) -> None:
+    """Purge locale : conserve les N plus récentes et supprime les plus anciennes."""
+    for i in range(5):
+        horodatage = f"202609{20 + i:02d}-120000"
+        (tmp_path / f"seamtech-search-{horodatage}.dump").write_bytes(b"dump")
+        (tmp_path / f"seamtech-search-{horodatage}.dump.manifest.json").write_text("{}", encoding="utf-8")
+    purges = appliquer_retention(conserver=2, dossier_local=tmp_path)
+    restantes = sorted(tmp_path.glob("*.dump"))
+    assert len(restantes) == 2
+    assert restantes[-1].name.endswith("20260924-120000.dump")
+    manifestes = sorted(tmp_path.glob("*.manifest.json"))
+    assert len(manifestes) == 2
+    assert len(purges) == 6  # 3 dumps + 3 manifestes
+
+
+def test_retention_locale_jamais_la_derniere(tmp_path: Path) -> None:
+    """Purge locale : une seule sauvegarde présente ne doit jamais être supprimée."""
+    (tmp_path / "seamtech-search-20260920-120000.dump").write_bytes(b"dump")
+    (tmp_path / "seamtech-search-20260920-120000.dump.manifest.json").write_text("{}", encoding="utf-8")
+    purges = appliquer_retention(conserver=1, dossier_local=tmp_path)
+    assert purges == []
+    assert len(list(tmp_path.glob("*.dump"))) == 1
+    assert len(list(tmp_path.glob("*.manifest.json"))) == 1
+
+
+def test_retention_locale_conserver_zero_garde_la_derniere(tmp_path: Path) -> None:
+    """Purge locale : conserver=0 traité comme 1, la dernière survit."""
+    for i in range(3):
+        horodatage = f"202609{20 + i:02d}-120000"
+        (tmp_path / f"seamtech-search-{horodatage}.dump").write_bytes(b"dump")
+        (tmp_path / f"seamtech-search-{horodatage}.dump.manifest.json").write_text("{}", encoding="utf-8")
+    purges = appliquer_retention(conserver=0, dossier_local=tmp_path)
+    assert len(list(tmp_path.glob("*.dump"))) == 1
+    assert len(list(tmp_path.glob("*.manifest.json"))) == 1
+    assert len(purges) == 4  # 2 dumps + 2 manifestes purgés
+
+
+def test_retention_symetrique_locale_et_s3(tmp_path: Path) -> None:
+    """Purge symétrique : purge simultanément S3 et le dossier local."""
+    client = S3EnMemoire()
+    _semer_sauvegardes(client, 4)
+    for i in range(4):
+        horodatage = f"202609{20 + i:02d}-120000"
+        (tmp_path / f"seamtech-search-{horodatage}.dump").write_bytes(b"dump")
+        (tmp_path / f"seamtech-search-{horodatage}.dump.manifest.json").write_text("{}", encoding="utf-8")
+    purges = appliquer_retention(client_s3=client, conserver=2, dossier_local=tmp_path)
+    # S3
+    restantes_s3 = [c for c in client.list_keys(sauvegarde.PREFIXE_SAUVEGARDES) if c.endswith(".dump")]
+    assert len(restantes_s3) == 2
+    # Local
+    assert len(list(tmp_path.glob("*.dump"))) == 2
+    assert len(list(tmp_path.glob("*.manifest.json"))) == 2
+    # Purges totales : (2 dumps + 2 manifestes S3) + (2 dumps + 2 manifestes locaux) = 8
+    assert len(purges) == 8
 
 
 # ---------------------------------------------------------------------------

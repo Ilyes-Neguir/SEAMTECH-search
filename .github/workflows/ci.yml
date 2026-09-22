@@ -809,27 +809,50 @@ jobs:
           SEAMTECH_SAUVEGARDE_JSON: sauvegarde-mesures.jsonl
         run: |
           python -m pytest tests/test_sauvegarde_unites.py tests/test_sauvegarde_restauration.py \
-            -m "postgres or sauvegarde" -v --junitxml=sauvegarde-junit.xml
+            -v --junitxml=sauvegarde-junit.xml
       - name: GARDE-FOU — every round-trip test ran, none skipped
         run: |
           python - << 'PY'
+          import re
+          import subprocess
+          import sys
           import xml.etree.ElementTree as ET
 
+          # 1. Lire les résultats du junitxml
           racine = ET.parse("sauvegarde-junit.xml").getroot()
           testsuite = racine if racine.tag == "testsuite" else racine.find("testsuite")
-          passes = int(testsuite.get("tests", 0)) - int(testsuite.get("failures", 0)) - int(testsuite.get("errors", 0)) - int(testsuite.get("skipped", 0))
+          executes = int(testsuite.get("tests", 0))
           sautes = int(testsuite.get("skipped", 0))
           echecs = int(testsuite.get("failures", 0)) + int(testsuite.get("errors", 0))
-          print(f"sauvegarde : {passes} passés, {sautes} sautés, {echecs} échecs")
-          # Attendu : 12 tests unitaires + 7 tests d'aller-retour réel.
-          # Un test sauté ici signifierait que l'épreuve hors-site ne s'est PAS
-          # exécutée contre MinIO — la porte doit échouer, pas verdir en silence.
-          if echecs or sautes or passes < 19:
+          passes = executes - sautes - echecs
+
+          # 2. Obtenir le nombre de tests collectés sans filtrage
+          cmd = [
+              sys.executable,
+              "-m",
+              "pytest",
+              "tests/test_sauvegarde_unites.py",
+              "tests/test_sauvegarde_restauration.py",
+              "--collect-only",
+              "-q",
+          ]
+          proc = subprocess.run(cmd, capture_output=True, text=True, check=True)
+          m = re.search(r"(\d+)\s+tests?\s+collected", proc.stdout)
+          collectes = int(m.group(1)) if m else len([l for l in proc.stdout.splitlines() if "::" in l])
+
+          print(
+              f"sauvegarde : {collectes} collectés, {executes} exécutés ({passes} passés, {sautes} sautés, {echecs} échecs)"
+          )
+          # Attendu : tous les tests collectés exécutés (≥ 19), 0 sauté, 0 échec.
+          # Sautés > 0 ou collectés != exécutés ou échecs > 0 → échec inviolable.
+          if sautes > 0 or collectes != executes or echecs > 0 or passes < 19:
               raise SystemExit(
-                  "GARDE-FOU sauvegarde : attendu ≥ 19 tests passés, 0 sautés, 0 échecs — "
-                  f"mesuré {passes} passés, {sautes} sautés, {echecs} échecs. "
+                  "GARDE-FOU sauvegarde renforcé : échec détecté ! "
+                  f"attendu collectés == exécutés, ≥ 19 passés, 0 sauté, 0 échec — "
+                  f"mesuré {collectes} collectés, {executes} exécutés, {passes} passés, "
+                  f"{sautes} sautés, {echecs} échecs. "
                   "L'aller-retour sauvegarde → destruction → restauration doit être "
-                  "prouvé par exécution, jamais sauté."
+                  "prouvé par exécution, aucun test ne doit être sauté ou désélectionné."
               )
           PY
       - name: Publish measured durations (runbook figures)

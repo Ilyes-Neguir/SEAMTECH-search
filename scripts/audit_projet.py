@@ -34,6 +34,8 @@ import sys
 from pathlib import Path
 
 RACINE = Path(__file__).resolve().parents[1]
+if str(RACINE) not in sys.path:
+    sys.path.insert(0, str(RACINE))
 
 # Empreinte du document client réel (166 990 octets, 1 page).
 SHA_FICHE_REELLE = "43afc51e55ae598d3eaffc3096f0e7ddaa00e8ddc579ae315bb31b4dbf1c1f40"
@@ -118,8 +120,23 @@ def controle_fichiers_de_test() -> None:
               not manquants, ", ".join(manquants))
 
 
+def controle_verite() -> None:
+    print("\n6. Source unique de vérité terrain (74 cibles)")
+    chemin_paquet = RACINE / "seamtech_search" / "fiches" / "verite_7792.py"
+    controler("seamtech_search/fiches/verite_7792.py présent", chemin_paquet.is_file())
+    if chemin_paquet.is_file():
+        try:
+            from docs.verite_terrain.VERITE_7792_COMPLETE import VERITE_7792 as V_DOCS
+            from seamtech_search.fiches.verite_7792 import VERITE_7792
+
+            controler("source unique contient 74 cibles", len(VERITE_7792) == 74, f"{len(VERITE_7792)} cibles")
+            controler("docs/ ré-exporte sans dérive", VERITE_7792 == V_DOCS, "égalité stricte")
+        except (ImportError, AttributeError) as exc:
+            controler("import vérité terrain valide", False, str(exc))
+
+
 def controle_suite() -> None:
-    print("\n6. Suite de tests (sortie brute)")
+    print("\n7. Suite de tests (sortie brute)")
     # Le harnais du projet exige > 1 Go libre : sous ce seuil il répond 507 et
     # 10 tests d'import échouent — un faux positif d'environnement, pas une
     # régression. On choisit donc un basetemp sur un volume assez large.
@@ -152,6 +169,7 @@ def main() -> int:
     controle_exceptions()
     controle_calibration()
     controle_fichiers_de_test()
+    controle_verite()
     if not arguments.rapide:
         controle_suite()
 

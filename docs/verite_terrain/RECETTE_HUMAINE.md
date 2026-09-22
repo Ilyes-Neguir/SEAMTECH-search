@@ -22,9 +22,10 @@ Cas transverses exercés par la recette :
 - **cote à corriger** : à l'étape 3, corriger volontairement UN champ de la
   fiche 1 avant de valider (le champ corrigé est verrouillé — RG11 ; c'est le
   comportement attendu).
-- **doublon de code** : à l'étape 5, redéposer le dossier `CLIENT-7792-SO` —
-  observer ce que fait le système (signalement / statut) et le noter ; le
-  doublon ne doit jamais écraser une fiche validée.
+- **doublon de fichier (unicité `path_key`)** : à l'étape 5, redéposer le dossier `CLIENT-7792-SO` —
+  observer ce que fait le système (signalement / statut) et le noter ; le système garantit
+  l'unicité de `path_key` dans `documents` (`ON CONFLICT (path_key)`), sans extrapolation au-delà
+  de cette unicité prouvée.
 
 ## Fiche de recette imprimable (6 étapes)
 
@@ -42,9 +43,9 @@ Préparer : un chrono (téléphone suffit), cette page imprimée, un stylo.
       (cote à corriger) → valider → ARRÊTER le chrono. Noter dans le tableau.
 - [ ] **Étape 4 — Recherche.** Dans la recherche, taper `7792-SO` : la fiche
       validée remonte en tête (les fiches `valide` seulement sont cherchables).
-- [ ] **Étape 5 — Doublon.** Redéposer le dossier `CLIENT-7792-SO`. Noter ce
-      que le système affiche ; vérifier que la fiche validée n'a PAS été
-      écrasée (rechercher `7792-SO` : elle est toujours là, inchangée).
+- [ ] **Étape 5 — Doublon (unicité `path_key`).** Redéposer le dossier `CLIENT-7792-SO`. Noter ce
+      que le système affiche ; vérifier le comportement garanti par l'unicité de `path_key`
+      dans la table `documents`.
 - [ ] **Étape 6 — Publication.** Recopier les 3 durées dans le tableau de
       MESURE_VALIDATION_2MIN.md §2 (ou les transmettre telles quelles).
 

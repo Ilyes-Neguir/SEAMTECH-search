@@ -184,3 +184,18 @@ class TestJeuxDeCotes:
             {"cotes.dessin.slu_m": 6.8, "cotes.dessin.sf_m": 3.2, "cotes.finie.slu_m": 6.6, "cotes.finie.sf_m": 3.08},
         )
         assert taux == 1.0 and not ecarts
+
+
+class TestAntiDeriveVerite:
+    """Garde anti-dérive : source unique dans le paquet, ré-exportée par docs/."""
+
+    def test_source_unique_paquet_verite_7792(self) -> None:
+        import docs.verite_terrain.VERITE_7792_COMPLETE as v_docs
+        from seamtech_search.fiches import persistance, verite_7792
+
+        assert len(verite_7792.VERITE_7792) == 74
+        assert len(verite_7792.VERITE_7792_COMPLETE) == 74
+        assert persistance.VERITE_7792 is verite_7792.VERITE_7792
+        assert v_docs.VERITE_7792 is verite_7792.VERITE_7792
+        assert v_docs.VERITE_7792_COMPLETE is verite_7792.VERITE_7792_COMPLETE
+
