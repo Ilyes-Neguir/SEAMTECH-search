@@ -524,6 +524,23 @@ class S3StorageClient:
             logger.warning("Failed to delete S3 key %s: %s", remote_key, exc)
             return False
 
+    def list_keys(self, prefix: str) -> list[str]:
+        """Liste les clés du bucket portant ce préfixe (rétention des
+        sauvegardes, Lot H.1). Cohérent avec les autres méthodes : le préfixe
+        applicatif ``s3_prefix`` est appliqué avant la recherche."""
+        s3 = self._get_client()
+        prefixe_complet = self._apply_prefix(prefix)
+        try:
+            cles: list[str] = []
+            paginateur = s3.get_paginator("list_objects_v2")
+            for page in paginateur.paginate(Bucket=self.bucket_name, Prefix=prefixe_complet):
+                for objet in page.get("Contents", []):
+                    cles.append(objet["Key"])
+            return sorted(cles)
+        except Exception as exc:
+            logger.error("Failed to list S3 keys under %s: %s", prefixe_complet, exc)
+            raise StorageError(f"List failed: {exc}") from exc
+
 
 def upload_artifacts_to_storage(
     folder_name: str,

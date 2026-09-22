@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator
 
+from . import schema_metier
 from .models import Document
 
 logger = logging.getLogger("seamtech_search.indexer")
@@ -597,6 +598,173 @@ class SearchIndex:
             )
             logger.info("Rebuilt %d search vector(s) with accent folding", cursor.rowcount)
 
+    # ------------------------------------------------------------------
+    # Migrations 006-009 — couche métier « fiche technique » (Lot A).
+    # DÉCISION §17.1 du plan v3.0 : PostgreSQL UNIQUEMENT. Sur SQLite ces
+    # migrations ne font rien (warning journalisé, migration enregistrée) :
+    # le mode SQLite reste supporté pour l'indexation de fichiers héritée,
+    # pas pour les fiches. Ne pas « rétablir la parité SQLite ».
+    # ------------------------------------------------------------------
+
+    def _migration_006_fiche_technique(self, connection: Any) -> None:
+        if not self.is_postgres:
+            logger.warning(
+                "Migration 006_fiche_technique ignorée : la couche métier est PostgreSQL uniquement "
+                "(décision §17.1) — conséquence : aucune table de fiches en mode SQLite."
+            )
+            return
+        with connection.cursor() as cursor:
+            # Constat 1 de revue : la configuration de recherche effective est
+            # résolue ICI (dégradation gracieuse vers 'simple' si le rôle ne
+            # peut pas installer unaccent — même choix que la migration 005)
+            # et injectée dans le DDL de chunk.tsv. Le script ne suppose jamais
+            # que 'seamtech_unaccent' existe.
+            self._ensure_unaccent_config(connection)
+            config = self._postgres_ts_config(connection)
+            script = schema_metier.SQL_006_FICHE_TECHNIQUE.replace(
+                schema_metier.MARQUEUR_TS_CONFIG, config
+            )
+            try:
+                cursor.execute(script)
+            except Exception as exc:
+                # `vector` n'est pas une extension « trusted » : sans
+                # superutilisateur ni préinstallation, le CREATE EXTENSION
+                # échoue au niveau du serveur. La couche métier ne peut pas se
+                # dégrader silencieusement (colonnes vector(384) obligatoires),
+                # donc l'échec reste fatal — mais il porte l'action exacte.
+                if getattr(exc, "sqlstate", None) == "42501" or "permission denied" in str(exc).lower():
+                    logger.error("Migration 006 bloquée par les privilèges PostgreSQL : %s", exc)
+                    raise RuntimeError(
+                        "Migration 006_fiche_technique impossible : le rôle PostgreSQL n'a pas le "
+                        "privilège de créer l'extension 'vector' (requis par les colonnes vector(384) "
+                        "de la couche métier). Actions possibles : (1) utiliser l'image "
+                        "pgvector/pgvector:pg16 (compose et CI la fournissent) avec le rôle "
+                        "superutilisateur du conteneur ; ou (2) demander à l'administrateur de "
+                        "préinstaller l'extension dans la base : CREATE EXTENSION vector;. "
+                        f"Erreur serveur : {exc}"
+                    ) from exc
+                raise
+
+    def _migration_007_recherche_index(self, connection: Any) -> None:
+        if not self.is_postgres:
+            logger.warning(
+                "Migration 007_recherche_index ignorée : la couche métier est PostgreSQL uniquement "
+                "(décision §17.1) — conséquence : aucun index de recherche de fiches en mode SQLite."
+            )
+            return
+        with connection.cursor() as cursor:
+            # Constat 1 de revue (volet pg_trgm) : les index trigrammes sont
+            # dégradables — sans le privilège CREATE sur la base, pg_trgm ne
+            # s'installe pas et seuls les index de tolérance aux fautes sont
+            # omis (avertissement + conséquence journalisés). Le cœur (colonne
+            # de recherche pondérée, fonction, synonymes, journal) s'applique.
+            config = self._postgres_ts_config(connection)
+            # D'abord le cœur : les index trigrammes ciblent fiche.champs_texte,
+            # qui n'existe pas avant lui.
+            cursor.execute(
+                schema_metier.SQL_007_RECHERCHE_INDEX.replace(schema_metier.MARQUEUR_TS_CONFIG, config)
+            )
+            cursor.execute("SAVEPOINT seamtech_pg_trgm")
+            try:
+                cursor.execute(schema_metier.SQL_007_TRGM)
+                cursor.execute("RELEASE SAVEPOINT seamtech_pg_trgm")
+            except Exception as exc:
+                cursor.execute("ROLLBACK TO SAVEPOINT seamtech_pg_trgm")
+                logger.warning(
+                    "pg_trgm indisponible (%s) — conséquence : index trigrammes omis, la tolérance "
+                    "aux fautes (« monofim » → Monofilm) est désactivée ; la recherche plein-texte "
+                    "et la recherche par mots-clés restent opérationnelles.",
+                    exc,
+                )
+
+    def _migration_008_ml_corpus(self, connection: Any) -> None:
+        if not self.is_postgres:
+            logger.warning(
+                "Migration 008_ml_corpus ignorée : la couche métier est PostgreSQL uniquement "
+                "(décision §17.1) — conséquence : aucun corpus ML en mode SQLite."
+            )
+            return
+        with connection.cursor() as cursor:
+            cursor.execute(schema_metier.SQL_008_ML_CORPUS)
+
+    def _migration_009_qualite_et_gabarits(self, connection: Any) -> None:
+        if not self.is_postgres:
+            logger.warning(
+                "Migration 009_qualite_et_gabarits ignorée : la couche métier est PostgreSQL uniquement "
+                "(décision §17.1) — conséquence : aucune vue qualité en mode SQLite."
+            )
+            return
+        with connection.cursor() as cursor:
+            cursor.execute(schema_metier.SQL_009_QUALITE_ET_GABARITS)
+
+    def _migration_010_lots_ingestion(self, connection: Any) -> None:
+        if not self.is_postgres:
+            logger.warning(
+                "Migration 010_lots_ingestion ignorée : la couche métier est PostgreSQL uniquement "
+                "(décision §17.1) — conséquence : aucun lot d'ingestion en mode SQLite."
+            )
+            return
+        with connection.cursor() as cursor:
+            cursor.execute(schema_metier.SQL_010_LOTS_INGESTION)
+
+    def _migration_011_pieces_catalogue_documents(self, connection: Any) -> None:
+        if not self.is_postgres:
+            logger.warning(
+                "Migration 011_pieces_catalogue_documents ignorée : la couche métier est "
+                "PostgreSQL uniquement (décision §17.1) — conséquence : les pièces jointes "
+                "restent hors catalogue documents en mode SQLite."
+            )
+            return
+        with connection.cursor() as cursor:
+            cursor.execute(schema_metier.SQL_011_PIECES_CATALOGUE_DOCUMENTS)
+
+    def _migration_012_recherche_hybride(self, connection: Any) -> None:
+        if not self.is_postgres:
+            logger.warning(
+                "Migration 012_recherche_hybride ignorée : la couche métier est "
+                "PostgreSQL uniquement (décision §17.1) — conséquence : aucune recherche "
+                "hybride de fiches en mode SQLite."
+            )
+            return
+        with connection.cursor() as cursor:
+            # Même dégradation gracieuse que 007 : le cœur (index de facettes,
+            # suivi des recherches sans résultat, rafraîchissement global,
+            # backfill) s'applique toujours ; les index trigrammes des
+            # référentiels (suggestions tolérantes aux fautes) sont omis si
+            # pg_trgm ne peut pas s'installer, avec avertissement journalisé.
+            config = self._postgres_ts_config(connection)
+            cursor.execute(
+                schema_metier.SQL_012_RECHERCHE_HYBRIDE.replace(schema_metier.MARQUEUR_TS_CONFIG, config)
+            )
+            cursor.execute("SAVEPOINT seamtech_012_trgm")
+            try:
+                cursor.execute(schema_metier.SQL_012_TRGM)
+                cursor.execute("RELEASE SAVEPOINT seamtech_012_trgm")
+            except Exception as exc:
+                cursor.execute("ROLLBACK TO SAVEPOINT seamtech_012_trgm")
+                logger.warning(
+                    "pg_trgm indisponible (%s) — conséquence : index trigrammes des référentiels "
+                    "omis ; les suggestions par préfixe restent opérationnelles, la tolérance aux "
+                    "fautes dans les suggestions est désactivée.",
+                    exc,
+                )
+
+    def _migration_013_recherche_fonds_reel(self, connection: Any) -> None:
+        """Tâche 3 : le rejeu du jeu de requêtes RÉEL sur la vraie fiche
+        7792-SO a mesuré deux angles morts du vecteur — la raison sociale du
+        client (« cruette ») et l'année d'édition (« spi sailonet 2026 »).
+        Les deux sont ajoutées au texte pondéré (poids B)."""
+        if not self.is_postgres:
+            logger.info(
+                "Migration 013 (recherche fonds réel) ignorée en mode SQLite — PostgreSQL uniquement (§17.1)."
+            )
+            return
+        with connection.cursor() as cursor:
+            config = self._postgres_ts_config(connection)
+            cursor.execute(
+                schema_metier.SQL_013_RECHERCHE_FONDS_REEL.replace(schema_metier.MARQUEUR_TS_CONFIG, config)
+            )
+
     def run_migrations(self) -> None:
         """Run pending schema migrations once at startup."""
         with self.connect() as connection:
@@ -609,6 +777,15 @@ class SearchIndex:
                 ("003_category_backfill_guard", self._migration_003_category_backfill_guard),
                 ("004_uploaded_at_epoch", self._migration_004_uploaded_at_epoch),
                 ("005_unaccent_search_vector", self._migration_005_unaccent_search_vector),
+                # Couche métier « fiches » — PostgreSQL uniquement (§17.1).
+                ("006_fiche_technique", self._migration_006_fiche_technique),
+                ("007_recherche_index", self._migration_007_recherche_index),
+                ("008_ml_corpus", self._migration_008_ml_corpus),
+                ("009_qualite_et_gabarits", self._migration_009_qualite_et_gabarits),
+                ("010_lots_ingestion", self._migration_010_lots_ingestion),
+                ("011_pieces_catalogue_documents", self._migration_011_pieces_catalogue_documents),
+                ("012_recherche_hybride", self._migration_012_recherche_hybride),
+                ("013_recherche_fonds_reel", self._migration_013_recherche_fonds_reel),
             ]
 
             for version, func in migrations:
@@ -1309,22 +1486,42 @@ class SearchIndex:
                     except Exception as exc:
                         integrity = f"check_failed:{exc}"
 
+            # Diagnostic Lot A : version de schéma appliquée + présence
+            # EFFECTIVE des extensions (pg_extension, pas la configuration).
+            metier: dict[str, Any] = {"schema_migrations": [], "schema_metier_a_jour": False, "extensions": {}}
+            try:
+                with connection.cursor() as cursor:
+                    metier = schema_metier.diagnostic_metier(cursor)
+            except Exception as exc:
+                # Conséquence : /health reste répondant, mais signale que le
+                # diagnostic métier est indisponible (base non migrée ?).
+                logger.warning("Diagnostic schéma métier indisponible dans /health : %s", exc)
+                metier = {"diagnostic": "indisponible", **metier}
+
             return {
                 "backend": "postgresql",
                 "database_url_configured": True,
                 "database_bytes": database_bytes,
                 "database_integrity": integrity,
                 "version": version,
+                "schema_migrations": metier.get("schema_migrations", []),
+                "schema_metier_a_jour": metier.get("schema_metier_a_jour", False),
+                "extensions": metier.get("extensions", {}),
             }
 
         with self.connect() as connection:
             integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
+            versions = [row["version"] for row in connection.execute("SELECT version FROM schema_migrations").fetchall()]
         return {
             "backend": "sqlite",
             "database_path": str(self.database_path),
             "database_exists": self.database_path.exists(),
             "database_bytes": self.database_path.stat().st_size if self.database_path.exists() else 0,
             "database_integrity": integrity,
+            "schema_migrations": versions,
+            # Couche métier PostgreSQL uniquement (§17.1) : extensions non applicables.
+            "schema_metier_a_jour": False,
+            "extensions": {"vector": False, "pg_trgm": False, "unaccent": False, "applicables": False},
         }
 
 

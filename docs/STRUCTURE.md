@@ -7,6 +7,7 @@ SEAMTECH-search/
 │   └── config.json                 # Active local configuration (gitignored)
 ├── docs/                           # Comprehensive technical and operational documentation
 │   ├── PROJECT_REPORT.md           # Full technical, architectural, and business report
+│   ├── PHASE0_RAPPORT.md           # Phase 0 report: delivered instruments, measured numbers, blockers
 │   ├── REPORT.md                   # Production readiness and operations summary
 │   ├── STRUCTURE.md                # Repository layout and component directory
 │   ├── IMPLEMENTATION_PLAN.md      # Architecture roadmap and deliverable checklist
@@ -54,10 +55,12 @@ SEAMTECH-search/
 │   ├── benchmark_indexing.py       # Performance and throughput benchmarking utility
 │   ├── bootstrap.py                # Environment bootstrap helper
 │   ├── ensure_postgres.ps1         # Auto-provisioning script for local PostgreSQL container
+│   ├── inventaire_archive.py       # Phase 0 read-only archive inventory (types, years, duplicates, scans, fiche locations, gabarit families)
 │   ├── restore_postgres.ps1        # PostgreSQL database restore script
 │   ├── restore_sqlite.ps1          # SQLite fallback database restore script
 │   ├── run_indexing.ps1            # Scheduled directory indexing script
-│   └── start_seamtech_search.ps1   # Native desktop launcher script
+│   ├── start_seamtech_search.ps1   # Native desktop launcher script
+│   └── validate_extraction.py      # Extraction harness: historical per-document review + Phase 0 field-by-field measurement against a ground-truth JSON (--verite)
 ├── seamtech_search/                # Core Python package
 │   ├── __init__.py                 # Package version and export definitions (v0.4.0)
 │   ├── __main__.py                 # CLI execution entry point
@@ -67,6 +70,18 @@ SEAMTECH-search/
 │   ├── cli.py                      # Command-line interface subcommands (serve, index, stats, cleanup)
 │   ├── config.py                   # Pydantic v2 configuration models and env parsing
 │   ├── crawler.py                  # Directory crawler with symlink safety and batched traversal
+│   ├── detection_fiches.py         # Structural fiche detection (lexicon + table grid, explainable verdict)
+│   ├── lexique.py                  # Configurable fiche lexicon loader (config/lexique_fiches.json)
+│   ├── fiches/                     # Lot B — gabarit-driven fabrication-sheet extraction (French domain)
+│   │   ├── modeles.py              # FicheExtraite + per-value traceability (ChampExtrait: method, confidence, page, zone)
+│   │   ├── gabarits.py             # Gabarit registry + anchor detection + embedded FICHE_PORTANT_V1 / FICHE_GENOIS_V1 rules
+│   │   ├── extraction.py           # pdfplumber engine: words/lines/tables → rules → traced values; RG6 leftover capture
+│   │   ├── normalisation.py        # French formats: 6,60 m→6.6, g/m², mm, FR dates, booleans, référentiel name splitting
+│   │   ├── anomalies.py            # RG16 coherence checks independent of confidence (ranges, surface ratio, ordering)
+│   │   ├── persistance.py          # Single-transaction write, statut a_valider (RG3), RG11 idempotence, seuils routing
+│   │   ├── cli.py                  # Demo CLI: extraire (read-only), ecrire (transactional), init, banc (gabarit_test)
+│   │   ├── routes.py               # Lot B.2 HTTP routes (§17.11): field traceability + gabarit registry (read/publish only)
+│   │   └── depot.py                # Lot C — folder deposit engine: scan, one-transaction write, traced/resumable/idempotent batches (migration 010 tables)
 │   ├── extraction_worker.py        # Process-isolated extraction helper
 │   ├── extractors.py               # Text, PDF (pdfplumber/pypdf), XLSX (openpyxl), DOCX extractors
 │   ├── import_pipeline.py          # Two-phase dossier import, multi-sheet analysis, PDF/DOCX generation
@@ -92,6 +107,8 @@ SEAMTECH-search/
 │   ├── test_sample_fixture.py      # Sample fixture ingestion verification tests
 │   ├── test_scan_safety.py         # Directory boundary, symlink, and scan safety tests
 │   └── test_storage.py             # S3/MinIO client, presigned URLs, and live integration tests
+│   ├── test_depot_transactionnel.py  # Lot C — imposed §17.2: scanner, all-or-nothing, replay, RG13 archive (18 live tests with test_lot_ingestion.py)
+│   ├── test_lot_ingestion.py         # Lot C — 100-folder lot interrupted/resumed, replay, measured throughput (54 ms/folder → 10k ≈ 9 min)
 ├── .env.example                    # Template for environment variables
 ├── .github/workflows/ci.yml        # GitHub Actions CI pipeline with Postgres/Redis services
 ├── .gitignore                      # Git exclusion rules
@@ -103,3 +120,23 @@ SEAMTECH-search/
 ├── requirements-local.txt          # Development dependencies
 └── requirements.txt                # Production Python dependencies
 ```
+
+## Pièces jointes : une seule description par fichier (décision revue 21/09, RG12)
+
+Un fichier déposé est décrit **UNE FOIS**, dans `documents` (catalogue du crawler) :
+`role` = `croquis` / `photo` / `plan` / `piece_jointe` (défaut du dépôt), `content` = métadonnées
+seulement (« pièce jointe (…) de la fiche X — non analysée »), `extraction_status='metadata'`,
+`path_key = os.path.normcase(chemin résolu)` — la MÊME clé que le crawler, donc un futur passage
+réconcilie la ligne au lieu de la dupliquer. `fiche_piece_jointe` (migration 011 : colonne
+`id_document`) est la table de LIEN fiche ↔ document, avec chemin/rôle/empreinte pour la
+traçabilité du lien. Conséquence : la recherche plein-texte (lot E) trouve les croquis par leur
+nom et par le code de leur fiche (testé dans `tests/test_pieces_jointes_documents.py`).
+
+## Deux dossiers, la même fiche (décision revue 21/09)
+
+Déposer un second dossier portant une fiche du même code REMPLACE la fiche (RG11, uniquement si
+`a_valider` ; une fiche `valide` est intouchable). Le remplacement est fait **SUR PLACE** :
+`id_fiche` est conservé, seules les données d'extraction sont rafraîchies
+(`_TABLES_FILLES_RAFRAICHIES` dans `fiches/persistance.py`) ; `fiche_piece_jointe`, `fiche_lien`
+et `fiche_validation` survivent — le lien du premier dossier n'est jamais cassé, et
+`lot_dossier.id_fiche` ne devient jamais orphelin. Test figé : `TestDeuxDossiersMemeFiche`.

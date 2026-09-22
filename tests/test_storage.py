@@ -243,3 +243,53 @@ def test_live_minio_s3_integration(tmp_path: Path) -> None:
     presigned = client.get_presigned_url(key)
     assert "seamtech-integration-test" in presigned
     assert "X-Amz-Signature" in presigned or "Signature" in presigned
+
+
+def _client_minimal() -> S3StorageClient:
+    return S3StorageClient(
+        endpoint_url="http://localhost:9000",
+        bucket_name="seamtech-documents",
+        access_key_id="test",
+        secret_access_key="test",
+    )
+
+
+def test_storage_list_keys_pages_and_prefix() -> None:
+    """list_keys (rétention des sauvegardes, Lot H.1) : pagine, applique le
+    préfixe applicatif et renvoie les clés triées."""
+    client = _client_minimal()
+    client.prefix = "docs"
+    mock_boto = MagicMock()
+    paginateur = MagicMock()
+    paginateur.paginate.return_value = iter(
+        [
+            {"Contents": [{"Key": "docs/backups/b.dump"}, {"Key": "docs/backups/a.dump"}]},
+            {"Contents": [{"Key": "docs/backups/a.dump.manifest.json"}]},
+            {},  # page vide — ne doit ni casser ni inventer de clés
+        ]
+    )
+    mock_boto.get_paginator.return_value = paginateur
+    with patch.object(client, "_get_client", return_value=mock_boto):
+        cles = client.list_keys("backups/")
+    assert cles == [
+        "docs/backups/a.dump",
+        "docs/backups/a.dump.manifest.json",
+        "docs/backups/b.dump",
+    ]
+    mock_boto.get_paginator.assert_called_once_with("list_objects_v2")
+    paginateur.paginate.assert_called_once_with(Bucket="seamtech-documents", Prefix="docs/backups/")
+
+
+def test_storage_list_keys_failure_raises_storage_error() -> None:
+    """Un listing qui échoue doit lever StorageError — la rétention ne doit
+    jamais croire à tort que le bucket est vide."""
+    from seamtech_search.storage import StorageError
+
+    client = _client_minimal()
+    mock_boto = MagicMock()
+    paginateur = MagicMock()
+    paginateur.paginate.side_effect = RuntimeError("bucket injoignable")
+    mock_boto.get_paginator.return_value = paginateur
+    with patch.object(client, "_get_client", return_value=mock_boto):
+        with pytest.raises(StorageError, match="List failed"):
+            client.list_keys("backups/")

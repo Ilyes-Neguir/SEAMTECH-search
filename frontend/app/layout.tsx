@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from 'next'
 import './globals.css'
+import { Nav } from '@/components/nav'
 
 // Note: this intentionally does NOT use next/font/google. That fetches font
 // files from fonts.googleapis.com at *build* time, which breaks Docker/CI
@@ -30,7 +31,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className="antialiased font-sans">{children}</body>
+      <body className="antialiased font-sans">
+        <Nav />
+        {children}
+      </body>
     </html>
   )
 }

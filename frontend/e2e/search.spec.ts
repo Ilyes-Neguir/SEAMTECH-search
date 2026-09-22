@@ -5,6 +5,10 @@ test.describe("Search Workflow", () => {
   test("should search for documents and display results with preview", async ({ page }) => {
     await signIn(page)
 
+    // Lot E : la recherche fichiers de la Phase 0 vit sur /fichiers ;
+    // /recherche est désormais la recherche hybride des fiches techniques.
+    await page.goto("/fichiers")
+
     // Find search input and type query
     const searchInput = page.getByPlaceholder(/Search files, folders/i)
     await expect(searchInput).toBeVisible()

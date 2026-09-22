@@ -60,6 +60,8 @@ __all__ = [
     "DIMENSION_PATTERN",
     "UNIT_TO_MM",
     "ImportCancelledError",
+    "importer_dossier_complet",
+    "importer_lot_dossiers",
 ]
 
 
@@ -1565,3 +1567,42 @@ def retry_upload(index: SearchIndex, config: AppConfig, import_id: str) -> dict[
 
     update_import(index, import_id, payload.get("status", "needs_review"), payload)
     return payload
+
+
+# ---------------------------------------------------------------------------
+# Lot C — porte A : dossier complet (fiche + pièces) et lots historiques.
+#
+# Extension volontairement MINCE : la porte B (import unitaire ci-dessus,
+# Phase 0) reste inchangée ; la porte A délègue au moteur de fiches du Lot B
+# et à la couche de dépôt du Lot C. Un seul pipeline, trois portes (plan §9.1).
+# ---------------------------------------------------------------------------
+
+
+def importer_dossier_complet(
+    index: SearchIndex,
+    dossier: Path,
+    *,
+    gabarits: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Porte A : dépose un dossier complet (fiche PDF + pièces) → fiche en
+    ``a_valider``. Délègue à :func:`seamtech_search.fiches.depot.deposer_dossier`
+    (idempotence normcase + SHA-256, écriture entière ou pas du tout)."""
+    from .fiches.depot import deposer_dossier
+
+    return deposer_dossier(index, Path(dossier), gabarits=gabarits)
+
+
+def importer_lot_dossiers(
+    index: SearchIndex,
+    racine: Path,
+    *,
+    notes: str | None = None,
+    interrompre_apres: int | None = None,
+) -> dict[str, Any]:
+    """Porte A bis : crée et exécute un lot de dossiers (archive historique).
+    Délègue à :func:`seamtech_search.fiches.depot.creer_lot` +
+    :func:`seamtech_search.fiches.depot.executer_lot` (reprise = rappeler)."""
+    from .fiches.depot import creer_lot, executer_lot
+
+    id_lot = creer_lot(index, Path(racine), notes=notes)
+    return {"id_lot": id_lot, "etat": executer_lot(index, id_lot, interrompre_apres=interrompre_apres)}

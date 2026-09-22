@@ -15,6 +15,7 @@
     "clsx": "^2.1.1",
     "lucide-react": "^1.16.0",
     "next": "16.3.5",
+    "pdfjs-dist": "5.4.149",
     "react": "^19",
     "react-dom": "^19",
     "swr": "^2.5.1",
