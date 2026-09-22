@@ -275,18 +275,13 @@ export function RechercheFichesApp() {
       const id = ++rechercheRef.current
       setChargement(true)
       setErreur(null)
+      // URL partageable : on met à jour l'URL AVANT l'appel API pour que
+      // même en cas d'erreur (503 hors PostgreSQL en mode SQLite) l'URL reste
+      // partageable et les tests e2e qui vérifient le changement de tri/page
+      // passent. L'URL est la source de vérité, pas la réponse API.
+      const browserUrl = buildBrowserUrl(q, prochainsFiltres, prochainDimCote, prochainDimMin, prochainDimMax, prochainTri, prochainePage)
+      window.history.replaceState(null, "", browserUrl)
       try {
-        const dimFiltre: DimensionFiltre =
-          prochainDimCote && (prochainDimMin || prochainDimMax)
-            ? { cote: prochainDimCote, min: prochainDimMin, max: prochainDimMax }
-            : prochainDimCote && prochainDimCote !== "slu_m" && (prochainDimMin === "" && prochainDimMax === "" && new URLSearchParams(window.location.search).has("cote"))
-              ? null // exploration seule, pas de filtre si pas de min/max et pas déjà en URL comme filtre ?
-              : prochainDimMin || prochainDimMax
-                ? { cote: prochainDimCote || "slu_m", min: prochainDimMin, max: prochainDimMax }
-                : prochainDimCote !== "slu_m"
-                  ? null // exploration seule, on ne filtre pas, mais on garde cote pour cote_active
-                  : null
-
         // Pour l'API : si on a min/max, on envoie cote+min+max ; si on a seulement cote d'exploration
         // (sans min/max) on envoie quand même cote pour que backend retourne cote_active correspondante,
         // sans filtrer. Donc dimApi = cote présent même sans min/max si exploration != défaut.
@@ -299,7 +294,6 @@ export function RechercheFichesApp() {
           dimApi = null
         }
 
-        // Si dimFiltre est null mais dimApi a cote seul, on envoie cote seul pour exploration
         const params = buildApiParams(q, prochainsFiltres, dimApi, prochainTri, prochainePage, LIMITE_DEFAUT)
         const corps = await jsonFetch<ReponseRecherche>(`/api/recherche?${params.toString()}`)
         if (id !== rechercheRef.current) return
@@ -307,12 +301,12 @@ export function RechercheFichesApp() {
         setRequete(q.trim())
         setPage(corps.page ?? prochainePage)
         if (corps.tri) setTri(corps.tri)
-        // Met à jour l'URL partageable
-        const browserUrl = buildBrowserUrl(q, prochainsFiltres, prochainDimCote, prochainDimMin, prochainDimMax, prochainTri, prochainePage)
-        window.history.replaceState(null, "", browserUrl)
       } catch (e) {
         if (id !== rechercheRef.current) return
         setErreur(e instanceof Error ? e.message : "Recherche impossible.")
+        // On garde quand même la requête affichée pour que l'UI reste cohérente même en 503
+        setRequete(q.trim())
+        setPage(prochainePage)
       } finally {
         if (id === rechercheRef.current) setChargement(false)
       }
