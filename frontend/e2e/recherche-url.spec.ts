@@ -46,11 +46,18 @@ test.describe("Recherche URL partageable (Lot J)", () => {
     const url = page.url()
     const page2 = await page.context().newPage()
     await page2.goto("/login")
-    // sign in sur nouvel onglet
-    const pwd = process.env.SEAMTECH_UI_PASSWORD ?? "e2e-shared-password"
-    await page2.getByLabel("Password").fill(pwd)
-    await page2.getByRole("button", { name: "Sign in" }).click()
-    await page2.waitForURL(/\//, { timeout: 20000 })
+    // sign in sur nouvel onglet — mais le contexte partage les cookies, donc si déjà authentifié /login redirige vers /
+    // On tente de remplir seulement si le champ Password est visible
+    const pwdInput = page2.getByLabel("Password")
+    try {
+      await pwdInput.waitFor({ state: "visible", timeout: 3000 })
+      const pwd = process.env.SEAMTECH_UI_PASSWORD ?? "e2e-shared-password"
+      await pwdInput.fill(pwd)
+      await page2.getByRole("button", { name: "Sign in" }).click()
+      await page2.waitForURL(/\//, { timeout: 20000 })
+    } catch {
+      // déjà authentifié (redirection /) — on continue
+    }
     await page2.goto(url)
     await expect(page2.getByTestId("recherche-saisie")).toHaveValue("grand", { timeout: 10000 })
     await expect(page2.getByTestId("recherche-tri")).toHaveValue("date_desc", { timeout: 10000 })
