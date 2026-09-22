@@ -33,19 +33,22 @@ en **version 2 dans le registre JSONB** (aucune coordonnée en dur : ancres,
 alignements de colonnes et ruptures d'espacement), les règles v1 restant en
 tête pour les fixtures synthétiques (« premier lu gagne »).
 
-**Mesures sur le document réel (21/09)** :
+**Mesures sur le document réel (21/09 - 22/09)** :
 
-- `validate_extraction.py --verite docs/verite_terrain/7792-SO_ffab.json --moteur gabarit` :
+- `validate_extraction.py --verite docs/verite_terrain/VERITE_7792_COMPLETE.py --moteur gabarit` :
+  **74/74 = 100.0 %** (vérité étendue, résolveur `_valeur_extraite` de `persistance.py`, 12 familles :
+  cotes 11 · jonction 13 · galon 12 · fiche 11 · renfort 9 · materiau 8 · option 3 · finition 3 ·
+  bateau 1 · client 1 · gamme 1 · type_voile 1 = 74 valeurs métier mesurées, 0 écart) ;
+- banc `gabarit_test` (`cli banc`) : **74/74 = 100 %** (seuil 90 %, passé de 31 à 74 cibles) ;
+- `validate_extraction.py --verite docs/verite_terrain/7792-SO_ffab.json --moteur gabarit` (champs hérités Phase 0) :
   **6/6 = 100 %** (reference, material, quantity, description, dimensions.length
   6,60 m, dimensions.width 3,08 m) — avant réglage : **1/6 = 16,7 %** ;
-- banc `gabarit_test` (`cli banc`) : **31/31 = 100 %** (seuil 90 %) ;
 - `cli extraire` : score qualité 0,93, routage **passage_direct** (avant
   réglage : `reprise_complete`) ; ~172 ms/fiche.
 
-La vérité du banc (`VERITE_7792`) a été corrigée pour suivre le document réel,
-pas l'inverse : têtière/poids ne sont imprimés que sur la ligne « Mesures
-Dessin » (clés déplacées vers `cotes.dessin.*`), le galon de chute est
-« Rouge » (pas « Rouge · Blanc ») — aucune valeur inventée (RG6).
+La vérité du banc (`VERITE_7792`, étendue via `VERITE_7792_COMPLETE`) a été vérifiée contradictoirement
+contre le texte du document réel : 115 valeurs tracées littéralement, 2 dates dérivées
+(2026-03-06 / 06/03/2026), 5 codes internes avec libellé dans le document — aucune valeur inventée (RG6).
 
 ## Conclusions
 

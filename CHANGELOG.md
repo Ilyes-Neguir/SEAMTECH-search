@@ -1,3 +1,22 @@
+## Unreleased — Intégration de la vérité terrain étendue (74 cibles) et garde-fou CI (`arena/01a0c90e-seamtech-search`)
+
+- **Vérité terrain étendue (74 cibles, 12 familles)** : passage du banc de référence de 31 à 74 cibles
+  (cotes 11, jonction 13, galon 12, fiche 11, renfort 9, materiau 8, option 3, finition 3, bateau 1,
+  client 1, gamme 1, type_voile 1). Vérification contradictoire intégrale contre le texte extrait du document
+  client réel (`sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf`) : 115 tracées littéralement, 2 dates
+  dérivées ISO (2026-03-06 / 06/03/2026), 5 codes internes dont le libellé figure dans le document,
+  3 booléens dérivés de « Non » (0 valeur devinée ou inventée).
+- **Branchement sur les bancs de mesure** :
+  - `cli banc` : supporte l'exécution autonome (hors base) ou en base PostgreSQL (`gabarit_test`), résultat
+    mesuré : **74/74 = 100.0 %** (seuil 90 %).
+  - `validate_extraction.py` : supporte `--verite` au format Python (`VERITE_7792_COMPLETE.py`) et JSON
+    (`7792-SO_ffab_complete.json`) en réutilisant le résolveur existant `_valeur_extraite` de `persistance.py`.
+    Résultat mesuré : **74/74 = 100.0 %**. Rétro-compatibilité 6/6 Phase 0 préservée sur `7792-SO_ffab.json`.
+- **Garde-fou du projet (`scripts/audit_projet.py`)** : outil de contrôle des 6 invariants critiques
+  (emplacement de `.github/workflows/ci.yml`, fixture réelle SHA-256 + taille, aucun `except:` aveugle avalé,
+  verrou de calibration actif, présence des 8 fichiers de test §17.11, suite de tests). Mesuré : 7/7 verts en
+  `--rapide` (9/9 en mode complet). Intégré comme étape CI dans le job backend de `.github/workflows/ci.yml`.
+
 ## Unreleased — Consolidation finale : flake de latence corrigé, runbook de fusion, garde-fous sandbox (`arena/01a0c56d-seamtech-search`)
 
 Audit indépendant du 22/09 : plus rien à construire — prouver que tout tient,

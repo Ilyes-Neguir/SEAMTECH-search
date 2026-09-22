@@ -277,6 +277,11 @@ jobs:
         # bare scans the ambient environment, where sandbox tooling (Jupyter
         # stack → tornado) shows up as noise that the project never declares.
         run: pip-audit -r requirements.txt --desc
+      - name: Audit projet (garde-fou invariants)
+        # 6 contrôles d'invariants issus d'incidents réels (emplacement CI,
+        # fixture réelle, pas d'except aveugle, calibration, fichiers §17.11).
+        # Jamais comme substitut aux tests : exécuté après les suites pytest.
+        run: python3 scripts/audit_projet.py --rapide
       - name: Upload pytest logs
         # The job-log blob host (productionresultssa*.blob.core.windows.net) is
         # unreachable from some networks, which is how a failing step ended up

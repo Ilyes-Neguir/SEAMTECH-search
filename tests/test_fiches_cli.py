@@ -51,3 +51,11 @@ class TestExtraire:
 
         monkeypatch.setattr(cli, "_index", _interdit)
         assert cli.principal(["extraire", str(PDF_7792)]) == 0
+
+    def test_banc_autonome_74_cibles(self, capsys) -> None:
+        code_sortie = cli.principal(["banc", str(PDF_7792)])
+        assert code_sortie == 0
+        rapport = capsys.readouterr().out
+        assert "74/74" in rapport
+        assert "100.0%" in rapport
+        assert "CONFORME" in rapport

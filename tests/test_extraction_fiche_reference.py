@@ -38,6 +38,12 @@ class TestFiche7792Verite:
         taux, ecarts = evaluer_verite(fiche_7792, VERITE_7792)
         assert taux >= 0.90, f"taux {taux:.1%} < 90 % : {ecarts}"
 
+    def test_banc_etendu_74_cibles_100_pourcent(self, fiche_7792: FicheExtraite) -> None:
+        taux, ecarts = evaluer_verite(fiche_7792, VERITE_7792)
+        assert len(VERITE_7792) == 74, f"attendu 74 cibles, obtenu {len(VERITE_7792)}"
+        assert taux == 1.0, f"taux {taux:.1%} != 100 % : {ecarts}"
+        assert not ecarts
+
     def test_champs_structurels(self, fiche_7792: FicheExtraite) -> None:
         assert fiche_7792.code == "7792-SO"
         assert fiche_7792.titre == "Voile de portant"

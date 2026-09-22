@@ -18,7 +18,7 @@ le pull_request du même SHA est vert.
 
 | Affirmation | Commande | Sortie brute | Commit | Statut |
 |---|---|---|---|---|
-| Extraction de la vraie fiche 7792-SO : 6/6 critères `validate_extraction` | `pytest tests/test_validate_extraction_mesure.py -q` + `python scripts/validate_extraction.py sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf` | 6/6 (voir `docs/verite_terrain/EMPREINTES.md`) ; banc 31/31 champs | b49479d | ⚠️ démontré une fois (UNE fiche réelle) |
+| Extraction de la vraie fiche 7792-SO : 6/6 critères Phase 0, 74/74 vérité étendue | `pytest tests/test_validate_extraction_mesure.py -q` + `python scripts/validate_extraction.py sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf --verite docs/verite_terrain/VERITE_7792_COMPLETE.py --moteur gabarit` | 6/6 Phase 0 (voir `docs/verite_terrain/EMPREINTES.md`) ; banc étendu 74/74 champs (100 %) | b49479d → HEAD | ⚠️ démontré une fois (UNE fiche réelle) |
 | 48 champs réels affichés dans l'UI (comptages assertés par famille) | job e2e CI, `frontend/e2e/validation.spec.ts` | « 3 passed » runs 35666837231, 35715783739, 35716412346 | b49479d → 64e090c | ✅ établi (CI, rejoué) |
 | Le gabarit génois est une fixture SYNTHÉTIQUE | `sha256sum sample_data/CLIENT-GENOA/fiche-genois.pdf` | 3c073703e4a8… / 1 584 o | 4efe2adc (main) | ✅ établi (documenté noir sur blanc, jamais présenté comme réel) |
 

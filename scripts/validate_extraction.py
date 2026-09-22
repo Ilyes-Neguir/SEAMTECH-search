@@ -167,15 +167,33 @@ def _verifier_valeur_concrete(chemin_entree: str, champ: str, valeur: Any) -> No
 
 
 def charger_verite(chemin: Path) -> dict[str, dict[str, Any]]:
-    """Charge le JSON de vérité terrain et refuse un fichier incomplet.
+    """Charge le JSON ou fichier Python de vérité terrain et refuse un fichier incomplet.
 
     Contrôles (un rapport de calibration bâti sur une vérité partielle serait
     trompeur) : objet JSON non vide ; chaque entrée porte "attendu" ; chaque
     "attendu" contient AU MOINS UN champ attendu non null ; aucune valeur
     placeholder ("...", "à remplir", "todo", "?", …).
     """
-    with chemin.open("r", encoding="utf-8") as fichier:
-        donnees = json.load(fichier)
+    if str(chemin).endswith(".py"):
+        import importlib.util
+
+        spec_mod = importlib.util.spec_from_file_location("verite_module", chemin)
+        if spec_mod is None or spec_mod.loader is None:
+            raise ValueError(f"Impossible de charger le fichier Python de vérité : {chemin}")
+        mod = importlib.util.module_from_spec(spec_mod)
+        spec_mod.loader.exec_module(mod)
+        dict_verite = getattr(mod, "VERITE_7792_COMPLETE", None) or getattr(mod, "VERITE_7792", None)
+        if dict_verite is None:
+            raise ValueError(f"Le fichier {chemin} ne contient ni VERITE_7792_COMPLETE ni VERITE_7792.")
+        donnees = {
+            "fiche-7792-SO_ffab.pdf": {
+                "gabarit": "FICHE_PORTANT_V1",
+                "attendu": dict_verite,
+            }
+        }
+    else:
+        with chemin.open("r", encoding="utf-8") as fichier:
+            donnees = json.load(fichier)
     if not isinstance(donnees, dict) or not donnees:
         raise ValueError(
             f"Vérité terrain invalide : {chemin} doit être un objet JSON non vide "
@@ -211,7 +229,7 @@ def champ_suspect(data: Any, champ: str) -> bool:
 
 
 def comparer_champ_simple(champ: str, attendu: Any, lu: Any, suspect: bool) -> dict[str, Any]:
-    """Compare un champ scalaire (texte ou entier) et rend le verdict."""
+    """Compare un champ scalaire (texte, entier, booléen ou flottant) et rend le verdict."""
     if lu is None or (isinstance(lu, str) and not lu.strip()):
         return {
             "champ": champ,
@@ -220,7 +238,16 @@ def comparer_champ_simple(champ: str, attendu: Any, lu: Any, suspect: bool) -> d
             "lu": lu,
             "note": "aucune valeur lue par les motifs actuels",
         }
-    if champ == "quantity":
+    if isinstance(attendu, bool):
+        conforme = lu is attendu
+    elif isinstance(attendu, (int, float)):
+        conforme = (
+            lu is not None
+            and isinstance(lu, (int, float))
+            and not isinstance(lu, bool)
+            and abs(float(lu) - float(attendu)) <= max(0.005, abs(float(attendu)) * 0.01)
+        )
+    elif champ == "quantity":
         conforme = lu == attendu or str(lu).strip() == str(attendu).strip()
     else:
         conforme = normaliser_valeur(lu) == normaliser_valeur(attendu)
@@ -303,8 +330,11 @@ def comparer_dimensions(attendu: dict[str, Any], dimensions: Any, suspect: bool)
 
 def comparer_fiche(spec: dict[str, Any], data: Any) -> list[dict[str, Any]]:
     """Produit le verdict champ par champ pour une fiche extraite."""
+    from seamtech_search.fiches.persistance import _valeur_extraite
+
     attendu: dict[str, Any] = spec.get("attendu") or {}
     verdicts: list[dict[str, Any]] = []
+    fiche_extraite = getattr(data, "_fiche", None)
     for champ, valeur_attendue in attendu.items():
         suspect = champ_suspect(data, champ)
         if champ == "dimensions":
@@ -314,7 +344,7 @@ def comparer_fiche(spec: dict[str, Any], data: Any) -> list[dict[str, Any]]:
                         "champ": "dimensions",
                         "verdict": VERDICT_OK_ABSENCE,
                         "attendu": None,
-                        "lu": data.dimensions.model_dump(),
+                        "lu": data.dimensions.model_dump() if data.dimensions else None,
                         "note": "absence attendue confirmée",
                     }
                 )
@@ -322,7 +352,11 @@ def comparer_fiche(spec: dict[str, Any], data: Any) -> list[dict[str, Any]]:
                 verdicts.extend(comparer_dimensions(valeur_attendue, data.dimensions, suspect))
             continue
         if valeur_attendue is None:
-            lue = getattr(data, champ, None)
+            lue = None
+            if fiche_extraite is not None:
+                lue = _valeur_extraite(fiche_extraite, champ)
+            if lue is None:
+                lue = getattr(data, champ, None)
             present = lue is not None and (not isinstance(lue, str) or bool(lue.strip()))
             verdicts.append(
                 {
@@ -334,7 +368,14 @@ def comparer_fiche(spec: dict[str, Any], data: Any) -> list[dict[str, Any]]:
                 }
             )
             continue
-        verdicts.append(comparer_champ_simple(champ, valeur_attendue, getattr(data, champ, None), suspect))
+
+        lu = None
+        if fiche_extraite is not None:
+            lu = _valeur_extraite(fiche_extraite, champ)
+        if lu is None:
+            lu = getattr(data, champ, None)
+
+        verdicts.append(comparer_champ_simple(champ, valeur_attendue, lu, suspect))
     return verdicts
 
 
@@ -367,6 +408,8 @@ def extraire_via_gabarit(chemin: Path, config: Any) -> Any:
     (cibles provisoires du fichier de vérité, en attendant les cotes nommées
     du banc lot B). Le lot B lit en réalité bien plus (cotes nommées, galons,
     jonctions…) : c'est mesuré au banc gabarit_test (CLI ``banc``).
+    La fiche complète est attachée sur `_fiche` pour alimenter le résolveur
+    métier `_valeur_extraite` (vérité étendue à 74 cibles).
     """
     from seamtech_search.fiches.extraction import extraire_avec_filet
     from seamtech_search.fiches.gabarits import GABARITS_EMBARQUES
@@ -386,7 +429,7 @@ def extraire_via_gabarit(chemin: Path, config: Any) -> Any:
         avertissements.append("gabarit inconnu : valeurs conservées en mesures libres (RG6)")
     if fiche.mesures_libres:
         avertissements.append(f"{len(fiche.mesures_libres)} mesure(s) libre(s) conservée(s)")
-    return ExtractedData(
+    donnees = ExtractedData(
         reference=fiche.code,
         material=designation,
         quantity=fiche.quantite,
@@ -404,6 +447,8 @@ def extraire_via_gabarit(chemin: Path, config: Any) -> Any:
         confidence=fiche.score_qualite() or 0.0,
         warnings=avertissements,
     )
+    donnees._fiche = fiche
+    return donnees
 
 
 def mesurer_echantillon(
