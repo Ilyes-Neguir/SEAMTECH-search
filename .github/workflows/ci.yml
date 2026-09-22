@@ -124,11 +124,15 @@ jobs:
           # blob host unreachable and the artifact on the same blocked host.
           # errexit is disabled only around the command whose failure we handle
           # ourselves, and restored immediately after.
-          # Sélection « postgres and not perf » (audit du 22/09) : les mesures
-          # de latence (marqueur perf) sont évaluées dans l'étape dédiée SANS
-          # instrumentation qui suit, et nulle part ailleurs.
+          # Sélection « postgres and not perf and not sauvegarde » (audit du
+          # 22/09 + Lot H.1) : les mesures de latence (marqueur perf) sont
+          # évaluées dans l'étape dédiée SANS instrumentation qui suit ; les
+          # tests d'aller-retour sauvegarde exigeant un VRAI bucket S3
+          # (marqueur sauvegarde) sont exécutés par le job dédié `sauvegarde`
+          # avec MinIO réel — ici ils seraient sautés, et un saut fait
+          # échouer cette porte.
           set +e
-          pytest -m "postgres and not perf" -v -rf 2>&1 | tee /tmp/pg.log
+          pytest -m "postgres and not perf and not sauvegarde" -v -rf 2>&1 | tee /tmp/pg.log
           rc=${PIPESTATUS[0]}
           set -e
           if [ "$rc" -ne 0 ]; then
@@ -148,7 +152,7 @@ jobs:
             echo "::error title=postgres-tests-skipped::$skipped Postgres test(s) skipped even though SEAMTECH_TEST_DATABASE_URL is set"
             exit 1
           fi
-          echo "::notice title=suite-postgres::pytest -m \"postgres and not perf\" : passed=$passed skipped=$skipped"
+          echo "::notice title=suite-postgres::pytest -m \"postgres and not perf and not sauvegarde\" : passed=$passed skipped=$skipped"
       - name: Run latency criteria (perf — sans instrumentation, p50/p95/max publiés)
         # Une seule version de la matrice (audit du 22/09) : la latence ne
         # dépend pas de la version de Python ; exécuter l'étape 3 fois
@@ -706,4 +710,135 @@ jobs:
                   "du parcours machine complet de la vraie fiche n'a pas été produit."
               )
           print("::notice title=mesure-phase1::" + mesures[0]["description"])
+          PY
+
+  sauvegarde:
+    # Lot H.1 — ALLER-RETOUR ÉPROUVÉ : sauvegarde hors-site (MinIO réel),
+    # base RÉELLEMENT détruite (DROP DATABASE), puis reconstruite DEPUIS LE
+    # BUCKET SEUL. La preuve d'égalité est exécutée : comptes par table,
+    # VERSION_SCHEMA_METIER, recherche fonctionnelle, inventaire d'archive.
+    # La durée de restauration sur ~50 000 fiches est MESURÉE et publiée en
+    # ::notice (chiffre repris dans RUNBOOK_RESTAURATION.md).
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: seamtech
+          POSTGRES_PASSWORD: seamtech_test_password
+          POSTGRES_DB: seamtech_search_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      minio:
+        image: minio/minio
+        env:
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: minioadmin123
+        ports:
+          - 9000:9000
+        options: >-
+          --health-cmd "mc ready local"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      SEAMTECH_TEST_DATABASE_URL: postgresql://seamtech:seamtech_test_password@127.0.0.1:5432/seamtech_search_test
+      SEAMTECH_S3_ENDPOINT_URL: http://127.0.0.1:9000
+      SEAMTECH_S3_BUCKET: seamtech-backups
+      SEAMTECH_S3_ACCESS_KEY: minioadmin
+      SEAMTECH_S3_SECRET_KEY: minioadmin123
+      SEAMTECH_S3_PREFIX: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+      - name: Prepare config file (S3 env overrides apply on top)
+        run: cp config/config.example.json config/config.json
+      - name: Create the off-site backups bucket
+        run: |
+          python - << 'PY'
+          import boto3
+
+          client = boto3.client(
+              "s3",
+              endpoint_url="http://127.0.0.1:9000",
+              aws_access_key_id="minioadmin",
+              aws_secret_access_key="minioadmin123",
+          )
+          client.create_bucket(Bucket="seamtech-backups")
+          print("bucket seamtech-backups créé")
+          PY
+      - name: Run the backup round-trip suite (sauver → détruire → restaurer)
+        env:
+          SEAMTECH_SAUVEGARDE_JSON: sauvegarde-mesures.jsonl
+        run: |
+          python -m pytest tests/test_sauvegarde_unites.py tests/test_sauvegarde_restauration.py \
+            -m "postgres or sauvegarde" -v --junitxml=sauvegarde-junit.xml
+      - name: GARDE-FOU — every round-trip test ran, none skipped
+        run: |
+          python - << 'PY'
+          import xml.etree.ElementTree as ET
+
+          racine = ET.parse("sauvegarde-junit.xml").getroot()
+          testsuite = racine if racine.tag == "testsuite" else racine.find("testsuite")
+          passes = int(testsuite.get("tests", 0)) - int(testsuite.get("failures", 0)) - int(testsuite.get("errors", 0)) - int(testsuite.get("skipped", 0))
+          sautes = int(testsuite.get("skipped", 0))
+          echecs = int(testsuite.get("failures", 0)) + int(testsuite.get("errors", 0))
+          print(f"sauvegarde : {passes} passés, {sautes} sautés, {echecs} échecs")
+          # Attendu : 12 tests unitaires + 7 tests d'aller-retour réel.
+          # Un test sauté ici signifierait que l'épreuve hors-site ne s'est PAS
+          # exécutée contre MinIO — la porte doit échouer, pas verdir en silence.
+          if echecs or sautes or passes < 19:
+              raise SystemExit(
+                  "GARDE-FOU sauvegarde : attendu ≥ 19 tests passés, 0 sautés, 0 échecs — "
+                  f"mesuré {passes} passés, {sautes} sautés, {echecs} échecs. "
+                  "L'aller-retour sauvegarde → destruction → restauration doit être "
+                  "prouvé par exécution, jamais sauté."
+              )
+          PY
+      - name: Publish measured durations (runbook figures)
+        env:
+          SEAMTECH_SAUVEGARDE_JSON: sauvegarde-mesures.jsonl
+        run: |
+          python - << 'PY'
+          import json
+          import pathlib
+
+          chemin = pathlib.Path("sauvegarde-mesures.jsonl")
+          if not chemin.exists() or not chemin.read_text(encoding="utf-8").strip():
+              raise SystemExit(
+                  "GARDE-FOU sauvegarde : aucune mesure publiée — la restauration "
+                  "n'a pas été exécutée jusqu'au bout."
+              )
+          lignes = [json.loads(brut) for brut in chemin.read_text(encoding="utf-8").splitlines()]
+          if not any(l.get("scenario") == "50k_fiches" for l in lignes):
+              raise SystemExit("GARDE-FOU sauvegarde : la mesure 50 000 fiches est absente.")
+          for ligne in lignes:
+              if ligne.get("scenario") == "50k_fiches":
+                  print(
+                      f"::notice title=sauvegarde-restauration-50k::"
+                      f"restauration de {ligne['nb_fiches']} fiches en {ligne['duree_s']} s "
+                      f"(dump {ligne['dump_octets']} octets) — chiffre publié dans RUNBOOK_RESTAURATION.md"
+                  )
+              elif ligne.get("operation") == "restaurer" and ligne.get("base"):
+                  print(
+                      f"::notice title=sauvegarde-restauration::{ligne['base']} restaurée en "
+                      f"{ligne['duree_s']} s ({ligne.get('fiches', '?')} fiches)"
+                  )
+              elif ligne.get("operation") == "sauver":
+                  print(
+                      f"::notice title=sauvegarde-envoi::dump {ligne['dump_octets']} octets en "
+                      f"{ligne['duree_s']} s, archive {ligne['archive_fichiers']} fichiers, "
+                      f"vérifié après envoi : {ligne['verifiee_apres_envoi']}"
+                  )
           PY

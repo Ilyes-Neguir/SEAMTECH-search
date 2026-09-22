@@ -43,6 +43,13 @@ le pull_request du même SHA est vert.
 | Le bruit de queue des runners existe AUSSI sans instrumentation — seuil d'environnement CI étiqueté + dérive visible | run push 35720563422 (perf sans --cov) | p50 = 6,6 ms mais p95 = 180,0 ms, max = 341,3 ms (jeu 50) ; même SHA vert en pull_request. Correctif : `SEAMTECH_PERF_P95_CI_MS=250` en CI, ÉTIQUETÉ, justifié par cette mesure ; critère PRODUIT p95 < 100 ms (défaut local/production), p50 < 100 ms sans tolérance ; `::warning perf-derive` si p95 > 50 ms ou > 10 × p50 (sans échouer) | consolidation 22/09 | ✅ établi |
 | L'estimateur p95 est un vrai percentile (n ≥ 50 partout) ; étape perf sur une seule version de matrice | run push 35724366193 | 3 notices (job 3.12 seul, 0 notice sur 3.11/3.13) : 1 500 fiches p95 = 46,2 ms (n=60), jeu 50 p95 = 9,1 ms (n=50), fonds réel p95 = 8,3 ms (n=65) — tous < 100 ms ; avant le correctif, n=12/13 désignait le « deuxième pire » échantillon (run vert 35721947520 : p95 = 40,3 mais max = 111,2 ms) | f3de9c9 | ✅ établi |
 
+## Sauvegarde hors-site et restauration (Lot H.1)
+
+| Affirmation | Commande | Sortie brute | Commit | Statut |
+|---|---|---|---|---|
+| Base détruite reconstruite à l'identique (comptes par table, VERSION_SCHEMA_METIER, recherche, inventaire archive) | job CI `sauvegarde` : `pytest -m "postgres or sauvegarde"` sur PostgreSQL réel + MinIO réel, garde-fou 19 passés / 0 sautés | en attente du run CI | à venir | ❌ NON PROUVÉ tant que le run CI n'est pas vert — jamais « sauvegarde configurée » à la place de « aller-retour prouvé » |
+| Durée de restauration ~50 000 fiches mesurée et publiée | annotation `::notice title=sauvegarde-restauration-50k` du job CI `sauvegarde` | en attente du run CI | à venir | ❌ NON MESURÉ en CI (mesure sandbox 0,82 s publiée au runbook comme ordre de grandeur seulement) |
+
 ## Chrono « validation < 2 minutes » (Phase 1)
 
 | Affirmation | Commande | Sortie brute | Commit | Statut |

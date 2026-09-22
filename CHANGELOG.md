@@ -1,3 +1,62 @@
+## Unreleased — Lot H.1 « poste prêt » : sauvegarde hors-site éprouvée, mise en service, recette humaine, exploitation (`arena/01a0c56d-seamtech-search`)
+
+Le poste doit être prêt : sauvegarde qui a été détruite puis reconstruite
+(prouvé), mise en service en un chemin, recette humaine exécutable sans le
+développeur, minimum d'exploitation.
+
+- **Sauvegarde hors-site avec restauration RÉELLEMENT testée** : nouveau
+  module portable `python -m seamtech_search.sauvegarde`
+  (`sauver`/`restaurer`/`verifier`) — pg_dump -Fc, découverte des binaires
+  (PATH / SEAMTECH_PG_BINDIR / /usr/lib/postgresql/*/bin / pgserver),
+  manifeste complet (date, taille et sha256 du dump, VERSION_SCHEMA_METIER,
+  comptes par table, fiches par statut, nb documents, commit), envoi via le
+  client S3 existant avec RE-LECTURE du dump depuis le bucket et comparaison
+  d'empreinte après chaque envoi, rétention N paramétrable qui ne purge
+  JAMAIS la dernière. L'archive n'est jamais copiée ni modifiée (RG13) : son
+  ÉTAT (chemins + tailles + sha256) est enregistré dans le manifeste, et
+  `verifier` signale tout fichier PERDU, ALTÉRÉ ou ajouté. La restauration
+  refuse une base cible existante et vérifie l'empreinte AVANT toute
+  écriture. Les scripts PowerShell existants restent en place comme repli
+  documenté (non testés depuis ce sandbox Linux — dit explicitement dans
+  MISE_EN_SERVICE.md §4).
+- **Aller-retour PROUVÉ par exécution** : tests
+  `tests/test_sauvegarde_restauration.py` (marqueurs `postgres`/`sauvegarde`)
+  — base semée → sauvegarde → copies locales supprimées → base DROPée →
+  restauration DEPUIS LE BUCKET SEUL → comptes par table identiques,
+  VERSION_SCHEMA_METIER présente, recherche renvoyant la même fiche,
+  inventaire d'archive comparé ; plus les refus (dump altéré, base
+  existante), la détection d'archive altérée, et la preuve CLI exécutée
+  telle quelle (subprocess). Durée de restauration ~50 000 fiches mesurée et
+  publiée en JSONL (SEAMTECH_SAUVEGARDE_JSON). Nouveau job CI dédié
+  `sauvegarde` (PostgreSQL service + MinIO RÉEL via `minio/minio`, bucket
+  créé, client réel) avec garde-fous : ≥ 19 tests passés, 0 sauté, 0 échec ;
+  mesures publiées en `::notice` (dont la durée 50 000 fiches reprise au
+  runbook). La sélection du job backend devient
+  `postgres and not perf and not sauvegarde` (l'épreuve hors-site exige un
+  vrai bucket — elle vit dans son job, jamais sautée en silence).
+- **Mise en service + décision matériel** : docs/verite_terrain/
+  MISE_EN_SERVICE.md (UN chemin validé : docker compose, rejoué en CI par le
+  job integration ; Windows = checklist non testée à exécuter par le
+  commanditaire) ; DECISION_MATERIEL.md (options A/B/C chiffrées, décision au
+  commanditaire, chiffres non mesurés écrits « non mesuré »).
+- **Recette humaine prête à exécuter** : docs/verite_terrain/RECETTE_HUMAINE.md
+  — jeu de 3 fiches du dépôt (7792-SO / GENOA champs incertains / 123) +
+  doublon de code par redépôt + cote à corriger (RG11), fiche imprimable en
+  6 étapes avec tableau de mesure ; remplit le tableau vide de
+  MESURE_VALIDATION_2MIN.md sans le développeur.
+- **Minimum d'exploitation** : rotation des journaux bornée dans
+  docker-compose.yml (json-file 10 Mo × 5, les 5 services) ; garde-fou disque
+  existant vérifié et documenté (SEAMTECH_MIN_FREE_BYTES → 507, testé dans
+  tests/test_chaos.py) ; RUNBOOK_RESTAURATION.md (commandes exactes, sorties
+  attendues, tableau « si ça ne correspond pas », durées mesurées) ;
+  QUE_FAIRE_SI.md (service tombé, base muette, disque plein, recherche vide,
+  fiche bloquée a_valider, R2 muet) ; contrôle quotidien en une commande.
+- **Couverture** : `S3StorageClient.list_keys` (rétention) + 2 tests mockés
+  (`test_storage.py`) — storage.py reste au-dessus de sa porte de 97 %.
+- Portes locales au commit : `-m "not postgres"` 501/3 ;
+  `postgres and not perf and not sauvegarde` 118/1 (le 1 sauté = poids e5,
+  fourni en CI) ; perf 3/0 ; porte de couverture rc=0 ; ruff propre.
+
 ## Unreleased — Consolidation finale : flake de latence corrigé, runbook de fusion, garde-fous sandbox (`arena/01a0c56d-seamtech-search`)
 
 Audit indépendant du 22/09 : plus rien à construire — prouver que tout tient,
