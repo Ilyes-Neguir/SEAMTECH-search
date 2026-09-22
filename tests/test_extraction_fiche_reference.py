@@ -202,6 +202,7 @@ class TestAntiDeriveVerite:
     def test_garde_derive_json_7792_complete(self) -> None:
         import json
         from pathlib import Path
+
         from seamtech_search.fiches.verite_7792 import VERITE_7792
 
         chemin_json = Path(__file__).resolve().parent.parent / "docs/verite_terrain/7792-SO_ffab_complete.json"
