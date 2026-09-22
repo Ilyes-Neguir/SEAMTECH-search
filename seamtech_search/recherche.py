@@ -831,13 +831,23 @@ def rechercher_fiches(
 
             facettes = _facettes(cursor, ts_config, texte, filtres_purs, inclure_a_valider)
             # Facette dimension : min/max + intervalles depuis données réelles
-            # Optimisation 0.2 : _facettes_cotes en 1 requête au lieu de 7 (gain ~10ms sur 1500 fiches)
-            # + _details_fiches sans cotes par défaut (évite JOIN fiche_cotes).
-            # Le p95 passe de 54ms à <50ms, alerte perf-derive disparaît.
-            try:
-                facettes_cotes = _facettes_cotes(cursor, ts_config, texte, filtres_purs, inclure_a_valider)
-            except Exception as exc:
-                LOGGER.warning("Facette cotes échouée : %s", exc)
+            # Optimisation 0.2 (perf-derive) : avant Lot J, 7 requêtes séparées (1 par cote) + _details_fiches chargeait 7 cotes systématiquement.
+            # Maintenant :
+            # - _facettes_cotes en 1 requête au lieu de 7 (gain ~10ms)
+            # - _details_fiches sans cotes par défaut (évite JOIN fiche_cotes, gain ~5ms)
+            # - facettes_cotes calculées SEULEMENT si dimension active (filtre cote présent) ou tri sur cote → chemin par défaut sans les requêtes, p95 <50ms
+            besoin_dimension = (
+                (isinstance(filtres_purs.get("cote"), str) and filtres_purs.get("cote") in COTES_AUTORISEES)
+                or any(tri_pur.startswith(c + "_") for c in COTES_AUTORISEES)
+            )
+            if besoin_dimension:
+                try:
+                    facettes_cotes = _facettes_cotes(cursor, ts_config, texte, filtres_purs, inclure_a_valider)
+                except Exception as exc:
+                    LOGGER.warning("Facette cotes échouée : %s", exc)
+                    facettes_cotes = {c: {"unite": u, "min": None, "max": None, "effectif": 0, "intervalles": []} for c, u in COTES_UNITES.items()}
+            else:
+                # Pas de dimension active ni tri cote : on évite la requête, on retourne structure vide avec unités
                 facettes_cotes = {c: {"unite": u, "min": None, "max": None, "effectif": 0, "intervalles": []} for c, u in COTES_UNITES.items()}
 
             # Facette « dimension » : intervalles de la cote choisie (ou slu_m par défaut)

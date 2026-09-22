@@ -71,7 +71,9 @@ def test_dimension_facettes_et_intervalles(base_recherche: dict[str, Any]) -> No
     index = base_recherche["index"]
     _semer_cotes(index, base_recherche["fiches"])
 
-    reponse = rechercher_fiches(index, requete="", limit=100)
+    # Optimisation 0.2 : facettes_cotes calculées seulement si dimension active (filtre cote présent) ou tri cote.
+    # Pour tester intervalles, on active dimension via filtre cote.
+    reponse = rechercher_fiches(index, requete="", filtres={"cote": "slu_m"}, limit=100)
     assert "facettes_cotes" in reponse
     fc = reponse["facettes_cotes"]
     # 7 cotes explicites
@@ -95,7 +97,7 @@ def test_dimension_facettes_et_intervalles(base_recherche: dict[str, Any]) -> No
     for iv in slu["intervalles"]:
         assert "min" in iv and "max" in iv and "effectif" in iv and "label" in iv
 
-    # cote_active défaut slu_m
+    # cote_active défaut slu_m ou celle filtrée
     assert reponse["cote_active"] == "slu_m"
     assert "dimension" in reponse["facettes"]
     # facettes["dimension"] = intervalles de cote_active
@@ -108,6 +110,13 @@ def test_dimension_facettes_et_intervalles(base_recherche: dict[str, Any]) -> No
     fc_filtree = reponse_filtree["facettes_cotes"]
     # Les cotes autres que filtrée gardent leur effectif, mais slu_m aussi (sans son propre filtre)
     assert fc_filtree["slu_m"]["effectif"] == fc["slu_m"]["effectif"]
+
+    # Sans dimension active, facettes_cotes vide (optimisation perf 0.2)
+    reponse_sans_dim = rechercher_fiches(index, requete="", limit=100)
+    fc_sans = reponse_sans_dim["facettes_cotes"]
+    for cote in ("slu_m", "sle_m", "sf_m", "shw_m", "spa_m2", "tetiere_cm", "poids_kg"):
+        assert cote in fc_sans
+        assert "unite" in fc_sans[cote]
 
 
 def test_tri_et_pagination(base_recherche: dict[str, Any]) -> None:
