@@ -22,7 +22,14 @@ rendre la fusion sûre, corriger le dernier défaut réel, nettoyer.
   ÉTIQUETÉ dans chaque ::notice, justifié par la mesure ci-dessus, JAMAIS
   appliqué en local/production où le critère produit p95 < 100 ms s'applique
   tel quel ; le p50 < 100 ms (critère d'architecture) reste asserté sans
-  aucune tolérance.
+  aucune tolérance. Durcissements de la mesure (audit du même soir) :
+  l'estimateur p95 était le « deuxième pire » échantillon à n = 12/13 —
+  5 passages mesurés amènent n = 60/65 ; le plafond anti-flake n'aveugle
+  plus la porte (`::warning perf-derive` si p95 > 50 ms ou > 10 × p50) ;
+  l'étape perf ne tourne que sur Python 3.12 (3 notices au lieu de 9,
+  risque de flake divisé par 3). Preuve : run PUSH 35724366193 vert —
+  p95 = 46,2 (n=60) / 9,1 (n=50) / 8,3 ms (n=65), tous sous le critère
+  produit ; intégration 113/0.
   Inventaire des assertions de temps : les trois p95 sortent
   du contexte instrumenté (marqueur perf) ; `test_reindex_skip.py` (< 4 s,
   timeout d'extraction) et `test_lot_ingestion.py` (< 24 h extrapolé) RESTENT
