@@ -45,6 +45,34 @@ La recherche « comme Google » des fiches validées. La route Phase 0 `GET /sea
 
 Aucune de ces routes n'écrit de fiche : elles lisent, détectent et publient des gabarits.
 
+## Assistant sourcé (Lot I, plan v3.0 §11 / Phase 4)
+
+Questions en français, réponses **EXTRACTIF** construites depuis la base
+(aucun LLM génératif, aucun torch, aucun modèle téléchargé — décision
+matérielle actée) : chaque valeur affirmée porte une citation vérifiable ;
+sans source, l'assistant refuse explicitement.
+
+| Route | Rôle |
+|---|---|
+| `POST /assistant` | Corps JSON : `{"question": str (1..500), "inclure_a_valider": bool=false}`. Réponse : `{question, etat, reponse, citations:[{code_fiche, champ, libelle, table_cible, colonne_cible, valeur, valeur_normalisee, page, zone, lien}], interpretations:[{lecture, reponse, citations}], pistes:[str], duree_ms}`. États : `ok` (réponse + ≥ 1 citation), `ambigu` (lectures listées, chacune sourcée), `sans_source` (refus explicite, citations vides), `occupe` (une analyse à la fois — poste mono-cœur), `indisponible` (503, hors PostgreSQL). `lien` pointe `/dossier/<code>?champ=<champ>` : l'écran Fiche surligne la zone PDF de la citation. |
+| `GET /assistant/etat` | `{etat: ok|occupe, postgres: bool}` — disponibilité pour le panneau. |
+
+**Comportements** :
+
+- **Aucune réponse sans citation** : une valeur n'est rendue que si elle est
+  lue dans `fiche*`/référentiels ; le refus (« je ne trouve pas dans les
+  fiches ») n'affirme rien et propose au besoin des pistes de requête
+  (clairement étiquetées « pas des réponses »).
+- **Champ « non applicable » (RG5)** : une valeur consignée `~`/« non
+  applicable » est rendue comme telle (sans objet), jamais convertie en
+  chiffre.
+- **Comptages** : chaque fiche comptée est citée ; un comptage à zéro est dit
+  tel quel (aucune valeur affirmée).
+- **Journal « comme les recherches »** : chaque question est écrite dans
+  `recherche_log` (`filtres->>'canal' = 'assistant'`, `nb_resultats` = nombre
+  de citations) — mesure de l'usage réel.
+- **Sans PostgreSQL** : 503 `{"etat": "indisponible"}` (décision §17.1).
+
 ## Traçabilité
 
 | Route | Rôle |

@@ -128,3 +128,19 @@ Livraison sur **arena/01a0c9eb-seamtech-search** imposée par la session, pas
 sur la base ; aucune PR créée/fermée, aucune fusion distante. CI du nouveau
 SHA : voir le rapport de livraison, **NON PROUVÉE tant que ses huit jobs ne
 sont pas terminés avec success**. Revalider toute tête différente de fc4f99e.
+
+## Assistant sourcé (Lot I — 22/09/2026, `arena/01a0ca1a-seamtech-search`)
+
+| Affirmation | Commande | Sortie brute | Commit | Statut |
+|---|---|---|---|---|
+| Le jeu des 8 questions répond comme attendu (6 sourcées, 1 refus, 1 ambigu qualifié) | `SEAMTECH_TEST_DATABASE_URL=… python scripts/mesure_assistant.py` | 8 réponses rendues dans `RAPPORT_20260922_LOT_I.md` (Q1 6,60 m zone PDF ; Q2 Spi Asymétrique ; Q3 1 fiche ; Q4 3 fiches ; Q5 Nylon ; Q6 refus 0 citation ; Q7 3 interprétations sourcées ; Q8 « ~ » sans objet) | 1d5df21 → HEAD | ✅ établi (local, re-jouable ; CI à confirmer sur la PR) |
+| Taux de réponses sourcées = 100 % des réponses effectives | idem + `pytest tests/test_assistant_postgres.py::test_invariant_reponses_sourcees_100_pourcent` | 7/7 = 100 % ; invariant asserté en test | 1d5df21 → HEAD | ✅ établi |
+| Latence assistant p50/p95 sur les 8 questions, n étiqueté | `scripts/mesure_assistant.py` (1 échauffement + 10 passages/question) | direct n=80 : p50 = 1,79 ms, p95 = 2,21 ms, max = 2,45 ms ; HTTP n=80 : p50 = 6,31 ms, p95 = 7,66 ms, max = 8,96 ms (sandbox 22/09) | 1d5df21 → HEAD | ⚠️ démontré une fois par environnement (CI publie les siens en ::notice) |
+| LE REFUS est prouvé par un test automatisé, montré rouge puis vert | `pytest tests/test_assistant.py::test_refus_base_vide_n_invente_rien` | VERT 1 passed ; puis repli « plausible » introduit volontairement → ROUGE (« valeur plausible inventée … 6,55 m ») ; retiré → VERT (sorties brutes dans le rapport) | 1d5df21 → HEAD | ✅ établi |
+| Champ « non applicable » dit sans objet, jamais chiffré (RG5) | `pytest tests/test_assistant_postgres.py::test_q8_non_applicable_rg5` | « consigné « ~ » dans la fiche — sans objet (non applicable) » + citation zone PDF | 1d5df21 → HEAD | ✅ établi |
+| RG13 : aucune écriture dans l'archive | `scripts/mesure_assistant.py` (SHA-256 arbre sample_data avant/après) | `12e053f72f157decc68fd2ae2c4362a7d43d816066d87e03f16b1f99f6cde0ca` = `12e053f…` (IDENTIQUE) | 1d5df21 → HEAD | ✅ établi |
+| RG14 : aucun appel réseau sortant | `sudo unshare -n python scripts/mesure_assistant.py --dans-namespace` (interfaces = lo seul, connexion sortante → Network is unreachable) | 8/8 réponses identiques sans réseau ; direct p50 = 2,05 ms / p95 = 3,16 ms (n=80) | 1d5df21 → HEAD | ✅ établi (namespace vide vérifié dans le script) |
+| Journalisation « comme les recherches » | `pytest tests/test_assistant_postgres.py::test_journalisation_comme_recherches` | 8 lignes `recherche_log` `filtres->>'canal'='assistant'`, nb_resultats = citations | 1d5df21 → HEAD | ✅ établi |
+| Pas de régression : suites existantes restent vertes + nouveaux tests | `pytest -q -m "not postgres"` → 532 passed, 3 skipped (510 d'avant + 22) ; `-m "postgres and not perf and not sauvegarde"` → 125 passed, 1 skipped (e5, env) ; `-m perf` → 4 passed | sorties brutes dans le rapport | 1d5df21 → HEAD | ✅ établi (local ; CI à confirmer) |
+| Seuils tenus (audit 12/12, couverture, ruff, pip-audit) | `python scripts/audit_projet.py --rapide` ; `ruff check .` ; `pip-audit -r requirements.txt` ; `python scripts/coverage_gate.py coverage.json` | 12/12 ; All checks passed ; No known vulnerabilities ; « Coverage gate passed » (assistant.py 91,4 %) | 1d5df21 → HEAD | ✅ établi |
+| CI 8 jobs verte sur la branche | `gh run list --branch arena/01a0ca1a-seamtech-search` | à relever après push — NON PROUVÉ tant que les jobs ne sont pas `success` | (push) | ❌ non mesuré au moment du rapport (PR ouverte, run en cours) |

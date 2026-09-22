@@ -1,3 +1,59 @@
+## Unreleased — Lot I « assistant sourcé » : réponses extractives avec citations vérifiables, refus sans invention (`arena/01a0ca1a-seamtech-search`)
+
+La dernière fonctionnalité promise au commanditaire (plan v3.0 §11, Phase 4) :
+une **question en français → une réponse courte EXTRACTIVE + une liste de
+citations vérifiables + un état**. Décision matérielle respectée à la lettre :
+AUCUN LLM génératif, AUCUN torch, AUCUN modèle téléchargé — l'assistant lit la
+base existante (tables `fiche*`, référentiels, `fiche_champ_extrait`) et la
+recherche déjà livrée. Si l'information n'est pas dans la base, il refuse
+(« je ne trouve pas dans les fiches ») et propose des pistes — jamais une
+valeur inventée, jamais une réponse plausible non sourcée.
+
+- **`POST /assistant`** (+ `GET /assistant/etat`) : contrat JSON
+  `{etat: ok|ambigu|sans_source|occupe|indisponible, reponse, citations,
+  interpretations, pistes, duree_ms}` ; 503 hors PostgreSQL (§17.1) ; une
+  analyse à la fois (poste mono-cœur) avec état « occupé » observable ;
+  métriques `assistant_requests` / `assistant_sans_source`.
+- **Citations vérifiables** : code de fiche + champ (clé `fiche_champ_extrait`)
+  + table/colonne + valeur + page et ZONE PDF quand la trace réelle existe —
+  le lien `/dossier/<code>?champ=<champ>` ouvre l'écran Fiche et surligne la
+  zone dans la visionneuse (lien profond ajouté à `fiche-app.tsx`).
+- **Panneau intégré à l'écran Recherche** (`assistant-panneau.tsx` + proxy
+  `/api/assistant`) : question, réponse, citations cliquables, états
+  indisponible/occupé affichés clairement ; les 6 écrans existants inchangés
+  (build + tsc verts).
+- **Compréhension déterministe** (regex + dictionnaires, zéro modèle) :
+  cotes par fiche, intervalles de cotes (jeu par défaut « mesures finies »,
+  étiqueté), voiles par bateau, comptages par type/année (critère affiché,
+  chaque fiche comptée citée), galons, matière ambigue → lectures listées
+  chacune sourcée, surplus « ~ » rendu comme SANS OBJET (RG5, jamais
+  chiffré), options consignées, champs de tête par code, refus par défaut.
+- **Journal « comme les recherches »** : chaque question écrite dans
+  `recherche_log` avec `filtres->>'canal' = 'assistant'`,
+  `nb_resultats` = nombre de citations, durée — la matière première de la
+  mesure d'usage réel. Aucune nouvelle table, aucune écriture d'archive
+  (RG13), aucun appel réseau (RG14).
+- **Le garde du refus, montré rouge puis vert** : sur base vide simulée, les
+  8 questions ne peuvent produire aucune valeur (`test_refus_base_vide_n_invente_rien`,
+  motifs valeur-interdite refusés sauf écho des bornes de la question) ;
+  démonstration dans le rapport — repli « plausible » introduit volontairement
+  → test ROUGE (« valeur plausible inventée ») ; retiré → VERT.
+- **Mesures (§17.13)** : jeu des 8 questions du commanditaire sur base semée
+  (corpus Lot E synthétique étiqueté + VRAIE fiche 7792-SO par le pipeline
+  réglé) — réponses rendues dans
+  `docs/verite_terrain/RAPPORT_20260922_LOT_I.md` ; p50/p95 mesurés
+  (`scripts/mesure_assistant.py` + `test_perf_assistant_jeu_8`, marqueur
+  `perf`, publication ::notice CI) : n = 80 par mode, direct p50 = 1,79 ms /
+  p95 = 2,21 ms, HTTP p50 = 6,31 ms / p95 = 7,66 ms ; taux de réponses
+  sourcées = 7/7 réponses effectives = **100 %** ; RG14 prouvé en namespace
+  sans réseau (`unshare -n`, interfaces = lo seul, connexion sortante
+  impossible) : réponses identiques.
+- **Aucune nouvelle dépendance** (runtime comme dev) ; `pip-audit` et
+  `pnpm audit --prod` verts ; `ruff` propre ; suites : 532/3 sans PostgreSQL
+  (510 d'avant + 22 nouvelles), 146 passés + 4 perf avec PostgreSQL ;
+  `scripts/audit_projet.py --rapide` 12/12 ; seuils de couverture tenus
+  (assistant.py 91,4 %).
+
 ## Unreleased — Intégration de la vérité terrain étendue (74 cibles) et garde-fou CI (`arena/01a0c90e-seamtech-search`)
 
 - **Vérité terrain étendue (74 cibles, 12 familles)** : passage du banc de référence de 31 à 74 cibles
