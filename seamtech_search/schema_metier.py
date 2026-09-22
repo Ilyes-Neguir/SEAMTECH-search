@@ -73,6 +73,8 @@ TABLES_METIER: tuple[str, ...] = (
     "lot_import",
     "lot_dossier",
     "fiche_piece_jointe",
+    # 015 — Lot K : brouillons gabarits
+    "gabarit_brouillon",
 )
 
 SQL_006_FICHE_TECHNIQUE = """
