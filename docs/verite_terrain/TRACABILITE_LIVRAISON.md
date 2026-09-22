@@ -40,6 +40,7 @@ le pull_request du même SHA est vert.
 | p95 recherche vecteurs actifs : repli 9,1→9,4 ms / e5 réel 13,1→27,7 ms | mesures de l'audit indépendant du 22/09 (poids e5 hors de ce sandbox) | publiées CHANGELOG §Lot F, deux colonnes | 5b2df7d | ⚠️ démontré une fois (environnement d'audit) |
 | Coût embeddings : repli 0,6 ms/fiche / e5 réel 12,67 ms/fiche (78,9 fiches/s) | idem | idem | 5b2df7d | ⚠️ démontré une fois (audit) |
 | Le flake de latence sous --cov est corrigé (p95 = 108,8 ms, run push 35715779367) | étape couverture `-k "not s3" -m "not perf"` | porte de couverture verte sans perf (locale 22/09 : 590/3) ; à confirmer par 2 runs CI dont un push | consolidation 22/09 | ⚠️ démontré localement, preuve CI en cours |
+| Le bruit de queue des runners existe AUSSI sans instrumentation — seuil d'environnement CI étiqueté | run push 35720563422 (perf sans --cov) | p50 = 6,6 ms mais p95 = 180,0 ms, max = 341,3 ms (jeu 50) ; même SHA vert en pull_request. Correctif : `SEAMTECH_PERF_P95_CI_MS=250` en CI, ÉTIQUETÉ dans les ::notice et justifié par cette mesure ; le critère PRODUIT reste p95 < 100 ms (défaut local/production) et le p50 < 100 ms est asserté sans tolérance | consolidation 22/09 | ✅ établi (mesure du bruit publiée, seuil étiqueté) |
 
 ## Chrono « validation < 2 minutes » (Phase 1)
 

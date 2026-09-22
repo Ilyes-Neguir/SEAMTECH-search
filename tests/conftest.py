@@ -202,12 +202,30 @@ def base_recherche() -> Iterator[dict[str, Any]]:
         _supprimer_base_jetable(nom_base)
 
 
+def seuil_perf_p95_ms() -> float:
+    """Seuil p95 APPLICABLE au contexte d'exécution (audit du 22/09).
+
+    Le critère PRODUIT reste p95 < 100 ms (jamais desserré). Sur les runners
+    CI partagés, la QUEUE de distribution subit le bruit du voisinage même
+    SANS instrumentation : mesuré le 22/09 au run push 35720563422 —
+    p50 = 6,6 ms mais p95 = 180,0 ms et max = 341,3 ms sur le jeu de 50
+    requêtes (même SHA vert en pull_request). C'est pourquoi un seuil
+    d'ENVIRONNEMENT CI plus permissif peut être positionné via
+    ``SEAMTECH_PERF_P95_CI_MS`` : il est alors ÉTIQUETÉ comme tel dans la
+    publication (jamais un chiffre desserré en silence) et justifié par cette
+    mesure. Par défaut (local, production) : 100 ms = le critère produit."""
+    brut = os.environ.get("SEAMTECH_PERF_P95_CI_MS")
+    if not brut:
+        return 100.0
+    return float(brut)
+
+
 def publier_mesure_perf(nom: str, p50_ms: float, p95_ms: float, max_ms: float, n: int) -> None:
     """Publie une mesure de latence dans le fichier JSONL désigné par
     ``SEAMTECH_PERF_JSON`` (étape CI dédiée ``perf``, sans instrumentation).
     Sans la variable : aucun fichier écrit — la mesure reste lisible dans la
     sortie pytest. Une ligne par mesure :
-    ``{"nom": …, "p50_ms": …, "p95_ms": …, "max_ms": …, "n": …}``."""
+    ``{"nom": …, "p50_ms": …, "p95_ms": …, "max_ms": …, "n": …, "seuil_p95_ms": …}``."""
     chemin = os.environ.get("SEAMTECH_PERF_JSON")
     if not chemin:
         return
@@ -217,6 +235,7 @@ def publier_mesure_perf(nom: str, p50_ms: float, p95_ms: float, max_ms: float, n
         "p95_ms": round(p95_ms, 2),
         "max_ms": round(max_ms, 2),
         "n": n,
+        "seuil_p95_ms": round(seuil_perf_p95_ms(), 2),
     }
     with open(chemin, "a", encoding="utf-8") as f:
         f.write(json.dumps(mesure, ensure_ascii=False) + "\n")
