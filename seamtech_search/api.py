@@ -1113,6 +1113,12 @@ def create_app(config: AppConfig) -> FastAPI:
         encode_requete=encodeur_ml.vecteur_requete if encodeur_ml is not None else None,
     )
 
+    # Lot I (§11, Phase 4) : assistant sourcé — POST /assistant (extractif,
+    # sans LLM : réponses construites depuis la base, citations obligatoires).
+    from seamtech_search.assistant import enregistrer_routes_assistant
+
+    enregistrer_routes_assistant(app, index, config, _require_auth, metriques=metrics)
+
     from seamtech_search.ml.routes import enregistrer_routes_ml
 
     enregistrer_routes_ml(

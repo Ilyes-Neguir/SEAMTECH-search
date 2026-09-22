@@ -84,8 +84,12 @@ def _creer_base_jetable() -> tuple[str, str]:
             cursor.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(nom_base)))
     finally:
         administrateur.close()
-    partie = DATABASE_URL.rsplit("/", 1)
-    return nom_base, f"{partie[0]}/{nom_base}"
+    # La requête éventuelle de l'URL (?host=/chemin/socket pour une connexion
+    # par socket UNIX — mesure RG14 sans réseau) est préservée telle quelle :
+    # le découpage ne doit porter que sur la partie avant « ? ».
+    url_principale, separateur, requete = DATABASE_URL.partition("?")
+    partie = url_principale.rsplit("/", 1)
+    return nom_base, f"{partie[0]}/{nom_base}" + (f"?{requete}" if separateur else "")
 
 
 def _supprimer_base_jetable(nom_base: str) -> None:
@@ -239,3 +243,98 @@ def publier_mesure_perf(nom: str, p50_ms: float, p95_ms: float, max_ms: float, n
     }
     with open(chemin, "a", encoding="utf-8") as f:
         f.write(json.dumps(mesure, ensure_ascii=False) + "\n")
+
+
+# ---------------------------------------------------------------------------
+# Lot I — assistant sourcé : jeu d'essai des 8 questions + semis partagés.
+# Le jeu est ÉTIQUETÉ : la fiche 7792-SO vient du fonds RÉEL (document client,
+# extraction gabarit), les cotes ajoutées au corpus Lot E sont SYNTHÉTIQUES
+# (méthode 'synthetique' dans fiche_champ_extrait, jamais confondues avec le
+# réel). Le même semis sert aux tests PostgreSQL ET au script de mesure
+# (scripts/mesure_assistant.py) — une seule définition, jamais deux.
+# ---------------------------------------------------------------------------
+
+CHEMIN_FICHE_REELLE = Path(__file__).resolve().parents[1] / "sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf"
+
+# (question, étiquette) — l'étiquette dit DE QUOI VIENT la réponse attendue.
+JEU_8_QUESTIONS: tuple[tuple[str, str], ...] = (
+    ("quelle est la SLU de la fiche 7792-SO ?", "cote par fiche — fonds réel (6,60 m, vérité terrain)"),
+    ("quelles voiles pour le bateau 29er ?", "voiles par bateau — fonds réel (Spi Asymétrique)"),
+    ("combien de fiches de type portant en 2024 ?", "comptage — corpus synthétique (1 fiche : 0812-SPI-001)"),
+    ("quelles fiches ont une SLU entre 6,5 et 6,7 m ?", "intervalle — synthétique + réel (3 fiches)"),
+    ("quelle matière pour le galon de bordure ?", "attribut galon — fonds réel (Nylon)"),
+    ("quelle est la longueur du mât de la fiche 7792-SO ?", "SANS SOURCE → refus explicite"),
+    ("quelle est la matière de la fiche 7792-SO ?", "AMBIGU → interprétations sourcées"),
+    ("quel est le surplus de jonction de la fiche 7792-SO ?", "non applicable RG5 (consigné « ~ »)"),
+)
+
+# Cotes SLU SYNTHÉTIQUES ajoutées au corpus Lot E (jeu « finie ») :
+# deux dans l'intervalle [6,5 ; 6,7] de la question 4, un hors intervalle.
+SLU_SYNTHEtiques: dict[str, float] = {"0701-GV-001": 6.62, "0702-GV-003": 6.55, "0812-SPI-001": 7.15}
+
+
+def enrichir_corpus_assistant(index: Any) -> dict[str, float]:
+    """Ajoute au corpus Lot E des cotes SLU SYNTHÉTIQUES (jeu finie) + leur
+    trace ``fiche_champ_extrait`` (methode='synthetique', sans page/zone — la
+    zone reste l'apanage de l'extraction réelle)."""
+    with index.connect() as connexion:
+        with connexion.cursor() as cursor:
+            for code, slu in SLU_SYNTHEtiques.items():
+                cursor.execute("SELECT id_fiche FROM fiche WHERE code = %s", (code,))
+                ligne = cursor.fetchone()
+                if ligne is None:
+                    raise RuntimeError(f"corpus Lot E attendu manquant : {code}")
+                cursor.execute(
+                    "INSERT INTO fiche_cotes (id_fiche, jeu, slu_m) VALUES (%s, 'finie', %s) "
+                    "ON CONFLICT (id_fiche, jeu) DO NOTHING",
+                    (int(ligne[0]), slu),
+                )
+                cursor.execute(
+                    "INSERT INTO fiche_champ_extrait (id_fiche, champ, rang, table_cible, colonne_cible, "
+                    "valeur_brute, valeur_normalisee, methode, confiance) "
+                    "VALUES (%s, 'cotes.finie.slu_m', NULL, 'fiche_cotes', 'slu_m', %s, %s, 'synthetique', 1.0) "
+                    "ON CONFLICT DO NOTHING",
+                    (int(ligne[0]), str(slu), str(slu)),
+                )
+    return dict(SLU_SYNTHEtiques)
+
+
+def semer_base_assistant(index: Any) -> dict[str, Any]:  # noqa: ANN401 - SearchIndex réel
+    """Semis complet de l'assistant : corpus Lot E + cotes synthétiques + la
+    VRAIE fiche 7792-SO par le pipeline réglé (extraction gabarit → écriture
+    RG3 → validation humaine qui rend cherchable)."""
+    from seamtech_search.fiches.extraction import extraire_fiche
+    from seamtech_search.fiches.gabarits import charger_gabarits, initialiser_gabarits
+    from seamtech_search.fiches.persistance import ecrire_fiche
+    from seamtech_search.fiches.routes import valider_fiche
+
+    ids = semer_corpus(index)
+    enrichir_corpus_assistant(index)
+    initialiser_gabarits(index)
+    fiche = extraire_fiche(CHEMIN_FICHE_REELLE, gabarits=charger_gabarits(index))
+    id_fiche, action = ecrire_fiche(index, fiche)
+    if action != "creee":
+        raise RuntimeError(f"la vraie fiche devait être créée, action = {action}")
+    valider_fiche(index, fiche.code, "assistant")
+    ids[fiche.code] = id_fiche
+    return {"ids": ids, "fiche": fiche}
+
+
+@pytest.fixture()
+def base_assistant() -> Iterator[dict[str, Any]]:
+    """Base PostgreSQL jetable migrée + semis assistant (cf. semer_base_assistant)."""
+    if not DATABASE_URL:
+        pytest.skip("Set SEAMTECH_TEST_DATABASE_URL to run PostgreSQL integration tests")
+
+    from seamtech_search.indexer import SearchIndex
+
+    nom_base, url_base = _creer_base_jetable()
+    index = SearchIndex(Path(f"/tmp/unused-{nom_base}.db"), url_base)
+    index.initialize()
+    index.run_migrations()
+    semis = semer_base_assistant(index)
+    try:
+        yield {"index": index, "url": url_base, "nom": nom_base, "semis": semis}
+    finally:
+        index.close()
+        _supprimer_base_jetable(nom_base)

@@ -203,12 +203,24 @@ jobs:
           if os.path.exists(chemin):
               with open(chemin, encoding="utf-8") as f:
                   mesures = [json.loads(ligne) for ligne in f if ligne.strip()]
-          if len(mesures) != 3:
+          # Lot I : une 4e mesure est attendue (assistant sur le jeu des 8).
+          # Le garde vérifie les NOMS attendus (les tests perf doivent
+          # réellement s'exécuter et publier), puis applique les mêmes seuils
+          # à TOUTE mesure publiée — une mesure nouvelle ne contourne rien.
+          attendus = {
+              "50 requêtes synthétique",
+              "1 500 fiches (mi-échelle)",
+              "fonds réel 7792-SO (13 requêtes)",
+              "assistant_jeu_8_corpus_mixte",
+          }
+          publies = {m.get("nom") for m in mesures}
+          manquants = attendus - publies
+          if manquants:
               raise SystemExit(
-                  f"GARDE-FOU perf : attendu 3 mesures de latence publiées "
-                  f"(50 requêtes synthétique, 1 500 fiches, fonds réel) — mesuré "
-                  f"{len(mesures)}. Les tests perf doivent réellement s'exécuter "
-                  "et publier (SEAMTECH_PERF_JSON)."
+                  f"GARDE-FOU perf : mesures de latence attendues absentes : "
+                  f"{sorted(manquants)} — mesuré {sorted(publies)}. Les tests "
+                  "perf doivent réellement s'exécuter et publier "
+                  "(SEAMTECH_PERF_JSON)."
               )
           for m in mesures:
             seuil = float(m.get("seuil_p95_ms", 100.0))

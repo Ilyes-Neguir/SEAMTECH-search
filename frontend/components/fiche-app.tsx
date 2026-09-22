@@ -5,6 +5,7 @@
 // historique de validation (journal fiche_validation).
 
 import { useEffect, useState } from "react"
+import { useSearchParams } from "next/navigation"
 import { FileText } from "lucide-react"
 import { PalierBadge } from "@/components/palier-badge"
 import { PdfViewer, type ZoneASurligner } from "@/components/pdf-viewer"
@@ -33,6 +34,7 @@ export function FicheApp({ code }: { code: string }) {
   const [journal, setJournal] = useState<Journal[]>([])
   const [zone, setZone] = useState<ZoneASurligner | null>(null)
   const [erreur, setErreur] = useState<string | null>(null)
+  const parametres = useSearchParams()
 
   useEffect(() => {
     jsonFetch<ChampExtrait[]>(`/api/fiches/${encodeURIComponent(code)}/champs`).then(setChamps).catch((e) => setErreur(e.message))
@@ -40,6 +42,21 @@ export function FicheApp({ code }: { code: string }) {
     // L'historique arrive avec les écrans de suivi (pas d'endpoint journal encore
     // exposé en lecture) : le journal est écrit à chaque action (testé côté API).
   }, [code])
+
+  // Lien profond du panneau assistant (lot I) : /dossier/<code>?champ=<champ>
+  // &rang=<n> surligne DIRECTEMENT la zone PDF du champ cité — le clic d'une
+  // citation atterrit sur la bonne zone, pas seulement sur la fiche.
+  useEffect(() => {
+    const champCible = parametres.get("champ")
+    if (!champCible) return
+    const rangCible = parametres.get("rang")
+    const trouve = champs.find(
+      (champ) => champ.champ === champCible && (rangCible == null || String(champ.rang ?? "") === rangCible),
+    )
+    if (trouve?.zone) {
+      setZone({ page: trouve.zone.page, x0: trouve.zone.x0, y0: trouve.zone.y0, x1: trouve.zone.x1, y1: trouve.zone.y1 })
+    }
+  }, [parametres, champs])
 
   return (
     <div className="grid h-[calc(100vh-3.5rem)] min-h-0 grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]" data-testid="fiche-app">

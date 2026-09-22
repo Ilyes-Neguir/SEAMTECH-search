@@ -9,6 +9,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { Search, X } from "lucide-react"
 import { authedFetch } from "@/lib/authed-fetch"
 import { cn } from "@/lib/utils"
+import { AssistantPanneau } from "@/components/assistant-panneau"
 
 interface FacetteEntree {
   valeur: string
@@ -233,6 +234,12 @@ export function RechercheFichesApp() {
           </ul>
         )}
       </form>
+
+      {/* Assistant sourcé (lot I) : question → réponse extraite de la base,
+          citations cliquables — jamais de valeur sans source. */}
+      <div className="mt-4">
+        <AssistantPanneau />
+      </div>
 
       {/* Filtres actifs */}
       {Object.keys(filtres).length > 0 && (
