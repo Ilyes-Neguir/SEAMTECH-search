@@ -26,7 +26,7 @@ from __future__ import annotations
 from typing import Any
 
 # Version du schéma métier — incrémentée à chaque nouvelle migration.
-VERSION_SCHEMA_METIER = "013_recherche_fonds_reel"
+VERSION_SCHEMA_METIER = "014_facette_dimension"
 
 # Marqueur injecté par le code au moment de la migration (constat 1 de revue) :
 # le nom de la configuration de recherche effective — 'seamtech_unaccent' ou
@@ -855,6 +855,42 @@ END;
 $fn$;
 """
 
+SQL_014_FACETTE_DIMENSION = """
+-- ============================================================================
+-- 014_facette_dimension — Lot J : facette « dimension » (plan v3.0 §11.4)
+-- La vue v_fiche_recherche omettait tetiere_cm ; on la complète avec les
+-- 7 cotes métier (slu_m, sle_m, sf_m, shw_m, spa_m2, tetiere_cm, poids_kg).
+-- Les valeurs sont déjà normalisées en unités métier (m, m², cm, kg) lors
+-- de l'extraction — aucune conversion à la lecture.
+-- Index pour le filtre par plage (cote=...&min=...&max=...).
+-- ============================================================================
+CREATE OR REPLACE VIEW v_fiche_recherche AS
+SELECT f.id_fiche,
+       f.code,
+       f.titre,
+       f.statut,
+       tv.libelle                    AS type_voile,
+       c.nom                         AS client,
+       b.nom || ' ' || coalesce(b.taille,'') AS bateau,
+       f.gamme,
+       f.segment,
+       f.date_edition,
+       cd.slu_m, cd.sle_m, cd.sf_m, cd.shw_m, cd.spa_m2, cd.tetiere_cm, cd.poids_kg
+FROM fiche f
+LEFT JOIN type_voile tv ON tv.id_type_voile = f.id_type_voile
+LEFT JOIN client     c  ON c.id_client      = f.id_client
+LEFT JOIN bateau     b  ON b.id_bateau      = f.id_bateau
+LEFT JOIN fiche_cotes cd ON cd.id_fiche = f.id_fiche AND cd.jeu = 'finie';
+
+CREATE INDEX IF NOT EXISTS idx_fiche_cotes_slu_m ON fiche_cotes(slu_m);
+CREATE INDEX IF NOT EXISTS idx_fiche_cotes_sle_m ON fiche_cotes(sle_m);
+CREATE INDEX IF NOT EXISTS idx_fiche_cotes_sf_m ON fiche_cotes(sf_m);
+CREATE INDEX IF NOT EXISTS idx_fiche_cotes_shw_m ON fiche_cotes(shw_m);
+CREATE INDEX IF NOT EXISTS idx_fiche_cotes_spa_m2 ON fiche_cotes(spa_m2);
+CREATE INDEX IF NOT EXISTS idx_fiche_cotes_tetiere_cm ON fiche_cotes(tetiere_cm);
+CREATE INDEX IF NOT EXISTS idx_fiche_cotes_poids_kg ON fiche_cotes(poids_kg);
+"""
+
 MIGRATIONS_METIER: tuple[tuple[str, str], ...] = (
     ("006_fiche_technique", SQL_006_FICHE_TECHNIQUE),
     ("007_recherche_index", SQL_007_RECHERCHE_INDEX),
@@ -864,6 +900,7 @@ MIGRATIONS_METIER: tuple[tuple[str, str], ...] = (
     ("011_pieces_catalogue_documents", SQL_011_PIECES_CATALOGUE_DOCUMENTS),
     ("012_recherche_hybride", SQL_012_RECHERCHE_HYBRIDE),
     ("013_recherche_fonds_reel", SQL_013_RECHERCHE_FONDS_REEL),
+    ("014_facette_dimension", SQL_014_FACETTE_DIMENSION),
 )
 
 
