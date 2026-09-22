@@ -124,8 +124,11 @@ jobs:
           # blob host unreachable and the artifact on the same blocked host.
           # errexit is disabled only around the command whose failure we handle
           # ourselves, and restored immediately after.
+          # Sélection « postgres and not perf » (audit du 22/09) : les mesures
+          # de latence (marqueur perf) sont évaluées dans l'étape dédiée SANS
+          # instrumentation qui suit, et nulle part ailleurs.
           set +e
-          pytest -m postgres -v -rf 2>&1 | tee /tmp/pg.log
+          pytest -m "postgres and not perf" -v -rf 2>&1 | tee /tmp/pg.log
           rc=${PIPESTATUS[0]}
           set -e
           if [ "$rc" -ne 0 ]; then
@@ -145,6 +148,60 @@ jobs:
             echo "::error title=postgres-tests-skipped::$skipped Postgres test(s) skipped even though SEAMTECH_TEST_DATABASE_URL is set"
             exit 1
           fi
+          echo "::notice title=suite-postgres::pytest -m \"postgres and not perf\" : passed=$passed skipped=$skipped"
+      - name: Run latency criteria (perf — sans instrumentation, p50/p95/max publiés)
+        # Audit indépendant du 22/09 : le critère p95 < 100 ms était évalué
+        # DANS l'étape de couverture (--cov) sur runner partagé → flake mesuré
+        # à 108,8 ms (run push 35715779367, même SHA vert en pull_request).
+        # Correctif : séparer le critère de l'instrumentation, sans le
+        # desserrer — les tests marqués perf tournent ici SANS --cov, avec
+        # chauffe (premier passage jeté), et publient p50/p95/max en
+        # ::notice (même mécanique que mesure-phase1) : la dérive devient
+        # visible avant de casser, avec un historique de valeurs dans les
+        # runs. La couverture désélectionne perf (-m "not perf") : elle
+        # mesure la couverture, pas la charge de la machine.
+        env:
+          SEAMTECH_TEST_DATABASE_URL: postgresql://seamtech:seamtech_test_password@localhost:5432/seamtech_search_test
+          SEAMTECH_PERF_JSON: perf-mesures.json
+        run: |
+          set -uo pipefail
+          set +e
+          pytest -q -m perf -rf 2>&1 | tee /tmp/perf.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            echo "::error title=perf-suite-failed::$(grep -E '^(FAILED|ERROR)' /tmp/perf.log | head -15 | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 1500)"
+            echo "::error title=perf-suite-tail::$(tail -30 /tmp/perf.log | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 1800)"
+            exit "$rc"
+          fi
+          python - <<'PY'
+          import json
+          import os
+
+          chemin = os.environ.get("SEAMTECH_PERF_JSON", "perf-mesures.json")
+          mesures = []
+          if os.path.exists(chemin):
+              with open(chemin, encoding="utf-8") as f:
+                  mesures = [json.loads(ligne) for ligne in f if ligne.strip()]
+          if len(mesures) != 3:
+              raise SystemExit(
+                  f"GARDE-FOU perf : attendu 3 mesures de latence publiées "
+                  f"(50 requêtes synthétique, 1 500 fiches, fonds réel) — mesuré "
+                  f"{len(mesures)}. Les tests perf doivent réellement s'exécuter "
+                  "et publier (SEAMTECH_PERF_JSON)."
+              )
+          for m in mesures:
+              if m["p95_ms"] >= 100.0:
+                  raise SystemExit(
+                      f"GARDE-FOU perf : {m['nom']} : p95 = {m['p95_ms']:.1f} ms ≥ 100 ms "
+                      "(critère produit, seuil jamais desserré)"
+                  )
+              print(
+                  f"::notice title=perf-latence::{m['nom']} : p50 = {m['p50_ms']:.1f} ms, "
+                  f"p95 = {m['p95_ms']:.1f} ms, max = {m['max_ms']:.1f} ms "
+                  f"(n = {m['n']}, critère p95 < 100 ms, sans instrumentation)"
+              )
+          PY
       - name: Run coverage
         # Same selection as the SQLite suite above, plus the mocked-postgres
         # coverage tests AND the live-postgres tests. SEAMTECH_TEST_DATABASE_URL
@@ -164,7 +221,10 @@ jobs:
           # errexit is disabled only around the command whose failure we handle
           # ourselves, and restored immediately after.
           set +e
-          pytest -k "not s3" -q -rf --cov=seamtech_search --cov-report=term-missing --cov-report=json:coverage.json 2>&1 | tee /tmp/cov.log
+          # -m "not perf" (audit du 22/09) : les mesures de latence sortent du
+          # contexte instrumenté — le critère p95 est évalué dans l'étape perf
+          # dédiée sans --cov. La couverture mesure la couverture.
+          pytest -k "not s3" -m "not perf" -q -rf --cov=seamtech_search --cov-report=term-missing --cov-report=json:coverage.json 2>&1 | tee /tmp/cov.log
           rc=${PIPESTATUS[0]}
           set -e
           if [ "$rc" -ne 0 ]; then
@@ -194,6 +254,7 @@ jobs:
           path: |
             /tmp/sqlite.log
             /tmp/pg.log
+            /tmp/perf.log
             /tmp/cov.log
           if-no-files-found: ignore
           retention-days: 5

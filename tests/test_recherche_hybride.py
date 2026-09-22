@@ -38,7 +38,7 @@ from seamtech_search.recherche import (
     invalider_cache_synonymes,
     rechercher_fiches,
 )
-from tests.conftest import EMBEDDING_A, FICHES_CORPUS
+from tests.conftest import EMBEDDING_A, FICHES_CORPUS, publier_mesure_perf
 
 pytestmark = pytest.mark.postgres
 
@@ -290,12 +290,18 @@ def _jeu_50_requetes() -> list[tuple[str, str]]:
 
 @pytest.mark.postgres
 def test_jeu_50_requetes_reference_100_pourcent(base_recherche: dict[str, Any]) -> None:
-    """Sortie Phase 3 : 100 % des résultats attendus retrouvés (rappel@10),
-    temps de réponse < 100 ms. Chiffres MESURÉS sur le corpus SYNTHÉTIQUE de
-    test (12 fiches seed) — ils prouvent l'architecture, pas le fonds réel :
-    la re-mesure sur la vraie fiche 7792-SO est dans
-    ``tests/test_recherche_fonds_reel.py`` ; l'échelle 10 000 fiches reste à
-    re-mesurer sur données réelles."""
+    """Sortie Phase 3 : 100 % des résultats attendus retrouvés (rappel@10).
+    Chiffres MESURÉS sur le corpus SYNTHÉTIQUE de test (12 fiches seed) — ils
+    prouvent l'architecture, pas le fonds réel : la re-mesure sur la vraie
+    fiche 7792-SO est dans ``tests/test_recherche_fonds_reel.py`` ; l'échelle
+    10 000 fiches reste à re-mesurer sur données réelles.
+
+    Le critère de latence (p95 < 100 ms) n'est PAS asserté ici : il est
+    mesuré hors instrumentation par ``test_perf_p95_jeu_50_reference``
+    (marqueur ``perf``, étape CI dédiée sans --cov) — l'instrumentation de la
+    couverture ralentit l'exécution sur runner partagé et a produit un flake
+    (p95 = 108,8 ms, run push 35715779367 vert en pull_request ; audit du
+    22/09). La latence affichée ici reste indicative."""
     index = base_recherche["index"]
     avec_synonyme = False
     manquants: list[str] = []
@@ -313,19 +319,54 @@ def test_jeu_50_requetes_reference_100_pourcent(base_recherche: dict[str, Any]) 
     p95 = sorted(durees_ms)[int(len(durees_ms) * 0.95) - 1]
     print(
         f"\n[mesure Lot E] 50 requêtes : rappel@10 = {(50 - len(manquants))}/50 ; "
-        f"p50 = {p50:.1f} ms, p95 = {p95:.1f} ms, max = {max(durees_ms):.1f} ms"
+        f"latence indicative sous ce contexte d'exécution : "
+        f"p50 = {p50:.1f} ms, p95 = {p95:.1f} ms, max = {max(durees_ms):.1f} ms "
+        "(critère p95 < 100 ms asserté hors instrumentation, test_perf_p95_jeu_50_reference)"
     )
     assert not manquants, "rappel@10 < 100 % : " + " ; ".join(manquants)
     assert avec_synonyme, "la requête faute doit passer par la source trigrammes"
+
+
+@pytest.mark.perf
+@pytest.mark.postgres
+def test_perf_p95_jeu_50_reference(base_recherche: dict[str, Any]) -> None:
+    """CRITÈRE DE LATENCE Phase 3 (p95 < 100 ms) sur le jeu de 50 requêtes de
+    référence (corpus synthétique), mesuré HORS INSTRUMENTATION (audit du
+    22/09) : le critère était évalué dans l'étape de couverture --cov sur un
+    runner partagé → non-déterminisme d'environnement (flake à 108,8 ms, run
+    push 35715779367, même SHA vert en pull_request). Séparer le critère de
+    l'instrumentation, pas desserrer le critère : ce test porte le seuil
+    produit intact, tourne dans l'étape CI dédiée sans --cov, et publie
+    p50/p95/max (SEAMTECH_PERF_JSON → ::notice perf-latence). Robustesse :
+    chauffe complète du jeu (premier passage jeté) avant le passage mesuré."""
+    index = base_recherche["index"]
+    jeu = _jeu_50_requetes()
+    for requete, _attendu in jeu:  # chauffe : plans, caches, connexions
+        rechercher_fiches(index, requete=requete, limit=10)
+    durees_ms: list[float] = []
+    for requete, attendu in jeu:
+        debut = time.perf_counter()
+        reponse = rechercher_fiches(index, requete=requete, limit=10)
+        durees_ms.append((time.perf_counter() - debut) * 1000.0)
+        assert attendu in codes(reponse), f"la chauffe ne doit pas changer le rappel : {requete!r} ne retrouve plus {attendu}"
+    p50 = statistics.median(durees_ms)
+    p95 = sorted(durees_ms)[int(len(durees_ms) * 0.95) - 1]
+    print(f"\n[perf Lot E] 50 requêtes (synthétique) : p50 = {p50:.1f} ms, p95 = {p95:.1f} ms, max = {max(durees_ms):.1f} ms")
+    publier_mesure_perf("50 requêtes synthétique", p50, p95, max(durees_ms), len(durees_ms))
     assert p95 < 100.0, f"critère de sortie Phase 3 violé : p95 = {p95:.1f} ms ≥ 100 ms"
 
 
+@pytest.mark.perf
 @pytest.mark.postgres
 def test_charge_modeste_1500_fiches(base_recherche: dict[str, Any]) -> None:
     """Garde-fou d'échelle intermédiaire : 1 500 fiches validées de plus,
     puis p95 < 100 ms sur un extrait du jeu de référence. Avertissement
     hérité du Lot C : les fixtures restent minuscules face aux 10 000 fiches
-    réelles — ceci est un PLAN-CHER à mi-échelle, pas une preuve finale."""
+    réelles — ceci est un PLAN-CHER à mi-échelle, pas une preuve finale.
+
+    Marqué ``perf`` (audit du 22/09) : c'est une mesure de charge — elle
+    s'exécute hors instrumentation dans l'étape CI dédiée qui publie
+    p50/p95/max ; la couverture la désélectionne (-m "not perf")."""
     index = base_recherche["index"]
     with index.connect() as connexion:
         with connexion.cursor() as cursor:
@@ -343,14 +384,19 @@ def test_charge_modeste_1500_fiches(base_recherche: dict[str, Any]) -> None:
             rafraichies = int(cursor.fetchone()[0])
     assert rafraichies >= 1512, "le rafraîchissement ensembliste doit couvrir tout le corpus"
 
+    extrait = _jeu_50_requetes()[:12]
+    for requete, _attendu in extrait:  # chauffe : premier passage jeté
+        rechercher_fiches(index, requete=requete, limit=10)
     durees_ms: list[float] = []
-    for requete, attendu in _jeu_50_requetes()[:12]:
+    for requete, attendu in extrait:
         debut = time.perf_counter()
         reponse = rechercher_fiches(index, requete=requete, limit=10)
         durees_ms.append((time.perf_counter() - debut) * 1000.0)
         assert attendu in codes(reponse), f"à 1 500 fiches, {requete!r} doit toujours retrouver {attendu}"
+    p50 = statistics.median(durees_ms)
     p95 = sorted(durees_ms)[int(len(durees_ms) * 0.95) - 1]
-    print(f"\n[mesure Lot E] 1 500 fiches : p95 = {p95:.1f} ms, max = {max(durees_ms):.1f} ms")
+    print(f"\n[perf Lot E] 1 500 fiches : p50 = {p50:.1f} ms, p95 = {p95:.1f} ms, max = {max(durees_ms):.1f} ms")
+    publier_mesure_perf("1 500 fiches (mi-échelle)", p50, p95, max(durees_ms), len(durees_ms))
     assert p95 < 100.0, f"à mi-échelle, p95 = {p95:.1f} ms ≥ 100 ms"
 
 

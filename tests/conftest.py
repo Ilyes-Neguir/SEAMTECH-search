@@ -12,6 +12,7 @@ Chaque test crée sa propre base : aucune dépendance entre exécutions.
 
 from __future__ import annotations
 
+import json
 import os
 import time
 import uuid
@@ -199,3 +200,23 @@ def base_recherche() -> Iterator[dict[str, Any]]:
     finally:
         index.close()
         _supprimer_base_jetable(nom_base)
+
+
+def publier_mesure_perf(nom: str, p50_ms: float, p95_ms: float, max_ms: float, n: int) -> None:
+    """Publie une mesure de latence dans le fichier JSONL désigné par
+    ``SEAMTECH_PERF_JSON`` (étape CI dédiée ``perf``, sans instrumentation).
+    Sans la variable : aucun fichier écrit — la mesure reste lisible dans la
+    sortie pytest. Une ligne par mesure :
+    ``{"nom": …, "p50_ms": …, "p95_ms": …, "max_ms": …, "n": …}``."""
+    chemin = os.environ.get("SEAMTECH_PERF_JSON")
+    if not chemin:
+        return
+    mesure = {
+        "nom": nom,
+        "p50_ms": round(p50_ms, 2),
+        "p95_ms": round(p95_ms, 2),
+        "max_ms": round(max_ms, 2),
+        "n": n,
+    }
+    with open(chemin, "a", encoding="utf-8") as f:
+        f.write(json.dumps(mesure, ensure_ascii=False) + "\n")

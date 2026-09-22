@@ -46,6 +46,7 @@ pythonpath = ["."]
 markers = [
     "postgres: tests requiring a live PostgreSQL instance",
     "s3: tests requiring a live S3 or MinIO instance",
+    "perf: mesures de latence (critères produit p95 < 100 ms) — à exécuter HORS instrumentation (--cov) sur runner partagé, dans l'étape CI dédiée qui publie p50/p95/max (audit 22/09 : flake à 108,8 ms mesuré sous --cov)",
 ]
 
 [tool.ruff]

@@ -2,7 +2,35 @@
 
 Internal file search, technical dossier ingestion, and synthesis report platform for SEAMTECH sail manufacturing.
 
-**Verified state:** `ruff check .` passes, `pytest -k "not s3"` 160 passed, 4 skipped (live-Postgres tests self-skip without `SEAMTECH_TEST_DATABASE_URL`), 10 deselected (live-S3 marker). Coverage 89% overall with per-module gates enforced in CI (`scripts/coverage_gate.py`). `pip-audit` and `pnpm audit --prod --audit-level=high` are clean. See `docs/VERIFICATION.md` for per-claim reproduction commands.
+**État réel au 22/09/2026** (cet état remplace toute mention antérieure de
+« Verified state ») :
+
+- **Ce qui est établi** : extraction réglée mesurée 6/6 sur UNE vraie fiche
+  client (7792-SO) ; recherche hybride PostgreSQL 13/13 sur le jeu réel et
+  50/50 sur le jeu synthétique de référence ; latence produit p95 < 100 ms
+  mesurée HORS instrumentation (étape CI dédiée, publiée en ::notice) ;
+  parcours machine complet de validation 582-665 ms sur la vraie fiche
+  (annotation CI `mesure-phase1`, trois runs verts consécutifs) ; source
+  vecteurs active ; CI 7 jobs. Détails, commandes et sorties brutes :
+  `docs/verite_terrain/TRACABILITE_LIVRAISON.md` (une ligne par affirmation,
+  statut ✅ établi / ⚠️ démontré une fois / ❌ non mesuré).
+- **Où sont les mesures** : `docs/verite_terrain/` — `EMPREINTES.md`
+  (extraction), `JEU_REQUETES_REELLES.md` (recherche, auto-limites écrites),
+  `MESURE_VALIDATION_2MIN.md` (chrono machine + procédure humaine),
+  `FUSION_MAIN.md` (runbook de fusion + répétition générale), CHANGELOG
+  (deux colonnes repli / e5 réel pour chaque chiffre Lot F).
+- **Comment lancer** : `docker compose up -d` (voir Quickstart) ; tests :
+  `pytest -q -m "not postgres"` (487/3 sans PostgreSQL), avec PostgreSQL :
+  `-m "postgres and not perf"` (intégration) puis `-m perf` (latence, sans
+  instrumentation) ; front : `pnpm build && pnpm start`.
+- **Ce qui n'est PAS prouvé** : le chrono humain de validation (0/3 fiches
+  mesurées — dernier verrou de la Phase 1) ; l'échelle réelle (une seule fiche
+  réelle aujourd'hui ; 20-30 attendues) ; la sauvegarde testée par une
+  restauration (R2/S3) ; la calibration (`calibre: false`, volontaire).
+- **Sécurité** : le dépôt contient une vraie fiche client et doit passer
+  PRIVÉ ; le jeton GitHub ayant circulé doit être révoqué (règle : un
+  document client ne se versionne pas — l'archive est la source de vérité,
+  RG13).
 
 ---
 

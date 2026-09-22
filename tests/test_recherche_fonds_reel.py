@@ -27,7 +27,7 @@ from typing import Any, Iterator
 
 import pytest
 
-from tests.conftest import DATABASE_URL, _creer_base_jetable, _supprimer_base_jetable
+from tests.conftest import DATABASE_URL, _creer_base_jetable, _supprimer_base_jetable, publier_mesure_perf
 
 RACINE = Path(__file__).resolve().parents[1]
 PDF_7792 = RACINE / "sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf"
@@ -126,7 +126,10 @@ def test_extraction_reelle_nourrit_l_index(fonds_reel: dict[str, Any]) -> None:
 def test_jeu_requetes_reelles_13_sur_13(fonds_reel: dict[str, Any]) -> None:
     """Rejeu du jeu réel : les 13 requêtes retrouvent la fiche, rang 1.
     Chiffres MESURÉS sur le fonds réel (1 fiche) — publiés dans
-    ``docs/verite_terrain/JEU_REQUETES_REELLES.md``."""
+    ``docs/verite_terrain/JEU_REQUETES_REELLES.md``. Le critère de latence
+    (p95 < 100 ms) est asserté hors instrumentation par
+    ``test_perf_p95_fonds_reel`` (marqueur ``perf``, étape CI dédiée sans
+    --cov ; audit du 22/09) ; la latence affichée ici reste indicative."""
     index = fonds_reel["index"]
     _retrouver(index, "7792-SO")  # échauffement : plans, caches de connexions
     manquants: list[str] = []
@@ -143,9 +146,33 @@ def test_jeu_requetes_reelles_13_sur_13(fonds_reel: dict[str, Any]) -> None:
     p95 = sorted(durees_ms)[int(len(durees_ms) * 0.95) - 1]
     print(
         f"\n[mesure Tâche 3 — fonds réel] {len(JEU_REQUETES_REELLES) - len(manquants)}/13 "
-        f"requêtes retrouvent 7792-SO au rang 1 ; p50 = {p50:.1f} ms, p95 = {p95:.1f} ms"
+        f"requêtes retrouvent 7792-SO au rang 1 ; latence indicative sous ce contexte : "
+        f"p50 = {p50:.1f} ms, p95 = {p95:.1f} ms"
     )
     assert not manquants, "requêtes réelles sans la fiche : " + " ; ".join(manquants)
+
+
+@pytest.mark.perf
+@pytest.mark.postgres
+def test_perf_p95_fonds_reel(fonds_reel: dict[str, Any]) -> None:
+    """CRITÈRE DE SORTIE LOT E (p95 < 100 ms) sur le fonds réel (vraie fiche
+    7792-SO, 13 requêtes réelles), mesuré HORS INSTRUMENTATION — même
+    justification que ``test_perf_p95_jeu_50_reference`` (audit du 22/09 : le
+    critère sous --cov a flaké à 108,8 ms). Chauffe complète du jeu avant le
+    passage mesuré ; publication p50/p95/max via SEAMTECH_PERF_JSON."""
+    index = fonds_reel["index"]
+    for requete, _nature in JEU_REQUETES_REELLES:  # chauffe : premier passage jeté
+        _retrouver(index, requete)
+    durees_ms: list[float] = []
+    for requete, nature in JEU_REQUETES_REELLES:
+        debut = time.perf_counter()
+        rang, _codes = _retrouver(index, requete)
+        durees_ms.append((time.perf_counter() - debut) * 1000.0)
+        assert rang == 1, f"{requete!r} ({nature}) : la seule fiche du fonds doit être au rang 1, trouvée au rang {rang}"
+    p50 = statistics.median(durees_ms)
+    p95 = sorted(durees_ms)[int(len(durees_ms) * 0.95) - 1]
+    print(f"\n[perf Tâche 3 — fonds réel] p50 = {p50:.1f} ms, p95 = {p95:.1f} ms, max = {max(durees_ms):.1f} ms")
+    publier_mesure_perf("fonds réel 7792-SO (13 requêtes)", p50, p95, max(durees_ms), len(durees_ms))
     assert p95 < 100.0, f"le critère de sortie du Lot E (p95 < 100 ms) doit tenir sur le fonds réel : {p95:.1f} ms"
 
 

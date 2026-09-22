@@ -1,3 +1,55 @@
+## Unreleased — Consolidation finale : flake de latence corrigé, runbook de fusion, garde-fous sandbox (`arena/01a0c56d-seamtech-search`)
+
+Audit indépendant du 22/09 : plus rien à construire — prouver que tout tient,
+rendre la fusion sûre, corriger le dernier défaut réel, nettoyer.
+
+- **Flake de latence corrigé en séparant le critère de l'instrumentation,
+  sans desserrer le seuil** : le critère p95 < 100 ms était évalué DANS
+  l'étape de couverture (`--cov`) sur runner partagé → run push 35715779367
+  ROUGE à 108,8 ms (même SHA vert en pull_request ; étape non instrumentée
+  verte sur le même run = non-déterminisme d'environnement, pas une
+  régression). Correctif : marqueur `perf` (pyproject) sur les trois mesures
+  de latence (jeu 50 synthétique, 1 500 fiches, fonds réel 7792-SO) ; étape
+  CI dédiée SANS `--cov` qui publie p50/p95/max en `::notice perf-latence`
+  (garde-fous : 3 mesures publiées exigées, p95 ≥ 100 ms fait échouer) ;
+  couverture désélectionnée `-m "not perf"` ; porte de couverture vérifiée
+  verte sans perf. Robustesse : chauffe (premier passage jeté) avant le
+  passage mesuré. Inventaire des assertions de temps : les trois p95 sortent
+  du contexte instrumenté (marqueur perf) ; `test_reindex_skip.py` (< 4 s,
+  timeout d'extraction) et `test_lot_ingestion.py` (< 24 h extrapolé) RESTENT
+  dans la suite instrumentée — assertions fonctionnelles à large marge, non
+  flakées. Comptes re-mesurés (filtre cité) : `-m perf` = 3/0 ;
+  `-m "postgres and not perf"` = 112/1 hors CI (113/0 en CI avec poids e5) ;
+  `-m "not postgres"` = 487/3.
+- **Runbook de fusion livré** : `docs/verite_terrain/FUSION_MAIN.md` —
+  Option A (un seul merge de la tête de pile dans main : 0 conflit, prouvé en
+  répétition générale sur clone jetable : 167 → 255 fichiers, un seul ci.yml,
+  `-m "not postgres"` = 483/3 et `-m postgres` = 113/1 sur le résultat
+  fusionné, état 64e090c) ; Option B (ordre topologique #10→…→#20 puis #14
+  no-op, #9 fermeture seule) ; avertissement prouvé : fusionner lot-d seul
+  supprime `.github/workflows/` de main ; commande de la branche de nettoyage
+  du doublon PDF racine (jamais un commit direct sur main).
+- **Garde-fous anti-incident sandbox** (le sandbox a réinitialisé un
+  historique local le 22/09 ; un commit orphelin de 108 fichiers, dont deux
+  fixtures PDF altérées, a failli partir) : `tests/test_empreintes_fixtures.py`
+  (sha256 + tailles épinglés des 4 PDF du dépôt, rouge si une fixture est
+  restaurée de travers) ; `scripts/etat_sandbox.sh` (HEAD vs origin via
+  ls-remote avant tout commit, arbre propre, empreintes affichées) ; README :
+  la vérité est sur origin, on ne travaille jamais sans fetch.
+- **Nettoyage documenté** : doublon `7792-SO_ffab.pdf` racine vs
+  `sample_data/CLIENT-7792-SO/` (byte-identiques, sha256 43afc51e…, mesuré) —
+  suppression portée par une branche de nettoyage post-fusion (runbook §3) ;
+  règle tranchée : un document client ne se versionne pas (archive = source de
+  vérité, RG13), le dépôt doit passer privé.
+- **Traçabilité client** : `docs/verite_terrain/TRACABILITE_LIVRAISON.md` —
+  une ligne par affirmation : commande exacte, sortie brute collée, commit,
+  statut ✅ établi / ⚠️ démontré une fois / ❌ non mesuré (chrono humain 0/3,
+  échelle réelle, R2/S3).
+- **Règle de publication appliquée** : tout compte de tests porte son filtre
+  (`-m "not postgres"` = 487/3 ≠ `-k "not postgres"` = 468/3) ; un run se
+  compte par événement (push et pull_request) ; un run push rouge est un run
+  rouge.
+
 ## Unreleased — Lot F : IA locale — vecteurs activés, classifieur mesuré (`arena/01a0c56d-seamtech-search`)
 
 **Décision matériel (commanditaire, 21/09) : 8 Go de RAM.** Conséquences
@@ -55,7 +107,8 @@ lot (marginal à 8 Go : 2-10 jetons/s en Q4 — plan §17.14 Phase 4 reporté à
   test e5 réel, exécuté en CI où les poids sont téléchargés ; il ÉCHOUE si la
   variable est positionnée mais les poids absents — jamais de skip masqué ;
   le téléchargeur est testé SANS réseau, primitives HTTP simulées). Portes :
-  pytest **596 passés / 4 sautés, 0 échec**, `-m postgres` **113 passés /
+  pytest **596 passés / 4 sautés, 0 échec** (sélection CI « not s3 »,
+  PostgreSQL de service), `-m postgres` **113 passés /
   1 sauté** (le saut = test e5 réel sans poids hors CI), ruff, pip-audit,
   couverture 89,9 % + seuils par module.
 
@@ -107,7 +160,8 @@ lot (marginal à 8 Go : 2-10 jetons/s en Q4 — plan §17.14 Phase 4 reporté à
   synthétiques sur chaînes, étiquetés comme tels) : `extraction.py` remonte à
   90 %. Un comportement de docstring contredit par la mesure y est tracé
   (« - » n'est pas un séparateur de `scinder_sur_tirets`).
-- **Portes** : pytest **584 passés / 3 sautés, 0 échec** ; ruff OK ;
+- **Portes** : pytest **584 passés / 3 sautés, 0 échec** (sélection CI
+  « not s3 », PostgreSQL de service) ; ruff OK ;
   pip-audit : aucune vulnérabilité connue ; porte de couverture 90,4 % global
   + tous seuils par module ; `pnpm build` OK ; Playwright porté par la CI
   (Chromium indisponible dans le bac à sable — aucun substitut local).
@@ -146,7 +200,8 @@ lot (marginal à 8 Go : 2-10 jetons/s en Q4 — plan §17.14 Phase 4 reporté à
 - **Tests** : nouveau `tests/test_recherche_fonds_reel.py` (marque
   `-m postgres` : fonds réel = la seule vraie fiche, jeu réel de 13 requêtes,
   facettes exactes, régression migration 013) ; pytest **559 passés /
-  3 sautés, 0 échec** ; ruff OK ; porte de couverture : 88,1 % global et tous
+  3 sautés, 0 échec** (sélection CI « not s3 », PostgreSQL de service) ;
+  ruff OK ; porte de couverture : 88,1 % global et tous
   les seuils par module respectés.
 
 ## Unreleased — Tâche 2 : gabarit portant réglé sur la vraie fiche 7792-SO (`arena/01a0c56d-seamtech-search`)
