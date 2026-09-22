@@ -50,7 +50,9 @@ valeur inventée, jamais une réponse plausible non sourcée.
   impossible) : réponses identiques.
 - **Aucune nouvelle dépendance** (runtime comme dev) ; `pip-audit` et
   `pnpm audit --prod` verts ; `ruff` propre ; suites : 532/3 sans PostgreSQL
-  (510 d'avant + 22 nouvelles), 146 passés + 4 perf avec PostgreSQL ;
+  (510 d'avant + 22 nouvelles), intégration PostgreSQL 125 passés / 1 sauté
+  (e5 : env local) + 4 perf, CI verte 8/8 jobs (runs push 35763512958 et
+  pull_request 35763634670 ; étape postgres : passed=134 skipped=0) ;
   `scripts/audit_projet.py --rapide` 12/12 ; seuils de couverture tenus
   (assistant.py 91,4 %).
 

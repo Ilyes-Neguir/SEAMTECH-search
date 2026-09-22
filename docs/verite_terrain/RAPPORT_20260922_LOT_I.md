@@ -314,8 +314,9 @@ Détail par question (direct || HTTP, n = 10 chacune) :
 ```
 
 La même mesure tourne en CI (étape `perf` dédiée, **sans instrumentation**,
-publication `::notice`) via `test_perf_assistant_jeu_8` : chiffres du run
-collés au §5.
+publication `::notice`) via `test_perf_assistant_jeu_8` — mesuré sur les
+runners GitHub (run push 35763512958) :
+`assistant_jeu_8_corpus_mixte : p50 = 1.7 ms, p95 = 2.0 ms, max = 4.3 ms (n = 80)`.
 
 ### 3.2 Taux de réponses sourcées
 
@@ -340,9 +341,11 @@ asserté par `test_invariant_reponses_sourcees_100_pourcent`.
 
 ## 4) Non prouvé / bloqué (liste honnête)
 
-1. **CI sur la branche** : ❌ **NON PROUVÉ au moment où ce rapport est écrit** —
-   la PR est ouverte, les 8 jobs tournent ; leurs statuts sont collés au §5
-   (mis à jour après push, même document).
+1. ~~CI sur la branche~~ → **✅ PROUVÉ depuis la rédaction initiale** : les
+   runs push 35763512958 et pull_request 35763634670 sont 8/8 `success` sur la
+   tête `5a1510c` (détail au §5). Un premier run (35762943432) avait échoué sur
+   le garde de comptage de l'étape `perf` (3 mesures attendues, 4 publiées) —
+   corrigé par `5a1510c`, incident documenté au §5.
 2. **Échelle réelle** : le fonds ne compte toujours qu'UNE fiche réelle
    (7792-SO). Les mesures portent sur le corpus étiqueté synthétique + réel ;
    la latence et la pertinence « grand volume » restent à re-mesurer quand les
@@ -374,7 +377,40 @@ asserté par `test_invariant_reponses_sourcees_100_pourcent`.
 |---|---|
 | Base de la session | `main` @ `c0d5e45` (« Merge pull request #23 », aligné par fast-forward) |
 | Commit implémentation | `1d5df21` « feat(assistant): Lot I — assistant sourcé extractif… » |
-| Commit documentation | (ce fichier + CHANGELOG + TRACABILITÉ + docs/API — SHA après commit, voir `git log`) |
-| Branche poussée | `arena/01a0ca1a-seamtech-search` (push simple, jamais de force) |
-| PR | ouverte vers `main`, **NON fusionnée** (l'agent ne fusionne jamais) |
-| Statut des 8 jobs | relevé après push — collé ci-dessous avec les SHA de run `gh run list` (NON PROUVÉ tant que non `success`) |
+| Commit documentation | `71559f4` « docs(assistant): rapport Lot I, entrée CHANGELOG en tête… » |
+| Correctif CI | `5a1510c` « ci(perf): le garde de l'étape perf attend 4 mesures… » — **tête de la PR** |
+| Branche poussée | `arena/01a0ca1a-seamtech-search` (push simples `71559f4..5a1510c`, jamais de force) |
+| PR | [#24](https://github.com/Ilyes-Neguir/SEAMTECH-search/pull/24) ouverte vers `main`, **NON fusionnée** (l'agent ne fusionne jamais) |
+
+Statut des jobs — **CI VERTE, deux runs sur la tête 5a1510c** :
+
+```
+$ gh run view 35763512958        (push)
+✓ arena/01a0ca1a-seamtech-search CI #24 · 35763512958
+JOBS
+✓ integration in 2m43s   ✓ docker in 1m19s    ✓ e2e in 2m5s      ✓ frontend in 42s
+✓ backend (3.13) in 4m22s ✓ backend (3.11) in 4m21s ✓ sauvegarde in 1m4s ✓ backend (3.12) in 4m37s
+
+$ gh run view 35763634670        (pull_request — même SHA)
+✓ … 8/8 jobs SUCCESS
+```
+
+Mesures publiées par la CI (annotations `::notice`, job backend 3.12 du run
+35763512958 — la mesure assistant y figure parmi les 4 attendues par le garde) :
+
+```
+assistant_jeu_8_corpus_mixte : p50 = 1.7 ms, p95 = 2.0 ms, max = 4.3 ms
+  (n = 80, sans instrumentation ; critère produit p95 < 100 ms
+   — seuil d'environnement CI 250 ms (critère produit 100 ms, étiqueté))
+50 requêtes synthétique : p50 = 8.2 ms, p95 = 9.7 ms, max = 10.4 ms (n = 50 …)
+1 500 fiches (mi-échelle) : p50 = 14.9 ms, p95 = 46.2 ms, max = 47.8 ms (n = 60 …)
+fonds réel 7792-SO (13 requêtes) : p50 = 8.8 ms, p95 = 9.2 ms, max = 9.7 ms (n = 65 …)
+pytest -m "postgres and not perf and not sauvegarde" : passed=134 skipped=0
+```
+
+Incident CI relevé et corrigé en cours de livraison (transparence) : le premier
+push (run 35762943432) a ÉCHOUÉ sur l'étape `perf` — le garde comptait
+exactement 3 mesures publiées et l'assistant en publie une 4e. Correctif
+`5a1510c` : le garde vérifie les QUATRE noms attendus (les tests perf doivent
+toujours réellement s'exécuter et publier) et applique les mêmes seuils à
+toute mesure publiée — rien ne contourne la porte. Runs suivants : verts.
