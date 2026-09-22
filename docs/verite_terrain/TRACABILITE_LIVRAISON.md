@@ -74,7 +74,10 @@ le pull_request du même SHA est vert.
 
 | Affirmation | Commande | Sortie brute | Commit | Statut |
 |---|---|---|---|---|
-| CI 7/7 verte (dernier état poussé) | `gh run view <id>` | runs 35666837231, 35667273452, 35716412346 = success 7/7 ; run push 35715779367 ROUGE (flake latence sous --cov, corrigé depuis) | 64e090c → consolidation | ✅ établi / flake corrigé, preuve CI en cours |
+| CI 7/7 verte avec audit_projet (porte rapide) et vérité étendue | `gh run view <id>` | run push 35729543235 = success 7/7 (docker, backend 3.11/3.12/3.13, integration, e2e, frontend) ; audit_projet 7/7 vert en CI | 76cb9ee | ✅ établi (prouvé en CI) |
+| Porte garde-fou audit_projet | `python3 scripts/audit_projet.py` | 9/9 contrôles verts (7/7 en --rapide) : CI.yml, fixture réelle, 0 except aveugle, calibration, 8 tests §17.11, pytest | 76cb9ee | ✅ établi |
+| Vérité terrain étendue 74 cibles | `python -m seamtech_search.fiches.cli banc sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf` | 74/74 champs corrects (100.0 %) | 76cb9ee | ✅ établi |
+| CI 7/7 verte (historique des consolidations) | `gh run view <id>` | runs 35666837231, 35667273452, 35716412346 = success 7/7 ; run push 35715779367 ROUGE (flake latence sous --cov, corrigé depuis) | 64e090c → consolidation | ✅ établi / flake corrigé, preuve CI en cours |
 | Suite SQLite (défaut) | `pnpm test:e2e` (frontend) | 22 passed / 3 skipped, inchangée | b49479d | ✅ établi (CI) |
 | Comptes pytest avec filtre (mesures locales du 22/09, PostgreSQL 16.2 + pgvector + pg_trgm + unaccent) | voir colonne commande | `-m "not postgres"` = 487/3 · `-k "not postgres"` = 468/3 · `-k "not postgres and not s3"` = 459/2 · `-m "postgres and not perf"` = 112/1 (le saut = test e5 sans poids hors CI ; 113/0 en CI) · `-m postgres` = 115/1 · `-m perf` = 3/0 · `-k "not s3"` = 593/3 | consolidation 22/09 | ✅ établi (rejoué ce jour) |
 | Porte de couverture | `pytest -k "not s3" -m "not perf" --cov=seamtech_search … && python scripts/coverage_gate.py coverage.json` | « Coverage gate passed » (locale 22/09) | idem | ✅ établi (CI + local) |
