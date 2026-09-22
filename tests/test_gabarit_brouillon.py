@@ -52,7 +52,7 @@ startxref
         return tmp
 
 
-def test_brouillon_ne_sert_jamais_extraction_rouge_vert(index_postgres):
+def test_brouillon_ne_sert_jamais_extraction_rouge_vert(base_recherche):
     """Garde-fou : brouillon NON validé ne doit jamais servir extraction fiche réelle — ROUGE puis VERT."""
     from seamtech_search.fiches.gabarit_brouillon import (
         enregistrer_brouillon,
@@ -60,21 +60,22 @@ def test_brouillon_ne_sert_jamais_extraction_rouge_vert(index_postgres):
     )
     from seamtech_search.fiches.gabarits import charger_gabarits
 
+    index = base_recherche["index"]
     # Génère un PDF variante
     pdf_path = _pdf_minimal("Variante inconnue TEST")
     try:
         brouillon = generer_brouillon_depuis_pdf(pdf_path, code_propose="TEST_VARIANTE_K2")
         # Enregistre comme brouillon (statut brouillon)
-        enregistre = enregistrer_brouillon(index_postgres, brouillon, cree_par="testeur_k2")
+        enregistre = enregistrer_brouillon(index, brouillon, cree_par="testeur_k2")
         id_brouillon = enregistre["id_brouillon"]
 
         # ROUGE : vérifie que charger_gabarits ne contient PAS le brouillon
-        gabarits = charger_gabarits(index_postgres)
+        gabarits = charger_gabarits(index)
         codes = {g.code for g in gabarits}
         assert "TEST_VARIANTE_K2" not in codes, "ROUGE attendu : brouillon ne doit pas être dans gabarits actifs"
 
         # Vérifie que la table gabarit ne contient pas le brouillon
-        with index_postgres.connect() as conn:
+        with index.connect() as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT COUNT(*) FROM gabarit WHERE code=%s", ("TEST_VARIANTE_K2",))
                 nb = int(cur.fetchone()[0])
@@ -83,16 +84,16 @@ def test_brouillon_ne_sert_jamais_extraction_rouge_vert(index_postgres):
         # VERT : après validation brouillon → nouvelle version active dans gabarit
         from seamtech_search.fiches.gabarit_brouillon import valider_brouillon_vers_gabarit
 
-        resultat = valider_brouillon_vers_gabarit(index_postgres, id_brouillon)
+        resultat = valider_brouillon_vers_gabarit(index, id_brouillon)
         assert resultat["statut"] == "valide"
         assert resultat["gabarit"]["code"] == "TEST_VARIANTE_K2"
 
         # Maintenant charger_gabarits doit contenir le code
-        gabarits_apres = charger_gabarits(index_postgres)
+        gabarits_apres = charger_gabarits(index)
         codes_apres = {g.code for g in gabarits_apres}
         assert "TEST_VARIANTE_K2" in codes_apres, "VERT attendu : après validation, gabarit doit être actif"
 
-        with index_postgres.connect() as conn:
+        with index.connect() as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT COUNT(*) FROM gabarit WHERE code=%s AND actif=true", ("TEST_VARIANTE_K2",))
                 nb_actif = int(cur.fetchone()[0])
@@ -101,13 +102,13 @@ def test_brouillon_ne_sert_jamais_extraction_rouge_vert(index_postgres):
     finally:
         pdf_path.unlink(missing_ok=True)
         # Nettoyage
-        with index_postgres.connect() as conn:
+        with index.connect() as conn:
             with conn.cursor() as cur:
                 cur.execute("DELETE FROM gabarit_brouillon WHERE code=%s", ("TEST_VARIANTE_K2",))
                 cur.execute("DELETE FROM gabarit WHERE code=%s", ("TEST_VARIANTE_K2",))
 
 
-def test_brouillon_generation_champs_zones_confiance(index_postgres):
+def test_brouillon_generation_champs_zones_confiance(base_recherche):
     """À partir PDF variante, brouillon propose champs, zones page+rectangle, confiance."""
     from seamtech_search.fiches.gabarit_brouillon import generer_brouillon_depuis_pdf
 
@@ -132,18 +133,20 @@ def test_brouillon_generation_champs_zones_confiance(index_postgres):
         pdf_path.unlink(missing_ok=True)
 
 
-def test_brouillon_table_existe(index_postgres):
-    with index_postgres.connect() as conn:
+def test_brouillon_table_existe(base_recherche):
+    index = base_recherche["index"]
+    with index.connect() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT COUNT(*) FROM gabarit_brouillon")
             cur.fetchone()
 
 
-def test_gabarit_brouillon_pas_dans_extraction_reelle(index_postgres):
+def test_gabarit_brouillon_pas_dans_extraction_reelle(base_recherche):
     """Preuve que extraction fiche réelle n'utilise pas gabarit_brouillon."""
     # On insère un brouillon avec code qui pourrait matcher une fiche
     from seamtech_search.fiches.gabarit_brouillon import enregistrer_brouillon
 
+    index = base_recherche["index"]
     brouillon_fake = {
         "code": "FAUX_BROUILLON_K2",
         "description": "Brouillon qui ne doit jamais servir",
@@ -155,12 +158,12 @@ def test_gabarit_brouillon_pas_dans_extraction_reelle(index_postgres):
         "source_pdf_nom": "faux.pdf",
     }
     try:
-        enregistrer_brouillon(index_postgres, brouillon_fake)
+        enregistrer_brouillon(index, brouillon_fake)
 
         # Extraction doit échouer à détecter ce faux gabarit (car non actif, non dans gabarit)
         from seamtech_search.fiches.gabarits import charger_gabarits, detecter_gabarit
 
-        gabarits = charger_gabarits(index_postgres)
+        gabarits = charger_gabarits(index)
         assert all(g.code != "FAUX_BROUILLON_K2" for g in gabarits)
 
         # Même si on cherche à détecter avec texte contenant "faux brouillon", on ne doit pas le trouver
@@ -173,6 +176,6 @@ def test_gabarit_brouillon_pas_dans_extraction_reelle(index_postgres):
             pass
 
     finally:
-        with index_postgres.connect() as conn:
+        with index.connect() as conn:
             with conn.cursor() as cur:
                 cur.execute("DELETE FROM gabarit_brouillon WHERE code=%s", ("FAUX_BROUILLON_K2",))

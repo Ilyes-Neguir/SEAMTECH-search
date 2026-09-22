@@ -17,9 +17,10 @@ from seamtech_search.qualite.tableau import (
 pytestmark = pytest.mark.postgres
 
 
-def test_qualite_sources_reelles(index_postgres):
+def test_qualite_sources_reelles(base_recherche):
     """Sources fiche_champ_extrait, fiche_validation, fiche_anomalie, recherche_log, lots existent."""
-    with index_postgres.connect() as conn:
+    index = base_recherche["index"]
+    with index.connect() as conn:
         with conn.cursor() as cur:
             # Au moins les tables existent (migrations 006-015)
             cur.execute("SELECT COUNT(*) FROM fiche_champ_extrait")
@@ -30,8 +31,9 @@ def test_qualite_sources_reelles(index_postgres):
             cur.execute("SELECT COUNT(*) FROM lot_dossier")
 
 
-def test_taux_extraction_auto_definition(index_postgres):
-    with index_postgres.connect() as conn:
+def test_taux_extraction_auto_definition(base_recherche):
+    index = base_recherche["index"]
+    with index.connect() as conn:
         with conn.cursor() as cur:
             res = taux_extraction_auto(cur)
             assert "definition" in res
@@ -40,8 +42,9 @@ def test_taux_extraction_auto_definition(index_postgres):
             assert "taux_auto" in res
 
 
-def test_taux_correction_par_champ_group_by(index_postgres):
-    with index_postgres.connect() as conn:
+def test_taux_correction_par_champ_group_by(base_recherche):
+    index = base_recherche["index"]
+    with index.connect() as conn:
         with conn.cursor() as cur:
             res = taux_correction_par_champ(cur)
             assert isinstance(res, list)
@@ -50,8 +53,9 @@ def test_taux_correction_par_champ_group_by(index_postgres):
                 assert res[0]["taux_correction"] >= res[1]["taux_correction"]
 
 
-def test_temps_validation_mediane_p95(index_postgres):
-    with index_postgres.connect() as conn:
+def test_temps_validation_mediane_p95(base_recherche):
+    index = base_recherche["index"]
+    with index.connect() as conn:
         with conn.cursor() as cur:
             res = temps_validation(cur)
             assert "definition" in res
@@ -60,24 +64,27 @@ def test_temps_validation_mediane_p95(index_postgres):
             assert "nb_fiches_validees" in res
 
 
-def test_anomalies_frequentes_group_by(index_postgres):
-    with index_postgres.connect() as conn:
+def test_anomalies_frequentes_group_by(base_recherche):
+    index = base_recherche["index"]
+    with index.connect() as conn:
         with conn.cursor() as cur:
             res = anomalies_frequentes(cur)
             assert isinstance(res, list)
 
 
-def test_volume_par_statut(index_postgres):
-    with index_postgres.connect() as conn:
+def test_volume_par_statut(base_recherche):
+    index = base_recherche["index"]
+    with index.connect() as conn:
         with conn.cursor() as cur:
             res = volume_par_statut(cur)
             assert "par_statut" in res
             assert "en_attente_validation" in res
 
 
-def test_usage_recherches_split_canal(index_postgres):
+def test_usage_recherches_split_canal(base_recherche):
     """Distinguer recherches utilisateur vs questions assistant (canal filtres->>'canal')."""
-    with index_postgres.connect() as conn:
+    index = base_recherche["index"]
+    with index.connect() as conn:
         with conn.cursor() as cur:
             # Insère deux recherches : une utilisateur, une assistant
             cur.execute(
@@ -97,22 +104,24 @@ def test_usage_recherches_split_canal(index_postgres):
             assert "par_jour" in res
 
 
-def test_lots_stats(index_postgres):
-    with index_postgres.connect() as conn:
+def test_lots_stats(base_recherche):
+    index = base_recherche["index"]
+    with index.connect() as conn:
         with conn.cursor() as cur:
             res = lots_stats(cur)
             assert "total_lots" in res
             assert "total_dossiers" in res
 
 
-def test_qualite_perf_1000_fiches(index_postgres):
+def test_qualite_perf_1000_fiches(base_recherche):
     """Requêtes <100ms sur 1000 fiches — mesure n+p50/p95."""
     import json
     import os
     from pathlib import Path
 
+    index = base_recherche["index"]
     # Prépare 1000 fiches si pas déjà
-    with index_postgres.connect() as conn:
+    with index.connect() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT COUNT(*) FROM fiche")
             nb = int(cur.fetchone()[0])
@@ -138,7 +147,7 @@ def test_qualite_perf_1000_fiches(index_postgres):
     durees = []
     for _ in range(n):
         t0 = time.perf_counter()
-        with index_postgres.connect() as conn:
+        with index.connect() as conn:
             with conn.cursor() as cur:
                 taux_extraction_auto(cur)
                 taux_correction_par_champ(cur)
