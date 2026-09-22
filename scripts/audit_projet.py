@@ -131,8 +131,19 @@ def controle_verite() -> None:
 
             controler("source unique contient 74 cibles", len(VERITE_7792) == 74, f"{len(VERITE_7792)} cibles")
             controler("docs/ ré-exporte sans dérive", VERITE_7792 == V_DOCS, "égalité stricte")
-        except (ImportError, AttributeError) as exc:
-            controler("import vérité terrain valide", False, str(exc))
+
+            chemin_json = RACINE / "docs" / "verite_terrain" / "7792-SO_ffab_complete.json"
+            controler("docs/verite_terrain/7792-SO_ffab_complete.json présent", chemin_json.is_file())
+            if chemin_json.is_file():
+                donnees_json = json.loads(chemin_json.read_text(encoding="utf-8"))
+                attendu_json = donnees_json.get("fiche-7792-SO_ffab.pdf", {}).get("attendu")
+                controler(
+                    "JSON attendu == VERITE_7792 (égalité stricte 74 cibles)",
+                    attendu_json == VERITE_7792,
+                    "74 cibles conformes" if attendu_json == VERITE_7792 else "dérive détectée",
+                )
+        except (ImportError, AttributeError, json.JSONDecodeError, OSError) as exc:
+            controler("contrôle vérité terrain valide", False, str(exc))
 
 
 def controle_suite() -> None:

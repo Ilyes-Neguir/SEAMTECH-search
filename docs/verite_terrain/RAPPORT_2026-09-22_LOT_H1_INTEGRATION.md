@@ -127,14 +127,16 @@ Dans `docs/verite_terrain/RECETTE_HUMAINE.md`, la mention extrapolée « doublon
 
 ## 4. Phase 3 — Statut et vérification de la PR #21
 
-### 4.1. Fusion de la base
+### 4.1. Fusion de la base et préservation intégrale du CHANGELOG
 - Branche de base `origin/arena/01a0c56d-seamtech-search` fusionnée dans `arena/01a0c90e-seamtech-search` (commit de merge `99487df`).
-- Résolution du conflit sur `CHANGELOG.md` en conservant chronologiquement les deux entrées :
-  1. `Unreleased — Intégration de la vérité terrain étendue (74 cibles) et garde-fou CI`
-  2. `Unreleased — Lot H.1 « poste prêt » : sauvegarde hors-site éprouvée, mise en service, recette humaine, exploitation`
+- Résolution du conflit sur `CHANGELOG.md` en conservant l'intégralité des 22 sections historiques de la base (792 lignes de `f42e29b`, incluant toutes les versions de 0.1.0 à 0.5.0 et le Lot F) et en ajoutant en tête la section de la vérité étendue :
+  - Nombre de sections : `grep -c '^## ' CHANGELOG.md` = **23**
+  - Diff contre la base : `git diff --numstat origin/arena/01a0c56d-seamtech-search -- CHANGELOG.md` = **19 additions, 0 suppression** (aucune perte d'historique).
 
-### 4.2. Statut après push (`13c7d96`)
-Commande :
+### 4.2. Réparation de la base et statut PR
+- **Constat sur la base** : Le dernier commit de la branche de base `origin/arena/01a0c56d-seamtech-search` (`f42e29b`) présentait un job `sauvegarde` en échec en CI (run push `35731753595` bloqué à l'étape 10 GARDE-FOU car `test_sauvegarde_unites.py` n'avait pas le marqueur `sauvegarde`, causant une collecte de 7 tests < 19 requis).
+- **Rôle de PR #21** : Notre PR apporte la réparation de ce job (`pytestmark = pytest.mark.sauvegarde`, tests de rétention locale, garde-fou `collectés == exécutés` sans filtres restrictifs). Les runs de validation de PR (testant la combinaison `base + head`) sont 100 % VERTS (8/8 jobs), démontrant la résolution du problème de la base.
+- **Vérification API GitHub** :
 ```bash
 gh pr view 21 --json number,title,state,mergeable,mergeStateStatus,baseRefName,headRefName,headRefOid
 ```
@@ -143,7 +145,7 @@ Sortie brute :
 {
   "baseRefName": "arena/01a0c56d-seamtech-search",
   "headRefName": "arena/01a0c90e-seamtech-search",
-  "headRefOid": "13c7d965fbd1ce1bc011398a3e662baeaac865f3",
+  "headRefOid": "ad55bfb6188e63b65288b8e05cbafb54e3a6c221",
   "mergeStateStatus": "CLEAN",
   "mergeable": "MERGEABLE",
   "number": 21,
@@ -151,7 +153,7 @@ Sortie brute :
   "title": "Audit & Vérité terrain : intégration des 74 cibles et porte CI audit_projet"
 }
 ```
-La PR est `MERGEABLE`, tous les checks CI sont verts, et la PR n'est pas fusionnée.
+La PR est `MERGEABLE`, `mergeStateStatus: CLEAN`, 100 % des checks CI sont verts, et la PR reste ouverte (non fusionnée conformément aux consignes).
 
 ---
 
@@ -173,7 +175,7 @@ La PR est `MERGEABLE`, tous les checks CI sont verts, et la PR n'est pas fusionn
 
 ### 5.2. Preuve que le garde-fou mord (ROUGE puis VERT)
 
-#### Test altéré (ROUGE)
+#### Test altéré sur le code Python (ROUGE)
 Modification volontaire dans `seamtech_search/fiches/verite_7792.py` : `'bateau': 'faux_bateau_pour_test_rouge'`
 Commande :
 ```bash
@@ -198,16 +200,46 @@ tests/test_extraction_fiche_reference.py:44: AssertionError
 ======================= 1 failed, 15 deselected in 0.31s =======================
 ```
 
-#### Test rétabli (VERT)
-Rétablissement de la valeur réelle : `'bateau': '29er'`
-Commande :
-```bash
-python -m pytest tests/test_extraction_fiche_reference.py
-```
-Sortie brute :
+#### Test altéré sur le fichier JSON de vérité (ROUGE)
+Altération volontaire dans `docs/verite_terrain/7792-SO_ffab_complete.json` :
+`"bateau": "bateau_piege_anti_derive"`
+
+Exécution de `scripts/audit_projet.py --rapide` :
 ```text
-============================== 16 passed in 0.36s ==============================
+==========================================================================
+GARDE-FOU SEAMTECH-search — invariants déjà cassés par le passé
+==========================================================================
+...
+6. Source unique de vérité terrain (74 cibles)
+  [OK  ] seamtech_search/fiches/verite_7792.py présent
+  [OK  ] source unique contient 74 cibles — 74 cibles
+  [OK  ] docs/ ré-exporte sans dérive — égalité stricte
+  [OK  ] docs/verite_terrain/7792-SO_ffab_complete.json présent
+  [ÉCHEC] JSON attendu == VERITE_7792 (égalité stricte 74 cibles) — dérive détectée
+
+==========================================================================
+BILAN : 11/12 contrôles verts
+À CORRIGER :
+   - JSON attendu == VERITE_7792 (égalité stricte 74 cibles) (dérive détectée)
+==========================================================================
 ```
+
+Exécution du test unitaire `test_garde_derive_json_7792_complete` :
+```text
+=================================== FAILURES ===================================
+__________ TestAntiDeriveVerite.test_garde_derive_json_7792_complete ___________
+...
+>       assert attendu == VERITE_7792, "Dérive détectée entre 7792-SO_ffab_complete.json et la source unique verite_7792.py"
+E       AssertionError: Dérive détectée entre 7792-SO_ffab_complete.json et la source unique verite_7792.py
+E       Differing items:
+E       {'bateau': 'bateau_piege_anti_derive'} != {'bateau': '29er'}
+======================= 1 failed, 16 deselected in 0.26s =======================
+```
+
+#### Restauration des fichiers (VERT)
+Rétablissement de la valeur réelle : `'bateau': '29er'` dans le code et dans le JSON.
+- `python -m pytest tests/test_extraction_fiche_reference.py` → **17 passed**
+- `python scripts/audit_projet.py --rapide` → **12/12 contrôles verts**
 
 ### 5.3. Rejeu contradictoire des bancs
 - **CLI Banc** :
@@ -269,21 +301,26 @@ Statut global : **SUCCESS (8/8 jobs verts)**
 | `backend (3.13)` | 4m 15s | ✅ Succès | 113 passed / 0 skipped |
 | `backend (3.12)` | 4m 17s | ✅ Succès | perf p95: 1500 fiches 46,1 ms / synthétique 10,1 ms / réel 9,6 ms |
 
+### 6.3. Runs ultérieurs consécutifs vérifiés 100 % verts (8/8 jobs)
+- **Push Run #35738937509** (`ad55bfb`) : **8/8 jobs verts**, job `sauvegarde` : 23/23 tests passés, restauration 50 000 fiches en **1,34 s**.
+- **Pull Request Run #35738944082** (PR #21 sur `ad55bfb`) : **8/8 jobs verts**, job `sauvegarde` : 23/23 tests passés, restauration 50 000 fiches en **0,99 s**.
+
 ---
 
 ## 7. Fichiers et artefacts mis à jour
 
 - `seamtech_search/fiches/verite_7792.py` : Nouvelle source unique de la vérité terrain (74 cibles).
 - `docs/verite_terrain/VERITE_7792_COMPLETE.py` : Re-exportation sans duplication.
+- `docs/verite_terrain/7792-SO_ffab_complete.json` : Fichier de référence JSON couvert par le garde anti-dérive en égalité stricte (74 cibles).
 - `seamtech_search/fiches/persistance.py` : Importation stricte sans fallback silencieux.
 - `seamtech_search/sauvegarde.py` : Purge locale symétrique et rétention respectant le dernier dump.
 - `tests/test_sauvegarde_unites.py` : Marqueur `sauvegarde` et 4 tests de rétention locale/symétrique.
 - `tests/test_sauvegarde_restauration.py` : Marqueurs `postgres` et `sauvegarde`.
-- `tests/test_extraction_fiche_reference.py` : Test de non-régression et garde anti-dérive.
-- `scripts/audit_projet.py` : Invariant d'intégrité de la vérité terrain (10 contrôles).
+- `tests/test_extraction_fiche_reference.py` : Test de non-régression, test de banc étendu et garde anti-dérive (python + JSON).
+- `scripts/audit_projet.py` : Invariant d'intégrité de la vérité terrain étendu (contrôle 6 avec égalité stricte python et JSON, 12 contrôles verts en mode rapide).
 - `.github/workflows/ci.yml` : Retrait du filtre restrictif et renforcement du garde-fou collectés vs exécutés.
-- `CHANGELOG.md` : Fusion ordonnée chronologiquement des deux entrées sans perte.
+- `CHANGELOG.md` : Restauration intégrale des 22 sections de la base (`origin/arena/01a0c56d-seamtech-search`) + ajout de la section de vérité étendue en tête (23 sections au total, 0 suppression vs la base).
 - `docs/verite_terrain/RECETTE_HUMAINE.md` : Précision rigoureuse sur l'unicité de `path_key`.
-- `docs/verite_terrain/RUNBOOK_RESTAURATION.md` : Chiffres mesurés en CI consignés (0,98 s / 0,68 s).
+- `docs/verite_terrain/RUNBOOK_RESTAURATION.md` : Chiffres mesurés en CI consignés (runs 35738002767, 35738011591, 35738937509, 35738944082) et note explicite sur la réparation du job base cassé par la PR #21.
 - `docs/verite_terrain/TRACABILITE_LIVRAISON.md` : Bascule des affirmations de sauvegarde et CI à l'état établi vert (✅).
 - `docs/verite_terrain/RAPPORT_2026-09-22_LOT_H1_INTEGRATION.md` : Présent rapport.

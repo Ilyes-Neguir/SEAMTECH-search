@@ -199,3 +199,14 @@ class TestAntiDeriveVerite:
         assert v_docs.VERITE_7792 is verite_7792.VERITE_7792
         assert v_docs.VERITE_7792_COMPLETE is verite_7792.VERITE_7792_COMPLETE
 
+    def test_garde_derive_json_7792_complete(self) -> None:
+        import json
+        from pathlib import Path
+        from seamtech_search.fiches.verite_7792 import VERITE_7792
+
+        chemin_json = Path(__file__).resolve().parent.parent / "docs/verite_terrain/7792-SO_ffab_complete.json"
+        assert chemin_json.is_file()
+        d = json.loads(chemin_json.read_text(encoding="utf-8"))
+        attendu = d["fiche-7792-SO_ffab.pdf"]["attendu"]
+        assert attendu == VERITE_7792, "Dérive détectée entre 7792-SO_ffab_complete.json et la source unique verite_7792.py"
+

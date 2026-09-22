@@ -47,8 +47,8 @@ le pull_request du même SHA est vert.
 
 | Affirmation | Commande | Sortie brute | Commit | Statut |
 |---|---|---|---|---|
-| Base détruite reconstruite à l'identique (comptes par table, VERSION_SCHEMA_METIER, recherche, inventaire archive) | job CI `sauvegarde` : `pytest tests/test_sauvegarde_unites.py tests/test_sauvegarde_restauration.py` sur PostgreSQL réel + MinIO réel, garde-fou renforcé collectés == exécutés | 23/23 passés, 0 sauté, 0 échec (run push 35738002767, run PR 35738011591) | 13c7d96 | ✅ établi (prouvé en CI) |
-| Durée de restauration ~50 000 fiches mesurée et publiée | annotation `::notice title=sauvegarde-restauration-50k` du job CI `sauvegarde` | 0,98 s / dump 560 566 octets (run push 35738002767), 0,68 s (run PR 35738011591) | 13c7d96 | ✅ établi (mesuré et publié en CI) |
+| Base détruite reconstruite à l'identique (comptes par table, VERSION_SCHEMA_METIER, recherche, inventaire archive) — PR #21 RÉPARE le job base en échec | job CI `sauvegarde` : `pytest tests/test_sauvegarde_unites.py tests/test_sauvegarde_restauration.py` sur PostgreSQL réel + MinIO réel, garde-fou renforcé collectés == exécutés | 23/23 passés, 0 sauté, 0 échec (run push 35738002767, run PR 35738011591, run push 35738937509, run PR 35738944082). Réparation de la base `f42e29b` dont le run `35731753595` échouait | 13c7d96, ad55bfb | ✅ établi (prouvé en CI) |
+| Durée de restauration ~50 000 fiches mesurée et publiée | annotation `::notice title=sauvegarde-restauration-50k` du job CI `sauvegarde` | PR run 35738011591: 0,68 s / push run 35738002767: 0,98 s / PR run 35738944082: 0,99 s / push run 35738937509: 1,34 s (dump 560 566 octets) | 13c7d96, ad55bfb | ✅ établi (mesuré et publié en CI) |
 
 ## Chrono « validation < 2 minutes » (Phase 1)
 
@@ -103,7 +103,7 @@ le pull_request du même SHA est vert.
 1. Chrono humain de validation : **non mesuré** (0/3 fiches).
 2. Échelle réelle (20-30 fiches minimum, 10 000 à terme) : rappels, latence et
    classifieur à re-mesurer — bloqué par l'accès lecture seule à l'archive.
-3. Sauvegarde testée par une restauration (R2/S3) : **ÉPROUVÉ en CI** avec MinIO réel et PostgreSQL 16 (Lot H.1, runs 35738002767 et 35738011591, 23/23 tests passés, restauration 50 000 fiches en 0,98 s / 0,68 s).
+3. Sauvegarde testée par une restauration (R2/S3) : **ÉPROUVÉ en CI** avec MinIO réel et PostgreSQL 16 (Lot H.1, runs 35738002767, 35738011591, 35738937509 et 35738944082, 23/23 tests passés, restauration 50 000 fiches en 0,68 s - 1,34 s ; PR #21 répare la base `f42e29b` qui échouait au run 35731753595).
 4. Les mesures e5 réel (poids, latence, classifieur) proviennent de
    l'environnement d'audit du 22/09 : Hugging Face est injoignable depuis ce
    sandbox (000) — non re-mesurables ici, citées avec leur source.
