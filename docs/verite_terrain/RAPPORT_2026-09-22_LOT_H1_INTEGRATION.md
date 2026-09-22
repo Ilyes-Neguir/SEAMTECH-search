@@ -134,8 +134,10 @@ Dans `docs/verite_terrain/RECETTE_HUMAINE.md`, la mention extrapolée « doublon
   - Diff contre la base : `git diff --numstat origin/arena/01a0c56d-seamtech-search -- CHANGELOG.md` = **19 additions, 0 suppression** (aucune perte d'historique).
 
 ### 4.2. Réparation de la base et statut PR
-- **Constat sur la base** : Le dernier commit de la branche de base `origin/arena/01a0c56d-seamtech-search` (`f42e29b`) présentait un job `sauvegarde` en échec en CI (run push `35731753595` bloqué à l'étape 10 GARDE-FOU car `test_sauvegarde_unites.py` n'avait pas le marqueur `sauvegarde`, causant une collecte de 7 tests < 19 requis).
-- **Rôle de PR #21** : Notre PR apporte la réparation de ce job (`pytestmark = pytest.mark.sauvegarde`, tests de rétention locale, garde-fou `collectés == exécutés` sans filtres restrictifs). Les runs de validation de PR (testant la combinaison `base + head`, ex. runs `35738011591`, `35738944082`, `35742670756`) sont 100 % VERTS (8/8 jobs), démontrant la résolution du problème de la base.
+- **Constat sur la base** : Le dernier commit de la branche de base `origin/arena/01a0c56d-seamtech-search` (`f42e29b`) présentait un job `sauvegarde` en échec en CI (run push `35731753595` et run PR `35731759715` bloqués à l'étape 10 GARDE-FOU car `test_sauvegarde_unites.py` n'avait pas le marqueur `sauvegarde`, causant une collecte de 7 tests < 19 requis).
+- **Rôle de PR #21** : Notre PR apporte la réparation de ce job (`pytestmark = pytest.mark.sauvegarde`, tests de rétention locale, garde-fou `collectés == exécutés` sans filtres restrictifs).
+- **État de la base vs PR** : **La base `f42e29b` reste ROUGE jusqu'à la fusion de la PR #21 ; le run de fusion (événement pull_request) est vert 8/8, donc la fusion rétablit la base.**
+- **Règle de gouvernance** : La fusion de la PR #21 n'appartient PAS à l'agent et relève exclusivement de la décision du commanditaire. La PR demeure volontairement ouverte.
 - **Vérification API GitHub** :
 ```bash
 gh pr view 21 --json number,title,state,mergeable,mergeStateStatus,baseRefName,headRefName,headRefOid
@@ -145,7 +147,7 @@ Sortie brute :
 {
   "baseRefName": "arena/01a0c56d-seamtech-search",
   "headRefName": "arena/01a0c90e-seamtech-search",
-  "headRefOid": "1e85b8660b647ac865b7e297702794b9ee00d4fa",
+  "headRefOid": "9eb46a3e6af7a7ff1a1c95cf43f0bb4d1d1406bb",
   "mergeStateStatus": "CLEAN",
   "mergeable": "MERGEABLE",
   "number": 21,
@@ -306,6 +308,8 @@ Statut global : **SUCCESS (8/8 jobs verts)**
 - **Pull Request Run #35738944082** (PR #21 sur `ad55bfb`) : **8/8 jobs verts**, job `sauvegarde` : 23/23 tests passés, restauration 50 000 fiches en **0,99 s**.
 - **Push Run #35742665674** (`1e85b86`) : **8/8 jobs verts**, job `sauvegarde` : 23/23 tests passés, restauration 50 000 fiches en **1,01 s** (dump 560 568 o).
 - **Pull Request Run #35742670756** (PR #21 sur `1e85b86`) : **8/8 jobs verts**, job `sauvegarde` : 23/23 tests passés, restauration 50 000 fiches en **0,99 s** (dump 560 567 o).
+- **Push Run #35743433330** (`9eb46a3`) : **8/8 jobs verts**, job `sauvegarde` : 23/23 tests passés, restauration 50 000 fiches en **0,74 s** (dump 560 566 o).
+- **Pull Request Run #35743439266** (PR #21 sur `9eb46a3`) : **8/8 jobs verts**, job `sauvegarde` : 23/23 tests passés, restauration 50 000 fiches en **0,62 s** (dump 560 566 o).
 
 ---
 

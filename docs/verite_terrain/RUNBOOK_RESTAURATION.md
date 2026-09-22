@@ -97,21 +97,22 @@ La restauration de ~50 000 fiches semées est mesurée à CHAQUE run du job CI
 
 > **Note sur l'état de la branche de base vs notre PR #21** :
 > Le dernier commit de la branche de base `origin/arena/01a0c56d-seamtech-search` (`f42e29b`)
-> était **ROUGE** en CI (run push `35731753595` en échec à l'étape 10 GARDE-FOU car `test_sauvegarde_unites.py`
+> était **ROUGE** en CI (run push `35731753595` et run PR `35731759715` en échec à l'étape 10 GARDE-FOU car `test_sauvegarde_unites.py`
 > n'avait pas de marqueur `sauvegarde`, causant une collecte de 7 tests < 19 requis).
 > Notre PR #21 apporte la réparation de ce job (`pytestmark = pytest.mark.sauvegarde`, tests de rétention
 > locale symétrique, suppression des filtres aveugles et garde-fou renforcé `collectés == exécutés`).
-> Dès lors, les runs de validation de PR #21 (combinaison `base + head`, ex. runs `35738011591` et `35738944082`)
-> sont **100 % VERTS (8/8 jobs)** : PR #21 répare la CI de la base tout en intégrant la vérité étendue (74 cibles).
+> **La base `f42e29b` reste ROUGE jusqu'à la fusion de la PR #21 ; le run de fusion (événement pull_request) est vert 8/8, donc la fusion rétablit la base.**
 
 | Environnement | Restauration 50 000 fiches | Dump | Note |
 |---|---|---|---|
-| CI GitHub (ubuntu-latest, job `sauvegarde` — run PR 35742670756) | 0,99 s | 560 567 octets | mesuré en CI contre MinIO réel et PostgreSQL 16 pgvector, 23/23 tests passés |
-| CI GitHub (ubuntu-latest, job `sauvegarde` — run push 35742665674) | 1,01 s | 560 568 octets | mesuré en CI contre MinIO réel et PostgreSQL 16 pgvector, 23/23 tests passés |
-| CI GitHub (ubuntu-latest, job `sauvegarde` — run PR 35738944082) | 0,99 s | 560 566 octets | mesuré en CI contre MinIO réel et PostgreSQL 16 pgvector, 23/23 tests passés |
-| CI GitHub (ubuntu-latest, job `sauvegarde` — run push 35738937509) | 1,34 s | 560 566 octets | mesuré en CI contre MinIO réel et PostgreSQL 16 pgvector, 23/23 tests passés |
-| CI GitHub (ubuntu-latest, job `sauvegarde` — run PR 35738011591) | 0,68 s | 560 566 octets | mesuré en CI contre MinIO réel et PostgreSQL 16 pgvector, 23/23 tests passés |
-| CI GitHub (ubuntu-latest, job `sauvegarde` — run push 35738002767) | 0,98 s | 560 566 octets | mesuré en CI contre MinIO réel et PostgreSQL 16 pgvector, 23/23 tests passés |
+| CI GitHub (ubuntu-latest, job `sauvegarde` — run PR 35743439266) | 0,62 s | 560 566 octets | mesuré en CI contre MinIO réel et PostgreSQL 16 pgvector, 23/23 tests passés (tête `9eb46a3`) |
+| CI GitHub (ubuntu-latest, job `sauvegarde` — run push 35743433330) | 0,74 s | 560 566 octets | mesuré en CI contre MinIO réel et PostgreSQL 16 pgvector, 23/23 tests passés (tête `9eb46a3`) |
+| CI GitHub (ubuntu-latest, job `sauvegarde` — run PR 35742670756) | 0,99 s | 560 567 octets | mesuré en CI contre MinIO réel et PostgreSQL 16 pgvector, 23/23 tests passés (commit `1e85b86`) |
+| CI GitHub (ubuntu-latest, job `sauvegarde` — run push 35742665674) | 1,01 s | 560 568 octets | mesuré en CI contre MinIO réel et PostgreSQL 16 pgvector, 23/23 tests passés (commit `1e85b86`) |
+| CI GitHub (ubuntu-latest, job `sauvegarde` — run PR 35738944082) | 0,99 s | 560 566 octets | mesuré en CI contre MinIO réel et PostgreSQL 16 pgvector, 23/23 tests passés (commit `ad55bfb`) |
+| CI GitHub (ubuntu-latest, job `sauvegarde` — run push 35738937509) | 1,34 s | 560 566 octets | mesuré en CI contre MinIO réel et PostgreSQL 16 pgvector, 23/23 tests passés (commit `ad55bfb`) |
+| CI GitHub (ubuntu-latest, job `sauvegarde` — run PR 35738011591) | 0,68 s | 560 566 octets | mesuré en CI contre MinIO réel et PostgreSQL 16 pgvector, 23/23 tests passés (commit `13c7d96`) |
+| CI GitHub (ubuntu-latest, job `sauvegarde` — run push 35738002767) | 0,98 s | 560 566 octets | mesuré en CI contre MinIO réel et PostgreSQL 16 pgvector, 23/23 tests passés (commit `13c7d96`) |
 | Sandbox de développement (pgserver local) | 0,82 s (mesure locale du 22/09/2026) | 560 769 octets | ordre de grandeur seulement — matériel non représentatif |
 
 ## 5. Garde-fous d'exploitation

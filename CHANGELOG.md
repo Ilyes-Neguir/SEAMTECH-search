@@ -12,10 +12,11 @@
   - `validate_extraction.py` : supporte `--verite` au format Python (`VERITE_7792_COMPLETE.py`) et JSON
     (`7792-SO_ffab_complete.json`) en réutilisant le résolveur existant `_valeur_extraite` de `persistance.py`.
     Résultat mesuré : **74/74 = 100.0 %**. Rétro-compatibilité 6/6 Phase 0 préservée sur `7792-SO_ffab.json`.
-- **Garde-fou du projet (`scripts/audit_projet.py`)** : outil de contrôle des 6 invariants critiques
+- **Garde-fou du projet (`scripts/audit_projet.py`)** : outil de contrôle des invariants critiques
   (emplacement de `.github/workflows/ci.yml`, fixture réelle SHA-256 + taille, aucun `except:` aveugle avalé,
-  verrou de calibration actif, présence des 8 fichiers de test §17.11, suite de tests). Mesuré : 7/7 verts en
-  `--rapide` (9/9 en mode complet). Intégré comme étape CI dans le job backend de `.github/workflows/ci.yml`.
+  verrou de calibration actif, présence des 8 fichiers de test §17.11, source unique de vérité 74 cibles +
+  ré-export + JSON strict, suite de tests). Mesuré : 12/12 verts en `--rapide` (14/14 en mode complet).
+  Intégré comme étape CI dans le job backend de `.github/workflows/ci.yml`.
 
 ## Unreleased — Lot H.1 « poste prêt » : sauvegarde hors-site éprouvée, mise en service, recette humaine, exploitation (`arena/01a0c56d-seamtech-search`)
 
