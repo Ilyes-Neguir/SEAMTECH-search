@@ -303,8 +303,9 @@ def sauver(
         )
         manifeste["manifeste_cle_s3"] = cle_manifeste
         chemin_manifeste.write_text(json.dumps(manifeste, ensure_ascii=False, indent=1), encoding="utf-8")
-        purges = appliquer_retention(client_s3, retention)
+        purges = appliquer_retention(client_s3, retention, dossier_local=dossier_local)
         manifeste["retention_purgees"] = purges
+        chemin_manifeste.write_text(json.dumps(manifeste, ensure_ascii=False, indent=1), encoding="utf-8")
         _publier(
             {
                 "operation": "sauver",
@@ -316,6 +317,9 @@ def sauver(
             }
         )
     else:
+        purges = appliquer_retention(None, retention, dossier_local=dossier_local)
+        manifeste["retention_purgees"] = purges
+        chemin_manifeste.write_text(json.dumps(manifeste, ensure_ascii=False, indent=1), encoding="utf-8")
         _publier(
             {
                 "operation": "sauver",
@@ -323,26 +327,55 @@ def sauver(
                 "dump_octets": manifeste["dump"]["octets"],
                 "archive_fichiers": inventaire["nb_fichiers"],
                 "verifiee_apres_envoi": False,
+                "retention_purgees": len(purges),
             }
         )
     return manifeste
 
 
-def appliquer_retention(client_s3, conserver: int) -> list[str]:
-    """Purge hors-site : garde les ``conserver`` sauvegardes les plus récentes,
-    supprime les plus anciennes — JAMAIS la dernière. Une sauvegarde = la paire
-    (dump, manifeste). Renvoie les clés supprimées."""
-    cles = client_s3.list_keys(PREFIXE_SAUVEGARDES)
-    dumps = [c for c in cles if c.endswith(".dump")]
-    dumps_tries = sorted(dumps)  # horodatage dans la clé ⇒ ordre chronologique
-    a_purger = dumps_tries[:-conserver] if conserver >= 1 else []
+def appliquer_retention(
+    client_s3=None,
+    conserver: int = 5,
+    dossier_local: Path | str | None = None,
+) -> list[str]:
+    """Purge symétrique (S3 et local) : garde les ``conserver`` sauvegardes
+    les plus récentes, supprime les plus anciennes — JAMAIS la dernière.
+    Une sauvegarde = la paire (dump, manifeste).
+    Renvoie les identifiants supprimés (clés S3 et/ou chemins locaux)."""
+    nb_a_garder = max(1, int(conserver))
     supprimees: list[str] = []
-    for cle in a_purger:
-        if client_s3.delete_file(cle):
-            supprimees.append(cle)
-        cle_manifeste = f"{cle}.manifest.json"
-        if any(c == cle_manifeste for c in cles) and client_s3.delete_file(cle_manifeste):
-            supprimees.append(cle_manifeste)
+
+    if client_s3 is not None:
+        cles = client_s3.list_keys(PREFIXE_SAUVEGARDES)
+        dumps = [c for c in cles if c.endswith(".dump")]
+        dumps_tries = sorted(dumps)  # horodatage dans la clé ⇒ ordre chronologique
+        a_purger_s3 = dumps_tries[:-nb_a_garder]
+        for cle in a_purger_s3:
+            if client_s3.delete_file(cle):
+                supprimees.append(cle)
+            cle_manifeste = f"{cle}.manifest.json"
+            if any(c == cle_manifeste for c in cles) and client_s3.delete_file(cle_manifeste):
+                supprimees.append(cle_manifeste)
+
+    if dossier_local is not None:
+        dossier = Path(dossier_local)
+        if dossier.is_dir():
+            dumps_locaux = sorted(dossier.glob("*.dump"))
+            a_purger_locaux = dumps_locaux[:-nb_a_garder]
+            for dump_f in a_purger_locaux:
+                try:
+                    dump_f.unlink()
+                    supprimees.append(str(dump_f))
+                except OSError:
+                    pass
+                for cand in [dossier / f"{dump_f.name}.manifest.json", dump_f.with_suffix(".manifest.json")]:
+                    if cand.is_file():
+                        try:
+                            cand.unlink()
+                            supprimees.append(str(cand))
+                        except OSError:
+                            pass
+
     return supprimees
 
 

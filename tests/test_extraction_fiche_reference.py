@@ -38,6 +38,12 @@ class TestFiche7792Verite:
         taux, ecarts = evaluer_verite(fiche_7792, VERITE_7792)
         assert taux >= 0.90, f"taux {taux:.1%} < 90 % : {ecarts}"
 
+    def test_banc_etendu_74_cibles_100_pourcent(self, fiche_7792: FicheExtraite) -> None:
+        taux, ecarts = evaluer_verite(fiche_7792, VERITE_7792)
+        assert len(VERITE_7792) == 74, f"attendu 74 cibles, obtenu {len(VERITE_7792)}"
+        assert taux == 1.0, f"taux {taux:.1%} != 100 % : {ecarts}"
+        assert not ecarts
+
     def test_champs_structurels(self, fiche_7792: FicheExtraite) -> None:
         assert fiche_7792.code == "7792-SO"
         assert fiche_7792.titre == "Voile de portant"
@@ -178,3 +184,30 @@ class TestJeuxDeCotes:
             {"cotes.dessin.slu_m": 6.8, "cotes.dessin.sf_m": 3.2, "cotes.finie.slu_m": 6.6, "cotes.finie.sf_m": 3.08},
         )
         assert taux == 1.0 and not ecarts
+
+
+class TestAntiDeriveVerite:
+    """Garde anti-dérive : source unique dans le paquet, ré-exportée par docs/."""
+
+    def test_source_unique_paquet_verite_7792(self) -> None:
+        import docs.verite_terrain.VERITE_7792_COMPLETE as v_docs
+        from seamtech_search.fiches import persistance, verite_7792
+
+        assert len(verite_7792.VERITE_7792) == 74
+        assert len(verite_7792.VERITE_7792_COMPLETE) == 74
+        assert persistance.VERITE_7792 is verite_7792.VERITE_7792
+        assert v_docs.VERITE_7792 is verite_7792.VERITE_7792
+        assert v_docs.VERITE_7792_COMPLETE is verite_7792.VERITE_7792_COMPLETE
+
+    def test_garde_derive_json_7792_complete(self) -> None:
+        import json
+        from pathlib import Path
+
+        from seamtech_search.fiches.verite_7792 import VERITE_7792
+
+        chemin_json = Path(__file__).resolve().parent.parent / "docs/verite_terrain/7792-SO_ffab_complete.json"
+        assert chemin_json.is_file()
+        d = json.loads(chemin_json.read_text(encoding="utf-8"))
+        attendu = d["fiche-7792-SO_ffab.pdf"]["attendu"]
+        assert attendu == VERITE_7792, "Dérive détectée entre 7792-SO_ffab_complete.json et la source unique verite_7792.py"
+

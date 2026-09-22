@@ -28,6 +28,7 @@ from typing import Any
 
 from seamtech_search.fiches import normalisation as norm
 from seamtech_search.fiches.modeles import FicheExtraite
+from seamtech_search.fiches.verite_7792 import VERITE_7792, VERITE_7792_COMPLETE
 
 LOGGER = logging.getLogger("seamtech_search.fiches.persistance")
 
@@ -504,44 +505,10 @@ def _ecrire_fiche_dans(index: Any, fiche: FicheExtraite, connexion: Any) -> tupl
 
 # ---------------------------------------------------------------------------
 # Vérité terrain du gabarit de référence (7792-SO) — non-régression (§13)
+# Source unique dans le paquet : seamtech_search.fiches.verite_7792 (74 cibles)
 # ---------------------------------------------------------------------------
 
-VERITE_7792: dict[str, object] = {
-    "fiche.code": "7792-SO",
-    "fiche.titre": "Voile de portant",
-    "fiche.quantite": 1,
-    "client": "Sailonet",
-    "bateau": "29er",
-    "type_voile": "Spi Asymétrique",
-    "gamme": "Medium Régate",
-    "cotes.finie.slu_m": 6.6,
-    "cotes.finie.sle_m": 5.5,
-    "cotes.finie.sf_m": 3.08,
-    "cotes.finie.shw_m": 3.14,
-    "cotes.finie.spa_m2": 15.71,
-    # Le document réel n'imprime têtière/poids que sur la ligne « Mesures
-    # Dessin » ; la ligne « Mesures Finies » ne les porte pas (RG5/RG6 : la
-    # vérité suit le document, pas l'ancienne reconstruction §13).
-    "cotes.dessin.tetiere_cm": 3.0,
-    "cotes.dessin.poids_kg": 0.7,
-    "materiau.epaisseur.1": "Monofilm K903",
-    "materiau.epaisseur.1.mesure_mm": 190.0,
-    "galon.guindant": "Bleu",
-    "galon.chute": "Rouge",
-    "jonction.laizes.nb_zigzag": 1,
-    "jonction.laizes.nb_points": 6,
-    "jonction.laizes.espacement_mm": 15.0,
-    "jonction.horizontale.nb_zigzag": 2,
-    "jonction.horizontale.nb_points": 6,
-    "jonction.horizontale.espacement_mm": 30.0,
-    "finition.amure": "Œillet SR12",
-    "option.velcro_anti_deroulement": False,
-    "option.protection_anti_uv": False,
-    "renfort.1.quantite": 2,
-    "renfort.1.diametre_mm": 200.0,
-    "date_dessin": "2026-03-06",
-    "date_edition": "2026-03-06",
-}
+_ = VERITE_7792_COMPLETE  # Ré-export explicite pour compatibilité et non-régression
 
 
 def _valeur_extraite(fiche: FicheExtraite, cible: str) -> object:

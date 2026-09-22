@@ -31,8 +31,11 @@ from seamtech_search.fiches.gabarits import (
 )
 from seamtech_search.fiches.modeles import FicheExtraite
 from seamtech_search.fiches.persistance import (
+    SEUIL_GABARIT_TEST,
+    VERITE_7792,
     charger_seuils,
     ecrire_fiche,
+    evaluer_verite,
     initialiser_verite_7792,
     routage,
     verifier_non_regression,
@@ -136,10 +139,24 @@ def _cmd_init(arguments: argparse.Namespace) -> int:
 def _cmd_banc(arguments: argparse.Namespace) -> int:
     gabarits = list(GABARITS_EMBARQUES)
     fiche = extraire_fiche(Path(arguments.chemin), gabarits=gabarits, gabarit_code=arguments.code)
-    index = _index(arguments.database_url)
-    resultat = verifier_non_regression(index, fiche, nom_fichier=arguments.nom)
+    if arguments.database_url:
+        index = _index(arguments.database_url)
+        resultat = verifier_non_regression(index, fiche, nom_fichier=arguments.nom)
+    else:
+        taux, ecarts = evaluer_verite(fiche, VERITE_7792)
+        seuil = SEUIL_GABARIT_TEST
+        resultat = {
+            "taux": taux,
+            "seuil": seuil,
+            "conforme": taux >= seuil,
+            "ecarts": ecarts,
+            "total": len(VERITE_7792),
+        }
     print(f"Banc gabarit {fiche.gabarit_code} / {arguments.nom}")
-    print(f"  taux de champs corrects : {resultat['taux']:.1%} (seuil {resultat['seuil']:.0%})")
+    print(
+        f"  champs corrects : {resultat['total'] - len(resultat['ecarts'])}/{resultat['total']} "
+        f"({resultat['taux']:.1%}, seuil {resultat['seuil']:.0%})"
+    )
     if resultat["ecarts"]:
         print("  écarts :")
         for ecart in resultat["ecarts"]:
@@ -209,7 +226,7 @@ def principal(argv: list[str] | None = None) -> int:
 
     banc = sous.add_parser("banc", help="non-régression : fiche extraite vs vérité gabarit_test")
     banc.add_argument("chemin")
-    banc.add_argument("--database-url", required=True)
+    banc.add_argument("--database-url", default=None, help="base PostgreSQL (si omis : banc autonome)")
     banc.add_argument("--code", default="FICHE_PORTANT_V1")
     banc.add_argument("--nom", default="fiche-7792-SO_ffab.pdf")
 

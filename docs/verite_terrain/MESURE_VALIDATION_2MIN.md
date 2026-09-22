@@ -36,8 +36,8 @@ vide.**
 Le critère complet de la Phase 1 est : « une fiche entre en base par
 l'interface, validée, avec traçabilité complète — ≥ 90 % des champs lus
 automatiquement, validation en moins de 2 minutes, 0 régression ». Le ≥ 90 %
-est atteint et mesuré sur le document réel (banc 31/31, `validate_extraction`
-6/6 — voir `EMPREINTES.md`). Restait le chrono, jamais produit sur un vrai
+est atteint et mesuré sur le document réel (banc étendu 74/74, `validate_extraction`
+74/74 et 6/6 Phase 0 — voir `EMPREINTES.md`). Restait le chrono, jamais produit sur un vrai
 document.
 
 ## 1. Mesure scriptée (Playwright) — ce que la CI publie

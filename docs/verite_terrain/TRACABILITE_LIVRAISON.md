@@ -18,7 +18,7 @@ le pull_request du même SHA est vert.
 
 | Affirmation | Commande | Sortie brute | Commit | Statut |
 |---|---|---|---|---|
-| Extraction de la vraie fiche 7792-SO : 6/6 critères `validate_extraction` | `pytest tests/test_validate_extraction_mesure.py -q` + `python scripts/validate_extraction.py sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf` | 6/6 (voir `docs/verite_terrain/EMPREINTES.md`) ; banc 31/31 champs | b49479d | ⚠️ démontré une fois (UNE fiche réelle) |
+| Extraction de la vraie fiche 7792-SO : 6/6 critères Phase 0, 74/74 vérité étendue | `pytest tests/test_validate_extraction_mesure.py -q` + `python scripts/validate_extraction.py sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf --verite docs/verite_terrain/VERITE_7792_COMPLETE.py --moteur gabarit` | 6/6 Phase 0 (voir `docs/verite_terrain/EMPREINTES.md`) ; banc étendu 74/74 champs (100 %) | b49479d → HEAD | ⚠️ démontré une fois (UNE fiche réelle) |
 | 48 champs réels affichés dans l'UI (comptages assertés par famille) | job e2e CI, `frontend/e2e/validation.spec.ts` | « 3 passed » runs 35666837231, 35715783739, 35716412346 | b49479d → 64e090c | ✅ établi (CI, rejoué) |
 | Le gabarit génois est une fixture SYNTHÉTIQUE | `sha256sum sample_data/CLIENT-GENOA/fiche-genois.pdf` | 3c073703e4a8… / 1 584 o | 4efe2adc (main) | ✅ établi (documenté noir sur blanc, jamais présenté comme réel) |
 
@@ -47,8 +47,8 @@ le pull_request du même SHA est vert.
 
 | Affirmation | Commande | Sortie brute | Commit | Statut |
 |---|---|---|---|---|
-| Base détruite reconstruite à l'identique (comptes par table, VERSION_SCHEMA_METIER, recherche, inventaire archive) | job CI `sauvegarde` : `pytest -m "postgres or sauvegarde"` sur PostgreSQL réel + MinIO réel, garde-fou 19 passés / 0 sautés | en attente du run CI | à venir | ❌ NON PROUVÉ tant que le run CI n'est pas vert — jamais « sauvegarde configurée » à la place de « aller-retour prouvé » |
-| Durée de restauration ~50 000 fiches mesurée et publiée | annotation `::notice title=sauvegarde-restauration-50k` du job CI `sauvegarde` | en attente du run CI | à venir | ❌ NON MESURÉ en CI (mesure sandbox 0,82 s publiée au runbook comme ordre de grandeur seulement) |
+| Base détruite reconstruite à l'identique (comptes par table, VERSION_SCHEMA_METIER, recherche, inventaire archive) — la base `f42e29b` reste ROUGE jusqu'à la fusion de la PR #21 ; le run de fusion (événement pull_request) est vert 8/8, donc la fusion rétablit la base | job CI `sauvegarde` : `pytest tests/test_sauvegarde_unites.py tests/test_sauvegarde_restauration.py` sur PostgreSQL réel + MinIO réel, garde-fou renforcé collectés == exécutés | 23/23 passés, 0 sauté, 0 échec (run push 35738002767, run PR 35738011591, run push 35738937509, run PR 35738944082, run push 35742665674, run PR 35742670756, run push 35743433330, run PR 35743439266, run push 35745835236, run PR 35745844265). La base `f42e29b` reste ROUGE jusqu'à la fusion de la PR #21 ; le run de fusion (événement pull_request) est vert 8/8, donc la fusion rétablit la base | 13c7d96, ad55bfb, 1e85b86, 9eb46a3, 0c2a4a2 | ✅ établi (prouvé en CI) |
+| Durée de restauration ~50 000 fiches mesurée et publiée | annotation `::notice title=sauvegarde-restauration-50k` du job CI `sauvegarde` | PR run 35743439266: 0,62 s / push run 35743433330: 0,74 s / push run 35745835236: 0,88 s / PR run 35738011591: 0,68 s / push run 35738002767: 0,98 s / PR run 35738944082: 0,99 s / PR run 35742670756: 0,99 s / push run 35742665674: 1,01 s / PR run 35745844265: 1,01 s / push run 35738937509: 1,34 s (dump ~560 565 octets) | 13c7d96, ad55bfb, 1e85b86, 9eb46a3, 0c2a4a2 | ✅ établi (mesuré et publié en CI) |
 
 ## Chrono « validation < 2 minutes » (Phase 1)
 
@@ -81,7 +81,10 @@ le pull_request du même SHA est vert.
 
 | Affirmation | Commande | Sortie brute | Commit | Statut |
 |---|---|---|---|---|
-| CI 7/7 verte (dernier état poussé) | `gh run view <id>` | runs 35666837231, 35667273452, 35716412346 = success 7/7 ; run push 35715779367 ROUGE (flake latence sous --cov, corrigé depuis) | 64e090c → consolidation | ✅ établi / flake corrigé, preuve CI en cours |
+| CI 8/8 verte avec sauvegarde, audit_projet et vérité étendue | `gh run view <id>` | run push 35738002767 = success 8/8, run PR 35738011591 = success 8/8 (docker, backend 3.11/3.12/3.13, integration, e2e, frontend, sauvegarde) ; audit_projet 10/10 vert en CI | 13c7d96 | ✅ établi (prouvé en CI) |
+| Porte garde-fou audit_projet | `python3 scripts/audit_projet.py` | 10/10 contrôles verts (10/10 en --rapide) : CI.yml, fixture réelle, 0 except aveugle, calibration, 8 tests §17.11, vérité unique 74 cibles, ré-export docs | 13c7d96 | ✅ établi |
+| Vérité terrain étendue 74 cibles | `python -m seamtech_search.fiches.cli banc sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf` | 74/74 champs corrects (100.0 %) | 76cb9ee → 13c7d96 | ✅ établi |
+| CI 7/7 verte (historique des consolidations) | `gh run view <id>` | runs 35666837231, 35667273452, 35716412346 = success 7/7 ; run push 35715779367 ROUGE (flake latence sous --cov, corrigé depuis) | 64e090c → consolidation | ✅ établi / flake corrigé, preuve CI en cours |
 | Suite SQLite (défaut) | `pnpm test:e2e` (frontend) | 22 passed / 3 skipped, inchangée | b49479d | ✅ établi (CI) |
 | Comptes pytest avec filtre (mesures locales du 22/09, PostgreSQL 16.2 + pgvector + pg_trgm + unaccent) | voir colonne commande | `-m "not postgres"` = 487/3 · `-k "not postgres"` = 468/3 · `-k "not postgres and not s3"` = 459/2 · `-m "postgres and not perf"` = 112/1 (le saut = test e5 sans poids hors CI ; 113/0 en CI) · `-m postgres` = 115/1 · `-m perf` = 3/0 · `-k "not s3"` = 593/3 | consolidation 22/09 | ✅ établi (rejoué ce jour) |
 | Porte de couverture | `pytest -k "not s3" -m "not perf" --cov=seamtech_search … && python scripts/coverage_gate.py coverage.json` | « Coverage gate passed » (locale 22/09) | idem | ✅ établi (CI + local) |
@@ -100,7 +103,7 @@ le pull_request du même SHA est vert.
 1. Chrono humain de validation : **non mesuré** (0/3 fiches).
 2. Échelle réelle (20-30 fiches minimum, 10 000 à terme) : rappels, latence et
    classifieur à re-mesurer — bloqué par l'accès lecture seule à l'archive.
-3. Sauvegarde testée par une restauration (R2/S3) : non commencé.
+3. Sauvegarde testée par une restauration (R2/S3) : **ÉPROUVÉ en CI** avec MinIO réel et PostgreSQL 16 (Lot H.1, runs 35738002767, 35738011591, 35738937509, 35738944082, 35742665674, 35742670756, 35743433330, 35743439266, 35745835236 et 35745844265, 23/23 tests passés, restauration 50 000 fiches en 0,62 s - 1,34 s ; la base `f42e29b` reste ROUGE jusqu'à la fusion de la PR #21 ; le run de fusion (événement pull_request) est vert 8/8, donc la fusion rétablit la base).
 4. Les mesures e5 réel (poids, latence, classifieur) proviennent de
    l'environnement d'audit du 22/09 : Hugging Face est injoignable depuis ce
    sandbox (000) — non re-mesurables ici, citées avec leur source.

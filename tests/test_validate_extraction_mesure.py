@@ -460,3 +460,48 @@ def test_moteur_gabarit_inconnu_conserve_valeurs_et_avertit(tmp_path: Path) -> N
     assert verdicts["reference"] == "MANQUANT"  # la valeur n'est pas INVENTÉE
     assert code in (0, 1)  # le taux peut être faible : ce n'est pas un crash
 
+
+def test_moteur_gabarit_verite_etendue_74_cibles(tmp_path: Path, capsys) -> None:
+    """Banc étendu sur document réel : 74/74 cibles = 100.0 % (script .py et json)."""
+    racine = Path(__file__).resolve().parent.parent
+    verite_py = racine / "docs/verite_terrain/VERITE_7792_COMPLETE.py"
+    verite_json = racine / "docs/verite_terrain/7792-SO_ffab_complete.json"
+
+    # 1. Via le fichier Python
+    code_py = harness.main(
+        [
+            "validate_extraction.py",
+            str(racine / "sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf"),
+            "--verite",
+            str(verite_py),
+            "--moteur",
+            "gabarit",
+            "--sortie-json",
+            str(tmp_path / "mesure_py.json"),
+        ]
+    )
+    assert code_py == 0
+    mesure_py = json.loads((tmp_path / "mesure_py.json").read_text(encoding="utf-8"))
+    assert mesure_py["global"]["attendus"] == 74
+    assert mesure_py["global"]["ok"] == 74
+    assert mesure_py["global"]["taux_ok"] == 1.0
+
+    # 2. Via le fichier JSON
+    code_json = harness.main(
+        [
+            "validate_extraction.py",
+            str(racine / "sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf"),
+            "--verite",
+            str(verite_json),
+            "--moteur",
+            "gabarit",
+            "--sortie-json",
+            str(tmp_path / "mesure_json.json"),
+        ]
+    )
+    assert code_json == 0
+    mesure_json = json.loads((tmp_path / "mesure_json.json").read_text(encoding="utf-8"))
+    assert mesure_json["global"]["attendus"] == 74
+    assert mesure_json["global"]["ok"] == 74
+    assert mesure_json["global"]["taux_ok"] == 1.0
+
