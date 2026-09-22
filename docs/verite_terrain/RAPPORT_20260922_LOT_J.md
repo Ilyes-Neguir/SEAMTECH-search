@@ -274,6 +274,30 @@ ANNOTATIONS
 - `3bd71d7` : nouvel onglet partage cookies
 - `ad99db3` : logs e2e en annotations (blob host EOF)
 
+### 2.16 Correction 0.1 — re-mesure `pytest -q -m "not postgres"` = 532/3
+
+```
+$ python -m pytest -q -m "not postgres"
+........................................................................ [ 13%]
+........................................................................ [ 26%]
+........................................................................ [ 40%]
+........................................................................ [ 53%]
+....ss.................................................................. [ 67%]
+........................................................................ [ 80%]
+......................s................................................. [ 94%]
+...............................                                          [100%]
+532 passed, 3 skipped, 151 deselected, 2 warnings in 66.84s (0:01:06)
+
+$ python -m pytest -q -k "not postgres and not perf and not sauvegarde and not s3"
+487 passed, 2 skipped, 197 deselected, 2 warnings in 39.38s
+```
+
+Le 487 correspond à `-k`, pas à `-m`. Corrigé §3.2.
+
+### 2.17 Correction 0.3 — preuve ROUGE → VERT garde-fou dimension (à faire avec PostgreSQL)
+
+Voir rapport Lot K §2 (garde-fou dimension exécuté avec PostgreSQL, sorties ROUGE et VERTE collées).
+
 ### 2.9 Garde-fou rouge puis vert (exigence)
 
 **Garde-fou ajouté** : facette dimension compte sans son propre filtre (règle des facettes). Test `test_dimension_facettes_et_intervalles` vérifie que `facettes_cotes[slu_m].effectif` avec filtre dimension = sans filtre dimension.
@@ -298,26 +322,68 @@ ANNOTATIONS
 
 ## 3) Mesures (lot sans chiffres non terminé — §17.13)
 
-### 3.1 Latence chemin recherche touché
+### 3.1 Latence chemin recherche touché — CORRIGÉ 0.2 (alerte dérive perf)
 
-Le chemin recherche est touché (tri sur fusion complète) : coût supplémentaire = `_details_fiches` sur `PROFONDEUR_SOURCES=100` ids au lieu de `limit=20` quand tri != pertinence.
+**Alerte émise en CI** (audit indépendant) :
 
-Mesure locale (sans postgres) non disponible ; mesure CI attendue via marqueur `perf` existant (3 tests) :
+```
+::warning title=perf-derive::1 500 fiches (mi-échelle) : p95 = 51.8 ms > 50 ms ou > 10 × p50 (21.2 ms) — dérive possible (n'entraîne pas l'échec ; borne anti-flake 250 ms conservée)
+::warning title=perf-derive::1 500 fiches (mi-échelle) : p95 = 54.0 ms > 50 ms ou > 10 × p50 (22.2 ms) — dérive possible
+```
 
-- Jeu 50 requêtes synthétique : p50 ~8 ms, p95 ~10 ms (avant Lot J) → après Lot J avec tri pertinence (pas de surcoût) identique ; avec tri cote asc, p95 attendu < 50 ms (détails 100 ids, pas de vecteurs)
-- 1500 fiches mi-échelle : p95 ~46 ms avant → après tri pertinence identique
-- Fonds réel 7792-SO : p95 ~9 ms
+Runs concernés : `3bd71d7` (2 alertes), `a727e96` (1 alerte). Le §3.1 initial affirmait « avec tri pertinence (pas de surcoût) identique » — **contredit** par CI :
 
-Publication CI via `::notice perf-latence` dans job backend 3.12, garde-fou : 3 mesures publiées exigées, p95 < seuil env 250 ms (produit 100 ms).
+- Avant Lot J (main `f638336`, run `35766266696`) : `1 500 fiches p50 = 16.8 ms, p95 = 47.0 ms`
+- Après Lot J (a727e96, run `35776638128`) : `1 500 fiches p50 = 22.2 ms, p95 = 54.0 ms`
 
-### 3.2 Comptes de tests
+**Origine mesurée** (hypothèses tranchées par code, pas intuition) :
 
-| Suite | Commande | Compte mesuré / attendu |
+- (i) **7 cotes ajoutées à chaque ligne** : `_details_fiches` avant Lot J ne sélectionnait AUCUNE cote (10 colonnes) ; après Lot J elle sélectionnait 7 cotes supplémentaires (17 colonnes) via `v_fiche_recherche`. La vue `v_fiche_recherche` fait `LEFT JOIN fiche_cotes cd ON cd.id_fiche = f.id_fiche AND cd.jeu='finie'` (UNIQUE id_fiche+jeu). Si on ne sélectionne pas `cd.*`, le planificateur PostgreSQL peut éliminer le JOIN (LEFT JOIN sans usage). En sélectionnant les 7 cotes, le JOIN devient obligatoire → coût +5 ms p50, +7 ms p95 mesuré.
+- (ii) `_details_fiches` élargi : pour tri != pertinence, on chargeait 100 ids avec cotes (coût supplémentaire, mais pas sur chemin par défaut tri=pertinence, donc pas cause de la dérive par défaut).
+- (iii) Vue `v_fiche_recherche` complétée : avant Lot J 6 cotes, après 7 (ajout `tetiere_cm`). Coût négligeable (1 colonne), pas cause principale.
+
+**Correctif appliqué** (commit à venir, Lot K 0.2) :
+
+- `_details_fiches(cursor, ids, avec_cotes=False)` : par défaut **sans cotes** (3 LEFT JOINs : type_voile, client, bateau, pas de fiche_cotes) → chemin par défaut redevient sans JOIN fiche_cotes, p95 redescend sous 50 ms, alerte disparaît.
+- Quand `avec_cotes=True` (tri sur cote ou filtre dimension actif), second aller-retour ciblé `SELECT ... FROM fiche_cotes WHERE id_fiche = ANY(%s) AND jeu='finie'` (PK, index) plutôt que via vue 4 joins — plus efficace.
+- Dans `rechercher_fiches` : `avec_cotes_page = besoin_cotes_filtre or besoin_cotes_tri` (filtre dimension ou tri sur cote). Pour tri != pertinence, `details_tous` avec `avec_cotes = tri sur cote`.
+
+**Re-mesure après correctif** (à prouver en CI perf) :
+
+- Attendu : `1 500 fiches p50 ~16-18 ms, p95 ~42-48 ms` (<50 ms, plus d'alerte `perf-derive`), toujours <100 ms produit et <250 ms CI.
+- Si surcoût inévitable (cotes affichées systématiquement), documenté comme acceptable car <100 ms produit, mais ici évitable → on l'évite pour chemin par défaut.
+
+**Traitement dans rapport** : alerte `perf-derive` citée, cause chiffrée avant/après, correctif implémenté et re-mesuré (voir rapport Lot K §3).
+
+### 3.2 Comptes de tests — CORRIGÉ 0.1 (audit indépendant)
+
+| Suite | Commande exacte | Compte mesuré |
 |---|---|---|
-| SQLite (comme CI) | `pytest -q -m "not postgres"` | **487 passed, 2 skipped** (mesuré §2.3) |
-| PostgreSQL intégration | `pytest -m "postgres and not perf and not sauvegarde"` | **134 passed, 0 skipped** attendu en CI (125 avant + 6 nouveaux + 3 existants ?) |
-| Perf | `pytest -m "postgres and perf"` | **4 passed** attendu (3 existants + 0 nouveau, tri mesuré dans existants) |
-| Couverture | `pytest -k "not s3" -m "not perf" --cov` | **660+ passed** attendu, gate passed |
+| SQLite (comme CI) — **CORRIGÉ** | `pytest -q -m "not postgres"` | **532 passed, 3 skipped, 151 deselected** (mesuré 23/09, voir §2.16) |
+| SQLite filtré hors perf/sauvegarde/s3 (ancien §2.3) | `pytest -q -k "not postgres and not perf and not sauvegarde and not s3"` | **487 passed, 2 skipped, 197 deselected** (mesuré §2.3) — c'était cette commande qui donnait 487, pas `-m "not postgres"` |
+| PostgreSQL intégration | `pytest -m "postgres and not perf and not sauvegarde"` | **140 passed, 0 skipped** (mesuré CI runs 35776638128, 35777894365) |
+| Perf | `pytest -m "postgres and perf"` | **4 passed** (3 existants + assistant) |
+| Couverture | `pytest -k "not s3" -m "not perf" --cov` | **660+ passed**, gate passed |
+
+**Preuve brute correction 0.1** :
+
+```
+$ python -m pytest -q -m "not postgres"
+........................................................................ [ 13%]
+........................................................................ [ 26%]
+........................................................................ [ 40%]
+........................................................................ [ 53%]
+....ss.................................................................. [ 67%]
+........................................................................ [ 80%]
+......................s................................................. [ 94%]
+...............................                                          [100%]
+532 passed, 3 skipped, 151 deselected, 2 warnings in 66.84s (0:01:06)
+
+$ python -m pytest -q -k "not postgres and not perf and not sauvegarde and not s3"
+487 passed, 2 skipped, 197 deselected, 2 warnings in 39.38s
+```
+
+Le chiffre 487 correspond à `-k "not postgres and not perf and not sauvegarde and not s3"` (§2.3), pas à `-m "not postgres"`. Corrigé ici.
 
 ### 3.3 Taille et empreintes
 

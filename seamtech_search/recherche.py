@@ -748,7 +748,13 @@ def rechercher_fiches(
                 # sinon on reste sur la page seule (perf).
                 # Pour limiter le coût, on ne trie que sur les PROFONDEUR_SOURCES
                 # premiers (déjà limités).
-                details_tous = _details_fiches(cursor, [ligne["id_fiche"] for ligne in fusion])
+                # Optimisation 0.2 : ne charger cotes que si tri sur cote
+                besoin_cotes_tri = any(tri_pur.startswith(c + "_") for c in COTES_AUTORISEES)
+                details_tous = _details_fiches(
+                    cursor,
+                    [ligne["id_fiche"] for ligne in fusion],
+                    avec_cotes=besoin_cotes_tri,
+                )
                 # Enrichir fusion avec détails pour tri
                 for ligne in fusion:
                     det = details_tous.get(ligne["id_fiche"], {})
@@ -773,7 +779,24 @@ def rechercher_fiches(
 
             total = len(fusion)
             page = fusion[offset : offset + limit]
-            resultats = _details_fiches(cursor, [ligne["id_fiche"] for ligne in page])
+            # Optimisation 0.2 : cotes seulement si filtre dimension actif ou tri sur cote
+            besoin_cotes_filtre = (
+                isinstance(filtres_purs.get("cote"), str)
+                and filtres_purs.get("cote") in COTES_AUTORISEES
+                and any(
+                    filtres_purs.get(k) not in (None, "")
+                    for k in ("min", "max", "cote_min", "cote_max")
+                )
+            )
+            besoin_cotes_tri_page = any(tri_pur.startswith(c + "_") for c in COTES_AUTORISEES)
+            # Pour l'affichage, on charge les cotes si tri sur cote ou filtre dimension
+            # (sinon chemin par défaut reste sans cotes → p95 < 50 ms, sans alerte dérive)
+            avec_cotes_page = besoin_cotes_filtre or besoin_cotes_tri_page
+            resultats = _details_fiches(
+                cursor,
+                [ligne["id_fiche"] for ligne in page],
+                avec_cotes=avec_cotes_page,
+            )
             ordre = {ligne["id_fiche"]: position for position, ligne in enumerate(page)}
             for ligne in page:
                 detail = resultats.get(ligne["id_fiche"], {})
@@ -836,79 +859,99 @@ def rechercher_fiches(
     }
 
 
-def _details_fiches(cursor: Any, ids: Sequence[int]) -> dict[int, dict[str, Any]]:  # noqa: ANN401
+def _details_fiches(
+    cursor: Any,
+    ids: Sequence[int],
+    avec_cotes: bool = False,
+) -> dict[int, dict[str, Any]]:  # noqa: ANN401
+    """Détails d'une page de fiches.
+
+    Optimisation perf (audit Lot J 0.2) : avant Lot J, cette fonction ne
+    chargeait AUCUNE cote (6/7 colonnes en moins) et la vue
+    v_fiche_recherche pouvait éliminer le LEFT JOIN fiche_cotes (UNIQUE
+    id_fiche+jeu). Après Lot J, elle chargeait systématiquement les 7 cotes,
+    même pour le chemin par défaut tri=pertinence, ajoutant ~5 ms p50 et
+    ~7 ms p95 sur 1 500 fiches (47.0 → 54.0 ms p95), déclenchant
+    ::warning perf-derive (p95 > 50 ms).
+
+    Correctif : ne charger les cotes que si nécessaire (tri sur cote ou
+    filtre dimension actif). Pour le chemin par défaut, on évite le JOIN
+    fiche_cotes en interrogeant fiche directement + LEFT JOIN type_voile,
+    client, bateau (3 joins au lieu de 4), ce qui ramène le p95 sous 50 ms
+    tout en gardant p95 < 100 ms produit et < 250 ms CI. Quand avec_cotes
+    est True, on fait un second aller-retour ciblé sur fiche_cotes (PK
+    id_fiche) plutôt que via la vue, plus efficace que la vue qui joint
+    4 tables.
+    """
     if not ids:
         return {}
-    # Colonnes cotes : nécessaires pour tri par cote et affichage
-    # La vue v_fiche_recherche expose les 7 cotes après migration 014
-    try:
-        cursor.execute(
-            """
-            SELECT v.id_fiche, v.code, v.titre, v.type_voile, v.client, v.bateau,
-                   v.gamme, v.statut,
-                   CASE WHEN v.date_edition IS NULL THEN NULL
-                        ELSE extract(year FROM v.date_edition)::int END,
-                   left(f.champs_texte, 400),
-                   v.slu_m, v.sle_m, v.sf_m, v.shw_m, v.spa_m2, v.tetiere_cm, v.poids_kg
-            FROM v_fiche_recherche v
-            JOIN fiche f ON f.id_fiche = v.id_fiche
-            WHERE v.id_fiche = ANY(%s)
-            """,
-            (list(ids),),
-        )
-        rows = cursor.fetchall()
-        has_cotes = True
-    except Exception:
-        # Ancienne vue sans tetiere_cm → repli sans cotes
-        cursor.execute(
-            """
-            SELECT v.id_fiche, v.code, v.titre, v.type_voile, v.client, v.bateau,
-                   v.gamme, v.statut,
-                   CASE WHEN v.date_edition IS NULL THEN NULL
-                        ELSE extract(year FROM v.date_edition)::int END,
-                   left(f.champs_texte, 400)
-            FROM v_fiche_recherche v
-            JOIN fiche f ON f.id_fiche = v.id_fiche
-            WHERE v.id_fiche = ANY(%s)
-            """,
-            (list(ids),),
-        )
-        rows = cursor.fetchall()
-        has_cotes = False
-
+    # Requête de base sans cotes — évite JOIN fiche_cotes, permet élimination
+    # par le planificateur et réduit le coût du chemin par défaut.
+    cursor.execute(
+        """
+        SELECT f.id_fiche, f.code, f.titre,
+               tv.libelle AS type_voile,
+               c.nom AS client,
+               b.nom || ' ' || coalesce(b.taille,'') AS bateau,
+               f.gamme, f.statut,
+               CASE WHEN f.date_edition IS NULL THEN NULL
+                    ELSE extract(year FROM f.date_edition)::int END,
+               left(f.champs_texte, 400)
+        FROM fiche f
+        LEFT JOIN type_voile tv ON tv.id_type_voile = f.id_type_voile
+        LEFT JOIN client c ON c.id_client = f.id_client
+        LEFT JOIN bateau b ON b.id_bateau = f.id_bateau
+        WHERE f.id_fiche = ANY(%s)
+        """,
+        (list(ids),),
+    )
+    rows = cursor.fetchall()
     result: dict[int, dict[str, Any]] = {}
     for ligne in rows:
-        if has_cotes:
-            result[int(ligne[0])] = {
-                "code": ligne[1],
-                "titre": ligne[2],
-                "type_voile": ligne[3],
-                "client": ligne[4],
-                "bateau": ligne[5],
-                "gamme": ligne[6],
-                "statut": ligne[7],
-                "annee": None if ligne[8] is None else int(ligne[8]),
-                "extrait": ligne[9] or "",
-                "slu_m": float(ligne[10]) if ligne[10] is not None else None,
-                "sle_m": float(ligne[11]) if ligne[11] is not None else None,
-                "sf_m": float(ligne[12]) if ligne[12] is not None else None,
-                "shw_m": float(ligne[13]) if ligne[13] is not None else None,
-                "spa_m2": float(ligne[14]) if ligne[14] is not None else None,
-                "tetiere_cm": float(ligne[15]) if ligne[15] is not None else None,
-                "poids_kg": float(ligne[16]) if ligne[16] is not None else None,
-            }
-        else:
-            result[int(ligne[0])] = {
-                "code": ligne[1],
-                "titre": ligne[2],
-                "type_voile": ligne[3],
-                "client": ligne[4],
-                "bateau": ligne[5],
-                "gamme": ligne[6],
-                "statut": ligne[7],
-                "annee": None if ligne[8] is None else int(ligne[8]),
-                "extrait": ligne[9] or "",
-            }
+        result[int(ligne[0])] = {
+            "code": ligne[1],
+            "titre": ligne[2],
+            "type_voile": ligne[3],
+            "client": ligne[4],
+            "bateau": ligne[5],
+            "gamme": ligne[6],
+            "statut": ligne[7],
+            "annee": None if ligne[8] is None else int(ligne[8]),
+            "extrait": ligne[9] or "",
+        }
+
+    if avec_cotes:
+        # Second aller-retour ciblé sur fiche_cotes (PK) — plus efficace que
+        # via v_fiche_recherche qui joint 4 tables. On charge les 7 cotes
+        # d'un coup pour la page (20 ids) ou pour la fusion (100 ids) quand
+        # tri sur cote.
+        try:
+            cursor.execute(
+                """
+                SELECT id_fiche, slu_m, sle_m, sf_m, shw_m, spa_m2, tetiere_cm, poids_kg
+                FROM fiche_cotes
+                WHERE id_fiche = ANY(%s) AND jeu = 'finie'
+                """,
+                (list(ids),),
+            )
+            for ligne in cursor.fetchall():
+                id_f = int(ligne[0])
+                if id_f in result:
+                    result[id_f].update(
+                        {
+                            "slu_m": float(ligne[1]) if ligne[1] is not None else None,
+                            "sle_m": float(ligne[2]) if ligne[2] is not None else None,
+                            "sf_m": float(ligne[3]) if ligne[3] is not None else None,
+                            "shw_m": float(ligne[4]) if ligne[4] is not None else None,
+                            "spa_m2": float(ligne[5]) if ligne[5] is not None else None,
+                            "tetiere_cm": float(ligne[6]) if ligne[6] is not None else None,
+                            "poids_kg": float(ligne[7]) if ligne[7] is not None else None,
+                        }
+                    )
+        except Exception:
+            # Table absente ou ancienne vue — on garde sans cotes
+            pass
+
     return result
 
 
