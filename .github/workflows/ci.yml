@@ -646,7 +646,17 @@ jobs:
         run: pnpm exec playwright install --with-deps chromium
       - name: Run E2E tests (suite par défaut, SQLite)
         working-directory: frontend
-        run: pnpm test:e2e
+        run: |
+          set -uo pipefail
+          set +e
+          pnpm test:e2e 2>&1 | tee /tmp/e2e.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            echo "::error title=e2e-failed::$(grep -E 'FAILED|Error|expect|●' /tmp/e2e.log | head -30 | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 2000)"
+            echo "::error title=e2e-tail::$(tail -60 /tmp/e2e.log | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 2000)"
+            exit "$rc"
+          fi
       - name: Upload Playwright report on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -655,6 +665,7 @@ jobs:
           path: |
             frontend/playwright-report/
             frontend/test-results/
+            /tmp/e2e.log
           if-no-files-found: ignore
           retention-days: 5
       # Clôture Phase 1 (Tâche 2 du 21/09) : le parcours de validation est
