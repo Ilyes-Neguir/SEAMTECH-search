@@ -14,7 +14,7 @@ historique, ne force-push jamais).
 | Fait | Preuve |
 |---|---|
 | `origin/main` = `c69dd18` | `git ls-remote origin refs/heads/main` |
-| Tête de pile arena = tête du lot de consolidation (voir §1 pour la tête exacte du jour) | `git ls-remote origin refs/heads/arena/01a0c56d-seamtech-search` |
+| Tête de pile arena = **7cf52dc** (consolidation du 22/09 : flake corrigé — run PUSH 35721372171 vert, garde-fous sandbox, ce runbook) | `git ls-remote origin refs/heads/arena/01a0c56d-seamtech-search` |
 | 10 PR sur 11 (#10 → #19) sont **déjà entièrement contenues** dans la tête de pile | `git merge-base --is-ancestor <tête-PR> <tête-pile>` → « Already up to date » au merge |
 | PR #9 (`fix/test-normcase-basetemp`) est la seule hors pile ; son contenu (normcase dans `tests/test_reindex_skip.py`) est **déjà dans la pile** — le conflit au merge est un conflit de COMMENTAIRE (les deux branches réécrivent le même commentaire) | `gh pr view 9 --json files` = 1 fichier, +8/−1 ; pile : `os.path.normcase` déjà aux lignes 48-51 |
 | ☠️ Fusionner `lot-d/interface-5-ecrans` SEUL dans `main` **supprime `.github/workflows/` en entier** (il ne contient que `ci.yml`, absent de lot-d) → plus aucune CI sur main | vérifié en clone jetable : `git merge lot-d` puis `find .github -type f` → vide |

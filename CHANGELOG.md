@@ -28,8 +28,12 @@ rendre la fusion sûre, corriger le dernier défaut réel, nettoyer.
   timeout d'extraction) et `test_lot_ingestion.py` (< 24 h extrapolé) RESTENT
   dans la suite instrumentée — assertions fonctionnelles à large marge, non
   flakées. Comptes re-mesurés (filtre cité) : `-m perf` = 3/0 ;
-  `-m "postgres and not perf"` = 112/1 hors CI (113/0 en CI avec poids e5) ;
-  `-m "not postgres"` = 487/3.
+  `-m "postgres and not perf"` = 112/1 hors CI (**113 passés / 0 sauté en
+  CI**, ::notice `suite-postgres` du run push) ; `-m "not postgres"` = 487/3.
+  Preuve exigée par l'audit : **run PUSH 35721372171 et pull_request
+  35721378488 VERTS** sur 7cf52dc (le push est l'événement qui compte pour la
+  protection de branche) ; le run push publie p95 = 8,2 / 7,7 / 42,1 ms —
+  tous sous le critère produit de 100 ms sans recourir au seuil étiqueté.
 - **Runbook de fusion livré** : `docs/verite_terrain/FUSION_MAIN.md` —
   Option A (un seul merge de la tête de pile dans main : 0 conflit, prouvé en
   répétition générale sur clone jetable : 167 → 255 fichiers, un seul ci.yml,
