@@ -5,7 +5,9 @@ Livraison : **recherche façon Google v3.0 §11.4** — facette DIMENSION (cotes
 
 > **Itération 3 — 22/09/2026** : CI push `35769811962` / PR `35769817335` → 7/8 verts, seul `e2e` rouge. Cause : `frontend/components/recherche-fiches-app.tsx` `lancer()` faisait `buildBrowserUrl` + `replaceState` seulement après succès API. En mode SQLite `/api/recherche` → 503 `PostgreSQL indisponible hors conteneur`, donc changement tri/page ne mettait pas à jour URL → `recherche-url.spec.ts` `toHaveURL(/tri=date_desc/)` et `/page=2/` échouait. Fix : déplacer `replaceState` avant `jsonFetch` + `setRequete`/`setPage` dans `catch`. Commit `babdeb5` + `7676c4b` (artefact Playwright). Token GitHub expiré ensuite (`gh auth status` → Bad credentials), donc runs `35772537132`/`35772543594` non consultables, artefact non téléchargeable.
 >
-> **Itération 4 — SHA actuel `7676c4b`** : backend 140 passed (3.11/3.12/3.13), sauvegarde verte, docker/frontend/integration verts (run `35771238024` preuves §2.11). E2E attendu vert après fix URL avant fetch (preuve locale build OK, tsc OK, 502 passed SQLite). CI 8/8 à re-prouver après reconnexion GitHub.
+> **Itération 4 — SHA `7676c4b` → `494a493`** : backend 140 passed (3.11/3.12/3.13), sauvegarde verte, docker/frontend/integration verts (run `35771238024` preuves §2.11). E2E encore rouge après fix URL (cause 2 : nouvel onglet partage cookies, `/login` redirige vers `/`, `getByLabel('Password')` timeout 30s). Fix `3bd71d7` : ne remplir password que si visible.
+>
+> **Itération 5 — SHA `3bd71d7` → `ad99db3` → `3bd71d7` : CI 8/8 VERTE** : runs `35776638128` (push) et `35776643429` (PR) → `success` 8/8. Backend 140 passed, sauvegarde 0.99s 50k, e2e 1m58s vert, mesure-phase1 670 ms. Preuves §2.15.
 
 ---
 
@@ -239,6 +241,39 @@ $ grep -n "recherche_log" seamtech_search/journal_recherche.py | head
 
 Module lit table réelle, pas de réseau, période paramétrable.
 
+### 2.15 CI 8/8 verte finale — runs 35776638128 (push) et 35776643429 (PR)
+
+```
+$ gh run view 35776638128
+✓ arena/01a0ca57-seamtech-search CI #25 · 35776638128
+JOBS
+✓ docker in 1m19s (ID 106911406173)
+✓ frontend in 36s (ID 106911406577)
+✓ integration in 1m50s (ID 106911406579)
+✓ backend (3.12) in 4m55s (ID 106911406622)
+✓ backend (3.11) in 4m17s (ID 106911406668)
+✓ sauvegarde in 1m1s (ID 106911406703)
+✓ e2e in 1m58s (ID 106911406710)
+✓ backend (3.13) in 3m58s (ID 106911406876)
+
+ANNOTATIONS
+- pytest -m "postgres and not perf and not sauvegarde" : passed=140 skipped=0 (3.11, 3.12, 3.13)
+- 1 500 fiches (mi-échelle) : p50 = 22.2 ms, p95 = 54.0 ms, max = 63.0 ms (n=60)
+- 50 requêtes synthétique : p50 = 14.7 ms, p95 = 16.7 ms, max = 20.3 ms (n=50)
+- fonds réel 7792-SO (13 requêtes) : p50 = 14.6 ms, p95 = 15.5 ms, max = 19.8 ms (n=65)
+- assistant_jeu_8_corpus_mixte : p50 = 1.8 ms, p95 = 2.1 ms, max = 2.2 ms (n=80)
+- recherche_test_0d7eef7339 restaurée en 0.35 s (15 fiches)
+- restauration de 50000 fiches en 0.99 s (dump 562525 octets) — chiffre publié dans RUNBOOK_RESTAURATION.md
+- parcours machine complet de la vraie fiche 7792-SO : 670 ms ; lecture humaine hors chrono (critère < 120 000 ms)
+```
+
+**Preuve e2e** : avant fix nouvel onglet, erreur `locator.fill: Test timeout of 30000ms exceeded; waiting for getByLabel('Password')` à `recherche-url.spec.ts:51:40` (nouvel onglet partage cookies, /login redirige). Fix : `waitFor` avec try/catch, si déjà authentifié on continue. Après fix, e2e vert 1m58s.
+
+**Fixes successifs** :
+- `babdeb5` : URL avant fetch (SQLite 503)
+- `3bd71d7` : nouvel onglet partage cookies
+- `ad99db3` : logs e2e en annotations (blob host EOF)
+
 ### 2.9 Garde-fou rouge puis vert (exigence)
 
 **Garde-fou ajouté** : facette dimension compte sans son propre filtre (règle des facettes). Test `test_dimension_facettes_et_intervalles` vérifie que `facettes_cotes[slu_m].effectif` avec filtre dimension = sans filtre dimension.
@@ -295,12 +330,12 @@ Publication CI via `::notice perf-latence` dans job backend 3.12, garde-fou : 3 
 
 ## 4) Non prouvé / bloqué (liste honnête)
 
-1. **CI sur la branche** → NON PROUVÉ au moment de ce rapport (push non encore effectué). À prouver par `gh run view` après push : 8 jobs verts, dont e2e (3 passed) et sauvegarde.
+1. **CI sur la branche** → **PROUVÉ 8/8 verte** runs `35776638128` (push) et `35776643429` (PR) — preuves §2.15. Backend 140 passed, e2e vert, sauvegarde verte, docker/frontend/integration verts, mesure-phase1 670 ms.
 2. **Échelle réelle** : fonds toujours 1 fiche réelle (7792-SO). Mesures dimension/tri sur corpus synthétique + cotes semées ; latence grand volume à re-mesurer quand 20-30 fiches réelles.
 3. **Latence HTTP de bout en bout** via uvicorn + proxy Next.js : mesurée via TestClient in-process ; poste cible à prendre sur installation réelle.
 4. **Chrono humain validation** : 0/3 fiches mesurées — hors périmètre Lot J.
-5. **E2E local** : Chromium non téléchargeable en sandbox sans réseau (RG14) — test non exécutable localement, à passer en CI où browsers préinstallés.
-6. **Postgres local** : pas de `SEAMTECH_TEST_DATABASE_URL` en sandbox — tests postgres non exécutés localement, à passer en CI.
+5. **E2E local** : Chromium non téléchargeable en sandbox sans réseau (RG14) — test non exécutable localement, passé en CI où browsers préinstallés (e2e 1m58s vert).
+6. **Postgres local** : pas de `SEAMTECH_TEST_DATABASE_URL` en sandbox — tests postgres non exécutés localement, passés en CI (140 passed).
 
 ---
 
@@ -313,35 +348,46 @@ Publication CI via `::notice perf-latence` dans job backend 3.12, garde-fou : 3 
 | Commit itération 3 | `45cbe22` fix(sauvegarde): version attendue 014 |
 | Commit itération 3 fix URL | `babdeb5` fix(frontend): URL avant API pour SQLite |
 | Commit itération 3 CI artefact | `7676c4b` ci(e2e): publier rapport Playwright |
-| HEAD actuel | `7676c4bc253933eaba5c0c2c2eddcff71b6f72d6` |
+| Commit itération 3 rapport | `494a493` docs(LotJ): maj rapport iteration 3 |
+| Commit itération 4 logs e2e | `ad99db3` ci(e2e): publier logs e2e en annotations |
+| Commit itération 4 fix nouvel onglet | `3bd71d7` fix(e2e): nouvel onglet partage cookies |
+| HEAD actuel | `3bd71d725a6516d553cbef162e642843c8c6f49e` (avant maj finale rapport) |
 | Branche poussée | `arena/01a0ca57-seamtech-search` (push simple, jamais de force) |
 | PR | #25 ouverte vers `main`, NON fusionnée (agent ne fusionne jamais) |
 
-Statut des jobs — **État au 22/09 22h UTC** :
+Statut des jobs — **FINAL 8/8 verte** :
 
 ```
-Run 35769811962 (push après 45cbe22) :
-✓ docker 1m35s, ✓ sauvegarde 1m14s, ✓ frontend 33s, ✓ backend 3.13 4m28s passed=140, ✓ backend 3.11 4m36s passed=140, ✓ backend 3.12 4m49s passed=140, ✓ integration 1m34s, X e2e 2m9s
-→ 7/8 verts, seul e2e rouge (URL non mise à jour en SQLite)
+Run 35776638128 (push) — 22/09 19:57 UTC — SUCCESS 8/8 :
+✓ docker in 1m19s (ID 106911406173)
+✓ frontend in 36s (ID 106911406577)
+✓ integration in 1m50s (ID 106911406579)
+✓ backend (3.12) in 4m55s (ID 106911406622) — passed=140 skipped=0
+✓ backend (3.11) in 4m17s (ID 106911406668) — passed=140 skipped=0
+✓ sauvegarde in 1m1s (ID 106911406703) — 50000 fiches en 0.99 s
+✓ e2e in 1m58s (ID 106911406710) — 3 tests recherche-url + 3 validation
+✓ backend (3.13) in 3m58s (ID 106911406876) — passed=140 skipped=0
 
-Run 35771238024 (push après babdeb5 ?) :
-✓ docker 1m11s, ✓ backend 3.13 4m30s passed=140, ✓ integration 3m19s, X e2e 3m25s, ✓ frontend 35s, ✓ sauvegarde 1m10s, ✓ backend 3.11 4m40s passed=140, ✓ backend 3.12 7m45s passed=140
-→ 7/8 verts, e2e encore rouge (fix URL peut-être pas dans ce run, timing)
+Run 35776643429 (PR) — même SHA — SUCCESS 8/8 (mêmes durées)
 
-Runs 35772537132 / 35772543594 (après 7676c4b) :
-queued → in_progress → token expiré 401 Bad credentials, logs inaccessibles, artefact non récupérable
-→ NON PROUVÉ, à rejouer après reconnexion GitHub
+Historique :
+- 35769811962 : 7/8 (e2e X URL SQLite)
+- 35771238024 : 7/8 (e2e X URL SQLite)
+- 35774259887 : 7/8 (e2e X nouvel onglet)
+- 35775453718 : 7/8 (e2e X nouvel onglet, logs publiés)
+- 35776638128 : 8/8 verte finale
 ```
 
-Mesures publiées (run 35771238024 annotations) :
+Mesures publiées (run 35776638128 annotations) :
 
 ```
 pytest -m "postgres and not perf and not sauvegarde" : passed=140 skipped=0 (3 versions)
-1 500 fiches (mi-échelle) : p50 = 13.4 ms, p95 = 39.2 ms, max = 46.8 ms (n=60)
-50 requêtes synthétique : p50 = 10.6 ms, p95 = 28.0 ms, max = 53.9 ms (n=50)
-fonds réel 7792-SO : p50 = 11.0 ms, p95 = 15.0 ms, max = 91.0 ms (n=65)
-assistant_jeu_8_corpus_mixte : p50 = 1.5 ms, p95 = 2.0 ms, max = 132.6 ms (n=80)
-sauvegarde 50k : 0.99 s (50000 fiches, dump 562528 octets)
+1 500 fiches (mi-échelle) : p50 = 22.2 ms, p95 = 54.0 ms, max = 63.0 ms (n=60, seuil env CI 250 ms, produit 100 ms)
+50 requêtes synthétique : p50 = 14.7 ms, p95 = 16.7 ms, max = 20.3 ms (n=50)
+fonds réel 7792-SO (13 requêtes) : p50 = 14.6 ms, p95 = 15.5 ms, max = 19.8 ms (n=65)
+assistant_jeu_8_corpus_mixte : p50 = 1.8 ms, p95 = 2.1 ms, max = 2.2 ms (n=80)
+sauvegarde 50k : 0.99 s (50000 fiches, dump 562525 octets)
+parcours machine complet vraie fiche 7792-SO : 670 ms (critère < 120 000 ms)
 ```
 
 ---
@@ -368,6 +414,6 @@ sauvegarde 50k : 0.99 s (50000 fiches, dump 562528 octets)
 - [x] E2E Playwright URL partageable (3 tests)
 - [x] `pyproject.toml` : `recherche-log` script
 - [x] `CHANGELOG.md` entrée en tête, 24 sections intactes
-- [x] `audit_projet.py --rapide` 12/12, tsc+build verts, ruff propre, 487 passed hors postgres
-- [ ] CI 8 jobs verte (à prouver après push)
-- [ ] Rapport avec preuves brutes, mesures, limites, SHA+statut jobs (ce fichier, à compléter après CI)
+- [x] `audit_projet.py --rapide` 12/12, tsc+build verts, ruff propre, 502 passed hors postgres (local), 140 passed postgres CI
+- [x] CI 8 jobs verte — runs 35776638128 (push) et 35776643429 (PR) SUCCESS 8/8, preuves §2.15
+- [x] Rapport avec preuves brutes, mesures, limites, SHA+statut jobs (ce fichier, maj finale)
