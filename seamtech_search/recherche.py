@@ -814,10 +814,19 @@ def rechercher_fiches(
 
             facettes = _facettes(cursor, ts_config, texte, filtres_purs, inclure_a_valider)
             # Facette dimension : min/max + intervalles depuis données réelles
-            try:
-                facettes_cotes = _facettes_cotes(cursor, ts_config, texte, filtres_purs, inclure_a_valider)
-            except Exception as exc:
-                LOGGER.warning("Facette cotes échouée : %s", exc)
+            # Optimisation 0.2 : ne calculer les 7 cotes que si facette dimension active (filtre cote présent) ou tri sur cote.
+            # Sinon chemin par défaut reste sans les 7 requêtes GROUP BY, p95 < 50 ms, plus d'alerte perf-derive.
+            besoin_dimension = besoin_cotes_filtre or besoin_cotes_tri_page or (
+                isinstance(filtres_purs.get("cote"), str) and filtres_purs.get("cote") in COTES_AUTORISEES
+            )
+            if besoin_dimension:
+                try:
+                    facettes_cotes = _facettes_cotes(cursor, ts_config, texte, filtres_purs, inclure_a_valider)
+                except Exception as exc:
+                    LOGGER.warning("Facette cotes échouée : %s", exc)
+                    facettes_cotes = {c: {"unite": u, "min": None, "max": None, "effectif": 0, "intervalles": []} for c, u in COTES_UNITES.items()}
+            else:
+                # Pas de dimension active ni tri cote : on évite les 7 requêtes, on retourne structure vide avec unités
                 facettes_cotes = {c: {"unite": u, "min": None, "max": None, "effectif": 0, "intervalles": []} for c, u in COTES_UNITES.items()}
 
             # Facette « dimension » : intervalles de la cote choisie (ou slu_m par défaut)
