@@ -48,13 +48,30 @@ test.describe("validation de bout en bout", () => {
     await expect(page.getByTestId("message-ok")).toContainText("rejet", { timeout: 10000 })
   })
 
-  test("la vraie fiche 7792-SO : champs réels, correction RG11, validation < 2 min", async ({ page }) => {
-    const file = await ouvrirFile(page)
-    // Chrono du parcours opérateur : de l'OUVERTURE de la fiche (clic dans la
-    // file) à la confirmation de validation. Critère de sortie Phase 1
-    // (§17.14) : moins de 2 minutes. Le chiffre est publié en annotation.
+  test("la vraie fiche 7792-SO : parcours machine complet (< 2 min)", async ({ page }) => {
+    await signIn(page)
+    // Chrono du PARCOURS MACHINE COMPLET — correction de l'audit indépendant
+    // du 22/09 : la fiche 7792-SO est AUTO-SÉLECTIONNÉE à l'arrivée sur la
+    // page (validation-app.tsx sélectionne la première de la file, triée par
+    // confiance croissante), donc un chrono démarrant APRÈS ouvrirFile()
+    // mesurait un plancher (relecture DOM + deux écritures sur une fiche déjà
+    // affichée), et le rendu PDF n'était jamais attendu alors que c'est ce que
+    // l'opérateur regarde. Le chrono démarre donc AVANT la navigation et la
+    // fenêtre exige le rendu réel : file, fiche ouverte, 48 champs, PDF
+    // (pdf.js a chargé le document : « 1 / N »), correction RG11, validation.
+    // La part humaine (lecture du document, décision) reste hors chrono —
+    // elle est mesurée à la main (docs/verite_terrain/MESURE_VALIDATION_2MIN.md).
     const debut = Date.now()
+    await page.goto("/validation")
+    const file = page.getByTestId("file-validation")
+    await expect(file).toBeVisible()
+    await file.getByTestId("code-fiche").first().waitFor({ timeout: 10000 })
+    // Clic explicite : si l'auto-sélection disparaît un jour, c'est lui qui
+    // ouvre réellement la fiche (la charge reste dans la fenêtre de mesure).
     await ouvrirFiche(page, file, "7792-SO")
+    // Le rendu du PDF fait partie de la fenêtre : pdf-page affiche « 1 / … »
+    // tant que pdf.js n'a pas chargé le document, puis « 1 / N ».
+    await expect(page.getByTestId("pdf-page")).toHaveText(/\d+ \/ \d+/, { timeout: 15000 })
 
     // Les comptages RÉELS mesurés sur le document client (jamais inventés —
     // ce sont les comptes du banc gabarit_test, docs/verite_terrain) :
@@ -94,7 +111,7 @@ test.describe("validation de bout en bout", () => {
     const dureeMs = Date.now() - debut
     test.info().annotations.push({
       type: "mesure-phase1",
-      description: `parcours ouverture→validation de la vraie fiche 7792-SO : ${dureeMs} ms (critère < 120 000 ms)`,
+      description: `parcours machine complet de la vraie fiche 7792-SO (navigation → fiche ouverte, champs et PDF rendus → correction RG11 → validation) : ${dureeMs} ms ; lecture humaine hors chrono (critère < 120 000 ms)`,
     })
     expect(dureeMs).toBeLessThan(120_000)
   })

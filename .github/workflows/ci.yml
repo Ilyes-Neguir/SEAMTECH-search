@@ -581,13 +581,19 @@ jobs:
                   yield from iterer_specs(enfant)
 
           stats = d["stats"]
-          passes = stats["expected"] + stats.get("flaky", 0)
+          passes = stats["expected"]
+          flaky = stats.get("flaky", 0)
           sautes = stats.get("skipped", 0)
-          if sautes or passes != 3:
+          # Porte de sortie de phase (audit indépendant du 22/09) : un test qui
+          # échoue puis passe au retry (compté « flaky » par Playwright avec
+          # retries: 2) n'est PAS un test réellement assaini — il doit faire
+          # échouer la porte, pas compter comme « réellement exécuté ».
+          if sautes or flaky or passes != 3:
               raise SystemExit(
-                  f"GARDE-FOU live e2e : attendu 3 tests passés, 0 sautés — mesuré "
-                  f"{passes} passés, {sautes} sautés. Les tests live ne doivent jamais "
-                  "s'ignorer silencieusement."
+                  f"GARDE-FOU live e2e : attendu 3 tests passés au premier essai, "
+                  f"0 flaky, 0 sautés — mesuré {passes} passés, {flaky} flaky, "
+                  f"{sautes} sautés. Les tests live ne doivent jamais s'ignorer "
+                  "silencieusement ni masquer une instabilité par retry."
               )
           mesures = [
               a
