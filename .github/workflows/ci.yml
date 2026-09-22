@@ -735,7 +735,11 @@ jobs:
           --health-timeout 5s
           --health-retries 5
       minio:
-        image: minio/minio
+        # Même image que docker-compose.yml : minio/minio a été retiré de
+        # Docker Hub le 2026-09-11 (pulls anonymes 404/401) ; quay.io/minio
+        # est la distribution officielle. Échec observé au run push
+        # 35729178045 : « Docker pull failed with exit code 1 ».
+        image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
         env:
           MINIO_ROOT_USER: minioadmin
           MINIO_ROOT_PASSWORD: minioadmin123
