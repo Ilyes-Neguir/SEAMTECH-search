@@ -74,17 +74,23 @@ lot (marginal à 8 Go : 2-10 jetons/s en Q4 — plan §17.14 Phase 4 reporté à
   dessin ×6 / finie ×5, 4 matériaux, 3 galons, 4 jonctions, 3 finitions,
   8 options, 3 renforts), valeurs spot mesurées en base le 21/09
   (`cotes.finie.slu_m` = 6.6 ; `galon.guindant` = « 50.0 mm | 65.0 g/m² »),
-  correction RG11 puis validation. Le chrono ouverture→validation est asserté
-  < 120 s dans le test ; depuis le 22/09 la CI l'extrait du rapport JSON
-  Playwright (`PLAYWRIGHT_JSON_OUTPUT_NAME=report.json`) et le publie en
-  `::notice mesure-phase1`, avec double garde-fou : les 3 tests live doivent
-  réellement s'exécuter (0 saut toléré) et l'annotation doit exister. Valeur
-  mesurée publiée (run 35666837231) : **351 ms**. Correction d'honnêteté
-  (audit indépendant du 22/09) : avant ce mécanisme, seul le « vert sous
-  120 s » était prouvé — le reporter `list` n'imprime jamais les annotations
-  de test, et les annonces « valeur visible dans l'onglet Actions »
-  décrivaient quelque chose qui n'existait pas. (Précision : ce chrono est la
-  part machine — rendu + traitement + validation ; la part humaine, 3 fiches
+  correction RG11 puis validation. Le chrono du PARCOURS MACHINE COMPLET
+  (navigation → fiche ouverte, champs et PDF rendus → correction RG11 →
+  validation) est asserté < 120 s dans le test ; la CI l'extrait du rapport
+  JSON Playwright (`PLAYWRIGHT_JSON_OUTPUT_NAME=report.json`) et le publie en
+  `::notice mesure-phase1`, avec triple garde-fou : 3 passés au premier
+  essai, 0 flaky (un échec rattrapé par retry fait échouer la porte), 0 saut,
+  et l'annotation doit exister. Valeur mesurée publiée sur la fenêtre
+  corrigée : **665 ms** (run 35715024408). Corrections d'honnêteté (audit
+  indépendant du 22/09) : (1) avant ce mécanisme, seul le « vert sous 120 s »
+  était prouvé — le reporter `list` n'imprime jamais les annotations de test,
+  et les annonces « valeur visible dans l'onglet Actions » décrivaient quelque
+  chose qui n'existait pas ; (2) la première fenêtre de mesure démarrait
+  APRÈS l'arrivée sur la page alors que la fiche y est auto-sélectionnée, et
+  le rendu PDF n'était jamais attendu — les valeurs publiées sous cette
+  fenêtre (351 ms run 35666837231, 449 ms run 35667273452 ; variance ~30 %,
+  ordre de la demi-seconde) étaient un plancher, pas un temps d'ouverture.
+  (Précision : ce chrono est la part machine ; la part humaine, 3 fiches
   chrono à la main, reste non mesurée 0/3.)
 - **La porte Playwright porte le document réel en CI** : le job e2e reçoit un
   service PostgreSQL (pgvector/pg16), un `pnpm build` (le mode live démarre

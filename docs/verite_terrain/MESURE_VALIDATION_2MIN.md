@@ -1,19 +1,35 @@
 # Mesure « validation < 2 minutes » — critère de sortie Phase 1 (§17.14)
 
-Statut au 22/09/2026 : **mesure scriptée VERTE en CI et CHRONO PUBLIÉ**
-(run 35666837231, commit 6c5b0ae) — parcours ouverture→validation de la vraie
-fiche 7792-SO : **351 ms** (critère < 120 000 ms), valeur lisible en
-annotation `mesure-phase1` du job e2e. **Correction d'honnêteté (audit
-indépendant du 22/09)** : sur les runs antérieurs, la valeur en ms n'était
-traçable NULLE PART — le reporter `list` de Playwright n'imprime jamais les
-annotations de test (banc minimal reproduit), le run n'avait aucun artefact et
-l'API GitHub aucune annotation de test ; l'annonce « visible dans l'onglet
-Actions » décrivait quelque chose qui n'existait pas. Depuis le 22/09, la CI
-extrait le chrono du rapport JSON (`PLAYWRIGHT_JSON_OUTPUT_NAME=report.json`)
-et le publie en `::notice mesure-phase1`, avec garde-fou : 3 tests live
-réellement exécutés (0 saut) et annotation exigée. **Mesure humaine :
-procédure fournie, chiffres non mesurés (0/3 fiches) — la Phase 1 n'est pas
-close au sens de l'acceptation tant que ce tableau est vide.**
+Statut au 22/09/2026 : **mesure scriptée VERTE en CI, chrono publié sur la
+FENÊTRE CORRIGÉE** — parcours machine complet de la vraie fiche 7792-SO
+(navigation → fiche ouverte, champs et PDF rendus → correction RG11 →
+validation) : **665 ms** (run 35715024408, commit d7a0026 ; critère
+< 120 000 ms), lisible en annotation `mesure-phase1` du job e2e.
+
+Historique des corrections d'honnêteté (audit indépendant du 22/09) :
+1. **La valeur n'était traçable nulle part** — le reporter `list` de
+   Playwright n'imprime jamais les annotations de test (banc minimal
+   reproduit), le run n'avait aucun artefact et l'API GitHub aucune
+   annotation ; l'annonce « visible dans l'onglet Actions » décrivait quelque
+   chose qui n'existait pas. Corrigé : la CI extrait le chrono du rapport
+   JSON (`PLAYWRIGHT_JSON_OUTPUT_NAME=report.json`) et le publie en
+   `::notice mesure-phase1`, avec garde-fous (3 passés au premier essai,
+   0 flaky, 0 saut, annotation exigée).
+2. **La fenêtre de mesure ne couvrait pas ce que le libellé annonçait** —
+   7792-SO est auto-sélectionnée à l'arrivée sur la page (première de la
+   file triée par confiance croissante), le chrono démarrait après : les
+   valeurs mesurées sous cette fenêtre — 351 ms (run 35666837231) et
+   449 ms (run 35667273452), variance ~30 % entre deux runs verts, ordre de
+   la demi-seconde — étaient un PLANCHER (relecture DOM + deux écritures sur
+   une fiche déjà affichée ; le rendu PDF n'était jamais attendu). Corrigé au
+   commit d7a0026 : le chrono démarre avant la navigation et exige le rendu
+   réel (file, titre, 48 champs, PDF « 1 / N »). Ces deux valeurs plancher
+   restent publiées ici pour mémoire, à ne plus citer comme temps
+   d'ouverture.
+
+**Mesure humaine : procédure fournie, chiffres non mesurés (0/3 fiches) — la
+Phase 1 n'est pas close au sens de l'acceptation tant que ce tableau est
+vide.**
 
 Le critère complet de la Phase 1 est : « une fiche entre en base par
 l'interface, validée, avec traçabilité complète — ≥ 90 % des champs lus
@@ -24,18 +40,22 @@ document.
 
 ## 1. Mesure scriptée (Playwright) — ce que la CI publie
 
-Test : `frontend/e2e/validation.spec.ts`, « la vraie fiche 7792-SO : champs
-réels, correction RG11, validation < 2 min ».
+Test : `frontend/e2e/validation.spec.ts`, « la vraie fiche 7792-SO : parcours
+machine complet (< 2 min) ».
 
-- Début du chrono : clic sur la fiche dans la file (ouverture).
+- Début du chrono : AVANT `page.goto("/validation")` (signIn est le harnais,
+  hors chrono). La fiche 7792-SO étant auto-sélectionnée à l'arrivée
+  (première de la file), démarrer après l'ouverture mesurerait un plancher —
+  c'est ce que faisait la première version, corrigée le 22/09.
 - Fin du chrono : apparition du message de confirmation de validation.
-- Entre les deux : affichage des 48 champs réels (comptages assertés),
-  relecture/correction d'un champ (RG11), validation individuelle.
-- Le test échoue au-delà de 120 000 ms ; la valeur exacte est poussée en
-  annotation `mesure-phase1`, extraite du rapport JSON par l'étape CI
-  (`--reporter=list,json` + lecture de `report.json`) et publiée en
-  `::notice` — c'est ce mécanisme qui rend le chiffre lisible dans les
-  journaux du run (le reporter `list` seul ne l'imprime pas).
+- Dans la fenêtre : navigation, chargement de la file, ouverture de la fiche
+  (titre), 48 champs réels comptés + valeurs spot, rendu du PDF par pdf.js
+  (attente explicite « 1 / N »), correction d'un champ (RG11), validation.
+- Le test échoue au-delà de 120 000 ms ; la valeur exacte est extraite du
+  rapport JSON par l'étape CI (`--reporter=list,json` +
+  `PLAYWRIGHT_JSON_OUTPUT_NAME=report.json`) et publiée en `::notice` (le
+  reporter `list` seul n'imprime jamais les annotations). La porte CI exige
+  en outre 3 passés au PREMIER essai, 0 flaky, 0 saut.
 
 C'est le temps de RENDU + TRAITEMENT, pas le temps de lecture humain — il
 borne la part machine du parcours. Il est rejoué à chaque CI sur la base

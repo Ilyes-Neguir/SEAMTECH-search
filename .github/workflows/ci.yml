@@ -553,11 +553,12 @@ jobs:
         run: |
           # --reporter=list,json : le reporter « list » n'imprime JAMAIS les
           # annotations de test (vérifié par banc minimal le 22/09) ; le chrono
-          # ouverture→validation (annotation mesure-phase1) est donc extrait du
-          # rapport JSON et publié en ::notice — c'est le seul mécanisme qui le
-          # rende lisible dans les journaux CI. Les deux garde-fous reproduisent
-          # ceux de l'étape PostgreSQL : les 3 tests live doivent RÉELLEMENT
-          # s'exécuter (aucun saut toléré) et le chrono doit avoir été produit.
+          # du parcours machine complet (annotation mesure-phase1) est donc
+          # extrait du rapport JSON et publié en ::notice — c'est le seul
+          # mécanisme qui le rende lisible dans les journaux CI. Garde-fous de
+          # porte de sortie de phase : 3 passés au premier essai, 0 flaky (un
+          # échec rattrapé par retry fait échouer la porte), 0 saut, et le
+          # chrono doit avoir été produit.
           set -uo pipefail
           set +e
           pnpm exec playwright test e2e/validation.spec.ts --reporter=list,json
@@ -606,7 +607,7 @@ jobs:
           if not mesures:
               raise SystemExit(
                   "GARDE-FOU chrono : annotation mesure-phase1 absente — le chrono "
-                  "ouverture→validation de la vraie fiche n'a pas été produit."
+                  "du parcours machine complet de la vraie fiche n'a pas été produit."
               )
           print("::notice title=mesure-phase1::" + mesures[0]["description"])
           PY
