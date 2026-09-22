@@ -107,3 +107,24 @@ le pull_request du même SHA est vert.
 4. Les mesures e5 réel (poids, latence, classifieur) proviennent de
    l'environnement d'audit du 22/09 : Hugging Face est injoignable depuis ce
    sandbox (000) — non re-mesurables ici, citées avec leur source.
+
+
+## Re-mesure du runbook de fusion — 22/09/2026
+
+Runbook de fusion re-mesuré le **22/09/2026** sur la pile **fc4f99e** —
+répétition générale : **0 conflit, 272 fichiers, 510 passés / 3 sautés**
+(`pytest -q -m "not postgres"`, 123 désélectionnés, Python 3.11.2).
+
+Preuve : [FUSION_MAIN.md §4](FUSION_MAIN.md#4-preuves-brutes--répétition-du-22092026-sur-fc4f99e),
+commandes et sorties brutes datées, commit d'essai local
+`0055a91cc17509479a9cb84c5512ea520036185b` (jamais poussé).
+Diff : 128 fichiers, +22953 / −28 ; 23 sections du CHANGELOG, les cinq sections
+de main conservées intégralement ; PDF racine conservé et byte-identique.
+**Écart : 52 commits côté pile / 1 côté main, pas les 41 annoncés.**
+
+Le run push de la pile **35751552283** est `success` pour chacun de ses huit
+jobs (JSON brut dans le runbook). Il ne valide pas le nouveau SHA documentaire.
+Livraison sur **arena/01a0c9eb-seamtech-search** imposée par la session, pas
+sur la base ; aucune PR créée/fermée, aucune fusion distante. CI du nouveau
+SHA : voir le rapport de livraison, **NON PROUVÉE tant que ses huit jobs ne
+sont pas terminés avec success**. Revalider toute tête différente de fc4f99e.
