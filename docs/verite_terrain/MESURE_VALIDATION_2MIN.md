@@ -3,8 +3,10 @@
 Statut au 22/09/2026 : **mesure scriptée VERTE en CI, chrono publié sur la
 FENÊTRE CORRIGÉE** — parcours machine complet de la vraie fiche 7792-SO
 (navigation → fiche ouverte, champs et PDF rendus → correction RG11 →
-validation) : **665 ms** (run 35715024408, commit d7a0026 ; critère
-< 120 000 ms), lisible en annotation `mesure-phase1` du job e2e.
+validation) : **665 ms** (run 35715024408, commit d7a0026) et **656 ms**
+(run 35715783739) sur deux runs verts consécutifs — variance ~1 %, ordre de
+la demi-seconde (critère < 120 000 ms) ; valeurs lisibles en annotation
+`mesure-phase1` du job e2e.
 
 Historique des corrections d'honnêteté (audit indépendant du 22/09) :
 1. **La valeur n'était traçable nulle part** — le reporter `list` de

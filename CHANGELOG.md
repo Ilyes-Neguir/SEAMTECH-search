@@ -80,8 +80,9 @@ lot (marginal à 8 Go : 2-10 jetons/s en Q4 — plan §17.14 Phase 4 reporté à
   JSON Playwright (`PLAYWRIGHT_JSON_OUTPUT_NAME=report.json`) et le publie en
   `::notice mesure-phase1`, avec triple garde-fou : 3 passés au premier
   essai, 0 flaky (un échec rattrapé par retry fait échouer la porte), 0 saut,
-  et l'annotation doit exister. Valeur mesurée publiée sur la fenêtre
-  corrigée : **665 ms** (run 35715024408). Corrections d'honnêteté (audit
+  et l'annotation doit exister. Valeurs mesurées publiées sur la fenêtre
+  corrigée : **665 ms** (run 35715024408) et **656 ms** (run 35715783739) —
+  variance ~1 %, ordre de la demi-seconde. Corrections d'honnêteté (audit
   indépendant du 22/09) : (1) avant ce mécanisme, seul le « vert sous 120 s »
   était prouvé — le reporter `list` n'imprime jamais les annotations de test,
   et les annonces « valeur visible dans l'onglet Actions » décrivaient quelque
