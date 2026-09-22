@@ -310,6 +310,8 @@ Statut global : **SUCCESS (8/8 jobs verts)**
 - **Pull Request Run #35742670756** (PR #21 sur `1e85b86`) : **8/8 jobs verts**, job `sauvegarde` : 23/23 tests passés, restauration 50 000 fiches en **0,99 s** (dump 560 567 o).
 - **Push Run #35743433330** (`9eb46a3`) : **8/8 jobs verts**, job `sauvegarde` : 23/23 tests passés, restauration 50 000 fiches en **0,74 s** (dump 560 566 o).
 - **Pull Request Run #35743439266** (PR #21 sur `9eb46a3`) : **8/8 jobs verts**, job `sauvegarde` : 23/23 tests passés, restauration 50 000 fiches en **0,62 s** (dump 560 566 o).
+- **Push Run #35745835236** (`0c2a4a2`) : **8/8 jobs verts**, job `sauvegarde` : 23/23 tests passés, restauration 50 000 fiches en **0,88 s** (dump 560 565 o).
+- **Pull Request Run #35745844265** (PR #21 sur `0c2a4a2`) : **8/8 jobs verts**, job `sauvegarde` : 23/23 tests passés, restauration 50 000 fiches en **1,01 s** (dump 560 563 o).
 
 ---
 
@@ -323,10 +325,27 @@ Statut global : **SUCCESS (8/8 jobs verts)**
 - `tests/test_sauvegarde_unites.py` : Marqueur `sauvegarde` et 4 tests de rétention locale/symétrique.
 - `tests/test_sauvegarde_restauration.py` : Marqueurs `postgres` et `sauvegarde`.
 - `tests/test_extraction_fiche_reference.py` : Test de non-régression, test de banc étendu et garde anti-dérive (python + JSON).
-- `scripts/audit_projet.py` : Invariant d'intégrité de la vérité terrain étendu (contrôle 6 avec égalité stricte python et JSON, 12 contrôles verts en mode rapide).
+- `scripts/audit_projet.py` : Invariant d'intégrité de la vérité terrain étendu (contrôle 6 avec égalité stricte python et JSON, 12 contrôles verts en mode rapide, 14 contrôles verts en mode complet).
 - `.github/workflows/ci.yml` : Retrait du filtre restrictif et renforcement du garde-fou collectés vs exécutés.
-- `CHANGELOG.md` : Restauration intégrale des 22 sections de la base (`origin/arena/01a0c56d-seamtech-search`) + ajout de la section de vérité étendue en tête (23 sections au total, 0 suppression vs la base).
+- `CHANGELOG.md` : Restauration intégrale des 22 sections de la base (`origin/arena/01a0c56d-seamtech-search`) + ajout de la section de vérité étendue en tête (23 sections au total, 0 suppression vs la base) avec les métriques d'audit actualisées (12/12 et 14/14).
 - `docs/verite_terrain/RECETTE_HUMAINE.md` : Précision rigoureuse sur l'unicité de `path_key`.
-- `docs/verite_terrain/RUNBOOK_RESTAURATION.md` : Chiffres mesurés en CI consignés (runs 35738002767, 35738011591, 35738937509, 35738944082) et note explicite sur la réparation du job base cassé par la PR #21.
-- `docs/verite_terrain/TRACABILITE_LIVRAISON.md` : Bascule des affirmations de sauvegarde et CI à l'état établi vert (✅).
+- `docs/verite_terrain/RUNBOOK_RESTAURATION.md` : Chiffres mesurés en CI consignés (runs 35738002767, 35738011591, 35738937509, 35738944082, 35742665674, 35742670756, 35743433330, 35743439266, 35745835236, 35745844265) et note explicite sur la réparation du job base cassé par la PR #21.
+- `docs/verite_terrain/TRACABILITE_LIVRAISON.md` : Bascule des affirmations de sauvegarde et CI à l'état établi vert (✅) et précision de statut de la base.
 - `docs/verite_terrain/RAPPORT_2026-09-22_LOT_H1_INTEGRATION.md` : Présent rapport.
+
+---
+
+## 8. État GitHub vérifié (tête finale)
+
+### 8.1. Statut de la Pull Request #21
+Vérification par l'API GitHub (`gh pr view 21`) :
+- **Numéro** : #21
+- **Branche de base** : `arena/01a0c56d-seamtech-search` (commit `f42e29b`)
+- **Branche de tête** : `arena/01a0c90e-seamtech-search`
+- **Statut de fusion** : `mergeable: MERGEABLE`, `mergeStateStatus: CLEAN`
+- **État** : `state: OPEN`
+
+### 8.2. Constat contradictoire et gouvernance
+1. **La base `f42e29b` reste ROUGE jusqu'à la fusion de la PR #21** : ses deux derniers runs (push `35731753595` et PR `35731759715`) ont échoué sur le job `sauvegarde`.
+2. **Le run de fusion (événement `pull_request`) est 100 % VERT (8/8 jobs)** : il prouve que la fusion du commit de tête dans la base rétablit la base dans un état vert.
+3. **Règle absolue** : La fusion de la PR #21 n'appartient PAS à l'agent : elle est décidée et exécutée exclusivement par le commanditaire. La PR demeure volontairement ouverte.
