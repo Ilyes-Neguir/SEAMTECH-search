@@ -647,6 +647,16 @@ jobs:
       - name: Run E2E tests (suite par défaut, SQLite)
         working-directory: frontend
         run: pnpm test:e2e
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            frontend/playwright-report/
+            frontend/test-results/
+          if-no-files-found: ignore
+          retention-days: 5
       # Clôture Phase 1 (Tâche 2 du 21/09) : le parcours de validation est
       # rejoué EN CONDITIONS RÉELLES — base PostgreSQL jetable, trois dossiers
       # déposés par le pipeline (dont la vraie fiche 7792-SO), front de
