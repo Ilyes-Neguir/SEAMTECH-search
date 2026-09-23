@@ -34,10 +34,10 @@ ALL_MODULES = {
     "seamtech_search/redis_store.py": 93.0,
     "seamtech_search/storage.py": 98.0,
     "seamtech_search/worker.py": 93.0,
-    "seamtech_search/ocr/inventaire.py": 80.0,
-    "seamtech_search/ocr/etat.py": 60.0,
-    "seamtech_search/ocr/pipeline.py": 40.0,
-    "seamtech_search/ocr/cli.py": 40.0,
+    "seamtech_search/ocr/inventaire.py": 81.5,
+    "seamtech_search/ocr/etat.py": 57.0,
+    "seamtech_search/ocr/pipeline.py": 56.6,
+    "seamtech_search/ocr/cli.py": 42.7,
 }
 
 
@@ -47,7 +47,7 @@ def test_gate_passes_when_all_modules_above_threshold() -> None:
 
 
 def test_gate_fails_when_overall_below_floor() -> None:
-    failures = gate.check_coverage(make_report(79.9, ALL_MODULES))
+    failures = gate.check_coverage(make_report(82.9, ALL_MODULES))
     assert any("overall" in f for f in failures)
 
 
@@ -81,7 +81,7 @@ def test_gate_accepts_the_one_decimal_rounding_boundary() -> None:
 
 def test_gate_fails_on_multiple_breaches_and_reports_each() -> None:
     modules = dict(ALL_MODULES, **{"seamtech_search/api.py": 80.0, "seamtech_search/jobs.py": 50.0})
-    failures = gate.check_coverage(make_report(79.9, modules))
+    failures = gate.check_coverage(make_report(82.9, modules))
     assert len(failures) == 3  # overall + api + jobs
 
 
@@ -105,4 +105,4 @@ def test_gate_main_fails_when_report_missing(tmp_path: Path) -> None:
 def test_gate_main_fails_on_invalid_json(tmp_path: Path) -> None:
     report = tmp_path / "coverage.json"
     report.write_text("{not json", encoding="utf-8")
-    assert gate.main(["coverage_gate.py", str(report)]) == 1
+    assert gate.main([f"coverage_gate.py", str(report)]) == 1

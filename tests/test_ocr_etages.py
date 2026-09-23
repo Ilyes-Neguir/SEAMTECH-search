@@ -543,3 +543,72 @@ def test_inventaire_obligatoire_etage1_et_etage3(tmp_path: Path) -> None:
     # Estimation dérivée d'un débit mesuré (pas inventé)
     assert etage3["debit_mesure_pages_par_minute"] == 30.0
     assert etage3["formule_estimation"] == "estimation_duree_s = pages_a_oceriser * 60 / debit_mesure_pages_par_minute"
+
+def test_ocr_avec_fake_tesseract_couvre_sans_binaire(tmp_path: Path) -> None:
+    """Q.1.d : faux tesseract local pour couvrir chemins heureux sans binaire réel (RG14).
+
+    Ce test utilise tests/fixtures/ocr/fake_tesseract.py comme binaire tesseract,
+    sans aucun appel réseau, et couvre les branches succès OCR (texte, confiance,
+    version, durée, page_ocerisee, motif) dans le job backend (sans tesseract réel).
+    Il permet de faire remonter l'overall coverage de 84,07% (avec tesseract réel)
+    vers 85%+ si possible, ou au moins d'améliorer la couverture OCR de 47% → 55%+.
+    """
+    fake_tesseract = FIXTURES_OCR / "fake_tesseract.py"
+    assert fake_tesseract.exists(), "fake tesseract manquant"
+
+    if not PDF_PROPRE.exists():
+        pytest.skip("Échantillon propre absent")
+
+    res = ocriser_fichier(
+        PDF_PROPRE,
+        seuil=SEUIL_DEFAUT,
+        langue="fra",
+        tesseract_command=str(fake_tesseract),
+    )
+
+    assert res["nb_pages"] >= 1
+    assert res["nb_pages_ocerisees"] >= 1, "fake tesseract doit océriser au moins 1 page"
+    assert res["pages"][0]["page_ocerisee"] is True
+    assert res["pages"][0]["texte_ocr"].strip() != ""
+    assert res["pages"][0]["confiance"] is not None
+    assert 0 <= res["pages"][0]["confiance"] <= 100
+    assert res["pages"][0]["moteur"] == "tesseract"
+    assert "5.3.4-fake" in (res["pages"][0]["version_moteur"] or "")
+
+    if REF_PROPRE.exists():
+        reference = REF_PROPRE.read_text(encoding="utf-8")
+        ocr_texte = "\n".join(p["texte_ocr"] for p in res["pages"])
+        taux = _taux_mots_retrouves(reference, ocr_texte)
+        assert taux >= 0.90, f"fake tesseract qualité propre {taux:.3f} <0,90"
+
+    travail = tmp_path / "travail_fake"
+    travail.mkdir()
+    src_tmp = tmp_path / "src_fake"
+    src_tmp.mkdir()
+    shutil.copy(PDF_PROPRE, src_tmp / "scan.pdf")
+
+    os.environ["SEAMTECH_OCR_TRAVAIL_DIR"] = str(travail)
+
+    from seamtech_search.ocr.cli import main as cli_main
+
+    rc = cli_main(
+        [
+            "nuit",
+            "--dossier",
+            str(src_tmp),
+            "--limite",
+            "1",
+            "--budget-minutes",
+            "5",
+            "--tesseract-command",
+            str(fake_tesseract),
+            "--json",
+        ]
+    )
+    assert rc == 0
+
+    rapports = list((travail / "rapports").glob("*.json"))
+    assert len(rapports) >= 1
+    rapport = json.loads(rapports[0].read_text(encoding="utf-8"))
+    assert rapport["pages_ocerisees"] >= 1
+    assert rapport["debit_pages_par_minute"] > 0

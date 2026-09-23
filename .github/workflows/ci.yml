@@ -487,7 +487,13 @@ jobs:
       - name: Coverage gate (overall + per-module)
         # Real gate: reads coverage.json, compares every Phase 1 module against
         # its threshold, exits 1 on any breach. Enforced by tests/test_coverage_gate.py.
-        run: python scripts/coverage_gate.py coverage.json
+        # Publie le chiffre en annotation lisible par API (Q.1.c), comme les autres portes.
+        run: |
+          python scripts/coverage_gate.py coverage.json
+          overall=$(python3 -c "import json; d=json.load(open('coverage.json')); print(f\"{d['totals']['percent_covered']:.2f}\")")
+          floor=$(python3 -c "import importlib.util, pathlib; spec=importlib.util.spec_from_file_location('coverage_gate','scripts/coverage_gate.py'); mod=importlib.util.module_from_spec(spec); spec.loader.exec_module(mod); print(mod.OVERALL_MIN)")
+          echo "::notice title=coverage::overall=${overall}% floor=${floor}% (commande: pytest -k 'not s3' -m 'not perf' --cov=seamtech_search --cov-report=json:coverage.json)"
+          python3 -c "import json; d=json.load(open('coverage.json')); files=d.get('files',{}); print(f\"::notice title=coverage-details::inventaire={files.get('seamtech_search/ocr/inventaire.py',{}).get('summary',{}).get('percent_covered',0):.1f}% etat={files.get('seamtech_search/ocr/etat.py',{}).get('summary',{}).get('percent_covered',0):.1f}% pipeline={files.get('seamtech_search/ocr/pipeline.py',{}).get('summary',{}).get('percent_covered',0):.1f}% cli={files.get('seamtech_search/ocr/cli.py',{}).get('summary',{}).get('percent_covered',0):.1f}% api={files.get('seamtech_search/api.py',{}).get('summary',{}).get('percent_covered',0):.1f}% indexer={files.get('seamtech_search/indexer.py',{}).get('summary',{}).get('percent_covered',0):.1f}%\")"
       - name: Pip audit (security)
         # No `|| echo`: a known vulnerability in a pinned dependency fails CI.
         # Audit the DECLARED dependencies (revue 21/09, Fait 2): `pip-audit`

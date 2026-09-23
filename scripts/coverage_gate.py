@@ -21,20 +21,39 @@ import sys
 from pathlib import Path
 
 # Overall floor for the whole package.
-# Lot M adds ocr module (4 files, ~47% covered without tesseract) which lowers
-# overall from ~86% (main with postgres) to ~84% (estimated). Floor lowered to
-# 80% to accommodate new module while keeping Phase 1 per-module gates intact.
-# Justification : ocr is optional (tesseract absent → unavailable), its coverage
-# is measured separately (47% without binaire, >80% with tesseract in CI job ocr),
-# and overall with postgres should stay >80%. Will be raised again when ocr
-# coverage improves.
-OVERALL_MIN = 80.0
+# Mesures réelles (règle zéro : chiffre + commande + sortie) :
+# - main AVANT Lot M, local avec PostgreSQL, commande exacte CI :
+#   $ pytest -k "not s3" -m "not perf" --cov=seamtech_search --cov-report=json:coverage.json
+#   $ python3 -c "import json; d=json.load(open('coverage.json')); print(d['totals']['percent_covered'], d['totals']['covered'], d['totals']['num_statements'])"
+#   SORTIE : 86.68% 8049/9286 → ancien plancher 85% justifié (mou 1.68 pt)
+# - branche Lot M AVEC tesseract (5.5.0 local, 5.3.4 CI), même commande, avec PostgreSQL :
+#   $ pytest -k "not s3" -m "not perf" --cov=seamtech_search --cov-report=json
+#   SORTIE : 84.07% 8544/10163 (mesuré par auditeur, local)
+#   Donc 85% n'est plus atteint : passage à 83% (mou 1.07 pt) pour backend sans tesseract
+#   (backend sans tesseract : ocr 47% vs 55.3% avec tesseract, impact overall -0.7% → 83.37% estimé)
+# - couverture OCR avec tesseract (même commande, fichiers) :
+#   $ pytest -k "ocr" --cov=seamtech_search.ocr --cov-report=term-missing
+#   inventaire.py 81.5% (97/119), etat.py 57.0% (85/149), pipeline.py 56.6% (154/272), cli.py 42.7% (131/307)
+#   module OCR total 471/851 =55.3%
+#   Sans tesseract : 47% (backend job, ocr tests skipped)
+#   Avec fake_tesseract.py (tests/fixtures/ocr/fake_tesseract.py) : pipeline passe 33%→57%, total 56%
+#   (voir test_ocr_avec_fake_tesseract_couvre_sans_binaire)
+# - overall avec fake_tesseract + tesseract réel devrait repasser ≥85% si tous chemins couverts,
+#   mais en l'état 84.07% <85%, donc plancher abaissé à 83% avec justification mesurée.
+#   Si Q.1.d (fake tesseract) fait repasser ≥85%, remettre OVERALL_MIN=85.0 (meilleure issue).
+#   Sinon, section 4 rapport : plancher abaissé, non compensé par des tests, chiffre mesuré à l'appui.
+OVERALL_MIN = 83.0
 
 # Phase 1 per-module gates: module -> minimum percent covered.
-# These are the numbers the Phase 1 work was accepted at (api 87%, indexer 90%,
-# jobs 94%, redis 92%, storage 97%, worker 92%, import_pipeline 90%).
-# Lot M adds ocr gates with lower thresholds (optional module, tesseract absent
-# in backend job, coverage 47% without binaire, 80%+ with tesseract in ocr job).
+# Convention dépôt : mou 1-3 points max (ex 85% floor pour 86.68% réel → 1.68 pt mou)
+# Lot M : planchers OCR resserrés à 1-3 pts de mou d'après mesures réelles avec tesseract :
+# - inventaire 81.5% → gate 80 (mou 1.5 pt)
+# - etat 57.0% → gate 55 (mou 2.0 pt)
+# - pipeline 56.6% → gate 54 (mou 2.6 pt)
+# - cli 42.7% → gate 40 (mou 2.7 pt)
+# Ces valeurs sont mesurées via :
+# $ pytest -k "ocr" --cov=seamtech_search.ocr --cov-report=term-missing (avec tesseract)
+# SORTIE : voir ci-dessus 81.5%, 57.0%, 56.6%, 42.7%
 MODULE_GATES: dict[str, float] = {
     "seamtech_search/api.py": 87.0,
     "seamtech_search/import_pipeline.py": 90.0,
@@ -43,10 +62,10 @@ MODULE_GATES: dict[str, float] = {
     "seamtech_search/redis_store.py": 92.0,
     "seamtech_search/storage.py": 97.0,
     "seamtech_search/worker.py": 92.0,
-    "seamtech_search/ocr/inventaire.py": 70.0,
-    "seamtech_search/ocr/etat.py": 50.0,
-    "seamtech_search/ocr/pipeline.py": 30.0,
-    "seamtech_search/ocr/cli.py": 35.0,
+    "seamtech_search/ocr/inventaire.py": 80.0,
+    "seamtech_search/ocr/etat.py": 55.0,
+    "seamtech_search/ocr/pipeline.py": 54.0,
+    "seamtech_search/ocr/cli.py": 40.0,
 }
 
 

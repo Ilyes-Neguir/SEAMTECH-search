@@ -201,8 +201,8 @@ def inventaire_etage3(
     - fichiers_texte_natif : nombre de fichiers avec texte natif
     - pages_a_oceriser : nombre total de pages sans texte exploitable
     - pages_texte_natif : pages avec texte natif
-    - estimation_duree_s : estimation basée sur débit mesuré
-    - debit_mesure_pages_par_minute : débit de référence mesuré
+    - estimation_duree_s : estimation basée sur hypothèse de dimensionnement (30 p/min) ou débit réellement mesuré en CI (102,9 p/min) selon contexte
+    - debit_mesure_pages_par_minute : débit de référence — hypothèse prudente 30 p/min pour dimensionnement, mesures réelles CI 102,899/104,176 p/min publiées en annotation
     - seuil : seuil utilisé
     - details : par fichier, pages à océriser
     """
@@ -275,9 +275,10 @@ def inventaire_etage3(
             # Autre type : non concerné par OCR étage 3
             continue
 
-    # Estimation de durée dérivée d'un débit MESURÉ (pas inventé)
-    # Formule : estimation_duree_s = pages_a_oceriser * (60 / debit_mesure)
-    # avec debit_mesure = 30 pages/min mesuré sur échantillons (voir docstring)
+    # Estimation de durée dérivée d'une hypothèse de dimensionnement (30 p/min) — pas mesure
+    # Mesures réelles CI : 102,899 p/min et 104,176 p/min (tesseract 5.3.4, voir docstring module)
+    # Formule : estimation_duree_s = pages_a_oceriser * (60 / debit_hypothese)
+    # avec debit_hypothese = 30 pages/min hypothèse prudente pour PC 8Go CPU seul (voir docstring)
     estimation_duree_s = pages_a_oceriser * DUREE_MOYENNE_PAR_PAGE_S
 
     return {
