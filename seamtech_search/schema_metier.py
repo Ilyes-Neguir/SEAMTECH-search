@@ -26,7 +26,7 @@ from __future__ import annotations
 from typing import Any
 
 # Version du schéma métier — incrémentée à chaque nouvelle migration.
-VERSION_SCHEMA_METIER = "016_dedup_comptes_nominatifs"
+VERSION_SCHEMA_METIER = "017_ocr_etage3"
 
 # Marqueur injecté par le code au moment de la migration (constat 1 de revue) :
 # le nom de la configuration de recherche effective — 'seamtech_unaccent' ou
@@ -78,6 +78,8 @@ TABLES_METIER: tuple[str, ...] = (
     # 016 — Lot L.2 : sessions nominatives. La table `utilisateur` existait déjà
     # (006) et n'est donc PAS recomptée ici ; `session_ui` est la 32e.
     "session_ui",
+    # 017 — Lot M : staging OCR étage 3 (texte OCR par page, jamais dans chunk/document)
+    "ocr_etage3",
 )
 
 SQL_006_FICHE_TECHNIQUE = """
@@ -1072,6 +1074,52 @@ CREATE INDEX IF NOT EXISTS idx_fiche_titre_trgm_brut
     ON fiche USING gin (titre gin_trgm_ops);
 """
 
+SQL_017_OCR_ETAGE3 = """
+-- ============================================================================
+-- 017_ocr_etage3 — Lot M : staging du texte OCR par page (préparation Lot G)
+-- ============================================================================
+-- AUCUNE écriture dans chunk ni document : la promotion vers l'index
+-- appartient au Lot G. Cette table est du STAGING pur, jamais lue par la
+-- recherche tant que le Lot G ne l'a pas promue.
+--
+-- Une ligne = une page océrisée (ou tentative). Les pages avec texte natif
+-- ne sont PAS insérées (elles sont comptées comme ignorées dans le tableau
+-- de bord, mais pas stockées ici — le texte natif est déjà dans le PDF).
+-- Les images isolées (png/jpg/tif) sont traitées comme un scan d'une page.
+--
+-- Colonnes :
+-- - fichier_source : chemin du fichier source (pour traçabilité humaine)
+-- - empreinte_sha256 : empreinte du fichier source (idempotence, jamais mtime)
+-- - page : numéro de page 0-based
+-- - texte_ocr : texte produit par OCR
+-- - confiance : confiance moyenne tesseract (0-100) ou NULL
+-- - moteur : nom du moteur (tesseract)
+-- - version_moteur : version du binaire (ex: tesseract 5.3.0)
+-- - duree_s : durée OCR de la page
+-- - page_ocerisee : bool, True si OCR a produit du texte
+-- - motif : raison de non-OCR ou d'échec (texte natif présent, tesseract absent, etc.)
+-- - horodatage : date d'insertion
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS ocr_etage3 (
+    id               BIGSERIAL PRIMARY KEY,
+    fichier_source   TEXT NOT NULL,
+    empreinte_sha256 TEXT NOT NULL,
+    page             INTEGER NOT NULL,
+    texte_ocr        TEXT,
+    confiance        REAL,
+    moteur           TEXT,
+    version_moteur   TEXT,
+    duree_s          REAL,
+    page_ocerisee    BOOLEAN NOT NULL DEFAULT false,
+    motif            TEXT,
+    horodatage       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_ocr_etage3_empreinte ON ocr_etage3 (empreinte_sha256);
+CREATE INDEX IF NOT EXISTS idx_ocr_etage3_fichier ON ocr_etage3 (fichier_source);
+CREATE INDEX IF NOT EXISTS idx_ocr_etage3_page_ocerisee ON ocr_etage3 (page_ocerisee);
+CREATE INDEX IF NOT EXISTS idx_ocr_etage3_horodatage ON ocr_etage3 (horodatage DESC);
+"""
+
 MIGRATIONS_METIER: tuple[tuple[str, str], ...] = (
     ("006_fiche_technique", SQL_006_FICHE_TECHNIQUE),
     ("007_recherche_index", SQL_007_RECHERCHE_INDEX),
@@ -1084,6 +1132,7 @@ MIGRATIONS_METIER: tuple[tuple[str, str], ...] = (
     ("014_facette_dimension", SQL_014_FACETTE_DIMENSION),
     ("015_qualite_gabarit_brouillon", SQL_015_QUALITE_GABARIT_BROUILLON),
     ("016_dedup_comptes_nominatifs", SQL_016_DEDUP_COMPTES_NOMINATIFS),
+    ("017_ocr_etage3", SQL_017_OCR_ETAGE3),
 )
 
 

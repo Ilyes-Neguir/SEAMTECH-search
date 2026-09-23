@@ -209,9 +209,9 @@ def test_qualite_cli_sans_reseau():
 #   (c) sa ligne dans docs/API.md.
 # ---------------------------------------------------------------------------
 
-from seamtech_search.qualite.tableau import doublons_detectes, tableau_de_bord  # noqa: E402
+from seamtech_search.qualite.tableau import doublons_detectes, ocr_etage3, tableau_de_bord  # noqa: E402
 
-# Les 9 indicateurs réellement exposés après L.2 (8 en L.1 + taux_par_utilisateur).
+# Les 10 indicateurs réellement exposés après M (9 en L.2 + ocr_etage3).
 CLES_TABLEAU_DE_BORD = {
     "taux_extraction_auto",
     "taux_correction_par_champ",
@@ -222,6 +222,7 @@ CLES_TABLEAU_DE_BORD = {
     "lots",
     "doublons_detectes",
     "taux_par_utilisateur",
+    "ocr_etage3",
 }
 
 
@@ -328,3 +329,45 @@ def test_taux_par_utilisateur_expose_les_actions_sans_utilisateur(base_recherche
     assert resultat["comptes_actifs_sans_action"] == 0  # aucun compte nominatif en base de test
     for cle in ("definition", "unite", "periode"):
         assert resultat[cle], f"charge {cle} absente (exigence Lot K)"
+
+
+def test_ocr_etage3_indicateur_valeurs(base_recherche):
+    """Lot M.6 — l'indicateur ocr_etage3 expose ses compteurs réels."""
+    index = base_recherche["index"]
+    # Insère 2 pages océrisées et 1 ignorée (texte natif)
+    with index.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO ocr_etage3
+                (fichier_source, empreinte_sha256, page, texte_ocr, confiance,
+                 moteur, version_moteur, duree_s, page_ocerisee, motif)
+                VALUES
+                (%s, %s, 0, %s, 95.0, 'tesseract', 'tesseract 5.3.0', 1.8, true, ''),
+                (%s, %s, 1, %s, 90.0, 'tesseract', 'tesseract 5.3.0', 2.2, true, ''),
+                (%s, %s, 0, '', NULL, 'natif', NULL, 0.0, false, 'texte natif présent')
+                """,
+                (
+                    "scan1.pdf",
+                    "a" * 64,
+                    "SEAMTECH VOILE TEST",
+                    "scan1.pdf",
+                    "a" * 64,
+                    "SEAMTECH VOILE TEST 2",
+                    "natif.pdf",
+                    "b" * 64,
+                ),
+            )
+
+    with index.connect() as conn:
+        with conn.cursor() as cur:
+            res = ocr_etage3(cur)
+
+    assert res["pages_ocerisees"] == 2
+    assert res["fichiers_scannes"] == 1
+    assert res["pages_ignorees_texte_natif"] == 1
+    assert res["taille_texte_produit"] > 0
+    assert res["duree_totale_s"] >= 4.0
+    assert res["debit_moyen_pages_par_minute"] > 0
+    for cle in ("definition", "unite", "periode"):
+        assert res[cle], f"charge {cle} absente (exigence Lot K)"

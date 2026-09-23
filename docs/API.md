@@ -234,9 +234,9 @@ sel de 16 octets via `secrets`), vérification `hmac.compare_digest`, **biblioth
 uniquement** (aucune dépendance nouvelle). Les jetons de session ne sont stockés que par leur
 empreinte SHA-256 — un dump de la base ne permet pas de rejouer une session.
 
-## Tableau de bord qualité (Lot K.1 + L)
+## Tableau de bord qualité (Lot K.1 + L + M)
 
-`GET /qualite/tableau-de-bord` — 9 indicateurs, chacun avec sa `definition`, son `unite` et
+`GET /qualite/tableau-de-bord` — 10 indicateurs, chacun avec sa `definition`, son `unite` et
 sa `periode` (exigence Lot K), tous en `GROUP BY` côté SQL :
 
 | Indicateur | Contenu |
@@ -250,11 +250,60 @@ sa `periode` (exigence Lot K), tous en `GROUP BY` côté SQL :
 | `lots` | Lots d'ingestion : dossiers, réussites, échecs. |
 | `doublons_detectes` | Lot L.1 — `groupes_exacts`, `liens_exacts`, `liens_probables`, `doublons_vus_avant_validation` (fiches **non `valide`** déjà engagées dans un lien : le chiffre du lot — combien de doublons ont été vus AVANT validation). Un doublon vu n'est pas un doublon traité. |
 | `taux_par_utilisateur` | Lot L.2 — `actions_total`, `actions_attribuees`, `actions_sans_utilisateur`, `part_attribuee`, `par_utilisateur` (identifiant, nom, rôle, actions), `comptes_actifs_sans_action`. Les actions sans utilisateur sont l'héritage d'avant L.2 : elles ne sont **jamais** réattribuées a posteriori. |
+| `ocr_etage3` | Lot M — `total_pages`, `pages_ocerisees`, `fichiers_scannes`, `pages_ignorees_texte_natif`, `echecs`, `taille_texte_produit`, `duree_totale_s`, `debit_moyen_pages_par_minute`, `confiance_moyenne`. Source : table de staging `ocr_etage3` (une ligne = une page). Rappel plan v3.0 : OCR seulement là où c'est utile — le texte des fiches est déjà dans le PDF. |
 
 **Règle de maintenance** : tout nouvel indicateur arrive avec (a) sa clé dans
 `tests/test_qualite_tableau.py::CLES_TABLEAU_DE_BORD`, (b) un test de valeurs, (c) sa ligne
 dans ce tableau. Le test de forme compare l'**ensemble exact** des clés : un indicateur
 ajouté sans être déclaré fait échouer la CI.
+
+## OCR par étages — Lot M (préparation Lot G)
+
+> « OCR seulement là où c'est utile — le texte des fiches est déjà dans le PDF » (plan v3.0 §4 bis)
+
+### CLI
+
+`python3 -m seamtech_search.ocr.cli` (alias installé : `ocr-nuit`) — trois commandes :
+
+| Commande | Rôle |
+|---|---|
+| `inventaire --dossier <chemin> [--seuil 20] [--json]` | Étage 1 + étage 3 : inventaire rapide (fichiers, extensions, tailles, par année/dossier) + inventaire des scans (fichiers_scannes, fichiers_texte_natif, pages_a_oceriser, estimation_duree_s). Phase d'inventaire obligatoire avant traitement (exigence plan). |
+| `nuit --dossier <chemin> --limite N --budget-minutes B [--seuil 20] [--langue fra] [--resolution 300] [--tesseract-command tesseract] [--pages 0,1] [--database-url URL] [--travail-dir DIR] [--json]` | Exécution nocturne : verrou (un seul run à la fois, second sort code 2 proprement), état reprenable par empreinte SHA-256 (jamais mtime), budget de temps respecté à la minute, arrêt propre (état écrit, verrou libéré), compte rendu JSON + texte (fichiers examinés, pages océrisées, pages ignorées texte natif, échecs avec motif, durée totale, débit pages/min, taille texte produit, moteur+version). Toute sortie dans répertoire travail déclaré `SEAMTECH_OCR_TRAVAIL_DIR` (défaut `data/ocr_travail`), jamais dans dossier source (RG13). Aucun appel réseau (RG14). |
+| `rapport --depuis <YYYY-MM-DD> [--json]` | Liste les comptes rendus précédents depuis une date, dans travail_dir/rapports/. |
+
+Variable d'environnement : `SEAMTECH_OCR_TRAVAIL_DIR` (répertoire hors archive pour verrou, état, rapports).
+
+### Table de staging
+
+`ocr_etage3` (migration 017) — staging du texte OCR par page, jamais dans `chunk` ni `document` (promotion = Lot G) :
+
+| Colonne | Type | Description |
+|---|---|---|
+| `fichier_source` | TEXT | Chemin source (traçabilité humaine) |
+| `empreinte_sha256` | TEXT | Empreinte SHA-256 fichier source (idempotence) |
+| `page` | INTEGER | Numéro page 0-based |
+| `texte_ocr` | TEXT | Texte produit par OCR |
+| `confiance` | REAL | Confiance moyenne tesseract (0-100) ou NULL |
+| `moteur` | TEXT | Moteur (tesseract) |
+| `version_moteur` | TEXT | Version binaire (ex tesseract 5.3.0) |
+| `duree_s` | REAL | Durée OCR page |
+| `page_ocerisee` | BOOLEAN | True si OCR a produit du texte |
+| `motif` | TEXT | Raison non-OCR (texte natif présent, tesseract absent, etc.) |
+| `horodatage` | TIMESTAMPTZ | Date insertion |
+
+Index : empreinte, fichier, page_ocerisee, horodatage.
+
+### Planification
+
+Documentée dans `docs/OCR_ETAGES.md` (Windows `schtasks`, Linux `cron`), non exécutée. Précautions : budget, verrou, répertoire travail, journal.
+
+### Règle d'étage (inviolable)
+
+- PDF à texte natif : ZÉRO page océrisée, texte natif jamais remplacé (fonction pure `doit_oceriser_page`)
+- PDF scanné : pages sans texte SONT océrisées
+- Fichier déjà traité (même empreinte) : jamais retraité (idempotence)
+- Image isolée (png/jpg/tif) : traitée comme scan d'une page
+- Seuil paramétrable, défaut 20 justifié (voir `docs/OCR_ETAGES.md`)
 
 ## Ingestion par dossier complet et lots (Lot C)
 

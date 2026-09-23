@@ -45,6 +45,8 @@ recherche-log = "seamtech_search.journal_recherche:main"
 dedup-scan = "seamtech_search.dedup.cli:main"
 # Lot L.2 : comptes nominatifs (mot de passe toujours lu sur STDIN).
 comptes = "seamtech_search.comptes.cli:main"
+# Lot M : pipeline OCR par étages, exécutable la nuit.
+ocr-nuit = "seamtech_search.ocr.cli:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
