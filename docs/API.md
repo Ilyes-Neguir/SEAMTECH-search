@@ -13,7 +13,7 @@ La recherche « comme Google » des fiches validées. La route Phase 0 `GET /sea
 
 | Route | Rôle |
 |---|---|
-| `GET /recherche?q=&type_voile=&client=&bateau=&matiere=&gamme=&annee=&annee_min=&annee_max=&cote=&min=&max=&cote_min=&cote_max=&tri=&page=&limit=&offset=&inclure_a_valider=` | Recherche hybride : lexical tsvector pondéré A/B/C + trigrammes (volet dégradable) + texte des PDF (chunks/documents) + vecteurs (dormants, activables par injection `encode_requete`), fusionnés par **RRF k=60**. Par défaut : fiches `valide` seulement. Réponse : `{requete, nb_resultats, resultats:[{code, titre, type_voile, client, bateau, gamme, statut, annee, extrait, score, sources, slu_m, sle_m, sf_m, shw_m, spa_m2, tetiere_cm, poids_kg}], facettes:{groupe:[{valeur, effectif}]}, facettes_cotes:{cote:{unite, min, max, effectif, intervalles:[{min,max,effectif,label}] }}, cote_active, cotes_unites, tri, page, sources_actives, sans_resultat, duree_ms}`. |
+| `GET /recherche?q=&type_voile=&client=&bateau=&matiere=&gamme=&annee=&annee_min=&annee_max=&cote=&min=&max=&cote_min=&cote_max=&tri=&page=&limit=&offset=&inclure_a_valider=` | Recherche hybride : lexical tsvector pondéré A/B/C + trigrammes (volet dégradable) + texte des PDF (chunks/documents) + vecteurs (dormants, activables par injection `encode_requete`), fusionnés par **RRF k=60**. Par défaut : fiches `valide` seulement. Réponse : `{requete, nb_resultats, resultats:[{code, titre, type_voile, client, bateau, gamme, statut, annee, extrait, score, sources}], facettes:{groupe:[{valeur, effectif}]}, facettes_cotes:{cote:{unite, min, max, effectif, intervalles:[{min,max,effectif,label}] }}, cote_active, cotes_unites, tri, page, sources_actives, sans_resultat, duree_ms}`. **Les 7 cotes d'un résultat (`slu_m`, `sle_m`, `sf_m`, `shw_m`, `spa_m2`, `tetiere_cm`, `poids_kg`) ne sont présentes QUE si un filtre dimension ou un tri par cote est demandé — voir « Chargement conditionnel des cotes » ci-dessous.** |
 | `GET /recherche/suggestions?prefix=&limite=` | Suggestions au fil de la frappe : **valeurs réellement présentes seulement** (référentiels, codes, gammes) par préfixe, complétées par tolérance aux fautes trigrammes sur les référentiels si le préfixe ne donne rien. Réponse : `{prefixe, suggestions:[{nature, valeur}]}`. |
 | `GET /recherche/journal?jours=&limite_top=&limite_sans=` | Exploitation du journal : agrégé depuis `recherche_log` réelle. Retour : `{periode_jours, total_recherches, total_sans_resultat, top_requetes:[{requete, nb_occurrences, nb_sans_resultat, dernier}], sans_resultat:[{requete, nb_occurrences, dernier, exemple_filtres}]}`. Période paramétrable en jours. |
 
@@ -31,6 +31,39 @@ La recherche « comme Google » des fiches validées. La route Phase 0 `GET /sea
   `cote_active` = cote filtrée ou `slu_m` par défaut. `facettes["dimension"]`
   = intervalles de la cote active (compatibilité UI). Chaque facette (y compris
   dimension) compte sans son propre filtre, comme les autres facettes.
+  **Sous réserve du chargement conditionnel ci-dessous : par défaut
+  `effectif = 0` et `intervalles = []`, `facettes["dimension"]` est vide.**
+
+- **Chargement conditionnel des cotes (correctif 0.4, audit Lot K)** : les 7
+  cotes d'un résultat **et** les valeurs de `facettes_cotes` sont chargées
+  **si et seulement si** :
+  1. un **filtre dimension est actif** — `cote=<nom>` accompagné d'au moins une
+     borne (`min`/`max`, ou leurs alias `cote_min`/`cote_max`) ; ou
+  2. un **tri par cote est demandé** — `tri` commençant par une des 7 cotes
+     (`slu_m_asc`, `slu_m_desc`, …, `poids_kg_asc`, `poids_kg_desc`).
+
+  Sinon — c'est-à-dire dans tous les autres cas, dont le défaut
+  `tri=pertinence` sans filtre dimension — **les résultats ne portent AUCUNE
+  des 7 clés de cote** (`r["slu_m"]` lève `KeyError`, ce n'est pas `null` : un
+  code qui fait `r.get("slu_m")` verra `None`, indistinguable d'une cote non
+  extraite) et **les 7 clés de `facettes_cotes` existent mais sont vides** :
+  `{"unite": …, "min": null, "max": null, "effectif": 0, "intervalles": []}`
+  (les `unite` restent renseignées, pour que l'UI connaisse l'unité à
+  afficher). `facettes["dimension"]` est alors `[]`.
+
+  **Raison** : la latence. Charger systématiquement les 7 cotes imposait un
+  `JOIN fiche_cotes` sur chaque recherche (fusion complète + page) et 7
+  requêtes de facettes : p95 mesuré 54 ms puis, après 7→1 requête, toujours
+  au-dessus du seuil d'environnement CI (< 50 ms), avec alerte `perf-derive`.
+  Le correctif du Lot J (commit `d0a8aac`) rend le coût proportionnel au
+  besoin réel : le chemin par défaut (`tri=pertinence`, aucun filtre
+  dimension) n'ouvre plus `fiche_cotes` du tout.
+
+  **Comment obtenir les cotes** : ajouter un filtre dimension
+  (`?cote=slu_m&min=6.5&max=6.7`) ou un tri par cote (`?tri=slu_m_asc`). C'est
+  la seule façon documentée ; il n'existe pas de paramètre « charge tout ».
+  Le contrat est figé par le test
+  `tests/test_recherche_dimension_tri.py::test_contrat_cotes_conditionnelles_documente`.
 
 - **Tri** : paramètre `tri` parmi 18 valeurs (`pertinence` par défaut,
   `date_asc/desc` sur année, `code_asc/desc`, `slu_m_asc/desc`, `sle_m_asc/desc`,
