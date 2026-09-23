@@ -967,10 +967,17 @@ jobs:
           # rien passerait sinon pour un succès).
           set -uo pipefail
           set +e
-          pnpm exec playwright test e2e/doublons.spec.ts --reporter=list,json
-          rc=$?
+          pnpm exec playwright test e2e/doublons.spec.ts --reporter=list,json 2>&1 | tee /tmp/e2e_doublons.log
+          rc=${PIPESTATUS[0]}
           set -e
-          [ "$rc" -eq 0 ] || exit "$rc"
+          if [ "$rc" -ne 0 ]; then
+            # Le journal complet (gh run view --log) est inaccessible (blob host
+            # EOF) : les annotations SONT le journal. Sans elles, un échec de
+            # cette étape ne dit rien de plus que « exit 1 ».
+            echo "::error title=e2e-doublons-failed::$(grep -E '✘|✓|failed|Error|expect|attendu' /tmp/e2e_doublons.log | head -25 | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 1800)"
+            echo "::error title=e2e-doublons-tail::$(tail -40 /tmp/e2e_doublons.log | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 1800)"
+            exit "$rc"
+          fi
           python - <<'PY'
           import json
 
@@ -980,6 +987,10 @@ jobs:
           flaky = stats.get("flaky", 0)
           sautes = stats.get("skipped", 0)
           if sautes or flaky or passes != 2:
+              print(
+                  f"::error title=e2e-doublons-count::attendu 2 tests passés au premier essai, "
+                  f"0 flaky, 0 sautés — mesuré {passes} passés, {flaky} flaky, {sautes} sautés"
+              )
               raise SystemExit(
                   f"GARDE-FOU e2e doublons : attendu 2 tests passés au premier essai, "
                   f"0 flaky, 0 sautés — mesuré {passes} passés, {flaky} flaky, {sautes} sautés."
@@ -998,10 +1009,14 @@ jobs:
         run: |
           set -uo pipefail
           set +e
-          pnpm exec playwright test e2e/auth.spec.ts --reporter=list,json
-          rc=$?
+          pnpm exec playwright test e2e/auth.spec.ts --reporter=list,json 2>&1 | tee /tmp/e2e_auth.log
+          rc=${PIPESTATUS[0]}
           set -e
-          [ "$rc" -eq 0 ] || exit "$rc"
+          if [ "$rc" -ne 0 ]; then
+            echo "::error title=e2e-auth-failed::$(grep -E '✘|✓|failed|Error|expect|attendu' /tmp/e2e_auth.log | head -25 | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 1800)"
+            echo "::error title=e2e-auth-tail::$(tail -40 /tmp/e2e_auth.log | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 1800)"
+            exit "$rc"
+          fi
           python - <<'PY'
           import json
 
@@ -1015,6 +1030,11 @@ jobs:
           # nominatifs. Le compte est EXACT : un test qui s'ignore en CI (base
           # live absente) ferait tomber la porte au lieu de passer inaperçu.
           if sautes or flaky or passes != 23:
+              # Message aussi en annotation : c'est le seul canal lisible en CI.
+              print(
+                  f"::error title=e2e-auth-count::attendu 23 tests passés au premier essai, "
+                  f"0 flaky, 0 sautés — mesuré {passes} passés, {flaky} flaky, {sautes} sautés"
+              )
               raise SystemExit(
                   f"GARDE-FOU e2e auth : attendu 23 tests passés au premier essai, "
                   f"0 flaky, 0 sautés — mesuré {passes} passés, {flaky} flaky, {sautes} sautés."
