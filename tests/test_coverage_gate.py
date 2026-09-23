@@ -105,4 +105,4 @@ def test_gate_main_fails_when_report_missing(tmp_path: Path) -> None:
 def test_gate_main_fails_on_invalid_json(tmp_path: Path) -> None:
     report = tmp_path / "coverage.json"
     report.write_text("{not json", encoding="utf-8")
-    assert gate.main([f"coverage_gate.py", str(report)]) == 1
+    assert gate.main(["coverage_gate.py", str(report)]) == 1

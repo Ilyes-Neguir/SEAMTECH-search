@@ -170,7 +170,7 @@ def _cmd_inventaire(args: argparse.Namespace) -> int:
         print(f"Débit hypothèse (dimensionnement) : {etage3['debit_mesure_pages_par_minute']} pages/min — mesures réelles CI 102,899/104,176 p/min tesseract 5.3.4")
         print(f"Estimation durée : {etage3['estimation_duree_s']:.1f}s ({etage3['estimation_duree_min']} min) avec hypothèse 30 p/min")
         print(f"Formule : {etage3['formule_estimation']}")
-        print(f"Mesures réelles CI : 102,899 p/min et 104,176 p/min (voir docs/OCR_ETAGES.md)")
+        print("Mesures réelles CI : 102,899 p/min et 104,176 p/min (voir docs/OCR_ETAGES.md)")
         print("")
         print("Détails (premiers 20) :")
         for det in etage3["details"][:20]:
