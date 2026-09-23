@@ -67,15 +67,44 @@ L'OCR reste OPTIONNEL au runtime : si `tesseract` est absent, le statut est
 Tous les réglages sont documentés et paramétrables pour ne JAMAIS saturer
 la machine cible (PC bureau 8 Go RAM, CPU seul, sans GPU).
 
-Débit mesuré de référence : 30 pages/minute (2 s/page) sur PC de référence
-8 Go RAM, CPU seul, tesseract 5.x -l fra, 300 dpi.
-Mesure obtenue sur échantillons commités :
-- propre 1 page : ~1,8 s
-- dégradé 1 page : ~2,2 s
-Moyenne 2 s/page = 30 p/min, utilisée pour estimation durée :
-`estimation_duree_s = pages_a_oceriser * 60 / debit_mesure`.
+Mesures réelles en CI (job `ocr`, tesseract 5.3.4, runner GitHub, échantillons commités
+`tests/fixtures/ocr/ocr_propre.pdf` 36 964 o et `ocr_degrade.pdf` 34 546 o) :
 
-Le débit réel est mesuré à chaque run et publié dans le compte rendu.
+```
+$ sudo apt-get install -y tesseract-ocr tesseract-ocr-fra poppler-utils
+$ tesseract --version
+tesseract 5.3.4
+$ pytest -k "ocr" -v
+```
+
+Annotations publiées par la CI (canal lisible, `gh run view --log` inaccessible) :
+
+- `::notice title=ocr-qualite::taux mots retrouvés propre=1.000 pages=1 océrisées=1 duree_s=0.69 moteur=tesseract version=tesseract 5.3.4`
+  → mesuré 0,69 s/page → 60/0,69 = 86,96 pages/min ≈ 87 p/min
+
+- `::notice title=ocr-qualite-degrade::taux mots retrouvés degrade=0.955 pages=1 océrisées=1 duree_s=0.47`
+  → mesuré 0,47 s/page → 60/0,47 = 127,66 pages/min ≈ 128 p/min
+
+- `::notice title=ocr-compte-rendu::fichiers=2 pages_ocerisees=2 echecs=0 duree_s=1.166 debit=102.899 pages/min taille_texte=... moteur=tesseract version=tesseract 5.3.4`
+  → run complet 2 fichiers, 2 pages, 1,166 s total, débit 102,899 p/min
+
+- second run (même job, après reprise) : `debit=104.176 pages/min`
+
+Commande locale équivalente (sans tesseract, statut unavailable) :
+```
+$ python3 -m seamtech_search.ocr.cli --travail-dir /tmp/ocr_travail nuit --dossier tests/fixtures/ocr --limite 2 --budget-minutes 5 --json
+# sortie : echecs=2 motif tesseract absent, debit 0.0 — normal sans binaire
+```
+
+Hypothèse prudente retenue pour le dimensionnement poste cible (PC bureau 8 Go RAM, CPU seul, sans GPU, 2-5 utilisateurs) :
+- 30 pages/min (2 s/page) — hypothèse, pas mesure.
+- Justification : runner CI (≈103 p/min) est plus rapide que PC cible ; on retient 30 p/min soit 102,899/30 = 3,43× plus lent que mesure CI, marge pour ne JAMAIS saturer et arrêt propre par budget.
+- Formule d'estimation (avec hypothèse) : `estimation_duree_s = pages_a_oceriser * 60 / debit_hypothese`
+- Exemple 100k pages : 100000*60/30 = 200000 s = 55,6 h (hypothèse prudente)
+- Avec débit réellement mesuré en CI (102,9 p/min) : 100000*60/102,899 = 58309 s = 16,2 h
+- Les deux résultats sont publiés, le retenu pour dimensionnement est l'hypothèse prudente (30 p/min).
+
+Le débit réel de chaque run est mesuré et publié dans le compte rendu JSON/TXT (`debit_pages_par_minute`).
 
 ## Sortie produite
 
@@ -156,8 +185,9 @@ schtasks /delete /tn "SEAMTECH OCR Nuit" /f
 
 ## Limites
 
-- Qualité mesurée sur échantillons seulement (2 PDF <150 Ko), aucune mesure sur 50+ Go
-  (extrapolation seulement, formule : `duree_50Go = nb_pages_estime * 60 / debit_mesure`)
+- Qualité mesurée sur échantillons seulement (2 PDF <150 Ko : propre 36 964 o, dégradé 34 546 o), aucune mesure sur 50+ Go
+  (extrapolation seulement, deux formules publiées : avec débit réellement mesuré CI 102,899 p/min → 16,2 h pour 100k pages,
+  et avec hypothèse prudente 30 p/min → 55,6 h ; formule générique : `duree = nb_pages * 60 / debit`)
 - Planification non exécutée (documentée seulement)
 - OCR via binaires uniquement, pas de modèle Python (décision architecture : postes 8 Go CPU seul)
 - Pas de GPU, pas de modèle téléchargé (RG14)

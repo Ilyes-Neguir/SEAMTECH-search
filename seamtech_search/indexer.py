@@ -819,6 +819,22 @@ class SearchIndex:
                     exc,
                 )
 
+    def _migration_017_ocr_etage3(self, connection: Any) -> None:
+        """Lot M : staging OCR étage 3 (texte OCR par page, jamais dans chunk/document).
+
+        PostgreSQL uniquement (§17.1), comme 006-016. Sur SQLite : warning
+        journalisé, migration enregistrée, aucun effet (le staging OCR n'est
+        pas requis en mode SQLite).
+        """
+        if not self.is_postgres:
+            logger.warning(
+                "Migration 017_ocr_etage3 ignorée : la couche métier est PostgreSQL uniquement "
+                "(§17.1) — conséquence : aucune table ocr_etage3 en mode SQLite."
+            )
+            return
+        with connection.cursor() as cursor:
+            cursor.execute(schema_metier.SQL_017_OCR_ETAGE3)
+
     def run_migrations(self) -> None:
         """Run pending schema migrations once at startup."""
         with self.connect() as connection:
@@ -846,6 +862,9 @@ class SearchIndex:
                 # `sauvegarde` (l'échec du Lot K) : 016 est la version attendue
                 # par VERSION_SCHEMA_METIER, elle doit être APPLIQUÉE.
                 ("016_dedup_comptes_nominatifs", self._migration_016_dedup_comptes_nominatifs),
+                # Lot M — staging OCR étage 3, table ocr_etage3, jamais chunk/document
+                # (oubli qui avait cassé sauvegarde au Lot K, puis au Lot M — même motif).
+                ("017_ocr_etage3", self._migration_017_ocr_etage3),
             ]
 
             for version, func in migrations:
