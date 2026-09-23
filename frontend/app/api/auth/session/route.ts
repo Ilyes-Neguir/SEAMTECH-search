@@ -16,6 +16,15 @@ export const dynamic = "force-dynamic"
  *
  * The response never contains the session token, the password, any hash, or
  * backend data beyond the identity of the caller.
+ *
+ * Statuts (Lot L.2, exigence « réutiliser le cookie après déconnexion → 401 ») :
+ *   * pas de cookie                  → 200 {authenticated:false} (la page de
+ *     connexion doit pouvoir afficher son formulaire) ;
+ *   * cookie signé mais session MORTE (révoquée/expirée/compte désactivé, ou
+ *     backend injoignable) → **401** {authenticated:false, reason} ;
+ *   * session vivante                → 200 {authenticated:true, identifiant, …}.
+ * Un cookie que le serveur refuse ne doit pas répondre 200 : c'est exactement
+ * ce qu'un attaquant lirait comme « encore valide ».
  */
 export async function GET() {
   const store = await cookies()
@@ -44,7 +53,7 @@ export async function GET() {
         // Session révoquée, expirée, ou compte désactivé côté base.
         return NextResponse.json(
           { authenticated: false, configured: configure, reason: "session_revoquee" },
-          { status: 200, headers: { "Cache-Control": "no-store" } },
+          { status: 401, headers: { "Cache-Control": "no-store" } },
         )
       }
       const backend = await res.json().catch(() => ({}))
@@ -67,7 +76,7 @@ export async function GET() {
       // révocation possible — on refuse, l'opérateur se reconnecte.
       return NextResponse.json(
         { authenticated: false, configured: configure, reason: "backend_injoignable" },
-        { status: 200, headers: { "Cache-Control": "no-store" } },
+        { status: 401, headers: { "Cache-Control": "no-store" } },
       )
     }
   }

@@ -106,17 +106,28 @@ export function ValidationApp() {
       return
     }
     let annule = false
-    jsonFetch<{ par_code: Record<string, LienDoublon[]> }>("/api/validation/doublons", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ codes }),
-    })
-      .then((corps) => {
-        if (!annule) setDoublons(corps.par_code ?? {})
+    const charger = (essai: number) =>
+      jsonFetch<{ par_code: Record<string, LienDoublon[]> }>("/api/validation/doublons", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ codes }),
       })
-      .catch(() => {
-        if (!annule) setDoublons({})
-      })
+        .then((corps) => {
+          if (!annule) setDoublons(corps.par_code ?? {})
+        })
+        .catch(() => {
+          // Une reprise UNIQUE avant d'abandonner : un échec transitoire de cette
+          // requête ferait valider une fiche SANS voir son doublon — exactement ce
+          // que le lot existe pour empêcher. (Mesuré en CI : la première requête
+          // après le démarrage du front peut échouer.)
+          if (essai === 0) {
+            setTimeout(() => charger(1), 500)
+            return
+          }
+          console.warn("[doublons] liens indisponibles — le bandeau ne peut pas être affiché.")
+          if (!annule) setDoublons({})
+        })
+    charger(0)
     return () => {
       annule = true
     }

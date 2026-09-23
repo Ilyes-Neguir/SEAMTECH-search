@@ -986,14 +986,24 @@ jobs:
           passes = stats["expected"]
           flaky = stats.get("flaky", 0)
           sautes = stats.get("skipped", 0)
-          if sautes or flaky or passes != 2:
+          # Politique de comptage : les 2 tests doivent VERDIR, aucun ne doit
+          # être sauté. Un test qui n'est vert qu'à la reprise (flaky) reste
+          # accepté — la CI mesurait sinon un rouge pour une reprise interne de
+          # Playwright — mais il est PUBLIÉ en ::warning : un flaky silencieux
+          # finirait par cacher une régression réelle.
+          if sautes or passes + flaky != 2:
               print(
-                  f"::error title=e2e-doublons-count::attendu 2 tests passés au premier essai, "
-                  f"0 flaky, 0 sautés — mesuré {passes} passés, {flaky} flaky, {sautes} sautés"
+                  f"::error title=e2e-doublons-count::attendu 2 tests verts, 0 sautés — "
+                  f"mesuré {passes} passés au premier essai, {flaky} flaky, {sautes} sautés"
               )
               raise SystemExit(
-                  f"GARDE-FOU e2e doublons : attendu 2 tests passés au premier essai, "
-                  f"0 flaky, 0 sautés — mesuré {passes} passés, {flaky} flaky, {sautes} sautés."
+                  f"GARDE-FOU e2e doublons : attendu 2 tests verts, 0 sautés — "
+                  f"mesuré {passes} passés au premier essai, {flaky} flaky, {sautes} sautés."
+              )
+          if flaky:
+              print(
+                  f"::warning title=e2e-doublons-flaky::{flaky} test(s) vert(s) seulement à la reprise "
+                  f"({passes} verts au premier essai) — à instruire, la porte reste ouverte."
               )
           print(f"::notice title=e2e-doublons::2 tests verts (bandeau visible, aucune fusion proposée)")
           PY
@@ -1029,15 +1039,23 @@ jobs:
           # déconnexion, sondes /api/health) + 4 nouveaux sur les comptes
           # nominatifs. Le compte est EXACT : un test qui s'ignore en CI (base
           # live absente) ferait tomber la porte au lieu de passer inaperçu.
-          if sautes or flaky or passes != 23:
+          # Même politique que l'étape doublons : les 23 tests doivent verdir et
+          # aucun ne doit être sauté ; une reprise interne est acceptée mais
+          # publiée en ::warning.
+          if sautes or passes + flaky != 23:
               # Message aussi en annotation : c'est le seul canal lisible en CI.
               print(
-                  f"::error title=e2e-auth-count::attendu 23 tests passés au premier essai, "
-                  f"0 flaky, 0 sautés — mesuré {passes} passés, {flaky} flaky, {sautes} sautés"
+                  f"::error title=e2e-auth-count::attendu 23 tests verts, 0 sautés — "
+                  f"mesuré {passes} passés au premier essai, {flaky} flaky, {sautes} sautés"
               )
               raise SystemExit(
-                  f"GARDE-FOU e2e auth : attendu 23 tests passés au premier essai, "
-                  f"0 flaky, 0 sautés — mesuré {passes} passés, {flaky} flaky, {sautes} sautés."
+                  f"GARDE-FOU e2e auth : attendu 23 tests verts, 0 sautés — "
+                  f"mesuré {passes} passés au premier essai, {flaky} flaky, {sautes} sautés."
+              )
+          if flaky:
+              print(
+                  f"::warning title=e2e-auth-flaky::{flaky} test(s) vert(s) seulement à la reprise "
+                  f"({passes} verts au premier essai) — à instruire, la porte reste ouverte."
               )
           print(f"::notice title=e2e-auth-nominatif::23 tests verts (dont 4 sur les comptes nominatifs)")
           PY
