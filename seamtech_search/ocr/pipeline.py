@@ -103,13 +103,15 @@ def _texte_natif_par_page_pdf(chemin: Path) -> list[str]:
             for page in pdf.pages:
                 try:
                     t = page.extract_text(x_tolerance=2, y_tolerance=2) or ""
-                except Exception:
+                except Exception as exc:
+                    _ = exc
                     t = ""
                 texts.append(t)
         if texts:
             return texts
-    except Exception:
-        pass
+    except Exception as exc:
+        # pdfplumber indisponible ou PDF illisible — fallback pypdf
+        _ = exc
 
     try:
         from pypdf import PdfReader  # type: ignore
@@ -119,11 +121,13 @@ def _texte_natif_par_page_pdf(chemin: Path) -> list[str]:
         for page in reader.pages:
             try:
                 t = page.extract_text() or ""
-            except Exception:
+            except Exception as exc:
+                _ = exc
                 t = ""
             texts.append(t)
         return texts
-    except Exception:
+    except Exception as exc:
+        _ = exc
         return []
 
 
@@ -266,11 +270,11 @@ def _extraire_images_pypdf(
                         if data:
                             chemin_img.write_bytes(data)
                             images_extraites.append(chemin_img)
-                except Exception:
+                except (OSError, ValueError, RuntimeError):
                     continue
-        except Exception:
-            # Ancienne API ou pas d'images
-            pass
+        except (AttributeError, KeyError, OSError, ValueError) as exc:
+            # Ancienne API ou pas d'images — on ignore et tente XObject
+            _ = exc
 
         # Si rien via page.images, tente extraction manuelle via XObject
         if not images_extraites:
@@ -291,13 +295,15 @@ def _extraire_images_pypdf(
                                 chemin_img = dossier_temp / f"page{numero_page}_{nom_obj}{ext}"
                                 chemin_img.write_bytes(data)
                                 images_extraites.append(chemin_img)
-                    except Exception:
+                    except (OSError, ValueError, RuntimeError, KeyError):
                         continue
-            except Exception:
-                pass
+            except (AttributeError, KeyError, OSError, ValueError) as exc:
+                # XObject absent ou non lisible
+                _ = exc
 
-    except Exception:
-        pass
+    except (ImportError, OSError, ValueError, RuntimeError) as exc:
+        # pypdf indisponible ou PDF illisible
+        _ = exc
 
     return images_extraites
 

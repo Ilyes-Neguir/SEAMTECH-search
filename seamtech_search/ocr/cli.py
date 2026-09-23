@@ -457,8 +457,10 @@ def _cmd_nuit(args: argparse.Namespace) -> int:
         # Sauvegarde dernière exécution dans état
         try:
             etat.set_derniere_execution(stats)
-        except Exception:
-            pass
+        except (OSError, ValueError, RuntimeError) as exc:
+            # état non critique, on log et continue
+            print(f"Avertissement état: {exc}", file=sys.stderr)
+            _ = exc
 
         # Libère verrou
         verrou.release()

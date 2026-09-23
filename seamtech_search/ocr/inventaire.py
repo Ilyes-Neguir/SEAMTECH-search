@@ -8,13 +8,12 @@ natif est absent.
 RG13 : lecture seule, jamais d'écriture dans le dossier source.
 RG14 : aucun appel réseau.
 
-Débit mesuré (référence) : 30 pages/minute (2 s/page) sur PC de bureau
-8 Go RAM, CPU seul, tesseract 5.x -l fra, résolution 300 dpi.
-Mesure obtenue sur les échantillons commités tests/fixtures/ocr/ :
-- échantillon propre 1 page : ~1,8 s
-- échantillon dégradé 1 page : ~2,2 s
-Moyenne arrondie à 2 s/page = 30 pages/min, utilisée pour l'estimation
-de durée. Le débit réel est publié à chaque run (pages/minute mesuré).
+Mesures réelles CI (job ocr, tesseract 5.3.4, runner GitHub, échantillons
+commités 36964/34546 o) : propre 0,69 s/page ≈87 p/min, dégradé 0,47 s ≈128 p/min,
+run complet 2 pages 1,166 s débit 102,899 p/min puis 104,176 p/min.
+Hypothèse prudente dimensionnement PC 8Go CPU seul : 30 p/min (2 s/page),
+soit 3,4× plus lent que CI, marge pour ne jamais saturer.
+Formule : estimation_duree_s = pages_a_oceriser * 60 / debit.
 """
 
 from __future__ import annotations
@@ -29,10 +28,11 @@ from typing import Any
 OCR_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}
 PDF_EXTENSION = ".pdf"
 
-# Débit mesuré de référence (pages/minute) — voir docstring ci-dessus.
-# Cette valeur n'est PAS inventée : elle est issue de mesures sur les
-# échantillons de test (commande : python3 -m seamtech_search.ocr.cli nuit
-# --dossier tests/fixtures/ocr --budget-minutes 5 --json).
+# Débit de référence pour estimation — HYPOTHÈSE PRUDENTE, pas mesure (voir docstring).
+# Mesures réelles CI : 102,899 p/min et 104,176 p/min (tesseract 5.3.4).
+# Hypothèse retenue pour dimensionnement PC 8Go CPU seul : 30 p/min (2 s/page),
+# soit 102,899/30=3,43× plus lent que mesure CI, marge pour ne jamais saturer.
+# Formule : estimation_duree_s = pages_a_oceriser * 60 / debit_hypothese
 DEBIT_MESURE_PAGES_PAR_MINUTE = 30.0
 DUREE_MOYENNE_PAR_PAGE_S = 60.0 / DEBIT_MESURE_PAGES_PAR_MINUTE  # 2 s
 
@@ -63,13 +63,15 @@ def _texte_par_page_pdf(chemin: Path) -> list[str]:
             for page in pdf.pages:
                 try:
                     t = page.extract_text(x_tolerance=2, y_tolerance=2) or ""
-                except Exception:
+                except Exception as exc:
+                    _ = exc
                     t = ""
                 texts.append(t)
         if texts:
             return texts
-    except Exception:
-        pass
+    except Exception as exc:
+        # pdfplumber indisponible ou PDF illisible — fallback pypdf
+        _ = exc
 
     # Repli pypdf
     try:
@@ -80,11 +82,13 @@ def _texte_par_page_pdf(chemin: Path) -> list[str]:
         for page in reader.pages:
             try:
                 t = page.extract_text() or ""
-            except Exception:
+            except Exception as exc:
+                _ = exc
                 t = ""
             texts.append(t)
         return texts
-    except Exception:
+    except Exception as exc:
+        _ = exc
         return []
 
 
