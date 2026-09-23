@@ -28,7 +28,10 @@ VERROU = Path(__file__).resolve().parent / ".live-pg-seed.lock"
 NOMBRE_FICHES_ATTENDU = 3
 # Lot L.1 — la fiche supplémentaire qui partage le PDF de 7792-SO. Sans elle,
 # l'e2e du bandeau de doublon n'aurait rien à afficher (voir e2e/doublons.spec.ts).
-CODE_DOUBLON = "7792-SO-BIS"
+# « BIS-7792 » et non « 7792-SO-BIS » : le bandeau de la ligne cite l'autre
+# code, donc un code qui CONTIENT le code d'origine rendrait les deux lignes
+# indiscernables par leur texte (mesuré en CI avant data-code).
+CODE_DOUBLON = "BIS-7792"
 
 
 @contextmanager

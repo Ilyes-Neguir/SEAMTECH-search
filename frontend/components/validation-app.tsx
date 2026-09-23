@@ -245,7 +245,12 @@ export function ValidationApp() {
           </div>
           <ul className="min-h-0 flex-1 overflow-auto" data-testid="file-validation">
             {file.map((entree) => (
-              <li key={entree.code}>
+              // data-code : identifiant EXACT de la ligne pour les tests e2e.
+              // Sans lui, une ligne se repérait par son texte — or le bandeau de
+              // doublon cite l'AUTRE code, donc la ligne du doublon contient aussi
+              // le code de la fiche d'origine (mesuré en CI : deux lignes
+              // répondaient à la même recherche « 7792-SO »).
+              <li key={entree.code} data-code={entree.code}>
                 <div
                   className={cn(
                     "flex w-full cursor-pointer items-center gap-2 border-b border-border/60 px-3 py-2 text-left text-xs hover:bg-accent/40",

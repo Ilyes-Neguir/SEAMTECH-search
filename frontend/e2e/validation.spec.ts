@@ -15,7 +15,9 @@ async function ouvrirFile(page: Page): Promise<Locator> {
  * la file, qui est trié par confiance croissante — l'ordre varie donc avec le
  * gabarit et ne doit jamais être codé en dur dans un test). */
 async function ouvrirFiche(page: Page, file: Locator, code: string): Promise<void> {
-  await file.locator("li", { hasText: code }).getByTestId("code-fiche").click()
+  // data-code : sélection EXACTE. Un filtre par texte attrapait aussi la ligne
+  // du doublon, dont le bandeau cite le code de l'autre fiche (vu en CI).
+  await file.locator(`li[data-code="${code}"]`).getByTestId("code-fiche").click()
   await expect(page.getByTestId("titre-fiche")).toHaveText(code)
 }
 
@@ -35,7 +37,7 @@ test.describe("validation de bout en bout", () => {
     const file = await ouvrirFile(page)
     // Preuve que le pipeline de dépôt a traité les trois dossiers d'exemple.
     for (const code of ["7792-SO", "0901-MM", "0902-MM"]) {
-      await expect(file.locator("li", { hasText: code })).toBeVisible()
+      await expect(file.locator(`li[data-code="${code}"]`)).toBeVisible()
     }
 
     // Rejet de la fiche synthétique 0902-MM : sans motif, impossible
@@ -118,9 +120,9 @@ test.describe("validation de bout en bout", () => {
 
   test("validation en lot du reste : verrou de calibration puis acquittement explicite", async ({ page }) => {
     const file = await ouvrirFile(page)
-    // Il ne reste que 0901-MM dans la file.
-    await expect(file.locator("li").filter({ hasText: "7792-SO" })).toHaveCount(0)
-    await expect(file.locator("li").filter({ hasText: "0902-MM" })).toHaveCount(0)
+    // Les fiches déjà traitées ont quitté la file (sélection par code EXACT).
+    await expect(file.locator('li[data-code="7792-SO"]')).toHaveCount(0)
+    await expect(file.locator('li[data-code="0902-MM"]')).toHaveCount(0)
     // cocher UNIQUEMENT les cases de la file (pas celle de l'acquittement)
     const cases = file.locator('input[type="checkbox"]')
     const nombre = await cases.count()

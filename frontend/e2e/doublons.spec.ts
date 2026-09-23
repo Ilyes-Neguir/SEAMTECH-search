@@ -21,7 +21,7 @@ import { signIn } from "./helpers"
  * serait signalé par le garde-fou de comptage de l'étape.
  */
 
-const CODE_DOUBLON = "7792-SO-BIS"
+const CODE_DOUBLON = "BIS-7792"
 const CODE_ORIGINAL = "7792-SO"
 
 test.describe("bandeau de doublon avant validation", () => {
@@ -36,7 +36,9 @@ test.describe("bandeau de doublon avant validation", () => {
     await file.getByTestId("code-fiche").first().waitFor({ timeout: 10000 })
 
     // La fiche bis est dans la file : elle n'a jamais été validée par ce test.
-    const ligne = file.locator("li", { hasText: CODE_DOUBLON })
+    // Sélection par data-code : le bandeau cite l'autre code, donc un filtre par
+    // texte attraperait aussi la ligne de la fiche d'origine.
+    const ligne = file.locator(`li[data-code="${CODE_DOUBLON}"]`)
     await expect(ligne).toBeVisible({ timeout: 10000 })
 
     // Le bandeau est là AVANT tout clic, et il nomme l'AUTRE fiche.
