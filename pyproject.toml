@@ -43,6 +43,8 @@ dev = [
 recherche-log = "seamtech_search.journal_recherche:main"
 # Lot L.1 : détection de doublons (propositive). Homogène avec recherche-log.
 dedup-scan = "seamtech_search.dedup.cli:main"
+# Lot L.2 : comptes nominatifs (mot de passe toujours lu sur STDIN).
+comptes = "seamtech_search.comptes.cli:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

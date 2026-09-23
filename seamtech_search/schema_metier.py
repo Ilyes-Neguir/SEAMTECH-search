@@ -75,6 +75,9 @@ TABLES_METIER: tuple[str, ...] = (
     "fiche_piece_jointe",
     # 015 — Lot K : brouillons gabarits
     "gabarit_brouillon",
+    # 016 — Lot L.2 : sessions nominatives. La table `utilisateur` existait déjà
+    # (006) et n'est donc PAS recomptée ici ; `session_ui` est la 32e.
+    "session_ui",
 )
 
 SQL_006_FICHE_TECHNIQUE = """
@@ -1001,6 +1004,48 @@ CREATE INDEX IF NOT EXISTS idx_fiche_lien_type ON fiche_lien (type);
 -- Sens de parcours de l'affichage (liens d'une fiche donnée), dans les deux sens.
 CREATE INDEX IF NOT EXISTS idx_fiche_lien_source ON fiche_lien (id_fiche_source);
 CREATE INDEX IF NOT EXISTS idx_fiche_lien_cible ON fiche_lien (id_fiche_cible);
+
+-- ---------------------------------------------------------------------------
+-- L.2 — COMPTES NOMINATIFS « qui a validé quoi »
+-- ---------------------------------------------------------------------------
+-- La table `utilisateur` EXISTAIT depuis la 006 (identifiant UNIQUE, nom, role,
+-- actif) mais n'était JAMAIS alimentée : l'attribution se faisait par un simple
+-- identifiant recopié du corps de requête. On l'étend au lieu de la remplacer —
+-- et les colonnes d'attribution existantes (`fiche_validation.id_utilisateur`,
+-- `fiche_champ_extrait.corrige_par`) restent celles qui portent la traçabilité.
+ALTER TABLE utilisateur ADD COLUMN IF NOT EXISTS empreinte_mot_de_passe TEXT;
+ALTER TABLE utilisateur ADD COLUMN IF NOT EXISTS mot_de_passe_modifie_le TIMESTAMPTZ;
+ALTER TABLE utilisateur ADD COLUMN IF NOT EXISTS derniere_connexion TIMESTAMPTZ;
+ALTER TABLE utilisateur ADD COLUMN IF NOT EXISTS doit_changer_mot_de_passe BOOLEAN NOT NULL DEFAULT false;
+
+COMMENT ON COLUMN utilisateur.empreinte_mot_de_passe IS
+    'Format scrypt$n=16384$r=8$p=1$<sel_b64>$<hash_b64> (hashlib.scrypt, sel de 16 octets). Jamais renvoyée par une API, jamais journalisée.';
+
+-- Sessions nominatives. Le cookie signé — seule chose que détient le navigateur —
+-- porte l'id_session ; la VÉRITÉ est ici. C'est ce qui rend une déconnexion
+-- réellement effective : `revoque_le` est posé, et un cookie encore
+-- cryptographiquement valide ne vaut plus rien.
+CREATE TABLE IF NOT EXISTS session_ui (
+    id_session        BIGSERIAL PRIMARY KEY,
+    id_utilisateur    BIGINT NOT NULL REFERENCES utilisateur(id_utilisateur) ON DELETE CASCADE,
+    empreinte_jeton   TEXT NOT NULL UNIQUE,
+    cree_le           TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expire_le         TIMESTAMPTZ NOT NULL,
+    derniere_activite TIMESTAMPTZ NOT NULL DEFAULT now(),
+    revoque_le        TIMESTAMPTZ,
+    user_agent        TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_session_ui_utilisateur ON session_ui (id_utilisateur);
+CREATE INDEX IF NOT EXISTS idx_session_ui_expire ON session_ui (expire_le);
+
+-- Verrouillage des connexions (5 échecs en 5 minutes ⇒ 429 pendant 5 minutes).
+-- Le compteur n'a PAS sa propre table : une connexion refusée est un événement
+-- d'audit, journalisé dans `audit_log` (action = 'connexion_refusee'). Cela
+-- évite une 33e table métier et laisse une trace consultable après coup.
+-- L'index existant porte sur `timestamp` seul : le filtre du verrou porte sur
+-- (actor, action), d'où celui-ci. Aucune purge : on ne supprime jamais
+-- automatiquement de données.
+CREATE INDEX IF NOT EXISTS idx_audit_log_actor_action ON audit_log (actor, action, timestamp DESC);
 """
 
 # ---------------------------------------------------------------------------

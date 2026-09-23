@@ -1,6 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { backendBase, authHeaders } from "@/lib/backend"
-import { requireAuth } from "@/lib/auth"
+import { backendBase, authHeaders, requireAuthValide } from "@/lib/backend"
 
 // Proxy Lot L.1 : liens de doublon pour la file de /validation.
 //
@@ -31,7 +30,7 @@ async function relayer(codes: string[]) {
 }
 
 export async function GET(req: NextRequest) {
-  const denied = await requireAuth()
+  const denied = await requireAuthValide()
   if (denied) return denied
   const brut = req.nextUrl.searchParams.get("codes") ?? ""
   const codes = brut
@@ -42,7 +41,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const denied = await requireAuth()
+  const denied = await requireAuthValide()
   if (denied) return denied
   const corps = await req.json().catch(() => ({}))
   const codes = Array.isArray(corps?.codes) ? corps.codes.map((c: unknown) => String(c)) : []

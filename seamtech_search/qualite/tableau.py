@@ -361,6 +361,71 @@ def doublons_detectes(cursor: Any) -> dict[str, Any]:  # noqa: ANN401 - curseur 
     }
 
 
+def taux_par_utilisateur(cursor: Any) -> dict[str, Any]:  # noqa: ANN401 - curseur psycopg2 réel
+    """Actions de validation attribuées à un compte nominatif — Lot L.2, indicateur 9.
+
+    Deux chiffres, dans cet ordre d'importance :
+
+    - ``actions_attribuees`` / ``part_attribuee`` : combien d'actions portent
+      l'identité d'un compte nominatif (``fiche_validation.id_utilisateur``).
+    - ``actions_sans_utilisateur`` : combien n'en portent aucune.
+
+    Le second n'est PAS une anomalie en soi : toutes les validations faites
+    avant L.2 sont anonymes, et le rattrapage n'existe pas — on n'invente pas
+    d'attribution a posteriori. L'indicateur sert à mesurer la couverture
+    réelle, pas à désigner un coupable. Aucune écriture, aucune correction
+    automatique ici : lecture seule, comme tout le tableau.
+    """
+    cursor.execute(
+        """
+        SELECT COUNT(*)::int AS actions_total,
+               COUNT(id_utilisateur)::int AS actions_attribuees
+        FROM fiche_validation
+        """
+    )
+    total, attribuees = (int(valeur or 0) for valeur in cursor.fetchone())
+
+    cursor.execute(
+        """
+        SELECT u.identifiant, u.nom, u.role, COUNT(*)::int AS actions
+        FROM fiche_validation v
+        JOIN utilisateur u ON u.id_utilisateur = v.id_utilisateur
+        GROUP BY u.identifiant, u.nom, u.role
+        ORDER BY COUNT(*) DESC, u.identifiant
+        """
+    )
+    par_utilisateur = [
+        {
+            "identifiant": str(ligne[0]),
+            "nom": ligne[1],
+            "role": str(ligne[2]),
+            "actions": int(ligne[3]),
+        }
+        for ligne in cursor.fetchall()
+    ]
+    return {
+        "definition": (
+            "Répartition des actions de validation par compte nominatif ; "
+            "« sans utilisateur » regroupe les actions antérieures à L.2, jamais réattribuées a posteriori."
+        ),
+        "unite": "action",
+        "periode": "depuis l'origine",
+        "actions_total": total,
+        "actions_attribuees": attribuees,
+        "actions_sans_utilisateur": total - attribuees,
+        "part_attribuee": round(attribuees / total, 4) if total else None,
+        "par_utilisateur": par_utilisateur,
+        "comptes_actifs_sans_action": _comptes_sans_action(cursor, par_utilisateur),
+    }
+
+
+def _comptes_sans_action(cursor: Any, par_utilisateur: list[dict[str, Any]]) -> int:  # noqa: ANN401
+    """Comptes actifs n'ayant encore rien validé (informatif, jamais bloquant)."""
+    avec_action = {entree["identifiant"] for entree in par_utilisateur}
+    cursor.execute("SELECT identifiant FROM utilisateur WHERE actif ORDER BY identifiant")
+    return sum(1 for (identifiant,) in cursor.fetchall() if str(identifiant) not in avec_action)
+
+
 def tableau_de_bord(index: Any) -> dict[str, Any]:
     """Assemble le tableau de bord complet — toutes requêtes en GROUP BY.
 
@@ -377,6 +442,7 @@ def tableau_de_bord(index: Any) -> dict[str, Any]:
             recherches = usage_recherches(cursor)
             lots = lots_stats(cursor)
             doublons = doublons_detectes(cursor)
+            par_utilisateur = taux_par_utilisateur(cursor)
 
     return {
         "taux_extraction_auto": taux_auto,
@@ -387,4 +453,5 @@ def tableau_de_bord(index: Any) -> dict[str, Any]:
         "usage_recherches": recherches,
         "lots": lots,
         "doublons_detectes": doublons,
+        "taux_par_utilisateur": par_utilisateur,
     }

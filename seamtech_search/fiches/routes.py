@@ -25,6 +25,7 @@ from typing import Annotated, Any
 
 from fastapi import File, Header, HTTPException, UploadFile
 
+from seamtech_search.comptes.comptes import resoudre_attribution
 from seamtech_search.fiches.depot import (
     DepotImpossible,
     creer_lot,
@@ -223,6 +224,30 @@ _SQL_JOURNAL = (
     "INSERT INTO fiche_validation (id_fiche, id_utilisateur, action, etat_avant, etat_apres, commentaire) "
     "VALUES (%s, %s, %s, %s, %s, %s)"
 )
+
+
+def _attribution(
+    config: Any,
+    token: str | None,
+    corps_utilisateur: Any,  # noqa: ANN401 - valeur brute du corps JSON
+    entete_utilisateur: str | None,
+    entete_role: str | None,
+) -> str | None:
+    """Qui agit ? — L.2 : la SESSION prime, le corps n'est qu'un repli.
+
+    Jusqu'à L.2, l'attribution venait EXCLUSIVEMENT de ``corps["utilisateur"]``,
+    c'est-à-dire du navigateur : n'importe qui pouvait valider une fiche au nom
+    d'un autre en changeant un champ JSON. Désormais l'identité vient des
+    en-têtes posés par le proxy serveur depuis la session nominative
+    (``X-SEAMTECH-UTILISATEUR`` / ``X-SEAMTECH-ROLE``), et ``resoudre_attribution``
+    refuse (401) ces en-têtes si ``X-SEAMTECH-TOKEN`` n'est pas valide sur la
+    même requête. Le corps reste accepté en repli pour l'outillage existant
+    (scripts, tests), mais il ne peut plus usurper une session.
+    """
+    identifiant, _role = resoudre_attribution(
+        config, token, entete_utilisateur, entete_role, corps_utilisateur
+    )
+    return identifiant
 
 
 def _resoudre_utilisateur(cursor: Any, identifiant: str | None) -> int | None:
@@ -692,12 +717,15 @@ def enregistrer_routes_fiches(app: Any, index: Any, config: Any, verifier_auth: 
         code: str,
         corps: dict[str, Any],
         token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+        entete_utilisateur: Annotated[str | None, Header(alias="X-SEAMTECH-UTILISATEUR")] = None,
+        entete_role: Annotated[str | None, Header(alias="X-SEAMTECH-ROLE")] = None,
     ) -> dict[str, Any]:
         verifier_auth(config, token)
         _exiger_postgres(index)
         return corriger_champ(
             index, code,
-            corps.get("champ"), corps.get("valeur"), corps.get("utilisateur"),
+            corps.get("champ"), corps.get("valeur"),
+            _attribution(config, token, corps.get("utilisateur"), entete_utilisateur, entete_role),
             rang=corps.get("rang"), commentaire=corps.get("commentaire"),
         )
 
@@ -706,30 +734,48 @@ def enregistrer_routes_fiches(app: Any, index: Any, config: Any, verifier_auth: 
         code: str,
         corps: dict[str, Any],
         token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+        entete_utilisateur: Annotated[str | None, Header(alias="X-SEAMTECH-UTILISATEUR")] = None,
+        entete_role: Annotated[str | None, Header(alias="X-SEAMTECH-ROLE")] = None,
     ) -> dict[str, Any]:
         verifier_auth(config, token)
         _exiger_postgres(index)
-        return valider_fiche(index, code, corps.get("utilisateur"), corps.get("commentaire"))
+        return valider_fiche(
+            index, code,
+            _attribution(config, token, corps.get("utilisateur"), entete_utilisateur, entete_role),
+            corps.get("commentaire"),
+        )
 
     @app.post("/fiches/{code}/rejeter")
     def route_rejeter_fiche(
         code: str,
         corps: dict[str, Any],
         token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+        entete_utilisateur: Annotated[str | None, Header(alias="X-SEAMTECH-UTILISATEUR")] = None,
+        entete_role: Annotated[str | None, Header(alias="X-SEAMTECH-ROLE")] = None,
     ) -> dict[str, Any]:
         verifier_auth(config, token)
         _exiger_postgres(index)
-        return rejeter_fiche(index, code, corps.get("utilisateur"), corps.get("motif") or "")
+        return rejeter_fiche(
+            index, code,
+            _attribution(config, token, corps.get("utilisateur"), entete_utilisateur, entete_role),
+            corps.get("motif") or "",
+        )
 
     @app.post("/fiches/{code}/rouvrir")
     def route_rouvrir_fiche(
         code: str,
         corps: dict[str, Any],
         token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+        entete_utilisateur: Annotated[str | None, Header(alias="X-SEAMTECH-UTILISATEUR")] = None,
+        entete_role: Annotated[str | None, Header(alias="X-SEAMTECH-ROLE")] = None,
     ) -> dict[str, Any]:
         verifier_auth(config, token)
         _exiger_postgres(index)
-        return rouvrir_fiche(index, code, corps.get("utilisateur"), corps.get("commentaire"), bool(corps.get("effacer_corrections")))
+        return rouvrir_fiche(
+            index, code,
+            _attribution(config, token, corps.get("utilisateur"), entete_utilisateur, entete_role),
+            corps.get("commentaire"), bool(corps.get("effacer_corrections")),
+        )
 
     @app.get("/validation/file")
     def route_fichier_validation(
@@ -745,13 +791,19 @@ def enregistrer_routes_fiches(app: Any, index: Any, config: Any, verifier_auth: 
     def route_valider_lot(
         corps: dict[str, Any],
         token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+        entete_utilisateur: Annotated[str | None, Header(alias="X-SEAMTECH-UTILISATEUR")] = None,
+        entete_role: Annotated[str | None, Header(alias="X-SEAMTECH-ROLE")] = None,
     ) -> dict[str, Any]:
         verifier_auth(config, token)
         _exiger_postgres(index)
         codes = [str(c) for c in (corps.get("codes") or [])]
         if not codes:
             raise HTTPException(status_code=422, detail="Liste « codes » vide — rien à valider.")
-        return valider_lot(index, codes, corps.get("utilisateur"), acquittement_humain=bool(corps.get("acquittement_humain")), commentaire=corps.get("commentaire"))
+        return valider_lot(
+            index, codes,
+            _attribution(config, token, corps.get("utilisateur"), entete_utilisateur, entete_role),
+            acquittement_humain=bool(corps.get("acquittement_humain")), commentaire=corps.get("commentaire"),
+        )
     @app.get("/fiches")
     def route_liste_fiches(
         token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,

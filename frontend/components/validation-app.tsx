@@ -14,7 +14,13 @@ import { authedFetch } from "@/lib/authed-fetch"
 import { palierDeChamp, type ChampExtrait, type FicheFileEntry, type PiecesDeFiche } from "@/lib/fiche"
 import { cn } from "@/lib/utils"
 
-const UTILISATEUR = "operateur-atelier" // identité de session (traçabilité du journal)
+// Lot L.2 — « qui a validé quoi » ne vient PLUS d'ici. Le corps de requête
+// n'est pas une identité : n'importe qui peut l'écrire. Le proxy serveur
+// (/api/fiches/... et /api/validation/lot) ajoute X-SEAMTECH-UTILISATEUR et
+// X-SEAMTECH-ROLE depuis le cookie signé, et le backend ne les honore que si le
+// jeton de service les accompagne. Le navigateur n'envoie donc plus AUCUN
+// « utilisateur » : le champ a été retiré des trois appels ci-dessous pour
+// qu'il n'existe qu'une seule source de vérité.
 
 // Lot L.1 — un lien de doublon, tel que le rend `GET /fiches/{code}/doublons`.
 // Affiché AVANT la validation : « Doublon exact de CODE (sha256) » ou
@@ -141,7 +147,7 @@ export function ValidationApp() {
       await jsonFetch(`/api/fiches/${encodeURIComponent(codeActif)}/corriger`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ champ: champ.champ, valeur, utilisateur: UTILISATEUR, rang: champ.rang }),
+        body: JSON.stringify({ champ: champ.champ, valeur, rang: champ.rang }),
       })
       setMessage(`Champ « ${champ.champ} » corrigé — verrou RG11 armé (une valeur corrigée n'est plus écrasée).`)
       setChamps(await jsonFetch(`/api/fiches/${encodeURIComponent(codeActif)}/champs`))
@@ -160,7 +166,7 @@ export function ValidationApp() {
       await jsonFetch(`/api/fiches/${encodeURIComponent(codeActif)}/${actionName}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ utilisateur: UTILISATEUR, ...extra }),
+        body: JSON.stringify({ ...extra }),
       })
       setMessage(`Fiche ${codeActif} : ${actionName} enregistré au journal.`)
       await chargerFile()
@@ -180,7 +186,7 @@ export function ValidationApp() {
       const corps = await jsonFetch<{ nb_validees: number; nb_ignorees: number }>("/api/validation/lot", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ codes: [...selection], utilisateur: UTILISATEUR, acquittement_humain: acquittement }),
+        body: JSON.stringify({ codes: [...selection], acquittement_humain: acquittement }),
       })
       setMessage(`Validation en lot : ${corps.nb_validees} validée(s), ${corps.nb_ignorees} ignorée(s).`)
       setSelection(new Set())

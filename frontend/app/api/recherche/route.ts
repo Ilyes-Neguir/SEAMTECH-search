@@ -1,6 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { backendBase, authHeaders } from "@/lib/backend"
-import { requireAuth } from "@/lib/auth"
+import { backendBase, authHeaders, requireAuthValide } from "@/lib/backend"
 
 // Proxy Lot E : recherche hybride des fiches (GET /recherche côté FastAPI).
 // Miroir du patron app/api/lots/route.ts — la route Phase 0 /api/search
@@ -9,7 +8,7 @@ import { requireAuth } from "@/lib/auth"
 export const dynamic = "force-dynamic"
 
 export async function GET(req: NextRequest) {
-  const denied = await requireAuth()
+  const denied = await requireAuthValide()
   if (denied) return denied
   const base = backendBase()
   if (!base) return NextResponse.json({ detail: "Backend non configuré (SEAMTECH_API_URL)." }, { status: 503 })

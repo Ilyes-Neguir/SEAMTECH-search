@@ -289,6 +289,71 @@ jobs:
             exit 1
           fi
           echo "Garde-fou dédup : ROUGE puis VERT prouvé"
+      - name: Garde-fou attribution — ROUGE puis VERT (Lot L.2, « qui a validé quoi »)
+        # Motif EXACTEMENT calqué sur « Garde-fou dédup » ci-dessus. Ce qui est
+        # prouvé : l'attribution d'une validation vient de la SESSION, jamais de
+        # ce que le navigateur écrit dans le corps de la requête. Le sabotage
+        # fige l'attribution sur un identifiant littéral (« premier », le premier
+        # compte créé par le test) : le test doit ROUGIR sur son ASSERTION, pas
+        # sur une erreur SQL — vérifié localement avant d'écrire cette étape
+        # (rouge mesuré : « attribution = 1 (attendu 2) »).
+        if: matrix.python-version == '3.12'
+        env:
+          SEAMTECH_TEST_DATABASE_URL: postgresql://seamtech:seamtech_test_password@localhost:5432/seamtech_search_test
+        run: |
+          set -uo pipefail
+          FICHIER=seamtech_search/fiches/routes.py
+          TEST=tests/test_comptes.py::test_validation_attribuee_au_compte_connecte
+          echo "=== Sauvegarde originale ==="
+          cp "$FICHIER" /tmp/routes.py.bak
+          echo "=== Casse volontaire : l'attribution est figée sur un identifiant littéral ==="
+          python - "$FICHIER" <<'PYEOF'
+          import pathlib
+          import sys
+
+          chemin = pathlib.Path(sys.argv[1])
+          texte = chemin.read_text(encoding="utf-8")
+          attendu = (
+              "    identifiant, _role = resoudre_attribution(\n"
+              "        config, token, entete_utilisateur, entete_role, corps_utilisateur\n"
+              "    )\n"
+              "    return identifiant"
+          )
+          sabotage = attendu.replace("return identifiant", 'return "premier"  # SABOTAGE')
+          if attendu not in texte:
+              raise SystemExit("motif d'attribution introuvable — le garde-fou doit être mis à jour")
+          chemin.write_text(texte.replace(attendu, sabotage), encoding="utf-8")
+          print("sabotage appliqué : l'attribution ne vient plus de la session")
+          PYEOF
+          grep -n 'SABOTAGE' "$FICHIER" || true
+          set +e
+          pytest -q "$TEST" 2>&1 | tee /tmp/rouge_attribution.log
+          rc_rouge=${PIPESTATUS[0]}
+          set -e
+          echo "rc_rouge=$rc_rouge"
+          # Un rouge d'ERREUR SQL ne prouve rien : on l'exige sur l'assertion.
+          if grep -qE "psycopg2.errors|sqlalchemy" /tmp/rouge_attribution.log; then
+            echo "::error title=garde-fou-attribution-echec::Le rouge vient d'une ERREUR SQL, pas de l'assertion — ce sabotage ne prouve rien"
+            exit 1
+          fi
+          echo "=== Restauration ==="
+          mv /tmp/routes.py.bak "$FICHIER"
+          set +e
+          pytest -q "$TEST" 2>&1 | tee /tmp/vert_attribution.log
+          rc_vert=${PIPESTATUS[0]}
+          set -e
+          echo "rc_vert=$rc_vert"
+          echo "::error title=garde-fou-attribution-rouge::$(grep -E 'FAILED|AssertionError|assert' /tmp/rouge_attribution.log | head -20 | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 1800)"
+          echo "::notice title=garde-fou-attribution-vert::$(tail -20 /tmp/vert_attribution.log | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 1800)"
+          if [ "$rc_rouge" -eq 0 ]; then
+            echo "::error title=garde-fou-attribution-echec::Le test aurait dû ROUGIR avec l'attribution figée sur un identifiant fixe, mais il est resté VERT"
+            exit 1
+          fi
+          if [ "$rc_vert" -ne 0 ]; then
+            echo "::error title=garde-fou-attribution-echec::Le test aurait dû REVERDIR après restauration, mais il est resté ROUGE"
+            exit 1
+          fi
+          echo "Garde-fou attribution : ROUGE puis VERT prouvé"
       - name: Run latency criteria (perf — sans instrumentation, p50/p95/max publiés)
         # Une seule version de la matrice (audit du 22/09) : la latence ne
         # dépend pas de la version de Python ; exécuter l'étape 3 fois
@@ -885,6 +950,89 @@ jobs:
               )
           print("::notice title=mesure-phase1::" + mesures[0]["description"])
           PY
+
+      # Lot L.1 (correctif C.2 de l'audit) — le BANDEAU DE DOUBLON est enfin
+      # vérifié à l'écran. Le seed live ajoute la fiche 7792-SO-BIS (deuxième
+      # fiche rattachée au MÊME PDF, même empreinte SHA-256) et lance le scan
+      # propositif : le bandeau a donc une donnée réelle à afficher.
+      - name: Run live E2E doublons (bandeau avant validation)
+        working-directory: frontend
+        env:
+          SEAMTECH_E2E_DATABASE_URL: postgresql://seamtech:seamtech_test_password@localhost:5432/seamtech_search_test
+          PLAYWRIGHT_JSON_OUTPUT_NAME: report-doublons.json
+        run: |
+          # Même garde-fou de comptage que l'e2e de validation : les tests de ce
+          # fichier ne doivent ni s'ignorer, ni se rattraper par retry, ni
+          # disparaître silencieusement (un fichier de spec qui ne matche plus
+          # rien passerait sinon pour un succès).
+          set -uo pipefail
+          set +e
+          pnpm exec playwright test e2e/doublons.spec.ts --reporter=list,json
+          rc=$?
+          set -e
+          [ "$rc" -eq 0 ] || exit "$rc"
+          python - <<'PY'
+          import json
+
+          d = json.load(open("report-doublons.json"))
+          stats = d["stats"]
+          passes = stats["expected"]
+          flaky = stats.get("flaky", 0)
+          sautes = stats.get("skipped", 0)
+          if sautes or flaky or passes != 2:
+              raise SystemExit(
+                  f"GARDE-FOU e2e doublons : attendu 2 tests passés au premier essai, "
+                  f"0 flaky, 0 sautés — mesuré {passes} passés, {flaky} flaky, {sautes} sautés."
+              )
+          print(f"::notice title=e2e-doublons::2 tests verts (bandeau visible, aucune fusion proposée)")
+          PY
+      # Lot L.2 (L.2.10) — les comptes nominatifs, éprouvés en conditions
+      # réelles : connexion nominative, 403 pour un opérateur, 200 pour un
+      # administrateur, et surtout un cookie COPIÉ qui ne vaut plus rien après
+      # déconnexion (session révoquée en base).
+      - name: Run live E2E auth nominatif (comptes, rôles, révocation)
+        working-directory: frontend
+        env:
+          SEAMTECH_E2E_DATABASE_URL: postgresql://seamtech:seamtech_test_password@localhost:5432/seamtech_search_test
+          PLAYWRIGHT_JSON_OUTPUT_NAME: report-auth.json
+        run: |
+          set -uo pipefail
+          set +e
+          pnpm exec playwright test e2e/auth.spec.ts --reporter=list,json
+          rc=$?
+          set -e
+          [ "$rc" -eq 0 ] || exit "$rc"
+          python - <<'PY'
+          import json
+
+          d = json.load(open("report-auth.json"))
+          stats = d["stats"]
+          passes = stats["expected"]
+          flaky = stats.get("flaky", 0)
+          sautes = stats.get("skipped", 0)
+          # 23 tests : 19 déjà présents (gate d'authentification, jeton altéré,
+          # déconnexion, sondes /api/health) + 4 nouveaux sur les comptes
+          # nominatifs. Le compte est EXACT : un test qui s'ignore en CI (base
+          # live absente) ferait tomber la porte au lieu de passer inaperçu.
+          if sautes or flaky or passes != 23:
+              raise SystemExit(
+                  f"GARDE-FOU e2e auth : attendu 23 tests passés au premier essai, "
+                  f"0 flaky, 0 sautés — mesuré {passes} passés, {flaky} flaky, {sautes} sautés."
+              )
+          print(f"::notice title=e2e-auth-nominatif::23 tests verts (dont 4 sur les comptes nominatifs)")
+          PY
+
+      - name: Upload live E2E reports on failure (doublons, auth nominatif)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-live
+          path: |
+            frontend/report-doublons.json
+            frontend/report-auth.json
+            frontend/test-results/
+          if-no-files-found: ignore
+          retention-days: 5
 
   sauvegarde:
     # Lot H.1 — ALLER-RETOUR ÉPROUVÉ : sauvegarde hors-site (MinIO réel),

@@ -1,11 +1,10 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { backendBase, authHeaders } from "@/lib/backend"
-import { requireAuth } from "@/lib/auth"
+import { backendBase, backendHeaders, requireAuthValide } from "@/lib/backend"
 
 export const dynamic = "force-dynamic"
 
 export async function POST(req: NextRequest) {
-  const denied = await requireAuth()
+  const denied = await requireAuthValide()
   if (denied) return denied
   const base = backendBase()
   if (!base) return NextResponse.json({ detail: "Backend non configuré (SEAMTECH_API_URL)." }, { status: 503 })
@@ -13,7 +12,7 @@ export async function POST(req: NextRequest) {
   try {
     const res = await fetch(`${base}/validation/lot`, {
       method: "POST",
-      headers: { ...authHeaders(), "Content-Type": "application/json" },
+      headers: await backendHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(payload ?? {}),
       cache: "no-store",
     })

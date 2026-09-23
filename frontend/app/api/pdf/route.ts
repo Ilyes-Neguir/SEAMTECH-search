@@ -1,6 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { backendBase, authHeaders } from "@/lib/backend"
-import { requireAuth } from "@/lib/auth"
+import { backendBase, authHeaders, requireAuthValide } from "@/lib/backend"
 
 export const dynamic = "force-dynamic"
 
@@ -8,7 +7,7 @@ export const dynamic = "force-dynamic"
 // Le backend sert le fichier via POST /open (FileResponse ; 302 présigné si S3).
 // Le jeton serveur ne quitte JAMAIS le proxy : le navigateur ne le voit pas.
 export async function GET(req: NextRequest) {
-  const denied = await requireAuth()
+  const denied = await requireAuthValide()
   if (denied) return denied
   const path = req.nextUrl.searchParams.get("path") ?? ""
   if (!path) return NextResponse.json({ detail: "Paramètre « path » requis." }, { status: 400 })

@@ -98,3 +98,44 @@ PY
 - Rappel : l'archive n'est JAMAIS dans le bucket (RG13) — le bucket contient
   les dumps + manifestes + documents de la pile ; l'archive vit sur son
   disque, son état est prouvé par l'inventaire du manifeste.
+
+## 7. Un opérateur ne peut plus se connecter (ou a oublié son mot de passe)
+
+Depuis le lot L.2, les comptes sont NOMINATIFS : la connexion vérifie
+`utilisateur.empreinte_mot_de_passe` (scrypt) et ouvre une ligne dans
+`session_ui`. Trois causes possibles, dans l'ordre où il faut les écarter :
+
+```bash
+# a) trop de tentatives : 5 échecs en 5 minutes ⇒ 429 pendant 5 minutes.
+#    Le compteur vit dans audit_log (aucune table en plus) — c'est visible :
+docker compose exec postgres psql -U seamtech -d seamtech_search -c \
+  "SELECT actor, timestamp, details FROM audit_log WHERE action = 'connexion_refusee' ORDER BY timestamp DESC LIMIT 10;"
+#    Une connexion réussie (action='connexion') remet le compteur à zéro :
+docker compose exec postgres psql -U seamtech -d seamtech_search -c \
+  "SELECT actor, timestamp FROM audit_log WHERE action = 'connexion' ORDER BY timestamp DESC LIMIT 5;"
+
+# b) compte désactivé ou rôle à vérifier :
+docker compose exec web python -m seamtech_search.comptes.cli lister
+
+# c) mot de passe perdu : le réinitialiser (changement imposé à la prochaine
+#    connexion, sessions ouvertes révoquées) :
+docker compose exec web python -m seamtech_search.comptes.cli reinitialiser-mot-de-passe --identifiant imrane
+```
+
+Si PLUS AUCUN compte nominatif n'est joignable, le compte de secours reste la
+porte de sortie : identifiant vide (ou « secours ») + `SEAMTECH_UI_PASSWORD` au
+formulaire de connexion. Ses actions sont attribuées à « secours » — à ne pas
+laisser en place plus longtemps que nécessaire.
+
+## 8. Une validation a été attribuée au mauvais opérateur
+
+L'attribution vient de la SESSION, jamais du corps de la requête : vérifier
+d'abord que le proxy serveur a bien le jeton de service (`SEAMTECH_AUTH_TOKEN`)
+— sans lui, les en-têtes `X-SEAMTECH-UTILISATEUR`/`X-SEAMTECH-ROLE` sont
+IGNORÉS et la requête reçoit 401 (frontière de confiance, docs/API.md).
+
+```bash
+# Qui a validé quoi, et combien d'actions restent non attribuées (héritage d'avant L.2) :
+curl -s -H "X-SEAMTECH-TOKEN: $SEAMTECH_AUTH_TOKEN" http://127.0.0.1:8000/qualite/tableau-de-bord \
+  | python -m json.tool | grep -A 12 taux_par_utilisateur
+```

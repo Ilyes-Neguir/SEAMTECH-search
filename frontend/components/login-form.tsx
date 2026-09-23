@@ -8,14 +8,20 @@ import { SeamtechLogo } from "@/components/seamtech-logo"
 import { resolveNextPath } from "@/lib/authed-fetch"
 
 /**
- * Single shared-password sign-in form (audit issue #5, Option B).
+ * Sign-in form (Lot L.2).
  *
- * Posts to /api/auth/login, which sets an httpOnly session cookie. The cookie
- * is never readable from JavaScript, so this component only has to react to
- * the response status and let the router re-render the gated pages.
+ * Posts { identifiant, mot_de_passe } to /api/auth/login, which verifies the
+ * account with the backend and sets an httpOnly session cookie carrying the
+ * nominative identity. The cookie is never readable from JavaScript, so this
+ * component only reacts to the response status and lets the router re-render
+ * the gated pages.
+ *
+ * The rescue account keeps working: leaving the identifier empty (or typing
+ * « secours ») uses the historical shared password. See docs/API.md.
  */
 export function LoginForm() {
   const router = useRouter()
+  const [identifiant, setIdentifiant] = useState("")
   const [password, setPassword] = useState("")
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
@@ -38,7 +44,7 @@ export function LoginForm() {
       const response = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password }),
+        body: JSON.stringify({ identifiant: identifiant.trim(), mot_de_passe: password }),
         cache: "no-store",
       })
       if (response.ok) {
@@ -48,9 +54,9 @@ export function LoginForm() {
         return
       }
       const body = await response.json().catch(() => ({}))
-      setError(body?.detail ?? `Sign-in failed (${response.status}).`)
+      setError(body?.detail ?? `Connexion refusée (${response.status}).`)
     } catch {
-      setError("Could not reach the sign-in endpoint.")
+      setError("Endpoint de connexion injoignable.")
     } finally {
       setSubmitting(false)
     }
@@ -65,26 +71,41 @@ export function LoginForm() {
         <form
           onSubmit={onSubmit}
           className="rounded-xl border border-border bg-card p-5 shadow-sm"
-          aria-label="Sign in to SEAMTECH Search"
+          aria-label="Connexion à SEAMTECH Search"
         >
-          <h1 className="text-base font-semibold text-foreground">Sign in</h1>
+          <h1 className="text-base font-semibold text-foreground">Connexion</h1>
           <p className="mt-1 text-xs text-muted-foreground">
-            SEAMTECH Search is an internal tool. Enter the shared workshop password to continue.
+            SEAMTECH Search est un outil interne. Connectez-vous avec votre compte nominatif — les
+            validations sont tracées à votre nom.
           </p>
 
-          <label htmlFor="password" className="mt-4 block text-xs font-medium text-muted-foreground">
-            Password
+          <label htmlFor="identifiant" className="mt-4 block text-xs font-medium text-muted-foreground">
+            Identifiant
+          </label>
+          <Input
+            id="identifiant"
+            name="identifiant"
+            type="text"
+            autoComplete="username"
+            autoFocus
+            value={identifiant}
+            onChange={(event) => setIdentifiant(event.target.value)}
+            placeholder="Votre identifiant (ex. imrane)"
+            className="mt-1"
+          />
+
+          <label htmlFor="password" className="mt-3 block text-xs font-medium text-muted-foreground">
+            Mot de passe
           </label>
           <Input
             id="password"
             name="password"
             type="password"
             autoComplete="current-password"
-            autoFocus
             required
             value={password}
             onChange={(event) => setPassword(event.target.value)}
-            placeholder="Shared workshop password"
+            placeholder="Votre mot de passe"
             className="mt-1"
             aria-invalid={error ? true : undefined}
             aria-describedby={error ? "login-error" : undefined}
@@ -97,8 +118,13 @@ export function LoginForm() {
           ) : null}
 
           <Button type="submit" size="lg" className="mt-4 w-full" disabled={submitting || password.length === 0}>
-            {submitting ? "Signing in…" : "Sign in"}
+            {submitting ? "Connexion…" : "Se connecter"}
           </Button>
+
+          <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">
+            Compte de secours : laissez l'identifiant vide et saisissez le mot de passe partagé de
+            l'atelier. Ses actions sont attribuées à « secours » et sa session n'est pas révocable.
+          </p>
         </form>
       </div>
     </main>

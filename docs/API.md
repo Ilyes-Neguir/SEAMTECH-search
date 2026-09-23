@@ -155,6 +155,107 @@ sans source, l'assistant refuse explicitement.
 | `POST /gabarits/{code}/versions` | Publie une **nouvelle** version (max+1). Corps JSON : `{"description": str, "ancres_detection": [str, …], "regles": {…}}`. 201 → `{"code", "version", "nb_ancres", "nb_regles"}`. Jamais destructif : les versions précédentes passent `actif=false` (consultables), la nouvelle devient la seule active. 422 si ancres vides ou règles absentes. |
 | `POST /gabarits/detecter` | Détection seule sur un PDF envoyé en multipart (champ `fichier`), **sans aucune écriture**. 200 → `{"detecte": true, "gabarit", "version", "score", "ancres_trouvees", "scores", "pages"}` ou `{"detecte": false, "voie": "reprise_complete", "scores", "detail"}` — une non-détection est un résultat, pas une erreur. 422 si le contenu n'est pas un PDF, 413 au-delà de 20 Mo. |
 
+## Déduplication avant validation (Lot L.1, plan v3.0 §17.4)
+
+**Détection PROPOSITIVE — à lire avant toute intégration.** Aucune de ces routes ne
+supprime, ne fusionne ni ne change le `statut` d'une fiche. Elles constatent et
+enregistrent des **liens** (`fiche_lien`), la décision reste humaine (RG3). Le
+paramètre `appliquer` vaut **`false` par défaut** partout : sans lui, rien n'est écrit.
+
+| Route | Rôle |
+|---|---|
+| `GET /fiches/doublons` | Tous les liens de doublon connus (`?type=doublon_exact` ou `doublon_probable` pour filtrer) : `id_lien`, `type`, `score`, codes source/cible, statuts, `cree_le`. |
+| `POST /fiches/doublons/scan` | Lance une détection **sans écrire** (`dry_run` implicite) et rend `{groupes_exacts, liens_exacts, liens_probables, liens_crees, liens_deja_presents, fiches_concernees, trigrammes_disponibles}`. Corps optionnel : `{"seuil": 0.55, "appliquer": true}` — `appliquer=true` est le SEUL chemin qui écrit des liens, jamais une fusion. Idempotent : rejouer ne duplique aucun lien (`ON CONFLICT DO NOTHING`). |
+| `GET /fiches/{code}/doublons` | Liens d'UNE fiche, dans les deux sens (source ou cible). 404 si le code est inconnu. C'est ce que consomme le bandeau de `/validation`. |
+| `POST /validation/doublons` | Liens pour une LISTE de codes (une seule requête pour tout l'écran de validation). Corps `{"codes": ["0701-GV-001", …]}` → `{"par_code": {code: [lien, …]}}` ; chaque code demandé est présent, même sans lien. |
+
+**Doublon exact** = même empreinte SHA-256 de pièce jointe portée par plusieurs fiches
+(`GROUP BY empreinte_sha256 HAVING count(DISTINCT id_fiche) > 1`). **Doublon probable** =
+titres similaires (pg_trgm) ; sans l'extension, repli déterministe documenté (titre
+normalisé identique ET même client/bateau/gamme/année), jamais une erreur.
+
+**CLI** : `python -m seamtech_search.dedup.cli scan` (alias installé : `dedup-scan`) —
+simulation par défaut, `--appliquer` pour écrire les liens, `--seuil`, `--json`,
+`--database-url`. PostgreSQL requis (503 sinon).
+
+## Comptes nominatifs et « qui a validé quoi » (Lot L.2, plan v3.0 §10.1)
+
+Deux chemins, jamais un seul :
+
+```
+navigateur ──cookie signé (HMAC)──► Next.js /api/* ──X-SEAMTECH-TOKEN──► API Python
+```
+
+Le navigateur ne détient **jamais** `SEAMTECH_AUTH_TOKEN` : le proxy serveur le porte, et
+c'est ce qui rend les en-têtes d'attribution dignes de foi.
+
+| Route | Rôle |
+|---|---|
+| `POST /auth/connexion` | Corps `{"identifiant", "mot_de_passe"}`. Vérifie `utilisateur.empreinte_mot_de_passe` (scrypt) et ouvre une session : `{"ok", "id_utilisateur", "identifiant", "nom", "role", "id_session", "jeton_session", "expire_le"}`. 401 si les identifiants sont faux (réponse identique pour un compte inexistant), 429 si 5 tentatives ont échoué en 5 minutes (`Retry-After` renseigné). |
+| `POST /auth/deconnexion` | Corps `{"id_session", "jeton_session"}` ; exige le JETON (un `id_session` seul est devinable). Pose `revoque_le` : le cookie, même encore signé, ne vaut plus rien. Idempotent. 401 si le jeton ne correspond pas. |
+| `GET /auth/session` | En-têtes `X-SEAMTECH-SESSION` + `X-SEAMTECH-SESSION-JETON` → identité de la session. 401 si la session est expirée, révoquée, ou si le compte a été désactivé. **Jamais** d'empreinte, de sel ni de jeton dans la réponse. |
+| `POST /auth/mot-de-passe` | Changement par l'intéressé : `{"mot_de_passe_actuel", "nouveau_mot_de_passe"}`. Éteint `doit_changer_mot_de_passe`. 401 si l'actuel est faux. |
+| `GET /auth/utilisateurs` | Liste des comptes : `identifiant`, `nom`, `role`, `actif`, dates, `mot_de_passe_defini` (booléen) — jamais l'empreinte. **403 si la session n'est pas `administrateur`**, 401 sans session. |
+| `POST /auth/utilisateurs` | Crée un compte (`identifiant`, `nom`, `role`, `mot_de_passe`). 403 pour un opérateur, 409 si l'identifiant existe, 422 si rôle inconnu. |
+| `POST /auth/utilisateurs/{identifiant}/desactiver` | `actif=false` ET révocation des sessions ouvertes (désactiver sans révoquer laisserait un cookie travailler). 404 si inconnu. **Aucune suppression** de compte ni d'historique. |
+| `POST /auth/utilisateurs/{identifiant}/mot-de-passe` | Réinitialise (changement imposé à la prochaine connexion) et révoque les sessions. |
+
+**Frontière de confiance (à ne pas déplacer).** Le proxy Next.js pose
+`X-SEAMTECH-UTILISATEUR` et `X-SEAMTECH-ROLE` depuis le cookie signé. Côté Python ces
+en-têtes ne sont honorés **que si `X-SEAMTECH-TOKEN` est valide sur la même requête** :
+une requête qui les porte sans le jeton de service reçoit **401** et la fiche n'est pas
+attribuée. Les routes de validation (`POST /fiches/{code}/corriger|valider|rejeter|rouvrir`,
+`POST /validation/lot`) prennent l'identité de cette session ; le champ `utilisateur` du
+corps de requête n'est plus qu'un **repli d'outillage** (scripts, tests), jamais
+prioritaire. L'écran ne l'envoie plus : une seule source de vérité.
+
+**Vérrouillage des connexions** : le compteur d'échecs vit dans la table `audit_log`
+existante (`action='connexion_refusee'`), pas dans une table dédiée — la mission fixe
+32 tables métier après L.2 et une connexion refusée EST un événement d'audit. Conséquence
+documentée : `SELECT … FROM audit_log WHERE actor='<identifiant>' AND action='connexion_refusee'`
+liste les tentatives. Une connexion réussie (`action='connexion'`) remet le compteur à zéro ;
+aucune purge automatique n'est faite (on ne supprime jamais de données).
+
+**CLI** : `python -m seamtech_search.comptes.cli` (alias installé : `comptes`) —
+`creer --identifiant --nom --role operateur|administrateur`, `lister`, `desactiver`,
+`reinitialiser-mot-de-passe`, `sessions --identifiant`, `revoquer-session --id-session`,
+`verifier --identifiant`. Le mot de passe est **toujours lu sur STDIN, jamais en argument**
+(un mot de passe en argument finit dans l'historique du shell et dans `ps`).
+
+**Compte de secours (limite assumée)** : `SEAMTECH_UI_PASSWORD`, identifiant `secours`,
+rôle `administrateur`. Il n'existe PAS en base : sa session n'est donc ni révocable ni
+attribuable (`X-SEAMTECH-UTILISATEUR: secours`), et il sert uniquement à créer les premiers
+comptes nominatifs puis à dépanner. À désactiver (`SEAMTECH_UI_PASSWORD` vide) une fois les
+comptes nominatifs en place — dans ce cas le front refuse toute connexion et l'application
+n'est accessible que par les comptes nominatifs.
+
+**Sécurité** : empreintes `scrypt$n=16384$r=8$p=1$<sel_b64>$<hash_b64>` (`hashlib.scrypt`,
+sel de 16 octets via `secrets`), vérification `hmac.compare_digest`, **bibliothèque standard
+uniquement** (aucune dépendance nouvelle). Les jetons de session ne sont stockés que par leur
+empreinte SHA-256 — un dump de la base ne permet pas de rejouer une session.
+
+## Tableau de bord qualité (Lot K.1 + L)
+
+`GET /qualite/tableau-de-bord` — 9 indicateurs, chacun avec sa `definition`, son `unite` et
+sa `periode` (exigence Lot K), tous en `GROUP BY` côté SQL :
+
+| Indicateur | Contenu |
+|---|---|
+| `taux_extraction_auto` | Part des champs extraits sans correction humaine. |
+| `taux_correction_par_champ` | Taux de correction par champ, trié décroissant. |
+| `temps_validation` | Durée de validation : médiane et p95. |
+| `anomalies_frequentes` | Anomalies les plus fréquentes par code. |
+| `volume_par_statut` | Nombre de fiches par statut. |
+| `usage_recherches` | Usage réel de la recherche. |
+| `lots` | Lots d'ingestion : dossiers, réussites, échecs. |
+| `doublons_detectes` | Lot L.1 — `groupes_exacts`, `liens_exacts`, `liens_probables`, `doublons_vus_avant_validation` (fiches **non `valide`** déjà engagées dans un lien : le chiffre du lot — combien de doublons ont été vus AVANT validation). Un doublon vu n'est pas un doublon traité. |
+| `taux_par_utilisateur` | Lot L.2 — `actions_total`, `actions_attribuees`, `actions_sans_utilisateur`, `part_attribuee`, `par_utilisateur` (identifiant, nom, rôle, actions), `comptes_actifs_sans_action`. Les actions sans utilisateur sont l'héritage d'avant L.2 : elles ne sont **jamais** réattribuées a posteriori. |
+
+**Règle de maintenance** : tout nouvel indicateur arrive avec (a) sa clé dans
+`tests/test_qualite_tableau.py::CLES_TABLEAU_DE_BORD`, (b) un test de valeurs, (c) sa ligne
+dans ce tableau. Le test de forme compare l'**ensemble exact** des clés : un indicateur
+ajouté sans être déclaré fait échouer la CI.
+
 ## Ingestion par dossier complet et lots (Lot C)
 
 | Route | Rôle |

@@ -73,6 +73,18 @@ interface Tableau {
     liens_probables: number
     doublons_vus_avant_validation: number
   }
+  // Lot L.2 — « qui a validé quoi » (indicateur 9).
+  taux_par_utilisateur: {
+    definition: string
+    unite: string
+    periode: string
+    actions_total: number
+    actions_attribuees: number
+    actions_sans_utilisateur: number
+    part_attribuee: number | null
+    par_utilisateur: Array<{ identifiant: string; nom: string | null; role: string; actions: number }>
+    comptes_actifs_sans_action: number
+  }
 }
 
 export function QualiteApp() {
@@ -211,6 +223,35 @@ export function QualiteApp() {
         <p className="text-xs text-muted-foreground">
           Détection PROPOSITIVE : aucun effacement, aucune fusion automatique — la décision reste humaine.
         </p>
+      </section>
+
+      <section className="rounded border p-4" data-testid="indicateur-par-utilisateur">
+        <h2 className="font-semibold">Qui a validé quoi (comptes nominatifs)</h2>
+        <p className="text-xs text-muted-foreground">
+          {data.taux_par_utilisateur.definition} — {data.taux_par_utilisateur.unite} —{" "}
+          {data.taux_par_utilisateur.periode}
+        </p>
+        <p className="mt-2">
+          Actions attribuées : {data.taux_par_utilisateur.actions_attribuees} / {data.taux_par_utilisateur.actions_total}
+          {typeof data.taux_par_utilisateur.part_attribuee === "number"
+            ? ` (${(data.taux_par_utilisateur.part_attribuee * 100).toFixed(1)} %)`
+            : ""}
+        </p>
+        <p className="mt-1">
+          Actions SANS utilisateur (héritage d'avant L.2, jamais réattribuées) :{" "}
+          {data.taux_par_utilisateur.actions_sans_utilisateur}
+        </p>
+        <ul className="mt-2 text-xs">
+          {data.taux_par_utilisateur.par_utilisateur.length === 0 ? (
+            <li className="text-muted-foreground">Aucune action attribuée pour l'instant.</li>
+          ) : (
+            data.taux_par_utilisateur.par_utilisateur.map((entree) => (
+              <li key={entree.identifiant}>
+                {entree.identifiant} ({entree.role}) : {entree.actions} action(s)
+              </li>
+            ))
+          )}
+        </ul>
       </section>
     </div>
   )

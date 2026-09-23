@@ -7,6 +7,11 @@ import path from "path"
 // on the password — e2e/helpers.ts reads the same variables.
 process.env.SEAMTECH_UI_PASSWORD ??= "e2e-shared-password"
 process.env.SEAMTECH_SESSION_SECRET ??= "e2e-session-secret-not-for-production-use"
+// Lot L.2 : le proxy serveur ne pose les en-têtes d'attribution
+// (X-SEAMTECH-UTILISATEUR / X-SEAMTECH-ROLE) que si le backend le reconnaît par
+// son jeton de service. L'e2e doit donc en avoir un — la même valeur est écrite
+// dans e2e/backend.config.json, chargée par le serveur Python spawné ci-dessous.
+process.env.SEAMTECH_AUTH_TOKEN ??= "e2e-service-token"
 
 import { execSync } from "child_process"
 import { randomUUID } from "crypto"
@@ -82,6 +87,7 @@ export default defineConfig({
       timeout: 30000,
       env: {
         SEAMTECH_API_URL: "http://127.0.0.1:8123",
+        SEAMTECH_AUTH_TOKEN: process.env.SEAMTECH_AUTH_TOKEN,
         SEAMTECH_UI_PASSWORD: process.env.SEAMTECH_UI_PASSWORD,
         SEAMTECH_SESSION_SECRET: process.env.SEAMTECH_SESSION_SECRET,
       },

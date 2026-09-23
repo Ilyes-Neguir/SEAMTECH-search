@@ -1130,6 +1130,14 @@ def create_app(config: AppConfig) -> FastAPI:
 
     enregistrer_routes_dedup(app, index, config, _require_auth)
 
+    # Lot L.2 (§10.1, §17.5) : authentification nominative — /auth/connexion,
+    # /auth/deconnexion, /auth/session, gestion des comptes. Ces routes exigent
+    # le jeton de service : le navigateur ne les appelle jamais directement, il
+    # passe par le proxy Next.js, qui seul détient SEAMTECH_AUTH_TOKEN.
+    from seamtech_search.comptes.routes import enregistrer_routes_auth
+
+    enregistrer_routes_auth(app, index, config, _require_auth)
+
     from seamtech_search.ml.routes import enregistrer_routes_ml
 
     enregistrer_routes_ml(
