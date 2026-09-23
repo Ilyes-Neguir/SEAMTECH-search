@@ -117,7 +117,10 @@ def test_aller_retour_complet_base_detruite(
     dossiers_backups = tmp_path / "backups"
     manifeste = sauver(url_base, [archive], dossiers_backups, client_s3=client, retention=5)
 
-    assert manifeste["version_schema_metier"] == "013_recherche_fonds_reel"
+    # Version attendue = version courante du schéma métier (015 après Lot K)
+    from seamtech_search.schema_metier import VERSION_SCHEMA_METIER
+
+    assert manifeste["version_schema_metier"] == VERSION_SCHEMA_METIER
     assert manifeste["dump"]["octets"] > 0
     assert manifeste["dump"]["sha256"]
     assert manifeste["dump"]["cle_s3"]

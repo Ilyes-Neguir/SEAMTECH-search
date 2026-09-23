@@ -153,6 +153,42 @@ jobs:
             exit 1
           fi
           echo "::notice title=suite-postgres::pytest -m \"postgres and not perf and not sauvegarde\" : passed=$passed skipped=$skipped"
+      - name: Garde-fou dimension — ROUGE puis VERT (correction 0.3 audit Lot J)
+        if: matrix.python-version == '3.12'
+        env:
+          SEAMTECH_TEST_DATABASE_URL: postgresql://seamtech:seamtech_test_password@localhost:5432/seamtech_search_test
+        run: |
+          set -uo pipefail
+          echo "=== Sauvegarde originale ==="
+          cp seamtech_search/recherche.py /tmp/recherche.py.bak
+          echo "=== Casse volontaire : exclure=frozenset() au lieu de GROUPE_COTES ==="
+          # On casse uniquement dans _facettes_cotes
+          sed -i 's/exclure=GROUPE_COTES/exclure=frozenset()/g' seamtech_search/recherche.py
+          set +e
+          pytest -m postgres tests/test_recherche_dimension_tri.py::test_dimension_facettes_et_intervalles -v 2>&1 | tee /tmp/rouge.log
+          rc_rouge=${PIPESTATUS[0]}
+          set -e
+          echo "rc_rouge=$rc_rouge"
+          echo "=== Restauration ==="
+          mv /tmp/recherche.py.bak seamtech_search/recherche.py
+          set +e
+          pytest -m postgres tests/test_recherche_dimension_tri.py::test_dimension_facettes_et_intervalles -v 2>&1 | tee /tmp/vert.log
+          rc_vert=${PIPESTATUS[0]}
+          set -e
+          echo "rc_vert=$rc_vert"
+          # Publications en annotations (blob host EOF → annotations restent lisibles)
+          echo "::error title=garde-fou-dimension-rouge::$(grep -E 'FAILED|AssertionError|effectif' /tmp/rouge.log | head -20 | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 1800)"
+          echo "::notice title=garde-fou-dimension-vert::$(tail -20 /tmp/vert.log | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 1800)"
+          echo "::notice title=garde-fou-dimension-rouge-tail::$(tail -40 /tmp/rouge.log | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 1800)"
+          if [ "$rc_rouge" -eq 0 ]; then
+            echo "::error title=garde-fou-dimension-echec::Le test aurait dû ROUGIR avec exclure=frozenset(), mais il est resté VERT"
+            exit 1
+          fi
+          if [ "$rc_vert" -ne 0 ]; then
+            echo "::error title=garde-fou-dimension-echec::Le test aurait dû REVERDIR après restauration, mais il est resté ROUGE"
+            exit 1
+          fi
+          echo "Garde-fou dimension : ROUGE puis VERT prouvé"
       - name: Run latency criteria (perf — sans instrumentation, p50/p95/max publiés)
         # Une seule version de la matrice (audit du 22/09) : la latence ne
         # dépend pas de la version de Python ; exécuter l'étape 3 fois
@@ -646,7 +682,28 @@ jobs:
         run: pnpm exec playwright install --with-deps chromium
       - name: Run E2E tests (suite par défaut, SQLite)
         working-directory: frontend
-        run: pnpm test:e2e
+        run: |
+          set -uo pipefail
+          set +e
+          pnpm test:e2e 2>&1 | tee /tmp/e2e.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            echo "::error title=e2e-failed::$(grep -E 'FAILED|Error|expect|●' /tmp/e2e.log | head -30 | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 2000)"
+            echo "::error title=e2e-tail::$(tail -60 /tmp/e2e.log | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 2000)"
+            exit "$rc"
+          fi
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            frontend/playwright-report/
+            frontend/test-results/
+            /tmp/e2e.log
+          if-no-files-found: ignore
+          retention-days: 5
       # Clôture Phase 1 (Tâche 2 du 21/09) : le parcours de validation est
       # rejoué EN CONDITIONS RÉELLES — base PostgreSQL jetable, trois dossiers
       # déposés par le pipeline (dont la vraie fiche 7792-SO), front de

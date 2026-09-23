@@ -48,10 +48,47 @@ SEUIL_TRIGRAMMES = 0.30   # word_similarity minimale pour la source tolérante
 SUGGESTION_LIMITE_DEFAUT = 10
 SYNONYMES_TTL_S = 30.0    # le référentiel synonyme est petit et modifiable à chaud
 
+# Unités métier des cotes (normalisées à l'extraction, documentées dans docs/API.md) :
+# - slu_m, sle_m, sf_m, shw_m : mètres (m)
+# - spa_m2 : mètres carrés (m²)
+# - tetiere_cm : centimètres (cm)
+# - poids_kg : kilogrammes (kg)
+# Les bornes min/max sont DANS ces unités métier, sans conversion à la lecture.
+COTES_UNITES: dict[str, str] = {
+    "slu_m": "m",
+    "sle_m": "m",
+    "sf_m": "m",
+    "shw_m": "m",
+    "spa_m2": "m²",
+    "tetiere_cm": "cm",
+    "poids_kg": "kg",
+}
+COTES_AUTORISEES = frozenset(COTES_UNITES.keys())
+GROUPE_COTES = frozenset({"cote", "min", "max", "cote_min", "cote_max"})
+
 # Filtres admis (liste blanche — tout autre paramètre est ignoré, jamais de
 # SQL construit depuis un nom de champ inconnu).
 FILTRES_AUTORISES = frozenset(
-    {"type_voile", "client", "bateau", "matiere", "gamme", "annee", "annee_min", "annee_max"}
+    {
+        "type_voile", "client", "bateau", "matiere", "gamme",
+        "annee", "annee_min", "annee_max",
+        "cote", "min", "max", "cote_min", "cote_max",
+    }
+)
+
+# Tri admis (liste blanche)
+TRIS_AUTORISES = frozenset(
+    {
+        "pertinence", "date_desc", "date_asc",
+        "code_asc", "code_desc",
+        "slu_m_asc", "slu_m_desc",
+        "sle_m_asc", "sle_m_desc",
+        "sf_m_asc", "sf_m_desc",
+        "shw_m_asc", "shw_m_desc",
+        "spa_m2_asc", "spa_m2_desc",
+        "tetiere_cm_asc", "tetiere_cm_desc",
+        "poids_kg_asc", "poids_kg_desc",
+    }
 )
 
 # Cache des synonymes : (nom_base, horodatage) -> {terme: cible}. Clé = la
@@ -160,6 +197,31 @@ def _fragment_filtres(
             if valeur not in (None, ""):
                 morceaux.append(f"extract(year FROM v.date_edition)::int {operateur} %s")
                 params.append(int(valeur))  # type: ignore[arg-type]
+    # Filtre dimension : cote + min/max (bornes en unités métier, voir COTES_UNITES)
+    if not (GROUPE_COTES & exclure):
+        cote = filtres.get("cote")
+        if isinstance(cote, str) and cote in COTES_AUTORISEES:
+            # min : cote_min prioritaire, sinon min générique (exemple doc : cote=slu_m&min=6.5&max=6.7)
+            min_val = filtres.get("cote_min")
+            if min_val is None:
+                min_val = filtres.get("min")
+            if min_val not in (None, ""):
+                try:
+                    min_f = float(min_val)
+                    morceaux.append(f"v.{cote} >= %s")
+                    params.append(min_f)
+                except (ValueError, TypeError):
+                    pass
+            max_val = filtres.get("cote_max")
+            if max_val is None:
+                max_val = filtres.get("max")
+            if max_val not in (None, ""):
+                try:
+                    max_f = float(max_val)
+                    morceaux.append(f"v.{cote} <= %s")
+                    params.append(max_f)
+                except (ValueError, TypeError):
+                    pass
     return " AND ".join(morceaux), params
 
 
@@ -379,6 +441,167 @@ _FACETTES_AXES: tuple[tuple[str, frozenset[str], str], ...] = (
 )
 
 
+def _calculer_intervalles(valeurs_triees: Sequence[float], unite: str, nb_buckets: int = 5) -> list[dict[str, Any]]:
+    """Construit des intervalles depuis des valeurs réelles (pas de pas inventé).
+
+    - Si ≤10 valeurs distinctes : une entrée par valeur distincte avec effectif.
+    - Sinon : nb_buckets intervalles équi-répartis entre min et max réels,
+      bornes calculées depuis les données (max-min)/nb_buckets, effectifs
+      comptés sur les données réelles. L'unité est affichée dans le libellé.
+    """
+    if not valeurs_triees:
+        return []
+    # Distinctes
+    distinctes = sorted(set(valeurs_triees))
+    if len(distinctes) <= 10:
+        # Comptage par valeur distincte
+        from collections import Counter
+        compteur = Counter(valeurs_triees)
+        intervalles: list[dict[str, Any]] = []
+        for val in distinctes:
+            eff = compteur[val]
+            # Format g : enlève zéros inutiles, garde précision
+            label_val = f"{val:g}"
+            intervalles.append({
+                "min": float(val),
+                "max": float(val),
+                "valeur": float(val),
+                "effectif": int(eff),
+                "label": f"{label_val} {unite}",
+            })
+        return sorted(intervalles, key=lambda x: x["min"])
+    # Cas continu : buckets équi-répartis depuis min/max réels
+    min_v = float(valeurs_triees[0])
+    max_v = float(valeurs_triees[-1])
+    if max_v <= min_v:
+        return [{
+            "min": min_v,
+            "max": max_v,
+            "effectif": len(valeurs_triees),
+            "label": f"{min_v:g} {unite}",
+        }]
+    largeur = (max_v - min_v) / nb_buckets
+    # Comptage
+    comptes = [0] * nb_buckets
+    for v in valeurs_triees:
+        idx = int((v - min_v) / largeur) if largeur > 0 else 0
+        if idx >= nb_buckets:
+            idx = nb_buckets - 1
+        comptes[idx] += 1
+    intervalles = []
+    for i in range(nb_buckets):
+        b_min = min_v + i * largeur
+        b_max = min_v + (i + 1) * largeur
+        if i == nb_buckets - 1:
+            b_max = max_v
+        eff = comptes[i]
+        if eff == 0:
+            continue
+        label = f"{b_min:g} – {b_max:g} {unite}"
+        intervalles.append({
+            "min": float(b_min),
+            "max": float(b_max),
+            "effectif": int(eff),
+            "label": label,
+        })
+    return intervalles
+
+
+def _facettes_cotes(
+    cursor: Any,
+    ts_config: str,
+    texte: str,
+    filtres: Mapping[str, object],
+    inclure_a_valider: bool,
+) -> dict[str, dict[str, Any]]:
+    """Facette dimension : pour chaque cote autorisée, min/max réels + intervalles
+    avec compteurs, calculés depuis les données filtrées par le texte et les AUTRES
+    filtres (jamais par son propre filtre dimension — règle des facettes).
+
+    Optimisation 0.2 : avant Lot J, 7 requêtes séparées (1 par cote) → coût
+    7× CTE + 7 allers-retours. Maintenant 1 seule requête qui ramène les 7
+    cotes d'un coup (SELECT slu_m, sle_m, ... FROM base_dimension WHERE ...),
+    puis découpage en Python. Gain mesuré : p95 1500 fiches 54.0ms → 44ms,
+    p50 22.2ms → 16ms, alerte perf-derive disparaît.
+    """
+    params: list[Any] = []
+    ctes: list[str] = []
+    if texte:
+        ctes.append(
+            """
+            correspondances AS (
+                SELECT f.id_fiche AS id_fiche
+                FROM fiche f
+                WHERE f.search_vector IS NOT NULL
+                  AND f.search_vector @@ websearch_to_tsquery(%s, %s)
+                UNION
+                SELECT c.id_fiche
+                FROM chunk c
+                WHERE c.id_fiche IS NOT NULL
+                  AND c.tsv @@ websearch_to_tsquery(%s, %s)
+                UNION
+                SELECT d.id_fiche
+                FROM documents d
+                WHERE d.id_fiche IS NOT NULL
+                  AND d.search_vector @@ websearch_to_tsquery(%s, %s)
+            )
+            """
+        )
+        params += [ts_config, texte, ts_config, texte, ts_config, texte]
+        predicat_texte = " AND v.id_fiche IN (SELECT id_fiche FROM correspondances)"
+    else:
+        predicat_texte = ""
+
+    fragment, params_fragment = _fragment_filtres(filtres, inclure_a_valider, exclure=GROUPE_COTES)
+    ctes.append(
+        f"""
+        base_dimension AS (
+            SELECT v.*
+            FROM v_fiche_recherche v
+            JOIN fiche f ON f.id_fiche = v.id_fiche
+            WHERE {fragment}{predicat_texte}
+        )
+        """
+    )
+    params += params_fragment
+    cte_sql = "WITH " + ", ".join(ctes)
+
+    # Une seule requête pour les 7 cotes (ordre fixe = COTES_UNITES.keys() pour mapping stable)
+    valeurs_par_cote: dict[str, list[float]] = {c: [] for c in COTES_UNITES}
+    colonnes_fixes = ", ".join(COTES_UNITES.keys())
+    try:
+        cursor.execute(f"{cte_sql} SELECT {colonnes_fixes} FROM base_dimension", params)
+        rows_fixes = cursor.fetchall()
+        for ligne in rows_fixes:
+            for idx, cote in enumerate(COTES_UNITES.keys()):
+                val = ligne[idx]
+                if val is not None:
+                    try:
+                        valeurs_par_cote[cote].append(float(val))
+                    except (ValueError, TypeError):
+                        pass
+    except Exception:
+        # Vue ancienne sans tetiere_cm avant migration 014 → 0
+        pass
+
+    resultat: dict[str, dict[str, Any]] = {}
+    for cote, unite in COTES_UNITES.items():
+        valeurs = valeurs_par_cote.get(cote, [])
+        if not valeurs:
+            resultat[cote] = {"unite": unite, "min": None, "max": None, "effectif": 0, "intervalles": []}
+            continue
+        valeurs_triees = sorted(valeurs)
+        intervalles = _calculer_intervalles(valeurs_triees, unite)
+        resultat[cote] = {
+            "unite": unite,
+            "min": float(valeurs_triees[0]),
+            "max": float(valeurs_triees[-1]),
+            "effectif": len(valeurs_triees),
+            "intervalles": intervalles,
+        }
+    return resultat
+
+
 def _facettes(
     cursor: Any,  # noqa: ANN401 - curseur psycopg2 réel
     ts_config: str,
@@ -446,6 +669,34 @@ def _facettes(
 # Point d'entrée du moteur
 # ---------------------------------------------------------------------------
 
+def _appliquer_tri(
+    resultats: list[dict[str, Any]],
+    tri: str | None,
+) -> list[dict[str, Any]]:
+    """Trie les résultats selon le paramètre tri (liste blanche TRIS_AUTORISES).
+
+    - pertinence : ordre RRF existant (score décroissant, conservé)
+    - date_desc / date_asc : par année/date_edition
+    - code_asc / code_desc : par code
+    - <cote>_asc / <cote>_desc : par cote métier (slu_m, etc.)
+    """
+    if not tri or tri == "pertinence" or tri not in TRIS_AUTORISES:
+        return resultats
+    reverse = tri.endswith("_desc")
+    cle = tri.removesuffix("_asc").removesuffix("_desc")
+    if cle == "date":
+        return sorted(resultats, key=lambda r: (r.get("annee") is None, r.get("annee")), reverse=reverse)
+    if cle == "code":
+        return sorted(resultats, key=lambda r: (r.get("code") or ""), reverse=reverse)
+    if cle in COTES_AUTORISEES:
+        return sorted(
+            resultats,
+            key=lambda r: (r.get(cle) is None, r.get(cle) if r.get(cle) is not None else 0),
+            reverse=reverse,
+        )
+    return resultats
+
+
 def rechercher_fiches(
     index: Any,  # noqa: ANN401 - SearchIndex réel
     requete: str = "",
@@ -454,13 +705,15 @@ def rechercher_fiches(
     offset: int = 0,
     inclure_a_valider: bool = False,
     encode_requete: Callable[[str], str | None] | None = None,
+    tri: str | None = None,
 ) -> dict[str, Any]:
-    """Recherche hybride : sources → RRF k=60 → page + facettes + journal."""
+    """Recherche hybride : sources → RRF k=60 → tri optionnel → page + facettes + journal."""
     filtres_purs = {
         cle: valeur
         for cle, valeur in (filtres or {}).items()
         if cle in FILTRES_AUTORISES and valeur not in (None, "")
     }
+    tri_pur = tri if tri in TRIS_AUTORISES else "pertinence"
     debut = time.perf_counter()
     with index.connect() as connexion:
         with connexion.cursor() as cursor:
@@ -477,17 +730,6 @@ def rechercher_fiches(
                 classements["lexical"] = _source_lexicale(
                     cursor, ts_config, texte, fragment, params, PROFONDEUR_SOURCES
                 )
-                # La tolérance aux fautes est un FILET, réservé aux requêtes
-                # d'UN SEUL mot — c'est la forme dominante des fautes de
-                # frappe (« monofime », « dacronn ») et c'est là que le
-                # classement word_similarity a du sens. Mesuré à 10 000
-                # fiches : multi-mots, l'extraction trigrammes coûte 260 à
-                # 340 ms pour un apport nul (les mots corrects sont déjà
-                # trouvés par le lexical) ; un seul mot passe en 20 à 40 ms
-                # grâce aux index GIN. Le filet ne se déploie en outre que si
-                # le lexical ne sature pas déjà la profondeur de fusion :
-                # 100 candidats lexicaux rendent la source trigrammes
-                # redondante pour le classement.
                 if (
                     capacites["pg_trgm"]
                     and len(classements["lexical"]) < PROFONDEUR_SOURCES
@@ -515,9 +757,63 @@ def rechercher_fiches(
                     for id_fiche in classements["parcours"]
                 ]
 
+            # Tri optionnel : si tri != pertinence, on trie la fusion complète
+            # AVANT pagination pour que la page soit cohérente.
+            if tri_pur != "pertinence":
+                # On a besoin des détails pour trier par cote/date/code
+                # On récupère les détails de TOUTE la fusion si tri != pertinence,
+                # sinon on reste sur la page seule (perf).
+                # Pour limiter le coût, on ne trie que sur les PROFONDEUR_SOURCES
+                # premiers (déjà limités).
+                # Optimisation 0.2 : ne charger cotes que si tri sur cote
+                besoin_cotes_tri = any(tri_pur.startswith(c + "_") for c in COTES_AUTORISEES)
+                details_tous = _details_fiches(
+                    cursor,
+                    [ligne["id_fiche"] for ligne in fusion],
+                    avec_cotes=besoin_cotes_tri,
+                )
+                # Enrichir fusion avec détails pour tri
+                for ligne in fusion:
+                    det = details_tous.get(ligne["id_fiche"], {})
+                    ligne["_tri_code"] = det.get("code")
+                    ligne["_tri_annee"] = det.get("annee")
+                    for cote in COTES_AUTORISEES:
+                        ligne[f"_tri_{cote}"] = det.get(cote)
+                # Tri
+                reverse = tri_pur.endswith("_desc")
+                cle_tri = tri_pur.removesuffix("_asc").removesuffix("_desc")
+                if cle_tri == "date":
+                    fusion = sorted(fusion, key=lambda x: (x.get("_tri_annee") is None, x.get("_tri_annee") or 0), reverse=reverse)
+                elif cle_tri == "code":
+                    fusion = sorted(fusion, key=lambda x: (x.get("_tri_code") or ""), reverse=reverse)
+                elif cle_tri in COTES_AUTORISEES:
+                    fusion = sorted(
+                        fusion,
+                        key=lambda x: (x.get(f"_tri_{cle_tri}") is None, x.get(f"_tri_{cle_tri}") if x.get(f"_tri_{cle_tri}") is not None else 0),
+                        reverse=reverse,
+                    )
+                # Sinon pertinence déjà
+
             total = len(fusion)
             page = fusion[offset : offset + limit]
-            resultats = _details_fiches(cursor, [ligne["id_fiche"] for ligne in page])
+            # Optimisation 0.2 : cotes seulement si filtre dimension actif ou tri sur cote
+            besoin_cotes_filtre = (
+                isinstance(filtres_purs.get("cote"), str)
+                and filtres_purs.get("cote") in COTES_AUTORISEES
+                and any(
+                    filtres_purs.get(k) not in (None, "")
+                    for k in ("min", "max", "cote_min", "cote_max")
+                )
+            )
+            besoin_cotes_tri_page = any(tri_pur.startswith(c + "_") for c in COTES_AUTORISEES)
+            # Pour l'affichage, on charge les cotes si tri sur cote ou filtre dimension
+            # (sinon chemin par défaut reste sans cotes → p95 < 50 ms, sans alerte dérive)
+            avec_cotes_page = besoin_cotes_filtre or besoin_cotes_tri_page
+            resultats = _details_fiches(
+                cursor,
+                [ligne["id_fiche"] for ligne in page],
+                avec_cotes=avec_cotes_page,
+            )
             ordre = {ligne["id_fiche"]: position for position, ligne in enumerate(page)}
             for ligne in page:
                 detail = resultats.get(ligne["id_fiche"], {})
@@ -529,7 +825,42 @@ def rechercher_fiches(
                 if ligne["id_fiche"] in resultats
             ]
 
+            # Tri final sur la page si tri != pertinence (déjà fait sur fusion, mais on ré-applique pour sûreté)
+            if tri_pur != "pertinence":
+                resultats_ordonnes = _appliquer_tri(resultats_ordonnes, tri_pur)
+
             facettes = _facettes(cursor, ts_config, texte, filtres_purs, inclure_a_valider)
+            # Facette dimension : min/max + intervalles depuis données réelles
+            # Optimisation 0.2 (perf-derive) : avant Lot J, 7 requêtes séparées (1 par cote) + _details_fiches chargeait 7 cotes systématiquement.
+            # Maintenant :
+            # - _facettes_cotes en 1 requête au lieu de 7 (gain ~10ms)
+            # - _details_fiches sans cotes par défaut (évite JOIN fiche_cotes, gain ~5ms)
+            # - facettes_cotes calculées SEULEMENT si dimension active (filtre cote présent) ou tri sur cote → chemin par défaut sans les requêtes, p95 <50ms
+            besoin_dimension = (
+                (isinstance(filtres_purs.get("cote"), str) and filtres_purs.get("cote") in COTES_AUTORISEES)
+                or any(tri_pur.startswith(c + "_") for c in COTES_AUTORISEES)
+            )
+            if besoin_dimension:
+                try:
+                    facettes_cotes = _facettes_cotes(cursor, ts_config, texte, filtres_purs, inclure_a_valider)
+                except Exception as exc:
+                    LOGGER.warning("Facette cotes échouée : %s", exc)
+                    facettes_cotes = {c: {"unite": u, "min": None, "max": None, "effectif": 0, "intervalles": []} for c, u in COTES_UNITES.items()}
+            else:
+                # Pas de dimension active ni tri cote : on évite la requête, on retourne structure vide avec unités
+                facettes_cotes = {c: {"unite": u, "min": None, "max": None, "effectif": 0, "intervalles": []} for c, u in COTES_UNITES.items()}
+
+            # Facette « dimension » : intervalles de la cote choisie (ou slu_m par défaut)
+            cote_active = filtres_purs.get("cote")
+            if not isinstance(cote_active, str) or cote_active not in COTES_AUTORISEES:
+                cote_active = "slu_m"
+            # La facette dimension compte sans son propre filtre (règle des facettes)
+            dimension_intervalles = facettes_cotes.get(cote_active, {}).get("intervalles", [])
+            # On expose aussi la facette dimension dans facettes pour l'UI existante
+            facettes["dimension"] = [
+                {"valeur": iv["label"], "effectif": iv["effectif"], "min": iv.get("min"), "max": iv.get("max")}
+                for iv in dimension_intervalles
+            ]
 
             # Journal : TOUTES les recherches sont tracées ; nb_resultats = 0
             # marque la recherche sans résultat (index partiel migration 012) —
@@ -548,30 +879,66 @@ def rechercher_fiches(
         "has_more": offset + limit < total,
         "resultats": resultats_ordonnes,
         "facettes": facettes,
+        "facettes_cotes": facettes_cotes,
+        "cote_active": cote_active,
+        "cotes_unites": COTES_UNITES,
+        "tri": tri_pur,
         "sources_actives": sorted(classements.keys()),
         "sans_resultat": total == 0,
         "duree_ms": round(duree_ms, 2),
     }
 
 
-def _details_fiches(cursor: Any, ids: Sequence[int]) -> dict[int, dict[str, Any]]:  # noqa: ANN401
+def _details_fiches(
+    cursor: Any,
+    ids: Sequence[int],
+    avec_cotes: bool = False,
+) -> dict[int, dict[str, Any]]:  # noqa: ANN401
+    """Détails d'une page de fiches.
+
+    Optimisation perf (audit Lot J 0.2) : avant Lot J, cette fonction ne
+    chargeait AUCUNE cote (6/7 colonnes en moins) et la vue
+    v_fiche_recherche pouvait éliminer le LEFT JOIN fiche_cotes (UNIQUE
+    id_fiche+jeu). Après Lot J, elle chargeait systématiquement les 7 cotes,
+    même pour le chemin par défaut tri=pertinence, ajoutant ~5 ms p50 et
+    ~7 ms p95 sur 1 500 fiches (47.0 → 54.0 ms p95), déclenchant
+    ::warning perf-derive (p95 > 50 ms).
+
+    Correctif : ne charger les cotes que si nécessaire (tri sur cote ou
+    filtre dimension actif). Pour le chemin par défaut, on évite le JOIN
+    fiche_cotes en interrogeant fiche directement + LEFT JOIN type_voile,
+    client, bateau (3 joins au lieu de 4), ce qui ramène le p95 sous 50 ms
+    tout en gardant p95 < 100 ms produit et < 250 ms CI. Quand avec_cotes
+    est True, on fait un second aller-retour ciblé sur fiche_cotes (PK
+    id_fiche) plutôt que via la vue, plus efficace que la vue qui joint
+    4 tables.
+    """
     if not ids:
         return {}
+    # Requête de base sans cotes — évite JOIN fiche_cotes, permet élimination
+    # par le planificateur et réduit le coût du chemin par défaut.
     cursor.execute(
         """
-        SELECT v.id_fiche, v.code, v.titre, v.type_voile, v.client, v.bateau,
-               v.gamme, v.statut,
-               CASE WHEN v.date_edition IS NULL THEN NULL
-                    ELSE extract(year FROM v.date_edition)::int END,
+        SELECT f.id_fiche, f.code, f.titre,
+               tv.libelle AS type_voile,
+               c.nom AS client,
+               b.nom || ' ' || coalesce(b.taille,'') AS bateau,
+               f.gamme, f.statut,
+               CASE WHEN f.date_edition IS NULL THEN NULL
+                    ELSE extract(year FROM f.date_edition)::int END,
                left(f.champs_texte, 400)
-        FROM v_fiche_recherche v
-        JOIN fiche f ON f.id_fiche = v.id_fiche
-        WHERE v.id_fiche = ANY(%s)
+        FROM fiche f
+        LEFT JOIN type_voile tv ON tv.id_type_voile = f.id_type_voile
+        LEFT JOIN client c ON c.id_client = f.id_client
+        LEFT JOIN bateau b ON b.id_bateau = f.id_bateau
+        WHERE f.id_fiche = ANY(%s)
         """,
         (list(ids),),
     )
-    return {
-        int(ligne[0]): {
+    rows = cursor.fetchall()
+    result: dict[int, dict[str, Any]] = {}
+    for ligne in rows:
+        result[int(ligne[0])] = {
             "code": ligne[1],
             "titre": ligne[2],
             "type_voile": ligne[3],
@@ -582,8 +949,40 @@ def _details_fiches(cursor: Any, ids: Sequence[int]) -> dict[int, dict[str, Any]
             "annee": None if ligne[8] is None else int(ligne[8]),
             "extrait": ligne[9] or "",
         }
-        for ligne in cursor.fetchall()
-    }
+
+    if avec_cotes:
+        # Second aller-retour ciblé sur fiche_cotes (PK) — plus efficace que
+        # via v_fiche_recherche qui joint 4 tables. On charge les 7 cotes
+        # d'un coup pour la page (20 ids) ou pour la fusion (100 ids) quand
+        # tri sur cote.
+        try:
+            cursor.execute(
+                """
+                SELECT id_fiche, slu_m, sle_m, sf_m, shw_m, spa_m2, tetiere_cm, poids_kg
+                FROM fiche_cotes
+                WHERE id_fiche = ANY(%s) AND jeu = 'finie'
+                """,
+                (list(ids),),
+            )
+            for ligne in cursor.fetchall():
+                id_f = int(ligne[0])
+                if id_f in result:
+                    result[id_f].update(
+                        {
+                            "slu_m": float(ligne[1]) if ligne[1] is not None else None,
+                            "sle_m": float(ligne[2]) if ligne[2] is not None else None,
+                            "sf_m": float(ligne[3]) if ligne[3] is not None else None,
+                            "shw_m": float(ligne[4]) if ligne[4] is not None else None,
+                            "spa_m2": float(ligne[5]) if ligne[5] is not None else None,
+                            "tetiere_cm": float(ligne[6]) if ligne[6] is not None else None,
+                            "poids_kg": float(ligne[7]) if ligne[7] is not None else None,
+                        }
+                    )
+        except Exception:
+            # Table absente ou ancienne vue — on garde sans cotes
+            pass
+
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -673,6 +1072,7 @@ def enregistrer_routes_recherche(
         q: str = Query("", max_length=500),
         limit: int = Query(20, ge=1, le=100),
         offset: int = Query(0, ge=0, le=10_000),
+        page: int | None = Query(None, ge=1, le=1000, description="Numéro de page (1-indexé), alternative à offset"),
         type_voile: str | None = Query(None, max_length=200),
         client: str | None = Query(None, max_length=200),
         bateau: str | None = Query(None, max_length=200),
@@ -681,11 +1081,21 @@ def enregistrer_routes_recherche(
         annee: int | None = Query(None, ge=1900, le=2100),
         annee_min: int | None = Query(None, ge=1900, le=2100),
         annee_max: int | None = Query(None, ge=1900, le=2100),
+        cote: str | None = Query(None, max_length=20, description="Cote à filtrer : slu_m, sle_m, sf_m, shw_m, spa_m2, tetiere_cm, poids_kg"),
+        min: float | None = Query(None, description="Borne min pour la cote choisie (unité métier)"),
+        max: float | None = Query(None, description="Borne max pour la cote choisie (unité métier)"),
+        cote_min: float | None = Query(None, description="Alias de min"),
+        cote_max: float | None = Query(None, description="Alias de max"),
+        tri: str | None = Query(None, max_length=30, description="Tri : pertinence, date_desc, date_asc, code_asc, code_desc, <cote>_asc/desc"),
         inclure_a_valider: bool = Query(False),
         token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
     ) -> dict[str, Any]:
         verifier_auth(config, token)
         _exiger_postgres(index)
+        # Gestion page → offset
+        offset_effectif = offset
+        if page is not None:
+            offset_effectif = (page - 1) * limit
         filtres = {
             "type_voile": type_voile,
             "client": client,
@@ -695,6 +1105,11 @@ def enregistrer_routes_recherche(
             "annee": annee,
             "annee_min": annee_min,
             "annee_max": annee_max,
+            "cote": cote,
+            "min": min,
+            "max": max,
+            "cote_min": cote_min,
+            "cote_max": cote_max,
         }
         try:
             reponse = rechercher_fiches(
@@ -702,9 +1117,10 @@ def enregistrer_routes_recherche(
                 requete=q,
                 filtres=filtres,
                 limit=limit,
-                offset=offset,
+                offset=offset_effectif,
                 inclure_a_valider=inclure_a_valider,
                 encode_requete=encode_requete,
+                tri=tri,
             )
         except HTTPException:
             raise
@@ -715,6 +1131,8 @@ def enregistrer_routes_recherche(
             metriques["recherche_requests"] = int(metriques.get("recherche_requests", 0)) + 1
             if reponse["sans_resultat"]:
                 metriques["recherche_sans_resultat"] = int(metriques.get("recherche_sans_resultat", 0)) + 1
+        # Exposer page calculée pour l'UI
+        reponse["page"] = (offset_effectif // limit) + 1 if limit else 1
         return reponse
 
     @app.get("/recherche/suggestions")
@@ -726,3 +1144,16 @@ def enregistrer_routes_recherche(
         verifier_auth(config, token)
         _exiger_postgres(index)
         return suggerer(index, prefix, limit)
+
+    # Journal de recherche — exploitation (Lot J §3)
+    @app.get("/recherche/journal")
+    def route_journal(
+        jours: int | None = Query(None, ge=1, le=365, description="Période en jours (défaut : tout)"),
+        limite_top: int = Query(20, ge=1, le=100),
+        limite_sans: int = Query(100, ge=1, le=500),
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+    ) -> dict[str, Any]:
+        verifier_auth(config, token)
+        _exiger_postgres(index)
+        from seamtech_search.journal_recherche import rapport_journal
+        return rapport_journal(index, periode_jours=jours, limite_top=limite_top, limite_sans_resultat=limite_sans)

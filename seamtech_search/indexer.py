@@ -765,6 +765,27 @@ class SearchIndex:
                 schema_metier.SQL_013_RECHERCHE_FONDS_REEL.replace(schema_metier.MARQUEUR_TS_CONFIG, config)
             )
 
+    def _migration_014_facette_dimension(self, connection: Any) -> None:
+        """Lot J : facette dimension — vue v_fiche_recherche complète avec
+        tetiere_cm + index sur les 7 cotes pour le filtre par plage."""
+        if not self.is_postgres:
+            logger.info(
+                "Migration 014 (facette dimension) ignorée en mode SQLite — PostgreSQL uniquement (§17.1)."
+            )
+            return
+        with connection.cursor() as cursor:
+            cursor.execute(schema_metier.SQL_014_FACETTE_DIMENSION)
+
+    def _migration_015_qualite_gabarit_brouillon(self, connection: Any) -> None:
+        """Lot K : index qualité + table gabarit_brouillon (brouillons non actifs)."""
+        if not self.is_postgres:
+            logger.info(
+                "Migration 015 (qualité + brouillon) ignorée en mode SQLite — PostgreSQL uniquement (§17.1)."
+            )
+            return
+        with connection.cursor() as cursor:
+            cursor.execute(schema_metier.SQL_015_QUALITE_GABARIT_BROUILLON)
+
     def run_migrations(self) -> None:
         """Run pending schema migrations once at startup."""
         with self.connect() as connection:
@@ -786,6 +807,8 @@ class SearchIndex:
                 ("011_pieces_catalogue_documents", self._migration_011_pieces_catalogue_documents),
                 ("012_recherche_hybride", self._migration_012_recherche_hybride),
                 ("013_recherche_fonds_reel", self._migration_013_recherche_fonds_reel),
+                ("014_facette_dimension", self._migration_014_facette_dimension),
+                ("015_qualite_gabarit_brouillon", self._migration_015_qualite_gabarit_brouillon),
             ]
 
             for version, func in migrations:

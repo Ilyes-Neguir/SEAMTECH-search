@@ -13,10 +13,44 @@ La recherche « comme Google » des fiches validées. La route Phase 0 `GET /sea
 
 | Route | Rôle |
 |---|---|
-| `GET /recherche?q=&type_voile=&client=&bateau=&matiere=&gamme=&annee=&annee_min=&annee_max=&inclure_a_valider=&limit=&offset=` | Recherche hybride : lexical tsvector pondéré A/B/C + trigrammes (volet dégradable) + texte des PDF (chunks/documents) + vecteurs (dormants, activables par injection `encode_requete`), fusionnés par **RRF k=60**. Par défaut : fiches `valide` seulement. Réponse : `{requete, nb_resultats, resultats:[{code, titre, type_voile, client, bateau, gamme, statut, annee, extrait, score, sources}], facettes:{groupe:[{valeur, effectif}]}, sources_actives, sans_resultat, duree_ms}`. |
+| `GET /recherche?q=&type_voile=&client=&bateau=&matiere=&gamme=&annee=&annee_min=&annee_max=&cote=&min=&max=&cote_min=&cote_max=&tri=&page=&limit=&offset=&inclure_a_valider=` | Recherche hybride : lexical tsvector pondéré A/B/C + trigrammes (volet dégradable) + texte des PDF (chunks/documents) + vecteurs (dormants, activables par injection `encode_requete`), fusionnés par **RRF k=60**. Par défaut : fiches `valide` seulement. Réponse : `{requete, nb_resultats, resultats:[{code, titre, type_voile, client, bateau, gamme, statut, annee, extrait, score, sources, slu_m, sle_m, sf_m, shw_m, spa_m2, tetiere_cm, poids_kg}], facettes:{groupe:[{valeur, effectif}]}, facettes_cotes:{cote:{unite, min, max, effectif, intervalles:[{min,max,effectif,label}] }}, cote_active, cotes_unites, tri, page, sources_actives, sans_resultat, duree_ms}`. |
 | `GET /recherche/suggestions?prefix=&limite=` | Suggestions au fil de la frappe : **valeurs réellement présentes seulement** (référentiels, codes, gammes) par préfixe, complétées par tolérance aux fautes trigrammes sur les référentiels si le préfixe ne donne rien. Réponse : `{prefixe, suggestions:[{nature, valeur}]}`. |
+| `GET /recherche/journal?jours=&limite_top=&limite_sans=` | Exploitation du journal : agrégé depuis `recherche_log` réelle. Retour : `{periode_jours, total_recherches, total_sans_resultat, top_requetes:[{requete, nb_occurrences, nb_sans_resultat, dernier}], sans_resultat:[{requete, nb_occurrences, dernier, exemple_filtres}]}`. Période paramétrable en jours. |
 
-**Comportements** :
+**Comportements (Lot J)** :
+
+- **Facette DIMENSION (cotes)** : 7 cotes explicites depuis `fiche_cotes` (vue
+  `fiche_cotes` migration 014) — `slu_m`, `sle_m`, `sf_m`, `shw_m`, `spa_m2`,
+  `tetiere_cm`, `poids_kg`. Paramètres API : `cote=<nom>&min=&max=` (alias
+  `cote_min`/`cote_max`). Unités métier : `slu_m`/`sle_m`/`sf_m`/`shw_m` en
+  mètres (m), `spa_m2` en m², `tetiere_cm` en cm, `poids_kg` en kg — aucune
+  conversion : la valeur stockée est dans son unité métier. `facettes_cotes`
+  retourne pour chaque cote `{unite, min, max, effectif, intervalles[]}` où
+  `intervalles` est calculé depuis les données réelles filtrées (hors filtre
+  dimension courant) avec répartition quantile approximative (≤5 intervalles).
+  `cote_active` = cote filtrée ou `slu_m` par défaut. `facettes["dimension"]`
+  = intervalles de la cote active (compatibilité UI). Chaque facette (y compris
+  dimension) compte sans son propre filtre, comme les autres facettes.
+
+- **Tri** : paramètre `tri` parmi 18 valeurs (`pertinence` par défaut,
+  `date_asc/desc` sur année, `code_asc/desc`, `slu_m_asc/desc`, `sle_m_asc/desc`,
+  `sf_m_asc/desc`, `shw_m_asc/desc`, `spa_m2_asc/desc`, `tetiere_cm_asc/desc`,
+  `poids_kg_asc/desc`). Tri appliqué sur la fusion complète AVANT pagination :
+  les détails des cotes sont récupérés sur `PROFONDEUR_SOURCES` ids puis triés,
+  puis paginés.
+
+- **Pagination partageable** : `page` (1-indexed) converti en `offset = (page-1)*limit`
+  côté API. L'UI synchronise `q + filtres + cote/min/max + tri + page` dans
+  `URLSearchParams`, restaurés au chargement. Bouton « Copier le lien » copie
+  l'URL courante. F5 et nouvel onglet conservent l'état (aucun état caché).
+
+- **Journal exploité** : route `GET /recherche/journal` agrège la table réelle
+  `recherche_log`. Paramètres `jours` (période), `limite_top`, `limite_sans`.
+  CLI `python -m seamtech_search.journal_recherche --jours 30 --json` ou
+  `recherche-log` (entry point). Fonctions testables `rapport_journal`,
+  `top_requetes`, `recherches_sans_resultat` sur jeu injecté (test automatisé).
+
+**Comportements (Lot E)** :
 
 - **Facettes à compteurs** : chaque axe (type de voile, client, bateau, matière,
   gamme, année) compte les résultats filtrés par le texte et par les AUTRES

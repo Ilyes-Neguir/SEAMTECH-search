@@ -768,3 +768,76 @@ def enregistrer_routes_fiches(app: Any, index: Any, config: Any, verifier_auth: 
         verifier_auth(config, token)
         _exiger_postgres(index)
         return pieces_de_fiche(index, code)
+
+    # Lot K.2 — brouillons de gabarits depuis PDF variante
+    from seamtech_search.fiches.gabarit_brouillon import (
+        enregistrer_brouillon,
+        generer_brouillon_depuis_pdf,
+        get_brouillon,
+        lister_brouillons,
+        valider_brouillon_vers_gabarit,
+    )
+
+    @app.post("/gabarits/brouillon/from-pdf")
+    async def route_brouillon_from_pdf(
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+        fichier: UploadFile | None = File(default=None),
+        code: str | None = None,
+    ) -> dict[str, Any]:
+        """Génère un brouillon de gabarit depuis un PDF variante inconnue.
+
+        Le brouillon est stocké en table gabarit_brouillon (statut brouillon) et
+        ne sert JAMAIS à l'extraction réelle — garde-fou : charger_gabarits()
+        ne lit que gabarit WHERE actif.
+        """
+        verifier_auth(config, token)
+        _exiger_postgres(index)
+        if fichier is None:
+            raise HTTPException(status_code=422, detail="Envoyer le PDF en multipart (champ fichier).")
+        contenu = await fichier.read()
+        if len(contenu) > TAILLE_PDF_MAX:
+            raise HTTPException(status_code=413, detail=f"PDF trop gros ({len(contenu)} octets, max {TAILLE_PDF_MAX}).")
+        if not contenu.startswith(b"%PDF"):
+            raise HTTPException(status_code=422, detail="Le contenu reçu n'est pas un PDF (signature %PDF absente).")
+        descripteur, chemin = tempfile.mkstemp(suffix=".pdf", prefix="brouillon-")
+        try:
+            with os.fdopen(descripteur, "wb") as sortie:
+                sortie.write(contenu)
+            brouillon = generer_brouillon_depuis_pdf(Path(chemin), code_propose=code)
+            enregistre = enregistrer_brouillon(index, brouillon)
+            return {**brouillon, **enregistre}
+        except Exception as exc:
+            LOGGER.exception("Échec génération brouillon depuis PDF: %s", exc)
+            raise HTTPException(status_code=500, detail=f"Échec génération brouillon: {exc}") from exc
+        finally:
+            try:
+                os.unlink(chemin)
+            except OSError:
+                pass
+
+    @app.get("/gabarits/brouillons")
+    def route_liste_brouillons(
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+    ) -> list[dict[str, Any]]:
+        verifier_auth(config, token)
+        _exiger_postgres(index)
+        return lister_brouillons(index)
+
+    @app.get("/gabarits/brouillons/{id_brouillon}")
+    def route_get_brouillon(
+        id_brouillon: int,
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+    ) -> dict[str, Any]:
+        verifier_auth(config, token)
+        _exiger_postgres(index)
+        return get_brouillon(index, id_brouillon)
+
+    @app.post("/gabarits/brouillons/{id_brouillon}/valider", status_code=201)
+    def route_valider_brouillon(
+        id_brouillon: int,
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+    ) -> dict[str, Any]:
+        """Valide un brouillon → nouvelle version active dans registre gabarit existant."""
+        verifier_auth(config, token)
+        _exiger_postgres(index)
+        return valider_brouillon_vers_gabarit(index, id_brouillon)

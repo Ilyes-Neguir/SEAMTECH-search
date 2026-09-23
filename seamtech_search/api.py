@@ -1119,6 +1119,10 @@ def create_app(config: AppConfig) -> FastAPI:
 
     enregistrer_routes_assistant(app, index, config, _require_auth, metriques=metrics)
 
+    from seamtech_search.qualite.routes import enregistrer_routes_qualite
+
+    enregistrer_routes_qualite(app, index, config, _require_auth)
+
     from seamtech_search.ml.routes import enregistrer_routes_ml
 
     enregistrer_routes_ml(
