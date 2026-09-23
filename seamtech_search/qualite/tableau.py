@@ -293,6 +293,74 @@ def lots_stats(cursor: Any) -> dict[str, Any]:
     }
 
 
+def doublons_detectes(cursor: Any) -> dict[str, Any]:  # noqa: ANN401 - curseur psycopg2 réel
+    """Doublons détectés — Lot L.1 (§17.4), indicateur 8 du tableau de bord.
+
+    Trois compteurs, tous en SQL ``GROUP BY`` / ``FILTER`` comme le reste du
+    module (aucune agrégation Python) :
+
+    - ``groupes_exacts`` : nombre d'empreintes SHA-256 portées par PLUSIEURS
+      fiches (``GROUP BY empreinte_sha256 HAVING count(DISTINCT id_fiche) > 1``
+      sur ``fiche_piece_jointe``) — le même critère que la détection, pas une
+      approximation ;
+    - ``liens_probables`` : lignes ``fiche_lien`` de type ``doublon_probable``
+      (les propositions de rapprochement par titre déjà enregistrées) ;
+    - ``doublons_vus_avant_validation`` : nombre de fiches **non ``valide```**
+      engagées dans un lien de doublon, dans un sens ou dans l'autre. C'est LE
+      chiffre du lot : combien de doublons ont été vus AVANT la validation,
+      donc combien ont pu être arbitrés sans qu'une fiche validée soit à
+      reprendre.
+
+    Un doublon vu n'est pas un doublon traité : cet indicateur mesure la
+    DÉTECTION, jamais une décision.
+    """
+    cursor.execute(
+        """
+        SELECT COUNT(*) FROM (
+            SELECT p.empreinte_sha256
+            FROM fiche_piece_jointe p
+            WHERE p.empreinte_sha256 IS NOT NULL AND p.empreinte_sha256 <> ''
+            GROUP BY p.empreinte_sha256
+            HAVING COUNT(DISTINCT p.id_fiche) > 1
+        ) AS groupes
+        """
+    )
+    groupes_exacts = int(cursor.fetchone()[0] or 0)
+
+    cursor.execute("SELECT COUNT(*) FROM fiche_lien WHERE type = 'doublon_probable'")
+    liens_probables = int(cursor.fetchone()[0] or 0)
+
+    cursor.execute(
+        """
+        SELECT COUNT(DISTINCT f.id_fiche)
+        FROM fiche f
+        WHERE f.statut <> 'valide'
+          AND (
+              EXISTS (SELECT 1 FROM fiche_lien l WHERE l.id_fiche_source = f.id_fiche)
+              OR EXISTS (SELECT 1 FROM fiche_lien l WHERE l.id_fiche_cible = f.id_fiche)
+          )
+        """
+    )
+    avant_validation = int(cursor.fetchone()[0] or 0)
+
+    cursor.execute("SELECT COUNT(*) FROM fiche_lien WHERE type = 'doublon_exact'")
+    liens_exacts = int(cursor.fetchone()[0] or 0)
+
+    return {
+        "definition": (
+            "Doublons détectés (empreintes SHA-256 partagées + liens probables) et nombre de fiches "
+            "NON validées déjà engagées dans un lien de doublon — donc vues avant validation. "
+            "Détection PROPOSITIVE : aucun effacement, aucune fusion."
+        ),
+        "unite": "compte",
+        "periode": "instantané",
+        "groupes_exacts": groupes_exacts,
+        "liens_exacts": liens_exacts,
+        "liens_probables": liens_probables,
+        "doublons_vus_avant_validation": avant_validation,
+    }
+
+
 def tableau_de_bord(index: Any) -> dict[str, Any]:
     """Assemble le tableau de bord complet — toutes requêtes en GROUP BY.
 
@@ -308,6 +376,7 @@ def tableau_de_bord(index: Any) -> dict[str, Any]:
             volume = volume_par_statut(cursor)
             recherches = usage_recherches(cursor)
             lots = lots_stats(cursor)
+            doublons = doublons_detectes(cursor)
 
     return {
         "taux_extraction_auto": taux_auto,
@@ -317,4 +386,5 @@ def tableau_de_bord(index: Any) -> dict[str, Any]:
         "volume_par_statut": volume,
         "usage_recherches": recherches,
         "lots": lots,
+        "doublons_detectes": doublons,
     }

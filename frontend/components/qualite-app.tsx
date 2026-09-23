@@ -63,6 +63,16 @@ interface Tableau {
     par_statut_lot: Record<string, number>
     par_statut_dossier: Record<string, number>
   }
+  // Lot L.1 — doublons détectés AVANT validation (indicateur 8).
+  doublons_detectes: {
+    definition: string
+    unite: string
+    periode: string
+    groupes_exacts: number
+    liens_exacts: number
+    liens_probables: number
+    doublons_vus_avant_validation: number
+  }
 }
 
 export function QualiteApp() {
@@ -184,6 +194,23 @@ export function QualiteApp() {
         <p className="mt-2">Lots: {data.lots.total_lots} — Dossiers: {data.lots.total_dossiers}</p>
         <p className="text-xs">Par statut lot: {JSON.stringify(data.lots.par_statut_lot)}</p>
         <p className="text-xs">Par statut dossier: {JSON.stringify(data.lots.par_statut_dossier)}</p>
+      </section>
+
+      <section className="rounded border p-4" data-testid="indicateur-doublons">
+        <h2 className="font-semibold">Doublons détectés (avant validation)</h2>
+        <p className="text-xs text-muted-foreground">
+          {data.doublons_detectes.definition} — {data.doublons_detectes.unite} — {data.doublons_detectes.periode}
+        </p>
+        <p className="mt-2">
+          Groupes exacts (même empreinte SHA-256) : {data.doublons_detectes.groupes_exacts} — liens exacts :{" "}
+          {data.doublons_detectes.liens_exacts} — liens probables : {data.doublons_detectes.liens_probables}
+        </p>
+        <p className="mt-1 font-semibold">
+          Fiches non validées déjà vues en doublon : {data.doublons_detectes.doublons_vus_avant_validation}
+        </p>
+        <p className="text-xs text-muted-foreground">
+          Détection PROPOSITIVE : aucun effacement, aucune fusion automatique — la décision reste humaine.
+        </p>
       </section>
     </div>
   )

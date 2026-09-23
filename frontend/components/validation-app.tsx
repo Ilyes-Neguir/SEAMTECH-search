@@ -16,6 +16,46 @@ import { cn } from "@/lib/utils"
 
 const UTILISATEUR = "operateur-atelier" // identité de session (traçabilité du journal)
 
+// Lot L.1 — un lien de doublon, tel que le rend `GET /fiches/{code}/doublons`.
+// Affiché AVANT la validation : « Doublon exact de CODE (sha256) » ou
+// « Doublon probable de CODE (score 0.xx) ». Aucun bouton « fusionner » : la
+// décision reste humaine, l'écran ne fait que prévenir.
+export interface LienDoublon {
+  id_lien: number
+  type: "doublon_exact" | "doublon_probable" | string
+  score: number | null
+  code_autre: string
+  statut_autre: string
+}
+
+function libelleDoublon(lien: LienDoublon): string {
+  if (lien.type === "doublon_exact") return `Doublon exact de ${lien.code_autre}`
+  return `Doublon probable de ${lien.code_autre}`
+}
+
+function detailDoublon(lien: LienDoublon): string {
+  if (lien.type === "doublon_exact") return "même fichier (empreinte SHA-256 identique)"
+  return typeof lien.score === "number" ? `score ${lien.score.toFixed(2)}` : "score non calculé"
+}
+
+function BandeauDoublon({ liens }: { liens: LienDoublon[] }) {
+  if (liens.length === 0) return null
+  return (
+    <div
+      className="mt-1 rounded border border-amber-500/50 bg-amber-500/10 px-2 py-1 text-[11px] text-amber-900 dark:text-amber-200"
+      data-testid="bandeau-doublon"
+    >
+      {liens.map((lien) => (
+        <div key={lien.id_lien}>
+          <span className="font-semibold">{libelleDoublon(lien)}</span>{" "}
+          <span className="text-muted-foreground">({detailDoublon(lien)})</span>
+        </div>
+      ))}
+      <div className="text-muted-foreground">À arbitrer avant validation — aucune fusion automatique.</div>
+    </div>
+  )
+}
+
 async function jsonFetch<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await authedFetch(url, init)
   const body = await res.json().catch(() => ({}))
@@ -48,6 +88,33 @@ export function ValidationApp() {
   useEffect(() => {
     chargerFile()
   }, [chargerFile])
+
+  // Lot L.1 — liens de doublon de TOUTE la file, en une requête. Un échec ici
+  // ne doit jamais empêcher de valider : le bandeau est une AIDE, pas une
+  // condition. On retombe donc sur une carte vide, sans message d'erreur.
+  const [doublons, setDoublons] = useState<Record<string, LienDoublon[]>>({})
+  useEffect(() => {
+    const codes = file.map((entree) => entree.code)
+    if (codes.length === 0) {
+      setDoublons({})
+      return
+    }
+    let annule = false
+    jsonFetch<{ par_code: Record<string, LienDoublon[]> }>("/api/validation/doublons", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ codes }),
+    })
+      .then((corps) => {
+        if (!annule) setDoublons(corps.par_code ?? {})
+      })
+      .catch(() => {
+        if (!annule) setDoublons({})
+      })
+    return () => {
+      annule = true
+    }
+  }, [file])
 
   useEffect(() => {
     if (!codeActif && file.length > 0) setCodeActif(file[0].code)
@@ -199,6 +266,7 @@ export function ValidationApp() {
                         {entree.paliers.certain}·{entree.paliers.lu}·{entree.paliers.decompose}·{entree.paliers.partiel}
                       </span>
                     </span>
+                    <BandeauDoublon liens={doublons[entree.code] ?? []} />
                   </button>
                   <ChevronRight className="size-3.5 text-muted-foreground" />
                 </div>
@@ -236,6 +304,9 @@ export function ValidationApp() {
                   {codeActif}
                 </h2>
                 <span className="flex-1" />
+                <div className="w-full">
+                  <BandeauDoublon liens={doublons[codeActif] ?? []} />
+                </div>
                 <button
                   type="button"
                   onClick={() => action("valider")}

@@ -26,7 +26,7 @@ from __future__ import annotations
 from typing import Any
 
 # Version du schéma métier — incrémentée à chaque nouvelle migration.
-VERSION_SCHEMA_METIER = "015_qualite_gabarit_brouillon"
+VERSION_SCHEMA_METIER = "016_dedup_comptes_nominatifs"
 
 # Marqueur injecté par le code au moment de la migration (constat 1 de revue) :
 # le nom de la configuration de recherche effective — 'seamtech_unaccent' ou
@@ -941,6 +941,92 @@ CREATE INDEX IF NOT EXISTS idx_brouillon_code ON gabarit_brouillon(code);
 CREATE INDEX IF NOT EXISTS idx_brouillon_statut ON gabarit_brouillon(statut);
 """
 
+SQL_016_DEDUP_COMPTES_NOMINATIFS = """
+-- ============================================================================
+-- 016_dedup_comptes_nominatifs — Lot L : doublons (L.1) + comptes nominatifs (L.2)
+-- ============================================================================
+-- L.1 — DÉTECTION DE DOUBLONS. Rien n'efface, rien ne fusionne : la détection
+-- est PROPOSITIVE et s'appuie sur deux colonnes qui EXISTAIENT DÉJÀ :
+--   * fiche_piece_jointe.empreinte_sha256 (remplie à l'import par
+--     `empreinte_fichier()`) → doublons EXACTS ;
+--   * fiche.titre → doublons PROBABLES par similarité.
+-- `fiche_lien` (schéma initial 006, jamais utilisée jusqu'ici) porte les liens
+-- avec type='doublon_exact' | 'doublon_probable'.
+--
+-- AUCUNE NOUVELLE TABLE dans cette partie : TABLES_METIER reste à 31. La table
+-- de sessions (L.2) est ajoutée plus bas, dans la même migration.
+-- ============================================================================
+
+-- ---------------------------------------------------------------------------
+-- L.1 — Normalisation de titre partagée SQL/Python
+-- ---------------------------------------------------------------------------
+-- Pourquoi une FONCTION et pas un appel direct à `unaccent()` :
+-- `unaccent()` est STABLE, pas IMMUTABLE (elle dépend du dictionnaire chargé) —
+-- un index ne peut donc pas la porter. `translate()` est IMMUTABLE : le pliage
+-- des accents français ci-dessous est indexable en GIN trigrammes, ce dont la
+-- détection des doublons probables a besoin. Le miroir Python exact est
+-- `seamtech_search.dedup.detection.normaliser_titre`.
+CREATE OR REPLACE FUNCTION seamtech_titre_normalise(t TEXT)
+RETURNS TEXT
+LANGUAGE sql
+IMMUTABLE
+PARALLEL SAFE
+AS $fonction$
+    SELECT btrim(
+        lower(
+            regexp_replace(
+                translate(
+                    coalesce(t, ''),
+                    'àâäáãåÀÂÄÁÃÅèéêëÈÉÊËìíîïÌÍÎÏòóôöõÒÓÔÖÕùúûüÙÚÛÜçÇñÑÿŸ',
+                    'aaaaaaAAAAAAeeeeEEEEiiiiIIIIoooooOOOOOuuuuUUUUcCnNyY'
+                ),
+                '[[:space:]]+', ' ', 'g'
+            )
+        )
+    )
+$fonction$;
+
+COMMENT ON FUNCTION seamtech_titre_normalise(TEXT) IS
+    'Titre normalisé (casse pliée, espaces compactés, accents FR dépliés) — IMMUTABLE, donc indexable ; miroir Python : seamtech_search.dedup.detection.normaliser_titre';
+
+-- ---------------------------------------------------------------------------
+-- L.1 — Index des doublons
+-- ---------------------------------------------------------------------------
+-- Doublons exacts : GROUP BY empreinte_sha256 HAVING count(DISTINCT id_fiche) > 1.
+CREATE INDEX IF NOT EXISTS idx_pj_empreinte ON fiche_piece_jointe (empreinte_sha256);
+
+-- Lecture des liens par nature (« tous les doublons exacts »).
+CREATE INDEX IF NOT EXISTS idx_fiche_lien_type ON fiche_lien (type);
+
+-- Sens de parcours de l'affichage (liens d'une fiche donnée), dans les deux sens.
+CREATE INDEX IF NOT EXISTS idx_fiche_lien_source ON fiche_lien (id_fiche_source);
+CREATE INDEX IF NOT EXISTS idx_fiche_lien_cible ON fiche_lien (id_fiche_cible);
+"""
+
+# ---------------------------------------------------------------------------
+# 016 — volet TRIGRAMMES, DÉGRADABLE (même motif que SQL_007_TRGM)
+# ---------------------------------------------------------------------------
+# Sans le privilège CREATE sur la base, `pg_trgm` ne s'installe pas : l'indexeur
+# isole ce bloc dans un SAVEPOINT et l'omet avec un avertissement. Conséquence
+# écrite : la détection des doublons PROBABLES perd l'accès rapide par index et
+# bascule sur son repli déterministe — jamais une erreur, jamais un silence.
+#
+# L'index porte `seamtech_titre_normalise(titre)` et non `titre` nu : c'est la
+# même normalisation que celle comparée dans la détection, donc un index que le
+# planificateur peut réellement utiliser pour l'opérateur `%` du JOIN.
+SQL_016_TRGM_TITRE = """
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
+CREATE INDEX IF NOT EXISTS idx_fiche_titre_trgm
+    ON fiche USING gin (seamtech_titre_normalise(titre) gin_trgm_ops);
+
+-- Tolérance sur la recherche plein-texte de la recherche : l'index trigrammes
+-- existant porte sur fiche.champs_texte (007). Cet index-ci cible le TITRE,
+-- dont dépend la détection des doublons.
+CREATE INDEX IF NOT EXISTS idx_fiche_titre_trgm_brut
+    ON fiche USING gin (titre gin_trgm_ops);
+"""
+
 MIGRATIONS_METIER: tuple[tuple[str, str], ...] = (
     ("006_fiche_technique", SQL_006_FICHE_TECHNIQUE),
     ("007_recherche_index", SQL_007_RECHERCHE_INDEX),
@@ -952,6 +1038,7 @@ MIGRATIONS_METIER: tuple[tuple[str, str], ...] = (
     ("013_recherche_fonds_reel", SQL_013_RECHERCHE_FONDS_REEL),
     ("014_facette_dimension", SQL_014_FACETTE_DIMENSION),
     ("015_qualite_gabarit_brouillon", SQL_015_QUALITE_GABARIT_BROUILLON),
+    ("016_dedup_comptes_nominatifs", SQL_016_DEDUP_COMPTES_NOMINATIFS),
 )
 
 

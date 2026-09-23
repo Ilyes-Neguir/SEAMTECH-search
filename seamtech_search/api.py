@@ -1123,6 +1123,13 @@ def create_app(config: AppConfig) -> FastAPI:
 
     enregistrer_routes_qualite(app, index, config, _require_auth)
 
+    # Lot L.1 (§17.4) : détection de doublons — PROPOSITIVE (liens seulement,
+    # jamais de fusion ni d'effacement). Les routes vivent sous /fiches, la
+    # ressource concernée, et alimentent le bandeau de /validation.
+    from seamtech_search.dedup.routes import enregistrer_routes_dedup
+
+    enregistrer_routes_dedup(app, index, config, _require_auth)
+
     from seamtech_search.ml.routes import enregistrer_routes_ml
 
     enregistrer_routes_ml(

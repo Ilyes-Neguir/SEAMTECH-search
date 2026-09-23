@@ -41,6 +41,8 @@ dev = [
 
 [project.scripts]
 recherche-log = "seamtech_search.journal_recherche:main"
+# Lot L.1 : détection de doublons (propositive). Homogène avec recherche-log.
+dedup-scan = "seamtech_search.dedup.cli:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
