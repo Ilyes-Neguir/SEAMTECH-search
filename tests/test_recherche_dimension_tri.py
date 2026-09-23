@@ -119,6 +119,85 @@ def test_dimension_facettes_et_intervalles(base_recherche: dict[str, Any]) -> No
         assert "unite" in fc_sans[cote]
 
 
+COTES_7 = ("slu_m", "sle_m", "sf_m", "shw_m", "spa_m2", "tetiere_cm", "poids_kg")
+
+
+def test_contrat_cotes_conditionnelles_documente(base_recherche: dict[str, Any]) -> None:
+    """Correctif 0.4 (audit Lot K) : fige par exécution le contrat DÉCRIT dans docs/API.md.
+
+    Les 7 cotes d'un résultat ET les valeurs de ``facettes_cotes`` ne sont
+    chargées **si et seulement si** un filtre dimension est actif (``cote=``
+    + ``min``/``max``) OU qu'un tri par cote est demandé (``tri=slu_m_asc``…).
+
+    Ce test protège les prochains lots : remettre le chargement
+    inconditionnel (annuler l'optimisation 0.2 du Lot J, commit d0a8aac) le
+    fait ROUGIR — c'est le sabotage joué en local (voir rapport Lot L, §0.4.3).
+    """
+    from seamtech_search.recherche import COTES_UNITES, rechercher_fiches
+
+    index = base_recherche["index"]
+    _semer_cotes(index, base_recherche["fiches"])
+
+    # ---- 1) Requête par défaut : tri=pertinence, AUCUN filtre dimension ----
+    defaut = rechercher_fiches(index, requete="", limit=100)
+    assert defaut["tri"] == "pertinence"
+    assert defaut["resultats"], "le corpus de test doit rendre des résultats"
+
+    facettes_defaut = defaut["facettes_cotes"]
+    for cote in COTES_7:
+        # Les CLÉS existent (l'UI connaît l'unité à afficher)…
+        assert cote in facettes_defaut, f"clé de facette {cote} absente de la réponse par défaut"
+        assert facettes_defaut[cote]["unite"] == COTES_UNITES[cote]
+        # …mais elles sont VIDES : aucun calcul depuis les données réelles.
+        assert facettes_defaut[cote]["effectif"] == 0, (
+            f"{cote} : la réponse par défaut ne doit PAS charger les facettes de cotes "
+            f"(effectif={facettes_defaut[cote]['effectif']}) — voir docs/API.md « Chargement "
+            "conditionnel des cotes »"
+        )
+        assert facettes_defaut[cote]["min"] is None
+        assert facettes_defaut[cote]["max"] is None
+        assert facettes_defaut[cote]["intervalles"] == []
+    assert defaut["facettes"]["dimension"] == []
+
+    # Contrepartie : les résultats ne PORTENT pas les cotes.
+    for resultat in defaut["resultats"]:
+        for cote in COTES_7:
+            assert cote not in resultat, (
+                f"la fiche {resultat['code']} porte {cote} alors qu'aucun filtre dimension ni tri "
+                "par cote n'est demandé — le chargement est redevenu inconditionnel"
+            )
+
+    # ---- 2) Tri par cote : les cotes d'affichage SONT chargées ----
+    trie = rechercher_fiches(index, requete="", tri="slu_m_asc", limit=100)
+    assert trie["tri"] == "slu_m_asc"
+    valeurs = [r.get("slu_m") for r in trie["resultats"]]
+    assert any(v is not None for v in valeurs), (
+        "tri=slu_m_asc doit charger slu_m sur au moins une fiche du résultat (cotes semées : "
+        "sans filtre dimension, un tri par cote suffit à déclencher le chargement)"
+    )
+    assert trie["facettes_cotes"]["slu_m"]["effectif"] > 0
+    # Le tri est bien appliqué (les non-nulles d'abord, croissantes).
+    non_nulles = [v for v in valeurs if v is not None]
+    assert non_nulles == sorted(non_nulles)
+
+    # ---- 3) Filtre dimension actif : facettes_cotes remplies ----
+    filtre = rechercher_fiches(
+        index, requete="", filtres={"cote": "slu_m", "min": 6.5, "max": 6.7}, limit=100
+    )
+    assert filtre["facettes_cotes"]["slu_m"]["effectif"] > 0, (
+        "un filtre dimension actif (cote= + min/max) doit déclencher le calcul réel des facettes "
+        "de cotes — voir docs/API.md"
+    )
+    assert filtre["facettes_cotes"]["slu_m"]["min"] is not None
+    assert filtre["facettes_cotes"]["slu_m"]["max"] is not None
+    # La facette compte SANS son propre filtre dimension (règle des facettes) :
+    # l'effectif reste celui de toute la sélection, pas des 2 fiches filtrées.
+    assert filtre["facettes_cotes"]["slu_m"]["effectif"] == trie["facettes_cotes"]["slu_m"]["effectif"]
+    assert filtre["cote_active"] == "slu_m"
+    # Les résultats, eux, portent bien les cotes demandées.
+    assert any(r.get("slu_m") is not None for r in filtre["resultats"])
+
+
 def test_tri_et_pagination(base_recherche: dict[str, Any]) -> None:
     from seamtech_search.recherche import rechercher_fiches
 

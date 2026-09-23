@@ -193,3 +193,138 @@ def test_qualite_cli_sans_reseau():
     assert "requests" not in src
     assert "httpx" not in src
     # Pas d'appel réseau sortant
+
+
+# ---------------------------------------------------------------------------
+# Lot L (correctif C.1) — le tableau de bord ENTIER est testé.
+#
+# Motif qui a manqué en L.1 : le Lot K testait chaque indicateur un par un,
+# mais rien ne garantissait que `tableau_de_bord()` les expose TOUS ni que la
+# route les serve. Un indicateur cassé ou oublié laissait donc la CI verte et
+# l'écran /qualite cassé chez l'utilisateur.
+#
+# Règle adoptée (et écrite dans le rapport) : tout nouvel indicateur arrive avec
+#   (a) sa clé dans CLES_TABLEAU_DE_BORD ci-dessous,
+#   (b) son test de valeurs,
+#   (c) sa ligne dans docs/API.md.
+# ---------------------------------------------------------------------------
+
+from seamtech_search.qualite.tableau import doublons_detectes, tableau_de_bord  # noqa: E402
+
+# Les 9 indicateurs réellement exposés après L.2 (8 en L.1 + taux_par_utilisateur).
+CLES_TABLEAU_DE_BORD = {
+    "taux_extraction_auto",
+    "taux_correction_par_champ",
+    "temps_validation",
+    "anomalies_frequentes",
+    "volume_par_statut",
+    "usage_recherches",
+    "lots",
+    "doublons_detectes",
+    "taux_par_utilisateur",
+}
+
+
+def test_tableau_de_bord_expose_tous_les_indicateurs_declares(base_recherche):
+    """C.1.1 — égalité EXACTE des clés : ajouter un indicateur sans le déclarer casse ici."""
+    tableau = tableau_de_bord(base_recherche["index"])
+    assert set(tableau.keys()) == CLES_TABLEAU_DE_BORD, (
+        f"indicateurs manquants : {CLES_TABLEAU_DE_BORD - set(tableau.keys())} ; "
+        f"indicateurs non déclarés : {set(tableau.keys()) - CLES_TABLEAU_DE_BORD}"
+    )
+
+
+def _poser_doublon_exact(index, id_a: int, id_b: int, empreinte: str) -> None:
+    """Deux pièces jointes de MÊME empreinte + le lien exact, en SQL direct."""
+    with index.connect() as conn:
+        with conn.cursor() as cur:
+            for id_fiche, nom in ((id_a, "a.pdf"), (id_b, "b.pdf")):
+                cur.execute(
+                    "INSERT INTO fiche_piece_jointe (id_fiche, chemin, empreinte_sha256, taille_octets) "
+                    "VALUES (%s, %s, %s, %s)",
+                    (id_fiche, f"pieces/{nom}", empreinte, 1234),
+                )
+            cur.execute(
+                "INSERT INTO fiche_lien (id_fiche_source, id_fiche_cible, type, score) "
+                "VALUES (%s, %s, 'doublon_exact', 1.000)",
+                (id_a, id_b),
+            )
+
+
+def test_doublons_detectes_compte_vraiment(base_recherche):
+    """C.1.2 — deux fiches partagent une empreinte, dont UNE non validée.
+
+    Vérifie que le compteur compte (groupe + fiche vue avant validation) et que
+    la charge définition/unité/période du Lot K est toujours là.
+    """
+    index = base_recherche["index"]
+    id_valide = base_recherche["fiches"]["0701-GV-001"]  # valide
+    id_a_valider = base_recherche["fiches"]["1001-GV-006"]  # a_valider
+    empreinte = "f" * 64
+
+    _poser_doublon_exact(index, id_valide, id_a_valider, empreinte)
+
+    with index.connect() as conn:
+        with conn.cursor() as cur:
+            resultat = doublons_detectes(cur)
+
+    assert resultat["groupes_exacts"] == 1
+    assert resultat["liens_exacts"] == 1
+    assert resultat["doublons_vus_avant_validation"] >= 1, (
+        "la fiche non validée liée à un doublon doit être comptée comme vue AVANT validation"
+    )
+    for cle in ("definition", "unite", "periode"):
+        assert resultat[cle], f"charge {cle} absente (exigence Lot K)"
+
+
+def test_doublons_detectes_sans_doublon(base_recherche):
+    """C.1.2 (suite) — base sans doublon : zéro partout, pas d'erreur."""
+    index = base_recherche["index"]
+    with index.connect() as conn:
+        with conn.cursor() as cur:
+            resultat = doublons_detectes(cur)
+    assert resultat["groupes_exacts"] == 0
+    assert resultat["liens_exacts"] == 0
+    assert resultat["liens_probables"] == 0
+    assert resultat["doublons_vus_avant_validation"] == 0
+
+
+def test_route_tableau_de_bord(base_recherche):
+    """C.1.3 — la route sert exactement les mêmes clés que la fonction (200 attendu)."""
+    from pathlib import Path
+
+    from fastapi.testclient import TestClient
+
+    from seamtech_search.api import create_app
+    from seamtech_search.config import AppConfig
+
+    config = AppConfig(root_paths=[Path(".")], database_url=base_recherche["url"])
+    client = TestClient(create_app(config))
+
+    reponse = client.get("/qualite/tableau-de-bord")
+    assert reponse.status_code == 200, reponse.text
+    assert set(reponse.json().keys()) == CLES_TABLEAU_DE_BORD
+
+
+def test_taux_par_utilisateur_expose_les_actions_sans_utilisateur(base_recherche):
+    """C.1.2/L.2.7 — l'héritage non attribué est rendu VISIBLE, pas masqué."""
+    index = base_recherche["index"]
+    id_fiche = base_recherche["fiches"]["1001-GV-006"]
+    with index.connect() as conn:
+        with conn.cursor() as cur:
+            # Une action SANS utilisateur (comme toutes celles d'avant L.2)…
+            cur.execute(
+                "INSERT INTO fiche_validation (id_fiche, id_utilisateur, action, etat_avant, etat_apres) "
+                "VALUES (%s, NULL, 'valider', 'a_valider', 'valide')",
+                (id_fiche,),
+            )
+    # Hors du bloc : la transaction est validée, et `tableau_de_bord` ouvre sa
+    # propre connexion (sinon il lirait un état non commité).
+    resultat = tableau_de_bord(index)["taux_par_utilisateur"]
+
+    assert resultat["actions_total"] >= 1
+    assert resultat["actions_sans_utilisateur"] >= 1
+    assert resultat["actions_attribuees"] + resultat["actions_sans_utilisateur"] == resultat["actions_total"]
+    assert resultat["comptes_actifs_sans_action"] == 0  # aucun compte nominatif en base de test
+    for cle in ("definition", "unite", "periode"):
+        assert resultat[cle], f"charge {cle} absente (exigence Lot K)"

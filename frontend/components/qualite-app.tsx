@@ -63,6 +63,28 @@ interface Tableau {
     par_statut_lot: Record<string, number>
     par_statut_dossier: Record<string, number>
   }
+  // Lot L.1 — doublons détectés AVANT validation (indicateur 8).
+  doublons_detectes: {
+    definition: string
+    unite: string
+    periode: string
+    groupes_exacts: number
+    liens_exacts: number
+    liens_probables: number
+    doublons_vus_avant_validation: number
+  }
+  // Lot L.2 — « qui a validé quoi » (indicateur 9).
+  taux_par_utilisateur: {
+    definition: string
+    unite: string
+    periode: string
+    actions_total: number
+    actions_attribuees: number
+    actions_sans_utilisateur: number
+    part_attribuee: number | null
+    par_utilisateur: Array<{ identifiant: string; nom: string | null; role: string; actions: number }>
+    comptes_actifs_sans_action: number
+  }
 }
 
 export function QualiteApp() {
@@ -184,6 +206,52 @@ export function QualiteApp() {
         <p className="mt-2">Lots: {data.lots.total_lots} — Dossiers: {data.lots.total_dossiers}</p>
         <p className="text-xs">Par statut lot: {JSON.stringify(data.lots.par_statut_lot)}</p>
         <p className="text-xs">Par statut dossier: {JSON.stringify(data.lots.par_statut_dossier)}</p>
+      </section>
+
+      <section className="rounded border p-4" data-testid="indicateur-doublons">
+        <h2 className="font-semibold">Doublons détectés (avant validation)</h2>
+        <p className="text-xs text-muted-foreground">
+          {data.doublons_detectes.definition} — {data.doublons_detectes.unite} — {data.doublons_detectes.periode}
+        </p>
+        <p className="mt-2">
+          Groupes exacts (même empreinte SHA-256) : {data.doublons_detectes.groupes_exacts} — liens exacts :{" "}
+          {data.doublons_detectes.liens_exacts} — liens probables : {data.doublons_detectes.liens_probables}
+        </p>
+        <p className="mt-1 font-semibold">
+          Fiches non validées déjà vues en doublon : {data.doublons_detectes.doublons_vus_avant_validation}
+        </p>
+        <p className="text-xs text-muted-foreground">
+          Détection PROPOSITIVE : aucun effacement, aucune fusion automatique — la décision reste humaine.
+        </p>
+      </section>
+
+      <section className="rounded border p-4" data-testid="indicateur-par-utilisateur">
+        <h2 className="font-semibold">Qui a validé quoi (comptes nominatifs)</h2>
+        <p className="text-xs text-muted-foreground">
+          {data.taux_par_utilisateur.definition} — {data.taux_par_utilisateur.unite} —{" "}
+          {data.taux_par_utilisateur.periode}
+        </p>
+        <p className="mt-2">
+          Actions attribuées : {data.taux_par_utilisateur.actions_attribuees} / {data.taux_par_utilisateur.actions_total}
+          {typeof data.taux_par_utilisateur.part_attribuee === "number"
+            ? ` (${(data.taux_par_utilisateur.part_attribuee * 100).toFixed(1)} %)`
+            : ""}
+        </p>
+        <p className="mt-1">
+          Actions SANS utilisateur (héritage d'avant L.2, jamais réattribuées) :{" "}
+          {data.taux_par_utilisateur.actions_sans_utilisateur}
+        </p>
+        <ul className="mt-2 text-xs">
+          {data.taux_par_utilisateur.par_utilisateur.length === 0 ? (
+            <li className="text-muted-foreground">Aucune action attribuée pour l'instant.</li>
+          ) : (
+            data.taux_par_utilisateur.par_utilisateur.map((entree) => (
+              <li key={entree.identifiant}>
+                {entree.identifiant} ({entree.role}) : {entree.actions} action(s)
+              </li>
+            ))
+          )}
+        </ul>
       </section>
     </div>
   )

@@ -1,15 +1,14 @@
 import { NextResponse } from "next/server"
-import { backendBase, authHeaders } from "@/lib/backend"
+import { backendBase, authHeaders, sessionServeurVivante } from "@/lib/backend"
 import { SAMPLE_STATS } from "@/lib/sample-data"
 import type { HealthResponse } from "@/lib/types"
-import { isAuthenticated } from "@/lib/auth"
 
 export const dynamic = "force-dynamic"
 
 /**
  * Health / liveness.
  *
- * This route is the one deliberate exception to the requireAuth() gate that
+ * This route is the one deliberate exception to the requireAuthValide() gate that
  * covers every other app/api/* route, because it is the target of the
  * docker-compose frontend healthcheck and the CI `curl -fsS .../api/health`
  * probe — a 401 there would mark a perfectly healthy container unhealthy.
@@ -20,7 +19,10 @@ export const dynamic = "force-dynamic"
  * to enumerate the index without signing in.
  */
 export async function GET() {
-  const authenticated = await isAuthenticated()
+  // Lot L.2 : la sonde répond toujours 200 (elle sert au healthcheck), mais les
+  // compteurs de l'archive ne sortent que pour une session ENCORE VIVANTE côté
+  // backend — sinon une session révoquée continuerait d'énumérer l'index.
+  const authenticated = await sessionServeurVivante()
 
   if (!authenticated) {
     return NextResponse.json(

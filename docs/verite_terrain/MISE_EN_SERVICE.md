@@ -21,12 +21,29 @@ cd SEAMTECH-search
 cp .env.example .env
 # puis éditer .env et fixer :
 #   SEAMTECH_AUTH_TOKEN      (token API — chaîne longue aléatoire)
-#   SEAMTECH_UI_PASSWORD     (mot de passe opérateur de l'interface)
+#   SEAMTECH_UI_PASSWORD     (compte de SECOURS de l'interface — voir ci-dessous)
 #   SEAMTECH_SESSION_SECRET  (secret de session — chaîne longue aléatoire)
 
 # 3. Démarrage
 docker compose up -d --build
+
+# 4. LOT L.2 — créer les COMPTES NOMINATIFS avant de travailler.
+#    Tant qu'aucun compte n'existe, seul le compte de secours (mot de passe
+#    partagé SEAMTECH_UI_PASSWORD, identifiant « secours ») permet d'entrer —
+#    c'est voulu, pour ne jamais se verrouiller dehors. Mais ses validations
+#    sont toutes attribuées à « secours » : créez les comptes réels, puis
+#    videz SEAMTECH_UI_PASSWORD et redémarrez le conteneur frontend.
+docker compose exec web python -m seamtech_search.comptes.cli creer \
+    --identifiant imrane --nom "I. N." --role administrateur
+#    (mot de passe lu sur STDIN ; jamais en argument — cf. docs/API.md)
+docker compose exec web python -m seamtech_search.comptes.cli lister
 ```
+
+Statut des comptes, à tout moment : `… comptes.cli lister` (rôle, actif, dernière
+connexion) ; `… sessions --identifiant imrane` montre les sessions ouvertes et
+`… revoquer-session --id-session N` en ferme une immédiatement. La déconnexion
+depuis l'interface ferme la session EN BASE (`revoque_le`) : un cookie copié ne
+vaut plus rien après coup — c'est vérifié par les tests et par l'e2e live.
 
 Sortie attendue : `docker compose ps` montre `postgres`, `minio`, `redis`,
 `web`, `frontend` en `running (healthy)` après la montée (les healthchecks de
@@ -43,7 +60,8 @@ curl -s -H "X-SEAMTECH-TOKEN: <SEAMTECH_AUTH_TOKEN>" http://127.0.0.1:8000/healt
 
 ```bash
 # 6. Dépôt d'un dossier réel puis fiche visible
-#    Interface : http://127.0.0.1:3000 (connexion avec SEAMTECH_UI_PASSWORD),
+#    Interface : http://127.0.0.1:3000 (connexion avec l'identifiant + mot de
+#    passe d'un compte nominatif ; identifiant vide = compte de secours),
 #    écran Dépôt → choisir un dossier de fiches PDF → attendre la fin du
 #    traitement → la fiche apparaît dans la file de validation.
 #    (CLI équivalent : voir docs/API.md — `cli depot`.)

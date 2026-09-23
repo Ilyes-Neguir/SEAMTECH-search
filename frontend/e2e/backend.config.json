@@ -1,8 +1,11 @@
 {
-  "root_paths": ["../../sample_data"],
+  "root_paths": [
+    "../../sample_data"
+  ],
   "database_path": "e2e-data/search.db",
   "host": "127.0.0.1",
   "port": 8123,
   "min_free_bytes": 0,
-  "rate_limit_per_minute": 1000
+  "rate_limit_per_minute": 1000,
+  "auth_token": "e2e-service-token"
 }

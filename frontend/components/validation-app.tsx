@@ -14,7 +14,53 @@ import { authedFetch } from "@/lib/authed-fetch"
 import { palierDeChamp, type ChampExtrait, type FicheFileEntry, type PiecesDeFiche } from "@/lib/fiche"
 import { cn } from "@/lib/utils"
 
-const UTILISATEUR = "operateur-atelier" // identité de session (traçabilité du journal)
+// Lot L.2 — « qui a validé quoi » ne vient PLUS d'ici. Le corps de requête
+// n'est pas une identité : n'importe qui peut l'écrire. Le proxy serveur
+// (/api/fiches/... et /api/validation/lot) ajoute X-SEAMTECH-UTILISATEUR et
+// X-SEAMTECH-ROLE depuis le cookie signé, et le backend ne les honore que si le
+// jeton de service les accompagne. Le navigateur n'envoie donc plus AUCUN
+// « utilisateur » : le champ a été retiré des trois appels ci-dessous pour
+// qu'il n'existe qu'une seule source de vérité.
+
+// Lot L.1 — un lien de doublon, tel que le rend `GET /fiches/{code}/doublons`.
+// Affiché AVANT la validation : « Doublon exact de CODE (sha256) » ou
+// « Doublon probable de CODE (score 0.xx) ». Aucun bouton « fusionner » : la
+// décision reste humaine, l'écran ne fait que prévenir.
+export interface LienDoublon {
+  id_lien: number
+  type: "doublon_exact" | "doublon_probable" | string
+  score: number | null
+  code_autre: string
+  statut_autre: string
+}
+
+function libelleDoublon(lien: LienDoublon): string {
+  if (lien.type === "doublon_exact") return `Doublon exact de ${lien.code_autre}`
+  return `Doublon probable de ${lien.code_autre}`
+}
+
+function detailDoublon(lien: LienDoublon): string {
+  if (lien.type === "doublon_exact") return "même fichier (empreinte SHA-256 identique)"
+  return typeof lien.score === "number" ? `score ${lien.score.toFixed(2)}` : "score non calculé"
+}
+
+function BandeauDoublon({ liens }: { liens: LienDoublon[] }) {
+  if (liens.length === 0) return null
+  return (
+    <div
+      className="mt-1 rounded border border-amber-500/50 bg-amber-500/10 px-2 py-1 text-[11px] text-amber-900 dark:text-amber-200"
+      data-testid="bandeau-doublon"
+    >
+      {liens.map((lien) => (
+        <div key={lien.id_lien}>
+          <span className="font-semibold">{libelleDoublon(lien)}</span>{" "}
+          <span className="text-muted-foreground">({detailDoublon(lien)})</span>
+        </div>
+      ))}
+      <div className="text-muted-foreground">À arbitrer avant validation — aucune fusion automatique.</div>
+    </div>
+  )
+}
 
 async function jsonFetch<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await authedFetch(url, init)
@@ -49,6 +95,44 @@ export function ValidationApp() {
     chargerFile()
   }, [chargerFile])
 
+  // Lot L.1 — liens de doublon de TOUTE la file, en une requête. Un échec ici
+  // ne doit jamais empêcher de valider : le bandeau est une AIDE, pas une
+  // condition. On retombe donc sur une carte vide, sans message d'erreur.
+  const [doublons, setDoublons] = useState<Record<string, LienDoublon[]>>({})
+  useEffect(() => {
+    const codes = file.map((entree) => entree.code)
+    if (codes.length === 0) {
+      setDoublons({})
+      return
+    }
+    let annule = false
+    const charger = (essai: number) =>
+      jsonFetch<{ par_code: Record<string, LienDoublon[]> }>("/api/validation/doublons", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ codes }),
+      })
+        .then((corps) => {
+          if (!annule) setDoublons(corps.par_code ?? {})
+        })
+        .catch(() => {
+          // Une reprise UNIQUE avant d'abandonner : un échec transitoire de cette
+          // requête ferait valider une fiche SANS voir son doublon — exactement ce
+          // que le lot existe pour empêcher. (Mesuré en CI : la première requête
+          // après le démarrage du front peut échouer.)
+          if (essai === 0) {
+            setTimeout(() => charger(1), 500)
+            return
+          }
+          console.warn("[doublons] liens indisponibles — le bandeau ne peut pas être affiché.")
+          if (!annule) setDoublons({})
+        })
+    charger(0)
+    return () => {
+      annule = true
+    }
+  }, [file])
+
   useEffect(() => {
     if (!codeActif && file.length > 0) setCodeActif(file[0].code)
   }, [file, codeActif])
@@ -74,7 +158,7 @@ export function ValidationApp() {
       await jsonFetch(`/api/fiches/${encodeURIComponent(codeActif)}/corriger`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ champ: champ.champ, valeur, utilisateur: UTILISATEUR, rang: champ.rang }),
+        body: JSON.stringify({ champ: champ.champ, valeur, rang: champ.rang }),
       })
       setMessage(`Champ « ${champ.champ} » corrigé — verrou RG11 armé (une valeur corrigée n'est plus écrasée).`)
       setChamps(await jsonFetch(`/api/fiches/${encodeURIComponent(codeActif)}/champs`))
@@ -93,7 +177,7 @@ export function ValidationApp() {
       await jsonFetch(`/api/fiches/${encodeURIComponent(codeActif)}/${actionName}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ utilisateur: UTILISATEUR, ...extra }),
+        body: JSON.stringify({ ...extra }),
       })
       setMessage(`Fiche ${codeActif} : ${actionName} enregistré au journal.`)
       await chargerFile()
@@ -113,7 +197,7 @@ export function ValidationApp() {
       const corps = await jsonFetch<{ nb_validees: number; nb_ignorees: number }>("/api/validation/lot", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ codes: [...selection], utilisateur: UTILISATEUR, acquittement_humain: acquittement }),
+        body: JSON.stringify({ codes: [...selection], acquittement_humain: acquittement }),
       })
       setMessage(`Validation en lot : ${corps.nb_validees} validée(s), ${corps.nb_ignorees} ignorée(s).`)
       setSelection(new Set())
@@ -172,7 +256,12 @@ export function ValidationApp() {
           </div>
           <ul className="min-h-0 flex-1 overflow-auto" data-testid="file-validation">
             {file.map((entree) => (
-              <li key={entree.code}>
+              // data-code : identifiant EXACT de la ligne pour les tests e2e.
+              // Sans lui, une ligne se repérait par son texte — or le bandeau de
+              // doublon cite l'AUTRE code, donc la ligne du doublon contient aussi
+              // le code de la fiche d'origine (mesuré en CI : deux lignes
+              // répondaient à la même recherche « 7792-SO »).
+              <li key={entree.code} data-code={entree.code}>
                 <div
                   className={cn(
                     "flex w-full cursor-pointer items-center gap-2 border-b border-border/60 px-3 py-2 text-left text-xs hover:bg-accent/40",
@@ -199,6 +288,7 @@ export function ValidationApp() {
                         {entree.paliers.certain}·{entree.paliers.lu}·{entree.paliers.decompose}·{entree.paliers.partiel}
                       </span>
                     </span>
+                    <BandeauDoublon liens={doublons[entree.code] ?? []} />
                   </button>
                   <ChevronRight className="size-3.5 text-muted-foreground" />
                 </div>
@@ -236,6 +326,9 @@ export function ValidationApp() {
                   {codeActif}
                 </h2>
                 <span className="flex-1" />
+                <div className="w-full">
+                  <BandeauDoublon liens={doublons[codeActif] ?? []} />
+                </div>
                 <button
                   type="button"
                   onClick={() => action("valider")}

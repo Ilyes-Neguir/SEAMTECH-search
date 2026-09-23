@@ -293,6 +293,139 @@ def lots_stats(cursor: Any) -> dict[str, Any]:
     }
 
 
+def doublons_detectes(cursor: Any) -> dict[str, Any]:  # noqa: ANN401 - curseur psycopg2 réel
+    """Doublons détectés — Lot L.1 (§17.4), indicateur 8 du tableau de bord.
+
+    Trois compteurs, tous en SQL ``GROUP BY`` / ``FILTER`` comme le reste du
+    module (aucune agrégation Python) :
+
+    - ``groupes_exacts`` : nombre d'empreintes SHA-256 portées par PLUSIEURS
+      fiches (``GROUP BY empreinte_sha256 HAVING count(DISTINCT id_fiche) > 1``
+      sur ``fiche_piece_jointe``) — le même critère que la détection, pas une
+      approximation ;
+    - ``liens_probables`` : lignes ``fiche_lien`` de type ``doublon_probable``
+      (les propositions de rapprochement par titre déjà enregistrées) ;
+    - ``doublons_vus_avant_validation`` : nombre de fiches **non ``valide```**
+      engagées dans un lien de doublon, dans un sens ou dans l'autre. C'est LE
+      chiffre du lot : combien de doublons ont été vus AVANT la validation,
+      donc combien ont pu être arbitrés sans qu'une fiche validée soit à
+      reprendre.
+
+    Un doublon vu n'est pas un doublon traité : cet indicateur mesure la
+    DÉTECTION, jamais une décision.
+    """
+    cursor.execute(
+        """
+        SELECT COUNT(*) FROM (
+            SELECT p.empreinte_sha256
+            FROM fiche_piece_jointe p
+            WHERE p.empreinte_sha256 IS NOT NULL AND p.empreinte_sha256 <> ''
+            GROUP BY p.empreinte_sha256
+            HAVING COUNT(DISTINCT p.id_fiche) > 1
+        ) AS groupes
+        """
+    )
+    groupes_exacts = int(cursor.fetchone()[0] or 0)
+
+    cursor.execute("SELECT COUNT(*) FROM fiche_lien WHERE type = 'doublon_probable'")
+    liens_probables = int(cursor.fetchone()[0] or 0)
+
+    cursor.execute(
+        """
+        SELECT COUNT(DISTINCT f.id_fiche)
+        FROM fiche f
+        WHERE f.statut <> 'valide'
+          AND (
+              EXISTS (SELECT 1 FROM fiche_lien l WHERE l.id_fiche_source = f.id_fiche)
+              OR EXISTS (SELECT 1 FROM fiche_lien l WHERE l.id_fiche_cible = f.id_fiche)
+          )
+        """
+    )
+    avant_validation = int(cursor.fetchone()[0] or 0)
+
+    cursor.execute("SELECT COUNT(*) FROM fiche_lien WHERE type = 'doublon_exact'")
+    liens_exacts = int(cursor.fetchone()[0] or 0)
+
+    return {
+        "definition": (
+            "Doublons détectés (empreintes SHA-256 partagées + liens probables) et nombre de fiches "
+            "NON validées déjà engagées dans un lien de doublon — donc vues avant validation. "
+            "Détection PROPOSITIVE : aucun effacement, aucune fusion."
+        ),
+        "unite": "compte",
+        "periode": "instantané",
+        "groupes_exacts": groupes_exacts,
+        "liens_exacts": liens_exacts,
+        "liens_probables": liens_probables,
+        "doublons_vus_avant_validation": avant_validation,
+    }
+
+
+def taux_par_utilisateur(cursor: Any) -> dict[str, Any]:  # noqa: ANN401 - curseur psycopg2 réel
+    """Actions de validation attribuées à un compte nominatif — Lot L.2, indicateur 9.
+
+    Deux chiffres, dans cet ordre d'importance :
+
+    - ``actions_attribuees`` / ``part_attribuee`` : combien d'actions portent
+      l'identité d'un compte nominatif (``fiche_validation.id_utilisateur``).
+    - ``actions_sans_utilisateur`` : combien n'en portent aucune.
+
+    Le second n'est PAS une anomalie en soi : toutes les validations faites
+    avant L.2 sont anonymes, et le rattrapage n'existe pas — on n'invente pas
+    d'attribution a posteriori. L'indicateur sert à mesurer la couverture
+    réelle, pas à désigner un coupable. Aucune écriture, aucune correction
+    automatique ici : lecture seule, comme tout le tableau.
+    """
+    cursor.execute(
+        """
+        SELECT COUNT(*)::int AS actions_total,
+               COUNT(id_utilisateur)::int AS actions_attribuees
+        FROM fiche_validation
+        """
+    )
+    total, attribuees = (int(valeur or 0) for valeur in cursor.fetchone())
+
+    cursor.execute(
+        """
+        SELECT u.identifiant, u.nom, u.role, COUNT(*)::int AS actions
+        FROM fiche_validation v
+        JOIN utilisateur u ON u.id_utilisateur = v.id_utilisateur
+        GROUP BY u.identifiant, u.nom, u.role
+        ORDER BY COUNT(*) DESC, u.identifiant
+        """
+    )
+    par_utilisateur = [
+        {
+            "identifiant": str(ligne[0]),
+            "nom": ligne[1],
+            "role": str(ligne[2]),
+            "actions": int(ligne[3]),
+        }
+        for ligne in cursor.fetchall()
+    ]
+    return {
+        "definition": (
+            "Répartition des actions de validation par compte nominatif ; "
+            "« sans utilisateur » regroupe les actions antérieures à L.2, jamais réattribuées a posteriori."
+        ),
+        "unite": "action",
+        "periode": "depuis l'origine",
+        "actions_total": total,
+        "actions_attribuees": attribuees,
+        "actions_sans_utilisateur": total - attribuees,
+        "part_attribuee": round(attribuees / total, 4) if total else None,
+        "par_utilisateur": par_utilisateur,
+        "comptes_actifs_sans_action": _comptes_sans_action(cursor, par_utilisateur),
+    }
+
+
+def _comptes_sans_action(cursor: Any, par_utilisateur: list[dict[str, Any]]) -> int:  # noqa: ANN401
+    """Comptes actifs n'ayant encore rien validé (informatif, jamais bloquant)."""
+    avec_action = {entree["identifiant"] for entree in par_utilisateur}
+    cursor.execute("SELECT identifiant FROM utilisateur WHERE actif ORDER BY identifiant")
+    return sum(1 for (identifiant,) in cursor.fetchall() if str(identifiant) not in avec_action)
+
+
 def tableau_de_bord(index: Any) -> dict[str, Any]:
     """Assemble le tableau de bord complet — toutes requêtes en GROUP BY.
 
@@ -308,6 +441,8 @@ def tableau_de_bord(index: Any) -> dict[str, Any]:
             volume = volume_par_statut(cursor)
             recherches = usage_recherches(cursor)
             lots = lots_stats(cursor)
+            doublons = doublons_detectes(cursor)
+            par_utilisateur = taux_par_utilisateur(cursor)
 
     return {
         "taux_extraction_auto": taux_auto,
@@ -317,4 +452,6 @@ def tableau_de_bord(index: Any) -> dict[str, Any]:
         "volume_par_statut": volume,
         "usage_recherches": recherches,
         "lots": lots,
+        "doublons_detectes": doublons,
+        "taux_par_utilisateur": par_utilisateur,
     }

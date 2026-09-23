@@ -1,13 +1,12 @@
 import { NextResponse } from "next/server"
-import { backendBase, authHeaders } from "@/lib/backend"
-import { requireAuth } from "@/lib/auth"
+import { backendBase, backendHeaders, requireAuthValide } from "@/lib/backend"
 
 const ACTIONS = new Set(["corriger", "valider", "rejeter", "rouvrir"])
 
 export const dynamic = "force-dynamic"
 
 export async function POST(req: Request, { params }: { params: Promise<{ code: string; action: string }> }) {
-  const denied = await requireAuth()
+  const denied = await requireAuthValide()
   if (denied) return denied
   const { code, action } = await params
   if (!ACTIONS.has(action)) return NextResponse.json({ detail: "Action inconnue." }, { status: 404 })
@@ -17,7 +16,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ code: s
   try {
     const res = await fetch(`${base}/fiches/${encodeURIComponent(code)}/${action}`, {
       method: "POST",
-      headers: { ...authHeaders(), "Content-Type": "application/json" },
+      headers: await backendHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(payload ?? {}),
       cache: "no-store",
     })

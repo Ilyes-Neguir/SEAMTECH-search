@@ -786,6 +786,39 @@ class SearchIndex:
         with connection.cursor() as cursor:
             cursor.execute(schema_metier.SQL_015_QUALITE_GABARIT_BROUILLON)
 
+    def _migration_016_dedup_comptes_nominatifs(self, connection: Any) -> None:
+        """Lot L : doublons (L.1) + comptes nominatifs (L.2).
+
+        Le cœur (fonction de normalisation, index ``idx_pj_empreinte``,
+        ``idx_fiche_lien_type``, colonnes d'attribution) s'applique toujours.
+        Les index TRIGRAMMES sur ``fiche.titre`` sont **dégradables**, exactement
+        comme au 007 : sans le privilège d'installer ``pg_trgm``, ils sont omis
+        avec un avertissement + la conséquence écrite, et la détection de
+        doublons bascule sur son repli déterministe au lieu d'échouer.
+        """
+        if not self.is_postgres:
+            logger.warning(
+                "Migration 016_dedup_comptes_nominatifs ignorée : la couche métier est PostgreSQL "
+                "uniquement (§17.1) — conséquence : ni fiche_lien ni session_ui en mode SQLite."
+            )
+            return
+        with connection.cursor() as cursor:
+            cursor.execute(schema_metier.SQL_016_DEDUP_COMPTES_NOMINATIFS)
+            cursor.execute("SAVEPOINT seamtech_trgm_dedup")
+            try:
+                cursor.execute(schema_metier.SQL_016_TRGM_TITRE)
+                cursor.execute("RELEASE SAVEPOINT seamtech_trgm_dedup")
+            except Exception as exc:
+                cursor.execute("ROLLBACK TO SAVEPOINT seamtech_trgm_dedup")
+                logger.warning(
+                    "pg_trgm indisponible pour la déduplication (%s) — conséquence : pas d'index "
+                    "trigrammes sur fiche.titre, la détection des doublons PROBABLES bascule sur le "
+                    "repli déterministe documenté (titre identique à la casse/accents près ET même "
+                    "client+bateau+gamme+année) ; la détection des doublons EXACTS (SHA-256) n'est "
+                    "pas affectée.",
+                    exc,
+                )
+
     def run_migrations(self) -> None:
         """Run pending schema migrations once at startup."""
         with self.connect() as connection:
@@ -809,6 +842,10 @@ class SearchIndex:
                 ("013_recherche_fonds_reel", self._migration_013_recherche_fonds_reel),
                 ("014_facette_dimension", self._migration_014_facette_dimension),
                 ("015_qualite_gabarit_brouillon", self._migration_015_qualite_gabarit_brouillon),
+                # Lot L — une migration NON ENREGISTRÉE ici ferait échouer le job
+                # `sauvegarde` (l'échec du Lot K) : 016 est la version attendue
+                # par VERSION_SCHEMA_METIER, elle doit être APPLIQUÉE.
+                ("016_dedup_comptes_nominatifs", self._migration_016_dedup_comptes_nominatifs),
             ]
 
             for version, func in migrations:

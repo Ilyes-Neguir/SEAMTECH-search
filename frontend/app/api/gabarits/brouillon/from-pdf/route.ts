@@ -1,11 +1,10 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { backendBase, authHeaders } from "@/lib/backend"
-import { requireAuth } from "@/lib/auth"
+import { backendBase, authHeaders, requireAuthValide } from "@/lib/backend"
 
 export const dynamic = "force-dynamic"
 
 export async function POST(req: NextRequest) {
-  const denied = await requireAuth()
+  const denied = await requireAuthValide()
   if (denied) return denied
   const base = backendBase()
   if (!base) return NextResponse.json({ detail: "Backend non configuré" }, { status: 503 })

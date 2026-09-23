@@ -1,5 +1,5 @@
 import { test, expect, request as pwRequest } from "@playwright/test"
-import { UI_PASSWORD } from "./helpers"
+import { ADMIN, OPERATEUR, UI_PASSWORD } from "./helpers"
 
 /**
  * Regression coverage for audit issue #5 (Option B).
@@ -73,7 +73,7 @@ test.describe("Authentication gate (audit issue #5)", () => {
     try {
       const response = await context.fetch("/api/auth/login", {
         method: "POST",
-        data: { password: `${UI_PASSWORD}-definitely-wrong` },
+        data: { mot_de_passe: `${UI_PASSWORD}-definitely-wrong` },
         failOnStatusCode: false,
       })
       expect(response.status()).toBe(401)
@@ -92,7 +92,7 @@ test.describe("Authentication gate (audit issue #5)", () => {
     try {
       const login = await context.fetch("/api/auth/login", {
         method: "POST",
-        data: { password: UI_PASSWORD },
+        data: { mot_de_passe: UI_PASSWORD },
         failOnStatusCode: false,
       })
       expect(login.status()).toBe(200)
@@ -119,7 +119,7 @@ test.describe("Authentication gate (audit issue #5)", () => {
     try {
       const login = await context.fetch("/api/auth/login", {
         method: "POST",
-        data: { password: UI_PASSWORD },
+        data: { mot_de_passe: UI_PASSWORD },
         failOnStatusCode: false,
       })
       expect(login.status()).toBe(200)
@@ -151,7 +151,7 @@ test.describe("Authentication gate (audit issue #5)", () => {
     try {
       const login = await context.fetch("/api/auth/login", {
         method: "POST",
-        data: { password: UI_PASSWORD },
+        data: { mot_de_passe: UI_PASSWORD },
         failOnStatusCode: false,
       })
       expect(login.status()).toBe(200)
@@ -189,12 +189,142 @@ test.describe("Authentication gate (audit issue #5)", () => {
     try {
       await context.fetch("/api/auth/login", {
         method: "POST",
-        data: { password: UI_PASSWORD },
+        data: { mot_de_passe: UI_PASSWORD },
         failOnStatusCode: false,
       })
       const response = await context.fetch("/api/health", { failOnStatusCode: false })
       const body = await response.json().catch(() => ({}))
       expect(body.authenticated).toBe(true)
+    } finally {
+      await context.dispose()
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Lot L.2 — comptes nominatifs (« qui a validé quoi »).
+//
+// Ces tests portent sur la couche live (PostgreSQL) : les comptes e2e-operateur
+// et e2e-admin sont créés par e2e/seed-live-pg.py, comme des comptes réels.
+// ---------------------------------------------------------------------------
+
+test.describe("Comptes nominatifs (Lot L.2)", () => {
+  test.skip(!process.env.SEAMTECH_E2E_DATABASE_URL, "e2e live : requiert SEAMTECH_E2E_DATABASE_URL (PostgreSQL)")
+
+  test("la connexion nominative renvoie l'identité et pose le cookie httpOnly", async () => {
+    const context = await anonymousContext()
+    try {
+      const login = await context.fetch("/api/auth/login", {
+        method: "POST",
+        data: { identifiant: OPERATEUR.identifiant, mot_de_passe: OPERATEUR.motDePasse },
+        failOnStatusCode: false,
+      })
+      expect(login.status()).toBe(200)
+      const corps = await login.json()
+      expect(corps).toMatchObject({ ok: true, mode: "nominatif", identifiant: OPERATEUR.identifiant, role: "operateur" })
+
+      const setCookie = login.headers()["set-cookie"] ?? ""
+      expect(setCookie).toMatch(/seamtech_session=/)
+      expect(setCookie.toLowerCase()).toMatch(/httponly/)
+      expect(setCookie.toLowerCase()).toMatch(/samesite=lax/)
+      // Ni empreinte, ni sel, ni jeton de service dans la réponse.
+      expect(JSON.stringify(corps)).not.toMatch(/scrypt\$/)
+
+      const session = await context.fetch("/api/auth/session", { failOnStatusCode: false })
+      expect(session.status()).toBe(200)
+      const etat = await session.json()
+      expect(etat).toMatchObject({ authenticated: true, identifiant: OPERATEUR.identifiant, role: "operateur" })
+      expect(JSON.stringify(etat)).not.toMatch(/scrypt\$/)
+      expect(etat.jeton_session).toBeUndefined()
+    } finally {
+      await context.dispose()
+    }
+  })
+
+  test("un mot de passe erroné est refusé et ne pose aucun cookie", async () => {
+    const context = await anonymousContext()
+    try {
+      const response = await context.fetch("/api/auth/login", {
+        method: "POST",
+        data: { identifiant: OPERATEUR.identifiant, mot_de_passe: `${OPERATEUR.motDePasse}-faux` },
+        failOnStatusCode: false,
+      })
+      expect(response.status()).toBe(401)
+      const setCookie = response.headers()["set-cookie"] ?? ""
+      expect(setCookie).not.toMatch(/seamtech_session=[^;]+/)
+      // Toujours pas de session : la route de données reste fermée.
+      const suite = await context.fetch("/api/search?q=CLIENT", { failOnStatusCode: false })
+      expect(suite.status()).toBe(401)
+    } finally {
+      await context.dispose()
+    }
+  })
+
+  test("un opérateur reçoit 403 sur la gestion des comptes, un administrateur 200", async () => {
+    const operateur = await anonymousContext()
+    const admin = await anonymousContext()
+    try {
+      await operateur.fetch("/api/auth/login", {
+        method: "POST",
+        data: { identifiant: OPERATEUR.identifiant, mot_de_passe: OPERATEUR.motDePasse },
+        failOnStatusCode: false,
+      })
+      const refus = await operateur.fetch("/api/auth/utilisateurs", { failOnStatusCode: false })
+      expect(refus.status()).toBe(403)
+      expect((await refus.json()).detail).toMatch(/administrateur/i)
+
+      await admin.fetch("/api/auth/login", {
+        method: "POST",
+        data: { identifiant: ADMIN.identifiant, mot_de_passe: ADMIN.motDePasse },
+        failOnStatusCode: false,
+      })
+      const liste = await admin.fetch("/api/auth/utilisateurs", { failOnStatusCode: false })
+      expect(liste.status()).toBe(200)
+      const comptes = await liste.json()
+      expect(comptes.map((c: { identifiant: string }) => c.identifiant)).toEqual(
+        expect.arrayContaining([OPERATEUR.identifiant, ADMIN.identifiant]),
+      )
+      // Jamais d'empreinte ni de mot de passe dans la liste.
+      expect(JSON.stringify(comptes)).not.toMatch(/scrypt\$/)
+    } finally {
+      await operateur.dispose()
+      await admin.dispose()
+    }
+  })
+
+  test("après déconnexion, le même cookie ne vaut plus rien", async () => {
+    const context = await anonymousContext()
+    try {
+      const login = await context.fetch("/api/auth/login", {
+        method: "POST",
+        data: { identifiant: OPERATEUR.identifiant, mot_de_passe: OPERATEUR.motDePasse },
+        failOnStatusCode: false,
+      })
+      expect(login.status()).toBe(200)
+
+      // Le cookie est copié AVANT la déconnexion : c'est le scénario qui compte
+      // (un cookie volé doit cesser de fonctionner, pas seulement disparaître
+      // du navigateur de son propriétaire).
+      const cookie = (await context.storageState()).cookies.find((c) => c.name === "seamtech_session")
+      expect(cookie, "la connexion doit avoir posé un cookie").toBeTruthy()
+
+      const deconnexion = await context.fetch("/api/auth/logout", { method: "POST", failOnStatusCode: false })
+      expect(deconnexion.status()).toBe(200)
+
+      const copie = await pwRequest.newContext({
+        baseURL: BASE_URL,
+        extraHTTPHeaders: { Cookie: `seamtech_session=${cookie!.value}` },
+      })
+      try {
+        // La session est révoquée EN BASE : même un cookie encore signé est refusé
+        // partout — y compris sur les routes de données, pas seulement /auth/session.
+        for (const chemin of ["/api/auth/session", "/api/search?q=CLIENT", "/api/validation/file"]) {
+          const refus = await copie.fetch(chemin, { failOnStatusCode: false })
+          expect(refus.status(), `${chemin} doit refuser une session révoquée`).toBe(401)
+        }
+      } finally {
+        await copie.dispose()
+      }
     } finally {
       await context.dispose()
     }

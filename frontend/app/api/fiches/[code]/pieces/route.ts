@@ -1,11 +1,10 @@
 import { NextResponse } from "next/server"
-import { backendBase, authHeaders } from "@/lib/backend"
-import { requireAuth } from "@/lib/auth"
+import { backendBase, authHeaders, requireAuthValide } from "@/lib/backend"
 
 export const dynamic = "force-dynamic"
 
 export async function GET(_req: Request, { params }: { params: Promise<{ code: string }> }) {
-  const denied = await requireAuth()
+  const denied = await requireAuthValide()
   if (denied) return denied
   const { code } = await params
   const base = backendBase()

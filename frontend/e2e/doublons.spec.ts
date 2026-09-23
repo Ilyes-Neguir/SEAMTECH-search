@@ -1,0 +1,80 @@
+import { expect, test } from "@playwright/test"
+import { signIn } from "./helpers"
+
+/**
+ * Lot L.1 — le bandeau de doublon, vérifié À L'ÉCRAN (correctif C.2).
+ *
+ * Le job e2e était vert sans rien prouver du bandeau : aucune spec ne
+ * l'observait. Ce fichier comble le trou, en conditions réelles :
+ *
+ *   * la base live (e2e/seed-live-pg.py) dépose les trois dossiers habituels
+ *     PUIS ajoute la fiche 7792-SO-BIS, deuxième fiche rattachée au MÊME PDF
+ *     (même chemin, même empreinte SHA-256), et lance le scan propositif —
+ *     le lien exact existe donc vraiment en base ;
+ *   * le bandeau doit être VISIBLE avant toute action de l'opérateur : c'est
+ *     tout l'intérêt du lot, voir le doublon AVANT de valider ;
+ *   * aucune commande de fusion ne doit exister : la décision reste humaine.
+ *
+ * Sans SEAMTECH_E2E_DATABASE_URL la suite tourne sur SQLite, où le schéma
+ * métier n'existe pas : la spec s'ignore (comme validation.spec.ts), et la CI
+ * la fait tourner en mode live — un test qui s'ignorerait silencieusement en CI
+ * serait signalé par le garde-fou de comptage de l'étape.
+ */
+
+const CODE_DOUBLON = "BIS-7792"
+const CODE_ORIGINAL = "7792-SO"
+
+test.describe("bandeau de doublon avant validation", () => {
+  test.skip(!process.env.SEAMTECH_E2E_DATABASE_URL, "e2e live : requiert SEAMTECH_E2E_DATABASE_URL (PostgreSQL)")
+
+  test("le doublon exact est visible AVANT toute validation", async ({ page }) => {
+    await signIn(page)
+    await page.goto("/validation")
+
+    const file = page.getByTestId("file-validation")
+    await expect(file).toBeVisible()
+    await file.getByTestId("code-fiche").first().waitFor({ timeout: 10000 })
+
+    // La fiche bis est dans la file : elle n'a jamais été validée par ce test.
+    // Sélection par data-code : le bandeau cite l'autre code, donc un filtre par
+    // texte attraperait aussi la ligne de la fiche d'origine.
+    const ligne = file.locator(`li[data-code="${CODE_DOUBLON}"]`)
+    await expect(ligne).toBeVisible({ timeout: 10000 })
+
+    // Le bandeau est là AVANT tout clic, et il nomme l'AUTRE fiche.
+    const bandeau = ligne.getByTestId("bandeau-doublon")
+    await expect(bandeau).toBeVisible({ timeout: 20000 })
+    await expect(bandeau).toContainText("Doublon exact de")
+    await expect(bandeau).toContainText(CODE_ORIGINAL)
+    await expect(bandeau).toContainText("empreinte SHA-256 identique")
+
+    // Ouvrir la fiche ne change rien : le bandeau est aussi dans son entête.
+    await ligne.getByTestId("code-fiche").click()
+    await expect(page.getByTestId("titre-fiche")).toHaveText(CODE_DOUBLON)
+    await expect(page.getByTestId("bandeau-doublon").first()).toContainText("Doublon exact de")
+  })
+
+  test("aucune commande de fusion n'est proposée à l'opérateur", async ({ page }) => {
+    await signIn(page)
+    await page.goto("/validation")
+    await expect(page.getByTestId("file-validation")).toBeVisible()
+
+    // On attend d'abord que le bandeau soit là : sans cette attente, l'assertion
+    // négative passait parfois AVANT que l'aide au doublon n'arrive — un succès
+    // de timing, pas une preuve (mesuré en CI : test « flaky »).
+    const bandeau = page.getByTestId("bandeau-doublon").first()
+    await expect(bandeau).toBeVisible({ timeout: 20000 })
+    await expect(bandeau).toContainText("aucune fusion automatique")
+    await expect(bandeau.locator("button, a")).toHaveCount(0)
+
+    // Assertion NÉGATIVE, en deux formes complémentaires :
+    //  * aucun contrôle dont le NOM ACCESSIBLE commence par « Fusionner… » — la
+    //    recherche est ancrée car les lignes de la file sont des boutons dont le
+    //    nom accessible contient TOUT le texte de la ligne, bandeau inclus (un
+    //    motif non ancré matchait ces lignes : faux positif observé en CI) ;
+    //  * le mot « Fusionner » n'apparaît nulle part dans le texte rendu.
+    await expect(page.getByRole("button", { name: /^\s*fusionner/i })).toHaveCount(0)
+    await expect(page.getByRole("link", { name: /^\s*fusionner/i })).toHaveCount(0)
+    await expect(page.getByText(/fusionner/i)).toHaveCount(0)
+  })
+})

@@ -1,13 +1,12 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { backendBase, authHeaders } from "@/lib/backend"
+import { backendBase, authHeaders, requireAuthValide } from "@/lib/backend"
 import { searchSample } from "@/lib/sample-data"
 import type { SearchResponse } from "@/lib/types"
-import { requireAuth } from "@/lib/auth"
 
 export const dynamic = "force-dynamic"
 
 export async function GET(req: NextRequest) {
-  const denied = await requireAuth()
+  const denied = await requireAuthValide()
   if (denied) return denied
   const { searchParams } = new URL(req.url)
   const q = (searchParams.get("q") ?? "").trim()
