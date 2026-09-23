@@ -1,21 +1,27 @@
 # Rapport de vérité terrain — Lot L « doublons avant validation + comptes nominatifs » (23/09/2026)
 
 - **Dépôt** : `Ilyes-Neguir/SEAMTECH-search`
-- **Branche** : `arena/01a0cda8-seamtech-search` — **pull request #26** (brouillon) vers `main`, **jamais fusionnée**
+- **Branche** : `arena/01a0cda8-seamtech-search` — **pull request #26** vers `main`, **prête à relire** (`draft=false`, passée en revue le 23/09), **jamais fusionnée**
 - **Base** : `82231fa7ddf80f0d637a89a5deaac63587af2856` (`origin/main` au 23/09)
-- **HEAD** : `d8b2b7f4c3bf92c48ebd74e4e6c40a4bf3f330bf`
+- **HEAD de code** : `d8b2b7f4c3bf92c48ebd74e4e6c40a4bf3f330bf` (dernier commit qui touche au code du lot)
+- **HEAD de branche** : `470e0d7` (première version de ce rapport) puis le **commit de micro-correctifs d'audit** qui contient la version que vous lisez — un fichier ne peut pas citer son propre SHA : celui-là est `git rev-parse HEAD`, affiché en tête de la PR #26
 - **Règle zéro de ce rapport** : chaque affirmation est accompagnée de la COMMANDE et de la SORTIE BRUTE copiée telle quelle. Aucun chiffre recopié d'un message antérieur, aucun arrondi présenté comme une mesure. Les quatre sabotages sont montrés **ROUGE ET VERT**.
 
 ```console
 $ git fetch origin && git log -1 --format='%H %s' origin/main
 82231fa7ddf80f0d637a89a5deaac63587af2856 Merge pull request #25 from Ilyes-Neguir/arena/01a0ca57-seamtech-search
 
-$ git log -1 --format='%H %s' HEAD
+$ git log -1 --format='%H %s' HEAD          # HEAD de code : dernier commit qui touche au code
 d8b2b7f4c3bf92c48ebd74e4e6c40a4bf3f330bf fix(e2e L.2): session morte = 401 (cause du rouge CI) + assertions de doublon non ambiguës
 
 $ git status --short | wc -l
 0
 ```
+
+Après ce rapport, deux commits **de documentation seulement** se sont ajoutés sur la même branche :
+`470e0d7` (première version de ce fichier) puis le commit de micro-correctifs d'audit du 23/09 (le présent,
+qui corrige les trois énoncés non reproductibles listés en §3.2 et §5.3). Aucun fichier de code n'est touché :
+le HEAD de code reste `d8b2b7f`, et les mesures de ce rapport sont celles de ce SHA.
 
 ---
 
@@ -342,7 +348,26 @@ La suite locale ne bouge pas (532) : les tests du lot L sont marqués `postgres`
 | Qualité, 1 000 fiches | CI, `perf-latence` | `p50 = 2.1 ms, p95 = 2.2 ms, max = 2.7 ms` |
 | Restauration de sauvegarde (50 000 fiches) | CI, job `sauvegarde` | `restauration de 50000 fiches en 1.27 s (dump 575857 octets)` |
 | Longueur du schéma métier | `python3 -c … print(len(T), 'session_ui' in T)` | **`32 True`** — `TABLES_METIER` **contient 32 tables** |
-| Sections du CHANGELOG | `grep -E '^(#\|##) ' CHANGELOG.md \| grep -vc '^# Changelog$'` | **28** |
+| Sections du CHANGELOG | `grep -c '^## ' CHANGELOG.md` | **27 sections `## `** (porte de la mission) — **28** en comptant le titre de niveau 1 historique `# Unreleased — Micro-correctifs de la revue du 21/09` |
+
+```console
+$ grep -c '^## ' CHANGELOG.md
+27
+$ grep -E '^(#|##) ' CHANGELOG.md | grep -vc '^# Changelog$'
+28
+$ grep -n '^# ' CHANGELOG.md
+532:# Unreleased — Micro-correctifs de la revue du 21/09 (`fix/micro-correctifs-revue-2109`)
+665:# Changelog
+```
+(la ligne 665 est le titre du document, exclue par le filtre `grep -vc '^# Changelog$'` ; la ligne 532 est
+la seule section de niveau 1 comptée en plus des 27 sections `## `.)
+
+Les deux nombres sont vrais, mais pas pour la même commande : **27** est le compte de sections du CHANGELOG
+(porte de la mission, `grep -c '^## '`), **28** celui du second compte, qui inclut le titre de niveau 1
+historique. Écrire « 28 sections » sous la commande `grep -c '^## '` était donc un chiffre NON reproductible
+par la commande citée — relevé par l'audit indépendant du 23/09 et corrigé ici. Le compte de sections est
+inchangé depuis `f5e1016` : la section « Lot L » a été enrichie sur place (une section par lot) au lieu d'en
+créer une seconde.
 
 ### 3.3 Qualité statique et sécurité
 
@@ -400,7 +425,10 @@ $ pytest -q -m postgres tests/test_dedup.py -k "reseau or RG14 or network" tests
 
 ## 5. SHA, commits et statut des 8 jobs
 
-### 5.1 Commits (du plus ancien au plus récent)
+### 5.1 Commits de code (du plus ancien au plus récent)
+
+Sortie brute obtenue sur `d8b2b7f` ; rejouée sur le HEAD de branche, la même commande liste en plus les deux
+commits de documentation (`470e0d7` puis le présent).
 
 ```console
 $ git log --oneline 82231fa7ddf80f0d637a89a5deaac63587af2856..HEAD
@@ -460,7 +488,7 @@ JOBS
 | `docker` | images construites et démarrage en conteneur |
 | `sauvegarde` | `sauvegarde-restauration-50k :: restauration de 50000 fiches en 1.27 s` — aller-retour hors-site éprouvé |
 
-### 5.3 Portes de sortie — état sur `d8b2b7f`
+### 5.3 Portes de sortie — état sur le HEAD de code `d8b2b7f`
 
 | Porte | Exigence | Mesure | Verdict |
 |---|---|---|---|
@@ -470,11 +498,13 @@ JOBS
 | Tableau de bord | 9 clés exactes | `set(tableau.keys()) == CLES_TABLEAU_DE_BORD` (15 tests verts) | ✅ |
 | Perf | 0 alerte `perf-derive` | `5 passed`, `grep -c perf-derive` → `0` | ✅ |
 | Audit projet | 12/12 | `BILAN : 12/12 contrôles verts` | ✅ |
-| CHANGELOG | 28 sections | `28` | ✅ |
+| CHANGELOG | 27 sections `## ` (porte) | `grep -c '^## ' CHANGELOG.md` → `27` (**28** avec le titre `#` historique) | ✅ |
 | Statique / sécurité | ruff, pip-audit, pnpm audit, tsc, build | `All checks passed!`, `No known vulnerabilities found` (×2), `0 erreur`, build ✓ | ✅ |
 | CI | 8/8 jobs verts | runs `35851520903` (push) et `35851525135` (pull_request) : `completed success` | ✅ |
 | Gardes de sabotage | 4 × ROUGE→VERT, en CI, preuves en annotations | 10 annotations `garde-fou-*` | ✅ |
 | RG13 / RG14 | archive intacte / aucun appel réseau | `2 passed` + `2 passed` | ✅ |
 | Sauvegarde | job vert, chiffre publié | restauration 50 000 fiches en 1.27 s | ✅ |
 
-**Statut final : lot L livré sur le HEAD poussé `d8b2b7f`, PR #26 prête à relire — jamais fusionnée par cette session.**
+**Statut final : lot L livré — HEAD de code `d8b2b7f`, HEAD de branche = le commit de micro-correctifs d'audit
+qui contient ce rapport ; PR #26 ouverte et prête à relire, jamais fusionnée par cette session (la fusion
+appartient à l'utilisateur).**
