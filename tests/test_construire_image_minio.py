@@ -82,8 +82,14 @@ def test_sources_officieles_clonnees_aux_tags() -> None:
 
 
 def test_script_en_mode_strict() -> None:
-    """Le script s'arrête au premier échec (pas de build « à moitié » silencieux)."""
+    """Le script s'arrête au premier échec (pas de build « à moitié » silencieux).
+
+    Et sans pipeline `| grep -q` : sous `pipefail`, grep -q sortant au premier
+    match tuait `docker run` en SIGPIPE (exit 141, course aléatoire — échec CI
+    du run 36054987181 sur sauvegarde alors qu'integration passait).
+    """
     assert "set -euo pipefail" in _script()
+    assert "| grep" not in _script()
 
 
 def test_ci_construit_l_image_avant_de_la_consommer() -> None:

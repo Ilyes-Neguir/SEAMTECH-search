@@ -60,8 +60,18 @@ CMD ["minio"]
 DOCKERFILE
 
 # Fumigène : les binaires de l'image répondent et l'alias « local » (requis par
-# le healthcheck compose `mc ready local`) est bien présent.
+# le healthcheck compose `mc ready local`) est bien présent. Aucun pipeline vers
+# `grep -q` ici : sous `set -o pipefail`, grep -q sortant au premier match
+# envoyait SIGPIPE à `docker run` (exit 141, course aléatoire constatée en CI).
 docker run --rm --entrypoint /usr/bin/minio "$IMAGE" --help >/dev/null
-docker run --rm --entrypoint /usr/bin/mc "$IMAGE" alias list 2>&1 | grep -q "local"
+alias_list="$(docker run --rm --entrypoint /usr/bin/mc "$IMAGE" alias list 2>&1)"
+echo "$alias_list"
+case "$alias_list" in
+  *local*) : ;;
+  *)
+    echo "alias local absent de l'image reconstruite — le healthcheck compose échouerait" >&2
+    exit 1
+    ;;
+esac
 
 echo "Image ${IMAGE} prête (minio ${MINIO_TAG} + mc ${MC_TAG}, sources officielles archivées)."
