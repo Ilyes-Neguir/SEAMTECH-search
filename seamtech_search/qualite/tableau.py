@@ -426,6 +426,111 @@ def _comptes_sans_action(cursor: Any, par_utilisateur: list[dict[str, Any]]) -> 
     return sum(1 for (identifiant,) in cursor.fetchall() if str(identifiant) not in avec_action)
 
 
+def ocr_etage3(cursor: Any) -> dict[str, Any]:  # noqa: ANN401 - curseur psycopg2 réel
+    """OCR étage 3 — Lot M, indicateur 10 du tableau de bord.
+
+    Sources : table de staging ocr_etage3 (une ligne = une page).
+
+    Compteurs (tous en SQL GROUP BY / FILTER, aucune agrégation Python) :
+    - pages_ocerisees : COUNT où page_ocerisee = true
+    - fichiers_scannes : COUNT DISTINCT empreinte_sha256 où page_ocerisee = true
+    - pages_ignorees_texte_natif : COUNT où motif = 'texte natif présent'
+    - echecs : COUNT où page_ocerisee = false ET motif != 'texte natif présent'
+    - taille_texte_produit : SUM LENGTH(texte_ocr)
+    - duree_totale_s : SUM duree_s
+    - debit_moyen_pages_par_minute : pages_ocerisees / (duree_totale_s/60)
+    - confiance_moyenne : AVG(confiance)
+
+    Unité : compte + ratio + secondes
+    Période : instantané (tout historique de staging)
+
+    Règle d'or rappelée : OCR seulement là où c'est utile — le texte des
+    fiches est déjà dans le PDF. Cet indicateur mesure l'étage 3, jamais
+    l'étage 2.
+    """
+    # Vérifie existence table (migration 017 peut ne pas être appliquée sur base vide)
+    try:
+        cursor.execute("SELECT COUNT(*) FROM ocr_etage3")
+        total_pages = int(cursor.fetchone()[0] or 0)
+    except Exception:
+        # Table absente (base non migrée) : retourne zéros, jamais d'exception
+        return {
+            "definition": (
+                "OCR étage 3 : pages océrisées (scans), fichiers scannés détectés, "
+                "pages ignorées pour cause de texte natif, débit moyen, échecs. "
+                "Source : table de staging ocr_etage3 (une ligne = une page). "
+                "Rappel plan v3.0 : OCR seulement là où c'est utile."
+            ),
+            "unite": "compte + secondes",
+            "periode": "instantané",
+            "total_pages": 0,
+            "pages_ocerisees": 0,
+            "fichiers_scannes": 0,
+            "pages_ignorees_texte_natif": 0,
+            "echecs": 0,
+            "taille_texte_produit": 0,
+            "duree_totale_s": 0.0,
+            "debit_moyen_pages_par_minute": 0.0,
+            "confiance_moyenne": None,
+        }
+
+    cursor.execute(
+        """
+        SELECT
+            COUNT(*) AS total_pages,
+            COUNT(*) FILTER (WHERE page_ocerisee) AS pages_ocerisees,
+            COUNT(DISTINCT empreinte_sha256) FILTER (WHERE page_ocerisee) AS fichiers_scannes,
+            COUNT(*) FILTER (WHERE NOT page_ocerisee AND motif = 'texte natif présent') AS pages_ignorees,
+            COUNT(*) FILTER (WHERE NOT page_ocerisee AND motif <> 'texte natif présent') AS echecs,
+            COALESCE(SUM(LENGTH(texte_ocr)), 0) AS taille_texte,
+            COALESCE(SUM(duree_s), 0) AS duree_totale,
+            AVG(confiance) AS confiance_moyenne
+        FROM ocr_etage3
+        """
+    )
+    (
+        total_pages,
+        pages_ocerisees,
+        fichiers_scannes,
+        pages_ignorees,
+        echecs,
+        taille_texte,
+        duree_totale,
+        confiance_moyenne,
+    ) = cursor.fetchone()
+
+    total_pages = int(total_pages or 0)
+    pages_ocerisees = int(pages_ocerisees or 0)
+    fichiers_scannes = int(fichiers_scannes or 0)
+    pages_ignorees = int(pages_ignorees or 0)
+    echecs = int(echecs or 0)
+    taille_texte = int(taille_texte or 0)
+    duree_totale = float(duree_totale or 0.0)
+    confiance_moyenne = float(confiance_moyenne) if confiance_moyenne is not None else None
+
+    debit = (pages_ocerisees / (duree_totale / 60)) if duree_totale > 0 and pages_ocerisees > 0 else 0.0
+
+    return {
+        "definition": (
+            "OCR étage 3 : pages océrisées (scans d'archive ancienne), fichiers scannés détectés, "
+            "pages ignorées pour cause de texte natif (étage 2), débit moyen, échecs. "
+            "Source : table de staging ocr_etage3 (une ligne = une page). "
+            "Rappel plan v3.0 : OCR seulement là où c'est utile — le texte des fiches est déjà dans le PDF."
+        ),
+        "unite": "compte + secondes",
+        "periode": "instantané",
+        "total_pages": total_pages,
+        "pages_ocerisees": pages_ocerisees,
+        "fichiers_scannes": fichiers_scannes,
+        "pages_ignorees_texte_natif": pages_ignorees,
+        "echecs": echecs,
+        "taille_texte_produit": taille_texte,
+        "duree_totale_s": round(duree_totale, 2),
+        "debit_moyen_pages_par_minute": round(debit, 2),
+        "confiance_moyenne": round(confiance_moyenne, 2) if confiance_moyenne is not None else None,
+    }
+
+
 def tableau_de_bord(index: Any) -> dict[str, Any]:
     """Assemble le tableau de bord complet — toutes requêtes en GROUP BY.
 
@@ -443,6 +548,7 @@ def tableau_de_bord(index: Any) -> dict[str, Any]:
             lots = lots_stats(cursor)
             doublons = doublons_detectes(cursor)
             par_utilisateur = taux_par_utilisateur(cursor)
+            ocr = ocr_etage3(cursor)
 
     return {
         "taux_extraction_auto": taux_auto,
@@ -454,4 +560,5 @@ def tableau_de_bord(index: Any) -> dict[str, Any]:
         "lots": lots,
         "doublons_detectes": doublons,
         "taux_par_utilisateur": par_utilisateur,
+        "ocr_etage3": ocr,
     }

@@ -487,7 +487,13 @@ jobs:
       - name: Coverage gate (overall + per-module)
         # Real gate: reads coverage.json, compares every Phase 1 module against
         # its threshold, exits 1 on any breach. Enforced by tests/test_coverage_gate.py.
-        run: python scripts/coverage_gate.py coverage.json
+        # Publie le chiffre en annotation lisible par API (Q.1.c), comme les autres portes.
+        run: |
+          python scripts/coverage_gate.py coverage.json
+          overall=$(python3 -c "import json; d=json.load(open('coverage.json')); print(f\"{d['totals']['percent_covered']:.2f}\")")
+          floor=$(python3 -c "import importlib.util, pathlib; spec=importlib.util.spec_from_file_location('coverage_gate','scripts/coverage_gate.py'); mod=importlib.util.module_from_spec(spec); spec.loader.exec_module(mod); print(mod.OVERALL_MIN)")
+          echo "::notice title=coverage::overall=${overall}% floor=${floor}% (commande: pytest -k 'not s3' -m 'not perf' --cov=seamtech_search --cov-report=json:coverage.json)"
+          python3 -c "import json; d=json.load(open('coverage.json')); files=d.get('files',{}); print(f\"::notice title=coverage-details::inventaire={files.get('seamtech_search/ocr/inventaire.py',{}).get('summary',{}).get('percent_covered',0):.1f}% etat={files.get('seamtech_search/ocr/etat.py',{}).get('summary',{}).get('percent_covered',0):.1f}% pipeline={files.get('seamtech_search/ocr/pipeline.py',{}).get('summary',{}).get('percent_covered',0):.1f}% cli={files.get('seamtech_search/ocr/cli.py',{}).get('summary',{}).get('percent_covered',0):.1f}% api={files.get('seamtech_search/api.py',{}).get('summary',{}).get('percent_covered',0):.1f}% indexer={files.get('seamtech_search/indexer.py',{}).get('summary',{}).get('percent_covered',0):.1f}%\")"
       - name: Pip audit (security)
         # No `|| echo`: a known vulnerability in a pinned dependency fails CI.
         # Audit the DECLARED dependencies (revue 21/09, Fait 2): `pip-audit`
@@ -1246,3 +1252,175 @@ jobs:
                       f"vérifié après envoi : {ligne['verifiee_apres_envoi']}"
                   )
           PY
+
+  ocr:
+    # Lot M — 9e job (les 8 existants restent SANS OCR) : pipeline OCR par étages
+    # sur échantillons commités, avec tesseract local, publication compte rendu
+    # et qualité en annotations, plus garde ROUGE→VERT sabotage forcer True.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+      - name: Install OCR binaries (tesseract + fra + poppler)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr tesseract-ocr-fra poppler-utils
+          tesseract --version
+          tesseract --list-langs
+          pdftoppm -v 2>&1 | head -5 || true
+      - name: Run OCR suite on committed samples
+        run: |
+          set -uo pipefail
+          set +e
+          pytest -k "ocr" -v 2>&1 | tee /tmp/ocr.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          # Publie qualité et compte rendu même en cas d'échec partiel
+          python - << 'PY'
+          import json
+          import re
+          import sys
+          from pathlib import Path
+
+          # 1. Qualité : taux mots retrouvés sur échantillons commités
+          try:
+              from seamtech_search.ocr.pipeline import ocriser_fichier
+
+              def taux_mots(reference: str, ocr_texte: str) -> float:
+                  def tokenize(s: str):
+                      return [w.lower() for w in re.split(r"[^A-Za-z0-9À-ÿ\-]+", s) if w.strip()]
+                  ref_mots = tokenize(reference)
+                  ocr_set = set(tokenize(ocr_texte))
+                  if not ref_mots:
+                      return 0.0
+                  presents = sum(1 for mot in ref_mots if mot in ocr_set or mot in ocr_texte.lower())
+                  return presents / len(ref_mots)
+
+              propre_pdf = Path("tests/fixtures/ocr/ocr_propre.pdf")
+              degrade_pdf = Path("tests/fixtures/ocr/ocr_degrade.pdf")
+              ref_propre = Path("tests/fixtures/ocr/reference_propre.txt")
+              ref_degrade = Path("tests/fixtures/ocr/reference_degrade.txt")
+
+              if propre_pdf.exists() and ref_propre.exists():
+                  res = ocriser_fichier(propre_pdf, langue="fra")
+                  ocr_txt = "\n".join(p["texte_ocr"] for p in res["pages"])
+                  ref_txt = ref_propre.read_text(encoding="utf-8")
+                  taux = taux_mots(ref_txt, ocr_txt)
+                  print(f"::notice title=ocr-qualite::taux mots retrouvés propre={taux:.3f} pages={res['nb_pages']} océrisées={res['nb_pages_ocerisees']} duree_s={res['duree_s']:.2f} moteur={res['moteur']} version={res['version_moteur']}")
+                  # Seuil cible >=0,90
+                  if taux < 0.90:
+                      print(f"::warning title=ocr-qualite-faible::taux propre {taux:.3f} < 0.90")
+              if degrade_pdf.exists() and ref_degrade.exists():
+                  res_d = ocriser_fichier(degrade_pdf, langue="fra")
+                  ocr_txt_d = "\n".join(p["texte_ocr"] for p in res_d["pages"])
+                  ref_txt_d = ref_degrade.read_text(encoding="utf-8")
+                  taux_d = taux_mots(ref_txt_d, ocr_txt_d)
+                  print(f"::notice title=ocr-qualite-degrade::taux mots retrouvés degrade={taux_d:.3f} pages={res_d['nb_pages']} océrisées={res_d['nb_pages_ocerisees']} duree_s={res_d['duree_s']:.2f}")
+                  if taux_d < 0.60:
+                      print(f"::notice title=ocr-qualite-degrade-faible::degrade {taux_d:.3f} < 0.60 signalé dans limites (qualité échantillons seulement)")
+          except Exception as exc:
+              print(f"::warning title=ocr-qualite-erreur::calcul qualité a échoué: {exc}")
+
+          # 2. Compte rendu via CLI nuit sur fixtures
+          try:
+              import subprocess
+              import tempfile
+              travail = Path("/tmp/ocr_travail_ci")
+              travail.mkdir(parents=True, exist_ok=True)
+              # Nettoie anciens rapports
+              rapports_dir = travail / "rapports"
+              if rapports_dir.exists():
+                  import shutil
+                  shutil.rmtree(rapports_dir)
+              cmd = [
+                  sys.executable, "-m", "seamtech_search.ocr.cli",
+                  "--travail-dir", str(travail),
+                  "nuit",
+                  "--dossier", "tests/fixtures/ocr",
+                  "--limite", "5",
+                  "--budget-minutes", "5",
+                  "--json"
+              ]
+              result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+              print(f"CLI nuit rc={result.returncode}")
+              print(result.stdout[-2000:])
+              print(result.stderr[-2000:])
+              # Lit dernier rapport JSON
+              if rapports_dir.exists():
+                  jsons = sorted(rapports_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+                  if jsons:
+                      rapport = json.loads(jsons[0].read_text(encoding="utf-8"))
+                      # Publication en notice (canal lisible)
+                      print(f"::notice title=ocr-compte-rendu::fichiers={rapport.get('fichiers_examines')} pages_ocerisees={rapport.get('pages_ocerisees')} ignorees_texte_natif={rapport.get('pages_ignorees_texte_natif')} echecs={rapport.get('echecs')} duree_s={rapport.get('duree_totale_s')} debit={rapport.get('debit_pages_par_minute')} taille_texte={rapport.get('taille_texte_produit')} moteur={rapport.get('moteur')} version={rapport.get('version_moteur')}")
+                      # Débit mesuré
+                      debit = rapport.get('debit_pages_par_minute')
+                      if debit:
+                          print(f"::notice title=ocr-debit::debit mesure {debit} pages/min")
+                  else:
+                      print("::warning title=ocr-compte-rendu-absent::aucun rapport JSON trouvé")
+              else:
+                  print("::warning title=ocr-compte-rendu-absent::dossier rapports absent")
+          except Exception as exc:
+              print(f"::warning title=ocr-compte-rendu-erreur::compte rendu a échoué: {exc}")
+          PY
+          if [ "$rc" -ne 0 ]; then
+            echo "::error title=ocr-suite-failed::$(grep -E '^(FAILED|ERROR)' /tmp/ocr.log | head -20 | tr -d '\000-\010\013\014\016-\\037' | tr '\n' ';' | head -c 1800)"
+            echo "::error title=ocr-suite-tail::$(tail -40 /tmp/ocr.log | tr -d '\000-\010\013\014\016-\\037' | tr '\n' ';' | head -c 1800)"
+            exit "$rc"
+          fi
+      - name: Garde-fou OCR étage 3 — ROUGE puis VERT
+        run: |
+          set -uo pipefail
+          FICHIER=seamtech_search/ocr/pipeline.py
+          TEST=tests/test_ocr_etages.py::test_pdf_texte_natif_zero_page_ocerisee
+          echo "=== Sauvegarde originale ==="
+          cp "$FICHIER" /tmp/pipeline.py.bak
+          echo "=== Casse volontaire : forcer doit_oceriser_page à True (OCR partout) ==="
+          python - "$FICHIER" << 'PYEOF'
+          import pathlib
+          import sys
+          chemin = pathlib.Path(sys.argv[1])
+          texte = chemin.read_text(encoding="utf-8")
+          if "return len(texte_natif.strip()) < seuil" not in texte:
+              raise SystemExit("motif doit_oceriser_page introuvable — le garde-fou doit être mis à jour")
+          texte = texte.replace("return len(texte_natif.strip()) < seuil", "return True  # SABOTAGE OCR partout")
+          chemin.write_text(texte, encoding="utf-8")
+          print("sabotage appliqué : doit_oceriser_page retourne toujours True")
+          PYEOF
+          grep -n "SABOTAGE" "$FICHIER" || true
+          set +e
+          pytest -q "$TEST" 2>&1 | tee /tmp/ocr_rouge.log
+          rc_rouge=${PIPESTATUS[0]}
+          set -e
+          echo "rc_rouge=$rc_rouge"
+          # Vérifie que le rouge vient bien d'une ASSERTION, pas d'erreur SQL/import
+          if grep -qE "psycopg2|sqlalchemy|ModuleNotFoundError|SyntaxError" /tmp/ocr_rouge.log; then
+            echo "::error title=garde-fou-ocr-rouge-erreur-sql::Le rouge vient d'une ERREUR technique, pas de l'assertion — sabotage non probant"
+            cat /tmp/ocr_rouge.log
+            exit 1
+          fi
+          echo "=== Restauration ==="
+          mv /tmp/pipeline.py.bak "$FICHIER"
+          set +e
+          pytest -q "$TEST" 2>&1 | tee /tmp/ocr_vert.log
+          rc_vert=${PIPESTATUS[0]}
+          set -e
+          echo "rc_vert=$rc_vert"
+          echo "::error title=garde-fou-ocr-rouge::$(grep -E 'FAILED|AssertionError|assert|ne doit PAS' /tmp/ocr_rouge.log | head -20 | tr -d '\000-\010\013\014\016-\\037' | tr '\n' ';' | head -c 1800)"
+          echo "::notice title=garde-fou-ocr-vert::$(tail -20 /tmp/ocr_vert.log | tr -d '\000-\010\013\014\016-\\037' | tr '\n' ';' | head -c 1800)"
+          echo "::notice title=garde-fou-ocr-rouge-tail::$(tail -40 /tmp/ocr_rouge.log | tr -d '\000-\010\013\014\016-\\037' | tr '\n' ';' | head -c 1800)"
+          if [ "$rc_rouge" -eq 0 ]; then
+            echo "::error title=garde-fou-ocr-echec::Le test aurait dû ROUGIR avec doit_oceriser_page forcé à True (OCR partout), mais il est resté VERT"
+            exit 1
+          fi
+          if [ "$rc_vert" -ne 0 ]; then
+            echo "::error title=garde-fou-ocr-echec::Le test aurait dû REVERDIR après restauration, mais il est resté ROUGE"
+            exit 1
+          fi
+          echo "Garde-fou OCR étage 3 : ROUGE puis VERT prouvé"
