@@ -329,3 +329,20 @@ Postérieurement au §1, la validation CI a été préparée (branche poussée, 
   `git diff --check` propre, build front `✓ Compiled successfully`.
 - La couverture AVEC PostgreSQL sera jugée par le job CI `backend` (seuils
   intacts) ; le §1.2 reste valable pour l'environnement local sans PostgreSQL.
+- **7.1 — Rupture de distribution MinIO (2026-09-24, pendant l'attente
+  CI)** : les jobs `integration` et `sauvegarde` ont d'abord échoué (pull
+  quay.io → `minio Error unauthorized: access to the requested resource is
+  not authorized`, étape `docker run` en exit 125). Cause : le dépôt
+  `quay.io/minio/minio` a été **supprimé dans la journée** —
+  `https://quay.io/repository/minio/minio` → « Repository not found »
+  (main vert à 12:26 UTC sur les mêmes pulls, échec à 13:55) ; `dl.min.io`
+  répond « 410 Gone — … projects are archived and no longer maintained » ;
+  `docker.io/minio/minio` était retiré depuis le 2026-09-11 ;
+  `github.com/minio/minio` est archivé (lecture seule) depuis le 2026-04-25.
+  Correctif : image reconstruite depuis les sources officielles du **même
+  tag** (`scripts/construire_image_minio.sh` : minio
+  `RELEASE.2025-09-07T16-13-09Z` + mc `RELEASE.2025-08-13T08-35-41Z`),
+  consigne des auteurs respectée (« clone the source and build the latest
+  container »). Preuves = pages ci-dessus, récupérées le 2026-09-24.
+  Lot G réel : toujours bloqué (archive/PDF de production non reçus) —
+  indépendant de cette rupture d'infrastructure.
