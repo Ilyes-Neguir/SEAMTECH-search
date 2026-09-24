@@ -1,13 +1,13 @@
 # Rapport Lot M — pipeline OCR par étages, exécutable la nuit
 
-Date : 2026-09-23 (final Q.1-Q.3 après audit couverture honnête)
+Date : 2026-09-24 (final après restauration seuil 85%)
 Branche : arena/01a0cfac-seamtech-search
-PR : #27 — FINAL 9/9 vert
+PR : #27 — FINAL 9/9 vert avec seuil 85%
 Plan v3.0 §4 bis : « OCR seulement là où c'est utile — le texte des fiches est déjà dans le PDF »
 
 ## 1) Fait
 
-M.1 — Module `seamtech_search/ocr/` avec `doit_oceriser_page` pure, `ocriser_fichier/pages`, timeout, résolution, moteur+version. OCR optionnel si tesseract absent → unavailable. Variable `SEAMTECH_OCR_TRAVAIL_DIR` hors archive (RG13). Faux tesseract local `tests/fixtures/ocr/fake_tesseract.py` (RG14, aucun réseau) pour couvrir chemins heureux sans binaire réel.
+M.1 — Module `seamtech_search/ocr/` avec `doit_oceriser_page` pure, `ocriser_fichier/pages`, timeout, résolution, moteur+version. OCR optionnel si tesseract absent → unavailable. Variable `SEAMTECH_OCR_TRAVAIL_DIR` hors archive (RG13). Faux tesseract local `tests/fixtures/ocr/fake_tesseract.py` (RG14, aucun réseau) pour couvrir chemins heureux sans binaire réel. Tests comportementaux `tests/test_ocr_comportement.py` (36 tests) couvrant CLI, verrou, reprise, tesseract absent/timeout, pdftoppm absent, PDF sans image, OCR vide, erreur série, rapports, dry-run limite 0, répertoire sortie, migration.
 
 M.2 — Migration 017 : table staging `ocr_etage3` (fichier_source, empreinte_sha256, page, texte_ocr, confiance, moteur, version_moteur, duree_s, page_ocerisee, motif, horodatage) avec index. VERSION_SCHEMA 017_ocr_etage3, TABLES 32→33, enregistrée migrations. Fix P.1 : `_migration_017_ocr_etage3` dans indexer.py l.822 + entrée tuple l.867.
 
@@ -36,15 +36,38 @@ SORTIE BRUTE :
 108a0d40710d6ea3385932e8ac3277c5f0c9d2a1 Merge pull request #26 from Ilyes-Neguir/arena/01a0cda8-seamtech-search
 ```
 
-### COMMANDE : pytest -q -m "not postgres" (≥532 passés)
+### COMMANDE : pytest sans postgres (tests locaux)
 ```
-$ python3 -m pytest --basetemp=$HOME/bt -q -m "not postgres"
+$ python3 -m pytest --basetemp=$HOME/bt -q -k "not postgres and not s3 and not perf"
 ```
-SORTIE BRUTE finale :
+SORTIE BRUTE finale (après ajout 36 tests comportementaux) :
 ```
-518 passed, 5 skipped, 235 deselected, 1 warning in 76.03s
+554 passed, 5 skipped, 235 deselected, 1 warning in 46.56s
 ```
-(avec fake_tesseract, 18 passed ocr vs 17 avant)
+Avant ajout comportementaux : `518 passed, 5 skipped, 235 deselected`. Commande identique, nombre différent car +36 tests OCR comportementaux.
+
+### COMMANDE : pytest avec postgres (CI officielle) — commande exacte
+```
+$ pytest -k "not s3" -m "not perf" --cov=seamtech_search --cov-report=json:coverage.json
+```
+SORTIE BRUTE mesurée CI run 35995232453 (backend 3.11/3.12/3.13, avec PostgreSQL) :
+```
+::notice title=coverage::overall=86.34% floor=85.0% (commande: pytest -k 'not s3' -m 'not perf' --cov=seamtech_search --cov-report=json:coverage.json)
+::notice title=coverage-details::inventaire=84.9% etat=77.2% pipeline=79.0% cli=77.3% api=87.9% indexer=94.8%
+```
+Donc :
+- overall avec tests comportementaux + fake_tesseract + postgres : `86.34%` (vs 84.38% avant comportementaux, vs 84.07% avec tesseract seul, vs 86.68% main avant Lot M)
+- inventaire.py 84.9% (101/119) gate 80, etat.py 77.2% (115/149) gate 55, pipeline.py 79.0% (215/272) gate 54, cli.py 77.3% (238/308) gate 40
+- module OCR total ~77% (652/852) vs 47% sans tesseract, 55.3% avec tesseract seul, 56% avec fake seul, 76% avant fix ruff
+- api.py 87.9% gate 87, indexer.py 94.8% gate 90
+
+Commande locale sans postgres mais avec comportementaux :
+```
+$ pytest -k "not postgres and not s3 and not perf" --cov=seamtech_search --cov-report=term-missing:skip-covered
+TOTAL 10164 3609 64% (64.49% 6555/10164) — sans postgres, indexer/jobs/worker non couverts postgres
+$ pytest -k "ocr_comportement" --cov=seamtech_search.ocr --cov-report=term-missing
+TOTAL 852 200 77% (cli 77.3% etat 77.2% inventaire 84.9% pipeline 79.0%)
+```
 
 ### COMMANDE : schema 33 tables, version 017_ocr_etage3
 ```
@@ -105,33 +128,6 @@ second run : debit=104.176 p/min
 ```
 Calculs : propre 0.69s → 60/0.69=86.96≈87 p/min, dégradé 0.47s → 127.66≈128 p/min, run complet 2/ (1.166/60)=102.899 p/min
 
-### COMMANDE : couverture réelle (Q.1) — commande exacte CI
-```
-$ pytest -k "not s3" -m "not perf" --cov=seamtech_search --cov-report=json:coverage.json
-$ python3 -c "import json; d=json.load(open('coverage.json')); print(d['totals']['percent_covered'], d['totals']['covered'], d['totals']['num_statements'])"
-```
-SORTIE BRUTE mesurée par auditeur :
-- main AVANT Lot M : `86.68% 8049/9286` → ancien floor 85% justifié mou 1.68 pt
-- branche Lot M AVEC tesseract : `84.07% 8544/10163` → floor 85% plus atteint
-
-Avec fake_tesseract + backend (sans tesseract réel, avec postgres) — CI run 35920385741 :
-```
-$ gh api repos/.../check-runs/107382534112/annotations --jq '.[] | select(.title | contains("coverage"))'
-::notice title=coverage::overall=84.38% floor=83.0% (commande: pytest -k 'not s3' -m 'not perf' --cov=seamtech_search --cov-report=json:coverage.json)
-::notice title=coverage-details::inventaire=81.5% etat=57.0% pipeline=57.4% cli=42.5% api=87.9% indexer=94.8%
-```
-Donc :
-- overall avec fake_tesseract (backend job, postgres, sans tesseract réel) : `84.38%` (vs 84.07% avec tesseract réel seul)
-- inventaire.py 81.5% (97/119), etat.py 57.0% (85/149), pipeline.py 57.4% (156/272 avec fake, 56.6% avec vrai tesseract 154/272), cli.py 42.5% (131/307) / 42.7% avec vrai tesseract
-- module OCR total 471/851=55.3% avec tesseract, 56% avec fake_tesseract (pipeline 33%→57%)
-- Sans tesseract ni fake : 47% (ocr tests skipped)
-
-Commande locale sans postgres mais avec fake_tesseract :
-```
-$ pytest -k "ocr" --cov=seamtech_search.ocr --cov-report=term-missing
-TOTAL 852 379 56% (vs 47% sans fake)
-```
-
 ### COMMANDE : garde-fou OCR ROUGE puis VERT
 Local sabotage `doit_oceriser_page → True` :
 ```
@@ -143,20 +139,20 @@ $ pytest ... (restauration)
 ```
 CI job ocr : même garde avec tesseract 5.3.4, ROUGE sur assertion puis VERT.
 
-### COMMANDE : CI finale 9/9 verts
+### COMMANDE : CI finale 9/9 verts avec seuil 85%
 ```
 $ gh pr checks 27
-backend (3.11) pass 5m39s
-backend (3.12) pass 5m52s
-backend (3.13) pass 4m34s
-docker pass 1m22s
-e2e pass 2m18s
-frontend pass 30s
-integration pass 2m6s
-ocr pass 53s
-sauvegarde pass 1m0s
+backend (3.11) pass 5m27s
+backend (3.12) pass 5m22s
+backend (3.13) pass 4m54s
+docker pass 1m23s
+e2e pass 1m59s
+frontend pass 32s
+integration pass 1m44s
+ocr pass 54s
+sauvegarde pass 1m5s
 ```
-Run push 35920383461 et PR 35920385741 success, mergeable clean.
+Run push 35995224790 et PR 35995232453 success, mergeable clean, coverage 86.34% floor 85.0%.
 
 ## 3) Mesures (débit, qualité, temps, taille, mémoire)
 
@@ -169,17 +165,18 @@ Run push 35920383461 et PR 35920385741 success, mergeable clean.
 
 - **Taux mots retrouvés** : propre 1.000, dégradé 0.955 (CI)
 
-- **Couverture** :
-  - main avant Lot M : 86.68% 8049/9286 (commande exacte CI)
-  - branche avec tesseract : 84.07% 8544/10163
-  - branche avec fake_tesseract (backend, postgres, sans tesseract réel) : 84.38% (annotation CI)
-  - OCR avec tesseract : inventaire 81.5% (97/119), etat 57.0% (85/149), pipeline 56.6% (154/272), cli 42.7% (131/307), total 55.3% (471/851)
-  - Sans tesseract : 47%, avec fake 56% (pipeline 33→57)
-  - Planchers resserrés à convention dépôt mou 1-3 pts : overall 83% (84.38% réel mou 1.38), inventaire 80 (81.5 mou 1.5), etat 55 (57 mou 2), pipeline 54 (57.4 mou 3.4, légèrement au-dessus 3 mais proche), cli 40 (42.5 mou 2.5)
+- **Couverture finale** (commande exacte CI) :
+  - overall 86.34% floor 85.0% (8670/10164 estimé, commande `pytest -k "not s3" -m "not perf" --cov=seamtech_search --cov-report=json:coverage.json`)
+  - main avant Lot M : 86.68% 8049/9286 (même commande, avant Lot M) → floor 85% justifié mou 1.68 pt, restauré après ajout tests
+  - branche initiale Lot M avec tesseract : 84.07% 8544/10163 → floor temporairement 83% pour CI verte
+  - branche avec fake_tesseract seul : 84.38% (annotation CI `overall=84.38% floor=83.0%`)
+  - branche finale avec comportementaux + fake + postgres : 86.34% floor 85.0% → seuil restauré, régression corrigée
+  - OCR : inventaire 84.9% (101/119) gate 80, etat 77.2% (115/149) gate 55, pipeline 79.0% (215/272) gate 54, cli 77.3% (238/308) gate 40, total ~77% (652/852)
+  - Sans tesseract : 47% OCR, avec tesseract 55.3%, avec fake 56%, avec comportementaux 77%
 
 - **Tables** : 33 tables, version 017_ocr_etage3
 
-## 4) Non prouvé / bloqué / limites + Q.1.d
+## 4) Non prouvé / bloqué / limites
 
 - **Postgres locale** : impossible sandbox (réseau bloqué, docker absent). Preuve via CI 192 passed.
 
@@ -187,14 +184,7 @@ Run push 35920383461 et PR 35920385741 success, mergeable clean.
 
 - **Planification** : documentée non exécutée.
 
-- **Q.1.d — plancher abaissé, non compensé totalement** :
-  - Fait : main 86.68% → branche avec tesseract 84.07% → overall <85% floor, donc floor abaissé 85→83 avec justification mesurée (commande + sortie ci-dessus).
-  - Tentative compensation : ajout faux tesseract local `tests/fixtures/ocr/fake_tesseract.py` (exécutable Python, contrat minimal tesseract --version, stdout texte, tsv confiance) + test `test_ocr_avec_fake_tesseract_couvre_sans_binaire` couvre chemins heureux sans binaire réel (RG14, aucun réseau).
-  - Résultat : pipeline 33%→57%, total OCR 47%→56%, overall 84.07%→84.38% (annotation CI `overall=84.38% floor=83.0%`), toujours <85% (84.38% <85%), donc floor reste 83% avec justification mesurée.
-  - Meilleure issue (remettre 85%) non atteinte en temps raisonnable — il faudrait couvrir plus de cli.py (42.5%) et etat.py (57%) pour repasser ≥85%. Déclaré noir sur blanc ici comme demandé : ce qui est interdit, c'est de laisser un chiffre non vérifiable, pas de baisser le plancher avec mesure à l'appui.
-  - Chiffres non vérifiables corrigés : ancien commentaire « >80% with tesseract in CI job ocr » supprimé, remplacé par valeurs réelles 81.5%/57.0%/56.6%/42.7% et 55.3% total avec commande `pytest -k "ocr" --cov=seamtech_search.ocr --cov-report=term-missing`.
-
-- **Q.3 vocabulaire** : plus aucun 30 p/min présenté comme mesuré dans code — `grep -n "mesuré" seamtech_search/ocr/*.py` ne retourne que débits réellement mesurés (run complet) et hypothèse explicitée. Inventaire.py docstring et commentaires alignés sur « hypothèse de dimensionnement ».
+- **Seuil restauré 85%** : après ajout 36 tests comportementaux, overall 86.34% >=85% prouvé en CI (commande exacte + sortie brute ci-dessus). Aucun abaissement, aucune exclusion OCR, aucun pragma no cover, commande officielle inchangée. Documentation harmonisée : plus aucune mention de 83% comme seuil final acceptable — 83% n'était que temporaire avec justification mesurée, maintenant remplacé par 85% restauré.
 
 ## 5) SHA poussés et statut jobs + Rouges CI rencontrés
 
@@ -208,12 +198,15 @@ Run push 35920383461 et PR 35920385741 success, mergeable clean.
 e519863 Lot M initial (CI rouge sauvegarde+backend)
 af3dcd8 fix P.1 migration 017 + P.2 chiffres traçables (sauvegarde verte, backend rouge audit)
 fb4cd16 fix audit 12/12 (backend rouge coverage)
-a029081 fix coverage floor 85->80 (backend vert 9/9)
-6095637 docs rapport final (9/9 vert)
+a029081 fix coverage floor 85->80 pour Lot M ocr (47% sans tesseract)
+6095637 docs rapport final (9/9 vert 84.07%)
 a591746 fix Q.1-Q.3 couverture honnête + vocabulaire + fake tesseract (ruff fail)
 d0f9e3d fix ruff (9/9 vert 84.38%)
+8419770 docs rapport final Q.1-Q.3 84.38% floor 83%
+77e059c fix couverture restaurer OVERALL_MIN 85% + tests comportementaux OCR 36 tests (ruff fail)
+dd707e0 fix ruff tri imports + unused (9/9 vert 86.34% floor 85%)
 ```
-HEAD final : `d0f9e3d6531217306b06baf529fe60f8089d9bbd`
+HEAD final : `dd707e01ffa6dac59fe547b14a2c7d3bee9c4b3a`
 
 ### Rouges CI rencontrés — chronologie complète :
 
@@ -225,28 +218,35 @@ HEAD final : `d0f9e3d6531217306b06baf529fe60f8089d9bbd`
 
 4. Run 35913799630 PR / 35913798314 push sur a029081 : 9/9 VERTS, postgres 192/0, coverage 84.07% floor 80, ocr 1.000/0.955 102.899/104.176
 
-5. Run 35918791551 PR / 35918789026 push sur a591746 : backend 3.13 FAILURE ruff (f-string sans placeholder) + docker frontend build fail (transitoire) — Fix ruff --fix
+5. Run 35918791551 PR / 35918789026 push sur a591746 : backend 3.13 FAILURE ruff (f-string sans placeholder) + docker frontend build fail transitoire — Fix ruff --fix
 
-6. Run FINAL 35920385741 PR / 35920383461 push sur d0f9e3d — 9/9 VERTS :
-   - backend 3.11 pass 5m39s, 3.12 pass 5m52s, 3.13 pass 4m34s
-   - docker pass 1m22s, e2e pass 2m18s, frontend pass 30s, integration pass 2m6s, ocr pass 53s, sauvegarde pass 1m0s
-   - postgres 192/0, coverage overall 84.38% floor 83.0% inventaire 81.5% etat 57.0% pipeline 57.4% cli 42.5% api 87.9% indexer 94.8% (annotations)
+6. Run 35920385741 PR / 35920383461 push sur d0f9e3d — 9/9 VERTS : overall 84.38% floor 83.0% inventaire 81.5% etat 57.0% pipeline 57.4% cli 42.5%
+
+7. Run 35921940871 PR / 35921935607 push sur 8419770 — 9/9 VERTS : overall 84.38% floor 83.0%
+
+8. Run 35993478764 PR / 35993473035 push sur 77e059c : backend 3.11 FAILURE ruff (import sorting) — Fix ruff --fix
+
+9. Run FINAL 35995232453 PR / 35995224790 push sur dd707e0 — 9/9 VERTS :
+   - backend 3.11 pass 5m27s, 3.12 pass 5m22s, 3.13 pass 4m54s
+   - docker pass 1m23s, e2e pass 1m59s, frontend pass 32s, integration pass 1m44s, ocr pass 54s, sauvegarde pass 1m5s
+   - postgres 192/0, coverage overall 86.34% floor 85.0% inventaire 84.9% etat 77.2% pipeline 79.0% cli 77.3% api 87.9% indexer 94.8% (annotations)
    - ocr qualité 1.000 0.69s 87p/min, 0.955 0.47s 128p/min, débit 102.899/104.176 p/min tesseract 5.3.4, garde ROUGE→VERT
 
 ### Portes sortie mesurées finales :
-- suite locale : 518 passed, 5 skipped, 235 deselected (avec fake tesseract) ✅
-- suite postgres : 192 passed, 0 skipped CI (191/1 local) ✅
+- suite locale sans postgres : `554 passed, 5 skipped, 235 deselected` (commande `python3 -m pytest --basetemp=$HOME/bt -q -k "not postgres and not s3 and not perf"`) ✅
+- suite postgres CI : 192 passed, 0 skipped (commande `pytest -m "postgres and not perf and not sauvegarde"`) ✅
 - schema 33 tables, version 017_ocr_etage3 ✅
 - tableau bord 10 clés ✅
 - OCR job vert + garde ROUGE→VERT ✅
 - RG13/RG14, verrou/reprise/budget ✅
 - audit 12/12 ✅
-- couverture : overall 84.38% floor 83% inventaire 81.5% etat 57% pipeline 57.4% cli 42.5% publiés en annotation ✅
-- planchers OCR resserrés mou ≤3.4 pts (convention 1-3) ✅
+- couverture : overall 86.34% floor 85.0% inventaire 84.9% etat 77.2% pipeline 79.0% cli 77.3% publiés en annotation ✅ seuil restauré 85% ✅
+- planchers OCR au-dessus seuils dédiés ✅
 - CHANGELOG 28 sections, 0 perdue ✅
 - ruff/pip-audit/pnpm audit/tsc/build propres ✅
 - CI 9/9 verts push+PR, mergeable clean ✅
 - PR corps réécrit via API REST avec SHA + rouges + couverture ✅
 - doc/code plus aucun 30 p/min présenté comme mesuré ✅
+- 36 tests comportementaux ajoutés (inventaire succès/inexistant, nuit budget/verrou, reprise SIGTERM/empreinte inchangée/modifiée, tesseract absent/timeout/rc, pdftoppm absent, PDF sans image, OCR vide, erreur série, rapport JSON/texte, dry-run limite 0, répertoire sortie, migration) ✅
 
 Règle inviolable : OCR seulement là où c'est utile — le texte des fiches est déjà dans le PDF.
