@@ -53,7 +53,7 @@ COPY --from=construction /out/minio /usr/bin/minio
 COPY --from=construction /out/mc /usr/bin/mc
 COPY minio/dockerscripts/docker-entrypoint.sh /usr/bin/docker-entrypoint.sh
 RUN chmod 0755 /usr/bin/minio /usr/bin/mc /usr/bin/docker-entrypoint.sh \
-    && /usr/bin/mc alias set local http://localhost:9000 "" ""
+    && /usr/bin/mc alias set local http://localhost:9000 "" "" --api s3v4
 ENTRYPOINT ["/usr/bin/docker-entrypoint.sh"]
 VOLUME ["/data"]
 CMD ["minio"]

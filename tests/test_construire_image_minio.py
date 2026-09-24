@@ -57,8 +57,14 @@ def test_tags_au_format_release_verifie() -> None:
 
 
 def test_alias_local_pour_le_healthcheck_compose() -> None:
-    """Le healthcheck compose `mc ready local` exige l'alias local préconfiguré."""
+    """Le healthcheck compose `mc ready local` exige l'alias local préconfiguré.
+
+    `--api s3v4` est obligatoire : sans lui, `mc alias set` sonde le serveur
+    (probe-bsign-…) et échoue au build tant qu'aucun MinIO n'écoute (cause
+    d'échec CI du 2026-09-24, jour 1, run 36012758232).
+    """
     assert "mc alias set local" in _script()
+    assert "--api s3v4" in _script()
     assert 'mc", "ready", "local"' in _compose() or "mc ready local" in _compose()
 
 
