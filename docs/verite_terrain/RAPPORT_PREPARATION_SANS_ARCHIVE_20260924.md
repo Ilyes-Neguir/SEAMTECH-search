@@ -344,5 +344,10 @@ Postérieurement au §1, la validation CI a été préparée (branche poussée, 
   `RELEASE.2025-09-07T16-13-09Z` + mc `RELEASE.2025-08-13T08-35-41Z`),
   consigne des auteurs respectée (« clone the source and build the latest
   container »). Preuves = pages ci-dessus, récupérées le 2026-09-24.
+  Correctif de second tour : `mc alias set` exige `--api s3v4` pour ne pas
+  sonder le réseau au build (source `cmd/alias-set.go` de mc). **CI finale
+  9/9 verte** sur `05937d3` (runs `36014861499` + `36014854540`), couverture
+  backend PostgreSQL `86.43 %` (floor 85 %), suite PG `192 passed, 0 skipped`,
+  job sauvegarde vert (aller-retour complet, 0 sauté).
   Lot G réel : toujours bloqué (archive/PDF de production non reçus) —
   indépendant de cette rupture d'infrastructure.
