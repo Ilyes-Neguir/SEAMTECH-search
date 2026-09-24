@@ -308,5 +308,24 @@ absentes, indépendantes de la qualité de la préparation). Sur périmètre
 préparatoire : préflight (refus propres codes 2-9, rapports JSON+texte,
 échantillon borné, empreintes SHA-256/taille/mtime), script Windows non
 destructif testé, protocole + modèles de validation prêts, 641 tests verts
-0 régression, audit 12/12, Ruff clean, build front OK, garde-fous RG13/RG14/
-logs/config étendus **sans supprimer ni abaisser aucun garde-fou existant**.
+0 régression (647 après complément CI §7), audit 12/12, Ruff clean, build
+front OK, garde-fous RG13/RG14/logs/config étendus **sans supprimer ni
+abaisser aucun garde-fou existant**.
+
+---
+
+## 7. Complément — préparation CI (2026-09-24, même jour)
+
+Postérieurement au §1, la validation CI a été préparée (branche poussée, PR vers
+`main`, base `4b799a6` = fusion Lot M) :
+
+- CSV de suivi réencodé **utf-8-sig** (BOM EF BB BF présent — exigence
+  documentée, désormais testée) ; contenu inchangé.
+- Tests dédiés ajoutés : nombre/ordre exact des 15 colonnes, encodage
+  utf-8-sig, séparateur `;` (et non la virgule), lecture `csv.DictReader`,
+  absence de chemin absolu, sortie dans un **sous-sous-répertoire** de la source.
+- Reprise de la suite : `647 passed, 5 skipped, 221 deselected` (641 + 6
+  nouveaux tests — 0 échec). Ruff `All checks passed!`, audit `12/12`,
+  `git diff --check` propre, build front `✓ Compiled successfully`.
+- La couverture AVEC PostgreSQL sera jugée par le job CI `backend` (seuils
+  intacts) ; le §1.2 reste valable pour l'environnement local sans PostgreSQL.

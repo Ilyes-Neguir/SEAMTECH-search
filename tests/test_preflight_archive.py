@@ -167,6 +167,15 @@ def test_refuse_sortie_dans_la_source_code_4(tmp_path: Path, chemin_isole) -> No
     assert code == pf.CODE_INCLUSION_CHEMINS == 4
 
 
+def test_refuse_sortie_dans_un_sous_sous_repertoire_de_la_source_code_4(tmp_path: Path, chemin_isole) -> None:
+    """Sortie dans un sous-répertoire PROFOND de la source : refusée pareil."""
+    chemin_isole()
+    source = _arbre_source(tmp_path)
+    profond = source / "CLIENT-A" / "sous-dossier" / "rapports"
+    code = pf.main(["preflight", "--source", str(source), "--travail", str(tmp_path / "t"), "--sortie", str(profond), "--min-libre-o", "0"])
+    assert code == pf.CODE_INCLUSION_CHEMINS == 4
+
+
 def test_refuse_travail_dans_la_source_code_4(tmp_path: Path, chemin_isole) -> None:
     chemin_isole()
     source = _arbre_source(tmp_path)

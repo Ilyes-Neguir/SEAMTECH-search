@@ -575,6 +575,56 @@ def test_suivi_validation_csv_conforme_et_documente() -> None:
         assert colonne in documentation, f"colonne non documentée : {colonne}"
 
 
+def test_csv_nombre_et_ordre_des_colonnes() -> None:
+    """Test DÉDIÉ : exactement 15 colonnes, dans l'ordre documenté (import contrôlé)."""
+    with SUIVI_CSV.open(encoding="utf-8-sig", newline="") as flux:
+        lignes = list(csv.reader(flux, delimiter=";"))
+    assert len(COLONNES_ATTENDUES) == 15
+    for numero, ligne in enumerate(lignes):
+        assert len(ligne) == 15, f"ligne {numero} : {len(ligne)} colonnes au lieu de 15 (séparateur parasite ?)"
+    assert lignes[0] == COLONNES_ATTENDUES  # ordre exact, tête de fichier
+
+
+def test_csv_encodage_utf8_sig() -> None:
+    """Test DÉDIÉ : le fichier est encodé utf-8-sig (BOM EF BB BF, Excel)."""
+    brut = SUIVI_CSV.read_bytes()
+    assert brut[:3] == b"\xef\xbb\xbf", "BOM utf-8-sig absent du CSV de suivi"
+    SUIVI_CSV.read_text(encoding="utf-8-sig")  # décodable sans erreur
+
+
+def test_csv_separateur_point_virgule() -> None:
+    """Test DÉDIÉ : séparateur ';' — ni virgule ni tabulation (zone_pdf est quotée)."""
+    with SUIVI_CSV.open(encoding="utf-8-sig", newline="") as flux:
+        lignes = list(csv.reader(flux, delimiter=";"))
+    assert lignes[0][0] == "code_fiche" and len(lignes[0]) == 15
+    # Avec la virgule comme séparateur, la tête ne doit PAS se découper en 15 :
+    with SUIVI_CSV.open(encoding="utf-8-sig", newline="") as flux:
+        lignes_virgule = list(csv.reader(flux, delimiter=","))
+    assert len(lignes_virgule[0]) != 15, "la virgule ne doit pas être le séparateur"
+    # Aucune tabulation dans le fichier brut (après retrait du BOM).
+    assert "\t" not in SUIVI_CSV.read_text(encoding="utf-8-sig")
+
+
+def test_csv_lecture_dictreader_correcte() -> None:
+    """Test DÉDIÉ : lecture csv.DictReader — futur import contrôlé."""
+    with SUIVI_CSV.open(encoding="utf-8-sig", newline="") as flux:
+        lignes = list(csv.DictReader(flux, delimiter=";"))
+    assert lignes, "CSV de suivi vide"
+    assert list(lignes[0].keys()) == COLONNES_ATTENDUES
+    for ligne in lignes:
+        assert ligne["resultat"] in ("OK", "ABSENTE", "NON_APPLICABLE", "CORRIGEE", "ANOMALIE")
+        assert ligne["statut_final"] in ("VALIDEE", "A_CORRIGER", "REJETEE")
+        assert ligne["chemin_document"].startswith("<SOURCE>/"), "chemin attendu relatif à <SOURCE>"
+        assert all(valeur is not None for valeur in ligne.values()), f"colonne orpheline : {ligne}"
+
+
+def test_csv_aucun_chemin_absolu() -> None:
+    """Le modèle de suivi ne contient aucun chemin absolu (fichier partageable)."""
+    texte = SUIVI_CSV.read_text(encoding="utf-8-sig")
+    for motif in ("C:\\", "C:/", "/home/", "/Users/", "/data/", "\\\\"):
+        assert motif not in texte, f"chemin absolu interdit dans le CSV : {motif}"
+
+
 def test_fiche_modele_contient_les_rubriques_exigees() -> None:
     assert FICHE_MODELE.exists(), "docs/templates/FICHE_VALIDATION_REFERENCE.md manquant"
     texte = FICHE_MODELE.read_text(encoding="utf-8")
