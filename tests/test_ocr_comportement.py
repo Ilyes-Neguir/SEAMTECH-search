@@ -30,17 +30,16 @@ from unittest import mock
 import pytest
 
 from seamtech_search.ocr import inventaire as inv_mod
-from seamtech_search.ocr.cli import _parse_pages, main as cli_main
+from seamtech_search.ocr.cli import _parse_pages
+from seamtech_search.ocr.cli import main as cli_main
 from seamtech_search.ocr.etat import EtatOCR, VerrouOCR, empreinte_sha256, get_travail_dir, verifier_budget
 from seamtech_search.ocr.pipeline import (
     _extraire_images_pypdf,
     _has_command,
     _ocr_image_via_tesseract,
-    _ocr_page_pdf,
     _rendre_page_pdf_via_pdftoppm,
     _tesseract_version,
     _texte_natif_par_page_pdf,
-    doit_oceriser_page,
     ocriser_fichier,
     ocriser_pages,
 )
