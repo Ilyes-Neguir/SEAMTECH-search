@@ -311,30 +311,36 @@ def test_signature_publique_de_l_url_presignee_est_le_contrat_des_appelants() ->
     assert parametres == ["self", "remote_key", "expiration_seconds"]
 
 
-def test_ecart_d1_api_appelle_l_url_presignee_avec_un_mot_cle_inexistant() -> None:
-    """ÉCART CONNU D-1 (audit §7) — mesuré le 25/09/2026, figé ici EXPRÈS.
+def test_d1_corrige_les_appels_de_l_api_utilisent_le_vrai_nom_de_parametre() -> None:
+    """ÉCART D-1 — **CORRIGÉ le 25/09/2026**. Ce test est l'inverse du précédent.
 
-    ``api.py`` appelle ``get_presigned_url(object_key, expires_in=900)`` alors
-    que le paramètre s'appelle ``expiration_seconds``. Conséquence réelle :
-    ``TypeError`` → la redirection 302 vers l'URL présignée n'est JAMAIS prise
-    en production ; c'est le repli local documenté qui sert la pièce.
+    Historique, à garder pour que personne ne refasse le chemin : ``api.py``
+    appelait ``get_presigned_url(object_key, expires_in=900)`` alors que le
+    paramètre s'appelle ``expiration_seconds``. Le ``TypeError`` était avalé
+    par le ``except Exception`` du repli, donc la redirection 302 annoncée par
+    la documentation n'était jamais servie — sans aucun test rouge, puisque
+    les tests d'alors remplaçaient le client par un ``MagicMock``.
 
-    Ce test est écrit pour être SUPPRIMÉ : quand le commanditaire arbitre D-1
-    (``api.py`` → ``expiration_seconds=900``), il devient rouge et doit être
-    remplacé par son contraire. Tant qu'il est vert, l'écart existe encore.
+    La preuve de COMPORTEMENT (302, ``Location``, 900 s, replis, 404) est dans
+    ``tests/test_url_presignee_302.py``. Ici, on garde la sentinelle de
+    lecture : aucun mot-clé inventé dans ``api.py``, et la durée reste 900 s.
     """
     source = (RACINE / "seamtech_search" / "api.py").read_text(encoding="utf-8")
     mots_cles = set(re.findall(r"get_presigned_url\([^)]*?(\w+)\s*=", source))
-    assert mots_cles == {"expires_in"}, f"appels mesurés dans api.py : {sorted(mots_cles)}"
-
     valides = set(inspect.signature(S3StorageClient.get_presigned_url).parameters)
-    assert not mots_cles & valides, "D-1 corrigé : remplacer ce test par son contraire"
 
-    # Preuve exécutée du TypeError (ce n'est pas une lecture de source).
+    assert "expires_in" not in mots_cles, "régression D-1 : le mot-clé inexistant est revenu"
+    assert mots_cles <= valides, f"mot-clé inconnu du client : {sorted(mots_cles - valides)}"
+    assert re.findall(r"get_presigned_url\(object_key,\s*expiration_seconds=(\d+)\)", source) == ["900", "900"]
+
+    # Preuve exécutée : le mauvais mot-clé lèverait bien, le bon passe.
     client = _client_fictif()
-    with patch.object(client, "_get_client", return_value=MagicMock()):
+    faux_boto = MagicMock()
+    faux_boto.generate_presigned_url.return_value = "http://minio.invalide:9000/signe"
+    with patch.object(client, "_get_client", return_value=faux_boto):
         with pytest.raises(TypeError, match="expires_in"):
             client.get_presigned_url("IMP-1/abc/plan.pdf", expires_in=900)  # type: ignore[call-arg]
+        assert client.get_presigned_url("IMP-1/abc/plan.pdf", expiration_seconds=900)
 
 
 def test_url_presignee_n_applique_pas_le_prefixe_contrairement_a_l_envoi() -> None:
@@ -367,10 +373,10 @@ def test_route_artefact_ne_tombe_jamais_en_500_ni_ne_fuit_les_identifiants(
 ) -> None:
     """Bout en bout avec le VRAI client S3 (boto3 doublé) : la pièce est servie, sans fuite.
 
-    Le test ne fige pas le code de statut (200 repli local aujourd'hui à cause
-    de l'écart D-1, 302 après correctif) : il fige les deux propriétés qui
-    comptent pour une mise en production — aucune erreur serveur, aucun
-    identifiant dans la réponse ni dans les journaux.
+    Depuis le correctif D-1 (25/09/2026), le chemin nominal est la redirection
+    302 — vérifiée en détail dans ``tests/test_url_presignee_302.py``. Ce test
+    garde son rôle propre : aucune erreur serveur, et aucun identifiant dans la
+    réponse ni dans les journaux, quel que soit le chemin emprunté.
     """
     rapport = tmp_path / "technical-report.pdf"
     rapport.write_bytes(b"%PDF-1.4 rapport")

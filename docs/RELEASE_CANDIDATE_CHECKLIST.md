@@ -177,8 +177,10 @@ modifie pas, et le jour J passe par `scripts/preflight_archive.py`).
   Attendu : `upload_status: "uploaded"`, `all_verified: true`, un `object_key` par fichier.
 - [ ] **8.4** Rien en quarantaine : `docker compose exec web ls data/quarantine` → vide.
 - [ ] **8.5** Téléchargement d'un artefact (`report_pdf`) : le fichier arrive et s'ouvre.
-      *Écart connu D-1 : la réponse est aujourd'hui un `200` servi par l'API, pas le `302`
-      vers une URL présignée annoncé dans la documentation — voir l'audit stockage §6.*
+      Avec S3 configuré, la réponse attendue est un **302** vers une URL présignée
+      valable 900 s (`curl -i` montre l'en-tête `Location`) ; sans clé d'objet, un `200`
+      servi par l'API. *Correctif D-1 du 25/09/2026 — avant lui, le 302 n'était jamais
+      servi ; voir l'audit stockage §6.*
 - [ ] **8.6** Idempotence : rejouer le même dépôt → `deja_traite`, aucun doublon créé.
 
 ## 9. Recherche de test
@@ -350,7 +352,7 @@ docker compose exec web python -m seamtech_search.sauvegarde verifier \
 | CI sur `main` après fusion de la PR #28 | ✅ verte, 9/9 (`36168258103`) |
 | Migrations 001→017 | ✅ séquence complète, rejeu idempotent |
 | Sauvegarde → destruction → restauration | ✅ prouvée en CI (MinIO réel) |
-| Stockage objet | ⚠️ **VALIDÉ AVEC RÉSERVES** — voir `AUDIT_STOCKAGE_S3_MINIO.md` (D-1, R-1, R-2, R-3, R-13) |
+| Stockage objet | ⚠️ **VALIDÉ AVEC RÉSERVES** — D-1 et R-14 corrigés le 25/09 ; restent R-1 (MinIO archivé), R-2/R-3 (réglages trompeurs), R-13 (aucun second fournisseur éprouvé) — voir `AUDIT_STOCKAGE_S3_MINIO.md` |
 | Chemin Windows | ❌ non exécuté depuis l'environnement de développement (Linux) |
 | Chrono humain de validation | ❌ 0/3 fiches mesurées |
 | Échelle réelle | ❌ **Lot G réel bloqué** — archive non livrée |
