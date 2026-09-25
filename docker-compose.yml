@@ -42,6 +42,11 @@ services:
     # tags stopped advancing when the project went source-only; the newer
     # `.hotfix.*` tags on quay.io come from the paid stream and are
     # deliberately not used here.
+    # 2026-09-24 : cette image n'est plus distribuée par aucun registre
+    # (quay.io supprimé, docker.io retiré le 2026-09-11, dl.min.io 410 Gone).
+    # La reconstruire depuis les sources officielles AVANT tout compose up :
+    #   bash scripts/construire_image_minio.sh
+    # (la CI appelle ce script dans les jobs integration et sauvegarde).
     image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
     restart: unless-stopped
     logging: *default-logging

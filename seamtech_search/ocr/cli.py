@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import time
 from datetime import datetime, timezone
@@ -32,6 +33,16 @@ from pathlib import Path
 from .etat import EtatOCR, VerrouOCR, empreinte_sha256, get_travail_dir, verifier_budget
 from .inventaire import inventaire_etage1, inventaire_etage3
 from .pipeline import SEUIL_DEFAUT, ocriser_fichier
+
+# Identifiants d'URL (scheme://user:motdepasse@…) : tout message d'erreur qui
+# sort du module passe par là (« erreurs lisibles mais non bavardes sur les
+# secrets » — garde-fous sécurité des logs).
+_MOTIF_IDENTIFIANTS = re.compile('(://[^/\\s:@]+:)[^@\\s]+(@)')
+
+
+def _masquer_identifiants(texte: str) -> str:
+    """Redige le mot de passe d'une URL dans un message d'erreur (best effort)."""
+    return _MOTIF_IDENTIFIANTS.sub(r"\1***\2", str(texte))
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -385,7 +396,7 @@ def _cmd_nuit(args: argparse.Namespace) -> int:
                         conn.commit()
                     index.close()
                 except Exception as exc:
-                    print(f"Stockage base échoué pour {chemin} : {exc}", file=sys.stderr)
+                    print(f"Stockage base échoué pour {chemin} : {_masquer_identifiants(exc)}", file=sys.stderr)
                     # Non bloquant : le staging est optionnel, le run continue
 
     except KeyboardInterrupt:
@@ -394,8 +405,8 @@ def _cmd_nuit(args: argparse.Namespace) -> int:
     except SystemExit:
         raise
     except Exception as exc:
-        print(f"Erreur inattendue : {exc}", file=sys.stderr)
-        stats["arret_motif"] = f"erreur: {exc}"
+        print(f"Erreur inattendue : {_masquer_identifiants(exc)}", file=sys.stderr)
+        stats["arret_motif"] = f"erreur: {_masquer_identifiants(exc)}"
         # On continue vers la sauvegarde du rapport et libération du verrou
     finally:
         # Finalise stats

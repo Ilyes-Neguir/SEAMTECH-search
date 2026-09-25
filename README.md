@@ -71,6 +71,12 @@ cp .env.example .env
 docker compose up -d
 ```
 
+> **Note registre MinIO (2026-09-24)** : plus aucun registre ne publie
+> l'image MinIO (quay.io supprimé, docker.io retiré le 2026-09-11,
+> dl.min.io « 410 Gone — projects archived »). Avant `docker compose up`,
+> construire l'image locale depuis les sources officielles archivées :
+> `bash scripts/construire_image_minio.sh` (la CI fait de même).
+
 Services (all `restart: unless-stopped`, bound to `127.0.0.1`):
 
 | Service | URL | Notes |

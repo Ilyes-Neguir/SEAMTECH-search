@@ -610,6 +610,14 @@ jobs:
         run: |
           docker --version
           docker compose version
+      - name: Build MinIO image from archived sources (registries gone)
+        # docker.io/minio/minio (retiré le 2026-09-11) et quay.io/minio/minio
+        # (dépôt supprimé le 2026-09-24 : « Repository not found ») ne
+        # distribuent plus MinIO ; dl.min.io répond « 410 Gone » (projets
+        # archivés). scripts/construire_image_minio.sh reconstruit l'image
+        # depuis les sources officielles du tag épinglé (consigne des auteurs :
+        # « clone the source and build the latest container »).
+        run: bash scripts/construire_image_minio.sh
       - name: Start infra services
         # SEAMTECH_AUTH_TOKEN is required to PARSE the compose file (the web/
         # frontend services declare ${SEAMTECH_AUTH_TOKEN:?...}) even though we
@@ -1123,6 +1131,13 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
+      - name: Build MinIO image from archived sources (registries gone)
+        # Idem job integration : plus aucun registre ne publie MinIO
+        # (quay.io supprimé le 2026-09-24, docker.io retiré le 2026-09-11,
+        # dl.min.io 410 Gone). scripts/construire_image_minio.sh reconstruit
+        # quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z depuis les sources
+        # officielles archivées du même tag (minio + mc).
+        run: bash scripts/construire_image_minio.sh
       - name: Start MinIO (bucket hors-site réel)
         run: |
           docker run -d --name minio -p 9000:9000 \
