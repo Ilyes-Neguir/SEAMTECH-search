@@ -272,6 +272,13 @@ Effet mesuré sur la collecte (même arbre, deux commandes) :
 | mesure de couverture | 901 tests | **916 tests** |
 | tests marqués `s3` | 1 | **4** |
 
+Contrôle en CI réelle (là où PostgreSQL existe), annotations émises par le workflow
+lui-même : la couverture globale passe de **86,49 %** (ancienne commande `-k`,
+run `36171596634`) à **86,52 %** (nouvelle commande `-m`, run `36174286450`), `api.py`
+de **87,9 %** à **88,2 %**, et la sélection PostgreSQL reste inchangée
+(`passed=192 skipped=0`). Élargir la sélection n'a donc **rien coûté** : elle a rendu du
+code couvert et n'a retiré aucun test à aucun job.
+
 ---
 
 ## 6. Écart D-1 — constaté, puis CORRIGÉ (25/09/2026)

@@ -221,7 +221,29 @@ exercé. **Aucun seuil n'a été modifié.**
 | Aucune dépendance ajoutée | `requirements*.txt` non modifiés |
 | Aucun test supprimé | 900 → 925 collectés ; les 5 renommages de la veille sont documentés, aucun nouveau |
 
-### 4.2 Ce qui n'a pas été exécuté ici
+### 4.2 CI complète — verte (PR #29)
+
+Poussé sur `arena/01a0d9a7-seamtech-search`, commit `6adc808`. **Run `36174286450`
+(push) : 9/9 jobs verts** — `backend (3.11)`, `backend (3.12)`, `backend (3.13)`,
+`frontend`, `e2e`, `docker`, `integration`, `sauvegarde`, `ocr`. Le run `pull_request`
+(`36174333854`) est vert lui aussi.
+
+Comparaison avec le run du commit précédent (`36171596634`, même arbre sauf ces
+correctifs), d'après les annotations émises par le workflow :
+
+| Mesure en CI (avec PostgreSQL) | Avant (`-k`) | Après (`-m`) |
+|---|---|---|
+| couverture globale | 86,49 % | **86,52 %** (plancher 85 %) |
+| `api.py` | 87,9 % | **88,2 %** (porte 87 %) |
+| `indexer.py` | 94,8 % | 94,8 % (porte 90 %) |
+| autres modules (inventaire, état, pipeline, cli OCR) | 84,9 / 77,2 / 79,4 / 79,8 % | identiques |
+| sélection PostgreSQL | `passed=192 skipped=0` | `passed=192 skipped=0` |
+
+C'est la démonstration attendue pour R-14 : la sélection élargie **augmente** la
+couverture réelle et ne retire de test à aucun job — y compris `integration` et
+`sauvegarde`, qui exécutent bien les tests désormais marqués `s3`.
+
+### 4.3 Ce qui n'a pas été exécuté ici
 
 | Non exécuté | Raison |
 |---|---|
@@ -271,9 +293,9 @@ par marqueur, 33 tests rendus à la CI, garde-fou en place).
 404 sans faux 302, audit tracé) ; R-14 corrigé (sélection par marqueur, **4** tests S3
 marqués, **718** tests exécutés par la commande CI sans service contre 662 avant,
 garde-fou de 13 tests) ; `ruff` propre, `git diff --check` propre, audit projet 12/12 ;
-suite locale **715 passed / 3 skipped** ; couverture inchangée globalement, améliorée
-sur `storage.py` (98,1 %) et `api.py` (87,7 %), **aucun seuil abaissé** ; aucun test
-supprimé, aucune dépendance ajoutée.
+suite locale **715 passed / 3 skipped** ; **CI complète verte, 9/9 jobs** (run
+`36174286450`) avec couverture **86,49 % → 86,52 %** et `api.py` **87,9 % → 88,2 %**,
+**aucun seuil abaissé** ; aucun test supprimé, aucune dépendance ajoutée.
 
 Réserves :
 
