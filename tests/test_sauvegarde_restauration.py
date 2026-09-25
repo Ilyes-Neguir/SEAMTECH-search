@@ -339,6 +339,7 @@ def test_cli_sans_s3_aller_retour(base_recherche: dict, tmp_path: Path) -> None:
 
 
 @pytest.mark.sauvegarde
+@pytest.mark.s3
 def test_aller_retour_via_client_s3_reel(base_recherche: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """L'aller-retour complet avec le VRAI client S3 contre le VRAI bucket
     (MinIO en CI). Saute hors CI quand SEAMTECH_S3_ENDPOINT_URL est absent —

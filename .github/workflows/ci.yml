@@ -87,8 +87,17 @@ jobs:
           # blob host unreachable and the artifact on the same blocked host.
           # errexit is disabled only around the command whose failure we handle
           # ourselves, and restored immediately after.
+          #
+          # Sélection par MARQUEUR, jamais par sous-chaîne de nom (R-14, audit
+          # du 25/09) : `-k "not postgres and not s3"` désélectionnait tout
+          # test dont le NOM contenait « s3 » ou « postgres », y compris 33
+          # tests qui n'exigent aucun service (chaos S3 sur doubles, grammaire
+          # SQL PostgreSQL hors serveur, routes 503 sans PostgreSQL…). Ils ne
+          # s'exécutaient nulle part. `-m` sélectionne par CATÉGORIE déclarée :
+          # un test n'échappe à cette suite que s'il porte le marqueur qui dit
+          # de quel service il a besoin. Garde-fou : tests/test_selection_ci.py.
           set +e
-          pytest -q -rf -k "not postgres and not s3" 2>&1 | tee /tmp/sqlite.log
+          pytest -q -rf -m "not postgres and not s3 and not perf" 2>&1 | tee /tmp/sqlite.log
           rc=${PIPESTATUS[0]}
           set -e
           if [ "$rc" -ne 0 ]; then
@@ -476,7 +485,11 @@ jobs:
           # -m "not perf" (audit du 22/09) : les mesures de latence sortent du
           # contexte instrumenté — le critère p95 est évalué dans l'étape perf
           # dédiée sans --cov. La couverture mesure la couverture.
-          pytest -k "not s3" -m "not perf" -q -rf --cov=seamtech_search --cov-report=term-missing --cov-report=json:coverage.json 2>&1 | tee /tmp/cov.log
+          # -m "not s3" (audit du 25/09, R-14) : remplace `-k "not s3"`, qui
+          # excluait par sous-chaîne de nom et retirait donc de la MESURE de
+          # couverture des tests entièrement sur doubles. Même règle que
+          # l'étape SQLite : la catégorie se déclare par marqueur.
+          pytest -m "not s3 and not perf" -q -rf --cov=seamtech_search --cov-report=term-missing --cov-report=json:coverage.json 2>&1 | tee /tmp/cov.log
           rc=${PIPESTATUS[0]}
           set -e
           if [ "$rc" -ne 0 ]; then
@@ -492,7 +505,7 @@ jobs:
           python scripts/coverage_gate.py coverage.json
           overall=$(python3 -c "import json; d=json.load(open('coverage.json')); print(f\"{d['totals']['percent_covered']:.2f}\")")
           floor=$(python3 -c "import importlib.util, pathlib; spec=importlib.util.spec_from_file_location('coverage_gate','scripts/coverage_gate.py'); mod=importlib.util.module_from_spec(spec); spec.loader.exec_module(mod); print(mod.OVERALL_MIN)")
-          echo "::notice title=coverage::overall=${overall}% floor=${floor}% (commande: pytest -k 'not s3' -m 'not perf' --cov=seamtech_search --cov-report=json:coverage.json)"
+          echo "::notice title=coverage::overall=${overall}% floor=${floor}% (commande: pytest -m 'not s3 and not perf' --cov=seamtech_search --cov-report=json:coverage.json)"
           python3 -c "import json; d=json.load(open('coverage.json')); files=d.get('files',{}); print(f\"::notice title=coverage-details::inventaire={files.get('seamtech_search/ocr/inventaire.py',{}).get('summary',{}).get('percent_covered',0):.1f}% etat={files.get('seamtech_search/ocr/etat.py',{}).get('summary',{}).get('percent_covered',0):.1f}% pipeline={files.get('seamtech_search/ocr/pipeline.py',{}).get('summary',{}).get('percent_covered',0):.1f}% cli={files.get('seamtech_search/ocr/cli.py',{}).get('summary',{}).get('percent_covered',0):.1f}% api={files.get('seamtech_search/api.py',{}).get('summary',{}).get('percent_covered',0):.1f}% indexer={files.get('seamtech_search/indexer.py',{}).get('summary',{}).get('percent_covered',0):.1f}%\")"
       - name: Pip audit (security)
         # No `|| echo`: a known vulnerability in a pinned dependency fails CI.
