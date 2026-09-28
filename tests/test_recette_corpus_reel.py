@@ -413,6 +413,16 @@ def test_04c_depot_fiche_lot_c(app_client, dossiers: dict[str, Path], ref: str) 
     assert corps["statut"] == "traite", f"{ref} : dépôt non traité ({raison})"
     assert corps.get("fiche"), f"{ref} : aucune fiche créée"
     RECETTE["refs"][ref]["fiche"] = corps["fiche"]
+    # PDF SOURCE de la fiche déposée (l'écran Fiche l'expose) : les termes de
+    # recherche de l'étape 7 devront ressortir CE document — un dossier peut
+    # contenir plusieurs fiches (le scan Phase 0 et le dépôt Lot C ne
+    # retiennent pas forcément la même) et le terme provient de la fiche
+    # DÉPOSÉE.
+    reponse_pieces = app_client.get(f"/fiches/{urllib.parse.quote(corps['fiche'])}/pieces")
+    assert reponse_pieces.status_code == 200, f"{ref} : lecture pieces HTTP {reponse_pieces.status_code}"
+    pdf_source = reponse_pieces.json().get("pdf_source")
+    assert pdf_source, f"{ref} : pdf_source absent de la fiche déposée"
+    RECETTE["refs"][ref]["pdf_fiche"] = pdf_source
 
 
 # ---------------------------------------------------------------------------
@@ -560,7 +570,9 @@ def _termes_de_la_base() -> tuple[dict[str, str], dict[str, str]]:
 
     Retourne (termes, origine) : pour chaque famille, le code REF dont la
     fiche a fourni le terme — le document attendu dans les résultats est
-    LE PDF technique de CE dossier, pas toujours REF-001.
+    LE PDF SOURCE DE CETTE FICHE DÉPOSÉE (un dossier peut porter plusieurs
+    fiches : le scan Phase 0 et le dépôt Lot C ne retiennent pas
+    forcément la même).
     """
     from seamtech_search.indexer import SearchIndex
 
@@ -619,6 +631,27 @@ def _termes_de_la_base() -> tuple[dict[str, str], dict[str, str]]:
     return termes, origine
 
 
+def _tous_les_resultats(app_client, terme: str, pages_max: int = 5) -> list[str]:
+    """Résultats de /search PAGINÉS jusqu'à épuisement (bornés).
+
+    Un dossier du corpus porte des centaines de fichiers de découpe dont le
+    NOM contient le préfixe du type de voile : le classement du produit
+    (correspondances de nom avant contenu) les met en tête. Le document
+    attendu peut donc être au-delà de la première page — un utilisateur le
+    retrouve en feuilletant, le test fait de même (limit=200 est le maximum
+    accepté par la route).
+    """
+    chemins: list[str] = []
+    for page in range(pages_max):
+        reponse = app_client.get("/search", params={"q": terme, "limit": 200, "offset": page * 200})
+        assert reponse.status_code == 200, f"recherche paginée : HTTP {reponse.status_code}"
+        corps = reponse.json()
+        chemins.extend(r.get("path") for r in corps["results"])
+        if not corps.get("has_more"):
+            break
+    return chemins
+
+
 def test_07_recherches_par_mots_cles(app_client) -> None:
     """Chaque famille de mots-clés retrouve le document technique attendu."""
     termes, origine = _termes_de_la_base()
@@ -627,12 +660,17 @@ def test_07_recherches_par_mots_cles(app_client) -> None:
         terme = termes.get(famille)
         if not terme:
             continue
-        chemin_attendu = RECETTE["refs"][origine[famille]]["technique"]
-        reponse = app_client.get("/search", params={"q": terme, "limit": 50})
-        assert reponse.status_code == 200, f"recherche {famille} : HTTP {reponse.status_code}"
-        resultats = reponse.json()["results"]
-        assert any(r.get("path") == chemin_attendu for r in resultats), (
-            f"recherche {famille} : le document technique attendu n'est pas ressorti"
+        # Le document attendu est le PDF SOURCE DE LA FICHE qui a fourni le
+        # terme (la valeur y figure par construction). Un dossier peut porter
+        # plusieurs fiches : le scan Phase 0 et le dépôt Lot C ne retiennent
+        # pas forcément la même. La comparaison se fait par NOM DE FICHIER :
+        # pour la REF importée par upload, l'exemplaire indexé est la copie
+        # stagée (même nom, même contenu, même empreinte).
+        nom_attendu = Path(RECETTE["refs"][origine[famille]]["pdf_fiche"]).name
+        resultats = _tous_les_resultats(app_client, terme)
+        assert any(Path(chemin or "").name == nom_attendu for chemin in resultats), (
+            f"recherche {famille} : le document de la fiche d'origine n'est pas ressorti "
+            f"({len(resultats)} résultats parcourus)"
         )
 
     familles_eprouvees = sum(1 for k in ("reference", "client", "bateau", "type", "matiere") if termes.get(k))
