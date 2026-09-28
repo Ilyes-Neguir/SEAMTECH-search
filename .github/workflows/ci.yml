@@ -1459,8 +1459,22 @@ jobs:
       - name: Run full recette suite (fails explicitly on any step)
         env:
           SEAMTECH_RECETTE_CORPUS_RACINE: ${{ runner.temp }}/corpus-recette
+        # En cas d'échec, le résumé pytest est republié en ANNOTATIONS (lignes
+        # FAILED + queue courte) : les messages d'assertion du module sont
+        # volontairement SANS valeur métier, seuls comptes/codes/statuts y
+        # figurent — la confidentialité du corpus tient aussi en cas d'échec.
         run: |
-          pytest tests/test_recette_corpus_reel.py -v -rf
+          set +e
+          pytest tests/test_recette_corpus_reel.py -v -rf --tb=short 2>&1 | tee /tmp/recette-pytest.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            echo "::error title=recette-corpus-echec::pytest a échoué (rc=$rc) — résumé dans les annotations"
+            grep -E "^(FAILED|ERROR) " /tmp/recette-pytest.log | head -25 | while IFS= read -r ligne; do
+              echo "::error title=recette::$ligne"
+            done
+          fi
+          exit "$rc"
       - name: Check corpus ZIPs (RG13, après recette) - invariant
         # Toujours exécuté, même si la recette a échoué : une modification des
         # ZIP est une violation contractuelle qui doit être signalée quoi

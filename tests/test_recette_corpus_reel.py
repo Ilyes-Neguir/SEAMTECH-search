@@ -305,7 +305,9 @@ def _meilleur_candidat_technique(rapport_scan: dict) -> dict:
 def _importer_dossier(client, ref: str, dossier: Path, *, via_upload: bool = False) -> None:
     if via_upload:
         # Étape « upload » du flux réel : les fichiers du dossier transitent
-        # par /imports/upload (multipart) ; le scan porte sur la copie stagée.
+        # par /imports/upload (multipart), avec leurs chemins RELATIFS (sinon
+        # deux fichiers de noms identiques dans des sous-dossiers se
+        # écraseraient dans le staging) ; le scan porte sur la copie stagée.
         fichiers = sorted(p for p in dossier.rglob("*") if p.is_file())
         assert fichiers, f"{ref} : dossier vide"
         assert len(fichiers) <= 500, f"{ref} : trop de fichiers pour un upload unique"
@@ -315,7 +317,8 @@ def _importer_dossier(client, ref: str, dossier: Path, *, via_upload: bool = Fal
             for fichier in fichiers:
                 poignee = fichier.open("rb")
                 poignees.append(poignee)
-                multipart.append(("files", (fichier.name, poignee.read(), "application/octet-stream")))
+                nom_relatif = str(fichier.relative_to(dossier))
+                multipart.append(("files", (nom_relatif, poignee.read(), "application/octet-stream")))
             reponse = client.post(
                 "/imports/upload",
                 files=multipart,
@@ -481,7 +484,7 @@ def test_06_ocr_par_etages(dossiers: dict[str, Path], tmp_path: Path) -> None:
     # Étage 3 : une page du corpus rendue en IMAGE est océrisée réellement.
     premiere_fiche = Path(RECETTE["refs"]["REF-001"]["technique"])
     subprocess.run(
-        ["pdftoppm", "-f", "1", "-l", "1", "-r", "150", "-png", str(premiere_fiche), str(tmp_path / "page")],
+        ["pdftoppm", "-f", "1", "-l", "1", "-r", "300", "-png", str(premiere_fiche), str(tmp_path / "page")],
         check=True,
         capture_output=True,
     )
@@ -510,13 +513,17 @@ def test_06_ocr_par_etages(dossiers: dict[str, Path], tmp_path: Path) -> None:
     assert page["texte_final"] == page["texte_ocr"], "le texte final n'est pas le texte OCR"
     assert len(page["texte_ocr"].strip()) >= 50, "texte OCR trop court : Tesseract n'a pas vraiment tourné"
 
-    # Preuve SANS divulgation : un mot du texte natif est retrouvé par l'OCR.
-    mots = [
-        m for m in re.split(r"[^A-Za-zÀ-ÿ]+", texte_natif) if len(m) >= 6
-    ]
+    # Preuve SANS divulgation : au moins un des mots les plus longs de la
+    # page native est retrouvé par l'OCR (le plus long peut être coupé par
+    # le rendu, on en propose cinq).
+    mots = sorted(
+        (m for m in re.split(r"[^A-Za-zÀ-ÿ]+", texte_natif) if len(m) >= 6),
+        key=len,
+        reverse=True,
+    )[:5]
     assert mots, "page sans mot exploitable pour la preuve OCR"
-    mot = max(mots, key=len).lower()
-    assert mot in page["texte_ocr"].lower(), (
+    texte_ocr = page["texte_ocr"].lower()
+    assert any(m.lower() in texte_ocr for m in mots), (
         "l'OCR n'a retrouvé aucun mot significatif de la page rendue en image"
     )
 
@@ -526,8 +533,13 @@ def test_06_ocr_par_etages(dossiers: dict[str, Path], tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _termes_de_la_base() -> dict[str, str]:
-    """Termes de recherche tirés de la base (valeurs JAMAIS imprimées)."""
+def _termes_de_la_base() -> tuple[dict[str, str], dict[str, str]]:
+    """Termes de recherche tirés de la base (valeurs JAMAIS imprimées).
+
+    Retourne (termes, origine) : pour chaque famille, le code REF dont la
+    fiche a fourni le terme — le document attendu dans les résultats est
+    LE PDF technique de CE dossier, pas toujours REF-001.
+    """
     from seamtech_search.indexer import SearchIndex
 
     index = SearchIndex(Path("/tmp/recette-termes.db"), URL_BASE)
@@ -547,47 +559,59 @@ def _termes_de_la_base() -> dict[str, str]:
         index.close()
     assert lignes, "aucune fiche en base pour tirer les termes de recherche"
 
+    # code fiche → REF du dossier (mémorisé à l'import, étape 4).
+    code_vers_ref = {infos["fiche"]: ref for ref, infos in RECETTE["refs"].items() if infos.get("fiche")}
+
     termes: dict[str, str] = {}
+    origine: dict[str, str] = {}
+    accentue: tuple[str, str] | None = None
     for code, client, bateau, type_voile, tissu in lignes:
-        termes.setdefault("reference", code)
-        if client:
-            termes.setdefault("client", client)
-        if bateau:
-            termes.setdefault("bateau", bateau)
-        if type_voile:
-            termes.setdefault("type", type_voile)
-        if tissu:
-            termes.setdefault("matiere", tissu)
+        ref = code_vers_ref.get(code)
+        if ref is None:
+            continue
+        for famille, valeur in (
+            ("reference", code),
+            ("client", client),
+            ("bateau", bateau),
+            ("type", type_voile),
+            ("matiere", tissu),
+        ):
+            if valeur and famille not in termes:
+                termes[famille] = valeur
+                origine[famille] = ref
+            # Terme accentué : cherché sur TOUTES les lignes (le premier
+            # fournisseur de chaque famille peut être sans accent).
+            if valeur and accentue is None and any(c in valeur for c in "éèêëàâäîïôöùüç"):
+                accentue = (valeur, ref)
     assert "reference" in termes, "aucune référence exploitable en base"
 
     # Un terme accentué + sa version sans accent (parité accents) : le corpus
     # contient nécessairement des libellés accentués (invariant mesuré).
-    accentue = next(
-        (v for v in termes.values() if any(c in v for c in "éèêëàâäîïôöùüç")),
-        None,
-    )
     assert accentue, "aucun terme accentué en base : la preuve accents est impossible"
-    termes["accentue"] = accentue
+    termes["accentue"] = accentue[0]
+    origine["accentue"] = accentue[1]
     table = str.maketrans("éèêëàâäîïôöùüçÉÈÊËÀÂÄÎÏÔÖÙÜÇ", "eeeeaaaiioouucEEEEAAAIIIOOUUC")
-    termes["sans_accent"] = accentue.translate(table)
+    termes["sans_accent"] = termes["accentue"].translate(table)
+    origine["sans_accent"] = origine["accentue"]
     termes["multi"] = f"{termes['reference']} {termes.get('bateau') or termes.get('client')}".strip()
-    return termes
+    origine["multi"] = origine["reference"]
+    return termes, origine
 
 
 def test_07_recherches_par_mots_cles(app_client) -> None:
-    """Chaque famille de mots-clés retrouve le document technique correspondant."""
-    termes = _termes_de_la_base()
-    chemin_attendu = RECETTE["refs"]["REF-001"]["technique"]
+    """Chaque famille de mots-clés retrouve le document technique attendu."""
+    termes, origine = _termes_de_la_base()
 
     for famille in ("reference", "client", "bateau", "type", "matiere", "accentue", "sans_accent", "multi"):
         terme = termes.get(famille)
         if not terme:
             continue
+        chemin_attendu = RECETTE["refs"][origine[famille]]["technique"]
         reponse = app_client.get("/search", params={"q": terme, "limit": 50})
         assert reponse.status_code == 200, f"recherche {famille} : HTTP {reponse.status_code}"
         resultats = reponse.json()["results"]
         assert any(r.get("path") == chemin_attendu for r in resultats), (
-            f"recherche {famille} : le document technique n'est pas ressorti"
+            f"recherche {famille} : le document technique attendu n'est pas ressorti"
         )
 
     familles_eprouvees = sum(1 for k in ("reference", "client", "bateau", "type", "matiere") if termes.get(k))
