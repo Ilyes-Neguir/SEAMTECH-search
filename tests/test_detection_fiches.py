@@ -70,17 +70,19 @@ def test_les_trois_fiches_connues_sont_candidates(lexique_defaut: Any) -> None:
 
 
 def test_le_point_mort_genois_est_reproduce_et_corrige(lexique_defaut: Any) -> None:
-    """La fiche génois reste ratée par le classifieur, mais pas par la détection.
-
-    C'est le test de non-régression sur l'angle mort lui-même : si quelqu'un
-    « corrige » le classifieur sans le savoir, ce test documente toujours que
-    la détection structurelle couvre ce cas indépendamment.
-    """
+    """La fiche génois était l'angle mort d'origine du classifieur (1 seule
+    ancre forte). Depuis l'enrichissement des ancres par le vocabulaire réel
+    de voilerie (2026-09-28 : bordure, sangle, amure, drisse, écoute…), le
+    classifieur la reconnaît : ce test verrouille la correction. La détection
+    structurelle reste le signal indépendant — ce test prouve aussi qu'elle
+    continue de couvrir ce cas seule."""
     from seamtech_search.anchors import classify_pdf_text
     from seamtech_search.extractors import extract_file
 
     texte = extract_file(FIXTURE_GENOA).text
-    assert classify_pdf_text(texte) == "plan_pdf", "le classifieur a changé : mettre à jour ce test"
+    assert classify_pdf_text(texte) == "technical_pdf", (
+        "le classifieur a régressé : la fiche génois doit être reconnue technique"
+    )
 
     resultat = detection_sur(FIXTURE_GENOA, lexique_defaut)
     assert resultat.est_candidat
@@ -247,12 +249,12 @@ def test_inventaire_rapporte_deux_vues_et_les_desaccords(tmp_path: Path) -> None
     assert len(detection["lexique"]["empreinte_sha256"]) == 64
     assert detection["nb_candidats"] == 1
     assert detection["candidats"][0]["chemin"].endswith("fiche-genois.pdf")
+    # Depuis l'enrichissement des ancres (2026-09-28), le classifieur
+    # reconnaît la fiche génois : les deux vues sont d'accord, plus aucun
+    # désaccord « raté par le classifieur ».
     desaccords = detection["desaccords"]
-    assert desaccords["nb_rates_par_le_classifieur"] == 1
-    rate = desaccords["rates_par_le_classifieur"][0]
-    assert rate["chemin"].endswith("fiche-genois.pdf")
-    assert rate["categorie_classifieur"] == "plan"
-    assert "guindant" in rate["vocabulaire_trouve"]
+    assert desaccords["nb_rates_par_le_classifieur"] == 0
+    assert desaccords["rates_par_le_classifieur"] == []
     # Le plan n'est ni candidat ni désaccord :
     assert all(not c["chemin"].endswith("plan-coupe.pdf") for c in detection["candidats"])
 
@@ -271,7 +273,9 @@ def test_inventaire_csv_porte_les_deux_vues(tmp_path: Path) -> None:
     assert len(lignes) == 1
     assert lignes[0]["candidat_fiche"] == "1"
     assert float(lignes[0]["score_fiche"]) > 0
-    assert lignes[0]["categorie_pdf"] == "plan"
+    # Corrigé avec l'enrichissement des ancres (2026-09-28) : la fiche
+    # génois est désormais classée technique par le classifieur textuel.
+    assert lignes[0]["categorie_pdf"] == "technique"
 
 
 def test_technique_du_classifieur_sans_structure_est_signalee(tmp_path: Path, lexique_defaut: Any) -> None:
@@ -471,16 +475,19 @@ def test_mesure_appariement_7792_avant_apres(lexique_defaut: Any) -> None:
     """Mesure rejouée sur la fiche de référence (constat 3).
 
     Mesure sur le DOCUMENT CLIENT RÉEL 7792-SO (reçu le 21/09, SHA-256
-    43afc51e…) : 27 termes du lexique y sont trouvés — chiffre mesuré le
-    21/09/2026, qui remplace l'ancien 31 obtenu sur la reconstruction (la
-    mise en page réelle n'imprime pas tous les libellés de la reconstruction,
-    p. ex. « désignation »). La tolérance au pluriel reste vérifiée :
-    « Jonction verticale » (libellé réel) est couvert par le terme singulier
-    du lexique.
+    43afc51e…) : 27 termes du lexique y étaient trouvés avec le lexique v2
+    (chiffre mesuré le 21/09/2026, qui remplaçait l'ancien 31 obtenu sur la
+    reconstruction : la mise en page réelle n'imprime pas tous les libellés
+    de la reconstruction, p. ex. « désignation »). Le lexique v3 (28/09/2026,
+    corpus atelier) ajoute des libellés partagés par toutes les fiches
+    (amure, drisse, écoute…) : la mesure rejouée monte à 37 termes, tous
+    réellement présents sur le document. La tolérance au pluriel reste
+    vérifiée : « Jonction verticale » (libellé réel) est couvert par le
+    terme singulier du lexique.
     """
     page = inventory.analyser_page_pdf(FIXTURE_7792)
     from seamtech_search.detection_fiches import detecter_fiche
 
     resultat = detecter_fiche(page.mots, page.largeur, page.hauteur, page.grille_tracee, lexique_defaut)
-    assert len(resultat.vocabulaire_trouve) == 27, "mesuré sur le document réel 7792-SO le 21/09/2026"
+    assert len(resultat.vocabulaire_trouve) == 37, "mesuré sur le document réel 7792-SO le 28/09/2026 (lexique v3)"
     assert "jonction" in resultat.vocabulaire_trouve
