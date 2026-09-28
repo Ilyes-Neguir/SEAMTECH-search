@@ -18,6 +18,7 @@ Formule : estimation_duree_s = pages_a_oceriser * 60 / debit.
 
 from __future__ import annotations
 
+import importlib.util
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
@@ -53,7 +54,15 @@ def _lister_fichiers(dossier: Path) -> list[Path]:
 
 
 def _texte_par_page_pdf(chemin: Path) -> list[str]:
-    """Extrait le texte natif par page (pdfplumber puis pypdf en repli)."""
+    """Extrait le texte natif par page (pdfplumber puis pypdf en repli).
+
+    Refuse explicitement de produire un inventaire partiel si aucun parseur PDF
+    n'est installé : retourner ``[]`` dans ce cas ferait passer tous les PDF
+    sous silence et pourrait être pris à tort pour un corpus sans texte natif.
+    """
+    if importlib.util.find_spec("pdfplumber") is None and importlib.util.find_spec("pypdf") is None:
+        raise RuntimeError("parseur PDF indisponible : installer pdfplumber ou pypdf avant l'inventaire OCR")
+
     # pdfplumber d'abord (layout-aware)
     try:
         import pdfplumber  # type: ignore
