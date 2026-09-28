@@ -183,9 +183,20 @@ def app_client(tmp_path_factory: pytest.TempPathFactory):
     from fastapi.testclient import TestClient
 
     from seamtech_search.api import create_app
+    from seamtech_search.indexer import SearchIndex
 
     travail = tmp_path_factory.mktemp("recette")
     app = create_app(_config_recette(URL_BASE, travail))
+    # Amorçage des gabarits embarqués (geste opérateur du CLI, cf. MISE_EN
+    # SERVICE) : create_app applique les migrations mais n'enregistre PAS les
+    # gabarits — sans eux, le dépôt Lot C n'a aucun gabarit actif.
+    from seamtech_search.fiches.gabarits import initialiser_gabarits
+
+    index_semis = SearchIndex(travail / "semis.db", URL_BASE)
+    try:
+        initialiser_gabarits(index_semis)
+    finally:
+        index_semis.close()
     client = TestClient(app, follow_redirects=False)
     client.headers.update({"X-SEAMTECH-TOKEN": JETON})
     with client:

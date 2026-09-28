@@ -1465,13 +1465,22 @@ jobs:
         # figurent — la confidentialité du corpus tient aussi en cas d'échec.
         run: |
           set +e
-          pytest tests/test_recette_corpus_reel.py -v -rf --tb=short 2>&1 | tee /tmp/recette-pytest.log
+          pytest tests/test_recette_corpus_reel.py -v -ra --tb=short 2>&1 | tee /tmp/recette-pytest.log
           rc=${PIPESTATUS[0]}
           set -e
           if [ "$rc" -ne 0 ]; then
             echo "::error title=recette-corpus-echec::pytest a échoué (rc=$rc) — résumé dans les annotations"
             grep -E "^(FAILED|ERROR) " /tmp/recette-pytest.log | head -25 | while IFS= read -r ligne; do
               echo "::error title=recette::$ligne"
+            done
+            # Queue du résumé court (SKIPPED avec raisons, XFAIL) : bornée.
+            sed -n '/^=====\? .* short test summary/,$p' /tmp/recette-pytest.log \
+              | grep -E "^(SKIPPED|XFAIL|FAILED|ERROR) " | head -10 | while IFS= read -r ligne; do
+              echo "::error title=recette-resume::$ligne"
+            done
+            # Dernières lignes du premier échec (traceback borné, sans valeur métier).
+            tail -30 /tmp/recette-pytest.log | head -20 | while IFS= read -r ligne; do
+              echo "::error title=recette-queue::$ligne"
             done
           fi
           exit "$rc"
