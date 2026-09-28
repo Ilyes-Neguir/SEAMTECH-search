@@ -544,6 +544,16 @@ def test_inventaire_obligatoire_etage1_et_etage3(tmp_path: Path) -> None:
     assert etage3["debit_mesure_pages_par_minute"] == 30.0
     assert etage3["formule_estimation"] == "estimation_duree_s = pages_a_oceriser * 60 / debit_mesure_pages_par_minute"
 
+
+def test_inventaire_pdf_refuse_absence_de_parseurs(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Un inventaire ne doit pas masquer tous les PDF si ses parseurs manquent."""
+    monkeypatch.setattr(inv_mod.importlib.util, "find_spec", lambda _nom: None)
+    with pytest.raises(RuntimeError, match="parseur PDF indisponible"):
+        inv_mod._texte_par_page_pdf(tmp_path / "document.pdf")
+
+
 def test_ocr_avec_fake_tesseract_couvre_sans_binaire(tmp_path: Path) -> None:
     """Q.1.d : faux tesseract local pour couvrir chemins heureux sans binaire réel (RG14).
 
