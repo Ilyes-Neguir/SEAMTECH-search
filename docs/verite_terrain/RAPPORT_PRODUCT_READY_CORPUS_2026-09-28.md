@@ -238,7 +238,8 @@ Les 7 ZIP originaux n'ont jamais été retouchés (RG13 vérifié à chaque run)
 
 ## 6. Décision demandée au commanditaire
 
-La PR reste **ouverte, non fusionnée** (aucune fusion sans décision explicite).
+PR d'origine : [#31](https://github.com/Ilyes-Neguir/SEAMTECH-search/pull/31)
+(ouverte, **non fusionnée** — aucune fusion sans décision explicite).
 Deux décisions restent au commanditaire :
 
 1. fusionner la branche de recette ;
