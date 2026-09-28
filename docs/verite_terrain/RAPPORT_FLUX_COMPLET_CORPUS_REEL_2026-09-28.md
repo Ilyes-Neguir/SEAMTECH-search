@@ -225,10 +225,13 @@ réels** a été effectuée avec `sqlite3.Connection.backup` hors dépôt :
 | Sauvegarde/restauration PostgreSQL | 7 skipped : base/service absent |
 
 Le run post-merge de la base `cbbe405b31107ea36032da5a2c44810475b40fce` a
-réussi en CI sur ses 9 jobs. Il précède les changements locaux de ce lot ; la
-CI du présent commit/PR doit être attendue après publication de cette branche.
+réussi en CI sur ses 9 jobs. La PR [#30](https://github.com/Ilyes-Neguir/SEAMTECH-search/pull/30)
+a également passé les **9/9 jobs CI** (runs push et pull_request) sur le commit de
+qualification `1c32215dbb970a0b6d8d14e8eb11d53ad04c23ec` ; run PR :
+[36469050825](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36469050825).
 Aucun seuil de test n'a été abaissé ; 207 tests dépendant des marqueurs
-`postgres`/`s3`/`perf` n'ont pas été sélectionnés dans la suite locale.
+`postgres`/`s3`/`perf` n'ont pas été sélectionnés dans la suite locale. La PR
+reste ouverte ; aucun merge n'a été demandé.
 
 ## 9. RG13, RG14, stockage et limites
 
