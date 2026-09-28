@@ -191,6 +191,7 @@ def app_client(tmp_path_factory: pytest.TempPathFactory):
     from seamtech_search.indexer import SearchIndex
 
     travail = tmp_path_factory.mktemp("recette")
+    RECETTE["travail"] = str(travail)  # l'étape 10.6 réutilisera ces racines
     app = create_app(_config_recette(URL_BASE, travail))
     # Amorçage des gabarits embarqués (geste opérateur du CLI, cf. MISE_EN
     # SERVICE) : create_app applique les migrations mais n'enregistre PAS les
@@ -845,9 +846,12 @@ def test_10_sauvegarde_restauration_base_neuve(
     # cherchable suit la validation humaine — jamais automatique).
 
     # 10.6 OUVERTURE PDF depuis la base restaurée : 302 présigné, contenu identique.
-    travail = tmp_path / "app-restauree"
-    travail.mkdir()
-    app = create_app(_config_recette(URL_BASE_RESTAUREE, travail))
+    # L'app restaurée doit garder les MÊMES racines que la session d'origine :
+    # le document technique de REF-001 est la copie STAGÉE (répertoire de
+    # travail de la session) — sous d'autres racines, /open répondrait 403
+    # « outside configured search roots ».
+    assert RECETTE.get("travail"), "le répertoire de travail de la session n'a pas été mémorisé"
+    app = create_app(_config_recette(URL_BASE_RESTAUREE, Path(RECETTE["travail"])))
     chemin_pdf = RECETTE["refs"]["REF-001"]["technique"]
     with TestClient(app, follow_redirects=False) as client_rest:
         reponse = client_rest.post(
