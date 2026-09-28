@@ -105,6 +105,36 @@ _SQL_RENFORT_INS = (
 _SQL_MESURE_LIBRE_INS = (
     "INSERT INTO fiche_mesure_libre (id_fiche, code, libelle, valeur_num, valeur_texte) VALUES (%s, %s, %s, %s, %s)"
 )
+
+
+_RE_NOMBRE_LIBRE = re.compile(r"\d+(?:[.,]\d+)?")
+
+
+def _valeur_numerique_libre(valeur: Any) -> float | None:
+    """Valeur NUMÉRIQUE d'une mesure libre — jamais d'exception, jamais d'invention.
+
+    RG6/RG16 : une mesure libre peut être un nombre (« 12.5 »), un nombre avec
+    son unité (« 50 mm ») ou une ligne descriptive ENTIÈRE (« LATTES Plates
+    20 x 9 mm … »). La colonne ``valeur_num`` ne reçoit un nombre QUE si la
+    valeur en contient exactement UN ; une ligne à plusieurs nombres (ou sans
+    nombre) y reste NULL — le texte intégral vit dans ``valeur_texte``, rien
+    n'est perdu, rien n'est inventé.
+    """
+    if valeur is None:
+        return None
+    if isinstance(valeur, (int, float)):
+        return float(valeur)
+    texte = str(valeur).strip()
+    if not texte:
+        return None
+    nombres = _RE_NOMBRE_LIBRE.findall(texte.replace(" ", ""))
+    if len(nombres) != 1:
+        return None
+    try:
+        return float(nombres[0].replace(",", "."))
+    except ValueError:
+        return None
+
 _SQL_CHAMP_INS = (
     "INSERT INTO fiche_champ_extrait (id_fiche, champ, rang, table_cible, colonne_cible, valeur_brute, "
     "valeur_normalisee, methode, confiance, page, zone, version_gabarit) "
@@ -473,7 +503,7 @@ def _ecrire_fiche_dans(index: Any, fiche: FicheExtraite, connexion: Any) -> tupl
                         id_fiche,
                         libre.champ.removeprefix("libre."),
                         libelle,
-                        None if libre.valeur_normalisee is None else float(libre.valeur_normalisee),
+                        _valeur_numerique_libre(libre.valeur_normalisee),
                         libre.valeur_brute,
                     ),
                 )

@@ -533,3 +533,40 @@ class TestFiletReprise:
         for chemin in (fiche_jade, fiche_gv):
             fiche = extraire_avec_filet(chemin, list(GABARITS_EMBARQUES))
             assert fiche.gabarit_code is not None
+
+
+class TestValeurNumeriqueLibre:
+    """Régression du run CI 36488649403 : le dépôt de la fiche GV (REF-006)
+    plantait en écriture car la persistance appliquait ``float()`` à la
+    valeur normalisée de TOUTE mesure libre — or le handler GV stocke la
+    ligne LATTES complète en texte. La colonne numérique ne doit recevoir
+    un nombre QUE si la valeur en contient exactement un (RG16 : jamais
+    d'invention, jamais d'exception)."""
+
+    def test_ligne_descriptive_multi_nombres(self) -> None:
+        from seamtech_search.fiches.persistance import _valeur_numerique_libre
+
+        # Ligne réelle du corpus (vocabulaire générique de voilerie).
+        ligne = "LATTES Plates 20 x 9 mm type OR FULLBATTEN Pas de coulisseaux cardan inox 3000 Sailman filetage M10"
+        assert _valeur_numerique_libre(ligne) is None
+
+    def test_nombre_avec_unite(self) -> None:
+        from seamtech_search.fiches.persistance import _valeur_numerique_libre
+
+        assert _valeur_numerique_libre("50 mm") == 50.0
+        assert _valeur_numerique_libre("12,5") == 12.5
+        assert _valeur_numerique_libre("12.5") == 12.5
+
+    def test_valeurs_vides_et_texte_sans_nombre(self) -> None:
+        from seamtech_search.fiches.persistance import _valeur_numerique_libre
+
+        assert _valeur_numerique_libre(None) is None
+        assert _valeur_numerique_libre("") is None
+        assert _valeur_numerique_libre("Pas de coulisseaux") is None
+
+    def test_nombre_seul_un_chiffre_isole(self) -> None:
+        from seamtech_search.fiches.persistance import _valeur_numerique_libre
+
+        # Un seul nombre présent : il est proposé tel quel (jamais inventé,
+        # jamais converti) ; le texte intégral reste en valeur_texte.
+        assert _valeur_numerique_libre("cardan inox 3000 Sailman") == 3000.0

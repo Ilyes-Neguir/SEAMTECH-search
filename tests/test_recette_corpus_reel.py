@@ -110,24 +110,29 @@ def _empreinte(chemin: Path) -> str:
     return hashlib.sha256(chemin.read_bytes()).hexdigest()
 
 
-def _client_s3():
-    import boto3
+def _sans_accents(texte: str) -> str:
+    """Version sans accents (NFKD + retrait des diacritiques combinants)."""
+    import unicodedata
 
-    return boto3.client(
-        "s3",
-        endpoint_url=S3_ENDPOINT,
-        aws_access_key_id=S3_ACCESS_KEY,
-        aws_secret_access_key=S3_SECRET_KEY,
+    return "".join(
+        caractere
+        for caractere in unicodedata.normalize("NFKD", texte)
+        if not unicodedata.combining(caractere)
     )
 
 
-def _creer_bucket_si_absent(client, nom: str) -> None:
-    try:
-        client.head_bucket(Bucket=nom)
-        return
-    except Exception:
-        pass
-    client.create_bucket(Bucket=nom)
+def _client_s3(bucket: str | None = None):
+    """Client stockage du PROJET (S3StorageClient) — pas un client boto3 nu :
+    la sauvegarde appelle ``upload_file(..., avoid_overwrite=True)``, paramètre
+    du wrapper seul (le client brut lève TypeError)."""
+    from seamtech_search.storage import S3StorageClient
+
+    return S3StorageClient(
+        endpoint_url=S3_ENDPOINT,
+        bucket_name=bucket or S3_BUCKET,
+        access_key_id=S3_ACCESS_KEY,
+        secret_access_key=S3_SECRET_KEY,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -288,10 +293,12 @@ def test_03_services_et_migrations_017_base_neuve(app_client) -> None:
     conn_redis = module_redis.from_url(REDIS_URL, socket_connect_timeout=5, socket_timeout=5)
     assert conn_redis.ping(), "Redis ne répond pas au ping"
 
-    # --- MinIO : le bucket documents existe et répond.
-    client = _client_s3()
-    _creer_bucket_si_absent(client, S3_BUCKET)
-    client.head_bucket(Bucket=S3_BUCKET)
+    # --- MinIO : le bucket documents existe et répond (le wrapper porte le
+    # bucket ; ensure_bucket_exists sonde par head_bucket et crée si absent,
+    # le listage vide confirme que l'API répond).
+    client = _client_s3(S3_BUCKET)
+    client.ensure_bucket_exists()
+    client.list_keys("")
 
     # --- PostgreSQL tout court (sonde bas niveau, distincte de l'app).
     with psycopg2.connect(URL_BASE, connect_timeout=5) as connexion:
@@ -399,7 +406,11 @@ def test_04c_depot_fiche_lot_c(app_client, dossiers: dict[str, Path], ref: str) 
     reponse = app_client.post("/imports/dossier", json={"dossier": str(dossiers[ref])})
     assert reponse.status_code == 201, f"{ref} : dépôt HTTP {reponse.status_code}"
     corps = reponse.json()
-    assert corps["statut"] == "traite", f"{ref} : dépôt non traité ({corps.get('raison')})"
+    # La raison d'un refus embarque l'exception applicative, qui peut recopier
+    # du texte documentaire : on n'en retient que le TYPE (dépôt public —
+    # aucune valeur métier ne doit fuiter dans les journaux d'assertion).
+    raison = re.sub(r"'[^']*'", "«…»", str(corps.get("raison") or ""))[:120]
+    assert corps["statut"] == "traite", f"{ref} : dépôt non traité ({raison})"
     assert corps.get("fiche"), f"{ref} : aucune fiche créée"
     RECETTE["refs"][ref]["fiche"] = corps["fiche"]
 
@@ -601,8 +612,7 @@ def _termes_de_la_base() -> tuple[dict[str, str], dict[str, str]]:
     assert accentue, "aucun terme accentué en base : la preuve accents est impossible"
     termes["accentue"] = accentue[0]
     origine["accentue"] = accentue[1]
-    table = str.maketrans("éèêëàâäîïôöùüçÉÈÊËÀÂÄÎÏÔÖÙÜÇ", "eeeeaaaiioouucEEEEAAAIIIOOUUC")
-    termes["sans_accent"] = termes["accentue"].translate(table)
+    termes["sans_accent"] = _sans_accents(termes["accentue"])
     origine["sans_accent"] = origine["accentue"]
     termes["multi"] = f"{termes['reference']} {termes.get('bateau') or termes.get('client')}".strip()
     origine["multi"] = origine["reference"]
@@ -685,7 +695,7 @@ def test_08_ouverture_pdf_url_presignee_reelle(app_client) -> None:
 def test_09_rapport_pdf_telecharge(app_client) -> None:
     """Le rapport d'import se télécharge (302 présigné ou 200 direct) en PDF."""
     import_id = RECETTE["refs"]["REF-001"]["import_id"]
-    reponse = app_client.get(f"/imports/{import_id}/artifact/report_pdf")
+    reponse = app_client.get(f"/imports/{import_id}/artifacts/report_pdf")
     assert reponse.status_code in {200, 302}, (
         f"téléchargement rapport : HTTP {reponse.status_code}"
     )
@@ -717,8 +727,8 @@ def test_10_sauvegarde_restauration_base_neuve(
     from seamtech_search.recherche import rechercher_fiches
     from seamtech_search.sauvegarde import restaurer, sauver, verifier
 
-    client = _client_s3()
-    _creer_bucket_si_absent(client, S3_BACKUP_BUCKET)
+    client = _client_s3(S3_BACKUP_BUCKET)
+    client.ensure_bucket_exists()
     monkeypatch.setenv("SEAMTECH_SAUVEGARDE_TMP", str(tmp_path / "sauvegarde-tmp"))
 
     # 10.1 SAUVEGARDE de la base réelle (dump + manifeste + envoi MinIO vérifié).

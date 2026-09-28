@@ -117,6 +117,58 @@ class TestEcritureTransactionnelle:
         assert score is not None and 0.0 <= float(score) <= 1.0
         assert id_gabarit is not None
 
+    def test_mesures_libres_textuelles_sans_exception(self, base_fiches) -> None:
+        """Régression run CI 36488649403 : une mesure libre dont la valeur
+        normalisée est une LIGNE ENTIÈRE (multi-nombres, voie GV/RG6) ne doit
+        JAMAIS faire échouer l'écriture — valeur_num NULL, texte préservé."""
+        from seamtech_search.fiches.modeles import ChampExtrait, FicheExtraite
+
+        fiche = FicheExtraite(code="TEST-LIBRES-TEXTE", fichier_pdf="synthese.pdf")
+        fiche.mesures_libres = [
+            ChampExtrait(
+                champ="libre.lattes",
+                valeur_brute="LATTES Plates 20 x 9 mm type OR Pas de coulisseaux cardan inox 3000",
+                valeur_normalisee="LATTES Plates 20 x 9 mm type OR Pas de coulisseaux cardan inox 3000",
+                methode="gabarit",
+                confiance=0.85,
+            ),
+            ChampExtrait(
+                champ="libre.largeur",
+                valeur_brute="50 mm",
+                valeur_normalisee="50 mm",
+                methode="gabarit",
+                confiance=0.95,
+            ),
+            ChampExtrait(
+                champ="libre.titre",
+                valeur_brute="Pas de coulisseaux",
+                valeur_normalisee="Pas de coulisseaux",
+                methode="gabarit",
+                confiance=0.9,
+            ),
+        ]
+        id_fiche, action = ecrire_fiche(base_fiches["index"], fiche)
+        assert action == "creee" and id_fiche > 0
+        index = base_fiches["index"]
+        with index.connect() as connexion:
+            with connexion.cursor() as cursor:
+                cursor.execute(
+                    "SELECT ml.code, ml.valeur_num, ml.valeur_texte "
+                    "FROM fiche_mesure_libre ml JOIN fiche f ON f.id_fiche = ml.id_fiche "
+                    "WHERE f.code = %s ORDER BY ml.code",
+                    (fiche.code,),
+                )
+                lignes = {code: (num, texte) for code, num, texte in cursor.fetchall()}
+        # Ligne descriptive multi-nombres : colonne numérique NULL, texte intact.
+        assert lignes["lattes"][0] is None
+        assert lignes["lattes"][1] == "LATTES Plates 20 x 9 mm type OR Pas de coulisseaux cardan inox 3000"
+        # Nombre unique avec unité : proposé tel quel (jamais converti).
+        assert float(lignes["largeur"][0]) == 50.0
+        # Texte sans nombre : NULL, texte intact.
+        assert lignes["titre"][0] is None
+        assert lignes["titre"][1] == "Pas de coulisseaux"
+
+
     def test_toutes_les_tables_enfants_remplies(self, base_fiches, fiche_7792) -> None:
         ecrire_fiche(base_fiches["index"], fiche_7792)
         comptes = _comptes(base_fiches["index"], fiche_7792.code)
