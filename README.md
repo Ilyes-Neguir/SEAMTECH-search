@@ -144,9 +144,11 @@ Env overrides (all `SEAMTECH_` prefixed) or `config/config.json` (must exist, no
 
 ```bash
 ruff check .
-pytest -k "not postgres and not s3" -q   # 156 passed, 2 skipped, 16 deselected
+# Selection is by MARKER, never by name substring (fix R-14, 2026-09-25): a test
+# that needs a service declares it (`postgres`, `s3`, `sauvegarde`, `perf`).
+pytest -m "not postgres and not s3 and not perf" -q   # 715 passed, 3 skipped, 207 deselected
 # With coverage (same selection CI gates on; live-postgres self-skips without a DB URL):
-pytest -k "not s3" -q --cov=seamtech_search --cov-report=term --cov-report=json:coverage.json
+pytest -m "not s3 and not perf" -q --cov=seamtech_search --cov-report=term --cov-report=json:coverage.json
 python scripts/coverage_gate.py coverage.json   # fails (exit 1) on any threshold breach
 # Live integration (needs docker compose up):
 SEAMTECH_TEST_S3_URL=http://localhost:9000 pytest -m s3 -q

@@ -26,7 +26,19 @@ if DOCKER_AVAILABLE:
     except Exception:
         COMPOSE_AVAILABLE = False
 
-pytestmark = pytest.mark.skipif(not (DOCKER_AVAILABLE and COMPOSE_AVAILABLE), reason="Docker not available in this environment")
+# Deux marqueurs, deux rôles distincts :
+#  - ``skipif`` : sans Docker, ces tests ne peuvent pas s'exécuter ;
+#  - ``s3``     : ils exigent un stockage objet VIVANT (MinIO du compose :
+#    ``ensure_bucket_exists``, ``upload_file``, ``get_presigned_url``,
+#    ``delete_file``). Le marqueur est ce qui les tient hors des suites sans
+#    service (R-14) ; le job CI `integration` les sélectionne PAR CHEMIN, donc
+#    le marqueur ne les y désélectionne pas.
+pytestmark = [
+    pytest.mark.skipif(
+        not (DOCKER_AVAILABLE and COMPOSE_AVAILABLE), reason="Docker not available in this environment"
+    ),
+    pytest.mark.s3,
+]
 
 # Strict mode (set by CI, where the infra services are brought up first and
 # health-checked): backends that are supposed to be reachable must actually

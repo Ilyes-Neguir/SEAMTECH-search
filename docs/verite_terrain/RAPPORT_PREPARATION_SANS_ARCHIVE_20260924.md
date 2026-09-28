@@ -351,3 +351,41 @@ Postérieurement au §1, la validation CI a été préparée (branche poussée, 
   job sauvegarde vert (aller-retour complet, 0 sauté).
   Lot G réel : toujours bloqué (archive/PDF de production non reçus) —
   indépendant de cette rupture d'infrastructure.
+
+---
+
+## Addendum du 2026-09-25 — deux mesures de ce rapport ont changé de base
+
+Ce rapport reste le compte rendu du 24/09 : rien n'y est réécrit. Deux de ses
+chiffres reposaient toutefois sur une **sélection de tests fausse**, corrigée le
+lendemain ; il faut le savoir pour ne pas les comparer naïvement aux suivants.
+
+1. **La commande de sélection a changé** (correctif R-14, audit stockage §5.2).
+   Toutes les mesures ci-dessus utilisent `-k "not postgres and not s3…"`, qui
+   exclut par **sous-chaîne du nom** : 33 tests n'exigeant aucun service — chaos
+   S3 sur doubles, grammaire SQL PostgreSQL hors serveur, routes 503 sans
+   PostgreSQL — n'étaient exécutés **nulle part**, ni dans la suite locale, ni en
+   CI. Depuis le 25/09, la sélection est faite par **marqueur** :
+
+   ```
+   pytest -m "not postgres and not s3 and not perf"     # suite sans service
+   pytest -m "not s3 and not perf" --cov=seamtech_search # mesure de couverture
+   ```
+
+   Conséquence directe sur le §1.2 (couverture locale sans PostgreSQL) : la
+   mesure porte désormais sur **916 tests collectés** au lieu de 901. Les seuils
+   n'ont pas bougé ; la couverture locale reste inférieure au plancher **parce
+   que 173 tests métier PostgreSQL se sautent hors serveur**, et la CI backend
+   avec PostgreSQL reste le juge.
+
+2. **La documentation du téléchargement d'artefact était fausse** (défaut D-1) :
+   `api.py` appelait `get_presigned_url(..., expires_in=900)` alors que le
+   paramètre s'appelle `expiration_seconds` ; le `TypeError` était avalé et la
+   redirection **302** annoncée par le README n'était jamais servie. Corrigé le
+   25/09 (durée de 900 s inchangée), prouvé par `tests/test_url_presignee_302.py`.
+   Les vérifications du 24/09 qui parlent du chemin « artefact » décrivaient donc
+   le **repli**, pas le chemin nominal.
+
+Le reste du rapport (préflight, poste Windows, protocole de validation,
+garde-fous RG13/RG14, rupture de distribution MinIO) est inchangé. **Lot G réel
+toujours bloqué** : archive et PDF de production non reçus.

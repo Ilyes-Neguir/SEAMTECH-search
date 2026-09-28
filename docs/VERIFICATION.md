@@ -11,8 +11,8 @@ Audited commit: `b7be72a`. Current HEAD: `4f0c21e` + fixes. Date: 2026-09-16.
 Commands:
 ```bash
 ruff check .
-python -m pytest -k "not postgres and not s3" -q   # 156 passed, 2 skipped, 16 deselected
-python -m pytest -k "not s3" -q --cov=seamtech_search --cov-report=json:coverage.json
+python -m pytest -m "not postgres and not s3 and not perf" -q   # 715 passed, 3 skipped, 207 deselected
+python -m pytest -m "not s3 and not perf" -q --cov=seamtech_search --cov-report=json:coverage.json
 python scripts/coverage_gate.py coverage.json      # exit 1 on any threshold breach
 ```
 
@@ -71,7 +71,8 @@ grep -n "ON CONFLICT" seamtech_search/import_pipeline.py
 **Claim:** `GET /imports/{id}/artifacts/{artifact}` → 302 presigned URL (900s) or FileResponse, fallback S3 download if cache cold.
 **Proof:**
 ```bash
-grep -n "artifacts\|get_presigned_url\|expires_in=900" seamtech_search/api.py
+grep -n "artifacts\|get_presigned_url\|expiration_seconds=900" seamtech_search/api.py
+# 302 prouvé de bout en bout (Location + ExpiresIn=900) : tests/test_url_presignee_302.py
 # E2E: import sample_data/CLIENT-123, GET /imports/{id}/artifacts/report_pdf -i (should be 302 or 200)
 curl -H "X-SEAMTECH-TOKEN: $TOKEN" http://localhost:8000/imports/<id>/artifacts/report_pdf -v
 # Frontend:
@@ -242,7 +243,7 @@ pytest tests/test_indexer.py -q
 
 ## Definition of Done checklist
 
-- [x] `ruff check . && pytest -k "not postgres and not s3" -q` green
+- [x] `ruff check . && pytest -m "not postgres and not s3 and not perf" -q` green
 - [x] coverage gate met (89% overall, ≥85%) and enforced in CI by `scripts/coverage_gate.py` (reads `coverage.json`, exits 1 on breach, unit-tested)
 - [x] `docker compose up` from clean checkout with only `.env` works (image seeds `config.json`; smoke test in CI requires `/live` to answer)
 - [x] Full round trip: drag folder → classify → analyse → report → upload → search → download report → correct → re-download (via API, frontend buttons exist)

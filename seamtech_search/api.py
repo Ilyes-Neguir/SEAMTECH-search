@@ -474,7 +474,7 @@ def create_app(config: AppConfig) -> FastAPI:
 
         if storage_client is not None and object_key:
             try:
-                url = storage_client.get_presigned_url(object_key, expires_in=900)
+                url = storage_client.get_presigned_url(object_key, expiration_seconds=900)
                 record_audit_event(
                     index, action="open", actor=actor, resource=str(target), status="302", details={"object_key": object_key}
                 )
@@ -985,7 +985,7 @@ def create_app(config: AppConfig) -> FastAPI:
         # If S3 configured and we have object key, redirect to presigned URL (expiry <=15 min)
         if storage_client is not None and object_key:
             try:
-                url = storage_client.get_presigned_url(object_key, expires_in=900)
+                url = storage_client.get_presigned_url(object_key, expiration_seconds=900)
                 record_audit_event(
                     index,
                     action="artifact_download",
