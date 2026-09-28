@@ -1935,7 +1935,14 @@ def _traiter_galons_bdf(fiche: FicheExtraite, brut: str, base: ChampExtrait, con
             texte = " ".join(mot.texte for mot in ligne.mots).strip()
             trouve_type = re.match(r"bdf\s+(a plat|pliée|pliee|décalée|decalee)", ligne.normalise)
             type_bdf = normaliser_terme(trouve_type.group(1)).replace(" ", "_") if trouve_type else "bdf"
-            galon = Galon(bande=bande)  # largeur/grammage/couleur : absents sans unité explicite
+            # Une seule ligne fiche_galon par bande (UNIQUE id_fiche+bande) :
+            # les bandes de force multiples d'un même bord se rattachent à la
+            # même ligne — leurs traces distinctes (galon.<bande>.<type>)
+            # portent le détail, jamais perdu.
+            galon = next((g for g in fiche.galons if g.bande == bande), None)
+            if galon is None:
+                galon = Galon(bande=bande)  # largeur/grammage/couleur : absents sans unité explicite
+                fiche.galons.append(galon)
             trace = ChampExtrait(
                 champ=f"galon.{bande}.{type_bdf}",
                 valeur_brute=texte,
@@ -1948,7 +1955,6 @@ def _traiter_galons_bdf(fiche: FicheExtraite, brut: str, base: ChampExtrait, con
                 colonne_cible=f"{bande}.{type_bdf}",
             )
             galon.champs.append(trace)
-            fiche.galons.append(galon)
 
 
 def _traiter_finitions_jade(fiche: FicheExtraite, brut: str, base: ChampExtrait, contexte: dict) -> None:

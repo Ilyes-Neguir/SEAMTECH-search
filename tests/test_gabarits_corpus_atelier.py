@@ -344,7 +344,11 @@ class TestChampsJade:
 
     def test_galons_bdf_par_bord(self, fiche_jade: Path) -> None:
         fiche = _extraire(fiche_jade)
-        cles = {g.champs[0].champ for g in fiche.galons}
+        # Une ligne fiche_galon par bande (contrainte UNIQUE id_fiche+bande) :
+        # les bandes de force multiples d'un même bord vivent en TRACES.
+        assert {g.bande for g in fiche.galons} == {"guindant", "chute", "bordure"}
+        assert len(fiche.galons) == 3
+        cles = {c.champ for g in fiche.galons for c in g.champs}
         assert cles == {
             "galon.guindant.a_plat",
             "galon.chute.a_plat",
@@ -353,10 +357,13 @@ class TestChampsJade:
             "galon.bordure.a_plat",
             "galon.bordure.pliee",
         }
+        # Chaque trace reste rattachée à la ligne de SA bande.
+        for g in fiche.galons:
+            assert all(c.champ.startswith(f"galon.{g.bande}.") for c in g.champs)
         # Sans unité explicite : aucune valeur numérique convertie (RG16 honnête).
         for galon in fiche.galons:
             assert galon.largeur_mm is None and galon.grammage_g_m2 is None
-            assert galon.champs[0].valeur_brute and galon.champs[0].zone is not None
+            assert all(c.valeur_brute and c.zone is not None for c in galon.champs)
 
     def test_finitions_points_ancrage(self, fiche_jade: Path) -> None:
         fiche = _extraire(fiche_jade)

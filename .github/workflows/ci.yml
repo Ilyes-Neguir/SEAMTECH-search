@@ -1459,29 +1459,36 @@ jobs:
       - name: Run full recette suite (fails explicitly on any step)
         env:
           SEAMTECH_RECETTE_CORPUS_RACINE: ${{ runner.temp }}/corpus-recette
-        # En cas d'échec, le résumé pytest est republié en ANNOTATIONS (lignes
-        # FAILED + queue courte) : les messages d'assertion du module sont
-        # volontairement SANS valeur métier, seuls comptes/codes/statuts y
-        # figurent — la confidentialité du corpus tient aussi en cas d'échec.
+        # Diagnostic en cas d'échec SANS artefact SANS valeur métier :
+        # - $GITHUB_STEP_SUMMARY : résultats par test (une ligne PASSED/
+        #   SKIPPED/FAILED) + résumé -ra + queue bornée ;
+        # - annotations ::error COMPACTES (GitHub n'en retient que 10 par
+        #   étape : chaque annotation porte un faisceau, pas une ligne).
         run: |
           set +e
           pytest tests/test_recette_corpus_reel.py -v -ra --tb=short 2>&1 | tee /tmp/recette-pytest.log
           rc=${PIPESTATUS[0]}
           set -e
+          {
+            echo "## Recette corpus réel — pytest"
+            echo
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          grep -E "PASSED|SKIPPED|FAILED|ERROR" /tmp/recette-pytest.log | head -60 >> "$GITHUB_STEP_SUMMARY" || true
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
           if [ "$rc" -ne 0 ]; then
-            echo "::error title=recette-corpus-echec::pytest a échoué (rc=$rc) — résumé dans les annotations"
-            grep -E "^(FAILED|ERROR) " /tmp/recette-pytest.log | head -25 | while IFS= read -r ligne; do
+            # Faisceau 1 : liste compacte des tests en échec (noms seuls).
+            echecs=$(grep -E "^FAILED " /tmp/recette-pytest.log | sed 's/^FAILED //; s/ - .*//' | tr '\n' ',' | sed 's/,$//')
+            echo "::error title=recette-echecs::pytest rc=$rc — échecs : $echecs"
+            # Faisceau 2 : messages d'assertion (sans valeur métier par construction).
+            grep -E "^FAILED " /tmp/recette-pytest.log | head -12 | while IFS= read -r ligne; do
               echo "::error title=recette::$ligne"
             done
-            # Queue du résumé court (SKIPPED avec raisons, XFAIL) : bornée.
-            sed -n '/^=====\? .* short test summary/,$p' /tmp/recette-pytest.log \
-              | grep -E "^(SKIPPED|XFAIL|FAILED|ERROR) " | head -10 | while IFS= read -r ligne; do
-              echo "::error title=recette-resume::$ligne"
-            done
-            # Dernières lignes du premier échec (traceback borné, sans valeur métier).
-            tail -30 /tmp/recette-pytest.log | head -20 | while IFS= read -r ligne; do
-              echo "::error title=recette-queue::$ligne"
-            done
+            # Faisceau 3 : résumé court (SKIPPED avec raisons) + dernière ligne.
+            resume=$(grep -E "^(SKIPPED|XFAIL) " /tmp/recette-pytest.log | head -8 | tr '\n' ';' | sed 's/;$//')
+            [ -n "$resume" ] && echo "::error title=recette-skips::$resume"
+            queue=$(tail -12 /tmp/recette-pytest.log | tr '\n' '|' | cut -c1-600)
+            echo "::error title=recette-queue::$queue"
           fi
           exit "$rc"
       - name: Check corpus ZIPs (RG13, après recette) - invariant
