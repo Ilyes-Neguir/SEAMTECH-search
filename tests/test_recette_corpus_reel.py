@@ -678,16 +678,26 @@ def test_07_recherches_par_mots_cles(app_client) -> None:
         f"seulement {familles_eprouvees} familles de termes éprouvées (attendu ≥ 4)"
     )
 
-    # Recherche FICHES (/recherche) : la fiche A_VALIDER est trouvée.
+    # Recherche FICHES (/recherche) — RG3 en lecture : une fiche A_VALIDER
+    # n'est PAS encore dans l'archive de confiance. Son texte de recherche
+    # (search_vector) n'est rempli qu'à la VALIDATION humaine (fonction
+    # rafraichir_texte_recherche_fiche, migration 007 ; preuve du
+    # raccordement : test_validation_rend_cherchable, Lot E). La recette ne
+    # valide JAMAIS automatiquement (RG3) : la fiche déposée doit donc rester
+    # introuvable par défaut, et la requête élargie répondre sans erreur.
+    reponse = app_client.get("/recherche", params={"q": termes["reference"], "limit": 20})
+    assert reponse.status_code == 200, f"recherche fiches (défaut) : HTTP {reponse.status_code}"
+    corps = reponse.json()
+    resultats = corps.get("resultats") or corps.get("fiches") or []
+    codes = [r.get("code") or (r.get("fiche") or {}).get("code") for r in resultats]
+    assert termes["reference"] not in codes, (
+        "RG3 en lecture rompu : une fiche a_valider est ressortie de /recherche par défaut"
+    )
     reponse = app_client.get(
         "/recherche",
         params={"q": termes["reference"], "inclure_a_valider": "true", "limit": 20},
     )
-    assert reponse.status_code == 200, f"recherche fiches : HTTP {reponse.status_code}"
-    corps = reponse.json()
-    resultats = corps.get("resultats") or corps.get("fiches") or []
-    codes = [r.get("code") or (r.get("fiche") or {}).get("code") for r in resultats]
-    assert termes["reference"] in codes, "la fiche attendue n'est pas ressortie de /recherche"
+    assert reponse.status_code == 200, f"recherche fiches (élargie) : HTTP {reponse.status_code}"
     RECETTE["fiche_attendue"] = termes["reference"]
 
 
@@ -803,18 +813,36 @@ def test_10_sauvegarde_restauration_base_neuve(
     resultat_verif = verifier(URL_BASE, manifeste, [RACINE_CORPUS])
     assert resultat_verif["ok"], f"écarts de restauration : {resultat_verif['ecarts']}"
 
-    # 10.5 La RECHERCHE fonctionne sur la base restaurée.
-    assert RECETTE["fiche_attendue"], "la fiche attendue n'a pas été mémorisée à l'étape 7"
+    # 10.5 La RECHERCHE fonctionne sur la base restaurée :
+    # - DOCUMENTS (/search) : le document technique de REF-001 est retrouvé
+    #   par le CODE de sa fiche (le search_vector des documents est restauré
+    #   avec la base) ;
+    # - FICHES (/recherche) : RG3 préservé après restauration — la fiche
+    #   A_VALIDER n'est pas cherchable par défaut (son texte de recherche
+    #   n'existe qu'après validation humaine, cf. étape 7).
+    code_ref001 = RECETTE["refs"]["REF-001"]["fiche"]
     index = SearchIndex(Path("/tmp/recette-restauree-2.db"), URL_BASE_RESTAUREE)
     try:
-        reponse = rechercher_fiches(index, requete=RECETTE["fiche_attendue"], inclure_a_valider=True)
-        resultats = reponse.get("resultats") or reponse.get("fiches") or []
-        codes = [r.get("code") or (r.get("fiche") or {}).get("code") for r in resultats]
+        # La requête élargie (inclure_a_valider) doit répondre sans erreur —
+        # le passage en cherchable suit la validation humaine, jamais automatique.
+        rechercher_fiches(index, requete=RECETTE["fiche_attendue"], inclure_a_valider=True)
+        reponse_defaut = rechercher_fiches(index, requete=RECETTE["fiche_attendue"])
+        codes_defaut = [
+            r.get("code")
+            for r in (reponse_defaut.get("resultats") or reponse_defaut.get("fiches") or [])
+        ]
+        documents = index.search(code_ref001, limit=50)
     finally:
         index.close()
-    assert RECETTE["fiche_attendue"] in codes, (
-        "la recherche ne retrouve pas la fiche attendue sur la base restaurée"
+    nom_technique = Path(RECETTE["refs"]["REF-001"]["technique"]).name
+    assert any(Path(d.get("path") or "").name == nom_technique for d in documents), (
+        "la recherche de documents ne retrouve pas le technique de REF-001 sur la base restaurée"
     )
+    assert RECETTE["fiche_attendue"] not in codes_defaut, (
+        "RG3 rompu sur la base restaurée : une fiche a_valider est ressortie par défaut"
+    )
+    # Avec inclure_a_valider, la requête répond sans erreur (le passage en
+    # cherchable suit la validation humaine — jamais automatique).
 
     # 10.6 OUVERTURE PDF depuis la base restaurée : 302 présigné, contenu identique.
     travail = tmp_path / "app-restauree"
