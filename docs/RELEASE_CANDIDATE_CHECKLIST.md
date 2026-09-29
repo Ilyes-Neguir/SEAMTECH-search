@@ -363,7 +363,7 @@ docker compose exec web python -m seamtech_search.sauvegarde verifier \
 ## 19. Portail de la candidate Lots 1–3 (2026-09-29)
 
 État arrêté sur la branche `arena/01a0ed7b-seamtech-search`, HEAD
-`01484d0777c9aca62d64b1610ede8f482ba4b194` (PR #33 ouverte, non fusionnée; code applicatif évalué en `984e2db`).
+`156ab883269553dac2d02febd0622b9460677a72` (PR #33 ouverte, non fusionnée; code applicatif évalué en `984e2db`).
 
 | Contrôle | Statut / preuve |
 |---|---|
@@ -372,7 +372,7 @@ docker compose exec web python -m seamtech_search.sauvegarde verifier \
 | Suite locale sélectionnée | ✅ `766 passed, 3 skipped, 234 deselected`; sélection par marqueurs `-m`. Vérifications précédemment réussies : Ruff, TypeScript, build frontend, compilation Python, YAML et `git diff --check`. |
 | Benchmark PostgreSQL jetable, 10 000 fiches | ✅ **SYNTHÉTIQUE** — run [36594937291](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36594937291), 50 échantillons/scénario, terminé vert en 1 min 5 s. Percentiles et trois plans EXPLAIN complets sont enregistrés dans `docs/benchmarks/scale-bench-synthetique-36594937291.{json,md}`; artifact GitHub également attaché. |
 | Échec initial du benchmark | Diagnostiqué : `ModuleNotFoundError: seamtech_search` lors de l'exécution directe du script. Corrigé par `PYTHONPATH=.`; le run synthétique réussi ci-dessus valide ce correctif. |
-| CI du HEAD `01484d0` | ✅ Push [36595978800](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36595978800) et PR [36595984492](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36595984492) verts; 11 jobs requis passés. Benchmark [36595985033](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36595985033) vert. La mesure chiffrée et les plans conservés dans ce portail proviennent du run [36594937291](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36594937291), SHA `984e2db` (même code applicatif; commit suivant documentation uniquement). |
+| CI finale HEAD `156ab88` | ✅ Push [36596936501](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36596936501) et PR [36596943586](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36596943586) verts; 11/11 jobs chacun. Les runs antérieurs sur HEAD `01484d0` (36595978800/36595984492) étaient aussi verts. Benchmarks [36596943828](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36596943828) et [36595985033](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36595985033) verts. Les plans EXPLAIN complets conservés dans `docs/benchmarks/` proviennent du run [36594937291](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36594937291), SHA `984e2db` (même code applicatif). |
 | Répétition humaine REF-001..007, VPS01 / R2, Windows atelier | **NON MESURÉ / À VALIDER** — portes de déploiement non levées. MinIO reste le backend production; R2 est conditionné à D-2. |
 
 Percentiles **SYNTHÉTIQUES** du run 36594937291 (millisecondes; ne représentent ni VPS01/R2 ni utilisateurs réels) :
@@ -387,5 +387,18 @@ Percentiles **SYNTHÉTIQUES** du run 36594937291 (millisecondes; ne représenten
 | suggestions | 4.28 | 4.58 | 4.67 | 4.67 |
 
 Toutes les valeurs p95 sont sous la cible **indicative SYNTHÉTIQUE** de 250 ms. Les plans EXPLAIN ANALYZE/BUFFERS des 3 requêtes lentes sont enregistrés intégralement dans le JSON et le rapport lié ci-dessus.
+
+Répétition benchmark **SYNTHÉTIQUE** du HEAD `156ab88`, run 36596943828 (ms; annotation check GitHub) :
+
+| Scénario | p50 | p95 | p99 | max |
+|---|---:|---:|---:|---:|
+| mot_simple | 67.25 | 72.99 | 83.62 | 83.62 |
+| multi_mots | 100.77 | 118.04 | 140.22 | 140.22 |
+| code | 11.56 | 23.32 | 26.09 | 26.09 |
+| facette_dimension | 79.74 | 86.74 | 87.95 | 87.95 |
+| filtres | 82.74 | 84.17 | 98.89 | 98.89 |
+| suggestions | 7.48 | 7.64 | 7.85 | 7.85 |
+
+Valeurs issues d'un PostgreSQL jetable et de 10 000 fiches synthétiques; elles ne mesurent ni VPS01, ni R2, ni le temps réel de l'opérateur.
 
 **Verdict :** candidate techniquement enrichie, suite locale et CI finale vertes; **pas une autorisation de mise en production**. Ne pas merger ni déployer tant que l'opérateur n'a pas validé REF-001..007, que les contrôles réels VPS01/sauvegarde/restauration ne sont pas documentés et que les décisions D-2/D-4 restent ouvertes. Les valeurs de benchmark sont mesurées en environnement **SYNTHÉTIQUE**, jamais à présenter comme réelles.
