@@ -71,7 +71,16 @@ jobs:
               env.write("SEAMTECH_SCALE_DATABASE_URL=postgresql://seamtech:seamtech_test_password@localhost:5432/seamtech_scale\n")
           PY
       - name: Exécuter mesure endpoints /recherche et suggestions
-        run: python scripts/scale_bench.py
+        run: |
+          set -uo pipefail
+          set +e
+          python scripts/scale_bench.py 2>&1 | tee /tmp/scale-bench.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            echo "::error title=scale-bench-details::$(tail -60 /tmp/scale-bench.log | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 5000)"
+            exit "$rc"
+          fi
       - name: Publier le rapport (plans EXPLAIN compris)
         if: always()
         uses: actions/upload-artifact@v7
