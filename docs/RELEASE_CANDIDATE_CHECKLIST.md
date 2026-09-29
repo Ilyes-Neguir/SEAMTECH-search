@@ -362,17 +362,17 @@ docker compose exec web python -m seamtech_search.sauvegarde verifier \
 
 ## 19. Portail de la candidate Lots 1–3 (2026-09-29)
 
-État arrêté sur la branche `arena/01a0ed7b-seamtech-search`, HEAD
-`156ab883269553dac2d02febd0622b9460677a72` (PR #33 ouverte, non fusionnée; code applicatif évalué en `984e2db`).
+État arrêté sur la branche `arena/01a0ed7b-seamtech-search`, checkpoint de code/tests
+`887beba5b5d2e36ce99e405d99a5e23b2e5a53b9` (PR #33 ouverte, non fusionnée; code applicatif évalué en `984e2db`).
 
 | Contrôle | Statut / preuve |
 |---|---|
 | ZIP corpus : empreintes courantes | ✅ Recalculées le 29/09; aucune modification locale. Sorties brutes (SHA-256) :<br>`AQUILA 250216AJA-20260928T182324Z-1-001.zip` — `fd1fca0930494328687ecf5d6905af139c24f93a8b9e2e51b2f6075772446be6`<br>`ATTALIA 250121JA-20260928T182325Z-1-001.zip` — `a71ec77d6d5abf3c55f5ca8aa5c79d3347d3b3765b91f54950065b9c2161d699`<br>`BAVARIA 32 - 250604JA-20260928T182326Z-1-001.zip` — `a9ca298cae78ccbacfaab69260cede299062ef0d20e0a7fba62c3539ac3a538f`<br>`BAVARIA 34 - 250323JA-20260928T182327Z-1-001.zip` — `483f89716b953734315b7bbb4ba81050dc24b33a162e2a2623604eee268b8f6f`<br>`DAMIEN 4 - 250821JA-20260928T182330Z-1-001.zip` — `2f1ecb0205b817c3dbdb324bf444aad9fb5ddce1d3f415859698fbb21fb428bf`<br>`DEHLER 39 - 250329AJA-20260928T182330Z-1-001.zip` — `b3171d070f6b332366263626a665e7f7985bb8406062c2957895401850df6a06`<br>`GIB SEA 284 - 250328AJA-20260928T182331Z-1-001.zip` — `103359b561ef32f5a8ce04b373864c26a0b496156efc1f728e75f0c0911b4aa3` |
 | PDF racine / copie canonique | ✅ SHA-256 identique à l'empreinte de la copie canonique : `43afc51e55ae598d3eaffc3096f0e7ddaa00e8ddc579ae315bb31b4dbf1c1f40`. Le doublon racine est retiré du tree; il subsiste dans l'historique Git. |
 | Suite locale sélectionnée | ✅ `766 passed, 3 skipped, 234 deselected`; sélection par marqueurs `-m`. Vérifications précédemment réussies : Ruff, TypeScript, build frontend, compilation Python, YAML et `git diff --check`. |
-| Benchmark PostgreSQL jetable, 10 000 fiches | ✅ **SYNTHÉTIQUE** — run [36594937291](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36594937291), 50 échantillons/scénario, terminé vert en 1 min 5 s. Percentiles et trois plans EXPLAIN complets sont enregistrés dans `docs/benchmarks/scale-bench-synthetique-36594937291.{json,md}`; artifact GitHub également attaché. |
+| Benchmark PostgreSQL jetable, 10 000 fiches | ✅ **SYNTHÉTIQUE** — run initial [36594937291](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36594937291) (1 min 5 s) et rerun final [36598278884](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36598278884) (1 min 11 s), 50 échantillons/scénario. Percentiles et trois plans EXPLAIN complets des deux runs sont archivés : `docs/benchmarks/scale-bench-synthetique-36594937291.{json,md}` et `docs/benchmarks/scale-bench-synthetique-36598278884.{json,md}`. |
 | Échec initial du benchmark | Diagnostiqué : `ModuleNotFoundError: seamtech_search` lors de l'exécution directe du script. Corrigé par `PYTHONPATH=.`; le run synthétique réussi ci-dessus valide ce correctif. |
-| CI finale HEAD `156ab88` | ✅ Push [36596936501](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36596936501) et PR [36596943586](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36596943586) verts; 11/11 jobs chacun. Les runs antérieurs sur HEAD `01484d0` (36595978800/36595984492) étaient aussi verts. Benchmarks [36596943828](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36596943828) et [36595985033](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36595985033) verts. Les plans EXPLAIN complets conservés dans `docs/benchmarks/` proviennent du run [36594937291](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36594937291), SHA `984e2db` (même code applicatif). |
+| CI finale checkpoint `887beba` | ✅ Push [36598273856](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36598273856) et PR [36598278897](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36598278897) verts; 11/11 jobs chacun. Les runs antérieurs (156ab88: 36596936501/36596943586; 01484d0: 36595978800/36595984492) étaient aussi verts. Benchmark final [36598278884](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36598278884) vert; rapport JSON et plans EXPLAIN complets archivés sous `docs/benchmarks/scale-bench-synthetique-36598278884.{json,md}`. |
 | Répétition humaine REF-001..007, VPS01 / R2, Windows atelier | **NON MESURÉ / À VALIDER** — portes de déploiement non levées. MinIO reste le backend production; R2 est conditionné à D-2. |
 
 Percentiles **SYNTHÉTIQUES** du run 36594937291 (millisecondes; ne représentent ni VPS01/R2 ni utilisateurs réels) :
@@ -388,16 +388,16 @@ Percentiles **SYNTHÉTIQUES** du run 36594937291 (millisecondes; ne représenten
 
 Toutes les valeurs p95 sont sous la cible **indicative SYNTHÉTIQUE** de 250 ms. Les plans EXPLAIN ANALYZE/BUFFERS des 3 requêtes lentes sont enregistrés intégralement dans le JSON et le rapport lié ci-dessus.
 
-Répétition benchmark **SYNTHÉTIQUE** du HEAD `156ab88`, run 36596943828 (ms; annotation check GitHub) :
+Répétition benchmark **SYNTHÉTIQUE** du checkpoint `887beba`, run 36598278884 (ms; annotation GitHub conservée en JSON et plans EXPLAIN archivés en Markdown/JSON) :
 
 | Scénario | p50 | p95 | p99 | max |
 |---|---:|---:|---:|---:|
-| mot_simple | 67.25 | 72.99 | 83.62 | 83.62 |
-| multi_mots | 100.77 | 118.04 | 140.22 | 140.22 |
-| code | 11.56 | 23.32 | 26.09 | 26.09 |
-| facette_dimension | 79.74 | 86.74 | 87.95 | 87.95 |
-| filtres | 82.74 | 84.17 | 98.89 | 98.89 |
-| suggestions | 7.48 | 7.64 | 7.85 | 7.85 |
+| mot_simple | 81.13 | 84.81 | 88.42 | 88.42 |
+| multi_mots | 107.86 | 109.83 | 133.43 | 133.43 |
+| code | 11.70 | 12.43 | 12.57 | 12.57 |
+| facette_dimension | 92.97 | 94.00 | 95.18 | 95.18 |
+| filtres | 98.04 | 99.76 | 111.70 | 111.70 |
+| suggestions | 8.47 | 8.76 | 8.82 | 8.82 |
 
 Valeurs issues d'un PostgreSQL jetable et de 10 000 fiches synthétiques; elles ne mesurent ni VPS01, ni R2, ni le temps réel de l'opérateur.
 

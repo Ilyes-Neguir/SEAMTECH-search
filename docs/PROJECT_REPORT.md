@@ -210,14 +210,14 @@ SEAMTECH Search v0.4.0 delivers a modern, robust, and scalable platform that tra
 ### 9.1 State, scope, and verdict
 
 - **Branch:** `arena/01a0ed7b-seamtech-search`
-- **Final branch HEAD (last confirmed):** `156ab883269553dac2d02febd0622b9460677a72` (release portal, captured benchmark outputs, and CI closeout).
-- **Validated candidate code SHA:** `984e2dbb3379aa0080d41bdca9f2d9dae673c992`; subsequent commits `01484d0` and `156ab88` update documentation only, not application code. Push and PR CI also passed on `156ab88`.
+- **Validated candidate application SHA:** `984e2dbb3379aa0080d41bdca9f2d9dae673c992`.
+- **Latest CI/benchmark evidence checkpoint:** `887beba5b5d2e36ce99e405d99a5e23b2e5a53b9`; subsequent closeout commits contain documentation and benchmark-output files only, not application code. Push and PR CI passed on this checkpoint.
 - **PR:** #33, open and not merged at last confirmed state.
 - **Verdict:** **NOT CLEARED FOR PRODUCTION / NO MERGE AUTHORIZED.** Lots 1–3 code, local checks, final push/PR CI and the synthetic benchmark are complete. The human and real-environment acceptance gates remain outstanding. MinIO remains the production object-store backend; R2 is only an option pending D-2.
 
 ### 9.2 Change inventory (base `a7ffe7d2800ed697f306a93b0564b4ad8c87eb74` → code HEAD)
 
-32 files changed; 1,758 insertions and 119 deletions, including the synthetic raw benchmark outputs and removal of the duplicate root PDF:
+Inventaire fichier par fichier du diff cumulé depuis le commit de base `a7ffe7d2800ed697f306a93b0564b4ad8c87eb74` (les statistiques exactes restent celles de `git diff --stat`; les artefacts bruts des deux exécutions synthétiques sont inclus) :
 
 | File(s) | Change |
 |---|---|
@@ -227,6 +227,7 @@ SEAMTECH Search v0.4.0 delivers a modern, robust, and scalable platform that tra
 | `scripts/audit_dependency_policy.py` | Runtime pip / production pnpm audit policy. |
 | `scripts/scale_bench.py` | Synthetic data seed, endpoint percentiles and EXPLAIN. |
 | `docs/benchmarks/scale-bench-synthetique-36594937291.json`, `.md` | Reconstructed synthetic result JSON and complete top-3 EXPLAIN output from this run's compressed GitHub annotations. |
+| `docs/benchmarks/scale-bench-synthetique-36598278884.json`, `.md` | Raw synthetic results and full top-3 EXPLAIN plans from final repeat-run annotations; executed at SHA `887beba`. |
 | `seamtech_search/api.py`, `seamtech_search/fiches/routes.py` | Optional assistant/ML flag and route behavior. |
 | `frontend/app/recherche/page.tsx`, `frontend/components/recherche-fiches-app.tsx`, `frontend/lib/fiche.ts` | Search feature-flag/UI wiring. |
 | `frontend/components/validation-app.tsx`, `frontend/components/pdf-viewer.tsx`, `frontend/e2e/validation.spec.ts` | Human validation workflow, keyboard and PDF highlighting, anomaly confirmation, session timer, E2E coverage. |
@@ -259,7 +260,7 @@ The root PDF and canonical file SHA-256 matched exactly: `43afc51e55ae598d3eaffc
   | suggestions | 4.28 | 4.58 | 4.67 | 4.67 |
 
   All six synthetic p95 values are below the benchmark's **indicative 250 ms** target. This does not establish the separate product latency target or VPS01/R2 performance. The first benchmark attempt failed because direct script execution omitted the repository root from `sys.path` (`ModuleNotFoundError: seamtech_search`); `PYTHONPATH=.` corrected it.
-- On candidate SHA `984e2db`, push CI [36594929912](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36594929912), PR CI [36594937282](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36594937282), and synthetic run [36594937291](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36594937291) all passed. After the docs-only closeout commit `01484d0`, push CI [36595978800](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36595978800) and PR CI [36595984492](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36595984492) also passed; repeat synthetic run [36595985033](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36595985033) passed. On final recorded SHA `156ab88`, push CI [36596936501](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36596936501) and PR CI [36596943586](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36596943586) each passed **11/11 jobs**. The jobs include live E2E validation, duplicate banner, named-user auth, Docker, integration, backend Python 3.11/3.12/3.13, security, corpus recipe, OCR and backup. The earlier E2E failure was a test-state mistake (pressing `r` while a text field retained focus); the test now blurs the input before invoking page-level shortcuts.
+- On candidate SHA `984e2db`, push CI [36594929912](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36594929912), PR CI [36594937282](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36594937282), and synthetic run [36594937291](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36594937291) all passed. After the docs-only closeout commit `01484d0`, push CI [36595978800](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36595978800) and PR CI [36595984492](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36595984492) also passed; repeat synthetic run [36595985033](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36595985033) passed. On evidence checkpoint `156ab88`, push CI [36596936501](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36596936501) and PR CI [36596943586](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36596943586) each passed **11/11 jobs**. The jobs include live E2E validation, duplicate banner, named-user auth, Docker, integration, backend Python 3.11/3.12/3.13, security, corpus recipe, OCR and backup. The earlier E2E failure was a test-state mistake (pressing `r` while a text field retained focus); the test now blurs the input before invoking page-level shortcuts.
 - Repeat benchmark [36596943828](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36596943828) also passed on `156ab88` (10,000 synthetic records; 50 samples/scenario; 1 min 13 s). Its job annotation reported the following **SYNTHÉTIQUE** values (milliseconds):
 
   | Scenario | p50 | p95 | p99 | max |
@@ -271,7 +272,19 @@ The root PDF and canonical file SHA-256 matched exactly: `43afc51e55ae598d3eaffc
   | filtres | 82.74 | 84.17 | 98.89 | 98.89 |
   | suggestions | 7.48 | 7.64 | 7.85 | 7.85 |
 
-  All six p95 values are below this benchmark's indicative 250 ms threshold only. This does not establish live VPS01/R2 performance or user-facing latency. Full EXPLAIN plans are archived from run `36594937291` in `docs/benchmarks/`; the repeat run's own EXPLAIN annotations are available in its check details.
+  All six p95 values are below this benchmark's indicative 250 ms threshold only. This does not establish live VPS01/R2 performance or user-facing latency.
+- At code-and-test evidence checkpoint `887beba`, push CI [36598273856](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36598273856) and PR CI [36598278897](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36598278897) passed **11/11 jobs each**. Synthetic repeat [36598278884](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36598278884) passed in 1 min 11 s. Its metric annotation and all three compressed EXPLAIN annotations were decoded and archived in `docs/benchmarks/scale-bench-synthetique-36598278884.{json,md}`.
+
+  | Scenario | p50 ms | p95 ms | p99 ms | max ms |
+  |---|---:|---:|---:|---:|
+  | mot_simple | 81.13 | 84.81 | 88.42 | 88.42 |
+  | multi_mots | 107.86 | 109.83 | 133.43 | 133.43 |
+  | code | 11.70 | 12.43 | 12.57 | 12.57 |
+  | facette_dimension | 92.97 | 94.00 | 95.18 | 95.18 |
+  | filtres | 98.04 | 99.76 | 111.70 | 111.70 |
+  | suggestions | 8.47 | 8.76 | 8.82 | 8.82 |
+
+  These are **SYNTHÉTIQUES** on a disposable CI database only; no VPS01/R2 or real operator performance is measured.
 
 ### 9.4 Explicitly unmeasured / remaining gates
 
