@@ -402,3 +402,16 @@ Répétition benchmark **SYNTHÉTIQUE** du checkpoint `887beba`, run 36598278884
 Valeurs issues d'un PostgreSQL jetable et de 10 000 fiches synthétiques; elles ne mesurent ni VPS01, ni R2, ni le temps réel de l'opérateur.
 
 **Verdict :** candidate techniquement enrichie, suite locale et CI finale vertes; **pas une autorisation de mise en production**. Ne pas merger ni déployer tant que l'opérateur n'a pas validé REF-001..007, que les contrôles réels VPS01/sauvegarde/restauration ne sont pas documentés et que les décisions D-2/D-4 restent ouvertes. Les valeurs de benchmark sont mesurées en environnement **SYNTHÉTIQUE**, jamais à présenter comme réelles.
+
+## 20. Audit pré-merge PR #33 (2026-09-29)
+
+Arbre code/tests audité `6ea4bee364d01c4a351a23c0c68c765d6b719976`, base `a7ffe7d2800ed697f306a93b0564b4ad8c87eb74`. PR #33 est ouverte et non fusionnée. Le rapport détaillé avec commandes, sorties, inventaire et catégories RÉEL / SYNTHÉTIQUE / NON MESURÉ est [`RAPPORT_FINAL_OPTIMISATION_2026-09-29.md`](verite_terrain/RAPPORT_FINAL_OPTIMISATION_2026-09-29.md).
+
+| Contrôle | Résultat |
+|---|---|
+| Suite sélectionnée main / PR | Main : 764 passed, 3 skipped, 234 deselected. PR : 771 passed, 3 skipped, 234 deselected. |
+| Nodeids | Main 767; PR 774; zéro nodeid main perdu/renommé; 7 ajouts. |
+| Corpus | 7/7 SHA-256 identiques à main; ZIP inchangés. Détails de hachage existants au §19. |
+| Seuils / sélection | Couverture globale 85% et planchers module inchangés; aucun `pragma: no cover` ajouté; sélection pytest CI par `-m` uniquement. |
+| CI push / PR | Runs 36607480324 et 36607487809 verts, chacun 11/11 jobs, sur `6ea4bee`. Benchmark 36607487218 vert, SYNTHÉTIQUE, 10 000 fiches. |
+| Verdict de l’auto-audit | **PR PRÊTE À MERGER** pour les contrôles pré-merge demandés; cela ne vaut pas décision de fusion. Aucune fusion effectuée. Mise en production non approuvée : les mesures opérateur/VPS01/R2 restent NON MESURÉES. |

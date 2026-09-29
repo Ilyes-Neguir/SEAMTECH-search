@@ -212,6 +212,7 @@ SEAMTECH Search v0.4.0 delivers a modern, robust, and scalable platform that tra
 - **Branch:** `arena/01a0ed7b-seamtech-search`
 - **Validated candidate application SHA:** `984e2dbb3379aa0080d41bdca9f2d9dae673c992`.
 - **Latest CI/benchmark evidence checkpoint:** `887beba5b5d2e36ce99e405d99a5e23b2e5a53b9`; subsequent closeout commits contain documentation and benchmark-output files only, not application code. Push and PR CI passed on this checkpoint.
+- **Pre-merge test/control checkpoint:** `6ea4bee364d01c4a351a23c0c68c765d6b719976`; push `36607480324` and PR `36607487809` each passed 11/11 jobs; synthetic benchmark `36607487218` passed. The dated audit is `docs/verite_terrain/RAPPORT_FINAL_OPTIMISATION_2026-09-29.md`.
 - **PR:** #33, open and not merged at last confirmed state.
 - **Verdict:** **NOT CLEARED FOR PRODUCTION / NO MERGE AUTHORIZED.** Lots 1–3 code, local checks, final push/PR CI and the synthetic benchmark are complete. The human and real-environment acceptance gates remain outstanding. MinIO remains the production object-store backend; R2 is only an option pending D-2.
 
@@ -246,7 +247,8 @@ The root PDF and canonical file SHA-256 matched exactly: `43afc51e55ae598d3eaffc
 
 ### 9.3 Validation evidence
 
-- Local selected suite (markers only): **766 passed, 3 skipped, 234 deselected**. Earlier baseline reference was approximately 746 passed / 3 skipped; this is not a same-commit before/after comparison.
+- At the earlier candidate snapshot (`8761825`), the local selected suite was **766 passed, 3 skipped, 234 deselected**. This is historical, not the final pre-merge replay.
+- Final pre-merge replay at `6ea4bee`: exact command `pytest -m "not postgres and not s3 and not perf" -q`; `main` had **764 passed, 3 skipped, 234 deselected**, and the PR had **771 passed, 3 skipped, 234 deselected**. Collection comparison: main 767 nodeids / PR 774; **zero main nodeids missing or renamed**. Full evidence is in `docs/verite_terrain/RAPPORT_FINAL_OPTIMISATION_2026-09-29.md`.
 - Previously successful on the Lot 3 tree: `ruff check .`; Python compilation; YAML parsing; `git diff --check`; frontend TypeScript and production build; focused optional-feature/selection/privacy tests (**32 passed**).
 - Benchmark **SYNTHÉTIQUE**: [run 36594937291](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36594937291), 10,000 synthetic records, 50 samples per scenario, successful in **1 min 5 s**. Metrics and all three complete EXPLAIN ANALYZE/BUFFERS plans were reconstructed from compressed GitHub check annotations and saved in `docs/benchmarks/scale-bench-synthetique-36594937291.{json,md}`.
 
