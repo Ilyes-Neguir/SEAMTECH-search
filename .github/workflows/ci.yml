@@ -928,10 +928,14 @@ jobs:
           # chrono doit avoir été produit.
           set -uo pipefail
           set +e
-          pnpm exec playwright test e2e/validation.spec.ts e2e/recherche-badge.spec.ts --reporter=list,json
-          rc=$?
+          pnpm exec playwright test e2e/validation.spec.ts e2e/recherche-badge.spec.ts --reporter=list,json 2>&1 | tee /tmp/e2e_validation.log
+          rc=${PIPESTATUS[0]}
           set -e
-          [ "$rc" -eq 0 ] || exit "$rc"
+          if [ "$rc" -ne 0 ]; then
+            echo "::error title=live-validation-details::$(grep -E '✘|failed|Error|expect|toHave|Timeout|expected|not.to' /tmp/e2e_validation.log | tail -20 | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 3000)"
+            echo "::error title=live-validation-tail::$(tail -40 /tmp/e2e_validation.log | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 3000)"
+            exit "$rc"
+          fi
           python - <<'PY'
           import json
           import os
