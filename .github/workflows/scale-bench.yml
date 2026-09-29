@@ -104,12 +104,14 @@ jobs:
           payload = json.dumps({"fiches": report["fiches"], "echantillons": report["echantillons_par_requete"], "requêtes": report["requêtes"]}, ensure_ascii=False, separators=(",", ":"))
           payload = payload.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
           print(f"::notice title=scale-bench SYNTHÉTIQUE::{payload}")
+          import base64
+          import gzip
           for plan in report.get("explain_top3", []):
               explain = json.dumps({"rank": plan["rank"], "observed_execute_ms": plan["observed_execute_ms"], "plan": plan["plan"]}, ensure_ascii=False, separators=(",", ":"))
-              chunks = [explain[offset:offset + 2500] for offset in range(0, len(explain), 2500)]
+              compressed = base64.b64encode(gzip.compress(explain.encode("utf-8"), mtime=0)).decode("ascii")
+              chunks = [compressed[offset:offset + 2500] for offset in range(0, len(compressed), 2500)]
               for number, chunk in enumerate(chunks, start=1):
-                  chunk = chunk.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
-                  print(f"::notice title=scale-bench EXPLAIN #{plan['rank']} chunk {number}/{len(chunks)}::{chunk}")
+                  print(f"::notice title=scale-bench EXPLAIN #{plan['rank']} gzip+base64 {number}/{len(chunks)}::{chunk}")
           PY
       - name: Publier le rapport (plans EXPLAIN compris)
         if: always()
