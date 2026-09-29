@@ -363,28 +363,28 @@ docker compose exec web python -m seamtech_search.sauvegarde verifier \
 ## 19. Portail de la candidate Lots 1–3 (2026-09-29)
 
 État arrêté sur la branche `arena/01a0ed7b-seamtech-search`, HEAD
-`9794e474051f73afec54238d204b45ae6238ff04` (PR #33 ouverte, non fusionnée).
+`984e2dbb3379aa0080d41bdca9f2d9dae673c992` (PR #33 ouverte, non fusionnée).
 
 | Contrôle | Statut / preuve |
 |---|---|
 | ZIP corpus : empreintes courantes | ✅ Recalculées le 29/09; aucune modification locale. Sorties brutes (SHA-256) :<br>`AQUILA 250216AJA-20260928T182324Z-1-001.zip` — `fd1fca0930494328687ecf5d6905af139c24f93a8b9e2e51b2f6075772446be6`<br>`ATTALIA 250121JA-20260928T182325Z-1-001.zip` — `a71ec77d6d5abf3c55f5ca8aa5c79d3347d3b3765b91f54950065b9c2161d699`<br>`BAVARIA 32 - 250604JA-20260928T182326Z-1-001.zip` — `a9ca298cae78ccbacfaab69260cede299062ef0d20e0a7fba62c3539ac3a538f`<br>`BAVARIA 34 - 250323JA-20260928T182327Z-1-001.zip` — `483f89716b953734315b7bbb4ba81050dc24b33a162e2a2623604eee268b8f6f`<br>`DAMIEN 4 - 250821JA-20260928T182330Z-1-001.zip` — `2f1ecb0205b817c3dbdb324bf444aad9fb5ddce1d3f415859698fbb21fb428bf`<br>`DEHLER 39 - 250329AJA-20260928T182330Z-1-001.zip` — `b3171d070f6b332366263626a665e7f7985bb8406062c2957895401850df6a06`<br>`GIB SEA 284 - 250328AJA-20260928T182331Z-1-001.zip` — `103359b561ef32f5a8ce04b373864c26a0b496156efc1f728e75f0c0911b4aa3` |
 | PDF racine / copie canonique | ✅ SHA-256 identique à l'empreinte de la copie canonique : `43afc51e55ae598d3eaffc3096f0e7ddaa00e8ddc579ae315bb31b4dbf1c1f40`. Le doublon racine est retiré du tree; il subsiste dans l'historique Git. |
 | Suite locale sélectionnée | ✅ `766 passed, 3 skipped, 234 deselected`; sélection par marqueurs `-m`. Vérifications précédemment réussies : Ruff, TypeScript, build frontend, compilation Python, YAML et `git diff --check`. |
-| Benchmark PostgreSQL jetable, 10 000 fiches | ✅ **SYNTHÉTIQUE** — run [36593833893](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36593833893), 50 échantillons/scénario, terminé vert en 53 s. Percentiles et trois plans EXPLAIN complets sont enregistrés dans `docs/benchmarks/scale-bench-synthetique-36593833893.{json,md}`; artifact GitHub également attaché. |
+| Benchmark PostgreSQL jetable, 10 000 fiches | ✅ **SYNTHÉTIQUE** — run [36594937291](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36594937291), 50 échantillons/scénario, terminé vert en 1 min 5 s. Percentiles et trois plans EXPLAIN complets sont enregistrés dans `docs/benchmarks/scale-bench-synthetique-36594937291.{json,md}`; artifact GitHub également attaché. |
 | Échec initial du benchmark | Diagnostiqué : `ModuleNotFoundError: seamtech_search` lors de l'exécution directe du script. Corrigé par `PYTHONPATH=.`; le run synthétique réussi ci-dessus valide ce correctif. |
-| CI du SHA candidat `9794e47` | ✅ Push [36593827929](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36593827929) et PR [36593833850](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36593833850) verts. Docker, E2E live, backend Python 3.11/3.12/3.13, sauvegarde MinIO, recette corpus, OCR, frontend, intégration et audits sécurité passés. |
+| CI du SHA candidat `984e2db` | ✅ Push [36594929912](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36594929912) et PR [36594937282](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36594937282) verts; 11 jobs PR passés. Docker, E2E live, backend Python 3.11/3.12/3.13, sauvegarde MinIO, recette corpus, OCR, frontend, intégration et audits sécurité. Benchmark [36594937291](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36594937291) vert aussi. |
 | Répétition humaine REF-001..007, VPS01 / R2, Windows atelier | **NON MESURÉ / À VALIDER** — portes de déploiement non levées. MinIO reste le backend production; R2 est conditionné à D-2. |
 
-Percentiles **SYNTHÉTIQUES** du run 36593833893 (millisecondes; ne représentent ni VPS01/R2 ni utilisateurs réels) :
+Percentiles **SYNTHÉTIQUES** du run 36594937291 (millisecondes; ne représentent ni VPS01/R2 ni utilisateurs réels) :
 
 | Scénario | p50 | p95 | p99 | max |
 |---|---:|---:|---:|---:|
-| mot_simple | 81.88 | 90.46 | 96.79 | 96.79 |
-| multi_mots | 101.87 | 104.61 | 104.89 | 104.89 |
-| code | 12.36 | 13.21 | 13.53 | 13.53 |
-| facette_dimension | 95.13 | 98.84 | 111.07 | 111.07 |
-| filtres | 97.30 | 100.03 | 101.70 | 101.70 |
-| suggestions | 8.89 | 9.21 | 9.48 | 9.48 |
+| mot_simple | 42.59 | 48.11 | 48.26 | 48.26 |
+| multi_mots | 52.83 | 66.45 | 86.05 | 86.05 |
+| code | 6.70 | 6.83 | 15.48 | 15.48 |
+| facette_dimension | 50.71 | 62.05 | 129.36 | 129.36 |
+| filtres | 53.44 | 80.11 | 150.62 | 150.62 |
+| suggestions | 4.28 | 4.58 | 4.67 | 4.67 |
 
 Toutes les valeurs p95 sont sous la cible **indicative SYNTHÉTIQUE** de 250 ms. Les plans EXPLAIN ANALYZE/BUFFERS des 3 requêtes lentes sont enregistrés intégralement dans le JSON et le rapport lié ci-dessus.
 
