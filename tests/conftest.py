@@ -35,7 +35,7 @@ MATERIAUX = (("Monofilm", "film", "150.0"), ("Dacron", "tissu", "220.0"), ("Myla
 CLIENTS = (("Voilerie Atlantique", "Brest"), ("Chantier Méditerranée", "La Ciotat"))
 BATEAUX = (("First 30", "30 pieds"), ("Sun Fast 36", "36 pieds"), ("Figaro 3", "29 pieds"))
 
-# 15 fiches : 12 validées (cherchables), 2 a_valider, 1 rejetée.
+# 15 fiches : 12 validées, 2 a_valider (cherchables et badgées depuis 018), 1 rejetée.
 # (code, titre, type, gamme, client, bateau, matiere, annee, notes, statut)
 FICHES_CORPUS: tuple[tuple[str, str, str, str, int, int, int, int, str, str], ...] = (
     ("0701-GV-001", "Grand-voile régate First 30", 0, "Régate", 0, 0, 0, 2024, "", "valide"),
@@ -177,10 +177,12 @@ def semer_corpus(index: Any) -> dict[str, int]:  # noqa: ANN401 - SearchIndex r�
                     ),
                 )
 
-            # Les fiches VALIDÉES reçoivent leur texte de recherche pondéré —
-            # exactement comme le fait la validation en production.
+            # Toutes les fiches VALIDÉES et A_VALIDER reçoivent leur texte de
+            # recherche pondéré — exactement comme en production depuis la
+            # migration 018 (remplissage à l'écriture ; la validation rafraîchit).
+            # Les rejetées n'en reçoivent jamais : elles ne sont pas cherchables.
             for (code, *_reste) in FICHES_CORPUS:
-                if _reste[-1] == "valide":
+                if _reste[-1] in ("valide", "a_valider"):
                     cursor.execute("SELECT rafraichir_texte_recherche_fiche(%s)", (ids[code],))
     return ids
 

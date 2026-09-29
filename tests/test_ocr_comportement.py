@@ -946,9 +946,25 @@ def test_migration_017_existe() -> None:
     assert "017_ocr_etage3" in src
 
 
+def test_migration_018_existe() -> None:
+    """Phase 2.1 (production-readiness 2026-09-29) : rattrapage du texte de
+    recherche des fiches écrites avant le remplissage précoce."""
+    from seamtech_search import schema_metier
+
+    assert hasattr(schema_metier, "SQL_018_RECHERCHE_A_VALIDER")
+    assert "rafraichir_texte_recherche_fiche" in schema_metier.SQL_018_RECHERCHE_A_VALIDER
+    assert "search_vector IS NULL" in schema_metier.SQL_018_RECHERCHE_A_VALIDER
+
+    import seamtech_search.indexer as idx_mod
+
+    src = Path(idx_mod.__file__).read_text(encoding="utf-8")
+    assert "_migration_018_recherche_a_valider" in src
+    assert "018_recherche_a_valider" in src
+
+
 def test_version_schema_et_tables() -> None:
     from seamtech_search.schema_metier import TABLES_METIER, VERSION_SCHEMA_METIER
 
-    assert VERSION_SCHEMA_METIER == "017_ocr_etage3"
+    assert VERSION_SCHEMA_METIER == "018_recherche_a_valider"
     assert len(TABLES_METIER) == 33
     assert "ocr_etage3" in TABLES_METIER

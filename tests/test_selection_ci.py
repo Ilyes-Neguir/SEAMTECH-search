@@ -58,7 +58,7 @@ INVENTAIRE_S3_REEL = {
     # d'exécution SEAMTECH_RECETTE_CORPUS.
     "tests/test_recette_corpus_reel.py::test_01_zip_intacts_avant_recette",
     "tests/test_recette_corpus_reel.py::test_02_corpus_extrait_complet",
-    "tests/test_recette_corpus_reel.py::test_03_services_et_migrations_017_base_neuve",
+    "tests/test_recette_corpus_reel.py::test_03_services_et_migrations_018_base_neuve",
     "tests/test_recette_corpus_reel.py::test_04a_import_flux_reel_ref001_via_upload",
     "tests/test_recette_corpus_reel.py::test_04b_import_flux_reel[REF-002]",
     "tests/test_recette_corpus_reel.py::test_04b_import_flux_reel[REF-003]",

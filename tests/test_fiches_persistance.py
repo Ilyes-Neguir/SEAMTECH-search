@@ -271,6 +271,45 @@ class TestIdempotenceRG11:
             ecrire_fiche(base_fiches["index"], FicheExtraite(code=None))
 
 
+class TestRechercheDesLEcriture:
+    """Phase 2.1 (production-readiness, décision commanditaire 2026-09-29) :
+    une fiche écrite en ``a_valider`` est immédiatement cherchable (badgée
+    « non vérifiée » par l'interface) — son texte de recherche pondéré est
+    rempli DÈS l'écriture, pas seulement à la validation."""
+
+    def test_ecriture_remplit_le_texte_de_recherche(self, base_fiches, fiche_7792) -> None:
+        index = base_fiches["index"]
+        id_fiche, action = ecrire_fiche(index, fiche_7792)
+        assert action == "creee"
+
+        with index.connect() as connexion:
+            with connexion.cursor() as cursor:
+                cursor.execute(
+                    "SELECT statut, search_vector IS NOT NULL FROM fiche WHERE id_fiche = %s",
+                    (id_fiche,),
+                )
+                statut, vecteur_rempli = cursor.fetchone()
+        assert statut == "a_valider", "RG3 : l'écriture ne valide JAMAIS"
+        assert vecteur_rempli, "le texte de recherche doit être rempli dès l'écriture (018)"
+
+    def test_fiche_a_valider_trouvee_par_defaut(self, base_fiches, fiche_7792) -> None:
+        from seamtech_search.recherche import rechercher_fiches
+
+        index = base_fiches["index"]
+        ecrire_fiche(index, fiche_7792)
+
+        par_defaut = rechercher_fiches(index, requete="7792")
+        codes_defaut = {r["code"] for r in par_defaut["resultats"]}
+        assert "7792-SO" in codes_defaut, "une fiche déposée doit être retrouvée sans être validée"
+        ligne = next(r for r in par_defaut["resultats"] if r["code"] == "7792-SO")
+        assert ligne["statut"] == "a_valider", "le statut est exposé pour le badge « non vérifiée »"
+
+        confiance = rechercher_fiches(index, requete="7792", inclure_a_valider=False)
+        assert "7792-SO" not in {r["code"] for r in confiance["resultats"]}, (
+            "inclure_a_valider=False = archive de confiance uniquement"
+        )
+
+
 class TestBancGabaritTest:
     def test_non_regression_7792_conforme(self, base_fiches, fiche_7792) -> None:
         resultat = verifier_non_regression(base_fiches["index"], fiche_7792)

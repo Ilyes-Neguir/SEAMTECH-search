@@ -55,9 +55,12 @@ docker system df            # la part Docker (images, volumes orphelins)
 curl -s -H "X-SEAMTECH-TOKEN: <token>" "http://127.0.0.1:8000/api/search?q=7792-SO"
 ```
 
-- Aucune fiche `valide` en base : c'est normal — la portée par défaut est
-  `valide` ; les fiches attendent la validation humaine (RG3). Valider une
-  fiche la rend cherchable.
+- Aucune fiche en base dans les résultats : depuis le contrat du 2026-09-29
+  (migration 018), les fiches `a_valider` sont cherchables **par défaut**
+  (badgées « Non vérifiée ») et les fiches `valide` forment l'archive de
+  confiance (filtre « Validées uniquement », `inclure_a_valider=false`). Si
+  RIEN ne remonte du tout : la fiche n'a pas été déposée jusqu'au bout —
+  vérifier la file de validation et les journaux du service `web`.
 - Des fiches validées mais rien ne remonte : vérifier l'index (`documents` /
   `search_vector`) via le runbook de recherche — `JEU_REQUETES_REELLES.md`
   donne les requêtes de contrôle et leurs attendus exacts.

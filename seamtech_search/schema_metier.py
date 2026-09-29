@@ -26,7 +26,7 @@ from __future__ import annotations
 from typing import Any
 
 # Version du schéma métier — incrémentée à chaque nouvelle migration.
-VERSION_SCHEMA_METIER = "017_ocr_etage3"
+VERSION_SCHEMA_METIER = "018_recherche_a_valider"
 
 # Marqueur injecté par le code au moment de la migration (constat 1 de revue) :
 # le nom de la configuration de recherche effective — 'seamtech_unaccent' ou
@@ -428,8 +428,10 @@ SQL_007_RECHERCHE_INDEX = """
 -- ============================================================================
 
 -- Texte de recherche par fiche : agrégat PONDÉRÉ rempli par la fonction
--- rafraichir_texte_recherche_fiche(), appelée à la VALIDATION d'une fiche
--- (une fiche à la fois — jamais en boucle ligne par ligne sur la table).
+-- rafraichir_texte_recherche_fiche(), appelée à l'ÉCRITURE de chaque fiche
+-- (statut a_valider — migration 018, décision commanditaire 2026-09-29)
+-- puis rafraîchie à sa VALIDATION (une fiche à la fois — jamais en boucle
+-- ligne par ligne sur la table).
 ALTER TABLE fiche ADD COLUMN IF NOT EXISTS champs_texte TEXT NOT NULL DEFAULT '';
 ALTER TABLE fiche ADD COLUMN IF NOT EXISTS search_vector TSVECTOR;
 
@@ -1120,6 +1122,20 @@ CREATE INDEX IF NOT EXISTS idx_ocr_etage3_page_ocerisee ON ocr_etage3 (page_ocer
 CREATE INDEX IF NOT EXISTS idx_ocr_etage3_horodatage ON ocr_etage3 (horodatage DESC);
 """
 
+# ---------------------------------------------------------------------------
+# Migration 018 — Phase 2.1 (production-readiness, décision commanditaire du
+# 2026-09-29) : les fiches a_valider deviennent CHERCHABLES (badgées « non
+# vérifiée » par l'interface). Depuis cette version, ecrire_fiche remplit le
+# texte de recherche pondéré DÈS l'écriture ; cette migration RATTRAPE les
+# fiches déjà posées en base avant le changement (search_vector IS NULL) en
+# leur appliquant la même fonction, quels que soient leur statut et leur
+# ancienneté. Aucune table nouvelle, aucun changement de statut : RG3 est
+# intact (rien ne devient « valide » sans décision humaine).
+# ---------------------------------------------------------------------------
+SQL_018_RECHERCHE_A_VALIDER = """
+SELECT rafraichir_texte_recherche_fiche(id_fiche) FROM fiche WHERE search_vector IS NULL;
+"""
+
 MIGRATIONS_METIER: tuple[tuple[str, str], ...] = (
     ("006_fiche_technique", SQL_006_FICHE_TECHNIQUE),
     ("007_recherche_index", SQL_007_RECHERCHE_INDEX),
@@ -1133,6 +1149,7 @@ MIGRATIONS_METIER: tuple[tuple[str, str], ...] = (
     ("015_qualite_gabarit_brouillon", SQL_015_QUALITE_GABARIT_BROUILLON),
     ("016_dedup_comptes_nominatifs", SQL_016_DEDUP_COMPTES_NOMINATIFS),
     ("017_ocr_etage3", SQL_017_OCR_ETAGE3),
+    ("018_recherche_a_valider", SQL_018_RECHERCHE_A_VALIDER),
 )
 
 
