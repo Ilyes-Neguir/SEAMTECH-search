@@ -1,6 +1,16 @@
 name: Scale benchmark (SYNTHÉTIQUE)
 
 on:
+  # Opt-in PR execution: only code/docs that define this synthetic benchmark
+  # should pay its bounded <20-minute cost. The manual trigger remains available
+  # after this workflow has been installed on the repository default branch.
+  pull_request:
+    paths:
+      - ".github/workflows/scale-bench.yml"
+      - "scripts/scale_bench.py"
+      - "seamtech_search/recherche.py"
+      - "seamtech_search/schema_metier.py"
+      - "tests/conftest.py"
   workflow_dispatch:
     inputs:
       samples:
