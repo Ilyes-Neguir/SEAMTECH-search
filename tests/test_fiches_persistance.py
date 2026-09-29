@@ -17,6 +17,7 @@ import pytest
 
 from seamtech_search.fiches.extraction import extraire_fiche
 from seamtech_search.fiches.gabarits import GABARITS_EMBARQUES, charger_gabarits, initialiser_gabarits
+from seamtech_search.fiches.modeles import FicheExtraite
 from seamtech_search.fiches.persistance import (
     ecrire_fiche,
     evaluer_verite,
@@ -272,14 +273,28 @@ class TestIdempotenceRG11:
 
 
 class TestRechercheDesLEcriture:
-    """Phase 2.1 (production-readiness, décision commanditaire 2026-09-29) :
+    """Phase 2.1 (production-readiness, décision commanditaire du 2026-09-29) :
     une fiche écrite en ``a_valider`` est immédiatement cherchable (badgée
     « non vérifiée » par l'interface) — son texte de recherche pondéré est
-    rempli DÈS l'écriture, pas seulement à la validation."""
+    rempli DÈS l'écriture, pas seulement à la validation.
 
-    def test_ecriture_remplit_le_texte_de_recherche(self, base_fiches, fiche_7792) -> None:
+    NB : le banc sème déjà la 7792-SO VALIDÉE (vérité terrain) ; ces tests
+    écrivent une fiche NOUVELLE à code unique, comme le dépôt d'un nouveau
+    dossier en production."""
+
+    @staticmethod
+    def _fiche_nouvelle() -> FicheExtraite:
+        return FicheExtraite(
+            code="AVL-018-XYZ",
+            titre="Grand-voile de test contrat 018",
+            client_nom="Client Test Contrat 018",
+            bateau_nom="Bateau Test Contrat 018",
+            type_voile_libelle="Grand-voile",
+        )
+
+    def test_ecriture_remplit_le_texte_de_recherche(self, base_fiches) -> None:
         index = base_fiches["index"]
-        id_fiche, action = ecrire_fiche(index, fiche_7792)
+        id_fiche, action = ecrire_fiche(index, self._fiche_nouvelle())
         assert action == "creee"
 
         with index.connect() as connexion:
@@ -292,20 +307,20 @@ class TestRechercheDesLEcriture:
         assert statut == "a_valider", "RG3 : l'écriture ne valide JAMAIS"
         assert vecteur_rempli, "le texte de recherche doit être rempli dès l'écriture (018)"
 
-    def test_fiche_a_valider_trouvee_par_defaut(self, base_fiches, fiche_7792) -> None:
+    def test_fiche_a_valider_trouvee_par_defaut(self, base_fiches) -> None:
         from seamtech_search.recherche import rechercher_fiches
 
         index = base_fiches["index"]
-        ecrire_fiche(index, fiche_7792)
+        ecrire_fiche(index, self._fiche_nouvelle())
 
-        par_defaut = rechercher_fiches(index, requete="7792")
+        par_defaut = rechercher_fiches(index, requete="XYZ")
         codes_defaut = {r["code"] for r in par_defaut["resultats"]}
-        assert "7792-SO" in codes_defaut, "une fiche déposée doit être retrouvée sans être validée"
-        ligne = next(r for r in par_defaut["resultats"] if r["code"] == "7792-SO")
+        assert "AVL-018-XYZ" in codes_defaut, "une fiche déposée doit être retrouvée sans être validée"
+        ligne = next(r for r in par_defaut["resultats"] if r["code"] == "AVL-018-XYZ")
         assert ligne["statut"] == "a_valider", "le statut est exposé pour le badge « non vérifiée »"
 
-        confiance = rechercher_fiches(index, requete="7792", inclure_a_valider=False)
-        assert "7792-SO" not in {r["code"] for r in confiance["resultats"]}, (
+        confiance = rechercher_fiches(index, requete="XYZ", inclure_a_valider=False)
+        assert "AVL-018-XYZ" not in {r["code"] for r in confiance["resultats"]}, (
             "inclure_a_valider=False = archive de confiance uniquement"
         )
 

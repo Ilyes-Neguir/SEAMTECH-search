@@ -233,13 +233,18 @@ def test_journal_recherches_et_sans_resultat(base_recherche: dict[str, Any]) -> 
 @pytest.mark.postgres
 def test_requete_vide_navigation_par_date(base_recherche: dict[str, Any]) -> None:
     """Requête vide = navigation à la Google : les plus récentes d'abord,
-    facettes quand même, et uniquement du valide."""
+    facettes quand même. Contrat 2026-09-29 : le défaut couvre validées +
+    a_valider badgées (14) ; l'archive de confiance seule en fait 12."""
     reponse = rechercher_fiches(base_recherche["index"], requete="")
     assert reponse["sources_actives"] == ["parcours"]
-    assert reponse["nb_resultats"] == 12, "12 fiches validées dans le corpus"
+    assert reponse["nb_resultats"] == 14, "12 validées + 2 a_valider (badgées) par défaut"
     annees = [r["annee"] for r in reponse["resultats"]]
     assert annees == sorted(annees, reverse=True)
     assert reponse["facettes"], "les facettes vivent aussi en navigation"
+
+    confiance = rechercher_fiches(base_recherche["index"], requete="", inclure_a_valider=False)
+    assert confiance["nb_resultats"] == 12, "archive de confiance : 12 fiches validées"
+    assert all(r["statut"] == "valide" for r in confiance["resultats"])
 
 
 @pytest.mark.postgres

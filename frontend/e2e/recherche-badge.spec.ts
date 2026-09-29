@@ -10,6 +10,10 @@ const CODE_A_VALIDER = "BIS-7792"
 const CODE_VALIDEE = "7792-SO"
 
 test.describe("Recherche — badge « Non vérifiée » et archive de confiance", () => {
+  // e2e « live » : la recherche de fiches exige PostgreSQL (503 en SQLite) et
+  // BIS-7792 n'existe que dans la base seedée par e2e/seed-live-pg.py.
+  test.skip(!process.env.SEAMTECH_E2E_DATABASE_URL, "e2e live : requiert SEAMTECH_E2E_DATABASE_URL (PostgreSQL)")
+
   test("une fiche a_valider sort par défaut, badgée, et disparaît avec « Validées uniquement »", async ({ page }) => {
     await signIn(page)
     await page.goto("/recherche?q=7792")
