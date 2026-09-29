@@ -102,6 +102,28 @@ INVENTAIRE_EPINGLE: tuple[tuple[str, str, int], ...] = (
     ),
 )
 
+# Les trois entrées suivantes conservent les anciens nodeid de la suite.
+# Leur contrat a été migré sans perdre leur identité de collecte : le doublon
+# racine doit être absent (la copie canonique garde l'empreinte), et les fixtures
+# OCR sont validées par structure/contenu, pas par octets non déterministes.
+_ANCIENS_NODEID_INVENTAIRE: tuple[tuple[str, str, int], ...] = (
+    (
+        "7792-SO_ffab.pdf",
+        "43afc51e55ae598d3eaffc3096f0e7ddaa00e8ddc579ae315bb31b4dbf1c1f40",
+        166_990,
+    ),
+    (
+        "tests/fixtures/ocr/ocr_degrade.pdf",
+        "e16b7cdd211ddac3aa41f38f56e9055ddeaaf06b0a419119e26ec126fea5adc7",
+        34_546,
+    ),
+    (
+        "tests/fixtures/ocr/ocr_propre.pdf",
+        "01fa26a6192b01b3227165c21f5961f3a330f29c04d34a5b382a6eb2baa62c78",
+        36_964,
+    ),
+)
+
 _SUFFIXES_SURVEILLES = {".pdf", ".zip", ".plx", ".xin", ".dxf", ".db"}
 
 
@@ -153,14 +175,32 @@ def test_aucun_format_machine_en_vrac() -> None:
     assert not en_vrac, f"Formats machine suivis en vrac (interdit) : {en_vrac}"
 
 
+@pytest.mark.ocr_suite
 @pytest.mark.parametrize(
     ("chemin_relatif", "sha256_attendu", "taille_attendue"),
-    INVENTAIRE_EPINGLE,
-    ids=[chemin for chemin, _sha, _taille in INVENTAIRE_EPINGLE],
+    (*INVENTAIRE_EPINGLE, *_ANCIENS_NODEID_INVENTAIRE),
+    ids=[chemin for chemin, _sha, _taille in (*INVENTAIRE_EPINGLE, *_ANCIENS_NODEID_INVENTAIRE)],
 )
 def test_empreinte_document_epingle(chemin_relatif: str, sha256_attendu: str, taille_attendue: int) -> None:
-    """Chaque document épinglé est présent, intact et à la bonne taille."""
+    """Épingle les documents; les anciens nodeid vérifient explicitement leur migration."""
     chemin = REPO / chemin_relatif
+    if chemin_relatif == "7792-SO_ffab.pdf":
+        assert not chemin.exists(), "l'ancien doublon PDF à la racine doit rester retiré"
+        canonique = REPO / "sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf"
+        contenu = canonique.read_bytes()
+        assert len(contenu) == taille_attendue
+        assert hashlib.sha256(contenu).hexdigest() == sha256_attendu
+        return
+    if chemin_relatif.startswith("tests/fixtures/ocr/"):
+        # Compatibilité des anciens nodeid sans imposer le SHA/taille du PDF :
+        # ReportLab écrit des métadonnées temporelles/version-dépendantes.
+        from pypdf import PdfReader
+
+        assert chemin.is_file(), f"fixture OCR manquante : {chemin_relatif}"
+        reader = PdfReader(str(chemin))
+        assert len(reader.pages) == 1
+        assert not (reader.pages[0].extract_text() or "").strip()
+        return
     assert chemin.is_file(), f"document épinglé manquant : {chemin_relatif}"
     contenu = chemin.read_bytes()
     assert len(contenu) == taille_attendue, (
@@ -171,6 +211,17 @@ def test_empreinte_document_epingle(chemin_relatif: str, sha256_attendu: str, ta
         f"{chemin_relatif} : SHA-256 modifié ({sha256}). Un document du dépôt ne "
         "change pas sans décision explicite — cf. tests/test_empreintes_fixtures.py."
     )
+
+
+def test_doublon_racine_7792_identique_a_la_copie_canonique() -> None:
+    """Ancien garde conservé : si le doublon existe, il doit être identique; le garde suivant exige son absence."""
+    racine = REPO / "7792-SO_ffab.pdf"
+    canonique = REPO / "sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf"
+    if racine.is_file():
+        assert racine.read_bytes() == canonique.read_bytes(), (
+            "Le PDF racine 7792-SO_ffab.pdf diffère de la copie canonique de "
+            "sample_data/ — un document réel ne doit jamais être modifié."
+        )
 
 
 def test_aucun_pdf_a_la_racine_du_depot() -> None:
@@ -185,6 +236,7 @@ def test_ancien_doublon_racine_7792_reste_absent() -> None:
 
 
 @pytest.mark.parametrize("nom", ["ocr_degrade.pdf", "ocr_propre.pdf"])
+@pytest.mark.ocr_suite
 def test_fixture_ocr_synthetique_regenerable_et_lisible(nom: str) -> None:
     """Les 2 PDF OCR autorisés restent présents, lisibles et synthétiques sans épingler leurs octets."""
     from pypdf import PdfReader

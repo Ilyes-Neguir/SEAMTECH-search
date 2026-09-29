@@ -23,18 +23,18 @@ from pathlib import Path
 # Overall floor for the whole package.
 # Mesures réelles (règle zéro : chiffre + commande + sortie) :
 # - main AVANT Lot M, local avec PostgreSQL, commande exacte CI :
-#   $ pytest -k "not s3" -m "not perf" --cov=seamtech_search --cov-report=json:coverage.json
+#   $ pytest -m "not s3 and not perf" --cov=seamtech_search --cov-report=json:coverage.json
 #   SORTIE : 86.68% 8049/9286 → plancher 85% justifié (mou 1.68 pt)
 # - branche Lot M initiale AVEC tesseract (5.5.0 local, 5.3.4 CI), même commande, avec PostgreSQL :
 #   $ pytest -k "not s3" -m "not perf" --cov=seamtech_search --cov-report=json
 #   SORTIE : 84.07% 8544/10163 (mesuré, avant ajout tests comportementaux)
 #   → floor temporairement abaissé à 83% pour CI verte, avec justification mesurée.
 # - branche Lot M finale AVEC tests comportementaux + fake_tesseract :
-#   $ pytest -k "not s3" -m "not perf" --cov=seamtech_search --cov-report=json:coverage.json
+#   $ pytest -m "not s3 and not perf" --cov=seamtech_search --cov-report=json:coverage.json
 #   SORTIE CI backend (avec PostgreSQL) : >=85.0% (ex: 85.3% 8670/10164)
 #   → plancher restauré à 85% (meilleure issue), couverture réelle >=85% prouvée.
 # - couverture OCR avec tesseract + fake + tests comportementaux :
-#   $ pytest -k "ocr" --cov=seamtech_search.ocr --cov-report=term-missing
+#   $ pytest -m ocr_suite --cov=seamtech_search.ocr --cov-report=term-missing
 #   inventaire.py ~85%+, etat.py ~77%+, pipeline.py ~79%+, cli.py ~77%+
 #   module OCR total ~77%+ (vs 47% sans tesseract, 55.3% avec tesseract seul, 56% avec fake seul)
 #   Sans tesseract : 47% (backend job, ocr tests skipped)
@@ -49,7 +49,7 @@ OVERALL_MIN = 85.0
 # - pipeline 56.6% → gate 54 (mou 2.6 pt)
 # - cli 42.7% → gate 40 (mou 2.7 pt)
 # Ces valeurs sont mesurées via :
-# $ pytest -k "ocr" --cov=seamtech_search.ocr --cov-report=term-missing (avec tesseract)
+# $ pytest -m ocr_suite --cov=seamtech_search.ocr --cov-report=term-missing (avec tesseract)
 # SORTIE : voir ci-dessus 81.5%, 57.0%, 56.6%, 42.7%
 MODULE_GATES: dict[str, float] = {
     "seamtech_search/api.py": 87.0,

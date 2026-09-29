@@ -361,6 +361,7 @@ def test_aucun_parcours_sans_chemin_explicite(tmp_path: Path, chemin_isole, monk
     assert appels == []
 
 
+@pytest.mark.ocr_suite
 def test_version_schema_et_config_ocr_dans_le_rapport(tmp_path: Path, chemin_isole) -> None:
     chemin_isole()
     source = _arbre_source(tmp_path)

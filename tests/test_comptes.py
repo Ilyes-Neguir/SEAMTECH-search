@@ -543,6 +543,7 @@ def test_attribution_refusee_sans_jeton_de_service(
             assert int(cursor.fetchone()[0]) == 0
 
 
+@pytest.mark.ci_guard_attribution
 def test_validation_attribuee_au_compte_connecte(base_comptes_corpus: dict[str, Any]) -> None:
     """LE test du lot L.2 : « qui a validé quoi » — sabotage visé ``id_utilisateur = 1``.
 

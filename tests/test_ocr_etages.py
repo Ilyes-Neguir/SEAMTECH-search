@@ -71,6 +71,8 @@ def _taux_mots_retrouves(reference: str, ocr_texte: str) -> float:
 # M.3 — Règle d'étage prouvée
 # ---------------------------------------------------------------------------
 
+pytestmark = pytest.mark.ocr_suite
+
 
 def test_doit_oceriser_page_fonction_pure() -> None:
     """M.1/M.3 : doit_oceriser_page est une fonction pure testable."""
@@ -98,6 +100,7 @@ def test_seuil_defaut_justifie() -> None:
     assert "20" in src
 
 
+@pytest.mark.ci_guard_ocr
 def test_pdf_texte_natif_zero_page_ocerisee() -> None:
     """M.3/M.7 : un PDF à texte natif (7792-SO) : ZÉRO page océrisée.
 

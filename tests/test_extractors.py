@@ -3,6 +3,7 @@ import sys
 from pathlib import Path
 from zipfile import ZipFile
 
+import pytest
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 
@@ -42,6 +43,7 @@ def test_structured_result_does_not_put_status_in_content(tmp_path: Path) -> Non
     assert result.text == ""
 
 
+@pytest.mark.ocr_suite
 def test_optional_legacy_and_ocr_formats_are_transparent_when_disabled(tmp_path: Path) -> None:
     legacy = tmp_path / "old.doc"
     image = tmp_path / "drawing.png"

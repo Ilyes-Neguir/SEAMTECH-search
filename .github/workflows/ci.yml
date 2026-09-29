@@ -118,7 +118,7 @@ jobs:
         # were skipped.
         #
         # Runs BEFORE the coverage step on purpose. The coverage step selects
-        # `-k "not s3"`, which includes these same live-postgres tests plus the
+        # `-m "not s3 and not perf"`, which includes these same live-postgres tests plus the
         # mocked ones; when both ran together a failure in either was
         # indistinguishable. Separating them means a red coverage step with a
         # green Postgres step points at coverage/mocked tests, and vice versa.
@@ -174,14 +174,14 @@ jobs:
           # On casse uniquement dans _facettes_cotes
           sed -i 's/exclure=GROUPE_COTES/exclure=frozenset()/g' seamtech_search/recherche.py
           set +e
-          pytest -m postgres tests/test_recherche_dimension_tri.py::test_dimension_facettes_et_intervalles -v 2>&1 | tee /tmp/rouge.log
+          pytest -m ci_guard_dimension -v 2>&1 | tee /tmp/rouge.log
           rc_rouge=${PIPESTATUS[0]}
           set -e
           echo "rc_rouge=$rc_rouge"
           echo "=== Restauration ==="
           mv /tmp/recherche.py.bak seamtech_search/recherche.py
           set +e
-          pytest -m postgres tests/test_recherche_dimension_tri.py::test_dimension_facettes_et_intervalles -v 2>&1 | tee /tmp/vert.log
+          pytest -m ci_guard_dimension -v 2>&1 | tee /tmp/vert.log
           rc_vert=${PIPESTATUS[0]}
           set -e
           echo "rc_vert=$rc_vert"
@@ -210,7 +210,6 @@ jobs:
         run: |
           set -uo pipefail
           FICHIER=seamtech_search/recherche.py
-          TEST=tests/test_recherche_dimension_tri.py::test_contrat_cotes_conditionnelles_documente
           echo "=== Sauvegarde originale ==="
           cp "$FICHIER" /tmp/recherche.py.cotes.bak
           echo "=== Casse volontaire : retour au chargement inconditionnel des 7 cotes ==="
@@ -219,14 +218,14 @@ jobs:
           grep -n "avec_cotes_page = True" "$FICHIER" || true
           grep -n "^                or True" "$FICHIER" || true
           set +e
-          pytest -q "$TEST" 2>&1 | tee /tmp/cotes_rouge.log
+          pytest -m ci_guard_cotes -q 2>&1 | tee /tmp/cotes_rouge.log
           rc_rouge=${PIPESTATUS[0]}
           set -e
           echo "rc_rouge=$rc_rouge"
           echo "=== Restauration ==="
           mv /tmp/recherche.py.cotes.bak "$FICHIER"
           set +e
-          pytest -q "$TEST" 2>&1 | tee /tmp/cotes_vert.log
+          pytest -m ci_guard_cotes -q 2>&1 | tee /tmp/cotes_vert.log
           rc_vert=${PIPESTATUS[0]}
           set -e
           echo "rc_vert=$rc_vert"
@@ -254,7 +253,6 @@ jobs:
         run: |
           set -uo pipefail
           FICHIER=seamtech_search/dedup/detection.py
-          TEST=tests/test_dedup.py::test_doublons_exacts_le_pdf_reel_en_double
           echo "=== Sauvegarde originale ==="
           cp "$FICHIER" /tmp/detection.py.bak
           echo "=== Casse volontaire : la clé de rapprochement exact (empreinte_sha256) devient une constante ==="
@@ -274,14 +272,14 @@ jobs:
           PYEOF
           grep -n "x' || ''" "$FICHIER" || true
           set +e
-          pytest -q "$TEST" 2>&1 | tee /tmp/rouge_dedup.log
+          pytest -m ci_guard_dedup -q 2>&1 | tee /tmp/rouge_dedup.log
           rc_rouge=${PIPESTATUS[0]}
           set -e
           echo "rc_rouge=$rc_rouge"
           echo "=== Restauration ==="
           mv /tmp/detection.py.bak "$FICHIER"
           set +e
-          pytest -q "$TEST" 2>&1 | tee /tmp/vert_dedup.log
+          pytest -m ci_guard_dedup -q 2>&1 | tee /tmp/vert_dedup.log
           rc_vert=${PIPESTATUS[0]}
           set -e
           echo "rc_vert=$rc_vert"
@@ -312,7 +310,6 @@ jobs:
         run: |
           set -uo pipefail
           FICHIER=seamtech_search/fiches/routes.py
-          TEST=tests/test_comptes.py::test_validation_attribuee_au_compte_connecte
           echo "=== Sauvegarde originale ==="
           cp "$FICHIER" /tmp/routes.py.bak
           echo "=== Casse volontaire : l'attribution est figée sur un identifiant littéral ==="
@@ -336,7 +333,7 @@ jobs:
           PYEOF
           grep -n 'SABOTAGE' "$FICHIER" || true
           set +e
-          pytest -q "$TEST" 2>&1 | tee /tmp/rouge_attribution.log
+          pytest -m ci_guard_attribution -q 2>&1 | tee /tmp/rouge_attribution.log
           rc_rouge=${PIPESTATUS[0]}
           set -e
           echo "rc_rouge=$rc_rouge"
@@ -348,7 +345,7 @@ jobs:
           echo "=== Restauration ==="
           mv /tmp/routes.py.bak "$FICHIER"
           set +e
-          pytest -q "$TEST" 2>&1 | tee /tmp/vert_attribution.log
+          pytest -m ci_guard_attribution -q 2>&1 | tee /tmp/vert_attribution.log
           rc_vert=${PIPESTATUS[0]}
           set -e
           echo "rc_vert=$rc_vert"
@@ -825,7 +822,7 @@ jobs:
           export SEAMTECH_S3_ACCESS_KEY="minioadmin"
           export SEAMTECH_S3_SECRET_KEY="minioadmin123"
           set +e
-          pytest tests/test_integration_docker.py -v
+          pytest -m integration_docker -v
           rc=$?
           set -e
           # Always tear the infra down, success or failure.
@@ -1202,8 +1199,7 @@ jobs:
         env:
           SEAMTECH_SAUVEGARDE_JSON: sauvegarde-mesures.jsonl
         run: |
-          python -m pytest tests/test_sauvegarde_unites.py tests/test_sauvegarde_restauration.py \
-            -v --junitxml=sauvegarde-junit.xml
+          python -m pytest -m sauvegarde -v --junitxml=sauvegarde-junit.xml
       - name: GARDE-FOU — every round-trip test ran, none skipped
         run: |
           python - << 'PY'
@@ -1220,15 +1216,15 @@ jobs:
           echecs = int(testsuite.get("failures", 0)) + int(testsuite.get("errors", 0))
           passes = executes - sautes - echecs
 
-          # 2. Obtenir le nombre de tests collectés sans filtrage
+          # 2. Obtenir le nombre de tests sélectionnés par le même marqueur
           cmd = [
               sys.executable,
               "-m",
               "pytest",
-              "tests/test_sauvegarde_unites.py",
-              "tests/test_sauvegarde_restauration.py",
               "--collect-only",
               "-q",
+              "-m",
+              "sauvegarde",
           ]
           proc = subprocess.run(cmd, capture_output=True, text=True, check=True)
           m = re.search(r"(\d+)\s+tests?\s+collected", proc.stdout)
@@ -1473,7 +1469,7 @@ jobs:
         #   documents — jamais de contenu documentaire dans un dépôt public).
         run: |
           set +e
-          pytest tests/test_recette_corpus_reel.py -v -ra --tb=short 2>&1 | tee /tmp/recette-pytest.log
+          pytest -m recette_corpus -v -ra --tb=short 2>&1 | tee /tmp/recette-pytest.log
           rc=${PIPESTATUS[0]}
           set -e
           if [ "$rc" -ne 0 ]; then
@@ -1583,7 +1579,7 @@ jobs:
         run: |
           set -uo pipefail
           set +e
-          pytest -k "ocr" -v 2>&1 | tee /tmp/ocr.log
+          pytest -m ocr_suite -v 2>&1 | tee /tmp/ocr.log
           rc=${PIPESTATUS[0]}
           set -e
           # Publie qualité et compte rendu même en cas d'échec partiel
@@ -1683,7 +1679,6 @@ jobs:
         run: |
           set -uo pipefail
           FICHIER=seamtech_search/ocr/pipeline.py
-          TEST=tests/test_ocr_etages.py::test_pdf_texte_natif_zero_page_ocerisee
           echo "=== Sauvegarde originale ==="
           cp "$FICHIER" /tmp/pipeline.py.bak
           echo "=== Casse volontaire : forcer doit_oceriser_page à True (OCR partout) ==="
@@ -1700,7 +1695,7 @@ jobs:
           PYEOF
           grep -n "SABOTAGE" "$FICHIER" || true
           set +e
-          pytest -q "$TEST" 2>&1 | tee /tmp/ocr_rouge.log
+          pytest -m ci_guard_ocr -q 2>&1 | tee /tmp/ocr_rouge.log
           rc_rouge=${PIPESTATUS[0]}
           set -e
           echo "rc_rouge=$rc_rouge"
@@ -1713,7 +1708,7 @@ jobs:
           echo "=== Restauration ==="
           mv /tmp/pipeline.py.bak "$FICHIER"
           set +e
-          pytest -q "$TEST" 2>&1 | tee /tmp/ocr_vert.log
+          pytest -m ci_guard_ocr -q 2>&1 | tee /tmp/ocr_vert.log
           rc_vert=${PIPESTATUS[0]}
           set -e
           echo "rc_vert=$rc_vert"
@@ -1747,7 +1742,23 @@ jobs:
       - name: Installer pip-audit
         run: python -m pip install --upgrade pip pip-audit
       - name: Auditer les dépendances runtime Python
-        run: pip-audit -r requirements.txt --format json --output /tmp/pip-audit.json
+        run: |
+          # pip-audit renvoie 1 lorsqu'il a trouvé des avis; laisser le job
+          # poursuivre pour classifier la sévérité et la disponibilité d'un fix.
+          # Les codes inattendus et un JSON absent/invalide restent bloquants.
+          set +e
+          pip-audit -r requirements.txt --format json --output /tmp/pip-audit.json
+          rc=$?
+          set -e
+          if [ "$rc" -gt 1 ]; then
+            echo "::error title=pip-audit::échec outil pip-audit (rc=$rc)"
+            exit "$rc"
+          fi
+          if [ ! -s /tmp/pip-audit.json ]; then
+            echo "::error title=pip-audit::rapport JSON absent (rc=$rc)"
+            exit 1
+          fi
+          python -m json.tool /tmp/pip-audit.json > /dev/null
       - name: Installer les dépendances production frontend
         working-directory: frontend
         run: pnpm install --frozen-lockfile

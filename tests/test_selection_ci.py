@@ -14,10 +14,9 @@ La règle désormais :
    (``postgres``, ``s3``, ``sauvegarde``, ``perf``) ;
 2. **la CI sélectionne par marqueur** (``-m``), jamais par sous-chaîne pour une
    catégorie ;
-3. les jobs dédiés (``integration``, ``sauvegarde``) sélectionnent **par
-   chemin**, donc les marqueurs ne les amputent pas ;
-4. un ``-k`` reste permis pour une sélection *thématique positive* (job ``ocr``)
-   — ce qui était interdit, c'est d'**exclure une catégorie** par son nom.
+3. tous les jobs dédiés sélectionnent eux aussi **par marqueurs ``-m``** ;
+4. aucune sélection ``-k`` ni sélection par chemin/nodeid n'est autorisée dans
+   les commandes pytest du workflow.
 
 Ce fichier ne lance aucun service et n'ouvre aucune connexion réseau (RG14) :
 il lit le workflow, analyse les fichiers de tests en AST, et interroge pytest
@@ -54,8 +53,8 @@ INVENTAIRE_S3_REEL = {
     "tests/test_storage.py::test_live_minio_s3_integration",
     # job `recette-corpus-reel` (Lot 2) : recette complète du corpus réel —
     # MinIO vivant pour l'envoi des documents, les URL présignées (302, 900 s)
-    # et la sauvegarde hors-site. Sélection par chemin (aucun -m), garde
-    # d'exécution SEAMTECH_RECETTE_CORPUS.
+    # et la sauvegarde hors-site. Sélection par marqueur recette_corpus,
+    # garde d'exécution SEAMTECH_RECETTE_CORPUS.
     "tests/test_recette_corpus_reel.py::test_01_zip_intacts_avant_recette",
     "tests/test_recette_corpus_reel.py::test_02_corpus_extrait_complet",
     "tests/test_recette_corpus_reel.py::test_03_services_et_migrations_018_base_neuve",
@@ -121,7 +120,7 @@ def _commandes_pytest_du_workflow() -> list[str]:
         nue = ligne.strip()
         if nue.startswith("#"):
             continue
-        if re.search(r"(^|\s)(python -m )?pytest\s", nue):
+        if re.match(r"^(python -m )?pytest\s", nue):
             lignes.append(nue)
     return lignes
 
@@ -270,20 +269,17 @@ def test_les_tests_sur_doubles_ne_portent_pas_le_marqueur_s3() -> None:
 
 
 def test_aucune_commande_ci_n_exclut_une_categorie_par_sous_chaine() -> None:
-    """Interdiction du motif ``-k "not <catégorie>"`` (la cause de R-14).
-
-    ``-k`` reste autorisé pour une sélection thématique POSITIVE (job ``ocr``) :
-    ce qui rend une suite menteuse, c'est d'exclure une catégorie par le nom des
-    tests, parce que la moindre coïncidence de nom retire un test de la CI.
-    """
-    fautifs = []
-    for commande in _commandes_pytest_du_workflow():
-        for expression in re.findall(r"-k\s+\"([^\"]+)\"|-k\s+'([^']+)'", commande):
-            texte = (expression[0] or expression[1]).lower()
-            if "not " in texte and any(categorie in texte for categorie in CATEGORIES):
-                fautifs.append(commande)
-    assert not fautifs, (
-        "exclusion de catégorie par sous-chaîne (R-14) — utiliser -m :\n" + "\n".join(f"  {c}" for c in fautifs)
+    """Compatibilité du nodeid historique; la règle est maintenant stricte : ``-m`` seulement."""
+    commandes = _commandes_pytest_du_workflow()
+    assert commandes, "aucune commande pytest détectée dans le workflow"
+    sans_marqueur = [commande for commande in commandes if not re.search(r"(?:^|\s)-m(?:\s|$)", commande)]
+    selecteurs_interdits = [commande for commande in commandes if re.search(r"(?:^|\s)(?:-k|tests/test_[^\s]+)", commande)]
+    assert not sans_marqueur, "sélection CI sans -m :\n" + "\n".join(f"  {c}" for c in sans_marqueur)
+    assert not selecteurs_interdits, "sélection CI par -k/chemin au lieu de -m :\n" + "\n".join(
+        f"  {c}" for c in selecteurs_interdits
+    )
+    assert re.search(r'"-m",\s*"sauvegarde"', CI.read_text(encoding="utf-8")), (
+        "la commande collect-only du garde sauvegarde doit utiliser le même marqueur"
     )
 
 
@@ -295,26 +291,15 @@ def test_les_commandes_de_selection_attendues_sont_bien_celles_du_workflow() -> 
 
 
 def test_les_jobs_dedies_selectionnent_par_chemin_et_ne_sont_pas_ampute_par_le_marqueur() -> None:
-    """Marquer ``s3`` ne doit RIEN retirer aux jobs qui fournissent le service.
-
-    ``integration`` et ``sauvegarde`` sélectionnent par chemin (aucun ``-m``),
-    donc les tests marqués ``s3`` y tournent toujours — c'est ce qui rend le
-    marquage sûr.
-    """
+    """Nodeid historique conservé; les jobs dédiés emploient maintenant -m eux aussi."""
     contenu = CI.read_text(encoding="utf-8")
-    assert "pytest tests/test_integration_docker.py -v" in contenu
-    assert "python -m pytest tests/test_sauvegarde_unites.py tests/test_sauvegarde_restauration.py" in contenu
+    assert "pytest -m integration_docker -v" in contenu
+    assert "python -m pytest -m sauvegarde -v --junitxml=sauvegarde-junit.xml" in contenu
+    assert "pytest -m recette_corpus -v" in contenu
+    assert "pytest -m ocr_suite -v" in contenu
     for commande in _commandes_pytest_du_workflow():
-        if "test_integration_docker.py" not in commande and "test_sauvegarde_restauration.py" not in commande:
-            continue
-        # `python -m pytest` n'est pas une sélection : on ne regarde que les
-        # expressions de marqueurs (-m "…" / -m marqueur).
-        expressions = [
-            (double or simple or nu)
-            for double, simple, nu in re.findall(r"-m\s+(?:\"([^\"]+)\"|'([^']+)'|(\S+))", commande)
-            if (double or simple or nu) != "pytest"
-        ]
-        assert not expressions, f"job dédié filtré par marqueur, ses tests S3 seraient sautés : {commande}"
+        assert re.search(r"(?:^|\s)-m(?:\s|$)", commande), f"sélection hors marqueur : {commande}"
+        assert not re.search(r"(?:^|\s)(?:-k|tests/test_[^\s]+)", commande), f"sélection hors marqueur : {commande}"
 
 
 # ---------------------------------------------------------------------------

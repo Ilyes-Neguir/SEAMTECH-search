@@ -469,6 +469,7 @@ def test_05_fiches_proposees_a_valider(app_client) -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.ocr_suite
 def test_06_ocr_par_etages(dossiers: dict[str, Path], tmp_path: Path) -> None:
     """30 pages natives NON océrisées ; une page-image océrisée par Tesseract."""
     if shutil.which("tesseract") is None:

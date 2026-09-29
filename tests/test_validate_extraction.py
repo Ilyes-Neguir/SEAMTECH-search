@@ -13,6 +13,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 SCRIPT_PATH = Path(__file__).resolve().parent.parent / "scripts" / "validate_extraction.py"
 
 
@@ -97,6 +99,7 @@ def test_review_notes_flags_missing_unit_and_missing_fields() -> None:
     assert "extraction_status=partial" in joined
 
 
+@pytest.mark.ocr_suite
 def test_review_notes_flags_empty_text_as_needing_ocr() -> None:
     data = _extracted(raw_text="", extraction_status="failed", confidence=0.0)
 
