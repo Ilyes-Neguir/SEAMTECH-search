@@ -97,3 +97,8 @@ candidate n°1 du premier rang.
 - La mesure humaine est la seule qui vaille pour l'acceptation du critère :
   un opérateur qui relit 48 champs doit tenir sous 2 minutes. Elle dépend de
   la densité d'écran et de l'entraînement — d'où 3 fiches, pas une.
+
+
+## Chrono local de session (Phase 2.2 — 2026-09-29)
+
+L'écran `/validation` mesure désormais localement le temps écoulé entre l'ouverture d'une fiche et une décision humaine (valider/rejeter/rouvrir). Quand la file est terminée, il affiche le nombre de décisions, médiane, minimum et maximum en secondes. Ces valeurs vivent uniquement dans l'état React de l'onglet : aucun endpoint ne les reçoit, elles disparaissent à la fermeture/rechargement, et elles ne sont pas une mesure représentative tant qu'elles ne sont pas collectées en conditions opérateur. **NON MESURÉ** : médiane réelle d'un ouvrier sur le corpus fourni. Le critère ≤ 2 min exige la lecture et décision humaine ; le chrono machine E2E ne les remplace pas.

@@ -37,6 +37,7 @@ export interface FicheFileEntry {
   nb_champs: number
   paliers: Paliers // comptes ORDINAUX — jamais une « confiance moyenne »
   confiance_min: number | null
+  a_anomalies: boolean
 }
 
 export interface FicheListe {

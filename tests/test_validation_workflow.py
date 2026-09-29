@@ -235,9 +235,13 @@ class TestFileDeValidation:
         assert reponse.status_code == 200
         file = reponse.json()
         assert file, "la file de validation ne doit pas être vide"
-        confiances = [f["confiance_min"] for f in file]
-        assert confiances == sorted(confiances, key=lambda x: (x is None, x)), "file non triée (incertaines d'abord)"
+        cles_tri = [
+            (entree["confiance_min"] is None, entree["confiance_min"] if entree["confiance_min"] is not None else 0, entree["code"])
+            for entree in file
+        ]
+        assert cles_tri == sorted(cles_tri), "file non triée par confiance croissante puis code"
         for entree in file:
+            assert isinstance(entree["a_anomalies"], bool)
             assert set(entree["paliers"]) == {"certain", "lu", "decompose", "partiel"}
             # JAMAIS de « confiance moyenne » : des comptes ordinaires, additionnables
             assert sum(entree["paliers"].values()) == entree["nb_champs"]
