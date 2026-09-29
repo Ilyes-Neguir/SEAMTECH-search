@@ -290,6 +290,16 @@ def test_les_commandes_de_selection_attendues_sont_bien_celles_du_workflow() -> 
         assert commande in contenu, f"commande de sélection absente du workflow : {commande}"
 
 
+def test_garde_collect_only_parse_le_nombre_selectionne_par_marqueur() -> None:
+    """pytest affiche ``23/1007`` sous -m; la garde doit lire 23 et non le total."""
+    motif = r"(?m)^(\d+)(?:/\d+)?\s+tests?\s+collected"
+    for sortie, attendu in (("23/1007 tests collected (984 deselected)", 23), ("23 tests collected", 23)):
+        correspondance = re.search(motif, sortie)
+        assert correspondance is not None
+        assert int(correspondance.group(1)) == attendu
+    assert motif in CI.read_text(encoding="utf-8")
+
+
 def test_les_jobs_dedies_selectionnent_par_chemin_et_ne_sont_pas_ampute_par_le_marqueur() -> None:
     """Nodeid historique conservé; les jobs dédiés emploient maintenant -m eux aussi."""
     contenu = CI.read_text(encoding="utf-8")

@@ -1227,7 +1227,7 @@ jobs:
               "sauvegarde",
           ]
           proc = subprocess.run(cmd, capture_output=True, text=True, check=True)
-          m = re.search(r"(\d+)\s+tests?\s+collected", proc.stdout)
+          m = re.search(r"(?m)^(\d+)(?:/\d+)?\s+tests?\s+collected", proc.stdout)
           collectes = int(m.group(1)) if m else len([l for l in proc.stdout.splitlines() if "::" in l])
 
           print(
