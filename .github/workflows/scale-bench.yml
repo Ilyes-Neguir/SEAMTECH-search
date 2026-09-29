@@ -106,8 +106,10 @@ jobs:
           print(f"::notice title=scale-bench SYNTHÉTIQUE::{payload}")
           for plan in report.get("explain_top3", []):
               explain = json.dumps({"rank": plan["rank"], "observed_execute_ms": plan["observed_execute_ms"], "plan": plan["plan"]}, ensure_ascii=False, separators=(",", ":"))
-              explain = explain.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
-              print(f"::notice title=scale-bench EXPLAIN top {plan['rank']}::{explain}")
+              chunks = [explain[offset:offset + 2500] for offset in range(0, len(explain), 2500)]
+              for number, chunk in enumerate(chunks, start=1):
+                  chunk = chunk.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+                  print(f"::notice title=scale-bench EXPLAIN #{plan['rank']} chunk {number}/{len(chunks)}::{chunk}")
           PY
       - name: Publier le rapport (plans EXPLAIN compris)
         if: always()
