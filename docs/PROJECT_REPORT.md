@@ -210,13 +210,13 @@ SEAMTECH Search v0.4.0 delivers a modern, robust, and scalable platform that tra
 ### 9.1 State, scope, and verdict
 
 - **Branch:** `arena/01a0ed7b-seamtech-search`
-- **Code HEAD:** `f16b017b61e759cf3b25f7d7b054752ba0c6979e`
+- **Candidate code HEAD:** `9794e474051f73afec54238d204b45ae6238ff04`
 - **PR:** #33, open and not merged at last confirmed state.
-- **Verdict:** **NOT CLEARED FOR PRODUCTION / NO MERGE AUTHORIZED.** Lots 1–3 changes and local checks are complete, but final GitHub CI status and operational acceptance gates remain outstanding. MinIO remains the production object-store backend; R2 is only an option pending D-2.
+- **Verdict:** **NOT CLEARED FOR PRODUCTION / NO MERGE AUTHORIZED.** Lots 1–3 code, local checks, final push/PR CI and the synthetic benchmark are complete. The human and real-environment acceptance gates remain outstanding. MinIO remains the production object-store backend; R2 is only an option pending D-2.
 
 ### 9.2 Change inventory (base `a7ffe7d2800ed697f306a93b0564b4ad8c87eb74` → code HEAD)
 
-29 files changed; 974 insertions and 117 deletions, plus deletion of the duplicate root PDF:
+32 files changed; 1,758 insertions and 119 deletions, including the synthetic raw benchmark outputs and removal of the duplicate root PDF:
 
 | File(s) | Change |
 |---|---|
@@ -225,6 +225,7 @@ SEAMTECH Search v0.4.0 delivers a modern, robust, and scalable platform that tra
 | `7792-SO_ffab.pdf` | Removed duplicate root copy; canonical fixture retained. |
 | `scripts/audit_dependency_policy.py` | Runtime pip / production pnpm audit policy. |
 | `scripts/scale_bench.py` | Synthetic data seed, endpoint percentiles and EXPLAIN. |
+| `docs/benchmarks/scale-bench-synthetique-36593833893.json`, `.md` | Reconstructed synthetic result JSON and complete top-3 EXPLAIN output from this run's compressed GitHub annotations. |
 | `seamtech_search/api.py`, `seamtech_search/fiches/routes.py` | Optional assistant/ML flag and route behavior. |
 | `frontend/app/recherche/page.tsx`, `frontend/components/recherche-fiches-app.tsx`, `frontend/lib/fiche.ts` | Search feature-flag/UI wiring. |
 | `frontend/components/validation-app.tsx`, `frontend/components/pdf-viewer.tsx`, `frontend/e2e/validation.spec.ts` | Human validation workflow, keyboard and PDF highlighting, anomaly confirmation, session timer, E2E coverage. |
@@ -245,9 +246,19 @@ The root PDF and canonical file SHA-256 matched exactly: `43afc51e55ae598d3eaffc
 
 - Local selected suite (markers only): **766 passed, 3 skipped, 234 deselected**. Earlier baseline reference was approximately 746 passed / 3 skipped; this is not a same-commit before/after comparison.
 - Previously successful on the Lot 3 tree: `ruff check .`; Python compilation; YAML parsing; `git diff --check`; frontend TypeScript and production build; focused optional-feature/selection/privacy tests (**32 passed**).
-- Synthetic benchmark: [run 36587268340](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36587268340), PR-triggered, 10,000 synthetic records, 50 samples per scenario; successful measurement and artifact steps, total job duration **1 min 16 s**. The artifact is `scale-bench-synthetique-36587268340` and contains p50/p95/p99 plus top-3 EXPLAIN plans. **Numeric values are not transcribed in this report:** artifact retrieval returned EOF in this session. Treat metrics as SYNTHÉTIQUE only; do not infer any VPS01/R2 performance.
-- The first benchmark attempt failed because direct script execution did not put the repository root on `sys.path` (`ModuleNotFoundError: seamtech_search`). The workflow now sets `PYTHONPATH=.`; the successful run above validates the fix.
-- CI runs on code HEAD `f16b017`: push run `36587260783` failed in the Docker frontend build and live E2E; PR run `36587268199` failed one live E2E assertion (7 passed, 1 failed), while the PR Docker build, integration, security, corpus recipe and backend jobs passed. Failure cause: the keyboard-only test pressed `r` while an input retained focus; page shortcuts deliberately ignore printable keys inside editing controls. The E2E test now blurs the input before invoking the page-level shortcut, preserving the rule that printable shortcuts are ignored inside editable controls. The regression fix and benchmark job-summary publication are in the current commit; GitHub revalidation is pending.
+- Benchmark **SYNTHÉTIQUE**: [run 36593833893](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36593833893), 10,000 synthetic records, 50 samples per scenario, successful in **53 s**. Metrics and the complete three EXPLAIN ANALYZE/BUFFERS plans were reconstructed from the check annotations, which are chunked gzip+base64 to avoid artifact-download EOF and annotation length limits. The parsed JSON and readable report are committed at `docs/benchmarks/scale-bench-synthetique-36593833893.{json,md}`.
+
+  | Scenario | p50 ms | p95 ms | p99 ms | max ms |
+  |---|---:|---:|---:|---:|
+  | mot_simple | 81.88 | 90.46 | 96.79 | 96.79 |
+  | multi_mots | 101.87 | 104.61 | 104.89 | 104.89 |
+  | code | 12.36 | 13.21 | 13.53 | 13.53 |
+  | facette_dimension | 95.13 | 98.84 | 111.07 | 111.07 |
+  | filtres | 97.30 | 100.03 | 101.70 | 101.70 |
+  | suggestions | 8.89 | 9.21 | 9.48 | 9.48 |
+
+  All six synthetic p95 values are below the benchmark's **indicative 250 ms** target. This does not establish the separate product latency target or VPS01/R2 performance. The first benchmark attempt failed because direct script execution omitted the repository root from `sys.path` (`ModuleNotFoundError: seamtech_search`); `PYTHONPATH=.` corrected it.
+- On candidate SHA `9794e47`, push CI [36593827929](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36593827929) and PR CI [36593833850](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36593833850) both passed. The PR run's live E2E validation, duplicate banner and named-user auth checks all passed. The previous E2E failure was a test-state mistake (pressing `r` while a text field retained focus); the test now blurs the input before invoking page-level shortcuts. Docker, integration, backend Python 3.11/3.12/3.13, security, corpus recipe, OCR, frontend and backup jobs are green.
 
 ### 9.4 Explicitly unmeasured / remaining gates
 
