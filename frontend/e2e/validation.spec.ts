@@ -63,6 +63,12 @@ test.describe("validation de bout en bout", () => {
     await expect(page.getByTestId("aide-raccourcis")).toContainText("Entrée")
     await page.keyboard.press("Escape")
     await expect(page.getByTestId("aide-raccourcis")).toHaveCount(0)
+    const champ = page.locator('input[data-testid^="champ-"]').first()
+    await expect(champ).toBeVisible()
+    await page.keyboard.press("c")
+    await expect(champ).toBeFocused()
+    await page.keyboard.press("r")
+    await expect(page.getByTestId("motif-rejet")).toBeFocused()
   })
 
   test("le focus clavier d'un champ surligne sa zone et sa page PDF", async ({ page }) => {
@@ -79,13 +85,14 @@ test.describe("validation de bout en bout", () => {
     await expect(pdf).toHaveText(new RegExp(`^${pageZone} / [0-9]+$`))
   })
 
-  test("V demande confirmation explicite si la fiche signale une anomalie", async ({ page }) => {
+  test("V confirme les anomalies; R + Entrée rejette et affiche le chrono local", async ({ page }) => {
     await signIn(page)
     let validationEnvoyee = false
+    let rejetEnregistre = false
     await page.route("**/api/validation/file**", (route) => route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify([{
+      body: JSON.stringify(rejetEnregistre ? [] : [{
         code: "ANOMALIE-E2E", titre: "Fixture synthétique", score_qualite: 0.4, gabarit: "TEST",
         nb_champs: 1, paliers: { certain: 0, lu: 0, decompose: 0, partiel: 1 },
         confiance_min: 0.1, a_anomalies: true,
@@ -98,6 +105,10 @@ test.describe("validation de bout en bout", () => {
       validationEnvoyee = true
       return route.fulfill({ status: 200, contentType: "application/json", body: "{}" })
     })
+    await page.route("**/api/fiches/ANOMALIE-E2E/rejeter", (route) => {
+      rejetEnregistre = true
+      return route.fulfill({ status: 200, contentType: "application/json", body: "{}" })
+    })
     await page.goto("/validation")
     await expect(page.getByTestId("titre-fiche")).toHaveText("ANOMALIE-E2E")
     await expect(page.getByText("Anomalie à vérifier")).toBeVisible()
@@ -107,6 +118,15 @@ test.describe("validation de bout en bout", () => {
     })
     await page.keyboard.press("v")
     expect(validationEnvoyee).toBe(false)
+
+    await page.keyboard.press("r")
+    await expect(page.getByTestId("motif-rejet")).toBeFocused()
+    await page.getByTestId("motif-rejet").fill("anomalie confirmée par opérateur")
+    await page.keyboard.press("Enter")
+    await expect(page.getByTestId("message-ok")).toContainText("rejeter")
+    expect(rejetEnregistre).toBe(true)
+    await expect(page.getByTestId("chrono-session")).toContainText("1 fiche(s)")
+    await expect(page.getByTestId("chrono-session")).toContainText("Mesure locale uniquement")
   })
 
   test("le seed dépose trois dossiers et le rejet exige un motif", async ({ page }) => {

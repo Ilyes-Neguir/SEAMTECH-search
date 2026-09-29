@@ -12,6 +12,13 @@
 - Le chrono est strictement local à l'onglet/session : temps par décision et résumé médiane/min/max/compteur à la fin. Aucune mesure n'est envoyée. Aucun statut n'est auto-validé ; la validation groupée reste verrouillée à 409 sans calibration.
 - E2E live étendu de 4 à 8 tests attendus ; suite sans service mesurée à 764 passed, 3 skipped, 234 deselected.
 
+## 2026-09-29 — Docs, échelle et allègement (Lot 3 en cours)
+
+- Deux runbooks ciblés sous `docs/deploiement/` : VPS01 + R2 en option non décidée (MinIO reste effectif) et poste atelier local ; ils renvoient aux procédures détaillées existantes au lieu de les recopier.
+- Workflow manuel `scale-bench.yml` : 10 000 fiches exclusivement SYNTHÉTIQUES dans PostgreSQL jetable, mesures p50/p95/p99 de `/recherche` (six profils + suggestions), `EXPLAIN (ANALYZE, BUFFERS)` sur les trois instructions SQL SELECT les plus lentes observées ; timeout 20 min. Ne constitue pas une preuve VPS01/R2.
+- Drapeau `SEAMTECH_OPTIONAL_FEATURES_ENABLED` (défaut actif) masque assistant, `/ml/*` et charge du modèle quand `false`; routes code conservées, recherche classique continue. Poste mono-opérateur documenté.
+- Portail checklist et verdict projet complétés après mesure finale CI/scale-bench.
+
 ## Unreleased — Production-readiness Phase 0 (garde-fou confidentialité) + Phase 2.1 (fiches a_valider cherchables, badgées « Non vérifiée ») (`arena/01a0d324-seamtech-search`)
 
 **Phase 2.1 — les fiches déposées sont cherchables AVANT leur validation (décision commanditaire du 2026-09-29).** Problème de produit le plus risqué à 10 000 PDF : le texte de recherche d'une fiche (`fiche.search_vector`, fonction pondérée A/B/C `rafraichir_texte_recherche_fiche`, migration 007) n'était rempli qu'à la VALIDATION humaine — des milliers de fiches déposées mais non validées étaient invisibles à `/recherche`. Correctif en trois gestes, RG3 **inchangé sur le fond** (rien ne passe à `valide` sans décision humaine ; une fiche `rejete` n'est jamais renvoyée) : (1) `ecrire_fiche` remplit le texte de recherche **dès l'écriture** (`seamtech_search/fiches/persistance.py`) ; (2) **migration `018_recherche_a_valider`** qui rattrape les fiches déjà en base (`SELECT rafraichir_texte_recherche_fiche(id_fiche) FROM fiche WHERE search_vector IS NULL` — aucune table nouvelle, aucune donnée validée touchée, `VERSION_SCHEMA_METIER` → `018_recherche_a_valider`) ; (3) le défaut de `/recherche` et de `rechercher_fiches` **inclut** désormais les `a_valider`, le statut étant TOUJOURS exposé dans chaque résultat (badge interface) ; `inclure_a_valider=false` restreint à l'archive de confiance. L'assistant garde sa propre sémantique (validées seules par défaut : ses réponses sourcées ne doivent pas citer du non vérifié sans le dire).

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import shutil
 import time
@@ -113,6 +114,11 @@ def _initialize_schema(index: SearchIndex, stage: str) -> None:
             f"Schema migrations failed during {stage}: {exc}. Refusing to start against a "
             "half-migrated schema; the underlying database error is logged above."
         ) from exc
+
+
+def fonctionnalites_optionnelles_actives() -> bool:
+    """Assistant et routes ML visibles par défaut; désactivables au déploiement."""
+    return os.environ.get("SEAMTECH_OPTIONAL_FEATURES_ENABLED", "true").strip().lower() not in {"0", "false", "no", "off"}
 
 
 def create_app(config: AppConfig) -> FastAPI:
@@ -1103,7 +1109,8 @@ def create_app(config: AppConfig) -> FastAPI:
     # reste None et la branche vectorielle demeure dormante, sans erreur.
     from seamtech_search.recherche import enregistrer_routes_recherche
 
-    encodeur_ml = _charger_encodeur_ml(config)
+    optionnels_actifs = fonctionnalites_optionnelles_actives()
+    encodeur_ml = _charger_encodeur_ml(config) if optionnels_actifs else None
     enregistrer_routes_recherche(
         app,
         index,
@@ -1115,9 +1122,10 @@ def create_app(config: AppConfig) -> FastAPI:
 
     # Lot I (§11, Phase 4) : assistant sourcé — POST /assistant (extractif,
     # sans LLM : réponses construites depuis la base, citations obligatoires).
-    from seamtech_search.assistant import enregistrer_routes_assistant
+    if optionnels_actifs:
+        from seamtech_search.assistant import enregistrer_routes_assistant
 
-    enregistrer_routes_assistant(app, index, config, _require_auth, metriques=metrics)
+        enregistrer_routes_assistant(app, index, config, _require_auth, metriques=metrics)
 
     from seamtech_search.qualite.routes import enregistrer_routes_qualite
 
@@ -1138,16 +1146,17 @@ def create_app(config: AppConfig) -> FastAPI:
 
     enregistrer_routes_auth(app, index, config, _require_auth)
 
-    from seamtech_search.ml.routes import enregistrer_routes_ml
+    if optionnels_actifs:
+        from seamtech_search.ml.routes import enregistrer_routes_ml
 
-    enregistrer_routes_ml(
-        app,
-        index,
-        config,
-        _require_auth,
-        modeles_dir=_dossier_modeles_ml(config),
-        racine_verite=Path(__file__).resolve().parents[1],
-    )
+        enregistrer_routes_ml(
+            app,
+            index,
+            config,
+            _require_auth,
+            modeles_dir=_dossier_modeles_ml(config),
+            racine_verite=Path(__file__).resolve().parents[1],
+        )
 
     return app
 

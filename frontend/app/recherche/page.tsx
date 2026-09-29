@@ -8,5 +8,6 @@ export const dynamic = "force-dynamic"
 
 export default async function Page() {
   if (!(await isAuthenticated())) redirect("/login?next=/recherche")
-  return <RechercheFichesApp />
+  const optionnelsActifs = !["0", "false", "no", "off"].includes((process.env.SEAMTECH_OPTIONAL_FEATURES_ENABLED ?? "true").trim().toLowerCase())
+  return <RechercheFichesApp assistantActif={optionnelsActifs} />
 }

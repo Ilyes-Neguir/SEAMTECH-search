@@ -131,6 +131,7 @@ services:
       SEAMTECH_BEHIND_TLS_PROXY: ${SEAMTECH_BEHIND_TLS_PROXY:-true}
       SEAMTECH_AUTH_TOKEN: ${SEAMTECH_AUTH_TOKEN:?Set SEAMTECH_AUTH_TOKEN in the environment}
       SEAMTECH_ROOT_PATHS: ${SEAMTECH_ROOT_PATHS:-}
+      SEAMTECH_OPTIONAL_FEATURES_ENABLED: ${SEAMTECH_OPTIONAL_FEATURES_ENABLED:-true}
     depends_on:
       postgres:
         condition: service_healthy
@@ -169,6 +170,7 @@ services:
       SEAMTECH_UI_PASSWORD: ${SEAMTECH_UI_PASSWORD:?Set SEAMTECH_UI_PASSWORD in the environment}
       SEAMTECH_SESSION_SECRET: ${SEAMTECH_SESSION_SECRET:?Set SEAMTECH_SESSION_SECRET in the environment}
       SEAMTECH_SESSION_HOURS: ${SEAMTECH_SESSION_HOURS:-12}
+      SEAMTECH_OPTIONAL_FEATURES_ENABLED: ${SEAMTECH_OPTIONAL_FEATURES_ENABLED:-true}
       # Marks the session cookie Secure when a TLS terminator is in front.
       #
       # Deliberately defaults to false here while `web` above defaults to true.
