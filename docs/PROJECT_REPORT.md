@@ -210,7 +210,8 @@ SEAMTECH Search v0.4.0 delivers a modern, robust, and scalable platform that tra
 ### 9.1 State, scope, and verdict
 
 - **Branch:** `arena/01a0ed7b-seamtech-search`
-- **Candidate code HEAD:** `984e2dbb3379aa0080d41bdca9f2d9dae673c992`
+- **Final branch HEAD:** `01484d0777c9aca62d64b1610ede8f482ba4b194` (release portal and captured benchmark outputs).
+- **Validated candidate code SHA:** `984e2dbb3379aa0080d41bdca9f2d9dae673c992`; the closeout commit adds only report/checklist/benchmark-output documentation. The branch HEAD CI also passed.
 - **PR:** #33, open and not merged at last confirmed state.
 - **Verdict:** **NOT CLEARED FOR PRODUCTION / NO MERGE AUTHORIZED.** Lots 1–3 code, local checks, final push/PR CI and the synthetic benchmark are complete. The human and real-environment acceptance gates remain outstanding. MinIO remains the production object-store backend; R2 is only an option pending D-2.
 
@@ -258,7 +259,7 @@ The root PDF and canonical file SHA-256 matched exactly: `43afc51e55ae598d3eaffc
   | suggestions | 4.28 | 4.58 | 4.67 | 4.67 |
 
   All six synthetic p95 values are below the benchmark's **indicative 250 ms** target. This does not establish the separate product latency target or VPS01/R2 performance. The first benchmark attempt failed because direct script execution omitted the repository root from `sys.path` (`ModuleNotFoundError: seamtech_search`); `PYTHONPATH=.` corrected it.
-- On candidate SHA `984e2db`, push CI [36594929912](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36594929912) and PR CI [36594937282](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36594937282), plus synthetic run [36594937291](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36594937291), all passed. The PR's 11 CI jobs passed, including live E2E validation, duplicate banner, named-user auth, Docker, integration, backend Python 3.11/3.12/3.13, security, corpus recipe, OCR and backup. The earlier E2E failure was a test-state mistake (pressing `r` while a text field retained focus); the test now blurs the input before invoking page-level shortcuts.
+- On candidate SHA `984e2db`, push CI [36594929912](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36594929912), PR CI [36594937282](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36594937282), and synthetic run [36594937291](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36594937291) all passed. After the docs-only closeout commit `01484d0`, push CI [36595978800](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36595978800) and PR CI [36595984492](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36595984492) also passed; repeat synthetic run [36595985033](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36595985033) passed. The 11 PR CI jobs passed, including live E2E validation, duplicate banner, named-user auth, Docker, integration, backend Python 3.11/3.12/3.13, security, corpus recipe, OCR and backup. The earlier E2E failure was a test-state mistake (pressing `r` while a text field retained focus); the test now blurs the input before invoking page-level shortcuts.
 
 ### 9.4 Explicitly unmeasured / remaining gates
 
