@@ -74,7 +74,7 @@ jobs:
         run: |
           set -uo pipefail
           set +e
-          python scripts/scale_bench.py 2>&1 | tee /tmp/scale-bench.log
+          PYTHONPATH=. python scripts/scale_bench.py 2>&1 | tee /tmp/scale-bench.log
           rc=${PIPESTATUS[0]}
           set -e
           if [ "$rc" -ne 0 ]; then
