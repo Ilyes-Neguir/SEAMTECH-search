@@ -76,7 +76,7 @@ test.describe("validation de bout en bout", () => {
     const canvas = page.getByTestId("pdf-canvas")
     await expect(canvas).toHaveAttribute("data-zone-active", "true")
     const pageZone = Number(await canvas.getAttribute("data-zone-page")) + 1
-    await expect(pdf).toHaveText(new RegExp(`^${pageZone} \/ \d+$`))
+    await expect(pdf).toHaveText(new RegExp(`^${pageZone} / [0-9]+$`))
   })
 
   test("V demande confirmation explicite si la fiche signale une anomalie", async ({ page }) => {
