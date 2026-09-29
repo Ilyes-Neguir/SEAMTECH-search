@@ -348,9 +348,10 @@ def valider_fiche(index: Any, code: str, utilisateur: str | None, commentaire: s
                 raise HTTPException(status_code=409, detail=f"Fiche {code} en statut « {statut} » : seule une fiche a_valider peut être validée{conseil}")
             id_utilisateur = _resoudre_utilisateur(cursor, utilisateur)
             cursor.execute("UPDATE fiche SET statut = 'valide', updated_at = now() WHERE id_fiche = %s", (id_fiche,))
-            # Lot E : la validation est LE moment où la fiche devient cherchable —
-            # le texte de recherche pondéré (A/B/C) est rempli ici, dans la même
-            # transaction (migration 007 : « appelée à la VALIDATION d'une fiche »).
+            # Lot E, articulé avec la migration 018 : le texte de recherche est
+            # rempli dès l'ÉCRITURE (fiche badgée « non vérifiée ») ; la VALIDATION
+            # le rafraîchit dans la même transaction et fait passer la fiche dans
+            # l'archive de confiance (le badge disparaît).
             cursor.execute("SELECT rafraichir_texte_recherche_fiche(%s)", (id_fiche,))
             _jouter_journal(cursor, id_fiche, id_utilisateur, "valider", statut, "valide", commentaire)
             LOGGER.info(

@@ -529,6 +529,16 @@ def _ecrire_fiche_dans(index: Any, fiche: FicheExtraite, connexion: Any) -> tupl
                 )
             for anomalie in fiche.anomalies:
                 cursor.execute(_SQL_ANOMALIE_INS, (id_fiche, anomalie.code, anomalie.gravite, anomalie.message))
+    # Phase 2.1 (production-readiness, décision commanditaire du 2026-09-29) :
+    # le texte de recherche pondéré est rempli DÈS L'ÉCRITURE (statut
+    # a_valider) — une fiche déposée est cherchable immédiatement, badgée
+    # « non vérifiée » par l'interface. RG3 INCHANGÉ : rien ne passe à
+    # « valide » sans décision humaine ; la validation rafraîchit à nouveau
+    # le texte (mêmes poids A/B/C) au moment où la fiche rejoint l'archive
+    # de confiance. Sans ce remplissage précoce, des milliers de fiches
+    # déposées mais non validées seraient invisibles à la recherche.
+    with connexion.cursor() as cursor:
+        cursor.execute("SELECT rafraichir_texte_recherche_fiche(%s)", (id_fiche,))
     LOGGER.info("Fiche %s écrite (%s, id %d, statut a_valider).", fiche.code, action, id_fiche)
     return id_fiche, action
 

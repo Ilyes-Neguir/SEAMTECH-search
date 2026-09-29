@@ -835,6 +835,25 @@ class SearchIndex:
         with connection.cursor() as cursor:
             cursor.execute(schema_metier.SQL_017_OCR_ETAGE3)
 
+    def _migration_018_recherche_a_valider(self, connection: Any) -> None:
+        """Phase 2.1 (production-readiness, 2026-09-29) : fiches a_valider cherchables.
+
+        Rattrapage des fiches écrites AVANT le remplissage précoce du texte de
+        recherche (désormais fait par ecrire_fiche) : la fonction pondérée
+        A/B/C est appliquée à toute fiche dont ``search_vector`` est NULL,
+        quel que soit son statut. PostgreSQL uniquement, comme 006-017 ; sur
+        SQLite : warning journalisé, migration enregistrée, aucun effet (le
+        mode SQLite ne porte pas la recherche de fiches).
+        """
+        if not self.is_postgres:
+            logger.warning(
+                "Migration 018_recherche_a_valider ignorée : la couche métier est PostgreSQL "
+                "uniquement — conséquence : aucun rattrapage de texte de recherche en mode SQLite."
+            )
+            return
+        with connection.cursor() as cursor:
+            cursor.execute(schema_metier.SQL_018_RECHERCHE_A_VALIDER)
+
     def run_migrations(self) -> None:
         """Run pending schema migrations once at startup."""
         with self.connect() as connection:
@@ -865,6 +884,7 @@ class SearchIndex:
                 # Lot M — staging OCR étage 3, table ocr_etage3, jamais chunk/document
                 # (oubli qui avait cassé sauvegarde au Lot K, puis au Lot M — même motif).
                 ("017_ocr_etage3", self._migration_017_ocr_etage3),
+                ("018_recherche_a_valider", self._migration_018_recherche_a_valider),
             ]
 
             for version, func in migrations:

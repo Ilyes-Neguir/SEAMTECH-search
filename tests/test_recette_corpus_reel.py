@@ -20,7 +20,7 @@ chemins des dossiers.
 
 1. ZIP d'origine intacts avant recette (empreintes SHA-256, RG13).
 2. Corpus extrait complet : 7 dossiers, 14 PDF uniques, 30 pages natives.
-3. Services vivants + migrations 001..017 appliquées sur une base neuve.
+3. Services vivants + migrations 001..018 appliquées sur une base neuve.
 4. Import des 7 dossiers par le FLUX RÉEL : upload (REF-001), scan,
    confirmation avec sélection du candidat technique ; dépôt Lot C
    (fiche + pièces jointes) pour chaque dossier.
@@ -241,12 +241,12 @@ def test_02_corpus_extrait_complet(dossiers: dict[str, Path]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 3. Services vivants + migrations 001..017 sur base neuve.
+# 3. Services vivants + migrations 001..018 sur base neuve.
 # ---------------------------------------------------------------------------
 
 
-def test_03_services_et_migrations_017_base_neuve(app_client) -> None:
-    """PostgreSQL (migrations 001..017, base vide), Redis (ping), MinIO (bucket)."""
+def test_03_services_et_migrations_018_base_neuve(app_client) -> None:
+    """PostgreSQL (migrations 001..018, base vide), Redis (ping), MinIO (bucket)."""
     import psycopg2
     import redis as module_redis
 
@@ -679,26 +679,34 @@ def test_07_recherches_par_mots_cles(app_client) -> None:
         f"seulement {familles_eprouvees} familles de termes éprouvées (attendu ≥ 4)"
     )
 
-    # Recherche FICHES (/recherche) — RG3 en lecture : une fiche A_VALIDER
-    # n'est PAS encore dans l'archive de confiance. Son texte de recherche
-    # (search_vector) n'est rempli qu'à la VALIDATION humaine (fonction
-    # rafraichir_texte_recherche_fiche, migration 007 ; preuve du
-    # raccordement : test_validation_rend_cherchable, Lot E). La recette ne
-    # valide JAMAIS automatiquement (RG3) : la fiche déposée doit donc rester
-    # introuvable par défaut, et la requête élargie répondre sans erreur.
+    # Recherche FICHES (/recherche) — contrat 2026-09-29 (production-readiness
+    # Phase 2.1) : le texte de recherche est rempli DÈS L'ÉCRITURE (migration
+    # 018 + ecrire_fiche) — la fiche A_VALIDER déposée est donc retrouvée PAR
+    # DÉFAUT, avec son statut exposé pour le badge « non vérifiée ». RG3
+    # inchangé sur le fond : la recette ne valide JAMAIS automatiquement, et
+    # inclure_a_valider=false restreint à l'archive de confiance.
     reponse = app_client.get("/recherche", params={"q": termes["reference"], "limit": 20})
     assert reponse.status_code == 200, f"recherche fiches (défaut) : HTTP {reponse.status_code}"
     corps = reponse.json()
     resultats = corps.get("resultats") or corps.get("fiches") or []
-    codes = [r.get("code") or (r.get("fiche") or {}).get("code") for r in resultats]
-    assert termes["reference"] not in codes, (
-        "RG3 en lecture rompu : une fiche a_valider est ressortie de /recherche par défaut"
+    fiches_trouvees = {r.get("code"): r.get("statut") for r in resultats if r.get("code")}
+    assert termes["reference"] in fiches_trouvees, (
+        "contrat 018 rompu : la fiche a_valider déposée doit être retrouvée par défaut"
+    )
+    assert fiches_trouvees[termes["reference"]] == "a_valider", (
+        "le statut doit être exposé (badge « non vérifiée »), jamais masqué"
     )
     reponse = app_client.get(
         "/recherche",
-        params={"q": termes["reference"], "inclure_a_valider": "true", "limit": 20},
+        params={"q": termes["reference"], "inclure_a_valider": "false", "limit": 20},
     )
-    assert reponse.status_code == 200, f"recherche fiches (élargie) : HTTP {reponse.status_code}"
+    assert reponse.status_code == 200, f"recherche fiches (confiance) : HTTP {reponse.status_code}"
+    corps_confiance = reponse.json()
+    resultats_confiance = corps_confiance.get("resultats") or corps_confiance.get("fiches") or []
+    codes_confiance = [r.get("code") for r in resultats_confiance]
+    assert termes["reference"] not in codes_confiance, (
+        "inclure_a_valider=false : une fiche a_valider est ressortie de l'archive de confiance"
+    )
     RECETTE["fiche_attendue"] = termes["reference"]
 
 
@@ -818,19 +826,22 @@ def test_10_sauvegarde_restauration_base_neuve(
     # - DOCUMENTS (/search) : le document technique de REF-001 est retrouvé
     #   par le CODE de sa fiche (le search_vector des documents est restauré
     #   avec la base) ;
-    # - FICHES (/recherche) : RG3 préservé après restauration — la fiche
-    #   A_VALIDER n'est pas cherchable par défaut (son texte de recherche
-    #   n'existe qu'après validation humaine, cf. étape 7).
+    # - FICHES (/recherche) : contrat 2026-09-29 (Phase 2.1) — la fiche
+    #   A_VALIDER reste cherchable PAR DÉFAUT après restauration (texte de
+    #   recherche rempli à l'écriture, migration 018), statut exposé pour le
+    #   badge ; inclure_a_valider=False restreint à l'archive de confiance.
     code_ref001 = RECETTE["refs"]["REF-001"]["fiche"]
     index = SearchIndex(Path("/tmp/recette-restauree-2.db"), URL_BASE_RESTAUREE)
     try:
-        # La requête élargie (inclure_a_valider) doit répondre sans erreur —
-        # le passage en cherchable suit la validation humaine, jamais automatique.
-        rechercher_fiches(index, requete=RECETTE["fiche_attendue"], inclure_a_valider=True)
         reponse_defaut = rechercher_fiches(index, requete=RECETTE["fiche_attendue"])
-        codes_defaut = [
+        lignes_defaut = reponse_defaut.get("resultats") or reponse_defaut.get("fiches") or []
+        statuts_defaut = {r.get("code"): r.get("statut") for r in lignes_defaut if r.get("code")}
+        reponse_confiance = rechercher_fiches(
+            index, requete=RECETTE["fiche_attendue"], inclure_a_valider=False
+        )
+        codes_confiance = [
             r.get("code")
-            for r in (reponse_defaut.get("resultats") or reponse_defaut.get("fiches") or [])
+            for r in (reponse_confiance.get("resultats") or reponse_confiance.get("fiches") or [])
         ]
         documents = index.search(code_ref001, limit=50)
     finally:
@@ -839,11 +850,14 @@ def test_10_sauvegarde_restauration_base_neuve(
     assert any(Path(d.get("path") or "").name == nom_technique for d in documents), (
         "la recherche de documents ne retrouve pas le technique de REF-001 sur la base restaurée"
     )
-    assert RECETTE["fiche_attendue"] not in codes_defaut, (
-        "RG3 rompu sur la base restaurée : une fiche a_valider est ressortie par défaut"
+    assert statuts_defaut.get(RECETTE["fiche_attendue"]) == "a_valider", (
+        "contrat 018 rompu sur la base restaurée : la fiche a_valider doit rester "
+        "cherchable par défaut, statut exposé (badge « non vérifiée »)"
     )
-    # Avec inclure_a_valider, la requête répond sans erreur (le passage en
-    # cherchable suit la validation humaine — jamais automatique).
+    assert RECETTE["fiche_attendue"] not in codes_confiance, (
+        "inclure_a_valider=False : une fiche a_valider est ressortie de l'archive "
+        "de confiance sur la base restaurée"
+    )
 
     # 10.6 OUVERTURE PDF depuis la base restaurée : 302 présigné, contenu identique.
     # L'app restaurée doit garder les MÊMES racines que la session d'origine :

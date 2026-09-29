@@ -17,9 +17,22 @@ from tests.conftest import FICHES_CORPUS
 
 pytestmark = pytest.mark.postgres
 
-# Attendus calculés sur le corpus semé par tests/conftest.py (12 fiches
-# validées — les a_valider et rejetées n'entrent JAMAIS dans les compteurs).
+# Attendus calculés sur le corpus semé par tests/conftest.py. Contrat
+# 2026-09-29 (production-readiness Phase 2.1) : par DÉFAUT la recherche
+# compte les 12 validées ET les 2 a_valider (14 fiches) ; les compteurs de
+# l'archive de confiance (12 validées) s'obtiennent par inclure_a_valider=False.
+# La rejetée n'entre JAMAIS dans les compteurs.
 FACETTES_CORPUS = {
+    "type_voile": {"Grand-voile": 6, "Génois": 5, "Spinnaker": 2, "Tourmentin": 1},
+    "client": {"Voilerie Atlantique": 8, "Chantier Méditerranée": 6},
+    "bateau": {"First 30 30 pieds": 6, "Sun Fast 36 36 pieds": 5, "Figaro 3 29 pieds": 3},
+    "gamme": {"Régate": 7, "Croisière": 6, "Course": 1},
+    "annee": {"2023": 4, "2024": 4, "2025": 5, "2022": 1},
+    "matiere": {"Dacron": 6, "Mylar": 4, "Monofilm": 4},
+}
+
+# Archive de confiance seule (inclure_a_valider=False) : les 12 validées.
+FACETTES_CORPUS_VALIDES = {
     "type_voile": {"Grand-voile": 5, "Génois": 4, "Spinnaker": 2, "Tourmentin": 1},
     "client": {"Voilerie Atlantique": 7, "Chantier Méditerranée": 5},
     "bateau": {"First 30 30 pieds": 5, "Sun Fast 36 36 pieds": 4, "Figaro 3 29 pieds": 3},
@@ -35,13 +48,20 @@ def en_dict(facette: list[dict[str, Any]]) -> dict[str, int]:
 
 @pytest.mark.postgres
 def test_facettes_compteurs_du_corpus(base_recherche: dict[str, Any]) -> None:
-    """Sans filtre ni texte : les compteurs sont exactement ceux du corpus
-    validé (aucun a_valider, aucun rejeté ne gonfle un effectif)."""
+    """Sans filtre ni texte : les compteurs sont exacts des deux côtés du
+    contrat — défaut 14 fiches (12 validées + 2 a_valider, badge « non
+    vérifiée » côté interface), archive de confiance 12 via
+    inclure_a_valider=False. La rejetée ne gonfle jamais un effectif."""
     reponse = rechercher_fiches(base_recherche["index"], requete="")
     for nom, attendu in FACETTES_CORPUS.items():
-        assert en_dict(reponse["facettes"][nom]) == attendu, f"facette {nom}"
+        assert en_dict(reponse["facettes"][nom]) == attendu, f"facette {nom} (défaut)"
         assert len(reponse["facettes"][nom]) <= FACETTE_LIMITE
-    assert sum(reponse["facettes"]["type_voile"][i]["effectif"] for i in range(4)) == 12
+    assert sum(reponse["facettes"]["type_voile"][i]["effectif"] for i in range(4)) == 14
+
+    confiance = rechercher_fiches(base_recherche["index"], requete="", inclure_a_valider=False)
+    for nom, attendu in FACETTES_CORPUS_VALIDES.items():
+        assert en_dict(confiance["facettes"][nom]) == attendu, f"facette {nom} (validées seules)"
+    assert sum(confiance["facettes"]["type_voile"][i]["effectif"] for i in range(4)) == 12
 
 
 @pytest.mark.postgres
@@ -52,7 +72,7 @@ def test_facettes_filtres_croises(base_recherche: dict[str, Any]) -> None:
         base_recherche["index"], requete="", filtres={"client": "Voilerie Atlantique"}
     )
     assert en_dict(reponse["facettes"]["type_voile"]) == {
-        "Grand-voile": 3, "Génois": 2, "Spinnaker": 1, "Tourmentin": 1,
+        "Grand-voile": 4, "Génois": 2, "Spinnaker": 1, "Tourmentin": 1,
     }
     # La facette client, elle, n'est pas filtrée par elle-même : les deux
     # clients restent proposés avec leurs compteurs (comportement standard).
@@ -63,9 +83,10 @@ def test_facettes_filtres_croises(base_recherche: dict[str, Any]) -> None:
         requete="",
         filtres={"client": "Voilerie Atlantique", "type_voile": "Grand-voile"},
     )
-    # Les 3 GV de la Voilerie Atlantique : GV-001 (2024), GV-002 et GV-005 (2023).
-    assert en_dict(croise["facettes"]["annee"]) == {"2023": 2, "2024": 1}
-    assert croise["nb_resultats"] == 3
+    # Les 4 GV de la Voilerie Atlantique : GV-001 (2024), GV-002 et GV-005
+    # (2023), GV-006 (2025, a_valider badgée — comptée par défaut).
+    assert en_dict(croise["facettes"]["annee"]) == {"2023": 2, "2024": 1, "2025": 1}
+    assert croise["nb_resultats"] == 4
 
 
 @pytest.mark.postgres
@@ -76,9 +97,9 @@ def test_facettes_matiere_et_annee_depuis_les_tables_enfants(base_recherche: dic
         base_recherche["index"], requete="", filtres={"matiere": "Monofilm"}
     )
     assert en_dict(reponse["facettes"]["matiere"]) == FACETTES_CORPUS["matiere"]
-    assert en_dict(reponse["facettes"]["type_voile"]) == {"Grand-voile": 3}
-    # GV-001 (2024), GV-003 et GV-004 (2025).
-    assert en_dict(reponse["facettes"]["annee"]) == {"2025": 2, "2024": 1}
+    assert en_dict(reponse["facettes"]["type_voile"]) == {"Grand-voile": 4}
+    # GV-001 (2024), GV-003 et GV-004 (2025), GV-006 (2025, a_valider badgée).
+    assert en_dict(reponse["facettes"]["annee"]) == {"2025": 3, "2024": 1}
 
 
 @pytest.mark.postgres

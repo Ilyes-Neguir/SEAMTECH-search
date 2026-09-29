@@ -11,7 +11,8 @@ ne sont pas comparables) :
 
 - ``lexical``   : tsvector PONDÉRÉ de la fiche (A = code + titre, B = champs
                   métier, C = notes — fonction rafraichir_texte_recherche_fiche,
-                  remplie à la VALIDATION) ;
+                  remplie à l'ÉCRITURE depuis la migration 018, rafraîchie à
+                  la VALIDATION) ;
 - ``trigrammes``: tolérance aux fautes (pg_trgm, ``word_similarity``) — volet
                   dégradable de la migration 012 ;
 - ``texte_pdf`` : texte des chunks et des documents rattachés à la fiche ;
@@ -21,9 +22,13 @@ ne sont pas comparables) :
                   contient des embeddings. La fusion RRF, elle, est déjà
                   réelle et testée.
 
-RG3 en lecture : par défaut, la recherche ne renvoie que des fiches
-``valide`` (l'archive de confiance) ; ``inclure_a_valider`` élargit
-explicitement à la file de validation. Les recherches SANS RÉSULTAT sont
+RG3 en lecture : le statut n'est JAMAIS masqué. Depuis la décision
+commanditaire du 2026-09-29 (production-readiness, Phase 2.1), la recherche
+renvoie PAR DÉFAUT les fiches ``valide`` ET ``a_valider`` — ces dernières
+badgées « non vérifiée » par l'interface, leur ``statut`` étant toujours
+présent dans chaque résultat. ``inclure_a_valider=false`` restreint à
+l'archive de confiance (fiches validées). Une fiche ``rejete`` n'est JAMAIS
+renvoyée. Les recherches SANS RÉSULTAT sont
 journalisées (``recherche_log``, index partiel migration 012) : c'est la
 matière première de l'amélioration du lexique (critère de sortie Phase 3).
 """
@@ -703,7 +708,7 @@ def rechercher_fiches(
     filtres: Mapping[str, object] | None = None,
     limit: int = 20,
     offset: int = 0,
-    inclure_a_valider: bool = False,
+    inclure_a_valider: bool = True,
     encode_requete: Callable[[str], str | None] | None = None,
     tri: str | None = None,
 ) -> dict[str, Any]:
@@ -1087,7 +1092,14 @@ def enregistrer_routes_recherche(
         cote_min: float | None = Query(None, description="Alias de min"),
         cote_max: float | None = Query(None, description="Alias de max"),
         tri: str | None = Query(None, max_length=30, description="Tri : pertinence, date_desc, date_asc, code_asc, code_desc, <cote>_asc/desc"),
-        inclure_a_valider: bool = Query(False),
+        inclure_a_valider: bool = Query(
+            True,
+            description=(
+                "Inclure les fiches a_valider, badgées « non vérifiée » (défaut depuis la "
+                "décision commanditaire du 2026-09-29 : une fiche déposée doit être retrouvable "
+                "avant sa validation). false = fiches validées uniquement."
+            ),
+        ),
         token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
     ) -> dict[str, Any]:
         verifier_auth(config, token)

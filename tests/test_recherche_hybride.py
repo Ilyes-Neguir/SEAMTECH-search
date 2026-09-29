@@ -157,37 +157,51 @@ def test_synonymes_a_chaud(base_recherche: dict[str, Any]) -> None:
 
 
 @pytest.mark.postgres
-def test_statut_par_defaut_valide_seulement(base_recherche: dict[str, Any]) -> None:
-    """RG3 en lecture : l'archive de confiance = fiches VALIDÉES par un humain.
-    a_valider n'apparaît que sur demande explicite ; rejetée, jamais."""
+def test_statut_par_defaut_badge_non_verifiee(base_recherche: dict[str, Any]) -> None:
+    """RG3 en lecture, contrat 2026-09-29 (production-readiness Phase 2.1) :
+    par défaut la recherche renvoie les fiches valide ET a_valider — ces
+    dernières TOUJOURS porteuses de leur statut (badge « non vérifiée » dans
+    l'interface, jamais masqué). ``inclure_a_valider=False`` restreint à
+    l'archive de confiance ; une fiche rejetée n'est JAMAIS renvoyée."""
     index = base_recherche["index"]
 
     par_defaut = rechercher_fiches(index, requete="validation")
-    assert codes(par_defaut) == [], "les fiches a_valider ne sont pas cherchables par défaut"
+    liste_defaut = {r["code"]: r["statut"] for r in par_defaut["resultats"]}
+    assert liste_defaut.get("1001-GV-006") == "a_valider", (
+        "une fiche a_valider doit être cherchable par défaut (décision commanditaire 2026-09-29)"
+    )
+    assert liste_defaut.get("1002-GEN-005") == "a_valider"
+    assert "1003-SPI-003" not in liste_defaut, "une fiche rejetée ne devient jamais cherchable"
+    # Le statut est exposé sur CHAQUE résultat : l'interface peut badger.
+    assert all(r.get("statut") in ("valide", "a_valider") for r in par_defaut["resultats"])
 
-    elargi = rechercher_fiches(index, requete="validation", inclure_a_valider=True)
-    liste = {r["code"]: r["statut"] for r in elargi["resultats"]}
-    assert liste.get("1001-GV-006") == "a_valider"
-    assert liste.get("1002-GEN-005") == "a_valider"
-    assert "1003-SPI-003" not in liste, "une fiche rejetée ne devient jamais cherchable"
+    restreint = rechercher_fiches(index, requete="validation", inclure_a_valider=False)
+    liste_restreinte = {r["code"]: r["statut"] for r in restreint["resultats"]}
+    assert "1001-GV-006" not in liste_restreinte, (
+        "inclure_a_valider=False = archive de confiance uniquement"
+    )
+    assert all(r["statut"] == "valide" for r in restreint["resultats"])
 
 
 @pytest.mark.postgres
-def test_validation_rend_cherchable(base_recherche: dict[str, Any]) -> None:
-    """Câblage Lot E : la validation (décision humaine) rafraîchit le texte de
-    recherche dans la même transaction — la fiche devient visible de suite."""
+def test_validation_fait_passer_dans_l_archive_de_confiance(base_recherche: dict[str, Any]) -> None:
+    """Câblage Lot E + 018 : la fiche est cherchable DÈS son écriture (badgée
+    a_valider) ; la validation (décision humaine) rafraîchit le texte de
+    recherche dans la même transaction et fait DISPARAÎTRE le badge."""
     from seamtech_search.fiches.routes import valider_fiche
 
     index = base_recherche["index"]
     avant = rechercher_fiches(index, requete="attente")
-    assert "1001-GV-006" not in codes(avant), "non validée = invisible par défaut"
+    assert "1001-GV-006" in codes(avant), "déposée = cherchable immédiatement (badgée a_valider)"
+    ligne_avant = next(r for r in avant["resultats"] if r["code"] == "1001-GV-006")
+    assert ligne_avant["statut"] == "a_valider"
 
     valider_fiche(index, "1001-GV-006", "operateur.test", "validation de test Lot E")
 
     apres = rechercher_fiches(index, requete="attente")
-    assert "1001-GV-006" in codes(apres), "validée = immédiatement cherchable"
+    assert "1001-GV-006" in codes(apres), "validée = toujours cherchable"
     ligne = next(r for r in apres["resultats"] if r["code"] == "1001-GV-006")
-    assert ligne["statut"] == "valide"
+    assert ligne["statut"] == "valide", "la validation retire le badge : archive de confiance"
 
 
 @pytest.mark.postgres
@@ -219,13 +233,18 @@ def test_journal_recherches_et_sans_resultat(base_recherche: dict[str, Any]) -> 
 @pytest.mark.postgres
 def test_requete_vide_navigation_par_date(base_recherche: dict[str, Any]) -> None:
     """Requête vide = navigation à la Google : les plus récentes d'abord,
-    facettes quand même, et uniquement du valide."""
+    facettes quand même. Contrat 2026-09-29 : le défaut couvre validées +
+    a_valider badgées (14) ; l'archive de confiance seule en fait 12."""
     reponse = rechercher_fiches(base_recherche["index"], requete="")
     assert reponse["sources_actives"] == ["parcours"]
-    assert reponse["nb_resultats"] == 12, "12 fiches validées dans le corpus"
+    assert reponse["nb_resultats"] == 14, "12 validées + 2 a_valider (badgées) par défaut"
     annees = [r["annee"] for r in reponse["resultats"]]
     assert annees == sorted(annees, reverse=True)
     assert reponse["facettes"], "les facettes vivent aussi en navigation"
+
+    confiance = rechercher_fiches(base_recherche["index"], requete="", inclure_a_valider=False)
+    assert confiance["nb_resultats"] == 12, "archive de confiance : 12 fiches validées"
+    assert all(r["statut"] == "valide" for r in confiance["resultats"])
 
 
 @pytest.mark.postgres

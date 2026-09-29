@@ -922,12 +922,13 @@ jobs:
           # du parcours machine complet (annotation mesure-phase1) est donc
           # extrait du rapport JSON et publié en ::notice — c'est le seul
           # mécanisme qui le rende lisible dans les journaux CI. Garde-fous de
-          # porte de sortie de phase : 3 passés au premier essai, 0 flaky (un
+          # porte de sortie de phase : 4 passés au premier essai (3 du parcours
+          # validation + 1 badge « Non vérifiée », contrat 2026-09-29), 0 flaky (un
           # échec rattrapé par retry fait échouer la porte), 0 saut, et le
           # chrono doit avoir été produit.
           set -uo pipefail
           set +e
-          pnpm exec playwright test e2e/validation.spec.ts --reporter=list,json
+          pnpm exec playwright test e2e/validation.spec.ts e2e/recherche-badge.spec.ts --reporter=list,json
           rc=$?
           set -e
           [ "$rc" -eq 0 ] || exit "$rc"
@@ -955,9 +956,9 @@ jobs:
           # échoue puis passe au retry (compté « flaky » par Playwright avec
           # retries: 2) n'est PAS un test réellement assaini — il doit faire
           # échouer la porte, pas compter comme « réellement exécuté ».
-          if sautes or flaky or passes != 3:
+          if sautes or flaky or passes != 4:
               raise SystemExit(
-                  f"GARDE-FOU live e2e : attendu 3 tests passés au premier essai, "
+                  f"GARDE-FOU live e2e : attendu 4 tests passés au premier essai, "
                   f"0 flaky, 0 sautés — mesuré {passes} passés, {flaky} flaky, "
                   f"{sautes} sautés. Les tests live ne doivent jamais s'ignorer "
                   "silencieusement ni masquer une instabilité par retry."

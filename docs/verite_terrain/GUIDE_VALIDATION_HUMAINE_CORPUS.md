@@ -160,9 +160,11 @@ Protocole §10/§12 — même mécanique que la RECETTE_HUMAINE.md :
 
 - Dans l'écran Validation, après relecture de TOUTES les propositions (aucune
   ligne sans décision) : action **Valider** (statut `valide`).
-- La fiche validée devient cherchable dans la recherche générale (les fiches
-  `valide` seulement y figurent ; `inclure_a_valider` est l'option de la file
-  de travail, pas de l'usage courant).
+- Cherchabilité (contrat du 2026-09-29, migration 018) : une fiche déposée est
+  cherchable **dès son écriture**, badgée « Non vérifiée » dans les résultats.
+  La **validation retire le badge** : la fiche rejoint l'archive de confiance
+  (le filtre « Validées uniquement » de l'écran Recherche restreint à cette
+  seule archive).
 - Recopier `statut_final` (`VALIDEE` / `A_CORRIGER` / `REJETEE`) sur chaque
   ligne du suivi — la décision reste au périmètre exact du commanditaire.
 

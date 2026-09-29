@@ -559,7 +559,9 @@ export function RechercheFichesApp() {
       {/* Filtres actifs */}
       {(Object.keys(filtres).length > 0 || dimMin || dimMax) && (
         <div className="mt-3 flex flex-wrap items-center gap-2">
-          {Object.entries(filtres).map(([cle, valeur]) => (
+          {Object.entries(filtres)
+            .filter(([cle]) => cle !== "inclure_a_valider")
+            .map(([cle, valeur]) => (
             <button
               key={cle}
               type="button"
@@ -570,6 +572,17 @@ export function RechercheFichesApp() {
               <X className="size-3" />
             </button>
           ))}
+          {filtres["inclure_a_valider"] === "false" && (
+            <button
+              type="button"
+              onClick={() => retirerFiltre("inclure_a_valider")}
+              className="flex items-center gap-1.5 rounded-full border border-border bg-accent/30 px-3 py-1 text-xs"
+              data-testid="pastille-validees-uniquement"
+            >
+              <span className="text-muted-foreground">Archive :</span> validées uniquement
+              <X className="size-3" />
+            </button>
+          )}
           {(dimMin || dimMax) && (
             <button
               type="button"
@@ -590,6 +603,28 @@ export function RechercheFichesApp() {
       <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-[240px_1fr]">
         {/* Facettes */}
         <aside className="space-y-6">
+          {/* Archive de confiance — contrat 2026-09-29 (production-readiness
+              Phase 2.1) : par défaut, les fiches déposées non encore validées
+              apparaissent dans les résultats, badgées « Non vérifiée ». Ce
+              filtre restreint aux fiches validées par un humain. */}
+          <div data-testid="filtre-archive-confiance">
+            <label
+              className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-xs hover:bg-accent/50"
+              data-testid="libelle-validees-uniquement"
+            >
+              <input
+                type="checkbox"
+                checked={filtres["inclure_a_valider"] === "false"}
+                onChange={() => basculerFiltre("inclure_a_valider", "false")}
+                data-testid="case-validees-uniquement"
+              />
+              <span>Validées uniquement</span>
+            </label>
+            <p className="mt-1 px-2 text-[10px] leading-snug text-muted-foreground">
+              Les fiches non encore vérifiées apparaissent par défaut, avec un badge « Non vérifiée ».
+            </p>
+          </div>
+
           {facettesActives.map(({ cle, libelle }) => (
             <div key={cle}>
               <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
@@ -741,6 +776,15 @@ export function RechercheFichesApp() {
                       <div className="flex items-baseline gap-2">
                         <span className="font-mono text-xs text-muted-foreground">{fiche.code ?? "—"}</span>
                         <h2 className="text-sm font-medium">{fiche.titre ?? "Sans titre"}</h2>
+                        {fiche.statut === "a_valider" && (
+                          <span
+                            className="shrink-0 rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-300"
+                            data-testid="badge-non-verifiee"
+                            title="Fiche déposée, pas encore vérifiée par un humain"
+                          >
+                            Non vérifiée
+                          </span>
+                        )}
                       </div>
                       <p className="mt-1 text-xs text-muted-foreground">
                         {[fiche.type_voile, fiche.client, fiche.bateau, fiche.annee, fiche.gamme]

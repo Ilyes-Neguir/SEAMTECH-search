@@ -49,9 +49,10 @@ def test_dimension_filtre_par_plage(base_recherche: dict[str, Any]) -> None:
     index = base_recherche["index"]
     _semer_cotes(index, base_recherche["fiches"])
 
-    # Sans filtre dimension : les 4 fiches avec cotes + les autres sans cotes (12 validées)
+    # Sans filtre dimension : les 4 fiches avec cotes + les autres sans cotes.
+    # Contrat 2026-09-29 : 12 validées + 2 a_valider (badgées, sans cotes) par défaut.
     sans = rechercher_fiches(index, requete="", limit=100)
-    assert sans["nb_resultats"] == 12
+    assert sans["nb_resultats"] == 14
 
     # Filtre SLU entre 6.5 et 6.7 → 0701-GV-001 (6.60) + 0801-GEN-001 (6.55) = 2
     filtre = {"cote": "slu_m", "min": 6.5, "max": 6.7}
