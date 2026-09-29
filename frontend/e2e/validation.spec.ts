@@ -67,6 +67,9 @@ test.describe("validation de bout en bout", () => {
     await expect(champ).toBeVisible()
     await page.keyboard.press("c")
     await expect(champ).toBeFocused()
+    // R is a page-level shortcut; while an input owns focus, printable keys
+    // must remain available for editing instead of stealing focus.
+    await champ.evaluate((element) => (element as HTMLInputElement).blur())
     await page.keyboard.press("r")
     await expect(page.getByTestId("motif-rejet")).toBeFocused()
   })

@@ -359,3 +359,20 @@ docker compose exec web python -m seamtech_search.sauvegarde verifier \
 
 **Cases non cochées, avec la raison** (à recopier ici, une ligne par case) :
 ............................................................................................
+
+## 19. Portail de la candidate Lots 1–3 (2026-09-29)
+
+État arrêté sur la branche `arena/01a0ed7b-seamtech-search`, HEAD
+`f16b017b61e759cf3b25f7d7b054752ba0c6979e` (PR #33 ouverte, non fusionnée).
+
+| Contrôle | Statut / preuve |
+|---|---|
+| ZIP corpus : empreintes courantes | ✅ Recalculées le 29/09; aucune modification locale. Sorties brutes (SHA-256) :<br>`AQUILA 250216AJA-20260928T182324Z-1-001.zip` — `fd1fca0930494328687ecf5d6905af139c24f93a8b9e2e51b2f6075772446be6`<br>`ATTALIA 250121JA-20260928T182325Z-1-001.zip` — `a71ec77d6d5abf3c55f5ca8aa5c79d3347d3b3765b91f54950065b9c2161d699`<br>`BAVARIA 32 - 250604JA-20260928T182326Z-1-001.zip` — `a9ca298cae78ccbacfaab69260cede299062ef0d20e0a7fba62c3539ac3a538f`<br>`BAVARIA 34 - 250323JA-20260928T182327Z-1-001.zip` — `483f89716b953734315b7bbb4ba81050dc24b33a162e2a2623604eee268b8f6f`<br>`DAMIEN 4 - 250821JA-20260928T182330Z-1-001.zip` — `2f1ecb0205b817c3dbdb324bf444aad9fb5ddce1d3f415859698fbb21fb428bf`<br>`DEHLER 39 - 250329AJA-20260928T182330Z-1-001.zip` — `b3171d070f6b332366263626a665e7f7985bb8406062c2957895401850df6a06`<br>`GIB SEA 284 - 250328AJA-20260928T182331Z-1-001.zip` — `103359b561ef32f5a8ce04b373864c26a0b496156efc1f728e75f0c0911b4aa3` |
+| PDF racine / copie canonique | ✅ SHA-256 identique à l'empreinte de la copie canonique : `43afc51e55ae598d3eaffc3096f0e7ddaa00e8ddc579ae315bb31b4dbf1c1f40`. Le doublon racine est retiré du tree; il subsiste dans l'historique Git. |
+| Suite locale sélectionnée | ✅ `766 passed, 3 skipped, 234 deselected`; sélection par marqueurs `-m`. Vérifications précédemment réussies : Ruff, TypeScript, build frontend, compilation Python, YAML et `git diff --check`. |
+| Benchmark PostgreSQL jetable, 10 000 fiches | ✅ **SYNTHÉTIQUE** — run [36587268340](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36587268340), job terminé vert en 1 min 16 s; étape mesure et upload du rapport vertes. Le JSON (percentiles p50/p95/p99 et EXPLAIN top 3) est l'artefact `scale-bench-synthetique-36587268340`. Ses valeurs n'ont pas pu être relues dans cette session (téléchargement GitHub terminé en EOF); elles ne sont donc pas transcrites ici et aucune latence n'est affirmée. |
+| Échec initial du benchmark | Diagnostiqué : `ModuleNotFoundError: seamtech_search` lors de l'exécution directe du script. Corrigé par `PYTHONPATH=.`; le run synthétique réussi ci-dessus valide ce correctif. |
+| CI du dernier SHA poussé `f16b017` | ❌ Push `36587260783` en échec (Docker frontend + E2E); PR `36587268199` en échec sur 1 assertion E2E (7 passées), les autres jobs PR dont Docker et intégration sont verts. Cause E2E diagnostiquée : `r` testé alors qu'un champ de saisie gardait le focus. Le test est corrigé (blur avant raccourci) dans le commit en cours; revalidation CI pendante. La CI n'est donc pas verte à ce stade. |
+| Répétition humaine REF-001..007, VPS01 / R2, Windows atelier | **NON MESURÉ / À VALIDER** — portes de déploiement non levées. MinIO reste le backend production; R2 est conditionné à D-2. |
+
+**Verdict :** candidate techniquement enrichie et validée localement; **pas une autorisation de mise en production**. Ne pas merger ni déployer tant que la CI finale n'est pas confirmée, que l'opérateur n'a pas validé REF-001..007 et que les contrôles réels VPS01/sauvegarde/restauration et les décisions D-2/D-4 ne sont pas renseignés. Les valeurs de benchmark sont mesurées en environnement **SYNTHÉTIQUE**, jamais à présenter comme réelles.

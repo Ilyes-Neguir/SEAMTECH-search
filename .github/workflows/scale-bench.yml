@@ -81,6 +81,30 @@ jobs:
             echo "::error title=scale-bench-details::$(tail -60 /tmp/scale-bench.log | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 5000)"
             exit "$rc"
           fi
+      - name: Résumer les mesures SYNTHÉTIQUES dans le job GitHub
+        if: success()
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          report = json.loads(Path(os.environ["SCALE_BENCH_OUTPUT"]).read_text(encoding="utf-8"))
+          lines = [
+              "## Résultats SYNTHÉTIQUES — ne prouvent pas la performance VPS01/R2",
+              f"{report['fiches']} fiches synthétiques; {report['echantillons_par_requete']} échantillons par scénario.",
+              "| Scénario | p50 (ms) | p95 (ms) | p99 (ms) | Max (ms) |",
+              "|---|---:|---:|---:|---:|",
+          ]
+          for name, metrics in report["requêtes"].items():
+              lines.append(f"| {name} | {metrics['p50_ms']} | {metrics['p95_ms']} | {metrics['p99_ms']} | {metrics['max_ms']} |")
+          for plan in report.get("explain_top3", []):
+              lines += ["", f"### EXPLAIN #{plan['rank']} — observé {plan['observed_execute_ms']} ms", "```text", plan["plan"], "```"]
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write("\n".join(lines) + "\n")
+          payload = json.dumps({"fiches": report["fiches"], "echantillons": report["echantillons_par_requete"], "requêtes": report["requêtes"]}, ensure_ascii=False, separators=(",", ":"))
+          payload = payload.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+          print(f"::notice title=scale-bench SYNTHÉTIQUE::{payload}")
+          PY
       - name: Publier le rapport (plans EXPLAIN compris)
         if: always()
         uses: actions/upload-artifact@v7

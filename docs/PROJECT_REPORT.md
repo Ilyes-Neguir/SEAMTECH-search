@@ -3,7 +3,7 @@
 
 **Project Type:** Cloud-Native Technical File Ingestion, Metadata Extraction, Full-Text Search, and Dossier Analysis Platform  
 **Version:** 0.4.0  
-**Target Environment:** Linux VPS / Docker / Cloudflare R2 / AWS S3 / Windows Workstations  
+**Target Environment:** Linux VPS / Docker / MinIO (production actuelle) / R2 éventuel après décision D-2 / poste Windows atelier
 **Repository:** `Ilyes-Neguir/SEAMTECH-search`  
 **Date:** September 2026  
 
@@ -201,4 +201,60 @@ docker compose up -d
 
 ## 8. Conclusion
 
-SEAMTECH Search v0.4.0 delivers a modern, robust, and scalable platform that transitions engineering file search and manufacturing dossier analysis into a truly cloud-native paradigm. With its decoupled architecture, durable S3 storage, resilient Redis queues, and multi-sheet technical extraction, the platform provides complete data safety, fast response times, and an intuitive user experience for engineering and workshop teams.
+SEAMTECH Search v0.4.0 delivers a modern, robust, and scalable platform that transitions engineering file search and manufacturing dossier analysis into a truly cloud-native paradigm. With its decoupled architecture, durable object storage, resilient Redis queues, and multi-sheet technical extraction, the platform provides a strong technical baseline. Production readiness remains conditional on the explicit human and infrastructure gates below; CI and synthetic measurements are not production evidence.
+
+---
+
+## 9. Production-readiness closeout — 2026-09-29
+
+### 9.1 State, scope, and verdict
+
+- **Branch:** `arena/01a0ed7b-seamtech-search`
+- **Code HEAD:** `f16b017b61e759cf3b25f7d7b054752ba0c6979e`
+- **PR:** #33, open and not merged at last confirmed state.
+- **Verdict:** **NOT CLEARED FOR PRODUCTION / NO MERGE AUTHORIZED.** Lots 1–3 changes and local checks are complete, but final GitHub CI status and operational acceptance gates remain outstanding. MinIO remains the production object-store backend; R2 is only an option pending D-2.
+
+### 9.2 Change inventory (base `a7ffe7d2800ed697f306a93b0564b4ad8c87eb74` → code HEAD)
+
+29 files changed; 974 insertions and 117 deletions, plus deletion of the duplicate root PDF:
+
+| File(s) | Change |
+|---|---|
+| `.github/workflows/ci.yml` | Ubuntu 24.04 runners, verified action versions, CI/dependency-policy updates. |
+| `.github/workflows/scale-bench.yml` | Bounded optional 10k synthetic PostgreSQL benchmark, targeted PR trigger, diagnostics and artifact upload. |
+| `7792-SO_ffab.pdf` | Removed duplicate root copy; canonical fixture retained. |
+| `scripts/audit_dependency_policy.py` | Runtime pip / production pnpm audit policy. |
+| `scripts/scale_bench.py` | Synthetic data seed, endpoint percentiles and EXPLAIN. |
+| `seamtech_search/api.py`, `seamtech_search/fiches/routes.py` | Optional assistant/ML flag and route behavior. |
+| `frontend/app/recherche/page.tsx`, `frontend/components/recherche-fiches-app.tsx`, `frontend/lib/fiche.ts` | Search feature-flag/UI wiring. |
+| `frontend/components/validation-app.tsx`, `frontend/components/pdf-viewer.tsx`, `frontend/e2e/validation.spec.ts` | Human validation workflow, keyboard and PDF highlighting, anomaly confirmation, session timer, E2E coverage. |
+| `tests/test_fonctionnalites_optionnelles.py` | Default-enabled and disabled optional route coverage. |
+| `tests/test_validation_workflow.py` | Group-validation and workflow coverage adjustments. |
+| `tests/test_confidentialite_depots.py`, `tests/test_empreintes_fixtures.py`, `tests/test_garde_fous_preparation.py`, `tests/test_ocr_etages.py` | Duplicate-PDF/privacy/OCR and source-read-only safeguards. |
+| `.env.example`, `docker-compose.yml` | Optional feature configuration. |
+| `docs/OPTIONAL_FEATURES.md` | Feature flag usage and compatibility. |
+| `docs/deploiement/vps01-r2.md`, `docs/deploiement/poste-atelier.md` | VPS01/R2 option and workshop runbooks. |
+| `docs/RELEASE_CANDIDATE_CHECKLIST.md` | Candidate controls and dated release portal, including unclosed gates. |
+| `docs/verite_terrain/EMPREINTES.md` | PDF duplicate removal note and hash. |
+| `docs/verite_terrain/FUSION_MAIN.md`, `docs/verite_terrain/MESURE_VALIDATION_2MIN.md` | State notes and human-measurement gate. |
+| `CHANGELOG.md` | Lot 1–3 change record. |
+
+The root PDF and canonical file SHA-256 matched exactly: `43afc51e55ae598d3eaffc3096f0e7ddaa00e8ddc579ae315bb31b4dbf1c1f40`. The root blob remains in Git history. The seven corpus ZIPs were re-hashed on 2026-09-29; the outputs are recorded in `docs/RELEASE_CANDIDATE_CHECKLIST.md` §19 and their working-tree bytes were not changed.
+
+### 9.3 Validation evidence
+
+- Local selected suite (markers only): **766 passed, 3 skipped, 234 deselected**. Earlier baseline reference was approximately 746 passed / 3 skipped; this is not a same-commit before/after comparison.
+- Previously successful on the Lot 3 tree: `ruff check .`; Python compilation; YAML parsing; `git diff --check`; frontend TypeScript and production build; focused optional-feature/selection/privacy tests (**32 passed**).
+- Synthetic benchmark: [run 36587268340](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36587268340), PR-triggered, 10,000 synthetic records, 50 samples per scenario; successful measurement and artifact steps, total job duration **1 min 16 s**. The artifact is `scale-bench-synthetique-36587268340` and contains p50/p95/p99 plus top-3 EXPLAIN plans. **Numeric values are not transcribed in this report:** artifact retrieval returned EOF in this session. Treat metrics as SYNTHÉTIQUE only; do not infer any VPS01/R2 performance.
+- The first benchmark attempt failed because direct script execution did not put the repository root on `sys.path` (`ModuleNotFoundError: seamtech_search`). The workflow now sets `PYTHONPATH=.`; the successful run above validates the fix.
+- CI runs on code HEAD `f16b017`: push run `36587260783` failed in the Docker frontend build and live E2E; PR run `36587268199` failed one live E2E assertion (7 passed, 1 failed), while the PR Docker build, integration, security, corpus recipe and backend jobs passed. Failure cause: the keyboard-only test pressed `r` while an input retained focus; page shortcuts deliberately ignore printable keys inside editing controls. The E2E test now blurs the input before invoking the page-level shortcut, preserving the rule that printable shortcuts are ignored inside editable controls. The regression fix and benchmark job-summary publication are in the current commit; GitHub revalidation is pending.
+
+### 9.4 Explicitly unmeasured / remaining gates
+
+- Human review of references REF-001…REF-007, including corrections and accept/reject decisions: **NON MESURÉ / OPERATOR ACTION REQUIRED**.
+- Real VPS01 scale, deployment, live response latency, restore/rollback, and workshop/Windows operation: **NON MESURÉ**.
+- R2 acceptance and production switch: **DECISION D-2 REQUIRED**; MinIO stays production meanwhile.
+- Calibrated confidence thresholds and grouped validation: locked at `calibre:false`; HTTP 409 remains expected until calibration is justified by human-validated real records.
+- Other outstanding storage decisions (including D-4 credentials) remain in the storage audit/runbooks.
+
+**Release rule:** no PR merge or production deployment without explicit sponsor decision, final green CI, operator validation of REF-001…007, and completed real-environment backup/restore/rollback checks. The synthetic job is a bounded engineering benchmark, not an acceptance test for production.
