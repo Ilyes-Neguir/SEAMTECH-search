@@ -251,9 +251,105 @@ GABARIT_GENOIS = GabaritDef(
     ],
 )
 
+# ---------------------------------------------------------------------------
+# Gabarits du corpus réel (2026-09-28) — deux familles de mise en page couvrent
+# les 7 dossiers fournis. Les ancres sont des LIBELLÉS génériques de voilerie
+# observés sur les fiches réelles ; AUCUNE valeur métier (nom de client, nom de
+# bateau, référence de commande) n'apparaît ici.
+# ---------------------------------------------------------------------------
+
+CODE_GABARIT_JADE = "FICHE_JADE_V1"
+CODE_GABARIT_GV_FULLBATTEN = "FICHE_GV_FULLBATTEN_V1"
+
+GABARIT_JADE = GabaritDef(
+    code=CODE_GABARIT_JADE,
+    version=VERSION_COURANTE,
+    description=(
+        "Fiche de fabrication atelier, format tableau mono-page : en-tête "
+        "CLIENT/BATEAU/TYPE DE VOILE en colonnes, ligne N° Commande, ligne DATE "
+        "avec Surface, cotes GUINDANT/CHUTE/BORDURE en décimal français, BDF "
+        "par bord, points d'ancrage (amure/écoute/drisse/ris), coutures zigzag."
+    ),
+    ancres_detection=[
+        # « fiche de fabrication » est volontairement ABSENT : ce libellé
+        # figure sur toutes les fiches (portant, génois, échantillons) et ne
+        # discrimine pas le format atelier — une seule occurrence suffirait
+        # à capturer un document hors gabarit (constaté sur le corpus de
+        # démonstration CLIENT-123). Les 4 ancres ci-dessous sont propres à
+        # la mise en page atelier.
+        "type de voile",
+        "point d'ancrage",
+        "bande de visu",
+        "expédition",
+    ],
+    champs=[
+        # En-tête complet (titre, commande, client, bateau, type, date,
+        # surface) : un seul traitement lit la page en colonnes.
+        RegleChamp(cible="traitement:entete_jade", ancres=["client"], type="texte"),
+        # Cotes des trois bords (le libellé et la valeur peuvent être collés :
+        # « GUINDANT9,53 »).
+        RegleChamp(cible="traitement:bords_jade", ancres=["chute"], type="texte"),
+        # Matière : zone sous la ligne DATE, colonne centrale.
+        RegleChamp(cible="traitement:tissu_jade", ancres=["date"], type="texte"),
+        # Bandes de force (BDF a plat / pliée / décalée) par bord.
+        RegleChamp(cible="traitement:galons_bdf", ancres=["bdf"], type="texte"),
+        # Points d'ancrage (amure, écoute, drisse, ris…). L'ancre « amure »
+        # porte une valeur sur sa ligne (la ligne « POINT D'ANCRAGE » seule
+        # n'aurait aucune valeur à lire) ; le traitement relit toute la page.
+        RegleChamp(cible="traitement:finitions_jade", ancres=["amure", "ecoute", "drisse"], type="texte"),
+        # Coutures (zigzag, fil) → montage.
+        RegleChamp(cible="fiche.montage_type", ancres=["zigzag", "zig"], type="texte", traitement="montage_jade"),
+        # Remarques : ligne DIVERS (absente sinon — jamais inventée).
+        RegleChamp(cible="fiche.notes", ancres=["divers"], type="texte"),
+        # Renforts : ligne RENFORTS au-dessus du bloc planning atelier.
+        RegleChamp(cible="traitement:renforts_jade", ancres=["renforts"], type="texte"),
+    ],
+)
+
+GABARIT_GV_FULLBATTEN = GabaritDef(
+    code=CODE_GABARIT_GV_FULLBATTEN,
+    version=VERSION_COURANTE,
+    description=(
+        "Fiche de fabrication grand-voile fullbatten : même en-tête atelier que "
+        "FICHE_JADE_V1, plus les sections propres à une GV lattée (Ris 1-3, "
+        "LATTES, goussets L1-L7, boîtiers/coulisseaux, numéro de voile, bôme)."
+    ),
+    ancres_detection=[
+        "fullbatten",
+        "lattes",
+        "ris 1",
+        "ragage",
+        "numéro voile",
+        "coulisseaux",
+        "goussets",
+    ],
+    champs=[
+        RegleChamp(cible="traitement:entete_jade", ancres=["client"], type="texte"),
+        RegleChamp(cible="traitement:bords_jade", ancres=["chute"], type="texte"),
+        RegleChamp(cible="traitement:tissu_jade", ancres=["date"], type="texte"),
+        RegleChamp(cible="traitement:galons_bdf", ancres=["bdf"], type="texte"),
+        RegleChamp(cible="traitement:finitions_jade", ancres=["point d'ancrage"], type="texte"),
+        RegleChamp(cible="fiche.montage_type", ancres=["zigzag", "zig"], type="texte", traitement="montage_jade"),
+        RegleChamp(cible="fiche.notes", ancres=["divers"], type="texte"),
+        RegleChamp(cible="traitement:renforts_jade", ancres=["renforts"], type="texte"),
+        # Sections GV lattée : conservées en mesures libres (aucun champ
+        # dédié dans le schéma — jamais forcées dans une table).
+        RegleChamp(cible="traitement:libres_gv", ancres=["lattes"], type="texte"),
+    ],
+)
+
 # Ordre significatif : à score d'ancres égal, la version la plus récente
-# d'un code gagne la détection (v2 devant v1).
-GABARITS_EMBARQUES: tuple[GabaritDef, ...] = (GABARIT_PORTANT_V2, GABARIT_PORTANT, GABARIT_GENOIS)
+# d'un code gagne la détection (v2 devant v1) ; les gabarits du corpus réel
+# viennent EN DERNIER pour que les gabarits historiques (génois, portant)
+# gagnent les égalités de score sur leurs propres documents.
+GABARITS_EMBARQUES: tuple[GabaritDef, ...] = (
+    GABARIT_PORTANT_V2,
+    GABARIT_PORTANT,
+    GABARIT_GENOIS,
+    GABARIT_GV_FULLBATTEN,
+    GABARIT_JADE,
+)
+
 
 
 def initialiser_gabarits(index: Any) -> None:

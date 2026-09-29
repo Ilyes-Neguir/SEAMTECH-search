@@ -51,10 +51,12 @@ TYPES_VOILE: tuple[tuple[str, str, str], ...] = (
     ("spi asymétrique", "Spi Asymétrique", "portant"),
     ("spi symétrique", "Spi Symétrique", "portant"),
     ("spi", "Spi", "portant"),
+    ("gennaker", "Gennaker", "portant"),
     ("génois", "Génois", "interface"),
     ("genoa", "Génois", "interface"),
     ("grand-voile", "Grand-voile", "interface"),
     ("grand voile", "Grand-voile", "interface"),
+    ("gv", "Grand-voile", "interface"),
     ("trinquette", "Trinquette", "interface"),
     ("solent", "Solent", "interface"),
     ("code 0", "Code 0", "portant"),
@@ -592,7 +594,7 @@ def _traiter_finitions(fiche: FicheExtraite, brut: str, base: ChampExtrait) -> N
     """« amure/écoute/drisse — Œillet SR12, non-sanglé » → fiche_finition."""
     gauche, _, droite = brut.partition("—")
     postes = [normaliser_terme(poste) for poste in re.split(r"[/,]", gauche) if poste.strip()]
-    valeur = re.sub(r",?\s*non-?sangl\w*", "", droite, flags=re.I).strip().rstrip(",;").strip()
+    valeur = re.sub(r",?\s*non[\s-]*sangl\w*", "", droite, flags=re.I).strip().rstrip(",;").strip()
     if not valeur:
         valeur = gauche.strip()
     oeillet = None
@@ -600,7 +602,7 @@ def _traiter_finitions(fiche: FicheExtraite, brut: str, base: ChampExtrait) -> N
     trouve = re.search(r"œillet\s+(\S+)", droite, re.I)
     if trouve:
         oeillet = trouve.group(1).rstrip(",;")
-    if re.search(r"non-?sangl", droite, re.I):
+    if re.search(r"non[\s-]*sangl", droite, re.I):
         sangle = False
     elif re.search(r"sangl", droite, re.I):
         sangle = True
@@ -1191,11 +1193,11 @@ def _traiter_finitions_grille(fiche: FicheExtraite, brut: str, base: ChampExtrai
                 trouve = re.search(r"œillet\s+(\S+)", valeur_texte, re.I)
                 if trouve:
                     oeillet = trouve.group(1).rstrip(",;")
-                if re.search(r"non-?sangl", valeur_texte, re.I):
+                if re.search(r"non[\s-]*sangl", valeur_texte, re.I):
                     sangle = False
                 elif re.search(r"sangl", valeur_texte, re.I):
                     sangle = True
-                valeur_texte = re.sub(r",?\s*non-?sangl\w*", "", valeur_texte, flags=re.I).strip().rstrip(",;").strip()
+                valeur_texte = re.sub(r",?\s*non[\s-]*sangl\w*", "", valeur_texte, flags=re.I).strip().rstrip(",;").strip()
             finition = Finition(poste=poste, valeur_texte=valeur_texte or None, oeillet_type=oeillet, sangle=sangle)
             trace = _reprendre_base(
                 fiche, base,
@@ -1572,6 +1574,615 @@ def _traiter_fichier_edite(fiche: FicheExtraite, brut: str, base: ChampExtrait, 
             return
 
 
+# ---------------------------------------------------------------------------
+# Traitements « format atelier » (corpus réel 2026-09-28 — gabarits
+# FICHE_JADE_V1 / FICHE_GV_FULLBATTEN_V1). Ces traitements lisent la PAGE
+# (contexte["pages"]) : en-tête en colonnes CLIENT/BATEAU/TYPE DE VOILE,
+# ligne N° Commande (référence à 6 chiffres + initiales, parfois collée au
+# libellé), ligne DATE avec Surface, cotes des trois bords en décimal
+# français (valeur pouvant être collée au libellé : « GUINDANT9,53 »),
+# bandes de force (BDF) par bord, points d'ancrage, coutures zigzag,
+# renforts au-dessus du planning atelier. Rien n'est complété ni deviné :
+# une zone absente reste absente (RG6), un nombre sans unité explicite
+# n'est jamais converti (RG16 honnête).
+# ---------------------------------------------------------------------------
+
+# Bord → colonne de cote du schéma (SLU = guindant, SLE = chute, SF = bordure).
+_BORDS_JADE: tuple[tuple[str, str], ...] = (
+    ("guindant", "slu_m"),
+    ("chute", "sle_m"),
+    ("bordure", "sf_m"),
+)
+# Limite haute de la zone « matière » sous la ligne DATE (en points) : la
+# colonne matière des fiches réelles vit dans les ~15 pt sous la date ; les
+# sections suivantes (RIS, LATTES…) commencent plus bas.
+_DELTA_TISSU_PT = 15.0
+# Bord droit de la colonne centrale (bateau/matière) : au-delà commencent la
+# colonne Expédition et le bord droit de la page.
+_X_COLONNE_CENTRALE_PT = 340.0
+# Préfixes des lignes du planning atelier (bas de page) : tout ce qui suit
+# appartient à l'ordonnancement, pas à la fiche métier.
+_PREFIXES_PLANNING = ("preparation", "prepa", "coupe", "montage machine", "temps total", "renforts + uv")
+
+
+def _ligne_contenant(pages: list[PageAnalysee], predicat) -> tuple[PageAnalysee, Ligne] | None:
+    """Première ligne (page, ligne) satisfaisant le prédicat."""
+    for page in pages:
+        for ligne in page.lignes:
+            if ligne.mots and predicat(ligne):
+                return page, ligne
+    return None
+
+
+def _trace_fiche(
+    champ: str,
+    valeur_brute: str | None,
+    valeur_normalisee: str | None,
+    confiance: float,
+    page: int,
+    zone: Zone | None,
+    colonne: str,
+) -> ChampExtrait:
+    """ChampExtrait de tête (table ``fiche``) — traces des traitements atelier."""
+    return ChampExtrait(
+        champ=champ,
+        valeur_brute=valeur_brute,
+        valeur_normalisee=valeur_normalisee,
+        methode="gabarit",
+        confiance=confiance,
+        page=page,
+        zone=zone,
+        table_cible="fiche",
+        colonne_cible=colonne,
+    )
+
+
+def _designation_jade(fiche: FicheExtraite, valeur: str) -> tuple[str | None, str | None, float]:
+    """« Gennaker C0 » / « GV Fullbatten » / « GSE » → (type, gamme, confiance).
+
+    Un type connu du lexique ouvre type + gamme (lecture déterministe) ; un
+    acronyme inconnu (ex. « GSE ») est conservé comme type TEL QUEL, sans
+    gamme inventée, à confiance réduite.
+    """
+    normalise = norm.sans_accents(valeur).lower().strip()
+    for motif, libelle, _famille in TYPES_VOILE:
+        if normalise.startswith(norm.sans_accents(motif).lower()):
+            reste = valeur[len(motif) :].strip(" -,–")
+            return libelle, (reste or None), CONFIANCE_CERTAIN
+    return valeur.strip() or None, None, 0.7
+
+
+def _traiter_entete_jade(fiche: FicheExtraite, brut: str, base: ChampExtrait, contexte: dict) -> None:
+    """En-tête du format atelier : titre, N° Commande, colonnes CLIENT /
+    BATEAU / TYPE DE VOILE, DATE, Surface. Chaque sous-valeur reçoit sa
+    propre trace avec sa zone (le bateau peut être reporté sur la ligne
+    suivante quand il déborde de sa colonne — lu dans la colonne, jamais
+    dans le texte voisin)."""
+    pages = contexte.get("pages") or []
+    if base in fiche.champs:
+        fiche.champs.remove(base)
+    for page in pages:
+        lignes = [ligne for ligne in page.lignes if ligne.mots]
+        # --- Titre : « FICHE DE FABRICATION » -----------------------------
+        titre = _ligne_contenant([page], lambda ligne: ligne.mots[0].normalise == "fiche" and "fabrication" in ligne.normalise)
+        if titre is not None and fiche.titre is None:
+            ligne_titre = titre[1]
+            texte_titre = " ".join(mot.texte for mot in ligne_titre.mots)
+            fiche.titre = texte_titre
+            fiche.champs.append(
+                _trace_fiche("fiche.titre", texte_titre, texte_titre, CONFIANCE_CERTAIN, page.numero, _zone_des_mots(ligne_titre.mots), "titre")
+            )
+        # --- N° Commande : référence à 6 chiffres + initiales -------------
+        commande = _ligne_contenant(
+            [page], lambda ligne: any("commande" in mot.normalise for mot in ligne.mots) and ligne.mots[0].haut < 70
+        )
+        if commande is not None and fiche.code is None:
+            ligne_commande = commande[1]
+            texte = " ".join(mot.texte for mot in ligne_commande.mots)
+            trouve = re.search(r"(\d{6})\s*([A-Za-z]{2,3})\b", texte)
+            if trouve:
+                fiche.code = f"{trouve.group(1)} {trouve.group(2)}"
+                mots_zone = [
+                    mot
+                    for mot in ligne_commande.mots
+                    if trouve.group(1) in mot.texte or mot.texte == trouve.group(2)
+                ]
+                fiche.champs.append(
+                    _trace_fiche(
+                        "fiche.code", trouve.group(0), fiche.code, CONFIANCE_CERTAIN,
+                        page.numero, _zone_des_mots(mots_zone) or _zone_des_mots(ligne_commande.mots), "code",
+                    )
+                )
+        # --- Ligne d'en-tête : CLIENT … BATEAU … TYPE DE VOILE … -----------
+        entete = None
+        for ligne in lignes:
+            normes = [mot.normalise for mot in ligne.mots]
+            if "client" in normes and "bateau" in normes and "type" in normes and "voile" in normes:
+                entete = ligne
+                break
+        if entete is not None:
+            mots = entete.mots
+            index_client = next(i for i, mot in enumerate(mots) if mot.normalise == "client")
+            index_bateau = next(i for i, mot in enumerate(mots) if mot.normalise == "bateau")
+            index_type = next(i for i, mot in enumerate(mots) if mot.normalise == "type")
+            # client : entre les libellés CLIENT et BATEAU
+            if fiche.client_nom is None:
+                mots_client = mots[index_client + 1 : index_bateau]
+                texte_client = " ".join(mot.texte for mot in mots_client).strip()
+                if texte_client:
+                    fiche.client_nom = texte_client
+                    fiche.champs.append(
+                        _trace_fiche(
+                            "fiche.client", texte_client, texte_client, CONFIANCE_CERTAIN,
+                            page.numero, _zone_des_mots(mots_client), "client",
+                        )
+                    )
+            # bateau : entre BATEAU et TYPE, sinon la ligne suivante DANS la
+            # colonne bateau (x du libellé BATEAU à x du libellé TYPE).
+            if fiche.bateau_nom is None:
+                mots_bateau = mots[index_bateau + 1 : index_type]
+                if not mots_bateau:
+                    x_min = mots[index_bateau].x1
+                    x_max = mots[index_type].x0
+                    y_entete = mots[index_bateau].haut
+                    for ligne in lignes:
+                        if not ligne.mots or ligne.mots[0].haut <= y_entete or ligne.mots[0].haut - y_entete > 6:
+                            continue
+                        mots_bateau = [mot for mot in ligne.mots if x_min < mot.x0 < x_max]
+                        break
+                texte_bateau = " ".join(mot.texte for mot in mots_bateau).strip()
+                if texte_bateau:
+                    nom, taille = norm.separer_nom_et_detail(texte_bateau)
+                    fiche.bateau_nom = nom or texte_bateau
+                    fiche.bateau_taille = taille
+                    fiche.champs.append(
+                        _trace_fiche(
+                            "fiche.bateau", texte_bateau,
+                            f"{fiche.bateau_nom} | {taille}" if taille else fiche.bateau_nom,
+                            CONFIANCE_CERTAIN, page.numero, _zone_des_mots(mots_bateau), "bateau",
+                        )
+                    )
+            # type de voile : après la séquence TYPE DE VOILE, jusqu'en fin de ligne
+            if fiche.type_voile_libelle is None and index_type + 2 < len(mots):
+                if mots[index_type + 1].normalise == "de" and mots[index_type + 2].normalise == "voile":
+                    mots_type = mots[index_type + 3 :]
+                    texte_type = " ".join(mot.texte for mot in mots_type).strip()
+                    if texte_type:
+                        libelle, gamme, confiance = _designation_jade(fiche, texte_type)
+                        fiche.type_voile_libelle = libelle
+                        fiche.gamme = gamme
+                        fiche.champs.append(
+                            _trace_fiche(
+                                "fiche.designation", texte_type,
+                                f"{libelle} | {gamme}" if gamme else libelle,
+                                confiance, page.numero, _zone_des_mots(mots_type), "designation",
+                            )
+                        )
+        # --- Ligne DATE : date + surface -----------------------------------
+        ligne_date = _ligne_contenant([page], lambda ligne: ligne.mots[0].normalise == "date")
+        if ligne_date is not None:
+            ligne = ligne_date[1]
+            texte = " ".join(mot.texte for mot in ligne.mots)
+            if fiche.date_edition is None:
+                date_iso = norm.date_fr_vers_iso(texte)
+                if date_iso is not None:
+                    fiche.date_edition = date_iso
+                    trouve = re.search(r"\d{1,2}[/.-]\d{1,2}[/.-]\d{4}", texte)
+                    mots_date = [mot for mot in ligne.mots if trouve and trouve.group(0) in mot.texte]
+                    fiche.champs.append(
+                        _trace_fiche(
+                            "fiche.date_edition", trouve.group(0) if trouve else texte, date_iso,
+                            CONFIANCE_CERTAIN, page.numero, _zone_des_mots(mots_date), "date_edition",
+                        )
+                    )
+            if not _cote_deja_lue(fiche, "cotes.finie.spa_m2"):
+                trouve_surface = re.search(r"(?:surface|surf)\s*[:=]?\s*(\d+(?:[.,]\d+)?)\s*m", texte, re.I)
+                if trouve_surface:
+                    valeur = norm.cote_en_metres(trouve_surface.group(0))
+                    if valeur is not None:
+                        index_surface = next(
+                            (i for i, mot in enumerate(ligne.mots) if mot.normalise in ("surface", "surf")), None
+                        )
+                        mots_surface = ligne.mots[index_surface + 1 :] if index_surface is not None else []
+                        champ = ChampExtrait(
+                            champ="cotes.finie.spa_m2",
+                            valeur_brute=trouve_surface.group(0),
+                            valeur_normalisee=str(valeur),
+                            methode="gabarit",
+                            confiance=CONFIANCE_CERTAIN,
+                            page=page.numero,
+                            zone=_zone_des_mots(mots_surface),
+                            table_cible="fiche_cotes",
+                            colonne_cible="spa_m2",
+                        )
+                        _ranger_cote(fiche, "cotes.finie.spa_m2", valeur, champ)
+
+
+def _traiter_bords_jade(fiche: FicheExtraite, brut: str, base: ChampExtrait, contexte: dict) -> None:
+    """Cotes des trois bords : la ligne « GUINDANT9,53 » (valeur collée au
+    libellé), « CHUTE 11,2 » ou « BORDURE 5,37 à la corde ». Le qualificatif
+    (« à la corde ») reste dans la valeur brute ; seule la valeur numérique
+    est normalisée en mètres."""
+    pages = contexte.get("pages") or []
+    if base in fiche.champs:
+        fiche.champs.remove(base)
+    for page in pages:
+        for ligne in page.lignes:
+            if not ligne.mots:
+                continue
+            tete = ligne.mots[0].normalise
+            for bord, colonne in _BORDS_JADE:
+                if not tete.startswith(bord):
+                    continue
+                cible = f"cotes.finie.{colonne}"
+                if _cote_deja_lue(fiche, cible):
+                    break
+                texte = " ".join(mot.texte for mot in ligne.mots)
+                trouve = re.match(rf"^{bord}\s*(\d+(?:[.,]\d+)?)", texte, re.I)
+                if trouve is None:
+                    break  # ligne « Guindant : voir tracé » → pas une cote lisible
+                valeur = norm.cote_en_metres(trouve.group(1))
+                if valeur is None:
+                    break
+                champ = ChampExtrait(
+                    champ=cible,
+                    valeur_brute=texte,
+                    valeur_normalisee=str(valeur),
+                    methode="gabarit",
+                    confiance=CONFIANCE_CERTAIN,
+                    page=page.numero,
+                    zone=_zone_des_mots(ligne.mots),
+                    table_cible="fiche_cotes",
+                    colonne_cible=colonne,
+                )
+                _ranger_cote(fiche, cible, valeur, champ)
+                break
+
+
+def _traiter_tissu_jade(fiche: FicheExtraite, brut: str, base: ChampExtrait, contexte: dict) -> None:
+    """Matière : bande de mots sous/autour de la ligne DATE, colonne centrale
+    (x < 340). Sur les fiches réelles, les mots matière se partagent la ligne
+    DATE (reconstruction par tolérance verticale) ou la suivent à ~10 pt.
+    Sont exclus : les libellés et valeurs de DATE/Surface/Expédition, la
+    diagonale (« D 7,45 NP ») et les rapports numériques (« 344/394 »).
+    Absente → aucun matériau (jamais inventée)."""
+    if fiche.materiaux:
+        return
+    pages = contexte.get("pages") or []
+    if base in fiche.champs:
+        fiche.champs.remove(base)
+    for page in pages:
+        datee = _ligne_contenant([page], lambda ligne: ligne.mots[0].normalise == "date")
+        if datee is None:
+            continue
+        ligne_date = datee[1]
+        y_date = ligne_date.mots[0].haut
+        # Tout ce qui est à droite du libellé Surface SUR la ligne DATE
+        # appartient au bloc surface/expédition, jamais à la matière.
+        mot_surface = next((m for m in ligne_date.mots if m.normalise in ("surface", "surf")), None)
+        x_surface = mot_surface.x0 - 2 if mot_surface is not None else None
+        bande = [
+            mot
+            for mot in ligne_date.mots
+            if mot.x0 < _X_COLONNE_CENTRALE_PT and (x_surface is None or mot.x0 < x_surface)
+        ]
+        for ligne in page.lignes:
+            if not ligne.mots or ligne is ligne_date:
+                continue
+            y = ligne.mots[0].haut
+            if y <= y_date - 1 or y - y_date > _DELTA_TISSU_PT:
+                continue
+            bande.extend(mot for mot in ligne.mots if mot.x0 < _X_COLONNE_CENTRALE_PT)
+        mots_zone: list[Mot] = []
+        tries = sorted(bande, key=lambda m: (m.haut, m.x0))
+        exclus: set[int] = set()
+        # Diagonale « D 7,45 NP » : le trio consécutif est exclu en bloc.
+        for indice, mot in enumerate(tries):
+            if mot.normalise == "d" and indice + 2 < len(tries):
+                if re.fullmatch(r"\d+(?:[.,]\d+)?", tries[indice + 1].texte) and tries[indice + 2].normalise == "np":
+                    exclus |= {indice, indice + 1, indice + 2}
+        for indice, mot in enumerate(tries):
+            if indice in exclus:
+                continue
+            normalise = mot.normalise
+            if normalise in ("date", "surface", "surf") or normalise.startswith("expedition"):
+                continue
+            if re.fullmatch(r"\d{1,2}[.,]\d{1,2}[.,]\d{2,4}", mot.texte):  # valeur de date
+                continue
+            if re.fullmatch(r"\d{3,4}/\d{3,4}", mot.texte):  # rapport de mesures, pas une matière
+                continue
+            if normalise == "np" and any(i in exclus for i in (indice - 2, indice - 1)):
+                continue
+            mots_zone.append(mot)
+        if not mots_zone:
+            continue
+        designation = " ".join(mot.texte for mot in mots_zone).strip()
+        if not designation:
+            continue
+        fiche.tissu_texte = designation
+        materiau = Materiau(role="tissu_principal", designation=designation, grammage_g_m2=norm.grammage_g_m2(designation))
+        trace = _trace_fiche(
+            "materiau.tissu_principal", designation, designation, 0.85,
+            page.numero, _zone_des_mots(mots_zone), "tissu_principal",
+        )
+        materiau.champs.append(trace)
+        fiche.materiaux.append(materiau)
+        break
+
+
+def _traiter_galons_bdf(fiche: FicheExtraite, brut: str, base: ChampExtrait, contexte: dict) -> None:
+    """Bandes de force (« BDF a plat / pliée / décalée … ») rattachées au
+    bord en cours (section GUINDANT / CHUTE / BORDURE). Le texte intégral de
+    la ligne est proposé tel quel : sans unité explicite, aucune largeur ni
+    grammage n'est converti (jamais inventé)."""
+    if fiche.galons:
+        return
+    pages = contexte.get("pages") or []
+    if base in fiche.champs:
+        fiche.champs.remove(base)
+    for page in pages:
+        bande: str | None = None
+        for ligne in page.lignes:
+            if not ligne.mots:
+                continue
+            tete = ligne.mots[0].normalise
+            bord_vu = next((bord for bord, _colonne in _BORDS_JADE if tete.startswith(bord)), None)
+            if bord_vu is not None:
+                bande = bord_vu
+                continue
+            if bande is None or not tete.startswith("bdf"):
+                continue
+            texte = " ".join(mot.texte for mot in ligne.mots).strip()
+            trouve_type = re.match(r"bdf\s+(a plat|pliée|pliee|décalée|decalee)", ligne.normalise)
+            type_bdf = normaliser_terme(trouve_type.group(1)).replace(" ", "_") if trouve_type else "bdf"
+            # Une seule ligne fiche_galon par bande (UNIQUE id_fiche+bande) :
+            # les bandes de force multiples d'un même bord se rattachent à la
+            # même ligne — leurs traces distinctes (galon.<bande>.<type>)
+            # portent le détail, jamais perdu.
+            galon = next((g for g in fiche.galons if g.bande == bande), None)
+            if galon is None:
+                galon = Galon(bande=bande)  # largeur/grammage/couleur : absents sans unité explicite
+                fiche.galons.append(galon)
+            trace = ChampExtrait(
+                champ=f"galon.{bande}.{type_bdf}",
+                valeur_brute=texte,
+                valeur_normalisee=texte,
+                methode="gabarit",
+                confiance=0.85,
+                page=page.numero,
+                zone=_zone_des_mots(ligne.mots),
+                table_cible="fiche_galon",
+                colonne_cible=f"{bande}.{type_bdf}",
+            )
+            galon.champs.append(trace)
+
+
+def _traiter_finitions_jade(fiche: FicheExtraite, brut: str, base: ChampExtrait, contexte: dict) -> None:
+    """Points d'ancrage : lignes AMURE / ECOUTE / DRISSE / RIS [CHUTE|GT] /
+    TÊTIÈRE sous le bloc « POINT D'ANCRAGE ». La valeur est le reste de la
+    ligne ; œillet et sangle sont décomposés quand ils y figurent. Les
+    lignes de continuation (« Barrée », « Surliures main »…) ne créent rien."""
+    if fiche.finitions:
+        return
+    pages = contexte.get("pages") or []
+    if base in fiche.champs:
+        fiche.champs.remove(base)
+    postes = ("amure", "ecoute", "drisse", "ris", "tetiere")
+    for page in pages:
+        ancrage = _ligne_contenant(
+            [page], lambda ligne: ligne.mots[0].normalise == "point" and "ancrage" in ligne.normalise
+        )
+        if ancrage is None:
+            continue
+        y_ancrage = ancrage[1].mots[0].haut
+        for ligne in page.lignes:
+            if not ligne.mots or ligne.mots[0].haut <= y_ancrage:
+                continue
+            mots = ligne.mots
+            indice = 0
+            # GV : « 3 ris RIS CHUTE … » — le quantificateur précède le libellé.
+            if re.fullmatch(r"\d+", mots[0].normalise) and len(mots) > 1 and mots[1].normalise == "ris":
+                indice = 2
+            if indice >= len(mots):
+                continue
+            tete = mots[indice].normalise
+            if tete not in postes:
+                continue
+            poste = tete
+            consomme = indice + 1
+            if tete == "ris" and consomme < len(mots) and mots[consomme].normalise in ("chute", "gt"):
+                poste = f"ris {mots[consomme].normalise}"
+                consomme += 1
+            valeur_mots = mots[consomme:]
+            valeur = " ".join(mot.texte for mot in valeur_mots).strip()
+            oeillet = None
+            trouve = re.search(r"[ŒOe]{1,2}illet\s+(\S+)", valeur, re.I)
+            if trouve:
+                oeillet = trouve.group(1).rstrip(",;.")
+            sangle = None
+            if re.search(r"non[\s-]*sangl", valeur, re.I):
+                sangle = False
+                valeur = re.sub(r",?\s*non[\s-]*sangl\w*", "", valeur, flags=re.I).strip().rstrip(",;").strip()
+            elif re.search(r"sangl", valeur, re.I):
+                sangle = True
+            finition = Finition(poste=poste, valeur_texte=valeur or None, oeillet_type=oeillet, sangle=sangle)
+            poste_norm = poste.replace(" ", "_")
+            trace = ChampExtrait(
+                champ=f"finition.{poste_norm}",
+                valeur_brute=" ".join(mot.texte for mot in mots),
+                valeur_normalisee=valeur or None,
+                methode="gabarit",
+                confiance=0.85,
+                page=page.numero,
+                zone=_zone_des_mots(mots),
+                table_cible="fiche_finition",
+                colonne_cible=poste_norm,
+            )
+            finition.champs.append(trace)
+            fiche.finitions.append(finition)
+
+
+def _traiter_montage_jade(fiche: FicheExtraite, brut: str, base: ChampExtrait, contexte: dict) -> None:
+    """Coutures : la ligne portant « zigzag » / « zig zag » donne le montage
+    (points zigzag, fil). La ligne est relue ENTIÈRE depuis la page : le
+    nombre de points précède le mot zigzag, hors de la valeur bornée."""
+    pages = contexte.get("pages") or []
+    for page in pages:
+        ligne_montage = _ligne_contenant([page], lambda ligne: "zigzag" in ligne.normalise or ("zig" in [m.normalise for m in ligne.mots] and "zag" in [m.normalise for m in ligne.mots]))
+        if ligne_montage is None:
+            continue
+        texte = " ".join(mot.texte for mot in ligne_montage[1].mots)
+        # Le nombre de points précède parfois « zigzag » (fiches GSE :
+        # « 2 Zig Zag 6 temps ») mais peut être omis (fiches GV :
+        # « zigzag 6temps. ») — il reste facultatif, jamais inventé.
+        trouve = re.search(r"(?:(\d+)\s*)?zig\s*zag\w*\s*(?:en\s*)?(\d+)\s*t(?:emps|ps)", texte, re.I)
+        if trouve is None:
+            continue
+        fiche.montage_type = f"{trouve.group(1) or ''} zigzag {trouve.group(2)} temps".strip()
+        base.champ = "fiche.montage_type"
+        base.valeur_brute = texte
+        base.valeur_normalisee = fiche.montage_type
+        base.confiance = 0.85
+        base.zone = _zone_des_mots(ligne_montage[1].mots)
+        trouve_fil = re.search(r"\bfil\s+(\d+)\b", texte, re.I)
+        if trouve_fil and fiche.montage_fil is None:
+            fiche.montage_fil = trouve_fil.group(1)
+            base.valeur_normalisee += f" | fil {fiche.montage_fil}"
+        if base not in fiche.champs:
+            fiche.champs.append(base)
+        return
+
+
+def _traiter_renforts_jade(fiche: FicheExtraite, brut: str, base: ChampExtrait, contexte: dict) -> None:
+    """Renforts : la ligne RENFORTS au-dessus du planning atelier (les
+    libellés « RENFORTS + UV » du planning ne sont pas des renforts)."""
+    if fiche.renforts:
+        return
+    pages = contexte.get("pages") or []
+    if base in fiche.champs:
+        fiche.champs.remove(base)
+    for page in pages:
+        y_planning: float | None = None
+        for ligne in page.lignes:
+            if not ligne.mots:
+                continue
+            tete = " ".join(mot.normalise for mot in ligne.mots[:2])
+            if any(tete.startswith(prefixe) or ligne.mots[0].normalise.startswith(prefixe) for prefixe in _PREFIXES_PLANNING):
+                y_planning = ligne.mots[0].haut
+                break
+        for ligne in page.lignes:
+            if not ligne.mots or not ligne.mots[0].normalise.startswith("renfort"):
+                continue
+            if y_planning is not None and ligne.mots[0].haut >= y_planning:
+                continue  # libellé du planning atelier, pas un renfort
+            texte = " ".join(mot.texte for mot in ligne.mots).strip()
+            valeur = " ".join(mot.texte for mot in ligne.mots[1:]).strip()
+            if not valeur:
+                continue
+            quantite = None
+            forme = None
+            trouve = re.search(r"(\d+)\s*[x×]?\s*(œillets?|oeillets?|sangles?|renforts?)", valeur, re.I)
+            if trouve:
+                quantite = int(trouve.group(1))
+                forme = normaliser_terme(trouve.group(2))
+            renfort = Renfort(quantite=quantite, forme=forme, description=valeur)
+            trace = ChampExtrait(
+                champ="renforts.ligne",
+                rang=len(fiche.renforts) + 1,
+                valeur_brute=texte,
+                valeur_normalisee=valeur,
+                methode="gabarit",
+                confiance=0.85,
+                page=page.numero,
+                zone=_zone_des_mots(ligne.mots),
+                table_cible="fiche_renfort",
+                colonne_cible=f"renfort_{len(fiche.renforts) + 1}",
+            )
+            renfort.champs.append(trace)
+            fiche.renforts.append(renfort)
+
+
+def _traiter_libres_gv(fiche: FicheExtraite, brut: str, base: ChampExtrait, contexte: dict) -> None:
+    """Sections propres à la GV fullbatten, conservées en mesures libres
+    (aucune table dédiée dans le schéma — jamais forcées ailleurs) : prises
+    de ris (« Ris 1 = 4,98 long »), positions de goussets (« L7 = L4 = 4,59 »),
+    lattes, numéro de voile, bôme."""
+    pages = contexte.get("pages") or []
+    if base in fiche.champs:
+        fiche.champs.remove(base)
+    for page in pages:
+        for ligne in page.lignes:
+            if not ligne.mots:
+                continue
+            texte = " ".join(mot.texte for mot in ligne.mots).strip()
+            normalise = ligne.normalise
+            for cle, valeur in re.findall(r"ris\s+(\d)\s*=\s*(\d+(?:[.,]\d+)?)", normalise):
+                fiche.mesures_libres.append(
+                    ChampExtrait(
+                        champ=f"libre.ris_{cle}",
+                        valeur_brute=f"Ris {cle} = {valeur} long",
+                        valeur_normalisee=str(norm.extraire_decimal(valeur)),
+                        methode="gabarit",
+                        confiance=0.7,
+                        page=page.numero,
+                        zone=_zone_des_mots(ligne.mots),
+                    )
+                )
+            for cle, cle_paire, valeur in re.findall(r"\bl(\d)\s*=\s*(?:(l\d)\s*=\s*)?(\d+(?:[.,]\d+)?)", normalise):
+                # « L7 = L4 = 4,59 » : les DEUX positions valent 4,59 —
+                # deux mesures libres, jamais une seule (RG6 : rien de perdu).
+                for cle_gousset in (cle, cle_paire[1] if cle_paire else ""):
+                    if not cle_gousset:
+                        continue
+                    fiche.mesures_libres.append(
+                        ChampExtrait(
+                            champ=f"libre.gousset_l{cle_gousset}",
+                            valeur_brute=f"L{cle_gousset} = {valeur}",
+                            valeur_normalisee=str(norm.extraire_decimal(valeur)),
+                            methode="gabarit",
+                            confiance=0.7,
+                            page=page.numero,
+                            zone=_zone_des_mots(ligne.mots),
+                        )
+                    )
+            if ligne.mots[0].normalise == "lattes":
+                fiche.mesures_libres.append(
+                    ChampExtrait(
+                        champ="libre.lattes",
+                        valeur_brute=texte,
+                        valeur_normalisee=texte,
+                        methode="gabarit",
+                        confiance=0.7,
+                        page=page.numero,
+                        zone=_zone_des_mots(ligne.mots),
+                    )
+                )
+            if normalise.startswith("numero voile"):
+                fiche.mesures_libres.append(
+                    ChampExtrait(
+                        champ="libre.numero_voile",
+                        valeur_brute=texte,
+                        valeur_normalisee=" ".join(mot.texte for mot in ligne.mots[2:]),
+                        methode="gabarit",
+                        confiance=0.7,
+                        page=page.numero,
+                        zone=_zone_des_mots(ligne.mots[2:]),
+                    )
+                )
+            if ligne.mots[0].normalise.startswith("bome"):
+                fiche.mesures_libres.append(
+                    ChampExtrait(
+                        champ="libre.bome",
+                        valeur_brute=texte,
+                        valeur_normalisee=texte,
+                        methode="gabarit",
+                        confiance=0.7,
+                        page=page.numero,
+                        zone=_zone_des_mots(ligne.mots),
+                    )
+                )
+
+
 TRAITEMENTS = {
     "titre": lambda fiche, brut, base, contexte: _traiter_titre(fiche, brut, base),
     "ligne_titre_portant": lambda fiche, brut, base, contexte: _traiter_ligne_titre_portant(fiche, brut, base, contexte),
@@ -1599,6 +2210,15 @@ TRAITEMENTS = {
     "epaisseurs": lambda fiche, brut, base, contexte: _traiter_epaisseurs(fiche, brut, base),
     "tissu_principal": lambda fiche, brut, base, contexte: _traiter_tissu_principal(fiche, brut, base, contexte),
     "notes": lambda fiche, brut, base, contexte: _traiter_notes(fiche, brut, base),
+    # Format atelier (corpus réel 2026-09-28 — FICHE_JADE_V1 / FICHE_GV_FULLBATTEN_V1).
+    "entete_jade": lambda fiche, brut, base, contexte: _traiter_entete_jade(fiche, brut, base, contexte),
+    "bords_jade": lambda fiche, brut, base, contexte: _traiter_bords_jade(fiche, brut, base, contexte),
+    "tissu_jade": lambda fiche, brut, base, contexte: _traiter_tissu_jade(fiche, brut, base, contexte),
+    "galons_bdf": lambda fiche, brut, base, contexte: _traiter_galons_bdf(fiche, brut, base, contexte),
+    "finitions_jade": lambda fiche, brut, base, contexte: _traiter_finitions_jade(fiche, brut, base, contexte),
+    "montage_jade": lambda fiche, brut, base, contexte: _traiter_montage_jade(fiche, brut, base, contexte),
+    "renforts_jade": lambda fiche, brut, base, contexte: _traiter_renforts_jade(fiche, brut, base, contexte),
+    "libres_gv": lambda fiche, brut, base, contexte: _traiter_libres_gv(fiche, brut, base, contexte),
 }
 
 
@@ -1635,6 +2255,10 @@ _GROUPE_DU_TRAITEMENT: dict[str, str] = {
     "jonctions": "jonctions",
     "jonctions_grille": "jonctions",
     "renforts_note": "renforts",
+    # Format atelier : garde d'idempotence par groupe (une seule exécution).
+    "galons_bdf": "galons",
+    "finitions_jade": "finitions",
+    "renforts_jade": "renforts",
 }
 
 

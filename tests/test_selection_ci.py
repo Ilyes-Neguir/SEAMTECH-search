@@ -52,6 +52,34 @@ INVENTAIRE_S3_REEL = {
     "tests/test_sauvegarde_restauration.py::test_aller_retour_via_client_s3_reel",
     # épreuve de conformité d'un endpoint réel (SEAMTECH_TEST_S3_URL).
     "tests/test_storage.py::test_live_minio_s3_integration",
+    # job `recette-corpus-reel` (Lot 2) : recette complète du corpus réel —
+    # MinIO vivant pour l'envoi des documents, les URL présignées (302, 900 s)
+    # et la sauvegarde hors-site. Sélection par chemin (aucun -m), garde
+    # d'exécution SEAMTECH_RECETTE_CORPUS.
+    "tests/test_recette_corpus_reel.py::test_01_zip_intacts_avant_recette",
+    "tests/test_recette_corpus_reel.py::test_02_corpus_extrait_complet",
+    "tests/test_recette_corpus_reel.py::test_03_services_et_migrations_017_base_neuve",
+    "tests/test_recette_corpus_reel.py::test_04a_import_flux_reel_ref001_via_upload",
+    "tests/test_recette_corpus_reel.py::test_04b_import_flux_reel[REF-002]",
+    "tests/test_recette_corpus_reel.py::test_04b_import_flux_reel[REF-003]",
+    "tests/test_recette_corpus_reel.py::test_04b_import_flux_reel[REF-004]",
+    "tests/test_recette_corpus_reel.py::test_04b_import_flux_reel[REF-005]",
+    "tests/test_recette_corpus_reel.py::test_04b_import_flux_reel[REF-006]",
+    "tests/test_recette_corpus_reel.py::test_04b_import_flux_reel[REF-007]",
+    "tests/test_recette_corpus_reel.py::test_04c_depot_fiche_lot_c[REF-001]",
+    "tests/test_recette_corpus_reel.py::test_04c_depot_fiche_lot_c[REF-002]",
+    "tests/test_recette_corpus_reel.py::test_04c_depot_fiche_lot_c[REF-003]",
+    "tests/test_recette_corpus_reel.py::test_04c_depot_fiche_lot_c[REF-004]",
+    "tests/test_recette_corpus_reel.py::test_04c_depot_fiche_lot_c[REF-005]",
+    "tests/test_recette_corpus_reel.py::test_04c_depot_fiche_lot_c[REF-006]",
+    "tests/test_recette_corpus_reel.py::test_04c_depot_fiche_lot_c[REF-007]",
+    "tests/test_recette_corpus_reel.py::test_05_fiches_proposees_a_valider",
+    "tests/test_recette_corpus_reel.py::test_06_ocr_par_etages",
+    "tests/test_recette_corpus_reel.py::test_07_recherches_par_mots_cles",
+    "tests/test_recette_corpus_reel.py::test_08_ouverture_pdf_url_presignee_reelle",
+    "tests/test_recette_corpus_reel.py::test_09_rapport_pdf_telecharge",
+    "tests/test_recette_corpus_reel.py::test_10_sauvegarde_restauration_base_neuve",
+    "tests/test_recette_corpus_reel.py::test_11_zip_inchanges_apres_recette",
 }
 
 #: Variables d'environnement qui, LUES par un test, désignent un endpoint réel.

@@ -1281,6 +1281,278 @@ jobs:
                   )
           PY
 
+  recette-corpus-reel:
+    # Lot 2 — recette COMPLÈTE sur le corpus réel (7 dossiers REF-001..REF-007
+    # livrés par le commanditaire, ZIP commités à la racine du dépôt). Le job
+    # n'exécute que tests/test_recette_corpus_reel.py (marqueurs s3 +
+    # recette_corpus : aucune suite existante ne le sélectionne, aucun job
+    # existant n'est modifié). Chaque étape échoue EXPLICITEMENT : ZIP intacts
+    # avant/après (RG13), migrations 001..017 sur base neuve, import des 7
+    # dossiers par le flux réel (upload, scan, confirmation avec sélection du
+    # candidat), classement automatique + champs proposés + fiches A_VALIDER,
+    # OCR par étages (30 pages natives non océrisées, page-image océrisée par
+    # Tesseract fra), recherches par mots-clés, ouverture PDF par URL présignée
+    # RÉELLE contre MinIO (302, Location, ExpiresIn=900 s, SHA-256 identique),
+    # rapport PDF téléchargé, sauvegarde puis restauration de la base dans une
+    # base neuve (fiches, object_key, recherche, ouverture PDF revérifiés).
+    #
+    # CONFIDENTIALITÉ : aucun artefact n'est publié ; les journaux ne portent
+    # que des comptes, codes REF-00x, statuts HTTP, empreintes et mesures
+    # agrégées (le module de recette compare les valeurs dynamiquement et
+    # réduit les journaux applicatifs à WARNING).
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: seamtech
+          POSTGRES_PASSWORD: seamtech_recette_password
+          POSTGRES_DB: seamtech_search_recette
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      # MinIO n'est PAS un service GitHub (la commande `server /data` est
+      # obligatoire et un conteneur de service ne peut pas en recevoir) :
+      # démarré par une étape dédiée, comme les jobs integration/sauvegarde.
+    env:
+      SEAMTECH_RECETTE_CORPUS: "1"
+      SEAMTECH_TEST_DATABASE_URL: postgresql://seamtech:seamtech_recette_password@127.0.0.1:5432/seamtech_search_recette
+      SEAMTECH_RECETTE_DATABASE_RESTAURATION: postgresql://seamtech:seamtech_recette_password@127.0.0.1:5432/seamtech_search_recette_restauree
+      SEAMTECH_REDIS_URL: redis://127.0.0.1:6379/0
+      SEAMTECH_S3_ENDPOINT_URL: http://127.0.0.1:9000
+      SEAMTECH_S3_BUCKET: seamtech-documents
+      SEAMTECH_S3_ACCESS_KEY: minioadmin
+      SEAMTECH_S3_SECRET_KEY: minioadmin123
+      SEAMTECH_RECETTE_BUCKET_SAUVEGARDE: seamtech-backups
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+      - name: Install OCR binaries (tesseract + fra + poppler)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr tesseract-ocr-fra poppler-utils
+          tesseract --version
+          tesseract --list-langs
+          pdftoppm -v 2>&1 | head -2
+          pg_restore --version
+      - name: Build MinIO image from archived sources (registries gone)
+        # Idem jobs integration/sauvegarde : aucun registre ne publie plus
+        # MinIO ; scripts/construire_image_minio.sh reconstruit l'image depuis
+        # les sources officielles du tag épinglé.
+        run: bash scripts/construire_image_minio.sh
+      - name: Start MinIO and create buckets
+        run: |
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=minioadmin \
+            -e MINIO_ROOT_PASSWORD=minioadmin123 \
+            quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z server /data
+          python - << 'PY'
+          import sys
+          import time
+          import urllib.request
+
+          deadline = time.time() + 120
+          while time.time() < deadline:
+              try:
+                  with urllib.request.urlopen("http://127.0.0.1:9000/minio/health/live", timeout=3) as resp:
+                      if resp.getcode() == 200:
+                          break
+              except Exception:
+                  pass
+              time.sleep(2)
+          else:
+              print("::error title=minio-not-ready::MinIO n'a pas répondu sur /minio/health/live en 120 s")
+              sys.exit(1)
+
+          import boto3
+
+          client = boto3.client(
+              "s3",
+              endpoint_url="http://127.0.0.1:9000",
+              aws_access_key_id="minioadmin",
+              aws_secret_access_key="minioadmin123",
+          )
+          for bucket in ("seamtech-documents", "seamtech-backups"):
+              try:
+                  client.head_bucket(Bucket=bucket)
+              except Exception:
+                  client.create_bucket(Bucket=bucket)
+              client.head_bucket(Bucket=bucket)
+          print("MinIO vivant, buckets documents + backups créés")
+          PY
+      - name: Check corpus ZIPs (RG13, avant extraction)
+        # Garde-fous : exactement 7 ZIP, empreintes SHA-256 consignées AVANT
+        # l'extraction (le runner temporaire reçoit les documents, le dépôt
+        # n'est jamais modifié).
+        run: |
+          python - << 'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          racine = Path(os.environ["GITHUB_WORKSPACE"])
+          zips = sorted(racine.glob("*.zip"))
+          if len(zips) != 7:
+              raise SystemExit(f"::error title=corpus-incomplet::attendu 7 ZIP, trouvé {len(zips)}")
+          empreintes = {z.name: hashlib.sha256(z.read_bytes()).hexdigest() for z in zips}
+          Path(os.environ["RUNNER_TEMP"], "zip-empreintes-avant.json").write_text(
+              json.dumps(empreintes), encoding="utf-8"
+          )
+          print(f"7 ZIP présents, empreintes AVANT consignées ({len(empreintes)})")
+          PY
+      - name: Extract corpus to runner temp (guarded)
+        # NB : le contexte ``runner`` n'est pas disponible dans ``env`` au
+        # niveau JOB (échec de validation du workflow) — il l'est au niveau
+        # étape, où la racine du corpus est donc injectée.
+        env:
+          SEAMTECH_RECETTE_CORPUS_RACINE: ${{ runner.temp }}/corpus-recette
+        run: |
+          python - << 'PY'
+          import os
+          import zipfile
+          from pathlib import Path
+
+          racine = Path(os.environ["GITHUB_WORKSPACE"])
+          sortie = Path(os.environ["SEAMTECH_RECETTE_CORPUS_RACINE"])
+          sortie.mkdir(parents=True, exist_ok=True)
+          MAX_OCTETS = 200 * 1024 * 1024
+          extraits = 0
+          for z in sorted(racine.glob("*.zip")):
+              with zipfile.ZipFile(z) as zf:
+                  for info in zf.infolist():
+                      if info.is_dir():
+                          continue
+                      cible = (sortie / info.filename).resolve()
+                      if not str(cible).startswith(str(sortie.resolve())):
+                          raise SystemExit(f"::error title=traversee::chemin refusé dans {z.name}")
+                      if info.file_size > MAX_OCTETS:
+                          raise SystemExit(f"::error title=taille::fichier refusé : {info.file_size} octets (> {MAX_OCTETS})")
+                      cible.parent.mkdir(parents=True, exist_ok=True)
+                      with zf.open(info) as src, cible.open("wb") as dst:
+                          dst.write(src.read())
+                      extraits += 1
+          dossiers = [p for p in sortie.iterdir() if p.is_dir()]
+          if len(dossiers) != 7:
+              raise SystemExit(f"::error title=extraction::attendu 7 dossiers, trouvé {len(dossiers)}")
+          print(f"corpus extrait : {extraits} fichiers, 7 dossiers (répertoire temporaire du runner)")
+          PY
+      - name: Run full recette suite (fails explicitly on any step)
+        env:
+          SEAMTECH_RECETTE_CORPUS_RACINE: ${{ runner.temp }}/corpus-recette
+        # Diagnostic d'échec SANS artefact et SANS valeur métier. Les
+        # annotations ::error sont le SEUL canal lisible via l'API (les
+        # résumés d'étape ne sont pas exposés par l'API check-runs) :
+        # - GitHub n'en retient que 10 par étape → des FAISCEAUX compacts ;
+        # - toute chaîne y est ASSAINIE : le contenu entre guillemets est
+        #   retiré (les messages d'exception recopient le texte des
+        #   documents — jamais de contenu documentaire dans un dépôt public).
+        run: |
+          set +e
+          pytest tests/test_recette_corpus_reel.py -v -ra --tb=short 2>&1 | tee /tmp/recette-pytest.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            assainir() {
+              sed -e "s/'[^']*'/«…»/g" -e 's/"[^"]*"/«…»/g' | cut -c1-220
+            }
+            # Faisceau 1 : liste compacte des tests en échec (noms seuls).
+            echecs=$(grep -E "^FAILED " /tmp/recette-pytest.log | sed 's/^FAILED //; s/ - .*//' | tr '\n' ',' | sed 's/,$//')
+            echo "::error title=recette-echecs::pytest rc=$rc — échecs : $echecs"
+            # Faisceau 2 : messages d'assertion assainis.
+            grep -E "^FAILED " /tmp/recette-pytest.log | head -6 | assainir | while IFS= read -r ligne; do
+              echo "::error title=recette::$ligne"
+            done
+            # Faisceau 3 : résumé court (SKIPPED avec raisons), assaini.
+            resume=$(grep -E "^(SKIPPED|XFAIL) " /tmp/recette-pytest.log | head -8 | tr '\n' ';' | sed 's/;$//' | assainir)
+            [ -n "$resume" ] && echo "::error title=recette-skips::$resume"
+            # Faisceau 4 : queue de log assainie (bornée).
+            queue=$(tail -10 /tmp/recette-pytest.log | tr '\n' '|' | assainir | cut -c1-600)
+            echo "::error title=recette-queue::$queue"
+          fi
+          exit "$rc"
+
+      - name: Publish diagnostic summary (always)
+        # Toujours exécuté (échec compris) : le résumé d'étape est le canal
+        # de lecture HUMAINE (UI GitHub) — assaini comme les annotations.
+        # NB : les résumés d'étape ne sont PAS exposés par l'API check-runs ;
+        # c'est pourquoi les annotations ci-dessus portent l'essentiel.
+        if: ${{ always() }}
+        run: |
+          if [ ! -f /tmp/recette-pytest.log ]; then
+            echo "## Recette corpus réel — pytest" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "Journal pytest absent (l'étape de recette n'a pas démarré)." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          assainir() {
+            sed -e "s/'[^']*'/«…»/g" -e 's/"[^"]*"/«…»/g'
+          }
+          {
+            echo "## Recette corpus réel — pytest (résultats par test)"
+            echo ""
+            echo '```'
+            grep -E "PASSED|SKIPPED|FAILED|ERROR" /tmp/recette-pytest.log | head -80 | assainir || true
+            echo '```'
+            echo ""
+            echo "### Résumé court"
+            echo ""
+            echo '```'
+            sed -n '/short test summary/,$p' /tmp/recette-pytest.log | head -40 | assainir || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Check corpus ZIPs (RG13, après recette) - invariant
+        # Toujours exécuté, même si la recette a échoué : une modification des
+        # ZIP est une violation contractuelle qui doit être signalée quoi
+        # qu'il arrive.
+        if: ${{ always() }}
+        run: |
+          python - << 'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          racine = Path(os.environ["GITHUB_WORKSPACE"])
+          avant = json.loads(
+              Path(os.environ["RUNNER_TEMP"], "zip-empreintes-avant.json").read_text(encoding="utf-8")
+          )
+          ecarts = {
+              nom: "modifié"
+              for nom, empreinte in avant.items()
+              if hashlib.sha256((racine / nom).read_bytes()).hexdigest() != empreinte
+          }
+          if ecarts:
+              raise SystemExit(f"::error title=rg13-violé::{len(ecarts)} ZIP modifié(s) pendant la recette")
+          print(f"RG13 vérifié : les 7 ZIP sont strictement identiques avant/après recette")
+          PY
+      - name: Purge runner temp (documents jamais persistés)
+        if: ${{ always() }}
+        env:
+          SEAMTECH_RECETTE_CORPUS_RACINE: ${{ runner.temp }}/corpus-recette
+        run: |
+          rm -rf "${SEAMTECH_RECETTE_CORPUS_RACINE}" "${RUNNER_TEMP}/zip-empreintes-avant.json" || true
+          docker rm -f minio || true
+
   ocr:
     # Lot M — 9e job (les 8 existants restent SANS OCR) : pipeline OCR par étages
     # sur échantillons commités, avec tesseract local, publication compte rendu

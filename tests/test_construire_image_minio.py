@@ -93,7 +93,8 @@ def test_script_en_mode_strict() -> None:
 
 
 def test_ci_construit_l_image_avant_de_la_consommer() -> None:
-    """Les jobs integration et sauvegarde doivent bâtir l'image avant de l'employer.
+    """Les jobs integration, sauvegarde et recette-corpus-reel doivent bâtir
+    l'image avant de l'employer.
 
     Sans cette étape, `docker compose up ... minio` et `docker run
     quay.io/minio/minio:...` retombent sur les registres morts (échec
@@ -101,9 +102,10 @@ def test_ci_construit_l_image_avant_de_la_consommer() -> None:
     """
     ci = _ci()
     appels = [m.start() for m in re.finditer(r"run: bash scripts/construire_image_minio\.sh", ci)]
-    assert len(appels) == 2, "le build MinIO doit être appelé par les 2 jobs concernés"
+    assert len(appels) == 3, "le build MinIO doit être appelé par les 3 jobs concernés"
     pos_integration = ci.index("- name: Start infra services")
     pos_sauvegarde = ci.index("- name: Start MinIO (bucket")
+    pos_recette = ci.index("- name: Start MinIO and create buckets")
     assert appels[0] < pos_integration, "build MinIO absent avant l'étape Start infra services"
     assert appels[1] < pos_sauvegarde, "build MinIO absent avant l'étape Start MinIO"
-    assert appels[0] < appels[1] < pos_sauvegarde + 1 or appels[1] > pos_integration
+    assert appels[2] < pos_recette, "build MinIO absent avant l'étape Start MinIO (recette-corpus-reel)"
