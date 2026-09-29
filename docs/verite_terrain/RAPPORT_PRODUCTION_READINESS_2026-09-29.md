@@ -68,7 +68,7 @@ atelier, 200 dossiers, 10 000 fiches) sont **NON MESURÉES** faute d'accès.
   rubriques à infrastructure réelle resteront vides tant que VPS01/R2/ouvrier
   ne sont pas disponibles.
 
-## Vérifications de ce lot (mesures locales, venv neuf)
+## Vérifications de ce lot (mesures locales, venv neuf + CI 10/10)
 
 ```bash
 python -m pytest tests/test_confidentialite_depots.py tests/test_empreintes_fixtures.py -q
@@ -79,9 +79,9 @@ ruff check .        # → All checks passed
 cd frontend && ./node_modules/.bin/tsc --noEmit && pnpm build   # → verts
 ```
 
-Les tests PostgreSQL de ce lot (`TestRechercheDesLEcriture`, contrat
-`/recherche`, facettes, recette `test_07`/`test_10`) s'exécutent dans les jobs
-CI `integration`/`recette-corpus-reel` — verdict dans la PR.
+**CI complète : run [36569073423](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36569073423), 10/10 jobs VERTS** sur `c10449e` (PR #32) : backend 3.11/3.12/3.13 (suite PostgreSQL avec le contrat 018 : fiche nouvelle écrite → vecteur rempli → retrouvée badgée par défaut, absente de l'archive de confiance ; comptages 14/12), frontend, docker, integration, sauvegarde, ocr, e2e (suite défaut SQLite : le spec badge skippe proprement ; **suite live PostgreSQL : badge « Non vérifiée » + filtre « Validées uniquement » prouvés au premier essai, garde de porte 4/4**), recette-corpus-reel (**contrat 018 éprouvé sur le corpus réel : fiche a_valider retrouvée par défaut avec statut exposé, absente avec `inclure_a_valider=false`, y compris sur base restaurée**).
+
+Premier run (`36567702950`) : 4 échecs PostgreSQL (fiche 7792-SO déjà validée dans le banc → `conservee_validee` ; deux comptages 12 restés à l'ancien contrat) et 1 échec e2e (spec badge exécuté dans la suite SQLite où la recherche de fiches répond 503 et où `BIS-7792` n'existe pas) — tous corrigés par le commit `c10449e` : fiche NOUVELLE à code unique pour les tests d'écriture, comptages 14/12, garde de saut `SEAMTECH_E2E_DATABASE_URL` + spec ajouté à la commande live (garde de porte 3→4, documenté dans `ci.yml`).
 
 ## Décisions ouvertes pour le commanditaire
 
