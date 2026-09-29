@@ -196,11 +196,17 @@ EXCEPTIONS_RG14: dict[str, str] = {
         "connexion sortante est impossible (namespace réseau isolé), aucun "
         "appel sortant à l'exécution normale"
     ),
+    "scripts/audit_dependency_policy.py": (
+        "job CI uniquement : résolution de sévérité CVSS des avis pip-audit via OSV "
+        "pour appliquer le seuil HIGH/CRITICAL ; jamais importé/exécuté par le service. "
+        "La dépendance est explicitement documentée dans docs/deploiement/ (lot 3)"
+    ),
 }
 
 DOCS_MARQUEURS_EXCEPTIONS = {
     "seamtech_search/ml/telecharger.py": "EXPLICITE",
     "scripts/mesure_assistant.py": "socket",
+    "scripts/audit_dependency_policy.py": "RG14_EXCEPTION",
 }
 
 

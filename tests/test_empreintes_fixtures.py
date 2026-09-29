@@ -22,7 +22,7 @@ REPO = Path(__file__).resolve().parent.parent
 # (chemin relatif, sha256 complet, taille en octets)
 EMPREINTES: tuple[tuple[str, str, int], ...] = (
     # La VRAIE fiche client 7792-SO (copie canonique ; le doublon à la racine
-    # de main est voué à suppression — voir docs/verite_terrain/FUSION_MAIN.md).
+    # a été retiré de l'arbre courant le 29/09/2026, voir EMPREINTES.md).
     (
         "sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf",
         "43afc51e55ae598d3eaffc3096f0e7ddaa00e8ddc579ae315bb31b4dbf1c1f40",

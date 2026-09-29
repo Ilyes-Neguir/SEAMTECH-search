@@ -18,9 +18,11 @@ Règles :
 - une archive ZIP suivie doit être dans l'inventaire épinglé ;
 - aucun format machine (.plx, .xin, .dxf, .db) ne doit être suivi PAR Git :
   ces fichiers n'existent que DANS les ZIP du corpus, jamais en vrac ;
-- le doublon racine de la fiche 7792-SO est toléré tant qu'il est identique
-  à la copie canonique de ``sample_data/`` (sa suppression est prévue par
-  docs/verite_terrain/FUSION_MAIN.md — ce test suivra).
+- aucun PDF ne doit être suivi à la racine du dépôt ; la copie canonique
+  7792-SO demeure épinglée sous ``sample_data/``.
+- les PDF du répertoire ``tests/fixtures/ocr/`` sont des données SYNTHÉTIQUES
+  régénérables explicitement autorisées ; leurs octets ne sont pas épinglés,
+  car les métadonnées PDF diffèrent selon les versions de reportlab.
 """
 
 from __future__ import annotations
@@ -42,11 +44,6 @@ INVENTAIRE_EPINGLE: tuple[tuple[str, str, int], ...] = (
     # --- commanditaire n'a pas décidé de les retirer/purger, toute
     # --- modification de l'un d'eux doit être explicite.
     (
-        "7792-SO_ffab.pdf",
-        "43afc51e55ae598d3eaffc3096f0e7ddaa00e8ddc579ae315bb31b4dbf1c1f40",
-        166_990,
-    ),
-    (
         "sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf",
         "43afc51e55ae598d3eaffc3096f0e7ddaa00e8ddc579ae315bb31b4dbf1c1f40",
         166_990,
@@ -66,16 +63,6 @@ INVENTAIRE_EPINGLE: tuple[tuple[str, str, int], ...] = (
         "frontend/e2e/live-fixtures/CLIENT-E2E-TROIS/fiche-trois.pdf",
         "c250b0771b0ac7b8a6a949ec9dc250aae703b9e6338472b19e558d478f5076ac",
         1_589,
-    ),
-    (
-        "tests/fixtures/ocr/ocr_degrade.pdf",
-        "e16b7cdd211ddac3aa41f38f56e9055ddeaaf06b0a419119e26ec126fea5adc7",
-        34_546,
-    ),
-    (
-        "tests/fixtures/ocr/ocr_propre.pdf",
-        "01fa26a6192b01b3227165c21f5961f3a330f29c04d34a5b382a6eb2baa62c78",
-        36_964,
     ),
     # --- Corpus réel 2026-09-28 : 7 dossiers atelier (ZIP) ---
     (
@@ -140,7 +127,9 @@ def test_aucun_document_hors_inventaire_epingle() -> None:
     suspects = [
         chemin
         for chemin in _fichiers_suivis()
-        if Path(chemin).suffix.lower() in _SUFFIXES_SURVEILLES and chemin not in inventaire
+        if Path(chemin).suffix.lower() in _SUFFIXES_SURVEILLES
+        and chemin not in inventaire
+        and not (chemin.startswith("tests/fixtures/ocr/") and Path(chemin).suffix.lower() == ".pdf")
     ]
     assert not suspects, (
         "Fichier(s) documentaire(s) suivi(s) par Git mais ABSENT(S) de l'inventaire "
@@ -184,12 +173,26 @@ def test_empreinte_document_epingle(chemin_relatif: str, sha256_attendu: str, ta
     )
 
 
-def test_doublon_racine_7792_identique_a_la_copie_canonique() -> None:
-    """Le doublon racine de la fiche réelle doit rester l'exacte copie canonique."""
-    racine = REPO / "7792-SO_ffab.pdf"
-    canonique = REPO / "sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf"
-    if racine.is_file():
-        assert racine.read_bytes() == canonique.read_bytes(), (
-            "Le PDF racine 7792-SO_ffab.pdf diffère de la copie canonique de "
-            "sample_data/ — un document réel ne doit jamais être modifié."
-        )
+def test_aucun_pdf_a_la_racine_du_depot() -> None:
+    """Aucun PDF réel ou synthétique ne doit être exposé à la racine Git."""
+    pdf_racine = sorted(p.name for p in REPO.glob("*.pdf") if p.is_file())
+    assert not pdf_racine, f"PDF interdit(s) à la racine du dépôt : {pdf_racine}"
+
+
+def test_ancien_doublon_racine_7792_reste_absent() -> None:
+    """Vérifie nommément le retrait du doublon public documenté dans FUSION_MAIN."""
+    assert not (REPO / "7792-SO_ffab.pdf").exists()
+
+
+@pytest.mark.parametrize("nom", ["ocr_degrade.pdf", "ocr_propre.pdf"])
+def test_fixture_ocr_synthetique_regenerable_et_lisible(nom: str) -> None:
+    """Les 2 PDF OCR autorisés restent présents, lisibles et synthétiques sans épingler leurs octets."""
+    from pypdf import PdfReader
+
+    dossier = REPO / "tests/fixtures/ocr"
+    attendus = {"ocr_degrade.pdf", "ocr_propre.pdf"}
+    pdfs = {p.name for p in dossier.glob("*.pdf")}
+    assert pdfs == attendus, f"PDF OCR synthétiques inattendus/manquants : {sorted(pdfs ^ attendus)}"
+    reader = PdfReader(str(dossier / nom))
+    assert len(reader.pages) == 1
+    assert not (reader.pages[0].extract_text() or "").strip(), "la fixture OCR doit rester une image sans couche texte"

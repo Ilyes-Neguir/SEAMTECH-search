@@ -33,7 +33,7 @@ from seamtech_search.ocr.pipeline import (
 
 RACINE = Path(__file__).resolve().parent.parent
 FIXTURES_OCR = RACINE / "tests" / "fixtures" / "ocr"
-PDF_NATIF_REEL = RACINE / "7792-SO_ffab.pdf"  # PDF à texte natif déjà utilisé par la suite
+PDF_NATIF_REEL = RACINE / "sample_data" / "CLIENT-7792-SO" / "fiche-7792-SO_ffab.pdf"  # copie canonique
 PDF_PROPRE = FIXTURES_OCR / "ocr_propre.pdf"
 PDF_DEGRADE = FIXTURES_OCR / "ocr_degrade.pdf"
 REF_PROPRE = FIXTURES_OCR / "reference_propre.txt"

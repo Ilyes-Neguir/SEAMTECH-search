@@ -393,3 +393,8 @@ Le SHA documentaire poussé et ses statuts CI sont fournis dans le rapport de
 livraison de la session. **Sans ses 8 jobs success, la livraison documentaire
 n'est pas déclarée verte.** Aucune fermeture, création de PR ou fusion distante
 ne doit être déduite des commandes préparées dans ce document.
+
+
+## Addendum du 2026-09-29 — doublon racine retiré
+
+L'état décrit dans ce runbook est une photographie historique du 22/09/2026. Depuis, le doublon racine `7792-SO_ffab.pdf` a été retiré de l'arbre de travail : le test OCR lit désormais la copie canonique `sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf`. SHA mesuré avant retrait : les deux copies valaient `43afc51e55ae598d3eaffc3096f0e7ddaa00e8ddc579ae315bb31b4dbf1c1f40`. Ce retrait ne supprime pas le blob de l'historique Git ni les copies déjà clonées. Le dépôt reste public, conformément à la décision du commanditaire ; aucune nouvelle demande de changement de visibilité n'est lancée. La garde de confidentialité exige désormais qu'aucun PDF ne soit à la racine.

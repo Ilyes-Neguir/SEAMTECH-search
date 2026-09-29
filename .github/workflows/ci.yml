@@ -6,7 +6,7 @@ on:
 
 jobs:
   backend:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
@@ -41,8 +41,8 @@ jobs:
       # mais les poids absents — jamais de skip silencieux).
       SEAMTECH_ML_E5_DIR: /home/runner/.cache/seamtech-e5
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install dependencies
@@ -56,7 +56,7 @@ jobs:
           # packages is how pytest ended up at both 8.4.1 and 9.1.1.
           pip install -r requirements-dev.txt
       - name: Cache e5-small ONNX weights (Lot F)
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: /home/runner/.cache/seamtech-e5
           key: seamtech-e5-small-onnx-v1
@@ -524,7 +524,7 @@ jobs:
         # with no readable diagnostics at all. Artifacts are served from a
         # different host, so this is a second channel for the same information.
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: backend-pytest-logs-${{ matrix.python-version }}
           path: |
@@ -536,16 +536,16 @@ jobs:
           retention-days: 5
 
   frontend:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 9
       - name: Verify pnpm-lock.yaml is in sync
@@ -562,11 +562,11 @@ jobs:
         run: pnpm build
 
   docker:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
       - name: Build backend image
         run: |
           docker build -t seamtech-search:ci -f Dockerfile .
@@ -609,10 +609,10 @@ jobs:
           docker rm seamtech-ci
 
   integration:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Install dependencies
@@ -833,7 +833,7 @@ jobs:
           exit "$rc"
 
   e2e:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Service PostgreSQL pour l'e2e « live » (validation sur la vraie fiche) :
     # même image que le job backend — l'utilisateur est superutilisateur, ce
     # qui autorise le seed à créer/recréer la base jetable e2e_*.
@@ -852,14 +852,14 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 9
       - name: Install backend dependencies
@@ -887,7 +887,7 @@ jobs:
           fi
       - name: Upload Playwright report on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: playwright-report
           path: |
@@ -1090,7 +1090,7 @@ jobs:
 
       - name: Upload live E2E reports on failure (doublons, auth nominatif)
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: playwright-report-live
           path: |
@@ -1107,7 +1107,7 @@ jobs:
     # VERSION_SCHEMA_METIER, recherche fonctionnelle, inventaire d'archive.
     # La durée de restauration sur ~50 000 fiches est MESURÉE et publiée en
     # ::notice (chiffre repris dans RUNBOOK_RESTAURATION.md).
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -1137,8 +1137,8 @@ jobs:
       SEAMTECH_S3_SECRET_KEY: minioadmin123
       SEAMTECH_S3_PREFIX: ""
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Install dependencies
@@ -1301,7 +1301,7 @@ jobs:
     # que des comptes, codes REF-00x, statuts HTTP, empreintes et mesures
     # agrégées (le module de recette compare les valeurs dynamiquement et
     # réduit les journaux applicatifs à WARNING).
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -1339,8 +1339,8 @@ jobs:
       SEAMTECH_S3_SECRET_KEY: minioadmin123
       SEAMTECH_RECETTE_BUCKET_SAUVEGARDE: seamtech-backups
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Install dependencies
@@ -1558,10 +1558,10 @@ jobs:
     # Lot M — 9e job (les 8 existants restent SANS OCR) : pipeline OCR par étages
     # sur échantillons commités, avec tesseract local, publication compte rendu
     # et qualité en annotations, plus garde ROUGE→VERT sabotage forcer True.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Install dependencies
@@ -1725,3 +1725,33 @@ jobs:
             exit 1
           fi
           echo "Garde-fou OCR étage 3 : ROUGE puis VERT prouvé"
+
+  securite-dependances:
+    name: securite-dependances
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9.15.9
+      - name: Installer pip-audit
+        run: python -m pip install --upgrade pip pip-audit
+      - name: Auditer les dépendances runtime Python
+        run: pip-audit -r requirements.txt --format json --output /tmp/pip-audit.json
+      - name: Installer les dépendances production frontend
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+      - name: Auditer les dépendances production frontend
+        working-directory: frontend
+        run: pnpm audit --prod --json > /tmp/pnpm-audit.json || true
+      - name: Politique vulnérabilités
+        run: |
+          # Échec uniquement pour HIGH/CRITICAL avec une correction amont ;
+          # les non-corrigeables sont publiées en annotation sans faire échouer.
+          python scripts/audit_dependency_policy.py /tmp/pip-audit.json /tmp/pnpm-audit.json
