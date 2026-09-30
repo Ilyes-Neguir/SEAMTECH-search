@@ -201,12 +201,19 @@ EXCEPTIONS_RG14: dict[str, str] = {
         "pour appliquer le seuil HIGH/CRITICAL ; jamais importé/exécuté par le service. "
         "La dépendance est explicitement documentée dans docs/deploiement/ (lot 3)"
     ),
+    "scripts/recette_verif.py": (
+        "client HTTP de RECETTE locale (outillage d'acceptation, jamais importé par "
+        "le service) : les contrôles PASS/FAIL prouvent le parcours réel via l'API "
+        "publiée — cible LOOPBACK uniquement (127.0.0.1 du conteneur web et endpoint "
+        "S3 local de la compose). Documenté dans docs/verite_terrain/ (Phase 2)"
+    ),
 }
 
 DOCS_MARQUEURS_EXCEPTIONS = {
     "seamtech_search/ml/telecharger.py": "EXPLICITE",
     "scripts/mesure_assistant.py": "socket",
     "scripts/audit_dependency_policy.py": "RG14_EXCEPTION",
+    "scripts/recette_verif.py": "RG14_EXCEPTION",
 }
 
 

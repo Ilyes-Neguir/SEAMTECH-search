@@ -1554,6 +1554,41 @@ jobs:
           rm -rf "${SEAMTECH_RECETTE_CORPUS_RACINE}" "${RUNNER_TEMP}/zip-empreintes-avant.json" || true
           docker rm -f minio || true
 
+  recette-locale:
+    # Recette locale « ça marche sur ma machine » (Phase 2) : le script
+    # scripts/recette_locale.sh tourne DE BOUT EN BOUT sur machine vierge
+    # (aucun .env, aucune image MinIO) et sort le rapport PASS/FAIL ligne par
+    # contrôle. C'est la preuve CI que « le script passe » — les contrôles
+    # fonctionnels (compte nominatif, dépôt des 7 ZIP, suivi de lot, validation,
+    # recherches texte/dimension « 6,60 »/filtres/suggestions, PDF présigné +
+    # zone surlignée, rejeu idempotent, sauvegarde/restauration, persistance
+    # down/up) sont ceux de scripts/recette_verif.py, source UNIQUE partagée
+    # avec la variante Windows scripts/recette_locale.ps1.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Vérifier Docker
+        run: |
+          docker --version
+          docker compose version
+      - name: Recette locale complète (scripts/recette_locale.sh)
+        run: bash scripts/recette_locale.sh
+      - name: Publier le rapport de recette (toujours)
+        if: always()
+        run: |
+          shopt -s nullglob
+          for rapport in data/backups/rapport-recette-*.txt; do
+            echo "::group::$(basename "$rapport")"
+            cat "$rapport"
+            echo "::endgroup::"
+          done
+          docker compose ps || true
+          docker compose logs --no-color --tail 40 web frontend || true
+
   ocr:
     # Lot M — 9e job (les 8 existants restent SANS OCR) : pipeline OCR par étages
     # sur échantillons commités, avec tesseract local, publication compte rendu
