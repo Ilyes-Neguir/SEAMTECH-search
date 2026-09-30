@@ -1588,6 +1588,15 @@ jobs:
           done
           docker compose ps || true
           docker compose logs --no-color --tail 40 web frontend || true
+      - name: Uploader le rapport et la sortie brute du vérificateur (toujours)
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: recette-locale-rapport
+          path: |
+            data/backups/rapport-recette-*.txt
+            data/backups/recette-verif-sortie.txt
+          if-no-files-found: warn
 
   ocr:
     # Lot M — 9e job (les 8 existants restent SANS OCR) : pipeline OCR par étages

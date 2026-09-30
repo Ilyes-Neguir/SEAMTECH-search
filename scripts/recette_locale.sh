@@ -37,6 +37,9 @@ controle() { # <id> <PASS|FAIL> <détail>
     echo "CONTROLE|$1|$2|$3" | tee -a "$RAPPORT_TMP"
     if [ "$2" = "FAIL" ]; then
         NB_FAIL=$((NB_FAIL + 1))
+        if [ -n "${GITHUB_ACTIONS:-}" ]; then
+            echo "::error title=recette-locale/$1::$3"
+        fi
     fi
 }
 
@@ -198,7 +201,16 @@ SORTIE_VERIF="$(docker compose exec -T \
     -e RECETTE_MOT_DE_PASSE="$RECETTE_MOT_DE_PASSE" \
     web python - < scripts/recette_verif.py 2>&1)" && CODE_VERIF=0 || CODE_VERIF=$?
 echo "$SORTIE_VERIF" | tee -a "$RAPPORT_TMP"
+mkdir -p data/backups
+printf '%s\n' "$SORTIE_VERIF" > "data/backups/recette-verif-sortie.txt"
 NB_FAIL=$((NB_FAIL + $(grep -c '^CONTROLE|.*|FAIL|' <<<"$SORTIE_VERIF" || true)))
+if [ -n "${GITHUB_ACTIONS:-}" ]; then
+    while IFS='|' read -r _cle _id _statut _detail; do
+        if [ "$_statut" = "FAIL" ]; then
+            echo "::error title=recette-locale/$_id::$_detail"
+        fi
+    done < <(grep '^CONTROLE|' <<<"$SORTIE_VERIF" || true)
+fi
 FICHE="$(grep '^INFO|fiche_pour_restauration|' <<<"$SORTIE_VERIF" | tail -1 | cut -d'|' -f3 || true)"
 FICHE="${FICHE:-}"
 
@@ -274,6 +286,17 @@ echo "=== RAPPORT FINAL — recette locale ($(date -u +%Y-%m-%dT%H:%M:%SZ)) ==="
 grep '^CONTROLE|' "$RAPPORT_TMP" | awk -F'|' '{printf "%-22s %-4s %s\n", $2, $3, $4}'
 echo "---"
 echo "$TOTAL contrôle(s) — $NB_FAIL FAIL — code sortie $([ "$NB_FAIL" -gt 0 ] && echo 1 || echo 0)"
+if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+    {
+        echo "## Rapport recette locale"
+        echo ""
+        echo "| contrôle | statut | détail |"
+        echo "|---|---|---|"
+        grep '^CONTROLE|' "$RAPPORT_TMP" | awk -F'|' '{printf "| %s | %s | %s |\n", $2, $3, $4}'
+        echo ""
+        echo "$TOTAL contrôle(s) — $NB_FAIL FAIL"
+    } >> "$GITHUB_STEP_SUMMARY"
+fi
 cp "$RAPPORT_TMP" "data/backups/rapport-recette-$(date -u +%Y%m%d-%H%M%S).txt" 2>/dev/null || true
 [ "$NB_FAIL" -gt 0 ] && exit 1
 exit 0

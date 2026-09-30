@@ -41,7 +41,10 @@ function Rapport([string]$id, [string]$statut, [string]$detail) {
     $ligne = "CONTROLE|$id|$statut|$detail"
     Write-Host $ligne
     Add-Content -Path $RapportTmp -Value $ligne -Encoding utf8
-    if ($statut -eq "FAIL") { $script:NbFail++ }
+    if ($statut -eq "FAIL") {
+        $script:NbFail++
+        if ($env:GITHUB_ACTIONS) { Write-Host "::error title=recette-locale/$id::$detail" }
+    }
 }
 
 function HttpCode([string]$Uri, [string]$Token) {
@@ -232,6 +235,13 @@ $CodeVerif = $LASTEXITCODE
 Write-Host $SortieVerif
 Add-Content -Path $RapportTmp -Value $SortieVerif -Encoding utf8
 $script:NbFail += ([regex]::Matches($SortieVerif, '(?m)^CONTROLE\|[^|]+\|FAIL\|')).Count
+New-Item -ItemType Directory -Force -Path (Join-Path $ProjectRoot "data\backups") | Out-Null
+Set-Content -Path (Join-Path $ProjectRoot "data\backups\recette-verif-sortie.txt") -Value $SortieVerif -Encoding utf8
+if ($env:GITHUB_ACTIONS) {
+    foreach ($m in [regex]::Matches($SortieVerif, '(?m)^CONTROLE\|([^|]+)\|FAIL\|(.*)$')) {
+        Write-Host "::error title=recette-locale/$($m.Groups[1].Value)::$($m.Groups[2].Value.Trim())"
+    }
+}
 $Fiche = ""
 foreach ($ligne in ($SortieVerif -split "`n")) {
     if ($ligne -match '^INFO\|fiche_pour_restauration\|(.+)$') { $Fiche = $Matches[1].Trim() }

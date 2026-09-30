@@ -13,6 +13,8 @@ Entrées (variables d'environnement) :
     SEAMTECH_AUTH_TOKEN   jeton de service (déjà présent dans le conteneur)
     RECETTE_SOURCES       dossier des archives/dossiers à déposer
                           (défaut : /app/data/recette-sources)
+    RECETTE_TRAVAIL       répertoire de travail (extraction, RG13)
+                          (défaut : /app/data/recette-lot)
     RECETTE_UTILISATEUR   compte nominatif de recette (défaut : recette)
     RECETTE_MOT_DE_PASSE  mot de passe du compte (obligatoire)
     RECETTE_TIMEOUT_LOT   secondes max pour un lot (défaut : 1200)
@@ -72,7 +74,7 @@ UTILISATEUR = os.environ.get("RECETTE_UTILISATEUR", "recette")
 MOT_DE_PASSE = os.environ.get("RECETTE_MOT_DE_PASSE", "")
 TIMEOUT_LOT = int(os.environ.get("RECETTE_TIMEOUT_LOT", "1200"))
 SOURCES = Path(os.environ.get("RECETTE_SOURCES", "/app/data/recette-sources"))
-TRAVAIL = Path("/app/data/recette-lot")
+TRAVAIL = Path(os.environ.get("RECETTE_TRAVAIL", "/app/data/recette-lot"))
 
 ECHECS: list[str] = []
 
@@ -303,25 +305,35 @@ def _suivre_lot(id_lot: int | None) -> dict[str, Any] | None:
 
 
 def _fiches_a_valider(nb_attendu: int) -> list[str]:
+    """Cohorte déposée : fiches a_valider (badgées) + déjà validées (rejeu).
+
+    Idempotent : une re-recette ne doit pas échouer parce qu'une fiche du
+    premier passage a été validée — la cohorte compte les deux statuts.
+    """
     code, corps, _ = _appel("GET", "/fiches?statut=a_valider&taille=100")
     fiches = corps.get("fiches", []) if isinstance(corps, dict) else []
     codes = [f.get("code", "") for f in fiches if isinstance(f, dict)]
     badgees = all(f.get("statut") == "a_valider" for f in fiches if isinstance(f, dict))
     total = int(corps.get("total") or 0) if isinstance(corps, dict) else 0
-    ok = code == 200 and total >= nb_attendu and badgees and len(codes) >= nb_attendu
+    code_v, corps_v, _ = _appel("GET", "/fiches?statut=valide&taille=100")
+    valides = [f.get("code", "") for f in (corps_v.get("fiches", []) if isinstance(corps_v, dict) else [])]
+    cohorte = sorted(set(codes) | set(valides))
+    ok = code == 200 and badgees and len(cohorte) >= nb_attendu
     _ligne(
         "fiches-a-valider",
         ok,
-        f"HTTP {code} total={total} (attendu ≥ {nb_attendu}) toutes badgées a_valider={badgees} "
-        f"codes={codes[:8]}",
+        f"HTTP {code} a_valider={total} (toutes badgées={badgees}) + valides={len(valides)} "
+        f"= cohorte {len(cohorte)} (attendu ≥ {nb_attendu}) codes={cohorte[:8]}",
     )
-    return codes
+    return cohorte
 
 
 def _valider_une_fiche(codes: list[str]) -> str | None:
     if not codes:
         _ligne("validation-fiche", False, "aucune fiche à valider")
         return None
+    # Cible DÉTERMINISTE (première de la cohorte triée) : une re-recette
+    # valide la MÊME fiche — 409 « déjà validée » = succès d'idempotence.
     cible = codes[0]
     code_http, corps, _ = _appel("POST", f"/fiches/{urllib.parse.quote(cible)}/valider", {})
     code2, corps2, _ = _appel("GET", "/fiches?statut=valide&taille=100")
