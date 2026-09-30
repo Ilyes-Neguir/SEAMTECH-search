@@ -397,10 +397,10 @@ def _recherche_dimension(codes: list[str], index: Any) -> None:
         and float(dim.get("tolerance_pct") or 0) == 0.5
     )
     sous_details.append(f"« 6,60 » → dimension_active={_extrait(dim, 100)} OK={mecanisme}")
-    # (b) cote nommée « SLU 6,60 ».
+    # (b) cote nommée « SLU 6,60 » — la cote canonique retournée est « slu_m ».
     code, corps, _ = _appel("GET", f"/recherche?q={urllib.parse.quote('SLU 6,60')}&limit=5")
     dim2 = corps.get("dimension_active") if isinstance(corps, dict) else None
-    nommee = code == 200 and isinstance(dim2, dict) and dim2.get("cote") == "slu"
+    nommee = code == 200 and isinstance(dim2, dict) and dim2.get("cote") in {"slu", "slu_m"}
     sous_details.append(f"« SLU 6,60 » → cote={dim2.get('cote') if isinstance(dim2, dict) else None} OK={nommee}")
     # (c) valeur RÉELLE issue du corpus : la fiche propriétaire doit remonter.
     reel_ok = True
@@ -408,27 +408,32 @@ def _recherche_dimension(codes: list[str], index: Any) -> None:
         with index.connect() as connexion:
             with connexion.cursor() as cursor:
                 cursor.execute(
-                    "SELECT c.id_fiche, c.cote, c.valeur FROM fiche_cotes c "
-                    "JOIN fiche f ON f.id = c.id_fiche WHERE c.valeur IS NOT NULL LIMIT 5"
+                    "SELECT id_fiche, jeu, slu_m, sle_m, sf_m, shw_m, spa_m2, tetiere_cm, poids_kg "
+                    "FROM fiche_cotes LIMIT 5"
                 )
                 lignes = cursor.fetchall()
     except Exception as erreur:  # noqa: BLE001
         lignes = []
         sous_details.append(f"cotes en base illisibles : {_extrait(erreur, 80)}")
     if lignes:
-        for _id_fiche, _cote, valeur in lignes:
-            try:
-                v = float(valeur)
-            except (TypeError, ValueError):
+        noms_cotes = ("slu_m", "sle_m", "sf_m", "shw_m", "spa_m2", "tetiere_cm", "poids_kg")
+        for ligne in lignes:
+            for nom, valeur in zip(noms_cotes, ligne[2:]):
+                if valeur is None:
+                    continue
+                requete = f"{float(valeur):.2f}".replace(".", ",")
+                code, corps, _ = _appel(
+                    "GET", f"/recherche?q={urllib.parse.quote(requete)}&limit=10&inclure_a_valider=true"
+                )
+                resultats = corps.get("resultats", []) if isinstance(corps, dict) else []
+                codes_trouves = [r.get("code") for r in resultats if isinstance(r, dict)]
+                nb = corps.get("nb_resultats") if isinstance(corps, dict) else "?"
+                sous_details.append(f"valeur réelle « {requete} » ({nom}) → nb={nb} top10={codes_trouves[:6]}")
+                if not codes_trouves:
+                    reel_ok = False
+                break
+            else:
                 continue
-            requete = f"{v:.2f}".replace(".", ",")
-            code, corps, _ = _appel("GET", f"/recherche?q={urllib.parse.quote(requete)}&limit=10&inclure_a_valider=true")
-            resultats = corps.get("resultats", []) if isinstance(corps, dict) else []
-            codes_trouves = [r.get("code") for r in resultats if isinstance(r, dict)]
-            nb = corps.get("nb_resultats") if isinstance(corps, dict) else "?"
-            sous_details.append(f"valeur réelle « {requete} » ({_cote}) → nb={nb} top10={codes_trouves[:6]}")
-            if not codes_trouves:
-                reel_ok = False
             break
     else:
         sous_details.append("NON MESURÉ : aucune cote en base sur ce corpus")
@@ -439,7 +444,12 @@ def _recherche_dimension(codes: list[str], index: Any) -> None:
 def _filtres_facettes() -> None:
     code, corps, _ = _appel("GET", "/recherche?q=&limit=20&inclure_a_valider=true")
     facettes = corps.get("facettes") if isinstance(corps, dict) else None
-    a_des_facettes = isinstance(facettes, dict) and bool(facettes)
+    groupes_vides = {
+        cle: len(valeurs)
+        for cle, valeurs in (facettes or {}).items()
+        if isinstance(valeurs, list) and valeurs
+    }
+    a_des_facettes = isinstance(facettes, dict) and bool(groupes_vides)
     # Badge : inclure_a_valider=false doit EXCLURE les fiches encore non
     # vérifiées (la fiche validée plus haut a le droit d'y figurer).
     _, liste, _ = _appel("GET", "/fiches?statut=a_valider&taille=100")

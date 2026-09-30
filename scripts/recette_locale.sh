@@ -91,13 +91,18 @@ fi
 # ---------------------------------------------------------------------------
 VARS="POSTGRES_PASSWORD MINIO_ROOT_USER MINIO_ROOT_PASSWORD REDIS_PASSWORD SEAMTECH_AUTH_TOKEN SEAMTECH_UI_PASSWORD SEAMTECH_SESSION_SECRET"
 if [ ! -f .env ]; then
-    umask 077
-    : > .env
-    for var in $VARS; do
-        echo "$var=seamtech-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')" >> .env
-    done
-    echo "SEAMTECH_ROOT_PATHS=$SOURCES_CONTENEUR:/app/data/recette-lot:/app/data:/app/sample_data" >> .env
-    echo "RECETTE_MOT_DE_PASSE=seamtech-recette-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')" >> .env
+    # umask restreint UNIQUEMENT pour .env (secret) — remis à 022 ensuite,
+    # sinon les répertoires de travail créés plus bas seraient 700 et le
+    # conteneur web (utilisateur seamtech) ne pourrait pas les lire.
+    ( umask 077
+      {
+        for var in $VARS; do
+            echo "$var=seamtech-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+        done
+        echo "SEAMTECH_ROOT_PATHS=$SOURCES_CONTENEUR:/app/data/recette-lot:/app/data:/app/sample_data"
+        echo "RECETTE_MOT_DE_PASSE=seamtech-recette-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+      } > .env
+    )
     CREATION="créé avec 7 secrets aléatoires"
 else
     CREATION="existant réutilisé (idempotence)"
@@ -189,6 +194,9 @@ for chemin in "$@"; do
     cp -r "$chemin" "$SOURCES_HOTE/"
     NB_EXTRA=$((NB_EXTRA + 1))
 done
+# Le conteneur web (utilisateur seamtech) doit pouvoir LIRE les sources
+# copiées — y compris les chemins argument (espaces/accents) et leurs arbres.
+chmod -R a+rwX "$SOURCES_HOTE" 2>/dev/null || true
 echo "Sources en zone de travail : $NB_ZIP ZIP du dépôt + $NB_EXTRA chemin(s) argument."
 
 # ---------------------------------------------------------------------------
