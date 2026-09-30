@@ -430,7 +430,8 @@ def fichier_validation(index: Any, gabarit: str | None = None, anomalie: str | N
         # palier « décomposé » : même borne 0,85 que compter_par_palier (échelle ordinale §4)
         "COUNT(c.id_champ) FILTER (WHERE c.valeur_normalisee IS NOT NULL AND c.confiance >= %s AND c.confiance < %s), "
         "COUNT(c.id_champ) FILTER (WHERE c.valeur_normalisee IS NOT NULL AND (c.confiance < %s OR c.confiance IS NULL)), "
-        "MIN(c.confiance) FILTER (WHERE c.valeur_normalisee IS NOT NULL) "
+        "MIN(c.confiance) FILTER (WHERE c.valeur_normalisee IS NOT NULL), "
+        "EXISTS (SELECT 1 FROM fiche_anomalie a WHERE a.id_fiche = f.id_fiche AND a.statut = 'a_traiter') "
         "FROM fiche f "
         "LEFT JOIN fiche_champ_extrait c ON c.id_fiche = f.id_fiche "
         "LEFT JOIN gabarit g ON g.id_gabarit = f.id_gabarit "
@@ -452,6 +453,7 @@ def fichier_validation(index: Any, gabarit: str | None = None, anomalie: str | N
             # échelle ORDINALE : des comptes par palier, jamais une moyenne
             "paliers": {"certain": int(ligne[5]), "lu": int(ligne[6]), "decompose": int(ligne[7]), "partiel": int(ligne[8])},
             "confiance_min": float(ligne[9]) if ligne[9] is not None else None,
+            "a_anomalies": bool(ligne[10]),
         }
         for ligne in lignes
     ]

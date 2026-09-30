@@ -1,10 +1,31 @@
+# Changelog
+
+## 2026-09-29 — Cycle production-readiness (en cours)
+
+- **CI** : runners épinglés sur `ubuntu-24.04` ; mises à niveau vérifiées des actions officielles (checkout/setup-python/setup-node/upload-artifact/cache/buildx/pnpm) vers les majeures actuellement publiées. Nouveau job `securite-dependances` audite les dépendances Python runtime et frontend production ; seuls les vulnérabilités HIGH/CRITICAL corrigibles font échouer le job, les autres sont annotées.
+- **Confidentialité** : suppression de `7792-SO_ffab.pdf` à la racine ; `tests/test_ocr_etages.py` utilise la copie canonique `sample_data/`. La copie racine partageait SHA-256 `43afc51e…`. Le fichier reste dans l'historique Git, la réduction ne concerne que l'arbre courant. Renforcement du garde-fou : aucun PDF à la racine. Les PDF OCR du répertoire `tests/fixtures/ocr/` sont explicitement des fixtures SYNTHÉTIQUES autorisées, leur génération ne conserve pas systématiquement les octets PDF entre versions d'outils.
+
+## 2026-09-29 — Phase 2.2 validation humaine à débit (en cours)
+
+- File backend déjà triée par `MIN(confiance)` croissante puis code; API garde `confiance_min`, ajoute le marqueur d'alerte `a_anomalies`. UI liste la confiance et signale les anomalies.
+- Raccourcis V (valider, confirmation explicite si anomalie), R (focus motif, Entrée confirme), C (focus du champ), J/K ou ↑/↓ (navigation), ? (aide, Échap ferme). Le focus d'un champ dirige le viewer vers sa page et surligne la zone. Les octets du PDF suivant sont préchargés en mémoire du navigateur.
+- Le chrono est strictement local à l'onglet/session : temps par décision et résumé médiane/min/max/compteur à la fin. Aucune mesure n'est envoyée. Aucun statut n'est auto-validé ; la validation groupée reste verrouillée à 409 sans calibration.
+- E2E live étendu de 4 à 8 tests attendus ; suite sans service mesurée à 764 passed, 3 skipped, 234 deselected.
+
+## 2026-09-29 — Docs, échelle et allègement (Lot 3 en cours)
+
+- Deux runbooks ciblés sous `docs/deploiement/` : VPS01 + R2 en option non décidée (MinIO reste effectif) et poste atelier local ; ils renvoient aux procédures détaillées existantes au lieu de les recopier.
+- Workflow manuel `scale-bench.yml` : 10 000 fiches exclusivement SYNTHÉTIQUES dans PostgreSQL jetable, mesures p50/p95/p99 de `/recherche` (six profils + suggestions), `EXPLAIN (ANALYZE, BUFFERS)` sur les trois instructions SQL SELECT les plus lentes observées ; timeout 20 min. Ne constitue pas une preuve VPS01/R2.
+- Drapeau `SEAMTECH_OPTIONAL_FEATURES_ENABLED` (défaut actif) masque assistant, `/ml/*` et charge du modèle quand `false`; routes code conservées, recherche classique continue. Poste mono-opérateur documenté.
+- Portail checklist et verdict projet complétés après mesure finale CI/scale-bench.
+
 ## Unreleased — Production-readiness Phase 0 (garde-fou confidentialité) + Phase 2.1 (fiches a_valider cherchables, badgées « Non vérifiée ») (`arena/01a0d324-seamtech-search`)
 
 **Phase 2.1 — les fiches déposées sont cherchables AVANT leur validation (décision commanditaire du 2026-09-29).** Problème de produit le plus risqué à 10 000 PDF : le texte de recherche d'une fiche (`fiche.search_vector`, fonction pondérée A/B/C `rafraichir_texte_recherche_fiche`, migration 007) n'était rempli qu'à la VALIDATION humaine — des milliers de fiches déposées mais non validées étaient invisibles à `/recherche`. Correctif en trois gestes, RG3 **inchangé sur le fond** (rien ne passe à `valide` sans décision humaine ; une fiche `rejete` n'est jamais renvoyée) : (1) `ecrire_fiche` remplit le texte de recherche **dès l'écriture** (`seamtech_search/fiches/persistance.py`) ; (2) **migration `018_recherche_a_valider`** qui rattrape les fiches déjà en base (`SELECT rafraichir_texte_recherche_fiche(id_fiche) FROM fiche WHERE search_vector IS NULL` — aucune table nouvelle, aucune donnée validée touchée, `VERSION_SCHEMA_METIER` → `018_recherche_a_valider`) ; (3) le défaut de `/recherche` et de `rechercher_fiches` **inclut** désormais les `a_valider`, le statut étant TOUJOURS exposé dans chaque résultat (badge interface) ; `inclure_a_valider=false` restreint à l'archive de confiance. L'assistant garde sa propre sémantique (validées seules par défaut : ses réponses sourcées ne doivent pas citer du non vérifié sans le dire).
 
 **Interface (écran Recherche)** : badge **« Non vérifiée »** sur chaque résultat `a_valider` (`data-testid="badge-non-verifiee"`, statut jamais masqué) ; case **« Validées uniquement »** dans la barre latérale (`inclure_a_valider=false`), pastille de filtre actif dédiée, état partageable dans l'URL (`inclure_a_valider=false` déjà dans `FILTRES_CLES`). Nouveau test e2e `frontend/e2e/recherche-badge.spec.ts` sur la fiche `BIS-7792` (a_valider) du seed : présente+badgée par défaut, retirée par le filtre, URL partagée, retour au décochage. `tsc --noEmit` et `pnpm build` verts localement (Next.js 16, production).
 
-**Phase 0 — garde-fou de confidentialité des dépôts** : `tests/test_confidentialite_depots.py` (**17 tests**, suite sans service) épingle l'inventaire COMPLET des fichiers documentaires suivis par Git (7 PDF, 7 ZIP du corpus réel — tout ajout ou modification d'un PDF/ZIP/`.plx`/`.xin`/`.dxf`/`.db` non épinglé rend la CI rouge ; les formats machine restent interdits en vrac) et vérifie que le doublon racine `7792-SO_ffab.pdf` reste l'exacte copie canonique. Complète `test_empreintes_fixtures.py` sans le réécrire. Constat associé, à décision du commanditaire : le PDF client réel 7792-SO (racine + `sample_data/`) et les 7 ZIP réels sont dans l'historique Git ; le passage du dépôt en privé requiert les droits propriétaire (le token agent reçoit `403` sur `PATCH repos … private=true`).
+**Phase 0 — garde-fou de confidentialité des dépôts** : `tests/test_confidentialite_depots.py` (**17 tests**, suite sans service) épingle l'inventaire COMPLET des fichiers documentaires suivis par Git (6 PDF dont 2 fixtures OCR synthétiques explicitement autorisées (4 PDF épinglés), 7 ZIP du corpus réel — tout ajout ou modification d'un PDF/ZIP/`.plx`/`.xin`/`.dxf`/`.db` non épinglé rend la CI rouge ; les formats machine restent interdits en vrac) et interdit tout PDF à la racine (le doublon racine a été supprimé). Complète `test_empreintes_fixtures.py` sans le réécrire. Le PDF réel reste dans l'historique Git et dans sa copie canonique suivie ; seuls l'arbre courant et l'exposition en double sont réduits. Le dépôt reste public selon la décision du commanditaire ; aucun changement de visibilité n'est demandé.
 
 **Contrats de tests mis à jour (aucun affaiblissement)** : `test_statut_par_defaut_valide_seulement` → `test_statut_par_defaut_badge_non_verifiee` (le défaut INCLUT les a_valider avec statut exposé, `inclure_a_valider=False` les exclut, la rejetée n'apparaît jamais, statut exigé sur CHAQUE résultat) ; `test_validation_rend_cherchable` → `test_validation_fait_passer_dans_l_archive_de_confiance` (cherchable dès l'écriture badgée, la validation retire le badge) ; facettes : compteurs exacts des DEUX côtés du contrat (14 par défaut / 12 en archive de confiance) ; recette : `test_03_services_et_migrations_018_base_neuve`, `test_07` et `test_10.5` éprouvent le nouveau contrat **sur le corpus réel** (fiche a_valider retrouvée par défaut statut exposé, absente de l'archive de confiance, y compris sur base restaurée) ; nouvelles régressions PostgreSQL `TestRechercheDesLEcriture` (2 tests : vecteur rempli dès l'écriture + fiche retrouvée par défaut) ; épingles de migrations mises à jour (001..018, `018_recherche_a_valider`, toujours 33 tables métier).
 
@@ -331,9 +352,9 @@ rendre la fusion sûre, corriger le dernier défaut réel, nettoyer.
   restaurée de travers) ; `scripts/etat_sandbox.sh` (HEAD vs origin via
   ls-remote avant tout commit, arbre propre, empreintes affichées) ; README :
   la vérité est sur origin, on ne travaille jamais sans fetch.
-- **Nettoyage documenté** : doublon `7792-SO_ffab.pdf` racine vs
+- **Nettoyage effectué le 29/09/2026** : doublon `7792-SO_ffab.pdf` racine vs
   `sample_data/CLIENT-7792-SO/` (byte-identiques, sha256 43afc51e…, mesuré) —
-  suppression portée par une branche de nettoyage post-fusion (runbook §3) ;
+  supprimé de l'arbre courant ; son blob subsiste dans l'historique Git ;
   règle tranchée : un document client ne se versionne pas (archive = source de
   vérité, RG13), le dépôt doit passer privé.
 - **Traçabilité client** : `docs/verite_terrain/TRACABILITE_LIVRAISON.md` —

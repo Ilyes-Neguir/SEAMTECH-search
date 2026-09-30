@@ -1,0 +1,137 @@
+name: Scale benchmark (SYNTHÉTIQUE)
+
+on:
+  # Opt-in PR execution: only code/docs that define this synthetic benchmark
+  # should pay its bounded <20-minute cost. The manual trigger remains available
+  # after this workflow has been installed on the repository default branch.
+  pull_request:
+    paths:
+      - ".github/workflows/scale-bench.yml"
+      - "scripts/scale_bench.py"
+      - "seamtech_search/recherche.py"
+      - "seamtech_search/schema_metier.py"
+      - "tests/conftest.py"
+  workflow_dispatch:
+    inputs:
+      samples:
+        description: "Mesures par scénario (minimum 50 conseillé)"
+        required: false
+        default: "50"
+        type: choice
+        options:
+          - "50"
+          - "100"
+
+jobs:
+  scale-bench:
+    name: scale-bench (10 000 fiches SYNTHÉTIQUES)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: seamtech
+          POSTGRES_PASSWORD: seamtech_test_password
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 8
+    env:
+      SEAMTECH_SCALE_ADMIN_URL: postgresql://seamtech:seamtech_test_password@localhost:5432/postgres
+      SCALE_BENCH_SAMPLES: ${{ inputs.samples || '50' }}
+      SCALE_BENCH_FICHES: "10000"
+      SCALE_BENCH_OUTPUT: /tmp/scale-bench.json
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Installer dépendances runtime
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt httpx==0.28.1
+      - name: Créer la base jetable de benchmark
+        run: |
+          python - <<'PY'
+          import os
+          import psycopg2
+          from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
+          admin = psycopg2.connect(os.environ["SEAMTECH_SCALE_ADMIN_URL"])
+          admin.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
+          with admin.cursor() as cursor:
+              cursor.execute('DROP DATABASE IF EXISTS "seamtech_scale"')
+              cursor.execute('CREATE DATABASE "seamtech_scale"')
+          admin.close()
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env:
+              env.write("SEAMTECH_SCALE_DATABASE_URL=postgresql://seamtech:seamtech_test_password@localhost:5432/seamtech_scale\n")
+          PY
+      - name: Exécuter mesure endpoints /recherche et suggestions
+        run: |
+          set -uo pipefail
+          set +e
+          PYTHONPATH=. python scripts/scale_bench.py 2>&1 | tee /tmp/scale-bench.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            echo "::error title=scale-bench-details::$(tail -60 /tmp/scale-bench.log | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 5000)"
+            exit "$rc"
+          fi
+      - name: Résumer les mesures SYNTHÉTIQUES dans le job GitHub
+        if: success()
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          report = json.loads(Path(os.environ["SCALE_BENCH_OUTPUT"]).read_text(encoding="utf-8"))
+          lines = [
+              "## Résultats SYNTHÉTIQUES — ne prouvent pas la performance VPS01/R2",
+              f"{report['fiches']} fiches synthétiques; {report['echantillons_par_requete']} échantillons par scénario.",
+              "| Scénario | p50 (ms) | p95 (ms) | p99 (ms) | Max (ms) |",
+              "|---|---:|---:|---:|---:|",
+          ]
+          for name, metrics in report["requêtes"].items():
+              lines.append(f"| {name} | {metrics['p50_ms']} | {metrics['p95_ms']} | {metrics['p99_ms']} | {metrics['max_ms']} |")
+          for plan in report.get("explain_top3", []):
+              lines += ["", f"### EXPLAIN #{plan['rank']} — observé {plan['observed_execute_ms']} ms", "```text", plan["plan"], "```"]
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write("\n".join(lines) + "\n")
+          payload = json.dumps({"fiches": report["fiches"], "echantillons": report["echantillons_par_requete"], "requêtes": report["requêtes"]}, ensure_ascii=False, separators=(",", ":"))
+          payload = payload.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+          print(f"::notice title=scale-bench SYNTHÉTIQUE::{payload}")
+          import base64
+          import gzip
+          for plan in report.get("explain_top3", []):
+              explain = json.dumps({"rank": plan["rank"], "observed_execute_ms": plan["observed_execute_ms"], "plan": plan["plan"]}, ensure_ascii=False, separators=(",", ":"))
+              compressed = base64.b64encode(gzip.compress(explain.encode("utf-8"), mtime=0)).decode("ascii")
+              chunks = [compressed[offset:offset + 2500] for offset in range(0, len(compressed), 2500)]
+              for number, chunk in enumerate(chunks, start=1):
+                  print(f"::notice title=scale-bench EXPLAIN #{plan['rank']} gzip+base64 {number}/{len(chunks)}::{chunk}")
+          PY
+      - name: Publier le rapport (plans EXPLAIN compris)
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: scale-bench-synthetique-${{ github.run_id }}
+          path: /tmp/scale-bench.json
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Détruire la base jetable
+        if: always()
+        run: |
+          python - <<'PY'
+          import os
+          import psycopg2
+          from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
+          admin = psycopg2.connect(os.environ["SEAMTECH_SCALE_ADMIN_URL"])
+          admin.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
+          with admin.cursor() as cursor:
+              cursor.execute("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'seamtech_scale' AND pid <> pg_backend_pid()")
+              cursor.execute('DROP DATABASE IF EXISTS "seamtech_scale"')
+          admin.close()
+          PY

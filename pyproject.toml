@@ -58,6 +58,13 @@ markers = [
     "sauvegarde: aller-retour complet sauvegarde → destruction → restauration (Lot H.1), épreuve hors-site en CI avec MinIO réel",
     "perf: mesures de latence (critères produit p95 < 100 ms) — à exécuter HORS instrumentation (--cov) sur runner partagé, dans l'étape CI dédiée qui publie p50/p95/max (audit 22/09 : flake à 108,8 ms mesuré sous --cov)",
     "recette_corpus: recette complète du corpus réel (7 dossiers) — job CI dédié « recette-corpus-reel » uniquement : services réels (PostgreSQL+pgvector, Redis, MinIO, Tesseract+fra), extraction temporaire des ZIP, garde SEAMTECH_RECETTE_CORPUS",
+    "integration_docker: intégration Docker/Compose avec Postgres, Redis et MinIO réels",
+    "ocr_suite: tests OCR dédiés exécutés par le job CI OCR",
+    "ci_guard_dimension: garde ROUGE/VERT ciblant le contrat de dimension/tri",
+    "ci_guard_cotes: garde ROUGE/VERT ciblant le contrat de chargement des cotes",
+    "ci_guard_dedup: garde ROUGE/VERT ciblant la détection des doublons exacts",
+    "ci_guard_attribution: garde ROUGE/VERT ciblant l'attribution de validation",
+    "ci_guard_ocr: garde ROUGE/VERT ciblant le contrat OCR par page",
 ]
 
 [tool.ruff]

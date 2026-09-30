@@ -59,6 +59,8 @@ def _has_tesseract() -> bool:
 # CLI inventaire
 # ---------------------------------------------------------------------------
 
+pytestmark = pytest.mark.ocr_suite
+
 
 def test_cli_inventaire_succes(tmp_path: Path, capsys) -> None:
     src = tmp_path / "src_inv_succes"

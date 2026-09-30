@@ -155,6 +155,7 @@ def _compter_liens(index: Any) -> int:  # noqa: ANN401
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.ci_guard_dedup
 def test_doublons_exacts_le_pdf_reel_en_double(base_dedup: dict[str, Any]) -> None:
     """LE cas réel : ``fiche-7792-SO_ffab.pdf`` (sha256 ``43afc51e…``) attaché à
     DEUX fiches. Elles doivent former UN groupe exact — et un seul, portant la

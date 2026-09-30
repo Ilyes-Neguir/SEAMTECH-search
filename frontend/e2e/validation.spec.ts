@@ -33,6 +33,105 @@ test.describe("validation de bout en bout", () => {
   //   7792-SO — la VRAIE fiche client (SHA-256 43afc51e…, 842×595 paysage) ;
   //   0901-MM, 0902-MM — fiches synthétiques (CLIENT-GENOA, CLIENT-E2E-TROIS).
 
+  test("la file respecte le tri croissant confiance puis code", async ({ page }) => {
+    const file = await ouvrirFile(page)
+    const lignes = await file.locator("li[data-code]").evaluateAll((elements) => elements.map((li) => {
+      const code = li.getAttribute("data-code") ?? ""
+      const brut = li.querySelector('[data-testid="confiance-file"]')?.textContent?.trim() ?? "sans confiance"
+      const confiance = brut === "sans confiance" ? null : Number(brut)
+      return { code, confiance }
+    }))
+    const attendu = [...lignes].sort((a, b) => {
+      if (a.confiance === null && b.confiance !== null) return 1
+      if (b.confiance === null && a.confiance !== null) return -1
+      return (a.confiance ?? 0) - (b.confiance ?? 0) || a.code.localeCompare(b.code)
+    })
+    expect(lignes).toEqual(attendu)
+  })
+
+  test("navigation clavier J/K et aide ? sans souris", async ({ page }) => {
+    const file = await ouvrirFile(page)
+    const codes = await file.locator("li[data-code]").evaluateAll((elements) => elements.map((li) => li.getAttribute("data-code") ?? ""))
+    expect(codes.length).toBeGreaterThan(1)
+    await expect(page.getByTestId("titre-fiche")).toHaveText(codes[0])
+    await page.keyboard.press("j")
+    await expect(page.getByTestId("titre-fiche")).toHaveText(codes[1])
+    await page.keyboard.press("ArrowUp")
+    await expect(page.getByTestId("titre-fiche")).toHaveText(codes[0])
+    await page.keyboard.press("?")
+    await expect(page.getByTestId("aide-raccourcis")).toBeVisible()
+    await expect(page.getByTestId("aide-raccourcis")).toContainText("Entrée")
+    await page.keyboard.press("Escape")
+    await expect(page.getByTestId("aide-raccourcis")).toHaveCount(0)
+    const champ = page.locator('input[data-testid^="champ-"]').first()
+    await expect(champ).toBeVisible()
+    await page.keyboard.press("c")
+    await expect(champ).toBeFocused()
+    // R is a page-level shortcut; while an input owns focus, printable keys
+    // must remain available for editing instead of stealing focus.
+    await champ.evaluate((element) => (element as HTMLInputElement).blur())
+    await page.keyboard.press("r")
+    await expect(page.getByTestId("motif-rejet")).toBeFocused()
+  })
+
+  test("le focus clavier d'un champ surligne sa zone et sa page PDF", async ({ page }) => {
+    const file = await ouvrirFile(page)
+    await ouvrirFiche(page, file, "7792-SO")
+    const pdf = page.getByTestId("pdf-page")
+    await expect(pdf).toHaveText(/\d+ \/ \d+/, { timeout: 15000 })
+    const champAvecZone = page.locator('input[data-testid^="champ-"][data-zone="true"]').first()
+    await expect(champAvecZone).toBeVisible()
+    await champAvecZone.focus()
+    const canvas = page.getByTestId("pdf-canvas")
+    await expect(canvas).toHaveAttribute("data-zone-active", "true")
+    const pageZone = Number(await canvas.getAttribute("data-zone-page")) + 1
+    await expect(pdf).toHaveText(new RegExp(`^${pageZone} / [0-9]+$`))
+  })
+
+  test("V confirme les anomalies; R + Entrée rejette et affiche le chrono local", async ({ page }) => {
+    await signIn(page)
+    let validationEnvoyee = false
+    let rejetEnregistre = false
+    await page.route("**/api/validation/file**", (route) => route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(rejetEnregistre ? [] : [{
+        code: "ANOMALIE-E2E", titre: "Fixture synthétique", score_qualite: 0.4, gabarit: "TEST",
+        nb_champs: 1, paliers: { certain: 0, lu: 0, decompose: 0, partiel: 1 },
+        confiance_min: 0.1, a_anomalies: true,
+      }]),
+    }))
+    await page.route("**/api/fiches/ANOMALIE-E2E/champs", (route) => route.fulfill({ status: 200, contentType: "application/json", body: "[]" }))
+    await page.route("**/api/fiches/ANOMALIE-E2E/pieces", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ pdf_source: null, fichier_source: null, pieces: [] }) }))
+    await page.route("**/api/validation/doublons", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ par_code: {} }) }))
+    await page.route("**/api/fiches/ANOMALIE-E2E/valider", (route) => {
+      validationEnvoyee = true
+      return route.fulfill({ status: 200, contentType: "application/json", body: "{}" })
+    })
+    await page.route("**/api/fiches/ANOMALIE-E2E/rejeter", (route) => {
+      rejetEnregistre = true
+      return route.fulfill({ status: 200, contentType: "application/json", body: "{}" })
+    })
+    await page.goto("/validation")
+    await expect(page.getByTestId("titre-fiche")).toHaveText("ANOMALIE-E2E")
+    await expect(page.getByText("Anomalie à vérifier")).toBeVisible()
+    page.once("dialog", async (dialog) => {
+      expect(dialog.message()).toContain("anomalie")
+      await dialog.dismiss()
+    })
+    await page.keyboard.press("v")
+    expect(validationEnvoyee).toBe(false)
+
+    await page.keyboard.press("r")
+    await expect(page.getByTestId("motif-rejet")).toBeFocused()
+    await page.getByTestId("motif-rejet").fill("anomalie confirmée par opérateur")
+    await page.keyboard.press("Enter")
+    await expect(page.getByTestId("message-ok")).toContainText("rejeter")
+    expect(rejetEnregistre).toBe(true)
+    await expect(page.getByTestId("chrono-session")).toContainText("1 fiche(s)")
+    await expect(page.getByTestId("chrono-session")).toContainText("Mesure locale uniquement")
+  })
+
   test("le seed dépose trois dossiers et le rejet exige un motif", async ({ page }) => {
     const file = await ouvrirFile(page)
     // Preuve que le pipeline de dépôt a traité les trois dossiers d'exemple.

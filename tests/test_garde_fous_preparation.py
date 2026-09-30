@@ -196,11 +196,17 @@ EXCEPTIONS_RG14: dict[str, str] = {
         "connexion sortante est impossible (namespace réseau isolé), aucun "
         "appel sortant à l'exécution normale"
     ),
+    "scripts/audit_dependency_policy.py": (
+        "job CI uniquement : résolution de sévérité CVSS des avis pip-audit via OSV "
+        "pour appliquer le seuil HIGH/CRITICAL ; jamais importé/exécuté par le service. "
+        "La dépendance est explicitement documentée dans docs/deploiement/ (lot 3)"
+    ),
 }
 
 DOCS_MARQUEURS_EXCEPTIONS = {
     "seamtech_search/ml/telecharger.py": "EXPLICITE",
     "scripts/mesure_assistant.py": "socket",
+    "scripts/audit_dependency_policy.py": "RG14_EXCEPTION",
 }
 
 
@@ -321,6 +327,7 @@ def test_reprise_et_integrite_toujours_presents() -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.ocr_suite
 def test_rapports_ocr_sans_identifiants_de_base(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """--database-url avec identifiants : jamais recopié dans rapports ni stderr."""
     from seamtech_search.ocr.cli import main as ocr_main
@@ -419,6 +426,7 @@ def test_erreur_interne_preflight_ne_revele_pas_le_secret(monkeypatch: pytest.Mo
     assert "RuntimeError" in sortie.err  # lisible : le type est communiqué
 
 
+@pytest.mark.ocr_suite
 def test_rapports_preflight_ocr_ne_recopient_pas_les_variables_environnement(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Balayage large : aucun marqueur secret injecté dans les rapports produits."""
     marqueur = "MarqueurSecretXYZ789"

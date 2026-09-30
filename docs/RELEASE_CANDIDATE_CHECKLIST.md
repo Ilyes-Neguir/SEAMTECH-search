@@ -1,7 +1,6 @@
 # Checklist de release candidate — SEAMTECH Search
 
-**Version auditée** : `main` = `f8befb5da800c10d793e25addf9519cc63f5fd6c` (PR #28 fusionnée,
-CI post-fusion verte 9/9, run `36168258103`) · **Rédigée le** 2026-09-25.
+**Photographie historique** : les sections opérateur ci-dessous ont été amorcées sur `main` `f8befb5` (25/09) et comportent des sorties encore à rejouer sur la machine cible. **Mise à jour de production-readiness** : base attendue `a7ffe7d` (PR #32) vérifiée le 29/09 ; preuves, commandes et SHA de cette mission en §19. Les éléments historiques ne valent pas preuve sur le VPS01 du commanditaire.
 
 À quoi sert ce document : c'est la **liste des cases à cocher sur le poste cible**, dans
 l'ordre, avec pour chaque case **la commande exacte**, **la sortie attendue** et **la
@@ -11,8 +10,7 @@ rempli, daté et signé.
 
 > **Ce qui reste bloqué et ne peut donc PAS être coché ici**
 >
-> - **Lot G réel bloqué** : l'archive de production n'a pas été livrée. Aucun traitement
->   de masse, aucune mesure de volumétrie, aucune durée d'import réelle.
+> - **Échelle de production non mesurée** : le corpus fourni de 7 ZIP est traité par la recette CI, mais les 200 dossiers/volumes du poste cible et leur durée d'import restent à mesurer sur l'infrastructure du commanditaire.
 > - **F-2 bloqué** : les 300 à 500 fiches validées nécessaires au réentraînement ne sont
 >   pas disponibles ; la calibration reste volontairement verrouillée (`calibre: false`).
 > - **Métriques de production indisponibles** : tous les chiffres cités viennent de la CI
@@ -89,8 +87,7 @@ variables `:?` manque — c'est voulu.
       `tests/test_garde_fous_preparation.py` §D).
 - [ ] **3.6** Sauvegarde des secrets **hors machine** (coffre / enveloppe scellée) : sans eux,
       une restauration ne redonne pas l'accès.
-- [ ] **3.7** Le jeton GitHub ayant circulé est **révoqué** et le dépôt est **privé** (le dépôt
-      contient une vraie fiche client — RG13).
+- [ ] **3.7** **Décision du commanditaire 2026-09-29 : le dépôt reste public** ; aucune demande de changement de visibilité n'est lancée. Le PDF racine doublon a été retiré, mais la copie canonique client 7792-SO et l'historique Git demeurent publics. **NON MESURÉ** ici : état de révocation de tout ancien jeton GitHub côté propriétaire. Mesure opérateur requise : vérifier les jetons dans les paramètres du compte, sans les copier dans Git ni le chat.
 
 ## 4. Lancement Docker
 
@@ -116,15 +113,15 @@ il n'y a pas d'étape manuelle, mais il y a une **vérification obligatoire**.
   docker compose exec -T postgres psql -U seamtech -d seamtech_search \
     -c "SELECT version FROM schema_migrations ORDER BY version;"
   ```
-  Attendu : **17 lignes**, de `001_initial` à `017_ocr_etage3`.
+  Attendu : **18 lignes**, de `001_initial` à `018_recherche_a_valider`.
 - [ ] **5.2** Version métier alignée :
   ```bash
   docker compose exec -T web python -c "from seamtech_search.schema_metier import VERSION_SCHEMA_METIER, TABLES_METIER; print(VERSION_SCHEMA_METIER, len(TABLES_METIER))"
   ```
-  Attendu : `017_ocr_etage3 33`.
+  Attendu : `018_recherche_a_valider 33`.
 - [ ] **5.3** Extensions réellement présentes : `/health` renvoie `vector`, `pg_trgm`, `unaccent`.
 - [ ] **5.4** Rejeu sans effet : redémarrer `web` ne rejoue ni ne duplique aucune migration
-      (garde-fou : `test_migrations_sequentielles_001_a_017_sur_base_vide`).
+      (garde-fou : `test_migrations_sequentielles_001_a_017_sur_base_vide` (identifiant historique conservé ; assertions vérifient `001..018`)).
 
 > Une migration écrite mais **non enregistrée** est l'incident des Lots K puis M : elle
 > fait échouer la sauvegarde (qui exige `VERSION_SCHEMA_METIER` dans `schema_migrations`).
@@ -187,7 +184,7 @@ modifie pas, et le jour J passe par `scripts/preflight_archive.py`).
 
 - [ ] **9.1** `curl -fsS -H "X-SEAMTECH-TOKEN: $SEAMTECH_AUTH_TOKEN" "http://127.0.0.1:8000/recherche?q=grand-voile"`
       → `nb_resultats ≥ 1`, `duree_ms` renseigné.
-- [ ] **9.2** Une fiche **`a_valider` n'apparaît pas** sans `inclure_a_valider=true`.
+- [ ] **9.2** Depuis le contrat du 29/09, les fiches `a_valider` sont incluses par défaut et portent le badge « Non vérifiée » ; `inclure_a_valider=false` les retire (archive de confiance uniquement). Ne jamais masquer leur statut.
 - [ ] **9.3** Suggestions : `/recherche/suggestions?prefix=gr` renvoie des valeurs
       **réellement présentes**.
 - [ ] **9.4** Recherche depuis l'interface (avec session) : résultats identiques.
@@ -206,8 +203,7 @@ modifie pas, et le jour J passe par `scripts/preflight_archive.py`).
 - [ ] **10.5** Validation en lot : **refusée** tant que les seuils ne sont pas calibrés
       (`calibre: false`) — c'est le verrou attendu, pas une panne. Il ne sera levé qu'avec
       des fiches réelles validées (**F-2 bloqué**).
-- [ ] **10.6** Chronométrer une validation humaine et **écrire la mesure** dans
-      `docs/verite_terrain/MESURE_VALIDATION_2MIN.md` (0/3 fiches mesurées à ce jour).
+- [ ] **10.6** L'écran mesure maintenant localement le temps par fiche et médiane/min/max/compteur en fin de session. **NON MESURÉ** : temps d'un opérateur/ouvrier lisant et décidant sur 3 fiches (ou sur le corpus). Noter la mesure humaine dans `docs/verite_terrain/MESURE_VALIDATION_2MIN.md` ; le chronomètre machine CI ne la remplace pas.
 
 ## 11. Sauvegarde
 
@@ -325,8 +321,7 @@ docker compose exec web python -m seamtech_search.sauvegarde verifier \
       → aucun fichier `MODIFIÉ`/`PERDU`.
 - [ ] **17.3** Répertoire de travail OCR **hors archive** : `SEAMTECH_OCR_TRAVAIL_DIR`
       (défaut `data/ocr_travail`).
-- [ ] **17.4** Aucun document client versionné dans Git (la fiche 7792-SO présente au dépôt
-      impose le dépôt **privé** ; cf. §3.7).
+- [ ] **17.4** État connu : la copie canonique de la fiche réelle 7792-SO et les 7 ZIP du corpus sont déjà suivis/historiques dans le dépôt public ; le doublon `7792-SO_ffab.pdf` à la racine est retiré du tree courant. Le fichier subsiste dans l'historique Git. Aucune donnée client réelle nouvelle n'est ajoutée par cette mission. Décision du commanditaire : visibilité du dépôt reste publique ; maintenir les garde-fous de confidentialité.
 - [ ] **17.5** Les sauvegardes n'écrivent **jamais** dans l'archive (inventaire seul).
 
 **RG14 — aucun appel réseau dans le code de traitement** :
@@ -345,9 +340,11 @@ docker compose exec web python -m seamtech_search.sauvegarde verifier \
 
 ---
 
-## 18. Décision de mise en service
+## 18. Photographie historique de la première candidate (2026-09-25)
 
-| Élément | État au 2026-09-25 |
+> Cette photographie précède les PR #32/#33 et n'est pas l'état courant. Voir §19 pour la mesure de cette mission.
+
+| Élément | État historique au 2026-09-25 |
 |---|---|
 | CI sur `main` après fusion de la PR #28 | ✅ verte, 9/9 (`36168258103`) |
 | Migrations 001→017 | ✅ séquence complète, rejeu idempotent |
@@ -362,3 +359,59 @@ docker compose exec web python -m seamtech_search.sauvegarde verifier \
 
 **Cases non cochées, avec la raison** (à recopier ici, une ligne par case) :
 ............................................................................................
+
+## 19. Portail de la candidate Lots 1–3 (2026-09-29)
+
+État arrêté sur la branche `arena/01a0ed7b-seamtech-search`, checkpoint de code/tests
+`887beba5b5d2e36ce99e405d99a5e23b2e5a53b9` (PR #33 ouverte, non fusionnée; code applicatif évalué en `984e2db`).
+
+| Contrôle | Statut / preuve |
+|---|---|
+| ZIP corpus : empreintes courantes | ✅ Recalculées le 29/09; aucune modification locale. Sorties brutes (SHA-256) :<br>`AQUILA 250216AJA-20260928T182324Z-1-001.zip` — `fd1fca0930494328687ecf5d6905af139c24f93a8b9e2e51b2f6075772446be6`<br>`ATTALIA 250121JA-20260928T182325Z-1-001.zip` — `a71ec77d6d5abf3c55f5ca8aa5c79d3347d3b3765b91f54950065b9c2161d699`<br>`BAVARIA 32 - 250604JA-20260928T182326Z-1-001.zip` — `a9ca298cae78ccbacfaab69260cede299062ef0d20e0a7fba62c3539ac3a538f`<br>`BAVARIA 34 - 250323JA-20260928T182327Z-1-001.zip` — `483f89716b953734315b7bbb4ba81050dc24b33a162e2a2623604eee268b8f6f`<br>`DAMIEN 4 - 250821JA-20260928T182330Z-1-001.zip` — `2f1ecb0205b817c3dbdb324bf444aad9fb5ddce1d3f415859698fbb21fb428bf`<br>`DEHLER 39 - 250329AJA-20260928T182330Z-1-001.zip` — `b3171d070f6b332366263626a665e7f7985bb8406062c2957895401850df6a06`<br>`GIB SEA 284 - 250328AJA-20260928T182331Z-1-001.zip` — `103359b561ef32f5a8ce04b373864c26a0b496156efc1f728e75f0c0911b4aa3` |
+| PDF racine / copie canonique | ✅ SHA-256 identique à l'empreinte de la copie canonique : `43afc51e55ae598d3eaffc3096f0e7ddaa00e8ddc579ae315bb31b4dbf1c1f40`. Le doublon racine est retiré du tree; il subsiste dans l'historique Git. |
+| Suite locale sélectionnée | ✅ `766 passed, 3 skipped, 234 deselected`; sélection par marqueurs `-m`. Vérifications précédemment réussies : Ruff, TypeScript, build frontend, compilation Python, YAML et `git diff --check`. |
+| Benchmark PostgreSQL jetable, 10 000 fiches | ✅ **SYNTHÉTIQUE** — run initial [36594937291](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36594937291) (1 min 5 s) et rerun final [36598278884](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36598278884) (1 min 11 s), 50 échantillons/scénario. Percentiles et trois plans EXPLAIN complets des deux runs sont archivés : `docs/benchmarks/scale-bench-synthetique-36594937291.{json,md}` et `docs/benchmarks/scale-bench-synthetique-36598278884.{json,md}`. |
+| Échec initial du benchmark | Diagnostiqué : `ModuleNotFoundError: seamtech_search` lors de l'exécution directe du script. Corrigé par `PYTHONPATH=.`; le run synthétique réussi ci-dessus valide ce correctif. |
+| CI finale checkpoint `887beba` | ✅ Push [36598273856](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36598273856) et PR [36598278897](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36598278897) verts; 11/11 jobs chacun. Les runs antérieurs (156ab88: 36596936501/36596943586; 01484d0: 36595978800/36595984492) étaient aussi verts. Benchmark final [36598278884](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36598278884) vert; rapport JSON et plans EXPLAIN complets archivés sous `docs/benchmarks/scale-bench-synthetique-36598278884.{json,md}`. |
+| Répétition humaine REF-001..007, VPS01 / R2, Windows atelier | **NON MESURÉ / À VALIDER** — portes de déploiement non levées. MinIO reste le backend production; R2 est conditionné à D-2. |
+
+Percentiles **SYNTHÉTIQUES** du run 36594937291 (millisecondes; ne représentent ni VPS01/R2 ni utilisateurs réels) :
+
+| Scénario | p50 | p95 | p99 | max |
+|---|---:|---:|---:|---:|
+| mot_simple | 42.59 | 48.11 | 48.26 | 48.26 |
+| multi_mots | 52.83 | 66.45 | 86.05 | 86.05 |
+| code | 6.70 | 6.83 | 15.48 | 15.48 |
+| facette_dimension | 50.71 | 62.05 | 129.36 | 129.36 |
+| filtres | 53.44 | 80.11 | 150.62 | 150.62 |
+| suggestions | 4.28 | 4.58 | 4.67 | 4.67 |
+
+Toutes les valeurs p95 sont sous la cible **indicative SYNTHÉTIQUE** de 250 ms. Les plans EXPLAIN ANALYZE/BUFFERS des 3 requêtes lentes sont enregistrés intégralement dans le JSON et le rapport lié ci-dessus.
+
+Répétition benchmark **SYNTHÉTIQUE** du checkpoint `887beba`, run 36598278884 (ms; annotation GitHub conservée en JSON et plans EXPLAIN archivés en Markdown/JSON) :
+
+| Scénario | p50 | p95 | p99 | max |
+|---|---:|---:|---:|---:|
+| mot_simple | 81.13 | 84.81 | 88.42 | 88.42 |
+| multi_mots | 107.86 | 109.83 | 133.43 | 133.43 |
+| code | 11.70 | 12.43 | 12.57 | 12.57 |
+| facette_dimension | 92.97 | 94.00 | 95.18 | 95.18 |
+| filtres | 98.04 | 99.76 | 111.70 | 111.70 |
+| suggestions | 8.47 | 8.76 | 8.82 | 8.82 |
+
+Valeurs issues d'un PostgreSQL jetable et de 10 000 fiches synthétiques; elles ne mesurent ni VPS01, ni R2, ni le temps réel de l'opérateur.
+
+**Verdict :** candidate techniquement enrichie, suite locale et CI finale vertes; **pas une autorisation de mise en production**. Ne pas merger ni déployer tant que l'opérateur n'a pas validé REF-001..007, que les contrôles réels VPS01/sauvegarde/restauration ne sont pas documentés et que les décisions D-2/D-4 restent ouvertes. Les valeurs de benchmark sont mesurées en environnement **SYNTHÉTIQUE**, jamais à présenter comme réelles.
+
+## 20. Audit pré-merge PR #33 (2026-09-29)
+
+Arbre code/tests audité `6ea4bee364d01c4a351a23c0c68c765d6b719976`, base `a7ffe7d2800ed697f306a93b0564b4ad8c87eb74`. PR #33 est ouverte et non fusionnée. Le rapport détaillé avec commandes, sorties, inventaire et catégories RÉEL / SYNTHÉTIQUE / NON MESURÉ est [`RAPPORT_FINAL_OPTIMISATION_2026-09-29.md`](verite_terrain/RAPPORT_FINAL_OPTIMISATION_2026-09-29.md).
+
+| Contrôle | Résultat |
+|---|---|
+| Suite sélectionnée main / PR | Main : 764 passed, 3 skipped, 234 deselected. PR : 771 passed, 3 skipped, 234 deselected. |
+| Nodeids | Main 767; PR 774; zéro nodeid main perdu/renommé; 7 ajouts. |
+| Corpus | 7/7 SHA-256 identiques à main; ZIP inchangés. Détails de hachage existants au §19. |
+| Seuils / sélection | Couverture globale 85% et planchers module inchangés; aucun `pragma: no cover` ajouté; sélection pytest CI par `-m` uniquement. |
+| CI push / PR | Runs 36607480324 et 36607487809 verts, chacun 11/11 jobs, sur `6ea4bee`. Benchmark 36607487218 vert, SYNTHÉTIQUE, 10 000 fiches. |
+| Verdict de l’auto-audit | **PR PRÊTE À MERGER** pour les contrôles pré-merge demandés; cela ne vaut pas décision de fusion. Aucune fusion effectuée. Mise en production non approuvée : les mesures opérateur/VPS01/R2 restent NON MESURÉES. |

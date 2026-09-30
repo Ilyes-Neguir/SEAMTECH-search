@@ -331,6 +331,7 @@ def test_taux_par_utilisateur_expose_les_actions_sans_utilisateur(base_recherche
         assert resultat[cle], f"charge {cle} absente (exigence Lot K)"
 
 
+@pytest.mark.ocr_suite
 def test_ocr_etage3_indicateur_valeurs(base_recherche):
     """Lot M.6 — l'indicateur ocr_etage3 expose ses compteurs réels."""
     index = base_recherche["index"]

@@ -66,6 +66,7 @@ def test_dimension_filtre_par_plage(base_recherche: dict[str, Any]) -> None:
     assert {r["code"] for r in avec_alias["resultats"]} == codes
 
 
+@pytest.mark.ci_guard_dimension
 def test_dimension_facettes_et_intervalles(base_recherche: dict[str, Any]) -> None:
     from seamtech_search.recherche import rechercher_fiches
 
@@ -123,6 +124,7 @@ def test_dimension_facettes_et_intervalles(base_recherche: dict[str, Any]) -> No
 COTES_7 = ("slu_m", "sle_m", "sf_m", "shw_m", "spa_m2", "tetiere_cm", "poids_kg")
 
 
+@pytest.mark.ci_guard_cotes
 def test_contrat_cotes_conditionnelles_documente(base_recherche: dict[str, Any]) -> None:
     """Correctif 0.4 (audit Lot K) : fige par exécution le contrat DÉCRIT dans docs/API.md.
 

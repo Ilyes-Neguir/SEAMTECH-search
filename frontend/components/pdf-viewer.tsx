@@ -19,11 +19,12 @@ export interface ZoneASurligner {
 interface Props {
   chemin: string | null // chemin d'archive absolu (proxy /api/pdf)
   zone: ZoneASurligner | null
+  donneesPrechargees?: Uint8Array | null
 }
 
 type PdfjsModule = typeof import("pdfjs-dist")
 
-export function PdfViewer({ chemin, zone }: Props) {
+export function PdfViewer({ chemin, zone, donneesPrechargees = null }: Props) {
   const canevasRef = useRef<HTMLCanvasElement>(null)
   const [pdfjs, setPdfjs] = useState<PdfjsModule | null>(null)
   const [document_, setDocument] = useState<Awaited<ReturnType<PdfjsModule["getDocument"]>["promise"]> | null>(null)
@@ -55,12 +56,12 @@ export function PdfViewer({ chemin, zone }: Props) {
     setChargement(true)
     setErreur(null)
     pdfjs
-      .getDocument({ url: `/api/pdf?path=${encodeURIComponent(chemin)}` })
+      .getDocument(donneesPrechargees ? { data: donneesPrechargees.slice() } : { url: `/api/pdf?path=${encodeURIComponent(chemin)}` })
       .promise.then((doc) => {
         if (!vivant) return
         setDocument(doc)
         setNbPages(doc.numPages)
-        setPageCourante(zone ? zone.page + 1 : 1)
+        setPageCourante(1)
       })
       .catch((e: unknown) => {
         if (vivant) setErreur(e instanceof Error ? e.message : "Chargement du PDF impossible.")
@@ -71,7 +72,11 @@ export function PdfViewer({ chemin, zone }: Props) {
     return () => {
       vivant = false
     }
-  }, [pdfjs, chemin, zone])
+  }, [pdfjs, chemin, donneesPrechargees])
+
+  useEffect(() => {
+    if (zone) setPageCourante(zone.page + 1)
+  }, [zone])
 
   const rendre = useCallback(async () => {
     const canevas = canevasRef.current
@@ -144,7 +149,13 @@ export function PdfViewer({ chemin, zone }: Props) {
       </div>
       <div className="flex-1 overflow-auto bg-black/30 p-3">
         {chargement && <p className="p-4 text-sm text-muted-foreground">Chargement du PDF…</p>}
-        <canvas ref={canevasRef} className="mx-auto block max-w-full bg-white shadow" data-testid="pdf-canvas" />
+        <canvas
+        ref={canevasRef}
+        className="mx-auto block max-w-full bg-white shadow"
+        data-testid="pdf-canvas"
+        data-zone-active={zone ? "true" : "false"}
+        data-zone-page={zone?.page}
+      />
       </div>
     </div>
   )

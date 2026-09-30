@@ -33,7 +33,7 @@ from seamtech_search.ocr.pipeline import (
 
 RACINE = Path(__file__).resolve().parent.parent
 FIXTURES_OCR = RACINE / "tests" / "fixtures" / "ocr"
-PDF_NATIF_REEL = RACINE / "7792-SO_ffab.pdf"  # PDF à texte natif déjà utilisé par la suite
+PDF_NATIF_REEL = RACINE / "sample_data" / "CLIENT-7792-SO" / "fiche-7792-SO_ffab.pdf"  # copie canonique
 PDF_PROPRE = FIXTURES_OCR / "ocr_propre.pdf"
 PDF_DEGRADE = FIXTURES_OCR / "ocr_degrade.pdf"
 REF_PROPRE = FIXTURES_OCR / "reference_propre.txt"
@@ -71,6 +71,8 @@ def _taux_mots_retrouves(reference: str, ocr_texte: str) -> float:
 # M.3 — Règle d'étage prouvée
 # ---------------------------------------------------------------------------
 
+pytestmark = pytest.mark.ocr_suite
+
 
 def test_doit_oceriser_page_fonction_pure() -> None:
     """M.1/M.3 : doit_oceriser_page est une fonction pure testable."""
@@ -98,6 +100,7 @@ def test_seuil_defaut_justifie() -> None:
     assert "20" in src
 
 
+@pytest.mark.ci_guard_ocr
 def test_pdf_texte_natif_zero_page_ocerisee() -> None:
     """M.3/M.7 : un PDF à texte natif (7792-SO) : ZÉRO page océrisée.
 

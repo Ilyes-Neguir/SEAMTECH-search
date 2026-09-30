@@ -6,7 +6,7 @@
 // « valide » sans décision explicite (RG3). Le verrou de calibration (409)
 // s'affiche avec sa sortie et la case d'acquittement explicite.
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { Check, ChevronRight, CircleX, Lock, RefreshCw, RotateCcw, Undo2 } from "lucide-react"
 import { PalierBadge } from "@/components/palier-badge"
 import { PdfViewer, type ZoneASurligner } from "@/components/pdf-viewer"
@@ -81,6 +81,11 @@ export function ValidationApp() {
   const [acquittement, setAcquittement] = useState(false)
   const [selection, setSelection] = useState<Set<string>>(new Set())
   const [occupe, setOccupe] = useState(false)
+  const [aideRaccourcis, setAideRaccourcis] = useState(false)
+  const [tempsFiches, setTempsFiches] = useState<number[]>([])
+  const [precharge, setPrecharge] = useState<{ code: string; bytes: Uint8Array } | null>(null)
+  const debutFiche = useRef<{ code: string; debut: number } | null>(null)
+  const motifRef = useRef<HTMLInputElement>(null)
 
   const chargerFile = useCallback(async () => {
     try {
@@ -140,7 +145,10 @@ export function ValidationApp() {
   const [cheminPdf, setCheminPdf] = useState<string | null>(null)
   useEffect(() => {
     if (!codeActif) return
+    debutFiche.current = { code: codeActif, debut: Date.now() }
     setMotifRejet("")
+    setChamps([])
+    setCheminPdf(null)
     setZone(null)
     jsonFetch<ChampExtrait[]>(`/api/fiches/${encodeURIComponent(codeActif)}/champs`)
       .then(setChamps)
@@ -180,6 +188,9 @@ export function ValidationApp() {
         body: JSON.stringify({ ...extra }),
       })
       setMessage(`Fiche ${codeActif} : ${actionName} enregistré au journal.`)
+      if (debutFiche.current?.code === codeActif) {
+        setTempsFiches((mesures) => [...mesures, Math.max(0, Date.now() - debutFiche.current!.debut)])
+      }
       await chargerFile()
       setCodeActif(null)
       setChamps([])
@@ -211,6 +222,91 @@ export function ValidationApp() {
     }
   }
 
+  async function validerFiche() {
+    const entree = file.find((ligne) => ligne.code === codeActif)
+    if (entree?.a_anomalies && !window.confirm(`Cette fiche comporte des champs signalés en anomalie. Valider ${codeActif} malgré ces alertes ?`)) return
+    await action("valider")
+  }
+
+  function naviguer(delta: number) {
+    if (file.length === 0) return
+    const position = file.findIndex((entree) => entree.code === codeActif)
+    const prochaine = Math.min(file.length - 1, Math.max(0, (position < 0 ? 0 : position) + delta))
+    setCodeActif(file[prochaine].code)
+  }
+
+  // Pré-charge les octets du PDF suivant pendant la fiche courante.
+  useEffect(() => {
+    const position = file.findIndex((entree) => entree.code === codeActif)
+    const suivante = position >= 0 ? file[position + 1] : undefined
+    if (!suivante) {
+      setPrecharge(null)
+      return
+    }
+    let annule = false
+    ;(async () => {
+      try {
+        const pieces = await jsonFetch<PiecesDeFiche>(`/api/fiches/${encodeURIComponent(suivante.code)}/pieces`)
+        const chemin = pieces.pdf_source ?? pieces.fichier_source
+        if (!chemin) return
+        const reponse = await fetch(`/api/pdf?path=${encodeURIComponent(chemin)}`, { cache: "no-store" })
+        if (!reponse.ok) return
+        const bytes = new Uint8Array(await reponse.arrayBuffer())
+        if (!annule) setPrecharge({ code: suivante.code, bytes })
+      } catch {
+        // La précharge optimise le parcours mais ne bloque jamais l'ouverture.
+      }
+    })()
+    return () => { annule = true }
+  }, [file, codeActif])
+
+  // Raccourcis clavier hors champs de saisie. Aucun raccourci ne déclenche
+  // une correction ou validation implicite sans interaction/décision humaine.
+  useEffect(() => {
+    const clavier = (event: KeyboardEvent) => {
+      const cible = event.target as HTMLElement | null
+      const edition = !!cible && (cible.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(cible.tagName))
+      if (event.key === "Escape" && aideRaccourcis) {
+        event.preventDefault()
+        setAideRaccourcis(false)
+        return
+      }
+      if (event.key === "Enter" && cible === motifRef.current) {
+        event.preventDefault()
+        if (motifRejet.trim() && !occupe) void action("rejeter", { motif: motifRejet })
+        return
+      }
+      if (event.ctrlKey || event.metaKey || event.altKey || edition) return
+      const touche = event.key.toLowerCase()
+      if (event.key === "?") {
+        event.preventDefault()
+        setAideRaccourcis((visible) => !visible)
+      } else if (touche === "v") {
+        event.preventDefault()
+        if (!occupe) void validerFiche()
+      } else if (touche === "r") {
+        event.preventDefault()
+        motifRef.current?.focus()
+      } else if (touche === "c") {
+        event.preventDefault()
+        document.querySelector<HTMLInputElement>('[data-testid^="champ-"]')?.focus()
+      } else if (touche === "j" || event.key === "ArrowDown") {
+        event.preventDefault()
+        naviguer(1)
+      } else if (touche === "k" || event.key === "ArrowUp") {
+        event.preventDefault()
+        naviguer(-1)
+      }
+    }
+    window.addEventListener("keydown", clavier)
+    return () => window.removeEventListener("keydown", clavier)
+  }, [file, codeActif, motifRejet, occupe, champs, aideRaccourcis])
+
+  const tempsTries = [...tempsFiches].sort((a, b) => a - b)
+  const medianeMs = tempsTries.length === 0 ? 0 : tempsTries.length % 2
+    ? tempsTries[Math.floor(tempsTries.length / 2)]
+    : (tempsTries[tempsTries.length / 2 - 1] + tempsTries[tempsTries.length / 2]) / 2
+
   function basculerSelection(code: string) {
     setSelection((s) => {
       const copie = new Set(s)
@@ -236,6 +332,21 @@ export function ValidationApp() {
           </button>
         </div>
       )}
+      {aideRaccourcis && (
+        <div role="dialog" aria-modal="true" aria-labelledby="aide-raccourcis-titre" className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" data-testid="aide-raccourcis">
+          <section className="w-full max-w-md rounded-lg border border-border bg-background p-5 shadow-xl">
+            <h2 id="aide-raccourcis-titre" className="text-lg font-semibold">Raccourcis de validation</h2>
+            <ul className="mt-3 space-y-2 text-sm">
+              <li><kbd>V</kbd> — valider (les anomalies demandent confirmation)</li>
+              <li><kbd>R</kbd> — motif de rejet, puis <kbd>Entrée</kbd> pour confirmer</li>
+              <li><kbd>C</kbd> — focus sur le premier champ pour correction</li>
+              <li><kbd>↓</kbd>/<kbd>J</kbd> — fiche suivante ; <kbd>↑</kbd>/<kbd>K</kbd> — précédente</li>
+              <li><kbd>?</kbd> — afficher/masquer cette aide</li>
+            </ul>
+            <button autoFocus type="button" onClick={() => setAideRaccourcis(false)} className="mt-4 rounded bg-primary px-3 py-1.5 text-sm text-primary-foreground">Fermer</button>
+          </section>
+        </div>
+      )}
       <div className="grid min-h-0 flex-1 grid-cols-[22rem_minmax(0,1fr)_minmax(0,1.1fr)]">
         {/* file de validation */}
         <aside className="flex min-h-0 flex-col border-r border-border">
@@ -255,7 +366,12 @@ export function ValidationApp() {
             />
           </div>
           <ul className="min-h-0 flex-1 overflow-auto" data-testid="file-validation">
-            {file.map((entree) => (
+            {file.length === 0 && tempsFiches.length > 0 && (
+            <li className="border-b border-border p-3 text-xs" data-testid="chrono-session">
+              Session terminée — {tempsFiches.length} fiche(s) : médiane {(medianeMs / 1000).toFixed(1)} s, min {(tempsTries[0] / 1000).toFixed(1)} s, max {(tempsTries[tempsTries.length - 1] / 1000).toFixed(1)} s. Mesure locale uniquement.
+            </li>
+          )}
+          {file.map((entree) => (
               // data-code : identifiant EXACT de la ligne pour les tests e2e.
               // Sans lui, une ligne se repérait par son texte — or le bandeau de
               // doublon cite l'AUTRE code, donc la ligne du doublon contient aussi
@@ -279,6 +395,8 @@ export function ValidationApp() {
                       {entree.code}
                     </span>
                     <span className="block truncate text-muted-foreground">{entree.titre}</span>
+                    <span className="sr-only" data-testid="confiance-file">{entree.confiance_min ?? "sans confiance"}</span>
+                    {entree.a_anomalies && <span className="mt-1 inline-block rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] text-amber-800">Anomalie à vérifier</span>}
                     <span className="mt-1 flex flex-wrap gap-1" aria-label="Comptes par palier">
                       {entree.paliers.certain > 0 && <PalierBadge palier="certain" />}
                       {entree.paliers.lu > 0 && <PalierBadge palier="lu" />}
@@ -297,6 +415,7 @@ export function ValidationApp() {
             {file.length === 0 && <li className="p-4 text-xs text-muted-foreground">File vide — rien à valider.</li>}
           </ul>
           <footer className="border-t border-border p-3">
+            <button type="button" onClick={() => setAideRaccourcis(true)} className="mb-2 text-[11px] text-muted-foreground underline" data-testid="bouton-aide-raccourcis">? Raccourcis clavier</button>
             <label className="flex items-start gap-2 text-[11px] text-muted-foreground">
               <input type="checkbox" checked={acquittement} onChange={(e) => setAcquittement(e.target.checked)} />
               <span>
@@ -331,10 +450,11 @@ export function ValidationApp() {
                 </div>
                 <button
                   type="button"
-                  onClick={() => action("valider")}
+                  onClick={() => void validerFiche()}
                   disabled={occupe}
                   className="flex items-center gap-1 rounded bg-emerald-600 px-3 py-1 text-xs font-semibold text-white disabled:opacity-40"
                   data-testid="bouton-valider"
+                  title="Raccourci : V"
                 >
                   <Check className="size-3.5" /> Valider
                 </button>
@@ -349,6 +469,7 @@ export function ValidationApp() {
                   <CircleX className="size-3.5" /> Rejeter
                 </button>
                 <input
+                  ref={motifRef}
                   value={motifRejet}
                   onChange={(e) => setMotifRejet(e.target.value)}
                   placeholder="motif du rejet (obligatoire)"
@@ -373,7 +494,7 @@ export function ValidationApp() {
 
         {/* visionneuse */}
         <aside className="min-h-0 border-l border-border" data-testid="panneau-pdf">
-          <PdfViewer chemin={cheminPdf} zone={zone} />
+          <PdfViewer chemin={cheminPdf} zone={zone} donneesPrechargees={precharge?.code === codeActif ? precharge.bytes : null} />
         </aside>
       </div>
     </div>
@@ -406,8 +527,10 @@ function ChampsFiche({
               <input
                 value={brouillon}
                 onChange={(e) => setBrouillons((b) => ({ ...b, [cle]: e.target.value }))}
+                onFocus={() => onVoirZone(champ.zone ? { page: champ.zone.page, x0: champ.zone.x0, y0: champ.zone.y0, x1: champ.zone.x1, y1: champ.zone.y1 } : null)}
                 className="w-full rounded border border-transparent bg-input px-1.5 py-0.5 focus:border-primary"
                 data-testid={`champ-${champ.champ}`}
+                data-zone={champ.zone ? "true" : "false"}
               />
               {modifie && (
                 <button

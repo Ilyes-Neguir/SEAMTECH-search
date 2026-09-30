@@ -244,7 +244,7 @@ function buildApiParams(
   return params
 }
 
-export function RechercheFichesApp() {
+export function RechercheFichesApp({ assistantActif = true }: { assistantActif?: boolean }) {
   const [saisie, setSaisie] = useState("")
   const [requete, setRequete] = useState("")
   const [filtres, setFiltres] = useState<Record<string, string>>({})
@@ -551,10 +551,12 @@ export function RechercheFichesApp() {
         )}
       </form>
 
-      {/* Assistant sourcé */}
-      <div className="mt-4">
-        <AssistantPanneau />
-      </div>
+      {/* Assistant optionnel — masqué avec le même runtime flag que le backend. */}
+      {assistantActif && (
+        <div className="mt-4">
+          <AssistantPanneau />
+        </div>
+      )}
 
       {/* Filtres actifs */}
       {(Object.keys(filtres).length > 0 || dimMin || dimMax) && (

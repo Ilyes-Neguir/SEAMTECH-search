@@ -60,3 +60,8 @@ contre le texte du document réel : 115 valeurs tracées littéralement, 2 dates
    Les taux publiés le sont sur le document réel — jamais sur reconstruction. La calibration des
    seuils attend toujours les 20-30 fiches ORIGINALES (blocage 1) ; le banc échouera désormais si
    la lecture de cette fiche réelle régresse.
+
+
+## Retrait du doublon à la racine (2026-09-29)
+
+Le PDF `7792-SO_ffab.pdf` qui se trouvait à la racine a été retiré de l'arbre courant. Avant retrait, `sha256sum 7792-SO_ffab.pdf sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf` a donné deux fois `43afc51e55ae598d3eaffc3096f0e7ddaa00e8ddc579ae315bb31b4dbf1c1f40` ; la copie canonique sous `sample_data/` reste épinglée dans `tests/test_confidentialite_depots.py` et `tests/test_empreintes_fixtures.py`. **Le blob racine demeure dans l'historique Git** : cette suppression réduit uniquement l'exposition de l'arbre courant, elle n'efface ni commits ni clones antérieurs. Le test de confidentialité interdit désormais tout PDF à la racine. Les PDF OCR `tests/fixtures/ocr/*.pdf` sont les seuls fichiers couverts par l'autorisation explicite de répertoire pour fixtures SYNTHÉTIQUES régénérées ; leur identité fonctionnelle est testée indépendamment, pas par SHA/longueur exacte.
