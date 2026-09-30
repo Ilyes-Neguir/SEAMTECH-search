@@ -1588,6 +1588,19 @@ jobs:
           done
           docker compose ps || true
           docker compose logs --no-color --tail 40 web frontend || true
+          # Échec → pousser la fin des journaux WEB dans les annotations
+          # (chaque étape a son propre budget ; les journaux d'actions restent
+          # hors d'atteinte depuis un poste protégé, les annotations si).
+          if grep -q "|FAIL|" data/backups/recette-verif-sortie.txt 2>/dev/null; then
+            docker compose logs --no-color --tail 120 web 2>/dev/null \
+              | tail -c 6000 > /tmp/journaux-web.txt || true
+            n=0
+            while [ $n -lt 3 ]; do
+              bout=$(tail -c +$((n * 2000 + 1)) /tmp/journaux-web.txt | head -c 2000 | tr '\n' '|' | sed -e 's/%/%25/g' -e 's/\r/%0D/g')
+              [ -n "$bout" ] && echo "::error title=recette-locale/journaux-web ($((n + 1))/3)::$bout"
+              n=$((n + 1))
+            done
+          fi
       - name: Uploader le rapport et la sortie brute du vérificateur (toujours)
         if: always()
         uses: actions/upload-artifact@v7

@@ -295,10 +295,20 @@ def _suivre_lot(id_lot: int | None) -> dict[str, Any] | None:
     nb_echecs = int(etat.get("nb_echecs") or 0)
     ok = statut == "termine" and nb_echecs == 0 and nb_traites == nb_dossiers and nb_dossiers > 0
     progression_visible = len(echantillons) > 1
+    # État des lignes : « tout reste en_attente » = le traitement n'a rien
+    # produit (thread mort ou bloqué) — ce détail distingue un lot SLOW d'un
+    # lot MORT sans avoir à lire les journaux du conteneur.
+    lignes = [
+        f"{d.get('id_lot_dossier')}:{d.get('statut')}"
+        + (f"({str(d.get('raison') or '')[:32]})" if d.get("raison") else "")
+        for d in etat.get("dossiers", [])
+        if isinstance(d, dict)
+    ]
     _ligne(
         "suivi-lots",
         ok,
         f"lot #{id_lot} statut={statut} {nb_traites}/{nb_dossiers} échecs={nb_echecs} "
+        f"lignes={lignes[:4]}{'…' if len(lignes) > 4 else ''} "
         f"progression observée : {echantillons[:6]}{'…' if progression_visible else ' (lot terminé avant échantillonnage)'}",
     )
     return etat

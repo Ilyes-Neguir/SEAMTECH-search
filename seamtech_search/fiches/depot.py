@@ -419,7 +419,9 @@ def executer_lot(index: Any, id_lot: int, interrompre_apres: int | None = None) 
     lequel le lot passe « interrompu » — c'est l'interruption volontaire des
     tests de reprise. Rejouer la fonction reprend là où c'était resté.
     """
+    LOGGER.info("Lot #%s : chargement des gabarits actifs…", id_lot)
     gabarits = charger_gabarits(index)
+    LOGGER.info("Lot #%s : %d gabarit(s) actif(s) chargé(s).", id_lot, len(gabarits))
     traites_cette_passe = 0
     while True:
         with index.connect() as connexion:
@@ -433,6 +435,7 @@ def executer_lot(index: Any, id_lot: int, interrompre_apres: int | None = None) 
         if ligne is None:
             break  # plus rien en attente : le lot se termine plus bas
         id_lot_dossier, chemin = int(ligne[0]), Path(ligne[1])
+        LOGGER.info("Lot #%s : traitement du dossier %s (%s)…", id_lot, id_lot_dossier, chemin)
         resultat = deposer_dossier(index, chemin, gabarits=gabarits, id_lot=id_lot, id_lot_dossier=id_lot_dossier)
         if resultat["statut"] == "echec":
             LOGGER.warning(
