@@ -515,35 +515,62 @@ def _suggestions() -> None:
     )
 
 
-def _pdf_presigne(codes: list[str]) -> Path | None:
-    if not codes:
-        _ligne("pdf-presigne", False, "aucune fiche")
-        return None
-    cible = codes[0]
-    code, corps, _ = _appel("GET", f"/fiches/{urllib.parse.quote(cible)}/pieces")
-    pdf_source = corps.get("pdf_source") if isinstance(corps, dict) else None
-    if not pdf_source:
-        _ligne("pdf-presigne", False, f"pieces HTTP {code} sans pdf_source {_extrait(corps, 100)}")
-        return None
-    code, _, entetes = _appel("POST", f"/open?path={urllib.parse.quote(str(pdf_source))}", {})
+def _pdf_presigne() -> None:
+    # Le flux qui téléverse vers S3 est le FLUX D'IMPORT (scan → confirm) :
+    # il pose documents.object_key, sans lequel /open sert le fichier en 200
+    # local au lieu du 302 présigné (RG12 : les pièces d'un lot de dépôt sont
+    # « métadonnées seulement » — jamais de object_key, par design). La
+    # référence est le test corpus réel test_08 (ouverture PDF présignée).
+    affaires = sorted(p for p in (TRAVAIL / "affaires").iterdir() if p.is_dir())
+    if not affaires:
+        _ligne("pdf-presigne", False, "aucune affaire à importer (TRAVAIL/affaires vide)")
+        return
+    source = affaires[-1]  # la dernière : zone-surlignee travaille codes[0]
+    code, corps, _ = _appel("POST", "/imports/scan", {"source_path": str(source)})
+    candidats = [
+        c
+        for c in (corps.get("candidates", []) if isinstance(corps, dict) else [])
+        if isinstance(c, dict) and c.get("classification") == "technical_pdf"
+    ]
+    if code != 200 or not candidats:
+        _ligne("pdf-presigne", False, f"scan HTTP {code} sans candidat technical_pdf {_extrait(corps, 100)}")
+        return
+    candidat = max(candidats, key=lambda c: c.get("anchor_count", 0))
+    code, corps, _ = _appel(
+        "POST",
+        "/imports/confirm?wait=true",
+        {"source_path": str(source), "technical_pdf": candidat["path"]},
+    )
+    upload = corps.get("upload_status") if isinstance(corps, dict) else None
+    fichier = None
+    if isinstance(corps, dict):
+        fichier = next((f for f in corps.get("files", []) if isinstance(f, dict) and f.get("path") == candidat["path"]), None)
+    object_key = fichier.get("object_key") if fichier else None
+    if code != 200 or upload != "uploaded" or not object_key:
+        _ligne(
+            "pdf-presigne",
+            False,
+            f"confirm HTTP {code} upload={upload} object_key={'oui' if object_key else 'non'} {_extrait(corps, 80)}",
+        )
+        return
+    code, _, entetes = _appel("POST", f"/open?path={urllib.parse.quote(str(candidat['path']))}", {})
     location = entetes.get("Location") or entetes.get("location")
     if code != 302 or not location:
         _ligne("pdf-presigne", False, f"open HTTP {code} (attendu 302) location={location}")
-        return None
+        return
     try:
         with urllib.request.urlopen(location, timeout=60) as telechargement:
             contenu = telechargement.read()
-        local = Path(str(pdf_source)).read_bytes()
+        local = Path(str(candidat["path"])).read_bytes()
         meme = hashlib.sha256(contenu).hexdigest() == hashlib.sha256(local).hexdigest()
         _ligne(
             "pdf-presigne",
             meme,
-            f"302 → téléchargement {len(contenu)} octets ; SHA-256 identique à la source = {meme}",
+            f"import {source.name} : object_key présent, 302 → {len(contenu)} octets ; "
+            f"SHA-256 identique à la source = {meme}",
         )
-        return Path(str(pdf_source))
     except Exception as erreur:  # noqa: BLE001
         _ligne("pdf-presigne", False, f"téléchargement de l'URL présignée impossible : {_extrait(erreur)}")
-        return None
 
 
 def _zone_surlignee(codes: list[str]) -> None:
@@ -646,7 +673,7 @@ def main() -> int:
         _ligne("recherche-dimension", False, f"index inutilisable : {_extrait(erreur)}")
     _filtres_facettes()
     _suggestions()
-    _pdf_presigne(codes)
+    _pdf_presigne()
     _zone_surlignee(codes)
     _rejeu(len(affaires))
 
