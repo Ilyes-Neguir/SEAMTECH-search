@@ -113,15 +113,15 @@ il n'y a pas d'étape manuelle, mais il y a une **vérification obligatoire**.
   docker compose exec -T postgres psql -U seamtech -d seamtech_search \
     -c "SELECT version FROM schema_migrations ORDER BY version;"
   ```
-  Attendu : **18 lignes**, de `001_initial` à `018_recherche_a_valider`.
+  Attendu : **19 lignes**, de `001_initial` à `019_recherche_dimension`.
 - [ ] **5.2** Version métier alignée :
   ```bash
   docker compose exec -T web python -c "from seamtech_search.schema_metier import VERSION_SCHEMA_METIER, TABLES_METIER; print(VERSION_SCHEMA_METIER, len(TABLES_METIER))"
   ```
-  Attendu : `018_recherche_a_valider 33`.
+  Attendu : `019_recherche_dimension 33`.
 - [ ] **5.3** Extensions réellement présentes : `/health` renvoie `vector`, `pg_trgm`, `unaccent`.
 - [ ] **5.4** Rejeu sans effet : redémarrer `web` ne rejoue ni ne duplique aucune migration
-      (garde-fou : `test_migrations_sequentielles_001_a_017_sur_base_vide` (identifiant historique conservé ; assertions vérifient `001..018`)).
+      (garde-fou : `test_migrations_sequentielles_001_a_017_sur_base_vide` (identifiant historique conservé ; assertions vérifient `001..019`)).
 
 > Une migration écrite mais **non enregistrée** est l'incident des Lots K puis M : elle
 > fait échouer la sauvegarde (qui exige `VERSION_SCHEMA_METIER` dans `schema_migrations`).

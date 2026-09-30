@@ -964,9 +964,29 @@ def test_migration_018_existe() -> None:
     assert "018_recherche_a_valider" in src
 
 
+def test_migration_019_existe() -> None:
+    """Phase 1 (2026-09-30) : recherche par dimension — les 7 cotes dans le
+    texte pondéré, deux formes « 6.60 » et « 6,60 », backfill global."""
+    from seamtech_search import schema_metier
+
+    assert hasattr(schema_metier, "SQL_019_RECHERCHE_DIMENSION")
+    assert "rafraichir_texte_recherche_fiche" in schema_metier.SQL_019_RECHERCHE_DIMENSION
+    assert "rafraichir_texte_recherche_toutes" in schema_metier.SQL_019_RECHERCHE_DIMENSION
+    sql = schema_metier.SQL_019_RECHERCHE_DIMENSION
+    assert sql.count("replace(round(") >= 14, "les 7 cotes doivent porter les deux formes (point et virgule)"
+    assert "PERFORM rafraichir_texte_recherche_toutes()" in sql
+
+    import seamtech_search.indexer as idx_mod
+
+    src = Path(idx_mod.__file__).read_text(encoding="utf-8")
+    assert "_migration_019_recherche_dimension" in src
+    assert "019_recherche_dimension" in src
+
+
 def test_version_schema_et_tables() -> None:
     from seamtech_search.schema_metier import TABLES_METIER, VERSION_SCHEMA_METIER
 
-    assert VERSION_SCHEMA_METIER == "018_recherche_a_valider"
+    assert VERSION_SCHEMA_METIER == "019_recherche_dimension"
+    # 019 n'ajoute AUCUNE table (cotes indexées dans le texte pondéré) : 33.
     assert len(TABLES_METIER) == 33
     assert "ocr_etage3" in TABLES_METIER

@@ -14,6 +14,20 @@ COPY config ./config
 
 RUN pip install --no-cache-dir -r requirements.txt
 
+# OCR métier (Phase 2.3) : l'extraction appelle le binaire `tesseract -l fra`
+# (seamtech_search/ocr) et pdftoppm (poppler-utils) pour rendre les pages
+# scannées avant OCR. Sans ces paquets, tout PDF scanné est dégradé en silence
+# dans la pile Docker (« tesseract absent ») alors que la CI les installe —
+# l'image doit porter le MÊME outillage que la CI. `tesseract-ocr-fra` fournit
+# fra.traineddata (la langue par défaut de l'OCR est « fra »).
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        tesseract-ocr \
+        tesseract-ocr-fra \
+        poppler-utils \
+    && rm -rf /var/lib/apt/lists/* \
+    && tesseract --list-langs 2>&1 | grep -q fra
+
 # The server refuses to start without config/config.json (by design, to avoid
 # silent misconfiguration on the desktop app). Container deployments configure
 # the app through SEAMTECH_* environment variables, which override the values

@@ -173,6 +173,29 @@ def create_app(config: AppConfig) -> FastAPI:
         # Initialize DB and run versioned migrations once at startup.
         # Health must not call initialize (read-only probe).
         _initialize_schema(index, "startup")
+        # Registre des gabarits : sur une base NEUVE, semer les gabarits
+        # embarqués — sans cette graine, tout dépôt est refusé « gabarit
+        # inconnu » (les tests, la CLI et les scripts sèment explicitement ;
+        # le serveur seul ne le faisait pas). Garde : uniquement si le
+        # registre est VIDE — jamais d'écrasement de règles personnalisées
+        # (la CLI reste le canal explicite de mise à jour, RG11). Registre
+        # PostgreSQL-only, comme le dépôt de dossiers lui-même.
+        if index.is_postgres:
+            try:
+                with index.connect() as connexion:
+                    with connexion.cursor() as curseur:
+                        curseur.execute("SELECT 1 FROM gabarit LIMIT 1")
+                        registre_vide = curseur.fetchone() is None
+                if registre_vide:
+                    from seamtech_search.fiches.gabarits import initialiser_gabarits
+
+                    initialiser_gabarits(index)
+                    logger.info("Registre des gabarits vide : gabarits embarqués enregistrés.")
+            except Exception:
+                logger.exception(
+                    "Échec de la graine des gabarits — conséquence : les dépôts seront "
+                    "refusés « gabarit inconnu » tant que la table reste vide."
+                )
         recovered = recover_stale_jobs(index)
         if recovered > 0:
             logger.info("Recovered %d stale import jobs on startup", recovered)

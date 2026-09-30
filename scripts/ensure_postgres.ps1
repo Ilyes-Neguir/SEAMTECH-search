@@ -35,17 +35,28 @@ if (-not (Test-Path $EnvFile)) {
     New-Item -ItemType File -Path $EnvFile -Force | Out-Null
 }
 
+# Machine vierge : docker-compose.yml exige SEPT secrets (`${VAR:?}`) — chaque
+# variable absente empêche `docker compose up` de démarrer. Tous sont générés
+# ici en local aléatoire (jamais dans Git : .env est ignoré), puis réutilisés
+# aux exécutions suivantes.
+$Secrets = @(
+    "POSTGRES_PASSWORD",
+    "MINIO_ROOT_USER",
+    "MINIO_ROOT_PASSWORD",
+    "REDIS_PASSWORD",
+    "SEAMTECH_AUTH_TOKEN",
+    "SEAMTECH_UI_PASSWORD",
+    "SEAMTECH_SESSION_SECRET"
+)
+foreach ($nom in $Secrets) {
+    $valeur = Get-EnvValue $nom
+    if (-not $valeur -or $valeur -eq "change-me") {
+        $valeur = "seamtech-" + ([guid]::NewGuid().ToString("N"))
+        Set-EnvValue $nom $valeur
+    }
+}
 $password = Get-EnvValue "POSTGRES_PASSWORD"
-if (-not $password -or $password -eq "change-me") {
-    $password = "seamtech-" + ([guid]::NewGuid().ToString("N"))
-    Set-EnvValue "POSTGRES_PASSWORD" $password
-}
-
 $authToken = Get-EnvValue "SEAMTECH_AUTH_TOKEN"
-if (-not $authToken -or $authToken -eq "change-me") {
-    $authToken = "seamtech-token-" + ([guid]::NewGuid().ToString("N"))
-    Set-EnvValue "SEAMTECH_AUTH_TOKEN" $authToken
-}
 
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     throw "Docker Desktop is required for automatic PostgreSQL setup. Install Docker Desktop and run the launcher again."
@@ -76,6 +87,35 @@ try {
     }
     if (-not $ready) {
         throw "Docker Desktop did not become ready within 60 seconds."
+    }
+}
+
+# L'image MinIO (quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z) n'est plus
+# distribuée par aucun registre — elle doit être RECONSTRUITE depuis les
+# sources archivées avant le premier `docker compose up`, sinon la pile ne
+# démarre jamais sur machine vierge. Idempotent : ne reconstruit pas si
+# l'image est déjà présente.
+$ImageMinio = "quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z"
+docker image inspect $ImageMinio *> $null
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "Image MinIO absente — construction locale depuis les sources archivées..."
+    $Bash = $null
+    foreach ($candidat in @("bash", "C:\Program Files\Git\bin\bash.exe", "C:\Program Files (x86)\Git\bin\bash.exe")) {
+        if (Get-Command $candidat -ErrorAction SilentlyContinue) {
+            $Bash = $candidat
+            break
+        }
+        if (Test-Path $candidat) {
+            $Bash = $candidat
+            break
+        }
+    }
+    if (-not $Bash) {
+        throw "bash (Git for Windows) est requis pour construire l'image MinIO via scripts/construire_image_minio.sh. Installez Git for Windows puis relancez."
+    }
+    & $Bash (Join-Path $ProjectRoot "scripts/construire_image_minio.sh")
+    if ($LASTEXITCODE -ne 0) {
+        throw "Construction de l'image MinIO impossible (scripts/construire_image_minio.sh)."
     }
 }
 

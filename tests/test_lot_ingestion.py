@@ -236,3 +236,31 @@ class TestTachesDeFond:
         etat = depot.etat_lot(index, id_lot)
         assert etat["statut"] == "termine"
         assert etat["nb_traites"] == 1 and etat["nb_echecs"] == 1
+
+
+class TestFiletSecuriteLot:
+    def test_lot_ne_meurt_jamais_sur_une_exception(self, base_lot: dict, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Erreur NON GÉRÉE au dossier N : ligne en échec, le lot CONTINUE.
+
+        Règle « le lot continue » (docstring de executer_lot) : sans ce filet,
+        une exception imprévue tuait le thread au premier dossier — le lot
+        restait « en_cours » pour toujours avec toutes ses lignes « en_attente »
+        (symptôme exact de la recette CI, run 1 et 2).
+        """
+        index = base_lot["index"]
+        archive = base_lot["archive"]
+        id_lot = depot.creer_lot(index, archive)
+
+        def _panne_simulee(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            raise RuntimeError("panne simulée")
+
+        monkeypatch.setattr(depot, "deposer_dossier", _panne_simulee)
+        etat = depot.executer_lot(index, id_lot)
+        assert etat["statut"] == "termine"
+        assert etat["nb_echecs"] == NB_DOSSIERS
+        assert etat["nb_traites"] == 0
+        with index.connect() as connexion:
+            with connexion.cursor() as cursor:
+                cursor.execute("SELECT statut FROM lot_dossier WHERE id_lot = %s ORDER BY id_lot_dossier", (id_lot,))
+                statuts = [ligne[0] for ligne in cursor.fetchall()]
+        assert statuts == ["echec"] * NB_DOSSIERS
