@@ -1,5 +1,50 @@
 # Changelog
 
+## 2026-09-30 — Mission « ça marche sur ma machine » : recherche par dimension (Phase 1), recette locale (Phase 2), préparation démo (Phase 3) (PR #34, en cours)
+
+- **Phase 1 — recherche par dimension (`6,60`)** : migration `019_recherche_dimension`
+  (idempotente, 7 cotes nommées, formes `6.60` ET `6,60` dans les données,
+  REPLACE de deux fonctions + backfill global, épingles 001..019) ; tokenisation
+  PostgreSQL **RÉELLE** publiée dans `docs/verite_terrain/RAPPORT_RECHERCHE_DIMENSION_2026-09-30.md`
+  (`6,60` → `'6' <-> '60'` — d'où le repli numérique) ; normalisation requête :
+  `6,6` / `6.60` / `6,60 m` / `660 cm` / `6600 mm` convergent ; valeur seule →
+  toutes cotes ±0,5 % par bornes numériques (tri par écart), `SLU 6,60` → cote
+  nommée ; entier nu sans alias exclu (`2026`, `7792` ne régressent pas) ;
+  réponse `dimension_active`. Tests : 38 verts dont perf p95 **15,2 ms**
+  (sandbox, < 100 ms) ; rappels 50/50 SYNTHÉTIQUE et 13/13 RÉEL inchangés ;
+  garde e2e live portée à 10 (3 validation + 1 badge + 4 Phase 2.2 + 2 dimension).
+  Suites finales : **797 passed** hors services (baseline 787 préservée),
+  **228 passed** postgres, 6 perf.
+- **Phase 2 — recette locale automatisée** : `scripts/recette_locale.ps1` (Windows,
+  chemins espaces/accents) + `scripts/recette_locale.sh` (Linux/CI) orchestrent
+  `scripts/recette_verif.py` (vérificateur fonctionnel UNIQUE exécuté dans le
+  conteneur web) : prérequis, ports libres, `.env` (7 secrets aléatoires locaux,
+  jamais dans Git), image MinIO locale (registres morts), `compose up -d --build`,
+  santé `/live /ready /health` avec timeout, compte nominatif, dépôt des 7 ZIP
+  et/ou chemins argument (RG13 : sources lues, jamais modifiées), suivi `/lots`,
+  fiches `a_valider` badgées, validation, recherche texte/dimension `6,60`/
+  filtres/facettes/suggestions, PDF par URL présignée (302 + SHA-256) et zones
+  page/zone, rejeu idempotent, sauvegarde `pg_dump` custom + restauration
+  `pg_restore --clean`, persistance `down && up` (volumes nommés). Rapport
+  PASS/FAIL ligne par contrôle + code sortie non nul sur FAIL. **Correctifs
+  parcours local** : `Dockerfile` installe `tesseract-ocr`, `tesseract-ocr-fra`
+  et `poppler-utils` (l'OCR métier appelait `tesseract -l fra` absent de l'image,
+  vérifié au build) ; `ensure_postgres.ps1` génère les 7 secrets exigés par le
+  compose ET construit l'image MinIO au premier démarrage (machine vierge).
+  CI : job dédié `recette-locale` exécute la recette de bout en bout
+  (annotations `::error` + artefact du rapport).
+- **Phase 3 — préparation démo** : `docs/verite_terrain/DEMO_BOSS.md` (scénario
+  10 min pas à pas, actions exactes + écrans attendus, variante « cote lue sur
+  la fiche » documentée : les 7 ZIP du corpus ne contiennent pas de cote à
+  6,60 — valeurs réelles 7,45 / 6,79 / 6,45…) et `GUIDE_DEMARRAGE_LOCAL.md`
+  (1 page, 5 commandes).
+- **RG14** : exception documentée via le canal prévu par la garde
+  (`EXCEPTIONS_RG14` + marqueur `RG14_EXCEPTION`) pour `urllib.request` de
+  `scripts/recette_verif.py` — client de recette loopback uniquement, outillage
+  jamais importé par le service. 10 tests statiques (`tests/test_recette_locale.py`)
+  épinglent Dockerfile OCR, partage du vérificateur, code sortie, secrets,
+  job CI, normalisation des sources (RG13 + refus de traversée d'archive).
+
 ## 2026-09-29 — Cycle production-readiness (en cours)
 
 - **CI** : runners épinglés sur `ubuntu-24.04` ; mises à niveau vérifiées des actions officielles (checkout/setup-python/setup-node/upload-artifact/cache/buildx/pnpm) vers les majeures actuellement publiées. Nouveau job `securite-dependances` audite les dépendances Python runtime et frontend production ; seuls les vulnérabilités HIGH/CRITICAL corrigibles font échouer le job, les autres sont annotées.
