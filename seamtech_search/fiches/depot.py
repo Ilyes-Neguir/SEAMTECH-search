@@ -160,6 +160,12 @@ def scanner_dossier(dossier: Path, gabarits: list[GabaritDef]) -> PlanDossier:
     dossier = Path(dossier)
     if not dossier.is_dir():
         raise DepotImpossible(f"Dossier introuvable ou non-directory : {dossier}")
+    if not gabarits:
+        raise DepotImpossible(
+            "aucun gabarit actif en base (table gabarit vide ou tout inactif) — "
+            "exécutez la CLI d'initialisation des gabarits ; conséquence : "
+            "aucune détection n'est possible."
+        )
     plan = PlanDossier(dossier=dossier)
     pdfs: list[Path] = []
     for element in sorted(dossier.iterdir(), key=lambda chemin: chemin.name):
@@ -436,7 +442,13 @@ def executer_lot(index: Any, id_lot: int, interrompre_apres: int | None = None) 
             break  # plus rien en attente : le lot se termine plus bas
         id_lot_dossier, chemin = int(ligne[0]), Path(ligne[1])
         LOGGER.info("Lot #%s : traitement du dossier %s (%s)…", id_lot, id_lot_dossier, chemin)
-        resultat = deposer_dossier(index, chemin, gabarits=gabarits, id_lot=id_lot, id_lot_dossier=id_lot_dossier)
+        try:
+            resultat = deposer_dossier(index, chemin, gabarits=gabarits, id_lot=id_lot, id_lot_dossier=id_lot_dossier)
+        except Exception as erreur:  # filet : « le lot continue » quoi qu'il arrive
+            LOGGER.exception("Lot #%s : erreur non gérée sur le dossier %s", id_lot, chemin)
+            _maj_ligne(index, id_lot_dossier, "echec", f"{type(erreur).__name__}: {erreur}", None, None, 0)
+            _rafraichir_compteurs(index, id_lot)
+            continue
         if resultat["statut"] == "echec":
             LOGGER.warning(
                 "Dossier %s en échec dans le lot #%d : %s — conséquence : compté en échec, le lot continue.",

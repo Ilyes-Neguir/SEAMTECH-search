@@ -62,6 +62,14 @@ class TestScannerUnitaire:
         with pytest.raises(DepotImpossible, match="introuvable"):
             scanner_dossier(tmp_path / "absent", list(GABARITS_EMBARQUES))
 
+    def test_aucun_gabarit_actif_leve_un_refus_explicite(self, tmp_path: Path) -> None:
+        """Registre vide = refus documenté (jamais un ValueError de max())."""
+        dossier = tmp_path / "D0005"
+        dossier.mkdir()
+        shutil.copy(ARCHIVE_7792 / "fiche-7792-SO_ffab.pdf", dossier / "fiche.pdf")
+        with pytest.raises(DepotImpossible, match="aucun gabarit actif"):
+            scanner_dossier(dossier, [])
+
     def test_genois_detecte_dans_son_dossier(self, tmp_path: Path) -> None:
         dossier = tmp_path / "D0004"
         dossier.mkdir()

@@ -238,6 +238,14 @@ def _creer_compte() -> None:
             creation = "créé"
         except Exception as erreur:  # noqa: BLE001 — 409 = déjà présent (rejeu)
             creation = f"déjà présent ({_extrait(erreur, 80)})"
+        try:
+            with index.connect() as connexion:
+                with connexion.cursor() as curseur:
+                    curseur.execute("SELECT count(*) FROM gabarit WHERE actif")
+                    nb_gabarits = int(curseur.fetchone()[0])
+            _info("gabarits_actifs", str(nb_gabarits))
+        except Exception:  # noqa: BLE001 — purement informatif
+            _info("gabarits_actifs", "indisponible")
         index.close()
     except Exception as erreur:  # noqa: BLE001
         _ligne("compte-recette", False, f"bootstrap du compte impossible : {_extrait(erreur)}")
