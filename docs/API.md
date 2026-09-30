@@ -13,7 +13,7 @@ La recherche « comme Google » des fiches validées. La route Phase 0 `GET /sea
 
 | Route | Rôle |
 |---|---|
-| `GET /recherche?q=&type_voile=&client=&bateau=&matiere=&gamme=&annee=&annee_min=&annee_max=&cote=&min=&max=&cote_min=&cote_max=&tri=&page=&limit=&offset=&inclure_a_valider=` | Recherche hybride : lexical tsvector pondéré A/B/C + trigrammes (volet dégradable) + texte des PDF (chunks/documents) + vecteurs (dormants, activables par injection `encode_requete`), fusionnés par **RRF k=60**. Par défaut : fiches `valide` seulement. Réponse : `{requete, nb_resultats, resultats:[{code, titre, type_voile, client, bateau, gamme, statut, annee, extrait, score, sources}], facettes:{groupe:[{valeur, effectif}]}, facettes_cotes:{cote:{unite, min, max, effectif, intervalles:[{min,max,effectif,label}] }}, cote_active, cotes_unites, tri, page, sources_actives, sans_resultat, duree_ms}`. **Les 7 cotes d'un résultat (`slu_m`, `sle_m`, `sf_m`, `shw_m`, `spa_m2`, `tetiere_cm`, `poids_kg`) ne sont présentes QUE si un filtre dimension ou un tri par cote est demandé — voir « Chargement conditionnel des cotes » ci-dessous.** |
+| `GET /recherche?q=&type_voile=&client=&bateau=&matiere=&gamme=&annee=&annee_min=&annee_max=&cote=&min=&max=&cote_min=&cote_max=&tri=&page=&limit=&offset=&inclure_a_valider=` | Recherche hybride : lexical tsvector pondéré A/B/C + trigrammes (volet dégradable) + texte des PDF (chunks/documents) + vecteurs (dormants, activables par injection `encode_requete`), fusionnés par **RRF k=60** ; depuis la migration 019, une **dimension détectée dans `q`** bascule sur le chemin numérique (voir « Recherche par dimension (Phase 1) » ci-dessous). Par défaut : fiches `valide` seulement. Réponse : `{requete, nb_resultats, resultats:[{code, titre, type_voile, client, bateau, gamme, statut, annee, extrait, score, sources}], facettes:{groupe:[{valeur, effectif}]}, facettes_cotes:{cote:{unite, min, max, effectif, intervalles:[{min,max,effectif,label}] }}, cote_active, cotes_unites, dimension_active, tri, page, sources_actives, sans_resultat, duree_ms}`. **Les 7 cotes d'un résultat (`slu_m`, `sle_m`, `sf_m`, `shw_m`, `spa_m2`, `tetiere_cm`, `poids_kg`) ne sont présentes QUE si un filtre dimension, une recherche par dimension ou un tri par cote est demandé — voir « Chargement conditionnel des cotes » ci-dessous.** |
 | `GET /recherche/suggestions?prefix=&limite=` | Suggestions au fil de la frappe : **valeurs réellement présentes seulement** (référentiels, codes, gammes) par préfixe, complétées par tolérance aux fautes trigrammes sur les référentiels si le préfixe ne donne rien. Réponse : `{prefixe, suggestions:[{nature, valeur}]}`. |
 | `GET /recherche/journal?jours=&limite_top=&limite_sans=` | Exploitation du journal : agrégé depuis `recherche_log` réelle. Retour : `{periode_jours, total_recherches, total_sans_resultat, top_requetes:[{requete, nb_occurrences, nb_sans_resultat, dernier}], sans_resultat:[{requete, nb_occurrences, dernier, exemple_filtres}]}`. Période paramétrable en jours. |
 
@@ -40,7 +40,11 @@ La recherche « comme Google » des fiches validées. La route Phase 0 `GET /sea
   1. un **filtre dimension est actif** — `cote=<nom>` accompagné d'au moins une
      borne (`min`/`max`, ou leurs alias `cote_min`/`cote_max`) ; ou
   2. un **tri par cote est demandé** — `tri` commençant par une des 7 cotes
-     (`slu_m_asc`, `slu_m_desc`, …, `poids_kg_asc`, `poids_kg_desc`).
+     (`slu_m_asc`, `slu_m_desc`, …, `poids_kg_asc`, `poids_kg_desc`) ; ou
+  3. une **recherche par dimension est détectée dans `q`** (Phase 1,
+     migration 019) — la réponse porte alors `dimension_active` non nul et les
+     cotes des résultats sont affichées (c'est le but : « je vois toutes les
+     voiles correspondantes » avec leurs valeurs).
 
   Sinon — c'est-à-dire dans tous les autres cas, dont le défaut
   `tri=pertinence` sans filtre dimension — **les résultats ne portent AUCUNE
@@ -64,6 +68,36 @@ La recherche « comme Google » des fiches validées. La route Phase 0 `GET /sea
   la seule façon documentée ; il n'existe pas de paramètre « charge tout ».
   Le contrat est figé par le test
   `tests/test_recherche_dimension_tri.py::test_contrat_cotes_conditionnelles_documente`.
+
+- **Recherche par dimension (Phase 1, migration 019)** : la requête `q` est
+  scindée en (dimension éventuelle + mots restants). Une dimension est un
+  nombre **décimal** (« 6,60 » / « 6.60 ») ou muni d'une **unité** (« 660 cm »,
+  « 6600 mm », « 6,60 m »), éventuellement suivi d'une **cote nommée**
+  (`slu`, `sle`, `sf`, `shw`, `spa`, `tetiere`/`têtière`, `poids`, `guindant`).
+  Frontière documentée : un **entier nu** (« 2026 », « 7792 ») n'est JAMAIS une
+  dimension — années et codes restent des mots (« spi sailonet 2026 », « 7792-SO »
+  ne basculent pas dans le filtre numérique), sauf si une cote est nommée
+  (« tetiere 15 »).
+  - **Normalisation** : « 6,6 », « 6.60 », « 6,60 m », « 660 cm », « 6600 mm »
+    convergent vers la même valeur (6.6).
+  - **Requête numérique seule** (« 6,60 ») : la valeur est cherchée dans
+    **toutes les 7 cotes** avec tolérance **±0,5 %**, **par le chemin numérique
+    existant** (bornes sur les colonnes de `v_fiche_recherche`, même mécanique
+    que `cote=&min=&max=`) — `sources_actives == ["dimension"]`, aucun tsvector.
+    Résultats ordonnés par écart à la valeur (les plus proches d'abord).
+  - **Cote nommée** (« SLU 6,60 », « poids 6,60 ») : la valeur est cherchée
+    **uniquement dans cette cote**, convertie dans son unité métier
+    (« tetiere 150 mm » → 15 cm ; « slu 660 cm » → 6,60 m).
+  - **Mots + dimension** (« spi 6,60 ») : les mots portent les sources
+    textuelles, la valeur sert de **filtre** (toutes les cotes ou la cote
+    nommée). Rappel : « spi » n'est PAS une cote — c'est un type de voile.
+  - **`dimension_active`** dans la réponse : `{valeur, unite, cote,
+    tolerance_pct: 0.5, texte_restant}` ou `null` si aucune dimension détectée.
+  - Le texte de recherche pondéré des fiches (poids B) porte les 7 cotes dans
+    les DEUX formes « 6.60 » et « 6,60 » (migration 019) — `websearch_to_tsquery`
+    traite « 6,60 » en `'6' <-> '60'` et « 6.60 » en float unique `'6.60'`, les
+    deux formes ne se croisent jamais (test de tokenisation RÉEL gardé par
+    `tests/test_recherche_dimension.py::TestTokenisationReelle`).
 
 - **Tri** : paramètre `tri` parmi 18 valeurs (`pertinence` par défaut,
   `date_asc/desc` sur année, `code_asc/desc`, `slu_m_asc/desc`, `sle_m_asc/desc`,

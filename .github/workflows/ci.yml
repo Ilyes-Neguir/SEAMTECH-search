@@ -919,13 +919,13 @@ jobs:
           # du parcours machine complet (annotation mesure-phase1) est donc
           # extrait du rapport JSON et publié en ::notice — c'est le seul
           # mécanisme qui le rende lisible dans les journaux CI. Garde-fous de
-          # porte de sortie : 8 passés au premier essai (3 du parcours validation,
-          # 1 badge « Non vérifiée », 4 tests Phase 2.2), 0 flaky (un
-          # échec rattrapé par retry fait échouer la porte), 0 saut, et le
-          # chrono doit avoir été produit.
+          # porte de sortie : 10 passés au premier essai (3 du parcours validation,
+          # 1 badge « Non vérifiée », 4 tests Phase 2.2, 2 recherche par
+          # dimension Phase 1), 0 flaky (un échec rattrapé par retry fait
+          # échouer la porte), 0 saut, et le chrono doit avoir été produit.
           set -uo pipefail
           set +e
-          pnpm exec playwright test e2e/validation.spec.ts e2e/recherche-badge.spec.ts --reporter=list,json 2>&1 | tee /tmp/e2e_validation.log
+          pnpm exec playwright test e2e/validation.spec.ts e2e/recherche-badge.spec.ts e2e/recherche-dimension.spec.ts --reporter=list,json 2>&1 | tee /tmp/e2e_validation.log
           rc=${PIPESTATUS[0]}
           set -e
           if [ "$rc" -ne 0 ]; then
@@ -957,9 +957,9 @@ jobs:
           # échoue puis passe au retry (compté « flaky » par Playwright avec
           # retries: 2) n'est PAS un test réellement assaini — il doit faire
           # échouer la porte, pas compter comme « réellement exécuté ».
-          if sautes or flaky or passes != 8:
+          if sautes or flaky or passes != 10:
               raise SystemExit(
-                  f"GARDE-FOU live e2e : attendu 8 tests passés au premier essai, "
+                  f"GARDE-FOU live e2e : attendu 10 tests passés au premier essai, "
                   f"0 flaky, 0 sautés — mesuré {passes} passés, {flaky} flaky, "
                   f"{sautes} sautés. Les tests live ne doivent jamais s'ignorer "
                   "silencieusement ni masquer une instabilité par retry."

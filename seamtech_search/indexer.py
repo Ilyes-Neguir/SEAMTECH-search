@@ -854,6 +854,28 @@ class SearchIndex:
         with connection.cursor() as cursor:
             cursor.execute(schema_metier.SQL_018_RECHERCHE_A_VALIDER)
 
+    def _migration_019_recherche_dimension(self, connection: Any) -> None:
+        """Phase 1 (2026-09-30) : recherche par dimension.
+
+        Les 7 cotes entrent dans le texte de recherche pondéré (poids B) dans
+        les DEUX formes « 6.60 » ET « 6,60 » — le test de tokenisation RÉEL a
+        mesuré que les deux ne se croisent jamais sous websearch_to_tsquery.
+        REPLACE propre des deux fonctions de rafraîchissement puis backfill
+        global (toutes les fiches déjà posées). PostgreSQL uniquement, comme
+        006-018 ; sur SQLite : warning journalisé, migration enregistrée.
+        """
+        if not self.is_postgres:
+            logger.warning(
+                "Migration 019_recherche_dimension ignorée : la couche métier est PostgreSQL "
+                "uniquement — conséquence : aucune cote indexée dans le texte de recherche en mode SQLite."
+            )
+            return
+        with connection.cursor() as cursor:
+            config = self._postgres_ts_config(connection)
+            cursor.execute(
+                schema_metier.SQL_019_RECHERCHE_DIMENSION.replace(schema_metier.MARQUEUR_TS_CONFIG, config)
+            )
+
     def run_migrations(self) -> None:
         """Run pending schema migrations once at startup."""
         with self.connect() as connection:
@@ -885,6 +907,10 @@ class SearchIndex:
                 # (oubli qui avait cassé sauvegarde au Lot K, puis au Lot M — même motif).
                 ("017_ocr_etage3", self._migration_017_ocr_etage3),
                 ("018_recherche_a_valider", self._migration_018_recherche_a_valider),
+                # Phase 1 — recherche par dimension : cotes dans le texte pondéré
+                # (deux formes « 6.60 »/« 6,60 »), même motif d'enregistrement
+                # que 017/018 : une migration oubliée ici ferait échouer sauvegarde.
+                ("019_recherche_dimension", self._migration_019_recherche_dimension),
             ]
 
             for version, func in migrations:

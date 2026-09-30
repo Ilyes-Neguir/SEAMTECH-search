@@ -241,12 +241,15 @@ def test_02_corpus_extrait_complet(dossiers: dict[str, Path]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 3. Services vivants + migrations 001..018 sur base neuve.
+# 3. Services vivants + migrations 001..019 sur base neuve.
 # ---------------------------------------------------------------------------
 
 
 def test_03_services_et_migrations_018_base_neuve(app_client) -> None:
-    """PostgreSQL (migrations 001..018, base vide), Redis (ping), MinIO (bucket)."""
+    """PostgreSQL (migrations 001..019, base vide), Redis (ping), MinIO (bucket).
+
+    Identifiant historique conservé (inventaire S3 réel de test_selection_ci) ;
+    les assertions vérifient la séquence complète 001..019."""
     import psycopg2
     import redis as module_redis
 
@@ -282,6 +285,8 @@ def test_03_services_et_migrations_018_base_neuve(app_client) -> None:
         "015_qualite_gabarit_brouillon",
         "016_dedup_comptes_nominatifs",
         "017_ocr_etage3",
+        "018_recherche_a_valider",
+        "019_recherche_dimension",
     }
     manquantes = attendues - versions
     assert not manquantes, f"migrations non appliquées : {sorted(manquantes)}"

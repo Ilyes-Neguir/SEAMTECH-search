@@ -39,9 +39,12 @@ import json
 import logging
 import re
 import time
+from dataclasses import dataclass
 from typing import Annotated, Any, Callable, Mapping, Sequence
 
 from fastapi import Header, HTTPException, Query
+
+from seamtech_search.fiches.normalisation import sans_accents, vers_metres
 
 LOGGER = logging.getLogger("seamtech.recherche")
 
@@ -70,6 +73,164 @@ COTES_UNITES: dict[str, str] = {
 }
 COTES_AUTORISEES = frozenset(COTES_UNITES.keys())
 GROUPE_COTES = frozenset({"cote", "min", "max", "cote_min", "cote_max"})
+
+# ---------------------------------------------------------------------------
+# Phase 1 — recherche par dimension (migration 019)
+# ---------------------------------------------------------------------------
+# Test de tokenisation RÉEL (PostgreSQL 16.2, config seamtech_unaccent) :
+#   websearch_to_tsquery('6,60') → '6' <-> '60'   (la virgule coupe en deux)
+#   websearch_to_tsquery('6.60') → '6.60'         (le point garde un float)
+#   vecteur « 6.60 » × requête « 6,60 » → JAMAIS ; l'inverse non plus.
+# D'où la migration 019 : les 7 cotes entrent dans le texte pondéré dans les
+# DEUX formes (« 6.60 » ET « 6,60 »), et la VALEUR est cherchée par le chemin
+# NUMÉRIQUE existant (bornes sur les colonnes de v_fiche_recherche) avec
+# tolérance ±0,5 % — jamais par tsvector.
+TOLERANCE_DIMENSION = 0.005  # ±0,5 % (valeur demandée par le commanditaire)
+
+# Alias de cotes admis dans la barre de recherche (« SLU 6,60 », « têtière 15 »).
+# « spi » n'en est PAS un : c'est un type de voile, il reste un mot.
+COTE_ALIASES: dict[str, str] = {
+    "slu": "slu_m", "slu_m": "slu_m", "guindant": "slu_m",
+    "sle": "sle_m", "sle_m": "sle_m",
+    "sf": "sf_m", "sf_m": "sf_m",
+    "shw": "shw_m", "shw_m": "shw_m",
+    "spa": "spa_m2", "spa_m2": "spa_m2",
+    "tetiere": "tetiere_cm", "tetiere_cm": "tetiere_cm",
+    "poids": "poids_kg", "poids_kg": "poids_kg",
+}
+
+# Unités admises après le nombre (collées ou séparées : « 660 cm », « 6.60m »).
+# L'ordre d'alternance compte : « mm » avant « m », « m2 » avant « m ».
+_UNITE_ALIASES: dict[str, str] = {
+    "mm": "mm", "cm": "cm", "m": "m",
+    "m2": "m2", "m²": "m2", "m^2": "m2",
+    "kg": "kg", "g": "g",
+    "mètre": "m", "metre": "m", "mètres": "m", "metres": "m",
+}
+
+# Un nombre de dimension : décimale (« 6,60 » / « 6.60 ») et/ou unité
+# (« 660 cm »). Le lookbehind et le lookahead refusent les fragments
+# alphanumériques : « 29er », « k903 », « 0701-GV-001 » ne sont jamais des
+# dimensions ; les ENTIERS NUS (« 2026 », « 7792 ») non plus — années, codes
+# et quantités doivent rester des mots, sinon « spi sailonet 2026 » tomberait
+# à zéro résultat.
+_RE_DIMENSION = re.compile(
+    r"(?<![\w.,])(?P<nombre>\d{1,3}(?:[\u00a0\u202f ]\d{3})+|\d+)(?:[.,](?P<decimales>\d+))?"
+    r"(?:\s*(?P<unite>mm|cm|m2|m²|m\^2|m|kg|g|mètre|metre|mètres|metres)\b)?(?![\w])",
+    re.IGNORECASE,
+)
+
+
+@dataclass(frozen=True)
+class RequeteDimension:
+    """Résultat de ``analyser_requete_dimension`` — dimension détectée ou non.
+
+    - ``valeur``   : valeur BRUTE extraite (« 660 » dans « 660 cm ») ;
+    - ``unite``    : unité détectée ('m', 'cm', 'mm', 'm2', 'kg', 'g') ou None ;
+    - ``cote``     : cote nommée (clé de ``COTES_UNITES``) ou None = toutes ;
+    - ``texte``    : mots restants pour les sources textuelles (sans le nombre,
+      ni l'unité, ni l'alias de cote).
+    """
+
+    valeur: float | None = None
+    unite: str | None = None
+    cote: str | None = None
+    texte: str = ""
+
+    @property
+    def active(self) -> bool:
+        return self.valeur is not None
+
+    def valeur_convergente(self) -> float:
+        """Valeur canonique pour la recherche sur TOUTES les cotes.
+
+        « 6,6 », « 6.60 », « 6,60 m », « 660 cm », « 6600 mm » convergent tous
+        vers 6.6 ; « 3,4 kg » et « 3400 g » vers 3.4. C'est cette valeur qui est
+        comparée aux 7 cotes dans leurs unités métier (tolérance ±0,5 %)."""
+        if self.valeur is None:
+            raise ValueError("aucune valeur de dimension")
+        if self.unite == "g":
+            return self.valeur / 1000.0
+        if self.unite in ("m", "cm", "mm") or self.unite is None:
+            return float(vers_metres(self.valeur, self.unite or "m"))
+        return self.valeur  # m2, kg : déjà en unité de base
+
+    def valeur_pour_cote(self, cote: str) -> float:
+        """Valeur convertie dans l'UNITÉ MÉTIQUE de la cote nommée.
+
+        « tetiere 150 mm » → 15 (cm) ; « slu 660 cm » → 6.6 (m) ;
+        « tetiere 15 » (sans unité) → 15, déjà en cm."""
+        if self.valeur is None:
+            raise ValueError("aucune valeur de dimension")
+        if cote == "tetiere_cm":
+            if self.unite in ("m", "cm", "mm"):
+                return float(vers_metres(self.valeur, self.unite)) * 100.0
+            return self.valeur
+        if cote == "poids_kg":
+            return self.valeur / 1000.0 if self.unite == "g" else self.valeur
+        if cote == "spa_m2":
+            return self.valeur
+        # slu_m, sle_m, sf_m, shw_m : mètres
+        return float(vers_metres(self.valeur, self.unite or "m"))
+
+    def bornes_tolerance(self, valeur_cible: float) -> tuple[float, float]:
+        ecart = TOLERANCE_DIMENSION * abs(valeur_cible)
+        return valeur_cible - ecart, valeur_cible + ecart
+
+
+def analyser_requete_dimension(texte: str) -> RequeteDimension:
+    """Détecte une dimension dans la requête et sépare les mots restants.
+
+    Une dimension est un nombre DÉCIMAL (« 6,60 »), muni d'une unité
+    (« 660 cm »), ou suivi d'une COTE NOMMÉE (« tetiere 15 » — l'alias
+    désambiguïse l'entier). Un entier nu SANS cote nommée (« 2026 », « 7792 »)
+    n'en est jamais une — la frontière documentée protège les requêtes d'année
+    et de code. Les entiers nus sont sautés (« grand voile 2024 6,60 » détecte
+    bien 6,60) ; la première dimension retenue gagne."""
+    if not texte:
+        return RequeteDimension()
+    mots = texte.split()
+    cote: str | None = None
+    for mot in mots:
+        cle = sans_accents(mot.strip().lower())
+        if cle in COTE_ALIASES:
+            cote = COTE_ALIASES[cle]
+            break
+    for correspondance in _RE_DIMENSION.finditer(texte):
+        nombre = (
+            correspondance.group("nombre").replace(" ", "").replace("\u00a0", "").replace("\u202f", "")
+        )
+        decimales = correspondance.group("decimales")
+        unite_raw = (correspondance.group("unite") or "").strip().lower()
+        unite = _UNITE_ALIASES.get(unite_raw) if unite_raw else None
+        if decimales is None and unite is None and cote is None:
+            # Entier nu sans cote nommée (« 2026 », « 7792 ») : jamais de
+            # filtre dimension implicite — années, codes et quantités.
+            continue
+        if decimales is not None:
+            nombre = f"{nombre}.{decimales}"
+        valeur = float(nombre)
+        reste = (texte[: correspondance.start()] + " " + texte[correspondance.end() :]).split()
+        mots_restants: list[str] = []
+        for mot in reste:
+            cle = sans_accents(mot.strip().lower())
+            if cote is not None and cle == _cle_cote(cote):
+                continue  # l'alias de cote est consommé (« SLU 6,60 »)
+            if cle in COTE_ALIASES:
+                continue  # un second alias reste un mot utile au texte
+            mots_restants.append(mot.strip())
+        return RequeteDimension(
+            valeur=valeur, unite=unite, cote=cote, texte=" ".join(mots_restants)
+        )
+    return RequeteDimension(texte=texte)
+
+
+def _cle_cote(cote: str) -> str:
+    """Premier alias textuel d'une cote (celui que le parser consomme)."""
+    for alias, cible in COTE_ALIASES.items():
+        if cible == cote:
+            return alias
+    return cote
 
 # Filtres admis (liste blanche — tout autre paramètre est ignoré, jamais de
 # SQL construit depuis un nom de champ inconnu).
@@ -173,11 +334,18 @@ def _fragment_filtres(
     filtres: Mapping[str, object],
     inclure_a_valider: bool,
     exclure: frozenset[str] = frozenset(),
+    dimension_toutes: tuple[float, float] | None = None,
 ) -> tuple[str, list[Any]]:
     """Fragment WHERE (alias imposés : v = vue, f = fiche). ``exclure`` sert
     aux facettes : chaque facette compte sans son PROPRE filtre, comme un
     moteur généraliste (le filtre type_voile ne réduit pas la facette
-    type_voile)."""
+    type_voile).
+
+    ``dimension_toutes`` (bornes min/max) ajoute le chemin NUMÉRIQUE « valeur
+    dans toutes les cotes » : un OR sur les 7 colonnes de cotes de la vue, aux
+    bornes déjà converties (±0,5 % calculés par l'appelant). C'est la même
+    mécanique de bornes que le filtre ``cote=...&min=&max=`` existant — jamais
+    de tsvector pour une valeur numérique."""
     morceaux: list[str] = []
     params: list[Any] = []
     if inclure_a_valider:
@@ -227,6 +395,17 @@ def _fragment_filtres(
                     params.append(max_f)
                 except (ValueError, TypeError):
                     pass
+    # Recherche par dimension sans cote nommée : la valeur est cherchée dans
+    # les 7 cotes avec tolérance (bornes déjà calculées par l'appelant).
+    # Un OR sur les colonnes numériques de la vue — le chemin numérique
+    # existant, pas le tsvector.
+    if dimension_toutes is not None:
+        borne_min, borne_max = dimension_toutes
+        alternatives: list[str] = []
+        for nom_cote in COTES_UNITES:
+            alternatives.append(f"v.{nom_cote} BETWEEN %s AND %s")
+            params.extend([borne_min, borne_max])
+        morceaux.append("(" + " OR ".join(alternatives) + ")")
     return " AND ".join(morceaux), params
 
 
@@ -387,6 +566,42 @@ def _liste_par_defaut(cursor: Any, filtres_sql: str, params: Sequence[Any], limi
         LIMIT %s
         """,
         (*params, limite),
+    )
+    return [int(ligne[0]) for ligne in cursor.fetchall()]
+
+
+def _source_dimension(
+    cursor: Any,
+    dimension: RequeteDimension,
+    filtres_sql: str,
+    params: Sequence[Any],
+    limite: int,
+) -> list[int]:
+    """Requête numérique SEULE (« 6,60 ») : candidats ordonnés par écart à la
+    valeur (les plus proches d'abord, puis code — déterministe).
+
+    Le filtre de tolérance est déjà dans ``filtres_sql`` (chemin numérique) ;
+    cette source ne fait qu'ordonner. Aucun tsvector n'est consulté."""
+    if dimension.valeur is None:
+        return []
+    if dimension.cote is not None:
+        cible = dimension.valeur_pour_cote(dimension.cote)
+        ordre_sql = f"ABS(v.{dimension.cote} - %s)"
+        params_ordre: list[Any] = [cible]
+    else:
+        cible = dimension.valeur_convergente()
+        ordre_sql = "LEAST(" + ", ".join(f"ABS(v.{nom} - %s)" for nom in COTES_UNITES) + ")"
+        params_ordre = [cible] * len(COTES_UNITES)
+    cursor.execute(
+        f"""
+        SELECT v.id_fiche
+        FROM v_fiche_recherche v
+        JOIN fiche f ON f.id_fiche = v.id_fiche
+        WHERE {filtres_sql}
+        ORDER BY {ordre_sql} ASC NULLS LAST, v.code
+        LIMIT %s
+        """,
+        (*params, *params_ordre, limite),
     )
     return [int(ligne[0]) for ligne in cursor.fetchall()]
 
@@ -613,6 +828,7 @@ def _facettes(
     texte: str,
     filtres: Mapping[str, object],
     inclure_a_valider: bool,
+    dimension_toutes: tuple[float, float] | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
     """Un seul énoncé SQL (CTE par axe + UNION ALL) : un aller-retour serveur."""
     params: list[Any] = []
@@ -645,7 +861,9 @@ def _facettes(
 
     unions: list[str] = []
     for nom, exclure, select_facette in _FACETTES_AXES:
-        fragment, params_fragment = _fragment_filtres(filtres, inclure_a_valider, exclure)
+        fragment, params_fragment = _fragment_filtres(
+            filtres, inclure_a_valider, exclure, dimension_toutes=dimension_toutes
+        )
         base = f"base_{nom}"
         ctes.append(
             f"""
@@ -729,7 +947,42 @@ def rechercher_fiches(
                 _normaliser_separateurs(requete.strip()), _charger_synonymes(cursor, nom_base)
             )
 
-            fragment, params = _fragment_filtres(filtres_purs, inclure_a_valider)
+            # Phase 1 — recherche par dimension : la requête est scindée en
+            # (valeur + unité + éventuelle cote nommée) et les mots restants.
+            # « 6,60 » seul → chemin numérique (toutes les cotes ±0,5 %), AUCUN
+            # tsvector ; « spi 6,60 » → mots + filtre numérique ; « SLU 6,60 » →
+            # cote nommée (filtre de cote existant). Les entiers nus ne sont
+            # jamais des dimensions (« spi sailonet 2026 » reste textuel).
+            analyse = analyser_requete_dimension(texte)
+            dimension: RequeteDimension | None = None
+            dimension_toutes: tuple[float, float] | None = None
+            if analyse.active:
+                dimension = analyse
+                texte = analyse.texte
+                cote_filtre = filtres_purs.get("cote")
+                cote_explicite = (
+                    cote_filtre if isinstance(cote_filtre, str) and cote_filtre in COTES_AUTORISEES else None
+                )
+                bornes_explicites = any(
+                    filtres_purs.get(k) not in (None, "") for k in ("min", "max", "cote_min", "cote_max")
+                )
+                cote_cible = analyse.cote or cote_explicite
+                if cote_cible is not None:
+                    if not bornes_explicites:
+                        cible = analyse.valeur_pour_cote(cote_cible)
+                        bas, haut = analyse.bornes_tolerance(cible)
+                        filtres_purs = {
+                            **filtres_purs,
+                            "cote": cote_cible,
+                            "cote_min": bas,
+                            "cote_max": haut,
+                        }
+                elif not bornes_explicites:
+                    dimension_toutes = analyse.bornes_tolerance(analyse.valeur_convergente())
+
+            fragment, params = _fragment_filtres(
+                filtres_purs, inclure_a_valider, dimension_toutes=dimension_toutes
+            )
             classements: dict[str, list[int]] = {}
             if texte:
                 classements["lexical"] = _source_lexicale(
@@ -752,6 +1005,13 @@ def rechercher_fiches(
                         classements["vecteurs"] = _source_vecteurs(
                             cursor, embedding, fragment, params, PROFONDEUR_SOURCES
                         )
+                fusion = fusionner_rrf(classements)
+            elif dimension is not None:
+                # Recherche par dimension PURE : la valeur passe par le chemin
+                # numérique (filtre de cote), jamais par le tsvector.
+                classements["dimension"] = _source_dimension(
+                    cursor, dimension, fragment, params, PROFONDEUR_SOURCES
+                )
                 fusion = fusionner_rrf(classements)
             else:
                 classements["parcours"] = _liste_par_defaut(
@@ -802,7 +1062,7 @@ def rechercher_fiches(
             total = len(fusion)
             page = fusion[offset : offset + limit]
             # Optimisation 0.2 : cotes seulement si filtre dimension actif ou tri sur cote
-            besoin_cotes_filtre = (
+            besoin_cotes_filtre = dimension is not None or (
                 isinstance(filtres_purs.get("cote"), str)
                 and filtres_purs.get("cote") in COTES_AUTORISEES
                 and any(
@@ -834,7 +1094,10 @@ def rechercher_fiches(
             if tri_pur != "pertinence":
                 resultats_ordonnes = _appliquer_tri(resultats_ordonnes, tri_pur)
 
-            facettes = _facettes(cursor, ts_config, texte, filtres_purs, inclure_a_valider)
+            facettes = _facettes(
+                cursor, ts_config, texte, filtres_purs, inclure_a_valider,
+                dimension_toutes=dimension_toutes,
+            )
             # Facette dimension : min/max + intervalles depuis données réelles
             # Optimisation 0.2 (perf-derive) : avant Lot J, 7 requêtes séparées (1 par cote) + _details_fiches chargeait 7 cotes systématiquement.
             # Maintenant :
@@ -842,7 +1105,8 @@ def rechercher_fiches(
             # - _details_fiches sans cotes par défaut (évite JOIN fiche_cotes, gain ~5ms)
             # - facettes_cotes calculées SEULEMENT si dimension active (filtre cote présent) ou tri sur cote → chemin par défaut sans les requêtes, p95 <50ms
             besoin_dimension = (
-                (isinstance(filtres_purs.get("cote"), str) and filtres_purs.get("cote") in COTES_AUTORISEES)
+                dimension is not None
+                or (isinstance(filtres_purs.get("cote"), str) and filtres_purs.get("cote") in COTES_AUTORISEES)
                 or any(tri_pur.startswith(c + "_") for c in COTES_AUTORISEES)
             )
             if besoin_dimension:
@@ -887,6 +1151,17 @@ def rechercher_fiches(
         "facettes_cotes": facettes_cotes,
         "cote_active": cote_active,
         "cotes_unites": COTES_UNITES,
+        "dimension_active": (
+            {
+                "valeur": dimension.valeur,
+                "unite": dimension.unite,
+                "cote": dimension.cote,
+                "tolerance_pct": round(TOLERANCE_DIMENSION * 100.0, 1),
+                "texte_restant": dimension.texte,
+            }
+            if dimension is not None
+            else None
+        ),
         "tri": tri_pur,
         "sources_actives": sorted(classements.keys()),
         "sans_resultat": total == 0,
