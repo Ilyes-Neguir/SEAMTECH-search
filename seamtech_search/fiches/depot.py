@@ -93,9 +93,58 @@ _SQL_DOCUMENT_FICHE_UPSERT = (
     "VALUES (%s, %s, %s, %s, %s, %s, %s, FALSE, %s, %s, 'metadata', 'analyzed', 'fiche_pdf') "
     "ON CONFLICT (path_key) DO UPDATE SET name = EXCLUDED.name, path = EXCLUDED.path, "
     "parent_path = EXCLUDED.parent_path, extension = EXCLUDED.extension, size = EXCLUDED.size, "
-    "modified_at = EXCLUDED.modified_at, content = EXCLUDED.content, content_hash = EXCLUDED.content_hash, "
-    "category = 'analyzed', role = 'fiche_pdf' RETURNING id"
+    "modified_at = EXCLUDED.modified_at, "
+    "content = CASE WHEN COALESCE(documents.content, '') = '' THEN EXCLUDED.content ELSE documents.content END, "
+    "content_hash = EXCLUDED.content_hash, category = 'analyzed', role = 'fiche_pdf' RETURNING id"
 )
+
+
+def _texte_indexable_fiche(fiche: Any) -> str:
+    """Index searchable fiche metadata without persisting source paths.
+
+    The primary PDF can be new to the crawler (for example, the original file
+    behind an uploaded staging copy). In that case, its catalogue row still
+    needs searchable metadata. When the crawler already extracted document
+    text, the upsert preserves that content instead of replacing it with this
+    metadata fallback.
+    """
+    valeurs: list[str] = []
+    for nom in (
+        "code",
+        "titre",
+        "gamme",
+        "type_voile_libelle",
+        "client_nom",
+        "client_chantier",
+        "bateau_nom",
+        "bateau_taille",
+        "commande_numero",
+        "atelier",
+        "tissu_texte",
+        "montage_type",
+        "montage_fil",
+        "logo",
+        "notes",
+        "dessinateur",
+        "date_dessin",
+        "date_edition",
+    ):
+        valeur = getattr(fiche, nom, None)
+        if valeur is not None and str(valeur).strip():
+            valeurs.append(str(valeur).strip())
+
+    tous_les_champs = getattr(fiche, "tous_les_champs", None)
+    if callable(tous_les_champs):
+        for champ in tous_les_champs():
+            nom_champ = str(getattr(champ, "champ", "")).lower()
+            if any(fragment in nom_champ for fragment in ("fichier_source", "path", "chemin", "object_key")):
+                continue
+            for attribut in ("valeur_normalisee", "valeur_brute"):
+                valeur = getattr(champ, attribut, None)
+                if valeur is not None and str(valeur).strip():
+                    valeurs.append(str(valeur).strip())
+
+    return " ".join(dict.fromkeys(valeurs))
 # Même expression que l'indexeur (RG12 : contenu indexé = métadonnées seulement).
 _SQL_DOCUMENT_VECTOR = (
     f"UPDATE documents SET search_vector = to_tsvector('{PG_UNACCENT_CONFIG}', "
@@ -341,7 +390,7 @@ def deposer_dossier(index: Any, dossier: Path, gabarits: list[GabaritDef] | None
                         pdf_fiche.suffix.lower(),
                         pdf_stat.st_size,
                         pdf_stat.st_mtime,
-                        f"PDF source de la fiche {fiche.code}",
+                        _texte_indexable_fiche(fiche),
                         empreinte,
                     ),
                 )

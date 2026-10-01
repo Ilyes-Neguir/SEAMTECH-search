@@ -832,12 +832,12 @@ def test_10_sauvegarde_restauration_base_neuve(
     code_ref001 = RECETTE["refs"]["REF-001"]["fiche"]
     index = SearchIndex(Path("/tmp/recette-restauree-2.db"), URL_BASE_RESTAUREE)
     try:
-        reponse_defaut = rechercher_fiches(index, requete=RECETTE["fiche_attendue"])
+        # Utiliser la fiche REF-001 directement : cette étape ne doit pas
+        # dépendre de l'état partagé écrit à la fin du test 07, qui peut échouer.
+        reponse_defaut = rechercher_fiches(index, requete=code_ref001)
         lignes_defaut = reponse_defaut.get("resultats") or reponse_defaut.get("fiches") or []
         statuts_defaut = {r.get("code"): r.get("statut") for r in lignes_defaut if r.get("code")}
-        reponse_confiance = rechercher_fiches(
-            index, requete=RECETTE["fiche_attendue"], inclure_a_valider=False
-        )
+        reponse_confiance = rechercher_fiches(index, requete=code_ref001, inclure_a_valider=False)
         codes_confiance = [
             r.get("code")
             for r in (reponse_confiance.get("resultats") or reponse_confiance.get("fiches") or [])
@@ -849,11 +849,11 @@ def test_10_sauvegarde_restauration_base_neuve(
     assert any(Path(d.get("path") or "").name == nom_technique for d in documents), (
         "la recherche de documents ne retrouve pas le technique de REF-001 sur la base restaurée"
     )
-    assert statuts_defaut.get(RECETTE["fiche_attendue"]) == "a_valider", (
+    assert statuts_defaut.get(code_ref001) == "a_valider", (
         "contrat 018 rompu sur la base restaurée : la fiche a_valider doit rester "
         "cherchable par défaut, statut exposé (badge « non vérifiée »)"
     )
-    assert RECETTE["fiche_attendue"] not in codes_confiance, (
+    assert code_ref001 not in codes_confiance, (
         "inclure_a_valider=False : une fiche a_valider est ressortie de l'archive "
         "de confiance sur la base restaurée"
     )

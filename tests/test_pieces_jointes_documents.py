@@ -21,7 +21,9 @@ import pytest
 
 from seamtech_search.fiches import depot
 from seamtech_search.fiches.gabarits import initialiser_gabarits
+from seamtech_search.fiches.modeles import FicheExtraite
 from seamtech_search.indexer import SearchIndex
+from seamtech_search.models import Document
 
 RACINE = Path(__file__).resolve().parent.parent
 ARCHIVE_7792 = RACINE / "sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf"
@@ -70,6 +72,56 @@ def base_pieces() -> Iterator[dict[str, Any]]:
 
 
 class TestCatalogueUniquePieceJointe:
+    def test_depot_fiche_preserve_le_texte_deja_indexe_du_pdf(
+        self, base_pieces: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """L'ID catalogue ne détruit pas le texte ; la fiche et le PDF sont synthétiques."""
+        index = base_pieces["index"]
+        dossier = tmp_path / "AFFAIRE-TEXTE-PRESERVE"
+        dossier.mkdir()
+        pdf = dossier / "fiche-synthetique.pdf"
+        pdf.write_bytes(b"%PDF-1.4\nSynthetic test file; no client document.\n")
+        monkeypatch.setattr(
+            depot,
+            "scanner_dossier",
+            lambda dossier_scan, _gabarits: depot.PlanDossier(
+                dossier=Path(dossier_scan), pdf_fiche=pdf, gabarit_code="synthetique", score=1
+            ),
+        )
+        monkeypatch.setattr(
+            depot,
+            "extraire_fiche",
+            lambda *_args, **_kwargs: FicheExtraite(
+                code="PRESERVE-TEST-001",
+                titre="Fiche synthétique",
+                fichier_source=str(pdf),
+                fichier_pdf=str(pdf),
+                gabarit_code="synthetique",
+            ),
+        )
+        terme = "TERMEINDEXABLEPRESERVE"
+        document = Document(
+            path=pdf,
+            name=pdf.name,
+            parent_path=pdf.parent,
+            extension=".pdf",
+            size=pdf.stat().st_size,
+            modified_at=pdf.stat().st_mtime,
+            is_dir=False,
+            text=f"texte extrait {terme}",
+        )
+        index.upsert_document(document)
+
+        resultat = depot.deposer_dossier(index, dossier)
+        assert resultat["statut"] == "traite"
+
+        with index.connect() as connexion:
+            with connexion.cursor() as cursor:
+                cursor.execute("SELECT id, content FROM documents WHERE path_key = %s", (document.path_key,))
+                id_document, contenu = cursor.fetchone()
+        assert terme in contenu
+        assert any(ligne["id"] == id_document for ligne in index.search(terme))
+
     def test_piece_decrite_une_fois_et_retrouvable(self, base_pieces: dict, tmp_path: Path) -> None:
         """Décision RG12 : la pièce déposée existe UNE fois dans `documents`
         (rôle posé, métadonnées indexées) et le lien porte id_document —
