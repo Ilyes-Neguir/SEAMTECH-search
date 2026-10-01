@@ -50,16 +50,18 @@ SEAMTECH-search/
 │   ├── CLIENT-123/                 # Sample client dossier (PDF drawing, XLSX BOM, notes)
 │   └── CLIENT-456/                 # Sample client notes
 ├── scripts/                        # Automation, operational, and maintenance scripts
+│   ├── arreter_seamtech.ps1        # Clean shutdown: app processes by PID (data\pids), never any data
 │   ├── backup_postgres.ps1         # Automated PostgreSQL backup script
 │   ├── backup_sqlite.ps1           # SQLite fallback backup script
 │   ├── benchmark_indexing.py       # Performance and throughput benchmarking utility
 │   ├── bootstrap.py                # Environment bootstrap helper
 │   ├── ensure_postgres.ps1         # Auto-provisioning script for local PostgreSQL container
+│   ├── installer_poste_windows.ps1 # One-command clean install: checks, .env, venv, first run, desktop icon
 │   ├── inventaire_archive.py       # Phase 0 read-only archive inventory (types, years, duplicates, scans, fiche locations, gabarit families)
 │   ├── restore_postgres.ps1        # PostgreSQL database restore script
 │   ├── restore_sqlite.ps1          # SQLite fallback database restore script
 │   ├── run_indexing.ps1            # Scheduled directory indexing script
-│   ├── start_seamtech_search.ps1   # Native desktop launcher script
+│   ├── start_seamtech_search.ps1   # Native desktop launcher script (journal + PID files for a clean shutdown)
 │   └── validate_extraction.py      # Extraction harness: historical per-document review + Phase 0 field-by-field measurement against a ground-truth JSON (--verite)
 ├── seamtech_search/                # Core Python package
 │   ├── __init__.py                 # Package version and export definitions (v0.4.0)
@@ -115,6 +117,9 @@ SEAMTECH-search/
 ├── CHANGELOG.md                    # Detailed version changelog
 ├── Dockerfile                      # Container image for FastAPI backend and worker
 ├── docker-compose.yml              # Complete multi-container deployment stack
+├── Installer SEAMTECH Search.cmd   # Double-click clean install on a Windows workstation
+├── SEAMTECH Search.cmd             # Daily launcher (double-click): local engine + UI, browser opens
+├── SEAMTECH Search.ico             # Application icon used by the desktop and Start Menu shortcuts
 ├── pyproject.toml                  # Python package metadata, dependencies, pytest, and ruff settings
 ├── README.md                       # Main project README and user guide
 ├── requirements-local.txt          # Development dependencies

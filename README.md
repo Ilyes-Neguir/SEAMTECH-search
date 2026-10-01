@@ -77,6 +77,14 @@ docker compose up -d
 > construire l'image locale depuis les sources officielles archivées :
 > `bash scripts/construire_image_minio.sh` (la CI fait de même).
 
+**Poste Windows, installation en une commande** (sans droit administrateur) :
+double-clic sur `Installer SEAMTECH Search.cmd` — mesure du poste, `.env`,
+`.venv`, `config\config.json`, premier lancement réel, puis icône
+« SEAMTECH Search » sur le bureau et dans le menu Démarrer. Voir
+`docs/INSTALLATION_POSTE_WINDOWS.md` (usage quotidien : double-clic sur
+`SEAMTECH Search.cmd` ou sur l'icône ; arrêt propre :
+`scripts\arreter_seamtech.ps1`).
+
 Services (all `restart: unless-stopped`, bound to `127.0.0.1`):
 
 | Service | URL | Notes |

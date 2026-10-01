@@ -1,5 +1,60 @@
 # Changelog
 
+## 2026-10-01 — Installation « propre » sur poste Windows : une commande, une icône (en cours)
+
+- **Installation en une commande** : `Installer SEAMTECH Search.cmd` →
+  `scripts/installer_poste_windows.ps1`, sans droit administrateur. Contrôle de
+  la copie COMPLÈTE du dépôt ; mesure du poste (Windows 64 bits, RAM ≥ 8 Go,
+  disque ≥ 20 Go, Docker + Compose v2 + moteur démarré, Node.js, pnpm,
+  Python 3.10+, bash/Git for Windows) avec lignes `OK` / `!!` et arrêt propre
+  tant qu'un point manque — le script n'installe JAMAIS de logiciel à la place
+  de l'utilisateur ; `.env` (7 secrets aléatoires locaux, jamais dans Git) +
+  image MinIO locale + conteneurs postgres/minio/redis via `ensure_postgres.ps1` ;
+  `.venv` + `requirements.txt` ; `config/config.json` (dossier à indexer choisi
+  par l'opérateur et vérifié, MinIO et Redis renseignés — le moteur lancé en
+  local lit ce fichier, pas `.env`) écrit **SANS BOM** (`UTF8Encoding($false)` :
+  `json.load` en UTF-8 strict échouerait sur un BOM) ; premier lancement réel
+  avec contrôle de santé `/api/health` ; dépôt de l'icône (raccourcis Bureau +
+  menu Démarrer, dossiers système demandés à Windows via
+  `WScript.Shell.SpecialFolders` — sur un poste français le chemin anglais codé
+  en dur aurait déposé les raccourcis dans un dossier invisible) ;
+  `-DemarrageAutomatique`, `-SansCompte`, `-SansLancement`, `-Oui`. Rejouable :
+  `.env`, `config.json`, volumes Docker et `data/` sont réutilisés.
+- **Compte nominatif dès l'installation** : identifiant, nom affiché, rôle, mot
+  de passe masqué (deux saisies, comparaison sensible à la casse) puis pipe sur
+  l'entrée standard de `seamtech_search.comptes.cli creer` — jamais en argument,
+  jamais affiché ; `--mot-de-passe-definitif` (aucun écran de changement forcé
+  n'existe côté interface : l'imposer y enfermerait l'opérateur).
+  `$OutputEncoding` repassé en UTF-8 pour que le tube ne mutile pas un mot de
+  passe non ASCII.
+- **Arrêt propre** : `scripts/arreter_seamtech.ps1` arrête le moteur et
+  l'interface PAR IDENTIFIANT de processus (`data/pids/*.pid`, écrits par le
+  lanceur), repli sur les processus qui écoutent 8000/3000/3001, ARBRE de
+  processus tué avec le parent (sinon un node fantôme tient le port 3000 et le
+  démarrage suivant bascule sur 3001), NOM du processus vérifié avant tout arrêt
+  (un PID recyclé n'est jamais tué). Aucune donnée supprimée : jamais
+  `down -v`, jamais `system prune` ; `-AvecServices` arrête en plus les
+  conteneurs de données. Confirmation par bulle (lancé sans fenêtre).
+- **Lanceur quotidien durci** : `scripts/start_seamtech_search.ps1` journalise
+  chaque démarrage dans `data/logs/lancement-*.log`, enregistre les
+  identifiants de processus (`-PassThru`), et en cas d'échec écrit la cause au
+  journal puis affiche une bulle « cause + chemin du journal » — lancé sans
+  fenêtre depuis l'icône, un échec ne disparaît plus en silence.
+- **Docs** : `docs/INSTALLATION_POSTE_WINDOWS.md` (prérequis, déroulé des huit
+  étapes, options, icône, arrêt, sauvegarde, réinstallation/désinstallation,
+  dépannage, et ce que l'installation ne fait PAS) ; pointeurs ajoutés dans
+  `README.md`, `GUIDE_DEMARRAGE_LOCAL.md` et `docs/STRUCTURE.md`.
+- **Tests** : `tests/test_installation_poste_windows.py` — 30 tests de CONTENU
+  (les scripts tournent sur le poste Windows, la CI est Linux) : BOM UTF-8 des
+  `.ps1` (PowerShell 5.1 lit sinon en ANSI) et `.cmd` ASCII sans BOM (cmd.exe
+  lit en OEM), icône ICO valide, huit étapes couvertes, santé `/api/health`,
+  rejouabilité (`.env` jamais réécrit par l'installeur), `config.json` sans BOM
+  et renseignant MinIO/Redis, chemins en `Join-Path` sans disque codé en dur,
+  aucun logiciel installé par le script, aucun secret journalisé, arrêt jamais
+  destructif et limité aux fichiers de PID, arbre de processus, nom vérifié,
+  régression du lanceur (comportement d'origine conservé), guide et STRUCTURE à
+  jour.
+
 ## 2026-09-30 — Mission « ça marche sur ma machine » : recherche par dimension (Phase 1), recette locale (Phase 2), préparation démo (Phase 3) (PR #34, en cours)
 
 - **Phase 1 — recherche par dimension (`6,60`)** : migration `019_recherche_dimension`

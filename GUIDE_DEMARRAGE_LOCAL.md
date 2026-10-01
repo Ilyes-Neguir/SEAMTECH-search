@@ -4,6 +4,12 @@ Poste Windows + Docker Desktop (commanditaire) — Linux en équivalent.
 Prérequis : Docker Desktop démarré, Git (Git for Windows suffit), Node.js +
 pnpm pour le lanceur quotidien, Python 3.11+ pour les tests.
 
+**Première installation sur le poste (une seule fois)** : double-clic sur
+`Installer SEAMTECH Search.cmd`. Le script mesure le poste, prépare `.env`,
+`.venv`, `config\config.json`, lance l'application une première fois pour de
+vrai, puis dépose l'icône « SEAMTECH Search » sur le bureau et dans le menu
+Démarrer. Détails, options et dépannage : `docs/INSTALLATION_POSTE_WINDOWS.md`.
+
 ## Les 5 commandes
 
 | # | Windows (PowerShell) | Linux | Ce qui se passe |
@@ -34,6 +40,7 @@ commité (`.gitignore`).
 | Un contrôle FAIL au rapport | détail sur la ligne FAIL | relire le détail, `docker compose logs web frontend` |
 | Un port déjà occupé | un autre service écoute (3000/8000/5433/6379/9000/9001) | la recette le dit : libérer le port |
 | Chemins avec espaces/accents | — | gérés : les scripts les citent entre guillemets |
+| L'icône du bureau ne répond pas | échec au démarrage (Docker arrêté, pnpm absent…) | le message affiche la cause ; détail dans `data\logs\lancement-*.log` |
 
 Vérifications développeurs : `pytest -m "not postgres and not s3 and not perf"`
 (puis `-m postgres` avec un PostgreSQL), `pnpm build` dans `frontend/`.
