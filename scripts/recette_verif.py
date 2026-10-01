@@ -66,7 +66,27 @@ CONTROLES = (
     "pdf-presigne",
     "zone-surlignee",
     "rejeu-idempotent",
+    "parcours-recherche",
+    "parcours-dossiers",
+    "parcours-validation",
+    "parcours-fiche",
+    "pieces-par-id",
+    "pdf-7-fiches-integrite",
+    "fichiers-catalogue",
 )
+
+# PDF source principaux des sept archives de recette (nom et SHA-256 épinglés
+# depuis les ZIP versionnés). Toute altération à l'extraction, au service ou au
+# téléchargement est donc détectée, notamment pour GIB SEA 284 / 250328 AJA.
+PDFS_SEPT_FICHES = {
+    "Fiche GSE AQUILA 250216 AJA.pdf": "6029d7606a8ab5b5659601acdef2b3f84e50d9d9e8f11f9f23f692e65c81ffbb",
+    "Fiche GENOIS ATTALIA 250121 JA.pdf": "bd48ddb777d6507c9d4a3bf727d7203f6ce55ff8581f805580995f5630971258",
+    "Fiche BAVARIA32 CODE 0 STORMLITE 250604 JA.pdf": "930c6c977a70117134a6e1e9fbeac0089bdd3a40295dd2a3b37a741d3d14f968",
+    "Fiche BAVARIA 34 GENOIS 250323 JA.pdf": "e8071167ed4f1285a9f3cf3f6c550cc5a83b73b04984b9c07ecf5bd5e1f946a9",
+    "fiche Gennaker DAMIEN 250821 JA.pdf": "f46a72108a8e679149bd8536393c7e51c728a37b80c86bbc4d384b408efc20f2",
+    "fiche GV Full DEHLER 39 250329 AJA.pdf": "66e89412d73f825b0db0ecdd1079d2a70e97796cb3cf572e9233a38f563e97b5",
+    "Fiche GENOIS GIBSEA 284 250328 AJA.pdf": "72b59b80d494fa85548e18ea1f6ca43b8f80ea45024592cf047a100529b7b85d",
+}
 
 BASE = os.environ.get("RECETTE_BASE", "http://127.0.0.1:8000").rstrip("/")
 JETON = os.environ.get("SEAMTECH_AUTH_TOKEN", "")
@@ -515,6 +535,156 @@ def _suggestions() -> None:
     )
 
 
+def _parcours_recherche() -> None:
+    code, corps, _ = _appel("GET", f"/recherche?q={urllib.parse.quote('6,60')}&limit=10")
+    dimension = corps.get("dimension_active") if isinstance(corps, dict) else None
+    ok = code == 200 and isinstance(dimension, dict) and abs(float(dimension.get("valeur") or 0) - 6.6) < 1e-9
+    _ligne("parcours-recherche", ok, f"recherche dimensionnelle « 6,60 » : HTTP {code}, dimension={_extrait(dimension, 100)}")
+
+
+def _parcours_dossiers() -> None:
+    code, corps, _ = _appel("GET", "/fiches?taille=50&page=1")
+    fiches = corps.get("fiches", []) if isinstance(corps, dict) else []
+    ok = code == 200 and isinstance(fiches, list) and len(fiches) > 0
+    _ligne("parcours-dossiers", ok, f"liste paginée des dossiers : HTTP {code}, total={corps.get('total') if isinstance(corps, dict) else '?'}")
+
+
+def _parcours_validation() -> None:
+    code, corps, _ = _appel("GET", "/validation/file?taille=50")
+    ok = code == 200 and isinstance(corps, list)
+    _ligne("parcours-validation", ok, f"file de validation : HTTP {code}, {len(corps) if isinstance(corps, list) else '?'} fiche(s)")
+
+
+def _parcours_fiche(codes: list[str]) -> None:
+    if not codes:
+        _ligne("parcours-fiche", False, "aucun code de fiche disponible")
+        return
+    fiche = urllib.parse.quote(codes[0], safe="")
+    resultat = {}
+    for nom, chemin in (
+        ("detail", f"/fiches/{fiche}"),
+        ("champs", f"/fiches/{fiche}/champs"),
+        ("pieces", f"/fiches/{fiche}/pieces"),
+        ("historique", f"/fiches/{fiche}/historique"),
+    ):
+        statut, corps, _ = _appel("GET", chemin)
+        resultat[nom] = statut == 200 and isinstance(corps, (dict, list))
+    ok = all(resultat.values())
+    _ligne("parcours-fiche", ok, f"fiche {codes[0]} detail/champs/pièces/historique : {resultat}")
+
+
+def _pieces_par_id(codes: list[str]) -> tuple[str, dict[str, Any]] | None:
+    """Contrôle liste, HEAD, GET, Range 206 et téléchargement par id."""
+    trouve: tuple[str, dict[str, Any]] | None = None
+    dernier_statut = 0
+    for code_fiche in codes:
+        statut, corps, _ = _appel("GET", f"/fiches/{urllib.parse.quote(code_fiche, safe='')}/pieces")
+        dernier_statut = statut
+        if statut != 200 or not isinstance(corps, dict):
+            continue
+        pieces = corps.get("pieces", [])
+        pdf = next((p for p in pieces if isinstance(p, dict) and p.get("kind") == "pdf"), None)
+        if pdf and isinstance(pdf.get("id"), int):
+            # Les clés historiques restent présentes mais EXPURGÉES : aucun
+            # chemin local, object_key ou URL S3 ne sort de l'API.
+            champs_absents = corps.get("pdf_source") is None and corps.get("fichier_source") is None
+            chemin_absent = all(not ({"path", "path_key", "object_key", "chemin"} & p.keys()) for p in pieces if isinstance(p, dict))
+            trouve = (code_fiche, {**pdf, "_champs_absents": champs_absents and chemin_absent})
+            break
+
+    if trouve is None:
+        _ligne("pieces-par-id", False, f"aucun PDF catalogué par id (dernier HTTP /fiches/{{code}}/pieces={dernier_statut})")
+        return None
+
+    code_fiche, piece = trouve
+    identifiant = int(piece["id"])
+    head, head_corps, head_headers = _appel("HEAD", f"/pieces/{identifiant}/apercu", brut=True)
+    range_code, range_corps, range_headers = _appel(
+        "GET", f"/pieces/{identifiant}/apercu", entetes={"Range": "bytes=0-0"}, brut=True
+    )
+    download, contenu, download_headers = _appel("GET", f"/pieces/{identifiant}/telecharger", brut=True)
+    head_norm = {k.lower(): v for k, v in head_headers.items()}
+    range_norm = {k.lower(): v for k, v in range_headers.items()}
+    download_norm = {k.lower(): v for k, v in download_headers.items()}
+    ok = (
+        bool(piece.get("_champs_absents"))
+        and head == 200
+        and not head_corps
+        and head_norm.get("content-type", "").startswith("application/pdf")
+        and range_code == 206
+        and len(range_corps) == 1
+        and range_norm.get("content-range", "").startswith("bytes 0-0/")
+        and download == 200
+        and isinstance(contenu, bytes)
+        and bool(contenu)
+        and download_norm.get("content-disposition", "").startswith("attachment;")
+    )
+    _ligne(
+        "pieces-par-id",
+        ok,
+        f"fiche {code_fiche} id={identifiant} : HEAD={head} GET range={range_code} "
+        f"({range_norm.get('content-range')}) download={download} n={len(contenu) if isinstance(contenu, bytes) else 0} "
+        f"MIME={head_norm.get('content-type')} en-têtes sans chemins/S3={bool(piece.get('_champs_absents'))}",
+    )
+    return trouve
+
+
+def _pdf_7_fiches_integrite(codes: list[str]) -> None:
+    correspondances: dict[str, tuple[str, int]] = {}
+    for code_fiche in codes:
+        statut, corps, _ = _appel("GET", f"/fiches/{urllib.parse.quote(code_fiche, safe='')}/pieces")
+        if statut != 200 or not isinstance(corps, dict):
+            continue
+        for piece in corps.get("pieces", []):
+            if not isinstance(piece, dict) or piece.get("kind") != "pdf" or not isinstance(piece.get("id"), int):
+                continue
+            correspondances.setdefault(str(piece.get("name", "")).casefold(), (code_fiche, int(piece["id"])))
+
+    controles: list[str] = []
+    echec: list[str] = []
+    for nom, empreinte_attendue in PDFS_SEPT_FICHES.items():
+        correspondance = correspondances.get(nom.casefold())
+        if correspondance is None:
+            echec.append(f"{nom}: absent du catalogue des fiches")
+            continue
+        code_fiche, identifiant = correspondance
+        statut, contenu, entetes = _appel("GET", f"/pieces/{identifiant}/telecharger", brut=True)
+        entetes_norm = {k.lower(): v for k, v in entetes.items()}
+        empreinte_reelle = hashlib.sha256(contenu).hexdigest() if isinstance(contenu, bytes) else ""
+        ok_pdf = statut == 200 and empreinte_reelle == empreinte_attendue and entetes_norm.get("content-disposition", "").startswith("attachment;")
+        controles.append(f"{nom} [{code_fiche}] SHA-256={'OK' if empreinte_reelle == empreinte_attendue else 'DIFF'}")
+        if not ok_pdf:
+            echec.append(f"{nom}: HTTP {statut}, SHA-256={empreinte_reelle}")
+    ok = len(controles) == 7 and not echec
+    _ligne(
+        "pdf-7-fiches-integrite",
+        ok,
+        f"{len(controles)}/7 PDF téléchargés par id et comparés à leur SHA-256 source; "
+        f"GIB SEA 250328 AJA inclus={any('GIBSEA 284 250328 AJA' in x for x in controles)}; "
+        f"écarts={echec[:4]}",
+    )
+
+
+def _fichiers_catalogue() -> None:
+    statut, corps, _ = _appel("GET", "/pieces?limit=200&offset=0")
+    pieces = corps.get("pieces", []) if isinstance(corps, dict) else []
+    ids = [p.get("id") for p in pieces if isinstance(p, dict)]
+    sans_chemin = all(
+        not ({"path", "path_key", "object_key", "chemin"} & p.keys())
+        for p in pieces
+        if isinstance(p, dict)
+    )
+    total = int(corps.get("total") or 0) if isinstance(corps, dict) else 0
+    # Fichiers doit être une vraie liste paginée et sans doublon d'identifiant.
+    ok = statut == 200 and total >= len(pieces) > 0 and len(ids) == len(set(ids)) and sans_chemin
+    _ligne(
+        "fichiers-catalogue",
+        ok,
+        f"GET /pieces HTTP {statut}: total réel={total}, page={len(pieces)}, "
+        f"has_more={corps.get('has_more') if isinstance(corps, dict) else None}, chemins/clé S3 absents={sans_chemin}",
+    )
+
+
 def _pdf_presigne() -> None:
     # Le flux qui téléverse vers S3 est le FLUX D'IMPORT (scan → confirm) :
     # il pose documents.object_key, sans lequel /open sert le fichier en 200
@@ -676,6 +846,17 @@ def main() -> int:
     _pdf_presigne()
     _zone_surlignee(codes)
     _rejeu(len(affaires))
+
+    # Sept contrôles additionnels, conservant sans changement les vingt
+    # contrôles historiques (12 fonctionnels + 8 orchestrateur) : les quatre
+    # parcours métier, service par id, intégrité des sept PDFs et catalogue.
+    _parcours_recherche()
+    _parcours_dossiers()
+    _parcours_validation()
+    _parcours_fiche(codes)
+    _pieces_par_id(codes)
+    _pdf_7_fiches_integrite(codes)
+    _fichiers_catalogue()
 
     if fiche_validee:
         _info("fiche_pour_restauration", fiche_validee)

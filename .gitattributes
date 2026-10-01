@@ -1,0 +1,4 @@
+# Normalize text files in the repository and check out PowerShell scripts with
+# Windows line endings. PowerShell scripts carry a UTF-8 BOM in their source.
+* text=auto eol=lf
+*.ps1 text eol=crlf

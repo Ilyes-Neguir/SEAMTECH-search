@@ -419,16 +419,16 @@ def test_04c_depot_fiche_lot_c(app_client, dossiers: dict[str, Path], ref: str) 
     assert corps["statut"] == "traite", f"{ref} : dépôt non traité ({raison})"
     assert corps.get("fiche"), f"{ref} : aucune fiche créée"
     RECETTE["refs"][ref]["fiche"] = corps["fiche"]
-    # PDF SOURCE de la fiche déposée (l'écran Fiche l'expose) : les termes de
-    # recherche de l'étape 7 devront ressortir CE document — un dossier peut
-    # contenir plusieurs fiches (le scan Phase 0 et le dépôt Lot C ne
-    # retiennent pas forcément la même) et le terme provient de la fiche
-    # DÉPOSÉE.
+    # PDF source de la fiche déposée : retenir son nom, jamais un chemin local.
+    # Les étapes de consultation récupèrent ensuite le fichier par l'id catalogue.
     reponse_pieces = app_client.get(f"/fiches/{urllib.parse.quote(corps['fiche'])}/pieces")
     assert reponse_pieces.status_code == 200, f"{ref} : lecture pieces HTTP {reponse_pieces.status_code}"
-    pdf_source = reponse_pieces.json().get("pdf_source")
-    assert pdf_source, f"{ref} : pdf_source absent de la fiche déposée"
-    RECETTE["refs"][ref]["pdf_fiche"] = pdf_source
+    pieces = reponse_pieces.json()
+    pdf_fiche = next((p for p in pieces.get("pieces", []) if p.get("is_primary_pdf")), None)
+    assert pdf_fiche and isinstance(pdf_fiche.get("id"), int), f"{ref} : PDF source par id absent de la fiche déposée"
+    assert pieces.get("pdf_source") is None and pieces.get("fichier_source") is None
+    RECETTE["refs"][ref]["pdf_fiche"] = pdf_fiche["name"]
+    RECETTE["refs"][ref]["pdf_fiche_id"] = pdf_fiche["id"]
 
 
 # ---------------------------------------------------------------------------
@@ -639,24 +639,17 @@ def _termes_de_la_base() -> tuple[dict[str, str], dict[str, str]]:
 
 
 def _tous_les_resultats(app_client, terme: str, pages_max: int = 5) -> list[str]:
-    """Résultats de /search PAGINÉS jusqu'à épuisement (bornés).
-
-    Un dossier du corpus porte des centaines de fichiers de découpe dont le
-    NOM contient le préfixe du type de voile : le classement du produit
-    (correspondances de nom avant contenu) les met en tête. Le document
-    attendu peut donc être au-delà de la première page — un utilisateur le
-    retrouve en feuilletant, le test fait de même (limit=200 est le maximum
-    accepté par la route).
-    """
-    chemins: list[str] = []
+    """Résultats de /search PAGINÉS jusqu'à épuisement (bornés), sans chemins."""
+    noms: list[str] = []
     for page in range(pages_max):
         reponse = app_client.get("/search", params={"q": terme, "limit": 200, "offset": page * 200})
         assert reponse.status_code == 200, f"recherche paginée : HTTP {reponse.status_code}"
         corps = reponse.json()
-        chemins.extend(r.get("path") for r in corps["results"])
+        noms.extend(str(r.get("name") or "") for r in corps["results"])
+        assert all("path" not in r and "path_key" not in r and "object_key" not in r for r in corps["results"])
         if not corps.get("has_more"):
             break
-    return chemins
+    return noms
 
 
 def test_07_recherches_par_mots_cles(app_client) -> None:
@@ -675,7 +668,7 @@ def test_07_recherches_par_mots_cles(app_client) -> None:
         # stagée (même nom, même contenu, même empreinte).
         nom_attendu = Path(RECETTE["refs"][origine[famille]]["pdf_fiche"]).name
         resultats = _tous_les_resultats(app_client, terme)
-        assert any(Path(chemin or "").name == nom_attendu for chemin in resultats), (
+        assert nom_attendu in resultats, (
             f"recherche {famille} : le document de la fiche d'origine n'est pas ressorti "
             f"({len(resultats)} résultats parcourus)"
         )

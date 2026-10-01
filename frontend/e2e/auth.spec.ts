@@ -19,8 +19,11 @@ const BASE_URL = process.env.PLAYWRIGHT_TEST_BASE_URL || "http://127.0.0.1:3123"
 /** Every gated route, with a syntactically valid request for it. */
 const GATED_ROUTES: Array<{ name: string; method: "GET" | "POST" | "PATCH"; path: string; data?: unknown }> = [
   { name: "search", method: "GET", path: "/api/search?q=CLIENT" },
-  { name: "preview", method: "GET", path: "/api/preview?path=/tmp/x.pdf" },
-  { name: "open", method: "POST", path: "/api/open?path=/tmp/x.pdf" },
+  { name: "pieces catalogue", method: "GET", path: "/api/pieces" },
+  { name: "piece preview by id", method: "GET", path: "/api/pieces/1/apercu" },
+  { name: "piece download by id", method: "GET", path: "/api/pieces/1/telecharger" },
+  { name: "retired preview", method: "GET", path: "/api/preview?path=/tmp/x.pdf" },
+  { name: "retired open", method: "POST", path: "/api/open?path=/tmp/x.pdf" },
   { name: "imports create", method: "POST", path: "/api/imports", data: { source_path: "/tmp" } },
   { name: "imports scan", method: "POST", path: "/api/imports/scan", data: { source_path: "/tmp" } },
   { name: "imports confirm", method: "POST", path: "/api/imports/confirm", data: { source_path: "/tmp", technical_pdf: "/tmp/a.pdf" } },

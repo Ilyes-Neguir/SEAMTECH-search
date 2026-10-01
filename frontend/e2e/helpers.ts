@@ -36,7 +36,7 @@ export async function signInWith(page: Page, identifiants: Identifiants): Promis
   await page.getByRole("button", { name: "Se connecter" }).click()
   // The form router.replace()s to the ?next= target, or "/" by default.
   await page.waitForURL(/\/$/, { timeout: 20000 })
-  await expect(page.getByPlaceholder(/Search files, folders/i)).toBeVisible({ timeout: 20000 })
+  await expect(page.getByTestId("archive-browser")).toBeVisible({ timeout: 20000 })
 }
 
 /** Sign in as the rescue account (shared workshop password, no identifier). */
@@ -45,6 +45,6 @@ export async function signIn(page: Page, password: string = UI_PASSWORD): Promis
 }
 
 export async function signOut(page: Page): Promise<void> {
-  await page.getByRole("button", { name: /Sign out/i }).click()
+  await page.getByRole("button", { name: /Se déconnecter/i }).click()
   await page.waitForURL(/\/login/, { timeout: 20000 })
 }

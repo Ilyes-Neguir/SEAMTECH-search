@@ -33,6 +33,7 @@ WRAPPER_PS1 = RACINE / "scripts" / "recette_locale.ps1"
 ENSURE_POSTGRES = RACINE / "scripts" / "ensure_postgres.ps1"
 CI = RACINE / ".github" / "workflows" / "ci.yml"
 GITIGNORE = RACINE / ".gitignore"
+GITATTRIBUTES = RACINE / ".gitattributes"
 
 # Contrôles fonctionnels du vérificateur (sortie CONTROLE|<id>|...).
 CONTROLES_VERIF = (
@@ -48,6 +49,13 @@ CONTROLES_VERIF = (
     "pdf-presigne",
     "zone-surlignee",
     "rejeu-idempotent",
+    "parcours-recherche",
+    "parcours-dossiers",
+    "parcours-validation",
+    "parcours-fiche",
+    "pieces-par-id",
+    "pdf-7-fiches-integrite",
+    "fichiers-catalogue",
 )
 
 # Contrôles tenus par les orchestrateurs (prérequis, pile, sauvegarde).
@@ -98,6 +106,62 @@ def test_recette_verif_declare_tous_les_controles_functionnels() -> None:
         elt.value for elt in constantes["CONTROLES"].elts  # type: ignore[attr-defined]
     )
     assert declarés == CONTROLES_VERIF
+
+
+def test_recette_etend_les_20_controles_existants_a_27_sans_regression() -> None:
+    """Les 8 contrôles d'orchestration + 19 fonctionnels donnent 27 au total.
+
+    Les douze contrôles fonctionnels d'origine restent dans le même ordre ; les
+    sept nouveaux couvrent Recherche, Dossiers, Validation, fiche, accès fichier
+    par id, intégrité SHA-256 des sept PDF et navigateur Fichiers.
+    """
+    historiques = (
+        "compte-recette", "depot-archives", "suivi-lots", "fiches-a-valider",
+        "validation-fiche", "recherche-texte", "recherche-dimension", "filtres-facettes",
+        "suggestions", "pdf-presigne", "zone-surlignee", "rejeu-idempotent",
+    )
+    assert CONTROLES_VERIF[: len(historiques)] == historiques
+    assert len(CONTROLES_VERIF) == 19
+    assert len(CONTROLES_WRAPPER) == 8
+    assert len(CONTROLES_VERIF) + len(CONTROLES_WRAPPER) == 27
+
+
+def test_recette_epingle_les_sept_pdf_sources_et_gib_sea() -> None:
+    """Les 7 PDF principaux sont comparés par SHA-256; GIB SEA est requis."""
+    import scripts.recette_verif as recette
+
+    assert len(recette.PDFS_SEPT_FICHES) == 7
+    assert any("GIBSEA 284 250328 AJA.pdf" in nom for nom in recette.PDFS_SEPT_FICHES)
+    assert all(len(empreinte) == 64 and all(c in "0123456789abcdef" for c in empreinte) for empreinte in recette.PDFS_SEPT_FICHES.values())
+
+
+def test_scripts_powershell_utf8_bom_crlf_et_gitattributes() -> None:
+    """Les scripts PowerShell s'ouvrent en Windows avec BOM UTF-8 et CRLF."""
+    attributs = GITATTRIBUTES.read_text(encoding="utf-8")
+    assert "*.ps1 text eol=crlf" in attributs
+    for script in (RACINE / "scripts").glob("*.ps1"):
+        contenu = script.read_bytes()
+        assert contenu.startswith(b"\xef\xbb\xbf"), f"{script.name}: BOM UTF-8 absent"
+        assert b"\r\n" in contenu and b"\n" not in contenu.replace(b"\r\n", b""), f"{script.name}: CRLF attendu"
+
+
+def test_proxies_s3_ne_transmettent_pas_les_identifiants_au_stockage() -> None:
+    """Les redirects signés sont suivis sans relayer le jeton de service."""
+    piece_proxy = (RACINE / "frontend" / "lib" / "piece-proxy.ts").read_text(encoding="utf-8")
+    artifacts = (
+        RACINE / "frontend" / "app" / "api" / "imports" / "[id]" / "artifacts" / "[artifact]" / "route.ts"
+    ).read_text(encoding="utf-8")
+    assert 'redirect: "manual"' in piece_proxy
+    assert 'if (upstream.status >= 300 && upstream.status < 400)' in piece_proxy
+    assert 'redirect: "manual"' in artifacts
+    assert 'upstream = await fetch(cible, { cache: "no-store", redirect: "follow" })' in artifacts
+    assert '"location"' not in artifacts.split("const RESPONSE_HEADERS", 1)[1].split("]", 1)[0]
+
+
+def test_anciens_proxys_par_chemin_sont_desactives() -> None:
+    for route in ("open", "preview"):
+        contenu = (RACINE / "frontend" / "app" / "api" / route / "route.ts").read_text(encoding="utf-8")
+        assert "status: 410" in contenu, f"/api/{route} doit refuser l'ancien accès par chemin"
 
 
 def test_wrappers_partagent_le_verificateur_unique() -> None:

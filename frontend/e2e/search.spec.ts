@@ -5,15 +5,25 @@ test.describe("Search Workflow", () => {
   test("should search for documents and display results with preview", async ({ page }) => {
     await signIn(page)
 
-    // Lot E : la recherche fichiers de la Phase 0 vit sur /fichiers ;
-    // /recherche est désormais la recherche hybride des fiches techniques.
+    // Le catalogue de pièces est l’écran Fichiers par défaut ; la recherche
+    // historique reste disponible sans perte dans le mode « Recherche avancée ».
     await page.goto("/fichiers")
+    await page.getByRole("button", { name: "Recherche avancée" }).click()
 
-    // Find search input and type query
-    const searchInput = page.getByPlaceholder(/Search files, folders/i)
+    const searchInput = page.getByPlaceholder(/Rechercher des fichiers/i)
     await expect(searchInput).toBeVisible()
 
-    await searchInput.fill("CLIENT")
+    const reponseRecherche = await page.request.get(`/api/search?q=${encodeURIComponent("fiche-7792-SO_ffab.pdf")}`)
+    expect(reponseRecherche.ok()).toBeTruthy()
+    const chargeRecherche = await reponseRecherche.json()
+    expect(chargeRecherche.results[0]).toHaveProperty("id")
+    for (const ligne of chargeRecherche.results) {
+      expect(ligne).not.toHaveProperty("path")
+      expect(ligne).not.toHaveProperty("path_key")
+      expect(ligne).not.toHaveProperty("object_key")
+    }
+
+    await searchInput.fill("fiche-7792-SO_ffab.pdf")
     await searchInput.press("Enter")
 
     // Expect results to be displayed
@@ -21,17 +31,12 @@ test.describe("Search Workflow", () => {
     await expect(resultsContainer).toBeVisible()
 
     // Wait for at least one result item
-    const firstResult = page.locator("article, [data-result-item], li, .group").filter({ hasText: /CLIENT/i }).first()
+    const firstResult = page.locator('[role="button"][tabindex="0"]').filter({ hasText: /fiche-7792-SO_ffab\.pdf/i }).first()
     await expect(firstResult).toBeVisible({ timeout: 10000 })
 
-    // Click on result to open preview panel
+    // L’aperçu et le téléchargement passent par l’identifiant du catalogue.
     await firstResult.click()
-
-    // Expect preview panel to display metadata or text.
-    // Target the panel's complementary landmark: the previous selector
-    // ("aside, [aria-label='Preview']") also matched the per-row "Preview"
-    // buttons rendered by result-item.tsx, i.e. 6 unrelated elements.
-    const previewPanel = page.getByRole("complementary")
-    await expect(previewPanel).toBeVisible()
+    await expect(page.locator('[data-testid="visionneuse-piece"]')).toBeVisible()
+    await expect(page.getByRole("link", { name: "Télécharger le fichier" })).toBeVisible()
   })
 })
