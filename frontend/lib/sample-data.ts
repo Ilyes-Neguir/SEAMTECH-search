@@ -169,10 +169,11 @@ export function searchSample(query: string, limit: number, offset: number) {
 
     if (!matchType) return null
 
+    const parent = f.path.slice(0, f.path.lastIndexOf("\\")).split("\\").filter(Boolean).pop() ?? "Archive"
     const result: SearchResult = {
+      id: SAMPLE_FILES.indexOf(f) + 1,
       name: f.name,
-      path: f.path,
-      parent: f.path.slice(0, f.path.lastIndexOf("\\")),
+      parent,
       extension: ext,
       size: f.size,
       modified: f.modified,

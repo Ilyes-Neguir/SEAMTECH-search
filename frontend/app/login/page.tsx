@@ -6,7 +6,7 @@ import { isAuthConfigured, isAuthenticated } from "@/lib/auth"
 export const dynamic = "force-dynamic"
 
 export const metadata = {
-  title: "Sign in — SEAMTECH Search",
+  title: "Connexion — SEAMTECH Search",
 }
 
 export default async function LoginPage() {
@@ -24,15 +24,15 @@ export default async function LoginPage() {
             <SeamtechLogo className="h-auto w-44" />
           </div>
           <div className="rounded-xl border border-destructive/40 bg-card p-5" role="alert">
-            <h1 className="text-base font-semibold text-foreground">Sign-in is not configured</h1>
+            <h1 className="text-base font-semibold text-foreground">La connexion n’est pas configurée</h1>
             <p className="mt-2 text-xs text-muted-foreground">
-              This server has no <code className="text-foreground">SEAMTECH_UI_PASSWORD</code>. Every login attempt is
-              refused rather than allowed, so the archive stays closed.
+              Le serveur ne dispose pas de <code className="text-foreground">SEAMTECH_UI_PASSWORD</code>. Toute tentative
+              de connexion est refusée afin de protéger l’archive.
             </p>
             <p className="mt-2 text-xs text-muted-foreground">
-              Set <code className="text-foreground">SEAMTECH_UI_PASSWORD</code> and{" "}
-              <code className="text-foreground">SEAMTECH_SESSION_SECRET</code> in <code>.env</code>, then restart the
-              frontend container.
+              Définissez <code className="text-foreground">SEAMTECH_UI_PASSWORD</code> et{" "}
+              <code className="text-foreground">SEAMTECH_SESSION_SECRET</code> dans <code>.env</code>, puis redémarrez
+              le conteneur frontend.
             </p>
           </div>
         </div>

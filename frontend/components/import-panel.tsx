@@ -12,8 +12,8 @@ interface DroppedFile {
 
 async function readEntry(entry: any, base: string, out: DroppedFile[]): Promise<void> {
   if (entry.isFile) {
-    const file: File = await new Promise((resolve, reject) => entry.file(resolve, reject))
-    out.push({ file, rel: base + file.name })
+    const fichier: File = await new Promise((resolve, reject) => entry.file(resolve, reject))
+    out.push({ file: fichier, rel: base + fichier.name })
   } else if (entry.isDirectory) {
     const reader = entry.createReader()
     let batch: any[]
@@ -36,30 +36,30 @@ async function filesFromDrop(dt: DataTransfer): Promise<DroppedFile[]> {
 }
 
 function formatBytes(size: number): string {
-  if (size < 1024) return `${size} B`
-  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`
-  return `${(size / (1024 * 1024)).toFixed(1)} MB`
+  if (size < 1024) return `${size} o`
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} Ko`
+  return `${(size / (1024 * 1024)).toFixed(1)} Mo`
 }
 
 function formatStage(stage: string): string {
   switch (stage) {
     case "starting":
     case "queued":
-      return "Preparing import…"
+      return "Préparation de l’import…"
     case "scanning":
-      return "Scanning files…"
+      return "Analyse des fichiers…"
     case "extracting":
-      return "Extracting technical & Excel data…"
+      return "Extraction des données techniques et Excel…"
     case "generating_reports":
-      return "Generating PDF & Word reports…"
+      return "Génération des rapports PDF et Word…"
     case "uploading":
-      return "Uploading to object storage…"
+      return "Envoi vers le stockage documentaire…"
     case "indexing":
-      return "Updating search index…"
+      return "Mise à jour de l’index de recherche…"
     case "done":
-      return "Completed"
+      return "Terminé"
     default:
-      return stage ? `${stage}…` : "Processing…"
+      return stage ? `${stage}…` : "Traitement…"
   }
 }
 
@@ -101,7 +101,7 @@ export function ImportPanel() {
       body: body !== undefined ? JSON.stringify(body) : undefined,
     })
     const payload = await response.json().catch(() => ({}))
-    if (!response.ok) throw new Error(payload?.detail ?? "Request failed.")
+    if (!response.ok) throw new Error(payload?.detail ?? "La requête a échoué.")
     return payload
   }
 
@@ -122,16 +122,16 @@ export function ImportPanel() {
           setSelectedExcel(null)
         } else if (payload.status === "failed") {
           if (pollTimerRef.current) clearInterval(pollTimerRef.current)
-          setError(payload.error || "Import job failed.")
+          setError(payload.error || "L’import a échoué.")
           setActiveJob(null)
         } else if (payload.status === "cancelled") {
           if (pollTimerRef.current) clearInterval(pollTimerRef.current)
           setActiveJob(null)
-          setError("Import was cancelled by user.")
+          setError("L’import a été annulé.")
         }
       } catch (err) {
         if (pollTimerRef.current) clearInterval(pollTimerRef.current)
-        setError(err instanceof Error ? err.message : "Error polling job status.")
+        setError(err instanceof Error ? err.message : "Erreur lors du suivi de l’import.")
         setActiveJob(null)
       }
     }, 500)
@@ -143,7 +143,7 @@ export function ImportPanel() {
     try {
       await fn()
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Request failed.")
+      setError(err instanceof Error ? err.message : "La requête a échoué.")
     } finally {
       setBusy(null)
     }
@@ -156,9 +156,9 @@ export function ImportPanel() {
       await callJson(`/api/imports/${encodeURIComponent(id!)}/cancel`, "POST")
       if (pollTimerRef.current) clearInterval(pollTimerRef.current)
       setActiveJob(null)
-      setError("Import job cancelled.")
+      setError("Import annulé.")
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to cancel import job.")
+      setError(err instanceof Error ? err.message : "Impossible d’annuler l’import.")
     }
   }
 
@@ -220,7 +220,7 @@ export function ImportPanel() {
       for (const item of dropped) form.append("files", item.file, item.rel)
       const response = await authedFetch("/api/imports/upload", { method: "POST", body: form })
       const payload = await response.json().catch(() => ({}))
-      if (!response.ok) throw new Error(payload?.detail ?? "Upload failed.")
+      if (!response.ok) throw new Error(payload?.detail ?? "L’envoi des fichiers a échoué.")
       resetAfterScan(payload as ImportScanPayload)
       setDropped([])
     })
@@ -249,17 +249,17 @@ export function ImportPanel() {
       <div className="mx-auto max-w-6xl">
         <div className="mb-3 flex items-baseline justify-between gap-4">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-primary">Import Reference</p>
-            <h2 className="mt-1 text-lg font-semibold">Analyze a reference folder</h2>
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-primary">Importer un dossier</p>
+            <h2 className="mt-1 text-lg font-semibold">Analyser un dossier de référence</h2>
           </div>
-          <span className="text-xs text-muted-foreground">Original files are never moved or modified</span>
+          <span className="text-xs text-muted-foreground">Les fichiers d’origine ne sont jamais déplacés ni modifiés</span>
         </div>
 
         {/* Server folder */}
         <div className="flex flex-col gap-2 sm:flex-row">
           <input
             className="min-h-10 flex-1 rounded-md border border-input bg-background px-3 text-sm outline-none ring-primary focus:ring-2"
-            placeholder="Server folder path, e.g. C:\\SEAMTECH\\Reference_001"
+            placeholder="Chemin du dossier sur le serveur, ex. C:\\SEAMTECH\\Reference_001"
             value={sourcePath}
             onChange={(event) => setSourcePath(event.target.value)}
           />
@@ -268,18 +268,18 @@ export function ImportPanel() {
             disabled={!sourcePath.trim() || loading}
             onClick={scanFolder}
           >
-            {busy === "scan" ? "Scanning…" : "Scan folder"}
+            {busy === "scan" ? "Analyse…" : "Analyser le dossier"}
           </button>
           <button
             className="min-h-10 rounded-md bg-primary px-5 text-sm font-semibold text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50"
             disabled={!sourcePath.trim() || loading}
             onClick={quickImport}
           >
-            {busy === "import" || activeJob ? "Processing…" : "Quick import"}
+            {busy === "import" || activeJob ? "Traitement…" : "Importation rapide"}
           </button>
         </div>
         <p className="mt-2 text-xs text-muted-foreground">
-          The server must have access to this folder. Scan first to choose between technical PDFs and Excel sheets, or quick-import to take the first matches.
+          Le serveur doit pouvoir accéder à ce dossier. Analysez-le pour choisir le PDF technique et le fichier Excel, ou lancez l’importation rapide.
         </p>
 
         {/* Active Job Progress Panel */}
@@ -299,7 +299,7 @@ export function ImportPanel() {
                   className="rounded border border-destructive/60 bg-background px-3 py-1 text-xs font-medium text-destructive hover:bg-destructive/10"
                   onClick={cancelActiveJob}
                 >
-                  Cancel
+                  Annuler
                 </button>
               </div>
             </div>
@@ -333,9 +333,9 @@ export function ImportPanel() {
             })
           }}
         >
-          <p className="text-sm font-medium">…or drag &amp; drop a reference folder here</p>
+          <p className="text-sm font-medium">…ou déposez ici un dossier de référence</p>
           <p className="mt-1 text-xs text-muted-foreground">
-            Files are staged on the server for analysis only — your originals stay untouched.
+            Les fichiers sont copiés dans une zone temporaire pour analyse ; les originaux restent intacts.
           </p>
           <div className="mt-3 flex justify-center gap-2">
             <button
@@ -343,14 +343,14 @@ export function ImportPanel() {
               disabled={loading}
               onClick={() => filesInput.current?.click()}
             >
-              Browse files
+              Choisir des fichiers
             </button>
             <button
               className="min-h-9 rounded-md border border-input bg-background px-4 text-sm font-medium disabled:opacity-50"
               disabled={loading}
               onClick={() => folderInput.current?.click()}
             >
-              Browse folder
+              Choisir un dossier
             </button>
           </div>
           <input
@@ -385,7 +385,7 @@ export function ImportPanel() {
           {dropped.length > 0 && (
             <div className="mx-auto mt-3 max-w-2xl rounded-md border border-border bg-card p-3 text-left">
               <p className="text-xs font-semibold text-muted-foreground">
-                {dropped.length} file{dropped.length === 1 ? "" : "s"} ready to stage
+                {dropped.length} fichier{dropped.length === 1 ? "" : "s"} prêts à envoyer
               </p>
               <ul className="mt-1 max-h-28 overflow-auto text-xs">
                 {dropped.slice(0, 50).map((item) => (
@@ -394,7 +394,7 @@ export function ImportPanel() {
                     <span className="shrink-0 text-muted-foreground">{formatBytes(item.file.size)}</span>
                   </li>
                 ))}
-                {dropped.length > 50 && <li className="text-muted-foreground">…and {dropped.length - 50} more</li>}
+                {dropped.length > 50 && <li className="text-muted-foreground">…et {dropped.length - 50} de plus</li>}
               </ul>
               <div className="mt-2 flex justify-end gap-2">
                 <button
@@ -402,14 +402,14 @@ export function ImportPanel() {
                   disabled={loading}
                   onClick={() => setDropped([])}
                 >
-                  Clear
+                  Effacer
                 </button>
                 <button
                   className="min-h-8 rounded-md bg-primary px-4 text-xs font-semibold text-primary-foreground disabled:opacity-50"
                   disabled={loading}
                   onClick={uploadAndScan}
                 >
-                  {busy === "upload" ? "Uploading…" : "Upload & scan"}
+                  {busy === "upload" ? "Envoi…" : "Envoyer et analyser"}
                 </button>
               </div>
             </div>
@@ -423,16 +423,16 @@ export function ImportPanel() {
           <div className="mt-4 space-y-4 rounded-md border border-border bg-background p-4 text-sm">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
               <p className="font-medium">
-                Candidates in <span className="font-mono text-xs">{effectiveSource}</span>
+                Fichiers détectés dans <span className="font-mono text-xs">{effectiveSource}</span>
               </p>
-              <span className="text-xs text-muted-foreground">{scan.files_detected} files scanned</span>
+              <span className="text-xs text-muted-foreground">{scan.files_detected} fichiers analysés</span>
             </div>
             {scan.warnings?.length > 0 && <p className="text-warning">{scan.warnings.join(" ")}</p>}
 
             {/* Technical PDFs */}
             <div>
               <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
-                1. Select Technical PDF ({candidates.length} detected)
+                1. Choisir le PDF technique ({candidates.length} détecté(s))
               </p>
               {candidates.length > 0 ? (
                 <ul className="space-y-2">
@@ -454,7 +454,7 @@ export function ImportPanel() {
                           <span className="block truncate font-medium">{candidate.name}</span>
                           <span className="block truncate font-mono text-xs text-muted-foreground">{candidate.path}</span>
                           <span className="mt-1 block text-xs text-muted-foreground">
-                            {candidate.anchor_count} anchors: {candidate.anchors_matched.join(", ")}
+                            {candidate.anchor_count} ancres : {candidate.anchors_matched.join(", ")}
                           </span>
                         </span>
                       </label>
@@ -462,7 +462,7 @@ export function ImportPanel() {
                   ))}
                 </ul>
               ) : (
-                <p className="text-xs text-muted-foreground">No technical PDF found in this folder.</p>
+                <p className="text-xs text-muted-foreground">Aucun PDF technique n’a été trouvé dans ce dossier.</p>
               )}
             </div>
 
@@ -470,7 +470,7 @@ export function ImportPanel() {
             {excelCandidates.length > 0 && (
               <div>
                 <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
-                  2. Select Excel Sheet / BOM (Optional, {excelCandidates.length} detected)
+                  2. Choisir le fichier Excel / nomenclature (facultatif, {excelCandidates.length} détecté(s))
                 </p>
                 <ul className="space-y-2">
                   <li>
@@ -486,7 +486,7 @@ export function ImportPanel() {
                         checked={selectedExcel === null}
                         onChange={() => setSelectedExcel(null)}
                       />
-                      <span className="text-xs font-medium text-muted-foreground">None (do not import Excel sheet)</span>
+                      <span className="text-xs font-medium text-muted-foreground">Aucun (ne pas importer de fichier Excel)</span>
                     </label>
                   </li>
                   {excelCandidates.map((candidate) => (
@@ -507,7 +507,7 @@ export function ImportPanel() {
                           <span className="block truncate font-medium">{candidate.name}</span>
                           <span className="block truncate font-mono text-xs text-muted-foreground">{candidate.path}</span>
                           <span className="mt-1 block text-xs text-muted-foreground">
-                            Excel workbook ({formatBytes(candidate.size)})
+                            Classeur Excel ({formatBytes(candidate.size)})
                           </span>
                         </span>
                       </label>
@@ -523,7 +523,7 @@ export function ImportPanel() {
                 disabled={!selectedPdf || loading}
                 onClick={confirmImport}
               >
-                {busy === "confirm" || activeJob ? "Processing…" : "Import Selected Files"}
+                {busy === "confirm" || activeJob ? "Traitement…" : "Importer les fichiers sélectionnés"}
               </button>
             </div>
           </div>
@@ -534,19 +534,19 @@ export function ImportPanel() {
           <div className="mt-4 rounded-md border border-border bg-background p-4 text-sm">
             <div className="flex flex-wrap gap-x-6 gap-y-2">
               <span>
-                Status: <strong>{result.status}</strong>
+                État : <strong>{result.status}</strong>
               </span>
               <span>
-                Files: <strong>{result.files_detected}</strong>
+                Fichiers : <strong>{result.files_detected}</strong>
               </span>
               <span>
-                Technical PDFs: <strong>{result.analyzed_files}</strong>
+                PDF techniques : <strong>{result.analyzed_files}</strong>
               </span>
               <span>
-                Upload: <strong>{result.upload_status}</strong>
+                Envoi : <strong>{result.upload_status}</strong>
               </span>
             </div>
-            {/* Download buttons — real artifacts via presigned URLs */}
+            {/* Boutons de téléchargement des rapports et fichiers source. */}
             <div className="mt-3 flex flex-wrap gap-2">
               {result.report_path && (
                 <a
@@ -554,7 +554,7 @@ export function ImportPanel() {
                   className="inline-flex min-h-8 items-center rounded-md bg-primary px-3 text-xs font-semibold text-primary-foreground hover:bg-primary/90"
                   download
                 >
-                  Download PDF Report
+                  Télécharger le rapport PDF
                 </a>
               )}
               {result.report_docx_path && (
@@ -563,7 +563,7 @@ export function ImportPanel() {
                   className="inline-flex min-h-8 items-center rounded-md border border-input bg-background px-3 text-xs font-medium hover:bg-muted"
                   download
                 >
-                  Download Word Report
+                  Télécharger le rapport Word
                 </a>
               )}
               {result.technical_pdf && (
@@ -572,7 +572,7 @@ export function ImportPanel() {
                   className="inline-flex min-h-8 items-center rounded-md border border-input bg-background px-3 text-xs font-medium hover:bg-muted"
                   download
                 >
-                  Download Source PDF
+                  Télécharger le PDF source
                 </a>
               )}
               {result.excel_file && (
@@ -581,7 +581,7 @@ export function ImportPanel() {
                   className="inline-flex min-h-8 items-center rounded-md border border-input bg-background px-3 text-xs font-medium hover:bg-muted"
                   download
                 >
-                  Download Excel
+                  Télécharger le fichier Excel
                 </a>
               )}
             </div>
@@ -593,25 +593,25 @@ export function ImportPanel() {
             )}
             {result.warnings?.length > 0 && <p className="mt-3 text-warning">{result.warnings.join(" ")}</p>}
             
-            {/* Upload incomplete — quarantine preserved */}
+            {/* Envoi incomplet : les originaux sont conservés en quarantaine. */}
             {(result.upload_status === "upload_incomplete" || result.status === "upload_incomplete") && (
               <div className="mt-3 rounded-md border border-warning/40 bg-warning/10 p-3 text-xs">
-                <strong>Upload incomplete:</strong> Some files could not be uploaded to object storage. The source folder was moved to quarantine and will not be deleted. Use Retry Upload.
+                <strong>Envoi incomplet :</strong> Certains fichiers n’ont pas pu être envoyés vers le stockage documentaire. Le dossier source a été placé en quarantaine et ne sera pas supprimé. Vous pouvez relancer l’envoi.
               </div>
             )}
 
-            {/* Technical Sheet PDF Extracted Metadata */}
+            {/* Métadonnées extraites du PDF technique. */}
             {result.data && (
               <div className="mt-3 overflow-x-auto">
                 <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">
-                  Fiche Technique Extraction
+                  Données extraites de la fiche technique
                 </p>
                 <table className="w-full text-left text-xs">
                   <tbody>
                     {(
                       [
-                        ["Reference", result.data.reference],
-                        ["Material", result.data.material],
+                        ["Référence", result.data.reference],
+                        ["Matériau", result.data.material],
                         [
                           "Dimensions",
                           result.data.dimensions
@@ -621,12 +621,12 @@ export function ImportPanel() {
                             : null,
                         ],
                         [
-                          "Normalized",
+                          "Valeurs normalisées",
                           result.data.dimensions?.length_mm != null
                             ? `${result.data.dimensions.length_mm} × ${result.data.dimensions.width_mm} mm`
                             : null,
                         ],
-                        ["Quantity", result.data.quantity],
+                        ["Quantité", result.data.quantity],
                         ["Description", result.data.description],
                         ["Extraction", `${result.data.extraction_status} (${Math.round(result.data.confidence * 100)}%)`],
                       ] as const
@@ -641,21 +641,21 @@ export function ImportPanel() {
               </div>
             )}
 
-            {/* Excel Sheet Summary Display */}
+            {/* Résumé du classeur Excel. */}
             {result.excel_summary && (
               <div className="mt-4 rounded border border-border/80 bg-muted/20 p-3">
                 <div className="flex items-center justify-between">
                   <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    Excel Workbook Summary ({result.excel_summary.name})
+                    Résumé du classeur Excel ({result.excel_summary.name})
                   </p>
                   <span className="text-xs font-medium text-muted-foreground">
-                    {result.excel_summary.total_sheets} sheet{result.excel_summary.total_sheets === 1 ? "" : "s"}
+                    {result.excel_summary.total_sheets} feuille{result.excel_summary.total_sheets === 1 ? "" : "s"}
                   </span>
                 </div>
                 {result.excel_summary.sheets.map((sheet) => (
                   <div key={sheet.name} className="mt-2">
                     <p className="text-xs font-medium text-foreground">
-                      Sheet: <span className="font-semibold">{sheet.name}</span> ({sheet.max_row} rows × {sheet.max_column} cols)
+                      Feuille : <span className="font-semibold">{sheet.name}</span> ({sheet.max_row} lignes × {sheet.max_column} colonnes)
                     </p>
                     {sheet.sample_rows && sheet.sample_rows.length > 0 && (
                       <div className="mt-1 overflow-x-auto">
@@ -695,7 +695,7 @@ export function ImportPanel() {
                   disabled={loading}
                   onClick={retryUpload}
                 >
-                  {busy === "retry" ? "Retrying…" : "Retry upload"}
+                  {busy === "retry" ? "Nouvel essai…" : "Relancer l’envoi"}
                 </button>
               </div>
             )}

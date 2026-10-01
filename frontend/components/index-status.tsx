@@ -35,21 +35,21 @@ export function IndexStatus() {
           className={cn("size-2 fill-current", online ? "text-success" : "text-muted-foreground")}
           aria-hidden
         />
-        {data ? (online ? "Index online" : "Index offline") : "Checking…"}
-        {data?.sample && <span className="text-primary/80">(sample data)</span>}
+        {data ? (online ? "Index en ligne" : "Index hors ligne") : "Vérification…"}
+        {data?.sample && <span className="text-primary/80">(données d’exemple)</span>}
       </span>
 
       {counts && (
         <>
           <span className="inline-flex items-center gap-1.5">
             <Database className="size-3.5" aria-hidden />
-            {counts.documents.toLocaleString()} indexed
+            {counts.documents.toLocaleString()} indexés
           </span>
           <span className="hidden sm:inline">
-            {counts.files.toLocaleString()} files · {counts.folders.toLocaleString()} folders
+            {counts.files.toLocaleString()} fichiers · {counts.folders.toLocaleString()} dossiers
           </span>
           {data?.last_scan && (
-            <span className="hidden md:inline">Last scan {formatDateTime(data.last_scan.started_at)}</span>
+            <span className="hidden md:inline">Dernier scan : {formatDateTime(data.last_scan.started_at)}</span>
           )}
         </>
       )}

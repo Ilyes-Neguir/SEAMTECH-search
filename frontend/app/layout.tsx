@@ -10,9 +10,9 @@ import { Nav } from '@/components/nav'
 // this keeps the app fully self-contained for production builds.
 
 export const metadata: Metadata = {
-  title: 'SEAMTECH Search — Internal File Search',
+  title: 'SEAMTECH Search — Archives techniques',
   description:
-    'Search the SEAMTECH archive of sails, patterns, datasheets and client orders by name, folder path or document content.',
+    'Recherche, consultation et téléchargement des fiches techniques et documents de l’archive SEAMTECH.',
   icons: {
     icon: [{ url: '/seamtech-logo.png', type: 'image/png' }],
     apple: '/seamtech-logo.png',
@@ -30,7 +30,7 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en">
+    <html lang="fr">
       <body className="antialiased font-sans">
         <Nav />
         {children}

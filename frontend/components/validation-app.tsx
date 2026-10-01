@@ -9,9 +9,9 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { Check, ChevronRight, CircleX, Lock, RefreshCw, RotateCcw, Undo2 } from "lucide-react"
 import { PalierBadge } from "@/components/palier-badge"
-import { PdfViewer, type ZoneASurligner } from "@/components/pdf-viewer"
+import { VisionneusePiece, type ZoneASurligner } from "@/components/visionneuse-piece"
 import { authedFetch } from "@/lib/authed-fetch"
-import { palierDeChamp, type ChampExtrait, type FicheFileEntry, type PiecesDeFiche } from "@/lib/fiche"
+import { palierDeChamp, type ChampExtrait, type FicheFileEntry, type PieceJointe, type PiecesDeFiche } from "@/lib/fiche"
 import { cn } from "@/lib/utils"
 
 // Lot L.2 — « qui a validé quoi » ne vient PLUS d'ici. Le corps de requête
@@ -142,20 +142,20 @@ export function ValidationApp() {
     if (!codeActif && file.length > 0) setCodeActif(file[0].code)
   }, [file, codeActif])
 
-  const [cheminPdf, setCheminPdf] = useState<string | null>(null)
+  const [piecePdf, setPiecePdf] = useState<PieceJointe | null>(null)
   useEffect(() => {
     if (!codeActif) return
     debutFiche.current = { code: codeActif, debut: Date.now() }
     setMotifRejet("")
     setChamps([])
-    setCheminPdf(null)
+    setPiecePdf(null)
     setZone(null)
     jsonFetch<ChampExtrait[]>(`/api/fiches/${encodeURIComponent(codeActif)}/champs`)
       .then(setChamps)
       .catch((e) => setErreur(e instanceof Error ? e.message : "Champs indisponibles."))
     jsonFetch<PiecesDeFiche>(`/api/fiches/${encodeURIComponent(codeActif)}/pieces`)
-      .then((corps) => setCheminPdf(corps.pdf_source ?? corps.fichier_source))
-      .catch(() => setCheminPdf(null))
+      .then((corps) => setPiecePdf(corps.pieces.find((piece) => piece.is_primary_pdf) ?? corps.pieces.find((piece) => piece.kind === "pdf") ?? null))
+      .catch(() => setPiecePdf(null))
   }, [codeActif])
 
   async function corriger(champ: ChampExtrait, valeur: string) {
@@ -247,9 +247,9 @@ export function ValidationApp() {
     ;(async () => {
       try {
         const pieces = await jsonFetch<PiecesDeFiche>(`/api/fiches/${encodeURIComponent(suivante.code)}/pieces`)
-        const chemin = pieces.pdf_source ?? pieces.fichier_source
-        if (!chemin) return
-        const reponse = await fetch(`/api/pdf?path=${encodeURIComponent(chemin)}`, { cache: "no-store" })
+        const pdf = pieces.pieces.find((piece) => piece.is_primary_pdf) ?? pieces.pieces.find((piece) => piece.kind === "pdf")
+        if (!pdf) return
+        const reponse = await fetch(`/api/pieces/${encodeURIComponent(pdf.id)}/apercu`, { cache: "no-store" })
         if (!reponse.ok) return
         const bytes = new Uint8Array(await reponse.arrayBuffer())
         if (!annule) setPrecharge({ code: suivante.code, bytes })
@@ -494,7 +494,7 @@ export function ValidationApp() {
 
         {/* visionneuse */}
         <aside className="min-h-0 border-l border-border" data-testid="panneau-pdf">
-          <PdfViewer chemin={cheminPdf} zone={zone} donneesPrechargees={precharge?.code === codeActif ? precharge.bytes : null} />
+          <VisionneusePiece piece={piecePdf} zone={zone} donneesPrechargees={precharge?.code === codeActif ? precharge.bytes : null} />
         </aside>
       </div>
     </div>

@@ -14,8 +14,8 @@ export interface ScanSummary {
 }
 
 export interface SearchResult {
+  id: number
   name: string
-  path: string
   parent: string
   extension: string
   size: number
@@ -34,25 +34,6 @@ export interface SearchResponse {
   limit: number
   has_more: boolean
   results: SearchResult[]
-}
-
-export interface PreviewChild {
-  name: string
-  path: string
-  is_dir: boolean
-  size: number
-}
-
-export interface PreviewResponse {
-  path: string
-  name: string
-  is_dir: boolean
-  extension?: string
-  size?: number
-  text?: string
-  children?: PreviewChild[]
-  extraction_status?: ExtractionStatus
-  extraction_detail?: string
 }
 
 export interface HealthResponse {

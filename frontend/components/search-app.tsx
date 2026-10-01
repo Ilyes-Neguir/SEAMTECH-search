@@ -1,11 +1,9 @@
 "use client"
 
-// The signed-in search UI. Rendered only by app/page.tsx, which is a server
-// component that redirects to /login when the session cookie is missing or
-// invalid (audit issue #5, Option B). Kept as a client component because the
-// search/preview/import state all lives in the browser.
+// Recherche historique de l’archive et flux Import. L’état de recherche,
+// d’aperçu et d’import reste côté client.
 
-import { useCallback, useEffect, useState } from "react"
+import { useState } from "react"
 import type { SearchResult } from "@/lib/types"
 import { useSearch } from "@/hooks/use-search"
 import { SeamtechLogo } from "@/components/seamtech-logo"
@@ -16,33 +14,11 @@ import { PreviewPanel } from "@/components/preview-panel"
 import { cn } from "@/lib/utils"
 import { ImportPanel } from "@/components/import-panel"
 import { SignOutButton } from "@/components/sign-out-button"
-import { authedFetch } from "@/lib/authed-fetch"
 
 export function SearchApp() {
   const { query, results, hasMore, loading, loadingMore, searched, error, run, loadMore } = useSearch()
   const [input, setInput] = useState("")
   const [selected, setSelected] = useState<SearchResult | null>(null)
-  const [toast, setToast] = useState<string | null>(null)
-
-  useEffect(() => {
-    if (!toast) return
-    const t = setTimeout(() => setToast(null), 4000)
-    return () => clearTimeout(t)
-  }, [toast])
-
-  const onOpen = useCallback(async (r: SearchResult) => {
-    try {
-      const res = await authedFetch(`/api/open?path=${encodeURIComponent(r.path)}`, { method: "POST" })
-      const body = await res.json().catch(() => ({}))
-      if (res.ok) {
-        setToast(`Opening ${r.is_dir ? "folder" : "file"} on the host…`)
-      } else {
-        setToast(body?.detail ?? "Could not open on host.")
-      }
-    } catch {
-      setToast("Could not reach the SEAMTECH backend.")
-    }
-  }, [])
 
   return (
     <div className="flex min-h-dvh flex-col">
@@ -53,7 +29,7 @@ export function SearchApp() {
             <SeamtechLogo className="h-8 w-auto sm:h-9" />
             <div className="flex items-center gap-3">
               <div className="hidden text-right text-xs text-muted-foreground sm:block">
-                Internal File Search
+                Recherche d’archives
               </div>
               <SignOutButton />
             </div>
@@ -72,8 +48,8 @@ export function SearchApp() {
             {searched && !loading && !error && (
               <span className="shrink-0 text-xs text-muted-foreground">
                 {results.length}
-                {hasMore ? "+" : ""} result{results.length === 1 ? "" : "s"}
-                {query && <span className="text-foreground/70"> for “{query}”</span>}
+                {hasMore ? "+" : ""} résultat{results.length === 1 ? "" : "s"}
+                {query && <span className="text-foreground/70"> pour « {query} »</span>}
               </span>
             )}
           </div>
@@ -92,9 +68,8 @@ export function SearchApp() {
         >
           <ResultsList
             results={results}
-            selectedPath={selected?.path ?? null}
+            selectedId={selected?.id ?? null}
             onSelect={setSelected}
-            onOpen={onOpen}
             onLoadMore={loadMore}
             hasMore={hasMore}
             loadingMore={loadingMore}
@@ -108,7 +83,7 @@ export function SearchApp() {
         {selected && (
           <div className="w-full border-r border-border lg:w-[400px] lg:shrink-0">
             <div className="sticky top-[164px] h-[calc(100dvh-164px)]">
-              <PreviewPanel result={selected} onClose={() => setSelected(null)} onOpen={onOpen} />
+              <PreviewPanel result={selected} onClose={() => setSelected(null)} />
             </div>
           </div>
         )}
@@ -116,18 +91,10 @@ export function SearchApp() {
 
       <footer className="border-t border-border py-4">
         <div className="mx-auto w-full max-w-6xl px-4 text-center text-xs text-muted-foreground sm:px-6">
-          SEAMTECH Search · We produce your sails
+          SEAMTECH Search · Tous les documents de votre atelier
         </div>
       </footer>
 
-      {/* Toast */}
-      <div aria-live="polite" className="pointer-events-none fixed inset-x-0 bottom-6 z-50 flex justify-center px-4">
-        {toast && (
-          <div className="pointer-events-auto max-w-md rounded-lg border border-border bg-card px-4 py-3 text-sm text-foreground shadow-lg shadow-black/40">
-            {toast}
-          </div>
-        )}
-      </div>
     </div>
   )
 }

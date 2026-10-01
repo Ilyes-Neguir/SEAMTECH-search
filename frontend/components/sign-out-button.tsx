@@ -25,8 +25,8 @@ export function SignOutButton() {
   }
 
   return (
-    <Button variant="ghost" size="sm" onClick={signOut} disabled={busy} aria-label="Sign out">
-      {busy ? "Signing out…" : "Sign out"}
+    <Button variant="ghost" size="sm" onClick={signOut} disabled={busy} aria-label="Se déconnecter">
+      {busy ? "Déconnexion…" : "Se déconnecter"}
     </Button>
   )
 }

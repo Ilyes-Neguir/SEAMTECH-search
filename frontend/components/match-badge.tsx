@@ -2,10 +2,10 @@ import type { MatchType } from "@/lib/types"
 import { cn } from "@/lib/utils"
 
 const LABELS: Record<MatchType, string> = {
-  exact_name: "Exact name",
-  name: "Name",
-  path: "Path",
-  content: "Content",
+  exact_name: "Nom exact",
+  name: "Nom",
+  path: "Dossier",
+  content: "Contenu",
 }
 
 const STYLES: Record<MatchType, string> = {

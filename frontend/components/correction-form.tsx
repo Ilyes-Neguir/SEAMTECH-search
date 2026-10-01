@@ -69,22 +69,22 @@ export function CorrectionForm({ data, saving, onSave }: Props) {
   return (
     <div className="mt-4 rounded-md border border-border bg-card/60 p-4">
       <div className="mb-3 flex items-baseline justify-between gap-4">
-        <h3 className="text-sm font-semibold">Manual correction</h3>
+        <h3 className="text-sm font-semibold">Correction manuelle</h3>
         <span className="text-xs text-muted-foreground">
-          Saving re-validates, regenerates both reports and re-uploads
+          L’enregistrement relance la validation, les rapports et l’envoi des fichiers.
         </span>
       </div>
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
         <label className="text-xs text-muted-foreground">
-          Reference
+          Référence
           <input className={inputCls} value={reference} onChange={(e) => setReference(e.target.value)} />
         </label>
         <label className="text-xs text-muted-foreground">
-          Material
+          Matériau
           <input className={inputCls} value={material} onChange={(e) => setMaterial(e.target.value)} />
         </label>
         <label className="text-xs text-muted-foreground">
-          Quantity
+          Quantité
           <input
             className={inputCls}
             inputMode="numeric"
@@ -93,7 +93,7 @@ export function CorrectionForm({ data, saving, onSave }: Props) {
           />
         </label>
         <label className="text-xs text-muted-foreground">
-          Unit
+          Unité
           <select className={inputCls} value={unit} onChange={(e) => setUnit(e.target.value)}>
             <option value="mm">mm</option>
             <option value="cm">cm</option>
@@ -101,15 +101,15 @@ export function CorrectionForm({ data, saving, onSave }: Props) {
           </select>
         </label>
         <label className="text-xs text-muted-foreground">
-          Length
+          Longueur
           <input className={inputCls} inputMode="decimal" value={length} onChange={(e) => setLength(e.target.value)} />
         </label>
         <label className="text-xs text-muted-foreground">
-          Width
+          Largeur
           <input className={inputCls} inputMode="decimal" value={width} onChange={(e) => setWidth(e.target.value)} />
         </label>
         <label className="text-xs text-muted-foreground">
-          Height (optional)
+          Hauteur (facultative)
           <input className={inputCls} inputMode="decimal" value={height} onChange={(e) => setHeight(e.target.value)} />
         </label>
         <label className="text-xs text-muted-foreground sm:col-span-2">
@@ -123,7 +123,7 @@ export function CorrectionForm({ data, saving, onSave }: Props) {
           disabled={saving}
           onClick={save}
         >
-          {saving ? "Saving…" : "Save correction"}
+          {saving ? "Enregistrement…" : "Enregistrer la correction"}
         </button>
       </div>
     </div>

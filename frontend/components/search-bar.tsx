@@ -42,8 +42,8 @@ export function SearchBar({ value, onChange, onSubmit, loading, autoFocus }: Sea
           autoFocus={autoFocus}
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="Search files, folders, paths and document content…"
-          aria-label="Search"
+          placeholder="Rechercher des fichiers, dossiers et contenus…"
+          aria-label="Rechercher"
           className="h-full w-full bg-transparent text-[15px] text-foreground placeholder:text-muted-foreground focus:outline-none"
           spellCheck={false}
           autoComplete="off"
@@ -55,7 +55,7 @@ export function SearchBar({ value, onChange, onSubmit, loading, autoFocus }: Sea
               onChange("")
               inputRef.current?.focus()
             }}
-            aria-label="Clear search"
+            aria-label="Effacer la recherche"
             className="rounded-md p-1 text-muted-foreground transition-colors hover:text-foreground"
           >
             <X className="size-4" />
@@ -71,7 +71,7 @@ export function SearchBar({ value, onChange, onSubmit, loading, autoFocus }: Sea
           "transition-colors hover:bg-primary/90 disabled:opacity-60",
         )}
       >
-        Search
+        Rechercher
       </button>
     </div>
   )

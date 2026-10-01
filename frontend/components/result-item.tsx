@@ -9,7 +9,7 @@ import {
   FileArchive,
   File,
   Eye,
-  ExternalLink,
+  Download,
 } from "lucide-react"
 import type { SearchResult } from "@/lib/types"
 import { formatBytes, formatDate } from "@/lib/format"
@@ -29,7 +29,17 @@ function iconFor(r: SearchResult) {
 
 function extractionLabel(status?: SearchResult["extraction_status"]) {
   if (!status || status === "extracted" || status === "not_applicable") return null
-  return status.replace("_", " ")
+  const labels: Record<string, string> = {
+    unavailable: "extraction indisponible",
+    failed: "extraction en échec",
+    too_large: "fichier trop volumineux",
+    skipped: "non extrait",
+  }
+  return labels[status] ?? status.replaceAll("_", " ")
+}
+
+function libelleDossier(parent: string): string {
+  return parent.split(/[\\/]+/).filter(Boolean).pop() ?? "Archive"
 }
 
 function renderSnippet(snippet: string) {
@@ -51,10 +61,9 @@ interface ResultItemProps {
   result: SearchResult
   selected: boolean
   onSelect: () => void
-  onOpen: () => void
 }
 
-export function ResultItem({ result, selected, onSelect, onOpen }: ResultItemProps) {
+export function ResultItem({ result, selected, onSelect }: ResultItemProps) {
   const Icon = iconFor(result)
   const showSnippet = result.match_type === "content" && result.snippet
 
@@ -96,8 +105,8 @@ export function ResultItem({ result, selected, onSelect, onOpen }: ResultItemPro
           )}
         </div>
 
-        <p className="mt-0.5 truncate font-mono text-xs text-muted-foreground" title={result.parent}>
-          {result.parent}
+        <p className="mt-0.5 truncate text-xs text-muted-foreground">
+          {libelleDossier(result.parent)}
         </p>
 
         {showSnippet && (
@@ -109,7 +118,7 @@ export function ResultItem({ result, selected, onSelect, onOpen }: ResultItemPro
         )}
 
         <div className="mt-1.5 flex items-center gap-3 text-[11px] text-muted-foreground">
-          <span className="uppercase">{result.is_dir ? "Folder" : result.extension.replace(".", "") || "File"}</span>
+          <span className="uppercase">{result.is_dir ? "Dossier" : result.extension.replace(".", "") || "Fichier"}</span>
           {!result.is_dir && (
             <>
               <span aria-hidden>·</span>
@@ -128,24 +137,23 @@ export function ResultItem({ result, selected, onSelect, onOpen }: ResultItemPro
             e.stopPropagation()
             onSelect()
           }}
-          aria-label="Preview"
-          title="Preview"
+          aria-label="Prévisualiser"
+          title="Prévisualiser"
           className="rounded-md p-2 text-muted-foreground transition-colors hover:bg-white/10 hover:text-foreground"
         >
           <Eye className="size-4" />
         </button>
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation()
-            onOpen()
-          }}
-          aria-label="Open on host"
-          title="Open on host"
-          className="rounded-md p-2 text-muted-foreground transition-colors hover:bg-white/10 hover:text-foreground"
-        >
-          <ExternalLink className="size-4" />
-        </button>
+        {!result.is_dir && (
+          <a
+            href={`/api/pieces/${encodeURIComponent(result.id)}/telecharger`}
+            onClick={(event) => event.stopPropagation()}
+            aria-label={`Télécharger ${result.name}`}
+            title="Télécharger"
+            className="rounded-md p-2 text-muted-foreground transition-colors hover:bg-white/10 hover:text-foreground"
+          >
+            <Download className="size-4" />
+          </a>
+        )}
       </div>
     </div>
   )

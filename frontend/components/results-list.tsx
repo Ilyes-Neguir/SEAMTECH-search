@@ -6,9 +6,8 @@ import { ResultItem } from "./result-item"
 
 interface ResultsListProps {
   results: SearchResult[]
-  selectedPath: string | null
+  selectedId: number | null
   onSelect: (r: SearchResult) => void
-  onOpen: (r: SearchResult) => void
   onLoadMore?: () => void
   hasMore?: boolean
   loadingMore?: boolean
@@ -20,9 +19,8 @@ interface ResultsListProps {
 
 export function ResultsList({
   results,
-  selectedPath,
+  selectedId,
   onSelect,
-  onOpen,
   onLoadMore,
   hasMore,
   loadingMore,
@@ -34,7 +32,7 @@ export function ResultsList({
     return (
       <div className="flex flex-col items-center justify-center gap-3 py-24 text-muted-foreground">
         <Loader2 className="size-6 animate-spin text-primary" />
-        <p className="text-sm">Searching the index…</p>
+        <p className="text-sm">Recherche dans l’index…</p>
       </div>
     )
   }
@@ -43,7 +41,7 @@ export function ResultsList({
     return (
       <div className="flex flex-col items-center justify-center gap-2 px-6 py-24 text-center">
         <SearchX className="size-8 text-destructive" />
-        <p className="text-sm font-medium text-foreground">Search failed</p>
+        <p className="text-sm font-medium text-foreground">Échec de la recherche</p>
         <p className="max-w-sm text-sm text-muted-foreground">{error}</p>
       </div>
     )
@@ -55,9 +53,9 @@ export function ResultsList({
         <div className="flex size-14 items-center justify-center rounded-full bg-primary/10 text-primary">
           <FileSearch className="size-7" />
         </div>
-        <p className="text-sm font-medium text-foreground">Search the SEAMTECH archive</p>
+        <p className="text-sm font-medium text-foreground">Rechercher dans l’archive SEAMTECH</p>
         <p className="max-w-md text-sm text-muted-foreground">
-          Find sails, patterns, datasheets and client orders by name, folder path or by the text inside documents.
+          Retrouvez fiches, plans, documents techniques et commandes par nom ou contenu.
         </p>
       </div>
     )
@@ -67,9 +65,9 @@ export function ResultsList({
     return (
       <div className="flex flex-col items-center justify-center gap-2 px-6 py-24 text-center">
         <SearchX className="size-8 text-muted-foreground" />
-        <p className="text-sm font-medium text-foreground">No matches found</p>
+        <p className="text-sm font-medium text-foreground">Aucun résultat trouvé</p>
         <p className="max-w-sm text-sm text-muted-foreground">
-          Try a different term, a partial file name, or an order reference like SAIL-2041.
+          Essayez un autre terme, une partie du nom de fichier ou une référence de commande.
         </p>
       </div>
     )
@@ -79,11 +77,10 @@ export function ResultsList({
     <div className="divide-y divide-border">
       {results.map((r) => (
         <ResultItem
-          key={r.path}
+          key={r.id}
           result={r}
-          selected={selectedPath === r.path}
+          selected={selectedId === r.id}
           onSelect={() => onSelect(r)}
-          onOpen={() => onOpen(r)}
         />
       ))}
 
@@ -96,7 +93,7 @@ export function ResultsList({
             className="inline-flex items-center gap-2 rounded-lg border border-input bg-card px-5 py-2 text-sm font-medium text-foreground transition-colors hover:bg-white/5 disabled:opacity-60"
           >
             {loadingMore && <Loader2 className="size-4 animate-spin" />}
-            Load more results
+            Charger plus de résultats
           </button>
         </div>
       )}

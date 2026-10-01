@@ -40,6 +40,26 @@ export interface FicheFileEntry {
   a_anomalies: boolean
 }
 
+export interface FicheDetail {
+  code: string
+  titre: string
+  statut: string
+  gabarit: string
+  client: string
+  bateau: string
+  bateau_taille: string
+  date_edition: string | null
+  nb_fichiers: number
+}
+
+export interface HistoriqueFiche {
+  action: string
+  etat_avant: string | null
+  etat_apres: string | null
+  commentaire: string | null
+  created_at: string
+}
+
 export interface FicheListe {
   code: string
   titre: string
@@ -49,21 +69,45 @@ export interface FicheListe {
   client: string
   bateau: string
   bateau_taille: string
+  nb_fichiers?: number
+  a_pdf?: boolean
 }
 
 export interface PiecesDeFiche {
-  fichier_source: string | null
-  pdf_source: string | null // chemin d'archive du PDF (clé d'idempotence lot C)
+  fichier_source?: string | null // compatibilité avec les anciens clients ; ne pas utiliser pour ouvrir un fichier
+  pdf_source?: string | null // compatibilité transitoire uniquement
   pieces: PieceJointe[]
 }
 
+export type PieceKind = "pdf" | "excel" | "machine" | "other"
+
 export interface PieceJointe {
-  chemin: string
-  role: string
-  empreinte_sha256: string
-  taille_octets: number | null
-  id_document: number | null
-  nom: string | null
+  id: number
+  name: string
+  extension: string
+  size: number | null
+  kind: PieceKind
+  is_primary_pdf: boolean
+  previewable: boolean
+  dossier?: string
+  fiche_code?: string
+  // Champs historiques maintenus pendant la migration des écrans.
+  chemin?: string
+  role?: string
+  empreinte_sha256?: string
+  taille_octets?: number | null
+  id_document?: number | null
+  nom?: string | null
+}
+
+export interface PiecesArchive {
+  total: number
+  limit: number
+  offset: number
+  has_more: boolean
+  pieces: PieceJointe[]
+  extensions: string[]
+  dossiers: string[]
 }
 
 export interface LotResume {

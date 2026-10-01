@@ -36,12 +36,8 @@
   --radius-xl: calc(var(--radius) * 1.4);
 }
 
-/*
-  SEAMTECH brand palette (from seamtech.tn):
-  - near-black surfaces
-  - white / off-white text
-  - amber-gold accent #E8B305
-*/
+/* Palette d’atelier : surfaces charbon, contraste ivoire et accent lagon.
+   L’ambre reste réservé aux alertes et aux états à vérifier. */
 :root {
   color-scheme: dark;
   --background: #0d0e10;
@@ -50,8 +46,8 @@
   --card-foreground: #f6f6f6;
   --popover: #17181b;
   --popover-foreground: #f6f6f6;
-  --primary: #e8b305;
-  --primary-foreground: #1a1400;
+  --primary: #55b9aa;
+  --primary-foreground: #071613;
   --secondary: #232428;
   --secondary-foreground: #f6f6f6;
   --muted: #1c1d21;
@@ -63,7 +59,7 @@
   --warning: #ff9a52;
   --border: rgba(255, 255, 255, 0.1);
   --input: rgba(255, 255, 255, 0.14);
-  --ring: #e8b305;
+  --ring: #55b9aa;
   --radius: 0.5rem;
 }
 
