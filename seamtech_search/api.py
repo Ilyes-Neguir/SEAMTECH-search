@@ -415,13 +415,30 @@ def create_app(config: AppConfig) -> FastAPI:
                 index, action="search", actor=actor, resource=q, status="error", details={"error": str(exc)}
             )
             raise HTTPException(status_code=500, detail="Search service failure.") from exc
+        # File identity is the opaque catalogue id. Keep local paths, object
+        # keys, and full parent directories inside the backend only.
+        safe_results = []
+        for result in results:
+            parent = str(result.get("parent") or "").replace("\\", "/").rstrip("/")
+            safe_parent = parent.rsplit("/", 1)[-1] if parent else ""
+            safe_results.append(
+                {
+                    **{
+                        key: value
+                        for key, value in result.items()
+                        if key not in {"path", "path_key", "object_key", "parent"}
+                    },
+                    "id": int(result["id"]),
+                    "parent": safe_parent,
+                }
+            )
         return {
             "query": q,
-            "count": len(results),
+            "count": len(safe_results),
             "offset": offset,
             "limit": limit,
             "has_more": has_more,
-            "results": results,
+            "results": safe_results,
         }
 
     @app.get("/metrics")
@@ -1123,7 +1140,7 @@ def create_app(config: AppConfig) -> FastAPI:
     # lecture et publication uniquement, aucune écriture de fiche par ces routes.
     from seamtech_search.fiches.routes import enregistrer_routes_fiches
 
-    enregistrer_routes_fiches(app, index, config, _require_auth)
+    enregistrer_routes_fiches(app, index, config, _require_auth, storage_client=storage_client)
 
     # Lot E (§17.2, §17.5) : recherche hybride des fiches — GET /recherche et
     # GET /recherche/suggestions. L'existant (/search fichiers) n'est pas touché.

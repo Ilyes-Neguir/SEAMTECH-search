@@ -113,10 +113,11 @@ grep -R "Analytics\|vercel\|v0.app" frontend/app/layout.tsx frontend/package.jso
 cat frontend/package.json | grep '"name"'
 ```
 
-### 3.4 Sample fallback
-**Claim:** Gated on `SEAMTECH_DEMO_MODE=1`, impossible in production → 503.
+### 3.4 Sample fallback and file access
+**Claim:** Sample search/health data is gated on `SEAMTECH_DEMO_MODE=1` and disabled in production; the retired browser routes `/api/preview` and `/api/open` return 410 after session validation. File reads use catalogue IDs.
 ```bash
-grep -n "SEAMTECH_DEMO_MODE\|isProd\|503" frontend/app/api/search/route.ts frontend/app/api/health/route.ts frontend/app/api/preview/route.ts frontend/app/api/open/route.ts
+grep -n "SEAMTECH_DEMO_MODE\|isProd\|503" frontend/app/api/search/route.ts frontend/app/api/health/route.ts
+grep -n "410\|api/pieces" frontend/app/api/preview/route.ts frontend/app/api/open/route.ts frontend/lib/piece-proxy.ts
 ```
 
 ### 3.5 Container runs as root, test deps in prod

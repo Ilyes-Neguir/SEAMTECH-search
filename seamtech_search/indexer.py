@@ -1404,6 +1404,7 @@ class SearchIndex:
             rows = connection.execute(
                 """
                 SELECT
+                    d.id,
                     d.path,
                     d.name,
                     d.parent_path AS parent,
@@ -1483,6 +1484,7 @@ class SearchIndex:
                             to_tsquery('{ts_config}', %s) AS query_and
                     )
                     SELECT
+                        d.id,
                         d.path,
                         d.name,
                         d.parent_path AS parent,

@@ -3,54 +3,75 @@ import { backendBase, authHeaders, requireAuthValide } from "@/lib/backend"
 
 export const dynamic = "force-dynamic"
 
-export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string; artifact: string }> }) {
+const RESPONSE_HEADERS = ["content-disposition", "content-length", "content-range", "content-type", "etag", "last-modified"]
+const PARAMETRES_SIGNATURE = ["X-Amz-Signature", "Signature", "AWSAccessKeyId"]
+
+function urlPresignee(location: string, base: string): URL | null {
+  try {
+    const url = new URL(location, base)
+    if ((url.protocol !== "https:" && url.protocol !== "http:") || url.username || url.password) return null
+    if (!PARAMETRES_SIGNATURE.some((parametre) => url.searchParams.has(parametre))) return null
+    return url
+  } catch {
+    return null
+  }
+}
+
+export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string; artifact: string }> }) {
   const denied = await requireAuthValide()
   if (denied) return denied
   const { id, artifact } = await params
   const allowed = ["report_pdf", "report_docx", "source_pdf", "source_excel"]
   if (!allowed.includes(artifact)) {
-    return NextResponse.json({ detail: `Unknown artifact. Allowed: ${allowed.join(", ")}` }, { status: 400 })
+    return NextResponse.json({ detail: "Type de document inconnu." }, { status: 400 })
   }
 
   const base = backendBase()
   if (!base) {
-    return NextResponse.json({ detail: "Artifact download requires a configured backend." }, { status: 503 })
+    return NextResponse.json({ detail: "Le téléchargement nécessite un backend configuré." }, { status: 503 })
   }
 
   try {
     const url = `${base}/imports/${encodeURIComponent(id)}/artifacts/${encodeURIComponent(artifact)}`
-    const res = await fetch(url, {
+    const reponseBackend = await fetch(url, {
       headers: authHeaders(),
       cache: "no-store",
       redirect: "manual",
     })
+    let upstream = reponseBackend
 
-    // If backend returns 302 to presigned URL, forward the redirect location as JSON for frontend to open
-    if (res.status >= 300 && res.status < 400) {
-      const location = res.headers.get("location")
-      if (location) {
-        // For browser download, we can redirect directly
-        return NextResponse.redirect(location, { status: 302 })
+    if (reponseBackend.status >= 300 && reponseBackend.status < 400) {
+      const location = reponseBackend.headers.get("location")
+      const cible = location ? urlPresignee(location, url) : null
+      if (!cible) {
+        return NextResponse.json({ detail: "Le stockage a renvoyé une redirection invalide." }, { status: 502 })
       }
+      // Important : ne pas réutiliser authHeaders() pour cet appel. Le lien est
+      // déjà signé et le jeton de service ne doit jamais quitter le backend.
+      upstream = await fetch(cible, { cache: "no-store", redirect: "follow" })
     }
 
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({ detail: "Artifact not found" }))
-      return NextResponse.json(body, { status: res.status })
+    if (upstream.status === 501) {
+      return NextResponse.json({ detail: "Le document ne peut pas être servi pour le moment." }, { status: 502 })
+    }
+    if (!upstream.ok) {
+      return NextResponse.json(
+        { detail: upstream.status === 404 ? "Le document demandé est introuvable." : "Le téléchargement est temporairement indisponible." },
+        { status: upstream.status },
+      )
     }
 
-    // If backend streams file directly, proxy it
-    const contentType = res.headers.get("content-type") || "application/octet-stream"
-    const contentDisposition = res.headers.get("content-disposition") || `attachment; filename="${artifact}"`
-    const buffer = await res.arrayBuffer()
-    return new NextResponse(buffer, {
-      status: 200,
-      headers: {
-        "Content-Type": contentType,
-        "Content-Disposition": contentDisposition,
-      },
-    })
+    const headers = new Headers({ "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" })
+    for (const name of RESPONSE_HEADERS) {
+      const value = upstream.headers.get(name)
+      if (value) headers.set(name, value)
+    }
+    if (!headers.has("content-disposition")) {
+      const ext = artifact === "report_pdf" || artifact === "source_pdf" ? "pdf" : artifact === "report_docx" ? "docx" : "xlsx"
+      headers.set("Content-Disposition", `attachment; filename="${artifact}.${ext}"`)
+    }
+    return new NextResponse(upstream.body, { status: upstream.status, headers })
   } catch {
-    return NextResponse.json({ detail: "Could not reach the SEAMTECH backend." }, { status: 502 })
+    return NextResponse.json({ detail: "Le backend SEAMTECH est injoignable." }, { status: 502 })
   }
 }

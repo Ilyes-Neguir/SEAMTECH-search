@@ -87,6 +87,15 @@ _SQL_DOCUMENT_UPSERT = (
     "size = EXCLUDED.size, modified_at = EXCLUDED.modified_at, content = EXCLUDED.content "
     "RETURNING id"
 )
+_SQL_DOCUMENT_FICHE_UPSERT = (
+    "INSERT INTO documents (path_key, path, name, parent_path, extension, size, modified_at, "
+    "is_dir, content, content_hash, extraction_status, category, role) "
+    "VALUES (%s, %s, %s, %s, %s, %s, %s, FALSE, %s, %s, 'metadata', 'analyzed', 'fiche_pdf') "
+    "ON CONFLICT (path_key) DO UPDATE SET name = EXCLUDED.name, path = EXCLUDED.path, "
+    "parent_path = EXCLUDED.parent_path, extension = EXCLUDED.extension, size = EXCLUDED.size, "
+    "modified_at = EXCLUDED.modified_at, content = EXCLUDED.content, content_hash = EXCLUDED.content_hash, "
+    "category = 'analyzed', role = 'fiche_pdf' RETURNING id"
+)
 # Même expression que l'indexeur (RG12 : contenu indexé = métadonnées seulement).
 _SQL_DOCUMENT_VECTOR = (
     f"UPDATE documents SET search_vector = to_tsvector('{PG_UNACCENT_CONFIG}', "
@@ -317,6 +326,28 @@ def deposer_dossier(index: Any, dossier: Path, gabarits: list[GabaritDef] | None
             with connexion.cursor() as cursor:
                 fiche = extraire_fiche(plan.pdf_fiche, gabarits=gabarits, gabarit_code=plan.gabarit_code)
                 id_fiche, action = ecrire_fiche(index, fiche, connexion=connexion)
+
+                # Le PDF principal a lui aussi un identifiant de catalogue : toutes
+                # les vues l'ouvrent par /pieces/{id}, sans transmettre son chemin.
+                pdf_fiche = Path(plan.pdf_fiche)
+                pdf_stat = pdf_fiche.stat()
+                cursor.execute(
+                    _SQL_DOCUMENT_FICHE_UPSERT,
+                    (
+                        os.path.normcase(str(pdf_fiche.resolve())),
+                        str(pdf_fiche),
+                        pdf_fiche.name,
+                        str(pdf_fiche.parent),
+                        pdf_fiche.suffix.lower(),
+                        pdf_stat.st_size,
+                        pdf_stat.st_mtime,
+                        f"PDF source de la fiche {fiche.code}",
+                        empreinte,
+                    ),
+                )
+                id_document_pdf = cursor.fetchone()[0]
+                cursor.execute(_SQL_DOCUMENT_VECTOR, (id_document_pdf,))
+
                 for piece in plan.pieces:
                     chemin_piece = Path(piece.chemin)
                     # RG12 — décision revue 21/09 : le fichier est décrit UNE FOIS,

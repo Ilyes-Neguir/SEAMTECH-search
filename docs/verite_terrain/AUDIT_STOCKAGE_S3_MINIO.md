@@ -36,10 +36,10 @@ R-14 · **Base** : `origin/main` = `f8befb5da800c10d793e25addf9519cc63f5fd6c`
 
 ```
 Navigateur ─▶ Next.js (proxy serveur)  ─▶ FastAPI  ─▶ PostgreSQL 16 + pgvector   (index, object_key, audit)
-                 /api/open                  /open        Redis 7                 (file d'attente, verrous)
-                 /api/imports/…/artifacts   /imports/…   S3 compatible           (MinIO en dev/CI, R2/AWS prévu)
-                                             │
-                                             └─ worker (thread) : vérifie, met en quarantaine, autorise la purge
+                 /api/pieces/{id}/…       /pieces/{id}/… Redis 7                 (file d'attente, verrous)
+                 /api/imports/…/artifacts /imports/…    S3 compatible           (MinIO en dev/CI, R2/AWS prévu)
+                                                        │
+                                                        └─ worker (thread) : vérifie, met en quarantaine, autorise la purge
 ```
 
 | Couche | Fichier | Rôle vis-à-vis du stockage objet |
@@ -49,8 +49,8 @@ Navigateur ─▶ Next.js (proxy serveur)  ─▶ FastAPI  ─▶ PostgreSQL 16 
 | Import | `seamtech_search/import_pipeline.py` | Appelle `upload_artifacts_to_storage()` (import initial, retraitement, ré-essai) ; écrit `object_key`/`object_bucket`/`upload_status` par fichier. |
 | Ordonnanceur | `seamtech_search/worker.py` | Porte de purge : `upload_status == uploaded` **et** `all_verified` **et** toutes les clés présentes, sinon `upload_incomplete` → `data/quarantine/` (jamais purgé). |
 | Index | `seamtech_search/indexer.py` | Colonnes `object_key`, `object_bucket`, `uploaded_at`, `upload_status` (migration `002_object_storage_columns`). |
-| API | `seamtech_search/api.py` | `/health` (état + versioning), `/open`, `/imports/{id}/artifacts/{artifact}` (302 présignée **prévue** → repli fichier local → téléchargement depuis S3 → 404). |
-| Frontend | `frontend/app/api/open/route.ts`, `frontend/app/api/imports/[id]/artifacts/[artifact]/route.ts` | `redirect: "manual"` puis relais de la redirection (JSON `{url}` pour `/open`, 302 pour les artefacts) ; sinon proxy du flux. Le navigateur n'appelle jamais S3 directement sans URL signée. |
+| API | `seamtech_search/api.py`, `seamtech_search/fiches/routes.py` | `/pieces/{id}/apercu` et `/telecharger` servent le catalogue par identifiant (GET/HEAD, plages d’octets) ; `/imports/{id}/artifacts/{artifact}` reste le flux de rapports d’import. `/open` et `/preview` subsistent uniquement pour compatibilité interne. |
+| Frontend | `frontend/lib/piece-proxy.ts`, `frontend/app/api/pieces/[id]/…`, `frontend/app/api/imports/[id]/artifacts/[artifact]/route.ts` | Proxy authentifié par session, flux binaire et Range relayés ; les pièces par id sont servies en flux direct, et seul le proxy des artefacts Import suit une URL présignée côté serveur, sans y transmettre les en-têtes d’authentification. Le navigateur ne reçoit ni chemin local, ni clé d’objet, ni URL présignée. Les anciens `/api/open` et `/api/preview` renvoient 410. |
 | Sauvegarde | `seamtech_search/sauvegarde.py` | `pg_dump -Fc` + manifeste → bucket, **relecture + comparaison sha256 après envoi**, rétention N, restauration depuis le bucket seul. |
 | Infrastructure | `docker-compose.yml`, `Dockerfile`, `scripts/construire_image_minio.sh` | Service `minio` épinglé, healthcheck `mc ready local`, image reconstruite depuis les sources archivées. |
 

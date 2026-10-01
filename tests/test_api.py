@@ -58,6 +58,9 @@ def test_search_pagination_contract(tmp_path: Path) -> None:
     assert payload["limit"] == 2
     assert payload["count"] == 2
     assert payload["has_more"] is False
+    assert all(isinstance(result.get("id"), int) for result in payload["results"])
+    assert all(not ({"path", "path_key", "object_key"} & result.keys()) for result in payload["results"])
+    assert {result["parent"] for result in payload["results"]} == {root.name}
 
 
 def test_local_mode_allows_search_without_token(tmp_path: Path) -> None:

@@ -328,9 +328,9 @@ class TestListeEtPieces:
         reponse = client.get("/fiches/7792-SO/pieces")
         assert reponse.status_code == 200
         corps_pieces = reponse.json()
-        assert corps_pieces["fichier_source"], "le chemin du PDF source doit être exposé (visionneuse lot D)"
-        assert corps_pieces["pdf_source"], "le chemin d'archive du PDF (clé d'idempotence lot C) doit être exposé"
-        cible = next(p for p in corps_pieces["pieces"] if p["nom"] == "croquis-voile.pdf")
-        assert cible["role"] == "piece_jointe" and cible["id_document"] is not None
-        assert cible["empreinte_sha256"]
+        assert corps_pieces["fichier_source"] is None and corps_pieces["pdf_source"] is None
+        assert all("chemin" not in p and "object_key" not in p for p in corps_pieces["pieces"])
+        cible = next(p for p in corps_pieces["pieces"] if p["name"] == "croquis-voile.pdf")
+        assert cible["role"] == "piece_jointe" and isinstance(cible["id"], int)
+        assert cible["id_document"] == cible["id"] and cible["empreinte_sha256"]
         assert client.get("/fiches/INCONNU/pieces").status_code == 404

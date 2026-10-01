@@ -18,12 +18,17 @@ n'existent pas côté SQLite, les routes répondent 503 avec l'explication.
 from __future__ import annotations
 
 import logging
+import mimetypes
 import os
+import re
 import tempfile
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Annotated, Any
+from urllib.parse import quote
 
-from fastapi import File, Header, HTTPException, UploadFile
+from fastapi import File, Header, HTTPException, Query, Request, UploadFile
+from fastapi.responses import StreamingResponse
+from starlette.responses import Response
 
 from seamtech_search.comptes.comptes import resoudre_attribution
 from seamtech_search.fiches.depot import (
@@ -43,6 +48,8 @@ from seamtech_search.fiches.extraction import (
 )
 from seamtech_search.fiches.gabarits import GabaritInconnu, charger_gabarits, detecter_gabarit
 from seamtech_search.fiches.persistance import verifier_autorisation_validation_lot
+from seamtech_search.import_pipeline import staging_root
+from seamtech_search.storage import S3StorageClient, StorageError
 
 LOGGER = logging.getLogger("seamtech_search.fiches.routes")
 
@@ -500,6 +507,248 @@ def valider_lot(
 
 
 
+_EXTENSIONS_EXCEL = {".csv", ".xls", ".xlsx", ".xlsm", ".ods", ".xlsb"}
+_EXTENSIONS_MACHINE = {".dxf", ".dwg", ".step", ".stp", ".igs", ".iges", ".xin", ".plx", ".plt", ".nc", ".cnc"}
+_EXTENSIONS_IMAGE = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tif", ".tiff"}
+_EXTENSIONS_TEXTE = {".txt", ".csv", ".md", ".log", ".json", ".xml"}
+
+
+def _type_piece(extension: str) -> str:
+    ext = extension.lower()
+    if ext == ".pdf":
+        return "pdf"
+    if ext in _EXTENSIONS_EXCEL:
+        return "excel"
+    if ext in _EXTENSIONS_MACHINE:
+        return "machine"
+    return "other"
+
+
+def _apercu_possible(extension: str) -> bool:
+    ext = extension.lower()
+    return ext == ".pdf" or ext in _EXTENSIONS_IMAGE or ext in _EXTENSIONS_TEXTE
+
+
+def _content_type_piece(name: str, extension: str) -> str:
+    ext = extension.lower()
+    if ext == ".pdf":
+        return "application/pdf"
+    if ext in _EXTENSIONS_TEXTE:
+        return "text/csv; charset=utf-8" if ext == ".csv" else "text/plain; charset=utf-8"
+    return mimetypes.guess_type(name)[0] or "application/octet-stream"
+
+
+def _nom_fichier_sure(nom: str) -> str:
+    nom = str(nom).replace("\\", "/").rsplit("/", 1)[-1]
+    return re.sub(r"[\r\n\x00]", "_", nom) or "fichier"
+
+
+def _content_disposition(nom: str, *, inline: bool) -> str:
+    nom = _nom_fichier_sure(nom)
+    ascii_nom = nom.encode("ascii", "ignore").decode("ascii")
+    ascii_nom = re.sub(r"[^A-Za-z0-9._-]", "_", ascii_nom).strip("._") or "fichier"
+    encoded = quote(nom, safe="!#$&-.^_`|~")
+    disposition = "inline" if inline else "attachment"
+    return f'{disposition}; filename="{ascii_nom}"; filename*=UTF-8\'\'{encoded}'
+
+
+def _path_autorise(path: str | Path, config: Any) -> bool:
+    try:
+        cible = Path(path).expanduser().resolve()
+        racines = [Path(root).expanduser().resolve() for root in getattr(config, "root_paths", [])]
+        racines.append(staging_root(config).expanduser().resolve())
+        return any(cible == racine or racine in cible.parents for racine in racines)
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return False
+
+
+def _echapper_like(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _where_archive(index: Any, config: Any, *, q: str = "", extension: str = "", dossier: str = "") -> tuple[str, list[Any]]:
+    marqueur = "%s" if getattr(index, "is_postgres", False) else "?"
+    conditions = ["is_dir = FALSE"]
+    valeurs: list[Any] = []
+    racines = {Path(root).expanduser().resolve() for root in getattr(config, "root_paths", [])}
+    racines.add(staging_root(config).expanduser().resolve())
+    clauses_racines: list[str] = []
+    for racine in sorted(racines, key=str):
+        cle = os.path.normcase(str(racine))
+        motif = _echapper_like(cle.rstrip("/\\") + os.sep) + "%"
+        clauses_racines.append(f"(path_key = {marqueur} OR path_key LIKE {marqueur} ESCAPE '\\')")
+        valeurs.extend((cle, motif))
+    if clauses_racines:
+        conditions.append("(" + " OR ".join(clauses_racines) + ")")
+    if q.strip():
+        motif = f"%{_echapper_like(q.strip().lower())}%"
+        conditions.append(
+            f"(LOWER(name) LIKE {marqueur} ESCAPE '\\' OR LOWER(path) LIKE {marqueur} ESCAPE '\\' "
+            f"OR LOWER(parent_path) LIKE {marqueur} ESCAPE '\\')"
+        )
+        valeurs.extend((motif, motif, motif))
+    if extension.strip():
+        ext = extension.strip().lower()
+        ext = ext if ext.startswith(".") else f".{ext}"
+        conditions.append(f"LOWER(extension) = {marqueur}")
+        valeurs.append(ext)
+    if dossier.strip():
+        motif = f"%{_echapper_like(dossier.strip().lower())}%"
+        conditions.append(f"LOWER(parent_path) LIKE {marqueur} ESCAPE '\\'")
+        valeurs.append(motif)
+    return " AND ".join(conditions), valeurs
+
+
+def _nom_dossier(parent: str | None) -> str:
+    if not parent:
+        return ""
+    return PureWindowsPath(parent).name if "\\" in parent and "/" not in parent else Path(parent).name
+
+
+def _piece_payload(
+    piece_id: int,
+    name: str,
+    extension: str,
+    size: int | None,
+    *,
+    is_primary_pdf: bool = False,
+    dossier: str = "",
+    role: str | None = None,
+    legacy_path: str | None = None,
+    digest: str | None = None,
+    fiche_code: str | None = None,
+) -> dict[str, Any]:
+    ext = extension.lower() or Path(name).suffix.lower()
+    payload: dict[str, Any] = {
+        "id": int(piece_id),
+        "name": name,
+        "extension": ext,
+        "size": int(size) if size is not None else None,
+        "kind": _type_piece(ext),
+        "is_primary_pdf": bool(is_primary_pdf),
+        "previewable": _apercu_possible(ext),
+        "dossier": dossier,
+        # Champs conservés pendant la transition des écrans existants.
+        "id_document": int(piece_id),
+        "nom": name,
+        "taille_octets": int(size) if size is not None else None,
+    }
+    if role is not None:
+        payload["role"] = role
+    # Le paramètre legacy_path reste accepté pour ne pas casser les appels
+    # internes, mais aucun chemin local n'est renvoyé par l'API.
+    if digest is not None:
+        payload["empreinte_sha256"] = digest
+    if fiche_code:
+        payload["fiche_code"] = fiche_code
+    return payload
+
+
+def _tranche_octets(range_header: str | None, size: int) -> tuple[int, int, int]:
+    if not range_header:
+        return 0, max(size - 1, -1), 200
+    match = re.fullmatch(r"bytes=(\d*)-(\d*)", range_header.strip(), flags=re.IGNORECASE)
+    if not match or size <= 0 or (not match.group(1) and not match.group(2)):
+        raise HTTPException(status_code=416, detail="Plage d’octets invalide.", headers={"Content-Range": f"bytes */{size}"})
+    if match.group(1):
+        debut = int(match.group(1))
+        fin = int(match.group(2)) if match.group(2) else size - 1
+    else:
+        suffixe = int(match.group(2))
+        if suffixe <= 0:
+            raise HTTPException(status_code=416, detail="Plage d’octets invalide.", headers={"Content-Range": f"bytes */{size}"})
+        debut = max(0, size - suffixe)
+        fin = size - 1
+    if debut >= size or fin < debut:
+        raise HTTPException(status_code=416, detail="Plage d’octets invalide.", headers={"Content-Range": f"bytes */{size}"})
+    return debut, min(fin, size - 1), 206
+
+
+def _flux_fichier(path: Path, debut: int, fin: int):
+    with path.open("rb") as fichier:
+        fichier.seek(debut)
+        restant = max(0, fin - debut + 1)
+        while restant:
+            bloc = fichier.read(min(restant, 1024 * 1024))
+            if not bloc:
+                break
+            restant -= len(bloc)
+            yield bloc
+
+
+def lister_pieces_archive(
+    index: Any,
+    config: Any,
+    *,
+    q: str = "",
+    extension: str = "",
+    dossier: str = "",
+    limit: int = 100,
+    offset: int = 0,
+) -> dict[str, Any]:
+    """Catalogue consultable de tous les fichiers accessibles à l'utilisateur."""
+    limit = min(max(1, limit), 200)
+    offset = min(max(0, offset), 1_000_000)
+    where, valeurs = _where_archive(index, config, q=q, extension=extension, dossier=dossier)
+    marqueur = "%s" if getattr(index, "is_postgres", False) else "?"
+    with index.connect() as connexion:
+        if index.is_postgres:
+            with connexion.cursor() as cursor:
+                cursor.execute(f"SELECT COUNT(*) FROM documents WHERE {where}", tuple(valeurs))
+                total = int(cursor.fetchone()[0])
+                cursor.execute(
+                    "SELECT d.id, d.name, d.extension, d.size, d.parent_path, "
+                    "COALESCE((SELECT f.code FROM fiche f WHERE f.fichier_source = d.path LIMIT 1), "
+                    "(SELECT f.code FROM fiche_piece_jointe p JOIN fiche f ON f.id_fiche = p.id_fiche "
+                    "WHERE p.id_document = d.id LIMIT 1)) "
+                    "FROM documents d WHERE "
+                    f"{where} ORDER BY LOWER(d.name), d.id LIMIT {marqueur} OFFSET {marqueur}",
+                    tuple(valeurs) + (limit, offset),
+                )
+                lignes = cursor.fetchall()
+                where_base, valeurs_base = _where_archive(index, config)
+                cursor.execute(
+                    "SELECT DISTINCT extension, parent_path FROM documents WHERE " + where_base,
+                    tuple(valeurs_base),
+                )
+                facettes = cursor.fetchall()
+        else:
+            total = int(connexion.execute(f"SELECT COUNT(*) FROM documents WHERE {where}", tuple(valeurs)).fetchone()[0])
+            lignes = connexion.execute(
+                "SELECT id, name, extension, size, parent_path, NULL "
+                "FROM documents WHERE "
+                f"{where} ORDER BY LOWER(name), id LIMIT {marqueur} OFFSET {marqueur}",
+                tuple(valeurs) + (limit, offset),
+            ).fetchall()
+            where_base, valeurs_base = _where_archive(index, config)
+            facettes = connexion.execute(
+                "SELECT DISTINCT extension, parent_path FROM documents WHERE " + where_base,
+                tuple(valeurs_base),
+            ).fetchall()
+    pieces = [
+        _piece_payload(
+            row[0],
+            str(row[1]),
+            str(row[2] or Path(str(row[1])).suffix).lower(),
+            row[3],
+            dossier=_nom_dossier(row[4]),
+            fiche_code=str(row[5]) if row[5] else None,
+        )
+        for row in lignes
+    ]
+    extensions = sorted({str(row[0]).lower() for row in facettes if row[0]})
+    dossiers = sorted({_nom_dossier(str(row[1])) for row in facettes if row[1]})
+    return {
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "has_more": offset + len(pieces) < total,
+        "pieces": pieces,
+        "extensions": extensions,
+        "dossiers": dossiers,
+    }
+
+
 def liste_fiches(index: Any, statut: str | None = None, page: int = 1, taille: int = 50) -> dict[str, Any]:
     """Écran Dossiers (lot D) : liste paginée + facettes (compteurs par statut)."""
     page = max(1, page)
@@ -510,7 +759,10 @@ def liste_fiches(index: Any, statut: str | None = None, page: int = 1, taille: i
         with connexion.cursor() as cursor:
             cursor.execute(
                 "SELECT f.code, COALESCE(f.titre, ''), f.statut, f.score_qualite, COALESCE(g.code, ''), "
-                "COALESCE(c.nom, ''), COALESCE(b.nom, ''), COALESCE(b.taille, '') "
+                "COALESCE(c.nom, ''), COALESCE(b.nom, ''), COALESCE(b.taille, ''), "
+                "(SELECT COUNT(*) FROM fiche_piece_jointe p WHERE p.id_fiche = f.id_fiche) "
+                "+ CASE WHEN f.fichier_source IS NULL THEN 0 ELSE 1 END AS nb_fichiers, "
+                "CASE WHEN f.fichier_source IS NULL THEN FALSE ELSE TRUE END AS a_pdf "
                 "FROM fiche f LEFT JOIN gabarit g ON g.id_gabarit = f.id_gabarit "
                 "LEFT JOIN client c ON c.id_client = f.id_client "
                 "LEFT JOIN bateau b ON b.id_bateau = f.id_bateau "
@@ -533,55 +785,363 @@ def liste_fiches(index: Any, statut: str | None = None, page: int = 1, taille: i
                 "code": ligne[0], "titre": ligne[1], "statut": ligne[2],
                 "score_qualite": float(ligne[3]) if ligne[3] is not None else None,
                 "gabarit": ligne[4], "client": ligne[5], "bateau": ligne[6], "bateau_taille": ligne[7],
+                "nb_fichiers": int(ligne[8]), "a_pdf": bool(ligne[9]),
             }
             for ligne in lignes
         ],
     }
 
 
-def pieces_de_fiche(index: Any, code: str) -> dict[str, Any]:
-    """Pièces jointes de la fiche, avec leur description `documents` (RG12 :
-    une seule description par fichier — le lien porte id_document) ; et le
-    chemin du PDF source de la fiche (visionneuse de l'écran Fiche/Validation)."""
+def _document_fiche_par_chemin(cursor: Any, chemin: str, role: str, config: Any | None = None) -> tuple[Any, ...] | None:
+    """Trouve un document du catalogue, avec reprise des anciennes fiches sans id_document."""
+    if not chemin:
+        return None
+    path = Path(chemin).expanduser()
+    try:
+        resolu = path.resolve()
+    except (OSError, RuntimeError):
+        resolu = path
+    if config is not None and not _path_autorise(resolu, config):
+        return None
+    cle = os.path.normcase(str(resolu))
+    cursor.execute(
+        "SELECT id, name, extension, size, path, object_key, role FROM documents WHERE path_key = %s LIMIT 1",
+        (cle,),
+    )
+    row = cursor.fetchone()
+    if row is None:
+        cursor.execute(
+            "SELECT id, name, extension, size, path, object_key, role FROM documents WHERE path = %s LIMIT 1",
+            (str(path),),
+        )
+        row = cursor.fetchone()
+    if row is not None:
+        return row
+    if not resolu.is_file():
+        return None
+
+    stat = resolu.stat()
+    extension = resolu.suffix.lower()
+    categorie = "analyzed" if extension == ".pdf" else "storage_direct"
+    cursor.execute(
+        "INSERT INTO documents (path_key, path, name, parent_path, extension, size, modified_at, is_dir, "
+        "content, content_hash, extraction_status, category, role) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, FALSE, '', '', 'metadata', %s, %s) "
+        "ON CONFLICT (path_key) DO UPDATE SET role = COALESCE(documents.role, EXCLUDED.role) "
+        "RETURNING id, name, extension, size, path, object_key, role",
+        (
+            cle,
+            str(resolu),
+            resolu.name,
+            str(resolu.parent),
+            extension,
+            stat.st_size,
+            stat.st_mtime,
+            categorie,
+            role,
+        ),
+    )
+    return cursor.fetchone()
+
+
+def pieces_de_fiche(index: Any, code: str, config: Any | None = None) -> dict[str, Any]:
+    """Liste par identifiant toutes les pièces, PDF source inclus.
+
+    ``pdf_source`` et ``chemin`` restent temporairement présents pour les anciens
+    clients ; les nouveaux écrans utilisent uniquement ``id`` pour ouvrir les
+    fichiers. Les clés d'objet S3 ne sont jamais renvoyées au navigateur.
+    """
+    _exiger_postgres(index)
     with index.connect() as connexion:
         with connexion.cursor() as cursor:
             cursor.execute("SELECT id_fiche, fichier_source FROM fiche WHERE code = %s", (code,))
-            ligne = cursor.fetchone()
-            if ligne is None:
+            fiche = cursor.fetchone()
+            if fiche is None:
                 raise HTTPException(status_code=404, detail=f"Fiche {code} inconnue.")
-            cursor.execute(
-                "SELECT p.chemin, p.role, p.empreinte_sha256, p.taille_octets, d.id, d.name "
-                "FROM fiche_piece_jointe p LEFT JOIN documents d ON d.id = p.id_document "
-                "WHERE p.id_fiche = %s ORDER BY p.chemin",
-                (int(ligne[0]),),
-            )
-            lignes = cursor.fetchall()
-            # Le chemin d'archive du PDF de la fiche : première moitié de la clé
-            # d'idempotence du dernier dépôt traite (normcase(chemin) | SHA-256).
+            id_fiche = int(fiche[0])
             cursor.execute(
                 "SELECT split_part(cle_idempotence, '|', 1) FROM lot_dossier "
                 "WHERE id_fiche = %s AND statut = 'traite' AND cle_idempotence IS NOT NULL "
                 "ORDER BY traite_le DESC LIMIT 1",
-                (int(ligne[0]),),
+                (id_fiche,),
             )
-            pdf_source = cursor.fetchone()
+            ligne_pdf = cursor.fetchone()
+            pdf_source = (ligne_pdf[0] if ligne_pdf and ligne_pdf[0] else None) or fiche[1]
+            principal = _document_fiche_par_chemin(cursor, str(pdf_source or ""), "fiche_pdf", config)
+            cursor.execute(
+                "SELECT p.chemin, p.role, p.empreinte_sha256, p.taille_octets, d.id, d.name, "
+                "d.extension, d.size, d.path, d.object_key "
+                "FROM fiche_piece_jointe p LEFT JOIN documents d ON d.id = p.id_document "
+                "WHERE p.id_fiche = %s ORDER BY p.chemin",
+                (id_fiche,),
+            )
+            lignes_pieces = cursor.fetchall()
+
+            pieces: list[dict[str, Any]] = []
+            if principal is not None:
+                id_document, nom, extension, taille, chemin, _object_key, _role = principal
+                pieces.append(
+                    _piece_payload(
+                        int(id_document),
+                        str(nom),
+                        str(extension or Path(str(nom)).suffix).lower(),
+                        int(taille) if taille is not None else None,
+                        is_primary_pdf=True,
+                        dossier=_nom_dossier(str(Path(str(chemin)).parent)) if chemin else "",
+                        role="fiche_pdf",
+                        legacy_path=str(chemin or pdf_source),
+                    )
+                )
+            for piece in lignes_pieces:
+                chemin_piece, role, empreinte, taille, id_document, nom, extension, taille_doc, chemin_doc, _object_key = piece
+                if id_document is None:
+                    document = _document_fiche_par_chemin(cursor, str(chemin_piece), str(role or "piece_jointe"), config)
+                    if document is None:
+                        continue
+                    id_document, nom, extension, taille_doc, chemin_doc, _object_key, _role_doc = document
+                nom_piece = str(nom or Path(str(chemin_piece)).name)
+                pieces.append(
+                    _piece_payload(
+                        int(id_document),
+                        nom_piece,
+                        str(extension or Path(nom_piece).suffix).lower(),
+                        int(taille_doc if taille_doc is not None else taille) if (taille_doc is not None or taille is not None) else None,
+                        dossier=_nom_dossier(str(Path(str(chemin_piece)).parent)),
+                        role=str(role or "piece_jointe"),
+                        legacy_path=str(chemin_piece),
+                        digest=str(empreinte) if empreinte is not None else None,
+                    )
+                )
     return {
-        "fichier_source": ligne[1],
-        "pdf_source": pdf_source[0] if pdf_source and pdf_source[0] else None,
-        "pieces": [
-            {
-                "chemin": piece[0], "role": piece[1], "empreinte_sha256": piece[2],
-                "taille_octets": int(piece[3]) if piece[3] is not None else None,
-                "id_document": int(piece[4]) if piece[4] is not None else None,
-                "nom": piece[5],
-            }
-            for piece in lignes
-        ],
+        # Champs de compatibilité conservés mais expurgés : l'ouverture se fait
+        # exclusivement par l'identifiant numérique du catalogue.
+        "fichier_source": None,
+        "pdf_source": None,
+        "pieces": pieces,
     }
 
 
-def enregistrer_routes_fiches(app: Any, index: Any, config: Any, verifier_auth: Any) -> None:
-    """Branche les routes du Lot B.2 dans l'application FastAPI existante."""
+def detail_fiche(index: Any, code: str) -> dict[str, Any]:
+    """Métadonnées d'en-tête d'une fiche, sans chemin de fichier."""
+    _exiger_postgres(index)
+    with index.connect() as connexion:
+        with connexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT f.code, COALESCE(f.titre, ''), f.statut, COALESCE(g.code, ''), "
+                "COALESCE(c.nom, ''), COALESCE(b.nom, ''), COALESCE(b.taille, ''), f.date_edition, "
+                "(SELECT COUNT(*) FROM fiche_piece_jointe p WHERE p.id_fiche = f.id_fiche) "
+                "+ CASE WHEN f.fichier_source IS NULL THEN 0 ELSE 1 END "
+                "FROM fiche f LEFT JOIN gabarit g ON g.id_gabarit = f.id_gabarit "
+                "LEFT JOIN client c ON c.id_client = f.id_client "
+                "LEFT JOIN bateau b ON b.id_bateau = f.id_bateau WHERE f.code = %s",
+                (code,),
+            )
+            row = cursor.fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Fiche {code} inconnue.")
+    date_edition = row[7].isoformat() if hasattr(row[7], "isoformat") else row[7]
+    return {
+        "code": row[0],
+        "titre": row[1],
+        "statut": row[2],
+        "gabarit": row[3],
+        "client": row[4],
+        "bateau": row[5],
+        "bateau_taille": row[6],
+        "date_edition": date_edition,
+        "nb_fichiers": int(row[8]),
+    }
+
+
+def historique_fiche(index: Any, code: str) -> list[dict[str, Any]]:
+    """Journal en lecture seule des décisions de validation d'une fiche."""
+    _exiger_postgres(index)
+    with index.connect() as connexion:
+        with connexion.cursor() as cursor:
+            cursor.execute("SELECT id_fiche FROM fiche WHERE code = %s", (code,))
+            fiche = cursor.fetchone()
+            if fiche is None:
+                raise HTTPException(status_code=404, detail=f"Fiche {code} inconnue.")
+            cursor.execute(
+                "SELECT action, etat_avant, etat_apres, commentaire, created_at "
+                "FROM fiche_validation WHERE id_fiche = %s ORDER BY created_at DESC, id_validation DESC",
+                (int(fiche[0]),),
+            )
+            lignes = cursor.fetchall()
+    return [
+        {
+            "action": row[0],
+            "etat_avant": row[1],
+            "etat_apres": row[2],
+            "commentaire": row[3],
+            "created_at": row[4].isoformat() if hasattr(row[4], "isoformat") else str(row[4]),
+        }
+        for row in lignes
+    ]
+
+
+def enregistrer_routes_fiches(
+    app: Any,
+    index: Any,
+    config: Any,
+    verifier_auth: Any,
+    storage_client: S3StorageClient | None = None,
+) -> None:
+    """Branche les routes métier et l'API de fichiers par identifiant."""
+
+    def charger_document(piece_id: int) -> dict[str, Any]:
+        with index.connect() as connexion:
+            if index.is_postgres:
+                with connexion.cursor() as cursor:
+                    cursor.execute(
+                        "SELECT id, path, path_key, name, extension, size, parent_path, object_key, is_dir "
+                        "FROM documents WHERE id = %s",
+                        (piece_id,),
+                    )
+                    row = cursor.fetchone()
+            else:
+                row = connexion.execute(
+                    "SELECT id, path, path_key, name, extension, size, parent_path, object_key, is_dir "
+                    "FROM documents WHERE id = ?",
+                    (piece_id,),
+                ).fetchone()
+                row = dict(row) if row is not None else None
+        if row is None:
+            raise HTTPException(status_code=404, detail="Fichier inconnu.")
+        if index.is_postgres:
+            row = dict(
+                zip(
+                    ("id", "path", "path_key", "name", "extension", "size", "parent_path", "object_key", "is_dir"),
+                    row,
+                )
+            )
+        if bool(row["is_dir"]):
+            raise HTTPException(status_code=404, detail="Fichier inconnu.")
+        chemin = str(row["path"] or row["path_key"] or "")
+        if not _path_autorise(chemin, config):
+            raise HTTPException(status_code=403, detail="Accès à ce fichier interdit.")
+        return row
+
+    def servir_piece(piece_id: int, request: Request, *, apercu: bool) -> Response:
+        document = charger_document(piece_id)
+        nom = _nom_fichier_sure(str(document["name"] or "fichier"))
+        extension = str(document["extension"] or Path(nom).suffix).lower()
+        if apercu and not _apercu_possible(extension):
+            raise HTTPException(
+                status_code=415,
+                detail="L’aperçu n’est pas disponible pour ce type de fichier. Téléchargez le fichier pour l’ouvrir.",
+            )
+
+        chemin = Path(str(document["path"] or document["path_key"])).expanduser()
+        object_key = document.get("object_key")
+        inline = apercu
+        disposition = _content_disposition(nom, inline=inline)
+        media_type = _content_type_piece(nom, extension)
+        headers = {
+            "Content-Type": media_type,
+            "Content-Disposition": disposition,
+            "Accept-Ranges": "bytes",
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+        }
+        methode = request.method.upper()
+        range_header = request.headers.get("range") if methode == "GET" else None
+
+        if storage_client is not None and object_key:
+            if methode == "HEAD":
+                try:
+                    metadata = storage_client.head_object(str(object_key))
+                except StorageError as erreur:
+                    raise HTTPException(status_code=502, detail="Le stockage du fichier est temporairement indisponible.") from erreur
+                longueur = metadata.get("ContentLength", document.get("size"))
+                if longueur is not None:
+                    headers["Content-Length"] = str(int(longueur))
+                if metadata.get("ETag"):
+                    headers["ETag"] = str(metadata["ETag"])
+                if metadata.get("LastModified"):
+                    headers["Last-Modified"] = metadata["LastModified"].strftime("%a, %d %b %Y %H:%M:%S GMT")
+                return Response(status_code=200, headers=headers)
+
+            range_a_demander = range_header
+            taille_connue = document.get("size")
+            if range_header and taille_connue is not None:
+                debut, fin, statut_range = _tranche_octets(range_header, int(taille_connue))
+                if statut_range == 206:
+                    range_a_demander = f"bytes={debut}-{fin}"
+            try:
+                objet = storage_client.get_object(str(object_key), range_header=range_a_demander)
+            except StorageError as erreur:
+                raise HTTPException(status_code=502, detail="Le stockage du fichier est temporairement indisponible.") from erreur
+            if objet.get("ContentRange"):
+                headers["Content-Range"] = str(objet["ContentRange"])
+            if objet.get("ContentLength") is not None:
+                headers["Content-Length"] = str(int(objet["ContentLength"]))
+            if objet.get("ETag"):
+                headers["ETag"] = str(objet["ETag"])
+            if objet.get("LastModified"):
+                headers["Last-Modified"] = objet["LastModified"].strftime("%a, %d %b %Y %H:%M:%S GMT")
+            corps = objet["Body"].iter_chunks(chunk_size=1024 * 1024)
+            return StreamingResponse(corps, status_code=206 if objet.get("ContentRange") else 200, headers=headers)
+
+        try:
+            stat = chemin.stat()
+        except OSError as erreur:
+            raise HTTPException(status_code=404, detail="Fichier non disponible.") from erreur
+        taille = stat.st_size
+        headers["Content-Length"] = str(taille)
+        if methode == "HEAD":
+            return Response(status_code=200, headers=headers)
+        debut, fin, statut = _tranche_octets(range_header, taille)
+        if statut == 206:
+            headers["Content-Range"] = f"bytes {debut}-{fin}/{taille}"
+            headers["Content-Length"] = str(fin - debut + 1)
+        return StreamingResponse(_flux_fichier(chemin, debut, fin), status_code=statut, headers=headers)
+
+    @app.get("/pieces")
+    def route_lister_pieces(
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+        q: str = Query("", max_length=300),
+        extension: str = Query("", max_length=24),
+        dossier: str = Query("", max_length=300),
+        limit: int = Query(100, ge=1, le=200),
+        offset: int = Query(0, ge=0, le=1_000_000),
+    ) -> dict[str, Any]:
+        verifier_auth(config, token)
+        return lister_pieces_archive(index, config, q=q, extension=extension, dossier=dossier, limit=limit, offset=offset)
+
+    @app.api_route("/pieces/{piece_id}/apercu", methods=["GET", "HEAD"])
+    def route_apercu_piece(
+        piece_id: int,
+        request: Request,
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+    ) -> Response:
+        verifier_auth(config, token)
+        return servir_piece(piece_id, request, apercu=True)
+
+    @app.api_route("/pieces/{piece_id}/telecharger", methods=["GET", "HEAD"])
+    def route_telecharger_piece(
+        piece_id: int,
+        request: Request,
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+    ) -> Response:
+        verifier_auth(config, token)
+        return servir_piece(piece_id, request, apercu=False)
+
+    @app.get("/fiches/{code}")
+    def route_detail_fiche(
+        code: str,
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+    ) -> dict[str, Any]:
+        verifier_auth(config, token)
+        return detail_fiche(index, code)
+
+    @app.get("/fiches/{code}/historique")
+    def route_historique_fiche(
+        code: str,
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+    ) -> list[dict[str, Any]]:
+        verifier_auth(config, token)
+        return historique_fiche(index, code)
 
     @app.get("/fiches/{code}/champs")
     def route_champs_fiche(code: str, token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None) -> list[dict[str, Any]]:
@@ -821,8 +1381,7 @@ def enregistrer_routes_fiches(app: Any, index: Any, config: Any, verifier_auth: 
     @app.get("/fiches/{code}/pieces")
     def route_pieces_fiche(code: str, token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None) -> dict[str, Any]:
         verifier_auth(config, token)
-        _exiger_postgres(index)
-        return pieces_de_fiche(index, code)
+        return pieces_de_fiche(index, code, config)
 
     # Lot K.2 — brouillons de gabarits depuis PDF variante
     from seamtech_search.fiches.gabarit_brouillon import (

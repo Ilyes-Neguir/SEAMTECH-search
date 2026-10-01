@@ -501,18 +501,41 @@ class S3StorageClient:
             raise StorageError(f"Download failed: {exc}") from exc
 
     def get_presigned_url(self, remote_key: str, expiration_seconds: int = 3600) -> str:
-        """Generate a secure, time-limited presigned URL for direct downloading/previewing."""
+        """Generate a secure, time-limited presigned URL for direct reading."""
         s3 = self._get_client()
         try:
-            url = s3.generate_presigned_url(
+            return s3.generate_presigned_url(
                 ClientMethod="get_object",
                 Params={"Bucket": self.bucket_name, "Key": remote_key},
                 ExpiresIn=expiration_seconds,
             )
-            return url
         except Exception as exc:
             logger.error("Failed to generate presigned URL for %s: %s", remote_key, exc)
             raise StorageError(f"Presigned URL generation failed: {exc}") from exc
+
+    def head_object(self, remote_key: str) -> dict[str, Any]:
+        """Return object metadata for an authenticated API HEAD request."""
+        s3 = self._get_client()
+        try:
+            return s3.head_object(Bucket=self.bucket_name, Key=remote_key)
+        except Exception as exc:
+            logger.warning("Could not read metadata for S3 key %s: %s", remote_key, exc)
+            raise StorageError(f"Object metadata lookup failed: {exc}") from exc
+
+    def get_object(self, remote_key: str, *, range_header: str | None = None) -> dict[str, Any]:
+        """Open an object, optionally requesting a single byte range.
+
+        Normal preview/download uses :meth:`get_presigned_url`; this method is
+        reserved for byte-range requests so the API can return a real 206 to PDF.js.
+        """
+        params: dict[str, Any] = {"Bucket": self.bucket_name, "Key": remote_key}
+        if range_header:
+            params["Range"] = range_header
+        try:
+            return self._get_client().get_object(**params)
+        except Exception as exc:
+            logger.warning("Could not stream S3 key %s: %s", remote_key, exc)
+            raise StorageError(f"Object stream lookup failed: {exc}") from exc
 
     def delete_file(self, remote_key: str) -> bool:
         """Delete an object from S3."""
