@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import openpyxl
+import pytest
 from fastapi.testclient import TestClient
 
 from seamtech_search.api import create_app
@@ -61,6 +62,55 @@ def test_search_pagination_contract(tmp_path: Path) -> None:
     assert all(isinstance(result.get("id"), int) for result in payload["results"])
     assert all(not ({"path", "path_key", "object_key"} & result.keys()) for result in payload["results"])
     assert {result["parent"] for result in payload["results"]} == {root.name}
+
+
+def test_open_reports_missing_file_without_echoing_local_path(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    missing = root / "not-here.pdf"
+    client = TestClient(create_app(AppConfig(root_paths=[root], database_path=tmp_path / "search.db")))
+
+    response = client.post("/open", params={"path": str(missing)})
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Path does not exist."
+    assert str(root) not in response.text
+
+
+def test_import_nonexistent_path_is_a_client_error(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    client = TestClient(create_app(AppConfig(root_paths=[root], database_path=tmp_path / "search.db", min_free_bytes=0)))
+
+    response = client.post("/imports", json={"source_path": str(root / "missing")})
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Import path must be an existing directory"
+
+
+@pytest.mark.parametrize(
+    ("exception_type", "expected_status"),
+    [(PermissionError, 403), (ValueError, 400)],
+)
+def test_sync_import_maps_service_errors_to_http(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    exception_type: type[Exception],
+    expected_status: int,
+) -> None:
+    root = tmp_path / "root"
+    source = root / "source"
+    source.mkdir(parents=True)
+    client = TestClient(create_app(AppConfig(root_paths=[root], database_path=tmp_path / "search.db", min_free_bytes=0)))
+
+    def fail_import(*_args, **_kwargs):
+        raise exception_type("simulated import error")
+
+    monkeypatch.setattr("seamtech_search.api.import_folder", fail_import)
+    response = client.post("/imports?wait=true", json={"source_path": str(source)})
+
+    assert response.status_code == expected_status
+    assert response.json()["detail"] == "simulated import error"
 
 
 def test_local_mode_allows_search_without_token(tmp_path: Path) -> None:
