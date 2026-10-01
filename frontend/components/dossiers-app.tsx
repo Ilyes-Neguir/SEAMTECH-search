@@ -3,6 +3,7 @@
 // Écran DOSSIERS (lot D) : tableau des fiches (type de gabarit, client,
 // bateau, statut) + facettes (compteurs par statut).
 
+import Link from "next/link"
 import { useCallback, useEffect, useState } from "react"
 import { authedFetch } from "@/lib/authed-fetch"
 import type { FicheListe } from "@/lib/fiche"
@@ -79,16 +80,17 @@ export function DossiersApp() {
                 <th className="py-2 pr-3">Gabarit</th>
                 <th className="py-2 pr-3">Client</th>
                 <th className="py-2 pr-3">Bateau</th>
-                <th className="py-2">Statut</th>
+                <th className="py-2 pr-3">Statut</th>
+                <th className="py-2">Fichiers</th>
               </tr>
             </thead>
             <tbody>
               {reponse.fiches.map((fiche) => (
                 <tr key={fiche.code} className="border-b border-border/50 hover:bg-accent/20">
                   <td className="py-2 pr-3 font-mono font-semibold">
-                    <a href={`/dossier/${encodeURIComponent(fiche.code)}`} className="underline-offset-2 hover:underline" data-testid="lien-fiche">
+                    <Link href={`/fiches/${encodeURIComponent(fiche.code)}`} className="underline-offset-2 hover:underline" data-testid="lien-fiche">
                       {fiche.code}
-                    </a>
+                    </Link>
                   </td>
                   <td className="max-w-48 truncate py-2 pr-3">{fiche.titre}</td>
                   <td className="py-2 pr-3 font-mono text-muted-foreground">{fiche.gabarit}</td>
@@ -97,10 +99,15 @@ export function DossiersApp() {
                     {fiche.bateau}
                     {fiche.bateau_taille ? ` (${fiche.bateau_taille})` : ""}
                   </td>
-                  <td className="py-2">
+                  <td className="py-2 pr-3">
                     <span className={cn("rounded border px-1.5 py-0.5 font-mono text-[10px]", STATUT_STYLE[fiche.statut] ?? "border-border")}>
                       {fiche.statut}
                     </span>
+                  </td>
+                  <td className="py-2 text-muted-foreground">
+                    <Link href={`/fiches/${encodeURIComponent(fiche.code)}`} className="hover:text-primary" aria-label={`Ouvrir ${fiche.nb_fichiers ?? 0} fichier(s) de ${fiche.code}`}>
+                      {fiche.nb_fichiers ?? 0} fichier(s)
+                    </Link>
                   </td>
                 </tr>
               ))}

@@ -6,6 +6,7 @@
 // facette DIMENSION (cotes), tri, pagination, URL partageable.
 // L'écran Phase 0 de recherche fichiers vit désormais sur /fichiers.
 
+import Link from "next/link"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { Search, X, Link as LinkIcon, Check } from "lucide-react"
 import { authedFetch } from "@/lib/authed-fetch"
@@ -129,7 +130,7 @@ const FILTRES_CLES = [
 ]
 
 const LIBELLE_SOURCE: Record<string, string> = {
-  lexical: "Lexical",
+  lexical: "Recherche lexicale",
   trigrammes: "Faute tolérée",
   texte_pdf: "Texte PDF",
   vecteurs: "Vecteurs",
@@ -775,8 +776,8 @@ export function RechercheFichesApp({ assistantActif = true }: { assistantActif?:
                 {reponse.resultats.map((fiche, position) => (
                   <li key={`${fiche.code ?? position}`}>
                     <article className="rounded-lg border border-border bg-background/60 px-4 py-3">
-                      <div className="flex items-baseline gap-2">
-                        <span className="font-mono text-xs text-muted-foreground">{fiche.code ?? "—"}</span>
+                      <div className="flex flex-wrap items-baseline gap-2">
+                        {fiche.code ? <Link href={`/fiches/${encodeURIComponent(fiche.code)}`} className="font-mono text-xs text-primary underline-offset-2 hover:underline" aria-label={`Ouvrir la fiche ${fiche.code}`}>{fiche.code}</Link> : <span className="font-mono text-xs text-muted-foreground">—</span>}
                         <h2 className="text-sm font-medium">{fiche.titre ?? "Sans titre"}</h2>
                         {fiche.statut === "a_valider" && (
                           <span
