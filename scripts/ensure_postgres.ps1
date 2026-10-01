@@ -1,4 +1,4 @@
-$ErrorActionPreference = "Stop"
+﻿$ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 $EnvFile = Join-Path $ProjectRoot ".env"
 $ComposeFile = Join-Path $ProjectRoot "docker-compose.yml"

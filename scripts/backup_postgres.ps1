@@ -1,4 +1,4 @@
-param(
+﻿param(
     [Parameter(Mandatory = $true)]
     [string]$DatabaseUrl,
     [string]$BackupDir = "data/backups"

@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$Config = "config/config.json",
     [switch]$Rebuild
 )

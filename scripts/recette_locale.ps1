@@ -1,4 +1,4 @@
-# Recette locale SEAMTECH Search — variante Windows (commanditaire).
+﻿# Recette locale SEAMTECH Search — variante Windows (commanditaire).
 #
 # Une commande qui vérifie que la pile COMPLÈTE fonctionne en local :
 #   prereqs -> ports libres -> .env (secrets aléatoires, jamais dans Git)
@@ -119,7 +119,7 @@ if (-not (Test-Path $EnvFile)) {
     foreach ($nom in $Secrets) {
         $lignes += "$nom=seamtech-$([guid]::NewGuid().ToString('N'))"
     }
-    $lignes += "SEAMTECH_ROOT_PATHS=$SourcesConteneur:/app/data/recette-lot:/app/data:/app/sample_data"
+    $lignes += "SEAMTECH_ROOT_PATHS=${SourcesConteneur}:/app/data/recette-lot:/app/data:/app/sample_data"
     $lignes += "RECETTE_MOT_DE_PASSE=seamtech-recette-$([guid]::NewGuid().ToString('N'))"
     Set-Content -Path $EnvFile -Value $lignes -Encoding ascii
     $Creation = "créé avec 7 secrets aléatoires"
@@ -127,7 +127,7 @@ if (-not (Test-Path $EnvFile)) {
     $Creation = "existant réutilisé (idempotence)"
     $contenu = Get-Content $EnvFile
     if (-not ($contenu -match '^SEAMTECH_ROOT_PATHS=')) {
-        Add-Content -Path $EnvFile -Value "SEAMTECH_ROOT_PATHS=$SourcesConteneur:/app/data/recette-lot:/app/data:/app/sample_data" -Encoding ascii
+        Add-Content -Path $EnvFile -Value "SEAMTECH_ROOT_PATHS=${SourcesConteneur}:/app/data/recette-lot:/app/data:/app/sample_data" -Encoding ascii
     }
     if (-not ($contenu -match '^RECETTE_MOT_DE_PASSE=')) {
         Add-Content -Path $EnvFile -Value "RECETTE_MOT_DE_PASSE=seamtech-recette-$([guid]::NewGuid().ToString('N'))" -Encoding ascii

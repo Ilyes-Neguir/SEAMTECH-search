@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$DatabasePath = "data/search.db",
     [string]$BackupDir = "data/backups"
 )
