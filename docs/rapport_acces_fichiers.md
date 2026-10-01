@@ -114,3 +114,23 @@ Les 20 contrôles précédemment déclarés PASS ne sont pas déclarés en régr
 3. `feat(front): fiche page`
 4. `feat(front): fichiers browser`
 5. `test: recette` — inclut le vérificateur, les tests de recette et ce rapport.
+
+## Suivi des échecs CI — 1 octobre 2026
+
+Le run initial [36899890884](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36899890884) échouait sur trois jobs et quatre causes distinctes (deux tests dans la recette, le garde E2E et le gate de couverture). Les corrections ont été poussées sur la même branche dans `69ba186`, `9925d15` et `aaf3a11`; elles n'abaissent aucun seuil de qualité.
+
+### Causes et correctifs
+
+1. **`recette-corpus-reel`, test 07 — recherche du document de fiche.** À l'upsert, le dépôt remplaçait le contenu déjà extrait/indexé du PDF par la chaîne générique « PDF source de la fiche … ». Pour une nouvelle ligne, cette chaîne ne contenait pas non plus les métadonnées recherchées. L'upsert conserve maintenant tout contenu déjà indexé et, seulement s'il est vide, utilise les métadonnées textuelles de la fiche comme solution de repli; les champs identifiant un chemin ou une clé de stockage en sont exclus. Le test de préservation ajouté utilise un fichier et une fiche synthétiques, sans lire le PDF client.
+2. **`recette-corpus-reel`, test 10 — `AttributeError` en cascade.** Le test dépendait de `RECETTE["fiche_attendue"]`, état partagé renseigné par le test 07. Quand le 07 échouait, le 10 tombait à son tour avant de vérifier la restauration. Le test 10 recherche maintenant directement REF-001 à partir de sa référence fixe et ne dépend plus de l'ordre ou du résultat du test 07.
+3. **`e2e`, garde d'authentification nominative.** Les 26 tests Playwright avaient tous réussi (0 flaky, 0 sauté), mais le garde-fou CI attendait encore exactement 23. C'était un désaccord de comptage, pas un défaut d'authentification; l'attendu et l'annotation ont été portés à 26.
+4. **`backend (3.13)`, porte de couverture.** La suite pytest/PostgreSQL terminait, puis le gate refusait le rapport contre les planchers existants. Le journal/artifact du run initial n'a pas pu être téléchargé (réponse EOF du service de logs), donc le pourcentage/module précis sous le seuil à ce SHA n'est pas récupérable et n'est pas attribué par supposition. Des tests synthétiques supplémentaires couvrent les accès par ID — catalogue PostgreSQL, association d'une pièce à une fiche, GET/HEAD/Range, cas 404/415/416, erreurs S3 et absence de fuite — ainsi que les erreurs d'import et l'indexation. Le gate CI publie désormais son diagnostic détaillé en annotation en cas de nouvel échec.
+
+### Validation après correction
+
+Le run [36909952842](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36909952842), SHA `aaf3a11e25658737c3b34d599388ce03d1d02850`, est **vert sur tous les jobs**, dont `recette-corpus-reel`, `e2e` et les trois versions Python. Le corpus de recette a été extrait dans le répertoire temporaire CI sous les gardes RG13, puis l'empreinte des ZIP a été contrôlée de nouveau; aucun ZIP ni volume du dépôt n'a été modifié.
+
+- E2E auth nominatif : **26 tests verts, 0 sauté** (dont les 4 comptes nominatifs).
+- Suite PostgreSQL : **221 passés, 0 sauté**; les nouveaux tests PostgreSQL de l'accès par ID et de préservation du contenu ont été exécutés.
+- Couverture : **86,93 % au global** pour un plancher inchangé de **85 %**; gate global et portes par module tous verts. Mesures publiées : `api.py` 89,7 %, `indexer.py` 94,9 %, OCR `inventaire.py` 85,2 %, `etat.py` 77,2 %, `pipeline.py` 79,4 % et `cli.py` 79,8 %.
+- Vérifications locales ciblées : **47 passés, 1 sauté**; Ruff, `git diff --check` et analyse YAML du workflow passent. Le seul saut local concernait l'intégration PostgreSQL sans URL de base; elle a ensuite passé dans CI.
