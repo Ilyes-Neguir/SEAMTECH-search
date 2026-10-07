@@ -103,6 +103,10 @@ docker compose ps
       ne montre que des `127.0.0.1:…` (garde-fou : `tests/test_compose_hardening.py`).
 - [ ] **4.4** Redémarrage automatique : `restart: unless-stopped` sur les 5 services.
 
+| 4.5 | **Service `worker` démarré** (exécute les imports) | `docker compose ps worker` | `running` / `healthy` (le healthcheck lance `--verifier`) | |
+| 4.6 | `web` n'exécute PAS d'import | `docker compose exec -T web printenv SEAMTECH_WEB_WORKER_ENABLED` | `false` | |
+| 4.7 | File durable exigée | `docker compose exec -T web printenv SEAMTECH_REQUIRE_DURABLE_QUEUE` | `true` | |
+
 ## 5. Migrations
 
 Les migrations tournent **au démarrage de l'API** (`lifespan` → `_initialize_schema`) :
@@ -113,15 +117,16 @@ il n'y a pas d'étape manuelle, mais il y a une **vérification obligatoire**.
   docker compose exec -T postgres psql -U seamtech -d seamtech_search \
     -c "SELECT version FROM schema_migrations ORDER BY version;"
   ```
-  Attendu : **19 lignes**, de `001_initial` à `019_recherche_dimension`.
+  Attendu : **20 lignes**, de `001_initial` à `020_file_durable`.
 - [ ] **5.2** Version métier alignée :
   ```bash
   docker compose exec -T web python -c "from seamtech_search.schema_metier import VERSION_SCHEMA_METIER, TABLES_METIER; print(VERSION_SCHEMA_METIER, len(TABLES_METIER))"
   ```
-  Attendu : `019_recherche_dimension 33`.
+  Attendu : `020_file_durable 33` (la 020 n'ajoute que des colonnes de
+  supervision à `import_jobs`, aucune table).
 - [ ] **5.3** Extensions réellement présentes : `/health` renvoie `vector`, `pg_trgm`, `unaccent`.
 - [ ] **5.4** Rejeu sans effet : redémarrer `web` ne rejoue ni ne duplique aucune migration
-      (garde-fou : `test_migrations_sequentielles_001_a_017_sur_base_vide` (identifiant historique conservé ; assertions vérifient `001..019`)).
+      (garde-fou : `test_migrations_sequentielles_001_a_017_sur_base_vide` (identifiant historique conservé ; assertions vérifient `001..020`)).
 
 > Une migration écrite mais **non enregistrée** est l'incident des Lots K puis M : elle
 > fait échouer la sauvegarde (qui exige `VERSION_SCHEMA_METIER` dans `schema_migrations`).
@@ -157,6 +162,20 @@ docker compose exec web python -m seamtech_search.comptes.cli lister
 | 7.7 | Documentation API fermée en production | `curl -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8000/docs` | `404` dès qu'un token est configuré |
 
 - [ ] 7.1 – 7.7 verts, sortie de `/health` archivée.
+
+## 7 bis. File d'attente durable (imports)
+
+Contrat complet : `docs/FILE_DURABLE.md`. Ce qui se coche ici :
+
+| # | Contrôle | Commande | Attendu | Preuve |
+|---|---|---|---|---|
+| 7b.1 | Le worker voit sa file | `docker compose exec -T worker python -m seamtech_search.worker_service --verifier` | `durable_ready: true`, code de sortie 0 | |
+| 7b.2 | Persistance Redis (AOF) | `docker compose exec -T redis redis-cli -a "$REDIS_PASSWORD" config get appendonly` | `appendonly` → `yes` | |
+| 7b.3 | **Preuve de survie au redémarrage** : accepter un import, redémarrer `web`, l'import se termine | `docker compose restart web` puis `docker compose logs --tail 20 worker` | l'import se termine, `import_jobs.status = completed` | |
+| 7b.4 | Refus honnête sans Redis | `docker compose stop redis`, puis déposer un import | HTTP **503** « file d'attente durable indisponible » + **aucun** job créé (`SELECT count(*) FROM import_jobs`) | |
+| 7b.5 | Reprise d'une tâche orpheline | `docker compose kill -s SIGKILL worker` pendant un import, puis `docker compose start worker` | journal « Reprise au démarrage : … » ; l'import se termine une seule fois (pas de doublon de documents) | |
+| 7b.6 | Raisons d'échec lisibles | `SELECT id, attempts, claimed_by, failure_reason FROM import_jobs WHERE status='failed';` | chaque échec porte une raison non vide | |
+| 7b.7 | Annulation d'un lot | `POST /lots/{id}/annuler` pendant un lot | lot `annule`, dossiers restants `en_attente` (reprenables), aucun dossier bloqué « en_cours » | |
 
 ## 8. Import de test
 
@@ -227,6 +246,12 @@ docker compose exec web python -m seamtech_search.sauvegarde sauver \
       journalisée.
 - [ ] **11.7** Sans S3 configuré, la commande le **dit** (`sauvegarde LOCALE seule`) — une
       sauvegarde locale sur la même machine n'est pas une protection.
+
+- [ ] **11.8** État des imports non terminés inclus dans la sauvegarde (le worker doit
+      pouvoir reprendre) :
+      `docker compose exec -T postgres psql -U seamtech -d seamtech_search -c "SELECT id, status, attempts FROM import_jobs WHERE status IN ('pending','running');"`
+      Attendu : la liste est conservée avec la sauvegarde ; au redémarrage, ces jobs sont
+      repris ou marqués en échec **avec raison** — jamais « running » pour toujours.
 
 ## 12. Restauration
 
@@ -415,3 +440,24 @@ Arbre code/tests audité `6ea4bee364d01c4a351a23c0c68c765d6b719976`, base `a7ffe
 | Seuils / sélection | Couverture globale 85% et planchers module inchangés; aucun `pragma: no cover` ajouté; sélection pytest CI par `-m` uniquement. |
 | CI push / PR | Runs 36607480324 et 36607487809 verts, chacun 11/11 jobs, sur `6ea4bee`. Benchmark 36607487218 vert, SYNTHÉTIQUE, 10 000 fiches. |
 | Verdict de l’auto-audit | **PR PRÊTE À MERGER** pour les contrôles pré-merge demandés; cela ne vaut pas décision de fusion. Aucune fusion effectuée. Mise en production non approuvée : les mesures opérateur/VPS01/R2 restent NON MESURÉES. |
+
+## 21. Passe de revue indépendante (2026-10-07)
+
+État arrêté sur la branche `arena/7da80c2f-seamtech-search`. Les chiffres
+ci-dessus (§19-20) décrivent des checkpoints antérieurs ; ce qui suit les
+remplace pour la tête de branche.
+
+| Contrôle | Statut / preuve |
+|---|---|
+| Suite sans service | ✅ **833 passed, 3 skipped, 299 deselected** (`-m "not postgres and not s3 and not perf and not recette_corpus and not integration_docker and not redis_queue"`, 84 s) |
+| Suite PostgreSQL réelle | ✅ **226 passed, 2 skipped** |
+| File durable (Redis + PostgreSQL réels) | ✅ **37 passed, 0 skipped** — dont 5 tests lançant de **vrais processus** worker (`python -m seamtech_search.worker_service`) tués par `SIGKILL` puis repris |
+| Suite S3 vivant | ⛔ **0 passed, 29 skipped** dans cet environnement (pas de Docker, pas de MinIO). Exécution : job CI `integration` (+ `sauvegarde`, `recette-corpus-reel`) |
+| Front-end : types | ✅ `npx tsc --noEmit` → exit 0 (les 11 specs `e2e/*.ts` sont dans le programme) |
+| Front-end : build production | ✅ `npx next build` → exit 0 |
+| Navigateur Playwright | ⛔ **non exécuté ici** : `cdn.playwright.dev` injoignable (ECONNRESET), aucun navigateur système. Exécution : job CI `e2e` |
+| Lint / compilation | ✅ `ruff check .` → All checks passed ; `python -m compileall seamtech_search` → OK |
+| Intégrité du stockage | ✅ 10 tests (magasin S3 en mémoire conservant les vrais octets) : métadonnées ≠ preuve, taille seule ⇒ **purge refusée** |
+| Limite honnête | Le partage web/worker est prouvé **au niveau processus et contrat** ici ; il n'est **pas** prouvé au niveau conteneurs avant le run CI `integration` de `tests/test_compose_partage_worker.py` |
+
+Détail : `docs/verite_terrain/REVUE_INDEPENDANTE_2026-10-07.md`.

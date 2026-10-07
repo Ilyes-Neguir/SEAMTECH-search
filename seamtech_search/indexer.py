@@ -101,7 +101,14 @@ CREATE TABLE IF NOT EXISTS import_jobs (
     error TEXT,
     result TEXT,
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    -- 020_file_durable : supervision et reprise (mêmes colonnes que PostgreSQL ;
+    -- la création « from scratch » et la migration doivent donner le même schéma).
+    attempts INTEGER NOT NULL DEFAULT 0,
+    claimed_by TEXT,
+    heartbeat_at TEXT,
+    failure_reason TEXT,
+    durability TEXT NOT NULL DEFAULT 'durable'
 );
 
 CREATE TABLE IF NOT EXISTS audit_log (
@@ -172,8 +179,31 @@ CREATE TABLE IF NOT EXISTS import_jobs (
     error TEXT,
     result JSONB,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    -- 020_file_durable : supervision et reprise des imports.
+    attempts INTEGER NOT NULL DEFAULT 0,
+    claimed_by TEXT,
+    heartbeat_at TIMESTAMPTZ,
+    failure_reason TEXT,
+    durability TEXT NOT NULL DEFAULT 'durable'
 );
+-- Index partiel sur les jobs actifs. Le garde de colonne n'est pas
+-- décoratif : sur une base ANTÉRIEURE à la migration 020, ``import_jobs``
+-- existe déjà SANS ``heartbeat_at`` — ``CREATE TABLE IF NOT EXISTS`` ne fait
+-- rien, et créer l'index directement faisait échouer ``initialize()`` (donc
+-- le démarrage) avec « column heartbeat_at does not exist ». La migration 020
+-- ajoute la colonne PUIS l'index ; ici on ne casse rien en attendant.
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'import_jobs' AND column_name = 'heartbeat_at'
+    ) THEN
+        CREATE INDEX IF NOT EXISTS idx_import_jobs_actifs
+            ON import_jobs (status, heartbeat_at DESC)
+            WHERE status IN ('pending', 'running');
+    END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS audit_log (
     id BIGSERIAL PRIMARY KEY,
@@ -876,6 +906,47 @@ class SearchIndex:
                 schema_metier.SQL_019_RECHERCHE_DIMENSION.replace(schema_metier.MARQUEUR_TS_CONFIG, config)
             )
 
+    def _migration_020_file_durable(self, connection: Any) -> None:
+        """Imports durables (2026-10-06) : traçabilité des jobs et des lots.
+
+        Ajoute à ``import_jobs`` les colonnes qui rendent un job supervisable
+        (tentatives, worker propriétaire, dernier battement de cœur, raison
+        d'échec, durabilité réelle de l'acceptation) et à ``lot_import`` les
+        états « annule »/« relance » plus l'identité du worker. C'est ce qui
+        permet à la BASE — et non à Redis — de rester le registre de vérité.
+
+        PostgreSQL : SQL idempotent (IF NOT EXISTS partout). SQLite : mêmes
+        colonnes ajoutées une par une après lecture de ``PRAGMA table_info``
+        (SQLite ne connaît pas ``ADD COLUMN IF NOT EXISTS``) ; le mode SQLite
+        ne porte pas la couche métier, mais la table ``import_jobs`` y existe
+        et le code de supervision doit y répondre avec les mêmes clés.
+        """
+        if self.is_postgres:
+            with connection.cursor() as cursor:
+                cursor.execute(schema_metier.SQL_020_FILE_DURABLE)
+            return
+
+        colonnes = {
+            "attempts": "INTEGER NOT NULL DEFAULT 0",
+            "claimed_by": "TEXT",
+            "heartbeat_at": "TEXT",
+            "failure_reason": "TEXT",
+            "durability": "TEXT NOT NULL DEFAULT 'durable'",
+        }
+        existantes = {
+            str(ligne[1]) for ligne in connection.execute("PRAGMA table_info(import_jobs)").fetchall()
+        }
+        for nom, definition in colonnes.items():
+            if nom not in existantes:
+                connection.execute(f"ALTER TABLE import_jobs ADD COLUMN {nom} {definition}")
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_import_jobs_actifs ON import_jobs (status, heartbeat_at)"
+        )
+        logger.info(
+            "Migration 020_file_durable : colonnes de supervision ajoutées à import_jobs (SQLite). "
+            "Conséquence : les états de reprise sont lisibles, la couche métier reste PostgreSQL-only."
+        )
+
     def run_migrations(self) -> None:
         """Run pending schema migrations once at startup."""
         with self.connect() as connection:
@@ -911,6 +982,12 @@ class SearchIndex:
                 # (deux formes « 6.60 »/« 6,60 »), même motif d'enregistrement
                 # que 017/018 : une migration oubliée ici ferait échouer sauvegarde.
                 ("019_recherche_dimension", self._migration_019_recherche_dimension),
+                # 2026-10-06 — file durable : colonnes de supervision des jobs
+                # (tentatives, worker propriétaire, battement de cœur, raison
+                # d'échec, durabilité de l'acceptation) et états de lot
+                # « annule »/« relance ». Enregistrée ici comme les autres :
+                # une migration oubliée fait échouer sauvegarde/restauration.
+                ("020_file_durable", self._migration_020_file_durable),
             ]
 
             for version, func in migrations:

@@ -49,6 +49,8 @@ from seamtech_search.fiches.extraction import (
 from seamtech_search.fiches.gabarits import GabaritInconnu, charger_gabarits, detecter_gabarit
 from seamtech_search.fiches.persistance import verifier_autorisation_validation_lot
 from seamtech_search.import_pipeline import staging_root
+from seamtech_search.jobs import create_job, register_job_cancel
+from seamtech_search.redis_store import RedisStore
 from seamtech_search.storage import S3StorageClient, StorageError
 
 LOGGER = logging.getLogger("seamtech_search.fiches.routes")
@@ -1201,9 +1203,20 @@ def enregistrer_routes_fiches(
     ) -> dict[str, Any]:
         """Crée un lot multi-dossiers (une racine, un sous-dossier par affaire).
 
-        Sans Redis : traitement en tâche de fond IN-PROCESS (thread, état en
-        base, consultable par GET /lots/{id}) par défaut — X-SEAMTECH-BACKGROUND:
-        false force le traitement synchrone (jeux de test, petits lots)."""
+        Trois modes, tous ANNONCÉS dans la réponse (jamais de « accepté » flou) :
+
+        * ``file_durable`` — le lot est remis à la file Redis et exécuté par le
+          service worker ; il survit à un redémarrage du serveur web ;
+        * ``processus_memoire`` — repli de développement sans Redis : le lot
+          tourne dans un fil du processus web et meurt avec lui (visible dans
+          ``durability``) ;
+        * ``synchrone`` — ``X-SEAMTECH-BACKGROUND: false`` : traitement dans la
+          requête (petits lots, jeux de test).
+
+        Avec ``require_durable_queue`` (production), l'absence de file durable
+        est un 503 explicite : on préfère refuser que perdre un lot de 200
+        dossiers en silence.
+        """
         verifier_auth(config, token)
         _exiger_postgres(index)
         racine = str(corps.get("racine") or "").strip()
@@ -1213,19 +1226,74 @@ def enregistrer_routes_fiches(
             id_lot = creer_lot(index, Path(racine), notes=corps.get("notes"))
         except DepotImpossible as erreur:
             raise HTTPException(status_code=422, detail=str(erreur)) from erreur
-        if fond:
-            import threading
 
-            thread = threading.Thread(
-                target=executer_lot,
-                args=(index, id_lot),
-                name=f"lot-{id_lot}",
-                daemon=True,
+        if not fond:
+            return {"id_lot": id_lot, "statut": "termine", "traitement": "synchrone", "etat": executer_lot(index, id_lot)}
+
+        job_id = f"lot-{id_lot}"
+        redis_store = RedisStore(config=config)
+        from seamtech_search.worker import file_durable_disponible
+
+        durable = file_durable_disponible(redis_store)
+        if not durable and config.require_durable_queue:
+            # Le lot est déjà créé « en_attente » : l'opérateur peut le relancer
+            # avec la même racine une fois Redis revenu (aucun dossier perdu).
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    f"Lot #{id_lot} créé mais NON démarré : file d'attente durable indisponible "
+                    "(Redis injoignable). Relancez le lot quand le service est revenu — "
+                    "les dossiers restent « en_attente », rien n'est perdu."
+                ),
             )
-            thread.start()
-            LOGGER.info("Lot #%d en tâche de fond (in-process, sans Redis).", id_lot)
-            return {"id_lot": id_lot, "statut": "en_cours", "traitement": "fond"}
-        return {"id_lot": id_lot, "statut": "termine", "traitement": "synchrone", "etat": executer_lot(index, id_lot)}
+
+        create_job(
+            index,
+            job_id,
+            racine,
+            status="pending",
+            stage="queued",
+            durability="durable" if durable else "process_memory",
+        )
+        if durable:
+            redis_store.set_job(
+                job_id,
+                {"id": job_id, "status": "pending", "progress": 0, "stage": "queued", "source_path": racine},
+            )
+            redis_store.enqueue_task("imports", {"job_id": job_id, "kind": "lot", "id_lot": id_lot})
+            LOGGER.info("Lot #%d remis à la file durable (job %s).", id_lot, job_id)
+            return {
+                "id_lot": id_lot,
+                "job_id": job_id,
+                "statut": "en_cours",
+                "traitement": "file_durable",
+                "durability": "durable",
+                "suivi": f"/lots/{id_lot}",
+            }
+
+        import threading
+
+        thread = threading.Thread(
+            target=executer_lot,
+            args=(index, id_lot),
+            name=f"lot-{id_lot}",
+            daemon=True,
+        )
+        thread.start()
+        LOGGER.warning(
+            "Lot #%d traité en fil IN-PROCESS (Redis absent, repli de développement) : "
+            "il ne survivra pas à un redémarrage du serveur web.",
+            id_lot,
+        )
+        return {
+            "id_lot": id_lot,
+            "job_id": job_id,
+            "statut": "en_cours",
+            "traitement": "processus_memoire",
+            "durability": "process_memory",
+            "avertissement": "Repli de développement : ce lot ne survit pas à un redémarrage du serveur.",
+            "suivi": f"/lots/{id_lot}",
+        }
 
     @app.get("/lots")
     def route_lots(token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None) -> list[dict[str, Any]]:
@@ -1246,6 +1314,42 @@ def enregistrer_routes_fiches(
             return etat_lot(index, id_lot)
         except DepotImpossible as erreur:
             raise HTTPException(status_code=404, detail=str(erreur)) from erreur
+
+    @app.post("/lots/{id_lot}/annuler")
+    def route_annuler_lot(
+        id_lot: int,
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+    ) -> dict[str, Any]:
+        """Demande l'arrêt d'un lot en cours (annulation inter-processus).
+
+        Le drapeau passe par Redis (TTL 24 h) : le worker — qui peut tourner dans
+        un AUTRE conteneur — l'observe entre deux dossiers et marque le lot
+        ``annule``. Les dossiers non traités restent ``en_attente`` : le lot est
+        reprenable, et un dossier déjà traité n'est jamais refait (clé
+        d'idempotence). Aucun fichier n'est supprimé.
+        """
+        verifier_auth(config, token)
+        _exiger_postgres(index)
+        etat_avant = etat_lot(index, id_lot)
+        if etat_avant["statut"] in {"termine", "annule"}:
+            return {"id_lot": id_lot, "statut": etat_avant["statut"], "annulation": "sans_objet", "etat": etat_avant}
+        redis_store = RedisStore(config=config)
+        if not redis_store.is_configured():
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Annulation impossible : le drapeau d'annulation passe par Redis, et il n'est pas "
+                    "configuré. Attendez la fin du lot ou arrêtez le service worker."
+                ),
+            )
+        register_job_cancel(f"lot-{id_lot}", redis_store)
+        LOGGER.warning("Lot #%d : annulation demandée par l'opérateur.", id_lot)
+        return {
+            "id_lot": id_lot,
+            "statut": "annulation_demandee",
+            "annulation": "demandee",
+            "consigne": "Le lot s'arrêtera entre deux dossiers ; les dossiers restants sont reprenables.",
+        }
 
     @app.post("/gabarits/detecter")
     async def route_detecter(

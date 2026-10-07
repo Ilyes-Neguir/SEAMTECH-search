@@ -113,7 +113,10 @@ def test_jobs_postgres_branches(tmp_path: Path):
             cancelled = cancel_job(idx, "jid")
             assert cancelled is not None
 
-            # recover_stale_jobs postgres
+            # recover_stale_jobs postgres : la fonction LISTE d'abord les
+            # candidats (pour pouvoir écarter ceux qui attendent encore en
+            # file), puis les marque en échec en un seul UPDATE.
+            mock_cursor.fetchall.return_value = [("jid",), ("jid-2",)]
             mock_cursor.rowcount = 2
             count = recover_stale_jobs(idx, heartbeat_threshold_seconds=100)
             assert count == 2

@@ -29,7 +29,7 @@ import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from seamtech_search.fiches.extraction import extraire_fiche
 from seamtech_search.fiches.gabarits import GabaritDef, charger_gabarits
@@ -498,18 +498,62 @@ def creer_lot(index: Any, racine: Path, notes: str | None = None) -> int:
     return id_lot
 
 
-def executer_lot(index: Any, id_lot: int, interrompre_apres: int | None = None) -> dict[str, Any]:
+def executer_lot(
+    index: Any,
+    id_lot: int,
+    interrompre_apres: int | None = None,
+    *,
+    doit_continuer: Callable[[], bool] | None = None,
+    progress_cb: Callable[[int, int], None] | None = None,
+    worker_id: str | None = None,
+) -> dict[str, Any]:
     """Traite séquentiellement les dossiers en attente d'un lot.
 
     ``interrompre_apres`` : nombre de TRAITEMENTS (succès ou échec) après
     lequel le lot passe « interrompu » — c'est l'interruption volontaire des
     tests de reprise. Rejouer la fonction reprend là où c'était resté.
+
+    ``doit_continuer`` : contrôle d'annulation inter-processus (drapeau Redis
+    lu par le worker) ; quand il renvoie faux, le lot s'arrête proprement entre
+    deux dossiers et ``etat_lot`` expose ``annule: True``. Aucun dossier n'est
+    laissé « en cours » : ce qui reste est ``en_attente``, donc reprenable.
+
+    ``progress_cb(traites, total)`` et ``worker_id`` servent la supervision :
+    sans eux, un lot long est indistinguable d'un lot bloqué.
     """
     LOGGER.info("Lot #%s : chargement des gabarits actifs…", id_lot)
     gabarits = charger_gabarits(index)
     LOGGER.info("Lot #%s : %d gabarit(s) actif(s) chargé(s).", id_lot, len(gabarits))
+
+    # Reprise : un lot laissé « en_cours » par un worker mort est marqué
+    # « relance » AVANT de continuer — l'exploitant voit que ce n'est pas la
+    # passe initiale, et le worker propriétaire est tracé.
+    with index.connect() as connexion:
+        with connexion.cursor() as cursor:
+            cursor.execute(
+                "UPDATE lot_import SET statut = 'relance', worker_id = %s, heartbeat_at = now() "
+                "WHERE id_lot = %s AND statut IN ('en_cours', 'relance')",
+                (worker_id, id_lot),
+            )
+
+    total = _compter_dossiers(index, id_lot)
     traites_cette_passe = 0
     while True:
+        if doit_continuer is not None and not doit_continuer():
+            LOGGER.warning(
+                "Lot #%s : annulation demandée — conséquence : arrêt entre deux dossiers, "
+                "les dossiers restants restent « en_attente » (repris si le lot est relancé).",
+                id_lot,
+            )
+            with index.connect() as connexion:
+                with connexion.cursor() as cursor:
+                    cursor.execute(
+                        "UPDATE lot_import SET statut = 'annule', annule_le = now() WHERE id_lot = %s",
+                        (id_lot,),
+                    )
+            etat = etat_lot(index, id_lot)
+            etat["annule"] = True
+            return etat
         with index.connect() as connexion:
             with connexion.cursor() as cursor:
                 cursor.execute(
@@ -521,6 +565,12 @@ def executer_lot(index: Any, id_lot: int, interrompre_apres: int | None = None) 
         if ligne is None:
             break  # plus rien en attente : le lot se termine plus bas
         id_lot_dossier, chemin = int(ligne[0]), Path(ligne[1])
+        with index.connect() as connexion:
+            with connexion.cursor() as cursor:
+                cursor.execute(
+                    "UPDATE lot_import SET heartbeat_at = now() WHERE id_lot = %s",
+                    (id_lot,),
+                )
         LOGGER.info("Lot #%s : traitement du dossier %s (%s)…", id_lot, id_lot_dossier, chemin)
         try:
             resultat = deposer_dossier(index, chemin, gabarits=gabarits, id_lot=id_lot, id_lot_dossier=id_lot_dossier)
@@ -538,6 +588,11 @@ def executer_lot(index: Any, id_lot: int, interrompre_apres: int | None = None) 
             )
         traites_cette_passe += 1
         _rafraichir_compteurs(index, id_lot)
+        if progress_cb is not None:
+            try:
+                progress_cb(traites_cette_passe, total)
+            except Exception:  # pragma: no cover - le suivi ne doit jamais casser le lot
+                LOGGER.warning("Lot #%s : le callback de progression a échoué (lot poursuivi).", id_lot)
         if interrompre_apres is not None and traites_cette_passe >= interrompre_apres:
             with index.connect() as connexion:
                 with connexion.cursor() as cursor:
@@ -555,6 +610,31 @@ def executer_lot(index: Any, id_lot: int, interrompre_apres: int | None = None) 
                 (id_lot,),
             )
     return etat_lot(index, id_lot)
+
+
+def _compter_dossiers(index: Any, id_lot: int) -> int:
+    with index.connect() as connexion:
+        with connexion.cursor() as cursor:
+            cursor.execute(_SQL_LOT_COMPTE, (id_lot,))
+            return int(cursor.fetchone()[0])
+
+
+def annuler_lot(index: Any, id_lot: int) -> dict[str, Any]:
+    """Marque un lot annulé (état terminal explicite, distinct d'un échec).
+
+    Ne supprime ni dossier ni fiche : un lot annulé puis relancé reprend les
+    dossiers ``en_attente``, et les dossiers ``traite`` ne sont jamais refaits
+    (clé d'idempotence).
+    """
+    with index.connect() as connexion:
+        with connexion.cursor() as cursor:
+            cursor.execute(
+                "UPDATE lot_import SET statut = 'annule', annule_le = now() WHERE id_lot = %s",
+                (id_lot,),
+            )
+    etat = etat_lot(index, id_lot)
+    etat["annule"] = True
+    return etat
 
 
 def _finaliser_lot(index: Any, id_lot: int) -> None:

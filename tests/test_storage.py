@@ -9,6 +9,7 @@ from seamtech_search.config import AppConfig
 from seamtech_search.import_pipeline import import_folder
 from seamtech_search.indexer import SearchIndex
 from seamtech_search.storage import S3StorageClient, StorageError, upload_artifacts_to_storage
+from tests.s3_en_memoire import S3EnMemoire
 
 
 def _missing_object(*args: object, **kwargs: object) -> dict:
@@ -99,6 +100,34 @@ def test_s3_storage_nonexistent_file_raises(tmp_path: Path) -> None:
         client.upload_file(tmp_path / "does_not_exist.pdf")
 
 
+class _S3Branche:
+    """Branche le client S3 réel sur un magasin en mémoire.
+
+    Les anciens doubles répondaient « l'objet existe » : depuis que la
+    vérification relit les OCTETS et recalcule l'empreinte, ce double ne
+    testait plus rien de réel. Ici les octets sont conservés.
+    """
+
+    def __init__(self) -> None:
+        self.magasin = S3EnMemoire()
+        self._patchs: list = []
+
+    def __enter__(self) -> S3EnMemoire:
+        magasin = self.magasin
+        self._patchs = [
+            patch.object(S3StorageClient, "_get_client", lambda _instance, probe_timeout=None: magasin),
+            patch.object(S3StorageClient, "ensure_bucket_exists", lambda _instance: True),
+            patch.object(S3StorageClient, "first_free_key", lambda _instance, cle: cle),
+        ]
+        for patcheur in self._patchs:
+            patcheur.start()
+        return self.magasin
+
+    def __exit__(self, *_exc: object) -> None:
+        for patcheur in self._patchs:
+            patcheur.stop()
+
+
 def test_upload_artifacts_to_storage_helper(tmp_path: Path) -> None:
     file1 = tmp_path / "doc.pdf"
     file1.write_bytes(b"test pdf")
@@ -114,13 +143,7 @@ def test_upload_artifacts_to_storage_helper(tmp_path: Path) -> None:
         min_free_bytes=0,
     )
 
-    with (
-        patch(
-            "seamtech_search.storage.S3StorageClient.upload_file",
-            side_effect=_store_and_return_key,
-        ) as mock_upload,
-        patch("seamtech_search.storage.S3StorageClient.object_exists", return_value=True) as mock_verify,
-    ):
+    with _S3Branche() as magasin:
         batch = upload_artifacts_to_storage(
             folder_name="REF-001",
             files_to_upload=[file1, file2],
@@ -131,8 +154,13 @@ def test_upload_artifacts_to_storage_helper(tmp_path: Path) -> None:
 
         assert batch.status == "uploaded"
         assert batch.all_verified is True
-        assert mock_upload.call_count == 2
-        assert mock_verify.call_count == 2
+        assert len(magasin.envois) == 2
+        # La vérification a réellement relu les octets des deux objets.
+        assert {a.verification for a in batch.artifacts} == {"relecture_sha256"}
+        # Purge locale autorisée seulement sur preuve : le worker consulte
+        # `all_verified`, jamais le simple fait que `upload_file` n'a pas levé.
+        for key in [a.key for a in batch.artifacts]:
+            assert magasin.objets[key]["donnees"]
         assert [a.name for a in batch.artifacts] == ["doc.pdf", "table.xlsx"]
         assert all(a.verified and a.key and a.bucket == "seamtech-bucket" for a in batch.artifacts)
         # Every file is keyed by import id + a hash of its own path, so two
@@ -164,24 +192,19 @@ def test_import_with_s3_storage_uploads_all_files(tmp_path: Path) -> None:
     index = SearchIndex(config.database_path)
     index.initialize(rebuild=True)
 
-    with (
-        patch(
-            "seamtech_search.storage.S3StorageClient.upload_file",
-            side_effect=_store_and_return_key,
-        ) as mock_upload,
-        patch("seamtech_search.storage.S3StorageClient.object_exists", return_value=True),
-    ):
+    with _S3Branche() as magasin:
         result = import_folder(source_folder, config, index)
+        mock_upload = magasin
         assert result.status == "completed"
         assert result.upload_status == "uploaded"
         # 3 source files (pdf, dwg, txt) + 2 reports (pdf, docx) = 5 uploaded files
-        assert mock_upload.call_count == 5
+        assert len(mock_upload.envois) == 5
         # The keys are namespaced by this import: the same folder imported again
         # cannot land on top of these objects.
         # Note: result.files are ImportFile, artifacts are in result? Actually
         # import_folder returns ImportResult which has upload_status but not artifacts.
         # We check the upload calls for uniqueness.
-        called_keys = [call.kwargs.get("remote_key") or call.args[1] for call in mock_upload.mock_calls]
+        called_keys = [envoi["key"] for envoi in mock_upload.envois]
         assert len(set(called_keys)) == len(called_keys), "every artifact has its own object key"
         assert all(str(key).startswith(f"{result.import_id}/") for key in called_keys)
 
@@ -293,3 +316,44 @@ def test_storage_list_keys_failure_raises_storage_error() -> None:
     with patch.object(client, "_get_client", return_value=mock_boto):
         with pytest.raises(StorageError, match="List failed"):
             client.list_keys("backups/")
+
+
+def test_le_chemin_relatif_d_origine_voyage_avec_l_objet(tmp_path: Path) -> None:
+    """Un objet doit permettre de retrouver D'OÙ il vient, sans la base.
+
+    L'empreinte du chemin est dans la clé (non inversable) et le nom du fichier
+    en fin de clé : sans métadonnée, le dossier d'origine était perdu si l'on ne
+    consultait que le bucket. ``seamtech-chemin`` le conserve, encodé en
+    pourcentage — les en-têtes S3 n'acceptent pas d'octets non-ASCII.
+    """
+    from seamtech_search.storage import METADATA_CHEMIN, chemin_relatif_origine
+
+    dossier = tmp_path / "AFFAIRE 12" / "plan été"
+    dossier.mkdir(parents=True)
+    fichier = dossier / "Plan n°2.pdf"
+    fichier.write_bytes(b"%PDF-1.4 plan")
+
+    assert chemin_relatif_origine(fichier, tmp_path) == "AFFAIRE 12/plan été/Plan n°2.pdf"
+    # Un fichier hors de la racine (rapport généré) retombe sur son nom.
+    assert chemin_relatif_origine(fichier, tmp_path / "ailleurs") == "Plan n°2.pdf"
+
+    client = S3StorageClient(
+        endpoint_url="http://minio.invalide:9000",
+        bucket_name="seamtech-documents",
+        access_key_id="cle-fictive",
+        secret_access_key="secret-fictif",
+    )
+    faux_boto = MagicMock()
+    with patch.object(client, "_get_client", return_value=faux_boto):
+        with patch.object(client, "ensure_bucket_exists"):
+            with patch.object(client, "first_free_key", side_effect=lambda cle: cle):
+                client.upload_file(
+                    fichier,
+                    remote_key="IMP-1/abc/Plan n°2.pdf",
+                    relative_path=chemin_relatif_origine(fichier, tmp_path),
+                )
+    metadonnees = faux_boto.upload_file.call_args.kwargs["ExtraArgs"]["Metadata"]
+    # URL-encodé : ni espace, ni « ° », ni accent dans l'en-tête HTTP…
+    assert metadonnees[METADATA_CHEMIN] == "AFFAIRE%2012/plan%20%C3%A9t%C3%A9/Plan%20n%C2%B02.pdf"
+    # …et les séparateurs de dossier restent lisibles.
+    assert "/" in metadonnees[METADATA_CHEMIN]

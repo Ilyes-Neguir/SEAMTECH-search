@@ -21,11 +21,13 @@ re-extracted from anywhere:
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import logging
 import mimetypes
 import threading
 import time
+import urllib.parse
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
@@ -56,7 +58,14 @@ class UploadedArtifact:
     key: str | None = None
     bucket: str | None = None
     status: str = "pending"
+    #: Vrai UNIQUEMENT si les OCTETS stockés ont été vérifiés (relecture) ou si
+    #: le fournisseur a lui-même calculé l'empreinte sur l'objet stocké. Jamais
+    #: vrai sur une simple comparaison de métadonnées que NOUS avons fournies.
     verified: bool = False
+    #: Methode réellement employée : "relecture_sha256", "checksum_serveur",
+    #: "metadata_seule" (déclaratif, non prouvé), "taille_seule", "echec".
+    verification: str = "non_verifie"
+    verification_detail: str | None = None
     error: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -67,6 +76,8 @@ class UploadedArtifact:
             "bucket": self.bucket,
             "status": self.status,
             "verified": self.verified,
+            "verification": self.verification,
+            "verification_detail": self.verification_detail,
             "error": self.error,
         }
 
@@ -120,6 +131,65 @@ def artifact_object_key(
     digest = hashlib.sha256(digest_input.encode("utf-8")).hexdigest()
     key = f"{import_id}/{digest}/{path.name}"
     return f"{prefix.rstrip('/')}/{key}" if prefix else key
+
+
+#: Clé de métadonnée S3 portant l'empreinte du contenu. Volontairement une
+#: métadonnée applicative et PAS l'ETag : sur un upload multipart (au-delà de
+#: 8 Mio par défaut) l'ETag S3/MinIO n'est pas un MD5, et sur R2 il peut ne pas
+#: l'être du tout. Comparer un ETag à un MD5 « marche » sur les petits fichiers
+#: et se casse silencieusement sur les gros.
+METADATA_SHA256 = "seamtech-sha256"
+METADATA_TAILLE = "seamtech-taille"
+#: Chemin RELATIF d'origine, conservé avec l'objet. L'empreinte du chemin est
+#: dans la CLÉ (impossible à inverser) et le nom du fichier est en fin de clé ;
+#: la base garde aussi ``documents.path``. Cette métadonnée rend le chemin
+#: reconstructible depuis le seul bucket, ce qui est ce qu'on veut le jour où
+#: l'on doit retrouver d'où vient un objet. Encodée en pourcentage : les
+#: en-têtes S3 n'acceptent pas d'octets non-ASCII (accents, espaces).
+METADATA_CHEMIN = "seamtech-chemin"
+
+
+def chemin_relatif_origine(chemin: Path, racine: Path | str | None = None) -> str:
+    """Chemin d'origine d'un artefact : relatif à ``racine`` si possible, sinon son nom."""
+    if racine is not None:
+        try:
+            return Path(chemin).resolve().relative_to(Path(racine).resolve()).as_posix()
+        except (ValueError, OSError):
+            pass
+    return Path(chemin).name
+
+
+@dataclass(frozen=True)
+class ResultatVerification:
+    """Ce qu'une vérification d'objet a RÉELLEMENT prouvé — et par quel moyen.
+
+    Distinction essentielle, souvent confondue :
+
+    * ``seamtech-sha256`` est une métadonnée **que nous fournissons** à l'envoi.
+      La relire ne prouve rien sur les octets stockés : un envoi tronqué
+      conserverait la métadonnée intacte. Ce n'est donc PAS une vérification.
+    * ``relecture_sha256`` relit l'objet par l'API et recalcule l'empreinte sur
+      les octets REÇUS : c'est une preuve sur le contenu.
+    * ``checksum_serveur`` est l'empreinte calculée par le fournisseur sur
+      l'objet stocké (``ChecksumSHA256`` avec ``ChecksumType: FULL_OBJECT``).
+      Elle aussi porte sur les octets — mais uniquement pour un objet non
+      multipart, d'où la garde ``FULL_OBJECT``.
+
+    Seul ``integrite_prouvee=True`` autorise la purge de la copie locale.
+    """
+
+    integrite_prouvee: bool
+    methode: str
+    detail: str
+
+
+def empreinte_sha256(chemin: Path) -> str:
+    """SHA-256 d'un fichier, lu par blocs (jamais tout en mémoire)."""
+    digest = hashlib.sha256()
+    with Path(chemin).open("rb") as flux:
+        for bloc in iter(lambda: flux.read(1024 * 1024), b""):
+            digest.update(bloc)
+    return digest.hexdigest()
 
 
 def _suffixed_key(base_key: str, index: int) -> str:
@@ -417,6 +487,7 @@ class S3StorageClient:
         content_type: str | None = None,
         *,
         avoid_overwrite: bool = True,
+        relative_path: str | None = None,
     ) -> str:
         """Upload a local file to S3/MinIO and return the key it was stored under.
 
@@ -437,15 +508,34 @@ class S3StorageClient:
             key = self.first_free_key(key)
 
         mime = content_type or mimetypes.guess_type(local.name)[0] or "application/octet-stream"
-        extra_args = {"ContentType": mime}
+        taille = local.stat().st_size
+        empreinte = empreinte_sha256(local)
+        metadonnees = {METADATA_SHA256: empreinte, METADATA_TAILLE: str(taille)}
+        if relative_path:
+            metadonnees[METADATA_CHEMIN] = urllib.parse.quote(relative_path, safe="/")
+        extra_args = {"ContentType": mime, "Metadata": metadonnees}
+
+        def _envoyer(arguments: dict[str, Any]) -> None:
+            s3.upload_file(Filename=str(local), Bucket=self.bucket_name, Key=key, ExtraArgs=arguments)
 
         try:
-            s3.upload_file(
-                Filename=str(local),
-                Bucket=self.bucket_name,
-                Key=key,
-                ExtraArgs=extra_args,
-            )
+            # ChecksumAlgorithm demande au FOURNISSEUR de recalculer l'empreinte
+            # sur les octets qu'il reçoit et de refuser l'envoi en cas
+            # d'incohérence : une corruption pendant le transfert est détectée
+            # à l'ingestion, pas six mois plus tard. Tous les fournisseurs
+            # compatibles ne l'implémentent pas (et certaines versions de
+            # botocore non plus) : dans ce cas on réessaie sans, et la
+            # vérification de relecture ci-dessous reste la preuve.
+            try:
+                _envoyer({**extra_args, "ChecksumAlgorithm": "SHA256"})
+            except Exception as exc:
+                logger.warning(
+                    "Envoi sans checksum d'ingestion pour %s (%s) — conséquence : "
+                    "l'intégrité sera établie par relecture de l'objet.",
+                    local.name,
+                    exc,
+                )
+                _envoyer(extra_args)
             logger.info("Uploaded %s to S3 bucket %s with key %s", local.name, self.bucket_name, key)
             return key
         except Exception as exc:
@@ -459,6 +549,7 @@ class S3StorageClient:
         content_type: str | None = None,
         *,
         avoid_overwrite: bool = True,
+        relative_path: str | None = None,
     ) -> str:
         """Upload in-memory bytes directly to S3/MinIO without writing to local disk.
 
@@ -474,12 +565,20 @@ class S3StorageClient:
 
         mime = content_type or mimetypes.guess_type(key)[0] or "application/octet-stream"
         try:
-            s3.put_object(
-                Bucket=self.bucket_name,
-                Key=key,
-                Body=data,
-                ContentType=mime,
-            )
+            parametres: dict[str, Any] = {
+                "Bucket": self.bucket_name,
+                "Key": key,
+                "Body": data,
+                "ContentType": mime,
+                "Metadata": {
+                    METADATA_SHA256: hashlib.sha256(data).hexdigest(),
+                    METADATA_TAILLE: str(len(data)),
+                },
+            }
+            try:
+                s3.put_object(**parametres, ChecksumAlgorithm="SHA256")
+            except Exception:
+                s3.put_object(**parametres)
             return key
         except Exception as exc:
             logger.error("Failed to upload bytes to S3 key %s: %s", key, exc)
@@ -537,6 +636,96 @@ class S3StorageClient:
             logger.warning("Could not stream S3 key %s: %s", remote_key, exc)
             raise StorageError(f"Object stream lookup failed: {exc}") from exc
 
+    def verifier_integrite(
+        self,
+        remote_key: str,
+        chemin_local: Path | str,
+        *,
+        relire: bool = True,
+    ) -> ResultatVerification:
+        """Vérifie les OCTETS stockés, pas la déclaration que nous en avons faite.
+
+        Ordre des preuves, du plus fort au plus faible :
+
+        1. ``relecture_sha256`` (défaut) — l'objet est relu par l'API et
+           l'empreinte est recalculée sur les octets reçus. C'est la seule
+           méthode qui détecte un envoi tronqué ou altéré quel que soit le
+           fournisseur. Coût : une lecture de l'objet.
+        2. ``checksum_serveur`` — le fournisseur a calculé ``ChecksumSHA256``
+           sur l'objet stocké ET déclare ``ChecksumType: FULL_OBJECT``. Utilisé
+           quand la relecture est désactivée par configuration. La garde
+           ``FULL_OBJECT`` est indispensable : sur un envoi multipart, le
+           checksum renvoyé n'est PAS celui du fichier entier.
+        3. ``metadata_seule`` — la métadonnée ``seamtech-sha256`` correspond.
+           C'est déclaratif : elle a été fournie par nous à l'envoi. Compté
+           comme NON prouvé, et ne permet PAS la suppression locale.
+        4. ``taille_seule`` — taille identique, aucune empreinte : NON prouvé.
+
+        Toute inégalité (taille, empreinte recalculée) est un ``echec`` : la
+        copie locale n'est jamais supprimée.
+        """
+        local = Path(chemin_local)
+        try:
+            entete = self.head_object(remote_key)
+        except StorageError as exc:
+            return ResultatVerification(False, "echec", f"objet illisible: {exc}")
+
+        taille_locale = local.stat().st_size
+        taille_distante = entete.get("ContentLength")
+        if taille_distante is not None and int(taille_distante) != taille_locale:
+            return ResultatVerification(
+                False, "echec", f"taille differente: local={taille_locale} distant={taille_distante}"
+            )
+
+        empreinte_locale = empreinte_sha256(local)
+
+        if relire:
+            try:
+                corps = self.get_object(remote_key)["Body"]
+                digest = hashlib.sha256()
+                for bloc in iter(lambda: corps.read(1024 * 1024), b""):
+                    digest.update(bloc)
+                empreinte_distante = digest.hexdigest()
+            except Exception as exc:
+                return ResultatVerification(False, "echec", f"relecture impossible: {exc}")
+            if empreinte_distante != empreinte_locale:
+                return ResultatVerification(
+                    False,
+                    "echec",
+                    f"relecture: sha256 different (local={empreinte_locale[:12]} distant={empreinte_distante[:12]})",
+                )
+            return ResultatVerification(
+                True, "relecture_sha256", "octets relus et empreinte recalculée sur l'objet stocké"
+            )
+
+        checksum = entete.get("ChecksumSHA256")
+        type_checksum = str(entete.get("ChecksumType") or "")
+        if checksum and type_checksum.upper() == "FULL_OBJECT":
+            attendu = base64.b64encode(bytes.fromhex(empreinte_locale)).decode("ascii")
+            if str(checksum) != attendu:
+                return ResultatVerification(
+                    False, "echec", f"checksum serveur different: {str(checksum)[:16]}…"
+                )
+            return ResultatVerification(
+                True, "checksum_serveur", "checksum du fournisseur sur l'objet entier (FULL_OBJECT)"
+            )
+
+        metadonnees = {str(cle).lower(): str(valeur) for cle, valeur in (entete.get("Metadata") or {}).items()}
+        declaree = metadonnees.get(METADATA_SHA256)
+        if declaree and declaree == empreinte_locale:
+            return ResultatVerification(
+                False,
+                "metadata_seule",
+                "metadonnee fournie par l'application identique — NON prouve les octets stockes",
+            )
+        if not declaree:
+            return ResultatVerification(
+                False, "taille_seule", "aucune empreinte disponible — seule la taille concorde"
+            )
+        return ResultatVerification(
+            False, "echec", f"metadonnee divergente: local={empreinte_locale[:12]} declaré={declaree[:12]}"
+        )
+
     def delete_file(self, remote_key: str) -> bool:
         """Delete an object from S3."""
         s3 = self._get_client()
@@ -585,6 +774,11 @@ def upload_artifacts_to_storage(
     import cannot destroy — or be destroyed by — an earlier one that used the
     same folder name. The recorded ``key`` is the key the object actually has.
     """
+    #: Relecture des objets après envoi. Désactiver la relecture ne rend pas la
+    #: vérification « plus rapide mais suffisante » : cela la rend IMPOSSIBLE
+    #: (aucune preuve sur les octets), donc la purge locale n'a plus lieu.
+    relire_objets = bool(getattr(config, "storage_verify_reread", True))
+
     valid_files: list[Path] = []
     seen: set[str] = set()
     for candidate in files_to_upload:
@@ -623,12 +817,33 @@ def upload_artifacts_to_storage(
                 # The client refuses to reuse an occupied key and tells us which
                 # key it really used; verifying that exact key is what authorises
                 # deleting the local copy.
-                key = s3_client.upload_file(file_path, remote_key=base_key)
+                key = s3_client.upload_file(
+                    file_path,
+                    remote_key=base_key,
+                    relative_path=chemin_relatif_origine(file_path, source_root),
+                )
                 artifact.key = key
                 artifact.status = "uploaded"
-                artifact.verified = s3_client.object_exists(key)
-                if not artifact.verified:
-                    artifact.error = f"object {key} not found in bucket after upload"
+                # Vérification des OCTETS stockés (relecture + empreinte
+                # recalculée, ou checksum du fournisseur sur objet entier).
+                # C'est cette réponse — et elle seule — qui autorise la purge
+                # locale. Une comparaison de la métadonnée que NOUS avons
+                # fournie ne suffit pas : elle resterait intacte sur un envoi
+                # tronqué.
+                resultat = s3_client.verifier_integrite(key, file_path, relire=relire_objets)
+                artifact.verified = resultat.integrite_prouvee
+                artifact.verification = resultat.methode
+                artifact.verification_detail = resultat.detail
+                if not resultat.integrite_prouvee and resultat.methode == "echec":
+                    artifact.status = "failed"
+                    artifact.error = f"objet {key} non conforme après envoi ({resultat.detail})"
+                elif not resultat.integrite_prouvee:
+                    # Objet présent, taille correcte, mais intégrité NON
+                    # prouvée (relecture désactivée) : on ne supprime pas la
+                    # copie locale et on le dit.
+                    artifact.error = (
+                        f"intégrité non prouvée ({resultat.methode}) — copie locale conservée"
+                    )
             except Exception as exc:
                 artifact.status = "failed"
                 artifact.error = str(exc)

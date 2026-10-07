@@ -39,21 +39,22 @@ Internal file search, technical dossier ingestion, and synthesis report platform
 ```
 Browser → Next.js Frontend (proxy) → FastAPI API → PostgreSQL 16 + pgvector (FTS + métier) + Redis 7 (single) + S3 (MinIO/R2/AWS)
                                       │
-                                      └─ Background worker thread (Redis BLMOVE queue, not separate service)
-                                      └─ Retention scheduler (daily, preserves quarantine)
-                                      └─ Object Storage is source of truth, local reports are cache
+                                      ├─ web : accepte les imports, N'EXÉCUTE RIEN (SEAMTECH_WEB_WORKER_ENABLED=false)
+                                      │        └─ Retention scheduler (daily, preserves quarantine)
+                                      └─ worker (service séparé) : exécute les imports depuis la file Redis
+                                               └─ Object Storage is source of truth, local reports are cache
 ```
 
-- **Object Storage (MinIO / R2 / AWS S3):** Durable store. Keys are collision-free: `{s3_prefix}/{import_id}/{sha256(relative_path)}/{filename}`. Existing keys are never overwritten — next free `-2`, `-3` suffix is used. Bucket versioning is requested at creation (best-effort: Cloudflare R2 does not implement `PutBucketVersioning`, so `versioning_available: false` is reported in `/health` and suffix protection is used). Every upload is verified via `head_object` before local purge is allowed.
+- **Object Storage (MinIO / R2 / AWS S3):** Durable store. Keys are collision-free: `{s3_prefix}/{import_id}/{sha256(relative_path)}/{filename}`. Existing keys are never overwritten — next free `-2`, `-3` suffix is used. Bucket versioning is requested at creation (best-effort: Cloudflare R2 does not implement `PutBucketVersioning`, so `versioning_available: false` is reported in `/health` and suffix protection is used). Every upload is verified by reading back **size + SHA-256** (stored as object metadata `seamtech-sha256`/`seamtech-taille`) before local purge is allowed — never by comparing an ETag to an MD5 (a multipart ETag, or R2, is not an MD5). The original relative path travels with the object as URL-encoded `seamtech-chemin`, so an object can be traced back to its folder from the bucket alone.
 - **Database (PostgreSQL 16 via `pgvector/pgvector:pg16` — Lot A requires the `vector` extension; SQLite fallback for the legacy file index only, the fiche layer is PostgreSQL-only per plan §17.1):** Stores document index, `tsvector` GIN search, `JSONB` import payloads, `object_key`/`object_bucket`/`uploaded_at`/`upload_status` per document, `import_jobs` with `updated_at` heartbeat, `schema_migrations` versioned migrations, and `audit_log` (regular table, **not immutable** — pruned by retention after `audit_retention_days`, default 365).
 - **Redis 7 (single container, not cluster):** `RPUSH`/`BLMOVE` queue → processing list, `seamtech:retry:<queue>` sorted set with exponential backoff `2**attempt`, `seamtech:deadletter:<queue>` list after 3 attempts, `seamtech:job:{id}` cache 24h TTL, `seamtech:cancel:{id}` flag for distributed cancellation, sliding-window rate limiter 600 req/min via sorted sets. `/health` reports `upload_dead_letters`.
 - **API (FastAPI):** Stateless except for scratch. Scratch `data/uploads/<uuid>_<folder>` is purged **only** when `upload_status == uploaded` and every artifact verified (`all_verified`). On failure, import is marked `upload_incomplete`, moved to `data/quarantine/` (never pruned), and surfaced in UI. `/health` is read-only, cheap, does not call `initialize()`. Docs (`/docs`, `/openapi.json`) disabled when `auth_token` set, and not exempt from rate limiting. Auth uses `secrets.compare_digest` constant-time.
-- **Worker:** `worker.py` `process_import_task` handles upload verification, quarantine, and purge gating. `worker_loop` processes retry queue first, acks on success, retries with backoff, deadletters after max attempts. Cancellation survives process boundaries via Redis flag + in-memory fallback. Background tasks kept in strong reference set to prevent GC.
+- **Worker (separate service, `docker compose` → `worker`):** `python -m seamtech_search.worker_service` runs `worker_loop` in its own process, so a web restart/upgrade no longer kills a running import. `process_import_task` handles upload verification, quarantine, and purge gating; the loop drains the retry set first, acks on success, retries with exponential backoff, and deadletters after `SEAMTECH_MAX_TASK_ATTEMPTS` (3) with a reason recorded in `import_jobs.failure_reason`. Claims (`seamtech:claim:<queue>:<job_id>`, TTL 300 s) make a killed worker's task recoverable; workers register under `seamtech:worker:*` for supervision. Cancellation crosses processes via a Redis flag; an in-memory fallback remains for the no-Redis development path. `--verifier` prints a JSON diagnostic and exits 2 when Redis is unreachable, so a supervisor sees a useless worker instead of a green one. Full contract: `docs/FILE_DURABLE.md`.
 - **Frontend (Next.js 16):** No Vercel Analytics, no `v0.app` metadata. Package name `seamtech-search-frontend`. Sample data fallback only when `SEAMTECH_DEMO_MODE=1` and never in production (`NODE_ENV === production` → 503). Download buttons link to `GET /imports/{id}/artifacts/{artifact}` which 302s to presigned URL (900s expiry) or serves file / downloads from S3 if cache cold.
 
 **Limits / non-goals:**
-- Single-user token auth, no RBAC.
-- No separate `worker` service in `docker-compose.yml` — worker is thread inside `web`. Real separate worker process would need its own container.
+- Auth is nominative (table `utilisateur` + `session_ui` in PostgreSQL), with two roles: `operateur` and `administrateur`. Account management endpoints (`/auth/utilisateurs…`) require `administrateur`; everything else is available to any signed-in operator. There is no per-project ACL and no enterprise RBAC. The `SEAMTECH_UI_PASSWORD` « secours » account is a shared rescue path, has no revocable session row, and should be left empty once nominative accounts exist.
+- Imports are executed by the separate `worker` service, not by `web`. Redis delivery is at-least-once: idempotence (not "exactly once") is what prevents duplicate projects/documents. See `docs/FILE_DURABLE.md`.
 - No `Redis Cluster`, single Redis.
 - Audit log not immutable.
 - Search uses `simple` tsvector (no French stemming) with OR prefix matching (`term:* | term:*`) and rank boost for all-terms (`&`). Identical semantics on SQLite (FTS5 `OR` + `*`) and Postgres.
@@ -118,16 +119,16 @@ Env overrides (all `SEAMTECH_` prefixed) or `config/config.json` (must exist, no
 | Method | Endpoint | Notes |
 |---|---|---|
 | `GET` | `/live`, `/ready` | Probes |
-| `GET` | `/health` | Read-only, reports `versioning_available`, `upload_dead_letters`, disk free |
+| `GET` | `/health` | Read-only; reports `queue{queue,processing,retry,deadletter,workers_vivants}`, `jobs{par_statut,echecs,en_cours,recoverables}`, `versioning_available`, `upload_dead_letters`, disk free, backup status, `s3_credentials` |
 | `GET` | `/search?q=` | OR prefix, rank boost for AND, identical SQLite/Postgres |
 | `POST` | `/imports/scan` | Returns **all PDFs** with `anchor_count`, `anchors_matched`, `classification`, `is_technical` ranking hint (4.8) |
 | `POST` | `/imports/confirm` | |
-| `POST` | `/imports` | 202 async via Redis or in-process fallback, `?wait=true` for sync |
+| `POST` | `/imports` | 202 async via the durable Redis queue (`durability: "durable"`), `?wait=true` for sync. With `SEAMTECH_REQUIRE_DURABLE_QUEUE=true` and Redis down: **503, no job created**; without it (development) the 202 carries `durability: "process_memory"` |
 | `POST` | `/imports/dossier` | Lot C — porte A : deposit a complete fabrication folder → fiche `a_valider` + attachments, one transaction, idempotent (refusal = traced result with reason, never a 500) |
-| `POST` | `/imports/dossier/lot` | Lot C — door A bis: background batch of folders (in-process thread, no Redis); resumable by calling again |
+| `POST` | `/imports/dossier/lot` | Lot C — door A bis: batch of folders. Queued on the durable Redis queue (`kind: "lot"`) and executed by the `worker` service; resumable, cancellable (`POST /lots/{id}/annuler`), and `X-SEAMTECH-BACKGROUND: false` still runs it synchronously |
 | `GET` | `/lots`, `/lots/{id}` | Lot C — batch progress, per-folder status **with failure reasons**, remaining files (`/imports/{id}` stays Phase-0 single import) |
 | `GET` | `/imports/{id}` | DB-first to avoid stale Redis cache shadowing after PATCH |
-| `POST` | `/imports/{id}/cancel` | Redis flag + memory fallback |
+| `POST` | `/imports/{id}/cancel` | Redis flag read by the worker (cross-process) + memory fallback |
 | `PATCH` | `/imports/{id}` | Correction, regenerates reports, re-uploads, invalidates Redis cache |
 | `POST` | `/imports/{id}/retry-upload` | Retries every file where `upload_status != uploaded` (not just technical PDF + reports) |
 | `GET` | `/imports/{id}/artifacts/{artifact}` | `artifact ∈ {report_pdf, report_docx, source_pdf, source_excel}` → 302 presigned URL (≤15 min) or FileResponse, falls back to S3 download if cache cold |
@@ -146,7 +147,14 @@ Env overrides (all `SEAMTECH_` prefixed) or `config/config.json` (must exist, no
 ruff check .
 # Selection is by MARKER, never by name substring (fix R-14, 2026-09-25): a test
 # that needs a service declares it (`postgres`, `s3`, `sauvegarde`, `perf`).
-pytest -m "not postgres and not s3 and not perf" -q   # 715 passed, 3 skipped, 207 deselected
+# Exactly the selection measured on 2026-10-07 (marker-based, no name substring):
+pytest -q -m "not postgres and not s3 and not perf and not recette_corpus and not integration_docker and not redis_queue"
+#   833 passed, 3 skipped, 299 deselected
+# Live queue suite (real Redis + real PostgreSQL; spawns REAL worker processes
+# that are SIGKILLed mid-import, then resumed):
+SEAMTECH_TEST_REDIS_URL=redis://:pass@127.0.0.1:6379/1 \
+SEAMTECH_TEST_DATABASE_URL=postgresql://seamtech@127.0.0.1:5432/seamtech_search \
+  pytest -q -m "redis_queue"        # 37 passed, 0 skipped
 # With coverage (same selection CI gates on; live-postgres self-skips without a DB URL):
 pytest -m "not s3 and not perf" -q --cov=seamtech_search --cov-report=term --cov-report=json:coverage.json
 python scripts/coverage_gate.py coverage.json   # fails (exit 1) on any threshold breach

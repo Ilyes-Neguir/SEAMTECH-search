@@ -97,7 +97,10 @@ jobs:
           # un test n'échappe à cette suite que s'il porte le marqueur qui dit
           # de quel service il a besoin. Garde-fou : tests/test_selection_ci.py.
           set +e
-          pytest -q -rf -m "not postgres and not s3 and not perf" 2>&1 | tee /tmp/sqlite.log
+          # `and not redis_queue` : les tests de file durable ont leur étape
+          # dédiée (Redis réel exigé) — les exécuter ici les ferait sauter
+          # silencieusement, et un test qui saute n'est pas un test.
+          pytest -q -rf -m "not postgres and not s3 and not perf and not redis_queue" 2>&1 | tee /tmp/sqlite.log
           rc=${PIPESTATUS[0]}
           set -e
           if [ "$rc" -ne 0 ]; then
@@ -141,7 +144,7 @@ jobs:
           # avec MinIO réel — ici ils seraient sautés, et un saut fait
           # échouer cette porte.
           set +e
-          pytest -m "postgres and not perf and not sauvegarde" -v -rf 2>&1 | tee /tmp/pg.log
+          pytest -m "postgres and not perf and not sauvegarde and not redis_queue" -v -rf 2>&1 | tee /tmp/pg.log
           rc=${PIPESTATUS[0]}
           set -e
           if [ "$rc" -ne 0 ]; then
@@ -162,6 +165,40 @@ jobs:
             exit 1
           fi
           echo "::notice title=suite-postgres::pytest -m \"postgres and not perf and not sauvegarde\" : passed=$passed skipped=$skipped"
+      - name: Run durable queue suite (real Redis + real PostgreSQL, must actually run)
+        # Lot « file durable » : ces tests-là ne se contentent pas de mocks.
+        # Ils tuent un VRAI processus worker (SIGKILL), redémarrent un serveur
+        # Redis réel (AOF), reprennent un lot interrompu et comptent les fiches
+        # pour prouver l'absence de doublon. Le garde-fou ci-dessous refuserait
+        # un job vert où tout aurait été sauté : « passed > 0 et skipped == 0 ».
+        env:
+          SEAMTECH_TEST_REDIS_URL: redis://127.0.0.1:6379/1
+          SEAMTECH_TEST_DATABASE_URL: postgresql://seamtech:seamtech_test_password@localhost:5432/seamtech_search_test
+        run: |
+          set -uo pipefail
+          set +e
+          pytest -m "redis_queue" -v -rf 2>&1 | tee /tmp/redis_queue.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            echo "::error title=durable-queue-suite-failed::$(grep -E '^(FAILED|ERROR)' /tmp/redis_queue.log | head -25 | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 1500)"
+            echo "::error title=durable-queue-suite-tail::$(tail -45 /tmp/redis_queue.log | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 1800)"
+            exit "$rc"
+          fi
+          summary=$(tail -1 /tmp/redis_queue.log)
+          passed=$(echo "$summary" | grep -oE '[0-9]+ passed' | grep -oE '[0-9]+' || echo 0)
+          skipped=$(echo "$summary" | grep -oE '[0-9]+ skipped' | grep -oE '[0-9]+' || echo 0)
+          echo "Durable queue summary: passed=$passed skipped=$skipped"
+          if [ "${passed:-0}" -eq 0 ]; then
+            echo "::error title=durable-queue-did-not-run::0 test de file durable exécuté — Redis ou PostgreSQL non vu par la suite"
+            exit 1
+          fi
+          if [ "${skipped:-0}" -ne 0 ]; then
+            echo "::error title=durable-queue-skipped::$skipped test(s) de file durable sautés alors que les services sont annoncés"
+            exit 1
+          fi
+          echo "::notice title=suite-file-durable::pytest -m \"redis_queue\" : passed=$passed skipped=$skipped"
+
       - name: Garde-fou dimension — ROUGE puis VERT (correction 0.3 audit Lot J)
         if: matrix.python-version == '3.12'
         env:

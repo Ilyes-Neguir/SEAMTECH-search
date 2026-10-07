@@ -90,8 +90,15 @@ def create_job(
     source_path: str,
     status: str = "pending",
     stage: str = "queued",
+    durability: str = "durable",
 ) -> dict[str, Any]:
-    """Create a new job record in import_jobs."""
+    """Create a new job record in import_jobs.
+
+    ``durability`` dit la VÉRITÉ de l'acceptation : 'durable' (le job est dans
+    la file Redis, il survivra à ce processus), 'process_memory' (repli de
+    développement : le job meurt avec le processus) ou 'sync' (traité dans la
+    requête). Le champ est écrit à la création, jamais deviné plus tard.
+    """
     now_iso = datetime.now(timezone.utc).isoformat()
     with index.connect() as conn:
         if index.is_postgres:
@@ -99,19 +106,21 @@ def create_job(
                 cursor.execute(
                     """
                     INSERT INTO import_jobs (
-                        id, status, progress, stage, source_path, error, result, created_at, updated_at
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, now(), now())
+                        id, status, progress, stage, source_path, error, result,
+                        created_at, updated_at, durability
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, now(), now(), %s)
                     """,
-                    (job_id, status, 0, stage, source_path, None, None),
+                    (job_id, status, 0, stage, source_path, None, None, durability),
                 )
         else:
             conn.execute(
                 """
                 INSERT INTO import_jobs (
-                    id, status, progress, stage, source_path, error, result, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    id, status, progress, stage, source_path, error, result,
+                    created_at, updated_at, durability
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (job_id, status, 0, stage, source_path, None, None, now_iso, now_iso),
+                (job_id, status, 0, stage, source_path, None, None, now_iso, now_iso, durability),
             )
 
     return {
@@ -122,6 +131,7 @@ def create_job(
         "source_path": source_path,
         "error": None,
         "result": None,
+        "durability": durability,
         "created_at": now_iso,
         "updated_at": now_iso,
     }
@@ -214,7 +224,10 @@ def get_job(index: SearchIndex, job_id: str) -> dict[str, Any] | None:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
                 cursor.execute(
                     """
-                    SELECT id, status, progress, stage, source_path, error, result, created_at, updated_at
+                    SELECT id, status, progress, stage, source_path, error, result,
+                           created_at, updated_at, attempts, claimed_by,
+                           extract(epoch FROM heartbeat_at) AS heartbeat_epoch,
+                           failure_reason, durability
                     FROM import_jobs WHERE id = %s
                     """,
                     (job_id,),
@@ -231,7 +244,8 @@ def get_job(index: SearchIndex, job_id: str) -> dict[str, Any] | None:
 
         cursor = conn.execute(
             """
-            SELECT id, status, progress, stage, source_path, error, result, created_at, updated_at
+            SELECT id, status, progress, stage, source_path, error, result, created_at, updated_at,
+                   attempts, claimed_by, heartbeat_at, failure_reason, durability
             FROM import_jobs WHERE id = ?
             """,
             (job_id,),
@@ -256,6 +270,11 @@ def get_job(index: SearchIndex, job_id: str) -> dict[str, Any] | None:
             "result": parsed_result,
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
+            "attempts": row["attempts"] if "attempts" in row.keys() else 0,
+            "claimed_by": row["claimed_by"] if "claimed_by" in row.keys() else None,
+            "heartbeat_at": row["heartbeat_at"] if "heartbeat_at" in row.keys() else None,
+            "failure_reason": row["failure_reason"] if "failure_reason" in row.keys() else None,
+            "durability": row["durability"] if "durability" in row.keys() else None,
         }
 
 
@@ -271,12 +290,70 @@ def cancel_job(index: SearchIndex, job_id: str) -> dict[str, Any] | None:
     )
 
 
-def recover_stale_jobs(index: SearchIndex, heartbeat_threshold_seconds: int = 300) -> int:
-    """Mark running/pending jobs from prior crashed/restarted processes as failed.
+def recover_stale_jobs(
+    index: SearchIndex,
+    heartbeat_threshold_seconds: int = 300,
+    redis_store: Any | None = None,
+) -> int:
+    """Marque en échec les jobs abandonnés — mais PAS ceux qui attendent en file.
 
-    Scoped to jobs whose updated_at is older than heartbeat_threshold (4.7).
+    Défaut réel corrigé (2026-10-06) : la version précédente marquait en échec
+    tout job ``pending``/``running`` plus vieux que le seuil, y compris ceux qui
+    attendaient sagement dans la file Redis. Un backlog d'imports ralentissait le
+    traitement, et au bout de 5 minutes les jobs en attente s'auto-détruisaient
+    (« Server restarted while job was running ») — l'exploitant devait alors les
+    relancer à la main.
+
+    Désormais : on LISTE d'abord les candidats, on écarte ceux qui sont encore
+    dans la file (quand Redis est joignable), puis on ne marque en échec que les
+    vrais orphelins. La supervision (``jobs_actifs``) reste la même.
     """
+    from datetime import timedelta
+
+    cutoff_iso = (datetime.now(timezone.utc) - timedelta(seconds=heartbeat_threshold_seconds)).isoformat()
     with index.connect() as conn:
+        if index.is_postgres:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT id FROM import_jobs
+                    WHERE status IN ('pending', 'running')
+                      AND updated_at < now() - (%s || ' seconds')::interval
+                    """,
+                    (str(heartbeat_threshold_seconds),),
+                )
+                candidats = [str(ligne[0]) for ligne in cursor.fetchall()]
+        else:
+            candidats = [
+                str(ligne[0])
+                for ligne in conn.execute(
+                    """
+                    SELECT id FROM import_jobs
+                    WHERE status IN ('pending', 'running') AND updated_at < ?
+                    """,
+                    (cutoff_iso,),
+                ).fetchall()
+            ]
+
+        orphelins = candidats
+        if redis_store is not None and candidats:
+            restants: list[str] = []
+            for job_id in candidats:
+                try:
+                    if redis_store.job_est_dans_file(job_id):
+                        # Toujours en file : ce n'est pas un job mort, il attend.
+                        continue
+                except Exception as exc:
+                    # Dans le doute on ne marque PAS en échec : « attendre » est
+                    # réversible, « échoué » ne l'est pas.
+                    logger.debug("Présence en file indéterminée pour %s : %s", job_id, exc)
+                    continue
+                restants.append(job_id)
+            orphelins = restants
+
+        if not orphelins:
+            return 0
+
         if index.is_postgres:
             with conn.cursor() as cursor:
                 cursor.execute(
@@ -285,32 +362,253 @@ def recover_stale_jobs(index: SearchIndex, heartbeat_threshold_seconds: int = 30
                     SET status = 'failed',
                         stage = 'failed',
                         error = 'Server restarted while job was running',
+                        failure_reason = 'job orphelin au redémarrage (aucune trace en file)',
+                        claimed_by = NULL,
+                        heartbeat_at = NULL,
                         updated_at = now()
-                    WHERE status IN ('pending', 'running')
-                      AND updated_at < now() - (%s || ' seconds')::interval
+                    WHERE id = ANY(%s)
                     """,
-                    (str(heartbeat_threshold_seconds),),
+                    (orphelins,),
                 )
                 count = cursor.rowcount
         else:
-            from datetime import timedelta
-
             now_iso = datetime.now(timezone.utc).isoformat()
-            cutoff = (datetime.now(timezone.utc) - timedelta(seconds=heartbeat_threshold_seconds)).isoformat()
-            cursor = conn.execute(
-                """
-                UPDATE import_jobs
-                SET status = 'failed',
-                    stage = 'failed',
-                    error = 'Server restarted while job was running',
-                    updated_at = ?
-                WHERE status IN ('pending', 'running')
-                  AND updated_at < ?
-                """,
-                (now_iso, cutoff),
-            )
-            count = cursor.rowcount
+            count = 0
+            for job_id in orphelins:
+                cursor = conn.execute(
+                    """
+                    UPDATE import_jobs
+                    SET status = 'failed',
+                        stage = 'failed',
+                        error = 'Server restarted while job was running',
+                        failure_reason = 'job orphelin au redémarrage (aucune trace en file)',
+                        claimed_by = NULL,
+                        heartbeat_at = NULL,
+                        updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (now_iso, job_id),
+                )
+                count += cursor.rowcount
 
     if count > 0:
         logger.warning("Recovered %d stale import job(s) left in running/pending state.", count)
     return max(0, count)
+
+
+# ---------------------------------------------------------------------------
+# Durable job lifecycle (migration 020) — la base est le registre de vérité
+# ---------------------------------------------------------------------------
+#
+# États d'un job d'import et transitions autorisées :
+#
+#   pending   (queued)      → running (processing) → completed
+#                                                 → failed
+#                                                 → upload_incomplete / needs_review
+#                                                 → cancelled
+#   running   (processing)  → pending  (RECOVERABLE : worker mort, job remis
+#                                       en file — c'est l'état « récupérable »
+#                                       exposé par /health et /lots)
+#   pending   (queued)      → failed  avec failure_reason='dead_letter: …'
+#                                       quand les tentatives sont épuisées
+#
+# Aucun état « accepté durablement » n'est écrit pour un job resté en mémoire :
+# c'est la colonne ``durability`` qui le dit ('durable', 'process_memory',
+# 'sync'). Un job 'process_memory' disparaît avec son processus, c'est assumé
+# et visible.
+
+STATUTS_ACTIFS = ("pending", "running")
+STATUTS_TERMINAUX = ("completed", "failed", "cancelled", "upload_incomplete", "needs_review")
+
+
+def marquer_job_claim(index: SearchIndex, job_id: str, worker_id: str) -> bool:
+    """Enregistre le worker qui prend le job et incrémente le compteur de tentatives.
+
+    Retourne False si le job n'existe pas (jamais d'échec silencieux) : un
+    worker qui ne trouve pas sa ligne en base ne doit pas croire qu'il travaille
+    sur un job suivi.
+    """
+    now_iso = datetime.now(timezone.utc).isoformat()
+    with index.connect() as conn:
+        if index.is_postgres:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE import_jobs
+                    SET status = 'running', claimed_by = %s, heartbeat_at = now(),
+                        attempts = attempts + 1, stage = 'starting', updated_at = now()
+                    WHERE id = %s
+                    """,
+                    (worker_id, job_id),
+                )
+                return cursor.rowcount > 0
+        cursor = conn.execute(
+            """
+            UPDATE import_jobs
+            SET status = 'running', claimed_by = ?, heartbeat_at = ?, attempts = attempts + 1,
+                stage = 'starting', updated_at = ?
+            WHERE id = ?
+            """,
+            (worker_id, now_iso, now_iso, job_id),
+        )
+        return cursor.rowcount > 0
+
+
+def heartbeat_job(index: SearchIndex, job_id: str) -> bool:
+    """Met à jour le battement de cœur du job (supervision + reprise)."""
+    with index.connect() as conn:
+        if index.is_postgres:
+            with conn.cursor() as cursor:
+                cursor.execute("UPDATE import_jobs SET heartbeat_at = now() WHERE id = %s", (job_id,))
+                return cursor.rowcount > 0
+        now_iso = datetime.now(timezone.utc).isoformat()
+        cursor = conn.execute("UPDATE import_jobs SET heartbeat_at = ? WHERE id = ?", (now_iso, job_id))
+        return cursor.rowcount > 0
+
+
+def remettre_en_file(
+    index: SearchIndex,
+    job_id: str,
+    *,
+    raison: str,
+    tentative_durable: bool = True,
+) -> bool:
+    """Remet un job en attente (état RÉCUPÉRABLE) après la mort de son worker.
+
+    ``tentative_durable=False`` (redélivrance déjà épuisée) marque le job en
+    échec définitif AVEC la raison : c'est le seul chemin acceptable pour
+    « il ne sera plus jamais repris », jamais une disparition silencieuse.
+    """
+    now_iso = datetime.now(timezone.utc).isoformat()
+    with index.connect() as conn:
+        if index.is_postgres:
+            with conn.cursor() as cursor:
+                if tentative_durable:
+                    cursor.execute(
+                        """
+                        UPDATE import_jobs
+                        SET status = 'pending', stage = 'requeued', claimed_by = NULL,
+                            heartbeat_at = NULL, error = %s, failure_reason = %s, updated_at = now()
+                        WHERE id = %s AND status IN ('pending', 'running')
+                        """,
+                        (raison, raison, job_id),
+                    )
+                else:
+                    cursor.execute(
+                        """
+                        UPDATE import_jobs
+                        SET status = 'failed', stage = 'dead_letter', claimed_by = NULL,
+                            heartbeat_at = NULL, error = %s, failure_reason = %s, updated_at = now()
+                        WHERE id = %s AND status IN ('pending', 'running')
+                        """,
+                        (raison, raison, job_id),
+                    )
+                return cursor.rowcount > 0
+        if tentative_durable:
+            cursor = conn.execute(
+                """
+                UPDATE import_jobs
+                SET status = 'pending', stage = 'requeued', claimed_by = NULL,
+                    heartbeat_at = NULL, error = ?, failure_reason = ?, updated_at = ?
+                WHERE id = ? AND status IN ('pending', 'running')
+                """,
+                (raison, raison, now_iso, job_id),
+            )
+        else:
+            cursor = conn.execute(
+                """
+                UPDATE import_jobs
+                SET status = 'failed', stage = 'dead_letter', claimed_by = NULL,
+                    heartbeat_at = NULL, error = ?, failure_reason = ?, updated_at = ?
+                WHERE id = ? AND status IN ('pending', 'running')
+                """,
+                (raison, raison, now_iso, job_id),
+            )
+        return cursor.rowcount > 0
+
+
+def terminer_job(
+    index: SearchIndex,
+    job_id: str,
+    *,
+    status: str,
+    failure_reason: str | None = None,
+) -> bool:
+    """Ferme un job : libère le worker propriétaire et trace la raison."""
+    now_iso = datetime.now(timezone.utc).isoformat()
+    with index.connect() as conn:
+        if index.is_postgres:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE import_jobs
+                    SET status = %s, claimed_by = NULL, heartbeat_at = NULL,
+                        failure_reason = %s, updated_at = now()
+                    WHERE id = %s
+                    """,
+                    (status, failure_reason, job_id),
+                )
+                return cursor.rowcount > 0
+        cursor = conn.execute(
+            """
+            UPDATE import_jobs
+            SET status = ?, claimed_by = NULL, heartbeat_at = NULL,
+                failure_reason = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (status, failure_reason, now_iso, job_id),
+        )
+        return cursor.rowcount > 0
+
+
+def compter_jobs_par_statut(index: SearchIndex) -> dict[str, int]:
+    """Comptage par statut pour /health : les jobs actifs ne doivent jamais
+    être invisibles pour l'exploitant."""
+    with index.connect() as conn:
+        if index.is_postgres:
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT status, count(*) FROM import_jobs GROUP BY status")
+                lignes = cursor.fetchall()
+        else:
+            lignes = conn.execute("SELECT status, count(*) FROM import_jobs GROUP BY status").fetchall()
+    return {str(ligne[0]): int(ligne[1]) for ligne in lignes}
+
+
+def jobs_actifs(index: SearchIndex, limite: int = 20) -> list[dict[str, Any]]:
+    """Jobs en attente ou en cours, avec worker propriétaire et ancienneté.
+
+    Sert la supervision opérateur (« qui traite quoi, depuis quand ») sans
+    lire Redis : c'est la base qui répond.
+    """
+    with index.connect() as conn:
+        if index.is_postgres:
+            import psycopg2.extras
+
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
+                cursor.execute(
+                    """
+                    SELECT id, status, stage, progress, claimed_by, attempts,
+                           extract(epoch FROM heartbeat_at) AS heartbeat_epoch,
+                           extract(epoch FROM updated_at) AS updated_epoch,
+                           source_path, error, durability
+                    FROM import_jobs
+                    WHERE status IN ('pending', 'running')
+                    ORDER BY updated_at DESC
+                    LIMIT %s
+                    """,
+                    (limite,),
+                )
+                return [dict(ligne) for ligne in cursor.fetchall()]
+        lignes = conn.execute(
+            """
+            SELECT id, status, stage, progress, claimed_by, attempts,
+                   NULL AS heartbeat_epoch, NULL AS updated_epoch,
+                   source_path, error, durability
+            FROM import_jobs
+            WHERE status IN ('pending', 'running')
+            ORDER BY updated_at DESC
+            LIMIT ?
+            """,
+            (limite,),
+        ).fetchall()
+    return [dict(ligne) for ligne in lignes]

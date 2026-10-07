@@ -1,4 +1,4 @@
-"""Schéma métier « fiche technique » — migrations 006 à 019 (Lots A → Phase 1).
+"""Schéma métier « fiche technique » — migrations 006 à 020 (Lots A → file durable).
 
 DÉCISION DE COUCHE ACTÉE (plan v3.0 §17.1) : la couche métier est
 **PostgreSQL uniquement**. Elle s'appuie sur pgvector, pg_trgm, les index GIN,
@@ -26,7 +26,7 @@ from __future__ import annotations
 from typing import Any
 
 # Version du schéma métier — incrémentée à chaque nouvelle migration.
-VERSION_SCHEMA_METIER = "019_recherche_dimension"
+VERSION_SCHEMA_METIER = "020_file_durable"
 
 # Marqueur injecté par le code au moment de la migration (constat 1 de revue) :
 # le nom de la configuration de recherche effective — 'seamtech_unaccent' ou
@@ -1294,6 +1294,53 @@ END
 $seamtech_backfill$;
 """
 
+SQL_020_FILE_DURABLE = """
+-- ============================================================================
+-- 020_file_durable — imports durables et traçables (file Redis + worker séparé)
+-- ============================================================================
+-- Motivations mesurées (voir docs/FILE_DURABLE.md) :
+--   * un job dont le worker meurt était marqué « failed » sans trace de la
+--     tentative ni du worker propriétaire : impossible de savoir qui traitait
+--     quoi, ni combien de fois ;
+--   * le lot multi-dossiers (porte A bis) restait « en_cours » à jamais après
+--     un redémarrage du serveur web : aucun état terminal, aucune reprise ;
+--   * une livraison dupliquée (redelivery Redis) relançait l'import complet.
+--
+-- La BASE reste le registre de vérité (le prompt de mission l'exige) : ces
+-- colonnes décrivent l'état durable d'un job, Redis ne fait que transporter.
+-- Toutes additives et idempotentes : un rejeu après échec partiel est sans
+-- effet, et une base déjà à jour n'est pas modifiée.
+
+ALTER TABLE import_jobs ADD COLUMN IF NOT EXISTS attempts INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE import_jobs ADD COLUMN IF NOT EXISTS claimed_by TEXT;
+ALTER TABLE import_jobs ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMPTZ;
+ALTER TABLE import_jobs ADD COLUMN IF NOT EXISTS failure_reason TEXT;
+-- durability : "durable" (accepté par la file Redis), "process_memory"
+-- (repli de développement, perdu si le processus meurt), "sync" (traité dans
+-- la requête HTTP). Un état « accepté durablement » ne doit jamais être
+-- rapporté pour un job resté en mémoire.
+ALTER TABLE import_jobs ADD COLUMN IF NOT EXISTS durability TEXT NOT NULL DEFAULT 'durable';
+
+-- Les états terminaux doivent être lisibles sans jointure : index partiel sur
+-- les jobs actifs (requête de supervision : combien de jobs en vol, qui les
+-- détient, depuis quand).
+CREATE INDEX IF NOT EXISTS idx_import_jobs_actifs
+    ON import_jobs (status, heartbeat_at DESC)
+    WHERE status IN ('pending', 'running');
+
+-- Statut de lot : ajout de « annule » (arrêt volontaire, distinct d'un échec)
+-- et de « relance » (lot repris après une interruption). Le CHECK d'origine
+-- est remplacé, jamais contourné : une valeur inconnue reste refusée.
+ALTER TABLE lot_import DROP CONSTRAINT IF EXISTS lot_import_statut_check;
+ALTER TABLE lot_import ADD CONSTRAINT lot_import_statut_check
+    CHECK (statut IN ('en_cours', 'termine', 'interrompu', 'annule', 'relance'));
+ALTER TABLE lot_import ADD COLUMN IF NOT EXISTS annule_le TIMESTAMPTZ;
+-- Le worker propriétaire d'un lot : sans cette colonne, un lot resté
+-- « en_cours » après la mort d'un worker est indistinguable d'un lot en cours.
+ALTER TABLE lot_import ADD COLUMN IF NOT EXISTS worker_id TEXT;
+ALTER TABLE lot_import ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMPTZ;
+"""
+
 MIGRATIONS_METIER: tuple[tuple[str, str], ...] = (
     ("006_fiche_technique", SQL_006_FICHE_TECHNIQUE),
     ("007_recherche_index", SQL_007_RECHERCHE_INDEX),
@@ -1309,6 +1356,7 @@ MIGRATIONS_METIER: tuple[tuple[str, str], ...] = (
     ("017_ocr_etage3", SQL_017_OCR_ETAGE3),
     ("018_recherche_a_valider", SQL_018_RECHERCHE_A_VALIDER),
     ("019_recherche_dimension", SQL_019_RECHERCHE_DIMENSION),
+    ("020_file_durable", SQL_020_FILE_DURABLE),
 )
 
 

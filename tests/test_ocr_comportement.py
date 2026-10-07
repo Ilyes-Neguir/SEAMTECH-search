@@ -986,7 +986,8 @@ def test_migration_019_existe() -> None:
 def test_version_schema_et_tables() -> None:
     from seamtech_search.schema_metier import TABLES_METIER, VERSION_SCHEMA_METIER
 
-    assert VERSION_SCHEMA_METIER == "019_recherche_dimension"
-    # 019 n'ajoute AUCUNE table (cotes indexées dans le texte pondéré) : 33.
+    assert VERSION_SCHEMA_METIER == "020_file_durable"
+    # 019 et 020 n'ajoutent AUCUNE table (texte pondéré, puis colonnes de
+    # supervision des imports) : le compte de tables reste 33.
     assert len(TABLES_METIER) == 33
     assert "ocr_etage3" in TABLES_METIER

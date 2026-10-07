@@ -65,9 +65,11 @@ Start the complete stack with one command:
 docker compose up -d --build
 ```
 
-The `web` service waits for healthy PostgreSQL, MinIO, and Redis. The `frontend`
-service waits for a healthy `web` service. Watch the real container health state
-rather than assuming that a successful `up -d` means the application is ready:
+The `web` service waits for healthy PostgreSQL, MinIO, and Redis. The `worker`
+service (which actually executes imports) waits for the same three. The
+`frontend` service waits for a healthy `web` service. Watch the real container
+health state rather than assuming that a successful `up -d` means the
+application is ready:
 
 ```powershell
 docker compose ps
@@ -78,9 +80,51 @@ The frontend health response should be HTTP 200 and report the backend health
 payload. If a service is unhealthy, inspect its logs before restarting it:
 
 ```powershell
-docker compose logs --tail 100 web frontend postgres minio redis
+docker compose logs --tail 100 web worker frontend postgres minio redis
 docker compose ps
 ```
+
+### The worker service (why imports survive a restart)
+
+`web` accepts imports but does **not** execute them: the environment sets
+`SEAMTECH_WEB_WORKER_ENABLED=false`. Execution belongs to the `worker` service
+(`python -m seamtech_search.worker_service`), which consumes the durable Redis
+queue. Three consequences the operator should know:
+
+* restarting or upgrading `web` (including `docker compose up -d --build web`)
+  does not interrupt a running import;
+* if Redis is unreachable, `SEAMTECH_REQUIRE_DURABLE_QUEUE=true` makes the API
+  answer **503 and refuse the import** instead of accepting it and losing it —
+  an honest refusal, visible in the UI;
+* the `worker` healthcheck runs `--verifier`, which exits non-zero when Redis
+  cannot be reached and prints the queue depth, the jobs per status, and the
+  live workers. A worker that cannot work is therefore *unhealthy*, not green.
+* `SEAMTECH_STORAGE_VERIFY_REREAD` (default `true`, passed to both `web` and
+  `worker` by `docker-compose.yml`) controls whether an upload is verified by
+  **reading the stored bytes back** (`GET` + SHA-256) before the local draft is
+  deleted. Setting it to `false` does **not** speed anything up safely: with no
+  read-back, every artifact is only "metadata echoed by us", which is not proof,
+  so **the worker refuses to purge the local copy** and says why
+  (`intégrité non prouvée (…) — copie locale conservée`). Leave it `true` unless
+  you have a provider-side whole-object checksum and know that is what you rely
+  on.
+
+Useful commands:
+
+```powershell
+# Is the worker able to work? (queue depth, jobs per status, live workers)
+docker compose exec -T worker python -m seamtech_search.worker_service --verifier
+
+# Failed imports, with the recorded reason (never a silent failure)
+docker compose exec -T postgres psql -U seamtech -d seamtech_search -c `
+  "SELECT id, status, attempts, claimed_by, failure_reason FROM import_jobs WHERE status = 'failed' ORDER BY updated_at DESC LIMIT 20;"
+
+# Queue depth as the API reports it
+docker compose exec -T web python -c "import json,os,urllib.request;r=urllib.request.Request('http://127.0.0.1:8000/health',headers={'X-SEAMTECH-TOKEN':os.environ['SEAMTECH_AUTH_TOKEN']});print(json.dumps(json.load(urllib.request.urlopen(r))['queue'],indent=2))"
+```
+
+Full contract, limits and what is *not* guaranteed:
+`docs/FILE_DURABLE.md`.
 
 ## Authentication
 
@@ -171,7 +215,10 @@ and the backend on their loopback/container network endpoints.
 ## Updates and shutdown
 
 Pull a reviewed revision, then rebuild the application images. Compose preserves
-the named data volumes and restarts services in dependency order:
+the named data volumes and restarts services in dependency order. The `worker`
+service is rebuilt and restarted too; an import in progress is finished by the
+old container or, if it is killed, resumed by the new one once its claim
+expires (≤ 5 min by default):
 
 ```powershell
 git pull
@@ -212,6 +259,15 @@ new stack has passed the frontend health check and a representative search.
 - **Compose refuses to parse:** confirm every `:?` variable in `.env` is set,
   especially `REDIS_PASSWORD`, `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD`, and
   `SEAMTECH_AUTH_TOKEN`; run `docker compose config --quiet`.
+- **Imports stay `pending` / the queue grows:** the `worker` service is the only
+  consumer. Check `docker compose ps worker` and
+  `docker compose exec -T worker python -m seamtech_search.worker_service --verifier`.
+  Exit code 2 means Redis is unreachable from the worker; fix Redis before
+  relaunching imports.
+- **An import is refused with HTTP 503:** this is deliberate. `web` requires a
+  durable queue (`SEAMTECH_REQUIRE_DURABLE_QUEUE=true`) and Redis is down, so
+  nothing was accepted. Bring Redis back and submit again — no partial job was
+  created.
 - **`web` is unhealthy:** inspect `docker compose logs web postgres minio redis`.
   Confirm the three dependency containers are healthy and that the credentials
   in `.env` match the first-created volumes.

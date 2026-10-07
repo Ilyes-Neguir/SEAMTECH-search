@@ -47,6 +47,11 @@ INVENTAIRE_S3_REEL = {
     # ensure_bucket_exists / upload_file / get_presigned_url / delete_file.
     "tests/test_integration_docker.py::test_docker_compose_infra",
     "tests/test_integration_docker.py::test_api_with_real_backends",
+    # job `integration` : deux CONTENEURS séparés (web + worker) sur la même
+    # pile, MinIO vivant pour l'envoi des documents et le téléchargement du
+    # rapport généré. C'est la preuve que le worker distinct partage réellement
+    # les volumes (fichiers téléversés, brouillons, quarantaine, modèles).
+    "tests/test_compose_partage_worker.py::test_web_et_worker_partagent_volumes_et_fichiers",
     # job `sauvegarde` : aller-retour hors-site contre un VRAI bucket.
     "tests/test_sauvegarde_restauration.py::test_aller_retour_via_client_s3_reel",
     # épreuve de conformité d'un endpoint réel (SEAMTECH_TEST_S3_URL).
@@ -89,9 +94,12 @@ CATEGORIES = ("postgres", "s3", "perf", "sauvegarde")
 
 #: Commandes de sélection attendues dans le workflow (contrat explicite : si
 #: quelqu'un les rétrograde vers `-k`, ce test devient rouge).
-COMMANDE_SUITE_SANS_SERVICE = 'pytest -q -rf -m "not postgres and not s3 and not perf"'
+COMMANDE_SUITE_SANS_SERVICE = 'pytest -q -rf -m "not postgres and not s3 and not perf and not redis_queue"'
 COMMANDE_COUVERTURE = 'pytest -m "not s3 and not perf"'
-COMMANDE_POSTGRES = 'pytest -m "postgres and not perf and not sauvegarde"'
+COMMANDE_POSTGRES = 'pytest -m "postgres and not perf and not sauvegarde and not redis_queue"'
+#: File durable (Lot « imports durables ») : Redis réel + worker réel. Marquée
+#: à part pour que sa CI ne puisse pas être verte par simple SKIP.
+COMMANDE_FILE_DURABLE = 'pytest -m "redis_queue" -v -rf'
 COMMANDE_PERF = "pytest -q -m perf -rf"
 
 
@@ -284,9 +292,15 @@ def test_aucune_commande_ci_n_exclut_une_categorie_par_sous_chaine() -> None:
 
 
 def test_les_commandes_de_selection_attendues_sont_bien_celles_du_workflow() -> None:
-    """Contrat explicite des 4 sélections : suite sans service, couverture, PostgreSQL, perf."""
+    """Contrat explicite des 5 sélections : sans service, couverture, PostgreSQL, file durable, perf."""
     contenu = CI.read_text(encoding="utf-8")
-    for commande in (COMMANDE_SUITE_SANS_SERVICE, COMMANDE_COUVERTURE, COMMANDE_POSTGRES, COMMANDE_PERF):
+    for commande in (
+        COMMANDE_SUITE_SANS_SERVICE,
+        COMMANDE_COUVERTURE,
+        COMMANDE_POSTGRES,
+        COMMANDE_FILE_DURABLE,
+        COMMANDE_PERF,
+    ):
         assert commande in contenu, f"commande de sélection absente du workflow : {commande}"
 
 

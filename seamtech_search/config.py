@@ -66,6 +66,30 @@ class AppConfig(BaseModel):
 
     # Redis settings
     redis_url: str | None = None
+    # Exiger une acceptation DURABLE : quand vrai, une API sans Redis joignable
+    # refuse le job (503) au lieu de le garder en mémoire. Défaut False pour ne
+    # pas casser les postes de développement ; la composition de production le
+    # passe à true, et un repli mémoire est alors toujours ANNONCÉ dans la
+    # réponse 202 (`durability: "process_memory"`).
+    #: Relecture de chaque objet après envoi (empreinte recalculée sur les
+    #: octets stockés). C'est la SEULE preuve d'intégrité côté fournisseur :
+    #: une métadonnée envoyée par l'application ne prouve rien. La désactiver
+    #: n'accélère pas « sans risque » — elle interdit la purge locale, puisque
+    #: plus rien ne prouve que l'objet stocké est le bon.
+    storage_verify_reread: bool = True
+    require_durable_queue: bool = False
+    # Durée de vie du verrou (claim) d'une tâche : au-delà, un worker muet est
+    # considéré mort et sa tâche est reprise. À majorer sur un serveur lent.
+    task_claim_ttl_seconds: int = Field(default=300, ge=15)
+    # Nombre de tentatives avant lettre morte (le job reste visible, jamais perdu).
+    max_task_attempts: int = Field(default=3, ge=1, le=20)
+    # Intervalle de balayage des tâches orphelines dans la boucle du worker.
+    queue_reclaim_interval_seconds: float = Field(default=30.0, ge=1.0)
+    # Le processus web démarre-t-il un worker en fil d'arrière-plan ? Vrai par
+    # défaut (compatibilité mono-conteneur) ; la composition de production le
+    # met à false et fait tourner un service `worker` séparé, pour que
+    # l'exécution des jobs ne dépende pas du cycle de vie du serveur web.
+    web_worker_enabled: bool = True
 
     # Database connection pool settings
     pool_min: int = Field(default=1, ge=1)
@@ -142,6 +166,34 @@ class AppConfig(BaseModel):
             data["s3_endpoint_url"] = os.environ["SEAMTECH_S3_ENDPOINT_URL"]
         if os.environ.get("SEAMTECH_S3_BUCKET"):
             data["s3_bucket"] = os.environ["SEAMTECH_S3_BUCKET"]
+        # NOTE : la variable lue est bien SEAMTECH_STORAGE_VERIFY_REREAD. Une
+        # version antérieure testait SEAMTECH_REQUIRE_DURABLE_QUEUE puis
+        # indexait SEAMTECH_STORAGE_VERIFY_REREAD : dès que la durabilité était
+        # exigée sans que la variable de relecture soit posée, AppConfig.load
+        # levait KeyError — le conteneur `web` documenté ne démarrait plus.
+        if os.environ.get("SEAMTECH_STORAGE_VERIFY_REREAD") is not None:
+            data["storage_verify_reread"] = os.environ["SEAMTECH_STORAGE_VERIFY_REREAD"].strip().lower() in {
+                "1",
+                "true",
+                "yes",
+                "on",
+            }
+        if os.environ.get("SEAMTECH_REQUIRE_DURABLE_QUEUE"):
+            data["require_durable_queue"] = os.environ["SEAMTECH_REQUIRE_DURABLE_QUEUE"].strip().lower() in {
+                "1",
+                "true",
+                "yes",
+            }
+        if os.environ.get("SEAMTECH_TASK_CLAIM_TTL_SECONDS"):
+            data["task_claim_ttl_seconds"] = int(os.environ["SEAMTECH_TASK_CLAIM_TTL_SECONDS"])
+        if os.environ.get("SEAMTECH_MAX_TASK_ATTEMPTS"):
+            data["max_task_attempts"] = int(os.environ["SEAMTECH_MAX_TASK_ATTEMPTS"])
+        if os.environ.get("SEAMTECH_WEB_WORKER_ENABLED"):
+            data["web_worker_enabled"] = os.environ["SEAMTECH_WEB_WORKER_ENABLED"].strip().lower() in {
+                "1",
+                "true",
+                "yes",
+            }
         if os.environ.get("SEAMTECH_S3_ACCESS_KEY"):
             data["s3_access_key"] = os.environ["SEAMTECH_S3_ACCESS_KEY"]
         if os.environ.get("SEAMTECH_S3_SECRET_KEY"):

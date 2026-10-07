@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 
 from .audit import actor_fingerprint, get_audit_logs, record_audit_event
 from .config import AppConfig
+from .etat_exploitation import etat_sauvegarde, s3_credential_kind
 from .extractors import extract_file
 from .import_pipeline import (
     ImportResult,
@@ -34,8 +35,10 @@ from .jobs import (
     ImportCancelledError,
     cancel_job,
     clear_job_cancel,
+    compter_jobs_par_statut,
     create_job,
     get_job,
+    jobs_actifs,
     make_cancel_checker,
     recover_stale_jobs,
     update_job,
@@ -43,7 +46,7 @@ from .jobs import (
 from .redis_store import RedisStore
 from .retention import InsufficientStorageError, ensure_free_space, run_retention_cleanup
 from .storage import S3StorageClient
-from .worker import start_background_worker, stop_background_worker
+from .worker import file_durable_disponible, start_background_worker, stop_background_worker
 
 logger = logging.getLogger("seamtech_search.api")
 
@@ -196,7 +199,7 @@ def create_app(config: AppConfig) -> FastAPI:
                     "Échec de la graine des gabarits — conséquence : les dépôts seront "
                     "refusés « gabarit inconnu » tant que la table reste vide."
                 )
-        recovered = recover_stale_jobs(index)
+        recovered = recover_stale_jobs(index, redis_store=redis_store)
         if recovered > 0:
             logger.info("Recovered %d stale import jobs on startup", recovered)
         start_background_worker(config, index, redis_store)
@@ -351,12 +354,32 @@ def create_app(config: AppConfig) -> FastAPI:
             if storage_client is not None
             else {"versioning_available": None, "versioning_detail": "object storage is not configured"}
         )
-        deadletter_count = 0
+        file_operationnelle = file_durable_disponible(redis_store)
+        file: dict[str, object] = {
+            "configured": redis_store.is_configured(),
+            "durable": file_operationnelle,
+            "require_durable": config.require_durable_queue,
+            "web_worker_enabled": config.web_worker_enabled,
+        }
+        if file_operationnelle:
+            try:
+                file.update(redis_store.profondeur_file("imports"))
+                file["workers_vivants"] = [w.get("worker_id") for w in redis_store.workers_vivants()]
+                file["dead_letters"] = redis_store.get_deadletters("imports", limit=20)
+            except Exception as exc:
+                logger.warning("Supervision de la file indisponible : %s", exc)
+
+        # Supervision métier : l'exploitant doit voir, sans requête SQL, ce qui
+        # est en attente, ce qui tourne, ce qui a échoué et pourquoi.
+        jobs_par_statut: dict[str, int] = {}
+        jobs_en_cours: list[dict[str, object]] = []
         try:
-            if redis_store.is_configured():
-                deadletter_count = redis_store.get_deadletter_count("imports")
-        except Exception:
-            deadletter_count = 0
+            jobs_par_statut = compter_jobs_par_statut(index)
+            jobs_en_cours = jobs_actifs(index, limite=20)
+        except Exception as exc:
+            logger.warning("Comptage des jobs indisponible : %s", exc)
+
+        sauvegarde = etat_sauvegarde(config)
 
         return {
             "status": "ok",
@@ -370,7 +393,16 @@ def create_app(config: AppConfig) -> FastAPI:
             "redis_connected": redis_store.ping() if redis_store.is_configured() else None,
             "storage_backend": config.storage_backend,
             "s3_configured": bool(config.s3_endpoint_url or config.s3_access_key),
-            "upload_dead_letters": deadletter_count,
+            "s3_credentials": s3_credential_kind(config),
+            "upload_dead_letters": len(file.get("dead_letters", [])) if isinstance(file.get("dead_letters"), list) else 0,
+            "queue": file,
+            "jobs": {
+                "par_statut": jobs_par_statut,
+                "echecs": jobs_par_statut.get("failed", 0),
+                "en_cours": jobs_en_cours,
+                "recoverables": jobs_par_statut.get("pending", 0),
+            },
+            "backup": sauvegarde,
             # Read-only probe (never puts versioning): False means the endpoint
             # cannot version (Cloudflare R2), None means "could not find out".
             **versioning,
@@ -651,20 +683,50 @@ def create_app(config: AppConfig) -> FastAPI:
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
 
-        create_job(index, job_id, request_body.source_path, status="pending", stage="queued")
-        if redis_store.is_configured() and redis_store.ping():
-            task_payload = {
-                "job_id": job_id,
-                "source_path": request_body.source_path,
-                "selected_pdf": None,
-                "selected_excel": request_body.excel_file,
-            }
+        task_payload = {
+            "job_id": job_id,
+            "source_path": request_body.source_path,
+            "selected_pdf": None,
+            "selected_excel": request_body.excel_file,
+        }
+        durable = file_durable_disponible(redis_store)
+        if not durable and config.require_durable_queue:
+            record_audit_event(
+                index,
+                action="import_create",
+                actor=actor,
+                resource=job_id,
+                status="503",
+                details={"reason": "file durable indisponible"},
+            )
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "File d'attente durable indisponible (Redis injoignable) : l'import est refusé "
+                    "plutôt qu'accepté en mémoire. Réessayez quand le service est revenu, "
+                    "ou démarrez le worker (docker compose up -d redis worker)."
+                ),
+            )
+        create_job(
+            index,
+            job_id,
+            request_body.source_path,
+            status="pending",
+            stage="queued",
+            durability="durable" if durable else "process_memory",
+        )
+        if durable:
             redis_store.set_job(
                 job_id,
                 {"id": job_id, "status": "pending", "progress": 0, "stage": "queued", "source_path": request_body.source_path},
             )
             redis_store.enqueue_task("imports", task_payload)
         else:
+            logger.warning(
+                "Redis indisponible : job %s accepté EN MÉMOIRE DE PROCESSUS (repli de développement). "
+                "Conséquence : il ne survivra pas à un redémarrage du serveur.",
+                job_id,
+            )
             task = asyncio.create_task(asyncio.to_thread(_execute_import_background, job_id, source, None, excel_path))
             background_tasks.add(task)
             task.add_done_callback(background_tasks.discard)
@@ -675,7 +737,7 @@ def create_app(config: AppConfig) -> FastAPI:
             actor=actor,
             resource=job_id,
             status="accepted",
-            details={"async": True},
+            details={"async": True, "durability": "durable" if durable else "process_memory"},
         )
 
         return JSONResponse(
@@ -688,6 +750,8 @@ def create_app(config: AppConfig) -> FastAPI:
                 "progress": 0,
                 "stage": "queued",
                 "source_path": request_body.source_path,
+                "durability": "durable" if durable else "process_memory",
+                "durable": durable,
             },
         )
 
@@ -750,20 +814,48 @@ def create_app(config: AppConfig) -> FastAPI:
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-        create_job(index, job_id, request_body.source_path, status="pending", stage="queued")
-        if redis_store.is_configured() and redis_store.ping():
-            task_payload = {
-                "job_id": job_id,
-                "source_path": request_body.source_path,
-                "selected_pdf": str(technical_pdf),
-                "selected_excel": str(excel_path) if excel_path else None,
-            }
+        task_payload = {
+            "job_id": job_id,
+            "source_path": request_body.source_path,
+            "selected_pdf": str(technical_pdf),
+            "selected_excel": str(excel_path) if excel_path else None,
+        }
+        durable = file_durable_disponible(redis_store)
+        if not durable and config.require_durable_queue:
+            record_audit_event(
+                index,
+                action="import_confirm",
+                actor=actor,
+                resource=job_id,
+                status="503",
+                details={"reason": "file durable indisponible"},
+            )
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "File d'attente durable indisponible (Redis injoignable) : l'import est refusé "
+                    "plutôt qu'accepté en mémoire. Réessayez quand le service est revenu."
+                ),
+            )
+        create_job(
+            index,
+            job_id,
+            request_body.source_path,
+            status="pending",
+            stage="queued",
+            durability="durable" if durable else "process_memory",
+        )
+        if durable:
             redis_store.set_job(
                 job_id,
                 {"id": job_id, "status": "pending", "progress": 0, "stage": "queued", "source_path": request_body.source_path},
             )
             redis_store.enqueue_task("imports", task_payload)
         else:
+            logger.warning(
+                "Redis indisponible : import %s accepté EN MÉMOIRE DE PROCESSUS (repli de développement).",
+                job_id,
+            )
             task = asyncio.create_task(
                 asyncio.to_thread(_execute_import_background, job_id, source, technical_pdf, excel_path)
             )
@@ -775,7 +867,7 @@ def create_app(config: AppConfig) -> FastAPI:
             actor=actor,
             resource=job_id,
             status="accepted",
-            details={"async": True},
+            details={"async": True, "durability": "durable" if durable else "process_memory"},
         )
         return JSONResponse(
             status_code=202,
@@ -787,6 +879,8 @@ def create_app(config: AppConfig) -> FastAPI:
                 "progress": 0,
                 "stage": "queued",
                 "source_path": request_body.source_path,
+                "durability": "durable" if durable else "process_memory",
+                "durable": durable,
             },
         )
 
