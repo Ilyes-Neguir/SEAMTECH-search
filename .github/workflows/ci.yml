@@ -1075,23 +1075,45 @@ jobs:
           import json
           import os
 
+          # Toute sortie du garde-fou est PUBLIÉE en annotation `::error` : le
+          # job 112850611086 (run 37638410974) a échoué SANS annotation, et son
+          # journal est inaccessible depuis cette session — un échec sans cause
+          # lisible coûte une passe entière. Un garde-fou qui refuse doit dire
+          # ce qu'il a mesuré.
+          def refuser(message: str) -> "NoReturn":  # noqa: F821
+              print(f"::error title=concurrence-garde-fou::{message}")
+              raise SystemExit(message)
+
           if not os.path.exists("report-concurrence.json"):
-              raise SystemExit(
-                  "GARDE-FOU concurrence : report-concurrence.json absent — "
-                  "PLAYWRIGHT_JSON_OUTPUT_NAME doit être positionné."
+              refuser(
+                  "report-concurrence.json absent — PLAYWRIGHT_JSON_OUTPUT_NAME "
+                  "doit être positionné (rien n'a été mesuré)."
               )
           d = json.load(open("report-concurrence.json"))
           stats = d["stats"]
           passes = stats["expected"]
           flaky = stats.get("flaky", 0)
           sautes = stats.get("skipped", 0)
+          inattendus = stats.get("unexpected", 0)
           # 4 scénarios de concurrence, TOUS exécutés (aucun saut : la base
           # PostgreSQL est fournie par le job), aucun rattrapé par retry.
+          # Titres (déjà publics : noms de tests du dépôt) des specs non vertes.
+          fautives: list[str] = []
+
+          def parcourir(suites: list[dict]) -> None:
+              for suite in suites or []:
+                  for spec in suite.get("specs") or []:
+                      if not spec.get("ok"):
+                          fautives.append(str(spec.get("title", "?")))
+                  parcourir(suite.get("suites") or [])
+
           if sautes or flaky or passes != 4:
-              raise SystemExit(
-                  "GARDE-FOU concurrence : attendu 4 tests passés au premier essai, "
-                  f"0 flaky, 0 sautés — mesuré {passes} passés, {flaky} flaky, "
-                  f"{sautes} sautés. Un test de concurrence sauté ne prouve RIEN."
+              parcourir(d.get("suites") or [])
+              refuser(
+                  f"attendu 4 tests passés au premier essai, 0 flaky, 0 sautés — "
+                  f"mesuré {passes} passés, {flaky} flaky, {sautes} sautés, "
+                  f"{inattendus} en échec. Tests non verts : "
+                  + ("; ".join(fautives[:5]) if fautives else "aucun nom lisible")
               )
           print(
               "Concurrence : 4 scénarios multi-sessions exécutés au premier essai "

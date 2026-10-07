@@ -115,10 +115,16 @@ test.describe("concurrence entre postes (sessions indépendantes)", () => {
       if ((await poste.locator(selecteur).count()) === 0) continue
       const testid = (await premier.getAttribute("data-testid")) ?? ""
       if (!testid.startsWith("champ-")) continue
-      // L'identifiant doit désigner UN SEUL champ de l'écran : sinon le
-      // sélecteur viserait peut-être un autre rang que celui observé en base.
-      if ((await poste.locator(`input[data-testid="${testid}"]`).count()) !== 1) continue
-      return { selecteur, champ: testid.slice("champ-".length) }
+      // L'identifiant doit désigner UN SEUL champ de l'écran : sinon le champ
+      // existe en plusieurs rangs (même `data-testid`), la preuve « la valeur
+      // du collègue est intacte » porterait peut-être sur un autre rang que
+      // celui lu en base, et un sélecteur de PRÉFIXE ferait échouer Playwright
+      // en mode strict (« resolved to N elements ») — un flake, pas une preuve.
+      const exact = `input[data-testid="${testid}"]`
+      if ((await poste.locator(exact).count()) !== 1) continue
+      // On rend TOUJOURS le sélecteur exact : la liste de candidats sert à
+      // choisir, jamais à interroger l'écran.
+      return { selecteur: exact, champ: testid.slice("champ-".length) }
     }
     throw new Error("aucun champ corrigeable UNIQUE (et présent) trouvé sur la fiche")
   }
