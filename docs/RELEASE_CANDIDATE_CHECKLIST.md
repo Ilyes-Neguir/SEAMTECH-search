@@ -11,8 +11,12 @@ rempli, daté et signé.
 > **Ce qui reste bloqué et ne peut donc PAS être coché ici**
 >
 > - **Échelle de production non mesurée** : le corpus fourni de 7 ZIP est traité par la recette CI, mais les 200 dossiers/volumes du poste cible et leur durée d'import restent à mesurer sur l'infrastructure du commanditaire.
-> - **F-2 bloqué** : les 300 à 500 fiches validées nécessaires au réentraînement ne sont
->   pas disponibles ; la calibration reste volontairement verrouillée (`calibre: false`).
+> - **F-2 bloqué — mais SEULEMENT la promesse de confiance calibrée** : les 300 à 500
+>   fiches validées nécessaires au réentraînement ne sont pas disponibles, donc
+>   `calibre: false` et aucune confiance calibrée n'est annoncée à l'opérateur. Cela ne
+>   bloque **pas** la mise en service de l'extraction assistée (champs extraits + file de
+>   validation) : l'atelier reste la référence, et c'est lui qui valide. À rejouer quand
+>   les fiches validées existeront — pas avant.
 > - **Métriques de production indisponibles** : tous les chiffres cités viennent de la CI
 >   ou du poste de développement, jamais d'une exploitation réelle.
 > - **Fixtures du dépôt non représentatives** : `sample_data/` = 1 fiche client réelle +
@@ -32,13 +36,22 @@ rempli, daté et signé.
 | # | Contrôle | Commande | Attendu | Preuve |
 |---|---|---|---|---|
 | 1.1 | Docker + Compose v2 | `docker --version && docker compose version` | deux versions affichées | |
-| 1.2 | Espace disque libre | `df -h .` (Windows : `Get-PSDrive C`) | **≥ 50 Go** pour l'archive réelle ; 5 Go pour une recette | |
-| 1.3 | RAM / cœurs | `free -h`, `nproc` | ≥ 8 Go, ≥ 2 cœurs (postes 8 Go : pas de PyTorch, décision du 21/09) | |
+| 1.2 | Espace disque libre | `df -h .` (Windows : `Get-PSDrive C`) | **≥ 50 Go — chiffre PROVISOIRE de départ** ; 5 Go pour une recette | |
+| 1.3 | RAM / cœurs | `free -h`, `nproc` | **≥ 8 Go et ≥ 2 cœurs — chiffres PROVISOIRES de départ** | |
 | 1.4 | Ports libres | `ss -lntp \| grep -E ':(3000\|8000\|9000\|9001\|6379\|5433)'` | aucune ligne | |
 | 1.5 | Git + horloge système | `git --version`, `date -u` | horloge juste (les clés de sauvegarde sont horodatées UTC) | |
 | 1.6 | **Image MinIO disponible** — plus aucun registre ne la distribue | `bash scripts/construire_image_minio.sh` | `Image quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z prête` | |
 | 1.7 | (option Windows) Docker Desktop + WSL 2 | `docs/CHECKLIST_POSTE_WINDOWS.md` | checklist Windows cochée | |
 
+> **1.2 / 1.3 — ce que « provisoire » veut dire (revue du 2026-10-07).** Ces chiffres
+> sont des points de départ à confirmer par la MESURE sur le serveur retenu, jamais une
+> taille validée. Le volume doit couvrir, ENSEMBLE : les originaux de l'archive (lecture
+> seule, taille de l'archive livrée), les copies stockées (bucket MinIO), l'espace de
+> traitement (OCR, rendus PDF, fichiers temporaires), la quarantaine, la base PostgreSQL
+> et ses index, les sauvegardes (dump + archive), et la croissance — prévoir une marge.
+> Le besoin mémoire/cœurs se mesure pendant le pilote (import réel + recherche + validation
+> concurrente), puis se fixe. Voir `docs/verite_terrain/DECISION_MATERIEL.md`.
+>
 > 1.6 exige Docker **et** un accès réseau à GitHub le temps de la compilation (voir
 > `docs/verite_terrain/AUDIT_STOCKAGE_S3_MINIO.md` §4). À faire **une fois**, avant le
 > premier `docker compose up`. Sur un poste sans réseau : exporter l'image depuis un
@@ -68,7 +81,10 @@ variables `:?` manque — c'est voulu.
 - [ ] **2.1** `docker compose config --quiet` ne renvoie **rien** (aucune variable manquante).
 - [ ] **2.2** Aucune valeur `change-me` ne subsiste : `grep -n "change-me\|minioadmin" .env` → **vide**.
 - [ ] **2.3** Le dossier d'archive est monté **en lecture seule** dans `web` (`:ro`) — RG13.
-- [ ] **2.4** Le stockage est **provisionné** : `bash scripts/provisionner_stockage.sh` a créé les
+- [ ] **2.4** Le stockage est **provisionné AVANT tout usage normal** — pas seulement
+      « `docker compose up` » : le provisionnement (`bash scripts/provisionner_stockage.sh`)
+      précède le premier import réel, et il est VÉRIFIÉ (dépôt puis relecture d'un objet de
+      test avec l'identité applicative ; `/health` le confirme). `bash scripts/provisionner_stockage.sh` a créé les
       buckets (`seamtech-documents`, `seamtech-backups`), activé leur versioning et créé les deux
       identités **restreintes**. Contrôles : `/health` renvoie `s3_credentials: "dedie"` (jamais
       `root_like`), et les variables `MINIO_ROOT_*` ne sont **pas** présentes dans
@@ -83,8 +99,16 @@ variables `:?` manque — c'est voulu.
   openssl rand -base64 48   # SEAMTECH_AUTH_TOKEN
   openssl rand -base64 48   # SEAMTECH_SESSION_SECRET
   openssl rand -base64 24   # SEAMTECH_UI_PASSWORD (secours)
-  openssl rand -base64 24   # POSTGRES_PASSWORD / REDIS_PASSWORD / MINIO_ROOT_PASSWORD
+  openssl rand -hex 24      # POSTGRES_PASSWORD / REDIS_PASSWORD / MINIO_ROOT_PASSWORD
   ```
+- [ ] **3.1 bis** Les secrets qui finissent dans une **URL de connexion** (`POSTGRES_PASSWORD`,
+      `REDIS_PASSWORD` — `docker-compose.yml` construit `SEAMTECH_DATABASE_URL` et
+      `SEAMTECH_REDIS_URL` à partir d'eux) sont **URL-safe** : `openssl rand -hex 24` ou
+      `openssl rand -base64 24 | tr '+/' '-_'`. Un `base64` brut peut contenir « / » : dans
+      une URL Redis il devient le sélecteur de base, et la connexion échoue sans dire
+      pourquoi. Si un secret existe déjà en base64 : l'encoder (`/` → `%2F`). L'application
+      **refuse de démarrer** avec un message explicite quand un mot de passe d'URL n'est pas
+      encodé (`AppConfig.validate_connection_urls`, testé dans `tests/test_config.py`).
 - [ ] **3.2** Droits du fichier : `chmod 600 .env` → `ls -l .env` affiche `-rw-------`
       (Windows : n'autoriser que le compte d'exploitation).
 - [ ] **3.3** `.env` **n'est pas** dans Git : `git check-ignore -v .env` renvoie une règle ;
@@ -106,12 +130,13 @@ docker compose up -d --build
 docker compose ps
 ```
 
-- [ ] **4.1** 5 services : `postgres`, `minio`, `redis`, `web`, `frontend`.
+- [ ] **4.1** **6 services** : `postgres`, `minio`, `redis`, `web` (API), **`worker`**
+      (exécute les imports — service SÉPARÉ, cf. 4.5/7b) et `frontend`.
 - [ ] **4.2** Tous en `running (healthy)` (les healthchecks font foi ; `web` attend
       `service_healthy` sur les trois autres).
 - [ ] **4.3** Ports publiés **en loopback uniquement** : `docker compose ps --format '{{.Name}} {{.Ports}}'`
       ne montre que des `127.0.0.1:…` (garde-fou : `tests/test_compose_hardening.py`).
-- [ ] **4.4** Redémarrage automatique : `restart: unless-stopped` sur les 5 services.
+- [ ] **4.4** Redémarrage automatique : `restart: unless-stopped` sur les **6** services.
 
 | 4.5 | **Service `worker` démarré** (exécute les imports) | `docker compose ps worker` | `running` / `healthy` (le healthcheck lance `--verifier`) | |
 | 4.6 | `web` n'exécute PAS d'import | `docker compose exec -T web printenv SEAMTECH_WEB_WORKER_ENABLED` | `false` | |
@@ -211,6 +236,13 @@ modifie pas, et le jour J passe par `scripts/preflight_archive.py`).
       rediriger vers l'endpoint interne du réseau des conteneurs cassait le
       téléchargement depuis un autre poste ; voir l'écart E-28.*
 - [ ] **8.6** Idempotence : rejouer le même dépôt → `deja_traite`, aucun doublon créé.
+- [ ] **8.7** **Import PROGRESSIF (revue du 2026-10-07)** : on n'importe PAS l'archive
+      complète d'entrée. D'abord un **échantillon représentatif** (chaque type de document et
+      de nommage de l'archive) puis les **cas difficiles** (scans anciens en OCR, fichiers
+      sans texte, doublons, chemins accentués, gros PDF), et seulement ensuite le reste.
+      À chaque palier : chaque fichier est **comptabilisé** (importés + en quarantaine +
+      écartés = total du palier), les recherches attendues trouvent leurs fiches, et les
+      originaux se téléchargent. Un palier rouge arrête la montée en charge.
 
 ## 9. Recherche de test
 
@@ -293,7 +325,7 @@ docker compose exec web python -m seamtech_search.sauvegarde verifier \
 
 ## 13. Arrêt / redémarrage
 
-- [ ] **13.1** `docker compose stop` puis `docker compose up -d` → 5 services `healthy`.
+- [ ] **13.1** `docker compose stop` puis `docker compose up -d` → **6** services `healthy`.
 - [ ] **13.2** Après redémarrage : `/health` conserve le nombre de documents, les
       `object_key` restent exploitables (garde-fou
       `test_references_objets_survivent_au_redemarrage`), la recherche renvoie les mêmes
@@ -487,3 +519,33 @@ remplace pour la tête de branche.
 | Limite honnête | Le partage web/worker est prouvé **au niveau processus et contrat** ici ; il n'est **pas** prouvé au niveau conteneurs avant le run CI `integration` de `tests/test_compose_partage_worker.py` |
 
 Détail : `docs/verite_terrain/REVUE_INDEPENDANTE_2026-10-07.md`.
+
+## 22. Deuxième passe de revue indépendante (2026-10-07) — corrections du plan
+
+Ce qui suit corrige la façon de DÉPLOYER (ne pas exécuter l'ancien plan mot à mot).
+Les points d'ingénierie sont fermés dans le code (E-40 : `index --rebuild` sûr,
+prouvé sur PostgreSQL réel par `tests/test_rebuild_index_postgres.py`) ; ici, c'est
+la mise en service qui est recadrée.
+
+| # | Correction | Où c'est appliqué |
+|---|---|---|
+| 22.1 | **MinIO est le fournisseur retenu** pour cette release (R2/S3 restent optionnels) — la question n'est pas rouverte | ce document §1.6, `docs/DEPLOYMENT.md` (en-tête) |
+| 22.2 | Les **identités S3 dédiées** ne sont plus une décision mais du **provisionnement + vérification sur le serveur cible** | §2.4, `scripts/provisionner_stockage.sh`, `docs/DEPLOYMENT.md` |
+| 22.3 | **Six services** : `frontend`, `web` (API), `worker`, `postgres`, `redis`, `minio` | §4.1, §4.4, §13.1, `docs/verite_terrain/MISE_EN_SERVICE.md` |
+| 22.4 | Migrations vérifiées contre la **constante de schéma de la release** (`VERSION_SCHEMA_METIER`, liste finissant à `021_revision_fiche`) | §5.1–5.2 |
+| 22.5 | **50 Go / 8 Go / 2 cœurs = provisoires** ; le stockage doit couvrir originaux, copies stockées, traitement, quarantaine, base, sauvegardes et croissance | §1.2–1.3, `docs/ARRIVEE_ARCHIVE.md`, `docs/verite_terrain/DECISION_MATERIEL.md` |
+| 22.6 | **Sécurité AVANT les données réelles et les workers** : secrets, archive en lecture seule, exposition réseau, TLS | §2, §3, §16, `docs/DEPLOYMENT.md` (section TLS/accès) |
+| 22.7 | **Import progressif** : échantillon représentatif + cas difficiles avant l'archive entière | §8.7, `docs/ARRIVEE_ARCHIVE.md` |
+| 22.8 | La **calibration ML** ne bloque que la promesse de confiance calibrée, pas l'extraction assistée | en-tête (« Ce qui reste bloqué ») |
+| 22.9 | **Secrets base64 → URL-safe** (ou encodage) pour les URL PostgreSQL/Redis ; **provisionnement du stockage vérifié avant l'usage normal** | §3.1 bis, §2.4, `AppConfig.validate_connection_urls` |
+
+**Ordre recommandé** (détaillé dans `docs/verite_terrain/MISE_EN_SERVICE.md` §2 bis) :
+(1) fermer les points d'ingénierie et FIGER le commit de release ; (2) confirmer la
+conception (serveur d'atelier local ou VM vs VPS distant — un VPS fait dépendre
+l'atelier de la liaison Internet —, MinIO, destination de sauvegarde indépendante,
+perte de données acceptable / durée de reprise, qui maintient comptes, mises à jour,
+sauvegardes et alertes) ; (3) provisionner SÉCURISÉ avant toute donnée réelle et
+avant les workers ; (4) pilote réduit représentatif, cas difficiles compris, le
+processus de fabrication existant restant la référence ; (5) prouver la reprise dans
+un environnement isolé (un dump restauré seul ≠ archive récupérée) ; (6) augmenter la
+taille de l'archive, accepter en atelier, mesurer, go/no-go explicite.

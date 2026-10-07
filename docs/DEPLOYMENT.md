@@ -1,10 +1,18 @@
 # SEAMTECH Search office deployment
 
-This is the supported deployment path for an office Windows machine running Docker
-Desktop. The application stack is PostgreSQL, MinIO, Redis, the SEAMTECH API, and
-the Next.js frontend. The compose file publishes the application ports on
-`127.0.0.1`; expose the frontend to the office LAN only through a TLS-terminating
-reverse proxy.
+This is the supported deployment path for an office machine running Docker Desktop
+(Windows) — or a workshop server/VM. The stack is SIX compose services: `postgres`,
+`redis`, `minio`, `web` (API), `worker` (separate process: imports survive a
+restart) and `frontend` (Next.js); `docker compose ps` must show all six as
+`running (healthy)`. For object storage, **MinIO is the supported provider for this
+release** (the compose file ships it and CI proves the six-service stack);
+S3-compatible endpoints such as Cloudflare R2 remain optional — do not reopen the
+architecture while an archive is being imported. Whether this machine is a local
+workshop server or a remote VPS is a design decision with consequences (a remote
+host makes workshop access depend on the internet link): see
+`docs/verite_terrain/DECISION_MATERIEL.md`. The compose file publishes the
+application ports on `127.0.0.1`; expose the frontend to the office LAN only
+through a TLS-terminating reverse proxy.
 
 ## Prerequisites
 
@@ -35,7 +43,15 @@ notepad .env
 
 Edit `.env` before starting the stack. Set unique, long values for all required
 secrets; add `REDIS_PASSWORD`, which is required by `docker-compose.yml`, and the
-two UI sign-in values described under [Authentication](#authentication):
+two UI sign-in values described under [Authentication](#authentication).
+
+Two of these values are embedded in **connection URLs**: `docker-compose.yml`
+builds `SEAMTECH_DATABASE_URL` from `POSTGRES_PASSWORD` and `SEAMTECH_REDIS_URL`
+from `REDIS_PASSWORD`. Generate them **URL-safe** (`openssl rand -hex 24`, or
+`openssl rand -base64 24 | tr '+/' '-_'`). A raw base64 secret can contain `/`,
+which breaks the URL — in a Redis URL the `/` silently becomes the database
+selector. The application refuses to start with an explicit message when a
+password in either URL is not encoded (`AppConfig.validate_connection_urls`).
 
 ```dotenv
 POSTGRES_PASSWORD=<long-random-postgres-password>
@@ -73,7 +89,11 @@ application identity and the upload fails loudly (`AccessDenied`) if that
 identity has no rights on the backup bucket.
 
 Provision the bucket, the versioning and both restricted identities **before**
-the first `docker compose up`, and again after rotating any of these secrets:
+the first `docker compose up` — and, more importantly, **before any normal use of
+the application** (a first real import is not the moment to discover that the
+bucket does not exist). Then VERIFY, not just provision: with the application
+identity, store one object and read its bytes back; `/health` must report
+`s3_credentials: "dedie"`. Re-run after rotating any of these secrets:
 
 ```powershell
 docker compose up -d minio          # MinIO must be running first

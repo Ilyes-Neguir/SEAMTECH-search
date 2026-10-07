@@ -31,7 +31,7 @@ Cas transverses exercés par la recette :
 
 Préparer : un chrono (téléphone suffit), cette page imprimée, un stylo.
 
-- [ ] **Étape 1 — Le service vit.** `docker compose ps` : 5 services healthy ;
+- [ ] **Étape 1 — Le service vit.** `docker compose ps` : **6** services healthy (`postgres`, `redis`, `minio`, `web`, `worker`, `frontend`) ;
       `http://127.0.0.1:3000/api/health` répond. Sinon : MISE_EN_SERVICE.md.
 - [ ] **Étape 2 — Dépôt.** Interface `http://127.0.0.1:3000` → connexion →
       écran Dépôt → déposer le dossier `sample_data` (les 3 fiches ci-dessus).

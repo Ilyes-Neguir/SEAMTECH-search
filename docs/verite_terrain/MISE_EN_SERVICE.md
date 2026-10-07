@@ -23,6 +23,11 @@ cp .env.example .env
 #   SEAMTECH_AUTH_TOKEN      (token API — chaîne longue aléatoire)
 #   SEAMTECH_UI_PASSWORD     (compte de SECOURS de l'interface — voir ci-dessous)
 #   SEAMTECH_SESSION_SECRET  (secret de session — chaîne longue aléatoire)
+# Les secrets qui finissent dans une URL de connexion (POSTGRES_PASSWORD,
+# REDIS_PASSWORD — compose construit SEAMTECH_DATABASE_URL / SEAMTECH_REDIS_URL
+# avec eux) doivent être URL-safe : « openssl rand -hex 24 ». Un base64 brut peut
+# contenir « / », qui casse l'URL (côté Redis, il devient le sélecteur de base) ;
+# l'application refuse alors de démarrer avec un message explicite.
 
 # 3. Démarrage
 docker compose up -d --build
@@ -45,9 +50,12 @@ connexion) ; `… sessions --identifiant imrane` montre les sessions ouvertes et
 depuis l'interface ferme la session EN BASE (`revoque_le`) : un cookie copié ne
 vaut plus rien après coup — c'est vérifié par les tests et par l'e2e live.
 
-Sortie attendue : `docker compose ps` montre `postgres`, `minio`, `redis`,
-`web`, `frontend` en `running (healthy)` après la montée (les healthchecks de
-compose font foi ; le job CI `integration` attend exactement cet état).
+Sortie attendue : `docker compose ps` montre les **six** services — `postgres`,
+`minio`, `redis`, `web` (API), **`worker`** (imports, service séparé) et
+`frontend` — en `running (healthy)` après la montée (les healthchecks de compose
+font foi ; le job CI `integration` attend exactement cet état). Le provisionnement
+du stockage (section 1, étape 2) est **vérifié AVANT tout usage normal** : un dépôt
+réel avant vérification peut échouer à mi-parcours.
 
 ```bash
 # 4. Santé — l'unique route sans authentification
@@ -71,6 +79,44 @@ Sortie attendue : la fiche entre en statut `a_valider` (RG3 : jamais validée
 automatiquement), ses champs extraits sont affichés, son PDF est rendu à
 droite. C'est exactement ce que le job CI `integration` rejoue avec la vraie
 fiche 7792-SO.
+
+## 2 bis. Ordre recommandé de mise en service (revue du 2026-10-07)
+
+L'ordre compte : chaque étape suppose la précédente FAITE et VÉRIFIÉE.
+
+1. **Fermer les points d'ingénierie et figer la release.** `index --rebuild` est
+   sûr (E-40 corrigé, prouvé sur PostgreSQL réel) ; la CI est verte sur le commit
+   retenu ; on sélectionne **un commit de release** et on ne fait plus entrer de
+   fonctionnalité sans rapport.
+2. **Confirmer la conception.** Serveur d'atelier local (PC/VM) ou VPS distant —
+   un VPS fait dépendre l'atelier de la liaison Internet ; **MinIO** comme
+   fournisseur objet (R2 optionnel, non requis) ; **destination de sauvegarde
+   indépendante** (pas le même disque, pas le même compte) ; **perte de données
+   acceptable** et **durée de reprise** écrites ; qui maintient comptes, mises à
+   jour, sauvegardes et alertes.
+3. **Provisionner SÉCURISÉ — avant toute donnée réelle et avant les workers** :
+   secrets (URL-safe) hors dépôt, volumes et permissions, **archive montée en
+   lecture seule**, identités applicative et de sauvegarde **restreintes à leur
+   bucket**, exposition réseau limitée (loopback + TLS pour les postes), puis
+   vérifier les **six services** et les **migrations** attendues de la release
+   (constante `VERSION_SCHEMA_METIER`, liste finissant à `021_revision_fiche`).
+4. **Pilote réduit représentatif** (dossier réel + cas difficiles : scans anciens,
+   doublons, chemins accentués, gros PDF) : chaque fichier comptabilisé, résultats
+   de recherche attendus, téléchargement des originaux et des rapports depuis un
+   AUTRE poste, validation par les ouvriers — et refus CLAIR d'une validation
+   périmée ou d'une édition concurrente. Le **processus de fabrication existant
+   reste la référence** : le logiciel ne le remplace pas.
+5. **Prouver la reprise dans un environnement ISOLÉ** : connexion et permissions,
+   projets et historique de validation, recherche, originaux + rapports, contrôle
+   d'intégrité, sort des jobs en attente. **Un dump restauré seul ne prouve pas que
+   l'archive est récupérée.**
+6. **Augmenter la taille de l'archive** puis **acceptation en atelier** : mesurer
+   (durées d'import, latences de recherche, mémoire), et conclure par un **go/no-go
+   explicite** avec les limites écrites noir sur blanc.
+
+> La **calibration ML** ne bloque PAS cette mise en service : elle bloque seulement
+> la promesse d'une **confiance calibrée** affichée à l'opérateur (les fiches
+> validées nécessaires n'existent pas encore).
 
 ## 2. Contrôle quotidien (une commande)
 
@@ -102,7 +148,7 @@ sauvegarde de référence est `python -m seamtech_search.sauvegarde` (portable,
 - [ ] Docker Desktop installé ; `docker compose version` répond
 - [ ] `git clone` + `cp .env.example .env` + les 3 secrets fixés
 - [ ] `docker compose up -d --build` termine sans erreur
-- [ ] `docker compose ps` : 5 services `healthy`
+- [ ] `docker compose ps` : **6** services `healthy`
 - [ ] `curl http://127.0.0.1:3000/api/health` répond (depuis PowerShell : `Invoke-WebRequest http://127.0.0.1:3000/api/health`)
 - [ ] un dossier réel déposé via l'écran Dépôt produit une fiche `a_valider` visible
 - [ ] une sauvegarde `python -m seamtech_search.sauvegarde sauver …` écrit dump + manifeste
