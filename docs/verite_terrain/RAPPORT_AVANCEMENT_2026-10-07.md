@@ -537,9 +537,13 @@ est, lui, téléchargé explicitement par la CI.
 
 ## 5. Intégration continue
 
-Les liens exacts et l'état de chaque job pour le commit de tête sont consignés
-dans `docs/verite_terrain/TRACABILITE_LIVRAISON.md` (§ « Revue indépendante
-2026-10-07 »), avec le SHA. Ce que chaque job apporte et **ne peut apporter
+Les liens exacts et l'état de chaque job sont consignés dans
+`docs/verite_terrain/TRACABILITE_LIVRAISON.md` (§ « Revue indépendante
+2026-10-07 »), avec le SHA : dernier commit de CODE **`c65b7d8`** (push
+`37642194285`, pull_request `37642211480` / `37642211503`, **12/12 verts** —
+dont l'étape « Run multi-session E2E (concurrence, sessions indépendantes) »),
+et commit de documentation **`b1eb5a9`** (push `37643239027`, pull_request
+`37643251469` / `37643251577`, **12/12 verts**). Ce que chaque job apporte et **ne peut apporter
 qu'à lui** :
 
 | Job | Preuve exclusive |
@@ -621,14 +625,14 @@ reste pendante ; aucune ligne ci-dessus ne la remplace.
 
 | Point non prouvé | Pourquoi | Ce qui le ferme |
 |---|---|---|
-| MinIO réel : intégrité, quarantaine, upload, téléchargement | pas de Docker/MinIO dans cette session ; 29 tests `s3` sautés **localement** | job CI `integration` (+ `sauvegarde`) sur le commit de tête — **`integration` et `sauvegarde` lus VERTS** sur `3e13c7f` ; à revérifier sur le commit de clôture |
+| MinIO réel : intégrité, quarantaine, upload, téléchargement | pas de Docker/MinIO dans cette session ; 29 tests `s3` sautés **localement** | job CI `integration` (+ `sauvegarde`) — **lu VERT sur `c65b7d8`** (push `37642194285` et les deux pull_request du même SHA), et `sauvegarde` déjà verte sur `3e13c7f` (`37618670336`). Ce point est **FERMÉ** tant que le code ne change pas |
 | Pile Compose à deux conteneurs (partage fichiers/quarantaine/modèles/permissions) | idem | `tests/test_compose_partage_worker.py` dans le job `integration` |
 | Navigateurs (scénario trois postes) | navigateurs Playwright non installables ici (CDN bloqué) | job CI `e2e` |
 | Sauvegarde → restauration réelle de bout en bout | dépend de MinIO | job CI `sauvegarde` (19+ tests, dont 50 000 fiches) |
 | **Drill de restauration humain indépendant** | aucun humain n'a restauré une sauvegarde | procédure `RUNBOOK_RESTAURATION.md`, exécutée et signée par l'exploitant |
 | **Destination de sauvegarde de production** | non choisie/validée par le propriétaire | décision du propriétaire + test d'écriture hors serveur |
 | **Pertinence de la recherche sur archives réelles** | aucune étiquette humaine sur corpus réel ; 7 fiches de référence, 0 validée | jeu de requêtes étiqueté (`JEU_REQUETES_REELLES.md`) + validation humaine |
-| **Moindre privilège S3 — contre MinIO RÉEL** | les tests Docker correspondants ne tournent qu'en CI (pas de Docker ici) | job CI `integration` sur le commit de tête (§5) |
+| **Moindre privilège S3 — contre MinIO RÉEL** | les tests Docker correspondants ne tournent qu'en CI (pas de Docker ici) | job CI `integration` **lu VERT sur `c65b7d8`** (push et pull_request) ; ALLOW/DENY réels dans `tests/test_credentials_s3_restreintes.py` |
 | **Fonctionnement hors ligne — sur le SERVEUR d'atelier** | le harnais prouve l'absence de dépendance externe **de cette machine** ; il ne prouve ni les postes réels, ni le serveur cible | exécution du harnais sur le serveur cible + acceptation trois postes réseau coupé |
 | **Concurrence vue du NAVIGATEUR** | les navigateurs ne s'installent pas dans cette session (CDN `cdn.playwright.dev` bloqué — vérifié à nouveau le 2026-10-07) | **FERMÉ en CI** : étape « concurrence » `success` sur `c65b7d8` (push + 2 pull_request) ; les 4 échecs successifs (E-30, E-33, E-34, E-36) ont été corrigés, pas contournés |
 | **Acceptation atelier (fabrication)** | décision humaine | trois postes, un import pendant une recherche, validation d'une fiche |
