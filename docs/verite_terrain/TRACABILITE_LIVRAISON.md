@@ -241,3 +241,53 @@ lu) de **contrat** (vérifié statiquement, jamais exécuté).
 | Les trois familles de tests backend sont vertes sur l'arbre de cette passe | `pytest -m "not postgres and not s3 and not perf and not redis_queue"` / `-m "postgres and not perf and not sauvegarde and not redis_queue"` / `-m redis_queue` | **886 passés (3 sautés)** / **232 passés (1 sauté)** / **63 passés (1 sauté)** — PostgreSQL 16.2 + pgvector/unaccent/pg_trgm et Redis 7.2.5 réels | ✅ établi (local) |
 | Front : types, build de production, audit | `tsc --noEmit` / `next build` / `pnpm audit --prod --audit-level=high` | **OK / OK / « No known vulnerabilities found »** | ✅ établi (local) |
 
+
+---
+
+## Clôture CI de la passe F1–F4 — 2026-10-07 (tous les runs LUS)
+
+Branche : `arena/7da80c2f-seamtech-search` · PR **#35**. Chaque affirmation de
+cette section vient d'un run **lu** (`gh run view --json jobs`,
+`gh api .../check-runs/<id>/annotations`), jamais d'une supposition.
+
+| Élément | Run | Résultat lu |
+|---|---|---|
+| **7 scénarios de concurrence au premier essai** | push `37668475085`, job `e2e` | `success` — le garde-fou du job REFUSE tout autre compte que 7 passés / 0 flaky / 0 sauté (il nomme les tests fautifs ou rattrapés sinon) |
+| **Parcours hors ligne pleine pile** | push `37668475085`, job `hors-ligne-reel`, étapes 17→21 | `success` — étapes : démarrer la pile (compte applicatif), bloquer la sortie réseau (contrôle négatif + positif), parcours navigateur, relevé `REJECT = 0`, lever le blocage |
+| Annotation publiée par le job hors ligne | `check-runs/<job>/annotations` | « **parcours navigateur verts avec sortie externe RÉELLEMENT bloquée — 0 paquet rejeté (aucune dépendance externe tentée)** » |
+| **Garde-fou NAVIGATEUR** (aucune ressource hors boucle locale pendant tout le parcours) | push `37670079596` (+ pull_request `37670089091` / `37670087887`) | `e2e` **`success`** (étapes 13→16 : concurrence, validation live, doublons, comptes nominatifs) et `hors-ligne-reel` **`success`** |
+| Suites live restantes, lues dans les annotations du job `e2e` | push `37668475085` | `e2e-auth-nominatif` : 26 tests verts ; `e2e-doublons` : 2 verts ; `mesure-phase1` : parcours machine complet **841 ms** (critère < 120 000 ms) |
+| **Commit de clôture** (attente de la révision avant décision + garde-fou bavard, E-47) | push **`37671726429`**, pull_request **`37671732453`** (CI) et **`37671732326`** (benchmark) | **13/13 jobs verts sur le push** — dont `e2e` (étapes 13→16) et `hors-ligne-reel` (étapes 17→21, annotation « 0 paquet rejeté ») ; **`success` sur les deux pull_request** |
+| Les échecs de cette passe étaient-ils des défauts PRODUIT ? | 9 runs lus (voir l'historique du rapport d'avancement, §5) | **Non** : tous étaient des défauts de TEST ou de JOB (E-41 → E-47), corrigés un par un — aucune assertion supprimée, aucun seuil abaissé, aucun test ignoré, aucun défaut produit revendiqué à tort |
+
+**Défauts que ces exécutions ont trouvés et fait corriger** (détail au §2.7 du
+rapport d'avancement) : E-41 (scénarios dépendants de l'ordre), E-42 (assertion
+ambiguë sur le bandeau), E-43 (clic sur un bouton qui n'existe qu'en état
+d'échec — trois tentatives de 30 s), E-44 (fixture simulant l'ancien endpoint
+`/champs`), E-45 (quatre défauts du job hors ligne : `secure_path`, traversée du
+dépôt, `next` lancé par `node`, sondes sans jeton), E-46 (deux défauts de la spec
+hors ligne : identifiant d'import attendu entier alors qu'il est UUID ; recherche
+MÉTIER interrogée avec une référence EXTRAITE), E-47 (étape « live E2E
+validation » : décision cliquée avant la lecture de la révision — instabilité
+sans défaut produit — et garde-fou Python muet en cas d'échec).
+
+**Ce qui reste ouvert après cette clôture** — et rien d'autre :
+
+| Point | Preuve du caractère ouvert | Ce qui le fermerait |
+|---|---|---|
+| `index --rebuild` inutilisable sur PostgreSQL (E-40) | reproduction locale : `DependentObjectsStillExist` puis `FeatureNotSupported` | correction de l'outil (`DROP … CASCADE` ou purge ordonnée) + test PostgreSQL |
+| Drill de restauration par un humain indépendant | aucun humain n'a restauré une sauvegarde | runbook exécuté et signé |
+| Destination de sauvegarde de production | non choisie par le propriétaire | décision + test d'écriture hors serveur |
+| Pertinence de la recherche sur archives réelles | aucune étiquette humaine | jeu de requêtes étiqueté + validation humaine |
+| Acceptation atelier (trois postes, réseau coupé) | décision humaine | essai sur le serveur cible |
+
+Les preuves d'exécution **locales** de cette passe (suites complètes
+PostgreSQL/Redis réelles, couverture 85,9 % avec toutes les portes par module,
+`tsc`/`build`/`audit` du front) restent celles du tableau précédent, inchangées.
+
+Ce document est publié par un commit de **documentation seule**, qui suit le
+commit de code `89c2b1f` : c'est ce dernier qui porte le code et les specs
+décrits ci-dessus, et ses trois runs sont ceux lus dans le tableau. Une
+correction de documentation ne peut pas changer un résultat de test — mais elle
+ne l'invalide pas non plus.
+
