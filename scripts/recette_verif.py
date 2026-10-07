@@ -734,7 +734,13 @@ def _pdf_presigne() -> None:
             f"confirm HTTP {code} upload={upload} object_key={'oui' if object_key else 'non'} {_extrait(corps, 80)}",
         )
         return
-    code, contenu_ou_corps, entetes = _appel("POST", f"/open?path={urllib.parse.quote(str(candidat['path']))}", {})
+    # ``brut=True`` : sans cela le corps PDF est décodé en texte tronqué et le
+    # contrôle comparerait une chaîne à des octets — c'est le défaut qui a fait
+    # échouer ce contrôle en CI le 2026-10-07 (« open HTTP 200 (attendu 200 ou
+    # 302) »), alors que le téléchargement fonctionnait parfaitement.
+    code, contenu_ou_corps, entetes = _appel(
+        "POST", f"/open?path={urllib.parse.quote(str(candidat['path']))}", {}, brut=True
+    )
     location = entetes.get("Location") or entetes.get("location")
     hote = (urllib.parse.urlparse(location).hostname or "") if location else ""
     hotes_internes = {"minio", "web", "worker", "redis", "postgres", "frontend"}

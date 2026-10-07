@@ -616,6 +616,22 @@ def worker_loop(
                                 max_attempts,
                             )
                             redis_store.retry_task("imports", task, delay_seconds=delay)
+                            # Le registre (base) suit l'état RÉEL : la tâche est
+                            # reprogrammée, donc le job est RÉCUPÉRABLE — pas
+                            # « échoué ». L'échec définitif n'est écrit qu'à
+                            # l'épuisement des tentatives (juste en dessous), et
+                            # la raison reste visible pour l'opérateur.
+                            update_job(
+                                index,
+                                job_id,
+                                status="pending",
+                                stage="requeued",
+                                error=(
+                                    f"nouvelle tentative programmée dans {delay}s "
+                                    f"(tentative {attempt + 2}/{max_attempts}) : "
+                                    f"{result.get('error') or statut}"
+                                ),
+                            )
                         else:
                             raison = (
                                 f"lettre morte après {attempt + 1} tentative(s) : "
@@ -635,6 +651,18 @@ def worker_loop(
                     if attempt + 1 < max_attempts:
                         delay = 2**attempt
                         redis_store.retry_task("imports", task, delay_seconds=delay)
+                        # Même règle que ci-dessus : une tâche reprogrammée est un
+                        # job RÉCUPÉRABLE, jamais un « échec » déjà écrit.
+                        update_job(
+                            index,
+                            job_id,
+                            status="pending",
+                            stage="requeued",
+                            error=(
+                                f"nouvelle tentative programmée dans {delay}s "
+                                f"(tentative {attempt + 2}/{max_attempts}) : {task_exc}"
+                            ),
+                        )
                     else:
                         raison = f"lettre morte après exception ({attempt + 1} tentative(s)) : {task_exc}"
                         redis_store.deadletter_task("imports", task)

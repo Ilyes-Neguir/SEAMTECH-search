@@ -773,3 +773,147 @@ def test_version_schema_metier_est_la_derniere_migration_declaree() -> None:
         "33 tables métier (018-020 n'ajoutent aucune table : texte de recherche, "
         "puis colonnes de supervision des imports)"
     )
+
+
+# ---------------------------------------------------------------------------
+# Client lié à un endpoint PUBLIC (signature pour les navigateurs)
+# ---------------------------------------------------------------------------
+
+
+def test_client_public_cree_hors_ligne_et_reutilise_par_endpoint() -> None:
+    """Un client par endpoint public, créé SANS appel réseau, et jamais utilisé
+    pour lire des objets : seulement pour signer une URL destinée au navigateur.
+
+    C'est ce qui permet aux postes de l'atelier de télécharger sans que
+    l'endpoint INTERNE du réseau des conteneurs n'apparaisse jamais. La création
+    d'un client boto3 est paresseuse (aucune I/O) : ce test tourne donc sans
+    MinIO et prouve que la configuration demandée est bien celle appliquée.
+    """
+    client = S3StorageClient(
+        endpoint_url="http://minio:9000",
+        bucket_name="seamtech-documents",
+        access_key_id=CLE_ACCES_FICTIVE,
+        secret_access_key=SECRET_FICTIF,
+    )
+    premier = client._client_pour_endpoint("https://stockage.atelier.invalide:9000")
+    second = client._client_pour_endpoint("https://stockage.atelier.invalide:9000")
+    autre = client._client_pour_endpoint("https://autre.atelier.invalide:9000")
+
+    assert premier is second, "un seul client par endpoint (pas de fuite de sockets)"
+    assert autre is not premier, "deux endpoints = deux clients"
+    assert premier.meta.endpoint_url == "https://stockage.atelier.invalide:9000"
+    config = premier.meta.config
+    assert config.signature_version == "s3v4"
+    assert config.s3 == {"addressing_style": "path"}, config.s3
+    assert config.connect_timeout == 5 and config.read_timeout == 5, config
+    assert config.retries["total_max_attempts"] == 2, config.retries
+    # Le client historique (endpoint interne) n'est PAS réutilisé pour signer :
+    # la signature doit porter l'hôte que le navigateur va réellement joindre.
+    assert client._clients_publics == {
+        "https://stockage.atelier.invalide:9000": premier,
+        "https://autre.atelier.invalide:9000": autre,
+    }
+
+
+def test_batch_d_artefacts_serialisable_pour_l_api() -> None:
+    """``UploadBatch.to_payload()`` (et son ``to_dict()``) exposent exactement
+    ce que l'API renvoie : statut, clé, bucket, vérification — aucune donnée
+    interne de plus."""
+    from seamtech_search.storage import UploadBatch, UploadedArtifact
+
+    artifact = UploadedArtifact(
+        path="/atelier/dossier/plan.pdf",
+        name="plan.pdf",
+        key="imports/IMP-1/plan.pdf",
+        bucket="seamtech-documents",
+        status="uploaded",
+        verified=True,
+        verification="relecture_sha256",
+        verification_detail="octets relus",
+    )
+    batch = UploadBatch(status="uploaded", artifacts=[artifact])
+
+    assert batch.all_verified is True
+    attendu = [
+        {
+            "path": "/atelier/dossier/plan.pdf",
+            "name": "plan.pdf",
+            "key": "imports/IMP-1/plan.pdf",
+            "bucket": "seamtech-documents",
+            "status": "uploaded",
+            "verified": True,
+            "verification": "relecture_sha256",
+            "verification_detail": "octets relus",
+            "error": None,
+        }
+    ]
+    assert batch.to_dict() == attendu
+    assert batch.to_payload() == attendu, "to_payload est le contrat d'API (et suit to_dict)"
+
+    vide = UploadBatch(status="not_applicable")
+    assert vide.all_verified is False and vide.to_payload() == []
+
+
+def test_bucket_cree_si_absent_et_versioning_tentee_une_seule_fois() -> None:
+    """Provisionnement : le bucket est créé s'il manque (avec la contrainte de
+    région quand elle est nécessaire), une erreur d'accès ne casse pas le
+    démarrage, et la versioning n'est tentée qu'UNE fois par client."""
+    from seamtech_search.storage import S3StorageClient
+
+    class _ClientProvisoire:
+        def __init__(self, erreur: ClientError | None = None) -> None:
+            self.erreur = erreur
+            self.creations: list[dict] = []
+            self.versioning: list[dict] = []
+
+        def head_bucket(self, Bucket: str) -> dict:  # noqa: N803
+            if self.erreur is not None:
+                raise self.erreur
+            return {}
+
+        def create_bucket(self, **kwargs: object) -> dict:
+            self.creations.append(dict(kwargs))
+            return {}
+
+        def put_bucket_versioning(self, **kwargs: object) -> dict:
+            self.versioning.append(dict(kwargs))
+            return {}
+
+    def _erreur(code: str) -> ClientError:
+        return ClientError({"Error": {"Code": code, "Message": code}}, "HeadBucket")
+
+    # 1) Bucket absent + région non « us-east-1 » → création avec contrainte.
+    client = S3StorageClient(
+        endpoint_url="http://minio:9000",
+        bucket_name="seamtech-documents",
+        access_key_id=CLE_ACCES_FICTIVE,
+        secret_access_key=SECRET_FICTIF,
+        region_name="eu-west-3",
+    )
+    double = _ClientProvisoire(_erreur("404"))
+    client._s3 = double
+    client.ensure_bucket_exists()
+    assert double.creations == [
+        {"Bucket": "seamtech-documents", "CreateBucketConfiguration": {"LocationConstraint": "eu-west-3"}}
+    ], double.creations
+    assert double.versioning == [
+        {"Bucket": "seamtech-documents", "VersioningConfiguration": {"Status": "Enabled"}}
+    ], double.versioning
+
+    # 2) Versioning : rejouée ? NON. Le client ne la tente qu'une fois.
+    client._enable_versioning_once()
+    assert len(double.versioning) == 1
+
+    # 3) Erreur d'accès (autre code que 404) : journalisée, jamais fatale —
+    #    l'application démarre et l'upload dira l'échec réel.
+    client2 = S3StorageClient(
+        endpoint_url="http://minio:9000",
+        bucket_name="seamtech-documents",
+        access_key_id=CLE_ACCES_FICTIVE,
+        secret_access_key=SECRET_FICTIF,
+    )
+    double2 = _ClientProvisoire(_erreur("AccessDenied"))
+    client2._s3 = double2
+    client2.ensure_bucket_exists()
+    assert double2.creations == [], "une erreur d'accès ne doit pas déclencher de création"
+    assert len(double2.versioning) == 1, "le versioning reste tenté (best-effort)"

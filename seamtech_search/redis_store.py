@@ -545,7 +545,13 @@ class RedisStore(ClaimMixin):
         try:
             current = self.get_job(job_id) or {"id": job_id}
             current.update(updates)
-            self.set_job(job_id, current)
+            if not self.set_job(job_id, current):
+                # Ne JAMAIS prétendre avoir écrit : sans Redis joignable, l'état
+                # mis en cache n'existe nulle part. L'appelant reçoit None et
+                # sait que la copie Redis n'a PAS été mise à jour (le registre
+                # en base, lui, reste la vérité).
+                logger.warning("État du job %s non mis à jour dans Redis (non joignable)", job_id)
+                return None
             return current
         except Exception as exc:
             logger.warning("Failed to update job in Redis %s: %s", job_id, exc)

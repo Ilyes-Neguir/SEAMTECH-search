@@ -127,6 +127,15 @@ jobs:
         # green Postgres step points at coverage/mocked tests, and vice versa.
         env:
           SEAMTECH_TEST_DATABASE_URL: postgresql://seamtech:seamtech_test_password@localhost:5432/seamtech_search_test
+          # SEAMTECH_TEST_REDIS_URL était ABSENT ici : les tests de file durable
+          # (marqueur `redis_queue`, 74 tests) se SAUTAIENT donc dans la mesure de
+          # couverture, et redis_store.py/worker.py/jobs.py étaient mesurés comme
+          # s'ils n'étaient presque jamais exécutés (64 %, 63 %, 82 %) — alors que
+          # le job exécute la même suite ailleurs, avec un vrai Redis, et qu'elle
+          # passe. Mesurer le code de file sans Redis, c'est mesurer un produit
+          # qu'on n'exécute pas : le service de ce job fournit déjà Redis sur
+          # 6379, il suffit de le déclarer.
+          SEAMTECH_TEST_REDIS_URL: redis://127.0.0.1:6379/1
         run: |
           set -uo pipefail
           # GitHub runs `run:` steps with `bash -e`, so a non-zero pytest exit

@@ -315,7 +315,10 @@ def _faux_environnement_pdf(tmp_path: Path, monkeypatch, contenu: bytes):
     lignes: list[tuple[str, bool, str]] = []
     monkeypatch.setattr(recette_verif, "_ligne", lambda c, ok, d: lignes.append((c, ok, d)))
 
-    def faux_appel(methode, chemin, corps=None, **kwargs):  # noqa: ANN001, ANN202, ARG001
+    appels: list[tuple[str, str, dict]] = []
+
+    def faux_appel(methode, chemin, corps=None, **kwargs):  # noqa: ANN001, ANN202
+        appels.append((methode, chemin, kwargs))
         if "/imports/scan" in chemin:
             return 200, {
                 "candidates": [
@@ -357,7 +360,7 @@ def _faux_environnement_pdf(tmp_path: Path, monkeypatch, contenu: bytes):
         REPONSE[0] = (code, corps, entetes)
 
     REPONSE: list = [(200, contenu, {"content-type": "application/pdf"})]
-    return lignes, installer_reponse, telechargements
+    return lignes, installer_reponse, telechargements, appels
 
 
 def test_recette_verif_pdf_telechargeable_par_api(
@@ -373,7 +376,7 @@ def test_recette_verif_pdf_telechargeable_par_api(
     un succès, il casse ici avant la CI.
     """
     contenu = b"%PDF-1.4 technique " + b"x" * 500
-    lignes, _installer, telechargements = _faux_environnement_pdf(tmp_path, monkeypatch, contenu)
+    lignes, _installer, telechargements, appels = _faux_environnement_pdf(tmp_path, monkeypatch, contenu)
     from scripts import recette_verif
 
     recette_verif._pdf_presigne()
@@ -383,6 +386,11 @@ def test_recette_verif_pdf_telechargeable_par_api(
     assert ok, f"téléchargement servi par l'API refusé à tort : {detail}"
     assert "200 (servi par l'API)" in detail and "SHA-256 identique à la source = True" in detail
     assert telechargements == [], "aucun téléchargement d'URL externe ne devait être nécessaire"
+    # L'appel à /open doit demander le corps BRUT : sinon le PDF est décodé en
+    # texte, le contrôle compare une chaîne à des octets et échoue — défaut
+    # réellement observé en CI (« open HTTP 200 (attendu 200 ou 302) »).
+    appels_open = [appel for appel in appels if appel[1].startswith("/open")]
+    assert appels_open and appels_open[0][2].get("brut") is True, appels_open
 
     # Un contenu DIFFÉRENT ne peut jamais passer pour un succès.
     lignes.clear()
@@ -401,7 +409,7 @@ def test_recette_verif_pdf_refuse_la_redirection_vers_l_hote_interne(
     l'atelier. Une redirection vers un hôte PUBLIC reste acceptée et suivie.
     """
     contenu = b"%PDF-1.4 technique " + b"y" * 500
-    lignes, installer, telechargements = _faux_environnement_pdf(tmp_path, monkeypatch, contenu)
+    lignes, installer, telechargements, _appels = _faux_environnement_pdf(tmp_path, monkeypatch, contenu)
     from scripts import recette_verif
 
     installer(302, b"", {"Location": "http://minio:9000/documents/objets/technique.pdf?sig=abc"})
