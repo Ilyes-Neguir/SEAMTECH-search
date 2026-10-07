@@ -52,6 +52,16 @@ INVENTAIRE_S3_REEL = {
     # rapport généré. C'est la preuve que le worker distinct partage réellement
     # les volumes (fichiers téléversés, brouillons, quarantaine, modèles).
     "tests/test_compose_partage_worker.py::test_web_et_worker_partagent_volumes_et_fichiers",
+    # job `integration` : identités RESTREINTES — l'identité applicative
+    # écrit/lit SON bucket, et se voit refuser un autre bucket, toute opération
+    # d'administration et l'accès anonyme ; `web`/`worker` reçoivent bien cette
+    # identité (jamais MINIO_ROOT_*) ; identifiants absents ⇒ échec clair de la
+    # composition ; aucun secret dans les journaux. Correctif du défaut bloquant
+    # de la revue du 2026-10-07.
+    "tests/test_credentials_s3_restreintes.py::test_identite_applicative_autorisee_sur_son_bucket_et_refusee_ailleurs",
+    "tests/test_credentials_s3_restreintes.py::test_conteneurs_web_et_worker_recoivent_l_identite_applicative_et_pas_le_root",
+    "tests/test_credentials_s3_restreintes.py::test_identifiants_applicatifs_manquants_echec_clair_de_la_composition",
+    "tests/test_credentials_s3_restreintes.py::test_aucun_secret_dans_les_journaux_des_services",
     # job `sauvegarde` : aller-retour hors-site contre un VRAI bucket.
     "tests/test_sauvegarde_restauration.py::test_aller_retour_via_client_s3_reel",
     # épreuve de conformité d'un endpoint réel (SEAMTECH_TEST_S3_URL).

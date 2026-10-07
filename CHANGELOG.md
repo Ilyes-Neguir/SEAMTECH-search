@@ -18,7 +18,7 @@
 - **Phase 2 — recette locale automatisée** : `scripts/recette_locale.ps1` (Windows,
   chemins espaces/accents) + `scripts/recette_locale.sh` (Linux/CI) orchestrent
   `scripts/recette_verif.py` (vérificateur fonctionnel UNIQUE exécuté dans le
-  conteneur web) : prérequis, ports libres, `.env` (7 secrets aléatoires locaux,
+  conteneur web) : prérequis, ports libres, `.env (secrets aléatoires locaux,
   jamais dans Git), image MinIO locale (registres morts), `compose up -d --build`,
   santé `/live /ready /health` avec timeout, compte nominatif, dépôt des 7 ZIP
   et/ou chemins argument (RG13 : sources lues, jamais modifiées), suivi `/lots`,
@@ -29,7 +29,7 @@
   PASS/FAIL ligne par contrôle + code sortie non nul sur FAIL. **Correctifs
   parcours local** : `Dockerfile` installe `tesseract-ocr`, `tesseract-ocr-fra`
   et `poppler-utils` (l'OCR métier appelait `tesseract -l fra` absent de l'image,
-  vérifié au build) ; `ensure_postgres.ps1` génère les 7 secrets exigés par le
+  vérifié au build) ; `ensure_postgres.ps1` génère les secrets exigés par le
   compose ET construit l'image MinIO au premier démarrage (machine vierge).
   CI : job dédié `recette-locale` exécute la recette de bout en bout
   (annotations `::error` + artefact du rapport).

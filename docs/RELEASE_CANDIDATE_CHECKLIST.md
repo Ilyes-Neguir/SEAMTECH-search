@@ -56,8 +56,11 @@ variables `:?` manque — c'est voulu.
 | `SEAMTECH_UI_PASSWORD` | oui au 1ᵉʳ démarrage | compte de **secours** ; **à vider** dès que les comptes nominatifs existent | idem |
 | `SEAMTECH_SESSION_SECRET` | oui | secret long (signature du cookie) | idem |
 | `REDIS_PASSWORD` | oui | secret long | idem |
-| `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` | oui | **ne pas laisser `minioadmin`** | idem |
+| `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` | oui | **ne pas laisser `minioadmin`** — identifiants d'ADMINISTRATION, utilisés par le provisionnement seul | idem |
+| `SEAMTECH_S3_ACCESS_KEY` / `SEAMTECH_S3_SECRET_KEY` | **oui** | identité APPLICATIVE **dédiée** (aucun repli administrateur ; créée par `scripts/provisionner_stockage.sh`) | `docker compose config --quiet`, `/health` → `s3_credentials: dedie` |
+| `SEAMTECH_BACKUP_ACCESS_KEY` / `SEAMTECH_BACKUP_SECRET_KEY` | oui pour l'envoi hors-site | identité **distincte** de l'identité applicative, limitée au bucket de sauvegarde | `python -m seamtech_search.sauvegarde sauver …` |
 | `SEAMTECH_S3_BUCKET` | non (défaut `seamtech-documents`) | — | `/health` |
+| `SEAMTECH_BACKUP_BUCKET` | non (défaut `seamtech-backups`) | — | provisionnement, sauvegarde |
 | `SEAMTECH_ROOT_PATHS` | oui en production | dossier d'archive **monté en lecture seule** | `/health`, `/preview` |
 | `SEAMTECH_BEHIND_TLS_PROXY` | selon exposition | `true` derrière un terminateur TLS | `docs/TLS.md` |
 | `SEAMTECH_SESSION_HOURS` | non (12) | durée de session | — |
@@ -65,6 +68,13 @@ variables `:?` manque — c'est voulu.
 - [ ] **2.1** `docker compose config --quiet` ne renvoie **rien** (aucune variable manquante).
 - [ ] **2.2** Aucune valeur `change-me` ne subsiste : `grep -n "change-me\|minioadmin" .env` → **vide**.
 - [ ] **2.3** Le dossier d'archive est monté **en lecture seule** dans `web` (`:ro`) — RG13.
+- [ ] **2.4** Le stockage est **provisionné** : `bash scripts/provisionner_stockage.sh` a créé les
+      buckets (`seamtech-documents`, `seamtech-backups`), activé leur versioning et créé les deux
+      identités **restreintes**. Contrôles : `/health` renvoie `s3_credentials: "dedie"` (jamais
+      `root_like`), et les variables `MINIO_ROOT_*` ne sont **pas** présentes dans
+      `docker compose exec -T web printenv`.
+- [ ] **2.5** Les journaux des services ne contiennent aucun secret :
+      `docker compose logs --no-color web worker | grep -F "$(grep -E 'SEAMTECH_(S3|BACKUP)_SECRET_KEY|MINIO_ROOT_PASSWORD' .env | cut -d= -f2)"` → **vide**.
 
 ## 3. Génération et protection des secrets
 

@@ -39,15 +39,59 @@ two UI sign-in values described under [Authentication](#authentication):
 
 ```dotenv
 POSTGRES_PASSWORD=<long-random-postgres-password>
-MINIO_ROOT_USER=<long-random-minio-user>
-MINIO_ROOT_PASSWORD=<long-random-minio-password>
+MINIO_ROOT_USER=<long-random-minio-admin-user>
+MINIO_ROOT_PASSWORD=<long-random-minio-admin-password>
 REDIS_PASSWORD=<long-random-redis-password>
 SEAMTECH_AUTH_TOKEN=<long-random-shared-token>
 SEAMTECH_UI_PASSWORD=<the password the operator types at /login>
 SEAMTECH_SESSION_SECRET=<long-random-cookie-signing-key>
 SEAMTECH_S3_BUCKET=seamtech-documents
 SEAMTECH_ROOT_PATHS=/app/data/DesignFiles
+# Dedicated APPLICATION identity: restricted to SEAMTECH_S3_BUCKET only.
+SEAMTECH_S3_ACCESS_KEY=seamtech-app
+SEAMTECH_S3_SECRET_KEY=<long-random-app-secret>
+# Dedicated BACKUP identity: restricted to SEAMTECH_BACKUP_BUCKET only.
+SEAMTECH_BACKUP_ACCESS_KEY=seamtech-sauvegarde
+SEAMTECH_BACKUP_SECRET_KEY=<long-random-backup-secret>
+SEAMTECH_BACKUP_BUCKET=seamtech-backups
 ```
+
+### Storage identities: administrator vs application vs backup
+
+`MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` are **provisioning credentials**.
+They are given to the MinIO service and to
+`scripts/provisionner_stockage.sh`, and to nothing else: the `web` and `worker`
+services receive the dedicated application identity above, which can read and
+write objects in `SEAMTECH_S3_BUCKET` only — no other bucket, no
+administration operation, no permission. `docker-compose.yml` refuses to start
+if `SEAMTECH_S3_ACCESS_KEY` / `SEAMTECH_S3_SECRET_KEY` are missing
+(`${VAR:?message}`), so there is no silent fallback to the administrator. The
+backup tool (`python -m seamtech_search.sauvegarde`) uses the separate backup
+identity when `SEAMTECH_BACKUP_*` are set, so a compromised application cannot
+read or rewrite the off-site backups; without them it falls back to the
+application identity and the upload fails loudly (`AccessDenied`) if that
+identity has no rights on the backup bucket.
+
+Provision the bucket, the versioning and both restricted identities **before**
+the first `docker compose up`, and again after rotating any of these secrets:
+
+```powershell
+docker compose up -d minio          # MinIO must be running first
+bash scripts/provisionner_stockage.sh
+```
+
+The script is idempotent and repeatable; it creates `SEAMTECH_S3_BUCKET` and
+`SEAMTECH_BACKUP_BUCKET`, enables object versioning on both (the restricted
+application identity cannot enable it itself), creates the two policies
+(object read/write + bucket listing on their own bucket only), recreates the
+two users with the secrets you supplied (that is the rotation procedure) and
+checks anonymously that neither bucket is public. It refuses to run if the
+application or backup credentials are the administrator ones, or if the two
+identities are the same. It never prints a secret.
+
+`GET /health` reports `s3_credentials` as `dedie`, `root_like` or `absent`:
+`dedie` is the expected value, `root_like` means the administrator credentials
+were reused or the demonstration `minioadmin` values are still in place.
 
 Generate the random ones in PowerShell:
 
@@ -294,8 +338,18 @@ new stack has passed the frontend health check and a representative search.
 ## Troubleshooting checklist
 
 - **Compose refuses to parse:** confirm every `:?` variable in `.env` is set,
-  especially `REDIS_PASSWORD`, `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD`, and
-  `SEAMTECH_AUTH_TOKEN`; run `docker compose config --quiet`.
+  especially `REDIS_PASSWORD`, `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD`,
+  `SEAMTECH_S3_ACCESS_KEY`, `SEAMTECH_S3_SECRET_KEY`, and `SEAMTECH_AUTH_TOKEN`;
+  run `docker compose config --quiet`.
+- **Uploads fail with `AccessDenied` / an empty `seamtech-documents`:** the
+  buckets and restricted identities have not been provisioned in this
+  environment. Run `bash scripts/provisionner_stockage.sh` (see
+  [Storage identities](#storage-identities-administrator-vs-application-vs-backup)),
+  then `docker compose up -d --build web worker`.
+- **`/health` reports `s3_credentials: root_like`:** the administrator
+  credentials were reused for the application. Provision the dedicated
+  identity and put it in `.env`; do not "fix" this by granting the
+  administrator credentials to `web`/`worker`.
 - **Imports stay `pending` / the queue grows:** the `worker` service is the only
   consumer. Check `docker compose ps worker` and
   `docker compose exec -T worker python -m seamtech_search.worker_service --verifier`.

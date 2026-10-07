@@ -8,7 +8,7 @@ pnpm pour le lanceur quotidien, Python 3.11+ pour les tests.
 
 | # | Windows (PowerShell) | Linux | Ce qui se passe |
 |---|---|---|---|
-| 1 | `.\scripts\recette_locale.ps1` | `bash scripts/recette_locale.sh` | **Premier lancement / preuve complète** : génère `.env` (7 secrets aléatoires, jamais dans Git), construit l'image MinIO locale (les registres sont morts), démarre la pile, dépose les 7 ZIP du dépôt, vérifie 20 contrôles (dépôt, lots, validation, recherche dimension `6,60`, PDF présigné, rejeu, sauvegarde/restauration, persistance) → **rapport PASS/FAIL + code sortie 0**. Rejouable à volonté. |
+| 1 | `.\scripts\recette_locale.ps1` | `bash scripts/recette_locale.sh` | **Premier lancement / preuve complète** : génère `.env` (secrets aléatoires, jamais dans Git), construit l'image MinIO locale (les registres sont morts), **provisionne le stockage** (buckets, versioning, identités restreintes — voir `scripts/provisionner_stockage.sh`), démarre la pile, dépose les 7 ZIP du dépôt, vérifie 20 contrôles (dépôt, lots, validation, recherche dimension `6,60`, PDF présigné, rejeu, sauvegarde/restauration, persistance) → **rapport PASS/FAIL + code sortie 0**. Rejouable à volonté. |
 | 2 | `.\SEAMTECH Search.cmd` | `docker compose up -d --build` puis ouvrir `http://127.0.0.1:3000` | **Démarrage quotidien** : services PostgreSQL/MinIO/Redis dans Docker, application + interface locales, navigateur ouvert. Connexion : compte nominatif (ex. `recette`, mot de passe dans `.env` → `RECETTE_MOT_DE_PASSE`). |
 | 3 | `docker compose ps` | idem | État de la pile : les 5 services doivent être `running`/`healthy`. |
 | 4 | `docker compose down` | idem | Arrêt propre — **les données restent** (volumes nommés) : `docker compose up -d` les retrouve. |

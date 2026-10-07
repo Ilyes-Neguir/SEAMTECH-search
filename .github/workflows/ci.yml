@@ -689,6 +689,26 @@ jobs:
 
   integration:
     runs-on: ubuntu-24.04
+    # Identités de stockage SÉPARÉES (constat bloquant de la revue indépendante
+    # du 2026-10-07) : `docker-compose.yml` EXIGE désormais
+    # `SEAMTECH_S3_ACCESS_KEY`/`SEAMTECH_S3_SECRET_KEY` — l'identité APPLICATIVE
+    # dédiée, jamais l'administrateur MinIO. Ces valeurs sont des identités
+    # restreintes : `scripts/provisionner_stockage.sh` les crée juste après le
+    # démarrage de MinIO (étape « Provisionner les identités restreintes »).
+    env:
+      POSTGRES_PASSWORD: test_password
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin123
+      REDIS_PASSWORD: redis_test_password
+      SEAMTECH_AUTH_TOKEN: test-token-123
+      SEAMTECH_UI_PASSWORD: ci-ui-password
+      SEAMTECH_SESSION_SECRET: ci-session-secret-not-for-production
+      SEAMTECH_S3_BUCKET: seamtech-documents
+      SEAMTECH_BACKUP_BUCKET: seamtech-backups
+      SEAMTECH_S3_ACCESS_KEY: seamtech-app-ci
+      SEAMTECH_S3_SECRET_KEY: ci-app-secret-not-for-production
+      SEAMTECH_BACKUP_ACCESS_KEY: seamtech-sauvegarde-ci
+      SEAMTECH_BACKUP_SECRET_KEY: ci-backup-secret-not-for-production
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -796,6 +816,12 @@ jobs:
                   sys.exit(1)
               time.sleep(5)
           PY
+      - name: Provisionner les identités restreintes (buckets + versioning + politiques)
+        # Étape SÉPARÉE du démarrage applicatif : c'est le provisionnement — et
+        # non l'application — qui crée les buckets, active le versioning et crée
+        # les identités restreintes (applicative + sauvegarde). Rejouable : la
+        # relancer est aussi la procédure de ROTATION des identifiants.
+        run: bash scripts/provisionner_stockage.sh
       - name: Boot documented stack (web + frontend) and wait for healthy
         # Prove the one-command office deployment, not only the individual
         # images. Both application services must report healthy before the
@@ -937,8 +963,8 @@ jobs:
           # test at those ports (same host, same loopback).
           export SEAMTECH_REDIS_URL="redis://:redis_test_password@127.0.0.1:6379/0"
           export SEAMTECH_S3_ENDPOINT_URL="http://127.0.0.1:9000"
-          export SEAMTECH_S3_ACCESS_KEY="minioadmin"
-          export SEAMTECH_S3_SECRET_KEY="minioadmin123"
+          # Identité APPLICATIVE RESTREINTE (env du job) : ces tests prouvent le
+          # moindre privilège — plus AUCUN export d'identifiants administrateur.
           set +e
           pytest -m integration_docker -v
           rc=$?
@@ -1249,9 +1275,19 @@ jobs:
     env:
       SEAMTECH_TEST_DATABASE_URL: postgresql://seamtech:seamtech_test_password@127.0.0.1:5432/seamtech_search_test
       SEAMTECH_S3_ENDPOINT_URL: http://127.0.0.1:9000
+      # Ce job éprouve l'ALLER-RETOUR HORS-SITE : l'identité en jeu est donc
+      # l'identité de SAUVEGARDE restreinte (revue du 2026-10-07), pas le root
+      # MinIO. Elle n'a de droits que sur `seamtech-backups` : c'est le seul
+      # bucket que le dump quitte et que la restauration relit.
       SEAMTECH_S3_BUCKET: seamtech-backups
-      SEAMTECH_S3_ACCESS_KEY: minioadmin
-      SEAMTECH_S3_SECRET_KEY: minioadmin123
+      SEAMTECH_S3_ACCESS_KEY: seamtech-sauvegarde-ci
+      SEAMTECH_S3_SECRET_KEY: ci-backup-secret-not-for-production
+      SEAMTECH_BACKUP_ACCESS_KEY: seamtech-sauvegarde-ci
+      SEAMTECH_BACKUP_SECRET_KEY: ci-backup-secret-not-for-production
+      SEAMTECH_BACKUP_BUCKET: seamtech-backups
+      # MinIO tourne ici en `docker run` (pas compose) : le provisionnement doit
+      # viser ce conteneur nommé.
+      SEAMTECH_MINIO_CONTAINER: minio
       SEAMTECH_S3_PREFIX: ""
     steps:
       - uses: actions/checkout@v7
@@ -1297,20 +1333,18 @@ jobs:
           PY
       - name: Prepare config file (S3 env overrides apply on top)
         run: cp config/config.example.json config/config.json
-      - name: Create the off-site backups bucket
-        run: |
-          python - << 'PY'
-          import boto3
-
-          client = boto3.client(
-              "s3",
-              endpoint_url="http://127.0.0.1:9000",
-              aws_access_key_id="minioadmin",
-              aws_secret_access_key="minioadmin123",
-          )
-          client.create_bucket(Bucket="seamtech-backups")
-          print("bucket seamtech-backups créé")
-          PY
+      - name: Provisionner les buckets et les identités restreintes
+        # Remplace l'ancienne création du bucket avec les identifiants ROOT : le
+        # provisionnement crée les DEUX buckets (documents + sauvegardes), active
+        # leur versioning et crée les deux identités restreintes. L'identité
+        # applicative est provisionnée ici pour que la séparation soit réelle
+        # même dans un job qui n'utilise que l'identité de sauvegarde.
+        env:
+          SEAMTECH_S3_BUCKET: seamtech-documents
+          SEAMTECH_S3_ACCESS_KEY: seamtech-app-ci
+          SEAMTECH_S3_SECRET_KEY: ci-app-secret-not-for-production
+          SEAMTECH_BACKUP_BUCKET: seamtech-backups
+        run: bash scripts/provisionner_stockage.sh
       - name: Run the backup round-trip suite (sauver → détruire → restaurer)
         env:
           SEAMTECH_SAUVEGARDE_JSON: sauvegarde-mesures.jsonl
@@ -1452,8 +1486,16 @@ jobs:
       SEAMTECH_REDIS_URL: redis://127.0.0.1:6379/0
       SEAMTECH_S3_ENDPOINT_URL: http://127.0.0.1:9000
       SEAMTECH_S3_BUCKET: seamtech-documents
-      SEAMTECH_S3_ACCESS_KEY: minioadmin
-      SEAMTECH_S3_SECRET_KEY: minioadmin123
+      # Identité APPLICATIVE restreinte (revue du 2026-10-07) : la recette sur
+      # corpus réel doit tourner avec les droits réels du déploiement, pas ceux
+      # de l'administrateur MinIO.
+      SEAMTECH_S3_ACCESS_KEY: seamtech-app-ci
+      SEAMTECH_S3_SECRET_KEY: ci-app-secret-not-for-production
+      SEAMTECH_BACKUP_ACCESS_KEY: seamtech-sauvegarde-ci
+      SEAMTECH_BACKUP_SECRET_KEY: ci-backup-secret-not-for-production
+      SEAMTECH_BACKUP_BUCKET: seamtech-backups
+      # MinIO en `docker run` ici : provisionnement via conteneur nommé.
+      SEAMTECH_MINIO_CONTAINER: minio
       SEAMTECH_RECETTE_BUCKET_SAUVEGARDE: seamtech-backups
     steps:
       - uses: actions/checkout@v7
@@ -1477,7 +1519,7 @@ jobs:
         # MinIO ; scripts/construire_image_minio.sh reconstruit l'image depuis
         # les sources officielles du tag épinglé.
         run: bash scripts/construire_image_minio.sh
-      - name: Start MinIO and create buckets
+      - name: Start MinIO (buckets et identités provisionnés à l'étape suivante)
         run: |
           docker run -d --name minio -p 9000:9000 \
             -e MINIO_ROOT_USER=minioadmin \
@@ -1501,22 +1543,12 @@ jobs:
               print("::error title=minio-not-ready::MinIO n'a pas répondu sur /minio/health/live en 120 s")
               sys.exit(1)
 
-          import boto3
-
-          client = boto3.client(
-              "s3",
-              endpoint_url="http://127.0.0.1:9000",
-              aws_access_key_id="minioadmin",
-              aws_secret_access_key="minioadmin123",
-          )
-          for bucket in ("seamtech-documents", "seamtech-backups"):
-              try:
-                  client.head_bucket(Bucket=bucket)
-              except Exception:
-                  client.create_bucket(Bucket=bucket)
-              client.head_bucket(Bucket=bucket)
-          print("MinIO vivant, buckets documents + backups créés")
           PY
+      - name: Provisionner les identités restreintes (buckets + versioning + politiques)
+        # Remplace la création des buckets avec les identifiants ROOT : le
+        # provisionnement crée les deux buckets, active le versioning et crée les
+        # identités restreintes (applicative + sauvegarde).
+        run: bash scripts/provisionner_stockage.sh
       - name: Check corpus ZIPs (RG13, avant extraction)
         # Garde-fous : exactement 7 ZIP, empreintes SHA-256 consignées AVANT
         # l'extraction (le runner temporaire reçoit les documents, le dépôt

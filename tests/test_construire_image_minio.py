@@ -105,7 +105,10 @@ def test_ci_construit_l_image_avant_de_la_consommer() -> None:
     assert len(appels) == 3, "le build MinIO doit être appelé par les 3 jobs concernés"
     pos_integration = ci.index("- name: Start infra services")
     pos_sauvegarde = ci.index("- name: Start MinIO (bucket")
-    pos_recette = ci.index("- name: Start MinIO and create buckets")
+    # Le titre de l'étape de recette a changé avec le provisionnement des
+    # identités restreintes (2026-10-07) : elle démarre MinIO, le
+    # provisionnement crée buckets/identités à l'étape suivante.
+    pos_recette = ci.index("- name: Start MinIO (buckets et identités provisionnés à l'étape suivante)")
     assert appels[0] < pos_integration, "build MinIO absent avant l'étape Start infra services"
     assert appels[1] < pos_sauvegarde, "build MinIO absent avant l'étape Start MinIO"
     assert appels[2] < pos_recette, "build MinIO absent avant l'étape Start MinIO (recette-corpus-reel)"

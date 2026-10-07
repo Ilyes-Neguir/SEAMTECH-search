@@ -265,10 +265,37 @@ class S3StorageClient:
         """Check if S3 credentials/endpoint are configured."""
         return bool(self.bucket_name and (self.access_key_id or self.endpoint_url))
 
+    def credentials_presentes(self) -> bool:
+        """Les DEUX identifiants sont-ils fournis (access + secret) ?
+
+        Distinct de :meth:`is_configured` : on peut avoir un endpoint et un
+        bucket sans identifiants. C'est l'état que /health expose et que
+        :meth:`_make_client` refuse — un client S3 sans identifiants enverrait
+        des requêtes anonymes, dont l'échec ressemblerait à une panne du
+        stockage au lieu d'un défaut de configuration.
+        """
+        return bool((self.access_key_id or "").strip() and (self.secret_access_key or "").strip())
+
     def _make_client(self, probe_timeout: float | None = None):
-        """Build a boto3 client; ``probe_timeout`` shortens it for health checks."""
+        """Build a boto3 client; ``probe_timeout`` shortens it for health checks.
+
+        REFUS EXPLICITE sans identifiants : la composition de production exige
+        une identité applicative DÉDIÉE (``SEAMTECH_S3_ACCESS_KEY`` /
+        ``SEAMTECH_S3_SECRET_KEY``, créée par scripts/provisionner_stockage.sh).
+        Il n'existe aucun repli sur les identifiants administrateur : un client
+        anonyme échouerait plus tard, au milieu d'un import, avec un message qui
+        accuserait le stockage.
+        """
         import boto3
         from botocore.config import Config
+
+        if self.endpoint_url and not self.credentials_presentes():
+            raise StorageError(
+                "Identifiants S3 applicatifs absents : renseigner SEAMTECH_S3_ACCESS_KEY et "
+                "SEAMTECH_S3_SECRET_KEY (identité dédiée créée par "
+                "scripts/provisionner_stockage.sh). Aucun repli sur les identifiants "
+                "administrateur MinIO n'existe."
+            )
 
         settings: dict[str, Any] = {
             "signature_version": "s3v4",
@@ -377,16 +404,29 @@ class S3StorageClient:
         self._enable_versioning_once()
 
     def _enable_versioning_once(self) -> None:
-        """Best-effort ``put_bucket_versioning``.
+        """Best-effort ``put_bucket_versioning``, précédé d'une LECTURE.
 
         A failure here must never fail an upload: Cloudflare R2 does not implement
         ``PutBucketVersioning`` at all (it is absent from its S3 compatibility
         matrix), and on such an endpoint the overwrite guarantee is carried by
         refusing to reuse an occupied key instead.
+
+        La lecture d'abord n'est pas une optimisation, c'est une conséquence de
+        la séparation des identités (revue du 2026-10-07) : le versioning est
+        désormais activé par ``scripts/provisionner_stockage.sh``, et l'identité
+        applicative RESTREINTE n'a plus le droit ``PutBucketVersioning``. Sans
+        cette lecture, une application correctement configurée se croirait sans
+        versioning (donc sans protection contre l'écrasement) alors que le
+        bucket l'est déjà.
         """
         if self._versioning_attempted:
             return
         self._versioning_attempted = True
+        etat = self._read_versioning()
+        if etat.get("versioning_available") is True:
+            self._versioning_state = etat
+            logger.info("Object versioning already enabled on bucket %s", self.bucket_name)
+            return
         try:
             s3 = self._get_client()
             s3.put_bucket_versioning(Bucket=self.bucket_name, VersioningConfiguration={"Status": "Enabled"})

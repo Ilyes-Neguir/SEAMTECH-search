@@ -146,6 +146,19 @@ def create_app(config: AppConfig) -> FastAPI:
     storage_client: S3StorageClient | None = S3StorageClient(config=config)
     if not storage_client.is_configured():
         storage_client = None
+    elif not storage_client.credentials_presentes():
+        # Configuration INCOMPLÈTE, dite explicitement : sans cette alerte,
+        # l'absence d'identité ressemblerait plus tard à une panne du stockage
+        # (« Access Denied » au milieu d'un import). Aucun repli sur les
+        # identifiants administrateur n'existe : /health renvoie « absent ».
+        logger.error(
+            "Stockage objet configuré (endpoint=%s bucket=%s) mais identifiants applicatifs "
+            "absents : renseigner SEAMTECH_S3_ACCESS_KEY et SEAMTECH_S3_SECRET_KEY "
+            "(identité dédiée créée par scripts/provisionner_stockage.sh). "
+            "Aucun repli sur l'administrateur MinIO n'est effectué.",
+            config.s3_endpoint_url,
+            config.s3_bucket,
+        )
 
     def _is_staged(source_path: str | Path) -> bool:
         """True when the import lives in the browser-upload staging area."""

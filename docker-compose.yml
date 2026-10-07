@@ -124,8 +124,17 @@ services:
       # passent par l'API authentifiée ; un renvoi présigné vers l'endpoint
       # interne (http://minio:9000) ne serait résolvable nulle part ailleurs.
       SEAMTECH_S3_PUBLIC_ENDPOINT_URL: ${SEAMTECH_S3_PUBLIC_ENDPOINT_URL:-}
-      SEAMTECH_S3_ACCESS_KEY: ${MINIO_ROOT_USER:?Set MINIO_ROOT_USER in the environment}
-      SEAMTECH_S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in the environment}
+      # IDENTITÉ APPLICATIVE DÉDIÉE — jamais les identifiants administrateur
+      # MinIO. Constat de la revue indépendante du 2026-10-07 : ces deux lignes
+      # transmettaient `MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD`, donc l'API et le
+      # worker tournaient en root du stockage (lecture/écrasement/suppression de
+      # n'importe quel bucket) et régler `SEAMTECH_S3_ACCESS_KEY` dans `.env`
+      # n'avait AUCUN effet, la composition écrasant la valeur.
+      # Les identités sont créées par scripts/provisionner_stockage.sh, qui
+      # limite l'application à `SEAMTECH_S3_BUCKET` et la sauvegarde à son
+      # bucket hors-site. Obligatoires (`:?`) : pas de repli silencieux.
+      SEAMTECH_S3_ACCESS_KEY: ${SEAMTECH_S3_ACCESS_KEY:?Set SEAMTECH_S3_ACCESS_KEY - identite applicative dediee, voir scripts/provisionner_stockage.sh}
+      SEAMTECH_S3_SECRET_KEY: ${SEAMTECH_S3_SECRET_KEY:?Set SEAMTECH_S3_SECRET_KEY - secret applicatif dedie, voir scripts/provisionner_stockage.sh}
       SEAMTECH_REDIS_URL: "redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in the environment}@redis:6379/0"
       # DURABILITÉ DES IMPORTS. Le service `web` n'exécute PLUS les imports :
       # ils sont traités par le service `worker` ci-dessous. Deux raisons :
@@ -208,8 +217,17 @@ services:
       # passent par l'API authentifiée ; un renvoi présigné vers l'endpoint
       # interne (http://minio:9000) ne serait résolvable nulle part ailleurs.
       SEAMTECH_S3_PUBLIC_ENDPOINT_URL: ${SEAMTECH_S3_PUBLIC_ENDPOINT_URL:-}
-      SEAMTECH_S3_ACCESS_KEY: ${MINIO_ROOT_USER:?Set MINIO_ROOT_USER in the environment}
-      SEAMTECH_S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in the environment}
+      # IDENTITÉ APPLICATIVE DÉDIÉE — jamais les identifiants administrateur
+      # MinIO. Constat de la revue indépendante du 2026-10-07 : ces deux lignes
+      # transmettaient `MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD`, donc l'API et le
+      # worker tournaient en root du stockage (lecture/écrasement/suppression de
+      # n'importe quel bucket) et régler `SEAMTECH_S3_ACCESS_KEY` dans `.env`
+      # n'avait AUCUN effet, la composition écrasant la valeur.
+      # Les identités sont créées par scripts/provisionner_stockage.sh, qui
+      # limite l'application à `SEAMTECH_S3_BUCKET` et la sauvegarde à son
+      # bucket hors-site. Obligatoires (`:?`) : pas de repli silencieux.
+      SEAMTECH_S3_ACCESS_KEY: ${SEAMTECH_S3_ACCESS_KEY:?Set SEAMTECH_S3_ACCESS_KEY - identite applicative dediee, voir scripts/provisionner_stockage.sh}
+      SEAMTECH_S3_SECRET_KEY: ${SEAMTECH_S3_SECRET_KEY:?Set SEAMTECH_S3_SECRET_KEY - secret applicatif dedie, voir scripts/provisionner_stockage.sh}
       SEAMTECH_REDIS_URL: "redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in the environment}@redis:6379/0"
       SEAMTECH_REQUIRE_DURABLE_QUEUE: ${SEAMTECH_REQUIRE_DURABLE_QUEUE:-true}
       # Relecture des octets stockés pour prouver l'intégrité AVANT toute purge

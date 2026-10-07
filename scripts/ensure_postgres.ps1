@@ -46,7 +46,14 @@ $Secrets = @(
     "REDIS_PASSWORD",
     "SEAMTECH_AUTH_TOKEN",
     "SEAMTECH_UI_PASSWORD",
-    "SEAMTECH_SESSION_SECRET"
+    "SEAMTECH_SESSION_SECRET",
+    # Identités de stockage SÉPARÉES (revue indépendante du 2026-10-07) :
+    # l'application reçoit une identité RESTREINTE à son bucket, jamais
+    # l'administrateur MinIO. `docker-compose.yml` EXIGE ces deux variables.
+    "SEAMTECH_S3_ACCESS_KEY",
+    "SEAMTECH_S3_SECRET_KEY",
+    "SEAMTECH_BACKUP_ACCESS_KEY",
+    "SEAMTECH_BACKUP_SECRET_KEY"
 )
 foreach ($nom in $Secrets) {
     $valeur = Get-EnvValue $nom
@@ -57,6 +64,10 @@ foreach ($nom in $Secrets) {
 }
 $password = Get-EnvValue "POSTGRES_PASSWORD"
 $authToken = Get-EnvValue "SEAMTECH_AUTH_TOKEN"
+# Exportés pour scripts/provisionner_stockage.sh (buckets + identités restreintes).
+foreach ($nom in @("MINIO_ROOT_USER", "MINIO_ROOT_PASSWORD", "SEAMTECH_S3_ACCESS_KEY", "SEAMTECH_S3_SECRET_KEY", "SEAMTECH_BACKUP_ACCESS_KEY", "SEAMTECH_BACKUP_SECRET_KEY")) {
+    Set-Item -Path ("env:" + $nom) -Value (Get-EnvValue $nom)
+}
 
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     throw "Docker Desktop is required for automatic PostgreSQL setup. Install Docker Desktop and run the launcher again."
@@ -124,6 +135,28 @@ try {
     docker compose -f $ComposeFile up -d --wait postgres minio redis
 } finally {
     Pop-Location
+}
+
+# Provisionnement du stockage (buckets, versioning, identités RESTREINTES) :
+# étape SÉPARÉE du démarrage applicatif, rejouable (rotation des secrets). Sans
+# elle, les services web/worker refusent de démarrer — la composition exige
+# SEAMTECH_S3_ACCESS_KEY/SEAMTECH_S3_SECRET_KEY.
+$Bash = $null
+foreach ($candidat in @("bash", "C:\Program Files\Git\bin\bash.exe", "C:\Program Files (x86)\Git\bin\bash.exe")) {
+    if (Get-Command $candidat -ErrorAction SilentlyContinue) { $Bash = $candidat; break }
+    if (Test-Path $candidat) { $Bash = $candidat; break }
+}
+if (-not $Bash) {
+    throw "bash (Git for Windows) est requis pour scripts/provisionner_stockage.sh (buckets + identités restreintes). Installez Git for Windows puis relancez."
+}
+Push-Location $ProjectRoot
+try {
+    & $Bash (Join-Path $ProjectRoot "scripts/provisionner_stockage.sh")
+} finally {
+    Pop-Location
+}
+if ($LASTEXITCODE -ne 0) {
+    throw "Provisionnement du stockage en échec (scripts/provisionner_stockage.sh)."
 }
 
 $env:SEAMTECH_DATABASE_URL = "postgresql://seamtech:$password@127.0.0.1:5433/seamtech_search"
