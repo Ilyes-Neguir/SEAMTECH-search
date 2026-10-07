@@ -1391,7 +1391,16 @@ jobs:
         # leur versioning et crée les deux identités restreintes. L'identité
         # applicative est provisionnée ici pour que la séparation soit réelle
         # même dans un job qui n'utilise que l'identité de sauvegarde.
+        # Les identifiants ADMINISTRATEUR sont fournis ICI, au niveau de l'ÉTAPE
+        # et pas du job : le provisionnement en a besoin (il crée les buckets,
+        # les politiques et les utilisateurs), les suites de tests qui suivent
+        # n'en héritent pas — elles doivent tourner avec l'identité restreinte.
+        # Défaut trouvé par la CI du run 37617039519 : cette étape échouait ici
+        # (« MINIO_ROOT_USER requis ») alors que le conteneur MinIO était bien
+        # démarré avec ces identifiants juste avant.
         env:
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: minioadmin123
           SEAMTECH_S3_BUCKET: seamtech-documents
           SEAMTECH_S3_ACCESS_KEY: seamtech-app-ci
           SEAMTECH_S3_SECRET_KEY: ci-app-secret-not-for-production
@@ -1600,6 +1609,12 @@ jobs:
         # Remplace la création des buckets avec les identifiants ROOT : le
         # provisionnement crée les deux buckets, active le versioning et crée les
         # identités restreintes (applicative + sauvegarde).
+        # Les identifiants ADMINISTRATEUR sont fournis au niveau de l'ÉTAPE (et
+        # pas du job) : la recette qui suit doit tourner avec l'identité
+        # APPLICATIVE restreinte, jamais avec l'administrateur.
+        env:
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: minioadmin123
         run: bash scripts/provisionner_stockage.sh
       - name: Check corpus ZIPs (RG13, avant extraction)
         # Garde-fous : exactement 7 ZIP, empreintes SHA-256 consignées AVANT
@@ -1735,9 +1750,24 @@ jobs:
           from pathlib import Path
 
           racine = Path(os.environ["GITHUB_WORKSPACE"])
-          avant = json.loads(
-              Path(os.environ["RUNNER_TEMP"], "zip-empreintes-avant.json").read_text(encoding="utf-8")
-          )
+          apercu = Path(os.environ["RUNNER_TEMP"], "zip-empreintes-avant.json")
+          if not apercu.exists():
+              # Cas observé au run 37617039519 : l'étape « avant extraction » a
+              # été SAUTÉE (échec du provisionnement en amont) et cette étape
+              # « toujours exécutée » levait alors un FileNotFoundError illisible.
+              # L'invariant n'a pas pu être vérifié : on le dit explicitement —
+              # jamais de succès silencieux sur un invariant non prouvé.
+              raise SystemExit(
+                  "::error title=rg13-non-verifie::invariant RG13 NON VÉRIFIÉ : "
+                  "l'empreinte AVANT est absente (l'étape « Check corpus ZIPs "
+                  "(RG13, avant extraction) » n'a pas été exécutée)."
+              )
+          avant = json.loads(apercu.read_text(encoding="utf-8"))
+          if len(avant) != 7:
+              raise SystemExit(
+                  f"::error title=rg13-non-verifie::invariant RG13 incomplet : "
+                  f"{len(avant)} ZIP consignés avant recette, 7 attendus."
+              )
           ecarts = {
               nom: "modifié"
               for nom, empreinte in avant.items()

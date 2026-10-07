@@ -85,6 +85,34 @@ test.describe("concurrence entre postes (sessions indépendantes)", () => {
     await expect(poste.getByTestId("validation-app")).toHaveAttribute("data-revision", /^[0-9]+$/)
   }
 
+  /** Champ RÉELLEMENT présent sur la fiche, et son code.
+
+   * Le premier passage CI a montré l'erreur à ne pas refaire : le test
+   * supposait un champ nommé « materiau ». Les fiches réelles portent
+   * `materiau.tissu_principal` (famille `materiau.`), et les autres familles
+   * suivent le même préfixe — le sélecteur exact n'est donc PAS devinable.
+   * On choisit donc, dans l'ordre : le champ textile connu, la première
+   * matière, une désignation libre, et en dernier recours le premier champ
+   * corrigeable qui n'est pas le CODE de la fiche (écrire « MATERIAU-A » dans
+   * un code n'aurait aucun sens métier).
+   */
+  async function choisirChamp(poste: Page): Promise<{ selecteur: string; champ: string }> {
+    const candidats = [
+      'input[data-testid="champ-materiau.tissu_principal"]',
+      'input[data-testid^="champ-materiau."]',
+      'input[data-testid="champ-fiche.designation"]',
+      'input[data-testid^="champ-"]:not([data-testid="champ-fiche.code"])',
+    ]
+    for (const selecteur of candidats) {
+      const champ = poste.locator(selecteur).first()
+      if ((await champ.count()) === 0) continue
+      const testid = (await champ.getAttribute("data-testid")) ?? ""
+      if (!testid.startsWith("champ-")) continue
+      return { selecteur, champ: testid.slice("champ-".length) }
+    }
+    throw new Error("aucun champ corrigeable trouvé sur la fiche")
+  }
+
   /** Valeur d'un champ et révision lue depuis la BASE par l'API authentifiée. */
   async function etatEnBase(
     poste: Page,
@@ -110,11 +138,9 @@ test.describe("concurrence entre postes (sessions indépendantes)", () => {
       expect(codes.length, `file de validation inattendue : ${codes.join(", ")}`).toBeGreaterThan(0)
       const code = codes[codes.length - 1]
 
-      const champ = "materiau"
-      const selecteur = `input[data-testid="champ-${champ}"]`
-
       // LES DEUX POSTES OUVRENT LA MÊME FICHE, À LA MÊME RÉVISION.
       await Promise.all([ouvrirFiche(posteA, code), ouvrirFiche(posteB, code)])
+      const { selecteur, champ } = await choisirChamp(posteA)
       const etatInitial = await etatEnBase(posteA, code, champ)
       await expect(posteA.locator(selecteur)).toBeVisible()
       await expect(posteB.locator(selecteur)).toBeVisible()
@@ -153,6 +179,15 @@ test.describe("concurrence entre postes (sessions indépendantes)", () => {
       await posteB.getByTestId("bouton-recharger-fiche").click()
       await expect(posteB.getByTestId("conflit-revision")).toHaveCount(0, { timeout: 15000 })
       await expect(posteB.locator(selecteur)).toHaveValue("MATERIAU-POSTE-A", { timeout: 15000 })
+      // ET la révision rechargée est bien CELLE DU GAGNANT : sans cette
+      // attente, la nouvelle correction pourrait partir SANS verrou (le
+      // chargement de la révision est une seconde requête) et le scénario
+      // passerait en prouvant moins que ce qu'il annonce.
+      await expect(posteB.getByTestId("validation-app")).toHaveAttribute(
+        "data-revision",
+        String(apresA.revision),
+        { timeout: 15000 },
+      )
       await posteB.locator(selecteur).fill("MATERIAU-POSTE-B")
       await posteB.getByTestId("bouton-corriger").first().click()
       await expect(posteB.getByTestId("message-ok")).toContainText("corrigé", { timeout: 15000 })
@@ -216,10 +251,9 @@ test.describe("concurrence entre postes (sessions indépendantes)", () => {
       const codes = (await codesDeLaFile(posteA)).filter((code) => code && !code.includes("7792"))
       expect(codes.length).toBeGreaterThan(0)
       const code = codes[0]
-      const champ = "materiau"
-      const selecteur = `input[data-testid="champ-${champ}"]`
 
       await ouvrirFiche(posteB, code)
+      const { selecteur, champ } = await choisirChamp(posteB)
       await expect(posteB.locator(selecteur)).toBeVisible()
       const avant = await etatEnBase(posteB, code, champ)
 

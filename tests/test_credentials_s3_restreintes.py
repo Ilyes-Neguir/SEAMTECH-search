@@ -591,3 +591,134 @@ def test_aucun_secret_dans_les_journaux_des_services() -> None:
     journaux = resultat.stdout + resultat.stderr
     for interdit, nom in ((secret_app, "secret applicatif"), (secret_root, "secret administrateur")):
         assert interdit not in journaux, f"{nom} présent dans les journaux des services"
+
+
+# ---------------------------------------------------------------------------
+# 4. La CI alimente le provisionnement avec TOUT ce qu'il exige
+# ---------------------------------------------------------------------------
+
+CI_WORKFLOW = RACINE / ".github" / "workflows" / "ci.yml"
+
+#: Variables sans lesquelles ``scripts/provisionner_stockage.sh`` s'arrête
+#: (``set -euo pipefail`` + expansions ``:?`` sur les deux identités ET sur
+#: l'administrateur, qui reste indispensable au provisionnement lui-même).
+VARIABLES_EXIGEES_PAR_LE_PROVISIONNEMENT = (
+    "MINIO_ROOT_USER",
+    "MINIO_ROOT_PASSWORD",
+    "SEAMTECH_S3_ACCESS_KEY",
+    "SEAMTECH_S3_SECRET_KEY",
+    "SEAMTECH_BACKUP_ACCESS_KEY",
+    "SEAMTECH_BACKUP_SECRET_KEY",
+)
+
+#: Jobs dont le but est de faire TOURNER l'application (ou la recette sur corpus
+#: réel) avec l'identité RESTREINTE : l'administrateur n'y est admis qu'au
+#: niveau de l'étape de provisionnement, jamais au niveau du job — sinon les
+#: suites de tests hériteraient du root et la preuve « identité restreinte »
+#: perdrait son sens.
+JOBS_IDENTITE_RESTREINTE = ("sauvegarde", "recette-corpus-reel")
+
+
+def _workflow() -> dict:
+    return yaml.safe_load(CI_WORKFLOW.read_text(encoding="utf-8"))
+
+
+def _etapes_avec_provisionnement(job: dict) -> list[dict]:
+    return [
+        etape
+        for etape in (job.get("steps") or [])
+        if "provisionner_stockage.sh" in str(etape.get("run") or "")
+    ]
+
+
+def test_ci_fournit_au_provisionnement_toutes_les_variables_exigees() -> None:
+    """Régression CI (run 37617039519) : « MINIO_ROOT_USER requis » (2 jobs).
+
+    Les jobs ``sauvegarde`` et ``recette-corpus-reel`` démarraient MinIO avec
+    ``docker run -e MINIO_ROOT_USER=...`` puis appelaient le provisionnement
+    SANS exposer ces variables à l'étape : le script s'arrêtait sur son
+    garde-fou (``:?``) et les deux jobs échouaient AVANT d'exécuter le moindre
+    test (constat : étape « Provisionner les identités restreintes » en échec,
+    toutes les étapes de test sautées).
+
+    Le contrat devient exécutable : toute étape qui invoque le provisionnement
+    doit disposer, dans son environnement EFFECTIF (env du job + env de
+    l'étape), des six variables exigées par le script.
+    """
+    manquants: list[str] = []
+    verifiees = 0
+    for nom_job, job in (_workflow().get("jobs") or {}).items():
+        env_job = job.get("env") or {}
+        for etape in _etapes_avec_provisionnement(job):
+            verifiees += 1
+            effectif = {**env_job, **(etape.get("env") or {})}
+            for variable in VARIABLES_EXIGEES_PAR_LE_PROVISIONNEMENT:
+                if not str(effectif.get(variable, "")).strip():
+                    manquants.append(f"{nom_job} / {etape.get('name')!r} : {variable}")
+    assert verifiees >= 3, f"provisionnements détectés dans la CI : {verifiees} (attendu ≥ 3)"
+    assert manquants == [], (
+        "le provisionnement s'arrêtera sur ces variables absentes dans la CI : "
+        + " ; ".join(manquants)
+    )
+
+
+def test_ci_pointe_le_provisionnement_sur_le_conteneur_minio_hors_compose() -> None:
+    """MinIO démarré par ``docker run`` (hors composition) : conteneur nommé.
+
+    Le script exécute ``docker exec -i <conteneur> mc`` quand
+    ``SEAMTECH_MINIO_CONTAINER`` est renseigné, et ``docker compose exec -T
+    minio mc`` sinon. Un job qui démarre MinIO par ``docker run`` doit donc
+    renseigner la variable, sinon le provisionnement échoue dès le premier
+    ``mc`` (aucun service « minio » dans ce projet compose).
+    """
+    manquants: list[str] = []
+    verifiees = 0
+    for nom_job, job in (_workflow().get("jobs") or {}).items():
+        etapes = job.get("steps") or []
+        if not _etapes_avec_provisionnement(job):
+            continue
+        noms = set()
+        for etape in etapes:
+            commande = str(etape.get("run") or "")
+            for nom in re.findall(r"docker run[^\n]*?--name\s+([A-Za-z0-9_.-]+)", commande):
+                noms.add(nom)
+        if not noms:
+            continue  # pile lancée par docker compose : mode « service minio »
+        verifiees += 1
+        env_job = job.get("env") or {}
+        declares = {str(env_job.get("SEAMTECH_MINIO_CONTAINER", ""))}
+        for etape in _etapes_avec_provisionnement(job):
+            declares.add(str((etape.get("env") or {}).get("SEAMTECH_MINIO_CONTAINER", "")))
+        for nom in sorted(noms):
+            if nom not in declares:
+                manquants.append(f"{nom_job} : conteneur « {nom} » démarré hors compose, "
+                                 f"SEAMTECH_MINIO_CONTAINER absent ({sorted(declares)})")
+    assert verifiees >= 2, f"jobs hors compose détectés : {verifiees} (attendu ≥ 2)"
+    assert manquants == [], " ; ".join(manquants)
+
+
+@pytest.mark.parametrize("nom_job", JOBS_IDENTITE_RESTREINTE)
+def test_ci_garde_l_administrateur_hors_des_jobs_a_identite_restreinte(nom_job: str) -> None:
+    """L'administrateur n'entre dans ces jobs QUE par l'étape de provisionnement.
+
+    Preuve « l'application tourne avec une identité restreinte » : les suites de
+    tests de ces jobs ne doivent PAS pouvoir hériter de ``MINIO_ROOT_*``. Les
+    identifiants sont donc portés par l'étape de provisionnement (nécessaire au
+    script), et par elle seule.
+    """
+    job = (_workflow()["jobs"] or {})[nom_job]
+    env_job = job.get("env") or {}
+    for interdit in ("MINIO_ROOT_USER", "MINIO_ROOT_PASSWORD"):
+        assert interdit not in env_job, (
+            f"{nom_job} : {interdit} déclaré au niveau du JOB — les suites de tests qui "
+            "suivent doivent tourner avec l'identité restreinte, jamais avec l'administrateur"
+        )
+    etapes = _etapes_avec_provisionnement(job)
+    assert etapes, f"{nom_job} : aucun appel à scripts/provisionner_stockage.sh détecté"
+    for etape in etapes:
+        env_etape = etape.get("env") or {}
+        for variable in ("MINIO_ROOT_USER", "MINIO_ROOT_PASSWORD"):
+            assert str(env_etape.get(variable, "")).strip(), (
+                f"{nom_job} / {etape.get('name')!r} : {variable} doit être fourni au "
+                "niveau de l'ÉTAPE de provisionnement"
+            )
