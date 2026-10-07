@@ -470,6 +470,13 @@ test.describe("concurrence entre postes (sessions indépendantes)", () => {
   })
 
   test("révision non lue : correction et décision bloquées, et le backend refuse aussi", async ({ browser }) => {
+    // Budget EXPLICITE (90 s au lieu des 30 s par défaut) : ce scénario
+    // ÉPROUVE DES CHEMINS D'ÉCHEC — lecture retardée de 1,5 s, puis lecture
+    // abandonnée, chaque attente d'écran ayant elle-même 15 s de marge. Le
+    // premier passage CI l'a mesuré : « Test timeout of 30000ms exceeded » sur
+    // les trois tentatives. Le délai par défaut n'est pas une exigence du
+    // produit ; ce qui doit rester borné, ce sont les attentes INTERNES.
+    test.setTimeout(90_000)
     const { ctxA, ctxB, posteA, posteB } = await deuxPostes(browser)
     try {
       const [code] = await fichesDeTravail(posteA, 1)
@@ -489,19 +496,44 @@ test.describe("concurrence entre postes (sessions indépendantes)", () => {
         timeout: 15000,
       })
 
-      // LECTURE EN ÉCHEC : le poste affiche l'état bloqué et n'écrit plus.
+      // LECTURE EN ÉCHEC : le poste OUVRE la fiche pendant que la lecture
+      // d'état échoue (« le service ne répond pas »). On n'attend pas un bouton
+      // de reprise qui n'existe QUE déjà en état d'échec : cette attente morte
+      // consommait le budget entier du test — mesuré en CI, trois tentatives de
+      // 30 s échouées à la même seconde. On éprouve donc le geste réel, puis le
+      // retour du service.
       const avant = await etatReel(posteB, code)
       const journalAvant = await lignesDeJournal(posteB, code)
       await posteA.unroute(`**/api/fiches/${encodeURIComponent(code)}/etat`)
       await posteA.route(`**/api/fiches/${encodeURIComponent(code)}/etat`, (route) => route.abort())
-      await posteA.getByTestId("bouton-recharger-revision").click()
+      await posteA.goto("/validation")
+      await expect(posteA.getByTestId("file-validation")).toBeVisible()
+      await posteA.locator(`li[data-code="${code}"]`).getByTestId("code-fiche").click()
       const bandeau = posteA.getByTestId("revision-indisponible")
+      // L'écran ne RESTE PAS « en chargement » : il a bien constaté l'échec et
+      // il le dit. C'est la différence entre « bloqué » et « figé ».
+      await expect(posteA.getByTestId("validation-app")).toHaveAttribute("data-chargement-etat", "0", {
+        timeout: 15000,
+      })
       await expect(bandeau).toBeVisible({ timeout: 15000 })
       await expect(posteA.getByTestId("validation-app")).toHaveAttribute("data-revision", "")
       // Rien à corriger sans état lu : aucun champ n'est rendu, donc aucun
       // bouton « corriger » n'existe — l'écran ne peut pas écrire à l'aveugle.
       await expect(posteA.getByTestId("bouton-corriger")).toHaveCount(0)
       await expect(posteA.getByTestId("bouton-valider")).toBeVisible()
+      // Le bouton de reprise est bien PRÉSENT — et un second refus le laisse en
+      // place : aucune écriture n'est rendue possible par un rechargement raté.
+      await posteA.getByTestId("bouton-recharger-revision").click()
+      await expect(bandeau).toBeVisible()
+      await expect(posteA.getByTestId("validation-app")).toHaveAttribute("data-revision", "")
+      // SERVICE REVENU : la reprise rend la révision ET les champs — l'écran
+      // redevient capable d'écrire, sous verrou (révision relue, jamais supposée).
+      await posteA.unroute(`**/api/fiches/${encodeURIComponent(code)}/etat`)
+      await posteA.getByTestId("bouton-recharger-revision").click()
+      await expect(posteA.getByTestId("validation-app")).toHaveAttribute("data-revision", /^[0-9]+$/, {
+        timeout: 15000,
+      })
+      await expect(bandeau).toHaveCount(0)
 
       // REQUÊTE DIRECTE SANS RÉVISION (ce que ferait un script ou un ancien
       // client) : le BACKEND refuse aussi — 428, et rien n'est écrit.
