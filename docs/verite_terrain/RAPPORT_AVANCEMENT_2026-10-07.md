@@ -408,14 +408,23 @@ revue, ni dans le premier handoff) :
   refusés) et re-semé la base e2e **sous la pile en marche** — trois défauts de
   conception corrigés **avant** la première exécution, par relecture.
 
-* **E-40** — `seamtech_search index --rebuild` est **inutilisable sur
-  PostgreSQL** : `DROP TABLE documents` échoue (`DependentObjectsStillExist` —
-  `chunk.id_document` et `fiche_piece_jointe.id_document` référencent
-  `documents`), puis le chemin de restauration échoue à son tour
-  (`TRUNCATE TABLE documents` → `FeatureNotSupported`), ce qui **masque**
-  l'erreur initiale. Aucune donnée perdue (le DROP échoue avant d'écrire) ; la
-  commande fonctionne sur SQLite. Reproduit dans cette session, **hors du
-  périmètre F1–F4** (outil d'exploitation, pas un flux de livraison) → §6.
+* **E-40 — CORRIGÉ (deuxième revue, 2026-10-07)**. `seamtech_search index
+  --rebuild` était **inutilisable sur PostgreSQL** : `DROP TABLE documents`
+  échouait (`DependentObjectsStillExist` — `chunk.id_document` et
+  `fiche_piece_jointe.id_document` référencent `documents`), puis le chemin de
+  restauration échouait à son tour (`TRUNCATE TABLE documents` →
+  `FeatureNotSupported`), ce qui **masquait** l'erreur initiale. La revue a
+  refusé de classer ce défaut « hors périmètre » — pour un produit de
+  recherche, une reconstruction d'index cassée n'est pas un détail. La
+  correction (commit **`9a1b1c8`**) conserve la table et ses identifiants dès
+  qu'une table la référence (mode « en place » annoncé dans le journal), ne
+  supprime que les documents disparus ET non référencés, restaure l'instantané
+  avec les identifiants d'origine, CONSERVE l'instantané si le retour arrière
+  échoue, et laisse remonter l'erreur d'ORIGINE (`add_note`). Preuves :
+  `tests/test_rebuild_index_postgres.py` (6, PostgreSQL 16.2 réel, CLI de bout
+  en bout) + `tests/test_rebuild_index.py` (2, SQLite) ; **contrôle négatif :
+  les 8 tests échouent sur le code d'avant** (`cannot drop table documents
+  because other objects depend on it`).
 * **E-41** — scénarios de concurrence **dépendants de l'ordre** : la file de
   validation RÉTRÉCIT d'un scénario à l'autre (les précédents valident), donc
   « il reste 2 fiches » devenait faux ; mesuré en CI (0 fiche pour l'un, 1 au
@@ -866,8 +875,8 @@ reste pendante ; aucune ligne ci-dessus ne la remplace.
 | **Moindre privilège S3 — contre MinIO RÉEL** | les tests Docker correspondants ne tournent qu'en CI (pas de Docker ici) | job CI `integration` **lu VERT sur `c65b7d8`** (push et pull_request) ; ALLOW/DENY réels dans `tests/test_credentials_s3_restreintes.py` |
 | **Fonctionnement hors ligne — sur le SERVEUR d'atelier** | le harnais prouve l'absence de dépendance externe **de cette machine** ; il ne prouve ni les postes réels, ni le serveur cible | exécution du harnais sur le serveur cible + acceptation trois postes réseau coupé |
 | **Concurrence vue du NAVIGATEUR** | les navigateurs ne s'installent pas dans cette session (CDN `cdn.playwright.dev` bloqué — vérifié à nouveau le 2026-10-07) | **FERMÉ** : run push **`37668475085`** (job `e2e`) — **7 scénarios passés au premier essai, 0 flaky, 0 sauté**, garde-fou qui REFUSE tout autre compte. Les 3 scénarios neufs : décision liée à la révision revue (409 sans ligne d'audit, relecture exigée), révision non lue (correction ET décision bloquées, backend 428 sur requête directe), réponse tardive sans écrasement |
-| **Vérification hors ligne pleine pile** | le harnais Python a une portée limitée (constat F4) ; il ne dit rien du navigateur, de Next.js, du worker séparé ni des bibliothèques natives | **FERMÉ** : run push **`37668475085`**, job `hors-ligne-reel` vert — pile complète (web + worker séparé + front de production) sous compte applicatif dédié, blocage `iptables` par uid, contrôle négatif ET positif, parcours navigateur au premier essai, `REJECT = 0` (annotation « 0 paquet rejeté »). Portée exacte, sans embellissement : le blocage couvre les processus du compte applicatif ; le NAVIGATEUR est couvert par un garde-fou dans le test (aucune requête hors boucle locale, run **`37670079596`**). Ne prouve toujours pas : les postes d'atelier réels, ni le serveur cible |
-| **`index --rebuild` sur PostgreSQL** (E-40) | `DROP TABLE documents` est refusé (`chunk` et `fiche_piece_jointe` le référencent) ; la restauration échoue ensuite sur `TRUNCATE`, ce qui masque l'erreur initiale. Aucune donnée perdue ; la commande fonctionne sur SQLite | correction de l'outil : `DROP … CASCADE` (ou purge ordonnée) + test PostgreSQL dédié. **Hors périmètre F1–F4** (outil d'exploitation) — repro locale reproductible |
+| **Vérification hors ligne pleine pile** | le harnais Python a une portée limitée (constat F4) ; il ne dit rien du navigateur, de Next.js, du worker séparé ni des bibliothèques natives | **FERMÉ, puis RENFORCÉ le 2026-10-07** (deuxième revue) : pile complète (web + worker séparé + front de production) sous compte applicatif dédié, blocage `iptables` par uid, **IPv6 traité explicitement** (chaîne `ip6tables` ou preuve d'absence de route globale), **contrôle négatif qui PROUVE la règle** (DNS résolu à part, requête sur adresse LITTÉRALE, compteur `REJECT` qui augmente), contrôle positif, parcours navigateur au premier essai, `REJECT = 0`. Preuves : run push **`37668475085`** (première mouture) et run **`37689651949`** (mouture renforcée, job vert). Portée écrite : couverts = processus d'uid RÉEL du compte applicatif (web/API, worker séparé, Next.js de production) et leurs sous-processus ; NON couvert = navigateur/outils du runner (garanti côté page par l'assertion « aucune requête externe tentée »). Ne prouve toujours pas : les postes d'atelier réels, ni le serveur cible |
+| ~~**`index --rebuild` sur PostgreSQL** (E-40)~~ | — | **FERMÉ** le 2026-10-07 : correction `9a1b1c8` + 8 tests dédiés (dont le CLI réel et le contrôle négatif) ; run push **`37689401661`** vert 13/13. Détails en §4 |
 | **Acceptation atelier (fabrication)** | décision humaine | trois postes, un import pendant une recherche, validation d'une fiche |
 
 Aucun de ces points n'est présenté comme résolu, et la revendication de
