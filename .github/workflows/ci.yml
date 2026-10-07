@@ -1753,7 +1753,7 @@ jobs:
             "$PYTHON_BIN" \
             "$NODE_BIN" \
             "$GITHUB_WORKSPACE/seamtech_search/__init__.py" \
-            "$GITHUB_WORKSPACE/frontend/node_modules/.bin/next" \
+            "$GITHUB_WORKSPACE/frontend/node_modules/next/dist/bin/next" \
             "$GITHUB_WORKSPACE/frontend/.next" \
             "$GITHUB_WORKSPACE/sample_data"; do
             sudo -u seamtech-app test -r "$cible" 2>/dev/null || refus="$refus $cible"
@@ -1791,13 +1791,13 @@ jobs:
             SEAMTECH_UI_PASSWORD="$SEAMTECH_UI_PASSWORD" \
             SEAMTECH_SESSION_SECRET="$SEAMTECH_SESSION_SECRET" \
             NEXT_TELEMETRY_DISABLED=1 \
-            bash -c "cd \"$GITHUB_WORKSPACE/frontend\" && nohup \"$NODE_BIN\" node_modules/.bin/next start --port 3123 \
+            bash -c "cd \"$GITHUB_WORKSPACE/frontend\" && nohup \"$NODE_BIN\" \"$GITHUB_WORKSPACE/frontend/node_modules/next/dist/bin/next\" start --port 3123 \
               > /srv/seamtech/logs/front.log 2>&1 &"
           cd "$GITHUB_WORKSPACE"
           web_ok=0
           front_ok=0
           for _ in $(seq 1 60); do
-            curl -sf --max-time 5 http://127.0.0.1:8123/health >/dev/null && web_ok=1 || web_ok=0
+            curl -sf --max-time 5 -H "X-SEAMTECH-TOKEN: $AUTH_TOKEN_APP" http://127.0.0.1:8123/health >/dev/null && web_ok=1 || web_ok=0
             curl -sf --max-time 5 http://127.0.0.1:3123/login >/dev/null && front_ok=1 || front_ok=0
             if [ "$web_ok" = 1 ] && [ "$front_ok" = 1 ]; then break; fi
             sleep 2
@@ -1834,7 +1834,8 @@ jobs:
           fi
           echo "contrôle négatif OK : sortie externe refusée ($(head -c 120 /tmp/controle-negatif.err))"
           # CONTRÔLE POSITIF : la pile locale répond toujours.
-          sudo -u seamtech-app curl -sS --max-time 10 http://127.0.0.1:8123/health -o /dev/null
+          sudo -u seamtech-app curl -sS --max-time 10 -H "X-SEAMTECH-TOKEN: $AUTH_TOKEN_APP" \
+            http://127.0.0.1:8123/health -o /dev/null
           echo "contrôle positif OK : /health répond en local"
           # Les contrôles ci-dessus ont VOLONTAIREMENT provoqué des rejets : on
           # remet les compteurs à zéro pour que le relevé final mesure
