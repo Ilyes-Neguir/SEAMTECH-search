@@ -1633,6 +1633,17 @@ jobs:
           sudo chmod -R a+rX "$(dirname "$(dirname "$(readlink -f "$(command -v python3)")")")" || true
           sudo chmod -R a+rX "$(dirname "$(dirname "$(readlink -f "$(command -v node)")")")" || true
           sudo chmod -R a+rX "$GITHUB_WORKSPACE" || true
+          # LIRE le dépôt ne suffit pas : il faut pouvoir TRAVERSER le chemin
+          # jusqu'à lui. Mesuré en CI sur ce dépôt — accès refusé au compte
+          # applicatif ALORS QUE les fichiers existaient, ce qui se manifeste
+          # loin de la cause : Python « No module named seamtech_search »,
+          # Node « Cannot find module …/node_modules/.bin/next ». On ouvre donc
+          # la traversée sur TOUTE la chaîne de parents du workspace.
+          chemin="$GITHUB_WORKSPACE"
+          while [ -n "$chemin" ] && [ "$chemin" != "/" ]; do
+            sudo chmod a+rx "$chemin" 2>/dev/null || true
+            chemin="$(dirname "$chemin")"
+          done
           id -u seamtech-app
       - name: MinIO local (conteneur) + provisionnement des identités RESTREINTES
         env:
@@ -1723,9 +1734,35 @@ jobs:
           PATH_OUTILS="$(dirname "$PYTHON_BIN"):$(dirname "$NODE_BIN")"
           echo "interpréteur : $PYTHON_BIN"
           echo "node         : $NODE_BIN"
+          # Mêmes droits que l'étape « compte applicatif » : traversée des
+          # parents, lecture du dépôt, écriture du cache de `next start`.
+          chemin="$GITHUB_WORKSPACE"
+          while [ -n "$chemin" ] && [ "$chemin" != "/" ]; do
+            sudo chmod a+rx "$chemin" 2>/dev/null || true
+            chemin="$(dirname "$chemin")"
+          done
+          sudo chmod -R a+rX "$GITHUB_WORKSPACE" 2>/dev/null || true
           # `next start` écrit son cache sous `.next/` : le compte applicatif doit
           # y avoir accès en écriture (le reste du dépôt lui suffit en lecture).
-          sudo chmod -R a+rwX "$GITHUB_WORKSPACE/frontend/.next" || true
+          sudo chmod -R a+rwX "$GITHUB_WORKSPACE/frontend/.next" 2>/dev/null || true
+          # Contrôle AMONT : si le compte applicatif ne peut pas LIRE ce qu'il
+          # va exécuter, on le dit ICI plutôt que de laisser l'échec se
+          # manifester par un « module introuvable » trompeur.
+          refus=""
+          for cible in \
+            "$PYTHON_BIN" \
+            "$NODE_BIN" \
+            "$GITHUB_WORKSPACE/seamtech_search/__init__.py" \
+            "$GITHUB_WORKSPACE/frontend/node_modules/.bin/next" \
+            "$GITHUB_WORKSPACE/frontend/.next" \
+            "$GITHUB_WORKSPACE/sample_data"; do
+            sudo -u seamtech-app test -r "$cible" 2>/dev/null || refus="$refus $cible"
+          done
+          if [ -n "$refus" ]; then
+            echo "::error title=compte-app-sans-lecture::lecture refusée pour :$refus ; $(ls -ld "$GITHUB_WORKSPACE" "$(dirname "$GITHUB_WORKSPACE")" /home /home/runner 2>&1 | tr '\n' ';')"
+            exit 1
+          fi
+          echo "compte applicatif : lecture vérifiée (interpréteurs, paquet, front construit)"
           # La redirection des journaux est faite DANS le shell du compte
           # applicatif : sinon c'est le shell de l'ordonnanceur (un autre
           # utilisateur) qui ouvrirait /srv/seamtech/logs/… et échouerait.
@@ -1736,7 +1773,7 @@ jobs:
             SEAMTECH_S3_ACCESS_KEY="$SEAMTECH_S3_ACCESS_KEY" \
             SEAMTECH_S3_SECRET_KEY="$SEAMTECH_S3_SECRET_KEY" \
             SEAMTECH_ROOT_PATHS="$GITHUB_WORKSPACE/sample_data" \
-            bash -c "nohup \"$PYTHON_BIN\" -m seamtech_search serve --config /srv/seamtech/config.json \
+            bash -c "cd \"$GITHUB_WORKSPACE\" && nohup \"$PYTHON_BIN\" -m seamtech_search serve --config /srv/seamtech/config.json \
               > /srv/seamtech/logs/web.log 2>&1 &"
           sudo -u seamtech-app env PATH="$PATH_OUTILS:$PATH" \
             SEAMTECH_DATABASE_URL="$SEAMTECH_DATABASE_URL" \
@@ -1745,7 +1782,7 @@ jobs:
             SEAMTECH_S3_ACCESS_KEY="$SEAMTECH_S3_ACCESS_KEY" \
             SEAMTECH_S3_SECRET_KEY="$SEAMTECH_S3_SECRET_KEY" \
             SEAMTECH_ROOT_PATHS="$GITHUB_WORKSPACE/sample_data" \
-            bash -c "nohup \"$PYTHON_BIN\" -m seamtech_search.worker_service --config /srv/seamtech/config.json \
+            bash -c "cd \"$GITHUB_WORKSPACE\" && nohup \"$PYTHON_BIN\" -m seamtech_search.worker_service --config /srv/seamtech/config.json \
               > /srv/seamtech/logs/worker.log 2>&1 &"
           cd "$GITHUB_WORKSPACE/frontend"
           sudo -u seamtech-app env PATH="$PATH_OUTILS:$PATH" \
@@ -1754,14 +1791,14 @@ jobs:
             SEAMTECH_UI_PASSWORD="$SEAMTECH_UI_PASSWORD" \
             SEAMTECH_SESSION_SECRET="$SEAMTECH_SESSION_SECRET" \
             NEXT_TELEMETRY_DISABLED=1 \
-            bash -c "nohup \"$NODE_BIN\" node_modules/.bin/next start --port 3123 \
+            bash -c "cd \"$GITHUB_WORKSPACE/frontend\" && nohup \"$NODE_BIN\" node_modules/.bin/next start --port 3123 \
               > /srv/seamtech/logs/front.log 2>&1 &"
           cd "$GITHUB_WORKSPACE"
           web_ok=0
           front_ok=0
           for _ in $(seq 1 60); do
-            curl -sf http://127.0.0.1:8123/health >/dev/null && web_ok=1 || web_ok=0
-            curl -sf http://127.0.0.1:3123/login >/dev/null && front_ok=1 || front_ok=0
+            curl -sf --max-time 5 http://127.0.0.1:8123/health >/dev/null && web_ok=1 || web_ok=0
+            curl -sf --max-time 5 http://127.0.0.1:3123/login >/dev/null && front_ok=1 || front_ok=0
             if [ "$web_ok" = 1 ] && [ "$front_ok" = 1 ]; then break; fi
             sleep 2
           done
