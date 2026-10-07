@@ -50,6 +50,16 @@ export default defineConfig({
   retries: process.env.CI ? 2 : 0,
   workers: 1,
   reporter: "list",
+  // Délai des ASSERTIONS (`expect` SANS timeout explicite). Le défaut de
+  // Playwright est 5 s : sous charge CI (2 vCPU, front de production + backend +
+  // PostgreSQL), une attente de 5 s produit des instabilités qui ne disent rien
+  // du produit — deux scénarios de concurrence ont été comptés « flaky » le
+  // 2026-10-07 alors que le MÊME code passait au premier essai sur d'autres runs.
+  // 15 s est la convention DÉJÀ utilisée par tous les waits explicites du dépôt :
+  // l'assertion reste bornée (un comportement absent échoue toujours), et une
+  // vérification négative (`toHaveCount(0)`) réussit toujours immédiatement dès
+  // qu'elle est vraie.
+  expect: { timeout: 15000 },
   use: {
     baseURL: process.env.PLAYWRIGHT_TEST_BASE_URL || "http://127.0.0.1:3123",
     trace: "on-first-retry",

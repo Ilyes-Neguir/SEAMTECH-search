@@ -215,7 +215,13 @@ test.describe("concurrence entre postes (sessions indépendantes)", () => {
       await expect(posteA.locator(selecteur)).toBeVisible()
       await expect(posteB.locator(selecteur)).toBeVisible()
       const valeurInitiale = await posteA.locator(selecteur).inputValue()
-      expect(await posteB.locator(selecteur).inputValue()).toBe(valeurInitiale)
+      // ASSERTION avec réessai, jamais une lecture unique : `inputValue()` fige
+      // l'instant où il est appelé et peut observer un rendu intermédiaire
+      // (l'écran de B vient d'être ouvert) — c'est exactement le profil d'un
+      // « flaky qui passe au retry ». `toHaveValue` attend que l'écran CONVERGE
+      // vers la valeur du collègue, et échoue tout aussi nettement s'il ne
+      // converge pas.
+      await expect(posteB.locator(selecteur)).toHaveValue(valeurInitiale, { timeout: 15000 })
 
       // A CORRIGE ET ENREGISTRE.
       await posteA.locator(selecteur).fill("MATERIAU-POSTE-A")

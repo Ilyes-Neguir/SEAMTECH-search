@@ -1109,6 +1109,20 @@ jobs:
           fautives: list[str] = []
           instables: list[str] = []
 
+          def cause(test: dict) -> str:
+              """Message du PREMIER essai en échec (tronqué, une seule ligne).
+
+              Un nom de test sans cause n'est pas réparable : le 2026-10-07, un
+              scénario de concurrence a été nommé « flaky » sans que l'assertion
+              concernée soit lisible (journaux d'Actions injoignables)."""
+              for resultat in test.get("results") or []:
+                  if resultat.get("status") in {"failed", "timedOut", "interrupted"}:
+                      erreur = resultat.get("error") or {}
+                      message = str(erreur.get("message") or "").strip().replace("\n", " ")
+                      if message:
+                          return message[:400]
+              return "cause non consignée dans le rapport"
+
           def parcourir(suites: list[dict]) -> None:
               for suite in suites or []:
                   for spec in suite.get("specs") or []:
@@ -1116,9 +1130,9 @@ jobs:
                       for test in spec.get("tests") or []:
                           statut = test.get("status")
                           if statut == "unexpected":
-                              fautives.append(titre)
+                              fautives.append(f"{titre} — {cause(test)}")
                           elif statut == "flaky":
-                              instables.append(titre)
+                              instables.append(f"{titre} — {cause(test)}")
                   parcourir(suite.get("suites") or [])
 
           if sautes or flaky or passes != 7:
