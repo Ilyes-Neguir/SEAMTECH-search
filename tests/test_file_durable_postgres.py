@@ -284,11 +284,10 @@ def test_lot_interrompu_reprend_sans_refaire_les_dossiers_traites(
 
 
 def _redis_server_binaire() -> str | None:
-    """Binaire ``redis-server`` : explicite, sinon PATH, sinon bac à sable local."""
+    """Binaire ``redis-server`` : variable explicite, sinon PATH."""
     candidats = [
         os.environ.get("SEAMTECH_TEST_REDIS_SERVER", ""),
         shutil.which("redis-server") or "",
-        "/home/user/toolchain/redis-7.2.5/src/redis-server",
     ]
     for candidat in candidats:
         if candidat and Path(candidat).exists():

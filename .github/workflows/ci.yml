@@ -165,6 +165,28 @@ jobs:
             exit 1
           fi
           echo "::notice title=suite-postgres::pytest -m \"postgres and not perf and not sauvegarde\" : passed=$passed skipped=$skipped"
+      - name: Installer redis-server pour le test de redémarrage réel
+        # Le job fournit Redis par un CONTENEUR DE SERVICE : le binaire
+        # `redis-server` n'est donc pas sur le PATH de la machine, et le test
+        # « un redémarrage de Redis conserve la tâche acceptée » — qui démarre
+        # SA PROPRE instance avec AOF, la tue au SIGKILL puis la relance — se
+        # sautait. Le garde-fou « skipped == 0 » de l'étape suivante échouait
+        # alors à juste titre, mais le défaut était dans la CI, pas dans le test :
+        # on installe le binaire au lieu de tolérer le saut.
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq redis-server
+          # L'instance système démarrée par le paquet ne doit PAS prendre le
+          # port 6379 : celui-ci appartient au conteneur de service du job.
+          sudo systemctl stop redis-server 2>/dev/null || sudo service redis-server stop 2>/dev/null || true
+          redis-server --version
+          python - <<'PYREDIS'
+          import redis
+          assert redis.from_url("redis://127.0.0.1:6379/1").ping()
+          print("Redis du conteneur de service toujours joignable sur 6379")
+          PYREDIS
+
       - name: Run durable queue suite (real Redis + real PostgreSQL, must actually run)
         # Lot « file durable » : ces tests-là ne se contentent pas de mocks.
         # Ils tuent un VRAI processus worker (SIGKILL), redémarrent un serveur

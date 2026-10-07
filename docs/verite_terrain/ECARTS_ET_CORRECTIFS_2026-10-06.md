@@ -128,3 +128,21 @@ processus séparés et contrat de volumes du compose),
 faute de Docker**, exécuté par le job CI `integration`),
 `tests/test_verification_integrite.py` (10, sur un magasin S3 en mémoire qui
 conserve les vrais octets). Détail complet : `docs/verite_terrain/REVUE_INDEPENDANTE_2026-10-07.md`.
+
+## 7. Écarts trouvés et corrigés le 2026-10-07 (seconde passe : CI et dépendances)
+
+Trois écarts supplémentaires, tous **bloquants pour la CI** et sans rapport avec
+la logique métier — d'où leur coût : ils masquaient les vrais résultats. Ils
+suivent la numérotation du registre (E-24 était le dernier).
+
+| # | Écart | Gravité | Correctif | Preuve |
+|---|---|---|---|---|
+| E-25 | `pytest.skip(..., allow_module_level=True)` dans `tests/test_file_durable.py` et `tests/test_worker_process.py`. Un abandon au niveau du module est reporté comme **sauté** même quand la sélection `-m` a désélectionné le fichier : les garde-fous « aucun test sauté » des jobs `sauvegarde` (« 2 sautés ») et `backend` (« 2 Postgres test(s) skipped even though SEAMTECH_TEST_DATABASE_URL is set ») échouaient sur des tests **jamais demandés**. Pire : les 26 tests de ces modules n'étaient pas collectés du tout, donc absents des totaux | bloquante (faux positifs CI + comptage faux) | fixture `autouse` qui saute **par test**, uniquement si le test est sélectionné | expérience minimale reproduite (`1 passed, 1 skipped, 1 deselected` avec un module fautif non sélectionné) ; sur la vraie suite : **5 sauts → 3 sauts**, **289 → 315 désélectionnés**, **817 passés constants** |
+| E-26 | `./data` et `./logs` sont ignorés par git : Docker crée les dossiers de montage en `root:root` alors que l'application tourne en `seamtech`, donc brouillons téléversés, rapports générés et quarantaine **ne peuvent pas s'écrire** — l'import échoue par permission, ce qui ressemble à un bug applicatif | bloquante (import en conteneur) + exigence de déploiement | job `integration` : préparation de `data/`+`logs/` pour l'uid/gid de l'utilisateur applicatif **et vérification que l'écriture fonctionne** dans `/app/data` et `/app/logs` ; exigence documentée dans `docs/DEPLOYMENT.md` pour le serveur d'atelier | étape CI « Préparer les volumes applicatifs pour l'utilisateur NON-ROOT » ; le test Compose émet désormais une annotation avec l'état des deux conteneurs et leurs journaux en cas d'échec |
+| E-27 | Verrou pnpm en retard : `sharp < 0.35.5` (GHSA-wq5f-xc86-pv6w, HIGH) et `source-map-js < 1.2.2` (GHSA-68fv-2mgg-jv7q, HIGH). Les deux avis ont une correction amont, donc la politique du dépôt (échec pour HIGH/CRITICAL corrigeable) les refuse — à juste titre ; le job `frontend` (« Pnpm audit ») et le job `securite-dependances` (« Politique vulnérabilités ») échouaient | bloquante (CI) / hygiène sécurité | `pnpm-lock.yaml` régénéré avec dépassements explicites `sharp@0.35.5`, `source-map-js@1.2.2` (même mécanisme que `nanoid`/`browserslist`) | reproduction locale avec l'outillage exact des jobs (pnpm 9.15.9) : `pnpm audit --prod` **2 HIGH → 0**, `scripts/audit_dependency_policy.py` → « 0 finding(s) » code 0, `tsc --noEmit` et `pnpm build` OK |
+
+Ces trois écarts sont la raison pour laquelle les jobs `integration`,
+`sauvegarde`, `frontend` et `securite-dependances` étaient rouges sur
+`bf62783` **et** `512b6046` : aucun n'était une régression du code applicatif,
+et deux d'entre eux faisaient échouer des garde-fous sur des tests qui n'étaient
+même pas exécutés. Détail de la passe : `docs/verite_terrain/RAPPORT_AVANCEMENT_2026-10-07.md`.
