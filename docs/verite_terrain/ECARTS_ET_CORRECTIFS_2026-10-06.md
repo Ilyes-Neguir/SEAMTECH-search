@@ -146,3 +146,15 @@ Ces trois écarts sont la raison pour laquelle les jobs `integration`,
 `bf62783` **et** `512b6046` : aucun n'était une régression du code applicatif,
 et deux d'entre eux faisaient échouer des garde-fous sur des tests qui n'étaient
 même pas exécutés. Détail de la passe : `docs/verite_terrain/RAPPORT_AVANCEMENT_2026-10-07.md`.
+
+---
+
+## 8. Écart trouvé le 2026-10-07 (troisième passe) : téléchargement cassé depuis un autre poste
+
+| # | Écart | Gravité | Correctif | Preuve |
+|---|---|---|---|---|
+| E-28 | `GET /imports/{id}/artifacts/{artifact}` et `POST /open` **redirigeaient en 302** vers une URL présignée construite sur l'endpoint **interne** du stockage — `minio` sur le port 9000 dans la composition documentée. Ce nom d'hôte n'existe que dans le réseau Docker : depuis un poste de l'atelier, la résolution échouait (`Temporary failure in name resolution`) et **le rapport ou l'original était intéléchargeable**, alors que l'objet était bien stocké. Le défaut était invisible localement (les tests doublaient boto3) et invisible dans le job `integration` avant que l'instrumentation d'échec n'expose la cause exacte | **bloquante** (exigence « téléchargeable depuis un autre poste ») | la redirection présignée n'est émise que si le déploiement déclare un endpoint **public** joignable par les navigateurs (`SEAMTECH_S3_PUBLIC_ENDPOINT_URL`) ; par défaut, les octets sont servis **par l'API** (fichier local, sinon téléchargement dans le cache, sinon flux de l'objet) et `/open` sert un objet absent localement **sans réécrire dans l'archive** | `tests/test_telechargement_navigateur.py` (5 tests : aucun `Location`, octets exacts, endpoint public respecté, archive intacte) ; `tests/test_url_presignee_302.py` (15 tests, dont le défaut « aucun endpoint public ») ; `tests/test_recette_corpus_reel.py::test_08` réécrit ; le test Compose vérifie en plus qu'aucune 302 n'est servie |
+
+Conséquence de conception assumée : **l'endpoint interne du stockage ne touche jamais
+le navigateur** (ni en URL, ni en redirection), et un jeton porteur présigné n'est plus
+remis au poste client sans décision explicite de l'exploitant.

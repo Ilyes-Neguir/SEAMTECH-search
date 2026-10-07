@@ -711,36 +711,35 @@ def test_07_recherches_par_mots_cles(app_client) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 8. Ouverture d'un PDF : URL présignée RÉELLE (302, Location, 900 s).
+# 8. Ouverture d'un PDF : téléchargeable depuis un AUTRE poste (pas de
+#    redirection vers l'endpoint interne du stockage).
 # ---------------------------------------------------------------------------
 
 
-def test_08_ouverture_pdf_url_presignee_reelle(app_client) -> None:
-    """Le PDF s'ouvre par redirection 302 vers une URL présignée MinIO vivante."""
+def test_08_ouverture_pdf_telechargeable_sans_redirection_interne(app_client) -> None:
+    """Le PDF s'ouvre par l'API, avec les octets exacts et sans redirection.
+
+    Historique : cette étape exigeait une redirection 302 vers une URL présignée
+    MinIO. C'était une faute de conception, pas une preuve : l'endpoint interne
+    (``http://minio:9000`` dans le déploiement documenté) n'est résolvable que
+    dans le réseau des conteneurs — un poste de l'atelier obtenait
+    « Temporary failure in name resolution ». Le contrat est désormais : les
+    octets passent par l'API authentifiée, donc depuis n'importe quel poste.
+    La redirection présignée reste possible, mais seulement vers un endpoint
+    PUBLIC déclaré (``SEAMTECH_S3_PUBLIC_ENDPOINT_URL``), ce que le test ne
+    configure pas ici — c'est exactement le cas par défaut documenté.
+    """
     chemin_pdf = RECETTE["refs"]["REF-001"]["technique"]
     reponse = app_client.post("/open", params={"path": chemin_pdf})
-    assert reponse.status_code == 302, (
-        f"ouverture : HTTP {reponse.status_code} (attendu 302 présigné)"
+    assert reponse.status_code == 200, (
+        f"ouverture : HTTP {reponse.status_code} (attendu 200, service par l'API)"
     )
-    location = reponse.headers.get("location")
-    assert location, "redirection 302 sans en-tête Location"
-
-    analyse = urllib.parse.urlparse(location)
-    parametres = urllib.parse.parse_qs(analyse.query)
-    expiration = parametres.get("X-Amz-Expires", [None])[0]
-    assert expiration is not None, "URL présignée sans paramètre X-Amz-Expires"
-    assert 0 < int(expiration) <= EXPIRATION_PRESIGNEE_S, (
-        f"expiration {expiration} s hors borne (attendu ≤ {EXPIRATION_PRESIGNEE_S} s)"
+    assert "location" not in {cle.lower() for cle in reponse.headers}, (
+        "aucune redirection ne doit être émise vers l'endpoint interne"
     )
-    hote_attendu = urllib.parse.urlparse(S3_ENDPOINT).netloc
-    assert analyse.netloc == hote_attendu, "l'URL présignée ne pointe pas vers le S3 configuré"
-
-    # Téléchargement RÉEL de l'URL présignée (HTTP, hors TestClient).
-    with urllib.request.urlopen(location, timeout=60) as telechargement:
-        assert telechargement.status == 200
-        contenu = telechargement.read()
+    contenu = reponse.content
     assert hashlib.sha256(contenu).hexdigest() == _empreinte(Path(chemin_pdf)), (
-        "le contenu téléchargé via l'URL présignée diffère du fichier source (SHA-256)"
+        "le contenu téléchargé par l'API diffère du fichier source (SHA-256)"
     )
 
 

@@ -295,15 +295,35 @@ def test_api_open_with_s3_object_key(tmp_path: Path):
             mock_r = MagicMock()
             mock_r.is_configured.return_value = False
             MockRedis.return_value = mock_r
+            # SANS endpoint public déclaré : l'API sert le fichier elle-même
+            # (une redirection vers l'endpoint interne de MinIO serait
+            # injoignable depuis un autre poste de l'atelier — défaut corrigé).
             app = create_app(cfg)
             client = TestClient(app, follow_redirects=False)
             r = client.post(f"/open?path={f}")
-            assert r.status_code == 302
-            assert r.headers["location"] == "https://presigned.example.com/file"
+            assert r.status_code == 200, r.text[:200]
+            assert "location" not in {cle.lower() for cle in r.headers}
+
+            # AVEC endpoint public déclaré : la redirection présignée est
+            # autorisée, et elle pointe vers CET endpoint public.
+            cfg_public = make_cfg(
+                tmp_path,
+                database_path=tmp_path / "open_s3.db",
+                s3_endpoint_url="http://minio:9000",
+                s3_public_endpoint_url="https://minio.atelier.local",
+                s3_bucket="b",
+                s3_access_key="a",
+                s3_secret_key="s",
+            )
+            app_public = create_app(cfg_public)
+            client_public = TestClient(app_public, follow_redirects=False)
+            r_public = client_public.post(f"/open?path={f}")
+            assert r_public.status_code == 302
+            assert r_public.headers["location"] == "https://presigned.example.com/file"
 
             # Test presigned failure fallback to file
             mock_s3.get_presigned_url.side_effect = Exception("fail")
-            app2 = create_app(cfg)
+            app2 = create_app(cfg_public)
             client2 = TestClient(app2, follow_redirects=False)
             r2 = client2.post(f"/open?path={f}")
             assert r2.status_code == 200

@@ -68,11 +68,12 @@ grep -n "ON CONFLICT" seamtech_search/import_pipeline.py
 ## Phase 2 — Downloadable reports
 
 ### 2.1 Artifact endpoint
-**Claim:** `GET /imports/{id}/artifacts/{artifact}` → 302 presigned URL (900s) or FileResponse, fallback S3 download if cache cold.
+**Claim:** `GET /imports/{id}/artifacts/{artifact}` → bytes served by the API (FileResponse, else S3 download into the cache). A 302 presigned URL (900 s) is emitted **only** when `SEAMTECH_S3_PUBLIC_ENDPOINT_URL` names an endpoint the browsers can reach — redirecting a workshop PC to the internal endpoint fails by name resolution (found by the two-container Compose test, 2026-10-07).
 **Proof:**
 ```bash
 grep -n "artifacts\|get_presigned_url\|expiration_seconds=900" seamtech_search/api.py
-# 302 prouvé de bout en bout (Location + ExpiresIn=900) : tests/test_url_presignee_302.py
+# 302 public prouvé (Location + ExpiresIn=900) ET défaut sans redirection :
+# tests/test_url_presignee_302.py + tests/test_telechargement_navigateur.py
 # E2E: import sample_data/CLIENT-123, GET /imports/{id}/artifacts/report_pdf -i (should be 302 or 200)
 curl -H "X-SEAMTECH-TOKEN: $TOKEN" http://localhost:8000/imports/<id>/artifacts/report_pdf -v
 # Frontend:
@@ -87,7 +88,7 @@ sed -n '850,960p' seamtech_search/api.py | grep -n "download_file\|FileResponse\
 ```
 
 ### 2.3 /open not dead
-**Claim:** `/open` returns 302 presigned URL if object_key known, else FileResponse or dir JSON, no `os.startfile`.
+**Claim:** `/open` serves the file (local copy, or the stored object streamed by the API when the local copy is absent — restore case); 302 presigned only with a declared public endpoint; dir JSON for directories; no `os.startfile`.
 **Proof:**
 ```bash
 grep -n "os.startfile" seamtech_search/api.py || echo "no os.startfile — fixed"
@@ -234,8 +235,8 @@ grep "start_background_worker\|worker_loop" seamtech_search/api.py seamtech_sear
 grep "prune_audit_logs\|audit_log" seamtech_search/retention.py seamtech_search/indexer.py
 # Scratch purged only when verified:
 grep "truly_uploaded\|quarantine" seamtech_search/worker.py
-# Download via presigned URLs:
-curl -H "X-SEAMTECH-TOKEN: $TOKEN" http://localhost:8000/imports/<id>/artifacts/report_pdf -v | grep -i "302\|location"
+# Download works from another PC: bytes served by the API (200), no internal-host redirect
+curl -H "X-SEAMTECH-TOKEN: $TOKEN" http://localhost:8000/imports/<id>/artifacts/report_pdf -v | grep -i "200\|location"
 # Search parity:
 pytest tests/test_indexer.py -q
 # Health read-only cheap 1000 calls zero writes:

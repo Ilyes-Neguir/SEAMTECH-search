@@ -18,6 +18,7 @@ import base64
 import hashlib
 import json
 from io import BytesIO
+from pathlib import Path
 from typing import Any
 
 
@@ -59,7 +60,7 @@ class S3EnMemoire:
         donnees = bytes(corps)
         self._ecrire(kwargs["Key"], donnees, kwargs)
         self.envois.append({"key": kwargs["Key"], "octets": len(donnees), "extra": kwargs})
-        return {"ETag": self.objets[kwargs["Key"]]["ETag"]}
+        return {"ETag": self.objets[kwargs["Key"]]["entete"]["ETag"]}
 
     def _ecrire(self, cle: str, donnees: bytes, options: dict[str, Any]) -> None:
         metadonnees = dict(options.get("Metadata") or {})
@@ -85,6 +86,16 @@ class S3EnMemoire:
         if Key not in self.objets:
             raise ClientError({"Error": {"Code": "NoSuchKey", "Message": "Not Found"}}, "GetObject")
         return {"Body": CorpsEnMemoire(self.objets[Key]["donnees"]), **self.objets[Key]["entete"]}
+
+    def download_file(self, Bucket: str, Key: str, Filename: str) -> None:  # noqa: N803
+        """Téléchargement vers un fichier local (chemin « cache froid » de l'API)."""
+        from botocore.exceptions import ClientError
+
+        if Key not in self.objets:
+            raise ClientError({"Error": {"Code": "NoSuchKey", "Message": "Not Found"}}, "GetObject")
+        destination = Path(Filename)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(self.objets[Key]["donnees"])
 
     def delete_object(self, Bucket: str, Key: str) -> dict[str, Any]:  # noqa: N803
         self.objets.pop(Key, None)

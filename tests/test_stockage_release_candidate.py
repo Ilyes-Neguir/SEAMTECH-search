@@ -331,7 +331,10 @@ def test_signature_publique_de_l_url_presignee_est_le_contrat_des_appelants() ->
     ``tests/test_integration_docker.py`` et ``tests/test_storage*.py``.
     """
     parametres = list(inspect.signature(S3StorageClient.get_presigned_url).parameters)
-    assert parametres == ["self", "remote_key", "expiration_seconds"]
+    # `endpoint_url` (ajouté le 2026-10-07) permet de SIGNER pour l'endpoint
+    # PUBLIC déclaré par le déploiement, celui que les navigateurs de l'atelier
+    # peuvent joindre — sans jamais leur remettre l'endpoint interne.
+    assert parametres == ["self", "remote_key", "expiration_seconds", "endpoint_url"]
 
 
 def test_d1_corrige_les_appels_de_l_api_utilisent_le_vrai_nom_de_parametre() -> None:
@@ -354,7 +357,9 @@ def test_d1_corrige_les_appels_de_l_api_utilisent_le_vrai_nom_de_parametre() -> 
 
     assert "expires_in" not in mots_cles, "régression D-1 : le mot-clé inexistant est revenu"
     assert mots_cles <= valides, f"mot-clé inconnu du client : {sorted(mots_cles - valides)}"
-    assert re.findall(r"get_presigned_url\(object_key,\s*expiration_seconds=(\d+)\)", source) == ["900", "900"]
+    assert re.findall(r"get_presigned_url\(\s*object_key,\s*expiration_seconds=(\d+)", source) == ["900"], (
+        "un seul site d'appel (le helper qui sert les DEUX routes), toujours à 900 s"
+    )
 
     # Preuve exécutée : le mauvais mot-clé lèverait bien, le bon passe.
     client = _client_fictif()

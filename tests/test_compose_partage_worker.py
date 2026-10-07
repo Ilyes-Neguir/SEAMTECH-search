@@ -110,6 +110,16 @@ def _exec(service: str, *commande: str, timeout: int = 120) -> subprocess.Comple
     return _compose("exec", "-T", service, *commande, timeout=timeout)
 
 
+class _SansRedirection(urllib.request.HTTPRedirectHandler):
+    """Ouvre une URL sans jamais suivre une redirection (302 → renvoyé tel quel)."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001, ANN201
+        return None
+
+
+_OUVREUR_SANS_REDIRECTION = urllib.request.build_opener(_SansRedirection)
+
+
 def _requete(
     chemin: str,
     *,
@@ -117,13 +127,15 @@ def _requete(
     corps: bytes | None = None,
     entetes: dict[str, str] | None = None,
     url_base: str = URL_WEB,
+    suivre_redirections: bool = True,
 ) -> tuple[int, bytes, dict[str, str]]:
     entetes_complets = {"X-SEAMTECH-TOKEN": _env_compose()["SEAMTECH_AUTH_TOKEN"], **(entetes or {})}
     demande = urllib.request.Request(
         f"{url_base}{chemin}", data=corps, method=methode, headers=entetes_complets
     )
+    ouvreur = urllib.request.urlopen if suivre_redirections else _OUVREUR_SANS_REDIRECTION.open
     try:
-        with urllib.request.urlopen(demande, timeout=30) as reponse:
+        with ouvreur(demande, timeout=30) as reponse:
             return reponse.status, reponse.read(), dict(reponse.headers)
     except urllib.error.HTTPError as erreur:
         return erreur.code, erreur.read(), dict(erreur.headers)
@@ -444,6 +456,17 @@ def _scenario_partage(tmp_path: Path) -> None:
     assert code == 200, f"téléchargement du rapport impossible (HTTP {code}) : {contenu[:400]!r}"
     assert contenu[:4] == b"%PDF", "le rapport servi n'est pas un PDF"
     assert "attachment" in entetes.get("Content-Disposition", ""), entetes
+
+    # b-bis) Et SANS redirection : une 302 vers http://minio:9000 ne serait pas
+    # résolvable depuis un poste de l'atelier. Le test ne suit pas les
+    # redirections ici : c'est la réponse brute qui compte.
+    code_brut, _, entetes_brutes = _requete(
+        f"/imports/{job_id}/artifacts/report_pdf", suivre_redirections=False
+    )
+    assert code_brut == 200, (
+        f"le téléchargement ne doit pas rediriger vers un hôte interne (HTTP {code_brut}, "
+        f"Location={entetes_brutes.get('Location')!r})"
+    )
 
     # c) Le fichier témoin écrit par le WORKER est lisible par le WEB : preuve
     #    directe du volume partagé, dans les deux sens.

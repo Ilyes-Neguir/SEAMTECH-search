@@ -253,6 +253,8 @@ class S3StorageClient:
             self.prefix = prefix
 
         self._s3 = None
+        # Clients de signature liés à un endpoint public (jamais pour lire).
+        self._clients_publics: dict[str, Any] = {}
         self._probe_s3 = None
         self._versioning_attempted = False
         self._versioning_state: dict[str, Any] | None = None
@@ -286,6 +288,36 @@ class S3StorageClient:
             region_name=self.region_name,
             config=Config(**settings),
         )
+
+    def _client_pour_endpoint(self, endpoint_url: str):
+        """Client supplémentaire, lié à un endpoint donné (signature publique).
+
+        Un client n'est créé qu'une fois par endpoint, et il n'est jamais
+        utilisé pour des lectures d'objets : seulement pour signer une URL
+        destinée à un navigateur.
+        """
+        client = self._clients_publics.get(endpoint_url)
+        if client is not None:
+            return client
+        import boto3
+        from botocore.config import Config
+
+        client = boto3.client(
+            "s3",
+            endpoint_url=endpoint_url,
+            aws_access_key_id=self.access_key_id,
+            aws_secret_access_key=self.secret_access_key,
+            region_name=self.region_name,
+            config=Config(
+                signature_version="s3v4",
+                s3={"addressing_style": "path" if self.force_path_style else "auto"},
+                retries={"max_attempts": 1, "mode": "standard"},
+                connect_timeout=5,
+                read_timeout=5,
+            ),
+        )
+        self._clients_publics[endpoint_url] = client
+        return client
 
     def _get_client(self):
         if self._s3 is not None:
@@ -599,9 +631,21 @@ class S3StorageClient:
             logger.error("Failed to download S3 key %s: %s", remote_key, exc)
             raise StorageError(f"Download failed: {exc}") from exc
 
-    def get_presigned_url(self, remote_key: str, expiration_seconds: int = 3600) -> str:
-        """Generate a secure, time-limited presigned URL for direct reading."""
-        s3 = self._get_client()
+    def get_presigned_url(
+        self, remote_key: str, expiration_seconds: int = 3600, *, endpoint_url: str | None = None
+    ) -> str:
+        """URL présignée pour une lecture directe, limitée dans le temps.
+
+        ``endpoint_url`` permet de SIGNER pour un autre endpoint que celui du
+        client courant : c'est le cas de l'endpoint public déclaré pour les
+        navigateurs de l'atelier. Par défaut, on signe pour l'endpoint interne,
+        ce qui ne doit JAMAIS être remis à un navigateur (nom d'hôte non
+        résolvable depuis un autre poste).
+        """
+        if endpoint_url and endpoint_url != self.endpoint_url:
+            s3 = self._client_pour_endpoint(endpoint_url)
+        else:
+            s3 = self._get_client()
         try:
             return s3.generate_presigned_url(
                 ClientMethod="get_object",
@@ -622,10 +666,13 @@ class S3StorageClient:
             raise StorageError(f"Object metadata lookup failed: {exc}") from exc
 
     def get_object(self, remote_key: str, *, range_header: str | None = None) -> dict[str, Any]:
-        """Open an object, optionally requesting a single byte range.
+        """Ouvre un objet, éventuellement sur une plage d'octets.
 
-        Normal preview/download uses :meth:`get_presigned_url`; this method is
-        reserved for byte-range requests so the API can return a real 206 to PDF.js.
+        Utilisé à deux endroits : les requêtes par plage (l'API renvoie alors un
+        vrai 206 à PDF.js) et le **proxy de téléchargement** — servir les octets
+        par l'API authentifiée quand aucun endpoint public n'est déclaré, parce
+        qu'une redirection présignée vers un endpoint interne casse le
+        téléchargement depuis un autre poste de l'atelier.
         """
         params: dict[str, Any] = {"Bucket": self.bucket_name, "Key": remote_key}
         if range_header:

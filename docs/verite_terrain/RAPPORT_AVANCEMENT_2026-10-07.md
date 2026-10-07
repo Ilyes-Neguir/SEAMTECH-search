@@ -41,6 +41,7 @@ CI rouge sans rapport avec le code applicatif :
 | E-25 | `pytest.skip(allow_module_level=True)` compté comme « sauté » même quand la sélection `-m` a désélectionné le module | 2 jobs rouges pour des tests jamais demandés (`sauvegarde`, `backend`) | fixture autouse par test |
 | E-26 | `./data` / `./logs` créés par Docker en root, application en `seamtech` | imports/rapports impossibles en conteneur (échec du job `integration`) | préparation + **preuve d'écriture** en CI, exigence documentée |
 | E-27 | Verrou pnpm en retard : 2 avis HIGH (`sharp`, `source-map-js`) | jobs `frontend` et `securite-dependances` rouges | verrou régénéré, audit à 0 |
+| E-28 | Téléchargements redirigés (302) vers l'endpoint S3 **interne** (`minio:9000`), non résolvable depuis un poste | rapport/original **intéléchargeables depuis un autre poste** | octets servis par l'API par défaut ; redirection seulement vers un endpoint public déclaré |
 
 État de la CI au moment de la rédaction : voir §5 (les runs du commit de tête
 sont les seuls qui font foi).
@@ -144,10 +145,16 @@ suppression locale ? »* :
 
 ### 2.3 Téléchargements, navigateur, conception d'interface
 
-* Les téléchargements passent par un **proxy authentifié** de l'API
-  (`…/pieces/{id}/telecharger`), pas par une URL présignée pointant vers un nom
-  d'hôte interne au conteneur ni vers `localhost` du navigateur : c'est ce qui
-  les rend utilisables **depuis un autre poste de l'atelier**.
+* Les téléchargements passent par l'API (`…/pieces/{id}/telecharger`,
+  `GET /imports/{id}/artifacts/{artifact}`, `POST /open`) : les octets sont
+  servis par le serveur, jamais par une redirection vers un nom d'hôte interne
+  au conteneur ni vers `localhost` du navigateur. C'est ce qui les rend
+  utilisables **depuis un autre poste de l'atelier** — et c'est l'écart E-28,
+  corrigé dans cette passe : la redirection présignée par défaut pointait vers
+  `minio:9000`, injoignable hors du réseau Docker. Si l'exploitant expose MinIO
+  sur le réseau de l'atelier, il peut déclarer
+  `SEAMTECH_S3_PUBLIC_ENDPOINT_URL` et retrouver la redirection (moins de charge
+  serveur) ; sinon tout passe par l'API.
 * L'aperçu et le téléchargement sont distingués (aperçu ≠ téléchargement) ;
   les originaux restent téléchargeables.
 * **La conception UI de l'atelier n'a pas été modifiée** : les changements sont
@@ -171,7 +178,7 @@ PostgreSQL 16.2 + pgvector 0.8.0, Redis 7.2.5 et venv Python montés à la main.
 
 | Suite | Sélection | Résultat |
 |---|---|---|
-| Sans service | `-m "not redis_queue and not postgres and not s3 and not perf and not recette_corpus and not integration_docker and not sauvegarde"` | **817 passés, 3 sautés, 315 désélectionnés** |
+| Sans service | `-m "not redis_queue and not postgres and not s3 and not perf and not recette_corpus and not integration_docker and not sauvegarde"` | **825 passés, 3 sautés, 315 désélectionnés** |
 | PostgreSQL réel | `-m "postgres and not perf and not sauvegarde and not redis_queue"` | **220 passés, 1 sauté** |
 | File durable (Redis + PostgreSQL réels) | `-m redis_queue` | **37 passés, 0 sauté** |
 | S3 vivant (MinIO) | `-m s3` | **0 passé, 29 sautés** — aucun service S3 ici (§6) |
@@ -196,7 +203,8 @@ interrompait la collecte : ces 26 tests n'apparaissaient **nulle part** (ni
 exécutés, ni désélectionnés) et le module était reporté comme **2 sauts**.
 Après correction (saut par test via fixture autouse) : **5 sauts → 3 sauts**,
 **289 → 315 désélectionnés** (+26 = les 26 tests désormais collectés puis
-écartés par `-m`), à **817 passés constants**. Les 3 sauts restants sont les
+écartés par `-m`). Après la passe « téléchargement » (§4, E-28), la même
+sélection compte **825 passés** (8 tests ajoutés). Les 3 sauts restants sont les
 sauts OCR légitimes (tesseract absent ici). Le saut unique restant dans la
 sélection PostgreSQL correspond à un test conditionné à un service vivant
 (bucket S3 / sauvegarde), exécuté par les jobs CI dédiés ; le poids de modèle e5
@@ -248,6 +256,21 @@ est, lui, téléchargé explicitement par la CI.
   Le test désigne maintenant le PDF par le chemin rendu par le **scan** (comme
   le fait l'interface) et vérifie, depuis le conteneur worker, que ce chemin
   exact existe et est lisible avant de confirmer l'import.
+
+* **E-28 — téléchargements inaccessibles depuis un autre poste.** La première
+  exécution *réussie* de l'import Compose a laissé apparaître la vraie panne :
+  le rapport était bien généré, mais `GET …/artifacts/report_pdf` répondait
+  **302 vers l'endpoint interne** (`minio:9000`) et le navigateur d'un poste
+  d'atelier ne peut pas résoudre ce nom. Le test le plus précieux ici est celui
+  qui a *échoué* : sans la pile réelle, le défaut restait invisible (boto3
+  doublé ne résout rien). Correctif : par défaut l'API sert les octets
+  (fichier local, sinon le cache est reconstitué depuis le stockage, sinon
+  l'objet est transmis en flux) ; la redirection n'est émise que vers un
+  endpoint **public** déclaré. `/open` sert en plus un original dont la copie
+  locale a disparu **sans jamais réécrire dans l'archive** (cas d'une
+  restauration). Cinq tests dédiés (`tests/test_telechargement_navigateur.py`)
+  plus la mise à jour du garde-fou historique `tests/test_url_presignee_302.py`
+  (15 tests) figent ce contrat.
 
 ---
 

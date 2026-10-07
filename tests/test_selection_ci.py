@@ -80,7 +80,7 @@ INVENTAIRE_S3_REEL = {
     "tests/test_recette_corpus_reel.py::test_05_fiches_proposees_a_valider",
     "tests/test_recette_corpus_reel.py::test_06_ocr_par_etages",
     "tests/test_recette_corpus_reel.py::test_07_recherches_par_mots_cles",
-    "tests/test_recette_corpus_reel.py::test_08_ouverture_pdf_url_presignee_reelle",
+    "tests/test_recette_corpus_reel.py::test_08_ouverture_pdf_telechargeable_sans_redirection_interne",
     "tests/test_recette_corpus_reel.py::test_09_rapport_pdf_telecharge",
     "tests/test_recette_corpus_reel.py::test_10_sauvegarde_restauration_base_neuve",
     "tests/test_recette_corpus_reel.py::test_11_zip_inchanges_apres_recette",

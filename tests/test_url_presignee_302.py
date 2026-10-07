@@ -14,11 +14,17 @@ mot-clé erroné rend donc ces tests rouges, immédiatement.
 Ce que ce fichier prouve, pour les DEUX routes concernées
 (``POST /open`` et ``GET /imports/{id}/artifacts/{artifact}``) :
 
-1. objet présent et présignature disponible → **302**, en-tête ``Location``,
-   URL présignée réellement produite, **expiration 900 s** transmise à boto3 ;
-2. présignature indisponible → repli existant respecté, aucune exception non
+1. **endpoint public déclaré** (``SEAMTECH_S3_PUBLIC_ENDPOINT_URL``) et
+   présignature disponible → **302**, en-tête ``Location``, URL présignée
+   réellement produite, **expiration 900 s** transmise à boto3 ;
+2. **aucun endpoint public déclaré** (le défaut) → les octets sont servis par
+   l'API : **200**, aucun ``Location``, et la présignature n'est même pas
+   demandée. C'est le correctif du 2026-10-07 : rediriger un poste de l'atelier
+   vers l'endpoint interne du réseau des conteneurs échouait par résolution de
+   nom (constaté par le test Compose du job CI ``integration``) ;
+3. présignature indisponible → repli existant respecté, aucune exception non
    contrôlée, **aucun secret** dans la réponse ni dans les journaux ;
-3. objet absent → comportement inchangé, **jamais de faux 302**.
+4. objet absent → comportement inchangé, **jamais de faux 302**.
 
 Aucun réseau, aucun conteneur, aucun vrai secret (RG14) : les identifiants sont
 des chaînes fictives, reconnaissables pour qu'une fuite se trouve au ``grep``.
@@ -69,12 +75,18 @@ URL_PRESIGNEE = (
 # ---------------------------------------------------------------------------
 
 
-def _config(tmp_path: Path, nom_base: str) -> AppConfig:
+#: Endpoint PUBLIC fictif : c'est celui que les navigateurs de l'atelier
+#: peuvent joindre. Sa présence est ce qui autorise une redirection présignée.
+URL_PUBLIQUE = "https://minio.public.invalide:9000"
+
+
+def _config(tmp_path: Path, nom_base: str, *, endpoint_public: str | None = URL_PUBLIQUE) -> AppConfig:
     return AppConfig(
         root_paths=[tmp_path],
         database_path=tmp_path / nom_base,
         min_free_bytes=0,
         s3_endpoint_url="http://minio.invalide:9000",
+        s3_public_endpoint_url=endpoint_public,
         s3_bucket="seamtech-documents",
         s3_access_key=CLE_ACCES_FICTIVE,
         s3_secret_key=SECRET_FICTIF,
@@ -162,10 +174,12 @@ def _appeler(config: AppConfig, double_boto3: MagicMock, appel) -> object:
     client_reel = _client_reel()
     with patch.object(S3StorageClient, "_get_client", return_value=double_boto3):
         with patch.object(S3StorageClient, "_get_probe_client", return_value=double_boto3):
-            with patch("seamtech_search.api.S3StorageClient", return_value=client_reel):
-                application = create_app(config)
-                with TestClient(application, follow_redirects=False) as http:
-                    return appel(http)
+            # Signature pour l'endpoint PUBLIC : même double boto3, jamais de réseau.
+            with patch.object(S3StorageClient, "_client_pour_endpoint", return_value=double_boto3):
+                with patch("seamtech_search.api.S3StorageClient", return_value=client_reel):
+                    application = create_app(config)
+                    with TestClient(application, follow_redirects=False) as http:
+                        return appel(http)
 
 
 def _journal(caplog: pytest.LogCaptureFixture) -> str:
@@ -239,7 +253,7 @@ def test_artefact_presignature_indisponible_sert_le_repli_sans_exception(
     assert reponse.content == rapport.read_bytes()
     assert "location" not in {cle.lower() for cle in reponse.headers}
     journal = _journal(caplog)
-    assert "Failed to generate presigned URL" in journal, "l'échec doit rester visible dans les journaux"
+    assert "Signature publique impossible" in journal, "l'échec doit rester visible dans les journaux"
     _aucun_secret(reponse, journal)
 
 
@@ -305,7 +319,7 @@ def test_open_presignature_indisponible_sert_le_fichier_local(
     assert reponse.status_code == 200
     assert reponse.content == fichier.read_bytes()
     journal = _journal(caplog)
-    assert "Failed presigned URL for open" in journal
+    assert "Signature publique impossible" in journal
     _aucun_secret(reponse, journal)
 
 
@@ -359,8 +373,9 @@ def test_tous_les_appels_de_get_presigned_url_utilisent_le_mot_cle_reel() -> Non
             for mot_cle in re.findall(r"(\w+)\s*=", appel):
                 if mot_cle not in valides:
                     fautifs.append(f"{fichier.relative_to(RACINE)} : get_presigned_url(..., {mot_cle}=...)")
-    assert sites == ["seamtech_search/api.py", "seamtech_search/api.py"], (
-        "les appelants recensés le 25/09/2026 sont les deux routes de api.py ; "
+    assert sites == ["seamtech_search/api.py"], (
+        "depuis le correctif téléchargement, les deux routes passent par UN SEUL "
+        "site d'appel (le helper `_url_presignee_navigateur`) ; "
         f"appelants trouvés : {sites} — un nouvel appelant doit être ajouté ici ET testé"
     )
     assert not fautifs, "mot-clé inexistant (le TypeError serait avalé par le repli) :\n" + "\n".join(fautifs)
@@ -369,8 +384,15 @@ def test_tous_les_appels_de_get_presigned_url_utilisent_le_mot_cle_reel() -> Non
 def test_les_deux_routes_signalees_par_l_audit_passent_bien_900_secondes() -> None:
     """La durée de 900 s est inchangée par le correctif (exigence du lot)."""
     source = (RACINE / "seamtech_search" / "api.py").read_text(encoding="utf-8")
-    appels = re.findall(r"get_presigned_url\(object_key,\s*expiration_seconds=(\d+)\)", source)
-    assert appels == ["900", "900"], f"attendu deux appels à 900 s (/open et artefacts), trouvé : {appels}"
+    appels = re.findall(r"get_presigned_url\(\s*object_key,\s*expiration_seconds=(\d+)", source)
+    assert appels == ["900"], f"attendu un appel à 900 s (helper des deux routes), trouvé : {appels}"
+    # Les DEUX routes passent bien par ce helper (3 occurrences : la définition
+    # et les deux routes) : aucune ne peut contourner la règle « endpoint
+    # public déclaré, sinon proxy par l'API ».
+    assert source.count("_url_presignee_navigateur(") == 3, (
+        "les routes /open et /imports/{id}/artifacts/{artifact} doivent toutes deux "
+        "passer par _url_presignee_navigateur"
+    )
 
 
 def test_un_mot_cle_inexistant_leve_bien_une_erreur_sur_le_vrai_client() -> None:
@@ -384,3 +406,61 @@ def test_un_mot_cle_inexistant_leve_bien_une_erreur_sur_le_vrai_client() -> None
         with pytest.raises(TypeError, match="expires_in"):
             client.get_presigned_url("IMP-1/abc/plan.pdf", expires_in=900)  # type: ignore[call-arg]
         assert client.get_presigned_url("IMP-1/abc/plan.pdf", expiration_seconds=900) == URL_PRESIGNEE
+
+
+# ---------------------------------------------------------------------------
+# 4. Défaut de déploiement : AUCUN endpoint public déclaré → l'API sert les
+#    octets, et la présignature interne n'est JAMAIS remise au navigateur.
+# ---------------------------------------------------------------------------
+
+
+def test_artefact_sans_endpoint_public_sert_les_octets_par_l_api(tmp_path: Path) -> None:
+    """Le fichier local existe : 200 par l'API, aucune redirection, aucune signature."""
+    config = _config(tmp_path, "artefact_proxy.db", endpoint_public=None)
+    rapport = _import_en_base(config, tmp_path, avec_cle=True, rapport_existe=True)
+    double = _boto3_double()
+
+    reponse = _appeler(config, double, lambda http: http.get("/imports/IMP-1/artifacts/report_pdf"))
+
+    assert reponse.status_code == 200, reponse.status_code
+    assert reponse.content == rapport.read_bytes()
+    assert "location" not in {cle.lower() for cle in reponse.headers}
+    double.generate_presigned_url.assert_not_called()
+
+
+def test_open_sans_endpoint_public_sert_les_octets_par_l_api(tmp_path: Path) -> None:
+    """Idem sur /open : l'endpoint interne n'est jamais exposé au navigateur."""
+    config = _config(tmp_path, "open_proxy.db", endpoint_public=None)
+    fichier = tmp_path / "plan.pdf"
+    fichier.write_bytes(b"%PDF-1.4 plan")
+    _document_en_base(config, fichier, object_key="IMP-1/abc/plan.pdf")
+    double = _boto3_double()
+
+    reponse = _appeler(config, double, lambda http: http.post(f"/open?path={fichier}"))
+
+    assert reponse.status_code == 200
+    assert reponse.content == fichier.read_bytes()
+    assert "location" not in {cle.lower() for cle in reponse.headers}
+    double.generate_presigned_url.assert_not_called()
+
+
+def test_objet_seul_sans_copie_locale_est_servi_par_l_api(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Restauration : plus de copie locale, l'objet est la seule copie — servi quand même."""
+    config = _config(tmp_path, "open_restauration.db", endpoint_public=None)
+    fichier = tmp_path / "plan.pdf"
+    fichier.write_bytes(b"%PDF-1.4 plan")
+    _document_en_base(config, fichier, object_key="IMP-1/abc/plan.pdf")
+    fichier.unlink()
+
+    double = _boto3_double()
+    double.get_object.return_value = {"Body": __import__("io").BytesIO(b"%PDF-1.4 plan restaure"), "ContentLength": 23}
+
+    caplog.set_level(logging.DEBUG)
+    reponse = _appeler(config, double, lambda http: http.post(f"/open?path={fichier}"))
+
+    assert reponse.status_code == 200, f"{reponse.status_code} : la copie objet doit être servie"
+    assert reponse.content == b"%PDF-1.4 plan restaure"
+    assert "location" not in {cle.lower() for cle in reponse.headers}
+    assert not fichier.exists(), "l'ouverture ne réécrit jamais dans l'archive (lecture seule)"

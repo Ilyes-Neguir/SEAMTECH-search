@@ -78,6 +78,14 @@ class AppConfig(BaseModel):
     #: plus rien ne prouve que l'objet stocké est le bon.
     storage_verify_reread: bool = True
     require_durable_queue: bool = False
+    #: Endpoint S3 **joignable par les navigateurs des postes de l'atelier**
+    #: (par exemple le nom public du service MinIO de l'atelier). Vide par défaut : dans ce
+    #: cas les téléchargements sont servis par l'API (proxy authentifié), parce
+    #: qu'une redirection présignée vers l'endpoint interne du réseau des
+    #: conteneurs n'est résolvable depuis aucun poste. Ne renseigner cette
+    #: variable que si l'endpoint est réellement exposé sur le réseau de
+    #: l'atelier ET en HTTPS si les navigateurs y accèdent.
+    s3_public_endpoint_url: str | None = None
     # Durée de vie du verrou (claim) d'une tâche : au-delà, un worker muet est
     # considéré mort et sa tâche est reprise. À majorer sur un serveur lent.
     task_claim_ttl_seconds: int = Field(default=300, ge=15)
@@ -166,6 +174,8 @@ class AppConfig(BaseModel):
             data["s3_endpoint_url"] = os.environ["SEAMTECH_S3_ENDPOINT_URL"]
         if os.environ.get("SEAMTECH_S3_BUCKET"):
             data["s3_bucket"] = os.environ["SEAMTECH_S3_BUCKET"]
+        if os.environ.get("SEAMTECH_S3_PUBLIC_ENDPOINT_URL"):
+            data["s3_public_endpoint_url"] = os.environ["SEAMTECH_S3_PUBLIC_ENDPOINT_URL"]
         # NOTE : la variable lue est bien SEAMTECH_STORAGE_VERIFY_REREAD. Une
         # version antérieure testait SEAMTECH_REQUIRE_DURABLE_QUEUE puis
         # indexait SEAMTECH_STORAGE_VERIFY_REREAD : dès que la durabilité était

@@ -109,6 +109,24 @@ queue. Three consequences the operator should know:
   you have a provider-side whole-object checksum and know that is what you rely
   on.
 
+**Downloads from a workshop PC (do not expose the internal endpoint).** By
+default the API serves report/download/`open` bytes itself, through the
+authenticated endpoint the browser already talks to. That is deliberate: a
+presigned URL is signed for the S3 endpoint the application uses, which in this
+stack is `http://minio:9000` — a name that only exists inside the compose
+network. Redirecting a workshop PC there fails with *name resolution* (this was
+found by the two-container Compose test). If you *want* the cheaper presigned
+redirect, expose MinIO on the LAN (TLS terminator in front) and declare the
+endpoint browsers can reach:
+
+```bash
+SEAMTECH_S3_PUBLIC_ENDPOINT_URL=https://minio.atelier.local
+```
+
+Leave it empty and every download goes through the app; credentials and the
+internal endpoint then never reach browser code, and downloads work from any
+workshop PC.
+
 **Directories the container user must be able to write to (real deployment
 requirement).** `./data` and `./logs` are bind-mounted into `web` and `worker`,
 which run as the non-root `seamtech` user of the image. If Docker creates those

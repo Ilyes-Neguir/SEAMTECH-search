@@ -11,10 +11,10 @@ from collections import defaultdict
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Iterator
 
 from fastapi import FastAPI, File, Form, Header, HTTPException, Query, Request, Response, UploadFile
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from .audit import actor_fingerprint, get_audit_logs, record_audit_event
@@ -529,7 +529,7 @@ def create_app(config: AppConfig) -> FastAPI:
     ) -> Response:
         _require_auth(config, token)
         actor = actor_fingerprint(token, request.client.host if request.client else None)
-        target = _validated_path(path, config)
+        target = _validated_path(path, config, exiger_existence=False)
 
         # Try to find object storage key for this path
         object_key = None
@@ -550,25 +550,45 @@ def create_app(config: AppConfig) -> FastAPI:
             # signal of a broken schema/index and must not vanish silently.
             logger.warning("Could not look up object_key for %s: %s", target, exc)
 
-        if storage_client is not None and object_key:
-            try:
-                url = storage_client.get_presigned_url(object_key, expiration_seconds=900)
-                record_audit_event(
-                    index, action="open", actor=actor, resource=str(target), status="302", details={"object_key": object_key}
-                )
-                return RedirectResponse(url=url, status_code=302)
-            except Exception as exc:
-                logger.warning("Failed presigned URL for open %s: %s", target, exc)
+        url_publique = _url_presignee_navigateur(object_key, storage_client, config)
+        if url_publique:
+            record_audit_event(
+                index, action="open", actor=actor, resource=str(target), status="302", details={"object_key": object_key}
+            )
+            return RedirectResponse(url=url_publique, status_code=302)
 
         # Fallback: serve file directly if it exists locally
         if target.exists() and target.is_file():
             record_audit_event(index, action="open", actor=actor, resource=str(target), status="200")
             return FileResponse(path=target, filename=target.name)
 
+        # Ni redirection publique ni copie locale : l'objet existe pourtant
+        # dans le stockage (cas d'une restauration) — on le sert par l'API.
+        if storage_client is not None and object_key:
+            record_audit_event(
+                index,
+                action="open",
+                actor=actor,
+                resource=str(target),
+                status="200",
+                details={"object_key": object_key, "servi_par": "proxy_api"},
+            )
+            return _reponse_objet_s3(
+                object_key,
+                target.name,
+                "application/pdf" if target.suffix.lower() == ".pdf" else "application/octet-stream",
+                storage_client,
+                inline=True,
+            )
+
         # For directories, return listing instead of trying OS open
         if target.exists() and target.is_dir():
             record_audit_event(index, action="open", actor=actor, resource=str(target), status="200")
             return JSONResponse({"opened": str(target), "is_dir": True, "note": "Directory listing via /preview"})
+
+        if not target.exists():
+            record_audit_event(index, action="open", actor=actor, resource=str(target), status="404")
+            raise HTTPException(status_code=404, detail="Path does not exist.")
 
         record_audit_event(index, action="open", actor=actor, resource=str(target), status="404")
         raise HTTPException(status_code=404, detail="Path not found.")
@@ -1122,22 +1142,21 @@ def create_app(config: AppConfig) -> FastAPI:
                     object_key = f["object_key"]
                     break
 
-        # If S3 configured and we have object key, redirect to presigned URL (expiry <=15 min)
-        if storage_client is not None and object_key:
-            try:
-                url = storage_client.get_presigned_url(object_key, expiration_seconds=900)
-                record_audit_event(
-                    index,
-                    action="artifact_download",
-                    actor=actor,
-                    resource=f"{import_id}/{artifact}",
-                    status="302",
-                    details={"object_key": object_key, "filename": filename},
-                )
-                return RedirectResponse(url=url, status_code=302)
-            except Exception as exc:
-                logger.warning("Failed to generate presigned URL for %s: %s", object_key, exc)
-                # Fall back to local file if available
+        # Redirection présignée UNIQUEMENT vers un endpoint public déclaré : le
+        # endpoint interne (nom d'hôte « minio » du réseau des conteneurs, port
+        # 9000) n'est résolvable depuis AUCUN poste de l'atelier. Par défaut on
+        # sert donc les octets par l'API.
+        url_publique = _url_presignee_navigateur(object_key, storage_client, config)
+        if url_publique:
+            record_audit_event(
+                index,
+                action="artifact_download",
+                actor=actor,
+                resource=f"{import_id}/{artifact}",
+                status="302",
+                details={"object_key": object_key, "filename": filename, "servi_par": "redirection_publique"},
+            )
+            return RedirectResponse(url=url_publique, status_code=302)
 
         # Fallback: serve from local disk (cache) or download from S3 to cache
         if file_path and file_path.exists():
@@ -1295,6 +1314,71 @@ def create_app(config: AppConfig) -> FastAPI:
     return app
 
 
+def _url_presignee_navigateur(
+    object_key: str | None,
+    storage_client: S3StorageClient | None,
+    config: AppConfig,
+) -> str | None:
+    """URL présignée **uniquement si un endpoint public est déclaré**.
+
+    Une redirection présignée vers l'endpoint INTERNE (le service « minio » du
+    réseau des conteneurs) casse le téléchargement depuis un autre poste de
+    l'atelier : ce nom d'hôte n'existe que dans le réseau des conteneurs. Constaté par le test Compose du
+    job CI `integration` (302 → « Temporary failure in name resolution »).
+
+    Par défaut, la fonction renvoie donc ``None`` et l'appelant sert les octets
+    par l'API authentifiée. Renseigner ``SEAMTECH_S3_PUBLIC_ENDPOINT_URL``
+    (endpoint réellement joignable par les navigateurs) rétablit la
+    redirection.
+    """
+    if storage_client is None or not object_key or not config.s3_public_endpoint_url:
+        return None
+    try:
+        return storage_client.get_presigned_url(
+            object_key, expiration_seconds=900, endpoint_url=config.s3_public_endpoint_url
+        )
+    except Exception as exc:  # pragma: no cover - dépend du fournisseur
+        logger.warning("Signature publique impossible pour %s : %s", object_key, exc)
+        return None
+
+
+def _reponse_objet_s3(
+    object_key: str,
+    filename: str,
+    media_type: str,
+    storage_client: S3StorageClient | None,
+    *,
+    inline: bool = False,
+) -> Response:
+    """Sert un objet S3 **à travers l'API** (proxy authentifié).
+
+    C'est le mode par défaut des téléchargements : l'URL vue par le navigateur
+    reste celle de l'application, donc joignable depuis n'importe quel poste,
+    sans exposer l'endpoint interne ni un jeton porteur présigné.
+    """
+    if storage_client is None:
+        raise HTTPException(status_code=503, detail="Stockage objet non configuré.")
+    entete = storage_client.head_object(object_key)
+    longueur = entete.get("ContentLength")
+    corps = storage_client.get_object(object_key)["Body"]
+
+    def _blocs() -> Iterator[bytes]:
+        try:
+            for bloc in iter(lambda: corps.read(1024 * 1024), b""):
+                yield bloc
+        finally:
+            try:
+                corps.close()
+            except Exception:  # pragma: no cover - fermeture best-effort
+                pass
+
+    disposition = "inline" if inline else "attachment"
+    entetes = {"Content-Disposition": f'{disposition}; filename="{filename}"'}
+    if longueur is not None:
+        entetes["Content-Length"] = str(int(longueur))
+    return StreamingResponse(_blocs(), media_type=media_type, headers=entetes)
+
+
 def _dossier_modeles_ml(config: AppConfig) -> Path:
     """Dossier des poids/modèles : <data>/modeles, surclassable par env."""
     import os
@@ -1332,10 +1416,17 @@ def _require_auth(config: AppConfig, token: str | None) -> None:
         raise HTTPException(status_code=401, detail="Authentication required.")
 
 
-def _validated_path(path: str, config: AppConfig) -> Path:
+def _validated_path(path: str, config: AppConfig, *, exiger_existence: bool = True) -> Path:
+    """Résout un chemin et vérifie qu'il reste DANS les racines autorisées.
+
+    ``exiger_existence=False`` sert à ``/open`` : après une restauration, le
+    fichier local peut manquer alors que l'objet est bien dans le stockage. La
+    vérification de confinement (403) reste, elle, inconditionnelle — c'est
+    elle qui protège, pas l'existence du fichier.
+    """
     target = Path(path).expanduser().resolve()
     allowed_roots = [root.resolve() for root in config.root_paths]
-    if not target.exists():
+    if exiger_existence and not target.exists():
         raise HTTPException(status_code=404, detail="Path does not exist.")
     if not any(target == root or root in target.parents for root in allowed_roots):
         raise HTTPException(status_code=403, detail="Path is outside configured search roots.")
