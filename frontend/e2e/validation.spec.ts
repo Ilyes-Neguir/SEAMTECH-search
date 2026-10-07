@@ -101,7 +101,17 @@ test.describe("validation de bout en bout", () => {
         confiance_min: 0.1, a_anomalies: true,
       }]),
     }))
-    await page.route("**/api/fiches/ANOMALIE-E2E/champs", (route) => route.fulfill({ status: 200, contentType: "application/json", body: "[]" }))
+    // UN SEUL INSTANTANÉ (champs + révision + statut) : c'est ce que l'écran
+    // interroge depuis le verrou optimiste — il n'appelle plus `/champs`. Ce
+    // test simulait l'ancien endpoint : la révision restait donc inconnue,
+    // l'écran s'arrêtait FAIL CLOSED et refusait la décision. Mesuré en CI :
+    // après « R + Entrée », plus aucun `message-ok` (le rejet n'était jamais
+    // envoyé). On sert l'instantané réel, avec sa révision.
+    await page.route("**/api/fiches/ANOMALIE-E2E/etat", (route) => route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ champs: [], revision: 1, statut: "a_valider" }),
+    }))
     await page.route("**/api/fiches/ANOMALIE-E2E/pieces", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ pdf_source: null, fichier_source: null, pieces: [] }) }))
     await page.route("**/api/validation/doublons", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ par_code: {} }) }))
     await page.route("**/api/fiches/ANOMALIE-E2E/valider", (route) => {
