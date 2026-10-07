@@ -449,8 +449,16 @@ def test_le_job_hors_ligne_bloque_reellement_la_sortie_et_exige_le_controle_nega
     assert "iptables -Z SEAMTECH_HORS_LIGNE" in bloc, (
         "les compteurs doivent être remis à zéro après les contrôles, avant l'épreuve"
     )
-    assert bloc.index("-Z SEAMTECH_HORS_LIGNE") < bloc.index('$3=="REJECT"'), (
-        "la remise à zéro doit précéder le relevé final"
+    # Le relevé FINAL doit lire un compteur remis à zéro : la remise à zéro
+    # précède la DERNIÈRE lecture. (Le contrôle négatif, lui, lit AVANT la remise
+    # à zéro — c'est ainsi qu'il prouve que la règle a rejeté son paquet.)
+    reset = bloc.index("-Z SEAMTECH_HORS_LIGNE")
+    assert reset < bloc.rindex('$3=="REJECT"'), "la remise à zéro doit précéder le relevé FINAL"
+    assert bloc.index('$3=="REJECT"') < reset, (
+        "le contrôle négatif doit mesurer le compteur AVANT la remise à zéro (sinon il ne prouve rien)"
+    )
+    assert "dependance-externe-cachee" in bloc and reset < bloc.index("dependance-externe-cachee"), (
+        "le refus « paquet rejeté non nul » doit porter sur le relevé d'après l'épreuve"
     )
     # Le semis d'une base e2e TERMINE les connexions et SUPPRIME les bases e2e_% :
     # réarmé pendant l'épreuve, il détruirait la base de la pile bloquée.
@@ -499,4 +507,50 @@ def test_le_garde_fou_de_concurrence_compte_les_scenarios_reellement_executes() 
     )
     assert f"attendu {nombre} tests passés au premier essai" in contenu, (
         "le message du garde-fou doit annoncer le même compte que la condition"
+    )
+
+def test_le_controle_negatif_prouve_la_regle_et_couvre_ipv6() -> None:
+    """Un échec « example.com » ne prouve rien à lui seul (revue 2026-10-07).
+
+    Il pourrait n'être qu'un DNS cassé ou une absence de connectivité. Le job
+    doit donc (1) résoudre le nom DEPUIS le compte applicatif avant l'appel,
+    (2) appeler une ADRESSE LITTÉRALE (aucun DNS dans la requête), (3) exiger
+    que le COMPTEUR de la règle REJECT augmente — l'empreinte de la règle.
+
+    Il doit aussi traiter IPv6 : une chaîne ip6tables pour le même compte quand
+    le runner annonce une route IPv6 globale, sinon la PREUVE de l'absence de
+    chemin IPv6. Et la portée doit être écrite noir sur blanc : processus
+    couverts (uid réel seamtech-app) et non couverts (navigateur du runner).
+    """
+    contenu = CI.read_text(encoding="utf-8")
+    bloc = contenu.split("\n  hors-ligne-reel:\n", 1)[1].split("\n  recette-corpus-reel:\n", 1)[0]
+
+    # (1)-(3) le contrôle négatif PROUVE la règle, il ne la suppose pas.
+    assert "ahostsv4" in bloc, "le nom doit être résolu depuis le compte applicatif (DNS hors de cause)"
+    assert "--noproxy" in bloc and '"http://$adresse/"' in bloc, (
+        "l'appel de contrôle doit porter sur l'adresse LITTÉRALE résolue"
+    )
+    assert "hors-ligne-regle-non-prouvee" in bloc, (
+        "un échec non imputable à la règle (compteur inchangé) doit faire ÉCHOUER le job"
+    )
+    assert "rc_neg" in bloc and "-eq 6" in bloc, (
+        "un échec par résolution de nom (curl 6) doit être refusé : le contrôle ne mesurerait rien"
+    )
+
+    # IPv6 : bloqué s'il existe une route, sinon l'absence de chemin est PROUVÉE.
+    assert "ip6tables" in bloc and "SEAMTECH_HORS_LIGNE6" in bloc, "IPv6 doit être traité, pas ignoré"
+    assert "ip -6 route show default" in bloc, "la décision IPv6 doit se fonder sur la table de routage réelle"
+    assert "hors-ligne-ipv6-non-bloque" in bloc and "hors-ligne-ipv6-regle-non-prouvee" in bloc, (
+        "IPv6 doit avoir ses propres refus, symétriques de ceux d'IPv4"
+    )
+    assert "hors-ligne-ipv6-non-prouve" in bloc, "l'absence de route IPv6 doit être PROUVÉE, pas supposée"
+
+    # Le relevé final couvre IPv6 quand la chaîne existe.
+    assert "rejetes6" in bloc, "le relevé final doit contrôler aussi les paquets IPv6 rejetés"
+
+    # Portée écrite noir sur blanc (processus couverts / non couverts).
+    assert "PROCESSUS COUVERTS" in contenu, "la portée du blocage doit être documentée"
+    assert "NON couverts" in contenu, "les processus NON couverts doivent être dits (navigateur, outils du runner)"
+    assert "requetesExternes" in contenu, (
+        "la garantie côté navigateur (aucune requête externe TENTÉE) doit être nommée là où la portée est écrite"
     )

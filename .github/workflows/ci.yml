@@ -1554,14 +1554,39 @@ jobs:
   # bloquée par une chaîne iptables dédiée (règle `--uid-owner`).
   #
   # L'ordre des preuves compte :
-  #   1. contrôle NÉGATIF avant l'épreuve : une requête sortante DU COMPTE
-  #      APPLICATIF doit ÉCHOUER — sans lui, « zéro paquet rejeté » ne
-  #      prouverait rien ;
-  #   2. contrôle POSITIF : l'application locale répond toujours ;
-  #   3. parcours navigateur complet (import, recherche, aperçu PDF, original +
+  #   1. contrôle NÉGATIF avant l'épreuve, sur IPv4 ET IPv6 : une requête
+  #      sortante DU COMPTE APPLICATIF doit ÉCHOUER, et l'échec doit être
+  #      ATTRIBUABLE À LA RÈGLE — pas à un DNS cassé ni à une connectivité
+  #      absente. Trois exigences (revue du 2026-10-07) : le nom est résolu
+  #      depuis le compte applicatif AVANT l'appel (DNS hors de cause), l'appel
+  #      porte sur une ADRESSE LITTÉRALE (aucun DNS dans la requête), et le
+  #      COMPTEUR de la règle REJECT doit augmenter d'au moins 1 paquet. Seul ce
+  #      dernier point constitue l'empreinte de la règle.
+  #   2. IPv6 TRAITÉ EXPLICITEMENT : la règle IPv4 ne dit rien du trafic IPv6.
+  #      Si le runner annonce une route IPv6 globale, une chaîne ip6tables est
+  #      posée pour le même uid (et éprouvée par le même contrôle négatif) ;
+  #      sinon le job PROUVE l'absence de chemin IPv6 (aucune route globale +
+  #      tentative littérale qui échoue) avant de conclure quoi que ce soit.
+  #   3. contrôle POSITIF : l'application locale répond toujours ;
+  #   4. parcours navigateur complet (import, recherche, aperçu PDF, original +
   #      rapport téléchargés avec octets vérifiés, validation) ;
-  #   4. RELEVÉ FINAL : le compteur de paquets REJETÉS du compte applicatif est
-  #      resté à ZÉRO — aucune dépendance externe cachée n'a été tentée.
+  #   5. RELEVÉ FINAL : les compteurs de paquets REJETÉS du compte applicatif
+  #      (IPv4 et, s'il existe, IPv6) sont restés à ZÉRO — aucune dépendance
+  #      externe cachée n'a été tentée.
+  #
+  # PROCESSUS COUVERTS — à citer tel quel :
+  #   * couverts : les processus dont l'uid RÉEL est ``seamtech-app``, soit le
+  #     service web/API (uvicorn), le WORKER SÉPARÉ et le serveur Next.js de
+  #     production — tous lancés par ``sudo -u seamtech-app`` — AINSI QUE tout
+  #     sous-processus qu'ils engendrent (outils OCR/externes inclus, l'uid réel
+  #     étant hérité). La règle ``--uid-owner`` s'applique aux connexions
+  #     sortantes de ces processus, IPv4 et IPv6.
+  #   * NON couverts, et c'est dit : le navigateur Chromium/Playwright et les
+  #     outils du runner, qui tournent sous l'utilisateur du runner (la garantie
+  #     côté page est l'assertion ``requetesExternes == []`` de
+  #     ``frontend/e2e/hors-ligne.spec.ts`` : aucune requête externe n'est même
+  #     TENTÉE par l'application) ; et la boucle locale (``-o lo`` / 127.0.0.0/8
+  #     et ::1 sont volontairement rendus) puisque la pile se parle à elle-même.
   #
   # Portée exacte : ce job prouve la pile SUR CETTE MACHINE, avec cette
   # configuration. Il ne remplace pas l'acceptation en atelier (postes réels,
@@ -1827,22 +1852,99 @@ jobs:
             exit 1
           fi
           echo "pile démarrée (web 8123, front 3123, worker séparé)"
-      - name: Bloquer la sortie réseau du compte applicatif (iptables) — contrôles négatif et positif
+      - name: Bloquer la sortie réseau du compte applicatif (IPv4 + IPv6) — contrôle négatif qui PROUVE la règle
         run: |
           UID_APP="$(id -u seamtech-app)"
+          # Chaîne IPv4.
           sudo iptables -N SEAMTECH_HORS_LIGNE 2>/dev/null || sudo iptables -F SEAMTECH_HORS_LIGNE
           sudo iptables -A SEAMTECH_HORS_LIGNE -o lo -j RETURN
           sudo iptables -A SEAMTECH_HORS_LIGNE -d 127.0.0.0/8 -j RETURN
           sudo iptables -A SEAMTECH_HORS_LIGNE -j REJECT --reject-with icmp-port-unreachable
           sudo iptables -I OUTPUT 1 -m owner --uid-owner "$UID_APP" -j SEAMTECH_HORS_LIGNE
-          echo "-- chaîne active pour l'uid $UID_APP"
+          echo "-- chaîne IPv4 active pour l'uid $UID_APP"
           sudo iptables -L SEAMTECH_HORS_LIGNE -v -n
-          # CONTRÔLE NÉGATIF : sans lui, « zéro paquet rejeté » ne prouve rien.
-          if sudo -u seamtech-app curl -sS --max-time 10 https://example.com -o /dev/null 2>/tmp/controle-negatif.err; then
-            echo "::error title=hors-ligne-non-bloque::le compte applicatif joint encore une adresse EXTERNE — la mesure serait vide de sens"
+
+          # Chaîne IPv6 — OBLIGATOIRE : la règle IPv4 ne dit RIEN du trafic IPv6.
+          # Soit on bloque IPv6, soit on PROUVE qu'aucun chemin IPv6 n'existe.
+          # Sans ce volet, un hôte joignable en IPv6 serait un contournement muet
+          # du « 0 paquet rejeté » (constat de la revue du 2026-10-07).
+          if ip -6 route show default 2>/dev/null | grep -q .; then
+            sudo ip6tables -N SEAMTECH_HORS_LIGNE6 2>/dev/null || sudo ip6tables -F SEAMTECH_HORS_LIGNE6
+            sudo ip6tables -A SEAMTECH_HORS_LIGNE6 -o lo -j RETURN
+            sudo ip6tables -A SEAMTECH_HORS_LIGNE6 -d ::1/128 -j RETURN
+            sudo ip6tables -A SEAMTECH_HORS_LIGNE6 -j REJECT --reject-with icmp6-port-unreachable
+            sudo ip6tables -I OUTPUT 1 -m owner --uid-owner "$UID_APP" -j SEAMTECH_HORS_LIGNE6
+            echo "-- IPv6 : route globale présente → chaîne ip6tables active pour l'uid $UID_APP"
+            sudo ip6tables -L SEAMTECH_HORS_LIGNE6 -v -n
+            # Contrôle négatif IPv6 sur adresse LITTÉRALE (aucun DNS en jeu) :
+            # l'échec doit être causé par LA RÈGLE, prouvé par son compteur.
+            avant6="$(sudo ip6tables -L SEAMTECH_HORS_LIGNE6 -v -n -x | awk '$3=="REJECT" {print $1; exit}')"
+            set +e
+            sudo -u seamtech-app curl -sS --max-time 10 --noproxy '*' "http://[2606:4700:4700::1111]/" -o /dev/null 2>/tmp/controle-negatif6.err
+            rc6=$?
+            set -e
+            apres6="$(sudo ip6tables -L SEAMTECH_HORS_LIGNE6 -v -n -x | awk '$3=="REJECT" {print $1; exit}')"
+            if [ "$rc6" -eq 0 ]; then
+              echo "::error title=hors-ligne-ipv6-non-bloque::le compte applicatif JOINT une adresse IPv6 publique — le blocage IPv4 serait contournable"
+              exit 1
+            fi
+            if [ "$rc6" -eq 6 ]; then
+              echo "::error title=hors-ligne-ipv6-resolue::échec IPv6 par résolution de nom alors que l'adresse est littérale — contrôle invalide"
+              exit 1
+            fi
+            if [ "${apres6:-0}" -le "${avant6:-0}" ]; then
+              echo "::error title=hors-ligne-ipv6-regle-non-prouvee::le compteur REJECT IPv6 n'a pas bougé (${avant6:-?} → ${apres6:-?}) : la règle n'est PAS la cause de l'échec"
+              exit 1
+            fi
+            echo "contrôle négatif IPv6 OK : $((apres6 - avant6)) paquet(s) REJETÉ(S) PAR LA RÈGLE ($(head -c 120 /tmp/controle-negatif6.err))"
+          else
+            echo "-- IPv6 : aucune route globale sur ce runner ($(ip -6 route show default 2>&1 | head -1))"
+            set +e
+            sudo -u seamtech-app curl -sS --max-time 5 -6 "http://[2606:4700:4700::1111]/" -o /dev/null 2>/tmp/controle-ipv6.err
+            rc6=$?
+            set -e
+            if [ "$rc6" -eq 0 ]; then
+              echo "::error title=hors-ligne-ipv6-non-prouve::le compte applicatif JOINT une adresse IPv6 publique alors qu'aucune route globale n'est annoncée"
+              exit 1
+            fi
+            echo "contrôle IPv6 OK : aucun chemin IPv6 vers l'extérieur ($(head -c 120 /tmp/controle-ipv6.err))"
+          fi
+
+          # CONTRÔLE NÉGATIF IPv4 — il doit DÉMONTRER que c'est bien LA RÈGLE qui a
+          # rejeté la requête de contrôle : une requête « example.com » qui échoue
+          # pourrait n'être qu'un problème de DNS ou de connectivité (revue du
+          # 2026-10-07). Trois exigences :
+          #   a. le nom est résolu EN IPv4 depuis le compte applicatif (le DNS
+          #      n'est donc pas en cause) ;
+          #   b. l'appel se fait sur l'ADRESSE LITTÉRALE (aucun DNS dans la
+          #      requête elle-même) ;
+          #   c. le compteur REJECT de la chaîne AUGMENTE d'au moins 1 : c'est
+          #      l'empreinte de la règle, pas une déduction.
+          adresse="$(sudo -u seamtech-app getent ahostsv4 example.com | awk 'NR==1{print $1}')"
+          if [ -z "$adresse" ]; then
+            echo "::error title=hors-ligne-controle-impossible::impossible de résoudre example.com en IPv4 depuis le compte applicatif — le contrôle négatif ne saurait distinguer DNS et pare-feu"
             exit 1
           fi
-          echo "contrôle négatif OK : sortie externe refusée ($(head -c 120 /tmp/controle-negatif.err))"
+          echo "résolution IPv4 OK depuis le compte applicatif : example.com → $adresse (DNS hors de cause)"
+          avant="$(sudo iptables -L SEAMTECH_HORS_LIGNE -v -n -x | awk '$3=="REJECT" {print $1; exit}')"
+          set +e
+          sudo -u seamtech-app curl -sS --max-time 10 --noproxy '*' "http://$adresse/" -o /dev/null 2>/tmp/controle-negatif.err
+          rc_neg=$?
+          set -e
+          apres="$(sudo iptables -L SEAMTECH_HORS_LIGNE -v -n -x | awk '$3=="REJECT" {print $1; exit}')"
+          if [ "$rc_neg" -eq 0 ]; then
+            echo "::error title=hors-ligne-non-bloque::le compte applicatif JOINT encore une adresse EXTERNE ($adresse) — la mesure serait vide de sens"
+            exit 1
+          fi
+          if [ "$rc_neg" -eq 6 ]; then
+            echo "::error title=hors-ligne-adresse-litterale::échec par résolution de nom alors que la requête porte une adresse littérale — contrôle invalide"
+            exit 1
+          fi
+          if [ "${apres:-0}" -le "${avant:-0}" ]; then
+            echo "::error title=hors-ligne-regle-non-prouvee::l'échec du contrôle n'a PAS été provoqué par la règle REJECT (compteur ${avant:-?} → ${apres:-?}) : ni DNS, ni pare-feu amont, ni absence de route ne sont exclus"
+            exit 1
+          fi
+          echo "contrôle négatif IPv4 OK : $((apres - avant)) paquet(s) REJETÉ(S) PAR LA RÈGLE vers $adresse ($(head -c 120 /tmp/controle-negatif.err))"
           # CONTRÔLE POSITIF : la pile locale répond toujours.
           sudo -u seamtech-app curl -sS --max-time 10 -H "X-SEAMTECH-TOKEN: $AUTH_TOKEN_APP" \
             http://127.0.0.1:8123/health -o /dev/null
@@ -1851,8 +1953,10 @@ jobs:
           # remet les compteurs à zéro pour que le relevé final mesure
           # UNIQUEMENT les parcours d'atelier (et rien d'autre).
           sudo iptables -Z SEAMTECH_HORS_LIGNE
+          sudo ip6tables -Z SEAMTECH_HORS_LIGNE6 2>/dev/null || true
           echo "-- compteurs remis à zéro après les contrôles"
           sudo iptables -L SEAMTECH_HORS_LIGNE -v -n -x
+          sudo ip6tables -L SEAMTECH_HORS_LIGNE6 -v -n -x 2>/dev/null || true
       - name: Parcours navigateur HORS LIGNE (pile réelle)
         working-directory: frontend
         env:
@@ -1894,22 +1998,36 @@ jobs:
       - name: Relevé — aucune tentative externe du compte applicatif pendant les parcours
         run: |
           rejetes="$(sudo iptables -L SEAMTECH_HORS_LIGNE -v -n -x | awk '$3=="REJECT" {print $1; exit}')"
-          echo "paquets rejetés (sortie externe du compte applicatif) : ${rejetes:-?}"
+          echo "paquets rejetés IPv4 (sortie externe du compte applicatif) : ${rejetes:-?}"
           sudo iptables -L SEAMTECH_HORS_LIGNE -v -n -x
+          # IPv6 : si la chaîne existe (route globale sur ce runner), le COMPTE
+          # APPLICATIF ne doit rien avoir tenté non plus ; sinon, l'absence de
+          # route a déjà été prouvée au moment du blocage.
+          if sudo ip6tables -L SEAMTECH_HORS_LIGNE6 -v -n -x >/dev/null 2>&1; then
+            rejetes6="$(sudo ip6tables -L SEAMTECH_HORS_LIGNE6 -v -n -x | awk '$3=="REJECT" {print $1; exit}')"
+            echo "paquets rejetés IPv6 (sortie externe du compte applicatif) : ${rejetes6:-?}"
+            sudo ip6tables -L SEAMTECH_HORS_LIGNE6 -v -n -x
+            volet_ipv6="IPv6 : ${rejetes6:-?} paquet(s) rejeté(s)"
+          else
+            volet_ipv6="IPv6 : aucune route globale sur ce runner (prouvé au blocage)"
+          fi
           if [ "${rejetes:-1}" != "0" ]; then
             echo "::error title=dependance-externe-cachee::le compte applicatif a tenté ${rejetes} paquet(s) vers l'extérieur pendant les parcours (voir le journal web/worker)"
             sudo tail -n 40 /srv/seamtech/logs/web.log || true
             sudo tail -n 40 /srv/seamtech/logs/worker.log || true
             exit 1
           fi
-          echo "::notice title=hors-ligne-prouve::parcours navigateur verts avec sortie externe RÉELLEMENT bloquée — 0 paquet rejeté (aucune dépendance externe tentée)"
+          echo "::notice title=hors-ligne-prouve::parcours navigateur verts avec sortie externe RÉELLEMENT bloquée, blocage PROUVÉ par le compteur de la règle (contrôle négatif) — 0 paquet rejeté (aucune dépendance externe tentée) ; ${volet_ipv6} ; couvert : processus d'uid reel seamtech-app (API/web, worker séparé, serveur Next.js de production) et leurs sous-processus — NON couvert : Chromium/Playwright du runner, dont la garantie est l'assertion « aucune requête externe tentée »"
       - name: Lever le blocage réseau (toujours) et publier les journaux en cas d'échec
         if: always()
         run: |
           sudo iptables -D OUTPUT -m owner --uid-owner "$(id -u seamtech-app)" -j SEAMTECH_HORS_LIGNE 2>/dev/null || true
           sudo iptables -F SEAMTECH_HORS_LIGNE 2>/dev/null || true
           sudo iptables -X SEAMTECH_HORS_LIGNE 2>/dev/null || true
-          echo "-- sortie réseau rétablie"
+          sudo ip6tables -D OUTPUT -m owner --uid-owner "$(id -u seamtech-app)" -j SEAMTECH_HORS_LIGNE6 2>/dev/null || true
+          sudo ip6tables -F SEAMTECH_HORS_LIGNE6 2>/dev/null || true
+          sudo ip6tables -X SEAMTECH_HORS_LIGNE6 2>/dev/null || true
+          echo "-- sortie réseau rétablie (IPv4 et IPv6)"
           if [ -f /srv/seamtech/logs/web.log ]; then echo "== web =="; sudo tail -n 60 /srv/seamtech/logs/web.log; fi
           if [ -f /srv/seamtech/logs/worker.log ]; then echo "== worker =="; sudo tail -n 60 /srv/seamtech/logs/worker.log; fi
       - name: Upload Playwright report on failure
