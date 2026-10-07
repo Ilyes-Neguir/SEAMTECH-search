@@ -16,11 +16,23 @@ et Playwright y sont traités séparément (§5).
 
 | Suite | Sélection pytest | Résultat |
 |---|---|---|
-| SQLite / sans service | `-m "not postgres and not s3 and not perf and not recette_corpus and not integration_docker and not redis_queue"` | **833 passed, 3 skipped, 299 deselected**, 84 s |
-| PostgreSQL réel | `-m "postgres and not perf and not redis_queue"` | **226 passed, 2 skipped**, 75 s |
-| File durable (Redis + PostgreSQL réels) | `-m "redis_queue"` | **37 passed, 0 skipped**, 62 s |
-| S3 vivant (MinIO) | `-m "s3"` | **0 passed, 29 skipped** (aucun service S3 ici — voir §4) |
-| Lint + compilation | `ruff check .` / `python -m compileall seamtech_search` | **All checks passed / COMPILE_OK** |
+| SQLite / sans service | `-m "not postgres and not s3 and not perf and not recette_corpus and not integration_docker and not redis_queue"` | **827 passed, 3 skipped, 315 deselected**, 62 s |
+| PostgreSQL 16 + Redis 7 réels, sélection COMPLÈTE de la porte de couverture CI | `-m "not s3 and not perf"` | **1 145 passed, 5 skipped, 0 failed**, 276 s |
+| PostgreSQL réel | `-m "postgres and not perf and not redis_queue"` | **221 passed, 0 skipped** (annotation CI `suite-postgres`) |
+| File durable (Redis + PostgreSQL réels) | `-m "redis_queue"` | **64 passed, 0 skipped** (annotation CI `suite-file-durable`) |
+| S3 vivant (MinIO) | `-m "s3"` | **0 passed, 29 skipped** ici (aucun service S3 dans ce conteneur) → exécuté par la CI (§4) |
+| Lint + compilation | `ruff check .` / `python -m compileall seamtech_search` | **All checks passed** |
+
+**Couverture mesurée, locale puis en CI** (même sélection, PostgreSQL + Redis
+déclarés) — c'est cette mesure qui a révélé le dernier défaut bloquant :
+
+| Module | Local (avant) | CI sur `3a33740` (Redis absent de l'étape) | CI sur `67a442a` (Redis déclaré) | Porte |
+|---|---|---|---|---|
+| `jobs.py` | 97 % | 90,0 % ✗ | porte franchie ✓ | 94 % |
+| `redis_store.py` | 95 % | 64,2 % ✗ | porte franchie ✓ | 92 % |
+| `worker.py` | 97 % | 70,3 % ✗ | porte franchie ✓ | 92 % |
+| `storage.py` | 99 % | 98,8 % ✓ | ✓ | 97 % |
+| `total` | 86 % | 84,5 % ✗ | **86,70 %** | 85 % |
 
 **Comptabilité corrigée `skipped` vs `deselected`** (correction demandée) :
 `deselected` = tests écartés par la sélection `-m` (ils n'ont pas été demandés et
@@ -282,19 +294,72 @@ lien au §7), **ÉCRIT** (code + tests présents, non exécutables ici), **PENDI
 
 ---
 
-## 7. Commit, branche, PR et exécutions CI
+## 7. Commit, branche, PR et exécutions CI — **vert sur le SHA final**
 
-* Branche de session : `arena/7da80c2f-seamtech-search`.
-* Commit de ces travaux : **rempli juste après le commit** (voir l'en-tête du
-  fichier `docs/verite_terrain/TRACABILITE_LIVRAISON.md`, section « Revue
-  indépendante 2026-10-07 », qui porte le SHA exact et les liens).
-* Pull request : ouverte depuis cette même branche (lien dans la traçabilité).
-* Exécutions CI : les jobs `backend`, `frontend`, `docker`, `integration`,
-  `e2e`, `sauvegarde`, `recette-corpus-reel`, `recette-locale`, `ocr`,
-  `securite-dependances` sont déclenchés par le push ; les liens exacts sont
-  consignés dans la traçabilité. Les preuves qui **ne peuvent venir que de là**
-  sont : MinIO réel (§4), restauration hors-site (§4), navigateur Playwright
-  (§5) et pile à deux conteneurs (§3.2).
+* Branche de session : `arena/7da80c2f-seamtech-search`
+  (poussée sur `https://github.com/Ilyes-Neguir/SEAMTECH-search.git`).
+* **Commit final : `67a442a`** — « fix(ci): déclarer Redis dans l'étape de
+  COUVERTURE (et pas seulement ailleurs) », qui succède à
+  `3a33740` → `a1c62fd` → `57b4804` (correctif produit E-28).
+* Pull request : **#35** — <https://github.com/Ilyes-Neguir/SEAMTECH-search/pull/35>
+  (ouverte depuis cette branche, mise à jour par chaque push).
 
-Aucune de ces preuves CI n'est présentée dans ce document comme déjà acquise :
-elles le seront quand le run correspondant au SHA ci-dessus sera vert.
+### Exécutions CI rattachées à `67a442a`
+
+| Exécution | Événement | Lien | Résultat |
+|---|---|---|---|
+| CI (`ci.yml`) | push | <https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/37606067205> | **12 jobs verts / 12** |
+| CI (`ci.yml`) | pull_request | <https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/37606071939> | **12 jobs verts / 12** |
+| Scale benchmark | pull_request | <https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/37606071972> | **vert** |
+
+Jobs du run push `37606067205` (tous `success`) : `backend (3.11)`,
+`backend (3.12)`, `backend (3.13)`, `frontend`, `docker`, `integration`,
+`e2e`, `sauvegarde`, `recette-corpus-reel`, `recette-locale`, `ocr`,
+`securite-dependances`.
+
+### Les cinq preuves qui ne peuvent venir QUE de la CI — désormais acquises
+
+1. **MinIO réel + stockage vérifié** → job `integration` (vert) et job
+   `sauvegarde` (vert) : l'annotation `sauvegarde-envoi` du 2026-10-07 publie
+   `dump 150038 octets, archive 2 fichiers, vérifié après envoi : True`.
+2. **Restauration réelle** → annotation `sauvegarde-restauration` :
+   `recherche_test_bf06942c78 restaurée en 0.26 s (15 fiches)` et
+   `restaur50k_f6f8150a72 restaurée en 0.8 s (50000 fiches)` — la restauration
+   à 50 000 fiches est celle publiée dans `RUNBOOK_RESTAURATION.md`.
+3. **Pile à deux conteneurs (web + worker séparé partageant volumes)** →
+   `tests/test_compose_partage_worker.py`, exécuté par le job `integration`,
+   qui vérifie aussi le téléchargement du rapport **sans redirection interne**.
+4. **Navigateur réel (Playwright)** → job `e2e` (vert) : annotation
+   `e2e-auth-nominatif : 26 tests verts (dont 4 sur les comptes nominatifs)`,
+   `e2e-doublons : 2 tests verts`, et la mesure du parcours machine complet de
+   la vraie fiche 7792-SO (`841 ms`).
+5. **Recette locale complète et corpus réel** → jobs `recette-locale` et
+   `recette-corpus-reel` (verts), dont le contrôle `pdf-presigne` vérifie
+   désormais le RÉSULTAT (SHA-256 du document téléchargé) et refuse toute
+   redirection vers un hôte interne.
+
+### Trois causes rouges, trois corrections distinctes (ne pas les confondre)
+
+| Cause | Nature | Correction | Vérification |
+|---|---|---|---|
+| `integration` : `Content-Disposition` cherché en casse mixte dans un dictionnaire brut | test obsolète (en-têtes Starlette en minuscules) | normalisation des en-têtes reçus | job vert depuis `a1c62fd` |
+| `recette-corpus-reel::test_10` : exigeait un 302 sur base restaurée | test obsolète (ancien contrat) | 200 + SHA-256, plus un §10.6 bis qui vérifie qu'une 302 publique pointe bien vers l'hôte déclaré | job vert depuis `a1c62fd` |
+| `recette-locale` : `open HTTP 200 (attendu 200 ou 302)` | **défaut dans MON correctif** : `_appel()` sans `brut=True`, donc corps PDF décodé en texte et branche `bytes` inatteignable | appel en mode brut + deux tests locaux qui épinglent le contrat d'appel (mis à l'épreuve : ils échouent si on retire le drapeau) | job vert depuis `3a33740` |
+| `backend` : porte de couverture (84,5 % / 64 % / 70 % / 90 %) | **défaut dans MON lot** : `SEAMTECH_TEST_REDIS_URL` absente de l'étape de couverture, donc les 64 tests de file durable se sautaient là où la couverture est mesurée | variable déclarée dans l'étape de couverture + 37 tests ajoutés (surpervision, Redis injoignable, chemins d'échec de la boucle) | vert sur `67a442a` : total **86,70 %**, `suite-file-durable` **64 passés / 0 sauté** |
+
+### Correctifs produit issus de cette passe (au-delà des tests)
+
+1. `worker.py` : un échec qui programme une nouvelle tentative écrivait « échoué »
+   en base **avant** la relance ; le registre dit maintenant l'état réel
+   (`pending` / `requeued`, avec le délai et le numéro de tentative) et
+   « échoué » n'est écrit qu'à l'épuisement des tentatives.
+2. `redis_store.py` : `update_job` rendait l'état fusionné **même quand
+   l'écriture Redis échouait** — il prétendait avoir écrit. Il rend désormais
+   `None` et journalise ; le registre en base reste la vérité.
+
+**Ce qui reste explicitement NON prouvé** (voir le tableau du §6, colonnes
+« reste à faire ») : pertinence sur archives réelles (exige le jeu de requêtes
+étiqueté par un humain), essai de restauration humain indépendant, destination
+de sauvegarde de production, test « réseau externe bloqué » sur le serveur,
+identifiants S3 à moindre privilège (MinIO root aujourd'hui), et R2 (non
+supporté par choix).
