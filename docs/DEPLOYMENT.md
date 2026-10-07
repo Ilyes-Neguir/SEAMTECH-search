@@ -345,9 +345,26 @@ stack (web + **separate worker** + PostgreSQL + Redis + local MinIO) with the
 application account's egress actually REJECTED by iptables and drives the
 browser through import, search, PDF preview, original + generated-report
 downloads and validation; it then asserts the reject counter is still 0 (no
-hidden external dependency was even attempted) and requires the negative
-control (an outbound request must fail) to hold first. Neither replaces the
-workshop acceptance (real workstations, cable unplugged).
+hidden external dependency was even attempted). Three details make that proof
+hold up:
+
+* **the negative control PROVES the rule**, it does not assume it: the host is
+  resolved from the application account first (so DNS is not the cause), the
+  controlled request is sent to the **literal address** (no DNS in the request),
+  and the rule's REJECT **counter must increase** — a failed request alone could
+  be a broken resolver or a dead link;
+* **IPv6 is handled explicitly**: the IPv4 rule says nothing about IPv6. When the
+  runner has a global IPv6 route, an `ip6tables` chain is installed for the same
+  account and checked the same way; when it has none, the job proves there is no
+  IPv6 path before concluding;
+* **the covered processes are named**: every process whose real uid is the
+  application account — `web`/API, the separate `worker` and the Next.js
+  production server, plus anything they spawn (OCR/external tools) — is covered,
+  IPv4 and IPv6. Chromium/Playwright (runner user) is NOT firewall-covered; the
+  guarantee for the page itself is the e2e assertion that no external request is
+  even attempted. Loopback stays open on purpose (the stack talks to itself).
+
+Neither replaces the workshop acceptance (real workstations, cable unplugged).
 
 ```bash
 # 1. What is provisioned? (no blocking) — says REQUIRED vs OPTIONAL per capability
@@ -416,6 +433,30 @@ docker compose down
 
 Do **not** use `docker compose down -v` during normal maintenance. The `-v`
 option deletes the PostgreSQL and MinIO named volumes.
+
+### Reindexing is safe (`index --rebuild`, E-40 fixed)
+
+Rebuilding the index used to be impossible on a populated PostgreSQL database:
+`DROP TABLE documents` was refused (`chunk` and `fiche_piece_jointe` reference
+it) and the rollback then failed too, hiding the original error. It now picks one
+of two modes, and says which one in the log:
+
+* **`recreation`** — no table references `documents`: the table is rebuilt from
+  scratch (the historical behaviour, harmless here);
+* **`en_place`** — at least one table references it: the table is **kept with
+  its ids** (`chunk` attachments and fiche attachments stay resolvable), every
+  file is re-extracted, and a file that disappeared from disk is only removed
+  when nothing references it. A document still referenced by a fiche is kept and
+  the reason is logged.
+
+A failed or interrupted scan restores the pre-scan snapshot with the original
+ids; if that restore itself fails, the snapshot is **kept** so the state stays
+recoverable, and the error raised is still the original one (the rollback
+failure is attached as a note, never substituted for it). Proofs, all on real
+PostgreSQL 16.2: `tests/test_rebuild_index_postgres.py` (CLI end to end,
+attachments, search + download path, interrupted scan, failed rollback) and
+`tests/test_rebuild_index.py` (SQLite).
+
 
 ## Backups and recovery
 
