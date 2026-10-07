@@ -48,23 +48,37 @@ CI rouge sans rapport avec le code applicatif :
 | E-33 | Test e2e figé sur `champ-materiau`, champ inexistant (familles préfixées) | scénario de concurrence rouge | champ réel choisi dynamiquement, unique à l'écran |
 | E-34 | Le tableau des champs gardait le brouillon local après « Recharger la fiche à jour » | l'opérateur relisait sa saisie périmée en croyant lire celle du collègue | brouillons oubliés (un champ après enregistrement, tous après rechargement) |
 | E-35 | La recette écrivait la sauvegarde avec l'identité **applicative** (et retombait sur `minioadmin` en silence) | `recette-corpus-reel` rouge ; faux ALLOW masqué par la racine | identité choisie par bucket, **aucun** repli, échec clair |
+| E-36 | Preuve intermittente : champs choisis avant leur rendu (1 test flaky), garde-fou muet sur le nom du test, build MinIO tributaire du réseau | `e2e` + `recette-corpus-reel` rouges sur un run pull_request alors que le push du même SHA était vert | attente du rendu des champs, annotation nommant les tests instables, réessais bornés du build |
 
-État de la CI au moment de la rédaction : voir §5 (les runs du commit de tête
-sont les seuls qui font foi). **Dernier état lu** : `37618670336` sur `3e13c7f`
-— `sauvegarde` redevenue VERTE (correctif E-32), `e2e` et `recette-corpus-reel`
-rouges pour les causes E-34 et E-35, **corrigées depuis** ; la CI de clôture est
-relancée par le commit qui porte ces corrections.
+État de la CI au moment de la rédaction : **12/12 jobs verts sur `c65b7d8`**,
+sur le run push `37642194285` ET sur les deux runs pull_request du même SHA
+(`37642211480`, `37642211503`) — dont l'étape « Run multi-session E2E
+(concurrence, sessions indépendantes) », lue `success` (`gh api
+actions/jobs/<id>`). Un run vert n'est revendiqué que parce qu'il a été LU ;
+l'historique complet des lectures est au §5.
 
 **Verdicts séparés demandés par la mission :**
 
-* **Tests développeur** : large couverture et exécution réelle, y compris
-  multi-processus ; ~1 100 tests exécutables localement, suites sans service /
-  PostgreSQL / file durable vertes. **Atteint, à l'exception des preuves qui
-  exigent Docker** (§6).
+* **Tests développeur** : **ATTEINT** — 1180 tests passés localement (base
+  PostgreSQL et Redis réelles, 264 s), porte de couverture franchie sans
+  abaissement (86,65 %), `tsc` + build de production OK, et **CI 12/12 verte sur
+  `c65b7d8` (push ET pull_request)** y compris les preuves qui exigent Docker,
+  MinIO réel et un vrai navigateur (§5, §5bis).
 * **Pilote atelier contrôlé** : **NON atteint** — exige un drill de restauration
-  humain indépendant, une destination de sauvegarde de production, et la
-  validation humaine du corpus réel (0 fiche sur 7 validée à ce jour).
+  humain indépendant, une destination de sauvegarde de production distincte, la
+  validation humaine du corpus réel (0 fiche sur 7 validée à ce jour) et la
+  recette trois postes sur le serveur cible.
 * **Production** : **NON revendiquée** — voir §6, liste exhaustive.
+
+**Handoff (mission, point 8)** : commit final **`c65b7d8`** (le commit de
+documentation qui suit ce rapport ne touche AUCUN fichier de code : les preuves
+`c65b7d8` s'y appliquent telles quelles) · branche
+`arena/7da80c2f-seamtech-search` · PR **#35** (ouverte, **jamais fusionnée**) ·
+runs lus : `37642194285` (push, 12/12), `37642211480` et `37642211503`
+(pull_request, 12/12). Détail par constat : §4 (E-22 → E-36) ; tests ajoutés :
+§3 et §4 ; défauts de code restants : **aucun connu** à ce jour ; portes
+restantes : §6 et §8. **La revue de ce travail par l'agent d'implémentation
+n'est pas une approbation indépendante** : une revue externe reste pendante.
 
 ---
 
@@ -229,11 +243,14 @@ première exécution CI (run `37613980912`) a trouvé un défaut du TEST lui-mê
 `champ-materiau` inexistant sur les fiches réelles), puis la troisième
 (run `37618670336`) un défaut **du PRODUIT** (E-34 : le tableau des champs
 conservait le brouillon de l'opérateur après « Recharger la fiche à jour » —
-B relisait sa propre saisie périmée en croyant lire celle du collègue).
-Après correction des trois : les trois scénarios voisins passent
-(`3 passed`) et le scénario de conflit passe toutes ses assertions jusqu'à la
-reprise — le statut final est consigné au §5. Aucun de ces scénarios n'est
-revendiqué comme prouvé avant lecture du job correspondant.
+B relisait sa propre saisie périmée en croyant lire celle du collègue), puis un
+quatrième passage a montré une preuve **intermittente** (E-36 : champs choisis
+avant leur rendu, 1 test rattrapé par un retry) — durcie, pas relâchée.
+**Statut final LU** : sur `c65b7d8`, l'étape « Run multi-session E2E
+(concurrence, sessions indépendantes) » est `success` sur le run push
+`37642194285` **et** sur les deux runs pull_request du même SHA
+(`gh api actions/jobs/<id>` ; le garde-fou exige 4 passés au premier essai,
+0 flaky, 0 sauté). Les 4 scénarios multi-navigateurs sont donc prouvés en CI.
 
 ### 2.5 Vérification hors ligne (chantier 3 de la revue) — exécutée, pas lue
 
@@ -442,6 +459,32 @@ est, lui, téléchargé explicitement par la CI.
   silence), tous après un rechargement explicite (l'opérateur demande l'état
   enregistré), et un remontage par fiche pour qu'aucun brouillon ne traverse
   un changement de fiche.
+* **E-36 — une preuve INTERMITTENTE n'est pas une preuve (et un garde-fou muet
+  l'a caché).** Run pull_request `37640455508` (même SHA que le push vert) :
+  `e2e` et `recette-corpus-reel` rouges. Trois défauts distincts, tous corrigés :
+  (a) `choisirChamp()` s'exécutait dès que la fiche et sa révision étaient
+  chargées, alors que la **liste des champs** arrive par une seconde requête —
+  choisir trop tôt levait « aucun champ corrigeable » ; le test était rattrapé
+  par un retry, et le garde-fou exigeant « 0 flaky » refusait la preuve avec
+  raison (mesuré : **3 passés, 1 flaky**). On attend maintenant le premier champ
+  rendu avant de choisir (attente d'état, exigence inchangée).
+  (b) Le garde-fou disait « 1 flaky » **sans nommer le test** : il liste
+  désormais les tests en échec ET ceux rattrapés par un retry (statuts
+  `unexpected` / `flaky` du rapport JSON) — c'est cette annotation qui a
+  désigné le scénario de conflit et permis de le durcir au lieu de relancer à
+  l'aveugle.
+  (c) `recette-corpus-reel` est tombée sur l'étape **réseau** « Build MinIO
+  image from archived sources » (clone GitHub + `docker build`) : un incident
+  transitoire devenait un échec de recette, toutes les étapes de recette
+  restant sautées. `scripts/construire_image_minio.sh` réessaie chaque étape
+  réseau (3 tentatives, dites), écrit son Dockerfile dans un fichier — un
+  heredoc déjà consommé ne peut pas alimenter une seconde tentative — et
+  ÉCHOUE toujours si les 3 tentatives échouent : l'image doit exister et
+  passer le fumigène (binaires + alias `local`). Régression verrouillée par
+  `tests/test_construire_image_minio.py` (8 tests).
+  Leçon retenue et inscrite ici : **un job vert une fois ne prouve pas** ; il
+  faut le run pull_request ET le run push, et un garde-fou doit nommer ce
+  qu'il mesure.
 * **E-35 — la recette écrivait la sauvegarde avec l'identité applicative.**
   Même run, job `recette-corpus-reel` :
   `test_10_sauvegarde_restauration_base_neuve` échoue sur
@@ -521,13 +564,25 @@ qu'à lui** :
    (`test_10` : E-35, identité applicative sur le bucket de sauvegarde + repli
    `minioadmin` silencieux). Les autres jobs sont verts, y compris `backend`
    3.11/3.12/3.13, `integration` (MinIO réel) et `recette-locale`.
-4. Commit de clôture (E-34 + E-35 corrigés, plus 5 tests de régression) — le
-   run correspondant est relancé en fin de passe ; **c'est lui qui fait foi**,
-   et son résultat est consigné dans `TRACABILITE_LIVRAISON.md` dès lecture.
+4. `06667a8` (E-34 + E-35 corrigés, 5 tests de régression) — push : **11 jobs
+   verts sur 12**, `recette-corpus-reel` **VERTE** (E-35 fermé, identité de
+   sauvegarde devant MinIO réel) mais `e2e` rouge ; le run pull_request du même
+   SHA a `e2e` VERT : l'échec est **intermittent**, pas une régression.
+5. `5805eb3` (sélecteur exact + garde-fou bavard) — push : **12/12 VERT**,
+   `e2e` compris (les 4 scénarios multi-navigateurs passés au premier essai).
+   MAIS le run pull_request `37640455508` rougit `e2e` et
+   `recette-corpus-reel` : le nouveau garde-fou a parlé — « mesuré 3 passés,
+   1 flaky » — et la recette était tombée sur le **build réseau** de l'image
+   MinIO. Une preuve intermittente n'est pas une preuve : les deux causes sont
+   corrigées au point suivant.
+6. `c65b7d8` (E-36) — **push ET pull_request verts, 12/12 sur les trois runs**
+   (`37642194285` push, `37642211480` et `37642211503` pull_request) ; l'étape
+   « Run multi-session E2E (concurrence, sessions indépendantes) » est
+   **`success`** — 4 scénarios passés au premier essai, 0 flaky, 0 sauté.
 
-**Aucun résultat CI n'est revendiqué ici avant lecture du job.** Les jobs verts
-cités sont ceux **lus** aux points 2 et 3 ; le statut du point 4 est ouvert au
-moment de la rédaction.
+**Aucun résultat CI n'est revendiqué ici avant lecture du job** : les six
+points ci-dessus sont des lectures brutes (`gh run view --json jobs`,
+`gh api .../check-runs/<id>/annotations`), pas des suppositions.
 
 ---
 
@@ -544,11 +599,11 @@ n'exerce pas.** Chaque ligne cite l'épreuve qui exerce réellement le scénario
 | Visibilité en recherche après import ET après correction | harness hors ligne (fiche retrouvée après dépôt) ; `tests/test_recherche_hybride.py`, `tests/test_recherche_dimension.py` ; sur corpus réel : job `recette-corpus-reel` | **PROUVÉ** (local) ; corpus réel : **CI** |
 | Validation / révision : la fabrication ne peut pas écraser une correction humaine | `tests/test_fiches_persistance.py` + `tests/test_lot_ingestion.py` (RG11) ; harness (levée explicite du verrou) | **PROUVÉ** |
 | Récupération de l'original ET du rapport généré | `tests/test_telechargement_navigateur.py` (5), `tests/test_url_presignee_302.py` (15), harness (aperçu + original + rapport) | **PROUVÉ** (local) ; conteneurs : **CI** |
-| Édition concurrente : deux postes, même fiche, aucun écrasement silencieux | `tests/test_revision_optimiste.py` (6, dont 2 clients SIMULTANÉS) ; `frontend/e2e/concurrence.spec.ts` (4 scénarios multi-navigateurs) | backend **PROUVÉ** ; navigateur : **CI** — 3 défauts (2 de test, 1 de produit) trouvés par ces exécutions et corrigés (E-30, E-33, E-34) ; run de clôture en cours |
+| Édition concurrente : deux postes, même fiche, aucun écrasement silencieux | `tests/test_revision_optimiste.py` (6, dont 2 clients SIMULTANÉS) ; `frontend/e2e/concurrence.spec.ts` (4 scénarios multi-navigateurs) | **PROUVÉ** : backend (local) + navigateur **CI 12/12** sur `c65b7d8` (push et pull_request) — 4 défauts trouvés par ces exécutions et corrigés (E-30, E-33, E-34, E-36) |
 | Permissions restreintes : l'opérateur est refusé par le BACKEND | `tests/test_comptes.py`, `tests/test_credentials_s3_restreintes.py` (ALLOW/DENY réels contre MinIO) ; scénario 4 de la suite concurrence (403 backend) | **PROUVÉ** (local) ; MinIO réel + navigateur : **CI** |
 | Sauvegarde + restauration en environnement propre | `tests/test_sauvegarde_restauration.py`, `tests/test_sauvegarde_unites.py` ; job `sauvegarde` (dont 50 000 fiches) | **PROUVÉ** en CI ; **drill HUMAIN : OUVERT** |
 | Fonctionnement hors ligne | `scripts/verifier_hors_ligne.py --executer` (réseau externe bloqué, 0 échec) ; `tests/test_verification_hors_ligne.py` (5) | **PROUVÉ automatiquement** (local) ; **acceptation atelier : OUVERTE** |
-| Identités de stockage restreintes (applicative ≠ sauvegarde ≠ racine) | `tests/test_credentials_s3_restreintes.py` (**18** locaux + 4 Docker), `tests/test_construire_image_minio.py` | **PROUVÉ** (local) ; MinIO réel : **CI** (`sauvegarde` verte, `integration` verte) ; la recette écrit désormais la sauvegarde avec l'identité de sauvegarde (E-35) |
+| Identités de stockage restreintes (applicative ≠ sauvegarde ≠ racine) | `tests/test_credentials_s3_restreintes.py` (**18** locaux + 4 Docker), `tests/test_construire_image_minio.py` | **PROUVÉ** : local + **CI 12/12** sur `c65b7d8` (`integration` et `sauvegarde` et `recette-corpus-reel` vertes, MinIO réel) |
 | Trois postes réels sur le serveur d'atelier, réseau coupé | — | **OUVERT** (portes §6) |
 
 Rappel de méthode (revue du 2026-10-07) : la revue de ce travail par l'agent
@@ -568,7 +623,7 @@ reste pendante ; aucune ligne ci-dessus ne la remplace.
 | **Pertinence de la recherche sur archives réelles** | aucune étiquette humaine sur corpus réel ; 7 fiches de référence, 0 validée | jeu de requêtes étiqueté (`JEU_REQUETES_REELLES.md`) + validation humaine |
 | **Moindre privilège S3 — contre MinIO RÉEL** | les tests Docker correspondants ne tournent qu'en CI (pas de Docker ici) | job CI `integration` sur le commit de tête (§5) |
 | **Fonctionnement hors ligne — sur le SERVEUR d'atelier** | le harnais prouve l'absence de dépendance externe **de cette machine** ; il ne prouve ni les postes réels, ni le serveur cible | exécution du harnais sur le serveur cible + acceptation trois postes réseau coupé |
-| **Concurrence vue du NAVIGATEUR** | les navigateurs ne s'installent pas dans cette session (CDN `cdn.playwright.dev` bloqué — vérifié à nouveau le 2026-10-07) | job CI `e2e`, étape « concurrence » (§5) : les 3 échecs successifs (E-30 test, E-33 test, E-34 produit) sont corrigés ; **le verdict appartient au run de clôture** |
+| **Concurrence vue du NAVIGATEUR** | les navigateurs ne s'installent pas dans cette session (CDN `cdn.playwright.dev` bloqué — vérifié à nouveau le 2026-10-07) | **FERMÉ en CI** : étape « concurrence » `success` sur `c65b7d8` (push + 2 pull_request) ; les 4 échecs successifs (E-30, E-33, E-34, E-36) ont été corrigés, pas contournés |
 | **Acceptation atelier (fabrication)** | décision humaine | trois postes, un import pendant une recherche, validation d'une fiche |
 
 Aucun de ces points n'est présenté comme résolu, et la revendication de
@@ -620,10 +675,22 @@ docker compose up -d --build web worker && pytest -m integration_docker -v
 
 ## 8. Prochaines étapes, dans l'ordre
 
-1. Lire le résultat des jobs longs du commit de tête et le consigner (§5).
-2. Fermer **E-26** côté déploiement : décision sur le compte applicatif S3
-   (moindre privilège) et destination de sauvegarde de production.
-3. Organiser le **drill de restauration humain** sur le serveur d'atelier.
-4. Faire valider humainement le corpus de référence (0/7 aujourd'hui) et jouer
-   le jeu de requêtes réelles.
-5. Recette atelier trois postes, puis décision de pilote.
+Les travaux d'ingénierie et de vérification **automatisables** sont terminés :
+CI 12/12 sur `c65b7d8` (push ET pull_request), suites locales vertes, porte de
+couverture franchie, harnais hors ligne sans échec. Ce qui reste exige un
+humain ou le serveur d'atelier — aucune de ces étapes ne peut être remplacée
+par un test :
+
+1. **Installation sur le serveur d'atelier** avec les identités restreintes
+   provisionnées (`bash scripts/provisionner_stockage.sh`) et la destination de
+   sauvegarde de production choisie par le propriétaire (aujourd'hui : la
+   séparation des IDENTITÉS est prouvée, pas l'indépendance de la DESTINATION).
+2. **Drill de restauration humain** dans un environnement propre
+   (`RUNBOOK_RESTAURATION.md`), signé par l'exploitant.
+3. **Validation humaine du corpus de référence** (0/7 fiches validées à ce
+   jour) et jugement de pertinence sur un jeu de requêtes réelles étiqueté.
+4. **Recette atelier trois postes** : import réel avec comptabilité complète,
+   recherche pendant l'import, validation d'une fiche, travail de fabrication
+   avec acceptation des révisions par les opérateurs.
+5. **Capacité/performance réelles** sur le poste cible, puis décision de pilote
+   contrôlé — la production reste **non revendiquée** (§6).
