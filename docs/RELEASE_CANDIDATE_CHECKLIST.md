@@ -539,17 +539,20 @@ la mise en service qui est recadrée.
 | 22.8 | La **calibration ML** ne bloque que la promesse de confiance calibrée, pas l'extraction assistée | en-tête (« Ce qui reste bloqué ») |
 | 22.9 | **Secrets base64 → URL-safe** (ou encodage) pour les URL PostgreSQL/Redis ; **provisionnement du stockage vérifié avant l'usage normal** | §3.1 bis, §2.4, `AppConfig.validate_connection_urls` |
 
-**Commit de release FIGÉ : `de7333e`** (branche `arena/7da80c2f-seamtech-search`).
+**Commit de release FIGÉ : `889cfc4`** (branche `arena/7da80c2f-seamtech-search`).
 Il porte tout ce qui précède — F1–F4, E-40, hors ligne renforcé, garde-fou
-d'URL, corrections du plan — et la CI y est **VERTE sur les deux exécutions**
-(push `37691659442` et pull request `37691664501`, **13/13 jobs**, dont
-`hors-ligne-reel` avec l'annotation « blocage PROUVÉ par le compteur de la règle
-(contrôle négatif) — 0 paquet rejeté … IPv6 : aucune route globale sur ce runner
-(prouvé au blocage) » ; couverture 86,99 % ; `indexer.py` 95,3 % ;
-`pytest -m postgres` 239 passés/0 sauté ; `-m redis_queue` 64 passés/0 sauté ;
-`mesure-phase1` 694 ms). Les commits **documentaires** postérieurs à `de7333e`
-(présente section comprise) ne changent ni le code ni les tests : ils datent la
-preuve, ils ne la remplacent pas.
+d'URL, corrections du plan — **plus la suppression de la cause mesurée de
+l'instabilité de concurrence** (`expect.timeout` du dépôt ramené à sa convention
+de 15 s, lecture DOM sans réessai remplacée par une assertion qui attend la
+convergence, garde-fou qui publie désormais la CAUSE du test rattrapé). La CI y
+est **VERTE sur les deux exécutions** (push `37697083753` et pull request
+`37697089852`, **13/13 jobs**), dont `hors-ligne-reel` (annotation : « blocage
+PROUVÉ par le compteur de la règle (contrôle négatif) — 0 paquet rejeté … IPv6 :
+aucune route globale sur ce runner (prouvé au blocage) ») et le job `e2e`
+(**7 scénarios de concurrence au premier essai, 0 flaky, 0 sauté** — le
+garde-fou REFUSE tout autre compte). Les commits **documentaires** postérieurs à
+`889cfc4` (présente section comprise) ne changent ni le code ni les tests : ils
+datent la preuve, ils ne la remplacent pas.
 
 **Ordre recommandé** (détaillé dans `docs/verite_terrain/MISE_EN_SERVICE.md` §2 bis) :
 (1) fermer les points d'ingénierie et FIGER le commit de release ; (2) confirmer la

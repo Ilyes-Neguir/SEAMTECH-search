@@ -837,6 +837,38 @@ ci-dessus sont des lectures brutes (`gh run view --json jobs`,
 
 ---
 
+### 5.1 L'instabilité de concurrence : cause trouvée, corrigée, revérifiée (2026-10-07)
+
+Le garde-fou `concurrence-garde-fou` a refusé DEUX fois le même scénario — « deux
+postes, même fiche : A enregistre, B est arrêté et se reprend » — en le comptant
+*flaky* (runs `37691363596` et `37695112611`), tandis que le code **identique**
+passait au premier essai sur `67b6153` et `de7333e`. Une preuve qui dépend du
+hasard ne vaut rien : la cause a été cherchée dans le code, pas dans un
+`retries` plus généreux.
+
+* **Cause 1 — attente d'assertion sous le défaut de la bibliothèque.**
+  `frontend/playwright.config.ts` ne réglait pas `expect.timeout` : les assertions
+  sans `timeout` explicite retombaient sur **5 s**, alors que TOUS les waits
+  explicites du dépôt sont à 15 s. Sous charge CI (2 vCPU, front de production,
+  backend, PostgreSQL), c'est une instabilité qui ne dit rien du produit.
+  → `expect: { timeout: 15000 }`, aligné sur la convention du dépôt. Aucun test
+  n'est sauté, aucune porte n'est abaissée : un comportement absent échoue
+  toujours, simplement après 15 s au lieu de 5.
+* **Cause 2 — la seule lecture de DOM sans réessai du fichier.**
+  `await posteB.locator(selecteur).inputValue()` photographiait un instant de
+  rendu (l'écran de B vient de s'ouvrir) et pouvait échouer en millisecondes —
+  profil exact d'un « flaky qui passe au retry ». → `await
+  expect(posteB.locator(selecteur)).toHaveValue(valeurInitiale, { timeout:
+  15000 })` : la preuve est la même (la valeur du collègue est intacte), mais
+  l'assertion ATTEND la convergence.
+* **Cause 3 (lisibilité) — un nom sans cause n'est pas réparable.**
+  → le garde-fou publie désormais « *titre* — *message du premier essai* ».
+
+**Vérification** : commit `889cfc4`, run push **`37697083753`** et pull request
+**`37697089852`** — job `e2e` **vert**, `concurrence-garde-fou` silencieux (donc
+**7 scénarios passés au premier essai, 0 flaky, 0 sauté**), 13/13 jobs verts sur
+les deux exécutions. C'est ce commit qui est **FIGÉ comme commit de release**.
+
 ## 5 bis. Périmètre produit — chaque scénario et SA preuve
 
 Règle de lecture : **un nom de job vert ne prouve pas un scénario que ce job
