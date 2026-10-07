@@ -41,6 +41,13 @@ test.describe("hors ligne — pile réelle, sortie réseau bloquée", () => {
   const CODE = "REF-2026-CLIENT123"
 
   test("import, recherche, aperçu, téléchargements et validation sans réseau externe", async ({ page }) => {
+    // Budget EXPLICITE (180 s) : ce parcours enchaîne un IMPORT réel (pipeline
+    // complet par le WORKER SÉPARÉ, stockage objet configuré), un aperçu PDF,
+    // deux téléchargements ET une décision. Le délai par défaut (30 s) n'est
+    // pas une exigence du produit ; les attentes INTERNES restent bornées
+    // (60 s pour l'import, 20 s ailleurs) — mesuré en CI : le parcours dépasse
+    // le délai par défaut avant même la seconde moitié.
+    test.setTimeout(180_000)
     // 1. CONNEXION nominative (formulaire réel, cookie signé).
     await signInWith(page, OPERATEUR)
 
@@ -51,17 +58,22 @@ test.describe("hors ligne — pile réelle, sortie réseau bloquée", () => {
     const champDossier = page.getByPlaceholder(/Chemin du dossier sur le serveur/i)
     await expect(champDossier).toBeVisible()
     await champDossier.fill(dossier)
-    // L'identifiant d'import sert à récupérer le RAPPORT GÉNÉRÉ plus loin, avec
-    // la session du navigateur (donc par l'API authentifiée, pas par un script).
-    const reponseImport = page.waitForResponse(
-      (reponse) => /^\/api\/imports\/\d+$/.test(new URL(reponse.url()).pathname),
-      { timeout: 30000 },
-    )
     await page.getByRole("button", { name: /Importation rapide/i }).click()
-    await expect(page.getByText(/État :/i)).toBeVisible({ timeout: 30000 })
-    await expect(page.getByText(new RegExp(CODE, "i"))).toBeVisible({ timeout: 30000 })
-    const corpsImport = (await (await reponseImport).json()) as { import_id?: number }
-    const identifiantImport = corpsImport.import_id ?? null
+    await expect(page.getByText(/État :/i)).toBeVisible({ timeout: 60000 })
+    await expect(page.getByText(new RegExp(CODE, "i"))).toBeVisible({ timeout: 60000 })
+    // L'identifiant d'import est lu DANS L'ÉCRAN : c'est le lien du rapport
+    // généré, tel qu'un opérateur le voit et le suit. Aucune attente d'URL
+    // devinée : l'import part en file avec un identifiant **UUID** (hexadécimal,
+    // pas un entier) et l'écran ne publie le lien qu'au résultat final.
+    // (Mesure CI du premier passage réel : ce test attendait un GET
+    // « /api/imports/<entier> » — motif impossible à satisfaire, attente morte
+    // qui consommait tout le budget.)
+    const lienRapport = page.getByRole("link", { name: /Télécharger le rapport PDF/i })
+    await expect(lienRapport).toBeVisible({ timeout: 60000 })
+    const hrefRapport = (await lienRapport.getAttribute("href")) ?? ""
+    expect(hrefRapport, "lien du rapport généré").toMatch(
+      /^\/api\/imports\/[0-9a-zA-Z]+\/artifacts\/report_pdf$/,
+    )
 
     // 3. VISIBILITÉ EN RECHERCHE après import (index local, modèle local).
     await page.goto(`/recherche?q=${encodeURIComponent(CODE)}`)
@@ -88,14 +100,13 @@ test.describe("hors ligne — pile réelle, sortie réseau bloquée", () => {
     expect(octets.subarray(0, 4).toString()).toBe("%PDF")
     expect(octets.length).toBeGreaterThan(1000)
 
-    // 5. RAPPORT GÉNÉRÉ : octets vérifiés, servis à la session du navigateur.
-    if (identifiantImport !== null) {
-      const rapport = await page.request.get(`/api/imports/${identifiantImport}/artifacts/report_pdf`)
-      expect(rapport.status(), await rapport.text()).toBe(200)
-      const corps = await rapport.body()
-      expect(corps.subarray(0, 4).toString()).toBe("%PDF")
-      expect(corps.length).toBeGreaterThan(1000)
-    }
+    // 5. RAPPORT GÉNÉRÉ : octets vérifiés, servis à la session du navigateur
+    //    (l'URL vient de l'écran — donc du résultat réellement produit).
+    const rapport = await page.request.get(hrefRapport)
+    expect(rapport.status(), await rapport.text()).toBe(200)
+    const corps = await rapport.body()
+    expect(corps.subarray(0, 4).toString()).toBe("%PDF")
+    expect(corps.length).toBeGreaterThan(1000)
 
     // 6. VALIDATION sur l'écran de validation : la révision est lue (instantané)
     //    puis la décision porte sur CETTE révision — sans réseau externe.
