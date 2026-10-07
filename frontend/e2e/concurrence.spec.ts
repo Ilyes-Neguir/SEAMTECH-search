@@ -429,7 +429,10 @@ test.describe("concurrence entre postes (sessions indépendantes)", () => {
       const apresB = await etatReel(posteA, code)
       expect(apresB.revision).toBe(etatInitial.revision + 1)
 
-      // A, sur SON écran (révision N), clique « Valider » : REFUS.
+      // A, sur SON écran (révision N), clique « Valider » : REFUS — et le refus
+      // ne doit laisser AUCUNE trace d'audit trompeuse (une ligne « valider »
+      // ferait croire que la fabrication a été approuvée).
+      const journalAvantRefus = await lignesDeJournal(posteA, code)
       await expect(posteA.getByTestId("validation-app")).toHaveAttribute("data-revision", String(etatInitial.revision))
       await posteA.getByTestId("bouton-valider").click()
       const conflitA = posteA.getByTestId("conflit-revision")
@@ -446,6 +449,10 @@ test.describe("concurrence entre postes (sessions indépendantes)", () => {
       expect(etatApresRefus).toEqual({ statut: "a_valider", revision: apresB.revision })
       const champs = await etatChamp(posteA, code, champ)
       expect(champs).toBe(valeurCollegue)
+      expect(
+        await lignesDeJournal(posteA, code),
+        "une décision REFUSÉE a laissé une ligne d'audit (elle ferait croire à une approbation)",
+      ).toBe(journalAvantRefus)
 
       // A RECHARGE (l'écran exige une relecture), puis décide sur l'état à jour.
       await posteA.getByTestId("bouton-recharger-fiche").click()
