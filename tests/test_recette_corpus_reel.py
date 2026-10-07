@@ -291,6 +291,7 @@ def test_03_services_et_migrations_018_base_neuve(app_client) -> None:
         "018_recherche_a_valider",
         "019_recherche_dimension",
         "020_file_durable",
+        "021_revision_fiche",
     }
     manquantes = attendues - versions
     assert not manquantes, f"migrations non appliquées : {sorted(manquantes)}"

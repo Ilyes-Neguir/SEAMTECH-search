@@ -34,6 +34,20 @@ export interface LienDoublon {
   statut_autre: string
 }
 
+// Lot « concurrence » — réponse 409 du backend quand la fiche a changé depuis
+// l'ouverture : la correction n'a PAS été appliquée (le travail du collègue est
+// préservé). On affiche la valeur à jour et on propose de recharger.
+export interface ConflitRevision {
+  code?: string
+  message?: string
+  regle?: string
+  revision_envoyee?: number
+  revision_actuelle?: number
+  valeur_actuelle?: string | null
+  corrige_par?: string | null
+  corrige_le?: string | null
+}
+
 function libelleDoublon(lien: LienDoublon): string {
   if (lien.type === "doublon_exact") return `Doublon exact de ${lien.code_autre}`
   return `Doublon probable de ${lien.code_autre}`
@@ -74,6 +88,12 @@ export function ValidationApp() {
   const [filtreGabarit, setFiltreGabarit] = useState("")
   const [codeActif, setCodeActif] = useState<string | null>(null)
   const [champs, setChamps] = useState<ChampExtrait[]>([])
+  // Verrou optimiste (migration 021) : la révision de la fiche TELLE QU'ELLE A
+  // ÉTÉ LUE. Elle est renvoyée avec chaque correction : si un collègue a
+  // enregistré entre-temps, le serveur refuse (409) au lieu d'écraser son
+  // travail, et l'opérateur voit la valeur du collègue.
+  const [revisionFiche, setRevisionFiche] = useState<number | null>(null)
+  const [conflit, setConflit] = useState<ConflitRevision | null>(null)
   const [zone, setZone] = useState<ZoneASurligner | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const [erreur, setErreur] = useState<string | null>(null)
@@ -150,9 +170,14 @@ export function ValidationApp() {
     setChamps([])
     setPiecePdf(null)
     setZone(null)
+    setConflit(null)
+    setRevisionFiche(null)
     jsonFetch<ChampExtrait[]>(`/api/fiches/${encodeURIComponent(codeActif)}/champs`)
       .then(setChamps)
       .catch((e) => setErreur(e instanceof Error ? e.message : "Champs indisponibles."))
+    jsonFetch<{ revision?: number }>(`/api/fiches/${encodeURIComponent(codeActif)}`)
+      .then((corps) => setRevisionFiche(typeof corps.revision === "number" ? corps.revision : null))
+      .catch(() => setRevisionFiche(null)) // sans révision : correction possible, mais non protégée
     jsonFetch<PiecesDeFiche>(`/api/fiches/${encodeURIComponent(codeActif)}/pieces`)
       .then((corps) => setPiecePdf(corps.pieces.find((piece) => piece.is_primary_pdf) ?? corps.pieces.find((piece) => piece.kind === "pdf") ?? null))
       .catch(() => setPiecePdf(null))
@@ -162,18 +187,44 @@ export function ValidationApp() {
     if (!codeActif) return
     setOccupe(true)
     setErreur(null)
+    setConflit(null)
     try {
-      await jsonFetch(`/api/fiches/${encodeURIComponent(codeActif)}/corriger`, {
+      const corps: { revision?: number } = {}
+      if (revisionFiche !== null) corps.revision = revisionFiche
+      const reponse = await jsonFetch<{ revision?: number }>(`/api/fiches/${encodeURIComponent(codeActif)}/corriger`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ champ: champ.champ, valeur, rang: champ.rang }),
+        body: JSON.stringify({ champ: champ.champ, valeur, rang: champ.rang, ...corps }),
       })
+      if (typeof reponse.revision === "number") setRevisionFiche(reponse.revision)
       setMessage(`Champ « ${champ.champ} » corrigé — verrou RG11 armé (une valeur corrigée n'est plus écrasée).`)
       setChamps(await jsonFetch(`/api/fiches/${encodeURIComponent(codeActif)}/champs`))
     } catch (e) {
-      setErreur(e instanceof Error ? e.message : "Correction refusée.")
+      const err = e as Error & { status?: number; body?: { detail?: ConflitRevision | string } }
+      const detail = err.body?.detail
+      if (err.status === 409 && detail && typeof detail === "object") {
+        // Concurrence : le collègue a enregistré. On n'écrit RIEN, on montre son
+        // travail, et on recharge la fiche pour repartir d'un état juste.
+        setConflit(detail)
+        setErreur(null)
+      } else {
+        setErreur(e instanceof Error ? e.message : "Correction refusée.")
+      }
     } finally {
       setOccupe(false)
+    }
+  }
+
+  async function rechargerFiche() {
+    if (!codeActif) return
+    setConflit(null)
+    try {
+      setChamps(await jsonFetch<ChampExtrait[]>(`/api/fiches/${encodeURIComponent(codeActif)}/champs`))
+      const detail = await jsonFetch<{ revision?: number }>(`/api/fiches/${encodeURIComponent(codeActif)}`)
+      if (typeof detail.revision === "number") setRevisionFiche(detail.revision)
+      setMessage(`Fiche ${codeActif} rechargée à jour.`)
+    } catch (e) {
+      setErreur(e instanceof Error ? e.message : "Rechargement impossible.")
     }
   }
 
@@ -188,6 +239,8 @@ export function ValidationApp() {
         body: JSON.stringify({ ...extra }),
       })
       setMessage(`Fiche ${codeActif} : ${actionName} enregistré au journal.`)
+      // La décision a fait avancer la révision : l'état local devient périmé.
+      setRevisionFiche(null)
       if (debutFiche.current?.code === codeActif) {
         setTempsFiches((mesures) => [...mesures, Math.max(0, Date.now() - debutFiche.current!.debut)])
       }
@@ -330,6 +383,51 @@ export function ValidationApp() {
           <button type="button" onClick={() => { setMessage(null); setErreur(null) }}>
             <CircleX className="size-3.5" />
           </button>
+        </div>
+      )}
+      {conflit && (
+        /* Concurrence (409) : le collègue a enregistré d'abord. Aucune écriture
+           n'a été appliquée — on le dit, on montre SA valeur, et on laisse
+           recharger. Aucun « succès » trompeur, aucun travail perdu en silence. */
+        <div
+          className="flex flex-col gap-1 border-b border-amber-500/40 bg-amber-500/10 px-4 py-2 text-xs text-amber-200"
+          data-testid="conflit-revision"
+          role="alert"
+        >
+          <div className="flex items-start gap-2">
+            <Lock className="mt-0.5 size-3.5 shrink-0" />
+            <span className="flex-1">
+              <strong>Conflit de révision — correction NON appliquée.</strong>{" "}
+              {conflit.message ??
+                "La fiche a été modifiée par un autre poste entre l'ouverture et l'enregistrement."}
+            </span>
+            <button type="button" onClick={() => setConflit(null)} aria-label="Masquer le conflit">
+              <CircleX className="size-3.5" />
+            </button>
+          </div>
+          <dl className="ml-5 grid grid-cols-2 gap-x-3 gap-y-0.5 font-mono text-[11px]">
+            <dt>valeur du collègue</dt>
+            <dd data-testid="conflit-valeur">{conflit.valeur_actuelle ?? "—"}</dd>
+            <dt>corrigée par</dt>
+            <dd data-testid="conflit-auteur">{conflit.corrige_par ?? "—"}</dd>
+            <dt>le</dt>
+            <dd data-testid="conflit-date">{conflit.corrige_le ?? "—"}</dd>
+            <dt>révision</dt>
+            <dd data-testid="conflit-revisions">
+              {conflit.revision_envoyee ?? "?"} → {conflit.revision_actuelle ?? "?"}
+            </dd>
+          </dl>
+          <div className="ml-5">
+            <button
+              type="button"
+              onClick={rechargerFiche}
+              disabled={occupe}
+              className="flex items-center gap-1 rounded border border-amber-400/50 px-2 py-0.5 font-semibold disabled:opacity-40"
+              data-testid="bouton-recharger-fiche"
+            >
+              <RefreshCw className="size-3" /> Recharger la fiche à jour
+            </button>
+          </div>
         </div>
       )}
       {aideRaccourcis && (

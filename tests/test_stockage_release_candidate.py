@@ -742,8 +742,8 @@ def test_migrations_sequentielles_001_a_017_sur_base_vide(tmp_path: Path) -> Non
             versions = [ligne[0] for ligne in connexion.execute("SELECT version FROM schema_migrations")]
         numeros = [int(version.split("_", 1)[0]) for version in sorted(versions)]
 
-        assert numeros == list(range(1, 21)), f"séquence attendue 001..020, mesurée {numeros}"
-        assert sorted(versions)[-1] == VERSION_SCHEMA_METIER == "020_file_durable"
+        assert numeros == list(range(1, 22)), f"séquence attendue 001..021, mesurée {numeros}"
+        assert sorted(versions)[-1] == VERSION_SCHEMA_METIER == "021_revision_fiche"
         # Toute migration métier déclarée DOIT être enregistrée à l'exécution.
         manquantes = {version for version, _sql in MIGRATIONS_METIER} - set(versions)
         assert manquantes == set(), f"migrations métier déclarées mais jamais appliquées : {manquantes}"
@@ -770,8 +770,8 @@ def test_version_schema_metier_est_la_derniere_migration_declaree() -> None:
     assert declarees == sorted(declarees), "les migrations métier doivent être déclarées dans l'ordre"
     assert declarees[-1] == VERSION_SCHEMA_METIER
     assert len(TABLES_METIER) == 33, (
-        "33 tables métier (018-020 n'ajoutent aucune table : texte de recherche, "
-        "puis colonnes de supervision des imports)"
+        "33 tables métier (018-021 n'ajoutent aucune table : texte de recherche, colonnes "
+        "de supervision des imports, puis révision de fiche — uniquement des colonnes)"
     )
 
 

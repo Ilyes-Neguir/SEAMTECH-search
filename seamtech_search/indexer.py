@@ -947,6 +947,28 @@ class SearchIndex:
             "Conséquence : les états de reprise sont lisibles, la couche métier reste PostgreSQL-only."
         )
 
+    def _migration_021_revision_fiche(self, connection: Any) -> None:
+        """Verrou optimiste (2026-10-07) : numéro de révision des fiches.
+
+        Défaut constaté par la revue indépendante : ``corriger_champ`` écrivait
+        sans comparer l'état lu, donc deux postes corrigeant la même fiche
+        s'écrasaient mutuellement (« dernier écrivain gagne »). La colonne
+        ``fiche.revision`` permet de REFUSER (409) une écriture fondée sur un
+        état périmé.
+
+        PostgreSQL uniquement, comme 006-019 : sur SQLite, avertissement
+        journalisé, migration enregistrée, aucun effet (le mode SQLite ne porte
+        ni les fiches ni la validation humaine).
+        """
+        if not self.is_postgres:
+            logger.warning(
+                "Migration 021_revision_fiche ignorée : la couche métier est PostgreSQL "
+                "uniquement — conséquence : aucun verrou optimiste en mode SQLite."
+            )
+            return
+        with connection.cursor() as cursor:
+            cursor.execute(schema_metier.SQL_021_REVISION_FICHE)
+
     def run_migrations(self) -> None:
         """Run pending schema migrations once at startup."""
         with self.connect() as connection:
@@ -988,6 +1010,10 @@ class SearchIndex:
                 # « annule »/« relance ». Enregistrée ici comme les autres :
                 # une migration oubliée fait échouer sauvegarde/restauration.
                 ("020_file_durable", self._migration_020_file_durable),
+                # 2026-10-07 — verrou optimiste : `fiche.revision`. Enregistrée
+                # ici comme les autres : une migration oubliée ferait échouer
+                # sauvegarde/restauration (VERSION_SCHEMA_METIER absente).
+                ("021_revision_fiche", self._migration_021_revision_fiche),
             ]
 
             for version, func in migrations:

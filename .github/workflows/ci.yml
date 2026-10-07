@@ -1047,6 +1047,58 @@ jobs:
       - name: Build production frontend (mode live = next start)
         working-directory: frontend
         run: pnpm build
+      - name: Run multi-session E2E (concurrence, sessions indépendantes)
+        # Épreuve de CONCURRENCE (revue indépendante du 2026-10-07) : deux/trois
+        # sessions de navigateur distinctes contre le vrai backend et la vraie
+        # base. Deux postes ouvrent la même fiche, A enregistre, B est arrêté
+        # (409) puis se reprend ; un poste importe pendant qu'un autre cherche
+        # et télécharge (contenu PDF vérifié) ; une session expirée ne produit
+        # aucun faux succès ; le BACKEND refuse une action d'administration à un
+        # opérateur. Exécutée AVANT la porte live : chaque invocation Playwright
+        # recrée sa propre base e2e jetable, les deux épreuves sont indépendantes.
+        working-directory: frontend
+        env:
+          SEAMTECH_E2E_DATABASE_URL: postgresql://seamtech:seamtech_test_password@localhost:5432/seamtech_search_test
+          PLAYWRIGHT_JSON_OUTPUT_NAME: report-concurrence.json
+        run: |
+          set -uo pipefail
+          set +e
+          pnpm exec playwright test e2e/concurrence.spec.ts --reporter=list,json 2>&1 | tee /tmp/e2e_concurrence.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            echo "::error title=concurrence-details::$(grep -E '✘|failed|Error|expect|toHave|Timeout|expected|not.to' /tmp/e2e_concurrence.log | tail -20 | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 3000)"
+            echo "::error title=concurrence-tail::$(tail -40 /tmp/e2e_concurrence.log | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 3000)"
+            exit "$rc"
+          fi
+          python - <<'PY'
+          import json
+          import os
+
+          if not os.path.exists("report-concurrence.json"):
+              raise SystemExit(
+                  "GARDE-FOU concurrence : report-concurrence.json absent — "
+                  "PLAYWRIGHT_JSON_OUTPUT_NAME doit être positionné."
+              )
+          d = json.load(open("report-concurrence.json"))
+          stats = d["stats"]
+          passes = stats["expected"]
+          flaky = stats.get("flaky", 0)
+          sautes = stats.get("skipped", 0)
+          # 4 scénarios de concurrence, TOUS exécutés (aucun saut : la base
+          # PostgreSQL est fournie par le job), aucun rattrapé par retry.
+          if sautes or flaky or passes != 4:
+              raise SystemExit(
+                  "GARDE-FOU concurrence : attendu 4 tests passés au premier essai, "
+                  f"0 flaky, 0 sautés — mesuré {passes} passés, {flaky} flaky, "
+                  f"{sautes} sautés. Un test de concurrence sauté ne prouve RIEN."
+              )
+          print(
+              "Concurrence : 4 scénarios multi-sessions exécutés au premier essai "
+              "(conflit de révision + reprise, import pendant recherche/téléchargement, "
+              "session expirée sans faux succès, refus administrateur par le backend)."
+          )
+          PY
       - name: Run live E2E validation (PostgreSQL + vraie fiche)
         working-directory: frontend
         env:

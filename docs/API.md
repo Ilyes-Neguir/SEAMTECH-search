@@ -243,6 +243,19 @@ attribuée. Les routes de validation (`POST /fiches/{code}/corriger|valider|reje
 corps de requête n'est plus qu'un **repli d'outillage** (scripts, tests), jamais
 prioritaire. L'écran ne l'envoie plus : une seule source de vérité.
 
+**Concurrence entre postes (verrou optimiste, migration `021_revision_fiche`).** Une
+fiche porte un numéro de `revision` (entier ≥ 1), publié par `GET /fiches/{code}` et
+incrémenté par toute écriture qui change son contenu (correction d'un champ, validation,
+rejet, réouverture). Le corps de `POST /fiches/{code}/corriger` peut porter `revision` :
+si un autre poste a enregistré entre l'ouverture et l'enregistrement, la correction est
+**refusée (409)** avec `{code: "conflit_revision", revision_actuelle, valeur_actuelle,
+corrige_par, corrige_le, regle}` — la valeur du collègue est conservée, rien de ce poste
+n'est écrit (pas même la ligne « utilisateur » de l'auteur). Sans `revision` dans le corps
+(client ancien), le comportement historique est conservé MAIS un avertissement est
+journalisé : l'absence de verrou est un état connu, jamais une protection implicite. Le
+front (écran Validation) envoie la révision, affiche le conflit avec la valeur du collègue
+et propose de recharger la fiche.
+
 **Vérrouillage des connexions** : le compteur d'échecs vit dans la table `audit_log`
 existante (`action='connexion_refusee'`), pas dans une table dédiée — la mission fixe
 32 tables métier après L.2 et une connexion refusée EST un événement d'audit. Conséquence
