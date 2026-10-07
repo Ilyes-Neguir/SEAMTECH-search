@@ -326,6 +326,35 @@ def _scenario_partage(tmp_path: Path) -> None:
         f"le brouillon téléversé doit vivre sous {donnees_conteneur} : {staged_conteneur}"
     )
 
+    # Le PDF technique se désigne par le chemin rendu par le SCAN — c'est ce que
+    # fait l'interface. Un téléversement de dossier conserve l'arborescence
+    # relative envoyée par le navigateur : le fichier n'est donc PAS à la racine
+    # du brouillon. Supposer « <brouillon>/fiche.pdf » est faux — et le serveur
+    # a bien raison de le refuser par « Selected PDF does not exist » (leçon
+    # apprise par ce test : un échec explicite, jamais un faux succès).
+    candidats = scan.get("candidates") or []
+    assert candidats, f"le scan ne voit aucun PDF candidat : {scan}"
+    pdf_conteneur = Path(str(candidats[0]["path"]))
+    assert str(pdf_conteneur).startswith("/app/data/"), pdf_conteneur
+    assert pdf_conteneur.name == "fiche.pdf", pdf_conteneur
+    # Le WORKER doit voir CE chemin exact, avec le bon contenu : c'est le cœur
+    # du partage de fichiers entre les deux conteneurs.
+    pdf_vu_worker = _exec(
+        "worker",
+        "python",
+        "-c",
+        (
+            "import pathlib,sys;"
+            "p=pathlib.Path(sys.argv[1]);"
+            "print(p.is_file(), p.stat().st_size if p.is_file() else -1)"
+        ),
+        str(pdf_conteneur),
+    )
+    assert pdf_vu_worker.returncode == 0 and pdf_vu_worker.stdout.startswith("True"), (
+        "le worker ne voit pas le PDF désigné par le scan (volume non partagé ?) :\n"
+        f"{pdf_vu_worker.stdout}\n{pdf_vu_worker.stderr}"
+    )
+
     # Le brouillon écrit par le WEB est visible depuis le WORKER (volume partagé)
     # et le worker peut le LIRE — permissions comprises.
     lecture_worker = _exec(
@@ -351,7 +380,7 @@ def _scenario_partage(tmp_path: Path) -> None:
     corps = json.dumps(
         {
             "source_path": str(staged_conteneur),
-            "technical_pdf": str(staged_conteneur / "fiche.pdf"),
+            "technical_pdf": str(pdf_conteneur),
         }
     ).encode()
     statut, brut, _ = _requete(

@@ -232,7 +232,22 @@ est, lui, téléchargé explicitement par la CI.
   40 dernières lignes de journal. Cela répond à une contrainte constatée : les
   journaux bruts de job ne sont pas téléchargeables depuis tous les
   environnements (y compris celui de cette session), seules les annotations le
-  sont.
+  sont — et c'est grâce à elles que la cause suivante a été lue en une minute
+  au lieu d'être devinée.
+* **Un défaut du test lui-même, trouvé par cette instrumentation.** La première
+  exécution réelle du test Compose (run `37596092737`, job `integration`) a
+  échoué avec `error: 'Selected PDF does not exist'`, alors que le
+  téléversement, l'acceptation durable (`durability: durable`), la lecture du
+  brouillon par le worker et le partage des volumes fonctionnaient (journal du
+  web : `POST /imports/upload 200`, `POST /imports/confirm 202 Accepted`). Le
+  test **supposait** que le fichier téléversé se trouverait à
+  `<brouillon>/fiche.pdf` ; or un téléversement de dossier conserve
+  l'arborescence envoyée par le navigateur
+  (`<brouillon>/AFFAIRE-PARTAGE-CI/fiche.pdf`). **Le serveur a donc eu raison de
+  refuser** — un chemin inexistant ne doit jamais produire un faux succès.
+  Le test désigne maintenant le PDF par le chemin rendu par le **scan** (comme
+  le fait l'interface) et vérifie, depuis le conteneur worker, que ce chemin
+  exact existe et est lisible avant de confirmer l'import.
 
 ---
 
