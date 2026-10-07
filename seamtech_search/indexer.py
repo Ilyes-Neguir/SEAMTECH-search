@@ -246,6 +246,10 @@ class SearchIndex:
         self.pool_max = pool_max
         self.pool_timeout = pool_timeout
         self.statement_timeout_ms = statement_timeout_ms
+        # Renseigné par initialize(rebuild=True) : « recreation » (table
+        # recréée — le cas sûr) ou « en_place » (identifiants conservés parce
+        # que des pièces jointes de fiches référencent documents — E-40).
+        self.rebuild_mode: str | None = None
         self._pool: Any = None
         # Resolved Postgres text-search configuration name, cached per index
         # instance. See `_postgres_ts_config`.
@@ -1053,14 +1057,215 @@ class SearchIndex:
             "ALTER TABLE documents ADD COLUMN IF NOT EXISTS upload_status TEXT NOT NULL DEFAULT 'pending'"
         )
 
+    # ------------------------------------------------------------------
+    # Rebuild sûr (défaut E-40) : jamais de DROP qui emporte des liens
+    # ------------------------------------------------------------------
+    def _contraintes_vers_documents(self, cursor: Any) -> list[tuple[str, str, str]]:
+        """Clés étrangères qui POINTENT vers ``documents`` (PostgreSQL).
+
+        Rend ``(table_enfant, colonne, action_de_suppression)``. L'action sert
+        à distinguer celles qui BLOQUENT une suppression (``a`` = NO ACTION,
+        ``r`` = RESTRICT) de celles qui la propagent (``c`` = CASCADE,
+        ``n`` = SET NULL) : seules les premières interdisent de supprimer ou de
+        tronquer ``documents``.
+        """
+        cursor.execute(
+            """
+            SELECT cl.relname, att.attname, con.confdeltype
+            FROM pg_constraint con
+            JOIN pg_class cl ON cl.oid = con.conrelid
+            JOIN pg_class ref ON ref.oid = con.confrelid
+            JOIN pg_attribute att
+              ON att.attrelid = con.conrelid AND att.attnum = ANY (con.conkey)
+            WHERE con.contype = 'f'
+              AND ref.relname = 'documents'
+              AND ref.relnamespace = 'public'::regnamespace
+            ORDER BY 1, 2
+            """
+        )
+        return [(str(ligne[0]), str(ligne[1]), str(ligne[2])) for ligne in cursor.fetchall()]
+
+    def _table_documents_existe(self, cursor: Any) -> bool:
+        cursor.execute("SELECT to_regclass('public.documents')")
+        return cursor.fetchone()[0] is not None
+
+    def _preparer_rebuild_postgres(self, cursor: Any) -> str:
+        """Prépare un ``--rebuild`` SANS jamais détruire de liens (E-40).
+
+        Deux modes, et un seul est destructif :
+
+        * ``"recreation"`` — la table ``documents`` n'existe pas encore, ou
+          AUCUNE clé étrangère ne pointe vers elle : l'ancien comportement
+          (table recréée, migrations rejouées) ne peut alors casser personne ;
+        * ``"en_place"`` — au moins une table référence ``documents``
+          (``chunk``, ``fiche_piece_jointe``…) : un ``DROP`` emporterait ces
+          contraintes et/ou laisserait des liens orphelins, et un ``TRUNCATE``
+          est refusé par PostgreSQL. La table est donc CONSERVÉE avec ses
+          identifiants : le scan ré-extrait tout, rafraîchit les lignes en
+          place et ne supprime que ce qui n'est plus sur le disque ET n'est
+          référencé par rien (voir ``remove_missing``).
+        """
+        if not self._table_documents_existe(cursor):
+            return "recreation"
+        contraintes = self._contraintes_vers_documents(cursor)
+        if not contraintes:
+            cursor.execute("DROP TABLE IF EXISTS documents")
+            cursor.execute("DROP TABLE IF EXISTS schema_migrations")
+            return "recreation"
+        detail = ", ".join(f"{table}.{colonne}" for table, colonne, _ in contraintes)
+        logger.warning(
+            "Rebuild EN PLACE : %s référence(nt) documents — la table est conservée avec ses "
+            "identifiants pour ne pas casser les pièces jointes des fiches (E-40) ; tout est "
+            "ré-extrait et les documents disparus non référencés sont supprimés.",
+            detail,
+        )
+        return "en_place"
+
+    def _references_sqlite(self, connection: sqlite3.Connection) -> list[tuple[str, str]]:
+        """Tables SQLite qui référencent ``documents`` (table, colonne)."""
+        references: list[tuple[str, str]] = []
+        tables = [
+            ligne[0]
+            for ligne in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+            ).fetchall()
+        ]
+        for table in tables:
+            if table in {"documents", "documents_fts"}:
+                continue
+            for cle in connection.execute(f'PRAGMA foreign_key_list("{table}")').fetchall():
+                # colonnes : id, seq, table, from, to, on_update, on_delete, match
+                if str(cle[2]) == "documents":
+                    references.append((str(table), str(cle[3])))
+        return references
+
+    def _preparer_rebuild_sqlite(self, connection: sqlite3.Connection) -> str:
+        """Même politique que PostgreSQL, pour ne pas laisser de liens orphelins.
+
+        SQLite n'applique pas les clés étrangères par défaut : l'ancien
+        ``DROP TABLE documents`` « réussissait » donc en laissant
+        ``fiche_piece_jointe.id_document`` pointer dans le vide. Ici, dès
+        qu'une table référence ``documents`` ET porte au moins une référence
+        non nulle, la table est conservée (rebuild en place).
+        """
+        existe = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'documents'"
+        ).fetchone()
+        if not existe:
+            return "recreation"
+        references = self._references_sqlite(connection)
+        if not references:
+            connection.executescript(
+                """
+                DROP TABLE IF EXISTS documents_fts;
+                DROP TABLE IF EXISTS documents;
+                DROP TABLE IF EXISTS schema_migrations;
+                """
+            )
+            return "recreation"
+        for table, colonne in references:
+            ligne = connection.execute(
+                f'SELECT EXISTS (SELECT 1 FROM "{table}" r '
+                f'WHERE r."{colonne}" IS NOT NULL '
+                f'AND EXISTS (SELECT 1 FROM documents d WHERE d.id = r."{colonne}"))'
+            ).fetchone()
+            if ligne and int(ligne[0]):
+                logger.warning(
+                    "Rebuild EN PLACE : %s.%s référence des documents — la table est conservée "
+                    "avec ses identifiants pour ne pas casser les pièces jointes (E-40).",
+                    table,
+                    colonne,
+                )
+                return "en_place"
+        # Des clés étrangères existent mais AUCUNE ligne ne référence un
+        # document : l'ancien comportement reste sans danger.
+        connection.executescript(
+            """
+            DROP TABLE IF EXISTS documents_fts;
+            DROP TABLE IF EXISTS documents;
+            DROP TABLE IF EXISTS schema_migrations;
+            """
+        )
+        return "recreation"
+
+    def _restaurer_documents(self, cursor: Any, backup_table: str) -> dict[str, int]:
+        """Restaure ``documents`` depuis l'instantané — SANS jamais supprimer un
+        document référencé, et avec une identité IDENTIQUE (E-40).
+
+        Ordre : (1) retirer les lignes ajoutées par le scan raté (sauf celles
+        qu'une table de liens référence), (2) réinsérer les lignes disparues
+        AVEC leur identifiant d'origine (`SETVAL` de la séquence en fin), (3)
+        remettre les valeurs sauvegardées des lignes présentes des deux côtés.
+        """
+        def ident(nom: str) -> str:
+            return '"' + str(nom).replace('"', '""') + '"'
+
+        cursor.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema = 'public' AND table_name = 'documents'"
+        )
+        colonnes = [str(ligne[0]) for ligne in cursor.fetchall()]
+        cursor.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema = 'public' AND table_name = %s",
+            (backup_table,),
+        )
+        colonnes_instantane = {str(ligne[0]) for ligne in cursor.fetchall()}
+        communes = [colonne for colonne in colonnes if colonne in colonnes_instantane]
+        if not communes or "id" not in communes:
+            raise RuntimeError(f"instantané {backup_table} inutilisable (colonnes absentes)")
+
+        listes = ", ".join(ident(colonne) for colonne in communes)
+        garde = "".join(
+            f" AND NOT EXISTS (SELECT 1 FROM {ident(table)} ref WHERE ref.{ident(colonne)} = d.id)"
+            for table, colonne, action in self._contraintes_vers_documents(cursor)
+            if action in {"a", "r"}
+        )
+        cursor.execute(
+            f"DELETE FROM documents d "
+            f"WHERE NOT EXISTS (SELECT 1 FROM {ident(backup_table)} b WHERE b.id = d.id){garde}"
+        )
+        supprimees = int(cursor.rowcount)
+        cursor.execute(
+            f"INSERT INTO documents ({listes}) "
+            f"SELECT {listes} FROM {ident(backup_table)} b "
+            f"WHERE NOT EXISTS (SELECT 1 FROM documents d WHERE d.id = b.id)"
+        )
+        reinserees = int(cursor.rowcount)
+        maj = ", ".join(
+            f"{ident(colonne)} = b.{ident(colonne)}" for colonne in communes if colonne != "id"
+        )
+        if maj:
+            cursor.execute(f"UPDATE documents d SET {maj} FROM {ident(backup_table)} b WHERE b.id = d.id")
+        cursor.execute(
+            "SELECT setval(pg_get_serial_sequence('documents', 'id'), "
+            "GREATEST(COALESCE((SELECT MAX(id) FROM documents), 1), 1))"
+        )
+        return {"supprimees": supprimees, "reinserees": reinserees, "colonnes": len(communes)}
+
+    def _supprimer_documents_non_references(self, cursor: Any, path_keys: list[str]) -> list[str]:
+        """Supprime les documents absents du disque, SAUF ceux qu'une fiche
+        référence (E-40) : un lien de pièce jointe ne doit jamais devenir
+        orphelin parce qu'un fichier a bougé."""
+        garde = "".join(
+            f" AND NOT EXISTS (SELECT 1 FROM {table} ref WHERE ref.{colonne} = d.id)"
+            for table, colonne, action in self._contraintes_vers_documents(cursor)
+            if action in {"a", "r"}
+        )
+        cursor.execute(
+            "DELETE FROM documents d WHERE d.path_key = ANY(%s)" + garde + " RETURNING d.path_key",
+            (path_keys,),
+        )
+        return [str(ligne[0]) for ligne in cursor.fetchall()]
+
     def initialize(self, rebuild: bool = False) -> None:
         """Create tables if not exists — no DDL backfill, no category overwrite."""
         with self.connect() as connection:
+            self.rebuild_mode = None
             if self.is_postgres:
                 with connection.cursor() as cursor:
                     if rebuild:
-                        cursor.execute("DROP TABLE IF EXISTS documents")
-                        cursor.execute("DROP TABLE IF EXISTS schema_migrations")
+                        self.rebuild_mode = self._preparer_rebuild_postgres(cursor)
                     cursor.execute(POSTGRES_SCHEMA)
                     # Ensure migrations table exists, but do not run migrations here
                     cursor.execute(
@@ -1081,13 +1286,7 @@ class SearchIndex:
                 self._ensure_unaccent_config(connection)
             else:
                 if rebuild:
-                    connection.executescript(
-                        """
-                        DROP TABLE IF EXISTS documents_fts;
-                        DROP TABLE IF EXISTS documents;
-                        DROP TABLE IF EXISTS schema_migrations;
-                        """
-                    )
+                    self.rebuild_mode = self._preparer_rebuild_sqlite(connection)
                 connection.executescript(SQLITE_SCHEMA)
                 connection.execute(
                     """
@@ -1154,23 +1353,46 @@ class SearchIndex:
             with self.connect() as connection:
                 with connection.cursor() as cursor:
                     cursor.execute("DROP TABLE IF EXISTS " + backup_table)
-                    cursor.execute("SELECT to_regclass('public.documents')")
-                    has_documents = cursor.fetchone()[0] is not None
+                    has_documents = self._table_documents_existe(cursor)
                     if has_documents:
                         cursor.execute(f"CREATE TABLE {backup_table} AS TABLE documents")
+            # L'instantané n'est JETÉ que si le retour arrière a abouti : s'il
+            # échoue, il est CONSERVÉ pour une reprise manuelle (E-40).
+            instantane_encore_utile = False
             try:
                 yield
-            except Exception:
+            except Exception as erreur_scan:
                 if has_documents:
-                    with self.connect() as connection:
-                        with connection.cursor() as cursor:
-                            cursor.execute("TRUNCATE TABLE documents")
-                            cursor.execute(f"INSERT INTO documents SELECT * FROM {backup_table}")
+                    try:
+                        with self.connect() as connection:
+                            with connection.cursor() as cursor:
+                                rapport = self._restaurer_documents(cursor, backup_table)
+                        logger.warning("Scan en échec : instantané restauré (%s)", rapport)
+                    except Exception as erreur_restauration:
+                        instantane_encore_utile = True
+                        # L'erreur ORIGINALE reste l'erreur levée — un échec du
+                        # retour arrière ne doit JAMAIS la masquer (défaut
+                        # mesuré : « TRUNCATE ... cannot truncate » remplaçait la
+                        # vraie cause). Le détail est attaché à l'erreur
+                        # d'origine et tracé en entier.
+                        logger.exception(
+                            "Retour arrière de l'instantané ÉCHOUÉ (instantané %s conservé pour reprise)",
+                            backup_table,
+                        )
+                        ajouter_note = getattr(erreur_scan, "add_note", None)
+                        if callable(ajouter_note):
+                            ajouter_note(
+                                "Retour arrière de l'instantané ÉCHOUÉ : "
+                                f"{erreur_restauration!r}. La table documents peut être "
+                                f"partiellement restaurée ; l'instantané {backup_table} est "
+                                "CONSERVÉ pour reprise manuelle."
+                            )
                 raise
             finally:
-                with self.connect() as connection:
-                    with connection.cursor() as cursor:
-                        cursor.execute("DROP TABLE IF EXISTS " + backup_table)
+                if not instantane_encore_utile:
+                    with self.connect() as connection:
+                        with connection.cursor() as cursor:
+                            cursor.execute("DROP TABLE IF EXISTS " + backup_table)
             return
 
         backup_path = self.database_path.with_suffix(self.database_path.suffix + ".scan-backup")
@@ -1479,16 +1701,50 @@ class SearchIndex:
                 with connection.cursor() as cursor:
                     cursor.execute("SELECT path_key FROM documents")
                     missing = [row[0] for row in cursor.fetchall() if row[0] not in seen_path_keys]
-                    if missing:
-                        cursor.execute("DELETE FROM documents WHERE path_key = ANY(%s)", (missing,))
-                    return len(missing)
+                    if not missing:
+                        return 0
+                    supprimes = self._supprimer_documents_non_references(cursor, missing)
+                    conserves = len(missing) - len(supprimes)
+                    if conserves:
+                        # Un document a disparu du disque MAIS une fiche y
+                        # renvoie : le supprimer casserait la pièce jointe (ou
+                        # ferait échouer le scan). On le conserve et on le DIT.
+                        logger.warning(
+                            "%s document(s) absent(s) du disque conservé(s) : référencé(s) par une "
+                            "pièce jointe de fiche — aucun lien cassé (E-40).",
+                            conserves,
+                        )
+                    return len(supprimes)
         with self.connect() as connection:
             rows = connection.execute("SELECT id, path_key FROM documents").fetchall()
             missing = [(row["id"], row["path_key"]) for row in rows if row["path_key"] not in seen_path_keys]
+            references = self._references_sqlite(connection)
+            supprimes = 0
+            conserves = 0
             for row_id, _path_key in missing:
+                reference = False
+                for table, colonne in references:
+                    ligne = connection.execute(
+                        f'SELECT EXISTS (SELECT 1 FROM "{table}" r WHERE r."{colonne}" = ?)',
+                        (row_id,),
+                    ).fetchone()
+                    if ligne and int(ligne[0]):
+                        reference = True
+                        break
+                if reference:
+                    # Même politique que PostgreSQL : jamais de lien orphelin.
+                    conserves += 1
+                    continue
                 connection.execute("DELETE FROM documents_fts WHERE rowid = ?", (row_id,))
                 connection.execute("DELETE FROM documents WHERE id = ?", (row_id,))
-            return len(missing)
+                supprimes += 1
+            if conserves:
+                logger.warning(
+                    "%s document(s) absent(s) du disque conservé(s) : référencé(s) par une pièce "
+                    "jointe de fiche (E-40).",
+                    conserves,
+                )
+            return supprimes
 
     def search(self, query: str, limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
         clean_query = query.strip()

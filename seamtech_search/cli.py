@@ -85,6 +85,10 @@ def run_index(config_path: str, rebuild: bool = False) -> dict[str, float | int]
 
 def _run_index(index: SearchIndex, config: AppConfig, rebuild: bool = False) -> dict[str, float | int]:
     index.initialize(rebuild=rebuild)
+    if rebuild:
+        # Dire NOIR SUR BLANC ce qui a été reconstruit : la table peut avoir été
+        # conservée si des pièces jointes de fiches la référencent (E-40).
+        LOGGER.info("Rebuild demandé — mode « %s »", index.rebuild_mode or "inconnu")
 
     seen: set[str] = set()
     batch = []
@@ -92,7 +96,11 @@ def _run_index(index: SearchIndex, config: AppConfig, rebuild: bool = False) -> 
     changed = 0
     started_at = time.perf_counter()
     scan_id = index.start_scan()
-    existing_metadata = index.stored_manifest()
+    # Un rebuild ré-extrait TOUT : le manifeste (taille, date de modification,
+    # version d'extracteur) ne doit pas servir à sauter des fichiers — sinon
+    # « rebuild » ne reconstruirait rien. C'est ce qui rend le mode « en place »
+    # équivalent au mode « recréation » du point de vue du contenu.
+    existing_metadata = {} if rebuild else index.stored_manifest()
     try:
         for document in crawl(config, existing_metadata):
             scanned += 1
