@@ -722,3 +722,101 @@ def test_ci_garde_l_administrateur_hors_des_jobs_a_identite_restreinte(nom_job: 
                 f"{nom_job} / {etape.get('name')!r} : {variable} doit être fourni au "
                 "niveau de l'ÉTAPE de provisionnement"
             )
+
+
+# ---------------------------------------------------------------------------
+# 5. La recette sur corpus réel utilise l'identité du BUCKET visé
+# ---------------------------------------------------------------------------
+
+
+def _module_recette():
+    """Charge ``tests/test_recette_corpus_reel.py`` sans exécuter pytest.
+
+    Le module lit l'environnement au chargement (constantes), mais
+    ``_client_s3`` est une fonction pure : on peut l'appeler directement pour
+    vérifier QUELLE identité est présentée à QUEL bucket.
+    """
+    import importlib.util
+
+    chemin = RACINE / "tests" / "test_recette_corpus_reel.py"
+    specification = importlib.util.spec_from_file_location("recette_corpus_reel_pour_identites", chemin)
+    assert specification and specification.loader
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    return module
+
+
+def test_recette_sans_repli_administrateur_sur_les_identifiants() -> None:
+    """Les constantes de la recette n'ont AUCUNE valeur par défaut d'admin.
+
+    Régression : elles valaient ``minioadmin``/``minioadmin123``. Un repli
+    pareil rend la recette verte en administrateur quand l'identité restreinte
+    manque — exactement le faux positif que la revue demandait d'éliminer.
+    """
+    import ast
+
+    module = _module_recette()
+    assert module.S3_ACCESS_KEY == "", f"identité applicative avec repli : {module.S3_ACCESS_KEY!r}"
+    assert module.S3_SECRET_KEY == "", f"secret applicatif avec repli : {module.S3_SECRET_KEY!r}"
+    assert module.S3_BACKUP_ACCESS_KEY == "", "identité de sauvegarde avec repli"
+    assert module.S3_BACKUP_SECRET_KEY == "", "secret de sauvegarde avec repli"
+
+    # La vérification porte sur le CODE (le second argument d'`os.environ.get`),
+    # pas sur le texte : un commentaire expliquant le défaut doit pouvoir citer
+    # « minioadmin » sans faire échouer le test.
+    chemin = RACINE / "tests" / "test_recette_corpus_reel.py"
+    cibles = {"S3_ACCESS_KEY", "S3_SECRET_KEY", "S3_BACKUP_ACCESS_KEY", "S3_BACKUP_SECRET_KEY"}
+    vus: set[str] = set()
+    for noeud in ast.walk(ast.parse(chemin.read_text(encoding="utf-8"))):
+        if not isinstance(noeud, ast.Assign):
+            continue
+        cible = noeud.targets[0]
+        if not (isinstance(cible, ast.Name) and cible.id in cibles):
+            continue
+        vus.add(cible.id)
+        appel = noeud.value
+        assert isinstance(appel, ast.Call), f"{cible.id} : appel os.environ.get attendu"
+        defaut = appel.args[1]
+        assert isinstance(defaut, ast.Constant) and defaut.value == "", (
+            f"{cible.id} porte un repli non vide : {ast.dump(defaut)[:80]} — "
+            "un repli administrateur rendrait la recette verte pour de mauvaises raisons"
+        )
+    assert vus == cibles, f"constantes d'identifiants introuvables dans la recette : {cibles - vus}"
+
+
+def test_recette_choisit_l_identite_du_bucket_vise() -> None:
+    """``seamtech-backups`` ⇒ identité de sauvegarde ; documents ⇒ applicative.
+
+    Régression du run 37618670336 : le client S3 de la recette présentait
+    TOUJOURS l'identité applicative (celle de ``SEAMTECH_S3_ACCESS_KEY``) au
+    bucket de sauvegarde. Les droits restreints étant désormais réellement
+    restreints, l'envoi du dump dans ``seamtech-backups`` était refusé
+    (« Could not check whether backups/… exists »). La recette doit donc
+    porter l'identité prévue pour chaque bucket — et l'exiger, sans repli.
+    """
+    module = _module_recette()
+    module.S3_BACKUP_BUCKET = "seamtech-backups"
+    module.S3_ACCESS_KEY = "CLE-APPLICATIVE-FICTIVE"
+    module.S3_SECRET_KEY = "SECRET-APPLICATIF-FICTIF"
+    module.S3_BACKUP_ACCESS_KEY = "CLE-SAUVEGARDE-FICTIVE"
+    module.S3_BACKUP_SECRET_KEY = "SECRET-SAUVEGARDE-FICTIF"
+
+    sauvegarde = module._client_s3("seamtech-backups")
+    assert sauvegarde.bucket_name == "seamtech-backups"
+    assert sauvegarde.access_key_id == "CLE-SAUVEGARDE-FICTIVE", (
+        "le bucket hors-site doit être manipulé avec l'identité de sauvegarde"
+    )
+    assert sauvegarde.secret_access_key == "SECRET-SAUVEGARDE-FICTIF"
+
+    documents = module._client_s3("seamtech-documents")
+    assert documents.access_key_id == "CLE-APPLICATIVE-FICTIVE"
+    assert documents.secret_access_key == "SECRET-APPLICATIF-FICTIF"
+
+    # Sans identité de sauvegarde fournie, la recette ÉCHOUE CLAIREMENT au lieu
+    # de retomber silencieusement sur l'identité applicative (qui n'a aucun
+    # droit sur ce bucket).
+    module.S3_BACKUP_ACCESS_KEY = ""
+    module.S3_BACKUP_SECRET_KEY = ""
+    with pytest.raises(RuntimeError) as erreur:
+        module._client_s3("seamtech-backups")
+    assert "SEAMTECH_BACKUP_ACCESS_KEY" in str(erreur.value)

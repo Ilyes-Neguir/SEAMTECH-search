@@ -189,3 +189,24 @@ pull_request <https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/37606
 | Sélection SQLite sans service : aucune régression | `pytest -m "not redis_queue and not postgres and not s3 and not perf and not recette_corpus and not integration_docker and not sauvegarde"` | **827 passed, 3 skipped, 315 deselected**, 62 s | 67a442a | ✅ établi |
 | Sélection complète de la porte de couverture, services réels | `pytest -m "not s3 and not perf"` (PostgreSQL 16 + Redis 7) | **1 145 passed, 5 skipped, 0 failed**, 276 s | 67a442a | ✅ établi (local, mêmes versions que la CI) |
 
+
+## Passe de clôture — 2026-10-07 (suite de la revue indépendante)
+
+Branche : `arena/7da80c2f-seamtech-search` · PR **#35** (non fusionnée).
+Runs lus pendant cette passe :
+push <https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/37617039519>
+(`948130d`), push
+<https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/37618670336>
+(`3e13c7f`), pull_request `37618675764` / `37618675860` (même SHA).
+
+| Affirmation | Commande | Sortie brute | Commit | Statut |
+|---|---|---|---|---|
+| La CI ne donnait pas au provisionnement les identifiants MinIO exigés : `sauvegarde` et `recette-corpus-reel` échouaient AVANT tout test | `gh run view 37617039519 --json jobs` + `gh api .../actions/jobs/<id>` | étape 9 « Provisionner les identités restreintes » en échec, toutes les étapes de test `skipped` ; correctif = `MINIO_ROOT_*` au niveau de l'ÉTAPE | `948130d` → `3e13c7f` | ✅ établi (mode d'échec lu) |
+| Le correctif débloque bien le job : `sauvegarde` repasse au VERT | `gh run view 37618670336 --json jobs` | `sauvegarde` success ; restent rouges `e2e` et `recette-corpus-reel` (causes distinctes) | `3e13c7f` | ✅ établi (CI lue) |
+| Le scénario de concurrence va jusqu'au conflit complet en navigateur réel (bandeau, valeur du collègue, aucune écriture, base inchangée) | annotations du check-run `112783142751` (job `e2e`) | `1 failed, 3 passed` ; l'unique échec est l'assertion d'après rechargement (`toHaveValue` reçoit `MATERIAU-POSTE-B`) | `3e13c7f` | ✅ établi — défaut produit E-34 identifié |
+| Un opérateur ne relit plus sa saisie périmée après « Recharger la fiche à jour » (défaut E-34 corrigé) | `frontend/e2e/concurrence.spec.ts` (étape CI dédiée) | attendu : 4 scénarios verts, 0 sauté, 0 flaky — **verdict au run de clôture** | à venir | ⏳ en cours |
+| La recette n'écrit plus la sauvegarde avec l'identité applicative (défaut E-35 corrigé) | `tests/test_recette_corpus_reel.py` (`_client_s3` choisit l'identité par bucket) + 2 tests de régression sans service | tests ROUGES sur la version d'avant correctif (`minioadmin` en repli détecté par AST) | à venir | ✅ établi (rouge→vert local) |
+| Suite COMPLÈTE locale sur l'arbre de clôture | `.venv/bin/python -m pytest -q` (PostgreSQL 16.2 + pgvector/unaccent/pg_trgm, Redis 7.2.5 réels) | **1180 passés, 38 sautés, 0 échec** (264 s) | arbre de clôture | ✅ établi (local) |
+| Porte de couverture non contournée | `pytest -m "not s3 and not perf" --cov=seamtech_search --cov-report=json:coverage.json` puis `python scripts/coverage_gate.py coverage.json` | **1174 passés, 5 sautés** ; global **86,65 %** (plancher 85 %), tous les seuils par module `[ok]` | arbre de clôture | ✅ établi (local) |
+| Front : types et build de production | `pnpm install --frozen-lockfile` / `pnpm exec tsc --noEmit` / `pnpm build` | **OK / OK / OK** | arbre de clôture | ✅ établi (local) |
+| Aucune assertion retirée, aucun seuil abaissé, aucun saut silencieux introduit | `git diff` + `scripts/coverage_gate.py` (seuils inchangés) + `ruff check .` | les 5 tests ajoutés sont NETS (rouge avant, vert après) ; `OVERALL_MIN` inchangé | arbre de clôture | ✅ établi |

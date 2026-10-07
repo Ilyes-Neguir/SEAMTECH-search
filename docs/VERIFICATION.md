@@ -1,6 +1,16 @@
 # Verification — every README claim backed by a command
 
-Audited commit: `b7be72a`. Current HEAD: `4f0c21e` + fixes. Date: 2026-09-16.
+Audited commit: `b7be72a` — **registre Phase 0/1 daté du 2026-09-16**.
+
+Dernière mise à jour du présent en-tête : 2026-10-07, branche
+`arena/7da80c2f-seamtech-search`. Les chiffres du bloc de commandes ci-dessous
+sont ceux du 2026-09-16 et **ne sont pas les chiffres courants** ; les preuves à
+jour vivent dans :
+
+* `docs/verite_terrain/RAPPORT_AVANCEMENT_2026-10-07.md` — résultats de la
+  passe de vérification (suite complète locale, CI, harnais hors ligne) ;
+* `docs/verite_terrain/TRACABILITE_LIVRAISON.md` — une ligne par affirmation,
+  y compris la revue indépendante du 2026-10-07 et la passe de clôture.
 
 ## Ground rules (Phase 0)
 

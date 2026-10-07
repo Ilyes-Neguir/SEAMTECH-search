@@ -97,20 +97,30 @@ test.describe("concurrence entre postes (sessions indépendantes)", () => {
    * un code n'aurait aucun sens métier).
    */
   async function choisirChamp(poste: Page): Promise<{ selecteur: string; champ: string }> {
+    // Les champs PROVENANT DU PDF (`data-zone="true"`) viennent d'abord : ils
+    // portent une seule valeur sur la fiche. Le champ « matière » d'une fiche
+    // réelle, lui, peut apparaître PLUSIEURS FOIS (un rang par zone du plan) et
+    // partager alors le même `data-testid` : une preuve « la valeur du collègue
+    // est intacte » y serait ambiguë, et l'interface de correction — une valeur
+    // à la fois — ne saurait pas quel rang viser.
     const candidats = [
+      'input[data-testid="champ-materiau.tissu_principal"][data-zone="true"]',
+      'input[data-testid^="champ-"][data-zone="true"]',
       'input[data-testid="champ-materiau.tissu_principal"]',
-      'input[data-testid^="champ-materiau."]',
       'input[data-testid="champ-fiche.designation"]',
       'input[data-testid^="champ-"]:not([data-testid="champ-fiche.code"])',
     ]
     for (const selecteur of candidats) {
-      const champ = poste.locator(selecteur).first()
-      if ((await champ.count()) === 0) continue
-      const testid = (await champ.getAttribute("data-testid")) ?? ""
+      const premier = poste.locator(selecteur).first()
+      if ((await poste.locator(selecteur).count()) === 0) continue
+      const testid = (await premier.getAttribute("data-testid")) ?? ""
       if (!testid.startsWith("champ-")) continue
+      // L'identifiant doit désigner UN SEUL champ de l'écran : sinon le
+      // sélecteur viserait peut-être un autre rang que celui observé en base.
+      if ((await poste.locator(`input[data-testid="${testid}"]`).count()) !== 1) continue
       return { selecteur, champ: testid.slice("champ-".length) }
     }
-    throw new Error("aucun champ corrigeable trouvé sur la fiche")
+    throw new Error("aucun champ corrigeable UNIQUE (et présent) trouvé sur la fiche")
   }
 
   /** Valeur d'un champ et révision lue depuis la BASE par l'API authentifiée. */

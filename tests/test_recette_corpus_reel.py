@@ -90,8 +90,22 @@ REDIS_URL = os.environ.get("SEAMTECH_REDIS_URL", "")
 S3_ENDPOINT = os.environ.get("SEAMTECH_S3_ENDPOINT_URL", "http://127.0.0.1:9000")
 S3_BUCKET = os.environ.get("SEAMTECH_S3_BUCKET", "seamtech-documents")
 S3_BACKUP_BUCKET = os.environ.get("SEAMTECH_RECETTE_BUCKET_SAUVEGARDE", "seamtech-backups")
-S3_ACCESS_KEY = os.environ.get("SEAMTECH_S3_ACCESS_KEY", "minioadmin")
-S3_SECRET_KEY = os.environ.get("SEAMTECH_S3_SECRET_KEY", "minioadmin123")
+#: Identité APPLICATIVE (bucket des documents) — aucune valeur de repli : la
+#: recette tourne avec les identités RÉELLEMENT restreintes du déploiement
+#: (revue du 2026-10-07). Un repli sur ``minioadmin`` aurait au contraire
+#: masqué toute erreur de droits en donnant l'administrateur du stockage.
+S3_ACCESS_KEY = os.environ.get("SEAMTECH_S3_ACCESS_KEY", "")
+S3_SECRET_KEY = os.environ.get("SEAMTECH_S3_SECRET_KEY", "")
+
+#: Identité de SAUVEGARDE (bucket hors-site) : distincte de l'applicative, et
+#: SANS repli sur celle-ci. Défaut trouvé par la CI du run 37618670336 : la
+#: sauvegarde était écrite dans ``seamtech-backups`` avec l'identité
+#: applicative — un ALLOW qui n'existait que parce que l'identité en place
+#: était encore l'administrateur MinIO. Avec une identité réellement
+#: restreinte, ce montage échoue ; c'est le montage qu'il faut corriger, pas
+#: le test.
+S3_BACKUP_ACCESS_KEY = os.environ.get("SEAMTECH_BACKUP_ACCESS_KEY", "")
+S3_BACKUP_SECRET_KEY = os.environ.get("SEAMTECH_BACKUP_SECRET_KEY", "")
 JETON = "recette-corpus-jeton"
 
 #: Racine du dépôt (les 7 ZIP originaux y sont commités par le commanditaire).
@@ -127,14 +141,35 @@ def _sans_accents(texte: str) -> str:
 def _client_s3(bucket: str | None = None):
     """Client stockage du PROJET (S3StorageClient) — pas un client boto3 nu :
     la sauvegarde appelle ``upload_file(..., avoid_overwrite=True)``, paramètre
-    du wrapper seul (le client brut lève TypeError)."""
+    du wrapper seul (le client brut lève TypeError).
+
+    L'identité est choisie d'après le BUCKET visé : ``seamtech-backups`` se
+    manipule avec l'identité de sauvegarde, tout le reste avec l'identité
+    applicative. C'est la séparation réelle des privilèges — l'application
+    n'a aucun droit sur le bucket de sauvegarde, et la preuve de l'aller-retour
+    hors-site doit donc utiliser l'identité prévue pour lui.
+    """
     from seamtech_search.storage import S3StorageClient
 
+    cible = bucket or S3_BUCKET
+    if cible == S3_BACKUP_BUCKET and cible != S3_BUCKET:
+        # Aucun repli silencieux sur l'identité applicative : l'application
+        # n'a AUCUN droit sur ce bucket, l'erreur doit donc être dite ici.
+        if not S3_BACKUP_ACCESS_KEY or not S3_BACKUP_SECRET_KEY:
+            raise RuntimeError(
+                "recette : le bucket de sauvegarde "
+                f"{S3_BACKUP_BUCKET!r} exige SEAMTECH_BACKUP_ACCESS_KEY et "
+                "SEAMTECH_BACKUP_SECRET_KEY (identité dédiée ; l'identité "
+                "applicative n'a aucun droit sur ce bucket)."
+            )
+        cle, secret = S3_BACKUP_ACCESS_KEY, S3_BACKUP_SECRET_KEY
+    else:
+        cle, secret = S3_ACCESS_KEY, S3_SECRET_KEY
     return S3StorageClient(
         endpoint_url=S3_ENDPOINT,
-        bucket_name=bucket or S3_BUCKET,
-        access_key_id=S3_ACCESS_KEY,
-        secret_access_key=S3_SECRET_KEY,
+        bucket_name=cible,
+        access_key_id=cle,
+        secret_access_key=secret,
     )
 
 

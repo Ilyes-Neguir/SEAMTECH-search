@@ -88,6 +88,19 @@ export function ValidationApp() {
   const [filtreGabarit, setFiltreGabarit] = useState("")
   const [codeActif, setCodeActif] = useState<string | null>(null)
   const [champs, setChamps] = useState<ChampExtrait[]>([])
+  // Les brouillons saisis dans les champs survivent au rafraîchissement des
+  // DONNÉES par React (même position dans l'arbre = même état). Sans cela,
+  // recharger la fiche laissait la saisie locale à l'écran alors que la valeur
+  // ENREGISTRÉE avait changé : l'opérateur croyait lire l'état du collègue et
+  // rejouait une correction périmée. On demande donc explicitement au tableau
+  // des champs d'oublier : un seul brouillon après un enregistrement réussi
+  // (les autres saisies non envoyées sont CONSERVÉES — ne jamais perdre de
+  // travail en silence), et tous les brouillons après « Recharger la fiche à
+  // jour » (là, l'opérateur demande explicitement l'état enregistré).
+  const [brouillonsOublies, setBrouillonsOublies] = useState<{ champ: string | null; jeton: number }>({
+    champ: null,
+    jeton: 0,
+  })
   // Verrou optimiste (migration 021) : la révision de la fiche TELLE QU'ELLE A
   // ÉTÉ LUE. Elle est renvoyée avec chaque correction : si un collègue a
   // enregistré entre-temps, le serveur refuse (409) au lieu d'écraser son
@@ -199,6 +212,9 @@ export function ValidationApp() {
       if (typeof reponse.revision === "number") setRevisionFiche(reponse.revision)
       setMessage(`Champ « ${champ.champ} » corrigé — verrou RG11 armé (une valeur corrigée n'est plus écrasée).`)
       setChamps(await jsonFetch(`/api/fiches/${encodeURIComponent(codeActif)}/champs`))
+      // Relit l'état enregistré : le brouillon de CE champ n'a plus de raison
+      // d'être (les autres saisies non envoyées sont conservées).
+      setBrouillonsOublies((o) => ({ champ: `${champ.champ}#${champ.rang ?? 0}`, jeton: o.jeton + 1 }))
     } catch (e) {
       const err = e as Error & { status?: number; body?: { detail?: ConflitRevision | string } }
       const detail = err.body?.detail
@@ -220,6 +236,9 @@ export function ValidationApp() {
     setConflit(null)
     try {
       setChamps(await jsonFetch<ChampExtrait[]>(`/api/fiches/${encodeURIComponent(codeActif)}/champs`))
+      // Rechargement EXPLICITE : tous les brouillons sont oubliés, l'écran
+      // affiche l'état réellement enregistré (voir `brouillonsOublies`).
+      setBrouillonsOublies((o) => ({ champ: null, jeton: o.jeton + 1 }))
       const detail = await jsonFetch<{ revision?: number }>(`/api/fiches/${encodeURIComponent(codeActif)}`)
       if (typeof detail.revision === "number") setRevisionFiche(detail.revision)
       setMessage(`Fiche ${codeActif} rechargée à jour.`)
@@ -594,7 +613,15 @@ export function ValidationApp() {
                   <Undo2 className="size-3.5" /> Rouvrir
                 </button>
               </header>
-              <ChampsFiche champs={champs} onCorriger={corriger} onVoirZone={setZone} />
+              <ChampsFiche
+                // Une clé par FICHE : les brouillons d'une fiche ne doivent
+                // jamais se retrouver sur une autre (mêmes noms de champs).
+                key={codeActif ?? ""}
+                champs={champs}
+                onCorriger={corriger}
+                onVoirZone={setZone}
+                brouillonsOublies={brouillonsOublies}
+              />
             </>
           )}
         </section>
@@ -612,12 +639,28 @@ function ChampsFiche({
   champs,
   onCorriger,
   onVoirZone,
+  brouillonsOublies,
 }: {
   champs: ChampExtrait[]
   onCorriger: (champ: ChampExtrait, valeur: string) => void
   onVoirZone: (zone: ZoneASurligner | null) => void
+  brouillonsOublies: { champ: string | null; jeton: number }
 }) {
   const [brouillons, setBrouillons] = useState<Record<string, string>>({})
+  // Oubli DEMANDÉ par le parent : `champ === null` = rechargement complet
+  // (tous les brouillons), sinon un seul champ (`nom#rang`). Le jeton force
+  // l'effet même si la cible est identique deux fois de suite.
+  useEffect(() => {
+    setBrouillons((actuels) => {
+      if (brouillonsOublies.champ === null) {
+        return Object.keys(actuels).length === 0 ? actuels : {}
+      }
+      if (!(brouillonsOublies.champ in actuels)) return actuels
+      const suite = { ...actuels }
+      delete suite[brouillonsOublies.champ]
+      return suite
+    })
+  }, [brouillonsOublies])
   return (
     <div className="divide-y divide-border/60">
       {champs.map((champ) => {
