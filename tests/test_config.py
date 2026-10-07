@@ -179,3 +179,47 @@ def test_une_configuration_sans_le_champ_reste_fermee() -> None:
     assert AppConfig(root_paths=[Path("/tmp/racine-synthetique")]).require_revision is True
     sans_champ = SimpleNamespace()
     assert getattr(sans_champ, "require_revision", True) is True
+
+
+# ---------------------------------------------------------------------------
+# Secrets encodés dans les URL de connexion (revue du 2026-10-07)
+# ---------------------------------------------------------------------------
+
+
+def test_un_mot_de_passe_non_encode_dans_une_url_de_connexion_est_refuse() -> None:
+    """« openssl rand -base64 » peut produire « / » : collé tel quel dans une URL
+    de connexion, il casse la lecture (côté Redis, il devient le sélecteur de
+    base). Le refus doit être EXPLICITE, à la construction, avec le remède —
+    jamais une erreur de connexion opaque au démarrage."""
+    from pydantic import ValidationError
+
+    from seamtech_search.config import AppConfig, motif_mot_de_passe_non_encode
+
+    # Le défaut est détecté sur les deux URL, y compris quand le « / » avale la
+    # suite de l'autorité (aucun « @ » visible avant le premier « / »).
+    assert motif_mot_de_passe_non_encode("redis://:ab/cd+ef@redis:6379/0")
+    assert motif_mot_de_passe_non_encode("postgresql://seamtech:mo/t@passe@postgres:5432/seamtech_search")
+    assert motif_mot_de_passe_non_encode("redis://:secret%zz@redis:6379/0")
+
+    for champ in ("redis_url", "database_url"):
+        with pytest.raises(ValidationError, match="non encodé"):
+            AppConfig(root_paths=[Path("/tmp/racine-synthetique")], **{champ: "redis://:ab/cd@redis:6379/0"})
+
+    # Le message porte le REMÈDE, pas seulement le refus.
+    try:
+        AppConfig(root_paths=[Path("/tmp/racine-synthetique")], redis_url="redis://:ab/cd@redis:6379/0")
+    except ValidationError as erreur:
+        message = str(erreur)
+        assert "%2F" in message and "openssl rand -hex 24" in message, message
+
+    # Les URL saines restent acceptées : sans identifiants, ou avec un secret
+    # déjà sûr pour une URL (hex, base64url).
+    assert motif_mot_de_passe_non_encode("redis://127.0.0.1:6379/1") is None
+    assert motif_mot_de_passe_non_encode("redis://:ab-cd_ef.gh~ij@redis:6379/0") is None
+    assert motif_mot_de_passe_non_encode("postgresql://seamtech:motdepasse_hex@localhost:5432/base") is None
+    config = AppConfig(
+        root_paths=[Path("/tmp/racine-synthetique")],
+        redis_url="redis://:ab-cd_ef@redis:6379/0",
+        database_url="postgresql://seamtech:ab-cd_ef@localhost:5432/base",
+    )
+    assert config.redis_url and config.database_url

@@ -22,6 +22,44 @@ def default_config_path(project_root: str | Path | None = None) -> Path:
     return config_file
 
 
+# Caractères INTERDITS tels quels dans la partie identifiants d'une URL de
+# connexion (`postgresql://utilisateur:MOTDEPASSE@hôte`,
+# `redis://:MOTDEPASSE@hôte`). Un secret généré en base64 peut contenir « / »
+# (et « + ») : inséré tel quel, le « / » casse la lecture de l'URL — côté Redis
+# il devient le sélecteur de base, côté libpq les identifiants deviennent
+# ambigus. On préfère un refus EXPLICITE à la construction, avec le remède,
+# plutôt qu'une erreur de connexion incompréhensible au démarrage.
+_CARACTERES_URL_A_ENCODER = {"/", "@", "?", "#", "%"}
+
+
+def motif_mot_de_passe_non_encode(url: str) -> str | None:
+    """Décrit pourquoi ``url`` porte un mot de passe non encodé (ou None).
+
+    Ne prétend PAS valider l'URL : seulement détecter l'erreur réelle de mise en
+    service — un secret base64 collé tel quel dans une URL de connexion.
+    """
+    if "://" not in url:
+        return None
+    reste = url.split("://", 1)[1]
+    autorite = reste.split("/", 1)[0]
+    if "@" in reste and "@" not in autorite:
+        return "un « / » non encodé dans la partie identifiants"
+    if autorite.count("@") > 1:
+        return "un « @ » non encodé dans le mot de passe (il doit être %40)"
+    if "@" not in autorite:
+        return None
+    userinfo = autorite.rsplit("@", 1)[0]
+    if ":" not in userinfo:
+        return None
+    mot_de_passe = userinfo.split(":", 1)[1]
+    fautifs = sorted({caractere for caractere in mot_de_passe if caractere in _CARACTERES_URL_A_ENCODER})
+    if fautifs:
+        return f"le caractère {', '.join(repr(c) for c in fautifs)} non encodé dans le mot de passe"
+    if any(caractere.isspace() or not caractere.isprintable() for caractere in mot_de_passe):
+        return "un caractère blanc ou non imprimable dans le mot de passe"
+    return None
+
+
 class AppConfig(BaseModel):
     root_paths: list[Path] = Field(min_length=1)
     database_path: Path = Path("data/search.db")
@@ -131,6 +169,29 @@ class AppConfig(BaseModel):
             raise ValueError("auth_token is required when allow_network_access is enabled")
         if self.host not in local_hosts and self.auth_token and not self.behind_tls_proxy:
             raise ValueError("token authentication over non-local host requires behind_tls_proxy=true")
+        return self
+
+    @model_validator(mode="after")
+    def validate_connection_urls(self) -> "AppConfig":
+        """Refuse un mot de passe NON ENCODÉ dans une URL de connexion.
+
+        ``openssl rand -base64`` peut produire « / » et « + ». Recopié tel quel
+        dans ``SEAMTECH_DATABASE_URL`` ou ``SEAMTECH_REDIS_URL``, le « / » casse
+        l'URL (et devient le sélecteur de base côté Redis). Le remède est écrit
+        dans le message : encoder le mot de passe (``%2F``) ou générer un secret
+        SÛR POUR UNE URL (``openssl rand -hex 24``, ou
+        ``openssl rand -base64 24 | tr '+/' '-_'``).
+        """
+        for nom, url in (("SEAMTECH_DATABASE_URL", self.database_url), ("SEAMTECH_REDIS_URL", self.redis_url)):
+            if not url:
+                continue
+            motif = motif_mot_de_passe_non_encode(url)
+            if motif:
+                raise ValueError(
+                    f"{nom} : {motif}. Un secret base64 peut contenir « / » et « + » : encodez-le "
+                    "dans l'URL (par exemple « / » → « %2F ») ou générez un secret sûr pour une URL "
+                    "(« openssl rand -hex 24 », ou « openssl rand -base64 24 | tr '+/' '-_' »)."
+                )
         return self
 
     @classmethod
