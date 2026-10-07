@@ -199,7 +199,12 @@ def test_un_mot_de_passe_non_encode_dans_une_url_de_connexion_est_refuse() -> No
     # suite de l'autorité (aucun « @ » visible avant le premier « / »).
     assert motif_mot_de_passe_non_encode("redis://:ab/cd+ef@redis:6379/0")
     assert motif_mot_de_passe_non_encode("postgresql://seamtech:mo/t@passe@postgres:5432/seamtech_search")
+    # Un échappement INVALIDE est refusé (libpq s'arrêterait dessus)…
     assert motif_mot_de_passe_non_encode("redis://:secret%zz@redis:6379/0")
+    # …mais l'encodage CORRECT est ACCEPTÉ : c'est le remède que le message
+    # recommande, il serait absurde de le refuser.
+    assert motif_mot_de_passe_non_encode("redis://:ab%2Fcd%2Bef@redis:6379/0") is None
+    assert motif_mot_de_passe_non_encode("postgresql://seamtech:ab%2Fcd@localhost:5432/base") is None
 
     for champ in ("redis_url", "database_url"):
         with pytest.raises(ValidationError, match="non encodé"):

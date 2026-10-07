@@ -29,7 +29,11 @@ def default_config_path(project_root: str | Path | None = None) -> Path:
 # il devient le sélecteur de base, côté libpq les identifiants deviennent
 # ambigus. On préfère un refus EXPLICITE à la construction, avec le remède,
 # plutôt qu'une erreur de connexion incompréhensible au démarrage.
-_CARACTERES_URL_A_ENCODER = {"/", "@", "?", "#", "%"}
+_CARACTERES_URL_A_ENCODER = {"/", "@", "?", "#"}
+# « % » n'est PAS interdit : c'est le caractère d'échappement lui-même. Il n'est
+# accepté que dans un échappement VALIDE (« %2F ») — un « % » suivi d'autre chose
+# est une séquence invalide, que libpq refuse au démarrage avec un message obscur.
+_HEXADECIMAL = set("0123456789abcdefABCDEF")
 
 
 def motif_mot_de_passe_non_encode(url: str) -> str | None:
@@ -57,6 +61,15 @@ def motif_mot_de_passe_non_encode(url: str) -> str | None:
         return f"le caractère {', '.join(repr(c) for c in fautifs)} non encodé dans le mot de passe"
     if any(caractere.isspace() or not caractere.isprintable() for caractere in mot_de_passe):
         return "un caractère blanc ou non imprimable dans le mot de passe"
+    index = 0
+    while index < len(mot_de_passe):
+        if mot_de_passe[index] == "%":
+            suit = mot_de_passe[index + 1 : index + 3]
+            if len(suit) != 2 or not set(suit) <= _HEXADECIMAL:
+                return "un échappement « % » invalide (attendu « %XX », par exemple « %2F »)"
+            index += 3
+            continue
+        index += 1
     return None
 
 
