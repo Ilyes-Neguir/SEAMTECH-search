@@ -75,6 +75,31 @@ else
     MODE="service compose « minio »"
 fi
 
+# Nom du conteneur MinIO : nécessaire pour COPIER un fichier dedans. `mc`
+# s'exécute DANS le conteneur et ne voit donc PAS le /tmp de l'hôte — la CI l'a
+# montré au premier passage : « Unable to get policy: open /tmp/tmp.XXXX/
+# politique-app.json: no such file or directory ». Les politiques ci-dessous
+# sont donc copiées dans le conteneur avant d'être lues par `mc`.
+_conteneur_minio() {
+    if [ -n "${SEAMTECH_MINIO_CONTAINER:-}" ]; then
+        printf '%s' "$SEAMTECH_MINIO_CONTAINER"
+    else
+        docker compose ps -q minio
+    fi
+}
+
+_copier_dans_conteneur() {
+    local source="$1"
+    local destination="$2"
+    local conteneur
+    conteneur="$(_conteneur_minio)"
+    if [ -z "$conteneur" ]; then
+        echo "REFUS : conteneur MinIO introuvable (SEAMTECH_MINIO_CONTAINER, ou service compose « minio » démarré)" >&2
+        exit 2
+    fi
+    docker cp "$source" "$conteneur:$destination" >/dev/null
+}
+
 echo "== Provisionnement du stockage SEAMTECH ($MODE)"
 echo "   bucket applicatif : $BUCKET"
 echo "   bucket sauvegarde : $BUCKET_SAUVEGARDE"
@@ -117,12 +142,17 @@ JSON
 sed "s/__BUCKET__/$BUCKET/g" "$tmpdir/app.json" > "$tmpdir/politique-app.json"
 sed "s/__BUCKET__/$BUCKET_SAUVEGARDE/g" "$tmpdir/app.json" > "$tmpdir/politique-sauvegarde.json"
 
+# Les deux fichiers sont copiés DANS le conteneur (`/tmp` y existe toujours :
+# `mc` lit un chemin de son propre système de fichiers, pas celui de l'hôte).
+_copier_dans_conteneur "$tmpdir/politique-app.json" "/tmp/seamtech-politique-app.json"
+_copier_dans_conteneur "$tmpdir/politique-sauvegarde.json" "/tmp/seamtech-politique-sauvegarde.json"
+
 _mc admin policy detach "$ALIAS" "seamtech-app" --user "$SEAMTECH_S3_ACCESS_KEY" >/dev/null 2>&1 || true
 _mc admin policy rm "$ALIAS" "seamtech-app" >/dev/null 2>&1 || true
-_mc admin policy create "$ALIAS" "seamtech-app" "$tmpdir/politique-app.json" >/dev/null
+_mc admin policy create "$ALIAS" "seamtech-app" "/tmp/seamtech-politique-app.json" >/dev/null
 _mc admin policy detach "$ALIAS" "seamtech-sauvegarde" --user "$SEAMTECH_BACKUP_ACCESS_KEY" >/dev/null 2>&1 || true
 _mc admin policy rm "$ALIAS" "seamtech-sauvegarde" >/dev/null 2>&1 || true
-_mc admin policy create "$ALIAS" "seamtech-sauvegarde" "$tmpdir/politique-sauvegarde.json" >/dev/null
+_mc admin policy create "$ALIAS" "seamtech-sauvegarde" "/tmp/seamtech-politique-sauvegarde.json" >/dev/null
 
 # 4. Utilisateurs : recréés pour que le SECRET fourni soit réellement celui
 #    appliqué (rotation idempotente). Un compte retiré puis recréé ne conserve

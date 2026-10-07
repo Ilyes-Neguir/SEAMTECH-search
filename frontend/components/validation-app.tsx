@@ -370,7 +370,16 @@ export function ValidationApp() {
   }
 
   return (
-    <div className="flex h-[calc(100vh-3.5rem)] min-h-0 flex-col" data-testid="validation-app">
+    <div
+      className="flex h-[calc(100vh-3.5rem)] min-h-0 flex-col"
+      data-testid="validation-app"
+      /* État dont dépend la JUSTESSE (verrou optimiste) rendu observable :
+         attributs non visuels, aucune modification du design. Un test ou un
+         dépannage peut ainsi vérifier que l'écran a bien chargé la révision
+         AVANT d'enregistrer, au lieu de supposer que c'est le cas. */
+      data-fiche={codeActif ?? ""}
+      data-revision={revisionFiche ?? ""}
+    >
       {(message || erreur) && (
         <div
           className={cn(

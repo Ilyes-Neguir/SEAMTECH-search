@@ -376,6 +376,19 @@ docker compose exec web python -m seamtech_search.sauvegarde verifier \
       le service, pas un appel externe implicite) ; si l'endpoint est hors atelier, cela
       relève de la décision D-3 de l'audit stockage.
 
+**Vérification hors ligne AVANT le départ en atelier** (revue du 2026-10-07, constat n° 3) —
+l'inventaire seul ne prouve rien, c'est l'exécution qui compte :
+
+- [ ] **17.10** Inventaire du provisionnement : `python scripts/verifier_hors_ligne.py --inventaire`
+      → chaque capacité REQUISE est `OK` et chaque capacité OPTIONNELLE absente est **dite**
+      (OCR étage 3, rendu image, modèles e5, images conteneurs).
+- [ ] **17.11** Parcours essentiels avec réseau externe BLOQUÉ :
+      `python scripts/verifier_hors_ligne.py --executer --rapport /tmp/hors-ligne.json`
+      → `échecs : 0` et ligne `aucune dépendance externe` = `OK`
+      (si une sortie est tentée, l'hôte:port est nommé dans le rapport).
+- [ ] **17.12** Le rapport JSON est conservé avec la fiche d'acceptation ; il ne remplace
+      **pas** l'acceptation atelier (serveur réel, réseau débranché, trois postes, humains).
+
 ---
 
 ## 18. Photographie historique de la première candidate (2026-09-25)

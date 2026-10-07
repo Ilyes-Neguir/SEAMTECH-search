@@ -293,6 +293,56 @@ See [TLS.md](TLS.md) for Caddy, Nginx, and Cloudflare Tunnel examples. The
 reverse proxy should publish only the frontend; keep PostgreSQL, Redis, MinIO,
 and the backend on their loopback/container network endpoints.
 
+## Offline verification before the workshop (RG14_EXCEPTION, tooling only)
+
+The workshop server has no Internet access. Reading the configuration does not
+prove that: the automated check **executes** the essential workflows with every
+outbound Python connection blocked and reports what happened.
+
+```bash
+# 1. What is provisioned? (no blocking) — says REQUIRED vs OPTIONAL per capability
+python scripts/verifier_hors_ligne.py --inventaire
+
+# 2. Run the essential workflows with the outside world blocked
+export SEAMTECH_DATABASE_URL=postgresql://seamtech:...@127.0.0.1:5432/seamtech_search
+export SEAMTECH_REDIS_URL=redis://127.0.0.1:6379/0
+python scripts/verifier_hors_ligne.py --executer --rapport /tmp/hors-ligne.json
+
+# 3. Diagnostic only: do NOT block, but LIST every external connection attempted
+python scripts/verifier_hors_ligne.py --executer --autoriser-externe
+```
+
+What it exercises, against the real local stack (PostgreSQL + Redis, plus MinIO
+when `SEAMTECH_S3_ENDPOINT_URL` is set): application start-up, nominative
+sign-in, a real folder import with file accounting, report download, dossier
+deposit (fiche + pieces), human correction with the optimistic lock (a stale
+correction is refused), search visibility of the deposited fiche, PDF preview
+and original download, and `/open`. Zero external connections are expected; if
+any is attempted, the target host:port is **named** in the report.
+
+Capabilities that are absent are reported as OPTIONAL with their exact
+consequence (OCR tier 3 without `tesseract -l fra`, image rendering without
+`pdftoppm`, vector search without the e5 models, container images without
+Docker) — never silently worked around. Provision everything the workshop needs
+**before** the network is cut:
+
+```bash
+pnpm install --frozen-lockfile && pnpm build     # frontend
+python -m seamtech_search.ml.telecharger         # e5-small ONNX weights (operator command)
+bash scripts/construire_image_minio.sh           # MinIO image, if built locally
+```
+
+Two limits are stated in the tool itself and must not be glossed over:
+the guard intercepts **Python** connections (urllib, boto3, redis-py…), not
+C-library ones (libpq), so `--inventaire` additionally checks that the
+configured database/Redis/S3 endpoints are loopback or private; and this
+automated check **does not replace** the workshop acceptance (real server,
+physically unplugged network, three real workstations, human judgement).
+
+The tool imports `socket`/`urllib` on purpose — its job is to intercept and
+block outbound connections. That is the documented `RG14_EXCEPTION` (see
+`tests/test_garde_fous_preparation.py`); it is never imported by the service.
+
 ## Updates and shutdown
 
 Pull a reviewed revision, then rebuild the application images. Compose preserves

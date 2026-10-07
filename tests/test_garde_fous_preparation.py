@@ -207,6 +207,13 @@ EXCEPTIONS_RG14: dict[str, str] = {
         "publiée — cible LOOPBACK uniquement (127.0.0.1 du conteneur web et endpoint "
         "S3 local de la compose). Documenté dans docs/verite_terrain/ (Phase 2)"
     ),
+    "scripts/verifier_hors_ligne.py": (
+        "outil de VÉRIFICATION hors ligne (revue du 2026-10-07, constat n° 3) : il "
+        "importe socket/urllib pour INTERCEPTER et BLOQUER les connexions sortantes "
+        "pendant les parcours essentiels — sa raison d'être est de prouver l'absence "
+        "de dépendance externe, jamais d'en créer une. Jamais importé par le service ; "
+        "cible loopback. Documenté dans docs/DEPLOYMENT.md"
+    ),
 }
 
 DOCS_MARQUEURS_EXCEPTIONS = {
@@ -214,6 +221,7 @@ DOCS_MARQUEURS_EXCEPTIONS = {
     "scripts/mesure_assistant.py": "socket",
     "scripts/audit_dependency_policy.py": "RG14_EXCEPTION",
     "scripts/recette_verif.py": "RG14_EXCEPTION",
+    "scripts/verifier_hors_ligne.py": "RG14_EXCEPTION",
 }
 
 

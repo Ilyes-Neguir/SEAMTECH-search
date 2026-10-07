@@ -64,12 +64,25 @@ test.describe("concurrence entre postes (sessions indépendantes)", () => {
     )
   }
 
-  /** Ouvre une fiche PRÉCISE dans la vue validation. */
+  /** Ouvre une fiche PRÉCISE dans la vue validation, depuis N'IMPORTE quelle
+   *  page : le poste navigue lui-même vers la file. Sans cette navigation, un
+   *  poste resté sur l'écran d'accueil (cas réel : il vient de se connecter)
+   *  ne trouverait aucune ligne — c'est ce que la CI a montré au premier
+   *  passage (deux scénarios en échec sur `li[data-code]` introuvable). */
   async function ouvrirFiche(poste: Page, code: string): Promise<void> {
+    if (!poste.url().includes("/validation")) {
+      await poste.goto("/validation")
+      await expect(poste.getByTestId("file-validation")).toBeVisible()
+    }
     const ligne = poste.locator(`li[data-code="${code}"]`)
     await expect(ligne).toBeVisible({ timeout: 15000 })
     await ligne.getByTestId("code-fiche").click()
     await expect(poste.getByTestId("titre-fiche")).toHaveText(code)
+    // La révision est chargée ASYNCHRONEMENT : tant qu'elle n'est pas là,
+    // l'écran enregistrerait SANS protection. On attend qu'elle soit armée —
+    // c'est une condition de justesse du scénario, pas une coquetterie.
+    await expect(poste.getByTestId("validation-app")).toHaveAttribute("data-fiche", code)
+    await expect(poste.getByTestId("validation-app")).toHaveAttribute("data-revision", /^[0-9]+$/)
   }
 
   /** Valeur d'un champ et révision lue depuis la BASE par l'API authentifiée. */

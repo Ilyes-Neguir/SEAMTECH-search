@@ -66,7 +66,11 @@ def test_compose_transmet_une_identite_applicative_dediee(service: str) -> None:
     la composition REFUSE de démarrer si elles manquent (``:?``).
     """
     environnement = _compose()["services"][service]["environment"]
-    assert set(environnement) == set(environnement)  # dict attendu (pas de liste)
+    assert isinstance(environnement, dict), f"environnement de {service} illisible : {type(environnement)}"
+    # Aucune variable d'ADMINISTRATION ne doit atteindre l'application : c'est
+    # elle qui rendait le défaut silencieux (l'application héritait de la racine).
+    racines = sorted(str(cle) for cle in environnement if "MINIO_ROOT" in str(cle))
+    assert not racines, f"{service} reçoit encore des variables d'administration : {racines}"
     acces = str(environnement["SEAMTECH_S3_ACCESS_KEY"])
     secret = str(environnement["SEAMTECH_S3_SECRET_KEY"])
     assert "MINIO_ROOT" not in acces, (
@@ -161,6 +165,35 @@ def test_script_de_provisionnement_cree_une_identite_restreinte() -> None:
     # Deux modes : service compose (déploiement) et conteneur nommé (CI hors compose).
     assert "docker compose exec -T minio mc" in texte
     assert "docker exec -i" in texte
+
+
+def test_script_de_provisionnement_lit_les_politiques_DANS_le_conteneur() -> None:
+    """Régression CI (2026-10-07) : `mc` s'exécute DANS le conteneur.
+
+    Le premier passage de la CI a échoué sur :
+    ``mc: <ERROR> Unable to get policy: open /tmp/tmp.XXXX/politique-app.json:
+    no such file or directory`` — les politiques étaient écrites par
+    ``mktemp -d`` sur l'HÔTE et passées par leur chemin à `mc`, qui tourne dans
+    le conteneur MinIO et ne voit donc pas le ``/tmp`` de l'hôte.
+
+    Le script doit copier chaque politique DANS le conteneur et référencer ce
+    chemin-là. Ce test verrouille les deux moitiés du correctif.
+    """
+    texte = SCRIPT_PROVISIONNEMENT.read_text(encoding="utf-8")
+    assert "_copier_dans_conteneur()" in texte, "la copie vers le conteneur doit exister"
+    assert "docker cp" in texte, "la copie doit se faire par `docker cp`"
+    assert "_conteneur_minio()" in texte, "le conteneur cible doit être résolu (hors compose ET compose)"
+
+    lignes_politiques = [
+        ligne.strip() for ligne in texte.splitlines() if "admin policy create" in ligne
+    ]
+    assert len(lignes_politiques) == 2, lignes_politiques
+    for ligne in lignes_politiques:
+        assert "$tmpdir" not in ligne, f"politique lue via un chemin de l'HÔTE : {ligne}"
+        assert "/tmp/seamtech-politique-" in ligne, f"chemin DANS le conteneur attendu : {ligne}"
+
+    # Les deux politiques sont effectivement copiées (définition + 2 appels).
+    assert texte.count("_copier_dans_conteneur") >= 3
 
 
 def test_script_de_provisionnement_verifie_que_les_buckets_sont_prives() -> None:
@@ -360,14 +393,11 @@ def test_demarrage_avec_endpoint_sans_identifiants_est_dit_et_non_silencieux(
 
 DOCKER_OK = shutil.which("docker") is not None and (RACINE / "docker-compose.yml").exists()
 
-pytestmark_docker = [
-    pytest.mark.integration_docker,
-    pytest.mark.s3,
-    pytest.mark.skipif(
-        not DOCKER_OK,
-        reason="Docker/Compose absents : la preuve d'identités restreintes est exécutée par la CI (`integration`)",
-    ),
-]
+# Note d'hygiène (revue du 2026-10-07) : une liste module nommée
+# `pytestmark_docker` a été retirée. pytest n'applique QUE le nom réservé
+# `pytestmark` ; la liste donnait l'illusion d'un garde-fou. Les tests Docker
+# ci-dessous portent leurs propres décorateurs (`_PARTAGE`, marques
+# `integration_docker`/`s3`).
 
 URL_MINIO = os.environ.get("SEAMTECH_S3_ENDPOINT_URL", "http://127.0.0.1:9000")
 BUCKET_APP = os.environ.get("SEAMTECH_S3_BUCKET", "seamtech-documents")
