@@ -1627,9 +1627,11 @@ jobs:
           sudo mkdir -p /srv/seamtech/data /srv/seamtech/logs
           sudo chown -R seamtech-app:seamtech-app /srv/seamtech
           # La pile tourne SOUS CE COMPTE : il doit pouvoir lire l'interpréteur
-          # Python installé (toolcache) et le dépôt — c'est ce qui fait que le
-          # blocage réseau s'applique réellement au processus applicatif.
+          # Python et Node installés (toolcache) ainsi que le dépôt — c'est ce
+          # qui fait que le blocage réseau s'applique réellement au processus
+          # applicatif.
           sudo chmod -R a+rX "$(dirname "$(dirname "$(readlink -f "$(command -v python3)")")")" || true
+          sudo chmod -R a+rX "$(dirname "$(dirname "$(readlink -f "$(command -v node)")")")" || true
           sudo chmod -R a+rX "$GITHUB_WORKSPACE" || true
           id -u seamtech-app
       - name: MinIO local (conteneur) + provisionnement des identités RESTREINTES
@@ -1710,42 +1712,73 @@ jobs:
         run: pnpm build
       - name: Démarrer la pile (web + WORKER SÉPARÉ + front) sous le compte applicatif
         run: |
+          # `sudo` applique son `secure_path` : les binaires de l'étape
+          # (toolcache Python et Node) ne sont PAS dans le PATH du compte
+          # applicatif. Les nommer en clair est donc OBLIGATOIRE — sans cela
+          # `python3` résout vers l'interpréteur système, sans les dépendances
+          # installées, et la pile meurt au démarrage (premier passage :
+          # « Démarrer la pile » en échec, exit 7, rien sur /health).
+          PYTHON_BIN="$(readlink -f "$(command -v python3)")"
+          NODE_BIN="$(readlink -f "$(command -v node)")"
+          PATH_OUTILS="$(dirname "$PYTHON_BIN"):$(dirname "$NODE_BIN")"
+          echo "interpréteur : $PYTHON_BIN"
+          echo "node         : $NODE_BIN"
+          # `next start` écrit son cache sous `.next/` : le compte applicatif doit
+          # y avoir accès en écriture (le reste du dépôt lui suffit en lecture).
+          sudo chmod -R a+rwX "$GITHUB_WORKSPACE/frontend/.next" || true
           # La redirection des journaux est faite DANS le shell du compte
           # applicatif : sinon c'est le shell de l'ordonnanceur (un autre
           # utilisateur) qui ouvrirait /srv/seamtech/logs/… et échouerait.
-          sudo -u seamtech-app env \
+          sudo -u seamtech-app env PATH="$PATH_OUTILS:$PATH" \
             SEAMTECH_DATABASE_URL="$SEAMTECH_DATABASE_URL" \
             SEAMTECH_REDIS_URL="redis://127.0.0.1:6379/0" \
             SEAMTECH_AUTH_TOKEN="$AUTH_TOKEN_APP" \
             SEAMTECH_S3_ACCESS_KEY="$SEAMTECH_S3_ACCESS_KEY" \
             SEAMTECH_S3_SECRET_KEY="$SEAMTECH_S3_SECRET_KEY" \
             SEAMTECH_ROOT_PATHS="$GITHUB_WORKSPACE/sample_data" \
-            bash -c 'nohup python3 -m seamtech_search serve --config /srv/seamtech/config.json \
-              > /srv/seamtech/logs/web.log 2>&1 &'
-          sudo -u seamtech-app env \
+            bash -c "nohup \"$PYTHON_BIN\" -m seamtech_search serve --config /srv/seamtech/config.json \
+              > /srv/seamtech/logs/web.log 2>&1 &"
+          sudo -u seamtech-app env PATH="$PATH_OUTILS:$PATH" \
             SEAMTECH_DATABASE_URL="$SEAMTECH_DATABASE_URL" \
             SEAMTECH_REDIS_URL="redis://127.0.0.1:6379/0" \
             SEAMTECH_AUTH_TOKEN="$AUTH_TOKEN_APP" \
             SEAMTECH_S3_ACCESS_KEY="$SEAMTECH_S3_ACCESS_KEY" \
             SEAMTECH_S3_SECRET_KEY="$SEAMTECH_S3_SECRET_KEY" \
             SEAMTECH_ROOT_PATHS="$GITHUB_WORKSPACE/sample_data" \
-            bash -c 'nohup python3 -m seamtech_search.worker_service --config /srv/seamtech/config.json \
-              > /srv/seamtech/logs/worker.log 2>&1 &'
+            bash -c "nohup \"$PYTHON_BIN\" -m seamtech_search.worker_service --config /srv/seamtech/config.json \
+              > /srv/seamtech/logs/worker.log 2>&1 &"
           cd "$GITHUB_WORKSPACE/frontend"
-          sudo -u seamtech-app env \
+          sudo -u seamtech-app env PATH="$PATH_OUTILS:$PATH" \
             SEAMTECH_API_URL="http://127.0.0.1:8123" \
             SEAMTECH_AUTH_TOKEN="$AUTH_TOKEN_APP" \
             SEAMTECH_UI_PASSWORD="$SEAMTECH_UI_PASSWORD" \
             SEAMTECH_SESSION_SECRET="$SEAMTECH_SESSION_SECRET" \
             NEXT_TELEMETRY_DISABLED=1 \
-            bash -c 'nohup node_modules/.bin/next start --port 3123 > /srv/seamtech/logs/front.log 2>&1 &'
+            bash -c "nohup \"$NODE_BIN\" node_modules/.bin/next start --port 3123 \
+              > /srv/seamtech/logs/front.log 2>&1 &"
           cd "$GITHUB_WORKSPACE"
+          web_ok=0
+          front_ok=0
           for _ in $(seq 1 60); do
-            if curl -sf http://127.0.0.1:8123/health >/dev/null && curl -sf http://127.0.0.1:3123/login >/dev/null; then break; fi
+            curl -sf http://127.0.0.1:8123/health >/dev/null && web_ok=1 || web_ok=0
+            curl -sf http://127.0.0.1:3123/login >/dev/null && front_ok=1 || front_ok=0
+            if [ "$web_ok" = 1 ] && [ "$front_ok" = 1 ]; then break; fi
             sleep 2
           done
-          curl -sf http://127.0.0.1:8123/health >/dev/null
-          curl -sf http://127.0.0.1:3123/login >/dev/null
+          echo "web=$web_ok front=$front_ok"
+          if [ "$web_ok" != 1 ] || [ "$front_ok" != 1 ]; then
+            # Diagnostic DANS l'annotation : les journaux d'Actions ne sont pas
+            # toujours lisibles depuis un poste (constat déjà fait dans ce
+            # dépôt) ; l'annotation, elle, est lisible par API.
+            for journal in web worker front; do
+              echo "== /srv/seamtech/logs/$journal.log =="
+              sudo tail -n 30 "/srv/seamtech/logs/$journal.log" || echo "(absent)"
+              echo "::error title=pile-non-demarree-$journal::$(sudo tail -n 25 "/srv/seamtech/logs/$journal.log" 2>/dev/null | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 1200)"
+            done
+            echo "::error title=pile-non-demarree-processus::$(ps -eo user,pid,etime,args | grep -E 'seamtech_search|next|minio' | grep -v grep | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 1200)"
+            echo "::error title=pile-non-demarree-ports::$(ss -ltnp 2>/dev/null | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 800)"
+            exit 1
+          fi
           echo "pile démarrée (web 8123, front 3123, worker séparé)"
       - name: Bloquer la sortie réseau du compte applicatif (iptables) — contrôles négatif et positif
         run: |

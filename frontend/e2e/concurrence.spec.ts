@@ -16,10 +16,23 @@
  *      et l'état en base est INCHANGÉ ;
  *   4. un opérateur se voit REFUSER par le BACKEND une action réservée à
  *      l'administrateur (l'administrateur, lui, obtient 200) — la règle est
- *      appliquée côté serveur, pas seulement cachée dans l'interface.
+ *      appliquée côté serveur, pas seulement cachée dans l'interface ;
+ *   5. une DÉCISION (valider) est liée à la révision revue : A ne peut pas
+ *      approuver un écran que B vient de changer (409, aucune écriture, aucune
+ *      ligne « valider » au journal) ;
+ *   6. la révision N'EST PAS LUE (lecture retardée puis en échec) : l'écran
+ *      n'écrit plus, et une requête DIRECTE sans révision est refusée (428)
+ *      sans laisser de trace ;
+ *   7. une RÉPONSE TARDIVE de la fiche précédente n'écrase jamais l'état de la
+ *      fiche affichée (valeurs ET révision restent celles de la fiche choisie).
  *
  * Chaque vérification d'état passe par la BASE (via l'API authentifiée, qui la
  * lit) : un message d'interface ne prouve rien à lui seul.
+ *
+ * Les scénarios CONSTITUENT leurs fiches (`fichesDeTravail`) au lieu de
+ * supposer que la file en contient encore : le premier passage CI a montré
+ * qu'une preuve qui dépend de l'ordre d'exécution (la file rétrécit à mesure
+ * que les scénarios valident des fiches) devient instable — donc sans valeur.
  *
  * Mode « live » uniquement : sans `SEAMTECH_E2E_DATABASE_URL`, la pile tourne
  * sur SQLite, qui ne porte NI les fiches NI la validation humaine (§17.1).
@@ -53,15 +66,54 @@ test.describe("concurrence entre postes (sessions indépendantes)", () => {
     return { ctxA, ctxB, posteA, posteB }
   }
 
-  /** Codes des fiches présentes dans la file de validation. */
-  async function codesDeLaFile(poste: Page): Promise<string[]> {
-    await poste.goto("/validation")
-    const file = poste.getByTestId("file-validation")
-    await expect(file).toBeVisible()
-    await file.getByTestId("code-fiche").first().waitFor({ timeout: 15000 })
-    return file.locator("li[data-code]").evaluateAll((lignes) =>
-      lignes.map((li) => li.getAttribute("data-code") ?? ""),
-    )
+  /** Attend que la FILE de validation soit chargée et rendue.
+   *
+   *  Les scénarios ne choisissent plus leurs fiches DANS la file (elle
+   *  rétrécit d'un scénario à l'autre) : ils les constituent par l'API
+   *  (`fichesDeTravail`). Cette attente reste la porte d'entrée commune — on ne
+   *  clique une ligne qu'une fois la file affichée. */
+  async function attendreFile(poste: Page): Promise<void> {
+    if (!poste.url().includes("/validation")) await poste.goto("/validation")
+    await expect(poste.getByTestId("file-validation")).toBeVisible()
+    await poste.getByTestId("file-validation").getByTestId("code-fiche").first().waitFor({ timeout: 15000 })
+  }
+
+  /** Fiches de travail d'un scénario, choisies PAR L'API et ramenées à
+   *  « a_valider » par le chemin documenté (`rouvrir` avec la révision relue).
+   *
+   *  Pourquoi ce détour : la file de validation RÉTRÉCIT au fil du fichier —
+   *  les scénarios précédents valident des fiches. Un scénario qui « espère »
+   *  2 fiches dans la file dépend donc de l'ORDRE d'exécution : le premier
+   *  passage CI l'a mesuré (0 fiche pour l'un, 1 au lieu de 2 pour l'autre).
+   *  Ici chaque scénario constitue son jeu, et les fiches importées PENDANT le
+   *  run (codes REF-*) sont écartées : un import en cours écrit la fiche
+   *  pendant la mesure, ce qui fausserait « l'état n'a pas bougé ».
+   */
+  async function fichesDeTravail(poste: Page, combien: number): Promise<string[]> {
+    const reponse = await poste.request.get("/api/fiches?taille=200")
+    expect(reponse.status(), await reponse.text()).toBe(200)
+    const corps = (await reponse.json()) as { fiches?: Array<{ code?: string }> }
+    const codes = (corps.fiches ?? [])
+      .map((fiche) => String(fiche.code ?? ""))
+      .filter((code) => code && !code.includes("7792") && !code.toUpperCase().startsWith("REF-"))
+      .sort()
+    expect(
+      codes.length,
+      `corpus e2e insuffisant (${codes.length} fiche(s) hors 7792 et hors import) : ${codes.join(", ")}`,
+    ).toBeGreaterThanOrEqual(combien)
+    const choisis = codes.slice(0, combien)
+    for (const code of choisis) await garantirAValider(poste, code)
+    return choisis
+  }
+
+  /** Nombre de lignes du JOURNAL d'une fiche (audit) : une écriture refusée ne
+   *  doit ajouter AUCUNE ligne — un « valider » trompeur serait pire que
+   *  l'absence de décision. */
+  async function lignesDeJournal(poste: Page, code: string): Promise<number> {
+    const reponse = await poste.request.get(`/api/fiches/${encodeURIComponent(code)}/historique`)
+    expect(reponse.status(), await reponse.text()).toBe(200)
+    const lignes = (await reponse.json()) as unknown[]
+    return lignes.length
   }
 
   /** Ouvre une fiche PRÉCISE dans la vue validation, depuis N'IMPORTE quelle
@@ -70,10 +122,7 @@ test.describe("concurrence entre postes (sessions indépendantes)", () => {
    *  ne trouverait aucune ligne — c'est ce que la CI a montré au premier
    *  passage (deux scénarios en échec sur `li[data-code]` introuvable). */
   async function ouvrirFiche(poste: Page, code: string): Promise<void> {
-    if (!poste.url().includes("/validation")) {
-      await poste.goto("/validation")
-      await expect(poste.getByTestId("file-validation")).toBeVisible()
-    }
+    await attendreFile(poste)
     const ligne = poste.locator(`li[data-code="${code}"]`)
     await expect(ligne).toBeVisible({ timeout: 15000 })
     await ligne.getByTestId("code-fiche").click()
@@ -155,11 +204,9 @@ test.describe("concurrence entre postes (sessions indépendantes)", () => {
   test("deux postes, même fiche : A enregistre, B est arrêté et se reprend", async ({ browser }) => {
     const { ctxA, ctxB, posteA, posteB } = await deuxPostes(browser)
     try {
-      // Une fiche SYNTHÉTIQUE de la file : on ne touche pas à la vraie fiche
-      // 7792-SO (d'autres épreuves vivent dessus), ni à sa copie « BIS-7792 ».
-      const codes = (await codesDeLaFile(posteA)).filter((code) => code && !code.includes("7792"))
-      expect(codes.length, `file de validation inattendue : ${codes.join(", ")}`).toBeGreaterThan(0)
-      const code = codes[codes.length - 1]
+      // Une fiche SYNTHÉTIQUE hors 7792-SO (d'autres épreuves vivent dessus) et
+      // hors BIS-7792 (sa copie) : le scénario constitue son jeu par l'API.
+      const [code] = await fichesDeTravail(posteA, 1)
 
       // LES DEUX POSTES OUVRENT LA MÊME FICHE, À LA MÊME RÉVISION.
       await Promise.all([ouvrirFiche(posteA, code), ouvrirFiche(posteB, code)])
@@ -271,9 +318,7 @@ test.describe("concurrence entre postes (sessions indépendantes)", () => {
   test("session expirée en pleine correction : aucun faux succès, état inchangé", async ({ browser }) => {
     const { ctxA, ctxB, posteA, posteB } = await deuxPostes(browser)
     try {
-      const codes = (await codesDeLaFile(posteA)).filter((code) => code && !code.includes("7792"))
-      expect(codes.length).toBeGreaterThan(0)
-      const code = codes[0]
+      const [code] = await fichesDeTravail(posteA, 1)
 
       await ouvrirFiche(posteB, code)
       const { selecteur, champ } = await choisirChamp(posteB)
@@ -366,11 +411,7 @@ test.describe("concurrence entre postes (sessions indépendantes)", () => {
   test("décision liée à la révision revue : A ne peut pas approuver ce que B vient de changer", async ({ browser }) => {
     const { ctxA, ctxB, posteA, posteB } = await deuxPostes(browser)
     try {
-      const codes = await codesDeLaFile(posteA)
-      const candidats = codes.filter((code) => code && !code.includes("7792"))
-      expect(candidats.length).toBeGreaterThan(0)
-      // Une fiche qu'aucun autre scénario ne consomme : la DERNIÈRE de la file.
-      const code = candidats[candidats.length - 1]
+      const [code] = await fichesDeTravail(posteA, 1)
       const etatInitial = await garantirAValider(posteA, code)
 
       // LES DEUX POSTES ouvrent la MÊME fiche, à la MÊME révision.
@@ -411,7 +452,15 @@ test.describe("concurrence entre postes (sessions indépendantes)", () => {
       await expect(posteA.getByTestId("validation-app")).toHaveAttribute("data-revision", String(apresB.revision))
       await expect(conflitA).toHaveCount(0)
       await posteA.getByTestId("bouton-valider").click()
-      await expect(posteA.getByTestId("message-ok")).toBeVisible({ timeout: 15000 })
+      // MESSAGE SPÉCIFIQUE À LA DÉCISION, jamais le seul testid : après un
+      // rechargement, « message-ok » porte déjà « Fiche X rechargée à jour » —
+      // l'attendre par son testid seul laissait passer l'assertion AVANT que la
+      // décision soit appliquée (mesuré : 1 test flaky au run pull_request, la
+      // lecture suivante voyait encore « a_valider »). On exige donc le texte
+      // de LA décision.
+      await expect(posteA.getByTestId("message-ok")).toHaveText(/valider enregistré au journal/, {
+        timeout: 15000,
+      })
       const etatFinal = await etatReel(posteA, code)
       expect(etatFinal).toEqual({ statut: "valide", revision: apresB.revision + 1 })
     } finally {
@@ -423,10 +472,7 @@ test.describe("concurrence entre postes (sessions indépendantes)", () => {
   test("révision non lue : correction et décision bloquées, et le backend refuse aussi", async ({ browser }) => {
     const { ctxA, ctxB, posteA, posteB } = await deuxPostes(browser)
     try {
-      const codes = await codesDeLaFile(posteA)
-      const candidats = codes.filter((code) => code && !code.includes("7792"))
-      expect(candidats.length).toBeGreaterThan(0)
-      const code = candidats[0]
+      const [code] = await fichesDeTravail(posteA, 1)
 
       // LECTURE RETARDÉE : tant que la révision n'est pas là, aucun champ n'est
       // affiché — l'état n'est jamais « à moitié chargé » (champs sans jeton).
@@ -445,6 +491,7 @@ test.describe("concurrence entre postes (sessions indépendantes)", () => {
 
       // LECTURE EN ÉCHEC : le poste affiche l'état bloqué et n'écrit plus.
       const avant = await etatReel(posteB, code)
+      const journalAvant = await lignesDeJournal(posteB, code)
       await posteA.unroute(`**/api/fiches/${encodeURIComponent(code)}/etat`)
       await posteA.route(`**/api/fiches/${encodeURIComponent(code)}/etat`, (route) => route.abort())
       await posteA.getByTestId("bouton-recharger-revision").click()
@@ -467,9 +514,22 @@ test.describe("concurrence entre postes (sessions indépendantes)", () => {
       })
       expect(decisionDirecte.status(), await decisionDirecte.text()).toBe(428)
 
-      // L'état en base n'a pas bougé d'un iota.
+      // L'ÉTAT EN BASE N'A PAS BOUGÉ — et on le prouve par des faits PRÉCIS,
+      // pas par une comparaison globale : la valeur refusée n'est nulle part,
+      // le JOURNAL n'a pas gagné une ligne (aucun « valider » trompeur), le
+      // statut et la révision sont ceux d'avant. Le message d'échec dit lequel
+      // des quatre a bougé.
       const apres = await etatReel(posteB, code)
-      expect(apres).toEqual(avant)
+      // La valeur refusée n'existe sur AUCUN champ de la fiche (le contrôle ne
+      // dépend donc pas de l'existence du champ visé, ni de son rang).
+      const champsApres = await posteB.request.get(`/api/fiches/${encodeURIComponent(code)}/champs`)
+      expect(champsApres.status(), await champsApres.text()).toBe(200)
+      expect(await champsApres.text()).not.toContain("ECRITURE-SANS-REVISION")
+      expect(await lignesDeJournal(posteB, code), "une écriture refusée a laissé une ligne d'audit").toBe(
+        journalAvant,
+      )
+      expect(apres.statut, "statut après refus").toBe(avant.statut)
+      expect(apres.revision, "révision après refus").toBe(avant.revision)
     } finally {
       await ctxA.close()
       await ctxB.close()
@@ -479,11 +539,7 @@ test.describe("concurrence entre postes (sessions indépendantes)", () => {
   test("réponse en retard : la fiche affichée n'est jamais écrasée par la précédente", async ({ browser }) => {
     const { ctxA, ctxB, posteA, posteB } = await deuxPostes(browser)
     try {
-      const codes = await codesDeLaFile(posteA)
-      const candidats = codes.filter((code) => code && !code.includes("7792"))
-      expect(candidats.length).toBeGreaterThanOrEqual(2)
-      const lente = candidats[candidats.length - 1]
-      const rapide = candidats[0]
+      const [rapide, lente] = await fichesDeTravail(posteA, 2)
 
       // La lecture d'état de la fiche LENTE est retardée : elle arrivera APRÈS
       // la sélection de la fiche RAPIDE.
