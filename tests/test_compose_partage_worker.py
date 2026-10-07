@@ -129,6 +129,29 @@ def _requete(
         return erreur.code, erreur.read(), dict(erreur.headers)
 
 
+def _annonce(niveau: str, titre: str, message: str) -> None:
+    """Émet une annotation GitHub lisible depuis la page du run.
+
+    Les journaux bruts d'un job ne sont pas toujours téléchargeables (et pas du
+    tout depuis certains environnements) ; les annotations, elles, restent
+    lisibles. Un échec de ce test doit donc dire POURQUOI dans une annotation,
+    plutôt que de renvoyer le lecteur vers un log inaccessible.
+    """
+    propre = " ".join(str(message).split())[:1500]
+    print(f"::{niveau} title={titre}::{propre}")
+
+
+def _diagnostic(motif: str) -> str:
+    """État des deux conteneurs au moment de l'échec."""
+    morceaux = [f"MOTIF: {motif}"]
+    for service in ("web", "worker"):
+        etat = _etat_conteneur(service)
+        morceaux.append(f"{service}: {etat}")
+        journaux = _compose("logs", "--no-color", "--tail", "40", service, timeout=120)
+        morceaux.append(f"--- logs {service} ---\n{journaux.stdout}{journaux.stderr}")
+    return "\n".join(morceaux)
+
+
 def _attendre(condition, delai: float, message: str):  # noqa: ANN001, ANN201
     limite = time.time() + delai
     derniere = None
@@ -226,6 +249,14 @@ def _etat_conteneur(service: str) -> dict[str, str]:
 
 def test_web_et_worker_partagent_volumes_et_fichiers(tmp_path: Path) -> None:
     """Le worker séparé traite ce que le web a accepté, sur les MÊMES chemins."""
+    try:
+        _scenario_partage(tmp_path)
+    except Exception as erreur:  # noqa: BLE001 - on annote puis on relance
+        _annonce("error", "compose-partage-web-worker", f"{type(erreur).__name__}: {erreur} || {_diagnostic(str(erreur))}")
+        raise
+
+
+def _scenario_partage(tmp_path: Path) -> None:
     archive = RACINE / "sample_data"
     avant = _sha256_arbre(archive)
     donnees_hote = RACINE / "data"
@@ -278,6 +309,12 @@ def test_web_et_worker_partagent_volumes_et_fichiers(tmp_path: Path) -> None:
     statut, brut, _ = _requete(
         "/imports/upload", methode="POST", corps=corps, entetes={"Content-Type": type_contenu}
     )
+    if statut != 200:
+        _annonce(
+            "error",
+            "compose-partage-upload",
+            f"téléversement refusé (HTTP {statut}) : {brut.decode('utf-8', 'replace')[:600]}",
+        )
     assert statut == 200, brut.decode("utf-8", "replace")
     scan = json.loads(brut)
     donnees_conteneur = _racine_donnees("worker")
@@ -347,6 +384,8 @@ def test_web_et_worker_partagent_volumes_et_fichiers(tmp_path: Path) -> None:
         600,
         "le job n'est jamais devenu terminal (le worker ne consomme-t-il pas la file ?)",
     )
+    if job["status"] not in {"completed", "needs_review"}:
+        _annonce("error", "compose-partage-job", f"job terminal inattendu : {job}")
     assert job["status"] in {"completed", "needs_review"}, job
 
     # --- 5. Ce que le partage doit garantir ------------------------------

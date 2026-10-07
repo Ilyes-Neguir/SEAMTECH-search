@@ -32,12 +32,22 @@ from seamtech_search.redis_store import RedisStore
 REDIS_URL = os.environ.get("SEAMTECH_TEST_REDIS_URL", "")
 pytestmark = pytest.mark.redis_queue
 
-if not REDIS_URL:  # pragma: no cover - sélection CI explicite
-    pytest.skip(
-        "Set SEAMTECH_TEST_REDIS_URL (ex. redis://:motdepasse@127.0.0.1:6379/1) "
-        "to run durable-queue tests",
-        allow_module_level=True,
-    )
+@pytest.fixture(autouse=True)
+def _redis_requis() -> None:
+    """Saute au niveau du TEST, jamais au niveau du MODULE.
+
+    Un ``pytest.skip(allow_module_level=True)`` apparaît comme « sauté » dans le
+    rapport JUnit **même quand la sélection ``-m`` a désélectionné le module** —
+    les garde-fous CI « 0 test sauté » des jobs `sauvegarde` et `postgres`
+    échouaient donc à cause de ce fichier, sans qu'aucun de ses tests n'ait été
+    demandé. Un saut par test, lui, ne se manifeste que si le test est
+    réellement sélectionné.
+    """
+    if not REDIS_URL:  # pragma: no cover - sélection CI explicite
+        pytest.skip(
+            "Set SEAMTECH_TEST_REDIS_URL (ex. redis://:motdepasse@127.0.0.1:6379/1) "
+            "to run durable-queue tests"
+        )
 
 
 @pytest.fixture()

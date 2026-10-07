@@ -109,6 +109,25 @@ queue. Three consequences the operator should know:
   you have a provider-side whole-object checksum and know that is what you rely
   on.
 
+**Directories the container user must be able to write to (real deployment
+requirement).** `./data` and `./logs` are bind-mounted into `web` and `worker`,
+which run as the non-root `seamtech` user of the image. If Docker creates those
+directories for you, they belong to `root` and the application cannot write the
+uploaded drafts, the generated reports or the quarantine — imports then fail
+with a permission error that looks like a code bug. Create them and give the
+container user ownership, once, before the first start:
+
+```bash
+mkdir -p data logs
+uid=$(docker compose exec -T web id -u)   # once `web` is up, or read it from the image
+gid=$(docker compose exec -T web id -g)
+sudo chown -R "$uid:$gid" data logs
+```
+
+The CI `integration` job does exactly this before running the two-container
+test, and asserts the container can really write into `/app/data` and
+`/app/logs`.
+
 Useful commands:
 
 ```powershell

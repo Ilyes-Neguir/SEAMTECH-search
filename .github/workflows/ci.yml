@@ -845,6 +845,42 @@ jobs:
             exit 1
           fi
           echo
+      - name: Préparer les volumes applicatifs pour l'utilisateur NON-ROOT
+        # `./data` et `./logs` ne sont pas versionnés : quand Docker crée ces
+        # dossiers pour un montage, il le fait en root:root (755), et
+        # l'application tourne en `seamtech`. Un import téléversé ou un rapport
+        # écrit par le worker échouerait alors par permission — pas par code.
+        # C'est une exigence de déploiement RÉELLE (le serveur d'atelier doit
+        # donner au compte applicatif l'accès en écriture à ces deux dossiers),
+        # donc la CI la satisfait explicitement au lieu de la contourner.
+        env:
+          POSTGRES_PASSWORD: test_password
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: minioadmin123
+          REDIS_PASSWORD: redis_test_password
+          SEAMTECH_AUTH_TOKEN: test-token-123
+          SEAMTECH_UI_PASSWORD: ci-ui-password
+          SEAMTECH_SESSION_SECRET: ci-session-secret-not-for-production
+        run: |
+          set -euo pipefail
+          uid=$(docker compose exec -T web id -u)
+          gid=$(docker compose exec -T web id -g)
+          echo "utilisateur applicatif : uid=$uid gid=$gid"
+          mkdir -p data logs
+          sudo chown -R "$uid:$gid" data logs
+          # Preuve que l'écriture est réellement possible (sinon l'échec plus
+          # loin serait attribué au test au lieu du montage).
+          docker compose exec -T web python -c "
+          import pathlib
+          for chemin in ('/app/data', '/app/logs', '/app/data/uploads', '/app/data/reports'):
+              p = pathlib.Path(chemin)
+              p.mkdir(parents=True, exist_ok=True)
+              temoin = p / '.ecriture-ci'
+              temoin.write_text('ok', encoding='utf-8')
+              temoin.unlink()
+          print('écriture conteneur OK dans /app/data et /app/logs')
+          "
+
       - name: Run docker compose integration test
         env:
           POSTGRES_PASSWORD: test_password

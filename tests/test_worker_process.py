@@ -39,8 +39,16 @@ REDIS_URL = os.environ.get("SEAMTECH_TEST_REDIS_URL", "")
 RACINE_DEPOT = Path(__file__).resolve().parents[1]
 pytestmark = pytest.mark.redis_queue
 
-if not REDIS_URL:  # pragma: no cover - sélection explicite
-    pytest.skip("Set SEAMTECH_TEST_REDIS_URL to run the killed-worker scenario", allow_module_level=True)
+@pytest.fixture(autouse=True)
+def _redis_requis() -> None:
+    """Même règle que ``test_file_durable`` : saut par TEST, jamais par MODULE.
+
+    Un saut au niveau du module est compté comme « sauté » dans le JUnit même
+    lorsque le marqueur ``redis_queue`` a fait désélectionner le fichier, ce qui
+    faisait échouer les garde-fous « aucun test sauté » des jobs CI voisins.
+    """
+    if not REDIS_URL:  # pragma: no cover - sélection explicite
+        pytest.skip("Set SEAMTECH_TEST_REDIS_URL to run the killed-worker scenario")
 
 
 def _rediger_config(tmp_path: Path, racine_donnees: Path, claim_ttl: int) -> Path:
