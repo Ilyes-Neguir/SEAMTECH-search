@@ -16,8 +16,9 @@
  *      `/api/search` : c'est cet index-là que l'import alimente), avec sa
  *      visionneuse ;
  *   5. fiche réelle du jeu de données retrouvée par la RECHERCHE MÉTIER
- *      (`/recherche`), aperçu PDF servi par l'API locale, ORIGINAL relu en
- *      octets (`/api/pieces/{id}/telecharger`) ;
+ *      (`/recherche`) puis ouverte : PDF RENDU par le navigateur (pdf.js local,
+ *      aucune ressource distante) et ORIGINAL relu en octets
+ *      (`/api/pieces/{id}/telecharger`) ;
  *   6. décision de VALIDATION prise sur la révision lue (verrou optimiste).
  *
  * Le job CI vérifie en plus, APRÈS ces parcours, que le compteur de paquets
@@ -119,13 +120,15 @@ test.describe("hors ligne — pile réelle, sortie réseau bloquée", () => {
     await page.goto(`/recherche?q=${encodeURIComponent("7792")}`)
     const ouverture = page.getByRole("link", { name: `Ouvrir la fiche ${CODE_FICHE}` })
     await expect(ouverture).toBeVisible({ timeout: 20000 })
-    const apercu = page.waitForResponse(
-      (reponse) => /\/api\/pieces\/\d+\/apercu/.test(new URL(reponse.url()).pathname) && reponse.status() === 200,
-      { timeout: 20000 },
-    )
     await ouverture.click()
-    await expect(page.getByTestId("panneau-pdf")).toBeVisible({ timeout: 20000 })
-    await apercu
+    await expect(page).toHaveURL(new RegExp(`/fiches/${CODE_FICHE}$`))
+    await expect(page.getByTestId("fiche-code")).toHaveText(CODE_FICHE)
+    await expect(page.getByTestId("pieces-jointes")).toBeVisible({ timeout: 20000 })
+    await expect(page.getByTestId("visionneuse-piece")).toBeVisible({ timeout: 20000 })
+    // PDF RÉELLEMENT RENDU (pdf.js chargé localement, « 1 / N ») — c'est ce que
+    // regarde l'opérateur ; une visionneuse vide ne prouverait rien.
+    await expect(page.getByTestId("pdf-page")).toHaveText(/\d+ \/ \d+/, { timeout: 30000 })
+    await expect(page.getByTestId("pdf-canvas")).toBeVisible()
 
     const lienOriginal = page.getByRole("link", { name: /Télécharger .*\.pdf/i }).first()
     await expect(lienOriginal).toBeVisible({ timeout: 20000 })
@@ -148,6 +151,12 @@ test.describe("hors ligne — pile réelle, sortie réseau bloquée", () => {
       timeout: 15000,
     })
     await page.getByTestId("bouton-valider").click()
-    await expect(page.getByTestId("message-ok")).toBeVisible({ timeout: 20000 })
+    // Le TEXTE de la décision, pas seulement le bandeau : `message-ok` porte
+    // aussi le message de rechargement — l'attendre par son seul identifiant
+    // validerait avant que la décision soit appliquée (leçon du flaky mesuré
+    // dans les scénarios de concurrence).
+    await expect(page.getByTestId("message-ok")).toHaveText(/valider enregistré au journal/, {
+      timeout: 20000,
+    })
   })
 })
