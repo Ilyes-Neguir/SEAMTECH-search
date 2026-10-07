@@ -136,9 +136,19 @@ def _requete(
     ouvreur = urllib.request.urlopen if suivre_redirections else _OUVREUR_SANS_REDIRECTION.open
     try:
         with ouvreur(demande, timeout=30) as reponse:
-            return reponse.status, reponse.read(), dict(reponse.headers)
+            return reponse.status, reponse.read(), _entetes_normalisees(reponse.headers)
     except urllib.error.HTTPError as erreur:
-        return erreur.code, erreur.read(), dict(erreur.headers)
+        return erreur.code, erreur.read(), _entetes_normalisees(erreur.headers)
+
+
+def _entetes_normalisees(entetes) -> dict[str, str]:  # noqa: ANN001
+    """En-têtes HTTP en minuscules : HTTP/1.1 ne garantit pas la casse.
+
+    Uvicorn émet les noms en minuscules ; ``dict(headers)`` conserve la casse
+    reçue, donc chercher « Content-Disposition » dans un dictionnaire brut
+    échouait silencieusement. On normalise une fois pour toutes.
+    """
+    return {cle.lower(): valeur for cle, valeur in entetes.items()}
 
 
 def _annonce(niveau: str, titre: str, message: str) -> None:
@@ -455,7 +465,7 @@ def _scenario_partage(tmp_path: Path) -> None:
     code, contenu, entetes = _requete(f"/imports/{job_id}/artifacts/report_pdf")
     assert code == 200, f"téléchargement du rapport impossible (HTTP {code}) : {contenu[:400]!r}"
     assert contenu[:4] == b"%PDF", "le rapport servi n'est pas un PDF"
-    assert "attachment" in entetes.get("Content-Disposition", ""), entetes
+    assert "attachment" in entetes.get("content-disposition", ""), entetes
 
     # b-bis) Et SANS redirection : une 302 vers http://minio:9000 ne serait pas
     # résolvable depuis un poste de l'atelier. Le test ne suit pas les
@@ -465,7 +475,7 @@ def _scenario_partage(tmp_path: Path) -> None:
     )
     assert code_brut == 200, (
         f"le téléchargement ne doit pas rediriger vers un hôte interne (HTTP {code_brut}, "
-        f"Location={entetes_brutes.get('Location')!r})"
+        f"location={entetes_brutes.get('location')!r})"
     )
 
     # c) Le fichier témoin écrit par le WORKER est lisible par le WEB : preuve

@@ -30,8 +30,11 @@ chemins des dossiers.
    rendue en image EST océrisée réellement par Tesseract (fra).
 7. Recherches par mots-clés (référence, client, bateau, type, matière,
    accents, multi-termes) — termes tirés dynamiquement de la base.
-8. Ouverture d'un PDF depuis un résultat : URL présignée RÉELLE contre
-   MinIO (HTTP 302, Location, ExpiresIn=900 s, contenu identique).
+8. Ouverture d'un PDF depuis un résultat : le document se TÉLÉCHARGE depuis
+   un autre poste de l'atelier (HTTP 200 servi par l'API — jamais de
+   redirection vers l'endpoint interne MinIO : écart E-28), contenu identique
+   au fichier source (SHA-256). Un endpoint S3 PUBLIC déclaré peut produire un
+   302, mais seulement vers cet hôte-là.
 9. Téléchargement d'un rapport PDF d'import.
 10. Sauvegarde puis restauration de la base PostgreSQL RÉELLE dans une base
     neuve ; fiches, object_key, recherche et ouverture PDF revérifiés.
@@ -858,29 +861,62 @@ def test_10_sauvegarde_restauration_base_neuve(
         "de confiance sur la base restaurée"
     )
 
-    # 10.6 OUVERTURE PDF depuis la base restaurée : 302 présigné, contenu identique.
+    # 10.6 OUVERTURE PDF depuis la base restaurée : le document se TÉLÉCHARGE,
+    # depuis n'importe quel poste de l'atelier.
+    # Contrat 2026-10-07 (écart E-28) : par défaut l'API sert les octets (200)
+    # et n'émet AUCUNE redirection — un 302 vers l'endpoint interne du stockage
+    # (``http://minio:9000``) est injoignable hors du réseau des conteneurs, ce
+    # qui était exactement la panne constatée. La redirection n'est admise que
+    # vers un endpoint PUBLIC déclaré (SEAMTECH_S3_PUBLIC_ENDPOINT_URL), vérifié
+    # ci-dessous en 10.6 bis.
     # L'app restaurée doit garder les MÊMES racines que la session d'origine :
     # le document technique de REF-001 est la copie STAGÉE (répertoire de
     # travail de la session) — sous d'autres racines, /open répondrait 403
     # « outside configured search roots ».
     assert RECETTE.get("travail"), "le répertoire de travail de la session n'a pas été mémorisé"
-    app = create_app(_config_recette(URL_BASE_RESTAUREE, Path(RECETTE["travail"])))
+    travail = Path(RECETTE["travail"])
     chemin_pdf = RECETTE["refs"]["REF-001"]["technique"]
+    empreinte_source = _empreinte(Path(chemin_pdf))
+    app = create_app(_config_recette(URL_BASE_RESTAUREE, travail))
     with TestClient(app, follow_redirects=False) as client_rest:
         reponse = client_rest.post(
             "/open", params={"path": chemin_pdf}, headers={"X-SEAMTECH-TOKEN": JETON}
         )
-        assert reponse.status_code == 302, (
-            f"ouverture sur base restaurée : HTTP {reponse.status_code}"
+        assert reponse.status_code == 200, (
+            f"ouverture sur base restaurée : HTTP {reponse.status_code} "
+            "(attendu 200, octets servis par l'API)"
         )
-        location = reponse.headers.get("location")
-        assert location, "302 sans Location sur base restaurée"
-        with urllib.request.urlopen(location, timeout=60) as telechargement:
-            assert telechargement.status == 200
-            contenu = telechargement.read()
-    assert hashlib.sha256(contenu).hexdigest() == _empreinte(Path(chemin_pdf)), (
+        assert "location" not in {cle.lower() for cle in reponse.headers}, (
+            "redirection émise vers l'endpoint interne du stockage : le poste de "
+            "l'atelier ne peut pas la résoudre"
+        )
+        contenu = reponse.content
+    assert hashlib.sha256(contenu).hexdigest() == empreinte_source, (
         "contenu PDF différent après restauration (SHA-256)"
     )
+
+    # 10.6 bis Redirection présignée : autorisée, mais UNIQUEMENT vers l'endpoint
+    # public déclaré — jamais vers l'endpoint interne du réseau des conteneurs.
+    url_publique = "https://minio.public.invalide:9000"
+    config_publique = _config_recette(URL_BASE_RESTAUREE, travail).model_copy(
+        update={"s3_public_endpoint_url": url_publique}
+    )
+    with TestClient(create_app(config_publique), follow_redirects=False) as client_pub:
+        reponse = client_pub.post(
+            "/open", params={"path": chemin_pdf}, headers={"X-SEAMTECH-TOKEN": JETON}
+        )
+        assert reponse.status_code == 302, (
+            f"endpoint public déclaré : HTTP {reponse.status_code} (attendu 302)"
+        )
+        location = reponse.headers.get("location") or ""
+        hote = urllib.parse.urlparse(location).hostname or ""
+        assert hote == "minio.public.invalide", (
+            f"redirection vers {hote!r} au lieu de l'endpoint public déclaré"
+        )
+        assert hote not in {"minio", "postgres", "redis", "web", "worker", "frontend"}, (
+            f"redirection vers un nom d'hôte INTERNE ({hote}) : intéléchargeable "
+            "depuis un autre poste"
+        )
 
 
 # ---------------------------------------------------------------------------

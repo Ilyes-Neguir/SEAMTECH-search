@@ -111,10 +111,11 @@ def _info(cle: str, valeur: str) -> None:
 
 
 class _SansRedirection(urllib.request.HTTPRedirectHandler):
-    """Ne JAMAIS suivre les redirections : /open répond 302 → URL présignée.
+    """Ne JAMAIS suivre les redirections : la recette voit la réponse brute.
 
-    La recette doit voir la redirection elle-même (contrat du PDF présigné),
-    exactement comme la visionneuse du navigateur.
+    Depuis le correctif du 2026-10-07, ``/open`` sert les octets par l'API
+    (200) et ne redirige (302) que si un endpoint S3 PUBLIC est déclaré. La
+    recette doit donc vérifier la réponse brute, pas seulement son contenu.
     """
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001, ANN201
@@ -686,11 +687,21 @@ def _fichiers_catalogue() -> None:
 
 
 def _pdf_presigne() -> None:
-    # Le flux qui téléverse vers S3 est le FLUX D'IMPORT (scan → confirm) :
-    # il pose documents.object_key, sans lequel /open sert le fichier en 200
-    # local au lieu du 302 présigné (RG12 : les pièces d'un lot de dépôt sont
-    # « métadonnées seulement » — jamais de object_key, par design). La
-    # référence est le test corpus réel test_08 (ouverture PDF présignée).
+    """Le PDF d'une affaire importée se télécharge, depuis n'importe quel poste.
+
+    Contrôle historique « PDF présigné », mis à jour le 2026-10-07 (écart E-28) :
+    ce qui compte n'est pas le *mécanisme* mais le RÉSULTAT — un poste de
+    l'atelier doit pouvoir ouvrir le document. Une redirection 302 n'est donc
+    acceptée que si elle ne pointe PAS vers un nom d'hôte du réseau des
+    conteneurs (``minio``, ``web``, …), injoignable hors du serveur : c'est
+    exactement la panne constatée en CI (téléchargement impossible, « name
+    resolution »). Par défaut l'API sert les octets (200) ; les deux formes sont
+    vérifiées par l'empreinte SHA-256 contre le fichier source.
+
+    Le flux qui téléverse vers S3 est le FLUX D'IMPORT (scan → confirm) : il
+    pose documents.object_key (RG12 : les pièces d'un lot de dépôt sont
+    « métadonnées seulement » — jamais de object_key, par design).
+    """
     affaires = sorted(p for p in (TRAVAIL / "affaires").iterdir() if p.is_dir())
     if not affaires:
         _ligne("pdf-presigne", False, "aucune affaire à importer (TRAVAIL/affaires vide)")
@@ -723,24 +734,39 @@ def _pdf_presigne() -> None:
             f"confirm HTTP {code} upload={upload} object_key={'oui' if object_key else 'non'} {_extrait(corps, 80)}",
         )
         return
-    code, _, entetes = _appel("POST", f"/open?path={urllib.parse.quote(str(candidat['path']))}", {})
+    code, contenu_ou_corps, entetes = _appel("POST", f"/open?path={urllib.parse.quote(str(candidat['path']))}", {})
     location = entetes.get("Location") or entetes.get("location")
-    if code != 302 or not location:
-        _ligne("pdf-presigne", False, f"open HTTP {code} (attendu 302) location={location}")
+    hote = (urllib.parse.urlparse(location).hostname or "") if location else ""
+    hotes_internes = {"minio", "web", "worker", "redis", "postgres", "frontend"}
+    if code == 302 and location:
+        if hote in hotes_internes:
+            _ligne(
+                "pdf-presigne",
+                False,
+                f"redirection vers un hôte INTERNE ({hote}) : intéléchargeable depuis un autre poste",
+            )
+            return
+        try:
+            with urllib.request.urlopen(location, timeout=60) as telechargement:
+                contenu = telechargement.read()
+        except Exception as erreur:  # noqa: BLE001
+            _ligne("pdf-presigne", False, f"téléchargement de l'URL présignée impossible : {_extrait(erreur)}")
+            return
+        mecanisme = f"302 ({hote})"
+    elif code == 200 and isinstance(contenu_ou_corps, bytes):
+        contenu = contenu_ou_corps
+        mecanisme = "200 (servi par l'API)"
+    else:
+        _ligne("pdf-presigne", False, f"open HTTP {code} (attendu 200 ou 302) location={location}")
         return
-    try:
-        with urllib.request.urlopen(location, timeout=60) as telechargement:
-            contenu = telechargement.read()
-        local = Path(str(candidat["path"])).read_bytes()
-        meme = hashlib.sha256(contenu).hexdigest() == hashlib.sha256(local).hexdigest()
-        _ligne(
-            "pdf-presigne",
-            meme,
-            f"import {source.name} : object_key présent, 302 → {len(contenu)} octets ; "
-            f"SHA-256 identique à la source = {meme}",
-        )
-    except Exception as erreur:  # noqa: BLE001
-        _ligne("pdf-presigne", False, f"téléchargement de l'URL présignée impossible : {_extrait(erreur)}")
+    local = Path(str(candidat["path"])).read_bytes()
+    meme = hashlib.sha256(contenu).hexdigest() == hashlib.sha256(local).hexdigest()
+    _ligne(
+        "pdf-presigne",
+        meme,
+        f"import {source.name} : object_key présent, {mecanisme} → {len(contenu)} octets ; "
+        f"SHA-256 identique à la source = {meme}",
+    )
 
 
 def _zone_surlignee(codes: list[str]) -> None:
