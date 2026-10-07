@@ -1195,11 +1195,25 @@ jobs:
           # retries: 2) n'est PAS un test réellement assaini — il doit faire
           # échouer la porte, pas compter comme « réellement exécuté ».
           if sautes or flaky or passes != 10:
+              # NOMMER ce qui a bougé : « 1 flaky » sans nom n'est pas
+              # diagnosticable depuis un poste qui n'atteint pas les journaux
+              # d'Actions (leçon du 2026-10-07 : un flake a rendu un run rouge
+              # sans que le test concerné soit lisible nulle part).
+              coupables = []
+              for s in d["suites"]:
+                  for spec in iterer_specs(s):
+                      for t in spec.get("tests", []):
+                          etat = t.get("outcome")
+                          if etat in {"flaky", "unexpected", "skipped"}:
+                              titres = " | ".join(r.get("title", "") for r in t.get("results", []))
+                              coupables.append(f"{etat}: {spec.get('title', '?')} [{titres[:120]}]")
+              detail = "; ".join(coupables[:5]) or "aucun test nommé dans le rapport"
               raise SystemExit(
                   f"GARDE-FOU live e2e : attendu 10 tests passés au premier essai, "
                   f"0 flaky, 0 sautés — mesuré {passes} passés, {flaky} flaky, "
                   f"{sautes} sautés. Les tests live ne doivent jamais s'ignorer "
-                  "silencieusement ni masquer une instabilité par retry."
+                  "silencieusement ni masquer une instabilité par retry. "
+                  f"Détail : {detail}"
               )
           mesures = [
               a

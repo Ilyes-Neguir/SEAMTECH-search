@@ -554,3 +554,35 @@ def test_le_controle_negatif_prouve_la_regle_et_couvre_ipv6() -> None:
     assert "requetesExternes" in contenu, (
         "la garantie côté navigateur (aucune requête externe TENTÉE) doit être nommée là où la portée est écrite"
     )
+
+
+def test_le_garde_fou_live_nomme_les_tests_en_cause_et_publie_la_raison() -> None:
+    """Un garde-fou qui échoue sans dire POURQUOI n'est pas exploitable.
+
+    Le 2026-10-07, un test live a été compté « flaky » (vert au second essai) : le
+    job est devenu rouge pour la bonne raison, mais ni le nom du test ni son titre
+    n'étaient lisibles depuis un poste qui n'atteint pas les journaux d'Actions.
+    Le garde-fou doit donc (1) refuser flaky/sautés, (2) NOMMER les tests en
+    cause dans son message, et (3) publier ce message en annotation lisible par
+    API.
+    """
+    import textwrap
+
+    contenu = CI.read_text(encoding="utf-8")
+    bloc = contenu.split("\n  e2e:\n", 1)[1].split("\n  docker:\n", 1)[0]
+    assert "live-validation-garde-fou" in bloc, "le garde-fou doit publier sa raison en annotation"
+    assert "0 flaky, 0 sautés" in bloc, "le garde-fou doit refuser toute instabilité masquée par retry"
+    assert "coupables" in bloc and "Détail :" in bloc, (
+        "le message doit NOMMER les tests en cause (sinon « 1 flaky » n'est pas diagnosticable)"
+    )
+
+    # Le bloc Python embarqué doit être syntaxiquement valide (un heredoc cassé
+    # ferait échouer le job pour une raison qui n'a rien à voir).
+    lignes = bloc.split("\n")
+    debut = next(i for i, ligne in enumerate(lignes) if "python - <<'PY'" in ligne)
+    fin = next(i for i, ligne in enumerate(lignes) if i > debut and ligne.strip() == "PY")
+    texte_python = textwrap.dedent("\n".join(lignes[debut + 1 : fin]))
+    compile(texte_python, "<garde-fou-live>", "exec")
+
+    # Et il doit REFUSER, pas seulement journaliser : la porte est un exit non nul.
+    assert "raise SystemExit" in texte_python, "le garde-fou doit lever (sortie non nulle)"
