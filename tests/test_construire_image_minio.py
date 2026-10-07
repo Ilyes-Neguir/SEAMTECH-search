@@ -112,3 +112,28 @@ def test_ci_construit_l_image_avant_de_la_consommer() -> None:
     assert appels[0] < pos_integration, "build MinIO absent avant l'étape Start infra services"
     assert appels[1] < pos_sauvegarde, "build MinIO absent avant l'étape Start MinIO"
     assert appels[2] < pos_recette, "build MinIO absent avant l'étape Start MinIO (recette-corpus-reel)"
+
+
+def test_les_etapes_reseau_sont_reessayees() -> None:
+    """Clones GitHub et `docker build` sont des dépendances RÉSEAU : réessai borné.
+
+    Constaté au run `37640455508` : le job `recette-corpus-reel` est tombé à
+    l'étape « Build MinIO image from archived sources » (clone/build), toutes les
+    étapes de recette restant sautées — un incident transitoire transformé en
+    échec de recette, sans cause lisible. Le script réessaie donc chaque étape
+    réseau au plus 3 fois ; si les 3 échouent, il ÉCHOUE (aucune exigence
+    relâchée : l'image doit exister et passer le fumigène ci-dessous).
+    """
+    script = _script()
+    assert "_reessayer()" in script, "l'aide de réessai borné doit exister"
+    assert "tentative=${tentative}/3" in script or "tentative ${tentative}/3" in script
+    for commande in ("clone minio", "clone mc", "docker build"):
+        motif = re.compile(rf"_reessayer \"[^\"]*{re.escape(commande)}")
+        assert motif.search(script), f"« {commande} » doit passer par _reessayer"
+    # Le Dockerfile est écrit dans un FICHIER : un heredoc déjà consommé ne
+    # pourrait pas alimenter une seconde tentative.
+    assert 'cat > "$TRAVAIL/Dockerfile" <<\'DOCKERFILE\'' in script
+    assert 'docker build -t "$IMAGE" -f "$TRAVAIL/Dockerfile" "$TRAVAIL"' in script
+    assert "-f - " not in script, "plus de Dockerfile par stdin (incompatible avec un réessai)"
+    # Le fumigène reste : binaires + alias « local » (healthcheck compose).
+    assert "alias local absent de l'image reconstruite" in script

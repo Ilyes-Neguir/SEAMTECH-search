@@ -1097,14 +1097,24 @@ jobs:
           inattendus = stats.get("unexpected", 0)
           # 4 scénarios de concurrence, TOUS exécutés (aucun saut : la base
           # PostgreSQL est fournie par le job), aucun rattrapé par retry.
-          # Titres (déjà publics : noms de tests du dépôt) des specs non vertes.
+          # Titres (déjà publics : noms de tests du dépôt) des specs NON vertes et
+          # des specs RATTRAPÉES par un retry. Le premier garde-fou lisait
+          # « mesuré 3 passés, 1 flaky … aucun nom lisible » : il faut pouvoir
+          # nommer le test instable pour le durcir au lieu de relancer à
+          # l'aveugle.
           fautives: list[str] = []
+          instables: list[str] = []
 
           def parcourir(suites: list[dict]) -> None:
               for suite in suites or []:
                   for spec in suite.get("specs") or []:
-                      if not spec.get("ok"):
-                          fautives.append(str(spec.get("title", "?")))
+                      titre = str(spec.get("title", "?"))
+                      for test in spec.get("tests") or []:
+                          statut = test.get("status")
+                          if statut == "unexpected":
+                              fautives.append(titre)
+                          elif statut == "flaky":
+                              instables.append(titre)
                   parcourir(suite.get("suites") or [])
 
           if sautes or flaky or passes != 4:
@@ -1112,8 +1122,10 @@ jobs:
               refuser(
                   f"attendu 4 tests passés au premier essai, 0 flaky, 0 sautés — "
                   f"mesuré {passes} passés, {flaky} flaky, {sautes} sautés, "
-                  f"{inattendus} en échec. Tests non verts : "
-                  + ("; ".join(fautives[:5]) if fautives else "aucun nom lisible")
+                  f"{inattendus} en échec. En échec : "
+                  + ("; ".join(fautives[:5]) if fautives else "aucun")
+                  + " | rattrapés par un retry : "
+                  + ("; ".join(instables[:5]) if instables else "aucun")
               )
           print(
               "Concurrence : 4 scénarios multi-sessions exécutés au premier essai "

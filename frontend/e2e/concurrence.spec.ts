@@ -103,6 +103,13 @@ test.describe("concurrence entre postes (sessions indépendantes)", () => {
     // partager alors le même `data-testid` : une preuve « la valeur du collègue
     // est intacte » y serait ambiguë, et l'interface de correction — une valeur
     // à la fois — ne saurait pas quel rang viser.
+    // ATTENDRE que les champs soient rendus : `ouvrirFiche` garantit la fiche
+    // et sa révision, mais la liste des champs arrive par une SECONDE requête.
+    // Choisir trop tôt levait « aucun champ corrigeable » — un échec
+    // intermittent (le retry CI rattrapait le test : mesuré 3 passés / 1 flaky
+    // au run 37640455508). On attend donc l'état attendu, on ne relâche pas
+    // l'exigence.
+    await expect(poste.locator('input[data-testid^="champ-"]').first()).toBeVisible({ timeout: 15000 })
     const candidats = [
       'input[data-testid="champ-materiau.tissu_principal"][data-zone="true"]',
       'input[data-testid^="champ-"][data-zone="true"]',
