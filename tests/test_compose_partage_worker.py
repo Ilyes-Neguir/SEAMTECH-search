@@ -160,6 +160,36 @@ def _multipart(fichiers: list[tuple[str, bytes]], champs: dict[str, str]) -> tup
     return b"".join(morceaux), f"multipart/form-data; boundary={frontiere}"
 
 
+def _resoudre(service: str, chemin: str) -> Path:
+    """Résout un chemin DANS le conteneur (l'API peut renvoyer un chemin relatif).
+
+    Le faire résoudre par le conteneur prouve au passage que le montage est bien
+    celui attendu : un chemin qui n'existerait pas des deux côtés ne résout pas
+    au même endroit.
+    """
+    resultat = _exec("worker" if service == "worker" else service, "python", "-c",
+                     "import pathlib,sys; print(pathlib.Path(sys.argv[1]).resolve())", chemin)
+    assert resultat.returncode == 0, f"résolution impossible de {chemin!r} : {resultat.stderr}"
+    return Path(resultat.stdout.strip())
+
+
+def _racine_donnees(service: str) -> Path:
+    """``<data>`` vu par le conteneur : dérivé de la configuration réelle."""
+    resultat = _exec(
+        service,
+        "python",
+        "-c",
+        (
+            "from seamtech_search.config import AppConfig;"
+            "import pathlib;"
+            "c=AppConfig.load('/app/config/config.json');"
+            "print(pathlib.Path(c.database_path).resolve().parent)"
+        ),
+    )
+    assert resultat.returncode == 0, resultat.stderr
+    return Path(resultat.stdout.strip())
+
+
 def _sha256_arbre(racine: Path) -> dict[str, str]:
     resultat: dict[str, str] = {}
     for chemin in sorted(racine.rglob("*")):
@@ -250,8 +280,14 @@ def test_web_et_worker_partagent_volumes_et_fichiers(tmp_path: Path) -> None:
     )
     assert statut == 200, brut.decode("utf-8", "replace")
     scan = json.loads(brut)
-    staged_conteneur = Path(scan["staged_path"])
-    assert staged_conteneur.is_absolute(), scan
+    donnees_conteneur = _racine_donnees("worker")
+    assert donnees_conteneur == Path("/app/data"), (
+        f"le volume de données n'est pas monté sur /app/data dans le worker : {donnees_conteneur}"
+    )
+    staged_conteneur = _resoudre("worker", scan["staged_path"])
+    assert donnees_conteneur in staged_conteneur.parents, (
+        f"le brouillon téléversé doit vivre sous {donnees_conteneur} : {staged_conteneur}"
+    )
 
     # Le brouillon écrit par le WEB est visible depuis le WORKER (volume partagé)
     # et le worker peut le LIRE — permissions comprises.
@@ -315,7 +351,9 @@ def test_web_et_worker_partagent_volumes_et_fichiers(tmp_path: Path) -> None:
 
     # --- 5. Ce que le partage doit garantir ------------------------------
     # a) Les rapports écrits par le WORKER existent sur le volume partagé…
-    rapports_hote = donnees_hote / "reports" / job_id
+    rapports_hote = donnees_hote / "reports" / job_id  # ./data est monté sur /app/data
+    rapports_conteneur = donnees_conteneur / "reports" / job_id
+    assert rapports_conteneur.name == job_id and str(rapports_conteneur).startswith("/app/data/")
     assert rapports_hote.exists(), f"aucun rapport pour {job_id} sous {rapports_hote}"
     fichiers_rapport = [f for f in sorted(rapports_hote.rglob("*")) if f.is_file()]
     assert fichiers_rapport, f"dossier de rapports vide : {rapports_hote}"
@@ -359,14 +397,19 @@ def test_web_et_worker_partagent_volumes_et_fichiers(tmp_path: Path) -> None:
             "from seamtech_search.config import AppConfig;"
             "from seamtech_search.import_pipeline import quarantine_root, staging_root;"
             "c=AppConfig.load('/app/config/config.json');"
-            "print(quarantine_root(c), staging_root(c))"
+            "print(quarantine_root(c).resolve(), staging_root(c).resolve())"
         ),
     )
     assert quarantaine.returncode == 0, quarantaine.stderr
     racine_quarantaine, racine_brouillons = [Path(p) for p in quarantaine.stdout.strip().split()]
-    assert racine_quarantaine == Path("/app/data/quarantine"), quarantaine.stdout
-    assert racine_brouillons == Path("/app/data/uploads"), quarantaine.stdout
-    assert str(donnees_hote / "quarantine").startswith(str(donnees_hote))
+    assert racine_quarantaine == donnees_conteneur / "quarantine", quarantaine.stdout
+    assert racine_brouillons == staged_conteneur.parent, (
+        f"le brouillon doit vivre sous {racine_brouillons}, vu {staged_conteneur.parent}"
+    )
+    assert racine_brouillons.name == "uploads", quarantaine.stdout
+    # Les deux vivent sur le volume partagé, donc récupérables par l'opérateur.
+    assert donnees_conteneur in racine_quarantaine.parents
+    assert donnees_conteneur in racine_brouillons.parents
 
     # e) Le dossier de modèles ML est résolu au même endroit par les deux
     #    processus, et le worker peut y lire (installation hors ligne).
@@ -382,7 +425,23 @@ def test_web_et_worker_partagent_volumes_et_fichiers(tmp_path: Path) -> None:
         ),
     )
     assert modeles.returncode == 0, modeles.stderr
-    chemin_modeles = modeles.stdout.strip().split()[0]
+    chemin_modeles = Path(modeles.stdout.strip().split()[0])
+    assert chemin_modeles == donnees_conteneur / "modeles", modeles.stdout
+    # Le worker crée le dossier des modèles et y dépose un témoin : c'est le
+    # geste d'une installation hors ligne des poids. Le web doit le lire.
+    depot = _exec(
+        "worker",
+        "python",
+        "-c",
+        (
+            "import pathlib,sys;"
+            "d=pathlib.Path(sys.argv[1]); d.mkdir(parents=True, exist_ok=True);"
+            "(d/'tokenizer.json').write_text('{\"version\": \"ci\"}');"
+            "print('ok')"
+        ),
+        str(chemin_modeles),
+    )
+    assert depot.returncode == 0 and depot.stdout.strip() == "ok", depot.stderr
     modeles_web = _exec(
         "web",
         "python",
@@ -391,13 +450,14 @@ def test_web_et_worker_partagent_volumes_et_fichiers(tmp_path: Path) -> None:
             "from seamtech_search.config import AppConfig;"
             "from seamtech_search.api import _dossier_modeles_ml;"
             "import os; d=_dossier_modeles_ml(AppConfig.load('/app/config/config.json'));"
-            "print(d, os.access(d, os.R_OK|os.X_OK))"
+            "print(d, os.access(d, os.R_OK|os.X_OK), (d/'tokenizer.json').read_text())"
         ),
     )
-    assert modeles_web.stdout.strip() == modeles.stdout.strip(), (
-        f"chemins de modèles différents entre web et worker : {modeles_web.stdout} vs {modeles.stdout}"
+    assert modeles_web.returncode == 0, modeles_web.stderr
+    assert modeles_web.stdout.strip().startswith(f"{chemin_modeles} True"), (
+        f"le web ne lit pas les modèles écrits par le worker : {modeles_web.stdout} {modeles_web.stderr}"
     )
-    assert chemin_modeles == "/app/data/modeles", modeles.stdout
+    assert '"version": "ci"' in modeles_web.stdout, modeles_web.stdout
 
     # f) L'archive montée en lecture seule n'a pas bougé d'un octet.
     assert _sha256_arbre(archive) == avant, "l'import a modifié l'archive d'origine (RG13)"
