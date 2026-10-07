@@ -27,6 +27,13 @@
  * sortante doit ÉCHOUER) est exécuté avant, sans quoi « zéro paquet rejeté » ne
  * prouverait rien.
  *
+ * PORTÉE, DITE SANS EMBELLISSEMENT : le blocage `iptables` s'applique aux
+ * processus du COMPTE APPLICATIF (web, worker séparé, front). Le NAVIGATEUR,
+ * lui, tourne sous l'utilisateur du runner et n'est pas visé par ce blocage :
+ * ses requêtes sont donc surveillées DANS le test — toute ressource demandée
+ * hors de la boucle locale fait échouer le parcours (aucun CDN, aucune police
+ * distante, aucun service en ligne ne peut se cacher derrière l'interface).
+ *
  * Exécution : `SEAMTECH_E2E_HORS_LIGNE=1` (jamais dans la suite par défaut : la
  * pile doit tourner avec stockage objet et migrations, et la sortie réseau doit
  * être bloquée pour que l'épreuve ait un sens).
@@ -57,6 +64,20 @@ test.describe("hors ligne — pile réelle, sortie réseau bloquée", () => {
     // (60 s pour l'import, 20 s ailleurs) — mesuré en CI : le parcours dépasse
     // le délai par défaut avant même la seconde moitié.
     test.setTimeout(180_000)
+    // 0. GARDE-FOU NAVIGATEUR. Le blocage `iptables` du job couvre les
+    //    processus du compte applicatif (web, worker séparé, front), PAS le
+    //    navigateur (utilisateur du runner). On prouve donc ici que les seules
+    //    ressources demandées par la page viennent de la boucle locale : une
+    //    interface d'atelier ne doit dépendre d'aucun CDN ni service en ligne.
+    //    (L'UI n'en déclare aucun — `app/layout.tsx` refuse même
+    //    `next/font/google` ; ce contrôle le CONSTATE au lieu de le supposer.)
+    const requetesExternes: string[] = []
+    page.on("request", (requete) => {
+      const url = requete.url()
+      if (!/^https?:/i.test(url)) return
+      const hote = new URL(url).hostname
+      if (!["127.0.0.1", "localhost", "::1"].includes(hote)) requetesExternes.push(url)
+    })
     // 1. CONNEXION nominative (formulaire réel, cookie signé).
     await signInWith(page, OPERATEUR)
 
@@ -158,5 +179,10 @@ test.describe("hors ligne — pile réelle, sortie réseau bloquée", () => {
     await expect(page.getByTestId("message-ok")).toHaveText(/valider enregistré au journal/, {
       timeout: 20000,
     })
+
+    // 7. AUCUNE ressource externe demandée par le navigateur de tout le
+    //    parcours (voir le garde-fou du début) : le poste d'atelier n'a besoin
+    //    ni d'Internet, ni d'un CDN, ni d'un service en ligne.
+    expect(requetesExternes, "ressources externes demandées par le navigateur").toEqual([])
   })
 })
