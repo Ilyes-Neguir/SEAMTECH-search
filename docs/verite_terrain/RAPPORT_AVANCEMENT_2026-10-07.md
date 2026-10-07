@@ -70,15 +70,22 @@ l'historique complet des lectures est au §5.
   recette trois postes sur le serveur cible.
 * **Production** : **NON revendiquée** — voir §6, liste exhaustive.
 
-**Handoff (mission, point 8)** : commit final **`c65b7d8`** (le commit de
-documentation qui suit ce rapport ne touche AUCUN fichier de code : les preuves
-`c65b7d8` s'y appliquent telles quelles) · branche
-`arena/7da80c2f-seamtech-search` · PR **#35** (ouverte, **jamais fusionnée**) ·
-runs lus : `37642194285` (push, 12/12), `37642211480` et `37642211503`
-(pull_request, 12/12). Détail par constat : §4 (E-22 → E-36) ; tests ajoutés :
-§3 et §4 ; défauts de code restants : **aucun connu** à ce jour ; portes
-restantes : §6 et §8. **La revue de ce travail par l'agent d'implémentation
-n'est pas une approbation indépendante** : une revue externe reste pendante.
+**Handoff (mission, point 8)** : **dernier commit de CODE `c65b7d8`** ; branche
+`arena/7da80c2f-seamtech-search` ; PR **#35** (ouverte, **jamais fusionnée**) ;
+runs lus, sur les deux déclencheurs, pour le code : `37642194285` (push, 12/12),
+`37642211480` et `37642211503` (pull_request, 12/12). Le commit de
+documentation `b1eb5a9` a lui aussi été lu : push `37643239027` **12/12** et
+pull_request `37643251469` / `37643251577` **12/12**, étape « Run multi-session
+E2E » `success` — la règle « un run vert sur push ne vaut pas pour le
+pull_request » (E-36) est donc satisfaite sur ce couple aussi. **Convention de
+preuve** : tout commit postérieur qui ne touche aucun fichier de code
+(`docs/` uniquement, vérifiable par `git show --stat`) hérite de ces preuves ;
+dès qu'un fichier de code change, une nouvelle lecture des runs des deux
+déclencheurs est obligatoire. Détail par constat : §4 (E-22 → E-36) ; tests
+ajoutés : §3 et §4 ; défauts de code restants : **aucun connu** à ce jour ;
+portes restantes : §6 et §8. **La revue de ce travail par l'agent
+d'implémentation n'est pas une approbation indépendante** : une revue externe
+reste pendante.
 
 ---
 
