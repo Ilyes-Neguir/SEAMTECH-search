@@ -9,12 +9,16 @@
  * (chaîne iptables dédiée au compte applicatif, job CI `hors-ligne-reel`) :
  *
  *   1. connexion nominative par le formulaire ;
- *   2. import d'un dossier réel (comptabilité des fichiers, extraction) ;
- *   3. visibilité en RECHERCHE après import ;
- *   4. ouverture de la fiche, révision lue, puis VALIDATION ;
- *   5. aperçu PDF servi par l'API ;
- *   6. téléchargement de l'ORIGINAL (octets %PDF vérifiés) ;
- *   7. téléchargement du RAPPORT GÉNÉRÉ (octets %PDF vérifiés).
+ *   2. import d'un dossier réel (comptabilité des fichiers, extraction) par le
+ *      WORKER SÉPARÉ, avec stockage objet ;
+ *   3. RAPPORT GÉNÉRÉ relu en octets par la session du navigateur ;
+ *   4. visibilité en RECHERCHE DOCUMENTAIRE du fichier importé (« Fichiers »,
+ *      `/api/search` : c'est cet index-là que l'import alimente), avec sa
+ *      visionneuse ;
+ *   5. fiche réelle du jeu de données retrouvée par la RECHERCHE MÉTIER
+ *      (`/recherche`), aperçu PDF servi par l'API locale, ORIGINAL relu en
+ *      octets (`/api/pieces/{id}/telecharger`) ;
+ *   6. décision de VALIDATION prise sur la révision lue (verrou optimiste).
  *
  * Le job CI vérifie en plus, APRÈS ces parcours, que le compteur de paquets
  * REJETÉS du compte applicatif est resté à ZÉRO : aucune dépendance externe
@@ -38,7 +42,11 @@ test.describe("hors ligne — pile réelle, sortie réseau bloquée", () => {
   )
 
   const RACINE = path.resolve(__dirname, "../..")
-  const CODE = "REF-2026-CLIENT123"
+  // Référence EXTRAITE du PDF importé (elle apparaît dans le panneau d'import,
+  // mais ce n'est PAS un code de fiche) et code de la fiche RÉELLE du jeu de
+  // données, seule fiche que la recherche métier peut rendre.
+  const REFERENCE = "REF-2026-CLIENT123"
+  const CODE_FICHE = "7792-SO"
 
   test("import, recherche, aperçu, téléchargements et validation sans réseau externe", async ({ page }) => {
     // Budget EXPLICITE (180 s) : ce parcours enchaîne un IMPORT réel (pipeline
@@ -60,7 +68,7 @@ test.describe("hors ligne — pile réelle, sortie réseau bloquée", () => {
     await champDossier.fill(dossier)
     await page.getByRole("button", { name: /Importation rapide/i }).click()
     await expect(page.getByText(/État :/i)).toBeVisible({ timeout: 60000 })
-    await expect(page.getByText(new RegExp(CODE, "i"))).toBeVisible({ timeout: 60000 })
+    await expect(page.getByText(new RegExp(REFERENCE, "i"))).toBeVisible({ timeout: 60000 })
     // L'identifiant d'import est lu DANS L'ÉCRAN : c'est le lien du rapport
     // généré, tel qu'un opérateur le voit et le suit. Aucune attente d'URL
     // devinée : l'import part en file avec un identifiant **UUID** (hexadécimal,
@@ -75,13 +83,42 @@ test.describe("hors ligne — pile réelle, sortie réseau bloquée", () => {
       /^\/api\/imports\/[0-9a-zA-Z]+\/artifacts\/report_pdf$/,
     )
 
-    // 3. VISIBILITÉ EN RECHERCHE après import (index local, modèle local).
-    await page.goto(`/recherche?q=${encodeURIComponent(CODE)}`)
-    const ouverture = page.getByRole("link", { name: new RegExp(`Ouvrir la fiche ${CODE}`) }).first()
-    await expect(ouverture).toBeVisible({ timeout: 20000 })
+    // 3. RAPPORT GÉNÉRÉ : octets vérifiés, servis à la session du navigateur
+    //    (l'URL vient de l'écran — donc du résultat réellement produit).
+    const rapport = await page.request.get(hrefRapport)
+    expect(rapport.status(), await rapport.text()).toBe(200)
+    const corps = await rapport.body()
+    expect(corps.subarray(0, 4).toString()).toBe("%PDF")
+    expect(corps.length).toBeGreaterThan(1000)
 
-    // 4. OUVERTURE DE LA FICHE : aperçu PDF servi par l'API (aucun CDN, aucune
-    //    police distante) + ORIGINAL téléchargeable depuis le poste.
+    // 4. VISIBILITÉ EN RECHERCHE DOCUMENTAIRE du fichier importé. C'est l'écran
+    //    « Fichiers » (API `/api/search`) qui indexe les documents importés —
+    //    la référence « REF-2026-CLIENT123 » est une référence EXTRAITE, elle
+    //    n'est pas un code de fiche : l'épreuve cherche donc le fichier par son
+    //    NOM, garanti indexé par l'import (et le navigateur le retrouve seul).
+    await page.goto("/fichiers")
+    await page.getByRole("button", { name: "Recherche avancée" }).click()
+    const champFichiers = page.getByPlaceholder(/Rechercher des fichiers/i)
+    await expect(champFichiers).toBeVisible()
+    await champFichiers.fill("fiche-technique.pdf")
+    await champFichiers.press("Enter")
+    const resultatFichier = page
+      .locator('[role="button"][tabindex="0"]')
+      .filter({ hasText: /fiche-technique\.pdf/i })
+      .first()
+    await expect(resultatFichier).toBeVisible({ timeout: 30000 })
+    await resultatFichier.click()
+    await expect(page.getByTestId("visionneuse-piece")).toBeVisible({ timeout: 20000 })
+    await expect(page.getByRole("link", { name: "Télécharger le fichier" })).toBeVisible()
+
+    // 5. FICHE RÉELLE du jeu de données, retrouvée par la RECHERCHE MÉTIER puis
+    //    ouverte : aperçu PDF servi par l'API locale (aucun CDN, aucune police
+    //    distante) et ORIGINAL relu EN OCTETS par la session du navigateur —
+    //    c'est le chemin exact d'un poste d'atelier (l'API sert le fichier,
+    //    personne ne lit le disque du serveur).
+    await page.goto(`/recherche?q=${encodeURIComponent("7792")}`)
+    const ouverture = page.getByRole("link", { name: `Ouvrir la fiche ${CODE_FICHE}` })
+    await expect(ouverture).toBeVisible({ timeout: 20000 })
     const apercu = page.waitForResponse(
       (reponse) => /\/api\/pieces\/\d+\/apercu/.test(new URL(reponse.url()).pathname) && reponse.status() === 200,
       { timeout: 20000 },
@@ -92,29 +129,21 @@ test.describe("hors ligne — pile réelle, sortie réseau bloquée", () => {
 
     const lienOriginal = page.getByRole("link", { name: /Télécharger .*\.pdf/i }).first()
     await expect(lienOriginal).toBeVisible({ timeout: 20000 })
-    const [telechargement] = await Promise.all([page.waitForEvent("download"), lienOriginal.click()])
-    const chemin = await telechargement.path()
-    expect(chemin, "le fichier téléchargé doit exister sur le disque du poste").toBeTruthy()
-    const { readFileSync } = await import("node:fs")
-    const octets = readFileSync(chemin!)
+    const hrefOriginal = (await lienOriginal.getAttribute("href")) ?? ""
+    expect(hrefOriginal, "lien de téléchargement de l'original").toMatch(/^\/api\/pieces\/\d+\/telecharger$/)
+    const origine = await page.request.get(hrefOriginal)
+    expect(origine.status(), await origine.text()).toBe(200)
+    const octets = await origine.body()
     expect(octets.subarray(0, 4).toString()).toBe("%PDF")
     expect(octets.length).toBeGreaterThan(1000)
-
-    // 5. RAPPORT GÉNÉRÉ : octets vérifiés, servis à la session du navigateur
-    //    (l'URL vient de l'écran — donc du résultat réellement produit).
-    const rapport = await page.request.get(hrefRapport)
-    expect(rapport.status(), await rapport.text()).toBe(200)
-    const corps = await rapport.body()
-    expect(corps.subarray(0, 4).toString()).toBe("%PDF")
-    expect(corps.length).toBeGreaterThan(1000)
 
     // 6. VALIDATION sur l'écran de validation : la révision est lue (instantané)
     //    puis la décision porte sur CETTE révision — sans réseau externe.
     await page.goto("/validation")
-    const ligne = page.locator(`li[data-code="${CODE}"]`)
+    const ligne = page.locator(`li[data-code="${CODE_FICHE}"]`)
     await expect(ligne).toBeVisible({ timeout: 20000 })
     await ligne.getByTestId("code-fiche").click()
-    await expect(page.getByTestId("titre-fiche")).toHaveText(CODE)
+    await expect(page.getByTestId("titre-fiche")).toHaveText(CODE_FICHE)
     await expect(page.getByTestId("validation-app")).toHaveAttribute("data-revision", /^[0-9]+$/, {
       timeout: 15000,
     })
