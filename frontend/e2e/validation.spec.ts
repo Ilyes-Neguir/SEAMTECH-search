@@ -19,6 +19,14 @@ async function ouvrirFiche(page: Page, file: Locator, code: string): Promise<voi
   // du doublon, dont le bandeau cite le code de l'autre fiche (vu en CI).
   await file.locator(`li[data-code="${code}"]`).getByTestId("code-fiche").click()
   await expect(page.getByTestId("titre-fiche")).toHaveText(code)
+  // Le verrou optimiste (constats F1/F3) n'autorise une décision qu'une fois la
+  // RÉVISION LUE : sans cette attente, un clic « Rejeter »/« Valider » lancé
+  // pendant le chargement de l'instantané est bloqué — À RAISON — par l'écran
+  // (fail closed) et le test devient instable sans qu'aucun défaut produit
+  // n'existe. On attend donc ce qu'un opérateur attend : l'état affiché.
+  await expect(page.getByTestId("validation-app")).toHaveAttribute("data-revision", /^[0-9]+$/, {
+    timeout: 15000,
+  })
 }
 
 test.describe("validation de bout en bout", () => {

@@ -1169,7 +1169,8 @@ jobs:
             echo "::error title=live-validation-tail::$(tail -40 /tmp/e2e_validation.log | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 3000)"
             exit "$rc"
           fi
-          python - <<'PY'
+          set +e
+          python - <<'PY' 2>&1 | tee /tmp/live-validation-gardefou.log
           import json
           import os
 
@@ -1215,6 +1216,15 @@ jobs:
               )
           print("::notice title=mesure-phase1::" + mesures[0]["description"])
           PY
+          grc=${PIPESTATUS[0]}
+          set -e
+          if [ "$grc" -ne 0 ]; then
+            # Un garde-fou qui échoue DOIT dire pourquoi : sans cette annotation,
+            # « exit code 1 » était la seule trace lisible (les journaux
+            # d'Actions ne sont pas toujours joignables d'un poste).
+            echo "::error title=live-validation-garde-fou::$(tr -d '\000-\010\013\014\016-\037' < /tmp/live-validation-gardefou.log | tr '\n' ';' | head -c 2000)"
+            exit 1
+          fi
 
       # Lot L.1 (correctif C.2 de l'audit) — le BANDEAU DE DOUBLON est enfin
       # vérifié à l'écran. Le seed live ajoute la fiche 7792-SO-BIS (deuxième
