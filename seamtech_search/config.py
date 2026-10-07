@@ -78,6 +78,16 @@ class AppConfig(BaseModel):
     #: plus rien ne prouve que l'objet stocké est le bon.
     storage_verify_reread: bool = True
     require_durable_queue: bool = False
+    #: Le poste DOIT annoncer la révision de fiche qu'il a lue pour ÉCRIRE
+    #: (correction) comme pour DÉCIDER (validation, rejet, réouverture).
+    #: Quand c'est vrai — le défaut — une requête sans révision est REFUSÉE
+    #: (428) au lieu d'être appliquée sans protection : « la révision n'a pas
+    #: pu être lue côté poste » ne doit jamais devenir « écriture non
+    #: protégée ». Défaut True partout, y compris sur les postes sans
+    #: PostgreSQL/S3 : la désactiver n'est légitime que pour un script ancien
+    #: identifié, JAMAIS pour l'écran d'atelier (qui envoie toujours la
+    #: révision qu'il affiche).
+    require_revision: bool = True
     #: Endpoint S3 **joignable par les navigateurs des postes de l'atelier**
     #: (par exemple le nom public du service MinIO de l'atelier). Vide par défaut : dans ce
     #: cas les téléchargements sont servis par l'API (proxy authentifié), parce
@@ -193,6 +203,15 @@ class AppConfig(BaseModel):
                 "1",
                 "true",
                 "yes",
+            }
+        # `is not None` (et non la vérité de la chaîne) : la variable est
+        # BOOLÉENNE et « false » est une valeur, pas une absence.
+        if os.environ.get("SEAMTECH_REQUIRE_REVISION") is not None:
+            data["require_revision"] = os.environ["SEAMTECH_REQUIRE_REVISION"].strip().lower() in {
+                "1",
+                "true",
+                "yes",
+                "on",
             }
         if os.environ.get("SEAMTECH_TASK_CLAIM_TTL_SECONDS"):
             data["task_claim_ttl_seconds"] = int(os.environ["SEAMTECH_TASK_CLAIM_TTL_SECONDS"])

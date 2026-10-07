@@ -293,11 +293,41 @@ See [TLS.md](TLS.md) for Caddy, Nginx, and Cloudflare Tunnel examples. The
 reverse proxy should publish only the frontend; keep PostgreSQL, Redis, MinIO,
 and the backend on their loopback/container network endpoints.
 
+## Optimistic locking between workstations (mandatory by default)
+
+`SEAMTECH_REQUIRE_REVISION=true` (compose default, and the safe default of
+`AppConfig`) makes the revision a **precondition**:
+
+* a correction without `revision` → **428**, nothing written (a failed revision
+  read on a workstation must never silently disable the anti-overwrite guard);
+* a correction with a stale revision → **409**, the colleague's value is kept;
+* a DECISION (valider / rejeter / rouvrir / batch) with a stale revision → **409**,
+  nothing written to the audit journal: a worker can never approve a value they
+  did not re-read;
+* `GET /fiches/{code}/etat` returns status + revision + fields **from one
+  snapshot**, so the revision on screen always matches the values on screen.
+
+Setting it to `false` is only for an identified legacy script; the workshop UI
+always sends the revision it displays, so it needs no relaxation.
+
 ## Offline verification before the workshop (RG14_EXCEPTION, tooling only)
 
 The workshop server has no Internet access. Reading the configuration does not
 prove that: the automated check **executes** the essential workflows with every
 outbound Python connection blocked and reports what happened.
+
+**Scope of that script (do not overstate it).** It patches Python `socket`
+calls inside ITS OWN process: it covers neither the browser, nor Next.js, nor a
+separate worker process, nor native libraries (part of libpq) and subprocesses.
+A green run means "this Python process reached nothing external", nothing more.
+The full-stack proof is separate: the CI job `hors-ligne-reel` runs the real
+stack (web + **separate worker** + PostgreSQL + Redis + local MinIO) with the
+application account's egress actually REJECTED by iptables and drives the
+browser through import, search, PDF preview, original + generated-report
+downloads and validation; it then asserts the reject counter is still 0 (no
+hidden external dependency was even attempted) and requires the negative
+control (an outbound request must fail) to hold first. Neither replaces the
+workshop acceptance (real workstations, cable unplugged).
 
 ```bash
 # 1. What is provisioned? (no blocking) — says REQUIRED vs OPTIONAL per capability

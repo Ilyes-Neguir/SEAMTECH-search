@@ -146,6 +146,14 @@ services:
       #     à une promesse non tenue.
       SEAMTECH_WEB_WORKER_ENABLED: ${SEAMTECH_WEB_WORKER_ENABLED:-false}
       SEAMTECH_REQUIRE_DURABLE_QUEUE: ${SEAMTECH_REQUIRE_DURABLE_QUEUE:-true}
+      # Verrou optimiste OBLIGATOIRE (défaut true) : une correction ou une
+      # décision (valider/rejeter/rouvrir) sans révision de fiche est REFUSÉE
+      # (428) au lieu d'être appliquée sans protection, et une fiche modifiée
+      # depuis l'affichage est refusée (409) — l'opérateur ne peut ni écraser
+      # ni approuver une valeur qu'il n'a pas relue. Ne passer à false que pour
+      # un script ancien identifié : l'écran d'atelier, lui, envoie toujours la
+      # révision qu'il affiche.
+      SEAMTECH_REQUIRE_REVISION: ${SEAMTECH_REQUIRE_REVISION:-true}
       # Relecture des octets stockés pour prouver l'intégrité AVANT toute purge
       # locale (GET + SHA-256 côté worker). Mettre à false interdit la purge :
       # une empreinte fournie par l'application ne prouve pas le contenu.
@@ -230,6 +238,14 @@ services:
       SEAMTECH_S3_SECRET_KEY: ${SEAMTECH_S3_SECRET_KEY:?Set SEAMTECH_S3_SECRET_KEY - secret applicatif dedie, voir scripts/provisionner_stockage.sh}
       SEAMTECH_REDIS_URL: "redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in the environment}@redis:6379/0"
       SEAMTECH_REQUIRE_DURABLE_QUEUE: ${SEAMTECH_REQUIRE_DURABLE_QUEUE:-true}
+      # Verrou optimiste OBLIGATOIRE (défaut true) : une correction ou une
+      # décision (valider/rejeter/rouvrir) sans révision de fiche est REFUSÉE
+      # (428) au lieu d'être appliquée sans protection, et une fiche modifiée
+      # depuis l'affichage est refusée (409) — l'opérateur ne peut ni écraser
+      # ni approuver une valeur qu'il n'a pas relue. Ne passer à false que pour
+      # un script ancien identifié : l'écran d'atelier, lui, envoie toujours la
+      # révision qu'il affiche.
+      SEAMTECH_REQUIRE_REVISION: ${SEAMTECH_REQUIRE_REVISION:-true}
       # Relecture des octets stockés pour prouver l'intégrité AVANT toute purge
       # locale (GET + SHA-256 côté worker). Mettre à false interdit la purge :
       # une empreinte fournie par l'application ne prouve pas le contenu.

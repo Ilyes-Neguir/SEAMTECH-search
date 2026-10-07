@@ -329,4 +329,188 @@ test.describe("concurrence entre postes (sessions indépendantes)", () => {
       await ctxB.close()
     }
   })
+
+  /** Ramène la fiche à « a_valider » (elle peut avoir été validée par un autre
+   *  scénario) et renvoie son état réel : ces scénarios ne supposent jamais un
+   *  numéro de révision, ils le LISENT. */
+  async function etatReel(
+    poste: Page,
+    code: string,
+  ): Promise<{ statut: string; revision: number }> {
+    const reponse = await poste.request.get(`/api/fiches/${encodeURIComponent(code)}/etat`)
+    expect(reponse.status(), await reponse.text()).toBe(200)
+    const corps = (await reponse.json()) as { statut: string; revision: number }
+    return { statut: corps.statut, revision: corps.revision }
+  }
+
+  /** Valeur ENREGISTRÉE d'un champ, lue par l'API authentifiée (donc en base). */
+  async function etatChamp(poste: Page, code: string, champ: string): Promise<string | null> {
+    const reponse = await poste.request.get(`/api/fiches/${encodeURIComponent(code)}/champs`)
+    expect(reponse.status(), await reponse.text()).toBe(200)
+    const lignes = (await reponse.json()) as Array<{ champ: string; valeur_normalisee: string | null }>
+    return lignes.find((ligne) => ligne.champ === champ)?.valeur_normalisee ?? null
+  }
+
+  async function garantirAValider(poste: Page, code: string): Promise<{ statut: string; revision: number }> {
+    let etat = await etatReel(poste, code)
+    if (etat.statut !== "a_valider") {
+      const reouverture = await poste.request.post(`/api/fiches/${encodeURIComponent(code)}/rouvrir`, {
+        data: { revision: etat.revision, effacer_corrections: false },
+      })
+      expect(reouverture.status(), await reouverture.text()).toBe(200)
+      etat = await etatReel(poste, code)
+    }
+    return etat
+  }
+
+  test("décision liée à la révision revue : A ne peut pas approuver ce que B vient de changer", async ({ browser }) => {
+    const { ctxA, ctxB, posteA, posteB } = await deuxPostes(browser)
+    try {
+      const codes = await codesDeLaFile(posteA)
+      const candidats = codes.filter((code) => code && !code.includes("7792"))
+      expect(candidats.length).toBeGreaterThan(0)
+      // Une fiche qu'aucun autre scénario ne consomme : la DERNIÈRE de la file.
+      const code = candidats[candidats.length - 1]
+      const etatInitial = await garantirAValider(posteA, code)
+
+      // LES DEUX POSTES ouvrent la MÊME fiche, à la MÊME révision.
+      await ouvrirFiche(posteA, code)
+      await ouvrirFiche(posteB, code)
+      await expect(posteA.getByTestId("validation-app")).toHaveAttribute("data-statut", "a_valider")
+
+      // B corrige une valeur de fabrication (le collègue travaille pendant que
+      // A relit) : la fiche avance d'une révision.
+      const { selecteur, champ } = await choisirChamp(posteB)
+      const valeurCollegue = `E2E-DECISION-${Date.now()}`
+      await posteB.locator(selecteur).fill(valeurCollegue)
+      await posteB.getByTestId("bouton-corriger").first().click()
+      await expect(posteB.getByTestId("message-ok")).toBeVisible({ timeout: 15000 })
+      const apresB = await etatReel(posteA, code)
+      expect(apresB.revision).toBe(etatInitial.revision + 1)
+
+      // A, sur SON écran (révision N), clique « Valider » : REFUS.
+      await expect(posteA.getByTestId("validation-app")).toHaveAttribute("data-revision", String(etatInitial.revision))
+      await posteA.getByTestId("bouton-valider").click()
+      const conflitA = posteA.getByTestId("conflit-revision")
+      await expect(conflitA).toBeVisible({ timeout: 15000 })
+      await expect(conflitA).toContainText("décision NON appliquée")
+      await expect(conflitA).toContainText("valider")
+      await expect(conflitA.getByTestId("conflit-revisions")).toContainText(
+        `${etatInitial.revision} → ${apresB.revision}`,
+      )
+
+      // PREUVE EN BASE : la fiche est TOUJOURS a_valider — la décision n'a pas
+      // été appliquée, et la valeur de B est intacte.
+      const etatApresRefus = await etatReel(posteA, code)
+      expect(etatApresRefus).toEqual({ statut: "a_valider", revision: apresB.revision })
+      const champs = await etatChamp(posteA, code, champ)
+      expect(champs).toBe(valeurCollegue)
+
+      // A RECHARGE (l'écran exige une relecture), puis décide sur l'état à jour.
+      await posteA.getByTestId("bouton-recharger-fiche").click()
+      await expect(posteA.getByTestId("validation-app")).toHaveAttribute("data-revision", String(apresB.revision))
+      await expect(conflitA).toHaveCount(0)
+      await posteA.getByTestId("bouton-valider").click()
+      await expect(posteA.getByTestId("message-ok")).toBeVisible({ timeout: 15000 })
+      const etatFinal = await etatReel(posteA, code)
+      expect(etatFinal).toEqual({ statut: "valide", revision: apresB.revision + 1 })
+    } finally {
+      await ctxA.close()
+      await ctxB.close()
+    }
+  })
+
+  test("révision non lue : correction et décision bloquées, et le backend refuse aussi", async ({ browser }) => {
+    const { ctxA, ctxB, posteA, posteB } = await deuxPostes(browser)
+    try {
+      const codes = await codesDeLaFile(posteA)
+      const candidats = codes.filter((code) => code && !code.includes("7792"))
+      expect(candidats.length).toBeGreaterThan(0)
+      const code = candidats[0]
+
+      // LECTURE RETARDÉE : tant que la révision n'est pas là, aucun champ n'est
+      // affiché — l'état n'est jamais « à moitié chargé » (champs sans jeton).
+      await posteA.route(`**/api/fiches/${encodeURIComponent(code)}/etat`, async (route) => {
+        await new Promise((resoudre) => setTimeout(resoudre, 1500))
+        await route.continue()
+      })
+      await posteA.goto("/validation")
+      await expect(posteA.getByTestId("file-validation")).toBeVisible()
+      await posteA.locator(`li[data-code="${code}"]`).getByTestId("code-fiche").click()
+      await expect(posteA.getByTestId("validation-app")).toHaveAttribute("data-chargement-etat", "1")
+      await expect(posteA.locator('input[data-testid^="champ-"]')).toHaveCount(0)
+      await expect(posteA.getByTestId("validation-app")).toHaveAttribute("data-revision", /^[0-9]+$/, {
+        timeout: 15000,
+      })
+
+      // LECTURE EN ÉCHEC : le poste affiche l'état bloqué et n'écrit plus.
+      const avant = await etatReel(posteB, code)
+      await posteA.unroute(`**/api/fiches/${encodeURIComponent(code)}/etat`)
+      await posteA.route(`**/api/fiches/${encodeURIComponent(code)}/etat`, (route) => route.abort())
+      await posteA.getByTestId("bouton-recharger-revision").click()
+      const bandeau = posteA.getByTestId("revision-indisponible")
+      await expect(bandeau).toBeVisible({ timeout: 15000 })
+      await expect(posteA.getByTestId("validation-app")).toHaveAttribute("data-revision", "")
+      // Rien à corriger sans état lu : aucun champ n'est rendu, donc aucun
+      // bouton « corriger » n'existe — l'écran ne peut pas écrire à l'aveugle.
+      await expect(posteA.getByTestId("bouton-corriger")).toHaveCount(0)
+      await expect(posteA.getByTestId("bouton-valider")).toBeVisible()
+
+      // REQUÊTE DIRECTE SANS RÉVISION (ce que ferait un script ou un ancien
+      // client) : le BACKEND refuse aussi — 428, et rien n'est écrit.
+      const directe = await posteB.request.post(`/api/fiches/${encodeURIComponent(code)}/corriger`, {
+        data: { champ: "fiche.designation", valeur: "ECRITURE-SANS-REVISION" },
+      })
+      expect(directe.status(), await directe.text()).toBe(428)
+      const decisionDirecte = await posteB.request.post(`/api/fiches/${encodeURIComponent(code)}/valider`, {
+        data: {},
+      })
+      expect(decisionDirecte.status(), await decisionDirecte.text()).toBe(428)
+
+      // L'état en base n'a pas bougé d'un iota.
+      const apres = await etatReel(posteB, code)
+      expect(apres).toEqual(avant)
+    } finally {
+      await ctxA.close()
+      await ctxB.close()
+    }
+  })
+
+  test("réponse en retard : la fiche affichée n'est jamais écrasée par la précédente", async ({ browser }) => {
+    const { ctxA, ctxB, posteA, posteB } = await deuxPostes(browser)
+    try {
+      const codes = await codesDeLaFile(posteA)
+      const candidats = codes.filter((code) => code && !code.includes("7792"))
+      expect(candidats.length).toBeGreaterThanOrEqual(2)
+      const lente = candidats[candidats.length - 1]
+      const rapide = candidats[0]
+
+      // La lecture d'état de la fiche LENTE est retardée : elle arrivera APRÈS
+      // la sélection de la fiche RAPIDE.
+      await posteA.route(`**/api/fiches/${encodeURIComponent(lente)}/etat`, async (route) => {
+        await new Promise((resoudre) => setTimeout(resoudre, 2000))
+        await route.continue()
+      })
+      await posteA.goto("/validation")
+      await expect(posteA.getByTestId("file-validation")).toBeVisible()
+      await posteA.locator(`li[data-code="${lente}"]`).getByTestId("code-fiche").click()
+      await posteA.locator(`li[data-code="${rapide}"]`).getByTestId("code-fiche").click()
+      await expect(posteA.getByTestId("titre-fiche")).toHaveText(rapide)
+      await expect(posteA.getByTestId("validation-app")).toHaveAttribute("data-revision", /^[0-9]+$/)
+
+      // On laisse la réponse tardive arriver, puis on vérifie que l'écran
+      // affiche TOUJOURS la fiche rapide — ses champs ET sa révision.
+      await posteA.waitForTimeout(2500)
+      await expect(posteA.getByTestId("titre-fiche")).toHaveText(rapide)
+      await expect(posteA.getByTestId("validation-app")).toHaveAttribute("data-fiche", rapide)
+      const { selecteur, champ } = await choisirChamp(posteA)
+      const attendue = await etatChamp(posteA, rapide, champ)
+      await expect(posteA.locator(selecteur)).toHaveValue(attendue ?? "")
+      const revisionRapide = (await etatReel(posteB, rapide)).revision
+      await expect(posteA.getByTestId("validation-app")).toHaveAttribute("data-revision", String(revisionRapide))
+    } finally {
+      await ctxA.close()
+      await ctxB.close()
+    }
+  })
 })

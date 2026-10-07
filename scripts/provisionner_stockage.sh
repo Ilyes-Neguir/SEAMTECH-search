@@ -29,7 +29,11 @@
 #   SEAMTECH_MINIO_CONTAINER  nom du conteneur MinIO si HORS composition
 #                             (la CI hors compose : « minio ») ; par défaut
 #                             le service compose « minio » est utilisé.
-#   SEAMTECH_MINIO_URL  URL vue DEPUIS le conteneur (défaut http://localhost:9000)
+#   SEAMTECH_MINIO_URL    URL de l'API S3 vue par `mc` (défaut http://localhost:9000)
+#   SEAMTECH_MINIO_MC     chemin d'un binaire `mc` exécuté SUR L'HÔTE : mode
+#                         « MinIO local sans Docker » (job CI hors-ligne, poste
+#                         d'atelier installé sans conteneur). Dans ce mode les
+#                         fichiers de politique sont lus directement.
 #
 # Usage : bash scripts/provisionner_stockage.sh
 set -euo pipefail
@@ -67,7 +71,12 @@ ALIAS="provisionnement"
 # Détermination du mode d'accès à `mc` : conteneur nommé (CI hors compose) ou
 # service compose. `mc` est embarqué dans l'image MinIO reconstruite par
 # scripts/construire_image_minio.sh — aucun binaire à installer sur l'hôte.
-if [ -n "${SEAMTECH_MINIO_CONTAINER:-}" ]; then
+if [ -n "${SEAMTECH_MINIO_MC:-}" ]; then
+    # Mode SANS Docker : `mc` tourne sur l'hôte, contre un MinIO local. Les
+    # politiques sont alors lues telles quelles (aucune copie nécessaire).
+    _mc() { "$SEAMTECH_MINIO_MC" "$@"; }
+    MODE="mc local ($SEAMTECH_MINIO_MC) — MinIO sans Docker"
+elif [ -n "${SEAMTECH_MINIO_CONTAINER:-}" ]; then
     _mc() { docker exec -i "$SEAMTECH_MINIO_CONTAINER" mc "$@"; }
     MODE="conteneur $SEAMTECH_MINIO_CONTAINER (docker exec)"
 else
@@ -86,6 +95,18 @@ _conteneur_minio() {
     else
         docker compose ps -q minio
     fi
+}
+
+# Chemin SOUS LEQUEL `mc` lira une politique.
+_exposer_politique() {
+    local source="$1"
+    local destination="$2"
+    if [ -n "${SEAMTECH_MINIO_MC:-}" ]; then
+        printf '%s' "$source"
+        return
+    fi
+    _copier_dans_conteneur "$source" "$destination"
+    printf '%s' "$destination"
 }
 
 _copier_dans_conteneur() {
@@ -144,15 +165,15 @@ sed "s/__BUCKET__/$BUCKET_SAUVEGARDE/g" "$tmpdir/app.json" > "$tmpdir/politique-
 
 # Les deux fichiers sont copiés DANS le conteneur (`/tmp` y existe toujours :
 # `mc` lit un chemin de son propre système de fichiers, pas celui de l'hôte).
-_copier_dans_conteneur "$tmpdir/politique-app.json" "/tmp/seamtech-politique-app.json"
-_copier_dans_conteneur "$tmpdir/politique-sauvegarde.json" "/tmp/seamtech-politique-sauvegarde.json"
+chemin_politique_app="$(_exposer_politique "$tmpdir/politique-app.json" "/tmp/seamtech-politique-app.json")"
+chemin_politique_sauvegarde="$(_exposer_politique "$tmpdir/politique-sauvegarde.json" "/tmp/seamtech-politique-sauvegarde.json")"
 
 _mc admin policy detach "$ALIAS" "seamtech-app" --user "$SEAMTECH_S3_ACCESS_KEY" >/dev/null 2>&1 || true
 _mc admin policy rm "$ALIAS" "seamtech-app" >/dev/null 2>&1 || true
-_mc admin policy create "$ALIAS" "seamtech-app" "/tmp/seamtech-politique-app.json" >/dev/null
+_mc admin policy create "$ALIAS" "seamtech-app" "$chemin_politique_app" >/dev/null
 _mc admin policy detach "$ALIAS" "seamtech-sauvegarde" --user "$SEAMTECH_BACKUP_ACCESS_KEY" >/dev/null 2>&1 || true
 _mc admin policy rm "$ALIAS" "seamtech-sauvegarde" >/dev/null 2>&1 || true
-_mc admin policy create "$ALIAS" "seamtech-sauvegarde" "/tmp/seamtech-politique-sauvegarde.json" >/dev/null
+_mc admin policy create "$ALIAS" "seamtech-sauvegarde" "$chemin_politique_sauvegarde" >/dev/null
 
 # 4. Utilisateurs : recréés pour que le SECRET fourni soit réellement celui
 #    appliqué (rotation idempotente). Un compte retiré puis recréé ne conserve
@@ -177,13 +198,14 @@ echo "-- vérification : les buckets sont PRIVÉS (accès anonyme refusé)"
 # Preuve structurelle, indépendante de la sortie texte de `mc` : une requête
 # HTTP SANS identifiants doit être refusée (403) sur une clé inexistante —
 # MinIO répond 403 pour un bucket privé, et 404 pour un bucket public.
-code_anonyme="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:9000/$BUCKET/sonde-privee" || true)"
+URL_SONDE="${URL_INTERNE/localhost/127.0.0.1}"
+code_anonyme="$(curl -s -o /dev/null -w '%{http_code}' "$URL_SONDE/$BUCKET/sonde-privee" || true)"
 if [ "$code_anonyme" != "403" ]; then
     echo "ATTENTION : accès anonyme au bucket $BUCKET renvoie HTTP ${code_anonyme:-?} (attendu 403)" >&2
     echo "            Vérifier qu'aucune politique anonyme n'a été posée sur ce bucket." >&2
     exit 1
 fi
-code_anonyme_sauv="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:9000/$BUCKET_SAUVEGARDE/sonde-privee" || true)"
+code_anonyme_sauv="$(curl -s -o /dev/null -w '%{http_code}' "$URL_SONDE/$BUCKET_SAUVEGARDE/sonde-privee" || true)"
 if [ "$code_anonyme_sauv" != "403" ]; then
     echo "ATTENTION : accès anonyme au bucket $BUCKET_SAUVEGARDE renvoie HTTP ${code_anonyme_sauv:-?} (attendu 403)" >&2
     exit 1

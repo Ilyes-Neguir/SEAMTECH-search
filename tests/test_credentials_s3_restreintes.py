@@ -190,10 +190,25 @@ def test_script_de_provisionnement_lit_les_politiques_DANS_le_conteneur() -> Non
     assert len(lignes_politiques) == 2, lignes_politiques
     for ligne in lignes_politiques:
         assert "$tmpdir" not in ligne, f"politique lue via un chemin de l'HÔTE : {ligne}"
-        assert "/tmp/seamtech-politique-" in ligne, f"chemin DANS le conteneur attendu : {ligne}"
+        assert "$chemin_politique_" in ligne, (
+            f"chemin résolu par _exposer_politique attendu : {ligne}"
+        )
 
-    # Les deux politiques sont effectivement copiées (définition + 2 appels).
-    assert texte.count("_copier_dans_conteneur") >= 3
+    # Le chemin est résolu PAR `_exposer_politique` : la copie vers le conteneur
+    # y est appelée une fois, pour les deux politiques (elle était appelée
+    # directement sur chaque fichier avant que le mode sans Docker n'existe).
+    assert texte.count("_copier_dans_conteneur") >= 2
+
+    # MODE SANS DOCKER (job CI hors-ligne, poste d'atelier sans conteneur) : dans
+    # ce mode `mc` tourne sur l'hôte, donc les politiques sont lues DIRECTEMENT à
+    # leur chemin local — la copie dans le conteneur ne s'applique pas.
+    assert "_exposer_politique()" in texte, "le chemin de politique doit être résolu selon le mode"
+    assert "SEAMTECH_MINIO_MC" in texte, "le mode `mc` local doit exister"
+    bloc_exposer = texte.split("_exposer_politique()", 1)[1].split("\n}", 1)[0]
+    assert 'printf \'%s\' "$source"' in bloc_exposer, "mode local : le chemin source est utilisé tel quel"
+    assert '_copier_dans_conteneur "$source" "$destination"' in bloc_exposer, (
+        "mode conteneur : la copie reste la seule voie"
+    )
 
 
 def test_script_de_provisionnement_verifie_que_les_buckets_sont_prives() -> None:

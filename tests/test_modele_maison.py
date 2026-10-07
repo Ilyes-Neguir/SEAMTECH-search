@@ -157,7 +157,7 @@ def base_ml() -> Iterator[dict[str, Any]]:
     initialiser_gabarits(index)
     resultat = depot.deposer_dossier(index, RACINE / "sample_data/CLIENT-7792-SO")
     assert resultat.get("statut") == "traite"
-    valider_fiche(index, "7792-SO", "test-modele-maison")
+    valider_fiche(index, "7792-SO", "test-modele-maison", exiger_revision=False)
     try:
         yield {"index": index, "url": url_base, "nom": nom_base}
     finally:

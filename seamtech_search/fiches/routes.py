@@ -64,6 +64,39 @@ _SQL_CHAMPS = (
     "WHERE f.code = %s ORDER BY e.id_champ"
 )
 _SQL_FICHE_EXISTE = "SELECT id_fiche FROM fiche WHERE code = %s"
+#: Colonnes de ``fiche_champ_extrait`` exposées par l'API (ordre exact du SELECT).
+_COLONNES_CHAMP = (
+    "champ",
+    "rang",
+    "table_cible",
+    "colonne_cible",
+    "valeur_brute",
+    "valeur_normalisee",
+    "methode",
+    "confiance",
+    "page",
+    "zone",
+    "version_gabarit",
+    "corrige",
+    "corrige_par",
+    "corrige_le",
+)
+#: ÉTAT COHÉRENT d'une fiche : statut + révision + champs en UNE SEULE requête.
+#: Deux requêtes séparées laissent passer l'entrelacement suivant (revue
+#: indépendante du 2026-10-07, constat n°2) :
+#:   1. le poste B lit les ANCIENNES valeurs ;
+#:   2. le poste A enregistre (la révision avance) ;
+#:   3. le poste B lit la NOUVELLE révision ;
+#:   4. B corrige : le verrou passe, alors que la correction est fondée sur un
+#:      état que B n'a jamais vu. Une requête = un instantané PostgreSQL : la
+#:      révision renvoyée est TOUJOURS celle des valeurs renvoyées.
+_SQL_ETAT_FICHE = (
+    "SELECT f.code, f.statut, f.revision, e.champ, e.rang, e.table_cible, e.colonne_cible, "
+    "e.valeur_brute, e.valeur_normalisee, e.methode, e.confiance, e.page, e.zone, "
+    "e.version_gabarit, e.corrige, e.corrige_par, e.corrige_le "
+    "FROM fiche f LEFT JOIN fiche_champ_extrait e ON e.id_fiche = f.id_fiche "
+    "WHERE f.code = %s ORDER BY e.id_champ"
+)
 _SQL_GABARITS_DERNIERES = (
     "SELECT DISTINCT ON (code) code, version, description, ancres_detection, actif, nb_fiches "
     "FROM gabarit ORDER BY code, version DESC"
@@ -100,23 +133,35 @@ def champs_de_fiche(index: Any, code: str) -> list[dict[str, Any]]:
             if cursor.fetchone() is None:
                 raise HTTPException(status_code=404, detail=f"Fiche « {code} » inconnue.")
             cursor.execute(_SQL_CHAMPS, (code,))
-            colonnes = [
-                "champ",
-                "rang",
-                "table_cible",
-                "colonne_cible",
-                "valeur_brute",
-                "valeur_normalisee",
-                "methode",
-                "confiance",
-                "page",
-                "zone",
-                "version_gabarit",
-                "corrige",
-                "corrige_par",
-                "corrige_le",
-            ]
-            return [dict(zip(colonnes, ligne)) for ligne in cursor.fetchall()]
+            return [dict(zip(_COLONNES_CHAMP, ligne)) for ligne in cursor.fetchall()]
+
+
+def etat_fiche(index: Any, code: str) -> dict[str, Any]:
+    """État d'une fiche lu en UN INSTANTANÉ : statut, révision ET champs.
+
+    C'est l'endpoint que l'écran de validation utilise pour ouvrir (et
+    recharger) une fiche : la révision renvoyée est, par construction,
+    celle des valeurs renvoyées. Une requête par ressource était le défaut
+    n°2 de la revue indépendante du 2026-10-07 (valeurs périmées + jeton de
+    révision frais = correction périmée acceptée).
+    """
+    _exiger_postgres(index)
+    with index.connect() as connexion:
+        with connexion.cursor() as cursor:
+            cursor.execute(_SQL_ETAT_FICHE, (code,))
+            lignes = cursor.fetchall()
+    if not lignes:
+        raise HTTPException(status_code=404, detail=f"Fiche « {code} » inconnue.")
+    premiere = lignes[0]
+    return {
+        "code": premiere[0],
+        "statut": str(premiere[1]),
+        "revision": int(premiere[2] if premiere[2] is not None else 1),
+        # LEFT JOIN : une fiche sans champ extrait renvoie UNE ligne « vide ».
+        "champs": [
+            dict(zip(_COLONNES_CHAMP, ligne[3:])) for ligne in lignes if ligne[3] is not None
+        ],
+    }
 
 
 def lister_gabarits(index: Any) -> list[dict[str, Any]]:
@@ -291,15 +336,130 @@ def _fiche_statut(cursor: Any, code: str) -> tuple[int, str]:
     return int(ligne[0]), str(ligne[1]), int(ligne[2] if ligne[2] is not None else 1)
 
 
+def _message_sans_revision(action: str) -> str:
+    """Refus 428 — la protection ne peut pas être perdue par un poste."""
+    return (
+        f"{action} refusée : la révision de la fiche n'a pas été fournie. La protection "
+        "anti-écrasement (deux postes sur la même fiche) ne se désactive pas depuis un poste : "
+        "rechargez la fiche pour lire son état ET sa révision, puis recommencez. "
+        "Cause possible : la révision n'avait pas encore été chargée, ou sa requête a échoué."
+    )
+
+
+def _revision_attendue(valeur: Any, *, exiger: bool, action: str) -> int | None:
+    """Révision annoncée par le poste : entière, >= 1, OBLIGATOIRE par défaut.
+
+    ``exiger=False`` n'est ouvert qu'à un client ancien explicitement configuré
+    (``SEAMTECH_REQUIRE_REVISION=false``) : l'écran d'atelier, lui, envoie
+    toujours la révision qu'il affiche.
+    """
+    if valeur is None or str(valeur).strip() == "":
+        if exiger:
+            raise HTTPException(status_code=428, detail=_message_sans_revision(action))
+        return None
+    try:
+        revision = int(valeur)
+    except (TypeError, ValueError) as erreur:
+        raise HTTPException(
+            status_code=422,
+            detail=f"« revision » doit être un entier (reçu : {valeur!r}).",
+        ) from erreur
+    if revision < 1:
+        raise HTTPException(status_code=422, detail="« revision » doit être >= 1.")
+    return revision
+
+
+def _conflit_decision(
+    cursor: Any, *, id_fiche: int, code: str, action: str, statut_attendu: str | None,
+    revision_attendue: int,
+) -> HTTPException:
+    """409 d'une DÉCISION refusée : on relit l'état réel pour que l'opérateur
+    comprenne (statut + révision) au lieu d'être simplement arrêté."""
+    cursor.execute("SELECT statut, revision FROM fiche WHERE id_fiche = %s", (id_fiche,))
+    etat = cursor.fetchone()
+    statut_actuel = str(etat[0]) if etat else (statut_attendu or "?")
+    revision_actuelle = int(etat[1]) if etat else int(revision_attendue) + 1
+    return HTTPException(
+        status_code=409,
+        detail={
+            "code": "conflit_decision",
+            "message": (
+                f"Fiche {code} modifiée par un autre poste depuis l'ouverture : la décision "
+                f"« {action} » n'a PAS été appliquée — elle porterait sur une version que "
+                "l'opérateur n'a pas relue. Rechargez la fiche, relisez son état, puis "
+                "reprenez la décision."
+            ),
+            "regle": "verrou optimiste de décision (statut + révision, migration 021)",
+            "decision": action,
+            "revision_envoyee": int(revision_attendue),
+            "revision_actuelle": revision_actuelle,
+            "statut_actuel": statut_actuel,
+        },
+    )
+
+
+def _decision_sous_verrou(
+    cursor: Any, *, id_fiche: int, code: str, action: str, statut_cible: str,
+    revision_attendue: int | None, exiger_revision: bool, statut_attendu: str | None = None,
+) -> int:
+    """Applique une DÉCISION sous compare-and-swap (statut + révision).
+
+    Une décision (valider/rejeter/rouvrir) engage la fabrication : elle doit
+    porter EXACTEMENT sur l'état que l'opérateur a relu. L'UPDATE vérifie donc
+    la révision — et, quand elle est connue, le statut — dans la même
+    instruction ; si un collègue a corrigé la fiche entre l'affichage et le
+    clic, ``rowcount`` vaut 0 et la décision est refusée (409) SANS écrire au
+    journal : aucun « valider » trompeur dans l'audit.
+    """
+    if revision_attendue is None:
+        if exiger_revision:
+            raise HTTPException(status_code=428, detail=_message_sans_revision(f"Décision « {action} »"))
+        LOGGER.warning(
+            "Décision %s sur la fiche %s SANS révision fournie (client ancien explicitement "
+            "autorisé) : elle s'applique à l'état COURANT, que le poste n'a pas forcément relu.",
+            action, code,
+        )
+        cursor.execute(
+            "UPDATE fiche SET statut = %s, revision = revision + 1, updated_at = now() "
+            "WHERE id_fiche = %s RETURNING revision",
+            (statut_cible, id_fiche),
+        )
+        return int(cursor.fetchone()[0])
+
+    conditions = "id_fiche = %s AND revision = %s"
+    parametres: list[Any] = [statut_cible, id_fiche, int(revision_attendue)]
+    if statut_attendu is not None:
+        conditions = "id_fiche = %s AND statut = %s AND revision = %s"
+        parametres = [statut_cible, id_fiche, statut_attendu, int(revision_attendue)]
+    cursor.execute(
+        f"UPDATE fiche SET statut = %s, revision = revision + 1, updated_at = now() "
+        f"WHERE {conditions} RETURNING revision",
+        tuple(parametres),
+    )
+    ligne = cursor.fetchone()
+    if ligne is None:
+        raise _conflit_decision(
+            cursor, id_fiche=id_fiche, code=code, action=action, statut_attendu=statut_attendu,
+            revision_attendue=int(revision_attendue),
+        )
+    return int(ligne[0])
+
+
 def _avancer_revision(
     cursor: Any, id_fiche: int, revision_attendue: int | None, code: str, id_champ: int | None = None,
+    *, exiger_revision: bool = True,
 ) -> int:
     """Fait avancer la révision de la fiche — compare-and-swap si une révision
     est attendue.
 
-    ``revision_attendue is None`` (client ancien) : incrément inconditionnel,
-    comme avant, mais un WARNING est journalisé — l'absence de verrou est un
-    ÉTAT CONNU, pas une garantie silencieuse.
+    ``revision_attendue is None`` : REFUS (428) quand ``exiger_revision`` est
+    vrai — le défaut. La protection ne peut donc pas disparaître parce qu'une
+    requête de révision a échoué côté poste (défaut n°1 de la revue
+    indépendante du 2026-10-07). Un client ancien ne peut écrire sans verrou
+    que si l'exploitant l'a explicitement autorisé
+    (``SEAMTECH_REQUIRE_REVISION=false``) : dans ce cas l'écriture reste
+    inconditionnelle mais elle est JOURNALISÉE comme telle — jamais présentée
+    comme une protection.
 
     Avec une révision attendue, l'UPDATE ne s'applique que si la fiche porte
     encore cette révision. PostgreSQL réévalue la clause ``WHERE`` après avoir
@@ -308,6 +468,8 @@ def _avancer_revision(
     d'écraser son travail.
     """
     if revision_attendue is None:
+        if exiger_revision:
+            raise HTTPException(status_code=428, detail=_message_sans_revision("Correction"))
         LOGGER.warning(
             "Correction de la fiche %s SANS révision fournie (client ancien) : écriture "
             "inconditionnelle — deux postes simultanés peuvent s'écraser mutuellement. "
@@ -368,6 +530,7 @@ def _avancer_revision(
 def corriger_champ(
     index: Any, code: str, champ: str, valeur: str, utilisateur: str | None,
     rang: int | None = None, commentaire: str | None = None, revision: int | str | None = None,
+    *, exiger_revision: bool = True,
 ) -> dict[str, Any]:
     """Corrige UN champ (RG11 : refusé sur une fiche validée ; la correction
     est tracée sur la ligne fiche_champ_extrait ET au journal).
@@ -376,20 +539,12 @@ def corriger_champ(
     corps peut porter ``revision`` — la révision de fiche lue à l'ouverture.
     Si un autre poste a enregistré entre-temps, la correction est REFUSÉE (409)
     avec la valeur du collègue, au lieu de l'écraser en silence. Sans
-    ``revision`` (client ancien), l'écriture reste inconditionnelle mais elle
-    est JOURNALISÉE comme telle : on ne fait pas passer une absence de verrou
-    pour une protection."""
-    revision_attendue: int | None = None
-    if revision is not None and str(revision).strip() != "":
-        try:
-            revision_attendue = int(revision)
-        except (TypeError, ValueError) as erreur:
-            raise HTTPException(
-                status_code=422,
-                detail=f"« revision » doit être un entier (reçu : {revision!r}).",
-            ) from erreur
-        if revision_attendue < 1:
-            raise HTTPException(status_code=422, detail="« revision » doit être >= 1.")
+    ``revision``, la correction est REFUSÉE (428) quand ``exiger_revision`` est
+    vrai — le défaut : une protection qui disparaît silencieusement n'est pas
+    une protection. Un client ancien ne peut écrire sans verrou que si
+    l'exploitant l'a explicitement autorisé, et l'écriture est alors
+    JOURNALISÉE comme non protégée."""
+    revision_attendue = _revision_attendue(revision, exiger=exiger_revision, action="Correction")
     if not champ:
         raise HTTPException(status_code=422, detail="Préciser le champ à corriger.")
     if valeur is None:
@@ -431,7 +586,9 @@ def corriger_champ(
             # L'ORDRE COMPTE : la révision est arbitrée AVANT toute écriture (et
             # avant la création éventuelle d'un compte opérateur), pour qu'un
             # conflit ne laisse AUCUNE trace de travail non appliqué.
-            nouvelle_revision = _avancer_revision(cursor, id_fiche, revision_attendue, code, id_champ)
+            nouvelle_revision = _avancer_revision(
+                cursor, id_fiche, revision_attendue, code, id_champ, exiger_revision=exiger_revision,
+            )
             id_utilisateur = _resoudre_utilisateur(cursor, utilisateur)
             cursor.execute(
                 "UPDATE fiche_champ_extrait SET valeur_normalisee = %s, corrige = TRUE, corrige_par = %s, corrige_le = now() "
@@ -451,20 +608,33 @@ def corriger_champ(
             }
 
 
-def valider_fiche(index: Any, code: str, utilisateur: str | None, commentaire: str | None = None) -> dict[str, Any]:
-    """a_valider → valide (RG3 : c'est une DÉCISION explicite, jamais un effet de bord)."""
+def valider_fiche(
+    index: Any, code: str, utilisateur: str | None, commentaire: str | None = None,
+    revision: int | str | None = None, *, exiger_revision: bool = True,
+) -> dict[str, Any]:
+    """a_valider → valide (RG3 : c'est une DÉCISION explicite, jamais un effet de bord).
+
+    La validation est LIÉE À LA RÉVISION REVUE (revue indépendante du
+    2026-10-07, constat n°3) : un opérateur qui approuve un écran périmé
+    approuverait une valeur qu'il n'a jamais lue — pour la fabrication, c'est
+    inacceptable. L'UPDATE vérifie statut ET révision dans la même instruction :
+    soit la fiche est exactement celle qui a été relue, soit la décision est
+    refusée (409) et rien n'est écrit au journal.
+    """
+    revision_attendue = _revision_attendue(revision, exiger=exiger_revision, action="Décision « valider »")
     with index.connect() as connexion:
         with connexion.cursor() as cursor:
-            id_fiche, statut, _revision = _fiche_statut(cursor, code)
+            id_fiche, statut, revision_fiche = _fiche_statut(cursor, code)
             if statut != "a_valider":
                 conseil = " — rouvrez-la d'abord (POST /fiches/{code}/rouvrir)." if statut == "rejete" else ""
                 raise HTTPException(status_code=409, detail=f"Fiche {code} en statut « {statut} » : seule une fiche a_valider peut être validée{conseil}")
             id_utilisateur = _resoudre_utilisateur(cursor, utilisateur)
             # Une DÉCISION change l'état de la fiche : la révision avance, donc un
             # poste resté sur l'ancienne révision ne pourra plus écrire (migration 021).
-            cursor.execute(
-                "UPDATE fiche SET statut = 'valide', revision = revision + 1, updated_at = now() WHERE id_fiche = %s",
-                (id_fiche,),
+            nouvelle_revision = _decision_sous_verrou(
+                cursor, id_fiche=id_fiche, code=code, action="valider", statut_cible="valide",
+                statut_attendu="a_valider", revision_attendue=revision_attendue,
+                exiger_revision=exiger_revision,
             )
             # Lot E, articulé avec la migration 018 : le texte de recherche est
             # rempli dès l'ÉCRITURE (fiche badgée « non vérifiée ») ; la VALIDATION
@@ -477,37 +647,54 @@ def valider_fiche(index: Any, code: str, utilisateur: str | None, commentaire: s
                 "et texte de recherche pondéré rafraîchi (visible par GET /recherche).",
                 code, utilisateur,
             )
-            return {"code": code, "statut": "valide", "revision": _revision + 1}
+            return {"code": code, "statut": "valide", "revision": nouvelle_revision}
 
 
-def rejeter_fiche(index: Any, code: str, utilisateur: str | None, motif: str) -> dict[str, Any]:
-    """a_valider → rejete (motif OBLIGATOIRE — un rejet sans raison n'est pas traçable)."""
+def rejeter_fiche(
+    index: Any, code: str, utilisateur: str | None, motif: str,
+    revision: int | str | None = None, *, exiger_revision: bool = True,
+) -> dict[str, Any]:
+    """a_valider → rejete (motif OBLIGATOIRE — un rejet sans raison n'est pas traçable).
+
+    Comme la validation, le rejet est lié à la révision revue : refuser une
+    fiche qui a changé depuis l'écran reviendrait à tracer un motif qui ne
+    correspond plus au contenu.
+    """
     if not motif or not motif.strip():
         raise HTTPException(status_code=422, detail="Motif OBLIGATOIRE pour rejeter une fiche (traçabilité).")
+    revision_attendue = _revision_attendue(revision, exiger=exiger_revision, action="Décision « rejeter »")
     with index.connect() as connexion:
         with connexion.cursor() as cursor:
-            id_fiche, statut, _revision = _fiche_statut(cursor, code)
+            id_fiche, statut, revision_fiche = _fiche_statut(cursor, code)
             if statut != "a_valider":
                 raise HTTPException(status_code=409, detail=f"Fiche {code} en statut « {statut} » : seule une fiche a_valider peut être rejetée.")
             id_utilisateur = _resoudre_utilisateur(cursor, utilisateur)
-            cursor.execute(
-                "UPDATE fiche SET statut = 'rejete', revision = revision + 1, updated_at = now() WHERE id_fiche = %s",
-                (id_fiche,),
+            nouvelle_revision = _decision_sous_verrou(
+                cursor, id_fiche=id_fiche, code=code, action="rejeter", statut_cible="rejete",
+                statut_attendu="a_valider", revision_attendue=revision_attendue,
+                exiger_revision=exiger_revision,
             )
             _jouter_journal(cursor, id_fiche, id_utilisateur, "rejeter", statut, "rejete", motif.strip())
             LOGGER.info("Fiche %s rejetée par %s (motif : %s).", code, utilisateur, motif.strip())
-            return {"code": code, "statut": "rejete", "revision": _revision + 1}
+            return {"code": code, "statut": "rejete", "revision": nouvelle_revision}
 
 
 def rouvrir_fiche(
     index: Any, code: str, utilisateur: str | None, commentaire: str | None = None,
     effacer_corrections: bool = False,
+    revision: int | str | None = None, *, exiger_revision: bool = True,
 ) -> dict[str, Any]:
     """valide/rejete → a_valider. Avec effacer_corrections=true : lève le verrou
-    RG11 en EFFAÇANT explicitement les corrections humaines (acquittement)."""
+    RG11 en EFFAÇANT explicitement les corrections humaines (acquittement).
+
+    Réouverture liée à la révision revue : elle change ce que les postes
+    peuvent réécrire, elle ne doit donc pas pouvoir s'appliquer à un état que
+    l'opérateur n'a pas relu.
+    """
+    revision_attendue = _revision_attendue(revision, exiger=exiger_revision, action="Décision « rouvrir »")
     with index.connect() as connexion:
         with connexion.cursor() as cursor:
-            id_fiche, statut, _revision = _fiche_statut(cursor, code)
+            id_fiche, statut, revision_fiche = _fiche_statut(cursor, code)
             if statut == "a_valider" and not effacer_corrections:
                 raise HTTPException(status_code=409, detail=f"Fiche {code} déjà a_valider.")
             corrections_effacees = False
@@ -517,16 +704,18 @@ def rouvrir_fiche(
                     (id_fiche,),
                 )
                 corrections_effacees = cursor.rowcount > 0
-            revision_apres = _revision
+            revision_apres = revision_fiche
             if statut != "a_valider" or corrections_effacees:
                 # Réouverture OU levée du verrou RG11 : dans les deux cas le
-                # contenu de la fiche change, donc la révision avance.
-                cursor.execute(
-                    "UPDATE fiche SET statut = 'a_valider', revision = revision + 1, updated_at = now() "
-                    "WHERE id_fiche = %s RETURNING revision",
-                    (id_fiche,),
+                # contenu de la fiche change, donc la révision avance — sous
+                # compare-and-swap. Le statut n'est pas contraint : rouvrir
+                # part de « valide », « rejete » ou d'un « a_valider » dont on
+                # lève le verrou RG11.
+                revision_apres = _decision_sous_verrou(
+                    cursor, id_fiche=id_fiche, code=code, action="rouvrir", statut_cible="a_valider",
+                    statut_attendu=None, revision_attendue=revision_attendue,
+                    exiger_revision=exiger_revision,
                 )
-                revision_apres = int(cursor.fetchone()[0])
             id_utilisateur = _resoudre_utilisateur(cursor, utilisateur)
             motif_journal = commentaire or ""
             if corrections_effacees:
@@ -563,7 +752,10 @@ def fichier_validation(index: Any, gabarit: str | None = None, anomalie: str | N
         "COUNT(c.id_champ) FILTER (WHERE c.valeur_normalisee IS NOT NULL AND c.confiance >= %s AND c.confiance < %s), "
         "COUNT(c.id_champ) FILTER (WHERE c.valeur_normalisee IS NOT NULL AND (c.confiance < %s OR c.confiance IS NULL)), "
         "MIN(c.confiance) FILTER (WHERE c.valeur_normalisee IS NOT NULL), "
-        "EXISTS (SELECT 1 FROM fiche_anomalie a WHERE a.id_fiche = f.id_fiche AND a.statut = 'a_traiter') "
+        "EXISTS (SELECT 1 FROM fiche_anomalie a WHERE a.id_fiche = f.id_fiche AND a.statut = 'a_traiter'), "
+        # Révision AFFICHÉE de chaque fiche : la validation en lot la renvoie pour
+        # que chaque décision porte sur l'état que l'opérateur a sélectionné.
+        "f.revision "
         "FROM fiche f "
         "LEFT JOIN fiche_champ_extrait c ON c.id_fiche = f.id_fiche "
         "LEFT JOIN gabarit g ON g.id_gabarit = f.id_gabarit "
@@ -586,6 +778,7 @@ def fichier_validation(index: Any, gabarit: str | None = None, anomalie: str | N
             "paliers": {"certain": int(ligne[5]), "lu": int(ligne[6]), "decompose": int(ligne[7]), "partiel": int(ligne[8])},
             "confiance_min": float(ligne[9]) if ligne[9] is not None else None,
             "a_anomalies": bool(ligne[10]),
+            "revision": int(ligne[11] if ligne[11] is not None else 1),
         }
         for ligne in lignes
     ]
@@ -594,11 +787,18 @@ def fichier_validation(index: Any, gabarit: str | None = None, anomalie: str | N
 def valider_lot(
     index: Any, codes: list[str], utilisateur: str | None,
     acquittement_humain: bool = False, commentaire: str | None = None,
+    revisions: dict[str, Any] | None = None, *, exiger_revision: bool = True,
 ) -> dict[str, Any]:
     """Validation GROUPÉE — la seule opération qui peut entériner une erreur
     systématique sur 10 000 fiches : verrou de calibration OBLIGATOIRE
     (409 tant que calibre:false, sauf acquittement humain explicite).
-    Un code ignoré est un RÉSULTAT avec raison ; le lot n'est pas cassé."""
+    Un code ignoré est un RÉSULTAT avec raison ; le lot n'est pas cassé.
+
+    Chaque fiche validée est liée à la RÉVISION que l'opérateur avait sous les
+    yeux (``revisions`` : code → révision affichée). Une fiche qui a bougé
+    depuis la sélection est IGNORÉE avec sa raison — elle n'est pas validée en
+    silence sur un contenu que personne n'a relu (constat n°3 de la revue
+    indépendante du 2026-10-07, étendu au lot)."""
     autorise, message = verifier_autorisation_validation_lot(None, acquittement_humain)
     if not autorise:
         raise HTTPException(status_code=409, detail=message)
@@ -608,20 +808,68 @@ def valider_lot(
             validees: list[str] = []
             ignorees: list[dict[str, str]] = []
             for code in codes:
-                cursor.execute("SELECT id_fiche, statut FROM fiche WHERE code = %s", (code,))
+                cursor.execute("SELECT id_fiche, statut, revision FROM fiche WHERE code = %s", (code,))
                 ligne = cursor.fetchone()
                 if ligne is None:
                     ignorees.append({"code": code, "raison": "fiche inconnue"})
                     continue
-                id_fiche, statut = int(ligne[0]), str(ligne[1])
+                id_fiche, statut, revision_actuelle = int(ligne[0]), str(ligne[1]), int(ligne[2] if ligne[2] is not None else 1)
                 if statut != "a_valider":
                     ignorees.append({"code": code, "raison": f"statut « {statut} » — rouvrez d'abord"})
                     continue
-                cursor.execute(
-                    "UPDATE fiche SET statut = 'valide', revision = revision + 1, updated_at = now() "
-                    "WHERE id_fiche = %s",
-                    (id_fiche,),
-                )
+                brute = revisions.get(code) if isinstance(revisions, dict) else None
+                try:
+                    attendue = _revision_attendue(
+                        brute, exiger=False, action="Validation en lot",
+                    )
+                except HTTPException:
+                    ignorees.append({
+                        "code": code,
+                        "raison": f"révision invalide ({brute!r}) — fiche NON validée",
+                    })
+                    continue
+                if attendue is None:
+                    if exiger_revision:
+                        ignorees.append({
+                            "code": code,
+                            "raison": (
+                                "révision attendue manquante — la fiche n'a pas été relue depuis "
+                                "l'affichage : rafraîchissez la file puis resélectionnez-la"
+                            ),
+                        })
+                        continue
+                    LOGGER.warning(
+                        "Validation en lot de la fiche %s SANS révision fournie (client ancien) : "
+                        "elle s'applique à l'état COURANT, que le poste n'a pas forcément relu.",
+                        code,
+                    )
+                if attendue is None:
+                    cursor.execute(
+                        "UPDATE fiche SET statut = 'valide', revision = revision + 1, updated_at = now() "
+                        "WHERE id_fiche = %s AND statut = 'a_valider' RETURNING revision",
+                        (id_fiche,),
+                    )
+                else:
+                    cursor.execute(
+                        "UPDATE fiche SET statut = 'valide', revision = revision + 1, updated_at = now() "
+                        "WHERE id_fiche = %s AND statut = 'a_valider' AND revision = %s RETURNING revision",
+                        (id_fiche, attendue),
+                    )
+                maj = cursor.fetchone()
+                if maj is None:
+                    cursor.execute("SELECT statut, revision FROM fiche WHERE id_fiche = %s", (id_fiche,))
+                    etat = cursor.fetchone()
+                    statut_reel = str(etat[0]) if etat else "?"
+                    revision_reelle = int(etat[1]) if etat else revision_actuelle
+                    ignorees.append({
+                        "code": code,
+                        "raison": (
+                            f"concurrence : la fiche a changé depuis la sélection "
+                            f"(révision {attendue} → {revision_reelle}, statut « {statut_reel} ») — "
+                            "relisez-la puis revalidez"
+                        ),
+                    })
+                    continue
                 # Lot E : chaque fiche validée en lot devient cherchable (même
                 # rafraîchissement que la validation individuelle, même transaction).
                 cursor.execute("SELECT rafraichir_texte_recherche_fiche(%s)", (id_fiche,))
@@ -1121,6 +1369,11 @@ def enregistrer_routes_fiches(
     storage_client: S3StorageClient | None = None,
 ) -> None:
     """Branche les routes métier et l'API de fichiers par identifiant."""
+    # Verrou optimiste OBLIGATOIRE par défaut : une configuration construite à
+    # la main (ou ancienne) qui n'expose pas le champ reste donc FERMÉE, jamais
+    # ouverte. `SEAMTECH_REQUIRE_REVISION=false` est le seul moyen d'ouvrir le
+    # client ancien — et l'écran d'atelier, lui, n'en dépend pas.
+    exiger_revision = bool(getattr(config, "require_revision", True))
 
     def charger_document(piece_id: int) -> dict[str, Any]:
         with index.connect() as connexion:
@@ -1280,6 +1533,18 @@ def enregistrer_routes_fiches(
     def route_champs_fiche(code: str, token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None) -> list[dict[str, Any]]:
         verifier_auth(config, token)
         return champs_de_fiche(index, code)
+
+    @app.get("/fiches/{code}/etat")
+    def route_etat_fiche(code: str, token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None) -> dict[str, Any]:
+        """Statut + révision + champs en UN instantané (voir ``etat_fiche``).
+
+        L'écran de validation ouvre et recharge par CETTE route : deux requêtes
+        séparées pouvaient apparier des valeurs périmées avec une révision à
+        jour, et laisser passer une correction fondée sur un état jamais vu.
+        """
+        verifier_auth(config, token)
+        _exiger_postgres(index)
+        return etat_fiche(index, code)
 
     @app.get("/gabarits")
     def route_gabarits(token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None) -> list[dict[str, Any]]:
@@ -1525,7 +1790,7 @@ def enregistrer_routes_fiches(
             corps.get("champ"), corps.get("valeur"),
             _attribution(config, token, corps.get("utilisateur"), entete_utilisateur, entete_role),
             rang=corps.get("rang"), commentaire=corps.get("commentaire"),
-            revision=corps.get("revision"),
+            revision=corps.get("revision"), exiger_revision=exiger_revision,
         )
 
     @app.post("/fiches/{code}/valider")
@@ -1542,6 +1807,7 @@ def enregistrer_routes_fiches(
             index, code,
             _attribution(config, token, corps.get("utilisateur"), entete_utilisateur, entete_role),
             corps.get("commentaire"),
+            revision=corps.get("revision"), exiger_revision=exiger_revision,
         )
 
     @app.post("/fiches/{code}/rejeter")
@@ -1558,6 +1824,7 @@ def enregistrer_routes_fiches(
             index, code,
             _attribution(config, token, corps.get("utilisateur"), entete_utilisateur, entete_role),
             corps.get("motif") or "",
+            revision=corps.get("revision"), exiger_revision=exiger_revision,
         )
 
     @app.post("/fiches/{code}/rouvrir")
@@ -1574,6 +1841,7 @@ def enregistrer_routes_fiches(
             index, code,
             _attribution(config, token, corps.get("utilisateur"), entete_utilisateur, entete_role),
             corps.get("commentaire"), bool(corps.get("effacer_corrections")),
+            revision=corps.get("revision"), exiger_revision=exiger_revision,
         )
 
     @app.get("/validation/file")
@@ -1602,6 +1870,7 @@ def enregistrer_routes_fiches(
             index, codes,
             _attribution(config, token, corps.get("utilisateur"), entete_utilisateur, entete_role),
             acquittement_humain=bool(corps.get("acquittement_humain")), commentaire=corps.get("commentaire"),
+            revisions=corps.get("revisions"), exiger_revision=exiger_revision,
         )
     @app.get("/fiches")
     def route_liste_fiches(

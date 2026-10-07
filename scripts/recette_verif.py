@@ -374,7 +374,23 @@ def _valider_une_fiche(codes: list[str]) -> str | None:
     # Cible DÉTERMINISTE (première de la cohorte triée) : une re-recette
     # valide la MÊME fiche — 409 « déjà validée » = succès d'idempotence.
     cible = codes[0]
-    code_http, corps, _ = _appel("POST", f"/fiches/{urllib.parse.quote(cible)}/valider", {})
+    # La décision porte la RÉVISION RELUE (verrou optimiste de décision,
+    # revue indépendante du 2026-10-07) : la recette relit la fiche juste avant
+    # de valider, exactement comme l'écran d'atelier. Un 428 « révision
+    # manquante » signifierait que la recette a sauté cette relecture.
+    code_detail, detail, _ = _appel("GET", f"/fiches/{urllib.parse.quote(cible)}")
+    revision = detail.get("revision") if isinstance(detail, dict) else None
+    if not isinstance(revision, int) or revision < 1:
+        _ligne(
+            "validation-fiche",
+            False,
+            f"fiche {cible} : révision illisible (HTTP {code_detail} {_extrait(detail, 80)}) — "
+            "la décision ne peut pas être liée à l'état relu",
+        )
+        return None
+    code_http, corps, _ = _appel(
+        "POST", f"/fiches/{urllib.parse.quote(cible)}/valider", {"revision": revision}
+    )
     code2, corps2, _ = _appel("GET", "/fiches?statut=valide&taille=100")
     valides = (
         [f.get("code") for f in corps2.get("fiches", [])]
@@ -385,7 +401,7 @@ def _valider_une_fiche(codes: list[str]) -> str | None:
     _ligne(
         "validation-fiche",
         ok,
-        f"fiche {cible} : validation HTTP {code_http} {_extrait(corps, 80)} ; "
+        f"fiche {cible} (révision relue {revision}) : validation HTTP {code_http} {_extrait(corps, 80)} ; "
         f"statut=valide HTTP {code2} contient {cible} = {cible in valides}",
     )
     _info("fiche_validee", cible)

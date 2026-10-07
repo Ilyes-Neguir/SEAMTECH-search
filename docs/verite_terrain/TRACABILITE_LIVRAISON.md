@@ -213,3 +213,29 @@ push <https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/37617039519>
 | Porte de couverture non contournée | `pytest -m "not s3 and not perf" --cov=seamtech_search --cov-report=json:coverage.json` puis `python scripts/coverage_gate.py coverage.json` | **1174 passés, 5 sautés** ; global **86,65 %** (plancher 85 %), tous les seuils par module `[ok]` | arbre de clôture | ✅ établi (local) |
 | Front : types et build de production | `pnpm install --frozen-lockfile` / `pnpm exec tsc --noEmit` / `pnpm build` | **OK / OK / OK** | arbre de clôture | ✅ établi (local) |
 | Aucune assertion retirée, aucun seuil abaissé, aucun saut silencieux introduit | `git diff` + `scripts/coverage_gate.py` (seuils inchangés) + `ruff check .` | les 5 tests ajoutés sont NETS (rouge avant, vert après) ; `OVERALL_MIN` inchangé | arbre de clôture | ✅ établi |
+
+## Deuxième revue indépendante — passe F1–F4 (2026-10-07)
+
+Branche : `arena/7da80c2f-seamtech-search` · PR **#35** (non fusionnée).
+Déclencheur : la revue du 2026-10-07 a rouvert la mission — la protection par
+révision n'était pas obligatoire (`F1`), champs et révision étaient lus
+séparément (`F2`), les décisions n'étaient pas liées à la révision revue (`F3`),
+et le harnais « hors ligne » avait une portée plus étroite que ce qu'il
+laissait croire (`F4`). Les lignes ci-dessous distinguent **établi** (exécuté et
+lu) de **contrat** (vérifié statiquement, jamais exécuté).
+
+| Affirmation | Commande / fichier | Sortie brute | Statut |
+|---|---|---|---|
+| Sans révision, l'API refuse ÉCRIRE et DÉCIDER (428) — le repli legacy demande une option explicite et journalise l'écriture non protégée | `pytest tests/test_revision_optimiste.py -q` | **12 passés** (dont `test_sans_revision_la_correction_est_refusee_ferme`, `test_ecriture_sans_revision_seulement_sous_option_explicite`) | ✅ établi (PostgreSQL réel, HTTP réel) |
+| Champs et révision sont lus dans UN instantané, et une réponse tardive n'écrase plus la fiche courante | `pytest tests/test_revision_optimiste.py -q` (tests `test_etat_fiche_…`) + `frontend/e2e/concurrence.spec.ts` (scénario « réponse tardive ») | lecture : **1 requête exigée** par un espion (la variante à 2 requêtes fait ROUGIR le test) ; navigateur : **à exécuter par la CI** | ✅ établi (côté API) / ⏳ scénario navigateur en attente du run |
+| Une validation (ou un rejet, une réouverture) fondée sur un écran périmé est refusée en 409 `conflit_decision`, sans écriture et sans ligne d'audit trompeuse | `pytest tests/test_revision_optimiste.py -q` | `test_valider_un_ecran_perime_est_refuse_sans_aucune_trace`, `test_rejeter_et_rouvrir_sont_lies_a_la_revision_revue`, `test_validation_en_lot_ignore_une_fiche_modifiee_depuis_la_selection` — **passés** | ✅ établi (PostgreSQL réel) |
+| Les scénarios historiques de validation rejouent le geste réel (relire la révision, puis décider) et 20 appels HTTP sans révision ont été mis à niveau | `pytest tests/test_validation_workflow.py -q` | **17 passés** | ✅ établi |
+| Aucun SCRIPT du dépôt n'écrit l'état d'une fiche sans révision (garde-fou AST répo-large) | `pytest tests/test_garde_fous_preparation.py -q -k revision` | **1 passé**, et le test échoue s'il ne trouve aucun appel à inspecter | ✅ établi |
+| Le harnais hors ligne ne revendique plus que sa portée réelle (processus Python) | `pytest tests/test_verification_hors_ligne.py -q` | **5 passés** (garde bloque/nomme/diagnostique) | ✅ établi |
+| Une épreuve PLEINE PILE hors ligne existe : pile web + worker séparé + front sous blocage `iptables` par uid, contrôle négatif obligatoire, compteur `REJECT` final à zéro | `.github/workflows/ci.yml` (job `hors-ligne-reel`) + `pytest tests/test_selection_ci.py -q` | contrat vérifié statiquement (**passé**) : ordre des étapes, contrôle négatif, remise à zéro, relevé final, spec navigateur | ⏳ **jamais exécuté** (exige un runner GitHub) |
+| Les 7 scénarios de concurrence (dont 3 neufs) seront comptés par le garde-fou du job `e2e` | `tests/test_selection_ci.py::test_le_garde_fou_de_concurrence_compte_les_scenarios_reellement_executes` | le garde-fou lit le nombre de scénarios DANS la spec (≥ 7) et exige le même compte dans la CI | ⏳ **jamais exécuté** |
+| Le job hors ligne ne dépend plus des binaires MinIO disparus (`dl.min.io` = 410 Gone) et bâtit l'image avant de la consommer | `pytest tests/test_construire_image_minio.py -q` | **9 passés** ; le contrat exige **4** jobs bâtisseurs et l'ordre build → `docker run` pour le job hors ligne | ✅ établi (contrat CI) |
+| Deux défauts trouvés PAR la re-exécution, corrigés | `pytest tests/test_fiches_api.py -q` | **18 passés** après correction : `route_etat_fiche` avait DEUX décorateurs (`/gabarits` répondait 422 « code requis » — E-37) ; un test d'attribution validait sans révision (E-38) | ✅ établi |
+| Les trois familles de tests backend sont vertes sur l'arbre de cette passe | `pytest -m "not postgres and not s3 and not perf and not redis_queue"` / `-m "postgres and not perf and not sauvegarde and not redis_queue"` / `-m redis_queue` | **886 passés (3 sautés)** / **232 passés (1 sauté)** / **63 passés (1 sauté)** — PostgreSQL 16.2 + pgvector/unaccent/pg_trgm et Redis 7.2.5 réels | ✅ établi (local) |
+| Front : types, build de production, audit | `tsc --noEmit` / `next build` / `pnpm audit --prod --audit-level=high` | **OK / OK / « No known vulnerabilities found »** | ✅ établi (local) |
+

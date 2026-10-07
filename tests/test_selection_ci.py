@@ -408,3 +408,95 @@ def test_les_marqueurs_de_categorie_sont_declares_dans_pyproject(categorie: str)
     """Un marqueur non déclaré serait une faute silencieuse (warning, pas erreur)."""
     pyproject = (RACINE / "pyproject.toml").read_text(encoding="utf-8")
     assert f'"{categorie}:' in pyproject, f"marqueur {categorie} non déclaré dans [tool.pytest.ini_options].markers"
+
+
+# ---------------------------------------------------------------------------
+# Contrats de la vérification PLEINE PILE hors ligne (revue du 2026-10-07)
+# ---------------------------------------------------------------------------
+
+
+def test_le_job_hors_ligne_bloque_reellement_la_sortie_et_exige_le_controle_negatif() -> None:
+    """« Zéro paquet rejeté » ne prouve RIEN sans contrôle négatif préalable.
+
+    Le garde socket du diagnostic Python ne couvre ni le navigateur, ni Next.js,
+    ni le worker séparé (constat n°4). Le job CI doit donc :
+
+    1. bloquer la sortie du COMPTE APPLICATIF (règle ``--uid-owner``) ;
+    2. exiger qu'une requête sortante ÉCHOUE avant l'épreuve (contrôle négatif) ;
+    3. vérifier que l'application locale répond encore (contrôle positif) ;
+    4. conduire le NAVIGATEUR sur les parcours réels ;
+    5. relire le compteur de paquets rejetés et refuser s'il n'est pas nul.
+    """
+    contenu = CI.read_text(encoding="utf-8")
+    assert "\n  hors-ligne-reel:\n" in contenu, "le job hors-ligne-reel doit exister"
+    bloc = contenu.split("\n  hors-ligne-reel:\n", 1)[1]
+    # On s'arrête au job suivant pour ne pas attribuer ses règles à celui-ci.
+    bloc = bloc.split("\n  recette-corpus-reel:\n", 1)[0]
+
+    assert "--uid-owner" in bloc, "le blocage doit viser le compte applicatif (pas toute la machine)"
+    assert "-j REJECT" in bloc, "une tentative sortante doit être REJETÉE, pas seulement journalisée"
+    assert "CONTRÔLE NÉGATIF" in bloc, "le contrôle négatif doit être explicite"
+    assert "example.com" in bloc, "le contrôle négatif doit viser une adresse EXTERNE réelle"
+    assert "hors-ligne-non-bloque" in bloc, "un blocage inopérant doit faire ÉCHOUER le job"
+    assert "CONTRÔLE POSITIF" in bloc and "/health" in bloc, "la pile locale doit rester joignable"
+    assert "e2e/hors-ligne.spec.ts" in bloc, "les parcours NAVIGATEUR doivent être exécutés"
+    assert 'awk \'$3=="REJECT" {print $1; exit}\'' in bloc, "le compteur de paquets rejetés doit être RELU"
+    assert "dependance-externe-cachee" in bloc, "un paquet rejeté non nul doit faire échouer le job"
+    assert "SEAMTECH_E2E_HORS_LIGNE" in bloc, "l'épreuve navigateur doit être armée explicitement"
+    # Les contrôles ci-dessus REJETTENT volontairement des paquets : sans remise à
+    # zéro, le relevé final serait non nul et le job échouerait… pour la bonne
+    # raison inverse de celle qu'il doit détecter.
+    assert "iptables -Z SEAMTECH_HORS_LIGNE" in bloc, (
+        "les compteurs doivent être remis à zéro après les contrôles, avant l'épreuve"
+    )
+    assert bloc.index("-Z SEAMTECH_HORS_LIGNE") < bloc.index('$3=="REJECT"'), (
+        "la remise à zéro doit précéder le relevé final"
+    )
+    # Le semis d'une base e2e TERMINE les connexions et SUPPRIME les bases e2e_% :
+    # réarmé pendant l'épreuve, il détruirait la base de la pile bloquée.
+    assert 'SEAMTECH_E2E_DATABASE_URL: ""' in bloc, (
+        "l'épreuve navigateur doit réutiliser la pile bloquée, pas re-semer sa base"
+    )
+    # dl.min.io répond « 410 Gone » : les binaires ne sont plus téléchargeables.
+    assert "dl.min.io/server" not in bloc and "dl.min.io/client" not in bloc, (
+        "dl.min.io répond 410 Gone : le job ne doit pas TÉLÉCHARGER MinIO depuis ce site"
+    )
+    assert "scripts/construire_image_minio.sh" in bloc, (
+        "l'image MinIO doit être reconstruite depuis les sources archivées (même chaîne que integration/sauvegarde)"
+    )
+    assert bloc.index("construire_image_minio.sh") < bloc.index("docker run -d --name minio"), (
+        "l'image doit être reconstruite AVANT de démarrer le conteneur MinIO"
+    )
+    assert "SEAMTECH_MINIO_CONTAINER" in bloc, (
+        "le provisionnement doit viser le conteneur MinIO hors composition (constat E-29)"
+    )
+    # La pile tourne sous le compte applicatif : c'est la condition pour que le
+    # blocage par uid s'applique VRAIMENT au processus applicatif, et donc pour
+    # que « zéro paquet rejeté » ait un sens.
+    assert "readlink -f" in bloc, "le compte applicatif doit pouvoir lire l'interpréteur Python employé par la pile"
+    assert "--uid-owner \"$UID_APP\"" in bloc, "le blocage doit cibler l'uid réellement calculé du compte applicatif"
+
+
+def test_le_garde_fou_de_concurrence_compte_les_scenarios_reellement_executes() -> None:
+    """Le garde-fou de concurrence doit attendre AUTANT de scénarios qu'il en existe.
+
+    Il attendait 4 tests passés au premier essai ; la revue a ajouté trois
+    scénarios (décision liée à la révision revue, révision non lue = écriture
+    bloquée, réponse tardive sans écrasement). Un garde resté à 4 refuserait un
+    run légitime — ou, pire, laisserait passer un scénario en échec si le compte
+    était baissé sans que le fichier de spec le justifie.
+    """
+    contenu = CI.read_text(encoding="utf-8")
+    spec = RACINE / "frontend" / "e2e" / "concurrence.spec.ts"
+    nombre = sum(
+        1
+        for ligne in spec.read_text(encoding="utf-8").splitlines()
+        if ligne.strip().startswith("test(") and "test.describe" not in ligne
+    )
+    assert nombre >= 7, f"scénarios de concurrence attendus : au moins 7, trouvé {nombre}"
+    assert f"passes != {nombre}" in contenu, (
+        f"le garde-fou doit refuser quand le nombre de tests passés n'est pas {nombre}"
+    )
+    assert f"attendu {nombre} tests passés au premier essai" in contenu, (
+        "le message du garde-fou doit annoncer le même compte que la condition"
+    )

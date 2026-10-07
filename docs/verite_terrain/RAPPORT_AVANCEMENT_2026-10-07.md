@@ -9,6 +9,7 @@
 | Pull request | [#35](https://github.com/Ilyes-Neguir/SEAMTECH-search/pull/35) — ouverte, **non fusionnée** |
 | Base de comparaison | `main` = `4e374f6` (« docs: record CI diagnoses and green validation ») |
 | Volume de la passe | 42 fichiers, **+7 005 / −332** lignes depuis `4e374f6` |
+| Deuxième revue indépendante | reçue le 2026-10-07 **après** le premier handoff : quatre constats (F1 → F4) à fermer avant toute revendication de fin — traités au §2.7 |
 
 > **Règle de lecture de ce rapport.** Chaque affirmation est marquée
 > **PROUVÉ (local)**, **PROUVÉ (CI)**, ou **PENDING**. Les preuves brutes
@@ -56,6 +57,18 @@ sur le run push `37642194285` ET sur les deux runs pull_request du même SHA
 (concurrence, sessions indépendantes) », lue `success` (`gh api
 actions/jobs/<id>`). Un run vert n'est revendiqué que parce qu'il a été LU ;
 l'historique complet des lectures est au §5.
+
+**Deuxième revue indépendante (2026-10-07) : quatre constats, quatre
+corrections.** Le relecteur a rouvert la mission sur des défauts que la
+première passe n'avait pas vus — la protection par révision existait, mais
+elle était **contournable** (l'écran pouvait écrire sans révision après un
+échec de lecture, les champs et la révision étaient lus par deux requêtes
+séparées, les décisions n'étaient pas liées à la révision revue) et le
+harnais « hors ligne » était présenté plus largement que ce qu'il protège
+(sockets **Python** seulement). Les quatre constats sont traités au §2.7 ; le
+détail du périmètre du harnais est dit au §2.5. **Aucune revendication de fin
+d'ingénierie n'est faite dans ce rapport tant que les exécutions CI de cette
+passe n'ont pas été lues.**
 
 **Verdicts séparés demandés par la mission :**
 
@@ -211,80 +224,130 @@ suppression locale ? »* :
   comportementaux (états, messages d'erreur, motifs par fichier, badges de
   validation) et non visuels.
 
-### 2.4 Édition concurrente (chantier 2 de la revue) — verrou optimiste
+### 2.4 Édition concurrente — verrou optimiste, refermé après la DEUXIÈME revue
 
-Défaut corrigé : `corriger_champ` écrivait sans comparer l'état lu (« dernier
+Défaut d'origine : `corriger_champ` écrivait sans comparer l'état lu (« dernier
 écrivain gagne »). Deux postes ouvrant la même fiche s'écrasaient donc
-mutuellement, sans trace ni avertissement.
+mutuellement, sans trace ni avertissement. Une **première** correction avait
+introduit la révision optimiste — mais la deuxième revue indépendante
+(2026-10-07) a montré que cette protection était **contournable** : elle
+existait sans être obligatoire ni liée à ce qui était relu. Les constats F1, F2
+et F3 sont traités au §2.7 ; ce paragraphe décrit l'état FINAL du verrou, tel
+qu'il est aujourd'hui dans le code.
 
 * migration `021_revision_fiche` : `fiche.revision INTEGER NOT NULL DEFAULT 1`
   (colonne seulement ; les 33 tables sont inchangées) ;
-* `POST /fiches/{code}/corriger` accepte `revision` et arbitre par
-  **compare-and-swap** (`UPDATE … WHERE revision = %s`) ; une correction fondée
-  sur un état périmé reçoit **409 `conflit_revision`** avec la valeur du
-  collègue, son auteur, sa date et la règle appliquée — et **aucune écriture**
-  n'a lieu (un refus ne crée même pas la ligne `utilisateur` de l'auteur) ;
-* les décisions (valider, rejeter, rouvrir, validation en lot) incrémentent
-  aussi la révision : un poste resté ouvert ne peut plus écrire après une
-  décision ;
-* un client qui n'envoie **pas** de révision garde l'ancien comportement, mais
-  l'absence de verrou est **journalisée** (WARNING « SANS révision fournie ») :
-  elle n'est jamais présentée comme une protection ;
-* l'écran Validation envoie la révision, affiche le conflit et propose
-  « Recharger la fiche à jour ». Design conservé : les deux seuls ajouts sont
-  des attributs **non visuels** (`data-fiche`, `data-revision`) qui rendent
-  observable l'état dont dépend la justesse.
+* **F1 — refus fermé** : sans révision, `corriger` et les trois décisions sont
+  refusés (**428**) ; le repli pour un client ancien n'existe plus que sous une
+  option d'exploitation explicite (`SEAMTECH_REQUIRE_REVISION=false`), jamais
+  par défaut, et toute écriture non protégée y est **journalisée comme telle**.
+  Une requête de révision en échec côté poste ne peut donc plus désactiver la
+  protection ;
+* **F2 — lecture cohérente** : `GET /fiches/{code}/etat` renvoie statut +
+  révision + champs dans **UN seul instantané** PostgreSQL, et l'écran jette
+  toute réponse tardive d'une fiche déjà quittée (jeton de génération) ;
+* **F3 — décision liée à la révision revue** : valider, rejeter, rouvrir et la
+  validation en lot vérifient statut ET révision dans **le même `UPDATE`**
+  (compare-and-swap). Approuver un écran périmé est refusé en **409
+  `conflit_decision`**, sans écriture et **sans ligne « valider » trompeuse**
+  dans le journal ; l'écran exige alors un rechargement et une nouvelle
+  décision explicite. En lot, une fiche qui a bougé est **ignorée avec sa
+  raison** (`ignorees[].raison`) et non validée en silence ;
+* l'écran Validation affiche le conflit et propose « Recharger la fiche à
+  jour ». Design conservé : les seuls ajouts sont des attributs **non visuels**
+  (`data-fiche`, `data-revision`, `data-statut`, `data-chargement-etat`) qui
+  rendent observable l'état dont dépend la justesse.
 
-Preuves : `tests/test_revision_optimiste.py` — **6 tests, 6 passés**, sur
-PostgreSQL réel et par HTTP réel, dont un enregistrement **simultané** de deux
-clients (barrière de départ, deux threads) : exactement un 200 et un 409, la
-base porte la valeur du gagnant, révision +1 exactement.
-`frontend/e2e/concurrence.spec.ts` — 4 scénarios multi-navigateurs
-(deux postes même fiche et reprise après conflit ; import pendant recherche +
-téléchargement d'octets PDF réels ; session expirée sans faux succès ; refus
-d'administrateur par le **backend**), exécutés par une étape CI dédiée dont le
-garde-fou exige `4 passés, 0 sauté, 0 flaky`. **Statut de cette preuve : la
-première exécution CI (run `37613980912`) a trouvé un défaut du TEST lui-même**
-(E-30 : le poste B n'avait pas navigué vers la file), puis la deuxième
-(run `37617039519`) un SECOND défaut de test (E-33 : nom de champ figé,
-`champ-materiau` inexistant sur les fiches réelles), puis la troisième
-(run `37618670336`) un défaut **du PRODUIT** (E-34 : le tableau des champs
-conservait le brouillon de l'opérateur après « Recharger la fiche à jour » —
-B relisait sa propre saisie périmée en croyant lire celle du collègue), puis un
-quatrième passage a montré une preuve **intermittente** (E-36 : champs choisis
-avant leur rendu, 1 test rattrapé par un retry) — durcie, pas relâchée.
-**Statut final LU** : sur `c65b7d8`, l'étape « Run multi-session E2E
-(concurrence, sessions indépendantes) » est `success` sur le run push
-`37642194285` **et** sur les deux runs pull_request du même SHA
-(`gh api actions/jobs/<id>` ; le garde-fou exige 4 passés au premier essai,
-0 flaky, 0 sauté). Les 4 scénarios multi-navigateurs sont donc prouvés en CI.
+Preuves (locales, PostgreSQL réel, HTTP réel) :
 
-### 2.5 Vérification hors ligne (chantier 3 de la revue) — exécutée, pas lue
+* `tests/test_revision_optimiste.py` — **12 tests, 12 passés** : publication de
+  la révision, correction à jour acceptée (révision +1), correction périmée
+  refusée sans écraser le collègue, **deux enregistrements simultanés** (une
+  seule correction passe), refus fermé sans révision (428, aucune écriture,
+  aucune ligne de journal), écriture sans verrou seulement sous option
+  explicite (et journalisée), décision qui invalide les postes ouverts,
+  validation d'un écran périmé refusée sans trace, rejet/réouverture liés à la
+  révision revue, lot qui ignore une fiche modifiée depuis la sélection, et
+  lecture champs+révision dans le **même instantané** (un espion prouve le
+  nombre de requêtes : la variante à deux requêtes échoue le test) ;
+* `tests/test_validation_workflow.py` — 17 passés : les scénarios historiques
+  de transition de statut rejouent désormais le geste réel d'un poste (relire
+  la révision, puis décider) et vérifient que la décision fait avancer la
+  révision ;
+* `frontend/e2e/concurrence.spec.ts` — **7 scénarios** multi-navigateurs
+  (deux postes même fiche et reprise après conflit ; import pendant recherche +
+  téléchargement d'octets PDF réels ; session expirée sans faux succès ; refus
+  d'administrateur par le **backend** ; décision liée à la révision revue ;
+  révision non lue ⇒ écriture bloquée ; réponse tardive qui n'écrase pas la
+  fiche courante), dont le garde-fou CI exige exactement `7 passés, 0 sauté,
+  0 flaky` — un garde-fou qui compte les scénarios réellement présents dans la
+  spec (test ajouté) ;
+* `tests/test_garde_fous_preparation.py` — un garde-fou neuf vérifie, par
+  analyse AST de **tous** les scripts du dépôt, qu'aucun n'écrit l'état d'une
+  fiche sans porter la révision : le repli d'exploitation ne peut pas se
+  réintroduire par un script oublié.
 
-`scripts/verifier_hors_ligne.py` :
+**Statut de la preuve navigateur : la CI est le premier exécutant.** Les trois
+nouveaux scénarios (7 au total) et la spec hors ligne n'ont **pas** pu tourner
+dans cette session (CDN Playwright inaccessible, vérifié à nouveau) : ils sont
+exécutés par les jobs CI et ne sont revendiqués qu'après lecture des runs. Les
+quatre défauts de test/produit successifs (E-30, E-33, E-34, E-36) et leurs
+corrections restent décrits au §4.
+
+### 2.5 Vérification hors ligne — portée CORRIGÉE (constat F4)
+
+Le harnais `scripts/verifier_hors_ligne.py` avait été présenté comme une preuve
+« cœur hors ligne ». C'était trop large : il installe un garde réseau qui
+n'intercepte que les connexions **Python** de son propre processus et exécute
+la pile via `TestClient` — **ni le navigateur, ni Next.js, ni un worker séparé,
+ni un sous-processus, ni une bibliothèque native (libpq) ne sont isolés par
+ce garde**. Le script a donc été **relabellisé** en diagnostic de processus
+Python : en-tête, ligne de portée, champ `portee` du rapport JSON et conclusion
+disent tous la même limite, et la conclusion finale ne revendique plus de
+fonctionnement hors ligne pleine pile.
+
+Ce que le harnais garde comme valeur (et qui reste vrai) :
 
 * `--inventaire` : classe chaque capacité en REQUISE ou OPTIONNELLE et dit la
-  conséquence exacte d'une absence (OCR étage 3 sans `tesseract -l fra`, rendu
-  image sans `pdftoppm`, recherche vectorielle sans modèles e5, images
-  conteneurs sans Docker) ; il vérifie en outre que les points de terminaison
-  configurés (base, Redis, S3) sont loopback/privés ;
-* `--executer` : installe un **garde réseau** qui fait échouer toute connexion
-  Python hors réseau privé en **nommant** la cible, puis exécute sur la pile
-  réelle : démarrage, connexion nominative, import d'un dossier réel
-  (comptabilité des fichiers), rapport PDF, dépôt d'une fiche + pièces, levée
-  **explicite** du verrou RG11 par le chemin documenté (`rouvrir` +
-  `effacer_corrections`), correction + verrou optimiste, recherche (visibilité
-  de la fiche déposée), aperçu + original PDF, `/open` ;
+  conséquence exacte d'une absence (OCR étage 3, rendu image, modèles e5,
+  conteneurs) ; il vérifie que les points de terminaison configurés (base,
+  Redis, S3) sont loopback/privés ;
+* `--executer` : garde réseau + parcours réels dans CE processus (démarrage,
+  connexion nominative, import d'un dossier réel, rapport PDF, dépôt d'une
+  fiche, levée **explicite** du verrou RG11 par le chemin documenté —
+  `rouvrir` + `effacer_corrections`, désormais **avec la révision relue**,
+  correction + verrou optimiste, recherche, aperçu + original PDF, `/open`) ;
 * `--autoriser-externe` : diagnostic (compte sans bloquer).
 
-Premier passage réel : **échecs 0**, « aucune connexion hors réseau privé
-tentée », capacités absentes dites (7). Limites énoncées par l'outil : il
-intercepte les connexions **Python** (une bibliothèque C, comme libpq, appelle
-`connect(2)` directement — d'où le contrôle d'adresses), et **il ne remplace
-pas** l'acceptation en atelier (serveur réel, réseau débranché, postes réels).
-`tests/test_verification_hors_ligne.py` (5 tests) prouve que le garde bloque
-vraiment : adresse publique refusée et nommée, loopback accepté, nom non
-déclaré refusé, mode diagnostic qui compte sans bloquer.
+**Preuve pleine pile, elle, par une épreuve de bout en bout réellement
+isolée** : le job CI `hors-ligne-reel` (`.github/workflows/ci.yml`) démarre la
+pile complète **sous un compte applicatif dédié** (`seamtech-app`) — web, worker
+séparé et front de production — puis **bloque sa sortie réseau au niveau du
+système** (chaîne `iptables` dédiée à l'`--uid-owner`, `REJECT` sauf loopback
+et `127.0.0.0/8`). Avant l'épreuve, un **contrôle négatif** exige qu'une requête
+vers une adresse externe **échoue** (sinon le job s'arrête : « blocage
+inopérant ») et un **contrôle positif** exige que la pile locale réponde
+encore. Le parcours navigateur
+(`frontend/e2e/hors-ligne.spec.ts` : connexion, import, recherche, fiche +
+aperçu PDF, téléchargement de l'original ET du rapport) tourne alors dans ce
+régime, puis le job relit le **compteur de paquets rejetés** : il doit valoir
+**zéro** (sinon « dépendance externe cachée »). Le compteur est remis à zéro
+juste avant l'épreuve, pour que les rejets des contrôles eux-mêmes ne soient
+pas comptés comme des tentatives de la pile. La spec reçoit en outre
+`SEAMTECH_E2E_DATABASE_URL=""` : sans cela, Playwright re-semerait une base
+e2e en **supprimant** celle de la pile bloquée — défaut trouvé par relecture du
+job avant sa première exécution.
+
+**Statut : ce job n'a JAMAIS tourné** (il exige les runners GitHub). Il est
+vérifié statiquement par `tests/test_selection_ci.py` (contrôle négatif,
+compteur remis à zéro puis relevé, `REJECT` non nul ⇒ échec, spec navigateur,
+variables d'environnement) — c'est un contrat, pas une exécution. La
+vérification hors ligne pleine pile reste donc **OUVERTE** tant que le run n'a
+pas été lu.
+
+`tests/test_verification_hors_ligne.py` (5 tests, verts) prouve que le garde
+**Python** bloque vraiment : adresse publique refusée et nommée, loopback
+accepté, nom non déclaré refusé, mode diagnostic qui compte sans bloquer.
 
 ### 2.6 Exploitation
 
@@ -293,6 +356,39 @@ vivants, lettres mortes), jobs par état + jobs actifs, état de sauvegarde,
 espace disque, type d'identifiants S3 (`s3_credential_kind`) et statut du
 versioning du bucket. `worker_service --verifier` rend un diagnostic exploitable
 et **refuse de démarrer sans Redis**.
+
+### 2.7 Deuxième revue indépendante — les quatre constats, un par un
+
+| Constat | Ce qui a été trouvé | Ce qui a été fait | Preuve |
+|---|---|---|---|
+| **F1 — échec ouvert** | l'écran laissait corriger quand la révision n'avait pas été lue (`.catch(() => setRevisionFiche(null))`) et le backend acceptait une écriture sans révision | `require_revision=True` par défaut (valeur lue, pas vérité d'une chaîne) ; refus **428** pour correction ET décisions ; repli legacy only sous `SEAMTECH_REQUIRE_REVISION=false`, journalisé ; l'écran bloque le bouton et l'annonce (`revision-indisponible`) | `test_sans_revision_la_correction_est_refusee_ferme`, `test_ecriture_sans_revision_seulement_sous_option_explicite`, `test_require_revision_actif_par_defaut_et_desactivable_explicitement`, `test_une_configuration_sans_le_champ_reste_fermee` |
+| **F2 — champs et révision incohérents** | deux requêtes séparées pouvaient apparier des valeurs périmées avec une révision fraîche ; une réponse tardive d'une autre fiche pouvait écraser l'état affiché | route `GET /fiches/{code}/etat` (statut + révision + champs dans **une** requête SQL) et proxy front ; l'écran n'utilise QUE cet instantané (ouverture ET rechargement), avec jeton de génération qui jette les réponses périmées | `test_etat_fiche_lit_champs_et_revision_dans_le_meme_instantane` (espion : 1 requête exigée), `test_etat_fiche_expose_le_statut_la_revision_et_les_champs_par_http`, scénario e2e « réponse tardive » |
+| **F3 — décision non liée à la révision** | `valider` ne portait ni ne vérifiait la révision : incrémenter APRÈS la validation ne prouvait rien — on pouvait approuver une valeur jamais relue | compare-and-swap `statut + révision` dans le même `UPDATE` pour valider, rejeter, rouvrir ; **409 `conflit_decision`** sans écriture ni ligne de journal ; lot : fiche modifiée **ignorée avec raison** ; écran : décision bloquée sans révision relue et rechargement exigé après conflit | `test_valider_un_ecran_perime_est_refuse_sans_aucune_trace`, `test_rejeter_et_rouvrir_sont_lies_a_la_revision_revue`, `test_validation_en_lot_ignore_une_fiche_modifiee_depuis_la_selection`, `test_une_decision_invalide_la_revision_des_postes_restes_ouverts` |
+| **F4 — portée du harnais hors ligne** | garde socket Python + `TestClient` ≠ isolation réseau : navigateur, Next.js, worker séparé, sous-processus et bibliothèques natives passent à côté | script **relabellisé** (portée dite dans l'en-tête, le rapport JSON et la conclusion) ; **nouvelle épreuve pleine pile** en CI sous blocage `iptables` réel par uid, avec contrôle négatif, contrôle positif, remise à zéro des compteurs et relevé final `REJECT = 0` ; spec navigateur dédiée | `tests/test_verification_hors_ligne.py` (5), `tests/test_selection_ci.py::test_le_job_hors_ligne_bloque_reellement_la_sortie_et_exige_le_controle_negatif`, `frontend/e2e/hors-ligne.spec.ts` — **exécution CI : non encore lue** |
+
+**Défauts trouvés PENDANT cette passe de correction** (ils n'étaient ni dans la
+revue, ni dans le premier handoff) :
+
+* **E-37** — `route_etat_fiche` avait été déclarée sous DEUX décorateurs
+  (`@app.get("/gabarits")` puis `@app.get("/fiches/{code}/etat")`) : FastAPI
+  enregistrait `GET /gabarits` **deux fois**, dont une fois sous la signature
+  `(code)` — `GET /gabarits` répondait **422 « champ code requis »** au lieu de
+  la liste des gabarits, et `GET /gabarits/{code}/versions` devenait
+  inatteignable. Trois tests l'ont montré (`TestRoutesSansPostgreSQL`,
+  `test_routes_protegees_par_token`, `TestRoutesLivePostgreSQL`). Corrigé :
+  chaque route sous son seul décorateur.
+* **E-38** — un test de la première passe (`test_validation_attribuee_au_compte_connecte`,
+  attribution nominative) validait encore **sans révision** : il ne pouvait
+  passer que tant que la protection était facultative. Il relit désormais la
+  révision avant de décider — c'est-à-dire ce que fait le poste réel.
+* **E-39** — le job CI `hors-ligne-reel` (écrit dans cette passe) téléchargeait
+  MinIO depuis `dl.min.io`, qui répond **410 Gone** (dépôt archivé) : le job
+  aurait échoué avant toute épreuve. Il reconstruit maintenant l'image depuis
+  les sources archivées, comme `integration`/`sauvegarde` ; il aurait aussi
+  tenté d'écrire ses journaux avec l'utilisateur de l'ordonnanceur (droits
+  refusés) et re-semé la base e2e **sous la pile en marche** — trois défauts de
+  conception corrigés **avant** la première exécution, par relecture.
+
 
 ---
 
@@ -558,6 +654,7 @@ qu'à lui** :
 | `recette-locale` | recette locale du poste cible |
 | `ocr` | chaîne OCR (tesseract) |
 | `securite-dependances` | pip-audit + pnpm audit selon la politique du dépôt |
+| **`hors-ligne-reel`** (nouveau) | parcours navigateur **pleine pile** web + worker séparé + front de production, sortie réseau du compte applicatif **réellement bloquée** (iptables par uid), contrôle négatif obligatoire, compteur de paquets rejetés à zéro — le seul job qui ferme F4 |
 
 **Historique de la passe** (chaque ligne = un run LU, pas supposé) :
 
@@ -591,8 +688,18 @@ qu'à lui** :
    « Run multi-session E2E (concurrence, sessions indépendantes) » est
    **`success`** — 4 scénarios passés au premier essai, 0 flaky, 0 sauté.
 
-**Aucun résultat CI n'est revendiqué ici avant lecture du job** : les six
-points ci-dessus sont des lectures brutes (`gh run view --json jobs`,
+**Passe de correction F1–F4 (celle de ce document).** Les résultats ne sont
+revendiqués qu'après lecture des runs du commit de cette passe, sur **les deux
+déclencheurs** : la section « Revue indépendante — passe F1–F4 » de
+`docs/verite_terrain/TRACABILITE_LIVRAISON.md` porte le SHA exact et les liens
+de runs. Deux points sont à surveiller en connaissance de cause : le job
+**`hors-ligne-reel` n'a jamais tourné** (il est vérifié statiquement) et les
+**trois nouveaux scénarios de concurrence** (7 au total) sont exécutés pour la
+première fois par la CI — `e2e` est donc le job le plus exposé d'un premier
+passage.
+
+**Aucun résultat CI n'est revendiqué ici avant lecture du job** : les points
+ci-dessus sont des lectures brutes (`gh run view --json jobs`,
 `gh api .../check-runs/<id>/annotations`), pas des suppositions.
 
 ---
@@ -634,7 +741,8 @@ reste pendante ; aucune ligne ci-dessus ne la remplace.
 | **Pertinence de la recherche sur archives réelles** | aucune étiquette humaine sur corpus réel ; 7 fiches de référence, 0 validée | jeu de requêtes étiqueté (`JEU_REQUETES_REELLES.md`) + validation humaine |
 | **Moindre privilège S3 — contre MinIO RÉEL** | les tests Docker correspondants ne tournent qu'en CI (pas de Docker ici) | job CI `integration` **lu VERT sur `c65b7d8`** (push et pull_request) ; ALLOW/DENY réels dans `tests/test_credentials_s3_restreintes.py` |
 | **Fonctionnement hors ligne — sur le SERVEUR d'atelier** | le harnais prouve l'absence de dépendance externe **de cette machine** ; il ne prouve ni les postes réels, ni le serveur cible | exécution du harnais sur le serveur cible + acceptation trois postes réseau coupé |
-| **Concurrence vue du NAVIGATEUR** | les navigateurs ne s'installent pas dans cette session (CDN `cdn.playwright.dev` bloqué — vérifié à nouveau le 2026-10-07) | **FERMÉ en CI** : étape « concurrence » `success` sur `c65b7d8` (push + 2 pull_request) ; les 4 échecs successifs (E-30, E-33, E-34, E-36) ont été corrigés, pas contournés |
+| **Concurrence vue du NAVIGATEUR** | les navigateurs ne s'installent pas dans cette session (CDN `cdn.playwright.dev` bloqué — vérifié à nouveau le 2026-10-07) | **OUVERT pour la passe F1–F4** : l'étape existe et garde-fouille exactement 7 scénarios, mais ces 7 scénarios (dont les 3 neufs : décision liée à la révision, écriture bloquée sans révision, réponse tardive) n'ont pas encore été exécutés — la lecture du run `e2e` du commit de cette passe est la condition de fermeture. Les 4 scénarios d'origine étaient verts sur `c65b7d8` |
+| **Vérification hors ligne pleine pile** | le harnais Python a une portée limitée (constat F4) ; il ne dit rien du navigateur, de Next.js, du worker séparé ni des bibliothèques natives | job CI **`hors-ligne-reel`** : pile complète sous compte applicatif dédié, sortie réseau bloquée par `iptables` (uid), contrôle négatif obligatoire, compteur `REJECT` final à zéro. **Jamais exécuté à ce jour** — contrat vérifié statiquement seulement (`tests/test_selection_ci.py`) |
 | **Acceptation atelier (fabrication)** | décision humaine | trois postes, un import pendant une recherche, validation d'une fiche |
 
 Aucun de ces points n'est présenté comme résolu, et la revendication de
@@ -653,11 +761,13 @@ Quatre précisions de périmètre, pour éviter les glissements de sens :
   destination distincte (et, pour une vraie résilience, hors du site). La
   configuration actuelle documente la **séparation des identités**, pas
   l'indépendance de la destination — celle-ci est une porte ouverte (§6).
-* **Toutes les tâches restantes n'exigent pas un humain ou un serveur de
-  production** : les preuves automatisables ont été exécutées ici (suite
-  complète, base réelle, Redis réel, harnais hors ligne) ; ce qui exige
-  réellement un humain ou le serveur cible est limité aux lignes du tableau
-  ci-dessus et aux portes de l'atelier.
+* **Les preuves automatisables ont été exécutées ici** (suite complète sur
+  PostgreSQL et Redis réels, front buildé, garde-fous statiques) **sauf
+  celles qui ne peuvent venir que de la CI** : les scénarios navigateur de la
+  passe F1–F4 et le job `hors-ligne-reel`. Ces deux-là ne sont pas « en
+  attente d'un humain » : ils sont en attente d'un **runner**, et ils sont
+  nommés comme tels — les présenter comme déjà prouvés serait exactement le
+  glissement de sens que la revue a reproché au constat F4.
 
 ---
 
@@ -686,11 +796,15 @@ docker compose up -d --build web worker && pytest -m integration_docker -v
 
 ## 8. Prochaines étapes, dans l'ordre
 
-Les travaux d'ingénierie et de vérification **automatisables** sont terminés :
-CI 12/12 sur `c65b7d8` (push ET pull_request), suites locales vertes, porte de
-couverture franchie, harnais hors ligne sans échec. Ce qui reste exige un
-humain ou le serveur d'atelier — aucune de ces étapes ne peut être remplacée
-par un test :
+**Les quatre constats de la deuxième revue sont traités dans le code, avec
+leurs tests de régression.** Ce qui reste, dans l'ordre :
+
+1. **Lire les runs CI de cette passe** (push ET pull_request) : le job `e2e`
+   exécute pour la première fois les 7 scénarios de concurrence, et le job
+   `hors-ligne-reel` son épreuve pleine pile. Un seul des deux déclencheurs ne
+   suffit pas (E-36). Tant que ces runs ne sont pas lus, la fermeture de F4 et
+   des scénarios navigateur reste **ouverte**.
+2. Puis seulement, les portes qui exigent un humain ou le serveur d'atelier :
 
 1. **Installation sur le serveur d'atelier** avec les identités restreintes
    provisionnées (`bash scripts/provisionner_stockage.sh`) et la destination de

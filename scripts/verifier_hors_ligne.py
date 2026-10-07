@@ -1,9 +1,23 @@
 #!/usr/bin/env python3
-"""Vérification HORS LIGNE des parcours essentiels — par EXÉCUTION, pas par lecture.
+"""DIAGNOSTIC hors ligne du PROCESSUS PYTHON — ce n'est PAS une isolation réseau.
 
-Exigence de la revue indépendante du 2026-10-07 (constat n° 3) : « vérifier le
-fonctionnement hors ligne AVANT le déploiement en atelier », et ne surtout pas
-conclure « prêt hors ligne » en LISANT la configuration.
+PORTÉE EXACTE (à citer telle quelle, jamais au-delà) :
+
+* ce script s'exécute DANS un interpréteur Python et remplace ``socket.connect``
+  / ``create_connection`` par un garde qui compte et refuse les adresses non
+  privées. Il couvre donc ce qui passe par ces fonctions : ``urllib``,
+  ``httpx``/``requests``, ``boto3``, ``redis-py``, ``psycopg2`` (Python), les
+  modèles téléchargés par du code Python…
+* il NE couvre PAS : les bibliothèques NATIVES qui appellent ``connect(2)``
+  directement (une partie de libpq, libcurl embarquée), le NAVIGATEUR des
+  postes, le serveur Next.js, un worker dans un AUTRE processus, les
+  sous-processus (tesseract, ocrmypdf, soffice) et les conteneurs.
+  « Parcours verts sans réseau externe » ne vaut donc QUE pour ce processus.
+* la vérification pleine pile — navigateur réel, pile web + worker déployée,
+  sortie réseau EXTERNE réellement bloquée — est une autre épreuve : elle vit
+  dans l'atelier, et un job CI dédié l'exécute sur une pile réelle (voir
+  ``docs/VERIFICATION.md`` / ``docs/DEPLOYMENT.md``). L'ACCEPTATION EN ATELIER
+  (serveur réel, postes réels, câble débranché) reste exigée dans tous les cas.
 
 Ce que ce script fait, concrètement :
 
@@ -34,12 +48,16 @@ LIMITES ÉNONCÉES (à ne pas dépasser) :
 
 * Le garde intercepte les connexions **Python** (urllib, boto3, redis-py,
   httpx…). Les bibliothèques C (libpq) appellent ``connect(2)`` directement :
-  elles ne passent pas par le garde. C'est pourquoi ``--inventaire`` vérifie en
-  plus que les points de terminaison configurés (base, Redis, S3) sont
-  loopback/privés, et que rien ne pointe vers un nom public.
-* Ce script ne remplace PAS l'acceptation en atelier (serveur réel, postes
-  réels, câble réseau débranché, modèles et images préinstallés) : il exécute
-  la partie automatisable et l'annonce. Il n'écrit rien dans le dépôt.
+  elles ne passent pas par le garde — c'est précisément pourquoi ce script ne
+  peut pas conclure « le produit travaille hors ligne ». C'est pourquoi
+  ``--inventaire`` vérifie en plus que les points de terminaison configurés
+  (base, Redis, S3) sont loopback/privés, et que rien ne pointe vers un nom
+  public.
+* Ce script ne remplace NI la vérification pleine pile (navigateur + worker,
+  sortie réseau bloquée au niveau du système) NI l'acceptation en atelier
+  (serveur réel, postes réels, câble réseau débranché, modèles et images
+  préinstallés) : il exécute la partie automatisable DANS SON PROCESSUS et
+  l'annonce. Il n'écrit rien dans le dépôt.
 
 Usage :
     python scripts/verifier_hors_ligne.py --inventaire
@@ -520,9 +538,18 @@ def parcours(
                 liste = fiches.get("fiches", fiches) if isinstance(fiches, dict) else fiches
                 code = str(liste[0]["code"]) if liste else ""
                 assert code, f"aucune fiche retrouvée après refus RG11 : {raison}"
+                # La réouverture est une DÉCISION : elle porte la révision
+                # relue (contrat de décision liée à la révision). Sans elle, le
+                # backend refuse 428 — c'est ce qui protège les postes restés
+                # ouverts dans l'atelier.
+                revision_fiche = int(client.get(f"/fiches/{code}", headers=entetes).json()["revision"])
                 rouvrir = client.post(
                     f"/fiches/{code}/rouvrir",
-                    json={"effacer_corrections": True, "commentaire": "vérification hors ligne"},
+                    json={
+                        "effacer_corrections": True,
+                        "commentaire": "vérification hors ligne",
+                        "revision": revision_fiche,
+                    },
                     headers=entetes,
                 )
                 assert rouvrir.status_code == 200, rouvrir.text
@@ -713,7 +740,12 @@ def main(argv: list[str] | None = None) -> int:
         analyseur.error("préciser --inventaire et/ou --executer")
 
     rapport = Rapport()
-    print("=== Vérification HORS LIGNE — SEAMTECH Search ===", flush=True)
+    print("=== Diagnostic hors ligne (PROCESSUS PYTHON) — SEAMTECH Search ===", flush=True)
+    print(
+        "  portée : garde socket dans cet interpréteur — navigateur, Next.js, worker séparé et "
+        "bibliothèques natives NON couverts. Ce n'est pas une isolation réseau du système.",
+        flush=True,
+    )
     config = config_depuis_environnement()
     capacites: dict[str, Any] = {}
 
@@ -768,8 +800,9 @@ def main(argv: list[str] | None = None) -> int:
         )
     elif not echecs:
         conclusion = (
-            "parcours essentiels VERTS sans réseau externe — acceptation atelier (serveur réel, réseau "
-            "coupé, postes réels) TOUJOURS requise"
+            "parcours VERTS dans CE PROCESSUS PYTHON avec garde socket — portée limitée : ni le "
+            "navigateur, ni Next.js, ni un worker séparé, ni les bibliothèques natives ne sont "
+            "couverts. Vérification pleine pile et acceptation atelier TOUJOURS requises"
         )
     else:
         conclusion = "ÉCHEC — corriger les points ci-dessus avant tout déploiement"
@@ -780,6 +813,10 @@ def main(argv: list[str] | None = None) -> int:
         arguments.rapport.write_text(
             json.dumps(
                 {
+                    "portee": (
+                        "diagnostic du PROCESSUS PYTHON (garde socket) : navigateur, Next.js, "
+                        "worker séparé, sous-processus et bibliothèques natives NON couverts"
+                    ),
                     "capacites": capacites,
                     "resultats": [r.__dict__ for r in rapport.resultats],
                     "tentatives_externes": tentatives,

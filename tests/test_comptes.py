@@ -572,10 +572,20 @@ def test_validation_attribuee_au_compte_connecte(base_comptes_corpus: dict[str, 
     assert cookie["id_utilisateur"] == second["id_utilisateur"]
 
     code = "1001-GV-006"  # fiche a_valider du corpus
+    # Une DÉCISION porte la révision relue (verrou optimiste de décision) : on
+    # relit la fiche juste avant de décider, comme le fait l'écran d'atelier.
+    with index.connect() as connexion:
+        with connexion.cursor() as cursor:
+            cursor.execute("SELECT revision FROM fiche WHERE code = %s", (code,))
+            revision = int(cursor.fetchone()[0])
     reponse = client.post(
         f"/fiches/{code}/valider",
         # Le corps prétend qu'un AUTRE a validé : il doit être ignoré.
-        json={"utilisateur": "premier", "commentaire": "validation sous session nominative"},
+        json={
+            "utilisateur": "premier",
+            "commentaire": "validation sous session nominative",
+            "revision": revision,
+        },
         headers={
             **_entetes_session(cookie),
             "X-SEAMTECH-UTILISATEUR": "second",
@@ -611,7 +621,7 @@ def test_indicateur_qualite_taux_par_utilisateur(base_comptes_corpus: dict[str, 
 
     from seamtech_search.fiches.routes import valider_fiche
 
-    valider_fiche(index, "1001-GV-006", "second", "via indicateur")
+    valider_fiche(index, "1001-GV-006", "second", "via indicateur", exiger_revision=False)
     assert second["id_utilisateur"] > 0
 
     with index.connect() as connexion:

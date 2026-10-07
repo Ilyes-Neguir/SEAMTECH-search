@@ -109,6 +109,22 @@ def _journal(base: dict, code: str) -> list[tuple]:
             return cursor.fetchall()
 
 
+def _revision(base: dict, code: str) -> int:
+    """Révision COURANTE de la fiche, lue en base.
+
+    Contrat F1/F3 (revue indépendante du 2026-10-07) : toute écriture
+    interactive doit porter la révision que le poste a relue. Les scénarios de
+    ce fichier rejouent un poste d'atelier : ils relisent donc la révision
+    juste avant d'agir, exactement comme l'écran le fait.
+    """
+    with base["index"].connect() as connexion:
+        with connexion.cursor() as cursor:
+            cursor.execute("SELECT revision FROM fiche WHERE code = %s", (code,))
+            ligne = cursor.fetchone()
+            assert ligne is not None, f"fiche {code} absente"
+            return int(ligne[0])
+
+
 def _dossier_reprise(base: dict, nom: str) -> Path:
     """Un dossier neuf portant le même PDF (pour rejouer une extraction)."""
     dossier = base["racine_essai"] / nom
@@ -120,41 +136,70 @@ def _dossier_reprise(base: dict, nom: str) -> Path:
 class TestTransitionsDeStatut:
     def test_valider_une_fiche_a_valider(self, base_workflow: dict, client: TestClient) -> None:
         assert _statut(base_workflow, "7792-SO") == "a_valider"  # RG3
-        reponse = client.post("/fiches/7792-SO/valider", json={"utilisateur": "alice", "commentaire": "conforme"})
+        revision = _revision(base_workflow, "7792-SO")
+        reponse = client.post(
+            "/fiches/7792-SO/valider",
+            json={"utilisateur": "alice", "commentaire": "conforme", "revision": revision},
+        )
         assert reponse.status_code == 200 and reponse.json()["statut"] == "valide"
+        assert reponse.json()["revision"] == revision + 1, "la décision doit faire avancer la révision"
         assert _statut(base_workflow, "7792-SO") == "valide"
         assert ("valider", "a_valider", "valide") in _journal(base_workflow, "7792-SO")
 
     def test_valider_deux_fois_refuse(self, base_workflow: dict, client: TestClient) -> None:
-        reponse = client.post("/fiches/7792-SO/valider", json={"utilisateur": "alice"})
+        reponse = client.post(
+            "/fiches/7792-SO/valider",
+            json={"utilisateur": "alice", "revision": _revision(base_workflow, "7792-SO")},
+        )
         assert reponse.status_code == 409 and "a_valider" in reponse.json()["detail"]
 
     def test_rouvrir_une_fiche_validee(self, base_workflow: dict, client: TestClient) -> None:
-        reponse = client.post("/fiches/7792-SO/rouvrir", json={"utilisateur": "bob", "commentaire": "coquille vue"})
+        reponse = client.post(
+            "/fiches/7792-SO/rouvrir",
+            json={"utilisateur": "bob", "commentaire": "coquille vue", "revision": _revision(base_workflow, "7792-SO")},
+        )
         assert reponse.status_code == 200 and reponse.json()["statut"] == "a_valider"
         assert _statut(base_workflow, "7792-SO") == "a_valider"
         assert ("rouvrir", "valide", "a_valider") in _journal(base_workflow, "7792-SO")
 
     def test_rejeter_sans_motif_refuse_avec_motif_ok(self, base_workflow: dict, client: TestClient) -> None:
-        reponse = client.post("/fiches/7792-SO/rejeter", json={"utilisateur": "bob"})
+        revision = _revision(base_workflow, "7792-SO")
+        reponse = client.post("/fiches/7792-SO/rejeter", json={"utilisateur": "bob", "revision": revision})
         assert reponse.status_code == 422 and "motif" in reponse.json()["detail"].lower()
-        reponse = client.post("/fiches/7792-SO/rejeter", json={"utilisateur": "bob", "motif": "gabarit douteux"})
+        reponse = client.post(
+            "/fiches/7792-SO/rejeter",
+            json={"utilisateur": "bob", "motif": "gabarit douteux", "revision": revision},
+        )
         assert reponse.status_code == 200 and reponse.json()["statut"] == "rejete"
         assert ("rejeter", "a_valider", "rejete") in _journal(base_workflow, "7792-SO")
         # rejeter une fiche rejetée → 409 ; rouvrir la rend a_valider
-        assert client.post("/fiches/7792-SO/rejeter", json={"utilisateur": "bob", "motif": "x"}).status_code == 409
-        assert client.post("/fiches/7792-SO/rouvrir", json={"utilisateur": "bob"}).status_code == 200
+        rev_rejetee = _revision(base_workflow, "7792-SO")
+        assert client.post(
+            "/fiches/7792-SO/rejeter", json={"utilisateur": "bob", "motif": "x", "revision": rev_rejetee}
+        ).status_code == 409
+        assert client.post(
+            "/fiches/7792-SO/rouvrir", json={"utilisateur": "bob", "revision": rev_rejetee}
+        ).status_code == 200
 
     def test_fiche_inconnue_404(self, client: TestClient) -> None:
-        assert client.post("/fiches/INCONNU/valider", json={"utilisateur": "alice"}).status_code == 404
-        assert client.post("/fiches/INCONNU/rejeter", json={"utilisateur": "alice", "motif": "x"}).status_code == 404
+        # la révision est fournie (1) : c'est bien « fiche inconnue » (404), pas
+        # « révision manquante » (428) qui doit répondre
+        assert client.post("/fiches/INCONNU/valider", json={"utilisateur": "alice", "revision": 1}).status_code == 404
+        assert client.post(
+            "/fiches/INCONNU/rejeter", json={"utilisateur": "alice", "motif": "x", "revision": 1}
+        ).status_code == 404
 
 
 class TestCorrectionEtJournal:
     def test_corriger_un_champ_trace_tout(self, base_workflow: dict, client: TestClient) -> None:
         reponse = client.post(
             "/fiches/7792-SO/corriger",
-            json={"champ": "fiche.designation", "valeur": "Spi Asymétrique Medium Régate 2", "utilisateur": "carole"},
+            json={
+                "champ": "fiche.designation",
+                "valeur": "Spi Asymétrique Medium Régate 2",
+                "utilisateur": "carole",
+                "revision": _revision(base_workflow, "7792-SO"),
+            },
         )
         assert reponse.status_code == 200
         corps = reponse.json()
@@ -201,10 +246,18 @@ class TestCorrectionEtJournal:
                 assert cursor.fetchone()[0] == "Spi Asymétrique Medium Régate 2"
 
     def test_corriger_une_fiche_validee_refuse_rg11(self, base_workflow: dict, client: TestClient) -> None:
-        assert client.post("/fiches/7792-SO/valider", json={"utilisateur": "alice"}).status_code == 200
+        assert client.post(
+            "/fiches/7792-SO/valider",
+            json={"utilisateur": "alice", "revision": _revision(base_workflow, "7792-SO")},
+        ).status_code == 200
         reponse = client.post(
             "/fiches/7792-SO/corriger",
-            json={"champ": "fiche.designation", "valeur": "x", "utilisateur": "carole"},
+            json={
+                "champ": "fiche.designation",
+                "valeur": "x",
+                "utilisateur": "carole",
+                "revision": _revision(base_workflow, "7792-SO"),
+            },
         )
         assert reponse.status_code == 409 and "RG11" in reponse.json()["detail"]
 
@@ -213,7 +266,12 @@ class TestCorrectionEtJournal:
 
         reponse = client.post(
             "/fiches/7792-SO/rouvrir",
-            json={"utilisateur": "bob", "effacer_corrections": True, "commentaire": "arbitrage : corrections abandonnées"},
+            json={
+                "utilisateur": "bob",
+                "effacer_corrections": True,
+                "commentaire": "arbitrage : corrections abandonnées",
+                "revision": _revision(base_workflow, "7792-SO"),
+            },
         )
         assert reponse.status_code == 200 and reponse.json()["corrections_effacees"] is True
         with base_workflow["index"].connect() as connexion:
@@ -258,7 +316,14 @@ class TestFileDeValidation:
 class TestVerrouCalibration:
     def test_validation_lot_refusee_tant_que_non_calibre(self, base_workflow: dict, client: TestClient) -> None:
         """calibre:false (état du dépôt jusqu'aux fiches réelles) → 409, rien n'est validé."""
-        reponse = client.post("/validation/lot", json={"codes": ["0901-MM"], "utilisateur": "alice"})
+        reponse = client.post(
+            "/validation/lot",
+            json={
+                "codes": ["0901-MM"],
+                "utilisateur": "alice",
+                "revisions": {"0901-MM": _revision(base_workflow, "0901-MM")},
+            },
+        )
         assert reponse.status_code == 409
         assert "calibr" in reponse.json()["detail"].lower()
         assert _statut(base_workflow, "0901-MM") == "a_valider", "la 409 ne doit rien écrire"
@@ -266,7 +331,13 @@ class TestVerrouCalibration:
     def test_validation_lot_avec_acquittement_explicite(self, base_workflow: dict, client: TestClient) -> None:
         reponse = client.post(
             "/validation/lot",
-            json={"codes": ["0901-MM"], "utilisateur": "chef", "acquittement_humain": True, "commentaire": "acquittement chef d'atelier"},
+            json={
+                "codes": ["0901-MM"],
+                "utilisateur": "chef",
+                "acquittement_humain": True,
+                "commentaire": "acquittement chef d'atelier",
+                "revisions": {"0901-MM": _revision(base_workflow, "0901-MM")},
+            },
         )
         assert reponse.status_code == 200
         assert reponse.json()["nb_validees"] == 1
@@ -275,7 +346,14 @@ class TestVerrouCalibration:
     def test_validation_lot_ignores_avec_raison(self, base_workflow: dict, client: TestClient) -> None:
         reponse = client.post(
             "/validation/lot",
-            json={"codes": ["0901-MM", "INCONNU-1"], "utilisateur": "chef", "acquittement_humain": True},
+            json={
+                "codes": ["0901-MM", "INCONNU-1"],
+                "utilisateur": "chef",
+                "acquittement_humain": True,
+                # INCONNU-1 ne peut pas avoir de révision : la fiche est inconnue,
+                # donc ignorée pour cette raison avant tout contrôle de révision.
+                "revisions": {"0901-MM": _revision(base_workflow, "0901-MM")},
+            },
         )
         assert reponse.status_code == 200
         corps = reponse.json()
@@ -287,7 +365,10 @@ class TestVerrouCalibration:
         """Une calibration réelle (fichier calibre:true) lève le verrou sans acquittement."""
         import json
 
-        rouvrir = client.post("/fiches/0901-MM/rouvrir", json={"utilisateur": "chef"})
+        rouvrir = client.post(
+            "/fiches/0901-MM/rouvrir",
+            json={"utilisateur": "chef", "revision": _revision(base_workflow, "0901-MM")},
+        )
         assert rouvrir.status_code == 200
         seuils = tmp_path / "seuils_calibres.json"
         seuils.write_text(
@@ -296,7 +377,14 @@ class TestVerrouCalibration:
             encoding="utf-8",
         )
         monkeypatch.setenv("SEAMTECH_SEUILS_CONFIANCE", str(seuils))
-        reponse = client.post("/validation/lot", json={"codes": ["0901-MM"], "utilisateur": "alice"})
+        reponse = client.post(
+            "/validation/lot",
+            json={
+                "codes": ["0901-MM"],
+                "utilisateur": "alice",
+                "revisions": {"0901-MM": _revision(base_workflow, "0901-MM")},
+            },
+        )
         assert reponse.status_code == 200, reponse.json()
         assert reponse.json()["nb_validees"] == 1
 

@@ -196,7 +196,7 @@ def test_validation_fait_passer_dans_l_archive_de_confiance(base_recherche: dict
     ligne_avant = next(r for r in avant["resultats"] if r["code"] == "1001-GV-006")
     assert ligne_avant["statut"] == "a_valider"
 
-    valider_fiche(index, "1001-GV-006", "operateur.test", "validation de test Lot E")
+    valider_fiche(index, "1001-GV-006", "operateur.test", "validation de test Lot E", exiger_revision=False)
 
     apres = rechercher_fiches(index, requete="attente")
     assert "1001-GV-006" in codes(apres), "validée = toujours cherchable"

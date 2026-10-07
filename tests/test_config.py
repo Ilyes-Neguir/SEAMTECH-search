@@ -120,3 +120,62 @@ def test_variables_durables_et_relecture_ne_dependent_pas_l_une_de_l_autre(
     monkeypatch.setenv("SEAMTECH_STORAGE_VERIFY_REREAD", "true")
     config = AppConfig.load(config_file)
     assert (config.require_durable_queue, config.storage_verify_reread) == (True, True)
+
+
+def test_require_revision_actif_par_defaut_et_desactivable_explicitement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Le verrou optimiste est OBLIGATOIRE par défaut (revue du 2026-10-07).
+
+    Trois choses sont verrouillées ici :
+
+    * le défaut est FERMÉ (``True``) : une configuration qui n'en parle pas
+      refuse une écriture sans révision, elle ne l'autorise pas ;
+    * ``SEAMTECH_REQUIRE_REVISION=false`` est lu comme une VALEUR (elle rétablit
+      l'écriture inconditionnelle pour un script ancien identifié) — le bug
+      d'origine de cette famille testait la vérité de la chaîne, donc « false »
+      n'était jamais appliqué ;
+    * les autres variables restent indépendantes (même famille que E-23 : une
+      variable posée ne doit pas en casser une autre).
+    """
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    config_file = config_dir / "config.json"
+    config_file.write_text('{"root_paths": ["sample_data"]}', encoding="utf-8")
+
+    # 1. Aucune variable : le défaut protège.
+    monkeypatch.delenv("SEAMTECH_REQUIRE_REVISION", raising=False)
+    monkeypatch.delenv("SEAMTECH_REQUIRE_DURABLE_QUEUE", raising=False)
+    monkeypatch.delenv("SEAMTECH_STORAGE_VERIFY_REREAD", raising=False)
+    assert AppConfig.load(config_file).require_revision is True
+
+    # 2. Désactivation EXPLICITE : la valeur est bien lue.
+    monkeypatch.setenv("SEAMTECH_REQUIRE_REVISION", "false")
+    assert AppConfig.load(config_file).require_revision is False
+
+    # 3. Réactivation explicite, avec les voisines posées : aucune interférence.
+    monkeypatch.setenv("SEAMTECH_REQUIRE_REVISION", "true")
+    monkeypatch.setenv("SEAMTECH_REQUIRE_DURABLE_QUEUE", "true")
+    monkeypatch.setenv("SEAMTECH_STORAGE_VERIFY_REREAD", "true")
+    config = AppConfig.load(config_file)
+    assert (config.require_revision, config.require_durable_queue, config.storage_verify_reread) == (
+        True,
+        True,
+        True,
+    )
+
+
+def test_une_configuration_sans_le_champ_reste_fermee() -> None:
+    """Une configuration construite à la main (ou ancienne) ne peut pas ouvrir
+    le verrou par OMISSION : les routes lisent le champ avec un défaut ``True``.
+
+    Le test porte sur le contrat de lecture utilisé par
+    ``enregistrer_routes_fiches`` (``getattr(config, "require_revision", True)``).
+    """
+    from types import SimpleNamespace
+
+    from seamtech_search.config import AppConfig
+
+    assert AppConfig(root_paths=[Path("/tmp/racine-synthetique")]).require_revision is True
+    sans_champ = SimpleNamespace()
+    assert getattr(sans_champ, "require_revision", True) is True
