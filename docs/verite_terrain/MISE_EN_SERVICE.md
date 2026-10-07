@@ -86,8 +86,10 @@ L'ordre compte : chaque étape suppose la précédente FAITE et VÉRIFIÉE.
 
 1. **Fermer les points d'ingénierie et figer la release.** `index --rebuild` est
    sûr (E-40 corrigé, prouvé sur PostgreSQL réel) ; la CI est verte sur le commit
-   retenu ; on sélectionne **un commit de release** et on ne fait plus entrer de
-   fonctionnalité sans rapport.
+   retenu, et le **commit de release est FIGÉ : `de7333e`** (CI 13/13 jobs, push
+   `37691659442` + pull request `37691664501`). Après ce gel, on ne fait plus
+   entrer de fonctionnalité sans rapport : les commits suivants éventuels sont
+   documentaires et doivent être présentés comme tels.
 2. **Confirmer la conception.** Serveur d'atelier local (PC/VM) ou VPS distant —
    un VPS fait dépendre l'atelier de la liaison Internet ; **MinIO** comme
    fournisseur objet (R2 optionnel, non requis) ; **destination de sauvegarde
