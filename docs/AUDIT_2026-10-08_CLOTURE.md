@@ -108,7 +108,7 @@ Two defects were found *by* these tests and fixed in the same commit:
 | `ruff check` (E,F,I,W, line-length 120) + `compileall` | **Local, clean** |
 | SQLite suite `-m "not postgres and not s3 and not perf and not redis_queue"` | **Local: 922 passed, 3 skipped** |
 | PostgreSQL + Redis suite `-m "postgres or redis_queue"` | **Local: 333 passed, 3 skipped** |
-| Audit/targeted modules (A01/A02, A05, A06/A07, claim/ack, retention, cross-workflow, recette) | **Local: 67 passed** |
+| Audit/targeted modules (A01/A02, A05, A06/A07, claim/ack, retention, cross-workflow, recette) | **Local: 65 passed** (re-run at the end of the work: 65 passed in 10.4 s) |
 | CI coverage gate (`pytest -m "not s3 and not perf" --cov=seamtech_search` + `scripts/coverage_gate.py`) | **Local, reproduced and passing**: 1249 passed, 5 skipped, overall 86.8 % (floor 85 %), every per-module gate met — `jobs.py` 100 % (gate 94 %) after the PostgreSQL supervision tests |
 | Migrations + `pgvector` on a fresh database | **Local: 001→022, `vector 0.7.4`, `documents.embedding vector`** |
 | Real PostgreSQL + real Redis integration | **Local** (suites above; disposable databases, never the user's data) |
@@ -161,7 +161,7 @@ SEAMTECH_TEST_REDIS_URL=redis://127.0.0.1:6390/0 \
 
 .venv/bin/python -m pytest -q -m "not postgres and not s3 and not perf and not redis_queue"
 
-# Audit modules only (64 tests)
+# Audit modules only (65 tests)
 SEAMTECH_TEST_DATABASE_URL=postgresql://seamtech@127.0.0.1:5433/postgres \
 SEAMTECH_TEST_REDIS_URL=redis://127.0.0.1:6390/0 \
   .venv/bin/python -m pytest -q tests/test_audit_a01_a02_integrite.py tests/test_audit_a05_collisions.py \
