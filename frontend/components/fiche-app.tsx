@@ -132,7 +132,7 @@ export function FicheApp({ code }: { code: string }) {
           {detailAffiche && (
             <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
               <div><dt className="text-muted-foreground">Client</dt><dd className="mt-0.5 font-medium">{detailAffiche.client || "—"}</dd></div>
-              <div><dt className="text-muted-foreground">Bateau</dt><dd className="mt-0.5 font-medium">{[detail.bateau, detail.bateau_taille].filter(Boolean).join(" · ") || "—"}</dd></div>
+              <div><dt className="text-muted-foreground">Bateau</dt><dd className="mt-0.5 font-medium">{[detailAffiche.bateau, detailAffiche.bateau_taille].filter(Boolean).join(" · ") || "—"}</dd></div>
               <div><dt className="text-muted-foreground">Gabarit</dt><dd className="mt-0.5 font-medium">{detailAffiche.gabarit || "—"}</dd></div>
               <div><dt className="text-muted-foreground">Édition</dt><dd className="mt-0.5 font-medium">{detailAffiche.date_edition || "—"}</dd></div>
             </dl>

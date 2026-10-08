@@ -991,7 +991,21 @@ def worker_loop(
                         worker_id=identifiant,
                         heartbeat=lambda: battement.suivre(job_id),
                     )
-                    redis_store.ack_task("imports", task)
+                    # ORDRE (investigation « propriété du claim », audit du
+                    # 2026-10-08) : la propriété est vérifiée AVANT
+                    # l'acquittement. Acquitter d'abord retirait la tâche de la
+                    # file même quand un autre worker l'avait reprise — sa copie
+                    # disparaissait, et une mort ultérieure du repreneur ne
+                    # laissait plus rien à reprendre dans la liste de traitement.
+                    if not redis_store.revendication_appartient_a("imports", job_id, identifiant):
+                        logger.warning(
+                            "Job %s : verrou perdu (repris par un autre worker) — "
+                            "conséquence : la tâche n'est PAS acquittée ici et cet état terminal "
+                            "n'est PAS écrit, la reprise fait foi.",
+                            job_id,
+                        )
+                        continue
+                    redis_store.ack_task("imports", task, worker_id=identifiant)
                     statut = str(result.get("status", "unknown"))
                     # `max_task_attempts` compte le nombre TOTAL de tentatives :
                     # avec 3, un job est essayé 3 fois (attempt 0, 1, 2) puis va
@@ -1000,17 +1014,10 @@ def worker_loop(
                     # plus que ce que l'opérateur avait réglé — un job pouvait
                     # être relancé 4 fois pour un réglage à 3.
                     tentatives_restantes = attempt + 1 < max_attempts
-                    # Protection de propriété : si le verrou a expiré pendant un
-                    # import très long et qu'un autre worker a repris la tâche,
-                    # écrire l'état terminal ici écraserait SON résultat. On
-                    # s'abstient et on le dit — la reprise fait autorité.
-                    if not redis_store.revendication_appartient_a("imports", job_id, identifiant):
-                        logger.warning(
-                            "Job %s : verrou perdu (repris par un autre worker) — "
-                            "conséquence : cet état terminal n'est PAS écrit, la reprise fait foi.",
-                            job_id,
-                        )
-                        continue
+                    # (La propriété du verrou a été vérifiée AVANT l'acquittement,
+                    # juste au-dessus : un worker déchu n'écrit ni état terminal,
+                    # ni acquittement, et ne peut pas escamoter la tâche du
+                    # repreneur.)
                     if statut in ("failed", "upload_incomplete"):
                         if tentatives_restantes:
                             delay = 2**attempt  # backoff exponentiel borné par le nombre de tentatives

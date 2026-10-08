@@ -35,6 +35,7 @@ from seamtech_search.fiches.corrections_canoniques import (
     CorrectionCanoniqueRefusee,
     appliquer_correction_canonique,
     diagnostiquer_divergences,
+    divergences_bloquantes_sous_curseur,
     reconcilier_fiche,
     resoudre_cible,
 )
@@ -651,6 +652,7 @@ def corriger_champ(
 def valider_fiche(
     index: Any, code: str, utilisateur: str | None, commentaire: str | None = None,
     revision: int | str | None = None, *, exiger_revision: bool = True,
+    accepter_divergences: bool = False,
 ) -> dict[str, Any]:
     """a_valider → valide (RG3 : c'est une DÉCISION explicite, jamais un effet de bord).
 
@@ -660,6 +662,15 @@ def valider_fiche(
     inacceptable. L'UPDATE vérifie statut ET révision dans la même instruction :
     soit la fiche est exactement celle qui a été relue, soit la décision est
     refusée (409) et rien n'est écrit au journal.
+
+    COHÉRENCE AVANT PUBLICATION (investigation « cohérence inter-parcours »,
+    audit du 2026-10-08) : valider publie la fiche dans l'archive de confiance —
+    donc dans ce que l'atelier CHERCHE. Si une correction relue n'a pas atteint
+    la donnée métier (divergence sur une cible supportée), la validation est
+    REFUSÉE (409) avec la liste : l'opérateur réconcilie explicitement
+    (POST /fiches/{code}/reconcilier-corrections) ou l'assume par
+    ``accepter_divergences=true``, et cette acceptation est JOURNALISÉE. Rien
+    n'est bloqué sans issue : c'est une décision à prendre, pas un mur.
     """
     revision_attendue = _revision_attendue(revision, exiger=exiger_revision, action="Décision « valider »")
     with index.connect() as connexion:
@@ -668,6 +679,27 @@ def valider_fiche(
             if statut != "a_valider":
                 conseil = " — rouvrez-la d'abord (POST /fiches/{code}/rouvrir)." if statut == "rejete" else ""
                 raise HTTPException(status_code=409, detail=f"Fiche {code} en statut « {statut} » : seule une fiche a_valider peut être validée{conseil}")
+            divergences = divergences_bloquantes_sous_curseur(cursor, code)
+            if divergences and not accepter_divergences:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": code,
+                        "regle": "coherence_canonique",
+                        "decision": "valider",
+                        "message": (
+                            f"{len(divergences)} correction(s) de cette fiche n'ont pas atteint la "
+                            "donnée métier : valider publierait dans la recherche une valeur "
+                            "différente de celle qui a été relue. Réconciliez, ou assumez "
+                            "explicitement."
+                        ),
+                        "divergences": divergences,
+                        "remediation": {
+                            "reconcilier": f"POST /fiches/{code}/reconcilier-corrections",
+                            "accepter": "renvoyer la validation avec accepter_divergences=true",
+                        },
+                    },
+                )
             id_utilisateur = _resoudre_utilisateur(cursor, utilisateur)
             # Une DÉCISION change l'état de la fiche : la révision avance, donc un
             # poste resté sur l'ancienne révision ne pourra plus écrire (migration 021).
@@ -681,13 +713,31 @@ def valider_fiche(
             # le rafraîchit dans la même transaction et fait passer la fiche dans
             # l'archive de confiance (le badge disparaît).
             cursor.execute("SELECT rafraichir_texte_recherche_fiche(%s)", (id_fiche,))
-            _jouter_journal(cursor, id_fiche, id_utilisateur, "valider", statut, "valide", commentaire)
+            commentaire_final = commentaire
+            if divergences:
+                detail_acceptation = (
+                    "divergences canoniques ACCEPTÉES explicitement : "
+                    + "; ".join(
+                        f"{d['champ']} (corrigé {d['valeur_corrigee']!r} ≠ canonique "
+                        f"{d['valeur_canonique']!r})"
+                        for d in divergences[:10]
+                    )
+                )
+                commentaire_final = (
+                    f"{commentaire} — {detail_acceptation}" if commentaire else detail_acceptation
+                )
+            _jouter_journal(cursor, id_fiche, id_utilisateur, "valider", statut, "valide", commentaire_final)
             LOGGER.info(
                 "Fiche %s VALIDÉE par %s — conséquence : verrou RG11 (aucune ré-extraction ne l'écrase) "
-                "et texte de recherche pondéré rafraîchi (visible par GET /recherche).",
+                "et texte de recherche pondéré rafraîchi (visible par GET /recherche).%s",
                 code, utilisateur,
+                f" {len(divergences)} divergence(s) canonique(s) acceptée(s) explicitement."
+                if divergences else "",
             )
-            return {"code": code, "statut": "valide", "revision": nouvelle_revision}
+            return {
+                "code": code, "statut": "valide", "revision": nouvelle_revision,
+                "divergences_acceptees": divergences,
+            }
 
 
 def rejeter_fiche(
@@ -828,6 +878,7 @@ def valider_lot(
     index: Any, codes: list[str], utilisateur: str | None,
     acquittement_humain: bool = False, commentaire: str | None = None,
     revisions: dict[str, Any] | None = None, *, exiger_revision: bool = True,
+    accepter_divergences: bool = False,
 ) -> dict[str, Any]:
     """Validation GROUPÉE — la seule opération qui peut entériner une erreur
     systématique sur 10 000 fiches : verrou de calibration OBLIGATOIRE
@@ -856,6 +907,30 @@ def valider_lot(
                 id_fiche, statut, revision_actuelle = int(ligne[0]), str(ligne[1]), int(ligne[2] if ligne[2] is not None else 1)
                 if statut != "a_valider":
                     ignorees.append({"code": code, "raison": f"statut « {statut} » — rouvrez d'abord"})
+                    continue
+                # Même cohérence qu'en validation unitaire (investigation
+                # « cohérence inter-parcours ») : une correction qui n'a pas
+                # atteint la donnée métier fait IGNORER la fiche avec sa raison
+                # — le lot continue, la fiche n'est pas publiée à l'aveugle.
+                divergences_lot = divergences_bloquantes_sous_curseur(cursor, code)
+                if divergences_lot and not accepter_divergences:
+                    # Nommer les champs : « 1 correction non propagée » sans dire
+                    # LESQUELLES obligerait l'opérateur à rouvrir la fiche pour
+                    # savoir quoi réconcilier.
+                    champs_divergents = ", ".join(str(d.get("champ")) for d in divergences_lot[:3])
+                    if len(divergences_lot) > 3:
+                        champs_divergents += ", …"
+                    ignorees.append(
+                        {
+                            "code": code,
+                            "raison": (
+                                f"{len(divergences_lot)} correction(s) non propagée(s) "
+                                f"({champs_divergents}) — réconciliez "
+                                "(POST /fiches/{code}/reconcilier-corrections) ou validez avec "
+                                "accepter_divergences=true"
+                            ),
+                        }
+                    )
                     continue
                 brute = revisions.get(code) if isinstance(revisions, dict) else None
                 try:
@@ -1897,6 +1972,9 @@ def enregistrer_routes_fiches(
             _attribution(config, token, corps.get("utilisateur"), entete_utilisateur, entete_role),
             corps.get("commentaire"),
             revision=corps.get("revision"), exiger_revision=exiger_revision,
+            # Acceptation EXPLICITE et journalisée (409 sinon) : c'est une
+            # décision de l'opérateur, jamais un effet de bord d'un rechargement.
+            accepter_divergences=bool(corps.get("accepter_divergences")),
         )
 
     @app.post("/fiches/{code}/rejeter")
@@ -1960,6 +2038,7 @@ def enregistrer_routes_fiches(
             _attribution(config, token, corps.get("utilisateur"), entete_utilisateur, entete_role),
             acquittement_humain=bool(corps.get("acquittement_humain")), commentaire=corps.get("commentaire"),
             revisions=corps.get("revisions"), exiger_revision=exiger_revision,
+            accepter_divergences=bool(corps.get("accepter_divergences")),
         )
     @app.get("/fiches")
     def route_liste_fiches(

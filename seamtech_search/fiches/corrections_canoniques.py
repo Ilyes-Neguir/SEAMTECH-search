@@ -38,6 +38,8 @@ annulée), et l'opérateur reçoit 422 plutôt qu'un succès trompeur.
 
 from __future__ import annotations
 
+import datetime as _datetime
+import decimal as _decimal
 import logging
 import re
 from dataclasses import dataclass, field
@@ -582,6 +584,26 @@ def _normaliser_comparaison(valeur: Any) -> str:
         return " ".join(str(valeur).split()).casefold()
 
 
+def valeur_json_sur(valeur: Any) -> Any:
+    """Valeur de base prête pour JSON (Decimal, date, bytes → types simples).
+
+    Ces valeurs repartent en HTTP : le 409 de cohérence et le rapport de
+    divergences transportent la valeur canonique TELLE QU'ELLE EST EN BASE. Un
+    ``Decimal`` non converti ferait échouer la sérialisation FastAPI — un 500 à
+    la place de l'explication, au moment précis où l'opérateur a besoin de la
+    raison du refus.
+    """
+    if valeur is None or isinstance(valeur, (bool, int, float, str)):
+        return valeur
+    if isinstance(valeur, _decimal.Decimal):
+        return float(valeur)
+    if isinstance(valeur, (_datetime.datetime, _datetime.date, _datetime.time)):
+        return valeur.isoformat()
+    if isinstance(valeur, (bytes, bytearray, memoryview)):
+        return bytes(valeur).decode("utf-8", errors="replace")
+    return str(valeur)
+
+
 def _lire_canonique(cursor: Any, cible: CibleCanonique, id_fiche: int) -> Any:
     """Valeur ACTUELLE de la donnée canonique visée (None si la ligne manque)."""
     cursor.execute(
@@ -604,7 +626,87 @@ def _lire_canonique(cursor: Any, cible: CibleCanonique, id_fiche: int) -> Any:
 # et n'écrit que sur une demande EXPLICITE, fiche par fiche, en journalisant.
 
 
-def diagnostiquer_divergences(index: Any, *, code: str | None = None, limite: int = 500) -> list[dict[str, Any]]:
+def divergences_sous_curseur(
+    cursor: Any, *, code: str | None = None, limite: int = 500
+) -> list[dict[str, Any]]:
+    """Divergences lisibles DEPUIS une transaction déjà ouverte.
+
+    Séparation nécessaire pour la validation (investigation « cohérence
+    inter-parcours », audit du 2026-10-08) : la décision de valider doit voir un
+    INSTANTANÉ cohérent — statut, révision et divergences lus au même moment, au
+    même endroit. Une seconde connexion pourrait lire un état plus récent et
+    refuser une fiche que l'opérateur a pourtant relue.
+    """
+    conditions = ["e.corrige"]
+    parametres: list[Any] = []
+    if code is not None:
+        conditions.append("f.code = %s")
+        parametres.append(code)
+    cursor.execute(
+        "SELECT f.code, f.id_fiche, e.id_champ, e.champ, e.rang, e.table_cible, "
+        "e.colonne_cible, e.valeur_normalisee "
+        "FROM fiche_champ_extrait e JOIN fiche f ON f.id_fiche = e.id_fiche "
+        f"WHERE {' AND '.join(conditions)} ORDER BY f.code, e.id_champ LIMIT %s",
+        (*parametres, limite),
+    )
+    divergences: list[dict[str, Any]] = []
+    for ligne in cursor.fetchall():
+        code_fiche, id_fiche, _id_champ, champ, rang, table_cible, colonne_cible, corrigee = ligne
+        cible, raison = resoudre_cible(str(champ), table_cible, colonne_cible)
+        entree: dict[str, Any] = {
+            "code": str(code_fiche),
+            "champ": str(champ),
+            "rang": None if rang is None else int(rang),
+            "table_cible": table_cible,
+            "colonne_cible": colonne_cible,
+            "valeur_corrigee": valeur_json_sur(corrigee),
+        }
+        if cible is None:
+            # Champ sans cible canonique : c'est un cas NORMAL pour une trace
+            # libre. Seul un champ qui DÉSIGNE une donnée typée sans être
+            # propageable est un écart qui mérite d'être vu.
+            if raison:
+                entree.update(
+                    {
+                        "statut": "non_propageable",
+                        "raison": raison,
+                        "valeur_canonique": None,
+                    }
+                )
+                divergences.append(entree)
+            continue
+        actuelle = _lire_canonique(cursor, cible, int(id_fiche))
+        entree["cible"] = cible.etiquette
+        entree["cle"] = cible.cle
+        entree["valeur_canonique"] = valeur_json_sur(actuelle)
+        if _normaliser_comparaison(corrigee) == _normaliser_comparaison(actuelle):
+            entree["statut"] = "coherente"
+        else:
+            entree["statut"] = "divergente"
+            divergences.append(entree)
+    return divergences
+
+
+def divergences_bloquantes_sous_curseur(cursor: Any, code: str) -> list[dict[str, Any]]:
+    """Divergences qui interdisent une VALIDATION sans décision explicite.
+
+    Seules les divergences sur une cible SUPPORTÉE comptent : une valeur
+    corrigée que la donnée métier n'a pas suivie signifie que ce que l'atelier
+    cherchera ne correspond pas à ce qui a été relu. Les champs « non
+    propageables » (identité de fiche, clé étrangère à résoudre, champ composite
+    du titre) sont exclus : leur trace n'est pas censée devenir une colonne, les
+    compter bloquerait la validation sans objet.
+    """
+    return [
+        divergence
+        for divergence in divergences_sous_curseur(cursor, code=code)
+        if divergence.get("statut") == "divergente"
+    ]
+
+
+def diagnostiquer_divergences(
+    index: Any, *, code: str | None = None, limite: int = 500
+) -> list[dict[str, Any]]:
     """Corrections tracées qui ne coïncident pas avec la donnée canonique.
 
     Lecture seule. Retourne une ligne par divergence, avec de quoi décider :
@@ -613,52 +715,7 @@ def diagnostiquer_divergences(index: Any, *, code: str | None = None, limite: in
     """
     with index.connect() as connexion:
         with connexion.cursor() as cursor:
-            conditions = ["e.corrige"]
-            parametres: list[Any] = []
-            if code is not None:
-                conditions.append("f.code = %s")
-                parametres.append(code)
-            cursor.execute(
-                "SELECT f.code, f.id_fiche, e.id_champ, e.champ, e.rang, e.table_cible, "
-                "e.colonne_cible, e.valeur_normalisee "
-                "FROM fiche_champ_extrait e JOIN fiche f ON f.id_fiche = e.id_fiche "
-                f"WHERE {' AND '.join(conditions)} ORDER BY f.code, e.id_champ LIMIT %s",
-                (*parametres, limite),
-            )
-            lignes = cursor.fetchall()
-            divergences: list[dict[str, Any]] = []
-            for ligne in lignes:
-                code_fiche, id_fiche, id_champ, champ, rang, table_cible, colonne_cible, corrigee = ligne
-                cible, raison = resoudre_cible(str(champ), table_cible, colonne_cible)
-                entree: dict[str, Any] = {
-                    "code": str(code_fiche),
-                    "champ": str(champ),
-                    "rang": None if rang is None else int(rang),
-                    "table_cible": table_cible,
-                    "colonne_cible": colonne_cible,
-                    "valeur_corrigee": corrigee,
-                }
-                if cible is None:
-                    entree.update(
-                        {
-                            "statut": "non_propageable",
-                            "raison": raison or "champ sans cible canonique (trace seule)",
-                            "valeur_canonique": None,
-                        }
-                    )
-                    if raison:
-                        divergences.append(entree)
-                    continue
-                actuelle = _lire_canonique(cursor, cible, int(id_fiche))
-                entree["cible"] = cible.etiquette
-                entree["cle"] = cible.cle
-                entree["valeur_canonique"] = actuelle
-                if _normaliser_comparaison(corrigee) == _normaliser_comparaison(actuelle):
-                    entree["statut"] = "coherente"
-                else:
-                    entree["statut"] = "divergente"
-                    divergences.append(entree)
-            return divergences
+            return divergences_sous_curseur(cursor, code=code, limite=limite)
 
 
 def reconcilier_fiche(
@@ -707,11 +764,24 @@ def reconcilier_fiche(
                     )
                 except CorrectionCanoniqueRefusee as refus:
                     rapport["refusees"].append(
-                        {"champ": str(champ), "rang": rang, "cible": cible.etiquette, "raison": str(refus)}
+                        {
+                            "champ": str(champ),
+                            "rang": rang,
+                            "cible": cible.etiquette,
+                            "raison": str(refus),
+                            "valeur_corrigee": valeur_json_sur(corrigee),
+                        }
                     )
                     continue
                 rapport["appliquees"].append(
-                    {"champ": str(champ), "rang": rang, "valeur_canonique_avant": actuelle, **detail}
+                    {
+                        "champ": str(champ),
+                        "rang": rang,
+                        # La réponse part en HTTP : Decimal/date convertis, sinon
+                        # FastAPI renvoie 500 au lieu du rapport attendu.
+                        "valeur_canonique_avant": valeur_json_sur(actuelle),
+                        **{cle: valeur_json_sur(valeur) for cle, valeur in detail.items()},
+                    }
                 )
                 _jouter_journal(
                     cursor,

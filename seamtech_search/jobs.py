@@ -614,6 +614,88 @@ def compter_jobs_par_statut(index: SearchIndex) -> dict[str, int]:
     return {str(ligne[0]): int(ligne[1]) for ligne in lignes}
 
 
+def jobs_non_preserves(index: SearchIndex, *, limite: int = 5000) -> list[dict[str, Any]]:
+    """Jobs dont la copie locale est encoré NÉCESSAIRE (retention, audit 2026-10-08).
+
+    Deux familles, dans l'ordre du risque :
+
+    * **travail actif** (``pending``/``running``) : la source locale est l'entrée
+      du job — la supprimer condamne un import en cours sans le dire ;
+    * **copie non prouvée** (``result.all_verified`` absent ou faux, y compris
+      ``upload_incomplete`` et ``failed``) : la copie locale est alors la SEULE
+      copie du document, et la reprise (``retry_upload``) en a besoin.
+
+    Défaut visé (investigation « rétention vs travail actif ») : l'élagage des
+    uploads et des rapports ne consultait QUE l'âge (mtime). Un dossier déposé
+    7 jours plus tôt et toujours en attente (worker arrêté, file en panne) était
+    donc supprimé — l'import devenait irrécupérable SANS aucun signal, alors que
+    la rétention est présentée comme un rangement.
+
+    Le résultat est volontairement limité (``limite``) : au-delà, l'appelant
+    DOIT refuser d'élaguer (voir ``retention.chemins_proteges``) plutôt que de
+    supprimer ce qu'il n'a pas pu examiner.
+    """
+    with index.connect() as conn:
+        if index.is_postgres:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT id, status, source_path, result
+                FROM import_jobs
+                WHERE status IN ('pending', 'running')
+                   OR result IS NULL
+                   OR coalesce(result->>'all_verified', 'false') <> 'true'
+                ORDER BY updated_at DESC
+                LIMIT %s
+                """,
+                (limite,),
+            )
+            lignes = cursor.fetchall()
+            cursor.close()
+        else:
+            # SQLite (mode développement) : pas de JSON garanti — on lit tout et
+            # on filtre ici. Le volume y est celui d'un poste, pas d'un serveur.
+            import json as _json
+
+            cursor = conn.execute(
+                "SELECT id, status, source_path, result FROM import_jobs ORDER BY updated_at DESC LIMIT ?",
+                (limite,),
+            )
+            lignes = []
+            for ligne in cursor.fetchall():
+                resultat = ligne[3]
+                if isinstance(resultat, str):
+                    try:
+                        resultat = _json.loads(resultat)
+                    except ValueError:
+                        resultat = None
+                preserve = (
+                    str(ligne[1]) in ("pending", "running")
+                    or not isinstance(resultat, dict)
+                    or str(resultat.get("all_verified")).lower() != "true"
+                )
+                if preserve:
+                    lignes.append((ligne[0], ligne[1], ligne[2], resultat))
+    jobs: list[dict[str, Any]] = []
+    for identifiant, statut, source_path, resultat in lignes:
+        if isinstance(resultat, str):
+            import json as _json
+
+            try:
+                resultat = _json.loads(resultat)
+            except ValueError:
+                resultat = None
+        jobs.append(
+            {
+                "id": str(identifiant),
+                "status": str(statut),
+                "source_path": None if source_path is None else str(source_path),
+                "result": resultat if isinstance(resultat, dict) else None,
+            }
+        )
+    return jobs
+
+
 def jobs_actifs(index: SearchIndex, limite: int = 20, offset: int = 0) -> list[dict[str, Any]]:
     """Jobs en attente ou en cours, avec worker propriétaire et ancienneté.
 

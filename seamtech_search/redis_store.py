@@ -668,10 +668,37 @@ class RedisStore(ClaimMixin):
             logger.error("Failed to dequeue task from Redis %s: %s", queue_name, exc)
             return None
 
-    def ack_task(self, queue_name: str, payload: dict[str, Any]) -> bool:
+    def ack_task(self, queue_name: str, payload: dict[str, Any], *, worker_id: str | None = None) -> bool:
+        """Acquitte une tâche — sans jamais acquitter celle d'un autre worker.
+
+        Défaut corrigé (investigation « propriété du claim / ordre de
+        l'acquittement », audit du 2026-10-08) : quand le JSON exact ne se
+        trouvait pas dans la liste de traitement (cas normal après une reprise,
+        car le repreneur a poussé SA copie de la charge), le repli retirait le
+        PREMIER élément portant le même ``job_id`` — c'est-à-dire la copie du
+        REPRENEUR, alors en cours de traitement. Le worker déchu faisait donc
+        disparaître, depuis la file, une tâche qu'un autre exécutait : si ce
+        dernier mourait à son tour, plus rien ne le signalait.
+
+        Règle désormais : si ``worker_id`` est fourni, l'acquittement est refusé
+        quand le verrou n'est plus le sien, et le repli « par job_id » (aveugle
+        par construction) est désactivé. Sans ``worker_id``, le comportement
+        historique est conservé — mais les appelants du produit en fournissent
+        toujours un.
+        """
         client = self._get_client()
         if client is None:
             return False
+        job_id = payload.get("job_id")
+        if worker_id is not None and job_id:
+            if not self.revendication_appartient_a(queue_name, str(job_id), worker_id):
+                logger.warning(
+                    "Acquittement refusé : la tâche %s n'appartient plus à %s (reprise par un "
+                    "autre worker) — sa copie de la file n'est PAS retirée.",
+                    job_id,
+                    worker_id,
+                )
+                return False
         try:
             processing_key = f"seamtech:processing:{queue_name}"
             # Remove one occurrence of this payload from processing list
@@ -679,9 +706,8 @@ class RedisStore(ClaimMixin):
             item = json.dumps(payload, ensure_ascii=False)
             # Try to remove the exact item, if not found try with attempt field variations
             removed = client.lrem(processing_key, 1, item)
-            if removed == 0:
+            if removed == 0 and worker_id is None:
                 # Try to remove any item with same job_id
-                job_id = payload.get("job_id")
                 if job_id:
                     # Scan processing list for job_id
                     items = client.lrange(processing_key, 0, -1)
