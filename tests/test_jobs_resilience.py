@@ -167,7 +167,15 @@ def test_reprise_tolere_une_file_en_panne_ou_un_double_non_conforme(tmp_path: Pa
 
     config = _config(tmp_path)
     index = _index(config)
-    vide = {"requeued": [], "dead_lettered": [], "relanced_from_db": [], "failed_from_db": []}
+    # ``redis_indisponible`` (audit A06) recense les jobs ACTIFS dont l'entrée
+    # de file est illisible : ils ne sont ni relancés ni condamnés à l'aveugle.
+    vide = {
+        "requeued": [],
+        "dead_lettered": [],
+        "relanced_from_db": [],
+        "failed_from_db": [],
+        "redis_indisponible": [],
+    }
 
     class _FileEnPanne:
         def reprendre_taches_orphelines(self, *args: object, **kwargs: object) -> list:

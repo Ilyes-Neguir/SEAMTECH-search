@@ -333,19 +333,58 @@ if (($CodeDump -eq 0) -and (Test-Path $Dump) -and ((Get-Item $Dump).Length -gt 0
 
 # ---------------------------------------------------------------------------
 # 9. Restauration rapide : la fiche validée disparaît puis revient.
+#
+# ISOLEMENT DES ÉCRIVAINS (constat A10 de l'audit du 2026-10-08) :
+# ``pg_restore --clean --if-exists`` est DESTRUCTEUR — il supprime et recrée
+# des objets. Tant qu'un conteneur qui écrit dans PostgreSQL tourne pendant ces
+# quelques secondes, deux choses peuvent arriver : la ligne supprimée est
+# recréée par l'application au milieu du restore, ou le worker rejoue un job
+# sur une base à moitié restaurée. Seul ``web`` était arrêté ; le worker, qui
+# écrit dans les MÊMES tables (jobs, lots, fiches), continuait de tourner.
+#
+# Ici : TOUS les écrivains sont arrêtés AVANT le DELETE et le pg_restore,
+# l'arrêt est VÉRIFIÉ (un ``stop`` qui échoue laisserait le contrôle mentir),
+# et le redémarrage passe par un ``finally`` — une exception au milieu ne doit
+# pas laisser la pile à moitié éteinte.
 # ---------------------------------------------------------------------------
+$Ecrivains = @("web", "worker")
 if (-not $Fiche) {
     Rapport "restauration" "FAIL" "aucune fiche validée connue (INFO|fiche_pour_restauration absente)"
 } else {
-    $FicheSql = $Fiche -replace "'", "''"
-    $Supprime = (docker compose exec -T postgres psql -U seamtech -d seamtech_search -tA `
-        -c "DELETE FROM fiche WHERE code = '$FicheSql'" 2>&1) | Out-String
-    docker compose stop web *> $null
-    docker compose cp $Dump "postgres:/tmp/recette-restore.dump" *> $null
-    $Restaure = (docker compose exec -T postgres pg_restore --clean --if-exists --no-owner `
-        -U seamtech -d seamtech_search /tmp/recette-restore.dump 2>&1) | Out-String
-    $CodeRestore = $LASTEXITCODE
-    docker compose start web *> $null
+    $Supprime = ""
+    $Restaure = ""
+    $CodeRestore = 1
+    $EcrivainsArretes = $false
+    try {
+        $FicheSql = $Fiche -replace "'", "''"
+        docker compose stop @Ecrivains *> $null
+        # Vérification : ce qui n'est pas explicitement confirmé arrêté est
+        # traité comme ACTIF. Un doute ⇒ pas de restore (les données existantes
+        # ne sont pas sacrifiables).
+        $EncoreActifs = @()
+        $ServicesActifs = (docker compose ps --status running --services 2>$null) -split "`r?`n"
+        foreach ($Service in $Ecrivains) {
+            if ($ServicesActifs -contains $Service) { $EncoreActifs += $Service }
+        }
+        if ($EncoreActifs.Count -gt 0) {
+            Rapport "restauration" "FAIL" ("écrivains encore actifs : " + ($EncoreActifs -join ", ") + " — pg_restore NON lancé (isolement impossible à prouver)")
+        }
+        else {
+            $EcrivainsArretes = $true
+            # Le DELETE vient APRÈS l'arrêt : sinon l'application peut recréer
+            # la fiche entre la suppression et le restore, et le contrôle
+            # « disparaît puis revient » ne prouverait plus rien.
+            $Supprime = (docker compose exec -T postgres psql -U seamtech -d seamtech_search -tA `
+                -c "DELETE FROM fiche WHERE code = '$FicheSql'" 2>&1) | Out-String
+            docker compose cp $Dump "postgres:/tmp/recette-restore.dump" *> $null
+            $Restaure = (docker compose exec -T postgres pg_restore --clean --if-exists --no-owner `
+                -U seamtech -d seamtech_search /tmp/recette-restore.dump 2>&1) | Out-String
+            $CodeRestore = $LASTEXITCODE
+        }
+    }
+    finally {
+        if ($EcrivainsArretes) { docker compose start @Ecrivains *> $null }
+    }
     $FicheEnc = [uri]::EscapeDataString($Fiche)
     $Retour = "000"
     $Fin = (Get-Date).AddSeconds(180)
@@ -355,10 +394,13 @@ if (-not $Fiche) {
         Start-Sleep -Seconds 3
     }
     if (($CodeRestore -eq 0) -and ($Retour -eq "200")) {
-        Rapport "restauration" "PASS" "fiche $Fiche supprimée ($($Supprime.Trim())) puis restaurée depuis $Dump (GET /fiches/$Fiche/pieces = 200)"
-    } else {
+        Rapport "restauration" "PASS" ("fiche $Fiche supprimée ($($Supprime.Trim())) puis restaurée depuis $Dump " + 
+            "(GET /fiches/$Fiche/pieces = 200) — écrivains " + ($Ecrivains -join "+") + " arrêtés pendant l'opération")
+    } elseif ($EcrivainsArretes) {
         Rapport "restauration" "FAIL" "pg_restore code=$CodeRestore ; fiche de retour HTTP $Retour"
     }
+    # Si $EcrivainsArretes est faux, le FAIL « écrivains encore actifs » a déjà
+    # été émis : un second FAIL sur la même cause n'apporterait rien.
 }
 
 # ---------------------------------------------------------------------------

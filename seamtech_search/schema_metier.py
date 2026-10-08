@@ -1,4 +1,4 @@
-"""Schéma métier « fiche technique » — migrations 006 à 020 (Lots A → file durable).
+"""Schéma métier « fiche technique » — migrations 006 à 022 (Lots A → correctifs d'audit).
 
 DÉCISION DE COUCHE ACTÉE (plan v3.0 §17.1) : la couche métier est
 **PostgreSQL uniquement**. Elle s'appuie sur pgvector, pg_trgm, les index GIN,
@@ -26,7 +26,7 @@ from __future__ import annotations
 from typing import Any
 
 # Version du schéma métier — incrémentée à chaque nouvelle migration.
-VERSION_SCHEMA_METIER = "021_revision_fiche"
+VERSION_SCHEMA_METIER = "022_selections_durables"
 
 # Marqueur injecté par le code au moment de la migration (constat 1 de revue) :
 # le nom de la configuration de recherche effective — 'seamtech_unaccent' ou
@@ -1369,6 +1369,28 @@ ALTER TABLE fiche DROP CONSTRAINT IF EXISTS fiche_revision_positive;
 ALTER TABLE fiche ADD CONSTRAINT fiche_revision_positive CHECK (revision >= 1);
 """
 
+SQL_022_SELECTIONS_DURABLES = """
+-- ============================================================================
+-- 022_selections_durables — la reprise ne substitue plus un autre document
+-- ============================================================================
+-- Défaut constaté par l'audit de préparation du 2026-10-08 (A06) : les
+-- sélections MANUELLES de l'opérateur (le PDF « fiche » choisi, le classeur
+-- Excel choisi) ne vivaient que dans la charge de la tâche Redis. Quand cette
+-- charge disparaissait (Redis redémarré sans persistance, entrée évincée), la
+-- réconciliation ré-enfilait le job sans elles — et l'import repartait sur
+-- « le premier PDF trouvé », c'est-à-dire un AUTRE document, sans que rien ne
+-- le signale. Le registre de vérité (la base) doit porter ce qui définit le
+-- travail à refaire.
+--
+-- Additive et idempotente : une base déjà à jour n'est pas modifiée, et les
+-- jobs existants gardent NULL (= « aucune sélection manuelle enregistrée »),
+-- ce qui laisse la reprise se comporter comme avant POUR CES JOBS-LÀ sans
+-- prétendre qu'ils avaient une sélection.
+
+ALTER TABLE import_jobs ADD COLUMN IF NOT EXISTS selected_pdf TEXT;
+ALTER TABLE import_jobs ADD COLUMN IF NOT EXISTS selected_excel TEXT;
+"""
+
 MIGRATIONS_METIER: tuple[tuple[str, str], ...] = (
     ("006_fiche_technique", SQL_006_FICHE_TECHNIQUE),
     ("007_recherche_index", SQL_007_RECHERCHE_INDEX),
@@ -1386,6 +1408,7 @@ MIGRATIONS_METIER: tuple[tuple[str, str], ...] = (
     ("019_recherche_dimension", SQL_019_RECHERCHE_DIMENSION),
     ("020_file_durable", SQL_020_FILE_DURABLE),
     ("021_revision_fiche", SQL_021_REVISION_FICHE),
+    ("022_selections_durables", SQL_022_SELECTIONS_DURABLES),
 )
 
 

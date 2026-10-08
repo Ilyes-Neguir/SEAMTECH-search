@@ -175,13 +175,17 @@ class TestEcritureEntiereOuPasDuTout:
         fiche annule TOUT (la pièce jointe et la ligne de lot n'existent pas,
         la fiche non plus — transaction annulée par l'appelant)."""
         index = base_depot["index"]
-        vraie_ecriture = depot.ecrire_fiche
+        # A02 (audit du 2026-10-08) : le dépôt appelle désormais
+        # ``ecrire_fiche_resultat`` (elle publie la révision). Le point
+        # d'interception suit le symbole réellement appelé — la garantie
+        # testée, elle, ne change pas : un crash APRÈS l'écriture ne laisse rien.
+        vraie_ecriture = depot.ecrire_fiche_resultat
 
-        def ecrire_puis_crash(idx: Any, fiche: Any, connexion: Any = None) -> tuple[int, str]:
-            id_fiche, action = vraie_ecriture(idx, fiche, connexion=connexion)
+        def ecrire_puis_crash(idx: Any, fiche: Any, connexion: Any = None) -> Any:
+            vraie_ecriture(idx, fiche, connexion=connexion)
             raise RuntimeError("crash simulé après l'écriture de la fiche")
 
-        monkeypatch.setattr(depot, "ecrire_fiche", ecrire_puis_crash)
+        monkeypatch.setattr(depot, "ecrire_fiche_resultat", ecrire_puis_crash)
         avant = _comptes(index)
         resultat = depot.deposer_dossier(index, dossier_ok)
         assert resultat["statut"] == "echec"

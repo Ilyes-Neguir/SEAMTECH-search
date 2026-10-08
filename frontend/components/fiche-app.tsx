@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useSearchParams } from "next/navigation"
 import { Download, FileText } from "lucide-react"
 import { PalierBadge } from "@/components/palier-badge"
@@ -25,37 +25,96 @@ function tailleLisible(octets: number | null): string {
 
 export function FicheApp({ code }: { code: string }) {
   const [detail, setDetail] = useState<FicheDetail | null>(null)
+  const [detailCode, setDetailCode] = useState<string | null>(null)
   const [champs, setChamps] = useState<ChampExtrait[]>([])
+  const [champsCode, setChampsCode] = useState<string | null>(null)
   const [pieces, setPieces] = useState<PiecesDeFiche | null>(null)
+  const [piecesCode, setPiecesCode] = useState<string | null>(null)
   const [journal, setJournal] = useState<HistoriqueFiche[]>([])
   const [pieceActive, setPieceActive] = useState<PieceJointe | null>(null)
   const [zone, setZone] = useState<ZoneASurligner | null>(null)
   const [erreur, setErreur] = useState<string | null>(null)
   const parametres = useSearchParams()
 
+  // Jeton de génération (A09) : les quatre chargements ci-dessous dépendent de
+  // la fiche affichée. Une réponse en retard — navigation rapide entre deux
+  // fiches — ne doit JAMAIS poser le document, les champs ou l'historique d'une
+  // fiche sur l'écran d'une autre. Chaque réponse est validée contre le jeton
+  // courant, succès comme échec, et le démontage invalide tout ce qui est en vol.
+  const generation = useRef(0)
+
   useEffect(() => {
+    const jeton = ++generation.current
     setErreur(null)
     setPieceActive(null)
-    jsonFetch<FicheDetail>(`/api/fiches/${encodeURIComponent(code)}`).then(setDetail).catch((e) => setErreur(e.message))
-    jsonFetch<ChampExtrait[]>(`/api/fiches/${encodeURIComponent(code)}/champs`).then(setChamps).catch((e) => setErreur(e.message))
-    jsonFetch<PiecesDeFiche>(`/api/fiches/${encodeURIComponent(code)}/pieces`).then((corps) => {
-      setPieces(corps)
-      setPieceActive(corps.pieces.find((piece) => piece.is_primary_pdf) ?? corps.pieces.find((piece) => piece.kind === "pdf") ?? corps.pieces[0] ?? null)
-    }).catch((e) => setErreur(e.message))
-    jsonFetch<HistoriqueFiche[]>(`/api/fiches/${encodeURIComponent(code)}/historique`).then(setJournal).catch(() => setJournal([]))
+    jsonFetch<FicheDetail>(`/api/fiches/${encodeURIComponent(code)}`)
+      .then((corps) => {
+        if (generation.current !== jeton) return
+        setDetail(corps)
+        setDetailCode(code)
+      })
+      .catch((e) => {
+        if (generation.current !== jeton) return
+        setErreur(e.message)
+      })
+    jsonFetch<ChampExtrait[]>(`/api/fiches/${encodeURIComponent(code)}/champs`)
+      .then((corps) => {
+        if (generation.current !== jeton) return
+        setChamps(corps)
+        setChampsCode(code)
+      })
+      .catch((e) => {
+        if (generation.current !== jeton) return
+        setErreur(e.message)
+      })
+    jsonFetch<PiecesDeFiche>(`/api/fiches/${encodeURIComponent(code)}/pieces`)
+      .then((corps) => {
+        if (generation.current !== jeton) return
+        setPieces(corps)
+        setPiecesCode(code)
+        setPieceActive(
+          corps.pieces.find((piece) => piece.is_primary_pdf) ??
+            corps.pieces.find((piece) => piece.kind === "pdf") ??
+            corps.pieces[0] ??
+            null,
+        )
+      })
+      .catch((e) => {
+        if (generation.current !== jeton) return
+        setErreur(e.message)
+      })
+    jsonFetch<HistoriqueFiche[]>(`/api/fiches/${encodeURIComponent(code)}/historique`)
+      .then((corps) => {
+        if (generation.current !== jeton) return
+        setJournal(corps)
+      })
+      .catch(() => {
+        if (generation.current !== jeton) return
+        setJournal([])
+      })
+    return () => {
+      generation.current += 1
+    }
   }, [code])
+
+  // Le surlignage s'appuie sur les champs de la fiche AFFICHÉE : si les champs
+  // chargés appartiennent à une autre fiche (réponse en vol), on ne surligne
+  // rien plutôt que de surligner une zone sans rapport.
+  const champsAffiches = champsCode === code ? champs : []
+  const detailAffiche = detailCode === code ? detail : null
+  const piecesAffichees = piecesCode === code ? pieces : null
 
   useEffect(() => {
     const champCible = parametres.get("champ")
     if (!champCible) return
     const rangCible = parametres.get("rang")
-    const trouve = champs.find(
+    const trouve = champsAffiches.find(
       (champ) => champ.champ === champCible && (rangCible == null || String(champ.rang ?? "") === rangCible),
     )
     if (trouve?.zone) {
       setZone({ page: trouve.zone.page, x0: trouve.zone.x0, y0: trouve.zone.y0, x1: trouve.zone.x1, y1: trouve.zone.y1 })
     }
-  }, [parametres, champs])
+  }, [parametres, champsAffiches])
 
   return (
     <div className="grid h-[calc(100vh-3.5rem)] min-h-0 grid-cols-[minmax(20rem,0.9fr)_minmax(0,1.1fr)]" data-testid="fiche-app">
@@ -65,17 +124,17 @@ export function FicheApp({ code }: { code: string }) {
             <div>
               <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">Détail de la fiche</p>
               <h1 className="mt-1 font-mono text-lg font-bold" data-testid="fiche-code">{code}</h1>
-              {detail && <p className="mt-1 text-sm text-muted-foreground">{detail.titre || "Sans titre"}</p>}
+              {detailAffiche && <p className="mt-1 text-sm text-muted-foreground">{detailAffiche.titre || "Sans titre"}</p>}
             </div>
-            {detail && <span className="rounded-full border border-border px-2.5 py-1 text-[10px] uppercase tracking-wider">{detail.statut}</span>}
+            {detailAffiche && <span className="rounded-full border border-border px-2.5 py-1 text-[10px] uppercase tracking-wider">{detailAffiche.statut}</span>}
           </div>
           {erreur && <p role="alert" className="mt-2 text-xs text-destructive">{erreur}</p>}
-          {detail && (
+          {detailAffiche && (
             <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
-              <div><dt className="text-muted-foreground">Client</dt><dd className="mt-0.5 font-medium">{detail.client || "—"}</dd></div>
+              <div><dt className="text-muted-foreground">Client</dt><dd className="mt-0.5 font-medium">{detailAffiche.client || "—"}</dd></div>
               <div><dt className="text-muted-foreground">Bateau</dt><dd className="mt-0.5 font-medium">{[detail.bateau, detail.bateau_taille].filter(Boolean).join(" · ") || "—"}</dd></div>
-              <div><dt className="text-muted-foreground">Gabarit</dt><dd className="mt-0.5 font-medium">{detail.gabarit || "—"}</dd></div>
-              <div><dt className="text-muted-foreground">Édition</dt><dd className="mt-0.5 font-medium">{detail.date_edition || "—"}</dd></div>
+              <div><dt className="text-muted-foreground">Gabarit</dt><dd className="mt-0.5 font-medium">{detailAffiche.gabarit || "—"}</dd></div>
+              <div><dt className="text-muted-foreground">Édition</dt><dd className="mt-0.5 font-medium">{detailAffiche.date_edition || "—"}</dd></div>
             </dl>
           )}
         </header>
@@ -83,11 +142,11 @@ export function FicheApp({ code }: { code: string }) {
         <section className="border-b border-border p-4">
           <div className="mb-2 flex items-center justify-between gap-2">
             <h2 className="text-sm font-semibold">Fichiers de la fiche</h2>
-            <span className="text-[10px] text-muted-foreground">{pieces?.pieces.length ?? 0} fichier(s)</span>
+            <span className="text-[10px] text-muted-foreground">{piecesAffichees?.pieces.length ?? 0} fichier(s)</span>
           </div>
-          {pieces?.pieces.length ? (
+          {piecesAffichees?.pieces.length ? (
             <ul className="space-y-1" data-testid="pieces-jointes">
-              {pieces.pieces.map((piece) => (
+              {piecesAffichees.pieces.map((piece) => (
                 <li key={piece.id}>
                   <div className={cn("flex items-center gap-2 rounded border px-2.5 py-1.5 transition-colors", pieceActive?.id === piece.id ? "border-primary/60 bg-primary/10" : "border-transparent hover:border-border hover:bg-accent/40")}>
                     <button type="button" onClick={() => setPieceActive(piece)} className="flex min-w-0 flex-1 items-center gap-2 text-left text-xs" data-testid={`piece-${piece.id}`}>
@@ -107,7 +166,7 @@ export function FicheApp({ code }: { code: string }) {
         <section className="border-b border-border">
           <h2 className="px-4 pb-2 pt-4 text-sm font-semibold">Champs extraits</h2>
           <div className="divide-y divide-border/60">
-            {champs.map((champ) => {
+            {champsAffiches.map((champ) => {
               const cle = `${champ.champ}#${champ.rang ?? 0}`
               return (
                 <div key={cle} className="grid grid-cols-[1fr_1fr_auto] items-center gap-2 px-4 py-1.5 text-xs">
@@ -124,7 +183,7 @@ export function FicheApp({ code }: { code: string }) {
                 </div>
               )
             })}
-            {champs.length === 0 && <p className="px-4 pb-4 text-xs text-muted-foreground">Aucun champ extrait.</p>}
+            {champsAffiches.length === 0 && <p className="px-4 pb-4 text-xs text-muted-foreground">Aucun champ extrait.</p>}
           </div>
         </section>
 

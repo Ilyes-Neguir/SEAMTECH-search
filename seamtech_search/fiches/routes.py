@@ -31,6 +31,13 @@ from fastapi.responses import StreamingResponse
 from starlette.responses import Response
 
 from seamtech_search.comptes.comptes import resoudre_attribution
+from seamtech_search.fiches.corrections_canoniques import (
+    CorrectionCanoniqueRefusee,
+    appliquer_correction_canonique,
+    diagnostiquer_divergences,
+    reconcilier_fiche,
+    resoudre_cible,
+)
 from seamtech_search.fiches.depot import (
     DepotImpossible,
     creer_lot,
@@ -558,7 +565,8 @@ def corriger_champ(
                     detail="RG11 : fiche validée — rouvrez-la d'abord (POST /fiches/{code}/rouvrir) avant de corriger.",
                 )
             cursor.execute(
-                "SELECT id_champ, rang, valeur_brute, valeur_normalisee FROM fiche_champ_extrait "
+                "SELECT id_champ, rang, valeur_brute, valeur_normalisee, table_cible, colonne_cible "
+                "FROM fiche_champ_extrait "
                 "WHERE id_fiche = %s AND champ = %s ORDER BY rang",
                 (id_fiche, champ),
             )
@@ -590,21 +598,53 @@ def corriger_champ(
                 cursor, id_fiche, revision_attendue, code, id_champ, exiger_revision=exiger_revision,
             )
             id_utilisateur = _resoudre_utilisateur(cursor, utilisateur)
+            # PROPAGATION CANONIQUE (défaut A01 de l'audit du 2026-10-08) : une
+            # correction qui ne change que la TRACE laisse la donnée métier, le
+            # texte de recherche et les filtres numériques sur l'ancienne valeur
+            # — l'écran dit « corrigé » et l'atelier cherche « 6,6 ». La cible
+            # est résolue par un registre EXPLICITE (littéraux du code, valeurs
+            # liées) ; toute valeur invalide refuse AVANT la moindre écriture.
+            cible_canonique, raison_non_supportee = resoudre_cible(
+                champ, ligne_cible[4], ligne_cible[5]
+            )
+            propagation: dict[str, Any]
+            if cible_canonique is not None:
+                try:
+                    detail = appliquer_correction_canonique(
+                        cursor, index, id_fiche, id_champ, cible_canonique, str(valeur)
+                    )
+                except CorrectionCanoniqueRefusee as refus:
+                    # Aucune écriture n'a eu lieu : la transaction est annulée
+                    # par la remontée — ni trace, ni journal, ni révision
+                    # avancée. L'opérateur reçoit la raison exacte.
+                    raise HTTPException(status_code=422, detail=str(refus)) from refus
+                propagation = {"statut": "appliquee", **detail}
+            elif raison_non_supportee:
+                propagation = {"statut": "non_supportee", "raison": raison_non_supportee}
+            else:
+                propagation = {"statut": "aucune_cible"}
             cursor.execute(
                 "UPDATE fiche_champ_extrait SET valeur_normalisee = %s, corrige = TRUE, corrige_par = %s, corrige_le = now() "
                 "WHERE id_champ = %s",
                 (str(valeur), id_utilisateur, id_champ),
             )
-            _jouter_journal(cursor, id_fiche, id_utilisateur, "corriger", statut, statut,
-                            commentaire or f"{champ} (rang {rang_cible if rang_cible is not None else '—'}) : {avant!r} → {str(valeur)!r}")
+            _jouter_journal(
+                cursor, id_fiche, id_utilisateur, "corriger", statut, statut,
+                commentaire or (
+                    f"{champ} (rang {rang_cible if rang_cible is not None else '—'}) : {avant!r} → {str(valeur)!r} "
+                    f"— propagation {propagation['statut']}"
+                    + (f" ({propagation.get('raison')})" if propagation.get("raison") else "")
+                ),
+            )
             LOGGER.info(
-                "Champ %s (rang %s) de %s corrigé : %r → %r — conséquence : corrige=TRUE, verrou RG11 armé sur cette fiche.",
-                champ, rang_cible, code, avant, str(valeur),
+                "Champ %s (rang %s) de %s corrigé : %r → %r — propagation canonique %s ; "
+                "conséquence : corrige=TRUE, verrou RG11 armé sur cette fiche.",
+                champ, rang_cible, code, avant, str(valeur), propagation["statut"],
             )
             return {
                 "code": code, "champ": champ, "rang": rang_cible, "valeur_brute": brute,
                 "avant": avant, "apres": str(valeur), "revision": nouvelle_revision,
-                "revision_ouverte": revision_fiche,
+                "revision_ouverte": revision_fiche, "propagation": propagation,
             }
 
 
@@ -1746,6 +1786,55 @@ def enregistrer_routes_fiches(
             "annulation": "demandee",
             "consigne": "Le lot s'arrêtera entre deux dossiers ; les dossiers restants sont reprenables.",
         }
+
+    @app.get("/fiches/corrections/divergences")
+    def route_divergences_corrections(
+        code: Annotated[str | None, Query()] = None,
+        limite: Annotated[int, Query(ge=1, le=5000)] = 500,
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+    ) -> dict[str, Any]:
+        """Divergences ENTRE trace corrigée et donnée métier canonique (A01).
+
+        Lecture seule : sert à l'exploitant qui arrive sur une base déjà
+        corrigée par l'ancienne version. Aucune réparation n'est décidée ici —
+        la réconciliation est une action explicite, fiche par fiche.
+        """
+        verifier_auth(config, token)
+        _exiger_postgres(index)
+        return {
+            "divergences": diagnostiquer_divergences(index, code=code, limite=limite),
+            "reconciliation": (
+                "POST /fiches/{code}/reconcilier-corrections avec {\"confirmer\": true} après examen"
+            ),
+        }
+
+    @app.post("/fiches/{code}/reconcilier-corrections")
+    def route_reconcilier_corrections(
+        code: str,
+        corps: dict[str, Any],
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+        entete_utilisateur: Annotated[str | None, Header(alias="X-SEAMTECH-UTILISATEUR")] = None,
+        entete_role: Annotated[str | None, Header(alias="X-SEAMTECH-ROLE")] = None,
+    ) -> dict[str, Any]:
+        """Réconciliation EXPLICITE et journalisée d'une fiche (jamais globale)."""
+        verifier_auth(config, token)
+        _exiger_postgres(index)
+        if not corps.get("confirmer"):
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Réconciliation refusée : lister d'abord GET /fiches/corrections/divergences, "
+                    "puis renvoyer {\"confirmer\": true} en connaissance de cause. "
+                    "Aucune valeur historique ambiguë n'est interprétée automatiquement."
+                ),
+            )
+        utilisateur = _attribution(
+            config, token, corps.get("utilisateur"), entete_utilisateur, entete_role
+        )
+        try:
+            return reconcilier_fiche(index, code, utilisateur=utilisateur, confirmer=True)
+        except KeyError as erreur:
+            raise HTTPException(status_code=404, detail=str(erreur)) from erreur
 
     @app.post("/gabarits/detecter")
     async def route_detecter(

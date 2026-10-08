@@ -34,8 +34,15 @@ def test_chaos_s3_down_mid_import(tmp_path: Path):
     - the job ends ``upload_incomplete`` (never ``completed`` — the files were
       not in the bucket — and never a silent ``failed`` with nothing left)
     - every artifact is reported ``failed`` (nothing was uploaded)
-    - the source folder is moved to quarantine and its content is preserved
-      byte-for-byte (no purge, no truncation)
+    - the source folder is preserved byte-for-byte, IN PLACE, and never purged
+
+    Corrected by audit A04 (2026-10-08): the historical assertion here was
+    "the source folder is moved to quarantine". That move is exactly the
+    defect — the source is an EXTERNAL archive (not app staging), and a move
+    both mutates the commanditaire's directory (RG13) and breaks the persisted
+    retry paths, which kept pointing at the old location. A staged source is
+    still quarantined (covered by
+    ``test_worker_coverage.test_upload_incomplete_quarantine_le_staging``).
     """
     from seamtech_search.import_pipeline import quarantine_root
     from seamtech_search.worker import process_import_task
@@ -74,13 +81,18 @@ def test_chaos_s3_down_mid_import(tmp_path: Path):
     for artifact in result["artifacts"]:
         assert artifact["status"] == "failed"
 
-    # 3. No data loss: the source is moved to quarantine, content intact.
-    assert not src.exists()
-    q_dir = quarantine_root(cfg) / f"{job_id}_src"
-    assert q_dir.is_dir()
-    assert (q_dir / "file.pdf").read_bytes() == pdf_bytes
-    assert (q_dir / "notes.txt").read_text() == "do not lose me"
-    assert Path(result["quarantine_path"]) == q_dir
+    # 3. No data loss: the EXTERNAL source is untouched — byte-for-byte, in
+    #    place — and nothing was moved to quarantine (audit A04).
+    assert src.is_dir(), "une archive externe ne doit jamais être déplacée par un échec d'envoi"
+    assert (src / "file.pdf").read_bytes() == pdf_bytes
+    assert (src / "notes.txt").read_text() == "do not lose me"
+    assert not quarantine_root(cfg).exists(), "aucun déplacement : la source n'appartient pas au staging"
+    assert result["quarantine"]["deplace"] is False
+    assert "externe" in result["quarantine"]["raison"]
+    assert "quarantine_path" not in result
+
+    # 4. La reprise reste possible sur place : la référence persistée n'a pas bougé.
+    assert result["source_path"] == str(src)
 
 
 def test_chaos_redis_killed_mid_job(tmp_path: Path):

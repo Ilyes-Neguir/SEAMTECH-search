@@ -91,6 +91,9 @@ def create_job(
     status: str = "pending",
     stage: str = "queued",
     durability: str = "durable",
+    *,
+    selected_pdf: str | None = None,
+    selected_excel: str | None = None,
 ) -> dict[str, Any]:
     """Create a new job record in import_jobs.
 
@@ -98,6 +101,13 @@ def create_job(
     la file Redis, il survivra à ce processus), 'process_memory' (repli de
     développement : le job meurt avec le processus) ou 'sync' (traité dans la
     requête). Le champ est écrit à la création, jamais deviné plus tard.
+
+    ``selected_pdf`` / ``selected_excel`` : les choix MANUELS de l'opérateur,
+    persistés en base (défaut A06 de l'audit du 2026-10-08). Ils ne vivaient que
+    dans la charge Redis : une fois cette charge perdue, la reprise ré-enfilait
+    le job avec « premier PDF trouvé » — c'est-à-dire un AUTRE document que
+    celui que l'opérateur avait désigné, sans que rien ne le signale. Le
+    registre de vérité doit porter ce qui définit le travail à refaire.
     """
     now_iso = datetime.now(timezone.utc).isoformat()
     with index.connect() as conn:
@@ -107,20 +117,22 @@ def create_job(
                     """
                     INSERT INTO import_jobs (
                         id, status, progress, stage, source_path, error, result,
-                        created_at, updated_at, durability
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, now(), now(), %s)
+                        created_at, updated_at, durability, selected_pdf, selected_excel
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, now(), now(), %s, %s, %s)
                     """,
-                    (job_id, status, 0, stage, source_path, None, None, durability),
+                    (job_id, status, 0, stage, source_path, None, None, durability,
+                     selected_pdf, selected_excel),
                 )
         else:
             conn.execute(
                 """
                 INSERT INTO import_jobs (
                     id, status, progress, stage, source_path, error, result,
-                    created_at, updated_at, durability
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    created_at, updated_at, durability, selected_pdf, selected_excel
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (job_id, status, 0, stage, source_path, None, None, now_iso, now_iso, durability),
+                (job_id, status, 0, stage, source_path, None, None, now_iso, now_iso,
+                 durability, selected_pdf, selected_excel),
             )
 
     return {
@@ -132,9 +144,34 @@ def create_job(
         "error": None,
         "result": None,
         "durability": durability,
+        "selected_pdf": selected_pdf,
+        "selected_excel": selected_excel,
         "created_at": now_iso,
         "updated_at": now_iso,
     }
+
+
+def update_job_source_path(index: SearchIndex, job_id: str, source_path: str) -> bool:
+    """Fait suivre le chemin de reprise d'un job après relocalisation (A04).
+
+    Appelé quand le staging applicatif est déplacé en quarantaine : la base est
+    le registre de vérité, donc la reprise doit retrouver l'archive à sa
+    NOUVELLE place sans édition manuelle.
+    """
+    now_iso = datetime.now(timezone.utc).isoformat()
+    with index.connect() as conn:
+        if index.is_postgres:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    "UPDATE import_jobs SET source_path = %s, updated_at = now() WHERE id = %s",
+                    (source_path, job_id),
+                )
+                return cursor.rowcount > 0
+        cursor = conn.execute(
+            "UPDATE import_jobs SET source_path = ?, updated_at = ? WHERE id = ?",
+            (source_path, now_iso, job_id),
+        )
+        return cursor.rowcount > 0
 
 
 def update_job(
@@ -227,7 +264,7 @@ def get_job(index: SearchIndex, job_id: str) -> dict[str, Any] | None:
                     SELECT id, status, progress, stage, source_path, error, result,
                            created_at, updated_at, attempts, claimed_by,
                            extract(epoch FROM heartbeat_at) AS heartbeat_epoch,
-                           failure_reason, durability
+                           failure_reason, durability, selected_pdf, selected_excel
                     FROM import_jobs WHERE id = %s
                     """,
                     (job_id,),
@@ -245,7 +282,8 @@ def get_job(index: SearchIndex, job_id: str) -> dict[str, Any] | None:
         cursor = conn.execute(
             """
             SELECT id, status, progress, stage, source_path, error, result, created_at, updated_at,
-                   attempts, claimed_by, heartbeat_at, failure_reason, durability
+                   attempts, claimed_by, heartbeat_at, failure_reason, durability,
+                   selected_pdf, selected_excel
             FROM import_jobs WHERE id = ?
             """,
             (job_id,),
@@ -275,6 +313,8 @@ def get_job(index: SearchIndex, job_id: str) -> dict[str, Any] | None:
             "heartbeat_at": row["heartbeat_at"] if "heartbeat_at" in row.keys() else None,
             "failure_reason": row["failure_reason"] if "failure_reason" in row.keys() else None,
             "durability": row["durability"] if "durability" in row.keys() else None,
+            "selected_pdf": row["selected_pdf"] if "selected_pdf" in row.keys() else None,
+            "selected_excel": row["selected_excel"] if "selected_excel" in row.keys() else None,
         }
 
 
@@ -574,11 +614,15 @@ def compter_jobs_par_statut(index: SearchIndex) -> dict[str, int]:
     return {str(ligne[0]): int(ligne[1]) for ligne in lignes}
 
 
-def jobs_actifs(index: SearchIndex, limite: int = 20) -> list[dict[str, Any]]:
+def jobs_actifs(index: SearchIndex, limite: int = 20, offset: int = 0) -> list[dict[str, Any]]:
     """Jobs en attente ou en cours, avec worker propriétaire et ancienneté.
 
     Sert la supervision opérateur (« qui traite quoi, depuis quand ») sans
     lire Redis : c'est la base qui répond.
+
+    ``offset`` existe pour la RÉCONCILIATION (A06) : la file d'un atelier peut
+    dépasser une page, et un job jamais lu est un job jamais repris. Le tri
+    reste ``updated_at DESC`` — déterministe pour une pagination stable.
     """
     with index.connect() as conn:
         if index.is_postgres:
@@ -590,25 +634,25 @@ def jobs_actifs(index: SearchIndex, limite: int = 20) -> list[dict[str, Any]]:
                     SELECT id, status, stage, progress, claimed_by, attempts,
                            extract(epoch FROM heartbeat_at) AS heartbeat_epoch,
                            extract(epoch FROM updated_at) AS updated_epoch,
-                           source_path, error, durability
+                           source_path, error, durability, selected_pdf, selected_excel
                     FROM import_jobs
                     WHERE status IN ('pending', 'running')
-                    ORDER BY updated_at DESC
-                    LIMIT %s
+                    ORDER BY updated_at DESC, id
+                    LIMIT %s OFFSET %s
                     """,
-                    (limite,),
+                    (limite, offset),
                 )
                 return [dict(ligne) for ligne in cursor.fetchall()]
         lignes = conn.execute(
             """
             SELECT id, status, stage, progress, claimed_by, attempts,
                    NULL AS heartbeat_epoch, NULL AS updated_epoch,
-                   source_path, error, durability
+                   source_path, error, durability, selected_pdf, selected_excel
             FROM import_jobs
             WHERE status IN ('pending', 'running')
-            ORDER BY updated_at DESC
-            LIMIT ?
+            ORDER BY updated_at DESC, id
+            LIMIT ? OFFSET ?
             """,
-            (limite,),
+            (limite, offset),
         ).fetchall()
     return [dict(ligne) for ligne in lignes]
