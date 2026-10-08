@@ -614,6 +614,25 @@ def compter_jobs_par_statut(index: SearchIndex) -> dict[str, int]:
     return {str(ligne[0]): int(ligne[1]) for ligne in lignes}
 
 
+def _resultat_job_json(valeur: Any) -> dict[str, Any] | None:
+    """``result`` d'un job, quel que soit l'encodage rendu par le moteur.
+
+    PostgreSQL (JSONB) rend un dictionnaire ; SQLite peut rendre la chaîne JSON
+    telle qu'elle a été écrite. Une charge illisible donne ``None`` — jamais une
+    exception : la boucle de rétention doit continuer à protéger les AUTRES
+    entrées plutôt que d'abandonner au premier job douteux.
+    """
+    if isinstance(valeur, dict):
+        return valeur
+    if isinstance(valeur, str):
+        try:
+            charge = json.loads(valeur)
+        except ValueError:
+            return None
+        return charge if isinstance(charge, dict) else None
+    return None
+
+
 def jobs_non_preserves(index: SearchIndex, *, limite: int = 5000) -> list[dict[str, Any]]:
     """Jobs dont la copie locale est encoré NÉCESSAIRE (retention, audit 2026-10-08).
 
@@ -653,22 +672,16 @@ def jobs_non_preserves(index: SearchIndex, *, limite: int = 5000) -> list[dict[s
             lignes = cursor.fetchall()
             cursor.close()
         else:
-            # SQLite (mode développement) : pas de JSON garanti — on lit tout et
-            # on filtre ici. Le volume y est celui d'un poste, pas d'un serveur.
-            import json as _json
-
+            # SQLite (mode développement) : pas de JSONB — ``result`` peut être la
+            # chaîne JSON telle qu'écrite, d'où la normalisation. Le volume y est
+            # celui d'un poste, pas d'un serveur.
             cursor = conn.execute(
                 "SELECT id, status, source_path, result FROM import_jobs ORDER BY updated_at DESC LIMIT ?",
                 (limite,),
             )
             lignes = []
             for ligne in cursor.fetchall():
-                resultat = ligne[3]
-                if isinstance(resultat, str):
-                    try:
-                        resultat = _json.loads(resultat)
-                    except ValueError:
-                        resultat = None
+                resultat = _resultat_job_json(ligne[3])
                 preserve = (
                     str(ligne[1]) in ("pending", "running")
                     or not isinstance(resultat, dict)
@@ -678,19 +691,17 @@ def jobs_non_preserves(index: SearchIndex, *, limite: int = 5000) -> list[dict[s
                     lignes.append((ligne[0], ligne[1], ligne[2], resultat))
     jobs: list[dict[str, Any]] = []
     for identifiant, statut, source_path, resultat in lignes:
-        if isinstance(resultat, str):
-            import json as _json
-
-            try:
-                resultat = _json.loads(resultat)
-            except ValueError:
-                resultat = None
+        # Normalisation UNIQUE : les deux branches ci-dessus alimentent ``lignes``
+        # avec un dictionnaire ou None (un résultat illisible devient None, donc
+        # « non préservé » : la prudence va toujours dans le sens de la
+        # conservation de l'entrée de travail).
+        charge = _resultat_job_json(resultat)
         jobs.append(
             {
                 "id": str(identifiant),
                 "status": str(statut),
                 "source_path": None if source_path is None else str(source_path),
-                "result": resultat if isinstance(resultat, dict) else None,
+                "result": charge,
             }
         )
     return jobs

@@ -106,18 +106,19 @@ Two defects were found *by* these tests and fixed in the same commit:
 | Check | Status |
 |---|---|
 | `ruff check` (E,F,I,W, line-length 120) + `compileall` | **Local, clean** |
-| SQLite suite `-m "not postgres and not s3 and not perf and not redis_queue"` | **Local: 920 passed, 3 skipped** |
-| PostgreSQL + Redis suite `-m "postgres or redis_queue"` | **Local: 331 passed, 35 skipped** (32 of the skips are `s3`: no Docker ⇒ no MinIO) |
-| Audit/targeted modules (A01/A02, A05, A06/A07, claim/ack, retention, cross-workflow, recette) | **Local: 64 passed** |
+| SQLite suite `-m "not postgres and not s3 and not perf and not redis_queue"` | **Local: 922 passed, 3 skipped** |
+| PostgreSQL + Redis suite `-m "postgres or redis_queue"` | **Local: 333 passed, 3 skipped** |
+| Audit/targeted modules (A01/A02, A05, A06/A07, claim/ack, retention, cross-workflow, recette) | **Local: 67 passed** |
+| CI coverage gate (`pytest -m "not s3 and not perf" --cov=seamtech_search` + `scripts/coverage_gate.py`) | **Local, reproduced and passing**: 1249 passed, 5 skipped, overall 86.8 % (floor 85 %), every per-module gate met — `jobs.py` 100 % (gate 94 %) after the PostgreSQL supervision tests |
 | Migrations + `pgvector` on a fresh database | **Local: 001→022, `vector 0.7.4`, `documents.embedding vector`** |
 | Real PostgreSQL + real Redis integration | **Local** (suites above; disposable databases, never the user's data) |
 | Backup/restore round trip (`tests/test_sauvegarde_restauration.py`, incl. destroyed-database round trip) | **Local (PostgreSQL suite)** |
-| Real MinIO upload/verify/failure/retry | **NOT executed locally** (no Docker in this sandbox). Covered by the `s3`-marked suite against a labelled in-memory S3 double (`tests/s3_en_memoire.py`) here, and by CI with a real MinIO service. Left open as a target-environment check |
+| Real MinIO upload/verify/failure/retry | **NOT executed locally** (no Docker in this sandbox), **passing in CI** (`integration` job, PR #36). Covered by the `s3`-marked suite against a labelled in-memory S3 double (`tests/s3_en_memoire.py`) here, and by CI with a real MinIO service. Left open as a target-environment check |
 | Frontend `tsc --noEmit` | **Local, clean** (includes the e2e specs) |
 | Frontend production build (`pnpm build`) | **Local, success** — route table includes `ƒ /api/lots/[id]` |
 | A08 relay over real HTTP (built frontend + real backend) | **Local, executed** (200/400/503 + deposit → lot) |
-| Browser e2e for A08/A09 | **NOT executed locally**: `playwright install chromium` fails (`cdn.playwright.dev` unreachable from this sandbox). Specs are written, type-checked and enumerated by `playwright test --list` (60 tests, 13 files); they run in CI. Left open |
-| A10 restore isolation on a Windows target | **NOT executed** (no Windows host, no Docker). Static pin + CI Docker job. Left open |
+| Browser e2e for A08/A09 | **NOT executed locally**: `playwright install chromium` fails (`cdn.playwright.dev` unreachable from this sandbox). Specs are written, type-checked and enumerated by `playwright test --list` (60 tests, 13 files) — and they **pass in CI** (`e2e` job on PR #36, 2 m 55 s) |
+| A10 restore isolation | **NOT executed on a Windows host** (none available). Static pin in `tests/test_recette_locale.py`; the Docker path **passes in CI** (`recette-locale` job on PR #36) |
 | Offline behaviour | `scripts/verifier_hors_ligne.py` and `frontend/e2e/hors-ligne.spec.ts` (browser part not run locally) |
 | Dependency audits | `pip-audit -r requirements.txt -r requirements-dev.txt`: **no known vulnerabilities**; `pnpm audit --prod`: **no known vulnerabilities** |
 | Test doubles labelled | Yes — the in-memory S3 double (`tests/s3_en_memoire.py`) is labelled as a double in its own docstring; the Redis and PostgreSQL boundaries are exercised against **real** servers locally |
@@ -131,13 +132,22 @@ behaviour, and regression-pinned**; the pre-fix code demonstrably fails the new 
 strength was proven by restoring the previous revision and re-running). Nothing was weakened: no
 assertion was relaxed, no test disabled, no marker removed, no skip silently widened.
 
-Two verification items remain **open by infrastructure, not by choice**: the browser e2e for
-A08/A09 and the real-MinIO upload/verify/retry path. Their code paths are covered here by
-type-check + production build + real-HTTP checks + real PostgreSQL/Redis suites + labelled doubles,
-and they are designed to run in CI. The A10 restore path is verified statically and by CI Docker
-job, not on a Windows target machine. Until those three run green in CI/target, this work should be
-described as **"pilot-ready pending CI confirmation of the browser, MinIO and Windows-restore
-checks"**, not as "verified end-to-end on the target environment".
+In CI (PR #36, commit `990531b`): the browser e2e (A08/A09), the Docker restore path (`recette-locale`),
+the real-MinIO integration path (`integration`), the backup/restore job (`sauvegarde`), the offline
+job (`hors-ligne-reel`), `docker`, `ocr`, `recette-corpus-reel`, `scale-bench`, `securite-dependances`
+and `frontend` **all pass**. Three `backend` matrix jobs went red on the **coverage gate** — the new
+`jobs.py` supervision code was exercised only on SQLite, leaving the PostgreSQL branches uncovered and
+`jobs.py` at 91.8 % against its 94 % gate. That was fixed here by adding the PostgreSQL supervision
+tests (`tests/test_file_durable_postgres.py`), the SQLite `result`-encoding test
+(`tests/test_audit_a06_a07_reprise.py`) and by removing one genuinely dead re-parsing block in
+`jobs_non_preserves`; the gate now passes locally (jobs.py **100 %**, overall 86.8 %).
+
+One verification item remains **open by infrastructure, not by choice**: restore isolation on a real
+**Windows** host — no Windows machine is available here; the property is pinned statically and the
+Docker equivalent passes in CI. Everything else that could not run locally (browser e2e, real MinIO)
+is green in CI. Readiness therefore: **pilot-ready for the three-workshop-user flow**, with the honest
+caveat that the Windows restore step is verified by its pin plus the Docker path, not on the
+commanditaire's machine.
 
 ---
 

@@ -260,6 +260,41 @@ def test_a06_selection_conservee_est_relancee_telle_quelle(tmp_path: Path) -> No
     index.close()
 
 
+def test_a06_jobs_non_preserves_lit_le_resultat_quel_que_soit_son_encodage(tmp_path: Path) -> None:
+    """SQLite (mode poste) : la protection doit lire le résultat sans se tromper.
+
+    ``jobs_non_preserves`` décide de ce que la rétention a le DROIT de purger.
+    Sur SQLite (mode poste), ``result`` peut revenir en TEXTE JSON ; une erreur
+    de lecture ne doit pas se transformer en « préservé » — ni en « tout est
+    protégé », ce qui reviendrait à ne plus jamais rien élaguer. Trois cas :
+    résultat prouvé (exclu), résultat illisible (protégé, par prudence),
+    résultat absent (protégé).
+    """
+    from seamtech_search.jobs import create_job, jobs_non_preserves
+
+    config = _config(tmp_path)
+    index = _index(config)
+    for job_id in ("job-preuve", "job-illisible", "job-sans-resultat", "job-attente"):
+        create_job(index, job_id, str(tmp_path / job_id), durability="durable")
+
+    with index.connect() as connexion:
+        connexion.execute(
+            "UPDATE import_jobs SET status = 'completed', result = ? WHERE id = ?",
+            ('{"all_verified": true, "upload_status": "uploaded"}', "job-preuve"),
+        )
+        connexion.execute(
+            "UPDATE import_jobs SET status = 'completed', result = ? WHERE id = ?",
+            ("{pas du json", "job-illisible"),
+        )
+        connexion.commit()
+
+    trouves = {job["id"] for job in jobs_non_preserves(index, limite=50)}
+    assert "job-preuve" not in trouves, "une préservation PROUVÉE n'a rien à protéger"
+    assert "job-illisible" in trouves, "un résultat illisible doit être protégé, jamais élagué"
+    assert "job-sans-resultat" in trouves and "job-attente" in trouves
+    index.close()
+
+
 # --------------------------------------------------------------------------- #
 # A07 — inventaire de reprise et preuve de préservation
 # --------------------------------------------------------------------------- #
