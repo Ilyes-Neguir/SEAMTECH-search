@@ -112,17 +112,24 @@ if ($EnCours) {
 # ---------------------------------------------------------------------------
 $Secrets = @(
     "POSTGRES_PASSWORD", "MINIO_ROOT_USER", "MINIO_ROOT_PASSWORD", "REDIS_PASSWORD",
-    "SEAMTECH_AUTH_TOKEN", "SEAMTECH_UI_PASSWORD", "SEAMTECH_SESSION_SECRET"
+    "SEAMTECH_AUTH_TOKEN", "SEAMTECH_UI_PASSWORD", "SEAMTECH_SESSION_SECRET",
+    # Identités SÉPARÉES (revue du 2026-10-07) : identité applicative RESTREINTE
+    # au bucket documents + identité de sauvegarde distincte. Exigées par la
+    # composition ; créées par scripts/provisionner_stockage.sh.
+    "SEAMTECH_S3_ACCESS_KEY", "SEAMTECH_S3_SECRET_KEY",
+    "SEAMTECH_BACKUP_ACCESS_KEY", "SEAMTECH_BACKUP_SECRET_KEY"
 )
 if (-not (Test-Path $EnvFile)) {
     $lignes = @()
     foreach ($nom in $Secrets) {
         $lignes += "$nom=seamtech-$([guid]::NewGuid().ToString('N'))"
     }
+    $lignes += "SEAMTECH_S3_BUCKET=seamtech-documents"
+    $lignes += "SEAMTECH_BACKUP_BUCKET=seamtech-backups"
     $lignes += "SEAMTECH_ROOT_PATHS=${SourcesConteneur}:/app/data/recette-lot:/app/data:/app/sample_data"
     $lignes += "RECETTE_MOT_DE_PASSE=seamtech-recette-$([guid]::NewGuid().ToString('N'))"
     Set-Content -Path $EnvFile -Value $lignes -Encoding ascii
-    $Creation = "créé avec 7 secrets aléatoires"
+    $Creation = "créé avec 11 secrets aléatoires"
 } else {
     $Creation = "existant réutilisé (idempotence)"
     $contenu = Get-Content $EnvFile
@@ -131,6 +138,18 @@ if (-not (Test-Path $EnvFile)) {
     }
     if (-not ($contenu -match '^RECETTE_MOT_DE_PASSE=')) {
         Add-Content -Path $EnvFile -Value "RECETTE_MOT_DE_PASSE=seamtech-recette-$([guid]::NewGuid().ToString('N'))" -Encoding ascii
+    }
+    # Identités de stockage : un .env antérieur au correctif n'en a pas.
+    foreach ($nom in @("SEAMTECH_S3_ACCESS_KEY", "SEAMTECH_S3_SECRET_KEY", "SEAMTECH_BACKUP_ACCESS_KEY", "SEAMTECH_BACKUP_SECRET_KEY")) {
+        if (-not ($contenu -match ("^" + $nom + "="))) {
+            Add-Content -Path $EnvFile -Value ("$nom=seamtech-" + [guid]::NewGuid().ToString('N')) -Encoding ascii
+        }
+    }
+    if (-not ($contenu -match '^SEAMTECH_S3_BUCKET=')) {
+        Add-Content -Path $EnvFile -Value "SEAMTECH_S3_BUCKET=seamtech-documents" -Encoding ascii
+    }
+    if (-not ($contenu -match '^SEAMTECH_BACKUP_BUCKET=')) {
+        Add-Content -Path $EnvFile -Value "SEAMTECH_BACKUP_BUCKET=seamtech-backups" -Encoding ascii
     }
 }
 $Variables = @{}
@@ -143,7 +162,17 @@ foreach ($nom in $Secrets) {
         exit 1
     }
 }
-Rapport "env-secrets" "PASS" ".env $Creation — 7 secrets présents, jamais journalisés (RG9)"
+Rapport "env-secrets" "PASS" ".env $Creation — secrets présents (dont identités de stockage dédiées), jamais journalisés (RG9)"
+# Exportés pour scripts/provisionner_stockage.sh (le script lit l'environnement ;
+# `docker compose`, lui, lit .env directement).
+foreach ($nom in @(
+    "MINIO_ROOT_USER", "MINIO_ROOT_PASSWORD",
+    "SEAMTECH_S3_ACCESS_KEY", "SEAMTECH_S3_SECRET_KEY",
+    "SEAMTECH_BACKUP_ACCESS_KEY", "SEAMTECH_BACKUP_SECRET_KEY",
+    "SEAMTECH_S3_BUCKET", "SEAMTECH_BACKUP_BUCKET"
+)) {
+    Set-Item -Path ("env:" + $nom) -Value $Variables[$nom]
+}
 $RecetteMotDePasse = $Variables["RECETTE_MOT_DE_PASSE"]
 
 # ---------------------------------------------------------------------------
@@ -169,6 +198,42 @@ if ($LASTEXITCODE -eq 0) {
     }
     Rapport "image-minio" "PASS" "image $ImageMinio construite depuis les sources archivées"
 }
+
+# ---------------------------------------------------------------------------
+# 4 bis. PROVISIONNEMENT du stockage : buckets, versioning, identités
+# RESTREINTES. Étape SÉPARÉE du démarrage applicatif ; la composition exige
+# désormais SEAMTECH_S3_ACCESS_KEY/SEAMTECH_S3_SECRET_KEY (aucun repli
+# administrateur), donc sans cette étape web/worker ne démarrent pas.
+# ---------------------------------------------------------------------------
+$Bash = $null
+foreach ($candidat in @("bash", "C:\Program Files\Git\bin\bash.exe", "C:\Program Files (x86)\Git\bin\bash.exe")) {
+    if (Get-Command $candidat -ErrorAction SilentlyContinue) { $Bash = $candidat; break }
+    if (Test-Path $candidat) { $Bash = $candidat; break }
+}
+if (-not $Bash) {
+    Rapport "provisionnement-stockage" "FAIL" "bash (Git for Windows) requis pour scripts/provisionner_stockage.sh"
+    exit 1
+}
+docker compose up -d minio 2>&1 | Out-Null
+$PretMinio = $false
+$FinMinio = (Get-Date).AddSeconds(120)
+while ((Get-Date) -lt $FinMinio) {
+    try {
+        $reponse = Invoke-WebRequest -UseBasicParsing -TimeoutSec 5 "http://127.0.0.1:9000/minio/health/live"
+        if ($reponse.StatusCode -eq 200) { $PretMinio = $true; break }
+    } catch { }
+    Start-Sleep -Seconds 3
+}
+if (-not $PretMinio) {
+    Rapport "provisionnement-stockage" "FAIL" "MinIO non prêt en 120 s"
+    exit 1
+}
+& $Bash (Join-Path $ProjectRoot "scripts/provisionner_stockage.sh") 2>&1 | Tee-Object -Variable SortieProv | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    Rapport "provisionnement-stockage" "FAIL" ("échec du provisionnement : " + (($SortieProv | Select-Object -Last 5) -join " "))
+    exit 1
+}
+Rapport "provisionnement-stockage" "PASS" "buckets + versioning + identités restreintes (applicative et sauvegarde)"
 
 # ---------------------------------------------------------------------------
 # 5. Pile complète : build + démarrage + santé avec timeout clair.

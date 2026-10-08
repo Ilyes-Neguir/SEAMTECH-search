@@ -54,6 +54,15 @@ CI_PROVIDED_ENV = {
     "SEAMTECH_UI_PASSWORD": "ci-ui-password",
     "SEAMTECH_SESSION_SECRET": "ci-session-secret-not-for-production",
     "SEAMTECH_S3_BUCKET": "seamtech-documents",
+    # Separate storage identities (independent review, 2026-10-07): the web and
+    # worker services now REQUIRE the dedicated application identity. These are
+    # restricted identities, provisioned by scripts/provisionner_stockage.sh --
+    # never the MinIO administrator.
+    "SEAMTECH_S3_ACCESS_KEY": "seamtech-app-ci",
+    "SEAMTECH_S3_SECRET_KEY": "ci-app-secret-not-for-production",
+    "SEAMTECH_BACKUP_ACCESS_KEY": "seamtech-sauvegarde-ci",
+    "SEAMTECH_BACKUP_SECRET_KEY": "ci-backup-secret-not-for-production",
+    "SEAMTECH_BACKUP_BUCKET": "seamtech-backups",
     # SEAMTECH_BEHIND_TLS_PROXY is deliberately absent: the tests below assert
     # the compose *defaults*, which is what a fresh checkout actually gets.
 }

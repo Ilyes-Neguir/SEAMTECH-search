@@ -100,7 +100,13 @@ docker compose up -d
 
 ### Production Checklist
 1. Point `SEAMTECH_S3_ENDPOINT_URL` to production Cloudflare R2 / AWS S3 endpoint.
-2. Provide `SEAMTECH_S3_ACCESS_KEY` and `SEAMTECH_S3_SECRET_KEY`.
+2. **Provision first, then provide**: run `bash scripts/provisionner_stockage.sh` (MinIO) or create the
+   equivalent restricted identity/policy at the provider, then set `SEAMTECH_S3_ACCESS_KEY` /
+   `SEAMTECH_S3_SECRET_KEY` to that **dedicated application identity** (and
+   `SEAMTECH_BACKUP_ACCESS_KEY` / `SEAMTECH_BACKUP_SECRET_KEY` to a separate backup identity restricted
+   to its own bucket). Administration credentials (`MINIO_ROOT_*`) are used by provisioning only and are
+   never handed to `web`/`worker`; the application has no fallback to them. See
+   `docs/DEPLOYMENT.md` § *Storage identities* and `docs/RELEASE_CANDIDATE_CHECKLIST.md` § 2.4.
 3. Provide `SEAMTECH_DATABASE_URL` pointing to PostgreSQL 16.
 4. Set `SEAMTECH_REDIS_URL` to production Redis instance.
 5. Set `SEAMTECH_AUTH_TOKEN` to a secure 32+ character random string.

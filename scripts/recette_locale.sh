@@ -89,7 +89,10 @@ fi
 # ---------------------------------------------------------------------------
 # 3. .env : secrets locaux aléatoires (jamais dans Git — .gitignore).
 # ---------------------------------------------------------------------------
-VARS="POSTGRES_PASSWORD MINIO_ROOT_USER MINIO_ROOT_PASSWORD REDIS_PASSWORD SEAMTECH_AUTH_TOKEN SEAMTECH_UI_PASSWORD SEAMTECH_SESSION_SECRET"
+# Identités SÉPARÉES (défaut bloquant de la revue du 2026-10-07) : l'application
+# (web/worker) reçoit une identité RESTREINTE au bucket documents, jamais
+# l'administrateur. scripts/provisionner_stockage.sh crée ces identités.
+VARS="POSTGRES_PASSWORD MINIO_ROOT_USER MINIO_ROOT_PASSWORD REDIS_PASSWORD SEAMTECH_AUTH_TOKEN SEAMTECH_UI_PASSWORD SEAMTECH_SESSION_SECRET SEAMTECH_S3_ACCESS_KEY SEAMTECH_S3_SECRET_KEY SEAMTECH_BACKUP_ACCESS_KEY SEAMTECH_BACKUP_SECRET_KEY"
 if [ ! -f .env ]; then
     # umask restreint UNIQUEMENT pour .env (secret) — remis à 022 ensuite,
     # sinon les répertoires de travail créés plus bas seraient 700 et le
@@ -99,17 +102,27 @@ if [ ! -f .env ]; then
         for var in $VARS; do
             echo "$var=seamtech-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
         done
+        echo "SEAMTECH_S3_BUCKET=seamtech-documents"
+        echo "SEAMTECH_BACKUP_BUCKET=seamtech-backups"
         echo "SEAMTECH_ROOT_PATHS=$SOURCES_CONTENEUR:/app/data/recette-lot:/app/data:/app/sample_data"
         echo "RECETTE_MOT_DE_PASSE=seamtech-recette-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
       } > .env
     )
-    CREATION="créé avec 7 secrets aléatoires"
+    CREATION="créé avec 11 secrets aléatoires"
 else
     CREATION="existant réutilisé (idempotence)"
     grep -q '^SEAMTECH_ROOT_PATHS=' .env || \
         echo "SEAMTECH_ROOT_PATHS=$SOURCES_CONTENEUR:/app/data/recette-lot:/app/data:/app/sample_data" >> .env
     grep -q '^RECETTE_MOT_DE_PASSE=' .env || \
         echo "RECETTE_MOT_DE_PASSE=seamtech-recette-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')" >> .env
+    # Identités de stockage : un .env antérieur au correctif n'en a pas — on les
+    # ajoute (rotation par régénération, le provisionnement recrée les comptes).
+    for var in SEAMTECH_S3_ACCESS_KEY SEAMTECH_S3_SECRET_KEY SEAMTECH_BACKUP_ACCESS_KEY SEAMTECH_BACKUP_SECRET_KEY; do
+        grep -q "^$var=." .env || \
+            echo "$var=seamtech-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')" >> .env
+    done
+    grep -q '^SEAMTECH_S3_BUCKET=' .env || echo "SEAMTECH_S3_BUCKET=seamtech-documents" >> .env
+    grep -q '^SEAMTECH_BACKUP_BUCKET=' .env || echo "SEAMTECH_BACKUP_BUCKET=seamtech-backups" >> .env
 fi
 SECRETS_OK="ok"
 for var in $VARS; do
@@ -121,7 +134,7 @@ if [ "$SECRETS_OK" != "ok" ]; then
 fi
 # shellcheck disable=SC1091
 set -a; . ./.env; set +a
-controle "env-secrets" "PASS" ".env $CREATION — 7 secrets présents, jamais journalisés (RG9)"
+controle "env-secrets" "PASS" ".env $CREATION — secrets présents (dont identités de stockage dédiées), jamais journalisés (RG9)"
 
 # data/ est monté en bind dans le conteneur web (./data:/app/data) : le
 # pré-créer en écriture pour tous AVANT compose up évite un répertoire root
@@ -141,6 +154,36 @@ else
         exit 1
     }
     controle "image-minio" "PASS" "image $IMAGE_MINIO construite depuis les sources archivées"
+fi
+
+# ---------------------------------------------------------------------------
+# 4 bis. PROVISIONNEMENT du stockage (hors démarrage applicatif) : buckets,
+# versioning, identités restreintes. La composition l'exige désormais : sans
+# cette étape, web/worker refusent de démarrer (${SEAMTECH_S3_ACCESS_KEY:?...}).
+# ---------------------------------------------------------------------------
+if docker compose up -d minio >/dev/null 2>&1; then
+    PRET_MINIO=""
+    FIN_MINIO=$((SECONDS + 120))
+    while [ $SECONDS -lt $FIN_MINIO ]; do
+        if curl -s -o /dev/null "http://127.0.0.1:9000/minio/health/live"; then
+            PRET_MINIO="oui"; break
+        fi
+        sleep 3
+    done
+    if [ "$PRET_MINIO" != "oui" ]; then
+        controle "provisionnement-stockage" "FAIL" "MinIO non prêt en 120 s"
+        exit 1
+    fi
+    if SORTIE_PROV="$(bash scripts/provisionner_stockage.sh 2>&1)"; then
+        controle "provisionnement-stockage" "PASS" \
+            "buckets $SEAMTECH_S3_BUCKET/$SEAMTECH_BACKUP_BUCKET, versioning actif, identités restreintes"
+    else
+        controle "provisionnement-stockage" "FAIL" "échec du provisionnement : $(echo "$SORTIE_PROV" | tail -5 | tr '\n' ' ')"
+        exit 1
+    fi
+else
+    controle "provisionnement-stockage" "FAIL" "démarrage du service minio impossible"
+    exit 1
 fi
 
 # ---------------------------------------------------------------------------

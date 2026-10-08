@@ -161,3 +161,133 @@ sont pas terminés avec success**. Revalider toute tête différente de fc4f99e.
 | CI 8/8 verte Lot J finale | `gh run view 35776638128` (push) et `35776643429` (PR) | docker ✓1m19s, frontend ✓36s, integration ✓1m50s, backend 3.11 ✓4m17s passed=140, 3.12 ✓4m55s passed=140 p50=22.2ms p95=54.0ms, 3.13 ✓3m58s passed=140, sauvegarde ✓1m1s 50k 0.99s, e2e ✓1m58s mesure-phase1 670ms — 8/8 SUCCESS | 3bd71d7 | ✅ établi (preuve brute §2.15) |
 | Sauvegarde version attendue 014 | `tests/test_sauvegarde_restauration.py` | version attendue mise à jour 014 après migration dimension, CI sauvegarde verte 1m1s | 45cbe22 | ✅ établi |
 | Latence chemin recherche touché (tri sur 100 ids) | `gh run view 35776638128` annotations perf-latence | 1500 fiches p50=22.2ms p95=54.0ms max=63.0ms n=60, 50 requêtes p50=14.7ms p95=16.7ms, fonds réel p50=14.6ms p95=15.5ms, assistant p50=1.8ms p95=2.1ms — tous <100ms produit, <250ms env CI | 3bd71d7 | ✅ établi |
+
+## Revue indépendante — 2026-10-07 (`arena/7da80c2f-seamtech-search`) — **CI 12/12 verte sur `67a442a`**
+
+Branche : `arena/7da80c2f-seamtech-search` · PR **#35** ·
+commit final **`67a442a`** (`3a33740` → `a1c62fd` → `57b4804`).
+Runs : push <https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/37606067205>,
+pull_request <https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/37606071939>.
+
+| Affirmation | Commande | Sortie brute | Commit | Statut |
+|---|---|---|---|---|
+| Les 12 jobs CI sont verts sur le SHA final (push ET pull_request) | `gh run view 37606067205 --json jobs` / `gh run view 37606071939 --json jobs` | 12/12 `success` sur chaque événement : backend 3.11/3.12/3.13, frontend, docker, integration, e2e, sauvegarde, recette-corpus-reel, recette-locale, ocr, securite-dependances | 67a442a | ✅ établi (deux runs verts, PR NON fusionnée) |
+| Le document s'ouvre/télécharge depuis un AUTRE poste : octets servis par l'API, aucune redirection vers l'endpoint interne | `pytest tests/test_recette_corpus_reel.py::test_08_ouverture_pdf_telechargeable_sans_redirection_interne` (MinIO réel, CI) | job `recette-corpus-reel` vert ; le test exige 200 + SHA-256 identique et l'ABSENCE d'en-tête `Location` | 67a442a | ✅ établi (CI, MinIO réel) |
+| Redirection présignée uniquement vers un endpoint PUBLIC déclaré | `tests/test_url_presignee_302.py` (15 passés) + §10.6 bis de `test_recette_corpus_reel.py` | 302 vers l'hôte déclaré ; en mode par défaut : 200 sans `Location` | 57b4804, a1c62fd | ✅ établi (local + CI) |
+| Contrôle de recette « PDF téléchargeable » : le corps est lu en BRUT, et un échec est un échec | `pytest tests/test_recette_locale.py -k pdf` (2 tests) + contrôle `pdf-presigne` en CI | 2 passés ; mis à l'épreuve : retirer `brut=True` fait ÉCHOUER le test (puis restauré). Job `recette-locale` vert | 3a33740 | ✅ établi (garde-fou rouge→vert démontré) |
+| File durable : 64 tests exécutés, 0 sauté (supervision, cycle de vie, Redis injoignable, échecs de boucle, verrou perdu, relever depuis la base) | `pytest -m "redis_queue"` (Redis + PostgreSQL réels) | annotation CI `suite-file-durable` : **passed=64 skipped=0** | 67a442a | ✅ établi (CI) |
+| Échec suivi d'une relance n'est PAS écrit « échoué » dans le registre | `pytest tests/test_file_durable_operations.py -k epuisees` + test `echec_repete_puis_lettre_morte` | statut `pending` / étape `requeued` + raison « nouvelle tentative programmée dans 1s (tentative 2/2) » ; lettre morte seulement après épuisement | 3a33740 | ✅ établi (local, Redis réel) |
+| `update_job` ne prétend pas avoir écrit dans Redis | `pytest tests/test_jobs_resilience.py::test_etat_redis_non_ecrit_quand_redis_est_injoignable` | retour `None` + journal d'avertissement (Redis sur port fermé) | 3a33740 | ✅ établi |
+| Couverture : la porte passe avec Redis déclaré dans l'étape de mesure | étape CI `Coverage gate` (`pytest -m "not s3 and not perf" --cov`) | `overall=86.70% floor=85.0%` ; `suite-file-durable passed=64 skipped=0` ; `api=90.5% indexer=95.3%` (`coverage-details`) | 67a442a | ✅ établi (CI) |
+| Sauvegarde hors-site réellement VÉRIFIÉE après envoi (MinIO) | job CI `sauvegarde`, annotations `sauvegarde-envoi` | `dump 150038 octets en 0.1 s, archive 2 fichiers, vérifié après envoi : True` (plusieurs dumps, tous `True`). La valeur `False` apparaît pour un scénario SANS client S3 : le code publie `verifiee_apres_envoi: False` dans la branche « sauvegarde locale seule » (`seamtech_search/sauvegarde.py`, l.329) — c'est-à-dire « rien à vérifier après envoi », PAS « vérification échouée ». Une vérification qui échoue, elle, lève `SauvegardeError` (l.294-297) | 67a442a | ✅ établi (CI, MinIO réel) |
+| Restauration réelle dans une base neuve, y compris à l'échelle | job CI `sauvegarde`, annotations `sauvegarde-restauration` | `recherche_test_bf06942c78 restaurée en 0.26 s (15 fiches)` ; `restaur50k_f6f8150a72 restaurée en 0.8 s (50000 fiches)` | 67a442a | ✅ établi (CI) — **essai humain indépendant : PENDING** |
+| Le WEB et un WORKER SÉPARÉ partagent volumes, brouillons, quarantaine et modèles (Docker) | `tests/test_compose_partage_worker.py` (job CI `integration`, `SEAMTECH_INTEGRATION_STRICT=1`) | job vert ; le test vérifie aussi le téléchargement HTTP du rapport **sans redirection** et l'exécution non-root | 67a442a | ✅ établi (CI, Compose réel) |
+| Navigateur réel : parcours complets, comptes nominatifs, doublons | job CI `e2e` (Playwright), annotations | `e2e-auth-nominatif : 26 tests verts (dont 4 sur les comptes nominatifs)` ; `e2e-doublons : 2 tests verts` ; `mesure-phase1 : parcours machine complet de la vraie fiche 7792-SO … 841 ms` | 67a442a | ✅ établi (CI, navigateur réel) |
+| Recette locale « ça marche sur ma machine » de bout en bout | job CI `recette-locale` (`scripts/recette_locale.sh` → `recette_verif.py` dans le conteneur web) | job vert ; contrôle `pdf-presigne` = octets téléchargés identiques (SHA-256) | 67a442a | ✅ établi (CI) |
+| Corpus réel : import des 7 dossiers, OCR par étages, recherche, sauvegarde/restauration | job CI `recette-corpus-reel` | job vert (7 ZIP, MinIO réel, Tesseract fra) | 67a442a | ✅ établi (CI) — relevance humaine sur requêtes réelles : PENDING |
+| Aucun secret dans les réponses de téléchargement | `tests/test_telechargement_navigateur.py` (5 passés) | ni clé, ni secret, ni `X-Amz-Signature`, ni hôte interne dans les en-têtes/octets servis | 57b4804 | ✅ établi |
+| Sélection SQLite sans service : aucune régression | `pytest -m "not redis_queue and not postgres and not s3 and not perf and not recette_corpus and not integration_docker and not sauvegarde"` | **827 passed, 3 skipped, 315 deselected**, 62 s | 67a442a | ✅ établi |
+| Sélection complète de la porte de couverture, services réels | `pytest -m "not s3 and not perf"` (PostgreSQL 16 + Redis 7) | **1 145 passed, 5 skipped, 0 failed**, 276 s | 67a442a | ✅ établi (local, mêmes versions que la CI) |
+
+
+## Passe de clôture — 2026-10-07 (suite de la revue indépendante)
+
+Branche : `arena/7da80c2f-seamtech-search` · PR **#35** (non fusionnée).
+Runs lus pendant cette passe :
+push <https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/37617039519>
+(`948130d`), push
+<https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/37618670336>
+(`3e13c7f`), pull_request `37618675764` / `37618675860` (même SHA).
+
+| Affirmation | Commande | Sortie brute | Commit | Statut |
+|---|---|---|---|---|
+| La CI ne donnait pas au provisionnement les identifiants MinIO exigés : `sauvegarde` et `recette-corpus-reel` échouaient AVANT tout test | `gh run view 37617039519 --json jobs` + `gh api .../actions/jobs/<id>` | étape 9 « Provisionner les identités restreintes » en échec, toutes les étapes de test `skipped` ; correctif = `MINIO_ROOT_*` au niveau de l'ÉTAPE | `948130d` → `3e13c7f` | ✅ établi (mode d'échec lu) |
+| Le correctif débloque bien le job : `sauvegarde` repasse au VERT | `gh run view 37618670336 --json jobs` | `sauvegarde` success ; restent rouges `e2e` et `recette-corpus-reel` (causes distinctes) | `3e13c7f` | ✅ établi (CI lue) |
+| Le scénario de concurrence va jusqu'au conflit complet en navigateur réel (bandeau, valeur du collègue, aucune écriture, base inchangée) | annotations du check-run `112783142751` (job `e2e`) | `1 failed, 3 passed` ; l'unique échec est l'assertion d'après rechargement (`toHaveValue` reçoit `MATERIAU-POSTE-B`) | `3e13c7f` | ✅ établi — défaut produit E-34 identifié |
+| Un opérateur ne relit plus sa saisie périmée après « Recharger la fiche à jour » (E-34) | étape CI « Run multi-session E2E (concurrence, sessions indépendantes) », lue par `gh api actions/jobs/<id>` | **`success`** sur le run push `37642194285` et sur les deux runs pull_request `37642211480` / `37642211503` (`c65b7d8`) : 4 scénarios verts au premier essai, 0 flaky, 0 sauté (garde-fou du job) | `c65b7d8` | ✅ établi (CI, navigateur réel) |
+| La recette n'écrit plus la sauvegarde avec l'identité applicative (E-35) | `tests/test_recette_corpus_reel.py` (`_client_s3` choisit l'identité par bucket) + 2 tests de régression sans service ; job `recette-corpus-reel` (MinIO réel) | tests ROUGES sur la version d'avant correctif (`minioadmin` en repli détecté par AST) ; job **VERT** sur `06667a8` puis `c65b7d8` | `c65b7d8` | ✅ établi (local + CI MinIO réel) |
+| Une preuve ne dépend pas d'un run « chanceux » : les 12 jobs sont verts sur le push ET sur les pull_request du même SHA | `gh run view 37642194285 / 37642211480 / 37642211503 --json jobs` | 12/12 `success` sur les trois runs de `c65b7d8` (`backend` 3.11/3.12/3.13, `frontend`, `docker`, `integration`, `e2e`, `sauvegarde`, `recette-corpus-reel`, `recette-locale`, `ocr`, `securite-dependances`, `scale-bench` sur le run PR) | `c65b7d8` | ✅ établi (CI lue) |
+| Le garde-fou de concurrence refuse un run flaky EN LE DISANT (nom du test) | annotation `concurrence-garde-fou` du run `37640455508` | « mesuré 3 passés, 1 flaky … rattrapés par un retry : deux postes, même fiche… » — l'annotation a permis de durcir le test au lieu de relancer à l'aveugle | `5805eb3` → `c65b7d8` | ✅ établi (annotation lue) |
+| Les étapes réseau du build MinIO ne transforment plus un incident transitoire en échec de recette | `scripts/construire_image_minio.sh` (réessais bornés) + `tests/test_construire_image_minio.py` (8 tests) | clones et `docker build` réessayés 3 fois ; échec conservé si les 3 tentatives échouent ; fumigène (binaires + alias `local`) maintenu | `c65b7d8` | ✅ établi (test de garde + CI) |
+| Suite COMPLÈTE locale sur l'arbre de clôture | `.venv/bin/python -m pytest -q` (PostgreSQL 16.2 + pgvector/unaccent/pg_trgm, Redis 7.2.5 réels) | **1180 passés, 38 sautés, 0 échec** (264 s) | arbre de clôture | ✅ établi (local) |
+| Porte de couverture non contournée | `pytest -m "not s3 and not perf" --cov=seamtech_search --cov-report=json:coverage.json` puis `python scripts/coverage_gate.py coverage.json` | **1174 passés, 5 sautés** ; global **86,65 %** (plancher 85 %), tous les seuils par module `[ok]` | arbre de clôture | ✅ établi (local) |
+| Front : types et build de production | `pnpm install --frozen-lockfile` / `pnpm exec tsc --noEmit` / `pnpm build` | **OK / OK / OK** | arbre de clôture | ✅ établi (local) |
+| Aucune assertion retirée, aucun seuil abaissé, aucun saut silencieux introduit | `git diff` + `scripts/coverage_gate.py` (seuils inchangés) + `ruff check .` | les 5 tests ajoutés sont NETS (rouge avant, vert après) ; `OVERALL_MIN` inchangé | arbre de clôture | ✅ établi |
+
+## Deuxième revue indépendante — passe F1–F4 (2026-10-07)
+
+Branche : `arena/7da80c2f-seamtech-search` · PR **#35** (non fusionnée).
+Déclencheur : la revue du 2026-10-07 a rouvert la mission — la protection par
+révision n'était pas obligatoire (`F1`), champs et révision étaient lus
+séparément (`F2`), les décisions n'étaient pas liées à la révision revue (`F3`),
+et le harnais « hors ligne » avait une portée plus étroite que ce qu'il
+laissait croire (`F4`). Les lignes ci-dessous distinguent **établi** (exécuté et
+lu) de **contrat** (vérifié statiquement, jamais exécuté).
+
+| Affirmation | Commande / fichier | Sortie brute | Statut |
+|---|---|---|---|
+| Sans révision, l'API refuse ÉCRIRE et DÉCIDER (428) — le repli legacy demande une option explicite et journalise l'écriture non protégée | `pytest tests/test_revision_optimiste.py -q` | **12 passés** (dont `test_sans_revision_la_correction_est_refusee_ferme`, `test_ecriture_sans_revision_seulement_sous_option_explicite`) | ✅ établi (PostgreSQL réel, HTTP réel) |
+| Champs et révision sont lus dans UN instantané, et une réponse tardive n'écrase plus la fiche courante | `pytest tests/test_revision_optimiste.py -q` (tests `test_etat_fiche_…`) + `frontend/e2e/concurrence.spec.ts` (scénario « réponse tardive ») | lecture : **1 requête exigée** par un espion (la variante à 2 requêtes fait ROUGIR le test) ; navigateur : scénario **vert** (run push **`37668475085`**, job `e2e`, 7 scénarios au premier essai) | ✅ établi (API **et** navigateur) |
+| Une validation (ou un rejet, une réouverture) fondée sur un écran périmé est refusée en 409 `conflit_decision`, sans écriture et sans ligne d'audit trompeuse | `pytest tests/test_revision_optimiste.py -q` | `test_valider_un_ecran_perime_est_refuse_sans_aucune_trace`, `test_rejeter_et_rouvrir_sont_lies_a_la_revision_revue`, `test_validation_en_lot_ignore_une_fiche_modifiee_depuis_la_selection` — **passés** | ✅ établi (PostgreSQL réel) |
+| Les scénarios historiques de validation rejouent le geste réel (relire la révision, puis décider) et 20 appels HTTP sans révision ont été mis à niveau | `pytest tests/test_validation_workflow.py -q` | **17 passés** | ✅ établi |
+| Aucun SCRIPT du dépôt n'écrit l'état d'une fiche sans révision (garde-fou AST répo-large) | `pytest tests/test_garde_fous_preparation.py -q -k revision` | **1 passé**, et le test échoue s'il ne trouve aucun appel à inspecter | ✅ établi |
+| Le harnais hors ligne ne revendique plus que sa portée réelle (processus Python) | `pytest tests/test_verification_hors_ligne.py -q` | **5 passés** (garde bloque/nomme/diagnostique) | ✅ établi |
+| Une épreuve PLEINE PILE hors ligne existe : pile web + worker séparé + front sous blocage `iptables` par uid, contrôle négatif obligatoire, compteur `REJECT` final à zéro | `.github/workflows/ci.yml` (job `hors-ligne-reel`) + `frontend/e2e/hors-ligne.spec.ts` | **exécutée et VERTE** : run push **`37668475085`**, étapes 17→21 vertes (pile démarrée sous le compte applicatif, blocage réellement posé avec contrôle négatif ET positif, parcours navigateur vert au premier essai, `REJECT = 0`), annotation du job : « parcours navigateur verts avec sortie externe RÉELLEMENT bloquée — 0 paquet rejeté (aucune dépendance externe tentée) » | ✅ **établi** (runner GitHub, blocage système réel) |
+| Les 7 scénarios de concurrence (dont 3 neufs) sont comptés par le garde-fou du job `e2e` | `frontend/e2e/concurrence.spec.ts` + garde-fou du job `e2e` | **7 scénarios passés au premier essai, 0 flaky, 0 sauté** (le garde-fou REFUSE tout autre compte ; run push **`37668475085`**). Les scénarios neufs : « décision liée à la révision revue », « révision non lue = correction et décision bloquées et le backend refuse aussi », « réponse tardive sans écrasement de la fiche affichée » | ✅ **établi** |
+| Le NAVIGATEUR lui-même ne demande aucune ressource hors boucle locale (le blocage `iptables` ne couvre que les processus du compte applicatif) | `frontend/e2e/hors-ligne.spec.ts` (garde-fou `page.on("request")`, assertion finale liste vide) | parcours hors ligne vert **avec** ce contrôle (run push **`37669839566`**) : aucune ressource externe demandée de tout le parcours | ✅ établi (run `37669839566`) |
+| **Instabilité de concurrence CORRIGÉE (cause mesurée)** : « deux postes, même fiche : A enregistre, B est arrêté et se reprend » était compté *flaky* sur `6bbc94a` et `21849e3`, vert au premier essai sur `67b6153`/`de7333e` (code identique) | `frontend/playwright.config.ts` (aucun `expect.timeout` → défaut Playwright de **5 s**), `frontend/e2e/concurrence.spec.ts` (seule lecture DOM sans réessai), `.github/workflows/ci.yml` (garde-fou) | Corrigé en `889cfc4` : `expect.timeout` = 15 s (la convention de TOUS les waits explicites du dépôt), lecture remplacée par `expect(...).toHaveValue(…, { timeout: 15000 })`, garde-fou qui publie la CAUSE de l'essai rattrapé. Vérifié : run push **`37697083753`** et pull request **`37697089852`** — job `e2e` vert, **7 scénarios au premier essai, 0 flaky, 0 sauté** | ✅ **corrigé** |
+| **E-40 CORRIGÉ** : `seamtech_search index --rebuild` fonctionne sur une base PostgreSQL peuplée ; la table `documents` est CONSERVÉE avec ses identifiants dès qu'une table la référence (mode « en place » annoncé), les liens fiche → document restent résolubles, seuls les documents disparus ET non référencés sont supprimés, et un retour arrière qui échoue CONSERVE l'instantané en laissant remonter l'erreur D'ORIGINE (`add_note`) | `pytest tests/test_rebuild_index_postgres.py tests/test_rebuild_index.py -q` — et **contrôle négatif** : les 8 tests ÉCHOUENT sur le code d'avant avec `psycopg2.errors.DependentObjectsStillExist: cannot drop table documents because other objects depend on it` | **8 passés** (PostgreSQL 16.2 réel + SQLite) : CLI réel de bout en bout, fiches/pièces/liens intacts, recherche + jointure de téléchargement fonctionnelles, scan interrompu restauré à l'identique, retour arrière en panne → instantané conservé + erreur d'origine | ✅ **corrigé** |
+| Le job hors ligne ne dépend plus des binaires MinIO disparus (`dl.min.io` = 410 Gone) et bâtit l'image avant de la consommer | `pytest tests/test_construire_image_minio.py -q` | **9 passés** ; le contrat exige **4** jobs bâtisseurs et l'ordre build → `docker run` pour le job hors ligne | ✅ établi (contrat CI) |
+| Deux défauts trouvés PAR la re-exécution, corrigés | `pytest tests/test_fiches_api.py -q` | **18 passés** après correction : `route_etat_fiche` avait DEUX décorateurs (`/gabarits` répondait 422 « code requis » — E-37) ; un test d'attribution validait sans révision (E-38) | ✅ établi |
+| Les trois familles de tests backend sont vertes sur l'arbre de cette passe | `pytest -m "not postgres and not s3 and not perf and not redis_queue"` / `-m "postgres and not perf and not sauvegarde and not redis_queue"` / `-m redis_queue` | **886 passés (3 sautés)** / **232 passés (1 sauté)** / **63 passés (1 sauté)** — PostgreSQL 16.2 + pgvector/unaccent/pg_trgm et Redis 7.2.5 réels | ✅ établi (local) |
+| Front : types, build de production, audit | `tsc --noEmit` / `next build` / `pnpm audit --prod --audit-level=high` | **OK / OK / « No known vulnerabilities found »** | ✅ établi (local) |
+
+
+---
+
+## Clôture CI de la passe F1–F4 — 2026-10-07 (tous les runs LUS)
+
+Branche : `arena/7da80c2f-seamtech-search` · PR **#35**. Chaque affirmation de
+cette section vient d'un run **lu** (`gh run view --json jobs`,
+`gh api .../check-runs/<id>/annotations`), jamais d'une supposition.
+
+| Élément | Run | Résultat lu |
+|---|---|---|
+| **7 scénarios de concurrence au premier essai** | push `37668475085`, job `e2e` | `success` — le garde-fou du job REFUSE tout autre compte que 7 passés / 0 flaky / 0 sauté (il nomme les tests fautifs ou rattrapés sinon) |
+| **Parcours hors ligne pleine pile** | push `37668475085`, job `hors-ligne-reel`, étapes 17→21 | `success` — étapes : démarrer la pile (compte applicatif), bloquer la sortie réseau (contrôle négatif + positif), parcours navigateur, relevé `REJECT = 0`, lever le blocage |
+| Annotation publiée par le job hors ligne | `check-runs/<job>/annotations` | « **parcours navigateur verts avec sortie externe RÉELLEMENT bloquée — 0 paquet rejeté (aucune dépendance externe tentée)** » |
+| **Garde-fou NAVIGATEUR** (aucune ressource hors boucle locale pendant tout le parcours) | push `37670079596` (+ pull_request `37670089091` / `37670087887`) | `e2e` **`success`** (étapes 13→16 : concurrence, validation live, doublons, comptes nominatifs) et `hors-ligne-reel` **`success`** |
+| Suites live restantes, lues dans les annotations du job `e2e` | push `37668475085` | `e2e-auth-nominatif` : 26 tests verts ; `e2e-doublons` : 2 verts ; `mesure-phase1` : parcours machine complet **841 ms** (critère < 120 000 ms) |
+| **Commit de clôture** (attente de la révision avant décision + garde-fou bavard, E-47) | push **`37671726429`**, pull_request **`37671732453`** (CI) et **`37671732326`** (benchmark) | **13/13 jobs verts sur le push** — dont `e2e` (étapes 13→16) et `hors-ligne-reel` (étapes 17→21, annotation « 0 paquet rejeté ») ; **`success` sur les deux pull_request** |
+| Les échecs de cette passe étaient-ils des défauts PRODUIT ? | 9 runs lus (voir l'historique du rapport d'avancement, §5) | **Non** : tous étaient des défauts de TEST ou de JOB (E-41 → E-47), corrigés un par un — aucune assertion supprimée, aucun seuil abaissé, aucun test ignoré, aucun défaut produit revendiqué à tort |
+
+**Défauts que ces exécutions ont trouvés et fait corriger** (détail au §2.7 du
+rapport d'avancement) : E-41 (scénarios dépendants de l'ordre), E-42 (assertion
+ambiguë sur le bandeau), E-43 (clic sur un bouton qui n'existe qu'en état
+d'échec — trois tentatives de 30 s), E-44 (fixture simulant l'ancien endpoint
+`/champs`), E-45 (quatre défauts du job hors ligne : `secure_path`, traversée du
+dépôt, `next` lancé par `node`, sondes sans jeton), E-46 (deux défauts de la spec
+hors ligne : identifiant d'import attendu entier alors qu'il est UUID ; recherche
+MÉTIER interrogée avec une référence EXTRAITE), E-47 (étape « live E2E
+validation » : décision cliquée avant la lecture de la révision — instabilité
+sans défaut produit — et garde-fou Python muet en cas d'échec).
+
+**Ce qui reste ouvert après cette clôture** — et rien d'autre :
+
+| Point | Preuve du caractère ouvert | Ce qui le fermerait |
+|---|---|---|
+| Drill de restauration par un humain indépendant | aucun humain n'a restauré une sauvegarde | runbook exécuté et signé |
+| Destination de sauvegarde de production | non choisie par le propriétaire | décision + test d'écriture hors serveur |
+| Pertinence de la recherche sur archives réelles | aucune étiquette humaine | jeu de requêtes étiqueté + validation humaine |
+| Acceptation atelier (trois postes, réseau coupé) | décision humaine | essai sur le serveur cible |
+
+Les preuves d'exécution **locales** de cette passe (suites complètes
+PostgreSQL/Redis réelles, couverture 85,9 % avec toutes les portes par module,
+`tsc`/`build`/`audit` du front) restent celles du tableau précédent, inchangées.
+
+Ce document est publié par un commit de **documentation seule**, qui suit le
+commit de code `89c2b1f` : c'est ce dernier qui porte le code et les specs
+décrits ci-dessus, et ses trois runs sont ceux lus dans le tableau. Une
+correction de documentation ne peut pas changer un résultat de test — mais elle
+ne l'invalide pas non plus.
+

@@ -521,7 +521,19 @@ def _client_s3_depuis_env():
     """Client S3 si la configuration hors-site est présente, sinon None
     (sauvegarde locale seule — l'envoi hors-site est alors signalé absent).
     Tolérant à l'absence de config applicative : la restauration/la
-    vérification locales doivent fonctionner avec la seule URL de base."""
+    vérification locales doivent fonctionner avec la seule URL de base.
+
+    IDENTITÉ : depuis le correctif de séparation des identités (revue du
+    2026-10-07), l'application ne dispose que de droits sur SON bucket
+    (``SEAMTECH_S3_BUCKET``). La sauvegarde hors-site vit dans un AUTRE bucket
+    et utilise donc, quand elles sont fournies, les variables dédiées
+    ``SEAMTECH_BACKUP_ACCESS_KEY`` / ``SEAMTECH_BACKUP_SECRET_KEY`` (et
+    ``SEAMTECH_BACKUP_BUCKET``), provisionnées par
+    ``scripts/provisionner_stockage.sh``. Sans ces variables, le repli est
+    l'identité APPLICATIVE, jamais l'administrateur : l'envoi échouera
+    franchement (AccessDenied) si elle n'a pas de droits sur le bucket de
+    sauvegarde — c'est préférable à une élévation de privilèges silencieuse.
+    """
     from .config import AppConfig
     from .storage import S3StorageClient
 
@@ -535,6 +547,29 @@ def _client_s3_depuis_env():
         return None
     if not config.s3_endpoint_url:
         return None
+
+    acces_sauvegarde = (os.environ.get("SEAMTECH_BACKUP_ACCESS_KEY") or "").strip()
+    secret_sauvegarde = (os.environ.get("SEAMTECH_BACKUP_SECRET_KEY") or "").strip()
+    bucket_sauvegarde = (os.environ.get("SEAMTECH_BACKUP_BUCKET") or "").strip()
+    # Copie : la configuration chargée n'est jamais modifiée sur place (un
+    # appelant qui la garde ne doit pas hériter de l'identité de sauvegarde).
+    remplacements: dict[str, str] = {}
+    if acces_sauvegarde and secret_sauvegarde:
+        remplacements["s3_access_key"] = acces_sauvegarde
+        remplacements["s3_secret_key"] = secret_sauvegarde
+        logger.info("Identité de sauvegarde DÉDIÉE utilisée (SEAMTECH_BACKUP_ACCESS_KEY)")
+    else:
+        logger.warning(
+            "SEAMTECH_BACKUP_ACCESS_KEY/SECRET_KEY absents : repli sur l'identité APPLICATIVE "
+            "(SEAMTECH_S3_ACCESS_KEY). Aucun repli sur l'administrateur. Si cette identité n'a "
+            "pas de droits sur le bucket de sauvegarde, l'envoi hors-site échouera — c'est le "
+            "signe qu'il faut provisionner l'identité de sauvegarde."
+        )
+    if bucket_sauvegarde:
+        remplacements["s3_bucket"] = bucket_sauvegarde
+        logger.info("Bucket de sauvegarde : %s", bucket_sauvegarde)
+    if remplacements:
+        config = config.model_copy(update=remplacements)
     return S3StorageClient(config=config)
 
 

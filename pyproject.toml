@@ -65,6 +65,7 @@ markers = [
     "ci_guard_dedup: garde ROUGE/VERT ciblant la détection des doublons exacts",
     "ci_guard_attribution: garde ROUGE/VERT ciblant l'attribution de validation",
     "ci_guard_ocr: garde ROUGE/VERT ciblant le contrat OCR par page",
+    "redis_queue: file durable testée contre un VRAI Redis (SEAMTECH_TEST_REDIS_URL) — reprise après mort du worker, redélivrance, lettre morte",
 ]
 
 [tool.ruff]

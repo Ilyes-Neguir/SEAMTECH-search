@@ -47,6 +47,21 @@ INVENTAIRE_S3_REEL = {
     # ensure_bucket_exists / upload_file / get_presigned_url / delete_file.
     "tests/test_integration_docker.py::test_docker_compose_infra",
     "tests/test_integration_docker.py::test_api_with_real_backends",
+    # job `integration` : deux CONTENEURS séparés (web + worker) sur la même
+    # pile, MinIO vivant pour l'envoi des documents et le téléchargement du
+    # rapport généré. C'est la preuve que le worker distinct partage réellement
+    # les volumes (fichiers téléversés, brouillons, quarantaine, modèles).
+    "tests/test_compose_partage_worker.py::test_web_et_worker_partagent_volumes_et_fichiers",
+    # job `integration` : identités RESTREINTES — l'identité applicative
+    # écrit/lit SON bucket, et se voit refuser un autre bucket, toute opération
+    # d'administration et l'accès anonyme ; `web`/`worker` reçoivent bien cette
+    # identité (jamais MINIO_ROOT_*) ; identifiants absents ⇒ échec clair de la
+    # composition ; aucun secret dans les journaux. Correctif du défaut bloquant
+    # de la revue du 2026-10-07.
+    "tests/test_credentials_s3_restreintes.py::test_identite_applicative_autorisee_sur_son_bucket_et_refusee_ailleurs",
+    "tests/test_credentials_s3_restreintes.py::test_conteneurs_web_et_worker_recoivent_l_identite_applicative_et_pas_le_root",
+    "tests/test_credentials_s3_restreintes.py::test_identifiants_applicatifs_manquants_echec_clair_de_la_composition",
+    "tests/test_credentials_s3_restreintes.py::test_aucun_secret_dans_les_journaux_des_services",
     # job `sauvegarde` : aller-retour hors-site contre un VRAI bucket.
     "tests/test_sauvegarde_restauration.py::test_aller_retour_via_client_s3_reel",
     # épreuve de conformité d'un endpoint réel (SEAMTECH_TEST_S3_URL).
@@ -75,7 +90,7 @@ INVENTAIRE_S3_REEL = {
     "tests/test_recette_corpus_reel.py::test_05_fiches_proposees_a_valider",
     "tests/test_recette_corpus_reel.py::test_06_ocr_par_etages",
     "tests/test_recette_corpus_reel.py::test_07_recherches_par_mots_cles",
-    "tests/test_recette_corpus_reel.py::test_08_ouverture_pdf_url_presignee_reelle",
+    "tests/test_recette_corpus_reel.py::test_08_ouverture_pdf_telechargeable_sans_redirection_interne",
     "tests/test_recette_corpus_reel.py::test_09_rapport_pdf_telecharge",
     "tests/test_recette_corpus_reel.py::test_10_sauvegarde_restauration_base_neuve",
     "tests/test_recette_corpus_reel.py::test_11_zip_inchanges_apres_recette",
@@ -89,9 +104,12 @@ CATEGORIES = ("postgres", "s3", "perf", "sauvegarde")
 
 #: Commandes de sélection attendues dans le workflow (contrat explicite : si
 #: quelqu'un les rétrograde vers `-k`, ce test devient rouge).
-COMMANDE_SUITE_SANS_SERVICE = 'pytest -q -rf -m "not postgres and not s3 and not perf"'
+COMMANDE_SUITE_SANS_SERVICE = 'pytest -q -rf -m "not postgres and not s3 and not perf and not redis_queue"'
 COMMANDE_COUVERTURE = 'pytest -m "not s3 and not perf"'
-COMMANDE_POSTGRES = 'pytest -m "postgres and not perf and not sauvegarde"'
+COMMANDE_POSTGRES = 'pytest -m "postgres and not perf and not sauvegarde and not redis_queue"'
+#: File durable (Lot « imports durables ») : Redis réel + worker réel. Marquée
+#: à part pour que sa CI ne puisse pas être verte par simple SKIP.
+COMMANDE_FILE_DURABLE = 'pytest -m "redis_queue" -v -rf'
 COMMANDE_PERF = "pytest -q -m perf -rf"
 
 
@@ -284,9 +302,15 @@ def test_aucune_commande_ci_n_exclut_une_categorie_par_sous_chaine() -> None:
 
 
 def test_les_commandes_de_selection_attendues_sont_bien_celles_du_workflow() -> None:
-    """Contrat explicite des 4 sélections : suite sans service, couverture, PostgreSQL, perf."""
+    """Contrat explicite des 5 sélections : sans service, couverture, PostgreSQL, file durable, perf."""
     contenu = CI.read_text(encoding="utf-8")
-    for commande in (COMMANDE_SUITE_SANS_SERVICE, COMMANDE_COUVERTURE, COMMANDE_POSTGRES, COMMANDE_PERF):
+    for commande in (
+        COMMANDE_SUITE_SANS_SERVICE,
+        COMMANDE_COUVERTURE,
+        COMMANDE_POSTGRES,
+        COMMANDE_FILE_DURABLE,
+        COMMANDE_PERF,
+    ):
         assert commande in contenu, f"commande de sélection absente du workflow : {commande}"
 
 
@@ -384,3 +408,181 @@ def test_les_marqueurs_de_categorie_sont_declares_dans_pyproject(categorie: str)
     """Un marqueur non déclaré serait une faute silencieuse (warning, pas erreur)."""
     pyproject = (RACINE / "pyproject.toml").read_text(encoding="utf-8")
     assert f'"{categorie}:' in pyproject, f"marqueur {categorie} non déclaré dans [tool.pytest.ini_options].markers"
+
+
+# ---------------------------------------------------------------------------
+# Contrats de la vérification PLEINE PILE hors ligne (revue du 2026-10-07)
+# ---------------------------------------------------------------------------
+
+
+def test_le_job_hors_ligne_bloque_reellement_la_sortie_et_exige_le_controle_negatif() -> None:
+    """« Zéro paquet rejeté » ne prouve RIEN sans contrôle négatif préalable.
+
+    Le garde socket du diagnostic Python ne couvre ni le navigateur, ni Next.js,
+    ni le worker séparé (constat n°4). Le job CI doit donc :
+
+    1. bloquer la sortie du COMPTE APPLICATIF (règle ``--uid-owner``) ;
+    2. exiger qu'une requête sortante ÉCHOUE avant l'épreuve (contrôle négatif) ;
+    3. vérifier que l'application locale répond encore (contrôle positif) ;
+    4. conduire le NAVIGATEUR sur les parcours réels ;
+    5. relire le compteur de paquets rejetés et refuser s'il n'est pas nul.
+    """
+    contenu = CI.read_text(encoding="utf-8")
+    assert "\n  hors-ligne-reel:\n" in contenu, "le job hors-ligne-reel doit exister"
+    bloc = contenu.split("\n  hors-ligne-reel:\n", 1)[1]
+    # On s'arrête au job suivant pour ne pas attribuer ses règles à celui-ci.
+    bloc = bloc.split("\n  recette-corpus-reel:\n", 1)[0]
+
+    assert "--uid-owner" in bloc, "le blocage doit viser le compte applicatif (pas toute la machine)"
+    assert "-j REJECT" in bloc, "une tentative sortante doit être REJETÉE, pas seulement journalisée"
+    assert "CONTRÔLE NÉGATIF" in bloc, "le contrôle négatif doit être explicite"
+    assert "example.com" in bloc, "le contrôle négatif doit viser une adresse EXTERNE réelle"
+    assert "hors-ligne-non-bloque" in bloc, "un blocage inopérant doit faire ÉCHOUER le job"
+    assert "CONTRÔLE POSITIF" in bloc and "/health" in bloc, "la pile locale doit rester joignable"
+    assert "e2e/hors-ligne.spec.ts" in bloc, "les parcours NAVIGATEUR doivent être exécutés"
+    assert 'awk \'$3=="REJECT" {print $1; exit}\'' in bloc, "le compteur de paquets rejetés doit être RELU"
+    assert "dependance-externe-cachee" in bloc, "un paquet rejeté non nul doit faire échouer le job"
+    assert "SEAMTECH_E2E_HORS_LIGNE" in bloc, "l'épreuve navigateur doit être armée explicitement"
+    # Les contrôles ci-dessus REJETTENT volontairement des paquets : sans remise à
+    # zéro, le relevé final serait non nul et le job échouerait… pour la bonne
+    # raison inverse de celle qu'il doit détecter.
+    assert "iptables -Z SEAMTECH_HORS_LIGNE" in bloc, (
+        "les compteurs doivent être remis à zéro après les contrôles, avant l'épreuve"
+    )
+    # Le relevé FINAL doit lire un compteur remis à zéro : la remise à zéro
+    # précède la DERNIÈRE lecture. (Le contrôle négatif, lui, lit AVANT la remise
+    # à zéro — c'est ainsi qu'il prouve que la règle a rejeté son paquet.)
+    reset = bloc.index("-Z SEAMTECH_HORS_LIGNE")
+    assert reset < bloc.rindex('$3=="REJECT"'), "la remise à zéro doit précéder le relevé FINAL"
+    assert bloc.index('$3=="REJECT"') < reset, (
+        "le contrôle négatif doit mesurer le compteur AVANT la remise à zéro (sinon il ne prouve rien)"
+    )
+    assert "dependance-externe-cachee" in bloc and reset < bloc.index("dependance-externe-cachee"), (
+        "le refus « paquet rejeté non nul » doit porter sur le relevé d'après l'épreuve"
+    )
+    # Le semis d'une base e2e TERMINE les connexions et SUPPRIME les bases e2e_% :
+    # réarmé pendant l'épreuve, il détruirait la base de la pile bloquée.
+    assert 'SEAMTECH_E2E_DATABASE_URL: ""' in bloc, (
+        "l'épreuve navigateur doit réutiliser la pile bloquée, pas re-semer sa base"
+    )
+    # dl.min.io répond « 410 Gone » : les binaires ne sont plus téléchargeables.
+    assert "dl.min.io/server" not in bloc and "dl.min.io/client" not in bloc, (
+        "dl.min.io répond 410 Gone : le job ne doit pas TÉLÉCHARGER MinIO depuis ce site"
+    )
+    assert "scripts/construire_image_minio.sh" in bloc, (
+        "l'image MinIO doit être reconstruite depuis les sources archivées (même chaîne que integration/sauvegarde)"
+    )
+    assert bloc.index("construire_image_minio.sh") < bloc.index("docker run -d --name minio"), (
+        "l'image doit être reconstruite AVANT de démarrer le conteneur MinIO"
+    )
+    assert "SEAMTECH_MINIO_CONTAINER" in bloc, (
+        "le provisionnement doit viser le conteneur MinIO hors composition (constat E-29)"
+    )
+    # La pile tourne sous le compte applicatif : c'est la condition pour que le
+    # blocage par uid s'applique VRAIMENT au processus applicatif, et donc pour
+    # que « zéro paquet rejeté » ait un sens.
+    assert "readlink -f" in bloc, "le compte applicatif doit pouvoir lire l'interpréteur Python employé par la pile"
+    assert "--uid-owner \"$UID_APP\"" in bloc, "le blocage doit cibler l'uid réellement calculé du compte applicatif"
+
+
+def test_le_garde_fou_de_concurrence_compte_les_scenarios_reellement_executes() -> None:
+    """Le garde-fou de concurrence doit attendre AUTANT de scénarios qu'il en existe.
+
+    Il attendait 4 tests passés au premier essai ; la revue a ajouté trois
+    scénarios (décision liée à la révision revue, révision non lue = écriture
+    bloquée, réponse tardive sans écrasement). Un garde resté à 4 refuserait un
+    run légitime — ou, pire, laisserait passer un scénario en échec si le compte
+    était baissé sans que le fichier de spec le justifie.
+    """
+    contenu = CI.read_text(encoding="utf-8")
+    spec = RACINE / "frontend" / "e2e" / "concurrence.spec.ts"
+    nombre = sum(
+        1
+        for ligne in spec.read_text(encoding="utf-8").splitlines()
+        if ligne.strip().startswith("test(") and "test.describe" not in ligne
+    )
+    assert nombre >= 7, f"scénarios de concurrence attendus : au moins 7, trouvé {nombre}"
+    assert f"passes != {nombre}" in contenu, (
+        f"le garde-fou doit refuser quand le nombre de tests passés n'est pas {nombre}"
+    )
+    assert f"attendu {nombre} tests passés au premier essai" in contenu, (
+        "le message du garde-fou doit annoncer le même compte que la condition"
+    )
+
+def test_le_controle_negatif_prouve_la_regle_et_couvre_ipv6() -> None:
+    """Un échec « example.com » ne prouve rien à lui seul (revue 2026-10-07).
+
+    Il pourrait n'être qu'un DNS cassé ou une absence de connectivité. Le job
+    doit donc (1) résoudre le nom DEPUIS le compte applicatif avant l'appel,
+    (2) appeler une ADRESSE LITTÉRALE (aucun DNS dans la requête), (3) exiger
+    que le COMPTEUR de la règle REJECT augmente — l'empreinte de la règle.
+
+    Il doit aussi traiter IPv6 : une chaîne ip6tables pour le même compte quand
+    le runner annonce une route IPv6 globale, sinon la PREUVE de l'absence de
+    chemin IPv6. Et la portée doit être écrite noir sur blanc : processus
+    couverts (uid réel seamtech-app) et non couverts (navigateur du runner).
+    """
+    contenu = CI.read_text(encoding="utf-8")
+    bloc = contenu.split("\n  hors-ligne-reel:\n", 1)[1].split("\n  recette-corpus-reel:\n", 1)[0]
+
+    # (1)-(3) le contrôle négatif PROUVE la règle, il ne la suppose pas.
+    assert "ahostsv4" in bloc, "le nom doit être résolu depuis le compte applicatif (DNS hors de cause)"
+    assert "--noproxy" in bloc and '"http://$adresse/"' in bloc, (
+        "l'appel de contrôle doit porter sur l'adresse LITTÉRALE résolue"
+    )
+    assert "hors-ligne-regle-non-prouvee" in bloc, (
+        "un échec non imputable à la règle (compteur inchangé) doit faire ÉCHOUER le job"
+    )
+    assert "rc_neg" in bloc and "-eq 6" in bloc, (
+        "un échec par résolution de nom (curl 6) doit être refusé : le contrôle ne mesurerait rien"
+    )
+
+    # IPv6 : bloqué s'il existe une route, sinon l'absence de chemin est PROUVÉE.
+    assert "ip6tables" in bloc and "SEAMTECH_HORS_LIGNE6" in bloc, "IPv6 doit être traité, pas ignoré"
+    assert "ip -6 route show default" in bloc, "la décision IPv6 doit se fonder sur la table de routage réelle"
+    assert "hors-ligne-ipv6-non-bloque" in bloc and "hors-ligne-ipv6-regle-non-prouvee" in bloc, (
+        "IPv6 doit avoir ses propres refus, symétriques de ceux d'IPv4"
+    )
+    assert "hors-ligne-ipv6-non-prouve" in bloc, "l'absence de route IPv6 doit être PROUVÉE, pas supposée"
+
+    # Le relevé final couvre IPv6 quand la chaîne existe.
+    assert "rejetes6" in bloc, "le relevé final doit contrôler aussi les paquets IPv6 rejetés"
+
+    # Portée écrite noir sur blanc (processus couverts / non couverts).
+    assert "PROCESSUS COUVERTS" in contenu, "la portée du blocage doit être documentée"
+    assert "NON couverts" in contenu, "les processus NON couverts doivent être dits (navigateur, outils du runner)"
+    assert "requetesExternes" in contenu, (
+        "la garantie côté navigateur (aucune requête externe TENTÉE) doit être nommée là où la portée est écrite"
+    )
+
+
+def test_le_garde_fou_live_nomme_les_tests_en_cause_et_publie_la_raison() -> None:
+    """Un garde-fou qui échoue sans dire POURQUOI n'est pas exploitable.
+
+    Le 2026-10-07, un test live a été compté « flaky » (vert au second essai) : le
+    job est devenu rouge pour la bonne raison, mais ni le nom du test ni son titre
+    n'étaient lisibles depuis un poste qui n'atteint pas les journaux d'Actions.
+    Le garde-fou doit donc (1) refuser flaky/sautés, (2) NOMMER les tests en
+    cause dans son message, et (3) publier ce message en annotation lisible par
+    API.
+    """
+    import textwrap
+
+    contenu = CI.read_text(encoding="utf-8")
+    bloc = contenu.split("\n  e2e:\n", 1)[1].split("\n  docker:\n", 1)[0]
+    assert "live-validation-garde-fou" in bloc, "le garde-fou doit publier sa raison en annotation"
+    assert "0 flaky, 0 sautés" in bloc, "le garde-fou doit refuser toute instabilité masquée par retry"
+    assert "coupables" in bloc and "Détail :" in bloc, (
+        "le message doit NOMMER les tests en cause (sinon « 1 flaky » n'est pas diagnosticable)"
+    )
+
+    # Le bloc Python embarqué doit être syntaxiquement valide (un heredoc cassé
+    # ferait échouer le job pour une raison qui n'a rien à voir).
+    lignes = bloc.split("\n")
+    debut = next(i for i, ligne in enumerate(lignes) if "python - <<'PY'" in ligne)
+    fin = next(i for i, ligne in enumerate(lignes) if i > debut and ligne.strip() == "PY")
+    texte_python = textwrap.dedent("\n".join(lignes[debut + 1 : fin]))
+    compile(texte_python, "<garde-fou-live>", "exec")
+
+    # Et il doit REFUSER, pas seulement journaliser : la porte est un exit non nul.
+    assert "raise SystemExit" in texte_python, "le garde-fou doit lever (sortie non nulle)"

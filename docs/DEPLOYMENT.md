@@ -1,10 +1,18 @@
 # SEAMTECH Search office deployment
 
-This is the supported deployment path for an office Windows machine running Docker
-Desktop. The application stack is PostgreSQL, MinIO, Redis, the SEAMTECH API, and
-the Next.js frontend. The compose file publishes the application ports on
-`127.0.0.1`; expose the frontend to the office LAN only through a TLS-terminating
-reverse proxy.
+This is the supported deployment path for an office machine running Docker Desktop
+(Windows) — or a workshop server/VM. The stack is SIX compose services: `postgres`,
+`redis`, `minio`, `web` (API), `worker` (separate process: imports survive a
+restart) and `frontend` (Next.js); `docker compose ps` must show all six as
+`running (healthy)`. For object storage, **MinIO is the supported provider for this
+release** (the compose file ships it and CI proves the six-service stack);
+S3-compatible endpoints such as Cloudflare R2 remain optional — do not reopen the
+architecture while an archive is being imported. Whether this machine is a local
+workshop server or a remote VPS is a design decision with consequences (a remote
+host makes workshop access depend on the internet link): see
+`docs/verite_terrain/DECISION_MATERIEL.md`. The compose file publishes the
+application ports on `127.0.0.1`; expose the frontend to the office LAN only
+through a TLS-terminating reverse proxy.
 
 ## Prerequisites
 
@@ -35,19 +43,75 @@ notepad .env
 
 Edit `.env` before starting the stack. Set unique, long values for all required
 secrets; add `REDIS_PASSWORD`, which is required by `docker-compose.yml`, and the
-two UI sign-in values described under [Authentication](#authentication):
+two UI sign-in values described under [Authentication](#authentication).
+
+Two of these values are embedded in **connection URLs**: `docker-compose.yml`
+builds `SEAMTECH_DATABASE_URL` from `POSTGRES_PASSWORD` and `SEAMTECH_REDIS_URL`
+from `REDIS_PASSWORD`. Generate them **URL-safe** (`openssl rand -hex 24`, or
+`openssl rand -base64 24 | tr '+/' '-_'`). A raw base64 secret can contain `/`,
+which breaks the URL — in a Redis URL the `/` silently becomes the database
+selector. The application refuses to start with an explicit message when a
+password in either URL is not encoded (`AppConfig.validate_connection_urls`).
 
 ```dotenv
 POSTGRES_PASSWORD=<long-random-postgres-password>
-MINIO_ROOT_USER=<long-random-minio-user>
-MINIO_ROOT_PASSWORD=<long-random-minio-password>
+MINIO_ROOT_USER=<long-random-minio-admin-user>
+MINIO_ROOT_PASSWORD=<long-random-minio-admin-password>
 REDIS_PASSWORD=<long-random-redis-password>
 SEAMTECH_AUTH_TOKEN=<long-random-shared-token>
 SEAMTECH_UI_PASSWORD=<the password the operator types at /login>
 SEAMTECH_SESSION_SECRET=<long-random-cookie-signing-key>
 SEAMTECH_S3_BUCKET=seamtech-documents
 SEAMTECH_ROOT_PATHS=/app/data/DesignFiles
+# Dedicated APPLICATION identity: restricted to SEAMTECH_S3_BUCKET only.
+SEAMTECH_S3_ACCESS_KEY=seamtech-app
+SEAMTECH_S3_SECRET_KEY=<long-random-app-secret>
+# Dedicated BACKUP identity: restricted to SEAMTECH_BACKUP_BUCKET only.
+SEAMTECH_BACKUP_ACCESS_KEY=seamtech-sauvegarde
+SEAMTECH_BACKUP_SECRET_KEY=<long-random-backup-secret>
+SEAMTECH_BACKUP_BUCKET=seamtech-backups
 ```
+
+### Storage identities: administrator vs application vs backup
+
+`MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` are **provisioning credentials**.
+They are given to the MinIO service and to
+`scripts/provisionner_stockage.sh`, and to nothing else: the `web` and `worker`
+services receive the dedicated application identity above, which can read and
+write objects in `SEAMTECH_S3_BUCKET` only — no other bucket, no
+administration operation, no permission. `docker-compose.yml` refuses to start
+if `SEAMTECH_S3_ACCESS_KEY` / `SEAMTECH_S3_SECRET_KEY` are missing
+(`${VAR:?message}`), so there is no silent fallback to the administrator. The
+backup tool (`python -m seamtech_search.sauvegarde`) uses the separate backup
+identity when `SEAMTECH_BACKUP_*` are set, so a compromised application cannot
+read or rewrite the off-site backups; without them it falls back to the
+application identity and the upload fails loudly (`AccessDenied`) if that
+identity has no rights on the backup bucket.
+
+Provision the bucket, the versioning and both restricted identities **before**
+the first `docker compose up` — and, more importantly, **before any normal use of
+the application** (a first real import is not the moment to discover that the
+bucket does not exist). Then VERIFY, not just provision: with the application
+identity, store one object and read its bytes back; `/health` must report
+`s3_credentials: "dedie"`. Re-run after rotating any of these secrets:
+
+```powershell
+docker compose up -d minio          # MinIO must be running first
+bash scripts/provisionner_stockage.sh
+```
+
+The script is idempotent and repeatable; it creates `SEAMTECH_S3_BUCKET` and
+`SEAMTECH_BACKUP_BUCKET`, enables object versioning on both (the restricted
+application identity cannot enable it itself), creates the two policies
+(object read/write + bucket listing on their own bucket only), recreates the
+two users with the secrets you supplied (that is the rotation procedure) and
+checks anonymously that neither bucket is public. It refuses to run if the
+application or backup credentials are the administrator ones, or if the two
+identities are the same. It never prints a secret.
+
+`GET /health` reports `s3_credentials` as `dedie`, `root_like` or `absent`:
+`dedie` is the expected value, `root_like` means the administrator credentials
+were reused or the demonstration `minioadmin` values are still in place.
 
 Generate the random ones in PowerShell:
 
@@ -65,9 +129,11 @@ Start the complete stack with one command:
 docker compose up -d --build
 ```
 
-The `web` service waits for healthy PostgreSQL, MinIO, and Redis. The `frontend`
-service waits for a healthy `web` service. Watch the real container health state
-rather than assuming that a successful `up -d` means the application is ready:
+The `web` service waits for healthy PostgreSQL, MinIO, and Redis. The `worker`
+service (which actually executes imports) waits for the same three. The
+`frontend` service waits for a healthy `web` service. Watch the real container
+health state rather than assuming that a successful `up -d` means the
+application is ready:
 
 ```powershell
 docker compose ps
@@ -78,9 +144,88 @@ The frontend health response should be HTTP 200 and report the backend health
 payload. If a service is unhealthy, inspect its logs before restarting it:
 
 ```powershell
-docker compose logs --tail 100 web frontend postgres minio redis
+docker compose logs --tail 100 web worker frontend postgres minio redis
 docker compose ps
 ```
+
+### The worker service (why imports survive a restart)
+
+`web` accepts imports but does **not** execute them: the environment sets
+`SEAMTECH_WEB_WORKER_ENABLED=false`. Execution belongs to the `worker` service
+(`python -m seamtech_search.worker_service`), which consumes the durable Redis
+queue. Three consequences the operator should know:
+
+* restarting or upgrading `web` (including `docker compose up -d --build web`)
+  does not interrupt a running import;
+* if Redis is unreachable, `SEAMTECH_REQUIRE_DURABLE_QUEUE=true` makes the API
+  answer **503 and refuse the import** instead of accepting it and losing it —
+  an honest refusal, visible in the UI;
+* the `worker` healthcheck runs `--verifier`, which exits non-zero when Redis
+  cannot be reached and prints the queue depth, the jobs per status, and the
+  live workers. A worker that cannot work is therefore *unhealthy*, not green.
+* `SEAMTECH_STORAGE_VERIFY_REREAD` (default `true`, passed to both `web` and
+  `worker` by `docker-compose.yml`) controls whether an upload is verified by
+  **reading the stored bytes back** (`GET` + SHA-256) before the local draft is
+  deleted. Setting it to `false` does **not** speed anything up safely: with no
+  read-back, every artifact is only "metadata echoed by us", which is not proof,
+  so **the worker refuses to purge the local copy** and says why
+  (`intégrité non prouvée (…) — copie locale conservée`). Leave it `true` unless
+  you have a provider-side whole-object checksum and know that is what you rely
+  on.
+
+**Downloads from a workshop PC (do not expose the internal endpoint).** By
+default the API serves report/download/`open` bytes itself, through the
+authenticated endpoint the browser already talks to. That is deliberate: a
+presigned URL is signed for the S3 endpoint the application uses, which in this
+stack is `http://minio:9000` — a name that only exists inside the compose
+network. Redirecting a workshop PC there fails with *name resolution* (this was
+found by the two-container Compose test). If you *want* the cheaper presigned
+redirect, expose MinIO on the LAN (TLS terminator in front) and declare the
+endpoint browsers can reach:
+
+```bash
+SEAMTECH_S3_PUBLIC_ENDPOINT_URL=https://minio.atelier.local
+```
+
+Leave it empty and every download goes through the app; credentials and the
+internal endpoint then never reach browser code, and downloads work from any
+workshop PC.
+
+**Directories the container user must be able to write to (real deployment
+requirement).** `./data` and `./logs` are bind-mounted into `web` and `worker`,
+which run as the non-root `seamtech` user of the image. If Docker creates those
+directories for you, they belong to `root` and the application cannot write the
+uploaded drafts, the generated reports or the quarantine — imports then fail
+with a permission error that looks like a code bug. Create them and give the
+container user ownership, once, before the first start:
+
+```bash
+mkdir -p data logs
+uid=$(docker compose exec -T web id -u)   # once `web` is up, or read it from the image
+gid=$(docker compose exec -T web id -g)
+sudo chown -R "$uid:$gid" data logs
+```
+
+The CI `integration` job does exactly this before running the two-container
+test, and asserts the container can really write into `/app/data` and
+`/app/logs`.
+
+Useful commands:
+
+```powershell
+# Is the worker able to work? (queue depth, jobs per status, live workers)
+docker compose exec -T worker python -m seamtech_search.worker_service --verifier
+
+# Failed imports, with the recorded reason (never a silent failure)
+docker compose exec -T postgres psql -U seamtech -d seamtech_search -c `
+  "SELECT id, status, attempts, claimed_by, failure_reason FROM import_jobs WHERE status = 'failed' ORDER BY updated_at DESC LIMIT 20;"
+
+# Queue depth as the API reports it
+docker compose exec -T web python -c "import json,os,urllib.request;r=urllib.request.Request('http://127.0.0.1:8000/health',headers={'X-SEAMTECH-TOKEN':os.environ['SEAMTECH_AUTH_TOKEN']});print(json.dumps(json.load(urllib.request.urlopen(r))['queue'],indent=2))"
+```
+
+Full contract, limits and what is *not* guaranteed:
+`docs/FILE_DURABLE.md`.
 
 ## Authentication
 
@@ -168,10 +313,110 @@ See [TLS.md](TLS.md) for Caddy, Nginx, and Cloudflare Tunnel examples. The
 reverse proxy should publish only the frontend; keep PostgreSQL, Redis, MinIO,
 and the backend on their loopback/container network endpoints.
 
+## Optimistic locking between workstations (mandatory by default)
+
+`SEAMTECH_REQUIRE_REVISION=true` (compose default, and the safe default of
+`AppConfig`) makes the revision a **precondition**:
+
+* a correction without `revision` → **428**, nothing written (a failed revision
+  read on a workstation must never silently disable the anti-overwrite guard);
+* a correction with a stale revision → **409**, the colleague's value is kept;
+* a DECISION (valider / rejeter / rouvrir / batch) with a stale revision → **409**,
+  nothing written to the audit journal: a worker can never approve a value they
+  did not re-read;
+* `GET /fiches/{code}/etat` returns status + revision + fields **from one
+  snapshot**, so the revision on screen always matches the values on screen.
+
+Setting it to `false` is only for an identified legacy script; the workshop UI
+always sends the revision it displays, so it needs no relaxation.
+
+## Offline verification before the workshop (RG14_EXCEPTION, tooling only)
+
+The workshop server has no Internet access. Reading the configuration does not
+prove that: the automated check **executes** the essential workflows with every
+outbound Python connection blocked and reports what happened.
+
+**Scope of that script (do not overstate it).** It patches Python `socket`
+calls inside ITS OWN process: it covers neither the browser, nor Next.js, nor a
+separate worker process, nor native libraries (part of libpq) and subprocesses.
+A green run means "this Python process reached nothing external", nothing more.
+The full-stack proof is separate: the CI job `hors-ligne-reel` runs the real
+stack (web + **separate worker** + PostgreSQL + Redis + local MinIO) with the
+application account's egress actually REJECTED by iptables and drives the
+browser through import, search, PDF preview, original + generated-report
+downloads and validation; it then asserts the reject counter is still 0 (no
+hidden external dependency was even attempted). Three details make that proof
+hold up:
+
+* **the negative control PROVES the rule**, it does not assume it: the host is
+  resolved from the application account first (so DNS is not the cause), the
+  controlled request is sent to the **literal address** (no DNS in the request),
+  and the rule's REJECT **counter must increase** — a failed request alone could
+  be a broken resolver or a dead link;
+* **IPv6 is handled explicitly**: the IPv4 rule says nothing about IPv6. When the
+  runner has a global IPv6 route, an `ip6tables` chain is installed for the same
+  account and checked the same way; when it has none, the job proves there is no
+  IPv6 path before concluding;
+* **the covered processes are named**: every process whose real uid is the
+  application account — `web`/API, the separate `worker` and the Next.js
+  production server, plus anything they spawn (OCR/external tools) — is covered,
+  IPv4 and IPv6. Chromium/Playwright (runner user) is NOT firewall-covered; the
+  guarantee for the page itself is the e2e assertion that no external request is
+  even attempted. Loopback stays open on purpose (the stack talks to itself).
+
+Neither replaces the workshop acceptance (real workstations, cable unplugged).
+
+```bash
+# 1. What is provisioned? (no blocking) — says REQUIRED vs OPTIONAL per capability
+python scripts/verifier_hors_ligne.py --inventaire
+
+# 2. Run the essential workflows with the outside world blocked
+export SEAMTECH_DATABASE_URL=postgresql://seamtech:...@127.0.0.1:5432/seamtech_search
+export SEAMTECH_REDIS_URL=redis://127.0.0.1:6379/0
+python scripts/verifier_hors_ligne.py --executer --rapport /tmp/hors-ligne.json
+
+# 3. Diagnostic only: do NOT block, but LIST every external connection attempted
+python scripts/verifier_hors_ligne.py --executer --autoriser-externe
+```
+
+What it exercises, against the real local stack (PostgreSQL + Redis, plus MinIO
+when `SEAMTECH_S3_ENDPOINT_URL` is set): application start-up, nominative
+sign-in, a real folder import with file accounting, report download, dossier
+deposit (fiche + pieces), human correction with the optimistic lock (a stale
+correction is refused), search visibility of the deposited fiche, PDF preview
+and original download, and `/open`. Zero external connections are expected; if
+any is attempted, the target host:port is **named** in the report.
+
+Capabilities that are absent are reported as OPTIONAL with their exact
+consequence (OCR tier 3 without `tesseract -l fra`, image rendering without
+`pdftoppm`, vector search without the e5 models, container images without
+Docker) — never silently worked around. Provision everything the workshop needs
+**before** the network is cut:
+
+```bash
+pnpm install --frozen-lockfile && pnpm build     # frontend
+python -m seamtech_search.ml.telecharger         # e5-small ONNX weights (operator command)
+bash scripts/construire_image_minio.sh           # MinIO image, if built locally
+```
+
+Two limits are stated in the tool itself and must not be glossed over:
+the guard intercepts **Python** connections (urllib, boto3, redis-py…), not
+C-library ones (libpq), so `--inventaire` additionally checks that the
+configured database/Redis/S3 endpoints are loopback or private; and this
+automated check **does not replace** the workshop acceptance (real server,
+physically unplugged network, three real workstations, human judgement).
+
+The tool imports `socket`/`urllib` on purpose — its job is to intercept and
+block outbound connections. That is the documented `RG14_EXCEPTION` (see
+`tests/test_garde_fous_preparation.py`); it is never imported by the service.
+
 ## Updates and shutdown
 
 Pull a reviewed revision, then rebuild the application images. Compose preserves
-the named data volumes and restarts services in dependency order:
+the named data volumes and restarts services in dependency order. The `worker`
+service is rebuilt and restarted too; an import in progress is finished by the
+old container or, if it is killed, resumed by the new one once its claim
+expires (≤ 5 min by default):
 
 ```powershell
 git pull
@@ -188,6 +433,30 @@ docker compose down
 
 Do **not** use `docker compose down -v` during normal maintenance. The `-v`
 option deletes the PostgreSQL and MinIO named volumes.
+
+### Reindexing is safe (`index --rebuild`, E-40 fixed)
+
+Rebuilding the index used to be impossible on a populated PostgreSQL database:
+`DROP TABLE documents` was refused (`chunk` and `fiche_piece_jointe` reference
+it) and the rollback then failed too, hiding the original error. It now picks one
+of two modes, and says which one in the log:
+
+* **`recreation`** — no table references `documents`: the table is rebuilt from
+  scratch (the historical behaviour, harmless here);
+* **`en_place`** — at least one table references it: the table is **kept with
+  its ids** (`chunk` attachments and fiche attachments stay resolvable), every
+  file is re-extracted, and a file that disappeared from disk is only removed
+  when nothing references it. A document still referenced by a fiche is kept and
+  the reason is logged.
+
+A failed or interrupted scan restores the pre-scan snapshot with the original
+ids; if that restore itself fails, the snapshot is **kept** so the state stays
+recoverable, and the error raised is still the original one (the rollback
+failure is attached as a note, never substituted for it). Proofs, all on real
+PostgreSQL 16.2: `tests/test_rebuild_index_postgres.py` (CLI end to end,
+attachments, search + download path, interrupted scan, failed rollback) and
+`tests/test_rebuild_index.py` (SQLite).
+
 
 ## Backups and recovery
 
@@ -210,8 +479,27 @@ new stack has passed the frontend health check and a representative search.
 ## Troubleshooting checklist
 
 - **Compose refuses to parse:** confirm every `:?` variable in `.env` is set,
-  especially `REDIS_PASSWORD`, `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD`, and
-  `SEAMTECH_AUTH_TOKEN`; run `docker compose config --quiet`.
+  especially `REDIS_PASSWORD`, `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD`,
+  `SEAMTECH_S3_ACCESS_KEY`, `SEAMTECH_S3_SECRET_KEY`, and `SEAMTECH_AUTH_TOKEN`;
+  run `docker compose config --quiet`.
+- **Uploads fail with `AccessDenied` / an empty `seamtech-documents`:** the
+  buckets and restricted identities have not been provisioned in this
+  environment. Run `bash scripts/provisionner_stockage.sh` (see
+  [Storage identities](#storage-identities-administrator-vs-application-vs-backup)),
+  then `docker compose up -d --build web worker`.
+- **`/health` reports `s3_credentials: root_like`:** the administrator
+  credentials were reused for the application. Provision the dedicated
+  identity and put it in `.env`; do not "fix" this by granting the
+  administrator credentials to `web`/`worker`.
+- **Imports stay `pending` / the queue grows:** the `worker` service is the only
+  consumer. Check `docker compose ps worker` and
+  `docker compose exec -T worker python -m seamtech_search.worker_service --verifier`.
+  Exit code 2 means Redis is unreachable from the worker; fix Redis before
+  relaunching imports.
+- **An import is refused with HTTP 503:** this is deliberate. `web` requires a
+  durable queue (`SEAMTECH_REQUIRE_DURABLE_QUEUE=true`) and Redis is down, so
+  nothing was accepted. Bring Redis back and submit again — no partial job was
+  created.
 - **`web` is unhealthy:** inspect `docker compose logs web postgres minio redis`.
   Confirm the three dependency containers are healthy and that the credentials
   in `.env` match the first-created volumes.

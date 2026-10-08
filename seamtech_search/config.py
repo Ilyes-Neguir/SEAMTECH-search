@@ -22,6 +22,57 @@ def default_config_path(project_root: str | Path | None = None) -> Path:
     return config_file
 
 
+# Caractères INTERDITS tels quels dans la partie identifiants d'une URL de
+# connexion (`postgresql://utilisateur:MOTDEPASSE@hôte`,
+# `redis://:MOTDEPASSE@hôte`). Un secret généré en base64 peut contenir « / »
+# (et « + ») : inséré tel quel, le « / » casse la lecture de l'URL — côté Redis
+# il devient le sélecteur de base, côté libpq les identifiants deviennent
+# ambigus. On préfère un refus EXPLICITE à la construction, avec le remède,
+# plutôt qu'une erreur de connexion incompréhensible au démarrage.
+_CARACTERES_URL_A_ENCODER = {"/", "@", "?", "#"}
+# « % » n'est PAS interdit : c'est le caractère d'échappement lui-même. Il n'est
+# accepté que dans un échappement VALIDE (« %2F ») — un « % » suivi d'autre chose
+# est une séquence invalide, que libpq refuse au démarrage avec un message obscur.
+_HEXADECIMAL = set("0123456789abcdefABCDEF")
+
+
+def motif_mot_de_passe_non_encode(url: str) -> str | None:
+    """Décrit pourquoi ``url`` porte un mot de passe non encodé (ou None).
+
+    Ne prétend PAS valider l'URL : seulement détecter l'erreur réelle de mise en
+    service — un secret base64 collé tel quel dans une URL de connexion.
+    """
+    if "://" not in url:
+        return None
+    reste = url.split("://", 1)[1]
+    autorite = reste.split("/", 1)[0]
+    if "@" in reste and "@" not in autorite:
+        return "un « / » non encodé dans la partie identifiants"
+    if autorite.count("@") > 1:
+        return "un « @ » non encodé dans le mot de passe (il doit être %40)"
+    if "@" not in autorite:
+        return None
+    userinfo = autorite.rsplit("@", 1)[0]
+    if ":" not in userinfo:
+        return None
+    mot_de_passe = userinfo.split(":", 1)[1]
+    fautifs = sorted({caractere for caractere in mot_de_passe if caractere in _CARACTERES_URL_A_ENCODER})
+    if fautifs:
+        return f"le caractère {', '.join(repr(c) for c in fautifs)} non encodé dans le mot de passe"
+    if any(caractere.isspace() or not caractere.isprintable() for caractere in mot_de_passe):
+        return "un caractère blanc ou non imprimable dans le mot de passe"
+    index = 0
+    while index < len(mot_de_passe):
+        if mot_de_passe[index] == "%":
+            suit = mot_de_passe[index + 1 : index + 3]
+            if len(suit) != 2 or not set(suit) <= _HEXADECIMAL:
+                return "un échappement « % » invalide (attendu « %XX », par exemple « %2F »)"
+            index += 3
+            continue
+        index += 1
+    return None
+
+
 class AppConfig(BaseModel):
     root_paths: list[Path] = Field(min_length=1)
     database_path: Path = Path("data/search.db")
@@ -66,6 +117,48 @@ class AppConfig(BaseModel):
 
     # Redis settings
     redis_url: str | None = None
+    # Exiger une acceptation DURABLE : quand vrai, une API sans Redis joignable
+    # refuse le job (503) au lieu de le garder en mémoire. Défaut False pour ne
+    # pas casser les postes de développement ; la composition de production le
+    # passe à true, et un repli mémoire est alors toujours ANNONCÉ dans la
+    # réponse 202 (`durability: "process_memory"`).
+    #: Relecture de chaque objet après envoi (empreinte recalculée sur les
+    #: octets stockés). C'est la SEULE preuve d'intégrité côté fournisseur :
+    #: une métadonnée envoyée par l'application ne prouve rien. La désactiver
+    #: n'accélère pas « sans risque » — elle interdit la purge locale, puisque
+    #: plus rien ne prouve que l'objet stocké est le bon.
+    storage_verify_reread: bool = True
+    require_durable_queue: bool = False
+    #: Le poste DOIT annoncer la révision de fiche qu'il a lue pour ÉCRIRE
+    #: (correction) comme pour DÉCIDER (validation, rejet, réouverture).
+    #: Quand c'est vrai — le défaut — une requête sans révision est REFUSÉE
+    #: (428) au lieu d'être appliquée sans protection : « la révision n'a pas
+    #: pu être lue côté poste » ne doit jamais devenir « écriture non
+    #: protégée ». Défaut True partout, y compris sur les postes sans
+    #: PostgreSQL/S3 : la désactiver n'est légitime que pour un script ancien
+    #: identifié, JAMAIS pour l'écran d'atelier (qui envoie toujours la
+    #: révision qu'il affiche).
+    require_revision: bool = True
+    #: Endpoint S3 **joignable par les navigateurs des postes de l'atelier**
+    #: (par exemple le nom public du service MinIO de l'atelier). Vide par défaut : dans ce
+    #: cas les téléchargements sont servis par l'API (proxy authentifié), parce
+    #: qu'une redirection présignée vers l'endpoint interne du réseau des
+    #: conteneurs n'est résolvable depuis aucun poste. Ne renseigner cette
+    #: variable que si l'endpoint est réellement exposé sur le réseau de
+    #: l'atelier ET en HTTPS si les navigateurs y accèdent.
+    s3_public_endpoint_url: str | None = None
+    # Durée de vie du verrou (claim) d'une tâche : au-delà, un worker muet est
+    # considéré mort et sa tâche est reprise. À majorer sur un serveur lent.
+    task_claim_ttl_seconds: int = Field(default=300, ge=15)
+    # Nombre de tentatives avant lettre morte (le job reste visible, jamais perdu).
+    max_task_attempts: int = Field(default=3, ge=1, le=20)
+    # Intervalle de balayage des tâches orphelines dans la boucle du worker.
+    queue_reclaim_interval_seconds: float = Field(default=30.0, ge=1.0)
+    # Le processus web démarre-t-il un worker en fil d'arrière-plan ? Vrai par
+    # défaut (compatibilité mono-conteneur) ; la composition de production le
+    # met à false et fait tourner un service `worker` séparé, pour que
+    # l'exécution des jobs ne dépende pas du cycle de vie du serveur web.
+    web_worker_enabled: bool = True
 
     # Database connection pool settings
     pool_min: int = Field(default=1, ge=1)
@@ -89,6 +182,29 @@ class AppConfig(BaseModel):
             raise ValueError("auth_token is required when allow_network_access is enabled")
         if self.host not in local_hosts and self.auth_token and not self.behind_tls_proxy:
             raise ValueError("token authentication over non-local host requires behind_tls_proxy=true")
+        return self
+
+    @model_validator(mode="after")
+    def validate_connection_urls(self) -> "AppConfig":
+        """Refuse un mot de passe NON ENCODÉ dans une URL de connexion.
+
+        ``openssl rand -base64`` peut produire « / » et « + ». Recopié tel quel
+        dans ``SEAMTECH_DATABASE_URL`` ou ``SEAMTECH_REDIS_URL``, le « / » casse
+        l'URL (et devient le sélecteur de base côté Redis). Le remède est écrit
+        dans le message : encoder le mot de passe (``%2F``) ou générer un secret
+        SÛR POUR UNE URL (``openssl rand -hex 24``, ou
+        ``openssl rand -base64 24 | tr '+/' '-_'``).
+        """
+        for nom, url in (("SEAMTECH_DATABASE_URL", self.database_url), ("SEAMTECH_REDIS_URL", self.redis_url)):
+            if not url:
+                continue
+            motif = motif_mot_de_passe_non_encode(url)
+            if motif:
+                raise ValueError(
+                    f"{nom} : {motif}. Un secret base64 peut contenir « / » et « + » : encodez-le "
+                    "dans l'URL (par exemple « / » → « %2F ») ou générez un secret sûr pour une URL "
+                    "(« openssl rand -hex 24 », ou « openssl rand -base64 24 | tr '+/' '-_' »)."
+                )
         return self
 
     @classmethod
@@ -142,6 +258,45 @@ class AppConfig(BaseModel):
             data["s3_endpoint_url"] = os.environ["SEAMTECH_S3_ENDPOINT_URL"]
         if os.environ.get("SEAMTECH_S3_BUCKET"):
             data["s3_bucket"] = os.environ["SEAMTECH_S3_BUCKET"]
+        if os.environ.get("SEAMTECH_S3_PUBLIC_ENDPOINT_URL"):
+            data["s3_public_endpoint_url"] = os.environ["SEAMTECH_S3_PUBLIC_ENDPOINT_URL"]
+        # NOTE : la variable lue est bien SEAMTECH_STORAGE_VERIFY_REREAD. Une
+        # version antérieure testait SEAMTECH_REQUIRE_DURABLE_QUEUE puis
+        # indexait SEAMTECH_STORAGE_VERIFY_REREAD : dès que la durabilité était
+        # exigée sans que la variable de relecture soit posée, AppConfig.load
+        # levait KeyError — le conteneur `web` documenté ne démarrait plus.
+        if os.environ.get("SEAMTECH_STORAGE_VERIFY_REREAD") is not None:
+            data["storage_verify_reread"] = os.environ["SEAMTECH_STORAGE_VERIFY_REREAD"].strip().lower() in {
+                "1",
+                "true",
+                "yes",
+                "on",
+            }
+        if os.environ.get("SEAMTECH_REQUIRE_DURABLE_QUEUE"):
+            data["require_durable_queue"] = os.environ["SEAMTECH_REQUIRE_DURABLE_QUEUE"].strip().lower() in {
+                "1",
+                "true",
+                "yes",
+            }
+        # `is not None` (et non la vérité de la chaîne) : la variable est
+        # BOOLÉENNE et « false » est une valeur, pas une absence.
+        if os.environ.get("SEAMTECH_REQUIRE_REVISION") is not None:
+            data["require_revision"] = os.environ["SEAMTECH_REQUIRE_REVISION"].strip().lower() in {
+                "1",
+                "true",
+                "yes",
+                "on",
+            }
+        if os.environ.get("SEAMTECH_TASK_CLAIM_TTL_SECONDS"):
+            data["task_claim_ttl_seconds"] = int(os.environ["SEAMTECH_TASK_CLAIM_TTL_SECONDS"])
+        if os.environ.get("SEAMTECH_MAX_TASK_ATTEMPTS"):
+            data["max_task_attempts"] = int(os.environ["SEAMTECH_MAX_TASK_ATTEMPTS"])
+        if os.environ.get("SEAMTECH_WEB_WORKER_ENABLED"):
+            data["web_worker_enabled"] = os.environ["SEAMTECH_WEB_WORKER_ENABLED"].strip().lower() in {
+                "1",
+                "true",
+                "yes",
+            }
         if os.environ.get("SEAMTECH_S3_ACCESS_KEY"):
             data["s3_access_key"] = os.environ["SEAMTECH_S3_ACCESS_KEY"]
         if os.environ.get("SEAMTECH_S3_SECRET_KEY"):

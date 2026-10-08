@@ -82,8 +82,11 @@ def test_docker_compose_infra(tmp_path: Path):
     # This test assumes docker compose up was done in CI, but we also try to bring up infra here if needed
     # Check env vars for compose
     postgres_password = os.environ.get("POSTGRES_PASSWORD", "test_password")
-    minio_user = os.environ.get("MINIO_ROOT_USER", "minioadmin")
-    minio_pass = os.environ.get("MINIO_ROOT_PASSWORD", "minioadmin123")
+    # Aucun repli « identifiants racine » : depuis le correctif de séparation des
+    # identités (revue du 2026-10-07), l'APPLICATION ne dispose que de son
+    # identité dédiée. Les identifiants racine ne servent qu'au provisionnement,
+    # et les laisser ici en défaut reproduirait exactement le défaut corrigé
+    # (MinIO répondait à l'application avec les droits d'administration).
     redis_pass = os.environ.get("REDIS_PASSWORD", "redis_test_password")
 
     # Try to connect to services if they are up
@@ -183,8 +186,17 @@ def test_docker_compose_infra(tmp_path: Path):
 
     s3_endpoint = os.environ.get("SEAMTECH_S3_ENDPOINT_URL", "http://127.0.0.1:9000")
     s3_bucket = os.environ.get("SEAMTECH_S3_BUCKET", "seamtech-documents")
-    s3_access = os.environ.get("SEAMTECH_S3_ACCESS_KEY", minio_user)
-    s3_secret = os.environ.get("SEAMTECH_S3_SECRET_KEY", minio_pass)
+    s3_access = os.environ.get("SEAMTECH_S3_ACCESS_KEY")
+    s3_secret = os.environ.get("SEAMTECH_S3_SECRET_KEY")
+    if not s3_access or not s3_secret:
+        message = (
+            "SEAMTECH_S3_ACCESS_KEY/SECRET_KEY absents : le job `integration` doit provisionner "
+            "l'identité APPLICATIVE dédiée (scripts/provisionner_stockage.sh). L'application ne "
+            "doit jamais retomber sur les identifiants racine."
+        )
+        if STRICT:
+            pytest.fail(message)
+        pytest.skip(message)
 
     try:
         client = S3StorageClient(

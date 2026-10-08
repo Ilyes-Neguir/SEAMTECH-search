@@ -97,7 +97,10 @@ jobs:
           # un test n'échappe à cette suite que s'il porte le marqueur qui dit
           # de quel service il a besoin. Garde-fou : tests/test_selection_ci.py.
           set +e
-          pytest -q -rf -m "not postgres and not s3 and not perf" 2>&1 | tee /tmp/sqlite.log
+          # `and not redis_queue` : les tests de file durable ont leur étape
+          # dédiée (Redis réel exigé) — les exécuter ici les ferait sauter
+          # silencieusement, et un test qui saute n'est pas un test.
+          pytest -q -rf -m "not postgres and not s3 and not perf and not redis_queue" 2>&1 | tee /tmp/sqlite.log
           rc=${PIPESTATUS[0]}
           set -e
           if [ "$rc" -ne 0 ]; then
@@ -124,6 +127,10 @@ jobs:
         # green Postgres step points at coverage/mocked tests, and vice versa.
         env:
           SEAMTECH_TEST_DATABASE_URL: postgresql://seamtech:seamtech_test_password@localhost:5432/seamtech_search_test
+          # Redis est déclaré ici AUSSI : ces tests partagent la base de la
+          # suite durable, et un test qui ne trouve pas Redis se saute — le
+          # garde-fou « skipped == 0 » de cette étape le refuse.
+          SEAMTECH_TEST_REDIS_URL: redis://127.0.0.1:6379/1
         run: |
           set -uo pipefail
           # GitHub runs `run:` steps with `bash -e`, so a non-zero pytest exit
@@ -141,7 +148,7 @@ jobs:
           # avec MinIO réel — ici ils seraient sautés, et un saut fait
           # échouer cette porte.
           set +e
-          pytest -m "postgres and not perf and not sauvegarde" -v -rf 2>&1 | tee /tmp/pg.log
+          pytest -m "postgres and not perf and not sauvegarde and not redis_queue" -v -rf 2>&1 | tee /tmp/pg.log
           rc=${PIPESTATUS[0]}
           set -e
           if [ "$rc" -ne 0 ]; then
@@ -162,6 +169,62 @@ jobs:
             exit 1
           fi
           echo "::notice title=suite-postgres::pytest -m \"postgres and not perf and not sauvegarde\" : passed=$passed skipped=$skipped"
+      - name: Installer redis-server pour le test de redémarrage réel
+        # Le job fournit Redis par un CONTENEUR DE SERVICE : le binaire
+        # `redis-server` n'est donc pas sur le PATH de la machine, et le test
+        # « un redémarrage de Redis conserve la tâche acceptée » — qui démarre
+        # SA PROPRE instance avec AOF, la tue au SIGKILL puis la relance — se
+        # sautait. Le garde-fou « skipped == 0 » de l'étape suivante échouait
+        # alors à juste titre, mais le défaut était dans la CI, pas dans le test :
+        # on installe le binaire au lieu de tolérer le saut.
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq redis-server
+          # L'instance système démarrée par le paquet ne doit PAS prendre le
+          # port 6379 : celui-ci appartient au conteneur de service du job.
+          sudo systemctl stop redis-server 2>/dev/null || sudo service redis-server stop 2>/dev/null || true
+          redis-server --version
+          python - <<'PYREDIS'
+          import redis
+          assert redis.from_url("redis://127.0.0.1:6379/1").ping()
+          print("Redis du conteneur de service toujours joignable sur 6379")
+          PYREDIS
+
+      - name: Run durable queue suite (real Redis + real PostgreSQL, must actually run)
+        # Lot « file durable » : ces tests-là ne se contentent pas de mocks.
+        # Ils tuent un VRAI processus worker (SIGKILL), redémarrent un serveur
+        # Redis réel (AOF), reprennent un lot interrompu et comptent les fiches
+        # pour prouver l'absence de doublon. Le garde-fou ci-dessous refuserait
+        # un job vert où tout aurait été sauté : « passed > 0 et skipped == 0 ».
+        env:
+          SEAMTECH_TEST_REDIS_URL: redis://127.0.0.1:6379/1
+          SEAMTECH_TEST_DATABASE_URL: postgresql://seamtech:seamtech_test_password@localhost:5432/seamtech_search_test
+        run: |
+          set -uo pipefail
+          set +e
+          pytest -m "redis_queue" -v -rf 2>&1 | tee /tmp/redis_queue.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            echo "::error title=durable-queue-suite-failed::$(grep -E '^(FAILED|ERROR)' /tmp/redis_queue.log | head -25 | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 1500)"
+            echo "::error title=durable-queue-suite-tail::$(tail -45 /tmp/redis_queue.log | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 1800)"
+            exit "$rc"
+          fi
+          summary=$(tail -1 /tmp/redis_queue.log)
+          passed=$(echo "$summary" | grep -oE '[0-9]+ passed' | grep -oE '[0-9]+' || echo 0)
+          skipped=$(echo "$summary" | grep -oE '[0-9]+ skipped' | grep -oE '[0-9]+' || echo 0)
+          echo "Durable queue summary: passed=$passed skipped=$skipped"
+          if [ "${passed:-0}" -eq 0 ]; then
+            echo "::error title=durable-queue-did-not-run::0 test de file durable exécuté — Redis ou PostgreSQL non vu par la suite"
+            exit 1
+          fi
+          if [ "${skipped:-0}" -ne 0 ]; then
+            echo "::error title=durable-queue-skipped::$skipped test(s) de file durable sautés alors que les services sont annoncés"
+            exit 1
+          fi
+          echo "::notice title=suite-file-durable::pytest -m \"redis_queue\" : passed=$passed skipped=$skipped"
+
       - name: Garde-fou dimension — ROUGE puis VERT (correction 0.3 audit Lot J)
         if: matrix.python-version == '3.12'
         env:
@@ -467,8 +530,17 @@ jobs:
         # out of the coverage run and the Postgres-only branches in indexer.py
         # were measured as uncovered (audit issue #5b). The postgres service is
         # already declared on this job, so point the tests at it.
+        #
+        # SEAMTECH_TEST_REDIS_URL manquait aussi, pour la même raison : les 64
+        # tests de file durable (marqueur `redis_queue`) se sautaient donc ici,
+        # et redis_store.py / worker.py / jobs.py étaient mesurés comme s'ils
+        # n'étaient presque jamais exécutés (64 %, 70 %, 90 %) alors que la
+        # même suite, exécutée avec un vrai Redis deux étapes plus haut, passe.
+        # Mesurer du code sans l'exécuter n'est pas une mesure : le service
+        # Redis est déjà déclaré sur ce job, on le branche.
         env:
           SEAMTECH_TEST_DATABASE_URL: postgresql://seamtech:seamtech_test_password@localhost:5432/seamtech_search_test
+          SEAMTECH_TEST_REDIS_URL: redis://127.0.0.1:6379/1
         run: |
           set -uo pipefail
           # GitHub runs `run:` steps with `bash -e`, so a non-zero pytest exit
@@ -617,6 +689,26 @@ jobs:
 
   integration:
     runs-on: ubuntu-24.04
+    # Identités de stockage SÉPARÉES (constat bloquant de la revue indépendante
+    # du 2026-10-07) : `docker-compose.yml` EXIGE désormais
+    # `SEAMTECH_S3_ACCESS_KEY`/`SEAMTECH_S3_SECRET_KEY` — l'identité APPLICATIVE
+    # dédiée, jamais l'administrateur MinIO. Ces valeurs sont des identités
+    # restreintes : `scripts/provisionner_stockage.sh` les crée juste après le
+    # démarrage de MinIO (étape « Provisionner les identités restreintes »).
+    env:
+      POSTGRES_PASSWORD: test_password
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin123
+      REDIS_PASSWORD: redis_test_password
+      SEAMTECH_AUTH_TOKEN: test-token-123
+      SEAMTECH_UI_PASSWORD: ci-ui-password
+      SEAMTECH_SESSION_SECRET: ci-session-secret-not-for-production
+      SEAMTECH_S3_BUCKET: seamtech-documents
+      SEAMTECH_BACKUP_BUCKET: seamtech-backups
+      SEAMTECH_S3_ACCESS_KEY: seamtech-app-ci
+      SEAMTECH_S3_SECRET_KEY: ci-app-secret-not-for-production
+      SEAMTECH_BACKUP_ACCESS_KEY: seamtech-sauvegarde-ci
+      SEAMTECH_BACKUP_SECRET_KEY: ci-backup-secret-not-for-production
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -724,6 +816,12 @@ jobs:
                   sys.exit(1)
               time.sleep(5)
           PY
+      - name: Provisionner les identités restreintes (buckets + versioning + politiques)
+        # Étape SÉPARÉE du démarrage applicatif : c'est le provisionnement — et
+        # non l'application — qui crée les buckets, active le versioning et crée
+        # les identités restreintes (applicative + sauvegarde). Rejouable : la
+        # relancer est aussi la procédure de ROTATION des identifiants.
+        run: bash scripts/provisionner_stockage.sh
       - name: Boot documented stack (web + frontend) and wait for healthy
         # Prove the one-command office deployment, not only the individual
         # images. Both application services must report healthy before the
@@ -808,6 +906,42 @@ jobs:
             exit 1
           fi
           echo
+      - name: Préparer les volumes applicatifs pour l'utilisateur NON-ROOT
+        # `./data` et `./logs` ne sont pas versionnés : quand Docker crée ces
+        # dossiers pour un montage, il le fait en root:root (755), et
+        # l'application tourne en `seamtech`. Un import téléversé ou un rapport
+        # écrit par le worker échouerait alors par permission — pas par code.
+        # C'est une exigence de déploiement RÉELLE (le serveur d'atelier doit
+        # donner au compte applicatif l'accès en écriture à ces deux dossiers),
+        # donc la CI la satisfait explicitement au lieu de la contourner.
+        env:
+          POSTGRES_PASSWORD: test_password
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: minioadmin123
+          REDIS_PASSWORD: redis_test_password
+          SEAMTECH_AUTH_TOKEN: test-token-123
+          SEAMTECH_UI_PASSWORD: ci-ui-password
+          SEAMTECH_SESSION_SECRET: ci-session-secret-not-for-production
+        run: |
+          set -euo pipefail
+          uid=$(docker compose exec -T web id -u)
+          gid=$(docker compose exec -T web id -g)
+          echo "utilisateur applicatif : uid=$uid gid=$gid"
+          mkdir -p data logs
+          sudo chown -R "$uid:$gid" data logs
+          # Preuve que l'écriture est réellement possible (sinon l'échec plus
+          # loin serait attribué au test au lieu du montage).
+          docker compose exec -T web python -c "
+          import pathlib
+          for chemin in ('/app/data', '/app/logs', '/app/data/uploads', '/app/data/reports'):
+              p = pathlib.Path(chemin)
+              p.mkdir(parents=True, exist_ok=True)
+              temoin = p / '.ecriture-ci'
+              temoin.write_text('ok', encoding='utf-8')
+              temoin.unlink()
+          print('écriture conteneur OK dans /app/data et /app/logs')
+          "
+
       - name: Run docker compose integration test
         env:
           POSTGRES_PASSWORD: test_password
@@ -829,8 +963,8 @@ jobs:
           # test at those ports (same host, same loopback).
           export SEAMTECH_REDIS_URL="redis://:redis_test_password@127.0.0.1:6379/0"
           export SEAMTECH_S3_ENDPOINT_URL="http://127.0.0.1:9000"
-          export SEAMTECH_S3_ACCESS_KEY="minioadmin"
-          export SEAMTECH_S3_SECRET_KEY="minioadmin123"
+          # Identité APPLICATIVE RESTREINTE (env du job) : ces tests prouvent le
+          # moindre privilège — plus AUCUN export d'identifiants administrateur.
           set +e
           pytest -m integration_docker -v
           rc=$?
@@ -913,6 +1047,112 @@ jobs:
       - name: Build production frontend (mode live = next start)
         working-directory: frontend
         run: pnpm build
+      - name: Run multi-session E2E (concurrence, sessions indépendantes)
+        # Épreuve de CONCURRENCE (revue indépendante du 2026-10-07) : deux/trois
+        # sessions de navigateur distinctes contre le vrai backend et la vraie
+        # base. Deux postes ouvrent la même fiche, A enregistre, B est arrêté
+        # (409) puis se reprend ; un poste importe pendant qu'un autre cherche
+        # et télécharge (contenu PDF vérifié) ; une session expirée ne produit
+        # aucun faux succès ; le BACKEND refuse une action d'administration à un
+        # opérateur. Exécutée AVANT la porte live : chaque invocation Playwright
+        # recrée sa propre base e2e jetable, les deux épreuves sont indépendantes.
+        working-directory: frontend
+        env:
+          SEAMTECH_E2E_DATABASE_URL: postgresql://seamtech:seamtech_test_password@localhost:5432/seamtech_search_test
+          PLAYWRIGHT_JSON_OUTPUT_NAME: report-concurrence.json
+        run: |
+          set -uo pipefail
+          set +e
+          pnpm exec playwright test e2e/concurrence.spec.ts --reporter=list,json 2>&1 | tee /tmp/e2e_concurrence.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            echo "::error title=concurrence-details::$(grep -E '✘|failed|Error|expect|toHave|Timeout|expected|not.to' /tmp/e2e_concurrence.log | tail -20 | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 3000)"
+            echo "::error title=concurrence-tail::$(tail -40 /tmp/e2e_concurrence.log | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 3000)"
+            exit "$rc"
+          fi
+          python - <<'PY'
+          import json
+          import os
+
+          # Toute sortie du garde-fou est PUBLIÉE en annotation `::error` : le
+          # job 112850611086 (run 37638410974) a échoué SANS annotation, et son
+          # journal est inaccessible depuis cette session — un échec sans cause
+          # lisible coûte une passe entière. Un garde-fou qui refuse doit dire
+          # ce qu'il a mesuré.
+          def refuser(message: str) -> "NoReturn":  # noqa: F821
+              print(f"::error title=concurrence-garde-fou::{message}")
+              raise SystemExit(message)
+
+          if not os.path.exists("report-concurrence.json"):
+              refuser(
+                  "report-concurrence.json absent — PLAYWRIGHT_JSON_OUTPUT_NAME "
+                  "doit être positionné (rien n'a été mesuré)."
+              )
+          d = json.load(open("report-concurrence.json"))
+          stats = d["stats"]
+          passes = stats["expected"]
+          flaky = stats.get("flaky", 0)
+          sautes = stats.get("skipped", 0)
+          inattendus = stats.get("unexpected", 0)
+          # 7 scénarios de concurrence, TOUS exécutés (aucun saut : la base
+          # PostgreSQL est fournie par le job), aucun rattrapé par retry.
+          # Les 3 scénarios ajoutés après la revue du 2026-10-07 ciblent les
+          # constats 1 à 3 : décision liée à la révision revue, révision non
+          # lue = écriture bloquée (et 428 côté backend), réponse tardive qui
+          # n'écrase pas la fiche affichée.
+          # Titres (déjà publics : noms de tests du dépôt) des specs NON vertes et
+          # des specs RATTRAPÉES par un retry. Le premier garde-fou lisait
+          # « mesuré 3 passés, 1 flaky … aucun nom lisible » : il faut pouvoir
+          # nommer le test instable pour le durcir au lieu de relancer à
+          # l'aveugle.
+          fautives: list[str] = []
+          instables: list[str] = []
+
+          def cause(test: dict) -> str:
+              """Message du PREMIER essai en échec (tronqué, une seule ligne).
+
+              Un nom de test sans cause n'est pas réparable : le 2026-10-07, un
+              scénario de concurrence a été nommé « flaky » sans que l'assertion
+              concernée soit lisible (journaux d'Actions injoignables)."""
+              for resultat in test.get("results") or []:
+                  if resultat.get("status") in {"failed", "timedOut", "interrupted"}:
+                      erreur = resultat.get("error") or {}
+                      message = str(erreur.get("message") or "").strip().replace("\n", " ")
+                      if message:
+                          return message[:400]
+              return "cause non consignée dans le rapport"
+
+          def parcourir(suites: list[dict]) -> None:
+              for suite in suites or []:
+                  for spec in suite.get("specs") or []:
+                      titre = str(spec.get("title", "?"))
+                      for test in spec.get("tests") or []:
+                          statut = test.get("status")
+                          if statut == "unexpected":
+                              fautives.append(f"{titre} — {cause(test)}")
+                          elif statut == "flaky":
+                              instables.append(f"{titre} — {cause(test)}")
+                  parcourir(suite.get("suites") or [])
+
+          if sautes or flaky or passes != 7:
+              parcourir(d.get("suites") or [])
+              refuser(
+                  f"attendu 7 tests passés au premier essai, 0 flaky, 0 sautés — "
+                  f"mesuré {passes} passés, {flaky} flaky, {sautes} sautés, "
+                  f"{inattendus} en échec. En échec : "
+                  + ("; ".join(fautives[:5]) if fautives else "aucun")
+                  + " | rattrapés par un retry : "
+                  + ("; ".join(instables[:5]) if instables else "aucun")
+              )
+          print(
+              "Concurrence : 7 scénarios multi-sessions exécutés au premier essai "
+              "(conflit de révision + reprise, import pendant recherche/téléchargement, "
+              "session expirée sans faux succès, refus administrateur par le backend, "
+              "décision liée à la révision revue, révision non lue = écriture bloquée, "
+              "réponse tardive sans écrasement de la fiche affichée)."
+          )
+          PY
       - name: Run live E2E validation (PostgreSQL + vraie fiche)
         working-directory: frontend
         env:
@@ -943,7 +1183,8 @@ jobs:
             echo "::error title=live-validation-tail::$(tail -40 /tmp/e2e_validation.log | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 3000)"
             exit "$rc"
           fi
-          python - <<'PY'
+          set +e
+          python - <<'PY' 2>&1 | tee /tmp/live-validation-gardefou.log
           import json
           import os
 
@@ -968,11 +1209,25 @@ jobs:
           # retries: 2) n'est PAS un test réellement assaini — il doit faire
           # échouer la porte, pas compter comme « réellement exécuté ».
           if sautes or flaky or passes != 10:
+              # NOMMER ce qui a bougé : « 1 flaky » sans nom n'est pas
+              # diagnosticable depuis un poste qui n'atteint pas les journaux
+              # d'Actions (leçon du 2026-10-07 : un flake a rendu un run rouge
+              # sans que le test concerné soit lisible nulle part).
+              coupables = []
+              for s in d["suites"]:
+                  for spec in iterer_specs(s):
+                      for t in spec.get("tests", []):
+                          etat = t.get("outcome")
+                          if etat in {"flaky", "unexpected", "skipped"}:
+                              titres = " | ".join(r.get("title", "") for r in t.get("results", []))
+                              coupables.append(f"{etat}: {spec.get('title', '?')} [{titres[:120]}]")
+              detail = "; ".join(coupables[:5]) or "aucun test nommé dans le rapport"
               raise SystemExit(
                   f"GARDE-FOU live e2e : attendu 10 tests passés au premier essai, "
                   f"0 flaky, 0 sautés — mesuré {passes} passés, {flaky} flaky, "
                   f"{sautes} sautés. Les tests live ne doivent jamais s'ignorer "
-                  "silencieusement ni masquer une instabilité par retry."
+                  "silencieusement ni masquer une instabilité par retry. "
+                  f"Détail : {detail}"
               )
           mesures = [
               a
@@ -989,6 +1244,15 @@ jobs:
               )
           print("::notice title=mesure-phase1::" + mesures[0]["description"])
           PY
+          grc=${PIPESTATUS[0]}
+          set -e
+          if [ "$grc" -ne 0 ]; then
+            # Un garde-fou qui échoue DOIT dire pourquoi : sans cette annotation,
+            # « exit code 1 » était la seule trace lisible (les journaux
+            # d'Actions ne sont pas toujours joignables d'un poste).
+            echo "::error title=live-validation-garde-fou::$(tr -d '\000-\010\013\014\016-\037' < /tmp/live-validation-gardefou.log | tr '\n' ';' | head -c 2000)"
+            exit 1
+          fi
 
       # Lot L.1 (correctif C.2 de l'audit) — le BANDEAU DE DOUBLON est enfin
       # vérifié à l'écran. Le seed live ajoute la fiche 7792-SO-BIS (deuxième
@@ -1141,9 +1405,19 @@ jobs:
     env:
       SEAMTECH_TEST_DATABASE_URL: postgresql://seamtech:seamtech_test_password@127.0.0.1:5432/seamtech_search_test
       SEAMTECH_S3_ENDPOINT_URL: http://127.0.0.1:9000
+      # Ce job éprouve l'ALLER-RETOUR HORS-SITE : l'identité en jeu est donc
+      # l'identité de SAUVEGARDE restreinte (revue du 2026-10-07), pas le root
+      # MinIO. Elle n'a de droits que sur `seamtech-backups` : c'est le seul
+      # bucket que le dump quitte et que la restauration relit.
       SEAMTECH_S3_BUCKET: seamtech-backups
-      SEAMTECH_S3_ACCESS_KEY: minioadmin
-      SEAMTECH_S3_SECRET_KEY: minioadmin123
+      SEAMTECH_S3_ACCESS_KEY: seamtech-sauvegarde-ci
+      SEAMTECH_S3_SECRET_KEY: ci-backup-secret-not-for-production
+      SEAMTECH_BACKUP_ACCESS_KEY: seamtech-sauvegarde-ci
+      SEAMTECH_BACKUP_SECRET_KEY: ci-backup-secret-not-for-production
+      SEAMTECH_BACKUP_BUCKET: seamtech-backups
+      # MinIO tourne ici en `docker run` (pas compose) : le provisionnement doit
+      # viser ce conteneur nommé.
+      SEAMTECH_MINIO_CONTAINER: minio
       SEAMTECH_S3_PREFIX: ""
     steps:
       - uses: actions/checkout@v7
@@ -1189,20 +1463,27 @@ jobs:
           PY
       - name: Prepare config file (S3 env overrides apply on top)
         run: cp config/config.example.json config/config.json
-      - name: Create the off-site backups bucket
-        run: |
-          python - << 'PY'
-          import boto3
-
-          client = boto3.client(
-              "s3",
-              endpoint_url="http://127.0.0.1:9000",
-              aws_access_key_id="minioadmin",
-              aws_secret_access_key="minioadmin123",
-          )
-          client.create_bucket(Bucket="seamtech-backups")
-          print("bucket seamtech-backups créé")
-          PY
+      - name: Provisionner les buckets et les identités restreintes
+        # Remplace l'ancienne création du bucket avec les identifiants ROOT : le
+        # provisionnement crée les DEUX buckets (documents + sauvegardes), active
+        # leur versioning et crée les deux identités restreintes. L'identité
+        # applicative est provisionnée ici pour que la séparation soit réelle
+        # même dans un job qui n'utilise que l'identité de sauvegarde.
+        # Les identifiants ADMINISTRATEUR sont fournis ICI, au niveau de l'ÉTAPE
+        # et pas du job : le provisionnement en a besoin (il crée les buckets,
+        # les politiques et les utilisateurs), les suites de tests qui suivent
+        # n'en héritent pas — elles doivent tourner avec l'identité restreinte.
+        # Défaut trouvé par la CI du run 37617039519 : cette étape échouait ici
+        # (« MINIO_ROOT_USER requis ») alors que le conteneur MinIO était bien
+        # démarré avec ces identifiants juste avant.
+        env:
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: minioadmin123
+          SEAMTECH_S3_BUCKET: seamtech-documents
+          SEAMTECH_S3_ACCESS_KEY: seamtech-app-ci
+          SEAMTECH_S3_SECRET_KEY: ci-app-secret-not-for-production
+          SEAMTECH_BACKUP_BUCKET: seamtech-backups
+        run: bash scripts/provisionner_stockage.sh
       - name: Run the backup round-trip suite (sauver → détruire → restaurer)
         env:
           SEAMTECH_SAUVEGARDE_JSON: sauvegarde-mesures.jsonl
@@ -1290,6 +1571,505 @@ jobs:
                   )
           PY
 
+  # Vérification PLEINE PILE hors ligne — constat n°4 de la revue indépendante du
+  # 2026-10-07.
+  #
+  # Le garde socket de scripts/verifier_hors_ligne.py ne couvre QUE le processus
+  # Python qui l'exécute : ni le navigateur, ni Next.js, ni le worker séparé, ni
+  # les bibliothèques natives. Ce job exerce donc le VRAI parcours d'atelier —
+  # navigateur Chromium, pile web + worker SÉPARÉS, PostgreSQL, Redis et MinIO
+  # LOCAUX — pendant que la sortie réseau du COMPTE APPLICATIF est réellement
+  # bloquée par une chaîne iptables dédiée (règle `--uid-owner`).
+  #
+  # L'ordre des preuves compte :
+  #   1. contrôle NÉGATIF avant l'épreuve, sur IPv4 ET IPv6 : une requête
+  #      sortante DU COMPTE APPLICATIF doit ÉCHOUER, et l'échec doit être
+  #      ATTRIBUABLE À LA RÈGLE — pas à un DNS cassé ni à une connectivité
+  #      absente. Trois exigences (revue du 2026-10-07) : le nom est résolu
+  #      depuis le compte applicatif AVANT l'appel (DNS hors de cause), l'appel
+  #      porte sur une ADRESSE LITTÉRALE (aucun DNS dans la requête), et le
+  #      COMPTEUR de la règle REJECT doit augmenter d'au moins 1 paquet. Seul ce
+  #      dernier point constitue l'empreinte de la règle.
+  #   2. IPv6 TRAITÉ EXPLICITEMENT : la règle IPv4 ne dit rien du trafic IPv6.
+  #      Si le runner annonce une route IPv6 globale, une chaîne ip6tables est
+  #      posée pour le même uid (et éprouvée par le même contrôle négatif) ;
+  #      sinon le job PROUVE l'absence de chemin IPv6 (aucune route globale +
+  #      tentative littérale qui échoue) avant de conclure quoi que ce soit.
+  #   3. contrôle POSITIF : l'application locale répond toujours ;
+  #   4. parcours navigateur complet (import, recherche, aperçu PDF, original +
+  #      rapport téléchargés avec octets vérifiés, validation) ;
+  #   5. RELEVÉ FINAL : les compteurs de paquets REJETÉS du compte applicatif
+  #      (IPv4 et, s'il existe, IPv6) sont restés à ZÉRO — aucune dépendance
+  #      externe cachée n'a été tentée.
+  #
+  # PROCESSUS COUVERTS — à citer tel quel :
+  #   * couverts : les processus dont l'uid RÉEL est ``seamtech-app``, soit le
+  #     service web/API (uvicorn), le WORKER SÉPARÉ et le serveur Next.js de
+  #     production — tous lancés par ``sudo -u seamtech-app`` — AINSI QUE tout
+  #     sous-processus qu'ils engendrent (outils OCR/externes inclus, l'uid réel
+  #     étant hérité). La règle ``--uid-owner`` s'applique aux connexions
+  #     sortantes de ces processus, IPv4 et IPv6.
+  #   * NON couverts, et c'est dit : le navigateur Chromium/Playwright et les
+  #     outils du runner, qui tournent sous l'utilisateur du runner (la garantie
+  #     côté page est l'assertion ``requetesExternes == []`` de
+  #     ``frontend/e2e/hors-ligne.spec.ts`` : aucune requête externe n'est même
+  #     TENTÉE par l'application) ; et la boucle locale (``-o lo`` / 127.0.0.0/8
+  #     et ::1 sont volontairement rendus) puisque la pile se parle à elle-même.
+  #
+  # Portée exacte : ce job prouve la pile SUR CETTE MACHINE, avec cette
+  # configuration. Il ne remplace pas l'acceptation en atelier (postes réels,
+  # câble débranché, modèles préinstallés).
+  hors-ligne-reel:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: seamtech
+          POSTGRES_PASSWORD: seamtech_test_password
+          POSTGRES_DB: seamtech_search_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      # Aucune télémétrie ne doit sortir PENDANT la fenêtre bloquée : elle
+      # fausserait la mesure « zéro tentative externe ».
+      NEXT_TELEMETRY_DISABLED: "1"
+      SEAMTECH_E2E_DATABASE_URL: postgresql://seamtech:seamtech_test_password@localhost:5432/seamtech_search_test
+      SEAMTECH_E2E_RUN_ID: hors-ligne-${{ github.run_id }}-${{ github.run_attempt }}
+      MINIO_ROOT_USER: minio-admin-hors-ligne
+      MINIO_ROOT_PASSWORD: mot-de-passe-admin-hors-ligne-2026
+      SEAMTECH_S3_ACCESS_KEY: app-hors-ligne
+      SEAMTECH_S3_SECRET_KEY: secret-app-hors-ligne-2026
+      SEAMTECH_BACKUP_ACCESS_KEY: sauvegarde-hors-ligne
+      SEAMTECH_BACKUP_SECRET_KEY: secret-sauvegarde-hors-ligne-2026
+      SEAMTECH_UI_PASSWORD: e2e-shared-password
+      SEAMTECH_SESSION_SECRET: e2e-session-secret-not-for-production-use
+      AUTH_TOKEN_APP: e2e-service-token
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+      - name: Install Playwright Chromium
+        working-directory: frontend
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Redis (file durable) + outils (iptables)
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq redis-server iptables
+          sudo redis-server --port 6379 --daemonize yes --appendonly no
+          sleep 1
+          redis-cli ping
+      - name: Image MinIO reconstruite depuis les sources archivées
+        # dl.min.io répond « 410 Gone » (projets archivés) et plus aucun registre
+        # ne publie MinIO : même chaîne que les jobs integration / sauvegarde —
+        # l'image (minio + mc embarqués) est reconstruite depuis les sources
+        # officielles du tag épinglé, AVANT tout blocage réseau.
+        run: bash scripts/construire_image_minio.sh
+      - name: Compte applicatif dédié (c'est SON réseau qui sera bloqué)
+        run: |
+          sudo useradd -m -s /bin/bash seamtech-app
+          sudo mkdir -p /srv/seamtech/data /srv/seamtech/logs
+          sudo chown -R seamtech-app:seamtech-app /srv/seamtech
+          # La pile tourne SOUS CE COMPTE : il doit pouvoir lire l'interpréteur
+          # Python et Node installés (toolcache) ainsi que le dépôt — c'est ce
+          # qui fait que le blocage réseau s'applique réellement au processus
+          # applicatif.
+          sudo chmod -R a+rX "$(dirname "$(dirname "$(readlink -f "$(command -v python3)")")")" || true
+          sudo chmod -R a+rX "$(dirname "$(dirname "$(readlink -f "$(command -v node)")")")" || true
+          sudo chmod -R a+rX "$GITHUB_WORKSPACE" || true
+          # LIRE le dépôt ne suffit pas : il faut pouvoir TRAVERSER le chemin
+          # jusqu'à lui. Mesuré en CI sur ce dépôt — accès refusé au compte
+          # applicatif ALORS QUE les fichiers existaient, ce qui se manifeste
+          # loin de la cause : Python « No module named seamtech_search »,
+          # Node « Cannot find module …/node_modules/.bin/next ». On ouvre donc
+          # la traversée sur TOUTE la chaîne de parents du workspace.
+          chemin="$GITHUB_WORKSPACE"
+          while [ -n "$chemin" ] && [ "$chemin" != "/" ]; do
+            sudo chmod a+rx "$chemin" 2>/dev/null || true
+            chemin="$(dirname "$chemin")"
+          done
+          id -u seamtech-app
+      - name: MinIO local (conteneur) + provisionnement des identités RESTREINTES
+        env:
+          # Conteneur hors composition : la CI nomme son service « minio ».
+          SEAMTECH_MINIO_CONTAINER: minio
+          SEAMTECH_MINIO_URL: http://127.0.0.1:9000
+        run: |
+          # MinIO est une dépendance LOCALE du produit : il doit rester
+          # joignable sans réseau externe. Il tourne en CONTENEUR et publie sur
+          # la boucle locale : le blocage par uid du compte applicatif ne
+          # l'atteint donc pas — c'est voulu, la pile doit fonctionner
+          # entièrement hors ligne.
+          docker run -d --name minio \
+            -p 127.0.0.1:9000:9000 -p 127.0.0.1:9001:9001 \
+            -e MINIO_ROOT_USER="$MINIO_ROOT_USER" \
+            -e MINIO_ROOT_PASSWORD="$MINIO_ROOT_PASSWORD" \
+            quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z server /data
+          for _ in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:9000/minio/health/live >/dev/null; then break; fi
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:9000/minio/health/live >/dev/null
+          # MÊME script de politiques que la production (constat E-29 : `mc`
+          # s'exécute DANS le conteneur et lit les politiques copiées dedans).
+          bash scripts/provisionner_stockage.sh
+      - name: Base d'essai + jeu de données (migrations, gabarits, dossier réel)
+        run: |
+          python3 frontend/e2e/seed-live-pg.py | tee /tmp/seed.json
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          url = json.loads(Path("/tmp/seed.json").read_text(encoding="utf-8").strip().splitlines()[-1])["url"]
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as fichier:
+              fichier.write(f"SEAMTECH_DATABASE_URL_ESSAI={url}\n")
+          print("base d'essai :", url)
+          PY
+      - name: Configuration de la pile (compte applicatif, stockage restreint)
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          racine = Path(os.environ["GITHUB_WORKSPACE"])
+          url = os.environ["SEAMTECH_DATABASE_URL_ESSAI"]
+          config = {
+              "root_paths": [str(racine / "sample_data")],
+              "database_path": "/srv/seamtech/data/search.db",
+              "host": "127.0.0.1",
+              "port": 8123,
+              "min_free_bytes": 0,
+              "rate_limit_per_minute": 1000,
+              "auth_token": os.environ["AUTH_TOKEN_APP"],
+              "storage_backend": "s3",
+              "s3_endpoint_url": "http://127.0.0.1:9000",
+              "s3_bucket": "seamtech-documents",
+              "s3_region": "us-east-1",
+              "storage_verify_reread": True,
+              "web_worker_enabled": False,
+          }
+          Path("/tmp/config-hors-ligne.json").write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as fichier:
+              fichier.write("SEAMTECH_CONFIG_HORS_LIGNE=/tmp/config-hors-ligne.json\n")
+              fichier.write(f"SEAMTECH_DATABASE_URL={url}\n")
+              fichier.write("SEAMTECH_REDIS_URL=redis://127.0.0.1:6379/0\n")
+          print("configuration écrite")
+          PY
+          sudo cp /tmp/config-hors-ligne.json /srv/seamtech/config.json
+          sudo chown seamtech-app:seamtech-app /srv/seamtech/config.json
+      - name: Construire le front de production
+        working-directory: frontend
+        env:
+          SEAMTECH_API_URL: http://127.0.0.1:8123
+          SEAMTECH_AUTH_TOKEN: e2e-service-token
+        run: pnpm build
+      - name: Démarrer la pile (web + WORKER SÉPARÉ + front) sous le compte applicatif
+        run: |
+          # `sudo` applique son `secure_path` : les binaires de l'étape
+          # (toolcache Python et Node) ne sont PAS dans le PATH du compte
+          # applicatif. Les nommer en clair est donc OBLIGATOIRE — sans cela
+          # `python3` résout vers l'interpréteur système, sans les dépendances
+          # installées, et la pile meurt au démarrage (premier passage :
+          # « Démarrer la pile » en échec, exit 7, rien sur /health).
+          PYTHON_BIN="$(readlink -f "$(command -v python3)")"
+          NODE_BIN="$(readlink -f "$(command -v node)")"
+          PATH_OUTILS="$(dirname "$PYTHON_BIN"):$(dirname "$NODE_BIN")"
+          echo "interpréteur : $PYTHON_BIN"
+          echo "node         : $NODE_BIN"
+          # Mêmes droits que l'étape « compte applicatif » : traversée des
+          # parents, lecture du dépôt, écriture du cache de `next start`.
+          chemin="$GITHUB_WORKSPACE"
+          while [ -n "$chemin" ] && [ "$chemin" != "/" ]; do
+            sudo chmod a+rx "$chemin" 2>/dev/null || true
+            chemin="$(dirname "$chemin")"
+          done
+          sudo chmod -R a+rX "$GITHUB_WORKSPACE" 2>/dev/null || true
+          # `next start` écrit son cache sous `.next/` : le compte applicatif doit
+          # y avoir accès en écriture (le reste du dépôt lui suffit en lecture).
+          sudo chmod -R a+rwX "$GITHUB_WORKSPACE/frontend/.next" 2>/dev/null || true
+          # Contrôle AMONT : si le compte applicatif ne peut pas LIRE ce qu'il
+          # va exécuter, on le dit ICI plutôt que de laisser l'échec se
+          # manifester par un « module introuvable » trompeur.
+          refus=""
+          for cible in \
+            "$PYTHON_BIN" \
+            "$NODE_BIN" \
+            "$GITHUB_WORKSPACE/seamtech_search/__init__.py" \
+            "$GITHUB_WORKSPACE/frontend/node_modules/next/dist/bin/next" \
+            "$GITHUB_WORKSPACE/frontend/.next" \
+            "$GITHUB_WORKSPACE/sample_data"; do
+            sudo -u seamtech-app test -r "$cible" 2>/dev/null || refus="$refus $cible"
+          done
+          if [ -n "$refus" ]; then
+            echo "::error title=compte-app-sans-lecture::lecture refusée pour :$refus ; $(ls -ld "$GITHUB_WORKSPACE" "$(dirname "$GITHUB_WORKSPACE")" /home /home/runner 2>&1 | tr '\n' ';')"
+            exit 1
+          fi
+          echo "compte applicatif : lecture vérifiée (interpréteurs, paquet, front construit)"
+          # La redirection des journaux est faite DANS le shell du compte
+          # applicatif : sinon c'est le shell de l'ordonnanceur (un autre
+          # utilisateur) qui ouvrirait /srv/seamtech/logs/… et échouerait.
+          sudo -u seamtech-app env PATH="$PATH_OUTILS:$PATH" \
+            SEAMTECH_DATABASE_URL="$SEAMTECH_DATABASE_URL" \
+            SEAMTECH_REDIS_URL="redis://127.0.0.1:6379/0" \
+            SEAMTECH_AUTH_TOKEN="$AUTH_TOKEN_APP" \
+            SEAMTECH_S3_ACCESS_KEY="$SEAMTECH_S3_ACCESS_KEY" \
+            SEAMTECH_S3_SECRET_KEY="$SEAMTECH_S3_SECRET_KEY" \
+            SEAMTECH_ROOT_PATHS="$GITHUB_WORKSPACE/sample_data" \
+            bash -c "cd \"$GITHUB_WORKSPACE\" && nohup \"$PYTHON_BIN\" -m seamtech_search serve --config /srv/seamtech/config.json \
+              > /srv/seamtech/logs/web.log 2>&1 &"
+          sudo -u seamtech-app env PATH="$PATH_OUTILS:$PATH" \
+            SEAMTECH_DATABASE_URL="$SEAMTECH_DATABASE_URL" \
+            SEAMTECH_REDIS_URL="redis://127.0.0.1:6379/0" \
+            SEAMTECH_AUTH_TOKEN="$AUTH_TOKEN_APP" \
+            SEAMTECH_S3_ACCESS_KEY="$SEAMTECH_S3_ACCESS_KEY" \
+            SEAMTECH_S3_SECRET_KEY="$SEAMTECH_S3_SECRET_KEY" \
+            SEAMTECH_ROOT_PATHS="$GITHUB_WORKSPACE/sample_data" \
+            bash -c "cd \"$GITHUB_WORKSPACE\" && nohup \"$PYTHON_BIN\" -m seamtech_search.worker_service --config /srv/seamtech/config.json \
+              > /srv/seamtech/logs/worker.log 2>&1 &"
+          cd "$GITHUB_WORKSPACE/frontend"
+          sudo -u seamtech-app env PATH="$PATH_OUTILS:$PATH" \
+            SEAMTECH_API_URL="http://127.0.0.1:8123" \
+            SEAMTECH_AUTH_TOKEN="$AUTH_TOKEN_APP" \
+            SEAMTECH_UI_PASSWORD="$SEAMTECH_UI_PASSWORD" \
+            SEAMTECH_SESSION_SECRET="$SEAMTECH_SESSION_SECRET" \
+            NEXT_TELEMETRY_DISABLED=1 \
+            bash -c "cd \"$GITHUB_WORKSPACE/frontend\" && nohup \"$NODE_BIN\" \"$GITHUB_WORKSPACE/frontend/node_modules/next/dist/bin/next\" start --port 3123 \
+              > /srv/seamtech/logs/front.log 2>&1 &"
+          cd "$GITHUB_WORKSPACE"
+          web_ok=0
+          front_ok=0
+          for _ in $(seq 1 60); do
+            curl -sf --max-time 5 -H "X-SEAMTECH-TOKEN: $AUTH_TOKEN_APP" http://127.0.0.1:8123/health >/dev/null && web_ok=1 || web_ok=0
+            curl -sf --max-time 5 http://127.0.0.1:3123/login >/dev/null && front_ok=1 || front_ok=0
+            if [ "$web_ok" = 1 ] && [ "$front_ok" = 1 ]; then break; fi
+            sleep 2
+          done
+          echo "web=$web_ok front=$front_ok"
+          if [ "$web_ok" != 1 ] || [ "$front_ok" != 1 ]; then
+            # Diagnostic DANS l'annotation : les journaux d'Actions ne sont pas
+            # toujours lisibles depuis un poste (constat déjà fait dans ce
+            # dépôt) ; l'annotation, elle, est lisible par API.
+            for journal in web worker front; do
+              echo "== /srv/seamtech/logs/$journal.log =="
+              sudo tail -n 30 "/srv/seamtech/logs/$journal.log" || echo "(absent)"
+              echo "::error title=pile-non-demarree-$journal::$(sudo tail -n 25 "/srv/seamtech/logs/$journal.log" 2>/dev/null | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 1200)"
+            done
+            echo "::error title=pile-non-demarree-processus::$(ps -eo user,pid,etime,args | grep -E 'seamtech_search|next|minio' | grep -v grep | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 1200)"
+            echo "::error title=pile-non-demarree-ports::$(ss -ltnp 2>/dev/null | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 800)"
+            exit 1
+          fi
+          echo "pile démarrée (web 8123, front 3123, worker séparé)"
+      - name: Bloquer la sortie réseau du compte applicatif (IPv4 + IPv6) — contrôle négatif qui PROUVE la règle
+        run: |
+          UID_APP="$(id -u seamtech-app)"
+          # Chaîne IPv4.
+          sudo iptables -N SEAMTECH_HORS_LIGNE 2>/dev/null || sudo iptables -F SEAMTECH_HORS_LIGNE
+          sudo iptables -A SEAMTECH_HORS_LIGNE -o lo -j RETURN
+          sudo iptables -A SEAMTECH_HORS_LIGNE -d 127.0.0.0/8 -j RETURN
+          sudo iptables -A SEAMTECH_HORS_LIGNE -j REJECT --reject-with icmp-port-unreachable
+          sudo iptables -I OUTPUT 1 -m owner --uid-owner "$UID_APP" -j SEAMTECH_HORS_LIGNE
+          echo "-- chaîne IPv4 active pour l'uid $UID_APP"
+          sudo iptables -L SEAMTECH_HORS_LIGNE -v -n
+
+          # Chaîne IPv6 — OBLIGATOIRE : la règle IPv4 ne dit RIEN du trafic IPv6.
+          # Soit on bloque IPv6, soit on PROUVE qu'aucun chemin IPv6 n'existe.
+          # Sans ce volet, un hôte joignable en IPv6 serait un contournement muet
+          # du « 0 paquet rejeté » (constat de la revue du 2026-10-07).
+          if ip -6 route show default 2>/dev/null | grep -q .; then
+            sudo ip6tables -N SEAMTECH_HORS_LIGNE6 2>/dev/null || sudo ip6tables -F SEAMTECH_HORS_LIGNE6
+            sudo ip6tables -A SEAMTECH_HORS_LIGNE6 -o lo -j RETURN
+            sudo ip6tables -A SEAMTECH_HORS_LIGNE6 -d ::1/128 -j RETURN
+            sudo ip6tables -A SEAMTECH_HORS_LIGNE6 -j REJECT --reject-with icmp6-port-unreachable
+            sudo ip6tables -I OUTPUT 1 -m owner --uid-owner "$UID_APP" -j SEAMTECH_HORS_LIGNE6
+            echo "-- IPv6 : route globale présente → chaîne ip6tables active pour l'uid $UID_APP"
+            sudo ip6tables -L SEAMTECH_HORS_LIGNE6 -v -n
+            # Contrôle négatif IPv6 sur adresse LITTÉRALE (aucun DNS en jeu) :
+            # l'échec doit être causé par LA RÈGLE, prouvé par son compteur.
+            avant6="$(sudo ip6tables -L SEAMTECH_HORS_LIGNE6 -v -n -x | awk '$3=="REJECT" {print $1; exit}')"
+            set +e
+            sudo -u seamtech-app curl -sS --max-time 10 --noproxy '*' "http://[2606:4700:4700::1111]/" -o /dev/null 2>/tmp/controle-negatif6.err
+            rc6=$?
+            set -e
+            apres6="$(sudo ip6tables -L SEAMTECH_HORS_LIGNE6 -v -n -x | awk '$3=="REJECT" {print $1; exit}')"
+            if [ "$rc6" -eq 0 ]; then
+              echo "::error title=hors-ligne-ipv6-non-bloque::le compte applicatif JOINT une adresse IPv6 publique — le blocage IPv4 serait contournable"
+              exit 1
+            fi
+            if [ "$rc6" -eq 6 ]; then
+              echo "::error title=hors-ligne-ipv6-resolue::échec IPv6 par résolution de nom alors que l'adresse est littérale — contrôle invalide"
+              exit 1
+            fi
+            if [ "${apres6:-0}" -le "${avant6:-0}" ]; then
+              echo "::error title=hors-ligne-ipv6-regle-non-prouvee::le compteur REJECT IPv6 n'a pas bougé (${avant6:-?} → ${apres6:-?}) : la règle n'est PAS la cause de l'échec"
+              exit 1
+            fi
+            echo "contrôle négatif IPv6 OK : $((apres6 - avant6)) paquet(s) REJETÉ(S) PAR LA RÈGLE ($(head -c 120 /tmp/controle-negatif6.err))"
+          else
+            echo "-- IPv6 : aucune route globale sur ce runner ($(ip -6 route show default 2>&1 | head -1))"
+            set +e
+            sudo -u seamtech-app curl -sS --max-time 5 -6 "http://[2606:4700:4700::1111]/" -o /dev/null 2>/tmp/controle-ipv6.err
+            rc6=$?
+            set -e
+            if [ "$rc6" -eq 0 ]; then
+              echo "::error title=hors-ligne-ipv6-non-prouve::le compte applicatif JOINT une adresse IPv6 publique alors qu'aucune route globale n'est annoncée"
+              exit 1
+            fi
+            echo "contrôle IPv6 OK : aucun chemin IPv6 vers l'extérieur ($(head -c 120 /tmp/controle-ipv6.err))"
+          fi
+
+          # CONTRÔLE NÉGATIF IPv4 — il doit DÉMONTRER que c'est bien LA RÈGLE qui a
+          # rejeté la requête de contrôle : une requête « example.com » qui échoue
+          # pourrait n'être qu'un problème de DNS ou de connectivité (revue du
+          # 2026-10-07). Trois exigences :
+          #   a. le nom est résolu EN IPv4 depuis le compte applicatif (le DNS
+          #      n'est donc pas en cause) ;
+          #   b. l'appel se fait sur l'ADRESSE LITTÉRALE (aucun DNS dans la
+          #      requête elle-même) ;
+          #   c. le compteur REJECT de la chaîne AUGMENTE d'au moins 1 : c'est
+          #      l'empreinte de la règle, pas une déduction.
+          adresse="$(sudo -u seamtech-app getent ahostsv4 example.com | awk 'NR==1{print $1}')"
+          if [ -z "$adresse" ]; then
+            echo "::error title=hors-ligne-controle-impossible::impossible de résoudre example.com en IPv4 depuis le compte applicatif — le contrôle négatif ne saurait distinguer DNS et pare-feu"
+            exit 1
+          fi
+          echo "résolution IPv4 OK depuis le compte applicatif : example.com → $adresse (DNS hors de cause)"
+          avant="$(sudo iptables -L SEAMTECH_HORS_LIGNE -v -n -x | awk '$3=="REJECT" {print $1; exit}')"
+          set +e
+          sudo -u seamtech-app curl -sS --max-time 10 --noproxy '*' "http://$adresse/" -o /dev/null 2>/tmp/controle-negatif.err
+          rc_neg=$?
+          set -e
+          apres="$(sudo iptables -L SEAMTECH_HORS_LIGNE -v -n -x | awk '$3=="REJECT" {print $1; exit}')"
+          if [ "$rc_neg" -eq 0 ]; then
+            echo "::error title=hors-ligne-non-bloque::le compte applicatif JOINT encore une adresse EXTERNE ($adresse) — la mesure serait vide de sens"
+            exit 1
+          fi
+          if [ "$rc_neg" -eq 6 ]; then
+            echo "::error title=hors-ligne-adresse-litterale::échec par résolution de nom alors que la requête porte une adresse littérale — contrôle invalide"
+            exit 1
+          fi
+          if [ "${apres:-0}" -le "${avant:-0}" ]; then
+            echo "::error title=hors-ligne-regle-non-prouvee::l'échec du contrôle n'a PAS été provoqué par la règle REJECT (compteur ${avant:-?} → ${apres:-?}) : ni DNS, ni pare-feu amont, ni absence de route ne sont exclus"
+            exit 1
+          fi
+          echo "contrôle négatif IPv4 OK : $((apres - avant)) paquet(s) REJETÉ(S) PAR LA RÈGLE vers $adresse ($(head -c 120 /tmp/controle-negatif.err))"
+          # CONTRÔLE POSITIF : la pile locale répond toujours.
+          sudo -u seamtech-app curl -sS --max-time 10 -H "X-SEAMTECH-TOKEN: $AUTH_TOKEN_APP" \
+            http://127.0.0.1:8123/health -o /dev/null
+          echo "contrôle positif OK : /health répond en local"
+          # Les contrôles ci-dessus ont VOLONTAIREMENT provoqué des rejets : on
+          # remet les compteurs à zéro pour que le relevé final mesure
+          # UNIQUEMENT les parcours d'atelier (et rien d'autre).
+          sudo iptables -Z SEAMTECH_HORS_LIGNE
+          sudo ip6tables -Z SEAMTECH_HORS_LIGNE6 2>/dev/null || true
+          echo "-- compteurs remis à zéro après les contrôles"
+          sudo iptables -L SEAMTECH_HORS_LIGNE -v -n -x
+          sudo ip6tables -L SEAMTECH_HORS_LIGNE6 -v -n -x 2>/dev/null || true
+      - name: Parcours navigateur HORS LIGNE (pile réelle)
+        working-directory: frontend
+        env:
+          SEAMTECH_E2E_HORS_LIGNE: "1"
+          PLAYWRIGHT_JSON_OUTPUT_NAME: report-hors-ligne.json
+          # VIDE À DESSEIN : la pile bloquée tourne déjà sur la base semée plus
+          # haut. Si `playwright.config.ts` voyait cette variable, il relancerait
+          # `seed-live-pg.py`, qui TERMINE les connexions et SUPPRIME les bases
+          # e2e_% — donc celle de la pile en cours d'épreuve. Playwright réutilise
+          # les serveurs déjà en écoute (`reuseExistingServer`).
+          SEAMTECH_E2E_DATABASE_URL: ""
+        run: |
+          set -uo pipefail
+          set +e
+          pnpm exec playwright test e2e/hors-ligne.spec.ts --reporter=list,json 2>&1 | tee /tmp/e2e_hors_ligne.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            echo "::error title=hors-ligne-details::$(grep -E '✘|failed|Error|expect|toHave|Timeout|expected|not.to' /tmp/e2e_hors_ligne.log | tail -20 | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 3000)"
+            exit "$rc"
+          fi
+          python - <<'PY'
+          import json
+
+          rapport = json.load(open("report-hors-ligne.json"))
+          stats = rapport["stats"]
+          # 1 scénario, exécuté, AUCUN rattrapage par retry : un parcours hors
+          # ligne qui n'est vert qu'au second essai est un parcours instable.
+          if stats.get("flaky") or stats.get("skipped") or stats.get("unexpected") or stats["expected"] != 1:
+              print(
+                  "::error title=hors-ligne-garde-fou::attendu 1 test passé au premier essai, "
+                  f"0 flaky, 0 sauté — mesuré {stats['expected']} passés, "
+                  f"{stats.get('flaky', 0)} flaky, {stats.get('skipped', 0)} sautés, "
+                  f"{stats.get('unexpected', 0)} en échec."
+              )
+              raise SystemExit(1)
+          print("Hors ligne : parcours navigateur vert au premier essai (0 flaky, 0 sauté).")
+          PY
+      - name: Relevé — aucune tentative externe du compte applicatif pendant les parcours
+        run: |
+          rejetes="$(sudo iptables -L SEAMTECH_HORS_LIGNE -v -n -x | awk '$3=="REJECT" {print $1; exit}')"
+          echo "paquets rejetés IPv4 (sortie externe du compte applicatif) : ${rejetes:-?}"
+          sudo iptables -L SEAMTECH_HORS_LIGNE -v -n -x
+          # IPv6 : si la chaîne existe (route globale sur ce runner), le COMPTE
+          # APPLICATIF ne doit rien avoir tenté non plus ; sinon, l'absence de
+          # route a déjà été prouvée au moment du blocage.
+          if sudo ip6tables -L SEAMTECH_HORS_LIGNE6 -v -n -x >/dev/null 2>&1; then
+            rejetes6="$(sudo ip6tables -L SEAMTECH_HORS_LIGNE6 -v -n -x | awk '$3=="REJECT" {print $1; exit}')"
+            echo "paquets rejetés IPv6 (sortie externe du compte applicatif) : ${rejetes6:-?}"
+            sudo ip6tables -L SEAMTECH_HORS_LIGNE6 -v -n -x
+            volet_ipv6="IPv6 : ${rejetes6:-?} paquet(s) rejeté(s)"
+          else
+            volet_ipv6="IPv6 : aucune route globale sur ce runner (prouvé au blocage)"
+          fi
+          if [ "${rejetes:-1}" != "0" ]; then
+            echo "::error title=dependance-externe-cachee::le compte applicatif a tenté ${rejetes} paquet(s) vers l'extérieur pendant les parcours (voir le journal web/worker)"
+            sudo tail -n 40 /srv/seamtech/logs/web.log || true
+            sudo tail -n 40 /srv/seamtech/logs/worker.log || true
+            exit 1
+          fi
+          echo "::notice title=hors-ligne-prouve::parcours navigateur verts avec sortie externe RÉELLEMENT bloquée, blocage PROUVÉ par le compteur de la règle (contrôle négatif) — 0 paquet rejeté (aucune dépendance externe tentée) ; ${volet_ipv6} ; couvert : processus d'uid reel seamtech-app (API/web, worker séparé, serveur Next.js de production) et leurs sous-processus — NON couvert : Chromium/Playwright du runner, dont la garantie est l'assertion « aucune requête externe tentée »"
+      - name: Lever le blocage réseau (toujours) et publier les journaux en cas d'échec
+        if: always()
+        run: |
+          sudo iptables -D OUTPUT -m owner --uid-owner "$(id -u seamtech-app)" -j SEAMTECH_HORS_LIGNE 2>/dev/null || true
+          sudo iptables -F SEAMTECH_HORS_LIGNE 2>/dev/null || true
+          sudo iptables -X SEAMTECH_HORS_LIGNE 2>/dev/null || true
+          sudo ip6tables -D OUTPUT -m owner --uid-owner "$(id -u seamtech-app)" -j SEAMTECH_HORS_LIGNE6 2>/dev/null || true
+          sudo ip6tables -F SEAMTECH_HORS_LIGNE6 2>/dev/null || true
+          sudo ip6tables -X SEAMTECH_HORS_LIGNE6 2>/dev/null || true
+          echo "-- sortie réseau rétablie (IPv4 et IPv6)"
+          if [ -f /srv/seamtech/logs/web.log ]; then echo "== web =="; sudo tail -n 60 /srv/seamtech/logs/web.log; fi
+          if [ -f /srv/seamtech/logs/worker.log ]; then echo "== worker =="; sudo tail -n 60 /srv/seamtech/logs/worker.log; fi
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report-hors-ligne
+          path: |
+            frontend/report-hors-ligne.json
+            frontend/test-results/
+            /tmp/e2e_hors_ligne.log
+          if-no-files-found: ignore
+          retention-days: 5
+
   recette-corpus-reel:
     # Lot 2 — recette COMPLÈTE sur le corpus réel (7 dossiers REF-001..REF-007
     # livrés par le commanditaire, ZIP commités à la racine du dépôt). Le job
@@ -1300,8 +2080,9 @@ jobs:
     # dossiers par le flux réel (upload, scan, confirmation avec sélection du
     # candidat), classement automatique + champs proposés + fiches A_VALIDER,
     # OCR par étages (30 pages natives non océrisées, page-image océrisée par
-    # Tesseract fra), recherches par mots-clés, ouverture PDF par URL présignée
-    # RÉELLE contre MinIO (302, Location, ExpiresIn=900 s, SHA-256 identique),
+    # Tesseract fra), recherches par mots-clés, ouverture PDF TÉLÉCHARGEABLE
+    # depuis un autre poste (200 servi par l'API ; 302 seulement vers un endpoint
+    # public déclaré — écart E-28), SHA-256 identique,
     # rapport PDF téléchargé, sauvegarde puis restauration de la base dans une
     # base neuve (fiches, object_key, recherche, ouverture PDF revérifiés).
     #
@@ -1343,8 +2124,16 @@ jobs:
       SEAMTECH_REDIS_URL: redis://127.0.0.1:6379/0
       SEAMTECH_S3_ENDPOINT_URL: http://127.0.0.1:9000
       SEAMTECH_S3_BUCKET: seamtech-documents
-      SEAMTECH_S3_ACCESS_KEY: minioadmin
-      SEAMTECH_S3_SECRET_KEY: minioadmin123
+      # Identité APPLICATIVE restreinte (revue du 2026-10-07) : la recette sur
+      # corpus réel doit tourner avec les droits réels du déploiement, pas ceux
+      # de l'administrateur MinIO.
+      SEAMTECH_S3_ACCESS_KEY: seamtech-app-ci
+      SEAMTECH_S3_SECRET_KEY: ci-app-secret-not-for-production
+      SEAMTECH_BACKUP_ACCESS_KEY: seamtech-sauvegarde-ci
+      SEAMTECH_BACKUP_SECRET_KEY: ci-backup-secret-not-for-production
+      SEAMTECH_BACKUP_BUCKET: seamtech-backups
+      # MinIO en `docker run` ici : provisionnement via conteneur nommé.
+      SEAMTECH_MINIO_CONTAINER: minio
       SEAMTECH_RECETTE_BUCKET_SAUVEGARDE: seamtech-backups
     steps:
       - uses: actions/checkout@v7
@@ -1368,7 +2157,7 @@ jobs:
         # MinIO ; scripts/construire_image_minio.sh reconstruit l'image depuis
         # les sources officielles du tag épinglé.
         run: bash scripts/construire_image_minio.sh
-      - name: Start MinIO and create buckets
+      - name: Start MinIO (buckets et identités provisionnés à l'étape suivante)
         run: |
           docker run -d --name minio -p 9000:9000 \
             -e MINIO_ROOT_USER=minioadmin \
@@ -1392,22 +2181,18 @@ jobs:
               print("::error title=minio-not-ready::MinIO n'a pas répondu sur /minio/health/live en 120 s")
               sys.exit(1)
 
-          import boto3
-
-          client = boto3.client(
-              "s3",
-              endpoint_url="http://127.0.0.1:9000",
-              aws_access_key_id="minioadmin",
-              aws_secret_access_key="minioadmin123",
-          )
-          for bucket in ("seamtech-documents", "seamtech-backups"):
-              try:
-                  client.head_bucket(Bucket=bucket)
-              except Exception:
-                  client.create_bucket(Bucket=bucket)
-              client.head_bucket(Bucket=bucket)
-          print("MinIO vivant, buckets documents + backups créés")
           PY
+      - name: Provisionner les identités restreintes (buckets + versioning + politiques)
+        # Remplace la création des buckets avec les identifiants ROOT : le
+        # provisionnement crée les deux buckets, active le versioning et crée les
+        # identités restreintes (applicative + sauvegarde).
+        # Les identifiants ADMINISTRATEUR sont fournis au niveau de l'ÉTAPE (et
+        # pas du job) : la recette qui suit doit tourner avec l'identité
+        # APPLICATIVE restreinte, jamais avec l'administrateur.
+        env:
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: minioadmin123
+        run: bash scripts/provisionner_stockage.sh
       - name: Check corpus ZIPs (RG13, avant extraction)
         # Garde-fous : exactement 7 ZIP, empreintes SHA-256 consignées AVANT
         # l'extraction (le runner temporaire reçoit les documents, le dépôt
@@ -1542,9 +2327,24 @@ jobs:
           from pathlib import Path
 
           racine = Path(os.environ["GITHUB_WORKSPACE"])
-          avant = json.loads(
-              Path(os.environ["RUNNER_TEMP"], "zip-empreintes-avant.json").read_text(encoding="utf-8")
-          )
+          apercu = Path(os.environ["RUNNER_TEMP"], "zip-empreintes-avant.json")
+          if not apercu.exists():
+              # Cas observé au run 37617039519 : l'étape « avant extraction » a
+              # été SAUTÉE (échec du provisionnement en amont) et cette étape
+              # « toujours exécutée » levait alors un FileNotFoundError illisible.
+              # L'invariant n'a pas pu être vérifié : on le dit explicitement —
+              # jamais de succès silencieux sur un invariant non prouvé.
+              raise SystemExit(
+                  "::error title=rg13-non-verifie::invariant RG13 NON VÉRIFIÉ : "
+                  "l'empreinte AVANT est absente (l'étape « Check corpus ZIPs "
+                  "(RG13, avant extraction) » n'a pas été exécutée)."
+              )
+          avant = json.loads(apercu.read_text(encoding="utf-8"))
+          if len(avant) != 7:
+              raise SystemExit(
+                  f"::error title=rg13-non-verifie::invariant RG13 incomplet : "
+                  f"{len(avant)} ZIP consignés avant recette, 7 attendus."
+              )
           ecarts = {
               nom: "modifié"
               for nom, empreinte in avant.items()

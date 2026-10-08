@@ -19,6 +19,14 @@ async function ouvrirFiche(page: Page, file: Locator, code: string): Promise<voi
   // du doublon, dont le bandeau cite le code de l'autre fiche (vu en CI).
   await file.locator(`li[data-code="${code}"]`).getByTestId("code-fiche").click()
   await expect(page.getByTestId("titre-fiche")).toHaveText(code)
+  // Le verrou optimiste (constats F1/F3) n'autorise une décision qu'une fois la
+  // RÉVISION LUE : sans cette attente, un clic « Rejeter »/« Valider » lancé
+  // pendant le chargement de l'instantané est bloqué — À RAISON — par l'écran
+  // (fail closed) et le test devient instable sans qu'aucun défaut produit
+  // n'existe. On attend donc ce qu'un opérateur attend : l'état affiché.
+  await expect(page.getByTestId("validation-app")).toHaveAttribute("data-revision", /^[0-9]+$/, {
+    timeout: 15000,
+  })
 }
 
 test.describe("validation de bout en bout", () => {
@@ -101,7 +109,17 @@ test.describe("validation de bout en bout", () => {
         confiance_min: 0.1, a_anomalies: true,
       }]),
     }))
-    await page.route("**/api/fiches/ANOMALIE-E2E/champs", (route) => route.fulfill({ status: 200, contentType: "application/json", body: "[]" }))
+    // UN SEUL INSTANTANÉ (champs + révision + statut) : c'est ce que l'écran
+    // interroge depuis le verrou optimiste — il n'appelle plus `/champs`. Ce
+    // test simulait l'ancien endpoint : la révision restait donc inconnue,
+    // l'écran s'arrêtait FAIL CLOSED et refusait la décision. Mesuré en CI :
+    // après « R + Entrée », plus aucun `message-ok` (le rejet n'était jamais
+    // envoyé). On sert l'instantané réel, avec sa révision.
+    await page.route("**/api/fiches/ANOMALIE-E2E/etat", (route) => route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ champs: [], revision: 1, statut: "a_valider" }),
+    }))
     await page.route("**/api/fiches/ANOMALIE-E2E/pieces", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ pdf_source: null, fichier_source: null, pieces: [] }) }))
     await page.route("**/api/validation/doublons", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ par_code: {} }) }))
     await page.route("**/api/fiches/ANOMALIE-E2E/valider", (route) => {

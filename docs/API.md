@@ -243,6 +243,37 @@ attribuée. Les routes de validation (`POST /fiches/{code}/corriger|valider|reje
 corps de requête n'est plus qu'un **repli d'outillage** (scripts, tests), jamais
 prioritaire. L'écran ne l'envoie plus : une seule source de vérité.
 
+**Concurrence entre postes (verrou optimiste, migration `021_revision_fiche`).** Une
+fiche porte un numéro de `revision` (entier ≥ 1), publié par `GET /fiches/{code}` et
+incrémenté par toute écriture qui change son contenu (correction d'un champ, validation,
+rejet, réouverture). Le corps de `POST /fiches/{code}/corriger` DOIT porter `revision` :
+si un autre poste a enregistré entre l'ouverture et l'enregistrement, la correction est
+**refusée (409)** avec `{code: "conflit_revision", revision_actuelle, valeur_actuelle,
+corrige_par, corrige_le, regle}` — la valeur du collègue est conservée, rien de ce poste
+n'est écrit (pas même la ligne « utilisateur » de l'auteur).
+
+Sans `revision`, la correction est **refusée (428)** : « la révision n'a pas pu être lue
+côté poste » ne doit jamais devenir « écriture non protégée ». Le seul moyen d'ouvrir un
+client ancien est de l'ASSUMER (`SEAMTECH_REQUIRE_REVISION=false`, jamais sur un poste
+d'atelier) ; l'écriture est alors non protégée et journalisée comme telle.
+
+`GET /fiches/{code}/etat` publie **statut + révision + champs dans UNE réponse** (un seul
+instantané : la révision renvoyée est toujours celle des valeurs renvoyées). L'écran de
+validation ouvre et recharge par cette route — deux requêtes séparées pouvaient apparier
+des valeurs périmées avec une révision à jour, et laisser passer une correction fondée sur
+un état jamais lu.
+
+**Les décisions sont liées à la révision revue.** `POST /fiches/{code}/valider|rejeter|rouvrir`
+et `POST /validation/lot` (`revisions: {code: n}`) vérifient statut ET révision dans le même
+`UPDATE` : si la fiche a changé depuis l'affichage, la décision est **refusée (409)**
+(`{code: "conflit_decision", decision, revision_envoyee, revision_actuelle, statut_actuel}`)
+et **aucune ligne n'est ajoutée au journal** — l'opérateur doit recharger et décider à
+nouveau. En lot, une fiche modifiée depuis la sélection est IGNORÉE avec sa raison
+(`ignorees[].raison`), les autres sont validées. Le front (écran Validation) envoie la
+révision, affiche le conflit avec la valeur du collègue (ou le statut réel pour une
+décision) et propose de recharger la fiche ; sans révision lue, il DÉSACTIVE les boutons
+d'écriture.
+
 **Vérrouillage des connexions** : le compteur d'échecs vit dans la table `audit_log`
 existante (`action='connexion_refusee'`), pas dans une table dédiée — la mission fixe
 32 tables métier après L.2 et une connexion refusée EST un événement d'audit. Conséquence

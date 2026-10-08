@@ -293,3 +293,140 @@ def test_normalisation_refuse_la_traversee_d_archive(tmp_path: Path, monkeypatch
     with pytest.raises(ValueError, match="traversée"):
         recette_verif._normaliser_sources()
     assert not (tmp_path / "evil.pdf").exists()
+
+
+def _faux_environnement_pdf(tmp_path: Path, monkeypatch, contenu: bytes):
+    """Prépare une affaire importée + un PDF source et capture les contrôles.
+
+    Renvoie ``(lignes, installer_reponse)`` : ``lignes`` reçoit les tuples
+    ``(controle, ok, detail)`` du vérificateur, ``installer_reponse`` règle la
+    réponse simulée de ``/open`` (code, corps, en-têtes).
+    """
+    import urllib.request
+
+    from scripts import recette_verif
+
+    affaire = tmp_path / "travail" / "affaires" / "AFF-001"
+    affaire.mkdir(parents=True)
+    pdf = affaire / "technique.pdf"
+    pdf.write_bytes(contenu)
+
+    monkeypatch.setattr(recette_verif, "TRAVAIL", tmp_path / "travail")
+    lignes: list[tuple[str, bool, str]] = []
+    monkeypatch.setattr(recette_verif, "_ligne", lambda c, ok, d: lignes.append((c, ok, d)))
+
+    appels: list[tuple[str, str, dict]] = []
+
+    def faux_appel(methode, chemin, corps=None, **kwargs):  # noqa: ANN001, ANN202
+        appels.append((methode, chemin, kwargs))
+        if "/imports/scan" in chemin:
+            return 200, {
+                "candidates": [
+                    {"path": str(pdf), "classification": "technical_pdf", "anchor_count": 3}
+                ]
+            }, {}
+        if "/imports/confirm" in chemin:
+            return 200, {
+                "upload_status": "uploaded",
+                "files": [{"path": str(pdf), "object_key": "objets/technique.pdf"}],
+            }, {}
+        if chemin.startswith("/open"):
+            return REPONSE[0]
+        raise AssertionError(f"appel inattendu : {methode} {chemin}")
+
+    monkeypatch.setattr(recette_verif, "_appel", faux_appel)
+
+    class _Reponse:
+        status = 200
+
+        def read(self) -> bytes:
+            return contenu
+
+        def __enter__(self):  # noqa: ANN204
+            return self
+
+        def __exit__(self, *args):  # noqa: ANN002, ANN204
+            return False
+
+    telechargements: list[str] = []
+
+    def faux_urlopen(url, timeout=60):  # noqa: ANN001, ANN202, ARG001
+        telechargements.append(url)
+        return _Reponse()
+
+    monkeypatch.setattr(urllib.request, "urlopen", faux_urlopen)
+
+    def installer_reponse(code: int, corps, entetes: dict[str, str]) -> None:
+        REPONSE[0] = (code, corps, entetes)
+
+    REPONSE: list = [(200, contenu, {"content-type": "application/pdf"})]
+    return lignes, installer_reponse, telechargements, appels
+
+
+def test_recette_verif_pdf_telechargeable_par_api(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Contrat 2026-10-07 (E-28) : ``/open`` doit livrer les OCTETS, ou une
+    redirection vers un hôte public — jamais vers l'hôte interne ``minio``.
+
+    Le contrôle « pdf-presigne » de la recette est la preuve, exécutée en CI par
+    le job ``recette-locale``, que le document est téléchargeable depuis un autre
+    poste de l'atelier. Ce test l'épingle sans Docker : si quelqu'un remet une
+    redirection vers l'endpoint interne, ou fait passer un contenu différent pour
+    un succès, il casse ici avant la CI.
+    """
+    contenu = b"%PDF-1.4 technique " + b"x" * 500
+    lignes, _installer, telechargements, appels = _faux_environnement_pdf(tmp_path, monkeypatch, contenu)
+    from scripts import recette_verif
+
+    recette_verif._pdf_presigne()
+    assert lignes, "aucun contrôle émis"
+    controle, ok, detail = lignes[-1]
+    assert controle == "pdf-presigne"
+    assert ok, f"téléchargement servi par l'API refusé à tort : {detail}"
+    assert "200 (servi par l'API)" in detail and "SHA-256 identique à la source = True" in detail
+    assert telechargements == [], "aucun téléchargement d'URL externe ne devait être nécessaire"
+    # L'appel à /open doit demander le corps BRUT : sinon le PDF est décodé en
+    # texte, le contrôle compare une chaîne à des octets et échoue — défaut
+    # réellement observé en CI (« open HTTP 200 (attendu 200 ou 302) »).
+    appels_open = [appel for appel in appels if appel[1].startswith("/open")]
+    assert appels_open and appels_open[0][2].get("brut") is True, appels_open
+
+    # Un contenu DIFFÉRENT ne peut jamais passer pour un succès.
+    lignes.clear()
+    _installer(200, b"%PDF-1.4 autre chose", {"content-type": "application/pdf"})
+    recette_verif._pdf_presigne()
+    assert lignes[-1][1] is False and "SHA-256 identique à la source = False" in lignes[-1][2]
+
+
+def test_recette_verif_pdf_refuse_la_redirection_vers_l_hote_interne(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Une 302 vers ``http://minio:9000`` est un ÉCHEC, pas un succès.
+
+    C'était la panne réelle (E-28) : le nom d'hôte n'existe que dans le réseau
+    Docker, donc « Temporary failure in name resolution » depuis un poste de
+    l'atelier. Une redirection vers un hôte PUBLIC reste acceptée et suivie.
+    """
+    contenu = b"%PDF-1.4 technique " + b"y" * 500
+    lignes, installer, telechargements, _appels = _faux_environnement_pdf(tmp_path, monkeypatch, contenu)
+    from scripts import recette_verif
+
+    installer(302, b"", {"Location": "http://minio:9000/documents/objets/technique.pdf?sig=abc"})
+    recette_verif._pdf_presigne()
+    assert lignes[-1][1] is False, lignes[-1]
+    assert "hôte INTERNE" in lignes[-1][2] and "minio" in lignes[-1][2]
+    assert telechargements == [], "une URL interne ne doit JAMAIS être suivie"
+
+    lignes.clear()
+    installer(
+        302,
+        b"",
+        {"Location": "https://minio.atelier.invalide:9000/documents/objets/technique.pdf?sig=abc"},
+    )
+    recette_verif._pdf_presigne()
+    assert lignes[-1][1] is True, lignes[-1]
+    assert "302 (minio.atelier.invalide)" in lignes[-1][2]
+    assert telechargements == [
+        "https://minio.atelier.invalide:9000/documents/objets/technique.pdf?sig=abc"
+    ]

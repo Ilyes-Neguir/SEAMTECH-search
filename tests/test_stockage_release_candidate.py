@@ -79,6 +79,19 @@ def _absent_objet_404() -> ClientError:
     return ClientError({"Error": {"Code": "404", "Message": "Not Found"}}, "HeadObject")
 
 
+def _magasin_s3(magasin: object) -> list:
+    """Branche le client S3 réel sur un magasin en mémoire (aucun socket).
+
+    Depuis que la vérification RELIT les octets, un double qui répond
+    « l'objet existe » ne teste plus rien : les octets doivent être là.
+    """
+    return [
+        patch.object(S3StorageClient, "_get_client", lambda _i, probe_timeout=None: magasin),
+        patch.object(S3StorageClient, "ensure_bucket_exists", lambda _i: True),
+        patch.object(S3StorageClient, "first_free_key", lambda _i, cle: cle),
+    ]
+
+
 # ---------------------------------------------------------------------------
 # 1. Configuration S3 complète
 # ---------------------------------------------------------------------------
@@ -176,11 +189,21 @@ def test_storage_backend_local_ne_desactive_pas_le_client_objet(tmp_path: Path) 
 
     fichier = tmp_path / "plan.pdf"
     fichier.write_bytes(b"%PDF-1.4 plan")
-    with patch("seamtech_search.storage.S3StorageClient.upload_file", return_value="k") as envoi:
-        with patch("seamtech_search.storage.S3StorageClient.object_exists", return_value=True):
-            lot = upload_artifacts_to_storage("dossier", [fichier], config, import_id="IMP-1")
-    assert envoi.called, "storage_backend=local n'empêche pas l'envoi S3 (comportement actuel)"
+    from tests.s3_en_memoire import S3EnMemoire
+
+    magasin = S3EnMemoire()
+    patcheurs = _magasin_s3(magasin)
+    for patcheur in patcheurs:
+        patcheur.start()
+    try:
+        lot = upload_artifacts_to_storage("dossier", [fichier], config, import_id="IMP-1")
+    finally:
+        for patcheur in patcheurs:
+            patcheur.stop()
+
+    assert magasin.envois, "storage_backend=local n'empêche pas l'envoi S3 (comportement actuel)"
     assert lot.status == "uploaded"
+    assert lot.artifacts[0].verification == "relecture_sha256"
 
 
 # ---------------------------------------------------------------------------
@@ -308,7 +331,10 @@ def test_signature_publique_de_l_url_presignee_est_le_contrat_des_appelants() ->
     ``tests/test_integration_docker.py`` et ``tests/test_storage*.py``.
     """
     parametres = list(inspect.signature(S3StorageClient.get_presigned_url).parameters)
-    assert parametres == ["self", "remote_key", "expiration_seconds"]
+    # `endpoint_url` (ajouté le 2026-10-07) permet de SIGNER pour l'endpoint
+    # PUBLIC déclaré par le déploiement, celui que les navigateurs de l'atelier
+    # peuvent joindre — sans jamais leur remettre l'endpoint interne.
+    assert parametres == ["self", "remote_key", "expiration_seconds", "endpoint_url"]
 
 
 def test_d1_corrige_les_appels_de_l_api_utilisent_le_vrai_nom_de_parametre() -> None:
@@ -331,7 +357,9 @@ def test_d1_corrige_les_appels_de_l_api_utilisent_le_vrai_nom_de_parametre() -> 
 
     assert "expires_in" not in mots_cles, "régression D-1 : le mot-clé inexistant est revenu"
     assert mots_cles <= valides, f"mot-clé inconnu du client : {sorted(mots_cles - valides)}"
-    assert re.findall(r"get_presigned_url\(object_key,\s*expiration_seconds=(\d+)\)", source) == ["900", "900"]
+    assert re.findall(r"get_presigned_url\(\s*object_key,\s*expiration_seconds=(\d+)", source) == ["900"], (
+        "un seul site d'appel (le helper qui sert les DEUX routes), toujours à 900 s"
+    )
 
     # Preuve exécutée : le mauvais mot-clé lèverait bien, le bon passe.
     client = _client_fictif()
@@ -489,7 +517,13 @@ def test_cle_avec_espaces_et_accents_transmise_telle_quelle_a_boto3(tmp_path: Pa
     assert faux_boto.generate_presigned_url.call_args.kwargs["Params"]["Key"] == cle
     assert faux_boto.download_file.call_args.kwargs["Key"] == cle
     # Le type MIME est déduit de l'extension malgré les accents.
-    assert faux_boto.upload_file.call_args.kwargs["ExtraArgs"] == {"ContentType": "application/pdf"}
+    extra = faux_boto.upload_file.call_args.kwargs["ExtraArgs"]
+    assert extra["ContentType"] == "application/pdf"
+    # Depuis la correction « ETag != MD5 » : l'empreinte du CONTENU voyage avec
+    # l'objet (métadonnée applicative), elle ne dépend pas de l'ETag du fournisseur.
+    from seamtech_search.storage import METADATA_SHA256, empreinte_sha256
+
+    assert extra["Metadata"][METADATA_SHA256] == empreinte_sha256(fichier)
 
 
 def test_normalisation_unicode_differente_produit_des_cles_differentes(tmp_path: Path) -> None:
@@ -563,16 +597,42 @@ def test_echec_partiel_interdit_la_purge_locale(tmp_path: Path) -> None:
         min_free_bytes=0,
     )
 
-    def _envoi(self: S3StorageClient, chemin: Path, remote_key: str | None = None, *a: object, **k: object) -> str:
+    def _envoi(
+        self: S3StorageClient,
+        chemin: Path,
+        remote_key: str | None = None,
+        *args: object,
+        **kwargs: object,
+    ) -> str:
         return str(remote_key)
 
-    with patch("seamtech_search.storage.S3StorageClient.upload_file", _envoi):
-        with patch("seamtech_search.storage.S3StorageClient.object_exists", side_effect=[True, False]):
-            lot = upload_artifacts_to_storage("dossier", [premier, second], config, import_id="IMP-1")
+    # Le premier objet est stocké fidèlement ; le second arrive ALTÉRÉ (panne
+    # réseau, disque, proxy…). La relecture recalcule l'empreinte sur les octets
+    # réellement stockés ⇒ non vérifié ⇒ purge locale interdite.
+    from tests.s3_en_memoire import S3EnMemoire
+
+    class MagasinAvecPanne(S3EnMemoire):
+        def upload_file(self, Filename, Bucket, Key, ExtraArgs=None):  # noqa: N803, ANN001
+            if Key.endswith("tableau.xlsx"):
+                self._ecrire(Key, b"xlsx tronque", ExtraArgs or {})
+                self.envois.append({"key": Key, "octets": 12, "extra": ExtraArgs or {}})
+                return None
+            return super().upload_file(Filename=Filename, Bucket=Bucket, Key=Key, ExtraArgs=ExtraArgs)
+
+    magasin = MagasinAvecPanne()
+    patcheurs = _magasin_s3(magasin)
+    for patcheur in patcheurs:
+        patcheur.start()
+    try:
+        lot = upload_artifacts_to_storage("dossier", [premier, second], config, import_id="IMP-1")
+    finally:
+        for patcheur in patcheurs:
+            patcheur.stop()
 
     assert lot.status == "partial"
     assert lot.all_verified is False
     assert [a.verified for a in lot.artifacts] == [True, False]
+    assert [a.verification for a in lot.artifacts] == ["relecture_sha256", "echec"]
     assert premier.exists() and second.exists()
 
 
@@ -670,7 +730,7 @@ def test_migrations_sequentielles_001_a_017_sur_base_vide(tmp_path: Path) -> Non
     enregistrée dans la liste ⇒ job ``sauvegarde`` rouge. Ce test tourne sans
     PostgreSQL (les migrations métier sont des no-op enregistrés en SQLite),
     donc il protège aussi la suite « non-PostgreSQL ». (Identifiant historique
-    conservé ; les assertions vérifient la séquence complète 001..019.)
+    conservé ; les assertions vérifient la séquence complète 001..020.)
     """
     from seamtech_search.schema_metier import MIGRATIONS_METIER, VERSION_SCHEMA_METIER
 
@@ -682,8 +742,8 @@ def test_migrations_sequentielles_001_a_017_sur_base_vide(tmp_path: Path) -> Non
             versions = [ligne[0] for ligne in connexion.execute("SELECT version FROM schema_migrations")]
         numeros = [int(version.split("_", 1)[0]) for version in sorted(versions)]
 
-        assert numeros == list(range(1, 20)), f"séquence attendue 001..019, mesurée {numeros}"
-        assert sorted(versions)[-1] == VERSION_SCHEMA_METIER == "019_recherche_dimension"
+        assert numeros == list(range(1, 22)), f"séquence attendue 001..021, mesurée {numeros}"
+        assert sorted(versions)[-1] == VERSION_SCHEMA_METIER == "021_revision_fiche"
         # Toute migration métier déclarée DOIT être enregistrée à l'exécution.
         manquantes = {version for version, _sql in MIGRATIONS_METIER} - set(versions)
         assert manquantes == set(), f"migrations métier déclarées mais jamais appliquées : {manquantes}"
@@ -709,4 +769,151 @@ def test_version_schema_metier_est_la_derniere_migration_declaree() -> None:
     declarees = [version for version, _sql in MIGRATIONS_METIER]
     assert declarees == sorted(declarees), "les migrations métier doivent être déclarées dans l'ordre"
     assert declarees[-1] == VERSION_SCHEMA_METIER
-    assert len(TABLES_METIER) == 33, "33 tables métier (018-019 n'ajoutent aucune table : texte de recherche uniquement)"
+    assert len(TABLES_METIER) == 33, (
+        "33 tables métier (018-021 n'ajoutent aucune table : texte de recherche, colonnes "
+        "de supervision des imports, puis révision de fiche — uniquement des colonnes)"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Client lié à un endpoint PUBLIC (signature pour les navigateurs)
+# ---------------------------------------------------------------------------
+
+
+def test_client_public_cree_hors_ligne_et_reutilise_par_endpoint() -> None:
+    """Un client par endpoint public, créé SANS appel réseau, et jamais utilisé
+    pour lire des objets : seulement pour signer une URL destinée au navigateur.
+
+    C'est ce qui permet aux postes de l'atelier de télécharger sans que
+    l'endpoint INTERNE du réseau des conteneurs n'apparaisse jamais. La création
+    d'un client boto3 est paresseuse (aucune I/O) : ce test tourne donc sans
+    MinIO et prouve que la configuration demandée est bien celle appliquée.
+    """
+    client = S3StorageClient(
+        endpoint_url="http://minio:9000",
+        bucket_name="seamtech-documents",
+        access_key_id=CLE_ACCES_FICTIVE,
+        secret_access_key=SECRET_FICTIF,
+    )
+    premier = client._client_pour_endpoint("https://stockage.atelier.invalide:9000")
+    second = client._client_pour_endpoint("https://stockage.atelier.invalide:9000")
+    autre = client._client_pour_endpoint("https://autre.atelier.invalide:9000")
+
+    assert premier is second, "un seul client par endpoint (pas de fuite de sockets)"
+    assert autre is not premier, "deux endpoints = deux clients"
+    assert premier.meta.endpoint_url == "https://stockage.atelier.invalide:9000"
+    config = premier.meta.config
+    assert config.signature_version == "s3v4"
+    assert config.s3 == {"addressing_style": "path"}, config.s3
+    assert config.connect_timeout == 5 and config.read_timeout == 5, config
+    assert config.retries["total_max_attempts"] == 2, config.retries
+    # Le client historique (endpoint interne) n'est PAS réutilisé pour signer :
+    # la signature doit porter l'hôte que le navigateur va réellement joindre.
+    assert client._clients_publics == {
+        "https://stockage.atelier.invalide:9000": premier,
+        "https://autre.atelier.invalide:9000": autre,
+    }
+
+
+def test_batch_d_artefacts_serialisable_pour_l_api() -> None:
+    """``UploadBatch.to_payload()`` (et son ``to_dict()``) exposent exactement
+    ce que l'API renvoie : statut, clé, bucket, vérification — aucune donnée
+    interne de plus."""
+    from seamtech_search.storage import UploadBatch, UploadedArtifact
+
+    artifact = UploadedArtifact(
+        path="/atelier/dossier/plan.pdf",
+        name="plan.pdf",
+        key="imports/IMP-1/plan.pdf",
+        bucket="seamtech-documents",
+        status="uploaded",
+        verified=True,
+        verification="relecture_sha256",
+        verification_detail="octets relus",
+    )
+    batch = UploadBatch(status="uploaded", artifacts=[artifact])
+
+    assert batch.all_verified is True
+    attendu = [
+        {
+            "path": "/atelier/dossier/plan.pdf",
+            "name": "plan.pdf",
+            "key": "imports/IMP-1/plan.pdf",
+            "bucket": "seamtech-documents",
+            "status": "uploaded",
+            "verified": True,
+            "verification": "relecture_sha256",
+            "verification_detail": "octets relus",
+            "error": None,
+        }
+    ]
+    assert batch.to_dict() == attendu
+    assert batch.to_payload() == attendu, "to_payload est le contrat d'API (et suit to_dict)"
+
+    vide = UploadBatch(status="not_applicable")
+    assert vide.all_verified is False and vide.to_payload() == []
+
+
+def test_bucket_cree_si_absent_et_versioning_tentee_une_seule_fois() -> None:
+    """Provisionnement : le bucket est créé s'il manque (avec la contrainte de
+    région quand elle est nécessaire), une erreur d'accès ne casse pas le
+    démarrage, et la versioning n'est tentée qu'UNE fois par client."""
+    from seamtech_search.storage import S3StorageClient
+
+    class _ClientProvisoire:
+        def __init__(self, erreur: ClientError | None = None) -> None:
+            self.erreur = erreur
+            self.creations: list[dict] = []
+            self.versioning: list[dict] = []
+
+        def head_bucket(self, Bucket: str) -> dict:  # noqa: N803
+            if self.erreur is not None:
+                raise self.erreur
+            return {}
+
+        def create_bucket(self, **kwargs: object) -> dict:
+            self.creations.append(dict(kwargs))
+            return {}
+
+        def put_bucket_versioning(self, **kwargs: object) -> dict:
+            self.versioning.append(dict(kwargs))
+            return {}
+
+    def _erreur(code: str) -> ClientError:
+        return ClientError({"Error": {"Code": code, "Message": code}}, "HeadBucket")
+
+    # 1) Bucket absent + région non « us-east-1 » → création avec contrainte.
+    client = S3StorageClient(
+        endpoint_url="http://minio:9000",
+        bucket_name="seamtech-documents",
+        access_key_id=CLE_ACCES_FICTIVE,
+        secret_access_key=SECRET_FICTIF,
+        region_name="eu-west-3",
+    )
+    double = _ClientProvisoire(_erreur("404"))
+    client._s3 = double
+    client.ensure_bucket_exists()
+    assert double.creations == [
+        {"Bucket": "seamtech-documents", "CreateBucketConfiguration": {"LocationConstraint": "eu-west-3"}}
+    ], double.creations
+    assert double.versioning == [
+        {"Bucket": "seamtech-documents", "VersioningConfiguration": {"Status": "Enabled"}}
+    ], double.versioning
+
+    # 2) Versioning : rejouée ? NON. Le client ne la tente qu'une fois.
+    client._enable_versioning_once()
+    assert len(double.versioning) == 1
+
+    # 3) Erreur d'accès (autre code que 404) : journalisée, jamais fatale —
+    #    l'application démarre et l'upload dira l'échec réel.
+    client2 = S3StorageClient(
+        endpoint_url="http://minio:9000",
+        bucket_name="seamtech-documents",
+        access_key_id=CLE_ACCES_FICTIVE,
+        secret_access_key=SECRET_FICTIF,
+    )
+    double2 = _ClientProvisoire(_erreur("AccessDenied"))
+    client2._s3 = double2
+    client2.ensure_bucket_exists()
+    assert double2.creations == [], "une erreur d'accès ne doit pas déclencher de création"
+    assert len(double2.versioning) == 1, "le versioning reste tenté (best-effort)"

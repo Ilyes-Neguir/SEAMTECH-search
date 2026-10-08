@@ -91,7 +91,7 @@ def fonds_reel() -> Iterator[dict[str, Any]]:
     fiche = extraire_fiche(PDF_7792, gabarits=charger_gabarits(index))
     id_fiche, action = ecrire_fiche(index, fiche)
     assert action == "creee", "le fonds réel ne doit contenir qu'une seule fiche"
-    valider_fiche(index, fiche.code, "test-fonds-reel")
+    valider_fiche(index, fiche.code, "test-fonds-reel", exiger_revision=False)
     try:
         yield {"index": index, "fiche": fiche, "id_fiche": id_fiche}
     finally:

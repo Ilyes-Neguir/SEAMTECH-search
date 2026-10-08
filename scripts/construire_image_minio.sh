@@ -35,12 +35,35 @@ IMAGE="quay.io/minio/minio:${MINIO_TAG}"
 TRAVAIL="$(mktemp -d)"
 trap 'rm -rf "$TRAVAIL"' EXIT
 
+# Certaines étapes dépendent du RÉSEAU (clones GitHub, images de base Docker
+# Hub) : un incident transitoire ne doit pas faire échouer un job de recette
+# (constaté au run 37640455508, étape « Build MinIO image from archived
+# sources » en échec — 2 minutes perdues, aucune cause lisible). On réessaie
+# donc un nombre BORNE de fois, en disant chaque tentative ; si toutes
+# échouent, le script échoue toujours (aucune vérification n'est relâchée :
+# l'image doit exister et passer le fumigène).
+_reessayer() {
+    local description="$1"
+    shift
+    local tentative
+    for tentative in 1 2 3; do
+        if "$@"; then
+            return 0
+        fi
+        echo "  tentative ${tentative}/3 échouée : ${description}" >&2
+        sleep $((tentative * 5))
+    done
+    return 1
+}
+
 echo "Clonage des sources officielles archivées (minio ${MINIO_TAG}, mc ${MC_TAG})…"
-git clone --depth 1 --branch "$MINIO_TAG" https://github.com/minio/minio "$TRAVAIL/minio"
-git clone --depth 1 --branch "$MC_TAG" https://github.com/minio/mc "$TRAVAIL/mc"
+_reessayer "clone minio" git clone --depth 1 --branch "$MINIO_TAG" https://github.com/minio/minio "$TRAVAIL/minio"
+_reessayer "clone mc" git clone --depth 1 --branch "$MC_TAG" https://github.com/minio/mc "$TRAVAIL/mc"
 
 echo "Construction de ${IMAGE}…"
-docker build -t "$IMAGE" -f - "$TRAVAIL" <<'DOCKERFILE'
+# Le Dockerfile est écrit DANS le dossier de travail (et non passé par stdin) :
+# un retry ne peut pas relire un heredoc déjà consommé.
+cat > "$TRAVAIL/Dockerfile" <<'DOCKERFILE'
 FROM golang:1.24-bookworm AS construction
 WORKDIR /src
 COPY minio/ /src/minio/
@@ -58,6 +81,7 @@ ENTRYPOINT ["/usr/bin/docker-entrypoint.sh"]
 VOLUME ["/data"]
 CMD ["minio"]
 DOCKERFILE
+_reessayer "docker build ${IMAGE}" docker build -t "$IMAGE" -f "$TRAVAIL/Dockerfile" "$TRAVAIL"
 
 # Fumigène : les binaires de l'image répondent et l'alias « local » (requis par
 # le healthcheck compose `mc ready local`) est bien présent. Aucun pipeline vers

@@ -93,19 +93,55 @@ def test_script_en_mode_strict() -> None:
 
 
 def test_ci_construit_l_image_avant_de_la_consommer() -> None:
-    """Les jobs integration, sauvegarde et recette-corpus-reel doivent bâtir
-    l'image avant de l'employer.
+    """Les jobs integration, sauvegarde, recette-corpus-reel et hors-ligne-reel
+    doivent bâtir l'image avant de l'employer.
 
     Sans cette étape, `docker compose up ... minio` et `docker run
     quay.io/minio/minio:...` retombent sur les registres morts (échec
-    `minio Error unauthorized...` constaté le 2026-09-24).
+    `minio Error unauthorized...` constaté le 2026-09-24). Le job
+    `hors-ligne-reel` s'est d'abord appuyé sur les binaires de dl.min.io : ils
+    répondent désormais 410 Gone (dépôt archivé), donc il passe par la MÊME
+    chaîne de reconstruction que les trois autres — sinon il échouerait avant
+    toute épreuve (constat E-39).
     """
     ci = _ci()
     appels = [m.start() for m in re.finditer(r"run: bash scripts/construire_image_minio\.sh", ci)]
-    assert len(appels) == 3, "le build MinIO doit être appelé par les 3 jobs concernés"
+    assert len(appels) == 4, "le build MinIO doit être appelé par les 4 jobs concernés"
     pos_integration = ci.index("- name: Start infra services")
     pos_sauvegarde = ci.index("- name: Start MinIO (bucket")
-    pos_recette = ci.index("- name: Start MinIO and create buckets")
+    # Le titre de l'étape de recette a changé avec le provisionnement des
+    # identités restreintes (2026-10-07) : elle démarre MinIO, le
+    # provisionnement crée buckets/identités à l'étape suivante.
+    pos_recette = ci.index("- name: Start MinIO (buckets et identités provisionnés à l'étape suivante)")
+    pos_hors_ligne = ci.index("- name: MinIO local (conteneur) + provisionnement des identités RESTREINTES")
     assert appels[0] < pos_integration, "build MinIO absent avant l'étape Start infra services"
     assert appels[1] < pos_sauvegarde, "build MinIO absent avant l'étape Start MinIO"
-    assert appels[2] < pos_recette, "build MinIO absent avant l'étape Start MinIO (recette-corpus-reel)"
+    # Ordre des jobs dans le workflow : integration, sauvegarde, hors-ligne-reel,
+    # recette-corpus-reel (le job hors-ligne a été inséré AVANT la recette).
+    assert appels[2] < pos_hors_ligne, "build MinIO absent avant l'étape MinIO du job hors-ligne-reel"
+    assert appels[3] < pos_recette, "build MinIO absent avant l'étape Start MinIO (recette-corpus-reel)"
+
+
+def test_les_etapes_reseau_sont_reessayees() -> None:
+    """Clones GitHub et `docker build` sont des dépendances RÉSEAU : réessai borné.
+
+    Constaté au run `37640455508` : le job `recette-corpus-reel` est tombé à
+    l'étape « Build MinIO image from archived sources » (clone/build), toutes les
+    étapes de recette restant sautées — un incident transitoire transformé en
+    échec de recette, sans cause lisible. Le script réessaie donc chaque étape
+    réseau au plus 3 fois ; si les 3 échouent, il ÉCHOUE (aucune exigence
+    relâchée : l'image doit exister et passer le fumigène ci-dessous).
+    """
+    script = _script()
+    assert "_reessayer()" in script, "l'aide de réessai borné doit exister"
+    assert "tentative=${tentative}/3" in script or "tentative ${tentative}/3" in script
+    for commande in ("clone minio", "clone mc", "docker build"):
+        motif = re.compile(rf"_reessayer \"[^\"]*{re.escape(commande)}")
+        assert motif.search(script), f"« {commande} » doit passer par _reessayer"
+    # Le Dockerfile est écrit dans un FICHIER : un heredoc déjà consommé ne
+    # pourrait pas alimenter une seconde tentative.
+    assert 'cat > "$TRAVAIL/Dockerfile" <<\'DOCKERFILE\'' in script
+    assert 'docker build -t "$IMAGE" -f "$TRAVAIL/Dockerfile" "$TRAVAIL"' in script
+    assert "-f - " not in script, "plus de Dockerfile par stdin (incompatible avec un réessai)"
+    # Le fumigène reste : binaires + alias « local » (healthcheck compose).
+    assert "alias local absent de l'image reconstruite" in script

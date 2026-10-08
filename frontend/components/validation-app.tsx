@@ -34,6 +34,36 @@ export interface LienDoublon {
   statut_autre: string
 }
 
+// Lot « concurrence » — réponse 409 du backend quand la fiche a changé depuis
+// l'ouverture : la correction n'a PAS été appliquée (le travail du collègue est
+// préservé). On affiche la valeur à jour et on propose de recharger.
+export interface ConflitRevision {
+  code?: string
+  message?: string
+  regle?: string
+  // Décision refusée (valider/rejeter/rouvrir) : le champ n'existe que là, et
+  // c'est lui qui distingue « correction NON appliquée » de « décision NON
+  // appliquée » dans le bandeau.
+  decision?: string
+  statut_actuel?: string
+  revision_envoyee?: number
+  revision_actuelle?: number
+  valeur_actuelle?: string | null
+  corrige_par?: string | null
+  corrige_le?: string | null
+}
+
+// ÉTAT COHÉRENT renvoyé par /api/fiches/{code}/etat : le statut, la révision et
+// les champs proviennent d'UN SEUL instantané en base. C'est la seule façon de
+// garantir que « la révision que j'affiche » est bien « celle des valeurs que
+// j'affiche ».
+export interface EtatFiche {
+  code: string
+  statut: string
+  revision: number
+  champs: ChampExtrait[]
+}
+
 function libelleDoublon(lien: LienDoublon): string {
   if (lien.type === "doublon_exact") return `Doublon exact de ${lien.code_autre}`
   return `Doublon probable de ${lien.code_autre}`
@@ -74,6 +104,35 @@ export function ValidationApp() {
   const [filtreGabarit, setFiltreGabarit] = useState("")
   const [codeActif, setCodeActif] = useState<string | null>(null)
   const [champs, setChamps] = useState<ChampExtrait[]>([])
+  // Les brouillons saisis dans les champs survivent au rafraîchissement des
+  // DONNÉES par React (même position dans l'arbre = même état). Sans cela,
+  // recharger la fiche laissait la saisie locale à l'écran alors que la valeur
+  // ENREGISTRÉE avait changé : l'opérateur croyait lire l'état du collègue et
+  // rejouait une correction périmée. On demande donc explicitement au tableau
+  // des champs d'oublier : un seul brouillon après un enregistrement réussi
+  // (les autres saisies non envoyées sont CONSERVÉES — ne jamais perdre de
+  // travail en silence), et tous les brouillons après « Recharger la fiche à
+  // jour » (là, l'opérateur demande explicitement l'état enregistré).
+  const [brouillonsOublies, setBrouillonsOublies] = useState<{ champ: string | null; jeton: number }>({
+    champ: null,
+    jeton: 0,
+  })
+  // Verrou optimiste (migration 021) : la révision de la fiche TELLE QU'ELLE A
+  // ÉTÉ LUE. Elle est renvoyée avec chaque correction : si un collègue a
+  // enregistré entre-temps, le serveur refuse (409) au lieu d'écraser son
+  // travail, et l'opérateur voit la valeur du collègue.
+  const [revisionFiche, setRevisionFiche] = useState<number | null>(null)
+  // Statut AFFICHÉ (issu du même instantané que la révision) : purement
+  // informatif pour l'écran, mais il prouve aux tests que l'état vient bien
+  // d'une lecture unique.
+  const [statutFiche, setStatutFiche] = useState<string | null>(null)
+  // Une lecture d'état est en cours : l'écran ne doit pas laisser croire que
+  // l'absence de révision est définitive, mais il ne doit SURTOUT pas écrire.
+  const [chargementEtat, setChargementEtat] = useState(false)
+  // Jeton de génération : une réponse en retard (fiche précédente) ne doit
+  // JAMAIS écraser l'état de la fiche affichée (constat n°2 de la revue).
+  const generation = useRef(0)
+  const [conflit, setConflit] = useState<ConflitRevision | null>(null)
   const [zone, setZone] = useState<ZoneASurligner | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const [erreur, setErreur] = useState<string | null>(null)
@@ -150,9 +209,38 @@ export function ValidationApp() {
     setChamps([])
     setPiecePdf(null)
     setZone(null)
-    jsonFetch<ChampExtrait[]>(`/api/fiches/${encodeURIComponent(codeActif)}/champs`)
-      .then(setChamps)
-      .catch((e) => setErreur(e instanceof Error ? e.message : "Champs indisponibles."))
+    setConflit(null)
+    setRevisionFiche(null)
+    setStatutFiche(null)
+    // UNE requête = UN instantané : statut, révision et champs sont lus
+    // ensemble. Deux requêtes séparées pouvaient apparier des valeurs périmées
+    // avec une révision fraîche — la correction suivante passait alors le
+    // verrou en s'appuyant sur un état que personne n'avait vu.
+    const jeton = ++generation.current
+    setChargementEtat(true)
+    jsonFetch<EtatFiche>(`/api/fiches/${encodeURIComponent(codeActif)}/etat`)
+      .then((etat) => {
+        if (generation.current !== jeton) return // réponse d'une fiche déjà quittée
+        setChamps(etat.champs)
+        setRevisionFiche(typeof etat.revision === "number" ? etat.revision : null)
+        setStatutFiche(etat.statut ?? null)
+        setChargementEtat(false)
+      })
+      .catch((e) => {
+        if (generation.current !== jeton) return
+        // FAIL CLOSED : sans révision, AUCUNE écriture n'est possible (le
+        // bouton « corriger » est désactivé et le backend refuserait en 428).
+        // L'écran le DIT au lieu de laisser écraser le travail d'un collègue.
+        setRevisionFiche(null)
+        setStatutFiche(null)
+        setChamps([])
+        setChargementEtat(false)
+        setErreur(
+          e instanceof Error
+            ? `État de la fiche indisponible (${e.message}) — correction et décision bloquées tant que la révision n'est pas relue.`
+            : "État de la fiche indisponible — correction et décision bloquées.",
+        )
+      })
     jsonFetch<PiecesDeFiche>(`/api/fiches/${encodeURIComponent(codeActif)}/pieces`)
       .then((corps) => setPiecePdf(corps.pieces.find((piece) => piece.is_primary_pdf) ?? corps.pieces.find((piece) => piece.kind === "pdf") ?? null))
       .catch(() => setPiecePdf(null))
@@ -160,34 +248,110 @@ export function ValidationApp() {
 
   async function corriger(champ: ChampExtrait, valeur: string) {
     if (!codeActif) return
+    if (revisionFiche === null) {
+      // FAIL CLOSED : la saisie reste à l'écran (rien n'est perdu), mais
+      // l'écriture est refusée ICI — et le serait par le backend (428). La
+      // protection anti-écrasement ne peut pas disparaître parce qu'une requête
+      // de révision a échoué.
+      setErreur(
+        "Correction bloquée : la révision de la fiche n'a pas été lue. Utilisez « Recharger la fiche à jour » — la protection anti-écrasement ne se désactive pas depuis un poste.",
+      )
+      return
+    }
     setOccupe(true)
     setErreur(null)
+    setConflit(null)
     try {
-      await jsonFetch(`/api/fiches/${encodeURIComponent(codeActif)}/corriger`, {
+      const reponse = await jsonFetch<{ revision?: number }>(`/api/fiches/${encodeURIComponent(codeActif)}/corriger`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ champ: champ.champ, valeur, rang: champ.rang }),
+        body: JSON.stringify({ champ: champ.champ, valeur, rang: champ.rang, revision: revisionFiche }),
       })
+      if (typeof reponse.revision === "number") setRevisionFiche(reponse.revision)
       setMessage(`Champ « ${champ.champ} » corrigé — verrou RG11 armé (une valeur corrigée n'est plus écrasée).`)
       setChamps(await jsonFetch(`/api/fiches/${encodeURIComponent(codeActif)}/champs`))
+      // Relit l'état enregistré : le brouillon de CE champ n'a plus de raison
+      // d'être (les autres saisies non envoyées sont conservées).
+      setBrouillonsOublies((o) => ({ champ: `${champ.champ}#${champ.rang ?? 0}`, jeton: o.jeton + 1 }))
     } catch (e) {
-      setErreur(e instanceof Error ? e.message : "Correction refusée.")
+      const err = e as Error & { status?: number; body?: { detail?: ConflitRevision | string } }
+      const detail = err.body?.detail
+      if (err.status === 409 && detail && typeof detail === "object") {
+        // Concurrence : le collègue a enregistré. On n'écrit RIEN, on montre son
+        // travail, et on recharge la fiche pour repartir d'un état juste.
+        setConflit(detail)
+        setErreur(null)
+      } else {
+        setErreur(e instanceof Error ? e.message : "Correction refusée.")
+      }
     } finally {
       setOccupe(false)
     }
   }
 
+  async function rechargerFiche() {
+    if (!codeActif) return
+    // Recharger invalide toute lecture en vol de la même fiche : l'état affiché
+    // doit être celui que CE rechargement a lu, jamais celui d'une réponse lente
+    // arrivée après coup.
+    const jeton = ++generation.current
+    setConflit(null)
+    try {
+      const etat = await jsonFetch<EtatFiche>(`/api/fiches/${encodeURIComponent(codeActif)}/etat`)
+      if (generation.current !== jeton) return
+      setChamps(etat.champs)
+      setRevisionFiche(etat.revision)
+      setStatutFiche(etat.statut ?? null)
+      // Rechargement EXPLICITE : tous les brouillons sont oubliés, l'écran
+      // affiche l'état réellement enregistré (voir `brouillonsOublies`).
+      setBrouillonsOublies((o) => ({ champ: null, jeton: o.jeton + 1 }))
+      setErreur(null)
+      setMessage(`Fiche ${codeActif} rechargée à jour (révision ${etat.revision}).`)
+    } catch (e) {
+      // FAIL CLOSED même ici : un rechargement raté laisse l'écran SANS état
+      // lisible, donc sans droit d'écrire. Conserver l'ancienne révision
+      // afficherait des valeurs peut-être périmées avec un jeton valide.
+      if (generation.current === jeton) {
+        setChamps([])
+        setRevisionFiche(null)
+        setStatutFiche(null)
+      }
+      setErreur(
+        e instanceof Error
+          ? `Rechargement impossible (${e.message}) — correction et décision restent bloquées.`
+          : "Rechargement impossible — correction et décision restent bloquées.",
+      )
+    }
+  }
+
   async function action(actionName: "valider" | "rejeter" | "rouvrir", extra: Record<string, unknown> = {}) {
     if (!codeActif) return
+    if (revisionFiche === null) {
+      // FAIL CLOSED : une décision (valider/rejeter/rouvrir) engage la
+      // fabrication. Sans la révision relue, elle porterait sur un état
+      // inconnu — le backend la refuse (428) et l'écran l'annonce.
+      setErreur(
+        "Décision bloquée : la révision de la fiche n'a pas été lue. Utilisez « Recharger la fiche à jour » puis relisez la fiche avant de décider.",
+      )
+      return
+    }
+    const revisionDecision = revisionFiche
     setOccupe(true)
     setErreur(null)
+    setConflit(null)
     try {
       await jsonFetch(`/api/fiches/${encodeURIComponent(codeActif)}/${actionName}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...extra }),
+        // La révision voyagée est CELLE QUI EST AFFICHÉE : le backend refuse la
+        // décision (409) si la fiche a changé depuis — l'opérateur ne peut donc
+        // jamais approuver une valeur qu'il n'a pas relue.
+        body: JSON.stringify({ ...extra, revision: revisionDecision }),
       })
       setMessage(`Fiche ${codeActif} : ${actionName} enregistré au journal.`)
+      // La décision a fait avancer la révision : l'état local devient périmé.
+      setRevisionFiche(null)
+      setStatutFiche(null)
       if (debutFiche.current?.code === codeActif) {
         setTempsFiches((mesures) => [...mesures, Math.max(0, Date.now() - debutFiche.current!.debut)])
       }
@@ -195,7 +359,16 @@ export function ValidationApp() {
       setCodeActif(null)
       setChamps([])
     } catch (e) {
-      setErreur(e instanceof Error ? e.message : `Action ${actionName} refusée.`)
+      const err = e as Error & { status?: number; body?: { detail?: ConflitRevision | string } }
+      const detail = err.body?.detail
+      if (err.status === 409 && detail && typeof detail === "object") {
+        // DÉCISION refusée : rien n'a été appliqué ni tracé. On affiche l'état
+        // réel et on EXIGE un rechargement + une nouvelle décision explicite.
+        setConflit(detail)
+        setErreur(null)
+      } else {
+        setErreur(e instanceof Error ? e.message : `Action ${actionName} refusée.`)
+      }
     } finally {
       setOccupe(false)
     }
@@ -205,12 +378,29 @@ export function ValidationApp() {
     setOccupe(true)
     setErreur(null)
     try {
-      const corps = await jsonFetch<{ nb_validees: number; nb_ignorees: number }>("/api/validation/lot", {
+      // Chaque fiche part avec la RÉVISION AFFICHÉE dans la file : une fiche
+      // corrigée depuis la sélection est IGNORÉE avec sa raison par le backend
+      // (jamais validée sur un contenu que personne n'a relu).
+      const revisions: Record<string, number> = {}
+      for (const entree of file) {
+        if (selection.has(entree.code) && typeof entree.revision === "number") {
+          revisions[entree.code] = entree.revision
+        }
+      }
+      const corps = await jsonFetch<{
+        nb_validees: number
+        nb_ignorees: number
+        ignorees?: Array<{ code: string; raison: string }>
+      }>("/api/validation/lot", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ codes: [...selection], acquittement_humain: acquittement }),
+        body: JSON.stringify({ codes: [...selection], acquittement_humain: acquittement, revisions }),
       })
-      setMessage(`Validation en lot : ${corps.nb_validees} validée(s), ${corps.nb_ignorees} ignorée(s).`)
+      const raisons = (corps.ignorees ?? []).map((ignoree) => `${ignoree.code} : ${ignoree.raison}`).join(" · ")
+      setMessage(
+        `Validation en lot : ${corps.nb_validees} validée(s), ${corps.nb_ignorees} ignorée(s).` +
+          (raisons ? ` Ignorées — ${raisons}` : ""),
+      )
       setSelection(new Set())
       setAcquittement(false)
       await chargerFile()
@@ -317,7 +507,18 @@ export function ValidationApp() {
   }
 
   return (
-    <div className="flex h-[calc(100vh-3.5rem)] min-h-0 flex-col" data-testid="validation-app">
+    <div
+      className="flex h-[calc(100vh-3.5rem)] min-h-0 flex-col"
+      data-testid="validation-app"
+      /* État dont dépend la JUSTESSE (verrou optimiste) rendu observable :
+         attributs non visuels, aucune modification du design. Un test ou un
+         dépannage peut ainsi vérifier que l'écran a bien chargé la révision
+         AVANT d'enregistrer, au lieu de supposer que c'est le cas. */
+      data-fiche={codeActif ?? ""}
+      data-revision={revisionFiche ?? ""}
+      data-statut={statutFiche ?? ""}
+      data-chargement-etat={chargementEtat ? "1" : "0"}
+    >
       {(message || erreur) && (
         <div
           className={cn(
@@ -330,6 +531,88 @@ export function ValidationApp() {
           <button type="button" onClick={() => { setMessage(null); setErreur(null) }}>
             <CircleX className="size-3.5" />
           </button>
+        </div>
+      )}
+      {codeActif && revisionFiche === null && !chargementEtat && (
+        /* FAIL CLOSED rendu VISIBLE : sans révision, l'écran n'écrit rien. On
+           explique pourquoi et on donne le geste de reprise — plutôt que de
+           laisser croire que la correction est protégée. */
+        <div
+          className="flex items-start gap-2 border-b border-destructive/40 bg-destructive/10 px-4 py-2 text-xs text-destructive"
+          data-testid="revision-indisponible"
+          role="alert"
+        >
+          <Lock className="mt-0.5 size-3.5 shrink-0" />
+          <span className="flex-1">
+            <strong>Révision non lue — correction et décision bloquées.</strong>{" "}
+            L&apos;état de la fiche doit être relu avec sa révision avant toute écriture : c&apos;est ce
+            qui empêche d&apos;écraser le travail d&apos;un collègue.
+          </span>
+          <button
+            type="button"
+            onClick={rechargerFiche}
+            className="flex items-center gap-1 rounded border border-destructive/50 px-2 py-0.5 font-semibold"
+            data-testid="bouton-recharger-revision"
+          >
+            <RefreshCw className="size-3" /> Recharger la fiche à jour
+          </button>
+        </div>
+      )}
+      {conflit && (
+        /* Concurrence (409) : le collègue a enregistré d'abord. Aucune écriture
+           n'a été appliquée — on le dit, on montre SA valeur, et on laisse
+           recharger. Aucun « succès » trompeur, aucun travail perdu en silence. */
+        <div
+          className="flex flex-col gap-1 border-b border-amber-500/40 bg-amber-500/10 px-4 py-2 text-xs text-amber-200"
+          data-testid="conflit-revision"
+          role="alert"
+        >
+          <div className="flex items-start gap-2">
+            <Lock className="mt-0.5 size-3.5 shrink-0" />
+            <span className="flex-1">
+              <strong>
+                Conflit de révision — {conflit.decision ? "décision" : "correction"} NON appliquée
+                {conflit.decision ? ` (${conflit.decision})` : ""}.
+              </strong>{" "}
+              {conflit.message ??
+                "La fiche a été modifiée par un autre poste entre l'ouverture et l'enregistrement."}
+            </span>
+            <button type="button" onClick={() => setConflit(null)} aria-label="Masquer le conflit">
+              <CircleX className="size-3.5" />
+            </button>
+          </div>
+          <dl className="ml-5 grid grid-cols-2 gap-x-3 gap-y-0.5 font-mono text-[11px]">
+            {conflit.decision ? (
+              <>
+                <dt>statut actuel</dt>
+                <dd data-testid="conflit-statut">{conflit.statut_actuel ?? "—"}</dd>
+              </>
+            ) : (
+              <>
+                <dt>valeur du collègue</dt>
+                <dd data-testid="conflit-valeur">{conflit.valeur_actuelle ?? "—"}</dd>
+              </>
+            )}
+            <dt>corrigée par</dt>
+            <dd data-testid="conflit-auteur">{conflit.corrige_par ?? "—"}</dd>
+            <dt>le</dt>
+            <dd data-testid="conflit-date">{conflit.corrige_le ?? "—"}</dd>
+            <dt>révision</dt>
+            <dd data-testid="conflit-revisions">
+              {conflit.revision_envoyee ?? "?"} → {conflit.revision_actuelle ?? "?"}
+            </dd>
+          </dl>
+          <div className="ml-5">
+            <button
+              type="button"
+              onClick={rechargerFiche}
+              disabled={occupe}
+              className="flex items-center gap-1 rounded border border-amber-400/50 px-2 py-0.5 font-semibold disabled:opacity-40"
+              data-testid="bouton-recharger-fiche"
+            >
+              <RefreshCw className="size-3" /> Recharger la fiche à jour
+            </button>
+          </div>
         </div>
       )}
       {aideRaccourcis && (
@@ -487,7 +770,16 @@ export function ValidationApp() {
                   <Undo2 className="size-3.5" /> Rouvrir
                 </button>
               </header>
-              <ChampsFiche champs={champs} onCorriger={corriger} onVoirZone={setZone} />
+              <ChampsFiche
+                // Une clé par FICHE : les brouillons d'une fiche ne doivent
+                // jamais se retrouver sur une autre (mêmes noms de champs).
+                key={codeActif ?? ""}
+                champs={champs}
+                onCorriger={corriger}
+                onVoirZone={setZone}
+                brouillonsOublies={brouillonsOublies}
+                correctionAutorisee={revisionFiche !== null}
+              />
             </>
           )}
         </section>
@@ -505,12 +797,33 @@ function ChampsFiche({
   champs,
   onCorriger,
   onVoirZone,
+  brouillonsOublies,
+  correctionAutorisee,
 }: {
   champs: ChampExtrait[]
   onCorriger: (champ: ChampExtrait, valeur: string) => void
   onVoirZone: (zone: ZoneASurligner | null) => void
+  brouillonsOublies: { champ: string | null; jeton: number }
+  // Sans révision lue, l'écran N'ÉCRIT PAS : le bouton est désactivé (et le
+  // gestionnaire refuserait de toute façon — double barrière, jamais un
+  // « succès » trompeur).
+  correctionAutorisee: boolean
 }) {
   const [brouillons, setBrouillons] = useState<Record<string, string>>({})
+  // Oubli DEMANDÉ par le parent : `champ === null` = rechargement complet
+  // (tous les brouillons), sinon un seul champ (`nom#rang`). Le jeton force
+  // l'effet même si la cible est identique deux fois de suite.
+  useEffect(() => {
+    setBrouillons((actuels) => {
+      if (brouillonsOublies.champ === null) {
+        return Object.keys(actuels).length === 0 ? actuels : {}
+      }
+      if (!(brouillonsOublies.champ in actuels)) return actuels
+      const suite = { ...actuels }
+      delete suite[brouillonsOublies.champ]
+      return suite
+    })
+  }, [brouillonsOublies])
   return (
     <div className="divide-y divide-border/60">
       {champs.map((champ) => {
@@ -536,7 +849,12 @@ function ChampsFiche({
                 <button
                   type="button"
                   onClick={() => onCorriger(champ, brouillon)}
-                  className="rounded bg-violet-600 px-1.5 py-0.5 font-semibold text-white"
+                  disabled={!correctionAutorisee}
+                  title={correctionAutorisee ? "" : "Révision non lue : rechargez la fiche avant de corriger"}
+                  className={cn(
+                    "rounded bg-violet-600 px-1.5 py-0.5 font-semibold text-white",
+                    !correctionAutorisee && "cursor-not-allowed opacity-40",
+                  )}
                   data-testid="bouton-corriger"
                 >
                   corriger

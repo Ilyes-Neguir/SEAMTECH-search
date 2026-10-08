@@ -218,16 +218,24 @@ def test_upload_artifacts_branches(tmp_path: Path):
     f2 = tmp_path / "b.pdf"
     f2.write_bytes(b"y")
     cfg3 = make_cfg(tmp_path, s3=True)
-    with patch("seamtech_search.storage.S3StorageClient.upload_file", return_value="id/hash/b.pdf"):
-        with patch("seamtech_search.storage.S3StorageClient.object_exists", return_value=True):
-            batch3 = upload_artifacts_to_storage("folder", [f2], cfg3, import_id="id", source_root=tmp_path)
-            assert batch3.status == "uploaded"
-            assert batch3.all_verified is True
+    from seamtech_search.storage import S3StorageClient
+    from tests.s3_en_memoire import S3EnMemoire
 
-    with patch("seamtech_search.storage.S3StorageClient.upload_file", side_effect=[Exception("fail"), "id/hash/b.pdf"]):
-        with patch("seamtech_search.storage.S3StorageClient.object_exists", return_value=True):
-            batch4 = upload_artifacts_to_storage("folder", [f1, f2], cfg3, import_id="id", source_root=tmp_path)
-            assert batch4.status in ("partial", "failed")
+    magasin = S3EnMemoire()
+    with patch.object(S3StorageClient, "_get_client", lambda _i, probe_timeout=None: magasin):
+        with patch.object(S3StorageClient, "ensure_bucket_exists", lambda _i: True):
+            with patch.object(S3StorageClient, "first_free_key", lambda _i, cle: cle):
+                batch3 = upload_artifacts_to_storage("folder", [f2], cfg3, import_id="id", source_root=tmp_path)
+                assert batch3.status == "uploaded"
+                assert batch3.all_verified is True  # octets relus et empreinte recalculée
+
+                with patch.object(
+                    S3StorageClient, "upload_file", side_effect=[Exception("fail"), "id/hash/b.pdf"]
+                ):
+                    batch4 = upload_artifacts_to_storage(
+                        "folder", [f1, f2], cfg3, import_id="id", source_root=tmp_path
+                    )
+                assert batch4.status in ("partial", "failed")
 
     with patch("seamtech_search.storage.S3StorageClient.upload_file", side_effect=Exception("fail")):
         batch5 = upload_artifacts_to_storage("folder", [f1], cfg3, import_id="id", source_root=tmp_path)

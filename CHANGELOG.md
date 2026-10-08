@@ -1,5 +1,46 @@
 # Changelog
 
+## Unreleased — Passe F1–F4 de la deuxième revue indépendante (`arena/7da80c2f-seamtech-search`, PR #35)
+
+- **F1 — échec fermé** : la correction et les trois décisions exigent une
+  révision LUE (`require_revision=True` par défaut ; refus **428**) ; le repli
+  pour anciens clients n'existe que sous `SEAMTECH_REQUIRE_REVISION=false`,
+  journalisé, et ne s'applique jamais à l'écran d'atelier (qui envoie toujours
+  la révision). L'écran bloque et l'annonce (`revision-indisponible`).
+- **F2 — instantané cohérent** : route `GET /fiches/{code}/etat` (champs +
+  révision + statut dans UNE requête SQL), proxy front, jeton de génération qui
+  jette les réponses tardives d'une fiche déjà quittée.
+- **F3 — décision liée à la révision revue** : compare-and-swap `statut +
+  révision` pour valider / rejeter / rouvrir, **409 `conflit_decision`** sans
+  écriture ni ligne d'audit ; validation en lot : fiche modifiée **ignorée avec
+  raison** ; relecture obligatoire après conflit.
+- **F4 — portée du hors ligne corrigée** : `scripts/verifier_hors_ligne.py`
+  relabellisé (diagnostic du processus Python) et **preuve pleine pile** en CI
+  (`hors-ligne-reel`) : pile web + worker séparé + front sous blocage
+  `iptables` par uid, contrôle négatif obligatoire, `REJECT = 0` —
+  **exécutée et verte** (run push `37668475085`), plus un garde-fou navigateur
+  (aucune ressource hors boucle locale).
+- **Défauts trouvés par ces exécutions** (E-37 → E-46) : deux décorateurs sur
+  une même route, test d'attribution validant sans révision, MinIO `410 Gone`,
+  scénarios dépendants de l'ordre, assertion ambiguë sur le bandeau, clic sur un
+  bouton qui n'existe qu'en état d'échec, fixture simulant l'ancien endpoint
+  `/champs`, quatre défauts du job hors ligne (`secure_path`, traversée du
+  dépôt, `next` lancé par `node`, sondes sans jeton), deux défauts de la spec
+  hors ligne (identifiant UUID attendu entier, référence extraite cherchée côté
+  fiches).
+- **Limite connue, ouverte** : `seamtech_search index --rebuild` est
+  inutilisable sur PostgreSQL (E-40 — `DROP TABLE documents` refusé, la
+  restauration masque l'erreur initiale) ; aucune donnée perdue, la commande
+  fonctionne sur SQLite.
+- Tests de régression : `tests/test_revision_optimiste.py` (12, dont
+  `test_sans_revision_la_correction_est_refusee_ferme`,
+  `test_ecriture_sans_revision_seulement_sous_option_explicite`,
+  `test_valider_un_ecran_perime_est_refuse_sans_aucune_trace`,
+  `test_etat_fiche_lit_champs_et_revision_dans_le_meme_instantane`),
+  `tests/test_validation_workflow.py` (17), `frontend/e2e/concurrence.spec.ts`
+  (7 scénarios navigateur, dont 3 neufs), `frontend/e2e/hors-ligne.spec.ts`
+  (1 parcours pleine pile), `tests/test_selection_ci.py` (16 garde-fous).
+
 ## 2026-09-30 — Mission « ça marche sur ma machine » : recherche par dimension (Phase 1), recette locale (Phase 2), préparation démo (Phase 3) (PR #34, en cours)
 
 - **Phase 1 — recherche par dimension (`6,60`)** : migration `019_recherche_dimension`
@@ -18,7 +59,7 @@
 - **Phase 2 — recette locale automatisée** : `scripts/recette_locale.ps1` (Windows,
   chemins espaces/accents) + `scripts/recette_locale.sh` (Linux/CI) orchestrent
   `scripts/recette_verif.py` (vérificateur fonctionnel UNIQUE exécuté dans le
-  conteneur web) : prérequis, ports libres, `.env` (7 secrets aléatoires locaux,
+  conteneur web) : prérequis, ports libres, `.env (secrets aléatoires locaux,
   jamais dans Git), image MinIO locale (registres morts), `compose up -d --build`,
   santé `/live /ready /health` avec timeout, compte nominatif, dépôt des 7 ZIP
   et/ou chemins argument (RG13 : sources lues, jamais modifiées), suivi `/lots`,
@@ -29,7 +70,7 @@
   PASS/FAIL ligne par contrôle + code sortie non nul sur FAIL. **Correctifs
   parcours local** : `Dockerfile` installe `tesseract-ocr`, `tesseract-ocr-fra`
   et `poppler-utils` (l'OCR métier appelait `tesseract -l fra` absent de l'image,
-  vérifié au build) ; `ensure_postgres.ps1` génère les 7 secrets exigés par le
+  vérifié au build) ; `ensure_postgres.ps1` génère les secrets exigés par le
   compose ET construit l'image MinIO au premier démarrage (machine vierge).
   CI : job dédié `recette-locale` exécute la recette de bout en bout
   (annotations `::error` + artefact du rapport).

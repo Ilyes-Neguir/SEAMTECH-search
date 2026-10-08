@@ -30,8 +30,11 @@ chemins des dossiers.
    rendue en image EST océrisée réellement par Tesseract (fra).
 7. Recherches par mots-clés (référence, client, bateau, type, matière,
    accents, multi-termes) — termes tirés dynamiquement de la base.
-8. Ouverture d'un PDF depuis un résultat : URL présignée RÉELLE contre
-   MinIO (HTTP 302, Location, ExpiresIn=900 s, contenu identique).
+8. Ouverture d'un PDF depuis un résultat : le document se TÉLÉCHARGE depuis
+   un autre poste de l'atelier (HTTP 200 servi par l'API — jamais de
+   redirection vers l'endpoint interne MinIO : écart E-28), contenu identique
+   au fichier source (SHA-256). Un endpoint S3 PUBLIC déclaré peut produire un
+   302, mais seulement vers cet hôte-là.
 9. Téléchargement d'un rapport PDF d'import.
 10. Sauvegarde puis restauration de la base PostgreSQL RÉELLE dans une base
     neuve ; fiches, object_key, recherche et ouverture PDF revérifiés.
@@ -87,8 +90,22 @@ REDIS_URL = os.environ.get("SEAMTECH_REDIS_URL", "")
 S3_ENDPOINT = os.environ.get("SEAMTECH_S3_ENDPOINT_URL", "http://127.0.0.1:9000")
 S3_BUCKET = os.environ.get("SEAMTECH_S3_BUCKET", "seamtech-documents")
 S3_BACKUP_BUCKET = os.environ.get("SEAMTECH_RECETTE_BUCKET_SAUVEGARDE", "seamtech-backups")
-S3_ACCESS_KEY = os.environ.get("SEAMTECH_S3_ACCESS_KEY", "minioadmin")
-S3_SECRET_KEY = os.environ.get("SEAMTECH_S3_SECRET_KEY", "minioadmin123")
+#: Identité APPLICATIVE (bucket des documents) — aucune valeur de repli : la
+#: recette tourne avec les identités RÉELLEMENT restreintes du déploiement
+#: (revue du 2026-10-07). Un repli sur ``minioadmin`` aurait au contraire
+#: masqué toute erreur de droits en donnant l'administrateur du stockage.
+S3_ACCESS_KEY = os.environ.get("SEAMTECH_S3_ACCESS_KEY", "")
+S3_SECRET_KEY = os.environ.get("SEAMTECH_S3_SECRET_KEY", "")
+
+#: Identité de SAUVEGARDE (bucket hors-site) : distincte de l'applicative, et
+#: SANS repli sur celle-ci. Défaut trouvé par la CI du run 37618670336 : la
+#: sauvegarde était écrite dans ``seamtech-backups`` avec l'identité
+#: applicative — un ALLOW qui n'existait que parce que l'identité en place
+#: était encore l'administrateur MinIO. Avec une identité réellement
+#: restreinte, ce montage échoue ; c'est le montage qu'il faut corriger, pas
+#: le test.
+S3_BACKUP_ACCESS_KEY = os.environ.get("SEAMTECH_BACKUP_ACCESS_KEY", "")
+S3_BACKUP_SECRET_KEY = os.environ.get("SEAMTECH_BACKUP_SECRET_KEY", "")
 JETON = "recette-corpus-jeton"
 
 #: Racine du dépôt (les 7 ZIP originaux y sont commités par le commanditaire).
@@ -124,14 +141,35 @@ def _sans_accents(texte: str) -> str:
 def _client_s3(bucket: str | None = None):
     """Client stockage du PROJET (S3StorageClient) — pas un client boto3 nu :
     la sauvegarde appelle ``upload_file(..., avoid_overwrite=True)``, paramètre
-    du wrapper seul (le client brut lève TypeError)."""
+    du wrapper seul (le client brut lève TypeError).
+
+    L'identité est choisie d'après le BUCKET visé : ``seamtech-backups`` se
+    manipule avec l'identité de sauvegarde, tout le reste avec l'identité
+    applicative. C'est la séparation réelle des privilèges — l'application
+    n'a aucun droit sur le bucket de sauvegarde, et la preuve de l'aller-retour
+    hors-site doit donc utiliser l'identité prévue pour lui.
+    """
     from seamtech_search.storage import S3StorageClient
 
+    cible = bucket or S3_BUCKET
+    if cible == S3_BACKUP_BUCKET and cible != S3_BUCKET:
+        # Aucun repli silencieux sur l'identité applicative : l'application
+        # n'a AUCUN droit sur ce bucket, l'erreur doit donc être dite ici.
+        if not S3_BACKUP_ACCESS_KEY or not S3_BACKUP_SECRET_KEY:
+            raise RuntimeError(
+                "recette : le bucket de sauvegarde "
+                f"{S3_BACKUP_BUCKET!r} exige SEAMTECH_BACKUP_ACCESS_KEY et "
+                "SEAMTECH_BACKUP_SECRET_KEY (identité dédiée ; l'identité "
+                "applicative n'a aucun droit sur ce bucket)."
+            )
+        cle, secret = S3_BACKUP_ACCESS_KEY, S3_BACKUP_SECRET_KEY
+    else:
+        cle, secret = S3_ACCESS_KEY, S3_SECRET_KEY
     return S3StorageClient(
         endpoint_url=S3_ENDPOINT,
-        bucket_name=bucket or S3_BUCKET,
-        access_key_id=S3_ACCESS_KEY,
-        secret_access_key=S3_SECRET_KEY,
+        bucket_name=cible,
+        access_key_id=cle,
+        secret_access_key=secret,
     )
 
 
@@ -287,6 +325,8 @@ def test_03_services_et_migrations_018_base_neuve(app_client) -> None:
         "017_ocr_etage3",
         "018_recherche_a_valider",
         "019_recherche_dimension",
+        "020_file_durable",
+        "021_revision_fiche",
     }
     manquantes = attendues - versions
     assert not manquantes, f"migrations non appliquées : {sorted(manquantes)}"
@@ -710,36 +750,35 @@ def test_07_recherches_par_mots_cles(app_client) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 8. Ouverture d'un PDF : URL présignée RÉELLE (302, Location, 900 s).
+# 8. Ouverture d'un PDF : téléchargeable depuis un AUTRE poste (pas de
+#    redirection vers l'endpoint interne du stockage).
 # ---------------------------------------------------------------------------
 
 
-def test_08_ouverture_pdf_url_presignee_reelle(app_client) -> None:
-    """Le PDF s'ouvre par redirection 302 vers une URL présignée MinIO vivante."""
+def test_08_ouverture_pdf_telechargeable_sans_redirection_interne(app_client) -> None:
+    """Le PDF s'ouvre par l'API, avec les octets exacts et sans redirection.
+
+    Historique : cette étape exigeait une redirection 302 vers une URL présignée
+    MinIO. C'était une faute de conception, pas une preuve : l'endpoint interne
+    (``http://minio:9000`` dans le déploiement documenté) n'est résolvable que
+    dans le réseau des conteneurs — un poste de l'atelier obtenait
+    « Temporary failure in name resolution ». Le contrat est désormais : les
+    octets passent par l'API authentifiée, donc depuis n'importe quel poste.
+    La redirection présignée reste possible, mais seulement vers un endpoint
+    PUBLIC déclaré (``SEAMTECH_S3_PUBLIC_ENDPOINT_URL``), ce que le test ne
+    configure pas ici — c'est exactement le cas par défaut documenté.
+    """
     chemin_pdf = RECETTE["refs"]["REF-001"]["technique"]
     reponse = app_client.post("/open", params={"path": chemin_pdf})
-    assert reponse.status_code == 302, (
-        f"ouverture : HTTP {reponse.status_code} (attendu 302 présigné)"
+    assert reponse.status_code == 200, (
+        f"ouverture : HTTP {reponse.status_code} (attendu 200, service par l'API)"
     )
-    location = reponse.headers.get("location")
-    assert location, "redirection 302 sans en-tête Location"
-
-    analyse = urllib.parse.urlparse(location)
-    parametres = urllib.parse.parse_qs(analyse.query)
-    expiration = parametres.get("X-Amz-Expires", [None])[0]
-    assert expiration is not None, "URL présignée sans paramètre X-Amz-Expires"
-    assert 0 < int(expiration) <= EXPIRATION_PRESIGNEE_S, (
-        f"expiration {expiration} s hors borne (attendu ≤ {EXPIRATION_PRESIGNEE_S} s)"
+    assert "location" not in {cle.lower() for cle in reponse.headers}, (
+        "aucune redirection ne doit être émise vers l'endpoint interne"
     )
-    hote_attendu = urllib.parse.urlparse(S3_ENDPOINT).netloc
-    assert analyse.netloc == hote_attendu, "l'URL présignée ne pointe pas vers le S3 configuré"
-
-    # Téléchargement RÉEL de l'URL présignée (HTTP, hors TestClient).
-    with urllib.request.urlopen(location, timeout=60) as telechargement:
-        assert telechargement.status == 200
-        contenu = telechargement.read()
+    contenu = reponse.content
     assert hashlib.sha256(contenu).hexdigest() == _empreinte(Path(chemin_pdf)), (
-        "le contenu téléchargé via l'URL présignée diffère du fichier source (SHA-256)"
+        "le contenu téléchargé par l'API diffère du fichier source (SHA-256)"
     )
 
 
@@ -858,29 +897,62 @@ def test_10_sauvegarde_restauration_base_neuve(
         "de confiance sur la base restaurée"
     )
 
-    # 10.6 OUVERTURE PDF depuis la base restaurée : 302 présigné, contenu identique.
+    # 10.6 OUVERTURE PDF depuis la base restaurée : le document se TÉLÉCHARGE,
+    # depuis n'importe quel poste de l'atelier.
+    # Contrat 2026-10-07 (écart E-28) : par défaut l'API sert les octets (200)
+    # et n'émet AUCUNE redirection — un 302 vers l'endpoint interne du stockage
+    # (``http://minio:9000``) est injoignable hors du réseau des conteneurs, ce
+    # qui était exactement la panne constatée. La redirection n'est admise que
+    # vers un endpoint PUBLIC déclaré (SEAMTECH_S3_PUBLIC_ENDPOINT_URL), vérifié
+    # ci-dessous en 10.6 bis.
     # L'app restaurée doit garder les MÊMES racines que la session d'origine :
     # le document technique de REF-001 est la copie STAGÉE (répertoire de
     # travail de la session) — sous d'autres racines, /open répondrait 403
     # « outside configured search roots ».
     assert RECETTE.get("travail"), "le répertoire de travail de la session n'a pas été mémorisé"
-    app = create_app(_config_recette(URL_BASE_RESTAUREE, Path(RECETTE["travail"])))
+    travail = Path(RECETTE["travail"])
     chemin_pdf = RECETTE["refs"]["REF-001"]["technique"]
+    empreinte_source = _empreinte(Path(chemin_pdf))
+    app = create_app(_config_recette(URL_BASE_RESTAUREE, travail))
     with TestClient(app, follow_redirects=False) as client_rest:
         reponse = client_rest.post(
             "/open", params={"path": chemin_pdf}, headers={"X-SEAMTECH-TOKEN": JETON}
         )
-        assert reponse.status_code == 302, (
-            f"ouverture sur base restaurée : HTTP {reponse.status_code}"
+        assert reponse.status_code == 200, (
+            f"ouverture sur base restaurée : HTTP {reponse.status_code} "
+            "(attendu 200, octets servis par l'API)"
         )
-        location = reponse.headers.get("location")
-        assert location, "302 sans Location sur base restaurée"
-        with urllib.request.urlopen(location, timeout=60) as telechargement:
-            assert telechargement.status == 200
-            contenu = telechargement.read()
-    assert hashlib.sha256(contenu).hexdigest() == _empreinte(Path(chemin_pdf)), (
+        assert "location" not in {cle.lower() for cle in reponse.headers}, (
+            "redirection émise vers l'endpoint interne du stockage : le poste de "
+            "l'atelier ne peut pas la résoudre"
+        )
+        contenu = reponse.content
+    assert hashlib.sha256(contenu).hexdigest() == empreinte_source, (
         "contenu PDF différent après restauration (SHA-256)"
     )
+
+    # 10.6 bis Redirection présignée : autorisée, mais UNIQUEMENT vers l'endpoint
+    # public déclaré — jamais vers l'endpoint interne du réseau des conteneurs.
+    url_publique = "https://minio.public.invalide:9000"
+    config_publique = _config_recette(URL_BASE_RESTAUREE, travail).model_copy(
+        update={"s3_public_endpoint_url": url_publique}
+    )
+    with TestClient(create_app(config_publique), follow_redirects=False) as client_pub:
+        reponse = client_pub.post(
+            "/open", params={"path": chemin_pdf}, headers={"X-SEAMTECH-TOKEN": JETON}
+        )
+        assert reponse.status_code == 302, (
+            f"endpoint public déclaré : HTTP {reponse.status_code} (attendu 302)"
+        )
+        location = reponse.headers.get("location") or ""
+        hote = urllib.parse.urlparse(location).hostname or ""
+        assert hote == "minio.public.invalide", (
+            f"redirection vers {hote!r} au lieu de l'endpoint public déclaré"
+        )
+        assert hote not in {"minio", "postgres", "redis", "web", "worker", "frontend"}, (
+            f"redirection vers un nom d'hôte INTERNE ({hote}) : intéléchargeable "
+            "depuis un autre poste"
+        )
 
 
 # ---------------------------------------------------------------------------

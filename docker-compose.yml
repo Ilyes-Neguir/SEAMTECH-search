@@ -84,7 +84,20 @@ services:
     image: redis:7-alpine
     restart: unless-stopped
     logging: *default-logging
-    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?Set REDIS_PASSWORD in the environment}", "--appendonly", "yes"]
+    # Persistance RÉELLE et non « au mieux » : AOF activé avec fsync toutes les
+    # secondes. Sans cela, un `docker compose restart redis` perdait les tâches
+    # acceptées mais pas encore exécutées (et l'API avait dit « accepté »).
+    # Le volume redis-data est monté sur /data : les deux sont nécessaires.
+    command:
+      - redis-server
+      - "--requirepass"
+      - "${REDIS_PASSWORD:?Set REDIS_PASSWORD in the environment}"
+      - "--appendonly"
+      - "yes"
+      - "--appendfsync"
+      - "everysec"
+      - "--save"
+      - "900 1"
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in the environment}
     ports:
@@ -106,9 +119,45 @@ services:
       SEAMTECH_STORAGE_BACKEND: "s3"
       SEAMTECH_S3_ENDPOINT_URL: "http://minio:9000"
       SEAMTECH_S3_BUCKET: ${SEAMTECH_S3_BUCKET:-seamtech-documents}
-      SEAMTECH_S3_ACCESS_KEY: ${MINIO_ROOT_USER:?Set MINIO_ROOT_USER in the environment}
-      SEAMTECH_S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in the environment}
+      # FACULTATIF : endpoint S3 que les NAVIGATEURS de l'atelier peuvent
+      # joindre (ex. https://minio.atelier.local). Vide = les téléchargements
+      # passent par l'API authentifiée ; un renvoi présigné vers l'endpoint
+      # interne (http://minio:9000) ne serait résolvable nulle part ailleurs.
+      SEAMTECH_S3_PUBLIC_ENDPOINT_URL: ${SEAMTECH_S3_PUBLIC_ENDPOINT_URL:-}
+      # IDENTITÉ APPLICATIVE DÉDIÉE — jamais les identifiants administrateur
+      # MinIO. Constat de la revue indépendante du 2026-10-07 : ces deux lignes
+      # transmettaient `MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD`, donc l'API et le
+      # worker tournaient en root du stockage (lecture/écrasement/suppression de
+      # n'importe quel bucket) et régler `SEAMTECH_S3_ACCESS_KEY` dans `.env`
+      # n'avait AUCUN effet, la composition écrasant la valeur.
+      # Les identités sont créées par scripts/provisionner_stockage.sh, qui
+      # limite l'application à `SEAMTECH_S3_BUCKET` et la sauvegarde à son
+      # bucket hors-site. Obligatoires (`:?`) : pas de repli silencieux.
+      SEAMTECH_S3_ACCESS_KEY: ${SEAMTECH_S3_ACCESS_KEY:?Set SEAMTECH_S3_ACCESS_KEY - identite applicative dediee, voir scripts/provisionner_stockage.sh}
+      SEAMTECH_S3_SECRET_KEY: ${SEAMTECH_S3_SECRET_KEY:?Set SEAMTECH_S3_SECRET_KEY - secret applicatif dedie, voir scripts/provisionner_stockage.sh}
       SEAMTECH_REDIS_URL: "redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in the environment}@redis:6379/0"
+      # DURABILITÉ DES IMPORTS. Le service `web` n'exécute PLUS les imports :
+      # ils sont traités par le service `worker` ci-dessous. Deux raisons :
+      #   * `SEAMTECH_WEB_WORKER_ENABLED=false` : un redémarrage du web (mise à
+      #     jour, crash) ne tue plus un import en cours — le worker vit sa vie ;
+      #   * `SEAMTECH_REQUIRE_DURABLE_QUEUE=true` : si Redis est injoignable,
+      #     l'API refuse l'import avec un 503 explicite au lieu de l'accepter
+      #     puis de le perdre avec le processus. Un refus honnête est préférable
+      #     à une promesse non tenue.
+      SEAMTECH_WEB_WORKER_ENABLED: ${SEAMTECH_WEB_WORKER_ENABLED:-false}
+      SEAMTECH_REQUIRE_DURABLE_QUEUE: ${SEAMTECH_REQUIRE_DURABLE_QUEUE:-true}
+      # Verrou optimiste OBLIGATOIRE (défaut true) : une correction ou une
+      # décision (valider/rejeter/rouvrir) sans révision de fiche est REFUSÉE
+      # (428) au lieu d'être appliquée sans protection, et une fiche modifiée
+      # depuis l'affichage est refusée (409) — l'opérateur ne peut ni écraser
+      # ni approuver une valeur qu'il n'a pas relue. Ne passer à false que pour
+      # un script ancien identifié : l'écran d'atelier, lui, envoie toujours la
+      # révision qu'il affiche.
+      SEAMTECH_REQUIRE_REVISION: ${SEAMTECH_REQUIRE_REVISION:-true}
+      # Relecture des octets stockés pour prouver l'intégrité AVANT toute purge
+      # locale (GET + SHA-256 côté worker). Mettre à false interdit la purge :
+      # une empreinte fournie par l'application ne prouve pas le contenu.
+      SEAMTECH_STORAGE_VERIFY_REREAD: ${SEAMTECH_STORAGE_VERIFY_REREAD:-true}
       # Inside the container network, web listens on 0.0.0.0 so frontend can communicate.
       SEAMTECH_HOST: "0.0.0.0"
       SEAMTECH_ALLOW_NETWORK_ACCESS: "true"
@@ -152,6 +201,82 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+
+  worker:
+    # Processus d'imports SÉPARÉ du web. Même image que `web` (même code, mêmes
+    # dépendances), commande différente. Il consomme `seamtech:queue:imports`,
+    # reprend les tâches orphelines (worker mort, claim expiré) et s'arrête
+    # proprement sur SIGTERM : la tâche en cours est terminée ou sa revendication
+    # expire, elle n'est jamais perdue.
+    #
+    # Le code de sortie est EXPLOITABLE : 2 = Redis injoignable, donc
+    # `restart: unless-stopped` redémarre le service, et /health le montre.
+    build: .
+    restart: unless-stopped
+    logging: *default-logging
+    command: ["python", "-m", "seamtech_search.worker_service"]
+    environment:
+      SEAMTECH_DATABASE_URL: postgresql://seamtech:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the environment}@postgres:5432/seamtech_search
+      SEAMTECH_STORAGE_BACKEND: "s3"
+      SEAMTECH_S3_ENDPOINT_URL: "http://minio:9000"
+      SEAMTECH_S3_BUCKET: ${SEAMTECH_S3_BUCKET:-seamtech-documents}
+      # FACULTATIF : endpoint S3 que les NAVIGATEURS de l'atelier peuvent
+      # joindre (ex. https://minio.atelier.local). Vide = les téléchargements
+      # passent par l'API authentifiée ; un renvoi présigné vers l'endpoint
+      # interne (http://minio:9000) ne serait résolvable nulle part ailleurs.
+      SEAMTECH_S3_PUBLIC_ENDPOINT_URL: ${SEAMTECH_S3_PUBLIC_ENDPOINT_URL:-}
+      # IDENTITÉ APPLICATIVE DÉDIÉE — jamais les identifiants administrateur
+      # MinIO. Constat de la revue indépendante du 2026-10-07 : ces deux lignes
+      # transmettaient `MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD`, donc l'API et le
+      # worker tournaient en root du stockage (lecture/écrasement/suppression de
+      # n'importe quel bucket) et régler `SEAMTECH_S3_ACCESS_KEY` dans `.env`
+      # n'avait AUCUN effet, la composition écrasant la valeur.
+      # Les identités sont créées par scripts/provisionner_stockage.sh, qui
+      # limite l'application à `SEAMTECH_S3_BUCKET` et la sauvegarde à son
+      # bucket hors-site. Obligatoires (`:?`) : pas de repli silencieux.
+      SEAMTECH_S3_ACCESS_KEY: ${SEAMTECH_S3_ACCESS_KEY:?Set SEAMTECH_S3_ACCESS_KEY - identite applicative dediee, voir scripts/provisionner_stockage.sh}
+      SEAMTECH_S3_SECRET_KEY: ${SEAMTECH_S3_SECRET_KEY:?Set SEAMTECH_S3_SECRET_KEY - secret applicatif dedie, voir scripts/provisionner_stockage.sh}
+      SEAMTECH_REDIS_URL: "redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in the environment}@redis:6379/0"
+      SEAMTECH_REQUIRE_DURABLE_QUEUE: ${SEAMTECH_REQUIRE_DURABLE_QUEUE:-true}
+      # Verrou optimiste OBLIGATOIRE (défaut true) : une correction ou une
+      # décision (valider/rejeter/rouvrir) sans révision de fiche est REFUSÉE
+      # (428) au lieu d'être appliquée sans protection, et une fiche modifiée
+      # depuis l'affichage est refusée (409) — l'opérateur ne peut ni écraser
+      # ni approuver une valeur qu'il n'a pas relue. Ne passer à false que pour
+      # un script ancien identifié : l'écran d'atelier, lui, envoie toujours la
+      # révision qu'il affiche.
+      SEAMTECH_REQUIRE_REVISION: ${SEAMTECH_REQUIRE_REVISION:-true}
+      # Relecture des octets stockés pour prouver l'intégrité AVANT toute purge
+      # locale (GET + SHA-256 côté worker). Mettre à false interdit la purge :
+      # une empreinte fournie par l'application ne prouve pas le contenu.
+      SEAMTECH_STORAGE_VERIFY_REREAD: ${SEAMTECH_STORAGE_VERIFY_REREAD:-true}
+      # Le worker ne sert pas le navigateur : il peut travailler sans le proxy TLS.
+      SEAMTECH_BEHIND_TLS_PROXY: "true"
+      SEAMTECH_OPTIONAL_FEATURES_ENABLED: ${SEAMTECH_OPTIONAL_FEATURES_ENABLED:-true}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    volumes:
+      # Archive en LECTURE SEULE (même montage que `web`) : un import ne modifie
+      # jamais l'archive d'origine.
+      - ./sample_data:/app/sample_data:ro
+      - ./logs:/app/logs
+      # Le worker écrit les rapports générés et la quarantaine des imports
+      # incomplets — jamais dans l'archive.
+      - ./data:/app/data
+    healthcheck:
+      # `--verifier` ne traite RIEN : il répond sur la file, le nombre de jobs
+      # par statut et les workers vivants. Un worker « up » mais sans Redis est
+      # donc visible, pas silencieusement inutile.
+      test: ["CMD", "python", "-m", "seamtech_search.worker_service", "--verifier"]
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 20s
 
   frontend:
     build: ./frontend

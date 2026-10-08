@@ -27,7 +27,7 @@ Tests de non-régression : `tests/test_preflight_archive.py` (refus, rapports,
 | Tesseract 5.x + langue **fra** | `tesseract_present`, `langue_francaise` | OCR étage 3 (fonds ancien) |
 | pdftoppm (ou pdftocairo) | `pdftoppm_present` | rendu PDF → image |
 | PostgreSQL | `postgres_present` **si** `--staging` | indexation staging |
-| Espace disque | `espace_disque` | seuil `--min-libre-o` (1 Go strict minimum, **50 Go+ le jour J**) |
+| Espace disque | `espace_disque` | seuil `--min-libre-o` (1 Go strict minimum, **≥ 50 Go le jour J — chiffre PROVISOIRE, à confirmer par la mesure : originaux + copies stockées + traitement OCR + quarantaine + base + sauvegardes + croissance**) |
 | Poste préparé | `docs/CHECKLIST_POSTE_WINDOWS.md` | diagnostic Windows la veille |
 | Secret des rapports | `--masquer-chemins` | avant tout partage hors équipe |
 
@@ -62,8 +62,16 @@ mkdir -p /var/seamtech/travail_ocr /var/seamtech/rapports   # HORS archive
 export SEAMTECH_OCR_TRAVAIL_DIR=/var/seamtech/travail_ocr
 ```
 
-Vérifier que le volume de sortie offre la place (50 Go+ conseillés) et que le
-compte de service n'a **pas** de droit d'écriture sur la source.
+Vérifier que le volume de sortie offre la place (**≥ 50 Go — chiffre provisoire de
+départ, à confirmer par la mesure**) et que le compte de service n'a **pas** de droit
+d'écriture sur la source.
+
+> **Importer PROGRESSIVEMENT (revue du 2026-10-07).** Le jour J ne commence pas par
+> l'archive entière : d'abord un échantillon représentatif, puis les cas difficiles
+> (scans anciens, fichiers sans texte, doublons, chemins accentués, gros PDF), et
+> seulement ensuite le reste — en comptabilisant à chaque palier chaque fichier
+> (importés + quarantaine + écartés = total). Un palier rouge arrête la montée en
+> charge ; on ne « continue pas pour voir ».
 
 ## 4. Lancement du préflight
 

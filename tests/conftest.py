@@ -317,7 +317,9 @@ def semer_base_assistant(index: Any) -> dict[str, Any]:  # noqa: ANN401 - Search
     id_fiche, action = ecrire_fiche(index, fiche)
     if action != "creee":
         raise RuntimeError(f"la vraie fiche devait être créée, action = {action}")
-    valider_fiche(index, fiche.code, "assistant")
+    # Mise en place de fixture : aucune concurrence possible ici — l'absence
+    # de révision est DEMANDÉE explicitement (jamais un repli silencieux).
+    valider_fiche(index, fiche.code, "assistant", exiger_revision=False)
     ids[fiche.code] = id_fiche
     return {"ids": ids, "fiche": fiche}
 

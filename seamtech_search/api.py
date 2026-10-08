@@ -11,14 +11,15 @@ from collections import defaultdict
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Iterator
 
 from fastapi import FastAPI, File, Form, Header, HTTPException, Query, Request, Response, UploadFile
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from .audit import actor_fingerprint, get_audit_logs, record_audit_event
 from .config import AppConfig
+from .etat_exploitation import etat_sauvegarde, s3_credential_kind
 from .extractors import extract_file
 from .import_pipeline import (
     ImportResult,
@@ -34,8 +35,10 @@ from .jobs import (
     ImportCancelledError,
     cancel_job,
     clear_job_cancel,
+    compter_jobs_par_statut,
     create_job,
     get_job,
+    jobs_actifs,
     make_cancel_checker,
     recover_stale_jobs,
     update_job,
@@ -43,7 +46,7 @@ from .jobs import (
 from .redis_store import RedisStore
 from .retention import InsufficientStorageError, ensure_free_space, run_retention_cleanup
 from .storage import S3StorageClient
-from .worker import start_background_worker, stop_background_worker
+from .worker import file_durable_disponible, start_background_worker, stop_background_worker
 
 logger = logging.getLogger("seamtech_search.api")
 
@@ -143,6 +146,19 @@ def create_app(config: AppConfig) -> FastAPI:
     storage_client: S3StorageClient | None = S3StorageClient(config=config)
     if not storage_client.is_configured():
         storage_client = None
+    elif not storage_client.credentials_presentes():
+        # Configuration INCOMPLÈTE, dite explicitement : sans cette alerte,
+        # l'absence d'identité ressemblerait plus tard à une panne du stockage
+        # (« Access Denied » au milieu d'un import). Aucun repli sur les
+        # identifiants administrateur n'existe : /health renvoie « absent ».
+        logger.error(
+            "Stockage objet configuré (endpoint=%s bucket=%s) mais identifiants applicatifs "
+            "absents : renseigner SEAMTECH_S3_ACCESS_KEY et SEAMTECH_S3_SECRET_KEY "
+            "(identité dédiée créée par scripts/provisionner_stockage.sh). "
+            "Aucun repli sur l'administrateur MinIO n'est effectué.",
+            config.s3_endpoint_url,
+            config.s3_bucket,
+        )
 
     def _is_staged(source_path: str | Path) -> bool:
         """True when the import lives in the browser-upload staging area."""
@@ -196,7 +212,7 @@ def create_app(config: AppConfig) -> FastAPI:
                     "Échec de la graine des gabarits — conséquence : les dépôts seront "
                     "refusés « gabarit inconnu » tant que la table reste vide."
                 )
-        recovered = recover_stale_jobs(index)
+        recovered = recover_stale_jobs(index, redis_store=redis_store)
         if recovered > 0:
             logger.info("Recovered %d stale import jobs on startup", recovered)
         start_background_worker(config, index, redis_store)
@@ -351,12 +367,32 @@ def create_app(config: AppConfig) -> FastAPI:
             if storage_client is not None
             else {"versioning_available": None, "versioning_detail": "object storage is not configured"}
         )
-        deadletter_count = 0
+        file_operationnelle = file_durable_disponible(redis_store)
+        file: dict[str, object] = {
+            "configured": redis_store.is_configured(),
+            "durable": file_operationnelle,
+            "require_durable": config.require_durable_queue,
+            "web_worker_enabled": config.web_worker_enabled,
+        }
+        if file_operationnelle:
+            try:
+                file.update(redis_store.profondeur_file("imports"))
+                file["workers_vivants"] = [w.get("worker_id") for w in redis_store.workers_vivants()]
+                file["dead_letters"] = redis_store.get_deadletters("imports", limit=20)
+            except Exception as exc:
+                logger.warning("Supervision de la file indisponible : %s", exc)
+
+        # Supervision métier : l'exploitant doit voir, sans requête SQL, ce qui
+        # est en attente, ce qui tourne, ce qui a échoué et pourquoi.
+        jobs_par_statut: dict[str, int] = {}
+        jobs_en_cours: list[dict[str, object]] = []
         try:
-            if redis_store.is_configured():
-                deadletter_count = redis_store.get_deadletter_count("imports")
-        except Exception:
-            deadletter_count = 0
+            jobs_par_statut = compter_jobs_par_statut(index)
+            jobs_en_cours = jobs_actifs(index, limite=20)
+        except Exception as exc:
+            logger.warning("Comptage des jobs indisponible : %s", exc)
+
+        sauvegarde = etat_sauvegarde(config)
 
         return {
             "status": "ok",
@@ -370,7 +406,16 @@ def create_app(config: AppConfig) -> FastAPI:
             "redis_connected": redis_store.ping() if redis_store.is_configured() else None,
             "storage_backend": config.storage_backend,
             "s3_configured": bool(config.s3_endpoint_url or config.s3_access_key),
-            "upload_dead_letters": deadletter_count,
+            "s3_credentials": s3_credential_kind(config),
+            "upload_dead_letters": len(file.get("dead_letters", [])) if isinstance(file.get("dead_letters"), list) else 0,
+            "queue": file,
+            "jobs": {
+                "par_statut": jobs_par_statut,
+                "echecs": jobs_par_statut.get("failed", 0),
+                "en_cours": jobs_en_cours,
+                "recoverables": jobs_par_statut.get("pending", 0),
+            },
+            "backup": sauvegarde,
             # Read-only probe (never puts versioning): False means the endpoint
             # cannot version (Cloudflare R2), None means "could not find out".
             **versioning,
@@ -497,7 +542,7 @@ def create_app(config: AppConfig) -> FastAPI:
     ) -> Response:
         _require_auth(config, token)
         actor = actor_fingerprint(token, request.client.host if request.client else None)
-        target = _validated_path(path, config)
+        target = _validated_path(path, config, exiger_existence=False)
 
         # Try to find object storage key for this path
         object_key = None
@@ -518,25 +563,45 @@ def create_app(config: AppConfig) -> FastAPI:
             # signal of a broken schema/index and must not vanish silently.
             logger.warning("Could not look up object_key for %s: %s", target, exc)
 
-        if storage_client is not None and object_key:
-            try:
-                url = storage_client.get_presigned_url(object_key, expiration_seconds=900)
-                record_audit_event(
-                    index, action="open", actor=actor, resource=str(target), status="302", details={"object_key": object_key}
-                )
-                return RedirectResponse(url=url, status_code=302)
-            except Exception as exc:
-                logger.warning("Failed presigned URL for open %s: %s", target, exc)
+        url_publique = _url_presignee_navigateur(object_key, storage_client, config)
+        if url_publique:
+            record_audit_event(
+                index, action="open", actor=actor, resource=str(target), status="302", details={"object_key": object_key}
+            )
+            return RedirectResponse(url=url_publique, status_code=302)
 
         # Fallback: serve file directly if it exists locally
         if target.exists() and target.is_file():
             record_audit_event(index, action="open", actor=actor, resource=str(target), status="200")
             return FileResponse(path=target, filename=target.name)
 
+        # Ni redirection publique ni copie locale : l'objet existe pourtant
+        # dans le stockage (cas d'une restauration) — on le sert par l'API.
+        if storage_client is not None and object_key:
+            record_audit_event(
+                index,
+                action="open",
+                actor=actor,
+                resource=str(target),
+                status="200",
+                details={"object_key": object_key, "servi_par": "proxy_api"},
+            )
+            return _reponse_objet_s3(
+                object_key,
+                target.name,
+                "application/pdf" if target.suffix.lower() == ".pdf" else "application/octet-stream",
+                storage_client,
+                inline=True,
+            )
+
         # For directories, return listing instead of trying OS open
         if target.exists() and target.is_dir():
             record_audit_event(index, action="open", actor=actor, resource=str(target), status="200")
             return JSONResponse({"opened": str(target), "is_dir": True, "note": "Directory listing via /preview"})
+
+        if not target.exists():
+            record_audit_event(index, action="open", actor=actor, resource=str(target), status="404")
+            raise HTTPException(status_code=404, detail="Path does not exist.")
 
         record_audit_event(index, action="open", actor=actor, resource=str(target), status="404")
         raise HTTPException(status_code=404, detail="Path not found.")
@@ -651,20 +716,50 @@ def create_app(config: AppConfig) -> FastAPI:
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
 
-        create_job(index, job_id, request_body.source_path, status="pending", stage="queued")
-        if redis_store.is_configured() and redis_store.ping():
-            task_payload = {
-                "job_id": job_id,
-                "source_path": request_body.source_path,
-                "selected_pdf": None,
-                "selected_excel": request_body.excel_file,
-            }
+        task_payload = {
+            "job_id": job_id,
+            "source_path": request_body.source_path,
+            "selected_pdf": None,
+            "selected_excel": request_body.excel_file,
+        }
+        durable = file_durable_disponible(redis_store)
+        if not durable and config.require_durable_queue:
+            record_audit_event(
+                index,
+                action="import_create",
+                actor=actor,
+                resource=job_id,
+                status="503",
+                details={"reason": "file durable indisponible"},
+            )
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "File d'attente durable indisponible (Redis injoignable) : l'import est refusé "
+                    "plutôt qu'accepté en mémoire. Réessayez quand le service est revenu, "
+                    "ou démarrez le worker (docker compose up -d redis worker)."
+                ),
+            )
+        create_job(
+            index,
+            job_id,
+            request_body.source_path,
+            status="pending",
+            stage="queued",
+            durability="durable" if durable else "process_memory",
+        )
+        if durable:
             redis_store.set_job(
                 job_id,
                 {"id": job_id, "status": "pending", "progress": 0, "stage": "queued", "source_path": request_body.source_path},
             )
             redis_store.enqueue_task("imports", task_payload)
         else:
+            logger.warning(
+                "Redis indisponible : job %s accepté EN MÉMOIRE DE PROCESSUS (repli de développement). "
+                "Conséquence : il ne survivra pas à un redémarrage du serveur.",
+                job_id,
+            )
             task = asyncio.create_task(asyncio.to_thread(_execute_import_background, job_id, source, None, excel_path))
             background_tasks.add(task)
             task.add_done_callback(background_tasks.discard)
@@ -675,7 +770,7 @@ def create_app(config: AppConfig) -> FastAPI:
             actor=actor,
             resource=job_id,
             status="accepted",
-            details={"async": True},
+            details={"async": True, "durability": "durable" if durable else "process_memory"},
         )
 
         return JSONResponse(
@@ -688,6 +783,8 @@ def create_app(config: AppConfig) -> FastAPI:
                 "progress": 0,
                 "stage": "queued",
                 "source_path": request_body.source_path,
+                "durability": "durable" if durable else "process_memory",
+                "durable": durable,
             },
         )
 
@@ -750,20 +847,48 @@ def create_app(config: AppConfig) -> FastAPI:
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-        create_job(index, job_id, request_body.source_path, status="pending", stage="queued")
-        if redis_store.is_configured() and redis_store.ping():
-            task_payload = {
-                "job_id": job_id,
-                "source_path": request_body.source_path,
-                "selected_pdf": str(technical_pdf),
-                "selected_excel": str(excel_path) if excel_path else None,
-            }
+        task_payload = {
+            "job_id": job_id,
+            "source_path": request_body.source_path,
+            "selected_pdf": str(technical_pdf),
+            "selected_excel": str(excel_path) if excel_path else None,
+        }
+        durable = file_durable_disponible(redis_store)
+        if not durable and config.require_durable_queue:
+            record_audit_event(
+                index,
+                action="import_confirm",
+                actor=actor,
+                resource=job_id,
+                status="503",
+                details={"reason": "file durable indisponible"},
+            )
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "File d'attente durable indisponible (Redis injoignable) : l'import est refusé "
+                    "plutôt qu'accepté en mémoire. Réessayez quand le service est revenu."
+                ),
+            )
+        create_job(
+            index,
+            job_id,
+            request_body.source_path,
+            status="pending",
+            stage="queued",
+            durability="durable" if durable else "process_memory",
+        )
+        if durable:
             redis_store.set_job(
                 job_id,
                 {"id": job_id, "status": "pending", "progress": 0, "stage": "queued", "source_path": request_body.source_path},
             )
             redis_store.enqueue_task("imports", task_payload)
         else:
+            logger.warning(
+                "Redis indisponible : import %s accepté EN MÉMOIRE DE PROCESSUS (repli de développement).",
+                job_id,
+            )
             task = asyncio.create_task(
                 asyncio.to_thread(_execute_import_background, job_id, source, technical_pdf, excel_path)
             )
@@ -775,7 +900,7 @@ def create_app(config: AppConfig) -> FastAPI:
             actor=actor,
             resource=job_id,
             status="accepted",
-            details={"async": True},
+            details={"async": True, "durability": "durable" if durable else "process_memory"},
         )
         return JSONResponse(
             status_code=202,
@@ -787,6 +912,8 @@ def create_app(config: AppConfig) -> FastAPI:
                 "progress": 0,
                 "stage": "queued",
                 "source_path": request_body.source_path,
+                "durability": "durable" if durable else "process_memory",
+                "durable": durable,
             },
         )
 
@@ -1028,22 +1155,21 @@ def create_app(config: AppConfig) -> FastAPI:
                     object_key = f["object_key"]
                     break
 
-        # If S3 configured and we have object key, redirect to presigned URL (expiry <=15 min)
-        if storage_client is not None and object_key:
-            try:
-                url = storage_client.get_presigned_url(object_key, expiration_seconds=900)
-                record_audit_event(
-                    index,
-                    action="artifact_download",
-                    actor=actor,
-                    resource=f"{import_id}/{artifact}",
-                    status="302",
-                    details={"object_key": object_key, "filename": filename},
-                )
-                return RedirectResponse(url=url, status_code=302)
-            except Exception as exc:
-                logger.warning("Failed to generate presigned URL for %s: %s", object_key, exc)
-                # Fall back to local file if available
+        # Redirection présignée UNIQUEMENT vers un endpoint public déclaré : le
+        # endpoint interne (nom d'hôte « minio » du réseau des conteneurs, port
+        # 9000) n'est résolvable depuis AUCUN poste de l'atelier. Par défaut on
+        # sert donc les octets par l'API.
+        url_publique = _url_presignee_navigateur(object_key, storage_client, config)
+        if url_publique:
+            record_audit_event(
+                index,
+                action="artifact_download",
+                actor=actor,
+                resource=f"{import_id}/{artifact}",
+                status="302",
+                details={"object_key": object_key, "filename": filename, "servi_par": "redirection_publique"},
+            )
+            return RedirectResponse(url=url_publique, status_code=302)
 
         # Fallback: serve from local disk (cache) or download from S3 to cache
         if file_path and file_path.exists():
@@ -1201,6 +1327,71 @@ def create_app(config: AppConfig) -> FastAPI:
     return app
 
 
+def _url_presignee_navigateur(
+    object_key: str | None,
+    storage_client: S3StorageClient | None,
+    config: AppConfig,
+) -> str | None:
+    """URL présignée **uniquement si un endpoint public est déclaré**.
+
+    Une redirection présignée vers l'endpoint INTERNE (le service « minio » du
+    réseau des conteneurs) casse le téléchargement depuis un autre poste de
+    l'atelier : ce nom d'hôte n'existe que dans le réseau des conteneurs. Constaté par le test Compose du
+    job CI `integration` (302 → « Temporary failure in name resolution »).
+
+    Par défaut, la fonction renvoie donc ``None`` et l'appelant sert les octets
+    par l'API authentifiée. Renseigner ``SEAMTECH_S3_PUBLIC_ENDPOINT_URL``
+    (endpoint réellement joignable par les navigateurs) rétablit la
+    redirection.
+    """
+    if storage_client is None or not object_key or not config.s3_public_endpoint_url:
+        return None
+    try:
+        return storage_client.get_presigned_url(
+            object_key, expiration_seconds=900, endpoint_url=config.s3_public_endpoint_url
+        )
+    except Exception as exc:  # pragma: no cover - dépend du fournisseur
+        logger.warning("Signature publique impossible pour %s : %s", object_key, exc)
+        return None
+
+
+def _reponse_objet_s3(
+    object_key: str,
+    filename: str,
+    media_type: str,
+    storage_client: S3StorageClient | None,
+    *,
+    inline: bool = False,
+) -> Response:
+    """Sert un objet S3 **à travers l'API** (proxy authentifié).
+
+    C'est le mode par défaut des téléchargements : l'URL vue par le navigateur
+    reste celle de l'application, donc joignable depuis n'importe quel poste,
+    sans exposer l'endpoint interne ni un jeton porteur présigné.
+    """
+    if storage_client is None:
+        raise HTTPException(status_code=503, detail="Stockage objet non configuré.")
+    entete = storage_client.head_object(object_key)
+    longueur = entete.get("ContentLength")
+    corps = storage_client.get_object(object_key)["Body"]
+
+    def _blocs() -> Iterator[bytes]:
+        try:
+            for bloc in iter(lambda: corps.read(1024 * 1024), b""):
+                yield bloc
+        finally:
+            try:
+                corps.close()
+            except Exception:  # pragma: no cover - fermeture best-effort
+                pass
+
+    disposition = "inline" if inline else "attachment"
+    entetes = {"Content-Disposition": f'{disposition}; filename="{filename}"'}
+    if longueur is not None:
+        entetes["Content-Length"] = str(int(longueur))
+    return StreamingResponse(_blocs(), media_type=media_type, headers=entetes)
+
+
 def _dossier_modeles_ml(config: AppConfig) -> Path:
     """Dossier des poids/modèles : <data>/modeles, surclassable par env."""
     import os
@@ -1238,10 +1429,17 @@ def _require_auth(config: AppConfig, token: str | None) -> None:
         raise HTTPException(status_code=401, detail="Authentication required.")
 
 
-def _validated_path(path: str, config: AppConfig) -> Path:
+def _validated_path(path: str, config: AppConfig, *, exiger_existence: bool = True) -> Path:
+    """Résout un chemin et vérifie qu'il reste DANS les racines autorisées.
+
+    ``exiger_existence=False`` sert à ``/open`` : après une restauration, le
+    fichier local peut manquer alors que l'objet est bien dans le stockage. La
+    vérification de confinement (403) reste, elle, inconditionnelle — c'est
+    elle qui protège, pas l'existence du fichier.
+    """
     target = Path(path).expanduser().resolve()
     allowed_roots = [root.resolve() for root in config.root_paths]
-    if not target.exists():
+    if exiger_existence and not target.exists():
         raise HTTPException(status_code=404, detail="Path does not exist.")
     if not any(target == root or root in target.parents for root in allowed_roots):
         raise HTTPException(status_code=403, detail="Path is outside configured search roots.")

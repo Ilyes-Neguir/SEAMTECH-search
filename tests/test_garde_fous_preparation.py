@@ -18,6 +18,13 @@ E. Configuration — aucun chemin de production codé en dur, aucun secret par
    défaut, aucune URL externe implicite, aucun mode production activé par
    défaut, aucun traitement massif par défaut.
 
+F. Revue indépendante du 2026-10-07 — verrou optimiste : AUCUN script du
+   dépôt n'écrit l'état d'une fiche (corriger / valider / rejeter / rouvrir /
+   validation en lot) sans porter la révision relue. Le repli pour un client
+   ancien est une option EXPLICITE d'exploitation
+   (``SEAMTECH_REQUIRE_REVISION=false``), jamais un oubli silencieux dans un
+   script : ce garde-fou empêche la réapparition de l'écriture non protégée.
+
 Plus : les modèles de validation humaine (chantier 3) sont présents,
 documentés, et exempts de données réelles (EXEMPLE_SYNTHETIQUE uniquement).
 """
@@ -30,6 +37,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import re
 import stat
 import sys
 from pathlib import Path
@@ -207,6 +215,13 @@ EXCEPTIONS_RG14: dict[str, str] = {
         "publiée — cible LOOPBACK uniquement (127.0.0.1 du conteneur web et endpoint "
         "S3 local de la compose). Documenté dans docs/verite_terrain/ (Phase 2)"
     ),
+    "scripts/verifier_hors_ligne.py": (
+        "outil de VÉRIFICATION hors ligne (revue du 2026-10-07, constat n° 3) : il "
+        "importe socket/urllib pour INTERCEPTER et BLOQUER les connexions sortantes "
+        "pendant les parcours essentiels — sa raison d'être est de prouver l'absence "
+        "de dépendance externe, jamais d'en créer une. Jamais importé par le service ; "
+        "cible loopback. Documenté dans docs/DEPLOYMENT.md"
+    ),
 }
 
 DOCS_MARQUEURS_EXCEPTIONS = {
@@ -214,6 +229,7 @@ DOCS_MARQUEURS_EXCEPTIONS = {
     "scripts/mesure_assistant.py": "socket",
     "scripts/audit_dependency_policy.py": "RG14_EXCEPTION",
     "scripts/recette_verif.py": "RG14_EXCEPTION",
+    "scripts/verifier_hors_ligne.py": "RG14_EXCEPTION",
 }
 
 
@@ -682,3 +698,53 @@ def test_protocole_validation_couvre_tous_les_sujets() -> None:
         "quatre yeux",
     ):
         assert sujet in texte, f"sujet non couvert par le protocole : {sujet}"
+
+# ---------------------------------------------------------------------------
+# F. Revue du 2026-10-07 — aucune écriture d'état de fiche sans révision
+# ---------------------------------------------------------------------------
+
+#: Verbes qui CHANGENT l'état d'une fiche côté API (les corrections « read-only »
+#: n'existent pas : corriger écrit toujours).
+_VERBES_ECRITURE = ("/corriger", "/valider", "/rejeter", "/rouvrir", "/validation/lot")
+
+
+def _appels_de_mutation(chemin: Path) -> list[str]:
+    """Texte des appels du fichier qui atteignent un verbe d'écriture de fiche.
+
+    Analyse AST (pas de faux positif de commentaire ou de chaîne isolée) : un
+    appel est retenu si son code, tel qu'écrit, vise un des verbes d'écriture.
+    """
+    arbre = ast.parse(chemin.read_text(encoding="utf-8"))
+    appels: list[str] = []
+    for noeud in ast.walk(arbre):
+        if isinstance(noeud, ast.Call):
+            texte_appel = ast.unparse(noeud)
+            if any(verbe in texte_appel for verbe in _VERBES_ECRITURE):
+                appels.append(texte_appel)
+    return appels
+
+
+def test_aucun_script_n_ecrit_l_etat_d_une_fiche_sans_revision() -> None:
+    """F1 (revue indépendante du 2026-10-07) — repli explicite, jamais implicite.
+
+    Le backend refuse toute écriture sans révision (428) depuis que
+    ``SEAMTECH_REQUIRE_REVISION`` vaut vrai par défaut, et l'écran d'atelier
+    envoie toujours la révision qu'il affiche. Le risque résiduel est un SCRIPT
+    du dépôt (recette, harnais, outillage) qui écrirait sans révision : il ne
+    doit pas exister, car il deviendrait le contournement silencieux que la
+    revue a précisément interdit. Ce test échoue si un tel appel apparaît, et
+    échoue aussi s'il ne trouve RIEN (garde-fou vide ≠ garde-fou vert).
+    """
+    scripts = sorted((RACINE / "scripts").glob("*.py"))
+    assert scripts, "aucun script dans scripts/ : le garde-fou ne vérifierait rien"
+    trouves = 0
+    for chemin in scripts:
+        for appel in _appels_de_mutation(chemin):
+            trouves += 1
+            assert re.search(r"\brevision\b", appel), (
+                f"{chemin.name} : écriture d'état de fiche SANS révision — {appel[:200]}"
+            )
+    assert trouves >= 2, (
+        f"{trouves} appel(s) d'écriture détecté(s) dans scripts/ : le garde-fou ne "
+        "couvre plus les cas réels (recette + harnais hors ligne)"
+    )
