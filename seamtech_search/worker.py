@@ -347,14 +347,15 @@ def _process_lot_task(
         return {"job_id": job_id, "status": "cancelled", "id_lot": id_lot}
 
     statut = "completed" if int(etat.get("nb_echecs", 0)) == 0 else "needs_review"
-    update_job(index, job_id, status=statut, progress=100, stage="done", result=etat, expected_worker=worker_id)
+    raison_echec = None if statut == "completed" else f"{etat.get('nb_echecs')} dossier(s) en échec"
     terminer_job(
         index,
         job_id,
         status=statut,
-        failure_reason=None if statut == "completed" else f"{etat.get('nb_echecs')} dossier(s) en échec",
+        failure_reason=raison_echec,
         expected_worker=worker_id,
     )
+    update_job(index, job_id, status=statut, progress=100, stage="done", result=etat, expected_worker=worker_id)
     if redis_store and redis_store.is_configured():
         redis_store.update_job(job_id, {"status": statut, "progress": 100, "stage": "done", "result": etat})
     return {"job_id": job_id, "status": statut, "id_lot": id_lot, "etat": etat}
