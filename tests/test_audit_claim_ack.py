@@ -425,3 +425,223 @@ def test_r2_ack_retry_deadletter_refuses_sans_claim_redis(store: RedisStore) -> 
     assert store.revendiquer_tache("imports", tache["job_id"], "worker-A", ttl_seconds=60) is True
     assert store.ack_task("imports", tache, worker_id="worker-A") is True
     assert client.llen("seamtech:processing:imports") == 0
+
+def test_r1_matrice_transitions_propriete_et_fencing(tmp_path: Path) -> None:
+    """Matrice complète des transitions de propriété (R1) :
+    1. Création (unclaimed, pending)
+    2. Revendication légitime par Worker A (claimed_by = Worker A, running)
+    3. Expiration / Requeue (status = pending, claimed_by = NULL)
+    4. Rejet strict des écritures tardives de Worker A (update_job, terminer_job, heartbeat)
+    5. Prise en charge par Worker B (claimed_by = Worker B, running)
+    6. Rejet strict des écritures tardives de Worker A pendant l'exécution de B
+    7. Clôture légitime par Worker B (status = completed, claimed_by = NULL)
+    8. Rejet strict des écritures tardives de Worker A après clôture
+    9. Opération opérateur / superviseur (expected_worker is None) toujours autorisée
+    """
+    from seamtech_search.jobs import (
+        cancel_job,
+        create_job,
+        get_job,
+        heartbeat_job,
+        marquer_job_claim,
+        remettre_en_file,
+        terminer_job,
+        update_job,
+    )
+
+    config = _config(tmp_path)
+    index = _index(config)
+    source = _dossier(tmp_path, "affaire-matrice-r1")
+    job_id = "job-matrice-r1"
+
+    # 1. Création
+    create_job(index, job_id, str(source), durability="durable")
+    job = get_job(index, job_id)
+    assert job["status"] == "pending"
+    assert job["claimed_by"] is None
+
+    # Mutation worker sans claim préalable -> rejeté
+    update_job(index, job_id, status="running", progress=10, expected_worker="worker-A")
+    assert get_job(index, job_id)["status"] == "pending"
+
+    # 2. Revendication Worker A
+    assert marquer_job_claim(index, job_id, "worker-A") is True
+    job = get_job(index, job_id)
+    assert job["status"] == "running"
+    assert job["claimed_by"] == "worker-A"
+
+    # Mutation légitime Worker A -> acceptée
+    assert update_job(index, job_id, progress=50, stage="parsing", expected_worker="worker-A") is not None
+    job = get_job(index, job_id)
+    assert job["progress"] == 50
+    assert job["stage"] == "parsing"
+    assert heartbeat_job(index, job_id, expected_worker="worker-A") is True
+
+    # 3. Expiration / Requeue
+    assert remettre_en_file(index, job_id, raison="bail expire", tentative_durable=True) is True
+    job = get_job(index, job_id)
+    assert job["status"] == "pending"
+    assert job["claimed_by"] is None
+    assert job["stage"] == "requeued"
+
+    # 4. Rejet strict des mutations tardives de Worker A
+    # Update status / progress
+    update_job(index, job_id, status="running", progress=90, expected_worker="worker-A")
+    job = get_job(index, job_id)
+    assert job["status"] == "pending", "Worker A périmé a pu repasser le job en running !"
+    assert job["progress"] == 50
+    assert job["claimed_by"] is None
+
+    # Heartbeat
+    assert heartbeat_job(index, job_id, expected_worker="worker-A") is False
+
+    # Terminer job
+    assert terminer_job(index, job_id, status="failed", failure_reason="rejet A", expected_worker="worker-A") is False
+    job = get_job(index, job_id)
+    assert job["status"] == "pending"
+
+    # 5. Prise en charge par Worker B
+    assert marquer_job_claim(index, job_id, "worker-B") is True
+    job = get_job(index, job_id)
+    assert job["status"] == "running"
+    assert job["claimed_by"] == "worker-B"
+
+    # 6. Rejet strict de Worker A alors que B détient le job
+    update_job(index, job_id, status="failed", error="crash tardif A", expected_worker="worker-A")
+    job = get_job(index, job_id)
+    assert job["status"] == "running"
+    assert job["claimed_by"] == "worker-B"
+    assert job["error"] != "crash tardif A"
+    assert terminer_job(index, job_id, status="failed", failure_reason="crash A", expected_worker="worker-A") is False
+
+    # Mutation légitime Worker B
+    update_job(index, job_id, progress=100, stage="done", result={"extracted": 42}, expected_worker="worker-B")
+    job = get_job(index, job_id)
+    assert job["progress"] == 100
+    assert job["result"] == {"extracted": 42}
+
+    # 7. Clôture par Worker B
+    assert terminer_job(index, job_id, status="completed", expected_worker="worker-B") is True
+    job = get_job(index, job_id)
+    assert job["status"] == "completed"
+    assert job["claimed_by"] is None
+
+    # 8. Rejet strict des écritures de Worker A après clôture
+    update_job(index, job_id, status="failed", result={"extracted": 0}, expected_worker="worker-A")
+    terminer_job(index, job_id, status="failed", failure_reason="post-mortem A", expected_worker="worker-A")
+    job = get_job(index, job_id)
+    assert job["status"] == "completed"
+    assert job["result"] == {"extracted": 42}
+    assert job["failure_reason"] is None
+
+    # 9. Opération superviseur / synchrone (expected_worker is None)
+    job_canc = cancel_job(index, job_id)
+    assert job_canc is not None
+    assert job_canc["status"] == "cancelled"
+
+    index.close()
+
+@pytest.mark.postgres
+def test_r1_matrice_transitions_propriete_et_fencing_postgres(tmp_path: Path) -> None:
+    """Matrice complète des transitions de propriété (R1) sur PostgreSQL réel."""
+    from seamtech_search.jobs import (
+        cancel_job,
+        create_job,
+        get_job,
+        heartbeat_job,
+        marquer_job_claim,
+        remettre_en_file,
+        terminer_job,
+        update_job,
+    )
+    from tests.conftest import _creer_base_jetable, _supprimer_base_jetable
+
+    nom_base, url_base = _creer_base_jetable()
+    index = SearchIndex(tmp_path / "unused.db", database_url=url_base)
+    index.initialize(rebuild=True)
+    index.run_migrations()
+    job_id = "job-matrice-r1-pg"
+
+    try:
+        # 1. Création
+        create_job(index, job_id, "/dummy", durability="durable")
+        job = get_job(index, job_id)
+        assert job["status"] == "pending"
+        assert job["claimed_by"] is None
+
+        # Mutation worker sans claim préalable -> rejeté
+        update_job(index, job_id, status="running", progress=10, expected_worker="worker-A")
+        assert get_job(index, job_id)["status"] == "pending"
+
+        # 2. Revendication Worker A
+        assert marquer_job_claim(index, job_id, "worker-A") is True
+        job = get_job(index, job_id)
+        assert job["status"] == "running"
+        assert job["claimed_by"] == "worker-A"
+
+        # Mutation légitime Worker A -> acceptée
+        assert update_job(index, job_id, progress=50, stage="parsing", expected_worker="worker-A") is not None
+        job = get_job(index, job_id)
+        assert job["progress"] == 50
+        assert job["stage"] == "parsing"
+        assert heartbeat_job(index, job_id, expected_worker="worker-A") is True
+
+        # 3. Expiration / Requeue
+        assert remettre_en_file(index, job_id, raison="bail expire", tentative_durable=True) is True
+        job = get_job(index, job_id)
+        assert job["status"] == "pending"
+        assert job["claimed_by"] is None
+        assert job["stage"] == "requeued"
+
+        # 4. Rejet strict des mutations tardives de Worker A
+        update_job(index, job_id, status="running", progress=90, expected_worker="worker-A")
+        job = get_job(index, job_id)
+        assert job["status"] == "pending", "Worker A périmé a pu repasser le job en running sur PostgreSQL !"
+        assert job["progress"] == 50
+        assert job["claimed_by"] is None
+
+        assert heartbeat_job(index, job_id, expected_worker="worker-A") is False
+        assert terminer_job(index, job_id, status="failed", failure_reason="rejet A", expected_worker="worker-A") is False
+        assert get_job(index, job_id)["status"] == "pending"
+
+        # 5. Prise en charge par Worker B
+        assert marquer_job_claim(index, job_id, "worker-B") is True
+        job = get_job(index, job_id)
+        assert job["status"] == "running"
+        assert job["claimed_by"] == "worker-B"
+
+        # 6. Rejet strict de Worker A alors que B détient le job
+        update_job(index, job_id, status="failed", error="crash tardif A", expected_worker="worker-A")
+        job = get_job(index, job_id)
+        assert job["status"] == "running"
+        assert job["claimed_by"] == "worker-B"
+        assert job["error"] != "crash tardif A"
+        assert terminer_job(index, job_id, status="failed", failure_reason="crash A", expected_worker="worker-A") is False
+
+        # Mutation légitime Worker B
+        update_job(index, job_id, progress=100, stage="done", result={"extracted": 42}, expected_worker="worker-B")
+        job = get_job(index, job_id)
+        assert job["progress"] == 100
+        assert job["result"] == {"extracted": 42}
+
+        # 7. Clôture par Worker B
+        assert terminer_job(index, job_id, status="completed", expected_worker="worker-B") is True
+        job = get_job(index, job_id)
+        assert job["status"] == "completed"
+        assert job["claimed_by"] is None
+
+        # 8. Rejet strict des écritures de Worker A après clôture
+        update_job(index, job_id, status="failed", result={"extracted": 0}, expected_worker="worker-A")
+        terminer_job(index, job_id, status="failed", failure_reason="post-mortem A", expected_worker="worker-A")
+        job = get_job(index, job_id)
+        assert job["status"] == "completed"
+        assert job["result"] == {"extracted": 42}
+        assert job["failure_reason"] is None
+
+        # 9. Opération superviseur / synchrone (expected_worker is None)
+        job_canc = cancel_job(index, job_id)
+        assert job_canc is not None
+        assert job_canc["status"] == "cancelled"
+    finally:
+        index.close()
+        _supprimer_base_jetable(nom_base)

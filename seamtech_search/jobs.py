@@ -258,7 +258,7 @@ def update_job(
             set_clauses.append("updated_at = now()")
             extra_where = "" if status == "cancelled" else " AND status != 'cancelled'"
             if expected_worker is not None:
-                extra_where += " AND (claimed_by = %s OR (claimed_by IS NULL AND status NOT IN ('completed', 'failed', 'cancelled', 'upload_incomplete', 'needs_review')))"
+                extra_where += " AND claimed_by = %s"
             sql = f"UPDATE import_jobs SET {', '.join(set_clauses)} WHERE id = %s{extra_where}"
 
             pg_values = []
@@ -279,7 +279,7 @@ def update_job(
             set_clauses.append("updated_at = ?")
             extra_where = "" if status == "cancelled" else " AND status != 'cancelled'"
             if expected_worker is not None:
-                extra_where += " AND (claimed_by = ? OR (claimed_by IS NULL AND status NOT IN ('completed', 'failed', 'cancelled', 'upload_incomplete', 'needs_review')))"
+                extra_where += " AND claimed_by = ?"
             sql = f"UPDATE import_jobs SET {', '.join(set_clauses)} WHERE id = ?{extra_where}"
             sqlite_values = list(values) + [now_iso, job_id]
             if expected_worker is not None:
@@ -639,7 +639,7 @@ def terminer_job(
                         UPDATE import_jobs
                         SET status = %s, claimed_by = NULL, heartbeat_at = NULL,
                             failure_reason = %s, updated_at = now()
-                        WHERE id = %s AND (claimed_by = %s OR (claimed_by IS NULL AND status NOT IN ('completed', 'failed', 'cancelled', 'upload_incomplete', 'needs_review')))
+                        WHERE id = %s AND claimed_by = %s
                         """,
                         (status, failure_reason, job_id, expected_worker),
                     )
@@ -660,7 +660,7 @@ def terminer_job(
                 UPDATE import_jobs
                 SET status = ?, claimed_by = NULL, heartbeat_at = NULL,
                     failure_reason = ?, updated_at = ?
-                WHERE id = ? AND (claimed_by = ? OR (claimed_by IS NULL AND status NOT IN ('completed', 'failed', 'cancelled', 'upload_incomplete', 'needs_review')))
+                WHERE id = ? AND claimed_by = ?
                 """,
                 (status, failure_reason, now_iso, job_id, expected_worker),
             )
