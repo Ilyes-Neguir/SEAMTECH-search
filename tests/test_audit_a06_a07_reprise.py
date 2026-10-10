@@ -580,9 +580,19 @@ def test_a07_preuves_anterieures_ne_sont_jamais_reecrites(tmp_path: Path) -> Non
 def test_r3_quarantaine_reprise_propage_nouveaux_chemins_et_selections(tmp_path: Path) -> None:
     """R3 : Après mise en quarantaine, la charge de retry et les sélections sont cohérentes et réessayables."""
     import json
+    import os
     from unittest.mock import patch
 
-    import redislite
+    import pytest
+
+    redis_url = os.environ.get("SEAMTECH_TEST_REDIS_URL")
+    if not redis_url:
+        try:
+            import redislite
+            r_inst = redislite.Redis(str(tmp_path / "r3_test.rdb"))
+            redis_url = f"unix://{r_inst.socket_file}"
+        except ImportError:
+            pytest.skip("Neither SEAMTECH_TEST_REDIS_URL nor redislite available for R3 test")
 
     from seamtech_search import worker
     from seamtech_search.config import AppConfig
@@ -592,8 +602,7 @@ def test_r3_quarantaine_reprise_propage_nouveaux_chemins_et_selections(tmp_path:
     from seamtech_search.redis_store import RedisStore
     from seamtech_search.storage import S3StorageClient, StorageError, UploadBatch, UploadedArtifact
 
-    r_inst = redislite.Redis(str(tmp_path / "r3_test.rdb"))
-    store = RedisStore(redis_url=f"unix://{r_inst.socket_file}")
+    store = RedisStore(redis_url=redis_url)
     client = store._get_client()
     client.flushdb()
 

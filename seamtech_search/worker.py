@@ -103,6 +103,18 @@ def process_import_task(
     selected_pdf = Path(payload["selected_pdf"]) if payload.get("selected_pdf") else None
     selected_excel = Path(payload["selected_excel"]) if payload.get("selected_excel") else None
 
+    # Fencing R1 : vérifier si le worker est toujours propriétaire avant toute mutation de fichiers/quarantaine/purge
+    def est_proprietaire_actif() -> bool:
+        if worker_id is None:
+            return True
+        if redis_store and redis_store.is_configured():
+            if not redis_store.revendication_appartient_a("imports", str(job_id), worker_id):
+                return False
+        j = get_job(index, str(job_id))
+        if j and j.get("claimed_by") and j.get("claimed_by") != worker_id:
+            return False
+        return True
+
     cancel_check = make_cancel_checker(job_id, redis_store)
 
     def progress_cb(stage: str, percent: int) -> None:
@@ -163,17 +175,7 @@ def process_import_task(
                 preservation.artefacts_verifies, preservation.artefacts_total,
             )
 
-        # Fencing R1 : vérifier si le worker est toujours propriétaire avant toute mutation de fichiers/quarantaine/purge
-        def est_proprietaire_actif() -> bool:
-            if worker_id is None:
-                return True
-            if redis_store and redis_store.is_configured():
-                if not redis_store.revendication_appartient_a("imports", str(job_id), worker_id):
-                    return False
-            j = get_job(index, str(job_id))
-            if j and j.get("claimed_by") and j.get("claimed_by") != worker_id:
-                return False
-            return True
+
 
         if not est_proprietaire_actif():
             logger.warning(
