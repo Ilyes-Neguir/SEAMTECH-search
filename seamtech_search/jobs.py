@@ -215,6 +215,7 @@ def update_job(
     stage: str | None = None,
     error: str | None = None,
     result: dict[str, Any] | None = None,
+    failure_reason: str | None = None,
     *,
     expected_worker: str | None = None,
 ) -> dict[str, Any] | None:
@@ -238,6 +239,9 @@ def update_job(
     if error is not None:
         fields.append("error")
         values.append(error)
+    if failure_reason is not None:
+        fields.append("failure_reason")
+        values.append(failure_reason)
     if result is not None:
         fields.append("result")
         values.append(json.dumps(result, ensure_ascii=False))
