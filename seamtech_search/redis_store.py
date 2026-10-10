@@ -824,8 +824,8 @@ class RedisStore(ClaimMixin):
                         if p.get("job_id") == job_id:
                             client.lrem(processing_key, 1, item)
                             break
-                    except Exception:
-                        pass
+                    except (json.JSONDecodeError, TypeError, KeyError) as parse_err:
+                        logger.debug("Tâche processing non-JSON ignorée lors de l'ack : %s", parse_err)
             return True
         except Exception as exc:
             logger.warning("Failed to ack task %s: %s", queue_name, exc)
