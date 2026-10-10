@@ -11,7 +11,7 @@ worker claim/ack ownership, cross-workflow consistency).
 - `ac7f5e9` : retention protections, claim/ack ordering, cross-workflow validation gate, frontend fix.
 - `37696ab` : CI coverage gate completion on PostgreSQL supervision and job result serialization.
 - `6390d25` : Initial counter-review delivery (R1-R4).
-- `HEAD` (this delivery) : Stricter fencing (R1: removal of `OR claimed_by IS NULL` regression hole, protection of all mutation paths including exception handlers and lot progress/heartbeat) and fail-closed restart prevention on failed restore in `recette_locale.ps1` with in-container SHA-256 verification (R4).
+- `HEAD` (this delivery, commit `22be8a3`) : Strict fencing on all terminal statuses (R1: removal of `needs_review` and `upload_incomplete` fence hole, support of `failure_reason` in `update_job`, protection of all mutation paths including exception handlers and lot progress/heartbeat); atomic claim-checked Redis transitions requiring active claim (R2: Lua reject on `no_claim`); and fail-closed restart prevention on failed restore in `recette_locale.ps1` with in-container SHA-256 verification (R4).
 
 **Post-fix behaviour is what is asserted** in every test below — "the faulty behaviour still
 reproduces" is explicitly *not* accepted as a passing safety test.
@@ -80,7 +80,7 @@ reproduces" is explicitly *not* accepted as a passing safety test.
 | Check | Status |
 |---|---|
 | `ruff check` (E,F,I,W, line-length 120) + `compileall` | **Local, clean** |
-| Audit/targeted test suites (`test_audit_claim_ack.py`, `test_audit_a06_a07_reprise.py`, `test_audit_a05_collisions.py`, `test_audit_retention_travail.py`, `test_recette_locale.py`) | **Local: 57 passed** (100 % pass rate across all 5 modules with real Redis) |
+| `test_audit_claim_ack.py`, `test_audit_a06_a07_reprise.py`, `test_audit_a05_collisions.py`, `test_audit_retention_travail.py`, `test_recette_locale.py`, `test_file_durable_operations.py` | **Local: 86 passed** (100 % pass rate with real Redis; 11/11 in `test_audit_claim_ack.py` covering R1 & R2, 27/27 in `test_file_durable_operations.py`) |
 | A01/A02 & Cross-workflow test suites (`test_audit_a01_a02_integrite.py`, `test_audit_coherence_parcours.py`) | **PostgreSQL integration suite** (verified in PR #36 CI; local unaccent extension absent from pip pgserver) |
 | Durable PostgreSQL queue suite (`test_file_durable_postgres.py`) | **PostgreSQL integration suite** (local supervision & migration tests pass; full lot test verified in CI) |
 | Frontend `tsc --noEmit` & production build (`pnpm build`) | **Local, clean** (`ƒ /api/lots/[id]` included) |
