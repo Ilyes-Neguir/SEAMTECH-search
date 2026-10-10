@@ -575,3 +575,85 @@ def test_a07_preuves_anterieures_ne_sont_jamais_reecrites(tmp_path: Path) -> Non
     assert prouve["uploaded_at"] == 111.0, "l'horodatage de la preuve doit survivre"
     neuf = next(e for e in manifeste if e["path"] == "/d/neuf.pdf")
     assert neuf["status"] == "pending" and neuf["verified"] is False
+
+
+def test_r3_quarantaine_reprise_propage_nouveaux_chemins_et_selections(tmp_path: Path) -> None:
+    """R3 : Après mise en quarantaine, la charge de retry et les sélections sont cohérentes et réessayables."""
+    import json
+    from unittest.mock import patch
+
+    import redislite
+
+    from seamtech_search import worker
+    from seamtech_search.config import AppConfig
+    from seamtech_search.import_pipeline import staging_root
+    from seamtech_search.indexer import SearchIndex
+    from seamtech_search.jobs import create_job, get_job
+    from seamtech_search.redis_store import RedisStore
+    from seamtech_search.storage import S3StorageClient, StorageError, UploadBatch, UploadedArtifact
+
+    r_inst = redislite.Redis(str(tmp_path / "r3_test.rdb"))
+    store = RedisStore(redis_url=f"unix://{r_inst.socket_file}")
+    client = store._get_client()
+    client.flushdb()
+
+    root = tmp_path / "env"
+    root.mkdir()
+    cfg = AppConfig(root_paths=[root], database_path=root / "data/index.db", min_free_bytes=0,
+                    s3_endpoint_url="http://127.0.0.1:1", s3_access_key="audit", s3_secret_key="audit")
+    idx = SearchIndex(cfg.database_path)
+    idx.initialize()
+    idx.run_migrations()
+
+    source = staging_root(cfg) / "upload"
+    source.mkdir(parents=True)
+    pdf = source / "selected.pdf"
+    pdf.write_bytes(Path("sample_data/CLIENT-123/fiche-technique.pdf").read_bytes())
+
+    create_job(idx, "job-r3", str(source), selected_pdf=str(pdf))
+    store.enqueue_task("imports", {"job_id": "job-r3", "source_path": str(source), "selected_pdf": str(pdf)})
+
+    # Tentative 1 avec panne S3 -> quarantaine
+    with patch.object(S3StorageClient, "_get_client", side_effect=StorageError("panne S3 injectée")):
+        worker.worker_loop(cfg, idx, store, worker_id="worker-A", run_once=True)
+
+    job = get_job(idx, "job-r3")
+    assert job is not None
+    pending = client.zrange("seamtech:retry:imports", 0, -1)
+    assert len(pending) == 1
+    retry_payload = json.loads(pending[0])
+
+    # Invariants R3 :
+    # 1. Le chemin source en base existe et est en quarantaine
+    assert Path(job["source_path"]).exists()
+    assert "quarantine" in job["source_path"]
+    # 2. La charge de retry Redis porte le NOUVEAU chemin en quarantaine, pas l'ancien périmé
+    assert Path(retry_payload["source_path"]).exists()
+    assert retry_payload["source_path"] == job["source_path"]
+    # 3. La sélection PDF en base et dans le payload pointe vers le fichier relocalisé
+    assert Path(job["selected_pdf"]).exists()
+    assert Path(retry_payload["selected_pdf"]).exists()
+
+    # 4. Reconstruction depuis la base
+    reconstruction = worker._charge_depuis_job(job)
+    assert reconstruction is not None
+    assert Path(reconstruction["source_path"]).exists()
+    assert Path(reconstruction["selected_pdf"]).exists()
+
+    # 5. Seconde tentative effective réussie
+    def fake_upload(folder_name, files_to_upload, config, import_id=None, source_root=None):
+        arts = [
+            UploadedArtifact(path=str(f), name=Path(f).name, key=f"key_{Path(f).name}", bucket="b", status="uploaded", verified=True)
+            for f in files_to_upload if f is not None
+        ]
+        return UploadBatch(status="uploaded", artifacts=arts)
+
+    client.zrem("seamtech:retry:imports", pending[0])
+    store.enqueue_task("imports", retry_payload)
+    with patch("seamtech_search.import_pipeline.upload_artifacts_to_storage", fake_upload):
+        worker.worker_loop(cfg, idx, store, worker_id="worker-A", run_once=True)
+
+    job_final = get_job(idx, "job-r3")
+    assert job_final is not None
+    assert job_final["status"] == "completed"
+    idx.close()

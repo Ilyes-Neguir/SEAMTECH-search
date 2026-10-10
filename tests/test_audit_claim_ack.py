@@ -207,3 +207,95 @@ def test_boucle_worker_proprietaire_acquitte_et_libere(
     job = get_job(index, "job-nominal")
     assert job is not None and job["status"] == "completed", job
     index.close()
+
+
+def test_r1_vrai_traitement_worker_dechu_n_ecrase_pas_resultat_du_repreneur(
+    store: RedisStore, tmp_path: Path
+) -> None:
+    """R1 : avec le vrai process_import_task, un worker déchu ne peut écraser le résultat du repreneur."""
+    from unittest.mock import patch
+
+    from seamtech_search import worker as module_worker
+    from seamtech_search.jobs import marquer_job_claim, update_job
+
+    config = _config(tmp_path)
+    index = _index(config)
+    source = _dossier(tmp_path, "affaire-r1-vraie")
+    create_job(index, "lease-test-r1", str(source), durability="durable")
+    marquer_job_claim(index, "lease-test-r1", "worker-A")
+    store.enqueue_task("imports", {"job_id": "lease-test-r1", "source_path": str(source)})
+
+    actual_import = module_worker.import_folder
+
+    def transfer(*a: Any, **kw: Any) -> Any:
+        result = actual_import(*a, **kw)
+        # B prend le claim dans Redis ET dans la BDD pendant que A termine son extraction
+        assert store.revendiquer_tache("imports", "lease-test-r1", "worker-B", ttl_seconds=60, reprendre=True)
+        assert marquer_job_claim(index, "lease-test-r1", "worker-B")
+        update_job(index, "lease-test-r1", status="running", result={"owner": "worker-B"}, expected_worker="worker-B")
+        return result
+
+    with patch.object(module_worker, "import_folder", side_effect=transfer):
+        module_worker.worker_loop(config, index, store, worker_id="worker-A", run_once=True)
+
+    job = get_job(index, "lease-test-r1")
+    assert job is not None
+    # Le résultat témoin de B n'a PAS été écrasé par A !
+    assert job["result"].get("owner") == "worker-B", "Le worker déchu A a écrasé le résultat de B !"
+    # La tâche est toujours protégée dans Redis pour B
+    assert store.revendication("imports", "lease-test-r1")["worker_id"] == "worker-B"
+    client = store._get_client()
+    assert client.llen(PROCESSING) == 1, "La tâche pour B doit rester dans processing"
+
+    index.close()
+
+
+def test_r2_atomicite_ack_lua_avec_transfert_de_claim(store: RedisStore) -> None:
+    """R2 : L'opération Lua d'acquittement est atomique et conditionnée au claim."""
+    store.enqueue_task("imports", {"job_id": "job-r2-ack", "source_path": "/synthetic"})
+    task = store.dequeue_task("imports", timeout=1)
+    assert task is not None
+    assert store.revendiquer_tache("imports", "job-r2-ack", "worker-A", ttl_seconds=60)
+
+    # Transfert de claim à B
+    assert store.revendiquer_tache("imports", "job-r2-ack", "worker-B", ttl_seconds=60, reprendre=True)
+
+    client = store._get_client()
+    assert client.llen(PROCESSING) == 1
+
+    # Worker A tente d'acquitter -> refusé atomiquement
+    ack_a = store.ack_task("imports", task, worker_id="worker-A")
+    assert ack_a is False
+    assert client.llen(PROCESSING) == 1, "La tâche de B ne doit pas être supprimée par A"
+
+    # Worker B acquitte -> succès atomique
+    ack_b = store.ack_task("imports", task, worker_id="worker-B")
+    assert ack_b is True
+    assert client.llen(PROCESSING) == 0
+
+
+def test_r2_retry_et_deadletter_refuses_si_claim_perdu(store: RedisStore) -> None:
+    """R2 : retry_task et deadletter_task sont également protégés atomiquement contre un worker déchu."""
+    store.enqueue_task("imports", {"job_id": "job-r2-retry", "source_path": "/synthetic"})
+    task = store.dequeue_task("imports", timeout=1)
+    assert task is not None
+    assert store.revendiquer_tache("imports", "job-r2-retry", "worker-A", ttl_seconds=60)
+
+    # Transfert à B
+    assert store.revendiquer_tache("imports", "job-r2-retry", "worker-B", ttl_seconds=60, reprendre=True)
+
+    # Worker A tente un retry -> refusé
+    assert store.retry_task("imports", task, delay_seconds=10, worker_id="worker-A") is False
+    client = store._get_client()
+    assert client.zcard("seamtech:retry:imports") == 0
+    assert client.llen(PROCESSING) == 1
+
+    # Worker A tente deadletter -> refusé
+    assert store.deadletter_task("imports", task, worker_id="worker-A") is False
+    assert client.llen("seamtech:deadletter:imports") == 0
+    assert client.llen(PROCESSING) == 1
+
+    # Worker B légitime retry -> accepté
+    assert store.retry_task("imports", task, delay_seconds=10, worker_id="worker-B") is True
+    assert client.zcard("seamtech:retry:imports") == 1
+    assert client.llen(PROCESSING) == 0

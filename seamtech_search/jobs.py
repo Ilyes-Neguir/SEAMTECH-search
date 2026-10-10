@@ -151,26 +151,59 @@ def create_job(
     }
 
 
-def update_job_source_path(index: SearchIndex, job_id: str, source_path: str) -> bool:
-    """Fait suivre le chemin de reprise d'un job après relocalisation (A04).
+def update_job_source_path(
+    index: SearchIndex,
+    job_id: str,
+    source_path: str,
+    *,
+    selected_pdf: str | None = None,
+    selected_excel: str | None = None,
+) -> bool:
+    """Fait suivre le chemin de reprise d'un job et ses sélections après relocalisation (A04, R3).
 
     Appelé quand le staging applicatif est déplacé en quarantaine : la base est
-    le registre de vérité, donc la reprise doit retrouver l'archive à sa
-    NOUVELLE place sans édition manuelle.
+    le registre de vérité, donc la reprise doit retrouver l'archive ET les sélections
+    manuelles à leur NOUVELLE place sans édition manuelle.
     """
     now_iso = datetime.now(timezone.utc).isoformat()
     with index.connect() as conn:
         if index.is_postgres:
             with conn.cursor() as cursor:
-                cursor.execute(
-                    "UPDATE import_jobs SET source_path = %s, updated_at = now() WHERE id = %s",
-                    (source_path, job_id),
-                )
+                if selected_pdf is not None or selected_excel is not None:
+                    clauses = ["source_path = %s"]
+                    params = [source_path]
+                    if selected_pdf is not None:
+                        clauses.append("selected_pdf = %s")
+                        params.append(selected_pdf)
+                    if selected_excel is not None:
+                        clauses.append("selected_excel = %s")
+                        params.append(selected_excel)
+                    clauses.append("updated_at = now()")
+                    params.append(job_id)
+                    cursor.execute(f"UPDATE import_jobs SET {', '.join(clauses)} WHERE id = %s", params)
+                else:
+                    cursor.execute(
+                        "UPDATE import_jobs SET source_path = %s, updated_at = now() WHERE id = %s",
+                        (source_path, job_id),
+                    )
                 return cursor.rowcount > 0
-        cursor = conn.execute(
-            "UPDATE import_jobs SET source_path = ?, updated_at = ? WHERE id = ?",
-            (source_path, now_iso, job_id),
-        )
+        if selected_pdf is not None or selected_excel is not None:
+            clauses = ["source_path = ?"]
+            params = [source_path]
+            if selected_pdf is not None:
+                clauses.append("selected_pdf = ?")
+                params.append(selected_pdf)
+            if selected_excel is not None:
+                clauses.append("selected_excel = ?")
+                params.append(selected_excel)
+            clauses.append("updated_at = ?")
+            params.extend([now_iso, job_id])
+            cursor = conn.execute(f"UPDATE import_jobs SET {', '.join(clauses)} WHERE id = ?", params)
+        else:
+            cursor = conn.execute(
+                "UPDATE import_jobs SET source_path = ?, updated_at = ? WHERE id = ?",
+                (source_path, now_iso, job_id),
+            )
         return cursor.rowcount > 0
 
 
@@ -182,6 +215,8 @@ def update_job(
     stage: str | None = None,
     error: str | None = None,
     result: dict[str, Any] | None = None,
+    *,
+    expected_worker: str | None = None,
 ) -> dict[str, Any] | None:
     """Update fields of an active job."""
     if is_job_cancelled(job_id) and status != "cancelled":
@@ -218,6 +253,8 @@ def update_job(
             set_clauses = [f"{f} = %s" for f in fields]
             set_clauses.append("updated_at = now()")
             extra_where = "" if status == "cancelled" else " AND status != 'cancelled'"
+            if expected_worker is not None:
+                extra_where += " AND (claimed_by = %s OR claimed_by IS NULL)"
             sql = f"UPDATE import_jobs SET {', '.join(set_clauses)} WHERE id = %s{extra_where}"
 
             pg_values = []
@@ -227,6 +264,8 @@ def update_job(
                 else:
                     pg_values.append(v)
             pg_values.append(job_id)
+            if expected_worker is not None:
+                pg_values.append(expected_worker)
 
             with conn.cursor() as cursor:
                 cursor.execute(sql, pg_values)
@@ -235,8 +274,12 @@ def update_job(
             set_clauses = [f"{f} = ?" for f in fields]
             set_clauses.append("updated_at = ?")
             extra_where = "" if status == "cancelled" else " AND status != 'cancelled'"
+            if expected_worker is not None:
+                extra_where += " AND (claimed_by = ? OR claimed_by IS NULL)"
             sql = f"UPDATE import_jobs SET {', '.join(set_clauses)} WHERE id = ?{extra_where}"
             sqlite_values = list(values) + [now_iso, job_id]
+            if expected_worker is not None:
+                sqlite_values.append(expected_worker)
             cur = conn.execute(sql, sqlite_values)
             rowcount = cur.rowcount
 
@@ -573,31 +616,54 @@ def terminer_job(
     *,
     status: str,
     failure_reason: str | None = None,
+    expected_worker: str | None = None,
 ) -> bool:
-    """Ferme un job : libère le worker propriétaire et trace la raison."""
+    """Ferme un job : libère le worker propriétaire et trace la raison (avec contrôle optionnel de fencing)."""
     now_iso = datetime.now(timezone.utc).isoformat()
     with index.connect() as conn:
         if index.is_postgres:
             with conn.cursor() as cursor:
-                cursor.execute(
-                    """
-                    UPDATE import_jobs
-                    SET status = %s, claimed_by = NULL, heartbeat_at = NULL,
-                        failure_reason = %s, updated_at = now()
-                    WHERE id = %s
-                    """,
-                    (status, failure_reason, job_id),
-                )
+                if expected_worker is not None:
+                    cursor.execute(
+                        """
+                        UPDATE import_jobs
+                        SET status = %s, claimed_by = NULL, heartbeat_at = NULL,
+                            failure_reason = %s, updated_at = now()
+                        WHERE id = %s AND (claimed_by = %s OR claimed_by IS NULL)
+                        """,
+                        (status, failure_reason, job_id, expected_worker),
+                    )
+                else:
+                    cursor.execute(
+                        """
+                        UPDATE import_jobs
+                        SET status = %s, claimed_by = NULL, heartbeat_at = NULL,
+                            failure_reason = %s, updated_at = now()
+                        WHERE id = %s
+                        """,
+                        (status, failure_reason, job_id),
+                    )
                 return cursor.rowcount > 0
-        cursor = conn.execute(
-            """
-            UPDATE import_jobs
-            SET status = ?, claimed_by = NULL, heartbeat_at = NULL,
-                failure_reason = ?, updated_at = ?
-            WHERE id = ?
-            """,
-            (status, failure_reason, now_iso, job_id),
-        )
+        if expected_worker is not None:
+            cursor = conn.execute(
+                """
+                UPDATE import_jobs
+                SET status = ?, claimed_by = NULL, heartbeat_at = NULL,
+                    failure_reason = ?, updated_at = ?
+                WHERE id = ? AND (claimed_by = ? OR claimed_by IS NULL)
+                """,
+                (status, failure_reason, now_iso, job_id, expected_worker),
+            )
+        else:
+            cursor = conn.execute(
+                """
+                UPDATE import_jobs
+                SET status = ?, claimed_by = NULL, heartbeat_at = NULL,
+                    failure_reason = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (status, failure_reason, now_iso, job_id),
+            )
         return cursor.rowcount > 0
 
 

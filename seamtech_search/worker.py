@@ -162,6 +162,25 @@ def process_import_task(
                 preservation.artefacts_verifies, preservation.artefacts_total,
             )
 
+        # Fencing R1 : vérifier si le worker est toujours propriétaire avant toute mutation de fichiers/quarantaine/purge
+        def est_proprietaire_actif() -> bool:
+            if worker_id is None:
+                return True
+            if redis_store and redis_store.is_configured():
+                if not redis_store.revendication_appartient_a("imports", str(job_id), worker_id):
+                    return False
+            j = get_job(index, str(job_id))
+            if j and j.get("claimed_by") and j.get("claimed_by") != worker_id:
+                return False
+            return True
+
+        if not est_proprietaire_actif():
+            logger.warning(
+                "Job %s : worker %s déchu (propriété perdue) — aucune mutation, ni quarantaine ni purge ni résultat.",
+                job_id, worker_id,
+            )
+            return {"job_id": job_id, "status": "stale_worker", "lost_claim": True}
+
         # 2. QUARANTAINE — uniquement ce qui nous appartient (A04). Une archive
         # externe n'est JAMAIS déplacée par un échec d'envoi, et une
         # relocalisation de staging met à jour toutes les références
@@ -176,6 +195,10 @@ def process_import_task(
                 references_mises_a_jour=[],
             ).to_dict()
 
+        if not est_proprietaire_actif():
+            logger.warning("Job %s : worker %s déchu après quarantaine — écriture du résultat annulée.", job_id, worker_id)
+            return {"job_id": job_id, "status": "stale_worker", "lost_claim": True}
+
         update_job(
             index,
             job_id,
@@ -183,6 +206,7 @@ def process_import_task(
             progress=100,
             stage="done" if final_status != "upload_incomplete" else "upload_incomplete",
             result=final_payload,
+            expected_worker=worker_id,
         )
         if redis_store and redis_store.is_configured():
             redis_store.update_job(
@@ -209,7 +233,7 @@ def process_import_task(
                 "purge": False,
                 "raison": "import en échec : la copie locale reste la source de la reprise",
             }
-        elif purge:
+        elif purge and est_proprietaire_actif():
             try:
                 resolved_source = Path(source_path).expanduser().resolve()
                 if resolved_source.exists():
@@ -231,7 +255,8 @@ def process_import_task(
             logger.warning(
                 "Copie locale de %s CONSERVÉE : %s", source_path, raison_purge,
             )
-        update_job(index, job_id, result=final_payload)
+        if est_proprietaire_actif():
+            update_job(index, job_id, result=final_payload, expected_worker=worker_id)
 
         return final_payload
 
@@ -783,10 +808,33 @@ def mettre_en_quarantaine(
     payload["quarantine_path"] = str(dest)
     # La BASE porte le chemin de reprise (registry de vérité) : sans cette mise
     # à jour, `retry_upload` chercherait l'ancien emplacement.
+    # Fait suivre également selected_pdf et selected_excel dans la base (R3).
     try:
-        from .jobs import update_job_source_path
+        from .jobs import get_job, update_job_source_path
 
-        update_job_source_path(index, job_id, str(dest))
+        job_actuel = get_job(index, job_id) or {}
+        new_sel_pdf = None
+        new_sel_excel = None
+        if job_actuel.get("selected_pdf"):
+            try:
+                reste = Path(job_actuel["selected_pdf"]).expanduser().resolve().relative_to(resolved_source)
+                new_sel_pdf = str(dest / reste)
+            except Exception:
+                new_sel_pdf = job_actuel.get("selected_pdf")
+        if job_actuel.get("selected_excel"):
+            try:
+                reste = Path(job_actuel["selected_excel"]).expanduser().resolve().relative_to(resolved_source)
+                new_sel_excel = str(dest / reste)
+            except Exception:
+                new_sel_excel = job_actuel.get("selected_excel")
+
+        update_job_source_path(
+            index,
+            job_id,
+            str(dest),
+            selected_pdf=new_sel_pdf,
+            selected_excel=new_sel_excel,
+        )
     except Exception as erreur:  # pragma: no cover - défensif
         logger.warning("Import %s : chemin de job non mis à jour après quarantaine : %s", job_id, erreur)
     logger.warning(
@@ -1029,7 +1077,12 @@ def worker_loop(
                                 attempt + 1,
                                 max_attempts,
                             )
-                            redis_store.retry_task("imports", task, delay_seconds=delay)
+                            # Contexte durable de reprise (R3) : reconstruire la charge à partir
+                            # de la base pour propager la relocalisation éventuelle en quarantaine
+                            job_actuel = get_job(index, job_id)
+                            task_retry = (_charge_depuis_job(job_actuel) if job_actuel else None) or dict(task)
+                            task_retry["attempt"] = attempt
+                            redis_store.retry_task("imports", task_retry, delay_seconds=delay, worker_id=identifiant)
                             # Le registre (base) suit l'état RÉEL : la tâche est
                             # reprogrammée, donc le job est RÉCUPÉRABLE — pas
                             # « échoué ». L'échec définitif n'est écrit qu'à
@@ -1045,6 +1098,7 @@ def worker_loop(
                                     f"(tentative {attempt + 2}/{max_attempts}) : "
                                     f"{result.get('error') or statut}"
                                 ),
+                                expected_worker=identifiant,
                             )
                         else:
                             raison = (
@@ -1052,19 +1106,24 @@ def worker_loop(
                                 f"{result.get('error') or statut}"
                             )
                             logger.warning("Job %s : %s", job_id, raison)
-                            redis_store.deadletter_task("imports", task)
-                            terminer_job(index, job_id, status="failed", failure_reason=raison)
+                            redis_store.deadletter_task("imports", task, worker_id=identifiant)
+                            terminer_job(index, job_id, status="failed", failure_reason=raison, expected_worker=identifiant)
                     elif statut == "completed":
-                        terminer_job(index, job_id, status="completed")
+                        terminer_job(index, job_id, status="completed", expected_worker=identifiant)
                     elif statut == "cancelled":
-                        terminer_job(index, job_id, status="cancelled", failure_reason="annulé par l'opérateur")
+                        terminer_job(index, job_id, status="cancelled", failure_reason="annulé par l'opérateur", expected_worker=identifiant)
+                    elif statut == "stale_worker":
+                        logger.warning("Job %s : worker %s déchu, aucune clôture de tâche.", job_id, identifiant)
                     else:
-                        terminer_job(index, job_id, status=statut)
+                        terminer_job(index, job_id, status=statut, expected_worker=identifiant)
                 except Exception as task_exc:
                     logger.exception("Task %s failed with exception: %s", job_id, task_exc)
                     if attempt + 1 < max_attempts:
                         delay = 2**attempt
-                        redis_store.retry_task("imports", task, delay_seconds=delay)
+                        job_actuel = get_job(index, job_id)
+                        task_retry = (_charge_depuis_job(job_actuel) if job_actuel else None) or dict(task)
+                        task_retry["attempt"] = attempt
+                        redis_store.retry_task("imports", task_retry, delay_seconds=delay, worker_id=identifiant)
                         # Même règle que ci-dessus : une tâche reprogrammée est un
                         # job RÉCUPÉRABLE, jamais un « échec » déjà écrit.
                         update_job(
@@ -1076,11 +1135,12 @@ def worker_loop(
                                 f"nouvelle tentative programmée dans {delay}s "
                                 f"(tentative {attempt + 2}/{max_attempts}) : {task_exc}"
                             ),
+                            expected_worker=identifiant,
                         )
                     else:
                         raison = f"lettre morte après exception ({attempt + 1} tentative(s)) : {task_exc}"
-                        redis_store.deadletter_task("imports", task)
-                        terminer_job(index, job_id, status="failed", failure_reason=raison)
+                        redis_store.deadletter_task("imports", task, worker_id=identifiant)
+                        terminer_job(index, job_id, status="failed", failure_reason=raison, expected_worker=identifiant)
                 finally:
                     battement.oublier(job_id)
                     # Libération conditionnelle : ne supprime que SI le verrou est
