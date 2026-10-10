@@ -281,16 +281,51 @@ fi
 # ---------------------------------------------------------------------------
 # 9. Restauration rapide : la fiche validée disparaît puis revient.
 # ---------------------------------------------------------------------------
+# ISOLEMENT DES ÉCRIVAINS (constat A10 de l'audit du 2026-10-08) :
+# ``pg_restore --clean --if-exists`` est DESTRUCTEUR. Tant qu'un conteneur qui
+# écrit dans PostgreSQL tourne pendant ces quelques secondes, la ligne
+# supprimée peut être recréée au milieu du restore, et le worker peut rejouer
+# un job sur une base à moitié restaurée. Seul ``web`` était arrêté ; le
+# worker, qui écrit dans les MÊMES tables (jobs, lots, fiches), continuait.
+# Ici : tous les écrivains sont arrêtés AVANT le DELETE et le pg_restore,
+# l'arrêt est VÉRIFIÉ (sinon le contrôle mentirait), et le redémarrage est
+# garanti par un trap — une interruption ne laisse jamais la pile éteinte.
+ECRIVAINS="web worker"
 if [ -z "$FICHE" ]; then
     controle "restauration" "FAIL" "aucune fiche validée connue (INFO|fiche_pour_restauration absente)"
 else
-    FICHE_SQL=$(printf '%s' "$FICHE" | sed "s/'/''/g")
-    SUPPRIME="$(docker compose exec -T postgres psql -U seamtech -d seamtech_search -tA \
-        -c "DELETE FROM fiche WHERE code = '$FICHE_SQL'" 2>&1)" || SUPPRIME="erreur: $SUPPRIME"
-    docker compose stop web >/dev/null 2>&1 || true
-    RESTAURE="$(docker compose exec -T postgres pg_restore --clean --if-exists --no-owner \
-        -U seamtech -d seamtech_search < "$DUMP" 2>&1)" && RESTAURE_OK=0 || RESTAURE_OK=$?
-    docker compose start web >/dev/null 2>&1 || true
+    SUPPRIME=""
+    RESTAURE=""
+    RESTAURE_OK=1
+    ECRIVAINS_ARRETES=0
+    restaurer_ecrivains() {
+        if [ "$ECRIVAINS_ARRETES" = "1" ]; then
+            # shellcheck disable=SC2086
+            docker compose start $ECRIVAINS >/dev/null 2>&1 || true
+            ECRIVAINS_ARRETES=0
+        fi
+    }
+    trap 'restaurer_ecrivains; rm -f "$RAPPORT_TMP"' EXIT INT TERM
+    # shellcheck disable=SC2086
+    docker compose stop $ECRIVAINS >/dev/null 2>&1 || true
+    ACTIFS="$(docker compose ps --status running --services 2>/dev/null || true)"
+    ENCORE=""
+    for SERVICE in $ECRIVAINS; do
+        if printf '%s\n' "$ACTIFS" | grep -qx "$SERVICE"; then ENCORE="$ENCORE $SERVICE"; fi
+    done
+    if [ -n "$ENCORE" ]; then
+        controle "restauration" "FAIL" "écrivains encore actifs :$ENCORE — pg_restore NON lancé (isolement impossible à prouver)"
+    else
+        ECRIVAINS_ARRETES=1
+        FICHE_SQL=$(printf '%s' "$FICHE" | sed "s/'/''/g")
+        # Le DELETE vient APRÈS l'arrêt : sinon l'application peut recréer la
+        # fiche entre la suppression et le restore, et le contrôle ne prouve plus rien.
+        SUPPRIME="$(docker compose exec -T postgres psql -U seamtech -d seamtech_search -tA \
+            -c "DELETE FROM fiche WHERE code = '$FICHE_SQL'" 2>&1)" || SUPPRIME="erreur: $SUPPRIME"
+        RESTAURE="$(docker compose exec -T postgres pg_restore --clean --if-exists --no-owner \
+            -U seamtech -d seamtech_search < "$DUMP" 2>&1)" && RESTAURE_OK=0 || RESTAURE_OK=$?
+        restaurer_ecrivains
+    fi
     FIN=$((SECONDS + 180)); RETOUR="000"
     while [ $SECONDS -lt $FIN ]; do
         RETOUR="$(curl -s -o /dev/null -w '%{http_code}' -H "X-SEAMTECH-TOKEN: ${SEAMTECH_AUTH_TOKEN}" \
@@ -299,11 +334,15 @@ else
         sleep 3
     done
     if [ "$RESTAURE_OK" = "0" ] && [ "$RETOUR" = "200" ]; then
-        controle "restauration" "PASS" "fiche $FICHE supprimée ($SUPPRIME) puis restaurée depuis $DUMP (GET /fiches/$FICHE/pieces = 200)"
-    else
+        controle "restauration" "PASS" "fiche $FICHE supprimée ($SUPPRIME) puis restaurée depuis $DUMP (GET /fiches/$FICHE/pieces = 200) — écrivains $ECRIVAINS arrêtés pendant l'opération"
+    elif [ "$ECRIVAINS_ARRETES" = "1" ]; then
         controle "restauration" "FAIL" "pg_restore code=$RESTAURE_OK $(echo "$RESTAURE" | tail -2 | tr '\n' ' ') ; fiche de retour HTTP $RETOUR"
     fi
+    # Sinon, le FAIL « écrivains encore actifs » a déjà été émis : pas de doublon.
 fi
+# Ré-arme le trap d'origine (le trap ci-dessus l'avait remplacé).
+trap 'rm -f "$RAPPORT_TMP"' EXIT
+trap - INT TERM
 
 # ---------------------------------------------------------------------------
 # 10. Persistance : docker compose down && up → les données reviennent.

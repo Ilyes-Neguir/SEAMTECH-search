@@ -22,6 +22,7 @@ injoignable » se contentent d'un port fermé — mais le module reste marqué
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 from pathlib import Path
@@ -647,7 +648,10 @@ def test_reconcilier_file_tolere_une_charge_illisible(store: RedisStore, tmp_pat
     client.rpush("seamtech:processing:imports", "pas du json")
 
     resume = reconcilier_file(index, store, max_tentatives=3)
-    assert resume == {"requeued": [], "dead_lettered": [], "relanced_from_db": [], "failed_from_db": []}, resume
+    assert resume == {
+            "requeued": [], "dead_lettered": [], "relanced_from_db": [], "failed_from_db": [],
+            "redis_indisponible": [],
+        }, resume
     lettres = store.get_deadletters("imports")
     assert lettres and lettres[0]["raison"] == "charge illisible", lettres
     assert store.profondeur_file("imports")["processing"] == 0
@@ -787,7 +791,9 @@ def test_reconcilier_file_marque_en_echec_les_tentatives_epuisees(store: RedisSt
     index.close()
 
 
-def test_balayage_periodique_signale_une_reprise(store: RedisStore, tmp_path: Path) -> None:
+def test_balayage_periodique_signale_une_reprise(
+    store: RedisStore, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     """Le balayage périodique n'est pas muet : quand il reprend une tâche, il
     le journalise (l'exploitant doit pouvoir constater qu'une reprise a eu lieu)."""
     from seamtech_search.worker import worker_loop
@@ -814,14 +820,22 @@ def test_balayage_periodique_signale_une_reprise(store: RedisStore, tmp_path: Pa
         return [{"job_id": "job-balayage", "action": "requeued", "attempt": 1, "raison": "worker interrompu"}]
 
     store.reprendre_taches_orphelines = decision_au_second_appel  # type: ignore[method-assign]
-    worker_loop(config, index, store, worker_id="worker-balayage", run_once=True)
+    with caplog.at_level(logging.WARNING, logger="seamtech_search.worker"):
+        worker_loop(config, index, store, worker_id="worker-balayage", run_once=True)
+    messages = [enregistrement.getMessage() for enregistrement in caplog.records]
 
     assert appels["n"] >= 2, "le balayage périodique doit avoir tourné"
     leurre = get_job(index, "job-leurre")
     assert leurre is not None and leurre["status"] == "completed", leurre
+    # Correctif A06 (audit du 2026-10-08) : un job ACTIF absent de la file n'est
+    # plus laissé « en attente pour toujours ». Le balayage le ré-enfile, et la
+    # boucle le traite dans la foulée. L'assertion historique (``pending``
+    # figé) décrivait précisément l'état orphelin que l'audit a relevé ; elle
+    # porte maintenant sur l'effet observable : le job est SORTI de l'état
+    # orphelin, et la reprise est journalisée.
     job = get_job(index, "job-balayage")
-    assert job is not None and job["status"] == "pending", job
-    assert job["stage"] == "requeued", job
+    assert job is not None and job["status"] in {"completed", "needs_review", "running"}, job
+    assert any("absent de la file" in message for message in messages), messages
     index.close()
 
 

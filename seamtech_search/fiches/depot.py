@@ -33,7 +33,7 @@ from typing import Any, Callable
 
 from seamtech_search.fiches.extraction import extraire_fiche
 from seamtech_search.fiches.gabarits import GabaritDef, charger_gabarits
-from seamtech_search.fiches.persistance import ecrire_fiche
+from seamtech_search.fiches.persistance import ecrire_fiche_resultat
 from seamtech_search.indexer import PG_UNACCENT_CONFIG
 
 LOGGER = logging.getLogger("seamtech_search.fiches.depot")
@@ -374,7 +374,12 @@ def deposer_dossier(index: Any, dossier: Path, gabarits: list[GabaritDef] | None
         with index.connect() as connexion:
             with connexion.cursor() as cursor:
                 fiche = extraire_fiche(plan.pdf_fiche, gabarits=gabarits, gabarit_code=plan.gabarit_code)
-                id_fiche, action = ecrire_fiche(index, fiche, connexion=connexion)
+                # ResultatEcriture : la révision qui accompagne le contenu écrit
+                # est publiée au lot (A02) — un dépôt qui REMPLACE une fiche
+                # fait avancer sa révision, et le dépôt le DIT.
+                ecriture = ecrire_fiche_resultat(index, fiche, connexion=connexion)
+                id_fiche, action = ecriture.id_fiche, ecriture.action
+                revision_fiche = ecriture.revision
 
                 # Le PDF principal a lui aussi un identifiant de catalogue : toutes
                 # les vues l'ouvrent par /pieces/{id}, sans transmettre son chemin.
@@ -474,6 +479,12 @@ def deposer_dossier(index: Any, dossier: Path, gabarits: list[GabaritDef] | None
         "raison": None if action == "creee" else action,
         "pieces": len(plan.pieces),
         "id_lot": id_lot_local,
+        # Révision PUBLIÉE avec le contenu (A02) : un remplacement sur place
+        # l'a fait avancer, donc un écran resté ouvert sur l'ancienne révision
+        # ne peut plus valider ce qu'il n'a pas relu.
+        "revision": revision_fiche,
+        "revision_avant": ecriture.revision_avant,
+        "contenu_remplace": ecriture.remplacee,
     }
 
 
@@ -521,6 +532,8 @@ def executer_lot(
     ``progress_cb(traites, total)`` et ``worker_id`` servent la supervision :
     sans eux, un lot long est indistinguable d'un lot bloqué.
     """
+    if not getattr(index, "is_postgres", False):
+        raise DepotImpossible("Le traitement de lot exige PostgreSQL (tables fiche_*, §17.1).")
     LOGGER.info("Lot #%s : chargement des gabarits actifs…", id_lot)
     gabarits = charger_gabarits(index)
     LOGGER.info("Lot #%s : %d gabarit(s) actif(s) chargé(s).", id_lot, len(gabarits))

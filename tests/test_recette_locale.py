@@ -212,6 +212,49 @@ def test_ensure_postgres_genere_tous_les_secrets_exiges_par_compose() -> None:
     assert compose["services"], "docker-compose.yml illisible"
 
 
+def test_restauration_isole_tous_les_ecrivains_avant_detruire(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Constat A10 — le restore destructeur n'est lancé que si PLUS AUCUN écrivain ne tourne.
+
+    ``pg_restore --clean --if-exists`` supprime et recrée des objets. Un
+    conteneur qui écrit dans PostgreSQL pendant ces secondes peut recréer la
+    ligne supprimée (le contrôle « disparaît puis revient » ne prouve alors
+    plus rien) ou rejouer un job sur une base à moitié restaurée. L'audit du
+    2026-10-08 a relevé que SEUL ``web`` était arrêté : le worker écrit dans les
+    MÊMES tables (jobs, lots, fiches).
+
+    Deux orchestrateurs, une seule règle : les deux doivent (1) nommer web ET
+    worker, (2) arrêter AVANT le DELETE et le pg_restore, (3) VÉRIFIER l'arrêt
+    et refuser de restaurer dans le doute. Le passage complet est prouvé par le
+    job CI ``recette-locale`` (Docker) ; ici, l'épinglage statique empêche la
+    régression silencieuse d'un script qu'aucun test local ne peut exécuter.
+    """
+    for nom, chemin, declaration in (
+        ("recette_locale.sh", WRAPPER_SH, "ECRIVAINS=\"web worker\""),
+        ("recette_locale.ps1", WRAPPER_PS1, '$Ecrivains = @("web", "worker")'),
+    ):
+        texte = chemin.read_text(encoding="utf-8-sig")
+        assert declaration in texte, f"{nom} : les écrivains déclarés doivent inclure web ET worker"
+
+        arret = texte.index("docker compose stop")
+        suppression = texte.index("DELETE FROM fiche")
+        # ``--no-owner`` distingue la COMMANDE du commentaire d'en-tête qui
+        # rappelle, avant, pourquoi l'isolement est nécessaire.
+        restauration = texte.index("pg_restore --clean --if-exists --no-owner")
+        assert arret < suppression < restauration, (
+            f"{nom} : l'arrêt des écrivains doit précéder le DELETE puis le pg_restore"
+        )
+
+        # La vérification est OBLIGATOIRE : un « stop » qui échoue ne doit pas
+        # laisser le script croire que la base est isolée.
+        assert "pg_restore NON lancé" in texte, f"{nom} : le doute d'isolement doit annuler le restore"
+        assert "--status running" in texte, f"{nom} : l'arrêt doit être VÉRIFIÉ, pas supposé"
+        # Le redémarrage est garanti (trap / finally) : une interruption ne doit
+        # pas laisser la pile à moitié éteinte sur le poste du commanditaire.
+        assert ("trap " in texte) if nom.endswith(".sh") else ("finally" in texte), (
+            f"{nom} : le redémarrage des écrivains doit être garanti"
+        )
+
+
 def test_ci_declare_le_job_recette_locale() -> None:
     """Le passage de la recette est un fait CI : job dédié + script .sh."""
     ci = yaml.safe_load(CI.read_text(encoding="utf-8"))

@@ -422,6 +422,133 @@ def _brute_concerne(brute: str, job_id: str) -> bool:
         return False
 
 
+
+_LUA_ACK_TASK = """
+local processing_key = KEYS[1]
+local claim_key = KEYS[2]
+local expected_worker = ARGV[1]
+local raw_payload = ARGV[2]
+local target_id = ARGV[3]
+
+if expected_worker ~= "" then
+    if claim_key == "" then
+        return {0, "no_claim"}
+    end
+    local claim_raw = redis.call('GET', claim_key)
+    if not claim_raw then
+        return {0, "no_claim"}
+    end
+    local ok, claim_data = pcall(cjson.decode, claim_raw)
+    if not (ok and claim_data and claim_data.worker_id and claim_data.worker_id == expected_worker) then
+        return {0, "lost_claim"}
+    end
+end
+
+local removed = redis.call('LREM', processing_key, 1, raw_payload)
+if removed > 0 then
+    return {1, "removed_exact"}
+end
+
+if target_id ~= "" then
+    local items = redis.call('LRANGE', processing_key, 0, -1)
+    for i, item in ipairs(items) do
+        local ok, decoded = pcall(cjson.decode, item)
+        if ok and decoded and decoded.job_id == target_id then
+            redis.call('LREM', processing_key, 1, item)
+            return {1, "removed_by_id"}
+        end
+    end
+end
+
+return {0, "not_found"}
+"""
+
+_LUA_RETRY_TASK = """
+local processing_key = KEYS[1]
+local target_key = KEYS[2]
+local claim_key = KEYS[3]
+local expected_worker = ARGV[1]
+local raw_payload = ARGV[2]
+local new_payload = ARGV[3]
+local mode = ARGV[4]
+local score = tonumber(ARGV[5])
+local target_id = ARGV[6]
+
+if expected_worker ~= "" then
+    if claim_key == "" then
+        return {0, "no_claim"}
+    end
+    local claim_raw = redis.call('GET', claim_key)
+    if not claim_raw then
+        return {0, "no_claim"}
+    end
+    local ok, claim_data = pcall(cjson.decode, claim_raw)
+    if not (ok and claim_data and claim_data.worker_id and claim_data.worker_id == expected_worker) then
+        return {0, "lost_claim"}
+    end
+end
+
+local removed = redis.call('LREM', processing_key, 1, raw_payload)
+if removed == 0 and target_id ~= "" then
+    local items = redis.call('LRANGE', processing_key, 0, -1)
+    for i, item in ipairs(items) do
+        local ok, decoded = pcall(cjson.decode, item)
+        if ok and decoded and decoded.job_id == target_id then
+            redis.call('LREM', processing_key, 1, item)
+            removed = 1
+            break
+        end
+    end
+end
+
+if mode == "zadd" then
+    redis.call('ZADD', target_key, score, new_payload)
+else
+    redis.call('RPUSH', target_key, new_payload)
+end
+
+return {1, "retried"}
+"""
+
+_LUA_DEADLETTER_TASK = """
+local processing_key = KEYS[1]
+local dead_key = KEYS[2]
+local claim_key = KEYS[3]
+local expected_worker = ARGV[1]
+local raw_payload = ARGV[2]
+local target_id = ARGV[3]
+
+if expected_worker ~= "" then
+    if claim_key == "" then
+        return {0, "no_claim"}
+    end
+    local claim_raw = redis.call('GET', claim_key)
+    if not claim_raw then
+        return {0, "no_claim"}
+    end
+    local ok, claim_data = pcall(cjson.decode, claim_raw)
+    if not (ok and claim_data and claim_data.worker_id and claim_data.worker_id == expected_worker) then
+        return {0, "lost_claim"}
+    end
+end
+
+local removed = redis.call('LREM', processing_key, 1, raw_payload)
+if removed == 0 and target_id ~= "" then
+    local items = redis.call('LRANGE', processing_key, 0, -1)
+    for i, item in ipairs(items) do
+        local ok, decoded = pcall(cjson.decode, item)
+        if ok and decoded and decoded.job_id == target_id then
+            redis.call('LREM', processing_key, 1, item)
+            removed = 1
+            break
+        end
+    end
+end
+
+redis.call('RPUSH', dead_key, raw_payload)
+return {1, "deadlettered"}
+"""
+
 class RedisStore(ClaimMixin):
     """Redis integration for job queues, status caching, and rate-limiting."""
 
@@ -668,65 +795,165 @@ class RedisStore(ClaimMixin):
             logger.error("Failed to dequeue task from Redis %s: %s", queue_name, exc)
             return None
 
-    def ack_task(self, queue_name: str, payload: dict[str, Any]) -> bool:
+    def ack_task(self, queue_name: str, payload: dict[str, Any], *, worker_id: str | None = None) -> bool:
+        """Acquitte une tâche de façon atomique conditionnée au verrou (R2)."""
         client = self._get_client()
         if client is None:
             return False
+        job_id = str(payload.get("job_id") or "")
+        worker_str = str(worker_id) if worker_id is not None else ""
+        processing_key = f"seamtech:processing:{queue_name}"
+        claim_key = f"seamtech:claim:{queue_name}:{job_id}" if job_id else ""
+        raw_payload = json.dumps(payload, ensure_ascii=False)
+
+        # Exécution atomique via script Lua si disponible
+        if hasattr(client, "eval") and type(getattr(client, "eval")).__name__ != "MagicMock":
+            try:
+                res = client.eval(_LUA_ACK_TASK, 2, processing_key, claim_key, worker_str, raw_payload, job_id)
+                if isinstance(res, (list, tuple)) and len(res) >= 2:
+                    if res[0] == 0:
+                        reason = res[1].decode("utf-8") if isinstance(res[1], bytes) else str(res[1])
+                        if reason in ("lost_claim", "no_claim"):
+                            logger.warning(
+                                "Acquittement refusé atomiquement : la tâche %s n'appartient plus à %s "
+                                "(raison: %s) — sa copie reste dans la file.",
+                                job_id, worker_id, reason,
+                            )
+                            return False
+                    return True
+                return True
+            except Exception as exc:
+                logger.warning("Lua eval failed in ack_task: %s", exc)
+                return False
+
+        # Repli standard (environnements de mock sans Lua)
         try:
-            processing_key = f"seamtech:processing:{queue_name}"
-            # Remove one occurrence of this payload from processing list
-            # We need to match the exact JSON; simpler: lrem by value
-            item = json.dumps(payload, ensure_ascii=False)
-            # Try to remove the exact item, if not found try with attempt field variations
-            removed = client.lrem(processing_key, 1, item)
-            if removed == 0:
-                # Try to remove any item with same job_id
-                job_id = payload.get("job_id")
-                if job_id:
-                    # Scan processing list for job_id
-                    items = client.lrange(processing_key, 0, -1)
-                    for it in items:
-                        try:
-                            data = json.loads(it)
-                            if data.get("job_id") == job_id:
-                                client.lrem(processing_key, 1, it)
-                                break
-                        except Exception:
-                            continue
+            count = client.lrem(processing_key, 1, raw_payload)
+            if count == 0 and job_id:
+                for item in client.lrange(processing_key, 0, -1):
+                    try:
+                        p = json.loads(item)
+                        if p.get("job_id") == job_id:
+                            client.lrem(processing_key, 1, item)
+                            break
+                    except (json.JSONDecodeError, TypeError, KeyError) as parse_err:
+                        logger.debug("Tâche processing non-JSON ignorée lors de l'ack : %s", parse_err)
             return True
         except Exception as exc:
             logger.warning("Failed to ack task %s: %s", queue_name, exc)
             return False
 
-    def retry_task(self, queue_name: str, payload: dict[str, Any], delay_seconds: int = 0) -> bool:
+    def retry_task(
+        self,
+        queue_name: str,
+        payload: dict[str, Any],
+        delay_seconds: int = 0,
+        *,
+        worker_id: str | None = None,
+    ) -> bool:
+        """Reprogramme une tâche de façon atomique conditionnée au verrou (R2)."""
         client = self._get_client()
         if client is None:
             return False
+        job_id = str(payload.get("job_id") or "")
+        worker_str = str(worker_id) if worker_id is not None else ""
+        processing_key = f"seamtech:processing:{queue_name}"
+        claim_key = f"seamtech:claim:{queue_name}:{job_id}" if job_id else ""
+        retry_key = f"seamtech:retry:{queue_name}"
+        target_key = retry_key if delay_seconds > 0 else f"seamtech:queue:{queue_name}"
+        mode = "zadd" if delay_seconds > 0 else "rpush"
+        score = time.time() + delay_seconds
+
+        new_payload = dict(payload)
+        new_payload["attempt"] = new_payload.get("attempt", 0) + 1
+        raw_payload = json.dumps(payload, ensure_ascii=False)
+        new_raw_payload = json.dumps(new_payload, ensure_ascii=False)
+
+        if hasattr(client, "eval") and type(getattr(client, "eval")).__name__ != "MagicMock":
+            try:
+                res = client.eval(
+                    _LUA_RETRY_TASK,
+                    3,
+                    processing_key,
+                    target_key,
+                    claim_key,
+                    worker_str,
+                    raw_payload,
+                    new_raw_payload,
+                    mode,
+                    score,
+                    job_id,
+                )
+                if isinstance(res, (list, tuple)) and len(res) >= 1:
+                    if res[0] == 0:
+                        logger.warning(
+                            "Retry refusé atomiquement : tâche %s n'appartient plus à %s",
+                            job_id, worker_id,
+                        )
+                        return False
+                    return True
+                return True
+            except Exception as exc:
+                logger.error("Failed to retry task %s: %s", queue_name, exc)
+                return False
+
         try:
-            retry_key = f"seamtech:retry:{queue_name}"
-            # Remove from processing
-            self.ack_task(queue_name, payload)
-            # Increment attempt
-            new_payload = dict(payload)
-            new_payload["attempt"] = new_payload.get("attempt", 0) + 1
+            self.ack_task(queue_name, payload, worker_id=worker_id)
             if delay_seconds > 0:
-                score = time.time() + delay_seconds
-                client.zadd(retry_key, {json.dumps(new_payload, ensure_ascii=False): score})
+                client.zadd(target_key, {new_raw_payload: score})
             else:
-                client.rpush(f"seamtech:queue:{queue_name}", json.dumps(new_payload, ensure_ascii=False))
+                client.rpush(target_key, new_raw_payload)
             return True
         except Exception as exc:
             logger.error("Failed to retry task %s: %s", queue_name, exc)
             return False
 
-    def deadletter_task(self, queue_name: str, payload: dict[str, Any]) -> bool:
+    def deadletter_task(
+        self,
+        queue_name: str,
+        payload: dict[str, Any],
+        *,
+        worker_id: str | None = None,
+    ) -> bool:
+        """Envoie une tâche en lettre morte de façon atomique conditionnée au verrou (R2)."""
         client = self._get_client()
         if client is None:
             return False
+        job_id = str(payload.get("job_id") or "")
+        worker_str = str(worker_id) if worker_id is not None else ""
+        processing_key = f"seamtech:processing:{queue_name}"
+        dead_key = f"seamtech:deadletter:{queue_name}"
+        claim_key = f"seamtech:claim:{queue_name}:{job_id}" if job_id else ""
+        raw_payload = json.dumps(payload, ensure_ascii=False)
+
+        if hasattr(client, "eval") and type(getattr(client, "eval")).__name__ != "MagicMock":
+            try:
+                res = client.eval(
+                    _LUA_DEADLETTER_TASK,
+                    3,
+                    processing_key,
+                    dead_key,
+                    claim_key,
+                    worker_str,
+                    raw_payload,
+                    job_id,
+                )
+                if isinstance(res, (list, tuple)) and len(res) >= 1:
+                    if res[0] == 0:
+                        logger.warning(
+                            "Deadletter refusé atomiquement : tâche %s n'appartient plus à %s",
+                            job_id, worker_id,
+                        )
+                        return False
+                    return True
+                return True
+            except Exception as exc:
+                logger.error("Failed to deadletter task %s: %s", queue_name, exc)
+                return False
+
         try:
-            dead_key = f"seamtech:deadletter:{queue_name}"
-            self.ack_task(queue_name, payload)
-            client.rpush(dead_key, json.dumps(payload, ensure_ascii=False))
+            self.ack_task(queue_name, payload, worker_id=worker_id)
+            client.rpush(dead_key, raw_payload)
             return True
         except Exception as exc:
             logger.error("Failed to deadletter task %s: %s", queue_name, exc)

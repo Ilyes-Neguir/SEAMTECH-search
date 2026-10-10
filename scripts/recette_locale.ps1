@@ -322,30 +322,99 @@ $Dump = Join-Path $BackupDir ("recette-{0:yyyyMMdd-HHmmss}.dump" -f (Get-Date))
 # (`*>`) corromprait le format custom (binaire) — sortie brute conservée.
 $DumpSortie = (docker compose exec -T postgres pg_dump -U seamtech --format=custom -f /tmp/recette-backup.dump seamtech_search 2>&1) | Out-String
 $CodeDump = $LASTEXITCODE
+$ShaInterneBrut = ((docker compose exec -T postgres sha256sum /tmp/recette-backup.dump 2>&1) | Out-String).Trim()
+$ShaInterne = if ($ShaInterneBrut) { $ShaInterneBrut.Split(" ")[0].Trim().ToLower() } else { "" }
 docker compose cp "postgres:/tmp/recette-backup.dump" $Dump *> $null
-if (($CodeDump -eq 0) -and (Test-Path $Dump) -and ((Get-Item $Dump).Length -gt 0)) {
+$CodeCp = $LASTEXITCODE
+$DumpValide = $false
+if (($CodeDump -eq 0) -and ($CodeCp -eq 0) -and (Test-Path $Dump) -and ((Get-Item $Dump).Length -gt 0)) {
     $Taille = (Get-Item $Dump).Length
-    $Em = (Get-FileHash -Algorithm SHA256 -Path $Dump).Hash.Substring(0, 16)
-    Rapport "sauvegarde" "PASS" "$Dump — $Taille octets, SHA-256 début=$Em"
+    $ShaLocal = (Get-FileHash -Algorithm SHA256 -Path $Dump).Hash.Trim().ToLower()
+    if ($ShaInterne -and ($ShaLocal -eq $ShaInterne)) {
+        $Em = $ShaLocal.Substring(0, 16)
+        $DumpValide = $true
+        Rapport "sauvegarde" "PASS" "$Dump — $Taille octets, SHA-256=$Em (conforme conteneur)"
+    } else {
+        Rapport "sauvegarde" "FAIL" "Dump corrompu lors du transfert docker cp : SHA local ($ShaLocal) != conteneur ($ShaInterne)"
+    }
 } else {
-    Rapport "sauvegarde" "FAIL" ("pg_dump impossible ou dump vide ($Dump) : " + ($DumpSortie.Trim() | Select-Object -First 1))
+    Rapport "sauvegarde" "FAIL" ("pg_dump ou docker cp impossible ou dump vide ($Dump) : " + ($DumpSortie.Trim() | Select-Object -First 1))
 }
 
 # ---------------------------------------------------------------------------
 # 9. Restauration rapide : la fiche validée disparaît puis revient.
+#
+# ISOLEMENT DES ÉCRIVAINS (constat A10 de l'audit du 2026-10-08, réserve R4) :
+# ``pg_restore --clean --if-exists`` est DESTRUCTEUR — il supprime et recrée
+# des objets. Tant qu'un conteneur qui écrit dans PostgreSQL tourne pendant ces
+# quelques secondes, deux choses peuvent arriver : la ligne supprimée est
+# recréée par l'application au milieu du restore, ou le worker rejoue un job
+# sur une base à moitié restaurée.
+#
+# Préconditions fail-closed strictes :
+# 1. Sauvegarde préalable valide et contrôlée ($DumpValide). En cas d'échec de
+#    dump, JAMAIS d'opération destructive.
+# 2. Arrêt explicite de web et worker avec vérification du code retour Docker.
+# 3. docker compose ps exécuté avec succès et sans écrivains actifs restants.
+# 4. Enfin, sécurité du redémarrage : redémarrage garanti uniquement si la
+#    restauration a réussi ou si aucune action destructive n'a été engagée.
 # ---------------------------------------------------------------------------
-if (-not $Fiche) {
+$Ecrivains = @("web", "worker")
+if (-not $DumpValide) {
+    Rapport "restauration" "FAIL" "sauvegarde absente ou corrompue — pg_restore NON lancé (aucune action destructive sans sauvegarde valide)"
+} elseif (-not $Fiche) {
     Rapport "restauration" "FAIL" "aucune fiche validée connue (INFO|fiche_pour_restauration absente)"
 } else {
-    $FicheSql = $Fiche -replace "'", "''"
-    $Supprime = (docker compose exec -T postgres psql -U seamtech -d seamtech_search -tA `
-        -c "DELETE FROM fiche WHERE code = '$FicheSql'" 2>&1) | Out-String
-    docker compose stop web *> $null
-    docker compose cp $Dump "postgres:/tmp/recette-restore.dump" *> $null
-    $Restaure = (docker compose exec -T postgres pg_restore --clean --if-exists --no-owner `
-        -U seamtech -d seamtech_search /tmp/recette-restore.dump 2>&1) | Out-String
-    $CodeRestore = $LASTEXITCODE
-    docker compose start web *> $null
+    $Supprime = ""
+    $Restaure = ""
+    $CodeRestore = 1
+    $EcrivainsArretes = $false
+    $RestaurationTente = $false
+    try {
+        $FicheSql = $Fiche -replace "'", "''"
+        $StopSortie = (docker compose stop @Ecrivains 2>&1) | Out-String
+        $CodeStop = $LASTEXITCODE
+        
+        # Vérification stricte : le code retour de docker compose ps DOIT être 0.
+        # Si ps échoue, on ne peut pas affirmer que les écrivains sont arrêtés.
+        $ServicesActifsBrut = (docker compose ps --status running --services 2>&1) | Out-String
+        $CodePs = $LASTEXITCODE
+        
+        if ($CodeStop -ne 0 -or $CodePs -ne 0) {
+            Rapport "restauration" "FAIL" "commande docker compose stop ou ps en erreur — pg_restore NON lancé (isolement non certifié)"
+        } else {
+            $ServicesActifs = ($ServicesActifsBrut.Trim() -split "`r?`n") | ForEach-Object { $_.Trim() }
+            $EncoreActifs = @()
+            foreach ($Service in $Ecrivains) {
+                if ($ServicesActifs -contains $Service) { $EncoreActifs += $Service }
+            }
+            if ($EncoreActifs.Count -gt 0) {
+                Rapport "restauration" "FAIL" ("écrivains encore actifs : " + ($EncoreActifs -join ", ") + " — pg_restore NON lancé (isolement impossible à prouver)")
+            } else {
+                $EcrivainsArretes = $true
+                # Le DELETE vient APRÈS confirmation absolue de l'arrêt des écrivains
+                $Supprime = (docker compose exec -T postgres psql -U seamtech -d seamtech_search -tA `
+                    -c "DELETE FROM fiche WHERE code = '$FicheSql'" 2>&1) | Out-String
+                $RestaurationTente = $true
+                docker compose cp $Dump "postgres:/tmp/recette-restore.dump" *> $null
+                $Restaure = (docker compose exec -T postgres pg_restore --clean --if-exists --no-owner `
+                    -U seamtech -d seamtech_search /tmp/recette-restore.dump 2>&1) | Out-String
+                $CodeRestore = $LASTEXITCODE
+            }
+        }
+    }
+    finally {
+        # Si les écrivains ont été arrêtés mais qu'aucune destruction n'a eu lieu, on peut redémarrer.
+        # Si une destruction a eu lieu et que le restore a réussi ($CodeRestore -eq 0), on redémarre.
+        # Si une destruction a eu lieu mais que le restore a échoué, un avertissement strict est émis.
+        if ($EcrivainsArretes) {
+            if (-not $RestaurationTente -or $CodeRestore -eq 0) {
+                docker compose start @Ecrivains *> $null
+            } else {
+                Write-Host "ÉCHEC CRITIQUE DE RESTAURATION : pg_restore a échoué (code $CodeRestore). Les écrivains (@Ecrivains) restent ARRÊTÉS pour protéger les données." -ForegroundColor Red
+            }
+        }
+    }
     $FicheEnc = [uri]::EscapeDataString($Fiche)
     $Retour = "000"
     $Fin = (Get-Date).AddSeconds(180)
@@ -355,10 +424,13 @@ if (-not $Fiche) {
         Start-Sleep -Seconds 3
     }
     if (($CodeRestore -eq 0) -and ($Retour -eq "200")) {
-        Rapport "restauration" "PASS" "fiche $Fiche supprimée ($($Supprime.Trim())) puis restaurée depuis $Dump (GET /fiches/$Fiche/pieces = 200)"
-    } else {
+        Rapport "restauration" "PASS" ("fiche $Fiche supprimée ($($Supprime.Trim())) puis restaurée depuis $Dump " + 
+            "(GET /fiches/$Fiche/pieces = 200) — écrivains " + ($Ecrivains -join "+") + " arrêtés pendant l'opération")
+    } elseif ($EcrivainsArretes) {
         Rapport "restauration" "FAIL" "pg_restore code=$CodeRestore ; fiche de retour HTTP $Retour"
     }
+    # Si $EcrivainsArretes est faux, le FAIL « écrivains encore actifs » a déjà
+    # été émis : un second FAIL sur la même cause n'apporterait rien.
 }
 
 # ---------------------------------------------------------------------------
