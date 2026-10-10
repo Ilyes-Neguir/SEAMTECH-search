@@ -322,15 +322,23 @@ $Dump = Join-Path $BackupDir ("recette-{0:yyyyMMdd-HHmmss}.dump" -f (Get-Date))
 # (`*>`) corromprait le format custom (binaire) — sortie brute conservée.
 $DumpSortie = (docker compose exec -T postgres pg_dump -U seamtech --format=custom -f /tmp/recette-backup.dump seamtech_search 2>&1) | Out-String
 $CodeDump = $LASTEXITCODE
+$ShaInterneBrut = ((docker compose exec -T postgres sha256sum /tmp/recette-backup.dump 2>&1) | Out-String).Trim()
+$ShaInterne = if ($ShaInterneBrut) { $ShaInterneBrut.Split(" ")[0].Trim().ToLower() } else { "" }
 docker compose cp "postgres:/tmp/recette-backup.dump" $Dump *> $null
+$CodeCp = $LASTEXITCODE
 $DumpValide = $false
-if (($CodeDump -eq 0) -and (Test-Path $Dump) -and ((Get-Item $Dump).Length -gt 0)) {
+if (($CodeDump -eq 0) -and ($CodeCp -eq 0) -and (Test-Path $Dump) -and ((Get-Item $Dump).Length -gt 0)) {
     $Taille = (Get-Item $Dump).Length
-    $Em = (Get-FileHash -Algorithm SHA256 -Path $Dump).Hash.Substring(0, 16)
-    $DumpValide = $true
-    Rapport "sauvegarde" "PASS" "$Dump — $Taille octets, SHA-256 début=$Em"
+    $ShaLocal = (Get-FileHash -Algorithm SHA256 -Path $Dump).Hash.Trim().ToLower()
+    if ($ShaInterne -and ($ShaLocal -eq $ShaInterne)) {
+        $Em = $ShaLocal.Substring(0, 16)
+        $DumpValide = $true
+        Rapport "sauvegarde" "PASS" "$Dump — $Taille octets, SHA-256=$Em (conforme conteneur)"
+    } else {
+        Rapport "sauvegarde" "FAIL" "Dump corrompu lors du transfert docker cp : SHA local ($ShaLocal) != conteneur ($ShaInterne)"
+    }
 } else {
-    Rapport "sauvegarde" "FAIL" ("pg_dump impossible ou dump vide ($Dump) : " + ($DumpSortie.Trim() | Select-Object -First 1))
+    Rapport "sauvegarde" "FAIL" ("pg_dump ou docker cp impossible ou dump vide ($Dump) : " + ($DumpSortie.Trim() | Select-Object -First 1))
 }
 
 # ---------------------------------------------------------------------------
@@ -403,8 +411,7 @@ if (-not $DumpValide) {
             if (-not $RestaurationTente -or $CodeRestore -eq 0) {
                 docker compose start @Ecrivains *> $null
             } else {
-                Write-Host "ATTENTION: Base de données partiellement restaurée (code $CodeRestore). Redémarrage sécurisé des services..." -ForegroundColor Yellow
-                docker compose start @Ecrivains *> $null
+                Write-Host "ÉCHEC CRITIQUE DE RESTAURATION : pg_restore a échoué (code $CodeRestore). Les écrivains (@Ecrivains) restent ARRÊTÉS pour protéger les données." -ForegroundColor Red
             }
         }
     }

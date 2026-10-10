@@ -106,16 +106,17 @@ def process_import_task(
     cancel_check = make_cancel_checker(job_id, redis_store)
 
     def progress_cb(stage: str, percent: int) -> None:
-        update_job(index, job_id, status="running", progress=percent, stage=stage)
-        heartbeat_job(index, job_id)
+        update_job(index, job_id, status="running", progress=percent, stage=stage, expected_worker=worker_id)
+        heartbeat_job(index, job_id, expected_worker=worker_id)
         if heartbeat is not None:
             heartbeat()
         if redis_store and redis_store.is_configured():
-            redis_store.set_heartbeat(job_id)
-            redis_store.update_job(job_id, {"status": "running", "progress": percent, "stage": stage})
+            if worker_id is None or redis_store.revendication_appartient_a("imports", str(job_id), worker_id):
+                redis_store.set_heartbeat(job_id)
+                redis_store.update_job(job_id, {"status": "running", "progress": percent, "stage": stage})
 
     try:
-        update_job(index, job_id, status="running", progress=5, stage="starting")
+        update_job(index, job_id, status="running", progress=5, stage="starting", expected_worker=worker_id)
         if redis_store and redis_store.is_configured():
             redis_store.update_job(job_id, {"status": "running", "progress": 5, "stage": "starting"})
 
@@ -261,15 +262,17 @@ def process_import_task(
         return final_payload
 
     except ImportCancelledError:
-        update_job(index, job_id, status="cancelled", stage="cancelled", error="Job was cancelled by user")
-        if redis_store and redis_store.is_configured():
-            redis_store.update_job(job_id, {"status": "cancelled", "stage": "cancelled", "error": "Job was cancelled by user"})
+        if est_proprietaire_actif():
+            update_job(index, job_id, status="cancelled", stage="cancelled", error="Job was cancelled by user", expected_worker=worker_id)
+            if redis_store and redis_store.is_configured():
+                redis_store.update_job(job_id, {"status": "cancelled", "stage": "cancelled", "error": "Job was cancelled by user"})
         return {"job_id": job_id, "status": "cancelled"}
     except Exception as exc:
         logger.exception("Import job %s failed: %s", job_id, exc)
-        update_job(index, job_id, status="failed", stage="failed", error=str(exc))
-        if redis_store and redis_store.is_configured():
-            redis_store.update_job(job_id, {"status": "failed", "stage": "failed", "error": str(exc)})
+        if est_proprietaire_actif():
+            update_job(index, job_id, status="failed", stage="failed", error=str(exc), expected_worker=worker_id)
+            if redis_store and redis_store.is_configured():
+                redis_store.update_job(job_id, {"status": "failed", "stage": "failed", "error": str(exc)})
         return {"job_id": job_id, "status": "failed", "error": str(exc)}
     finally:
         clear_job_cancel(job_id, redis_store)
@@ -309,12 +312,13 @@ def _process_lot_task(
 
     def progress_cb(dossiers_traites: int, total: int) -> None:
         pourcentage = int(100 * dossiers_traites / total) if total else 0
-        update_job(index, job_id, status="running", progress=pourcentage, stage="lot")
-        heartbeat_job(index, job_id)
+        update_job(index, job_id, status="running", progress=pourcentage, stage="lot", expected_worker=worker_id)
+        heartbeat_job(index, job_id, expected_worker=worker_id)
         if heartbeat is not None:
             heartbeat()
         if redis_store and redis_store.is_configured():
-            redis_store.update_job(job_id, {"status": "running", "progress": pourcentage, "stage": "lot"})
+            if worker_id is None or redis_store.revendication_appartient_a("lots", str(job_id), worker_id):
+                redis_store.update_job(job_id, {"status": "running", "progress": pourcentage, "stage": "lot"})
 
     try:
         etat = executer_lot(
@@ -326,8 +330,8 @@ def _process_lot_task(
         )
     except DepotImpossible as erreur:
         message = f"Lot #{id_lot} impossible : {erreur}"
-        update_job(index, job_id, status="failed", stage="failed", error=message)
-        terminer_job(index, job_id, status="failed", failure_reason=message)
+        update_job(index, job_id, status="failed", stage="failed", error=message, expected_worker=worker_id)
+        terminer_job(index, job_id, status="failed", failure_reason=message, expected_worker=worker_id)
         return {"job_id": job_id, "status": "failed", "error": message, "id_lot": id_lot}
 
     if etat.get("annule"):
@@ -336,17 +340,18 @@ def _process_lot_task(
             annuler_lot(index, id_lot)
         except Exception as exc:  # pragma: no cover - défensif
             logger.warning("Lot #%s : impossible de marquer l'annulation : %s", id_lot, exc)
-        update_job(index, job_id, status="cancelled", stage="cancelled", error=message, result=etat)
-        terminer_job(index, job_id, status="cancelled", failure_reason=message)
+        update_job(index, job_id, status="cancelled", stage="cancelled", error=message, result=etat, expected_worker=worker_id)
+        terminer_job(index, job_id, status="cancelled", failure_reason=message, expected_worker=worker_id)
         return {"job_id": job_id, "status": "cancelled", "id_lot": id_lot}
 
     statut = "completed" if int(etat.get("nb_echecs", 0)) == 0 else "needs_review"
-    update_job(index, job_id, status=statut, progress=100, stage="done", result=etat)
+    update_job(index, job_id, status=statut, progress=100, stage="done", result=etat, expected_worker=worker_id)
     terminer_job(
         index,
         job_id,
         status=statut,
         failure_reason=None if statut == "completed" else f"{etat.get('nb_echecs')} dossier(s) en échec",
+        expected_worker=worker_id,
     )
     if redis_store and redis_store.is_configured():
         redis_store.update_job(job_id, {"status": statut, "progress": 100, "stage": "done", "result": etat})

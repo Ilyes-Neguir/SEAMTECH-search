@@ -254,7 +254,7 @@ def update_job(
             set_clauses.append("updated_at = now()")
             extra_where = "" if status == "cancelled" else " AND status != 'cancelled'"
             if expected_worker is not None:
-                extra_where += " AND (claimed_by = %s OR claimed_by IS NULL)"
+                extra_where += " AND (claimed_by = %s)"
             sql = f"UPDATE import_jobs SET {', '.join(set_clauses)} WHERE id = %s{extra_where}"
 
             pg_values = []
@@ -275,7 +275,7 @@ def update_job(
             set_clauses.append("updated_at = ?")
             extra_where = "" if status == "cancelled" else " AND status != 'cancelled'"
             if expected_worker is not None:
-                extra_where += " AND (claimed_by = ? OR claimed_by IS NULL)"
+                extra_where += " AND (claimed_by = ?)"
             sql = f"UPDATE import_jobs SET {', '.join(set_clauses)} WHERE id = ?{extra_where}"
             sqlite_values = list(values) + [now_iso, job_id]
             if expected_worker is not None:
@@ -537,15 +537,21 @@ def marquer_job_claim(index: SearchIndex, job_id: str, worker_id: str) -> bool:
         return cursor.rowcount > 0
 
 
-def heartbeat_job(index: SearchIndex, job_id: str) -> bool:
+def heartbeat_job(index: SearchIndex, job_id: str, expected_worker: str | None = None) -> bool:
     """Met à jour le battement de cœur du job (supervision + reprise)."""
     with index.connect() as conn:
         if index.is_postgres:
             with conn.cursor() as cursor:
-                cursor.execute("UPDATE import_jobs SET heartbeat_at = now() WHERE id = %s", (job_id,))
+                if expected_worker is not None:
+                    cursor.execute("UPDATE import_jobs SET heartbeat_at = now() WHERE id = %s AND claimed_by = %s", (job_id, expected_worker))
+                else:
+                    cursor.execute("UPDATE import_jobs SET heartbeat_at = now() WHERE id = %s", (job_id,))
                 return cursor.rowcount > 0
         now_iso = datetime.now(timezone.utc).isoformat()
-        cursor = conn.execute("UPDATE import_jobs SET heartbeat_at = ? WHERE id = ?", (now_iso, job_id))
+        if expected_worker is not None:
+            cursor = conn.execute("UPDATE import_jobs SET heartbeat_at = ? WHERE id = ? AND claimed_by = ?", (now_iso, job_id, expected_worker))
+        else:
+            cursor = conn.execute("UPDATE import_jobs SET heartbeat_at = ? WHERE id = ?", (now_iso, job_id))
         return cursor.rowcount > 0
 
 
@@ -629,7 +635,7 @@ def terminer_job(
                         UPDATE import_jobs
                         SET status = %s, claimed_by = NULL, heartbeat_at = NULL,
                             failure_reason = %s, updated_at = now()
-                        WHERE id = %s AND (claimed_by = %s OR claimed_by IS NULL)
+                        WHERE id = %s AND (claimed_by = %s)
                         """,
                         (status, failure_reason, job_id, expected_worker),
                     )
@@ -650,7 +656,7 @@ def terminer_job(
                 UPDATE import_jobs
                 SET status = ?, claimed_by = NULL, heartbeat_at = NULL,
                     failure_reason = ?, updated_at = ?
-                WHERE id = ? AND (claimed_by = ? OR claimed_by IS NULL)
+                WHERE id = ? AND (claimed_by = ?)
                 """,
                 (status, failure_reason, now_iso, job_id, expected_worker),
             )

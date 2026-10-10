@@ -34,7 +34,7 @@ import pytest
 
 from seamtech_search.config import AppConfig
 from seamtech_search.indexer import SearchIndex
-from seamtech_search.jobs import create_job, get_job
+from seamtech_search.jobs import create_job, get_job, marquer_job_claim, terminer_job, update_job
 from seamtech_search.redis_store import RedisStore
 
 pytestmark = pytest.mark.redis_queue
@@ -299,3 +299,69 @@ def test_r2_retry_et_deadletter_refuses_si_claim_perdu(store: RedisStore) -> Non
     assert store.retry_task("imports", task, delay_seconds=10, worker_id="worker-B") is True
     assert client.zcard("seamtech:retry:imports") == 1
     assert client.llen(PROCESSING) == 0
+
+
+def test_r1_worker_dechu_apres_cloture_repreneur_ne_peut_pas_reecrire(
+    store: RedisStore, tmp_path: Path
+) -> None:
+    """R1 : Même après clôture par le repreneur B (claimed_by NULL), A ne peut plus écrire."""
+    config = _config(tmp_path)
+    index = _index(config)
+    source = _dossier(tmp_path, "affaire-r1-closed")
+    create_job(index, "job-r1-closed", str(source), durability="durable")
+    marquer_job_claim(index, "job-r1-closed", "worker-B")
+
+    # B termine le job avec succès -> status completed, claimed_by devient NULL
+    ok = terminer_job(index, "job-r1-closed", status="completed", expected_worker="worker-B")
+    assert ok is True
+    job_after_b = get_job(index, "job-r1-closed")
+    assert job_after_b["status"] == "completed"
+    assert job_after_b["claimed_by"] is None
+
+    # L'ancien worker A tente d'écrire (status failed, error) avec expected_worker="worker-A"
+    upd = update_job(index, "job-r1-closed", status="failed", error="erreur de A", expected_worker="worker-A")
+    assert upd is not None
+    assert upd["status"] == "completed", "Le worker déchu A a écrasé l'état du job !"
+    assert upd["error"] is None
+
+    # L'ancien worker A tente de terminer le job
+    term = terminer_job(index, "job-r1-closed", status="failed", failure_reason="rejet A", expected_worker="worker-A")
+    assert term is False, "Le worker déchu A a pu terminer le job déjà clos par B !"
+
+    job_final = get_job(index, "job-r1-closed")
+    assert job_final["status"] == "completed"
+    assert job_final["failure_reason"] is None
+    index.close()
+
+
+def test_r1_exception_handler_dans_process_import_task_necrase_pas_repreneur(
+    store: RedisStore, tmp_path: Path
+) -> None:
+    """R1 : Lorsqu'une exception survient dans process_import_task après prise par B, A ne marque pas le job en échec."""
+    from unittest.mock import patch
+
+    from seamtech_search import worker as module_worker
+
+    config = _config(tmp_path)
+    index = _index(config)
+    source = _dossier(tmp_path, "affaire-r1-exc")
+    create_job(index, "job-r1-exc", str(source), durability="durable")
+    marquer_job_claim(index, "job-r1-exc", "worker-A")
+    store.enqueue_task("imports", {"job_id": "job-r1-exc", "source_path": str(source)})
+
+    def fail_and_transfer(*a: Any, **kw: Any) -> Any:
+        # Reprise par B avant ou pendant l'exception
+        assert store.revendiquer_tache("imports", "job-r1-exc", "worker-B", ttl_seconds=60, reprendre=True)
+        assert marquer_job_claim(index, "job-r1-exc", "worker-B")
+        update_job(index, "job-r1-exc", status="running", result={"owner": "worker-B"}, expected_worker="worker-B")
+        raise RuntimeError("Crash simulé chez l'ancien worker A")
+
+    with patch.object(module_worker, "import_folder", side_effect=fail_and_transfer):
+        module_worker.worker_loop(config, index, store, worker_id="worker-A", run_once=True)
+
+    job = get_job(index, "job-r1-exc")
+    assert job is not None
+    assert job["status"] == "running", f"L'exception chez A a marqué le job en {job['status']} au lieu de préserver B !"
+    assert job["claimed_by"] == "worker-B"
+    assert job["result"].get("owner") == "worker-B"
+    index.close()
