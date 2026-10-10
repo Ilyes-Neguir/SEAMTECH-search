@@ -365,3 +365,63 @@ def test_r1_exception_handler_dans_process_import_task_necrase_pas_repreneur(
     assert job["claimed_by"] == "worker-B"
     assert job["result"].get("owner") == "worker-B"
     index.close()
+
+def test_r1_worker_dechu_apres_cloture_needs_review_ne_peut_pas_reecrire(tmp_path: Path) -> None:
+    """R1 : Après clôture en 'needs_review' par B, l'ancien worker A ne peut pas réécrire."""
+    config = _config(tmp_path)
+    index = _index(config)
+    source = _dossier(tmp_path, "affaire-r1-nr")
+    create_job(index, "job-r1-nr", str(source), durability="durable")
+    marquer_job_claim(index, "job-r1-nr", "worker-B")
+
+    # B termine le job avec needs_review -> status needs_review, claimed_by devient NULL
+    update_job(index, "job-r1-nr", result={"owner": "worker-B"}, expected_worker="worker-B")
+    ok = terminer_job(index, "job-r1-nr", status="needs_review", expected_worker="worker-B")
+    assert ok is True
+    job_after_b = get_job(index, "job-r1-nr")
+    assert job_after_b["status"] == "needs_review"
+    assert job_after_b["claimed_by"] is None
+    assert job_after_b["result"]["owner"] == "worker-B"
+
+    # L'ancien worker A tente d'écrire (status failed, error) avec expected_worker="worker-A"
+    upd = update_job(index, "job-r1-nr", status="failed", result={"owner": "worker-A"}, error="erreur de A", expected_worker="worker-A")
+    assert upd is not None
+    assert upd["status"] == "needs_review", "Le worker déchu A a écrasé l'état needs_review du job !"
+    assert upd["result"]["owner"] == "worker-B", "Le worker déchu A a écrasé le résultat de B !"
+
+    # L'ancien worker A tente de terminer le job
+    term = terminer_job(index, "job-r1-nr", status="failed", failure_reason="rejet A", expected_worker="worker-A")
+    assert term is False, "Le worker déchu A a pu terminer le job déjà clos en needs_review par B !"
+
+    job_final = get_job(index, "job-r1-nr")
+    assert job_final["status"] == "needs_review"
+    assert job_final["result"]["owner"] == "worker-B"
+    index.close()
+
+
+def test_r2_ack_retry_deadletter_refuses_sans_claim_redis(store: RedisStore) -> None:
+    """R2 : En l'absence totale de claim Redis (ex: bail expiré), les transitions sont refusées."""
+    tache = {"job_id": "job-r2-noclaim", "source_path": "/tmp/test"}
+    client = store._get_client()
+
+    # 1. ACK sans claim
+    store.enqueue_task("imports", tache)
+    store.dequeue_task("imports", timeout=1)
+    client.delete(f"seamtech:claim:imports:{tache['job_id']}")
+    assert store.ack_task("imports", tache, worker_id="worker-A") is False
+    assert client.llen("seamtech:processing:imports") == 1
+
+    # 2. Retry sans claim
+    assert store.retry_task("imports", tache, delay_seconds=0, worker_id="worker-A") is False
+    assert client.llen("seamtech:processing:imports") == 1
+    assert client.llen("seamtech:queue:imports") == 0
+
+    # 3. Deadletter sans claim
+    assert store.deadletter_task("imports", tache, worker_id="worker-A") is False
+    assert client.llen("seamtech:processing:imports") == 1
+    assert client.llen("seamtech:deadletter:imports") == 0
+
+    # 4. Maintenant avec claim valide pour worker-A, tout réussit
+    assert store.revendiquer_tache("imports", tache["job_id"], "worker-A", ttl_seconds=60) is True
+    assert store.ack_task("imports", tache, worker_id="worker-A") is True
+    assert client.llen("seamtech:processing:imports") == 0

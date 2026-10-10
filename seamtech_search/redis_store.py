@@ -430,13 +430,17 @@ local expected_worker = ARGV[1]
 local raw_payload = ARGV[2]
 local target_id = ARGV[3]
 
-if expected_worker ~= "" and claim_key ~= "" then
+if expected_worker ~= "" then
+    if claim_key == "" then
+        return {0, "no_claim"}
+    end
     local claim_raw = redis.call('GET', claim_key)
-    if claim_raw then
-        local ok, claim_data = pcall(cjson.decode, claim_raw)
-        if ok and claim_data and claim_data.worker_id and claim_data.worker_id ~= expected_worker then
-            return {0, "lost_claim"}
-        end
+    if not claim_raw then
+        return {0, "no_claim"}
+    end
+    local ok, claim_data = pcall(cjson.decode, claim_raw)
+    if not (ok and claim_data and claim_data.worker_id and claim_data.worker_id == expected_worker) then
+        return {0, "lost_claim"}
     end
 end
 
@@ -445,7 +449,7 @@ if removed > 0 then
     return {1, "removed_exact"}
 end
 
-if expected_worker == "" and target_id ~= "" then
+if target_id ~= "" then
     local items = redis.call('LRANGE', processing_key, 0, -1)
     for i, item in ipairs(items) do
         local ok, decoded = pcall(cjson.decode, item)
@@ -470,18 +474,22 @@ local mode = ARGV[4]
 local score = tonumber(ARGV[5])
 local target_id = ARGV[6]
 
-if expected_worker ~= "" and claim_key ~= "" then
+if expected_worker ~= "" then
+    if claim_key == "" then
+        return {0, "no_claim"}
+    end
     local claim_raw = redis.call('GET', claim_key)
-    if claim_raw then
-        local ok, claim_data = pcall(cjson.decode, claim_raw)
-        if ok and claim_data and claim_data.worker_id and claim_data.worker_id ~= expected_worker then
-            return {0, "lost_claim"}
-        end
+    if not claim_raw then
+        return {0, "no_claim"}
+    end
+    local ok, claim_data = pcall(cjson.decode, claim_raw)
+    if not (ok and claim_data and claim_data.worker_id and claim_data.worker_id == expected_worker) then
+        return {0, "lost_claim"}
     end
 end
 
 local removed = redis.call('LREM', processing_key, 1, raw_payload)
-if removed == 0 and expected_worker == "" and target_id ~= "" then
+if removed == 0 and target_id ~= "" then
     local items = redis.call('LRANGE', processing_key, 0, -1)
     for i, item in ipairs(items) do
         local ok, decoded = pcall(cjson.decode, item)
@@ -510,18 +518,22 @@ local expected_worker = ARGV[1]
 local raw_payload = ARGV[2]
 local target_id = ARGV[3]
 
-if expected_worker ~= "" and claim_key ~= "" then
+if expected_worker ~= "" then
+    if claim_key == "" then
+        return {0, "no_claim"}
+    end
     local claim_raw = redis.call('GET', claim_key)
-    if claim_raw then
-        local ok, claim_data = pcall(cjson.decode, claim_raw)
-        if ok and claim_data and claim_data.worker_id and claim_data.worker_id ~= expected_worker then
-            return {0, "lost_claim"}
-        end
+    if not claim_raw then
+        return {0, "no_claim"}
+    end
+    local ok, claim_data = pcall(cjson.decode, claim_raw)
+    if not (ok and claim_data and claim_data.worker_id and claim_data.worker_id == expected_worker) then
+        return {0, "lost_claim"}
     end
 end
 
 local removed = redis.call('LREM', processing_key, 1, raw_payload)
-if removed == 0 and expected_worker == "" and target_id ~= "" then
+if removed == 0 and target_id ~= "" then
     local items = redis.call('LRANGE', processing_key, 0, -1)
     for i, item in ipairs(items) do
         local ok, decoded = pcall(cjson.decode, item)
@@ -801,11 +813,11 @@ class RedisStore(ClaimMixin):
                 if isinstance(res, (list, tuple)) and len(res) >= 2:
                     if res[0] == 0:
                         reason = res[1].decode("utf-8") if isinstance(res[1], bytes) else str(res[1])
-                        if reason == "lost_claim":
+                        if reason in ("lost_claim", "no_claim"):
                             logger.warning(
                                 "Acquittement refusé atomiquement : la tâche %s n'appartient plus à %s "
-                                "(reprise par un autre worker) — sa copie reste dans la file.",
-                                job_id, worker_id,
+                                "(raison: %s) — sa copie reste dans la file.",
+                                job_id, worker_id, reason,
                             )
                             return False
                     return True
