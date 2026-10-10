@@ -532,6 +532,8 @@ def executer_lot(
     ``progress_cb(traites, total)`` et ``worker_id`` servent la supervision :
     sans eux, un lot long est indistinguable d'un lot bloqué.
     """
+    if not getattr(index, "is_postgres", False):
+        raise DepotImpossible("Le traitement de lot exige PostgreSQL (tables fiche_*, §17.1).")
     LOGGER.info("Lot #%s : chargement des gabarits actifs…", id_lot)
     gabarits = charger_gabarits(index)
     LOGGER.info("Lot #%s : %d gabarit(s) actif(s) chargé(s).", id_lot, len(gabarits))
