@@ -13,7 +13,8 @@ worker claim/ack ownership, cross-workflow consistency).
 - `6390d25` : Initial counter-review delivery (R1-R4).
 - `fd0b6d1` : Strict fencing on terminal statuses and static test documentation.
 - `a080d26` : Initial lot task claim and test matrix postgres skip guard.
-- `HEAD` (this delivery) : Separation of initial claim acquisition from possession checking in `_process_lot_task`. Elimination of blind re-claiming: if a job is already claimed by a successor worker B, stale worker A aborts immediately without claiming or executing, preserving B's results and ownership. Direct execution without previous worker_loop claim retains conditional claim acquisition (`claimed_by IS NULL`). Pinned by executable regression test `test_r1_lot_task_interleaving_transfer_stale_worker_aborts` covering the exact process_import_task -> _process_lot_task transfer interleaving.
+- `d5dd7ac` : Separation of initial claim acquisition from possession checking in `_process_lot_task`.
+- `HEAD` (this delivery) : Atomic conditional claim acquisition (`acquerir_claim_job`) eliminating the TOCTOU race condition in `_process_lot_task`. When a job has no owner (`claimed_by IS NULL`), the acquisition is executed atomically via `UPDATE ... WHERE id = ... AND ((claimed_by IS NULL AND status IN ('pending', 'running')) OR claimed_by = expected_worker)`. If another worker B claims the job between A's snapshot read and acquisition, A's update affects 0 rows, fails closed, and aborts immediately without executing the lot or touching B's ownership and results. Pinned by two executable tests in `tests/test_audit_claim_ack.py`: `test_r1_lot_task_interleaving_transfer_stale_worker_aborts` and `test_r1_lot_task_toctou_race_a_reads_null_b_claims_a_fails`.
 
 **Post-fix behaviour is what is asserted** in every test below — "the faulty behaviour still
 reproduces" is explicitly *not* accepted as a passing safety test.
@@ -82,7 +83,7 @@ reproduces" is explicitly *not* accepted as a passing safety test.
 | Check | Status |
 |---|---|
 | `ruff check` (E,F,I,W, line-length 120) + `compileall` | **Local, clean** |
-| `test_audit_claim_ack.py`, `test_audit_a06_a07_reprise.py`, `test_audit_a05_collisions.py`, `test_audit_retention_travail.py`, `test_recette_locale.py`, `test_file_durable_operations.py` | **Local: 89 passed, 1 skipped** (100 % pass rate with real Redis; 14 in `test_audit_claim_ack.py` covering R1 & R2 including lot interleaving transfer test, 27/27 in `test_file_durable_operations.py`) |
+| `test_audit_claim_ack.py`, `test_audit_a06_a07_reprise.py`, `test_audit_a05_collisions.py`, `test_audit_retention_travail.py`, `test_recette_locale.py`, `test_file_durable_operations.py` | **Local: 89 passed, 1 skipped** (100 % pass rate with real Redis; 15 in `test_audit_claim_ack.py` covering R1 & R2 including transfer and TOCTOU race prevention tests, 27/27 in `test_file_durable_operations.py`) |
 | A01/A02 & Cross-workflow test suites (`test_audit_a01_a02_integrite.py`, `test_audit_coherence_parcours.py`) | **PostgreSQL integration suite** (verified in PR #36 CI; local unaccent extension absent from pip pgserver) |
 | Durable PostgreSQL queue suite (`test_file_durable_postgres.py`) | **PostgreSQL integration suite** (local supervision & migration tests pass; full lot test verified in CI) |
 | Frontend `tsc --noEmit` & production build (`pnpm build`) | **Local, clean** (`ƒ /api/lots/[id]` included) |

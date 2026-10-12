@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from .import_pipeline import ImportCancelledError, import_folder, quarantine_root, staging_root
 from .jobs import (
+    acquerir_claim_job,
     clear_job_cancel,
     get_job,
     heartbeat_job,
@@ -300,11 +301,12 @@ def _process_lot_task(
     job_id = payload["job_id"]
     id_lot = int(payload["id_lot"])
 
-    # Fencing R1 : vérifier / acquérir légitimement la possession du job.
+    # Fencing R1 : vérifier / acquérir légitimement et atomiquement la possession du job.
     # Distingue l'acquisition initiale (job non possédé en BDD) d'une vérification
     # de propriété. Si le job a été transféré ou repris par un autre worker (B),
     # le worker déchu A s'interrompt immédiatement SANS réattribuer la tâche ni
     # écraser le travail ou le résultat de B.
+    # L'acquisition est atomique (UPDATE conditionnel) afin d'éliminer toute course TOCTOU.
     if worker_id is not None:
         j = get_job(index, str(job_id))
         if j is not None and j.get("claimed_by") and j.get("claimed_by") != worker_id:
@@ -316,7 +318,13 @@ def _process_lot_task(
             )
             return {"job_id": job_id, "status": "stale_worker", "id_lot": id_lot}
         if j is not None and j.get("claimed_by") is None:
-            marquer_job_claim(index, str(job_id), worker_id)
+            if not acquerir_claim_job(index, str(job_id), worker_id):
+                logger.warning(
+                    "Lot #%s (job %s) : acquisition atomique du verrou refusée (pris par un tiers) — traitement interrompu.",
+                    id_lot,
+                    job_id,
+                )
+                return {"job_id": job_id, "status": "stale_worker", "id_lot": id_lot}
     doit_continuer = None
     if redis_store is not None:
         from .jobs import is_job_cancelled

@@ -717,3 +717,77 @@ def test_r1_lot_task_interleaving_transfer_stale_worker_aborts(tmp_path: Path) -
 
     index.close()
 
+
+def test_r1_lot_task_toctou_race_a_reads_null_b_claims_a_fails(tmp_path: Path) -> None:
+    """R1 contre-revue : élimination de la course TOCTOU.
+
+    Scénario :
+    1. A lit le job alors qu'aucun propriétaire n'est encore assigné (claimed_by IS NULL).
+    2. Avant que A ne tente d'acquérir le verrou, B acquiert légitimement le job et enregistre son travail.
+    3. A tente ensuite d'acquérir le job : l'acquisition atomique échoue (0 ligne affectée).
+    4. A s'arrête immédiatement : le lot n'est PAS exécuté par A, B reste propriétaire et son résultat n'est pas écrasé.
+    """
+    from unittest.mock import patch
+
+    from seamtech_search import worker
+    from seamtech_search.jobs import acquerir_claim_job, create_job, get_job, update_job
+
+    config = _config(tmp_path)
+    index = _index(config)
+    job_id = "lot-r1-toctou"
+    create_job(index, job_id, str(tmp_path))
+
+    # Job initialement sans propriétaire
+    job_init = get_job(index, job_id)
+    assert job_init["claimed_by"] is None
+
+    actual_get = worker.get_job
+    race_injected = False
+
+    def get_with_race(idx_arg: Any, jid_arg: str) -> Any:
+        nonlocal race_injected
+        snapshot = actual_get(idx_arg, jid_arg)
+        if jid_arg == job_id and not race_injected:
+            race_injected = True
+            # Course injectée : A a lu le snapshot où claimed_by était None.
+            # Avant que A n'exécute acquerir_claim_job, B s'approprie atomiquement le job !
+            assert acquerir_claim_job(idx_arg, jid_arg, "worker-B") is True
+            update_job(
+                idx_arg,
+                jid_arg,
+                status="running",
+                result={"owner": "worker-B", "progress": "done_by_B"},
+                expected_worker="worker-B",
+            )
+        return snapshot
+
+    seen: dict[str, Any] = {}
+
+    def execute_stub(idx_arg: Any, id_lot_arg: int, **kw: Any) -> dict[str, Any]:
+        seen["executed"] = True
+        return {"nb_echecs": 0, "id_lot": id_lot_arg, "owner": "worker-A"}
+
+    with (
+        patch.object(worker, "get_job", side_effect=get_with_race),
+        patch("seamtech_search.fiches.depot.executer_lot", side_effect=execute_stub),
+    ):
+        resultat = worker.process_import_task(
+            {"job_id": job_id, "kind": "lot", "id_lot": 99},
+            config,
+            index,
+            worker_id="worker-A",
+        )
+
+    # 1. A a détecté l'échec de l'acquisition atomique et a abandonné
+    assert resultat.get("status") == "stale_worker"
+    # 2. Le sous-traitement n'a jamais été exécuté par A
+    assert not seen.get("executed"), "Le worker A ne doit pas exécuter le lot après échec de l'acquisition atomique !"
+    # 3. B est toujours le propriétaire unique
+    job = get_job(index, job_id)
+    assert job["claimed_by"] == "worker-B", "B doit rester propriétaire !"
+    # 4. Le résultat de B est intact
+    assert job["result"] == {"owner": "worker-B", "progress": "done_by_B"}
+
+    index.close()
+
+

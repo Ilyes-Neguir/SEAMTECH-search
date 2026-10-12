@@ -508,6 +508,48 @@ STATUTS_ACTIFS = ("pending", "running")
 STATUTS_TERMINAUX = ("completed", "failed", "cancelled", "upload_incomplete", "needs_review")
 
 
+def acquerir_claim_job(index: SearchIndex, job_id: str, worker_id: str) -> bool:
+    """Tente d'acquérir ou de renouveler atomiquement la revendication d'un job.
+
+    Transition conditionnelle atomique :
+    - Réussit UNIQUEMENT si le job n'a aucun propriétaire (``claimed_by IS NULL``
+      et statut actif ``pending`` / ``running``) ou s'il appartient déjà au worker
+      appelant (``claimed_by = worker_id``).
+    - Échoue (retourne ``False``, rowcount = 0) si un autre worker (B) détient déjà
+      le job, évitant toute course TOCTOU où A lirait NULL puis écraserait B.
+    """
+    now_iso = datetime.now(timezone.utc).isoformat()
+    with index.connect() as conn:
+        if index.is_postgres:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE import_jobs
+                    SET status = 'running', claimed_by = %s, heartbeat_at = now(),
+                        attempts = attempts + 1, stage = 'starting', updated_at = now()
+                    WHERE id = %s AND (
+                        (claimed_by IS NULL AND status IN ('pending', 'running'))
+                        OR claimed_by = %s
+                    )
+                    """,
+                    (worker_id, job_id, worker_id),
+                )
+                return cursor.rowcount > 0
+        cursor = conn.execute(
+            """
+            UPDATE import_jobs
+            SET status = 'running', claimed_by = ?, heartbeat_at = ?, attempts = attempts + 1,
+                stage = 'starting', updated_at = ?
+            WHERE id = ? AND (
+                (claimed_by IS NULL AND status IN ('pending', 'running'))
+                OR claimed_by = ?
+            )
+            """,
+            (worker_id, now_iso, now_iso, job_id, worker_id),
+        )
+        return cursor.rowcount > 0
+
+
 def marquer_job_claim(index: SearchIndex, job_id: str, worker_id: str) -> bool:
     """Enregistre le worker qui prend le job et incrémente le compteur de tentatives.
 
