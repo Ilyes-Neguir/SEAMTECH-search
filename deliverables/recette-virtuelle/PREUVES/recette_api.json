@@ -1,0 +1,1194 @@
+{
+  "base": "http://127.0.0.1:8000",
+  "resultats": [
+    {
+      "id": "A1-acces-sans-jeton-refuse",
+      "resultat": "PASS",
+      "detail": "HTTP 401"
+    },
+    {
+      "id": "A2-mauvais-jeton-refuse",
+      "resultat": "PASS",
+      "detail": "HTTP 401"
+    },
+    {
+      "id": "A3-mot-de-passe-incorrect-refuse",
+      "resultat": "PASS",
+      "detail": "HTTP 401 {\"detail\":\"Identifiant ou mot de passe incorrect.\"}"
+    },
+    {
+      "id": "A4-verrou-anti-force-brute",
+      "resultat": "PASS",
+      "detail": "6 tentatives → codes [429, 429, 429, 429, 429, 429]"
+    },
+    {
+      "id": "A5-attribution-sans-jeton-refusee",
+      "resultat": "PASS",
+      "detail": "HTTP 401 (les en-têtes d'attribution sans jeton de service sont refusés)"
+    },
+    {
+      "id": "A6-connexion-nominative",
+      "resultat": "PASS",
+      "detail": "recette rôle=operateur session=22 changement imposé=False"
+    },
+    {
+      "id": "A7-changement-de-mot-de-passe-impose",
+      "resultat": "PASS",
+      "detail": "déjà consommé lors d'un essai antérieur"
+    },
+    {
+      "id": "A8-session-courante",
+      "resultat": "PASS",
+      "detail": "HTTP 200 identifiant=recette champs=['actif', 'derniere_activite', 'doit_changer_mot_de_passe', 'expire_le', 'id_session', 'id_utilisateur', 'identifiant', 'nom', 'ok', 'role']"
+    },
+    {
+      "id": "A9-role-admin-requis",
+      "resultat": "PASS",
+      "detail": "opérateur=403 administrateur=200"
+    },
+    {
+      "id": "A10-aucune-fuite-de-secret",
+      "resultat": "PASS",
+      "detail": "5 comptes, champs=['actif', 'cree_le', 'derniere_connexion', 'doit_changer_mot_de_passe', 'id_utilisateur', 'identifiant', 'mot_de_passe_defini', 'nom', 'role']"
+    },
+    {
+      "id": "A11-deconnexion-invalide-la-session",
+      "resultat": "PASS",
+      "detail": "déconnexion HTTP 200 ; réutilisation HTTP 401"
+    },
+    {
+      "id": "A12-proxy-refuse-sans-session",
+      "resultat": "PASS",
+      "detail": "GET http://127.0.0.1:3000/api/fiches sans cookie → HTTP 401"
+    },
+    {
+      "id": "A13-desactivation-compte-revoque",
+      "resultat": "PASS",
+      "detail": "création HTTP 200 connexion=True reconnexion=401 session existante=401"
+    },
+    {
+      "id": "A14-creation-compte-reservee-admin",
+      "resultat": "PASS",
+      "detail": "HTTP 403"
+    },
+    {
+      "id": "C1-depot-dossier-fiche-creee",
+      "resultat": "PASS",
+      "detail": "HTTP 201 statut=traite fiche=250216 AJA pièces=45 lot=44"
+    },
+    {
+      "id": "C2-archive-source-intacte",
+      "resultat": "PASS",
+      "detail": "46 entrées avant/après identiques"
+    },
+    {
+      "id": "C3-redepot-meme-dossier-non-duplique",
+      "resultat": "PASS",
+      "detail": "HTTP 201 statut=deja_traite raison=deja_traite (lot #44)"
+    },
+    {
+      "id": "C4-dossier-inexistant-refuse-explicitement",
+      "resultat": "PASS",
+      "detail": "HTTP 201 statut=echec raison=Dossier introuvable ou non-directory : /home/user/rv/corpus/inexistant-xyz"
+    },
+    {
+      "id": "C5-lot-en-file-durable",
+      "resultat": "PASS",
+      "detail": "HTTP 202 lot=47 traitement=file_durable durability=durable"
+    },
+    {
+      "id": "C6-lot-suivi-jusqu-au-bout",
+      "resultat": "PASS",
+      "detail": "lot 47 statut=termine 2/10 échecs=7 statuts={'echec': 7, 'traite': 2, 'en_attente': 1}"
+    },
+    {
+      "id": "C7-dossier-sans-fiche-non-faux-succes",
+      "resultat": "PASS",
+      "detail": "SANS-FICHE → echec : aucun PDF dans le dossier"
+    },
+    {
+      "id": "C8-dossier-degrade-signale",
+      "resultat": "PASS",
+      "detail": "CAS-DEGRADES → echec : gabarit inconnu (scores de détection : facture syndic inconnue.pdf=0, fichier vide.pdf=-1, illisible corrompu."
+    },
+    {
+      "id": "C9-collision-de-noms-traitee",
+      "resultat": "PASS",
+      "detail": "COLLISIONS → echec : aucun PDF dans le dossier"
+    },
+    {
+      "id": "C10-doublon-detecte",
+      "resultat": "PASS",
+      "detail": "DOUBLONS → echec"
+    },
+    {
+      "id": "C11-upload-multipart",
+      "resultat": "PASS",
+      "detail": "HTTP 200 staging=/home/user/rv/data/uploads/3daa88bcc4774aedb4a52fafe0dda8fa_recette-upload-api fichiers détectés=1"
+    },
+    {
+      "id": "C12-fichier-sur-dimension-refuse",
+      "resultat": "PASS",
+      "detail": "HTTP 413 {\"detail\":\"File too large: archive enorme.bin\"}"
+    },
+    {
+      "id": "D1-fiche-reference-trouvee",
+      "resultat": "PASS",
+      "detail": "fiche 7792-SO présente dans l'index : True"
+    },
+    {
+      "id": "D2-champs-extraits-avec-zone",
+      "resultat": "PASS",
+      "detail": "48 champs extraits, 48 avec page+zone, 11 cotes"
+    },
+    {
+      "id": "D3-valeur-initiale-6,6",
+      "resultat": "PASS",
+      "detail": "cotes.finie.slu_m = 6,6 (attendu 6,6) — la route /champs est la source des valeurs ; /fiches/7792-SO n'expose que les métadonnées (clés=['bateau', 'bateau_taille', 'client', 'code', 'date_edition', 'gabarit', 'nb_fichiers', 'revision', 'statut', 'titre']), révision=21"
+    },
+    {
+      "id": "E1-recherche-code-exact",
+      "resultat": "PASS",
+      "detail": "« 7792-SO » → ['7792-SO']"
+    },
+    {
+      "id": "E2-dimension-virgule-6,60",
+      "resultat": "PASS",
+      "detail": "« 6,60 » → dimension_active={\"valeur\": 6.6, \"unite\": null, \"cote\": null, \"tolerance_pct\": 0.5, \"texte_restant\": \"\"} nb=1"
+    },
+    {
+      "id": "E3-dimension-point-6.60",
+      "resultat": "PASS",
+      "detail": "« 6.60 » → dimension_active={\"valeur\": 6.6, \"unite\": null, \"cote\": null, \"tolerance_pct\": 0.5, \"texte_restant\": \"\"} nb=1"
+    },
+    {
+      "id": "E4-dimension-unite-660-cm",
+      "resultat": "PASS",
+      "detail": "« 660 cm » → dimension_active={\"valeur\": 660.0, \"unite\": \"cm\", \"cote\": null, \"tolerance_pct\": 0.5, \"texte_restant\": \"\"} nb=1"
+    },
+    {
+      "id": "E5-dimension-unite-6600-mm",
+      "resultat": "PASS",
+      "detail": "« 6600 mm » → dimension_active={\"valeur\": 6600.0, \"unite\": \"mm\", \"cote\": null, \"tolerance_pct\": 0.5, \"texte_restant\": \"\"} nb=1"
+    },
+    {
+      "id": "E6-dimension-unite-6,60-m",
+      "resultat": "PASS",
+      "detail": "« 6,60 m » → dimension_active={\"valeur\": 6.6, \"unite\": \"m\", \"cote\": null, \"tolerance_pct\": 0.5, \"texte_restant\": \"\"} nb=1"
+    },
+    {
+      "id": "E7-entier-nu-pas-une-dimension",
+      "resultat": "PASS",
+      "detail": "« 2026 » → dimension_active=None (nb=11)"
+    },
+    {
+      "id": "E8-cote-nommee-slu",
+      "resultat": "PASS",
+      "detail": "« SLU 6,60 » → cote_active=slu_m dimension={\"valeur\": 6.6, \"unite\": null, \"cote\": \"slu_m\", \"tolerance_pct\": 0.5, \"texte_restant\": \"\"}"
+    },
+    {
+      "id": "E9-7-cotes-disponibles",
+      "resultat": "PASS",
+      "detail": "cotes proposées : null"
+    },
+    {
+      "id": "E10-sans-resultat",
+      "resultat": "PASS",
+      "detail": "nb=0 sans_resultat=True"
+    },
+    {
+      "id": "E11-accents-equivalents",
+      "resultat": "FAIL",
+      "detail": "requête « GENOIS » → ['0901-MM', '250323 JA', '250604 JA', '250821 JA'] ; requête « GÉNOIS » → ['0901-MM', '250323 JA'] ; l'index plein-texte (config seamtech_unaccent) est bien insensible aux accents, mais la couche de tolérance aux fautes (pg_trgm word_similarity, seuil 0,3) ne dé-accentue pas la requête : « genois » % « Gennaker » = 0,43 alors que « GÉNOIS » % « Gennaker » = 0,29 → voir ANOMALIES.md (A-11)"
+    },
+    {
+      "id": "E11b-lexemes-identiques-dans-l-index",
+      "resultat": "PASS",
+      "detail": "mêmes lexèmes pour « GÉNOIS » et « GENOIS » dans l'index (config seamtech_unaccent) : GÉNOIS → « 250323 JA,0901-MM », GENOIS → « 250323 JA,0901-MM » (la couche plein-texte est bien insensible aux accents)"
+    },
+    {
+      "id": "E12-filtre-cote-actif",
+      "resultat": "PASS",
+      "detail": "cote_active=slu_m nb=9 (les 7 cotes ne sortent que si le filtre dimension est actif : clés=['sle_m', 'slu_m', 'sources', 'spa_m2', 'statut', 'tetiere_cm', 'titre', 'type_voile'])"
+    },
+    {
+      "id": "E13-facettes-presentes",
+      "resultat": "PASS",
+      "detail": "facettes={\"dimension\": []}"
+    },
+    {
+      "id": "E14-badge-non-verifie-visible",
+      "resultat": "PASS",
+      "detail": "statuts renvoyés : {'valide', 'a_valider'}"
+    },
+    {
+      "id": "E15-suggestions",
+      "resultat": "PASS",
+      "detail": "1 suggestions pour « GE »"
+    },
+    {
+      "id": "E16-tri-et-page",
+      "resultat": "PASS",
+      "detail": "tri=slu_m_asc page=1 nb=11"
+    },
+    {
+      "id": "F1-etat-initial-reference",
+      "resultat": "PASS",
+      "detail": "cotes.finie.slu_m=6,6 (attendu 6,6) révision=21"
+    },
+    {
+      "id": "F2-revision-perimee-refusee",
+      "resultat": "PASS",
+      "detail": "HTTP 409 {\"detail\":{\"code\":\"conflit_revision\",\"message\":\"Fiche 7792-SO modifiée par un autre poste entre l'ouverture et"
+    },
+    {
+      "id": "F3-aucune-ecriture-apres-refus",
+      "resultat": "PASS",
+      "detail": "révision=21 valeur=6,6"
+    },
+    {
+      "id": "F4-valeur-invalide-refusee",
+      "resultat": "PASS",
+      "detail": "HTTP 422 {\"detail\":\"correction refusée pour fiche_cotes.slu_m : « pas-un-nombre » n'est pas un nombre\"}"
+    },
+    {
+      "id": "F5-etat-inchange-apres-refus",
+      "resultat": "PASS",
+      "detail": "cotes.finie.slu_m=6,6"
+    },
+    {
+      "id": "F6-correction-6,6-vers-7,7",
+      "resultat": "PASS",
+      "detail": "HTTP 200 {\"code\":\"7792-SO\",\"champ\":\"cotes.finie.slu_m\",\"rang\":null,\"valeur_brute\":\"6,60 m\",\"avant\":\"6,6\",\"apres\":\"7,7\",\"revision\":22,\"revision_ouverte\":21,\"pro"
+    },
+    {
+      "id": "F7-valeur-persistee",
+      "resultat": "PASS",
+      "detail": "cotes.finie.slu_m relu=7,7"
+    },
+    {
+      "id": "F8-correction-visible-en-recherche",
+      "resultat": "PASS",
+      "detail": "« 7,70 » → ['7792-SO']"
+    },
+    {
+      "id": "F9-validation",
+      "resultat": "PASS",
+      "detail": "HTTP 200 {\"code\":\"7792-SO\",\"statut\":\"valide\",\"revision\":23,\"divergences_acceptees\":[]}"
+    },
+    {
+      "id": "F10-journal-constitue",
+      "resultat": "PASS",
+      "detail": "22 lignes ; champs exposés=['action', 'commentaire', 'created_at', 'etat_apres', 'etat_avant']"
+    },
+    {
+      "id": "F11-journal-attribue-en-base",
+      "resultat": "PASS",
+      "detail": "journal en base : valider|recette-c | corriger|recette | corriger|recette | rouvrir|recette-c | valider|recette-c"
+    },
+    {
+      "id": "F12-reouverture",
+      "resultat": "PASS",
+      "detail": "HTTP 200 {\"code\":\"7792-SO\",\"statut\":\"a_valider\",\"corrections_effacees\":false,\"revision\":24}"
+    },
+    {
+      "id": "F13-reouverture-sans-revision-refusee",
+      "resultat": "PASS",
+      "detail": "HTTP 428"
+    },
+    {
+      "id": "F14-rejet-avec-motif",
+      "resultat": "PASS",
+      "detail": "HTTP 200 statut=rejete"
+    },
+    {
+      "id": "F15-rejet-sans-motif-refuse",
+      "resultat": "PASS",
+      "detail": "HTTP 422 {\"detail\":\"Motif OBLIGATOIRE pour rejeter une fiche (traçabilité).\"}"
+    },
+    {
+      "id": "G1-catalogue-pieces",
+      "resultat": "PASS",
+      "detail": "935 pièces au catalogue"
+    },
+    {
+      "id": "G2-apercu-piece",
+      "resultat": "PASS",
+      "detail": "HTTP 200 639 octets"
+    },
+    {
+      "id": "G3-telechargement-piece",
+      "resultat": "PASS",
+      "detail": "HTTP 200 639 octets sha256=9d40cc9fff01639f…"
+    },
+    {
+      "id": "G4-empreinte-au-manifeste",
+      "resultat": "PASS",
+      "detail": "empreinte servie 9d40cc9fff01639f… trouvée dans le manifeste du corpus = True"
+    },
+    {
+      "id": "G5-piece-sans-jeton-refusee",
+      "resultat": "PASS",
+      "detail": "HTTP 401"
+    },
+    {
+      "id": "G6-piece-inconnue-404",
+      "resultat": "PASS",
+      "detail": "HTTP 404"
+    },
+    {
+      "id": "G7-course-pieces-non-confondues",
+      "resultat": "PASS",
+      "detail": "pièce 684 (639 o) et pièce 636 (186354 o) servies séparément, chacune avec son empreinte"
+    },
+    {
+      "id": "S1-trois-postes-ouvrent-la-meme-version",
+      "resultat": "PASS",
+      "detail": "poste A (recette) révision=26 ; poste B (recette-b) révision=26"
+    },
+    {
+      "id": "S2-poste-A-corrige",
+      "resultat": "PASS",
+      "detail": "HTTP 200"
+    },
+    {
+      "id": "S3-poste-B-perime-refuse",
+      "resultat": "PASS",
+      "detail": "HTTP 409 {\"detail\":{\"code\":\"conflit_revision\",\"message\":\"Fiche 7792-SO modifiée par un autre poste entre l'ouverture et l'enregis"
+    },
+    {
+      "id": "S4-poste-B-se-reprend",
+      "resultat": "PASS",
+      "detail": "HTTP 200"
+    },
+    {
+      "id": "S5-poste-C-travaille-en-parallele",
+      "resultat": "PASS",
+      "detail": "import par le poste C HTTP 201 ; validation HTTP 200"
+    },
+    {
+      "id": "S6-aucun-ecrasement-silencieux",
+      "resultat": "PASS",
+      "detail": "cotes.finie.slu_m = 8,80 (valeur posée par le poste B, jamais écrasée en silence)"
+    },
+    {
+      "id": "H1-lots",
+      "resultat": "PASS",
+      "detail": "HTTP 200 [{\"id_lot\":48,\"dossier_racine\":\"/home/user/rv/data/recette-lot/affaires-api/sess"
+    },
+    {
+      "id": "H2-tableau-de-bord-qualite",
+      "resultat": "PASS",
+      "detail": "HTTP 200 {\"taux_extraction_auto\":{\"definition\":\"Part des champs extraits sans correction "
+    },
+    {
+      "id": "H3-gabarits",
+      "resultat": "PASS",
+      "detail": "HTTP 200 [{\"code\":\"FICHE_GENOIS_V1\",\"version\":1,\"description\":\"Fiche « Génois » (variante"
+    },
+    {
+      "id": "H4-assistant",
+      "resultat": "PASS",
+      "detail": "HTTP 200 {\"etat\":\"ok\",\"postgres\":true}"
+    },
+    {
+      "id": "H5-journal-recherche",
+      "resultat": "PASS",
+      "detail": "HTTP 200 {\"periode_jours\":null,\"total_recherches\":107,\"total_sans_resultat\":15,\"top_reque"
+    },
+    {
+      "id": "H6-audit",
+      "resultat": "PASS",
+      "detail": "HTTP 200 {\"count\":50,\"offset\":0,\"limit\":50,\"results\":[{\"id\":52,\"timestamp\":\"2026-10-12T17"
+    },
+    {
+      "id": "H7-metriques",
+      "resultat": "PASS",
+      "detail": "HTTP 200 {\"search_requests\":2,\"search_errors\":0,\"last_search_seconds\":0.00230100000021593"
+    },
+    {
+      "id": "H8-lettres-mortes",
+      "resultat": "PASS",
+      "detail": "HTTP 200 {\"count\":0,\"results\":[]}"
+    },
+    {
+      "id": "H9-file-de-validation",
+      "resultat": "PASS",
+      "detail": "HTTP 200 [{\"code\":\"250328 AJA\",\"titre\":\"FICHE DE FABRICATION\",\"score_qualite\":0.9,\"gabari"
+    },
+    {
+      "id": "H10-export-recherche",
+      "resultat": "PASS",
+      "detail": "HTTP 200 {\"query\":\"voile\",\"count\":25,\"offset\":0,\"limit\":50,\"has_more\":false,\"results\":[{\""
+    },
+    {
+      "id": "H11-doublons",
+      "resultat": "PASS",
+      "detail": "HTTP 200 {\"par_code\":{}}"
+    },
+    {
+      "id": "H12-dossier-detail",
+      "resultat": "PASS",
+      "detail": "HTTP 200 {\"code\":\"7792-SO\",\"titre\":\"Voile de portant\",\"statut\":\"valide\",\"gabarit\":\"FICHE_"
+    },
+    {
+      "id": "H13-historique",
+      "resultat": "PASS",
+      "detail": "HTTP 200 [{\"action\":\"valider\",\"etat_avant\":\"a_valider\",\"etat_apres\":\"valide\",\"commentaire"
+    },
+    {
+      "id": "H14-pieces-fiche",
+      "resultat": "PASS",
+      "detail": "HTTP 200 {\"fichier_source\":null,\"pdf_source\":null,\"pieces\":[{\"id\":474,\"name\":\"fiche-7792-"
+    },
+    {
+      "id": "H15-fiches-paginees",
+      "resultat": "PASS",
+      "detail": "HTTP 200 {\"total\":11,\"page\":1,\"facettes\":{\"valide\":3,\"a_valider\":8},\"fiches\":[{\"code\":\"77"
+    },
+    {
+      "id": "H16-gabarits-versions",
+      "resultat": "PASS",
+      "detail": "HTTP 200 [{\"version\":1,\"description\":\"Fiche « Génois » (variante mono-colonne : Guindant,"
+    },
+    {
+      "id": "H17-divergences",
+      "resultat": "PASS",
+      "detail": "HTTP 200 {\"divergences\":[],\"reconciliation\":\"POST /fiches/{code}/reconcilier-corrections "
+    },
+    {
+      "id": "H18-brouillons-gabarits",
+      "resultat": "PASS",
+      "detail": "HTTP 200 []"
+    }
+  ],
+  "echecs": 1,
+  "appels": [
+    {
+      "requete": "GET /fiches/7792-SO",
+      "code": 200,
+      "duree_ms": 10,
+      "extrait": "{\"code\":\"7792-SO\",\"titre\":\"Voile de portant\",\"statut\":\"valide\",\"gabarit\":\"FICHE_PORTANT_V1\",\"client\":\"Sailonet\",\"bateau\":\"29er\",\"bateau_taille\":\"15'\",\"date_edition\":\"2026-03-06\",\"nb_fichiers\":1,\"revision\":19}"
+    },
+    {
+      "requete": "POST /fiches/7792-SO/rouvrir",
+      "code": 200,
+      "duree_ms": 5,
+      "extrait": "{\"code\":\"7792-SO\",\"statut\":\"a_valider\",\"corrections_effacees\":false,\"revision\":20}"
+    },
+    {
+      "requete": "GET /fiches/7792-SO",
+      "code": 200,
+      "duree_ms": 3,
+      "extrait": "{\"code\":\"7792-SO\",\"titre\":\"Voile de portant\",\"statut\":\"a_valider\",\"gabarit\":\"FICHE_PORTANT_V1\",\"client\":\"Sailonet\",\"bateau\":\"29er\",\"bateau_taille\":\"15'\",\"date_edition\":\"2026-03-06\",\"nb_fichiers\":1,\"revision\":20}"
+    },
+    {
+      "requete": "GET /fiches/7792-SO/champs",
+      "code": 200,
+      "duree_ms": 4,
+      "extrait": "[{\"champ\":\"fiche.titre\",\"rang\":null,\"table_cible\":\"fiche\",\"colonne_cible\":\"titre\",\"valeur_brute\":\"\\\"Voile de portant\\\"\",\"valeur_normalisee\":\"Voile de portant\",\"methode\":\"gabarit\",\"confiance\":\"0.990\",\"page\":0,\"zone\":{\"x0\":425.3,\"x1\":491.7,\"y0\":24.9,\"y1\":32.7,\"page\":0},\"version_gabarit\":2,\"corrige\":fa"
+    },
+    {
+      "requete": "POST /fiches/7792-SO/corriger",
+      "code": 200,
+      "duree_ms": 6,
+      "extrait": "{\"code\":\"7792-SO\",\"champ\":\"cotes.finie.slu_m\",\"rang\":null,\"valeur_brute\":\"6,60 m\",\"avant\":\"8,80\",\"apres\":\"6,6\",\"revision\":21,\"revision_ouverte\":20,\"propagation\":{\"statut\":\"appliquee\",\"cible\":\"fiche_cotes.slu_m\",\"cle\":\"jeu=finie\",\"valeur_ecrite\":6.6,\"recherche_rafraichie\":true}}"
+    },
+    {
+      "requete": "GET /fiches/7792-SO",
+      "code": 200,
+      "duree_ms": 3,
+      "extrait": "{\"code\":\"7792-SO\",\"titre\":\"Voile de portant\",\"statut\":\"a_valider\",\"gabarit\":\"FICHE_PORTANT_V1\",\"client\":\"Sailonet\",\"bateau\":\"29er\",\"bateau_taille\":\"15'\",\"date_edition\":\"2026-03-06\",\"nb_fichiers\":1,\"revision\":21}"
+    },
+    {
+      "requete": "GET /fiches/7792-SO/champs",
+      "code": 200,
+      "duree_ms": 4,
+      "extrait": "[{\"champ\":\"fiche.titre\",\"rang\":null,\"table_cible\":\"fiche\",\"colonne_cible\":\"titre\",\"valeur_brute\":\"\\\"Voile de portant\\\"\",\"valeur_normalisee\":\"Voile de portant\",\"methode\":\"gabarit\",\"confiance\":\"0.990\",\"page\":0,\"zone\":{\"x0\":425.3,\"x1\":491.7,\"y0\":24.9,\"y1\":32.7,\"page\":0},\"version_gabarit\":2,\"corrige\":fa"
+    },
+    {
+      "requete": "POST /auth/connexion",
+      "code": 401,
+      "duree_ms": 51,
+      "extrait": "{\"detail\":\"Identifiant ou mot de passe incorrect.\"}"
+    },
+    {
+      "requete": "POST /auth/connexion",
+      "code": 429,
+      "duree_ms": 5,
+      "extrait": "{\"detail\":\"Trop de tentatives échouées pour « recette-verrou » : nouvelle tentative dans 222 s (verrou en base, il survit à un redémarrage).\"}"
+    },
+    {
+      "requete": "POST /auth/connexion",
+      "code": 429,
+      "duree_ms": 3,
+      "extrait": "{\"detail\":\"Trop de tentatives échouées pour « recette-verrou » : nouvelle tentative dans 222 s (verrou en base, il survit à un redémarrage).\"}"
+    },
+    {
+      "requete": "POST /auth/connexion",
+      "code": 429,
+      "duree_ms": 3,
+      "extrait": "{\"detail\":\"Trop de tentatives échouées pour « recette-verrou » : nouvelle tentative dans 222 s (verrou en base, il survit à un redémarrage).\"}"
+    },
+    {
+      "requete": "POST /auth/connexion",
+      "code": 429,
+      "duree_ms": 3,
+      "extrait": "{\"detail\":\"Trop de tentatives échouées pour « recette-verrou » : nouvelle tentative dans 222 s (verrou en base, il survit à un redémarrage).\"}"
+    },
+    {
+      "requete": "POST /auth/connexion",
+      "code": 429,
+      "duree_ms": 3,
+      "extrait": "{\"detail\":\"Trop de tentatives échouées pour « recette-verrou » : nouvelle tentative dans 222 s (verrou en base, il survit à un redémarrage).\"}"
+    },
+    {
+      "requete": "POST /auth/connexion",
+      "code": 429,
+      "duree_ms": 4,
+      "extrait": "{\"detail\":\"Trop de tentatives échouées pour « recette-verrou » : nouvelle tentative dans 222 s (verrou en base, il survit à un redémarrage).\"}"
+    },
+    {
+      "requete": "POST /auth/connexion",
+      "code": 200,
+      "duree_ms": 47,
+      "extrait": "{\"ok\":true,\"id_utilisateur\":1,\"identifiant\":\"recette\",\"nom\":\"Recette Atelier\",\"role\":\"operateur\",\"doit_changer_mot_de_passe\":false,\"id_session\":22,\"jeton_session\":\"T1hNnLWMDcpMDg5JbPy2YdZSOkxSYkOy9cHEwEaeSKI\",\"expire_le\":\"2026-10-13T05:35:05.773930+00:00\"}"
+    },
+    {
+      "requete": "POST /auth/connexion",
+      "code": 200,
+      "duree_ms": 38,
+      "extrait": "{\"ok\":true,\"id_utilisateur\":2,\"identifiant\":\"recette-b\",\"nom\":\"Bertrand Operateur\",\"role\":\"operateur\",\"doit_changer_mot_de_passe\":false,\"id_session\":23,\"jeton_session\":\"pTxckgmb-dmbXFfhZywy7ScZAT_9kmzMTnZ4xkBx-Xs\",\"expire_le\":\"2026-10-13T05:35:05.812245+00:00\"}"
+    },
+    {
+      "requete": "POST /auth/connexion",
+      "code": 200,
+      "duree_ms": 40,
+      "extrait": "{\"ok\":true,\"id_utilisateur\":3,\"identifiant\":\"recette-c\",\"nom\":\"Camille Admin\",\"role\":\"administrateur\",\"doit_changer_mot_de_passe\":false,\"id_session\":24,\"jeton_session\":\"bglNKBCYMbj_of1dsJ5wwXqH4MuGp7msddb1AnCgKgU\",\"expire_le\":\"2026-10-13T05:35:05.853330+00:00\"}"
+    },
+    {
+      "requete": "GET /auth/session",
+      "code": 200,
+      "duree_ms": 4,
+      "extrait": "{\"ok\":true,\"id_utilisateur\":1,\"identifiant\":\"recette\",\"nom\":\"Recette Atelier\",\"role\":\"operateur\",\"actif\":true,\"expire_le\":\"2026-10-13T05:35:05.773930+00:00\",\"derniere_activite\":\"2026-10-12T17:35:05.856699+00:00\",\"doit_changer_mot_de_passe\":false,\"id_session\":22}"
+    },
+    {
+      "requete": "GET /auth/utilisateurs",
+      "code": 403,
+      "duree_ms": 4,
+      "extrait": "{\"detail\":\"Gestion des comptes réservée au rôle « administrateur » (rôle de la session : « operateur »).\"}"
+    },
+    {
+      "requete": "GET /auth/utilisateurs",
+      "code": 200,
+      "duree_ms": 5,
+      "extrait": "[{\"id_utilisateur\":3,\"identifiant\":\"recette-c\",\"nom\":\"Camille Admin\",\"role\":\"administrateur\",\"actif\":true,\"cree_le\":\"2026-10-12T17:14:22.738545+00:00\",\"derniere_connexion\":\"2026-10-12T17:35:05.817192+00:00\",\"doit_changer_mot_de_passe\":false,\"mot_de_passe_defini\":true},{\"id_utilisateur\":1,\"identifian"
+    },
+    {
+      "requete": "POST /auth/deconnexion",
+      "code": 200,
+      "duree_ms": 4,
+      "extrait": "{\"ok\":true,\"id_session\":23,\"revoquee\":true,\"deja_revoquee\":false}"
+    },
+    {
+      "requete": "GET /auth/session",
+      "code": 401,
+      "duree_ms": 3,
+      "extrait": "{\"detail\":\"Session invalide : expirée, révoquée, ou jeton non conforme.\"}"
+    },
+    {
+      "requete": "POST /auth/utilisateurs",
+      "code": 200,
+      "duree_ms": 46,
+      "extrait": "{\"id_utilisateur\":6,\"identifiant\":\"recette-jetable-173505\",\"nom\":\"Compte jetable\",\"role\":\"operateur\",\"doit_changer_mot_de_passe\":true}"
+    },
+    {
+      "requete": "POST /auth/connexion",
+      "code": 200,
+      "duree_ms": 44,
+      "extrait": "{\"ok\":true,\"id_utilisateur\":6,\"identifiant\":\"recette-jetable-173505\",\"nom\":\"Compte jetable\",\"role\":\"operateur\",\"doit_changer_mot_de_passe\":true,\"id_session\":25,\"jeton_session\":\"q35TMMZ73n66sxqOsCg7o41lqPSOf1827WEHjEmdwCE\",\"expire_le\":\"2026-10-13T05:35:05.986779+00:00\"}"
+    },
+    {
+      "requete": "POST /auth/utilisateurs/recette-jetable-173505/desactiver",
+      "code": 200,
+      "duree_ms": 5,
+      "extrait": "{\"ok\":true,\"identifiant\":\"recette-jetable-173505\",\"actif\":false,\"sessions_revoquees\":1}"
+    },
+    {
+      "requete": "POST /auth/connexion",
+      "code": 401,
+      "duree_ms": 8,
+      "extrait": "{\"detail\":\"Identifiant ou mot de passe incorrect.\"}"
+    },
+    {
+      "requete": "GET /auth/session",
+      "code": 401,
+      "duree_ms": 3,
+      "extrait": "{\"detail\":\"Session invalide : expirée, révoquée, ou jeton non conforme.\"}"
+    },
+    {
+      "requete": "POST /auth/utilisateurs",
+      "code": 403,
+      "duree_ms": 4,
+      "extrait": "{\"detail\":\"Gestion des comptes réservée au rôle « administrateur » (rôle de la session : « operateur »).\"}"
+    },
+    {
+      "requete": "POST /imports/dossier",
+      "code": 201,
+      "duree_ms": 486,
+      "extrait": "{\"statut\":\"traite\",\"fiche\":\"250216 AJA\",\"raison\":\"conservee_validee\",\"pieces\":45,\"id_lot\":44,\"revision\":6,\"revision_avant\":6,\"contenu_remplace\":false,\"lot\":{\"id_lot\":44,\"dossier_racine\":\"/home/user/rv/data/recette-lot/affaires-api/depot-reel-173506\",\"statut\":\"termine\",\"nb_dossiers\":1,\"nb_traites\":1,"
+    },
+    {
+      "requete": "POST /imports/dossier",
+      "code": 201,
+      "duree_ms": 285,
+      "extrait": "{\"statut\":\"deja_traite\",\"fiche\":null,\"raison\":\"deja_traite (lot #44)\",\"pieces\":45,\"id_lot\":45,\"lot\":{\"id_lot\":45,\"dossier_racine\":\"/home/user/rv/data/recette-lot/affaires-api/depot-reel-173506\",\"statut\":\"termine\",\"nb_dossiers\":1,\"nb_traites\":1,\"nb_echecs\":0,\"cree_le\":\"2026-10-12T17:35:06.809454+00:0"
+    },
+    {
+      "requete": "POST /imports/dossier",
+      "code": 201,
+      "duree_ms": 7,
+      "extrait": "{\"statut\":\"echec\",\"fiche\":null,\"raison\":\"Dossier introuvable ou non-directory : /home/user/rv/corpus/inexistant-xyz\",\"pieces\":0,\"id_lot\":46,\"lot\":{\"id_lot\":46,\"dossier_racine\":\"/home/user/rv/corpus/inexistant-xyz\",\"statut\":\"termine\",\"nb_dossiers\":1,\"nb_traites\":0,\"nb_echecs\":1,\"cree_le\":\"2026-10-12T"
+    },
+    {
+      "requete": "POST /imports/dossier/lot",
+      "code": 202,
+      "duree_ms": 28,
+      "extrait": "{\"id_lot\":47,\"job_id\":\"lot-47\",\"statut\":\"en_cours\",\"traitement\":\"file_durable\",\"durability\":\"durable\",\"suivi\":\"/lots/47\"}"
+    },
+    {
+      "requete": "GET /lots/47",
+      "code": 200,
+      "duree_ms": 3,
+      "extrait": "{\"id_lot\":47,\"dossier_racine\":\"/home/user/rv/data/recette-lot/lot-synthetique-173506\",\"statut\":\"en_cours\",\"nb_dossiers\":10,\"nb_traites\":0,\"nb_echecs\":0,\"cree_le\":\"2026-10-12T17:35:08.964056+00:00\",\"termine_le\":null,\"notes\":null,\"progression_pct\":0.0,\"dossiers\":[{\"id_lot_dossier\":87,\"chemin_dossier\":"
+    },
+    {
+      "requete": "GET /lots/47",
+      "code": 200,
+      "duree_ms": 5,
+      "extrait": "{\"id_lot\":47,\"dossier_racine\":\"/home/user/rv/data/recette-lot/lot-synthetique-173506\",\"statut\":\"termine\",\"nb_dossiers\":10,\"nb_traites\":2,\"nb_echecs\":7,\"cree_le\":\"2026-10-12T17:35:08.964056+00:00\",\"termine_le\":\"2026-10-12T17:35:09.245342+00:00\",\"notes\":null,\"progression_pct\":90.0,\"dossiers\":[{\"id_lot"
+    },
+    {
+      "requete": "POST /imports/upload",
+      "code": 200,
+      "duree_ms": 15,
+      "extrait": "{\"staged_path\":\"/home/user/rv/data/uploads/3daa88bcc4774aedb4a52fafe0dda8fa_recette-upload-api\",\"source_path\":\"/home/user/rv/data/uploads/3daa88bcc4774aedb4a52fafe0dda8fa_recette-upload-api\",\"files_detected\":1,\"candidates\":[{\"path\":\"/home/user/rv/data/uploads/3daa88bcc4774aedb4a52fafe0dda8fa_recette"
+    },
+    {
+      "requete": "POST /imports/upload",
+      "code": 413,
+      "duree_ms": 7283,
+      "extrait": "{\"detail\":\"File too large: archive enorme.bin\"}"
+    },
+    {
+      "requete": "GET /recherche",
+      "code": 200,
+      "duree_ms": 38,
+      "extrait": "{\"requete\":\"7792-SO\",\"nb_resultats\":1,\"offset\":0,\"limit\":5,\"has_more\":false,\"resultats\":[{\"code\":\"7792-SO\",\"titre\":\"Voile de portant\",\"type_voile\":\"Spi Asymétrique\",\"client\":\"Sailonet\",\"bateau\":\"29er 15'\",\"gamme\":\"Medium Régate\",\"statut\":\"a_valider\",\"annee\":2026,\"extrait\":\"7792-SO | Voile de portant"
+    },
+    {
+      "requete": "GET /fiches/7792-SO",
+      "code": 200,
+      "duree_ms": 5,
+      "extrait": "{\"code\":\"7792-SO\",\"titre\":\"Voile de portant\",\"statut\":\"a_valider\",\"gabarit\":\"FICHE_PORTANT_V1\",\"client\":\"Sailonet\",\"bateau\":\"29er\",\"bateau_taille\":\"15'\",\"date_edition\":\"2026-03-06\",\"nb_fichiers\":1,\"revision\":21}"
+    },
+    {
+      "requete": "GET /fiches/7792-SO/champs",
+      "code": 200,
+      "duree_ms": 5,
+      "extrait": "[{\"champ\":\"fiche.titre\",\"rang\":null,\"table_cible\":\"fiche\",\"colonne_cible\":\"titre\",\"valeur_brute\":\"\\\"Voile de portant\\\"\",\"valeur_normalisee\":\"Voile de portant\",\"methode\":\"gabarit\",\"confiance\":\"0.990\",\"page\":0,\"zone\":{\"x0\":425.3,\"x1\":491.7,\"y0\":24.9,\"y1\":32.7,\"page\":0},\"version_gabarit\":2,\"corrige\":fa"
+    },
+    {
+      "requete": "GET /recherche",
+      "code": 200,
+      "duree_ms": 10,
+      "extrait": "{\"requete\":\"7792-SO\",\"nb_resultats\":1,\"offset\":0,\"limit\":10,\"has_more\":false,\"resultats\":[{\"code\":\"7792-SO\",\"titre\":\"Voile de portant\",\"type_voile\":\"Spi Asymétrique\",\"client\":\"Sailonet\",\"bateau\":\"29er 15'\",\"gamme\":\"Medium Régate\",\"statut\":\"a_valider\",\"annee\":2026,\"extrait\":\"7792-SO | Voile de portan"
+    },
+    {
+      "requete": "GET /recherche",
+      "code": 200,
+      "duree_ms": 10,
+      "extrait": "{\"requete\":\"6,60\",\"nb_resultats\":1,\"offset\":0,\"limit\":5,\"has_more\":false,\"resultats\":[{\"code\":\"7792-SO\",\"titre\":\"Voile de portant\",\"type_voile\":\"Spi Asymétrique\",\"client\":\"Sailonet\",\"bateau\":\"29er 15'\",\"gamme\":\"Medium Régate\",\"statut\":\"a_valider\",\"annee\":2026,\"extrait\":\"7792-SO | Voile de portant | "
+    },
+    {
+      "requete": "GET /recherche",
+      "code": 200,
+      "duree_ms": 8,
+      "extrait": "{\"requete\":\"6.60\",\"nb_resultats\":1,\"offset\":0,\"limit\":5,\"has_more\":false,\"resultats\":[{\"code\":\"7792-SO\",\"titre\":\"Voile de portant\",\"type_voile\":\"Spi Asymétrique\",\"client\":\"Sailonet\",\"bateau\":\"29er 15'\",\"gamme\":\"Medium Régate\",\"statut\":\"a_valider\",\"annee\":2026,\"extrait\":\"7792-SO | Voile de portant | "
+    },
+    {
+      "requete": "GET /recherche",
+      "code": 200,
+      "duree_ms": 8,
+      "extrait": "{\"requete\":\"660 cm\",\"nb_resultats\":1,\"offset\":0,\"limit\":5,\"has_more\":false,\"resultats\":[{\"code\":\"7792-SO\",\"titre\":\"Voile de portant\",\"type_voile\":\"Spi Asymétrique\",\"client\":\"Sailonet\",\"bateau\":\"29er 15'\",\"gamme\":\"Medium Régate\",\"statut\":\"a_valider\",\"annee\":2026,\"extrait\":\"7792-SO | Voile de portant "
+    },
+    {
+      "requete": "GET /recherche",
+      "code": 200,
+      "duree_ms": 9,
+      "extrait": "{\"requete\":\"6600 mm\",\"nb_resultats\":1,\"offset\":0,\"limit\":5,\"has_more\":false,\"resultats\":[{\"code\":\"7792-SO\",\"titre\":\"Voile de portant\",\"type_voile\":\"Spi Asymétrique\",\"client\":\"Sailonet\",\"bateau\":\"29er 15'\",\"gamme\":\"Medium Régate\",\"statut\":\"a_valider\",\"annee\":2026,\"extrait\":\"7792-SO | Voile de portant"
+    },
+    {
+      "requete": "GET /recherche",
+      "code": 200,
+      "duree_ms": 8,
+      "extrait": "{\"requete\":\"6,60 m\",\"nb_resultats\":1,\"offset\":0,\"limit\":5,\"has_more\":false,\"resultats\":[{\"code\":\"7792-SO\",\"titre\":\"Voile de portant\",\"type_voile\":\"Spi Asymétrique\",\"client\":\"Sailonet\",\"bateau\":\"29er 15'\",\"gamme\":\"Medium Régate\",\"statut\":\"a_valider\",\"annee\":2026,\"extrait\":\"7792-SO | Voile de portant "
+    },
+    {
+      "requete": "GET /recherche",
+      "code": 200,
+      "duree_ms": 10,
+      "extrait": "{\"requete\":\"2026\",\"nb_resultats\":11,\"offset\":0,\"limit\":5,\"has_more\":true,\"resultats\":[{\"code\":\"7792-SO\",\"titre\":\"Voile de portant\",\"type_voile\":\"Spi Asymétrique\",\"client\":\"Sailonet\",\"bateau\":\"29er 15'\",\"gamme\":\"Medium Régate\",\"statut\":\"a_valider\",\"annee\":2026,\"extrait\":\"7792-SO | Voile de portant | "
+    },
+    {
+      "requete": "GET /recherche",
+      "code": 200,
+      "duree_ms": 8,
+      "extrait": "{\"requete\":\"SLU 6,60\",\"nb_resultats\":1,\"offset\":0,\"limit\":5,\"has_more\":false,\"resultats\":[{\"code\":\"7792-SO\",\"titre\":\"Voile de portant\",\"type_voile\":\"Spi Asymétrique\",\"client\":\"Sailonet\",\"bateau\":\"29er 15'\",\"gamme\":\"Medium Régate\",\"statut\":\"a_valider\",\"annee\":2026,\"extrait\":\"7792-SO | Voile de portan"
+    },
+    {
+      "requete": "GET /recherche",
+      "code": 200,
+      "duree_ms": 7,
+      "extrait": "{\"requete\":\"zzzz-inexistant-xyz\",\"nb_resultats\":0,\"offset\":0,\"limit\":5,\"has_more\":false,\"resultats\":[],\"facettes\":{\"dimension\":[]},\"facettes_cotes\":{\"slu_m\":{\"unite\":\"m\",\"min\":null,\"max\":null,\"effectif\":0,\"intervalles\":[]},\"sle_m\":{\"unite\":\"m\",\"min\":null,\"max\":null,\"effectif\":0,\"intervalles\":[]},\"sf"
+    },
+    {
+      "requete": "GET /recherche",
+      "code": 200,
+      "duree_ms": 9,
+      "extrait": "{\"requete\":\"GENOIS\",\"nb_resultats\":4,\"offset\":0,\"limit\":10,\"has_more\":false,\"resultats\":[{\"code\":\"250323 JA\",\"titre\":\"FICHE DE FABRICATION\",\"type_voile\":\"Génois\",\"client\":\"JADE VOILE\",\"bateau\":\"BAVARIA 34 \",\"gamme\":null,\"statut\":\"a_valider\",\"annee\":2025,\"extrait\":\"250323 JA | FICHE DE FABRICATION | "
+    },
+    {
+      "requete": "GET /recherche",
+      "code": 200,
+      "duree_ms": 9,
+      "extrait": "{\"requete\":\"GÉNOIS\",\"nb_resultats\":2,\"offset\":0,\"limit\":10,\"has_more\":false,\"resultats\":[{\"code\":\"250323 JA\",\"titre\":\"FICHE DE FABRICATION\",\"type_voile\":\"Génois\",\"client\":\"JADE VOILE\",\"bateau\":\"BAVARIA 34 \",\"gamme\":null,\"statut\":\"a_valider\",\"annee\":2025,\"extrait\":\"250323 JA | FICHE DE FABRICATION | "
+    },
+    {
+      "requete": "GET /recherche",
+      "code": 200,
+      "duree_ms": 8,
+      "extrait": "{\"requete\":\"\",\"nb_resultats\":9,\"offset\":0,\"limit\":5,\"has_more\":true,\"resultats\":[{\"code\":\"7792-SO\",\"titre\":\"Voile de portant\",\"type_voile\":\"Spi Asymétrique\",\"client\":\"Sailonet\",\"bateau\":\"29er 15'\",\"gamme\":\"Medium Régate\",\"statut\":\"a_valider\",\"annee\":2026,\"extrait\":\"7792-SO | Voile de portant | Mediu"
+    },
+    {
+      "requete": "GET /recherche",
+      "code": 200,
+      "duree_ms": 11,
+      "extrait": "{\"requete\":\"GEN\",\"nb_resultats\":2,\"offset\":0,\"limit\":5,\"has_more\":false,\"resultats\":[{\"code\":\"250604 JA\",\"titre\":\"FICHE DE FABRICATION\",\"type_voile\":\"Gennaker\",\"client\":\"JADE VOILE\",\"bateau\":\"BAVARIA 32 \",\"gamme\":\"C0\",\"statut\":\"a_valider\",\"annee\":2025,\"extrait\":\"250604 JA | FICHE DE FABRICATION | C0"
+    },
+    {
+      "requete": "GET /recherche",
+      "code": 200,
+      "duree_ms": 7,
+      "extrait": "{\"requete\":\"\",\"nb_resultats\":11,\"offset\":0,\"limit\":50,\"has_more\":false,\"resultats\":[{\"code\":\"7792-SO\",\"titre\":\"Voile de portant\",\"type_voile\":\"Spi Asymétrique\",\"client\":\"Sailonet\",\"bateau\":\"29er 15'\",\"gamme\":\"Medium Régate\",\"statut\":\"a_valider\",\"annee\":2026,\"extrait\":\"7792-SO | Voile de portant | Me"
+    },
+    {
+      "requete": "GET /recherche/suggestions",
+      "code": 200,
+      "duree_ms": 4,
+      "extrait": "{\"prefixe\":\"GE\",\"suggestions\":[{\"nature\":\"type_voile\",\"valeur\":\"Gennaker\"}]}"
+    },
+    {
+      "requete": "GET /recherche",
+      "code": 200,
+      "duree_ms": 8,
+      "extrait": "{\"requete\":\"\",\"nb_resultats\":11,\"offset\":0,\"limit\":3,\"has_more\":true,\"resultats\":[{\"code\":\"7792-SO\",\"titre\":\"Voile de portant\",\"type_voile\":\"Spi Asymétrique\",\"client\":\"Sailonet\",\"bateau\":\"29er 15'\",\"gamme\":\"Medium Régate\",\"statut\":\"a_valider\",\"annee\":2026,\"extrait\":\"7792-SO | Voile de portant | Medi"
+    },
+    {
+      "requete": "GET /fiches/7792-SO",
+      "code": 200,
+      "duree_ms": 3,
+      "extrait": "{\"code\":\"7792-SO\",\"titre\":\"Voile de portant\",\"statut\":\"a_valider\",\"gabarit\":\"FICHE_PORTANT_V1\",\"client\":\"Sailonet\",\"bateau\":\"29er\",\"bateau_taille\":\"15'\",\"date_edition\":\"2026-03-06\",\"nb_fichiers\":1,\"revision\":21}"
+    },
+    {
+      "requete": "GET /fiches/7792-SO/champs",
+      "code": 200,
+      "duree_ms": 4,
+      "extrait": "[{\"champ\":\"fiche.titre\",\"rang\":null,\"table_cible\":\"fiche\",\"colonne_cible\":\"titre\",\"valeur_brute\":\"\\\"Voile de portant\\\"\",\"valeur_normalisee\":\"Voile de portant\",\"methode\":\"gabarit\",\"confiance\":\"0.990\",\"page\":0,\"zone\":{\"x0\":425.3,\"x1\":491.7,\"y0\":24.9,\"y1\":32.7,\"page\":0},\"version_gabarit\":2,\"corrige\":fa"
+    },
+    {
+      "requete": "GET /fiches/7792-SO",
+      "code": 200,
+      "duree_ms": 3,
+      "extrait": "{\"code\":\"7792-SO\",\"titre\":\"Voile de portant\",\"statut\":\"a_valider\",\"gabarit\":\"FICHE_PORTANT_V1\",\"client\":\"Sailonet\",\"bateau\":\"29er\",\"bateau_taille\":\"15'\",\"date_edition\":\"2026-03-06\",\"nb_fichiers\":1,\"revision\":21}"
+    },
+    {
+      "requete": "GET /fiches/7792-SO/champs",
+      "code": 200,
+      "duree_ms": 3,
+      "extrait": "[{\"champ\":\"fiche.titre\",\"rang\":null,\"table_cible\":\"fiche\",\"colonne_cible\":\"titre\",\"valeur_brute\":\"\\\"Voile de portant\\\"\",\"valeur_normalisee\":\"Voile de portant\",\"methode\":\"gabarit\",\"confiance\":\"0.990\",\"page\":0,\"zone\":{\"x0\":425.3,\"x1\":491.7,\"y0\":24.9,\"y1\":32.7,\"page\":0},\"version_gabarit\":2,\"corrige\":fa"
+    },
+    {
+      "requete": "POST /fiches/7792-SO/corriger",
+      "code": 409,
+      "duree_ms": 3,
+      "extrait": "{\"detail\":{\"code\":\"conflit_revision\",\"message\":\"Fiche 7792-SO modifiée par un autre poste entre l'ouverture et l'enregistrement : la correction n'a PAS été appliquée pour ne pas écraser le travail du collègue. Rechargez la fiche pour voir la valeur à jour, puis corrigez à nouveau si nécessaire.\",\"re"
+    },
+    {
+      "requete": "GET /fiches/7792-SO",
+      "code": 200,
+      "duree_ms": 3,
+      "extrait": "{\"code\":\"7792-SO\",\"titre\":\"Voile de portant\",\"statut\":\"a_valider\",\"gabarit\":\"FICHE_PORTANT_V1\",\"client\":\"Sailonet\",\"bateau\":\"29er\",\"bateau_taille\":\"15'\",\"date_edition\":\"2026-03-06\",\"nb_fichiers\":1,\"revision\":21}"
+    },
+    {
+      "requete": "GET /fiches/7792-SO/champs",
+      "code": 200,
+      "duree_ms": 4,
+      "extrait": "[{\"champ\":\"fiche.titre\",\"rang\":null,\"table_cible\":\"fiche\",\"colonne_cible\":\"titre\",\"valeur_brute\":\"\\\"Voile de portant\\\"\",\"valeur_normalisee\":\"Voile de portant\",\"methode\":\"gabarit\",\"confiance\":\"0.990\",\"page\":0,\"zone\":{\"x0\":425.3,\"x1\":491.7,\"y0\":24.9,\"y1\":32.7,\"page\":0},\"version_gabarit\":2,\"corrige\":fa"
+    },
+    {
+      "requete": "GET /fiches/7792-SO",
+      "code": 200,
+      "duree_ms": 3,
+      "extrait": "{\"code\":\"7792-SO\",\"titre\":\"Voile de portant\",\"statut\":\"a_valider\",\"gabarit\":\"FICHE_PORTANT_V1\",\"client\":\"Sailonet\",\"bateau\":\"29er\",\"bateau_taille\":\"15'\",\"date_edition\":\"2026-03-06\",\"nb_fichiers\":1,\"revision\":21}"
+    },
+    {
+      "requete": "GET /fiches/7792-SO/champs",
+      "code": 200,
+      "duree_ms": 3,
+      "extrait": "[{\"champ\":\"fiche.titre\",\"rang\":null,\"table_cible\":\"fiche\",\"colonne_cible\":\"titre\",\"valeur_brute\":\"\\\"Voile de portant\\\"\",\"valeur_normalisee\":\"Voile de portant\",\"methode\":\"gabarit\",\"confiance\":\"0.990\",\"page\":0,\"zone\":{\"x0\":425.3,\"x1\":491.7,\"y0\":24.9,\"y1\":32.7,\"page\":0},\"version_gabarit\":2,\"corrige\":fa"
+    },
+    {
+      "requete": "GET /fiches/7792-SO",
+      "code": 200,
+      "duree_ms": 3,
+      "extrait": "{\"code\":\"7792-SO\",\"titre\":\"Voile de portant\",\"statut\":\"a_valider\",\"gabarit\":\"FICHE_PORTANT_V1\",\"client\":\"Sailonet\",\"bateau\":\"29er\",\"bateau_taille\":\"15'\",\"date_edition\":\"2026-03-06\",\"nb_fichiers\":1,\"revision\":21}"
+    },
+    {
+      "requete": "POST /fiches/7792-SO/corriger",
+      "code": 422,
+      "duree_ms": 4,
+      "extrait": "{\"detail\":\"correction refusée pour fiche_cotes.slu_m : « pas-un-nombre » n'est pas un nombre\"}"
+    },
+    {
+      "requete": "GET /fiches/7792-SO/champs",
+      "code": 200,
+      "duree_ms": 4,
+      "extrait": "[{\"champ\":\"fiche.titre\",\"rang\":null,\"table_cible\":\"fiche\",\"colonne_cible\":\"titre\",\"valeur_brute\":\"\\\"Voile de portant\\\"\",\"valeur_normalisee\":\"Voile de portant\",\"methode\":\"gabarit\",\"confiance\":\"0.990\",\"page\":0,\"zone\":{\"x0\":425.3,\"x1\":491.7,\"y0\":24.9,\"y1\":32.7,\"page\":0},\"version_gabarit\":2,\"corrige\":fa"
+    },
+    {
+      "requete": "GET /fiches/7792-SO/champs",
+      "code": 200,
+      "duree_ms": 3,
+      "extrait": "[{\"champ\":\"fiche.titre\",\"rang\":null,\"table_cible\":\"fiche\",\"colonne_cible\":\"titre\",\"valeur_brute\":\"\\\"Voile de portant\\\"\",\"valeur_normalisee\":\"Voile de portant\",\"methode\":\"gabarit\",\"confiance\":\"0.990\",\"page\":0,\"zone\":{\"x0\":425.3,\"x1\":491.7,\"y0\":24.9,\"y1\":32.7,\"page\":0},\"version_gabarit\":2,\"corrige\":fa"
+    },
+    {
+      "requete": "GET /fiches/7792-SO",
+      "code": 200,
+      "duree_ms": 3,
+      "extrait": "{\"code\":\"7792-SO\",\"titre\":\"Voile de portant\",\"statut\":\"a_valider\",\"gabarit\":\"FICHE_PORTANT_V1\",\"client\":\"Sailonet\",\"bateau\":\"29er\",\"bateau_taille\":\"15'\",\"date_edition\":\"2026-03-06\",\"nb_fichiers\":1,\"revision\":21}"
+    },
+    {
+      "requete": "POST /fiches/7792-SO/corriger",
+      "code": 200,
+      "duree_ms": 9,
+      "extrait": "{\"code\":\"7792-SO\",\"champ\":\"cotes.finie.slu_m\",\"rang\":null,\"valeur_brute\":\"6,60 m\",\"avant\":\"6,6\",\"apres\":\"7,7\",\"revision\":22,\"revision_ouverte\":21,\"propagation\":{\"statut\":\"appliquee\",\"cible\":\"fiche_cotes.slu_m\",\"cle\":\"jeu=finie\",\"valeur_ecrite\":7.7,\"recherche_rafraichie\":true}}"
+    },
+    {
+      "requete": "GET /fiches/7792-SO/champs",
+      "code": 200,
+      "duree_ms": 3,
+      "extrait": "[{\"champ\":\"fiche.titre\",\"rang\":null,\"table_cible\":\"fiche\",\"colonne_cible\":\"titre\",\"valeur_brute\":\"\\\"Voile de portant\\\"\",\"valeur_normalisee\":\"Voile de portant\",\"methode\":\"gabarit\",\"confiance\":\"0.990\",\"page\":0,\"zone\":{\"x0\":425.3,\"x1\":491.7,\"y0\":24.9,\"y1\":32.7,\"page\":0},\"version_gabarit\":2,\"corrige\":fa"
+    },
+    {
+      "requete": "GET /fiches/7792-SO/champs",
+      "code": 200,
+      "duree_ms": 3,
+      "extrait": "[{\"champ\":\"fiche.titre\",\"rang\":null,\"table_cible\":\"fiche\",\"colonne_cible\":\"titre\",\"valeur_brute\":\"\\\"Voile de portant\\\"\",\"valeur_normalisee\":\"Voile de portant\",\"methode\":\"gabarit\",\"confiance\":\"0.990\",\"page\":0,\"zone\":{\"x0\":425.3,\"x1\":491.7,\"y0\":24.9,\"y1\":32.7,\"page\":0},\"version_gabarit\":2,\"corrige\":fa"
+    },
+    {
+      "requete": "GET /recherche",
+      "code": 200,
+      "duree_ms": 10,
+      "extrait": "{\"requete\":\"7,70\",\"nb_resultats\":1,\"offset\":0,\"limit\":10,\"has_more\":false,\"resultats\":[{\"code\":\"7792-SO\",\"titre\":\"Voile de portant\",\"type_voile\":\"Spi Asymétrique\",\"client\":\"Sailonet\",\"bateau\":\"29er 15'\",\"gamme\":\"Medium Régate\",\"statut\":\"a_valider\",\"annee\":2026,\"extrait\":\"7792-SO | Voile de portant |"
+    },
+    {
+      "requete": "GET /fiches/7792-SO",
+      "code": 200,
+      "duree_ms": 3,
+      "extrait": "{\"code\":\"7792-SO\",\"titre\":\"Voile de portant\",\"statut\":\"a_valider\",\"gabarit\":\"FICHE_PORTANT_V1\",\"client\":\"Sailonet\",\"bateau\":\"29er\",\"bateau_taille\":\"15'\",\"date_edition\":\"2026-03-06\",\"nb_fichiers\":1,\"revision\":22}"
+    },
+    {
+      "requete": "POST /fiches/7792-SO/valider",
+      "code": 200,
+      "duree_ms": 6,
+      "extrait": "{\"code\":\"7792-SO\",\"statut\":\"valide\",\"revision\":23,\"divergences_acceptees\":[]}"
+    },
+    {
+      "requete": "GET /fiches/7792-SO/historique",
+      "code": 200,
+      "duree_ms": 3,
+      "extrait": "[{\"action\":\"valider\",\"etat_avant\":\"a_valider\",\"etat_apres\":\"valide\",\"commentaire\":\"recette : validation\",\"created_at\":\"2026-10-12T17:35:19.568304+00:00\"},{\"action\":\"corriger\",\"etat_avant\":\"a_valider\",\"etat_apres\":\"a_valider\",\"commentaire\":\"recette : correction 6,6 → 7,7\",\"created_at\":\"2026-10-12T17:"
+    },
+    {
+      "requete": "GET /fiches/7792-SO",
+      "code": 200,
+      "duree_ms": 4,
+      "extrait": "{\"code\":\"7792-SO\",\"titre\":\"Voile de portant\",\"statut\":\"valide\",\"gabarit\":\"FICHE_PORTANT_V1\",\"client\":\"Sailonet\",\"bateau\":\"29er\",\"bateau_taille\":\"15'\",\"date_edition\":\"2026-03-06\",\"nb_fichiers\":1,\"revision\":23}"
+    },
+    {
+      "requete": "POST /fiches/7792-SO/rouvrir",
+      "code": 200,
+      "duree_ms": 4,
+      "extrait": "{\"code\":\"7792-SO\",\"statut\":\"a_valider\",\"corrections_effacees\":false,\"revision\":24}"
+    },
+    {
+      "requete": "POST /fiches/7792-SO/rouvrir",
+      "code": 428,
+      "duree_ms": 2,
+      "extrait": "{\"detail\":\"Décision « rouvrir » refusée : la révision de la fiche n'a pas été fournie. La protection anti-écrasement (deux postes sur la même fiche) ne se désactive pas depuis un poste : rechargez la fiche pour lire son état ET sa révision, puis recommencez. Cause possible : la révision n'avait pas "
+    },
+    {
+      "requete": "GET /fiches/7792-SO",
+      "code": 200,
+      "duree_ms": 3,
+      "extrait": "{\"code\":\"7792-SO\",\"titre\":\"Voile de portant\",\"statut\":\"a_valider\",\"gabarit\":\"FICHE_PORTANT_V1\",\"client\":\"Sailonet\",\"bateau\":\"29er\",\"bateau_taille\":\"15'\",\"date_edition\":\"2026-03-06\",\"nb_fichiers\":1,\"revision\":24}"
+    },
+    {
+      "requete": "POST /fiches/7792-SO/rejeter",
+      "code": 200,
+      "duree_ms": 3,
+      "extrait": "{\"code\":\"7792-SO\",\"statut\":\"rejete\",\"revision\":25}"
+    },
+    {
+      "requete": "GET /fiches/7792-SO",
+      "code": 200,
+      "duree_ms": 3,
+      "extrait": "{\"code\":\"7792-SO\",\"titre\":\"Voile de portant\",\"statut\":\"rejete\",\"gabarit\":\"FICHE_PORTANT_V1\",\"client\":\"Sailonet\",\"bateau\":\"29er\",\"bateau_taille\":\"15'\",\"date_edition\":\"2026-03-06\",\"nb_fichiers\":1,\"revision\":25}"
+    },
+    {
+      "requete": "POST /fiches/7792-SO/rejeter",
+      "code": 422,
+      "duree_ms": 2,
+      "extrait": "{\"detail\":\"Motif OBLIGATOIRE pour rejeter une fiche (traçabilité).\"}"
+    },
+    {
+      "requete": "GET /pieces",
+      "code": 200,
+      "duree_ms": 7,
+      "extrait": "{\"total\":935,\"limit\":50,\"offset\":0,\"has_more\":true,\"pieces\":[{\"id\":295,\"name\":\"344 PRO RADIAL 250329AJA.PLX\",\"extension\":\".plx\",\"size\":34224,\"kind\":\"machine\",\"is_primary_pdf\":false,\"previewable\":false,\"dossier\":\"DEHLER 39 - 250329AJA\",\"id_document\":295,\"nom\":\"344 PRO RADIAL 250329AJA.PLX\",\"taille_oc"
+    },
+    {
+      "requete": "GET /pieces/684/apercu",
+      "code": 200,
+      "duree_ms": 3,
+      "extrait": "%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>\nendobj\n4 0 obj\n<< /Length 95 >>\nstream\nBT /F1 12 Tf 40 760 Td 14 T"
+    },
+    {
+      "requete": "GET /pieces/684/telecharger",
+      "code": 200,
+      "duree_ms": 3,
+      "extrait": "%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>\nendobj\n4 0 obj\n<< /Length 95 >>\nstream\nBT /F1 12 Tf 40 760 Td 14 T"
+    },
+    {
+      "requete": "GET /pieces/99999999/telecharger",
+      "code": 404,
+      "duree_ms": 2,
+      "extrait": "{\"detail\":\"Fichier inconnu.\"}"
+    },
+    {
+      "requete": "GET /pieces",
+      "code": 200,
+      "duree_ms": 8,
+      "extrait": "{\"total\":935,\"limit\":200,\"offset\":0,\"has_more\":true,\"pieces\":[{\"id\":295,\"name\":\"344 PRO RADIAL 250329AJA.PLX\",\"extension\":\".plx\",\"size\":34224,\"kind\":\"machine\",\"is_primary_pdf\":false,\"previewable\":false,\"dossier\":\"DEHLER 39 - 250329AJA\",\"id_document\":295,\"nom\":\"344 PRO RADIAL 250329AJA.PLX\",\"taille_o"
+    },
+    {
+      "requete": "GET /pieces/684/telecharger",
+      "code": 200,
+      "duree_ms": 3,
+      "extrait": "%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>\nendobj\n4 0 obj\n<< /Length 95 >>\nstream\nBT /F1 12 Tf 40 760 Td 14 T"
+    },
+    {
+      "requete": "GET /pieces/636/telecharger",
+      "code": 200,
+      "duree_ms": 3,
+      "extrait": "%PDF-1.3\r\n1 0 obj\r\n<< /Creator <5361696c5061636b202d20233636434344393431>\r\n/CreationDate <443a3230323530363034323030303234>\r\n/Title <5361696c5061636b207072696e74206f7574202d20233636434344393431>\r\n/Author <233636434344393431>\r\n/Producer <5265706f72744275696c646572>\r\n/Keywords <>\r\n/Subject <5361696c50"
+    },
+    {
+      "requete": "GET /fiches/7792-SO",
+      "code": 200,
+      "duree_ms": 3,
+      "extrait": "{\"code\":\"7792-SO\",\"titre\":\"Voile de portant\",\"statut\":\"rejete\",\"gabarit\":\"FICHE_PORTANT_V1\",\"client\":\"Sailonet\",\"bateau\":\"29er\",\"bateau_taille\":\"15'\",\"date_edition\":\"2026-03-06\",\"nb_fichiers\":1,\"revision\":25}"
+    },
+    {
+      "requete": "POST /fiches/7792-SO/rouvrir",
+      "code": 200,
+      "duree_ms": 4,
+      "extrait": "{\"code\":\"7792-SO\",\"statut\":\"a_valider\",\"corrections_effacees\":false,\"revision\":26}"
+    },
+    {
+      "requete": "GET /fiches/7792-SO",
+      "code": 200,
+      "duree_ms": 2,
+      "extrait": "{\"code\":\"7792-SO\",\"titre\":\"Voile de portant\",\"statut\":\"a_valider\",\"gabarit\":\"FICHE_PORTANT_V1\",\"client\":\"Sailonet\",\"bateau\":\"29er\",\"bateau_taille\":\"15'\",\"date_edition\":\"2026-03-06\",\"nb_fichiers\":1,\"revision\":26}"
+    },
+    {
+      "requete": "GET /fiches/7792-SO",
+      "code": 200,
+      "duree_ms": 2,
+      "extrait": "{\"code\":\"7792-SO\",\"titre\":\"Voile de portant\",\"statut\":\"a_valider\",\"gabarit\":\"FICHE_PORTANT_V1\",\"client\":\"Sailonet\",\"bateau\":\"29er\",\"bateau_taille\":\"15'\",\"date_edition\":\"2026-03-06\",\"nb_fichiers\":1,\"revision\":26}"
+    },
+    {
+      "requete": "GET /fiches/7792-SO",
+      "code": 200,
+      "duree_ms": 2,
+      "extrait": "{\"code\":\"7792-SO\",\"titre\":\"Voile de portant\",\"statut\":\"a_valider\",\"gabarit\":\"FICHE_PORTANT_V1\",\"client\":\"Sailonet\",\"bateau\":\"29er\",\"bateau_taille\":\"15'\",\"date_edition\":\"2026-03-06\",\"nb_fichiers\":1,\"revision\":26}"
+    },
+    {
+      "requete": "POST /fiches/7792-SO/corriger",
+      "code": 200,
+      "duree_ms": 4,
+      "extrait": "{\"code\":\"7792-SO\",\"champ\":\"cotes.finie.slu_m\",\"rang\":null,\"valeur_brute\":\"6,60 m\",\"avant\":\"7,7\",\"apres\":\"8,8\",\"revision\":27,\"revision_ouverte\":26,\"propagation\":{\"statut\":\"appliquee\",\"cible\":\"fiche_cotes.slu_m\",\"cle\":\"jeu=finie\",\"valeur_ecrite\":8.8,\"recherche_rafraichie\":true}}"
+    },
+    {
+      "requete": "POST /fiches/7792-SO/corriger",
+      "code": 409,
+      "duree_ms": 5,
+      "extrait": "{\"detail\":{\"code\":\"conflit_revision\",\"message\":\"Fiche 7792-SO modifiée par un autre poste entre l'ouverture et l'enregistrement : la correction n'a PAS été appliquée pour ne pas écraser le travail du collègue. Rechargez la fiche pour voir la valeur à jour, puis corrigez à nouveau si nécessaire.\",\"re"
+    },
+    {
+      "requete": "GET /fiches/7792-SO",
+      "code": 200,
+      "duree_ms": 2,
+      "extrait": "{\"code\":\"7792-SO\",\"titre\":\"Voile de portant\",\"statut\":\"a_valider\",\"gabarit\":\"FICHE_PORTANT_V1\",\"client\":\"Sailonet\",\"bateau\":\"29er\",\"bateau_taille\":\"15'\",\"date_edition\":\"2026-03-06\",\"nb_fichiers\":1,\"revision\":27}"
+    },
+    {
+      "requete": "POST /fiches/7792-SO/corriger",
+      "code": 200,
+      "duree_ms": 5,
+      "extrait": "{\"code\":\"7792-SO\",\"champ\":\"cotes.finie.slu_m\",\"rang\":null,\"valeur_brute\":\"6,60 m\",\"avant\":\"8,8\",\"apres\":\"8,80\",\"revision\":28,\"revision_ouverte\":27,\"propagation\":{\"statut\":\"appliquee\",\"cible\":\"fiche_cotes.slu_m\",\"cle\":\"jeu=finie\",\"valeur_ecrite\":8.8,\"recherche_rafraichie\":true}}"
+    },
+    {
+      "requete": "POST /imports/dossier",
+      "code": 201,
+      "duree_ms": 24,
+      "extrait": "{\"statut\":\"traite\",\"fiche\":\"0901-MM\",\"raison\":\"remplacee\",\"pieces\":0,\"id_lot\":48,\"revision\":5,\"revision_avant\":4,\"contenu_remplace\":true,\"lot\":{\"id_lot\":48,\"dossier_racine\":\"/home/user/rv/data/recette-lot/affaires-api/sessions-173519\",\"statut\":\"termine\",\"nb_dossiers\":1,\"nb_traites\":1,\"nb_echecs\":0,\""
+    },
+    {
+      "requete": "GET /fiches/7792-SO",
+      "code": 200,
+      "duree_ms": 3,
+      "extrait": "{\"code\":\"7792-SO\",\"titre\":\"Voile de portant\",\"statut\":\"a_valider\",\"gabarit\":\"FICHE_PORTANT_V1\",\"client\":\"Sailonet\",\"bateau\":\"29er\",\"bateau_taille\":\"15'\",\"date_edition\":\"2026-03-06\",\"nb_fichiers\":1,\"revision\":28}"
+    },
+    {
+      "requete": "POST /fiches/7792-SO/valider",
+      "code": 200,
+      "duree_ms": 5,
+      "extrait": "{\"code\":\"7792-SO\",\"statut\":\"valide\",\"revision\":29,\"divergences_acceptees\":[]}"
+    },
+    {
+      "requete": "GET /fiches/7792-SO/champs",
+      "code": 200,
+      "duree_ms": 3,
+      "extrait": "[{\"champ\":\"fiche.titre\",\"rang\":null,\"table_cible\":\"fiche\",\"colonne_cible\":\"titre\",\"valeur_brute\":\"\\\"Voile de portant\\\"\",\"valeur_normalisee\":\"Voile de portant\",\"methode\":\"gabarit\",\"confiance\":\"0.990\",\"page\":0,\"zone\":{\"x0\":425.3,\"x1\":491.7,\"y0\":24.9,\"y1\":32.7,\"page\":0},\"version_gabarit\":2,\"corrige\":fa"
+    },
+    {
+      "requete": "GET /lots",
+      "code": 200,
+      "duree_ms": 3,
+      "extrait": "[{\"id_lot\":48,\"dossier_racine\":\"/home/user/rv/data/recette-lot/affaires-api/sessions-173519\",\"statut\":\"termine\",\"nb_dossiers\":1,\"nb_traites\":1,\"nb_echecs\":0,\"cree_le\":\"2026-10-12T17:35:19.702841+00:00\",\"termine_le\":\"2026-10-12T17:35:19.717735+00:00\"},{\"id_lot\":47,\"dossier_racine\":\"/home/user/rv/data"
+    },
+    {
+      "requete": "GET /qualite/tableau-de-bord",
+      "code": 200,
+      "duree_ms": 8,
+      "extrait": "{\"taux_extraction_auto\":{\"definition\":\"Part des champs extraits sans correction humaine (corrige=false)\",\"unite\":\"ratio\",\"periode\":\"tout historique\",\"total_champs\":247,\"auto\":244,\"corriges\":3,\"taux_auto\":0.9878542510121457,\"taux_auto_pct\":98.79},\"taux_correction_par_champ\":[{\"champ\":\"cotes.finie.slu"
+    },
+    {
+      "requete": "GET /gabarits",
+      "code": 200,
+      "duree_ms": 3,
+      "extrait": "[{\"code\":\"FICHE_GENOIS_V1\",\"version\":1,\"description\":\"Fiche « Génois » (variante mono-colonne : Guindant, Bordure, Tissu, Surface, Navire).\",\"nb_ancres\":2,\"ancres_detection\":[\"génois\",\"genoa\"],\"actif\":true,\"nb_fiches\":0},{\"code\":\"FICHE_GV_FULLBATTEN_V1\",\"version\":1,\"description\":\"Fiche de fabricatio"
+    },
+    {
+      "requete": "GET /assistant/etat",
+      "code": 200,
+      "duree_ms": 2,
+      "extrait": "{\"etat\":\"ok\",\"postgres\":true}"
+    },
+    {
+      "requete": "GET /recherche/journal",
+      "code": 200,
+      "duree_ms": 3,
+      "extrait": "{\"periode_jours\":null,\"total_recherches\":107,\"total_sans_resultat\":15,\"top_requetes\":[{\"requete\":\"\",\"nb_occurrences\":39,\"nb_sans_resultat\":0,\"dernier\":\"2026-10-12T17:35:19.484190+00:00\"},{\"requete\":\"6,60\",\"nb_occurrences\":9,\"nb_sans_resultat\":3,\"dernier\":\"2026-10-12T17:35:19.347525+00:00\"},{\"requete"
+    },
+    {
+      "requete": "GET /audit",
+      "code": 200,
+      "duree_ms": 3,
+      "extrait": "{\"count\":50,\"offset\":0,\"limit\":50,\"results\":[{\"id\":52,\"timestamp\":\"2026-10-12T17:35:12.001708+00:00\",\"actor\":\"token:58616712eb46\",\"action\":\"import_upload\",\"resource\":\"/home/user/rv/data/uploads/3daa88bcc4774aedb4a52fafe0dda8fa_recette-upload-api\",\"status\":\"success\",\"details\":{}},{\"id\":51,\"timestamp\""
+    },
+    {
+      "requete": "GET /metrics",
+      "code": 200,
+      "duree_ms": 33,
+      "extrait": "{\"search_requests\":2,\"search_errors\":0,\"last_search_seconds\":0.002301000000215936,\"slowest_search_seconds\":0.0026687299998684466,\"recherche_requests\":75,\"recherche_sans_resultat\":12,\"health\":{\"status\":\"ok\",\"backend\":\"postgresql\",\"database_url_configured\":true,\"database_bytes\":15159779,\"database_inte"
+    },
+    {
+      "requete": "GET /maintenance/deadletters",
+      "code": 200,
+      "duree_ms": 2,
+      "extrait": "{\"count\":0,\"results\":[]}"
+    },
+    {
+      "requete": "GET /validation/file",
+      "code": 200,
+      "duree_ms": 3,
+      "extrait": "[{\"code\":\"250328 AJA\",\"titre\":\"FICHE DE FABRICATION\",\"score_qualite\":0.9,\"gabarit\":\"FICHE_JADE_V1\",\"nb_champs\":22,\"paliers\":{\"certain\":9,\"lu\":0,\"decompose\":12,\"partiel\":1},\"confiance_min\":0.7,\"a_anomalies\":false,\"revision\":5},{\"code\":\"250329 AJA\",\"titre\":\"FICHE DE FABRICATION\",\"score_qualite\":0.836,"
+    },
+    {
+      "requete": "GET /search",
+      "code": 200,
+      "duree_ms": 6,
+      "extrait": "{\"query\":\"voile\",\"count\":25,\"offset\":0,\"limit\":50,\"has_more\":false,\"results\":[{\"id\":294,\"name\":\"fiche GV Full DEHLER 39 250329 AJA.pdf\",\"extension\":\".pdf\",\"size\":25403,\"modified\":1791825280.2442198,\"is_dir\":false,\"extraction_status\":\"metadata\",\"extraction_detail\":\"\",\"category\":\"analyzed\",\"snippet\":\""
+    },
+    {
+      "requete": "POST /validation/doublons",
+      "code": 200,
+      "duree_ms": 2,
+      "extrait": "{\"par_code\":{}}"
+    },
+    {
+      "requete": "GET /fiches/7792-SO",
+      "code": 200,
+      "duree_ms": 3,
+      "extrait": "{\"code\":\"7792-SO\",\"titre\":\"Voile de portant\",\"statut\":\"valide\",\"gabarit\":\"FICHE_PORTANT_V1\",\"client\":\"Sailonet\",\"bateau\":\"29er\",\"bateau_taille\":\"15'\",\"date_edition\":\"2026-03-06\",\"nb_fichiers\":1,\"revision\":29}"
+    },
+    {
+      "requete": "GET /fiches/7792-SO/historique",
+      "code": 200,
+      "duree_ms": 3,
+      "extrait": "[{\"action\":\"valider\",\"etat_avant\":\"a_valider\",\"etat_apres\":\"valide\",\"commentaire\":null,\"created_at\":\"2026-10-12T17:35:19.724117+00:00\"},{\"action\":\"corriger\",\"etat_avant\":\"a_valider\",\"etat_apres\":\"a_valider\",\"commentaire\":\"poste B à jour\",\"created_at\":\"2026-10-12T17:35:19.690852+00:00\"},{\"action\":\"co"
+    },
+    {
+      "requete": "GET /fiches/7792-SO/pieces",
+      "code": 200,
+      "duree_ms": 4,
+      "extrait": "{\"fichier_source\":null,\"pdf_source\":null,\"pieces\":[{\"id\":474,\"name\":\"fiche-7792-SO_ffab.pdf\",\"extension\":\".pdf\",\"size\":166990,\"kind\":\"pdf\",\"is_primary_pdf\":true,\"previewable\":true,\"dossier\":\"panne-stockage\",\"id_document\":474,\"nom\":\"fiche-7792-SO_ffab.pdf\",\"taille_octets\":166990,\"role\":\"fiche_pdf\"}]}"
+    },
+    {
+      "requete": "GET /fiches",
+      "code": 200,
+      "duree_ms": 4,
+      "extrait": "{\"total\":11,\"page\":1,\"facettes\":{\"valide\":3,\"a_valider\":8},\"fiches\":[{\"code\":\"7792-SO\",\"titre\":\"Voile de portant\",\"statut\":\"valide\",\"score_qualite\":0.929,\"gabarit\":\"FICHE_PORTANT_V1\",\"client\":\"Sailonet\",\"bateau\":\"29er\",\"bateau_taille\":\"15'\",\"nb_fichiers\":1,\"a_pdf\":true},{\"code\":\"0901-MM\",\"titre\":\"\","
+    },
+    {
+      "requete": "GET /gabarits/FICHE_GENOIS_V1/versions",
+      "code": 200,
+      "duree_ms": 3,
+      "extrait": "[{\"version\":1,\"description\":\"Fiche « Génois » (variante mono-colonne : Guindant, Bordure, Tissu, Surface, Navire).\",\"nb_ancres\":2,\"actif\":true,\"nb_fiches\":0,\"cree_le\":\"2026-10-12T17:13:43.720849+00:00\"}]"
+    },
+    {
+      "requete": "GET /fiches/corrections/divergences",
+      "code": 200,
+      "duree_ms": 3,
+      "extrait": "{\"divergences\":[],\"reconciliation\":\"POST /fiches/{code}/reconcilier-corrections avec {\\\"confirmer\\\": true} après examen\"}"
+    },
+    {
+      "requete": "GET /gabarits/brouillons",
+      "code": 200,
+      "duree_ms": 3,
+      "extrait": "[]"
+    }
+  ]
+}

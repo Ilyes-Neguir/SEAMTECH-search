@@ -1,0 +1,64 @@
+{
+  "machine": {
+    "hote": "e2b.local",
+    "systeme": "Linux-6.1.158+-x86_64-with-glibc2.36",
+    "distribution": "PRETTY_NAME=\"Debian GNU/Linux 12 (bookworm)\"",
+    "noyau": "6.1.158+",
+    "architecture": "x86_64",
+    "vCPU": 2,
+    "memoire_mo": 3940,
+    "disque": "Filesystem      Size  Used Avail Use% Mounted on\n/dev/root        21G  9.5G   11G  47% /",
+    "conteneurs": "aucun moteur de conteneur"
+  },
+  "versions": {
+    "python": "3.11.2",
+    "node": "v22.22.3",
+    "postgresql": "postgres (PostgreSQL) 16.2",
+    "redis": "redis_version:7.4.2",
+    "s3rver": "3.7.1",
+    "next": "\"version\": \"16.3.8\",",
+    "playwright": "1.63.0",
+    "chromium": "Chromium 153.0.8010.0",
+    "tesseract": "absent",
+    "pdftoppm": "absent"
+  },
+  "depot": {
+    "chemin": "/home/user/SEAMTECH-search",
+    "head": "8dd5ae7340a0eb1023bd73ef5d884c4538efbc09",
+    "branche": "arena/c5279d06-seamtech-search",
+    "dernier_commit": "8dd5ae7340a0eb1023bd73ef5d884c4538efbc09 2026-10-12 16:01:57 +0100 Merge pull request #36 from Ilyes-Neguir/arena/fb7d9326-seamtech-search",
+    "ecart_avec_candidat": ""
+  },
+  "services": {
+    "postgresql_5433": true,
+    "redis_6379": true,
+    "stockage_s3_9000": true,
+    "api_8000": true,
+    "frontend_3000": true
+  },
+  "extensions_postgres": "pg_trgm 1.6\nplpgsql 1.0\nunaccent 1.1\nvector 0.8.0",
+  "corpus": {
+    "racine": "/home/user/rv/corpus/sources",
+    "fichiers": 453,
+    "octets": 2156313450,
+    "manifeste": "/home/user/SEAMTECH-search/deliverables/recette-virtuelle/MANIFESTES/MANIFESTE_CORPUS.csv"
+  },
+  "reseau_sortant_autorise": [
+    "github.com",
+    "codeload.github.com",
+    "api.github.com",
+    "registry.npmjs.org",
+    "pypi.org",
+    "files.pythonhosted.org"
+  ],
+  "reseau_sortant_bloque": [
+    "deb.debian.org",
+    "archive.ubuntu.com",
+    "dl.min.io",
+    "storage.googleapis.com",
+    "golang.org",
+    "proxy.golang.org",
+    "cdn.playwright.dev",
+    "registres de conteneurs"
+  ]
+}

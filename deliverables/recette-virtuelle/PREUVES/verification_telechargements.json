@@ -1,0 +1,128 @@
+{
+  "catalogue_total": 987,
+  "echantillon": 20,
+  "ok": 20,
+  "echecs": [],
+  "detail": [
+    {
+      "id": 295,
+      "nom": "344 PRO RADIAL 250329AJA.PLX",
+      "http": 200,
+      "octets": 34224
+    },
+    {
+      "id": 296,
+      "nom": "394 PRO RADIAL 250329AJA.PLX",
+      "http": 200,
+      "octets": 37838
+    },
+    {
+      "id": 684,
+      "nom": "Annexe calcul SYNTH-003.pdf",
+      "http": 200,
+      "octets": 639
+    },
+    {
+      "id": 877,
+      "nom": "Annexe calcul SYNTH-003.pdf",
+      "http": 200,
+      "octets": 639
+    },
+    {
+      "id": 928,
+      "nom": "Annexe calcul SYNTH-003.pdf",
+      "http": 200,
+      "octets": 639
+    },
+    {
+      "id": 979,
+      "nom": "Annexe calcul SYNTH-003.pdf",
+      "http": 200,
+      "octets": 639
+    },
+    {
+      "id": 48,
+      "nom": "ARTIC BLUE 250121JA.PLX",
+      "http": 200,
+      "octets": 62337
+    },
+    {
+      "id": 522,
+      "nom": "ARTIC BLUE 250121JA.PLX",
+      "http": 200,
+      "octets": 62337
+    },
+    {
+      "id": 687,
+      "nom": "ARTIC BLUE 250121JA.PLX",
+      "http": 200,
+      "octets": 62337
+    },
+    {
+      "id": 783,
+      "nom": "ARTIC BLUE 250121JA.PLX",
+      "http": 200,
+      "octets": 62337
+    },
+    {
+      "id": 215,
+      "nom": "C3DAM4.csv",
+      "http": 200,
+      "octets": 2104
+    },
+    {
+      "id": 293,
+      "nom": "C3DAM4.pdf",
+      "http": 200,
+      "octets": 197207
+    },
+    {
+      "id": 216,
+      "nom": "C3DAM4.xin",
+      "http": 200,
+      "octets": 5651
+    },
+    {
+      "id": 217,
+      "nom": "C3DAM4.zip",
+      "http": 200,
+      "octets": 370919
+    },
+    {
+      "id": 218,
+      "nom": "C3DAM4013.dxf",
+      "http": 200,
+      "octets": 10863
+    },
+    {
+      "id": 219,
+      "nom": "C3DAM4014.dxf",
+      "http": 200,
+      "octets": 8723
+    },
+    {
+      "id": 220,
+      "nom": "C3DAM4015.dxf",
+      "http": 200,
+      "octets": 11217
+    },
+    {
+      "id": 221,
+      "nom": "C3DAM4016.dxf",
+      "http": 200,
+      "octets": 11166
+    },
+    {
+      "id": 222,
+      "nom": "C3DAM4017.dxf",
+      "http": 200,
+      "octets": 11280
+    },
+    {
+      "id": 223,
+      "nom": "C3DAM4018.dxf",
+      "http": 200,
+      "octets": 12924
+    }
+  ]
+}

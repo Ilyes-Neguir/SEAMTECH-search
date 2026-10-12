@@ -1,0 +1,9 @@
+{
+  "principe": "Les valeurs d'identifiants de l'environnement de recette sont remplacées par <nom du secret masqué> dans les fichiers livrés. Les preuves d'origine, non masquées, restent sur la machine de recette (rv/preuves, rv/logs) et ne sont pas versionnées.",
+  "fichiers": {
+    "PREUVES/config_resolue.json": {
+      "auth_token": 1,
+      "s3_secret_app": 1
+    }
+  }
+}

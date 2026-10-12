@@ -1,0 +1,21 @@
+=== semis de la base e2e jetable (AVANT les serveurs) ===
+Seed e2e : fichier run d'un autre run (passe7-1 ≠ passe8-1) — nouvelle base.
+Seed e2e : fiche 0902-MM porte son propre PDF (fiche-technique.pdf) — l'e2e A09 a deux documents distincts à distinguer.
+Seed e2e : fiche BIS-7792 (id 4) partage le PDF de 7792-SO — scan propositif : 1 lien(s) créé(s), 0 déjà présent(s), 2 fiche(s) concernée(s).
+Seed e2e : compte nominatif « e2e-operateur » (operateur) créé.
+Seed e2e : compte nominatif « e2e-admin » (administrateur) créé.
+Seed e2e : base e2e_f2ba869b créée et semée (3 dossiers) pour le run passe8-1.
+base e2e : postgresql://***@127.0.0.1:5433/e2e_f2ba869b
+=== serveurs de la suite (API 8123 + frontend 3123) ===
+santé API e2e : {'base': None, 'storage_backend': 's3', 'redis_connected': True, 'nb_fiches': None}
+=== exécution de la suite (navigateur réel) ===
+2026-10-12 18:01:32,582 WARNING Rebuild EN PLACE : chunk.id_document, fiche_piece_jointe.id_document référence(nt) documents — la table est conservée avec ses identifiants pour ne pas casser les pièces jointes des fiches (E-40) ; tout est ré-extrait et les documents disparus non référencés sont supprimés.
+2026-10-12 18:01:32,588 INFO Rebuild demandé — mode « en_place »
+2026-10-12 18:01:33,203 INFO Indexing complete. scanned=11 updated=11 removed=1 elapsed_seconds=0.61 items_per_second=17.9
+
+Running 1 test using 1 worker
+
+  ✓  1 [chromium-reel] › e2e/hors-ligne.spec.ts:59:7 › hors ligne — pile réelle, sortie réseau bloquée › import, recherche, aperçu, téléchargements et validation sans réseau externe (3.2s)
+
+  1 passed (4.7s)
+Terminated

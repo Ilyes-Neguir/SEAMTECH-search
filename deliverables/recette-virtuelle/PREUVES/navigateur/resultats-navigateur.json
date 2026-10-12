@@ -1,0 +1,151 @@
+{
+  "base": "http://127.0.0.1:3000",
+  "version": "153.0.8010.0",
+  "resultats": [
+    {
+      "id": "A1-trois-connexions-nominatives",
+      "resultat": "PASS",
+      "detail": "3 contextes navigateur distincts : recette (opérateur), recette-b (opérateur), recette-c (administrateur) ; cookie de session « seamtech_session » httpOnly=true"
+    },
+    {
+      "id": "A2-mot-de-passe-errone-refuse",
+      "resultat": "PASS",
+      "detail": "cookies de session posés = 0 ; page : « SEAMTECH Recherche Dossiers Fichiers Nouveau dossier Validation Qualité Gabarits Quitter Connexion SEAMTECH Se »"
+    },
+    {
+      "id": "A3-acces-direct-sans-session-redirige",
+      "resultat": "PASS",
+      "detail": "URL finale = http://127.0.0.1:3000/login?next=/validation"
+    },
+    {
+      "id": "B-navigation-recherche",
+      "resultat": "PASS",
+      "detail": "HTTP=200 écran=affiché erreurs console=0"
+    },
+    {
+      "id": "B-navigation-dossiers",
+      "resultat": "PASS",
+      "detail": "HTTP=200 écran=affiché erreurs console=0"
+    },
+    {
+      "id": "B-navigation-fichiers",
+      "resultat": "PASS",
+      "detail": "HTTP=200 écran=affiché erreurs console=0"
+    },
+    {
+      "id": "B-navigation-nouveau",
+      "resultat": "PASS",
+      "detail": "HTTP=200 écran=affiché erreurs console=0"
+    },
+    {
+      "id": "B-navigation-validation",
+      "resultat": "PASS",
+      "detail": "HTTP=200 écran=affiché erreurs console=0"
+    },
+    {
+      "id": "B-navigation-qualite",
+      "resultat": "PASS",
+      "detail": "HTTP=200 écran=affiché erreurs console=0"
+    },
+    {
+      "id": "B-navigation-gabarits",
+      "resultat": "PASS",
+      "detail": "HTTP=200 écran=affiché erreurs console=0"
+    },
+    {
+      "id": "B-precedent-suivant",
+      "resultat": "PASS",
+      "detail": "après retour = http://127.0.0.1:3000/dossiers ; après suivant = http://127.0.0.1:3000/validation"
+    },
+    {
+      "id": "C1-glisser-deposer-reel",
+      "resultat": "PASS",
+      "detail": "1 fichier(s) déposé(s) par événements navigateur réels (CDP dragEnter/dragOver/drop) → l'interface annonce 1 fichier(s)"
+    },
+    {
+      "id": "C2-envoi-du-depot-glisse",
+      "resultat": "PASS",
+      "detail": "après « Envoyer et analyser » : SEAMTECH Recherche Dossiers Fichiers Nouveau dossier Validation Qualité Gabarits Quitter Fichiers Catalogue d’archive Recherche avancée Recherche d’ar"
+    },
+    {
+      "id": "E1-recherche-dimension-interface",
+      "resultat": "PASS",
+      "detail": "« 6,60 » : facette dimension affichée=true, lignes de résultat=0 ; API : dimension_active={\"valeur\":6.6,\"unite\":null,\"cote\":null,\"tolerance_pct\":0.5,\"texte_restant\":\"\"} nb=0"
+    },
+    {
+      "id": "E2-etat-vide-explicite",
+      "resultat": "PASS",
+      "detail": "bandeau « sans résultat » affiché = true pour une requête sans correspondance"
+    },
+    {
+      "id": "E3-recherche-cote-nommee",
+      "resultat": "PASS",
+      "detail": "« SLU 6,60 » → cote_active=slu_m dimension={\"valeur\":6.6,\"unite\":null,\"cote\":\"slu_m\",\"tolerance_pct\":0.5,\"texte_restant\":\"\"} nb=0"
+    },
+    {
+      "id": "D1-revue-fiche-avec-champs",
+      "resultat": "PASS",
+      "detail": "fiche « 250328 AJA » : 22 champ(s) éditable(s) dont 22 avec zone PDF ; confiance en file = « 0.7 » ; panneau PDF visible = true"
+    },
+    {
+      "id": "F1-correction-depuis-l-interface-et-persistee",
+      "resultat": "PASS",
+      "detail": "champ « cotes.finie.slu_m » : « 8,8 » → saisi « 7,70 » → valeur relue par l'API = « 7,70 » (corrigé dans l'interface, enregistré, persisté)"
+    },
+    {
+      "id": "F2-fiche-consultable-en-lecture",
+      "resultat": "PASS",
+      "detail": "fiche 250328 AJA ouverte par l'administrateur : SEAMTECH Recherche Dossiers Fichiers Nouveau dossier Validation Qualité Gabarits Quitter DÉTAIL DE LA FICHE 250328 AJA F"
+    },
+    {
+      "id": "F3-validation-avec-journal",
+      "resultat": "PASS",
+      "detail": "validation HTTP 200 → statut=valide révision=7"
+    },
+    {
+      "id": "S1-deux-postes-voient-le-meme-etat",
+      "resultat": "PASS",
+      "detail": "poste B (recette-b) : file de validation affichée=true ; fiche 250328 AJA relue : statut=valide révision=7 (vue par le poste C)"
+    },
+    {
+      "id": "S2-ecrasement-silencieux-empeche",
+      "resultat": "PASS",
+      "detail": "A (révision 8) → HTTP 200 ; B avec la MÊME révision → HTTP 409 « [object Object] »"
+    },
+    {
+      "id": "G1-catalogue-fichiers-interface",
+      "resultat": "PASS",
+      "detail": "SEAMTECH Recherche Dossiers Fichiers Nouveau dossier Validation Qualité Gabarits Quitter Fichiers Catalogue d’archive Recherche av"
+    },
+    {
+      "id": "G2-ouverture-piece-depuis-la-fiche",
+      "resultat": "PASS",
+      "detail": "fiche 250216 AJA : 317 lien(s) de téléchargement, visionneuse visible=true"
+    },
+    {
+      "id": "G3-telechargement-empreinte-conforme",
+      "resultat": "PASS",
+      "detail": "« Fiche GSE AQUILA 250216 AJA.pdf » téléchargé par l'interface : SHA-256 6029d7606a8ab5b5… présente au manifeste du corpus = true"
+    },
+    {
+      "id": "G4-course-pieces-non-confondue",
+      "resultat": "PASS",
+      "detail": "fiche affichée avant la course = « 250216 AJA » ; catalogue interrogé = 200 pièces (la sélection de pièce reste liée à la fiche active)"
+    },
+    {
+      "id": "G5-course-pieces-retardee",
+      "resultat": "PASS",
+      "detail": "documents « Fiche GSE AQUILA 250216 AJA.pdf » (réponse retardée de 6 s par interception réseau) puis « GSEAQBOUIL.pdf » ; cliqués=true/true ; après la course, la page montre B=true et A=true (data-piece=n/a) — la réponse tardive de A n'a pas écrasé l'aperçu de B"
+    },
+    {
+      "id": "H1-coupure-reseau-signalee",
+      "resultat": "PASS",
+      "detail": "navigateur hors ligne : réponse=aucune ; page : « (vider) »"
+    },
+    {
+      "id": "H2-retablissement",
+      "resultat": "PASS",
+      "detail": "après rétablissement : SEAMTECH Recherche Dossiers Fichiers Nouveau dossier Validation Qualité Gabarits Quitter File de validation 25"
+    }
+  ]
+}

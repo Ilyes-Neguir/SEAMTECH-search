@@ -1,0 +1,279 @@
+5574:C 12 Oct 2026 17:17:55.594 # WARNING Memory overcommit must be enabled! Without it, a background save or replication may fail under low memory condition. To fix this issue add 'vm.overcommit_memory = 1' to /etc/sysctl.conf and then reboot or run the command 'sysctl vm.overcommit_memory=1' for this to take effect.
+5574:C 12 Oct 2026 17:17:55.594 * oO0OoO0OoO0Oo Redis is starting oO0OoO0OoO0Oo
+5574:C 12 Oct 2026 17:17:55.594 * Redis version=7.4.2, bits=64, commit=00000000, modified=1, pid=5574, just started
+5574:C 12 Oct 2026 17:17:55.594 * Configuration loaded
+5574:M 12 Oct 2026 17:17:55.594 * Increased maximum number of open files to 10032 (it was originally set to 1024).
+5574:M 12 Oct 2026 17:17:55.594 * monotonic clock: POSIX clock_gettime
+5574:M 12 Oct 2026 17:17:55.595 * Running mode=standalone, port=6379.
+5574:M 12 Oct 2026 17:17:55.595 * Server initialized
+5574:M 12 Oct 2026 17:17:55.595 * Reading RDB base file on AOF loading...
+5574:M 12 Oct 2026 17:17:55.595 * Loading RDB produced by version 7.4.2
+5574:M 12 Oct 2026 17:17:55.595 * RDB age 330 seconds
+5574:M 12 Oct 2026 17:17:55.595 * RDB memory usage when created 0.93 Mb
+5574:M 12 Oct 2026 17:17:55.595 * RDB is base AOF
+5574:M 12 Oct 2026 17:17:55.595 * Done loading RDB, keys loaded: 0, keys expired: 0.
+5574:M 12 Oct 2026 17:17:55.595 * DB loaded from base file appendonly.aof.1.base.rdb: 0.000 seconds
+5574:M 12 Oct 2026 17:17:55.598 * DB loaded from incr file appendonly.aof.1.incr.aof: 0.002 seconds
+5574:M 12 Oct 2026 17:17:55.598 * DB loaded from append only file: 0.003 seconds
+5574:M 12 Oct 2026 17:17:55.598 * Opening AOF incr file appendonly.aof.1.incr.aof on server start
+5574:M 12 Oct 2026 17:17:55.598 * Ready to accept connections tcp
+5574:signal-handler (1791825516) Received SIGTERM scheduling shutdown...
+5574:M 12 Oct 2026 17:18:36.733 * User requested shutdown...
+5574:M 12 Oct 2026 17:18:36.733 * Calling fsync() on the AOF file.
+5574:M 12 Oct 2026 17:18:36.734 * Saving the final RDB snapshot before exiting.
+5574:M 12 Oct 2026 17:18:36.736 * DB saved on disk
+5574:M 12 Oct 2026 17:18:36.736 # Redis is now ready to exit, bye bye...
+5909:C 12 Oct 2026 17:18:39.733 # WARNING Memory overcommit must be enabled! Without it, a background save or replication may fail under low memory condition. To fix this issue add 'vm.overcommit_memory = 1' to /etc/sysctl.conf and then reboot or run the command 'sysctl vm.overcommit_memory=1' for this to take effect.
+5909:C 12 Oct 2026 17:18:39.733 * oO0OoO0OoO0Oo Redis is starting oO0OoO0OoO0Oo
+5909:C 12 Oct 2026 17:18:39.733 * Redis version=7.4.2, bits=64, commit=00000000, modified=1, pid=5909, just started
+5909:C 12 Oct 2026 17:18:39.733 * Configuration loaded
+5909:M 12 Oct 2026 17:18:39.734 * Increased maximum number of open files to 10032 (it was originally set to 1024).
+5909:M 12 Oct 2026 17:18:39.734 * monotonic clock: POSIX clock_gettime
+5909:M 12 Oct 2026 17:18:39.742 * Running mode=standalone, port=6379.
+5909:M 12 Oct 2026 17:18:39.742 * Server initialized
+5909:M 12 Oct 2026 17:18:39.743 * Reading RDB base file on AOF loading...
+5909:M 12 Oct 2026 17:18:39.743 * Loading RDB produced by version 7.4.2
+5909:M 12 Oct 2026 17:18:39.743 * RDB age 374 seconds
+5909:M 12 Oct 2026 17:18:39.743 * RDB memory usage when created 0.93 Mb
+5909:M 12 Oct 2026 17:18:39.743 * RDB is base AOF
+5909:M 12 Oct 2026 17:18:39.743 * Done loading RDB, keys loaded: 0, keys expired: 0.
+5909:M 12 Oct 2026 17:18:39.743 * DB loaded from base file appendonly.aof.1.base.rdb: 0.000 seconds
+5909:M 12 Oct 2026 17:18:39.744 * DB loaded from incr file appendonly.aof.1.incr.aof: 0.002 seconds
+5909:M 12 Oct 2026 17:18:39.744 * DB loaded from append only file: 0.002 seconds
+5909:M 12 Oct 2026 17:18:39.744 * Opening AOF incr file appendonly.aof.1.incr.aof on server start
+5909:M 12 Oct 2026 17:18:39.744 * Ready to accept connections tcp
+5909:signal-handler (1791825928) Received SIGTERM scheduling shutdown...
+5909:M 12 Oct 2026 17:25:28.755 * User requested shutdown...
+5909:M 12 Oct 2026 17:25:28.755 * Calling fsync() on the AOF file.
+5909:M 12 Oct 2026 17:25:28.755 * Saving the final RDB snapshot before exiting.
+5909:M 12 Oct 2026 17:25:28.757 * DB saved on disk
+5909:M 12 Oct 2026 17:25:28.757 # Redis is now ready to exit, bye bye...
+7149:C 12 Oct 2026 17:25:31.791 # WARNING Memory overcommit must be enabled! Without it, a background save or replication may fail under low memory condition. To fix this issue add 'vm.overcommit_memory = 1' to /etc/sysctl.conf and then reboot or run the command 'sysctl vm.overcommit_memory=1' for this to take effect.
+7149:C 12 Oct 2026 17:25:31.791 * oO0OoO0OoO0Oo Redis is starting oO0OoO0OoO0Oo
+7149:C 12 Oct 2026 17:25:31.791 * Redis version=7.4.2, bits=64, commit=00000000, modified=1, pid=7149, just started
+7149:C 12 Oct 2026 17:25:31.791 * Configuration loaded
+7149:M 12 Oct 2026 17:25:31.791 * Increased maximum number of open files to 10032 (it was originally set to 1024).
+7149:M 12 Oct 2026 17:25:31.791 * monotonic clock: POSIX clock_gettime
+7149:M 12 Oct 2026 17:25:31.792 * Running mode=standalone, port=6379.
+7149:M 12 Oct 2026 17:25:31.792 * Server initialized
+7149:M 12 Oct 2026 17:25:31.792 * Reading RDB base file on AOF loading...
+7149:M 12 Oct 2026 17:25:31.792 * Loading RDB produced by version 7.4.2
+7149:M 12 Oct 2026 17:25:31.792 * RDB age 786 seconds
+7149:M 12 Oct 2026 17:25:31.792 * RDB memory usage when created 0.93 Mb
+7149:M 12 Oct 2026 17:25:31.792 * RDB is base AOF
+7149:M 12 Oct 2026 17:25:31.792 * Done loading RDB, keys loaded: 0, keys expired: 0.
+7149:M 12 Oct 2026 17:25:31.792 * DB loaded from base file appendonly.aof.1.base.rdb: 0.000 seconds
+7149:M 12 Oct 2026 17:25:31.808 * DB loaded from incr file appendonly.aof.1.incr.aof: 0.016 seconds
+7149:M 12 Oct 2026 17:25:31.808 * DB loaded from append only file: 0.017 seconds
+7149:M 12 Oct 2026 17:25:31.808 * Opening AOF incr file appendonly.aof.1.incr.aof on server start
+7149:M 12 Oct 2026 17:25:31.808 * Ready to accept connections tcp
+7149:signal-handler (1791826007) Received SIGTERM scheduling shutdown...
+7149:M 12 Oct 2026 17:26:47.501 * User requested shutdown...
+7149:M 12 Oct 2026 17:26:47.501 * Calling fsync() on the AOF file.
+7149:M 12 Oct 2026 17:26:47.502 * Saving the final RDB snapshot before exiting.
+7149:M 12 Oct 2026 17:26:47.504 * DB saved on disk
+7149:M 12 Oct 2026 17:26:47.504 # Redis is now ready to exit, bye bye...
+7257:C 12 Oct 2026 17:26:50.458 # WARNING Memory overcommit must be enabled! Without it, a background save or replication may fail under low memory condition. To fix this issue add 'vm.overcommit_memory = 1' to /etc/sysctl.conf and then reboot or run the command 'sysctl vm.overcommit_memory=1' for this to take effect.
+7257:C 12 Oct 2026 17:26:50.458 * oO0OoO0OoO0Oo Redis is starting oO0OoO0OoO0Oo
+7257:C 12 Oct 2026 17:26:50.458 * Redis version=7.4.2, bits=64, commit=00000000, modified=1, pid=7257, just started
+7257:C 12 Oct 2026 17:26:50.458 * Configuration loaded
+7257:M 12 Oct 2026 17:26:50.462 * Increased maximum number of open files to 10032 (it was originally set to 1024).
+7257:M 12 Oct 2026 17:26:50.462 * monotonic clock: POSIX clock_gettime
+7257:M 12 Oct 2026 17:26:50.463 * Running mode=standalone, port=6379.
+7257:M 12 Oct 2026 17:26:50.463 * Server initialized
+7257:M 12 Oct 2026 17:26:50.463 * Reading RDB base file on AOF loading...
+7257:M 12 Oct 2026 17:26:50.463 * Loading RDB produced by version 7.4.2
+7257:M 12 Oct 2026 17:26:50.463 * RDB age 865 seconds
+7257:M 12 Oct 2026 17:26:50.463 * RDB memory usage when created 0.93 Mb
+7257:M 12 Oct 2026 17:26:50.463 * RDB is base AOF
+7257:M 12 Oct 2026 17:26:50.463 * Done loading RDB, keys loaded: 0, keys expired: 0.
+7257:M 12 Oct 2026 17:26:50.463 * DB loaded from base file appendonly.aof.1.base.rdb: 0.000 seconds
+7257:M 12 Oct 2026 17:26:50.468 * DB loaded from incr file appendonly.aof.1.incr.aof: 0.005 seconds
+7257:M 12 Oct 2026 17:26:50.468 * DB loaded from append only file: 0.006 seconds
+7257:M 12 Oct 2026 17:26:50.468 * Opening AOF incr file appendonly.aof.1.incr.aof on server start
+7257:M 12 Oct 2026 17:26:50.468 * Ready to accept connections tcp
+7257:signal-handler (1791826056) Received SIGTERM scheduling shutdown...
+7257:M 12 Oct 2026 17:27:36.849 * User requested shutdown...
+7257:M 12 Oct 2026 17:27:36.849 * Calling fsync() on the AOF file.
+7257:M 12 Oct 2026 17:27:36.851 * Saving the final RDB snapshot before exiting.
+7257:M 12 Oct 2026 17:27:36.853 * DB saved on disk
+7257:M 12 Oct 2026 17:27:36.853 # Redis is now ready to exit, bye bye...
+7371:C 12 Oct 2026 17:27:39.809 # WARNING Memory overcommit must be enabled! Without it, a background save or replication may fail under low memory condition. To fix this issue add 'vm.overcommit_memory = 1' to /etc/sysctl.conf and then reboot or run the command 'sysctl vm.overcommit_memory=1' for this to take effect.
+7371:C 12 Oct 2026 17:27:39.809 * oO0OoO0OoO0Oo Redis is starting oO0OoO0OoO0Oo
+7371:C 12 Oct 2026 17:27:39.809 * Redis version=7.4.2, bits=64, commit=00000000, modified=1, pid=7371, just started
+7371:C 12 Oct 2026 17:27:39.809 * Configuration loaded
+7371:M 12 Oct 2026 17:27:39.810 * Increased maximum number of open files to 10032 (it was originally set to 1024).
+7371:M 12 Oct 2026 17:27:39.810 * monotonic clock: POSIX clock_gettime
+7371:M 12 Oct 2026 17:27:39.810 * Running mode=standalone, port=6379.
+7371:M 12 Oct 2026 17:27:39.810 * Server initialized
+7371:M 12 Oct 2026 17:27:39.810 * Reading RDB base file on AOF loading...
+7371:M 12 Oct 2026 17:27:39.810 * Loading RDB produced by version 7.4.2
+7371:M 12 Oct 2026 17:27:39.810 * RDB age 914 seconds
+7371:M 12 Oct 2026 17:27:39.810 * RDB memory usage when created 0.93 Mb
+7371:M 12 Oct 2026 17:27:39.810 * RDB is base AOF
+7371:M 12 Oct 2026 17:27:39.810 * Done loading RDB, keys loaded: 0, keys expired: 0.
+7371:M 12 Oct 2026 17:27:39.811 * DB loaded from base file appendonly.aof.1.base.rdb: 0.000 seconds
+7371:M 12 Oct 2026 17:27:39.817 * DB loaded from incr file appendonly.aof.1.incr.aof: 0.006 seconds
+7371:M 12 Oct 2026 17:27:39.817 * DB loaded from append only file: 0.006 seconds
+7371:M 12 Oct 2026 17:27:39.817 * Opening AOF incr file appendonly.aof.1.incr.aof on server start
+7371:M 12 Oct 2026 17:27:39.817 * Ready to accept connections tcp
+7371:M 12 Oct 2026 17:42:40.064 * 1 changes in 900 seconds. Saving...
+7371:M 12 Oct 2026 17:42:40.065 * Background saving started by pid 32845
+32845:C 12 Oct 2026 17:42:40.072 * DB saved on disk
+32845:C 12 Oct 2026 17:42:40.072 * Fork CoW for RDB: current 0 MB, peak 0 MB, average 0 MB
+7371:M 12 Oct 2026 17:42:40.166 * Background saving terminated with success
+7371:M 12 Oct 2026 17:57:41.075 * 1 changes in 900 seconds. Saving...
+7371:M 12 Oct 2026 17:57:41.075 * Background saving started by pid 61476
+61476:C 12 Oct 2026 17:57:41.078 * DB saved on disk
+61476:C 12 Oct 2026 17:57:41.078 * Fork CoW for RDB: current 0 MB, peak 0 MB, average 0 MB
+7371:M 12 Oct 2026 17:57:41.175 * Background saving terminated with success
+7371:signal-handler (1791828752) Received SIGTERM scheduling shutdown...
+7371:M 12 Oct 2026 18:12:32.159 * User requested shutdown...
+7371:M 12 Oct 2026 18:12:32.159 * Calling fsync() on the AOF file.
+7371:M 12 Oct 2026 18:12:32.161 * Saving the final RDB snapshot before exiting.
+7371:M 12 Oct 2026 18:12:32.163 * DB saved on disk
+7371:M 12 Oct 2026 18:12:32.165 # Redis is now ready to exit, bye bye...
+64300:C 12 Oct 2026 18:12:35.172 # WARNING Memory overcommit must be enabled! Without it, a background save or replication may fail under low memory condition. To fix this issue add 'vm.overcommit_memory = 1' to /etc/sysctl.conf and then reboot or run the command 'sysctl vm.overcommit_memory=1' for this to take effect.
+64300:C 12 Oct 2026 18:12:35.172 * oO0OoO0OoO0Oo Redis is starting oO0OoO0OoO0Oo
+64300:C 12 Oct 2026 18:12:35.172 * Redis version=7.4.2, bits=64, commit=00000000, modified=1, pid=64300, just started
+64300:C 12 Oct 2026 18:12:35.173 * Configuration loaded
+64300:M 12 Oct 2026 18:12:35.173 * Increased maximum number of open files to 10032 (it was originally set to 1024).
+64300:M 12 Oct 2026 18:12:35.173 * monotonic clock: POSIX clock_gettime
+64300:M 12 Oct 2026 18:12:35.174 * Running mode=standalone, port=6379.
+64300:M 12 Oct 2026 18:12:35.174 * Server initialized
+64300:M 12 Oct 2026 18:12:35.174 * Reading RDB base file on AOF loading...
+64300:M 12 Oct 2026 18:12:35.174 * Loading RDB produced by version 7.4.2
+64300:M 12 Oct 2026 18:12:35.174 * RDB age 3610 seconds
+64300:M 12 Oct 2026 18:12:35.174 * RDB memory usage when created 0.93 Mb
+64300:M 12 Oct 2026 18:12:35.174 * RDB is base AOF
+64300:M 12 Oct 2026 18:12:35.174 * Done loading RDB, keys loaded: 0, keys expired: 0.
+64300:M 12 Oct 2026 18:12:35.174 * DB loaded from base file appendonly.aof.1.base.rdb: 0.000 seconds
+64300:M 12 Oct 2026 18:12:35.208 * DB loaded from incr file appendonly.aof.1.incr.aof: 0.034 seconds
+64300:M 12 Oct 2026 18:12:35.208 * DB loaded from append only file: 0.034 seconds
+64300:M 12 Oct 2026 18:12:35.208 * Opening AOF incr file appendonly.aof.1.incr.aof on server start
+64300:M 12 Oct 2026 18:12:35.208 * Ready to accept connections tcp
+64300:signal-handler (1791829547) Received SIGTERM scheduling shutdown...
+64300:M 12 Oct 2026 18:25:47.362 * User requested shutdown...
+64300:M 12 Oct 2026 18:25:47.362 * Calling fsync() on the AOF file.
+64300:M 12 Oct 2026 18:25:47.363 * Saving the final RDB snapshot before exiting.
+64300:M 12 Oct 2026 18:25:47.365 * DB saved on disk
+64300:M 12 Oct 2026 18:25:47.365 # Redis is now ready to exit, bye bye...
+64740:C 12 Oct 2026 18:25:50.443 # WARNING Memory overcommit must be enabled! Without it, a background save or replication may fail under low memory condition. To fix this issue add 'vm.overcommit_memory = 1' to /etc/sysctl.conf and then reboot or run the command 'sysctl vm.overcommit_memory=1' for this to take effect.
+64740:C 12 Oct 2026 18:25:50.444 * oO0OoO0OoO0Oo Redis is starting oO0OoO0OoO0Oo
+64740:C 12 Oct 2026 18:25:50.444 * Redis version=7.4.2, bits=64, commit=00000000, modified=1, pid=64740, just started
+64740:C 12 Oct 2026 18:25:50.444 * Configuration loaded
+64740:M 12 Oct 2026 18:25:50.444 * Increased maximum number of open files to 10032 (it was originally set to 1024).
+64740:M 12 Oct 2026 18:25:50.444 * monotonic clock: POSIX clock_gettime
+64740:M 12 Oct 2026 18:25:50.444 * Running mode=standalone, port=6379.
+64740:M 12 Oct 2026 18:25:50.445 * Server initialized
+64740:M 12 Oct 2026 18:25:50.445 * Reading RDB base file on AOF loading...
+64740:M 12 Oct 2026 18:25:50.445 * Loading RDB produced by version 7.4.2
+64740:M 12 Oct 2026 18:25:50.445 * RDB age 4405 seconds
+64740:M 12 Oct 2026 18:25:50.445 * RDB memory usage when created 0.93 Mb
+64740:M 12 Oct 2026 18:25:50.445 * RDB is base AOF
+64740:M 12 Oct 2026 18:25:50.445 * Done loading RDB, keys loaded: 0, keys expired: 0.
+64740:M 12 Oct 2026 18:25:50.445 * DB loaded from base file appendonly.aof.1.base.rdb: 0.000 seconds
+64740:M 12 Oct 2026 18:25:50.497 * DB loaded from incr file appendonly.aof.1.incr.aof: 0.053 seconds
+64740:M 12 Oct 2026 18:25:50.497 * DB loaded from append only file: 0.053 seconds
+64740:M 12 Oct 2026 18:25:50.497 * Opening AOF incr file appendonly.aof.1.incr.aof on server start
+64740:M 12 Oct 2026 18:25:50.497 * Ready to accept connections tcp
+64740:signal-handler (1791829748) Received SIGTERM scheduling shutdown...
+64740:M 12 Oct 2026 18:29:08.345 * User requested shutdown...
+64740:M 12 Oct 2026 18:29:08.345 * Calling fsync() on the AOF file.
+64740:M 12 Oct 2026 18:29:08.346 * Saving the final RDB snapshot before exiting.
+64740:M 12 Oct 2026 18:29:08.349 * DB saved on disk
+64740:M 12 Oct 2026 18:29:08.349 # Redis is now ready to exit, bye bye...
+65112:C 12 Oct 2026 18:29:11.315 # WARNING Memory overcommit must be enabled! Without it, a background save or replication may fail under low memory condition. To fix this issue add 'vm.overcommit_memory = 1' to /etc/sysctl.conf and then reboot or run the command 'sysctl vm.overcommit_memory=1' for this to take effect.
+65112:C 12 Oct 2026 18:29:11.315 * oO0OoO0OoO0Oo Redis is starting oO0OoO0OoO0Oo
+65112:C 12 Oct 2026 18:29:11.315 * Redis version=7.4.2, bits=64, commit=00000000, modified=1, pid=65112, just started
+65112:C 12 Oct 2026 18:29:11.315 * Configuration loaded
+65112:M 12 Oct 2026 18:29:11.316 * Increased maximum number of open files to 10032 (it was originally set to 1024).
+65112:M 12 Oct 2026 18:29:11.316 * monotonic clock: POSIX clock_gettime
+65112:M 12 Oct 2026 18:29:11.316 * Running mode=standalone, port=6379.
+65112:M 12 Oct 2026 18:29:11.316 * Server initialized
+65112:M 12 Oct 2026 18:29:11.316 * Reading RDB base file on AOF loading...
+65112:M 12 Oct 2026 18:29:11.316 * Loading RDB produced by version 7.4.2
+65112:M 12 Oct 2026 18:29:11.316 * RDB age 4606 seconds
+65112:M 12 Oct 2026 18:29:11.316 * RDB memory usage when created 0.93 Mb
+65112:M 12 Oct 2026 18:29:11.316 * RDB is base AOF
+65112:M 12 Oct 2026 18:29:11.316 * Done loading RDB, keys loaded: 0, keys expired: 0.
+65112:M 12 Oct 2026 18:29:11.316 * DB loaded from base file appendonly.aof.1.base.rdb: 0.000 seconds
+65112:M 12 Oct 2026 18:29:11.359 * DB loaded from incr file appendonly.aof.1.incr.aof: 0.043 seconds
+65112:M 12 Oct 2026 18:29:11.359 * DB loaded from append only file: 0.043 seconds
+65112:M 12 Oct 2026 18:29:11.359 * Opening AOF incr file appendonly.aof.1.incr.aof on server start
+65112:M 12 Oct 2026 18:29:11.359 * Ready to accept connections tcp
+65112:signal-handler (1791830002) Received SIGTERM scheduling shutdown...
+65112:M 12 Oct 2026 18:33:22.207 * User requested shutdown...
+65112:M 12 Oct 2026 18:33:22.207 * Calling fsync() on the AOF file.
+65112:M 12 Oct 2026 18:33:22.208 * Saving the final RDB snapshot before exiting.
+65112:M 12 Oct 2026 18:33:22.210 * DB saved on disk
+65112:M 12 Oct 2026 18:33:22.210 # Redis is now ready to exit, bye bye...
+65505:C 12 Oct 2026 18:33:25.212 # WARNING Memory overcommit must be enabled! Without it, a background save or replication may fail under low memory condition. To fix this issue add 'vm.overcommit_memory = 1' to /etc/sysctl.conf and then reboot or run the command 'sysctl vm.overcommit_memory=1' for this to take effect.
+65505:C 12 Oct 2026 18:33:25.212 * oO0OoO0OoO0Oo Redis is starting oO0OoO0OoO0Oo
+65505:C 12 Oct 2026 18:33:25.212 * Redis version=7.4.2, bits=64, commit=00000000, modified=1, pid=65505, just started
+65505:C 12 Oct 2026 18:33:25.212 * Configuration loaded
+65505:M 12 Oct 2026 18:33:25.212 * Increased maximum number of open files to 10032 (it was originally set to 1024).
+65505:M 12 Oct 2026 18:33:25.212 * monotonic clock: POSIX clock_gettime
+65505:M 12 Oct 2026 18:33:25.213 * Running mode=standalone, port=6379.
+65505:M 12 Oct 2026 18:33:25.213 * Server initialized
+65505:M 12 Oct 2026 18:33:25.213 * Reading RDB base file on AOF loading...
+65505:M 12 Oct 2026 18:33:25.213 * Loading RDB produced by version 7.4.2
+65505:M 12 Oct 2026 18:33:25.213 * RDB age 4860 seconds
+65505:M 12 Oct 2026 18:33:25.213 * RDB memory usage when created 0.93 Mb
+65505:M 12 Oct 2026 18:33:25.213 * RDB is base AOF
+65505:M 12 Oct 2026 18:33:25.213 * Done loading RDB, keys loaded: 0, keys expired: 0.
+65505:M 12 Oct 2026 18:33:25.213 * DB loaded from base file appendonly.aof.1.base.rdb: 0.000 seconds
+65505:M 12 Oct 2026 18:33:25.258 * DB loaded from incr file appendonly.aof.1.incr.aof: 0.045 seconds
+65505:M 12 Oct 2026 18:33:25.258 * DB loaded from append only file: 0.045 seconds
+65505:M 12 Oct 2026 18:33:25.258 * Opening AOF incr file appendonly.aof.1.incr.aof on server start
+65505:M 12 Oct 2026 18:33:25.258 * Ready to accept connections tcp
+65505:signal-handler (1791830157) Received SIGTERM scheduling shutdown...
+65505:M 12 Oct 2026 18:35:57.864 * User requested shutdown...
+65505:M 12 Oct 2026 18:35:57.865 * Calling fsync() on the AOF file.
+65505:M 12 Oct 2026 18:35:57.866 * Saving the final RDB snapshot before exiting.
+65505:M 12 Oct 2026 18:35:57.868 * DB saved on disk
+65505:M 12 Oct 2026 18:35:57.868 # Redis is now ready to exit, bye bye...
+65880:C 12 Oct 2026 18:36:00.911 # WARNING Memory overcommit must be enabled! Without it, a background save or replication may fail under low memory condition. To fix this issue add 'vm.overcommit_memory = 1' to /etc/sysctl.conf and then reboot or run the command 'sysctl vm.overcommit_memory=1' for this to take effect.
+65880:C 12 Oct 2026 18:36:00.911 * oO0OoO0OoO0Oo Redis is starting oO0OoO0OoO0Oo
+65880:C 12 Oct 2026 18:36:00.911 * Redis version=7.4.2, bits=64, commit=00000000, modified=1, pid=65880, just started
+65880:C 12 Oct 2026 18:36:00.911 * Configuration loaded
+65880:M 12 Oct 2026 18:36:00.912 * Increased maximum number of open files to 10032 (it was originally set to 1024).
+65880:M 12 Oct 2026 18:36:00.912 * monotonic clock: POSIX clock_gettime
+65880:M 12 Oct 2026 18:36:00.916 * Running mode=standalone, port=6379.
+65880:M 12 Oct 2026 18:36:00.916 * Server initialized
+65880:M 12 Oct 2026 18:36:00.916 * Reading RDB base file on AOF loading...
+65880:M 12 Oct 2026 18:36:00.917 * Loading RDB produced by version 7.4.2
+65880:M 12 Oct 2026 18:36:00.917 * RDB age 5015 seconds
+65880:M 12 Oct 2026 18:36:00.917 * RDB memory usage when created 0.93 Mb
+65880:M 12 Oct 2026 18:36:00.917 * RDB is base AOF
+65880:M 12 Oct 2026 18:36:00.917 * Done loading RDB, keys loaded: 0, keys expired: 0.
+65880:M 12 Oct 2026 18:36:00.917 * DB loaded from base file appendonly.aof.1.base.rdb: 0.000 seconds
+65880:M 12 Oct 2026 18:36:00.960 * DB loaded from incr file appendonly.aof.1.incr.aof: 0.043 seconds
+65880:M 12 Oct 2026 18:36:00.960 * DB loaded from append only file: 0.044 seconds
+65880:M 12 Oct 2026 18:36:00.960 * Opening AOF incr file appendonly.aof.1.incr.aof on server start
+65880:M 12 Oct 2026 18:36:00.960 * Ready to accept connections tcp
+65880:signal-handler (1791830373) Received SIGTERM scheduling shutdown...
+65880:M 12 Oct 2026 18:39:33.385 * User requested shutdown...
+65880:M 12 Oct 2026 18:39:33.386 * Calling fsync() on the AOF file.
+65880:M 12 Oct 2026 18:39:33.386 * Saving the final RDB snapshot before exiting.
+65880:M 12 Oct 2026 18:39:33.388 * DB saved on disk
+65880:M 12 Oct 2026 18:39:33.388 # Redis is now ready to exit, bye bye...
+66341:C 12 Oct 2026 18:39:36.399 # WARNING Memory overcommit must be enabled! Without it, a background save or replication may fail under low memory condition. To fix this issue add 'vm.overcommit_memory = 1' to /etc/sysctl.conf and then reboot or run the command 'sysctl vm.overcommit_memory=1' for this to take effect.
+66341:C 12 Oct 2026 18:39:36.399 * oO0OoO0OoO0Oo Redis is starting oO0OoO0OoO0Oo
+66341:C 12 Oct 2026 18:39:36.399 * Redis version=7.4.2, bits=64, commit=00000000, modified=1, pid=66341, just started
+66341:C 12 Oct 2026 18:39:36.399 * Configuration loaded
+66341:M 12 Oct 2026 18:39:36.399 * Increased maximum number of open files to 10032 (it was originally set to 1024).
+66341:M 12 Oct 2026 18:39:36.399 * monotonic clock: POSIX clock_gettime
+66341:M 12 Oct 2026 18:39:36.400 * Running mode=standalone, port=6379.
+66341:M 12 Oct 2026 18:39:36.400 * Server initialized
+66341:M 12 Oct 2026 18:39:36.400 * Reading RDB base file on AOF loading...
+66341:M 12 Oct 2026 18:39:36.400 * Loading RDB produced by version 7.4.2
+66341:M 12 Oct 2026 18:39:36.400 * RDB age 5231 seconds
+66341:M 12 Oct 2026 18:39:36.400 * RDB memory usage when created 0.93 Mb
+66341:M 12 Oct 2026 18:39:36.400 * RDB is base AOF
+66341:M 12 Oct 2026 18:39:36.400 * Done loading RDB, keys loaded: 0, keys expired: 0.
+66341:M 12 Oct 2026 18:39:36.400 * DB loaded from base file appendonly.aof.1.base.rdb: 0.000 seconds
+66341:M 12 Oct 2026 18:39:36.443 * DB loaded from incr file appendonly.aof.1.incr.aof: 0.043 seconds
+66341:M 12 Oct 2026 18:39:36.443 * DB loaded from append only file: 0.043 seconds
+66341:M 12 Oct 2026 18:39:36.443 * Opening AOF incr file appendonly.aof.1.incr.aof on server start
+66341:M 12 Oct 2026 18:39:36.443 * Ready to accept connections tcp

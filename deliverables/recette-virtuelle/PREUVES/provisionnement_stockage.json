@@ -1,0 +1,12 @@
+{
+  "bucket_seamtech-documents": "présent",
+  "bucket_seamtech-backups": "créé",
+  "versioning_seamtech-documents": "NON SUPPORTÉ par le substitut (BucketAlreadyExists)",
+  "versioning_seamtech-backups": "NON SUPPORTÉ par le substitut (BucketAlreadyExists)",
+  "aller_retour_objet": "ok",
+  "sha256_temoin": "647eb4b6702cdbb0…",
+  "identite_sauvegarde": "opérationnelle sur le bucket de sauvegarde",
+  "identite_inconnue": "refusée (InvalidAccessKeyId)",
+  "secret_faux": "ACCEPTÉ (Anomalie : contrôle d'accès insuffisant)",
+  "app_ecrit_dans_bucket_sauvegarde": "ACCEPTÉ (politique par identité non appliquée par le substitut — écart consigné)"
+}

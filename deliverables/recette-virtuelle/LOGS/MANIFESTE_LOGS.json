@@ -1,0 +1,97 @@
+{
+  "recette_verif.log": {
+    "lignes_source": 24,
+    "lignes_copiees": 24,
+    "tronque": false
+  },
+  "api.log": {
+    "lignes_source": 3466,
+    "lignes_copiees": 3466,
+    "tronque": false
+  },
+  "api-e2e.log": {
+    "lignes_source": 391562,
+    "lignes_copiees": 3000,
+    "tronque": true
+  },
+  "frontend.log": {
+    "lignes_source": 5,
+    "lignes_copiees": 5,
+    "tronque": false
+  },
+  "frontend-e2e.log": {
+    "lignes_source": 6,
+    "lignes_copiees": 6,
+    "tronque": false
+  },
+  "redis.log": {
+    "lignes_source": 279,
+    "lignes_copiees": 279,
+    "tronque": false
+  },
+  "s3.log": {
+    "lignes_source": 762,
+    "lignes_copiees": 762,
+    "tronque": false
+  },
+  "postgres.log": {
+    "lignes_source": 77,
+    "lignes_copiees": 77,
+    "tronque": false
+  },
+  "e2e_depot_passe4.log": {
+    "lignes_source": 151,
+    "lignes_copiees": 151,
+    "tronque": false
+  },
+  "e2e_depot_passe5.log": {
+    "lignes_source": 205,
+    "lignes_copiees": 205,
+    "tronque": false
+  },
+  "e2e_depot_passe6.log": {
+    "lignes_source": 206,
+    "lignes_copiees": 206,
+    "tronque": false
+  },
+  "e2e_depot_passe7.log": {
+    "lignes_source": 81,
+    "lignes_copiees": 81,
+    "tronque": false
+  },
+  "e2e_depot_passe8.log": {
+    "lignes_source": 21,
+    "lignes_copiees": 21,
+    "tronque": false
+  },
+  "e2e_depot_passe9.log": {
+    "lignes_source": 80,
+    "lignes_copiees": 80,
+    "tronque": false
+  },
+  "recette_verif_relance.log": {
+    "lignes_source": 24,
+    "lignes_copiees": 24,
+    "tronque": false
+  },
+  "pannes_final.log": {
+    "lignes_source": 26,
+    "lignes_copiees": 26,
+    "tronque": false
+  },
+  "worker.log": {
+    "lignes_source": 760738,
+    "lignes_copiees": 4000,
+    "tronque": true
+  },
+  "build_redis.log": {
+    "lignes_source": 244,
+    "lignes_copiees": 200,
+    "tronque": true
+  },
+  "initdb.log": {
+    "lignes_source": 23,
+    "lignes_copiees": 23,
+    "tronque": false
+  }
+}

@@ -1,0 +1,762 @@
+[33mwarn[39m: the bucket "seamtech-documents" already exists
+stockage objet (substitut MinIO, s3rver) à l'écoute sur http://127.0.0.1:9000
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 49 objects for bucket "seamtech-documents"
+[32minfo[39m: ech-documents?versioning 200 27ms 18.3kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 49 objects for bucket "seamtech-documents"
+[32minfo[39m: ech-documents?versioning 200 14ms 18.3kb
+[33mwarn[39m: the bucket "seamtech-documents" already exists
+stockage objet (substitut MinIO, s3rver) à l'écoute sur http://127.0.0.1:9000
+[32minfo[39m: Fetched 2 buckets
+[32minfo[39m: 9ms 424b
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 49 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 18ms 18.3kb
+[32minfo[39m: Fetched bucket "seamtech-backups" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 1 objects for bucket "seamtech-backups"
+[32minfo[39m: tech-backups 200 5ms 544b
+[31merror[39m: Error creating bucket. Bucket "seamtech-documents" already exists
+[32minfo[39m: ech-documents?versioning 409 1ms -
+[31merror[39m: Error creating bucket. Bucket "seamtech-backups" already exists
+[32minfo[39m: ech-backups?versioning 409 1ms -
+[32minfo[39m: Stored object "_provisionnement/temoin.txt" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/_provisionnement/temoin.txt 200 6ms 0b
+[32minfo[39m: ech-documents/_provisionnement/temoin.txt 200 13ms 25b
+[32minfo[39m: Fetched bucket "seamtech-backups" with options {"encodingType":"url","maxKeys":1,"fetchOwner":false}
+[32minfo[39m: Found 1 objects for bucket "seamtech-backups"
+[32minfo[39m: ech-backups?list-type=2&max-keys=1&encoding-type=url 200 3ms 477b
+[32minfo[39m: ech-documents?list-type=2&encoding-type=url 403 1ms -
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"encodingType":"url","maxKeys":1000,"fetchOwner":false}
+[32minfo[39m: Found 49 objects for bucket "seamtech-documents"
+[32minfo[39m: ech-documents?list-type=2&encoding-type=url 200 11ms 15.01kb
+[32minfo[39m: Stored object "_provisionnement/app-dans-sauvegarde.txt" in bucket "seamtech-backups" successfully
+[32minfo[39m: ech-backups/_provisionnement/app-dans-sauvegarde.txt 200 5ms 0b
+[32minfo[39m: Stored object "_recette/sonde.txt" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/_recette/sonde.txt 200 4ms 0b
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 50 objects for bucket "seamtech-documents"
+[32minfo[39m: ech-documents?versioning 200 11ms 18.58kb
+[33mwarn[39m: the bucket "seamtech-documents" already exists
+stockage objet (substitut MinIO, s3rver) à l'écoute sur http://127.0.0.1:9000
+[32minfo[39m: Fetched 2 buckets
+[32minfo[39m: 6ms 424b
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 50 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 14ms 18.58kb
+[32minfo[39m: Fetched bucket "seamtech-backups" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 1 objects for bucket "seamtech-backups"
+[32minfo[39m: tech-backups 200 2ms 544b
+[31merror[39m: Error creating bucket. Bucket "seamtech-documents" already exists
+[32minfo[39m: ech-documents?versioning 409 2ms -
+[31merror[39m: Error creating bucket. Bucket "seamtech-backups" already exists
+[32minfo[39m: ech-backups?versioning 409 1ms -
+[32minfo[39m: Stored object "_provisionnement/temoin.txt" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/_provisionnement/temoin.txt 200 5ms 0b
+[32minfo[39m: ech-documents/_provisionnement/temoin.txt 200 3ms 25b
+[32minfo[39m: Fetched bucket "seamtech-backups" with options {"encodingType":"url","maxKeys":1,"fetchOwner":false}
+[32minfo[39m: Found 1 objects for bucket "seamtech-backups"
+[32minfo[39m: ech-backups?list-type=2&max-keys=1&encoding-type=url 200 2ms 477b
+[32minfo[39m: ech-documents?list-type=2&encoding-type=url 403 1ms -
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"encodingType":"url","maxKeys":1000,"fetchOwner":false}
+[32minfo[39m: Found 50 objects for bucket "seamtech-documents"
+[32minfo[39m: ech-documents?list-type=2&encoding-type=url 200 11ms 15.21kb
+[32minfo[39m: Stored object "_provisionnement/app-dans-sauvegarde.txt" in bucket "seamtech-backups" successfully
+[32minfo[39m: ech-backups/_provisionnement/app-dans-sauvegarde.txt 200 2ms 0b
+[32minfo[39m: Stored object "_recette/sonde.txt" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/_recette/sonde.txt 200 6ms 0b
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 50 objects for bucket "seamtech-documents"
+[32minfo[39m: ech-documents?versioning 200 9ms 18.58kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 50 objects for bucket "seamtech-documents"
+[32minfo[39m: ech-documents?versioning 200 11ms 18.58kb
+[33mwarn[39m: the bucket "seamtech-documents" already exists
+stockage objet (substitut MinIO, s3rver) à l'écoute sur http://127.0.0.1:9000
+[32minfo[39m: Fetched 2 buckets
+[32minfo[39m: 7ms 424b
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 50 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 15ms 18.58kb
+[32minfo[39m: Fetched bucket "seamtech-backups" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 1 objects for bucket "seamtech-backups"
+[32minfo[39m: tech-backups 200 3ms 544b
+[31merror[39m: Error creating bucket. Bucket "seamtech-documents" already exists
+[32minfo[39m: ech-documents?versioning 409 1ms -
+[31merror[39m: Error creating bucket. Bucket "seamtech-backups" already exists
+[32minfo[39m: ech-backups?versioning 409 1ms -
+[32minfo[39m: Stored object "_provisionnement/temoin.txt" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/_provisionnement/temoin.txt 200 5ms 0b
+[32minfo[39m: ech-documents/_provisionnement/temoin.txt 200 3ms 25b
+[32minfo[39m: Fetched bucket "seamtech-backups" with options {"encodingType":"url","maxKeys":1,"fetchOwner":false}
+[32minfo[39m: Found 1 objects for bucket "seamtech-backups"
+[32minfo[39m: ech-backups?list-type=2&max-keys=1&encoding-type=url 200 2ms 477b
+[32minfo[39m: ech-documents?list-type=2&encoding-type=url 403 1ms -
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"encodingType":"url","maxKeys":1000,"fetchOwner":false}
+[32minfo[39m: Found 50 objects for bucket "seamtech-documents"
+[32minfo[39m: ech-documents?list-type=2&encoding-type=url 200 12ms 15.21kb
+[32minfo[39m: Stored object "_provisionnement/app-dans-sauvegarde.txt" in bucket "seamtech-backups" successfully
+[32minfo[39m: ech-backups/_provisionnement/app-dans-sauvegarde.txt 200 2ms 0b
+[32minfo[39m: Stored object "_recette/sonde.txt" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/_recette/sonde.txt 200 5ms 0b
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 50 objects for bucket "seamtech-documents"
+[32minfo[39m: ech-documents?versioning 200 9ms 18.58kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 50 objects for bucket "seamtech-documents"
+[32minfo[39m: ech-documents?versioning 200 10ms 18.58kb
+[33mwarn[39m: the bucket "seamtech-documents" already exists
+stockage objet (substitut MinIO, s3rver) à l'écoute sur http://127.0.0.1:9000
+[32minfo[39m: Fetched 2 buckets
+[32minfo[39m: 6ms 424b
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 50 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 13ms 18.58kb
+[32minfo[39m: Fetched bucket "seamtech-backups" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 1 objects for bucket "seamtech-backups"
+[32minfo[39m: tech-backups 200 3ms 544b
+[31merror[39m: Error creating bucket. Bucket "seamtech-documents" already exists
+[32minfo[39m: ech-documents?versioning 409 2ms -
+[31merror[39m: Error creating bucket. Bucket "seamtech-backups" already exists
+[32minfo[39m: ech-backups?versioning 409 2ms -
+[32minfo[39m: Stored object "_provisionnement/temoin.txt" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/_provisionnement/temoin.txt 200 6ms 0b
+[32minfo[39m: ech-documents/_provisionnement/temoin.txt 200 3ms 25b
+[32minfo[39m: Fetched bucket "seamtech-backups" with options {"encodingType":"url","maxKeys":1,"fetchOwner":false}
+[32minfo[39m: Found 1 objects for bucket "seamtech-backups"
+[32minfo[39m: ech-backups?list-type=2&max-keys=1&encoding-type=url 200 2ms 477b
+[32minfo[39m: ech-documents?list-type=2&encoding-type=url 403 1ms -
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"encodingType":"url","maxKeys":1000,"fetchOwner":false}
+[32minfo[39m: Found 50 objects for bucket "seamtech-documents"
+[32minfo[39m: ech-documents?list-type=2&encoding-type=url 200 11ms 15.21kb
+[32minfo[39m: Stored object "_provisionnement/app-dans-sauvegarde.txt" in bucket "seamtech-backups" successfully
+[32minfo[39m: ech-backups/_provisionnement/app-dans-sauvegarde.txt 200 3ms 0b
+[32minfo[39m: Stored object "_recette/sonde.txt" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/_recette/sonde.txt 200 5ms 0b
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 50 objects for bucket "seamtech-documents"
+[32minfo[39m: ech-documents?versioning 200 12ms 18.58kb
+[32minfo[39m: ech-documents/49484c122ab74d1ba8200d1fe53c0f6e/4aa6934b83ce836e1d1c2ebaa45acea41b72fa27bf63f9c977fc6b9a285badaf/Fiche%20GENOIS%20GIBSEA%20284%20250328%20AJA.pdf 200 4ms 18.34kb
+[32minfo[39m: ech-documents/49484c122ab74d1ba8200d1fe53c0f6e/4aa6934b83ce836e1d1c2ebaa45acea41b72fa27bf63f9c977fc6b9a285badaf/Fiche%20GENOIS%20GIBSEA%20284%20250328%20AJA.pdf 200 3ms 18.34kb
+[32minfo[39m: ech-documents/49484c122ab74d1ba8200d1fe53c0f6e/4aa6934b83ce836e1d1c2ebaa45acea41b72fa27bf63f9c977fc6b9a285badaf/Fiche%20GENOIS%20GIBSEA%20284%20250328%20AJA.pdf 200 6ms 18.34kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 50 objects for bucket "seamtech-documents"
+[32minfo[39m: ech-documents?versioning 200 18ms 18.58kb
+[32minfo[39m: ech-documents/49484c122ab74d1ba8200d1fe53c0f6e/4aa6934b83ce836e1d1c2ebaa45acea41b72fa27bf63f9c977fc6b9a285badaf/Fiche%20GENOIS%20GIBSEA%20284%20250328%20AJA.pdf 200 5ms 18.34kb
+[32minfo[39m: ech-documents/49484c122ab74d1ba8200d1fe53c0f6e/4aa6934b83ce836e1d1c2ebaa45acea41b72fa27bf63f9c977fc6b9a285badaf/Fiche%20GENOIS%20GIBSEA%20284%20250328%20AJA.pdf 200 2ms 18.34kb
+[32minfo[39m: ech-documents/49484c122ab74d1ba8200d1fe53c0f6e/4aa6934b83ce836e1d1c2ebaa45acea41b72fa27bf63f9c977fc6b9a285badaf/Fiche%20GENOIS%20GIBSEA%20284%20250328%20AJA.pdf 200 2ms 18.34kb
+[32minfo[39m: ech-documents/49484c122ab74d1ba8200d1fe53c0f6e/4aa6934b83ce836e1d1c2ebaa45acea41b72fa27bf63f9c977fc6b9a285badaf/Fiche%20GENOIS%20GIBSEA%20284%20250328%20AJA.pdf 200 2ms 18.34kb
+[32minfo[39m: ech-documents/49484c122ab74d1ba8200d1fe53c0f6e/4aa6934b83ce836e1d1c2ebaa45acea41b72fa27bf63f9c977fc6b9a285badaf/Fiche%20GENOIS%20GIBSEA%20284%20250328%20AJA.pdf 200 2ms 18.34kb
+[32minfo[39m: ech-documents/49484c122ab74d1ba8200d1fe53c0f6e/4aa6934b83ce836e1d1c2ebaa45acea41b72fa27bf63f9c977fc6b9a285badaf/Fiche%20GENOIS%20GIBSEA%20284%20250328%20AJA.pdf 200 3ms 18.34kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 50 objects for bucket "seamtech-documents"
+[32minfo[39m: ech-documents?versioning 200 13ms 18.58kb
+[32minfo[39m: ech-documents/49484c122ab74d1ba8200d1fe53c0f6e/4aa6934b83ce836e1d1c2ebaa45acea41b72fa27bf63f9c977fc6b9a285badaf/Fiche%20GENOIS%20GIBSEA%20284%20250328%20AJA.pdf 200 2ms 18.34kb
+[32minfo[39m: ech-documents/49484c122ab74d1ba8200d1fe53c0f6e/4aa6934b83ce836e1d1c2ebaa45acea41b72fa27bf63f9c977fc6b9a285badaf/Fiche%20GENOIS%20GIBSEA%20284%20250328%20AJA.pdf 200 2ms 18.34kb
+[32minfo[39m: ech-documents/49484c122ab74d1ba8200d1fe53c0f6e/4aa6934b83ce836e1d1c2ebaa45acea41b72fa27bf63f9c977fc6b9a285badaf/Fiche%20GENOIS%20GIBSEA%20284%20250328%20AJA.pdf 200 3ms 18.34kb
+[32minfo[39m: ech-documents/49484c122ab74d1ba8200d1fe53c0f6e/4aa6934b83ce836e1d1c2ebaa45acea41b72fa27bf63f9c977fc6b9a285badaf/Fiche%20GENOIS%20GIBSEA%20284%20250328%20AJA.pdf 200 6ms 18.34kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 50 objects for bucket "seamtech-documents"
+[32minfo[39m: ech-documents?versioning 200 31ms 18.58kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 50 objects for bucket "seamtech-documents"
+[32minfo[39m: ech-documents?versioning 200 23ms 18.58kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 50 objects for bucket "seamtech-documents"
+[32minfo[39m: ech-documents?versioning 200 13ms 18.58kb
+[33mwarn[39m: the bucket "seamtech-documents" already exists
+stockage objet (substitut MinIO, s3rver) à l'écoute sur http://127.0.0.1:9000
+[32minfo[39m: Stored object "_recette/sonde.txt" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/_recette/sonde.txt 200 14ms 0b
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 50 objects for bucket "seamtech-documents"
+[32minfo[39m: ech-documents?versioning 200 13ms 18.58kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 50 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 13ms 18.58kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 50 objects for bucket "seamtech-documents"
+[32minfo[39m: ech-documents?versioning 200 11ms 18.58kb
+[31merror[39m: Error creating bucket. Bucket "seamtech-documents" already exists
+[32minfo[39m: ech-documents?versioning 409 2ms -
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/4aa6934b83ce836e1d1c2ebaa45acea41b72fa27bf63f9c977fc6b9a285badaf/Fiche%20GENOIS%20GIBSEA%20284%20250328%20AJA.pdf 404 1ms -
+[32minfo[39m: Stored object "ad34c7c1d2b34b179bfb76cf9a10c9ce/4aa6934b83ce836e1d1c2ebaa45acea41b72fa27bf63f9c977fc6b9a285badaf/Fiche GENOIS GIBSEA 284 250328 AJA.pdf" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/4aa6934b83ce836e1d1c2ebaa45acea41b72fa27bf63f9c977fc6b9a285badaf/Fiche%20GENOIS%20GIBSEA%20284%20250328%20AJA.pdf 200 4ms 0b
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/4aa6934b83ce836e1d1c2ebaa45acea41b72fa27bf63f9c977fc6b9a285badaf/Fiche%20GENOIS%20GIBSEA%20284%20250328%20AJA.pdf 200 3ms 18.34kb
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/4aa6934b83ce836e1d1c2ebaa45acea41b72fa27bf63f9c977fc6b9a285badaf/Fiche%20GENOIS%20GIBSEA%20284%20250328%20AJA.pdf 200 3ms 18.34kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 51 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 14ms 18.97kb
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/9ce3cbede347c5651cae502ecdbeb570152b7f8cc9e974c016cceb1daab94bc1/GSEGS284.csv 404 1ms -
+[32minfo[39m: Stored object "ad34c7c1d2b34b179bfb76cf9a10c9ce/9ce3cbede347c5651cae502ecdbeb570152b7f8cc9e974c016cceb1daab94bc1/GSEGS284.csv" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/9ce3cbede347c5651cae502ecdbeb570152b7f8cc9e974c016cceb1daab94bc1/GSEGS284.csv 200 3ms 0b
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/9ce3cbede347c5651cae502ecdbeb570152b7f8cc9e974c016cceb1daab94bc1/GSEGS284.csv 200 2ms 1.17kb
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/9ce3cbede347c5651cae502ecdbeb570152b7f8cc9e974c016cceb1daab94bc1/GSEGS284.csv 200 1ms 1.17kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 52 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 12ms 19.34kb
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/89d98e7cafb34eadb73ecb5b2c8668a7b4a5af0fcd135584153360c7bf9b1084/GSEGS284.pdf 404 1ms -
+[32minfo[39m: Stored object "ad34c7c1d2b34b179bfb76cf9a10c9ce/89d98e7cafb34eadb73ecb5b2c8668a7b4a5af0fcd135584153360c7bf9b1084/GSEGS284.pdf" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/89d98e7cafb34eadb73ecb5b2c8668a7b4a5af0fcd135584153360c7bf9b1084/GSEGS284.pdf 200 5ms 0b
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/89d98e7cafb34eadb73ecb5b2c8668a7b4a5af0fcd135584153360c7bf9b1084/GSEGS284.pdf 200 2ms 170.14kb
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/89d98e7cafb34eadb73ecb5b2c8668a7b4a5af0fcd135584153360c7bf9b1084/GSEGS284.pdf 200 3ms 170.14kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 53 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 13ms 19.7kb
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/10eefd8fb76c2066d84016ee52f63fcfdf544318ceb597f16537bc165c33b694/GSEGS284.xin 404 1ms -
+[32minfo[39m: Stored object "ad34c7c1d2b34b179bfb76cf9a10c9ce/10eefd8fb76c2066d84016ee52f63fcfdf544318ceb597f16537bc165c33b694/GSEGS284.xin" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/10eefd8fb76c2066d84016ee52f63fcfdf544318ceb597f16537bc165c33b694/GSEGS284.xin 200 3ms 0b
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/10eefd8fb76c2066d84016ee52f63fcfdf544318ceb597f16537bc165c33b694/GSEGS284.xin 200 1ms 3.28kb
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/10eefd8fb76c2066d84016ee52f63fcfdf544318ceb597f16537bc165c33b694/GSEGS284.xin 200 2ms 3.28kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 54 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 8ms 20.07kb
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/c02ecf5839b098a2eab05141f3f3127a2ec10b4c42e5c0e3bab672e1afa4208f/GSEGS284.zip 404 1ms -
+[32minfo[39m: Stored object "ad34c7c1d2b34b179bfb76cf9a10c9ce/c02ecf5839b098a2eab05141f3f3127a2ec10b4c42e5c0e3bab672e1afa4208f/GSEGS284.zip" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/c02ecf5839b098a2eab05141f3f3127a2ec10b4c42e5c0e3bab672e1afa4208f/GSEGS284.zip 200 3ms 0b
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/c02ecf5839b098a2eab05141f3f3127a2ec10b4c42e5c0e3bab672e1afa4208f/GSEGS284.zip 200 2ms 247.61kb
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/c02ecf5839b098a2eab05141f3f3127a2ec10b4c42e5c0e3bab672e1afa4208f/GSEGS284.zip 200 2ms 247.61kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 55 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 11ms 20.44kb
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/8c3305db3ab9caa1a4e0fde4dfed8f5e7c9a25a4477beffa11e08e8762da7f5c/GSEGS284012.dxf 404 1ms -
+[32minfo[39m: Stored object "ad34c7c1d2b34b179bfb76cf9a10c9ce/8c3305db3ab9caa1a4e0fde4dfed8f5e7c9a25a4477beffa11e08e8762da7f5c/GSEGS284012.dxf" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/8c3305db3ab9caa1a4e0fde4dfed8f5e7c9a25a4477beffa11e08e8762da7f5c/GSEGS284012.dxf 200 3ms 0b
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/8c3305db3ab9caa1a4e0fde4dfed8f5e7c9a25a4477beffa11e08e8762da7f5c/GSEGS284012.dxf 200 2ms 8.53kb
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/8c3305db3ab9caa1a4e0fde4dfed8f5e7c9a25a4477beffa11e08e8762da7f5c/GSEGS284012.dxf 200 1ms 8.53kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 56 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 12ms 20.81kb
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/6b3a44e746ca5c97d73550f37ab7761d6ab0e0b9825c56a9d636fb9c6bbf9454/GSEGS284013.dxf 404 1ms -
+[32minfo[39m: Stored object "ad34c7c1d2b34b179bfb76cf9a10c9ce/6b3a44e746ca5c97d73550f37ab7761d6ab0e0b9825c56a9d636fb9c6bbf9454/GSEGS284013.dxf" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/6b3a44e746ca5c97d73550f37ab7761d6ab0e0b9825c56a9d636fb9c6bbf9454/GSEGS284013.dxf 200 2ms 0b
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/6b3a44e746ca5c97d73550f37ab7761d6ab0e0b9825c56a9d636fb9c6bbf9454/GSEGS284013.dxf 200 1ms 8.43kb
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/6b3a44e746ca5c97d73550f37ab7761d6ab0e0b9825c56a9d636fb9c6bbf9454/GSEGS284013.dxf 200 1ms 8.43kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 57 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 10ms 21.18kb
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/18b8933ec5978a100a610339a16b173cd2578bdbbb7f2847d161bdb82eb276d8/GSEGS284014.dxf 404 0ms -
+[32minfo[39m: Stored object "ad34c7c1d2b34b179bfb76cf9a10c9ce/18b8933ec5978a100a610339a16b173cd2578bdbbb7f2847d161bdb82eb276d8/GSEGS284014.dxf" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/18b8933ec5978a100a610339a16b173cd2578bdbbb7f2847d161bdb82eb276d8/GSEGS284014.dxf 200 2ms 0b
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/18b8933ec5978a100a610339a16b173cd2578bdbbb7f2847d161bdb82eb276d8/GSEGS284014.dxf 200 1ms 8.38kb
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/18b8933ec5978a100a610339a16b173cd2578bdbbb7f2847d161bdb82eb276d8/GSEGS284014.dxf 200 1ms 8.38kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 58 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 15ms 21.55kb
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/b0cb300034655c7e3932b66fcdc495e342436d806456961eba82dbace56a2115/GSEGS284015.dxf 404 0ms -
+[32minfo[39m: Stored object "ad34c7c1d2b34b179bfb76cf9a10c9ce/b0cb300034655c7e3932b66fcdc495e342436d806456961eba82dbace56a2115/GSEGS284015.dxf" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/b0cb300034655c7e3932b66fcdc495e342436d806456961eba82dbace56a2115/GSEGS284015.dxf 200 2ms 0b
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/b0cb300034655c7e3932b66fcdc495e342436d806456961eba82dbace56a2115/GSEGS284015.dxf 200 1ms 8.39kb
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/b0cb300034655c7e3932b66fcdc495e342436d806456961eba82dbace56a2115/GSEGS284015.dxf 200 2ms 8.39kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 59 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 8ms 21.92kb
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/2fc1220964a0b6ee91d98b07045bbef57b8db45280cd2ae35d58d010f67229e4/GSEGS284016.dxf 404 0ms -
+[32minfo[39m: Stored object "ad34c7c1d2b34b179bfb76cf9a10c9ce/2fc1220964a0b6ee91d98b07045bbef57b8db45280cd2ae35d58d010f67229e4/GSEGS284016.dxf" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/2fc1220964a0b6ee91d98b07045bbef57b8db45280cd2ae35d58d010f67229e4/GSEGS284016.dxf 200 2ms 0b
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/2fc1220964a0b6ee91d98b07045bbef57b8db45280cd2ae35d58d010f67229e4/GSEGS284016.dxf 200 2ms 8.38kb
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/2fc1220964a0b6ee91d98b07045bbef57b8db45280cd2ae35d58d010f67229e4/GSEGS284016.dxf 200 1ms 8.38kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 60 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 8ms 22.28kb
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/aa300578cece4e460e3a1986ab4be4441b052e347fce677bda6162975d31daa2/GSEGS284017.dxf 404 1ms -
+[32minfo[39m: Stored object "ad34c7c1d2b34b179bfb76cf9a10c9ce/aa300578cece4e460e3a1986ab4be4441b052e347fce677bda6162975d31daa2/GSEGS284017.dxf" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/aa300578cece4e460e3a1986ab4be4441b052e347fce677bda6162975d31daa2/GSEGS284017.dxf 200 2ms 0b
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/aa300578cece4e460e3a1986ab4be4441b052e347fce677bda6162975d31daa2/GSEGS284017.dxf 200 1ms 8.49kb
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/aa300578cece4e460e3a1986ab4be4441b052e347fce677bda6162975d31daa2/GSEGS284017.dxf 200 1ms 8.49kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 61 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 7ms 22.65kb
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/ebb10c51d8dadd2e6fd5f9475ad846ae4964274b9de97b2ba5da6ca826e6f1ab/GSEGS284018.dxf 404 1ms -
+[32minfo[39m: Stored object "ad34c7c1d2b34b179bfb76cf9a10c9ce/ebb10c51d8dadd2e6fd5f9475ad846ae4964274b9de97b2ba5da6ca826e6f1ab/GSEGS284018.dxf" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/ebb10c51d8dadd2e6fd5f9475ad846ae4964274b9de97b2ba5da6ca826e6f1ab/GSEGS284018.dxf 200 2ms 0b
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/ebb10c51d8dadd2e6fd5f9475ad846ae4964274b9de97b2ba5da6ca826e6f1ab/GSEGS284018.dxf 200 1ms 9.54kb
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/ebb10c51d8dadd2e6fd5f9475ad846ae4964274b9de97b2ba5da6ca826e6f1ab/GSEGS284018.dxf 200 4ms 9.54kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 62 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 9ms 23.02kb
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/9f7490aa83074bad6965435db9768a0f979a911fad1e32ee94eba7f45039b8a0/GSEGS284019.dxf 404 1ms -
+[32minfo[39m: Stored object "ad34c7c1d2b34b179bfb76cf9a10c9ce/9f7490aa83074bad6965435db9768a0f979a911fad1e32ee94eba7f45039b8a0/GSEGS284019.dxf" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/9f7490aa83074bad6965435db9768a0f979a911fad1e32ee94eba7f45039b8a0/GSEGS284019.dxf 200 1ms 0b
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/9f7490aa83074bad6965435db9768a0f979a911fad1e32ee94eba7f45039b8a0/GSEGS284019.dxf 200 1ms 8.33kb
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/9f7490aa83074bad6965435db9768a0f979a911fad1e32ee94eba7f45039b8a0/GSEGS284019.dxf 200 2ms 8.33kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 63 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 21ms 23.39kb
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/6772b77843c3b054c7e7e9bf2e25b4be99875ae15f4fb87d260de7763198c43b/GSEGS28402.dxf 404 1ms -
+[32minfo[39m: Stored object "ad34c7c1d2b34b179bfb76cf9a10c9ce/6772b77843c3b054c7e7e9bf2e25b4be99875ae15f4fb87d260de7763198c43b/GSEGS28402.dxf" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/6772b77843c3b054c7e7e9bf2e25b4be99875ae15f4fb87d260de7763198c43b/GSEGS28402.dxf 200 2ms 0b
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/6772b77843c3b054c7e7e9bf2e25b4be99875ae15f4fb87d260de7763198c43b/GSEGS28402.dxf 200 1ms 10.94kb
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/6772b77843c3b054c7e7e9bf2e25b4be99875ae15f4fb87d260de7763198c43b/GSEGS28402.dxf 200 1ms 10.94kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 64 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 15ms 23.76kb
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/60533f37d491b0ce11ee488112ab2514c44ea141dcfa2e2f1b36c7d1fa8c6c49/GSEGS284020.dxf 404 1ms -
+[32minfo[39m: Stored object "ad34c7c1d2b34b179bfb76cf9a10c9ce/60533f37d491b0ce11ee488112ab2514c44ea141dcfa2e2f1b36c7d1fa8c6c49/GSEGS284020.dxf" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/60533f37d491b0ce11ee488112ab2514c44ea141dcfa2e2f1b36c7d1fa8c6c49/GSEGS284020.dxf 200 3ms 0b
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/60533f37d491b0ce11ee488112ab2514c44ea141dcfa2e2f1b36c7d1fa8c6c49/GSEGS284020.dxf 200 1ms 8.49kb
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/60533f37d491b0ce11ee488112ab2514c44ea141dcfa2e2f1b36c7d1fa8c6c49/GSEGS284020.dxf 200 1ms 8.49kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 65 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 10ms 24.13kb
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/9a9e2b416e5926f0c78b67166fb89a64da3e31225c826085afe9a68ba66a22a3/GSEGS284021.dxf 404 1ms -
+[32minfo[39m: Stored object "ad34c7c1d2b34b179bfb76cf9a10c9ce/9a9e2b416e5926f0c78b67166fb89a64da3e31225c826085afe9a68ba66a22a3/GSEGS284021.dxf" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/9a9e2b416e5926f0c78b67166fb89a64da3e31225c826085afe9a68ba66a22a3/GSEGS284021.dxf 200 1ms 0b
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/9a9e2b416e5926f0c78b67166fb89a64da3e31225c826085afe9a68ba66a22a3/GSEGS284021.dxf 200 2ms 8.36kb
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/9a9e2b416e5926f0c78b67166fb89a64da3e31225c826085afe9a68ba66a22a3/GSEGS284021.dxf 200 1ms 8.36kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 66 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 9ms 24.5kb
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/4792b7022af6e40bb66d7c7281ce025de279cdd1ca1522b06cb6ce0d549053be/GSEGS284022.dxf 404 0ms -
+[32minfo[39m: Stored object "ad34c7c1d2b34b179bfb76cf9a10c9ce/4792b7022af6e40bb66d7c7281ce025de279cdd1ca1522b06cb6ce0d549053be/GSEGS284022.dxf" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/4792b7022af6e40bb66d7c7281ce025de279cdd1ca1522b06cb6ce0d549053be/GSEGS284022.dxf 200 2ms 0b
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/4792b7022af6e40bb66d7c7281ce025de279cdd1ca1522b06cb6ce0d549053be/GSEGS284022.dxf 200 2ms 8.79kb
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/4792b7022af6e40bb66d7c7281ce025de279cdd1ca1522b06cb6ce0d549053be/GSEGS284022.dxf 200 1ms 8.79kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 67 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 10ms 24.87kb
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/e33e695695a29b232e3846591bf47ef7164971c3ebc4725d50755d5a922dcd09/GSEGS284023.dxf 404 0ms -
+[32minfo[39m: Stored object "ad34c7c1d2b34b179bfb76cf9a10c9ce/e33e695695a29b232e3846591bf47ef7164971c3ebc4725d50755d5a922dcd09/GSEGS284023.dxf" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/e33e695695a29b232e3846591bf47ef7164971c3ebc4725d50755d5a922dcd09/GSEGS284023.dxf 200 2ms 0b
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/e33e695695a29b232e3846591bf47ef7164971c3ebc4725d50755d5a922dcd09/GSEGS284023.dxf 200 1ms 8.87kb
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/e33e695695a29b232e3846591bf47ef7164971c3ebc4725d50755d5a922dcd09/GSEGS284023.dxf 200 2ms 8.87kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 68 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 9ms 25.24kb
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/00b3f4f0b7f4c99e6b75d184575587c4ca6d83fef48fdd6972b78924d7f23f5f/GSEGS284024.dxf 404 0ms -
+[32minfo[39m: Stored object "ad34c7c1d2b34b179bfb76cf9a10c9ce/00b3f4f0b7f4c99e6b75d184575587c4ca6d83fef48fdd6972b78924d7f23f5f/GSEGS284024.dxf" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/00b3f4f0b7f4c99e6b75d184575587c4ca6d83fef48fdd6972b78924d7f23f5f/GSEGS284024.dxf 200 2ms 0b
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/00b3f4f0b7f4c99e6b75d184575587c4ca6d83fef48fdd6972b78924d7f23f5f/GSEGS284024.dxf 200 1ms 8.69kb
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/00b3f4f0b7f4c99e6b75d184575587c4ca6d83fef48fdd6972b78924d7f23f5f/GSEGS284024.dxf 200 1ms 8.69kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 69 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 11ms 25.61kb
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/59292a0d5dd30090646b15bba260da51bd3ebeac9c51de1de4f7e3adc8b2b3ef/GSEGS284025.dxf 404 1ms -
+[32minfo[39m: Stored object "ad34c7c1d2b34b179bfb76cf9a10c9ce/59292a0d5dd30090646b15bba260da51bd3ebeac9c51de1de4f7e3adc8b2b3ef/GSEGS284025.dxf" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/59292a0d5dd30090646b15bba260da51bd3ebeac9c51de1de4f7e3adc8b2b3ef/GSEGS284025.dxf 200 2ms 0b
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/59292a0d5dd30090646b15bba260da51bd3ebeac9c51de1de4f7e3adc8b2b3ef/GSEGS284025.dxf 200 1ms 8.56kb
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/59292a0d5dd30090646b15bba260da51bd3ebeac9c51de1de4f7e3adc8b2b3ef/GSEGS284025.dxf 200 1ms 8.56kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 70 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 8ms 25.98kb
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/f158a843a39ee6307b571d8c9d711035879e6ad91139db24ab75ab2b842a35d3/GSEGS284026.dxf 404 7ms -
+[32minfo[39m: Stored object "ad34c7c1d2b34b179bfb76cf9a10c9ce/f158a843a39ee6307b571d8c9d711035879e6ad91139db24ab75ab2b842a35d3/GSEGS284026.dxf" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/f158a843a39ee6307b571d8c9d711035879e6ad91139db24ab75ab2b842a35d3/GSEGS284026.dxf 200 2ms 0b
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/f158a843a39ee6307b571d8c9d711035879e6ad91139db24ab75ab2b842a35d3/GSEGS284026.dxf 200 1ms 8.59kb
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/f158a843a39ee6307b571d8c9d711035879e6ad91139db24ab75ab2b842a35d3/GSEGS284026.dxf 200 2ms 8.59kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 71 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 9ms 26.34kb
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/facd675f85e19dfe13eac291e5f021f84050a86f2bd5146f1cdae967d6cf7c70/GSEGS284027.dxf 404 1ms -
+[32minfo[39m: Stored object "ad34c7c1d2b34b179bfb76cf9a10c9ce/facd675f85e19dfe13eac291e5f021f84050a86f2bd5146f1cdae967d6cf7c70/GSEGS284027.dxf" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/facd675f85e19dfe13eac291e5f021f84050a86f2bd5146f1cdae967d6cf7c70/GSEGS284027.dxf 200 2ms 0b
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/facd675f85e19dfe13eac291e5f021f84050a86f2bd5146f1cdae967d6cf7c70/GSEGS284027.dxf 200 1ms 8.91kb
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/facd675f85e19dfe13eac291e5f021f84050a86f2bd5146f1cdae967d6cf7c70/GSEGS284027.dxf 200 1ms 8.91kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 72 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 13ms 26.71kb
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/9a9b9fd267774dcf4df4a7564b7b60eb20b5a3a2caddb08262858fb18811f086/GSEGS284028.dxf 404 1ms -
+[32minfo[39m: Stored object "ad34c7c1d2b34b179bfb76cf9a10c9ce/9a9b9fd267774dcf4df4a7564b7b60eb20b5a3a2caddb08262858fb18811f086/GSEGS284028.dxf" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/9a9b9fd267774dcf4df4a7564b7b60eb20b5a3a2caddb08262858fb18811f086/GSEGS284028.dxf 200 2ms 0b
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/9a9b9fd267774dcf4df4a7564b7b60eb20b5a3a2caddb08262858fb18811f086/GSEGS284028.dxf 200 1ms 10.66kb
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/9a9b9fd267774dcf4df4a7564b7b60eb20b5a3a2caddb08262858fb18811f086/GSEGS284028.dxf 200 1ms 10.66kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 73 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 8ms 27.08kb
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/f50156f01196fdea171b16d4d062c228930bb075bb31b45010063ff19d2a5840/GSEGS284029.dxf 404 1ms -
+[32minfo[39m: Stored object "ad34c7c1d2b34b179bfb76cf9a10c9ce/f50156f01196fdea171b16d4d062c228930bb075bb31b45010063ff19d2a5840/GSEGS284029.dxf" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/f50156f01196fdea171b16d4d062c228930bb075bb31b45010063ff19d2a5840/GSEGS284029.dxf 200 2ms 0b
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/f50156f01196fdea171b16d4d062c228930bb075bb31b45010063ff19d2a5840/GSEGS284029.dxf 200 2ms 9.26kb
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/f50156f01196fdea171b16d4d062c228930bb075bb31b45010063ff19d2a5840/GSEGS284029.dxf 200 1ms 9.26kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 74 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 10ms 27.45kb
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/9b57d943e7904b7efbd8907fbe39cec3011d8b756632d0eabc4c37d7a5359f33/GSEGS28403.dxf 404 1ms -
+[32minfo[39m: Stored object "ad34c7c1d2b34b179bfb76cf9a10c9ce/9b57d943e7904b7efbd8907fbe39cec3011d8b756632d0eabc4c37d7a5359f33/GSEGS28403.dxf" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/9b57d943e7904b7efbd8907fbe39cec3011d8b756632d0eabc4c37d7a5359f33/GSEGS28403.dxf 200 2ms 0b
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/9b57d943e7904b7efbd8907fbe39cec3011d8b756632d0eabc4c37d7a5359f33/GSEGS28403.dxf 200 1ms 13.63kb
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/9b57d943e7904b7efbd8907fbe39cec3011d8b756632d0eabc4c37d7a5359f33/GSEGS28403.dxf 200 1ms 13.63kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 75 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 11ms 27.82kb
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/ff67dfb7aa573f0412f746b8e4213655e8aa922e57c94d2db919481afd687948/GSEGS284030.dxf 404 0ms -
+[32minfo[39m: Stored object "ad34c7c1d2b34b179bfb76cf9a10c9ce/ff67dfb7aa573f0412f746b8e4213655e8aa922e57c94d2db919481afd687948/GSEGS284030.dxf" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/ff67dfb7aa573f0412f746b8e4213655e8aa922e57c94d2db919481afd687948/GSEGS284030.dxf 200 2ms 0b
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/ff67dfb7aa573f0412f746b8e4213655e8aa922e57c94d2db919481afd687948/GSEGS284030.dxf 200 2ms 8.94kb
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/ff67dfb7aa573f0412f746b8e4213655e8aa922e57c94d2db919481afd687948/GSEGS284030.dxf 200 2ms 8.94kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 76 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 13ms 28.19kb
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/ba3fe1521d7a722e5276264eaffb833c2ef9a5cd974a44ac2a7877685dc1a804/GSEGS284031.dxf 404 1ms -
+[32minfo[39m: Stored object "ad34c7c1d2b34b179bfb76cf9a10c9ce/ba3fe1521d7a722e5276264eaffb833c2ef9a5cd974a44ac2a7877685dc1a804/GSEGS284031.dxf" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/ba3fe1521d7a722e5276264eaffb833c2ef9a5cd974a44ac2a7877685dc1a804/GSEGS284031.dxf 200 3ms 0b
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/ba3fe1521d7a722e5276264eaffb833c2ef9a5cd974a44ac2a7877685dc1a804/GSEGS284031.dxf 200 2ms 10.3kb
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/ba3fe1521d7a722e5276264eaffb833c2ef9a5cd974a44ac2a7877685dc1a804/GSEGS284031.dxf 200 2ms 10.3kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 77 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 9ms 28.56kb
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/ae99f47fea745b0f21097e48acb8d4bce3598bb956fed16de8e88b57eb84201a/GSEGS284032.dxf 404 1ms -
+[32minfo[39m: Stored object "ad34c7c1d2b34b179bfb76cf9a10c9ce/ae99f47fea745b0f21097e48acb8d4bce3598bb956fed16de8e88b57eb84201a/GSEGS284032.dxf" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/ae99f47fea745b0f21097e48acb8d4bce3598bb956fed16de8e88b57eb84201a/GSEGS284032.dxf 200 2ms 0b
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/ae99f47fea745b0f21097e48acb8d4bce3598bb956fed16de8e88b57eb84201a/GSEGS284032.dxf 200 1ms 10.64kb
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/ae99f47fea745b0f21097e48acb8d4bce3598bb956fed16de8e88b57eb84201a/GSEGS284032.dxf 200 1ms 10.64kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 78 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 9ms 28.93kb
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/a9d0bacf94f9e39d42c05d9a01648a22cdabe31080b3a92440f0c287737f7eb9/GSEGS284033.dxf 404 0ms -
+[32minfo[39m: Stored object "ad34c7c1d2b34b179bfb76cf9a10c9ce/a9d0bacf94f9e39d42c05d9a01648a22cdabe31080b3a92440f0c287737f7eb9/GSEGS284033.dxf" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/a9d0bacf94f9e39d42c05d9a01648a22cdabe31080b3a92440f0c287737f7eb9/GSEGS284033.dxf 200 2ms 0b
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/a9d0bacf94f9e39d42c05d9a01648a22cdabe31080b3a92440f0c287737f7eb9/GSEGS284033.dxf 200 1ms 10.64kb
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/a9d0bacf94f9e39d42c05d9a01648a22cdabe31080b3a92440f0c287737f7eb9/GSEGS284033.dxf 200 1ms 10.64kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 79 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 9ms 29.3kb
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/5316f5f414d291beba463894b7311ad1c5fe485573a82e402c2f8f791bdad9bf/GSEGS284034.dxf 404 1ms -
+[32minfo[39m: Stored object "ad34c7c1d2b34b179bfb76cf9a10c9ce/5316f5f414d291beba463894b7311ad1c5fe485573a82e402c2f8f791bdad9bf/GSEGS284034.dxf" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/5316f5f414d291beba463894b7311ad1c5fe485573a82e402c2f8f791bdad9bf/GSEGS284034.dxf 200 2ms 0b
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/5316f5f414d291beba463894b7311ad1c5fe485573a82e402c2f8f791bdad9bf/GSEGS284034.dxf 200 1ms 10.32kb
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/5316f5f414d291beba463894b7311ad1c5fe485573a82e402c2f8f791bdad9bf/GSEGS284034.dxf 200 1ms 10.32kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 80 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 9ms 29.67kb
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/dc1d7ac49b5da516d34472d508c47c75d8ad3c50e8d4bf76072adb2ff70a3abe/GSEGS284035.dxf 404 1ms -
+[32minfo[39m: Stored object "ad34c7c1d2b34b179bfb76cf9a10c9ce/dc1d7ac49b5da516d34472d508c47c75d8ad3c50e8d4bf76072adb2ff70a3abe/GSEGS284035.dxf" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/dc1d7ac49b5da516d34472d508c47c75d8ad3c50e8d4bf76072adb2ff70a3abe/GSEGS284035.dxf 200 2ms 0b
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/dc1d7ac49b5da516d34472d508c47c75d8ad3c50e8d4bf76072adb2ff70a3abe/GSEGS284035.dxf 200 2ms 10.62kb
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/dc1d7ac49b5da516d34472d508c47c75d8ad3c50e8d4bf76072adb2ff70a3abe/GSEGS284035.dxf 200 2ms 10.62kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 81 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 12ms 30.04kb
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/649388c4aa31ad1dda1623481b8d60b9182826d88239d61fe1aa243eb6af30a0/GSEGS284036.dxf 404 0ms -
+[32minfo[39m: Stored object "ad34c7c1d2b34b179bfb76cf9a10c9ce/649388c4aa31ad1dda1623481b8d60b9182826d88239d61fe1aa243eb6af30a0/GSEGS284036.dxf" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/649388c4aa31ad1dda1623481b8d60b9182826d88239d61fe1aa243eb6af30a0/GSEGS284036.dxf 200 2ms 0b
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/649388c4aa31ad1dda1623481b8d60b9182826d88239d61fe1aa243eb6af30a0/GSEGS284036.dxf 200 1ms 11.08kb
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/649388c4aa31ad1dda1623481b8d60b9182826d88239d61fe1aa243eb6af30a0/GSEGS284036.dxf 200 1ms 11.08kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 82 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 10ms 30.41kb
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/0e1f5d3fca4d8803c3f2dadcc25e1a711cd399cf6fd0981584e09dc834d21953/GSEGS28404.dxf 404 1ms -
+[32minfo[39m: Stored object "ad34c7c1d2b34b179bfb76cf9a10c9ce/0e1f5d3fca4d8803c3f2dadcc25e1a711cd399cf6fd0981584e09dc834d21953/GSEGS28404.dxf" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/0e1f5d3fca4d8803c3f2dadcc25e1a711cd399cf6fd0981584e09dc834d21953/GSEGS28404.dxf 200 1ms 0b
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/0e1f5d3fca4d8803c3f2dadcc25e1a711cd399cf6fd0981584e09dc834d21953/GSEGS28404.dxf 200 0ms 12.13kb
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/0e1f5d3fca4d8803c3f2dadcc25e1a711cd399cf6fd0981584e09dc834d21953/GSEGS28404.dxf 200 1ms 12.13kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 83 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 10ms 30.78kb
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/451b68142775f4d6e0cd1eb0031cf5d0f79c8bcfb696d4d21785af0fc2af9a4f/GSEGS28405.dxf 404 0ms -
+[32minfo[39m: Stored object "ad34c7c1d2b34b179bfb76cf9a10c9ce/451b68142775f4d6e0cd1eb0031cf5d0f79c8bcfb696d4d21785af0fc2af9a4f/GSEGS28405.dxf" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/451b68142775f4d6e0cd1eb0031cf5d0f79c8bcfb696d4d21785af0fc2af9a4f/GSEGS28405.dxf 200 1ms 0b
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/451b68142775f4d6e0cd1eb0031cf5d0f79c8bcfb696d4d21785af0fc2af9a4f/GSEGS28405.dxf 200 1ms 17.61kb
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/451b68142775f4d6e0cd1eb0031cf5d0f79c8bcfb696d4d21785af0fc2af9a4f/GSEGS28405.dxf 200 1ms 17.61kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 84 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 9ms 31.15kb
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/3ea5d188e0597bfad9f0d3d4a9f0631ecec33b63a89a02c27c5c7efcdfe0aaf8/GSEGS28406.dxf 404 0ms -
+[32minfo[39m: Stored object "ad34c7c1d2b34b179bfb76cf9a10c9ce/3ea5d188e0597bfad9f0d3d4a9f0631ecec33b63a89a02c27c5c7efcdfe0aaf8/GSEGS28406.dxf" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/3ea5d188e0597bfad9f0d3d4a9f0631ecec33b63a89a02c27c5c7efcdfe0aaf8/GSEGS28406.dxf 200 2ms 0b
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/3ea5d188e0597bfad9f0d3d4a9f0631ecec33b63a89a02c27c5c7efcdfe0aaf8/GSEGS28406.dxf 200 1ms 13.62kb
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/3ea5d188e0597bfad9f0d3d4a9f0631ecec33b63a89a02c27c5c7efcdfe0aaf8/GSEGS28406.dxf 200 2ms 13.62kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 85 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 21ms 31.52kb
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/dfd88d7fa5fa65de8073babc8b5721e19a5ffe0d2d394203efdce75bad18bf44/GSEGS28407.dxf 404 0ms -
+[32minfo[39m: Stored object "ad34c7c1d2b34b179bfb76cf9a10c9ce/dfd88d7fa5fa65de8073babc8b5721e19a5ffe0d2d394203efdce75bad18bf44/GSEGS28407.dxf" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/dfd88d7fa5fa65de8073babc8b5721e19a5ffe0d2d394203efdce75bad18bf44/GSEGS28407.dxf 200 3ms 0b
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/dfd88d7fa5fa65de8073babc8b5721e19a5ffe0d2d394203efdce75bad18bf44/GSEGS28407.dxf 200 2ms 15.43kb
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/dfd88d7fa5fa65de8073babc8b5721e19a5ffe0d2d394203efdce75bad18bf44/GSEGS28407.dxf 200 2ms 15.43kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 86 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 11ms 31.89kb
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/5f137dd357658c1082dcfbe001abe5972a3c191088588f85bea7d03b9835117e/GSEGS28408.dxf 404 1ms -
+[32minfo[39m: Stored object "ad34c7c1d2b34b179bfb76cf9a10c9ce/5f137dd357658c1082dcfbe001abe5972a3c191088588f85bea7d03b9835117e/GSEGS28408.dxf" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/5f137dd357658c1082dcfbe001abe5972a3c191088588f85bea7d03b9835117e/GSEGS28408.dxf 200 2ms 0b
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/5f137dd357658c1082dcfbe001abe5972a3c191088588f85bea7d03b9835117e/GSEGS28408.dxf 200 1ms 12.32kb
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/5f137dd357658c1082dcfbe001abe5972a3c191088588f85bea7d03b9835117e/GSEGS28408.dxf 200 1ms 12.32kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 87 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 10ms 32.26kb
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/ea3b2a6f228babfa04bcf42200e5a8822e46acfea6d2d171d37d0439ac3dff42/GSEGS28409.dxf 404 1ms -
+[32minfo[39m: Stored object "ad34c7c1d2b34b179bfb76cf9a10c9ce/ea3b2a6f228babfa04bcf42200e5a8822e46acfea6d2d171d37d0439ac3dff42/GSEGS28409.dxf" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/ea3b2a6f228babfa04bcf42200e5a8822e46acfea6d2d171d37d0439ac3dff42/GSEGS28409.dxf 200 3ms 0b
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/ea3b2a6f228babfa04bcf42200e5a8822e46acfea6d2d171d37d0439ac3dff42/GSEGS28409.dxf 200 1ms 7.68kb
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/ea3b2a6f228babfa04bcf42200e5a8822e46acfea6d2d171d37d0439ac3dff42/GSEGS28409.dxf 200 1ms 7.68kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 88 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 12ms 32.63kb
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/fd48a3892589ce3f93da6b197bbb2160d32b6da039f201718018e45754932e9f/GSEGS2841.dxf 404 1ms -
+[32minfo[39m: Stored object "ad34c7c1d2b34b179bfb76cf9a10c9ce/fd48a3892589ce3f93da6b197bbb2160d32b6da039f201718018e45754932e9f/GSEGS2841.dxf" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/fd48a3892589ce3f93da6b197bbb2160d32b6da039f201718018e45754932e9f/GSEGS2841.dxf 200 2ms 0b
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/fd48a3892589ce3f93da6b197bbb2160d32b6da039f201718018e45754932e9f/GSEGS2841.dxf 200 2ms 8.04kb
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/fd48a3892589ce3f93da6b197bbb2160d32b6da039f201718018e45754932e9f/GSEGS2841.dxf 200 1ms 8.04kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 89 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 15ms 32.99kb
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/df5d46cbd7b19ac47e7499fdfa33ad8e529e1a3f5c32a8389b6324194a4a24d2/GSEGS28410.dxf 404 1ms -
+[32minfo[39m: Stored object "ad34c7c1d2b34b179bfb76cf9a10c9ce/df5d46cbd7b19ac47e7499fdfa33ad8e529e1a3f5c32a8389b6324194a4a24d2/GSEGS28410.dxf" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/df5d46cbd7b19ac47e7499fdfa33ad8e529e1a3f5c32a8389b6324194a4a24d2/GSEGS28410.dxf 200 2ms 0b
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/df5d46cbd7b19ac47e7499fdfa33ad8e529e1a3f5c32a8389b6324194a4a24d2/GSEGS28410.dxf 200 1ms 8.5kb
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/df5d46cbd7b19ac47e7499fdfa33ad8e529e1a3f5c32a8389b6324194a4a24d2/GSEGS28410.dxf 200 2ms 8.5kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 90 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 17ms 33.36kb
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/377b409f11a38e37994833e775c6f976c8954896906ee2b138aeef7f2a499525/GSEGS28411.dxf 404 1ms -
+[32minfo[39m: Stored object "ad34c7c1d2b34b179bfb76cf9a10c9ce/377b409f11a38e37994833e775c6f976c8954896906ee2b138aeef7f2a499525/GSEGS28411.dxf" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/377b409f11a38e37994833e775c6f976c8954896906ee2b138aeef7f2a499525/GSEGS28411.dxf 200 2ms 0b
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/377b409f11a38e37994833e775c6f976c8954896906ee2b138aeef7f2a499525/GSEGS28411.dxf 200 1ms 8.33kb
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/377b409f11a38e37994833e775c6f976c8954896906ee2b138aeef7f2a499525/GSEGS28411.dxf 200 2ms 8.33kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 91 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 21ms 33.73kb
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/71dbce7ac801bb44b57cc7272dee56b0929c72c1119fc870ced28c89bd3abdf7/MARINE%20BLUE%20250328AJA.PLX 404 0ms -
+[32minfo[39m: Stored object "ad34c7c1d2b34b179bfb76cf9a10c9ce/71dbce7ac801bb44b57cc7272dee56b0929c72c1119fc870ced28c89bd3abdf7/MARINE BLUE 250328AJA.PLX" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/71dbce7ac801bb44b57cc7272dee56b0929c72c1119fc870ced28c89bd3abdf7/MARINE%20BLUE%20250328AJA.PLX 200 2ms 0b
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/71dbce7ac801bb44b57cc7272dee56b0929c72c1119fc870ced28c89bd3abdf7/MARINE%20BLUE%20250328AJA.PLX 200 2ms 58.56kb
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/71dbce7ac801bb44b57cc7272dee56b0929c72c1119fc870ced28c89bd3abdf7/MARINE%20BLUE%20250328AJA.PLX 200 1ms 58.56kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 92 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 12ms 34.11kb
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/ab6060ebb7ed65dfc0b7cdeaad40975b04b6558247a632ce8d5c1fa2bc36ce42/NEWPORT%20645%20-%20250328AJA.PLX 404 1ms -
+[32minfo[39m: Stored object "ad34c7c1d2b34b179bfb76cf9a10c9ce/ab6060ebb7ed65dfc0b7cdeaad40975b04b6558247a632ce8d5c1fa2bc36ce42/NEWPORT 645 - 250328AJA.PLX" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/ab6060ebb7ed65dfc0b7cdeaad40975b04b6558247a632ce8d5c1fa2bc36ce42/NEWPORT%20645%20-%20250328AJA.PLX 200 1ms 0b
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/ab6060ebb7ed65dfc0b7cdeaad40975b04b6558247a632ce8d5c1fa2bc36ce42/NEWPORT%20645%20-%20250328AJA.PLX 200 1ms 14.17kb
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/ab6060ebb7ed65dfc0b7cdeaad40975b04b6558247a632ce8d5c1fa2bc36ce42/NEWPORT%20645%20-%20250328AJA.PLX 200 2ms 14.17kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 93 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 12ms 34.49kb
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/3e028a1ed8ed4074fa797863bad615549dffe644cd19ec2c3177285202d8ba25/NEWPORT%20645%20CALES.PLX 404 1ms -
+[32minfo[39m: Stored object "ad34c7c1d2b34b179bfb76cf9a10c9ce/3e028a1ed8ed4074fa797863bad615549dffe644cd19ec2c3177285202d8ba25/NEWPORT 645 CALES.PLX" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/3e028a1ed8ed4074fa797863bad615549dffe644cd19ec2c3177285202d8ba25/NEWPORT%20645%20CALES.PLX 200 2ms 0b
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/3e028a1ed8ed4074fa797863bad615549dffe644cd19ec2c3177285202d8ba25/NEWPORT%20645%20CALES.PLX 200 1ms 48.74kb
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/3e028a1ed8ed4074fa797863bad615549dffe644cd19ec2c3177285202d8ba25/NEWPORT%20645%20CALES.PLX 200 1ms 48.74kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 94 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 20ms 34.87kb
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/5d17d709f9e42352b386823cd8c64030c4a9cb27e19fd5551ef374ac1fba58aa/NEWPORT%20645%20RENFORT.PLX 404 0ms -
+[32minfo[39m: Stored object "ad34c7c1d2b34b179bfb76cf9a10c9ce/5d17d709f9e42352b386823cd8c64030c4a9cb27e19fd5551ef374ac1fba58aa/NEWPORT 645 RENFORT.PLX" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/5d17d709f9e42352b386823cd8c64030c4a9cb27e19fd5551ef374ac1fba58aa/NEWPORT%20645%20RENFORT.PLX 200 2ms 0b
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/5d17d709f9e42352b386823cd8c64030c4a9cb27e19fd5551ef374ac1fba58aa/NEWPORT%20645%20RENFORT.PLX 200 2ms 39.76kb
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/5d17d709f9e42352b386823cd8c64030c4a9cb27e19fd5551ef374ac1fba58aa/NEWPORT%20645%20RENFORT.PLX 200 1ms 39.76kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 95 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 11ms 35.25kb
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/3c1e3efdea694d4001f6085911ba63f462e897a98590f15072a997b1690dcfc0/Thumbs.db 404 1ms -
+[32minfo[39m: Stored object "ad34c7c1d2b34b179bfb76cf9a10c9ce/3c1e3efdea694d4001f6085911ba63f462e897a98590f15072a997b1690dcfc0/Thumbs.db" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/3c1e3efdea694d4001f6085911ba63f462e897a98590f15072a997b1690dcfc0/Thumbs.db 200 2ms 0b
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/3c1e3efdea694d4001f6085911ba63f462e897a98590f15072a997b1690dcfc0/Thumbs.db 200 1ms 14kb
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/3c1e3efdea694d4001f6085911ba63f462e897a98590f15072a997b1690dcfc0/Thumbs.db 200 1ms 14kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 96 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 12ms 35.61kb
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/c15a5c46e2bfa70018a8dee41aeb62846fc265f9e95ddcae1e055bcc21cb1882/technical-report.pdf 404 0ms -
+[32minfo[39m: Stored object "ad34c7c1d2b34b179bfb76cf9a10c9ce/c15a5c46e2bfa70018a8dee41aeb62846fc265f9e95ddcae1e055bcc21cb1882/technical-report.pdf" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/c15a5c46e2bfa70018a8dee41aeb62846fc265f9e95ddcae1e055bcc21cb1882/technical-report.pdf 200 1ms 0b
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/c15a5c46e2bfa70018a8dee41aeb62846fc265f9e95ddcae1e055bcc21cb1882/technical-report.pdf 200 1ms 2.06kb
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/c15a5c46e2bfa70018a8dee41aeb62846fc265f9e95ddcae1e055bcc21cb1882/technical-report.pdf 200 2ms 2.06kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 97 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 12ms 35.98kb
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/8e54d8699c75d83da79d17f0f5044df9ae400a17f1c270b3519390a744a1f93a/technical-report.docx 404 1ms -
+[32minfo[39m: Stored object "ad34c7c1d2b34b179bfb76cf9a10c9ce/8e54d8699c75d83da79d17f0f5044df9ae400a17f1c270b3519390a744a1f93a/technical-report.docx" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/8e54d8699c75d83da79d17f0f5044df9ae400a17f1c270b3519390a744a1f93a/technical-report.docx 200 2ms 0b
+[32minfo[39m: tech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/8e54d8699c75d83da79d17f0f5044df9ae400a17f1c270b3519390a744a1f93a/technical-report.docx 200 1ms 36.11kb
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/8e54d8699c75d83da79d17f0f5044df9ae400a17f1c270b3519390a744a1f93a/technical-report.docx 200 2ms 36.11kb
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/4aa6934b83ce836e1d1c2ebaa45acea41b72fa27bf63f9c977fc6b9a285badaf/Fiche%20GENOIS%20GIBSEA%20284%20250328%20AJA.pdf 200 2ms 18.34kb
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/4aa6934b83ce836e1d1c2ebaa45acea41b72fa27bf63f9c977fc6b9a285badaf/Fiche%20GENOIS%20GIBSEA%20284%20250328%20AJA.pdf 200 3ms 18.34kb
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/4aa6934b83ce836e1d1c2ebaa45acea41b72fa27bf63f9c977fc6b9a285badaf/Fiche%20GENOIS%20GIBSEA%20284%20250328%20AJA.pdf 200 1ms 18.34kb
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/4aa6934b83ce836e1d1c2ebaa45acea41b72fa27bf63f9c977fc6b9a285badaf/Fiche%20GENOIS%20GIBSEA%20284%20250328%20AJA.pdf 200 2ms 18.34kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 98 objects for bucket "seamtech-documents"
+[32minfo[39m: ech-documents?versioning 200 24ms 36.36kb
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/4aa6934b83ce836e1d1c2ebaa45acea41b72fa27bf63f9c977fc6b9a285badaf/Fiche%20GENOIS%20GIBSEA%20284%20250328%20AJA.pdf 200 4ms 18.34kb
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/4aa6934b83ce836e1d1c2ebaa45acea41b72fa27bf63f9c977fc6b9a285badaf/Fiche%20GENOIS%20GIBSEA%20284%20250328%20AJA.pdf 200 3ms 18.34kb
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/4aa6934b83ce836e1d1c2ebaa45acea41b72fa27bf63f9c977fc6b9a285badaf/Fiche%20GENOIS%20GIBSEA%20284%20250328%20AJA.pdf 200 2ms 18.34kb
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/4aa6934b83ce836e1d1c2ebaa45acea41b72fa27bf63f9c977fc6b9a285badaf/Fiche%20GENOIS%20GIBSEA%20284%20250328%20AJA.pdf 200 2ms 18.34kb
+[33mwarn[39m: the bucket "seamtech-documents" already exists
+stockage objet (substitut MinIO, s3rver) à l'écoute sur http://127.0.0.1:9000
+[32minfo[39m: Fetched 2 buckets
+[32minfo[39m: 7ms 424b
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 98 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 21ms 36.36kb
+[32minfo[39m: Fetched bucket "seamtech-backups" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 1 objects for bucket "seamtech-backups"
+[32minfo[39m: tech-backups 200 3ms 544b
+[31merror[39m: Error creating bucket. Bucket "seamtech-documents" already exists
+[32minfo[39m: ech-documents?versioning 409 2ms -
+[31merror[39m: Error creating bucket. Bucket "seamtech-backups" already exists
+[32minfo[39m: ech-backups?versioning 409 1ms -
+[32minfo[39m: Stored object "_provisionnement/temoin.txt" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/_provisionnement/temoin.txt 200 5ms 0b
+[32minfo[39m: ech-documents/_provisionnement/temoin.txt 200 3ms 25b
+[32minfo[39m: Fetched bucket "seamtech-backups" with options {"encodingType":"url","maxKeys":1,"fetchOwner":false}
+[32minfo[39m: Found 1 objects for bucket "seamtech-backups"
+[32minfo[39m: ech-backups?list-type=2&max-keys=1&encoding-type=url 200 2ms 477b
+[32minfo[39m: ech-documents?list-type=2&encoding-type=url 403 1ms -
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"encodingType":"url","maxKeys":1000,"fetchOwner":false}
+[32minfo[39m: Found 98 objects for bucket "seamtech-documents"
+[32minfo[39m: ech-documents?list-type=2&encoding-type=url 200 16ms 29.76kb
+[32minfo[39m: Stored object "_provisionnement/app-dans-sauvegarde.txt" in bucket "seamtech-backups" successfully
+[32minfo[39m: ech-backups/_provisionnement/app-dans-sauvegarde.txt 200 2ms 0b
+[32minfo[39m: Stored object "_recette/sonde.txt" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/_recette/sonde.txt 200 2ms 0b
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 98 objects for bucket "seamtech-documents"
+[32minfo[39m: ech-documents?versioning 200 26ms 36.36kb
+[33mwarn[39m: the bucket "seamtech-documents" already exists
+stockage objet (substitut MinIO, s3rver) à l'écoute sur http://127.0.0.1:9000
+[32minfo[39m: Fetched 2 buckets
+[32minfo[39m: 6ms 424b
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 98 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 31ms 36.36kb
+[32minfo[39m: Fetched bucket "seamtech-backups" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 1 objects for bucket "seamtech-backups"
+[32minfo[39m: tech-backups 200 2ms 544b
+[31merror[39m: Error creating bucket. Bucket "seamtech-documents" already exists
+[32minfo[39m: ech-documents?versioning 409 2ms -
+[31merror[39m: Error creating bucket. Bucket "seamtech-backups" already exists
+[32minfo[39m: ech-backups?versioning 409 1ms -
+[32minfo[39m: Stored object "_provisionnement/temoin.txt" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/_provisionnement/temoin.txt 200 5ms 0b
+[32minfo[39m: ech-documents/_provisionnement/temoin.txt 200 3ms 25b
+[32minfo[39m: Fetched bucket "seamtech-backups" with options {"encodingType":"url","maxKeys":1,"fetchOwner":false}
+[32minfo[39m: Found 1 objects for bucket "seamtech-backups"
+[32minfo[39m: ech-backups?list-type=2&max-keys=1&encoding-type=url 200 2ms 477b
+[32minfo[39m: ech-documents?list-type=2&encoding-type=url 403 1ms -
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"encodingType":"url","maxKeys":1000,"fetchOwner":false}
+[32minfo[39m: Found 98 objects for bucket "seamtech-documents"
+[32minfo[39m: ech-documents?list-type=2&encoding-type=url 200 21ms 29.76kb
+[32minfo[39m: Stored object "_provisionnement/app-dans-sauvegarde.txt" in bucket "seamtech-backups" successfully
+[32minfo[39m: ech-backups/_provisionnement/app-dans-sauvegarde.txt 200 6ms 0b
+[32minfo[39m: Stored object "_recette/sonde.txt" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/_recette/sonde.txt 200 5ms 0b
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 98 objects for bucket "seamtech-documents"
+[32minfo[39m: ech-documents?versioning 200 35ms 36.36kb
+[33mwarn[39m: the bucket "seamtech-documents" already exists
+stockage objet (substitut MinIO, s3rver) à l'écoute sur http://127.0.0.1:9000
+[32minfo[39m: Fetched 2 buckets
+[32minfo[39m: 7ms 424b
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 98 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 43ms 36.36kb
+[32minfo[39m: Fetched bucket "seamtech-backups" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 1 objects for bucket "seamtech-backups"
+[32minfo[39m: tech-backups 200 5ms 544b
+[31merror[39m: Error creating bucket. Bucket "seamtech-documents" already exists
+[32minfo[39m: ech-documents?versioning 409 3ms -
+[31merror[39m: Error creating bucket. Bucket "seamtech-backups" already exists
+[32minfo[39m: ech-backups?versioning 409 2ms -
+[32minfo[39m: Stored object "_provisionnement/temoin.txt" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/_provisionnement/temoin.txt 200 7ms 0b
+[32minfo[39m: ech-documents/_provisionnement/temoin.txt 200 3ms 25b
+[32minfo[39m: Fetched bucket "seamtech-backups" with options {"encodingType":"url","maxKeys":1,"fetchOwner":false}
+[32minfo[39m: Found 1 objects for bucket "seamtech-backups"
+[32minfo[39m: ech-backups?list-type=2&max-keys=1&encoding-type=url 200 2ms 477b
+[32minfo[39m: ech-documents?list-type=2&encoding-type=url 403 1ms -
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"encodingType":"url","maxKeys":1000,"fetchOwner":false}
+[32minfo[39m: Found 98 objects for bucket "seamtech-documents"
+[32minfo[39m: ech-documents?list-type=2&encoding-type=url 200 14ms 29.76kb
+[32minfo[39m: Stored object "_provisionnement/app-dans-sauvegarde.txt" in bucket "seamtech-backups" successfully
+[32minfo[39m: ech-backups/_provisionnement/app-dans-sauvegarde.txt 200 2ms 0b
+[32minfo[39m: Stored object "_recette/sonde.txt" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/_recette/sonde.txt 200 3ms 0b
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 98 objects for bucket "seamtech-documents"
+[32minfo[39m: ech-documents?versioning 200 25ms 36.36kb
+[33mwarn[39m: the bucket "seamtech-documents" already exists
+stockage objet (substitut MinIO, s3rver) à l'écoute sur http://127.0.0.1:9000
+[32minfo[39m: Fetched 2 buckets
+[32minfo[39m: 7ms 424b
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 98 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 27ms 36.36kb
+[32minfo[39m: Fetched bucket "seamtech-backups" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 1 objects for bucket "seamtech-backups"
+[32minfo[39m: tech-backups 200 2ms 544b
+[31merror[39m: Error creating bucket. Bucket "seamtech-documents" already exists
+[32minfo[39m: ech-documents?versioning 409 2ms -
+[31merror[39m: Error creating bucket. Bucket "seamtech-backups" already exists
+[32minfo[39m: ech-backups?versioning 409 1ms -
+[32minfo[39m: Stored object "_provisionnement/temoin.txt" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/_provisionnement/temoin.txt 200 7ms 0b
+[32minfo[39m: ech-documents/_provisionnement/temoin.txt 200 5ms 25b
+[32minfo[39m: Fetched bucket "seamtech-backups" with options {"encodingType":"url","maxKeys":1,"fetchOwner":false}
+[32minfo[39m: Found 1 objects for bucket "seamtech-backups"
+[32minfo[39m: ech-backups?list-type=2&max-keys=1&encoding-type=url 200 3ms 477b
+[32minfo[39m: ech-documents?list-type=2&encoding-type=url 403 1ms -
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"encodingType":"url","maxKeys":1000,"fetchOwner":false}
+[32minfo[39m: Found 98 objects for bucket "seamtech-documents"
+[32minfo[39m: ech-documents?list-type=2&encoding-type=url 200 18ms 29.76kb
+[32minfo[39m: Stored object "_provisionnement/app-dans-sauvegarde.txt" in bucket "seamtech-backups" successfully
+[32minfo[39m: ech-backups/_provisionnement/app-dans-sauvegarde.txt 200 3ms 0b
+[32minfo[39m: Stored object "_recette/sonde.txt" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/_recette/sonde.txt 200 3ms 0b
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 98 objects for bucket "seamtech-documents"
+[32minfo[39m: ech-documents?versioning 200 23ms 36.36kb
+[33mwarn[39m: the bucket "seamtech-documents" already exists
+stockage objet (substitut MinIO, s3rver) à l'écoute sur http://127.0.0.1:9000
+[32minfo[39m: Fetched 2 buckets
+[32minfo[39m: 8ms 424b
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 98 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 26ms 36.36kb
+[32minfo[39m: Fetched bucket "seamtech-backups" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 1 objects for bucket "seamtech-backups"
+[32minfo[39m: tech-backups 200 3ms 544b
+[31merror[39m: Error creating bucket. Bucket "seamtech-documents" already exists
+[32minfo[39m: ech-documents?versioning 409 2ms -
+[31merror[39m: Error creating bucket. Bucket "seamtech-backups" already exists
+[32minfo[39m: ech-backups?versioning 409 1ms -
+[32minfo[39m: Stored object "_provisionnement/temoin.txt" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/_provisionnement/temoin.txt 200 6ms 0b
+[32minfo[39m: ech-documents/_provisionnement/temoin.txt 200 3ms 25b
+[32minfo[39m: Fetched bucket "seamtech-backups" with options {"encodingType":"url","maxKeys":1,"fetchOwner":false}
+[32minfo[39m: Found 1 objects for bucket "seamtech-backups"
+[32minfo[39m: ech-backups?list-type=2&max-keys=1&encoding-type=url 200 2ms 477b
+[32minfo[39m: ech-documents?list-type=2&encoding-type=url 403 1ms -
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"encodingType":"url","maxKeys":1000,"fetchOwner":false}
+[32minfo[39m: Found 98 objects for bucket "seamtech-documents"
+[32minfo[39m: ech-documents?list-type=2&encoding-type=url 200 24ms 29.76kb
+[32minfo[39m: Stored object "_provisionnement/app-dans-sauvegarde.txt" in bucket "seamtech-backups" successfully
+[32minfo[39m: ech-backups/_provisionnement/app-dans-sauvegarde.txt 200 3ms 0b
+[32minfo[39m: Stored object "_recette/sonde.txt" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/_recette/sonde.txt 200 4ms 0b
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 98 objects for bucket "seamtech-documents"
+[32minfo[39m: ech-documents?versioning 200 23ms 36.36kb
+[33mwarn[39m: the bucket "seamtech-documents" already exists
+stockage objet (substitut MinIO, s3rver) à l'écoute sur http://127.0.0.1:9000
+[32minfo[39m: Fetched 2 buckets
+[32minfo[39m: 7ms 424b
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 98 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 22ms 36.36kb
+[32minfo[39m: Fetched bucket "seamtech-backups" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 1 objects for bucket "seamtech-backups"
+[32minfo[39m: tech-backups 200 3ms 544b
+[31merror[39m: Error creating bucket. Bucket "seamtech-documents" already exists
+[32minfo[39m: ech-documents?versioning 409 2ms -
+[31merror[39m: Error creating bucket. Bucket "seamtech-backups" already exists
+[32minfo[39m: ech-backups?versioning 409 1ms -
+[32minfo[39m: Stored object "_provisionnement/temoin.txt" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/_provisionnement/temoin.txt 200 6ms 0b
+[32minfo[39m: ech-documents/_provisionnement/temoin.txt 200 3ms 25b
+[32minfo[39m: Fetched bucket "seamtech-backups" with options {"encodingType":"url","maxKeys":1,"fetchOwner":false}
+[32minfo[39m: Found 1 objects for bucket "seamtech-backups"
+[32minfo[39m: ech-backups?list-type=2&max-keys=1&encoding-type=url 200 2ms 477b
+[32minfo[39m: ech-documents?list-type=2&encoding-type=url 403 1ms -
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"encodingType":"url","maxKeys":1000,"fetchOwner":false}
+[32minfo[39m: Found 98 objects for bucket "seamtech-documents"
+[32minfo[39m: ech-documents?list-type=2&encoding-type=url 200 24ms 29.76kb
+[32minfo[39m: Stored object "_provisionnement/app-dans-sauvegarde.txt" in bucket "seamtech-backups" successfully
+[32minfo[39m: ech-backups/_provisionnement/app-dans-sauvegarde.txt 200 3ms 0b
+[32minfo[39m: Stored object "_recette/sonde.txt" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/_recette/sonde.txt 200 3ms 0b
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 98 objects for bucket "seamtech-documents"
+[32minfo[39m: ech-documents?versioning 200 25ms 36.36kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 98 objects for bucket "seamtech-documents"
+[32minfo[39m: ech-documents?versioning 200 17ms 36.36kb

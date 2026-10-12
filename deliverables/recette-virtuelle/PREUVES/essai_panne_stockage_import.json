@@ -1,0 +1,92 @@
+{
+  "rapport": {
+    "avant": {
+      "objets_stockage": 153,
+      "pieces_catalogue": 936,
+      "documents_health": 936
+    },
+    "dossier_importe": "/home/user/rv/data/recette-lot/affaires/panne-stockage-a04-180330/BAVARIA 34 - 250323JA",
+    "reponse_import": {
+      "http": 201,
+      "statut": "traite",
+      "fiche": "250323 JA",
+      "pieces": 50,
+      "raison": "remplacee",
+      "id_lot": 49
+    },
+    "pendant": {
+      "objets_stockage": 153,
+      "pieces_catalogue": 987,
+      "documents_health": 987
+    },
+    "pieces_servies_pendant_la_panne": [
+      [
+        295,
+        200,
+        34224
+      ],
+      [
+        296,
+        200,
+        37838
+      ],
+      [
+        684,
+        200,
+        639
+      ],
+      [
+        877,
+        200,
+        639
+      ],
+      [
+        928,
+        200,
+        639
+      ]
+    ],
+    "apres": {
+      "objets_stockage": 153,
+      "pieces_catalogue": 987,
+      "documents_health": 987
+    }
+  },
+  "resultats": [
+    {
+      "id": "A04.0-stockage-identifie",
+      "resultat": "PASS",
+      "detail": "serveur de stockage pid=7348 (port 9000)"
+    },
+    {
+      "id": "A04.1-panne-effective",
+      "resultat": "PASS",
+      "detail": "écriture vers le stockage : refusée (EndpointConnectionError)"
+    },
+    {
+      "id": "A04.2-import-annonce-traite-pendant-la-panne",
+      "resultat": "PASS",
+      "detail": "statut annoncé=traite fiche=250323 JA pièces=50 → catalogue 936→987, documents /health=987"
+    },
+    {
+      "id": "A04.3-aucune-ecriture-dans-le-stockage-pendant-la-panne",
+      "resultat": "PASS",
+      "detail": "objets dans le stockage : 153 avant → 153 pendant (le serveur est arrêté : toute écriture devrait échouer)"
+    },
+    {
+      "id": "A04.4-documents-servis-malgre-la-panne",
+      "resultat": "PASS",
+      "detail": "téléchargements par id pendant la panne : [(295, 200, 34224), (296, 200, 37838), (684, 200, 639), (877, 200, 639), (928, 200, 639)]"
+    },
+    {
+      "id": "A04.5-stockage-remonte",
+      "resultat": "PASS",
+      "detail": "écriture de nouveau acceptée ; objets=153 (avant la panne : 153, pendant : 153)"
+    },
+    {
+      "id": "A04.6-objets-manquants-rattrapes-apres-la-panne",
+      "resultat": "FAIL",
+      "detail": "objets rattrapés après reprise : 0 (aucun rattrapage = les documents déposés pendant la panne n'ont pas d'objet dans le stockage)"
+    }
+  ]
+}

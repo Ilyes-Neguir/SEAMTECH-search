@@ -1,0 +1,120 @@
+{
+  "resultats": [
+    {
+      "id": "P8.1-panne-stockage-detectee",
+      "resultat": "PASS",
+      "detail": "/health pendant la panne du stockage : s3_configured=True storage_backend=s3 — écriture sujet témoin : refusée (EndpointConnectionError)"
+    },
+    {
+      "id": "P8.1b-import-pendant-panne-non-faussement-reussi",
+      "resultat": "PASS",
+      "detail": "statut annoncé = traite ; fiche = 250216 AJA ; pièces=45 (catalogue 1557 → 1603) ; raison = conservee_validee"
+    },
+    {
+      "id": "P8.1c-reprise-apres-retour-du-stockage",
+      "resultat": "PASS",
+      "detail": "stockage réécouté=True ; écriture réelle rétablie=True ; provisionnement rc=0 ; documents=1603"
+    },
+    {
+      "id": "P8.1d-import-reussi-apres-reprise",
+      "resultat": "PASS",
+      "detail": "HTTP 201 statut=traite fiche=0901-MM pièces=0"
+    },
+    {
+      "id": "P8.2-lot-remis-a-la-file-durable",
+      "resultat": "PASS",
+      "detail": "HTTP 202 lot=92 traitement=file_durable durability=durable (worker arrêté AVANT la mise en file)"
+    },
+    {
+      "id": "P8.2b-lot-non-perdu-sans-worker",
+      "resultat": "PASS",
+      "detail": "lot 92 : statut=en_cours traités=0/3 → le lot reste à faire (rien n'est annoncé terminé à tort)"
+    },
+    {
+      "id": "P8.2c-reprise-du-lot-apres-redemarrage-du-worker",
+      "resultat": "PASS",
+      "detail": "statut=termine 3/3 échecs=0 — reprise observée 5 s après le redémarrage (claim TTL 300 s)"
+    },
+    {
+      "id": "P8.3-api-signale-redis-absent",
+      "resultat": "PASS",
+      "detail": "/health pendant l'arrêt de Redis : redis_connected=False"
+    },
+    {
+      "id": "P8.3b-api-reconnectee-a-redis",
+      "resultat": "PASS",
+      "detail": "/health après redémarrage : redis_connected=True"
+    },
+    {
+      "id": "P8.3c-lot-intact-apres-redemarrage-redis",
+      "resultat": "PASS",
+      "detail": "lot 93 avant=termine(1) après=termine(1)"
+    },
+    {
+      "id": "P8.3d-donnees-toujours-utilisables",
+      "resultat": "PASS",
+      "detail": "/recherche?q=AQUILA → HTTP 200 nb=1"
+    },
+    {
+      "id": "P8.4-entree-file-perdue-visible-et-rejouable",
+      "resultat": "PASS",
+      "detail": "entrée de file supprimée (clé seamtech:queue:imports, 0 supprimée) ; lot 94 statut=termine traités=1/1 restants=0"
+    },
+    {
+      "id": "P8.4c-callback-tardif-sans-double-traitement",
+      "resultat": "PASS",
+      "detail": "fiche neuve TARDIF-183941 mise en file worker ARRÊTÉ, puis revendication morte simulée (TTL 10 s, posée=True) ; après redémarrage : lot 96 repris=True statut=termine lignes=['traite'] ; fiche TARDIF-183941 relue : HTTP 200 statut=a_valider ; fiches 12→13 ; occurrences en recherche=1 ; listes Redis après coup : file=0, en_cours=0, revendication=0 ; rejeu du dossier → deja_traite"
+    },
+    {
+      "id": "P8.4b-reenfilage-aboutit",
+      "resultat": "PASS",
+      "detail": "lot réenfilé 95 : statut=termine 1/1 — dossier traite (deja_traite (lot #94))"
+    },
+    {
+      "id": "P8.5-pile-arretee",
+      "resultat": "PASS",
+      "detail": "API et worker arrêtés (SIGTERM)"
+    },
+    {
+      "id": "P8.5b-pile-redemarree-sans-perte",
+      "resultat": "PASS",
+      "detail": "API revenue=True ; fiches avant=13 après=13 ; base=postgresql redis=True stockage=True"
+    },
+    {
+      "id": "P8.5c-aucun-doublon-apres-redemarrage",
+      "resultat": "PASS",
+      "detail": "13 résultats, 13 codes distincts"
+    },
+    {
+      "id": "P8.6-espace-insuffisant-refus-explicite",
+      "resultat": "PASS",
+      "detail": "HTTP 507 — {\"brut\": \"{\\\"detail\\\":\\\"Insufficient disk space on /home/user/rv/data: 17688571904 bytes free, required minimum is 23413157888 bytes.\\\"}\"} (libre=17.69 Go, seuil exigé=23.06 Go) ; disque NON rempli (aucun fichier de remplissage créé)"
+    },
+    {
+      "id": "P9.1-sauvegarde-base-creee",
+      "resultat": "PASS",
+      "detail": "pg_dump rc=0 taille=413693 octets "
+    },
+    {
+      "id": "P9.1b-restauration-2e-cible-verifiee",
+      "resultat": "PASS",
+      "detail": "base restauration_184046 : pg_restore rc=0, fiches restaurées=13 = fiches d'origine=13"
+    },
+    {
+      "id": "P9.1c-volet-stockage-objet-present",
+      "resultat": "PASS",
+      "detail": "99 objets dans le stockage de recette (les pièces sont hors base : la sauvegarde de référence les copie par `mc mirror`/aws s3 sync — voir ANOMALIES.md)"
+    },
+    {
+      "id": "P9.1d-echec-de-restauration-signale",
+      "resultat": "PASS",
+      "detail": "pg_restore sur un dump corrompu : code=1 message=« pg_restore: error: unsupported version (-114.-80) in file header »"
+    },
+    {
+      "id": "P9.1e-base-de-recette-intacte-apres-injection",
+      "resultat": "PASS",
+      "detail": "fiches avant=13 après l'injection=13"
+    }
+  ],
+  "echecs": 0
+}

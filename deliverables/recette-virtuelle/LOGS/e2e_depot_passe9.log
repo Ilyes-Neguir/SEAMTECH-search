@@ -1,0 +1,80 @@
+=== semis de la base e2e jetable (AVANT les serveurs) ===
+Seed e2e : fichier run d'un autre run (passe8-1 ≠ passe9-1) — nouvelle base.
+Seed e2e : fiche 0902-MM porte son propre PDF (fiche-technique.pdf) — l'e2e A09 a deux documents distincts à distinguer.
+Seed e2e : fiche BIS-7792 (id 4) partage le PDF de 7792-SO — scan propositif : 1 lien(s) créé(s), 0 déjà présent(s), 2 fiche(s) concernée(s).
+Seed e2e : compte nominatif « e2e-operateur » (operateur) créé.
+Seed e2e : compte nominatif « e2e-admin » (administrateur) créé.
+Seed e2e : base e2e_dda8ff35 créée et semée (3 dossiers) pour le run passe9-1.
+base e2e : postgresql://***@127.0.0.1:5433/e2e_dda8ff35
+=== serveurs de la suite (API 8123 + frontend 3123) ===
+santé API e2e : {'base': None, 'storage_backend': 's3', 'redis_connected': True, 'nb_fiches': None}
+=== exécution de la suite (navigateur réel) ===
+2026-10-12 18:04:38,199 WARNING Rebuild EN PLACE : chunk.id_document, fiche_piece_jointe.id_document référence(nt) documents — la table est conservée avec ses identifiants pour ne pas casser les pièces jointes des fiches (E-40) ; tout est ré-extrait et les documents disparus non référencés sont supprimés.
+2026-10-12 18:04:38,205 INFO Rebuild demandé — mode « en_place »
+2026-10-12 18:04:38,764 INFO Indexing complete. scanned=11 updated=11 removed=1 elapsed_seconds=0.56 items_per_second=19.7
+
+Running 60 tests using 1 worker
+
+  ✓   1 [chromium-reel] › e2e/auth.spec.ts:44:9 › Authentication gate (audit issue #5) › GET search rejects an anonymous caller with 401 (45ms)
+  ✓   2 [chromium-reel] › e2e/auth.spec.ts:44:9 › Authentication gate (audit issue #5) › GET pieces catalogue rejects an anonymous caller with 401 (12ms)
+  ✓   3 [chromium-reel] › e2e/auth.spec.ts:44:9 › Authentication gate (audit issue #5) › GET piece preview by id rejects an anonymous caller with 401 (18ms)
+  ✓   4 [chromium-reel] › e2e/auth.spec.ts:44:9 › Authentication gate (audit issue #5) › GET piece download by id rejects an anonymous caller with 401 (15ms)
+  ✓   5 [chromium-reel] › e2e/auth.spec.ts:44:9 › Authentication gate (audit issue #5) › GET retired preview rejects an anonymous caller with 401 (12ms)
+  ✓   6 [chromium-reel] › e2e/auth.spec.ts:44:9 › Authentication gate (audit issue #5) › POST retired open rejects an anonymous caller with 401 (18ms)
+  ✓   7 [chromium-reel] › e2e/auth.spec.ts:44:9 › Authentication gate (audit issue #5) › POST imports create rejects an anonymous caller with 401 (10ms)
+  ✓   8 [chromium-reel] › e2e/auth.spec.ts:44:9 › Authentication gate (audit issue #5) › POST imports scan rejects an anonymous caller with 401 (10ms)
+  ✓   9 [chromium-reel] › e2e/auth.spec.ts:44:9 › Authentication gate (audit issue #5) › POST imports confirm rejects an anonymous caller with 401 (14ms)
+  ✓  10 [chromium-reel] › e2e/auth.spec.ts:44:9 › Authentication gate (audit issue #5) › POST imports upload rejects an anonymous caller with 401 (10ms)
+  ✓  11 [chromium-reel] › e2e/auth.spec.ts:44:9 › Authentication gate (audit issue #5) › GET import by id rejects an anonymous caller with 401 (9ms)
+  ✓  12 [chromium-reel] › e2e/auth.spec.ts:44:9 › Authentication gate (audit issue #5) › PATCH import correction rejects an anonymous caller with 401 (8ms)
+  ✓  13 [chromium-reel] › e2e/auth.spec.ts:44:9 › Authentication gate (audit issue #5) › POST import cancel rejects an anonymous caller with 401 (9ms)
+  ✓  14 [chromium-reel] › e2e/auth.spec.ts:44:9 › Authentication gate (audit issue #5) › POST import retry rejects an anonymous caller with 401 (8ms)
+  ✓  15 [chromium-reel] › e2e/auth.spec.ts:44:9 › Authentication gate (audit issue #5) › GET import artifact rejects an anonymous caller with 401 (8ms)
+  ✓  16 [chromium-reel] › e2e/auth.spec.ts:61:7 › Authentication gate (audit issue #5) › anonymous /api/search never returns archive results (7ms)
+  ✓  17 [chromium-reel] › e2e/auth.spec.ts:74:7 › Authentication gate (audit issue #5) › wrong password is rejected and sets no session cookie (15ms)
+  ✓  18 [chromium-reel] › e2e/auth.spec.ts:93:7 › Authentication gate (audit issue #5) › correct password sets an httpOnly session cookie and unlocks the API (42ms)
+  ✓  19 [chromium-reel] › e2e/auth.spec.ts:120:7 › Authentication gate (audit issue #5) › a tampered session token is rejected (14ms)
+  ✓  20 [chromium-reel] › e2e/auth.spec.ts:152:7 › Authentication gate (audit issue #5) › logout clears the session (15ms)
+  ✓  21 [chromium-reel] › e2e/auth.spec.ts:172:7 › Authentication gate (audit issue #5) › /api/health stays a usable liveness probe but leaks no archive counts (10ms)
+  ✓  22 [chromium-reel] › e2e/auth.spec.ts:190:7 › Authentication gate (audit issue #5) › /api/health reports archive counts once signed in (20ms)
+  ✓  23 [chromium-reel] › e2e/auth.spec.ts:217:7 › Comptes nominatifs (Lot L.2) › la connexion nominative renvoie l'identité et pose le cookie httpOnly (81ms)
+  ✓  24 [chromium-reel] › e2e/auth.spec.ts:247:7 › Comptes nominatifs (Lot L.2) › un mot de passe erroné est refusé et ne pose aucun cookie (60ms)
+  ✓  25 [chromium-reel] › e2e/auth.spec.ts:266:7 › Comptes nominatifs (Lot L.2) › un opérateur reçoit 403 sur la gestion des comptes, un administrateur 200 (145ms)
+  ✓  26 [chromium-reel] › e2e/auth.spec.ts:298:7 › Comptes nominatifs (Lot L.2) › après déconnexion, le même cookie ne vaut plus rien (85ms)
+  ✓  27 [chromium-reel] › e2e/concurrence.spec.ts:204:7 › concurrence entre postes (sessions indépendantes) › deux postes, même fiche : A enregistre, B est arrêté et se reprend (2.6s)
+  ✓  28 [chromium-reel] › e2e/concurrence.spec.ts:279:7 › concurrence entre postes (sessions indépendantes) › un poste importe pendant qu'un autre cherche et télécharge (1.8s)
+  ✓  29 [chromium-reel] › e2e/concurrence.spec.ts:324:7 › concurrence entre postes (sessions indépendantes) › session expirée en pleine correction : aucun faux succès, état inchangé (1.6s)
+  ✓  30 [chromium-reel] › e2e/concurrence.spec.ts:355:7 › concurrence entre postes (sessions indépendantes) › un opérateur est refusé par le BACKEND sur une action d'administrateur (1.1s)
+  ✓  31 [chromium-reel] › e2e/concurrence.spec.ts:417:7 › concurrence entre postes (sessions indépendantes) › décision liée à la révision revue : A ne peut pas approuver ce que B vient de changer (2.1s)
+  ✓  32 [chromium-reel] › e2e/concurrence.spec.ts:485:7 › concurrence entre postes (sessions indépendantes) › révision non lue : correction et décision bloquées, et le backend refuse aussi (3.8s)
+  ✓  33 [chromium-reel] › e2e/concurrence.spec.ts:584:7 › concurrence entre postes (sessions indépendantes) › réponse en retard : la fiche affichée n'est jamais écrasée par la précédente (4.1s)
+  ✓  34 [chromium-reel] › e2e/doublons.spec.ts:30:7 › bandeau de doublon avant validation › le doublon exact est visible AVANT toute validation (852ms)
+  ✓  35 [chromium-reel] › e2e/doublons.spec.ts:57:7 › bandeau de doublon avant validation › aucune commande de fusion n'est proposée à l'opérateur (681ms)
+  -  36 [chromium-reel] › e2e/hors-ligne.spec.ts:59:7 › hors ligne — pile réelle, sortie réseau bloquée › import, recherche, aperçu, téléchargements et validation sans réseau externe
+  ✓  37 [chromium-reel] › e2e/import.spec.ts:8:7 › Import Workflow › should scan folder and confirm import of technical PDF (794ms)
+  ✓  38 [chromium-reel] › e2e/import.spec.ts:37:7 › Import Workflow › should execute quick import with async job progress (1.4s)
+  ✓  39 [chromium-reel] › e2e/nouveau-suivi.spec.ts:51:7 › Suivi de lot après dépôt (constat A08) › le relais /api/lots/{id} existe : il relaie, il n'invente pas un 404 local (423ms)
+  ✓  40 [chromium-reel] › e2e/nouveau-suivi.spec.ts:76:7 › Suivi de lot après dépôt (constat A08) › dépôt → le suivi s'affiche, et un lot abandonné ne réécrit pas l'écran (3.8s)
+  ✓  41 [chromium-reel] › e2e/parcours-fichiers.spec.ts:13:7 › Parcours fichiers dans les vues métier › Recherche dimensionnelle → fiche et fichiers (788ms)
+  ✓  42 [chromium-reel] › e2e/parcours-fichiers.spec.ts:25:7 › Parcours fichiers dans les vues métier › Dossiers → détail → téléchargement par identifiant (711ms)
+  ✓  43 [chromium-reel] › e2e/parcours-fichiers.spec.ts:37:7 › Parcours fichiers dans les vues métier › Validation → PDF source servi par id et rendu PDF.js (805ms)
+  ✓  44 [chromium-reel] › e2e/parcours-fichiers.spec.ts:49:7 › Parcours fichiers dans les vues métier › /fiches/[code] ouvre directement le PDF et l’historique (741ms)
+  ✓  45 [chromium-reel] › e2e/parcours-fichiers.spec.ts:59:5 › Fichiers affiche un PDF et les actions restent sur les routes par id (782ms)
+  ✓  46 [chromium-reel] › e2e/recherche-badge.spec.ts:17:7 › Recherche — badge « Non vérifiée » et archive de confiance › une fiche a_valider sort par défaut, badgée, et disparaît avec « Validées uniquement » (965ms)
+  ✓  47 [chromium-reel] › e2e/recherche-dimension.spec.ts:21:7 › Recherche par dimension (Phase 1) › « 6,60 » retrouve la vraie fiche, et « 660 cm » converge vers la même valeur (747ms)
+  ✓  48 [chromium-reel] › e2e/recherche-dimension.spec.ts:38:7 › Recherche par dimension (Phase 1) › « SLU 6,60 » oriente vers la cote nommée (559ms)
+  ✓  49 [chromium-reel] › e2e/recherche-url.spec.ts:5:7 › Recherche URL partageable (Lot J) › question+filtres+tri+page dans URL, restaurés au chargement, copier lien (4.0s)
+  ✓  50 [chromium-reel] › e2e/recherche-url.spec.ts:67:7 › Recherche URL partageable (Lot J) › facette dimension présente avec cotes explicites (507ms)
+  ✓  51 [chromium-reel] › e2e/recherche-url.spec.ts:89:7 › Recherche URL partageable (Lot J) › pagination et tri dans URL (476ms)
+  ✓  52 [chromium-reel] › e2e/search.spec.ts:5:7 › Search Workflow › should search for documents and display results with preview (682ms)
+  ✓  53 [chromium-reel] › e2e/validation-pieces.spec.ts:26:7 › Validation — pièces jointes et fiche active (constat A09) › une réponse /pieces en retard ne pose pas le PDF d'une autre fiche (4.5s)
+  ✓  54 [chromium-reel] › e2e/validation.spec.ts:44:7 › validation de bout en bout › la file respecte le tri croissant confiance puis code (682ms)
+  ✓  55 [chromium-reel] › e2e/validation.spec.ts:60:7 › validation de bout en bout › navigation clavier J/K et aide ? sans souris (806ms)
+  ✓  56 [chromium-reel] › e2e/validation.spec.ts:85:7 › validation de bout en bout › le focus clavier d'un champ surligne sa zone et sa page PDF (975ms)
+  ✓  57 [chromium-reel] › e2e/validation.spec.ts:99:7 › validation de bout en bout › V confirme les anomalies; R + Entrée rejette et affiche le chrono local (611ms)
+  ✓  58 [chromium-reel] › e2e/validation.spec.ts:153:7 › validation de bout en bout › le seed dépose trois dossiers et le rejet exige un motif (885ms)
+  ✓  59 [chromium-reel] › e2e/validation.spec.ts:170:7 › validation de bout en bout › la vraie fiche 7792-SO : parcours machine complet (< 2 min) (1.3s)
+  ✓  60 [chromium-reel] › e2e/validation.spec.ts:238:7 › validation de bout en bout › validation en lot du reste : verrou de calibration puis acquittement explicite (1.1s)
+
+  1 skipped
+  59 passed (50.3s)

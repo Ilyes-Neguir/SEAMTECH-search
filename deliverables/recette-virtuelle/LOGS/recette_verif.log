@@ -1,0 +1,24 @@
+INFO|gabarits_actifs|4
+CONTROLE|compte-recette|PASS|compte « recette » déjà présent ("409: Un compte « recette » existe déjà.") ; connexion HTTP 200 {"ok": true, "id_utilisateur": 1, "identifiant": "recette", "nom": "Recette Atelier", "role": "operateur", "doit_changer
+CONTROLE|depot-archives|PASS|7 affaire(s) : ['AQUILA 250216AJA', 'ATTALIA 250121JA', 'BAVARIA 32 - 250604JA', 'BAVARIA 34 - 250323JA', 'DAMIEN 4 - 250821JA', 'DEHLER 39 - 250329AJA', 'GIB SEA 284 - 250328AJA'] — lot HTTP 202 id=1 {"id_lot": 1, "job_id": "lot-1", "statut": "en_cours", "traitement": "file_durable", "durability": "durable", "suivi": "
+INFO|nb_affaires|7
+CONTROLE|suivi-lots|PASS|lot #1 statut=termine 7/7 échecs=0 lignes=['1:traite', '2:traite', '3:traite', '4:traite']… progression observée : ['0.0%(0/7)', '100.0%(7/7)']…
+CONTROLE|fiches-a-valider|PASS|HTTP 200 a_valider=7 (toutes badgées=True) + valides=0 = cohorte 7 (attendu ≥ 7) codes=['250121 JA', '250216 AJA', '250323 JA', '250328 AJA', '250329 AJA', '250604 JA', '250821 JA']
+CONTROLE|validation-fiche|PASS|fiche 250121 JA (révision relue 1) : validation HTTP 200 {"code": "250121 JA", "statut": "valide", "revision": 2, "divergences_acceptees" ; statut=valide HTTP 200 contient 250121 JA = True
+INFO|fiche_validee|250121 JA
+CONTROLE|recherche-texte|PASS|terme réel « ATTALIA » (fiche 250121 JA) : HTTP 200 nb=1 top10=['250121 JA']
+CONTROLE|recherche-dimension|PASS|« 6,60 » → dimension_active={"valeur": 6.6, "unite": null, "cote": null, "tolerance_pct": 0.5, "texte_restant": ""} OK=True ; « SLU 6,60 » → cote=slu_m OK=True ; valeur réelle « 9,53 » (slu_m) → nb=1 top10=['250216 AJA']
+CONTROLE|filtres-facettes|PASS|facettes présentes=True ({"type_voile": [{"valeur": "GSE", "effectif": 3}, {"valeur": "Gennaker", "effect) ; 6 fiche(s) a_valider exclues de inclure_a_valider=false=True
+CONTROLE|suggestions|PASS|préfixe réel « ATT » : HTTP 200 1 suggestion(s) [{"nature": "bateau", "valeur": "ATTALIA"}]
+CONTROLE|pdf-presigne|PASS|import GIB SEA 284 - 250328AJA : object_key présent, 200 (servi par l'API) → 18781 octets ; SHA-256 identique à la source = True
+CONTROLE|zone-surlignee|PASS|fiche 250121 JA : HTTP 200 22 champ(s), 22 avec page+zone (ex: {"champ": "fiche.titre", "rang": null, "table_cible": "fiche", "colonne_cible": "titre", "valeur_brute": "FICHE DE FABRI)
+CONTROLE|rejeu-idempotent|PASS|rejeu du lot : HTTP 202 ; fiches avant=7 après=7 (inchangé = True) ; lignes du 2e lot = ['traite', 'traite', 'traite', 'traite', 'traite', 'traite', 'traite']
+CONTROLE|parcours-recherche|PASS|recherche dimensionnelle « 6,60 » : HTTP 200, dimension={"valeur": 6.6, "unite": null, "cote": null, "tolerance_pct": 0.5, "texte_restant": ""}
+CONTROLE|parcours-dossiers|PASS|liste paginée des dossiers : HTTP 200, total=7
+CONTROLE|parcours-validation|PASS|file de validation : HTTP 200, 6 fiche(s)
+CONTROLE|parcours-fiche|PASS|fiche 250121 JA detail/champs/pièces/historique : {'detail': True, 'champs': True, 'pieces': True, 'historique': True}
+CONTROLE|pieces-par-id|PASS|fiche 250121 JA id=47 : HEAD=200 GET range=206 (bytes 0-0/18670) download=200 n=18670 MIME=application/pdf en-têtes sans chemins/S3=True
+CONTROLE|pdf-7-fiches-integrite|PASS|7/7 PDF téléchargés par id et comparés à leur SHA-256 source; GIB SEA 250328 AJA inclus=True; écarts=[]
+CONTROLE|fichiers-catalogue|PASS|GET /pieces HTTP 200: total réel=427, page=200, has_more=True, chemins/clé S3 absents=True
+INFO|fiche_pour_restauration|250121 JA
+INFO|controles_echoues|aucun

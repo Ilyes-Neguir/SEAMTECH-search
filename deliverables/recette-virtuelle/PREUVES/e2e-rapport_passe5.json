@@ -1,0 +1,2483 @@
+{
+  "config": {
+    "argv": [
+      "/usr/local/bin/node",
+      "/home/user/SEAMTECH-search/frontend/node_modules/@playwright/test/cli.js",
+      "test",
+      "--config",
+      "/home/user/rv/harnais/e2e.config.cjs"
+    ],
+    "configFile": "/home/user/rv/harnais/e2e.config.cjs",
+    "rootDir": "/home/user/SEAMTECH-search/frontend/e2e",
+    "failOnFlakyTests": false,
+    "forbidOnly": false,
+    "fullyParallel": false,
+    "globalSetup": "/home/user/SEAMTECH-search/frontend/e2e/global-setup.ts",
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "projects": [
+      {
+        "outputDir": "/home/user/SEAMTECH-search/frontend/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "chromium-reel",
+        "name": "chromium-reel",
+        "testDir": "/home/user/SEAMTECH-search/frontend/e2e",
+        "testIgnore": [],
+        "testMatch": [
+          "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+        ],
+        "timeout": 30000
+      }
+    ],
+    "quiet": false,
+    "reporter": [
+      [
+        "list",
+        null
+      ],
+      [
+        "json",
+        {
+          "outputFile": "/home/user/rv/preuves/e2e-rapport.json"
+        }
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "shard": null,
+    "tags": [],
+    "updateSnapshots": "missing",
+    "updateSourceMethod": "patch",
+    "version": "1.63.0",
+    "workers": 1,
+    "webServer": null
+  },
+  "suites": [
+    {
+      "title": "auth.spec.ts",
+      "file": "auth.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "Authentication gate (audit issue #5)",
+          "file": "auth.spec.ts",
+          "line": 42,
+          "column": 6,
+          "specs": [
+            {
+              "title": "GET search rejects an anonymous caller with 401",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-reel",
+                  "projectName": "chromium-reel",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 48,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-12T17:48:07.254Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "d748ac400d08b85935ef-03082f34037151c816d5",
+              "file": "auth.spec.ts",
+              "line": 44,
+              "column": 9
+            },
+            {
+              "title": "GET pieces catalogue rejects an anonymous caller with 401",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-reel",
+                  "projectName": "chromium-reel",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 14,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-12T17:48:07.337Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "d748ac400d08b85935ef-ae330b8cc8c3505f2135",
+              "file": "auth.spec.ts",
+              "line": 44,
+              "column": 9
+            },
+            {
+              "title": "GET piece preview by id rejects an anonymous caller with 401",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-reel",
+                  "projectName": "chromium-reel",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 21,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-12T17:48:07.362Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "d748ac400d08b85935ef-95b35d796c6bb8e0084c",
+              "file": "auth.spec.ts",
+              "line": 44,
+              "column": 9
+            },
+            {
+              "title": "GET piece download by id rejects an anonymous caller with 401",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-reel",
+                  "projectName": "chromium-reel",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 15,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-12T17:48:07.393Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "d748ac400d08b85935ef-0dad2a1882cec533c995",
+              "file": "auth.spec.ts",
+              "line": 44,
+              "column": 9
+            },
+            {
+              "title": "GET retired preview rejects an anonymous caller with 401",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-reel",
+                  "projectName": "chromium-reel",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 11,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-12T17:48:07.416Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "d748ac400d08b85935ef-29230c72847776dcd940",
+              "file": "auth.spec.ts",
+              "line": 44,
+              "column": 9
+            },
+            {
+              "title": "POST retired open rejects an anonymous caller with 401",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-reel",
+                  "projectName": "chromium-reel",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 16,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-12T17:48:07.443Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "d748ac400d08b85935ef-0df2974022132e93e60d",
+              "file": "auth.spec.ts",
+              "line": 44,
+              "column": 9
+            },
+            {
+              "title": "POST imports create rejects an anonymous caller with 401",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-reel",
+                  "projectName": "chromium-reel",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 11,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-12T17:48:07.465Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "d748ac400d08b85935ef-a47cefd2820ece498d2d",
+              "file": "auth.spec.ts",
+              "line": 44,
+              "column": 9
+            },
+            {
+              "title": "POST imports scan rejects an anonymous caller with 401",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-reel",
+                  "projectName": "chromium-reel",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 11,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-12T17:48:07.482Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "d748ac400d08b85935ef-27ee0da84bfbf2f1c1c9",
+              "file": "auth.spec.ts",
+              "line": 44,
+              "column": 9
+            },
+            {
+              "title": "POST imports confirm rejects an anonymous caller with 401",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-reel",
+                  "projectName": "chromium-reel",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 15,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-12T17:48:07.504Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "d748ac400d08b85935ef-d0b020f972420296b10d",
+              "file": "auth.spec.ts",
+              "line": 44,
+              "column": 9
+            },
+            {
+              "title": "POST imports upload rejects an anonymous caller with 401",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-reel",
+                  "projectName": "chromium-reel",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 13,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-12T17:48:07.525Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "d748ac400d08b85935ef-ae02af58e20262707bd6",
+              "file": "auth.spec.ts",
+              "line": 44,
+              "column": 9
+            },
+            {
+              "title": "GET import by id rejects an anonymous caller with 401",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-reel",
+                  "projectName": "chromium-reel",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 13,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-12T17:48:07.548Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "d748ac400d08b85935ef-9f426eb0d9a8d67a9b22",
+              "file": "auth.spec.ts",
+              "line": 44,
+              "column": 9
+            },
+            {
+              "title": "PATCH import correction rejects an anonymous caller with 401",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-reel",
+                  "projectName": "chromium-reel",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 11,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-12T17:48:07.569Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "d748ac400d08b85935ef-92f0121bc78d68933338",
+              "file": "auth.spec.ts",
+              "line": 44,
+              "column": 9
+            },
+            {
+              "title": "POST import cancel rejects an anonymous caller with 401",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-reel",
+                  "projectName": "chromium-reel",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 8,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-12T17:48:07.587Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "d748ac400d08b85935ef-113c3bae49f25fdb0040",
+              "file": "auth.spec.ts",
+              "line": 44,
+              "column": 9
+            },
+            {
+              "title": "POST import retry rejects an anonymous caller with 401",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-reel",
+                  "projectName": "chromium-reel",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 10,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-12T17:48:07.601Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "d748ac400d08b85935ef-bf044403ff51bf873779",
+              "file": "auth.spec.ts",
+              "line": 44,
+              "column": 9
+            },
+            {
+              "title": "GET import artifact rejects an anonymous caller with 401",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-reel",
+                  "projectName": "chromium-reel",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 10,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-12T17:48:07.620Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "d748ac400d08b85935ef-fa1b055db1103659bcf7",
+              "file": "auth.spec.ts",
+              "line": 44,
+              "column": 9
+            },
+            {
+              "title": "anonymous /api/search never returns archive results",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-reel",
+                  "projectName": "chromium-reel",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 9,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-12T17:48:07.640Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "d748ac400d08b85935ef-4a2ab5ee2116f417a3e2",
+              "file": "auth.spec.ts",
+              "line": 61,
+              "column": 7
+            },
+            {
+              "title": "wrong password is rejected and sets no session cookie",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-reel",
+                  "projectName": "chromium-reel",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 17,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-12T17:48:07.658Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "d748ac400d08b85935ef-8c5e013e10fb3031ffe4",
+              "file": "auth.spec.ts",
+              "line": 74,
+              "column": 7
+            },
+            {
+              "title": "correct password sets an httpOnly session cookie and unlocks the API",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-reel",
+                  "projectName": "chromium-reel",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 39,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-12T17:48:07.681Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "d748ac400d08b85935ef-b60ae31ee7d7bc56828b",
+              "file": "auth.spec.ts",
+              "line": 93,
+              "column": 7
+            },
+            {
+              "title": "a tampered session token is rejected",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-reel",
+                  "projectName": "chromium-reel",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 14,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-12T17:48:07.726Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "d748ac400d08b85935ef-2cd7922c455177830e9a",
+              "file": "auth.spec.ts",
+              "line": 120,
+              "column": 7
+            },
+            {
+              "title": "logout clears the session",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-reel",
+                  "projectName": "chromium-reel",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 17,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-12T17:48:07.746Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "d748ac400d08b85935ef-5c8a4d5c9281fc935639",
+              "file": "auth.spec.ts",
+              "line": 152,
+              "column": 7
+            },
+            {
+              "title": "/api/health stays a usable liveness probe but leaks no archive counts",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-reel",
+                  "projectName": "chromium-reel",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 12,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-12T17:48:07.769Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "d748ac400d08b85935ef-f90aac8239ddf28292a3",
+              "file": "auth.spec.ts",
+              "line": 172,
+              "column": 7
+            },
+            {
+              "title": "/api/health reports archive counts once signed in",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-reel",
+                  "projectName": "chromium-reel",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 22,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-12T17:48:07.789Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "d748ac400d08b85935ef-1c0fd7bfded75cd59d59",
+              "file": "auth.spec.ts",
+              "line": 190,
+              "column": 7
+            }
+          ]
+        },
+        {
+          "title": "Comptes nominatifs (Lot L.2)",
+          "file": "auth.spec.ts",
+          "line": 214,
+          "column": 6,
+          "specs": [
+            {
+              "title": "la connexion nominative renvoie l'identité et pose le cookie httpOnly",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-reel",
+                  "projectName": "chromium-reel",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 84,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-12T17:48:07.817Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "d748ac400d08b85935ef-31872bf286c6f3842b80",
+              "file": "auth.spec.ts",
+              "line": 217,
+              "column": 7
+            },
+            {
+              "title": "un mot de passe erroné est refusé et ne pose aucun cookie",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-reel",
+                  "projectName": "chromium-reel",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 71,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-12T17:48:07.908Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "d748ac400d08b85935ef-360f89b0f5dd666e29ca",
+              "file": "auth.spec.ts",
+              "line": 247,
+              "column": 7
+            },
+            {
+              "title": "un opérateur reçoit 403 sur la gestion des comptes, un administrateur 200",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-reel",
+                  "projectName": "chromium-reel",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 150,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-12T17:48:07.985Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "d748ac400d08b85935ef-3b0b2086da3530cce2c8",
+              "file": "auth.spec.ts",
+              "line": 266,
+              "column": 7
+            },
+            {
+              "title": "après déconnexion, le même cookie ne vaut plus rien",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-reel",
+                  "projectName": "chromium-reel",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 85,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-12T17:48:08.142Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "d748ac400d08b85935ef-559a73cc7a2f332292af",
+              "file": "auth.spec.ts",
+              "line": 298,
+              "column": 7
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "concurrence.spec.ts",
+      "file": "concurrence.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "concurrence entre postes (sessions indépendantes)",
+          "file": "concurrence.spec.ts",
+          "line": 45,
+          "column": 6,
+          "specs": [
+            {
+              "title": "deux postes, même fiche : A enregistre, B est arrêté et se reprend",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-reel",
+                  "projectName": "chromium-reel",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 2614,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-12T17:48:08.243Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "f888834473a618dbcd70-0c29899bfe3970473790",
+              "file": "concurrence.spec.ts",
+              "line": 204,
+              "column": 7
+            },
+            {
+              "title": "un poste importe pendant qu'un autre cherche et télécharge",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-reel",
+                  "projectName": "chromium-reel",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 1836,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-12T17:48:10.904Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "f888834473a618dbcd70-e0417acfa3ad04b0af82",
+              "file": "concurrence.spec.ts",
+              "line": 279,
+              "column": 7
+            },
+            {
+              "title": "session expirée en pleine correction : aucun faux succès, état inchangé",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-reel",
+                  "projectName": "chromium-reel",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 1752,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-12T17:48:12.747Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "f888834473a618dbcd70-30f09db70859c90b160e",
+              "file": "concurrence.spec.ts",
+              "line": 324,
+              "column": 7
+            },
+            {
+              "title": "un opérateur est refusé par le BACKEND sur une action d'administrateur",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-reel",
+                  "projectName": "chromium-reel",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 1037,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-12T17:48:14.506Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "f888834473a618dbcd70-0085e5b68034b911ae1e",
+              "file": "concurrence.spec.ts",
+              "line": 355,
+              "column": 7
+            },
+            {
+              "title": "décision liée à la révision revue : A ne peut pas approuver ce que B vient de changer",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-reel",
+                  "projectName": "chromium-reel",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 2389,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-12T17:48:15.550Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "f888834473a618dbcd70-f60079e175f90c2cc0f0",
+              "file": "concurrence.spec.ts",
+              "line": 417,
+              "column": 7
+            },
+            {
+              "title": "révision non lue : correction et décision bloquées, et le backend refuse aussi",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 90000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-reel",
+                  "projectName": "chromium-reel",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 3812,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-12T17:48:17.947Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "f888834473a618dbcd70-ec8e07f9d09b76c506f0",
+              "file": "concurrence.spec.ts",
+              "line": 485,
+              "column": 7
+            },
+            {
+              "title": "réponse en retard : la fiche affichée n'est jamais écrasée par la précédente",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-reel",
+                  "projectName": "chromium-reel",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 4100,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-12T17:48:21.770Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "f888834473a618dbcd70-3f7091991576d0d92cf6",
+              "file": "concurrence.spec.ts",
+              "line": 584,
+              "column": 7
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "doublons.spec.ts",
+      "file": "doublons.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "bandeau de doublon avant validation",
+          "file": "doublons.spec.ts",
+          "line": 27,
+          "column": 6,
+          "specs": [
+            {
+              "title": "le doublon exact est visible AVANT toute validation",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-reel",
+                  "projectName": "chromium-reel",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 777,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-12T17:48:25.885Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "df7cb6327541a42f48db-a1cde5b437fa6fc409a0",
+              "file": "doublons.spec.ts",
+              "line": 30,
+              "column": 7
+            },
+            {
+              "title": "aucune commande de fusion n'est proposée à l'opérateur",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-reel",
+                  "projectName": "chromium-reel",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 666,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-12T17:48:26.671Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "df7cb6327541a42f48db-3f68bb9bb67786547688",
+              "file": "doublons.spec.ts",
+              "line": 57,
+              "column": 7
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "hors-ligne.spec.ts",
+      "file": "hors-ligne.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "hors ligne — pile réelle, sortie réseau bloquée",
+          "file": "hors-ligne.spec.ts",
+          "line": 46,
+          "column": 6,
+          "specs": [
+            {
+              "title": "import, recherche, aperçu, téléchargements et validation sans réseau externe",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 180000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-reel",
+                  "projectName": "chromium-reel",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 2566,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-12T17:48:27.349Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fc7ab65228c8e439414b-f1aea71b13535529d0e9",
+              "file": "hors-ligne.spec.ts",
+              "line": 59,
+              "column": 7
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "import.spec.ts",
+      "file": "import.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "Import Workflow",
+          "file": "import.spec.ts",
+          "line": 5,
+          "column": 6,
+          "specs": [
+            {
+              "title": "should scan folder and confirm import of technical PDF",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-reel",
+                  "projectName": "chromium-reel",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 720,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-12T17:48:29.927Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "776bafb40ff21b6b6a7d-76c6c878d28dc15b4d9e",
+              "file": "import.spec.ts",
+              "line": 8,
+              "column": 7
+            },
+            {
+              "title": "should execute quick import with async job progress",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-reel",
+                  "projectName": "chromium-reel",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 1313,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-12T17:48:30.655Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "776bafb40ff21b6b6a7d-f83db6e570b3ad6cb825",
+              "file": "import.spec.ts",
+              "line": 37,
+              "column": 7
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "nouveau-suivi.spec.ts",
+      "file": "nouveau-suivi.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "Suivi de lot après dépôt (constat A08)",
+          "file": "nouveau-suivi.spec.ts",
+          "line": 50,
+          "column": 6,
+          "specs": [
+            {
+              "title": "le relais /api/lots/{id} existe : il relaie, il n'invente pas un 404 local",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-reel",
+                  "projectName": "chromium-reel",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 412,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-12T17:48:31.979Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "78a79d257bf72df304ed-de320adecfd6cb004963",
+              "file": "nouveau-suivi.spec.ts",
+              "line": 51,
+              "column": 7
+            },
+            {
+              "title": "dépôt → le suivi s'affiche, et un lot abandonné ne réécrit pas l'écran",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-reel",
+                  "projectName": "chromium-reel",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 3747,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-12T17:48:32.399Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "78a79d257bf72df304ed-d1e1ba3a64d398e08b38",
+              "file": "nouveau-suivi.spec.ts",
+              "line": 76,
+              "column": 7
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "parcours-fichiers.spec.ts",
+      "file": "parcours-fichiers.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [
+        {
+          "title": "Fichiers affiche un PDF et les actions restent sur les routes par id",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chromium-reel",
+              "projectName": "chromium-reel",
+              "results": [
+                {
+                  "workerIndex": 1,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 756,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-12T17:48:54.347Z",
+                  "annotations": [],
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "74c02d0f7112fe6a99a9-d8bab8d7d0851731ca87",
+          "file": "parcours-fichiers.spec.ts",
+          "line": 59,
+          "column": 5
+        }
+      ],
+      "suites": [
+        {
+          "title": "Parcours fichiers dans les vues métier",
+          "file": "parcours-fichiers.spec.ts",
+          "line": 10,
+          "column": 6,
+          "specs": [
+            {
+              "title": "Recherche dimensionnelle → fiche et fichiers",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-reel",
+                  "projectName": "chromium-reel",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 684,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-12T17:48:36.172Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "74c02d0f7112fe6a99a9-9cda86541d5b9c0c6bc5",
+              "file": "parcours-fichiers.spec.ts",
+              "line": 13,
+              "column": 7
+            },
+            {
+              "title": "Dossiers → détail → téléchargement par identifiant",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-reel",
+                  "projectName": "chromium-reel",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 667,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-12T17:48:36.862Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "74c02d0f7112fe6a99a9-4dc02cc154fe1315f7bd",
+              "file": "parcours-fichiers.spec.ts",
+              "line": 25,
+              "column": 7
+            },
+            {
+              "title": "Validation → PDF source servi par id et rendu PDF.js",
+              "ok": false,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-reel",
+                  "projectName": "chromium-reel",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "failed",
+                      "duration": 15419,
+                      "error": {
+                        "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: locator('li[data-code=\"7792-SO\"]')\nExpected: visible\nTimeout: 15000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" locator('li[data-code=\"7792-SO\"]') with timeout 15000ms\u001b[22m\n\u001b[2m  - waiting for locator('li[data-code=\"7792-SO\"]')\u001b[22m\n",
+                        "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: locator('li[data-code=\"7792-SO\"]')\nExpected: visible\nTimeout: 15000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" locator('li[data-code=\"7792-SO\"]') with timeout 15000ms\u001b[22m\n\u001b[2m  - waiting for locator('li[data-code=\"7792-SO\"]')\u001b[22m\n\n    at /home/user/SEAMTECH-search/frontend/e2e/parcours-fichiers.spec.ts:41:25",
+                        "location": {
+                          "file": "/home/user/SEAMTECH-search/frontend/e2e/parcours-fichiers.spec.ts",
+                          "column": 25,
+                          "line": 41
+                        },
+                        "snippet": "  39 |     await page.goto(\"/validation\")\n  40 |     const ligne = page.locator(`li[data-code=\"${CODE_REEL}\"]`)\n> 41 |     await expect(ligne).toBeVisible({ timeout: 15000 })\n     |                         ^\n  42 |     await ligne.getByTestId(\"code-fiche\").click()\n  43 |     await expect(page.getByTestId(\"pdf-page\")).toHaveText(/\\d+ \\/ \\d+/, { timeout: 20000 })\n  44 |     await expect(page.getByTestId(\"pdf-canvas\")).toBeVisible()"
+                      },
+                      "errors": [
+                        {
+                          "location": {
+                            "file": "/home/user/SEAMTECH-search/frontend/e2e/parcours-fichiers.spec.ts",
+                            "column": 25,
+                            "line": 41
+                          },
+                          "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: locator('li[data-code=\"7792-SO\"]')\nExpected: visible\nTimeout: 15000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" locator('li[data-code=\"7792-SO\"]') with timeout 15000ms\u001b[22m\n\u001b[2m  - waiting for locator('li[data-code=\"7792-SO\"]')\u001b[22m\n\n\n  39 |     await page.goto(\"/validation\")\n  40 |     const ligne = page.locator(`li[data-code=\"${CODE_REEL}\"]`)\n> 41 |     await expect(ligne).toBeVisible({ timeout: 15000 })\n     |                         ^\n  42 |     await ligne.getByTestId(\"code-fiche\").click()\n  43 |     await expect(page.getByTestId(\"pdf-page\")).toHaveText(/\\d+ \\/ \\d+/, { timeout: 20000 })\n  44 |     await expect(page.getByTestId(\"pdf-canvas\")).toBeVisible()\n    at /home/user/SEAMTECH-search/frontend/e2e/parcours-fichiers.spec.ts:41:25"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-12T17:48:37.540Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "error-context",
+                          "contentType": "text/markdown",
+                          "path": "/home/user/SEAMTECH-search/frontend/test-results/parcours-fichiers-Parcours-46f88-ervi-par-id-et-rendu-PDF-js-chromium-reel/error-context.md"
+                        }
+                      ],
+                      "errorLocation": {
+                        "file": "/home/user/SEAMTECH-search/frontend/e2e/parcours-fichiers.spec.ts",
+                        "column": 25,
+                        "line": 41
+                      }
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "74c02d0f7112fe6a99a9-ffc198c457cc6cd606ac",
+              "file": "parcours-fichiers.spec.ts",
+              "line": 37,
+              "column": 7
+            },
+            {
+              "title": "/fiches/[code] ouvre directement le PDF et l’historique",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-reel",
+                  "projectName": "chromium-reel",
+                  "results": [
+                    {
+                      "workerIndex": 1,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 872,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-12T17:48:53.385Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "74c02d0f7112fe6a99a9-3316671171331dda8790",
+              "file": "parcours-fichiers.spec.ts",
+              "line": 49,
+              "column": 7
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "recherche-badge.spec.ts",
+      "file": "recherche-badge.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "Recherche — badge « Non vérifiée » et archive de confiance",
+          "file": "recherche-badge.spec.ts",
+          "line": 12,
+          "column": 6,
+          "specs": [
+            {
+              "title": "une fiche a_valider sort par défaut, badgée, et disparaît avec « Validées uniquement »",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-reel",
+                  "projectName": "chromium-reel",
+                  "results": [
+                    {
+                      "workerIndex": 1,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 706,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-12T17:48:55.126Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "c19e7393e0bae437d188-0aa1bf54e0d1914c34a2",
+              "file": "recherche-badge.spec.ts",
+              "line": 17,
+              "column": 7
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "recherche-dimension.spec.ts",
+      "file": "recherche-dimension.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "Recherche par dimension (Phase 1)",
+          "file": "recherche-dimension.spec.ts",
+          "line": 16,
+          "column": 6,
+          "specs": [
+            {
+              "title": "« 6,60 » retrouve la vraie fiche, et « 660 cm » converge vers la même valeur",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-reel",
+                  "projectName": "chromium-reel",
+                  "results": [
+                    {
+                      "workerIndex": 1,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 799,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-12T17:48:55.848Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "4fd3399e66b6987962c4-0b517ce77efb98183807",
+              "file": "recherche-dimension.spec.ts",
+              "line": 21,
+              "column": 7
+            },
+            {
+              "title": "« SLU 6,60 » oriente vers la cote nommée",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-reel",
+                  "projectName": "chromium-reel",
+                  "results": [
+                    {
+                      "workerIndex": 1,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 493,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-12T17:48:56.655Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "4fd3399e66b6987962c4-8b1e8bf5b0b15d954bad",
+              "file": "recherche-dimension.spec.ts",
+              "line": 38,
+              "column": 7
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "recherche-url.spec.ts",
+      "file": "recherche-url.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "Recherche URL partageable (Lot J)",
+          "file": "recherche-url.spec.ts",
+          "line": 4,
+          "column": 6,
+          "specs": [
+            {
+              "title": "question+filtres+tri+page dans URL, restaurés au chargement, copier lien",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-reel",
+                  "projectName": "chromium-reel",
+                  "results": [
+                    {
+                      "workerIndex": 1,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 3957,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-12T17:48:57.171Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "54f55ce96aeff077de2d-b8250e9cf05033faf0a8",
+              "file": "recherche-url.spec.ts",
+              "line": 5,
+              "column": 7
+            },
+            {
+              "title": "facette dimension présente avec cotes explicites",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-reel",
+                  "projectName": "chromium-reel",
+                  "results": [
+                    {
+                      "workerIndex": 1,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 570,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-12T17:49:01.139Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "54f55ce96aeff077de2d-243ad741b7b85712cb49",
+              "file": "recherche-url.spec.ts",
+              "line": 67,
+              "column": 7
+            },
+            {
+              "title": "pagination et tri dans URL",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-reel",
+                  "projectName": "chromium-reel",
+                  "results": [
+                    {
+                      "workerIndex": 1,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 518,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-12T17:49:01.717Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "54f55ce96aeff077de2d-0c4d30eaba57e77d82a5",
+              "file": "recherche-url.spec.ts",
+              "line": 89,
+              "column": 7
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "search.spec.ts",
+      "file": "search.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "Search Workflow",
+          "file": "search.spec.ts",
+          "line": 4,
+          "column": 6,
+          "specs": [
+            {
+              "title": "should search for documents and display results with preview",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-reel",
+                  "projectName": "chromium-reel",
+                  "results": [
+                    {
+                      "workerIndex": 1,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 756,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-12T17:49:02.250Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "a088064de9fe351eef5f-83977d797a4d23d1642e",
+              "file": "search.spec.ts",
+              "line": 5,
+              "column": 7
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "validation-pieces.spec.ts",
+      "file": "validation-pieces.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "Validation — pièces jointes et fiche active (constat A09)",
+          "file": "validation-pieces.spec.ts",
+          "line": 20,
+          "column": 6,
+          "specs": [
+            {
+              "title": "une réponse /pieces en retard ne pose pas le PDF d'une autre fiche",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-reel",
+                  "projectName": "chromium-reel",
+                  "results": [
+                    {
+                      "workerIndex": 1,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 4541,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-12T17:49:03.025Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "1011a84f80a1ff128182-d959b72b134fcbcb6069",
+              "file": "validation-pieces.spec.ts",
+              "line": 26,
+              "column": 7
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "validation.spec.ts",
+      "file": "validation.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "validation de bout en bout",
+          "file": "validation.spec.ts",
+          "line": 32,
+          "column": 6,
+          "specs": [
+            {
+              "title": "la file respecte le tri croissant confiance puis code",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-reel",
+                  "projectName": "chromium-reel",
+                  "results": [
+                    {
+                      "workerIndex": 1,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 647,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-12T17:49:07.584Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "1c599a7f4afdfa3cc2e4-d7254bf93bb77ae811e0",
+              "file": "validation.spec.ts",
+              "line": 44,
+              "column": 7
+            },
+            {
+              "title": "navigation clavier J/K et aide ? sans souris",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-reel",
+                  "projectName": "chromium-reel",
+                  "results": [
+                    {
+                      "workerIndex": 1,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 897,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-12T17:49:08.239Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "1c599a7f4afdfa3cc2e4-e7005faff1e685eee3d3",
+              "file": "validation.spec.ts",
+              "line": 60,
+              "column": 7
+            },
+            {
+              "title": "le focus clavier d'un champ surligne sa zone et sa page PDF",
+              "ok": false,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-reel",
+                  "projectName": "chromium-reel",
+                  "results": [
+                    {
+                      "workerIndex": 1,
+                      "parallelIndex": 0,
+                      "status": "timedOut",
+                      "duration": 30071,
+                      "error": {
+                        "message": "\u001b[31mTest timeout of 30000ms exceeded.\u001b[39m",
+                        "stack": "\u001b[31mTest timeout of 30000ms exceeded.\u001b[39m"
+                      },
+                      "errors": [
+                        {
+                          "message": "\u001b[31mTest timeout of 30000ms exceeded.\u001b[39m"
+                        },
+                        {
+                          "location": {
+                            "file": "/home/user/SEAMTECH-search/frontend/e2e/validation.spec.ts",
+                            "column": 75,
+                            "line": 20
+                          },
+                          "message": "Error: locator.click: Test timeout of 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByTestId('file-validation').locator('li[data-code=\"7792-SO\"]').getByTestId('code-fiche')\u001b[22m\n\n\n  18 |   // data-code : sélection EXACTE. Un filtre par texte attrapait aussi la ligne\n  19 |   // du doublon, dont le bandeau cite le code de l'autre fiche (vu en CI).\n> 20 |   await file.locator(`li[data-code=\"${code}\"]`).getByTestId(\"code-fiche\").click()\n     |                                                                           ^\n  21 |   await expect(page.getByTestId(\"titre-fiche\")).toHaveText(code)\n  22 |   // Le verrou optimiste (constats F1/F3) n'autorise une décision qu'une fois la\n  23 |   // RÉVISION LUE : sans cette attente, un clic « Rejeter »/« Valider » lancé\n    at ouvrirFiche (/home/user/SEAMTECH-search/frontend/e2e/validation.spec.ts:20:75)\n    at /home/user/SEAMTECH-search/frontend/e2e/validation.spec.ts:87:11"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-12T17:49:09.144Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "error-context",
+                          "contentType": "text/markdown",
+                          "path": "/home/user/SEAMTECH-search/frontend/test-results/validation-validation-de-b-93453-igne-sa-zone-et-sa-page-PDF-chromium-reel/error-context.md"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "1c599a7f4afdfa3cc2e4-d3911af59128feae85fb",
+              "file": "validation.spec.ts",
+              "line": 85,
+              "column": 7
+            },
+            {
+              "title": "V confirme les anomalies; R + Entrée rejette et affiche le chrono local",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-reel",
+                  "projectName": "chromium-reel",
+                  "results": [
+                    {
+                      "workerIndex": 2,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 852,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-12T17:49:39.654Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "1c599a7f4afdfa3cc2e4-fbd5abf0272fb27d5107",
+              "file": "validation.spec.ts",
+              "line": 99,
+              "column": 7
+            },
+            {
+              "title": "le seed dépose trois dossiers et le rejet exige un motif",
+              "ok": false,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-reel",
+                  "projectName": "chromium-reel",
+                  "results": [
+                    {
+                      "workerIndex": 2,
+                      "parallelIndex": 0,
+                      "status": "failed",
+                      "duration": 15671,
+                      "error": {
+                        "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByTestId('file-validation').locator('li[data-code=\"7792-SO\"]')\nExpected: visible\nTimeout: 15000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" getByTestId('file-validation').locator('li[data-code=\"7792-SO\"]') with timeout 15000ms\u001b[22m\n\u001b[2m  - waiting for getByTestId('file-validation').locator('li[data-code=\"7792-SO\"]')\u001b[22m\n",
+                        "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByTestId('file-validation').locator('li[data-code=\"7792-SO\"]')\nExpected: visible\nTimeout: 15000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" getByTestId('file-validation').locator('li[data-code=\"7792-SO\"]') with timeout 15000ms\u001b[22m\n\u001b[2m  - waiting for getByTestId('file-validation').locator('li[data-code=\"7792-SO\"]')\u001b[22m\n\n    at /home/user/SEAMTECH-search/frontend/e2e/validation.spec.ts:157:61",
+                        "location": {
+                          "file": "/home/user/SEAMTECH-search/frontend/e2e/validation.spec.ts",
+                          "column": 61,
+                          "line": 157
+                        },
+                        "snippet": "  155 |     // Preuve que le pipeline de dépôt a traité les trois dossiers d'exemple.\n  156 |     for (const code of [\"7792-SO\", \"0901-MM\", \"0902-MM\"]) {\n> 157 |       await expect(file.locator(`li[data-code=\"${code}\"]`)).toBeVisible()\n      |                                                             ^\n  158 |     }\n  159 |\n  160 |     // Rejet de la fiche synthétique 0902-MM : sans motif, impossible"
+                      },
+                      "errors": [
+                        {
+                          "location": {
+                            "file": "/home/user/SEAMTECH-search/frontend/e2e/validation.spec.ts",
+                            "column": 61,
+                            "line": 157
+                          },
+                          "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByTestId('file-validation').locator('li[data-code=\"7792-SO\"]')\nExpected: visible\nTimeout: 15000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" getByTestId('file-validation').locator('li[data-code=\"7792-SO\"]') with timeout 15000ms\u001b[22m\n\u001b[2m  - waiting for getByTestId('file-validation').locator('li[data-code=\"7792-SO\"]')\u001b[22m\n\n\n  155 |     // Preuve que le pipeline de dépôt a traité les trois dossiers d'exemple.\n  156 |     for (const code of [\"7792-SO\", \"0901-MM\", \"0902-MM\"]) {\n> 157 |       await expect(file.locator(`li[data-code=\"${code}\"]`)).toBeVisible()\n      |                                                             ^\n  158 |     }\n  159 |\n  160 |     // Rejet de la fiche synthétique 0902-MM : sans motif, impossible\n    at /home/user/SEAMTECH-search/frontend/e2e/validation.spec.ts:157:61"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-12T17:49:40.589Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "error-context",
+                          "contentType": "text/markdown",
+                          "path": "/home/user/SEAMTECH-search/frontend/test-results/validation-validation-de-b-93a8e--et-le-rejet-exige-un-motif-chromium-reel/error-context.md"
+                        }
+                      ],
+                      "errorLocation": {
+                        "file": "/home/user/SEAMTECH-search/frontend/e2e/validation.spec.ts",
+                        "column": 61,
+                        "line": 157
+                      }
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "1c599a7f4afdfa3cc2e4-d3cc06797576171c9860",
+              "file": "validation.spec.ts",
+              "line": 153,
+              "column": 7
+            },
+            {
+              "title": "la vraie fiche 7792-SO : parcours machine complet (< 2 min)",
+              "ok": false,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-reel",
+                  "projectName": "chromium-reel",
+                  "results": [
+                    {
+                      "workerIndex": 3,
+                      "parallelIndex": 0,
+                      "status": "timedOut",
+                      "duration": 30067,
+                      "error": {
+                        "message": "\u001b[31mTest timeout of 30000ms exceeded.\u001b[39m",
+                        "stack": "\u001b[31mTest timeout of 30000ms exceeded.\u001b[39m"
+                      },
+                      "errors": [
+                        {
+                          "message": "\u001b[31mTest timeout of 30000ms exceeded.\u001b[39m"
+                        },
+                        {
+                          "location": {
+                            "file": "/home/user/SEAMTECH-search/frontend/e2e/validation.spec.ts",
+                            "column": 75,
+                            "line": 20
+                          },
+                          "message": "Error: locator.click: Test timeout of 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByTestId('file-validation').locator('li[data-code=\"7792-SO\"]').getByTestId('code-fiche')\u001b[22m\n\n\n  18 |   // data-code : sélection EXACTE. Un filtre par texte attrapait aussi la ligne\n  19 |   // du doublon, dont le bandeau cite le code de l'autre fiche (vu en CI).\n> 20 |   await file.locator(`li[data-code=\"${code}\"]`).getByTestId(\"code-fiche\").click()\n     |                                                                           ^\n  21 |   await expect(page.getByTestId(\"titre-fiche\")).toHaveText(code)\n  22 |   // Le verrou optimiste (constats F1/F3) n'autorise une décision qu'une fois la\n  23 |   // RÉVISION LUE : sans cette attente, un clic « Rejeter »/« Valider » lancé\n    at ouvrirFiche (/home/user/SEAMTECH-search/frontend/e2e/validation.spec.ts:20:75)\n    at /home/user/SEAMTECH-search/frontend/e2e/validation.spec.ts:190:11"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-12T17:49:56.701Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "error-context",
+                          "contentType": "text/markdown",
+                          "path": "/home/user/SEAMTECH-search/frontend/test-results/validation-validation-de-b-175fe-ours-machine-complet-2-min--chromium-reel/error-context.md"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "1c599a7f4afdfa3cc2e4-c71362f66e3f6a2cede3",
+              "file": "validation.spec.ts",
+              "line": 170,
+              "column": 7
+            },
+            {
+              "title": "validation en lot du reste : verrou de calibration puis acquittement explicite",
+              "ok": false,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-reel",
+                  "projectName": "chromium-reel",
+                  "results": [
+                    {
+                      "workerIndex": 4,
+                      "parallelIndex": 0,
+                      "status": "failed",
+                      "duration": 15752,
+                      "error": {
+                        "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoHaveCount\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nLocator:  getByTestId('file-validation').locator('li[data-code=\"0902-MM\"]')\nExpected: \u001b[32m0\u001b[39m\nReceived: \u001b[31m1\u001b[39m\nTimeout:  15000ms\n\nCall log:\n\u001b[2m  - Expect \"toHaveCount\" getByTestId('file-validation').locator('li[data-code=\"0902-MM\"]') with timeout 15000ms\u001b[22m\n\u001b[2m  - waiting for getByTestId('file-validation').locator('li[data-code=\"0902-MM\"]')\u001b[22m\n\u001b[2m    34 × locator resolved to 1 element\u001b[22m\n\u001b[2m       - unexpected value \"1\"\u001b[22m\n",
+                        "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoHaveCount\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nLocator:  getByTestId('file-validation').locator('li[data-code=\"0902-MM\"]')\nExpected: \u001b[32m0\u001b[39m\nReceived: \u001b[31m1\u001b[39m\nTimeout:  15000ms\n\nCall log:\n\u001b[2m  - Expect \"toHaveCount\" getByTestId('file-validation').locator('li[data-code=\"0902-MM\"]') with timeout 15000ms\u001b[22m\n\u001b[2m  - waiting for getByTestId('file-validation').locator('li[data-code=\"0902-MM\"]')\u001b[22m\n\u001b[2m    34 × locator resolved to 1 element\u001b[22m\n\u001b[2m       - unexpected value \"1\"\u001b[22m\n\n    at /home/user/SEAMTECH-search/frontend/e2e/validation.spec.ts:242:59",
+                        "location": {
+                          "file": "/home/user/SEAMTECH-search/frontend/e2e/validation.spec.ts",
+                          "column": 59,
+                          "line": 242
+                        },
+                        "snippet": "  240 |     // Les fiches déjà traitées ont quitté la file (sélection par code EXACT).\n  241 |     await expect(file.locator('li[data-code=\"7792-SO\"]')).toHaveCount(0)\n> 242 |     await expect(file.locator('li[data-code=\"0902-MM\"]')).toHaveCount(0)\n      |                                                           ^\n  243 |     // cocher UNIQUEMENT les cases de la file (pas celle de l'acquittement)\n  244 |     const cases = file.locator('input[type=\"checkbox\"]')\n  245 |     const nombre = await cases.count()"
+                      },
+                      "errors": [
+                        {
+                          "location": {
+                            "file": "/home/user/SEAMTECH-search/frontend/e2e/validation.spec.ts",
+                            "column": 59,
+                            "line": 242
+                          },
+                          "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoHaveCount\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nLocator:  getByTestId('file-validation').locator('li[data-code=\"0902-MM\"]')\nExpected: \u001b[32m0\u001b[39m\nReceived: \u001b[31m1\u001b[39m\nTimeout:  15000ms\n\nCall log:\n\u001b[2m  - Expect \"toHaveCount\" getByTestId('file-validation').locator('li[data-code=\"0902-MM\"]') with timeout 15000ms\u001b[22m\n\u001b[2m  - waiting for getByTestId('file-validation').locator('li[data-code=\"0902-MM\"]')\u001b[22m\n\u001b[2m    34 × locator resolved to 1 element\u001b[22m\n\u001b[2m       - unexpected value \"1\"\u001b[22m\n\n\n  240 |     // Les fiches déjà traitées ont quitté la file (sélection par code EXACT).\n  241 |     await expect(file.locator('li[data-code=\"7792-SO\"]')).toHaveCount(0)\n> 242 |     await expect(file.locator('li[data-code=\"0902-MM\"]')).toHaveCount(0)\n      |                                                           ^\n  243 |     // cocher UNIQUEMENT les cases de la file (pas celle de l'acquittement)\n  244 |     const cases = file.locator('input[type=\"checkbox\"]')\n  245 |     const nombre = await cases.count()\n    at /home/user/SEAMTECH-search/frontend/e2e/validation.spec.ts:242:59"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-12T17:50:27.330Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "error-context",
+                          "contentType": "text/markdown",
+                          "path": "/home/user/SEAMTECH-search/frontend/test-results/validation-validation-de-b-8e194-puis-acquittement-explicite-chromium-reel/error-context.md"
+                        }
+                      ],
+                      "errorLocation": {
+                        "file": "/home/user/SEAMTECH-search/frontend/e2e/validation.spec.ts",
+                        "column": 59,
+                        "line": 242
+                      }
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "1c599a7f4afdfa3cc2e4-992eadd6c65dc1b2fed6",
+              "file": "validation.spec.ts",
+              "line": 238,
+              "column": 7
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-10-12T17:48:05.872Z",
+    "duration": 157367.784,
+    "expected": 55,
+    "skipped": 0,
+    "unexpected": 5,
+    "flaky": 0
+  }
+}

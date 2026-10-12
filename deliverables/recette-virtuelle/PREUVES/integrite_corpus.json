@@ -1,0 +1,11 @@
+{
+  "manifeste": "/home/user/SEAMTECH-search/deliverables/recette-virtuelle/MANIFESTES/MANIFESTE_CORPUS.csv",
+  "corpus": "/home/user/rv/corpus/sources",
+  "fichiers_au_manifeste": 453,
+  "fichiers_constates": 453,
+  "identiques": 453,
+  "modifies": [],
+  "ajoutes": [],
+  "supprimes": [],
+  "conforme": true
+}
