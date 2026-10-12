@@ -544,6 +544,8 @@ def test_r1_matrice_transitions_propriete_et_fencing(tmp_path: Path) -> None:
 @pytest.mark.postgres
 def test_r1_matrice_transitions_propriete_et_fencing_postgres(tmp_path: Path) -> None:
     """Matrice complète des transitions de propriété (R1) sur PostgreSQL réel."""
+    import os
+
     from seamtech_search.jobs import (
         cancel_job,
         create_job,
@@ -555,7 +557,8 @@ def test_r1_matrice_transitions_propriete_et_fencing_postgres(tmp_path: Path) ->
         update_job,
     )
     from tests.conftest import _creer_base_jetable, _supprimer_base_jetable
-
+    if not os.environ.get("SEAMTECH_TEST_DATABASE_URL"):
+        pytest.skip("Set SEAMTECH_TEST_DATABASE_URL to run PostgreSQL integration tests")
     nom_base, url_base = _creer_base_jetable()
     index = SearchIndex(tmp_path / "unused.db", database_url=url_base)
     index.initialize(rebuild=True)

@@ -299,6 +299,8 @@ def _process_lot_task(
 
     job_id = payload["job_id"]
     id_lot = int(payload["id_lot"])
+    if worker_id is not None:
+        marquer_job_claim(index, str(job_id), worker_id)
     doit_continuer = None
     if redis_store is not None:
         from .jobs import is_job_cancelled
