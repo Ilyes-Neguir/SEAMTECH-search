@@ -473,3 +473,32 @@ def test_recette_verif_pdf_refuse_la_redirection_vers_l_hote_interne(
     assert telechargements == [
         "https://minio.atelier.invalide:9000/documents/objets/technique.pdf?sig=abc"
     ]
+
+
+def test_recette_ps1_arrete_sur_echec_restauration_sans_poursuivre_down_up() -> None:
+    """Contre-revue A10 / R4 : après échec de pg_restore, recette_locale.ps1 DOIT sortir en erreur.
+
+    Le script ne doit jamais continuer vers la section 10 (docker compose down && up),
+    ce qui risquerait de redémarrer les écrivains applicatifs sur une base corrompue
+    ou partiellement restaurée.
+    """
+    texte = WRAPPER_PS1.read_text(encoding="utf-8-sig")
+
+    # 1. Vérifier la présence du bloc de gestion d'échec de restauration
+    idx_fail = texte.find('Rapport "restauration" "FAIL" "pg_restore code=$CodeRestore')
+    assert idx_fail != -1, "recette_locale.ps1 : rapport FAIL sur pg_restore absent"
+
+    # 2. Vérifier que 'exit 1' est appelé immédiatement dans cette branche
+    idx_down_up = texte.find('docker compose down', idx_fail)
+    idx_exit = texte.find('exit 1', idx_fail)
+    assert idx_exit != -1, "recette_locale.ps1 : 'exit 1' absent après échec pg_restore"
+    assert idx_exit < idx_down_up, (
+        "recette_locale.ps1 : 'exit 1' doit précéder tout 'docker compose down/up' après échec de restauration"
+    )
+
+    # 3. Vérifier que les écrivains restent ARRÊTÉS dans le finally en cas d'échec
+    assert "ÉCHEC CRITIQUE DE RESTAURATION" in texte
+    assert "docker compose start @Ecrivains" in texte
+    idx_finally = texte.find("finally")
+    idx_critique = texte.find("ÉCHEC CRITIQUE DE RESTAURATION", idx_finally)
+    assert idx_finally < idx_critique, "La garde d'arrêt des écrivains doit être dans le bloc finally"

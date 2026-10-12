@@ -1217,9 +1217,9 @@ jobs:
               for s in d["suites"]:
                   for spec in iterer_specs(s):
                       for t in spec.get("tests", []):
-                          etat = t.get("outcome")
+                          etat = t.get("status") or t.get("outcome")
                           if etat in {"flaky", "unexpected", "skipped"}:
-                              titres = " | ".join(r.get("title", "") for r in t.get("results", []))
+                              titres = " | ".join(r.get("status", "") for r in t.get("results", []))
                               coupables.append(f"{etat}: {spec.get('title', '?')} [{titres[:120]}]")
               detail = "; ".join(coupables[:5]) or "aucun test nommé dans le rapport"
               raise SystemExit(

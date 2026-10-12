@@ -428,6 +428,7 @@ if (-not $DumpValide) {
             "(GET /fiches/$Fiche/pieces = 200) — écrivains " + ($Ecrivains -join "+") + " arrêtés pendant l'opération")
     } elseif ($EcrivainsArretes) {
         Rapport "restauration" "FAIL" "pg_restore code=$CodeRestore ; fiche de retour HTTP $Retour"
+        exit 1
     }
     # Si $EcrivainsArretes est faux, le FAIL « écrivains encore actifs » a déjà
     # été émis : un second FAIL sur la même cause n'apporterait rien.
