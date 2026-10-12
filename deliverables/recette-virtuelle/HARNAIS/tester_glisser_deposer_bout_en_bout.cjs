@@ -1,4 +1,13 @@
 // Test de bout en bout du GLISSER-DÉPOSER dans le NAVIGATEUR RÉEL (Chromium 153 via CDP).
+// Assertions strictes :
+// 1. Déclenchement des événements réels CDP dragEnter, dragOver, drop avec fichiers réels.
+// 2. Vérification dans l'interface et clic sur "Envoyer et analyser".
+// 3. Interception réseau de la réponse d'upload et confirmation dans l'UI.
+// 4. ATTENTE OBLIGATOIRE du statut terminal (sans catch qui avalerait l'échec).
+//    Le statut terminal est lu dynamiquement depuis l'API et l'UI pour cet importId précis.
+// 5. Téléchargement des artefacts via l'application et comparaison stricte des SHA-256 avec les originaux.
+// 6. Épreuve de collision : vérification du rejet HTTP 409 avec code collision_chemins.
+//    La portée du compte-rendu est strictement limitée au rejet 409 et au code d'erreur (non-écrasement contractuel de l'API).
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
@@ -55,7 +64,7 @@ async function main() {
   await page.waitForURL(/\/$/, { timeout: 30000 });
   console.log("Connecté à l'interface Next.js");
 
-  // Aller sur /fichiers
+  // Navigation vers /fichiers
   await page.goto(`${BASE}/fichiers`, { waitUntil: "networkidle" });
   await page.getByRole("button", { name: /Recherche avancée/i }).click();
   await page.waitForTimeout(800);
@@ -63,7 +72,7 @@ async function main() {
   const zoneDepot = "div.border-dashed";
   await page.locator(zoneDepot).first().waitFor({ timeout: 20000 });
 
-  // Écoute de la réponse réseau d'upload
+  // Écoute de l'upload
   let uploadResponsePromise = page.waitForResponse(
     (resp) => resp.url().includes("/api/imports/upload") && resp.status() === 200,
     { timeout: 30000 }
@@ -102,12 +111,20 @@ async function main() {
   const importId = confirmPayload.import_id || confirmPayload.job_id || confirmPayload.id;
   console.log("Import initié avec ID:", importId);
 
-  // Attente dans l'interface de l'état terminal
-  await page.waitForSelector("text=completed", { timeout: 30000 }).catch(() => null);
+  // Assertion 1: Attente OBLIGATOIRE du sélecteur sans avaler d'erreur (timeout 30s)
+  await page.waitForSelector("text=completed", { timeout: 30000 });
   await page.screenshot({ path: path.join(PREUVES, "navigateur/C-depot-termine.png"), fullPage: true });
 
-  // Téléchargement des artefacts et comparaison SHA-256
+  // Vérification dynamique du statut terminal auprès de l'API pour cet importId précis
   const token = process.env.SEAMTECH_AUTH_TOKEN;
+  const rPoll = await fetch(`${API}/imports/${importId}`, {
+    headers: { "X-SEAMTECH-TOKEN": token }
+  });
+  const resPoll = await rPoll.json();
+  const statutTerminalReel = resPoll.status;
+  console.log(`Statut terminal vérifié pour import ${importId}: ${statutTerminalReel}`);
+
+  // Assertion 2: Téléchargement et comparaison SHA-256 rigoureuse
   const rPdf = await fetch(`${API}/imports/${importId}/artifacts/source_pdf`, {
     headers: { "X-SEAMTECH-TOKEN": token }
   });
@@ -122,10 +139,10 @@ async function main() {
 
   const okPdf = (rPdf.status === 200 && shaPdfRecu === shaPdfAttendu);
   const okExcel = (rExcel.status === 200 && shaExcelRecu === shaExcelAttendu);
-  console.log("Téléchargement PDF:", okPdf, "SHA:", shaPdfRecu);
-  console.log("Téléchargement Excel:", okExcel, "SHA:", shaExcelRecu);
+  console.log("Téléchargement PDF:", okPdf, "SHA conforme:", shaPdfRecu === shaPdfAttendu);
+  console.log("Téléchargement Excel:", okExcel, "SHA conforme:", shaExcelRecu === shaExcelAttendu);
 
-  // Épreuve de collision : vérification code HTTP 409 ET intégrité (aucun fichier écrit / écrasé)
+  // Assertion 3: Épreuve de collision strictement limitée au rejet 409 et au code d'erreur
   const formCollision = new FormData();
   formCollision.append("folder", "COLLISION_NAV");
   formCollision.append("files", new Blob([fs.readFileSync(pdfSource)]), "doublon.pdf");
@@ -138,30 +155,34 @@ async function main() {
   });
   const bodyColl = await rColl.json().catch(() => ({}));
   const okCollCode = (rColl.status === 409);
-  // Vérification de la non-écriture : le répertoire staged ne doit pas contenir de doublon écrasé
   const detailColl = bodyColl.detail || {};
   const collisionCode = detailColl.code === "collision_chemins";
   console.log("Test collision status:", rColl.status, "code collision:", collisionCode);
 
   await browser.close();
 
+  const tousControles = [
+    { controle: "glisser_deposer_interface", succes: pretAEnvoyer },
+    { controle: "upload_et_confirm_via_interface", succes: !!importId, import_id: importId },
+    { controle: "statut_terminal_completed", succes: (statutTerminalReel === "completed"), statut_obtenu: statutTerminalReel },
+    { controle: "telechargement_pdf_sha256", succes: okPdf, sha256_recu: shaPdfRecu, sha256_attendu: shaPdfAttendu },
+    { controle: "telechargement_excel_sha256", succes: okExcel, sha256_recu: shaExcelRecu, sha256_attendu: shaExcelAttendu },
+    { controle: "rejet_collision_409", succes: (okCollCode && collisionCode), status_http: rColl.status, code_erreur: detailColl.code }
+  ];
+
+  const statutGlobal = (pretAEnvoyer && !!importId && (statutTerminalReel === "completed") && okPdf && okExcel && okCollCode && collisionCode) ? "PASS" : "FAIL";
+
   const rapport = {
     date: new Date().toISOString(),
     geste_navigateur: "Chromium 153 via CDP (dragEnter, dragOver, drop)",
     import_id: importId,
-    statut_terminal: "completed",
-    controles: [
-      { controle: "glisser_deposer_interface", succes: pretAEnvoyer },
-      { controle: "upload_et_confirm_via_interface", succes: !!importId, import_id: importId },
-      { controle: "telechargement_pdf_sha256", succes: okPdf, sha256: shaPdfRecu },
-      { controle: "telechargement_excel_sha256", succes: okExcel, sha256: shaExcelRecu },
-      { controle: "rejet_collision_409_et_non_ecrasement", succes: (okCollCode && collisionCode), status_http: rColl.status, code_erreur: detailColl.code }
-    ],
-    statut_global: (pretAEnvoyer && !!importId && okPdf && okExcel && okCollCode && collisionCode) ? "PASS" : "FAIL"
+    statut_terminal_observe: statutTerminalReel,
+    controles: tousControles,
+    statut_global: statutGlobal
   };
 
   fs.writeFileSync(path.join(PREUVES, "import_drag_drop_complet.json"), JSON.stringify(rapport, null, 2));
-  console.log("Rapport écrit dans import_drag_drop_complet.json :", rapport.statut_global);
+  console.log("Rapport écrit dans import_drag_drop_complet.json :", statutGlobal);
 }
 
 main().catch((err) => {

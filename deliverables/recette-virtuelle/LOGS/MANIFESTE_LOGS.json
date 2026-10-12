@@ -5,8 +5,8 @@
     "tronque": false
   },
   "api.log": {
-    "lignes_source": 3573,
-    "lignes_copiees": 3573,
+    "lignes_source": 3593,
+    "lignes_copiees": 3593,
     "tronque": false
   },
   "api-e2e.log": {
@@ -30,13 +30,13 @@
     "tronque": false
   },
   "s3.log": {
-    "lignes_source": 887,
-    "lignes_copiees": 887,
+    "lignes_source": 930,
+    "lignes_copiees": 930,
     "tronque": false
   },
   "postgres.log": {
-    "lignes_source": 87,
-    "lignes_copiees": 87,
+    "lignes_source": 89,
+    "lignes_copiees": 89,
     "tronque": false
   },
   "e2e_depot_passe4.log": {

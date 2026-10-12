@@ -118,7 +118,7 @@ def main() -> int:
             lignes[idx]["resultat"] = statut_c2
             lignes[idx]["methode_et_outil"] = "rv/harnais/tester_glisser_deposer_bout_en_bout.cjs (Playwright + CDP)"
             lignes[idx]["preuve"] = "PREUVES/import_drag_drop_complet.json"
-            lignes[idx]["detail"] = f"import '{preuve_c2.get('import_id')}' issu du glisser-déposer CDP suivi jusqu'à {preuve_c2.get('statut_terminal')}, PDF et Excel téléchargés SHA-256 conformes, collision 409 et non-écrasement vérifiés"
+            lignes[idx]["detail"] = f"import '{preuve_c2.get('import_id')}' issu du glisser-déposer CDP suivi jusqu'à {preuve_c2.get('statut_terminal_observe')}, PDF et Excel téléchargés SHA-256 conformes, rejet collision 409 (code collision_chemins) vérifié"
 
     # Contrôle de restauration complète indépendante (§9) recalculé STRICTEMENT
     restauration_indep = charger(PREUVES / "restauration_complete_independante.json")

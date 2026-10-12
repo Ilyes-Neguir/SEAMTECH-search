@@ -1,8 +1,8 @@
 {
-  "date": "2026-10-12T20:11:03.904Z",
+  "date": "2026-10-12T20:20:57.233Z",
   "geste_navigateur": "Chromium 153 via CDP (dragEnter, dragOver, drop)",
-  "import_id": "51f34e082f19490b87028211799121fe",
-  "statut_terminal": "completed",
+  "import_id": "2cd07ceb220f4f639940dda5dc25c283",
+  "statut_terminal_observe": "completed",
   "controles": [
     {
       "controle": "glisser_deposer_interface",
@@ -11,20 +11,27 @@
     {
       "controle": "upload_et_confirm_via_interface",
       "succes": true,
-      "import_id": "51f34e082f19490b87028211799121fe"
+      "import_id": "2cd07ceb220f4f639940dda5dc25c283"
+    },
+    {
+      "controle": "statut_terminal_completed",
+      "succes": true,
+      "statut_obtenu": "completed"
     },
     {
       "controle": "telechargement_pdf_sha256",
       "succes": true,
-      "sha256": "abf6aaaaa1833f75585a364d240963232ae46d344e63661286f8e4f5e2355803"
+      "sha256_recu": "abf6aaaaa1833f75585a364d240963232ae46d344e63661286f8e4f5e2355803",
+      "sha256_attendu": "abf6aaaaa1833f75585a364d240963232ae46d344e63661286f8e4f5e2355803"
     },
     {
       "controle": "telechargement_excel_sha256",
       "succes": true,
-      "sha256": "96b0663b52c57f28f419a4b49d5be8c890b5c9cb101a03e2d5db6f6f8c889298"
+      "sha256_recu": "96b0663b52c57f28f419a4b49d5be8c890b5c9cb101a03e2d5db6f6f8c889298",
+      "sha256_attendu": "96b0663b52c57f28f419a4b49d5be8c890b5c9cb101a03e2d5db6f6f8c889298"
     },
     {
-      "controle": "rejet_collision_409_et_non_ecrasement",
+      "controle": "rejet_collision_409",
       "succes": true,
       "status_http": 409,
       "code_erreur": "collision_chemins"
