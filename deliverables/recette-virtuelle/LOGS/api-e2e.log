@@ -1,5 +1,4 @@
-# … 388562 ligne(s) antérieure(s) non copiée(s) (journal complet sur la machine de recette : /home/user/rv/logs/api-e2e.log) …
-2026-10-12 18:39:36,237 WARNING Failed to process retry queue imports: Error 111 connecting to 127.0.0.1:6379. Connection refused.
+# … 388563 ligne(s) antérieure(s) non copiée(s) (journal complet sur la machine de recette : /home/user/rv/logs/api-e2e.log) …
 2026-10-12 18:39:36,237 ERROR Failed to dequeue task from Redis imports: Error 111 connecting to 127.0.0.1:6379. Connection refused.
 2026-10-12 18:39:36,237 WARNING Failed to process retry queue imports: Error 111 connecting to 127.0.0.1:6379. Connection refused.
 2026-10-12 18:39:36,237 ERROR Failed to dequeue task from Redis imports: Error 111 connecting to 127.0.0.1:6379. Connection refused.
@@ -2999,3 +2998,4 @@
 2026-10-12 18:39:36,430 ERROR Failed to dequeue task from Redis imports: Redis is loading the dataset in memory
 2026-10-12 18:39:36,433 WARNING Failed to process retry queue imports: Redis is loading the dataset in memory
 2026-10-12 18:39:36,439 ERROR Failed to dequeue task from Redis imports: Redis is loading the dataset in memory
+INFO:     127.0.0.1:44256 - "GET /health HTTP/1.1" 401 Unauthorized

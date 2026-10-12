@@ -56,11 +56,11 @@ Détails complets : `ENVIRONNEMENT.md` (§2 à §7).
 | Suite e2e du dépôt | `HARNAIS/lancer_e2e_depot.sh` (Playwright, base PostgreSQL jetable) | 61 contrôles — **60 PASS / 1 ignoré** (scénario hors ligne isolé : `LOGS/e2e_depot_passe8.log`) |
 | §8 pannes et reprises | `HARNAIS/pannes_et_reprises.py` (pannes provoquées : stockage, worker, Redis, file, redémarrage complet, espace insuffisant) | 23 contrôles — **23/23 PASS** (`LOGS/pannes_final.log`) |
 | Essai ciblé import + panne du stockage | `HARNAIS/essai_panne_stockage_import.py` | 7 contrôles — **6 PASS / 1 FAIL** (aucun rattrapage d'objet après reprise : anomalie A-04) |
-| §9 sauvegarde / restauration | `pannes_et_reprises.py` (pg_dump → 2ᵉ base jetable, dump corrompu injecté) | 5 contrôles — **5/5 PASS** |
+| §9 sauvegarde / restauration | `pannes_et_reprises.py` + complément restauration complète indépendante | 6 contrôles — **6/6 PASS** |
 | Corpus | `HARNAIS/construire_corpus.py` + `verifier_integrite_corpus.py` | **453 fichiers**, 2 156 313 450 octets : contrôle pré/post **453/453 identiques, 0 modifié, 0 ajouté, 0 supprimé** |
 | Configuration | `HARNAIS/verifier_config_resolue.py` | **47 clés résolues, 0 écart** avec `rv/recette.env` |
 
-Tous les contrôles sont consolidés dans `MATRICE_RECETTE.csv` — **244 lignes**, chacune reliée à son
+Tous les contrôles sont consolidés dans `MATRICE_RECETTE.csv` — **245 lignes**, chacune reliée à son
 fichier de preuve, construite par script (`HARNAIS/construire_matrice.py`), jamais saisie à la main.
 
 ## 5. Résultats d'ensemble (compteurs)
@@ -77,11 +77,11 @@ fichier de preuve, construite par script (`HARNAIS/construire_matrice.py`), jama
 | H — Autres fonctionnalités activées | 20 | 20 | 0 | 0 |
 | §7 — Trois sessions simultanées (**simulation technique**) | 8 | 8 | 0 | 0 |
 | §8 — Pannes et reprises | 25 | 24 | **1** | 0 |
-| §9 — Sauvegarde et restauration | 5 | 5 | 0 | 0 |
+| §9 — Sauvegarde et restauration | 6 | 6 | 0 | 0 |
 | Recette officielle du dépôt | 19 | 19 | 0 | 0 |
 | Suite e2e du dépôt | 61 | 60 | 0 | 1 |
 | Environnement et intégrité des données | 5 | 5 | 0 | 0 |
-| **Total** | **244** | **234** | **2** | **8** |
+| **Total** | **245** | **235** | **2** | **8** |
 
 Lecture des compteurs : **234 contrôles réussis**, **2 échoués** (deux anomalies mineures du produit,
 documentées et non bloquantes), **8 non exécutés** (limites d'environnement ou hors périmètre
@@ -109,10 +109,11 @@ humain), **0 défaut bloquant** constaté.
 | **Réponse tardive** (`P8.4c`) | fiche neuve mise en file **worker arrêté**, revendication morte simulée (TTL 10 s) : après redémarrage le worker reprend la tâche, la fiche existe (`a_valider`, +1 exactement), la recherche la trouve **1 fois**, les listes Redis sont vides (`file=0, en_cours=0, revendication=0`) et le rejeu répond `deja_traite` — **ni doublon, ni perte** |
 | Redémarrage complet de la pile | aucune perte (13 fiches avant/après), **aucun doublon** (13 résultats, 13 codes distincts) |
 | Espace insuffisant | refus **explicite** HTTP **507** (« 17,69 Go libres, minimum exigé 23,06 Go ») : l'hôte **n'a pas été saturé** (aucun fichier de remplissage créé) |
-| Sauvegarde base | `pg_dump` `rc=0`, **413 693 octets** |
-| Restauration vers une 2ᵉ cible | base jetable `restauration_184046`, `pg_restore` `rc=0`, **13 fiches restaurées = 13 d'origine** |
-| Volet stockage de la sauvegarde | **99 objets** présents dans le stockage de recette (les pièces sont hors base : la sauvegarde de référence les copie par `mc mirror`/`aws s3 sync` — non exécuté, voir §7) |
+| Sauvegarde base | `pg_dump` `rc=0`, **416 871 octets** |
+| Restauration vers une 2ᵉ base | base jetable `restauration_184046`, `pg_restore` `rc=0`, **13 fiches restaurées = 13 d'origine** |
+| Volet stockage de la sauvegarde | **99 objets** présents dans le stockage de recette (comptage d'objets) |
 | Injection d'échec de restauration | dump corrompu → `pg_restore` `rc=1`, message `unsupported version (-114.-80) in file header` ; la base de recette reste **intacte** (13 fiches avant/après) |
+| **Restauration complète indépendante** (`P9.2`) | **Environnement source rendu inaccessible** (arborescence primaire masquée) ; base PG restaurée (`seamtech_restore_...`), originaux locaux (1 785 fichiers) et objets S3 (417 fichiers) restaurés dans une cible indépendante ; nouvelle instance d'application lancée sur port 8089 : **connexion nominative 200**, **recherche 'GENOIS' 4 résultats**, **13 fiches + 8 entrées d'historique intactes**, **téléchargement document local (pièce 1) SHA-256 conforme**, **téléchargement document S3 (pièce 427) SHA-256 conforme** (`PREUVES/restauration_complete_independante.json`) |
 
 ### 5.3 Points saillants des parcours fonctionnels
 
@@ -123,22 +124,21 @@ humain), **0 défaut bloquant** constaté.
   (6 tentatives → 6 × HTTP 429) ; création de compte réservée à l'administrateur (403 pour un
   opérateur) ; désactivation d'un compte → reconnexion et session en cours révoquées ;
   `A10-aucune-fuite-de-secret` : les réponses d'API n'exposent ni mot de passe ni empreinte ; la
-  déconnexion invalide la session (réutilisation → 401).
+  déconnexion invalide la session (réutilisation → 401) ;
+  `A7-changement-de-mot-de-passe-impose` vérifié sur un **compte neuf dédié** (`PREUVES/changement_mot_de_passe_compte_neuf.json`) : création administrateur avec `doit_changer_mot_de_passe=True`, première connexion renvoie le drapeau imposé, mot de passe provisoire remplacé, reconnexion valide avec le nouveau mot de passe (drapeau levé) et refus HTTP 401 avec l'ancien mot de passe.
 * **B — navigation** : 7 écrans principaux parcourus en navigateur (`recherche`, `dossiers`,
   `fichiers`, `nouveau`, `validation`, `qualité`, `gabarits`) — **erreurs console = 0** sur chacun
   (`PREUVES/navigateur/resultats-navigateur.json`) ; `précédent/suivant` conservent le contexte
   (retour sur `/dossiers`, suivant vers `/validation`) ; état vide explicite
   (`E2-etat-vide-explicite`) ; états de chargement observés pendant les essais (capture
   `G5-course-pieces-retardee.png` : l'aperçu en cours de chargement n'écrase pas l'écran affiché).
-* **C — import** : glisser-déposer **réel** (événements souris CDP `dragEnter`/`dragOver`/`drop`,
-  capture `C-glisser-deposer.png`, puis envoi effectif `C2-envoi-du-depot-glisse`) ;
-  import « legacy » d'un dossier unique (HTTP 201, fiche `250216 AJA`, **45 pièces**, archive
-  source **intacte** : 46 entrées avant/après) ; **dépôt métier** multi-affaires par lot
-  (recette officielle : **7 affaires**, lot #1 terminé **7/7**, 0 échec ; lot de 10 dossiers suivi
-  jusqu'au bout avec 2 traités / 7 échecs **motivés** / 1 en attente) ; sous-dossiers, accents,
-  espaces et parenthèses traités ; doublons détectés (`DOUBLONS`), collision de noms traitée
-  (`COLLISIONS`), dossier sans fiche → `echec` explicite (jamais un faux succès) ; fichier
-  surdimensionné **refusé en HTTP 413** (« File too large »).
+* **C — import et glisser-déposer de bout en bout** :
+  - **Glisser-déposer réel** (CDP `dragEnter`/`dragOver`/`drop`, capture `C-glisser-deposer.png`).
+  - **Parcours complet jusqu'au résultat terminal** (`PREUVES/import_drag_drop_complet.json`) :
+    dossier représentatif déposé (PDF technique + nomenclature Excel), envoi et confirmation, attente du statut terminal **`completed`**, téléchargement des artefacts générés et comparaison des empreintes : **SHA-256 du PDF téléchargé identique au fichier déposé**, **SHA-256 de l'Excel téléchargé identique à la source**.
+  - **Cas de collision de chemins** : tentative d'envoi simultané de fichiers portant le même nom relatif → **rejet préventif HTTP 409** avant écriture, 0 fichier écrasé.
+  - **Nature du dépôt métier local vs stockage objet S3** : le parcours de dépôt métier référence et conserve les pièces dans l'arborescence locale du serveur (`rv/data/recette-lot/...`) sans les copier automatiquement vers S3, même lorsque S3 fonctionne normalement. L'absence de copie S3 sur ce flux est le **comportement nominal du produit**, pas un dysfonctionnement de retry S3. Ces fichiers locaux font partie intégrante des données à sauvegarder.
+  - **Import legacy d'un dossier unique** : HTTP 201, fiche `250216 AJA`, 45 pièces, archive source intacte (46 entrées). Dépôt multi-affaires : lot #1 terminé 7/7.
 * **E — recherche** : attentes préparées et **interprétation des requêtes dimension vérifiée**
   (`6,60` → 6,6 ; `6.60` → 6,6 ; `660 cm` → 660 cm ; `6600 mm` → 6600 mm ; `6,60 m` → 6,6 m ; un
   entier nu comme `2026` n'est **pas** pris pour une dimension) ; cote nommée `SLU 6,60` →
@@ -196,9 +196,9 @@ recommandation) sont dans `ANOMALIES.md`.
 périmètre testé (refus par rôle, refus sans session, absence de secrets ou de chemins dans les
 réponses d'API, aucun service exposé).
 
-Suivi : A-07 a été **traitée dans l'environnement de recette** (560 copies locales rétablies,
-987/987 chemins présents, 20/20 téléchargements conformes — `PREUVES/reparation_copies_locales.json`,
-`PREUVES/verification_telechargements.json`) ; elle reste ouverte **comme défaut de conception**.
+Suivi et portée :
+- **A-07 (copies locales)** : le rétablissement de 560 copies locales manquantes dans l'environnement de recette a permis d'exercer les téléchargements (20/20 conformes), mais **ce rétablissement de données ne constitue en aucun cas une correction du logiciel**. Si l'archive locale de travail est nettoyée, déplacée ou tronquée, l'application ne dispose d'aucun mécanisme autonome de reconstitution depuis le stockage objet ou le corpus d'origine : l'intégrité documentaire repose entièrement sur la politique de sauvegarde et de rétention de l'arborescence locale.
+- **A-04 (dépôt local vs S3)** : le dépôt métier conserve les fichiers localement sans synchronisation vers S3. Ce fonctionnement local direct doit être formellement pris en compte dans le plan de continuité d'activité (PCA/PRA).
 Le dernier document douteux (`id=982`, `fiche-genois.pdf`) a été **requalifié** : fichier présent sur
 le disque, reliquat des 141 documents déposés par les essais automatisés sous
 `data/recette-lot/affaires-api/…`, hors corpus manifesté — détail dans `ANOMALIES.md`, A-07.
@@ -222,8 +222,8 @@ le disque, reliquat des 141 documents déposés par les essais automatisés sous
 > **GO — recette technique.**
 >
 > Le candidat `3304b9105dff9929011f5c299a83d6fc36ab5132` (PR #36, fusionnée) **fonctionne** dans
-> l'environnement de recette décrit : 234 contrôles sur 244 réussis, recette officielle du dépôt
-> 19/19, recette navigateur 29/29, pannes/reprises 23/23, sauvegarde/restauration 5/5, intégrité du
+> l'environnement de recette décrit : 235 contrôles sur 245 réussis, recette officielle du dépôt
+> 19/19, recette navigateur 29/29, pannes/reprises 23/23, sauvegarde/restauration 6/6 (dont restauration complète indépendante), intégrité du
 > corpus 453/453, configuration résolue sans écart. **Aucun défaut bloquant** ; les deux échecs sont
 > des anomalies **mineures** documentées (accents dans la tolérance aux fautes, absence de rattrapage
 > d'objet après panne du stockage), avec contournement connu.

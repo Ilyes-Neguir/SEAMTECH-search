@@ -760,3 +760,88 @@ stockage objet (substitut MinIO, s3rver) à l'écoute sur http://127.0.0.1:9000
 [32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
 [32minfo[39m: Found 98 objects for bucket "seamtech-documents"
 [32minfo[39m: ech-documents?versioning 200 17ms 36.36kb
+[31merror[39m: No bucket found for "health"
+[32minfo[39m: h 404 74ms -
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 98 objects for bucket "seamtech-documents"
+[32minfo[39m: ech-documents?versioning 200 38ms 36.36kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 98 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 14ms 36.36kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 98 objects for bucket "seamtech-documents"
+[32minfo[39m: ech-documents?versioning 200 20ms 36.36kb
+[31merror[39m: Error creating bucket. Bucket "seamtech-documents" already exists
+[32minfo[39m: ech-documents?versioning 409 1ms -
+[32minfo[39m: tech-documents/1307e29b05e5423d9e71e1c89c6c463f/d8ff41bf8c31c4316332431154a6f036ceb4c07cb81bb660c5f0de89908025b0/fiche-technique.pdf 404 1ms -
+[32minfo[39m: Stored object "1307e29b05e5423d9e71e1c89c6c463f/d8ff41bf8c31c4316332431154a6f036ceb4c07cb81bb660c5f0de89908025b0/fiche-technique.pdf" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/1307e29b05e5423d9e71e1c89c6c463f/d8ff41bf8c31c4316332431154a6f036ceb4c07cb81bb660c5f0de89908025b0/fiche-technique.pdf 200 3ms 0b
+[32minfo[39m: tech-documents/1307e29b05e5423d9e71e1c89c6c463f/d8ff41bf8c31c4316332431154a6f036ceb4c07cb81bb660c5f0de89908025b0/fiche-technique.pdf 200 3ms 1.89kb
+[32minfo[39m: ech-documents/1307e29b05e5423d9e71e1c89c6c463f/d8ff41bf8c31c4316332431154a6f036ceb4c07cb81bb660c5f0de89908025b0/fiche-technique.pdf 200 2ms 1.89kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 99 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 17ms 36.73kb
+[32minfo[39m: tech-documents/1307e29b05e5423d9e71e1c89c6c463f/23028f6384d4c5a08aa955e2be98c4f10dd5c7799674251a6544f43c0d381bac/nomenclature-voile.xlsx 404 1ms -
+[32minfo[39m: Stored object "1307e29b05e5423d9e71e1c89c6c463f/23028f6384d4c5a08aa955e2be98c4f10dd5c7799674251a6544f43c0d381bac/nomenclature-voile.xlsx" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/1307e29b05e5423d9e71e1c89c6c463f/23028f6384d4c5a08aa955e2be98c4f10dd5c7799674251a6544f43c0d381bac/nomenclature-voile.xlsx 200 2ms 0b
+[32minfo[39m: tech-documents/1307e29b05e5423d9e71e1c89c6c463f/23028f6384d4c5a08aa955e2be98c4f10dd5c7799674251a6544f43c0d381bac/nomenclature-voile.xlsx 200 1ms 5.69kb
+[32minfo[39m: ech-documents/1307e29b05e5423d9e71e1c89c6c463f/23028f6384d4c5a08aa955e2be98c4f10dd5c7799674251a6544f43c0d381bac/nomenclature-voile.xlsx 200 2ms 5.69kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 100 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 12ms 37.11kb
+[32minfo[39m: tech-documents/1307e29b05e5423d9e71e1c89c6c463f/88052baed645bbbe2b77a3df3c138335254625ed84ede5ba014b64646dced677/technical-report.pdf 404 1ms -
+[32minfo[39m: Stored object "1307e29b05e5423d9e71e1c89c6c463f/88052baed645bbbe2b77a3df3c138335254625ed84ede5ba014b64646dced677/technical-report.pdf" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/1307e29b05e5423d9e71e1c89c6c463f/88052baed645bbbe2b77a3df3c138335254625ed84ede5ba014b64646dced677/technical-report.pdf 200 1ms 0b
+[32minfo[39m: tech-documents/1307e29b05e5423d9e71e1c89c6c463f/88052baed645bbbe2b77a3df3c138335254625ed84ede5ba014b64646dced677/technical-report.pdf 200 2ms 2.87kb
+[32minfo[39m: ech-documents/1307e29b05e5423d9e71e1c89c6c463f/88052baed645bbbe2b77a3df3c138335254625ed84ede5ba014b64646dced677/technical-report.pdf 200 2ms 2.87kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 101 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 15ms 37.48kb
+[32minfo[39m: tech-documents/1307e29b05e5423d9e71e1c89c6c463f/b675ba675a90d78516c28988f3e4db111001763921df5cfaf9168e55cfebbcef/technical-report.docx 404 1ms -
+[32minfo[39m: Stored object "1307e29b05e5423d9e71e1c89c6c463f/b675ba675a90d78516c28988f3e4db111001763921df5cfaf9168e55cfebbcef/technical-report.docx" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/1307e29b05e5423d9e71e1c89c6c463f/b675ba675a90d78516c28988f3e4db111001763921df5cfaf9168e55cfebbcef/technical-report.docx 200 2ms 0b
+[32minfo[39m: tech-documents/1307e29b05e5423d9e71e1c89c6c463f/b675ba675a90d78516c28988f3e4db111001763921df5cfaf9168e55cfebbcef/technical-report.docx 200 1ms 36.66kb
+[32minfo[39m: ech-documents/1307e29b05e5423d9e71e1c89c6c463f/b675ba675a90d78516c28988f3e4db111001763921df5cfaf9168e55cfebbcef/technical-report.docx 200 1ms 36.66kb
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/9ce3cbede347c5651cae502ecdbeb570152b7f8cc9e974c016cceb1daab94bc1/GSEGS284.csv 200 3ms 1.17kb
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/89d98e7cafb34eadb73ecb5b2c8668a7b4a5af0fcd135584153360c7bf9b1084/GSEGS284.pdf 200 2ms 170.14kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 102 objects for bucket "seamtech-documents"
+[32minfo[39m: ech-documents?versioning 200 18ms 37.86kb
+[32minfo[39m: ech-documents/ad34c7c1d2b34b179bfb76cf9a10c9ce/89d98e7cafb34eadb73ecb5b2c8668a7b4a5af0fcd135584153360c7bf9b1084/GSEGS284.pdf 200 2ms 170.14kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 102 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 14ms 37.86kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 102 objects for bucket "seamtech-documents"
+[32minfo[39m: ech-documents?versioning 200 14ms 37.86kb
+[31merror[39m: Error creating bucket. Bucket "seamtech-documents" already exists
+[32minfo[39m: ech-documents?versioning 409 1ms -
+[32minfo[39m: tech-documents/620cdcba49304d04a153f253ae21decf/d8ff41bf8c31c4316332431154a6f036ceb4c07cb81bb660c5f0de89908025b0/fiche-technique.pdf 404 1ms -
+[32minfo[39m: Stored object "620cdcba49304d04a153f253ae21decf/d8ff41bf8c31c4316332431154a6f036ceb4c07cb81bb660c5f0de89908025b0/fiche-technique.pdf" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/620cdcba49304d04a153f253ae21decf/d8ff41bf8c31c4316332431154a6f036ceb4c07cb81bb660c5f0de89908025b0/fiche-technique.pdf 200 2ms 0b
+[32minfo[39m: tech-documents/620cdcba49304d04a153f253ae21decf/d8ff41bf8c31c4316332431154a6f036ceb4c07cb81bb660c5f0de89908025b0/fiche-technique.pdf 200 2ms 1.89kb
+[32minfo[39m: ech-documents/620cdcba49304d04a153f253ae21decf/d8ff41bf8c31c4316332431154a6f036ceb4c07cb81bb660c5f0de89908025b0/fiche-technique.pdf 200 1ms 1.89kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 103 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 17ms 38.23kb
+[32minfo[39m: tech-documents/620cdcba49304d04a153f253ae21decf/23028f6384d4c5a08aa955e2be98c4f10dd5c7799674251a6544f43c0d381bac/nomenclature-voile.xlsx 404 1ms -
+[32minfo[39m: Stored object "620cdcba49304d04a153f253ae21decf/23028f6384d4c5a08aa955e2be98c4f10dd5c7799674251a6544f43c0d381bac/nomenclature-voile.xlsx" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/620cdcba49304d04a153f253ae21decf/23028f6384d4c5a08aa955e2be98c4f10dd5c7799674251a6544f43c0d381bac/nomenclature-voile.xlsx 200 3ms 0b
+[32minfo[39m: tech-documents/620cdcba49304d04a153f253ae21decf/23028f6384d4c5a08aa955e2be98c4f10dd5c7799674251a6544f43c0d381bac/nomenclature-voile.xlsx 200 1ms 5.69kb
+[32minfo[39m: ech-documents/620cdcba49304d04a153f253ae21decf/23028f6384d4c5a08aa955e2be98c4f10dd5c7799674251a6544f43c0d381bac/nomenclature-voile.xlsx 200 1ms 5.69kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 104 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 32ms 38.61kb
+[32minfo[39m: tech-documents/620cdcba49304d04a153f253ae21decf/1749e2e9af7046f56afa7b71922f78b955ccece91a7e476c3f3853cbf52ddae4/technical-report.pdf 404 1ms -
+[32minfo[39m: Stored object "620cdcba49304d04a153f253ae21decf/1749e2e9af7046f56afa7b71922f78b955ccece91a7e476c3f3853cbf52ddae4/technical-report.pdf" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/620cdcba49304d04a153f253ae21decf/1749e2e9af7046f56afa7b71922f78b955ccece91a7e476c3f3853cbf52ddae4/technical-report.pdf 200 1ms 0b
+[32minfo[39m: tech-documents/620cdcba49304d04a153f253ae21decf/1749e2e9af7046f56afa7b71922f78b955ccece91a7e476c3f3853cbf52ddae4/technical-report.pdf 200 1ms 2.87kb
+[32minfo[39m: ech-documents/620cdcba49304d04a153f253ae21decf/1749e2e9af7046f56afa7b71922f78b955ccece91a7e476c3f3853cbf52ddae4/technical-report.pdf 200 2ms 2.87kb
+[32minfo[39m: Fetched bucket "seamtech-documents" with options {"maxKeys":1000,"fetchOwner":true}
+[32minfo[39m: Found 105 objects for bucket "seamtech-documents"
+[32minfo[39m: tech-documents 200 13ms 38.98kb
+[32minfo[39m: tech-documents/620cdcba49304d04a153f253ae21decf/9793a999b40d112331edf6146f0723d635c03938a915fac31b6b42d10355f4e1/technical-report.docx 404 0ms -
+[32minfo[39m: Stored object "620cdcba49304d04a153f253ae21decf/9793a999b40d112331edf6146f0723d635c03938a915fac31b6b42d10355f4e1/technical-report.docx" in bucket "seamtech-documents" successfully
+[32minfo[39m: ech-documents/620cdcba49304d04a153f253ae21decf/9793a999b40d112331edf6146f0723d635c03938a915fac31b6b42d10355f4e1/technical-report.docx 200 2ms 0b
+[32minfo[39m: tech-documents/620cdcba49304d04a153f253ae21decf/9793a999b40d112331edf6146f0723d635c03938a915fac31b6b42d10355f4e1/technical-report.docx 200 2ms 36.66kb
+[32minfo[39m: ech-documents/620cdcba49304d04a153f253ae21decf/9793a999b40d112331edf6146f0723d635c03938a915fac31b6b42d10355f4e1/technical-report.docx 200 1ms 36.66kb

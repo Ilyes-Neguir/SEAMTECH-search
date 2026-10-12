@@ -1,0 +1,37 @@
+{
+  "date": "20261012_195512",
+  "cible_restauration": "/home/user/rv/data/cible_restauration_20261012_195512",
+  "base_donnees_restauree": "seamtech_restore_20261012_195512",
+  "port_application": 8089,
+  "source_inaccessible_pendant_test": true,
+  "controles": [
+    {
+      "controle": "connexion_restauree",
+      "succes": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "controle": "recherche_restauree",
+      "succes": true,
+      "detail": "nb_resultats=4"
+    },
+    {
+      "controle": "fiches_et_historique_restaures",
+      "succes": true,
+      "detail": "13 fiches, 8 entrées historique"
+    },
+    {
+      "controle": "telechargement_document_local",
+      "succes": true,
+      "sha256": "6029d7606a8ab5b5659601acdef2b3f84e50d9d9e8f11f9f23f692e65c81ffbb",
+      "taille": 19568
+    },
+    {
+      "controle": "telechargement_document_s3",
+      "succes": true,
+      "sha256": "a76d2ab433db86a4776e4d18f37650423ce51d25d1e7112b14ac0494002d1d60",
+      "taille": 174228
+    }
+  ],
+  "statut_global": "PASS"
+}

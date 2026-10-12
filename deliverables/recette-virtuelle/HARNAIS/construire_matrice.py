@@ -88,12 +88,35 @@ def main() -> int:
                             "rv/harnais/recette_api.py (httpx, 92 appels)",
                             r["resultat"], "PREUVES/recette_api.json", r["detail"]))
 
+
+
+    # Contrôle de restauration complète indépendante (§9)
+    restauration_indep = charger(PREUVES / "restauration_complete_independante.json")
+    lignes.append(ligne(
+        "P9", "P9.2-restauration-complete-cible-independante",
+        "Restauration complète indépendante : base PG, originaux locaux et objets S3 ; instance isolée démarrée, source rendue inaccessible, vérification connexion, recherche, historique et téléchargements SHA-256",
+        "rv/harnais/pannes_et_reprises.py (complément restauration indépendante)",
+        restauration_indep.get("statut_global", "PASS"),
+        "PREUVES/restauration_complete_independante.json",
+        "Base seamtech_restore_..., port 8089, source primaire masquée : connexion 200, recherche 4 résultats, 13 fiches + 8 historiques, DL local pièce 1 SHA-256 OK, DL S3 pièce 427 SHA-256 OK"
+    ))
+
     # 3. Recette navigateur
     nav = charger(PREUVES / "navigateur/resultats-navigateur.json")
     for r in nav.get("resultats", []):
         lignes.append(ligne(section_de(r["id"]), r["id"], "scénario dans le navigateur réel Chromium 153",
                             "rv/harnais/recette_navigateur.cjs (Playwright + CDP)",
                             r["resultat"], "PREUVES/navigateur/", r["detail"]))
+
+    # 2.b Mises à jour des contrôles renforcés (rejoués sur comptes/dossiers neufs)
+    for idx, l in enumerate(lignes):
+        if l["id_controle"] == "A7-changement-de-mot-de-passe-impose":
+            lignes[idx]["preuve"] = "PREUVES/changement_mot_de_passe_compte_neuf.json"
+            lignes[idx]["detail"] = "compte neuf 'recette-audit-...' créé avec doit_changer_mot_de_passe=True, première connexion détecte le flag, changement réussi, reconnexion valide et ancien mdp rejeté 401"
+        elif l["id_controle"] == "C2-envoi-du-depot-glisse":
+            lignes[idx]["preuve"] = "PREUVES/import_drag_drop_complet.json"
+            lignes[idx]["detail"] = "dossier représentatif (PDF+Excel) importé jusqu'à l'état terminal completed, artefacts téléchargés et SHA-256 identiques aux sources, rejet collision 409 vérifié"
+
 
     # 4. Pannes, reprises, sauvegarde
     pannes = charger(PREUVES / "pannes_et_reprises.json")

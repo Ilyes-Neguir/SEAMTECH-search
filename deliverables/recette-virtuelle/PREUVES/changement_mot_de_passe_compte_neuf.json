@@ -1,0 +1,32 @@
+{
+  "date": "20261012_195547",
+  "compte_teste": "recette-audit-1791834947",
+  "controles": [
+    {
+      "controle": "creation_compte_mdp_impose",
+      "succes": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "controle": "premiere_connexion_flag_impose",
+      "succes": true,
+      "detail": "doit_changer=True"
+    },
+    {
+      "controle": "changement_mot_de_passe_effectue",
+      "succes": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "controle": "reconnexion_nouveau_mot_de_passe",
+      "succes": true,
+      "detail": "doit_changer=False"
+    },
+    {
+      "controle": "rejet_ancien_mot_de_passe",
+      "succes": true,
+      "detail": "HTTP 401"
+    }
+  ],
+  "statut_global": "PASS"
+}

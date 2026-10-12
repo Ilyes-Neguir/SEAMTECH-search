@@ -36,6 +36,9 @@ FICHIERS_PREUVES = [
     "essai_panne_stockage_import.json",
     "reparation_copies_locales.json",
     "verification_telechargements.json",
+    "restauration_complete_independante.json",
+    "import_drag_drop_complet.json",
+    "changement_mot_de_passe_compte_neuf.json",
 ]
 
 JOURNAUX = {
