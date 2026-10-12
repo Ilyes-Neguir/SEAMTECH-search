@@ -108,6 +108,9 @@ CREATE TABLE IF NOT EXISTS import_jobs (
     claimed_by TEXT,
     heartbeat_at TEXT,
     failure_reason TEXT,
+    -- 022_selections_durables : choix manuels de l'opérateur (audit A06).
+    selected_pdf TEXT,
+    selected_excel TEXT,
     durability TEXT NOT NULL DEFAULT 'durable'
 );
 
@@ -185,7 +188,10 @@ CREATE TABLE IF NOT EXISTS import_jobs (
     claimed_by TEXT,
     heartbeat_at TIMESTAMPTZ,
     failure_reason TEXT,
-    durability TEXT NOT NULL DEFAULT 'durable'
+    durability TEXT NOT NULL DEFAULT 'durable',
+    -- 022_selections_durables : choix manuels de l'opérateur (audit A06).
+    selected_pdf TEXT,
+    selected_excel TEXT
 );
 -- Index partiel sur les jobs actifs. Le garde de colonne n'est pas
 -- décoratif : sur une base ANTÉRIEURE à la migration 020, ``import_jobs``
@@ -973,6 +979,35 @@ class SearchIndex:
         with connection.cursor() as cursor:
             cursor.execute(schema_metier.SQL_021_REVISION_FICHE)
 
+    def _migration_022_selections_durables(self, connection: Any) -> None:
+        """Sélections manuelles durables (audit du 2026-10-08, constat A06).
+
+        ``selected_pdf`` / ``selected_excel`` sont les choix EXPLICITES de
+        l'opérateur. Ils ne vivaient que dans la charge Redis : sa perte faisait
+        repartir l'import sur « le premier PDF trouvé », sans aucun signal.
+
+        PostgreSQL : SQL idempotent (ADD COLUMN IF NOT EXISTS). SQLite : la
+        colonne est ajoutée après lecture de ``PRAGMA table_info`` (SQLite ne
+        connaît pas ``ADD COLUMN IF NOT EXISTS``) ; le mode SQLite ne porte pas
+        la couche métier, mais ``import_jobs`` y existe et la supervision doit
+        y répondre avec les mêmes clés.
+        """
+        if self.is_postgres:
+            with connection.cursor() as cursor:
+                cursor.execute(schema_metier.SQL_022_SELECTIONS_DURABLES)
+            return
+
+        existantes = {
+            str(ligne[1]) for ligne in connection.execute("PRAGMA table_info(import_jobs)").fetchall()
+        }
+        for nom in ("selected_pdf", "selected_excel"):
+            if nom not in existantes:
+                connection.execute(f"ALTER TABLE import_jobs ADD COLUMN {nom} TEXT")
+        logger.info(
+            "Migration 022_selections_durables : sélections manuelles persistées dans import_jobs (SQLite). "
+            "Conséquence : une reprise ne substitue plus un autre document."
+        )
+
     def run_migrations(self) -> None:
         """Run pending schema migrations once at startup."""
         with self.connect() as connection:
@@ -1018,6 +1053,12 @@ class SearchIndex:
                 # ici comme les autres : une migration oubliée ferait échouer
                 # sauvegarde/restauration (VERSION_SCHEMA_METIER absente).
                 ("021_revision_fiche", self._migration_021_revision_fiche),
+                # 2026-10-08 — sélections manuelles persistées (audit A06) :
+                # une reprise ne doit pas substituer « le premier PDF trouvé »
+                # au document que l'opérateur avait désigné. Enregistrée ici
+                # comme les autres : une migration oubliée fait échouer
+                # sauvegarde/restauration (VERSION_SCHEMA_METIER absente).
+                ("022_selections_durables", self._migration_022_selections_durables),
             ]
 
             for version, func in migrations:

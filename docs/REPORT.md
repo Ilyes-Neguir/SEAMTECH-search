@@ -7,8 +7,8 @@ SEAMTECH Search v0.4.0 is a fully hardened, decoupled, cloud-native file search,
 All components have been upgraded from local desktop paradigms to scalable, distributed cloud infrastructure:
 - **Permanent Storage:** S3-compatible object storage (MinIO locally, Cloudflare R2 or AWS S3 in production).
 - **Relational Metadata & Full-Text Search:** PostgreSQL 16 with `ThreadedConnectionPool`, `tsvector`/GIN indexing, and JSONB document storage.
-- **Coordination & Rate Limiting:** Redis 7 for distributed task queues (`RPUSH`/`BLPOP`), fast-path job status caching, and sliding-window rate limiting.
-- **Stateless Compute:** Ephemeral scratch directory lifecycle with automatic purge upon object storage upload.
+- **Coordination & Rate Limiting:** Redis 7 for distributed task queues (`RPUSH` + `BLMOVE` avec revendication reprenable), fast-path job status caching, and sliding-window rate limiting.
+- **Stateless Compute:** Ephemeral scratch directory lifecycle with purge gated on PROVEN object-storage integrity (audit 2026-10-08, A03/A07).
 - **Multi-Technical-PDF Analysis:** Full extraction across all technical PDF drawings in multi-sheet dossiers with dual PDF/Word synthesis reports.
 
 ---
@@ -18,10 +18,10 @@ All components have been upgraded from local desktop paradigms to scalable, dist
 ### Storage & Upload Architecture (`seamtech_search/storage.py`)
 - S3 client supporting MinIO, Cloudflare R2, and AWS S3 with standard bucket initialization and presigned download URL generation.
 - Complete dossier ingestion uploading raw technical drawings, Excel workbooks, and generated synthesis reports.
-- Stateless VPS operations: local scratch staging is purged immediately after S3 upload.
+- Stateless VPS operations: le staging local n'est purgé qu'APRÈS preuve d'intégrité côté stockage d'objets — chaque fichier et chaque rapport déclaré doit être `uploaded` + `verified` + porteur d'une clé. Un fichier resté en échec, une clé manquante ou un rapport absent fait basculer le job en `upload_incomplete` et CONSERVE le staging (audit 2026-10-08, A03/A07 : la purge aveugle après upload supprimait l'unique copie d'un original encore manquant à l'appel). Un dossier d'archive EXTERNE n'est jamais purgé sans `SEAMTECH_DELETE_LOCAL_AFTER_UPLOAD=true` explicite.
 
 ### Distributed Task Queue & Worker (`seamtech_search/redis_store.py` & `worker.py`)
-- Background task queue using Redis `RPUSH` / `BLPOP`.
+- Background task queue: `enqueue_task` (RPUSH) et reprise par `BLMOVE` (la tâche est DÉPLACÉE vers la liste de traitement : un worker qui meurt en cours de route laisse une revendication reprenable, voir `reprendre_taches_orphelines`).
 - Fast-path status caching in Redis (`seamtech:job:{id}`) with 24-hour TTL, mitigating database load during UI progress polling.
 - Standalone background worker process supporting asynchronous execution (`POST /imports` returning HTTP 202 Accepted), progress stage updates, and cooperative cancellation (`POST /imports/{id}/cancel`).
 

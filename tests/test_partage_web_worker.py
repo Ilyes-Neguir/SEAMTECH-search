@@ -452,11 +452,20 @@ def test_web_et_worker_partagent_fichiers_scratch_rapports_et_modeles(deploiemen
             "le web et la base doivent voir le même état (aucun état en mémoire seule)"
         )
 
-        # b) Le worker a purgé le brouillon partagé après vérification.
-        assert not staged.exists() or not any(staged.iterdir()), (
-            "le brouillon téléversé doit être purgé après un envoi vérifié "
-            "(sinon le disque du serveur se remplit)"
+        # b) AUCUN stockage objet ici (S3 non configuré) : la copie locale est
+        #    la SEULE copie, elle est donc CONSERVÉE.
+        #
+        # Correctif A03 (audit du 2026-10-08) : le test historique exigeait la
+        # purge du brouillon — y compris quand rien n'avait été envoyé. C'était
+        # le défaut : supprimer l'unique exemplaire au motif qu'il est « dans le
+        # staging ». La purge du staging n'est permise qu'après une copie
+        # durable VÉRIFIÉE (et l'élagage par âge reste borné par la rétention).
+        assert staged.exists() and any(staged.iterdir()), (
+            "sans stockage objet, le brouillon est l'unique copie : il doit être conservé"
         )
+        payload_final = job_en_base.get("result") or {}
+        assert payload_final.get("preservation", {}).get("integrite_prouvee") is False, payload_final
+        assert payload_final.get("cleanup", {}).get("purge") is False, payload_final
 
         # c) Le dossier de modèles est résolu au même endroit par les deux.
         from seamtech_search.api import _dossier_modeles_ml

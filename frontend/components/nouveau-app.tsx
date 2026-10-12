@@ -5,7 +5,7 @@
 // /lots/{id}). Un refus est un RÉSULTAT affiché avec sa raison, jamais un
 // crash silencieux.
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { FolderInput, RefreshCw } from "lucide-react"
 import { authedFetch } from "@/lib/authed-fetch"
 import type { LotDetail } from "@/lib/fiche"
@@ -18,6 +18,20 @@ async function jsonFetch<T>(url: string, init?: RequestInit): Promise<T> {
   return body as T
 }
 
+//: Statuts de lot pour lesquels on arrête d'interroger le serveur. « interrompu »
+//: et « relance » sont des états où un worker peut encore reprendre le lot : on
+//: continue de suivre tant que le lot n'est pas terminal.
+const STATUTS_LOT_TERMINAUX = new Set(["termine", "annule"])
+//: Statuts de lot que l'écran sait nommer. Un statut inconnu est AFFICHÉ tel
+//: quel (jamais masqué) : c'est une information, pas une erreur de format.
+const LIBELLES_LOT: Record<string, string> = {
+  en_cours: "en cours",
+  termine: "terminé",
+  interrompu: "interrompu",
+  annule: "annulé",
+  relance: "relancé",
+}
+
 export function NouveauApp() {
   const [dossier, setDossier] = useState("")
   const [resultat, setResultat] = useState<{ statut: string; fiche: string | null; raison: string | null; pieces: number } | null>(null)
@@ -25,25 +39,65 @@ export function NouveauApp() {
   const [lot, setLot] = useState<LotDetail | null>(null)
   const [occupe, setOccupe] = useState(false)
   const [erreur, setErreur] = useState<string | null>(null)
+  const [erreurSuivi, setErreurSuivi] = useState<string | null>(null)
+  // Jeton de génération : une réponse de lot arrivée APRÈS que l'opérateur a
+  // quitté le suivi (autre dépôt, démontage) ne doit pas réécrire l'écran. Le
+  // minuteur de rafraîchissement est lui aussi identifié par ce jeton — sans
+  // quoi un lot abandonné continuait d'interroger le serveur indéfiniment.
+  const generation = useRef(0)
+  const [jetonSuivi, setJetonSuivi] = useState(0)
 
-  const chargerLot = useCallback(async (id: number) => {
+  const chargerLot = useCallback(async (id: number, jeton: number) => {
     try {
       const detail = await jsonFetch<LotDetail>(`/api/lots/${id}`)
+      if (generation.current !== jeton) return // suivi abandonné : ne rien écrire
       setLot(detail)
-      if (detail.statut === "en_cours") setTimeout(() => chargerLot(id), 1000)
-    } catch {
-      setLot(null)
+      setErreurSuivi(null)
+      if (!STATUTS_LOT_TERMINAUX.has(detail.statut)) {
+        setTimeout(() => {
+          if (generation.current === jeton) void chargerLot(id, jeton)
+        }, 1000)
+      }
+    } catch (e) {
+      if (generation.current !== jeton) return
+      // Plus jamais d'échec MUET (défaut A08) : l'écran dit que le suivi est
+      // indisponible, avec la raison — l'opérateur sait qu'il ne voit rien
+      // plutôt que de croire qu'il n'y a rien à voir.
+      setErreurSuivi(
+        e instanceof Error
+          ? `Suivi du lot #${id} indisponible : ${e.message}`
+          : `Suivi du lot #${id} indisponible.`,
+      )
     }
   }, [])
 
   useEffect(() => {
-    if (idLot != null) chargerLot(idLot)
+    if (idLot == null) {
+      setLot(null)
+      setErreurSuivi(null)
+      return
+    }
+    const jeton = ++generation.current
+    setJetonSuivi(jeton)
+    setErreurSuivi(null)
+    void chargerLot(idLot, jeton)
+    // Démontage / changement de lot : invalide toute réponse ET tout minuteur
+    // en vol. Sans ce nettoyage, un lot abandonné continuaient d'actualiser
+    // l'écran (et d'interroger le serveur) après le départ de l'opérateur.
+    return () => {
+      generation.current += 1
+    }
   }, [idLot, chargerLot])
 
   async function deposer() {
     setOccupe(true)
     setErreur(null)
     setResultat(null)
+    // Nouveau dépôt : l'ancien suivi et son minuteur sont abandonnés.
+    generation.current += 1
+    setIdLot(null)
+    setLot(null)
+    setErreurSuivi(null)
     try {
       const corps = await jsonFetch<{ statut: string; fiche: string | null; raison: string | null; pieces: number; id_lot: number | null; lot?: { id_lot: number } }>(
         "/api/imports/dossier",
@@ -114,13 +168,23 @@ export function NouveauApp() {
           )}
         </div>
       )}
+      {erreurSuivi && (
+        <p role="alert" className="text-sm text-destructive" data-testid="erreur-suivi">
+          {erreurSuivi}
+        </p>
+      )}
+      {idLot != null && !lot && !erreurSuivi && (
+        <p className="text-xs text-muted-foreground" data-testid="suivi-en-chargement">
+          Chargement du suivi du lot #{idLot}…
+        </p>
+      )}
       {lot && (
         <div className="rounded border border-border p-4" data-testid="suivi-lot">
           <h2 className="flex items-center justify-between text-sm font-semibold">
             <span>
-              Lot #{lot.id_lot} — {lot.statut}
+              Lot #{lot.id_lot} — {LIBELLES_LOT[lot.statut] ?? lot.statut}
             </span>
-            <button type="button" onClick={() => chargerLot(lot.id_lot)} aria-label="Rafraîchir le lot" className="text-muted-foreground hover:text-foreground">
+            <button type="button" onClick={() => void chargerLot(lot.id_lot, jetonSuivi)} aria-label="Rafraîchir le lot" className="text-muted-foreground hover:text-foreground">
               <RefreshCw className="size-4" />
             </button>
           </h2>

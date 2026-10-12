@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -1499,71 +1500,245 @@ def _report_dir_for(payload: dict[str, Any], config: AppConfig, import_id: str) 
     return config.database_path.parent / "reports" / import_id
 
 
+def construire_manifeste(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Inventaire COMPLET et autoritatif de ce que l'import doit préserver.
+
+    Défaut corrigé (A07 de l'audit du 2026-10-08) : ``retry_upload`` remplaçait
+    ``payload["artifacts"]`` par les seuls fichiers qu'il venait de renvoyer et
+    recalculait ``all_verified`` sur ce sous-ensemble. Un renvoi de rapports
+    seuls — les originaux restant en échec — produisait donc
+    ``upload_status=uploaded`` et ``all_verified=true`` : un succès TOTAL
+    annoncé sur une préservation PARTIELLE, et une purge locale autorisée sur
+    cette base.
+
+    Le manifeste est la liste de TOUT ce que l'import a produit et qui doit
+    survivre : chaque fichier détecté, PLUS les rapports générés. Les preuves
+    déjà acquises (clé d'objet, empreinte vérifiée) sont RECONDUITES telles
+    quelles — un renvoi partiel ne réécrit jamais le passé.
+    """
+    entetes_connues = {
+        "path", "name", "key", "bucket", "status", "verified", "verification",
+        "verification_detail", "error", "required", "role", "uploaded_at",
+    }
+    # 1. Preuves acquises lors des envois PRÉCÉDENTS (jamais perdues).
+    preuves: dict[str, dict[str, Any]] = {}
+    for artefact in payload.get("artifacts") or []:
+        if not isinstance(artefact, dict) or not artefact.get("path"):
+            continue
+        preuves[str(artefact["path"])] = {
+            cle: artefact[cle] for cle in entetes_connues if cle in artefact
+        }
+
+    manifeste: dict[str, dict[str, Any]] = {}
+
+    def _entree(chemin: str, nom: str, role: str, statut: str, cle_objet: str | None) -> dict[str, Any]:
+        precedente = preuves.get(chemin, {})
+        entree: dict[str, Any] = {
+            "path": chemin,
+            "name": nom,
+            "key": cle_objet or precedente.get("key"),
+            "bucket": precedente.get("bucket"),
+            "status": statut,
+            "verified": bool(precedente.get("verified")) and statut == "uploaded",
+            "verification": precedente.get("verification", "non_verifie"),
+            "verification_detail": precedente.get("verification_detail"),
+            "error": precedente.get("error"),
+            "required": True,
+            "role": role,
+            "uploaded_at": precedente.get("uploaded_at"),
+        }
+        if entree["status"] == "uploaded" and not entree["verified"]:
+            # « uploaded » sans preuve d'intégrité n'est PAS une préservation :
+            # l'entrée reste à renvoyer (ou à re-vérifier), jamais comptée comme
+            # acquise.
+            entree["error"] = entree["error"] or "intégrité non prouvée lors d'un envoi antérieur"
+        return entree
+
+    for entree_fichier in payload.get("files") or []:
+        chemin = str(entree_fichier.get("path") or "")
+        if not chemin:
+            continue
+        manifeste[chemin] = _entree(
+            chemin,
+            str(entree_fichier.get("name") or Path(chemin).name),
+            str(entree_fichier.get("category") or "piece"),
+            str(entree_fichier.get("upload_status") or "pending"),
+            entree_fichier.get("object_key"),
+        )
+
+    # 2. Les rapports générés ne figurent pas dans ``files`` : sans cette
+    #    entrée, « tout préserver » ne les couvrirait pas — et c'est justement
+    #    par là que le sous-ensemble passait pour l'ensemble.
+    for cle, role in (("report_path", "rapport_pdf"), ("report_docx_path", "rapport_docx")):
+        chemin = payload.get(cle)
+        if not chemin:
+            continue
+        chemin = str(chemin)
+        if chemin in manifeste:
+            continue
+        manifeste[chemin] = _entree(
+            chemin, Path(chemin).name, role, "pending", None
+        )
+
+    # 3. Un rapport annoncé « envoyé » seulement parce que le drapeau global
+    #    l'était n'a aucune preuve : la clé d'objet manquante le trahit.
+    for entree in manifeste.values():
+        if entree["status"] == "uploaded" and not entree["key"]:
+            entree["status"] = "pending"
+            entree["verified"] = False
+            entree["error"] = "clé d'objet absente : envoi non prouvé"
+    return [manifeste[chemin] for chemin in sorted(manifeste)]
+
+
+def agreger_preservation(
+    manifeste: list[dict[str, Any]], *, destination_configuree: bool
+) -> tuple[str, bool]:
+    """Statut global et ``all_verified`` calculés sur l'INVENTAIRE ENTIER.
+
+    Retourne ``(upload_status, all_verified)``. ``all_verified`` n'est vrai que
+    si CHAQUE entrée requise porte une clé d'objet et une intégrité vérifiée —
+    jamais parce que le sous-ensemble renvoyé à l'instant a réussi.
+    """
+    if not manifeste:
+        return ("not_applicable", False)
+    if not destination_configuree:
+        return ("not_configured", False)
+    verifies = [e for e in manifeste if e.get("status") == "uploaded" and e.get("verified") and e.get("key")]
+    if len(verifies) == len(manifeste):
+        return ("uploaded", True)
+    if verifies:
+        return ("partial", False)
+    return ("failed", False)
+
+
 def retry_upload(index: SearchIndex, config: AppConfig, import_id: str) -> dict[str, Any]:
     payload = get_import(index, import_id)
     if payload is None:
         raise KeyError(f"Import not found: {import_id}")
-    technical_pdf = Path(payload["technical_pdf"]) if payload.get("technical_pdf") else None
-    report_pdf = Path(payload["report_path"]) if payload.get("report_path") else None
-    report_docx = Path(payload["report_docx_path"]) if payload.get("report_docx_path") else None
-    excel_file = Path(payload["excel_file"]) if payload.get("excel_file") else None
 
-    # Build list of files that still need upload (status != uploaded)
-    files_needing_retry: list[Path] = []
-    for entry in payload.get("files", []):
-        if entry.get("upload_status") != "uploaded":
-            p = Path(entry.get("path", ""))
-            if p.exists() or entry.get("path") in (payload.get("technical_pdf"), payload.get("excel_file")):
-                # Use the stored path even if file no longer exists locally; upload will fail and be reported
-                files_needing_retry.append(Path(entry["path"]))
-    # Reports are not in files list; retry them if overall status not uploaded or they are missing from verified set
-    # If no specific files, fall back to full set (backward compat)
-    if not files_needing_retry:
-        files_needing_retry = [technical_pdf, report_pdf, report_docx] + ([excel_file] if excel_file else [])
-        files_needing_retry = [p for p in files_needing_retry if p is not None]
-        # If previous upload was fully successful, keep empty to avoid redundant upload
-        if payload.get("upload_status") == "uploaded" and all(
-            e.get("upload_status") == "uploaded" for e in payload.get("files", [])
-        ):
-            files_needing_retry = []
-    else:
-        # Also include reports if they exist and need retry
-        for rep in (report_pdf, report_docx):
-            if rep and rep not in files_needing_retry:
-                files_needing_retry.append(rep)
+    manifeste = construire_manifeste(payload)
+    a_renvoyer: list[Path] = []
+    absents: list[str] = []
+    for entree in manifeste:
+        if entree["status"] == "uploaded" and entree["verified"] and entree["key"]:
+            continue  # preuve acquise : on ne renvoie pas, on ne réécrit pas
+        chemin = Path(entree["path"])
+        if chemin.exists() and chemin.is_file():
+            a_renvoyer.append(chemin)
+        else:
+            # Fichier requis INTROUVABLE localement : échec EXPLICITE (jamais
+            # un silence, jamais un « uploaded » de complaisance).
+            absents.append(entree["path"])
 
     folder = Path(payload.get("source_path", "")).name or "import"
     upload_batch = (
         upload_artifacts_to_storage(
             folder_name=folder,
-            files_to_upload=files_needing_retry,
+            files_to_upload=a_renvoyer,
             config=config,
             import_id=import_id,
             source_root=payload.get("source_path") or None,
         )
-        if files_needing_retry
-        else UploadBatch(status="uploaded" if payload.get("upload_status") == "uploaded" else "not_applicable")
+        if a_renvoyer
+        else UploadBatch(status="not_applicable")
     )
-    upload_status = upload_batch.status
-    artifact_by_path = {a.path: a for a in upload_batch.artifacts}
-    status_by_path = {a.path: a.status for a in upload_batch.artifacts}
+    resultats = {a.path: a.to_dict() for a in upload_batch.artifacts}
+
+    # Fusion : le manifeste reste COMPLET. Les entrées déjà vérifiées gardent
+    # leurs preuves, les entrées renvoyées prennent le nouveau résultat, et les
+    # fichiers localement absents portent un échec nommé.
+    par_chemin = {entree["path"]: entree for entree in manifeste}
+    for chemin, resultat in resultats.items():
+        cible = par_chemin.get(chemin)
+        if cible is None:
+            par_chemin[chemin] = {**resultat, "required": True, "role": "hors_manifeste"}
+            continue
+        cible.update(
+            {
+                "key": resultat.get("key"),
+                "bucket": resultat.get("bucket"),
+                "status": resultat.get("status", cible["status"]),
+                "verified": bool(resultat.get("verified")),
+                "verification": resultat.get("verification", "non_verifie"),
+                "verification_detail": resultat.get("verification_detail"),
+                "error": resultat.get("error"),
+            }
+        )
+    for chemin in absents:
+        cible = par_chemin.get(chemin)
+        if cible is not None:
+            cible.update(
+                {
+                    "status": "failed",
+                    "verified": False,
+                    "error": "fichier source absent localement : copie durable non prouvée",
+                }
+            )
+
+    manifeste = [par_chemin[chemin] for chemin in sorted(par_chemin)]
+    destination_configuree = upload_batch.status not in ("not_configured", "not_applicable") or any(
+        e.get("key") for e in manifeste
+    )
+    upload_status, all_verified = agreger_preservation(
+        manifeste, destination_configuree=destination_configuree
+    )
+    if not destination_configuree:
+        # Aucune destination : les preuves antérieures, s'il y en a, font foi ;
+        # sinon on l'annonce tel quel au lieu d'un « uploaded » vide de sens.
+        upload_status = payload.get("upload_status") or "not_configured"
 
     payload["upload_status"] = upload_status
-    # Update per-file statuses with new results
-    for entry in payload.get("files", []):
-        p = entry.get("path")
-        if p in status_by_path:
-            entry["upload_status"] = status_by_path[p]
-            artifact = artifact_by_path.get(p)
-            if artifact:
-                entry["object_key"] = artifact.key
-                entry["object_bucket"] = artifact.bucket
-                entry["verified"] = artifact.verified
-        # If file was already uploaded and not retried, keep its existing status
+    payload["all_verified"] = all_verified
+    payload["artifacts"] = manifeste
+    payload["inventaire"] = {
+        "total": len(manifeste),
+        "verifies": sum(1 for e in manifeste if e.get("verified") and e.get("key")),
+        "manquants_localement": absents,
+        "renvoyes": len(upload_batch.artifacts),
+        "conserves": len(manifeste) - len(resultats) - len(absents),
+    }
+    payload["preservation"] = {
+        "upload_status": upload_status,
+        "integrite_prouvee": all_verified,
+        "artefacts_total": len(manifeste),
+        "artefacts_verifies": payload["inventaire"]["verifies"],
+        "artefacts_non_verifies": [
+            e["path"] for e in manifeste if not (e.get("verified") and e.get("key"))
+        ],
+        "destination_configuree": destination_configuree,
+    }
+    # Éligibilité à la purge locale : elle découle de l'agrégat COMPLET, jamais
+    # du succès du sous-ensemble renvoyé.
+    payload["cleanup"] = {
+        "purge": bool(all_verified and getattr(config, "delete_local_after_upload", False)),
+        "raison": (
+            "inventaire entier vérifié et purge demandée par l'exploitant"
+            if all_verified and getattr(config, "delete_local_after_upload", False)
+            else (
+                "inventaire entier vérifié, mais purge locale non demandée "
+                "(SEAMTECH_DELETE_LOCAL_AFTER_UPLOAD désactivé)"
+                if all_verified
+                else "préservation incomplète : la copie locale reste nécessaire"
+            )
+        ),
+        "artefacts_non_verifies": payload["preservation"]["artefacts_non_verifies"],
+    }
 
-    # Update top-level artifacts for completeness
-    payload["artifacts"] = [a.to_dict() for a in upload_batch.artifacts]
-    payload["all_verified"] = upload_batch.all_verified
+    # Statuts par fichier : mis à jour depuis le MANIFESTE (source unique), donc
+    # jamais en contradiction avec lui.
+    for entree_fichier in payload.get("files") or []:
+        cible = par_chemin.get(str(entree_fichier.get("path") or ""))
+        if cible is None:
+            continue
+        entree_fichier["upload_status"] = cible["status"]
+        entree_fichier["object_key"] = cible.get("key")
+        entree_fichier["object_bucket"] = cible.get("bucket")
+        entree_fichier["verified"] = bool(cible.get("verified"))
+        if cible.get("status") == "uploaded" and cible.get("verified"):
+            entree_fichier["uploaded_at"] = entree_fichier.get("uploaded_at") or time.time()
+    payload["files_uploaded"] = sum(
+        1 for e in manifeste if e.get("status") == "uploaded" and e.get("verified")
+    )
 
     update_import(index, import_id, payload.get("status", "needs_review"), payload)
     return payload

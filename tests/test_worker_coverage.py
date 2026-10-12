@@ -112,11 +112,23 @@ def test_not_configured_keeps_completed(tmp_path: Path) -> None:
             assert src.exists()
 
 
-def test_upload_incomplete_quarantines(tmp_path: Path) -> None:
-    src = tmp_path / "src_fail"
-    src.mkdir()
-    (src / "file.txt").write_text("data")
+def test_upload_incomplete_quarantine_le_staging(tmp_path: Path) -> None:
+    """Envoi incomplet d'une source STAGÉE : mise en quarantaine (dossier à nous).
+
+    La source vient du staging applicatif (téléversement navigateur) : c'est
+    notre brouillon, on le déplace pour qu'il soit inspectable/rejouable et
+    exclu du balayage. Les octets restent intégralement présents.
+
+    NB (audit A04) : le test historique portait cette source HORS staging et
+    attendait le déplacement — c'était le défaut (déplacement d'une archive
+    externe, références de reprise périmées). Le cas externe est désormais
+    couvert par ``test_upload_incomplete_archive_externe_non_deplacee``.
+    """
     cfg = make_config(tmp_path)
+    staged = staging_root(cfg)
+    src = staged / "uuid_folder_fail"
+    src.mkdir(parents=True)
+    (src / "file.txt").write_text("data")
     idx = make_index(tmp_path / "idx3")
     result = fake_result(tmp_path, upload_status="failed", all_verified=False, with_key=False, src_path=src)
     result = replace(result, files=[replace(result.files[0], path=str(src / "file.txt"), object_key=None, upload_status="failed")], source_path=str(src))
@@ -130,7 +142,42 @@ def test_upload_incomplete_quarantines(tmp_path: Path) -> None:
             q_root = quarantine_root(cfg)
             assert q_root.exists()
             assert not src.exists()
-            assert len(list(q_root.iterdir())) >= 1
+            dest = q_root / "job-123_uuid_folder_fail"
+            assert (dest / "file.txt").read_text() == "data", "octets préservés à l'identique"
+            assert out["quarantine"]["deplace"] is True
+            assert out["quarantine"]["destination"] == str(dest)
+            # La reprise doit retrouver ses fichiers : la nouvelle référence est publiée.
+            assert out["source_path"] == str(dest)
+            assert "source_path" in out["quarantine"]["references_mises_a_jour"]
+
+
+def test_upload_incomplete_archive_externe_non_deplacee(tmp_path: Path) -> None:
+    """Envoi incomplet d'une source EXTERNE : jamais déplacée (audit A04).
+
+    L'archive du commanditaire (dossier serveur, partage réseau) n'est pas un
+    brouillon de l'application : un échec d'envoi la laisse STRICTEMENT en
+    place — sinon la reprise pointerait vers un dossier disparu et RG13
+    (« ne modifie jamais les archives sources ») serait violé.
+    """
+    src = tmp_path / "archive_commanditaire"
+    src.mkdir()
+    (src / "file.txt").write_text("data")
+    cfg = make_config(tmp_path)
+    idx = make_index(tmp_path / "idx4")
+    result = fake_result(tmp_path, upload_status="failed", all_verified=False, with_key=False, src_path=src)
+    result = replace(result, files=[replace(result.files[0], path=str(src / "file.txt"), object_key=None, upload_status="failed")], source_path=str(src))
+
+    with patch("seamtech_search.worker.import_folder", return_value=result):
+        with patch("seamtech_search.worker.update_job"):
+            payload = {"job_id": "job-456", "source_path": str(src)}
+            out = process_import_task(payload, cfg, idx, redis_store=None)
+            assert out["status"] == "upload_incomplete"
+            assert src.exists(), "l'archive externe reste en place"
+            assert (src / "file.txt").read_text() == "data"
+            assert not quarantine_root(cfg).exists(), "aucun déplacement vers la quarantaine"
+            assert out["quarantine"]["deplace"] is False
+            assert "externe" in out["quarantine"]["raison"]
+            assert out["source_path"] == str(src), "référence de reprise inchangée"
 
 
 def test_cancelled_and_exception(tmp_path: Path) -> None:

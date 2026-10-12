@@ -747,6 +747,11 @@ def create_app(config: AppConfig) -> FastAPI:
             status="pending",
             stage="queued",
             durability="durable" if durable else "process_memory",
+            # Sélections MANUELLES persistées en base (A06) : sans elles, une
+            # reprise après perte de la charge Redis ré-important un AUTRE
+            # document que celui désigné par l'opérateur.
+            selected_pdf=task_payload.get("selected_pdf"),
+            selected_excel=task_payload.get("selected_excel"),
         )
         if durable:
             redis_store.set_job(
@@ -877,6 +882,11 @@ def create_app(config: AppConfig) -> FastAPI:
             status="pending",
             stage="queued",
             durability="durable" if durable else "process_memory",
+            # Sélections MANUELLES persistées en base (A06) : sans elles, une
+            # reprise après perte de la charge Redis ré-important un AUTRE
+            # document que celui désigné par l'opérateur.
+            selected_pdf=task_payload.get("selected_pdf"),
+            selected_excel=task_payload.get("selected_excel"),
         )
         if durable:
             redis_store.set_job(
@@ -943,12 +953,45 @@ def create_app(config: AppConfig) -> FastAPI:
 
         safe_folder = re.sub(r"[^\w\-. ]", "_", folder.strip() or "upload").strip(" .") or "upload"
         staged = staging_root(config) / f"{uuid.uuid4().hex}_{safe_folder}"
+
+        # A05 — l'espace de noms de destination est validé EN ENTIER avant la
+        # moindre écriture. Deux fichiers qui visent le même chemin ne peuvent
+        # pas être « acceptés tous les deux » : le second écraserait le premier
+        # et l'API répondrait 200. On refuse explicitement, avec la liste
+        # complète des conflits — rien n'est écrit, donc rien n'est perdu.
+        plan = [_safe_relative_path(upload.filename or "file") for upload in files]
+        collisions = analyser_collisions(plan)
+        if collisions:
+            record_audit_event(
+                index,
+                action="import_upload",
+                actor=actor,
+                resource=str(staged),
+                status="409",
+                details={"collisions": collisions[:20], "nb_fichiers": len(plan)},
+            )
+            logger.warning(
+                "Envoi refusé : %d conflit(s) de destination — aucun fichier écrit (%s).",
+                len(collisions),
+                staged,
+            )
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "collision_chemins",
+                    "message": (
+                        f"{len(collisions)} conflit(s) de nom de fichier dans cet envoi : rien n'a été "
+                        "écrit. Renommez ou déplacez les fichiers concernés, puis renvoyez."
+                    ),
+                    "collisions": collisions,
+                },
+            )
+
         staged.mkdir(parents=True, exist_ok=True)
         total_size = 0
         max_aggregate = config.max_file_size_bytes * 10  # aggregate cap: 10x single file
         try:
-            for upload in files:
-                relative = _safe_relative_path(upload.filename or "file")
+            for upload, relative in zip(files, plan):
                 target = staged / relative
                 target.parent.mkdir(parents=True, exist_ok=True)
                 size = 0
@@ -1415,6 +1458,76 @@ def _safe_relative_path(filename: str) -> Path:
     parts = [part for part in Path(filename.replace("\\", "/")).parts if part not in ("", ".", "..", "/")]
     cleaned = [re.sub(r"[^\w\-+. ]", "_", part).strip(" .") or "file" for part in parts]
     return Path(*cleaned) if cleaned else Path("file")
+
+
+def _cle_insensible(chemin: Path) -> str:
+    """Clé de comparaison INSENSIBLE À LA CASSE, indépendante de l'hôte.
+
+    Un serveur Linux et un poste Windows ne doivent pas répondre différemment au
+    même envoi : sur Windows ``Rapport.pdf`` et ``rapport.pdf`` désignent le même
+    fichier, donc accepter les deux reviendrait à en perdre un en silence. On
+    refuse PARTOUT, pas seulement là où le système d'exploitation veut bien le
+    signaler.
+    """
+    return "/".join(part.casefold() for part in chemin.parts)
+
+
+def analyser_collisions(relatifs: list[Path]) -> list[dict[str, Any]]:
+    """Conflits de destination d'un envoi groupé — détectés AVANT toute écriture.
+
+    Défaut corrigé (A05 de l'audit du 2026-10-08) : deux fichiers nommés
+    ``same.txt`` étaient acceptés, écrits l'un après l'autre dans la même
+    destination, et l'API répondait 200 — l'opérateur croyait avoir déposé deux
+    pièces et n'en avait plus qu'une. Trois familles de conflits, toutes
+    rencontrées en vrai :
+
+    * ``doublon`` : deux entrées visent le même chemin (mêmes noms, noms rendus
+      identiques par l'assainissement ``:`` → ``_``, ou différences de casse) ;
+    * ``fichier_vs_dossier`` : un fichier porte le nom d'un dossier du même
+      envoi (``a`` et ``a/b.txt``) — écrire l'un détruirait l'autre ;
+    * ``dossier_implicite`` : deux fichiers exigent le même dossier avec des
+      casses différentes.
+
+    La liste est COMPLÈTE (pas seulement le premier conflit) : l'opérateur
+    renomme en une fois au lieu de découvrir les collisions une par une.
+    """
+    conflits: list[dict[str, Any]] = []
+    vues: dict[str, Path] = {}
+    for chemin in relatifs:
+        cle = _cle_insensible(chemin)
+        if cle in vues:
+            conflits.append(
+                {
+                    "type": "doublon",
+                    "cle": cle,
+                    "chemins": [str(vues[cle]), str(chemin)],
+                    "message": (
+                        f"« {vues[cle]} » et « {chemin} » visent le même fichier de destination "
+                        "(nom identique, ou identique après assainissement/insensibilité à la casse)"
+                    ),
+                }
+            )
+        else:
+            vues[cle] = chemin
+
+    # Un chemin ne peut pas être à la fois un fichier et un dossier du même envoi.
+    for cle, chemin in vues.items():
+        parties = cle.split("/")
+        for profondeur in range(1, len(parties)):
+            prefixe = "/".join(parties[:profondeur])
+            if prefixe in vues:
+                conflits.append(
+                    {
+                        "type": "fichier_vs_dossier",
+                        "cle": prefixe,
+                        "chemins": [str(vues[prefixe]), str(chemin)],
+                        "message": (
+                            f"« {vues[prefixe]} » est un fichier, mais « {chemin} » en fait un dossier "
+                            "— la destination ne peut pas être les deux"
+                        ),
+                    }
+                )
+    return conflits
 
 
 def _require_auth(config: AppConfig, token: str | None) -> None:

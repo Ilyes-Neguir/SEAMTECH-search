@@ -201,7 +201,16 @@ export function ValidationApp() {
     if (!codeActif && file.length > 0) setCodeActif(file[0].code)
   }, [file, codeActif])
 
-  const [piecePdf, setPiecePdf] = useState<PieceJointe | null>(null)
+  // Le PDF affiché est étiqueté par la fiche qui l'a fourni (A09). Sans cette
+  // étiquette, une réponse /pieces en retard pouvait poser le document de la
+  // fiche A dans la visionneuse alors que l'écran affichait déjà la fiche B :
+  // champs, code et révision d'un côté, PDF de l'autre — sur une fiche de
+  // fabrication, c'est le pire des mélanges.
+  const [piecePdf, setPiecePdf] = useState<{ code: string; piece: PieceJointe | null } | null>(null)
+  // Jeton de génération PROPRE aux pièces : une réponse de la fiche précédente
+  // est ignorée, succès comme échec (A09 de l'audit du 2026-10-08). /etat avait
+  // cette garde, /pieces ne l'avait pas.
+  const generationPieces = useRef(0)
   useEffect(() => {
     if (!codeActif) return
     debutFiche.current = { code: codeActif, debut: Date.now() }
@@ -241,9 +250,28 @@ export function ValidationApp() {
             : "État de la fiche indisponible — correction et décision bloquées.",
         )
       })
+    // La fiche pour laquelle CE chargement de pièces a été lancé : la réponse
+    // n'est acceptée que si elle correspond encore à l'écran.
+    const jetonPieces = ++generationPieces.current
     jsonFetch<PiecesDeFiche>(`/api/fiches/${encodeURIComponent(codeActif)}/pieces`)
-      .then((corps) => setPiecePdf(corps.pieces.find((piece) => piece.is_primary_pdf) ?? corps.pieces.find((piece) => piece.kind === "pdf") ?? null))
-      .catch(() => setPiecePdf(null))
+      .then((corps) => {
+        if (generationPieces.current !== jetonPieces) return // réponse d'une fiche déjà quittée
+        setPiecePdf({
+          code: codeActif,
+          piece:
+            corps.pieces.find((piece) => piece.is_primary_pdf) ??
+            corps.pieces.find((piece) => piece.kind === "pdf") ??
+            null,
+        })
+      })
+      .catch(() => {
+        if (generationPieces.current !== jetonPieces) return // échec tardif : ne pas masquer la fiche courante
+        setPiecePdf({ code: codeActif, piece: null })
+      })
+    // Démontage : toute réponse en vol est invalidée (la fiche a été quittée).
+    return () => {
+      generationPieces.current += 1
+    }
   }, [codeActif])
 
   async function corriger(champ: ChampExtrait, valeur: string) {
@@ -786,7 +814,14 @@ export function ValidationApp() {
 
         {/* visionneuse */}
         <aside className="min-h-0 border-l border-border" data-testid="panneau-pdf">
-          <VisionneusePiece piece={piecePdf} zone={zone} donneesPrechargees={precharge?.code === codeActif ? precharge.bytes : null} />
+          <VisionneusePiece
+            // Le document n'est affiché que s'il APPARTIENT à la fiche active :
+            // même si une réponse arrivait malgré la garde, l'écran ne
+            // montrerait jamais le PDF d'une autre fiche.
+            piece={piecePdf && piecePdf.code === codeActif ? piecePdf.piece : null}
+            zone={zone}
+            donneesPrechargees={precharge?.code === codeActif ? precharge.bytes : null}
+          />
         </aside>
       </div>
     </div>

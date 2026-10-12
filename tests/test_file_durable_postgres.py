@@ -148,6 +148,110 @@ def _dossiers_traites(index: SearchIndex, id_lot: int) -> int:
 
 
 # ---------------------------------------------------------------------------
+# 0. Supervision des jobs sur PostgreSQL (couverture des branches métier)
+# ---------------------------------------------------------------------------
+# ``tests/test_file_durable.py`` exerce ces fonctions sur SQLite (mode poste) :
+# les branches PostgreSQL — celles qui tournent en production — doivent l'être
+# AUSSI, sinon la porte de couverture de ``seamtech_search/jobs.py`` (94 %)
+# tombe et, plus grave, la supervision de jobs n'est éprouvée sur aucune base
+# réelle.
+
+
+def test_supervision_des_jobs_sur_postgresql(base_durable: dict[str, Any], tmp_path: Path) -> None:
+    """Claim, battement de cœur, remise en file, lettre morte et suivi du chemin."""
+    from seamtech_search.jobs import (
+        heartbeat_job,
+        marquer_job_claim,
+        remettre_en_file,
+        update_job_source_path,
+    )
+
+    index = base_durable["index"]
+    assert index.is_postgres
+    create_job(index, "job-pg-1", str(tmp_path), durability="durable")
+    create_job(index, "job-pg-2", str(tmp_path), durability="durable")
+
+    # 1. Revendication : le worker est enregistré, la tentative comptée.
+    assert marquer_job_claim(index, "job-pg-1", "worker-A") is True
+    assert marquer_job_claim(index, "job-pg-1", "worker-A") is True
+    assert marquer_job_claim(index, "job-pg-inconnu", "worker-A") is False, (
+        "un job absent ne doit jamais être « réclamé » en silence"
+    )
+    def _ligne(job_id: str, colonnes: str) -> tuple:
+        """Relit la ligne de job (chaque lecture ouvre SA connexion)."""
+        with index.connect() as connexion:
+            with connexion.cursor() as cursor:
+                cursor.execute(
+                    f"SELECT {colonnes} FROM import_jobs WHERE id = %s",  # noqa: S608 - colonnes littérales du test
+                    (job_id,),
+                )
+                return tuple(cursor.fetchone())
+
+    statut, claimed_by, attempts = _ligne("job-pg-1", "status, claimed_by, attempts")
+    assert (statut, claimed_by, int(attempts)) == ("running", "worker-A", 2)
+
+    # 2. Battement de cœur : présent et absent (jamais un mensonge).
+    assert heartbeat_job(index, "job-pg-1") is True
+    assert heartbeat_job(index, "job-pg-inconnu") is False
+
+    # 3. Reprise DURABLE : le job redevient récupérable, avec la raison écrite.
+    assert remettre_en_file(index, "job-pg-1", raison="worker perdu", tentative_durable=True) is True
+    statut, stage, claimed_by, raison = _ligne("job-pg-1", "status, stage, claimed_by, failure_reason")
+    assert (statut, stage, claimed_by) == ("pending", "requeued", None)
+    assert raison == "worker perdu"
+
+    # 4. Redélivrance épuisée : échec DÉFINITIF avec la raison — jamais une
+    #    disparition silencieuse.
+    assert marquer_job_claim(index, "job-pg-2", "worker-B") is True
+    assert remettre_en_file(index, "job-pg-2", raison="tentatives épuisées", tentative_durable=False) is True
+    statut, stage, raison = _ligne("job-pg-2", "status, stage, failure_reason")
+    assert (statut, stage) == ("failed", "dead_letter") and raison == "tentatives épuisées"
+
+    # 5. Relocalisation (A04) : le chemin suivi change, et un job absent est dit
+    #    absent (l'appelant ne doit pas croire à une écriture).
+    assert update_job_source_path(index, "job-pg-2", "/archive/quarantaine/job-pg-2") is True
+    assert update_job_source_path(index, "job-pg-inconnu", "/nimporte/ou") is False
+    assert _ligne("job-pg-2", "source_path")[0] == "/archive/quarantaine/job-pg-2"
+
+
+def test_jobs_non_preserves_sur_postgresql(base_durable: dict[str, Any], tmp_path: Path) -> None:
+    """La rétention ne doit JAMAIS purger l'entrée d'un travail non préservé.
+
+    ``jobs_non_preserves`` est la requête qui alimente ``chemins_proteges``
+    (investigation « rétention vs travail en cours ») : tout job actif, sans
+    résultat, ou dont la préservation n'est pas prouvée, doit en sortir — et un
+    job réellement préservé ne doit pas en sortir (sinon la liste de protection
+    mentirait dans l'autre sens, en protégeant tout et donc rien).
+    """
+    import json
+
+    from seamtech_search.jobs import jobs_non_preserves
+
+    index = base_durable["index"]
+    create_job(index, "job-attente", str(tmp_path / "attente"), durability="durable")
+    create_job(index, "job-verifie", str(tmp_path / "verifie"), durability="durable")
+    create_job(index, "job-partiel", str(tmp_path / "partiel"), durability="durable")
+
+    with index.connect() as connexion:
+        with connexion.cursor() as cursor:
+            cursor.execute(
+                "UPDATE import_jobs SET status = 'completed', result = %s WHERE id = %s",
+                (json.dumps({"all_verified": True, "upload_status": "uploaded"}), "job-verifie"),
+            )
+            cursor.execute(
+                "UPDATE import_jobs SET status = 'completed', result = %s WHERE id = %s",
+                (json.dumps({"all_verified": False, "upload_status": "partial"}), "job-partiel"),
+            )
+
+    trouves = {job["id"]: job for job in jobs_non_preserves(index, limite=50)}
+    assert "job-attente" in trouves, "un job en attente est un travail en cours"
+    assert "job-partiel" in trouves, "une préservation NON prouvée doit être protégée"
+    assert "job-verifie" not in trouves, "un job préservé n'a rien à protéger"
+    # Le chemin est rendu : c'est lui que la rétention met en protection.
+    assert trouves["job-attente"]["source_path"] == str(tmp_path / "attente")
+
+
+# ---------------------------------------------------------------------------
 # 1. Base antérieure à la migration 020 : démarrage puis migration
 # ---------------------------------------------------------------------------
 

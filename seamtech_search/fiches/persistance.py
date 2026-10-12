@@ -23,6 +23,7 @@ import json
 import logging
 import os
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -36,7 +37,14 @@ CHEMIN_SEUILS_DEFAUT = Path("config/seuils_confiance.json")
 SEUIL_GABARIT_TEST = 0.90
 
 # SQL écrits ici validés par pglast dans tests/test_fiches_sql_grammar.py.
-_SQL_EXISTE_FICHE = "SELECT id_fiche, statut FROM fiche WHERE code = %s"
+# ``FOR UPDATE`` (défaut A02 de l'audit du 2026-10-08) : la ré-extraction lit
+# l'état de la fiche ET prend le verrou de ligne DANS LA MÊME instruction. Sans
+# lui, la fenêtre « je compte les corrections » → « je remplace les tables
+# filles » laissait passer une correction humaine enregistrée entre les deux :
+# le remplacement la supprimait, ou bien une validation passait sur un contenu
+# qui venait de changer. Une correction concurrente attend désormais la fin du
+# remplacement, puis échoue sur le contrôle de révision (409).
+_SQL_EXISTE_FICHE = "SELECT id_fiche, statut, revision FROM fiche WHERE code = %s FOR UPDATE"
 _SQL_LIRE_STATUT = "SELECT statut FROM fiche WHERE id_fiche = %s"
 _SQL_SUPPRIMER_FICHE = "DELETE FROM fiche WHERE id_fiche = %s"
 # Remplacement SUR PLACE (décision revue 21/09 — « deux dossiers, la même fiche ») :
@@ -54,12 +62,19 @@ _TABLES_FILLES_RAFRAICHIES = (
     "fiche_champ_extrait",
     "fiche_anomalie",
 )
+#: Le remplacement SUR PLACE fait AVANCER la révision (défaut A02 de l'audit du
+#: 2026-10-08) : « le contenu de la fiche a changé » est exactement ce que la
+#: révision doit dire. Sans cette incrémentation, un écran resté ouvert sur la
+#: révision N continuait de passer le contrôle de révision et validait un
+#: contenu qu'il n'avait jamais affiché — la protection de la migration 021
+#: était contournée par le SEUL chemin qui réécrit vraiment la fiche.
 _SQL_FICHE_UPD = (
     "UPDATE fiche SET code = %s, titre = %s, id_type_voile = %s, gamme = %s, atelier = %s, "
     "id_bateau = %s, id_client = %s, id_commande = %s, quantite = %s, tissu_texte = %s, "
     "montage_type = %s, montage_fil = %s, notes = %s, dessinateur = %s, date_dessin = %s, "
-    "date_edition = %s, fichier_source = %s, id_gabarit = %s, statut = %s, score_qualite = %s "
-    "WHERE id_fiche = %s"
+    "date_edition = %s, fichier_source = %s, id_gabarit = %s, statut = %s, score_qualite = %s, "
+    "revision = revision + 1, updated_at = now() "
+    "WHERE id_fiche = %s RETURNING revision"
 )
 _SQL_ID_GABARIT = "SELECT id_gabarit FROM gabarit WHERE code = %s AND version = %s"
 _SQL_CLIENT = "SELECT id_client FROM client WHERE nom = %s AND chantier IS NOT DISTINCT FROM %s"
@@ -340,6 +355,39 @@ class ErreurVerrouRG11(ValueError):
     écrasée par une ré-extraction — le dépôt liste le dossier en échec."""
 
 
+@dataclass(frozen=True)
+class ResultatEcriture:
+    """Ce qu'une écriture de fiche a RÉELLEMENT fait, révision incluse.
+
+    ``revision`` est la révision APRÈS écriture (1 à la création) : c'est elle
+    qui doit être renvoyée à l'opérateur et comparée par les écrans, plutôt
+    qu'une révision relue par une seconde requête (fenêtre de course).
+    """
+
+    id_fiche: int
+    action: str
+    revision: int
+    revision_avant: int | None = None
+    #: Vrai quand la ré-extraction a REMPLACÉ le contenu d'une fiche existante :
+    #: c'est le cas que la protection de révision doit couvrir (A02).
+    remplacee: bool = False
+
+    def as_tuple(self) -> tuple[int, str]:
+        return (self.id_fiche, self.action)
+
+
+def ecrire_fiche_resultat(
+    index: Any, fiche: FicheExtraite, connexion: Any = None
+) -> ResultatEcriture:
+    """Comme :func:`ecrire_fiche`, mais rend aussi la révision résultante."""
+    if not fiche.code:
+        raise ValueError("Fiche sans code : écriture refusée (reprise complète requise avant stockage).")
+    if connexion is not None:
+        return _ecrire_fiche_dans(index, fiche, connexion)
+    with index.connect() as connexion_ext:
+        return _ecrire_fiche_dans(index, fiche, connexion_ext)
+
+
 def ecrire_fiche(index: Any, fiche: FicheExtraite, connexion: Any = None) -> tuple[int, str]:
     """Écrit la fiche et ses dépendances en UNE transaction PostgreSQL.
 
@@ -356,30 +404,30 @@ def ecrire_fiche(index: Any, fiche: FicheExtraite, connexion: Any = None) -> tup
     Lève ``ValueError`` si la fiche n'a pas de code (une fiche sans référence
     ne peut pas être posée en base : reprise complète d'abord).
     """
-    if not fiche.code:
-        raise ValueError("Fiche sans code : écriture refusée (reprise complète requise avant stockage).")
-    if connexion is not None:
-        return _ecrire_fiche_dans(index, fiche, connexion)
-    with index.connect() as connexion_ext:
-        return _ecrire_fiche_dans(index, fiche, connexion_ext)
+    return ecrire_fiche_resultat(index, fiche, connexion).as_tuple()
 
 
-def _ecrire_fiche_dans(index: Any, fiche: FicheExtraite, connexion: Any) -> tuple[int, str]:
+def _ecrire_fiche_dans(index: Any, fiche: FicheExtraite, connexion: Any) -> ResultatEcriture:
     action = "creee"
     id_fiche: int | None = None  # positionné tôt si remplacement sur place
+    revision_avant: int | None = None
     if True:  # bloc conservé pour indentation stable du corps historique
         with connexion.cursor() as cursor:
             cursor.execute(_SQL_EXISTE_FICHE, (fiche.code,))
             existante = cursor.fetchone()
             if existante is not None:
                 id_existante, statut = int(existante[0]), existante[1]
+                revision_avant = int(existante[2] if len(existante) > 2 and existante[2] is not None else 1)
                 if statut == "valide":
                     LOGGER.warning(
                         "Fiche %s déjà VALIDÉE (id %d) : ré-extraction ignorée — aucune donnée validée n'est écrasée (RG11).",
                         fiche.code,
                         id_existante,
                     )
-                    return id_existante, "conservee_validee"
+                    return ResultatEcriture(
+                        id_fiche=id_existante, action="conservee_validee",
+                        revision=revision_avant, revision_avant=revision_avant, remplacee=False,
+                    )
                 # Verrou RG11 (lot D) : une valeur corrigée par un humain n'est
                 # JAMAIS écrasée — si des champs sont corrigés, la ré-extraction
                 # est REFUSÉE (le dépôt listera le dossier en échec avec cette
@@ -456,11 +504,23 @@ def _ecrire_fiche_dans(index: Any, fiche: FicheExtraite, connexion: Any) -> tupl
                     "a_valider",  # RG3 : jamais « valide » à l'arrivée
                     fiche.score_qualite(),
             )
+            revision_apres: int
             if id_fiche is None:
                 cursor.execute(_SQL_FICHE_INS, parametres_fiche)
                 id_fiche = int(cursor.fetchone()[0])
+                revision_apres = 1
             else:
+                # Remplacement sur place : la révision avance DANS la même
+                # instruction que le changement de contenu — les deux sont
+                # atomiques par construction (A02).
                 cursor.execute(_SQL_FICHE_UPD, parametres_fiche + (id_fiche,))
+                revision_apres = int(cursor.fetchone()[0])
+                LOGGER.warning(
+                    "Fiche %s (id %d) REMPLACÉE sur place en révision %d : tout écran resté "
+                    "sur la révision %s sera refusé (409) au lieu de valider un contenu qu'il "
+                    "n'a jamais affiché.",
+                    fiche.code, id_fiche, revision_apres, revision_avant,
+                )
 
             for cotes in fiche.cotes:
                 cursor.execute(
@@ -539,8 +599,17 @@ def _ecrire_fiche_dans(index: Any, fiche: FicheExtraite, connexion: Any) -> tupl
     # déposées mais non validées seraient invisibles à la recherche.
     with connexion.cursor() as cursor:
         cursor.execute("SELECT rafraichir_texte_recherche_fiche(%s)", (id_fiche,))
-    LOGGER.info("Fiche %s écrite (%s, id %d, statut a_valider).", fiche.code, action, id_fiche)
-    return id_fiche, action
+    LOGGER.info(
+        "Fiche %s écrite (%s, id %d, statut a_valider, révision %d).",
+        fiche.code, action, id_fiche, revision_apres,
+    )
+    return ResultatEcriture(
+        id_fiche=id_fiche,
+        action=action,
+        revision=revision_apres,
+        revision_avant=revision_avant,
+        remplacee=action == "remplacee",
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -114,6 +114,53 @@ def _copier_lignes(cur, table: str, id_source: int, exclusions: tuple[str, ...],
     return len(lignes)
 
 
+def semer_piece_distincte(idx, code_fiche: str) -> None:
+    """Rattache le PDF DU dossier à sa propre fiche (constat A09).
+
+    Le dépôt de dossier n'enregistre pas le PDF principal comme pièce jointe
+    (mesuré : « pieces: 0 ») : sans cette ligne, TOUTES les fiches e2e
+    partageaient le seul document du doublon — deux fiches, un seul PDF. Or
+    l'e2e A09 doit pouvoir distinguer le document de la fiche A de celui de la
+    fiche B (une réponse `/pieces` en retard ne doit pas poser le PDF d'une
+    autre fiche) : sans documents distincts, le mélange serait invisible.
+
+    Ce PDF est UNIQUE (empreinte distincte des trois autres fixtures) : cette
+    ligne ne crée donc aucun couple de doublons supplémentaire — le seul couple
+    attendu reste celui fabriqué par semer_doublon(), que le scan vérifie.
+    """
+    from seamtech_search.fiches.depot import empreinte_fichier
+
+    # OBLIGATOIREMENT sous une racine servie (SEAMTECH_ROOT_PATHS = sample_data) :
+    # /pieces n'expose que les pièces dont le chemin est autorisé, et l'e2e doit
+    # pouvoir OUVRIR ce document — un PDF hors racine ne serait pas distinguable.
+    # `fiche-technique.pdf` est la seule fixture du dépôt qui n'appartient à
+    # aucune fiche (empreinte unique) : l'attacher ne crée donc aucun couple de
+    # doublons et ne change rien aux autres specs.
+    pdf = REPO / "sample_data" / "CLIENT-123" / "fiche-technique.pdf"
+    sha256 = empreinte_fichier(pdf)
+    with idx.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id_fiche FROM fiche WHERE code = %s", (code_fiche,))
+            ligne = cur.fetchone()
+            if ligne is None:
+                print(
+                    f"Seed e2e : fiche {code_fiche} absente — la pièce distincte de l'e2e A09 "
+                    "ne peut pas être semée.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            cur.execute(
+                "INSERT INTO fiche_piece_jointe (id_fiche, chemin, role, empreinte_sha256, taille_octets) "
+                "VALUES (%s, %s, 'fiche', %s, %s) ON CONFLICT DO NOTHING",
+                (int(ligne[0]), str(pdf), sha256, pdf.stat().st_size),
+            )
+    print(
+        f"Seed e2e : fiche {code_fiche} porte son propre PDF ({pdf.name}) — l'e2e A09 a "
+        "deux documents distincts à distinguer.",
+        file=sys.stderr,
+    )
+
+
 def semer_doublon(idx) -> None:
     """Ajoute une DEUXIÈME fiche partageant le PDF de 7792-SO, puis lance le scan.
 
@@ -271,6 +318,7 @@ def main() -> None:
         idx.initialize()
         idx.run_migrations()
         initialiser_gabarits(idx)
+        codes: dict[str, str] = {}
         for dossier in ("CLIENT-7792-SO", "CLIENT-GENOA", "CLIENT-E2E-TROIS"):
             chemin = REPO / "sample_data" / dossier
             if not chemin.exists():
@@ -283,6 +331,8 @@ def main() -> None:
                     file=sys.stderr,
                 )
                 sys.exit(1)
+            codes[dossier] = str(resultat.get("fiche"))
+        semer_piece_distincte(idx, codes["CLIENT-E2E-TROIS"])
         semer_doublon(idx)
         semer_comptes(idx)
         idx.close()
