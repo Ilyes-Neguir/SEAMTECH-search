@@ -299,8 +299,24 @@ def _process_lot_task(
 
     job_id = payload["job_id"]
     id_lot = int(payload["id_lot"])
+
+    # Fencing R1 : vérifier / acquérir légitimement la possession du job.
+    # Distingue l'acquisition initiale (job non possédé en BDD) d'une vérification
+    # de propriété. Si le job a été transféré ou repris par un autre worker (B),
+    # le worker déchu A s'interrompt immédiatement SANS réattribuer la tâche ni
+    # écraser le travail ou le résultat de B.
     if worker_id is not None:
-        marquer_job_claim(index, str(job_id), worker_id)
+        j = get_job(index, str(job_id))
+        if j is not None and j.get("claimed_by") and j.get("claimed_by") != worker_id:
+            logger.warning(
+                "Lot #%s (job %s) : possession perdue au profit de %s — traitement interrompu sans réattribution.",
+                id_lot,
+                job_id,
+                j.get("claimed_by"),
+            )
+            return {"job_id": job_id, "status": "stale_worker", "id_lot": id_lot}
+        if j is not None and j.get("claimed_by") is None:
+            marquer_job_claim(index, str(job_id), worker_id)
     doit_continuer = None
     if redis_store is not None:
         from .jobs import is_job_cancelled

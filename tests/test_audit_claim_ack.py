@@ -648,3 +648,72 @@ def test_r1_matrice_transitions_propriete_et_fencing_postgres(tmp_path: Path) ->
     finally:
         index.close()
         _supprimer_base_jetable(nom_base)
+
+
+def test_r1_lot_task_interleaving_transfer_stale_worker_aborts(tmp_path: Path) -> None:
+    """R1 contre-revue a080d26 : vérifie que le chemin process_import_task -> _process_lot_task
+
+    ne permet pas à un worker déchu A de réattribuer le job à son nom ni d'écraser le
+    résultat d'un repreneur B après transfert.
+    """
+    from unittest.mock import patch
+
+    from seamtech_search import worker
+    from seamtech_search.jobs import create_job, get_job, marquer_job_claim, update_job
+
+    config = _config(tmp_path)
+    index = _index(config)
+    job_id = "lot-r1-transfer"
+    create_job(index, job_id, str(tmp_path))
+    marquer_job_claim(index, job_id, "worker-A")
+
+    actual_get = worker.get_job
+    transferred = False
+
+    def get_then_transfer(idx_arg: Any, jid_arg: str) -> Any:
+        nonlocal transferred
+        snapshot = actual_get(idx_arg, jid_arg)
+        if jid_arg == job_id and not transferred:
+            transferred = True
+            # Transfert vers B pendant l'exécution
+            marquer_job_claim(idx_arg, jid_arg, "worker-B")
+            update_job(
+                idx_arg,
+                jid_arg,
+                status="running",
+                result={"owner": "worker-B", "lot_status": "ok"},
+                expected_worker="worker-B",
+            )
+        return snapshot
+
+    seen: dict[str, Any] = {}
+
+    def execute_stub(idx_arg: Any, id_lot_arg: int, **kw: Any) -> dict[str, Any]:
+        seen["executed"] = True
+        seen["claimed_by_at_execution"] = get_job(idx_arg, job_id)["claimed_by"]
+        return {"nb_echecs": 0, "id_lot": id_lot_arg, "owner": "worker-A"}
+
+    with (
+        patch.object(worker, "get_job", side_effect=get_then_transfer),
+        patch("seamtech_search.fiches.depot.executer_lot", side_effect=execute_stub),
+    ):
+        resultat = worker.process_import_task(
+            {"job_id": job_id, "kind": "lot", "id_lot": 42},
+            config,
+            index,
+            worker_id="worker-A",
+        )
+
+    # Vérifications strictes :
+    # 1. Le sous-traitement métier n'a PAS été exécuté par A
+    assert not seen.get("executed"), "Le traitement de lot ne doit pas être exécuté par le worker déchu !"
+    # 2. Le job est resté attribué à B
+    job = get_job(index, job_id)
+    assert job["claimed_by"] == "worker-B", "La propriété ne doit pas avoir été réattribuée à A !"
+    # 3. Le résultat de B n'a pas été écrasé
+    assert job["result"] == {"owner": "worker-B", "lot_status": "ok"}, "Le résultat de B a été écrasé !"
+    # 4. Le retour du worker A signale la perte de possession
+    assert resultat.get("status") == "stale_worker"
+
+    index.close()
+
