@@ -1,9 +1,11 @@
 {
-  "date": "20261012_195512",
-  "cible_restauration": "/home/user/rv/data/cible_restauration_20261012_195512",
-  "base_donnees_restauree": "seamtech_restore_20261012_195512",
+  "date": "20261012_200937",
+  "cible_restauration": "/home/user/rv/data/cible_restauration_isolee_20261012_200937",
+  "base_donnees_restauree": "seamtech_restore_20261012_200937",
   "port_application": 8089,
+  "port_s3_restaure": 9001,
   "source_inaccessible_pendant_test": true,
+  "repli_local_s3_rendu_impossible": true,
   "controles": [
     {
       "controle": "connexion_restauree",
@@ -27,8 +29,10 @@
       "taille": 19568
     },
     {
-      "controle": "telechargement_document_s3",
+      "controle": "telechargement_document_s3_stockage_restaure",
       "succes": true,
+      "s3_endpoint_utilise": "http://127.0.0.1:9001",
+      "repli_local_exclu": true,
       "sha256": "a76d2ab433db86a4776e4d18f37650423ce51d25d1e7112b14ac0494002d1d60",
       "taille": 174228
     }

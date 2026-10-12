@@ -5,8 +5,8 @@
     "tronque": false
   },
   "api.log": {
-    "lignes_source": 3541,
-    "lignes_copiees": 3541,
+    "lignes_source": 3573,
+    "lignes_copiees": 3573,
     "tronque": false
   },
   "api-e2e.log": {
@@ -25,18 +25,18 @@
     "tronque": false
   },
   "redis.log": {
-    "lignes_source": 284,
-    "lignes_copiees": 284,
+    "lignes_source": 289,
+    "lignes_copiees": 289,
     "tronque": false
   },
   "s3.log": {
-    "lignes_source": 847,
-    "lignes_copiees": 847,
+    "lignes_source": 887,
+    "lignes_copiees": 887,
     "tronque": false
   },
   "postgres.log": {
-    "lignes_source": 85,
-    "lignes_copiees": 85,
+    "lignes_source": 87,
+    "lignes_copiees": 87,
     "tronque": false
   },
   "e2e_depot_passe4.log": {

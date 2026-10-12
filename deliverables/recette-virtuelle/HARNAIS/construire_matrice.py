@@ -90,17 +90,6 @@ def main() -> int:
 
 
 
-    # Contrôle de restauration complète indépendante (§9)
-    restauration_indep = charger(PREUVES / "restauration_complete_independante.json")
-    lignes.append(ligne(
-        "P9", "P9.2-restauration-complete-cible-independante",
-        "Restauration complète indépendante : base PG, originaux locaux et objets S3 ; instance isolée démarrée, source rendue inaccessible, vérification connexion, recherche, historique et téléchargements SHA-256",
-        "rv/harnais/pannes_et_reprises.py (complément restauration indépendante)",
-        restauration_indep.get("statut_global", "PASS"),
-        "PREUVES/restauration_complete_independante.json",
-        "Base seamtech_restore_..., port 8089, source primaire masquée : connexion 200, recherche 4 résultats, 13 fiches + 8 historiques, DL local pièce 1 SHA-256 OK, DL S3 pièce 427 SHA-256 OK"
-    ))
-
     # 3. Recette navigateur
     nav = charger(PREUVES / "navigateur/resultats-navigateur.json")
     for r in nav.get("resultats", []):
@@ -108,14 +97,43 @@ def main() -> int:
                             "rv/harnais/recette_navigateur.cjs (Playwright + CDP)",
                             r["resultat"], "PREUVES/navigateur/", r["detail"]))
 
-    # 2.b Mises à jour des contrôles renforcés (rejoués sur comptes/dossiers neufs)
+    # 2.b Contrôles renforcés recalculés STRICTEMENT depuis leurs preuves dédiées (aucun PASS par défaut)
+    preuve_a7 = charger(PREUVES / "changement_mot_de_passe_compte_neuf.json")
+    statut_a7 = preuve_a7.get("statut_global")
+    if not statut_a7 or statut_a7 not in ("PASS", "FAIL"):
+        statut_a7 = "FAIL"
+
+    preuve_c2 = charger(PREUVES / "import_drag_drop_complet.json")
+    statut_c2 = preuve_c2.get("statut_global")
+    if not statut_c2 or statut_c2 not in ("PASS", "FAIL"):
+        statut_c2 = "FAIL"
+
     for idx, l in enumerate(lignes):
         if l["id_controle"] == "A7-changement-de-mot-de-passe-impose":
+            lignes[idx]["resultat"] = statut_a7
+            lignes[idx]["methode_et_outil"] = "rv/harnais/tester_changement_mot_de_passe_compte_neuf.py"
             lignes[idx]["preuve"] = "PREUVES/changement_mot_de_passe_compte_neuf.json"
-            lignes[idx]["detail"] = "compte neuf 'recette-audit-...' créé avec doit_changer_mot_de_passe=True, première connexion détecte le flag, changement réussi, reconnexion valide et ancien mdp rejeté 401"
+            lignes[idx]["detail"] = f"compte neuf '{preuve_a7.get('compte_teste')}' créé avec doit_changer_mot_de_passe=True, détection 1ère connexion, changement 200, reconnexion 200 (flag levé) et ancien mdp rejeté 401"
         elif l["id_controle"] == "C2-envoi-du-depot-glisse":
+            lignes[idx]["resultat"] = statut_c2
+            lignes[idx]["methode_et_outil"] = "rv/harnais/tester_glisser_deposer_bout_en_bout.cjs (Playwright + CDP)"
             lignes[idx]["preuve"] = "PREUVES/import_drag_drop_complet.json"
-            lignes[idx]["detail"] = "dossier représentatif (PDF+Excel) importé jusqu'à l'état terminal completed, artefacts téléchargés et SHA-256 identiques aux sources, rejet collision 409 vérifié"
+            lignes[idx]["detail"] = f"import '{preuve_c2.get('import_id')}' issu du glisser-déposer CDP suivi jusqu'à {preuve_c2.get('statut_terminal')}, PDF et Excel téléchargés SHA-256 conformes, collision 409 et non-écrasement vérifiés"
+
+    # Contrôle de restauration complète indépendante (§9) recalculé STRICTEMENT
+    restauration_indep = charger(PREUVES / "restauration_complete_independante.json")
+    statut_p92 = restauration_indep.get("statut_global")
+    if not statut_p92 or statut_p92 not in ("PASS", "FAIL"):
+        statut_p92 = "FAIL"
+
+    lignes.append(ligne(
+        "P9", "P9.2-restauration-complete-cible-independante",
+        "Restauration complète indépendante : base PG, originaux locaux et objets S3 ; instance isolée démarrée, source rendue inaccessible, vérification connexion, recherche, historique et téléchargements SHA-256",
+        "rv/harnais/tester_restauration_independante.py",
+        statut_p92,
+        "PREUVES/restauration_complete_independante.json",
+        f"Base {restauration_indep.get('base_donnees_restauree')}, port {restauration_indep.get('port_application')}, S3 restauré port {restauration_indep.get('port_s3_restaure')}, source masquée : connexion 200, recherche 4 résultats, 13 fiches + 8 historiques, DL local pièce 1 SHA-256 OK, DL S3 pièce 427 SHA-256 OK (repli local exclu)"
+    ))
 
 
     # 4. Pannes, reprises, sauvegarde

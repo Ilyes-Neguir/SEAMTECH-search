@@ -1,29 +1,33 @@
 {
-  "date": "20261012_195535",
+  "date": "2026-10-12T20:11:03.904Z",
+  "geste_navigateur": "Chromium 153 via CDP (dragEnter, dragOver, drop)",
+  "import_id": "51f34e082f19490b87028211799121fe",
+  "statut_terminal": "completed",
   "controles": [
     {
-      "controle": "import_representatif_etat_terminal",
-      "succes": true,
-      "detail": "status=completed, import_id=620cdcba49304d04a153f253ae21decf"
+      "controle": "glisser_deposer_interface",
+      "succes": true
     },
     {
-      "controle": "telechargement_et_sha256_pdf_importe",
+      "controle": "upload_et_confirm_via_interface",
       "succes": true,
-      "sha256_attendu": "abf6aaaaa1833f75585a364d240963232ae46d344e63661286f8e4f5e2355803",
-      "sha256_recu": "abf6aaaaa1833f75585a364d240963232ae46d344e63661286f8e4f5e2355803",
-      "detail": "HTTP 200"
+      "import_id": "51f34e082f19490b87028211799121fe"
     },
     {
-      "controle": "telechargement_et_sha256_excel_importe",
+      "controle": "telechargement_pdf_sha256",
       "succes": true,
-      "sha256_attendu": "96b0663b52c57f28f419a4b49d5be8c890b5c9cb101a03e2d5db6f6f8c889298",
-      "sha256_recu": "96b0663b52c57f28f419a4b49d5be8c890b5c9cb101a03e2d5db6f6f8c889298",
-      "detail": "HTTP 200"
+      "sha256": "abf6aaaaa1833f75585a364d240963232ae46d344e63661286f8e4f5e2355803"
     },
     {
-      "controle": "rejet_collision_upload",
+      "controle": "telechargement_excel_sha256",
       "succes": true,
-      "detail": "HTTP 409 ({\"detail\":{\"code\":\"collision_chemins\",\"message\":\"1 conflit(s) de nom de fichier dans cet envoi : rien n'a été écrit. Ren)"
+      "sha256": "96b0663b52c57f28f419a4b49d5be8c890b5c9cb101a03e2d5db6f6f8c889298"
+    },
+    {
+      "controle": "rejet_collision_409_et_non_ecrasement",
+      "succes": true,
+      "status_http": 409,
+      "code_erreur": "collision_chemins"
     }
   ],
   "statut_global": "PASS"

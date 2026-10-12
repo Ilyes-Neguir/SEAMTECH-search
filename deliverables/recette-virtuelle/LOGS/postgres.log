@@ -83,3 +83,5 @@
 2026-10-12 19:53:31.236 UTC [71205] ERROR:  relation "fiches" does not exist at character 54
 2026-10-12 19:53:31.236 UTC [71205] STATEMENT:  select count(*) from documents; select count(*) from fiches;
 2026-10-12 19:55:55.537 UTC [2376] LOG:  checkpoint complete: wrote 1162 buffers (7.1%); 0 WAL file(s) added, 0 removed, 1 recycled; write=149.682 s, sync=0.010 s, total=149.696 s; sync files=2378, longest=0.002 s, average=0.001 s; distance=9346 kB, estimate=17163 kB; lsn=0/E95E420, redo lsn=0/C6F3BD0
+2026-10-12 19:58:25.622 UTC [2376] LOG:  checkpoint starting: time
+2026-10-12 20:08:43.550 UTC [2376] LOG:  checkpoint complete: wrote 4377 buffers (26.7%); 0 WAL file(s) added, 0 removed, 2 recycled; write=617.921 s, sync=0.004 s, total=617.928 s; sync files=879, longest=0.002 s, average=0.001 s; distance=36011 kB, estimate=36011 kB; lsn=0/EA1E9C8, redo lsn=0/EA1E990

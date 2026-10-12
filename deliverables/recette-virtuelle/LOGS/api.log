@@ -3539,3 +3539,35 @@ INFO:     127.0.0.1:44640 - "POST /auth/mot-de-passe HTTP/1.1" 200 OK
 INFO:     127.0.0.1:44640 - "POST /auth/connexion HTTP/1.1" 200 OK
 2026-10-12 19:55:48,039 WARNING Connexion refusée pour « recette-audit-1791834947 » (échec journalisé dans audit_log).
 INFO:     127.0.0.1:44640 - "POST /auth/connexion HTTP/1.1" 401 Unauthorized
+2026-10-12 20:11:00,063 INFO Connexion de « recette-c » (rôle administrateur).
+INFO:     127.0.0.1:54212 - "POST /auth/connexion HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54212 - "GET /auth/session HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54222 - "GET /pieces?limit=50&offset=0 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54212 - "GET /auth/session HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54222 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54212 - "GET /auth/session HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54222 - "POST /imports/upload HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54212 - "GET /auth/session HTTP/1.1" 200 OK
+2026-10-12 20:11:03,511 WARNING Object versioning unavailable on bucket seamtech-documents (An error occurred (BucketAlreadyExists) when calling the PutBucketVersioning operation: The requested bucket already exists); overwrite protection relies on never reusing an existing object key
+2026-10-12 20:11:03,524 INFO Uploaded fiche-technique.pdf to S3 bucket seamtech-documents with key 51f34e082f19490b87028211799121fe/d8ff41bf8c31c4316332431154a6f036ceb4c07cb81bb660c5f0de89908025b0/fiche-technique.pdf
+2026-10-12 20:11:03,551 INFO Uploaded nomenclature-voile.xlsx to S3 bucket seamtech-documents with key 51f34e082f19490b87028211799121fe/23028f6384d4c5a08aa955e2be98c4f10dd5c7799674251a6544f43c0d381bac/nomenclature-voile.xlsx
+2026-10-12 20:11:03,575 INFO Uploaded technical-report.pdf to S3 bucket seamtech-documents with key 51f34e082f19490b87028211799121fe/0bf748b40fe2a6342d32a4ac70e5b33238d285458ab2cdbe0bbca3b543479989/technical-report.pdf
+2026-10-12 20:11:03,610 INFO Uploaded technical-report.docx to S3 bucket seamtech-documents with key 51f34e082f19490b87028211799121fe/e75514774c0052b0ecf324fb1abf3716886f0a06d08da08d4cc5ea7044ee3503/technical-report.docx
+INFO:     127.0.0.1:54222 - "POST /imports/confirm HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41654 - "GET /imports/51f34e082f19490b87028211799121fe/artifacts/source_pdf HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41662 - "GET /imports/51f34e082f19490b87028211799121fe/artifacts/source_excel HTTP/1.1" 200 OK
+2026-10-12 20:11:03,855 WARNING Envoi refusé : 1 conflit(s) de destination — aucun fichier écrit (/home/user/rv/data/uploads/17db81803a4f4e119e2521e5ca5f734f_COLLISION_NAV).
+INFO:     127.0.0.1:41654 - "POST /imports/upload HTTP/1.1" 409 Conflict
+2026-10-12 20:11:18,977 INFO Connexion de « recette-c » (rôle administrateur).
+INFO:     127.0.0.1:45186 - "POST /auth/connexion HTTP/1.1" 200 OK
+2026-10-12 20:11:18,984 INFO Création du compte « recette-audit-1791835878 » demandée par « recette-c ».
+2026-10-12 20:11:19,015 INFO Compte « recette-audit-1791835878 » créé (rôle operateur).
+INFO:     127.0.0.1:45186 - "POST /auth/utilisateurs HTTP/1.1" 200 OK
+2026-10-12 20:11:19,050 INFO Connexion de « recette-audit-1791835878 » (rôle operateur).
+INFO:     127.0.0.1:45186 - "POST /auth/connexion HTTP/1.1" 200 OK
+2026-10-12 20:11:19,114 INFO Mot de passe changé par « recette-audit-1791835878 ».
+INFO:     127.0.0.1:45186 - "POST /auth/mot-de-passe HTTP/1.1" 200 OK
+2026-10-12 20:11:19,155 INFO Connexion de « recette-audit-1791835878 » (rôle operateur).
+INFO:     127.0.0.1:45186 - "POST /auth/connexion HTTP/1.1" 200 OK
+2026-10-12 20:11:19,201 WARNING Connexion refusée pour « recette-audit-1791835878 » (échec journalisé dans audit_log).
+INFO:     127.0.0.1:45186 - "POST /auth/connexion HTTP/1.1" 401 Unauthorized

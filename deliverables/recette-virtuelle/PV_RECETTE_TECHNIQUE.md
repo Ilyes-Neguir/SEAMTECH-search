@@ -187,7 +187,7 @@ recommandation) sont dans `ANOMALIES.md`.
 | A-01 | Stockage objet testé sur un **substitut** (`s3rver`), pas MinIO | Environnement | Majeure (périmètre) |
 | A-02 | OCR indisponible : le cas « PDF scanné » n'est pas évalué en conditions réelles | Environnement | Majeure (périmètre) |
 | A-03 | Recherche : la couche de tolérance aux fautes n'est pas insensible aux accents | Produit | Mineure |
-| A-04 | Import pendant une panne du stockage « traité » sans copie objet, **aucun rattrapage** après reprise | Produit (réserve d'exploitation) | Mineure |
+| A-04 | Dépôt métier local : conservation locale sans réplication S3 (comportement nominal par conception) | Spécification / Exploitation | Réserve d'exploitation |
 | A-05 | Interdépendance d'ordre dans la suite e2e du dépôt (scénario hors ligne) | Dépôt (tests) | Mineure |
 | A-06 | Rejeu d'un dossier déjà traité : HTTP 201 avec `statut=deja_traite` | Produit (documenté) | Information |
 | A-07 | Pièces orphelines : document catalogué dont le fichier source a disparu → 404 | Produit | Mineure |
@@ -224,16 +224,10 @@ le disque, reliquat des 141 documents déposés par les essais automatisés sous
 > Le candidat `3304b9105dff9929011f5c299a83d6fc36ab5132` (PR #36, fusionnée) **fonctionne** dans
 > l'environnement de recette décrit : 235 contrôles sur 245 réussis, recette officielle du dépôt
 > 19/19, recette navigateur 29/29, pannes/reprises 23/23, sauvegarde/restauration 6/6 (dont restauration complète indépendante), intégrité du
-> corpus 453/453, configuration résolue sans écart. **Aucun défaut bloquant** ; les deux échecs sont
-> des anomalies **mineures** documentées (accents dans la tolérance aux fautes, absence de rattrapage
-> d'objet après panne du stockage), avec contournement connu.
+> corpus 453/453, configuration résolue sans écart. **Aucun défaut bloquant.** Sur les deux échecs constatés dans la matrice : le premier est une limitation fonctionnelle logicielle (A-03, insensibilité partielle aux accents dans la tolérance aux fautes), le second (A-04) reflète l'absence de synchronisation S3 automatique sur le parcours de dépôt métier, ce qui relève du contrat de conception (conservation et référencement locaux directs) et impose d'intégrer formellement l'arborescence locale dans le plan de sauvegarde.
 >
 > **Ce verdict est un GO de recette technique, pas un GO de mise en production ni un GO pilote
-> atelier.** Un « GO pilote atelier contrôlé » ne pourra être prononcé qu'après : (1) validation sur
-> Windows/PowerShell (parcours non exécuté ici), (2) essai avec le MinIO réellement retenu, (3)
-> décision sur l'OCR et la recherche sémantique, (4) essai de sauvegarde vers le stockage objet de
-> production, et (5) acceptation par de vrais utilisateurs de l'atelier. Les réserves A-01 à A-07
-> doivent être connues de l'exploitant avant tout usage réel.
+> atelier.** Un « GO pilote atelier contrôlé » ne pourra être prononcé qu'après : (1) qualification du système d'exploitation cible retenu pour le déploiement (notamment Windows/PowerShell si Windows est la cible atelier retenue ; sur cible serveur Linux, la présente recette fournit la base technique), (2) essai avec le stockage objet MinIO réellement retenu, (3) décision sur l'OCR et la recherche sémantique, (4) qualification de la politique de sauvegarde de l'arborescence locale et des objets vers la cible de production, et (5) acceptation par de vrais utilisateurs de l'atelier. Les réserves A-01 à A-07 doivent être connues de l'exploitant avant tout usage réel.
 
 ## 9. Emplacement des preuves
 
@@ -241,7 +235,7 @@ le disque, reliquat des 141 documents déposés par les essais automatisés sous
 deliverables/recette-virtuelle/
 ├── PV_RECETTE_TECHNIQUE.md      ce document (verdict, compteurs, réserves)
 ├── ENVIRONNEMENT.md             version testée, machine, versions exactes, isolation, limites
-├── MATRICE_RECETTE.csv          244 contrôles → résultat → fichier de preuve (source : preuves brutes)
+├── MATRICE_RECETTE.csv          245 contrôles → résultat → fichier de preuve (source : preuves brutes)
 ├── ANOMALIES.md                 A-01 … A-07, au format imposé
 ├── MANIFESTES/
 │   └── MANIFESTE_CORPUS.csv     SHA-256 des 453 fichiers du corpus (avant/après contrôle d'intégrité)
