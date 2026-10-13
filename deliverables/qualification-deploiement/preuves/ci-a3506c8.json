@@ -1,0 +1,47 @@
+{
+  "preuve_id": "qualif-2026-10-13-a3506c8",
+  "sha_applicatif": "a3506c84892e97a8993fe6a9657cc93019f002d3",
+  "sha_precedent_echec": "0665a684133f31e5c5742faeeb1fe3104ab2a721",
+  "branche": "arena/e7f33785-seamtech-search",
+  "pr": 37,
+  "fusion": false,
+  "runs": {
+    "qualification_reserves_push": {
+      "id": 38405546902,
+      "url": "https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/38405546902",
+      "job": "qualification",
+      "job_id": 115324070865,
+      "conclusion": "success",
+      "junit": {"tests": 74, "skipped": 0, "failures": 0, "errors": 0}
+    },
+    "qualification_reserves_pr": {
+      "id": 38405555307,
+      "url": "https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/38405555307",
+      "conclusion": "success"
+    },
+    "ci_push": {
+      "id": 38405546959,
+      "url": "https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/38405546959",
+      "conclusion": "failure",
+      "jobs": {
+        "sauvegarde": {"id": 115324072699, "conclusion": "success", "skip_garde": 0, "b03_notice": "recherche_test_80999acdf0_obj restaurée en 0.39 s (1 fiches)"},
+        "ocr": {"id": 115324073055, "conclusion": "success", "tesseract": "5.3.4", "taux_propre": 1.0, "taux_degrade": 0.955},
+        "backend_3_12": {
+          "id": 115324072864,
+          "conclusion": "failure",
+          "sqlite": "success",
+          "postgres": {"passed": 279, "skipped": 0},
+          "redis_queue": {"passed": 81, "skipped": 0},
+          "perf": "FAIL p95 324.4 ms ≥ 250 ms (seuil d'environnement CI étiqueté, critère produit 100 ms) — charge runner, hors périmètre A–D"
+        }
+      }
+    }
+  },
+  "limites": [
+    "Mesures 800/2000 indicatives, Seq Scan possible à 2000 lignes",
+    "Corpus synthétique, pas le fonds réel",
+    "D native Debian hors Docker non exécutée",
+    "Job ocr sans PostgreSQL : parcours C-03 exécuté sur qualification-reserves",
+    "CI globale non verte à cause du job perf (p95 CI)"
+  ]
+}

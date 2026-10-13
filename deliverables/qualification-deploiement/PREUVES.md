@@ -20,6 +20,13 @@ Lot 4 local (hors MinIO/tesseract) : `52 passed, 10 skipped` sur
 `test_sauvegarde_references` + `test_selection_ci` + normalisation +
 extractors + ocr_parcours.
 
+## SHA applicatif `a3506c84892e97a8993fe6a9657cc93019f002d3`
+
+Fichier : `preuves/ci-a3506c8.json`.
+
+- Qualification reserves push **38405546902** : **74 tests, 0 skipped, 0 failure** (PG + MinIO officiel + tesseract fra/eng). Inclut B-03 et C-03/C-04.
+- CI push **38405546959** : job `sauvegarde` SUCCESS (garde-fou 0 skip, notice `…_obj`) ; job `ocr` SUCCESS tesseract 5.3.4 ; postgres `279 passed / 0 skipped`. Conclusion globale CI **failure** sur le job **perf** (p95 324 ms ≥ 250 ms seuil runner — étiqueté, critère produit 100 ms).
+
 ## Commandes
 
 ```text
