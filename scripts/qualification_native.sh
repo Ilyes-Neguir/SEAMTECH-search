@@ -139,16 +139,14 @@ END
 SQL
 $SUDO -u postgres psql -Atqc "SELECT 1 FROM pg_database WHERE datname='seamtech_search'" | grep -q 1 \
     || $SUDO -u postgres createdb -O seamtech seamtech_search
-$SUDO -u postgres psql -Atqc "SELECT 1 FROM pg_database WHERE datname='seamtech_restore'" | grep -q 1 \
-    || $SUDO -u postgres createdb -O seamtech seamtech_restore
-for db in seamtech_search seamtech_restore; do
-    $SUDO -u postgres psql -d "$db" -v ON_ERROR_STOP=1 -c "CREATE EXTENSION IF NOT EXISTS vector;"
-    $SUDO -u postgres psql -d "$db" -v ON_ERROR_STOP=1 -c "CREATE EXTENSION IF NOT EXISTS unaccent;"
-    $SUDO -u postgres psql -d "$db" -v ON_ERROR_STOP=1 -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;"
-done
+$SUDO -u postgres psql -d seamtech_search -v ON_ERROR_STOP=1 -c "CREATE EXTENSION IF NOT EXISTS vector;"
+$SUDO -u postgres psql -d seamtech_search -v ON_ERROR_STOP=1 -c "CREATE EXTENSION IF NOT EXISTS unaccent;"
+$SUDO -u postgres psql -d seamtech_search -v ON_ERROR_STOP=1 -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;"
+# restaurer() REFUSE une base cible déjà existante : on ne crée pas
+# seamtech_restore ici, le CLI CREATE DATABASE au moment du restore.
 export SEAMTECH_DATABASE_URL="postgresql://seamtech:${POSTGRES_PASSWORD}@127.0.0.1:5432/seamtech_search"
 export SEAMTECH_RESTORE_DATABASE_URL="postgresql://seamtech:${POSTGRES_PASSWORD}@127.0.0.1:5432/seamtech_restore"
-controle "postgres" "PASS" "bases seamtech_search + seamtech_restore, extensions vector/unaccent/pg_trgm"
+controle "postgres" "PASS" "base seamtech_search + extensions ; seamtech_restore sera créée par restaurer()"
 
 # ---------------------------------------------------------------------------
 # 4. Redis natif

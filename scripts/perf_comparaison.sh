@@ -50,8 +50,15 @@ _extraire_sha() {
         echo "::error title=perf-comparaison/archive::git archive $sha rc=$rc_arch $(tr '\\n' ' ' < "$DOSSIER/archive-${sha:0:8}.err" | head -c 600)"
         exit 1
     fi
+    set +e
     tar -C "$dest" -xf "$DOSSIER/archive-${sha:0:8}.tar"
-    echo "extrait $sha → $dest"
+    local rc_tar=$?
+    set -e
+    if [ "$rc_tar" -ne 0 ]; then
+        echo "::error title=perf-comparaison/tar::tar xf $sha rc=$rc_tar taille=$(wc -c < "$DOSSIER/archive-${sha:0:8}.tar")"
+        exit 1
+    fi
+    echo "extrait $sha → $dest ($(find "$dest" -name pyproject.toml | head -1))"
 }
 
 WT_BASE="$DOSSIER/wt-baseline"
@@ -60,7 +67,10 @@ _extraire_sha "$BASELINE_SHA" "$WT_BASE"
 _extraire_sha "$INTER_SHA" "$WT_INTER"
 
 # Un seul environnement de dépendances : on bascule le paquet éditable.
-python -m pip install -q -e "$RACINE"
+if ! python -m pip install -e "$RACINE" 2>"$DOSSIER/pip-head.err"; then
+    echo "::error title=perf-comparaison/pip::$(tr '\\n' ' ' < "$DOSSIER/pip-head.err" | head -c 800)"
+    exit 1
+fi
 
 _executer_suite() {
     local etiquette="$1" racine_code="$2" run="$3"
