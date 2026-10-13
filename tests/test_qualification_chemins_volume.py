@@ -314,3 +314,113 @@ def test_nfc_nfd_sur_volume(base_volume: dict[str, Any]) -> None:
     a = _codes(rechercher_fiches(index, requete=nfc, limit=30))
     b = _codes(rechercher_fiches(index, requete=nfd, limit=30))
     assert a == b and a
+
+
+def test_mutation_document_existant_et_fonction_immutable(base_volume: dict[str, Any]) -> None:
+    """UPDATE titre existant → recherche suit ; SQL IMMUTABLE + search_path."""
+    index = base_volume["index"]
+    with index.connect() as connexion:
+        with connexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT p.provolatile, pg_get_functiondef(p.oid) "
+                "FROM pg_proc p WHERE p.proname = 'seamtech_texte_recherche'"
+            )
+            ligne = cursor.fetchone()
+            assert ligne is not None
+            assert ligne[0] == "i", "provolatile doit être IMMUTABLE"
+            assert "search_path" in ligne[1].lower()
+            cursor.execute(
+                "UPDATE fiche SET titre = 'Réparation urgente nord' WHERE code = 'VOL-0001' "
+                "RETURNING id_fiche"
+            )
+            ident = int(cursor.fetchone()[0])
+            cursor.execute("SELECT rafraichir_texte_recherche_fiche(%s)", (ident,))
+            cursor.execute("SELECT titre FROM fiche WHERE code = 'VOL-0001'")
+            assert cursor.fetchone()[0] == "Réparation urgente nord"
+    codes_rep = _codes(rechercher_fiches(index, requete="REPARATION", limit=50))
+    assert "VOL-0001" in codes_rep
+    codes_acc = _codes(rechercher_fiches(index, requete="réparation", limit=50))
+    assert codes_rep == codes_acc
+
+
+def test_filtres_codes_pagination_non_latin(base_volume: dict[str, Any]) -> None:
+    index = base_volume["index"]
+    with index.connect() as connexion:
+        with connexion.cursor() as cursor:
+            cursor.execute("SELECT id_type_voile FROM type_voile LIMIT 1")
+            id_type = int(cursor.fetchone()[0])
+            cursor.execute(
+                "INSERT INTO fiche (code, titre, id_type_voile, statut) "
+                "VALUES ('AR-001', 'شراع كبير', %s, 'valide') RETURNING id_fiche",
+                (id_type,),
+            )
+            ident = int(cursor.fetchone()[0])
+            cursor.execute("SELECT rafraichir_texte_recherche_fiche(%s)", (ident,))
+
+    # Filtre exact : une valeur absente n'élargit pas le corpus.
+    filtre_vide = rechercher_fiches(index, requete="façade", filtres={"type_voile": "INEXISTANT-XYZ"})
+    assert _codes(filtre_vide) == []
+
+    exact = rechercher_fiches(index, requete="VOL-0000")
+    assert _codes(exact)[0] == "VOL-0000"
+
+    page1 = rechercher_fiches(index, requete="GENOIS", limit=10, offset=0)
+    page2 = rechercher_fiches(index, requete="GÉNOIS", limit=10, offset=0)
+    assert _codes(page1) == _codes(page2)
+    suite1 = rechercher_fiches(index, requete="GENOIS", limit=10, offset=10)
+    suite2 = rechercher_fiches(index, requete="GÉNOIS", limit=10, offset=10)
+    assert _codes(suite1) == _codes(suite2)
+    assert not set(_codes(page1)) & set(_codes(suite1))
+
+    arabe = rechercher_fiches(index, requete="شراع")
+    assert "AR-001" in _codes(arabe)
+    # Pas de translittération : une requête latin n'invente pas le titre arabe.
+    genois = set(_codes(rechercher_fiches(index, requete="GENOIS", limit=50)))
+    assert "AR-001" not in genois
+
+
+def test_volume_2000_generate_series_indicatif() -> None:
+    """Volume supérieur (2000) — indicatif sandbox, pas un SLA."""
+    if not DATABASE_URL:
+        pytest.skip("Set SEAMTECH_TEST_DATABASE_URL")
+    nom, index = _creer_index()
+    try:
+        index.run_migrations()
+        with index.connect() as connexion:
+            with connexion.cursor() as cursor:
+                _semer_referentiels(cursor)
+                cursor.execute("SELECT id_type_voile FROM type_voile LIMIT 1")
+                id_type = int(cursor.fetchone()[0])
+                cursor.execute(
+                    "INSERT INTO fiche (code, titre, id_type_voile, statut) "
+                    "SELECT 'W2-' || lpad(g::text, 4, '0'), "
+                    "CASE WHEN g %% 4 = 0 THEN 'Génois n°' || g "
+                    "     WHEN g %% 4 = 1 THEN 'Façade n°' || g "
+                    "     WHEN g %% 4 = 2 THEN 'Réparation n°' || g "
+                    "     ELSE 'Cœur n°' || g END, "
+                    "%s, 'valide' FROM generate_series(1, 2000) AS g",
+                    (id_type,),
+                )
+                cursor.execute("SELECT rafraichir_texte_recherche_toutes()")
+        a = _codes(rechercher_fiches(index, requete="GENOIS", limit=30))
+        b = _codes(rechercher_fiches(index, requete="génois", limit=30))
+        assert a == b and a
+        debut = time.perf_counter()
+        rechercher_fiches(index, requete="FAÇADE", limit=20)
+        duree = (time.perf_counter() - debut) * 1000.0
+        print(f"\n[qualif A volume-2000] une requête FAÇADE = {duree:.1f} ms")
+        assert duree < 2000.0
+        with index.connect() as connexion:
+            with connexion.cursor() as cursor:
+                cursor.execute(
+                    "EXPLAIN SELECT id_fiche FROM fiche "
+                    "WHERE seamtech_texte_recherche(titre) %% seamtech_texte_recherche(%s) "
+                    "LIMIT 20",
+                    ("GÉNOIS",),
+                )
+                plan = "\n".join(r[0] for r in cursor.fetchall())
+        print(f"[qualif A volume-2000] plan:\n{plan}")
+        cursor_ok = "idx_fiche_titre_trgm_norm" in plan or "Seq Scan" in plan or "Bitmap" in plan
+        assert cursor_ok
+    finally:
+        _detruire(nom, index)

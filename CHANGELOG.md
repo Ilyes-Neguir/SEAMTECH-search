@@ -34,6 +34,13 @@ p95 17,8 ms sandbox, **pas un SLA**). Lanceur
 et MinIO bloqués sur le CDN GitHub Releases. Les quatre points ne sont
 **pas** présentés comme corrigés.
 
+Lot 3 : `sans_accents` ne déplie plus les ligatures (parité dédup SQL).
+`seamtech_texte_recherche` fixe `search_path`. Tests volume 2000, mutation,
+filtres, pagination, non-latin. Tests sauvegarde sans module pgserver.
+Workflow complémentaire `qualification-reserves.yml` (Tesseract apt +
+MinIO officiel depuis sources). Régression CI backend 3.13 (pgserver +
+œufs) corrigée.
+
 ## Unreleased — Passe F1–F4 de la deuxième revue indépendante (`arena/7da80c2f-seamtech-search`, PR #35)
 
 - **F1 — échec fermé** : la correction et les trois décisions exigent une

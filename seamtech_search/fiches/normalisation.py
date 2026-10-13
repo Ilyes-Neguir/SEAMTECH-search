@@ -43,6 +43,13 @@ _LIGATURES_RECHERCHE: tuple[tuple[str, str], ...] = (
 )
 
 
+def _plier_diacritiques(texte: str, *, casefold: bool) -> str:
+    decompose = unicodedata.normalize("NFD", texte)
+    sans_signes = "".join(caractere for caractere in decompose if not unicodedata.combining(caractere))
+    plie = sans_signes.casefold() if casefold else sans_signes.lower()
+    return " ".join(plie.split())
+
+
 def normaliser_cle_recherche(texte: str) -> str:
     """Clé de recherche : casse Unicode, diacritiques, ligatures, espaces.
 
@@ -54,24 +61,28 @@ def normaliser_cle_recherche(texte: str) -> str:
 
     Ne modifie PAS les textes métier : c'est une clé, pas une réécriture
     des données affichées ou stockées. Ne retire pas la ponctuation des
-    codes (géré à part par la tokenisation des séparateurs).
+    codes (géré à part par la tokenisation des séparateurs). Distinct de
+    ``sans_accents`` (dédup / extraction) qui ne déplie PAS les ligatures —
+    parité avec ``seamtech_titre_normalise``.
     """
     if not texte:
         return ""
     for source, cible in _LIGATURES_RECHERCHE:
         if source in texte:
             texte = texte.replace(source, cible)
-    decompose = unicodedata.normalize("NFD", texte)
-    sans_signes = "".join(caractere for caractere in decompose if not unicodedata.combining(caractere))
-    return " ".join(sans_signes.casefold().split())
+    return _plier_diacritiques(texte, casefold=True)
 
 
 def sans_accents(texte: str) -> str:
-    """Minuscules sans accents, espaces comprimés — forme de comparaison.
+    """Minuscules sans diacritiques, espaces comprimés — forme de comparaison.
 
-    Délègue à ``normaliser_cle_recherche`` (même règle, un seul endroit).
+    Miroir historique de ``seamtech_titre_normalise`` : ``lower()``, pas de
+    ligatures œ/oe. La clé de recherche (trigrammes, suggestions) est
+    ``normaliser_cle_recherche``.
     """
-    return normaliser_cle_recherche(texte)
+    if not texte:
+        return ""
+    return _plier_diacritiques(texte, casefold=False)
 
 
 def extraire_decimal(texte: str | None) -> float | None:

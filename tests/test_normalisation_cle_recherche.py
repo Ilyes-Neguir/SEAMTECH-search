@@ -58,8 +58,12 @@ def test_ne_mute_pas_l_entree() -> None:
     assert brut == "Génois"
 
 
-def test_sans_accents_delegue() -> None:
-    assert sans_accents("Été") == normaliser_cle_recherche("Été") == "ete"
+def test_sans_accents_ne_deplie_pas_les_ligatures() -> None:
+    """Parité dédup : sans_accents ≠ clé de recherche pour œ."""
+    assert sans_accents("Été") == "ete"
+    assert sans_accents("œufs") == "œufs"
+    assert normaliser_cle_recherche("œufs") == "oeufs"
+    assert normaliser_cle_recherche("Été") == "ete"
 
 
 def test_vide_et_espaces_seuls() -> None:

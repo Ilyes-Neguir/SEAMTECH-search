@@ -1,0 +1,10 @@
+{
+  "preuve_id": "A-volume-2000-sandbox-2026-10-13",
+  "commit_base": "3e4beb5e702b6e33bcbc7d5f9c2e663f2f682320",
+  "n_fiches": 2000,
+  "methode": "generate_series + rafraichir_texte_recherche_toutes",
+  "requete": "FAÇADE",
+  "duree_ms": 13.2,
+  "plan": "Seq Scan on fiche (planner; index idx_fiche_titre_trgm_norm exists)",
+  "etiquette": "indicatif sandbox — pas un SLA atelier"
+}

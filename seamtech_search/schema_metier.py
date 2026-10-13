@@ -1417,6 +1417,7 @@ RETURNS TEXT
 LANGUAGE sql
 IMMUTABLE
 PARALLEL SAFE
+SET search_path = public, pg_temp
 AS $fonction$
     SELECT btrim(
         replace(replace(replace(
@@ -1450,6 +1451,7 @@ RETURNS TEXT
 LANGUAGE sql
 IMMUTABLE
 PARALLEL SAFE
+SET search_path = public, pg_temp
 AS $fonction$
     SELECT btrim(
         replace(replace(replace(

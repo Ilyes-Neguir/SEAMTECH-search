@@ -1,74 +1,54 @@
 # Statuts de clôture A–D
 
-Les quatre points **ne sont pas présentés comme corrigés**.
-Acceptation humaine : étape séparée, non signée ici.
-PR #37 conservée (pas de fusion, pas de déploiement entreprise).
+Les quatre points **ne sont pas tous corrigés**. PR #37 **non fusionnée**.
+Aucun PV humain. Recette historique intacte.
 
-## Identité du code testé
+## Identité
 
-| Élément | Valeur |
+| | |
 |---|---|
-| Commit de départ (main) | `8dd5ae7340a0eb1023bd73ef5d884c4538efbc09` |
-| Commit applicatif PR #37 (1er lot) | `be0f6d2e170145a8491ebf065ef2f464fd639a63` |
-| Preuves A-03 avant/après | `preuves/A-03-avant.json` / `A-03-apres.json` |
-| Recette historique | `3304b91` / PR #36 — **non réécrite** |
-| Branche | `arena/e7f33785-seamtech-search` |
+| Départ | `8dd5ae7340a0eb1023bd73ef5d884c4538efbc09` |
+| Lot 1 | `be0f6d2e170145a8491ebf065ef2f464fd639a63` |
+| Lot 2 | `3e4beb5e702b6e33bcbc7d5f9c2e663f2f682320` |
+| Lot 3 (ce tour) | commit suivant sur la même branche |
+| Recette historique | préservée |
 
-Le commit de ce second lot (chemins HTTP, volume, lanceur) s’ajoute **par-dessus**
-`be0f6d2` sans le remplacer.
+## A — Recherche
 
-Périmètre d’exécution : Linux glibc 2.36, Python 3.11.2, PostgreSQL 16.2
-(pgserver, socket `/tmp/seamtech-pgdata`). CDN GitHub Releases
-(`release-assets.githubusercontent.com`) **injoignable**. Choix d’exploitation
-(OS, mode, objets, volume, langues OCR) : **non tranchés** (questionnaire passé).
+**Statut : CORRIGÉ ET TESTÉ** sous périmètre sandbox PostgreSQL 16.2 +
+chemins HTTP, **EN ATTENTE DE VALIDATION HUMAINE** (revue indépendante /
+fonds réel).
 
-## A — Normalisation générale de la recherche
+Exécuté ici : parité IDs+ordre, 022→023, mutation UPDATE, filtres, pagination,
+arabe non translittéré, 800 et 2000 fiches, GET /recherche + /search +
+suggestions. Régression dédup ligatures **corrigée**.
 
-**Statut : ÉTENDU SOUS PÉRIMÈTRE — pas une clôture atelier.**
+Pas un SLA atelier. Plan Seq Scan à 2000 lignes documenté.
 
-Exécuté sur `be0f6d2` + ce lot :
-
-- Chemins applicatifs : `GET /recherche`, `GET /recherche/suggestions`,
-  `GET /search` (fichiers, tsvector `seamtech_unaccent` + clé Python pour
-  ligatures côté requête).
-- Données **existantes** : fiches écrites sous 022, titres non réécrits,
-  migration 023, puis parité GENOIS/GÉNOIS.
-- **Nouvel import** (INSERT après 023) : `cœur`/`coeur`.
-- Volume **800 fiches** synthétiques accentuées (pas 11, pas 50 k — 50 k
-  n’est pas une obligation tant qu’il n’est pas un besoin). Perf **mesurée**
-  (p50/p95 sandbox, garde-fou 2 s, **pas un SLA atelier / 100 ms produit**).
-
-Revue humaine des diffs et perf représentative du fonds réel : **encore
-nécessaires**. Fonds réel 7792-SO : hors de ce lot.
-
-## B — Sauvegarde / restauration conjointes
+## B — Sauvegarde
 
 **Statut : PARTIEL.**
 
-- PostgreSQL + fichiers locaux : exécuté (PR #37, sources indisponibles
-  pendant restore).
-- Objets : **non qualifiés**. MinIO officiel existe en binaire GitHub
-  (`minio.linux-amd64.RELEASE.2025-09-07T16-13-09Z`) mais le CDN Releases
-  est bloqué ; `go` absent pour compiler. **s3rver/moto non utilisés**.
-  Lanceur : `scripts/preparer_outillage_qualification.sh`.
+- PG + fichiers locaux : **CORRIGÉ ET TESTÉ** dans ce sandbox (aller-retour
+  sources coupées).
+- Objets MinIO : test écrit, **PRÉPARÉ NON EXÉCUTÉ** ici (pas de binaire MinIO
+  dans le sandbox). Sera exécuté par le job CI `sauvegarde` (MinIO officiel
+  déjà vert sur PR #37) et le workflow `qualification-reserves.yml`.
 
-## C — OCR réel
+## C — OCR
 
-**Statut : BLOQUÉ dans cet environnement — pas une impossibilité définitive.**
+**Statut : PARTIEL.**
 
-- `tessdata_fast` (fra/eng) **cloné** via github.com (autorisé).
-- Binaire tesseract-static : même CDN bloqué. Pas de cmake/libpng-dev/
-  leptonica pour compiler ici.
-- Lanceur reproductible : `scripts/preparer_outillage_qualification.sh`.
-- Pas de mock, pas de PASS.
+- Sandbox local : **BLOQUÉ** (pas de binaire tesseract ; CDN Releases fermé).
+- Job CI historique `ocr` : tesseract 5.3.4 **réel**, taux propre 1.000,
+  dégradé 0.955 (annotations du run 38399629077). Parcours
+  import→index→recherche : **PRÉPARÉ NON EXÉCUTÉ** (job ocr sans PostgreSQL).
+  Workflow complémentaire ajoute PG + tesseract.
 
-Ressource manquante : HTTPS vers `release-assets.githubusercontent.com`
-**ou** paquets `tesseract-ocr tesseract-ocr-fra poppler-utils`
-**ou** toolchain de compilation (cmake + headers png/leptonica).
+## D — Déploiement de référence
 
-## D — Déploiement / acceptation
+**Statut : PRÉPARÉ NON EXÉCUTÉ** sur une machine vierge. Le sandbox actuel
+réutilise pgserver/Redis déjà là — ce n'est pas une install propre.
+Windows/Docker : non extrapolés.
 
-**Statut : PRÉPARÉ, NON EXÉCUTÉ sur cible approuvée. Non signé.**
-
-Les choix indispensables n’ont pas été fournis. Rien n’est inféré
-(Windows, Compose, R2, 50 k ne sont pas des obligations par défaut).
+**EN ATTENTE DE VALIDATION HUMAINE** pour l'acceptation métier.

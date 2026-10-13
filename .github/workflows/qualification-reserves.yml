@@ -1,0 +1,111 @@
+# Qualification complémentaire A–D (référence Linux native + MinIO officiel + OCR fra/eng).
+# N'altère pas les jobs historiques de ci.yml ni la recette 3304b91.
+name: Qualification reserves
+
+on:
+  pull_request:
+  push:
+
+jobs:
+  qualification:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: seamtech
+          POSTGRES_PASSWORD: seamtech_test_password
+          POSTGRES_DB: seamtech_search_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      SEAMTECH_TEST_DATABASE_URL: postgresql://seamtech:seamtech_test_password@127.0.0.1:5432/seamtech_search_test
+      SEAMTECH_S3_ENDPOINT_URL: http://127.0.0.1:9000
+      SEAMTECH_S3_BUCKET: seamtech-documents
+      SEAMTECH_S3_ACCESS_KEY: minioadmin
+      SEAMTECH_S3_SECRET_KEY: minioadmin123
+      SEAMTECH_S3_FORCE_PATH_STYLE: "true"
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin123
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Dépendances Python
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+      - name: Tesseract fra+eng + poppler + pg client
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+            tesseract-ocr tesseract-ocr-fra tesseract-ocr-eng poppler-utils postgresql-client
+          tesseract --version
+          tesseract --list-langs
+          pg_dump --version
+      - name: MinIO officiel depuis les sources archivées
+        run: bash scripts/construire_image_minio.sh
+      - name: Démarrer MinIO
+        run: |
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=minioadmin \
+            -e MINIO_ROOT_PASSWORD=minioadmin123 \
+            quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z server /data
+          python - <<'PY'
+          import time, urllib.request, sys
+          deadline = time.time() + 120
+          while time.time() < deadline:
+              try:
+                  with urllib.request.urlopen("http://127.0.0.1:9000/minio/health/live", timeout=3) as r:
+                      if r.getcode() == 200:
+                          print("MinIO vivant")
+                          sys.exit(0)
+              except Exception:
+                  time.sleep(2)
+          sys.exit("MinIO non prêt")
+          PY
+      - name: Tests qualification (A volume, B objets, C OCR)
+        env:
+          SEAMTECH_OCR_OBLIGATOIRE: "1"
+        run: |
+          set -uo pipefail
+          pytest -v --tb=short \
+            tests/test_normalisation_cle_recherche.py \
+            tests/test_recherche_normalisation.py \
+            tests/test_qualification_chemins_volume.py \
+            tests/test_sauvegarde_references.py \
+            tests/test_ocr_qualification.py \
+            tests/test_ocr_parcours_qualification.py \
+            tests/test_extractors.py \
+            | tee qualification-reserves.log
+      - name: Consigner l'identité
+        if: always()
+        run: |
+          python - <<'PY'
+          import json, os, platform, subprocess, shutil
+          from pathlib import Path
+          ident = {
+            "preuve_id": os.environ.get("GITHUB_RUN_ID", "local"),
+            "commit": os.environ.get("GITHUB_SHA", ""),
+            "ref": os.environ.get("GITHUB_REF", ""),
+            "python": platform.python_version(),
+            "platform": platform.platform(),
+            "tesseract": shutil.which("tesseract"),
+          }
+          Path("qualification-identite.json").write_text(json.dumps(ident, indent=2), encoding="utf-8")
+          print(json.dumps(ident, indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: preuves-qualification-reserves
+          path: |
+            qualification-reserves.log
+            qualification-identite.json
+          if-no-files-found: warn

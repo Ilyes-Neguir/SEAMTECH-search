@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
 from pathlib import Path
 
 import pytest
@@ -15,6 +17,23 @@ from seamtech_search.sauvegarde import (
     restaurer_fichiers_locaux,
     sauver,
 )
+
+
+def _pointer_pg_dump(monkeypatch: pytest.MonkeyPatch) -> None:
+    """pg_dump du PATH / SEAMTECH_PG_BINDIR / pgserver — sans importer pgserver si absent."""
+    if os.environ.get("SEAMTECH_PG_BINDIR"):
+        return
+    exe = shutil.which("pg_dump")
+    if exe:
+        monkeypatch.setenv("SEAMTECH_PG_BINDIR", str(Path(exe).parent))
+        return
+    try:
+        import pgserver
+    except ImportError:
+        return
+    bindir = Path(pgserver.__file__).parent / "pginstall" / "bin"
+    if bindir.is_dir():
+        monkeypatch.setenv("SEAMTECH_PG_BINDIR", str(bindir))
 
 
 def test_rediger_config_masque_les_secrets() -> None:
@@ -111,23 +130,18 @@ def test_destination_inaccessible_est_explicite(tmp_path: Path, monkeypatch: pyt
 
 
 @pytest.mark.postgres
+@pytest.mark.sauvegarde
 def test_sauvegarde_references_fichier_manquant_n_est_pas_complete(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Un fichier local référencé absent interdit le statut complet (pas un PASS silencieux)."""
-    import os
-
     if not os.environ.get("SEAMTECH_TEST_DATABASE_URL"):
         pytest.skip("Set SEAMTECH_TEST_DATABASE_URL")
-
-    import pgserver
 
     from seamtech_search.indexer import SearchIndex
     from tests.conftest import _creer_base_jetable, _supprimer_base_jetable
 
-    bindir = Path(pgserver.__file__).parent / "pginstall" / "bin"
-    if bindir.is_dir():
-        monkeypatch.setenv("SEAMTECH_PG_BINDIR", str(bindir))
+    _pointer_pg_dump(monkeypatch)
 
     nom, url = _creer_base_jetable()
     index = SearchIndex(tmp_path / "unused.db", url)
@@ -169,6 +183,7 @@ def test_sauvegarde_references_fichier_manquant_n_est_pas_complete(
 
 
 @pytest.mark.postgres
+@pytest.mark.sauvegarde
 def test_aller_retour_fichiers_vers_cible_distincte(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -177,21 +192,15 @@ def test_aller_retour_fichiers_vers_cible_distincte(
     Preuve : les originaux ne sont plus lisibles ; le bundle suffit ; les
     empreintes correspondent ; la recherche fonctionne sur la base restaurée.
     """
-    import os
-
     if not os.environ.get("SEAMTECH_TEST_DATABASE_URL"):
         pytest.skip("Set SEAMTECH_TEST_DATABASE_URL")
-
-    import pgserver
 
     from seamtech_search.indexer import SearchIndex
     from seamtech_search.recherche import rechercher_fiches
     from seamtech_search.sauvegarde import restaurer, restaurer_fichiers_locaux, verifier
     from tests.conftest import _creer_base_jetable, _supprimer_base_jetable
 
-    bindir = Path(pgserver.__file__).parent / "pginstall" / "bin"
-    if bindir.is_dir():
-        monkeypatch.setenv("SEAMTECH_PG_BINDIR", str(bindir))
+    _pointer_pg_dump(monkeypatch)
 
     nom, url = _creer_base_jetable()
     nom_cible = f"{nom}_restauree"
@@ -285,3 +294,133 @@ def test_manifeste_corrompu_est_refuse(tmp_path: Path) -> None:
     mauvais.write_text("{pas json", encoding="utf-8")
     with pytest.raises(json.JSONDecodeError):
         charger_manifeste(mauvais, None, None)
+
+
+@pytest.mark.postgres
+@pytest.mark.sauvegarde
+def test_aller_retour_objets_minio_sources_indisponibles(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PostgreSQL + fichier local + objet MinIO officiel ; sources coupées pendant restore.
+
+    Distinct : nouvelle base, nouvel arbre fichiers, objet recréé après
+    suppression de la clé source. Pas s3rver/moto.
+    """
+    if not os.environ.get("SEAMTECH_TEST_DATABASE_URL"):
+        pytest.skip("Set SEAMTECH_TEST_DATABASE_URL")
+    if not os.environ.get("SEAMTECH_S3_ENDPOINT_URL"):
+        pytest.skip("SEAMTECH_S3_ENDPOINT_URL absent — MinIO officiel requis")
+
+    from seamtech_search.indexer import SearchIndex
+    from seamtech_search.recherche import rechercher_fiches
+    from seamtech_search.sauvegarde import (
+        _sha256_fichier,
+        restaurer,
+        restaurer_fichiers_locaux,
+        restaurer_objets_s3,
+    )
+    from seamtech_search.storage import S3StorageClient
+    from tests.conftest import _creer_base_jetable, _supprimer_base_jetable
+
+    _pointer_pg_dump(monkeypatch)
+    client = S3StorageClient(
+        endpoint_url=os.environ["SEAMTECH_S3_ENDPOINT_URL"],
+        bucket_name=os.environ.get("SEAMTECH_S3_BUCKET") or "seamtech-documents",
+        access_key_id=os.environ.get("SEAMTECH_S3_ACCESS_KEY"),
+        secret_access_key=os.environ.get("SEAMTECH_S3_SECRET_KEY"),
+        force_path_style=True,
+    )
+    client.ensure_bucket_exists()
+
+    nom, url = _creer_base_jetable()
+    nom_cible = f"{nom}_obj"
+    url_cible = url.replace(f"/{nom}?", f"/{nom_cible}?") if "?" in url else url.rsplit("/", 1)[0] + f"/{nom_cible}"
+    index = SearchIndex(tmp_path / "unused.db", url)
+    index.initialize()
+    index.run_migrations()
+
+    local = tmp_path / "local" / "piece-locale.pdf"
+    local.parent.mkdir()
+    local.write_bytes(b"%PDF-1.4 LOCAL-QUALIF")
+    objet = tmp_path / "objet.bin"
+    objet.write_bytes(b"OBJET-MINIO-QUALIF")
+    sha_local = _sha256_fichier(local)
+    sha_objet = _sha256_fichier(objet)
+    cle = f"qualif-docs/{nom}/objet.bin"
+    client.upload_file(objet, cle, avoid_overwrite=False)
+
+    with index.connect() as connexion:
+        with connexion.cursor() as cursor:
+            cursor.execute("INSERT INTO type_voile (code, libelle, famille) VALUES ('GEN', 'Génois', 'voile_avant')")
+            cursor.execute(
+                "INSERT INTO fiche (code, titre, id_type_voile, statut) "
+                "VALUES ('Q-OBJ', 'Génois objet MinIO', 1, 'valide') RETURNING id_fiche"
+            )
+            ident = int(cursor.fetchone()[0])
+            cursor.execute("SELECT rafraichir_texte_recherche_fiche(%s)", (ident,))
+            cursor.execute(
+                "INSERT INTO documents (path_key, path, name, parent_path, extension, size, "
+                "modified_at, is_dir, object_key, object_bucket) "
+                "VALUES (%s, %s, %s, %s, '.pdf', %s, 1, false, NULL, NULL)",
+                ("k-loc", str(local), local.name, str(local.parent), local.stat().st_size),
+            )
+            cursor.execute(
+                "INSERT INTO documents (path_key, path, name, parent_path, extension, size, "
+                "modified_at, is_dir, object_key, object_bucket) "
+                "VALUES (%s, %s, %s, %s, '.bin', %s, 1, false, %s, %s)",
+                (
+                    "k-obj",
+                    f"s3://{client.bucket_name}/{cle}",
+                    "objet.bin",
+                    "s3",
+                    objet.stat().st_size,
+                    cle,
+                    client.bucket_name,
+                ),
+            )
+
+    archive = tmp_path / "archive"
+    archive.mkdir()
+    (archive / "temoin.txt").write_text("ok", encoding="utf-8")
+    backups = tmp_path / "backups"
+    try:
+        manifeste = sauver(
+            url,
+            [archive],
+            backups,
+            client_s3=client,
+            inclure_references_base=True,
+            client_documents_s3=client,
+            verrouiller=True,
+        )
+        assert manifeste["fichiers_locaux"]["nb_copies"] >= 1
+        assert manifeste["objets_s3"]["nb_copies"] >= 1
+        assert manifeste["complet"] is True
+
+        local.unlink()
+        assert client.delete_file(cle)
+        assert not local.exists()
+
+        restaurer(url_cible, manifeste, chemin_dump_local=backups / manifeste["dump"]["fichier"])
+        extra_f = restaurer_fichiers_locaux(manifeste, backups, tmp_path / "restaure-f")
+        extra_o = restaurer_objets_s3(manifeste, backups, client)
+        assert extra_f["nb"] >= 1
+        assert extra_o["nb"] >= 1
+        assert _sha256_fichier(Path(extra_f["fichiers"][0]["path"])) == sha_local
+        # Objet restauré : retélécharger et comparer.
+        dest = tmp_path / "objet-relu.bin"
+        client.download_file(cle, dest)
+        assert _sha256_fichier(dest) == sha_objet
+
+        index_c = SearchIndex(tmp_path / "cible.db", url_cible)
+        try:
+            assert "Q-OBJ" in [
+                r.get("code") for r in rechercher_fiches(index_c, requete="GENOIS").get("resultats") or []
+            ]
+        finally:
+            index_c.close()
+        client.delete_file(cle)
+    finally:
+        index.close()
+        _supprimer_base_jetable(nom)
+        _supprimer_base_jetable(nom_cible)
