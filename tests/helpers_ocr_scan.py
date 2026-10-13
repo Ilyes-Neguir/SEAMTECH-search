@@ -61,6 +61,37 @@ def _images_to_pdf(image_paths: list[Path], pdf_path: Path) -> Path:
     return pdf_path
 
 
+def gen_pdf_custom(tmp_dir: Path, unique_term: str, lang: str = "fr", filename: str = "scan-custom.pdf") -> Path:
+    """Image-only PDF with a caller-provided unique term (absent from filename/metadata)."""
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    if lang == "fr":
+        text = (
+            f"{unique_term}\n"
+            "Voile d'artimon en Dacron azur\n"
+            "Référence: FR-2026-001\n"
+            "Client: Atelier du Vent\n"
+            f"Ce document contient le terme unique {unique_term} pour validation OCR.\n"
+            "Génois léger 6,60 m\n"
+            "Élégance du génois"
+        )
+    else:
+        text = (
+            f"{unique_term}\n"
+            "Atlantic workshop genoa sail\n"
+            "Reference: EN-2026-002\n"
+            "Client: Ocean Sails Ltd\n"
+            f"Unique term {unique_term} for OCR validation.\n"
+            "Dimension 6.6 m\n"
+            "Elegance"
+        )
+    img = tmp_dir / f"{lang}_{unique_term[:8]}.png"
+    _create_image(text, img, degraded=False)
+    pdf = tmp_dir / filename
+    _images_to_pdf([img], pdf)
+    img.unlink(missing_ok=True)
+    return pdf
+
+
 def gen_pdf_fr(tmp_dir: Path) -> Path:
     """French with accents, unique term ZEPHYRINE_ÉLÉGANCE_42"""
     tmp_dir.mkdir(parents=True, exist_ok=True)
