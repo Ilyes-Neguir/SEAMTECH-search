@@ -6,7 +6,8 @@ from pathlib import Path
 repo_root = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(repo_root))
 
-from tests.helpers_ocr_scan import gen_pdf_fr, gen_pdf_en, gen_pdf_multi, gen_pdf_degrade
+from tests.helpers_ocr_scan import gen_pdf_degrade, gen_pdf_en, gen_pdf_fr, gen_pdf_multi  # noqa: E402
+
 
 def main():
     if len(sys.argv) < 3:

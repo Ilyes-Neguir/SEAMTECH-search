@@ -21,8 +21,6 @@ from __future__ import annotations
 import hashlib
 import os
 import shutil
-import subprocess
-import time
 from pathlib import Path
 
 import pytest
@@ -60,7 +58,7 @@ def test_upload_scan_ocr_recherche_telechargement(tmp_path: Path):
         pytest.skip("pdftoppm absent — rendu PDF→image nécessaire pour OCR")
 
     # Génération PDF image sans couche texte, termes uniques
-    from tests.helpers_ocr_scan import gen_pdf_fr, gen_pdf_en, gen_pdf_multi, gen_pdf_degrade, sha256_file
+    from tests.helpers_ocr_scan import gen_pdf_degrade, gen_pdf_en, gen_pdf_fr, gen_pdf_multi, sha256_file
 
     gen_dir = tmp_path / "gen"
     gen_dir.mkdir()
@@ -83,9 +81,9 @@ def test_upload_scan_ocr_recherche_telechargement(tmp_path: Path):
         pass
 
     sha_fr = sha256_file(pdf_fr)
-    sha_en = sha256_file(pdf_en)
-    sha_multi = sha256_file(pdf_multi)
-    sha_deg = sha256_file(pdf_deg)
+    sha256_file(pdf_en)
+    sha256_file(pdf_multi)
+    sha256_file(pdf_deg)
 
     # Setup PostgreSQL + API
     from fastapi.testclient import TestClient
@@ -324,6 +322,7 @@ def test_ocr_indisponible_explique_sans_faux_succes(tmp_path: Path):
     pdf_fr = gen_pdf_fr(gen_dir)
 
     from fastapi.testclient import TestClient
+
     from seamtech_search.api import create_app
     from seamtech_search.config import AppConfig
     from seamtech_search.indexer import SearchIndex

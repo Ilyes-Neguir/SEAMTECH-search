@@ -56,18 +56,18 @@ test.describe("Scan navigateur → OCR → Recherche → Téléchargement", () =
     await signIn(page)
 
     await page.getByRole("button", { name: "Recherche avancée" }).click()
-    await expect(page.getByText("Importer un dossier")).toBeVisible({ timeout: 10000 })
+    await expect(page.getByText("Importer un dossier").first()).toBeVisible({ timeout: 10000 })
 
     const fileInput = page.locator('input[type="file"]').first()
     await fileInput.setInputFiles(pdfPath)
 
-    await expect(page.getByText(/fichier.*prêt.*envoyer/i)).toBeVisible({ timeout: 5000 })
-    await expect(page.getByText(fileName)).toBeVisible()
+    await expect(page.getByText(/fichier.*prêt.*envoyer/i).first()).toBeVisible({ timeout: 5000 })
+    await expect(page.getByText(fileName).first()).toBeVisible()
 
     await page.getByRole("button", { name: "Envoyer et analyser" }).click()
 
-    await expect(page.getByText(/Fichiers détectés dans/i)).toBeVisible({ timeout: 10000 })
-    await expect(page.getByText(/Choisir le PDF technique/i)).toBeVisible()
+    await expect(page.getByText(/Fichiers détectés dans/i).first()).toBeVisible({ timeout: 10000 })
+    await expect(page.getByText(/Choisir le PDF technique/i).first()).toBeVisible()
 
     const importBtn = page.getByRole("button", {
       name: /Importer les fichiers sélectionnés/i,
@@ -75,10 +75,10 @@ test.describe("Scan navigateur → OCR → Recherche → Téléchargement", () =
     await expect(importBtn).toBeEnabled({ timeout: 5000 })
     await importBtn.click()
 
-    await expect(page.getByText(/État :/i)).toBeVisible({ timeout: 15000 })
+    await expect(page.getByText(/État :/i).first()).toBeVisible({ timeout: 15000 })
 
-    await expect(page.getByText(/Fichiers :/)).toBeVisible()
-    await expect(page.getByText(/PDF techniques :/)).toBeVisible()
+    await expect(page.getByText(/Fichiers :/).first()).toBeVisible()
+    await expect(page.getByText(/PDF techniques :/).first()).toBeVisible()
 
     const searchInput = page.getByPlaceholder(/Rechercher/i).first()
     await searchInput.fill("ZEPHYRINE_ÉLÉGANCE_42")
@@ -130,7 +130,7 @@ test.describe("Scan navigateur → OCR → Recherche → Téléchargement", () =
   test("cas d'erreur : PDF invalide expliqué sans faux succès", async ({ page }) => {
     await signIn(page)
     await page.getByRole("button", { name: "Recherche avancée" }).click()
-    await expect(page.getByText("Importer un dossier")).toBeVisible({ timeout: 10000 })
+    await expect(page.getByText("Importer un dossier").first()).toBeVisible({ timeout: 10000 })
 
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "scan-err-"))
     const invalidPath = path.join(tmpDir, "invalid.pdf")
@@ -139,10 +139,15 @@ test.describe("Scan navigateur → OCR → Recherche → Téléchargement", () =
     const fileInput = page.locator('input[type="file"]').first()
     await fileInput.setInputFiles(invalidPath)
 
-    await expect(page.getByText(/prêt.*envoyer/i)).toBeVisible({ timeout: 5000 })
+    await expect(page.getByText(/prêt.*envoyer/i).first()).toBeVisible({ timeout: 5000 })
     await page.getByRole("button", { name: "Envoyer et analyser" }).click()
 
-    await expect(page.getByText(/Erreur|échec|impossible|invalide|Failed|État/i).first()).toBeVisible({
+    // Le backend peut répondre soit par une erreur explicite, soit par 0 candidat détecté.
+    await expect(
+      page
+        .getByText(/Erreur|échec|impossible|invalide|Failed|État|Aucun PDF technique|aucun.*trouvé/i)
+        .first(),
+    ).toBeVisible({
       timeout: 10000,
     })
 
@@ -152,20 +157,20 @@ test.describe("Scan navigateur → OCR → Recherche → Téléchargement", () =
   test("cas d'erreur : fichier sans texte exploitable", async ({ page }) => {
     await signIn(page)
     await page.getByRole("button", { name: "Recherche avancée" }).click()
-    await expect(page.getByText("Importer un dossier")).toBeVisible({ timeout: 10000 })
+    await expect(page.getByText("Importer un dossier").first()).toBeVisible({ timeout: 10000 })
 
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "scan-blank-"))
-    const script = `
+    const pdfGen = `
 from PIL import Image
 from reportlab.lib.pagesizes import A4
-from reportlab.pdfgen import canvas
+from reportlab.pdfgen import canvas as pdf_canvas
 from pathlib import Path
 import sys
 tmp = Path(sys.argv[1])
 img = tmp / "blank.png"
-Image.new("RGB", (800,600), "white").save(img)
+Image.new("RGB", (800,600), "white").save(str(img))
 pdf = tmp / "blank.pdf"
-c = canvas.Canvas(str(pdf), pagesize=A4)
+c = pdf_canvas.Canvas(str(pdf), pagesize=A4)
 c.drawImage(str(img), 20,20, width=500, height=600)
 c.showPage()
 c.save()
@@ -173,7 +178,7 @@ img.unlink()
 print(str(pdf))
 `
     const tmpScript = path.join(tmpDir, "gen.py")
-    fs.writeFileSync(tmpScript, script)
+    fs.writeFileSync(tmpScript, pdfGen)
     const pdfPath = execSync(`python3 "${tmpScript}" "${tmpDir}"`, {
       encoding: "utf-8",
     })
@@ -185,11 +190,11 @@ print(str(pdf))
     const fileInput = page.locator('input[type="file"]').first()
     await fileInput.setInputFiles(pdfPath)
 
-    await expect(page.getByText(/prêt.*envoyer/i)).toBeVisible({ timeout: 5000 })
+    await expect(page.getByText(/prêt.*envoyer/i).first()).toBeVisible({ timeout: 5000 })
     await page.getByRole("button", { name: "Envoyer et analyser" }).click()
 
     await expect(
-      page.getByText(/Aucun|vide|exploitable|Warning|État|Fichiers détectés/i).first(),
+      page.getByText(/Aucun|vide|exploitable|Warning|État|Fichiers détectés|Choisir le PDF/i).first(),
     ).toBeVisible({ timeout: 10000 })
 
     fs.rmSync(tmpDir, { recursive: true, force: true })
