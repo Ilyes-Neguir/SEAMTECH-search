@@ -1,6 +1,7 @@
-# Matrice des contrôles (SHA `a3506c8`)
+# Matrice des contrôles (SHA final `d202f0b`)
 
-Preuve_id : `qualif-2026-10-13-a3506c8`. Ne pas sommer des lots qui se recoupent.
+Preuve_id : `qualif-2026-10-13-d202f0b`. Détail et liens : `SYNTHESE_FINALE.md`.
+Les 74 tests qualification et le postgres 279/0 sont **rejoués sur `d202f0b`**.
 
 | ID | Contrôle | Exécuté où | Résultat |
 |---|---|---|---|

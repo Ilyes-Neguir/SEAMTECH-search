@@ -1,5 +1,8 @@
 # Preuves d'exécution (2026-10-13)
 
+**SHA de revue et runs associés : voir `SYNTHESE_FINALE.md` (`d202f0b`).**
+Les sections ci-dessous conservent l’historique des lots antérieurs.
+
 Environnement : voir `preuves/environnement.json`.
 
 Commit de départ : `8dd5ae7340a0eb1023bd73ef5d884c4538efbc09`.
