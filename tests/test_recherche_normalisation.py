@@ -213,6 +213,18 @@ def test_trigrammes_fautes_toujours_actives(base_norm: dict[str, Any]) -> None:
 
 
 def test_plan_et_duree_trigrammes_index_expression(base_norm: dict[str, Any]) -> None:
+    import inspect
+
+    from seamtech_search.recherche import _source_trigrammes
+
+    source = inspect.getsource(_source_trigrammes)
+    assert "coalesce(f.titre" not in source, (
+        "coalesce() autour de la colonne casse le matching de l'index "
+        "idx_fiche_titre_trgm_norm (expression exacte seamtech_texte_recherche(titre))"
+    )
+    assert "seamtech_texte_recherche(f.titre)" in source
+    assert "WITH q AS" in source
+
     index = base_norm["index"]
     debut = time.perf_counter()
     reponse = rechercher_fiches(index, requete="GÉNOIS")
@@ -228,6 +240,17 @@ def test_plan_et_duree_trigrammes_index_expression(base_norm: dict[str, Any]) ->
                 ("GÉNOIS",),
             )
             plan = "\n".join(ligne[0] for ligne in cursor.fetchall())
+            cursor.execute("SET LOCAL enable_seqscan = off")
+            cursor.execute(
+                "EXPLAIN SELECT f.id_fiche FROM fiche f "
+                "WHERE seamtech_texte_recherche(f.titre) %% seamtech_texte_recherche(%s)",
+                ("GÉNOIS",),
+            )
+            plan_index = "\n".join(ligne[0] for ligne in cursor.fetchall())
+    assert "idx_fiche_titre_trgm_norm" in plan_index, (
+        "avec enable_seqscan=off, la forme de production doit utiliser "
+        f"l'index d'expression 023 ; plan=\n{plan_index}"
+    )
     # Sur un corpus de 11 fiches le planificateur peut rester en seq scan ;
     # l'index d'expression doit EXISTER (preuve de migration).
     with index.connect() as connexion:

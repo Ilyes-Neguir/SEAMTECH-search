@@ -450,40 +450,50 @@ def _source_trigrammes(
     latin, ligatures œ/æ/ß, NFC≡NFD) est appliquée AUX DEUX côtés : des
     requêtes ne différant que par la casse ou les accents votent identiquement.
     Le classement garde word_similarity, le plus pertinent pour un texte long.
-    Les données métier affichées ne sont pas réécrites."""
+    Les données métier affichées ne sont pas réécrites.
+
+    L'expression de gauche DOIT matcher l'index GIN 023
+    ``seamtech_texte_recherche(<colonne>)`` : un ``coalesce(colonne, '')``
+    autour de la colonne empêche PostgreSQL d'utiliser l'index (l'enveloppe
+    SQL coalesce déjà à l'intérieur de la fonction). La clé requête est
+    évaluée UNE fois (CTE ``q``)."""
     cursor.execute("SET LOCAL pg_trgm.word_similarity_threshold = '0.3'")
     cursor.execute("SET LOCAL enable_seqscan = off")
     try:
         cursor.execute(
             f"""
-            WITH candidats AS (
-                SELECT f.id_fiche FROM fiche f
-                 WHERE seamtech_texte_recherche(coalesce(f.code, '')) %% seamtech_texte_recherche(%s)
+            WITH q AS (
+                SELECT seamtech_texte_recherche(%s) AS q_norm
+            ),
+            candidats AS (
+                SELECT f.id_fiche FROM fiche f, q
+                 WHERE seamtech_texte_recherche(f.code) %% q.q_norm
                 UNION
-                SELECT f.id_fiche FROM fiche f
-                 WHERE seamtech_texte_recherche(coalesce(f.titre, '')) %% seamtech_texte_recherche(%s)
+                SELECT f.id_fiche FROM fiche f, q
+                 WHERE seamtech_texte_recherche(f.titre) %% q.q_norm
                 UNION
-                SELECT f.id_fiche FROM fiche f
-                 WHERE seamtech_texte_recherche(f.champs_texte) %%> seamtech_texte_recherche(%s)
+                SELECT f.id_fiche FROM fiche f, q
+                 WHERE seamtech_texte_recherche(f.champs_texte) %%> q.q_norm
             )
             SELECT id_fiche
             FROM (
                 SELECT v.id_fiche AS id_fiche,
                        greatest(
-                           word_similarity(seamtech_texte_recherche(%s), seamtech_texte_recherche(coalesce(f.code, ''))),
-                           word_similarity(seamtech_texte_recherche(%s), seamtech_texte_recherche(coalesce(f.titre, ''))),
-                           word_similarity(seamtech_texte_recherche(%s), seamtech_texte_recherche(f.champs_texte))
+                           word_similarity(q.q_norm, seamtech_texte_recherche(f.code)),
+                           word_similarity(q.q_norm, seamtech_texte_recherche(f.titre)),
+                           word_similarity(q.q_norm, seamtech_texte_recherche(f.champs_texte))
                        ) AS score
                 FROM candidats cand
                 JOIN fiche f ON f.id_fiche = cand.id_fiche
                 JOIN v_fiche_recherche v ON v.id_fiche = f.id_fiche
+                CROSS JOIN q
                 WHERE {filtres_sql}
             ) AS scores
             WHERE score > %s
             ORDER BY score DESC, id_fiche
             LIMIT %s
             """,
-            (texte, texte, texte, texte, texte, texte, *params, SEUIL_TRIGRAMMES, limite),
+            (texte, *params, SEUIL_TRIGRAMMES, limite),
         )
         return [int(ligne[0]) for ligne in cursor.fetchall()]
     finally:

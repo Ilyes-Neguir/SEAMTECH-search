@@ -19,6 +19,7 @@ Preuve_id : `qualif-2026-10-13-a3506c8`. Ne pas sommer des lots qui se recoupent
 | B-04 | Objet-only ≠ manquant local | unitaire + B-03 | PASS |
 | C-01 | OCR fixtures | job ocr 115324073055 | PASS taux 1.000 / 0.955 |
 | C-02 | OCR sandbox local | tesseract absent | BLOQUÉ |
-| C-03 | import→index→search→open | `test_parcours_import_ocr_index_recherche_telechargement` dans 74 skip=0 | PASS |
+| C-03 | crawl→upsert→GET /search→POST /open | `test_parcours_import_ocr_index_recherche_telechargement` dans 74 skip=0 | PASS (pas l'import navigateur) |
 | C-04 | Scan anglais | `test_scan_anglais_retrouve_les_mots` dans 74 skip=0 | PASS |
-| D-01 | Install propre Debian native | — | PRÉPARÉ NON EXÉCUTÉ |
+| D-01 | Install propre Debian native | `scripts/qualification_native.sh` + job `Qualification native` | PRÉPARÉ NON EXÉCUTÉ jusqu'au rapport PASS |
+| P-01 | Perf 8dd5ae7 vs a3506c8 vs HEAD | job `Perf comparaison` | OUVERT |

@@ -25,7 +25,11 @@ extractors + ocr_parcours.
 Fichier : `preuves/ci-a3506c8.json`.
 
 - Qualification reserves push **38405546902** : **74 tests, 0 skipped, 0 failure** (PG + MinIO officiel + tesseract fra/eng). Inclut B-03 et C-03/C-04.
-- CI push **38405546959** : job `sauvegarde` SUCCESS (garde-fou 0 skip, notice `…_obj`) ; job `ocr` SUCCESS tesseract 5.3.4 ; postgres `279 passed / 0 skipped`. Conclusion globale CI **failure** sur le job **perf** (p95 324 ms ≥ 250 ms seuil runner — étiqueté, critère produit 100 ms).
+- CI push **38405546959** : job `sauvegarde` SUCCESS (garde-fou 0 skip, notice `…_obj` = restore objets + PG + fichiers, sources coupées) ; job `ocr` SUCCESS tesseract 5.3.4 (extracteurs, **pas** le parcours import) ; postgres `279 passed / 0 skipped`. Conclusion globale CI **failure** sur le job **perf** :
+  - hybride p95 280,9 ms ≥ 250 ; dimension p95 326,7 ms ≥ 250 ; 1 500 fiches p95 324,4 ms ≥ 250 ;
+  - fonds réel **p50 275,2 ms ≥ 100 ms** (critère d'architecture, aucune tolérance CI).
+  Baseline **même job** sur `8dd5ae7` (run 38267250173) : p50 8–14 ms / p95 11–47 ms. Machines différentes → comparaison identique demandée au job `Perf comparaison`. Seuil 250 ms **non relevé**.
+- C-03/C-04 : crawl+upsert+`GET /search`+`POST /open` dans les 74 tests skip=0 — **pas** l'import navigateur.
 
 ## Commandes
 
