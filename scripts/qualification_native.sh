@@ -203,6 +203,7 @@ python3 -m venv "$PREFIX/venv"
 python -m pip install -q --upgrade pip
 pip install -q -r "$RACINE/requirements.txt"
 python -m compileall -q "$RACINE/seamtech_search"
+mkdir -p "$IMPORT/affaires" "$IMPORT/ocr"
 
 python - <<PY
 import json
@@ -210,7 +211,7 @@ from pathlib import Path
 racine = Path("$RACINE")
 cfg = json.loads((racine / "config" / "config.example.json").read_text(encoding="utf-8"))
 cfg.update({
-    "root_paths": ["$IMPORT"],
+    "root_paths": ["$IMPORT/affaires", "$IMPORT/ocr"],
     "database_path": "$DATA/search.db",
     "database_url": None,
     "host": "127.0.0.1",
@@ -242,7 +243,9 @@ export SEAMTECH_S3_ENDPOINT_URL="http://127.0.0.1:9000"
 export SEAMTECH_STORAGE_BACKEND="s3"
 export SEAMTECH_WEB_WORKER_ENABLED="false"
 export SEAMTECH_REQUIRE_DURABLE_QUEUE="true"
-export SEAMTECH_ROOT_PATHS="$IMPORT"
+mkdir -p "$IMPORT/affaires" "$IMPORT/ocr"
+export SEAMTECH_ROOT_PATHS="$IMPORT/affaires,$IMPORT/ocr"
+export SEAMTECH_NATIF_OCR="$IMPORT/ocr"
 export PYTHONPATH="$RACINE${PYTHONPATH:+:$PYTHONPATH}"
 
 # Compte nominatif (mot de passe sur stdin, jamais en argument).
@@ -331,7 +334,8 @@ controle "demarrage-pile" "PASS" "API :8000 worker séparé frontend :3000 (proc
 # ---------------------------------------------------------------------------
 export SEAMTECH_API_URL="http://127.0.0.1:8000"
 export SEAMTECH_FRONT_URL="http://127.0.0.1:3000"
-export SEAMTECH_NATIF_IMPORT="$IMPORT"
+export SEAMTECH_NATIF_IMPORT="$IMPORT/affaires"
+export SEAMTECH_NATIF_OCR="$IMPORT/ocr"
 export SEAMTECH_NATIF_BACKUP="$BACKUP"
 export SEAMTECH_NATIF_RESTORE_FILES="$RESTORE_FILES"
 set +e
@@ -372,6 +376,7 @@ else
 fi
 
 echo "=== RAPPORT FINAL native : $NB_FAIL FAIL — $RAPPORT ===" | tee -a "$RAPPORT"
+trap - ERR
 if [ "$NB_FAIL" -gt 0 ]; then
     exit 1
 fi

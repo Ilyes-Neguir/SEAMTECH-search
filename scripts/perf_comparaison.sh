@@ -37,21 +37,21 @@ if ! git cat-file -e "${INTER_SHA}^{commit}"; then
     exit 1
 fi
 
-_worktree() {
+_extraire_sha() {
     local sha="$1" dest="$2"
     rm -rf "$dest"
-    git worktree remove "$dest" --force >/dev/null 2>&1 || true
-    if ! git worktree add --detach "$dest" "$sha"; then
-        echo "::error title=perf-comparaison/worktree::git worktree add $dest $sha a échoué"
+    mkdir -p "$dest"
+    if ! git archive "$sha" | tar -C "$dest" -x; then
+        echo "::error title=perf-comparaison/archive::git archive $sha → $dest a échoué"
         exit 1
     fi
+    echo "extrait $sha → $dest ($(git rev-parse --short "$sha"))"
 }
 
 WT_BASE="$DOSSIER/wt-baseline"
 WT_INTER="$DOSSIER/wt-a3506c8"
-_worktree "$BASELINE_SHA" "$WT_BASE"
-_worktree "$INTER_SHA" "$WT_INTER"
-trap 'git worktree remove "$WT_BASE" --force >/dev/null 2>&1 || true; git worktree remove "$WT_INTER" --force >/dev/null 2>&1 || true' EXIT
+_extraire_sha "$BASELINE_SHA" "$WT_BASE"
+_extraire_sha "$INTER_SHA" "$WT_INTER"
 
 # Un seul environnement de dépendances : on bascule le paquet éditable.
 python -m pip install -q -e "$RACINE"

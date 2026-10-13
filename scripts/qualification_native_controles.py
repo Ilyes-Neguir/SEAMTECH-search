@@ -31,6 +31,7 @@ JETON = os.environ["SEAMTECH_AUTH_TOKEN"]
 IDENTIFIANT = os.environ.get("SEAMTECH_NATIF_IDENTIFIANT", "natif-essai")
 MOT_DE_PASSE = os.environ["SEAMTECH_NATIF_MOT_DE_PASSE"]
 RACINE_IMPORT = Path(os.environ["SEAMTECH_NATIF_IMPORT"])
+RACINE_OCR = Path(os.environ.get("SEAMTECH_NATIF_OCR", str(RACINE_IMPORT.parent / "ocr")))
 DSN = os.environ["SEAMTECH_DATABASE_URL"]
 DSN_RESTORE = os.environ["SEAMTECH_RESTORE_DATABASE_URL"]
 DOSSIER_SAUVEGARDE = Path(os.environ.get("SEAMTECH_NATIF_BACKUP", "data/backups-natif"))
@@ -108,43 +109,22 @@ def connexion() -> None:
     _ligne("connexion-nominative", ok, f"POST /auth/connexion HTTP {code} {str(corps)[:180]}")
 
 
-def _preparer_affaire_ocr() -> Path:
-    dest = RACINE_IMPORT / "AFFAIRE-OCR-NATIF"
-    dest.mkdir(parents=True, exist_ok=True)
+def _preparer_sources() -> None:
+    sample = Path(__file__).resolve().parent.parent / "sample_data" / "CLIENT-7792-SO"
+    RACINE_IMPORT.mkdir(parents=True, exist_ok=True)
+    if sample.is_dir():
+        cible = RACINE_IMPORT / "CLIENT-7792-SO"
+        if not cible.exists():
+            shutil.copytree(sample, cible)
+    RACINE_OCR.mkdir(parents=True, exist_ok=True)
     fixtures = Path(__file__).resolve().parent.parent / "tests" / "fixtures" / "ocr"
     for nom in ("ocr_propre.pdf", "ocr_degrade.pdf"):
         src = fixtures / nom
         if src.is_file():
-            shutil.copyfile(src, dest / nom)
-    return dest
+            shutil.copyfile(src, RACINE_OCR / nom)
 
 
-def import_et_worker() -> int | None:
-    affaire = _preparer_affaire_ocr()
-    sample = Path(__file__).resolve().parent.parent / "sample_data"
-    if sample.is_dir():
-        for enfant in sample.iterdir():
-            if enfant.is_dir() and enfant.name.startswith("CLIENT-"):
-                cible = RACINE_IMPORT / enfant.name
-                if not cible.exists():
-                    shutil.copytree(enfant, cible, dirs_exist_ok=True)
-                break
-    code, corps, _ = _appel(
-        "POST",
-        "/imports/dossier/lot",
-        {"racine": str(RACINE_IMPORT), "notes": "essai natif"},
-        entetes={"X-SEAMTECH-BACKGROUND": "true"},
-    )
-    id_lot = corps.get("id_lot") if isinstance(corps, dict) else None
-    durability = corps.get("durability") if isinstance(corps, dict) else None
-    ok = code == 202 and isinstance(id_lot, int)
-    _ligne(
-        "import-lot",
-        ok,
-        f"HTTP {code} id_lot={id_lot} durability={durability} affaire={affaire.name}",
-    )
-    if not ok:
-        return None
+def _attendre_lot(id_lot: int) -> dict[str, Any]:
     debut = time.time()
     etat: dict[str, Any] = {}
     while time.time() - debut < TIMEOUT_LOT:
@@ -154,29 +134,77 @@ def import_et_worker() -> int | None:
             if corps2.get("statut") in {"termine", "interrompu"}:
                 break
         time.sleep(3)
+    return etat
+
+
+def _attendre_job(job_id: str) -> dict[str, Any]:
+    debut = time.time()
+    etat: dict[str, Any] = {}
+    while time.time() - debut < TIMEOUT_LOT:
+        c2, corps2, _ = _appel("GET", f"/imports/{job_id}")
+        if c2 == 200 and isinstance(corps2, dict):
+            etat = corps2
+            statut = str(corps2.get("status") or "").lower()
+            if statut in {"completed", "failed", "cancelled", "error", "success"}:
+                break
+        time.sleep(3)
+    return etat
+
+
+def import_et_worker() -> int | None:
+    _preparer_sources()
+    code, corps, _ = _appel(
+        "POST",
+        "/imports/dossier/lot",
+        {"racine": str(RACINE_IMPORT), "notes": "essai natif 7792-SO"},
+        entetes={"X-SEAMTECH-BACKGROUND": "true"},
+    )
+    id_lot = corps.get("id_lot") if isinstance(corps, dict) else None
+    durability = corps.get("durability") if isinstance(corps, dict) else None
+    ok = code == 202 and isinstance(id_lot, int)
+    _ligne("import-lot", ok, f"HTTP {code} id_lot={id_lot} durability={durability}")
+    if not ok:
+        return None
+    etat = _attendre_lot(int(id_lot))
     statut = etat.get("statut")
     nb_traites = int(etat.get("nb_traites") or 0)
     nb_echecs = int(etat.get("nb_echecs") or 0)
     ok_lot = statut == "termine" and nb_echecs == 0 and nb_traites > 0
-    _ligne(
-        "worker-lot",
-        ok_lot,
-        f"statut={statut} traites={nb_traites} echecs={nb_echecs} {str(etat)[:200]}",
-    )
+    _ligne("worker-lot", ok_lot, f"statut={statut} traites={nb_traites} echecs={nb_echecs} {str(etat)[:240]}")
+
+    code_i, corps_i, _ = _appel("POST", "/imports", {"source_path": str(RACINE_OCR)})
+    job_id = None
+    if isinstance(corps_i, dict):
+        job_id = corps_i.get("job_id") or corps_i.get("id") or corps_i.get("import_id")
+    ok_i = code_i == 202 and bool(job_id)
+    _ligne("import-ocr-crawl", ok_i, f"HTTP {code_i} job={job_id} {str(corps_i)[:180]}")
+    if ok_i:
+        etat_j = _attendre_job(str(job_id))
+        _ligne(
+            "worker-ocr",
+            str(etat_j.get("status") or "").lower() not in {"failed", "error"},
+            f"{str(etat_j)[:240]}",
+        )
     return int(id_lot) if ok_lot else None
 
 
 def recherche_et_ocr() -> str | None:
     path_ouvert: str | None = None
-    for requete, etiquette in (("SEAMTECH", "ocr-fra"), ("GENOA", "ocr-eng"), ("7792", "fonds-sample")):
-        code, corps, _ = _appel("GET", "/search?q=" + urllib.parse.quote(requete))
-        hits = []
-        if code == 200 and isinstance(corps, dict):
-            hits = corps.get("results") or corps.get("resultats") or []
-        ok = code == 200 and bool(hits)
-        _ligne(f"recherche-{etiquette}", ok, f"q={requete!r} HTTP {code} n={len(hits)}")
+    code, corps, _ = _appel("GET", "/recherche?q=" + urllib.parse.quote("7792"))
+    hits: list[Any] = []
+    if code == 200 and isinstance(corps, dict):
+        hits = corps.get("resultats") or corps.get("results") or []
+    _ligne("recherche-metier-7792", code == 200 and bool(hits), f"GET /recherche q=7792 HTTP {code} n={len(hits)} {str(corps)[:180]}")
+
+    for requete, etiquette in (("SEAMTECH", "ocr-fra"), ("Sailonet", "fonds-sample")):
+        c2, corps2, _ = _appel("GET", "/search?q=" + urllib.parse.quote(requete))
+        hits2: list[Any] = []
+        if c2 == 200 and isinstance(corps2, dict):
+            hits2 = corps2.get("results") or corps2.get("resultats") or []
+        ok = c2 == 200 and bool(hits2)
+        _ligne(f"recherche-{etiquette}", ok, f"GET /search q={requete!r} HTTP {c2} n={len(hits2)}")
         if ok and path_ouvert is None:
-            premier = hits[0]
+            premier = hits2[0]
             path_ouvert = premier.get("path") or premier.get("chemin")
             ident = premier.get("id")
             if not path_ouvert and ident is not None:
@@ -191,9 +219,6 @@ def recherche_et_ocr() -> str | None:
                                 path_ouvert = ligne[0]
                 except Exception as exc:  # noqa: BLE001
                     _ligne("recherche-path", False, f"path introuvable ({exc})")
-    code, corps, _ = _appel("GET", "/recherche?q=SEAMTECH")
-    hits = corps.get("resultats") or corps.get("results") or [] if isinstance(corps, dict) else []
-    _ligne("recherche-metier", code == 200, f"GET /recherche HTTP {code} n={len(hits) if isinstance(hits, list) else '?'}")
     return path_ouvert
 
 
@@ -271,7 +296,7 @@ def sauvegarde_restauration() -> None:
         _ligne(
             "restauration-conjointe",
             proc_r.returncode == 0,
-            f"rc={proc_r.returncode} {proc_r.stdout.strip()[:200]} {proc_r.stderr[-180:]}",
+            f"rc={proc_r.returncode} out={proc_r.stdout.strip()[:300]} err={proc_r.stderr.strip()[:400]}",
         )
         if dump.is_file():
             sha2 = hashlib.sha256(dump.read_bytes()).hexdigest()
