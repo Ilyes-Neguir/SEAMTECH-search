@@ -43,22 +43,15 @@ async function dragDropFileViaEvents(page: any, filePath: string) {
   const buffer = fs.readFileSync(filePath)
   const base64 = buffer.toString("base64")
 
-  // Sélecteur de la zone de dépôt : div avec texte "déposez ici un dossier"
-  const dropSelector = 'div:has-text("déposez ici un dossier de référence")'
-
   await page.evaluate(
-    async ({ selector, fileName, base64 }: { selector: string; fileName: string; base64: string }) => {
-      const dropZone = document.querySelector(selector) as HTMLElement | null
-      if (!dropZone) {
-        // fallback : cherche la zone avec border-dashed
-        const candidates = Array.from(document.querySelectorAll("div"))
-        const found = candidates.find((el) => el.textContent?.includes("déposez ici"))
-        if (!found) throw new Error(`dropZone not found: ${selector}`)
-        ;(found as HTMLElement).dispatchEvent(
-          new DragEvent("dragenter", { bubbles: true, cancelable: true, dataTransfer: new DataTransfer() }),
-        )
-        return
-      }
+    async ({ fileName, base64 }: { fileName: string; base64: string }) => {
+      // Trouve la zone de dépôt par son texte, pas par sélecteur Playwright :has-text (invalide pour querySelector)
+      const candidates = Array.from(document.querySelectorAll("div"))
+      const dropZone = candidates.find((el) =>
+        el.textContent?.includes("déposez ici un dossier de référence"),
+      ) as HTMLElement | null
+      if (!dropZone) throw new Error("dropZone not found: div contenant 'déposez ici un dossier de référence'")
+
       const byteChars = atob(base64)
       const byteNumbers = new Array(byteChars.length)
       for (let i = 0; i < byteChars.length; i++) {
@@ -68,16 +61,11 @@ async function dragDropFileViaEvents(page: any, filePath: string) {
       const file = new File([byteArray], fileName, { type: "application/pdf" })
 
       const dataTransfer = new DataTransfer()
-      // @ts-ignore : items.add est supporté en Chromium
+      // @ts-ignore : items.add supporté en Chromium
       if (dataTransfer.items && (dataTransfer.items as any).add) {
         ;(dataTransfer.items as any).add(file)
-      } else {
-        // fallback
-        Object.defineProperty(dataTransfer, "files", {
-          value: [file],
-        })
       }
-      // Pour filesFromDrop qui lit dt.items.webkitGetAsEntry ou dt.files
+      // Pour filesFromDrop qui lit dt.files en fallback
       Object.defineProperty(dataTransfer, "files", {
         value: [file],
         writable: false,
@@ -103,11 +91,11 @@ async function dragDropFileViaEvents(page: any, filePath: string) {
       dropZone.dispatchEvent(dragOver)
       dropZone.dispatchEvent(drop)
     },
-    { selector: dropSelector, fileName, base64 },
+    { fileName, base64 },
   )
 
   // Attend que la logique filesFromDrop ait mis à jour l'état dropped
-  await page.waitForTimeout(500)
+  await page.waitForTimeout(800)
 }
 
 test.describe("Scan navigateur → OCR → Recherche → Téléchargement", () => {
