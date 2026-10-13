@@ -44,6 +44,48 @@ def test_structured_result_does_not_put_status_in_content(tmp_path: Path) -> Non
 
 
 @pytest.mark.ocr_suite
+def test_pdf_scanne_ocr_absent_n_est_pas_un_succes(tmp_path: Path) -> None:
+    """enable_ocr=true sans binaire : unavailable explicite, jamais extracted vide."""
+    from pypdf import PdfWriter
+
+    pdf = tmp_path / "scan.pdf"
+    # PDF sans couche texte (page vide) → extraction native unavailable.
+    writer = PdfWriter()
+    writer.add_blank_page(width=200, height=200)
+    writer.write(pdf)
+
+    sans = extract_file(pdf, max_chars=1_000, enable_ocr=False)
+    assert sans.status == "unavailable"
+
+    avec = extract_file(
+        pdf,
+        max_chars=1_000,
+        enable_ocr=True,
+        tesseract_command="/bin/seamtech-tesseract-absent",
+        ocrmypdf_command="/bin/seamtech-ocrmypdf-absent",
+    )
+    assert avec.status == "unavailable"
+    assert "tesseract" in avec.detail.lower() or "ocr" in avec.detail.lower()
+    assert avec.text == ""
+
+
+def test_pdf_texte_et_xlsx_sans_regression_ocr(tmp_path: Path) -> None:
+    pdf = tmp_path / "texte.pdf"
+    tampon = io.BytesIO()
+    c = canvas.Canvas(tampon, pagesize=A4)
+    c.drawString(72, 720, "Grand voile 7792-SO")
+    c.save()
+    pdf.write_bytes(tampon.getvalue())
+    resultat = extract_file(pdf, max_chars=2_000, enable_ocr=True)
+    assert resultat.status == "extracted"
+    assert "7792-SO" in resultat.text
+
+    xlsx = tmp_path / "nomenclature.xlsx"
+    with ZipFile(xlsx, "w") as archive:
+        archive.writestr("xl/sharedStrings.xml", "<sst><t>DACRON</t></sst>")
+    assert "DACRON" in extract_file(xlsx, max_chars=1_000, enable_ocr=True).text
+
+
 def test_optional_legacy_and_ocr_formats_are_transparent_when_disabled(tmp_path: Path) -> None:
     legacy = tmp_path / "old.doc"
     image = tmp_path / "drawing.png"

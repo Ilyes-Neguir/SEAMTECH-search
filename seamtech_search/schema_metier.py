@@ -1,4 +1,4 @@
-"""Schéma métier « fiche technique » — migrations 006 à 022 (Lots A → correctifs d'audit).
+"""Schéma métier « fiche technique » — migrations 006 à 023 (Lots A → correctifs d'audit).
 
 DÉCISION DE COUCHE ACTÉE (plan v3.0 §17.1) : la couche métier est
 **PostgreSQL uniquement**. Elle s'appuie sur pgvector, pg_trgm, les index GIN,
@@ -26,7 +26,7 @@ from __future__ import annotations
 from typing import Any
 
 # Version du schéma métier — incrémentée à chaque nouvelle migration.
-VERSION_SCHEMA_METIER = "022_selections_durables"
+VERSION_SCHEMA_METIER = "023_recherche_normalisee"
 
 # Marqueur injecté par le code au moment de la migration (constat 1 de revue) :
 # le nom de la configuration de recherche effective — 'seamtech_unaccent' ou
@@ -1391,6 +1391,130 @@ ALTER TABLE import_jobs ADD COLUMN IF NOT EXISTS selected_pdf TEXT;
 ALTER TABLE import_jobs ADD COLUMN IF NOT EXISTS selected_excel TEXT;
 """
 
+# ---------------------------------------------------------------------------
+# 023 — Clé de recherche normalisée (casse + diacritiques + ligatures)
+# ---------------------------------------------------------------------------
+# Constat A-03 (recette 2026-10-12) : l'index tsvector (seamtech_unaccent) plie
+# déjà les accents, mais la source trigrammes comparait le texte BRUT. Une
+# requête « GENOIS » et « GÉNOIS » produisaient donc des votes RRF différents
+# (word_similarity littérale). Ce n'est PAS un cas « génois » : toute paire
+# ne différant que par la casse ou les diacritiques latin doit renvoyer les
+# mêmes identifiants, dans le même ordre déterministe.
+#
+# Pourquoi une FONCTION IMMUTABLE plutôt que unaccent() nu dans les index :
+# unaccent() est STABLE (dictionnaire chargeable). L'enveloppe IMMUTABLE
+# (forme à deux arguments, dictionnaire nommé) est le motif PostgreSQL
+# documenté pour indexer unaccent. Limite assumée : si l'exploitant CHANGE
+# le dictionnaire unaccent.rules, les index d'expression deviennent faux
+# jusqu'à REINDEX — opération d'exploitation, pas un chemin applicatif.
+#
+# Miroir Python : seamtech_search.fiches.normalisation.normaliser_cle_recherche
+# (NFD + retrait des combinants + casefold + ligatures œ/æ + ß). Les deux
+# doivent rester alignés. Pas de translittération arabe/cyrillique.
+SQL_023_FONCTION_UNACCENT = """
+CREATE OR REPLACE FUNCTION seamtech_texte_recherche(t TEXT)
+RETURNS TEXT
+LANGUAGE sql
+IMMUTABLE
+PARALLEL SAFE
+AS $fonction$
+    SELECT btrim(
+        replace(replace(replace(
+            lower(
+                regexp_replace(
+                    translate(
+                        public.unaccent('public.unaccent'::regdictionary, coalesce(t, '')),
+                        E'\\u00a0\\u202f\\u2007\\u2009',
+                        '    '
+                    ),
+                    '[[:space:]]+', ' ', 'g'
+                )
+            ),
+            'œ', 'oe'),
+            'æ', 'ae'),
+            'ß', 'ss')
+    )
+$fonction$;
+
+COMMENT ON FUNCTION seamtech_texte_recherche(TEXT) IS
+    'Clé de recherche (casse pliée, diacritiques latin via unaccent, ligatures œ/æ/ß, espaces comprimés, NFC≡NFD) — IMMUTABLE donc indexable ; miroir Python : seamtech_search.fiches.normalisation.normaliser_cle_recherche';
+"""
+
+# Repli si unaccent n'est pas installable : translate() du latin-1 + latin
+# étendu A (1 caractère → 1 caractère) + ligatures par replace(). Couverture
+# plus étroite qu'unaccent (ø, ł, etc. sont couverts ; pas les symboles du
+# dictionnaire unaccent). Documenté, jamais silencieux.
+SQL_023_FONCTION_REPLI = r"""
+CREATE OR REPLACE FUNCTION seamtech_texte_recherche(t TEXT)
+RETURNS TEXT
+LANGUAGE sql
+IMMUTABLE
+PARALLEL SAFE
+AS $fonction$
+    SELECT btrim(
+        replace(replace(replace(
+            lower(
+                regexp_replace(
+                    translate(
+                        coalesce(t, ''),
+                        'ÀÁÂÃÄÅÈÉÊËÌÍÎÏÒÓÔÕÖÙÚÛÜÝàáâãäåèéêëìíîïòóôöõùúûüýÿÇçÑñØøŸĀāĂăĄąĆćĈĉĊċČčĎďĐđĒēĔĕĖėĘęĚěĜĝĞğĠġĢģĤĥĦħĨĩĪīĬĭĮįİıĴĵĶķĹĺĻļĽľĿŀŁłŃńŅņŇňŌōŎŏŐőŔŕŖŗŘřŚśŜŝŞşŠšŢţŤťŦŧŨũŪūŬŭŮůŰűŲųŴŵŶŷŹźŻżŽž' || E'\u00a0\u202f\u2007\u2009',
+                        'AAAAAAEEEEIIIIOOOOOUUUUYaaaaaaeeeeiiiiooooouuuuyyCcNnOoYAaAaAaCcCcCcCcDdDdEeEeEeEeEeGgGgGgGgHhHhIiIiIiIiIiJjKkLlLlLlLlLlNnNnNnOoOoOoRrRrRrSsSsSsSsTtTtTtUuUuUuUuUuUuWwYyZzZzZz    '
+                    ),
+                    '[[:space:]]+', ' ', 'g'
+                )
+            ),
+            'œ', 'oe'),
+            'æ', 'ae'),
+            'ß', 'ss')
+    )
+$fonction$;
+
+COMMENT ON FUNCTION seamtech_texte_recherche(TEXT) IS
+    'Clé de recherche (repli sans unaccent : translate latin-1 + étendu A) — IMMUTABLE ; miroir Python : normaliser_cle_recherche';
+"""
+
+SQL_023_INDEX = """
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
+-- Index de RECHERCHE : la comparaison trigrammes porte sur la clé normalisée,
+-- des deux côtés (requête et colonne). Les index bruts de 007 (titre/code/
+-- champs_texte nus) ne servent plus cette source.
+DROP INDEX IF EXISTS idx_fiche_code_trgm;
+DROP INDEX IF EXISTS idx_fiche_champs_trgm;
+
+CREATE INDEX IF NOT EXISTS idx_fiche_code_trgm_norm
+    ON fiche USING gin (seamtech_texte_recherche(code) gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_fiche_titre_trgm_norm
+    ON fiche USING gin (seamtech_texte_recherche(titre) gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_fiche_champs_trgm_norm
+    ON fiche USING gin (seamtech_texte_recherche(champs_texte) gin_trgm_ops);
+
+-- idx_fiche_titre_trgm : 007 le créait sur titre NU ; 016 voulait
+-- seamtech_titre_normalise(titre) pour la dédup, mais IF NOT EXISTS sautait
+-- si 007 avait déjà le nom. On le recrée sur l'expression de dédup.
+DROP INDEX IF EXISTS idx_fiche_titre_trgm;
+CREATE INDEX IF NOT EXISTS idx_fiche_titre_trgm
+    ON fiche USING gin (seamtech_titre_normalise(titre) gin_trgm_ops);
+
+-- Suggestions : mêmes clés normalisées sur les référentiels.
+DROP INDEX IF EXISTS idx_type_voile_libelle_trgm;
+DROP INDEX IF EXISTS idx_client_nom_trgm;
+DROP INDEX IF EXISTS idx_bateau_nom_trgm;
+DROP INDEX IF EXISTS idx_materiau_nom_trgm;
+DROP INDEX IF EXISTS idx_fiche_gamme_trgm;
+
+CREATE INDEX IF NOT EXISTS idx_type_voile_libelle_trgm_norm
+    ON type_voile USING gin (seamtech_texte_recherche(libelle) gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_client_nom_trgm_norm
+    ON client USING gin (seamtech_texte_recherche(nom) gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_bateau_nom_trgm_norm
+    ON bateau USING gin (seamtech_texte_recherche(nom) gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_materiau_nom_trgm_norm
+    ON materiau USING gin (seamtech_texte_recherche(nom) gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_fiche_gamme_trgm_norm
+    ON fiche USING gin (seamtech_texte_recherche(gamme) gin_trgm_ops);
+"""
+
 MIGRATIONS_METIER: tuple[tuple[str, str], ...] = (
     ("006_fiche_technique", SQL_006_FICHE_TECHNIQUE),
     ("007_recherche_index", SQL_007_RECHERCHE_INDEX),
@@ -1409,6 +1533,7 @@ MIGRATIONS_METIER: tuple[tuple[str, str], ...] = (
     ("020_file_durable", SQL_020_FILE_DURABLE),
     ("021_revision_fiche", SQL_021_REVISION_FICHE),
     ("022_selections_durables", SQL_022_SELECTIONS_DURABLES),
+    ("023_recherche_normalisee", SQL_023_FONCTION_UNACCENT),
 )
 
 

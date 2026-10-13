@@ -51,6 +51,12 @@ L'OCR reste OPTIONNEL au runtime : si `tesseract` est absent, le statut est
 `unavailable` avec motif lisible et le lot ne plante pas (même comportement que
 `extractors.py`).
 
+Ingestion (`extract_file`, version extracteur **5**) : un PDF scanné avec
+`enable_ocr=true` tente d'abord `ocrmypdf` s'il est présent, puis le pipeline
+pages ci-dessus. Sans binaire, le statut reste `unavailable` — jamais un
+`extracted` vide. Cette version n'a **pas** été qualifiée dans le bac à sable
+sans tesseract (voir `deliverables/qualification-deploiement/`).
+
 ## Réglages
 
 | Paramètre | Défaut | Justification |

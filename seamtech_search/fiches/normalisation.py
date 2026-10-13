@@ -30,12 +30,48 @@ MOIS_FR = {
 _RE_DECIMAL = re.compile(r"-?\d+(?:[.,]\d+)?")
 _RE_NOMBRE = re.compile(r"-?\d+")
 
+# Ligatures latin : un simple retrait de diacritiques combinants ne les traite
+# pas (œ, æ sont des caractères précomposés, pas lettre+combinant). ß est
+# déjà déplié par str.casefold() → « ss ». Couverture documentée : latin
+# (diacritiques Unicode + ces ligatures). Pas de translittération arabe,
+# cyrillique ou autre.
+_LIGATURES_RECHERCHE: tuple[tuple[str, str], ...] = (
+    ("œ", "oe"),
+    ("Œ", "oe"),
+    ("æ", "ae"),
+    ("Æ", "ae"),
+)
 
-def sans_accents(texte: str) -> str:
-    """Minuscules sans accents, espaces comprimés — forme de comparaison."""
+
+def normaliser_cle_recherche(texte: str) -> str:
+    """Clé de recherche : casse Unicode, diacritiques, ligatures, espaces.
+
+    - NFC et NFD d'un même caractère sont équivalents (décomposition NFD
+      puis retrait des marques combinantes) ;
+    - ``casefold()`` (pas seulement ``lower()`` ASCII) ;
+    - ligatures œ/æ → oe/ae ; ß → ss via casefold ;
+    - espaces de tête/fin, répétés, insécables : comprimés.
+
+    Ne modifie PAS les textes métier : c'est une clé, pas une réécriture
+    des données affichées ou stockées. Ne retire pas la ponctuation des
+    codes (géré à part par la tokenisation des séparateurs).
+    """
+    if not texte:
+        return ""
+    for source, cible in _LIGATURES_RECHERCHE:
+        if source in texte:
+            texte = texte.replace(source, cible)
     decompose = unicodedata.normalize("NFD", texte)
     sans_signes = "".join(caractere for caractere in decompose if not unicodedata.combining(caractere))
-    return " ".join(sans_signes.lower().split())
+    return " ".join(sans_signes.casefold().split())
+
+
+def sans_accents(texte: str) -> str:
+    """Minuscules sans accents, espaces comprimés — forme de comparaison.
+
+    Délègue à ``normaliser_cle_recherche`` (même règle, un seul endroit).
+    """
+    return normaliser_cle_recherche(texte)
 
 
 def extraire_decimal(texte: str | None) -> float | None:
