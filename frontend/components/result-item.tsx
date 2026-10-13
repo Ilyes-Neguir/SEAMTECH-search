@@ -71,6 +71,7 @@ export function ResultItem({ result, selected, onSelect }: ResultItemProps) {
     <div
       role="button"
       tabIndex={0}
+      data-testid="result-item"
       onClick={onSelect}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {

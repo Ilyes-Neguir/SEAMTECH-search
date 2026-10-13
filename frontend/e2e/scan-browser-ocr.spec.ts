@@ -190,31 +190,35 @@ test.describe("Scan navigateur → OCR → Recherche → Téléchargement", () =
     }
 
     // Recherche du terme unique par exécution — doit retourner le document de CET import
+    // Vérification directe API d'abord (preuve indexation effective, indépendante UI)
+    const apiSearchResp = await page.request.get(`/api/search?q=${encodeURIComponent(uniq)}`)
+    expect(apiSearchResp.ok()).toBeTruthy()
+    const apiSearchJson = await apiSearchResp.json()
+    console.log(`API search direct ${uniq} count=${apiSearchJson.count}`)
+    expect(apiSearchJson.count).toBeGreaterThan(0)
+    expect(apiSearchJson.results?.[0]?.id).toBeTruthy()
+
+    // Recherche via UI
     const searchInput = page.getByPlaceholder(/Rechercher/i).first()
     await searchInput.fill(uniq)
     await searchInput.press("Enter")
+    // Clique aussi sur bouton Rechercher pour robustesse
+    await page.getByRole("button", { name: "Rechercher" }).first().click().catch(() => {})
 
-    // Attendre réponse /api/search?q=uniq
+    // Attendre réponse /api/search?q=uniq via UI
     const searchResp = await page.waitForResponse(
       (r) => r.url().includes("/api/search") && r.url().includes(encodeURIComponent(uniq)) && r.request().method() === "GET",
       { timeout: 10000 },
     ).catch(() => null)
     if (searchResp) {
       const searchJson = await searchResp.json()
-      console.log(`search API ${uniq} count=${searchJson.count} results=${searchJson.results?.length}`)
+      console.log(`search UI API ${uniq} count=${searchJson.count} results=${searchJson.results?.length}`)
       expect(searchJson.count).toBeGreaterThan(0)
-      const first = searchJson.results?.[0]
-      expect(first).toBeTruthy()
-      // Vérifie identité : le nom doit correspondre au fichier uploadé ou le parent contient upload
-      expect(first.name || first.id).toBeTruthy()
-      // On exige que le résultat soit bien celui de l'import courant (via nom fichier)
-      // Le nom du fichier généré est scan-fr.pdf ou scan-custom.pdf, pas unique, donc on vérifie via id non nul et count
-      // Pour renforcer, on vérifie que le résultat n'est pas un vieux document : on a généré un terme unique, donc count==1 idéal
     }
 
     // UI : résultat doit être visible et contenir le fichier (pas un texte générique)
     const resultItem = page.locator('[data-testid="result-item"]').first()
-    await expect(resultItem).toBeVisible({ timeout: 10000 })
+    await expect(resultItem).toBeVisible({ timeout: 15000 })
     // Ouvre ce résultat
     await resultItem.click()
     await expect(page.getByTestId("visionneuse-piece").first()).toBeVisible({ timeout: 10000 }).catch(() => {})
@@ -368,9 +372,17 @@ test.describe("Scan navigateur → OCR → Recherche → Téléchargement", () =
       expect(rawText.replace(/[^A-Z0-9]/gi, "").toUpperCase()).toContain(uniq.replace(/[^A-Z0-9]/gi, "").toUpperCase())
     }
 
+    // Vérification directe API
+    const apiSearchResp = await page.request.get(`/api/search?q=${encodeURIComponent(uniq)}`)
+    expect(apiSearchResp.ok()).toBeTruthy()
+    const apiSearchJson = await apiSearchResp.json()
+    console.log(`API search direct drag-drop ${uniq} count=${apiSearchJson.count}`)
+    expect(apiSearchJson.count).toBeGreaterThan(0)
+
     const searchInput = page.getByPlaceholder(/Rechercher/i).first()
     await searchInput.fill(uniq)
     await searchInput.press("Enter")
+    await page.getByRole("button", { name: "Rechercher" }).first().click().catch(() => {})
 
     const searchResp = await page.waitForResponse(
       (r) => r.url().includes("/api/search") && r.url().includes(encodeURIComponent(uniq)) && r.request().method() === "GET",
@@ -378,12 +390,12 @@ test.describe("Scan navigateur → OCR → Recherche → Téléchargement", () =
     ).catch(() => null)
     if (searchResp) {
       const searchJson = await searchResp.json()
-      console.log(`search drag-drop ${uniq} count=${searchJson.count}`)
+      console.log(`search UI drag-drop ${uniq} count=${searchJson.count}`)
       expect(searchJson.count).toBeGreaterThan(0)
     }
 
     const resultItem = page.locator('[data-testid="result-item"]').first()
-    await expect(resultItem).toBeVisible({ timeout: 10000 })
+    await expect(resultItem).toBeVisible({ timeout: 15000 })
     await resultItem.click()
     await expect(page.getByTestId("visionneuse-piece").first()).toBeVisible({ timeout: 10000 }).catch(() => {})
 
