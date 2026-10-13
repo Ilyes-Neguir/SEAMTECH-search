@@ -6,18 +6,6 @@ import crypto from "crypto"
 import * as os from "os"
 import { execSync } from "child_process"
 
-/**
- * Parcours prioritaire : scan déposé par navigateur de bout en bout
- * - PDF image SANS couche texte (français avec accents, anglais, multipage, dégradé)
- * - Termes uniques absents des noms de fichiers/métadonnées
- * - Deux variantes de dépôt : sélection fichier (setInputFiles) ET véritable glisser-déposer (dragenter/dragover/drop via DataTransfer)
- * - Vérification fichiers détectés, confirmation, suivi traitement, OCR, indexation,
- *   recherche, ouverture, téléchargement SHA-256, infos/statuts
- * - Cas erreur : PDF invalide et PDF blanc sans texte exploitable, contrat explicite, absence de faux succès
- *
- * Pré-requis : backend avec enable_ocr=true et tesseract fra+eng + poppler.
- */
-
 function sha256(filePath: string): string {
   const data = fs.readFileSync(filePath)
   return crypto.createHash("sha256").update(data).digest("hex")
@@ -31,13 +19,6 @@ function generatePdfViaPython(tmpDir: string, variant: string): string {
   return out.split("\n").pop()!.trim()
 }
 
-/**
- * Glisser-déposer réel via événements navigateur.
- * Ne pas confondre avec setInputFiles (sélection fichier) : ici on déclenche
- * dragenter/dragover/drop avec DataTransfer contenant un vrai File.
- * C'est la preuve que les handlers onDragOver/onDrop de ImportPanel fonctionnent,
- * pas seulement l'input file caché.
- */
 async function dragDropFileViaEvents(page: any, filePath: string) {
   const fileName = path.basename(filePath)
   const buffer = fs.readFileSync(filePath)
@@ -45,12 +26,14 @@ async function dragDropFileViaEvents(page: any, filePath: string) {
 
   await page.evaluate(
     async ({ fileName, base64 }: { fileName: string; base64: string }) => {
-      // Trouve la zone de dépôt par son texte (évite :has-text invalide pour querySelector)
+      const byTestId = document.querySelector('[data-testid="drop-zone"]') as HTMLElement | null
       const candidates = Array.from(document.querySelectorAll("div"))
-      const dropZone = candidates.find((el) =>
-        el.textContent?.includes("déposez ici un dossier de référence"),
-      ) as HTMLElement | null
-      if (!dropZone) throw new Error("dropZone not found: div contenant 'déposez ici un dossier de référence'")
+      const dropZone =
+        byTestId ||
+        (candidates.find((el) =>
+          (el.textContent || "").includes("déposez ici un dossier de référence"),
+        ) as HTMLElement | null)
+      if (!dropZone) throw new Error("dropZone not found")
 
       const byteChars = atob(base64)
       const byteNumbers = new Array(byteChars.length)
@@ -60,61 +43,29 @@ async function dragDropFileViaEvents(page: any, filePath: string) {
       const byteArray = new Uint8Array(byteNumbers)
       const file = new File([byteArray], fileName, { type: "application/pdf" })
 
-      // Mock DataTransfer avec items.webkitGetAsEntry pour que filesFromDrop utilise la branche entries
-      const dataTransfer = new DataTransfer()
-      const entry = {
-        isFile: true,
-        isDirectory: false,
-        name: file.name,
-        file: (success: (f: File) => void) => success(file),
-      }
-      const item = {
-        kind: "file",
-        type: "application/pdf",
-        getAsFile: () => file,
-        webkitGetAsEntry: () => entry,
-      }
-      // @ts-ignore : on remplace items par un tableau mocké contenant webkitGetAsEntry
-      Object.defineProperty(dataTransfer, "items", {
-        value: {
-          length: 1,
-          0: item,
-          [Symbol.iterator]: function* () {
-            yield item
-          },
-        },
-        writable: false,
-      })
-      Object.defineProperty(dataTransfer, "files", {
-        value: [file],
-        writable: false,
-      })
+      const dt = new DataTransfer()
+      dt.items.add(file)
+      // @ts-ignore
+      dt.dropEffect = "copy"
+      // @ts-ignore
+      dt.effectAllowed = "all"
 
-      const dragEnter = new DragEvent("dragenter", {
-        bubbles: true,
-        cancelable: true,
-        dataTransfer,
-      })
-      const dragOver = new DragEvent("dragover", {
-        bubbles: true,
-        cancelable: true,
-        dataTransfer,
-      })
-      const drop = new DragEvent("drop", {
-        bubbles: true,
-        cancelable: true,
-        dataTransfer,
-      })
+      const mk = (type: string) =>
+        new DragEvent(type, {
+          bubbles: true,
+          cancelable: true,
+          dataTransfer: dt,
+        })
 
-      dropZone.dispatchEvent(dragEnter)
-      dropZone.dispatchEvent(dragOver)
-      dropZone.dispatchEvent(drop)
+      dropZone.dispatchEvent(mk("dragenter"))
+      dropZone.dispatchEvent(mk("dragover"))
+      await new Promise((r) => setTimeout(r, 80))
+      dropZone.dispatchEvent(mk("drop"))
     },
     { fileName, base64 },
   )
 
-  // Attend que la logique filesFromDrop (async readEntry) ait mis à jour l'état dropped
-  await page.waitForTimeout(1000)
+  await page.waitForTimeout(1500)
 }
 
 test.describe("Scan navigateur → OCR → Recherche → Téléchargement", () => {
@@ -161,7 +112,6 @@ test.describe("Scan navigateur → OCR → Recherche → Téléchargement", () =
     await expect(importBtn).toBeEnabled({ timeout: 5000 })
     await importBtn.click()
 
-    // Statut terminal : doit être completed ou needs_review (pas failed pour un scan valide)
     await expect(page.getByText(/État :/i).first()).toBeVisible({ timeout: 15000 })
     const etatText = await page.getByText(/État :/i).first().textContent()
     console.log(`État import: ${etatText}`)
@@ -243,10 +193,8 @@ test.describe("Scan navigateur → OCR → Recherche → Téléchargement", () =
     await page.getByRole("button", { name: "Recherche avancée" }).click()
     await expect(page.getByText("Importer un dossier").first()).toBeVisible({ timeout: 10000 })
 
-    // VÉRITABLE glisser-déposer : déclenche dragenter/dragover/drop avec DataTransfer
     await dragDropFileViaEvents(page, pdfPath)
 
-    // Après drop, la zone "fichiers prêts à envoyer" doit apparaître
     await expect(page.getByText(/fichier.*prêt.*envoyer/i).first()).toBeVisible({ timeout: 8000 })
     await expect(page.getByText(fileName).first()).toBeVisible({ timeout: 5000 })
 
@@ -264,7 +212,6 @@ test.describe("Scan navigateur → OCR → Recherche → Téléchargement", () =
     await expect(page.getByText(/État :/i).first()).toBeVisible({ timeout: 15000 })
     const etatText = await page.getByText(/État :/i).first().textContent()
     console.log(`État import drag-drop: ${etatText}`)
-    // Pour un scan anglais valide, status doit être completed ou needs_review (pas failed)
     expect(etatText).toMatch(/completed|needs_review/i)
 
     const searchInput = page.getByPlaceholder(/Rechercher/i).first()
@@ -321,17 +268,10 @@ test.describe("Scan navigateur → OCR → Recherche → Téléchargement", () =
     await expect(page.getByText(/prêt.*envoyer/i).first()).toBeVisible({ timeout: 5000 })
     await page.getByRole("button", { name: "Envoyer et analyser" }).click()
 
-    // Contrat invalide :
-    // - Soit erreur HTTP immédiate (400/413/500) affichée dans zone d'erreur (text-destructive)
-    // - Soit scan OK mais 0 PDF technique détecté → message "Aucun PDF technique" + warning
-    // - Soit candidat détecté mais import → statut terminal failed ou needs_review avec message invalide
-    // Dans tous les cas : pas de statut completed avec extraction réussie, pas de faux texte inventé
-
     const errorDestructive = page.locator("p.text-destructive").first()
     const fichiersDetectes = page.getByText(/Fichiers détectés dans/i).first()
     const aucunPdf = page.getByText(/Aucun PDF technique/i).first()
 
-    // Attend l'une des trois issues, pas un texte générique comme "État" seul
     await expect(async () => {
       const hasError = await errorDestructive.isVisible().catch(() => false)
       const hasDetect = await fichiersDetectes.isVisible().catch(() => false)
@@ -340,43 +280,27 @@ test.describe("Scan navigateur → OCR → Recherche → Téléchargement", () =
     }).toPass({ timeout: 10000 })
 
     if (await fichiersDetectes.isVisible().catch(() => false)) {
-      // Si scan a listé le fichier malgré invalidité, on tente l'import pour obtenir le statut terminal
       const importBtn = page.getByRole("button", { name: /Importer les fichiers sélectionnés/i })
       if (await importBtn.isVisible().catch(() => false)) {
         await importBtn.click()
-        // Statut terminal doit être failed ou needs_review, pas completed
         await expect(page.getByText(/État :/i).first()).toBeVisible({ timeout: 15000 })
         const etat = await page.getByText(/État :/i).first().textContent()
         console.log(`État import invalid: ${etat}`)
         expect(etat).toMatch(/failed|needs_review/i)
-        // Message utilisateur doit expliquer l'échec, pas être vide
-        const warningOrError = page.locator("p.text-warning, p.text-destructive, div:has-text('incomplet')").first()
-        const hasMessage = await warningOrError.isVisible().catch(() => false)
-        if (!hasMessage) {
-          // Au minimum, le statut failed/needs_review est déjà preuve d'échec signalé
-          console.log("Pas de message warning explicite, mais statut failed/needs_review prouve échec signalé")
-        }
       }
     } else {
-      // Erreur immédiate ou aucun PDF : preuve d'absence de faux succès
       const hasErrorNow = await errorDestructive.isVisible().catch(() => false)
       const hasAucunNow = await aucunPdf.isVisible().catch(() => false)
       expect(hasErrorNow || hasAucunNow).toBeTruthy()
     }
 
-    // Absence de faux résultat d'extraction : recherche d'un terme qui n'existe que dans le fichier invalide (aucun) ne doit pas retourner de résultat inventé
-    // On cherche un terme aléatoire unique lié à ce test invalide, qui ne doit pas être trouvé
     const searchInput = page.getByPlaceholder(/Rechercher/i).first()
     if (await searchInput.isVisible().catch(() => false)) {
       await searchInput.fill(`INVALIDE_${invalidSha.slice(0, 8)}`)
       await searchInput.press("Enter")
       await page.waitForTimeout(1000)
-      const noResults = page.getByText(/Aucun résultat|0 résultat|No results/i).first()
-      const hasNoResults = await noResults.isVisible().catch(() => false)
-      // Si pas de message "aucun résultat", au moins vérifier qu'aucun result-item ne contient le SHA invalide
       const resultItems = await page.locator('[data-testid="result-item"]').count()
-      console.log(`Recherche invalide: ${resultItems} résultats (attendu 0 ou sans contenu inventé)`)
-      // On ne fail pas si des résultats existent pour d'autres raisons, mais on vérifie qu'aucun ne contient le terme invalide inventé
+      console.log(`Recherche invalide: ${resultItems} résultats`)
       if (resultItems > 0) {
         const firstText = await page.locator('[data-testid="result-item"]').first().textContent()
         expect(firstText).not.toContain(`INVALIDE_${invalidSha.slice(0, 8)}`)
@@ -427,12 +351,6 @@ print(str(pdf))
     await expect(page.getByText(/prêt.*envoyer/i).first()).toBeVisible({ timeout: 5000 })
     await page.getByRole("button", { name: "Envoyer et analyser" }).click()
 
-    // Contrat blanc :
-    // - Produit peut conserver document blanc sans extraction (upload_status uploaded, extraction_status != success)
-    // - Statut terminal doit être needs_review ou failed (pas completed avec extraction réussie)
-    // - Aucun texte métier inventé, recherche d'un terme absent doit retourner 0
-    // On attend Fichiers détectés (pas un texte générique seul comme "État" sans valeur)
-
     await expect(page.getByText(/Fichiers détectés dans/i).first()).toBeVisible({ timeout: 10000 })
 
     const importBtn = page.getByRole("button", {
@@ -443,26 +361,11 @@ print(str(pdf))
       await expect(page.getByText(/État :/i).first()).toBeVisible({ timeout: 15000 })
       const etat = await page.getByText(/État :/i).first().textContent()
       console.log(`État import blank: ${etat}`)
-      // Blanc sans texte : status needs_review ou failed, pas completed
       expect(etat).toMatch(/needs_review|failed/i)
-
-      // Vérifie que l'extraction n'a pas inventé de texte : la table Données extraites doit afficher "À vérifier" ou être vide
-      const aVerifier = page.getByText(/À vérifier/i).first()
-      const hasAVerifier = await aVerifier.isVisible().catch(() => false)
-      console.log(`Blank a des champs À vérifier: ${hasAVerifier}`)
-      // Au moins un champ doit être à vérifier, ou aucun texte métier
-      if (!hasAVerifier) {
-        const donneesExtraites = page.getByText(/Données extraites de la fiche technique/i).first()
-        const hasDonnees = await donneesExtraites.isVisible().catch(() => false)
-        // Si pas de Données extraites, c'est aussi preuve d'absence d'extraction inventée
-        console.log(`Blank Données extraites visibles: ${hasDonnees} (attendu false ou avec À vérifier)`)
-      }
     } else {
-      // Si pas de bouton import (0 technique), alors message Aucun PDF technique est attendu, pas un succès OCR
       await expect(page.getByText(/Aucun PDF technique|No technical PDF/i).first()).toBeVisible({ timeout: 5000 })
     }
 
-    // Recherche d'un terme qui n'existe pas dans le blanc : doit retourner 0 ou aucun résultat inventé
     const searchInput = page.getByPlaceholder(/Rechercher/i).first()
     if (await searchInput.isVisible().catch(() => false)) {
       await searchInput.fill("BLANC_SANS_TEXTE_9999")
@@ -470,7 +373,6 @@ print(str(pdf))
       await page.waitForTimeout(1000)
       const resultCount = await page.locator('[data-testid="result-item"]').count()
       console.log(`Recherche blank terme inexistant: ${resultCount} résultats`)
-      // On ne doit pas trouver de fiche avec texte inventé contenant ce terme
       if (resultCount > 0) {
         const firstText = await page.locator('[data-testid="result-item"]').first().textContent()
         expect(firstText).not.toContain("BLANC_SANS_TEXTE_9999")
