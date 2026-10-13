@@ -313,6 +313,17 @@ class AppConfig(BaseModel):
             data["s3_prefix"] = os.environ["SEAMTECH_S3_PREFIX"]
         if os.environ.get("SEAMTECH_REDIS_URL"):
             data["redis_url"] = os.environ["SEAMTECH_REDIS_URL"]
+        if os.environ.get("SEAMTECH_ENABLE_OCR") is not None:
+            data["enable_ocr"] = os.environ["SEAMTECH_ENABLE_OCR"].strip().lower() in {
+                "1",
+                "true",
+                "yes",
+                "on",
+            }
+        if os.environ.get("SEAMTECH_TESSERACT_COMMAND"):
+            data["tesseract_command"] = os.environ["SEAMTECH_TESSERACT_COMMAND"]
+        if os.environ.get("SEAMTECH_OCRMYPDF_COMMAND"):
+            data["ocrmypdf_command"] = os.environ["SEAMTECH_OCRMYPDF_COMMAND"]
         if os.environ.get("SEAMTECH_DELETE_LOCAL_AFTER_UPLOAD"):
             data["delete_local_after_upload"] = os.environ["SEAMTECH_DELETE_LOCAL_AFTER_UPLOAD"].strip().lower() in {
                 "1",
