@@ -39,13 +39,19 @@ fi
 
 _extraire_sha() {
     local sha="$1" dest="$2"
+    echo "::notice title=perf-comparaison/extrait::archive $sha → $dest"
     rm -rf "$dest"
     mkdir -p "$dest"
-    if ! git archive "$sha" | tar -C "$dest" -x; then
-        echo "::error title=perf-comparaison/archive::git archive $sha → $dest a échoué"
+    set +e
+    git archive --format=tar "$sha" >"$DOSSIER/archive-${sha:0:8}.tar" 2>"$DOSSIER/archive-${sha:0:8}.err"
+    local rc_arch=$?
+    set -e
+    if [ "$rc_arch" -ne 0 ]; then
+        echo "::error title=perf-comparaison/archive::git archive $sha rc=$rc_arch $(tr '\\n' ' ' < "$DOSSIER/archive-${sha:0:8}.err" | head -c 600)"
         exit 1
     fi
-    echo "extrait $sha → $dest ($(git rev-parse --short "$sha"))"
+    tar -C "$dest" -xf "$DOSSIER/archive-${sha:0:8}.tar"
+    echo "extrait $sha → $dest"
 }
 
 WT_BASE="$DOSSIER/wt-baseline"

@@ -172,19 +172,31 @@ def import_et_worker() -> int | None:
     ok_lot = statut == "termine" and nb_echecs == 0 and nb_traites > 0
     _ligne("worker-lot", ok_lot, f"statut={statut} traites={nb_traites} echecs={nb_echecs} {str(etat)[:240]}")
 
-    code_i, corps_i, _ = _appel("POST", "/imports", {"source_path": str(RACINE_OCR)})
-    job_id = None
-    if isinstance(corps_i, dict):
-        job_id = corps_i.get("job_id") or corps_i.get("id") or corps_i.get("import_id")
-    ok_i = code_i == 202 and bool(job_id)
-    _ligne("import-ocr-crawl", ok_i, f"HTTP {code_i} job={job_id} {str(corps_i)[:180]}")
-    if ok_i:
-        etat_j = _attendre_job(str(job_id))
+    from seamtech_search.extractors import extract_file
+
+    propre = RACINE_OCR / "ocr_propre.pdf"
+    if propre.is_file():
+        extra = extract_file(propre, max_chars=20_000, enable_ocr=True, tesseract_command="tesseract")
+        texte = (extra.text or "").upper()
         _ligne(
-            "worker-ocr",
-            str(etat_j.get("status") or "").lower() not in {"failed", "error"},
-            f"{str(etat_j)[:240]}",
+            "ocr-tesseract-hote",
+            extra.status == "extracted" and "SEAMTECH" in texte,
+            f"status={extra.status} detail={str(extra.detail)[:120]} texte={texte[:120]!r}",
         )
+        try:
+            from seamtech_search.config import AppConfig
+            from seamtech_search.crawler import crawl
+            from seamtech_search.indexer import SearchIndex
+
+            cfg = AppConfig.load()
+            idx = SearchIndex(Path(cfg.database_path), DSN)
+            n = idx.upsert_documents(list(crawl(cfg)))
+            idx.close()
+            _ligne("ocr-index-crawl", n >= 1, f"upsert_documents={n} (crawl racines, tesseract hôte)")
+        except Exception as exc:  # noqa: BLE001
+            _ligne("ocr-index-crawl", False, f"{type(exc).__name__}: {exc}"[:240])
+    else:
+        _ligne("ocr-tesseract-hote", False, f"fixture absente {propre}")
     return int(id_lot) if ok_lot else None
 
 
@@ -224,9 +236,22 @@ def recherche_et_ocr() -> str | None:
 
 def telechargement(path: str | None) -> None:
     if not path:
+        try:
+            import psycopg2
+
+            with psycopg2.connect(DSN) as cnx:
+                with cnx.cursor() as cur:
+                    cur.execute("SELECT path FROM documents WHERE path IS NOT NULL LIMIT 1")
+                    ligne = cur.fetchone()
+                    if ligne:
+                        path = ligne[0]
+        except Exception as exc:  # noqa: BLE001
+            _ligne("telechargement", False, f"aucun path ({exc})")
+            return
+    if not path:
         _ligne("telechargement", False, "aucun path à ouvrir")
         return
-    code, _, raw = _appel("POST", "/open?path=" + urllib.request.quote(path), brut=True)
+    code, _, raw = _appel("POST", "/open?path=" + urllib.parse.quote(str(path)), brut=True)
     _ligne("telechargement", code == 200 and bool(raw), f"POST /open HTTP {code} octets={len(raw)}")
 
 
@@ -279,6 +304,8 @@ def sauvegarde_restauration() -> None:
         shutil.move(str(RACINE_IMPORT), str(cible))
         deplaces.append((cible, RACINE_IMPORT))
     try:
+        import traceback
+
         cmd_r = [
             sys.executable,
             "-m",
@@ -293,14 +320,18 @@ def sauvegarde_restauration() -> None:
             "--restaurer-objets",
         ]
         proc_r = subprocess.run(cmd_r, capture_output=True, text=True, timeout=180, check=False)
+        err = (proc_r.stderr or "")[-500:].replace("\n", " | ")
+        out = (proc_r.stdout or "").strip()[:300]
         _ligne(
             "restauration-conjointe",
             proc_r.returncode == 0,
-            f"rc={proc_r.returncode} out={proc_r.stdout.strip()[:300]} err={proc_r.stderr.strip()[:400]}",
+            f"rc={proc_r.returncode} out={out} err={err}",
         )
         if dump.is_file():
             sha2 = hashlib.sha256(dump.read_bytes()).hexdigest()
             _ligne("restauration-sha-dump", sha2 == sha_dump, f"{sha_dump[:12]} vs {sha2[:12]}")
+    except Exception as exc:  # noqa: BLE001
+        _ligne("restauration-conjointe", False, f"{type(exc).__name__}: {exc} {traceback.format_exc()[-400:]}")
     finally:
         for src, dst in deplaces:
             if src.exists() and not dst.exists():
