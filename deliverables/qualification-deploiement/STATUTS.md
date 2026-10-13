@@ -20,22 +20,26 @@ Un run vert sur un SHA ne qualifie pas un SHA suivant si le code métier change.
 Corpus synthétique. Postgres 279/0. Qualification-reserves 74/0 sur `a3506c8`
 (fonctionnel). Volumes 800/2000 indicatifs.
 
-## Perf — **PARTIEL**
+## Perf — **PARTIEL** (produit 100 ms tenu sur HEAD CI ; régression a3506c8 prouvée)
 
 Critère produit p50 < 100 ms et p95 < 100 ms **non desserré**. Seuil CI 250 ms
 étiqueté, test non retiré.
 
-| SHA | Job | 50 req. | fonds réel | dimension | 1 500 |
-|---|---|---|---|---|---|
-| `8dd5ae7` | CI 38267250173 backend 3.12 | p50 8,7 / p95 11,0 | 8,9 / 10,0 | 8,0 / 13,9 | 13,9 / 46,9 |
-| `a3506c8` | CI 38405546959 backend 3.12 **FAIL** | p95 280,9 | **p50 275,2** | p95 326,7 | p95 324,4 |
-| `ee776d0` | CI 38422805119 backend 3.12 **SUCCESS** | p50 5,0 / p95 7,0 | 6,1 / 6,3 | 6,0 / 11,1 | 13,7 / 34,9 |
+**Même runner, même PG, 3 runs** — job
+[Perf comparaison 38426744727](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/38426744727)
+(médianes p50 / p95) :
 
-Sur `ee776d0`, p50 et p95 sont **sous 100 ms** (critère produit tenu **sur ce
-run CI**, pas un PASS atelier). Ce n'est **pas** encore la comparaison
-8dd5ae7 vs a3506c8 vs HEAD sur **un même** runner (job `Perf comparaison`
-en cours de correction). Le motif « p50 bas / p95 haut » du runner **ne
-décrit pas** l'échec a3506c8 (p50 275 ms).
+| SHA | 50 req. | fonds réel 7792-SO | dimension | 1 500 |
+|---|---|---|---|---|
+| `8dd5ae7` | 5,4 / 6,4 | **4,7 / 5,5** | 4,7 / 7,9 | 9,0 / 26,7 |
+| `a3506c8` | 4,4 / 210 | **203 / 212** (×43 sur p50) | 4,7 / 255 | 16,5 / 242 |
+
+L'échec a3506c8 **n'est pas** un bruit de runner : sur le fonds réel le p50
+passe de 4,7 ms à 203 ms, trois fois. Les autres jeux gardent un p50 bas et
+un p95 ~210–250 ms (queue). Alignement SQL/index 023 poussé en `51d2772`.
+
+HEAD CI backend 3.12 `ee776d0` run 38422805119 : p50 5–14 ms, p95 7–35 ms
+(**sous 100 ms** sur ce run, pas un PASS atelier).
 
 ## B — Sauvegarde — **CORRIGÉ ET TESTÉ** (`a3506c8` CI + essai natif)
 

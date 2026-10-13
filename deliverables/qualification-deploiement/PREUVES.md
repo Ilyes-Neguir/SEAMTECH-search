@@ -41,8 +41,10 @@ Fichier : `preuves/ci-a3506c8.json`.
   notice `native-summary` tous les contrôles PASS (PostgreSQL apt +
   pgvector, Redis, MinIO binaire officiel, API+worker+frontend, lot
   worker 7792-SO, tesseract hôte, restore CLI vers base neuve).
-- Job `Perf comparaison` : pas encore de `resume.json` (pip install -e
-  d'archive) — PYTHONPATH ensuite.
+- Job `Perf comparaison` push **38426744727** (même runner, 3 runs) :
+  `8dd5ae7` fonds réel p50 médiane **4,7 ms** ; `a3506c8` **202,6 ms**
+  (×43). Régression a3506c8 prouvée, pas un flake p50 bas. 50 req. a3506c8
+  p50 4,4 / p95 210 (queue). HEAD produit : voir CI `ee776d0` ci-dessus.
 
 ## Commandes
 

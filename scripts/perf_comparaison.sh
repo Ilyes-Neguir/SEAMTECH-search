@@ -183,7 +183,11 @@ for etiquette in ("baseline", "a3506c8", "head"):
     json.dumps(resume, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
 )
 
+gha = os.environ.get("GITHUB_ACTIONS")
+avertissements: list[str] = []
+
 # Preuve de régression a3506c8 vs baseline (même runner, même protocole).
+# a3506c8 est un SHA historique : on le DOCUMENT, on ne fait pas échouer HEAD.
 for nom in sorted(attendus):
     b = mediane("baseline", nom, "p50_ms")
     a = mediane("a3506c8", nom, "p50_ms")
@@ -194,10 +198,10 @@ for nom in sorted(attendus):
     ratio = a / b if b > 0 else float("inf")
     print(f"ratio a3506c8/baseline p50 [{nom}] = {ratio:.2f} ({a:.1f}/{b:.1f})")
     if b < 30 and a >= 100:
-        erreurs.append(
-            f"RÉGRESSION mesurée (pas un bruit p95 isolé) : {nom} p50 "
+        avertissements.append(
+            f"RÉGRESSION a3506c8 (historique) : {nom} p50 "
             f"baseline {b:.1f} ms → a3506c8 {a:.1f} ms (×{ratio:.1f}) "
-            f"sur le même runner"
+            f"même runner — pas un flake p50 bas"
         )
     if h is not None:
         print(f"HEAD p50 [{nom}] = {h:.1f} ms")
@@ -206,23 +210,29 @@ for nom in sorted(attendus):
                 f"critère d'architecture violé sur HEAD : {nom} p50 = {h:.1f} ms ≥ 100 ms"
             )
         p95_h = mediane("head", nom, "p95_ms")
+        if p95_h is not None:
+            print(f"HEAD p95 [{nom}] = {p95_h:.1f} ms")
         if p95_h is not None and p95_h >= seuil_ci:
             erreurs.append(
                 f"seuil CI {seuil_ci:.0f} ms violé sur HEAD : {nom} p95 = {p95_h:.1f} ms "
                 f"(critère produit 100 ms non desserré)"
             )
         if p95_h is not None and p95_h >= 100.0:
-            print(
+            avertissements.append(
                 f"RESERVE produit : {nom} p95 HEAD = {p95_h:.1f} ms ≥ 100 ms "
                 f"— le critère atelier n'est pas démontré"
             )
 
-gha = os.environ.get("GITHUB_ACTIONS")
-for n in notices:
-    if gha:
-        print(f"::notice title=perf-comparaison::{n}")
-    else:
-        print(n)
+lignes_head = [n for n in notices if n.startswith("head |")]
+resume_court = " ; ".join(lignes_head)[:1400]
+if gha:
+    print(f"::notice title=perf-comparaison-head::{resume_court or 'HEAD sans mesures'}")
+    for a in avertissements:
+        print(f"::warning title=perf-comparaison::{a}")
+else:
+    print(resume_court)
+    for a in avertissements:
+        print("ATTENTION", a)
 
 if erreurs:
     for e in erreurs:
