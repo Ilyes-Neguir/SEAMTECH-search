@@ -6,6 +6,7 @@
 # Le seuil d'environnement CI 250 ms reste étiqueté. Aucun test n'est
 # désélectionné. Usage : scripts/perf_comparaison.sh
 set -euo pipefail
+trap 'echo "::error title=perf-comparaison/abort::échec ligne ${LINENO}"' ERR
 
 RACINE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$RACINE"
@@ -27,15 +28,23 @@ echo "a3506c8=$INTER_SHA"
 echo "HEAD=$HEAD_SHA"
 echo "n_runs=$N_RUNS seuil_ci=${SEUIL_CI} ms critère produit p50<100 / p95<100"
 
-git fetch origin "$BASELINE_SHA" "$INTER_SHA" --depth=1 >/dev/null 2>&1 || true
-git cat-file -e "${BASELINE_SHA}^{commit}"
-git cat-file -e "${INTER_SHA}^{commit}"
+if ! git cat-file -e "${BASELINE_SHA}^{commit}"; then
+    echo "::error title=perf-comparaison/sha::baseline $BASELINE_SHA absent du clone (fetch-depth 0 requis)"
+    exit 1
+fi
+if ! git cat-file -e "${INTER_SHA}^{commit}"; then
+    echo "::error title=perf-comparaison/sha::a3506c8 $INTER_SHA absent du clone"
+    exit 1
+fi
 
 _worktree() {
     local sha="$1" dest="$2"
     rm -rf "$dest"
     git worktree remove "$dest" --force >/dev/null 2>&1 || true
-    git worktree add --detach "$dest" "$sha"
+    if ! git worktree add --detach "$dest" "$sha"; then
+        echo "::error title=perf-comparaison/worktree::git worktree add $dest $sha a échoué"
+        exit 1
+    fi
 }
 
 WT_BASE="$DOSSIER/wt-baseline"

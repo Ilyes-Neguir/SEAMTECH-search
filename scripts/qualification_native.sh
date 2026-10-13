@@ -13,6 +13,7 @@
 #
 # Usage : bash scripts/qualification_native.sh
 set -euo pipefail
+trap 'echo "::error title=native/abort::échec ligne ${LINENO} (procédure interrompue)"' ERR
 
 RACINE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$RACINE"
@@ -77,11 +78,22 @@ fi
 controle "os" "PASS" "$PRETTY_NAME"
 
 $SUDO apt-get update -qq
-$SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-    postgresql postgresql-contrib postgresql-server-dev-all \
-    redis-server tesseract-ocr tesseract-ocr-fra tesseract-ocr-eng \
-    poppler-utils build-essential git curl python3 python3-venv python3-dev \
-    libpq-dev pkg-config ca-certificates psmisc
+installer() {
+    if ! $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "$@"; then
+        echo "::error title=native/apt::apt-get install a échoué : $*"
+        return 1
+    fi
+}
+installer postgresql postgresql-contrib
+installer redis-server
+installer tesseract-ocr tesseract-ocr-fra tesseract-ocr-eng poppler-utils
+installer build-essential git curl python3 python3-venv python3-dev libpq-dev pkg-config ca-certificates psmisc
+PG_MAJOR="$($SUDO -u postgres psql -Atqc 'SHOW server_version' 2>/dev/null | cut -d. -f1 || true)"
+if [ -z "$PG_MAJOR" ]; then
+    $SUDO service postgresql start || $SUDO pg_ctlcluster 16 main start || true
+    PG_MAJOR="$($SUDO -u postgres psql -Atqc 'SHOW server_version' | cut -d. -f1)"
+fi
+installer "postgresql-server-dev-${PG_MAJOR}"
 TESS_VER="$(tesseract --version 2>&1 | head -1)"
 LANGS="$(tesseract --list-langs 2>/dev/null | tr '\n' ' ')"
 if echo "$LANGS" | grep -q "fra" && echo "$LANGS" | grep -q "eng"; then

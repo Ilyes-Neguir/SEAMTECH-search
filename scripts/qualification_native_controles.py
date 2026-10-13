@@ -6,6 +6,10 @@ PostgreSQL, Redis, MinIO, API, worker et frontend. Sortie :
   CONTROLE|<id>|PASS|détail
   CONTROLE|<id>|FAIL|détail
 Code 0 si aucun FAIL.
+
+RG14_EXCEPTION : client HTTP d'ESSAI natif (outillage, jamais importé par le
+service). Cible LOOPBACK uniquement (127.0.0.1 API/frontend). urllib sert à
+prouver le parcours réel sur la machine vierge, pas une dépendance runtime.
 """
 
 from __future__ import annotations

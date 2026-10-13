@@ -69,6 +69,21 @@ jobs:
           PY
       - name: Comparer 8dd5ae7, a3506c8 et HEAD (3 runs chacun)
         run: bash scripts/perf_comparaison.sh
+      - name: Publier resume.json en notice (toujours)
+        if: always()
+        run: |
+          if [ -f /tmp/seamtech-perf-comparaison/resume.json ]; then
+            python - <<'PY'
+          import json
+          from pathlib import Path
+          data = json.loads(Path("/tmp/seamtech-perf-comparaison/resume.json").read_text(encoding="utf-8"))
+          print(json.dumps(data, ensure_ascii=False)[:3500])
+          print(f"::notice title=perf-comparaison-resume::{json.dumps(data, ensure_ascii=False)[:1500]}")
+          PY
+          else
+            echo "::error title=perf-comparaison-resume::resume.json absent"
+            ls -la /tmp/seamtech-perf-comparaison 2>/dev/null || true
+          fi
       - if: always()
         uses: actions/upload-artifact@v7
         with:
