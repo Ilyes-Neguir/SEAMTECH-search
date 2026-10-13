@@ -4,7 +4,21 @@ Environnement : voir `preuves/environnement.json`.
 
 Commit de départ : `8dd5ae7340a0eb1023bd73ef5d884c4538efbc09`.
 Commit applicatif PR #37 (lot 1) : `be0f6d2e170145a8491ebf065ef2f464fd639a63`.
+Lot 3 : `0665a684133f31e5c5742faeeb1fe3104ab2a721`.
 Branche de session : `arena/e7f33785-seamtech-search`.
+
+## CI SHA `0665a68` (consultée via `gh` + annotations, pas les zips CDN)
+
+- CI push [38402755760](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/38402755760) **failure**
+  - backend (3.12) sqlite : `INVENTAIRE_S3_REEL` (annotation `sqlite-suite-failed`)
+  - sauvegarde job 115314326192 : étape pytest exit 1 (pas de détail pytest dans les annotations)
+  - ocr job 115314326716 : **SUCCESS** (taux propre 1.000, dégradé 0.955, tesseract 5.3.4)
+- Qualification reserves push [38402755908](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/38402755908) **failure**
+  (MinIO démarré ; échec étape tests ; artefacts zip CDN inaccessibles ici)
+
+Lot 4 local (hors MinIO/tesseract) : `52 passed, 10 skipped` sur
+`test_sauvegarde_references` + `test_selection_ci` + normalisation +
+extractors + ocr_parcours.
 
 ## Commandes
 

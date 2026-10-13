@@ -70,12 +70,15 @@ jobs:
                   time.sleep(2)
           sys.exit("MinIO non prêt")
           PY
+      - name: Config applicative de test
+        run: cp config/config.example.json config/config.json
       - name: Tests qualification (A volume, B objets, C OCR)
         env:
           SEAMTECH_OCR_OBLIGATOIRE: "1"
         run: |
           set -uo pipefail
-          pytest -v --tb=short \
+          set +e
+          pytest -v --tb=short --junitxml=qualification-junit.xml \
             tests/test_normalisation_cle_recherche.py \
             tests/test_recherche_normalisation.py \
             tests/test_qualification_chemins_volume.py \
@@ -84,6 +87,41 @@ jobs:
             tests/test_ocr_parcours_qualification.py \
             tests/test_extractors.py \
             | tee qualification-reserves.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          python - <<'PY'
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+          p = Path("qualification-junit.xml")
+          if not p.is_file():
+              print("::error title=qualification-junit-absent::pas de junitxml")
+              raise SystemExit(0)
+          racine = ET.parse(p).getroot()
+          suite = racine if racine.tag == "testsuite" else racine.find("testsuite")
+          tests = int((suite or racine).get("tests") or 0)
+          skipped = int((suite or racine).get("skipped") or 0)
+          failures = int((suite or racine).get("failures") or 0)
+          errors = int((suite or racine).get("errors") or 0)
+          print(f"::notice title=qualification-summary::tests={tests} skipped={skipped} failures={failures} errors={errors}")
+          for case in racine.iter("testcase"):
+              nom = f"{case.get('classname')}::{case.get('name')}"
+              fail = case.find("failure")
+              err = case.find("error")
+              skip = case.find("skipped")
+              if fail is not None:
+                  msg = (fail.get("message") or fail.text or "")[:400]
+                  print(f"::error title=qualification-failed::{nom} {msg}")
+              elif err is not None:
+                  msg = (err.get("message") or err.text or "")[:400]
+                  print(f"::error title=qualification-error::{nom} {msg}")
+              elif skip is not None:
+                  msg = (skip.get("message") or skip.text or "")[:200]
+                  print(f"::warning title=qualification-skipped::{nom} {msg}")
+          PY
+          if [ "$rc" -ne 0 ]; then
+            echo "::error title=qualification-log::$(grep -E '^(FAILED|ERROR)' qualification-reserves.log | head -25 | tr -d '\\000-\\010\\013\\014\\016-\\037' | tr '\\n' ';' | head -c 1500)"
+            exit "$rc"
+          fi
       - name: Consigner l'identité
         if: always()
         run: |
@@ -108,4 +146,5 @@ jobs:
           path: |
             qualification-reserves.log
             qualification-identite.json
+            qualification-junit.xml
           if-no-files-found: warn

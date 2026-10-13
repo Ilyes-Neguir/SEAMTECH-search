@@ -260,8 +260,11 @@ def inventorier_references_documents(base_url: str) -> dict:
     manquants_locaux = 0
     for identifiant, chemin, nom, taille, cle, bucket, upload, categorie in lignes:
         chemin_txt = str(chemin or "")
-        present = bool(chemin_txt) and Path(chemin_txt).is_file()
-        if chemin_txt and not present:
+        cle_txt = str(cle or "")
+        present = bool(chemin_txt) and not chemin_txt.startswith("s3://") and Path(chemin_txt).is_file()
+        # Un document déjà stocké comme objet n'est pas un fichier local manquant
+        # (l'import local n'impose pas S3 ; l'inverse non plus).
+        if chemin_txt and not chemin_txt.startswith("s3://") and not present and not cle_txt:
             manquants_locaux += 1
         documents.append(
             {
@@ -269,7 +272,7 @@ def inventorier_references_documents(base_url: str) -> dict:
                 "path": chemin_txt,
                 "name": nom,
                 "taille_declaree": int(taille or 0),
-                "object_key": cle or "",
+                "object_key": cle_txt,
                 "object_bucket": bucket or "",
                 "upload_status": upload,
                 "category": categorie,
@@ -295,7 +298,10 @@ def copier_fichiers_locaux(references: dict, destination: Path) -> dict:
     manquants: list[dict] = []
     for doc in references.get("documents") or []:
         chemin = Path(doc["path"]) if doc.get("path") else None
-        if chemin is None or not str(doc.get("path")):
+        chemin_txt = str(doc.get("path") or "")
+        if chemin is None or not chemin_txt:
+            continue
+        if chemin_txt.startswith("s3://") or (doc.get("object_key") and not chemin.is_file()):
             continue
         if not chemin.is_file():
             manquants.append({"id": doc["id"], "path": doc["path"], "name": doc.get("name")})
@@ -387,8 +393,11 @@ def restaurer_objets_s3(manifeste: dict, racine_sauvegarde: Path, client_s3) -> 
                 f"empreinte objet {copie['path_relatif']} {empreinte[:12]}… ≠ manifeste {copie['sha256'][:12]}…"
             )
         cle = copie["object_key"]
-        client_s3.upload_file(source, cle, avoid_overwrite=True)
-        restaures.append({"object_key": cle, "sha256": empreinte})
+        # Restaurer DOIT réécrire la clé d'origine (les sources sont coupées).
+        # avoid_overwrite=True irait sur une clé -2 et laisserait le catalogue
+        # pointer vers un objet absent.
+        cle_ecrite = client_s3.upload_file(source, cle, avoid_overwrite=False)
+        restaures.append({"object_key": cle_ecrite, "sha256": empreinte})
     return {"nb": len(restaures), "objets": restaures}
 
 

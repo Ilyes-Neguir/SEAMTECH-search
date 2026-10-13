@@ -21,7 +21,8 @@ logger = logging.getLogger("seamtech_search.extractors")
 # v5: scanned PDFs with enable_ocr=true fall back to the tesseract page
 # pipeline when ocrmypdf is absent — previously they stayed « unavailable »
 # even with tesseract installed.
-CURRENT_EXTRACTOR_VERSION = 5
+# v6: OCR tesseract fra+eng when both language packs are present.
+CURRENT_EXTRACTOR_VERSION = 6
 
 EXTRACTION_STATUSES = {"extracted", "unavailable", "skipped", "error", "timeout", "not_applicable"}
 
@@ -261,6 +262,23 @@ def _extract_with_ocrmypdf(path: Path, max_chars: int, command: str, timeout: in
         return output_path.read_text(encoding="utf-8", errors="ignore")[:max_chars]
 
 
+def _langue_ocr_disponible(tesseract_command: str) -> str:
+    """fra+eng si les deux paquets sont installés, sinon fra, sinon eng."""
+    try:
+        completed = subprocess.run(
+            [tesseract_command, "--list-langs"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        disponibles = {ligne.strip() for ligne in (completed.stdout or "").splitlines()}
+    except Exception:
+        disponibles = set()
+    choisis = [code for code in ("fra", "eng") if code in disponibles]
+    return "+".join(choisis) if choisis else "fra"
+
+
 def _extract_pdf_via_pipeline_ocr(
     path: Path, max_chars: int, tesseract_command: str, timeout: int
 ) -> tuple[str, str]:
@@ -277,7 +295,7 @@ def _extract_pdf_via_pipeline_ocr(
             path,
             tesseract_command=tesseract_command,
             timeout_par_page_s=timeout_page,
-            langue="fra",
+            langue=_langue_ocr_disponible(tesseract_command),
         )
     except subprocess.TimeoutExpired:
         return "", "OCR a dépassé le délai"

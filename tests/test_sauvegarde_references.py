@@ -50,6 +50,29 @@ def test_rediger_config_masque_les_secrets() -> None:
     assert redige["root_paths"] == ["/data/archive"]
 
 
+def test_copier_document_objet_sans_fichier_local_n_est_pas_manquant(tmp_path: Path) -> None:
+    """Un objet S3 sans copie locale n'est pas un manquant local (contrat import)."""
+    present = tmp_path / "present.txt"
+    present.write_text("hello", encoding="utf-8")
+    refs = {
+        "documents": [
+            {"id": 1, "path": str(present), "name": "present.txt", "object_key": ""},
+            {
+                "id": 2,
+                "path": "s3://seamtech-documents/qualif/objet.bin",
+                "name": "objet.bin",
+                "object_key": "qualif/objet.bin",
+            },
+        ]
+    }
+    dest = tmp_path / "bundle"
+    dest.mkdir()
+    resultat = copier_fichiers_locaux(refs, dest)
+    assert resultat["nb_copies"] == 1
+    assert resultat["nb_manquants"] == 0
+    assert resultat["manquants"] == []
+
+
 def test_copier_signale_fichier_manquant_sans_l_ignorer(tmp_path: Path) -> None:
     present = tmp_path / "present.txt"
     present.write_text("hello", encoding="utf-8")
@@ -298,6 +321,7 @@ def test_manifeste_corrompu_est_refuse(tmp_path: Path) -> None:
 
 @pytest.mark.postgres
 @pytest.mark.sauvegarde
+@pytest.mark.s3
 def test_aller_retour_objets_minio_sources_indisponibles(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -394,7 +418,9 @@ def test_aller_retour_objets_minio_sources_indisponibles(
             verrouiller=True,
         )
         assert manifeste["fichiers_locaux"]["nb_copies"] >= 1
+        assert manifeste["fichiers_locaux"]["nb_manquants"] == 0
         assert manifeste["objets_s3"]["nb_copies"] >= 1
+        assert manifeste["objets_s3"]["nb_manquants"] == 0
         assert manifeste["complet"] is True
 
         local.unlink()
@@ -406,7 +432,9 @@ def test_aller_retour_objets_minio_sources_indisponibles(
         extra_o = restaurer_objets_s3(manifeste, backups, client)
         assert extra_f["nb"] >= 1
         assert extra_o["nb"] >= 1
-        assert _sha256_fichier(Path(extra_f["fichiers"][0]["path"])) == sha_local
+        restaure_local = Path(extra_f["fichiers"][0]["path"])
+        assert restaure_local != local
+        assert _sha256_fichier(restaure_local) == sha_local
         # Objet restauré : retélécharger et comparer.
         dest = tmp_path / "objet-relu.bin"
         client.download_file(cle, dest)

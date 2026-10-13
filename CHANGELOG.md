@@ -41,6 +41,13 @@ Workflow complémentaire `qualification-reserves.yml` (Tesseract apt +
 MinIO officiel depuis sources). Régression CI backend 3.13 (pgserver +
 œufs) corrigée.
 
+Lot 4 : CI `0665a68` n'était **pas** verte. Correctifs : inventaire S3
+(`test_sauvegarde_references` + `@pytest.mark.s3`) ; un document objet-only
+n'est plus un manquant local ; restore objet réécrit la clé d'origine ;
+OCR tesseract `fra+eng` si les paquets sont là ; parcours
+import→index→recherche→`/open` ; annotations junit sur qualification et
+sauvegarde. D reste hors Docker natif, non exécuté.
+
 ## Unreleased — Passe F1–F4 de la deuxième revue indépendante (`arena/7da80c2f-seamtech-search`, PR #35)
 
 - **F1 — échec fermé** : la correction et les trois décisions exigent une
