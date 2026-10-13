@@ -1,8 +1,9 @@
 # Procédure d’essai — installation native Debian/Ubuntu
 
-**Statut :** procédure écrite. L’exécution sur machine vierge est le job
-GitHub Actions `Qualification native` (`ubuntu-24.04`), pas le poste
-opérateur, pas Docker Compose, pas une homologation production.
+**Statut :** exécutée sur runner vierge `ubuntu-24.04` (job
+[38425712093](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/38425712093),
+SHA `6ccc383`, tous les `CONTROLE` PASS). Pas le poste opérateur, pas
+Docker Compose, pas une homologation production.
 
 ## Ce que cette procédure est
 

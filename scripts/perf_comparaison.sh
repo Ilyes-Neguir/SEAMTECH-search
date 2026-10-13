@@ -66,21 +66,17 @@ WT_INTER="$DOSSIER/wt-a3506c8"
 _extraire_sha "$BASELINE_SHA" "$WT_BASE"
 _extraire_sha "$INTER_SHA" "$WT_INTER"
 
-# Un seul environnement de dépendances : on bascule le paquet éditable.
-if ! python -m pip install -e "$RACINE" 2>"$DOSSIER/pip-head.err"; then
-    echo "::error title=perf-comparaison/pip::$(tr '\\n' ' ' < "$DOSSIER/pip-head.err" | head -c 800)"
-    exit 1
-fi
-
+# Dépendances déjà installées par le job. Chaque SHA est isolé par PYTHONPATH
+# (pip install -e d'une archive sans .git a échoué sur le runner).
 _executer_suite() {
     local etiquette="$1" racine_code="$2" run="$3"
     local json="$DOSSIER/${etiquette}-run${run}.jsonl"
     rm -f "$json"
     echo "-- $etiquette run $run (cwd=$racine_code)"
-    python -m pip install -q -e "$racine_code" --no-deps
     (
         cd "$racine_code"
         set +e
+        PYTHONPATH="$racine_code${PYTHONPATH:+:$PYTHONPATH}" \
         SEAMTECH_TEST_DATABASE_URL="$SEAMTECH_TEST_DATABASE_URL" \
         SEAMTECH_PERF_JSON="$json" \
         SEAMTECH_PERF_P95_CI_MS="$SEUIL_CI" \
@@ -98,8 +94,6 @@ for run in $(seq 1 "$N_RUNS"); do
     _executer_suite "a3506c8" "$WT_INTER" "$run"
     _executer_suite "head" "$RACINE" "$run"
 done
-
-python -m pip install -q -e "$RACINE" --no-deps
 
 python - <<'PY'
 import json

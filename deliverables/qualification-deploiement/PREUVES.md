@@ -31,6 +31,19 @@ Fichier : `preuves/ci-a3506c8.json`.
   Baseline **même job** sur `8dd5ae7` (run 38267250173) : p50 8–14 ms / p95 11–47 ms. Machines différentes → comparaison identique demandée au job `Perf comparaison`. Seuil 250 ms **non relevé**.
 - C-03/C-04 : crawl+upsert+`GET /search`+`POST /open` dans les 74 tests skip=0 — **pas** l'import navigateur.
 
+## SHA `ee776d0` / `6ccc383` (2026-10-13, après alignement index 023)
+
+- CI push **38422805119** backend (3.12) **SUCCESS** : postgres 279/0 ;
+  perf p50 5,0 / 6,1 / 6,0 / 13,7 ms et p95 7,0 / 6,3 / 11,1 / 34,9 ms
+  (50 req., fonds réel, dimension, 1 500) — sous 100 ms. SHA applicatif
+  recherche = `51d2772` (inchangé ensuite).
+- Qualification native push **38425712093** SHA `6ccc383` **SUCCESS** :
+  notice `native-summary` tous les contrôles PASS (PostgreSQL apt +
+  pgvector, Redis, MinIO binaire officiel, API+worker+frontend, lot
+  worker 7792-SO, tesseract hôte, restore CLI vers base neuve).
+- Job `Perf comparaison` : pas encore de `resume.json` (pip install -e
+  d'archive) — PYTHONPATH ensuite.
+
 ## Commandes
 
 ```text

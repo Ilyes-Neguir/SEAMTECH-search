@@ -21,5 +21,6 @@ Preuve_id : `qualif-2026-10-13-a3506c8`. Ne pas sommer des lots qui se recoupent
 | C-02 | OCR sandbox local | tesseract absent | BLOQUÉ |
 | C-03 | crawl→upsert→GET /search→POST /open | `test_parcours_import_ocr_index_recherche_telechargement` dans 74 skip=0 | PASS (pas l'import navigateur) |
 | C-04 | Scan anglais | `test_scan_anglais_retrouve_les_mots` dans 74 skip=0 | PASS |
-| D-01 | Install propre Debian native | `scripts/qualification_native.sh` + job `Qualification native` | PRÉPARÉ NON EXÉCUTÉ jusqu'au rapport PASS |
-| P-01 | Perf 8dd5ae7 vs a3506c8 vs HEAD | job `Perf comparaison` | OUVERT |
+| D-01 | Install propre Debian native | job Qualification native 38425712093 SHA `6ccc383` notice native-summary | PASS essai (pas production) |
+| P-01 | Perf produit 100 ms | CI backend 3.12 `ee776d0` run 38422805119 p50 5–14 ms p95 7–35 ms | PASS sur ce run CI ; comparaison same-runner encore ouverte |
+| P-02 | a3506c8 vs 8dd5ae7 même runner | job `Perf comparaison` | OUVERT (pip/archive) |

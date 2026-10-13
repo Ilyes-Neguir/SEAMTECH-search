@@ -1,73 +1,63 @@
 # Statuts de clôture A–D
 
-Les quatre points **ne sont pas tous corrigés**. PR #37 **non fusionnée**.
-Aucun PV humain. Recette historique intacte. Pas un PASS production.
+Les quatre points **ne sont pas tous un PASS production**. PR #37 **non
+fusionnée**. Aucun PV humain. Recette historique intacte.
 
 ## Identité
 
 | | |
 |---|---|
 | Départ | `8dd5ae7340a0eb1023bd73ef5d884c4538efbc09` |
-| Lot 3 | `0665a684133f31e5c5742faeeb1fe3104ab2a721` (CI A–C en échec) |
-| SHA applicatif **précédemment** testé | `a3506c84892e97a8993fe6a9657cc93019f002d3` |
+| SHA applicatif recherche (SQL 023 aligné index) | `51d277217a02d5af2488260e281eadcc40ad124c` |
+| SHA **perf CI 100 ms** (même `recherche.py`) | `ee776d0218489074a9449b94ebd1714bbfa4e034` |
+| SHA **essai natif PASS** | `6ccc383` (HEAD de cette branche au moment du job) |
 | Recette historique | préservée |
 
-Les preuves `a3506c8` restent valables **pour ce SHA**. Tout SHA ultérieur
-(requête trigrammes, procédure native) doit être **rejoué** : un run vert
-sur `a3506c8` ne qualifie pas le SHA suivant.
+Un run vert sur un SHA ne qualifie pas un SHA suivant si le code métier change.
 
-## A — Recherche — **CORRIGÉ ET TESTÉ** (`a3506c8`) / **EN ATTENTE HUMAINE**
+## A — Recherche — **CORRIGÉ ET TESTÉ** / **EN ATTENTE HUMAINE**
 
-1. **Modifié** : clé `normaliser_cle_recherche` distincte de `sans_accents`.
-2. **Exécuté** : postgres `279/0` ; qualification-reserves `74/0`.
-3. **Périmètre** : corpus synthétique. Volumes 800/2000 **indicatifs**.
-4. **Perf** : **non clos** (voir ci-dessous). La recherche fonctionnelle
-   n’est pas la qualification de latence.
+Corpus synthétique. Postgres 279/0. Qualification-reserves 74/0 sur `a3506c8`
+(fonctionnel). Volumes 800/2000 indicatifs.
 
-## Perf — **OUVERT**
+## Perf — **PARTIEL**
 
-Critère **produit** : p50 < 100 ms (architecture, sans tolérance) et
-p95 < 100 ms. Seuil CI `SEAMTECH_PERF_P95_CI_MS=250` **étiqueté**, jamais
-un critère desserré. Ne pas relever 250 ms, ne pas retirer le test, ne
-pas neutraliser le garde-fou.
+Critère produit p50 < 100 ms et p95 < 100 ms **non desserré**. Seuil CI 250 ms
+étiqueté, test non retiré.
 
-Mesures **CI backend 3.12, même workflow, machines différentes** (ce n’est
-**pas** encore la comparaison à conditions identiques) :
+| SHA | Job | 50 req. | fonds réel | dimension | 1 500 |
+|---|---|---|---|---|---|
+| `8dd5ae7` | CI 38267250173 backend 3.12 | p50 8,7 / p95 11,0 | 8,9 / 10,0 | 8,0 / 13,9 | 13,9 / 46,9 |
+| `a3506c8` | CI 38405546959 backend 3.12 **FAIL** | p95 280,9 | **p50 275,2** | p95 326,7 | p95 324,4 |
+| `ee776d0` | CI 38422805119 backend 3.12 **SUCCESS** | p50 5,0 / p95 7,0 | 6,1 / 6,3 | 6,0 / 11,1 | 13,7 / 34,9 |
 
-| SHA | 50 req. synth. | fonds réel 7792-SO | dimension | 1 500 fiches |
-|---|---|---|---|---|
-| `8dd5ae7` run 38267250173 | p50 8,7 / p95 11,0 | p50 8,9 / p95 10,0 | p50 8,0 / p95 13,9 | p50 13,9 / p95 46,9 |
-| `a3506c8` run 38405546959 | p95 280,9 ≥ 250 | **p50 275,2 ≥ 100** | p95 326,7 ≥ 250 | p95 324,4 ≥ 250 |
+Sur `ee776d0`, p50 et p95 sont **sous 100 ms** (critère produit tenu **sur ce
+run CI**, pas un PASS atelier). Ce n'est **pas** encore la comparaison
+8dd5ae7 vs a3506c8 vs HEAD sur **un même** runner (job `Perf comparaison`
+en cours de correction). Le motif « p50 bas / p95 haut » du runner **ne
+décrit pas** l'échec a3506c8 (p50 275 ms).
 
-Le motif documenté du runner (p50 bas, p95 haut, run 35720563422) **ne
-correspond pas** à un p50 fonds réel à 275 ms. Attribution « charge du
-runner » **refusée** tant que 8dd5ae7 et a3506c8 n’ont pas été mesurés
-sur le **même** runner, mêmes données/index, N runs. Job
-`Perf comparaison` ajouté pour cela. Alignement SQL trigrammes / index
-023 (`coalesce` hors expression d’index) poussé sur HEAD : à **retester**
-sur le nouveau SHA.
+## B — Sauvegarde — **CORRIGÉ ET TESTÉ** (`a3506c8` CI + essai natif)
 
-## B — Sauvegarde — **CORRIGÉ ET TESTÉ** (`a3506c8`, MinIO officiel CI)
+Restore conjoint PG + fichiers + objets, sources indisponibles, SHA-256.
+B-03 exécuté skip=0. Essai natif : `restaurer` vers une base **créée par
+le CLI** (cible distincte). Pas R2 / pas bucket atelier.
 
-Chemin exercé : dump PG + fichiers locaux + objets MinIO, restauration
-vers **cibles distinctes**, sources rendues indisponibles, comparaison
-SHA-256. B-03 **collecté et exécuté** (skip=0), notice `…_obj`.
-Pas R2, pas le bucket atelier.
+## C — OCR — **CORRIGÉ ET TESTÉ** pour les chemins exercés
 
-## C — OCR — **CORRIGÉ ET TESTÉ** (`a3506c8`) pour le chemin **exercé**
+- CI qualification : **crawl → upsert → GET /search → POST /open** (pas
+  l'import navigateur).
+- Essai natif `6ccc383` : tesseract **hôte** fra+eng (`ocr-tesseract-hote`)
+  + crawl d'index ; import **worker** = lot 7792-SO (`/imports/dossier/lot`),
+  pas un scan OCR via ce lot.
 
-Chemin CI qualification-reserves : **crawl → upsert → GET /search → POST /open**.
-Ce n’est **pas** l’import navigateur (`POST /imports/upload` + file worker
-+ écran). C-03/C-04 dans les 74 tests, skip=0. Job `ocr` = extracteurs
-seuls (pas PostgreSQL). Sandbox local sans tesseract : **BLOQUÉ**.
+## D — Déploiement — **CORRIGÉ ET TESTÉ** (essai) / **EN ATTENTE HUMAINE**
 
-## D — Déploiement — **PRÉPARÉ NON EXÉCUTÉ**
-
-Procédure : `deliverables/qualification-deploiement/PROCEDURE_NATIVE.md`
-et `scripts/qualification_native.sh` (Debian/Ubuntu, processus hôtes,
-MinIO officiel compilé, OCR fra+eng). L’exécution visée est le job
-`Qualification native` sur `ubuntu-24.04` (machine vierge autorisée).
-Tant que ce job n’a pas un rapport `CONTROLE|*|PASS` sans FAIL, D reste
-non exécuté. `recette-locale` / `integration` Docker **≠ D**.
+Exécuté sur runner vierge `ubuntu-24.04` (machine jetable autorisée, pas le
+PC opérateur, pas Docker Compose) : job
+[Qualification native 38425712093](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/38425712093)
+SHA `6ccc383`, notice `native-summary` : tous les contrôles PASS.
+Procédure : `scripts/qualification_native.sh`. **Pas** une homologation
+production.
 
 **EN ATTENTE DE VALIDATION HUMAINE.**
