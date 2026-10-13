@@ -45,7 +45,7 @@ async function dragDropFileViaEvents(page: any, filePath: string) {
 
   await page.evaluate(
     async ({ fileName, base64 }: { fileName: string; base64: string }) => {
-      // Trouve la zone de dépôt par son texte, pas par sélecteur Playwright :has-text (invalide pour querySelector)
+      // Trouve la zone de dépôt par son texte (évite :has-text invalide pour querySelector)
       const candidates = Array.from(document.querySelectorAll("div"))
       const dropZone = candidates.find((el) =>
         el.textContent?.includes("déposez ici un dossier de référence"),
@@ -60,12 +60,31 @@ async function dragDropFileViaEvents(page: any, filePath: string) {
       const byteArray = new Uint8Array(byteNumbers)
       const file = new File([byteArray], fileName, { type: "application/pdf" })
 
+      // Mock DataTransfer avec items.webkitGetAsEntry pour que filesFromDrop utilise la branche entries
       const dataTransfer = new DataTransfer()
-      // @ts-ignore : items.add supporté en Chromium
-      if (dataTransfer.items && (dataTransfer.items as any).add) {
-        ;(dataTransfer.items as any).add(file)
+      const entry = {
+        isFile: true,
+        isDirectory: false,
+        name: file.name,
+        file: (success: (f: File) => void) => success(file),
       }
-      // Pour filesFromDrop qui lit dt.files en fallback
+      const item = {
+        kind: "file",
+        type: "application/pdf",
+        getAsFile: () => file,
+        webkitGetAsEntry: () => entry,
+      }
+      // @ts-ignore : on remplace items par un tableau mocké contenant webkitGetAsEntry
+      Object.defineProperty(dataTransfer, "items", {
+        value: {
+          length: 1,
+          0: item,
+          [Symbol.iterator]: function* () {
+            yield item
+          },
+        },
+        writable: false,
+      })
       Object.defineProperty(dataTransfer, "files", {
         value: [file],
         writable: false,
@@ -94,8 +113,8 @@ async function dragDropFileViaEvents(page: any, filePath: string) {
     { fileName, base64 },
   )
 
-  // Attend que la logique filesFromDrop ait mis à jour l'état dropped
-  await page.waitForTimeout(800)
+  // Attend que la logique filesFromDrop (async readEntry) ait mis à jour l'état dropped
+  await page.waitForTimeout(1000)
 }
 
 test.describe("Scan navigateur → OCR → Recherche → Téléchargement", () => {
