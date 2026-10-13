@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="utf-8"?>
+<testsuite name="qualif-2026-10-13-5438b9e" tests="13" failures="0" errors="0" skipped="0" timestamp="2026-10-13T20:10:04Z">
+  <properties>
+    <property name="sha_complet" value="5438b9e22d0a2d0e7bad58580db92fc016be9db7"/>
+    <property name="sha_court" value="5438b9e"/>
+    <property name="branche" value="arena/c154b2fa-seamtech-search"/>
+    <property name="python" value="3.11/3.12/3.13"/>
+    <property name="node" value="22.22.3"/>
+    <property name="pnpm" value="9.15.9"/>
+    <property name="next" value="16.3.8"/>
+    <property name="postgres" value="pgvector/pgvector:pg16"/>
+    <property name="redis" value="redis:7-alpine"/>
+    <property name="minio" value="quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z"/>
+    <property name="tesseract" value="5.x fra+eng + poppler-utils"/>
+    <property name="playwright" value="Chromium"/>
+  </properties>
+  <testcase classname="ci" name="backend (3.11)" time="180">
+    <system-out>pytest -q -rf -m "not postgres and not s3 and not perf and not redis_queue and not ocr_suite" → 1104+ passed, 0 skipped
+pytest -m "postgres and not perf and not sauvegarde and not redis_queue and not ocr_suite" → 278 passed, 0 skipped
+ruff check . → All checks passed
+pnpm exec tsc --noEmit → OK
+Run 38458818644 job 115508339412 success</system-out>
+  </testcase>
+  <testcase classname="ci" name="backend (3.12)" time="180">
+    <system-out>Identique 3.11 + garde-fou dimension ROUGE→VERT, cotes ROUGE→VERT, dédup ROUGE→VERT, attribution ROUGE→VERT
+Run 38458818644 job 115508339488 success
+perf p50 6-13ms p95 8-42ms</system-out>
+  </testcase>
+  <testcase classname="ci" name="backend (3.13)" time="180">
+    <system-out>Identique, Run 38458818644 job 115508339604 success</system-out>
+  </testcase>
+  <testcase classname="ci" name="frontend" time="60">
+    <system-out>pnpm install --frozen-lockfile, tsc --noEmit, audit --prod, build → Compiled successfully Next.js 16.3.8
+Run 38458818644 job 115508339584 success</system-out>
+  </testcase>
+  <testcase classname="ci" name="docker" time="90">
+    <system-out>docker build -t seamtech-search:ci, frontend, smoke /live → success, tesseract fra+eng présent
+Run 38458818644 job 115508339530 success</system-out>
+  </testcase>
+  <testcase classname="ci" name="e2e" time="300">
+    <system-out>pnpm test:e2e, concurrence 7/0/0/0, validation 10/0/0/0 chrono &lt;2min, doublons 2 verts, auth 26 verts, scan-browser-ocr 3 verts (ZEPHYRINE_ÉLÉGANCE_42 hors métadonnées, PDF image-only pdfplumber 0, drag-drop setInputFiles, SHA original==téléchargé attaché, cas erreur invalide/blank)
+Run 38458818644 job 115508339473 success</system-out>
+  </testcase>
+  <testcase classname="ci" name="ocr" time="60">
+    <system-out>pytest -m ocr_suite -v → success, taux propre 1.000 dégradé 0.955, garde-fou OCR étage 3 ROUGE→VERT
+Run 38458818644 job 115508339489 success</system-out>
+  </testcase>
+  <testcase classname="ci" name="sauvegarde" time="120">
+    <system-out>pytest -m sauvegarde -v --junitxml=sauvegarde-junit.xml → ≥19 passed, 0 skipped, 0 échec, collectés==exécutés
+Notices restauration 50k fiches, dump octets, archive fichiers, vérifiée après envoi
+Run 38458818644 job 115508339048 success</system-out>
+  </testcase>
+  <testcase classname="ci" name="hors-ligne-reel" time="300">
+    <system-out>Compte seamtech-app, iptables --uid-owner SEAMTECH_HORS_LIGNE + ip6tables SEAMTECH_HORS_LIGNE6, contrôle négatif DNS ahostsv4 + adresse littérale --noproxy + compteur REJECT, contrôle négatif IPv6, contrôle positif /health, iptables -Z, e2e/hors-ligne.spec.ts SEAMTECH_E2E_HORS_LIGNE=1 SEAMTECH_E2E_DATABASE_URL="", relevé final 0 paquet rejeté, 0 externe tentée
+Run 38458818644 job 115508339660 success</system-out>
+  </testcase>
+  <testcase classname="ci" name="integration" time="300">
+    <system-out>Compose infra postgres+redis+minio (reconstruit), provisionner identités restreintes, boot web+frontend healthy /api/health, volumes data/logs chown uid/gid applicatif, pytest -m integration_docker -v SEAMTECH_INTEGRATION_STRICT=1
+Run 38458818644 job 115508339504 success</system-out>
+  </testcase>
+  <testcase classname="ci" name="recette-corpus-reel" time="600">
+    <system-out>7 ZIP REF-001..007 RG13 SHA avant/après, extraction guarded, pytest -m recette_corpus -v : migrations 001..017, import flux réel upload/scan/confirm, classement auto, OCR étages, recherches mots-clés, ouverture PDF téléchargeable 200 SHA identique, rapport PDF, sauvegarde/restauration base neuve
+Run 38458818644 job 115508339370 success</system-out>
+  </testcase>
+  <testcase classname="ci" name="recette-locale" time="600">
+    <system-out>bash scripts/recette_locale.sh machine vierge, rapport PASS/FAIL, compte nominatif, dépôt 7 ZIP, suivi lot, validation, recherches texte/dimension/filtres/suggestions, PDF présigné + zone surlignée, rejeu idempotent, sauvegarde/restauration, persistance down/up
+Run 38458818644 job 115508339495 success</system-out>
+  </testcase>
+  <testcase classname="ci" name="qualification-reserves" time="240">
+    <system-out>74 tests, 0 skipped, 0 failures, 0 errors, parité IDs+ordre, GET /recherche et /search mêmes IDs, avant/après 023, données pré-023, mutation UPDATE, filtres/pagination/arabe, volume 800/2000 indicatif, dédup, locaux manquants, restore distincts, objets MinIO sources coupées, OCR fixtures, crawl→upsert→search→open, scan anglais
+Run 38458818806 success</system-out>
+  </testcase>
+</testsuite>
