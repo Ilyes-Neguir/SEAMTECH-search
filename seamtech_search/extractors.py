@@ -18,7 +18,11 @@ logger = logging.getLogger("seamtech_search.extractors")
 #
 # v4: PDF extraction moved to pdfplumber (layout-aware text + tables) with
 # pypdf kept as a fallback, so every PDF is re-parsed on the next scan.
-CURRENT_EXTRACTOR_VERSION = 4
+# v5: scanned PDFs with enable_ocr=true fall back to the tesseract page
+# pipeline when ocrmypdf is absent — previously they stayed « unavailable »
+# even with tesseract installed.
+# v6: OCR tesseract fra+eng when both language packs are present.
+CURRENT_EXTRACTOR_VERSION = 6
 
 EXTRACTION_STATUSES = {"extracted", "unavailable", "skipped", "error", "timeout", "not_applicable"}
 
@@ -117,12 +121,24 @@ def extract_file(
             result = _from_legacy(_extract_pdf(path, max_chars))
             if result.status != "unavailable" or not enable_ocr:
                 return result
-            if not _has_command(ocrmypdf_command):
-                return ExtractionResult("", "unavailable", "OCRmyPDF is not installed")
-            return ExtractionResult(
-                _extract_with_ocrmypdf(path, max_chars, ocrmypdf_command, external_extraction_timeout_seconds),
-                "extracted",
-            )
+            if _has_command(ocrmypdf_command):
+                try:
+                    return ExtractionResult(
+                        _extract_with_ocrmypdf(
+                            path, max_chars, ocrmypdf_command, external_extraction_timeout_seconds
+                        ),
+                        "extracted",
+                    )
+                except Exception as exc:
+                    logger.warning("ocrmypdf a échoué sur %s (%s) — repli tesseract si présent", path.name, exc)
+            if _has_command(tesseract_command):
+                texte, motif = _extract_pdf_via_pipeline_ocr(
+                    path, max_chars, tesseract_command, external_extraction_timeout_seconds
+                )
+                if texte.strip():
+                    return ExtractionResult(texte, "extracted")
+                return ExtractionResult("", "unavailable", motif or "OCR n'a produit aucun texte")
+            return ExtractionResult("", "unavailable", "OCR activé mais ocrmypdf et tesseract absents")
         if suffix == ".docx":
             return _from_legacy(_extract_docx(path, max_chars))
         if suffix in OFFICE_XML_EXTENSIONS:
@@ -157,6 +173,8 @@ def extract_file(
             )
         if suffix in TEXT_EXTENSIONS:
             return ExtractionResult(_extract_plain_text(path, max_chars), "extracted")
+    except subprocess.TimeoutExpired:
+        return ExtractionResult("", "timeout", "OCR ou extracteur externe a dépassé le délai")
     except (OSError, BadZipFile, ValueError) as exc:
         return ExtractionResult("", "error", type(exc).__name__)
     except Exception as exc:
@@ -242,6 +260,54 @@ def _extract_with_ocrmypdf(path: Path, max_chars: int, command: str, timeout: in
         if completed.returncode != 0 or not output_path.exists():
             raise RuntimeError("OCRmyPDF could not extract text from the PDF")
         return output_path.read_text(encoding="utf-8", errors="ignore")[:max_chars]
+
+
+def _langue_ocr_disponible(tesseract_command: str) -> str:
+    """fra+eng si les deux paquets sont installés, sinon fra, sinon eng."""
+    try:
+        completed = subprocess.run(
+            [tesseract_command, "--list-langs"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        disponibles = {ligne.strip() for ligne in (completed.stdout or "").splitlines()}
+    except Exception:
+        disponibles = set()
+    choisis = [code for code in ("fra", "eng") if code in disponibles]
+    return "+".join(choisis) if choisis else "fra"
+
+
+def _extract_pdf_via_pipeline_ocr(
+    path: Path, max_chars: int, tesseract_command: str, timeout: int
+) -> tuple[str, str]:
+    """Repli PDF scanné : pipeline OCR par page déjà implémenté (tesseract).
+
+    Ne mocke rien. Si tesseract est absent ou échoue, le texte est vide et le
+    motif est renvoyé — jamais un succès fictif. L'original n'est pas modifié.
+    """
+    from seamtech_search.ocr.pipeline import ocriser_fichier
+
+    timeout_page = max(5, min(int(timeout), 60))
+    try:
+        rapport = ocriser_fichier(
+            path,
+            tesseract_command=tesseract_command,
+            timeout_par_page_s=timeout_page,
+            langue=_langue_ocr_disponible(tesseract_command),
+        )
+    except subprocess.TimeoutExpired:
+        return "", "OCR a dépassé le délai"
+    except Exception as exc:
+        return "", f"échec OCR : {type(exc).__name__}"
+    pages = rapport.get("pages") or []
+    textes = [str(p.get("texte_final") or "") for p in pages]
+    texte = "\n".join(morceau for morceau in textes if morceau.strip()).strip()
+    if texte:
+        return texte[:max_chars], ""
+    motifs = [str(p.get("motif") or "") for p in pages if p.get("motif")]
+    return "", "; ".join(m for m in motifs if m) or "OCR n'a produit aucun texte"
 
 
 def _extract_pdf(path: Path, max_chars: int) -> str:

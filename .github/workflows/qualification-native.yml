@@ -1,0 +1,69 @@
+name: Qualification native
+
+# Essai d'installation Linux NATIVE (Debian/Ubuntu) sur runner vierge.
+# Pas Docker Compose, pas le PC opérateur, pas une homologation production.
+on:
+  push:
+  pull_request:
+
+jobs:
+  native-ubuntu:
+    name: Essai natif Ubuntu 24.04
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.24.7"
+          cache: false
+      - name: Procédure native (scripts/qualification_native.sh)
+        run: bash scripts/qualification_native.sh
+      - name: Publier le rapport (toujours)
+        if: always()
+        run: |
+          shopt -s nullglob
+          for rapport in /tmp/seamtech-natif/backups/rapport-natif-*.txt; do
+            echo "::group::$(basename "$rapport")"
+            cat "$rapport"
+            echo "::endgroup::"
+          done
+          for journal in web worker front minio redis; do
+            f="/tmp/seamtech-natif/logs/${journal}.log"
+            if [ -f "$f" ]; then
+              echo "::group::$journal.log"
+              tail -n 80 "$f"
+              echo "::endgroup::"
+            fi
+          done
+      - name: Annotation de synthèse
+        if: always()
+        run: |
+          shopt -s nullglob
+          rapports=(/tmp/seamtech-natif/backups/rapport-natif-*.txt)
+          if [ ${#rapports[@]} -eq 0 ]; then
+            echo "::error title=native-summary::pas de rapport (procédure interrompue avant les contrôles)"
+            exit 1
+          fi
+          if grep -q '|FAIL|' "${rapports[@]}"; then
+            echo "::error title=native-summary::au moins un CONTROLE FAIL — voir le rapport"
+            exit 1
+          fi
+          echo "::notice title=native-summary::installation native Ubuntu 24.04 : tous les contrôles PASS (essai, pas production)"
+      - if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: qualification-native-rapport
+          path: /tmp/seamtech-natif/backups/rapport-natif-*.txt
+          if-no-files-found: warn

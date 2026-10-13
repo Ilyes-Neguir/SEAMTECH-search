@@ -127,12 +127,22 @@ La recherche « comme Google » des fiches validées. La route Phase 0 `GET /sea
   côté index — `0701-GV-001` se trouve tel quel, le tiret n'est jamais lu comme
   une exclusion.
 - **Tolérance aux fautes** : filet trigrammes sur les requêtes d'un seul mot
-  (`monofime` → Monofilm) ; seuil 0,30 ; indexable (GIN trigrammes, migration 007).
-  Limite connue : la comparaison trigrammes est littérale — un mot fautif SANS
-  ses accents (`genios`) n'est pas rattrapé ; la requête accentuée correcte
-  (`génois`) passe par le lexical. Plier les accents exigerait un index
-  d'expression `unaccent()` (fonction STABLE, non IMMUTABLE) : hors périmètre
-  Lot E, documenté pour la suite.
+  (`monofime` → Monofilm) ; seuil 0,30 ; indexable (GIN trigrammes, migration 007,
+  clés normalisées migration 023).
+- **Casse et diacritiques** : pour tous les champs réellement recherchés, les
+  variantes d'un même terme (casse, accents latin, NFC/NFD, ligatures œ/æ/ß)
+  produisent le **même ensemble d'identifiants**, dans le **même ordre**
+  déterministe. La normalisation porte sur une *clé* (`seamtech_texte_recherche`
+  côté SQL, `normaliser_cle_recherche` côté Python) : les textes affichés et
+  les fichiers d'origine ne sont pas réécrits. Ce n'est **pas** une recherche
+  par sous-chaîne, ni un changement des seuils de faute, ni une translittération
+  arabe/cyrillique. Les filtres exacts (`type_voile=…`) et les codes/dimensions
+  restent distincts de cette règle.
+- **Ligatures** : équivalences retenues — `œ`/`Œ` ↔ `oe`, `æ`/`Æ` ↔ `ae`,
+  `ß` ↔ `ss`. Un simple retrait d'accents ne les couvre pas.
+- **Limite** : une faute *et* un accent manquant (`genios` pour « Génois »)
+  reste une question de **seuil de trigrammes**, pas de normalisation. La
+  normalisation garantit seulement que `GENOIS` et `GÉNOIS` votent pareil.
 - **Synonymes** : table `synonyme` (terme → canonique), rafraîchie toutes les 30 s.
 - **Journal** : TOUTES les recherches sont écrites dans `recherche_log` ;
   `nb_resultats = 0` marque la recherche sans résultat (index partiel, migration

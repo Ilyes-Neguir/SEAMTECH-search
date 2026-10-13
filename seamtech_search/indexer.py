@@ -1008,6 +1008,51 @@ class SearchIndex:
             "Conséquence : une reprise ne substitue plus un autre document."
         )
 
+    def _migration_023_recherche_normalisee(self, connection: Any) -> None:
+        """Clé de recherche normalisée pour trigrammes et suggestions.
+
+        PostgreSQL : fonction IMMUTABLE ``seamtech_texte_recherche`` (unaccent
+        si possible, sinon translate latin) + index GIN d'expression. SQLite :
+        no-op enregistré — la couche métier est PostgreSQL uniquement, et
+        FTS5 plie déjà les diacritiques.
+        """
+        if not self.is_postgres:
+            logger.warning(
+                "Migration 023_recherche_normalisee ignorée : la couche métier est PostgreSQL "
+                "uniquement — conséquence : aucune clé de recherche normalisée en mode SQLite "
+                "(FTS5 plie déjà les diacritiques)."
+            )
+            return
+        with connection.cursor() as cursor:
+            cursor.execute("SAVEPOINT seamtech_023_unaccent")
+            try:
+                cursor.execute("CREATE EXTENSION IF NOT EXISTS unaccent")
+                cursor.execute(schema_metier.SQL_023_FONCTION_UNACCENT)
+                cursor.execute("RELEASE SAVEPOINT seamtech_023_unaccent")
+            except Exception as exc:
+                cursor.execute("ROLLBACK TO SAVEPOINT seamtech_023_unaccent")
+                cursor.execute("RELEASE SAVEPOINT seamtech_023_unaccent")
+                logger.warning(
+                    "unaccent indisponible pour seamtech_texte_recherche (%s) — "
+                    "repli translate() latin-1 + étendu A ; couverture plus étroite.",
+                    exc,
+                )
+                cursor.execute(schema_metier.SQL_023_FONCTION_REPLI)
+            cursor.execute("SAVEPOINT seamtech_023_trgm")
+            try:
+                cursor.execute(schema_metier.SQL_023_INDEX)
+                cursor.execute("RELEASE SAVEPOINT seamtech_023_trgm")
+            except Exception as exc:
+                cursor.execute("ROLLBACK TO SAVEPOINT seamtech_023_trgm")
+                cursor.execute("RELEASE SAVEPOINT seamtech_023_trgm")
+                logger.warning(
+                    "pg_trgm indisponible pour les index 023 (%s) — conséquence : "
+                    "la fonction seamtech_texte_recherche existe mais les index "
+                    "d'expression sont omis ; la comparaison normalisée reste "
+                    "correcte, plus lente (parcours).",
+                    exc,
+                )
+
     def run_migrations(self) -> None:
         """Run pending schema migrations once at startup."""
         with self.connect() as connection:
@@ -1059,6 +1104,11 @@ class SearchIndex:
                 # comme les autres : une migration oubliée fait échouer
                 # sauvegarde/restauration (VERSION_SCHEMA_METIER absente).
                 ("022_selections_durables", self._migration_022_selections_durables),
+                # 023 — clé de recherche normalisée (casse + diacritiques +
+                # ligatures) pour trigrammes et suggestions. Même motif
+                # d'enregistrement : une migration oubliée ici ferait échouer
+                # sauvegarde/restauration (VERSION_SCHEMA_METIER absente).
+                ("023_recherche_normalisee", self._migration_023_recherche_normalisee),
             ]
 
             for version, func in migrations:
@@ -1853,9 +1903,18 @@ class SearchIndex:
 
     def _search_postgres(self, clean_query: str, limit: int, offset: int) -> list[dict[str, Any]]:
         like_query = f"%{clean_query}%"
+        # Même clé que GET /recherche (casse / diacritiques / ligatures) : le
+        # tsvector `seamtech_unaccent` plie déjà les accents, pas œ/æ.
+        from seamtech_search.fiches.normalisation import normaliser_cle_recherche
+
+        requete_pliem = normaliser_cle_recherche(clean_query) or clean_query
         # Build prefix-matching OR query for Postgres to match SQLite semantics (4.1)
         # e.g. "voile bleue" -> "voile:* | bleue:*" with rank boost for all terms
-        terms = [t for t in re.findall(r"[\w]+", clean_query, flags=re.UNICODE) if t.upper() not in {"AND", "OR", "NOT"}]
+        terms = [
+            t
+            for t in re.findall(r"[\w]+", requete_pliem, flags=re.UNICODE)
+            if t.upper() not in {"AND", "OR", "NOT"}
+        ]
         if not terms:
             return []
         # OR with prefix — avoid backslash in f-string expression

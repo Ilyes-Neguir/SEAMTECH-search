@@ -1,0 +1,422 @@
+{
+  "phase": "avant_correction",
+  "commit": "8dd5ae7340a0eb1023bd73ef5d884c4538efbc09",
+  "mesures_sql": {
+    "unaccent_GENois_accentue": "GENOIS",
+    "unaccent_GENOIS": "GENOIS",
+    "lexemes_accent": "'genois':1",
+    "lexemes_plain": "'genois':1",
+    "word_similarity_GENOIS_Gennaker": 0.42857143,
+    "word_similarity_GENois_accentue_Gennaker": 0.14285715,
+    "word_similarity_genois_Gennaker": 0.14285715
+  },
+  "resultats": {
+    "genois": {
+      "GENOIS": [
+        "N-GENOIS_T-009",
+        "N-NOEL-004",
+        "N-MULLER-006",
+        "N-FACADE-001",
+        "N-ETE-003",
+        "N-REPARATI-002",
+        "N-COEUR-008",
+        "N-CABLE-005",
+        "N-SAO-007",
+        "N-GENNAKER-010"
+      ],
+      "GÉNOIS": [
+        "N-NOEL-004",
+        "N-MULLER-006",
+        "N-FACADE-001",
+        "N-GENOIS_T-009",
+        "N-ETE-003",
+        "N-REPARATI-002",
+        "N-COEUR-008",
+        "N-CABLE-005",
+        "N-SAO-007",
+        "N-GENNAKER-010"
+      ],
+      "génois": [
+        "N-NOEL-004",
+        "N-MULLER-006",
+        "N-FACADE-001",
+        "N-GENOIS_T-009",
+        "N-ETE-003",
+        "N-REPARATI-002",
+        "N-COEUR-008",
+        "N-CABLE-005",
+        "N-SAO-007",
+        "N-GENNAKER-010"
+      ],
+      "Génois": [
+        "N-NOEL-004",
+        "N-MULLER-006",
+        "N-FACADE-001",
+        "N-GENOIS_T-009",
+        "N-ETE-003",
+        "N-REPARATI-002",
+        "N-COEUR-008",
+        "N-CABLE-005",
+        "N-SAO-007",
+        "N-GENNAKER-010"
+      ],
+      "GeNoIs": [
+        "N-GENOIS_T-009",
+        "N-NOEL-004",
+        "N-MULLER-006",
+        "N-FACADE-001",
+        "N-ETE-003",
+        "N-REPARATI-002",
+        "N-COEUR-008",
+        "N-CABLE-005",
+        "N-SAO-007",
+        "N-GENNAKER-010"
+      ],
+      "Génois": [
+        "N-GENOIS_T-009",
+        "N-NOEL-004",
+        "N-MULLER-006",
+        "N-FACADE-001",
+        "N-ETE-003",
+        "N-REPARATI-002",
+        "N-COEUR-008",
+        "N-CABLE-005",
+        "N-SAO-007",
+        "N-GENNAKER-010"
+      ]
+    },
+    "facade": {
+      "facade": [
+        "N-FACADE-001"
+      ],
+      "façade": [
+        "N-FACADE-001"
+      ],
+      "FAÇADE": [
+        "N-FACADE-001"
+      ],
+      "FACADE": [
+        "N-FACADE-001"
+      ],
+      "façade": [
+        "N-FACADE-001"
+      ]
+    },
+    "reparation": {
+      "reparation": [
+        "N-REPARATI-002"
+      ],
+      "réparation": [
+        "N-REPARATI-002"
+      ],
+      "RÉPARATION": [
+        "N-REPARATI-002"
+      ],
+      "Reparation": [
+        "N-REPARATI-002"
+      ]
+    },
+    "ete": {
+      "ete": [
+        "N-ETE-003"
+      ],
+      "été": [
+        "N-ETE-003"
+      ],
+      "Été": [
+        "N-ETE-003"
+      ],
+      "ETE": [
+        "N-ETE-003"
+      ],
+      "été": [
+        "N-ETE-003"
+      ]
+    },
+    "noel": {
+      "noel": [
+        "N-NOEL-004",
+        "N-FACADE-001"
+      ],
+      "Noël": [
+        "N-NOEL-004",
+        "N-FACADE-001"
+      ],
+      "NOEL": [
+        "N-NOEL-004",
+        "N-FACADE-001"
+      ],
+      "NOËL": [
+        "N-NOEL-004",
+        "N-FACADE-001"
+      ]
+    },
+    "cable": {
+      "cable": [
+        "N-CABLE-005"
+      ],
+      "câble": [
+        "N-CABLE-005"
+      ],
+      "CÂBLE": [
+        "N-CABLE-005"
+      ]
+    },
+    "muller": {
+      "muller": [
+        "N-MULLER-006"
+      ],
+      "Müller": [
+        "N-MULLER-006"
+      ],
+      "MULLER": [
+        "N-MULLER-006"
+      ],
+      "müller": [
+        "N-MULLER-006"
+      ]
+    },
+    "sao": {
+      "sao": [
+        "N-SAO-007"
+      ],
+      "São": [
+        "N-SAO-007"
+      ],
+      "SAO": [
+        "N-SAO-007"
+      ]
+    },
+    "coeur": {
+      "coeur": [
+        "N-COEUR-008",
+        "N-ETE-003",
+        "N-GENNAKER-010"
+      ],
+      "cœur": [
+        "N-COEUR-008"
+      ],
+      "CŒUR": [
+        "N-COEUR-008"
+      ]
+    }
+  },
+  "sources_actives": {
+    "genois": {
+      "GENOIS": [
+        "lexical",
+        "texte_pdf",
+        "trigrammes"
+      ],
+      "GÉNOIS": [
+        "lexical",
+        "texte_pdf",
+        "trigrammes"
+      ],
+      "génois": [
+        "lexical",
+        "texte_pdf",
+        "trigrammes"
+      ],
+      "Génois": [
+        "lexical",
+        "texte_pdf",
+        "trigrammes"
+      ],
+      "GeNoIs": [
+        "lexical",
+        "texte_pdf",
+        "trigrammes"
+      ],
+      "Génois": [
+        "lexical",
+        "texte_pdf",
+        "trigrammes"
+      ]
+    },
+    "facade": {
+      "facade": [
+        "lexical",
+        "texte_pdf",
+        "trigrammes"
+      ],
+      "façade": [
+        "lexical",
+        "texte_pdf",
+        "trigrammes"
+      ],
+      "FAÇADE": [
+        "lexical",
+        "texte_pdf",
+        "trigrammes"
+      ],
+      "FACADE": [
+        "lexical",
+        "texte_pdf",
+        "trigrammes"
+      ],
+      "façade": [
+        "lexical",
+        "texte_pdf",
+        "trigrammes"
+      ]
+    },
+    "reparation": {
+      "reparation": [
+        "lexical",
+        "texte_pdf",
+        "trigrammes"
+      ],
+      "réparation": [
+        "lexical",
+        "texte_pdf",
+        "trigrammes"
+      ],
+      "RÉPARATION": [
+        "lexical",
+        "texte_pdf",
+        "trigrammes"
+      ],
+      "Reparation": [
+        "lexical",
+        "texte_pdf",
+        "trigrammes"
+      ]
+    },
+    "ete": {
+      "ete": [
+        "lexical",
+        "texte_pdf",
+        "trigrammes"
+      ],
+      "été": [
+        "lexical",
+        "texte_pdf",
+        "trigrammes"
+      ],
+      "Été": [
+        "lexical",
+        "texte_pdf",
+        "trigrammes"
+      ],
+      "ETE": [
+        "lexical",
+        "texte_pdf",
+        "trigrammes"
+      ],
+      "été": [
+        "lexical",
+        "texte_pdf",
+        "trigrammes"
+      ]
+    },
+    "noel": {
+      "noel": [
+        "lexical",
+        "texte_pdf",
+        "trigrammes"
+      ],
+      "Noël": [
+        "lexical",
+        "texte_pdf",
+        "trigrammes"
+      ],
+      "NOEL": [
+        "lexical",
+        "texte_pdf",
+        "trigrammes"
+      ],
+      "NOËL": [
+        "lexical",
+        "texte_pdf",
+        "trigrammes"
+      ]
+    },
+    "cable": {
+      "cable": [
+        "lexical",
+        "texte_pdf",
+        "trigrammes"
+      ],
+      "câble": [
+        "lexical",
+        "texte_pdf",
+        "trigrammes"
+      ],
+      "CÂBLE": [
+        "lexical",
+        "texte_pdf",
+        "trigrammes"
+      ]
+    },
+    "muller": {
+      "muller": [
+        "lexical",
+        "texte_pdf",
+        "trigrammes"
+      ],
+      "Müller": [
+        "lexical",
+        "texte_pdf",
+        "trigrammes"
+      ],
+      "MULLER": [
+        "lexical",
+        "texte_pdf",
+        "trigrammes"
+      ],
+      "müller": [
+        "lexical",
+        "texte_pdf",
+        "trigrammes"
+      ]
+    },
+    "sao": {
+      "sao": [
+        "lexical",
+        "texte_pdf",
+        "trigrammes"
+      ],
+      "São": [
+        "lexical",
+        "texte_pdf",
+        "trigrammes"
+      ],
+      "SAO": [
+        "lexical",
+        "texte_pdf",
+        "trigrammes"
+      ]
+    },
+    "coeur": {
+      "coeur": [
+        "lexical",
+        "texte_pdf",
+        "trigrammes"
+      ],
+      "cœur": [
+        "lexical",
+        "texte_pdf",
+        "trigrammes"
+      ],
+      "CŒUR": [
+        "lexical",
+        "texte_pdf",
+        "trigrammes"
+      ]
+    }
+  },
+  "parite_ensembles": {
+    "genois": false,
+    "facade": true,
+    "reparation": true,
+    "ete": true,
+    "noel": true,
+    "cable": true,
+    "muller": true,
+    "sao": true,
+    "coeur": false
+  },
+  "defaut_observe": true,
+  "commentaire": "Un False dans parite_ensembles signifie que des requêtes ne différant que par la casse ou les accents n'ont pas renvoyé les mêmes identifiants."
+}

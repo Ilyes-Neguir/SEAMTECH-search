@@ -40,11 +40,13 @@ Les binaires ``pg_dump``/``pg_restore`` sont découverts via ``PATH``, puis
 from __future__ import annotations
 
 import argparse
+import fcntl
 import glob
 import hashlib
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -64,6 +66,24 @@ PREFIXE_SAUVEGARDES = "backups/seamtech-search-"
 
 #: Taille des blocs de lecture pour les empreintes (fichiers volumineux).
 TAILLE_BLOC_SHA256 = 1024 * 1024
+
+#: Nom du fichier verrou (un seul sauver à la fois par dossier).
+NOM_VERROU = "sauvegarde.lock"
+
+#: Clés de configuration dont la valeur est masquée dans l'instantané.
+_RE_SECRET = re.compile(r"(password|secret|token|access_key|secret_key|passwd)", re.I)
+
+#: Perte de données maximale admissible / temps de reprise : DÉCISIONS
+#: D'EXPLOITATION À PRENDRE (non figées ici). La stratégie de cohérence
+#: retenue : pg_dump (instantané MVCC de la base) PUIS copie des fichiers
+#: et objets listés par cet instantané. Les écritures pendant la copie
+#: peuvent produire un écart fichiers/base ; les fichiers référencés
+#: absents sont signalés et interdisent le statut « complet ».
+RPO_RTO_A_DECIDER = {
+    "rpo": "décision d'exploitation à prendre (période entre deux sauvegardes + durée de copie)",
+    "rto": "décision d'exploitation à prendre (durée pg_restore + recopie fichiers/objets + redémarrage)",
+    "coherence": "instantané MVCC PostgreSQL puis copie des références de cet instantané ; pas de gel applicatif automatique",
+}
 
 
 class SauvegardeError(Exception):
@@ -178,6 +198,220 @@ def inventorier_archive(racines: list[Path]) -> dict:
     return {"racines": [str(Path(r).resolve()) for r in racines], "nb_fichiers": len(fichiers), "octets_total": octets_total, "fichiers": fichiers}
 
 
+class VerrouSauvegarde:
+    """Un seul ``sauver`` à la fois sur un dossier de destination.
+
+    Fichier ``sauvegarde.lock`` + ``fcntl.LOCK_EX | LOCK_NB``. Pas de
+    chevauchement silencieux. Le verrou est relâché à la sortie, y compris
+    après échec (``with`` / ``close``).
+    """
+
+    def __init__(self, dossier: Path):
+        self.dossier = Path(dossier)
+        self.dossier.mkdir(parents=True, exist_ok=True)
+        self.chemin = self.dossier / NOM_VERROU
+        self._flux = None
+
+    def __enter__(self) -> "VerrouSauvegarde":
+        self._flux = open(self.chemin, "a+", encoding="utf-8")
+        try:
+            fcntl.flock(self._flux.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            self._flux.close()
+            self._flux = None
+            raise SauvegardeError(
+                f"une sauvegarde est déjà en cours sur {self.dossier} "
+                f"(verrou {self.chemin}) — chevauchement refusé"
+            ) from exc
+        self._flux.seek(0)
+        self._flux.truncate()
+        self._flux.write(f"pid={os.getpid()} debut={datetime.now(timezone.utc).isoformat()}\n")
+        self._flux.flush()
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        if self._flux is not None:
+            try:
+                fcntl.flock(self._flux.fileno(), fcntl.LOCK_UN)
+            finally:
+                self._flux.close()
+                self._flux = None
+
+
+def inventorier_references_documents(base_url: str) -> dict:
+    """Toutes les pièces référencées en base : chemin local et/ou clé objet.
+
+    Ne copie rien. Signale ``present: false`` pour un chemin local absent.
+    L'import d'arborescence locale n'impose PAS une copie S3 : un document
+    peut n'avoir que ``path`` (contrat actuel, à ne pas transformer).
+    """
+    connexion = _connecter(base_url)
+    try:
+        with connexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT id, path, name, size, object_key, object_bucket, "
+                "coalesce(upload_status, ''), coalesce(category, '') "
+                "FROM documents ORDER BY id"
+            )
+            lignes = cursor.fetchall()
+    finally:
+        connexion.close()
+    documents: list[dict] = []
+    manquants_locaux = 0
+    for identifiant, chemin, nom, taille, cle, bucket, upload, categorie in lignes:
+        chemin_txt = str(chemin or "")
+        cle_txt = str(cle or "")
+        present = bool(chemin_txt) and not chemin_txt.startswith("s3://") and Path(chemin_txt).is_file()
+        # Un document déjà stocké comme objet n'est pas un fichier local manquant
+        # (l'import local n'impose pas S3 ; l'inverse non plus).
+        if chemin_txt and not chemin_txt.startswith("s3://") and not present and not cle_txt:
+            manquants_locaux += 1
+        documents.append(
+            {
+                "id": int(identifiant),
+                "path": chemin_txt,
+                "name": nom,
+                "taille_declaree": int(taille or 0),
+                "object_key": cle_txt,
+                "object_bucket": bucket or "",
+                "upload_status": upload,
+                "category": categorie,
+                "local_present": present,
+            }
+        )
+    return {
+        "nb_documents": len(documents),
+        "nb_locaux_manquants": manquants_locaux,
+        "nb_avec_objet": sum(1 for d in documents if d["object_key"]),
+        "documents": documents,
+    }
+
+
+def copier_fichiers_locaux(references: dict, destination: Path) -> dict:
+    """Copie les fichiers locaux présents vers ``destination/fichiers/{id}/nom``.
+
+    Les absents sont listés, jamais ignorés. Aucune purge de la source.
+    """
+    dest = Path(destination) / "fichiers"
+    dest.mkdir(parents=True, exist_ok=True)
+    copies: list[dict] = []
+    manquants: list[dict] = []
+    for doc in references.get("documents") or []:
+        chemin = Path(doc["path"]) if doc.get("path") else None
+        chemin_txt = str(doc.get("path") or "")
+        if chemin is None or not chemin_txt:
+            continue
+        if chemin_txt.startswith("s3://") or (doc.get("object_key") and not chemin.is_file()):
+            continue
+        if not chemin.is_file():
+            manquants.append({"id": doc["id"], "path": doc["path"], "name": doc.get("name")})
+            continue
+        cible_dir = dest / str(doc["id"])
+        cible_dir.mkdir(parents=True, exist_ok=True)
+        cible = cible_dir / (doc.get("name") or chemin.name)
+        shutil.copy2(chemin, cible)
+        copies.append(
+            {
+                "id": doc["id"],
+                "path_source": doc["path"],
+                "path_relatif": str(cible.relative_to(destination)),
+                "taille": cible.stat().st_size,
+                "sha256": _sha256_fichier(cible),
+            }
+        )
+    return {"copies": copies, "manquants": manquants, "nb_copies": len(copies), "nb_manquants": len(manquants)}
+
+
+def copier_objets_s3(references: dict, client_s3, destination: Path) -> dict:
+    """Télécharge les objets référencés (identité DU BUCKET DOCUMENTS).
+
+    Un objet manquant est signalé. Le substitut S3 n'est pas une qualification
+    MinIO : l'appelant documente le fournisseur réellement utilisé.
+    """
+    dest = Path(destination) / "objets"
+    dest.mkdir(parents=True, exist_ok=True)
+    copies: list[dict] = []
+    manquants: list[dict] = []
+    for doc in references.get("documents") or []:
+        cle = doc.get("object_key") or ""
+        if not cle:
+            continue
+        cible = dest / str(doc["id"]) / Path(cle).name
+        cible.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            client_s3.download_file(cle, cible)
+        except Exception as exc:
+            manquants.append({"id": doc["id"], "object_key": cle, "erreur": type(exc).__name__})
+            continue
+        copies.append(
+            {
+                "id": doc["id"],
+                "object_key": cle,
+                "path_relatif": str(cible.relative_to(destination)),
+                "taille": cible.stat().st_size,
+                "sha256": _sha256_fichier(cible),
+            }
+        )
+    return {"copies": copies, "manquants": manquants, "nb_copies": len(copies), "nb_manquants": len(manquants)}
+
+
+def restaurer_fichiers_locaux(manifeste: dict, racine_sauvegarde: Path, destination: Path) -> dict:
+    """Restaure les copies locales du bundle vers une cible DISTINCTE.
+
+    Ne lit pas les sources d'origine. Vérifie chaque empreinte. Refuse
+    d'écrire si une empreinte ne correspond pas.
+    """
+    destination = Path(destination)
+    destination.mkdir(parents=True, exist_ok=True)
+    restaures: list[dict] = []
+    for copie in (manifeste.get("fichiers_locaux") or {}).get("copies") or []:
+        source = Path(racine_sauvegarde) / copie["path_relatif"]
+        if not source.is_file():
+            raise SauvegardeError(f"fichier du bundle absent : {copie['path_relatif']}")
+        empreinte = _sha256_fichier(source)
+        if empreinte != copie["sha256"]:
+            raise SauvegardeError(
+                f"empreinte bundle {copie['path_relatif']} {empreinte[:12]}… ≠ manifeste {copie['sha256'][:12]}…"
+            )
+        cible = destination / str(copie["id"]) / Path(copie["path_relatif"]).name
+        cible.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, cible)
+        restaures.append({"id": copie["id"], "path": str(cible), "sha256": empreinte})
+    return {"nb": len(restaures), "fichiers": restaures}
+
+
+def restaurer_objets_s3(manifeste: dict, racine_sauvegarde: Path, client_s3) -> dict:
+    """Restaure les objets du bundle vers un bucket cible (sources inaccessibles)."""
+    restaures: list[dict] = []
+    for copie in (manifeste.get("objets_s3") or {}).get("copies") or []:
+        source = Path(racine_sauvegarde) / copie["path_relatif"]
+        if not source.is_file():
+            raise SauvegardeError(f"objet du bundle absent : {copie['path_relatif']}")
+        empreinte = _sha256_fichier(source)
+        if empreinte != copie["sha256"]:
+            raise SauvegardeError(
+                f"empreinte objet {copie['path_relatif']} {empreinte[:12]}… ≠ manifeste {copie['sha256'][:12]}…"
+            )
+        cle = copie["object_key"]
+        # Restaurer DOIT réécrire la clé d'origine (les sources sont coupées).
+        # avoid_overwrite=True irait sur une clé -2 et laisserait le catalogue
+        # pointer vers un objet absent.
+        cle_ecrite = client_s3.upload_file(source, cle, avoid_overwrite=False)
+        restaures.append({"object_key": cle_ecrite, "sha256": empreinte})
+    return {"nb": len(restaures), "objets": restaures}
+
+
+def rediger_config(valeurs: dict) -> dict:
+    """Instantané de configuration sans secrets (valeurs masquées)."""
+    redige: dict = {}
+    for cle, valeur in valeurs.items():
+        if _RE_SECRET.search(str(cle)):
+            redige[cle] = "***"
+        else:
+            redige[cle] = valeur
+    return redige
+
+
 def _compter_tables(connexion) -> dict[str, int]:
     comptes: dict[str, int] = {}
     with connexion.cursor() as cursor:
@@ -245,14 +479,56 @@ def sauver(
     dossier_local: Path,
     client_s3=None,
     retention: int = 5,
+    *,
+    inclure_references_base: bool = False,
+    client_documents_s3=None,
+    verrouiller: bool = True,
 ) -> dict:
-    """Sauvegarde complète : dump + inventaire archive + manifeste, puis envoi
-    hors-site si ``client_s3`` est fourni (avec re-lecture de vérification) et
-    rétention. Renvoie le manifeste enrichi des clés S3."""
+    """Sauvegarde : dump + inventaire archive + (optionnel) copies des pièces
+    référencées + manifeste, puis envoi hors-site si ``client_s3`` est fourni.
+
+    ``inclure_references_base`` : copie les fichiers locaux et objets S3
+    réellement référencés par ``documents`` (contrat : l'import local n'impose
+    PAS une réplication S3). Les absents sont listés ; ``complet`` est faux
+    s'il en reste. ``verrouiller`` empêche deux sauver() sur le même dossier.
+    """
     debut = time.perf_counter()
     dossier_local = Path(dossier_local)
-    dossier_local.mkdir(parents=True, exist_ok=True)
+    try:
+        dossier_local.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise SauvegardeError(f"destination inaccessible : {dossier_local} ({exc})") from exc
 
+    verrou: VerrouSauvegarde | None = VerrouSauvegarde(dossier_local) if verrouiller else None
+    if verrou is not None:
+        verrou.__enter__()
+    try:
+        return _sauver_corps(
+            base_url,
+            racines_archive,
+            dossier_local,
+            client_s3=client_s3,
+            retention=retention,
+            inclure_references_base=inclure_references_base,
+            client_documents_s3=client_documents_s3,
+            debut=debut,
+        )
+    finally:
+        if verrou is not None:
+            verrou.__exit__(None, None, None)
+
+
+def _sauver_corps(
+    base_url: str,
+    racines_archive: list[Path],
+    dossier_local: Path,
+    client_s3=None,
+    retention: int = 5,
+    *,
+    inclure_references_base: bool = False,
+    client_documents_s3=None,
+    debut: float = 0.0,
+) -> dict:
     horodatage = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     nom_dump = f"seamtech-search-{horodatage}.dump"
     chemin_dump = dossier_local / nom_dump
@@ -269,7 +545,7 @@ def sauver(
         raise SauvegardeError(f"pg_dump a échoué (rc={resultat.returncode}) : {resultat.stderr[-800:]}")
 
     inventaire = inventorier_archive(racines_archive)
-    manifeste = {
+    manifeste: dict = {
         "date_iso": datetime.now(timezone.utc).isoformat(),
         "commit": _commit_courant(),
         "version_schema_metier": VERSION_SCHEMA_METIER,
@@ -278,7 +554,38 @@ def sauver(
         "fiches_par_statut": etat["fiches_par_statut"],
         "documents": etat["documents"],
         "archive": inventaire,
+        "rpo_rto": RPO_RTO_A_DECIDER,
+        "coherence": "pg_dump MVCC puis copie des références de cet instantané",
+        "complet": True,
     }
+    if inclure_references_base:
+        refs = inventorier_references_documents(base_url)
+        manifeste["references"] = {
+            "nb_documents": refs["nb_documents"],
+            "nb_locaux_manquants": refs["nb_locaux_manquants"],
+            "nb_avec_objet": refs["nb_avec_objet"],
+        }
+        fichiers = copier_fichiers_locaux(refs, dossier_local)
+        manifeste["fichiers_locaux"] = {
+            "nb_copies": fichiers["nb_copies"],
+            "nb_manquants": fichiers["nb_manquants"],
+            "copies": fichiers["copies"],
+            "manquants": fichiers["manquants"],
+        }
+        if fichiers["nb_manquants"]:
+            manifeste["complet"] = False
+        if client_documents_s3 is not None:
+            objets = copier_objets_s3(refs, client_documents_s3, dossier_local)
+            manifeste["objets_s3"] = {
+                "nb_copies": objets["nb_copies"],
+                "nb_manquants": objets["nb_manquants"],
+                "copies": objets["copies"],
+                "manquants": objets["manquants"],
+            }
+            if objets["nb_manquants"]:
+                manifeste["complet"] = False
+        else:
+            manifeste["objets_s3"] = {"nb_copies": 0, "nb_manquants": 0, "copies": [], "manquants": [], "note": "client documents S3 non fourni"}
     chemin_manifeste = dossier_local / f"{nom_dump}.manifest.json"
     chemin_manifeste.write_text(json.dumps(manifeste, ensure_ascii=False, indent=1), encoding="utf-8")
 
@@ -583,6 +890,11 @@ def main(argv: list[str] | None = None) -> int:
     p_sauver.add_argument("--dossier", default="data/backups")
     p_sauver.add_argument("--retention", type=int, default=5)
     p_sauver.add_argument("--sans-s3", action="store_true", help="pas d'envoi hors-site (sauvegarde locale seule)")
+    p_sauver.add_argument(
+        "--avec-references",
+        action="store_true",
+        help="copie les fichiers locaux et objets S3 réellement référencés par documents",
+    )
 
     p_restaurer = sous.add_parser("restaurer", help="restaure depuis un manifeste (local ou S3)")
     p_restaurer.add_argument("--manifeste", help="chemin local du manifeste")
@@ -591,6 +903,15 @@ def main(argv: list[str] | None = None) -> int:
     p_restaurer.add_argument(
         "--dump",
         help="chemin local du dump ; par défaut : dossier du manifeste + nom du manifeste",
+    )
+    p_restaurer.add_argument(
+        "--fichiers-cible",
+        help="répertoire DISTINCT où restaurer les copies locales du bundle (sources d'origine non lues)",
+    )
+    p_restaurer.add_argument(
+        "--restaurer-objets",
+        action="store_true",
+        help="restaure les objets du bundle vers le bucket documents configuré",
     )
 
     p_verifier = sous.add_parser("verifier", help="compare une base vivante au manifeste")
@@ -605,19 +926,37 @@ def main(argv: list[str] | None = None) -> int:
         client = None if args.sans_s3 else _client_s3_depuis_env()
         if client is None and not args.sans_s3:
             logger.warning("S3 non configuré : sauvegarde LOCALE seule (pas de protection hors-site)")
+        client_documents = None
+        if args.avec_references:
+            # Identité du bucket DOCUMENTS (pas celle de sauvegarde) : l'import
+            # local n'impose pas S3 ; on ne copie que les objets déjà présents.
+            try:
+                from .config import AppConfig
+                from .storage import S3StorageClient
+
+                client_documents = S3StorageClient(config=AppConfig.load())
+            except Exception as exc:  # noqa: BLE001 — CLI : S3 documents optionnel
+                logger.warning("client documents S3 indisponible (%s) : copies locales seulement", type(exc).__name__)
         manifeste = sauver(
-            args.base_url, [Path(r) for r in args.archive], Path(args.dossier), client_s3=client, retention=args.retention
+            args.base_url,
+            [Path(r) for r in args.archive],
+            Path(args.dossier),
+            client_s3=client,
+            retention=args.retention,
+            inclure_references_base=bool(args.avec_references),
+            client_documents_s3=client_documents,
         )
         sortie = {
             "manifeste": str(Path(args.dossier) / (manifeste["dump"]["fichier"] + ".manifest.json")),
             "dump_sha256": manifeste["dump"]["sha256"],
+            "complet": manifeste.get("complet", True),
         }
         if "cle_s3" in manifeste["dump"]:
             sortie["cle_dump_s3"] = manifeste["dump"]["cle_s3"]
         if "manifeste_cle_s3" in manifeste:
             sortie["cle_manifeste_s3"] = manifeste["manifeste_cle_s3"]
         print(json.dumps(sortie, ensure_ascii=False))
-        return 0
+        return 0 if manifeste.get("complet", True) else 2
 
     if args.commande == "restaurer":
         client = _client_s3_depuis_env()
@@ -630,7 +969,33 @@ def main(argv: list[str] | None = None) -> int:
         else:
             dump_local = None  # re-téléchargé depuis le bucket
         resume = restaurer(args.base_cible, manifeste, chemin_dump_local=dump_local, client_s3=client)
-        print(json.dumps({"restaure": resume["base"], "duree_s": round(resume["duree_s"], 2)}, ensure_ascii=False))
+        extra: dict = {}
+        racine_bundle = Path(args.manifeste).parent if args.manifeste else Path(args.dump).parent if args.dump else None
+        if args.fichiers_cible:
+            if racine_bundle is None:
+                raise SauvegardeError("restauration des fichiers : fournir --manifeste (bundle local)")
+            extra["fichiers"] = restaurer_fichiers_locaux(manifeste, racine_bundle, Path(args.fichiers_cible))
+        if args.restaurer_objets:
+            if racine_bundle is None:
+                raise SauvegardeError("restauration des objets : fournir --manifeste (bundle local)")
+            from .config import AppConfig
+            from .storage import S3StorageClient
+
+            try:
+                config_docs = AppConfig.load()
+            except FileNotFoundError as exc:
+                raise SauvegardeError(
+                    "restauration des objets : configuration applicative absente "
+                    "(identité du bucket DOCUMENTS, distincte de la sauvegarde)"
+                ) from exc
+            extra["objets"] = restaurer_objets_s3(manifeste, racine_bundle, S3StorageClient(config=config_docs))
+        print(
+            json.dumps(
+                {"restaure": resume["base"], "duree_s": round(resume["duree_s"], 2), **extra},
+                ensure_ascii=False,
+                default=str,
+            )
+        )
         return 0
 
     if args.commande == "verifier":

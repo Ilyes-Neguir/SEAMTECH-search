@@ -1,0 +1,12 @@
+{
+  "commit_base_pr37": "be0f6d2e170145a8491ebf065ef2f464fd639a63",
+  "n_fiches": 800,
+  "corpus": "synthetique_accentue",
+  "n_mesures": 40,
+  "p50_ms": 11.5,
+  "p95_ms": 17.8,
+  "max_ms": 20.3,
+  "critere_produit_p95_ms": 100,
+  "etiquette": "indicatif sandbox — pas un PASS atelier / fonds réel",
+  "chemins": ["GET /recherche", "GET /recherche/suggestions", "GET /search"]
+}

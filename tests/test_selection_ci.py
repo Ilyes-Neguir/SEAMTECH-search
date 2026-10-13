@@ -64,6 +64,8 @@ INVENTAIRE_S3_REEL = {
     "tests/test_credentials_s3_restreintes.py::test_aucun_secret_dans_les_journaux_des_services",
     # job `sauvegarde` : aller-retour hors-site contre un VRAI bucket.
     "tests/test_sauvegarde_restauration.py::test_aller_retour_via_client_s3_reel",
+    # job `sauvegarde` + workflow qualification-reserves : PG + fichiers + objet MinIO.
+    "tests/test_sauvegarde_references.py::test_aller_retour_objets_minio_sources_indisponibles",
     # épreuve de conformité d'un endpoint réel (SEAMTECH_TEST_S3_URL).
     "tests/test_storage.py::test_live_minio_s3_integration",
     # job `recette-corpus-reel` (Lot 2) : recette complète du corpus réel —

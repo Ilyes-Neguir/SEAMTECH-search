@@ -1488,7 +1488,15 @@ jobs:
         env:
           SEAMTECH_SAUVEGARDE_JSON: sauvegarde-mesures.jsonl
         run: |
-          python -m pytest -m sauvegarde -v --junitxml=sauvegarde-junit.xml
+          set +e
+          python -m pytest -m sauvegarde -v --junitxml=sauvegarde-junit.xml 2>&1 | tee /tmp/sauvegarde.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            echo "::error title=sauvegarde-failed::$(grep -E '^(FAILED|ERROR)' /tmp/sauvegarde.log | head -25 | tr -d '\\000-\\010\\013\\014\\016-\\037' | tr '\\n' ';' | head -c 1500)"
+            echo "::error title=sauvegarde-tail::$(tail -40 /tmp/sauvegarde.log | tr -d '\\000-\\010\\013\\014\\016-\\037' | tr '\\n' ';' | head -c 1800)"
+            exit "$rc"
+          fi
       - name: GARDE-FOU — every round-trip test ran, none skipped
         run: |
           python - << 'PY'
@@ -2436,7 +2444,7 @@ jobs:
       - name: Install OCR binaries (tesseract + fra + poppler)
         run: |
           sudo apt-get update
-          sudo apt-get install -y tesseract-ocr tesseract-ocr-fra poppler-utils
+          sudo apt-get install -y tesseract-ocr tesseract-ocr-fra tesseract-ocr-eng poppler-utils
           tesseract --version
           tesseract --list-langs
           pdftoppm -v 2>&1 | head -5 || true

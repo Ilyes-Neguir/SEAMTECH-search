@@ -1,0 +1,92 @@
+name: Perf comparaison
+
+# Même runner, même PostgreSQL, même protocole pytest -m perf :
+# 8dd5ae7 (départ) vs a3506c8 (échec CI) vs HEAD. Ne desserre aucun seuil.
+on:
+  push:
+  pull_request:
+
+jobs:
+  comparaison:
+    name: 8dd5ae7 vs a3506c8 vs HEAD
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: seamtech
+          POSTGRES_PASSWORD: seamtech_test_password
+          POSTGRES_DB: seamtech_search_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      SEAMTECH_TEST_DATABASE_URL: postgresql://seamtech:seamtech_test_password@localhost:5432/seamtech_search_test
+      SEAMTECH_PERF_P95_CI_MS: "250"
+      N_RUNS: "3"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Installer les dépendances
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+      - name: Diagnostic ping PostgreSQL
+        run: |
+          python - <<'PY'
+          import os, time, statistics
+          import psycopg2
+          dsn = os.environ["SEAMTECH_TEST_DATABASE_URL"]
+          durees = []
+          for _ in range(20):
+              t = time.perf_counter()
+              cnx = psycopg2.connect(dsn)
+              with cnx.cursor() as cur:
+                  cur.execute("SELECT 1")
+                  cur.fetchone()
+              cnx.close()
+              durees.append((time.perf_counter() - t) * 1000)
+          print(f"SELECT 1 x20 : p50={statistics.median(durees):.2f} ms max={max(durees):.2f} ms")
+          print(f"::notice title=perf-ping-pg::SELECT 1 p50={statistics.median(durees):.2f} ms max={max(durees):.2f} ms")
+          PY
+      - name: Comparer 8dd5ae7, a3506c8 et HEAD (3 runs chacun)
+        run: bash scripts/perf_comparaison.sh
+      - name: Publier resume.json en notice (toujours)
+        if: always()
+        run: |
+          if [ -f /tmp/seamtech-perf-comparaison/resume.json ]; then
+            python - <<'PY'
+          import json
+          from pathlib import Path
+          data = json.loads(Path("/tmp/seamtech-perf-comparaison/resume.json").read_text(encoding="utf-8"))
+          print(json.dumps(data, ensure_ascii=False)[:3500])
+          print(f"::notice title=perf-comparaison-resume::{json.dumps(data, ensure_ascii=False)[:1500]}")
+          PY
+          else
+            echo "::error title=perf-comparaison-resume::resume.json absent"
+            ls -la /tmp/seamtech-perf-comparaison 2>/dev/null || true
+          fi
+      - if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: perf-comparaison
+          path: /tmp/seamtech-perf-comparaison/resume.json
+          if-no-files-found: warn

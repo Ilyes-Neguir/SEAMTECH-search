@@ -1,0 +1,16 @@
+{
+  "date": "2026-10-13",
+  "commit_depart": "8dd5ae7340a0eb1023bd73ef5d884c4538efbc09",
+  "branche": "arena/e7f33785-seamtech-search",
+  "python": "3.11.2",
+  "platform": "Linux-6.1.158+-x86_64-with-glibc2.36",
+  "postgres": "16.2 (pgserver, socket UNIX /tmp/seamtech-pgdata)",
+  "extensions": ["pg_trgm", "plpgsql", "unaccent", "vector"],
+  "pg_dump": "16.2 (pgserver/pginstall/bin)",
+  "tesseract": null,
+  "ocrmypdf": null,
+  "pdftoppm": null,
+  "minio": "non installé (release GitHub sans binaire ; s3rver ≠ MinIO)",
+  "redis": "7.4.2 local (non requis pour A–C)",
+  "apt": "indisponible dans le bac à sable"
+}

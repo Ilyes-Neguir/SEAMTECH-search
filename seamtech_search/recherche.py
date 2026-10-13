@@ -44,7 +44,7 @@ from typing import Annotated, Any, Callable, Mapping, Sequence
 
 from fastapi import Header, HTTPException, Query
 
-from seamtech_search.fiches.normalisation import sans_accents, vers_metres
+from seamtech_search.fiches.normalisation import normaliser_cle_recherche, sans_accents, vers_metres
 
 LOGGER = logging.getLogger("seamtech.recherche")
 
@@ -444,39 +444,56 @@ def _source_trigrammes(
     réelle : on écarte donc le plan séquentiel le temps de CE statement
     (SET LOCAL, borné à la transaction, jamais global), puis on rend la main
     au planificateur. Chaque branche mono-colonne retrouve son index GIN :
-    ``code % q``, ``titre % q`` et ``champs_texte %> q`` (word_similarity,
-    seuil 0,3 fixé par SET LOCAL). Le classement garde word_similarity, le
-    plus pertinent pour un texte long."""
+    ``seamtech_texte_recherche(code) % q_norm``, idem titre, et
+    ``seamtech_texte_recherche(champs_texte) %> q_norm`` (word_similarity,
+    seuil 0,3 fixé par SET LOCAL). La clé normalisée (casse, diacritiques
+    latin, ligatures œ/æ/ß, NFC≡NFD) est appliquée AUX DEUX côtés : des
+    requêtes ne différant que par la casse ou les accents votent identiquement.
+    Le classement garde word_similarity, le plus pertinent pour un texte long.
+    Les données métier affichées ne sont pas réécrites.
+
+    L'expression de gauche DOIT matcher l'index GIN 023
+    ``seamtech_texte_recherche(<colonne>)`` : un ``coalesce(colonne, '')``
+    autour de la colonne empêche PostgreSQL d'utiliser l'index (l'enveloppe
+    SQL coalesce déjà à l'intérieur de la fonction). La clé requête est
+    évaluée UNE fois (CTE ``q``)."""
     cursor.execute("SET LOCAL pg_trgm.word_similarity_threshold = '0.3'")
     cursor.execute("SET LOCAL enable_seqscan = off")
     try:
         cursor.execute(
             f"""
-            WITH candidats AS (
-                SELECT f.id_fiche FROM fiche f WHERE f.code %% %s
+            WITH q AS (
+                SELECT seamtech_texte_recherche(%s) AS q_norm
+            ),
+            candidats AS (
+                SELECT f.id_fiche FROM fiche f, q
+                 WHERE seamtech_texte_recherche(f.code) %% q.q_norm
                 UNION
-                SELECT f.id_fiche FROM fiche f WHERE f.titre %% %s
+                SELECT f.id_fiche FROM fiche f, q
+                 WHERE seamtech_texte_recherche(f.titre) %% q.q_norm
                 UNION
-                SELECT f.id_fiche FROM fiche f WHERE f.champs_texte %%> %s
+                SELECT f.id_fiche FROM fiche f, q
+                 WHERE seamtech_texte_recherche(f.champs_texte) %%> q.q_norm
             )
             SELECT id_fiche
             FROM (
                 SELECT v.id_fiche AS id_fiche,
                        greatest(
-                           word_similarity(%s, coalesce(f.code, '')),
-                           word_similarity(%s, coalesce(f.titre, '')),
-                           word_similarity(%s, f.champs_texte)
+                           word_similarity(q.q_norm, seamtech_texte_recherche(f.code)),
+                           word_similarity(q.q_norm, seamtech_texte_recherche(f.titre)),
+                           word_similarity(q.q_norm, seamtech_texte_recherche(f.champs_texte))
                        ) AS score
                 FROM candidats cand
                 JOIN fiche f ON f.id_fiche = cand.id_fiche
                 JOIN v_fiche_recherche v ON v.id_fiche = f.id_fiche
+                CROSS JOIN q
                 WHERE {filtres_sql}
             ) AS scores
             WHERE score > %s
             ORDER BY score DESC, id_fiche
             LIMIT %s
             """,
-            (texte, texte, texte, texte, texte, texte, *params, SEUIL_TRIGRAMMES, limite),
+            (texte, *params, SEUIL_TRIGRAMMES, limite),
         )
         return [int(ligne[0]) for ligne in cursor.fetchall()]
     finally:
@@ -1270,24 +1287,25 @@ def _details_fiches(
 # ---------------------------------------------------------------------------
 
 _SOURCES_SUGGESTIONS_PREFIXE: tuple[tuple[str, str], ...] = (
-    ("type_voile", "SELECT libelle FROM type_voile WHERE libelle ILIKE %s"),
-    ("bateau", "SELECT nom FROM bateau WHERE nom ILIKE %s"),
-    ("client", "SELECT nom FROM client WHERE nom ILIKE %s"),
-    ("matiere", "SELECT nom FROM materiau WHERE nom ILIKE %s"),
-    ("gamme", "SELECT DISTINCT gamme FROM fiche WHERE gamme ILIKE %s AND gamme <> ''"
+    ("type_voile", "SELECT libelle FROM type_voile WHERE seamtech_texte_recherche(libelle) LIKE %s ESCAPE '\\'"),
+    ("bateau", "SELECT nom FROM bateau WHERE seamtech_texte_recherche(nom) LIKE %s ESCAPE '\\'"),
+    ("client", "SELECT nom FROM client WHERE seamtech_texte_recherche(nom) LIKE %s ESCAPE '\\'"),
+    ("matiere", "SELECT nom FROM materiau WHERE seamtech_texte_recherche(nom) LIKE %s ESCAPE '\\'"),
+    ("gamme", "SELECT DISTINCT gamme FROM fiche WHERE seamtech_texte_recherche(gamme) LIKE %s ESCAPE '\\'"
+              " AND gamme <> '' AND statut IN ('valide', 'a_valider')"),
+    ("fiche", "SELECT code FROM fiche WHERE seamtech_texte_recherche(code) LIKE %s ESCAPE '\\'"
               " AND statut IN ('valide', 'a_valider')"),
-    ("fiche", "SELECT code FROM fiche WHERE code ILIKE %s AND statut IN ('valide', 'a_valider')"),
 )
 
 _SOURCES_SUGGESTIONS_TRGM: tuple[tuple[str, str], ...] = (
-    ("type_voile", "SELECT libelle, similarity(%s, libelle) FROM type_voile"
-                   " WHERE similarity(%s, libelle) > 0.3 ORDER BY 2 DESC LIMIT 3"),
-    ("bateau", "SELECT nom, similarity(%s, nom) FROM bateau"
-               " WHERE similarity(%s, nom) > 0.3 ORDER BY 2 DESC LIMIT 3"),
-    ("client", "SELECT nom, similarity(%s, nom) FROM client"
-               " WHERE similarity(%s, nom) > 0.3 ORDER BY 2 DESC LIMIT 3"),
-    ("matiere", "SELECT nom, similarity(%s, nom) FROM materiau"
-                " WHERE similarity(%s, nom) > 0.3 ORDER BY 2 DESC LIMIT 3"),
+    ("type_voile", "SELECT libelle, similarity(seamtech_texte_recherche(%s), seamtech_texte_recherche(libelle)) FROM type_voile"
+                   " WHERE similarity(seamtech_texte_recherche(%s), seamtech_texte_recherche(libelle)) > 0.3 ORDER BY 2 DESC LIMIT 3"),
+    ("bateau", "SELECT nom, similarity(seamtech_texte_recherche(%s), seamtech_texte_recherche(nom)) FROM bateau"
+               " WHERE similarity(seamtech_texte_recherche(%s), seamtech_texte_recherche(nom)) > 0.3 ORDER BY 2 DESC LIMIT 3"),
+    ("client", "SELECT nom, similarity(seamtech_texte_recherche(%s), seamtech_texte_recherche(nom)) FROM client"
+               " WHERE similarity(seamtech_texte_recherche(%s), seamtech_texte_recherche(nom)) > 0.3 ORDER BY 2 DESC LIMIT 3"),
+    ("matiere", "SELECT nom, similarity(seamtech_texte_recherche(%s), seamtech_texte_recherche(nom)) FROM materiau"
+                " WHERE similarity(seamtech_texte_recherche(%s), seamtech_texte_recherche(nom)) > 0.3 ORDER BY 2 DESC LIMIT 3"),
 )
 
 
@@ -1300,7 +1318,10 @@ def suggerer(index: Any, prefixe: str, limite: int = SUGGESTION_LIMITE_DEFAUT) -
             capacites = _capacites(cursor)
             vues: set[str] = set()
             suggestions: list[dict[str, str]] = []
-            motif = prefixe.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+            # Préfixe comparé sur la clé normalisée (casse/accents/ligatures),
+            # pas sur le texte affiché. Les valeurs renvoyées restent originales.
+            motif_norm = normaliser_cle_recherche(prefixe)
+            motif = motif_norm.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
 
             def _ajouter(nature: str, valeur: str | None) -> None:
                 if valeur is None or not valeur.strip():

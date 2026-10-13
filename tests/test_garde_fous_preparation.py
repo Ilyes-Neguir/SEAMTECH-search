@@ -222,6 +222,12 @@ EXCEPTIONS_RG14: dict[str, str] = {
         "de dépendance externe, jamais d'en créer une. Jamais importé par le service ; "
         "cible loopback. Documenté dans docs/DEPLOYMENT.md"
     ),
+    "scripts/qualification_native_controles.py": (
+        "client HTTP d'ESSAI d'installation native (outillage, jamais importé par "
+        "le service) : les CONTROLE PASS/FAIL prouvent le parcours réel via l'API "
+        "et le frontend publiés en processus hôtes — cible LOOPBACK uniquement "
+        "(127.0.0.1). Documenté dans PROCEDURE_NATIVE.md"
+    ),
 }
 
 DOCS_MARQUEURS_EXCEPTIONS = {
@@ -230,6 +236,7 @@ DOCS_MARQUEURS_EXCEPTIONS = {
     "scripts/audit_dependency_policy.py": "RG14_EXCEPTION",
     "scripts/recette_verif.py": "RG14_EXCEPTION",
     "scripts/verifier_hors_ligne.py": "RG14_EXCEPTION",
+    "scripts/qualification_native_controles.py": "RG14_EXCEPTION",
 }
 
 

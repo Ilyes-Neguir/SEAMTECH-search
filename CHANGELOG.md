@@ -1,5 +1,53 @@
 # Changelog
 
+## Unreleased — Qualification des réserves A–D (`arena/e7f33785-seamtech-search`)
+
+Complément à la recette historique (`3304b91`, PR #36) : ne réécrit aucun
+PASS/FAIL d'alors, ne signe aucun PV.
+
+- **A — normalisation générale de la recherche** (pas un cas « génois ») :
+  `normaliser_cle_recherche` (casse Unicode, diacritiques latin, NFC/NFD,
+  ligatures œ/ae/ß, espaces) et fonction SQL IMMUTABLE
+  `seamtech_texte_recherche` (migration `023_recherche_normalisee`, unaccent
+  2 arguments ou repli `translate`). Les deux opérandes trigrammes et les
+  suggestions passent par cette clé. Originaux inchangés. Preuve avant
+  (`defaut_observe: true` sur `8dd5ae7`) / après (`false`, mêmes IDs et
+  même ordre). Tests `test_normalisation_cle_recherche`,
+  `test_recherche_normalisation`.
+- **B — sauvegarde des pièces référencées** : `sauver --avec-references`
+  copie les `documents.path` locaux (l'import local n'impose pas S3) et
+  les objets déjà présents ; manquant → `complet=false` / exit 2.
+  Restauration vers base **neuve** et répertoire **distinct**, empreintes
+  vérifiées, originaux non relus. Verrou anti-chevauchement.
+- **C — OCR ingestion v5** : relais ocrmypdf puis pipeline tesseract.
+  **Non qualifié** ici (binaires absents) — pas un PASS.
+- **D — dossier** `deliverables/qualification-deploiement/` (statuts,
+  cible de référence non approuvée, protocole non signé, preuves JSON).
+
+Limites : pas MinIO, pas Windows, pas volume atelier, pas ICU. Voir
+`deliverables/qualification-deploiement/LIMITES.md`.
+
+Lot 2 (même PR, sans fusion) : chemins HTTP `/recherche` et `/search`,
+données pré-023 puis migration, 800 fiches synthétiques (p50 11,5 ms /
+p95 17,8 ms sandbox, **pas un SLA**). Lanceur
+`scripts/preparer_outillage_qualification.sh` : tessdata cloné, tesseract
+et MinIO bloqués sur le CDN GitHub Releases. Les quatre points ne sont
+**pas** présentés comme corrigés.
+
+Lot 3 : `sans_accents` ne déplie plus les ligatures (parité dédup SQL).
+`seamtech_texte_recherche` fixe `search_path`. Tests volume 2000, mutation,
+filtres, pagination, non-latin. Tests sauvegarde sans module pgserver.
+Workflow complémentaire `qualification-reserves.yml` (Tesseract apt +
+MinIO officiel depuis sources). Régression CI backend 3.13 (pgserver +
+œufs) corrigée.
+
+Lot 4 : CI `0665a68` n'était **pas** verte. Correctifs : inventaire S3
+(`test_sauvegarde_references` + `@pytest.mark.s3`) ; un document objet-only
+n'est plus un manquant local ; restore objet réécrit la clé d'origine ;
+OCR tesseract `fra+eng` si les paquets sont là ; parcours
+import→index→recherche→`/open` ; annotations junit sur qualification et
+sauvegarde. D reste hors Docker natif, non exécuté.
+
 ## Unreleased — Passe F1–F4 de la deuxième revue indépendante (`arena/7da80c2f-seamtech-search`, PR #35)
 
 - **F1 — échec fermé** : la correction et les trois décisions exigent une
