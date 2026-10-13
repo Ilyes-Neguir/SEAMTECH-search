@@ -27,7 +27,7 @@ from pathlib import Path
 
 import pytest
 
-pytestmark = [pytest.mark.postgres, pytest.mark.ocr_suite]
+pytestmark = [pytest.mark.ocr_suite]
 
 FIXTURES = Path(__file__).parent / "fixtures" / "ocr"
 

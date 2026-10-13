@@ -100,7 +100,7 @@ jobs:
           # `and not redis_queue` : les tests de file durable ont leur étape
           # dédiée (Redis réel exigé) — les exécuter ici les ferait sauter
           # silencieusement, et un test qui saute n'est pas un test.
-          pytest -q -rf -m "not postgres and not s3 and not perf and not redis_queue" 2>&1 | tee /tmp/sqlite.log
+          pytest -q -rf -m "not postgres and not s3 and not perf and not redis_queue and not ocr_suite" 2>&1 | tee /tmp/sqlite.log
           rc=${PIPESTATUS[0]}
           set -e
           if [ "$rc" -ne 0 ]; then
@@ -148,7 +148,7 @@ jobs:
           # avec MinIO réel — ici ils seraient sautés, et un saut fait
           # échouer cette porte.
           set +e
-          pytest -m "postgres and not perf and not sauvegarde and not redis_queue" -v -rf 2>&1 | tee /tmp/pg.log
+          pytest -m "postgres and not perf and not sauvegarde and not redis_queue and not ocr_suite" -v -rf 2>&1 | tee /tmp/pg.log
           rc=${PIPESTATUS[0]}
           set -e
           if [ "$rc" -ne 0 ]; then
