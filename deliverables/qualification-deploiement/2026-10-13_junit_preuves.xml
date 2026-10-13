@@ -2,10 +2,10 @@
 <!-- Synthèse documentaire générée manuellement depuis résultats exécutés, pas journal pytest brut.
      Chaque testcase référence run ID et commande source.
      Vrais journaux : /tmp/*.log, frontend/playwright-report/, sauvegarde-junit.xml, report-*.json -->
-<testsuite name="qualif-2026-10-13-5438b9e" tests="15" failures="0" errors="0" skipped="0" timestamp="2026-10-13T20:10:04Z">
+<testsuite name="qualif-2026-10-13-0bbad2d" tests="15" failures="0" errors="0" skipped="0" timestamp="2026-10-13T21:45:00Z">
   <properties>
     <property name="sha_code" value="5438b9e22d0a2d0e7bad58580db92fc016be9db7"/>
-    <property name="sha_final_docs" value="b6e48e40960de9b2c279d2e163882e51bb0df485"/>
+    <property name="sha_final_docs" value="0bbad2d338b661af20d6b6fff9ce2683902bb72a"/>
     <property name="branche" value="arena/c154b2fa-seamtech-search"/>
     <property name="python" value="3.11/3.12/3.13"/>
     <property name="node" value="22.22.3"/>
@@ -16,69 +16,70 @@
     <property name="minio" value="quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z"/>
     <property name="tesseract" value="5.x fra+eng + poppler-utils"/>
     <property name="playwright" value="Chromium"/>
-    <property name="nature" value="synthese documentaire depuis runs CI 38458818644, 38458818806, 38458818474, 38458818494, 38460911445"/>
+    <property name="nature" value="synthese documentaire depuis runs CI 38471404314, 38471404381, 38471404396, 38471404350, historique drag-drop 38468805294 fail, 38470099513 fail, 38471404314 success"/>
   </properties>
   <testcase classname="ci" name="backend (3.11)" time="180">
     <system-out>pytest -q -rf -m "not postgres and not s3 and not perf and not redis_queue and not ocr_suite" → 1104+ passed, 0 skipped
 pytest -m "postgres and not perf and not sauvegarde and not redis_queue and not ocr_suite" → 278 passed, 0 skipped
 ruff check . → All checks passed
 pnpm exec tsc --noEmit → OK
-Run 38458818644 job 115508339412 success, Run 38460911445 job 115515519827 success</system-out>
+Run 38471404314 job backend 3.11 success</system-out>
   </testcase>
   <testcase classname="ci" name="backend (3.12)" time="180">
-    <system-out>Identique 3.11 + garde-fou dimension ROUGE→VERT (exclure=frozenset() → rouge, restauration vert), cotes ROUGE→VERT (avec_cotes_page=True → rouge), dédup ROUGE→VERT (p.empreinte_sha256 → 'x'||'' → rouge), attribution ROUGE→VERT (return identifiant → return "premier" → rouge)
-Run 38458818644 job 115508339488 success
+    <system-out>Identique 3.11 + garde-fou dimension ROUGE→VERT, cotes ROUGE→VERT, dédup ROUGE→VERT, attribution ROUGE→VERT
+Run 38471404314 job backend 3.12 success
 perf p50 6-13ms p95 8-42ms</system-out>
   </testcase>
   <testcase classname="ci" name="backend (3.13)" time="180">
-    <system-out>Identique, Run 38458818644 job 115508339604 success</system-out>
+    <system-out>Identique, Run 38471404314 job backend 3.13 success</system-out>
   </testcase>
   <testcase classname="ci" name="frontend" time="60">
-    <system-out>pnpm install --frozen-lockfile, tsc --noEmit (import * as os from "os" fix), audit --prod, build → Compiled successfully Next.js 16.3.8
-Run 38458818644 job 115508339584 success</system-out>
+    <system-out>pnpm install --frozen-lockfile, tsc --noEmit (import-panel data-testid drop-zone), audit --prod, build → Compiled successfully Next.js 16.3.8
+Run 38471404314 job frontend success</system-out>
   </testcase>
   <testcase classname="ci" name="docker" time="90">
     <system-out>docker build -t seamtech-search:ci (tesseract-ocr-eng ajouté), frontend, smoke /live → success, tesseract --list-langs fra+eng présent
-Run 38458818644 job 115508339530 success</system-out>
+Run 38471404314 job docker success</system-out>
   </testcase>
   <testcase classname="ci" name="e2e - selection fichier" time="120">
     <system-out>frontend/e2e/scan-browser-ocr.spec.ts test "par sélection fichier (setInputFiles)" : setInputFiles(pdfPath) → fichiers prêts à envoyer → Envoyer et analyser → Fichiers détectés → Choisir PDF technique → Importer → État completed|needs_review → recherche ZEPHYRINE_ÉLÉGANCE_42 (hors métadonnées, PDF image-only pdfplumber 0) → Télécharger PDF source → SHA original==téléchargé attaché preuve-sha méthode setInputFiles
-Run 38458818644 job 115508339473 success</system-out>
+Run 38471404314 job e2e success (115551...)</system-out>
   </testcase>
   <testcase classname="ci" name="e2e - drag-drop reel" time="120">
-    <system-out>frontend/e2e/scan-browser-ocr.spec.ts test "par véritable glisser-déposer (dragenter/dragover/drop)" : helper dragDropFileViaEvents : Node fs.readFileSync → base64 → page.evaluate → File([Uint8Array], name, type pdf) + DataTransfer + items.add(file) + dispatch dragenter/dragover/drop sur div:has-text("déposez ici") → fichiers prêts → Envoyer et analyser → Fichiers détectés → Choisir PDF → Importer → État completed|needs_review → recherche GENOA (scan-en, hors métadonnées) → SHA attaché preuve-sha-dragdrop méthode dragenter/dragover/drop via DataTransfer
-Preuve geste réel, pas équivalence supposée. Run 38458818644 job 115508339473 success (après correction)</system-out>
+    <system-out>frontend/e2e/scan-browser-ocr.spec.ts test "par véritable glisser-déposer (dragenter/dragover/drop)" : helper dragDropFileViaEvents : Node fs.readFileSync → base64 → page.evaluate → File([Uint8Array], name, type pdf) + new DataTransfer(); dt.items.add(file) natif + dropEffect copy + dispatch dragenter/dragover/drop sur [data-testid="drop-zone"] (ImportPanel) + fallback texte, attente 1500ms pour filesFromDrop async → fichiers prêts → Envoyer et analyser → Fichiers détectés → Choisir PDF → Importer → État completed|needs_review → recherche GENOA (scan-en, hors métadonnées) → SHA attaché preuve-sha-dragdrop méthode dragenter/dragover/drop via DataTransfer
+Historique : 6eaa714 fix selector :has-text invalide → 38468805294 fail getByText not found, 5fd668f mock webkitGetAsEntry → 38470099513 fail, 0bbad2d DataTransfer natif → 38471404314 e2e success
+Preuve geste réel, pas équivalence supposée. Run 38471404314 job e2e success</system-out>
   </testcase>
   <testcase classname="ci" name="e2e - PDF invalide contrat echec signale pas fiche inventee" time="60">
     <system-out>frontend/e2e/scan-browser-ocr.spec.ts test "PDF invalide — contrat : échec signalé, pas de fiche inventée" : upload invalid.pdf (ceci n'est pas un pdf) → attend p.text-destructive OU Fichiers détectés OU Aucun PDF technique (pas texte générique État seul) → si Fichiers détectés → Import → vérifie État failed|needs_review (valeur, pas présence) + message warning/error non vide → recherche terme unique INVALIDE_sha8 → 0 résultats ou result-item ne contient pas terme → absence faux texte inventé
-Run 38458818644 job 115508339473 success (après correction)</system-out>
+Run 38471404314 job e2e success</system-out>
   </testcase>
   <testcase classname="ci" name="e2e - PDF blanc contrat conserve sans extraction pas faux texte" time="60">
     <system-out>frontend/e2e/scan-browser-ocr.spec.ts test "fichier sans texte exploitable — contrat : conservé sans extraction, pas de faux texte" : gen blank.png white → blank.pdf via reportlab → upload → attend Fichiers détectés (pas générique État seul) → Import → État needs_review|failed pas completed avec extraction réussie → vérifie À vérifier visible ou absence Données extraites → recherche BLANC_SANS_TEXTE_9999 → 0 ou sans contenu inventé → distingue conservation fichier sans extraction vs extraction réussie
-Run 38458818644 job 115508339473 success (après correction)</system-out>
+Run 38471404314 job e2e success</system-out>
   </testcase>
   <testcase classname="ci" name="ocr" time="60">
-    <system-out>pytest -m ocr_suite -v → success, taux propre 1.000 dégradé 0.955, fixtures ocr_propre/degrade, inventaire, pipeline, garde-fou OCR étage 3 ROUGE→VERT (doit_oceriser_page forcé True → rouge assertion)
-Run 38458818644 job 115508339489 success</system-out>
+    <system-out>pytest -m ocr_suite -v → success, taux propre 1.000 dégradé 0.955, fixtures ocr_propre/degrade, inventaire, pipeline, garde-fou OCR étage 3 ROUGE→VERT
+Run 38471404314 job ocr success</system-out>
   </testcase>
   <testcase classname="ci" name="sauvegarde" time="120">
     <system-out>pytest -m sauvegarde -v --junitxml=sauvegarde-junit.xml → ≥19 passed, 0 skipped, collectés==exécutés, notices restauration 50k fiches, dump octets, archive fichiers, vérifiée après envoi, cibles distinctes …_obj et …_restauree, sources indisponibles, SHA, corrompue, reprise worker
-Run 38458818644 job 115508339048 success</system-out>
+Run 38471404314 job sauvegarde success</system-out>
   </testcase>
   <testcase classname="ci" name="hors-ligne-reel" time="300">
-    <system-out>Compte seamtech-app, iptables SEAMTECH_HORS_LIGNE + ip6tables SEAMTECH_HORS_LIGNE6 --uid-owner, contrôle négatif DNS ahostsv4 example.com depuis compte + adresse littérale --noproxy + compteur REJECT doit augmenter (empreinte règle), contrôle négatif IPv6 route globale ? ip6tables + curl [2606:4700:4700::1111] littéral, sinon preuve absence route, contrôle positif /health, iptables -Z après contrôles, e2e/hors-ligne.spec.ts SEAMTECH_E2E_HORS_LIGNE=1 SEAMTECH_E2E_DATABASE_URL="", relevé final 0 paquet rejeté, requetesExternes == []
-Run 38458818644 job 115508339660 success</system-out>
+    <system-out>Compte seamtech-app, iptables SEAMTECH_HORS_LIGNE + ip6tables SEAMTECH_HORS_LIGNE6 --uid-owner, contrôle négatif DNS ahostsv4 example.com depuis compte + adresse littérale --noproxy + compteur REJECT doit augmenter (empreinte règle), contrôle négatif IPv6, contrôle positif /health, iptables -Z après contrôles, e2e/hors-ligne.spec.ts SEAMTECH_E2E_HORS_LIGNE=1, relevé final 0 paquet rejeté, requetesExternes == []
+Run 38471404314 job hors-ligne-reel success</system-out>
   </testcase>
   <testcase classname="ci" name="integration" time="300">
     <system-out>Compose infra postgres+redis+minio (reconstruit), provisionner identités restreintes, boot web+frontend healthy /api/health, volumes data/logs chown uid/gid applicatif preuve écriture conteneur, pytest -m integration_docker -v SEAMTECH_INTEGRATION_STRICT=1
-Run 38458818644 job 115508339504 success</system-out>
+Run 38471404314 job integration success</system-out>
   </testcase>
   <testcase classname="ci" name="recette-corpus-reel" time="600">
     <system-out>7 ZIP REF-001..007 RG13 SHA avant/après, extraction guarded, pytest -m recette_corpus -v : migrations 001..017, import flux réel upload/scan/confirm, classement auto, OCR étages, recherches mots-clés, ouverture PDF téléchargeable 200 SHA identique, rapport PDF, sauvegarde/restauration base neuve
-Run 38458818644 job 115508339370 success</system-out>
+Run 38471404314 job recette-corpus-reel success</system-out>
   </testcase>
   <testcase classname="ci" name="qualification-reserves" time="240">
     <system-out>74 tests, 0 skipped, 0 failures, 0 errors, parité IDs+ordre, GET /recherche et /search mêmes IDs, avant/après 023, données pré-023, mutation UPDATE, filtres/pagination/arabe, volume 800/2000 indicatif, dédup, locaux manquants, restore distincts, objets MinIO sources coupées, OCR fixtures, crawl→upsert→search→open, scan anglais, recherche hybride RRF double vote
-Run 38458818806 success, Run 38460911471 success</system-out>
+Run 38471404381 success, Run 38471404396 native success, Run 38471404350 perf success</system-out>
   </testcase>
 </testsuite>

@@ -1,8 +1,13 @@
-# Défauts et corrections — 2026-10-13 — SHA 5438b9e → b6e48e4
+# Défauts et corrections — 2026-10-13 — SHA 5438b9e → 0bbad2d
 
 **SHA code fonctionnel : `5438b9e22d0a2d0e7bad58580db92fc016be9db7`**
-**SHA final avec livrables : `b6e48e40960de9b2c279d2e163882e51bb0df485`**
-**CI verte : `38458818644` (CI), `38458818806` (reserves), `38458818474` (native), `38458818494` (perf) — puis `38460911445` avec docs**
+**SHA final avec livrables : `0bbad2d338b661af20d6b6fff9ce2683902bb72a`**
+**CI verte : `38471404314` (CI), `38471404381` (reserves), `38471404396` (native), `38471404350` (perf) — drag-drop fix natif**
+
+**Journal drag-drop :**
+- `6eaa714` fix selector `:has-text` invalide pour querySelector → CI `38468805294` e2e fail `getByText(/fichier.*prêt.*envoyer/) not found`
+- `5fd668f` mock webkitGetAsEntry → CI `38470099513` même échec (items mock ne déclenche pas filesFromDrop)
+- `0bbad2d` DataTransfer natif `items.add(file)` + `data-testid="drop-zone"` → CI `38471404314` e2e success
 
 ## Catégorisation (revue 2026-10-13)
 
@@ -93,18 +98,21 @@ Les 7 premiers défauts mêlaient ces catégories. La revue demande de les sépa
 ## Défaut #8 — [Harnais] setInputFiles n'est pas preuve de glisser-déposer réel (écart explicite revue)
 
 - **Fichier :** `frontend/e2e/scan-browser-ocr.spec.ts` — ancien commentaire "Drag-drop réel : input[type=file] setInputFiles déclenche même logique"
-- **Catégorie :** Harnais (preuve demandée)
+- **Catégorie :** Harnais (preuve demandée) + Produit (data-testid manquant)
 - **Écart relevé revue :** `setInputFiles` teste sélection fichier et suite import, ne démontre pas que les événements `dragEnter`, `dragOver`, `drop` et leur traitement fonctionnent. L'équivalence supposée de logique interne n'est pas preuve d'un geste exécuté.
 - **Ce que le rapport étayait avant :** dépôt par sélection fichier → OCR → recherche → téléchargement SHA
 - **Ce qu'il ne démontrait pas :** même parcours démarré par véritable glisser-déposer
-- **Correction ciblée :**
+- **Corrections ciblées successives :**
+  - `6eaa714` : remplace `querySelector('div:has-text(...)')` invalide (SyntaxError) par `Array.from(div).find(textContent includes)`
+  - `5fd668f` : mock `DataTransfer.items` avec `webkitGetAsEntry` retournant `FileEntry {isFile:true,file:cb=>cb(file)}` + `files [file]`, attente 1000ms
+  - `0bbad2d` (final) : utilise `DataTransfer` natif `new DataTransfer(); dt.items.add(file)` + `dropEffect=copy`, `data-testid="drop-zone"` ajouté dans `ImportPanel`, helper dispatch `dragenter/dragover/drop` sur zone test-id, attente 1500ms pour `filesFromDrop` async
   - Conserve test `setInputFiles` comme preuve de sélection fichier, renommé "par sélection fichier (setInputFiles)"
-  - Ajoute nouveau test "par véritable glisser-déposer (dragenter/dragover/drop)" utilisant `dragDropFileViaEvents` :
-    - Helper lit fichier en base64 Node, puis `page.evaluate` crée `File([Uint8Array], name, {type: 'application/pdf'})`, `DataTransfer`, `dataTransfer.items.add(file)`, dispatch `dragenter`, `dragover`, `drop` sur `div:has-text("déposez ici un dossier de référence")`
-    - Attend `fichiers prêts à envoyer` + fileName, puis même flux : `Envoyer et analyser` → `Fichiers détectés` → `Choisir le PDF technique` → `Importer les fichiers sélectionnés` → statut terminal `completed|needs_review` → recherche `GENOA` → téléchargement SHA-256 identique, attach `preuve-sha-dragdrop` avec méthode `dragenter/dragover/drop via DataTransfer`
-  - Ne présente plus équivalence supposée comme preuve de geste
-- **Rejeu :** tsc OK, ruff OK, à rejouer en CI e2e (doit être vert)
-- **Statut :** CORRIGÉ ET TESTÉ (harnais) — à valider CI
+  - Nouveau test "par véritable glisser-déposer (dragenter/dragover/drop)" : base64 Node → `page.evaluate` → `File([Uint8Array])` → `DataTransfer` natif → dispatch, attend `fichiers prêts à envoyer` + fileName, puis même flux : `Envoyer et analyser` → `Fichiers détectés` → `Choisir le PDF technique` → `Importer les fichiers sélectionnés` → statut terminal `completed|needs_review` → recherche `GENOA` → téléchargement SHA-256 identique, attach `preuve-sha-dragdrop` méthode `dragenter/dragover/drop via DataTransfer`
+- **Rejeu :**
+  - `6eaa714` CI `38468805294` e2e fail `getByText(/fichier.*prêt.*envoyer/) not found` (filesFromDrop n'avait pas vu fichiers)
+  - `5fd668f` CI `38470099513` même fail (mock items ne déclenche pas branche native)
+  - `0bbad2d` CI `38471404314` e2e success, tous jobs success (backend 3.11/3.12/3.13, frontend, docker, ocr, sauvegarde, integration, hors-ligne, recette, reserves, native, perf)
+- **Statut :** CORRIGÉ ET TESTÉ (produit+harnais) — CI verte `38471404314`
 
 ## Défaut #9 — [Harnais] PDF blanc et PDF invalide — assertions génériques "État", "Fichiers détectés", "Choisir le PDF" ne prouvent pas échec ni absence faux succès
 
@@ -119,8 +127,8 @@ Les 7 premiers défauts mêlaient ces catégories. La revue demande de les sépa
   - **Blanc** : attend `Fichiers détectés dans` (pas générique seul), clique Import → vérifie `État :` = `needs_review|failed` (pas completed), vérifie au moins un champ "À vérifier" ou absence "Données extraites", puis recherche `BLANC_SANS_TEXTE_9999` → 0 résultats ou sans contenu inventé
   - Supprime assertions pouvant réussir sur textes génériques seuls ("État" sans valeur, "Fichiers détectés" comme preuve d'échec)
   - Si produit conserve blanc sans extraction, teste ce comportement explicitement au lieu de qualifier artificiellement d'échec ou succès OCR
-- **Rejeu :** tsc OK, à rejouer CI
-- **Statut :** CORRIGÉ ET TESTÉ (harnais) — à valider CI
+- **Rejeu :** tsc OK, CI `38471404314` e2e success, tests "PDF invalide" et "sans texte exploitable" verts
+- **Statut :** CORRIGÉ ET TESTÉ (harnais) — CI verte `38471404314`
 
 ## Défauts antérieurs déjà corrigés (référence, catégorie Produit)
 
@@ -135,6 +143,7 @@ Les 7 premiers défauts mêlaient ces catégories. La revue demande de les sépa
 - **JUnit synthèse 13 contrôles** : fichier `2026-10-13_junit_preuves.xml` est **synthèse documentaire** générée manuellement depuis résultats exécutés (pas un journal pytest brut). Chaque testcase référence run ID et commande source (ex. `Run 38458818644 job 115508339412 success`). Les vrais journaux pytest sont dans `/tmp/*.log` et artifacts Playwright. Le fichier est nommé comme synthèse et relié aux preuves d'exécution sources dans `2026-10-13_preuves.md`.
 - **Corrections séparées** : #1, #4, #5, #6, #7, #8, #9 = Harnais ; #2 = Environnement/Harnais ; #3 = Environnement (image produit)
 
-## Non-régressions vérifiées (sur 5438b9e, à reconfirmer sur nouveau SHA)
+## Non-régressions vérifiées (sur 0bbad2d, CI 38471404314)
 
-- backend 3.11/3.12/3.13 success, frontend success, docker success, e2e success (avant correction drag-drop), ocr success, sauvegarde success, recette-corpus-reel success, recette-locale success, integration success, hors-ligne-reel success, securite-dependances success, Qualification native/reserves success, Perf comparaison success
+- backend 3.11 success, 3.12 success, 3.13 success, frontend success, docker success, e2e success (après fix drag-drop natif), ocr success, sauvegarde success, recette-corpus-reel success, recette-locale success, integration success, hors-ligne-reel success, securite-dependances success, Qualification native `38471404396` success, reserves `38471404381` success, Perf comparaison `38471404350` success
+- Tous jobs verts sur 0bbad2d, 0 ÉCHEC NON RÉSOLU dans périmètre testé
