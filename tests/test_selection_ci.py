@@ -106,9 +106,9 @@ CATEGORIES = ("postgres", "s3", "perf", "sauvegarde")
 
 #: Commandes de sélection attendues dans le workflow (contrat explicite : si
 #: quelqu'un les rétrograde vers `-k`, ce test devient rouge).
-COMMANDE_SUITE_SANS_SERVICE = 'pytest -q -rf -m "not postgres and not s3 and not perf and not redis_queue"'
+COMMANDE_SUITE_SANS_SERVICE = 'pytest -q -rf -m "not postgres and not s3 and not perf and not redis_queue and not ocr_suite"'
 COMMANDE_COUVERTURE = 'pytest -m "not s3 and not perf"'
-COMMANDE_POSTGRES = 'pytest -m "postgres and not perf and not sauvegarde and not redis_queue"'
+COMMANDE_POSTGRES = 'pytest -m "postgres and not perf and not sauvegarde and not redis_queue and not ocr_suite"'
 #: File durable (Lot « imports durables ») : Redis réel + worker réel. Marquée
 #: à part pour que sa CI ne puisse pas être verte par simple SKIP.
 COMMANDE_FILE_DURABLE = 'pytest -m "redis_queue" -v -rf'

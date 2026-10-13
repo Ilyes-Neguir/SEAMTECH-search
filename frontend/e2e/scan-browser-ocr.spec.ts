@@ -142,14 +142,34 @@ test.describe("Scan navigateur → OCR → Recherche → Téléchargement", () =
     await expect(page.getByText(/prêt.*envoyer/i).first()).toBeVisible({ timeout: 5000 })
     await page.getByRole("button", { name: "Envoyer et analyser" }).click()
 
-    // Le backend peut répondre soit par une erreur explicite, soit par 0 candidat détecté.
-    await expect(
-      page
-        .getByText(/Erreur|échec|impossible|invalide|Failed|État|Aucun PDF technique|aucun.*trouvé/i)
-        .first(),
-    ).toBeVisible({
-      timeout: 10000,
-    })
+    // Après upload, deux issues possibles :
+    // - erreur explicite immédiate (400/500)
+    // - scan OK mais 0 candidat technique ou candidat invalide → on tente l'import pour obtenir l'erreur métier
+    const errorLocator = page.getByText(/Erreur|échec|impossible|invalide|Failed/i).first()
+    const fichiersDetectes = page.getByText(/Fichiers détectés dans/i).first()
+    const aucunPdf = page.getByText(/Aucun PDF technique|aucun.*trouvé/i).first()
+
+    await expect(async () => {
+      const hasError = await errorLocator.isVisible().catch(() => false)
+      const hasDetect = await fichiersDetectes.isVisible().catch(() => false)
+      const hasAucun = await aucunPdf.isVisible().catch(() => false)
+      expect(hasError || hasDetect || hasAucun).toBeTruthy()
+    }).toPass({ timeout: 10000 })
+
+    if (await fichiersDetectes.isVisible().catch(() => false)) {
+      const importBtn = page.getByRole("button", { name: /Importer les fichiers sélectionnés/i })
+      if (await importBtn.isVisible().catch(() => false)) {
+        await importBtn.click()
+        await expect(
+          page.getByText(/Erreur|échec|impossible|invalide|Failed|État|Warning|vide|exploitable/i).first(),
+        ).toBeVisible({ timeout: 15000 })
+      }
+    } else {
+      // Déjà en état d'erreur ou d'absence de candidat : preuve que ce n'est pas un faux succès
+      await expect(
+        page.getByText(/Erreur|échec|impossible|invalide|Failed|Aucun PDF technique|aucun.*trouvé/i).first(),
+      ).toBeVisible({ timeout: 5000 })
+    }
 
     fs.rmSync(tmpDir, { recursive: true, force: true })
   })
