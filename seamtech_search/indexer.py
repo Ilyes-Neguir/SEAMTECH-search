@@ -1903,9 +1903,18 @@ class SearchIndex:
 
     def _search_postgres(self, clean_query: str, limit: int, offset: int) -> list[dict[str, Any]]:
         like_query = f"%{clean_query}%"
+        # Même clé que GET /recherche (casse / diacritiques / ligatures) : le
+        # tsvector `seamtech_unaccent` plie déjà les accents, pas œ/æ.
+        from seamtech_search.fiches.normalisation import normaliser_cle_recherche
+
+        requete_pliem = normaliser_cle_recherche(clean_query) or clean_query
         # Build prefix-matching OR query for Postgres to match SQLite semantics (4.1)
         # e.g. "voile bleue" -> "voile:* | bleue:*" with rank boost for all terms
-        terms = [t for t in re.findall(r"[\w]+", clean_query, flags=re.UNICODE) if t.upper() not in {"AND", "OR", "NOT"}]
+        terms = [
+            t
+            for t in re.findall(r"[\w]+", requete_pliem, flags=re.UNICODE)
+            if t.upper() not in {"AND", "OR", "NOT"}
+        ]
         if not terms:
             return []
         # OR with prefix — avoid backslash in f-string expression

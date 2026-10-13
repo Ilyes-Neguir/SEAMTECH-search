@@ -15,5 +15,8 @@ le 2026-10-13, à partir du commit de départ
 | [PREUVES.md](PREUVES.md) | Commandes, identifiants, comptes de tests |
 | [preuves/](preuves/) | JSON bruts (A-03 avant/après, environnement) |
 
+Les quatre réserves **ne sont pas** présentées comme corrigées. PR #37
+conservée, non fusionnée.
+
 La recette historique n'est pas rejouée ici. Un FAIL d'alors n'est pas
 transformé en PASS.

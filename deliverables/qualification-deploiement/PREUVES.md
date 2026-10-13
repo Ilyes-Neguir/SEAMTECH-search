@@ -3,6 +3,7 @@
 Environnement : voir `preuves/environnement.json`.
 
 Commit de départ : `8dd5ae7340a0eb1023bd73ef5d884c4538efbc09`.
+Commit applicatif PR #37 (lot 1) : `be0f6d2e170145a8491ebf065ef2f464fd639a63`.
 Branche de session : `arena/e7f33785-seamtech-search`.
 
 ## Commandes
@@ -36,6 +37,20 @@ pytest tests/test_normalisation_cle_recherche.py \
 | OCR qualification | **4 skipped** — tesseract absent (motif explicite) |
 | `test_sauvegarde_restauration` historique | 3 failed — harnais DSN socket, **non reclôturé** |
 | `test_migrations_metier` | erreurs de connexion DSN socket, **non reclôturé** |
+
+## Lot 2 (chemins réels, volume, outillage)
+
+```text
+pytest tests/test_qualification_chemins_volume.py
+bash scripts/preparer_outillage_qualification.sh
+```
+
+- Volume : 800 fiches synthétiques, parité d’identifiants, GET /recherche + GET /search.
+  Mesure : p50 **11,5 ms**, p95 **17,8 ms**, max 20,3 ms (n=40) — indicatif
+  sandbox, fichier `preuves/volume-800.json`. Pas un PASS atelier.
+- Migration 022 → 023 sur données déjà écrites (titres inchangés).
+- tessdata_fast cloné (fra/eng/osd). tesseract/MinIO Releases : CDN bloqué
+  (`release-assets.githubusercontent.com`). 4 tests OCR skipped.
 
 Le champ `phase` des JSON A-03 reste libellé `avant_correction` (script
 de reproduction unique) : se fier à `defaut_observe` et à l'ordre des

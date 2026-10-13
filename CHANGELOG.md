@@ -27,6 +27,13 @@ PASS/FAIL d'alors, ne signe aucun PV.
 Limites : pas MinIO, pas Windows, pas volume atelier, pas ICU. Voir
 `deliverables/qualification-deploiement/LIMITES.md`.
 
+Lot 2 (même PR, sans fusion) : chemins HTTP `/recherche` et `/search`,
+données pré-023 puis migration, 800 fiches synthétiques (p50 11,5 ms /
+p95 17,8 ms sandbox, **pas un SLA**). Lanceur
+`scripts/preparer_outillage_qualification.sh` : tessdata cloné, tesseract
+et MinIO bloqués sur le CDN GitHub Releases. Les quatre points ne sont
+**pas** présentés comme corrigés.
+
 ## Unreleased — Passe F1–F4 de la deuxième revue indépendante (`arena/7da80c2f-seamtech-search`, PR #35)
 
 - **F1 — échec fermé** : la correction et les trois décisions exigent une
