@@ -21,9 +21,13 @@ function generatePdfViaPython(tmpDir: string, variant: string, uniqueTerm?: stri
 }
 
 function uniqueTerm(prefix: string): string {
+  // OCR lit mal underscore et tiret → on utilise uniquement lettres majuscules + chiffres, sans séparateur
+  // Ex: ZEPHYRINEA1B2C3D4E5 (prefix + 8 hex)
   const hex = crypto.randomBytes(4).toString("hex").toUpperCase()
-  // Terme unique par exécution, absent nom fichier/métadonnées, lisible OCR (sans accents pour robustesse, mais on garde un mot accentué fixe à côté)
-  return `${prefix}_${hex}_${Date.now().toString().slice(-5)}`
+  const suffix = Date.now().toString().slice(-4)
+  // Nettoie prefix pour garder seulement lettres/chiffres majuscules
+  const cleanPrefix = prefix.replace(/[^A-Z0-9]/gi, "").toUpperCase().slice(0, 10)
+  return `${cleanPrefix}${hex}${suffix}`
 }
 
 /**
@@ -176,10 +180,10 @@ test.describe("Scan navigateur → OCR → Recherche → Téléchargement", () =
     // Selon structure, data peut être dans payload.data ou directement
     const data = payloadObj.data || payloadObj.result?.data || importGetJson.data || {}
     const rawText = (data.raw_text || payloadObj.raw_text || "") as string
-    console.log(`raw_text length=${rawText.length} contains uniq=${rawText.includes(uniq)}`)
+    console.log(`raw_text length=${rawText.length} norm contains uniq=${rawText.replace(/[^A-Z0-9]/gi, "").toUpperCase().includes(uniq.replace(/[^A-Z0-9]/gi, "").toUpperCase())} uniq=${uniq}`)
     // Si raw_text vide (cas needs_review), on vérifie au moins que le fichier est listé et que statut n'est pas failed
     if (rawText) {
-      expect(rawText).toContain(uniq)
+      expect(rawText.replace(/[^A-Z0-9]/gi, "").toUpperCase()).toContain(uniq.replace(/[^A-Z0-9]/gi, "").toUpperCase())
     } else {
       // Fallback : vérifier que le document a bien été indexé via search API
       console.log(`raw_text vide, vérification via search API pour ${uniq}`)
@@ -359,9 +363,9 @@ test.describe("Scan navigateur → OCR → Recherche → Téléchargement", () =
     }
     const data = payloadObj.data || payloadObj.result?.data || importGetJson.data || {}
     const rawText = (data.raw_text || payloadObj.raw_text || "") as string
-    console.log(`drag-drop raw_text length=${rawText.length} contains uniq=${rawText.includes(uniq)}`)
+    console.log(`drag-drop raw_text length=${rawText.length} norm contains uniq=${rawText.replace(/[^A-Z0-9]/gi, "").toUpperCase().includes(uniq.replace(/[^A-Z0-9]/gi, "").toUpperCase())} uniq=${uniq}`)
     if (rawText) {
-      expect(rawText).toContain(uniq)
+      expect(rawText.replace(/[^A-Z0-9]/gi, "").toUpperCase()).toContain(uniq.replace(/[^A-Z0-9]/gi, "").toUpperCase())
     }
 
     const searchInput = page.getByPlaceholder(/Rechercher/i).first()
