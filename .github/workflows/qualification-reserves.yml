@@ -75,6 +75,7 @@ jobs:
       - name: Tests qualification (A volume, B objets, C OCR)
         env:
           SEAMTECH_OCR_OBLIGATOIRE: "1"
+          SEAMTECH_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -uo pipefail
           set +e
@@ -86,51 +87,42 @@ jobs:
             tests/test_ocr_qualification.py \
             tests/test_ocr_parcours_qualification.py \
             tests/test_extractors.py \
+            tests/test_qualification_junit.py \
             | tee qualification-reserves.log
           rc=${PIPESTATUS[0]}
+          python scripts/qualification_junit.py qualification-junit.xml
+          junit_rc=$?
           set -e
-          python - <<'PY'
-          import xml.etree.ElementTree as ET
-          from pathlib import Path
-          p = Path("qualification-junit.xml")
-          if not p.is_file():
-              print("::error title=qualification-junit-absent::pas de junitxml")
-              raise SystemExit(0)
-          racine = ET.parse(p).getroot()
-          suite = racine if racine.tag == "testsuite" else racine.find("testsuite")
-          tests = int((suite or racine).get("tests") or 0)
-          skipped = int((suite or racine).get("skipped") or 0)
-          failures = int((suite or racine).get("failures") or 0)
-          errors = int((suite or racine).get("errors") or 0)
-          print(f"::notice title=qualification-summary::tests={tests} skipped={skipped} failures={failures} errors={errors}")
-          for case in racine.iter("testcase"):
-              nom = f"{case.get('classname')}::{case.get('name')}"
-              fail = case.find("failure")
-              err = case.find("error")
-              skip = case.find("skipped")
-              if fail is not None:
-                  msg = (fail.get("message") or fail.text or "")[:400]
-                  print(f"::error title=qualification-failed::{nom} {msg}")
-              elif err is not None:
-                  msg = (err.get("message") or err.text or "")[:400]
-                  print(f"::error title=qualification-error::{nom} {msg}")
-              elif skip is not None:
-                  msg = (skip.get("message") or skip.text or "")[:200]
-                  print(f"::warning title=qualification-skipped::{nom} {msg}")
-          PY
+          if [ "$junit_rc" -ne 0 ]; then
+            echo "::error title=qualification-junit-exit::garde-fou JUnit rc=$junit_rc (pytest rc=$rc) — skipped/absent/critique non masqué"
+            if [ "$rc" -ne 0 ]; then
+              echo "::error title=qualification-log::$(grep -E '^(FAILED|ERROR)' qualification-reserves.log | head -25 | tr -d '\\000-\\010\\013\\014\\016-\\037' | tr '\\n' ';' | head -c 1500)"
+              exit "$rc"
+            fi
+            exit "$junit_rc"
+          fi
           if [ "$rc" -ne 0 ]; then
             echo "::error title=qualification-log::$(grep -E '^(FAILED|ERROR)' qualification-reserves.log | head -25 | tr -d '\\000-\\010\\013\\014\\016-\\037' | tr '\\n' ';' | head -c 1500)"
             exit "$rc"
           fi
       - name: Consigner l'identité
         if: always()
+        env:
+          SEAMTECH_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           python - <<'PY'
           import json, os, platform, subprocess, shutil
           from pathlib import Path
+          try:
+              git_head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          except Exception:
+              git_head = ""
           ident = {
             "preuve_id": os.environ.get("GITHUB_RUN_ID", "local"),
-            "commit": os.environ.get("GITHUB_SHA", ""),
+            "git_head": git_head,
+            "github_sha": os.environ.get("GITHUB_SHA", ""),
+            "pr_head_sha": os.environ.get("SEAMTECH_PR_HEAD_SHA") or None,
+            "event": os.environ.get("GITHUB_EVENT_NAME", ""),
             "ref": os.environ.get("GITHUB_REF", ""),
             "python": platform.python_version(),
             "platform": platform.platform(),
@@ -138,6 +130,11 @@ jobs:
           }
           Path("qualification-identite.json").write_text(json.dumps(ident, indent=2), encoding="utf-8")
           print(json.dumps(ident, indent=2))
+          print(
+              f"::notice title=qualification-identite::git_head={git_head} "
+              f"github_sha={ident['github_sha']} event={ident['event']} "
+              f"pr_head_sha={ident['pr_head_sha'] or '(push: N/A)'}"
+          )
           PY
       - uses: actions/upload-artifact@v4
         if: always()
