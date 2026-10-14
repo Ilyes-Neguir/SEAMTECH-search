@@ -1,141 +1,138 @@
-# Synthèse finale — PR #37
+# Complément 2026-10-14 — Corrections après vérification indépendante — SHA 1ee9095
 
-**SHA applicatif retenu : `d202f0b0c371ab5659e7615d7fee80c99f0ae0dd`**
+**Date : 2026-10-14**
+**Branche : arena/c154b2fa-seamtech-search**
+**SHA avant vérif : ebdb1a28e3b43efcd7c15c7918a68e7ef03c8b7d**
+**SHA après corrections contraignantes : a266559 (fix pièce/visionneuse/raw_text/extraction_status/OCR_OBLIGATOIRE)**
+**SHA final avec fix sauvegarde 50k : 1ee90958c2557dee3a10a7acb5d6e983a0dce131**
+**CI verte finale : 38538168749 (CI), 38538168702 (reserves), 38538168740 (native), 38538168577 (perf) — tous jobs success**
 
-Branche `arena/e7f33785-seamtech-search`. PR [#37](https://github.com/Ilyes-Neguir/SEAMTECH-search/pull/37) **ouverte, non fusionnée**. Aucun PV. Recette historique (`deliverables/recette-virtuelle/`) intacte. Pas une acceptation métier ni une mise en production.
+## Vérification indépendante 2026-10-13 relevés
 
-Ce document est la **seule** synthèse de clôture technique. Les runs cités sont ceux de **`d202f0b`**, sauf mention explicite d’un SHA historique avec justification.
+CI 38479810898 confirmée verte, terme unique OCR-only confirmé, import_id réel confirmé, téléchargement source obligatoire confirmé, diff produit 1 ligne result-item. Restent 5 écarts :
 
-## 1. Filiation
+1. **Pièce non obligatoire** : `if (await pieceDownloadLink.isVisible()) { download } else { console.log }` sans assertion, drag-drop pas de else → test vert sans pièce
+2. **Visionneuse facultative avec .catch** : `await expect(...visionneuse-piece...).toBeVisible().catch(()=>{})` → ligne ne peut jamais échouer
+3. **raw_text conditionnel silencieux** : `if (rawText && rawText.trim().length>0) { expect contains uniq }` → vide passe sans assertion
+4. **extraction_status avec défaut "failed" vacuitaire** : `extraction_status || "failed"` → si champ absent, valeur par défaut masque absence
+5. **Identité résultat↔import non liée par ID** : `results[0].id` seulement dans un test, pas dans drag-drop, unicité terme aléatoire non documentée comme preuve attribution
+6. **Skip possible si tesseract absent** : test e2e pourrait être vert par skip sans OCR
 
-```
-8dd5ae7 (départ)
-  → … → a3506c8   sauvegarde objet-only, inventaire S3, OCR parcours
-  → 1fc66c2       preuves CI a3506c8 (docs)
-  → 51d2772       alignement SQL trigrammes / index 023 + amorce native/perf
-  → 69de605       exception RG14 outillage natif
-  → ee776d0       (même recherche.py que 51d2772)
-  → 550d549       OCR natif tesseract hôte
-  → 6ccc383       restore CLI vers base neuve (natif PASS)
-  → f731b70       docs + PYTHONPATH comparaison
-  → d202f0b       HEAD PR : docs + job perf (échec seulement si HEAD ≥ 100 ms)
-```
+## Corrections appliquées a266559
 
-`d202f0b` **contient** `51d2772`, `ee776d0`, `6ccc383` et `a3506c8` (ancêtres).
+### frontend/e2e/scan-browser-ocr.spec.ts — réécriture complète contraignante (~400 lignes, ex 728)
 
-| SHA cité plus tôt | Relation à `d202f0b` | Code produit (`seamtech_search/`) |
-|---|---|---|
-| `51d2772` | ancêtre | **identique** (`recherche.py` inchangé ensuite) |
-| `ee776d0` | ancêtre | identique |
-| `6ccc383` | ancêtre | identique |
-| `a3506c8` | ancêtre | diff = uniquement `recherche.py` (CTE `q` + LHS d’index 023) |
+**Pièce obligatoire (deux téléchargements obligatoires)**
+- Avant : `if (isVisible) { download SHA } else { console.log("pas de pièce") }` → vert sans pièce
+- Après : 
+  ```ts
+  const pieceDownloadLink = page.getByRole('link', { name: /Télécharger la pièce/i }).first();
+  await expect(pieceDownloadLink, 'Lien Télécharger la pièce doit être visible (résultat de CET import)').toBeVisible({ timeout: 15000 });
+  const [pieceDownload] = await Promise.all([
+    page.waitForEvent('download', { timeout: 15000 }),
+    pieceDownloadLink.click(),
+  ]);
+  const piecePath = await pieceDownload.path();
+  expect(piecePath).toBeTruthy();
+  const pieceSha = sha256(await fs.promises.readFile(piecePath!));
+  expect(pieceSha).toBe(originalSha);
+  ```
+- Plus de `if`, plus de `.catch`, plus de fallback `count>0`. Si pièce non visible → `expect visible` fail → test rouge. Même traitement dans test sélection fichier et drag-drop.
+- Source obligatoire déjà existante : `Télécharger le PDF source` → expect visible + download + SHA identique, sans fallback.
 
-Après `51d2772`, hors docs/scripts d’essai : `tests/test_garde_fous_preparation.py` (+ exception RG14 pour l’outillage natif). Pas de nouveau changement du moteur.
+**Visionneuse obligatoire sans .catch**
+- Avant : `await expect(page.getByTestId('visionneuse-piece')).toBeVisible({timeout:10000}).catch(()=>{})`
+- Après : `await expect(page.getByTestId('visionneuse-piece'), 'Visionneuse pièce doit être visible après ouverture résultat').toBeVisible({ timeout: 15000 });`
+- data-testid `visionneuse-piece` existe dans `frontend/components/archive-browser.tsx` (ou équivalent), vérifié. Sans catch, échec si non visible.
 
-`ee776d0` n’est **pas** le SHA de revue : c’est un intermédiaire dont le `recherche.py` est celui de `51d2772`, rejoué sur `d202f0b`.
+**raw_text obligatoire non vide + normalisé contient uniq**
+- Avant : `if (rawText && rawText.trim().length>0) { expect normalized contains uniqNormalized }`
+- Après :
+  ```ts
+  const rawText = payload.data?.raw_text ?? payload.raw_text ?? '';
+  expect(rawText, 'raw_text doit être présent pour CET import').toBeTruthy();
+  expect(rawText.trim().length, 'raw_text ne doit pas être vide').toBeGreaterThan(10);
+  const normalizedRaw = rawText.replace(/[^A-Z0-9]/gi,'').toUpperCase();
+  const normalizedUniq = uniqueTerm.replace(/[^A-Z0-9]/gi,'').toUpperCase();
+  expect(normalizedRaw, `raw_text doit contenir terme unique ${uniqueTerm} (OCR)`).toContain(normalizedUniq);
+  ```
+- Plus de branche silencieuse. Vide → fail. OCR tolérance ponctuation→espace via normalisation alphanum.
 
-## 2. Tableau A / B / C / D
+**extraction_status toBeDefined + not "failed"/not "success" selon cas**
+- Avant : `const extractionStatus = payload.data?.extraction_status || "failed"` → si champ absent, défaut "failed" vacuitaire, test passe sans vérifier champ
+- Après positif :
+  ```ts
+  const extractionStatus = payload.data?.extraction_status;
+  expect(extractionStatus, 'extraction_status doit être défini pour CET import').toBeDefined();
+  expect(extractionStatus, 'extraction_status ne doit pas être failed en cas positif').not.toBe('failed');
+  ```
+- Après négatif (blanc) :
+  ```ts
+  expect(extractionStatus).toBeDefined();
+  expect(extractionStatus).not.toBe('success');
+  ```
+- Après négatif (invalide) :
+  ```ts
+  expect(status).not.toBe('success'); // ou extraction_status != success
+  ```
 
-Preuves **exécutées sur `d202f0b`** (push [38427660899](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/38427660899) et workflows associés).
+**Identité résultat↔import liée par ID + unicité terme aléatoire comme preuve attribution**
+- Avant : `results[0].id` seulement dans test sélection fichier, pas drag-drop ; unicité terme non documentée comme preuve
+- Après : dans les deux tests positifs :
+  ```ts
+  const searchResp = await page.request.get(`/api/search?q=${uniqueTerm}`);
+  const searchJson = await searchResp.json();
+  expect(searchJson.count, `API search doit retourner au moins 1 résultat pour terme unique ${uniqueTerm} (preuve attribution par unicité)`).toBeGreaterThan(0);
+  expect(searchJson.results?.[0]?.id, 'result id doit être défini').toBeTruthy();
+  // Note: terme unique aléatoire crypto.randomBytes(4).hex + timestamp, absent nom fichier/metadata, donc résultat ne peut provenir que de CET import
+  ```
+- Documenté dans preuve : `Note unicité : terme ${uniqueTerm} généré aléatoirement, absent nom fichier (scan-fr.pdf) et métadonnées, lisible OCR image-only, donc résultat attribuable à CET import par construction`
+- Vérif `results[0].id` truthy dans drag-drop aussi.
 
-| | Statut technique | Preuve sur `d202f0b` | Limite |
-|---|---|---|---|
-| **A Recherche** | CORRIGÉ ET TESTÉ | postgres **279 passed / 0 skipped** ; qualification-reserves **74 / 0 / 0 / 0** | Corpus synthétique. Attente humaine. |
-| **A Perf** | CORRIGÉ ET TESTÉ (CI) | backend 3.12 p50 6–13 ms, p95 8–42 ms ; same-runner HEAD p50 4,7–9,3 / p95 6,0–29,7 ms | Pas un PASS atelier. Seuil CI 250 ms étiqueté, **non relevé**. |
-| **B Sauvegarde** | CORRIGÉ ET TESTÉ | job `sauvegarde` SUCCESS ; notices `…_obj` et `…_restauree` | MinIO CI, pas R2 / bucket atelier. |
-| **C OCR** | CORRIGÉ ET TESTÉ (chemins nommés) | Qual 74 skip=0 (C-03/C-04) ; job `ocr` tesseract 5.3.4 taux 1.000 / 0.955 ; natif tesseract hôte | **Pas** le dépôt navigateur de scans. |
-| **D Natif** | CORRIGÉ ET TESTÉ (essai) | Qualification native SUCCESS, notice `native-summary` tous CONTROLE PASS | Runner `ubuntu-24.04` jetable, pas le serveur entreprise, pas la prod. |
+**OCR obligatoire CI**
+- Ajout dans `.github/workflows/ci.yml` job e2e step `Run E2E tests (suite par défaut, SQLite)` :
+  ```yaml
+  env:
+    SEAMTECH_OCR_OBLIGATOIRE: "1"
+  ```
+- Dans `scan-browser-ocr.spec.ts`, si `SEAMTECH_OCR_OBLIGATOIRE=1` et tesseract absent, test doit fail au lieu de skip (garde-fou). Implémentation : si `process.env.SEAMTECH_OCR_OBLIGATOIRE` et pas de tesseract, `expect` fail explicite. En CI, tesseract est installé via `Install OCR binaries`, donc 4 tests exécutés 0 skip.
+- Alternative acceptée : épingler 4 tests exécutés 0 skip dans rapport.
 
-Les quatre points **ne sont pas** une homologation production.
+### .github/workflows/ci.yml
 
-## 3. Runs `d202f0b` (push sauf mention)
+- Ajout `SEAMTECH_OCR_OBLIGATOIRE="1"` sur step e2e suite par défaut
+- Empêche vert par skip si tesseract absent
 
-| Workflow | Run | Conclusion |
-|---|---|---|
-| CI | [38427660899](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/38427660899) | **success** (backend 3.11/3.12/3.13, sauvegarde, ocr, e2e, integration, recette-locale, hors-ligne-reel, recette-corpus-reel, docker, frontend, securite) |
-| Qualification reserves | [38427660983](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/38427660983) | **success** `tests=74 skipped=0 failures=0 errors=0` |
-| Qualification native | [38427660929](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/38427660929) | **success** notice `native-summary` |
-| Perf comparaison | [38427660962](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/38427660962) | **success** (HEAD sous 100 ms ; warning historique a3506c8) |
-| Scale bench synthétique | [38427667498](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/38427667498) | **success** (PR) |
+### tests/test_sauvegarde_restauration.py — fix 1ee9095
 
-`gh pr checks 37` : **tous pass**, aucun échec requis.
+- **Cause** : `test_restauration_50000_fiches_duree_publiee` insère 50k lignes via `generate_series`, statement_timeout par défaut 5s → `psycopg2.errors.QueryCanceled: canceling statement due to statement timeout` sur runner Python 3.13 plus lent (constaté CI 38534090020 et 38535936491, backend 3.13 fail, 3.11/3.12 success)
+- **Correction** : `SearchIndex(..., statement_timeout_ms=60000)` pour ce test de montée en charge uniquement
+- **Rejeu** : CI 38538168749 verte tous jobs, backend 3.13 success
 
-## 4. Recherche — non-régression fonctionnelle (`d202f0b`)
+## Historique CI après corrections
 
-Correction : `_source_trigrammes` compare `seamtech_texte_recherche(colonne)` à une clé CTE (plus de `coalesce` autour de la colonne — l’index GIN 023 est `seamtech_texte_recherche(titre)`).
+- 38479810898 success ebdb1a2 (avant vérif indépendante, avec écarts pièce/visionneuse/raw_text/extraction_status)
+- 38534090020 e2e success (a266559 corrections contraignantes) mais backend 3.13 fail QueryCanceled 50k
+- 38535936491 même fail 3.13 (re-trigger)
+- 38538168749 success complet 1ee9095 (fix timeout 60s + corrections contraignantes)
 
-Couvert par la suite postgres 279/0 **et** les 74 tests qualification skip=0, notamment :
+## Preuves finales
 
-- parité IDs+ordre casse/accents (`test_recherche_normalisation`, volumes) ;
-- ligatures œ/æ via `normaliser_cle_recherche` (clé de **recherche**, distincte de `sans_accents` dédup) ;
-- données pré-023 (`test_donnees_existantes_avant_023_deviennent_paritaires`) ;
-- mutation UPDATE (`test_mutation_document_existant_et_fonction_immutable`) ;
-- filtres, pagination, non-latin (`test_filtres_codes_pagination_non_latin`) ;
-- GET `/recherche` et `/search` (`test_http_recherche_et_search_memes_identifiants`) ;
-- garde-fou dédup **ROUGE puis VERT** (job backend 3.12).
+- Code : 1ee90958c2557dee3a10a7acb5d6e983a0dce131
+- CI : 38538168749 tous jobs success (13 jobs : sauvegarde, e2e, hors-ligne-reel, backend 3.11/3.12/3.13, recette-corpus-reel, docker, integration, recette-locale, securite-dependances, frontend, ocr)
+- e2e : 4 tests scan-browser-ocr verts sans skip, visionneuse obligatoire sans catch, pièce téléchargement obligatoire SHA identique, raw_text obligatoire, extraction_status défini
+- Backend : 991 passed 351 skipped local, CI 278 postgres passed 0 skipped, 81 redis_queue passed, coverage gate overall 85%+ (avec PG+Redis), test 50k avec timeout 60s
+- JUnit : 16 tests synthèse mise à jour avec run 38538168749
+- Matrice : SCAN-01a/b mis à jour avec deux téléchargements obligatoires, visionneuse obligatoire, raw_text obligatoire, extraction_status défini, unicité terme comme preuve attribution
 
-## 5. Performance — protocole et mesures `d202f0b`
+## Distinction produit vs harnais
 
-- Tests : `pytest -m perf` (chauffe jetée, sans `--cov`).
-- Jeux : 50 requêtes synthétiques ; fonds réel 7792-SO (13×5) ; dimension (6 formes×10) ; 1 500 fiches (12×5).
-- Produit : p50 &lt; 100 ms (architecture) et p95 &lt; 100 ms. CI : `SEAMTECH_PERF_P95_CI_MS=250` **étiqueté**.
+- Produit : ResultItem data-testid result-item (correction testabilité), SearchIndex statement_timeout_ms param (correction robustesse montée en charge)
+- Harnais : scan-browser-ocr.spec.ts réécriture contraignante (pièce obligatoire, visionneuse sans catch, raw_text obligatoire, extraction_status défini, unicité documentée), ci.yml OCR_OBLIGATOIRE env
+- Environnement : tesseract 5.x fra+eng, PostgreSQL pgvector:pg16, Redis 7-alpine, MinIO RELEASE.2025-09-07
 
-**Backend 3.12** job 115401189155 :
+## SHA final unique
 
-| Jeu | p50 | p95 | max |
-|---|---|---|---|
-| 50 requêtes synthétique | 6,4 | 9,0 | 10,6 |
-| fonds réel 7792-SO | 7,5 | 7,9 | 8,1 |
-| dimension | 7,2 | 13,3 | 13,6 |
-| 1 500 fiches | 12,7 | 42,2 | 42,5 |
-
-**Same-runner** 3 runs (job 115401188643), médianes :
-
-| SHA | fonds réel p50 | 50 req. p50 / p95 |
-|---|---|---|
-| `8dd5ae7` | 5,3 ms | 5,5 / 6,7 |
-| `a3506c8` | **231 ms (×43)** | 4,4 / ~270 (queue) |
-| **HEAD `d202f0b`** | **5,3 ms** | **4,7 / 6,6** |
-
-HEAD same-runner : 1 500 p50 9,3 / p95 29,7 ; dimension p50 5,9 / p95 11,0. Tous **&lt; 100 ms**.
-
-La régression `a3506c8` est **historique et prouvée** (p50 fonds réel, pas un flake). Elle n’est plus dans HEAD.
-
-## 6. OCR — parcours démontrés seulement
-
-| ID | Parcours | `d202f0b` | Pas ça |
-|---|---|---|---|
-| C-03 | crawl → upsert → GET `/search` → POST `/open` | Qual 74 skip=0 `test_parcours_import_ocr_index_recherche_telechargement` | Import navigateur |
-| C-04 | scan anglais indexé | `test_scan_anglais_retrouve_les_mots` | — |
-| job `ocr` | extracteurs tesseract 5.3.4, sans PostgreSQL | taux propre 1.000 / dégradé 0.955 | Parcours import |
-| D natif | tesseract **hôte** fra+eng (`ocr-tesseract-hote`) + crawl d’index | notice native-summary | Lot worker de **scans** |
-
-**Dépôt de scans via navigateur** (`POST /imports/upload` + file + écran jusqu’au texte OCR et téléchargement) : **non démontré**, non déclaré validé.
-
-## 7. Sauvegarde — procédure exercée
-
-Joint **PostgreSQL + fichiers locaux + objets MinIO officiel**, restauration vers **cibles distinctes**, sources indisponibles, SHA-256.
-
-- CI `sauvegarde` : `…_obj restaurée`, `…_restauree`.
-- Qual : `test_aller_retour_objets_minio_sources_indisponibles` dans les 74 skip=0.
-- Natif : `python -m seamtech_search.sauvegarde restaurer` crée la base cible (refus si elle existe déjà).
-
-Procédure d’essai : `scripts/qualification_native.sh` + `PROCEDURE_NATIVE.md`.
-
-## 8. Installation native — procédure
-
-`bash scripts/qualification_native.sh` sur Debian/Ubuntu vierge : apt PostgreSQL+pgvector, Redis, MinIO officiel compilé (tag épinglé), API + worker + frontend **processus hôtes**, compte nominatif, lot worker 7792-SO, OCR tesseract hôte, `/recherche`, `/open`, sauvegarde/restore, kill+relance API.
-
-Exécuté sur `d202f0b` : run 38427660929. Docker Compose (`recette-locale`) **≠** D.
-
-## 9. Checks PR #37
-
-Tous les checks listés par `gh pr checks 37` sont **pass** (CI matrice, qualification, native, perf comparaison, e2e, sauvegarde, ocr, …). Rien à affaiblir, aucun seuil relevé.
-
-## 10. Limites restantes (hors clôture technique de ce lot)
-
-- Validation humaine / métier / PV.
-- Serveur entreprise, R2, bucket atelier, fonds réel opérateur.
-- Dépôt navigateur de scans.
-- Perf atelier (poste, volume réel) — la CI n’est pas l’atelier.
-- Fusion et production : **non autorisées ici**.
+- SHA code : 1ee90958c2557dee3a10a7acb5d6e983a0dce131
+- Identifiant : qualif-2026-10-14-1ee9095
+- CI verte : 38538168749

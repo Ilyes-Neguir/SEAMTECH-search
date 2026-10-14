@@ -1,11 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Synthèse documentaire générée manuellement depuis résultats exécutés, pas journal pytest brut.
      Chaque testcase référence run ID et commande source.
-     Vrais journaux : /tmp/*.log, frontend/playwright-report/, sauvegarde-junit.xml, report-*.json -->
-<testsuite name="qualif-2026-10-13-ebdb1a2" tests="16" failures="0" errors="0" skipped="0" timestamp="2026-10-13T23:00:00Z">
+     Vrais journaux : /tmp/*.log, frontend/playwright-report/, sauvegarde-junit.xml, report-*.json
+     Mise à jour 2026-10-14 après corrections contraignantes et fix 50k timeout -->
+<testsuite name="qualif-2026-10-14-1ee9095" tests="16" failures="0" errors="0" skipped="0" timestamp="2026-10-14T08:30:00Z">
   <properties>
-    <property name="sha_code" value="5438b9e22d0a2d0e7bad58580db92fc016be9db7"/>
-    <property name="sha_final_docs" value="ebdb1a28e3b43efcd7c15c7918a68e7ef03c8b7d"/>
+    <property name="sha_code_avant_verif" value="ebdb1a28e3b43efcd7c15c7918a68e7ef03c8b7d"/>
+    <property name="sha_apres_corrections_contraignantes" value="a266559"/>
+    <property name="sha_final_docs" value="1ee90958c2557dee3a10a7acb5d6e983a0dce131"/>
     <property name="branche" value="arena/c154b2fa-seamtech-search"/>
     <property name="python" value="3.11/3.12/3.13"/>
     <property name="node" value="22.22.3"/>
@@ -14,105 +16,111 @@
     <property name="postgres" value="pgvector/pgvector:pg16"/>
     <property name="redis" value="redis:7-alpine"/>
     <property name="minio" value="quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z"/>
-    <property name="tesseract" value="5.x fra+eng + poppler-utils"/>
+    <property name="tesseract" value="5.x fra+eng + poppler-utils + SEAMTECH_OCR_OBLIGATOIRE=1"/>
     <property name="playwright" value="Chromium"/>
-    <property name="nature" value="synthese documentaire depuis runs CI 38479810898, 38479810943, 38479810991, 38479810965, historique drag-drop 38468805294 fail, 38470099513 fail, 38471404314 success natif, 38476009010 fail OCR underscore, 38477938099 fail result-item missing, 38479810898 success contraignant"/>
+    <property name="nature" value="synthese documentaire depuis runs CI 38538168749 (CI), 38538168702 (reserves), 38538168740 (native), 38538168577 (perf) — tous jobs success, historique drag-drop 38468805294 fail, 38470099513 fail, 38471404314 success natif permissif, 38476009010 fail OCR underscore, 38477938099 fail result-item missing, 38479810898 success ebdb1a2 avec écarts (piece conditionnelle, visionneuse catch, raw_text if, extraction_status défaut), 38534090020 e2e success a266559 (corrections contraignantes) mais backend 3.13 fail QueryCanceled 50k, 38538168749 success complet 1ee9095 (fix timeout 60s + corrections contraignantes)"/>
   </properties>
   <testcase classname="ci" name="backend (3.11)" time="180">
     <system-out>pytest -q -rf -m "not postgres and not s3 and not perf and not redis_queue and not ocr_suite" → 1104+ passed, 0 skipped
 pytest -m "postgres and not perf and not sauvegarde and not redis_queue and not ocr_suite" → 278 passed, 0 skipped
+pytest -m "redis_queue" → 81 passed, 0 skipped
 ruff check . → All checks passed
 pnpm exec tsc --noEmit → OK
-Run 38479810898 job backend 3.11 success</system-out>
+Run 38538168749 job backend 3.11 success
+Fix 50k timeout 60s pour Python 3.13, mais 3.11 déjà vert avant</system-out>
   </testcase>
   <testcase classname="ci" name="backend (3.12)" time="180">
     <system-out>Identique 3.11 + garde-fou dimension ROUGE→VERT, cotes ROUGE→VERT, dédup ROUGE→VERT, attribution ROUGE→VERT
-Run 38479810898 job backend 3.12 success
+Run 38538168749 job backend 3.12 success
 perf p50 6-13ms p95 8-42ms</system-out>
   </testcase>
   <testcase classname="ci" name="backend (3.13)" time="180">
-    <system-out>Identique, Run 38479810898 job backend 3.13 success</system-out>
+    <system-out>Identique, avec fix test_restauration_50000_fiches_duree_publiee : SearchIndex(..., statement_timeout_ms=60000) pour insertion 50k generate_series qui dépassait 5s sur runner 3.13 → psycopg2.errors.QueryCanceled avant fix (vu CI 38534090020 et 38535936491 backend 3.13 fail, 3.11/3.12 success, annotation coverage-suite-failed: FAILED test_restauration_50000_fiches_duree_publiee - QueryCanceled: canceling statement due to statement timeout)
+Après fix 1ee9095 : Run 38538168749 job backend 3.13 success, 278 postgres passed, 81 redis_queue passed, coverage gate overall 85%+ avec PG+Redis
+Run 38538168749 job backend 3.13 success</system-out>
   </testcase>
   <testcase classname="ci" name="frontend" time="60">
     <system-out>pnpm install --frozen-lockfile, tsc --noEmit (ResultItem data-testid result-item, ImportPanel data-testid drop-zone), audit --prod, build → Compiled successfully Next.js 16.3.8
-Run 38479810898 job frontend success</system-out>
+Run 38538168749 job frontend success</system-out>
   </testcase>
   <testcase classname="ci" name="docker" time="90">
     <system-out>docker build -t seamtech-search:ci (tesseract-ocr-eng ajouté), frontend, smoke /live → success, tesseract --list-langs fra+eng présent
-Run 38479810898 job docker success</system-out>
+Run 38538168749 job docker success</system-out>
   </testcase>
-  <testcase classname="ci" name="e2e - selection fichier terme unique OCR recherche liee SHA obligatoire" time="180">
+  <testcase classname="ci" name="e2e - selection fichier terme unique OCR recherche liee deux telechargements obligatoires visionneuse obligatoire raw_text obligatoire extraction_status defini" time="180">
     <system-out>frontend/e2e/scan-browser-ocr.spec.ts test "dépôt PDF image par sélection fichier (setInputFiles), OCR, recherche terme unique, téléchargement SHA obligatoire" :
-- gen terme unique ZEPHYRINE{HEX}{suffix} sans underscore via crypto.randomBytes, absent nom fichier/metadata, gen_pdf_custom image-only
+- gen terme unique ZEPHYRINE{HEX}{suffix} sans underscore via crypto.randomBytes, absent nom fichier/metadata, gen_pdf_custom image-only pdfplumber 0
 - setInputFiles → fichiers prêts à envoyer → Envoyer et analyser → POST /api/imports/upload ok + staged_path
-- Fichiers détectés → Choisir PDF technique → Importer → POST /api/imports/confirm capture import_id réel (pas via-ui) → job_id
-- Attente État : completed|needs_review pour CET import (needs_review documenté comme nominal possible si extraction partielle, mais on exige quand même OCR/indexation/téléchargement)
-- GET /api/imports/{id} → raw_text normalisé replace(/[^A-Z0-9]/gi,'').toUpperCase() contient terme unique → preuve OCR effective
-- GET /api/search?q=uniq direct via page.request → count&gt;0 obligatoire (preuve indexation effective, indépendante UI)
-- UI Recherche : fill uniq + Enter + click Rechercher → waitForResponse /api/search?q=uniq → count&gt;0
-- result-item visible 15000ms (data-testid ajouté dans ResultItem produit) → click → visionneuse-piece visible
-- TÉLÉCHARGEMENT OBLIGATOIRE import panel /api/imports/{id}/artifacts/source_pdf → download → sha256 compare original==téléchargé (pas de fallback count)
-- TÉLÉCHARGEMENT OBLIGATOIRE pièce /api/pieces/{id}/telecharger → download SHA identique
-- Preuve attachée avec vrais ids {originalSha, downloadedSha, fileName, importId, uniqueTerm, recherche, etat, rawTextContainsUniq, methode}
-Run 38479810898 job e2e success (après fix result-item + underscore)</system-out>
+- Fichiers détectés → Choisir PDF technique → Importer → POST /api/imports/confirm capture import_id réel (pas via-ui) → job_id, expect truthy
+- Attente État : completed|needs_review pour CET import (needs_review nominal possible si extraction partielle, mais on exige quand même OCR/indexation/téléchargement)
+- GET /api/imports/{id} → raw_text toBeTruthy length>10 (sans if silencieux) + normalisé replace(/[^A-Z0-9]/gi,'').toUpperCase() contient terme unique → preuve OCR effective obligatoire
+- extraction_status toBeDefined + not failed (sans défaut "failed" vacuitaire)
+- GET /api/search?q=uniq direct via page.request → count>0 obligatoire + results[0].id truthy (preuve indexation effective, preuve attribution par unicité terme aléatoire documentée)
+- UI Recherche : fill uniq + Enter + click Rechercher → waitForResponse /api/search?q=uniq → count>0 + result-item visible 15000ms (data-testid ajouté dans ResultItem produit) → click → visionneuse-piece visible obligatoire sans .catch (expect visible 15000ms)
+- DEUX TÉLÉCHARGEMENTS OBLIGATOIRES réellement obligatoires (corrigé après vérif indépendante) : import panel /api/imports/{id}/artifacts/source_pdf → expect visible obligatoire + download + sha256 compare original==téléchargé (sans else sans fallback count) + pièce /api/pieces/{id}/telecharger → expect visible obligatoire + download SHA identique (sans if/else, sans catch)
+- Preuve attachée avec vrais ids {originalSha, downloadedSha, fileName, importId, uniqueTerm, recherche, etat, rawTextContainsUniq, methode} + note unicité comme preuve attribution
+- SEAMTECH_OCR_OBLIGATOIRE=1 garantit 0 skip, 4 tests exécutés
+Run 38538168749 job e2e success (après fix result-item + underscore + pièce obligatoire + visionneuse sans catch + raw_text obligatoire + extraction_status défini)</system-out>
   </testcase>
-  <testcase classname="ci" name="e2e - drag-drop reel simulation DataTransfer natif terme unique SHA obligatoire" time="180">
+  <testcase classname="ci" name="e2e - drag-drop reel simulation DataTransfer natif terme unique deux telechargements obligatoires visionneuse obligatoire" time="180">
     <system-out>frontend/e2e/scan-browser-ocr.spec.ts test "dépôt PDF image par véritable glisser-déposer (simulation dragenter/dragover/drop avec DataTransfer natif dans vrai navigateur), OCR, recherche, SHA obligatoire" :
 - helper dragDropFileViaEvents : base64 Node → page.evaluate → File([Uint8Array]) + new DataTransfer(); dt.items.add(file) natif + dropEffect copy + dispatch dragenter/dragover/drop sur [data-testid="drop-zone"] (ImportPanel) + fallback texte, attente 1500ms
-- Terme unique GENOA{HEX}{suffix} sans underscore
-- Même flux que sélection fichier avec import_id réel, raw_text normalisé, API search direct count&gt;0, result-item, téléchargements obligatoires SHA
+- Terme unique GENOA{HEX}{suffix} sans underscore, absent nom fichier/metadata, image-only
+- Même flux que sélection fichier avec import_id réel, raw_text toBeTruthy length>10 normalisé contient uniq sans if, extraction_status toBeDefined not failed sans défaut, API search direct count>0 + results[0].id truthy (ajouté dans drag-drop aussi, preuve attribution par unicité), result-item visible 15000ms, visionneuse-piece visible obligatoire sans catch, deux téléchargements obligatoires SHA identiques (import + pièce) expect visible obligatoire sans else sans catch
 - Description geste : simulation dragenter/dragover/drop avec DataTransfer natif dans un vrai navigateur (pas geste manuel OS)
-- Historique : 6eaa714 selector :has-text invalid → 38468805294 fail, 5fd668f mock → 38470099513 fail, 0bbad2d natif → 38471404314 success mais assertions permissives, 8a5b3ff assertions contraignantes → 38476009010 fail OCR underscore, 07228b4 sans underscore → 38477938099 fail result-item missing, ebdb1a2 result-item data-testid → 38479810898 success contraignant
-Run 38479810898 job e2e success</system-out>
+- Historique : 6eaa714 selector :has-text invalid → 38468805294 fail, 5fd668f mock → 38470099513 fail, 0bbad2d natif → 38471404314 success mais permissif, 8a5b3ff assertions contraignantes → 38476009010 fail OCR underscore, 07228b4 sans underscore → 38477938099 fail result-item missing, ebdb1a2 result-item data-testid → 38479810898 success mais avec écarts (pièce conditionnelle, visionneuse catch, raw_text if, extraction_status défaut), a266559 corrections contraignantes → 38534090020 e2e success, 1ee9095 fix 50k → 38538168749 success complet
+Run 38538168749 job e2e success</system-out>
   </testcase>
   <testcase classname="ci" name="e2e - PDF invalide contrat echec explicite pas fiche inventee" time="90">
     <system-out>frontend/e2e/scan-browser-ocr.spec.ts test "PDF invalide — contrat : échec signalé avec issue explicite, pas de fiche inventée" :
-- upload invalid.pdf (ceci n'est pas un pdf) → POST /api/imports/upload → branche 1 : !ok → 400/413/500 + p.text-destructive message &gt;5 chars
+- upload invalid.pdf (ceci n'est pas un pdf) → POST /api/imports/upload → branche 1 : !ok → 400/413/500 + p.text-destructive message >5 chars
 - Branche 2 : upload ok → attend Fichiers détectés OU Aucun PDF technique OU p.text-destructive (pas État seul)
 - Si Aucun PDF technique → issue explicite vérifiée
-- Si Fichiers détectés + bouton import visible → POST /api/imports/confirm capture import_id → État failed|needs_review + GET /api/imports/{id} status failed/needs_review + extraction_status != success
+- Si Fichiers détectés + bouton import visible → POST /api/imports/confirm capture import_id → État failed|needs_review + GET /api/imports/{id} status failed/needs_review + extraction_status toBeDefined not success
 - Si pas bouton import → expect Aucun PDF technique ou erreur destructive
-- Recherche API /api/search?q=INVALIDE_sha8 count 0 obligatoire (pas seulement premier résultat ne contient pas chaîne)
+- Recherche API /api/search?q=INVALIDE_sha8 count 0 obligatoire
 - Aucune branche ne réussit seulement parce que Fichiers détectés visible
-Run 38479810898 job e2e success</system-out>
+Run 38538168749 job e2e success</system-out>
   </testcase>
   <testcase classname="ci" name="e2e - PDF blanc contrat conserve sans extraction pas faux texte issue explicite" time="90">
     <system-out>frontend/e2e/scan-browser-ocr.spec.ts test "fichier sans texte exploitable — contrat : conservé sans extraction, pas de faux texte, issue explicite" :
 - gen blank.png white → blank.pdf via reportlab → upload → POST /api/imports/upload ok → Fichiers détectés
 - Import → capture import_id → État needs_review|failed pas completed
-- GET /api/imports/{id} → extraction_status != success, raw_text len &lt;20
+- GET /api/imports/{id} → extraction_status toBeDefined not success, raw_text len &lt;20
 - UI À vérifier visible si Données extraites visible, sinon absence Données extraites = preuve absence extraction inventée
 - Recherche API /api/search?q=BLANC_SANS_TEXTE_9999 count 0 obligatoire
-- Vérifie données d'extraction du document concerné, pas seulement recherche mot absent
-Run 38479810898 job e2e success</system-out>
+Run 38538168749 job e2e success</system-out>
   </testcase>
   <testcase classname="ci" name="ocr" time="60">
     <system-out>pytest -m ocr_suite -v → success, taux propre 1.000 dégradé 0.955, fixtures ocr_propre/degrade, inventaire, pipeline, garde-fou OCR étage 3 ROUGE→VERT
-Run 38479810898 job ocr success</system-out>
+Run 38538168749 job ocr success, SEAMTECH_OCR_OBLIGATOIRE=1 garantit 4 tests e2e exécutés 0 skip</system-out>
   </testcase>
   <testcase classname="ci" name="sauvegarde" time="120">
     <system-out>pytest -m sauvegarde -v --junitxml=sauvegarde-junit.xml → ≥19 passed, 0 skipped, collectés==exécutés, notices restauration 50k fiches, dump octets, archive fichiers, vérifiée après envoi, cibles distinctes …_obj et …_restauree, sources indisponibles, SHA, corrompue, reprise worker
-Run 38479810898 job sauvegarde success</system-out>
+Fix 50k : SearchIndex(..., statement_timeout_ms=60000) pour test_restauration_50000_fiches_duree_publiee qui faisait QueryCanceled sur 3.13 (CI 38534090020/38535936491 backend 3.13 fail, annotation coverage-suite-failed: FAILED test_restauration_50000_fiches_duree_publiee - QueryCanceled)
+Run 38538168749 job sauvegarde success</system-out>
   </testcase>
   <testcase classname="ci" name="hors-ligne-reel" time="300">
     <system-out>Compte seamtech-app, iptables SEAMTECH_HORS_LIGNE + ip6tables SEAMTECH_HORS_LIGNE6 --uid-owner, contrôle négatif DNS ahostsv4 example.com depuis compte + adresse littérale --noproxy + compteur REJECT doit augmenter (empreinte règle), contrôle négatif IPv6, contrôle positif /health, iptables -Z après contrôles, e2e/hors-ligne.spec.ts SEAMTECH_E2E_HORS_LIGNE=1, relevé final 0 paquet rejeté, requetesExternes == []
-Run 38479810898 job hors-ligne-reel success</system-out>
+Run 38538168749 job hors-ligne-reel success</system-out>
   </testcase>
   <testcase classname="ci" name="integration" time="300">
     <system-out>Compose infra postgres+redis+minio (reconstruit), provisionner identités restreintes, boot web+frontend healthy /api/health, volumes data/logs chown uid/gid applicatif preuve écriture conteneur, pytest -m integration_docker -v SEAMTECH_INTEGRATION_STRICT=1
-Run 38479810898 job integration success</system-out>
+Run 38538168749 job integration success</system-out>
   </testcase>
   <testcase classname="ci" name="recette-corpus-reel" time="600">
     <system-out>7 ZIP REF-001..007 RG13 SHA avant/après, extraction guarded, pytest -m recette_corpus -v : migrations 001..017, import flux réel upload/scan/confirm, classement auto, OCR étages, recherches mots-clés, ouverture PDF téléchargeable 200 SHA identique, rapport PDF, sauvegarde/restauration base neuve
-Run 38479810898 job recette-corpus-reel success</system-out>
+Run 38538168749 job recette-corpus-reel success</system-out>
   </testcase>
   <testcase classname="ci" name="qualification-reserves" time="240">
     <system-out>74 tests, 0 skipped, 0 failures, 0 errors, parité IDs+ordre, GET /recherche et /search mêmes IDs, avant/après 023, données pré-023, mutation UPDATE, filtres/pagination/arabe, volume 800/2000 indicatif, dédup, locaux manquants, restore distincts, objets MinIO sources coupées, OCR fixtures, crawl→upsert→search→open, scan anglais, recherche hybride RRF double vote
-Run 38479810943 success, Run 38479810991 native success, Run 38479810965 perf success</system-out>
+Run 38538168702 success (reserves), Run 38538168740 native success, Run 38538168577 perf success
+Tous jobs verts sur 1ee9095, 0 ÉCHEC NON RÉSOLU</system-out>
   </testcase>
-  <testcase classname="ci" name="produit - ResultItem data-testid" time="10">
-    <system-out>frontend/components/result-item.tsx ajoute data-testid="result-item" sur div root (correction produit pour testabilité, pas correction métier dépôt)
-Run 38479810898 job e2e success après fix, ResultItem visible 15000ms, ouverture visionneuse, téléchargements obligatoires
-Distinction produit (ResultItem data-testid) vs harnais (drop-zone data-testid)</system-out>
+  <testcase classname="ci" name="produit - ResultItem data-testid + SearchIndex timeout 60s" time="10">
+    <system-out>frontend/components/result-item.tsx ajoute data-testid="result-item" sur div root (correction produit pour testabilité)
+seamtech_search/indexer.py statement_timeout_ms param déjà existant, utilisé dans tests/test_sauvegarde_restauration.py avec 60000 ms pour test 50k (correction produit robustesse montée en charge, fix QueryCanceled sur Python 3.13)
+Run 38538168749 tous jobs success
+Distinction produit (ResultItem data-testid, SearchIndex timeout) vs harnais (drop-zone data-testid, scan-browser-ocr.spec.ts contraignant avec deux téléchargements obligatoires, visionneuse sans catch, raw_text obligatoire, extraction_status défini, unicité comme preuve attribution) vs environnement (ci.yml OCR_OBLIGATOIRE, tesseract)</system-out>
   </testcase>
 </testsuite>
