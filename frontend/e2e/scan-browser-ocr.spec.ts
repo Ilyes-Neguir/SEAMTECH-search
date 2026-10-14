@@ -192,16 +192,19 @@ test.describe("Scan navigateur → OCR → Recherche → Téléchargement", () =
     const firstApi = apiSearchJson.results?.[0]
     expect(firstApi?.id).toBeTruthy()
 
-    // Recherche via UI — obligatoire (identité portée par API + result-item, mais UI doit aussi répondre)
+    // Recherche via UI — obligatoire (identité portée par API + result-item, mais UI doit aussi répondre) — waitForResponse avant actions pour éviter race
     const searchInput = page.getByPlaceholder(/Rechercher/i).first()
     await searchInput.fill(uniq)
-    await searchInput.press("Enter")
-    await page.getByRole("button", { name: "Rechercher" }).first().click()
-
-    const searchResp = await page.waitForResponse(
-      (r) => r.url().includes("/api/search") && r.url().includes(encodeURIComponent(uniq)) && r.request().method() === "GET",
-      { timeout: 10000 },
-    )
+    const [searchResp] = await Promise.all([
+      page.waitForResponse(
+        (r) => r.url().includes("/api/search") && r.url().includes(encodeURIComponent(uniq)) && r.request().method() === "GET",
+        { timeout: 15000 },
+      ),
+      (async () => {
+        await searchInput.press("Enter")
+        await page.getByRole("button", { name: "Rechercher" }).first().click()
+      })(),
+    ])
     const searchJson = await searchResp.json()
     console.log(`search UI API ${uniq} count=${searchJson.count}`)
     expect(searchJson.count).toBeGreaterThan(0)
@@ -371,13 +374,16 @@ test.describe("Scan navigateur → OCR → Recherche → Téléchargement", () =
 
     const searchInput = page.getByPlaceholder(/Rechercher/i).first()
     await searchInput.fill(uniq)
-    await searchInput.press("Enter")
-    await page.getByRole("button", { name: "Rechercher" }).first().click()
-
-    const searchResp = await page.waitForResponse(
-      (r) => r.url().includes("/api/search") && r.url().includes(encodeURIComponent(uniq)) && r.request().method() === "GET",
-      { timeout: 10000 },
-    )
+    const [searchResp] = await Promise.all([
+      page.waitForResponse(
+        (r) => r.url().includes("/api/search") && r.url().includes(encodeURIComponent(uniq)) && r.request().method() === "GET",
+        { timeout: 15000 },
+      ),
+      (async () => {
+        await searchInput.press("Enter")
+        await page.getByRole("button", { name: "Rechercher" }).first().click()
+      })(),
+    ])
     const searchJson = await searchResp.json()
     console.log(`search UI drag-drop ${uniq} count=${searchJson.count}`)
     expect(searchJson.count).toBeGreaterThan(0)
@@ -556,11 +562,15 @@ test.describe("Scan navigateur → OCR → Recherche → Téléchargement", () =
     const searchInput = page.getByPlaceholder(/Rechercher/i).first()
     if (await searchInput.isVisible().catch(() => false)) {
       await searchInput.fill(uniqInvalid)
-      await searchInput.press("Enter")
-      const searchResp = await page.waitForResponse(
-        (r) => r.url().includes("/api/search") && r.url().includes(encodeURIComponent(uniqInvalid)),
-        { timeout: 5000 },
-      )
+      const [searchResp] = await Promise.all([
+        page.waitForResponse(
+          (r) => r.url().includes("/api/search") && r.url().includes(encodeURIComponent(uniqInvalid)),
+          { timeout: 10000 },
+        ),
+        (async () => {
+          await searchInput.press("Enter")
+        })(),
+      ])
       const searchJson = await searchResp.json()
       console.log(`Recherche UI invalide ${uniqInvalid} count=${searchJson.count} (obligatoire, doit être 0)`)
       expect(searchJson.count).toBe(0)
@@ -692,11 +702,15 @@ print(str(pdf))
     const searchInput = page.getByPlaceholder(/Rechercher/i).first()
     if (await searchInput.isVisible().catch(() => false)) {
       await searchInput.fill(uniqBlank)
-      await searchInput.press("Enter")
-      const searchResp = await page.waitForResponse(
-        (r) => r.url().includes("/api/search") && r.url().includes(encodeURIComponent(uniqBlank)),
-        { timeout: 5000 },
-      )
+      const [searchResp] = await Promise.all([
+        page.waitForResponse(
+          (r) => r.url().includes("/api/search") && r.url().includes(encodeURIComponent(uniqBlank)),
+          { timeout: 10000 },
+        ),
+        (async () => {
+          await searchInput.press("Enter")
+        })(),
+      ])
       const searchJson = await searchResp.json()
       console.log(`Recherche UI blank ${uniqBlank} count=${searchJson.count} (obligatoire, doit être 0)`)
       expect(searchJson.count).toBe(0)
