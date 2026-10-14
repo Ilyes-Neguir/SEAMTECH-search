@@ -1021,6 +1021,8 @@ jobs:
         run: pnpm exec playwright install --with-deps chromium
       - name: Run E2E tests (suite par défaut, SQLite)
         working-directory: frontend
+        env:
+          SEAMTECH_OCR_OBLIGATOIRE: "1"
         run: |
           set -uo pipefail
           set +e
