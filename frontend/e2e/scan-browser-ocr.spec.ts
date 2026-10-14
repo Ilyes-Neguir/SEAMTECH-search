@@ -192,21 +192,19 @@ test.describe("Scan navigateur → OCR → Recherche → Téléchargement", () =
     const firstApi = apiSearchJson.results?.[0]
     expect(firstApi?.id).toBeTruthy()
 
-    // Recherche via UI
+    // Recherche via UI — obligatoire (identité portée par API + result-item, mais UI doit aussi répondre)
     const searchInput = page.getByPlaceholder(/Rechercher/i).first()
     await searchInput.fill(uniq)
     await searchInput.press("Enter")
-    await page.getByRole("button", { name: "Rechercher" }).first().click().catch(() => {})
+    await page.getByRole("button", { name: "Rechercher" }).first().click()
 
     const searchResp = await page.waitForResponse(
       (r) => r.url().includes("/api/search") && r.url().includes(encodeURIComponent(uniq)) && r.request().method() === "GET",
       { timeout: 10000 },
-    ).catch(() => null)
-    if (searchResp) {
-      const searchJson = await searchResp.json()
-      console.log(`search UI API ${uniq} count=${searchJson.count}`)
-      expect(searchJson.count).toBeGreaterThan(0)
-    }
+    )
+    const searchJson = await searchResp.json()
+    console.log(`search UI API ${uniq} count=${searchJson.count}`)
+    expect(searchJson.count).toBeGreaterThan(0)
 
     const resultItem = page.locator('[data-testid="result-item"]').first()
     await expect(resultItem).toBeVisible({ timeout: 15000 })
@@ -229,8 +227,8 @@ test.describe("Scan navigateur → OCR → Recherche → Téléchargement", () =
     console.log(`Téléchargé import sha=${downloadedShaImport} original sha=${originalSha} importId=${importId}`)
     expect(downloadedShaImport).toBe(originalSha)
 
-    // Téléchargement obligatoire depuis résultat de recherche (pièce jointe) — désormais contraignant
-    const pieceDownloadLink = page.locator('a[href*="/telecharger"]').first()
+    // Téléchargement obligatoire depuis résultat de recherche (pièce jointe) — désormais contraignant, sélecteur durci
+    const pieceDownloadLink = page.locator('a[href*="/api/pieces/"][href*="/telecharger"]').first()
     await expect(pieceDownloadLink).toBeVisible({ timeout: 10000 })
     const [downloadPiece] = await Promise.all([
       page.waitForEvent("download"),
@@ -357,6 +355,7 @@ test.describe("Scan navigateur → OCR → Recherche → Téléchargement", () =
     expect(data.extraction_status).not.toBe("failed")
     const rawText = (data.raw_text || payloadObj.raw_text || "") as string
     expect(rawText).toBeTruthy()
+    expect(rawText.length).toBeGreaterThan(10)
     const normRaw = rawText.replace(/[^A-Z0-9]/gi, "").toUpperCase()
     const normUniq = uniq.replace(/[^A-Z0-9]/gi, "").toUpperCase()
     console.log(`drag-drop raw_text len=${rawText.length} norm contains uniq=${normRaw.includes(normUniq)}`)
@@ -373,17 +372,15 @@ test.describe("Scan navigateur → OCR → Recherche → Téléchargement", () =
     const searchInput = page.getByPlaceholder(/Rechercher/i).first()
     await searchInput.fill(uniq)
     await searchInput.press("Enter")
-    await page.getByRole("button", { name: "Rechercher" }).first().click().catch(() => {})
+    await page.getByRole("button", { name: "Rechercher" }).first().click()
 
     const searchResp = await page.waitForResponse(
       (r) => r.url().includes("/api/search") && r.url().includes(encodeURIComponent(uniq)) && r.request().method() === "GET",
       { timeout: 10000 },
-    ).catch(() => null)
-    if (searchResp) {
-      const searchJson = await searchResp.json()
-      console.log(`search UI drag-drop ${uniq} count=${searchJson.count}`)
-      expect(searchJson.count).toBeGreaterThan(0)
-    }
+    )
+    const searchJson = await searchResp.json()
+    console.log(`search UI drag-drop ${uniq} count=${searchJson.count}`)
+    expect(searchJson.count).toBeGreaterThan(0)
 
     const resultItem = page.locator('[data-testid="result-item"]').first()
     await expect(resultItem).toBeVisible({ timeout: 15000 })
@@ -404,7 +401,7 @@ test.describe("Scan navigateur → OCR → Recherche → Téléchargement", () =
     console.log(`Drag-drop téléchargé import sha=${downloadedShaImport} original sha=${originalSha} importId=${importId}`)
     expect(downloadedShaImport).toBe(originalSha)
 
-    const pieceDownloadLink = page.locator('a[href*="/telecharger"]').first()
+    const pieceDownloadLink = page.locator('a[href*="/api/pieces/"][href*="/telecharger"]').first()
     await expect(pieceDownloadLink).toBeVisible({ timeout: 10000 })
     const [downloadPiece] = await Promise.all([
       page.waitForEvent("download"),
@@ -549,7 +546,13 @@ test.describe("Scan navigateur → OCR → Recherche → Téléchargement", () =
       }
     }
 
-    // Absence traitement réussi ou fiche métier attribuable à cet envoi
+    // Absence traitement réussi ou fiche métier attribuable à cet envoi — contrôle count 0 obligatoire (non conditionnel)
+    const apiInvalidResp = await page.request.get(`/api/search?q=${encodeURIComponent(uniqInvalid)}`)
+    expect(apiInvalidResp.ok()).toBeTruthy()
+    const apiInvalidJson = await apiInvalidResp.json()
+    console.log(`Recherche API invalide ${uniqInvalid} count=${apiInvalidJson.count} (obligatoire, doit être 0)`)
+    expect(apiInvalidJson.count).toBe(0)
+
     const searchInput = page.getByPlaceholder(/Rechercher/i).first()
     if (await searchInput.isVisible().catch(() => false)) {
       await searchInput.fill(uniqInvalid)
@@ -557,20 +560,10 @@ test.describe("Scan navigateur → OCR → Recherche → Téléchargement", () =
       const searchResp = await page.waitForResponse(
         (r) => r.url().includes("/api/search") && r.url().includes(encodeURIComponent(uniqInvalid)),
         { timeout: 5000 },
-      ).catch(() => null)
-      if (searchResp) {
-        const searchJson = await searchResp.json()
-        console.log(`Recherche invalide ${uniqInvalid} count=${searchJson.count}`)
-        expect(searchJson.count).toBe(0)
-      }
-    }
-
-    if (importId) {
-      const searchResp2 = await page.request.get(`/api/search?q=${encodeURIComponent(uniqInvalid)}`, { failOnStatusCode: false }).catch(() => null)
-      if (searchResp2 && searchResp2.ok()) {
-        const json = await searchResp2.json()
-        expect(json.count).toBe(0)
-      }
+      )
+      const searchJson = await searchResp.json()
+      console.log(`Recherche UI invalide ${uniqInvalid} count=${searchJson.count} (obligatoire, doit être 0)`)
+      expect(searchJson.count).toBe(0)
     }
 
     fs.rmSync(tmpDir, { recursive: true, force: true })
@@ -688,25 +681,25 @@ print(str(pdf))
       await expect(page.getByText(/Aucun PDF technique|No technical PDF/i).first()).toBeVisible({ timeout: 5000 })
     }
 
+    // Contrôle count 0 obligatoire pour terme blanc (non conditionnel) — BLANCSANSTEXTE9999 (sans underscore, doc vs code aligné)
+    const uniqBlank = "BLANCSANSTEXTE9999"
+    const apiBlankResp = await page.request.get(`/api/search?q=${encodeURIComponent(uniqBlank)}`)
+    expect(apiBlankResp.ok()).toBeTruthy()
+    const apiBlankJson = await apiBlankResp.json()
+    console.log(`Recherche API blank ${uniqBlank} count=${apiBlankJson.count} (obligatoire, doit être 0)`)
+    expect(apiBlankJson.count).toBe(0)
+
     const searchInput = page.getByPlaceholder(/Rechercher/i).first()
     if (await searchInput.isVisible().catch(() => false)) {
-      const uniqBlank = "BLANCSANSTEXTE9999"
       await searchInput.fill(uniqBlank)
       await searchInput.press("Enter")
       const searchResp = await page.waitForResponse(
         (r) => r.url().includes("/api/search") && r.url().includes(encodeURIComponent(uniqBlank)),
         { timeout: 5000 },
-      ).catch(() => null)
-      if (searchResp) {
-        const searchJson = await searchResp.json()
-        console.log(`Recherche blank ${uniqBlank} count=${searchJson.count}`)
-        expect(searchJson.count).toBe(0)
-      }
-      const apiResp = await page.request.get(`/api/search?q=${encodeURIComponent(uniqBlank)}`)
-      if (apiResp.ok()) {
-        const json = await apiResp.json()
-        expect(json.count).toBe(0)
-      }
+      )
+      const searchJson = await searchResp.json()
+      console.log(`Recherche UI blank ${uniqBlank} count=${searchJson.count} (obligatoire, doit être 0)`)
+      expect(searchJson.count).toBe(0)
     }
 
     fs.rmSync(tmpDir, { recursive: true, force: true })
