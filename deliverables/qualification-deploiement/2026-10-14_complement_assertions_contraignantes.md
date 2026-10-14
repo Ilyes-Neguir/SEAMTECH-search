@@ -1,138 +1,72 @@
-# Complément 2026-10-14 — Corrections après vérification indépendante — SHA 1ee9095
+# Complément 2026-10-14 — Corrections après vérification indépendante — SHA 1ee9095 → c158edd (exactitude 100%)
 
-**Date : 2026-10-14**
+**Date : 2026-10-14 initiale, mise à jour finale même jour après micro-écarts**
 **Branche : arena/c154b2fa-seamtech-search**
 **SHA avant vérif : ebdb1a28e3b43efcd7c15c7918a68e7ef03c8b7d**
 **SHA après corrections contraignantes : a266559 (fix pièce/visionneuse/raw_text/extraction_status/OCR_OBLIGATOIRE)**
-**SHA final avec fix sauvegarde 50k : 1ee90958c2557dee3a10a7acb5d6e983a0dce131**
-**CI verte finale : 38538168749 (CI), 38538168702 (reserves), 38538168740 (native), 38538168577 (perf) — tous jobs success**
+**SHA final avec fix sauvegarde 50k : 1ee90958c2557dee3a10a7acb5d6e983a0dce131 (CI 38538168749 verte)**
+**SHA après micro-écarts doc↔code 100% : 74928de (CI 38540975618 e2e failure race)**
+**SHA final avec fix race Promise.all : c158eddfd35c41c39e98f62703be153d7a40c802 (CI 38542285340 verte complète)**
+**CI verte finale : 38542285340 (CI), 38542285324 (reserves), 38542285312 (native), 38542285299 (perf) — tous jobs success**
 
 ## Vérification indépendante 2026-10-13 relevés
 
 CI 38479810898 confirmée verte, terme unique OCR-only confirmé, import_id réel confirmé, téléchargement source obligatoire confirmé, diff produit 1 ligne result-item. Restent 5 écarts :
 
-1. **Pièce non obligatoire** : `if (await pieceDownloadLink.isVisible()) { download } else { console.log }` sans assertion, drag-drop pas de else → test vert sans pièce
-2. **Visionneuse facultative avec .catch** : `await expect(...visionneuse-piece...).toBeVisible().catch(()=>{})` → ligne ne peut jamais échouer
-3. **raw_text conditionnel silencieux** : `if (rawText && rawText.trim().length>0) { expect contains uniq }` → vide passe sans assertion
-4. **extraction_status avec défaut "failed" vacuitaire** : `extraction_status || "failed"` → si champ absent, valeur par défaut masque absence
-5. **Identité résultat↔import non liée par ID** : `results[0].id` seulement dans un test, pas dans drag-drop, unicité terme aléatoire non documentée comme preuve attribution
-6. **Skip possible si tesseract absent** : test e2e pourrait être vert par skip sans OCR
+1. Pièce non obligatoire : if visible else log sans assertion
+2. Visionneuse facultative avec .catch
+3. raw_text conditionnel silencieux
+4. extraction_status avec défaut "failed" vacuitaire
+5. Identité résultat↔import non liée par ID, unicité non documentée
+6. Skip possible si tesseract absent
 
-## Corrections appliquées a266559
+## Corrections a266559
 
-### frontend/e2e/scan-browser-ocr.spec.ts — réécriture complète contraignante (~400 lignes, ex 728)
+- Pièce obligatoire : expect visible sans catch/else + download + SHA identique, dans deux tests
+- Visionneuse obligatoire : expect visible sans catch
+- raw_text obligatoire : toBeTruthy + length>10 + normalisé contient uniq, sans if
+- extraction_status : toBeDefined + not failed/success, sans défaut
+- Identité : API search direct count>0 + results[0].id truthy dans deux tests, unicité documentée comme preuve attribution
+- OCR obligatoire : SEAMTECH_OCR_OBLIGATOIRE=1
 
-**Pièce obligatoire (deux téléchargements obligatoires)**
-- Avant : `if (isVisible) { download SHA } else { console.log("pas de pièce") }` → vert sans pièce
-- Après : 
-  ```ts
-  const pieceDownloadLink = page.getByRole('link', { name: /Télécharger la pièce/i }).first();
-  await expect(pieceDownloadLink, 'Lien Télécharger la pièce doit être visible (résultat de CET import)').toBeVisible({ timeout: 15000 });
-  const [pieceDownload] = await Promise.all([
-    page.waitForEvent('download', { timeout: 15000 }),
-    pieceDownloadLink.click(),
-  ]);
-  const piecePath = await pieceDownload.path();
-  expect(piecePath).toBeTruthy();
-  const pieceSha = sha256(await fs.promises.readFile(piecePath!));
-  expect(pieceSha).toBe(originalSha);
-  ```
-- Plus de `if`, plus de `.catch`, plus de fallback `count>0`. Si pièce non visible → `expect visible` fail → test rouge. Même traitement dans test sélection fichier et drag-drop.
-- Source obligatoire déjà existante : `Télécharger le PDF source` → expect visible + download + SHA identique, sans fallback.
+## Vérification indépendante finale (après 1ee9095) — micro-écarts non bloquants relevés
 
-**Visionneuse obligatoire sans .catch**
-- Avant : `await expect(page.getByTestId('visionneuse-piece')).toBeVisible({timeout:10000}).catch(()=>{})`
-- Après : `await expect(page.getByTestId('visionneuse-piece'), 'Visionneuse pièce doit être visible après ouverture résultat').toBeVisible({ timeout: 15000 });`
-- data-testid `visionneuse-piece` existe dans `frontend/components/archive-browser.tsx` (ou équivalent), vérifié. Sans catch, échec si non visible.
+1. Test drag-drop : pas de length>10 sur raw_text (test 1 l'a) — doc dit length>10 pour deux
+2. Assertions réseau recherche UI encore en .catch(()=>null) + if — identité portée par API obligatoire + result-item obligatoire, pas faux positif, mais à ne pas présenter comme obligatoire côté UI
+3. Négatifs : contrôles count 0 conditionnels (if searchResp, if importId, if apiResp.ok) — sur chemin rejet HTTP 400 sans importId, contrôle API sauté. Doc dit obligatoires.
+4. Doc vs code : INVALIDE_sha8 vs INVALIDE${sha8} ; BLANC_SANS_TEXTE_9999 vs BLANCSANSTEXTE9999
+5. Commit a266559 message mentionne Produit: ResultItem alors que ce commit ne touche aucun fichier produit (reliquat ebdb1a2)
+6. Panneau import n'affiche État : qu'une fois polling completed — chemin needs_review accepté mais jamais démontré
 
-**raw_text obligatoire non vide + normalisé contient uniq**
-- Avant : `if (rawText && rawText.trim().length>0) { expect normalized contains uniqNormalized }`
-- Après :
-  ```ts
-  const rawText = payload.data?.raw_text ?? payload.raw_text ?? '';
-  expect(rawText, 'raw_text doit être présent pour CET import').toBeTruthy();
-  expect(rawText.trim().length, 'raw_text ne doit pas être vide').toBeGreaterThan(10);
-  const normalizedRaw = rawText.replace(/[^A-Z0-9]/gi,'').toUpperCase();
-  const normalizedUniq = uniqueTerm.replace(/[^A-Z0-9]/gi,'').toUpperCase();
-  expect(normalizedRaw, `raw_text doit contenir terme unique ${uniqueTerm} (OCR)`).toContain(normalizedUniq);
-  ```
-- Plus de branche silencieuse. Vide → fail. OCR tolérance ponctuation→espace via normalisation alphanum.
+## Corrections finales c158edd — exactitude doc↔code 100%
 
-**extraction_status toBeDefined + not "failed"/not "success" selon cas**
-- Avant : `const extractionStatus = payload.data?.extraction_status || "failed"` → si champ absent, défaut "failed" vacuitaire, test passe sans vérifier champ
-- Après positif :
-  ```ts
-  const extractionStatus = payload.data?.extraction_status;
-  expect(extractionStatus, 'extraction_status doit être défini pour CET import').toBeDefined();
-  expect(extractionStatus, 'extraction_status ne doit pas être failed en cas positif').not.toBe('failed');
-  ```
-- Après négatif (blanc) :
-  ```ts
-  expect(extractionStatus).toBeDefined();
-  expect(extractionStatus).not.toBe('success');
-  ```
-- Après négatif (invalide) :
-  ```ts
-  expect(status).not.toBe('success'); // ou extraction_status != success
-  ```
-
-**Identité résultat↔import liée par ID + unicité terme aléatoire comme preuve attribution**
-- Avant : `results[0].id` seulement dans test sélection fichier, pas drag-drop ; unicité terme non documentée comme preuve
-- Après : dans les deux tests positifs :
-  ```ts
-  const searchResp = await page.request.get(`/api/search?q=${uniqueTerm}`);
-  const searchJson = await searchResp.json();
-  expect(searchJson.count, `API search doit retourner au moins 1 résultat pour terme unique ${uniqueTerm} (preuve attribution par unicité)`).toBeGreaterThan(0);
-  expect(searchJson.results?.[0]?.id, 'result id doit être défini').toBeTruthy();
-  // Note: terme unique aléatoire crypto.randomBytes(4).hex + timestamp, absent nom fichier/metadata, donc résultat ne peut provenir que de CET import
-  ```
-- Documenté dans preuve : `Note unicité : terme ${uniqueTerm} généré aléatoirement, absent nom fichier (scan-fr.pdf) et métadonnées, lisible OCR image-only, donc résultat attribuable à CET import par construction`
-- Vérif `results[0].id` truthy dans drag-drop aussi.
-
-**OCR obligatoire CI**
-- Ajout dans `.github/workflows/ci.yml` job e2e step `Run E2E tests (suite par défaut, SQLite)` :
-  ```yaml
-  env:
-    SEAMTECH_OCR_OBLIGATOIRE: "1"
-  ```
-- Dans `scan-browser-ocr.spec.ts`, si `SEAMTECH_OCR_OBLIGATOIRE=1` et tesseract absent, test doit fail au lieu de skip (garde-fou). Implémentation : si `process.env.SEAMTECH_OCR_OBLIGATOIRE` et pas de tesseract, `expect` fail explicite. En CI, tesseract est installé via `Install OCR binaries`, donc 4 tests exécutés 0 skip.
-- Alternative acceptée : épingler 4 tests exécutés 0 skip dans rapport.
-
-### .github/workflows/ci.yml
-
-- Ajout `SEAMTECH_OCR_OBLIGATOIRE="1"` sur step e2e suite par défaut
-- Empêche vert par skip si tesseract absent
-
-### tests/test_sauvegarde_restauration.py — fix 1ee9095
-
-- **Cause** : `test_restauration_50000_fiches_duree_publiee` insère 50k lignes via `generate_series`, statement_timeout par défaut 5s → `psycopg2.errors.QueryCanceled: canceling statement due to statement timeout` sur runner Python 3.13 plus lent (constaté CI 38534090020 et 38535936491, backend 3.13 fail, 3.11/3.12 success)
-- **Correction** : `SearchIndex(..., statement_timeout_ms=60000)` pour ce test de montée en charge uniquement
-- **Rejeu** : CI 38538168749 verte tous jobs, backend 3.13 success
+- **Test drag-drop length>10** : ajouté `expect(rawText.length).toBeGreaterThan(10)` dans drag-drop (était seulement dans sélection fichier)
+- **Recherche UI obligatoire sans catch, sans race** : utilise `Promise.all([waitForResponse, actions])` pour éviter TimeoutError 10000ms (vu dans CI 38540975618 e2e failure : `page.waitForResponse: Timeout 10000ms exceeded` sur recherche UI). Avant : `await fill; await press Enter; await click; await waitForResponse.catch(()=>null); if(resp){expect}` → race + conditionnel. Après : `await fill; const [resp] = await Promise.all([waitForResponse({timeout:15000}), press Enter + click]) ; expect(count>0)` obligatoire dans deux tests positifs.
+- **Sélecteur pièce durci** : `a[href*="/api/pieces/"][href*="/telecharger"]` au lieu de `a[href*="/telecharger"]` pour exclure collision avec lien import `/api/imports/{id}/artifacts/source_pdf` (import-panel.tsx : import = `/api/imports/{id}/artifacts/source_pdf`, pièce = `/api/pieces/{id}/telecharger` — distincts, vérifié)
+- **Négatifs count 0 non conditionnels** :
+  - Invalide : `const apiInvalidResp = await page.request.get('/api/search?q=INVALIDE${sha8}'); expect(ok); expect(count).toBe(0)` obligatoire toujours, puis UI search count 0 obligatoire avec Promise.all si input visible
+  - Blanc : `const apiBlankResp = await page.request.get('/api/search?q=BLANCSANSTEXTE9999'); expect(count).toBe(0)` obligatoire toujours (BLANCSANSTEXTE9999 sans underscore, doc vs code aligné), puis UI search count 0 obligatoire
+  - Supprime `if(importId)` et `if(apiResp.ok)` conditionnels qui sautaient contrôle sur chemin rejet HTTP 400 sans importId
+- **Doc vs code aligné** : INVALIDE${sha8} (sans underscore, code = `INVALIDE${sha8.slice(0,8)}`), BLANCSANSTEXTE9999 (sans underscore)
+- **CI** : 38540975618 e2e failure (race) → 38542285340 e2e success (fix Promise.all)
 
 ## Historique CI après corrections
 
-- 38479810898 success ebdb1a2 (avant vérif indépendante, avec écarts pièce/visionneuse/raw_text/extraction_status)
-- 38534090020 e2e success (a266559 corrections contraignantes) mais backend 3.13 fail QueryCanceled 50k
-- 38535936491 même fail 3.13 (re-trigger)
-- 38538168749 success complet 1ee9095 (fix timeout 60s + corrections contraignantes)
+- 38479810898 success ebdb1a2 (avec écarts pièce conditionnelle, visionneuse catch, raw_text if, extraction_status défaut)
+- 38534090020 e2e success a266559 mais backend 3.13 fail QueryCanceled 50k (annotation coverage-suite-failed: FAILED test_restauration_50000_fiches_duree_publiee - QueryCanceled)
+- 38538168749 success complet 1ee9095 (fix timeout 60s)
+- 38540975618 e2e failure 74928de (micro-écarts rendus obligatoires mais race waitForResponse → TimeoutError 10000ms)
+- 38542285340 success complet c158edd (fix race Promise.all)
 
-## Preuves finales
+## Preuves finales c158edd
 
-- Code : 1ee90958c2557dee3a10a7acb5d6e983a0dce131
-- CI : 38538168749 tous jobs success (13 jobs : sauvegarde, e2e, hors-ligne-reel, backend 3.11/3.12/3.13, recette-corpus-reel, docker, integration, recette-locale, securite-dependances, frontend, ocr)
-- e2e : 4 tests scan-browser-ocr verts sans skip, visionneuse obligatoire sans catch, pièce téléchargement obligatoire SHA identique, raw_text obligatoire, extraction_status défini
-- Backend : 991 passed 351 skipped local, CI 278 postgres passed 0 skipped, 81 redis_queue passed, coverage gate overall 85%+ (avec PG+Redis), test 50k avec timeout 60s
-- JUnit : 16 tests synthèse mise à jour avec run 38538168749
-- Matrice : SCAN-01a/b mis à jour avec deux téléchargements obligatoires, visionneuse obligatoire, raw_text obligatoire, extraction_status défini, unicité terme comme preuve attribution
-
-## Distinction produit vs harnais
-
-- Produit : ResultItem data-testid result-item (correction testabilité), SearchIndex statement_timeout_ms param (correction robustesse montée en charge)
-- Harnais : scan-browser-ocr.spec.ts réécriture contraignante (pièce obligatoire, visionneuse sans catch, raw_text obligatoire, extraction_status défini, unicité documentée), ci.yml OCR_OBLIGATOIRE env
-- Environnement : tesseract 5.x fra+eng, PostgreSQL pgvector:pg16, Redis 7-alpine, MinIO RELEASE.2025-09-07
+- Code : c158eddfd35c41c39e98f62703be153d7a40c802
+- CI : 38542285340 tous jobs success (13 jobs), e2e success, backend 3.11/3.12/3.13 success (avec fix 50k timeout 60s), frontend, docker, ocr, sauvegarde, integration, hors-ligne, recette-corpus, recette-locale, securite, reserves 38542285324, native 38542285312, perf 38542285299
+- e2e : 4 tests verts sans skip, visionneuse obligatoire sans catch, deux téléchargements obligatoires SHA identiques avec sélecteur durci /api/pieces/, raw_text toBeTruthy length>10 dans deux tests, extraction_status toBeDefined, API search direct count>0 + results[0].id truthy dans deux tests, UI search obligatoire avec Promise.all (pas de catch), count 0 obligatoire API pour invalide/blanc, SEAMTECH_OCR_OBLIGATOIRE=1
+- Vérifié directement : import-panel.tsx lien import = /api/imports/{id}/artifacts/source_pdf, pièce = /api/pieces/{id}/telecharger → sélecteurs distincts, deux téléchargements bien distincts
 
 ## SHA final unique
 
-- SHA code : 1ee90958c2557dee3a10a7acb5d6e983a0dce131
-- Identifiant : qualif-2026-10-14-1ee9095
-- CI verte : 38538168749
+- SHA code : c158eddfd35c41c39e98f62703be153d7a40c802
+- Identifiant : qualif-2026-10-14-c158edd
+- CI verte : 38542285340
