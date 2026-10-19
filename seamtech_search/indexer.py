@@ -1106,41 +1106,45 @@ class SearchIndex:
                 stmts = schema_metier.split_sql_respecting_dollar_quote(
                     schema_metier.SQL_026_BOAT_MODELS_AND_ALIASES
                 )
+                # État des extensions AVANT la boucle (pas de SELECT dans transaction avortée)
+                try:
+                    cursor.execute(
+                        "SELECT extname FROM pg_extension WHERE extname IN ('unaccent','pg_trgm','vector')"
+                    )
+                    exts_state = sorted({r[0] for r in cursor.fetchall()})
+                except Exception:
+                    exts_state = "unknown"
                 for idx_stmt, stmt in enumerate(stmts, start=1):
-                    # Journalise l'état des extensions avant chaque instruction (séparé du 42601)
-                    # pour distinguer permission unaccent/pg_trgm/vector vs syntax
-                    if idx_stmt == 1:
-                        try:
-                            cursor.execute(
-                                "SELECT extname FROM pg_extension WHERE extname IN ('unaccent','pg_trgm','vector')"
-                            )
-                            exts = {r[0] for r in cursor.fetchall()}
-                            logger.info(
-                                "026 diagnostic — extensions présentes avant REVOKE : %s", sorted(exts)
-                            )
-                        except Exception:
-                            pass
                     try:
                         cursor.execute(stmt)
                     except Exception as exc_stmt:
-                        # Capture SQLSTATE, position, extrait sans masquer l'exception
+                        # Capture immédiate avant tout autre SELECT
                         sqlstate = getattr(exc_stmt, "pgcode", None)
                         diag = getattr(exc_stmt, "diag", None)
                         pos = getattr(diag, "statement_position", None) if diag else None
                         primary = getattr(diag, "message_primary", None) if diag else None
-                        # Log détaillé et remonte pour que run_migrations marque la migration en échec
-                        logger.error(
-                            "026 diagnostic — instruction %d/%d échec SQLSTATE=%s pos=%s stmt=%.200r primary=%.200r err=%s",
-                            idx_stmt,
-                            len(stmts),
-                            sqlstate,
-                            pos,
-                            stmt.strip()[:200],
-                            primary,
-                            exc_stmt,
-                            exc_info=True,
+                        stmt_text = stmt.strip()
+                        # Contexte autour de pos (pas seulement 500 premiers) — sinon zone fautive omise
+                        if pos:
+                            try:
+                                p = int(pos)
+                                # position PostgreSQL est 1-indexed dans l'instruction
+                                start = max(0, p - 120)
+                                end = min(len(stmt_text), p + 120)
+                                context = stmt_text[start:end]
+                            except Exception:
+                                context = stmt_text[:800]
+                        else:
+                            context = stmt_text[:800]
+                        diag_msg = (
+                            f"026 diagnostic — instruction {idx_stmt}/{len(stmts)} "
+                            f"échec SQLSTATE={sqlstate} pos={pos} "
+                            f"stmt={stmt_text[:800]!r} context_pos={context!r} "
+                            f"primary={primary!r} extensions={exts_state} — original: {exc_stmt}"
                         )
-                        raise
+                        logger.error(diag_msg, exc_info=True)
+                        # Vérifie traversée du gestionnaire externe jusqu'à pytest
+                        raise RuntimeError(diag_msg) from exc_stmt
                 cursor.execute("RELEASE SAVEPOINT seamtech_026_tables")
             except Exception as exc:
                 cursor.execute("ROLLBACK TO SAVEPOINT seamtech_026_tables")
