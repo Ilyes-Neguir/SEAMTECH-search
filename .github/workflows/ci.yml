@@ -1397,21 +1397,23 @@ jobs:
           passes = stats["expected"]
           flaky = stats.get("flaky", 0)
           sautes = stats.get("skipped", 0)
-          # 33 tests : les 26 existants (19 sondes d'auth + 4 comptes
-          # nominatifs + 3 sondes catalogue/pièces) et 7 nouvelles preuves du
-          # Lot 0a (logout POST seul, CSRF, logout-all, rotation du sid, cookie
-          # v1 refusé, no-store, parcours navigateur avec Retour). Le compte
-          # reste EXACT : aucun test ne peut s'ignorer en CI.
+          # 34 tests : les 26 existants (19 sondes d'auth + 4 comptes
+          # nominatifs + 3 sondes catalogue/pièces), 7 preuves du Lot 0a
+          # (logout POST seul, CSRF, logout-all, rotation du sid, cookie v1
+          # refusé, no-store sur page + API métier, parcours navigateur avec
+          # Retour) et 1 preuve live de téléchargement (no-store + %PDF + 401
+          # sans session). Le compte reste EXACT : aucun test ne peut
+          # s'ignorer en CI.
           # Même politique que l'étape doublons : tous doivent verdir et aucun
           # ne doit être sauté ; une reprise interne est publiée en ::warning.
-          if sautes or passes + flaky != 33:
+          if sautes or passes + flaky != 34:
               # Message aussi en annotation : c'est le seul canal lisible en CI.
               print(
-                  f"::error title=e2e-auth-count::attendu 33 tests verts, 0 sautés — "
+                  f"::error title=e2e-auth-count::attendu 34 tests verts, 0 sautés — "
                   f"mesuré {passes} passés au premier essai, {flaky} flaky, {sautes} sautés"
               )
               raise SystemExit(
-                  f"GARDE-FOU e2e auth : attendu 33 tests verts, 0 sautés — "
+                  f"GARDE-FOU e2e auth : attendu 34 tests verts, 0 sautés — "
                   f"mesuré {passes} passés au premier essai, {flaky} flaky, {sautes} sautés."
               )
           if flaky:
@@ -1419,7 +1421,7 @@ jobs:
                   f"::warning title=e2e-auth-flaky::{flaky} test(s) vert(s) seulement à la reprise "
                   f"({passes} verts au premier essai) — à instruire, la porte reste ouverte."
               )
-          print(f"::notice title=e2e-auth-nominatif::33 tests verts (dont 4 comptes nominatifs et 7 preuves Lot 0a)")
+          print(f"::notice title=e2e-auth-nominatif::34 tests verts (dont 4 comptes nominatifs, 7 preuves Lot 0a et 1 téléchargement)")
           PY
 
       - name: Upload live E2E reports on failure (doublons, auth nominatif)

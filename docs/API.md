@@ -252,6 +252,9 @@ Toute requête mutante authentifiée par cookie (POST/PUT/PATCH/DELETE sous `/ap
 l'en-tête `X-CSRF-Token` égal au cookie `seamtech_csrf` (double-submit) ; sinon **403**
 avant le handler. Les cookies v1/v2 (auto-portés, sans sid) sont refusés avec 401, et
 Redis/backend indisponible répond **503** (fail-closed) plutôt que de laisser passer.
+Le détail du mécanisme, sa justification et ses LIMITES (XSS, sous-domaines,
+login CSRF, `Origin` non vérifié) sont dans [SECURITE_SESSIONS.md](SECURITE_SESSIONS.md),
+avec la règle `Cache-Control: no-store` et les tests qui la couvrent.
 
 **Frontière de confiance (à ne pas déplacer).** Le proxy Next.js pose
 `X-SEAMTECH-UTILISATEUR` et `X-SEAMTECH-ROLE` depuis le cookie signé. Côté Python ces

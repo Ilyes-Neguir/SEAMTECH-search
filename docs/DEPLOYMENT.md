@@ -282,6 +282,10 @@ How it works:
 - **Fail-closed.** Redis or the backend unavailable ⇒ **503** (explicit
   message), never a fallback that would let a revoked session work. This is
   consistent with `SEAMTECH_REQUIRE_DURABLE_QUEUE=true`.
+- **Threat model, CSRF rationale and cache rules**: [SECURITE_SESSIONS.md](SECURITE_SESSIONS.md)
+  states exactly what the double-submit protects, what it does not (XSS,
+  sibling subdomains, login CSRF), and how `Cache-Control: no-store` reaches
+  pages, business APIs and file downloads.
 - Failed sign-ins are throttled: nominative accounts in the database (5
   failures / 5 minutes, survives restarts, `Retry-After`), rescue account in
   memory per process. Neither replaces network-level controls.

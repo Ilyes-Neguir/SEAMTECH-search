@@ -22,6 +22,34 @@ def test_configured_token_protects_search(tmp_path: Path) -> None:
     assert client.get("/health", headers={"X-SEAMTECH-TOKEN": "secret"}).status_code == 200
 
 
+def test_authenticated_responses_are_no_store(tmp_path: Path) -> None:
+    """Lot 0a : aucune réponse authentifiée ne doit être cachable.
+
+    Vérifié au niveau du middleware FastAPI (seamtech_search/api.py) sur deux
+    routes métier réelles, et pas seulement sur /auth/session : c'est le
+    backend qui pose l'en-tête que le navigateur voit, y compris pour les
+    réponses relayées par Next.
+    """
+    root = tmp_path / "root"
+    root.mkdir()
+    config = AppConfig(
+        root_paths=[root],
+        database_path=tmp_path / "nostore.db",
+        auth_token="secret",
+        min_free_bytes=0,
+    )
+    client = TestClient(create_app(config))
+
+    for chemin in ("/search?q=client", "/pieces"):
+        reponse = client.get(chemin, headers={"X-SEAMTECH-TOKEN": "secret"})
+        assert reponse.status_code == 200, (chemin, reponse.text)
+        assert reponse.headers.get("cache-control") == "no-store", chemin
+
+    # Sans jeton, ces routes sont refusées (401) : il n'y a rien à mettre en
+    # cache, et l'en-tête n'est pas une autorisation.
+    assert client.get("/search?q=client").status_code == 401
+
+
 def test_upload_over_file_cap_is_rejected_with_actionable_message(tmp_path: Path) -> None:
     """A dossier over the upload cap must get a clear 413, not an opaque 422.
 

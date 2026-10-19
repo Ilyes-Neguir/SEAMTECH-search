@@ -370,8 +370,11 @@ test.describe("Authentication gate (audit issue #5)", () => {
         data: { mot_de_passe: UI_PASSWORD },
         failOnStatusCode: false,
       })
-      for (const chemin of ["/api/auth/session", "/api/search?q=CLIENT"]) {
+      // Trois natures de réponse authentifiée : une PAGE protégée, une API
+      // métier, et la route de session. Toutes doivent interdire le cache.
+      for (const chemin of ["/fichiers", "/api/search?q=CLIENT", "/api/pieces", "/api/auth/session"]) {
         const reponse = await contexte.fetch(chemin, { failOnStatusCode: false })
+        expect(reponse.status(), chemin).toBe(200)
         expect(reponse.headers()["cache-control"], chemin).toMatch(/no-store/)
       }
     } finally {
@@ -502,6 +505,68 @@ test.describe("Comptes nominatifs (Lot L.2)", () => {
     } finally {
       await operateur.dispose()
       await admin.dispose()
+    }
+  })
+
+  test("le téléchargement d'une pièce est authentifié et interdit le cache", async () => {
+    const context = await anonymousContext()
+    try {
+      const login = await context.fetch("/api/auth/login", {
+        method: "POST",
+        data: { identifiant: ADMIN.identifiant, mot_de_passe: ADMIN.motDePasse },
+        failOnStatusCode: false,
+      })
+      expect(login.status()).toBe(200)
+
+      // Une pièce RÉELLE de la base seedée : on la cherche par le même chemin
+      // que l'écran de validation (file → pièces de la fiche).
+      const file = await context.fetch("/api/validation/file", { failOnStatusCode: false })
+      expect(file.status()).toBe(200)
+      const codes = ((await file.json()) as Array<{ code: string }>).map((entree) => entree.code)
+      expect(codes.length).toBeGreaterThan(0)
+
+      let idPiece: number | null = null
+      for (const code of codes) {
+        const pieces = await context.fetch(`/api/fiches/${encodeURIComponent(code)}/pieces`, {
+          failOnStatusCode: false,
+        })
+        if (pieces.status() !== 200) continue
+        const corps = (await pieces.json()) as {
+          pieces: Array<{ id: number; kind: string; is_primary_pdf: boolean }>
+        }
+        const piece =
+          corps.pieces.find((candidate) => candidate.is_primary_pdf) ??
+          corps.pieces.find((candidate) => candidate.kind === "pdf")
+        if (piece) {
+          idPiece = piece.id
+          break
+        }
+      }
+      expect(idPiece, "le seed live doit fournir au moins un PDF").not.toBeNull()
+
+      const telechargement = await context.fetch(`/api/pieces/${idPiece}/telecharger`, {
+        failOnStatusCode: false,
+      })
+      expect(telechargement.status()).toBe(200)
+      expect(telechargement.headers()["cache-control"]).toMatch(/no-store/)
+      expect(telechargement.headers()["content-type"]).toContain("application/pdf")
+      const octets = await telechargement.body()
+      expect(octets.subarray(0, 4).toString("latin1")).toBe("%PDF")
+      expect(octets.length).toBeGreaterThan(1000)
+
+      // Le MÊME téléchargement sans session est refusé : la donnée n'est pas
+      // publique, et l'absence de cache ne remplace pas le contrôle d'accès.
+      const anonyme = await pwRequest.newContext({ baseURL: BASE_URL })
+      try {
+        const refus = await anonyme.fetch(`/api/pieces/${idPiece}/telecharger`, {
+          failOnStatusCode: false,
+        })
+        expect(refus.status()).toBe(401)
+      } finally {
+        await anonyme.dispose()
+      }
+    } finally {
+      await context.dispose()
     }
   })
 
