@@ -1615,12 +1615,7 @@ COMMENT ON FUNCTION seamtech_texte_recherche(TEXT) IS
 """
 
 SQL_026_BOAT_MODELS_AND_ALIASES = """
--- ============================================================================
--- 026_boat_models_and_aliases — référentiel unique des modèles de bateaux
--- ============================================================================
-CREATE EXTENSION IF NOT EXISTS pg_trgm;
-
--- ---------- Référentiel : modèles canoniques ----------
+-- 026 minimal : tables seules, sans index ni inserts ni trigger
 CREATE TABLE IF NOT EXISTS boat_models (
     id              BIGSERIAL PRIMARY KEY,
     canonical_name  TEXT NOT NULL,
@@ -1630,26 +1625,6 @@ CREATE TABLE IF NOT EXISTS boat_models (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-
--- Trigger updated_at (utilise $func$ pour eviter conflit ; dans $$)
-CREATE OR REPLACE FUNCTION _touch_boat_models_updated_at() RETURNS TRIGGER AS $func$
-BEGIN
-    NEW.updated_at = now();
-    RETURN NEW;
-END;
-$func$ LANGUAGE plpgsql;
-
-DROP TRIGGER IF EXISTS trg_boat_models_updated_at ON boat_models;
-CREATE TRIGGER trg_boat_models_updated_at
-    BEFORE UPDATE ON boat_models
-    FOR EACH ROW EXECUTE FUNCTION _touch_boat_models_updated_at();
-
-CREATE INDEX IF NOT EXISTS idx_boat_models_normalized_key_trgm
-    ON boat_models USING gin (normalized_key gin_trgm_ops);
-CREATE INDEX IF NOT EXISTS idx_boat_models_canonical_name_trgm
-    ON boat_models USING gin (seamtech_texte_recherche(canonical_name) gin_trgm_ops);
-
--- ---------- Aliases : variantes & abréviations ----------
 CREATE TABLE IF NOT EXISTS boat_model_aliases (
     id                BIGSERIAL PRIMARY KEY,
     boat_model_id     BIGINT NOT NULL REFERENCES boat_models(id) ON DELETE CASCADE,
@@ -1660,15 +1635,6 @@ CREATE TABLE IF NOT EXISTS boat_model_aliases (
     created_by        TEXT,
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-
-CREATE INDEX IF NOT EXISTS idx_boat_aliases_model_id ON boat_model_aliases(boat_model_id);
-CREATE INDEX IF NOT EXISTS idx_boat_aliases_status ON boat_model_aliases(status);
-CREATE INDEX IF NOT EXISTS idx_boat_aliases_normalized_trgm
-    ON boat_model_aliases USING gin (alias_normalized gin_trgm_ops);
-CREATE INDEX IF NOT EXISTS idx_boat_aliases_raw_trgm
-    ON boat_model_aliases USING gin (seamtech_texte_recherche(alias_raw) gin_trgm_ops);
-
--- ---------- Historique des fusions ----------
 CREATE TABLE IF NOT EXISTS boat_model_merge_history (
     id                BIGSERIAL PRIMARY KEY,
     source_model_id   BIGINT NOT NULL,
@@ -1678,11 +1644,6 @@ CREATE TABLE IF NOT EXISTS boat_model_merge_history (
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
     reverted_at       TIMESTAMPTZ
 );
-
-CREATE INDEX IF NOT EXISTS idx_merge_history_source ON boat_model_merge_history(source_model_id);
-CREATE INDEX IF NOT EXISTS idx_merge_history_target ON boat_model_merge_history(target_model_id);
-
--- ---------- Synonymes voilerie (GV/GE/GEN/SPI/TRQ etc.) ----------
 CREATE TABLE IF NOT EXISTS search_synonyms (
     id                BIGSERIAL PRIMARY KEY,
     canonical_term    TEXT NOT NULL,
@@ -1691,41 +1652,6 @@ CREATE TABLE IF NOT EXISTS search_synonyms (
     active            BOOLEAN NOT NULL DEFAULT true,
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-
-CREATE INDEX IF NOT EXISTS idx_search_synonyms_alias_trgm
-    ON search_synonyms USING gin (normalized_alias gin_trgm_ops);
-CREATE INDEX IF NOT EXISTS idx_search_synonyms_canonical_trgm
-    ON search_synonyms USING gin (seamtech_texte_recherche(canonical_term) gin_trgm_ops);
-CREATE INDEX IF NOT EXISTS idx_search_synonyms_active ON search_synonyms(active) WHERE active = true;
-
--- Pré-remplissage : abréviations voilerie courantes (GV/GE/GEN/SPI/TRQ etc.)
--- Chaque ligne : canonical_term = forme développée, normalized_alias = abréviation normalisée (unique)
-INSERT INTO search_synonyms (canonical_term, normalized_alias, category, active) VALUES
-    ('Grand-Voile', 'gv', 'sail_type', true) ON CONFLICT (normalized_alias) DO NOTHING;
-INSERT INTO search_synonyms (canonical_term, normalized_alias, category, active) VALUES
-    ('Génois', 'ge', 'sail_type', true) ON CONFLICT (normalized_alias) DO NOTHING;
-INSERT INTO search_synonyms (canonical_term, normalized_alias, category, active) VALUES
-    ('Génois', 'gen', 'sail_type', true) ON CONFLICT (normalized_alias) DO NOTHING;
-INSERT INTO search_synonyms (canonical_term, normalized_alias, category, active) VALUES
-    ('Spinnaker', 'spi', 'sail_type', true) ON CONFLICT (normalized_alias) DO NOTHING;
-INSERT INTO search_synonyms (canonical_term, normalized_alias, category, active) VALUES
-    ('Trinquette', 'trq', 'sail_type', true) ON CONFLICT (normalized_alias) DO NOTHING;
-INSERT INTO search_synonyms (canonical_term, normalized_alias, category, active) VALUES
-    ('Gennaker', 'genn', 'sail_type', true) ON CONFLICT (normalized_alias) DO NOTHING;
-INSERT INTO search_synonyms (canonical_term, normalized_alias, category, active) VALUES
-    ('Code 0', 'c0', 'sail_type', true) ON CONFLICT (normalized_alias) DO NOTHING;
-INSERT INTO search_synonyms (canonical_term, normalized_alias, category, active) VALUES
-    ('Monofilm', 'monofilm', 'material', true) ON CONFLICT (normalized_alias) DO NOTHING;
-INSERT INTO search_synonyms (canonical_term, normalized_alias, category, active) VALUES
-    ('Dacron', 'dacron', 'material', true) ON CONFLICT (normalized_alias) DO NOTHING;
-INSERT INTO search_synonyms (canonical_term, normalized_alias, category, active) VALUES
-    ('Aramide', 'aramide', 'material', true) ON CONFLICT (normalized_alias) DO NOTHING;
-INSERT INTO search_synonyms (canonical_term, normalized_alias, category, active) VALUES
-    ('Lattée', 'lattee', 'nautical_term', true) ON CONFLICT (normalized_alias) DO NOTHING;
-
--- Index de recherche pour boat_synonyms : préfixe + trigramme
-CREATE INDEX IF NOT EXISTS idx_boat_models_aliases_join
-    ON boat_model_aliases(boat_model_id, status);
 """
 
 MIGRATIONS_METIER: tuple[tuple[str, str], ...] = (
