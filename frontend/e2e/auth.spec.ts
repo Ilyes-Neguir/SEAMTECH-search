@@ -259,6 +259,12 @@ test.describe("Authentication gate (audit issue #5)", () => {
       }
       expect((await premier.fetch("/api/auth/session")).status()).toBe(200)
       expect((await second.fetch("/api/auth/session")).status()).toBe(200)
+      // Cookie d'origine du premier appareil : il servira à rejouer la session
+      // APRÈS le logout-all (le cookie du navigateur initiateur est effacé).
+      const cookiePremier = (await premier.storageState()).cookies.find(
+        (cookie) => cookie.name === "seamtech_session",
+      )?.value
+      expect(cookiePremier).toBeTruthy()
 
       const reponse = await premier.fetch("/api/auth/logout-all", {
         method: "POST",
@@ -266,13 +272,30 @@ test.describe("Authentication gate (audit issue #5)", () => {
         failOnStatusCode: false,
       })
       expect(reponse.status()).toBe(200)
-      expect(await reponse.json()).toMatchObject({ ok: true })
-      expect((await reponse.json()).sessions_revoquees).toBeGreaterThanOrEqual(2)
+      const corps = await reponse.json()
+      expect(corps).toMatchObject({ ok: true })
+      expect(corps.sessions_revoquees).toBeGreaterThanOrEqual(2)
 
-      for (const contexte of [premier, second]) {
-        const refus = await contexte.fetch("/api/auth/session", { failOnStatusCode: false })
-        expect(refus.status()).toBe(401)
-        expect((await contexte.fetch("/api/search?q=CLIENT", { failOnStatusCode: false })).status()).toBe(401)
+      // L'AUTRE appareil (cookie intact) reçoit 401 : la session a bien été
+      // révoquée côté serveur, pas seulement effacée de l'initiateur.
+      expect((await second.fetch("/api/auth/session", { failOnStatusCode: false })).status()).toBe(401)
+      expect((await second.fetch("/api/search?q=CLIENT", { failOnStatusCode: false })).status()).toBe(401)
+      // L'initiateur a perdu ses cookies : il est proprement déconnecté.
+      const sessionPremier = await premier.fetch("/api/auth/session", { failOnStatusCode: false })
+      expect(sessionPremier.status()).toBe(200)
+      expect(await sessionPremier.json()).toMatchObject({ authenticated: false })
+      expect((await premier.fetch("/api/search?q=CLIENT", { failOnStatusCode: false })).status()).toBe(401)
+
+      // Rejeu du cookie copié AVANT la révocation : 401 sur les deux routes.
+      const rejeu = await pwRequest.newContext({
+        baseURL: BASE_URL,
+        extraHTTPHeaders: { Cookie: `seamtech_session=${cookiePremier}` },
+      })
+      try {
+        expect((await rejeu.fetch("/api/auth/session", { failOnStatusCode: false })).status()).toBe(401)
+        expect((await rejeu.fetch("/api/search?q=CLIENT", { failOnStatusCode: false })).status()).toBe(401)
+      } finally {
+        await rejeu.dispose()
       }
     } finally {
       await premier.dispose()
@@ -543,6 +566,14 @@ test.describe("Déconnexion navigateur (Lot 0a)", () => {
     // (cookie effacé + Cache-Control: no-store désactive la bfcache).
     await page.goBack()
     await expect(page.getByTestId("archive-browser")).toHaveCount(0)
+    // Selon le moteur, le Retour peut réafficher un document en cache mémoire
+    // sans repasser par le serveur. On force alors une requête (les réponses
+    // authentifiées sont en no-store) : elle doit aboutir à /login, jamais à
+    // une page de données avec une session morte.
+    if (!page.url().includes("/login")) {
+      await page.reload()
+    }
+    await expect(page).toHaveURL(/\/login/, { timeout: 20000 })
     await expect(page.getByRole("button", { name: "Se connecter" })).toBeVisible({ timeout: 20000 })
 
     // La reconnexion fonctionne après une déconnexion.

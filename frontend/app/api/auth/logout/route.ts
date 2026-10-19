@@ -30,6 +30,21 @@ export const dynamic = "force-dynamic"
  * and the server-side session will die by TTL. We never pretend a revocation
  * happened when it did not.
  */
+/**
+ * GET is refused with an explicit 405 and an `Allow` header.
+ *
+ * Next would answer 405 anyway (no GET export), but a deterministic handler
+ * makes the contract testable and tells a human/proxy exactly what is allowed.
+ * A GET must never mutate state: prefetchers, link scanners and <img> tags all
+ * issue GETs, and a logout must never be triggerable by one.
+ */
+export function GET() {
+  return NextResponse.json(
+    { detail: "Déconnexion : méthode POST uniquement." },
+    { status: 405, headers: { Allow: "POST", "Cache-Control": "no-store" } },
+  )
+}
+
 export async function POST(req: NextRequest) {
   const session = await currentSession()
   const base = backendBase()
