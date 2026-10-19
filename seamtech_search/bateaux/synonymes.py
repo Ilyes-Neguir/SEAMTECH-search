@@ -117,7 +117,6 @@ def _expand_query_with_synonymes(
         return resultat
 
     alias_to_canonical = search_synonymes.get("alias_to_canonical", {})
-    canonical_to_alias = search_synonymes.get("canonical_to_alias", {})
 
     # Pour les requêtes courtes (1-3 tokens), on vérifie si la requête entière
     # ou une sous-phrase est un alias ou un canonical
@@ -130,15 +129,10 @@ def _expand_query_with_synonymes(
     expansions: list[str] = []
     for ng in ngrams:
         if ng in alias_to_canonical:
-            # Alias → canonical (ex: "gv" → "grand voile")
             canonical = alias_to_canonical[ng]
-            if canonical not in query_norm:
+            if canonical not in query_norm and not canonical.startswith(ng) and ng not in canonical.split():
+                # Évite redondance si alias est déjà préfixe du canonical (ex: spi→spinnaker déjà trouvé par FTS prefix)
                 expansions.append(canonical)
-        if ng in canonical_to_alias:
-            # Canonical → alias (ex: "grand voile" → "gv")
-            alias = canonical_to_alias[ng]
-            if alias not in query_norm:
-                expansions.append(alias)
 
     if expansions:
         resultat = resultat + " " + " ".join(expansions)

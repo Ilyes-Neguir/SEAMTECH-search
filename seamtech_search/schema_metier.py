@@ -1565,13 +1565,10 @@ AS $fonction$
         replace(replace(replace(
             lower(
                 regexp_replace(
-                    regexp_replace(
-                        translate(
-                            public.unaccent('public.unaccent'::regdictionary, coalesce(t, '')),
-                            E'\\u00a0\\u202f\\u2007\\u2009',
-                            '    '
-                        ),
-                        '[-_\\u2013\\u2014/]+', ' ', 'g'
+                    translate(
+                        public.unaccent('public.unaccent'::regdictionary, coalesce(t, '')),
+                        E'\\u00a0\\u202f\\u2007\\u2009',
+                        '    '
                     ),
                     '[[:space:]]+', ' ', 'g'
                 )
@@ -1583,7 +1580,7 @@ AS $fonction$
 $fonction$;
 
 COMMENT ON FUNCTION seamtech_texte_recherche(TEXT) IS
-    'Clé de recherche Lot2 (casse/accents/ligatures/tirets-underscores-slash → espace, espaces comprimés) — IMMUTABLE ; miroir Python : normaliser_cle_recherche + normaliser_cle_bateau';
+    'Clé de recherche (casse pliée, diacritiques latin via unaccent, ligatures œ/æ/ß, espaces comprimés, NFC≡NFD) — IMMUTABLE donc indexable ; miroir Python : seamtech_search.fiches.normalisation.normaliser_cle_recherche';
 """
 
 SQL_026_FONCTION_REPLI_ETENDUE = r"""
@@ -1598,13 +1595,12 @@ AS $fonction$
         replace(replace(replace(
             lower(
                 regexp_replace(
-                    regexp_replace(
-                        translate(
-                            coalesce(t, ''),
-                            'ÀÁÂÃÄÅÈÉÊËÌÍÎÏÒÓÔÕÖÙÚÛÜÝàáâãäåèéêëìíîïòóôöõùúûüýÿÇçÑñØøŸĀāĂăĄąĆćĈĉĊċČčĎďĐđĒēĔĕĖėĘęĚěĜĝĞğĠġĢģĤĥĦħĨĩĪīĬĭĮįİıĴĵĶķĹĺĻļĽľĿŀŁłŃńŅņŇňŌōŎŏŐőŔŕŖŗŘřŚśŜŝŞşŠšŢţŤťŦŧŨũŪūŬŭŮůŰűŲųŴŵŶŷŹźŻżŽž' || E'\u00a0\u202f\u2007\u2009',
+                    translate(
+                        coalesce(t, ''),
+                        'ÀÁÂÃÄÅÈÉÊËÌÍÎÏÒÓÔÕÖÙÚÛÜÝàáâãäåèéêëìíîïòóôöõùúûüýÿÇçÑñØøŸĀāĂăĄąĆćĈĉĊċČčĎďĐđĒēĔĕĖėĘęĚěĜĝĞğĠġĢģĤĥĦħĨĩĪīĬĭĮįİıĴĵĶķĹĺĻļĽľĿŀŁłŃńŅņŇňŌōŎŏŐőŔŕŖŗŘřŚśŜŝŞşŠšŢţŤťŦŧŨũŪūŬŭŮůŰűŲųŴŵŶŷŹźŻżŽž' || E'\u00a0\u202f\u2007\u2009',
                             'AAAAAAEEEEIIIIOOOOOUUUUYaaaaaaeeeeiiiiooooouuuuyyCcNnOoYAaAaAaCcCcCcCcDdDdEeEeEeEeEeGgGgGgGgHhHhIiIiIiIiIiJjKkLlLlLlLlLlNnNnNnOoOoOoRrRrRrSsSsSsSsTtTtTtUuUuUuUuUuUuWwYyZzZzZz    '
                         ),
-                        '[-_\u2013\u2014/]+', ' ', 'g'
+                        '[[:space:]]+', ' ', 'g'
                     ),
                     '[[:space:]]+', ' ', 'g'
                 )
@@ -1616,7 +1612,7 @@ AS $fonction$
 $fonction$;
 
 COMMENT ON FUNCTION seamtech_texte_recherche(TEXT) IS
-    'Clé de recherche Lot2 (repli sans unaccent : tirets-underscores-slash → espace) — IMMUTABLE';
+    'Clé de recherche (repli sans unaccent : translate latin-1 + étendu A) — IMMUTABLE ; miroir Python : normaliser_cle_recherche';
 """
 
 SQL_026_BOAT_MODELS_AND_ALIASES = """
@@ -1719,8 +1715,6 @@ INSERT INTO search_synonyms (canonical_term, normalized_alias, category, active)
     ('Gennaker', 'genn', 'sail_type', true) ON CONFLICT (normalized_alias) DO NOTHING;
 INSERT INTO search_synonyms (canonical_term, normalized_alias, category, active) VALUES
     ('Code 0', 'c0', 'sail_type', true) ON CONFLICT (normalized_alias) DO NOTHING;
-INSERT INTO search_synonyms (canonical_term, normalized_alias, category, active) VALUES
-    ('Grand Voile', 'grand voile', 'sail_type', true) ON CONFLICT (normalized_alias) DO NOTHING;
 INSERT INTO search_synonyms (canonical_term, normalized_alias, category, active) VALUES
     ('Monofilm', 'monofilm', 'material', true) ON CONFLICT (normalized_alias) DO NOTHING;
 INSERT INTO search_synonyms (canonical_term, normalized_alias, category, active) VALUES

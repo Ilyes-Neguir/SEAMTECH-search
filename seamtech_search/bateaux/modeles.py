@@ -396,20 +396,24 @@ def merge_boat_models(
                 "target_model": {"id": int(tgt[0]), "canonical_name": str(tgt[1]), "normalized_key": tgt_cle},
             }
 
-            # Déplace les alias : réassigne boat_model_id
-            # Conflit possible si alias_normalized existe déjà chez target (unique) → on ignore
+            # Déplace les alias : réassigne boat_model_id, en gérant les doublons alias_normalized
+            # Si source et target ont déjà le même alias_normalized, on supprime celui du source (garde celui du target)
+            cursor.execute("SELECT alias_normalized FROM boat_model_aliases WHERE boat_model_id = %s", (target_id,))
+            target_aliases = {r[0] for r in cursor.fetchall()}
+            if target_aliases:
+                cursor.execute(
+                    "SELECT id, alias_normalized FROM boat_model_aliases WHERE boat_model_id = %s", (source_id,)
+                )
+                source_aliases = cursor.fetchall()
+                for alias_id, alias_norm in source_aliases:
+                    if alias_norm in target_aliases:
+                        cursor.execute("DELETE FROM boat_model_aliases WHERE id = %s", (alias_id,))
             cursor.execute(
                 """
                 UPDATE boat_model_aliases SET boat_model_id = %s WHERE boat_model_id = %s
                 """,
                 (target_id, source_id),
             )
-            # Gère les conflits d'unicité : si deux alias ont même normalized, le second échoue ;
-            # on supprime les doublons en gardant celui du target ?
-            # Postgres ON CONFLICT n'est pas possible sur UPDATE, donc on doit gérer manuellement :
-            # On a déplacé, s'il y a doublon, l'unique contrainte va lever. On attrape et on supprime les doublons.
-            # Simplification : on tente, si erreur on rollback et on fait plus fin
-            # Pour l'instant, on suppose pas de doublon (rare), et on laisse lever si doublon.
 
             # Insère historique
             cursor.execute(
@@ -555,10 +559,8 @@ def expand_query_with_boat_aliases(query: str, cursor: Any, nom_base: str) -> st
             canonical = alias_to_canonical[ng]
             if canonical not in query_norm and canonical not in expansions:
                 expansions.append(canonical)
-        if ng in canonical_to_aliases:
-            for alias in canonical_to_aliases[ng]:
-                if alias not in query_norm and alias not in expansions:
-                    expansions.append(alias)
+        # Pour la recherche fiches, on ne fait pas canonical→alias (évite bruit, ex: oceanis 45 → oc 45 inutile)
+        # La direction inverse est utile seulement pour les suggestions, pas pour la recherche FTS
 
     if expansions:
         return query + " " + " ".join(expansions)
