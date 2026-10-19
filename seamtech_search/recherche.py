@@ -965,8 +965,8 @@ def rechercher_fiches(
             )
             # Lot 2 — expansion synonymes voilerie (search_synonyms) + aliases bateau (dégradable, bases pré-026)
             try:
-                from seamtech_search.bateaux.recherche_etendue import normaliser_requete_etendue
                 from seamtech_search.bateaux.modeles import expand_query_with_boat_aliases
+                from seamtech_search.bateaux.recherche_etendue import normaliser_requete_etendue
                 from seamtech_search.bateaux.synonymes import _charger_search_synonymes, _expand_query_with_synonymes
 
                 search_syn = _charger_search_synonymes(cursor, nom_base)

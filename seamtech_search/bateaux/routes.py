@@ -8,7 +8,6 @@ from typing import Annotated, Any
 from fastapi import Header, HTTPException, Query
 
 from seamtech_search.bateaux.modeles import (
-    expand_query_with_boat_aliases,
     get_or_create_boat_model,
     list_boat_aliases,
     list_boat_models,

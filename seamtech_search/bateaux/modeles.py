@@ -163,7 +163,6 @@ def get_or_create_boat_model(
                     # mais avec garde-fou explicite : on ne doit pas auto-fusionner, donc pending est correct
                     # On crée quand même pending_review pour examen humain
                     id_proche = int(proche[0])
-                    canonical_proche = str(proche[1])
                     # Crée alias pending_review
                     cursor.execute(
                         """

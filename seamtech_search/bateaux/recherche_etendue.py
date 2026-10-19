@@ -15,9 +15,9 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from seamtech_search.bateaux.modeles import expand_query_with_boat_aliases
 from seamtech_search.bateaux.normalisation import normaliser_cle_bateau
 from seamtech_search.bateaux.synonymes import expand_query_for_search
-from seamtech_search.bateaux.modeles import expand_query_with_boat_aliases
 
 # ---------------------------------------------------------------------------
 # Helpers de normalisation pour la requête (tirets/underscores/slash)
@@ -252,7 +252,6 @@ def generer_tableau_comparatif(index: Any) -> dict[str, Any]:
     # On teste directement les fonctions de normalisation et de déduction,
     # sans nécessiter de données en base — c'est idempotent et déterministe.
     from seamtech_search.bateaux.normalisation import est_variante_distincte
-    from seamtech_search.fiches.normalisation import normaliser_cle_recherche
 
     cas_tests = [
         {
