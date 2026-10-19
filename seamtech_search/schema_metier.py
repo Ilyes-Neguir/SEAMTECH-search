@@ -1601,8 +1601,7 @@ AS $fonction$
                             'AAAAAAEEEEIIIIOOOOOUUUUYaaaaaaeeeeiiiiooooouuuuyyCcNnOoYAaAaAaCcCcCcCcDdDdEeEeEeEeEeGgGgGgGgHhHhIiIiIiIiIiJjKkLlLlLlLlLlNnNnNnOoOoOoRrRrRrSsSsSsSsTtTtTtUuUuUuUuUuUuWwYyZzZzZz    '
                         ),
                         '[[:space:]]+', ' ', 'g'
-                    ),
-                    '[[:space:]]+', ' ', 'g'
+                    )
                 )
             ),
             'œ', 'oe'),

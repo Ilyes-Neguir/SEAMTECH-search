@@ -559,8 +559,10 @@ def expand_query_with_boat_aliases(query: str, cursor: Any, nom_base: str) -> st
             canonical = alias_to_canonical[ng]
             if canonical not in query_norm and canonical not in expansions:
                 expansions.append(canonical)
-        # Pour la recherche fiches, on ne fait pas canonical→alias (évite bruit, ex: oceanis 45 → oc 45 inutile)
-        # La direction inverse est utile seulement pour les suggestions, pas pour la recherche FTS
+        if ng in canonical_to_aliases:
+            for alias in canonical_to_aliases[ng]:
+                if alias not in query_norm and alias not in expansions:
+                    expansions.append(alias)
 
     if expansions:
         return query + " " + " ".join(expansions)
