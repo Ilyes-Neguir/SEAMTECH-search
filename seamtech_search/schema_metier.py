@@ -1631,19 +1631,6 @@ CREATE TABLE IF NOT EXISTS boat_models (
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Trigger updated_at
-CREATE OR REPLACE FUNCTION _touch_boat_models_updated_at() RETURNS TRIGGER AS $$
-BEGIN
-    NEW.updated_at = now();
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-DROP TRIGGER IF EXISTS trg_boat_models_updated_at ON boat_models;
-CREATE TRIGGER trg_boat_models_updated_at
-    BEFORE UPDATE ON boat_models
-    FOR EACH ROW EXECUTE FUNCTION _touch_boat_models_updated_at();
-
 CREATE INDEX IF NOT EXISTS idx_boat_models_normalized_key_trgm
     ON boat_models USING gin (normalized_key gin_trgm_ops);
 CREATE INDEX IF NOT EXISTS idx_boat_models_canonical_name_trgm
