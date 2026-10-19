@@ -1619,7 +1619,7 @@ SQL_026_BOAT_MODELS_AND_ALIASES = """
 CREATE TABLE IF NOT EXISTS boat_models (
     id              BIGSERIAL PRIMARY KEY,
     canonical_name  TEXT NOT NULL,
-    normalized_key  TEXT NOT NULL UNIQUE,
+    normalized_key  TEXT NOT NULL,
     builder         TEXT,
     notes           TEXT,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -1629,9 +1629,9 @@ CREATE TABLE IF NOT EXISTS boat_model_aliases (
     id                BIGSERIAL PRIMARY KEY,
     boat_model_id     BIGINT NOT NULL REFERENCES boat_models(id) ON DELETE CASCADE,
     alias_raw         TEXT NOT NULL,
-    alias_normalized  TEXT NOT NULL UNIQUE,
-    status            TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'pending_review', 'rejected')),
-    source            TEXT NOT NULL DEFAULT 'auto_exact' CHECK (source IN ('auto_exact', 'heuristic_suggestion', 'admin_manual')),
+    alias_normalized  TEXT NOT NULL,
+    status            TEXT NOT NULL DEFAULT 'active',
+    source            TEXT NOT NULL DEFAULT 'auto_exact',
     created_by        TEXT,
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -1647,8 +1647,8 @@ CREATE TABLE IF NOT EXISTS boat_model_merge_history (
 CREATE TABLE IF NOT EXISTS search_synonyms (
     id                BIGSERIAL PRIMARY KEY,
     canonical_term    TEXT NOT NULL,
-    normalized_alias  TEXT NOT NULL UNIQUE,
-    category          TEXT NOT NULL CHECK (category IN ('sail_type', 'material', 'nautical_term')),
+    normalized_alias  TEXT NOT NULL,
+    category          TEXT NOT NULL,
     active            BOOLEAN NOT NULL DEFAULT true,
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
