@@ -3,6 +3,7 @@
 import { useState } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
+import { withCsrf } from "@/lib/csrf"
 
 /** Clear the httpOnly session cookie and return to the sign-in screen. */
 export function SignOutButton() {
@@ -13,7 +14,10 @@ export function SignOutButton() {
     if (busy) return
     setBusy(true)
     try {
-      await fetch("/api/auth/logout", { method: "POST", cache: "no-store" })
+      await fetch(
+        "/api/auth/logout",
+        withCsrf({ method: "POST", credentials: "include", cache: "no-store" }),
+      )
     } catch {
       // Even if the request fails, drop the user back to /login: the cookie is
       // httpOnly so we cannot clear it client-side, but the gated routes will

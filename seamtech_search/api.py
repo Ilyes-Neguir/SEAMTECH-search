@@ -322,6 +322,17 @@ def create_app(config: AppConfig) -> FastAPI:
 
         response: Response = await call_next(request)
         response.headers["X-Request-ID"] = request_id
+        # Lot 0a : aucune réponse authentifiée ne doit être mise en cache par un
+        # navigateur, un proxy ou un CDN. On se fonde sur la présence des
+        # justificatifs de session — pas sur le statut, qui peut être 401/403.
+        authentifiee = bool(
+            request.headers.get("X-SEAMTECH-SESSION-SID")
+            or request.headers.get("X-SEAMTECH-SESSION")
+            or (config.auth_token and request.headers.get("X-SEAMTECH-TOKEN"))
+            or path.startswith("/auth/")
+        )
+        if authentifiee:
+            response.headers["Cache-Control"] = "no-store"
         return response
 
     # ---------------------------------------------------------------------------

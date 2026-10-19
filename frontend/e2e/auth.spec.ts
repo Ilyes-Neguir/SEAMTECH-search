@@ -1,5 +1,5 @@
 import { test, expect, request as pwRequest } from "@playwright/test"
-import { ADMIN, OPERATEUR, UI_PASSWORD } from "./helpers"
+import { ADMIN, OPERATEUR, UI_PASSWORD, signIn } from "./helpers"
 
 /**
  * Regression coverage for audit issue #5 (Option B).
@@ -37,6 +37,20 @@ const GATED_ROUTES: Array<{ name: string; method: "GET" | "POST" | "PATCH"; path
 
 async function anonymousContext() {
   return pwRequest.newContext({ baseURL: BASE_URL })
+}
+
+/** Read the CSRF token the login route stored in the readable cookie. */
+async function csrfHeader(context: Awaited<ReturnType<typeof anonymousContext>>): Promise<Record<string, string>> {
+  const { cookies } = await context.storageState()
+  const jeton = cookies.find((cookie) => cookie.name === "seamtech_csrf")?.value
+  return jeton ? { "X-CSRF-Token": jeton } : {}
+}
+
+/** Decode the signed v3 payload (test-side inspection, never authentication). */
+function sidFromCookie(value: string): string {
+  const encoded = value.split(".")[3] ?? ""
+  const charge = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")) as { sid?: string }
+  return String(charge.sid ?? "")
 }
 
 test.describe("Authentication gate (audit issue #5)", () => {
@@ -159,13 +173,186 @@ test.describe("Authentication gate (audit issue #5)", () => {
       })
       expect(login.status()).toBe(200)
 
-      const logout = await context.fetch("/api/auth/logout", { method: "POST", failOnStatusCode: false })
+      const logout = await context.fetch("/api/auth/logout", {
+        method: "POST",
+        headers: await csrfHeader(context),
+        failOnStatusCode: false,
+      })
       expect(logout.status()).toBe(200)
+      expect(await logout.json()).toMatchObject({ ok: true, revoquee: true })
+      // Le cookie est effacé avec les mêmes attributs + Clear-Site-Data.
+      const setCookie = (logout.headers()["set-cookie"] ?? "").toLowerCase()
+      expect(setCookie).toMatch(/seamtech_session=;/)
+      expect(setCookie).toMatch(/path=\//)
+      expect(setCookie).toMatch(/httponly/)
+      expect(setCookie).toMatch(/samesite=lax/)
+      expect(setCookie).toMatch(/max-age=0/)
+      expect(logout.headers()["clear-site-data"]).toMatch(/cookies/)
 
       const after = await context.fetch("/api/search?q=CLIENT", { failOnStatusCode: false })
       expect(after.status()).toBe(401)
+      const session = await context.fetch("/api/auth/session", { failOnStatusCode: false })
+      expect(session.status()).toBe(200)
+      expect(await session.json()).toMatchObject({ authenticated: false })
     } finally {
       await context.dispose()
+    }
+  })
+
+  test("GET /api/auth/logout is refused with 405 (POST only)", async () => {
+    const context = await anonymousContext()
+    try {
+      const response = await context.fetch("/api/auth/logout", { method: "GET", failOnStatusCode: false })
+      expect(response.status()).toBe(405)
+      expect(response.headers()["allow"] ?? "").toMatch(/POST/i)
+    } finally {
+      await context.dispose()
+    }
+  })
+
+  test("POST /api/auth/logout sans jeton CSRF est rejeté (403) et ne déconnecte pas", async () => {
+    const context = await anonymousContext()
+    try {
+      const login = await context.fetch("/api/auth/login", {
+        method: "POST",
+        data: { mot_de_passe: UI_PASSWORD },
+        failOnStatusCode: false,
+      })
+      expect(login.status()).toBe(200)
+
+      // Pas d'en-tête X-CSRF-Token : le proxy doit refuser AVANT le handler.
+      const sansJeton = await context.fetch("/api/auth/logout", {
+        method: "POST",
+        failOnStatusCode: false,
+      })
+      expect(sansJeton.status()).toBe(403)
+      expect((await sansJeton.json()).detail).toMatch(/CSRF/i)
+
+      // Le refus n'a pas détruit la session.
+      const session = await context.fetch("/api/auth/session", { failOnStatusCode: false })
+      expect(session.status()).toBe(200)
+      expect(await session.json()).toMatchObject({ authenticated: true })
+
+      // Avec le jeton, la déconnexion aboutit.
+      const avecJeton = await context.fetch("/api/auth/logout", {
+        method: "POST",
+        headers: await csrfHeader(context),
+        failOnStatusCode: false,
+      })
+      expect(avecJeton.status()).toBe(200)
+    } finally {
+      await context.dispose()
+    }
+  })
+
+  test("« Déconnecter tous mes appareils » révoque deux sessions actives", async () => {
+    const premier = await anonymousContext()
+    const second = await anonymousContext()
+    try {
+      for (const contexte of [premier, second]) {
+        const login = await contexte.fetch("/api/auth/login", {
+          method: "POST",
+          data: { mot_de_passe: UI_PASSWORD },
+          failOnStatusCode: false,
+        })
+        expect(login.status()).toBe(200)
+      }
+      expect((await premier.fetch("/api/auth/session")).status()).toBe(200)
+      expect((await second.fetch("/api/auth/session")).status()).toBe(200)
+
+      const reponse = await premier.fetch("/api/auth/logout-all", {
+        method: "POST",
+        headers: await csrfHeader(premier),
+        failOnStatusCode: false,
+      })
+      expect(reponse.status()).toBe(200)
+      expect(await reponse.json()).toMatchObject({ ok: true })
+      expect((await reponse.json()).sessions_revoquees).toBeGreaterThanOrEqual(2)
+
+      for (const contexte of [premier, second]) {
+        const refus = await contexte.fetch("/api/auth/session", { failOnStatusCode: false })
+        expect(refus.status()).toBe(401)
+        expect((await contexte.fetch("/api/search?q=CLIENT", { failOnStatusCode: false })).status()).toBe(401)
+      }
+    } finally {
+      await premier.dispose()
+      await second.dispose()
+    }
+  })
+
+  test("le sid change à la connexion et l'ancien cookie ne vaut plus rien (anti-fixation)", async () => {
+    const contexte = await anonymousContext()
+    try {
+      const premier = await contexte.fetch("/api/auth/login", {
+        method: "POST",
+        data: { mot_de_passe: UI_PASSWORD },
+        failOnStatusCode: false,
+      })
+      expect(premier.status()).toBe(200)
+      const cookie1 = (await contexte.storageState()).cookies.find((c) => c.name === "seamtech_session")
+      expect(cookie1).toBeTruthy()
+      const sid1 = sidFromCookie(cookie1!.value)
+
+      // Seconde connexion dans le même navigateur : NOUVEAU sid obligatoire.
+      const second = await contexte.fetch("/api/auth/login", {
+        method: "POST",
+        data: { mot_de_passe: UI_PASSWORD },
+        failOnStatusCode: false,
+      })
+      expect(second.status()).toBe(200)
+      const cookie2 = (await contexte.storageState()).cookies.find((c) => c.name === "seamtech_session")
+      expect(cookie2).toBeTruthy()
+      const sid2 = sidFromCookie(cookie2!.value)
+      expect(sid1).not.toBe(sid2)
+      expect(sid2.length).toBeGreaterThanOrEqual(43)
+
+      // L'ancien cookie (copié avant rotation) est mort côté serveur.
+      const copie = await pwRequest.newContext({
+        baseURL: BASE_URL,
+        extraHTTPHeaders: { Cookie: `seamtech_session=${cookie1!.value}` },
+      })
+      try {
+        expect((await copie.fetch("/api/auth/session", { failOnStatusCode: false })).status()).toBe(401)
+        expect((await copie.fetch("/api/search?q=CLIENT", { failOnStatusCode: false })).status()).toBe(401)
+      } finally {
+        await copie.dispose()
+      }
+    } finally {
+      await contexte.dispose()
+    }
+  })
+
+  test("un ancien cookie v1 (auto-porté, sans sid serveur) est refusé immédiatement", async () => {
+    const maintenant = Date.now()
+    const ancien = `v1.${maintenant}.${maintenant + 3_600_000}.${"A".repeat(43)}`
+    const contexte = await pwRequest.newContext({
+      baseURL: BASE_URL,
+      extraHTTPHeaders: { Cookie: `seamtech_session=${ancien}` },
+    })
+    try {
+      const session = await contexte.fetch("/api/auth/session", { failOnStatusCode: false })
+      expect(session.status()).toBe(401)
+      expect(await session.json()).toMatchObject({ authenticated: false, reason: "cookie_invalide" })
+      expect((await contexte.fetch("/api/search?q=CLIENT", { failOnStatusCode: false })).status()).toBe(401)
+    } finally {
+      await contexte.dispose()
+    }
+  })
+
+  test("les réponses authentifiées portent Cache-Control: no-store", async () => {
+    const contexte = await anonymousContext()
+    try {
+      await contexte.fetch("/api/auth/login", {
+        method: "POST",
+        data: { mot_de_passe: UI_PASSWORD },
+        failOnStatusCode: false,
+      })
+      for (const chemin of ["/api/auth/session", "/api/search?q=CLIENT"]) {
+        const reponse = await contexte.fetch(chemin, { failOnStatusCode: false })
+        expect(reponse.headers()["cache-control"], chemin).toMatch(/no-store/)
+      }
+    } finally {
+      await contexte.dispose()
     }
   })
 
@@ -311,7 +498,11 @@ test.describe("Comptes nominatifs (Lot L.2)", () => {
       const cookie = (await context.storageState()).cookies.find((c) => c.name === "seamtech_session")
       expect(cookie, "la connexion doit avoir posé un cookie").toBeTruthy()
 
-      const deconnexion = await context.fetch("/api/auth/logout", { method: "POST", failOnStatusCode: false })
+      const deconnexion = await context.fetch("/api/auth/logout", {
+        method: "POST",
+        headers: await csrfHeader(context),
+        failOnStatusCode: false,
+      })
       expect(deconnexion.status()).toBe(200)
 
       const copie = await pwRequest.newContext({
@@ -331,5 +522,31 @@ test.describe("Comptes nominatifs (Lot L.2)", () => {
     } finally {
       await context.dispose()
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Lot 0a — parcours navigateur réel : déconnexion, Retour, reconnexion.
+// ---------------------------------------------------------------------------
+
+test.describe("Déconnexion navigateur (Lot 0a)", () => {
+  test("connexion → Déconnexion → /login → Retour → aucune donnée protégée → reconnexion", async ({ page }) => {
+    await signIn(page)
+    await page.goto("/fichiers")
+    await expect(page.getByTestId("archive-browser")).toBeVisible({ timeout: 20000 })
+
+    await page.getByTestId("logout").click()
+    await page.waitForURL(/\/login/, { timeout: 20000 })
+    await expect(page.getByRole("button", { name: "Se connecter" })).toBeVisible()
+
+    // Le bouton Retour du navigateur ne doit restaurer AUCUNE donnée protégée
+    // (cookie effacé + Cache-Control: no-store désactive la bfcache).
+    await page.goBack()
+    await expect(page.getByTestId("archive-browser")).toHaveCount(0)
+    await expect(page.getByRole("button", { name: "Se connecter" })).toBeVisible({ timeout: 20000 })
+
+    // La reconnexion fonctionne après une déconnexion.
+    await signIn(page)
+    await expect(page.getByTestId("archive-browser")).toBeVisible({ timeout: 20000 })
   })
 })

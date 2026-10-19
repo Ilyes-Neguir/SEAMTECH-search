@@ -40,7 +40,7 @@ LOGGER = logging.getLogger("seamtech_search.comptes")
 
 ROLES = ("operateur", "administrateur")
 ROLE_DEFAUT = "operateur"
-DUREE_SESSION_DEFAUT_H = 12
+DUREE_SESSION_DEFAUT_H = 8
 # Verrouillage des connexions : 5 échecs sur un identifiant en 5 minutes ⇒ 429
 # pendant 5 minutes. Demandé « souhaitable » par la mission, et donc implémenté.
 #
@@ -360,25 +360,44 @@ def ouvrir_session(
     return {"id_session": id_session, "jeton": jeton, "expire_le": expire_le.isoformat()}
 
 
-def session_valide(index: Any, id_session: int, jeton: str) -> bool:  # noqa: ANN401
+def session_valide(
+    index: Any,  # noqa: ANN401
+    id_session: int,
+    jeton: str,
+    *,
+    inactivite_minutes: int | None = None,
+) -> bool:  # noqa: ANN401
     """La session est-elle encore valable ? (non révoquée, non expirée, jeton conforme)
 
     C'est CE contrôle qui rend une déconnexion effective : un cookie signé
     parfaitement valide ne vaut plus rien dès que ``revoque_le`` est posé.
+
+    ``inactivite_minutes`` ajoute le contrôle d'inactivité pour les appelants
+    qui le connaissent (route /auth/session). La vérité de la session du
+    NAVIGATEUR vit désormais dans Redis (Lot 0a) ; ce chemin reste le contrôle
+    des sessions internes historiques, et il ne doit pas être plus permissif.
     """
     _exiger_postgres(index)
     with index.connect() as connexion:
         with connexion.cursor() as cursor:
             cursor.execute(
-                "SELECT revoque_le, expire_le, empreinte_jeton FROM session_ui WHERE id_session = %s",
+                "SELECT revoque_le, expire_le, empreinte_jeton, derniere_activite "
+                "FROM session_ui WHERE id_session = %s",
                 (int(id_session),),
             )
             ligne = cursor.fetchone()
             if ligne is None:
                 return False
-            if ligne[0] is not None or ligne[1] is None or ligne[1] <= _maintenant():
+            maintenant = _maintenant()
+            if ligne[0] is not None or ligne[1] is None or ligne[1] <= maintenant:
                 return False
             if ligne[2] != empreinte_jeton(jeton or ""):
+                return False
+            if (
+                inactivite_minutes is not None
+                and ligne[3] is not None
+                and maintenant - ligne[3] > timedelta(minutes=max(1, int(inactivite_minutes)))
+            ):
                 return False
             cursor.execute(
                 "UPDATE session_ui SET derniere_activite = now() WHERE id_session = %s", (int(id_session),)
@@ -428,6 +447,47 @@ def utilisateur_dune_session(index: Any, id_session: int) -> dict[str, Any] | No
         "derniere_activite": ligne[6].isoformat() if ligne[6] else None,
         "doit_changer_mot_de_passe": bool(ligne[7]),
     }
+
+
+def profil_utilisateur(index: Any, id_utilisateur: int) -> dict[str, Any] | None:  # noqa: ANN401
+    """Profil courant d'un compte (rôle, actif) — jamais l'empreinte.
+
+    La session Redis porte un instantané ; ce contrôle relit la BASE à chaque
+    validation pour qu'une désactivation ou un changement de rôle prenne effet
+    immédiatement, sans attendre l'expiration.
+    """
+    _exiger_postgres(index)
+    with index.connect() as connexion:
+        with connexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT id_utilisateur, identifiant, nom, role, actif, doit_changer_mot_de_passe "
+                "FROM utilisateur WHERE id_utilisateur = %s",
+                (int(id_utilisateur),),
+            )
+            ligne = cursor.fetchone()
+    if ligne is None:
+        return None
+    return {
+        "id_utilisateur": int(ligne[0]),
+        "identifiant": str(ligne[1]),
+        "nom": ligne[2],
+        "role": str(ligne[3]),
+        "actif": bool(ligne[4]),
+        "doit_changer_mot_de_passe": bool(ligne[5]),
+    }
+
+
+def id_utilisateur_par_identifiant(index: Any, identifiant: str) -> int | None:  # noqa: ANN401
+    """Identifiant numérique d'un compte, ou ``None`` (aucune fuite d'empreinte)."""
+    _exiger_postgres(index)
+    with index.connect() as connexion:
+        with connexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT id_utilisateur FROM utilisateur WHERE identifiant = %s",
+                ((identifiant or "").strip(),),
+            )
+            ligne = cursor.fetchone()
+    return int(ligne[0]) if ligne else None
 
 
 def changer_mot_de_passe(
@@ -481,6 +541,24 @@ def revoquer_session(index: Any, id_session: int) -> dict[str, Any]:  # noqa: AN
                 return {"id_session": int(id_session), "revoquee": False, "deja_revoquee": True}
     LOGGER.info("Session %d révoquée.", int(id_session))
     return {"id_session": int(id_session), "revoquee": True, "deja_revoquee": False}
+
+
+def revoquer_sessions_utilisateur(index: Any, id_utilisateur: int) -> int:  # noqa: ANN401
+    """Pose ``revoque_le`` sur toutes les sessions SQL d'un compte.
+
+    Utilisé par « Déconnecter tous mes appareils » et par les changements de
+    mot de passe/rôle. La session NAVIGATEUR correspondante est supprimée de
+    Redis par l'appelant ; les deux magasins doivent rester cohérents.
+    """
+    _exiger_postgres(index)
+    with index.connect() as connexion:
+        with connexion.cursor() as cursor:
+            cursor.execute(
+                "UPDATE session_ui SET revoque_le = now() "
+                "WHERE id_utilisateur = %s AND revoque_le IS NULL",
+                (int(id_utilisateur),),
+            )
+            return int(cursor.rowcount)
 
 
 def sessions_dun_utilisateur(index: Any, identifiant: str) -> list[dict[str, Any]]:  # noqa: ANN401

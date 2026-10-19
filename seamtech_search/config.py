@@ -96,6 +96,13 @@ class AppConfig(BaseModel):
     behind_tls_proxy: bool = False
     rate_limit_per_minute: int = Field(default=600, ge=1)
 
+    # Lot 0a — sessions serveur adossées à Redis.
+    # Inactivité (glissante) et expiration absolue sont DEUX contrôles distincts :
+    # le premier ferme un poste laissé ouvert, le second borne la durée de vie
+    # totale même si l'opérateur clique en continu.
+    session_idle_minutes: int = Field(default=30, ge=1, le=1440)
+    session_hours: float = Field(default=8.0, gt=0, le=720)
+
     # Retention settings
     reports_retention_days: int = Field(default=90, ge=1)
     staged_retention_days: int = Field(default=7, ge=1)
@@ -252,6 +259,12 @@ class AppConfig(BaseModel):
             }
         if os.environ.get("SEAMTECH_RATE_LIMIT_PER_MINUTE"):
             data["rate_limit_per_minute"] = int(os.environ["SEAMTECH_RATE_LIMIT_PER_MINUTE"])
+        # Lot 0a : durées de session. Lues à chaque démarrage du processus web ;
+        # les tests peuvent les réduire sans toucher au code.
+        if os.environ.get("SEAMTECH_SESSION_IDLE_MINUTES"):
+            data["session_idle_minutes"] = int(os.environ["SEAMTECH_SESSION_IDLE_MINUTES"])
+        if os.environ.get("SEAMTECH_SESSION_HOURS"):
+            data["session_hours"] = float(os.environ["SEAMTECH_SESSION_HOURS"])
         if os.environ.get("SEAMTECH_STORAGE_BACKEND"):
             data["storage_backend"] = os.environ["SEAMTECH_STORAGE_BACKEND"]
         if os.environ.get("SEAMTECH_S3_ENDPOINT_URL"):

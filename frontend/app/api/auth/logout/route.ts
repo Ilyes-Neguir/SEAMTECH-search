@@ -1,34 +1,52 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { MODE_NOMINATIF, SESSION_COOKIE, currentSession, shouldMarkCookieSecure } from "@/lib/auth"
+import {
+  CSRF_COOKIE,
+  SESSION_COOKIE,
+  csrfCookieOptions,
+  currentSession,
+  sessionCookieOptions,
+  shouldMarkCookieSecure,
+} from "@/lib/auth"
 import { authHeaders, backendBase } from "@/lib/backend"
 
 export const dynamic = "force-dynamic"
 
 /**
- * Sign out.
+ * Sign out — POST ONLY.
  *
- * For a NOMINATIVE session this does two things, in this order: it asks the
- * backend to set `revoque_le` on the session row, THEN it clears the cookie.
- * Just clearing the cookie would be a lie — anyone who had copied the cookie
- * would keep a working session. Clearing it afterwards means a failed backend
- * call still signs the local user out.
+ * `GET /api/auth/logout` intentionally has no handler: Next answers 405. The
+ * old navigation link used GET, which is exactly the reported bug (« cliquer
+ * Déconnexion → HTTP 405, cookie jamais supprimé »). A GET must never mutate
+ * state, and a link must never be the logout mechanism (CSRF / prefetch).
  *
- * The rescue session has no database row, so only the cookie is cleared.
- * Not behind requireAuthValide(): signing out while already signed out must succeed.
+ * Order of operations:
+ *   1. revoke the `sid` in Redis via the backend (the authority);
+ *   2. clear BOTH cookies with the exact attributes used when setting them
+ *      (Path=/, HttpOnly, SameSite=Lax, Secure when behind TLS);
+ *   3. send `Clear-Site-Data: "cache", "cookies", "storage"`.
+ *
+ * If the backend is unreachable we still clear the local cookies and say so in
+ * the JSON (`revoquee: false`) — the operator is signed out of THIS browser,
+ * and the server-side session will die by TTL. We never pretend a revocation
+ * happened when it did not.
  */
 export async function POST(req: NextRequest) {
   const session = await currentSession()
   const base = backendBase()
+  const secure = shouldMarkCookieSecure(req.headers.get("x-forwarded-proto"))
+  let revoquee = false
 
-  if (session && session.mode === MODE_NOMINATIF && session.idSession !== null && session.jeton && base) {
+  if (session?.sid && base) {
     try {
       const res = await fetch(`${base}/auth/deconnexion`, {
         method: "POST",
         headers: { ...authHeaders(), "Content-Type": "application/json" },
-        body: JSON.stringify({ id_session: session.idSession, jeton_session: session.jeton }),
+        body: JSON.stringify({ sid: session.sid }),
         cache: "no-store",
       })
-      if (!res.ok) {
+      if (res.ok) {
+        revoquee = true
+      } else {
         console.error(`[auth] Révocation de session refusée par le backend (${res.status}).`)
       }
     } catch {
@@ -36,13 +54,20 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const response = NextResponse.json({ ok: true }, { status: 200, headers: { "Cache-Control": "no-store" } })
-  response.cookies.set(SESSION_COOKIE, "", {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: shouldMarkCookieSecure(req.headers.get("x-forwarded-proto")),
-    path: "/",
-    maxAge: 0,
-  })
+  const response = NextResponse.json(
+    { ok: true, revoquee },
+    {
+      status: 200,
+      headers: {
+        "Cache-Control": "no-store",
+        Vary: "Cookie",
+        "Clear-Site-Data": '"cache", "cookies", "storage"',
+      },
+    },
+  )
+  // Mêmes attributs qu'à la pose : un effacement avec un Path/SameSite
+  // différent laisserait le cookie en place.
+  response.cookies.set(SESSION_COOKIE, "", sessionCookieOptions(0, secure))
+  response.cookies.set(CSRF_COOKIE, "", csrfCookieOptions(0, secure))
   return response
 }

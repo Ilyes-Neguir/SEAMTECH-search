@@ -63,6 +63,9 @@ from seamtech_search.indexer import SearchIndex
 from seamtech_search.qualite import tableau
 
 URL_PG = os.environ.get("SEAMTECH_TEST_DATABASE_URL", "")
+#: Lot 0a : les sessions navigateur vivent dans Redis. Sans cette URL, les
+#: routes /auth répondent 503 (fail-closed) — on ne teste donc pas à moitié.
+URL_REDIS = os.environ.get("SEAMTECH_TEST_REDIS_URL", "")
 RACINE = Path(__file__).resolve().parent.parent
 JETON_SERVICE = "jeton-de-service-de-test"
 
@@ -140,11 +143,18 @@ def client_comptes(base_comptes: dict[str, Any]) -> TestClient:
     from seamtech_search.api import create_app
     from seamtech_search.config import AppConfig
 
+    if not URL_REDIS:
+        pytest.skip("Set SEAMTECH_TEST_REDIS_URL to run browser-session tests (Lot 0a)")
     config = AppConfig(
         root_paths=[RACINE],
         database_path=RACINE / "unused-comptes.db",
         database_url=base_comptes["url"],
         auth_token=JETON_SERVICE,
+        redis_url=URL_REDIS,
+        # Valeurs explicites : le test d'expiration ne doit pas dépendre d'un
+        # .env local.
+        session_idle_minutes=30,
+        session_hours=8,
     )
     return TestClient(create_app(config))
 
@@ -405,41 +415,147 @@ def test_api_connexion_session_deconnexion(
     assert corps["identifiant"] == "imrane"
     assert corps["id_session"] > 0 and corps["jeton_session"]
     assert corps["doit_changer_mot_de_passe"] is True
+    # Lot 0a : le cookie navigateur ne contient QUE ce sid opaque.
+    sid = corps["sid"]
+    assert isinstance(sid, str) and len(sid) >= 43  # 256 bits base64url
+    assert corps["session_idle_minutes"] == 30 and corps["session_hours"] == 8
 
-    entetes = {
+    entetes_sid = {"X-SEAMTECH-TOKEN": JETON_SERVICE, "X-SEAMTECH-SESSION-SID": sid}
+    entetes_sql = {
         "X-SEAMTECH-TOKEN": JETON_SERVICE,
         "X-SEAMTECH-SESSION": str(corps["id_session"]),
         "X-SEAMTECH-SESSION-JETON": corps["jeton_session"],
     }
-    session = client_comptes.get("/auth/session", headers=entetes)
+    session = client_comptes.get("/auth/session", headers=entetes_sid)
     assert session.status_code == 200, session.text
     assert session.json()["identifiant"] == "imrane"
+    assert session.headers["cache-control"] == "no-store"
+    # La session SQL historique reste utilisable par les scripts internes.
+    assert client_comptes.get("/auth/session", headers=entetes_sql).status_code == 200
 
     # Aucune réponse ne contient d'empreinte, de sel ni de mot de passe.
     for reponse in (connexion, session):
         assert "scrypt$" not in reponse.text
         assert "empreinte_mot_de_passe" not in reponse.text
         assert "Secret!2026" not in reponse.text
+    # Le sid sert à POSER le cookie ; il n'est jamais relu en clair par l'API.
+    assert sid not in session.text
+
+    # Anti-fixation : une nouvelle connexion produit un sid NEUF.
+    seconde = client_comptes.post(
+        "/auth/connexion",
+        json={"identifiant": "imrane", "mot_de_passe": "Secret!2026"},
+        headers={"X-SEAMTECH-TOKEN": JETON_SERVICE},
+    )
+    assert seconde.status_code == 200, seconde.text
+    assert seconde.json()["sid"] != sid
 
     deconnexion = client_comptes.post(
         "/auth/deconnexion",
-        json={"id_session": corps["id_session"], "jeton_session": corps["jeton_session"]},
+        json={"sid": sid},
         headers={"X-SEAMTECH-TOKEN": JETON_SERVICE},
     )
     assert deconnexion.status_code == 200, deconnexion.text
-    assert deconnexion.json()["revoquee"] is True
+    assert deconnexion.json() == {"ok": True, "revoquee": True}
 
     # LE point du lot : le cookie est toujours signé, mais il ne vaut plus rien.
-    apres = client_comptes.get("/auth/session", headers=entetes)
+    apres = client_comptes.get("/auth/session", headers=entetes_sid)
     assert apres.status_code == 401, apres.text
+    # …et la ligne SQL correspondante a été révoquée par la même occasion.
+    assert client_comptes.get("/auth/session", headers=entetes_sql).status_code == 401
 
     # Un jeton non conforme ne révoque pas la session d'autrui.
     mauvais_jeton = client_comptes.post(
         "/auth/deconnexion",
-        json={"id_session": corps["id_session"], "jeton_session": "faux-jeton"},
+        json={
+            "id_session": seconde.json()["id_session"],
+            "jeton_session": "faux-jeton",
+        },
         headers={"X-SEAMTECH-TOKEN": JETON_SERVICE},
     )
     assert mauvais_jeton.status_code == 401, mauvais_jeton.text
+    assert client_comptes.get(
+        "/auth/session",
+        headers={"X-SEAMTECH-TOKEN": JETON_SERVICE, "X-SEAMTECH-SESSION-SID": seconde.json()["sid"]},
+    ).status_code == 200
+
+
+def test_api_deconnexion_tout_revoque_deux_sessions_redis(
+    base_comptes: dict[str, Any], client_comptes: TestClient
+) -> None:
+    """« Déconnecter tous mes appareils » : deux sessions, deux 401.
+
+    Les deux cookies sont émis par des connexions distinctes du MÊME compte ;
+    après le logout-all déclenché avec le premier, aucun des deux sid ne doit
+    plus ouvrir /auth/session (la révocation est dans Redis, pas dans le cookie).
+    """
+    _creer(base_comptes, "imrane", "Secret!2026")
+
+    sids = []
+    for _ in range(2):
+        reponse = client_comptes.post(
+            "/auth/connexion",
+            json={"identifiant": "imrane", "mot_de_passe": "Secret!2026"},
+            headers={"X-SEAMTECH-TOKEN": JETON_SERVICE},
+        )
+        assert reponse.status_code == 200, reponse.text
+        sids.append(reponse.json()["sid"])
+    assert sids[0] != sids[1]
+
+    for sid in sids:
+        assert client_comptes.get(
+            "/auth/session", headers={"X-SEAMTECH-TOKEN": JETON_SERVICE, "X-SEAMTECH-SESSION-SID": sid}
+        ).status_code == 200
+
+    reponse = client_comptes.post(
+        "/auth/deconnexion-tout",
+        headers={"X-SEAMTECH-TOKEN": JETON_SERVICE, "X-SEAMTECH-SESSION-SID": sids[0]},
+    )
+    assert reponse.status_code == 200, reponse.text
+    corps = reponse.json()
+    assert corps["sessions_revoquees"] >= 2
+    assert corps["sessions_sql_revoquees"] >= 2
+
+    for sid in sids:
+        assert client_comptes.get(
+            "/auth/session", headers={"X-SEAMTECH-TOKEN": JETON_SERVICE, "X-SEAMTECH-SESSION-SID": sid}
+        ).status_code == 401
+
+
+def test_api_redis_indisponible_repond_503_sans_repli(
+    base_comptes: dict[str, Any],
+) -> None:
+    """Redis injoignable : 503 explicite, jamais un cookie « accepté »."""
+    from seamtech_search.api import create_app
+    from seamtech_search.config import AppConfig
+
+    _creer(base_comptes, "imrane", "Secret!2026")
+    client = TestClient(
+        create_app(
+            AppConfig(
+                root_paths=[RACINE],
+                database_path=RACINE / "unused-comptes.db",
+                database_url=base_comptes["url"],
+                auth_token=JETON_SERVICE,
+                redis_url="redis://127.0.0.1:6399/0",  # port fermé
+                session_idle_minutes=30,
+                session_hours=8,
+            )
+        )
+    )
+    connexion = client.post(
+        "/auth/connexion",
+        json={"identifiant": "imrane", "mot_de_passe": "Secret!2026"},
+        headers={"X-SEAMTECH-TOKEN": JETON_SERVICE},
+    )
+    assert connexion.status_code == 503, connexion.text
+    assert "indisponible" in connexion.json()["detail"].lower()
+
+    session = client.get(
+        "/auth/session",
+        headers={"X-SEAMTECH-TOKEN": JETON_SERVICE, "X-SEAMTECH-SESSION-SID": "A" * 43},
+    )
+    assert session.status_code == 503, session.text
 
 
 def test_api_mauvais_mot_de_passe_et_jeton_de_service(
