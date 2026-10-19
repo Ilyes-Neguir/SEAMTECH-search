@@ -88,8 +88,9 @@ def test_migrations_sur_base_vide(base_metier: dict[str, Any]) -> None:
     # fiche_piece_jointe) = 30, +1 (015 gabarit_brouillon) = 31,
     # +1 (016 : session_ui — la 016 n'ajoute QUE cette table, les colonnes
     # d'attribution et les index ne créent rien) = 32,
-    # +1 (017 : ocr_etage3 — staging OCR, jamais chunk/document) = 33.
-    assert len(schema_metier.TABLES_METIER) == 33
+    # +1 (017 : ocr_etage3 — staging OCR, jamais chunk/document) = 33,
+    # +4 (026 : boat_models, boat_model_aliases, boat_model_merge_history, search_synonyms) = 37.
+    assert len(schema_metier.TABLES_METIER) == 37
     print(f"\n[mesure] migrations 006-009 sur base vide : {base_metier['duree_migrations_s']:.2f} s")
 
 
@@ -114,8 +115,8 @@ def test_idempotence_rejeu_sans_erreur(base_metier: dict[str, Any]) -> None:
             nb_tables = int(cursor.fetchone()[0])
     assert apres == avant
     # pg_tables ne compte pas les vues (v_fiche_recherche, v_qualite).
-    # 33 métier (32 + ocr_etage3 en 017) + 6 héritées = 39
-    assert nb_tables == len(schema_metier.TABLES_METIER) + len(TABLES_HERITEES) == 39
+    # 37 métier (33 + 4 Lot2 boat_models etc.) + 6 héritées = 43
+    assert nb_tables == len(schema_metier.TABLES_METIER) + len(TABLES_HERITEES) == 43
 
 
 @pytest.mark.postgres

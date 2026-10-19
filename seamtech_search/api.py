@@ -1347,6 +1347,18 @@ def create_app(config: AppConfig) -> FastAPI:
 
     enregistrer_routes_dedup(app, index, config, _require_auth)
 
+    # Lot 2 (recherche tolérante + référentiel boat_models) : modèles de bateaux,
+    # aliases, synonymes voilerie, suggestions /api/search/suggestions
+    try:
+        from seamtech_search.bateaux.routes import enregistrer_routes_bateaux
+
+        enregistrer_routes_bateaux(app, index, config, _require_auth)
+    except Exception as exc:
+        # Bases pré-026 : les routes dégradent gracieusement
+        import logging as _logging
+
+        _logging.getLogger("seamtech.api").warning("Routes bateau indisponibles : %s", exc)
+
     # Lot L.2 (§10.1, §17.5) : authentification nominative — /auth/connexion,
     # /auth/deconnexion, /auth/session, gestion des comptes. Ces routes exigent
     # le jeton de service : le navigateur ne les appelle jamais directement, il

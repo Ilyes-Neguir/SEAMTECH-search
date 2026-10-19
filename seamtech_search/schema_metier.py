@@ -26,7 +26,7 @@ from __future__ import annotations
 from typing import Any
 
 # Version du schéma métier — incrémentée à chaque nouvelle migration.
-VERSION_SCHEMA_METIER = "023_recherche_normalisee"
+VERSION_SCHEMA_METIER = "026_boat_models_and_aliases"
 
 # Marqueur injecté par le code au moment de la migration (constat 1 de revue) :
 # le nom de la configuration de recherche effective — 'seamtech_unaccent' ou
@@ -80,6 +80,11 @@ TABLES_METIER: tuple[str, ...] = (
     "session_ui",
     # 017 — Lot M : staging OCR étage 3 (texte OCR par page, jamais dans chunk/document)
     "ocr_etage3",
+    # 026 — Lot 2 : référentiel unique des modèles de bateaux & alias + synonymes voilerie
+    "boat_models",
+    "boat_model_aliases",
+    "boat_model_merge_history",
+    "search_synonyms",
 )
 
 SQL_006_FICHE_TECHNIQUE = """
@@ -1517,6 +1522,219 @@ CREATE INDEX IF NOT EXISTS idx_fiche_gamme_trgm_norm
     ON fiche USING gin (seamtech_texte_recherche(gamme) gin_trgm_ops);
 """
 
+
+# ---------------------------------------------------------------------------
+# 024 — réservée (continuité des numéros, aucune table)
+# ---------------------------------------------------------------------------
+SQL_024_PLACEHOLDER = """
+-- 024_placeholder — réservée pour continuité de numérotation, aucune table
+SELECT 1;
+"""
+
+# ---------------------------------------------------------------------------
+# 025 — réservée (continuité des numéros, aucune table)
+# ---------------------------------------------------------------------------
+SQL_025_PLACEHOLDER = """
+-- 025_placeholder — réservée pour continuité de numérotation, aucune table
+SELECT 1;
+"""
+
+# ---------------------------------------------------------------------------
+# 026 — référentiel unique des modèles de bateaux & alias + synonymes voilerie
+# ---------------------------------------------------------------------------
+# Objectif Lot 2 :
+# - Une source de vérité pour les modèles de bateaux (variantes casse/accents/
+#   tirets/underscores/espaces → même normalized_key, même boat_model_id)
+# - Abréviations dictionnaire actif (OC 45 → Oceanis 45, FIRST-40.7 → First 40.7)
+# - Garde-fou : Oceanis 45 vs 45.1 vs 45 CC jamais fusion auto → pending_review
+# - Synonymes voilerie (GV/GE/GEN/SPI/TRQ → Grand-Voile/Génois/etc.)
+#
+# La fonction seamtech_texte_recherche existante (023) est étendue pour
+# normaliser les séparateurs bateau (tirets/underscores/slash) de la même
+# façon que normaliser_cle_bateau côté Python : [-_–—/]+ → espace.
+# Le reste (casse/accents/ligatures) reste identique à 023.
+SQL_026_FONCTION_UNACCENT_ETENDUE = """
+CREATE OR REPLACE FUNCTION seamtech_texte_recherche(t TEXT)
+RETURNS TEXT
+LANGUAGE sql
+IMMUTABLE
+PARALLEL SAFE
+SET search_path = public, pg_temp
+AS $fonction$
+    SELECT btrim(
+        replace(replace(replace(
+            lower(
+                regexp_replace(
+                    regexp_replace(
+                        translate(
+                            public.unaccent('public.unaccent'::regdictionary, coalesce(t, '')),
+                            E'\\u00a0\\u202f\\u2007\\u2009',
+                            '    '
+                        ),
+                        '[-_\\u2013\\u2014/]+', ' ', 'g'
+                    ),
+                    '[[:space:]]+', ' ', 'g'
+                )
+            ),
+            'œ', 'oe'),
+            'æ', 'ae'),
+            'ß', 'ss')
+    )
+$fonction$;
+
+COMMENT ON FUNCTION seamtech_texte_recherche(TEXT) IS
+    'Clé de recherche Lot2 (casse/accents/ligatures/tirets-underscores-slash → espace, espaces comprimés) — IMMUTABLE ; miroir Python : normaliser_cle_recherche + normaliser_cle_bateau';
+"""
+
+SQL_026_FONCTION_REPLI_ETENDUE = r"""
+CREATE OR REPLACE FUNCTION seamtech_texte_recherche(t TEXT)
+RETURNS TEXT
+LANGUAGE sql
+IMMUTABLE
+PARALLEL SAFE
+SET search_path = public, pg_temp
+AS $fonction$
+    SELECT btrim(
+        replace(replace(replace(
+            lower(
+                regexp_replace(
+                    regexp_replace(
+                        translate(
+                            coalesce(t, ''),
+                            'ÀÁÂÃÄÅÈÉÊËÌÍÎÏÒÓÔÕÖÙÚÛÜÝàáâãäåèéêëìíîïòóôöõùúûüýÿÇçÑñØøŸĀāĂăĄąĆćĈĉĊċČčĎďĐđĒēĔĕĖėĘęĚěĜĝĞğĠġĢģĤĥĦħĨĩĪīĬĭĮįİıĴĵĶķĹĺĻļĽľĿŀŁłŃńŅņŇňŌōŎŏŐőŔŕŖŗŘřŚśŜŝŞşŠšŢţŤťŦŧŨũŪūŬŭŮůŰűŲųŴŵŶŷŹźŻżŽž' || E'\u00a0\u202f\u2007\u2009',
+                            'AAAAAAEEEEIIIIOOOOOUUUUYaaaaaaeeeeiiiiooooouuuuyyCcNnOoYAaAaAaCcCcCcCcDdDdEeEeEeEeEeGgGgGgGgHhHhIiIiIiIiIiJjKkLlLlLlLlLlNnNnNnOoOoOoRrRrRrSsSsSsSsTtTtTtUuUuUuUuUuUuWwYyZzZzZz    '
+                        ),
+                        '[-_\u2013\u2014/]+', ' ', 'g'
+                    ),
+                    '[[:space:]]+', ' ', 'g'
+                )
+            ),
+            'œ', 'oe'),
+            'æ', 'ae'),
+            'ß', 'ss')
+    )
+$fonction$;
+
+COMMENT ON FUNCTION seamtech_texte_recherche(TEXT) IS
+    'Clé de recherche Lot2 (repli sans unaccent : tirets-underscores-slash → espace) — IMMUTABLE';
+"""
+
+SQL_026_BOAT_MODELS_AND_ALIASES = """
+-- ============================================================================
+-- 026_boat_models_and_aliases — référentiel unique des modèles de bateaux
+-- ============================================================================
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
+-- ---------- Référentiel : modèles canoniques ----------
+CREATE TABLE IF NOT EXISTS boat_models (
+    id              BIGSERIAL PRIMARY KEY,
+    canonical_name  TEXT NOT NULL,
+    normalized_key  TEXT NOT NULL UNIQUE,
+    builder         TEXT,
+    notes           TEXT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Trigger updated_at
+CREATE OR REPLACE FUNCTION _touch_boat_models_updated_at() RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = now();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_boat_models_updated_at ON boat_models;
+CREATE TRIGGER trg_boat_models_updated_at
+    BEFORE UPDATE ON boat_models
+    FOR EACH ROW EXECUTE FUNCTION _touch_boat_models_updated_at();
+
+CREATE INDEX IF NOT EXISTS idx_boat_models_normalized_key_trgm
+    ON boat_models USING gin (normalized_key gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_boat_models_canonical_name_trgm
+    ON boat_models USING gin (seamtech_texte_recherche(canonical_name) gin_trgm_ops);
+
+-- ---------- Aliases : variantes & abréviations ----------
+CREATE TABLE IF NOT EXISTS boat_model_aliases (
+    id                BIGSERIAL PRIMARY KEY,
+    boat_model_id     BIGINT NOT NULL REFERENCES boat_models(id) ON DELETE CASCADE,
+    alias_raw         TEXT NOT NULL,
+    alias_normalized  TEXT NOT NULL UNIQUE,
+    status            TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'pending_review', 'rejected')),
+    source            TEXT NOT NULL DEFAULT 'auto_exact' CHECK (source IN ('auto_exact', 'heuristic_suggestion', 'admin_manual')),
+    created_by        TEXT,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_boat_aliases_model_id ON boat_model_aliases(boat_model_id);
+CREATE INDEX IF NOT EXISTS idx_boat_aliases_status ON boat_model_aliases(status);
+CREATE INDEX IF NOT EXISTS idx_boat_aliases_normalized_trgm
+    ON boat_model_aliases USING gin (alias_normalized gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_boat_aliases_raw_trgm
+    ON boat_model_aliases USING gin (seamtech_texte_recherche(alias_raw) gin_trgm_ops);
+
+-- ---------- Historique des fusions ----------
+CREATE TABLE IF NOT EXISTS boat_model_merge_history (
+    id                BIGSERIAL PRIMARY KEY,
+    source_model_id   BIGINT NOT NULL,
+    target_model_id   BIGINT NOT NULL REFERENCES boat_models(id) ON DELETE RESTRICT,
+    snapshot_json     JSONB NOT NULL,
+    actor_username    TEXT NOT NULL,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    reverted_at       TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_merge_history_source ON boat_model_merge_history(source_model_id);
+CREATE INDEX IF NOT EXISTS idx_merge_history_target ON boat_model_merge_history(target_model_id);
+
+-- ---------- Synonymes voilerie (GV/GE/GEN/SPI/TRQ etc.) ----------
+CREATE TABLE IF NOT EXISTS search_synonyms (
+    id                BIGSERIAL PRIMARY KEY,
+    canonical_term    TEXT NOT NULL,
+    normalized_alias  TEXT NOT NULL UNIQUE,
+    category          TEXT NOT NULL CHECK (category IN ('sail_type', 'material', 'nautical_term')),
+    active            BOOLEAN NOT NULL DEFAULT true,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_search_synonyms_alias_trgm
+    ON search_synonyms USING gin (normalized_alias gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_search_synonyms_canonical_trgm
+    ON search_synonyms USING gin (seamtech_texte_recherche(canonical_term) gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_search_synonyms_active ON search_synonyms(active) WHERE active = true;
+
+-- Pré-remplissage : abréviations voilerie courantes (GV/GE/GEN/SPI/TRQ etc.)
+-- Chaque ligne : canonical_term = forme développée, normalized_alias = abréviation normalisée (unique)
+INSERT INTO search_synonyms (canonical_term, normalized_alias, category, active) VALUES
+    ('Grand-Voile', 'gv', 'sail_type', true) ON CONFLICT (normalized_alias) DO NOTHING;
+INSERT INTO search_synonyms (canonical_term, normalized_alias, category, active) VALUES
+    ('Génois', 'ge', 'sail_type', true) ON CONFLICT (normalized_alias) DO NOTHING;
+INSERT INTO search_synonyms (canonical_term, normalized_alias, category, active) VALUES
+    ('Génois', 'gen', 'sail_type', true) ON CONFLICT (normalized_alias) DO NOTHING;
+INSERT INTO search_synonyms (canonical_term, normalized_alias, category, active) VALUES
+    ('Spinnaker', 'spi', 'sail_type', true) ON CONFLICT (normalized_alias) DO NOTHING;
+INSERT INTO search_synonyms (canonical_term, normalized_alias, category, active) VALUES
+    ('Trinquette', 'trq', 'sail_type', true) ON CONFLICT (normalized_alias) DO NOTHING;
+INSERT INTO search_synonyms (canonical_term, normalized_alias, category, active) VALUES
+    ('Gennaker', 'genn', 'sail_type', true) ON CONFLICT (normalized_alias) DO NOTHING;
+INSERT INTO search_synonyms (canonical_term, normalized_alias, category, active) VALUES
+    ('Code 0', 'c0', 'sail_type', true) ON CONFLICT (normalized_alias) DO NOTHING;
+INSERT INTO search_synonyms (canonical_term, normalized_alias, category, active) VALUES
+    ('Grand Voile', 'grand voile', 'sail_type', true) ON CONFLICT (normalized_alias) DO NOTHING;
+INSERT INTO search_synonyms (canonical_term, normalized_alias, category, active) VALUES
+    ('Monofilm', 'monofilm', 'material', true) ON CONFLICT (normalized_alias) DO NOTHING;
+INSERT INTO search_synonyms (canonical_term, normalized_alias, category, active) VALUES
+    ('Dacron', 'dacron', 'material', true) ON CONFLICT (normalized_alias) DO NOTHING;
+INSERT INTO search_synonyms (canonical_term, normalized_alias, category, active) VALUES
+    ('Aramide', 'aramide', 'material', true) ON CONFLICT (normalized_alias) DO NOTHING;
+INSERT INTO search_synonyms (canonical_term, normalized_alias, category, active) VALUES
+    ('Lattée', 'lattee', 'nautical_term', true) ON CONFLICT (normalized_alias) DO NOTHING;
+
+-- Index de recherche pour boat_synonyms : préfixe + trigramme
+CREATE INDEX IF NOT EXISTS idx_boat_models_aliases_join
+    ON boat_model_aliases(boat_model_id, status);
+"""
+
 MIGRATIONS_METIER: tuple[tuple[str, str], ...] = (
     ("006_fiche_technique", SQL_006_FICHE_TECHNIQUE),
     ("007_recherche_index", SQL_007_RECHERCHE_INDEX),
@@ -1536,6 +1754,9 @@ MIGRATIONS_METIER: tuple[tuple[str, str], ...] = (
     ("021_revision_fiche", SQL_021_REVISION_FICHE),
     ("022_selections_durables", SQL_022_SELECTIONS_DURABLES),
     ("023_recherche_normalisee", SQL_023_FONCTION_UNACCENT),
+    ("024_placeholder", SQL_024_PLACEHOLDER),
+    ("025_placeholder", SQL_025_PLACEHOLDER),
+    ("026_boat_models_and_aliases", SQL_026_BOAT_MODELS_AND_ALIASES),
 )
 
 

@@ -986,9 +986,10 @@ def test_migration_019_existe() -> None:
 def test_version_schema_et_tables() -> None:
     from seamtech_search.schema_metier import TABLES_METIER, VERSION_SCHEMA_METIER
 
-    assert VERSION_SCHEMA_METIER == "023_recherche_normalisee"
-    # 019-023 n'ajoutent AUCUNE table (texte pondéré, colonnes de
-    # supervision des imports, révision de fiche, sélections durables,
-    # fonction/index de recherche normalisée) : le compte de tables reste 33.
-    assert len(TABLES_METIER) == 33
+    assert VERSION_SCHEMA_METIER == "026_boat_models_and_aliases"
+    # 019-023 n'ajoutent aucune table ; 024-025 réservées ; 026 ajoute 4 tables
+    # boat_models / aliases / merge_history / search_synonyms → 37.
+    assert len(TABLES_METIER) == 37
     assert "ocr_etage3" in TABLES_METIER
+    assert "boat_models" in TABLES_METIER
+    assert "search_synonyms" in TABLES_METIER

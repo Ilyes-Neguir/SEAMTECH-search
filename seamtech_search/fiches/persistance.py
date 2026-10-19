@@ -466,6 +466,37 @@ def _ecrire_fiche_dans(index: Any, fiche: FicheExtraite, connexion: Any) -> Resu
             id_bateau = None
             if fiche.bateau_nom:
                 id_bateau = _resoudre(cursor, _SQL_BATEAU, _SQL_BATEAU_INS, (fiche.bateau_nom, fiche.bateau_taille))
+                # Lot 2 — alimente le référentiel unique des modèles de bateaux (idempotent, dégradable)
+                try:
+                    from seamtech_search.bateaux.normalisation import normaliser_cle_bateau
+
+                    bateau_full = fiche.bateau_nom.strip()
+                    if fiche.bateau_taille:
+                        bateau_full = f"{bateau_full} {fiche.bateau_taille.strip()}"
+                    cle = normaliser_cle_bateau(bateau_full)
+                    if cle:
+                        cursor.execute(
+                            """
+                            INSERT INTO boat_models (canonical_name, normalized_key)
+                            VALUES (%s, %s)
+                            ON CONFLICT (normalized_key) DO NOTHING
+                            """,
+                            (bateau_full, cle),
+                        )
+                        cursor.execute("SELECT id FROM boat_models WHERE normalized_key = %s", (cle,))
+                        row_model = cursor.fetchone()
+                        if row_model is not None:
+                            model_id = int(row_model[0])
+                            cursor.execute(
+                                """
+                                INSERT INTO boat_model_aliases (boat_model_id, alias_raw, alias_normalized, status, source)
+                                VALUES (%s, %s, %s, 'active', 'auto_exact')
+                                ON CONFLICT (alias_normalized) DO NOTHING
+                                """,
+                                (model_id, bateau_full, cle),
+                            )
+                except Exception:
+                    pass
             id_commande = None
             if fiche.commande_numero:
                 cursor.execute(_SQL_COMMANDE, (fiche.commande_numero,))

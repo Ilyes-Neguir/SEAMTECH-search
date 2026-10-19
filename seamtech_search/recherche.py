@@ -963,6 +963,24 @@ def rechercher_fiches(
             texte = _appliquer_synonymes(
                 _normaliser_separateurs(requete.strip()), _charger_synonymes(cursor, nom_base)
             )
+            # Lot 2 — expansion synonymes voilerie (search_synonyms) + aliases bateau (dégradable, bases pré-026)
+            try:
+                from seamtech_search.bateaux.recherche_etendue import normaliser_requete_etendue
+                from seamtech_search.bateaux.modeles import expand_query_with_boat_aliases
+                from seamtech_search.bateaux.synonymes import _charger_search_synonymes, _expand_query_with_synonymes
+
+                search_syn = _charger_search_synonymes(cursor, nom_base)
+                if search_syn.get("alias_to_canonical") or search_syn.get("canonical_to_alias"):
+                    texte = _expand_query_with_synonymes(texte, {}, search_syn)
+                texte = expand_query_with_boat_aliases(texte, cursor, nom_base)
+                # Tirets/underscores/slash déjà gérés par _normaliser_separateurs (qui couvre -/_),
+                # mais on ajoute aussi la normalisation slash étendue du Lot 2
+                q_norm_slash = normaliser_requete_etendue(texte)
+                if q_norm_slash != texte.strip() and q_norm_slash not in texte:
+                    texte = texte + " " + q_norm_slash
+            except Exception:
+                # Bases pré-026 ou tables manquantes → recherche reste fonctionnelle
+                pass
 
             # Phase 1 — recherche par dimension : la requête est scindée en
             # (valeur + unité + éventuelle cote nommée) et les mots restants.
@@ -1352,6 +1370,90 @@ def suggerer(index: Any, prefixe: str, limite: int = SUGGESTION_LIMITE_DEFAUT) -
                             break
                     if len(suggestions) >= limite:
                         break
+
+            # 3) Lot 2 — préfixe sur référentiel bateau + synonymes voilerie (dégradable)
+            # Ordre de pertinence : exact > alias actif > prefix > trigramme
+            if len(suggestions) < limite:
+                try:
+                    # a) boat_models par préfixe (canonical_name)
+                    cursor.execute(
+                        "SELECT canonical_name FROM boat_models WHERE seamtech_texte_recherche(canonical_name) LIKE %s ESCAPE '\\' ORDER BY canonical_name LIMIT %s",
+                        (motif, limite),
+                    )
+                    for (valeur,) in cursor.fetchall():
+                        _ajouter("bateau_modele", valeur)
+                        if len(suggestions) >= limite:
+                            break
+                except Exception:
+                    pass
+                if len(suggestions) < limite:
+                    try:
+                        cursor.execute(
+                            "SELECT alias_raw FROM boat_model_aliases WHERE status='active' AND seamtech_texte_recherche(alias_raw) LIKE %s ESCAPE '\\' ORDER BY alias_raw LIMIT %s",
+                            (motif, limite),
+                        )
+                        for (valeur,) in cursor.fetchall():
+                            _ajouter("bateau_alias", valeur)
+                            if len(suggestions) >= limite:
+                                break
+                    except Exception:
+                        pass
+                if len(suggestions) < limite:
+                    try:
+                        cursor.execute(
+                            "SELECT canonical_term FROM search_synonyms WHERE active = true AND seamtech_texte_recherche(canonical_term) LIKE %s ESCAPE '\\' LIMIT %s",
+                            (motif, limite),
+                        )
+                        for (valeur,) in cursor.fetchall():
+                            _ajouter("terme_voilerie", valeur)
+                            if len(suggestions) >= limite:
+                                break
+                        cursor.execute(
+                            "SELECT normalized_alias FROM search_synonyms WHERE active = true AND normalized_alias LIKE %s ESCAPE '\\' LIMIT %s",
+                            (motif, limite),
+                        )
+                        for (valeur,) in cursor.fetchall():
+                            _ajouter("terme_abrege", valeur)
+                            if len(suggestions) >= limite:
+                                break
+                    except Exception:
+                        pass
+                # b) corrections trigram sur boat_models (fautes)
+                if capacites["pg_trgm"] and len(suggestions) < limite:
+                    try:
+                        cursor.execute(
+                            """
+                            SELECT canonical_name, similarity(seamtech_texte_recherche(canonical_name), seamtech_texte_recherche(%s)) AS sim
+                            FROM boat_models
+                            WHERE similarity(seamtech_texte_recherche(canonical_name), seamtech_texte_recherche(%s)) > 0.3
+                            ORDER BY sim DESC LIMIT 3
+                            """,
+                            (prefixe, prefixe),
+                        )
+                        for valeur, _sim in cursor.fetchall():
+                            if valeur.strip().lower() != prefixe.strip().lower():
+                                _ajouter("correction_bateau", valeur)
+                                if len(suggestions) >= limite:
+                                    break
+                    except Exception:
+                        pass
+                    try:
+                        cursor.execute(
+                            """
+                            SELECT canonical_term, similarity(seamtech_texte_recherche(canonical_term), seamtech_texte_recherche(%s)) AS sim
+                            FROM search_synonyms
+                            WHERE active = true AND similarity(seamtech_texte_recherche(canonical_term), seamtech_texte_recherche(%s)) > 0.3
+                            ORDER BY sim DESC LIMIT 3
+                            """,
+                            (prefixe, prefixe),
+                        )
+                        for valeur, _sim in cursor.fetchall():
+                            if valeur.strip().lower() != prefixe.strip().lower():
+                                _ajouter("correction_synonyme", valeur)
+                                if len(suggestions) >= limite:
+                                    break
+                    except Exception:
+                        pass
 
     return {"prefixe": prefixe, "suggestions": suggestions[:limite]}
 

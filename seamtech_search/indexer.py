@@ -1053,6 +1053,65 @@ class SearchIndex:
                     exc,
                 )
 
+    def _migration_024_placeholder(self, connection: Any) -> None:
+        """024 réservée (continuité de numérotation) — no-op sur les deux backends."""
+        if self.is_postgres:
+            with connection.cursor() as cursor:
+                cursor.execute(schema_metier.SQL_024_PLACEHOLDER)
+        else:
+            logger.info("Migration 024_placeholder ignorée en mode SQLite — PostgreSQL uniquement.")
+
+    def _migration_025_placeholder(self, connection: Any) -> None:
+        """025 réservée (continuité de numérotation) — no-op sur les deux backends."""
+        if self.is_postgres:
+            with connection.cursor() as cursor:
+                cursor.execute(schema_metier.SQL_025_PLACEHOLDER)
+        else:
+            logger.info("Migration 025_placeholder ignorée en mode SQLite — PostgreSQL uniquement.")
+
+    def _migration_026_boat_models_and_aliases(self, connection: Any) -> None:
+        """026 — référentiel unique des modèles de bateaux & alias + synonymes voilerie.
+
+        1) Étend seamtech_texte_recherche pour tirets/underscores/slash → espace (Lot 2)
+        2) Crée les 4 tables : boat_models, boat_model_aliases, boat_model_merge_history, search_synonyms
+        3) Pré-remplit search_synonyms (GV/GE/GEN/SPI/TRQ etc.) — idempotent via ON CONFLICT
+
+        PostgreSQL uniquement ; sur SQLite : warning, migration enregistrée.
+        """
+        if not self.is_postgres:
+            logger.warning(
+                "Migration 026_boat_models_and_aliases ignorée : la couche métier est PostgreSQL "
+                "uniquement — conséquence : aucun référentiel bateau en mode SQLite."
+            )
+            return
+        with connection.cursor() as cursor:
+            # 1) Étend la fonction de normalisation (étend 023)
+            cursor.execute("SAVEPOINT seamtech_026_unaccent")
+            try:
+                cursor.execute("CREATE EXTENSION IF NOT EXISTS unaccent")
+                cursor.execute(schema_metier.SQL_026_FONCTION_UNACCENT_ETENDUE)
+                cursor.execute("RELEASE SAVEPOINT seamtech_026_unaccent")
+            except Exception as exc:
+                cursor.execute("ROLLBACK TO SAVEPOINT seamtech_026_unaccent")
+                cursor.execute("RELEASE SAVEPOINT seamtech_026_unaccent")
+                logger.warning(
+                    "unaccent indisponible pour 026 étendue (%s) — repli translate latin.",
+                    exc,
+                )
+                cursor.execute(schema_metier.SQL_026_FONCTION_REPLI_ETENDUE)
+            # 2) Tables + index + seed
+            cursor.execute("SAVEPOINT seamtech_026_tables")
+            try:
+                cursor.execute(schema_metier.SQL_026_BOAT_MODELS_AND_ALIASES)
+                cursor.execute("RELEASE SAVEPOINT seamtech_026_tables")
+            except Exception as exc:
+                cursor.execute("ROLLBACK TO SAVEPOINT seamtech_026_tables")
+                cursor.execute("RELEASE SAVEPOINT seamtech_026_tables")
+                logger.warning(
+                    "Tables 026 partiellement appliquées (%s) — index trigrammes peut-être omis.",
+                    exc,
+                )
+
     def run_migrations(self) -> None:
         """Run pending schema migrations once at startup."""
         with self.connect() as connection:
@@ -1109,6 +1168,9 @@ class SearchIndex:
                 # d'enregistrement : une migration oubliée ici ferait échouer
                 # sauvegarde/restauration (VERSION_SCHEMA_METIER absente).
                 ("023_recherche_normalisee", self._migration_023_recherche_normalisee),
+                ("024_placeholder", self._migration_024_placeholder),
+                ("025_placeholder", self._migration_025_placeholder),
+                ("026_boat_models_and_aliases", self._migration_026_boat_models_and_aliases),
             ]
 
             for version, func in migrations:
