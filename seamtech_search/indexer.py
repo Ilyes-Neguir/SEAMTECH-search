@@ -1107,14 +1107,6 @@ class SearchIndex:
             except Exception as exc:
                 cursor.execute("ROLLBACK TO SAVEPOINT seamtech_026_tables")
                 cursor.execute("RELEASE SAVEPOINT seamtech_026_tables")
-                import traceback
-
-                logger.error(
-                    "Migration 026_boat_models_and_aliases echec detail: %s\nSQL: %s\nTrace: %s",
-                    exc,
-                    schema_metier.SQL_026_BOAT_MODELS_AND_ALIASES[:500],
-                    traceback.format_exc(),
-                )
                 logger.warning(
                     "Tables 026 partiellement appliquées (%s) — index trigrammes peut-être omis.",
                     exc,
