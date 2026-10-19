@@ -102,6 +102,16 @@ ceux de la branche `arena/dc54c343-seamtech-search` au commit de livraison.
    et toutes les pages ; seuls les fichiers statiques (`_next/static`,
    images, CSS, JS, polices) sont exclus, car ils ne contiennent aucune donnée
    d'archive.
+
+   **Mode développement vs production.** En production (`next start`, le mode
+   déployé par le conteneur), la valeur `no-store` posée par le proxy est
+   conservée sur les pages (vérifié par `curl` et par le test e2e live). En
+   mode `next dev`, Next réécrit l'en-tête des réponses HTML en
+   `no-cache, must-revalidate` : la page n'est alors pas réutilisable sans
+   revalidation, mais ce n'est pas littéralement `no-store`. La suite e2e
+   SQLite (qui tourne en dev) accepte cet équivalent pour la PAGE et exige
+   `no-store` strict sur les API ; le test live (production) exige `no-store`
+   sur la page, l'API métier et le téléchargement.
 2. **Backend FastAPI** (`seamtech_search/api.py`, middleware) : toute requête
    portant un justificatif de session (`X-SEAMTECH-SESSION-SID` ou
    `X-SEAMTECH-SESSION`), le jeton de service, ou visant `/auth/*`, reçoit
@@ -127,9 +137,10 @@ Cookie` dans leur propre réponse.
   révocation → `no-store` (401 inclus).
 - `frontend/e2e/auth.spec.ts` : page protégée `/fichiers`, API métier
   `/api/search`, `/api/auth/session`.
-- `frontend/e2e/auth.spec.ts` (mode live, PostgreSQL) : téléchargement réel
+- `frontend/e2e/auth.spec.ts` (mode live, PostgreSQL, front de production) :
+  page protégée `/fichiers` → `no-store` ; téléchargement réel
   `/api/pieces/<id>/telecharger` → 200, `no-store`, `application/pdf`, corps
-  commençant par `%PDF`.
+  commençant par `%PDF`, et 401 sans session.
 
 ### 3.3 Ce que `no-store` ne fait pas
 

@@ -370,13 +370,23 @@ test.describe("Authentication gate (audit issue #5)", () => {
         data: { mot_de_passe: UI_PASSWORD },
         failOnStatusCode: false,
       })
-      // Trois natures de réponse authentifiée : une PAGE protégée, une API
-      // métier, et la route de session. Toutes doivent interdire le cache.
-      for (const chemin of ["/fichiers", "/api/search?q=CLIENT", "/api/pieces", "/api/auth/session"]) {
+      // API métier et route de session : `no-store` STRICT, y compris en mode
+      // développement (le proxy Next pose l'en-tête sur ces réponses).
+      for (const chemin of ["/api/search?q=CLIENT", "/api/pieces", "/api/auth/session"]) {
         const reponse = await contexte.fetch(chemin, { failOnStatusCode: false })
         expect(reponse.status(), chemin).toBe(200)
         expect(reponse.headers()["cache-control"], chemin).toMatch(/no-store/)
       }
+
+      // PAGE protégée : en production (`next start`, le mode déployé) elle
+      // reçoit `no-store` — c'est ce que vérifie le test live ci-dessous. Le
+      // serveur de DÉVELOPPEMENT de Next réécrit l'en-tête HTML en
+      // `no-cache, must-revalidate`, qui interdit tout autant la réutilisation
+      // sans revalidation ; on l'accepte ici pour ne pas faire passer un
+      // artefact du serveur de dev pour le comportement de production.
+      const page = await contexte.fetch("/fichiers", { failOnStatusCode: false })
+      expect(page.status()).toBe(200)
+      expect(page.headers()["cache-control"]).toMatch(/no-store|no-cache.*must-revalidate/)
     } finally {
       await contexte.dispose()
     }
@@ -543,6 +553,13 @@ test.describe("Comptes nominatifs (Lot L.2)", () => {
         }
       }
       expect(idPiece, "le seed live doit fournir au moins un PDF").not.toBeNull()
+
+      // EN PRODUCTION (next start) : la page protégée porte bien `no-store`.
+      // C'est le mode réellement déployé, et le seul où l'en-tête du proxy
+      // n'est pas réécrit par le serveur de développement.
+      const page = await context.fetch("/fichiers", { failOnStatusCode: false })
+      expect(page.status()).toBe(200)
+      expect(page.headers()["cache-control"]).toMatch(/no-store/)
 
       const telechargement = await context.fetch(`/api/pieces/${idPiece}/telecharger`, {
         failOnStatusCode: false,
