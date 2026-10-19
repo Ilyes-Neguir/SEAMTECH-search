@@ -1631,7 +1631,7 @@ CREATE TABLE IF NOT EXISTS boat_models (
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Trigger updated_at (utilise $func$ pour eviter conflit ; dans $$)
+-- Trigger updated_at
 CREATE OR REPLACE FUNCTION _touch_boat_models_updated_at() RETURNS TRIGGER AS $func$
 BEGIN
     NEW.updated_at = now();
@@ -1727,6 +1727,72 @@ INSERT INTO search_synonyms (canonical_term, normalized_alias, category, active)
 CREATE INDEX IF NOT EXISTS idx_boat_models_aliases_join
     ON boat_model_aliases(boat_model_id, status);
 """
+
+def split_sql_respecting_dollar_quote(sql_text: str) -> list[str]:
+    """Découpe un bloc SQL multi-statements en respectant les dollar-quotes.
+
+    Utilisé pour le diagnostic Lot 2 : permet d'identifier l'instruction
+    fautive sans couper à tort un `;` dans `BEGIN ... END;` ou `$func$`.
+    Teste via `tests/test_schema_metier_split.py` (non poussé) : vérifie
+    que `CREATE FUNCTION ... $func$ ... ; ... $func$ LANGUAGE plpgsql;`
+    reste une seule instruction.
+    """
+    statements: list[str] = []
+    buf: list[str] = []
+    i = 0
+    n = len(sql_text)
+    dollar_tag: str | None = None
+    in_single_quote = False
+    in_double_quote = False
+    while i < n:
+        ch = sql_text[i]
+        # Détection dollar-quote ouverture/fermeture hors quotes simples/doubles
+        if not in_single_quote and not in_double_quote and ch == "$":
+            # Cherche fin du tag : $tag$
+            j = i + 1
+            while j < n and sql_text[j] != "$":
+                # tag = [A-Za-z0-9_]*
+                if not (sql_text[j].isalnum() or sql_text[j] == "_"):
+                    break
+                j += 1
+            if j < n and sql_text[j] == "$":
+                tag = sql_text[i : j + 1]  # ex: $$, $func$, $fonction$
+                if dollar_tag is None:
+                    dollar_tag = tag
+                elif dollar_tag == tag:
+                    dollar_tag = None
+                # Ajoute le tag au buffer
+                buf.append(tag)
+                i = j + 1
+                continue
+        if dollar_tag is None:
+            # Gestion quotes simples/doubles pour ; hors dollar-quote
+            if ch == "'" and not in_double_quote:
+                # Gère '' échappé
+                if i + 1 < n and sql_text[i + 1] == "'":
+                    buf.append(ch)
+                    buf.append(sql_text[i + 1])
+                    i += 2
+                    continue
+                in_single_quote = not in_single_quote
+            elif ch == '"' and not in_single_quote:
+                in_double_quote = not in_double_quote
+            elif ch == ";" and not in_single_quote and not in_double_quote:
+                buf.append(ch)
+                stmt = "".join(buf).strip()
+                if stmt:
+                    statements.append(stmt)
+                buf = []
+                i += 1
+                continue
+        buf.append(ch)
+        i += 1
+    # Reste
+    tail = "".join(buf).strip()
+    if tail:
+        statements.append(tail)
+    return statements
+
 
 MIGRATIONS_METIER: tuple[tuple[str, str], ...] = (
     ("006_fiche_technique", SQL_006_FICHE_TECHNIQUE),

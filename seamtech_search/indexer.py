@@ -1099,10 +1099,48 @@ class SearchIndex:
                     exc,
                 )
                 cursor.execute(schema_metier.SQL_026_FONCTION_REPLI_ETENDUE)
-            # 2) Tables + index + seed
+            # 2) Tables + index + seed — diagnostic : exécution séparée avec logs précis
             cursor.execute("SAVEPOINT seamtech_026_tables")
             try:
-                cursor.execute(schema_metier.SQL_026_BOAT_MODELS_AND_ALIASES)
+                # Diagnostic : découpe respectant les dollar-quotes $func$/$fonction$/$$
+                stmts = schema_metier.split_sql_respecting_dollar_quote(
+                    schema_metier.SQL_026_BOAT_MODELS_AND_ALIASES
+                )
+                for idx_stmt, stmt in enumerate(stmts, start=1):
+                    # Journalise l'état des extensions avant chaque instruction (séparé du 42601)
+                    # pour distinguer permission unaccent/pg_trgm/vector vs syntax
+                    if idx_stmt == 1:
+                        try:
+                            cursor.execute(
+                                "SELECT extname FROM pg_extension WHERE extname IN ('unaccent','pg_trgm','vector')"
+                            )
+                            exts = {r[0] for r in cursor.fetchall()}
+                            logger.info(
+                                "026 diagnostic — extensions présentes avant REVOKE : %s", sorted(exts)
+                            )
+                        except Exception:
+                            pass
+                    try:
+                        cursor.execute(stmt)
+                    except Exception as exc_stmt:
+                        # Capture SQLSTATE, position, extrait sans masquer l'exception
+                        sqlstate = getattr(exc_stmt, "pgcode", None)
+                        diag = getattr(exc_stmt, "diag", None)
+                        pos = getattr(diag, "statement_position", None) if diag else None
+                        primary = getattr(diag, "message_primary", None) if diag else None
+                        # Log détaillé et remonte pour que run_migrations marque la migration en échec
+                        logger.error(
+                            "026 diagnostic — instruction %d/%d échec SQLSTATE=%s pos=%s stmt=%.200r primary=%.200r err=%s",
+                            idx_stmt,
+                            len(stmts),
+                            sqlstate,
+                            pos,
+                            stmt.strip()[:200],
+                            primary,
+                            exc_stmt,
+                            exc_info=True,
+                        )
+                        raise
                 cursor.execute("RELEASE SAVEPOINT seamtech_026_tables")
             except Exception as exc:
                 cursor.execute("ROLLBACK TO SAVEPOINT seamtech_026_tables")
@@ -1111,6 +1149,8 @@ class SearchIndex:
                     "Tables 026 partiellement appliquées (%s) — index trigrammes peut-être omis.",
                     exc,
                 )
+                # Re-lève pour que run_migrations logge 'Migration 026 failed' avec SQLSTATE/position
+                raise
 
     def run_migrations(self) -> None:
         """Run pending schema migrations once at startup."""
