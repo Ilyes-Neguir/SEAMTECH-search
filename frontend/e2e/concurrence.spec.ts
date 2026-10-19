@@ -40,7 +40,7 @@
 
 import { expect, test, type Browser, type BrowserContext, type Page } from "@playwright/test"
 import path from "node:path"
-import { ADMIN, OPERATEUR, signInWith } from "./helpers"
+import { ADMIN, OPERATEUR, csrfHeaders, signInWith } from "./helpers"
 
 test.describe("concurrence entre postes (sessions indépendantes)", () => {
   test.skip(
@@ -362,6 +362,7 @@ test.describe("concurrence entre postes (sessions indépendantes)", () => {
       expect(refusLecture.status()).toBe(403)
       const refusEcriture = await posteA.request.post("/api/auth/utilisateurs", {
         data: { identifiant, nom: "Intrus e2e", role: "operateur", mot_de_passe: "mot-de-passe-intrus" },
+        headers: await csrfHeaders(posteA.request),
       })
       expect(refusEcriture.status()).toBe(403)
       const detail = (await refusEcriture.json()) as { detail?: string }
@@ -407,6 +408,7 @@ test.describe("concurrence entre postes (sessions indépendantes)", () => {
     if (etat.statut !== "a_valider") {
       const reouverture = await poste.request.post(`/api/fiches/${encodeURIComponent(code)}/rouvrir`, {
         data: { revision: etat.revision, effacer_corrections: false },
+        headers: await csrfHeaders(poste.request),
       })
       expect(reouverture.status(), await reouverture.text()).toBe(200)
       etat = await etatReel(poste, code)
@@ -552,10 +554,12 @@ test.describe("concurrence entre postes (sessions indépendantes)", () => {
       // client) : le BACKEND refuse aussi — 428, et rien n'est écrit.
       const directe = await posteB.request.post(`/api/fiches/${encodeURIComponent(code)}/corriger`, {
         data: { champ: "fiche.designation", valeur: "ECRITURE-SANS-REVISION" },
+        headers: await csrfHeaders(posteB.request),
       })
       expect(directe.status(), await directe.text()).toBe(428)
       const decisionDirecte = await posteB.request.post(`/api/fiches/${encodeURIComponent(code)}/valider`, {
         data: {},
+        headers: await csrfHeaders(posteB.request),
       })
       expect(decisionDirecte.status(), await decisionDirecte.text()).toBe(428)
 

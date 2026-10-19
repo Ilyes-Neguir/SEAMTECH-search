@@ -1,4 +1,4 @@
-import { expect, type Page } from "@playwright/test"
+import { expect, type APIRequestContext, type Page } from "@playwright/test"
 
 /**
  * Shared sign-in helper for the e2e suite.
@@ -47,4 +47,15 @@ export async function signIn(page: Page, password: string = UI_PASSWORD): Promis
 export async function signOut(page: Page): Promise<void> {
   await page.getByRole("button", { name: /Se déconnecter/i }).click()
   await page.waitForURL(/\/login/, { timeout: 20000 })
+}
+
+/**
+ * CSRF header for a Playwright request context that is already signed in
+ * (Lot 0a, double-submit). APIRequestContext shares the browser context's
+ * cookies: echo the readable `seamtech_csrf` cookie in `X-CSRF-Token`.
+ */
+export async function csrfHeaders(context: APIRequestContext): Promise<Record<string, string>> {
+  const { cookies } = await context.storageState()
+  const jeton = cookies.find((cookie) => cookie.name === "seamtech_csrf")?.value
+  return jeton ? { "X-CSRF-Token": jeton } : {}
 }
