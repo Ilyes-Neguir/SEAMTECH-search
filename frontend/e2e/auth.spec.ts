@@ -558,6 +558,14 @@ test.describe("Déconnexion navigateur (Lot 0a)", () => {
     await page.goto("/fichiers")
     await expect(page.getByTestId("archive-browser")).toBeVisible({ timeout: 20000 })
 
+    // Deux écrans protégés distincts dans l'historique : le Retour après
+    // déconnexion doit atterrir sur un écran qui EXIGE la session, pas sur
+    // about:blank (ce qui rendrait le test vacuux).
+    await page.goto("/qualite")
+    await expect(page.getByTestId("nav")).toBeVisible({ timeout: 20000 })
+    await page.goto("/fichiers")
+    await expect(page.getByTestId("archive-browser")).toBeVisible({ timeout: 20000 })
+
     await page.getByTestId("logout").click()
     await page.waitForURL(/\/login/, { timeout: 20000 })
     await expect(page.getByRole("button", { name: "Se connecter" })).toBeVisible()
