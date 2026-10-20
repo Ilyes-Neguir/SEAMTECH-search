@@ -23,12 +23,23 @@ Clés :
 Le ``sid`` n'est jamais journalisé ; il n'est pas stocké en clair ailleurs que
 dans Redis, qui est déjà le magasin d'état.
 
-Redis n'est PAS la seule autorité d'invalidation : un changement ou une
-réinitialisation de mot de passe, ou une désactivation écrit ``utilisateur.sessions_invalidees_le``
-(migration 024, PostgreSQL) dans la transaction de la mutation. Si la
-révocation Redis échoue (503) puis que Redis revient avec ses clés, la
-validation de session refuse quand même les sessions ouvertes avant cet
-instant — voir ``comptes.routes._session_sid``.
+Redis n'est PAS la seule autorité d'invalidation. Chaque session nominative
+porte ``etat_identifiants`` : la génération d'identifiants capturée AU MOMENT
+DE LA VÉRIFICATION du mot de passe (empreinte scrypt + horodatages de mutation
++ ``actif``, voir ``comptes.securite.etat_identifiants``). À chaque requête,
+``comptes.routes._session_sid`` recalcule cette génération depuis PostgreSQL et
+compare — une ÉGALITÉ de valeurs, jamais une comparaison d'horloges.
+
+Conséquences, toutes voulues :
+
+* si la révocation Redis échoue (503) puis que Redis revient avec ses clés, les
+  sessions d'avant sont refusées par la base ;
+* une session créée APRÈS un changement de mot de passe mais à partir d'une
+  vérification faite AVANT (course connexion/réinitialisation) est refusée
+  aussi : elle porte l'ancienne génération ;
+* plusieurs répliques peuvent servir la même session sans horloges
+  synchronisées : la valeur comparée vient de la base, pas d'une horloge
+  locale.
 """
 
 from __future__ import annotations
@@ -79,6 +90,14 @@ class SessionRecord:
     #: n'est PAS une autorité : la révocation de la session navigateur passe
     #: par la clé Redis. Il sert à tenir l'audit SQL cohérent au logout.
     db_session_id: int | None = None
+    #: GÉNÉRATION D'IDENTIFIANTS capturée au moment de la vérification du mot
+    #: de passe (``comptes.securite.etat_identifiants``). C'est elle qui rend
+    #: la session invalide après un changement/réinitialisation même si la clé
+    #: Redis survit à une panne, ET même si la session a été créée après le
+    #: changement (course connexion/réinitialisation). ``None`` = session
+    #: émise par une version antérieure : refusée (fail-closed) dès qu'elle est
+    #: comparée à un compte nominatif.
+    etat_identifiants: str | None = None
 
     def vers_public(self) -> dict[str, Any]:
         """Vue renvoyée à l'API : jamais le ``sid`` (le client le connaît déjà)."""
@@ -184,6 +203,7 @@ class SessionStore:
         mode: str = MODE_NOMINATIF,
         user_agent: str | None = None,
         db_session_id: int | None = None,
+        etat_identifiants: str | None = None,
         now: float | None = None,
     ) -> SessionRecord:
         """Crée une session avec un ``sid`` NEUF (anti-fixation).
@@ -213,6 +233,7 @@ class SessionStore:
             expires_at=expire,
             user_agent=user_agent,
             db_session_id=int(db_session_id) if db_session_id is not None else None,
+            etat_identifiants=etat_identifiants,
         )
         charge = asdict(record)
         charge.pop("sid", None)
@@ -280,6 +301,7 @@ class SessionStore:
                     if charge.get("db_session_id") is not None
                     else None
                 ),
+                etat_identifiants=charge.get("etat_identifiants"),
             )
         except (KeyError, TypeError, ValueError, json.JSONDecodeError):
             # Charge illisible : on ne l'accepte jamais, on la retire.
@@ -307,6 +329,7 @@ class SessionStore:
             expires_at=record.expires_at,
             user_agent=record.user_agent,
             db_session_id=record.db_session_id,
+            etat_identifiants=record.etat_identifiants,
         )
         charge = asdict(mis_a_jour)
         charge.pop("sid", None)

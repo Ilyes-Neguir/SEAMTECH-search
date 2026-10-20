@@ -2,6 +2,25 @@
 
 ## Unreleased — Qualification des réserves A–D (`arena/e7f33785-seamtech-search`)
 
+- **Lot 0a — revue 3 : génération d'identifiants, atomicité, rollback authentifié.**
+  (1) La validité d'une session ne dépend plus d'une comparaison d'horodatages :
+  chaque session nominative porte `etat_identifiants`, la génération
+  d'identifiants capturée **au moment de la vérification du mot de passe**, et
+  `_session_sid` la compare à la valeur recalculée depuis PostgreSQL à chaque
+  requête. Ferme la course « connexion qui vérifie l'ancien mot de passe puis
+  crée sa session après une réinitialisation » et retire toute hypothèse
+  d'horloges synchronisées entre répliques. (2) Le changement de mot de passe
+  révoque les lignes `session_ui` **dans sa propre transaction** ; la session
+  historique est en outre liée à la génération (`empreinte_jeton(…,
+  etat_identifiants=…)`), donc refusée même si sa ligne n'a pas été révoquée.
+  (3) La consigne de rollback Redis du `docs/DEPLOYMENT.md` s'authentifie via
+  `REDISCLI_AUTH` (jamais `-a`, visible dans `ps`) et ne scanne que
+  `seamtech:session:*` / `seamtech:user_sessions:*` ; elle est **exécutée pour
+  de vrai** dans `tests/test_rollback_redis_auth.py` contre un `redis-server`
+  protégé par mot de passe. Preuves : deux contrôles négatifs (retirer la
+  comparaison de génération, sortir la révocation de la transaction) font
+  échouer les tests ; PostgreSQL et Redis réels, aucun double.
+
 - **Lot 0a — revue : invalidation durable des sessions** (migration
   `024_invalidation_sessions`, une colonne `utilisateur.sessions_invalidees_le`,
   aucune table). Changement de mot de passe, réinitialisation administrateur et

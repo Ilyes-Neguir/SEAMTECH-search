@@ -19,10 +19,20 @@ Ce que ces tests PROUVENT, sur un Redis RÉEL et une base PostgreSQL réelle :
 9. quand Redis refuse la révocation au moment exact de la mutation (ACL réelle
    `-del -srem`, aucun double), le changement/reset de mot de passe et la
    désactivation restent DURABLES : les clés Redis subsistent, puis les anciens
-   ``sid`` répondent 401 grâce à ``utilisateur.sessions_invalidees_le``
-   (migration 024), et le comportement documenté du nouveau mot de passe est
+   ``sid`` répondent 401 grâce à la GÉNÉRATION D'IDENTIFIANTS comparée depuis
+   PostgreSQL, et le comportement documenté du nouveau mot de passe est
    vérifié. ``revoquer_toutes_sessions_pour_identifiant()`` lève au lieu de
-   rendre ``0`` quand Redis est injoignable.
+   rendre ``0`` quand Redis est injoignable ;
+10. une connexion qui a vérifié l'ANCIEN mot de passe puis créé sa session APRÈS
+   une réinitialisation est refusée (course fermée par la génération capturée à
+   la vérification, pas par un horodatage) — session navigateur ET session
+   historique —, avec un contrôle positif sur le nouveau mot de passe ;
+11. la génération ne dépend d'aucune horloge (identique sur deux lectures
+   successives, changée par chaque mutation) ;
+12. la mutation du mot de passe et la révocation des lignes ``session_ui`` sont
+   ATOMIQUES : un trigger PostgreSQL qui refuse la révocation annule aussi le
+   changement (ancien mot de passe toujours valide, session historique
+   intacte).
 
 Marqueurs : ``session_redis`` (Redis réel) et ``postgres`` (comptes réels).
 L'étape CI dédiée exige ``passed > 0`` et ``skipped == 0``.
@@ -38,10 +48,16 @@ from typing import Any, Iterator
 import pytest
 from fastapi.testclient import TestClient
 
-from seamtech_search.comptes.comptes import creer_utilisateur
+from seamtech_search.comptes.comptes import (
+    creer_utilisateur,
+    ouvrir_session,
+    session_valide,
+    verifier_identifiants,
+)
 from seamtech_search.config import AppConfig
 from seamtech_search.indexer import SearchIndex
 from seamtech_search.sessions_redis import (
+    MODE_NOMINATIF,
     SessionRecord,
     SessionStore,
     SessionStoreIndisponible,
@@ -127,7 +143,7 @@ def _vider_redis(url: str) -> None:
             client.delete(cle)
 
 
-def _client(base: dict[str, Any], **extra: Any) -> TestClient:
+def _client(base: dict[str, Any], *, sans_exception_serveur: bool = False, **extra: Any) -> TestClient:
     from seamtech_search.api import create_app
 
     valeurs: dict[str, Any] = {
@@ -141,7 +157,9 @@ def _client(base: dict[str, Any], **extra: Any) -> TestClient:
         "session_hours": 8,
     }
     valeurs.update(extra)
-    return TestClient(create_app(AppConfig(**valeurs)))
+    return TestClient(
+        create_app(AppConfig(**valeurs)), raise_server_exceptions=not sans_exception_serveur
+    )
 
 
 def _entetes(sid: str | None = None) -> dict[str, str]:
@@ -551,3 +569,237 @@ def test_desactivation_survit_a_une_panne_redis(base_sessions: dict[str, Any]) -
         headers=_entetes(),
     )
     assert connexion.status_code == 401, connexion.text
+
+
+# ---------------------------------------------------------------------------
+# 10. COURSE connexion / réinitialisation (revue Lot 0a, blocage 1)
+# ---------------------------------------------------------------------------
+# Le défaut, tel que la revue l'a formulé : un login peut vérifier l'ANCIEN mot
+# de passe, puis créer ses sessions APRÈS qu'une réinitialisation a été
+# validée. Son ``issued_at`` est alors POSTÉRIEUR à l'invalidation, donc une
+# comparaison d'instants l'accepte — et deux répliques dont les horloges
+# diffèrent ne rendraient même pas le même verdict.
+#
+# Le test est DÉTERMINISTE : il ne course pas deux threads, il force l'ordre
+# exact des opérations (vérifier → réinitialiser → créer la session). Aucun
+# double : PostgreSQL et Redis sont réels, et le test exerce la vraie route
+# HTTP pour la réinitialisation.
+
+
+def test_course_connexion_reinitialisation_refusee_par_la_generation(
+    base_sessions: dict[str, Any],
+) -> None:
+    index = base_sessions["index"]
+    client = _client(base_sessions)
+
+    # 1) La connexion « lente » vérifie l'ANCIEN mot de passe : la génération
+    #    d'identifiants est capturée ICI, avant toute mutation.
+    verifie = verifier_identifiants(index, "imrane", "Secret!2026")
+    generation_ancienne = str(verifie["etat_identifiants"])
+
+    # 2) Un administrateur réinitialise le mot de passe : la génération change.
+    admin = _connexion(client, "chef", "Chef!2026")
+    reset = client.post(
+        "/auth/utilisateurs/imrane/mot-de-passe",
+        json={"mot_de_passe": "Apres!2026"},
+        headers=_entetes(admin["sid"]),
+    )
+    assert reset.status_code == 200, reset.text
+    # Le compteur de révocation SQL est publié par la mutation (ici zéro : le
+    # compte n'avait encore aucune session historique).
+    assert reset.json()["sessions_sql_revoquees"] == 0
+
+    # 3) La connexion « lente » reprend MAINTENANT : elle crée sa session SQL et
+    #    sa session Redis avec la génération capturée à l'étape 1.
+    historique = ouvrir_session(
+        index,
+        verifie["id_utilisateur"],
+        user_agent="course-connexion",
+        etat_identifiants_capture=generation_ancienne,
+    )
+    magasin = SessionStore(base_sessions["redis_url"], idle_minutes=30, session_hours=8)
+    record = magasin.creer_session(
+        user_id=verifie["id_utilisateur"],
+        identifiant=str(verifie["identifiant"]),
+        nom=verifie.get("nom"),
+        role=str(verifie["role"]),
+        mode=MODE_NOMINATIF,
+        user_agent="course-connexion",
+        db_session_id=int(historique["id_session"]),
+        etat_identifiants=generation_ancienne,
+    )
+
+    # 4) La session NAVIGATEUR, créée après la réinitialisation, est refusée :
+    #    elle a été obtenue avec l'ancien mot de passe.
+    refus = client.get("/auth/session", headers=_entetes(record.sid))
+    assert refus.status_code == 401, (
+        "une session créée APRÈS la réinitialisation avec l'ANCIEN mot de passe "
+        f"a été acceptée : {refus.text}"
+    )
+    assert "invalidée" in refus.json()["detail"].lower()
+    # Refus durable : la clé Redis a été retirée au passage (best effort).
+    assert magasin.session_existe(record.sid) is False
+
+    # 5) La session HISTORIQUE (X-SEAMTECH-SESSION + jeton) est refusée aussi :
+    #    son jeton est lié à l'ancienne génération, même si sa ligne SQL n'a pas
+    #    de ``revoque_le`` (elle a été créée après la révocation).
+    entetes_historique = {
+        "X-SEAMTECH-TOKEN": JETON_SERVICE,
+        "X-SEAMTECH-SESSION": str(historique["id_session"]),
+        "X-SEAMTECH-SESSION-JETON": str(historique["jeton"]),
+    }
+    refus_historique = client.get("/auth/session", headers=entetes_historique)
+    assert refus_historique.status_code == 401, refus_historique.text
+
+    # 6) CONTRÔLE POSITIF : la même mécanique, avec le NOUVEAU mot de passe,
+    #    produit des sessions acceptées. Sans ce contrôle, le test passerait
+    #    aussi si toutes les sessions étaient cassées.
+    verifie_apres = verifier_identifiants(index, "imrane", "Apres!2026")
+    assert verifie_apres["etat_identifiants"] != generation_ancienne
+    historique_apres = ouvrir_session(
+        index,
+        verifie_apres["id_utilisateur"],
+        etat_identifiants_capture=verifie_apres["etat_identifiants"],
+    )
+    record_apres = magasin.creer_session(
+        user_id=verifie_apres["id_utilisateur"],
+        identifiant="imrane",
+        nom=verifie_apres.get("nom"),
+        role=str(verifie_apres["role"]),
+        mode=MODE_NOMINATIF,
+        db_session_id=int(historique_apres["id_session"]),
+        etat_identifiants=str(verifie_apres["etat_identifiants"]),
+    )
+    accepte = client.get("/auth/session", headers=_entetes(record_apres.sid))
+    assert accepte.status_code == 200, accepte.text
+    assert accepte.json()["identifiant"] == "imrane"
+    entetes_apres = {
+        "X-SEAMTECH-TOKEN": JETON_SERVICE,
+        "X-SEAMTECH-SESSION": str(historique_apres["id_session"]),
+        "X-SEAMTECH-SESSION-JETON": str(historique_apres["jeton"]),
+    }
+    assert client.get("/auth/session", headers=entetes_apres).status_code == 200
+
+
+def test_generation_depend_de_chaque_mutation_et_pas_dune_horloge(
+    base_sessions: dict[str, Any],
+) -> None:
+    """La génération change à CHAQUE mutation, et ne dépend d'aucun instant.
+
+    Elle est calculée deux fois de suite sans mutation : identique (pas de
+    dépendance à l'heure courante, donc deux répliques rendent le même verdict).
+    Puis chaque mutation la change : réinitialisation admin, changement par
+    l'intéressé, désactivation.
+    """
+    index = base_sessions["index"]
+    client = _client(base_sessions)
+
+    premier = str(verifier_identifiants(index, "imrane", "Secret!2026")["etat_identifiants"])
+    second = str(verifier_identifiants(index, "imrane", "Secret!2026")["etat_identifiants"])
+    assert premier == second
+
+    from seamtech_search.comptes.comptes import profil_utilisateur
+
+    admin = _connexion(client, "chef", "Chef!2026")
+    assert client.post(
+        "/auth/utilisateurs/imrane/mot-de-passe",
+        json={"mot_de_passe": "Autre!2026"},
+        headers=_entetes(admin["sid"]),
+    ).status_code == 200
+    apres_reset = str(verifier_identifiants(index, "imrane", "Autre!2026")["etat_identifiants"])
+    assert apres_reset != premier
+
+    # Changement par l'intéressé : sa PROPRE session tombe (génération changée),
+    # ce qui est le comportement voulu — il se reconnecte avec le nouveau.
+    assert client.post(
+        "/auth/mot-de-passe",
+        json={"mot_de_passe_actuel": "Chef!2026", "nouveau_mot_de_passe": "Chef!2027"},
+        headers=_entetes(admin["sid"]),
+    ).status_code == 200
+    assert client.get("/auth/session", headers=_entetes(admin["sid"])).status_code == 401
+    admin = _connexion(client, "chef", "Chef!2027")
+
+    cible = int(verifier_identifiants(index, "imrane", "Autre!2026")["id_utilisateur"])
+    avant_desactivation = profil_utilisateur(index, cible)
+    assert avant_desactivation is not None
+    assert client.post(
+        "/auth/utilisateurs/imrane/desactiver", headers=_entetes(admin["sid"])
+    ).status_code == 200
+    apres_desactivation = profil_utilisateur(index, cible)
+    assert apres_desactivation is not None
+    assert apres_desactivation["actif"] is False
+    assert apres_desactivation["etat_identifiants"] != avant_desactivation["etat_identifiants"]
+
+
+# ---------------------------------------------------------------------------
+# 11. ATOMICITÉ mutation ↔ révocation des sessions historiques (blocage 2)
+# ---------------------------------------------------------------------------
+# Le défaut : le changement de mot de passe était commité, puis la révocation
+# des lignes ``session_ui`` faite dans une SECONDE transaction. Si celle-ci
+# échouait, l'utilisateur croyait son mot de passe changé alors que sa session
+# historique (en-têtes) continuait de fonctionner.
+#
+# Ici l'échec est RÉEL et déterministe : un trigger PostgreSQL refuse toute
+# révocation. Le mot de passe ne doit alors PAS changer (ROLLBACK complet).
+
+
+def test_changement_mot_de_passe_et_revocation_sql_sont_atomiques(
+    base_sessions: dict[str, Any],
+) -> None:
+    index = base_sessions["index"]
+    client = _client(base_sessions, sans_exception_serveur=True)
+    session = _connexion(client)
+    sid = session["sid"]
+
+    entetes_historique = {
+        "X-SEAMTECH-TOKEN": JETON_SERVICE,
+        "X-SEAMTECH-SESSION": str(session["id_session"]),
+        "X-SEAMTECH-SESSION-JETON": str(session["jeton_session"]),
+    }
+    assert client.get("/auth/session", headers=entetes_historique).status_code == 200
+
+    with index.connect() as connexion:
+        with connexion.cursor() as cursor:
+            cursor.execute(
+                "CREATE OR REPLACE FUNCTION test_refus_revocation() RETURNS trigger "
+                "LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'revocation refusee (test)'; END $$"
+            )
+            cursor.execute(
+                "CREATE TRIGGER test_refus_revocation BEFORE UPDATE ON session_ui "
+                "FOR EACH ROW WHEN (NEW.revoque_le IS NOT NULL AND OLD.revoque_le IS NULL) "
+                "EXECUTE FUNCTION test_refus_revocation()"
+            )
+    try:
+        changement = client.post(
+            "/auth/mot-de-passe",
+            json={"mot_de_passe_actuel": "Secret!2026", "nouveau_mot_de_passe": "Jamais!2026"},
+            headers=_entetes(sid),
+        )
+        # La mutation a échoué : l'API ne répond PAS 200.
+        assert changement.status_code >= 500, changement.text
+    finally:
+        with index.connect() as connexion:
+            with connexion.cursor() as cursor:
+                cursor.execute("DROP TRIGGER IF EXISTS test_refus_revocation ON session_ui")
+                cursor.execute("DROP FUNCTION IF EXISTS test_refus_revocation()")
+
+    # ROLLBACK COMPLET : l'ancien mot de passe fonctionne toujours…
+    assert verifier_identifiants(index, "imrane", "Secret!2026")["identifiant"] == "imrane"
+    # …le nouveau n'a jamais été enregistré…
+    with pytest.raises(Exception):
+        verifier_identifiants(index, "imrane", "Jamais!2026")
+    # …la ligne historique n'a pas été « à moitié » révoquée…
+    with index.connect() as connexion:
+        with connexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT revoque_le, sessions_invalidees_le FROM session_ui s "
+                "JOIN utilisateur u ON u.id_utilisateur = s.id_utilisateur "
+                "WHERE s.id_session = %s",
+                (int(session["id_session"]),),
+            )
+            revoque_le, invalidees_le = cursor.fetchone()
+    assert revoque_le is None
+    assert invalidees_le is None
+    # …et la session historique est TOUJOURS utilisable (état inchangé).
+    assert session_valide(index, int(session["id_session"]), str(session["jeton_session"])) is True
+    assert client.get("/auth/session", headers=entetes_historique).status_code == 200

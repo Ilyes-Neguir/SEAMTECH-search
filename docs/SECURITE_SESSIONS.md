@@ -23,26 +23,45 @@ ceux de la branche `arena/dc54c343-seamtech-search` au commit de livraison.
 - Redis ou le backend indisponible ⇒ **503** explicite (fail-closed). Aucun
   repli mémoire n'existe : `seamtech_search/sessions_redis.py` ne le prévoit
   pas.
-- **Invalidation durable.** Un changement de mot de passe, une
-  réinitialisation administrateur et une désactivation écrivent
-  `utilisateur.sessions_invalidees_le` **dans la même transaction PostgreSQL**
-  que la mutation du compte (migration `024_invalidation_sessions`, une
-  colonne, aucune table nouvelle). L'horodatage vient de l'horloge
-  applicative — celle qui écrit `issued_at` — pour ne pas comparer deux
-  horloges. La validation refuse toute session ouverte **avant** cet instant,
-  y compris quand sa clé Redis existe encore : c'est le cas d'une révocation
-  Redis qui a échoué (503 rendu au client) puis d'un Redis revenu avec ses
-  clés intactes. Le 503 signale l'échec, il ne protège de rien ; la colonne,
-  elle, est l'autorité durable. Les comptes jamais invalidés gardent `NULL`,
-  donc une session ouverte juste après la création du compte n'est pas refusée
-  par mégarde.
-  **Choix explicite : la mutation est COMMITÉE avec invalidation durable, pas
+- **Invalidation durable : une GÉNÉRATION, pas un horodatage.** Chaque session
+  nominative porte `etat_identifiants`, une empreinte calculée à partir de
+  l'empreinte du mot de passe, de `mot_de_passe_modifie_le`, de
+  `sessions_invalidees_le` et de `actif`
+  (`comptes.securite.etat_identifiants`). Elle est **capturée au moment exact
+  de la vérification du mot de passe** (`verifier_identifiants`), puis comparée
+  à la valeur recalculée depuis PostgreSQL à **chaque** requête
+  (`_session_sid`). Deux valeurs différentes ⇒ **401**, même si la clé Redis
+  existe encore. La colonne `utilisateur.sessions_invalidees_le` (migration
+  `024_invalidation_sessions`, une colonne, aucune table nouvelle) reste
+  écrite dans la transaction de la mutation, mais elle n'est plus comparée à
+  un instant : elle entre dans l'empreinte comme une valeur. Le `COMMENT` de
+  cette colonne décrit encore l'ancienne comparaison — la migration 024 est
+  laissée **telle quelle**, un schéma déjà migré ne la rejouerait pas ; c'est
+  `etat_identifiants` qui fait foi.
+  Pourquoi ce changement, demandé par la revue :
+  * **course connexion / réinitialisation** — un login peut vérifier l'ANCIEN
+    mot de passe puis créer sa session APRÈS qu'un changement a été validé ;
+    son `issued_at` est postérieur, donc une comparaison d'instants l'accepte.
+    Avec la génération capturée à la vérification, la session porte l'ancienne
+    valeur et la revalidation la refuse, quel que soit son instant de création ;
+  * **répliques** — une égalité de valeurs ne suppose aucune horloge
+    synchronisée entre machines ; une comparaison d'instants, si ;
+  * **réactivation** — `actif` entre dans l'empreinte : désactiver puis
+    réactiver change la génération, donc les sessions d'avant restent mortes.
+  **Choix explicite : la mutation est COMMITÉE avec la nouvelle génération, pas
   annulée.** Un rollback laisserait l'ancien mot de passe valide au moment
   précis où l'utilisateur croit l'avoir changé — et le 503 lui dirait
-  seulement « réessayez ». L'invalidation durable, elle, ferme l'accès sans
-  dépendre d'un second système. Corollaire : la session interne historique
-  (`session_ui`) est révoquée en SQL **avant** la tentative Redis, pour que
-  l'échec de celle-ci ne laisse pas non plus ces sessions vivantes.
+  seulement « réessayez ». La génération ferme l'accès sans dépendre d'un
+  second système.
+- **Atomicité mutation ↔ sessions historiques.** Le changement par l'intéressé
+  révoque les lignes `session_ui` **dans la même transaction** que l'écriture
+  de la nouvelle empreinte : les deux réussissent ou les deux sont annulées.
+  La session interne (`X-SEAMTECH-SESSION` + jeton) est en outre liée à la
+  génération d'identifiants de son émission
+  (`empreinte_jeton(jeton, etat_identifiants=…)`) : sa validation recalcule la
+  génération courante et refuse une session ouverte avant un changement, même
+  si sa ligne n'a pas été révoquée (mutation interrompue, ligne oubliée par un
+  ancien code).
 - **La déconnexion ne déclare jamais un succès qu'elle n'a pas obtenu.** Si un
   `sid` est présenté et que la révocation n'aboutit pas — `SEAMTECH_API_URL`
   absent, backend injoignable, ou réponse non-2xx (Redis arrêté → 503) —
@@ -161,7 +180,8 @@ C'est exactement ce que fait une révocation. Les tests exigent alors :
 2. les clés `seamtech:session:<sid>` sont **toujours présentes** dans Redis —
    l'état laissé par une panne suivie d'un retour sans perte ;
 3. après retour du service (client Redis normal), les anciens `sid` répondent
-   **401** avec `Session invalidée…` : c'est PostgreSQL, pas Redis, qui refuse ;
+   **401** avec `Session invalidée…` : c'est PostgreSQL, pas Redis, qui refuse,
+   parce que la génération d'identifiants de la session ne correspond plus ;
 4. le nouveau mot de passe ouvre une session, l'ancien est refusé ; pour une
    réinitialisation, `doit_changer_mot_de_passe` vaut `true` ; pour une
    désactivation, la connexion est refusée.
@@ -169,6 +189,19 @@ C'est exactement ce que fait une révocation. Les tests exigent alors :
 Un test complémentaire vérifie que `revoquer_toutes_sessions_pour_identifiant()`
 **lève** `SessionStoreIndisponible` quand Redis est injoignable : son retour
 `0` ne peut plus être lu comme « rien à révoquer, confirmé ».
+
+Deux preuves de plus, ajoutées par la revue suivante :
+
+* **course connexion / réinitialisation** — le test force l'ordre exact
+  (vérifier l'ancien mot de passe → réinitialiser → créer les sessions SQL et
+  Redis avec la génération capturée) et exige **401** sur la session
+  navigateur ET sur la session historique, puis vérifie qu'avec le nouveau mot
+  de passe les mêmes étapes donnent **200** (contrôle positif) ;
+* **atomicité** — un trigger PostgreSQL réel refuse toute révocation de
+  `session_ui` ; le changement de mot de passe doit alors échouer **en
+  entier** : l'ancien mot de passe reste valide, le nouveau est refusé, la
+  ligne n'est pas à moitié révoquée et la session historique fonctionne
+  toujours.
 
 ## 3. `Cache-Control: no-store` sur les réponses authentifiées
 

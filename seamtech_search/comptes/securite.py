@@ -116,7 +116,66 @@ def verifier_mot_de_passe(mot_de_passe: str | None, empreinte: str | None) -> bo
     return hmac.compare_digest(derive, attendu)
 
 
-def empreinte_jeton(jeton: str) -> str:
+def _canonique(valeur: object) -> str:
+    """Forme stable d'une valeur de colonne, pour une empreinte reproductible.
+
+    ``None`` et absence doivent produire la MÊME chaîne sur tous les process :
+    l'empreinte est recalculée à chaque requête, sur une autre réplique
+    éventuellement. Les horodatages PostgreSQL (``datetime``) passent par
+    ``isoformat()`` ; tout le reste par ``str()``.
+    """
+    if valeur is None:
+        return "-"
+    isoformat = getattr(valeur, "isoformat", None)
+    if callable(isoformat):
+        return str(isoformat())
+    return str(valeur)
+
+
+def etat_identifiants(
+    empreinte_mot_de_passe: str | None,
+    mot_de_passe_modifie_le: object = None,
+    sessions_invalidees_le: object = None,
+    actif: bool = True,
+) -> str:
+    """Empreinte de l'ÉTAT D'AUTHENTIFICATION d'un compte — sa « génération ».
+
+    C'est l'autorité durable qui remplace la comparaison d'horodatages de la
+    revue précédente. Elle est calculée à partir de colonnes DÉJÀ présentes
+    (``empreinte_mot_de_passe``, ``mot_de_passe_modifie_le``,
+    ``sessions_invalidees_le``, ``actif``), donc SANS nouvelle migration.
+
+    Pourquoi une empreinte et pas un horodatage comparé à ``issued_at`` :
+
+    * **Course connexion / réinitialisation.** Un login peut vérifier l'ANCIEN
+      mot de passe, puis créer sa session APRÈS qu'un changement a été validé :
+      son ``issued_at`` est postérieur et une comparaison d'instants l'accepte.
+      Ici, la session porte l'état lu AU MOMENT DE LA VÉRIFICATION ; si le mot
+      de passe a changé entre-temps, l'état courant diffère et la session est
+      refusée, quel que soit son instant de création.
+    * **Répliques et horloges.** Deux machines n'ont pas forcément la même
+      horloge. Une ÉGALITÉ de valeurs ne suppose aucune synchronisation ; une
+      comparaison d'instants, si.
+    * **Réactivation.** ``actif`` entre dans l'empreinte : désactiver puis
+      réactiver un compte change l'état, donc les sessions d'avant restent
+      mortes.
+
+    La valeur n'est jamais renvoyée par l'API ni journalisée : c'est un
+    identifiant interne de génération, dérivé d'un secret (l'empreinte scrypt).
+    """
+    base = "\x00".join(
+        [
+            "seamtech:etat-identifiants:v1",
+            _canonique(empreinte_mot_de_passe),
+            _canonique(mot_de_passe_modifie_le),
+            _canonique(sessions_invalidees_le),
+            "1" if actif else "0",
+        ]
+    )
+    return hashlib.sha256(base.encode("utf-8")).hexdigest()
+
+
+def empreinte_jeton(jeton: str, *, etat_identifiants: str | None = None) -> str:
     """Empreinte SHA-256 d'un jeton de session, en hexadécimal.
 
     On ne stocke JAMAIS le jeton de session en clair : ``session_ui`` ne garde
@@ -124,8 +183,18 @@ def empreinte_jeton(jeton: str) -> str:
     une session — exactement comme pour un mot de passe, mais avec SHA-256 seul :
     le jeton est déjà 256 bits d'aléa, il n'a rien à protéger contre une attaque
     par dictionnaire.
+
+    ``etat_identifiants`` LIE le jeton à la génération d'identifiants sous
+    laquelle il a été émis. La session historique devient alors invalide dès que
+    le mot de passe change, même si sa ligne ``session_ui`` n'a pas été révoquée
+    (panne au milieu d'une mutation, ligne oubliée par un ancien code) : la
+    revalidation recalcule l'empreinte avec l'état COURANT et ne la reconnaît
+    plus. Sans ce paramètre, l'empreinte reste celle du jeton seul (compatibilité
+    des appelants hors session) — les sessions ainsi stockées sont refusées dès
+    que le validateur lie l'état, ce qui est le sens sûr.
     """
-    return hashlib.sha256(jeton.encode("utf-8")).hexdigest()
+    matiere = jeton if etat_identifiants is None else f"{jeton}\x00{etat_identifiants}"
+    return hashlib.sha256(matiere.encode("utf-8")).hexdigest()
 
 
 def nouveau_jeton() -> str:

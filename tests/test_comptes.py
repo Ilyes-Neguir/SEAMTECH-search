@@ -219,6 +219,11 @@ def test_jeton_de_session_non_reversible() -> None:
     assert len(empreinte) == 64 and empreinte != jeton
     assert empreinte_jeton(jeton) == empreinte  # déterministe
     assert empreinte_jeton(jeton + "x") != empreinte
+    # Liaison à l'état d'identifiants : deux générations donnent deux
+    # empreintes pour le MÊME jeton (séparation de domaine par un NUL).
+    assert empreinte_jeton(jeton, etat_identifiants="a") == empreinte_jeton(jeton, etat_identifiants="a")
+    assert empreinte_jeton(jeton, etat_identifiants="a") != empreinte_jeton(jeton, etat_identifiants="b")
+    assert empreinte_jeton(jeton, etat_identifiants="a") != empreinte
 
 
 def test_cli_naccepte_jamais_le_mot_de_passe_en_argument() -> None:
@@ -292,7 +297,14 @@ def test_connexion_et_session_nominative(base_comptes: dict[str, Any]) -> None:
         with connexion.cursor() as cursor:
             cursor.execute("SELECT empreinte_jeton, user_agent FROM session_ui WHERE id_session = %s", (session["id_session"],))
             empreinte, agent = cursor.fetchone()
-    assert empreinte == empreinte_jeton(session["jeton"])
+    # Le jeton est lié à la GÉNÉRATION D'IDENTIFIANTS de son émission (revue
+    # Lot 0a, blocage 2) : l'empreinte stockée n'est pas celle du jeton seul.
+    # C'est ce qui rend la session invalide après un changement de mot de
+    # passe même si la ligne n'a pas été révoquée.
+    etat = utilisateur["etat_identifiants"]
+    assert session["etat_identifiants"] == etat
+    assert empreinte == empreinte_jeton(session["jeton"], etat_identifiants=etat)
+    assert empreinte != empreinte_jeton(session["jeton"])
     assert empreinte != session["jeton"]
     assert agent == "pytest/1.0"
 

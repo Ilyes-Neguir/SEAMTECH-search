@@ -26,6 +26,7 @@ journalisé.
 
 from __future__ import annotations
 
+import hmac
 import logging
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -155,13 +156,26 @@ def _session_sid(
             except SessionStoreIndisponible:
                 pass
             raise HTTPException(status_code=401, detail="Compte inconnu ou désactivé.")
-        # Invalidation DURABLE (revue Lot 0a, blocage 1) : mot de passe changé,
-        # réinitialisé ou compte désactivé pendant que Redis était indisponible
-        # ⇒ la révocation a pu échouer et les clés Redis survivre au retour du
-        # service. La base, elle, garde l'instant : toute session ouverte AVANT
-        # est refusée ici, sans dépendre de Redis ni d'un 503 vu par le client.
-        invalidation = profil.get("sessions_invalidees_le")
-        if invalidation is not None and record.issued_at <= invalidation.timestamp():
+        # INVALIDATION DURABLE (revue Lot 0a, blocages 1 et 2). La session
+        # porte la GÉNÉRATION D'IDENTIFIANTS capturée au moment de la
+        # vérification du mot de passe ; on la compare à la génération
+        # courante, recalculée depuis la base à chaque requête.
+        #
+        # C'est une ÉGALITÉ, pas une comparaison d'instants :
+        #  * une réinitialisation validée ENTRE la vérification et la création
+        #    de la session ne passe plus — la session porte l'ancienne
+        #    génération, même si son ``issued_at`` est postérieur ;
+        #  * deux répliques sans horloges synchronisées rendent le même verdict,
+        #    puisque la valeur comparée vient de PostgreSQL et non d'une horloge
+        #    locale ;
+        #  * désactivation puis réactivation comprises : ``actif`` entre dans la
+        #    génération.
+        # Une session émise par une version antérieure ne porte pas de
+        # génération : elle est refusée (fail-closed), jamais tolérée.
+        generation = profil.get("etat_identifiants")
+        if not generation or not record.etat_identifiants or not hmac.compare_digest(
+            str(record.etat_identifiants), str(generation)
+        ):
             try:
                 sessions.revoquer_session(record.sid)
             except SessionStoreIndisponible:
@@ -169,8 +183,8 @@ def _session_sid(
             raise HTTPException(
                 status_code=401,
                 detail=(
-                    "Session invalidée par un changement de mot de passe ou une "
-                    "désactivation du compte. Reconnectez-vous."
+                    "Session invalidée : les identifiants du compte ont changé "
+                    "(mot de passe, réinitialisation ou désactivation). Reconnectez-vous."
                 ),
             )
         # La base est l'autorité sur le rôle : un changement de rôle prend effet
@@ -286,7 +300,19 @@ def enregistrer_routes_auth(app: Any, index: Any, config: Any, verifier_auth: An
             index, identifiant, str(mot_de_passe), adresse=(adresse or "").split(",")[0].strip() or None
         )
         duree = max(1, int(round(float(getattr(config, "session_hours", 8.0)))))
-        session = ouvrir_session(index, utilisateur["id_utilisateur"], duree_heures=duree, user_agent=agent)
+        # GÉNÉRATION CAPTURÉE À LA VÉRIFICATION (revue Lot 0a, blocage 1) : la
+        # valeur vient de ``verifier_identifiants``, pas d'une relecture ici.
+        # Si un changement de mot de passe est validé entre les deux, les deux
+        # sessions (SQL et Redis) portent l'ANCIENNE génération et seront
+        # refusées à la première requête — c'est la fermeture de la course.
+        generation = utilisateur.get("etat_identifiants")
+        session = ouvrir_session(
+            index,
+            utilisateur["id_utilisateur"],
+            duree_heures=duree,
+            user_agent=agent,
+            etat_identifiants_capture=generation,
+        )
         try:
             record = sessions.creer_session(
                 user_id=utilisateur["id_utilisateur"],
@@ -296,6 +322,7 @@ def enregistrer_routes_auth(app: Any, index: Any, config: Any, verifier_auth: An
                 mode=MODE_NOMINATIF,
                 user_agent=agent,
                 db_session_id=int(session["id_session"]),
+                etat_identifiants=generation,
             )
         except SessionStoreIndisponible as exc:
             # La session SQL ne doit pas survivre à un échec Redis : sinon une
@@ -430,14 +457,18 @@ def enregistrer_routes_auth(app: Any, index: Any, config: Any, verifier_auth: An
                 detail="En-tête X-SEAMTECH-SESSION-SID requis pour révoquer toutes les sessions.",
             )
         record = _session_sid(index, sessions, str(sid))
+        # MÊME ORDRE QUE POUR LE MOT DE PASSE (revue Lot 0a, blocage 1) : les
+        # sessions historiques ``session_ui`` sont révoquées AVANT la tentative
+        # Redis. Un échec de celle-ci ne doit pas laisser ces sessions
+        # utilisables alors que l'utilisateur a demandé « tous mes appareils ».
+        sql_revoquees = 0
+        if record.mode == MODE_NOMINATIF and record.user_id.isdigit():
+            sql_revoquees = revoquer_sessions_utilisateur(index, int(record.user_id))
         try:
             revoquees = sessions.revoquer_toutes_sessions(record.user_id)
         except SessionStoreIndisponible as exc:
             LOGGER.error("Révocation globale impossible, Redis indisponible : %s", exc)
             raise HTTPException(status_code=503, detail=_DETAIL_REDIS) from exc
-        sql_revoquees = 0
-        if record.mode == MODE_NOMINATIF and record.user_id.isdigit():
-            sql_revoquees = revoquer_sessions_utilisateur(index, int(record.user_id))
         return {
             "ok": True,
             "sessions_revoquees": revoquees,
@@ -494,14 +525,17 @@ def enregistrer_routes_auth(app: Any, index: Any, config: Any, verifier_auth: An
             str(corps.get("mot_de_passe_actuel") or ""),
             str(corps.get("nouveau_mot_de_passe") or ""),
         )
-        # ORDRE VOLONTAIRE (revue Lot 0a, blocage 1) : l'invalidation SQL est
-        # faite AVANT la révocation Redis. Ces lignes ``session_ui`` portent les
-        # sessions internes historiques (en-têtes X-SEAMTECH-SESSION + jeton) ;
-        # les révoquer après coup laissait, si Redis échouait, l'API répondre
-        # 503 alors que ces sessions restaient utilisables.
-        sql_revoquees = revoquer_sessions_utilisateur(index, int(utilisateur["id_utilisateur"]))
-        # Réutilisation explicite de la fonction interne : un mot de passe
-        # changé ferme toutes les sessions ouvertes avec l'ancien.
+        # ORDRE VOLONTAIRE (revue Lot 0a, blocages 1 et 2) : la mutation est
+        # COMMITÉE — changement d'empreinte ET révocation des sessions
+        # historiques ``session_ui`` dans la MÊME transaction — AVANT toute
+        # tentative Redis. Il n'y a donc plus de seconde transaction
+        # d'invalidation qui pourrait échouer seule : ``changer_mot_de_passe``
+        # rend le compte de lignes qu'elle a réellement révoquées, et un échec
+        # de la révocation SQL annule aussi le changement de mot de passe.
+        sql_revoquees = int(resultat.pop("sessions_revoquees", 0))
+        # Un mot de passe changé ferme aussi les sessions navigateur (Redis).
+        # Si Redis échoue ici, la mutation reste valide et la génération
+        # d'identifiants a changé : les sessions Redis d'avant répondront 401.
         try:
             revoquees = sessions.revoquer_toutes_sessions(utilisateur["id_utilisateur"])
         except SessionStoreIndisponible as exc:
@@ -584,7 +618,11 @@ def enregistrer_routes_auth(app: Any, index: Any, config: Any, verifier_auth: An
         _admin(token, entete_sid, entete_session, entete_jeton)
         _exiger_postgres(index)
         cible = id_utilisateur_par_identifiant(index, identifiant)
-        resultat = {"ok": True, **desactiver_utilisateur(index, identifiant)}
+        mutation = desactiver_utilisateur(index, identifiant)
+        # La révocation des sessions historiques est faite DANS la transaction
+        # de la désactivation : le compteur vient de la mutation.
+        sql_revoquees = int(mutation.get("sessions_revoquees", 0))
+        resultat = {"ok": True, **mutation}
         redis_revoquees = 0
         if cible is not None:
             try:
@@ -592,7 +630,11 @@ def enregistrer_routes_auth(app: Any, index: Any, config: Any, verifier_auth: An
             except SessionStoreIndisponible as exc:
                 LOGGER.error("Compte désactivé mais révocation Redis impossible : %s", exc)
                 raise HTTPException(status_code=503, detail=_DETAIL_REDIS) from exc
-        return {**resultat, "sessions_redis_revoquees": redis_revoquees}
+        return {
+            **resultat,
+            "sessions_redis_revoquees": redis_revoquees,
+            "sessions_sql_revoquees": sql_revoquees,
+        }
 
     @app.post("/auth/utilisateurs/{identifiant}/mot-de-passe")
     def route_reinitialiser_mot_de_passe(
@@ -608,10 +650,11 @@ def enregistrer_routes_auth(app: Any, index: Any, config: Any, verifier_auth: An
         if not corps.get("mot_de_passe"):
             raise HTTPException(status_code=422, detail="« mot_de_passe » requis.")
         cible = id_utilisateur_par_identifiant(index, identifiant)
-        resultat = {
-            "ok": True,
-            **reinitialiser_mot_de_passe(index, identifiant, str(corps["mot_de_passe"])),
-        }
+        mutation = reinitialiser_mot_de_passe(index, identifiant, str(corps["mot_de_passe"]))
+        # La révocation des sessions historiques est faite DANS la transaction
+        # de la réinitialisation : le compteur vient de la mutation.
+        sql_revoquees = int(mutation.pop("sessions_revoquees", 0))
+        resultat = {"ok": True, **mutation}
         redis_revoquees = 0
         if cible is not None:
             try:
@@ -619,4 +662,8 @@ def enregistrer_routes_auth(app: Any, index: Any, config: Any, verifier_auth: An
             except SessionStoreIndisponible as exc:
                 LOGGER.error("Mot de passe réinitialisé mais révocation Redis impossible : %s", exc)
                 raise HTTPException(status_code=503, detail=_DETAIL_REDIS) from exc
-        return {**resultat, "sessions_redis_revoquees": redis_revoquees}
+        return {
+            **resultat,
+            "sessions_redis_revoquees": redis_revoquees,
+            "sessions_sql_revoquees": sql_revoquees,
+        }

@@ -1056,12 +1056,16 @@ class SearchIndex:
     def _migration_024_invalidation_sessions(self, connection: Any) -> None:
         """Invalidation durable des sessions (revue Lot 0a, blocage 1).
 
-        Une colonne ``utilisateur.sessions_invalidees_le`` datée par
-        l'application : le changement/réinitialisation de mot de passe et la
-        désactivation y écrivent un instant, dans la même transaction que la
-        mutation du compte. La validation de session refuse toute session
-        ouverte AVANT cet instant, même si la révocation Redis a échoué et que
-        les clés existent encore après le retour de Redis.
+        Une colonne ``utilisateur.sessions_invalidees_le`` écrite dans la même
+        transaction que la mutation du compte (changement/réinitialisation de
+        mot de passe, désactivation). Elle sert d'horodatage d'audit et entre
+        dans la GÉNÉRATION D'IDENTIFIANTS comparée à chaque validation
+        (``comptes.securite.etat_identifiants``) : la session est refusée dès
+        que la génération a changé, même si la révocation Redis a échoué et que
+        les clés existent encore après le retour de Redis. Depuis la revue du
+        Lot 0a, plus aucun horodatage n'est comparé à ``issued_at`` — le
+        COMMENT de la colonne, dans la migration 024 laissée inchangée,
+        décrit cette ancienne comparaison.
 
         PostgreSQL uniquement, comme 021/023 : la couche comptes n'existe pas
         en SQLite (mode hérité), la migration y est enregistrée sans effet.

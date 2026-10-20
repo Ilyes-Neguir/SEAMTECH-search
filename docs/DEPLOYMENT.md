@@ -267,22 +267,29 @@ How it works:
   `Clear-Site-Data: "cache", "cookies", "storage"`.
   `POST /api/auth/logout-all` revokes every session of the account (the
   backend function is shared with password changes and deactivations).
-- **Durable invalidation.** Password change, admin reset and deactivation
-  write `utilisateur.sessions_invalidees_le` — an application-clock instant,
-  the same clock that stamps a session's `issued_at` — **in the same PostgreSQL
-  transaction** as the account mutation (migration
-  `024_invalidation_sessions`, one column, no new table). Session validation
-  rejects any session opened at or before that instant. A 503 from an
-  unavailable Redis during revocation therefore cannot leave a usable session
-  behind: when Redis comes back with its old keys intact, the database still
-  refuses them. Redis revocation stays the fast path; the column is the
-  authority. The integration suite proves it by making a **real** Redis refuse
-  `DEL`/`SREM` (ACL user, no mock) and then replaying the old sids.
-  **The mutation is committed with durable invalidation — never rolled back.**
+- **Durable invalidation by credential generation.** Every nominative session
+  carries `etat_identifiants`: a fingerprint derived from the password hash,
+  `mot_de_passe_modifie_le`, `sessions_invalidees_le` and `actif`. It is
+  **captured the instant the password is verified** and compared with the value
+  recomputed from PostgreSQL on every request — an equality, never a timestamp
+  comparison. Consequences: a session created *after* a reset but from a
+  verification made *before* it is rejected (its generation is stale); and
+  replicas need no synchronised clocks, because the compared value comes from
+  the database, not from a local clock. A 503 from an unavailable Redis during
+  revocation therefore cannot leave a usable session behind: when Redis comes
+  back with its old keys intact, the database still refuses them. The
+  integration suite proves it by making a **real** Redis refuse `DEL`/`SREM`
+  (ACL user, no mock) and then replaying the old sids.
+  `utilisateur.sessions_invalidees_le` (migration `024_invalidation_sessions`,
+  one column, no new table) is still written in the mutation's transaction for
+  audit and feeds the fingerprint, but it is no longer compared to an instant.
+  **The mutation is committed with the new generation — never rolled back.**
   Returning 503 after a rollback would leave the old password valid at the very
-  moment the user believes it changed; the durable column closes access without
-  depending on a second system. The legacy `session_ui` rows are revoked in
-  SQL *before* the Redis attempt for the same reason.
+  moment the user believes it changed; the generation closes access without
+  depending on a second system. The legacy `session_ui` rows are revoked **in
+  the same transaction** as the password write, and the legacy token is bound
+  to the generation it was issued under, so a historical session is refused
+  even if its row was never revoked.
 - **Logout never reports a revocation it did not obtain.** When a sid is
   presented and the backend cannot be reached, is not configured
   (`SEAMTECH_API_URL`), or answers non-2xx — Redis down is the typical case —
@@ -350,10 +357,24 @@ not an outage. The `seamtech:session:*` and `seamtech:user_sessions:*` keys
 become unused and disappear by TTL. If a clean slate is required, delete
 **only those two namespaces**:
 
+Compose starts Redis with `--requirepass`, so a bare `redis-cli --scan` fails
+with `NOAUTH`. The password must **not** be passed as an argument (`-a` shows up
+in `ps` and in the shell history); `redis-cli` reads `REDISCLI_AUTH` from its
+environment instead, and the compose file already exports `REDIS_PASSWORD`
+inside the `redis` container:
+
 ```bash
-redis-cli --scan --pattern 'seamtech:session:*'       | xargs -r redis-cli del
-redis-cli --scan --pattern 'seamtech:user_sessions:*' | xargs -r redis-cli del
+docker compose exec -T redis sh -c '
+  export REDISCLI_AUTH="$REDIS_PASSWORD"
+  for motif in "seamtech:session:*" "seamtech:user_sessions:*"; do
+    redis-cli --scan --pattern "$motif" | xargs -r redis-cli del
+  done
+'
 ```
+
+Inside the container the password never appears in an argument list: it is
+exported once, and both `redis-cli` invocations inherit it. The command only
+scans the two namespaces named above — nothing else is touched.
 
 Do **not** widen these patterns to the whole `seamtech:` namespace. That
 prefix also covers the durable queue (`seamtech:queue:*`, `seamtech:processing:*`, `seamtech:retry:*`,
