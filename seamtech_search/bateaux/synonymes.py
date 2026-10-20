@@ -110,7 +110,9 @@ def _expand_query_with_synonymes(
     for terme, cible in synonymes_historique.items():
         resultat = re.sub(rf"\b{re.escape(terme)}\b", cible, resultat, flags=re.IGNORECASE)
 
-    # Search_synonyms : n-gram detection
+    # Search_synonyms : n-gram detection — construit de vraies variantes liées
+    # et conserve les autres termes comme contraintes AND (sans concaténation SQL).
+    # Ex: "spi 29er" + spi→spinnaker ⇒ "spi 29er OR spinnaker 29er" (garde 29er)
     query_norm = normaliser_cle_bateau(resultat)
     tokens = query_norm.split()
     if not tokens:
@@ -119,29 +121,28 @@ def _expand_query_with_synonymes(
     alias_to_canonical = search_synonymes.get("alias_to_canonical", {})
     canonical_to_alias = search_synonymes.get("canonical_to_alias", {})
 
-    # Pour les requêtes courtes (1-3 tokens), on vérifie si la requête entière
-    # ou une sous-phrase est un alias ou un canonical
-    # Génère tous les n-grams jusqu'à 3
-    ngrams: list[str] = []
+    # Génère tous les n-grams jusqu'à 3 avec leur position
+    variants: set[str] = set()
     for n in range(1, min(4, len(tokens) + 1)):
         for i in range(len(tokens) - n + 1):
-            ngrams.append(" ".join(tokens[i : i + n]))
+            ng = " ".join(tokens[i : i + n])
+            if ng in alias_to_canonical:
+                canonical = alias_to_canonical[ng]
+                # Variante où le n-gram est remplacé par son canonical, en gardant le contexte
+                variant_tokens = tokens[:i] + canonical.split() + tokens[i + n :]
+                variant = " ".join(variant_tokens)
+                if variant != query_norm:
+                    variants.add(variant)
+            if ng in canonical_to_alias:
+                alias = canonical_to_alias[ng]
+                variant_tokens = tokens[:i] + alias.split() + tokens[i + n :]
+                variant = " ".join(variant_tokens)
+                if variant != query_norm:
+                    variants.add(variant)
 
-    expansions: list[str] = []
-    for ng in ngrams:
-        if ng in alias_to_canonical:
-            # Alias → canonical (ex: "gv" → "grand voile")
-            canonical = alias_to_canonical[ng]
-            if canonical not in query_norm:
-                expansions.append(canonical)
-        if ng in canonical_to_alias:
-            # Canonical → alias (ex: "grand voile" → "gv")
-            alias = canonical_to_alias[ng]
-            if alias not in query_norm:
-                expansions.append(alias)
-
-    if expansions:
-        resultat = resultat + " | " + " | ".join(expansions)
+    if variants:
+        # websearch_to_tsquery reconnaît le mot OR (pas |) comme alternative
+        resultat = resultat + " OR " + " OR ".join(sorted(variants))
     return resultat
 
 

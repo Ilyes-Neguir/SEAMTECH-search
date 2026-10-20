@@ -541,29 +541,29 @@ def expand_query_with_boat_aliases(query: str, cursor: Any, nom_base: str) -> st
         # Le canonical lui-même est déjà dans alias_to_canonical via auto_exact,
         # mais on l'a déjà via aliases actifs
 
-    # Génère les n-grams du query_norm (jusqu'à 3 tokens)
+    # Génère les n-grams avec position et construit de vraies variantes liées
+    # en conservant les autres termes comme contraintes AND (sans concaténation SQL).
     tokens = query_norm.split()
     if not tokens:
         return query
-    ngrams: list[str] = []
+    variants: set[str] = set()
     for n in range(1, min(4, len(tokens) + 1)):
         for i in range(len(tokens) - n + 1):
-            ngrams.append(" ".join(tokens[i : i + n]))
-    # Aussi la requête entière normalisée
-    if query_norm not in ngrams:
-        ngrams.append(query_norm)
+            ng = " ".join(tokens[i : i + n])
+            if ng in alias_to_canonical:
+                canonical = alias_to_canonical[ng]
+                variant_tokens = tokens[:i] + canonical.split() + tokens[i + n :]
+                variant = " ".join(variant_tokens)
+                if variant != query_norm:
+                    variants.add(variant)
+            if ng in canonical_to_aliases:
+                for alias in canonical_to_aliases[ng]:
+                    variant_tokens = tokens[:i] + alias.split() + tokens[i + n :]
+                    variant = " ".join(variant_tokens)
+                    if variant != query_norm:
+                        variants.add(variant)
 
-    expansions: list[str] = []
-    for ng in ngrams:
-        if ng in alias_to_canonical:
-            canonical = alias_to_canonical[ng]
-            if canonical not in query_norm and canonical not in expansions:
-                expansions.append(canonical)
-        if ng in canonical_to_aliases:
-            for alias in canonical_to_aliases[ng]:
-                if alias not in query_norm and alias not in expansions:
-                    expansions.append(alias)
-
-    if expansions:
-        return query + " | " + " | ".join(expansions)
+    if variants:
+        # websearch_to_tsquery: le mot OR est l'alternative (pas |)
+        return query + " OR " + " OR ".join(sorted(variants))
     return query

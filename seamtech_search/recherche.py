@@ -977,7 +977,7 @@ def rechercher_fiches(
                 # mais on ajoute aussi la normalisation slash étendue du Lot 2
                 q_norm_slash = normaliser_requete_etendue(texte)
                 if q_norm_slash != texte.strip() and q_norm_slash not in texte:
-                    texte = texte + " | " + q_norm_slash
+                    texte = texte + " OR " + q_norm_slash
             except Exception:
                 # Bases pré-026 ou tables manquantes → recherche reste fonctionnelle
                 pass

@@ -1032,10 +1032,13 @@ class SearchIndex:
             except Exception as exc:
                 cursor.execute("ROLLBACK TO SAVEPOINT seamtech_023_unaccent")
                 cursor.execute("RELEASE SAVEPOINT seamtech_023_unaccent")
+                sqlstate_u = getattr(exc, "pgcode", None)
+                diag_u = getattr(exc, "diag", None)
+                pos_u = getattr(diag_u, "statement_position", None) if diag_u else None
+                primary_u = getattr(diag_u, "message_primary", None) if diag_u else None
                 logger.warning(
-                    "unaccent indisponible pour seamtech_texte_recherche (%s) — "
-                    "repli translate() latin-1 + étendu A ; couverture plus étroite.",
-                    exc,
+                    "unaccent indisponible pour seamtech_texte_recherche (SQLSTATE=%s pos=%s primary=%r stmt=%.300r) — repli translate() latin-1 + étendu A ; couverture plus étroite. original: %s",
+                    sqlstate_u, pos_u, primary_u, schema_metier.SQL_023_FONCTION_UNACCENT[:300], exc,
                 )
                 cursor.execute("SAVEPOINT seamtech_023_repli")
                 try:
@@ -1044,15 +1047,16 @@ class SearchIndex:
                 except Exception as exc_repli:
                     cursor.execute("ROLLBACK TO SAVEPOINT seamtech_023_repli")
                     cursor.execute("RELEASE SAVEPOINT seamtech_023_repli")
-                    logger.error(
-                        "023 repli diagnostic — échec SQLSTATE=%s pos=%s primary=%r stmt=%.300r — original: %s",
-                        getattr(exc_repli, "pgcode", None),
-                        getattr(getattr(exc_repli, "diag", None), "statement_position", None),
-                        getattr(getattr(exc_repli, "diag", None), "message_primary", None),
-                        schema_metier.SQL_023_FONCTION_REPLI[:300],
-                        exc_repli,
+                    sqlstate_r = getattr(exc_repli, "pgcode", None)
+                    diag_r = getattr(exc_repli, "diag", None)
+                    pos_r = getattr(diag_r, "statement_position", None) if diag_r else None
+                    primary_r = getattr(diag_r, "message_primary", None) if diag_r else None
+                    diag_msg_r = (
+                        f"023 repli diagnostic — échec SQLSTATE={sqlstate_r} pos={pos_r} "
+                        f"stmt={schema_metier.SQL_023_FONCTION_REPLI[:800]!r} primary={primary_r!r} — original: {exc_repli}"
                     )
-                    raise RuntimeError(f"023 repli échoué: {exc_repli}") from exc_repli
+                    logger.error(diag_msg_r, exc_info=True)
+                    raise RuntimeError(diag_msg_r) from exc_repli
             cursor.execute("SAVEPOINT seamtech_023_trgm")
             try:
                 cursor.execute(schema_metier.SQL_023_INDEX)

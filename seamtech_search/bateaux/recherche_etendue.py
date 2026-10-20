@@ -68,8 +68,8 @@ def expand_requete_totale(query: str, cursor: Any, nom_base: str) -> str:
     q_norm = normaliser_requete_etendue(q2)
     if q_norm != q2.strip():
         # On ajoute la forme normalisée comme expansion, pas en remplacement
-        # (pour garder les deux formes dans l'OR)
-        return q2 + " | " + q_norm
+        # (pour garder les deux formes dans l'OR) — websearch_to_tsquery utilise OR
+        return q2 + " OR " + q_norm
     return q2
 
 
