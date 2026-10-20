@@ -49,6 +49,13 @@ if (process.env.SEAMTECH_E2E_DATABASE_URL) {
 
 export default defineConfig({
   testDir: "./e2e",
+  // `panne-redis.spec.ts` ARRÊTE le Redis qu'on lui désigne (commande Redis
+  // `SHUTDOWN NOSAVE`) : il ne doit jamais être ramassé par les suites
+  // ordinaires, qui partagent le service Redis. Il n'est collecté que lorsque
+  // l'étape dédiée positionne SEAMTECH_E2E_PANNE_REDIS=1 et fournit une
+  // instance jetable (voir la spec et l'étape CI « panne Redis réelle »).
+  testIgnore:
+    process.env.SEAMTECH_E2E_PANNE_REDIS === "1" ? undefined : ["**/panne-redis.spec.ts"],
   globalSetup: "./e2e/global-setup.ts",
   fullyParallel: false,
   forbidOnly: !!process.env.CI,

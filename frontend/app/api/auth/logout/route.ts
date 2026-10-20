@@ -11,6 +11,12 @@ import { authHeaders, backendBase } from "@/lib/backend"
 
 export const dynamic = "force-dynamic"
 
+const SANS_CACHE = {
+  "Cache-Control": "no-store",
+  Vary: "Cookie",
+  "Clear-Site-Data": '"cache", "cookies", "storage"',
+} as const
+
 /**
  * Sign out — POST ONLY.
  *
@@ -25,10 +31,12 @@ export const dynamic = "force-dynamic"
  *      (Path=/, HttpOnly, SameSite=Lax, Secure when behind TLS);
  *   3. send `Clear-Site-Data: "cache", "cookies", "storage"`.
  *
- * If the backend is unreachable we still clear the local cookies and say so in
- * the JSON (`revoquee: false`) — the operator is signed out of THIS browser,
- * and the server-side session will die by TTL. We never pretend a revocation
- * happened when it did not.
+ * The response NEVER claims a revocation it did not obtain. When a `sid` is
+ * presented and the backend is not configured, unreachable, or answers
+ * non-2xx (Redis down → 503), this route answers **503** with `ok: false`
+ * and `revoquee: false`. The local cookies are still cleared and
+ * `Clear-Site-Data` is still sent — this browser must not stay signed in —
+ * but the server-side session is reported as what it is: NOT revoked.
  */
 /**
  * GET is refused with an explicit 405 and an `Allow` header.
@@ -49,40 +57,89 @@ export async function POST(req: NextRequest) {
   const session = await currentSession()
   const base = backendBase()
   const secure = shouldMarkCookieSecure(req.headers.get("x-forwarded-proto"))
-  let revoquee = false
 
-  if (session?.sid && base) {
-    try {
-      const res = await fetch(`${base}/auth/deconnexion`, {
-        method: "POST",
-        headers: { ...authHeaders(), "Content-Type": "application/json" },
-        body: JSON.stringify({ sid: session.sid }),
-        cache: "no-store",
-      })
-      if (res.ok) {
-        revoquee = true
-      } else {
-        console.error(`[auth] Révocation de session refusée par le backend (${res.status}).`)
-      }
-    } catch {
-      console.error("[auth] Backend injoignable : session non révoquée côté serveur (cookie effacé quand même).")
-    }
+  const deconnecteLocalement = (reponse: NextResponse): NextResponse => {
+    // Mêmes attributs qu'à la pose : un effacement avec un Path/SameSite
+    // différent laisserait le cookie en place.
+    reponse.cookies.set(SESSION_COOKIE, "", sessionCookieOptions(0, secure))
+    reponse.cookies.set(CSRF_COOKIE, "", csrfCookieOptions(0, secure))
+    return reponse
   }
 
-  const response = NextResponse.json(
-    { ok: true, revoquee },
-    {
-      status: 200,
-      headers: {
-        "Cache-Control": "no-store",
-        Vary: "Cookie",
-        "Clear-Site-Data": '"cache", "cookies", "storage"',
-      },
-    },
+  if (!session?.sid) {
+    // Aucun sid présenté : il n'y a rien à révoquer, l'action est idempotente
+    // et le navigateur est déjà déconnecté.
+    return deconnecteLocalement(
+      NextResponse.json({ ok: true, revoquee: false, deja_deconnecte: true }, { status: 200, headers: SANS_CACHE }),
+    )
+  }
+
+  if (!base) {
+    console.error("[auth] SEAMTECH_API_URL absent : sid NON révoqué (fail-closed, 503).")
+    return deconnecteLocalement(
+      NextResponse.json(
+        {
+          ok: false,
+          revoquee: false,
+          reason: "backend_non_configure",
+          detail:
+            "Backend non configuré (SEAMTECH_API_URL) : la session n'a PAS été révoquée côté serveur. " +
+            "Le navigateur est déconnecté localement, le sid reste valide jusqu'à expiration (fail-closed).",
+        },
+        { status: 503, headers: SANS_CACHE },
+      ),
+    )
+  }
+
+  let reponseBackend: Response
+  try {
+    reponseBackend = await fetch(`${base}/auth/deconnexion`, {
+      method: "POST",
+      headers: { ...authHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify({ sid: session.sid }),
+      cache: "no-store",
+    })
+  } catch {
+    console.error("[auth] Backend injoignable : sid NON révoqué (fail-closed, 503).")
+    return deconnecteLocalement(
+      NextResponse.json(
+        {
+          ok: false,
+          revoquee: false,
+          reason: "backend_injoignable",
+          detail:
+            "Backend injoignable : la session n'a PAS été révoquée côté serveur. " +
+            "Le navigateur est déconnecté localement, le sid reste valide jusqu'à expiration (fail-closed).",
+        },
+        { status: 503, headers: SANS_CACHE },
+      ),
+    )
+  }
+
+  if (!reponseBackend.ok) {
+    const corps = (await reponseBackend.json().catch(() => ({}))) as Record<string, unknown>
+    console.error(`[auth] Révocation refusée par le backend (${reponseBackend.status}) : sid NON révoqué.`)
+    return deconnecteLocalement(
+      NextResponse.json(
+        {
+          ok: false,
+          revoquee: false,
+          reason: "revocation_refusee",
+          statut_backend: reponseBackend.status,
+          detail:
+            "La révocation de session a échoué côté serveur (réponse non-2xx du backend) : " +
+            "le sid reste valide jusqu'à expiration — le navigateur est déconnecté localement, " +
+            "mais la session serveur NE l'est PAS (fail-closed).",
+          detail_backend: typeof corps.detail === "string" ? corps.detail : null,
+        },
+        { status: 503, headers: SANS_CACHE },
+      ),
+    )
+  }
+
+  // 200 du backend = le sid n'est plus vivant (supprimé à l'instant, ou déjà
+  // absent — la révocation est idempotente côté backend).
+  return deconnecteLocalement(
+    NextResponse.json({ ok: true, revoquee: true }, { status: 200, headers: SANS_CACHE }),
   )
-  // Mêmes attributs qu'à la pose : un effacement avec un Path/SameSite
-  // différent laisserait le cookie en place.
-  response.cookies.set(SESSION_COOKIE, "", sessionCookieOptions(0, secure))
-  response.cookies.set(CSRF_COOKIE, "", csrfCookieOptions(0, secure))
-  return response
 }

@@ -248,6 +248,10 @@ c'est ce qui rend les en-têtes d'attribution dignes de foi.
 **Côté navigateur (`frontend/app/api/auth/*`).** `logout` et `logout-all` n'acceptent
 que `POST` (`GET` → 405) ; ils révoquent la session serveur, effacent les cookies avec
 leurs attributs exacts et renvoient `Clear-Site-Data: "cache", "cookies", "storage"`.
+Quand la révocation n'aboutit pas (backend non configuré ou injoignable, réponse non-2xx
+— Redis arrêté par exemple), `logout` répond **503** avec `ok: false` et
+`revoquee: false` : les cookies sont effacés localement, mais la réponse
+**ne déclare pas** la session révoquée.
 Toute requête mutante authentifiée par cookie (POST/PUT/PATCH/DELETE sous `/api/*`) exige
 l'en-tête `X-CSRF-Token` égal au cookie `seamtech_csrf` (double-submit) ; sinon **403**
 avant le handler. Les cookies v1/v2 (auto-portés, sans sid) sont refusés avec 401, et

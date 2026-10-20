@@ -23,6 +23,19 @@ ceux de la branche `arena/dc54c343-seamtech-search` au commit de livraison.
 - Redis ou le backend indisponible ⇒ **503** explicite (fail-closed). Aucun
   repli mémoire n'existe : `seamtech_search/sessions_redis.py` ne le prévoit
   pas.
+- **La déconnexion ne déclare jamais un succès qu'elle n'a pas obtenu.** Si un
+  `sid` est présenté et que la révocation n'aboutit pas — `SEAMTECH_API_URL`
+  absent, backend injoignable, ou réponse non-2xx (Redis arrêté → 503) —
+  `POST /api/auth/logout` répond **503** avec `ok: false` et
+  `revoquee: false`, en indiquant `reason` (`backend_non_configure`,
+  `backend_injoignable`, `revocation_refusee`) et, le cas échéant,
+  `statut_backend`. Les deux cookies sont **quand même** effacés avec leurs
+  attributs exacts et `Clear-Site-Data: "cache", "cookies", "storage"` est
+  envoyé : le navigateur est déconnecté localement, mais la session serveur est
+  rapportée comme toujours valide jusqu'à son expiration. Un client ne peut
+  donc pas lire « 200 / ok » alors que le `sid` travaille encore. Sans `sid`
+  présenté, la réponse reste 200 (`deja_deconnecte: true`) : il n'y a rien à
+  révoquer.
 
 ## 2. CSRF : pourquoi le double-submit, et ce qu'il ne protège pas
 
@@ -91,6 +104,29 @@ ceux de la branche `arena/dc54c343-seamtech-search` au commit de livraison.
   le helper `csrfHeaders()` : sans lui, le proxy répondait 403 (mesuré en CI,
   run 39267854884) — preuve que la vérification s'applique aussi aux clients
   scriptés qui réutilisent les cookies du navigateur.
+
+### 2.5 Preuve de la déconnexion en panne de Redis (aucun mock)
+
+`frontend/e2e/panne-redis.spec.ts` arrête **réellement** le serveur Redis qui
+sert la session : il lui envoie sa propre commande d'arrêt (`SHUTDOWN NOSAVE`,
+protocole RESP sur une socket TCP), puis attend que le port **refuse** les
+connexions avant d'observer quoi que ce soit. Aucun client n'est doublé,
+aucune panne n'est simulée au niveau applicatif. Le test exige alors :
+
+1. `POST /api/auth/logout` → **503**, `ok` ≠ `true`, `revoquee` ≠ `true`,
+   `reason: "revocation_refusee"`, `statut_backend: 503` ;
+2. les deux cookies effacés (`max-age=0`, `Path=/`, `HttpOnly`,
+   `SameSite=Lax`) et `Clear-Site-Data` présent **malgré** la panne ;
+3. `/api/search`, `/api/pieces` et `/api/auth/session` → **503** (fail-closed)
+   pendant la panne, jamais 200 avec des données.
+
+Garde-fou d'exécution : la spec refuse de tourner si
+`SEAMTECH_E2E_PANNE_REDIS=1` n'est pas positionné, si l'URL ne vise pas une
+instance locale, ou si elle vise le port **6379** partagé. L'étape CI
+« panne Redis réelle » démarre une instance jetable sur 6380, et la supprime
+ensuite ; le service Redis du job n'est jamais touché. La suite ordinaire
+ignore ce fichier (`testIgnore` de `playwright.config.ts`) : il ne peut donc
+ni être ramassé par erreur, ni compter comme un test sauté.
 
 ## 3. `Cache-Control: no-store` sur les réponses authentifiées
 

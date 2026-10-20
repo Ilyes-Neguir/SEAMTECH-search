@@ -68,6 +68,7 @@ def base_sessions(redis_url: str) -> Iterator[dict[str, Any]]:
     if not URL_PG:
         pytest.skip("Set SEAMTECH_TEST_DATABASE_URL to run PostgreSQL integration tests")
     import psycopg2
+    from psycopg2 import sql
     from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 
     nom_base = f"session_test_{uuid.uuid4().hex[:10]}"
@@ -75,7 +76,9 @@ def base_sessions(redis_url: str) -> Iterator[dict[str, Any]]:
     admin.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
     try:
         with admin.cursor() as cursor:
-            cursor.execute(f'CREATE DATABASE "{nom_base}"')
+            # Nom composé comme IDENTIFIANT SQL (jamais de f-string) : un nom
+            # de base est une donnée, pas du code.
+            cursor.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(nom_base)))
     finally:
         admin.close()
     url_base = URL_PG.rsplit("/", 1)[0] + f"/{nom_base}"
@@ -101,7 +104,9 @@ def base_sessions(redis_url: str) -> Iterator[dict[str, Any]]:
                     "WHERE datname = %s AND pid <> pg_backend_pid()",
                     (nom_base,),
                 )
-                cursor.execute(f'DROP DATABASE IF EXISTS "{nom_base}" WITH (FORCE)')
+                cursor.execute(
+                    sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(nom_base))
+                )
         finally:
             admin.close()
 

@@ -267,6 +267,17 @@ How it works:
   `Clear-Site-Data: "cache", "cookies", "storage"`.
   `POST /api/auth/logout-all` revokes every session of the account (the
   backend function is shared with password changes and deactivations).
+- **Logout never reports a revocation it did not obtain.** When a sid is
+  presented and the backend cannot be reached, is not configured
+  (`SEAMTECH_API_URL`), or answers non-2xx — Redis down is the typical case —
+  `POST /api/auth/logout` answers **503** with `ok: false` and
+  `revoquee: false`, plus `reason` (`backend_non_configure`,
+  `backend_injoignable`, `revocation_refusee`). The browser is still signed out
+  locally (both cookies cleared, `Clear-Site-Data` sent), but the response
+  says the server-side session is still valid until it expires. Monitoring
+  should alert on that 503: it means sessions are accumulating in Redis until
+  TTL. The outage is exercised for real (Redis `SHUTDOWN NOSAVE`) by
+  `frontend/e2e/panne-redis.spec.ts` in the e2e job.
 - **CSRF (double-submit).** Login also sets a readable random cookie
   (`seamtech_csrf`); every mutating request (POST/PUT/PATCH/DELETE under
   `/api/*`) authenticated by the session cookie must echo it in

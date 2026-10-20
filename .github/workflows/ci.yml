@@ -1436,6 +1436,68 @@ jobs:
           if-no-files-found: ignore
           retention-days: 5
 
+      # Lot 0a — preuve que le logout ne MENT PAS quand la révocation échoue.
+      # Une instance Redis DÉDIÉE (port 6380) est démarrée pour l'occasion : la
+      # spec lui envoie `SHUTDOWN NOSAVE` (commande Redis réelle, aucun mock),
+      # vérifie que le port refuse alors toute connexion, puis exige :
+      #   * 503 explicite sur POST /api/auth/logout, sans ok:true ni revoquee:true ;
+      #   * cookies effacés + Clear-Site-Data malgré la panne (déconnexion locale) ;
+      #   * 503 fail-closed sur les routes protégées pendant la panne.
+      # Le service `redis` partagé du job (6379) n'est jamais touché.
+      - name: Run E2E panne Redis réelle (logout fail-closed)
+        working-directory: frontend
+        env:
+          SEAMTECH_E2E_PANNE_REDIS: "1"
+          SEAMTECH_REDIS_URL: redis://127.0.0.1:6380/0
+          PLAYWRIGHT_JSON_OUTPUT_NAME: report-panne-redis.json
+        run: |
+          set -uo pipefail
+          docker rm -f seamtech-e2e-panne-redis >/dev/null 2>&1 || true
+          docker run -d --name seamtech-e2e-panne-redis -p 6380:6379 redis:7-alpine
+          trap 'docker rm -f seamtech-e2e-panne-redis >/dev/null 2>&1 || true' EXIT
+          pret=0
+          for _ in $(seq 1 30); do
+            if docker exec seamtech-e2e-panne-redis redis-cli ping >/dev/null 2>&1; then pret=1; break; fi
+            sleep 1
+          done
+          if [ "$pret" -ne 1 ]; then
+            echo "::error title=e2e-panne-redis::Redis dédié (6380) ne répond pas : la preuve n'a pas pu être exécutée."
+            exit 1
+          fi
+          set +e
+          pnpm exec playwright test e2e/panne-redis.spec.ts --reporter=list,json 2>&1 | tee /tmp/e2e_panne_redis.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            echo "::error title=e2e-panne-redis::$(grep -E '✘|Error|expect|attendu|Received|Expected' /tmp/e2e_panne_redis.log | head -20 | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 1800)"
+            exit "$rc"
+          fi
+          python - <<'PY'
+          import json
+
+          d = json.load(open("report-panne-redis.json"))
+          stats = d["stats"]
+          passes = stats["expected"]
+          flaky = stats.get("flaky", 0)
+          sautes = stats.get("skipped", 0)
+          # 1 test : la preuve est UNIQUE et ne peut pas s'ignorer. Un saut
+          # signifierait que la panne n'a pas été provoquée (variable absente,
+          # instance partagée) — donc que rien n'a été prouvé.
+          if sautes or passes + flaky != 1:
+              print(
+                  f"::error title=e2e-panne-count::attendu 1 test vert, 0 sauté — "
+                  f"mesuré {passes} passés au premier essai, {flaky} flaky, {sautes} sautés"
+              )
+              raise SystemExit(
+                  f"GARDE-FOU panne Redis : attendu 1 test vert, 0 sauté — "
+                  f"mesuré {passes} passés, {flaky} flaky, {sautes} sautés."
+              )
+          print(
+              "::notice title=e2e-panne-redis::Redis réellement arrêté (SHUTDOWN NOSAVE) — "
+              "logout = 503 sans succès déclaré, cookies effacés, routes protégées 503 fail-closed"
+          )
+          PY
+
   sauvegarde:
     # Lot H.1 — ALLER-RETOUR ÉPROUVÉ : sauvegarde hors-site (MinIO réel),
     # base RÉELLEMENT détruite (DROP DATABASE), puis reconstruite DEPUIS LE
