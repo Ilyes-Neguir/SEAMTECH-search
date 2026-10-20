@@ -2,6 +2,22 @@
 
 ## Unreleased — Qualification des réserves A–D (`arena/e7f33785-seamtech-search`)
 
+- **Lot 0a — revue 4 : la génération ne sort plus de l'API, course testée sur la vraie route.**
+  (B7) `/auth/connexion` construit sa réponse par **liste blanche**
+  (`CHAMPS_PUBLICS_UTILISATEUR`) au lieu de `**utilisateur`, et
+  `SessionRecord.vers_public()` énumère ses champs au lieu de copier la
+  dataclass : `etat_identifiants` — dérivé de l'empreinte du mot de passe — ne
+  peut plus fuiter, ni aujourd'hui ni par l'ajout d'un champ futur. Tests :
+  absence du champ sur `/auth/connexion` (connexion réelle) et sur les deux
+  chemins de `/auth/session`, égalité stricte de `vers_public()`. (B8) le test
+  de course ne fabrique plus la session de ses mains : il passe par
+  **/auth/connexion**, la suspend juste après la vérification du mot de passe
+  (barrière déterministe par événements, aucun `sleep`), réinitialise via la
+  vraie route administrateur, puis la laisse reprendre — et exige 401 sur la
+  session navigateur ET sur la session historique, puis un contrôle positif
+  avec le nouveau mot de passe. Contrôles négatifs exécutés : retirer la
+  transmission de la génération capturée, ou revenir à `**utilisateur`, fait
+  échouer le test.
 - **Lot 0a — revue 3 : génération d'identifiants, atomicité, rollback authentifié.**
   (1) La validité d'une session ne dépend plus d'une comparaison d'horodatages :
   chaque session nominative porte `etat_identifiants`, la génération

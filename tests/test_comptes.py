@@ -226,6 +226,47 @@ def test_jeton_de_session_non_reversible() -> None:
     assert empreinte_jeton(jeton, etat_identifiants="a") != empreinte
 
 
+def test_vue_publique_dune_session_ne_laisse_passer_aucun_champ_interne() -> None:
+    """``vers_public()`` est une LISTE BLANCHE (revue Lot 0a, B7).
+
+    L'ancienne version copiait la dataclass avec ``asdict()`` et ne retirait que
+    ``sid`` : tout champ ajouté ensuite devenait public automatiquement. C'est
+    exactement ce qui serait arrivé à ``etat_identifiants``, la génération
+    dérivée de l'empreinte du mot de passe.
+    """
+    from seamtech_search.sessions_redis import SessionRecord
+
+    record = SessionRecord(
+        sid="sid-qui-ne-doit-jamais-sortir",
+        user_id="7",
+        identifiant="imrane",
+        nom="Imrane",
+        role="operateur",
+        mode="nominatif",
+        issued_at=1000.0,
+        last_seen_at=1010.0,
+        expires_at=2000.0,
+        user_agent="pytest/1.0",
+        db_session_id=42,
+        etat_identifiants="generation-derivee-du-mot-de-passe",
+    )
+    vue = record.vers_public()
+    assert "etat_identifiants" not in vue
+    assert "sid" not in vue
+    assert vue == {
+        "user_id": "7",
+        "identifiant": "imrane",
+        "nom": "Imrane",
+        "role": "operateur",
+        "mode": "nominatif",
+        "issued_at": 1000.0,
+        "last_seen_at": 1010.0,
+        "expires_at": 2000.0,
+        "user_agent": "pytest/1.0",
+        "db_session_id": 42,
+    }
+
+
 def test_cli_naccepte_jamais_le_mot_de_passe_en_argument() -> None:
     """Un mot de passe en argument finit dans l'historique du shell et dans `ps`."""
     analyseur = cli_comptes.construire_analyseur()

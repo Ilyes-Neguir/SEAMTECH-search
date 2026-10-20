@@ -67,6 +67,36 @@ _DETAIL_REDIS = (
     "Refus explicite (fail-closed), aucun repli n'est autorisé."
 )
 
+#: Champs d'un compte publiables par l'API. C'est une LISTE BLANCHE : tout ce
+#: qui n'y figure pas ne sort JAMAIS, y compris si un jour un champ interne est
+#: ajouté au dictionnaire interne. `etat_identifiants` — la génération dérivée
+#: de l'empreinte du mot de passe — en est volontairement absent (revue Lot 0a,
+#: B7 : il fuitait par `**utilisateur`).
+CHAMPS_PUBLICS_UTILISATEUR = (
+    "id_utilisateur",
+    "identifiant",
+    "nom",
+    "role",
+    "doit_changer_mot_de_passe",
+)
+
+#: Champs strictement internes : jamais dans une réponse, quelle qu'elle soit.
+CHAMPS_INTERNES = (
+    "etat_identifiants",
+    "empreinte_mot_de_passe",
+    "sessions_invalidees_le",
+)
+
+
+def _champs_publics(utilisateur: dict[str, Any], champs: tuple[str, ...]) -> dict[str, Any]:
+    """Ne garde QUE les champs demandés (liste blanche, jamais une liste noire)."""
+    return {champ: utilisateur.get(champ) for champ in champs}
+
+
+def _sans_champs_internes(donnees: dict[str, Any]) -> dict[str, Any]:
+    """Retire les champs internes d'un dictionnaire déjà construit ailleurs."""
+    return {cle: valeur for cle, valeur in donnees.items() if cle not in CHAMPS_INTERNES}
+
 
 def _exiger_postgres(index: Any) -> None:  # noqa: ANN401
     """Les comptes nominatifs n'existent que sur PostgreSQL (schéma métier)."""
@@ -333,7 +363,10 @@ def enregistrer_routes_auth(app: Any, index: Any, config: Any, verifier_auth: An
 
         return {
             "ok": True,
-            **utilisateur,
+            # LISTE BLANCHE (revue Lot 0a, B7) : `**utilisateur` renvoyait aussi
+            # la génération d'identifiants, alors que la documentation affirme
+            # qu'elle ne sort jamais. Seuls ces champs sont publics.
+            **_champs_publics(utilisateur, CHAMPS_PUBLICS_UTILISATEUR),
             "id_session": session["id_session"],
             # Renvoyé UNE fois : le serveur n'en garde que l'empreinte. Ce
             # jeton n'est PAS placé dans le cookie du navigateur (le cookie ne
@@ -493,7 +526,7 @@ def enregistrer_routes_auth(app: Any, index: Any, config: Any, verifier_auth: An
         )
         return {
             "ok": True,
-            **utilisateur,
+            **_sans_champs_internes(utilisateur),
             "mode": MODE_NOMINATIF,
             "session_idle_minutes": sessions.idle_minutes,
             "session_hours": sessions.session_hours,

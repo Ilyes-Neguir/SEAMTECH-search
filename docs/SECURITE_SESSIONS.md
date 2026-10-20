@@ -53,6 +53,11 @@ ceux de la branche `arena/dc54c343-seamtech-search` au commit de livraison.
   précis où l'utilisateur croit l'avoir changé — et le 503 lui dirait
   seulement « réessayez ». La génération ferme l'accès sans dépendre d'un
   second système.
+  Cette génération est **interne** : `/auth/connexion` construit sa réponse par
+  liste blanche (`CHAMPS_PUBLICS_UTILISATEUR`) et `SessionRecord.vers_public()`
+  énumère explicitement ses champs. La revue B7 avait relevé que
+  `**utilisateur` puis `asdict()` la laissaient passer : un champ ajouté
+  devenait public sans que personne ne le décide.
 - **Atomicité mutation ↔ sessions historiques.** Le changement par l'intéressé
   révoque les lignes `session_ui` **dans la même transaction** que l'écriture
   de la nouvelle empreinte : les deux réussissent ou les deux sont annulées.

@@ -100,10 +100,27 @@ class SessionRecord:
     etat_identifiants: str | None = None
 
     def vers_public(self) -> dict[str, Any]:
-        """Vue renvoyée à l'API : jamais le ``sid`` (le client le connaît déjà)."""
-        donnees = asdict(self)
-        donnees.pop("sid", None)
-        return donnees
+        """Vue renvoyée à l'API : jamais le ``sid``, jamais l'état interne.
+
+        LISTE BLANCHE explicite (revue Lot 0a, B7). L'ancienne version copiait
+        la dataclass via ``asdict()`` et retirait seulement ``sid`` : tout champ
+        ajouté ensuite sortait donc automatiquement — c'est ainsi que
+        ``etat_identifiants`` (génération dérivée de l'empreinte du mot de
+        passe) serait devenu public à la première utilisation. Ici, un nouveau
+        champ interne ne peut pas fuiter : il faut l'ajouter explicitement.
+        """
+        return {
+            "user_id": self.user_id,
+            "identifiant": self.identifiant,
+            "nom": self.nom,
+            "role": self.role,
+            "mode": self.mode,
+            "issued_at": self.issued_at,
+            "last_seen_at": self.last_seen_at,
+            "expires_at": self.expires_at,
+            "user_agent": self.user_agent,
+            "db_session_id": self.db_session_id,
+        }
 
 
 def _cle_session(sid: str) -> str:
