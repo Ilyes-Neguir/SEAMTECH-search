@@ -1430,7 +1430,7 @@ AS $fonction$
                 regexp_replace(
                     translate(
                         public.unaccent('public.unaccent'::regdictionary, coalesce(t, '')),
-                        E'\\u00a0\\u202f\\u2007\\u2009'',
+                        E'\\u00a0\\u202f\\u2007\\u2009',
                         '    '
                     ),
                     '[[:space:]]+', ' ', 'g'
@@ -1464,7 +1464,7 @@ AS $fonction$
                 regexp_replace(
                     translate(
                         coalesce(t, ''),
-                        'ÀÁÂÃÄÅÈÉÊËÌÍÎÏÒÓÔÕÖÙÚÛÜÝàáâãäåèéêëìíîïòóôöõùúûüýÿÇçÑñØøŸĀāĂăĄąĆćĈĉĊċČčĎďĐđĒēĔĕĖėĘęĚěĜĝĞğĠġĢģĤĥĦħĨĩĪīĬĭĮįİıĴĵĶķĹĺĻļĽľĿŀŁłŃńŅņŇňŌōŎŏŐőŔŕŖŗŘřŚśŜŝŞşŠšŢţŤťŦŧŨũŪūŬŭŮůŰűŲųŴŵŶŷŹźŻżŽž' ||E'\u00a0\u202f\u2007\u2009',
+                        'ÀÁÂÃÄÅÈÉÊËÌÍÎÏÒÓÔÕÖÙÚÛÜÝàáâãäåèéêëìíîïòóôöõùúûüýÿÇçÑñØøŸĀāĂăĄąĆćĈĉĊċČčĎďĐđĒēĔĕĖėĘęĚěĜĝĞğĠġĢģĤĥĦħĨĩĪīĬĭĮįİıĴĵĶķĹĺĻļĽľĿŀŁłŃńŅņŇňŌōŎŏŐőŔŕŖŗŘřŚśŜŝŞşŠšŢţŤťŦŧŨũŪūŬŭŮůŰűŲųŴŵŶŷŹźŻżŽž' || E'\u00a0\u202f\u2007\u2009',
                         'AAAAAAEEEEIIIIOOOOOUUUUYaaaaaaeeeeiiiiooooouuuuyyCcNnOoYAaAaAaCcCcCcCcDdDdEeEeEeEeEeGgGgGgGgHhHhIiIiIiIiIiJjKkLlLlLlLlLlNnNnNnOoOoOoRrRrRrSsSsSsSsTtTtTtUuUuUuUuUuUuWwYyZzZzZz    '
                     ),
                     '[[:space:]]+', ' ', 'g'
@@ -1565,10 +1565,13 @@ AS $fonction$
         replace(replace(replace(
             lower(
                 regexp_replace(
-                    translate(
-                        public.unaccent('public.unaccent'::regdictionary, coalesce(t, '')),
-                        E'\\u00a0\\u202f\\u2007\\u2009'',
-                        '    '
+                    regexp_replace(
+                        translate(
+                            public.unaccent('public.unaccent'::regdictionary, coalesce(t, '')),
+                            E'\\u00a0\\u202f\\u2007\\u2009',
+                            '    '
+                        ),
+                        '[-_–—/]+', ' ', 'g'
                     ),
                     '[[:space:]]+', ' ', 'g'
                 )
@@ -1580,7 +1583,7 @@ AS $fonction$
 $fonction$;
 
 COMMENT ON FUNCTION seamtech_texte_recherche(TEXT) IS
-    'Clé de recherche (casse pliée, diacritiques latin via unaccent, ligatures œ/æ/ß, espaces comprimés, NFC≡NFD) — IMMUTABLE donc indexable ; miroir Python : seamtech_search.fiches.normalisation.normaliser_cle_recherche';
+    'Clé de recherche Lot2 (casse/accents/ligatures/tirets-underscores-slash → espace, espaces comprimés) — IMMUTABLE ; miroir Python : normaliser_cle_recherche + normaliser_cle_bateau';
 """
 
 SQL_026_FONCTION_REPLI_ETENDUE = r"""
@@ -1595,13 +1598,15 @@ AS $fonction$
         replace(replace(replace(
             lower(
                 regexp_replace(
-                    translate(
-                        coalesce(t, ''),
-                        'ÀÁÂÃÄÅÈÉÊËÌÍÎÏÒÓÔÕÖÙÚÛÜÝàáâãäåèéêëìíîïòóôöõùúûüýÿÇçÑñØøŸĀāĂăĄąĆćĈĉĊċČčĎďĐđĒēĔĕĖėĘęĚěĜĝĞğĠġĢģĤĥĦħĨĩĪīĬĭĮįİıĴĵĶķĹĺĻļĽľĿŀŁłŃńŅņŇňŌōŎŏŐőŔŕŖŗŘřŚśŜŝŞşŠšŢţŤťŦŧŨũŪūŬŭŮůŰűŲųŴŵŶŷŹźŻżŽž' ||E'\u00a0\u202f\u2007\u2009',
+                    regexp_replace(
+                        translate(
+                            coalesce(t, ''),
+                            'ÀÁÂÃÄÅÈÉÊËÌÍÎÏÒÓÔÕÖÙÚÛÜÝàáâãäåèéêëìíîïòóôöõùúûüýÿÇçÑñØøŸĀāĂăĄąĆćĈĉĊċČčĎďĐđĒēĔĕĖėĘęĚěĜĝĞğĠġĢģĤĥĦħĨĩĪīĬĭĮįİıĴĵĶķĹĺĻļĽľĿŀŁłŃńŅņŇňŌōŎŏŐőŔŕŖŗŘřŚśŜŝŞşŠšŢţŤťŦŧŨũŪūŬŭŮůŰűŲųŴŵŶŷŹźŻżŽž' || E'\u00a0\u202f\u2007\u2009',
                             'AAAAAAEEEEIIIIOOOOOUUUUYaaaaaaeeeeiiiiooooouuuuyyCcNnOoYAaAaAaCcCcCcCcDdDdEeEeEeEeEeGgGgGgGgHhHhIiIiIiIiIiJjKkLlLlLlLlLlNnNnNnOoOoOoRrRrRrSsSsSsSsTtTtTtUuUuUuUuUuUuWwYyZzZzZz    '
                         ),
-                        '[[:space:]]+', ' ', 'g'
-                    )
+                        '[-_–—/]+', ' ', 'g'
+                    ),
+                    '[[:space:]]+', ' ', 'g'
                 )
             ),
             'œ', 'oe'),
@@ -1611,7 +1616,7 @@ AS $fonction$
 $fonction$;
 
 COMMENT ON FUNCTION seamtech_texte_recherche(TEXT) IS
-    'Clé de recherche (repli sans unaccent : translate latin-1 + étendu A) — IMMUTABLE ; miroir Python : normaliser_cle_recherche';
+    'Clé de recherche Lot2 (repli sans unaccent : tirets-underscores-slash → espace) — IMMUTABLE';
 """
 
 SQL_026_BOAT_MODELS_AND_ALIASES = """
