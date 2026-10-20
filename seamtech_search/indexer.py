@@ -1085,7 +1085,7 @@ class SearchIndex:
             )
             return
         with connection.cursor() as cursor:
-            # 1) Étend la fonction de normalisation (étend 023)
+            # 1) Étend la fonction de normalisation (étend 023) — avec diagnostic précis si syntax
             cursor.execute("SAVEPOINT seamtech_026_unaccent")
             try:
                 cursor.execute("CREATE EXTENSION IF NOT EXISTS unaccent")
@@ -1094,12 +1094,43 @@ class SearchIndex:
             except Exception as exc:
                 cursor.execute("ROLLBACK TO SAVEPOINT seamtech_026_unaccent")
                 cursor.execute("RELEASE SAVEPOINT seamtech_026_unaccent")
+                # Diagnostic immédiat pour l'échec unaccent (visible dans pytest)
+                sqlstate_u = getattr(exc, "pgcode", None)
+                diag_u = getattr(exc, "diag", None)
+                pos_u = getattr(diag_u, "statement_position", None) if diag_u else None
+                primary_u = getattr(diag_u, "message_primary", None) if diag_u else None
                 logger.warning(
-                    "unaccent indisponible pour 026 étendue (%s) — repli translate latin.",
-                    exc,
+                    "unaccent indisponible pour 026 étendue (SQLSTATE=%s pos=%s primary=%r stmt=%.300r) — repli translate latin. original: %s",
+                    sqlstate_u, pos_u, primary_u, schema_metier.SQL_026_FONCTION_UNACCENT_ETENDUE[:300], exc,
                 )
-                cursor.execute(schema_metier.SQL_026_FONCTION_REPLI_ETENDUE)
-            # 2) Tables + index + seed — diagnostic : exécution séparée avec logs précis
+                try:
+                    cursor.execute(schema_metier.SQL_026_FONCTION_REPLI_ETENDUE)
+                except Exception as exc_repli:
+                    sqlstate_r = getattr(exc_repli, "pgcode", None)
+                    diag_r = getattr(exc_repli, "diag", None)
+                    pos_r = getattr(diag_r, "statement_position", None) if diag_r else None
+                    primary_r = getattr(diag_r, "message_primary", None) if diag_r else None
+                    diag_msg_r = (
+                        f"026 repli diagnostic — échec SQLSTATE={sqlstate_r} pos={pos_r} "
+                        f"stmt={schema_metier.SQL_026_FONCTION_REPLI_ETENDUE[:800]!r} primary={primary_r!r} — original: {exc_repli}"
+                    )
+                    logger.error(diag_msg_r, exc_info=True)
+                    raise RuntimeError(diag_msg_r) from exc_repli
+            # 2) pg_trgm — extension trusted mais REVOKE CREATE peut la bloquer : ne doit pas faire échouer la migration
+            cursor.execute("SAVEPOINT seamtech_026_pg_trgm")
+            pg_trgm_disponible = True
+            try:
+                cursor.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
+                cursor.execute("RELEASE SAVEPOINT seamtech_026_pg_trgm")
+            except Exception as exc_pg:
+                cursor.execute("ROLLBACK TO SAVEPOINT seamtech_026_pg_trgm")
+                cursor.execute("RELEASE SAVEPOINT seamtech_026_pg_trgm")
+                logger.warning(
+                    "pg_trgm indisponible pour 026 (SQLSTATE=%s) — index trigrammes omis, recherche dégradée mais fonctionnelle. original: %s",
+                    getattr(exc_pg, "pgcode", None), exc_pg,
+                )
+                pg_trgm_disponible = False
+            # 3) Tables + index + seed — diagnostic : exécution séparée avec logs précis
             cursor.execute("SAVEPOINT seamtech_026_tables")
             try:
                 # Diagnostic : découpe respectant les dollar-quotes $func$/$fonction$/$$
@@ -1115,9 +1146,20 @@ class SearchIndex:
                 except Exception:
                     exts_state = "unknown"
                 for idx_stmt, stmt in enumerate(stmts, start=1):
+                    # Si pg_trgm indisponible, saute les index qui en dépendent (gin_trgm_ops) — ne doit pas échouer
+                    if not pg_trgm_disponible and "gin_trgm_ops" in stmt:
+                        logger.warning("Index 026 %d/%d omis (pg_trgm indisponible) : %.120r", idx_stmt, len(stmts), stmt[:120])
+                        continue
                     try:
                         cursor.execute(stmt)
                     except Exception as exc_stmt:
+                        # Si l'index trigramme échoue alors que pg_trgm était censé être disponible, log et continue (dégradé)
+                        if "gin_trgm_ops" in stmt:
+                            logger.warning(
+                                "Index trigramme 026 %d/%d échec (SQLSTATE=%s) — omis, recherche dégradée. stmt=%.200r original: %s",
+                                idx_stmt, len(stmts), getattr(exc_stmt, "pgcode", None), stmt[:200], exc_stmt,
+                            )
+                            continue
                         # Capture immédiate avant tout autre SELECT
                         sqlstate = getattr(exc_stmt, "pgcode", None)
                         diag = getattr(exc_stmt, "diag", None)
