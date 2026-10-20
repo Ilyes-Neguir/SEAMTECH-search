@@ -23,6 +23,26 @@ ceux de la branche `arena/dc54c343-seamtech-search` au commit de livraison.
 - Redis ou le backend indisponible ⇒ **503** explicite (fail-closed). Aucun
   repli mémoire n'existe : `seamtech_search/sessions_redis.py` ne le prévoit
   pas.
+- **Invalidation durable.** Un changement de mot de passe, une
+  réinitialisation administrateur et une désactivation écrivent
+  `utilisateur.sessions_invalidees_le` **dans la même transaction PostgreSQL**
+  que la mutation du compte (migration `024_invalidation_sessions`, une
+  colonne, aucune table nouvelle). L'horodatage vient de l'horloge
+  applicative — celle qui écrit `issued_at` — pour ne pas comparer deux
+  horloges. La validation refuse toute session ouverte **avant** cet instant,
+  y compris quand sa clé Redis existe encore : c'est le cas d'une révocation
+  Redis qui a échoué (503 rendu au client) puis d'un Redis revenu avec ses
+  clés intactes. Le 503 signale l'échec, il ne protège de rien ; la colonne,
+  elle, est l'autorité durable. Les comptes jamais invalidés gardent `NULL`,
+  donc une session ouverte juste après la création du compte n'est pas refusée
+  par mégarde.
+  **Choix explicite : la mutation est COMMITÉE avec invalidation durable, pas
+  annulée.** Un rollback laisserait l'ancien mot de passe valide au moment
+  précis où l'utilisateur croit l'avoir changé — et le 503 lui dirait
+  seulement « réessayez ». L'invalidation durable, elle, ferme l'accès sans
+  dépendre d'un second système. Corollaire : la session interne historique
+  (`session_ui`) est révoquée en SQL **avant** la tentative Redis, pour que
+  l'échec de celle-ci ne laisse pas non plus ces sessions vivantes.
 - **La déconnexion ne déclare jamais un succès qu'elle n'a pas obtenu.** Si un
   `sid` est présenté et que la révocation n'aboutit pas — `SEAMTECH_API_URL`
   absent, backend injoignable, ou réponse non-2xx (Redis arrêté → 503) —
@@ -127,6 +147,28 @@ instance locale, ou si elle vise le port **6379** partagé. L'étape CI
 ensuite ; le service Redis du job n'est jamais touché. La suite ordinaire
 ignore ce fichier (`testIgnore` de `playwright.config.ts`) : il ne peut donc
 ni être ramassé par erreur, ni compter comme un test sauté.
+
+### 2.6 Preuve : la révocation Redis peut échouer, la session meurt quand même
+
+`tests/test_sessions_redis_postgres.py` provoque la panne **dans un Redis
+réel**, sans aucun double : un utilisateur ACL (`+@all -del -srem`) peut lire
+et écrire, mais le serveur refuse `DEL`/`SREM` avec une vraie erreur `NOPERM`.
+C'est exactement ce que fait une révocation. Les tests exigent alors :
+
+1. `POST /auth/mot-de-passe` (et la réinitialisation administrateur, et la
+   désactivation) → **503** : la révocation n'a pas eu lieu, l'API ne prétend
+   pas le contraire ;
+2. les clés `seamtech:session:<sid>` sont **toujours présentes** dans Redis —
+   l'état laissé par une panne suivie d'un retour sans perte ;
+3. après retour du service (client Redis normal), les anciens `sid` répondent
+   **401** avec `Session invalidée…` : c'est PostgreSQL, pas Redis, qui refuse ;
+4. le nouveau mot de passe ouvre une session, l'ancien est refusé ; pour une
+   réinitialisation, `doit_changer_mot_de_passe` vaut `true` ; pour une
+   désactivation, la connexion est refusée.
+
+Un test complémentaire vérifie que `revoquer_toutes_sessions_pour_identifiant()`
+**lève** `SessionStoreIndisponible` quand Redis est injoignable : son retour
+`0` ne peut plus être lu comme « rien à révoquer, confirmé ».
 
 ## 3. `Cache-Control: no-store` sur les réponses authentifiées
 

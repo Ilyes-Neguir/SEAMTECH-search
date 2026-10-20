@@ -1,4 +1,4 @@
-"""Schéma métier « fiche technique » — migrations 006 à 023 (Lots A → correctifs d'audit).
+"""Schéma métier « fiche technique » — migrations 006 à 024 (Lots A → correctifs d'audit).
 
 DÉCISION DE COUCHE ACTÉE (plan v3.0 §17.1) : la couche métier est
 **PostgreSQL uniquement**. Elle s'appuie sur pgvector, pg_trgm, les index GIN,
@@ -26,7 +26,7 @@ from __future__ import annotations
 from typing import Any
 
 # Version du schéma métier — incrémentée à chaque nouvelle migration.
-VERSION_SCHEMA_METIER = "023_recherche_normalisee"
+VERSION_SCHEMA_METIER = "024_invalidation_sessions"
 
 # Marqueur injecté par le code au moment de la migration (constat 1 de revue) :
 # le nom de la configuration de recherche effective — 'seamtech_unaccent' ou
@@ -1517,6 +1517,36 @@ CREATE INDEX IF NOT EXISTS idx_fiche_gamme_trgm_norm
     ON fiche USING gin (seamtech_texte_recherche(gamme) gin_trgm_ops);
 """
 
+
+# ---------------------------------------------------------------------------
+# 024 — Invalidation durable des sessions (revue Lot 0a, blocage 1)
+# ---------------------------------------------------------------------------
+# Le changement/réinitialisation de mot de passe et la désactivation ÉCRIVENT
+# cette colonne dans la MÊME transaction que la mutation du compte. Elle est
+# comparée à l'instant d'ouverture de chaque session (``issued_at`` Redis,
+# horloge applicative) lors de la validation : une session ouverte AVANT
+# l'invalidation est refusée même si sa clé Redis existe encore.
+#
+# Pourquoi une colonne et pas seulement la révocation Redis : la révocation
+# peut échouer (Redis indisponible au moment exact de la mutation, puis
+# rétabli avec ses clés intactes). Le 503 signale l'échec, il ne protège de
+# rien. Cette colonne, elle, est DURABLE : elle vit dans PostgreSQL, dans la
+# transaction du changement de mot de passe.
+#
+# Pourquoi une horloge applicative et pas ``now()`` : ``issued_at`` est écrit
+# par le processus backend (``time.time()``). Comparer deux horloges
+# différentes (base vs application) rouvrirait une fenêtre dépendant de leur
+# dérive. L'invalidation est donc horodatée par l'application, qui écrit aussi
+# les sessions. Un compte JAMAIS invalidé garde NULL : une session ouverte
+# juste après la création du compte n'est pas refusée par mégarde.
+SQL_024_INVALIDATION_SESSIONS = """
+-- 024_invalidation_sessions — l'invalidation survit à une panne de Redis.
+ALTER TABLE utilisateur ADD COLUMN IF NOT EXISTS sessions_invalidees_le TIMESTAMPTZ;
+
+COMMENT ON COLUMN utilisateur.sessions_invalidees_le IS
+    'Instant a partir duquel toute session ouverte AVANT est refusee (changement/reset de mot de passe, desactivation). Horloge applicative UTC, comparee a issued_at. NULL = jamais invalide.';
+"""
+
 MIGRATIONS_METIER: tuple[tuple[str, str], ...] = (
     ("006_fiche_technique", SQL_006_FICHE_TECHNIQUE),
     ("007_recherche_index", SQL_007_RECHERCHE_INDEX),
@@ -1536,6 +1566,7 @@ MIGRATIONS_METIER: tuple[tuple[str, str], ...] = (
     ("021_revision_fiche", SQL_021_REVISION_FICHE),
     ("022_selections_durables", SQL_022_SELECTIONS_DURABLES),
     ("023_recherche_normalisee", SQL_023_FONCTION_UNACCENT),
+    ("024_invalidation_sessions", SQL_024_INVALIDATION_SESSIONS),
 )
 
 

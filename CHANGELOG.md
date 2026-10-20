@@ -2,6 +2,18 @@
 
 ## Unreleased — Qualification des réserves A–D (`arena/e7f33785-seamtech-search`)
 
+- **Lot 0a — revue : invalidation durable des sessions** (migration
+  `024_invalidation_sessions`, une colonne `utilisateur.sessions_invalidees_le`,
+  aucune table). Changement de mot de passe, réinitialisation administrateur et
+  désactivation horodatent l'invalidation dans la transaction de la mutation ;
+  la validation refuse toute session ouverte avant cet instant, même si la
+  révocation Redis a échoué (503) puis que Redis est revenu avec ses clés.
+  `revoquer_toutes_sessions_pour_identifiant()` lève désormais au lieu de
+  renvoyer `0` quand Redis est injoignable. Preuves : Redis réel avec ACL
+  `-del -srem` (aucun mock), clés conservées, anciens `sid` → 401 après retour,
+  nouveau mot de passe fonctionnel, `doit_changer_mot_de_passe` respecté,
+  désactivation couverte.
+
 Complément à la recette historique (`3304b91`, PR #36) : ne réécrit aucun
 PASS/FAIL d'alors, ne signe aucun PV.
 

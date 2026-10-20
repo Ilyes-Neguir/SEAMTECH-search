@@ -267,6 +267,22 @@ How it works:
   `Clear-Site-Data: "cache", "cookies", "storage"`.
   `POST /api/auth/logout-all` revokes every session of the account (the
   backend function is shared with password changes and deactivations).
+- **Durable invalidation.** Password change, admin reset and deactivation
+  write `utilisateur.sessions_invalidees_le` — an application-clock instant,
+  the same clock that stamps a session's `issued_at` — **in the same PostgreSQL
+  transaction** as the account mutation (migration
+  `024_invalidation_sessions`, one column, no new table). Session validation
+  rejects any session opened at or before that instant. A 503 from an
+  unavailable Redis during revocation therefore cannot leave a usable session
+  behind: when Redis comes back with its old keys intact, the database still
+  refuses them. Redis revocation stays the fast path; the column is the
+  authority. The integration suite proves it by making a **real** Redis refuse
+  `DEL`/`SREM` (ACL user, no mock) and then replaying the old sids.
+  **The mutation is committed with durable invalidation — never rolled back.**
+  Returning 503 after a rollback would leave the old password valid at the very
+  moment the user believes it changed; the durable column closes access without
+  depending on a second system. The legacy `session_ui` rows are revoked in
+  SQL *before* the Redis attempt for the same reason.
 - **Logout never reports a revocation it did not obtain.** When a sid is
   presented and the backend cannot be reached, is not configured
   (`SEAMTECH_API_URL`), or answers non-2xx — Redis down is the typical case —
@@ -325,15 +341,28 @@ start until they are set. Rotating `SEAMTECH_SESSION_SECRET` invalidates every
 cookie at once (the Redis keys then expire by TTL); rotating
 `SEAMTECH_UI_PASSWORD` takes effect on the next sign-in.
 
-**Rolling back Lot 0a.** The change requires **no SQL migration** (Redis only,
-migration 024 is not used). To roll back, redeploy the previous frontend
-image and restart the `web` service: the old code cannot read v3 cookies, so
-every user is signed out and must sign in again — that is the expected,
-fail-closed outcome, not an outage. The `seamtech:session:*` and
-`seamtech:user_sessions:*` keys become unused and disappear by TTL; they can
-also be removed explicitly with `redis-cli --scan --pattern 'seamtech:*'`
-followed by `DEL` if a clean slate is required. No user data is deleted by the
-rollback.
+**Rolling back Lot 0a.** The change adds **one column** — migration
+`024_invalidation_sessions` creates `utilisateur.sessions_invalidees_le` — and
+no new table. To roll back, redeploy the previous frontend image and restart
+the `web` service: the old code cannot read v3 cookies, so every user is
+signed out and must sign in again — that is the expected, fail-closed outcome,
+not an outage. The `seamtech:session:*` and `seamtech:user_sessions:*` keys
+become unused and disappear by TTL. If a clean slate is required, delete
+**only those two namespaces**:
+
+```bash
+redis-cli --scan --pattern 'seamtech:session:*'       | xargs -r redis-cli del
+redis-cli --scan --pattern 'seamtech:user_sessions:*' | xargs -r redis-cli del
+```
+
+Do **not** widen these patterns to the whole `seamtech:` namespace. That
+prefix also covers the durable queue (`seamtech:queue:*`, `seamtech:processing:*`, `seamtech:retry:*`,
+`seamtech:deadletter:*`, `seamtech:claim:*`, `seamtech:cancel:*`), the job
+records (`seamtech:job:*`), the worker supervision keys
+(`seamtech:heartbeat:*`, `seamtech:worker:*`) and the rate-limit counters
+(`seamtech:ratelimit:*`). Deleting them would destroy accepted or recoverable
+work and reset throttles; they are **not** part of Lot 0a and must survive the
+rollback. No user data is deleted by the rollback.
 
 **Why not Option A (localhost-only)?** The compose file already binds every
 published port to `127.0.0.1`, so Option A's binding change was already in

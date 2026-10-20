@@ -1480,21 +1480,24 @@ jobs:
           passes = stats["expected"]
           flaky = stats.get("flaky", 0)
           sautes = stats.get("skipped", 0)
-          # 1 test : la preuve est UNIQUE et ne peut pas s'ignorer. Un saut
-          # signifierait que la panne n'a pas été provoquée (variable absente,
-          # instance partagée) — donc que rien n'a été prouvé.
-          if sautes or passes + flaky != 1:
+          # 1 test, vert AU PREMIER ESSAI : `passes + flaky == 1` laissait passer
+          # `expected=0, flaky=1`, c'est-à-dire un job vert où la preuve n'avait
+          # été obtenue qu'à la reprise (revue Lot 0a, blocage 3). On exige donc
+          # les trois compteurs explicitement, et on les PUBLIE : l'annotation
+          # ne dit plus seulement « vert », elle dit ce qui a été mesuré.
+          if passes != 1 or flaky != 0 or sautes != 0:
               print(
-                  f"::error title=e2e-panne-count::attendu 1 test vert, 0 sauté — "
-                  f"mesuré {passes} passés au premier essai, {flaky} flaky, {sautes} sautés"
+                  f"::error title=e2e-panne-count::attendu expected=1, flaky=0, skipped=0 — "
+                  f"mesuré expected={passes}, flaky={flaky}, skipped={sautes}"
               )
               raise SystemExit(
-                  f"GARDE-FOU panne Redis : attendu 1 test vert, 0 sauté — "
-                  f"mesuré {passes} passés, {flaky} flaky, {sautes} sautés."
+                  f"GARDE-FOU panne Redis : attendu expected=1, flaky=0, skipped=0 — "
+                  f"mesuré expected={passes}, flaky={flaky}, skipped={sautes}."
               )
           print(
-              "::notice title=e2e-panne-redis::Redis réellement arrêté (SHUTDOWN NOSAVE) — "
-              "logout = 503 sans succès déclaré, cookies effacés, routes protégées 503 fail-closed"
+              f"::notice title=e2e-panne-redis::expected={passes} flaky={flaky} skipped={sautes} "
+              "— Redis réellement arrêté (SHUTDOWN NOSAVE) : logout = 503 sans succès déclaré, "
+              "cookies effacés, routes protégées 503 fail-closed"
           )
           PY
 

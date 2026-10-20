@@ -155,6 +155,24 @@ def _session_sid(
             except SessionStoreIndisponible:
                 pass
             raise HTTPException(status_code=401, detail="Compte inconnu ou désactivé.")
+        # Invalidation DURABLE (revue Lot 0a, blocage 1) : mot de passe changé,
+        # réinitialisé ou compte désactivé pendant que Redis était indisponible
+        # ⇒ la révocation a pu échouer et les clés Redis survivre au retour du
+        # service. La base, elle, garde l'instant : toute session ouverte AVANT
+        # est refusée ici, sans dépendre de Redis ni d'un 503 vu par le client.
+        invalidation = profil.get("sessions_invalidees_le")
+        if invalidation is not None and record.issued_at <= invalidation.timestamp():
+            try:
+                sessions.revoquer_session(record.sid)
+            except SessionStoreIndisponible:
+                pass
+            raise HTTPException(
+                status_code=401,
+                detail=(
+                    "Session invalidée par un changement de mot de passe ou une "
+                    "désactivation du compte. Reconnectez-vous."
+                ),
+            )
         # La base est l'autorité sur le rôle : un changement de rôle prend effet
         # immédiatement, même si Redis porte encore l'ancien instantané.
         record = replace(
@@ -476,6 +494,12 @@ def enregistrer_routes_auth(app: Any, index: Any, config: Any, verifier_auth: An
             str(corps.get("mot_de_passe_actuel") or ""),
             str(corps.get("nouveau_mot_de_passe") or ""),
         )
+        # ORDRE VOLONTAIRE (revue Lot 0a, blocage 1) : l'invalidation SQL est
+        # faite AVANT la révocation Redis. Ces lignes ``session_ui`` portent les
+        # sessions internes historiques (en-têtes X-SEAMTECH-SESSION + jeton) ;
+        # les révoquer après coup laissait, si Redis échouait, l'API répondre
+        # 503 alors que ces sessions restaient utilisables.
+        sql_revoquees = revoquer_sessions_utilisateur(index, int(utilisateur["id_utilisateur"]))
         # Réutilisation explicite de la fonction interne : un mot de passe
         # changé ferme toutes les sessions ouvertes avec l'ancien.
         try:
@@ -483,8 +507,12 @@ def enregistrer_routes_auth(app: Any, index: Any, config: Any, verifier_auth: An
         except SessionStoreIndisponible as exc:
             LOGGER.error("Mot de passe changé mais révocation Redis impossible : %s", exc)
             raise HTTPException(status_code=503, detail=_DETAIL_REDIS) from exc
-        revoquer_sessions_utilisateur(index, int(utilisateur["id_utilisateur"]))
-        return {"ok": True, **resultat, "sessions_revoquees": revoquees}
+        return {
+            "ok": True,
+            **resultat,
+            "sessions_revoquees": revoquees,
+            "sessions_sql_revoquees": sql_revoquees,
+        }
 
     # -----------------------------------------------------------------------
     # Gestion des comptes — administrateur uniquement

@@ -1053,6 +1053,28 @@ class SearchIndex:
                     exc,
                 )
 
+    def _migration_024_invalidation_sessions(self, connection: Any) -> None:
+        """Invalidation durable des sessions (revue Lot 0a, blocage 1).
+
+        Une colonne ``utilisateur.sessions_invalidees_le`` datée par
+        l'application : le changement/réinitialisation de mot de passe et la
+        désactivation y écrivent un instant, dans la même transaction que la
+        mutation du compte. La validation de session refuse toute session
+        ouverte AVANT cet instant, même si la révocation Redis a échoué et que
+        les clés existent encore après le retour de Redis.
+
+        PostgreSQL uniquement, comme 021/023 : la couche comptes n'existe pas
+        en SQLite (mode hérité), la migration y est enregistrée sans effet.
+        """
+        if not self.is_postgres:
+            logger.warning(
+                "Migration 024_invalidation_sessions ignorée : la couche métier est PostgreSQL "
+                "uniquement — conséquence : aucune invalidation durable des sessions en mode SQLite."
+            )
+            return
+        with connection.cursor() as cursor:
+            cursor.execute(schema_metier.SQL_024_INVALIDATION_SESSIONS)
+
     def run_migrations(self) -> None:
         """Run pending schema migrations once at startup."""
         with self.connect() as connection:
@@ -1109,6 +1131,12 @@ class SearchIndex:
                 # d'enregistrement : une migration oubliée ici ferait échouer
                 # sauvegarde/restauration (VERSION_SCHEMA_METIER absente).
                 ("023_recherche_normalisee", self._migration_023_recherche_normalisee),
+                # 024 — invalidation DURABLE des sessions (revue Lot 0a) : un
+                # changement/reset de mot de passe ou une désactivation reste
+                # effectif même si la révocation Redis échoue et que Redis
+                # revient avec ses anciennes clés. Enregistrée ici comme les
+                # autres : une migration oubliée ferait échouer sauvegarde.
+                ("024_invalidation_sessions", self._migration_024_invalidation_sessions),
             ]
 
             for version, func in migrations:

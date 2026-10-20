@@ -166,8 +166,9 @@ def desactiver_utilisateur(index: Any, identifiant: str) -> dict[str, Any]:  # n
     with index.connect() as connexion:
         with connexion.cursor() as cursor:
             cursor.execute(
-                "UPDATE utilisateur SET actif = false WHERE identifiant = %s RETURNING id_utilisateur",
-                ((identifiant or "").strip(),),
+                "UPDATE utilisateur SET actif = false, sessions_invalidees_le = %s "
+                "WHERE identifiant = %s RETURNING id_utilisateur",
+                (_maintenant(), (identifiant or "").strip()),
             )
             ligne = cursor.fetchone()
             if ligne is None:
@@ -193,8 +194,9 @@ def reinitialiser_mot_de_passe(index: Any, identifiant: str, mot_de_passe: str) 
         with connexion.cursor() as cursor:
             cursor.execute(
                 "UPDATE utilisateur SET empreinte_mot_de_passe = %s, mot_de_passe_modifie_le = now(), "
-                "doit_changer_mot_de_passe = true WHERE identifiant = %s RETURNING id_utilisateur",
-                (empreinte_mot_de_passe(mot_de_passe), (identifiant or "").strip()),
+                "sessions_invalidees_le = %s, doit_changer_mot_de_passe = true "
+                "WHERE identifiant = %s RETURNING id_utilisateur",
+                (empreinte_mot_de_passe(mot_de_passe), _maintenant(), (identifiant or "").strip()),
             )
             ligne = cursor.fetchone()
             if ligne is None:
@@ -460,8 +462,8 @@ def profil_utilisateur(index: Any, id_utilisateur: int) -> dict[str, Any] | None
     with index.connect() as connexion:
         with connexion.cursor() as cursor:
             cursor.execute(
-                "SELECT id_utilisateur, identifiant, nom, role, actif, doit_changer_mot_de_passe "
-                "FROM utilisateur WHERE id_utilisateur = %s",
+                "SELECT id_utilisateur, identifiant, nom, role, actif, doit_changer_mot_de_passe, "
+                "sessions_invalidees_le FROM utilisateur WHERE id_utilisateur = %s",
                 (int(id_utilisateur),),
             )
             ligne = cursor.fetchone()
@@ -474,6 +476,10 @@ def profil_utilisateur(index: Any, id_utilisateur: int) -> dict[str, Any] | None
         "role": str(ligne[3]),
         "actif": bool(ligne[4]),
         "doit_changer_mot_de_passe": bool(ligne[5]),
+        # Autorité DURABLE d'invalidation : les sessions ouvertes avant cet
+        # instant sont refusées même si leur clé Redis existe encore (revue
+        # Lot 0a, blocage 1). NULL = compte jamais invalidé.
+        "sessions_invalidees_le": ligne[6],
     }
 
 
@@ -517,8 +523,9 @@ def changer_mot_de_passe(
                 raise HTTPException(status_code=401, detail="Mot de passe actuel incorrect.")
             cursor.execute(
                 "UPDATE utilisateur SET empreinte_mot_de_passe = %s, mot_de_passe_modifie_le = now(), "
-                "doit_changer_mot_de_passe = false WHERE id_utilisateur = %s",
-                (empreinte_mot_de_passe(nouveau_mot_de_passe), int(id_utilisateur)),
+                "sessions_invalidees_le = %s, doit_changer_mot_de_passe = false "
+                "WHERE id_utilisateur = %s",
+                (empreinte_mot_de_passe(nouveau_mot_de_passe), _maintenant(), int(id_utilisateur)),
             )
     LOGGER.info("Mot de passe changé par « %s ».", ligne[0])
     return {"identifiant": str(ligne[0]), "doit_changer_mot_de_passe": False}

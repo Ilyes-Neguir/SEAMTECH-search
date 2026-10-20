@@ -20,9 +20,15 @@ Clés :
   pour « Déconnecter tous mes appareils » et la révocation après changement
   de mot de passe / de rôle.
 
-Aucune migration SQL n'est nécessaire : Redis suffit (mission Lot 0a). Le
-``sid`` n'est jamais journalisé ; il n'est pas stocké en clair ailleurs que
+Le ``sid`` n'est jamais journalisé ; il n'est pas stocké en clair ailleurs que
 dans Redis, qui est déjà le magasin d'état.
+
+Redis n'est PAS la seule autorité d'invalidation : un changement ou une
+réinitialisation de mot de passe, ou une désactivation écrit ``utilisateur.sessions_invalidees_le``
+(migration 024, PostgreSQL) dans la transaction de la mutation. Si la
+révocation Redis échoue (503) puis que Redis revient avec ses clés, la
+validation de session refuse quand même les sessions ouvertes avant cet
+instant — voir ``comptes.routes._session_sid``.
 """
 
 from __future__ import annotations
@@ -445,14 +451,12 @@ def revoquer_toutes_sessions_pour_identifiant(
 ) -> int:
     """Fonction interne réutilisable (mot de passe, rôle, désactivation).
 
-    Elle ne lève pas : un changement de mot de passe doit aboutir même si
-    Redis est momentanément indisponible — mais l'appelant API, lui, décide
-    explicitement quoi renvoyer. Le retour ``0`` signifie « rien révoqué ou
-    magasin indisponible » ; le journal dit lequel.
+    Fail-closed : Redis indisponible **lève** ``SessionStoreIndisponible``.
+    Le retour ``0`` ne veut donc dire qu'une chose — « confirmé : aucune
+    session vivante à révoquer » — et ne peut pas être confondu avec « je n'ai
+    pas pu joindre Redis » (revue Lot 0a, blocage 1). L'appelant qui veut
+    tolérer la panne doit l'attraper explicitement ; s'il l'ignore, la
+    protection durable reste la colonne ``utilisateur.sessions_invalidees_le``.
     """
-    try:
-        magasin = SessionStore(redis_url, idle_minutes=idle_minutes, session_hours=session_hours)
-        return magasin.revoquer_toutes_sessions(user_id)
-    except SessionStoreIndisponible as exc:
-        LOGGER.error("Révocation globale impossible (Redis) pour l'utilisateur %s : %s", user_id, exc)
-        return 0
+    magasin = SessionStore(redis_url, idle_minutes=idle_minutes, session_hours=session_hours)
+    return magasin.revoquer_toutes_sessions(user_id)

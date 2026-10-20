@@ -15,7 +15,14 @@ Ce que ces tests PROUVENT, sur un Redis RÉEL et une base PostgreSQL réelle :
    silencieux ;
 6. Cache-Control: no-store sur les réponses de session ;
 7. GET sur les endpoints de déconnexion ⇒ 405 ;
-8. un changement de mot de passe révoque toutes les sessions ouvertes.
+8. un changement de mot de passe révoque toutes les sessions ouvertes ;
+9. quand Redis refuse la révocation au moment exact de la mutation (ACL réelle
+   `-del -srem`, aucun double), le changement/reset de mot de passe et la
+   désactivation restent DURABLES : les clés Redis subsistent, puis les anciens
+   ``sid`` répondent 401 grâce à ``utilisateur.sessions_invalidees_le``
+   (migration 024), et le comportement documenté du nouveau mot de passe est
+   vérifié. ``revoquer_toutes_sessions_pour_identifiant()`` lève au lieu de
+   rendre ``0`` quand Redis est injoignable.
 
 Marqueurs : ``session_redis`` (Redis réel) et ``postgres`` (comptes réels).
 L'étape CI dédiée exige ``passed > 0`` et ``skipped == 0``.
@@ -360,3 +367,187 @@ def test_desactivation_revoque_les_sessions_redis(base_sessions: dict[str, Any])
     assert desactivation.status_code == 200, desactivation.text
     assert desactivation.json()["sessions_redis_revoquees"] >= 1
     assert client.get("/auth/session", headers=_entetes(sid_imrane)).status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# 9. Panne de Redis À LA FRONTIÈRE mutation → révocation (revue Lot 0a)
+# ---------------------------------------------------------------------------
+# Ces tests ne simulent RIEN : ils utilisent un serveur Redis RÉEL sur lequel un
+# utilisateur ACL réel a le droit de lire et d'écrire, mais PAS de supprimer
+# (`-del -srem`), exactement ce que fait une révocation. Le magasin de sessions
+# fonctionne donc pour l'authentification, échoue au moment de révoquer (503),
+# et les clés restent en place — l'état exact laissé par une panne de Redis
+# suivie d'un redémarrage sans perte. La base PostgreSQL, elle aussi réelle,
+# doit alors faire échouer les anciens SID par elle-même.
+
+
+def _redis_sans_revocation(redis_url: str) -> tuple[str, str]:
+    """URL d'un utilisateur ACL réel : lecture/écriture oui, suppression NON.
+
+    Aucun double du magasin : c'est le serveur Redis qui refuse `DEL`/`SREM`
+    avec une vraie erreur `NOPERM`, que `SessionStore` traduit en
+    ``SessionStoreIndisponible`` (→ 503).
+    """
+    from urllib.parse import quote, urlsplit, urlunsplit
+
+    import redis
+
+    admin = redis.from_url(redis_url)
+    nom = f"e2e-sans-revocation-{uuid.uuid4().hex[:10]}"
+    secret = f"acl-{uuid.uuid4().hex}"
+    admin.execute_command(
+        "ACL", "SETUSER", nom, "reset", "on", f">{secret}", "~*", "+@all", "-del", "-srem",
+    )
+    morceaux = urlsplit(redis_url)
+    netloc = f"{nom}:{quote(secret, safe='')}@{morceaux.hostname or '127.0.0.1'}:{morceaux.port or 6379}"
+    url = urlunsplit((morceaux.scheme or "redis", netloc, morceaux.path, morceaux.query, ""))
+    return url, nom
+
+
+def _liberer_acl(redis_url: str, nom: str) -> None:
+    import redis
+
+    redis.from_url(redis_url).execute_command("ACL", "DELUSER", nom)
+
+
+def _redis_brut(redis_url: str) -> Any:  # noqa: ANN401 - client redis réel
+    import redis
+
+    return redis.from_url(redis_url, decode_responses=True)
+
+
+def test_helper_revocation_ne_confond_pas_panne_et_zero() -> None:
+    """``0`` ne doit JAMAIS vouloir dire « Redis injoignable » (revue, blocage 1).
+
+    L'ancien helper avalait l'indisponibilité et renvoyait ``0`` : un appelant
+    pouvait lire « rien à révoquer, confirmé ». Il lève désormais, et ``0``
+    n'est plus rendu que par une révocation réellement exécutée.
+    """
+    from seamtech_search.sessions_redis import revoquer_toutes_sessions_pour_identifiant
+
+    with pytest.raises(SessionStoreIndisponible):
+        revoquer_toutes_sessions_pour_identifiant("redis://127.0.0.1:1/0", 1)
+
+
+def test_changement_mot_de_passe_survit_a_une_panne_redis(base_sessions: dict[str, Any]) -> None:
+    """Mot de passe changé + révocation impossible ⇒ anciens SID morts quand même."""
+    admin_client = _client(base_sessions)
+    premiere = _connexion(admin_client)
+    s1, s2 = premiere["sid"], _connexion(admin_client)["sid"]
+    # Session interne HISTORIQUE (en-têtes X-SEAMTECH-SESSION + jeton) : elle
+    # ne vit pas dans Redis. Elle doit elle aussi cesser de fonctionner, sans
+    # dépendre de la révocation Redis qui va échouer.
+    entetes_historique = {
+        "X-SEAMTECH-TOKEN": JETON_SERVICE,
+        "X-SEAMTECH-SESSION": str(premiere["id_session"]),
+        "X-SEAMTECH-SESSION-JETON": str(premiere["jeton_session"]),
+    }
+    assert admin_client.get("/auth/session", headers=entetes_historique).status_code == 200
+
+    url_refus, nom_acl = _redis_sans_revocation(base_sessions["redis_url"])
+    try:
+        client_panne = _client(base_sessions, redis_url=url_refus)
+        changement = client_panne.post(
+            "/auth/mot-de-passe",
+            json={"mot_de_passe_actuel": "Secret!2026", "nouveau_mot_de_passe": "Nouveau!2026"},
+            headers=_entetes(s1),
+        )
+        # 503 : la révocation Redis n'a PAS eu lieu, l'API ne prétend pas le contraire.
+        assert changement.status_code == 503, changement.text
+        assert "indisponible" in changement.json()["detail"].lower()
+    finally:
+        _liberer_acl(base_sessions["redis_url"], nom_acl)
+
+    # Les clés Redis sont TOUJOURS là : c'est la panne qu'on vient de provoquer.
+    brut = _redis_brut(base_sessions["redis_url"])
+    assert brut.exists(f"seamtech:session:{s1}")
+    assert brut.exists(f"seamtech:session:{s2}")
+
+    # Redis « revenu » (client normal) : la BASE invalide les sessions d'avant
+    # le changement, sans dépendre d'une quelconque révocation Redis.
+    apres = _client(base_sessions)
+    for sid in (s1, s2):
+        refus = apres.get("/auth/session", headers=_entetes(sid))
+        assert refus.status_code == 401, refus.text
+        assert "invalidée" in refus.json()["detail"].lower()
+
+    # La session interne historique est morte elle aussi : sa révocation SQL a
+    # été acquise AVANT la tentative Redis (dans la même requête).
+    historique_apres = apres.get("/auth/session", headers=entetes_historique)
+    assert historique_apres.status_code == 401, historique_apres.text
+
+    # Le mot de passe a bien changé : l'ancien est refusé, le nouveau ouvre.
+    ancien = apres.post(
+        "/auth/connexion",
+        json={"identifiant": "imrane", "mot_de_passe": "Secret!2026"},
+        headers=_entetes(),
+    )
+    assert ancien.status_code == 401, ancien.text
+    nouvelle = _connexion(apres, mot_de_passe="Nouveau!2026")
+    assert apres.get("/auth/session", headers=_entetes(nouvelle["sid"])).status_code == 200
+
+
+def test_reinitialisation_admin_survit_a_une_panne_redis(base_sessions: dict[str, Any]) -> None:
+    """Réinitialisation par un administrateur + révocation impossible ⇒ ancien SID mort."""
+    admin_client = _client(base_sessions)
+    sid_imrane = _connexion(admin_client)["sid"]
+    sid_admin = _connexion(admin_client, "chef", "Chef!2026")["sid"]
+
+    url_refus, nom_acl = _redis_sans_revocation(base_sessions["redis_url"])
+    try:
+        client_panne = _client(base_sessions, redis_url=url_refus)
+        reset = client_panne.post(
+            "/auth/utilisateurs/imrane/mot-de-passe",
+            json={"mot_de_passe": "Provisoire!2026"},
+            headers=_entetes(sid_admin),
+        )
+        assert reset.status_code == 503, reset.text
+    finally:
+        _liberer_acl(base_sessions["redis_url"], nom_acl)
+
+    brut = _redis_brut(base_sessions["redis_url"])
+    assert brut.exists(f"seamtech:session:{sid_imrane}"), (
+        "la révocation a échoué : la clé doit encore exister avant le retour du service"
+    )
+
+    apres = _client(base_sessions)
+    refus = apres.get("/auth/session", headers=_entetes(sid_imrane))
+    assert refus.status_code == 401, refus.text
+
+    # Le mot de passe provisoire fonctionne et impose son changement.
+    provisoire = _connexion(apres, mot_de_passe="Provisoire!2026")
+    assert apres.get("/auth/session", headers=_entetes(provisoire["sid"])).json()[
+        "doit_changer_mot_de_passe"
+    ] is True
+
+
+def test_desactivation_survit_a_une_panne_redis(base_sessions: dict[str, Any]) -> None:
+    """Désactivation + révocation impossible ⇒ ancien SID mort, connexion refusée."""
+    admin_client = _client(base_sessions)
+    sid_imrane = _connexion(admin_client)["sid"]
+    sid_admin = _connexion(admin_client, "chef", "Chef!2026")["sid"]
+
+    url_refus, nom_acl = _redis_sans_revocation(base_sessions["redis_url"])
+    try:
+        client_panne = _client(base_sessions, redis_url=url_refus)
+        desactivation = client_panne.post(
+            "/auth/utilisateurs/imrane/desactiver", headers=_entetes(sid_admin)
+        )
+        assert desactivation.status_code == 503, desactivation.text
+    finally:
+        _liberer_acl(base_sessions["redis_url"], nom_acl)
+
+    brut = _redis_brut(base_sessions["redis_url"])
+    assert brut.exists(f"seamtech:session:{sid_imrane}")
+
+    apres = _client(base_sessions)
+    refus = apres.get("/auth/session", headers=_entetes(sid_imrane))
+    assert refus.status_code == 401, refus.text
+    assert "désactivé" in refus.json()["detail"].lower()
+
+    connexion = apres.post(
+        "/auth/connexion",
+        json={"identifiant": "imrane", "mot_de_passe": "Secret!2026"},
+        headers=_entetes(),
+    )
+    assert connexion.status_code == 401, connexion.text
