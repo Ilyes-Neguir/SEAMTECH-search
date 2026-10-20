@@ -1430,7 +1430,7 @@ AS $fonction$
                 regexp_replace(
                     translate(
                         public.unaccent('public.unaccent'::regdictionary, coalesce(t, '')),
-                        E'\\u00a0\\u202f\\u2007\\u2009',
+                        E'\\u00a0\\u202f\\u2007\\u2009'',
                         '    '
                     ),
                     '[[:space:]]+', ' ', 'g'
@@ -1464,7 +1464,7 @@ AS $fonction$
                 regexp_replace(
                     translate(
                         coalesce(t, ''),
-                        'ÀÁÂÃÄÅÈÉÊËÌÍÎÏÒÓÔÕÖÙÚÛÜÝàáâãäåèéêëìíîïòóôöõùúûüýÿÇçÑñØøŸĀāĂăĄąĆćĈĉĊċČčĎďĐđĒēĔĕĖėĘęĚěĜĝĞğĠġĢģĤĥĦħĨĩĪīĬĭĮįİıĴĵĶķĹĺĻļĽľĿŀŁłŃńŅņŇňŌōŎŏŐőŔŕŖŗŘřŚśŜŝŞşŠšŢţŤťŦŧŨũŪūŬŭŮůŰűŲųŴŵŶŷŹźŻżŽž' || E'\u00a0\u202f\u2007\u2009',
+                        'ÀÁÂÃÄÅÈÉÊËÌÍÎÏÒÓÔÕÖÙÚÛÜÝàáâãäåèéêëìíîïòóôöõùúûüýÿÇçÑñØøŸĀāĂăĄąĆćĈĉĊċČčĎďĐđĒēĔĕĖėĘęĚěĜĝĞğĠġĢģĤĥĦħĨĩĪīĬĭĮįİıĴĵĶķĹĺĻļĽľĿŀŁłŃńŅņŇňŌōŎŏŐőŔŕŖŗŘřŚśŜŝŞşŠšŢţŤťŦŧŨũŪūŬŭŮůŰűŲųŴŵŶŷŹźŻżŽž' ||E'\u00a0\u202f\u2007\u2009',
                         'AAAAAAEEEEIIIIOOOOOUUUUYaaaaaaeeeeiiiiooooouuuuyyCcNnOoYAaAaAaCcCcCcCcDdDdEeEeEeEeEeGgGgGgGgHhHhIiIiIiIiIiJjKkLlLlLlLlLlNnNnNnOoOoOoRrRrRrSsSsSsSsTtTtTtUuUuUuUuUuUuWwYyZzZzZz    '
                     ),
                     '[[:space:]]+', ' ', 'g'
@@ -1567,7 +1567,7 @@ AS $fonction$
                 regexp_replace(
                     translate(
                         public.unaccent('public.unaccent'::regdictionary, coalesce(t, '')),
-                        E'\\u00a0\\u202f\\u2007\\u2009',
+                        E'\\u00a0\\u202f\\u2007\\u2009'',
                         '    '
                     ),
                     '[[:space:]]+', ' ', 'g'
@@ -1597,7 +1597,7 @@ AS $fonction$
                 regexp_replace(
                     translate(
                         coalesce(t, ''),
-                        'ÀÁÂÃÄÅÈÉÊËÌÍÎÏÒÓÔÕÖÙÚÛÜÝàáâãäåèéêëìíîïòóôöõùúûüýÿÇçÑñØøŸĀāĂăĄąĆćĈĉĊċČčĎďĐđĒēĔĕĖėĘęĚěĜĝĞğĠġĢģĤĥĦħĨĩĪīĬĭĮįİıĴĵĶķĹĺĻļĽľĿŀŁłŃńŅņŇňŌōŎŏŐőŔŕŖŗŘřŚśŜŝŞşŠšŢţŤťŦŧŨũŪūŬŭŮůŰűŲųŴŵŶŷŹźŻżŽž' || E'\u00a0\u202f\u2007\u2009',
+                        'ÀÁÂÃÄÅÈÉÊËÌÍÎÏÒÓÔÕÖÙÚÛÜÝàáâãäåèéêëìíîïòóôöõùúûüýÿÇçÑñØøŸĀāĂăĄąĆćĈĉĊċČčĎďĐđĒēĔĕĖėĘęĚěĜĝĞğĠġĢģĤĥĦħĨĩĪīĬĭĮįİıĴĵĶķĹĺĻļĽľĿŀŁłŃńŅņŇňŌōŎŏŐőŔŕŖŗŘřŚśŜŝŞşŠšŢţŤťŦŧŨũŪūŬŭŮůŰűŲųŴŵŶŷŹźŻżŽž' ||E'\u00a0\u202f\u2007\u2009',
                             'AAAAAAEEEEIIIIOOOOOUUUUYaaaaaaeeeeiiiiooooouuuuyyCcNnOoYAaAaAaCcCcCcCcDdDdEeEeEeEeEeGgGgGgGgHhHhIiIiIiIiIiJjKkLlLlLlLlLlNnNnNnOoOoOoRrRrRrSsSsSsSsTtTtTtUuUuUuUuUuUuWwYyZzZzZz    '
                         ),
                         '[[:space:]]+', ' ', 'g'
