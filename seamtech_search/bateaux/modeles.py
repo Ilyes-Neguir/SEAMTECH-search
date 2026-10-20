@@ -565,5 +565,5 @@ def expand_query_with_boat_aliases(query: str, cursor: Any, nom_base: str) -> st
                     expansions.append(alias)
 
     if expansions:
-        return query + " " + " ".join(expansions)
+        return query + " | " + " | ".join(expansions)
     return query

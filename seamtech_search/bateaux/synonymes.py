@@ -141,7 +141,7 @@ def _expand_query_with_synonymes(
                 expansions.append(alias)
 
     if expansions:
-        resultat = resultat + " " + " ".join(expansions)
+        resultat = resultat + " | " + " | ".join(expansions)
     return resultat
 
 

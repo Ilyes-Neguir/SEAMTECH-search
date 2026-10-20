@@ -1037,7 +1037,22 @@ class SearchIndex:
                     "repli translate() latin-1 + étendu A ; couverture plus étroite.",
                     exc,
                 )
-                cursor.execute(schema_metier.SQL_023_FONCTION_REPLI)
+                cursor.execute("SAVEPOINT seamtech_023_repli")
+                try:
+                    cursor.execute(schema_metier.SQL_023_FONCTION_REPLI)
+                    cursor.execute("RELEASE SAVEPOINT seamtech_023_repli")
+                except Exception as exc_repli:
+                    cursor.execute("ROLLBACK TO SAVEPOINT seamtech_023_repli")
+                    cursor.execute("RELEASE SAVEPOINT seamtech_023_repli")
+                    logger.error(
+                        "023 repli diagnostic — échec SQLSTATE=%s pos=%s primary=%r stmt=%.300r — original: %s",
+                        getattr(exc_repli, "pgcode", None),
+                        getattr(getattr(exc_repli, "diag", None), "statement_position", None),
+                        getattr(getattr(exc_repli, "diag", None), "message_primary", None),
+                        schema_metier.SQL_023_FONCTION_REPLI[:300],
+                        exc_repli,
+                    )
+                    raise RuntimeError(f"023 repli échoué: {exc_repli}") from exc_repli
             cursor.execute("SAVEPOINT seamtech_023_trgm")
             try:
                 cursor.execute(schema_metier.SQL_023_INDEX)
