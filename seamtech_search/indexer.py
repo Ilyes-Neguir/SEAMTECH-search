@@ -1146,9 +1146,12 @@ class SearchIndex:
                 except Exception:
                     exts_state = "unknown"
                 for idx_stmt, stmt in enumerate(stmts, start=1):
-                    # Si pg_trgm indisponible, saute les index qui en dépendent (gin_trgm_ops) — ne doit pas échouer
+                    # Si pg_trgm indisponible, saute CREATE EXTENSION pg_trgm et les index qui en dépendent (gin_trgm_ops) — ne doit pas échouer
                     if not pg_trgm_disponible and "gin_trgm_ops" in stmt:
                         logger.warning("Index 026 %d/%d omis (pg_trgm indisponible) : %.120r", idx_stmt, len(stmts), stmt[:120])
+                        continue
+                    if not pg_trgm_disponible and "CREATE EXTENSION" in stmt.upper() and "PG_TRGM" in stmt.upper():
+                        logger.warning("CREATE EXTENSION pg_trgm %d/%d omis (pg_trgm indisponible) : %.120r", idx_stmt, len(stmts), stmt[:120])
                         continue
                     try:
                         cursor.execute(stmt)
