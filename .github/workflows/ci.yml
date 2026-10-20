@@ -1444,7 +1444,15 @@ jobs:
       #   * cookies effacés + Clear-Site-Data malgré la panne (déconnexion locale) ;
       #   * 503 fail-closed sur les routes protégées pendant la panne.
       # Le service `redis` partagé du job (6379) n'est jamais touché.
+      # La preuve « panne Redis » ne dépend d'AUCUNE étape live précédente : elle
+      # monte son propre Redis (6380) et joue une seule spec. Sans condition, un
+      # flaky d'une étape live SANS RAPPORT la faisait sauter — donc la garde
+      # `expected=1, flaky=0, skipped=0` n'était jamais évaluée et le run ne
+      # portait aucune preuve (observé sur le run 39423041910). On l'exécute
+      # donc même si une étape antérieure a échoué : le job reste rouge à cause
+      # de cette étape, et la preuve de panne existe dans tous les cas.
       - name: Run E2E panne Redis réelle (logout fail-closed)
+        if: ${{ !cancelled() }}
         working-directory: frontend
         env:
           SEAMTECH_E2E_PANNE_REDIS: "1"
