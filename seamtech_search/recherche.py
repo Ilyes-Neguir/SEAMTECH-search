@@ -964,6 +964,8 @@ def rechercher_fiches(
                 _normaliser_separateurs(requete.strip()), _charger_synonymes(cursor, nom_base)
             )
             # Lot 2 — expansion synonymes voilerie (search_synonyms) + aliases bateau (dégradable, bases pré-026)
+            # Utilise un SAVEPOINT pour ne pas laisser la transaction en état aborted si les tables 026 n'existent pas
+            cursor.execute("SAVEPOINT recherche_lot2_expansion")
             try:
                 from seamtech_search.bateaux.modeles import expand_query_with_boat_aliases
                 from seamtech_search.bateaux.recherche_etendue import normaliser_requete_etendue
@@ -978,7 +980,10 @@ def rechercher_fiches(
                 q_norm_slash = normaliser_requete_etendue(texte)
                 if q_norm_slash != texte.strip() and q_norm_slash not in texte:
                     texte = texte + " OR " + q_norm_slash
+                cursor.execute("RELEASE SAVEPOINT recherche_lot2_expansion")
             except Exception:
+                cursor.execute("ROLLBACK TO SAVEPOINT recherche_lot2_expansion")
+                cursor.execute("RELEASE SAVEPOINT recherche_lot2_expansion")
                 # Bases pré-026 ou tables manquantes → recherche reste fonctionnelle
                 pass
 
