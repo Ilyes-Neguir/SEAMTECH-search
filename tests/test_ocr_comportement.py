@@ -989,7 +989,7 @@ def test_version_schema_et_tables() -> None:
     assert VERSION_SCHEMA_METIER == "026_boat_models_and_aliases"
     # 019-024 n'ajoutent aucune table (024 = colonne invalidation) ;
     # 025 réservée ; 026 ajoute 4 tables boat_models etc. → 37.
-    assert len(TABLES_METIER) == 37
+    assert len(TABLES_METIER) == 38
     assert "ocr_etage3" in TABLES_METIER
     assert "boat_models" in TABLES_METIER
     assert "search_synonyms" in TABLES_METIER

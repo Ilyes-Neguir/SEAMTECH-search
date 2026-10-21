@@ -1098,13 +1098,21 @@ class SearchIndex:
         with connection.cursor() as cursor:
             cursor.execute(schema_metier.SQL_024_INVALIDATION_SESSIONS)
 
-    def _migration_025_placeholder(self, connection: Any) -> None:
-        """025 réservée (continuité de numérotation) — no-op sur les deux backends."""
-        if self.is_postgres:
-            with connection.cursor() as cursor:
-                cursor.execute(schema_metier.SQL_025_PLACEHOLDER)
-        else:
-            logger.info("Migration 025_placeholder ignorée en mode SQLite — PostgreSQL uniquement.")
+    def _migration_025_audit_logs(self, connection: Any) -> None:
+        """025 — journal d'audit nominatif (Lot 0b, P0) : persistant, sans secret.
+
+        PostgreSQL uniquement (couche métier) : sur SQLite, enregistrée sans effet.
+        Préserve audit_log historique (connexion_refusee) : deux tables coexistent.
+        Idempotent via IF NOT EXISTS, testée sur base réelle depuis schéma précédent.
+        """
+        if not self.is_postgres:
+            logger.warning(
+                "Migration 025_audit_logs ignorée : la couche métier est PostgreSQL "
+                "uniquement — conséquence : aucun journal d'audit nominatif en mode SQLite."
+            )
+            return
+        with connection.cursor() as cursor:
+            cursor.execute(schema_metier.SQL_025_AUDIT_LOGS)
 
     def _migration_026_boat_models_and_aliases(self, connection: Any) -> None:
         """026 — référentiel unique des modèles de bateaux & alias + synonymes voilerie.
@@ -1295,7 +1303,7 @@ class SearchIndex:
                 # sauvegarde/restauration (VERSION_SCHEMA_METIER absente).
                 ("023_recherche_normalisee", self._migration_023_recherche_normalisee),
                 ("024_invalidation_sessions", self._migration_024_invalidation_sessions),
-                ("025_placeholder", self._migration_025_placeholder),
+                ("025_audit_logs", self._migration_025_audit_logs),
                 ("026_boat_models_and_aliases", self._migration_026_boat_models_and_aliases),
             ]
 

@@ -89,8 +89,9 @@ def test_migrations_sur_base_vide(base_metier: dict[str, Any]) -> None:
     # +1 (016 : session_ui — la 016 n'ajoute QUE cette table, les colonnes
     # d'attribution et les index ne créent rien) = 32,
     # +1 (017 : ocr_etage3 — staging OCR, jamais chunk/document) = 33,
-    # +4 (026 : boat_models, boat_model_aliases, boat_model_merge_history, search_synonyms) = 37.
-    assert len(schema_metier.TABLES_METIER) == 37
+    # +1 (025 : audit_logs) = 34,
+    # +4 (026 : boat_models, boat_model_aliases, boat_model_merge_history, search_synonyms) = 38.
+    assert len(schema_metier.TABLES_METIER) == 38
     print(f"\n[mesure] migrations 006-009 sur base vide : {base_metier['duree_migrations_s']:.2f} s")
 
 
