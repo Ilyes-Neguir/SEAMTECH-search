@@ -9,6 +9,8 @@
 //
 // Only import this from client components ("use client"); it touches window.
 
+import { withCsrf } from "@/lib/csrf"
+
 const LOGIN_PATH = "/login"
 
 function isSafeNextPath(candidate: string): boolean {
@@ -31,9 +33,13 @@ export function resolveNextPath(raw: string | null): string {
   return isSafeNextPath(raw) ? raw : "/"
 }
 
-/** fetch() that redirects to /login when the server says the session is gone. */
+/**
+ * fetch() that redirects to /login when the server says the session is gone,
+ * and that adds the CSRF header on every mutating request (Lot 0a). Without
+ * this, a POST would be rejected with 403 by `proxy.ts`.
+ */
 export async function authedFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
-  const response = await fetch(input, init)
+  const response = await fetch(input, withCsrf(init))
   if (response.status === 401) redirectToLogin()
   return response
 }

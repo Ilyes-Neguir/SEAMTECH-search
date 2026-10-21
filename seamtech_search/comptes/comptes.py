@@ -32,6 +32,7 @@ from ..audit import record_audit_event
 from .securite import (
     empreinte_jeton,
     empreinte_mot_de_passe,
+    etat_identifiants,
     nouveau_jeton,
     verifier_mot_de_passe,
 )
@@ -40,7 +41,7 @@ LOGGER = logging.getLogger("seamtech_search.comptes")
 
 ROLES = ("operateur", "administrateur")
 ROLE_DEFAUT = "operateur"
-DUREE_SESSION_DEFAUT_H = 12
+DUREE_SESSION_DEFAUT_H = 8
 # Verrouillage des connexions : 5 échecs sur un identifiant en 5 minutes ⇒ 429
 # pendant 5 minutes. Demandé « souhaitable » par la mission, et donc implémenté.
 #
@@ -166,8 +167,9 @@ def desactiver_utilisateur(index: Any, identifiant: str) -> dict[str, Any]:  # n
     with index.connect() as connexion:
         with connexion.cursor() as cursor:
             cursor.execute(
-                "UPDATE utilisateur SET actif = false WHERE identifiant = %s RETURNING id_utilisateur",
-                ((identifiant or "").strip(),),
+                "UPDATE utilisateur SET actif = false, sessions_invalidees_le = %s "
+                "WHERE identifiant = %s RETURNING id_utilisateur",
+                (_maintenant(), (identifiant or "").strip()),
             )
             ligne = cursor.fetchone()
             if ligne is None:
@@ -193,8 +195,9 @@ def reinitialiser_mot_de_passe(index: Any, identifiant: str, mot_de_passe: str) 
         with connexion.cursor() as cursor:
             cursor.execute(
                 "UPDATE utilisateur SET empreinte_mot_de_passe = %s, mot_de_passe_modifie_le = now(), "
-                "doit_changer_mot_de_passe = true WHERE identifiant = %s RETURNING id_utilisateur",
-                (empreinte_mot_de_passe(mot_de_passe), (identifiant or "").strip()),
+                "sessions_invalidees_le = %s, doit_changer_mot_de_passe = true "
+                "WHERE identifiant = %s RETURNING id_utilisateur",
+                (empreinte_mot_de_passe(mot_de_passe), _maintenant(), (identifiant or "").strip()),
             )
             ligne = cursor.fetchone()
             if ligne is None:
@@ -203,8 +206,17 @@ def reinitialiser_mot_de_passe(index: Any, identifiant: str, mot_de_passe: str) 
                 "UPDATE session_ui SET revoque_le = now() WHERE id_utilisateur = %s AND revoque_le IS NULL",
                 (int(ligne[0]),),
             )
-    LOGGER.info("Mot de passe de « %s » réinitialisé (changement forcé).", identifiant)
-    return {"identifiant": identifiant, "doit_changer_mot_de_passe": True}
+            revoquees = int(cursor.rowcount)
+    LOGGER.info(
+        "Mot de passe de « %s » réinitialisé (changement forcé, %d session(s) révoquée(s)).",
+        identifiant,
+        revoquees,
+    )
+    return {
+        "identifiant": identifiant,
+        "doit_changer_mot_de_passe": True,
+        "sessions_revoquees": revoquees,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -312,7 +324,8 @@ def verifier_identifiants(
     with index.connect() as connexion:
         with connexion.cursor() as cursor:
             cursor.execute(
-                "SELECT id_utilisateur, nom, role, actif, empreinte_mot_de_passe, doit_changer_mot_de_passe "
+                "SELECT id_utilisateur, nom, role, actif, empreinte_mot_de_passe, doit_changer_mot_de_passe, "
+                "mot_de_passe_modifie_le, sessions_invalidees_le "
                 "FROM utilisateur WHERE identifiant = %s",
                 (identifiant,),
             )
@@ -322,6 +335,13 @@ def verifier_identifiants(
                 LOGGER.warning("Connexion refusée pour « %s » (échec journalisé dans audit_log).", identifiant)
                 raise HTTPException(status_code=401, detail="Identifiant ou mot de passe incorrect.")
             id_utilisateur = int(ligne[0])
+            # ÉTAT D'IDENTIFIANTS CAPTURÉ ICI, dans la même lecture que
+            # l'empreinte qui vient d'être vérifiée (revue Lot 0a, blocage 1).
+            # La session portera CETTE valeur : si un changement de mot de
+            # passe est validé entre cette vérification et la création de la
+            # session, l'état courant ne correspondra plus et la session sera
+            # refusée — même si son ``issued_at`` est postérieur au changement.
+            etat = etat_identifiants(ligne[4], ligne[6], ligne[7], bool(ligne[3]))
             cursor.execute("UPDATE utilisateur SET derniere_connexion = now() WHERE id_utilisateur = %s", (id_utilisateur,))
     _noter_connexion(index, identifiant, str(ligne[2]), adresse)
     LOGGER.info("Connexion de « %s » (rôle %s).", identifiant, ligne[2])
@@ -331,6 +351,10 @@ def verifier_identifiants(
         "nom": ligne[1],
         "role": str(ligne[2]),
         "doit_changer_mot_de_passe": bool(ligne[5]),
+        # Génération d'identifiants au moment EXACT de la vérification. Elle
+        # n'est pas un secret exploitable (dérivée de l'empreinte scrypt) mais
+        # ne sort jamais de l'API : les routes ne la renvoient pas.
+        "etat_identifiants": etat,
     }
 
 
@@ -339,46 +363,108 @@ def ouvrir_session(
     id_utilisateur: int,
     duree_heures: int = DUREE_SESSION_DEFAUT_H,
     user_agent: str | None = None,
+    *,
+    etat_identifiants_capture: str | None = None,
 ) -> dict[str, Any]:
     """Ouvre une session nominative et rend son jeton EN CLAIR — une seule fois.
 
     Le jeton n'est pas stocké : seule son empreinte SHA-256 l'est. Il ne peut
     donc pas être relu depuis la base, seulement présenté de nouveau par le
     client — c'est le principe même d'un jeton de session.
+
+    ``etat_identifiants_capture`` vient de ``verifier_identifiants()`` et il est
+    IMPÉRATIF de le transmettre sur le chemin de connexion : sans lui, la
+    fonction relit l'état au moment de l'INSERT, et une réinitialisation
+    validée entre la vérification du mot de passe et cet INSERT serait
+    contournée (le jeton serait lié à l'état NOUVEAU alors qu'il a été obtenu
+    avec l'ANCIEN mot de passe). Le défaut ``None`` ne sert qu'aux appelants
+    hors connexion (outillage, tests) : l'état est alors relu ici.
     """
     _exiger_postgres(index)
     jeton = nouveau_jeton()
     expire_le = _maintenant() + timedelta(hours=max(1, int(duree_heures)))
     with index.connect() as connexion:
         with connexion.cursor() as cursor:
+            etat = etat_identifiants_capture
+            if etat is None:
+                cursor.execute(
+                    "SELECT empreinte_mot_de_passe, mot_de_passe_modifie_le, sessions_invalidees_le, actif "
+                    "FROM utilisateur WHERE id_utilisateur = %s",
+                    (int(id_utilisateur),),
+                )
+                compte = cursor.fetchone()
+                if compte is None:
+                    raise HTTPException(status_code=401, detail="Compte inconnu.")
+                etat = etat_identifiants(compte[0], compte[1], compte[2], bool(compte[3]))
             cursor.execute(
                 "INSERT INTO session_ui (id_utilisateur, empreinte_jeton, expire_le, user_agent) "
                 "VALUES (%s, %s, %s, %s) RETURNING id_session",
-                (int(id_utilisateur), empreinte_jeton(jeton), expire_le, user_agent),
+                (
+                    int(id_utilisateur),
+                    empreinte_jeton(jeton, etat_identifiants=etat),
+                    expire_le,
+                    user_agent,
+                ),
             )
             id_session = int(cursor.fetchone()[0])
-    return {"id_session": id_session, "jeton": jeton, "expire_le": expire_le.isoformat()}
+    return {
+        "id_session": id_session,
+        "jeton": jeton,
+        "expire_le": expire_le.isoformat(),
+        "etat_identifiants": etat,
+    }
 
 
-def session_valide(index: Any, id_session: int, jeton: str) -> bool:  # noqa: ANN401
+def session_valide(
+    index: Any,  # noqa: ANN401
+    id_session: int,
+    jeton: str,
+    *,
+    inactivite_minutes: int | None = None,
+) -> bool:  # noqa: ANN401
     """La session est-elle encore valable ? (non révoquée, non expirée, jeton conforme)
 
     C'est CE contrôle qui rend une déconnexion effective : un cookie signé
     parfaitement valide ne vaut plus rien dès que ``revoque_le`` est posé.
+
+    ``inactivite_minutes`` ajoute le contrôle d'inactivité pour les appelants
+    qui le connaissent (route /auth/session). La vérité de la session du
+    NAVIGATEUR vit désormais dans Redis (Lot 0a) ; ce chemin reste le contrôle
+    des sessions internes historiques, et il ne doit pas être plus permissif.
+
+    DEPUIS LA REVUE (blocage 2) : la ligne ``session_ui`` ne suffit plus. Le
+    jeton est lié à la génération d'identifiants de son émission
+    (``empreinte_jeton(..., etat_identifiants=…)``) ; la validation recalcule
+    cette génération depuis le compte COURANT. Une session ouverte avant un
+    changement de mot de passe est donc refusée même si sa ligne n'a pas été
+    révoquée (mutation interrompue, ligne oubliée par un ancien code). Aucun
+    horodatage n'est comparé : c'est une inégalité de valeurs, insensible aux
+    horloges des répliques.
     """
     _exiger_postgres(index)
     with index.connect() as connexion:
         with connexion.cursor() as cursor:
             cursor.execute(
-                "SELECT revoque_le, expire_le, empreinte_jeton FROM session_ui WHERE id_session = %s",
+                "SELECT s.revoque_le, s.expire_le, s.empreinte_jeton, s.derniere_activite, "
+                "u.empreinte_mot_de_passe, u.mot_de_passe_modifie_le, u.sessions_invalidees_le, u.actif "
+                "FROM session_ui s JOIN utilisateur u ON u.id_utilisateur = s.id_utilisateur "
+                "WHERE s.id_session = %s",
                 (int(id_session),),
             )
             ligne = cursor.fetchone()
             if ligne is None:
                 return False
-            if ligne[0] is not None or ligne[1] is None or ligne[1] <= _maintenant():
+            maintenant = _maintenant()
+            if ligne[0] is not None or ligne[1] is None or ligne[1] <= maintenant:
                 return False
-            if ligne[2] != empreinte_jeton(jeton or ""):
+            etat = etat_identifiants(ligne[4], ligne[5], ligne[6], bool(ligne[7]))
+            if ligne[2] != empreinte_jeton(jeton or "", etat_identifiants=etat):
+                return False
+            if (
+                inactivite_minutes is not None
+                and ligne[3] is not None
+                and maintenant - ligne[3] > timedelta(minutes=max(1, int(inactivite_minutes)))
+            ):
                 return False
             cursor.execute(
                 "UPDATE session_ui SET derniere_activite = now() WHERE id_session = %s", (int(id_session),)
@@ -398,9 +484,18 @@ def correspondance_jeton(index: Any, id_session: int, jeton: str) -> bool:  # no
         return False
     with index.connect() as connexion:
         with connexion.cursor() as cursor:
-            cursor.execute("SELECT empreinte_jeton FROM session_ui WHERE id_session = %s", (int(id_session),))
+            cursor.execute(
+                "SELECT s.empreinte_jeton, u.empreinte_mot_de_passe, u.mot_de_passe_modifie_le, "
+                "u.sessions_invalidees_le, u.actif "
+                "FROM session_ui s JOIN utilisateur u ON u.id_utilisateur = s.id_utilisateur "
+                "WHERE s.id_session = %s",
+                (int(id_session),),
+            )
             ligne = cursor.fetchone()
-    return ligne is not None and ligne[0] == empreinte_jeton(jeton)
+    if ligne is None:
+        return False
+    etat = etat_identifiants(ligne[1], ligne[2], ligne[3], bool(ligne[4]))
+    return ligne[0] == empreinte_jeton(jeton, etat_identifiants=etat)
 
 
 def utilisateur_dune_session(index: Any, id_session: int) -> dict[str, Any] | None:  # noqa: ANN401
@@ -430,6 +525,56 @@ def utilisateur_dune_session(index: Any, id_session: int) -> dict[str, Any] | No
     }
 
 
+def profil_utilisateur(index: Any, id_utilisateur: int) -> dict[str, Any] | None:  # noqa: ANN401
+    """Profil courant d'un compte (rôle, actif) — jamais l'empreinte.
+
+    La session Redis porte un instantané ; ce contrôle relit la BASE à chaque
+    validation pour qu'une désactivation ou un changement de rôle prenne effet
+    immédiatement, sans attendre l'expiration.
+    """
+    _exiger_postgres(index)
+    with index.connect() as connexion:
+        with connexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT id_utilisateur, identifiant, nom, role, actif, doit_changer_mot_de_passe, "
+                "sessions_invalidees_le, empreinte_mot_de_passe, mot_de_passe_modifie_le "
+                "FROM utilisateur WHERE id_utilisateur = %s",
+                (int(id_utilisateur),),
+            )
+            ligne = cursor.fetchone()
+    if ligne is None:
+        return None
+    return {
+        "id_utilisateur": int(ligne[0]),
+        "identifiant": str(ligne[1]),
+        "nom": ligne[2],
+        "role": str(ligne[3]),
+        "actif": bool(ligne[4]),
+        "doit_changer_mot_de_passe": bool(ligne[5]),
+        # Horodatage d'audit (migration 024) : il participe à l'empreinte
+        # ci-dessous, mais n'est PLUS comparé à un instant côté application.
+        "sessions_invalidees_le": ligne[6],
+        # AUTORITÉ DURABLE (revue Lot 0a, blocages 1 et 2) : génération
+        # d'identifiants du compte, recalculée à CHAQUE validation. Une session
+        # qui a capturé une autre valeur est refusée — sans comparaison
+        # d'horloges, donc sans supposer des répliques synchronisées.
+        "etat_identifiants": etat_identifiants(ligne[7], ligne[8], ligne[6], bool(ligne[4])),
+    }
+
+
+def id_utilisateur_par_identifiant(index: Any, identifiant: str) -> int | None:  # noqa: ANN401
+    """Identifiant numérique d'un compte, ou ``None`` (aucune fuite d'empreinte)."""
+    _exiger_postgres(index)
+    with index.connect() as connexion:
+        with connexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT id_utilisateur FROM utilisateur WHERE identifiant = %s",
+                ((identifiant or "").strip(),),
+            )
+            ligne = cursor.fetchone()
+    return int(ligne[0]) if ligne else None
+
+
 def changer_mot_de_passe(
     index: Any,  # noqa: ANN401
     id_utilisateur: int,
@@ -440,6 +585,18 @@ def changer_mot_de_passe(
 
     ``doit_changer_mot_de_passe`` retombe à ``false`` : c'est le seul chemin qui
     l'éteint, et il exige de connaître le mot de passe provisoire.
+
+    ATOMICITÉ (revue Lot 0a, blocage 2) : la révocation des sessions
+    historiques ``session_ui`` est faite DANS LA MÊME TRANSACTION que le
+    changement d'empreinte. Avant, la route enchaînait deux transactions : si
+    la seconde échouait, le mot de passe était changé mais les sessions
+    historiques restaient utilisables. Ici, l'une ou l'autre des opérations
+    échoue ⇒ ``ROLLBACK`` complet, et la session historique ne survit pas à un
+    changement annoncé comme réussi.
+
+    Le compteur ``sessions_revoquees`` est rendu par la mutation elle-même :
+    l'appelant n'a pas à révoquer une seconde fois (et ne le peut plus
+    « après coup »).
     """
     _exiger_postgres(index)
     if not nouveau_mot_de_passe:
@@ -457,11 +614,21 @@ def changer_mot_de_passe(
                 raise HTTPException(status_code=401, detail="Mot de passe actuel incorrect.")
             cursor.execute(
                 "UPDATE utilisateur SET empreinte_mot_de_passe = %s, mot_de_passe_modifie_le = now(), "
-                "doit_changer_mot_de_passe = false WHERE id_utilisateur = %s",
-                (empreinte_mot_de_passe(nouveau_mot_de_passe), int(id_utilisateur)),
+                "sessions_invalidees_le = %s, doit_changer_mot_de_passe = false "
+                "WHERE id_utilisateur = %s",
+                (empreinte_mot_de_passe(nouveau_mot_de_passe), _maintenant(), int(id_utilisateur)),
             )
-    LOGGER.info("Mot de passe changé par « %s ».", ligne[0])
-    return {"identifiant": str(ligne[0]), "doit_changer_mot_de_passe": False}
+            cursor.execute(
+                "UPDATE session_ui SET revoque_le = now() WHERE id_utilisateur = %s AND revoque_le IS NULL",
+                (int(id_utilisateur),),
+            )
+            revoquees = int(cursor.rowcount)
+    LOGGER.info("Mot de passe changé par « %s » (%d session(s) historique(s) révoquée(s)).", ligne[0], revoquees)
+    return {
+        "identifiant": str(ligne[0]),
+        "doit_changer_mot_de_passe": False,
+        "sessions_revoquees": revoquees,
+    }
 
 
 def revoquer_session(index: Any, id_session: int) -> dict[str, Any]:  # noqa: ANN401
@@ -481,6 +648,24 @@ def revoquer_session(index: Any, id_session: int) -> dict[str, Any]:  # noqa: AN
                 return {"id_session": int(id_session), "revoquee": False, "deja_revoquee": True}
     LOGGER.info("Session %d révoquée.", int(id_session))
     return {"id_session": int(id_session), "revoquee": True, "deja_revoquee": False}
+
+
+def revoquer_sessions_utilisateur(index: Any, id_utilisateur: int) -> int:  # noqa: ANN401
+    """Pose ``revoque_le`` sur toutes les sessions SQL d'un compte.
+
+    Utilisé par « Déconnecter tous mes appareils » et par les changements de
+    mot de passe/rôle. La session NAVIGATEUR correspondante est supprimée de
+    Redis par l'appelant ; les deux magasins doivent rester cohérents.
+    """
+    _exiger_postgres(index)
+    with index.connect() as connexion:
+        with connexion.cursor() as cursor:
+            cursor.execute(
+                "UPDATE session_ui SET revoque_le = now() "
+                "WHERE id_utilisateur = %s AND revoque_le IS NULL",
+                (int(id_utilisateur),),
+            )
+            return int(cursor.rowcount)
 
 
 def sessions_dun_utilisateur(index: Any, identifiant: str) -> list[dict[str, Any]]:  # noqa: ANN401

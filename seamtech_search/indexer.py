@@ -1072,13 +1072,31 @@ class SearchIndex:
                     exc,
                 )
 
-    def _migration_024_placeholder(self, connection: Any) -> None:
-        """024 réservée (continuité de numérotation) — no-op sur les deux backends."""
-        if self.is_postgres:
-            with connection.cursor() as cursor:
-                cursor.execute(schema_metier.SQL_024_PLACEHOLDER)
-        else:
-            logger.info("Migration 024_placeholder ignorée en mode SQLite — PostgreSQL uniquement.")
+    def _migration_024_invalidation_sessions(self, connection: Any) -> None:
+        """Invalidation durable des sessions (revue Lot 0a, blocage 1).
+
+        Une colonne ``utilisateur.sessions_invalidees_le`` écrite dans la même
+        transaction que la mutation du compte (changement/réinitialisation de
+        mot de passe, désactivation). Elle sert d'horodatage d'audit et entre
+        dans la GÉNÉRATION D'IDENTIFIANTS comparée à chaque validation
+        (``comptes.securite.etat_identifiants``) : la session est refusée dès
+        que la génération a changé, même si la révocation Redis a échoué et que
+        les clés existent encore après le retour de Redis. Depuis la revue du
+        Lot 0a, plus aucun horodatage n'est comparé à ``issued_at`` — le
+        COMMENT de la colonne, dans la migration 024 laissée inchangée,
+        décrit cette ancienne comparaison.
+
+        PostgreSQL uniquement, comme 021/023 : la couche comptes n'existe pas
+        en SQLite (mode hérité), la migration y est enregistrée sans effet.
+        """
+        if not self.is_postgres:
+            logger.warning(
+                "Migration 024_invalidation_sessions ignorée : la couche métier est PostgreSQL "
+                "uniquement — conséquence : aucune invalidation durable des sessions en mode SQLite."
+            )
+            return
+        with connection.cursor() as cursor:
+            cursor.execute(schema_metier.SQL_024_INVALIDATION_SESSIONS)
 
     def _migration_025_placeholder(self, connection: Any) -> None:
         """025 réservée (continuité de numérotation) — no-op sur les deux backends."""
@@ -1276,7 +1294,7 @@ class SearchIndex:
                 # d'enregistrement : une migration oubliée ici ferait échouer
                 # sauvegarde/restauration (VERSION_SCHEMA_METIER absente).
                 ("023_recherche_normalisee", self._migration_023_recherche_normalisee),
-                ("024_placeholder", self._migration_024_placeholder),
+                ("024_invalidation_sessions", self._migration_024_invalidation_sessions),
                 ("025_placeholder", self._migration_025_placeholder),
                 ("026_boat_models_and_aliases", self._migration_026_boat_models_and_aliases),
             ]

@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server"
 import { backendBase, backendHeaders, requireAuthValide } from "@/lib/backend"
 
+// `cache-control` n'est VOLONTAIREMENT pas recopié : la réponse est toujours
+// no-store (Lot 0a), et recopier l'en-tête amont permettrait à un backend
+// mal configuré de rendre un PDF cachable. La valeur locale est l'autorité.
 const RESPONSE_HEADERS = [
   "accept-ranges",
-  "cache-control",
   "content-disposition",
   "content-length",
   "content-range",

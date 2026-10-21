@@ -1,4 +1,4 @@
-"""Schéma métier « fiche technique » — migrations 006 à 023 (Lots A → correctifs d'audit).
+"""Schéma métier « fiche technique » — migrations 006 à 026 (Lots A → Lot 2).
 
 DÉCISION DE COUCHE ACTÉE (plan v3.0 §17.1) : la couche métier est
 **PostgreSQL uniquement**. Elle s'appuie sur pgvector, pg_trgm, les index GIN,
@@ -88,10 +88,8 @@ TABLES_METIER: tuple[str, ...] = (
 )
 
 SQL_006_FICHE_TECHNIQUE = """
--- ============================================================================
--- 006_fiche_technique — couche métier « fiche technique » (plan v3.0 §6.2)
--- ============================================================================
-CREATE EXTENSION IF NOT EXISTS vector;
+-- =====================================================================-- 006_fiche_technique — couche métier « fiche technique » (plan v3.0 §6.2)
+-- =====================================================================CREATE EXTENSION IF NOT EXISTS vector;
 
 -- ---------- Référentiels ----------
 CREATE TABLE IF NOT EXISTS client (
@@ -427,11 +425,9 @@ CREATE INDEX IF NOT EXISTS idx_fiche_champs_trgm  ON fiche USING GIN (champs_tex
 """
 
 SQL_007_RECHERCHE_INDEX = """
--- ============================================================================
--- 007_recherche_index — cœur « à la Google » (plan v3.0 §11, §17.3)
+-- =====================================================================-- 007_recherche_index — cœur « à la Google » (plan v3.0 §11, §17.3)
 -- (les index trigrammes vivent dans SQL_007_TRGM, dégradable, voir ci-dessus)
--- ============================================================================
-
+-- =====================================================================
 -- Texte de recherche par fiche : agrégat PONDÉRÉ rempli par la fonction
 -- rafraichir_texte_recherche_fiche(), appelée à l'ÉCRITURE de chaque fiche
 -- (statut a_valider — migration 018, décision commanditaire 2026-09-29)
@@ -506,12 +502,10 @@ CREATE TABLE IF NOT EXISTS recherche_log (
 """
 
 SQL_008_ML_CORPUS = """
--- ============================================================================
--- 008_ml_corpus — modèles, exemples étiquetés, historique (plan v3.0 §10.5)
+-- =====================================================================-- 008_ml_corpus — modèles, exemples étiquetés, historique (plan v3.0 §10.5)
 -- Aucun modèle binaire en base : seul le chemin du fichier sur le disque est
 -- stocké (contrainte « tout reste local », postes à 8 Go).
--- ============================================================================
-CREATE TABLE IF NOT EXISTS ml_modele (
+-- =====================================================================CREATE TABLE IF NOT EXISTS ml_modele (
     id_modele       BIGSERIAL PRIMARY KEY,
     version         TEXT NOT NULL UNIQUE,
     algorithme      TEXT NOT NULL,
@@ -548,10 +542,8 @@ CREATE TABLE IF NOT EXISTS ml_run (
 """
 
 SQL_009_QUALITE_ET_GABARITS = """
--- ============================================================================
--- 009_qualite_et_gabarits — jeu de référence des gabarits, vue qualité
--- ============================================================================
--- Fiches de test d'un gabarit : le PDF (par chemin ou empreinte) et les
+-- =====================================================================-- 009_qualite_et_gabarits — jeu de référence des gabarits, vue qualité
+-- =====================================================================-- Fiches de test d'un gabarit : le PDF (par chemin ou empreinte) et les
 -- valeurs attendues, pour vérifier qu'un changement de règle ne casse rien
 -- (même culture que les 262 tests du dépôt, plan v3.0 §10.2).
 CREATE TABLE IF NOT EXISTS gabarit_test (
@@ -593,11 +585,9 @@ FROM fiche f;
 # Les quatre migrations, dans l'ordre d'exécution. Structure consommée par
 # SearchIndex.run_migrations() et par le test de grammaire pglast.
 SQL_010_LOTS_INGESTION = """
--- ============================================================================
--- 010_lots_ingestion — dépôt de dossiers, lots suivis et reprenables (Lot C,
+-- =====================================================================-- 010_lots_ingestion — dépôt de dossiers, lots suivis et reprenables (Lot C,
 -- plan v3.0 §17.2, §11, §12.2). Idempotent, ordonné, PostgreSQL uniquement.
--- ============================================================================
--- Un lot = une opération de dépôt (une racine d'archive désignée, ou un
+-- =====================================================================-- Un lot = une opération de dépôt (une racine d'archive désignée, ou un
 -- dossier unique). L'état vit en BASE : consultable et reprenable sans Redis.
 CREATE TABLE IF NOT EXISTS lot_import (
     id_lot         BIGSERIAL PRIMARY KEY,
@@ -672,10 +662,8 @@ CREATE INDEX IF NOT EXISTS idx_piece_document ON fiche_piece_jointe (id_document
 # (suggestions tolérantes aux fautes) vivent dans SQL_012_TRGM, dégradable
 # sous SAVEPOINT exactement comme SQL_007_TRGM (constat 1 de revue).
 SQL_012_RECHERCHE_HYBRIDE = """
--- ============================================================================
--- 012_recherche_hybride — Lot E : facettes, suivi, rafraîchissement global
--- ============================================================================
-
+-- =====================================================================-- 012_recherche_hybride — Lot E : facettes, suivi, rafraîchissement global
+-- =====================================================================
 -- Axes de facettes de GET /recherche : type de voile / client / bateau sont
 -- déjà indexés (006) ; la matière passe par fiche_materiau et l'année par
 -- date_edition (idx_fiche_edition existe depuis 006).
@@ -870,8 +858,7 @@ $fn$;
 """
 
 SQL_014_FACETTE_DIMENSION = """
--- ============================================================================
--- 014_facette_dimension — Lot J : facette « dimension » (plan v3.0 §11.4)
+-- =====================================================================-- 014_facette_dimension — Lot J : facette « dimension » (plan v3.0 §11.4)
 -- La vue v_fiche_recherche omettait tetiere_cm ; on la complète avec les
 -- 7 cotes métier (slu_m, sle_m, sf_m, shw_m, spa_m2, tetiere_cm, poids_kg).
 -- Les valeurs sont déjà normalisées en unités métier (m, m², cm, kg) lors
@@ -881,8 +868,7 @@ SQL_014_FACETTE_DIMENSION = """
 -- échoue avec « cannot change name of view column poids_kg to tetiere_cm »
 -- (colonne 6 change de nom). On DROP puis CREATE pour autoriser le changement
 -- d'ordre/nom — idempotent et sans dépendance (v_qualite est indépendante).
--- ============================================================================
-DROP VIEW IF EXISTS v_fiche_recherche;
+-- =====================================================================DROP VIEW IF EXISTS v_fiche_recherche;
 CREATE VIEW v_fiche_recherche AS
 SELECT f.id_fiche,
        f.code,
@@ -911,8 +897,7 @@ CREATE INDEX IF NOT EXISTS idx_fiche_cotes_poids_kg ON fiche_cotes(poids_kg);
 """
 
 SQL_015_QUALITE_GABARIT_BROUILLON = """
--- ============================================================================
--- 015_qualite_gabarit_brouillon — Lot K : tableau qualité + gabarit brouillon
+-- =====================================================================-- 015_qualite_gabarit_brouillon — Lot K : tableau qualité + gabarit brouillon
 -- - Index pour qualité : accélère GROUP BY sur champs corrigés, recherche_log
 --   par canal (filtres->>'canal'), fiche_validation par action, fiche_anomalie
 --   par code, etc. Toutes les requêtes qualité doivent rester <100 ms sur
@@ -922,8 +907,7 @@ SQL_015_QUALITE_GABARIT_BROUILLON = """
 --   l'extraction réelle — garde-fou : charger_gabarits() ne lit que gabarit
 --   WHERE actif, jamais gabarit_brouillon. La publication copie le brouillon
 --   vers gabarit comme nouvelle version active (registre existant, pas parallèle).
--- ============================================================================
-
+-- =====================================================================
 -- Index qualité (si absents)
 CREATE INDEX IF NOT EXISTS idx_champ_champ ON fiche_champ_extrait(champ);
 CREATE INDEX IF NOT EXISTS idx_champ_corrige_champ ON fiche_champ_extrait(champ, corrige);
@@ -954,10 +938,8 @@ CREATE INDEX IF NOT EXISTS idx_brouillon_statut ON gabarit_brouillon(statut);
 """
 
 SQL_016_DEDUP_COMPTES_NOMINATIFS = """
--- ============================================================================
--- 016_dedup_comptes_nominatifs — Lot L : doublons (L.1) + comptes nominatifs (L.2)
--- ============================================================================
--- L.1 — DÉTECTION DE DOUBLONS. Rien n'efface, rien ne fusionne : la détection
+-- =====================================================================-- 016_dedup_comptes_nominatifs — Lot L : doublons (L.1) + comptes nominatifs (L.2)
+-- =====================================================================-- L.1 — DÉTECTION DE DOUBLONS. Rien n'efface, rien ne fusionne : la détection
 -- est PROPOSITIVE et s'appuie sur deux colonnes qui EXISTAIENT DÉJÀ :
 --   * fiche_piece_jointe.empreinte_sha256 (remplie à l'import par
 --     `empreinte_fichier()`) → doublons EXACTS ;
@@ -967,8 +949,7 @@ SQL_016_DEDUP_COMPTES_NOMINATIFS = """
 --
 -- AUCUNE NOUVELLE TABLE dans cette partie : TABLES_METIER reste à 31. La table
 -- de sessions (L.2) est ajoutée plus bas, dans la même migration.
--- ============================================================================
-
+-- =====================================================================
 -- ---------------------------------------------------------------------------
 -- L.1 — Normalisation de titre partagée SQL/Python
 -- ---------------------------------------------------------------------------
@@ -1082,10 +1063,8 @@ CREATE INDEX IF NOT EXISTS idx_fiche_titre_trgm_brut
 """
 
 SQL_017_OCR_ETAGE3 = """
--- ============================================================================
--- 017_ocr_etage3 — Lot M : staging du texte OCR par page (préparation Lot G)
--- ============================================================================
--- AUCUNE écriture dans chunk ni document : la promotion vers l'index
+-- =====================================================================-- 017_ocr_etage3 — Lot M : staging du texte OCR par page (préparation Lot G)
+-- =====================================================================-- AUCUNE écriture dans chunk ni document : la promotion vers l'index
 -- appartient au Lot G. Cette table est du STAGING pur, jamais lue par la
 -- recherche tant que le Lot G ne l'a pas promue.
 --
@@ -1106,8 +1085,7 @@ SQL_017_OCR_ETAGE3 = """
 -- - page_ocerisee : bool, True si OCR a produit du texte
 -- - motif : raison de non-OCR ou d'échec (texte natif présent, tesseract absent, etc.)
 -- - horodatage : date d'insertion
--- ============================================================================
-CREATE TABLE IF NOT EXISTS ocr_etage3 (
+-- =====================================================================CREATE TABLE IF NOT EXISTS ocr_etage3 (
     id               BIGSERIAL PRIMARY KEY,
     fichier_source   TEXT NOT NULL,
     empreinte_sha256 TEXT NOT NULL,
@@ -1300,10 +1278,8 @@ $seamtech_backfill$;
 """
 
 SQL_020_FILE_DURABLE = """
--- ============================================================================
--- 020_file_durable — imports durables et traçables (file Redis + worker séparé)
--- ============================================================================
--- Motivations mesurées (voir docs/FILE_DURABLE.md) :
+-- =====================================================================-- 020_file_durable — imports durables et traçables (file Redis + worker séparé)
+-- =====================================================================-- Motivations mesurées (voir docs/FILE_DURABLE.md) :
 --   * un job dont le worker meurt était marqué « failed » sans trace de la
 --     tentative ni du worker propriétaire : impossible de savoir qui traitait
 --     quoi, ni combien de fois ;
@@ -1347,10 +1323,8 @@ ALTER TABLE lot_import ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMPTZ;
 """
 
 SQL_021_REVISION_FICHE = """
--- ============================================================================
--- 021_revision_fiche — verrou optimiste : deux postes ne s'écrasent plus
--- ============================================================================
--- Défaut constaté par la revue indépendante du 2026-10-07 : `corriger_champ`
+-- =====================================================================-- 021_revision_fiche — verrou optimiste : deux postes ne s'écrasent plus
+-- =====================================================================-- Défaut constaté par la revue indépendante du 2026-10-07 : `corriger_champ`
 -- écrivait un UPDATE de fiche_champ_extrait filtre par identifiant de champ,
 -- SANS comparer
 -- l'état lu. Deux opérateurs ouvrant la même fiche (deux postes, deux onglets)
@@ -1375,10 +1349,8 @@ ALTER TABLE fiche ADD CONSTRAINT fiche_revision_positive CHECK (revision >= 1);
 """
 
 SQL_022_SELECTIONS_DURABLES = """
--- ============================================================================
--- 022_selections_durables — la reprise ne substitue plus un autre document
--- ============================================================================
--- Défaut constaté par l'audit de préparation du 2026-10-08 (A06) : les
+-- =====================================================================-- 022_selections_durables — la reprise ne substitue plus un autre document
+-- =====================================================================-- Défaut constaté par l'audit de préparation du 2026-10-08 (A06) : les
 -- sélections MANUELLES de l'opérateur (le PDF « fiche » choisi, le classeur
 -- Excel choisi) ne vivaient que dans la charge de la tâche Redis. Quand cette
 -- charge disparaissait (Redis redémarré sans persistance, entrée évincée), la
@@ -1523,282 +1495,6 @@ CREATE INDEX IF NOT EXISTS idx_fiche_gamme_trgm_norm
 """
 
 
-# ---------------------------------------------------------------------------
-# 024 — réservée (continuité des numéros, aucune table)
-# ---------------------------------------------------------------------------
-SQL_024_PLACEHOLDER = """
--- 024_placeholder — réservée pour continuité de numérotation, aucune table
-SELECT 1;
-"""
-
-# ---------------------------------------------------------------------------
-# 025 — réservée (continuité des numéros, aucune table)
-# ---------------------------------------------------------------------------
-SQL_025_PLACEHOLDER = """
--- 025_placeholder — réservée pour continuité de numérotation, aucune table
-SELECT 1;
-"""
-
-# ---------------------------------------------------------------------------
-# 026 — référentiel unique des modèles de bateaux & alias + synonymes voilerie
-# ---------------------------------------------------------------------------
-# Objectif Lot 2 :
-# - Une source de vérité pour les modèles de bateaux (variantes casse/accents/
-#   tirets/underscores/espaces → même normalized_key, même boat_model_id)
-# - Abréviations dictionnaire actif (OC 45 → Oceanis 45, FIRST-40.7 → First 40.7)
-# - Garde-fou : Oceanis 45 vs 45.1 vs 45 CC jamais fusion auto → pending_review
-# - Synonymes voilerie (GV/GE/GEN/SPI/TRQ → Grand-Voile/Génois/etc.)
-#
-# La fonction seamtech_texte_recherche existante (023) est étendue pour
-# normaliser les séparateurs bateau (tirets/underscores/slash) de la même
-# façon que normaliser_cle_bateau côté Python : [-_–—/]+ → espace.
-# Le reste (casse/accents/ligatures) reste identique à 023.
-SQL_026_FONCTION_UNACCENT_ETENDUE = """
-CREATE OR REPLACE FUNCTION seamtech_texte_recherche(t TEXT)
-RETURNS TEXT
-LANGUAGE sql
-IMMUTABLE
-PARALLEL SAFE
-SET search_path = public, pg_temp
-AS $fonction$
-    SELECT btrim(
-        replace(replace(replace(
-            lower(
-                regexp_replace(
-                    regexp_replace(
-                        translate(
-                            public.unaccent('public.unaccent'::regdictionary, coalesce(t, '')),
-                            E'\\u00a0\\u202f\\u2007\\u2009',
-                            '    '
-                        ),
-                        '[-_–—/]+', ' ', 'g'
-                    ),
-                    '[[:space:]]+', ' ', 'g'
-                )
-            ),
-            'œ', 'oe'),
-            'æ', 'ae'),
-            'ß', 'ss')
-    )
-$fonction$;
-
-COMMENT ON FUNCTION seamtech_texte_recherche(TEXT) IS
-    'Clé de recherche Lot2 (casse/accents/ligatures/tirets-underscores-slash → espace, espaces comprimés) — IMMUTABLE ; miroir Python : normaliser_cle_recherche + normaliser_cle_bateau';
-"""
-
-SQL_026_FONCTION_REPLI_ETENDUE = r"""
-CREATE OR REPLACE FUNCTION seamtech_texte_recherche(t TEXT)
-RETURNS TEXT
-LANGUAGE sql
-IMMUTABLE
-PARALLEL SAFE
-SET search_path = public, pg_temp
-AS $fonction$
-    SELECT btrim(
-        replace(replace(replace(
-            lower(
-                regexp_replace(
-                    regexp_replace(
-                        translate(
-                            coalesce(t, ''),
-                            'ÀÁÂÃÄÅÈÉÊËÌÍÎÏÒÓÔÕÖÙÚÛÜÝàáâãäåèéêëìíîïòóôöõùúûüýÿÇçÑñØøŸĀāĂăĄąĆćĈĉĊċČčĎďĐđĒēĔĕĖėĘęĚěĜĝĞğĠġĢģĤĥĦħĨĩĪīĬĭĮįİıĴĵĶķĹĺĻļĽľĿŀŁłŃńŅņŇňŌōŎŏŐőŔŕŖŗŘřŚśŜŝŞşŠšŢţŤťŦŧŨũŪūŬŭŮůŰűŲųŴŵŶŷŹźŻżŽž' || E'\u00a0\u202f\u2007\u2009',
-                            'AAAAAAEEEEIIIIOOOOOUUUUYaaaaaaeeeeiiiiooooouuuuyyCcNnOoYAaAaAaCcCcCcCcDdDdEeEeEeEeEeGgGgGgGgHhHhIiIiIiIiIiJjKkLlLlLlLlLlNnNnNnOoOoOoRrRrRrSsSsSsSsTtTtTtUuUuUuUuUuUuWwYyZzZzZz    '
-                        ),
-                        '[-_–—/]+', ' ', 'g'
-                    ),
-                    '[[:space:]]+', ' ', 'g'
-                )
-            ),
-            'œ', 'oe'),
-            'æ', 'ae'),
-            'ß', 'ss')
-    )
-$fonction$;
-
-COMMENT ON FUNCTION seamtech_texte_recherche(TEXT) IS
-    'Clé de recherche Lot2 (repli sans unaccent : tirets-underscores-slash → espace) — IMMUTABLE';
-"""
-
-SQL_026_BOAT_MODELS_AND_ALIASES = """
--- ============================================================================
--- 026_boat_models_and_aliases — référentiel unique des modèles de bateaux
--- ============================================================================
-CREATE EXTENSION IF NOT EXISTS pg_trgm;
-
--- ---------- Référentiel : modèles canoniques ----------
-CREATE TABLE IF NOT EXISTS boat_models (
-    id              BIGSERIAL PRIMARY KEY,
-    canonical_name  TEXT NOT NULL,
-    normalized_key  TEXT NOT NULL UNIQUE,
-    builder         TEXT,
-    notes           TEXT,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
--- Trigger updated_at
-CREATE OR REPLACE FUNCTION _touch_boat_models_updated_at() RETURNS TRIGGER AS $func$
-BEGIN
-    NEW.updated_at = now();
-    RETURN NEW;
-END;
-$func$ LANGUAGE plpgsql;
-
-DROP TRIGGER IF EXISTS trg_boat_models_updated_at ON boat_models;
-CREATE TRIGGER trg_boat_models_updated_at
-    BEFORE UPDATE ON boat_models
-    FOR EACH ROW EXECUTE FUNCTION _touch_boat_models_updated_at();
-
-CREATE INDEX IF NOT EXISTS idx_boat_models_normalized_key_trgm
-    ON boat_models USING gin (normalized_key gin_trgm_ops);
-CREATE INDEX IF NOT EXISTS idx_boat_models_canonical_name_trgm
-    ON boat_models USING gin (seamtech_texte_recherche(canonical_name) gin_trgm_ops);
-
--- ---------- Aliases : variantes & abréviations ----------
-CREATE TABLE IF NOT EXISTS boat_model_aliases (
-    id                BIGSERIAL PRIMARY KEY,
-    boat_model_id     BIGINT NOT NULL REFERENCES boat_models(id) ON DELETE CASCADE,
-    alias_raw         TEXT NOT NULL,
-    alias_normalized  TEXT NOT NULL UNIQUE,
-    status            TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'pending_review', 'rejected')),
-    source            TEXT NOT NULL DEFAULT 'auto_exact' CHECK (source IN ('auto_exact', 'heuristic_suggestion', 'admin_manual')),
-    created_by        TEXT,
-    created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE INDEX IF NOT EXISTS idx_boat_aliases_model_id ON boat_model_aliases(boat_model_id);
-CREATE INDEX IF NOT EXISTS idx_boat_aliases_status ON boat_model_aliases(status);
-CREATE INDEX IF NOT EXISTS idx_boat_aliases_normalized_trgm
-    ON boat_model_aliases USING gin (alias_normalized gin_trgm_ops);
-CREATE INDEX IF NOT EXISTS idx_boat_aliases_raw_trgm
-    ON boat_model_aliases USING gin (seamtech_texte_recherche(alias_raw) gin_trgm_ops);
-
--- ---------- Historique des fusions ----------
-CREATE TABLE IF NOT EXISTS boat_model_merge_history (
-    id                BIGSERIAL PRIMARY KEY,
-    source_model_id   BIGINT NOT NULL,
-    target_model_id   BIGINT NOT NULL REFERENCES boat_models(id) ON DELETE RESTRICT,
-    snapshot_json     JSONB NOT NULL,
-    actor_username    TEXT NOT NULL,
-    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
-    reverted_at       TIMESTAMPTZ
-);
-
-CREATE INDEX IF NOT EXISTS idx_merge_history_source ON boat_model_merge_history(source_model_id);
-CREATE INDEX IF NOT EXISTS idx_merge_history_target ON boat_model_merge_history(target_model_id);
-
--- ---------- Synonymes voilerie (GV/GE/GEN/SPI/TRQ etc.) ----------
-CREATE TABLE IF NOT EXISTS search_synonyms (
-    id                BIGSERIAL PRIMARY KEY,
-    canonical_term    TEXT NOT NULL,
-    normalized_alias  TEXT NOT NULL UNIQUE,
-    category          TEXT NOT NULL CHECK (category IN ('sail_type', 'material', 'nautical_term')),
-    active            BOOLEAN NOT NULL DEFAULT true,
-    created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE INDEX IF NOT EXISTS idx_search_synonyms_alias_trgm
-    ON search_synonyms USING gin (normalized_alias gin_trgm_ops);
-CREATE INDEX IF NOT EXISTS idx_search_synonyms_canonical_trgm
-    ON search_synonyms USING gin (seamtech_texte_recherche(canonical_term) gin_trgm_ops);
-CREATE INDEX IF NOT EXISTS idx_search_synonyms_active ON search_synonyms(active) WHERE active = true;
-
--- Pré-remplissage : abréviations voilerie courantes (GV/GE/GEN/SPI/TRQ etc.)
--- Chaque ligne : canonical_term = forme développée, normalized_alias = abréviation normalisée (unique)
-INSERT INTO search_synonyms (canonical_term, normalized_alias, category, active) VALUES
-    ('Grand-Voile', 'gv', 'sail_type', true) ON CONFLICT (normalized_alias) DO NOTHING;
-INSERT INTO search_synonyms (canonical_term, normalized_alias, category, active) VALUES
-    ('Génois', 'ge', 'sail_type', true) ON CONFLICT (normalized_alias) DO NOTHING;
-INSERT INTO search_synonyms (canonical_term, normalized_alias, category, active) VALUES
-    ('Génois', 'gen', 'sail_type', true) ON CONFLICT (normalized_alias) DO NOTHING;
-INSERT INTO search_synonyms (canonical_term, normalized_alias, category, active) VALUES
-    ('Spinnaker', 'spi', 'sail_type', true) ON CONFLICT (normalized_alias) DO NOTHING;
-INSERT INTO search_synonyms (canonical_term, normalized_alias, category, active) VALUES
-    ('Trinquette', 'trq', 'sail_type', true) ON CONFLICT (normalized_alias) DO NOTHING;
-INSERT INTO search_synonyms (canonical_term, normalized_alias, category, active) VALUES
-    ('Gennaker', 'genn', 'sail_type', true) ON CONFLICT (normalized_alias) DO NOTHING;
-INSERT INTO search_synonyms (canonical_term, normalized_alias, category, active) VALUES
-    ('Code 0', 'c0', 'sail_type', true) ON CONFLICT (normalized_alias) DO NOTHING;
-INSERT INTO search_synonyms (canonical_term, normalized_alias, category, active) VALUES
-    ('Monofilm', 'monofilm', 'material', true) ON CONFLICT (normalized_alias) DO NOTHING;
-INSERT INTO search_synonyms (canonical_term, normalized_alias, category, active) VALUES
-    ('Dacron', 'dacron', 'material', true) ON CONFLICT (normalized_alias) DO NOTHING;
-INSERT INTO search_synonyms (canonical_term, normalized_alias, category, active) VALUES
-    ('Aramide', 'aramide', 'material', true) ON CONFLICT (normalized_alias) DO NOTHING;
-INSERT INTO search_synonyms (canonical_term, normalized_alias, category, active) VALUES
-    ('Lattée', 'lattee', 'nautical_term', true) ON CONFLICT (normalized_alias) DO NOTHING;
-
--- Index de recherche pour boat_synonyms : préfixe + trigramme
-CREATE INDEX IF NOT EXISTS idx_boat_models_aliases_join
-    ON boat_model_aliases(boat_model_id, status);
-"""
-
-def split_sql_respecting_dollar_quote(sql_text: str) -> list[str]:
-    """Découpe un bloc SQL multi-statements en respectant les dollar-quotes.
-
-    Utilisé pour le diagnostic Lot 2 : permet d'identifier l'instruction
-    fautive sans couper à tort un `;` dans `BEGIN ... END;` ou `$func$`.
-    Teste via `tests/test_schema_metier_split.py` (non poussé) : vérifie
-    que `CREATE FUNCTION ... $func$ ... ; ... $func$ LANGUAGE plpgsql;`
-    reste une seule instruction.
-    """
-    statements: list[str] = []
-    buf: list[str] = []
-    i = 0
-    n = len(sql_text)
-    dollar_tag: str | None = None
-    in_single_quote = False
-    in_double_quote = False
-    while i < n:
-        ch = sql_text[i]
-        # Détection dollar-quote ouverture/fermeture hors quotes simples/doubles
-        if not in_single_quote and not in_double_quote and ch == "$":
-            # Cherche fin du tag : $tag$
-            j = i + 1
-            while j < n and sql_text[j] != "$":
-                # tag = [A-Za-z0-9_]*
-                if not (sql_text[j].isalnum() or sql_text[j] == "_"):
-                    break
-                j += 1
-            if j < n and sql_text[j] == "$":
-                tag = sql_text[i : j + 1]  # ex: $$, $func$, $fonction$
-                if dollar_tag is None:
-                    dollar_tag = tag
-                elif dollar_tag == tag:
-                    dollar_tag = None
-                # Ajoute le tag au buffer
-                buf.append(tag)
-                i = j + 1
-                continue
-        if dollar_tag is None:
-            # Gestion quotes simples/doubles pour ; hors dollar-quote
-            if ch == "'" and not in_double_quote:
-                # Gère '' échappé
-                if i + 1 < n and sql_text[i + 1] == "'":
-                    buf.append(ch)
-                    buf.append(sql_text[i + 1])
-                    i += 2
-                    continue
-                in_single_quote = not in_single_quote
-            elif ch == '"' and not in_single_quote:
-                in_double_quote = not in_double_quote
-            elif ch == ";" and not in_single_quote and not in_double_quote:
-                buf.append(ch)
-                stmt = "".join(buf).strip()
-                if stmt:
-                    statements.append(stmt)
-                buf = []
-                i += 1
-                continue
-        buf.append(ch)
-        i += 1
-    # Reste
-    tail = "".join(buf).strip()
-    if tail:
-        statements.append(tail)
-    return statements
-
-
 MIGRATIONS_METIER: tuple[tuple[str, str], ...] = (
     ("006_fiche_technique", SQL_006_FICHE_TECHNIQUE),
     ("007_recherche_index", SQL_007_RECHERCHE_INDEX),
@@ -1818,7 +1514,7 @@ MIGRATIONS_METIER: tuple[tuple[str, str], ...] = (
     ("021_revision_fiche", SQL_021_REVISION_FICHE),
     ("022_selections_durables", SQL_022_SELECTIONS_DURABLES),
     ("023_recherche_normalisee", SQL_023_FONCTION_UNACCENT),
-    ("024_placeholder", SQL_024_PLACEHOLDER),
+    ("024_invalidation_sessions", SQL_024_INVALIDATION_SESSIONS),
     ("025_placeholder", SQL_025_PLACEHOLDER),
     ("026_boat_models_and_aliases", SQL_026_BOAT_MODELS_AND_ALIASES),
 )

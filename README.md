@@ -102,7 +102,7 @@ Env overrides (all `SEAMTECH_` prefixed) or `config/config.json` (must exist, no
 | `SEAMTECH_AUTH_TOKEN` | Shared **server-to-server** token (32+ chars), never sent to the browser | — (mandatory in compose) |
 | `SEAMTECH_UI_PASSWORD` | Password the operator types at `/login` | — (mandatory in compose; unset ⇒ login fails closed with 503) |
 | `SEAMTECH_SESSION_SECRET` | HMAC key signing the httpOnly session cookie | — (mandatory in compose) |
-| `SEAMTECH_SESSION_HOURS` | Session lifetime | `12` |
+| `SEAMTECH_SESSION_HOURS` | Absolute session lifetime (Redis-backed, idle timeout 30 min) | `8` |
 | `SEAMTECH_SECURE_COOKIES` | Force the `Secure` cookie flag | auto from TLS proxy / `X-Forwarded-Proto` |
 | `SEAMTECH_BEHIND_TLS_PROXY` | Allow non-localhost binding with token auth when a TLS terminator is in front | config default `false`; compose: web `true`, frontend `false` (different purposes — see `docs/TLS.md`) |
 | `SEAMTECH_S3_ENDPOINT_URL`, `SEAMTECH_S3_BUCKET`, `SEAMTECH_S3_ACCESS_KEY`, `SEAMTECH_S3_SECRET_KEY` | S3 | — |

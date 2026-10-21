@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
+import { authedFetch } from "@/lib/authed-fetch"
 
 interface Brouillon {
   id_brouillon?: number
@@ -55,7 +56,7 @@ export function GabaritsApp() {
     setMessage("Génération brouillon…")
     const fd = new FormData()
     fd.append("fichier", pdfFile)
-    const r = await fetch("/api/gabarits/brouillon/from-pdf", { method: "POST", body: fd })
+    const r = await authedFetch("/api/gabarits/brouillon/from-pdf", { method: "POST", body: fd })
     if (!r.ok) {
       setMessage(`Erreur: ${await r.text()}`)
       return
@@ -117,7 +118,7 @@ export function GabaritsApp() {
       setMessage("Brouillon non enregistré — rechargez")
       return
     }
-    const r = await fetch(`/api/gabarits/brouillons/${brouillonCourant.id_brouillon}/valider`, { method: "POST" })
+    const r = await authedFetch(`/api/gabarits/brouillons/${brouillonCourant.id_brouillon}/valider`, { method: "POST" })
     if (!r.ok) {
       setMessage(`Erreur publication: ${await r.text()}`)
       return

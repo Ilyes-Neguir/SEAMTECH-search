@@ -730,7 +730,7 @@ def test_migrations_sequentielles_001_a_017_sur_base_vide(tmp_path: Path) -> Non
     enregistrée dans la liste ⇒ job ``sauvegarde`` rouge. Ce test tourne sans
     PostgreSQL (les migrations métier sont des no-op enregistrés en SQLite),
     donc il protège aussi la suite « non-PostgreSQL ». (Identifiant historique
-    conservé ; les assertions vérifient la séquence complète 001..023.)
+    conservé ; les assertions vérifient la séquence complète 001..024.)
     """
     from seamtech_search.schema_metier import MIGRATIONS_METIER, VERSION_SCHEMA_METIER
 
@@ -771,6 +771,8 @@ def test_version_schema_metier_est_la_derniere_migration_declaree() -> None:
     assert declarees[-1] == VERSION_SCHEMA_METIER
     assert len(TABLES_METIER) == 37, (
         "37 tables métier (018-023 sans table, 024-025 réservées, 026 ajoute 4 tables boat_models etc.)"
+    assert len(TABLES_METIER) == 37, (
+        "37 tables métier (018-024 sans table (024 = colonne invalidation), 025 réservée, 026 ajoute 4 tables boat_models etc.)"
     )
 
 

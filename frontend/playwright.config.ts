@@ -12,6 +12,11 @@ process.env.SEAMTECH_SESSION_SECRET ??= "e2e-session-secret-not-for-production-u
 // son jeton de service. L'e2e doit donc en avoir un — la même valeur est écrite
 // dans e2e/backend.config.json, chargée par le serveur Python spawné ci-dessous.
 process.env.SEAMTECH_AUTH_TOKEN ??= "e2e-service-token"
+// Lot 0a : les sessions vivent dans Redis. Le backend spawné ci-dessous en a
+// besoin ; sans Redis, /api/auth/login répond 503 (fail-closed) et l'e2e doit
+// échouer bruyamment plutôt que de tester un mode dégradé qui n'existe pas.
+// La CI fournit un service redis:7 ; en local, pointer vers un Redis réel.
+process.env.SEAMTECH_REDIS_URL ??= "redis://127.0.0.1:6379/1"
 
 import { execSync } from "child_process"
 import { randomUUID } from "crypto"
@@ -44,6 +49,13 @@ if (process.env.SEAMTECH_E2E_DATABASE_URL) {
 
 export default defineConfig({
   testDir: "./e2e",
+  // `panne-redis.spec.ts` ARRÊTE le Redis qu'on lui désigne (commande Redis
+  // `SHUTDOWN NOSAVE`) : il ne doit jamais être ramassé par les suites
+  // ordinaires, qui partagent le service Redis. Il n'est collecté que lorsque
+  // l'étape dédiée positionne SEAMTECH_E2E_PANNE_REDIS=1 et fournit une
+  // instance jetable (voir la spec et l'étape CI « panne Redis réelle »).
+  testIgnore:
+    process.env.SEAMTECH_E2E_PANNE_REDIS === "1" ? undefined : ["**/panne-redis.spec.ts"],
   globalSetup: "./e2e/global-setup.ts",
   fullyParallel: false,
   forbidOnly: !!process.env.CI,

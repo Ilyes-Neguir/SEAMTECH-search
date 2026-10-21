@@ -236,23 +236,93 @@ reach it, with no login screen at all.
 
 How it works:
 
-- `/login` collects a single shared operator password (`SEAMTECH_UI_PASSWORD`)
-  and `POST`s it to `/api/auth/login`.
-- On success the frontend sets an **httpOnly, SameSite=Lax** session cookie
-  (`seamtech_session`) containing an HMAC-SHA256-signed token
-  (`v1.<issuedAt>.<expiresAt>.<signature>`), signed with
-  `SEAMTECH_SESSION_SECRET`. The cookie is unreadable from JavaScript, so an
-  XSS bug cannot exfiltrate it. Sessions are stateless — no table, no Redis.
-- Every route under `frontend/app/api/*` calls `requireAuth()` first and returns
-  `401` without a valid session, so the backend token is never forwarded on an
-  unauthenticated caller's behalf.
+- `/login` collects an identifier plus a password. Nominative accounts are
+  verified by the backend (scrypt); leaving the identifier empty uses the
+  rescue account (`SEAMTECH_UI_PASSWORD`), whose session is now also a real,
+  revocable Redis session.
+- On success the backend opens **two** records: a `session_ui` row (audit of
+  « who opened what ») and a Redis session. The browser receives an
+  **httpOnly, SameSite=Lax** cookie (`seamtech_session`) whose v3 payload
+  carries an **opaque 256-bit `sid`** generated with the OS CSPRNG, plus a
+  signed identity snapshot used only for attribution. The HMAC signature
+  (`SEAMTECH_SESSION_SECRET`) prevents tampering; it **never authenticates**
+  anything on its own.
+- The authority is Redis: `seamtech:session:<sid>` holds `user_id`,
+  `issued_at`, `last_seen_at` and `expires_at`, with a TTL equal to the
+  absolute expiry. `seamtech:user_sessions:<user_id>` indexes every live sid
+  of an account so « sign out everywhere » and password changes can revoke
+  them all. The `sid` is **renewed on every login** (session-fixation defence).
+- Two server-enforced timeouts: inactivity `SEAMTECH_SESSION_IDLE_MINUTES`
+  (default **30 min**, refreshed on each authenticated request) and absolute
+  `SEAMTECH_SESSION_HOURS` (default **8 h**, never extended). A session that is
+  absent, revoked, idle-expired or absolutely expired answers **401**.
+- Every route under `frontend/app/api/*` calls `requireAuthValide()` first:
+  it re-checks the `sid` with the backend/Redis and returns `401` when the
+  session is gone. The backend token is never forwarded on an unauthenticated
+  caller's behalf. All authenticated responses carry `Cache-Control: no-store`.
+- **Logout is POST only.** `GET /api/auth/logout` is 405 by construction: a GET
+  must never mutate state, and a plain link must never sign anybody out. The
+  button revokes the sid in Redis, clears both cookies with the exact
+  attributes used when setting them, and sends
+  `Clear-Site-Data: "cache", "cookies", "storage"`.
+  `POST /api/auth/logout-all` revokes every session of the account (the
+  backend function is shared with password changes and deactivations).
+- **Durable invalidation by credential generation.** Every nominative session
+  carries `etat_identifiants`: a fingerprint derived from the password hash,
+  `mot_de_passe_modifie_le`, `sessions_invalidees_le` and `actif`. It is
+  **captured the instant the password is verified** and compared with the value
+  recomputed from PostgreSQL on every request — an equality, never a timestamp
+  comparison. Consequences: a session created *after* a reset but from a
+  verification made *before* it is rejected (its generation is stale); and
+  replicas need no synchronised clocks, because the compared value comes from
+  the database, not from a local clock. A 503 from an unavailable Redis during
+  revocation therefore cannot leave a usable session behind: when Redis comes
+  back with its old keys intact, the database still refuses them. The
+  integration suite proves it by making a **real** Redis refuse `DEL`/`SREM`
+  (ACL user, no mock) and then replaying the old sids.
+  `utilisateur.sessions_invalidees_le` (migration `024_invalidation_sessions`,
+  one column, no new table) is still written in the mutation's transaction for
+  audit and feeds the fingerprint, but it is no longer compared to an instant.
+  **The mutation is committed with the new generation — never rolled back.**
+  Returning 503 after a rollback would leave the old password valid at the very
+  moment the user believes it changed; the generation closes access without
+  depending on a second system. The legacy `session_ui` rows are revoked **in
+  the same transaction** as the password write, and the legacy token is bound
+  to the generation it was issued under, so a historical session is refused
+  even if its row was never revoked.
+- **Logout never reports a revocation it did not obtain.** When a sid is
+  presented and the backend cannot be reached, is not configured
+  (`SEAMTECH_API_URL`), or answers non-2xx — Redis down is the typical case —
+  `POST /api/auth/logout` answers **503** with `ok: false` and
+  `revoquee: false`, plus `reason` (`backend_non_configure`,
+  `backend_injoignable`, `revocation_refusee`). The browser is still signed out
+  locally (both cookies cleared, `Clear-Site-Data` sent), but the response
+  says the server-side session is still valid until it expires. Monitoring
+  should alert on that 503: it means sessions are accumulating in Redis until
+  TTL. The outage is exercised for real (Redis `SHUTDOWN NOSAVE`) by
+  `frontend/e2e/panne-redis.spec.ts` in the e2e job.
+- **CSRF (double-submit).** Login also sets a readable random cookie
+  (`seamtech_csrf`); every mutating request (POST/PUT/PATCH/DELETE under
+  `/api/*`) authenticated by the session cookie must echo it in
+  `X-CSRF-Token`. A missing or mismatched pair is refused with **403**, before
+  the handler runs. Logout and logout-all are NOT exempt.
 - `app/page.tsx` is a server component that redirects to `/login` when the
-  session is missing, so the search screen is never rendered either.
-- Sessions last `SEAMTECH_SESSION_HOURS` (default 12). Any `401` received by the
-  UI sends the operator back to `/login` with a `?next=` return path.
-- Failed sign-ins are throttled in memory: 5 attempts per 5 minutes, then a
-  5-minute lockout. This is per-process, not distributed — adequate for one
-  operator on one container, and not a substitute for network-level controls.
+  session is missing, so the search screen is never rendered either. Any
+  `401` received by the UI sends the operator back to `/login` with a
+  `?next=` return path.
+- **Old cookies (v1/v2, auto-portés) are refused immediately** with 401: they
+  carry no server-side sid, so accepting them would resurrect the very bug
+  Lot 0a fixes. After an upgrade, every user signs in once.
+- **Fail-closed.** Redis or the backend unavailable ⇒ **503** (explicit
+  message), never a fallback that would let a revoked session work. This is
+  consistent with `SEAMTECH_REQUIRE_DURABLE_QUEUE=true`.
+- **Threat model, CSRF rationale and cache rules**: [SECURITE_SESSIONS.md](SECURITE_SESSIONS.md)
+  states exactly what the double-submit protects, what it does not (XSS,
+  sibling subdomains, login CSRF), and how `Cache-Control: no-store` reaches
+  pages, business APIs and file downloads.
+- Failed sign-ins are throttled: nominative accounts in the database (5
+  failures / 5 minutes, survives restarts, `Retry-After`), rescue account in
+  memory per process. Neither replaces network-level controls.
 
 Two routes are intentionally **not** gated:
 
@@ -265,15 +335,55 @@ Required environment:
 
 | Variable | Required | Purpose |
 | --- | --- | --- |
-| `SEAMTECH_UI_PASSWORD` | yes | The shared password typed at `/login`. Unset ⇒ login returns `503` and nobody gets in (fails closed). |
-| `SEAMTECH_SESSION_SECRET` | yes | Signs the session cookie. Unset ⇒ a random per-process secret is used and sessions die on restart; a warning is logged. |
-| `SEAMTECH_SESSION_HOURS` | no | Session lifetime, default `12`. |
+| `SEAMTECH_UI_PASSWORD` | yes | The shared rescue password accepted at `/login` when the identifier is empty. Unset ⇒ the rescue path fails closed; nominative accounts remain the only way in. |
+| `SEAMTECH_SESSION_SECRET` | yes | Signs the v3 cookie envelope. Unset ⇒ a random per-process secret is used and sessions die on restart; a warning is logged. It does **not** authorise anything by itself. |
+| `SEAMTECH_REDIS_URL` | yes (backend) | Where the browser sessions live. The frontend container reaches Redis only through the backend; without it, login and every session check answer `503`. |
+| `SEAMTECH_SESSION_HOURS` | no | Absolute session lifetime, default `8` hours. |
+| `SEAMTECH_SESSION_IDLE_MINUTES` | no | Inactivity timeout, default `30` minutes. |
 | `SEAMTECH_SECURE_COOKIES` | no | Force the `Secure` cookie flag. Otherwise it is set automatically when `SEAMTECH_BEHIND_TLS_PROXY=true` or the request arrived over HTTPS. |
 
 `docker-compose.yml` requires `SEAMTECH_UI_PASSWORD` and
 `SEAMTECH_SESSION_SECRET` with `${VAR:?...}`, so `docker compose up` refuses to
-start until they are set. Rotating `SEAMTECH_SESSION_SECRET` signs everybody out
-immediately; rotating `SEAMTECH_UI_PASSWORD` takes effect on the next sign-in.
+start until they are set. Rotating `SEAMTECH_SESSION_SECRET` invalidates every
+cookie at once (the Redis keys then expire by TTL); rotating
+`SEAMTECH_UI_PASSWORD` takes effect on the next sign-in.
+
+**Rolling back Lot 0a.** The change adds **one column** — migration
+`024_invalidation_sessions` creates `utilisateur.sessions_invalidees_le` — and
+no new table. To roll back, redeploy the previous frontend image and restart
+the `web` service: the old code cannot read v3 cookies, so every user is
+signed out and must sign in again — that is the expected, fail-closed outcome,
+not an outage. The `seamtech:session:*` and `seamtech:user_sessions:*` keys
+become unused and disappear by TTL. If a clean slate is required, delete
+**only those two namespaces**:
+
+Compose starts Redis with `--requirepass`, so a bare `redis-cli --scan` fails
+with `NOAUTH`. The password must **not** be passed as an argument (`-a` shows up
+in `ps` and in the shell history); `redis-cli` reads `REDISCLI_AUTH` from its
+environment instead, and the compose file already exports `REDIS_PASSWORD`
+inside the `redis` container:
+
+```bash
+docker compose exec -T redis sh -c '
+  export REDISCLI_AUTH="$REDIS_PASSWORD"
+  for motif in "seamtech:session:*" "seamtech:user_sessions:*"; do
+    redis-cli --scan --pattern "$motif" | xargs -r redis-cli del
+  done
+'
+```
+
+Inside the container the password never appears in an argument list: it is
+exported once, and both `redis-cli` invocations inherit it. The command only
+scans the two namespaces named above — nothing else is touched.
+
+Do **not** widen these patterns to the whole `seamtech:` namespace. That
+prefix also covers the durable queue (`seamtech:queue:*`, `seamtech:processing:*`, `seamtech:retry:*`,
+`seamtech:deadletter:*`, `seamtech:claim:*`, `seamtech:cancel:*`), the job
+records (`seamtech:job:*`), the worker supervision keys
+(`seamtech:heartbeat:*`, `seamtech:worker:*`) and the rate-limit counters
+(`seamtech:ratelimit:*`). Deleting them would destroy accepted or recoverable
+work and reset throttles; they are **not** part of Lot 0a and must survive the
+rollback. No user data is deleted by the rollback.
 
 **Why not Option A (localhost-only)?** The compose file already binds every
 published port to `127.0.0.1`, so Option A's binding change was already in

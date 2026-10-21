@@ -235,14 +235,30 @@ c'est ce qui rend les en-têtes d'attribution dignes de foi.
 
 | Route | Rôle |
 |---|---|
-| `POST /auth/connexion` | Corps `{"identifiant", "mot_de_passe"}`. Vérifie `utilisateur.empreinte_mot_de_passe` (scrypt) et ouvre une session : `{"ok", "id_utilisateur", "identifiant", "nom", "role", "id_session", "jeton_session", "expire_le"}`. 401 si les identifiants sont faux (réponse identique pour un compte inexistant), 429 si 5 tentatives ont échoué en 5 minutes (`Retry-After` renseigné). |
-| `POST /auth/deconnexion` | Corps `{"id_session", "jeton_session"}` ; exige le JETON (un `id_session` seul est devinable). Pose `revoque_le` : le cookie, même encore signé, ne vaut plus rien. Idempotent. 401 si le jeton ne correspond pas. |
-| `GET /auth/session` | En-têtes `X-SEAMTECH-SESSION` + `X-SEAMTECH-SESSION-JETON` → identité de la session. 401 si la session est expirée, révoquée, ou si le compte a été désactivé. **Jamais** d'empreinte, de sel ni de jeton dans la réponse. |
-| `POST /auth/mot-de-passe` | Changement par l'intéressé : `{"mot_de_passe_actuel", "nouveau_mot_de_passe"}`. Éteint `doit_changer_mot_de_passe`. 401 si l'actuel est faux. |
+| `POST /auth/connexion` | Corps `{"identifiant", "mot_de_passe"}`. Vérifie `utilisateur.empreinte_mot_de_passe` (scrypt), ouvre la ligne `session_ui` ET la session Redis, puis renvoie une **liste blanche** de champs : `{"ok", "id_utilisateur", "identifiant", "nom", "role", "doit_changer_mot_de_passe", "id_session", "jeton_session", "sid", "issued_at", "last_seen_at", "expire_le", "session_idle_minutes", "session_hours"}`. La génération d'identifiants (`etat_identifiants`) et toute empreinte en sont **absentes par construction** (liste blanche, pas une liste noire). Le `sid` (256 bits) est NEUF à chaque connexion. 401 si les identifiants sont faux (réponse identique pour un compte inexistant), 429 si 5 tentatives ont échoué en 5 minutes (`Retry-After`), **503 si Redis ne peut pas enregistrer la session** (la ligne SQL est alors révoquée). |
+| `POST /auth/deconnexion` | Corps `{"sid"}` (session navigateur, idempotent) OU `{"id_session", "jeton_session"}` (session interne historique, jeton exigé). Révoque côté Redis et SQL : le cookie, même encore signé, ne vaut plus rien. 503 si Redis est injoignable — on ne prétend pas avoir révoqué ce qu'on n'a pas supprimé. |
+| `POST /auth/deconnexion-tout` | En-tête `X-SEAMTECH-SESSION-SID` (ou `{"sid"}`). Révoque TOUTES les sessions Redis du compte et ses lignes `session_ui` : `{"ok", "sessions_revoquees", "sessions_sql_revoquees"}`. Même fonction interne que le changement de mot de passe et la désactivation. 401 si le sid est mort, 503 si Redis est injoignable. |
+| `GET /auth/session` | En-tête `X-SEAMTECH-SESSION-SID` → identité relue en base à partir de la session Redis. Les en-têtes historiques `X-SEAMTECH-SESSION` + `X-SEAMTECH-SESSION-JETON` restent acceptés pour les scripts. 401 si la session est absente, révoquée, inactive (> 30 min) ou expirée (> 8 h), ou si le compte a été désactivé. **Jamais** d'empreinte, de sel, de jeton ni de sid dans la réponse. Toutes les réponses de session portent `Cache-Control: no-store`. |
+| `POST /auth/mot-de-passe` | Changement par l'intéressé : `{"mot_de_passe_actuel", "nouveau_mot_de_passe"}`. Éteint `doit_changer_mot_de_passe`. 401 si l'actuel est faux. 503 si la révocation Redis échoue — mais la mutation est **durable** : la *génération d'identifiants* (interne, jamais renvoyée par l'API ; dérivée du mot de passe et de `sessions_invalidees_le`, migration `024`) fait refuser en 401 toute session émise avant le changement, même si Redis est revenu avec ses anciennes clés, et même si la session a été créée après la mutation (course connexion/réinitialisation). Réponse : `{"ok", "identifiant", "doit_changer_mot_de_passe", "sessions_revoquees", "sessions_sql_revoquees"}`. La révocation des lignes `session_ui` est faite **dans la même transaction** que le changement. |
 | `GET /auth/utilisateurs` | Liste des comptes : `identifiant`, `nom`, `role`, `actif`, dates, `mot_de_passe_defini` (booléen) — jamais l'empreinte. **403 si la session n'est pas `administrateur`**, 401 sans session. |
 | `POST /auth/utilisateurs` | Crée un compte (`identifiant`, `nom`, `role`, `mot_de_passe`). 403 pour un opérateur, 409 si l'identifiant existe, 422 si rôle inconnu. |
 | `POST /auth/utilisateurs/{identifiant}/desactiver` | `actif=false` ET révocation des sessions ouvertes (désactiver sans révoquer laisserait un cookie travailler). 404 si inconnu. **Aucune suppression** de compte ni d'historique. |
-| `POST /auth/utilisateurs/{identifiant}/mot-de-passe` | Réinitialise (changement imposé à la prochaine connexion) et révoque les sessions. |
+| `POST /auth/utilisateurs/{identifiant}/mot-de-passe` | Réinitialise (changement imposé à la prochaine connexion) et révoque les sessions, lignes `session_ui` comprises, dans la transaction de la mutation. Invalidation **durable** par génération d'identifiants : les sessions antérieures restent refusées même si Redis était indisponible pendant la révocation. Réponse : `{"ok", "identifiant", "doit_changer_mot_de_passe", "sessions_redis_revoquees", "sessions_sql_revoquees"}`. |
+
+**Côté navigateur (`frontend/app/api/auth/*`).** `logout` et `logout-all` n'acceptent
+que `POST` (`GET` → 405) ; ils révoquent la session serveur, effacent les cookies avec
+leurs attributs exacts et renvoient `Clear-Site-Data: "cache", "cookies", "storage"`.
+Quand la révocation n'aboutit pas (backend non configuré ou injoignable, réponse non-2xx
+— Redis arrêté par exemple), `logout` répond **503** avec `ok: false` et
+`revoquee: false` : les cookies sont effacés localement, mais la réponse
+**ne déclare pas** la session révoquée.
+Toute requête mutante authentifiée par cookie (POST/PUT/PATCH/DELETE sous `/api/*`) exige
+l'en-tête `X-CSRF-Token` égal au cookie `seamtech_csrf` (double-submit) ; sinon **403**
+avant le handler. Les cookies v1/v2 (auto-portés, sans sid) sont refusés avec 401, et
+Redis/backend indisponible répond **503** (fail-closed) plutôt que de laisser passer.
+Le détail du mécanisme, sa justification et ses LIMITES (XSS, sous-domaines,
+login CSRF, `Origin` non vérifié) sont dans [SECURITE_SESSIONS.md](SECURITE_SESSIONS.md),
+avec la règle `Cache-Control: no-store` et les tests qui la couvrent.
 
 **Frontière de confiance (à ne pas déplacer).** Le proxy Next.js pose
 `X-SEAMTECH-UTILISATEUR` et `X-SEAMTECH-ROLE` depuis le cookie signé. Côté Python ces
@@ -298,11 +314,13 @@ aucune purge automatique n'est faite (on ne supprime jamais de données).
 (un mot de passe en argument finit dans l'historique du shell et dans `ps`).
 
 **Compte de secours (limite assumée)** : `SEAMTECH_UI_PASSWORD`, identifiant `secours`,
-rôle `administrateur`. Il n'existe PAS en base : sa session n'est donc ni révocable ni
-attribuable (`X-SEAMTECH-UTILISATEUR: secours`), et il sert uniquement à créer les premiers
-comptes nominatifs puis à dépanner. À désactiver (`SEAMTECH_UI_PASSWORD` vide) une fois les
-comptes nominatifs en place — dans ce cas le front refuse toute connexion et l'application
-n'est accessible que par les comptes nominatifs.
+rôle `administrateur`. Il n'existe PAS en base : ses actions restent attribuées à
+`secours` (pas de ligne `utilisateur`), mais sa session est désormais une vraie session
+Redis — donc **révocable** (déconnexion, « tous mes appareils ») et soumise aux mêmes
+inactivité/expiration. Il sert uniquement à créer les premiers comptes nominatifs puis à
+dépanner. À désactiver (`SEAMTECH_UI_PASSWORD` vide) une fois les comptes nominatifs en
+place — dans ce cas le front refuse la voie de secours et l'application n'est accessible
+que par les comptes nominatifs.
 
 **Sécurité** : empreintes `scrypt$n=16384$r=8$p=1$<sel_b64>$<hash_b64>` (`hashlib.scrypt`,
 sel de 16 octets via `secrets`), vérification `hmac.compare_digest`, **bibliothèque standard

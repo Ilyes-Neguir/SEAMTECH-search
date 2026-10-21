@@ -76,7 +76,7 @@ variables `:?` manque — c'est voulu.
 | `SEAMTECH_BACKUP_BUCKET` | non (défaut `seamtech-backups`) | — | provisionnement, sauvegarde |
 | `SEAMTECH_ROOT_PATHS` | oui en production | dossier d'archive **monté en lecture seule** | `/health`, `/preview` |
 | `SEAMTECH_BEHIND_TLS_PROXY` | selon exposition | `true` derrière un terminateur TLS | `docs/TLS.md` |
-| `SEAMTECH_SESSION_HOURS` | non (12) | durée de session | — |
+| `SEAMTECH_SESSION_HOURS` | non (8) | durée absolue de session (inactivité 30 min) | — |
 
 - [ ] **2.1** `docker compose config --quiet` ne renvoie **rien** (aucune variable manquante).
 - [ ] **2.2** Aucune valeur `change-me` ne subsiste : `grep -n "change-me\|minioadmin" .env` → **vide**.

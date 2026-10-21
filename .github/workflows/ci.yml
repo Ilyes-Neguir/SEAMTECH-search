@@ -100,7 +100,9 @@ jobs:
           # `and not redis_queue` : les tests de file durable ont leur étape
           # dédiée (Redis réel exigé) — les exécuter ici les ferait sauter
           # silencieusement, et un test qui saute n'est pas un test.
-          pytest -q -rf -m "not postgres and not s3 and not perf and not redis_queue and not ocr_suite" 2>&1 | tee /tmp/sqlite.log
+          # `and not session_redis` : même règle pour le Lot 0a (sessions
+          # serveur Redis réelles), exécuté par l'étape dédiée qui suit.
+          pytest -q -rf -m "not postgres and not s3 and not perf and not redis_queue and not session_redis and not ocr_suite" 2>&1 | tee /tmp/sqlite.log
           rc=${PIPESTATUS[0]}
           set -e
           if [ "$rc" -ne 0 ]; then
@@ -148,7 +150,7 @@ jobs:
           # avec MinIO réel — ici ils seraient sautés, et un saut fait
           # échouer cette porte.
           set +e
-          pytest -m "postgres and not perf and not sauvegarde and not redis_queue and not ocr_suite" -v -rf 2>&1 | tee /tmp/pg.log
+          pytest -m "postgres and not perf and not sauvegarde and not redis_queue and not session_redis and not ocr_suite" -v -rf 2>&1 | tee /tmp/pg.log
           rc=${PIPESTATUS[0]}
           set -e
           if [ "$rc" -ne 0 ]; then
@@ -224,6 +226,40 @@ jobs:
             exit 1
           fi
           echo "::notice title=suite-file-durable::pytest -m \"redis_queue\" : passed=$passed skipped=$skipped"
+
+      - name: Run session Redis suite (Lot 0a — real Redis + PostgreSQL, must actually run)
+        # Sessions serveur : sid 256 bits, révocation immédiate, logout-all,
+        # inactivité 30 min, expiration absolue 8 h, 503 si Redis tombe.
+        # Ces tests sont EXCLUS des suites SQLite/PostgreSQL ci-dessus (marqueur
+        # `session_redis`) et le garde-fou refuse un job vert où tout aurait été
+        # sauté : « passed > 0 et skipped == 0 ».
+        env:
+          SEAMTECH_TEST_REDIS_URL: redis://127.0.0.1:6379/1
+          SEAMTECH_TEST_DATABASE_URL: postgresql://seamtech:seamtech_test_password@localhost:5432/seamtech_search_test
+        run: |
+          set -uo pipefail
+          set +e
+          pytest -m "session_redis" -v -rf 2>&1 | tee /tmp/session_redis.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            echo "::error title=session-redis-suite-failed::$(grep -E '^(FAILED|ERROR)' /tmp/session_redis.log | head -25 | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 1500)"
+            echo "::error title=session-redis-suite-tail::$(tail -45 /tmp/session_redis.log | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 1800)"
+            exit "$rc"
+          fi
+          summary=$(tail -1 /tmp/session_redis.log)
+          passed=$(echo "$summary" | grep -oE '[0-9]+ passed' | grep -oE '[0-9]+' || echo 0)
+          skipped=$(echo "$summary" | grep -oE '[0-9]+ skipped' | grep -oE '[0-9]+' || echo 0)
+          echo "Session Redis summary: passed=$passed skipped=$skipped"
+          if [ "${passed:-0}" -eq 0 ]; then
+            echo "::error title=session-redis-did-not-run::0 test de session exécuté — Redis ou PostgreSQL non vu par la suite"
+            exit 1
+          fi
+          if [ "${skipped:-0}" -ne 0 ]; then
+            echo "::error title=session-redis-skipped::$skipped test(s) de session sautés alors que les services sont annoncés"
+            exit 1
+          fi
+          echo "::notice title=suite-sessions-redis::pytest -m \"session_redis\" : passed=$passed skipped=$skipped"
 
       - name: Garde-fou dimension — ROUGE puis VERT (correction 0.3 audit Lot J)
         if: matrix.python-version == '3.12'
@@ -992,6 +1028,21 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+      # Lot 0a : les sessions du navigateur vivent dans Redis. Sans ce
+      # service, la connexion échouerait en 503 (fail-closed) et TOUT l'e2e
+      # serait rouge — ce qui est le comportement voulu, pas un aléa.
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      # Le backend spawné par Playwright hérite de cet environnement.
+      SEAMTECH_REDIS_URL: redis://127.0.0.1:6379/1
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -1346,19 +1397,23 @@ jobs:
           passes = stats["expected"]
           flaky = stats.get("flaky", 0)
           sautes = stats.get("skipped", 0)
-          # 26 tests : les 23 existants (19 sondes d'auth + 4 comptes
-          # nominatifs) et 3 nouvelles sondes pour le catalogue et les pièces
-          # par ID. Le compte reste EXACT : aucun test ne peut s'ignorer en CI.
+          # 34 tests : les 26 existants (19 sondes d'auth + 4 comptes
+          # nominatifs + 3 sondes catalogue/pièces), 7 preuves du Lot 0a
+          # (logout POST seul, CSRF, logout-all, rotation du sid, cookie v1
+          # refusé, no-store sur page + API métier, parcours navigateur avec
+          # Retour) et 1 preuve live de téléchargement (no-store + %PDF + 401
+          # sans session). Le compte reste EXACT : aucun test ne peut
+          # s'ignorer en CI.
           # Même politique que l'étape doublons : tous doivent verdir et aucun
           # ne doit être sauté ; une reprise interne est publiée en ::warning.
-          if sautes or passes + flaky != 26:
+          if sautes or passes + flaky != 34:
               # Message aussi en annotation : c'est le seul canal lisible en CI.
               print(
-                  f"::error title=e2e-auth-count::attendu 26 tests verts, 0 sautés — "
+                  f"::error title=e2e-auth-count::attendu 34 tests verts, 0 sautés — "
                   f"mesuré {passes} passés au premier essai, {flaky} flaky, {sautes} sautés"
               )
               raise SystemExit(
-                  f"GARDE-FOU e2e auth : attendu 26 tests verts, 0 sautés — "
+                  f"GARDE-FOU e2e auth : attendu 34 tests verts, 0 sautés — "
                   f"mesuré {passes} passés au premier essai, {flaky} flaky, {sautes} sautés."
               )
           if flaky:
@@ -1366,7 +1421,7 @@ jobs:
                   f"::warning title=e2e-auth-flaky::{flaky} test(s) vert(s) seulement à la reprise "
                   f"({passes} verts au premier essai) — à instruire, la porte reste ouverte."
               )
-          print(f"::notice title=e2e-auth-nominatif::26 tests verts (dont 4 sur les comptes nominatifs)")
+          print(f"::notice title=e2e-auth-nominatif::34 tests verts (dont 4 comptes nominatifs, 7 preuves Lot 0a et 1 téléchargement)")
           PY
 
       - name: Upload live E2E reports on failure (doublons, auth nominatif)
@@ -1380,6 +1435,79 @@ jobs:
             frontend/test-results/
           if-no-files-found: ignore
           retention-days: 5
+
+      # Lot 0a — preuve que le logout ne MENT PAS quand la révocation échoue.
+      # Une instance Redis DÉDIÉE (port 6380) est démarrée pour l'occasion : la
+      # spec lui envoie `SHUTDOWN NOSAVE` (commande Redis réelle, aucun mock),
+      # vérifie que le port refuse alors toute connexion, puis exige :
+      #   * 503 explicite sur POST /api/auth/logout, sans ok:true ni revoquee:true ;
+      #   * cookies effacés + Clear-Site-Data malgré la panne (déconnexion locale) ;
+      #   * 503 fail-closed sur les routes protégées pendant la panne.
+      # Le service `redis` partagé du job (6379) n'est jamais touché.
+      # La preuve « panne Redis » ne dépend d'AUCUNE étape live précédente : elle
+      # monte son propre Redis (6380) et joue une seule spec. Sans condition, un
+      # flaky d'une étape live SANS RAPPORT la faisait sauter — donc la garde
+      # `expected=1, flaky=0, skipped=0` n'était jamais évaluée et le run ne
+      # portait aucune preuve (observé sur le run 39423041910). On l'exécute
+      # donc même si une étape antérieure a échoué : le job reste rouge à cause
+      # de cette étape, et la preuve de panne existe dans tous les cas.
+      - name: Run E2E panne Redis réelle (logout fail-closed)
+        if: ${{ !cancelled() }}
+        working-directory: frontend
+        env:
+          SEAMTECH_E2E_PANNE_REDIS: "1"
+          SEAMTECH_REDIS_URL: redis://127.0.0.1:6380/0
+          PLAYWRIGHT_JSON_OUTPUT_NAME: report-panne-redis.json
+        run: |
+          set -uo pipefail
+          docker rm -f seamtech-e2e-panne-redis >/dev/null 2>&1 || true
+          docker run -d --name seamtech-e2e-panne-redis -p 6380:6379 redis:7-alpine
+          trap 'docker rm -f seamtech-e2e-panne-redis >/dev/null 2>&1 || true' EXIT
+          pret=0
+          for _ in $(seq 1 30); do
+            if docker exec seamtech-e2e-panne-redis redis-cli ping >/dev/null 2>&1; then pret=1; break; fi
+            sleep 1
+          done
+          if [ "$pret" -ne 1 ]; then
+            echo "::error title=e2e-panne-redis::Redis dédié (6380) ne répond pas : la preuve n'a pas pu être exécutée."
+            exit 1
+          fi
+          set +e
+          pnpm exec playwright test e2e/panne-redis.spec.ts --reporter=list,json 2>&1 | tee /tmp/e2e_panne_redis.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            echo "::error title=e2e-panne-redis::$(grep -E '✘|Error|expect|attendu|Received|Expected' /tmp/e2e_panne_redis.log | head -20 | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 1800)"
+            exit "$rc"
+          fi
+          python - <<'PY'
+          import json
+
+          d = json.load(open("report-panne-redis.json"))
+          stats = d["stats"]
+          passes = stats["expected"]
+          flaky = stats.get("flaky", 0)
+          sautes = stats.get("skipped", 0)
+          # 1 test, vert AU PREMIER ESSAI : `passes + flaky == 1` laissait passer
+          # `expected=0, flaky=1`, c'est-à-dire un job vert où la preuve n'avait
+          # été obtenue qu'à la reprise (revue Lot 0a, blocage 3). On exige donc
+          # les trois compteurs explicitement, et on les PUBLIE : l'annotation
+          # ne dit plus seulement « vert », elle dit ce qui a été mesuré.
+          if passes != 1 or flaky != 0 or sautes != 0:
+              print(
+                  f"::error title=e2e-panne-count::attendu expected=1, flaky=0, skipped=0 — "
+                  f"mesuré expected={passes}, flaky={flaky}, skipped={sautes}"
+              )
+              raise SystemExit(
+                  f"GARDE-FOU panne Redis : attendu expected=1, flaky=0, skipped=0 — "
+                  f"mesuré expected={passes}, flaky={flaky}, skipped={sautes}."
+              )
+          print(
+              f"::notice title=e2e-panne-redis::expected={passes} flaky={flaky} skipped={sautes} "
+              "— Redis réellement arrêté (SHUTDOWN NOSAVE) : logout = 503 sans succès déclaré, "
+              "cookies effacés, routes protégées 503 fail-closed"
+          )
+          PY
 
   sauvegarde:
     # Lot H.1 — ALLER-RETOUR ÉPROUVÉ : sauvegarde hors-site (MinIO réel),
