@@ -96,6 +96,9 @@ class AppConfig(BaseModel):
     behind_tls_proxy: bool = False
     rate_limit_per_minute: int = Field(default=600, ge=1)
 
+    # Lot 0b — exposition documentation API (fermée par défaut)
+    expose_docs: bool = False
+
     # Lot 0a — sessions serveur adossées à Redis.
     # Inactivité (glissante) et expiration absolue sont DEUX contrôles distincts :
     # le premier ferme un poste laissé ouvert, le second borne la durée de vie
@@ -265,6 +268,8 @@ class AppConfig(BaseModel):
             data["session_idle_minutes"] = int(os.environ["SEAMTECH_SESSION_IDLE_MINUTES"])
         if os.environ.get("SEAMTECH_SESSION_HOURS"):
             data["session_hours"] = float(os.environ["SEAMTECH_SESSION_HOURS"])
+        if os.environ.get("SEAMTECH_EXPOSE_DOCS") is not None:
+            data["expose_docs"] = os.environ["SEAMTECH_EXPOSE_DOCS"].strip().lower() in {"1", "true", "yes", "on"}
         if os.environ.get("SEAMTECH_STORAGE_BACKEND"):
             data["storage_backend"] = os.environ["SEAMTECH_STORAGE_BACKEND"]
         if os.environ.get("SEAMTECH_S3_ENDPOINT_URL"):

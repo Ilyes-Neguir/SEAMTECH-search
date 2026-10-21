@@ -18,6 +18,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Stre
 from pydantic import BaseModel, Field
 
 from .audit import actor_fingerprint, get_audit_logs, record_audit_event
+from .audit_logs import record_audit_log
 from .config import AppConfig
 from .etat_exploitation import etat_sauvegarde, s3_credential_kind
 from .extractors import extract_file
@@ -231,8 +232,8 @@ def create_app(config: AppConfig) -> FastAPI:
         stop_background_worker()
         index.close()
 
-    # In production (auth_token set), disable public docs to avoid API surface disclosure
-    docs_enabled = not bool(config.auth_token)
+    # Lot 0b — docs fermés par défaut, seule activation explicite les expose (SEAMTECH_EXPOSE_DOCS=true)
+    docs_enabled = bool(getattr(config, "expose_docs", False))
     app = FastAPI(
         title="SEAMTECH Search",
         version="0.4.0",
@@ -334,6 +335,20 @@ def create_app(config: AppConfig) -> FastAPI:
         if authentifiee:
             response.headers["Cache-Control"] = "no-store"
         return response
+
+    @app.exception_handler(Exception)
+    async def generic_exception_handler(request: Request, exc: Exception):
+        # Ne pas intercepter HTTPException (déjà gérée par FastAPI avec son status)
+        from fastapi import HTTPException as FastHTTPException
+        if isinstance(exc, FastHTTPException):
+            raise exc
+        request_id = getattr(request.state, "request_id", "unknown")
+        logger.exception("Erreur interne non gérée (request_id=%s, path=%s): %s", request_id, request.url.path, exc)
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "Erreur interne."},
+            headers={"X-Request-ID": request_id, "Cache-Control": "no-store"},
+        )
 
     # ---------------------------------------------------------------------------
     # Probes
@@ -1223,6 +1238,22 @@ def create_app(config: AppConfig) -> FastAPI:
                 status="302",
                 details={"object_key": object_key, "filename": filename, "servi_par": "redirection_publique"},
             )
+            try:
+                record_audit_log(
+                    index,
+                    actor_user_id=None,
+                    actor_username=str(actor),
+                    actor_role="unknown",
+                    action="ARTIFACT_DOWNLOAD",
+                    target_type="import_artifact",
+                    target_id=f"{import_id}/{artifact}",
+                    outcome="success",
+                    details={"object_key": object_key, "filename": filename},
+                    ip_address=request.client.host if request.client else None,
+                    user_agent=request.headers.get("user-agent", "")[:500] if request.headers.get("user-agent") else None,
+                )
+            except Exception:
+                pass
             return RedirectResponse(url=url_publique, status_code=302)
 
         # Fallback: serve from local disk (cache) or download from S3 to cache
@@ -1235,6 +1266,22 @@ def create_app(config: AppConfig) -> FastAPI:
                 status="200",
                 details={"path": str(file_path), "filename": filename},
             )
+            try:
+                record_audit_log(
+                    index,
+                    actor_user_id=None,
+                    actor_username=str(actor),
+                    actor_role="unknown",
+                    action="ARTIFACT_DOWNLOAD",
+                    target_type="import_artifact",
+                    target_id=f"{import_id}/{artifact}",
+                    outcome="success",
+                    details={"path": str(file_path), "filename": filename},
+                    ip_address=request.client.host if request.client else None,
+                    user_agent=request.headers.get("user-agent", "")[:500] if request.headers.get("user-agent") else None,
+                )
+            except Exception:
+                pass
             return FileResponse(path=file_path, filename=filename, media_type=media_type)
 
         # If local cache cold but we have object_key, try to download from S3 to cache dir

@@ -438,7 +438,8 @@ def enregistrer_routes_bateaux(app: Any, index: Any, config: Any, verifier_auth:
             rapport = reindexer_tous_modeles(index, dry_run=dry_run)
             return {"dry_run": dry_run, **rapport}
         except Exception as exc:
-            raise HTTPException(status_code=500, detail=f"Réindexation échouée : {exc}") from exc
+            LOGGER.exception("Réindexation échouée (request_id=%s)", getattr(exc, "request_id", "unknown"))
+            raise HTTPException(status_code=500, detail="Erreur interne lors de la réindexation.") from exc
 
     @app.get("/admin/boat-models/comparatif")
     def route_comparatif(
@@ -453,4 +454,5 @@ def enregistrer_routes_bateaux(app: Any, index: Any, config: Any, verifier_auth:
         try:
             return generer_tableau_comparatif(index)
         except Exception as exc:
-            raise HTTPException(status_code=500, detail=f"Comparatif échoué : {exc}") from exc
+            LOGGER.exception("Comparatif échoué (request_id=%s)", getattr(exc, "request_id", "unknown"))
+            raise HTTPException(status_code=500, detail="Erreur interne lors de la génération du comparatif.") from exc

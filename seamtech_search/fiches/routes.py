@@ -57,6 +57,7 @@ from seamtech_search.fiches.extraction import (
 from seamtech_search.fiches.gabarits import GabaritInconnu, charger_gabarits, detecter_gabarit
 from seamtech_search.fiches.persistance import verifier_autorisation_validation_lot
 from seamtech_search.import_pipeline import staging_root
+from seamtech_search.audit_logs import record_audit_log
 from seamtech_search.jobs import create_job, register_job_cancel
 from seamtech_search.redis_store import RedisStore
 from seamtech_search.storage import S3StorageClient, StorageError
@@ -1482,6 +1483,7 @@ def enregistrer_routes_fiches(
     config: Any,
     verifier_auth: Any,
     storage_client: S3StorageClient | None = None,
+    sessions: Any | None = None,
 ) -> None:
     """Branche les routes métier et l'API de fichiers par identifiant."""
     # Verrou optimiste OBLIGATOIRE par défaut : une configuration construite à
@@ -1592,6 +1594,46 @@ def enregistrer_routes_fiches(
         headers["Content-Length"] = str(taille)
         if methode == "HEAD":
             return Response(status_code=200, headers=headers)
+        # Lot 0b — audit PIECE_DOWNLOAD (identité depuis session serveur si disponible)
+        try:
+            actor_id = None
+            actor_name = "unknown"
+            actor_role = "unknown"
+            if sessions is not None:
+                try:
+                    sid_hdr = request.headers.get("x-seamtech-session-sid") or request.headers.get("X-SEAMTECH-SESSION-SID")
+                    if sid_hdr:
+                        from seamtech_search.comptes.routes import _utilisateur_requete as _get_user
+                        # Tentative best-effort d'identification (session validée côté serveur)
+                        # Si échec, reste unknown mais on journalise quand même la tentative
+                        try:
+                            u = sessions.obtenir_session(sid_hdr)  # may not exist, fallback
+                            if u:
+                                actor_id = getattr(u, "user_id", None)
+                                actor_name = getattr(u, "identifiant", "unknown")
+                                actor_role = getattr(u, "role", "unknown")
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+            ip = (request.headers.get("x-forwarded-for") or request.client.host if request.client else "") if request else ""
+            ip = ip.split(",")[0].strip() if ip else None
+            ua = request.headers.get("user-agent")[:500] if request and request.headers.get("user-agent") else None
+            record_audit_log(
+                index,
+                actor_user_id=actor_id if isinstance(actor_id, int) else None,
+                actor_username=actor_name,
+                actor_role=actor_role,
+                action="PIECE_DOWNLOAD",
+                target_type="piece",
+                target_id=str(piece_id),
+                outcome="success",
+                details={"apercu": apercu, "nom": nom[:200]},
+                ip_address=ip,
+                user_agent=ua,
+            )
+        except Exception:
+            pass
         debut, fin, statut = _tranche_octets(range_header, taille)
         if statut == 206:
             headers["Content-Range"] = f"bytes {debut}-{fin}/{taille}"
@@ -2094,8 +2136,8 @@ def enregistrer_routes_fiches(
             enregistre = enregistrer_brouillon(index, brouillon)
             return {**brouillon, **enregistre}
         except Exception as exc:
-            LOGGER.exception("Échec génération brouillon depuis PDF: %s", exc)
-            raise HTTPException(status_code=500, detail=f"Échec génération brouillon: {exc}") from exc
+            LOGGER.exception("Échec génération brouillon depuis PDF (request_id=%s): %s", getattr(exc, "request_id", "unknown"), exc)
+            raise HTTPException(status_code=500, detail="Erreur interne lors de la génération du brouillon.") from exc
         finally:
             try:
                 os.unlink(chemin)

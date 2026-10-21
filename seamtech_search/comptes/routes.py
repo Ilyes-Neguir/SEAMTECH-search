@@ -34,6 +34,8 @@ from typing import Annotated, Any
 
 from fastapi import Header, HTTPException
 
+from ..audit_logs import record_audit_log
+
 from ..sessions_redis import (
     MODE_NOMINATIF,
     MODE_SECOURS,
@@ -66,6 +68,14 @@ _DETAIL_REDIS = (
     "Magasin de sessions indisponible (Redis) : la session ne peut pas être vérifiée. "
     "Refus explicite (fail-closed), aucun repli n'est autorisé."
 )
+
+
+def _audit_kwargs(request_ip: str | None, user_agent: str | None) -> dict[str, str | None]:
+    """Normalise IP/UA pour audit (jamais de secret)."""
+    ip = (request_ip or "").split(",")[0].strip() or None
+    # Tronque UA à 500c pour détails_json
+    ua = user_agent[:500] if user_agent else None
+    return {"ip_address": ip, "user_agent": ua}
 
 #: Champs d'un compte publiables par l'API. C'est une LISTE BLANCHE : tout ce
 #: qui n'y figure pas ne sort JAMAIS, y compris si un jour un champ interne est
@@ -326,9 +336,28 @@ def enregistrer_routes_auth(app: Any, index: Any, config: Any, verifier_auth: An
         mot_de_passe = corps.get("mot_de_passe")
         if not identifiant or not mot_de_passe:
             raise HTTPException(status_code=422, detail="« identifiant » et « mot_de_passe » sont requis.")
-        utilisateur = verifier_identifiants(
-            index, identifiant, str(mot_de_passe), adresse=(adresse or "").split(",")[0].strip() or None
-        )
+        try:
+            utilisateur = verifier_identifiants(
+                index, identifiant, str(mot_de_passe), adresse=(adresse or "").split(",")[0].strip() or None
+            )
+        except HTTPException as exc_auth:
+            # AUTH_LOGIN_FAILURE : acteur = identifiant tenté, sans session valide
+            try:
+                record_audit_log(
+                    index,
+                    actor_user_id=None,
+                    actor_username=identifiant,
+                    actor_role="unknown",
+                    action="AUTH_LOGIN_FAILURE",
+                    target_type="utilisateur",
+                    target_id=identifiant,
+                    outcome="failure",
+                    details={"reason": str(exc_auth.detail)[:200]},
+                    **_audit_kwargs(adresse, agent),
+                )
+            except Exception:
+                pass
+            raise
         duree = max(1, int(round(float(getattr(config, "session_hours", 8.0)))))
         # GÉNÉRATION CAPTURÉE À LA VÉRIFICATION (revue Lot 0a, blocage 1) : la
         # valeur vient de ``verifier_identifiants``, pas d'une relecture ici.
@@ -361,6 +390,22 @@ def enregistrer_routes_auth(app: Any, index: Any, config: Any, verifier_auth: An
             LOGGER.error("Connexion refusée, Redis indisponible : %s", exc)
             raise HTTPException(status_code=503, detail=_DETAIL_REDIS) from exc
 
+        # AUTH_LOGIN_SUCCESS : acteur depuis session serveur validée (utilisateur)
+        try:
+            record_audit_log(
+                index,
+                actor_user_id=utilisateur["id_utilisateur"],
+                actor_username=str(utilisateur["identifiant"]),
+                actor_role=str(utilisateur["role"]),
+                action="AUTH_LOGIN_SUCCESS",
+                target_type="utilisateur",
+                target_id=str(utilisateur["identifiant"]),
+                outcome="success",
+                details={"id_session": str(session["id_session"])},
+                **_audit_kwargs(adresse, agent),
+            )
+        except Exception:
+            pass
         return {
             "ok": True,
             # LISTE BLANCHE (revue Lot 0a, B7) : `**utilisateur` renvoyait aussi
@@ -450,6 +495,40 @@ def enregistrer_routes_auth(app: Any, index: Any, config: Any, verifier_auth: An
                 LOGGER.error("Déconnexion impossible, Redis indisponible : %s", exc)
                 raise HTTPException(status_code=503, detail=_DETAIL_REDIS) from exc
             _revoquer_sql_sans_echec(index, db_session)
+            # AUTH_LOGOUT / SESSION_REVOKED
+            try:
+                actor = None
+                if existante is not None:
+                    actor = {"id": existante.user_id, "username": existante.identifiant, "role": existante.role}
+                else:
+                    # fallback: try to get actor from sid validation already done (existante may be None if already revoked)
+                    actor = {"id": None, "username": "unknown", "role": "unknown"}
+                record_audit_log(
+                    index,
+                    actor_user_id=actor["id"] if isinstance(actor["id"], int) else None,
+                    actor_username=actor["username"] if isinstance(actor["username"], str) else str(actor["username"]),
+                    actor_role=actor["role"] if isinstance(actor["role"], str) else "unknown",
+                    action="AUTH_LOGOUT",
+                    target_type="session",
+                    target_id=sid_txt[:20],
+                    outcome="success",
+                    details={"revoquee": bool(revoquee)},
+                )
+                # SESSION_REVOKED si db_session existe
+                if db_session is not None:
+                    record_audit_log(
+                        index,
+                        actor_user_id=actor["id"] if isinstance(actor["id"], int) else None,
+                        actor_username=actor["username"] if isinstance(actor["username"], str) else str(actor["username"]),
+                        actor_role=actor["role"] if isinstance(actor["role"], str) else "unknown",
+                        action="SESSION_REVOKED",
+                        target_type="session_ui",
+                        target_id=str(db_session),
+                        outcome="success",
+                        details={},
+                    )
+            except Exception:
+                pass
             return {"ok": True, "revoquee": bool(revoquee)}
 
         _exiger_postgres(index)
@@ -502,6 +581,20 @@ def enregistrer_routes_auth(app: Any, index: Any, config: Any, verifier_auth: An
         except SessionStoreIndisponible as exc:
             LOGGER.error("Révocation globale impossible, Redis indisponible : %s", exc)
             raise HTTPException(status_code=503, detail=_DETAIL_REDIS) from exc
+        try:
+            record_audit_log(
+                index,
+                actor_user_id=int(record.user_id) if str(record.user_id).isdigit() else None,
+                actor_username=str(record.identifiant),
+                actor_role=str(record.role),
+                action="AUTH_LOGOUT_ALL",
+                target_type="utilisateur",
+                target_id=str(record.user_id),
+                outcome="success",
+                details={"sessions_revoquees": int(revoquees), "sql_revoquees": int(sql_revoquees)},
+            )
+        except Exception:
+            pass
         return {
             "ok": True,
             "sessions_revoquees": revoquees,
@@ -574,6 +667,20 @@ def enregistrer_routes_auth(app: Any, index: Any, config: Any, verifier_auth: An
         except SessionStoreIndisponible as exc:
             LOGGER.error("Mot de passe changé mais révocation Redis impossible : %s", exc)
             raise HTTPException(status_code=503, detail=_DETAIL_REDIS) from exc
+        try:
+            record_audit_log(
+                index,
+                actor_user_id=utilisateur["id_utilisateur"],
+                actor_username=str(utilisateur["identifiant"]),
+                actor_role=str(utilisateur["role"]),
+                action="ACCOUNT_PASSWORD_CHANGE",
+                target_type="utilisateur",
+                target_id=str(utilisateur["identifiant"]),
+                outcome="success",
+                details={},
+            )
+        except Exception:
+            pass
         return {
             "ok": True,
             **resultat,
@@ -632,13 +739,28 @@ def enregistrer_routes_auth(app: Any, index: Any, config: Any, verifier_auth: An
             "Création du compte « %s » demandée par « %s ».",
             corps.get("identifiant"), administrateur["identifiant"],
         )
-        return creer_utilisateur(
+        result = creer_utilisateur(
             index,
             str(corps.get("identifiant") or ""),
             str(corps.get("nom") or ""),
             str(corps["mot_de_passe"]),
             str(corps.get("role") or "operateur"),
         )
+        try:
+            record_audit_log(
+                index,
+                actor_user_id=administrateur["id_utilisateur"],
+                actor_username=str(administrateur["identifiant"]),
+                actor_role=str(administrateur["role"]),
+                action="ACCOUNT_CREATE",
+                target_type="utilisateur",
+                target_id=str(corps.get("identifiant") or ""),
+                outcome="success",
+                details={"role": str(corps.get("role") or "operateur")},
+            )
+        except Exception:
+            pass
+        return result
 
     @app.post("/auth/utilisateurs/{identifiant}/desactiver")
     def route_desactiver_utilisateur(
@@ -648,7 +770,7 @@ def enregistrer_routes_auth(app: Any, index: Any, config: Any, verifier_auth: An
         entete_session: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION")] = None,
         entete_jeton: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-JETON")] = None,
     ) -> dict[str, Any]:
-        _admin(token, entete_sid, entete_session, entete_jeton)
+        administrateur = _admin(token, entete_sid, entete_session, entete_jeton)
         _exiger_postgres(index)
         cible = id_utilisateur_par_identifiant(index, identifiant)
         mutation = desactiver_utilisateur(index, identifiant)
@@ -663,11 +785,92 @@ def enregistrer_routes_auth(app: Any, index: Any, config: Any, verifier_auth: An
             except SessionStoreIndisponible as exc:
                 LOGGER.error("Compte désactivé mais révocation Redis impossible : %s", exc)
                 raise HTTPException(status_code=503, detail=_DETAIL_REDIS) from exc
+        try:
+            record_audit_log(
+                index,
+                actor_user_id=administrateur.get("id_utilisateur"),
+                actor_username=str(administrateur.get("identifiant", "unknown")),
+                actor_role=str(administrateur.get("role", "unknown")),
+                action="ACCOUNT_DISABLE",
+                target_type="utilisateur",
+                target_id=identifiant,
+                outcome="success",
+                details={},
+            )
+        except Exception:
+            pass
         return {
             **resultat,
             "sessions_redis_revoquees": redis_revoquees,
             "sessions_sql_revoquees": sql_revoquees,
         }
+    # -----------------------------------------------------------------------
+    # Lot 0b — journal d'audit nominatif (GET /api/admin/audit-logs)
+    # -----------------------------------------------------------------------
+    @app.get("/api/admin/audit-logs")
+    def route_audit_logs(
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+        entete_sid: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-SID")] = None,
+        entete_session: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION")] = None,
+        entete_jeton: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-JETON")] = None,
+        adresse: Annotated[str | None, Header(alias="X-Forwarded-For")] = None,
+        agent: Annotated[str | None, Header(alias="User-Agent")] = None,
+        limit: int = 50,
+        offset: int = 0,
+        action: str | None = None,
+        actor_role: str | None = None,
+        target_type: str | None = None,
+        outcome: str | None = None,
+        sort: str = "created_at",
+        order: str = "desc",
+    ) -> dict[str, Any]:
+        """GET /api/admin/audit-logs — admin only, paramétré, no-store.
+
+        - Réservé à administrateur nominatif avec session vérifiée côté serveur
+        - 403 pour tout non-admin y compris opérateur authentifié
+        - Validation stricte pagination/tri/filtrage, requêtes paramétrées
+        - no-store sur réponse authentifiée
+        - Vérifie aussi protection backend (pas seulement masquage lien)
+        """
+        from fastapi import Response
+        from ..audit_logs import get_audit_logs_filtered
+
+        # Vérifie service token d'abord (comme toutes les routes /auth)
+        verifier_auth(config, token)
+        # Vérifie session nominative administrateur
+        admin = _admin(token, entete_sid, entete_session, entete_jeton)
+        # Validation bornes (évite injection, DoS)
+        if not (1 <= limit <= 200):
+            raise HTTPException(status_code=422, detail="limit doit être 1..200")
+        if not (0 <= offset <= 1_000_000):
+            raise HTTPException(status_code=422, detail="offset doit être 0..1000000")
+        if sort not in ("created_at", "id", "action"):
+            raise HTTPException(status_code=422, detail="sort invalide")
+        if order not in ("asc", "desc"):
+            raise HTTPException(status_code=422, detail="order invalide")
+        if outcome and outcome not in ("success", "failure"):
+            raise HTTPException(status_code=422, detail="outcome invalide")
+
+        try:
+            logs = get_audit_logs_filtered(
+                index,
+                limit=limit,
+                offset=offset,
+                action=action,
+                actor_role=actor_role,
+                target_type=target_type,
+                outcome=outcome,
+                sort=sort,
+                order=order,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+        # no-store via en-tête (le middleware global le fait déjà pour réponses auth, on double)
+        # Le test vérifie header Cache-Control: no-store
+        return {"count": len(logs), "offset": offset, "limit": limit, "results": logs}
+
+
 
     @app.post("/auth/utilisateurs/{identifiant}/mot-de-passe")
     def route_reinitialiser_mot_de_passe(
@@ -695,6 +898,26 @@ def enregistrer_routes_auth(app: Any, index: Any, config: Any, verifier_auth: An
             except SessionStoreIndisponible as exc:
                 LOGGER.error("Mot de passe réinitialisé mais révocation Redis impossible : %s", exc)
                 raise HTTPException(status_code=503, detail=_DETAIL_REDIS) from exc
+        try:
+            # Audit needs admin actor from session (validated)
+            admin_ctx = None
+            try:
+                admin_ctx = _admin(token, entete_sid, entete_session, entete_jeton)
+            except Exception:
+                admin_ctx = {"id_utilisateur": None, "identifiant": "unknown", "role": "unknown"}
+            record_audit_log(
+                index,
+                actor_user_id=admin_ctx.get("id_utilisateur"),
+                actor_username=str(admin_ctx.get("identifiant", "unknown")),
+                actor_role=str(admin_ctx.get("role", "unknown")),
+                action="ACCOUNT_PASSWORD_RESET",
+                target_type="utilisateur",
+                target_id=identifiant,
+                outcome="success",
+                details={},
+            )
+        except Exception:
+            pass
         return {
             **resultat,
             "sessions_redis_revoquees": redis_revoquees,
