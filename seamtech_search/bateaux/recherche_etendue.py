@@ -12,12 +12,15 @@ ce module ajoute la couche « référentiel bateau + synonymes » par-dessus.
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any
 
 from seamtech_search.bateaux.modeles import expand_query_with_boat_aliases
 from seamtech_search.bateaux.normalisation import normaliser_cle_bateau
 from seamtech_search.bateaux.synonymes import expand_query_for_search
+
+LOGGER = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Helpers de normalisation pour la requête (tirets/underscores/slash)
