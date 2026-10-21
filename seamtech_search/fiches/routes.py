@@ -1525,11 +1525,71 @@ def enregistrer_routes_fiches(
             raise HTTPException(status_code=403, detail="Accès à ce fichier interdit.")
         return row
 
+    def _resolve_piece_actor(request: Request) -> tuple[int | None, str, str]:
+        """Résout acteur depuis session validée, sinon unknown."""
+        actor_id = None
+        actor_name = "unknown"
+        actor_role = "unknown"
+        if sessions is not None:
+            try:
+                sid_hdr = request.headers.get("x-seamtech-session-sid") or request.headers.get("X-SEAMTECH-SESSION-SID")
+                if sid_hdr:
+                    try:
+                        u = sessions.valider_session(sid_hdr)
+                        if u:
+                            actor_id = getattr(u, "user_id", None)
+                            actor_name = getattr(u, "identifiant", None) or getattr(u, "username", None) or "unknown"
+                            actor_role = getattr(u, "role", None) or "unknown"
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+        # fallback: tente via token fingerprint si pas de session (service)
+        if actor_name == "unknown":
+            try:
+                # on ne fait pas confiance à X-SEAMTECH-ROLE librement, mais on logge token
+                tok = request.headers.get("x-seamtech-token") or request.headers.get("X-SEAMTECH-TOKEN")
+                if tok:
+                    actor_name = "service:" + tok[:8]
+            except Exception:
+                pass
+        return (actor_id if isinstance(actor_id, int) else None, str(actor_name), str(actor_role))
+
+    def _audit_piece(request: Request, piece_id: int, apercu: bool, nom: str, outcome: str, details: dict | None = None) -> None:
+        try:
+            uid, uname, rrole = _resolve_piece_actor(request)
+            ip = (request.headers.get("x-forwarded-for") or (request.client.host if request.client else "")) if request else ""
+            ip = ip.split(",")[0].strip() if ip else None
+            ua = request.headers.get("user-agent")[:500] if request and request.headers.get("user-agent") else None
+            record_audit_log(
+                index,
+                actor_user_id=uid,
+                actor_username=uname,
+                actor_role=rrole,
+                action="PIECE_DOWNLOAD",
+                target_type="piece",
+                target_id=str(piece_id),
+                outcome=outcome,
+                details=details or {"apercu": apercu, "nom": nom[:200]},
+                ip_address=ip,
+                user_agent=ua,
+            )
+        except Exception:
+            pass
+
     def servir_piece(piece_id: int, request: Request, *, apercu: bool) -> Response:
-        document = charger_document(piece_id)
+        # 415 - aperçu impossible
+        try:
+            document = charger_document(piece_id)
+        except HTTPException as exc:
+            # 404 fichier inconnu ou 403 accès interdit — audit failure sans fuite chemin
+            if exc.status_code in (404, 403):
+                _audit_piece(request, piece_id, apercu, "unknown", "failure", {"reason": "not_found" if exc.status_code==404 else "forbidden"})
+            raise
         nom = _nom_fichier_sure(str(document["name"] or "fichier"))
         extension = str(document["extension"] or Path(nom).suffix).lower()
         if apercu and not _apercu_possible(extension):
+            _audit_piece(request, piece_id, apercu, nom, "failure", {"reason": "preview_not_allowed"})
             raise HTTPException(
                 status_code=415,
                 detail="L’aperçu n’est pas disponible pour ce type de fichier. Téléchargez le fichier pour l’ouvrir.",
@@ -1555,6 +1615,7 @@ def enregistrer_routes_fiches(
                 try:
                     metadata = storage_client.head_object(str(object_key))
                 except StorageError as erreur:
+                    _audit_piece(request, piece_id, apercu, nom, "failure", {"reason": "storage_unavailable"})
                     raise HTTPException(status_code=502, detail="Le stockage du fichier est temporairement indisponible.") from erreur
                 longueur = metadata.get("ContentLength", document.get("size"))
                 if longueur is not None:
@@ -1563,6 +1624,7 @@ def enregistrer_routes_fiches(
                     headers["ETag"] = str(metadata["ETag"])
                 if metadata.get("LastModified"):
                     headers["Last-Modified"] = metadata["LastModified"].strftime("%a, %d %b %Y %H:%M:%S GMT")
+                _audit_piece(request, piece_id, apercu, nom, "success", {"apercu": apercu, "nom": nom[:200], "via": "s3_head"})
                 return Response(status_code=200, headers=headers)
 
             range_a_demander = range_header
@@ -1574,6 +1636,7 @@ def enregistrer_routes_fiches(
             try:
                 objet = storage_client.get_object(str(object_key), range_header=range_a_demander)
             except StorageError as erreur:
+                _audit_piece(request, piece_id, apercu, nom, "failure", {"reason": "storage_unavailable"})
                 raise HTTPException(status_code=502, detail="Le stockage du fichier est temporairement indisponible.") from erreur
             if objet.get("ContentRange"):
                 headers["Content-Range"] = str(objet["ContentRange"])
@@ -1584,60 +1647,24 @@ def enregistrer_routes_fiches(
             if objet.get("LastModified"):
                 headers["Last-Modified"] = objet["LastModified"].strftime("%a, %d %b %Y %H:%M:%S GMT")
             corps = objet["Body"].iter_chunks(chunk_size=1024 * 1024)
+            _audit_piece(request, piece_id, apercu, nom, "success", {"apercu": apercu, "nom": nom[:200], "via": "s3"})
             return StreamingResponse(corps, status_code=206 if objet.get("ContentRange") else 200, headers=headers)
 
         try:
             stat = chemin.stat()
         except OSError as erreur:
+            _audit_piece(request, piece_id, apercu, nom, "failure", {"reason": "file_not_available"})
             raise HTTPException(status_code=404, detail="Fichier non disponible.") from erreur
         taille = stat.st_size
         headers["Content-Length"] = str(taille)
         if methode == "HEAD":
+            _audit_piece(request, piece_id, apercu, nom, "success", {"apercu": apercu, "nom": nom[:200], "via": "local_head"})
             return Response(status_code=200, headers=headers)
-        # Lot 0b — audit PIECE_DOWNLOAD (identité depuis session serveur si disponible)
-        try:
-            actor_id = None
-            actor_name = "unknown"
-            actor_role = "unknown"
-            if sessions is not None:
-                try:
-                    sid_hdr = request.headers.get("x-seamtech-session-sid") or request.headers.get("X-SEAMTECH-SESSION-SID")
-                    if sid_hdr:
-                        from seamtech_search.comptes.routes import _utilisateur_requete as _get_user
-                        # Tentative best-effort d'identification (session validée côté serveur)
-                        # Si échec, reste unknown mais on journalise quand même la tentative
-                        try:
-                            u = sessions.obtenir_session(sid_hdr)  # may not exist, fallback
-                            if u:
-                                actor_id = getattr(u, "user_id", None)
-                                actor_name = getattr(u, "identifiant", "unknown")
-                                actor_role = getattr(u, "role", "unknown")
-                        except Exception:
-                            pass
-                except Exception:
-                    pass
-            ip = (request.headers.get("x-forwarded-for") or request.client.host if request.client else "") if request else ""
-            ip = ip.split(",")[0].strip() if ip else None
-            ua = request.headers.get("user-agent")[:500] if request and request.headers.get("user-agent") else None
-            record_audit_log(
-                index,
-                actor_user_id=actor_id if isinstance(actor_id, int) else None,
-                actor_username=actor_name,
-                actor_role=actor_role,
-                action="PIECE_DOWNLOAD",
-                target_type="piece",
-                target_id=str(piece_id),
-                outcome="success",
-                details={"apercu": apercu, "nom": nom[:200]},
-                ip_address=ip,
-                user_agent=ua,
-            )
-        except Exception:
-            pass
         debut, fin, statut = _tranche_octets(range_header, taille)
         if statut == 206:
             headers["Content-Range"] = f"bytes {debut}-{fin}/{taille}"
             headers["Content-Length"] = str(fin - debut + 1)
+        _audit_piece(request, piece_id, apercu, nom, "success", {"apercu": apercu, "nom": nom[:200], "via": "local"})
         return StreamingResponse(_flux_fichier(chemin, debut, fin), status_code=statut, headers=headers)
 
     @app.get("/pieces")

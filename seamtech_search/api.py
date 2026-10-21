@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 
 from .audit import actor_fingerprint, get_audit_logs, record_audit_event
 from .audit_logs import record_audit_log
+from .sessions_redis import SessionStore
 from .config import AppConfig
 from .etat_exploitation import etat_sauvegarde, s3_credential_kind
 from .extractors import extract_file
@@ -140,6 +141,14 @@ def create_app(config: AppConfig) -> FastAPI:
     )
 
     redis_store = RedisStore(config=config)
+    try:
+        session_store = SessionStore(
+            config.redis_url,
+            idle_minutes=getattr(config, "session_idle_minutes", 30),
+            session_hours=getattr(config, "session_hours", 8),
+        )
+    except Exception:
+        session_store = None  # type: ignore
 
     # One client for the whole app lifetime: it carries the versioning probe
     # cache that /health reports from, so a health-check loop does not turn into
@@ -704,6 +713,23 @@ def create_app(config: AppConfig) -> FastAPI:
                 status="507",
                 details={"error": str(exc)},
             )
+            try:
+                uid, uname, rrole = _resolve_audit_actor(request, config, token, session_store)
+                record_audit_log(
+                    index,
+                    actor_user_id=uid,
+                    actor_username=uname,
+                    actor_role=rrole,
+                    action="IMPORT_CREATE",
+                    target_type="import",
+                    target_id=job_id if 'job_id' in locals() else "pre_job",
+                    outcome="failure",
+                    details={"reason": "insufficient_storage"},
+                    ip_address=request.client.host if request.client else None,
+                    user_agent=request.headers.get("user-agent", "")[:500] if request.headers.get("user-agent") else None,
+                )
+            except Exception:
+                pass
             raise HTTPException(status_code=507, detail=str(exc)) from exc
 
         job_id = uuid.uuid4().hex
@@ -722,15 +748,47 @@ def create_app(config: AppConfig) -> FastAPI:
                     status="success",
                     details={"sync": True},
                 )
+                try:
+                    uid, uname, rrole = _resolve_audit_actor(request, config, token, session_store)
+                    record_audit_log(
+                        index,
+                        actor_user_id=uid,
+                        actor_username=uname,
+                        actor_role=rrole,
+                        action="IMPORT_CREATE",
+                        target_type="import",
+                        target_id=job_id,
+                        outcome="success",
+                        details={"sync": True},
+                        ip_address=request.client.host if request.client else None,
+                        user_agent=request.headers.get("user-agent", "")[:500] if request.headers.get("user-agent") else None,
+                    )
+                except Exception:
+                    pass
                 return JSONResponse(status_code=200, content=payload)
             except InsufficientStorageError as exc:
                 record_audit_event(index, action="import_create", actor=actor, resource=job_id, status="507")
+                try:
+                    uid, uname, rrole = _resolve_audit_actor(request, config, token, session_store)
+                    record_audit_log(index, actor_user_id=uid, actor_username=uname, actor_role=rrole, action="IMPORT_CREATE", target_type="import", target_id=job_id, outcome="failure", details={"reason": "insufficient_storage"}, ip_address=request.client.host if request.client else None, user_agent=request.headers.get("user-agent", "")[:500] if request.headers.get("user-agent") else None)
+                except Exception:
+                    pass
                 raise HTTPException(status_code=507, detail=str(exc)) from exc
             except PermissionError as exc:
                 record_audit_event(index, action="import_create", actor=actor, resource=job_id, status="403")
+                try:
+                    uid, uname, rrole = _resolve_audit_actor(request, config, token, session_store)
+                    record_audit_log(index, actor_user_id=uid, actor_username=uname, actor_role=rrole, action="IMPORT_CREATE", target_type="import", target_id=job_id, outcome="failure", details={"reason": "permission"}, ip_address=request.client.host if request.client else None, user_agent=request.headers.get("user-agent", "")[:500] if request.headers.get("user-agent") else None)
+                except Exception:
+                    pass
                 raise HTTPException(status_code=403, detail=str(exc)) from exc
             except ValueError as exc:
                 record_audit_event(index, action="import_create", actor=actor, resource=job_id, status="400")
+                try:
+                    uid, uname, rrole = _resolve_audit_actor(request, config, token, session_store)
+                    record_audit_log(index, actor_user_id=uid, actor_username=uname, actor_role=rrole, action="IMPORT_CREATE", target_type="import", target_id=job_id, outcome="failure", details={"reason": "value_error"}, ip_address=request.client.host if request.client else None, user_agent=request.headers.get("user-agent", "")[:500] if request.headers.get("user-agent") else None)
+                except Exception:
+                    pass
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         try:
@@ -758,6 +816,11 @@ def create_app(config: AppConfig) -> FastAPI:
                 status="503",
                 details={"reason": "file durable indisponible"},
             )
+            try:
+                uid, uname, rrole = _resolve_audit_actor(request, config, token, session_store)
+                record_audit_log(index, actor_user_id=uid, actor_username=uname, actor_role=rrole, action="IMPORT_CREATE", target_type="import", target_id=job_id, outcome="failure", details={"reason": "durable_unavailable"}, ip_address=request.client.host if request.client else None, user_agent=request.headers.get("user-agent", "")[:500] if request.headers.get("user-agent") else None)
+            except Exception:
+                pass
             raise HTTPException(
                 status_code=503,
                 detail=(
@@ -803,6 +866,11 @@ def create_app(config: AppConfig) -> FastAPI:
             status="accepted",
             details={"async": True, "durability": "durable" if durable else "process_memory"},
         )
+        try:
+            uid, uname, rrole = _resolve_audit_actor(request, config, token, session_store)
+            record_audit_log(index, actor_user_id=uid, actor_username=uname, actor_role=rrole, action="IMPORT_CREATE", target_type="import", target_id=job_id, outcome="success", details={"async": True, "durability": "durable" if durable else "process_memory"}, ip_address=request.client.host if request.client else None, user_agent=request.headers.get("user-agent", "")[:500] if request.headers.get("user-agent") else None)
+        except Exception:
+            pass
 
         return JSONResponse(
             status_code=202,
@@ -1176,11 +1244,21 @@ def create_app(config: AppConfig) -> FastAPI:
 
         allowed = {"report_pdf", "report_docx", "source_pdf", "source_excel"}
         if artifact not in allowed:
+            try:
+                uid, uname, rrole = _resolve_audit_actor(request, config, token, session_store)
+                record_audit_log(index, actor_user_id=uid, actor_username=uname, actor_role=rrole, action="ARTIFACT_DOWNLOAD", target_type="import_artifact", target_id=f"{import_id}/{artifact}", outcome="failure", details={"reason": "unknown_artifact"}, ip_address=request.client.host if request.client else None, user_agent=request.headers.get("user-agent", "")[:500] if request.headers.get("user-agent") else None)
+            except Exception:
+                pass
             raise HTTPException(status_code=400, detail=f"Unknown artifact. Allowed: {', '.join(sorted(allowed))}")
 
         payload = get_import(index, import_id)
         if payload is None:
             record_audit_event(index, action="artifact_download", actor=actor, resource=f"{import_id}/{artifact}", status="404")
+            try:
+                uid, uname, rrole = _resolve_audit_actor(request, config, token, session_store)
+                record_audit_log(index, actor_user_id=uid, actor_username=uname, actor_role=rrole, action="ARTIFACT_DOWNLOAD", target_type="import_artifact", target_id=f"{import_id}/{artifact}", outcome="failure", details={"reason": "import_not_found"}, ip_address=request.client.host if request.client else None, user_agent=request.headers.get("user-agent", "")[:500] if request.headers.get("user-agent") else None)
+            except Exception:
+                pass
             raise HTTPException(status_code=404, detail="Import not found.")
 
         # Resolve file path and object key from payload
@@ -1239,16 +1317,17 @@ def create_app(config: AppConfig) -> FastAPI:
                 details={"object_key": object_key, "filename": filename, "servi_par": "redirection_publique"},
             )
             try:
+                uid, uname, rrole = _resolve_audit_actor(request, config, token, session_store)
                 record_audit_log(
                     index,
-                    actor_user_id=None,
-                    actor_username=str(actor),
-                    actor_role="unknown",
+                    actor_user_id=uid,
+                    actor_username=uname,
+                    actor_role=rrole,
                     action="ARTIFACT_DOWNLOAD",
                     target_type="import_artifact",
                     target_id=f"{import_id}/{artifact}",
                     outcome="success",
-                    details={"object_key": object_key, "filename": filename},
+                    details={"filename": filename},
                     ip_address=request.client.host if request.client else None,
                     user_agent=request.headers.get("user-agent", "")[:500] if request.headers.get("user-agent") else None,
                 )
@@ -1267,16 +1346,17 @@ def create_app(config: AppConfig) -> FastAPI:
                 details={"path": str(file_path), "filename": filename},
             )
             try:
+                uid, uname, rrole = _resolve_audit_actor(request, config, token, session_store)
                 record_audit_log(
                     index,
-                    actor_user_id=None,
-                    actor_username=str(actor),
-                    actor_role="unknown",
+                    actor_user_id=uid,
+                    actor_username=uname,
+                    actor_role=rrole,
                     action="ARTIFACT_DOWNLOAD",
                     target_type="import_artifact",
                     target_id=f"{import_id}/{artifact}",
                     outcome="success",
-                    details={"path": str(file_path), "filename": filename},
+                    details={"filename": filename},
                     ip_address=request.client.host if request.client else None,
                     user_agent=request.headers.get("user-agent", "")[:500] if request.headers.get("user-agent") else None,
                 )
@@ -1298,11 +1378,21 @@ def create_app(config: AppConfig) -> FastAPI:
                         status="200",
                         details={"object_key": object_key, "filename": filename, "cache": "miss_downloaded"},
                     )
+                    try:
+                        uid, uname, rrole = _resolve_audit_actor(request, config, token, session_store)
+                        record_audit_log(index, actor_user_id=uid, actor_username=uname, actor_role=rrole, action="ARTIFACT_DOWNLOAD", target_type="import_artifact", target_id=f"{import_id}/{artifact}", outcome="success", details={"filename": filename, "cache": "miss_downloaded"}, ip_address=request.client.host if request.client else None, user_agent=request.headers.get("user-agent", "")[:500] if request.headers.get("user-agent") else None)
+                    except Exception:
+                        pass
                     return FileResponse(path=file_path, filename=filename, media_type=media_type)
             except Exception as exc:
                 logger.warning("Failed to download %s from storage: %s", object_key, exc)
 
         record_audit_event(index, action="artifact_download", actor=actor, resource=f"{import_id}/{artifact}", status="404")
+        try:
+            uid, uname, rrole = _resolve_audit_actor(request, config, token, session_store)
+            record_audit_log(index, actor_user_id=uid, actor_username=uname, actor_role=rrole, action="ARTIFACT_DOWNLOAD", target_type="import_artifact", target_id=f"{import_id}/{artifact}", outcome="failure", details={"reason": "artifact_not_found"}, ip_address=request.client.host if request.client else None, user_agent=request.headers.get("user-agent", "")[:500] if request.headers.get("user-agent") else None)
+        except Exception:
+            pass
         raise HTTPException(status_code=404, detail="Artifact not found. It may not have been generated or uploaded yet.")
 
     # ---------------------------------------------------------------------------
@@ -1367,7 +1457,7 @@ def create_app(config: AppConfig) -> FastAPI:
     # lecture et publication uniquement, aucune écriture de fiche par ces routes.
     from seamtech_search.fiches.routes import enregistrer_routes_fiches
 
-    enregistrer_routes_fiches(app, index, config, _require_auth, storage_client=storage_client)
+    enregistrer_routes_fiches(app, index, config, _require_auth, storage_client=storage_client, sessions=session_store)
 
     # Lot E (§17.2, §17.5) : recherche hybride des fiches — GET /recherche et
     # GET /recherche/suggestions. L'existant (/search fichiers) n'est pas touché.
@@ -1598,6 +1688,31 @@ def analyser_collisions(relatifs: list[Path]) -> list[dict[str, Any]]:
                     }
                 )
     return conflits
+
+
+def _resolve_audit_actor(request: Request, config: AppConfig, token: str | None, session_store: SessionStore | None = None) -> tuple[int | None, str, str]:
+    """Résout l'acteur depuis session serveur validée, sinon fallback token."""
+    # Tente session nominative d'abord (identité fiable)
+    sid = request.headers.get("x-seamtech-session-sid") or request.headers.get("X-SEAMTECH-SESSION-SID")
+    if sid and session_store is not None:
+        try:
+            rec = session_store.obtenir_session(sid)  # type: ignore
+            if rec:
+                # rec est SessionRecord avec user_id, identifiant, role
+                uid = getattr(rec, "user_id", None)
+                uname = getattr(rec, "identifiant", None) or getattr(rec, "username", None) or str(uid)
+                role = getattr(rec, "role", None) or "unknown"
+                try:
+                    uid_int = int(uid) if uid is not None else None
+                except Exception:
+                    uid_int = None
+                return (uid_int, str(uname), str(role))
+        except Exception:
+            pass
+        # fallback: try via comptes logic if Redis indisponible - on ne fait pas confiance à header role
+    # Fallback: empreinte service token
+    actor = actor_fingerprint(token, request.client.host if request.client else None)
+    return (None, str(actor), "service")
 
 
 def _require_auth(config: AppConfig, token: str | None) -> None:

@@ -116,8 +116,8 @@ def test_idempotence_rejeu_sans_erreur(base_metier: dict[str, Any]) -> None:
             nb_tables = int(cursor.fetchone()[0])
     assert apres == avant
     # pg_tables ne compte pas les vues (v_fiche_recherche, v_qualite).
-    # 37 métier (33 + 4 Lot2 boat_models etc.) + 6 héritées = 43
-    assert nb_tables == len(schema_metier.TABLES_METIER) + len(TABLES_HERITEES) == 43
+    # 38 métier (33 +1 etage3 +1 audit_logs +4 Lot2 boat_models) + 6 héritées = 44
+    assert nb_tables == len(schema_metier.TABLES_METIER) + len(TABLES_HERITEES) == 44
 
 
 @pytest.mark.postgres

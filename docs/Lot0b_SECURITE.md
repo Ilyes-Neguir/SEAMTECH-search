@@ -3,7 +3,7 @@
 **Branche**: `arena/c7c86aff-seamtech-search`  
 **SHA pré-fusion Lot 0a+Lot 2**: `e38e6e9` (merge commit préservant lignées)  
 **SHA HEAD actuel**: `892448a` + modifications Lot 0b (à pousser, voir ci-dessous pour SHA final)  
-**Date**: 2026-10-11
+**Date**: 2026-10-21 (révision après revue f3effa2)
 
 ## 1. Prévol (exigence 0)
 
@@ -22,8 +22,8 @@
 
 - Fichier unique `seamtech_search/schema_metier.py` : `SQL_024_INVALIDATION_SESSIONS` (1998af6), `SQL_025_AUDIT_LOGS` (12 colonnes : `id BIGSERIAL PK`, `created_at TIMESTAMPTZ default now()`, `actor_user_id FK utilisateur ON DELETE SET NULL`, `actor_username/role`, `action`, `target_type/target_id`, `ip_address/user_agent`, `outcome CHECK success/failure`, `details_json JSONB`; 5 index `created_at DESC/action/actor/target/actor_role`; `COMMENT`; `IF NOT EXISTS` idempotente), `SQL_026_FONCTION_UNACCENT_ETENDUE+REPLI+BOAT_MODELS`.
 - `TABLES_METIER` 37→38, `MIGRATIONS` 024_invalidation_sessions/025_audit_logs/026, header `006→026`.
-- `seamtech_search/indexer.py` : `_migration_025_audit_logs` (PG-only via `SAVEPOINT unaccent_before_025`, warning SQLite) remplace le placeholder ; idempotente sur PG réel, backup/restore testé (`pg_dump` avant migration, `pg_restore` en cas d'échec).
-- Préservation `audit_log` ancien (verrouillage connexions) : si table `audit_log` existe, renommée en `audit_log_pre_025` avant création, documentée dans `docs/MIGRATION_025.md`.
+- `seamtech_search/indexer.py` : `_migration_025_audit_logs` (PG-only, warning SQLite) exécute `SQL_025_AUDIT_LOGS` ; idempotente via `IF NOT EXISTS`/`IF NOT EXISTS` index, testée sur base réelle vide et re-jeu. Aucun SAVEPOINT nécessaire (contrairement à 026 qui utilise `SAVEPOINT seamtech_026_unaccent` pour la fonction unaccent).
+- Préservation `audit_log` ancien (verrouillage connexions) : l'ancien `audit_log` (événements `connexion_refusee`) est conservé tel quel ; `audit_logs` est une nouvelle table indépendante. Les deux coexistent, aucun renommage n'est effectué (vérifié `pg_tables`).
 - Pas de secrets, JSON borné 4ko (troncature), échec d'écriture journalisé `LOGGER.warning` sans bloquer la requête principale.
 
 ## 4. Événements + GET /api/admin/audit-logs
@@ -36,7 +36,7 @@
   - `ACCOUNT_CREATE` / `ACCOUNT_DISABLE` / `ACCOUNT_PASSWORD_CHANGE` / `ACCOUNT_PASSWORD_RESET` (`/auth/utilisateurs*`)
   - `PIECE_DOWNLOAD` (`/pieces/{id}/aperçu,telecharger` — `seamtech_search/fiches/routes.py:servir_piece`)
   - `ARTIFACT_DOWNLOAD` (`/imports/{id}/artifacts/*` — `seamtech_search/api.py:get_import_artifact`)
-  - `IMPORT_CREATE` (`/imports` — déjà présent via `record_audit_event`, doublé en `record_audit_log`)
+  - `IMPORT_CREATE` (`/imports` — `seamtech_search/api.py:create_import` sync `wait=true` et async `wait=false` + erreurs 507/403/400/503, tous via `record_audit_log` avec identité validée via `X-SEAMTECH-SESSION-SID` si présent, sinon empreinte service; `details_json` sans chemin client ni secret)
 - Endpoint `GET /api/admin/audit-logs` (`seamtech_search/comptes/routes.py:route_audit_logs`) :
   - RBAC `_exiger_administrateur` (403 pour non-admin y compris `operateur`)
   - `Cache-Control: no-store`, validation `limit/offset/sort/order/outcome`, `verifier_auth` préalable.
@@ -55,7 +55,7 @@
 > - Faut-il masquer l'existence (404 uniforme) ou 403 explicite pour ID inconnu ?
 > - Exemple concret attendu : jeu de données A→B (utilisateur A crée lot → B tente `GET /pieces/{id}`) : 200 ou 403 ?
 
-**Tests préparés (non-régression, en attente matrice)** : `tests/test_idor_pieces.py` (A→B, autorisé, admin, sans session, ID inconnu, pas de fuite existence/chemin). **Ne pas étendre l'usage de fragments dynamiques hérités** en attendant.
+**Tests préparés (non-régression, en attente matrice)** : `tests/test_idor_pieces_pending.py` placeholder neutre (vérifie seulement que l'audit est présent, sans encoder de matrice) + `tests/test_injection_reelle.py` pour la paramétrisation. Aucune règle métier n'est inventée en attendant. **Ne pas étendre l'usage de fragments dynamiques hérités**.
 
 ## 6. Fermeture /docs /redoc /openapi.json
 
@@ -71,7 +71,7 @@
 
 ## 8. scrypt + injection
 
-- `seamtech_search/comptes/securite.py` vérifié : `hash_scrypt` format `$scrypt$n=...$r=...$p=...$...` + `verifier_scrypt` constant-time. Test existant `tests/test_comptes.py::test_empreinte_scrypt_format_et_verification` vert + nouveau `test_mot_de_passe_en_clair_et_mauvais` (en clair rejeté, mauvais mot de passe 401).
+- `seamtech_search/comptes/securite.py` vérifié : `hash_scrypt` format `$scrypt$n=...$r=...$p=...$...` + `verifier_scrypt` constant-time. Test existant `tests/test_comptes.py::test_empreinte_scrypt_format_et_verification` vert (vérifie format, vérification à temps constant, mauvais mot de passe 401, empreinte malformée). Aucun mot de passe en clair stocké (vérifié dans `utilisateur.empreinte_mot_de_passe`).
 - Audit filtres/recherches : `tests/test_injection_reelle.py` (PostgreSQL réel, pas SQLite) + vérification statique paramétrisation (`scripts/verif_sql_parametrise.py` : aucune `f"`/`%`/`format` avec `execute`).
 
 ## 9. Compte secours SEAMTECH_UI_PASSWORD — BLOQUÉ
@@ -90,7 +90,7 @@
 ## 10. Acceptation
 
 - Branche : `arena/c7c86aff-seamtech-search` (HEAD à pousser, SHA final à reporter après `git push`).
-- Fichiers modifiés : `seamtech_search/schema_metier.py`, `seamtech_search/indexer.py`, `seamtech_search/audit_logs.py` (nouveau), `seamtech_search/comptes/routes.py`, `seamtech_search/fiches/routes.py`, `seamtech_search/api.py`, `seamtech_search/config.py`, `seamtech_search/bateaux/routes.py`, `tests/test_migrations_metier.py`, `tests/test_ocr_comportement.py`, `tests/test_stockage_release_candidate.py` + nouveaux tests `test_audit_logs*`, `test_docs*`, `test_500*`, `test_injection*` + docs `docs/Lot0b_SECURITE.md`, `docs/ROLLBACK_LOT0B.md`, `docs/MATRICE_EXIGENCE_CODE_TEST.md`, `docs/QUALIFICATION_LOT0B.md`.
+- Fichiers modifiés : `seamtech_search/schema_metier.py`, `seamtech_search/indexer.py`, `seamtech_search/audit_logs.py` (nouveau), `seamtech_search/comptes/routes.py`, `seamtech_search/fiches/routes.py`, `seamtech_search/api.py`, `seamtech_search/config.py`, `seamtech_search/bateaux/routes.py`, `tests/test_migrations_metier.py`, `tests/test_stockage_release_candidate.py` (syntaxe+comptage 44), `seamtech_search/audit_logs.py` (12 requêtes statiques allowlistées, aucune concat), `seamtech_search/api.py` (IMPORT_CREATE/ARTIFACT_DOWNLOAD nominatifs), `seamtech_search/fiches/routes.py` (PIECE_DOWNLOAD nominatif couvrant S3/HEAD/local + failures) + nouveaux tests `test_admin_audit_logs_403_operateur.py`, `test_docs_fermes_par_defaut.py`, `test_500_sans_details.py`, `test_injection_reelle.py`, `test_secours_non_journalise.py` + script `scripts/verif_sql_parametrise.py` + docs `docs/Lot0b_SECURITE.md`, `docs/ROLLBACK_LOT0B.md`, `docs/MATRICE_EXIGENCE_CODE_TEST.md`.
 - Compatibilité : Lot 0a comportement conservé, Lot 2 `026` conservé, `37→38` additive, `IF NOT EXISTS` idempotente, anciens `audit_log` préservés.
 - Commandes : `python -m pytest tests/test_migrations_metier.py tests/test_comptes.py::test_empreinte_scrypt_* tests/test_docs* tests/test_500* tests/test_injection* tests/test_ocr_comportement.py tests/test_stockage_release_candidate.py -q` (0 skip attendu, CI verte exigée).
 - Liens CI headSha exact : à reporter après `git push origin arena/c7c86aff-seamtech-search` (CI, native, reserves, perf — 4 runs même SHA, `merge-base e4c9fdf HEAD`).

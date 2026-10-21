@@ -166,6 +166,116 @@ def record_audit_log(
         )
 
 
+_SQL_AUDIT_PG_CREATED_AT_DESC = (
+    "SELECT id, created_at, actor_user_id, actor_username, actor_role, action, target_type, "
+    "target_id, ip_address, user_agent, outcome, details_json FROM audit_logs "
+    "WHERE (%s::text IS NULL OR action = %s) "
+    "AND (%s::text IS NULL OR actor_role = %s) "
+    "AND (%s::text IS NULL OR target_type = %s) "
+    "AND (%s::text IS NULL OR outcome = %s) "
+    "ORDER BY created_at DESC, id DESC LIMIT %s OFFSET %s"
+)
+_SQL_AUDIT_PG_CREATED_AT_ASC = (
+    "SELECT id, created_at, actor_user_id, actor_username, actor_role, action, target_type, "
+    "target_id, ip_address, user_agent, outcome, details_json FROM audit_logs "
+    "WHERE (%s::text IS NULL OR action = %s) "
+    "AND (%s::text IS NULL OR actor_role = %s) "
+    "AND (%s::text IS NULL OR target_type = %s) "
+    "AND (%s::text IS NULL OR outcome = %s) "
+    "ORDER BY created_at ASC, id ASC LIMIT %s OFFSET %s"
+)
+_SQL_AUDIT_PG_ID_DESC = (
+    "SELECT id, created_at, actor_user_id, actor_username, actor_role, action, target_type, "
+    "target_id, ip_address, user_agent, outcome, details_json FROM audit_logs "
+    "WHERE (%s::text IS NULL OR action = %s) "
+    "AND (%s::text IS NULL OR actor_role = %s) "
+    "AND (%s::text IS NULL OR target_type = %s) "
+    "AND (%s::text IS NULL OR outcome = %s) "
+    "ORDER BY id DESC, created_at DESC LIMIT %s OFFSET %s"
+)
+_SQL_AUDIT_PG_ID_ASC = (
+    "SELECT id, created_at, actor_user_id, actor_username, actor_role, action, target_type, "
+    "target_id, ip_address, user_agent, outcome, details_json FROM audit_logs "
+    "WHERE (%s::text IS NULL OR action = %s) "
+    "AND (%s::text IS NULL OR actor_role = %s) "
+    "AND (%s::text IS NULL OR target_type = %s) "
+    "AND (%s::text IS NULL OR outcome = %s) "
+    "ORDER BY id ASC, created_at ASC LIMIT %s OFFSET %s"
+)
+_SQL_AUDIT_PG_ACTION_DESC = (
+    "SELECT id, created_at, actor_user_id, actor_username, actor_role, action, target_type, "
+    "target_id, ip_address, user_agent, outcome, details_json FROM audit_logs "
+    "WHERE (%s::text IS NULL OR action = %s) "
+    "AND (%s::text IS NULL OR actor_role = %s) "
+    "AND (%s::text IS NULL OR target_type = %s) "
+    "AND (%s::text IS NULL OR outcome = %s) "
+    "ORDER BY action DESC, id DESC LIMIT %s OFFSET %s"
+)
+_SQL_AUDIT_PG_ACTION_ASC = (
+    "SELECT id, created_at, actor_user_id, actor_username, actor_role, action, target_type, "
+    "target_id, ip_address, user_agent, outcome, details_json FROM audit_logs "
+    "WHERE (%s::text IS NULL OR action = %s) "
+    "AND (%s::text IS NULL OR actor_role = %s) "
+    "AND (%s::text IS NULL OR target_type = %s) "
+    "AND (%s::text IS NULL OR outcome = %s) "
+    "ORDER BY action ASC, id ASC LIMIT %s OFFSET %s"
+)
+_SQL_AUDIT_SQLITE_CREATED_AT_DESC = (
+    "SELECT id, created_at, actor_user_id, actor_username, actor_role, action, target_type, "
+    "target_id, ip_address, user_agent, outcome, details_json FROM audit_logs "
+    "WHERE (? IS NULL OR action = ?) "
+    "AND (? IS NULL OR actor_role = ?) "
+    "AND (? IS NULL OR target_type = ?) "
+    "AND (? IS NULL OR outcome = ?) "
+    "ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?"
+)
+_SQL_AUDIT_SQLITE_CREATED_AT_ASC = (
+    "SELECT id, created_at, actor_user_id, actor_username, actor_role, action, target_type, "
+    "target_id, ip_address, user_agent, outcome, details_json FROM audit_logs "
+    "WHERE (? IS NULL OR action = ?) "
+    "AND (? IS NULL OR actor_role = ?) "
+    "AND (? IS NULL OR target_type = ?) "
+    "AND (? IS NULL OR outcome = ?) "
+    "ORDER BY created_at ASC, id ASC LIMIT ? OFFSET ?"
+)
+_SQL_AUDIT_SQLITE_ID_DESC = (
+    "SELECT id, created_at, actor_user_id, actor_username, actor_role, action, target_type, "
+    "target_id, ip_address, user_agent, outcome, details_json FROM audit_logs "
+    "WHERE (? IS NULL OR action = ?) "
+    "AND (? IS NULL OR actor_role = ?) "
+    "AND (? IS NULL OR target_type = ?) "
+    "AND (? IS NULL OR outcome = ?) "
+    "ORDER BY id DESC, created_at DESC LIMIT ? OFFSET ?"
+)
+_SQL_AUDIT_SQLITE_ID_ASC = (
+    "SELECT id, created_at, actor_user_id, actor_username, actor_role, action, target_type, "
+    "target_id, ip_address, user_agent, outcome, details_json FROM audit_logs "
+    "WHERE (? IS NULL OR action = ?) "
+    "AND (? IS NULL OR actor_role = ?) "
+    "AND (? IS NULL OR target_type = ?) "
+    "AND (? IS NULL OR outcome = ?) "
+    "ORDER BY id ASC, created_at ASC LIMIT ? OFFSET ?"
+)
+_SQL_AUDIT_SQLITE_ACTION_DESC = (
+    "SELECT id, created_at, actor_user_id, actor_username, actor_role, action, target_type, "
+    "target_id, ip_address, user_agent, outcome, details_json FROM audit_logs "
+    "WHERE (? IS NULL OR action = ?) "
+    "AND (? IS NULL OR actor_role = ?) "
+    "AND (? IS NULL OR target_type = ?) "
+    "AND (? IS NULL OR outcome = ?) "
+    "ORDER BY action DESC, id DESC LIMIT ? OFFSET ?"
+)
+_SQL_AUDIT_SQLITE_ACTION_ASC = (
+    "SELECT id, created_at, actor_user_id, actor_username, actor_role, action, target_type, "
+    "target_id, ip_address, user_agent, outcome, details_json FROM audit_logs "
+    "WHERE (? IS NULL OR action = ?) "
+    "AND (? IS NULL OR actor_role = ?) "
+    "AND (? IS NULL OR target_type = ?) "
+    "AND (? IS NULL OR outcome = ?) "
+    "ORDER BY action ASC, id ASC LIMIT ? OFFSET ?"
+)
+
+
 def get_audit_logs_filtered(
     index: SearchIndex,
     *,
@@ -185,34 +295,57 @@ def get_audit_logs_filtered(
     if offset < 0 or offset > 1_000_000:
         raise ValueError("offset doit être 0..1000000")
     if sort not in COLONNES_TRI:
-        raise ValueError(f"sort invalide: {sort}")
+        raise ValueError("sort invalide: " + sort)
     if order not in ("asc", "desc"):
         raise ValueError("order doit être asc/desc")
     if outcome and outcome not in ("success", "failure"):
         raise ValueError("outcome invalide")
 
-    where: list[str] = []
-    params: list[Any] = []
+    # Choix SQL statique (aucune concaténation, aucune f-string avec variable)
+    if index.is_postgres:
+        if sort == "created_at" and order == "desc":
+            sql = _SQL_AUDIT_PG_CREATED_AT_DESC
+        elif sort == "created_at" and order == "asc":
+            sql = _SQL_AUDIT_PG_CREATED_AT_ASC
+        elif sort == "id" and order == "desc":
+            sql = _SQL_AUDIT_PG_ID_DESC
+        elif sort == "id" and order == "asc":
+            sql = _SQL_AUDIT_PG_ID_ASC
+        elif sort == "action" and order == "desc":
+            sql = _SQL_AUDIT_PG_ACTION_DESC
+        elif sort == "action" and order == "asc":
+            sql = _SQL_AUDIT_PG_ACTION_ASC
+        else:
+            raise ValueError("tri invalide")
+    else:
+        if sort == "created_at" and order == "desc":
+            sql = _SQL_AUDIT_SQLITE_CREATED_AT_DESC
+        elif sort == "created_at" and order == "asc":
+            sql = _SQL_AUDIT_SQLITE_CREATED_AT_ASC
+        elif sort == "id" and order == "desc":
+            sql = _SQL_AUDIT_SQLITE_ID_DESC
+        elif sort == "id" and order == "asc":
+            sql = _SQL_AUDIT_SQLITE_ID_ASC
+        elif sort == "action" and order == "desc":
+            sql = _SQL_AUDIT_SQLITE_ACTION_DESC
+        elif sort == "action" and order == "asc":
+            sql = _SQL_AUDIT_SQLITE_ACTION_ASC
+        else:
+            raise ValueError("tri invalide")
 
-    if action:
-        where.append("action = %s" if index.is_postgres else "action = ?")
-        params.append(action)
-    if actor_role:
-        where.append("actor_role = %s" if index.is_postgres else "actor_role = ?")
-        params.append(actor_role)
-    if target_type:
-        where.append("target_type = %s" if index.is_postgres else "target_type = ?")
-        params.append(target_type)
-    if outcome:
-        where.append("outcome = %s" if index.is_postgres else "outcome = ?")
-        params.append(outcome)
-
-    where_sql = (" WHERE " + " AND ".join(where)) if where else ""
-    order_sql = f"ORDER BY {sort} {order.upper()}, id {order.upper()}"
-    limit_sql = "LIMIT %s OFFSET %s" if index.is_postgres else "LIMIT ? OFFSET ?"
-    params.extend([limit, offset])
-
-    sql = f"SELECT id, created_at, actor_user_id, actor_username, actor_role, action, target_type, target_id, ip_address, user_agent, outcome, details_json FROM audit_logs{where_sql} {order_sql} {limit_sql}"
+    # Paramètres liés uniquement (aucune valeur injectée en SQL)
+    params: tuple[Any, ...] = (
+        action,
+        action,
+        actor_role,
+        actor_role,
+        target_type,
+        target_type,
+        outcome,
+        outcome,
+        limit,
+        offset,
+    )
 
     with index.connect() as conn:
         if index.is_postgres:

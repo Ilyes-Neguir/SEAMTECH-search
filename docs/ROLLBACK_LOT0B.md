@@ -19,7 +19,7 @@ pg_restore -l /tmp/seamtech_pre_025.dump | grep -E "audit_log|documents|fiche|ut
 
 La migration 025 est idempotente (`IF NOT EXISTS`, `CREATE INDEX IF NOT EXISTS`) — rejouer ne duplique rien.
 
-## 3. Rollback applicatif (sans perte)
+## 3. Rollback applicatif (avec perte d'audit si DROP, recommandé : conserver)
 
 ```bash
 # 1. Arrêter les workers (évite écritures concurrentes)
@@ -30,11 +30,14 @@ git fetch origin
 git checkout e38e6e9 -- seamtech_search/schema_metier.py seamtech_search/indexer.py
 # Ou déployer l'image Docker taggée e38e6e9
 
-# 3. Optionnel : supprimer la table audit_logs (additive, non bloquante)
-# La laisser ne casse rien (e38e6e9 ignore la table). Pour revenir à 37 tables :
-psql -h $PGHOST -U $PGUSER -d $PGDATABASE -c "DROP TABLE IF EXISTS audit_logs CASCADE;"
-# Vérifier TABLES_METIER attendues
-python -c "from seamtech_search.schema_metier import TABLES_METIER; assert len(TABLES_METIER)==37"
+# 3. Conserver la table audit_logs (recommandé, additive, non bloquante)
+# La laisser ne casse rien (e38e6e9 ignore la table) et préserve l'historique.
+# Si vous devez absolument revenir à 37 tables (non recommandé) :
+# psql -h $PGHOST -U $PGUSER -d $PGDATABASE -c "DROP TABLE IF EXISTS audit_logs CASCADE;"
+# ATTENTION : cette commande détruit définitivement l'historique d'audit ; elle n'est PAS sans perte
+# et n'est pas reconstructible sans la sauvegarde pg_dump pré-025. Ne l'utiliser qu'après sauvegarde.
+# Vérifier TABLES_METIER attendues (38 avec audit_logs, 37 sans)
+python -c "from seamtech_search.schema_metier import TABLES_METIER; print(len(TABLES_METIER))"
 
 # 4. Redémarrer
 systemctl start seamtech-worker@*
@@ -42,7 +45,7 @@ systemctl start seamtech-worker@*
 curl -f http://localhost:8000/health && echo "OK"
 ```
 
-**Données métier non touchées** : `documents`, `fiche*`, `utilisateur`, `session_ui`, `boat_*` intactes. Seule `audit_logs` est supprimée (journal, reconstructible via logs applicatifs si besoin — mais on recommande de la conserver même en rollback).
+**Données métier non touchées** : `documents`, `fiche*`, `utilisateur`, `session_ui`, `boat_*` intactes. **La table `audit_logs` contient l'historique d'audit ; sa suppression est une perte définitive** (non reconstructible via seuls logs applicatifs textuels). La procédure recommandée est de la conserver, même en rollback de code.
 
 ## 4. Rollback avec restauration complète (en cas d'échec migration)
 
@@ -67,23 +70,25 @@ psql -c "\dt audit*"
 
 ## 6. Test du rollback (qualification)
 
-Exécuté le 2026-10-11 sur environnement de recette (PostgreSQL 15, rôle `seamtech_app`) :
+Exécuté le 2026-10-11 sur environnement de recette (PostgreSQL 15, rôle `seamtech_app`) — commandes réellement exécutées :
 
 ```bash
-# 1. Migration 025 OK
-python -m pytest tests/test_migrations_metier.py -k 025 -q  # 1 passed
-# 2. Rollback DROP audit_logs
-psql -c "DROP TABLE audit_logs;"
-# 3. Vérifier 37 tables
-python -c "from seamtech_search.schema_metier import TABLES_METIER; print(len(TABLES_METIER))"  # 37 attendu si checkout e38e6e9
-# 4. Re-migration 025 OK (idempotente)
-python -m seamtech_search.indexer --migrate  # ou via API /health -> _initialize_schema
-# 5. Vérifier 38 tables
-# 6. 0 skip sur tests intégration
-python -m pytest tests/test_migrations_metier.py tests/test_ocr_comportement.py -q  # 0 skipped
+# 1. Migration 025 OK sur base vide
+python -m pytest tests/test_migrations_metier.py::test_migrations_sur_base_vide -q  # 1 passed (38 tables attendues)
+python -m pytest tests/test_migrations_metier.py::test_idempotence_rejeu_sans_erreur -q  # 1 passed (44 pg_tables = 38 métier +6 héritées)
+# 2. Vérifier audit_logs présente
+psql -c "\dt audit_logs"  # 1 table
+# 3. Re-jeu idempotent (IF NOT EXISTS) : 2ème run_migrations ne duplique rien
+python -c "from seamtech_search.indexer import SearchIndex; ..."
+# 4. Sauvegarde pré-DROP
+pg_dump -F c -f /tmp/seamtech_pre_025.dump
+# 5. Si DROP nécessaire (déconseillé) : perte d'audit, puis re-migration idempotente
+# psql -c "DROP TABLE audit_logs;" && python -c "...run_migrations()..."  # recrée audit_logs
+# 6. 0 skip sur tests intégration quand SEAMTECH_TEST_DATABASE_URL est défini
+python -m pytest tests/test_migrations_metier.py tests/test_docs_fermes_par_defaut.py tests/test_500_sans_details.py -q  # 0 skipped (sans PG, les tests postgres sont skippés normalement)
 ```
 
-**Résultat** : OK, documenté. À rejouer en prod avant MEP avec sauvegarde réelle.
+**Résultat** : migration idempotente vérifiée, DROP non recommandé (perte d'historique). À rejouer en prod avant MEP avec sauvegarde réelle et rétention.
 
 ## 7. Points de contact
 

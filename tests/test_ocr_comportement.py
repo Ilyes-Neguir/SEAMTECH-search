@@ -987,8 +987,7 @@ def test_version_schema_et_tables() -> None:
     from seamtech_search.schema_metier import TABLES_METIER, VERSION_SCHEMA_METIER
 
     assert VERSION_SCHEMA_METIER == "026_boat_models_and_aliases"
-    # 019-024 n'ajoutent aucune table (024 = colonne invalidation) ;
-    # 025 réservée ; 026 ajoute 4 tables boat_models etc. → 37.
+    # 019-024 n'ajoutent pas de table (024 = colonne invalidation), 025 audit_logs (1), 026 ajoute 4 tables boat_models etc. → 38.
     assert len(TABLES_METIER) == 38
     assert "ocr_etage3" in TABLES_METIER
     assert "boat_models" in TABLES_METIER
