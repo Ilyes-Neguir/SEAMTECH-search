@@ -210,8 +210,8 @@ def reindexer_tous_modeles(index: Any, *, dry_run: bool = False) -> dict[str, An
                 try:
                     cursor.execute("SELECT count(*) FROM boat_model_aliases WHERE status='pending_review'")
                     stats["pending_review"] = int(cursor.fetchone()[0])
-                except Exception:
-                    pass
+                except Exception as exc:
+                    LOGGER.debug("recherche_etendue indisponible: %s", exc)
                 return stats
 
             # Mode réel : crée les modèles un par un (idempotent via get_or_create)
@@ -232,8 +232,8 @@ def reindexer_tous_modeles(index: Any, *, dry_run: bool = False) -> dict[str, An
             try:
                 cursor.execute("SELECT count(*) FROM boat_model_aliases WHERE status='pending_review'")
                 stats["pending_review"] = int(cursor.fetchone()[0])
-            except Exception:
-                pass
+            except Exception as exc:
+                LOGGER.debug("recherche_etendue stats indisponible: %s", exc)
     return stats
 
 

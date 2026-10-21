@@ -329,8 +329,8 @@ def enregistrer_routes_bateaux(app: Any, index: Any, config: Any, verifier_auth:
                         _ajouter("bateau_modele", str(canonical), score=1.0)
                         if len(suggestions) >= limit:
                             break
-                except Exception:
-                    pass
+                except Exception as exc:
+                    LOGGER.debug("routes suggestions indisponible: %s", exc)
 
                 # 2) Aliases bateau (préfixe)
                 if len(suggestions) < limit:
@@ -343,8 +343,8 @@ def enregistrer_routes_bateaux(app: Any, index: Any, config: Any, verifier_auth:
                             _ajouter("bateau_alias", str(alias_raw), score=0.9)
                             if len(suggestions) >= limit:
                                 break
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        LOGGER.debug("routes suggestions indisponible: %s", exc)
 
                 # 3) Synonymes voilerie (search_synonyms)
                 if len(suggestions) < limit:
@@ -358,8 +358,8 @@ def enregistrer_routes_bateaux(app: Any, index: Any, config: Any, verifier_auth:
                             _ajouter("terme_abrege", str(alias), score=0.85)
                             if len(suggestions) >= limit:
                                 break
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        LOGGER.debug("routes suggestions indisponible: %s", exc)
 
                 # 4) Corrections orthographiques via trigrammes (boat_models + search_synonyms)
                 if len(suggestions) < limit:
@@ -378,8 +378,8 @@ def enregistrer_routes_bateaux(app: Any, index: Any, config: Any, verifier_auth:
                                 _ajouter("correction", str(canonical), score=float(sim) * 0.5, correction=prefixe)
                                 if len(suggestions) >= limit:
                                     break
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        LOGGER.debug("routes suggestions indisponible: %s", exc)
                     # Corrections pour termes voilerie
                     try:
                         cursor.execute(
@@ -396,8 +396,8 @@ def enregistrer_routes_bateaux(app: Any, index: Any, config: Any, verifier_auth:
                                 _ajouter("correction", str(canonical), score=float(sim) * 0.5, correction=prefixe)
                                 if len(suggestions) >= limit:
                                     break
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        LOGGER.debug("routes suggestions indisponible: %s", exc)
 
                 # 5) Fallback : suggestions existantes de la recherche fiches (bateau, type_voile, etc.)
                 if len(suggestions) < limit:
@@ -411,8 +411,8 @@ def enregistrer_routes_bateaux(app: Any, index: Any, config: Any, verifier_auth:
                             _ajouter("bateau", str(nom), score=0.8)
                             if len(suggestions) >= limit:
                                 break
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        LOGGER.debug("routes suggestions indisponible: %s", exc)
 
         # Tri par score décroissant, puis alphabétique
         suggestions_sorted = sorted(suggestions, key=lambda x: (-x["score"], x["valeur"]))[:limit]

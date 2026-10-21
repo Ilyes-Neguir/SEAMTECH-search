@@ -495,8 +495,8 @@ def _ecrire_fiche_dans(index: Any, fiche: FicheExtraite, connexion: Any) -> Resu
                                 """,
                                 (model_id, bateau_full, cle),
                             )
-                except Exception:
-                    pass
+                except Exception as exc:
+                    LOGGER.debug("persistance boat alias indisponible: %s", exc)
             id_commande = None
             if fiche.commande_numero:
                 cursor.execute(_SQL_COMMANDE, (fiche.commande_numero,))

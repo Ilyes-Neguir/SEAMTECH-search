@@ -981,9 +981,10 @@ def rechercher_fiches(
                 if q_norm_slash != texte.strip() and q_norm_slash not in texte:
                     texte = texte + " OR " + q_norm_slash
                 cursor.execute("RELEASE SAVEPOINT recherche_lot2_expansion")
-            except Exception:
+            except Exception as exc:
                 cursor.execute("ROLLBACK TO SAVEPOINT recherche_lot2_expansion")
                 cursor.execute("RELEASE SAVEPOINT recherche_lot2_expansion")
+                LOGGER.debug("expansion Lot2 indisponible (pré-026): %s", exc)
                 # Bases pré-026 ou tables manquantes → recherche reste fonctionnelle
                 pass
 
@@ -1389,8 +1390,8 @@ def suggerer(index: Any, prefixe: str, limite: int = SUGGESTION_LIMITE_DEFAUT) -
                         _ajouter("bateau_modele", valeur)
                         if len(suggestions) >= limite:
                             break
-                except Exception:
-                    pass
+                except Exception as exc:
+                    LOGGER.debug("suggestions boat_models indisponible (pré-026): %s", exc)
                 if len(suggestions) < limite:
                     try:
                         cursor.execute(
@@ -1401,8 +1402,8 @@ def suggerer(index: Any, prefixe: str, limite: int = SUGGESTION_LIMITE_DEFAUT) -
                             _ajouter("bateau_alias", valeur)
                             if len(suggestions) >= limite:
                                 break
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        LOGGER.debug("suggestions boat_model_aliases indisponible: %s", exc)
                 if len(suggestions) < limite:
                     try:
                         cursor.execute(
@@ -1421,8 +1422,8 @@ def suggerer(index: Any, prefixe: str, limite: int = SUGGESTION_LIMITE_DEFAUT) -
                             _ajouter("terme_abrege", valeur)
                             if len(suggestions) >= limite:
                                 break
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        LOGGER.debug("suggestions search_synonyms indisponible: %s", exc)
                 # b) corrections trigram sur boat_models (fautes)
                 if capacites["pg_trgm"] and len(suggestions) < limite:
                     try:
@@ -1440,8 +1441,8 @@ def suggerer(index: Any, prefixe: str, limite: int = SUGGESTION_LIMITE_DEFAUT) -
                                 _ajouter("correction_bateau", valeur)
                                 if len(suggestions) >= limite:
                                     break
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        LOGGER.debug("suggestions correction_bateau indisponible: %s", exc)
                     try:
                         cursor.execute(
                             """
@@ -1457,8 +1458,8 @@ def suggerer(index: Any, prefixe: str, limite: int = SUGGESTION_LIMITE_DEFAUT) -
                                 _ajouter("correction_synonyme", valeur)
                                 if len(suggestions) >= limite:
                                     break
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        LOGGER.debug("suggestions correction_synonyme indisponible: %s", exc)
 
     return {"prefixe": prefixe, "suggestions": suggestions[:limite]}
 
