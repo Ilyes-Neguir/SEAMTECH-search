@@ -2,20 +2,20 @@
 
 **Branche**: `arena/c7c86aff-seamtech-search`  
 **SHA pré-fusion Lot 0a+Lot 2**: `e38e6e9` (merge commit préservant lignées)  
-**SHA HEAD actuel**: `892448a` + modifications Lot 0b (à pousser, voir ci-dessous pour SHA final)  
-**Date**: 2026-10-21 (révision après revue f3effa2)
+**SHA HEAD actuel**: `4a12758` (revue 4a12758, CI ruff rouge) → corrections en cours, prochain SHA à reporter après push
+**Date**: 2026-10-21 (révision après revue 4a12758, CI backend 3.12 ruff failure, native/réserves/perf vertes)
 
 ## 1. Prévol (exigence 0)
 
 - Fusion Lot 0a `1998af6` (Lot 0a revue4, sessions Redis, 30min inactivité, 8h absolue, CSRF mutations, fail-closed Redis, rejet cookies v1.*, logout global, no-store) + Lot 2 `c9b2531` (ancêtre commun `e4c9fdf`) réalisée via commit `e38e6e9` (merge commit, parents conservés, `git log --graph` vérifiable).
 - Comportement Lot 0a inchangé (valeurs `30min/8h`, CSRF, fail-closed, `no-store`, `v1.*` rejet) : vérifié par non-modification des fichiers `seamtech_search/sessions_redis.py` et `seamtech_search/comptes/routes.py` pour les parties auth critiques (sauf instrumentation audit additive).
-- Lot 2 non régressé : `TABLES_METIER` 38 (33+1 ocr_etage3+1 audit_logs+4 boat_models), `VERSION 026_boat_models_and_aliases` conservée, migration `026` intacte. CI attendue : 4 validations même SHA (`39571041240`, `39571041185`, `39571041162`, `39571041147` au SHA `c9b2531`) à rejouer sur HEAD final.
+- Lot 2 non régressé : `TABLES_METIER` 38 (33+1 ocr_etage3+1 audit_logs+4 boat_models), `VERSION 026_boat_models_and_aliases` conservée, migration `026` intacte. CI Lot2 acceptée au même SHA `c9b2531` : 4 runs verts `39571041240/185/162/147` vérifiés (f6b91045). À rejouer sur HEAD final `4a12758` : CI `39589710573` **Ruff failure**, native `39589710368` succès, réserves `39589710373` succès (84 tests 0 skipped), perf `39589710397` succès (p95 médian 29.63/9.68/8.76/12.09ms).
 
 ## 2. Garde-fous
 
 - Aucun modèle 4 rôles/UI ajouté.
 - Aucune SQL concat/f-string : toutes les requêtes d'audit utilisent `execute(sql, params)` avec `%s` lié. Aucun nouveau fragment dynamique ajouté ; fragments hérités signalés dans `docs/SECURITE_SQL.md`.
-- Tests d'intégration PostgreSQL/Redis/MinIO/Playwright réels 0 skip : qualification locale reproduisant `init/migration` rôle limité (voir `docs/QUALIFICATION_LOT0B.md`), `pglast` insuffisant pour DDL réel.
+- Tests d'intégration PostgreSQL/Redis/MinIO/Playwright réels : suites critiques 0 skip quand DB disponible (CI Lot2: 288 passed/0 skipped PostgreSQL, 84 tests réserves 0 skipped) ; `test_secours_desactivation_apres_admin` est volontairement `skip` (politique en attente, 1 skip attendu) — ne pas revendiquer 0 skip global. Qualification locale reproduit `init/migration` rôle limité, `pglast` insuffisant pour DDL réel.
 - Rollback documenté/testé : `docs/ROLLBACK_LOT0B.md`.
 
 ## 3. Migration 025 (audit_logs)
@@ -40,7 +40,7 @@
 - Endpoint `GET /api/admin/audit-logs` (`seamtech_search/comptes/routes.py:route_audit_logs`) :
   - RBAC `_exiger_administrateur` (403 pour non-admin y compris `operateur`)
   - `Cache-Control: no-store`, validation `limit/offset/sort/order/outcome`, `verifier_auth` préalable.
-  - Vérifié : `/audit` historique existant (lecture libre) ne doit pas être contourné pour accéder à `audit-logs` nominatif — test `test_audit_logs_non_contournement_via_audit.py`.
+  - Vérifié : `/audit` historique (ancien journal `audit_log`) ne doit pas exposer `audit_logs` nominatif — test `tests/test_admin_audit_logs_403_operateur.py` (section non-contournement) + `tests/test_audit_events_suite.py`
 
 ## 5. Anti-IDOR — BLOQUÉ (en attente coordinateur)
 
@@ -55,7 +55,7 @@
 > - Faut-il masquer l'existence (404 uniforme) ou 403 explicite pour ID inconnu ?
 > - Exemple concret attendu : jeu de données A→B (utilisateur A crée lot → B tente `GET /pieces/{id}`) : 200 ou 403 ?
 
-**Tests préparés (non-régression, en attente matrice)** : `tests/test_idor_pieces_pending.py` placeholder neutre (vérifie seulement que l'audit est présent, sans encoder de matrice) + `tests/test_injection_reelle.py` pour la paramétrisation. Aucune règle métier n'est inventée en attendant. **Ne pas étendre l'usage de fragments dynamiques hérités**.
+**Tests préparés** : `tests/test_injection_reelle.py` (paramétrisation) ; **aucun test IDOR n'encode de matrice** avant décision Lass (conforme consigne). Audit nominatif déjà en place (`_resolve_piece_actor`, `_resolve_audit_actor`). **Ne pas étendre l'usage de fragments dynamiques hérités**.
 
 ## 6. Fermeture /docs /redoc /openapi.json
 
@@ -89,28 +89,28 @@
 
 ## 10. Acceptation
 
-- Branche : `arena/c7c86aff-seamtech-search` (HEAD à pousser, SHA final à reporter après `git push`).
+- Branche : `arena/c7c86aff-seamtech-search` (HEAD `4a12758` → prochain push corrigeant ruff, actor, détails)
 - Fichiers modifiés : `seamtech_search/schema_metier.py`, `seamtech_search/indexer.py`, `seamtech_search/audit_logs.py` (nouveau), `seamtech_search/comptes/routes.py`, `seamtech_search/fiches/routes.py`, `seamtech_search/api.py`, `seamtech_search/config.py`, `seamtech_search/bateaux/routes.py`, `tests/test_migrations_metier.py`, `tests/test_stockage_release_candidate.py` (syntaxe+comptage 44), `seamtech_search/audit_logs.py` (12 requêtes statiques allowlistées, aucune concat), `seamtech_search/api.py` (IMPORT_CREATE/ARTIFACT_DOWNLOAD nominatifs), `seamtech_search/fiches/routes.py` (PIECE_DOWNLOAD nominatif couvrant S3/HEAD/local + failures) + nouveaux tests `test_admin_audit_logs_403_operateur.py`, `test_docs_fermes_par_defaut.py`, `test_500_sans_details.py`, `test_injection_reelle.py`, `test_secours_non_journalise.py` + script `scripts/verif_sql_parametrise.py` + docs `docs/Lot0b_SECURITE.md`, `docs/ROLLBACK_LOT0B.md`, `docs/MATRICE_EXIGENCE_CODE_TEST.md`.
 - Compatibilité : Lot 0a comportement conservé, Lot 2 `026` conservé, `37→38` additive, `IF NOT EXISTS` idempotente, anciens `audit_log` préservés.
-- Commandes : `python -m pytest tests/test_migrations_metier.py tests/test_comptes.py::test_empreinte_scrypt_* tests/test_docs* tests/test_500* tests/test_injection* tests/test_ocr_comportement.py tests/test_stockage_release_candidate.py -q` (0 skip attendu, CI verte exigée).
-- Liens CI headSha exact : à reporter après `git push origin arena/c7c86aff-seamtech-search` (CI, native, reserves, perf — 4 runs même SHA, `merge-base e4c9fdf HEAD`).
+- Commandes : `python -m pytest tests/test_migrations_metier.py tests/test_comptes.py::test_empreinte_scrypt_* tests/test_docs* tests/test_500* tests/test_injection* tests/test_audit_events* tests/test_ocr_comportement.py tests/test_stockage_release_candidate.py -q` (suites critiques 0 skip avec DB, +1 skip attendu secours, CI doit être verte sur les 3 backends)
+- Liens CI headSha exact : `4a12758` → CI `39589710573` **failure Ruff**, native `39589710368` succès, réserves `39589710373` succès, perf `39589710397` succès ; prochain SHA après corrections ruff/actor/détails à rejouer (même SHA, `merge-base e4c9fdf HEAD`). CI reste rouge tant que backend n'a pas exécuté ses tests (3.11/3.13 annulés).
 - Points bloqués : (1) politique compte secours après admin nominatif (attente Lass), (2) matrice anti-IDOR pièces/artefacts (attente coordinateur), (3) filiation Lot0a+Lot2 via `e38e6e9` à valider par revue indépendante — **ILY-10 non-Done**.
 
 ## 11. Matrice exigence→code→test (extraits)
 
 | Exigence | Code | Test |
 |----------|------|------|
-| Migration 025 idempotente PG réel | `schema_metier.py:SQL_025_AUDIT_LOGS`, `indexer.py:_migration_025_audit_logs` | `test_migrations_metier.py::test_tables_metier_38` |
-| Audit nominatif session serveur | `audit_logs.py:record_audit_log` + `comptes/routes.py:AUTH_*` | `test_audit_logs_nominatif.py` |
-| GET /api/admin/audit-logs 403 opérateur | `comptes/routes.py:route_audit_logs` + `_exiger_administrateur` | `test_admin_audit_logs_403_operateur.py` |
-| Docs fermés par défaut | `config.py:expose_docs`, `api.py:docs_enabled` | `test_docs_fermes_par_defaut.py` |
-| 500 génériques | `api.py:generic_exception_handler`, `fiches/routes.py:2098`, `bateaux/routes.py:441` | `test_500_sans_details.py` |
-| scrypt clair/mauvais | `comptes/securite.py:hash_scrypt` | `test_comptes.py::test_empreinte_scrypt*` + `test_mot_de_passe_en_clair` |
-| Rollback testé | `docs/ROLLBACK_LOT0B.md` | `scripts/qualification_native_controles.py` |
+| Migration 025 idempotente PG réel | `schema_metier.py:SQL_025_AUDIT_LOGS`, `indexer.py:_migration_025_audit_logs` | `test_migrations_metier.py::test_migrations_sur_base_vide` + `test_idempotence_rejeu_sans_erreur` (44 pg_tables) |
+| Audit nominatif session serveur | `audit_logs.py:record_audit_log` + `comptes/routes.py:AUTH_*` + `api.py:IMPORT_CREATE` + `fiches/routes.py:PIECE` | `tests/test_audit_events_suite.py` (AUTH_SUCCESS/FAILURE, secours, IMPORT_CREATE nominatif, détails assainis) + `test_admin_audit_logs_403_operateur.py` |
+| GET /api/admin/audit-logs 403 opérateur | `comptes/routes.py:route_audit_logs` + `_exiger_administrateur` | `test_admin_audit_logs_403_operateur.py` (403 opérateur, 200 admin, no-store, 422, injection, non-contournement /audit) |
+| Docs fermés par défaut | `config.py:expose_docs`, `api.py:docs_enabled` | `test_docs_fermes_par_defaut.py` (false/true/default + AppConfig.load via monkeypatch) |
+| 500 génériques | `api.py:generic_exception_handler`, `fiches/routes.py:2098`, `bateaux/routes.py:441/456` | `test_500_sans_details.py` (génériques sans fuite, X-Request-ID) |
+| scrypt clair/mauvais | `comptes/securite.py:hash_scrypt` | `test_comptes.py::test_empreinte_scrypt_format_et_verification` (format, constant-time, mauvais mdp) |
+| Rollback testé | `docs/ROLLBACK_LOT0B.md` | `scripts/qualification_native_controles.py` + `test_migrations_metier.py` (idempotence) |
 
 ## 12. Prochaines étapes
 
 1. Obtenir réponses bloquantes (secours, IDOR) → coder les deux derniers tickets.
-2. Rejouer qualification native complète (PostgreSQL rôle limité, chemin exact `init/migration`) → 0 skip.
+2. Rejouer qualification native complète (PostgreSQL rôle limité, chemin exact `init/migration`) → 0 skip sur suites critiques (hors skip secours en attente).
 3. Pousser branche + ouvrir PR → fournir 4 liens CI même SHA head.
 4. Revue indépendante → déclarer ILY-10 Done.

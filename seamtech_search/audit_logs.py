@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any
 
 from .indexer import SearchIndex
@@ -47,24 +47,57 @@ COLONNES_FILTRE = {"action", "actor_role", "target_type", "outcome"}
 COLONNES_TRI = {"created_at", "id", "action"}
 
 
+def _cle_est_secrete(cle: str) -> bool:
+    """Vrai si la clé contient un fragment secret (insensible à la casse, séparateurs)."""
+    k = cle.lower()
+    # Fragments interdits : on teste en sous-chaîne pour attraper api_token, password_hash, etc.
+    fragments = ("mot_de_passe", "password", "empreinte", "cookie", "jeton", "token", "secret", "hash", "sid", "session", "auth", "credential")
+    for frag in fragments:
+        if frag in k:
+            # Pour éviter faux positifs sur "sid" dans "residence", on exige que "sid" soit mot isolé ou avec _/-
+            if frag == "sid":
+                if k == "sid" or "_sid" in k or "sid_" in k or "-sid" in k or "sid-" in k:
+                    return True
+                continue
+            if frag == "hash" and "hash" in k:
+                # hash est sensible seulement si lié à mot de passe/secret, mais on filtre large
+                return True
+            return True
+    return False
+
+
+def _nettoyer_valeur(valeur: Any, profondeur: int = 0) -> Any:
+    """Nettoie récursivement une valeur : dict→dict filtré, list→list filtrée, primitif→tronqué."""
+    if profondeur > 5:
+        return "<max_depth>"
+    if isinstance(valeur, dict):
+        nettoye: dict[str, Any] = {}
+        for kk, vv in valeur.items():
+            if not isinstance(kk, str):
+                kk = str(kk)
+            if _cle_est_secrete(kk):
+                continue
+            nettoye[kk] = _nettoyer_valeur(vv, profondeur + 1)
+        return nettoye
+    if isinstance(valeur, (list, tuple, set)):
+        return [_nettoyer_valeur(v, profondeur + 1) for v in valeur][:20]
+    # Primitif : tronque
+    try:
+        s = str(valeur)
+    except Exception:
+        s = "<unrepresentable>"
+    if len(s) > 500:
+        s = s[:500] + "…"
+    return s
+
+
 def _tronquer_details(details: dict[str, Any] | None) -> dict[str, Any]:
-    """Borne details à 4ko, nettoie secrets."""
+    """Borne details à 4ko, nettoie secrets récursivement."""
     if not details:
         return {}
-    # Filtre secrets par clé
-    interdits = {"mot_de_passe", "password", "empreinte", "cookie", "jeton", "token", "secret", "sid"}
-    nettoye: dict[str, Any] = {}
-    for k, v in details.items():
-        if k.lower() in interdits:
-            continue
-        # Convertit en string tronquée
-        try:
-            val = str(v)
-        except Exception:
-            val = "<unrepresentable>"
-        if len(val) > 500:
-            val = val[:500] + "…"
-        nettoye[k] = val
+    nettoye = _nettoyer_valeur(details, 0)
+    if not isinstance(nettoye, dict):
+        nettoye = {"value": nettoye}
     # Vérifie taille JSON totale
     try:
         j = json.dumps(nettoye, ensure_ascii=False)

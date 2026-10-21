@@ -71,8 +71,10 @@ def verifier() -> int:
         return 1
 
     print(f"✓ {CIBLE.name}: aucune construction SQL par concaténation/f-string détectée")
-    nb = len(re.findall(r"_SQL_AUDIT_\w+", texte))
-    print(f"  {nb} requêtes statiques allowlistées (PG/SQLite x 3 tris x 2 ordres)")
+    nb = len(re.findall(r"_SQL_AUDIT_\w+ = \(", texte))
+    print(f"  {nb} définitions statiques allowlistées (PG/SQLite x 3 tris x 2 ordres = 12)")
+    if nb != 12:
+        print(f"  ⚠ attendu 12, trouvé {nb} — vérifier les constantes", file=sys.stderr)
     return 0
 
 

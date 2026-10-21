@@ -30,6 +30,7 @@ from fastapi import File, Header, HTTPException, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from starlette.responses import Response
 
+from seamtech_search.audit_logs import record_audit_log
 from seamtech_search.comptes.comptes import resoudre_attribution
 from seamtech_search.fiches.corrections_canoniques import (
     CorrectionCanoniqueRefusee,
@@ -57,7 +58,6 @@ from seamtech_search.fiches.extraction import (
 from seamtech_search.fiches.gabarits import GabaritInconnu, charger_gabarits, detecter_gabarit
 from seamtech_search.fiches.persistance import verifier_autorisation_validation_lot
 from seamtech_search.import_pipeline import staging_root
-from seamtech_search.audit_logs import record_audit_log
 from seamtech_search.jobs import create_job, register_job_cancel
 from seamtech_search.redis_store import RedisStore
 from seamtech_search.storage import S3StorageClient, StorageError
@@ -1527,7 +1527,7 @@ def enregistrer_routes_fiches(
 
     def _resolve_piece_actor(request: Request) -> tuple[int | None, str, str]:
         """Résout acteur depuis session validée, sinon unknown."""
-        actor_id = None
+        actor_id: int | None = None
         actor_name = "unknown"
         actor_role = "unknown"
         if sessions is not None:
@@ -1537,23 +1537,25 @@ def enregistrer_routes_fiches(
                     try:
                         u = sessions.valider_session(sid_hdr)
                         if u:
-                            actor_id = getattr(u, "user_id", None)
+                            raw_id = getattr(u, "user_id", None)
+                            try:
+                                actor_id = int(raw_id) if raw_id is not None and str(raw_id).isdigit() else None
+                            except Exception:
+                                actor_id = None
                             actor_name = getattr(u, "identifiant", None) or getattr(u, "username", None) or "unknown"
                             actor_role = getattr(u, "role", None) or "unknown"
                     except Exception:
                         pass
             except Exception:
                 pass
-        # fallback: tente via token fingerprint si pas de session (service)
+        # fallback: tente via token fingerprint si pas de session (service) — sans fuite de jeton
         if actor_name == "unknown":
             try:
-                # on ne fait pas confiance à X-SEAMTECH-ROLE librement, mais on logge token
-                tok = request.headers.get("x-seamtech-token") or request.headers.get("X-SEAMTECH-TOKEN")
-                if tok:
-                    actor_name = "service:" + tok[:8]
+                # on ne fait pas confiance à X-SEAMTECH-ROLE librement ; identité service constante non réversible
+                actor_name = "service"
             except Exception:
                 pass
-        return (actor_id if isinstance(actor_id, int) else None, str(actor_name), str(actor_role))
+        return (actor_id, str(actor_name), str(actor_role))
 
     def _audit_piece(request: Request, piece_id: int, apercu: bool, nom: str, outcome: str, details: dict | None = None) -> None:
         try:

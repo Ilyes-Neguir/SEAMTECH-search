@@ -157,6 +157,28 @@ def test_admin_audit_logs_403_operateur(tmp_path: Path):
         )
         assert resp_no_token.status_code == 401
 
+        # Non-contournement réel: /audit ne doit pas exposer les événements nominatifs de audit_logs
+        # Crée un événement spécifique et vérifie qu'il n'apparaît pas dans /audit
+        from seamtech_search.audit_logs import record_audit_log
+
+        record_audit_log(
+            index,
+            actor_user_id=None,
+            actor_username="admin_test",
+            actor_role="administrateur",
+            action="AUTH_LOGIN_SUCCESS",
+            target_type="utilisateur",
+            target_id="probe_non_contournement",
+            outcome="success",
+            details={"probe": "non_contournement"},
+        )
+        resp_audit = client_admin.get("/audit", headers={"X-SEAMTECH-TOKEN": JETON_SERVICE})
+        assert resp_audit.status_code == 200
+        audit_results = resp_audit.json().get("results", [])
+        # /audit retourne l'ancien journal audit_log (schéma différent) ; il ne doit pas contenir notre probe
+        # Vérifie qu'aucun résultat n'a le target_id probe (sinon ce serait un contournement)
+        assert not any("probe_non_contournement" in str(r) for r in audit_results), "/audit ne doit pas exposer audit_logs nominatif"
+
     finally:
         index.close()
         admin_conn = psycopg2.connect(URL_PG)

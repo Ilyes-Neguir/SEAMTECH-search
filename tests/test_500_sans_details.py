@@ -5,10 +5,6 @@ Vérifie que les handlers 500 ne fuient pas stack/SQL/path et que le log serveur
 from __future__ import annotations
 
 import pathlib
-import re
-
-import pytest
-from fastapi import HTTPException
 
 
 def test_brouillon_500_generique():
@@ -53,7 +49,7 @@ def test_pas_de_fuite_stack_dans_detail():
 def test_api_generic_handler_ne_fuit_pas_exception_text(tmp_path):
     """Le handler global 500 renvoie toujours 'Erreur interne.' même si l'exception contient des secrets."""
     from fastapi.testclient import TestClient
-    from fastapi import FastAPI, Request
+
     from seamtech_search.api import create_app
     from seamtech_search.config import AppConfig
     from seamtech_search.indexer import SearchIndex

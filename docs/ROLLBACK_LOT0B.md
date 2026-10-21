@@ -85,7 +85,7 @@ pg_dump -F c -f /tmp/seamtech_pre_025.dump
 # 5. Si DROP nécessaire (déconseillé) : perte d'audit, puis re-migration idempotente
 # psql -c "DROP TABLE audit_logs;" && python -c "...run_migrations()..."  # recrée audit_logs
 # 6. 0 skip sur tests intégration quand SEAMTECH_TEST_DATABASE_URL est défini
-python -m pytest tests/test_migrations_metier.py tests/test_docs_fermes_par_defaut.py tests/test_500_sans_details.py -q  # 0 skipped (sans PG, les tests postgres sont skippés normalement)
+python -m pytest tests/test_migrations_metier.py tests/test_docs_fermes_par_defaut.py tests/test_500_sans_details.py -q  # avec SEAMTECH_TEST_DATABASE_URL: 0 skipped; sans: tests postgres skippés normalement
 ```
 
 **Résultat** : migration idempotente vérifiée, DROP non recommandé (perte d'historique). À rejouer en prod avant MEP avec sauvegarde réelle et rétention.

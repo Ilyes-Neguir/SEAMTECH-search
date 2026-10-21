@@ -35,7 +35,6 @@ from typing import Annotated, Any
 from fastapi import Header, HTTPException
 
 from ..audit_logs import record_audit_log
-
 from ..sessions_redis import (
     MODE_NOMINATIF,
     MODE_SECOURS,
@@ -441,6 +440,7 @@ def enregistrer_routes_auth(app: Any, index: Any, config: Any, verifier_auth: An
         """
         del corps  # aucune donnée du client n'est utilisée
         verifier_auth(config, token)
+        adresse = None  # secours n'a pas X-Forwarded-For dans cette route, mais on peut le récupérer si présent via headers génériques
         try:
             record = sessions.creer_session(
                 user_id="secours",
@@ -451,8 +451,40 @@ def enregistrer_routes_auth(app: Any, index: Any, config: Any, verifier_auth: An
                 user_agent=agent,
             )
         except SessionStoreIndisponible as exc:
+            try:
+                record_audit_log(
+                    index,
+                    actor_user_id=None,
+                    actor_username="secours",
+                    actor_role="administrateur",
+                    action="AUTH_LOGIN_FAILURE",
+                    target_type="utilisateur",
+                    target_id="secours",
+                    outcome="failure",
+                    details={"reason": "redis_indisponible", "mode": MODE_SECOURS},
+                    ip_address=adresse,
+                    user_agent=agent[:500] if agent else None,
+                )
+            except Exception:
+                pass
             LOGGER.error("Connexion de secours refusée, Redis indisponible : %s", exc)
             raise HTTPException(status_code=503, detail=_DETAIL_REDIS) from exc
+        try:
+            record_audit_log(
+                index,
+                actor_user_id=None,
+                actor_username="secours",
+                actor_role="administrateur",
+                action="AUTH_LOGIN_SUCCESS",
+                target_type="utilisateur",
+                target_id="secours",
+                outcome="success",
+                details={"mode": MODE_SECOURS, "id_session": str(record.sid)[:20] + "…"},
+                ip_address=adresse,
+                user_agent=agent[:500] if agent else None,
+            )
+        except Exception:
+            pass
         return {
             "ok": True,
             "mode": MODE_SECOURS,
@@ -503,9 +535,15 @@ def enregistrer_routes_auth(app: Any, index: Any, config: Any, verifier_auth: An
                 else:
                     # fallback: try to get actor from sid validation already done (existante may be None if already revoked)
                     actor = {"id": None, "username": "unknown", "role": "unknown"}
+                # Convertit user_id chaîne numérique en int si possible (SessionRecord.user_id est str)
+                _uid = actor["id"]
+                try:
+                    _uid_int = int(_uid) if _uid is not None and str(_uid).isdigit() else None
+                except Exception:
+                    _uid_int = None
                 record_audit_log(
                     index,
-                    actor_user_id=actor["id"] if isinstance(actor["id"], int) else None,
+                    actor_user_id=_uid_int,
                     actor_username=actor["username"] if isinstance(actor["username"], str) else str(actor["username"]),
                     actor_role=actor["role"] if isinstance(actor["role"], str) else "unknown",
                     action="AUTH_LOGOUT",
@@ -518,7 +556,7 @@ def enregistrer_routes_auth(app: Any, index: Any, config: Any, verifier_auth: An
                 if db_session is not None:
                     record_audit_log(
                         index,
-                        actor_user_id=actor["id"] if isinstance(actor["id"], int) else None,
+                        actor_user_id=_uid_int,
                         actor_username=actor["username"] if isinstance(actor["username"], str) else str(actor["username"]),
                         actor_role=actor["role"] if isinstance(actor["role"], str) else "unknown",
                         action="SESSION_REVOKED",
@@ -832,13 +870,12 @@ def enregistrer_routes_auth(app: Any, index: Any, config: Any, verifier_auth: An
         - no-store sur réponse authentifiée
         - Vérifie aussi protection backend (pas seulement masquage lien)
         """
-        from fastapi import Response
         from ..audit_logs import get_audit_logs_filtered
 
         # Vérifie service token d'abord (comme toutes les routes /auth)
         verifier_auth(config, token)
         # Vérifie session nominative administrateur
-        admin = _admin(token, entete_sid, entete_session, entete_jeton)
+        _admin(token, entete_sid, entete_session, entete_jeton)
         # Validation bornes (évite injection, DoS)
         if not (1 <= limit <= 200):
             raise HTTPException(status_code=422, detail="limit doit être 1..200")

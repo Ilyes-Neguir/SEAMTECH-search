@@ -7,7 +7,6 @@ Vérifie les trois états:
 """
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -63,26 +62,25 @@ def test_docs_fermes_si_expose_false_explicite(tmp_path: Path):
         assert resp.status_code == 404, f"{path} doit être 404 quand expose_docs=false"
 
 
-def test_docs_via_env(tmp_path: Path):
-    orig = os.environ.get("SEAMTECH_EXPOSE_DOCS")
-    try:
-        os.environ["SEAMTECH_EXPOSE_DOCS"] = "true"
-        index = SearchIndex(tmp_path / "env_true.db")
-        index.initialize()
-        config = AppConfig(root_paths=[tmp_path], database_url="", min_free_bytes=0, auth_token="s")
-        assert config.expose_docs is True
-        app = create_app(config)
-        assert TestClient(app).get("/docs").status_code == 200
+def test_docs_via_env(tmp_path: Path, monkeypatch):
+    # Utilise le vrai chemin de chargement AppConfig.load() qui lit SEAMTECH_EXPOSE_DOCS
+    import json
 
-        os.environ["SEAMTECH_EXPOSE_DOCS"] = "false"
-        index2 = SearchIndex(tmp_path / "env_false.db")
-        index2.initialize()
-        config2 = AppConfig(root_paths=[tmp_path], database_url="", min_free_bytes=0, auth_token="s")
-        assert config2.expose_docs is False
-        app2 = create_app(config2)
-        assert TestClient(app2).get("/docs").status_code == 404
-    finally:
-        if orig is None:
-            os.environ.pop("SEAMTECH_EXPOSE_DOCS", None)
-        else:
-            os.environ["SEAMTECH_EXPOSE_DOCS"] = orig
+    cfg_path = tmp_path / "config.json"
+    cfg_path.write_text(json.dumps({"root_paths": [str(tmp_path)], "auth_token": "s"}), encoding="utf-8")
+
+    monkeypatch.setenv("SEAMTECH_EXPOSE_DOCS", "true")
+    config = AppConfig.load(cfg_path)
+    assert config.expose_docs is True
+    index = SearchIndex(tmp_path / "env_true.db")
+    index.initialize()
+    app = create_app(config)
+    assert TestClient(app).get("/docs").status_code == 200
+
+    monkeypatch.setenv("SEAMTECH_EXPOSE_DOCS", "false")
+    config2 = AppConfig.load(cfg_path)
+    assert config2.expose_docs is False
+    index2 = SearchIndex(tmp_path / "env_false.db")
+    index2.initialize()
+    app2 = create_app(config2)
+    assert TestClient(app2).get("/docs").status_code == 404

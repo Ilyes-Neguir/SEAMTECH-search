@@ -19,7 +19,6 @@ from pydantic import BaseModel, Field
 
 from .audit import actor_fingerprint, get_audit_logs, record_audit_event
 from .audit_logs import record_audit_log
-from .sessions_redis import SessionStore
 from .config import AppConfig
 from .etat_exploitation import etat_sauvegarde, s3_credential_kind
 from .extractors import extract_file
@@ -47,6 +46,7 @@ from .jobs import (
 )
 from .redis_store import RedisStore
 from .retention import InsufficientStorageError, ensure_free_space, run_retention_cleanup
+from .sessions_redis import SessionStore
 from .storage import S3StorageClient
 from .worker import file_durable_disponible, start_background_worker, stop_background_worker
 
@@ -722,7 +722,7 @@ def create_app(config: AppConfig) -> FastAPI:
                     actor_role=rrole,
                     action="IMPORT_CREATE",
                     target_type="import",
-                    target_id=job_id if 'job_id' in locals() else "pre_job",
+                    target_id="pre_job",
                     outcome="failure",
                     details={"reason": "insufficient_storage"},
                     ip_address=request.client.host if request.client else None,
@@ -1696,7 +1696,7 @@ def _resolve_audit_actor(request: Request, config: AppConfig, token: str | None,
     sid = request.headers.get("x-seamtech-session-sid") or request.headers.get("X-SEAMTECH-SESSION-SID")
     if sid and session_store is not None:
         try:
-            rec = session_store.obtenir_session(sid)  # type: ignore
+            rec = session_store.valider_session(sid)
             if rec:
                 # rec est SessionRecord avec user_id, identifiant, role
                 uid = getattr(rec, "user_id", None)
