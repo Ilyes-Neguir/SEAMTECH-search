@@ -68,6 +68,9 @@ INVENTAIRE_S3_REEL = {
     "tests/test_sauvegarde_references.py::test_aller_retour_objets_minio_sources_indisponibles",
     # épreuve de conformité d'un endpoint réel (SEAMTECH_TEST_S3_URL).
     "tests/test_storage.py::test_live_minio_s3_integration",
+    # Lot 0b audit S3 réel : PG + Redis + MinIO avec identité applicative restreinte
+    # (job `integration` via compose, SEAMTECH_S3_ACCESS_KEY=seamtech-app-ci)
+    "tests/test_audit_s3_reel.py::test_audit_s3_piece_et_artifact_minio",
     # job `recette-corpus-reel` (Lot 2) : recette complète du corpus réel —
     # MinIO vivant pour l'envoi des documents, les URL présignées (302, 900 s)
     # et la sauvegarde hors-site. Sélection par marqueur recette_corpus,
@@ -108,7 +111,7 @@ CATEGORIES = ("postgres", "s3", "perf", "sauvegarde")
 #: quelqu'un les rétrograde vers `-k`, ce test devient rouge).
 COMMANDE_SUITE_SANS_SERVICE = 'pytest -q -rf -m "not postgres and not s3 and not perf and not redis_queue and not session_redis and not ocr_suite"'
 COMMANDE_COUVERTURE = 'pytest -m "not s3 and not perf"'
-COMMANDE_POSTGRES = 'pytest -m "postgres and not perf and not sauvegarde and not redis_queue and not session_redis and not ocr_suite"'
+COMMANDE_POSTGRES = 'pytest -m "postgres and not perf and not sauvegarde and not s3 and not redis_queue and not session_redis and not ocr_suite"'
 #: File durable (Lot « imports durables ») : Redis réel + worker réel. Marquée
 #: à part pour que sa CI ne puisse pas être verte par simple SKIP.
 COMMANDE_FILE_DURABLE = 'pytest -m "redis_queue" -v -rf'

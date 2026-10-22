@@ -22,7 +22,8 @@ URL_PG = os.environ.get("SEAMTECH_TEST_DATABASE_URL", "")
 URL_REDIS = os.environ.get("SEAMTECH_TEST_REDIS_URL", "")
 JETON_SERVICE = "jeton-de-service-de-test"
 
-pytestmark = pytest.mark.postgres
+# Marqueurs par test (pas global) — la suite S3 est dans test_audit_s3_reel.py
+# Chaque test postgres porte explicitement @pytest.mark.postgres
 
 
 def _base_et_app(tmp_path: Path):
@@ -165,6 +166,8 @@ def test_audit_login_success_et_failure(tmp_path: Path):
                 assert "secret_nested" not in dj_str
                 assert "leak2" not in dj_str
                 assert "leak_mdp" not in dj_str
+                assert "leak" not in dj_str.lower()
+                assert "leak_list" not in dj_str
                 # Vérifie que les clés non-secrètes imbriquées sont conservées
                 assert dj.get("meta", {}).get("ok") == "keep"
                 # La liste doit être nettoyée mais keep doit rester
@@ -459,117 +462,6 @@ def test_audit_piece_et_artifact(tmp_path: Path):
                 assert row is not None, "ARTIFACT_DOWNLOAD non journalisé"
                 assert row[0] == created["id_utilisateur"]
                 assert row[1] == "ARTIFACT_DOWNLOAD" and row[2] == "failure" and row[3] == "import_artifact"
-
-    finally:
-        index.close()
-        admin_conn = psycopg2.connect(URL_PG)
-        admin_conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
-        try:
-            with admin_conn.cursor() as cur:
-                cur.execute(pgsql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(pgsql.Identifier(nom)))
-        finally:
-            admin_conn.close()
-
-
-@pytest.mark.postgres
-def test_audit_s3_piece_et_artifact_minio(tmp_path: Path):
-    """Preuve S3/MinIO réelle (sans mocks) — skip si MinIO absent."""
-    endpoint = os.environ.get("SEAMTECH_S3_ENDPOINT_URL") or os.environ.get("SEAMTECH_TEST_S3_URL")
-    if not endpoint:
-        pytest.skip("MinIO non configuré (SEAMTECH_S3_ENDPOINT_URL absent)")
-    access = os.environ.get("SEAMTECH_S3_ACCESS_KEY", "minioadmin")
-    secret = os.environ.get("SEAMTECH_S3_SECRET_KEY", "minioadmin")
-    bucket = os.environ.get("SEAMTECH_S3_BUCKET", "seamtech-documents")
-    # Vérifie connectivité MinIO
-    try:
-        from seamtech_search.storage import S3StorageClient
-
-        probe = S3StorageClient(endpoint_url=endpoint, bucket_name=bucket, access_key_id=access, secret_access_key=secret)
-        # ensure_bucket_exists lève si injoignable
-        probe.ensure_bucket_exists()
-    except Exception as exc:
-        pytest.skip(f"MinIO injoignable {endpoint}: {exc}")
-
-    index, app, url_base, nom = _base_et_app(tmp_path)
-    import psycopg2
-    from psycopg2 import sql as pgsql
-    from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
-
-    try:
-        # Configurer l'app avec S3 réel
-        orig_s3 = os.environ.get("SEAMTECH_S3_ENDPOINT_URL")
-        orig_acc = os.environ.get("SEAMTECH_S3_ACCESS_KEY")
-        orig_sec = os.environ.get("SEAMTECH_S3_SECRET_KEY")
-        orig_bkt = os.environ.get("SEAMTECH_S3_BUCKET")
-        os.environ["SEAMTECH_S3_ENDPOINT_URL"] = endpoint
-        os.environ["SEAMTECH_S3_BUCKET"] = bucket
-        os.environ["SEAMTECH_S3_ACCESS_KEY"] = access
-        os.environ["SEAMTECH_S3_SECRET_KEY"] = secret
-        # Re-crée app avec S3
-        config = AppConfig(root_paths=[tmp_path], database_url=url_base, min_free_bytes=0, auth_token=JETON_SERVICE, redis_url=URL_REDIS, s3_endpoint_url=endpoint, s3_bucket=bucket, s3_access_key=access, s3_secret_key=secret)
-        from seamtech_search.api import create_app as _create_app
-
-        app_s3 = _create_app(config)
-
-        created = _cree_utilisateur(index, "admin_s3", "administrateur")
-        client = TestClient(app_s3)
-        resp = client.post("/auth/connexion", json={"identifiant": "admin_s3", "mot_de_passe": "Secret123!"}, headers={"X-SEAMTECH-TOKEN": JETON_SERVICE})
-        sid = resp.json().get("sid")
-        assert sid
-
-        # Upload réel d'un PDF vers MinIO
-        from seamtech_search.storage import S3StorageClient
-
-        s3 = S3StorageClient(endpoint_url=endpoint, bucket_name=bucket, access_key_id=access, secret_access_key=secret)
-        local_pdf = tmp_path / "s3_piece.pdf"
-        local_pdf.write_bytes(b"%PDF-1.4 S3 proof")
-        remote_key = f"audit-test/{uuid.uuid4().hex}/s3_piece.pdf"
-        uploaded_key = s3.upload_file(local_pdf, remote_key=remote_key)
-        assert uploaded_key == remote_key
-
-        # Insère document avec object_key S3
-        with index.connect() as conn:
-            with conn.cursor() as cur:
-                path_key = f"s3://{bucket}/{remote_key}"
-                cur.execute(
-                    "INSERT INTO documents (path_key, path, name, parent_path, extension, size, modified_at, is_dir, object_key, object_bucket) "
-                    "VALUES (%s,%s,%s,%s,%s,%s,%s, FALSE, %s, %s) RETURNING id",
-                    (path_key, str(local_pdf), "s3_piece.pdf", str(tmp_path), ".pdf", local_pdf.stat().st_size, local_pdf.stat().st_mtime, remote_key, bucket),
-                )
-                piece_id = int(cur.fetchone()[0])
-
-        # Téléchargement via S3 -> success + audit
-        resp_dl = client.get(f"/pieces/{piece_id}/telecharger", headers={"X-SEAMTECH-TOKEN": JETON_SERVICE, "X-SEAMTECH-SESSION-SID": sid})
-        assert resp_dl.status_code in (200, 302), f"S3 piece download status {resp_dl.status_code}: {resp_dl.text[:500]}"
-        with index.connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT actor_user_id, action, outcome, target_id FROM audit_logs WHERE action='PIECE_DOWNLOAD' AND target_id=%s ORDER BY id DESC LIMIT 1", (str(piece_id),))
-                row = cur.fetchone()
-                assert row is not None and row[2] == "success", f"PIECE S3 non journalisé success: {row}"
-                assert row[0] == created["id_utilisateur"]
-
-        # Nettoie S3
-        try:
-            s3._get_client().delete_object(Bucket=bucket, Key=remote_key)
-        except Exception:
-            pass
-
-        if orig_s3 is None:
-            os.environ.pop("SEAMTECH_S3_ENDPOINT_URL", None)
-        else:
-            os.environ["SEAMTECH_S3_ENDPOINT_URL"] = orig_s3
-        if orig_acc is None:
-            os.environ.pop("SEAMTECH_S3_ACCESS_KEY", None)
-        else:
-            os.environ["SEAMTECH_S3_ACCESS_KEY"] = orig_acc
-        if orig_sec is None:
-            os.environ.pop("SEAMTECH_S3_SECRET_KEY", None)
-        else:
-            os.environ["SEAMTECH_S3_SECRET_KEY"] = orig_sec
-        if orig_bkt is None:
-            os.environ.pop("SEAMTECH_S3_BUCKET", None)
-        else:
-            os.environ["SEAMTECH_S3_BUCKET"] = orig_bkt
 
     finally:
         index.close()

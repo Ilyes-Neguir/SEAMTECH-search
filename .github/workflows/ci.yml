@@ -150,7 +150,7 @@ jobs:
           # avec MinIO réel — ici ils seraient sautés, et un saut fait
           # échouer cette porte.
           set +e
-          pytest -m "postgres and not perf and not sauvegarde and not redis_queue and not session_redis and not ocr_suite" -v -rf 2>&1 | tee /tmp/pg.log
+          pytest -m "postgres and not perf and not sauvegarde and not s3 and not redis_queue and not session_redis and not ocr_suite" -v -rf 2>&1 | tee /tmp/pg.log
           rc=${PIPESTATUS[0]}
           set -e
           if [ "$rc" -ne 0 ]; then
