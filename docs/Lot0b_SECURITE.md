@@ -2,8 +2,10 @@
 
 **Branche**: `arena/c7c86aff-seamtech-search`  
 **SHA pré-fusion Lot 0a+Lot 2**: `e38e6e9` (merge commit préservant lignées)  
-**SHA HEAD actuel**: `7fbeae9` (parent `c12f0c5`, audit vert complet : import vide 200 + S3 inventaire + coverage 84% + pypdf 6.21.1 + audit projet)
-**Date**: 2026-10-22 (CI `39764148304` **succès** 13/13 jobs, backend 3.11/3.12/3.13 succès, e2e succès, coverage 84.86% floor 84%, native `39766469796` succès, réserves `39766469668` succès, perf `39766469805` succès — tous exact-SHA `7fbeae9`)
+**SHA code validé**: `c12f0c5` (socle Lot 0b, 12/12 audits verts, 4 runs verts `39764148304`/`39764148299`/`39764148292`/`39764148314`) — **HEAD précédent** `7fbeae9` (sync doc) → `431e86e` (sync doc) code identique `c12f0c5`
+**SHA HEAD actuel (correctif revue 2026-10-22)**: **nouveau SHA à reporter** (parent `431e86e`, correctifs: S3 preuve réactivée PG+Redis+MinIO restreint + hex strict + 403/permission + coverage 85% + audit best-effort loggé, pas de `pass # noqa`)
+**Date**: 2026-10-23 — CI précédente `39768572329` **succès** 13/13 (backend 3.11/3.12/3.13 succès, e2e succès, coverage 84.86% floor 84% temporaire, native `39768572266` succès, réserves `39768572424` succès, perf `39768572304` succès — tous `431e86e` docs-only)
+**Couvrant**: floor 85% **restauré** (`scripts/coverage_gate.py` 84→85) via `tests/test_coverage_bump_lot0b.py` (helpers audit) + S3 proof `integration_docker` — décision implicite 84% annulée, 85% ciblé
 
 ## 1. Prévol (exigence 0)
 
@@ -16,6 +18,8 @@
 - Aucun modèle 4 rôles/UI ajouté.
 - Aucune SQL concat/f-string : toutes les requêtes d'audit utilisent `execute(sql, params)` avec `%s` lié. Aucun nouveau fragment dynamique ajouté ; fragments hérités signalés dans `docs/SECURITE_SQL.md`.
 - Tests d'intégration PostgreSQL/Redis/MinIO/Playwright réels : suites critiques 0 skip quand DB disponible (CI Lot2: 288 passed/0 skipped PostgreSQL, 84 tests réserves 0 skipped) ; `test_secours_desactivation_apres_admin` est volontairement `skip` (politique en attente, 1 skip attendu) — ne pas revendiquer 0 skip global. Qualification locale reproduit `init/migration` rôle limité, `pglast` insuffisant pour DDL réel.
+- Garde-fou `INVENTAIRE_S3_REEL` **sélectionné** : chaque test inventorié doit être sélectionné par une commande `-m` du workflow (`tests/test_selection_ci.py::test_chaque_test_de_l_inventaire_est_selectionne_par_un_job_ci`) — un inventaire non exécuté faisait passer la CI verte à tort (431e86e). `test_audit_s3_reel.py` porte `s3+integration_docker+postgres` et est exécuté par le job `integration` (PG 5433 + Redis + MinIO `seamtech-app-ci`, vérif octets + audit complet).
+- Audit best-effort : `except Exception as exc: LOGGER.debug(...)` (pas `pass # noqa` ni alias inutilisé) — exception audit loggée sans secret, opération métier non interrompue.
 - Rollback documenté/testé : `docs/ROLLBACK_LOT0B.md`.
 
 ## 3. Migration 025 (audit_logs)
@@ -24,7 +28,7 @@
 - `TABLES_METIER` 37→38, `MIGRATIONS` 024_invalidation_sessions/025_audit_logs/026, header `006→026`.
 - `seamtech_search/indexer.py` : `_migration_025_audit_logs` (PG-only, warning SQLite) exécute `SQL_025_AUDIT_LOGS` ; idempotente via `IF NOT EXISTS`/`IF NOT EXISTS` index, testée sur base réelle vide et re-jeu. Aucun SAVEPOINT nécessaire (contrairement à 026 qui utilise `SAVEPOINT seamtech_026_unaccent` pour la fonction unaccent).
 - Préservation `audit_log` ancien (verrouillage connexions) : l'ancien `audit_log` (événements `connexion_refusee`) est conservé tel quel ; `audit_logs` est une nouvelle table indépendante. Les deux coexistent, aucun renommage n'est effectué (vérifié `pg_tables`).
-- Pas de secrets, JSON borné 4ko (troncature), échec d'écriture journalisé `LOGGER.warning` sans bloquer la requête principale.
+- Pas de secrets, JSON borné 4ko (troncature), échec d'écriture **best-effort loggé `LOGGER.debug` sans secret** (pas `pass`), opération métier non bloquée — encodé dans `seamtech_search/api.py`/`comptes/routes.py`/`fiches/routes.py`.
 
 ## 4. Événements + GET /api/admin/audit-logs
 

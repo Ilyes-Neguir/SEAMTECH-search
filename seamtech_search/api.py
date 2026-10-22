@@ -728,8 +728,8 @@ def create_app(config: AppConfig) -> FastAPI:
                     ip_address=request.client.host if request.client else None,
                     user_agent=request.headers.get("user-agent", "")[:500] if request.headers.get("user-agent") else None,
                 )
-            except Exception as _audit_exc:  # audit non critique, ne masque pas l'erreur métier
-                pass  # noqa: E722 - audit log best-effort
+            except Exception as exc:  # audit best-effort : log sans secret, n'interrompt pas l'opération métier
+                logger.debug("audit log best-effort échoué: %s", exc)
             raise HTTPException(status_code=507, detail=str(exc)) from exc
 
         job_id = uuid.uuid4().hex
@@ -763,32 +763,32 @@ def create_app(config: AppConfig) -> FastAPI:
                         ip_address=request.client.host if request.client else None,
                         user_agent=request.headers.get("user-agent", "")[:500] if request.headers.get("user-agent") else None,
                     )
-                except Exception as _audit_exc:  # audit non critique
-                    pass  # noqa
+                except Exception as exc:  # audit best-effort : log sans secret, n'interrompt pas l'opération métier
+                    logger.debug("audit log best-effort échoué: %s", exc)
                 return JSONResponse(status_code=200, content=payload)
             except InsufficientStorageError as exc:
                 record_audit_event(index, action="import_create", actor=actor, resource=job_id, status="507")
                 try:
                     uid, uname, rrole = _resolve_audit_actor(request, config, token, session_store)
                     record_audit_log(index, actor_user_id=uid, actor_username=uname, actor_role=rrole, action="IMPORT_CREATE", target_type="import", target_id=job_id, outcome="failure", details={"reason": "insufficient_storage"}, ip_address=request.client.host if request.client else None, user_agent=request.headers.get("user-agent", "")[:500] if request.headers.get("user-agent") else None)
-                except Exception as _audit_exc:  # audit non critique
-                    pass  # noqa
+                except Exception as exc:  # audit best-effort : log sans secret, n'interrompt pas l'opération métier
+                    logger.debug("audit log best-effort échoué: %s", exc)
                 raise HTTPException(status_code=507, detail=str(exc)) from exc
             except PermissionError as exc:
                 record_audit_event(index, action="import_create", actor=actor, resource=job_id, status="403")
                 try:
                     uid, uname, rrole = _resolve_audit_actor(request, config, token, session_store)
                     record_audit_log(index, actor_user_id=uid, actor_username=uname, actor_role=rrole, action="IMPORT_CREATE", target_type="import", target_id=job_id, outcome="failure", details={"reason": "permission"}, ip_address=request.client.host if request.client else None, user_agent=request.headers.get("user-agent", "")[:500] if request.headers.get("user-agent") else None)
-                except Exception as _audit_exc:  # audit non critique
-                    pass  # noqa
+                except Exception as exc:  # audit best-effort : log sans secret, n'interrompt pas l'opération métier
+                    logger.debug("audit log best-effort échoué: %s", exc)
                 raise HTTPException(status_code=403, detail=str(exc)) from exc
             except ValueError as exc:
                 record_audit_event(index, action="import_create", actor=actor, resource=job_id, status="400")
                 try:
                     uid, uname, rrole = _resolve_audit_actor(request, config, token, session_store)
                     record_audit_log(index, actor_user_id=uid, actor_username=uname, actor_role=rrole, action="IMPORT_CREATE", target_type="import", target_id=job_id, outcome="failure", details={"reason": "value_error"}, ip_address=request.client.host if request.client else None, user_agent=request.headers.get("user-agent", "")[:500] if request.headers.get("user-agent") else None)
-                except Exception as _audit_exc:  # audit non critique
-                    pass  # noqa
+                except Exception as exc:  # audit best-effort : log sans secret, n'interrompt pas l'opération métier
+                    logger.debug("audit log best-effort échoué: %s", exc)
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         try:
@@ -819,8 +819,8 @@ def create_app(config: AppConfig) -> FastAPI:
             try:
                 uid, uname, rrole = _resolve_audit_actor(request, config, token, session_store)
                 record_audit_log(index, actor_user_id=uid, actor_username=uname, actor_role=rrole, action="IMPORT_CREATE", target_type="import", target_id=job_id, outcome="failure", details={"reason": "durable_unavailable"}, ip_address=request.client.host if request.client else None, user_agent=request.headers.get("user-agent", "")[:500] if request.headers.get("user-agent") else None)
-            except Exception as _audit_exc:  # audit non critique, ne masque pas l'erreur métier
-                pass  # noqa: E722 - audit log best-effort
+            except Exception as exc:  # audit best-effort : log sans secret, n'interrompt pas l'opération métier
+                logger.debug("audit log best-effort échoué: %s", exc)
             raise HTTPException(
                 status_code=503,
                 detail=(
@@ -869,8 +869,8 @@ def create_app(config: AppConfig) -> FastAPI:
         try:
             uid, uname, rrole = _resolve_audit_actor(request, config, token, session_store)
             record_audit_log(index, actor_user_id=uid, actor_username=uname, actor_role=rrole, action="IMPORT_CREATE", target_type="import", target_id=job_id, outcome="success", details={"async": True, "durability": "durable" if durable else "process_memory"}, ip_address=request.client.host if request.client else None, user_agent=request.headers.get("user-agent", "")[:500] if request.headers.get("user-agent") else None)
-        except Exception as _audit_exc:  # audit non critique
-            pass  # noqa
+        except Exception as exc:  # audit best-effort : log sans secret, n'interrompt pas l'opération métier
+            logger.debug("audit log best-effort échoué: %s", exc)
         return JSONResponse(
             status_code=202,
             content={
@@ -1246,8 +1246,8 @@ def create_app(config: AppConfig) -> FastAPI:
             try:
                 uid, uname, rrole = _resolve_audit_actor(request, config, token, session_store)
                 record_audit_log(index, actor_user_id=uid, actor_username=uname, actor_role=rrole, action="ARTIFACT_DOWNLOAD", target_type="import_artifact", target_id=f"{import_id}/{artifact}", outcome="failure", details={"reason": "unknown_artifact"}, ip_address=request.client.host if request.client else None, user_agent=request.headers.get("user-agent", "")[:500] if request.headers.get("user-agent") else None)
-            except Exception as _audit_exc:  # audit non critique, ne masque pas l'erreur métier
-                pass  # noqa: E722 - audit log best-effort
+            except Exception as exc:  # audit best-effort : log sans secret, n'interrompt pas l'opération métier
+                logger.debug("audit log best-effort échoué: %s", exc)
             raise HTTPException(status_code=400, detail=f"Unknown artifact. Allowed: {', '.join(sorted(allowed))}")
 
         payload = get_import(index, import_id)
@@ -1256,8 +1256,8 @@ def create_app(config: AppConfig) -> FastAPI:
             try:
                 uid, uname, rrole = _resolve_audit_actor(request, config, token, session_store)
                 record_audit_log(index, actor_user_id=uid, actor_username=uname, actor_role=rrole, action="ARTIFACT_DOWNLOAD", target_type="import_artifact", target_id=f"{import_id}/{artifact}", outcome="failure", details={"reason": "import_not_found"}, ip_address=request.client.host if request.client else None, user_agent=request.headers.get("user-agent", "")[:500] if request.headers.get("user-agent") else None)
-            except Exception as _audit_exc:  # audit non critique, ne masque pas l'erreur métier
-                pass  # noqa: E722 - audit log best-effort
+            except Exception as exc:  # audit best-effort : log sans secret, n'interrompt pas l'opération métier
+                logger.debug("audit log best-effort échoué: %s", exc)
             raise HTTPException(status_code=404, detail="Import not found.")
 
         # Resolve file path and object key from payload
@@ -1330,8 +1330,8 @@ def create_app(config: AppConfig) -> FastAPI:
                     ip_address=request.client.host if request.client else None,
                     user_agent=request.headers.get("user-agent", "")[:500] if request.headers.get("user-agent") else None,
                 )
-            except Exception as _audit_exc:  # audit non critique, ne masque pas l'erreur métier
-                pass  # noqa: E722 - audit log best-effort
+            except Exception as exc:  # audit best-effort : log sans secret, n'interrompt pas l'opération métier
+                logger.debug("audit log best-effort échoué: %s", exc)
             return RedirectResponse(url=url_publique, status_code=302)
 
         # Fallback: serve from local disk (cache) or download from S3 to cache
@@ -1359,8 +1359,8 @@ def create_app(config: AppConfig) -> FastAPI:
                     ip_address=request.client.host if request.client else None,
                     user_agent=request.headers.get("user-agent", "")[:500] if request.headers.get("user-agent") else None,
                 )
-            except Exception as _audit_exc:  # audit non critique, ne masque pas l'erreur métier
-                pass  # noqa: E722 - audit log best-effort
+            except Exception as exc:  # audit best-effort : log sans secret, n'interrompt pas l'opération métier
+                logger.debug("audit log best-effort échoué: %s", exc)
             return FileResponse(path=file_path, filename=filename, media_type=media_type)
 
         # If local cache cold but we have object_key, try to download from S3 to cache dir
@@ -1380,8 +1380,8 @@ def create_app(config: AppConfig) -> FastAPI:
                     try:
                         uid, uname, rrole = _resolve_audit_actor(request, config, token, session_store)
                         record_audit_log(index, actor_user_id=uid, actor_username=uname, actor_role=rrole, action="ARTIFACT_DOWNLOAD", target_type="import_artifact", target_id=f"{import_id}/{artifact}", outcome="success", details={"filename": filename, "cache": "miss_downloaded"}, ip_address=request.client.host if request.client else None, user_agent=request.headers.get("user-agent", "")[:500] if request.headers.get("user-agent") else None)
-                    except Exception as _audit_exc:  # audit non critique
-                        pass  # noqa
+                    except Exception as exc:  # audit best-effort : log sans secret, n'interrompt pas l'opération métier
+                        logger.debug("audit log best-effort échoué: %s", exc)
                     return FileResponse(path=file_path, filename=filename, media_type=media_type)
             except Exception as exc:
                 logger.warning("Failed to download %s from storage: %s", object_key, exc)
@@ -1390,8 +1390,8 @@ def create_app(config: AppConfig) -> FastAPI:
         try:
             uid, uname, rrole = _resolve_audit_actor(request, config, token, session_store)
             record_audit_log(index, actor_user_id=uid, actor_username=uname, actor_role=rrole, action="ARTIFACT_DOWNLOAD", target_type="import_artifact", target_id=f"{import_id}/{artifact}", outcome="failure", details={"reason": "artifact_not_found"}, ip_address=request.client.host if request.client else None, user_agent=request.headers.get("user-agent", "")[:500] if request.headers.get("user-agent") else None)
-        except Exception as _audit_exc:  # audit non critique
-            pass  # noqa
+        except Exception as exc:  # audit best-effort : log sans secret, n'interrompt pas l'opération métier
+            logger.debug("audit log best-effort échoué: %s", exc)
         raise HTTPException(status_code=404, detail="Artifact not found. It may not have been generated or uploaded yet.")
 
     # ---------------------------------------------------------------------------
@@ -1706,8 +1706,8 @@ def _resolve_audit_actor(request: Request, config: AppConfig, token: str | None,
                 except Exception:
                     uid_int = None
                 return (uid_int, str(uname), str(role))
-        except Exception as _audit_exc:  # audit non critique
-            pass  # noqa
+        except Exception as exc:  # audit best-effort : log sans secret, n'interrompt pas l'opération métier
+            logger.debug("audit log best-effort échoué: %s", exc)
         # fallback: try via comptes logic if Redis indisponible - on ne fait pas confiance à header role
     # Fallback: empreinte service token
     actor = actor_fingerprint(token, request.client.host if request.client else None)

@@ -1544,17 +1544,17 @@ def enregistrer_routes_fiches(
                                 actor_id = None
                             actor_name = getattr(u, "identifiant", None) or getattr(u, "username", None) or "unknown"
                             actor_role = getattr(u, "role", None) or "unknown"
-                    except Exception as _audit_exc:  # audit non critique
-                        pass  # noqa
-            except Exception as _audit_exc:  # audit non critique
-                pass  # noqa
+                    except Exception as exc:  # audit best-effort : log sans secret, n'interrompt pas l'opération métier
+                        LOGGER.debug("audit log best-effort échoué: %s", exc)
+            except Exception as exc:  # audit best-effort : log sans secret, n'interrompt pas l'opération métier
+                LOGGER.debug("audit log best-effort échoué: %s", exc)
         # fallback: tente via token fingerprint si pas de session (service) — sans fuite de jeton
         if actor_name == "unknown":
             try:
                 # on ne fait pas confiance à X-SEAMTECH-ROLE librement ; identité service constante non réversible
                 actor_name = "service"
-            except Exception as _audit_exc:  # audit non critique
-                pass  # noqa
+            except Exception as exc:  # audit best-effort : log sans secret, n'interrompt pas l'opération métier
+                LOGGER.debug("audit log best-effort échoué: %s", exc)
         return (actor_id, str(actor_name), str(actor_role))
 
     def _audit_piece(request: Request, piece_id: int, apercu: bool, nom: str, outcome: str, details: dict | None = None) -> None:
@@ -1576,8 +1576,8 @@ def enregistrer_routes_fiches(
                 ip_address=ip,
                 user_agent=ua,
             )
-        except Exception as _audit_exc:  # audit non critique
-            pass  # noqa
+        except Exception as exc:  # audit best-effort : log sans secret, n'interrompt pas l'opération métier
+            LOGGER.debug("audit log best-effort échoué: %s", exc)
     def servir_piece(piece_id: int, request: Request, *, apercu: bool) -> Response:
         # 415 - aperçu impossible
         try:

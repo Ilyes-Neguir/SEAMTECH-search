@@ -241,13 +241,15 @@ def test_import_create_et_artifact_nominatif(tmp_path: Path):
                 target_id = str(row[5]) if row[5] is not None else ""
                 assert row[5] is not None and len(target_id) >= 6, f"target_id manquant: {row}"
                 assert row[6] == "import", f"target_type doit être import, got {row[6]}"
-                # Format strict: soit pre_job soit 32 hex
+                # Format strict: soit pre_job soit 32 hex (minuscules uniquement, pas de majuscules)
                 if target_id != "pre_job":
-                    assert len(target_id) == 32 and re.fullmatch(r"[0-9a-f]{32}", target_id.lower()), f"target_id doit être pre_job ou 32 hex, got {target_id}"
+                    assert len(target_id) == 32 and re.fullmatch(r"[0-9a-f]{32}", target_id), f"target_id doit être 32 hex strict (minuscules), got {target_id}"
                     if row[4] == "failure":
-                        # Vérifie que le reason est bien value_error pour dossier vide en échec HTTP
-                        # (pas insufficient_storage ni permission)
-                        assert dj.get("reason") == "value_error", f"details reason doit être value_error, got {dj}"
+                        # 403 => permission, sinon dossier vide => value_error (pas insufficient_storage)
+                        if resp_imp.status_code == 403:
+                            assert dj.get("reason") in ("permission", "forbidden") or "permission" in str(dj).lower(), f"403 doit avoir reason permission, got {dj}"
+                        else:
+                            assert dj.get("reason") == "value_error", f"details reason doit être value_error, got {dj}"
 
         # Sans session, fallback service (mais pas de fuite token)
         client.post("/imports", json={"source_path": str(tmpdir)}, params={"wait": True}, headers={"X-SEAMTECH-TOKEN": JETON_SERVICE})

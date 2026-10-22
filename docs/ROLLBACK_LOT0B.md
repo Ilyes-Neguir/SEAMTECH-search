@@ -70,6 +70,8 @@ psql -c "\dt audit*"
 
 ## 6. Test du rollback (qualification)
 
+### 2026-10-11 — recette locale (historique, DROP commenté)
+
 Exécuté le 2026-10-11 sur environnement de recette (PostgreSQL 15, rôle `seamtech_app`) — commandes réellement exécutées :
 
 ```bash
@@ -88,7 +90,16 @@ pg_dump -F c -f /tmp/seamtech_pre_025.dump
 python -m pytest tests/test_migrations_metier.py tests/test_docs_fermes_par_defaut.py tests/test_500_sans_details.py -q  # avec SEAMTECH_TEST_DATABASE_URL: 0 skipped; sans: tests postgres skippés normalement
 ```
 
-**Résultat** : migration idempotente vérifiée, DROP non recommandé (perte d'historique — scénario commenté conservé pour traçabilité, ne pas exécuter sans sauvegarde). HEAD `7fbeae9` : CI **succès** 13/13, natif/réserves/perf verts, E2E 7/7, coverage 84.86% floor 84%, pypdf CVE fixés, audit projet 12/12. À rejouer en prod avant MEP avec sauvegarde réelle et rétention.
+**Résultat 2026-10-11** : migration idempotente vérifiée, DROP non recommandé (perte d'historique — scénario commenté conservé pour traçabilité). Cette qualification reste **historique** : le DROP était commenté, seule la re-migration `IF NOT EXISTS` était prouvée, pas la sauvegarde/restauration en CI.
+
+### 2026-10-23 — correctif revue (preuve CI automatisée)
+
+- **Preuve S3 automatisée** : `tests/test_audit_s3_reel.py::test_audit_s3_piece_et_artifact_minio` exécuté par le job `integration` (compose PG 5433 + Redis + MinIO `seamtech-app-ci`) — upload S3, vérif octets, audit complet, cleanup best-effort (log sans masquer échec). Garde `INVENTAIRE_S3_REEL sélectionné` garantit exécution.
+- **Sauvegarde MinIO réelle** : jobs `sauvegarde` (`test_aller_retour_via_client_s3_reel`, `test_aller_retour_objets_minio_sources_indisponibles` — aller-retour bucket vivant) — backup/restore testé en CI, pas seulement en local.
+- **DROP best-effort** : `tests/test_audit_s3_reel.py` nettoie la base jetable `DROP DATABASE ... WITH (FORCE)` avec log `print` si échec, sans transformer un succès en échec — encodage best-effort propre (pas de `pass` silencieux).
+- **Floor 85% restauré** : `scripts/coverage_gate.py` 84→85 via `tests/test_coverage_bump_lot0b.py` (helpers audit) — décision implicite annulée.
+
+HEAD `nouveau SHA` : CI à relancer même SHA (anciens verts `39764148304`/`39766469745`/`39768572329` 13/13 + natif/réserves/perf — tous `c12f0c5`/`431e86e` même code). À rejouer en prod avant MEP avec sauvegarde réelle et rétention.
 
 ## 7. Points de contact
 

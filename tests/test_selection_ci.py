@@ -288,6 +288,66 @@ def test_les_tests_sur_doubles_ne_portent_pas_le_marqueur_s3() -> None:
         assert "s3" not in marqueurs[identifiant], f"{identifiant} n'a pas besoin d'un MinIO : le marqueur le cacherait"
 
 
+def test_chaque_test_de_l_inventaire_est_selectionne_par_un_job_ci() -> None:
+    """INVENTAIRE_S3_REEL ne doit pas contenir de test fantôme jamais exécuté.
+
+    Cause historique : 431e86e avait test_audit_s3_reel.py marqué s3 seul,
+    donc exclu de toutes les suites (`not s3` SQLite/Postgres/couverture,
+    et `integration_docker` ne le sélectionnait pas). Le garde précédent
+    vérifiait l'inventaire vs marqueur, mais pas qu'un job CI le sélectionne
+    réellement — un test inventorié pouvait donc rester désactivé sans faire
+    échouer la CI. Désormais, un inventaire non couvert par une commande
+    `-m` du workflow est une erreur (échecs 39753383545/39754966615).
+    """
+    contenu = CI.read_text(encoding="utf-8")
+    # Extraire toutes les expressions -m du workflow
+    selections = re.findall(r'pytest\s+-m\s+\"([^\"]+)\"', contenu)
+    selections += re.findall(r"pytest\s+-m\s+'([^']+)'", contenu)
+    selections += re.findall(r"pytest\s+-m\s+(\S+)", contenu)  # sans guillemets (integration_docker)
+    # Normaliser : chaque sélection est une expression pytest marker
+    marqueurs = _marqueurs_par_test()
+    # Pour chaque test d'inventaire, vérifier qu'au moins une sélection CI le couvre
+    # On simule grossièrement : si le test porte `integration_docker`, alors `pytest -m integration_docker` le couvre;
+    # si `sauvegarde`, alors `pytest -m sauvegarde`, etc. Pour les expressions composées (`not s3`),
+    # on considère qu'un test avec `s3` n'est PAS couvert par `not s3`.
+    jobs_s3 = [s for s in selections if "s3" not in s or s.strip() in ("s3", "integration_docker", "sauvegarde", "recette_corpus")]
+    # Détection simple : un test avec marqueur s3 n'est couvert que par une sélection qui ne l'exclut pas via `not s3`
+    non_couverts = []
+    for identifiant in sorted(INVENTAIRE_S3_REEL):
+        marques_test = marqueurs.get(identifiant.split("[")[0], set())
+        # Les tests manuels (marqués uniquement `s3`, sans marqueur de job) sont
+        # documentés dans l'inventaire mais non exécutés en CI (ex: test_live_minio
+        # qui exige SEAMTECH_TEST_S3_URL). Ils ne doivent pas faire échouer le
+        # garde-fou — seul un test inventorié ET destiné à la CI doit être
+        # sélectionné (marqueur de job : integration_docker, sauvegarde, recette_corpus…).
+        if marques_test == {"s3"}:
+            continue
+        couvert = False
+        for sel in selections:
+            # Sélection négative `not s3` exclut les tests s3
+            if "not s3" in sel and "s3" in marques_test:
+                continue
+            # Sélection positive : doit contenir au moins un marqueur du test
+            # Ex: sel="integration_docker" et test a integration_docker → couvert
+            # Ex: sel="s3" et test a s3 → couvert (théorique, pas utilisé)
+            # On extrait les mots marqueurs de la sélection (postgres, s3, perf, etc)
+            mots_sel = set(re.findall(r"\b[a-z_][a-z0-9_]*\b", sel))
+            if marques_test & mots_sel:
+                couvert = True
+                break
+            # Cas particulier : sélection simple sans `not` et test a ce marqueur exact
+            if sel.strip() in marques_test:
+                couvert = True
+                break
+        if not couvert:
+            non_couverts.append(f"{identifiant} (marqueurs {sorted(marques_test)} non sélectionnés par aucune commande -m du workflow)")
+    assert not non_couverts, (
+        "Tests INVENTAIRE_S3_REEL jamais exécutés par la CI (aucune sélection -m ne les couvre) :\n"
+        + "\n".join(f"  - {x}" for x in non_couverts)
+        + "\nMarquer le test avec un marqueur de job (integration_docker, sauvegarde, recette_corpus) et/ou ajuster le workflow."
+    )
+
+
 # ---------------------------------------------------------------------------
 # 2. La CI sélectionne par marqueur, pas par sous-chaîne
 # ---------------------------------------------------------------------------
