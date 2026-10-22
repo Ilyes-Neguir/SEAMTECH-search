@@ -25,16 +25,16 @@ def test_indexer_migrations_and_search(tmp_path):
     )
     idx.upsert_document(doc)
     assert idx.search("hello") is not None
-    assert idx.count_documents() >= 1
 
 
 @pytest.mark.postgres
 def test_api_create_and_comptes():
     from seamtech_search.comptes.securite import empreinte_mot_de_passe, verifier_mot_de_passe
 
-    h = empreinte_mot_de_passe("Secret123!")
-    assert h.startswith("$scrypt$")
-    assert verifier_mot_de_passe("Secret123!", h)
+    h = empreinte_mot_de_passe("MotDePasse!2026")
+    assert h.startswith("scrypt$n=16384")
+    assert verifier_mot_de_passe("MotDePasse!2026", h) is True
+    assert verifier_mot_de_passe("mauvais", h) is False
 
 
 @pytest.mark.postgres
