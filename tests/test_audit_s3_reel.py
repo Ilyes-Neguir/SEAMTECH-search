@@ -242,7 +242,7 @@ def test_audit_s3_piece_et_artifact_minio(tmp_path: Path):
                 print(f"[warn] PIECE content mismatch got {len(resp_dl.content)} vs {len(contenu_piece)}")
             # nosniff check lenient
             if resp_dl.headers.get("X-Content-Type-Options") != "nosniff":
-                print(f"[warn] PIECE nosniff missing: {resp_dl.headers.get("X-Content-Type-Options")}")
+                print(f"[warn] PIECE nosniff missing: {resp_dl.headers.get('X-Content-Type-Options')}")
         elif resp_dl.status_code == 302:
             loc = resp_dl.headers.get("location", "") or resp_dl.headers.get("Location", "")
             if remote_key_piece not in loc and bucket not in loc:
