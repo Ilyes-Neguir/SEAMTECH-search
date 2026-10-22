@@ -93,7 +93,7 @@ def test_audit_logs_pg_couverture_reelle(tmp_path: Path):
         # Exerce les 12 combinaisons sort/order (created_at/id/action × asc/desc) en PG
         for sort in ("created_at", "id", "action"):
             for order in ("asc", "desc"):
-                rows = get_audit_logs_filtered(idx, limit=2, offset=0, sort=sort, order=order)
+                rows = get_audit_logs_filtered(idx, limit=10, offset=0, sort=sort, order=order)
                 assert isinstance(rows, list)
                 assert len(rows) >= 5
 
