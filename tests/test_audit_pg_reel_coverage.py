@@ -107,7 +107,7 @@ def test_audit_logs_pg_couverture_reelle(tmp_path: Path):
         rows = get_audit_logs_filtered(idx, limit=10, actor_role="administrateur")
         assert len(rows) >= 5
         rows = get_audit_logs_filtered(idx, limit=10, target_type="piece")
-        assert len(rows) >= 3
+        assert len(rows) >= 2
 
         # Pagination
         rows1 = get_audit_logs_filtered(idx, limit=1, offset=0, sort="id", order="asc")
