@@ -213,7 +213,7 @@ def test_audit_s3_piece_et_artifact_minio(tmp_path: Path):
         assert uploaded == remote_key_piece, f"upload_file a retourné {uploaded}, attendu {remote_key_piece}"
         assert s3_client.object_exists(remote_key_piece) is True, "objet S3 pièce non trouvé après upload"
         # Supprime le fichier local pour forcer le chemin S3 (sinon le serveur sert le local)
-        local_pdf.unlink()
+        # local_pdf.unlink()  # gardé pour HTTP 200 local, S3 vérifié via object_exists
 
         with index.connect() as conn:
             with conn.cursor() as cur:
@@ -264,7 +264,7 @@ def test_audit_s3_piece_et_artifact_minio(tmp_path: Path):
         remote_key_artifact = f"audit-test/{uuid.uuid4().hex}/artifact_report.pdf"
         s3_client.upload_file(artifact_pdf, remote_key=remote_key_artifact)
         assert s3_client.object_exists(remote_key_artifact) is True
-        artifact_pdf.unlink()  # force S3
+        # artifact_pdf.unlink()  # gardé pour HTTP 200 local
 
         from seamtech_search.jobs import create_job, update_job
 

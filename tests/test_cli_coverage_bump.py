@@ -11,8 +11,6 @@ def test_cli_help_bump():
 
 
 def test_config_load_bump(tmp_path):
-    from pathlib import Path
-
     from seamtech_search.config import AppConfig
 
     cfg = AppConfig(root_paths=[tmp_path], auth_token="t", host="127.0.0.1")
