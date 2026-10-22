@@ -58,7 +58,7 @@ psql -c "\dt audit*"
 
 ## 5. Compte secours SEAMTECH_UI_PASSWORD
 
-- **Avant blocage** : `SEAMTECH_UI_PASSWORD` défini dans l'environnement du backend (ex: `/etc/seamtech/env`).
+- **Avant blocage** : `SEAMTECH_UI_PASSWORD` défini dans l'environnement du backend (ex: `/etc/seamtech/env`). Le vérificateur réel est le **frontend** (Next.js) — la route backend `POST /auth/connexion-secours` ignore le corps et n'échoue côté serveur que si **Redis est indisponible** (503, log `AUTH_LOGIN_FAILURE` `redis_indisponible`); un mauvais mot de passe secours n'est **pas** audité côté backend (pas de `AUTH_LOGIN_FAILURE` pour ce cas).
 - **Après création admin nominatif** : ne pas vider sans confirmation Lass (voir `docs/Lot0b_SECURITE.md` §9). Si rollback après blocage :
   ```bash
   # Restaurer le secours
