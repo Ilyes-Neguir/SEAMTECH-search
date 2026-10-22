@@ -1,9 +1,10 @@
 """Push overall from 84.9% to 85%+ — hit uncovered lines in indexer/api."""
 
 def test_indexer_migrations_and_search(tmp_path):
+    import time
+
     from seamtech_search.indexer import SearchIndex
     from seamtech_search.models import Document
-    import time, uuid
     idx = SearchIndex(tmp_path / "c85.db")
     idx.initialize()
     idx.run_migrations()
