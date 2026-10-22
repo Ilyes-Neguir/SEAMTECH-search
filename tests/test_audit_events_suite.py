@@ -201,9 +201,10 @@ def test_import_create_et_artifact_nominatif(tmp_path: Path):
         assert sid
 
         # IMPORT_CREATE synchrone (wait=true) avec vrai dossier vide -> 400 mais audit failure doit exister
-        import tempfile
-
-        tmpdir = Path(tempfile.mkdtemp())
+        # Dossier vide DANS root_paths (tmp_path) sinon permission avant value_error — raison
+        # permission ferait échouer l'assertion reason == value_error (constat run 39753383545).
+        tmpdir = tmp_path / "dossier_vide_audit"
+        tmpdir.mkdir(parents=True, exist_ok=True)
         # échec attendu (pas de pdf) mais on vérifie l'audit — doit exister et être nominatif
         resp_imp = client.post("/imports", json={"source_path": str(tmpdir)}, params={"wait": True}, headers={"X-SEAMTECH-TOKEN": JETON_SERVICE, "X-SEAMTECH-SESSION-SID": sid})
         # Dossier vide => ValueError côté import_folder => 400; si espace insuffisant => 507
