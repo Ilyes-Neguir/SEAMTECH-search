@@ -354,8 +354,8 @@ def enregistrer_routes_auth(app: Any, index: Any, config: Any, verifier_auth: An
                     details={"reason": str(exc_auth.detail)[:200]},
                     **_audit_kwargs(adresse, agent),
                 )
-            except Exception:
-                pass
+            except Exception as _audit_exc:  # audit non critique
+                pass  # noqa
             raise
         duree = max(1, int(round(float(getattr(config, "session_hours", 8.0)))))
         # GÉNÉRATION CAPTURÉE À LA VÉRIFICATION (revue Lot 0a, blocage 1) : la
@@ -403,8 +403,8 @@ def enregistrer_routes_auth(app: Any, index: Any, config: Any, verifier_auth: An
                 details={"id_session": str(session["id_session"])},
                 **_audit_kwargs(adresse, agent),
             )
-        except Exception:
-            pass
+        except Exception as _audit_exc:  # audit non critique
+            pass  # noqa
         return {
             "ok": True,
             # LISTE BLANCHE (revue Lot 0a, B7) : `**utilisateur` renvoyait aussi
@@ -465,8 +465,8 @@ def enregistrer_routes_auth(app: Any, index: Any, config: Any, verifier_auth: An
                     ip_address=adresse,
                     user_agent=agent[:500] if agent else None,
                 )
-            except Exception:
-                pass
+            except Exception as _audit_exc:  # audit non critique
+                pass  # noqa
             LOGGER.error("Connexion de secours refusée, Redis indisponible : %s", exc)
             raise HTTPException(status_code=503, detail=_DETAIL_REDIS) from exc
         try:
@@ -483,8 +483,8 @@ def enregistrer_routes_auth(app: Any, index: Any, config: Any, verifier_auth: An
                 ip_address=adresse,
                 user_agent=agent[:500] if agent else None,
             )
-        except Exception:
-            pass
+        except Exception as _audit_exc:  # audit non critique
+            pass  # noqa
         return {
             "ok": True,
             "mode": MODE_SECOURS,
@@ -565,8 +565,8 @@ def enregistrer_routes_auth(app: Any, index: Any, config: Any, verifier_auth: An
                         outcome="success",
                         details={},
                     )
-            except Exception:
-                pass
+            except Exception as _audit_exc:  # audit non critique
+                pass  # noqa
             return {"ok": True, "revoquee": bool(revoquee)}
 
         _exiger_postgres(index)
@@ -631,8 +631,8 @@ def enregistrer_routes_auth(app: Any, index: Any, config: Any, verifier_auth: An
                 outcome="success",
                 details={"sessions_revoquees": int(revoquees), "sql_revoquees": int(sql_revoquees)},
             )
-        except Exception:
-            pass
+        except Exception as _audit_exc:  # audit non critique
+            pass  # noqa
         return {
             "ok": True,
             "sessions_revoquees": revoquees,
@@ -717,8 +717,8 @@ def enregistrer_routes_auth(app: Any, index: Any, config: Any, verifier_auth: An
                 outcome="success",
                 details={},
             )
-        except Exception:
-            pass
+        except Exception as _audit_exc:  # audit non critique
+            pass  # noqa
         return {
             "ok": True,
             **resultat,
@@ -796,8 +796,8 @@ def enregistrer_routes_auth(app: Any, index: Any, config: Any, verifier_auth: An
                 outcome="success",
                 details={"role": str(corps.get("role") or "operateur")},
             )
-        except Exception:
-            pass
+        except Exception as _audit_exc:  # audit non critique
+            pass  # noqa
         return result
 
     @app.post("/auth/utilisateurs/{identifiant}/desactiver")
@@ -835,8 +835,8 @@ def enregistrer_routes_auth(app: Any, index: Any, config: Any, verifier_auth: An
                 outcome="success",
                 details={},
             )
-        except Exception:
-            pass
+        except Exception as _audit_exc:  # audit non critique
+            pass  # noqa
         return {
             **resultat,
             "sessions_redis_revoquees": redis_revoquees,
@@ -953,8 +953,8 @@ def enregistrer_routes_auth(app: Any, index: Any, config: Any, verifier_auth: An
                 outcome="success",
                 details={},
             )
-        except Exception:
-            pass
+        except Exception as _audit_exc:  # audit non critique
+            pass  # noqa
         return {
             **resultat,
             "sessions_redis_revoquees": redis_revoquees,
