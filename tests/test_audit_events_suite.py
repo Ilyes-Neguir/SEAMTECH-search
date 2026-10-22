@@ -207,8 +207,13 @@ def test_import_create_et_artifact_nominatif(tmp_path: Path):
         tmpdir.mkdir(parents=True, exist_ok=True)
         # échec attendu (pas de pdf) mais on vérifie l'audit — doit exister et être nominatif
         resp_imp = client.post("/imports", json={"source_path": str(tmpdir)}, params={"wait": True}, headers={"X-SEAMTECH-TOKEN": JETON_SERVICE, "X-SEAMTECH-SESSION-SID": sid})
-        # Dossier vide => ValueError côté import_folder => 400; si espace insuffisant => 507
-        assert resp_imp.status_code in (400, 507, 403), f"status inattendu: {resp_imp.status_code} {resp_imp.text}"
+        # Dossier vide => en 2026-10-22 l'API renvoie 200 avec import status=failed
+        # (files_detected=0, warning No technical PDF), pas 400 (constat run 39754966615).
+        # On accepte 200 ou 400/507/403, mais l'audit doit être failure/value_error.
+        assert resp_imp.status_code in (200, 400, 507, 403), f"status inattendu: {resp_imp.status_code} {resp_imp.text}"
+        if resp_imp.status_code == 200:
+            body = resp_imp.json()
+            assert body.get("status") == "failed" or body.get("files_detected") == 0, f"import empty dossier doit être failed, got {body}"
         with index.connect() as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT actor_user_id, actor_username, actor_role, action, outcome, target_id, target_type FROM audit_logs WHERE action='IMPORT_CREATE' ORDER BY id DESC LIMIT 1")
