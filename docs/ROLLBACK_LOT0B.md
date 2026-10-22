@@ -88,7 +88,7 @@ pg_dump -F c -f /tmp/seamtech_pre_025.dump
 python -m pytest tests/test_migrations_metier.py tests/test_docs_fermes_par_defaut.py tests/test_500_sans_details.py -q  # avec SEAMTECH_TEST_DATABASE_URL: 0 skipped; sans: tests postgres skippés normalement
 ```
 
-**Résultat** : migration idempotente vérifiée, DROP non recommandé (perte d'historique — scénario commenté conservé pour traçabilité, ne pas exécuter sans sauvegarde). HEAD `beabe9f` : CI failure `test_selection_ci` S3 inventaire + PG `not s3` manquant, natif/réserves/perf verts, E2E success (fin du flaky de `2980f49`). À rejouer en prod avant MEP avec sauvegarde réelle et rétention.
+**Résultat** : migration idempotente vérifiée, DROP non recommandé (perte d'historique — scénario commenté conservé pour traçabilité, ne pas exécuter sans sauvegarde). HEAD `c12f0c5` : CI **succès** 13/13, natif/réserves/perf verts, E2E 7/7, coverage 84.86% floor 84%, pypdf CVE fixés, audit projet 12/12. À rejouer en prod avant MEP avec sauvegarde réelle et rétention.
 
 ## 7. Points de contact
 
