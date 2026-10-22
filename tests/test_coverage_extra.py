@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+from seamtech_search.audit_logs import _cle_est_secrete, _tronquer_details
+
 
 def test_indexer_tables_metier():
     from seamtech_search.schema_metier import TABLES_METIER
@@ -34,7 +36,5 @@ def test_bateaux_normalisation():
 
 
 def test_audit_logs_tronquer_et_filtre():
-    from seamtech_search.audit_logs import _tronquer_details, _cle_est_secrete
-
     assert _cle_est_secrete("token") is True
     assert _tronquer_details({"a": "x" * 10000}) is not None
