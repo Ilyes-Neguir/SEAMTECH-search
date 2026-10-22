@@ -55,6 +55,15 @@ def test_audit_logs_pg_couverture_reelle(tmp_path: Path):
 
     prefix = f"cov-{uuid.uuid4().hex[:8]}"
     ids = []
+    # Crée un utilisateur réel pour respecter la FK audit_logs_actor_user_id_fkey
+    from seamtech_search.comptes.comptes import creer_utilisateur
+
+    try:
+        cov_user = creer_utilisateur(idx, f"cov_{prefix}", "Cov User", "Secret123!", "administrateur")
+        cov_uid = cov_user["id_utilisateur"]
+    except Exception:
+        # si utilisateur existe déjà ou FK non stricte, fallback NULL
+        cov_uid = None
     try:
         # Insère plusieurs logs avec actions/outcomes variés pour tester filtres et tris
         base = [
@@ -68,7 +77,7 @@ def test_audit_logs_pg_couverture_reelle(tmp_path: Path):
             target = f"{prefix}-{suffix}-{i}"
             record_audit_log(
                 idx,
-                actor_user_id=1,
+                actor_user_id=cov_uid,
                 actor_username="admin_cov",
                 actor_role="administrateur",
                 action=action,
