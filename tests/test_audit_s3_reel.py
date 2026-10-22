@@ -120,39 +120,14 @@ def _s3_config():
 
 
 def _base_et_app_pg_redis_minio(tmp_path: Path):
+    # Réutilise la base `seamtech_search` existante (comme test_integration_docker)
+    # pour éviter CREATE DATABASE qui nécessite superuser et peut échouer si
+    # le rôle `seamtech` n'a pas droit de créer une DB dans le compose.
     pg_url = _pg_url()
     redis_url = _redis_url()
     endpoint, bucket, access, secret = _s3_config()
-    nom = f"audit_s3_{uuid.uuid4().hex[:8]}"
-    import psycopg2
-    from psycopg2 import sql
-    from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
-
-    # Création base jetable — on tente via /postgres puis directement
-    base_no_db = pg_url.rsplit("/", 1)[0]
-    admin_urls = [f"{base_no_db}/postgres", pg_url]
-    admin_conn = None
-    last_err = None
-    for aurl in admin_urls:
-        try:
-            admin_conn = psycopg2.connect(aurl, connect_timeout=5)
-            break
-        except Exception as e:
-            last_err = e
-            continue
-    if admin_conn is None:
-        pytest.fail(f"Connexion admin PG impossible pour CREATE DATABASE: {last_err} (pg_url={pg_url})")
-    admin_conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
-    try:
-        with admin_conn.cursor() as cur:
-            cur.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(nom)))
-    finally:
-        admin_conn.close()
-    url_base = f"{base_no_db}/{nom}"
-    if not _wait_for_postgres(url_base, timeout=10):
-        pytest.fail(f"Base jetable {nom} non joignable après CREATE DATABASE")
-    index = SearchIndex(tmp_path / f"{nom}.db", url_base)
-    # Sauvegarde env pour restauration
+    nom = "seamtech_search"  # base existante, pas de création jetable
+    index = SearchIndex(tmp_path / f"audit_s3_{uuid.uuid4().hex[:8]}.db", pg_url)
     orig_env = {
         k: os.environ.get(k)
         for k in ("SEAMTECH_REDIS_URL", "SEAMTECH_S3_ENDPOINT_URL", "SEAMTECH_S3_BUCKET", "SEAMTECH_S3_ACCESS_KEY", "SEAMTECH_S3_SECRET_KEY")
@@ -162,12 +137,10 @@ def _base_et_app_pg_redis_minio(tmp_path: Path):
     os.environ["SEAMTECH_S3_BUCKET"] = bucket
     os.environ["SEAMTECH_S3_ACCESS_KEY"] = access
     os.environ["SEAMTECH_S3_SECRET_KEY"] = secret
-    # Initialisation index + migrations
     try:
         index.initialize()
         index.run_migrations()
     except Exception as e:
-        # Restaure env avant de fail
         for k, v in orig_env.items():
             if v is None:
                 os.environ.pop(k, None)
@@ -176,7 +149,7 @@ def _base_et_app_pg_redis_minio(tmp_path: Path):
         pytest.fail(f"SearchIndex init/migrations échoué: {e}")
     config = AppConfig(
         root_paths=[tmp_path],
-        database_url=url_base,
+        database_url=pg_url,
         min_free_bytes=0,
         auth_token=JETON_SERVICE,
         redis_url=redis_url,
@@ -186,7 +159,7 @@ def _base_et_app_pg_redis_minio(tmp_path: Path):
         s3_secret_key=secret,
     )
     app = create_app(config)
-    return index, app, url_base, nom, orig_env, endpoint, bucket, access, secret
+    return index, app, pg_url, nom, orig_env, endpoint, bucket, access, secret
 
 
 def _restore_env(orig_env: dict):
@@ -202,10 +175,6 @@ def test_audit_s3_piece_et_artifact_minio(tmp_path: Path):
     from seamtech_search.storage import S3StorageClient
 
     index, app, url_base, nom, orig_env, endpoint, bucket, access, secret = _base_et_app_pg_redis_minio(tmp_path)
-    import psycopg2
-    from psycopg2 import sql as pgsql
-    from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
-
     remote_key_piece = None
     remote_key_artifact = None
     s3_client = None
@@ -329,49 +298,32 @@ def test_audit_s3_piece_et_artifact_minio(tmp_path: Path):
         assert s3_client.object_exists(remote_key_artifact) is True
 
     finally:
-        # Nettoyage S3 — ne doit jamais masquer l'échec du test : on log mais on ne raise pas
+        # Nettoyage S3 — ne doit jamais masquer l'échec du test
         if s3_client is not None:
             for key in (remote_key_piece, remote_key_artifact):
                 if key:
                     try:
-                        # Utilise l'API publique si dispo, sinon client bas niveau
                         try:
                             s3_client.delete_file(key)
                         except Exception:
                             s3_client._get_client().delete_object(Bucket=bucket, Key=key)
                     except Exception as cleanup_exc:
-                        # Log best-effort, ne masque pas l'assertion en cours
                         print(f"[cleanup S3] delete {key} failed: {cleanup_exc}")
-        # Restaure env
         _restore_env(orig_env)
-        # Nettoie DB — toujours, même si test a échoué
+        # Nettoie les lignes de test (pas de DROP DATABASE — on réutilise la base existante)
+        # On supprime les documents et jobs créés pour ne pas polluer la suite
+        try:
+            with index.connect() as conn:
+                with conn.cursor() as cur:
+                    if piece_id is not None:
+                        cur.execute("DELETE FROM documents WHERE id = %s", (piece_id,))
+                    if job_id is not None:
+                        cur.execute("DELETE FROM jobs WHERE job_id = %s", (job_id,))
+                    # Ne pas supprimer audit_logs (historique utile), mais on peut nettoyer ceux de ce test si besoin
+                conn.commit()
+        except Exception as e:
+            print(f"[cleanup PG] delete test rows failed: {e}")
         try:
             index.close()
         except Exception:
             pass
-        # DROP DATABASE — best-effort, log si échec mais ne masque pas le test
-        # Le test a déjà réussi/échoué ; un échec de DROP ne doit pas transformer un succès en échec
-        pg_url = None
-        try:
-            pg_url = _pg_url()
-            base_no_db = pg_url.rsplit("/", 1)[0]
-            for aurl in (f"{base_no_db}/postgres", pg_url):
-                try:
-                    admin_conn = psycopg2.connect(aurl, connect_timeout=5)
-                    break
-                except Exception:
-                    continue
-            else:
-                print(f"[cleanup PG] admin connect impossible pour DROP {nom}")
-                admin_conn = None
-            if admin_conn is not None:
-                from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
-
-                admin_conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
-                try:
-                    with admin_conn.cursor() as cur:
-                        cur.execute(pgsql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(pgsql.Identifier(nom)))
-                finally:
-                    admin_conn.close()
-        except Exception as e:
-            print(f"[cleanup PG] DROP DATABASE {nom} failed: {e} (pg_url={pg_url})")
