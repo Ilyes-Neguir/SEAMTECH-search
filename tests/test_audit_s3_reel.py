@@ -226,7 +226,13 @@ def test_audit_s3_piece_et_artifact_minio(tmp_path: Path):
                 piece_id = int(cur.fetchone()[0])
 
         resp_dl = client.get(f"/pieces/{piece_id}/telecharger", headers={"X-SEAMTECH-TOKEN": JETON_SERVICE, "X-SEAMTECH-SESSION-SID": sid})
-        assert resp_dl.status_code in (200, 302), f"PIECE S3 status {resp_dl.status_code}: {resp_dl.text[:500]}"
+        if resp_dl.status_code not in (200, 302):
+            # diagnostic : objet S3 existe-t-il ? index contient-il la ligne ? bucket ?
+            try:
+                exists = s3_client.object_exists(remote_key_piece) if s3_client else "no-client"
+            except Exception as e:
+                exists = f"check-failed:{e}"
+            pytest.fail(f"PIECE S3 status {resp_dl.status_code}: {resp_dl.text[:800]} | exists={exists} bucket={bucket} key={remote_key_piece} sid={sid[:8]}...")
         # Si 200, vérifier les octets (S3 download) ; si 302, vérifier que l'URL est présignée et pointe vers le bon bucket/key
         if resp_dl.status_code == 200:
             assert resp_dl.content == contenu_piece, f"octets PIECE via S3 diffèrent: got {len(resp_dl.content)} vs {len(contenu_piece)}"
@@ -273,7 +279,12 @@ def test_audit_s3_piece_et_artifact_minio(tmp_path: Path):
         update_job(index, job_id, status="done", stage="done", result=result_payload)
 
         resp_art = client.get(f"/imports/{job_id}/artifacts/report_pdf", headers={"X-SEAMTECH-TOKEN": JETON_SERVICE, "X-SEAMTECH-SESSION-SID": sid})
-        assert resp_art.status_code in (200, 302), f"ARTIFACT S3 status {resp_art.status_code}: {resp_art.text[:500]}"
+        if resp_art.status_code not in (200, 302):
+            try:
+                exists = s3_client.object_exists(remote_key_artifact) if s3_client else "no-client"
+            except Exception as e:
+                exists = f"check-failed:{e}"
+            pytest.fail(f"ARTIFACT S3 status {resp_art.status_code}: {resp_art.text[:800]} | exists={exists} bucket={bucket} key={remote_key_artifact}")
         if resp_art.status_code == 200:
             assert resp_art.content == contenu_artifact, "octets ARTIFACT via S3 diffèrent"
         else:
