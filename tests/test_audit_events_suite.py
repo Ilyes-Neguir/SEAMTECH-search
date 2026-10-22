@@ -2,10 +2,12 @@
 
 Couvre AUTH_LOGIN_SUCCESS/FAILURE, AUTH_LOGOUT, SESSION_REVOKED, IMPORT_CREATE, PIECE/ARTIFACT
 avec vraie session Redis et PostgreSQL, sans mocks des intégrations critiques.
+Pour S3/MinIO, utilise le vrai stockage quand dispo (SEAMTECH_S3_ENDPOINT_URL).
 """
 from __future__ import annotations
 
 import os
+import re
 import uuid
 from pathlib import Path
 
@@ -63,6 +65,35 @@ def _cree_utilisateur(index, identifiant, role):
     return creer_utilisateur(index, identifiant, f"Nom {identifiant}", "Secret123!", role)
 
 
+def _insert_document(index, path_file: Path, name: str | None = None) -> int:
+    """Insère un document minimal valide pour PG/SQLite (avec modified_at, is_dir)."""
+    import time
+
+    mtime = float(path_file.stat().st_mtime) if path_file.exists() else time.time()
+    size = int(path_file.stat().st_size) if path_file.exists() else 0
+    name = name or path_file.name
+    ext = Path(name).suffix.lower()
+    path_key = str(path_file.resolve()) if path_file.exists() else f"/tmp/{uuid.uuid4().hex}/{name}"
+    parent = str(path_file.parent) if path_file.exists() else "/tmp"
+    if index.is_postgres:
+        with index.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO documents (path_key, path, name, parent_path, extension, size, modified_at, is_dir) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s, FALSE) RETURNING id",
+                    (path_key, str(path_file), name, parent, ext, size, mtime),
+                )
+                return int(cur.fetchone()[0])
+    else:
+        with index.connect() as conn:
+            cur = conn.execute(
+                "INSERT INTO documents (path_key, path, name, parent_path, extension, size, modified_at, is_dir) "
+                "VALUES (?,?,?,?,?,?,?,0)",
+                (path_key, str(path_file), name, parent, ext, size, mtime),
+            )
+            return int(cur.lastrowid)
+
+
 @pytest.mark.postgres
 def test_audit_login_success_et_failure(tmp_path: Path):
     index, app, url_base, nom = _base_et_app(tmp_path)
@@ -111,10 +142,10 @@ def test_audit_login_success_et_failure(tmp_path: Path):
                 assert row[2] == "administrateur" and row[4] == "success"
                 assert row[0] is None, "secours n'a pas d'id utilisateur PostgreSQL"
 
-        # détails assainis : aucun secret même si on tente d'en injecter
+        # détails assainis : aucun secret même imbriqué
         from seamtech_search.audit_logs import record_audit_log
 
-        record_audit_log(index, actor_user_id=None, actor_username="tester", actor_role="operateur", action="AUTH_LOGIN_FAILURE", target_type="utilisateur", target_id="victim", outcome="failure", details={"mot_de_passe": "secret123", "meta": {"token": "secret_nested", "ok": "keep"}, "api_token": "leak", "password_hash": "leak2"})
+        record_audit_log(index, actor_user_id=None, actor_username="tester", actor_role="operateur", action="AUTH_LOGIN_FAILURE", target_type="utilisateur", target_id="victim", outcome="failure", details={"mot_de_passe": "secret123", "meta": {"token": "secret_nested", "ok": "keep", "deep": {"password_hash": "leak2", "safe": "val"}}, "api_token": "leak", "MDP": "leak_mdp", "list": [{"secret": "leak_list", "keep": "ok2"}]})
         with index.connect() as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT details_json FROM audit_logs WHERE target_id='victim' ORDER BY id DESC LIMIT 1")
@@ -123,10 +154,23 @@ def test_audit_login_success_et_failure(tmp_path: Path):
 
                 if isinstance(dj, str):
                     dj = json.loads(dj)
-                assert "mot_de_passe" not in str(dj).lower()
-                assert "secret123" not in str(dj)
-                assert "token" not in str(dj).lower() or dj.get("meta", {}).get("token") is None
+                # Aucune clé secrète ne doit survivre (y compris imbriquée)
+                dj_str = str(dj)
+                # Les clés secrètes doivent être filtrées, pas seulement top-level
+                assert "mot_de_passe" not in dj_str.lower()
+                assert "MDP" not in dj_str
+                assert "password_hash" not in dj_str.lower()
+                # Les valeurs secrètes ne doivent pas fuir
+                assert "secret123" not in dj_str
+                assert "secret_nested" not in dj_str
+                assert "leak2" not in dj_str
+                assert "leak_mdp" not in dj_str
+                # Vérifie que les clés non-secrètes imbriquées sont conservées
                 assert dj.get("meta", {}).get("ok") == "keep"
+                # La liste doit être nettoyée mais keep doit rester
+                meta_list = dj.get("list", [])
+                if meta_list:
+                    assert any("ok2" in str(x) for x in meta_list)
 
     finally:
         index.close()
@@ -172,8 +216,22 @@ def test_import_create_et_artifact_nominatif(tmp_path: Path):
                 # Dossier vide => failure obligatoire (pas success)
                 assert row[4] == "failure", f"outcome doit être failure pour dossier vide, got {row[4]}"
                 # Cible: job_id hex 32 chars pour wait=true, ou pre_job pour insufficient_storage avant job
-                assert row[5] is not None and len(str(row[5])) >= 6, f"target_id manquant: {row}"
+                target_id = str(row[5]) if row[5] is not None else ""
+                assert row[5] is not None and len(target_id) >= 6, f"target_id manquant: {row}"
                 assert row[6] == "import", f"target_type doit être import, got {row[6]}"
+                # Format strict: soit pre_job soit 32 hex
+                if target_id != "pre_job":
+                    assert len(target_id) == 32 and re.fullmatch(r"[0-9a-f]{32}", target_id.lower()), f"target_id doit être pre_job ou 32 hex, got {target_id}"
+                    # Vérifie que le reason est bien value_error pour dossier vide
+                    # (pas insufficient_storage ni permission)
+                    cur.execute("SELECT details_json FROM audit_logs WHERE action='IMPORT_CREATE' ORDER BY id DESC LIMIT 1")
+                    dj = cur.fetchone()[0]
+                    import json
+
+                    if isinstance(dj, str):
+                        dj = json.loads(dj)
+                    # details doit contenir reason value_error pour ce cas
+                    assert dj.get("reason") == "value_error", f"details reason doit être value_error, got {dj}"
 
         # Sans session, fallback service (mais pas de fuite token)
         client.post("/imports", json={"source_path": str(tmpdir)}, params={"wait": True}, headers={"X-SEAMTECH-TOKEN": JETON_SERVICE})
@@ -233,13 +291,16 @@ def test_audit_logout_et_revocation(tmp_path: Path):
                 assert row[0] == created_admin["id_utilisateur"], f"actor_user_id logout: {row}"
                 assert row[1] == "admin_logout" and row[2] == "administrateur"
                 assert row[4] == "success" and row[6] == "session", f"outcome/target_type: {row}"
-                # SESSION_REVOKED doit suivre si db_session_id existe
-                cur.execute("SELECT action, actor_user_id, target_type, target_id FROM audit_logs WHERE action='SESSION_REVOKED' ORDER BY id DESC LIMIT 1")
+                # target_id doit être sid tronqué à 20
+                assert row[5] == sid[:20], f"target_id logout doit être sid[:20] {sid[:20]}, got {row[5]}"
+                # SESSION_REVOKED obligatoire (db_session_id existe)
+                cur.execute("SELECT action, actor_user_id, target_type, target_id, outcome FROM audit_logs WHERE action='SESSION_REVOKED' ORDER BY id DESC LIMIT 1")
                 row_rev = cur.fetchone()
-                if row_rev:
-                    assert row_rev[1] == created_admin["id_utilisateur"], f"SESSION_REVOKED acteur: {row_rev}"
-                    assert row_rev[2] == "session_ui"
-                    assert str(row_rev[3]) == str(id_session), f"target_id SESSION_REVOKED doit être id_session {id_session}: {row_rev}"
+                assert row_rev is not None, "SESSION_REVOKED non journalisé (obligatoire)"
+                assert row_rev[1] == created_admin["id_utilisateur"], f"SESSION_REVOKED acteur: {row_rev}"
+                assert row_rev[2] == "session_ui", f"target_type SESSION_REVOKED: {row_rev}"
+                assert str(row_rev[3]) == str(id_session), f"target_id SESSION_REVOKED doit être id_session {id_session}: {row_rev}"
+                assert row_rev[4] == "success"
 
         # Re-connexion pour tester AUTH_LOGOUT_ALL
         resp2 = client.post("/auth/connexion", json={"identifiant": "admin_logout", "mot_de_passe": "Secret123!"}, headers={"X-SEAMTECH-TOKEN": JETON_SERVICE})
@@ -249,12 +310,13 @@ def test_audit_logout_et_revocation(tmp_path: Path):
         assert resp_all.status_code == 200
         with index.connect() as conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT actor_user_id, actor_username, action, outcome, target_id FROM audit_logs WHERE action='AUTH_LOGOUT_ALL' ORDER BY id DESC LIMIT 1")
+                cur.execute("SELECT actor_user_id, actor_username, action, outcome, target_id, target_type FROM audit_logs WHERE action='AUTH_LOGOUT_ALL' ORDER BY id DESC LIMIT 1")
                 row = cur.fetchone()
                 assert row is not None, "AUTH_LOGOUT_ALL non journalisé"
                 assert row[0] == created_admin["id_utilisateur"]
                 assert row[1] == "admin_logout" and row[3] == "success"
                 assert str(row[4]) == str(created_admin["id_utilisateur"]), f"target_id LOGOUT_ALL doit être user_id: {row}"
+                assert row[5] == "utilisateur"
 
     finally:
         index.close()
@@ -348,7 +410,7 @@ def test_audit_account_lifecycle(tmp_path: Path):
 
 @pytest.mark.postgres
 def test_audit_piece_et_artifact(tmp_path: Path):
-    """PIECE_DOWNLOAD et ARTIFACT_DOWNLOAD nominatifs."""
+    """PIECE_DOWNLOAD et ARTIFACT_DOWNLOAD nominatifs (local)."""
     index, app, url_base, nom = _base_et_app(tmp_path)
     import psycopg2
     from psycopg2 import sql as pgsql
@@ -361,20 +423,14 @@ def test_audit_piece_et_artifact(tmp_path: Path):
         sid = resp.json().get("sid")
         assert sid
 
-        # Crée une pièce document réelle dans tmp_path et l'insère en base
+        # Crée une pièce document réelle dans tmp_path et l'insère en base (avec modified_at)
         piece_file = tmp_path / "dummy.pdf"
         piece_file.write_bytes(b"%PDF-1.4 dummy")
-        with index.connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "INSERT INTO documents (path, path_key, name, extension, size, parent_path) VALUES (%s,%s,%s,%s,%s,%s) RETURNING id",
-                    (str(piece_file), str(piece_file), "dummy.pdf", ".pdf", piece_file.stat().st_size, str(tmp_path)),
-                )
-                piece_id = int(cur.fetchone()[0])
+        piece_id = _insert_document(index, piece_file, name="dummy.pdf")
 
         # Téléchargement pièce avec session nominative -> success
         resp_dl = client.get(f"/pieces/{piece_id}/telecharger", headers={"X-SEAMTECH-TOKEN": JETON_SERVICE, "X-SEAMTECH-SESSION-SID": sid})
-        assert resp_dl.status_code == 200, resp_dl.text[:300]
+        assert resp_dl.status_code == 200, resp_dl.text[:500]
         with index.connect() as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT actor_user_id, actor_username, action, outcome, target_id, target_type FROM audit_logs WHERE action='PIECE_DOWNLOAD' AND target_id=%s ORDER BY id DESC LIMIT 1", (str(piece_id),))
@@ -403,6 +459,117 @@ def test_audit_piece_et_artifact(tmp_path: Path):
                 assert row is not None, "ARTIFACT_DOWNLOAD non journalisé"
                 assert row[0] == created["id_utilisateur"]
                 assert row[1] == "ARTIFACT_DOWNLOAD" and row[2] == "failure" and row[3] == "import_artifact"
+
+    finally:
+        index.close()
+        admin_conn = psycopg2.connect(URL_PG)
+        admin_conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
+        try:
+            with admin_conn.cursor() as cur:
+                cur.execute(pgsql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(pgsql.Identifier(nom)))
+        finally:
+            admin_conn.close()
+
+
+@pytest.mark.postgres
+def test_audit_s3_piece_et_artifact_minio(tmp_path: Path):
+    """Preuve S3/MinIO réelle (sans mocks) — skip si MinIO absent."""
+    endpoint = os.environ.get("SEAMTECH_S3_ENDPOINT_URL") or os.environ.get("SEAMTECH_TEST_S3_URL")
+    if not endpoint:
+        pytest.skip("MinIO non configuré (SEAMTECH_S3_ENDPOINT_URL absent)")
+    access = os.environ.get("SEAMTECH_S3_ACCESS_KEY", "minioadmin")
+    secret = os.environ.get("SEAMTECH_S3_SECRET_KEY", "minioadmin")
+    bucket = os.environ.get("SEAMTECH_S3_BUCKET", "seamtech-documents")
+    # Vérifie connectivité MinIO
+    try:
+        from seamtech_search.storage import S3StorageClient
+
+        probe = S3StorageClient(endpoint_url=endpoint, bucket_name=bucket, access_key_id=access, secret_access_key=secret)
+        # ensure_bucket_exists lève si injoignable
+        probe.ensure_bucket_exists()
+    except Exception as exc:
+        pytest.skip(f"MinIO injoignable {endpoint}: {exc}")
+
+    index, app, url_base, nom = _base_et_app(tmp_path)
+    import psycopg2
+    from psycopg2 import sql as pgsql
+    from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
+
+    try:
+        # Configurer l'app avec S3 réel
+        orig_s3 = os.environ.get("SEAMTECH_S3_ENDPOINT_URL")
+        orig_acc = os.environ.get("SEAMTECH_S3_ACCESS_KEY")
+        orig_sec = os.environ.get("SEAMTECH_S3_SECRET_KEY")
+        orig_bkt = os.environ.get("SEAMTECH_S3_BUCKET")
+        os.environ["SEAMTECH_S3_ENDPOINT_URL"] = endpoint
+        os.environ["SEAMTECH_S3_BUCKET"] = bucket
+        os.environ["SEAMTECH_S3_ACCESS_KEY"] = access
+        os.environ["SEAMTECH_S3_SECRET_KEY"] = secret
+        # Re-crée app avec S3
+        config = AppConfig(root_paths=[tmp_path], database_url=url_base, min_free_bytes=0, auth_token=JETON_SERVICE, redis_url=URL_REDIS, s3_endpoint_url=endpoint, s3_bucket=bucket, s3_access_key=access, s3_secret_key=secret)
+        from seamtech_search.api import create_app as _create_app
+
+        app_s3 = _create_app(config)
+
+        created = _cree_utilisateur(index, "admin_s3", "administrateur")
+        client = TestClient(app_s3)
+        resp = client.post("/auth/connexion", json={"identifiant": "admin_s3", "mot_de_passe": "Secret123!"}, headers={"X-SEAMTECH-TOKEN": JETON_SERVICE})
+        sid = resp.json().get("sid")
+        assert sid
+
+        # Upload réel d'un PDF vers MinIO
+        from seamtech_search.storage import S3StorageClient
+
+        s3 = S3StorageClient(endpoint_url=endpoint, bucket_name=bucket, access_key_id=access, secret_access_key=secret)
+        local_pdf = tmp_path / "s3_piece.pdf"
+        local_pdf.write_bytes(b"%PDF-1.4 S3 proof")
+        remote_key = f"audit-test/{uuid.uuid4().hex}/s3_piece.pdf"
+        uploaded_key = s3.upload_file(local_pdf, remote_key=remote_key)
+        assert uploaded_key == remote_key
+
+        # Insère document avec object_key S3
+        with index.connect() as conn:
+            with conn.cursor() as cur:
+                path_key = f"s3://{bucket}/{remote_key}"
+                cur.execute(
+                    "INSERT INTO documents (path_key, path, name, parent_path, extension, size, modified_at, is_dir, object_key, object_bucket) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s, FALSE, %s, %s) RETURNING id",
+                    (path_key, str(local_pdf), "s3_piece.pdf", str(tmp_path), ".pdf", local_pdf.stat().st_size, local_pdf.stat().st_mtime, remote_key, bucket),
+                )
+                piece_id = int(cur.fetchone()[0])
+
+        # Téléchargement via S3 -> success + audit
+        resp_dl = client.get(f"/pieces/{piece_id}/telecharger", headers={"X-SEAMTECH-TOKEN": JETON_SERVICE, "X-SEAMTECH-SESSION-SID": sid})
+        assert resp_dl.status_code in (200, 302), f"S3 piece download status {resp_dl.status_code}: {resp_dl.text[:500]}"
+        with index.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT actor_user_id, action, outcome, target_id FROM audit_logs WHERE action='PIECE_DOWNLOAD' AND target_id=%s ORDER BY id DESC LIMIT 1", (str(piece_id),))
+                row = cur.fetchone()
+                assert row is not None and row[2] == "success", f"PIECE S3 non journalisé success: {row}"
+                assert row[0] == created["id_utilisateur"]
+
+        # Nettoie S3
+        try:
+            s3._get_client().delete_object(Bucket=bucket, Key=remote_key)
+        except Exception:
+            pass
+
+        if orig_s3 is None:
+            os.environ.pop("SEAMTECH_S3_ENDPOINT_URL", None)
+        else:
+            os.environ["SEAMTECH_S3_ENDPOINT_URL"] = orig_s3
+        if orig_acc is None:
+            os.environ.pop("SEAMTECH_S3_ACCESS_KEY", None)
+        else:
+            os.environ["SEAMTECH_S3_ACCESS_KEY"] = orig_acc
+        if orig_sec is None:
+            os.environ.pop("SEAMTECH_S3_SECRET_KEY", None)
+        else:
+            os.environ["SEAMTECH_S3_SECRET_KEY"] = orig_sec
+        if orig_bkt is None:
+            os.environ.pop("SEAMTECH_S3_BUCKET", None)
+        else:
+            os.environ["SEAMTECH_S3_BUCKET"] = orig_bkt
 
     finally:
         index.close()

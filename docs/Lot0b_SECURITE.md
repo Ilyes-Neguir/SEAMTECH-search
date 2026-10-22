@@ -2,14 +2,14 @@
 
 **Branche**: `arena/c7c86aff-seamtech-search`  
 **SHA pré-fusion Lot 0a+Lot 2**: `e38e6e9` (merge commit préservant lignées)  
-**SHA HEAD actuel**: `6eabcc9` (parent `b4b7004`, 3 tests SQLite verts + assertions audit obligatoires)
-**Date**: 2026-10-22 (CI `39747447425` coverage gate 84.8% failure, native/réserves/perf verts)
+**SHA HEAD actuel**: `2980f49` (parent `6eabcc9`, audit strict + logout/révocation/piece/artefact/ACCOUNT_* + docs sync)
+**Date**: 2026-10-22 (CI `39749157839` failure `NotNullViolation documents.modified_at` sur `test_audit_piece_et_artifact`, native `39749157859` succès, réserves `39749157883` succès, perf `39749157986` succès — tous exact-SHA `2980f49`)
 
 ## 1. Prévol (exigence 0)
 
 - Fusion Lot 0a `1998af6` (Lot 0a revue4, sessions Redis, 30min inactivité, 8h absolue, CSRF mutations, fail-closed Redis, rejet cookies v1.*, logout global, no-store) + Lot 2 `c9b2531` (ancêtre commun `e4c9fdf`) réalisée via commit `e38e6e9` (merge commit, parents conservés, `git log --graph` vérifiable).
 - Comportement Lot 0a inchangé (valeurs `30min/8h`, CSRF, fail-closed, `no-store`, `v1.*` rejet) : vérifié par non-modification des fichiers `seamtech_search/sessions_redis.py` et `seamtech_search/comptes/routes.py` pour les parties auth critiques (sauf instrumentation audit additive).
-- Lot 2 non régressé : `TABLES_METIER` 38 (33+1 ocr_etage3+1 audit_logs+4 boat_models), `VERSION 026_boat_models_and_aliases` conservée, migration `026` intacte. CI Lot2 acceptée au même SHA `c9b2531` : 4 runs verts `39571041240/185/162/147` vérifiés (f6b91045). HEAD `6eabcc9` : CI `39747447425` **failure Coverage gate 84.8% <85%** (backend 3.11/3.12/3.13, `seamtech_search/api.py` 87.6% ok), native `39747447265` succès, réserves `39747447384` succès, perf `39747447343` succès — tous exact-SHA `6eabcc9`.
+- Lot 2 non régressé : `TABLES_METIER` 38 (33+1 ocr_etage3+1 audit_logs+4 boat_models), `VERSION 026_boat_models_and_aliases` conservée, migration `026` intacte. CI Lot2 acceptée au même SHA `c9b2531` : 4 runs verts `39571041240/185/162/147` vérifiés (f6b91045). HEAD `2980f49` : CI `39749157839` **failure** `psycopg2.errors.NotNullViolation: null value in column "modified_at" of relation "documents" violates not-null constraint` sur `tests/test_audit_events_suite.py::test_audit_piece_et_artifact` (backend 3.11/3.12/3.13, insertion `documents` sans `modified_at`), native `39749157859` succès, réserves `39749157883` succès, perf `39749157986` succès — tous exact-SHA `2980f49`.
 
 ## 2. Garde-fous
 
@@ -89,11 +89,11 @@
 
 ## 10. Acceptation
 
-- Branche : `arena/c7c86aff-seamtech-search` (HEAD `6eabcc9` → prochain push renforçant preuves IMPORT_CREATE + tests logout/révocation/pièce/artefact/ACCOUNT_* + docs sync, coverage gate à repasser)
+- Branche : `arena/c7c86aff-seamtech-search` (HEAD `2980f49` → correctif en cours : SESSION_REVOKED obligatoire, target_id logout exact, format import strict, secrets imbriqués, preuve MinIO réelle)
 - Fichiers modifiés : `seamtech_search/schema_metier.py`, `seamtech_search/indexer.py`, `seamtech_search/audit_logs.py` (nouveau, 12 requêtes allowlistées, aucun concat, filtre récursif `mdp` inclus), `seamtech_search/comptes/routes.py`, `seamtech_search/fiches/routes.py`, `seamtech_search/api.py`, `seamtech_search/config.py`, `seamtech_search/bateaux/routes.py`, `tests/test_migrations_metier.py`, `tests/test_stockage_release_candidate.py` (syntaxe+comptage 44) + nouveaux tests `test_admin_audit_logs_403_operateur.py`, `test_docs_fermes_par_defaut.py` (health avec token), `test_500_sans_details.py`, `test_injection_reelle.py` (vacuité + table intacte), `test_secours_non_journalise.py` (sentinelle par concat), `test_audit_events_suite.py` (AUTH_LOGIN success/failure nominatif, IMPORT_CREATE strict, + logout/révocation/pièce/artefact/ACCOUNT_* nominatifs) + script `scripts/verif_sql_parametrise.py` (12 définitions) + docs `docs/Lot0b_SECURITE.md`, `docs/ROLLBACK_LOT0B.md`, `docs/MATRICE_EXIGENCE_CODE_TEST.md`.
 - Compatibilité : Lot 0a comportement conservé, Lot 2 `026` conservé, `37→38` additive, `IF NOT EXISTS` idempotente, anciens `audit_log` préservés.
 - Commandes : `python -m pytest tests/test_migrations_metier.py tests/test_comptes.py::test_empreinte_scrypt_* tests/test_docs* tests/test_500* tests/test_injection* tests/test_audit_events* tests/test_ocr_comportement.py tests/test_stockage_release_candidate.py -q` (suites critiques 0 skip avec DB, +1 skip attendu secours, CI doit être verte sur les 3 backends)
-- Liens CI headSha exact : `6eabcc9` → CI `39747447425` **failure Coverage gate 84.8%** (overall <85% floor, backend 3.11/3.12/3.13; `api.py` 87.6% gate ok), native `39747447265` succès, réserves `39747447384` succès, perf `39747447343` succès — 4 runs même SHA, `merge-base e4c9fdf HEAD` préservé (`e38e6e9` parents). Prochain SHA après renforcement audit + coverage à rejouer.
+- Liens CI headSha exact : `2980f49` → CI `39749157839` **failure** `NotNullViolation modified_at` (backend 3.11/3.12/3.13), native `39749157859` succès, réserves `39749157883` succès, perf `39749157986` succès — 4 runs même SHA, `merge-base e4c9fdf HEAD` préservé (`e38e6e9` parents). Correctif `documents` + renforcements à rejouer sur prochain SHA.
 - Points bloqués : (1) politique compte secours après admin nominatif (attente Lass), (2) matrice anti-IDOR pièces/artefacts (attente coordinateur), (3) filiation Lot0a+Lot2 via `e38e6e9` à valider par revue indépendante — **ILY-10 non-Done**.
 
 ## 11. Matrice exigence→code→test (extraits)
