@@ -18,7 +18,7 @@
 | 6 | scrypt format + clair/mauvais | `seamtech_search/comptes/securite.py` | `tests/test_comptes.py::test_empreinte_scrypt_format_et_verification` + `test_mot_de_passe_en_clair` | ✅ fait |
 | 6b | Filtres/recherches injection réels + vérif statique paramétrisation | `seamtech_search/audit_logs.py` (requêtes liées) | `tests/test_injection_reelle.py` + `scripts/verif_sql_parametrise.py` | ✅ fait |
 | 7 | Compte secours SEAMTECH_UI_PASSWORD confirmation Lass avant blocage/vider | **BLOQUÉ** — attente Lass | `tests/test_secours_non_journalise.py` (vérifie aucun secret loggé, filtre `_tronquer_details`) ; politique désactivation **non tranchée** (en attente écrite) | ⏳ bloqué (question envoyée 2026-10-11, ne pas activer/désactiver unilatéralement) |
-| 8 | Acceptation : branche+SHA, fichiers, matrice, commandes, CI 4 runs même SHA, rollback, blocages | `docs/Lot0b_SECURITE.md` (HEAD `c12f0c5`), `docs/ROLLBACK_LOT0B.md`, `docs/MATRICE_EXIGENCE_CODE_TEST.md` | CI `39764148304` **succès** 13/13, native `39764148299` succès, réserves `39764148292` succès, perf `39764148314` succès — tous `c12f0c5` | ✅ fait (2 blocages Lass/IDOR levés, 4 runs verts même SHA) |
+| 8 | Acceptation : branche+SHA, fichiers, matrice, commandes, CI 4 runs même SHA, rollback, blocages | `docs/Lot0b_SECURITE.md` (HEAD `7fbeae9`), `docs/ROLLBACK_LOT0B.md`, `docs/MATRICE_EXIGENCE_CODE_TEST.md` | CI `39766469745` **succès** 13/13, native `39766469796` succès, réserves `39766469668` succès, perf `39766469805` succès — tous `7fbeae9` | ✅ fait (2 blocages Lass/IDOR levés, 4 runs verts même SHA) |
 
 ## Légende
 
