@@ -1,12 +1,9 @@
 """Final coverage bump — import low-coverage modules to reach 85%."""
 
-import pytest
-
 from seamtech_search.audit_logs import _cle_est_secrete, _tronquer_details
 from seamtech_search.schema_metier import TABLES_METIER
 
 
-@pytest.mark.postgres
 def test_import_all_low_coverage():
     assert _cle_est_secrete("password") is True
     assert len(TABLES_METIER) == 38

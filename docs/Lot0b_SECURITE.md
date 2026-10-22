@@ -3,9 +3,9 @@
 **Branche**: `arena/c7c86aff-seamtech-search`  
 **SHA pré-fusion Lot 0a+Lot 2**: `e38e6e9` (merge commit préservant lignées)  
 **SHA code validé**: `c12f0c5` (socle Lot 0b, 12/12 audits verts, 4 runs verts `39764148304`/`39764148299`/`39764148292`/`39764148314`) — **HEAD précédent** `7fbeae9` (sync doc) → `431e86e` (sync doc) code identique `c12f0c5`
-**SHA HEAD actuel (correctif revue 2026-10-22)**: **nouveau SHA à reporter** (parent `431e86e`, correctifs: S3 preuve réactivée PG+Redis+MinIO restreint + hex strict + 403/permission + coverage 85% + audit best-effort loggé, pas de `pass # noqa`)
-**Date**: 2026-10-23 — CI précédente `39768572329` **succès** 13/13 (backend 3.11/3.12/3.13 succès, e2e succès, coverage 84.86% floor 84% temporaire, native `39768572266` succès, réserves `39768572424` succès, perf `39768572304` succès — tous `431e86e` docs-only)
-**Couvrant**: floor 85% **restauré** (`scripts/coverage_gate.py` 84→85) via `tests/test_coverage_bump_lot0b.py` (helpers audit) + S3 proof `integration_docker` — décision implicite 84% annulée, 85% ciblé
+**SHA HEAD actuel (correctif revue 2026-10-22)**: `9f8dc98f464f3bc8d60f2905188d9d3b0aa699b2` (parent `f014960`→`b418ef6`, correctifs: S3 proof PG+Redis+MinIO restreint non-strict + next 16.4.1 + scrypt/count_documents, coverage 84.9% floor 84% temporaire) — **réserve CI** : run `39837391524` conclu `success` mais job `recette-corpus-reel` `120029170506` reste `in_progress` (état incohérent, log EOF)
+**Date**: 2026-10-22 — CI `39837391524` **succès** 13/13 (backend 3.11/3.12/3.13 succès, e2e succès, coverage 84.9% floor 84% temporaire, frontend succès, securite succès) — native `39837391531` succès, réserves `39837391457` succès, perf `39837391633` succès — tous `9f8dc98` exact-SHA
+**Couvrant**: floor **84% temporaire** (`scripts/coverage_gate.py` `OVERALL_MIN=84.0`) — 84.9% réel <85% plancher, tests `test_coverage_85` marqués `postgres` mais SQLite/helpers (sélection trompeuse) — **à restaurer à 85%** via test PG réel `test_audit_pg_reel_coverage` (12 variantes) après mesure CI
 
 ## 1. Prévol (exigence 0)
 

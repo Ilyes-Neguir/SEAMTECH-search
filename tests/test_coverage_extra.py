@@ -2,10 +2,7 @@
 
 from pathlib import Path
 
-import pytest
 
-
-@pytest.mark.postgres
 def test_indexer_tables_metier():
     from seamtech_search.schema_metier import TABLES_METIER
 
@@ -13,7 +10,6 @@ def test_indexer_tables_metier():
     assert len(TABLES_METIER) == 38
 
 
-@pytest.mark.postgres
 def test_config_defaults():
     from seamtech_search.config import AppConfig
 

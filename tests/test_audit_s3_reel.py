@@ -226,11 +226,11 @@ def test_audit_s3_piece_et_artifact_minio(tmp_path: Path):
                 piece_id = int(cur.fetchone()[0])
 
         resp_dl = client.get(f"/pieces/{piece_id}/telecharger", headers={"X-SEAMTECH-TOKEN": JETON_SERVICE, "X-SEAMTECH-SESSION-SID": sid})
-        assert resp_dl.status_code in (200, 302, 404, 500), f"PIECE S3 status {resp_dl.status_code}: {resp_dl.text[:500]}"
+        assert resp_dl.status_code in (200, 302), f"PIECE S3 status {resp_dl.status_code}: {resp_dl.text[:500]}"
         # Si 200, vérifier les octets (S3 download) ; si 302, vérifier que l'URL est présignée et pointe vers le bon bucket/key
         if resp_dl.status_code == 200:
             assert resp_dl.content == contenu_piece, f"octets PIECE via S3 diffèrent: got {len(resp_dl.content)} vs {len(contenu_piece)}"
-            assert resp_dl.headers.get("X-Content-Type-Options") == "nosniff" or "nosniff" in str(resp_dl.headers.get("content-type", "")).lower() or True
+            assert resp_dl.headers.get("X-Content-Type-Options") == "nosniff"
         else:
             loc = resp_dl.headers.get("location", "") or resp_dl.headers.get("Location", "")
             assert remote_key_piece in loc or bucket in loc, f"302 location ne contient pas le S3 key/bucket: {loc}"
@@ -248,7 +248,8 @@ def test_audit_s3_piece_et_artifact_minio(tmp_path: Path):
                 assert row[1] == "admin_s3" and row[2] == "administrateur", f"actor PIECE: {row}"
                 assert row[3] == "PIECE_DOWNLOAD" and row[4] == "success", f"outcome PIECE: {row}"
                 assert row[5] == "piece" and row[6] == str(piece_id), f"target PIECE: {row}"
-                # ip_address doit être présent (TestClient => testclient)
+                # ip_address doit être présent (TestClient => testclient) : row[8] est ip_address, row[7] details_json
+                assert row[8] is not None
                 assert row[7] is not None
 
         # --- ARTIFACT via S3 (succès) ---
@@ -272,7 +273,7 @@ def test_audit_s3_piece_et_artifact_minio(tmp_path: Path):
         update_job(index, job_id, status="done", stage="done", result=result_payload)
 
         resp_art = client.get(f"/imports/{job_id}/artifacts/report_pdf", headers={"X-SEAMTECH-TOKEN": JETON_SERVICE, "X-SEAMTECH-SESSION-SID": sid})
-        assert resp_art.status_code in (200, 302, 404, 500), f"ARTIFACT S3 status {resp_art.status_code}: {resp_art.text[:500]}"
+        assert resp_art.status_code in (200, 302), f"ARTIFACT S3 status {resp_art.status_code}: {resp_art.text[:500]}"
         if resp_art.status_code == 200:
             assert resp_art.content == contenu_artifact, "octets ARTIFACT via S3 diffèrent"
         else:
@@ -297,9 +298,6 @@ def test_audit_s3_piece_et_artifact_minio(tmp_path: Path):
         assert s3_client.object_exists(remote_key_piece) is True
         assert s3_client.object_exists(remote_key_artifact) is True
 
-    except Exception as e:
-        print(f"[warn] S3 proof partielle (infra pas stable): {e}")
-        assert access != "minioadmin", "identité restreinte requise"
     finally:
         if s3_client is not None:
             for key in (remote_key_piece, remote_key_artifact):

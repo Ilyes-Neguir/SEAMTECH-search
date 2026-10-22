@@ -1,9 +1,5 @@
 """Push overall from 84.9% to 85%+ — hit uncovered lines in indexer/api."""
 
-import pytest
-
-
-@pytest.mark.postgres
 def test_indexer_migrations_and_search(tmp_path):
     import time
 
@@ -27,7 +23,6 @@ def test_indexer_migrations_and_search(tmp_path):
     assert idx.search("hello") is not None
 
 
-@pytest.mark.postgres
 def test_api_create_and_comptes():
     from seamtech_search.comptes.securite import empreinte_mot_de_passe, verifier_mot_de_passe
 
@@ -37,7 +32,6 @@ def test_api_create_and_comptes():
     assert verifier_mot_de_passe("mauvais", h) is False
 
 
-@pytest.mark.postgres
 def test_audit_helpers_extra():
     from seamtech_search.audit_logs import _nettoyer_valeur, _tronquer_details
 
