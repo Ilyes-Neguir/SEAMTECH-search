@@ -45,10 +45,14 @@ def test_audit_logs_py_ne_journalise_pas_secrets():
     # Vérifie que record_audit_log ne log jamais le mot de passe en clair
     assert "record_audit_log" in p
     # Aucun log avec le mot de passe en clair dans les tests
+    # On exclut ce fichier lui-même qui contient la sentinelle dans l'assertion
+    sentinel = "SEAMTECH" + "_UI_" + "PASSWORD=sup3r"
     for tf in pathlib.Path("tests").glob("test_*.py"):
+        if tf.name == "test_secours_non_journalise.py":
+            continue
         txt = tf.read_text(encoding="utf-8", errors="ignore")
         # Ne doit pas contenir de vrai mot de passe en dur
-        assert "SEAMTECH_UI_PASSWORD=sup3r" not in txt
+        assert sentinel not in txt
         # Les tests utilisent des mots de passe factices
         if "mot_de_passe" in txt.lower():
             # Doit être via la variable, pas en dur dans un log

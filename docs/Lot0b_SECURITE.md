@@ -28,8 +28,8 @@
 
 ## 4. Événements + GET /api/admin/audit-logs
 
-- Helper `seamtech_search/audit_logs.py` : `record_audit_log(index, actor_user_id, actor_username, actor_role, action, target_type, target_id, outcome, details, ip_address, user_agent)` — troncature 4ko, filtrage secrets (`mot_de_passe`, `empreinte`, `token`, `sid`, `cookie`, `jeton`), paramétré (whitelist `action`/`target_type`/`outcome`), erreurs non bloquantes.
-- `get_audit_logs_filtered(index, limit 1-200, offset 0-1M, sort in [created_at,id,action], order asc/desc, filtres)` — pagination bornée, tri whitelist, requêtes paramétrées, `no-store`.
+- Helper `seamtech_search/audit_logs.py` : `record_audit_log(index, actor_user_id, actor_username, actor_role, action, target_type, target_id, outcome, details, ip_address, user_agent)` — troncature 4ko, filtrage récursif secrets (`mot_de_passe`/`MDP`/`password`/`token`/`sid`/nested), requêtes paramétrées, erreurs non bloquantes. `ACTIONS_AUTORISEES` n'est qu'une documentation des actions prévues, non appliquée à l'écriture (point 9).
+- `get_audit_logs_filtered(index, limit 1-200, offset 0-1M, sort in [created_at,id,action], order asc/desc, filtres)` — pagination bornée, tri whitelist (`created_at/id/action` × `asc/desc`), `outcome` whitelist (`success/failure`), 12 requêtes statiques allowlistées (`PG/SQLite×3 tris×2 ordres`), paramètres liés, `no-store`. Le vérificateur `scripts/verif_sql_parametrise.py` porte uniquement sur ce fichier.
 - Événements instrumentés (identité depuis session serveur validée) :
   - `AUTH_LOGIN_SUCCESS` / `AUTH_LOGIN_FAILURE` (`/auth/connexion`, `/auth/connexion-secours`)
   - `AUTH_LOGOUT` / `AUTH_LOGOUT_ALL` / `SESSION_REVOKED` (`/auth/deconnexion`, `/auth/deconnexion-tout`)
@@ -72,7 +72,7 @@
 ## 8. scrypt + injection
 
 - `seamtech_search/comptes/securite.py` vérifié : `hash_scrypt` format `$scrypt$n=...$r=...$p=...$...` + `verifier_scrypt` constant-time. Test existant `tests/test_comptes.py::test_empreinte_scrypt_format_et_verification` vert (vérifie format, vérification à temps constant, mauvais mot de passe 401, empreinte malformée). Aucun mot de passe en clair stocké (vérifié dans `utilisateur.empreinte_mot_de_passe`).
-- Audit filtres/recherches : `tests/test_injection_reelle.py` (PostgreSQL réel, pas SQLite) + vérification statique paramétrisation (`scripts/verif_sql_parametrise.py` : aucune `f"`/`%`/`format` avec `execute`).
+- Audit filtres/recherches : `tests/test_injection_reelle.py` (PostgreSQL réel, pas SQLite, 0 ligne + table intacte) + vérification statique (`scripts/verif_sql_parametrise.py` : scope `seamtech_search/audit_logs.py` seul, 12 définitions, aucune `f"`/`%`/`format` avec `execute`).
 
 ## 9. Compte secours SEAMTECH_UI_PASSWORD — BLOQUÉ
 

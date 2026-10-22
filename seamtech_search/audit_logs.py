@@ -50,8 +50,8 @@ COLONNES_TRI = {"created_at", "id", "action"}
 def _cle_est_secrete(cle: str) -> bool:
     """Vrai si la clé contient un fragment secret (insensible à la casse, séparateurs)."""
     k = cle.lower()
-    # Fragments interdits : on teste en sous-chaîne pour attraper api_token, password_hash, etc.
-    fragments = ("mot_de_passe", "password", "empreinte", "cookie", "jeton", "token", "secret", "hash", "sid", "session", "auth", "credential")
+    # Fragments interdits : on teste en sous-chaîne pour attraper api_token, password_hash, MDP, etc.
+    fragments = ("mot_de_passe", "password", "empreinte", "cookie", "jeton", "token", "secret", "hash", "sid", "session", "auth", "credential", "mdp")
     for frag in fragments:
         if frag in k:
             # Pour éviter faux positifs sur "sid" dans "residence", on exige que "sid" soit mot isolé ou avec _/-

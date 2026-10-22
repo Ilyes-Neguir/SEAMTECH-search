@@ -40,8 +40,8 @@ def test_docs_fermes_par_defaut(tmp_path: Path):
         resp = client.get(path)
         assert resp.status_code == 404, f"{path} doit être 404 par défaut, got {resp.status_code}"
 
-    # Health tetap ouvert
-    assert client.get("/health").status_code == 200
+    # Health nécessite authentification quand auth_token est défini
+    assert client.get("/health", headers={"X-SEAMTECH-TOKEN": "secret-test"}).status_code == 200
 
 
 def test_docs_ouverts_si_expose_true(tmp_path: Path):

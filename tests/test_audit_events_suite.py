@@ -153,16 +153,19 @@ def test_import_create_et_artifact_nominatif(tmp_path: Path):
         import tempfile
 
         tmpdir = Path(tempfile.mkdtemp())
-        # échec attendu (pas de pdf) mais on vérifie l'audit
-        client.post("/imports", json={"source_path": str(tmpdir)}, params={"wait": True}, headers={"X-SEAMTECH-TOKEN": JETON_SERVICE, "X-SEAMTECH-SESSION-SID": sid})
-        # 400 ou 507 selon espace, mais dans tous les cas on vérifie que l'audit est nominatif quand session validée
+        # échec attendu (pas de pdf) mais on vérifie l'audit — doit exister et être nominatif
+        resp_imp = client.post("/imports", json={"source_path": str(tmpdir)}, params={"wait": True}, headers={"X-SEAMTECH-TOKEN": JETON_SERVICE, "X-SEAMTECH-SESSION-SID": sid})
+        assert resp_imp.status_code in (400, 507, 403)  # échec attendu mais journalisé
         with index.connect() as conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT actor_username, actor_role, action FROM audit_logs WHERE action='IMPORT_CREATE' ORDER BY id DESC LIMIT 1")
+                cur.execute("SELECT actor_user_id, actor_username, actor_role, action, outcome, target_id FROM audit_logs WHERE action='IMPORT_CREATE' ORDER BY id DESC LIMIT 1")
                 row = cur.fetchone()
-                if row:
-                    # Si session validée, acteur doit être admin_b pas "service"
-                    assert row[0] == "admin_b" and row[1] == "administrateur", f"acteur non nominatif: {row}"
+                assert row is not None, "IMPORT_CREATE non journalisé avec session nominative"
+                # Vérifie acteur, ID, cible, résultat obligatoirement
+                assert row[1] == "admin_b" and row[2] == "administrateur", f"acteur non nominatif: {row}"
+                assert row[4] == "failure" or row[4] == "success"  # failure pour dossier vide
+                # Vérifie actor_user_id est renseigné (int, pas None)
+                assert row[0] is not None, "actor_user_id doit être renseigné pour session nominative"
 
         # Sans session, fallback service (mais pas de fuite token)
         client.post("/imports", json={"source_path": str(tmpdir)}, params={"wait": True}, headers={"X-SEAMTECH-TOKEN": JETON_SERVICE})
