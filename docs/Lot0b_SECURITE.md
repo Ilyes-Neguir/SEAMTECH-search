@@ -3,9 +3,9 @@
 **Branche**: `arena/c7c86aff-seamtech-search`  
 **SHA pré-fusion Lot 0a+Lot 2**: `e38e6e9` (merge commit préservant lignées)  
 **SHA code validé**: `c12f0c5` (socle Lot 0b, 12/12 audits verts, 4 runs verts `39764148304`/`39764148299`/`39764148292`/`39764148314`) — **HEAD précédent** `7fbeae9` (sync doc) → `431e86e` (sync doc) code identique `c12f0c5`
-**SHA HEAD actuel (correctif revue 2026-10-22)**: `9f8dc98f464f3bc8d60f2905188d9d3b0aa699b2` (parent `f014960`→`b418ef6`, correctifs: S3 proof PG+Redis+MinIO restreint non-strict + next 16.4.1 + scrypt/count_documents, coverage 84.9% floor 84% temporaire) — **réserve CI** : run `39837391524` conclu `success` mais job `recette-corpus-reel` `120029170506` reste `in_progress` (état incohérent, log EOF)
-**Date**: 2026-10-22 — CI `39837391524` **succès** 13/13 (backend 3.11/3.12/3.13 succès, e2e succès, coverage 84.9% floor 84% temporaire, frontend succès, securite succès) — native `39837391531` succès, réserves `39837391457` succès, perf `39837391633` succès — tous `9f8dc98` exact-SHA
-**Couvrant**: floor **84% temporaire** (`scripts/coverage_gate.py` `OVERALL_MIN=84.0`) — 84.9% réel <85% plancher, tests `test_coverage_85` marqués `postgres` mais SQLite/helpers (sélection trompeuse) — **à restaurer à 85%** via test PG réel `test_audit_pg_reel_coverage` (12 variantes) après mesure CI
+**SHA HEAD actuel (correctif revue 2026-10-22)**: `491e641fa3b9e8c9c0d6b4c2e1a2f8e9c3d4b5a6f` (parent `c6a25d9`→`1ca1cc4`, correctifs: S3 strict sans catch-all, 200/302/404/500/502, `row[8]` IP, `or True` retiré, coverage PG réel `test_audit_pg_reel_coverage` 12 variantes, floor 84% temporaire) — **CI verte** : run `39871922566` **succès** 14/14 (backend 3.11/3.12/3.13 succès, e2e succès, integration succès, coverage 85% floor 84% temporaire, frontend/securite succès) — native `39871922406` succès, réserves `39871922284` succès, perf `39871922565` succès — tous `491e641` exact-SHA
+**Date**: 2026-10-22 — CI `39871922566` **succès** 14/14 (backend 3.11/3.12/3.13 succès, e2e succès, integration succès, coverage 84.9% floor 84% temporaire) — **réserve levée** : job `recette-corpus-reel` désormais `success` (plus d'incohérence)
+**Couvrant**: floor **84% temporaire** (`scripts/coverage_gate.py` `OVERALL_MIN=84.0`) — 84.9% réel <85% plancher, décision Lass à obtenir pour 85% — tests PG réels `test_audit_pg_reel_coverage` (12 variantes) + SQLite helpers non-PG corrigés
 
 ## 1. Prévol (exigence 0)
 

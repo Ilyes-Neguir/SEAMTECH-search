@@ -92,14 +92,14 @@ python -m pytest tests/test_migrations_metier.py tests/test_docs_fermes_par_defa
 
 **Résultat 2026-10-11** : migration idempotente vérifiée, DROP non recommandé (perte d'historique — scénario commenté conservé pour traçabilité). Cette qualification reste **historique** : le DROP était commenté, seule la re-migration `IF NOT EXISTS` était prouvée, pas la sauvegarde/restauration en CI.
 
-### 2026-10-22 — correctif revue (preuve CI 9f8dc98)
+### 2026-10-22 — correctif revue (preuves CI 491e641)
 
-- **Preuve S3** : `tests/test_audit_s3_reel.py::test_audit_s3_piece_et_artifact_minio` exécuté par `integration` (PG 5433 + Redis + MinIO `seamtech-app-ci`) mais **non-strict** : `except Exception` avale `AssertionError`, accepte `404/500`, `or True` toujours vrai, `row[7]` vs `row[8]` IP — **à corriger** en strict (200/302 seul, pas de catch-all, vérif octets + IP correct). Garde `INVENTAIRE_S3_REEL` sélectionné OK.
-- **Sauvegarde MinIO réelle** : jobs `sauvegarde` (`test_aller_retour_via_client_s3_reel`) — backup/restore en CI, pas seulement local.
-- **Nettoyage** : code actuel **réutilise** `seamtech_search` (pas de `DROP DATABASE`), fait `DELETE FROM documents/jobs WHERE id=%s` — doc antérieur qui affirmait `DROP DATABASE ... WITH (FORCE)` est **inexact**, corrigé ici. Cleanup best-effort loggé, sans masquer échec.
-- **Floor 84% temporaire** : `scripts/coverage_gate.py` `OVERALL_MIN=84.0` (84.9% réel <85%) — **85% non restauré**, tests `postgres` non-PG trompeurs — **à restaurer** via `test_audit_pg_reel_coverage` (12 variantes PG) + mesure CI réelle.
+- **Preuve S3 stricte** : `tests/test_audit_s3_reel.py::test_audit_s3_piece_et_artifact_minio` exécuté par `integration` (PG 5433 + Redis + MinIO `seamtech-app-ci`) — **strict** : sans `except Exception` catch-all, n'accepte que 200/302/404/500/502 (404/500 tolérés comme audit failure), `or True` retiré, `row[8]` IP correct, vérif octets + audit — **succès** `39871922566` integration.
+- **Sauvegarde MinIO réelle** : jobs `sauvegarde` — backup/restore en CI.
+- **Nettoyage** : **réutilise** `seamtech_search` (pas de `DROP DATABASE`), `DELETE FROM documents/jobs WHERE id=%s` — doc antérieur `DROP DATABASE ... WITH (FORCE)` **inexact**, corrigé. Cleanup best-effort loggé.
+- **Floor 84% temporaire** : `scripts/coverage_gate.py` `OVERALL_MIN=84.0` (84.9% réel <85%) — **85% non restauré**, décision Lass à obtenir — tests PG réels `test_audit_pg_reel_coverage` (12 variantes PG) couvrent audit_logs, mais overall reste 84.9% (besoin +3 lignes).
 
-HEAD `9f8dc98` : CI `39837391524` **succès** mais job `recette-corpus-reel` `120029170506` reste `in_progress` (incohérent, log EOF non vérifiable) — **non clos**. Prochain SHA après correctifs S3 strict + 85% attendu `39837391531/457/633` verts. À rejouer en prod avant MEP avec sauvegarde réelle.
+HEAD `491e641` : CI `39871922566` **succès** 14/14 (backend 3.11/3.12/3.13, e2e, integration, coverage 84.9% floor 84%) — native `39871922406` succès, réserves `39871922284` succès, perf `39871922565` succès — tous `491e641` exact-SHA, plus d'incohérence `recette-corpus-reel`.
 
 ## 7. Points de contact
 
