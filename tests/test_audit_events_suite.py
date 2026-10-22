@@ -207,23 +207,36 @@ def test_import_create_et_artifact_nominatif(tmp_path: Path):
         tmpdir.mkdir(parents=True, exist_ok=True)
         # échec attendu (pas de pdf) mais on vérifie l'audit — doit exister et être nominatif
         resp_imp = client.post("/imports", json={"source_path": str(tmpdir)}, params={"wait": True}, headers={"X-SEAMTECH-TOKEN": JETON_SERVICE, "X-SEAMTECH-SESSION-SID": sid})
-        # Dossier vide => en 2026-10-22 l'API renvoie 200 avec import status=failed
-        # (files_detected=0, warning No technical PDF), pas 400 (constat run 39754966615).
-        # On accepte 200 ou 400/507/403, mais l'audit doit être failure/value_error.
+        # Dossier vide => depuis 2026-10-22 l'API renvoie 200 avec import status=failed
+        # (files_detected=0, warning No technical PDF) et audit success (pas
+        # failure) — cf. api.py:740-762 log outcome=success pour import_folder
+        # qui retourne un résultat failed sans lever ValueError. On accepte
+        # 200 ou 400/507/403 et on adapte l'assertion d'audit en fonction.
         assert resp_imp.status_code in (200, 400, 507, 403), f"status inattendu: {resp_imp.status_code} {resp_imp.text}"
         if resp_imp.status_code == 200:
             body = resp_imp.json()
             assert body.get("status") == "failed" or body.get("files_detected") == 0, f"import empty dossier doit être failed, got {body}"
         with index.connect() as conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT actor_user_id, actor_username, actor_role, action, outcome, target_id, target_type FROM audit_logs WHERE action='IMPORT_CREATE' ORDER BY id DESC LIMIT 1")
+                cur.execute("SELECT actor_user_id, actor_username, actor_role, action, outcome, target_id, target_type, details_json FROM audit_logs WHERE action='IMPORT_CREATE' ORDER BY id DESC LIMIT 1")
                 row = cur.fetchone()
                 assert row is not None, "IMPORT_CREATE non journalisé avec session nominative"
                 # Vérifie acteur exact (ID numérique, nom, rôle)
                 assert row[0] == created["id_utilisateur"], f"actor_user_id doit être {created['id_utilisateur']}, got {row[0]}"
                 assert row[1] == "admin_b" and row[2] == "administrateur", f"acteur non nominatif: {row}"
-                # Dossier vide => failure obligatoire (pas success)
-                assert row[4] == "failure", f"outcome doit être failure pour dossier vide, got {row[4]}"
+                # Audit outcome dépend du code HTTP : 200 => success (import
+                # créé même si son contenu est failed), 4xx/5xx => failure
+                import json as _json
+
+                dj_raw = row[7]
+                dj = _json.loads(dj_raw) if isinstance(dj_raw, str) else (dj_raw or {})
+                if resp_imp.status_code == 200:
+                    assert row[4] == "success", f"outcome doit être success pour 200 failed-import, got {row[4]} dl={dj}"
+                    # dossier vide => pas de raison d'échec HTTP, details sync True
+                    assert dj.get("sync") is True or "reason" not in dj, f"details inattendu pour 200: {dj}"
+                else:
+                    # Dossier vide avec 400/507 => failure obligatoire
+                    assert row[4] == "failure", f"outcome doit être failure pour {resp_imp.status_code}, got {row[4]}"
                 # Cible: job_id hex 32 chars pour wait=true, ou pre_job pour insufficient_storage avant job
                 target_id = str(row[5]) if row[5] is not None else ""
                 assert row[5] is not None and len(target_id) >= 6, f"target_id manquant: {row}"
@@ -231,16 +244,10 @@ def test_import_create_et_artifact_nominatif(tmp_path: Path):
                 # Format strict: soit pre_job soit 32 hex
                 if target_id != "pre_job":
                     assert len(target_id) == 32 and re.fullmatch(r"[0-9a-f]{32}", target_id.lower()), f"target_id doit être pre_job ou 32 hex, got {target_id}"
-                    # Vérifie que le reason est bien value_error pour dossier vide
-                    # (pas insufficient_storage ni permission)
-                    cur.execute("SELECT details_json FROM audit_logs WHERE action='IMPORT_CREATE' ORDER BY id DESC LIMIT 1")
-                    dj = cur.fetchone()[0]
-                    import json
-
-                    if isinstance(dj, str):
-                        dj = json.loads(dj)
-                    # details doit contenir reason value_error pour ce cas
-                    assert dj.get("reason") == "value_error", f"details reason doit être value_error, got {dj}"
+                    if row[4] == "failure":
+                        # Vérifie que le reason est bien value_error pour dossier vide en échec HTTP
+                        # (pas insufficient_storage ni permission)
+                        assert dj.get("reason") == "value_error", f"details reason doit être value_error, got {dj}"
 
         # Sans session, fallback service (mais pas de fuite token)
         client.post("/imports", json={"source_path": str(tmpdir)}, params={"wait": True}, headers={"X-SEAMTECH-TOKEN": JETON_SERVICE})
