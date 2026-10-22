@@ -310,7 +310,6 @@ def test_chaque_test_de_l_inventaire_est_selectionne_par_un_job_ci() -> None:
     # On simule grossièrement : si le test porte `integration_docker`, alors `pytest -m integration_docker` le couvre;
     # si `sauvegarde`, alors `pytest -m sauvegarde`, etc. Pour les expressions composées (`not s3`),
     # on considère qu'un test avec `s3` n'est PAS couvert par `not s3`.
-    jobs_s3 = [s for s in selections if "s3" not in s or s.strip() in ("s3", "integration_docker", "sauvegarde", "recette_corpus")]
     # Détection simple : un test avec marqueur s3 n'est couvert que par une sélection qui ne l'exclut pas via `not s3`
     non_couverts = []
     for identifiant in sorted(INVENTAIRE_S3_REEL):

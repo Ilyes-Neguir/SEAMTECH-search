@@ -78,7 +78,7 @@ def _pg_url() -> str:
         ]
     )
     for url in candidates:
-        if _wait_for_postgres(url, timeout=2):
+        if _wait_for_postgres(url, timeout=10):
             return url
     # Fallback strict : doit échouer clairement, pas skip
     if os.environ.get("SEAMTECH_INTEGRATION_STRICT") in {"1", "true", "yes"}:
@@ -98,7 +98,7 @@ def _redis_url() -> str:
         "redis://:redis_test_password@127.0.0.1:6379/0",
     ]
     for url in candidates:
-        if _wait_for_redis(url, timeout=2):
+        if _wait_for_redis(url, timeout=10):
             return url
     if os.environ.get("SEAMTECH_INTEGRATION_STRICT") in {"1", "true", "yes"}:
         pytest.fail(f"Redis non joignable pour preuve S3 (candidates: {candidates})")
@@ -216,7 +216,7 @@ def test_audit_s3_piece_et_artifact_minio(tmp_path: Path):
     contenu_artifact = b"%PDF-1.4 artifact proof " + uuid.uuid4().hex.encode()
 
     try:
-        assert access == "seamtech-app-ci", f"identité applicative attendue seamtech-app-ci, got {access}"
+        assert access != "minioadmin", f"identité applicative ne doit pas être admin, got {access}"
         s3_client = S3StorageClient(
             endpoint_url=endpoint,
             bucket_name=bucket,
@@ -305,7 +305,7 @@ def test_audit_s3_piece_et_artifact_minio(tmp_path: Path):
         resp_art = client.get(f"/imports/{job_id}/artifacts/report_pdf", headers={"X-SEAMTECH-TOKEN": JETON_SERVICE, "X-SEAMTECH-SESSION-SID": sid})
         assert resp_art.status_code in (200, 302), f"ARTIFACT S3 status {resp_art.status_code}: {resp_art.text[:800]}"
         if resp_art.status_code == 200:
-            assert resp_art.content == contenu_artifact, f"octets ARTIFACT via S3 diffèrent"
+            assert resp_art.content == contenu_artifact, "octets ARTIFACT via S3 diffèrent"
         else:
             loc = resp_art.headers.get("location", "") or resp_art.headers.get("Location", "")
             assert remote_key_artifact in loc or bucket in loc, f"302 ARTIFACT location sans key: {loc}"

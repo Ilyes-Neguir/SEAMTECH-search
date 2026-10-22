@@ -5,14 +5,14 @@ Ce fichier vise des lignes simples non couvertes par les suites principales
 (84.86% mesuré en 431e86e après ajout S3 audit).
 """
 import json
-import pytest
+from pathlib import Path
+
 from seamtech_search.audit_logs import (
     _cle_est_secrete,
     _tronquer_details,
     record_audit_log,
 )
 from seamtech_search.config import AppConfig
-from pathlib import Path
 
 
 def test_cle_est_secrete_detecte_mots_sensibles():
