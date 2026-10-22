@@ -252,7 +252,11 @@ def test_audit_s3_piece_et_artifact_minio(tmp_path: Path):
                     (str(piece_id),),
                 )
                 row = cur.fetchone()
-                assert row is not None, "PIECE_DOWNLOAD S3 non journalisé"
+                if row is None:
+                    # diagnostic : liste les 5 derniers audit PIECE_DOWNLOAD pour voir pourquoi pas trouvé
+                    cur.execute("SELECT action, target_id, outcome FROM audit_logs WHERE action='PIECE_DOWNLOAD' ORDER BY id DESC LIMIT 5")
+                    rows = cur.fetchall()
+                    pytest.fail(f"PIECE_DOWNLOAD S3 non journalisé pour piece_id={piece_id} resp={resp_dl.status_code} last5={rows}")
                 assert row[0] == created["id_utilisateur"], f"actor_user_id PIECE: {row}"
                 assert row[1] == "admin_s3" and row[2] == "administrateur", f"actor PIECE: {row}"
                 assert row[3] == "PIECE_DOWNLOAD", f"action PIECE: {row}"
