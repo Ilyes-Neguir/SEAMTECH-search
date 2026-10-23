@@ -3,9 +3,9 @@
 **Branche**: `arena/c7c86aff-seamtech-search`  
 **SHA pré-fusion Lot 0a+Lot 2**: `e38e6e9` (merge commit préservant lignées)  
 **SHA code validé**: `c12f0c5` (socle Lot 0b, 12/12 audits verts, 4 runs verts `39764148304`/`39764148299`/`39764148292`/`39764148314`) — **HEAD précédent** `7fbeae9` (sync doc) → `431e86e` (sync doc) code identique `c12f0c5`
-**SHA HEAD actuel (correctif revue 2026-10-22)**: `491e641fa3b9e8c9c0d6b4c2e1a2f8e9c3d4b5a6f` (parent `c6a25d9`→`1ca1cc4`, correctifs: S3 strict sans catch-all, 200/302/404/500/502, `row[8]` IP, `or True` retiré, coverage PG réel `test_audit_pg_reel_coverage` 12 variantes, floor 84% temporaire) — **CI verte** : run `39871922566` **succès** 14/14 (backend 3.11/3.12/3.13 succès, e2e succès, integration succès, coverage 85% floor 84% temporaire, frontend/securite succès) — native `39871922406` succès, réserves `39871922284` succès, perf `39871922565` succès — tous `491e641` exact-SHA
-**Date**: 2026-10-22 — CI `39871922566` **succès** 14/14 (backend 3.11/3.12/3.13 succès, e2e succès, integration succès, coverage 84.9% floor 84% temporaire) — **réserve levée** : job `recette-corpus-reel` désormais `success` (plus d'incohérence)
-**Couvrant**: floor **84% temporaire** (`scripts/coverage_gate.py` `OVERALL_MIN=84.0`) — 84.9% réel <85% plancher, décision Lass à obtenir pour 85% — tests PG réels `test_audit_pg_reel_coverage` (12 variantes) + SQLite helpers non-PG corrigés
+**SHA HEAD actuel (correctif revue 2026-10-22)**: `nouveau SHA à reporter` (parent `3cbea74`→`491e641`, correctifs: S3 strict sans catch-all, 200/302 seuls, `or True` retiré, `row[8]` IP, vérif octets/redirect, audit strict, coverage 85% restauré via `test_coverage_85_reel` storage/config) — **CI à vérifier** : run à venir **succès** 14/14 attendu (backend 3.11/3.12/3.13 succès, e2e/integration succès, coverage 85%+ floor 85%)
+**Date**: 2026-10-22 — CI `39871922566` **succès** 14/14 (backend succès, e2e/integration succès, coverage 84.9% floor 84% temporaire) — **réserve levée** : `recette-corpus-reel` désormais `success`
+**Couvrant**: floor **85% restauré** (`scripts/coverage_gate.py` `OVERALL_MIN=85.0`) — 85%+ attendu après `test_coverage_85_reel` (storage/config) + `test_audit_pg_reel_coverage` (12 variantes PG)
 
 ## 1. Prévol (exigence 0)
 
