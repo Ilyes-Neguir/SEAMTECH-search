@@ -9,7 +9,7 @@ def test_indexer_tables_metier():
     assert "audit_logs" in TABLES_METIER
     assert "approval_requests" in TABLES_METIER
     assert "in_app_notifications" in TABLES_METIER
-    assert len(TABLES_METIER) == 40
+    assert len(TABLES_METIER) == 45
 
 
 def test_config_defaults():

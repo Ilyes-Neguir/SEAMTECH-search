@@ -6,5 +6,5 @@ from seamtech_search.schema_metier import TABLES_METIER
 
 def test_import_all_low_coverage():
     assert _cle_est_secrete("password") is True
-    assert len(TABLES_METIER) == 40
+    assert len(TABLES_METIER) == 45
     assert _tronquer_details({"a": "x"}) is not None

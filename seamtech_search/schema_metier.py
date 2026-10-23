@@ -26,7 +26,7 @@ from __future__ import annotations
 from typing import Any
 
 # Version du schéma métier — incrémentée à chaque nouvelle migration.
-VERSION_SCHEMA_METIER = "027_roles_approbations"
+VERSION_SCHEMA_METIER = "030_evaluations_confiance"
 
 # Marqueur injecté par le code au moment de la migration (constat 1 de revue) :
 # le nom de la configuration de recherche effective — 'seamtech_unaccent' ou
@@ -90,6 +90,14 @@ TABLES_METIER: tuple[str, ...] = (
     # 027 — Lot 1 : rôles et workflow d'approbation (approvals + notifications)
     "approval_requests",
     "in_app_notifications",
+    # 028 — Lot 3a : extraction structurée
+    "sail_extractions",
+    # 029 — Lot 3b : corrections + apprentissage
+    "extraction_corrections",
+    "learned_extraction_patterns",
+    # 030 — Lots 4b+5 : évaluations confiance + comparaisons
+    "evaluations_confiance",
+    "comparaisons_sails",
 )
 
 SQL_006_FICHE_TECHNIQUE = """
@@ -1831,6 +1839,204 @@ CREATE INDEX IF NOT EXISTS idx_notifications_created_at ON in_app_notifications(
 COMMENT ON TABLE in_app_notifications IS 'Lot1 — notifications in-app (approbateur <-> utilisateur)';
 """
 
+# ---------------------------------------------------------------------------
+# 028 — Lot 3a : extraction structurée des voiles
+# ---------------------------------------------------------------------------
+SQL_028_SAIL_EXTRACTIONS = """
+-- 028_sail_extractions — Lot 3a : extraction structurée source → SAIL + provenance + cohérence
+
+CREATE TABLE IF NOT EXISTS sail_extractions (
+    id                      BIGSERIAL PRIMARY KEY,
+    document_id             BIGINT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    fiche_id                BIGINT REFERENCES fiches_techniques(id) ON DELETE SET NULL,
+    extraction_status       TEXT NOT NULL DEFAULT 'pending' CHECK (extraction_status IN ('pending', 'completed', 'failed', 'needs_review')),
+    extraction_method       TEXT NOT NULL DEFAULT 'regex_rules' CHECK (extraction_method IN ('regex_rules', 'llm_assist', 'manual')),
+
+    -- Données extraites (extraits bruts tels que trouvés ; normalisés côté applicatif)
+    sail_type_raw           TEXT,
+    sail_type_normalized    TEXT,
+    boat_model_raw          TEXT,
+    boat_model_id           BIGINT REFERENCES boat_models(id) ON DELETE SET NULL,
+    material_raw            TEXT,
+
+    -- Dimensions : lues brutes, converties en cm en applicatif ; on stocke cm entiers
+    luff_length_cm          INTEGER,
+    leech_length_cm         INTEGER,
+    foot_length_cm          INTEGER,
+    luff_perpendicular_cm   INTEGER,
+    sail_area_sqm           NUMERIC(8,2),
+
+    -- Provenance / traçabilité
+    field_provenance_json   JSONB NOT NULL DEFAULT '{}'::jsonb,
+    confidence_overall      NUMERIC(4,3),
+    coherence_score         NUMERIC(4,3),
+    coherence_flags_json    JSONB NOT NULL DEFAULT '[]'::jsonb,
+    raw_text_excerpt        TEXT,
+
+    -- Audit
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_by              TEXT,
+    extraction_duration_ms  INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_sail_extractions_document_id ON sail_extractions(document_id);
+CREATE INDEX IF NOT EXISTS idx_sail_extractions_fiche_id ON sail_extractions(fiche_id);
+CREATE INDEX IF NOT EXISTS idx_sail_extractions_boat_model_id ON sail_extractions(boat_model_id);
+CREATE INDEX IF NOT EXISTS idx_sail_extractions_status ON sail_extractions(extraction_status);
+CREATE INDEX IF NOT EXISTS idx_sail_extractions_created_at ON sail_extractions(created_at DESC);
+
+COMMENT ON TABLE sail_extractions IS 'Lot3a — extraction structurée par document : champs + provenance + cohérence géométrique';
+COMMENT ON COLUMN sail_extractions.field_provenance_json IS 'Par champ : {value, page, bbox, confidence, method} — traçabilité source';
+COMMENT ON COLUMN sail_extractions.coherence_flags_json IS 'Liste de drapeaux : INCOHERENT_LUFF_LEECH, GUINDANT_TROP_COURT, etc.';
+
+CREATE OR REPLACE FUNCTION _touch_sail_extractions_updated_at() RETURNS TRIGGER AS $func$
+BEGIN
+    NEW.updated_at = now();
+    RETURN NEW;
+END;
+$func$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_sail_extractions_updated_at ON sail_extractions;
+CREATE TRIGGER trg_sail_extractions_updated_at
+    BEFORE UPDATE ON sail_extractions
+    FOR EACH ROW EXECUTE FUNCTION _touch_sail_extractions_updated_at();
+"""
+
+# ---------------------------------------------------------------------------
+# 029 — Lot 3b : rattachement + correction + apprentissage
+# ---------------------------------------------------------------------------
+SQL_029_LINKING_AND_LEARNING = """
+-- 029_linking_and_learning — Lot 3b : rattachement modèle, corrections, patterns appris
+
+-- Lien extraction → modèle canonique (déjà boat_model_id dans 028, on ajoute statut approbation extraction)
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'sail_extractions' AND column_name = 'validation_status'
+    ) THEN
+        ALTER TABLE sail_extractions ADD COLUMN validation_status TEXT NOT NULL DEFAULT 'pending' CHECK (validation_status IN ('pending', 'validated', 'corrected', 'rejected'));
+    END IF;
+END$$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'sail_extractions' AND column_name = 'validated_by'
+    ) THEN
+        ALTER TABLE sail_extractions ADD COLUMN validated_by BIGINT REFERENCES utilisateur(id_utilisateur) ON DELETE SET NULL;
+    END IF;
+END$$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'sail_extractions' AND column_name = 'validated_at'
+    ) THEN
+        ALTER TABLE sail_extractions ADD COLUMN validated_at TIMESTAMPTZ;
+    END IF;
+END$$;
+
+CREATE INDEX IF NOT EXISTS idx_sail_extractions_validation_status ON sail_extractions(validation_status);
+CREATE INDEX IF NOT EXISTS idx_sail_extractions_validated_by ON sail_extractions(validated_by);
+
+-- Corrections : chaque champ corrigé par approbateur est historisé
+CREATE TABLE IF NOT EXISTS extraction_corrections (
+    id                      BIGSERIAL PRIMARY KEY,
+    sail_extraction_id      BIGINT NOT NULL REFERENCES sail_extractions(id) ON DELETE CASCADE,
+    field_name              TEXT NOT NULL,
+    old_value               TEXT,
+    new_value               TEXT,
+    old_normalized          TEXT,
+    new_normalized          TEXT,
+    correction_reason       TEXT,
+    corrected_by            BIGINT NOT NULL REFERENCES utilisateur(id_utilisateur) ON DELETE SET NULL,
+    corrected_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+    applied_to_patterns     BOOLEAN NOT NULL DEFAULT false
+);
+
+CREATE INDEX IF NOT EXISTS idx_extraction_corrections_extraction ON extraction_corrections(sail_extraction_id);
+CREATE INDEX IF NOT EXISTS idx_extraction_corrections_field ON extraction_corrections(field_name);
+CREATE INDEX IF NOT EXISTS idx_extraction_corrections_corrected_by ON extraction_corrections(corrected_by);
+
+COMMENT ON TABLE extraction_corrections IS 'Lot3b — historique corrections approbateur : champ par champ, traçable';
+
+-- Patterns appris : règles d''extraction déduites des corrections (suggestion, jamais auto-écrasement)
+CREATE TABLE IF NOT EXISTS learned_extraction_patterns (
+    id                      BIGSERIAL PRIMARY KEY,
+    pattern_type            TEXT NOT NULL CHECK (pattern_type IN ('regex', 'synonym', 'unit_alias', 'geometry_rule')),
+    field_target            TEXT NOT NULL,
+    pattern_raw             TEXT NOT NULL,
+    pattern_normalized      TEXT NOT NULL,
+    replacement_or_rule     TEXT,
+    confidence              NUMERIC(4,3) NOT NULL DEFAULT 0.500,
+    occurrences             INTEGER NOT NULL DEFAULT 1,
+    validated_count         INTEGER NOT NULL DEFAULT 0,
+    status                  TEXT NOT NULL DEFAULT 'pending_review' CHECK (status IN ('pending_review', 'approved', 'rejected')),
+    proposed_by_correction_id BIGINT REFERENCES extraction_corrections(id) ON DELETE SET NULL,
+    created_by              BIGINT REFERENCES utilisateur(id_utilisateur) ON DELETE SET NULL,
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+    reviewed_by             BIGINT REFERENCES utilisateur(id_utilisateur) ON DELETE SET NULL,
+    reviewed_at             TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_learned_patterns_type ON learned_extraction_patterns(pattern_type);
+CREATE INDEX IF NOT EXISTS idx_learned_patterns_field ON learned_extraction_patterns(field_target);
+CREATE INDEX IF NOT EXISTS idx_learned_patterns_status ON learned_extraction_patterns(status);
+
+COMMENT ON TABLE learned_extraction_patterns IS 'Lot3b — patterns appris des corrections, en attente validation approbateur';
+"""
+
+# ---------------------------------------------------------------------------
+# 030 — Lots 4b + 5 : écart géométrique + évaluations confiance
+# ---------------------------------------------------------------------------
+SQL_030_EVALUATIONS_CONFIANCE = """
+-- 030_evaluations_confiance — Lots 4b (compare) + 5 (confiance N>=5)
+
+CREATE TABLE IF NOT EXISTS evaluations_confiance (
+    id                      BIGSERIAL PRIMARY KEY,
+    boat_model_id           BIGINT NOT NULL REFERENCES boat_models(id) ON DELETE CASCADE,
+    sail_type_normalized    TEXT NOT NULL,
+    -- Statistiques par champ (JSON : {field: {median, mad, n, p25, p75}})
+    stats_json              JSONB NOT NULL DEFAULT '{}'::jsonb,
+    sample_size             INTEGER NOT NULL DEFAULT 0,
+    heterogeneity_flags_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+    confiance_status        TEXT NOT NULL DEFAULT 'INSUFFISANT' CHECK (confiance_status IN ('INSUFFISANT', 'OK', 'HETEROGENE')),
+    alerte_seuil            NUMERIC(5,2) NOT NULL DEFAULT 75.00,
+    justification           TEXT,
+    last_computed_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    computed_by             TEXT,
+    UNIQUE(boat_model_id, sail_type_normalized)
+);
+
+CREATE INDEX IF NOT EXISTS idx_evaluations_confiance_model ON evaluations_confiance(boat_model_id);
+CREATE INDEX IF NOT EXISTS idx_evaluations_confiance_status ON evaluations_confiance(confiance_status);
+
+COMMENT ON TABLE evaluations_confiance IS 'Lot5 — Fonction B : médiane/MAD par couple modèle+type, N>=5, seuil 75%';
+COMMENT ON COLUMN evaluations_confiance.stats_json IS 'Médiane/MAD par dimension : luff/leech/foot/lp/area';
+COMMENT ON COLUMN evaluations_confiance.confiance_status IS 'INSUFFISANT si N<5, HETEROGENE si >75% hors bande, OK sinon';
+
+-- Table de comparaison ponctuelle (audit Fonction A) — optionnelle mais utile pour traçabilité
+CREATE TABLE IF NOT EXISTS comparaisons_sails (
+    id                      BIGSERIAL PRIMARY KEY,
+    boat_model_id           BIGINT NOT NULL REFERENCES boat_models(id) ON DELETE CASCADE,
+    sail_type_normalized    TEXT NOT NULL,
+    sail_a_id               BIGINT NOT NULL REFERENCES sail_extractions(id) ON DELETE CASCADE,
+    sail_b_id               BIGINT NOT NULL REFERENCES sail_extractions(id) ON DELETE CASCADE,
+    delta_json              JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_by              BIGINT REFERENCES utilisateur(id_utilisateur) ON DELETE SET NULL,
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_comparaisons_model_type ON comparaisons_sails(boat_model_id, sail_type_normalized);
+CREATE INDEX IF NOT EXISTS idx_comparaisons_created_at ON comparaisons_sails(created_at DESC);
+
+COMMENT ON TABLE comparaisons_sails IS 'Lot4b — Fonction A : comparaisons bloc-par-bloc Δcm/Δ% entre deux SAIL du même modèle+type';
+"""
+
 def split_sql_respecting_dollar_quote(sql_text: str) -> list[str]:
     """Découpe un bloc SQL multi-statements en respectant les dollar-quotes.
 
@@ -1920,6 +2126,9 @@ MIGRATIONS_METIER: tuple[tuple[str, str], ...] = (
     ("025_audit_logs", SQL_025_AUDIT_LOGS),
     ("026_boat_models_and_aliases", SQL_026_BOAT_MODELS_AND_ALIASES),
     ("027_roles_approbations", SQL_027_ROLES_APPROBATIONS),
+    ("028_sail_extractions", SQL_028_SAIL_EXTRACTIONS),
+    ("029_linking_and_learning", SQL_029_LINKING_AND_LEARNING),
+    ("030_evaluations_confiance", SQL_030_EVALUATIONS_CONFIANCE),
 )
 
 

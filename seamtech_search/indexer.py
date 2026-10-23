@@ -1279,6 +1279,86 @@ class SearchIndex:
                     logger.error(diag_msg, exc_info=True)
                     raise RuntimeError(diag_msg) from exc_stmt
 
+    def _migration_028_sail_extractions(self, connection: Any) -> None:
+        """028 — Lot 3a : extraction structurée des voiles (sail_extractions).
+
+        Crée la table sail_extractions avec provenance par champ et scores de cohérence.
+        PostgreSQL uniquement ; SQLite : warning.
+        """
+        if not self.is_postgres:
+            logger.warning(
+                "Migration 028_sail_extractions ignorée : PostgreSQL uniquement — "
+                "pas d'extraction structurée en mode SQLite."
+            )
+            return
+        with connection.cursor() as cursor:
+            stmts = schema_metier.split_sql_respecting_dollar_quote(
+                schema_metier.SQL_028_SAIL_EXTRACTIONS
+            )
+            for idx_stmt, stmt in enumerate(stmts, start=1):
+                try:
+                    cursor.execute(stmt)
+                except Exception as exc_stmt:
+                    sqlstate = getattr(exc_stmt, "pgcode", None)
+                    diag = getattr(exc_stmt, "diag", None)
+                    primary = getattr(diag, "message_primary", None) if diag else None
+                    diag_msg = (
+                        f"028 diagnostic — instruction {idx_stmt}/{len(stmts)} "
+                        f"échec SQLSTATE={sqlstate} primary={primary!r} stmt={stmt[:800]!r} — original: {exc_stmt}"
+                    )
+                    logger.error(diag_msg, exc_info=True)
+                    raise RuntimeError(diag_msg) from exc_stmt
+
+    def _migration_029_linking_and_learning(self, connection: Any) -> None:
+        """029 — Lot 3b : rattachement + corrections + apprentissage."""
+        if not self.is_postgres:
+            logger.warning(
+                "Migration 029_linking_and_learning ignorée : PostgreSQL uniquement."
+            )
+            return
+        with connection.cursor() as cursor:
+            stmts = schema_metier.split_sql_respecting_dollar_quote(
+                schema_metier.SQL_029_LINKING_AND_LEARNING
+            )
+            for idx_stmt, stmt in enumerate(stmts, start=1):
+                try:
+                    cursor.execute(stmt)
+                except Exception as exc_stmt:
+                    sqlstate = getattr(exc_stmt, "pgcode", None)
+                    diag = getattr(exc_stmt, "diag", None)
+                    primary = getattr(diag, "message_primary", None) if diag else None
+                    diag_msg = (
+                        f"029 diagnostic — instruction {idx_stmt}/{len(stmts)} "
+                        f"échec SQLSTATE={sqlstate} primary={primary!r} stmt={stmt[:800]!r} — original: {exc_stmt}"
+                    )
+                    logger.error(diag_msg, exc_info=True)
+                    raise RuntimeError(diag_msg) from exc_stmt
+
+    def _migration_030_evaluations_confiance(self, connection: Any) -> None:
+        """030 — Lots 4b+5 : évaluations confiance (médiane/MAD) + comparaisons."""
+        if not self.is_postgres:
+            logger.warning(
+                "Migration 030_evaluations_confiance ignorée : PostgreSQL uniquement."
+            )
+            return
+        with connection.cursor() as cursor:
+            stmts = schema_metier.split_sql_respecting_dollar_quote(
+                schema_metier.SQL_030_EVALUATIONS_CONFIANCE
+            )
+            for idx_stmt, stmt in enumerate(stmts, start=1):
+                try:
+                    cursor.execute(stmt)
+                except Exception as exc_stmt:
+                    sqlstate = getattr(exc_stmt, "pgcode", None)
+                    diag = getattr(exc_stmt, "diag", None)
+                    primary = getattr(diag, "message_primary", None) if diag else None
+                    diag_msg = (
+                        f"030 diagnostic — instruction {idx_stmt}/{len(stmts)} "
+                        f"échec SQLSTATE={sqlstate} primary={primary!r} stmt={stmt[:800]!r} — original: {exc_stmt}"
+                    )
+                    logger.error(diag_msg, exc_info=True)
+                    raise RuntimeError(diag_msg) from exc_stmt
+
     def run_migrations(self) -> None:
         """Run pending schema migrations once at startup."""
         with self.connect() as connection:
@@ -1339,6 +1419,9 @@ class SearchIndex:
                 ("025_audit_logs", self._migration_025_audit_logs),
                 ("026_boat_models_and_aliases", self._migration_026_boat_models_and_aliases),
                 ("027_roles_approbations", self._migration_027_roles_approbations),
+                ("028_sail_extractions", self._migration_028_sail_extractions),
+                ("029_linking_and_learning", self._migration_029_linking_and_learning),
+                ("030_evaluations_confiance", self._migration_030_evaluations_confiance),
             ]
 
             for version, func in migrations:

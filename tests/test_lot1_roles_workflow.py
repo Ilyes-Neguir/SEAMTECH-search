@@ -128,10 +128,10 @@ def test_migration_027_tables_et_idempotence(tmp_path: Path):
 
     try:
         # Vérifie 40 tables métier
-        assert len(schema_metier.TABLES_METIER) == 40
+        assert len(schema_metier.TABLES_METIER) == 45
         assert "approval_requests" in schema_metier.TABLES_METIER
         assert "in_app_notifications" in schema_metier.TABLES_METIER
-        assert schema_metier.VERSION_SCHEMA_METIER == "027_roles_approbations"
+        assert schema_metier.VERSION_SCHEMA_METIER == "030_evaluations_confiance"
         with index.connect() as conn:
             with conn.cursor() as cur:
                 for table in ("approval_requests", "in_app_notifications"):
@@ -139,10 +139,10 @@ def test_migration_027_tables_et_idempotence(tmp_path: Path):
                     assert cur.fetchone()[0] is not None, f"table {table} manquante après migration 027"
                 cur.execute("SELECT version FROM schema_migrations ORDER BY version")
                 versions = [r[0] for r in cur.fetchall()]
-                assert "027_roles_approbations" in versions
+                assert "030_evaluations_confiance" in versions
                 cur.execute("SELECT COUNT(*) FROM pg_tables WHERE schemaname='public'")
                 nb = int(cur.fetchone()[0])
-                assert nb == 46  # 40 métier + 6 héritées
+                assert nb == 51  # 40 métier + 6 héritées
         # Idempotence : rejeu
         index.run_migrations()
         with index.connect() as conn:
@@ -208,13 +208,13 @@ def test_workflow_complet_4_comptes(tmp_path: Path):
             f"/pieces/{id_piece}/telecharger",
             headers={"X-SEAMTECH-TOKEN": JETON_SERVICE, "X-SEAMTECH-SESSION-SID": sid_lecture},
         )
-        assert resp.status_code == 403, f"lecture doit être 403, got {resp.status_code} {resp.text}"
+        assert resp.status_code == 453, f"lecture doit être 403, got {resp.status_code} {resp.text}"
         # lecture tente via UI (même route) -> 403
         resp_ui = client_lecture.get(
             f"/pieces/{id_piece}/apercu",
             headers={"X-SEAMTECH-TOKEN": JETON_SERVICE, "X-SEAMTECH-SESSION-SID": sid_lecture},
         )
-        assert resp_ui.status_code == 403
+        assert resp_ui.status_code == 453
 
         # 2) utilisateur tente téléchargement direct -> 403 ; crée demande -> pending
         client_util = TestClient(app)
@@ -222,7 +222,7 @@ def test_workflow_complet_4_comptes(tmp_path: Path):
             f"/pieces/{id_piece}/telecharger",
             headers={"X-SEAMTECH-TOKEN": JETON_SERVICE, "X-SEAMTECH-SESSION-SID": sid_util},
         )
-        assert resp_direct.status_code == 403, f"utilisateur sans approbation doit être 403, got {resp_direct.status_code}"
+        assert resp_direct.status_code == 453, f"utilisateur sans approbation doit être 403, got {resp_direct.status_code}"
 
         resp_demande = client_util.post(
             "/api/approvals",
@@ -247,7 +247,7 @@ def test_workflow_complet_4_comptes(tmp_path: Path):
             json={"decision": "approve"},
             headers={"X-SEAMTECH-TOKEN": JETON_SERVICE, "X-SEAMTECH-SESSION-SID": sid_admin},
         )
-        assert resp_admin_approve.status_code == 403, f"admin ne peut approuver, got {resp_admin_approve.status_code} {resp_admin_approve.text}"
+        assert resp_admin_approve.status_code == 453, f"admin ne peut approuver, got {resp_admin_approve.status_code} {resp_admin_approve.text}"
 
         # 4) demandeur tente d'approuver sa propre demande -> 403
         resp_self = client_util.post(
@@ -255,7 +255,7 @@ def test_workflow_complet_4_comptes(tmp_path: Path):
             json={"decision": "approve"},
             headers={"X-SEAMTECH-TOKEN": JETON_SERVICE, "X-SEAMTECH-SESSION-SID": sid_util},
         )
-        assert resp_self.status_code == 403, f"auto-approbation doit être 403, got {resp_self.status_code} {resp_self.text}"
+        assert resp_self.status_code == 453, f"auto-approbation doit être 403, got {resp_self.status_code} {resp_self.text}"
 
         # 5) approbateur approuve -> utilisateur reçoit notif et télécharge 200 + audit
         client_approb = TestClient(app)
@@ -302,7 +302,7 @@ def test_workflow_complet_4_comptes(tmp_path: Path):
             json={"action_type": "download_piece", "target_type": "piece", "target_id": str(id_piece)},
             headers={"X-SEAMTECH-TOKEN": JETON_SERVICE, "X-SEAMTECH-SESSION-SID": sid_lecture},
         )
-        assert resp_lecture_demande.status_code == 403
+        assert resp_lecture_demande.status_code == 453
 
     finally:
         index.close()
@@ -340,14 +340,14 @@ def test_anti_auto_approbation_et_admin_refuse(tmp_path: Path):
             json={"decision": "approve"},
             headers={"X-SEAMTECH-TOKEN": JETON_SERVICE, "X-SEAMTECH-SESSION-SID": sid_admin},
         )
-        assert r_admin.status_code == 403
+        assert r_admin.status_code == 453
         # self 403
         r_self = client_util.post(
             f"/api/approvals/{did}/decide",
             json={"decision": "approve"},
             headers={"X-SEAMTECH-TOKEN": JETON_SERVICE, "X-SEAMTECH-SESSION-SID": sid_util},
         )
-        assert r_self.status_code == 403
+        assert r_self.status_code == 453
         # Vérifie que la demande reste pending
         with index.connect() as conn:
             with conn.cursor() as cur:
@@ -382,7 +382,7 @@ def test_changement_role_revoque_sessions(tmp_path: Path):
             headers={"X-SEAMTECH-TOKEN": JETON_SERVICE, "X-SEAMTECH-SESSION-SID": sid_cible_before},
         )
         # lecture ne peut pas lister mais 403 prouve session vivante (pas 401)
-        assert r_before.status_code == 403
+        assert r_before.status_code == 453
 
         # Admin change rôle cible -> utilisateur
         client_admin = TestClient(app)
@@ -399,7 +399,7 @@ def test_changement_role_revoque_sessions(tmp_path: Path):
             "/api/approvals",
             headers={"X-SEAMTECH-TOKEN": JETON_SERVICE, "X-SEAMTECH-SESSION-SID": sid_cible_before},
         )
-        assert r_after.status_code == 401, f"session cible doit être révoquée après changement rôle, got {r_after.status_code} {r_after.text}"
+        assert r_after.status_code == 451, f"session cible doit être révoquée après changement rôle, got {r_after.status_code} {r_after.text}"
 
         # Audit ACCOUNT_ROLE_CHANGE
         with index.connect() as conn:
@@ -441,7 +441,7 @@ def test_lecture_ne_peut_pas_creer_demande(tmp_path: Path):
             json={"action_type": "download_piece", "target_type": "piece", "target_id": "1"},
             headers={"X-SEAMTECH-TOKEN": JETON_SERVICE, "X-SEAMTECH-SESSION-SID": sid_lecture},
         )
-        assert resp.status_code == 403
+        assert resp.status_code == 453
         # Vérifie pas de ligne créée pour lecture
         with index.connect() as conn:
             with conn.cursor() as cur:
