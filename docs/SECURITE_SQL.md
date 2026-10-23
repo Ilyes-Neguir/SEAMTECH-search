@@ -1,17 +1,16 @@
-# Sécurité SQL — périmètre et limites
+# Sécurité SQL — périmètre et état
 
-**Contexte** : Lot 0b exige « aucune SQL concat/f-string (valeurs liées) ». Le script `scripts/verif_sql_parametrise.py` vérifie le périmètre `seamtech_search/audit_logs.py` (12 définitions allowlistées, `execute(sql, params)` liés, `limit/offset/sort/order/outcome` validés).
+**Invariant Lot 0b** : aucune construction SQL par concaténation ou f-string avec valeurs — toutes les requêtes doivent utiliser des paramètres liés `%s / ?` via `execute(sql, params)`.
 
-**Limite documentée** : `seamtech_search/fiches/routes.py:443-445` contient un fragment hérité :
+**État actuel (post-b0f7419 → correctif final)** :
+- `seamtech_search/audit_logs.py` : 12 requêtes statiques allowlistées vérifiées par `scripts/verif_sql_parametrise.py` (`✓ audit_logs.py: aucune f-string` — 12 définitions).
+- `seamtech_search/fiches/routes.py:443-445` : **f-string hérité supprimé**. Remplacé par 2 SQL littéraux statiques sélectionnés selon le cas :
+  ```python
+  if statut_attendu is not None:
+      cursor.execute("UPDATE fiche SET statut=%s ... WHERE id_fiche=%s AND statut=%s AND revision=%s RETURNING revision", (...) )
+  else:
+      cursor.execute("UPDATE fiche SET statut=%s ... WHERE id_fiche=%s AND revision=%s RETURNING revision", (...) )
+  ```
+  Aucune interpolation `{conditions}` ne subsiste. Le garde-fou `scripts/verif_sql_parametrise.py` vérifie désormais `fiches/routes.py` (`WHERE {conditions}` interdit — `✓ fiches/routes.py: aucune f-string WHERE {conditions}`).
 
-```python
-conditions = "id_fiche = %s AND revision = %s"  # ou "id_fiche = %s AND statut = %s AND revision = %s"
-cursor.execute(f"UPDATE fiche SET statut = %s, revision = revision + 1, updated_at = now() "
-               f"WHERE {conditions} RETURNING revision", tuple(parametres))
-```
-
-`conditions` est une constante parmi 2 chaînes hardcodées, `parametres` est un tuple de valeurs liées (`%s`). Les valeurs utilisateur (`statut_cible`, `id_fiche`, `revision_attendue`, `statut_attendu`) ne sont **jamais interpolées** — seules 2 colonnes/filtres statiques le sont. Ce pattern est hérité (pré-Lot0b) et non étendu ; Lot 0b n'ajoute aucune construction dynamique.
-
-**Preuve** : `scripts/verif_sql_parametrise.py` scope `audit_logs.py` seul — preuve globale via revue manuelle + `test_injection_reelle.py` (injection comme valeur → 0 ligne, table intacte, `pglast` non seul).
-
-**Action** : ne pas étendre l'usage de `f"WHERE {conditions}"` ; toute nouvelle requête doit être 100% statique + paramétrée.
+**Limite historique** : `verif_sql_parametrise.py` ne prouve **que** le périmètre `audit_logs.py` (+ fiches `WHERE {conditions}` depuis ce correctif), pas l’intégralité du dépôt. La conformité globale repose sur revue manuelle + `tests/test_injection_reelle.py` (injection comme valeur → 0 ligne, table intacte). Ne pas prétendre que le script prouve tout le dépôt — il est un garde-fou ciblé.

@@ -435,16 +435,18 @@ def _decision_sous_verrou(
         )
         return int(cursor.fetchone()[0])
 
-    conditions = "id_fiche = %s AND revision = %s"
-    parametres: list[Any] = [statut_cible, id_fiche, int(revision_attendue)]
     if statut_attendu is not None:
-        conditions = "id_fiche = %s AND statut = %s AND revision = %s"
-        parametres = [statut_cible, id_fiche, statut_attendu, int(revision_attendue)]
-    cursor.execute(
-        f"UPDATE fiche SET statut = %s, revision = revision + 1, updated_at = now() "
-        f"WHERE {conditions} RETURNING revision",
-        tuple(parametres),
-    )
+        cursor.execute(
+            "UPDATE fiche SET statut = %s, revision = revision + 1, updated_at = now() "
+            "WHERE id_fiche = %s AND statut = %s AND revision = %s RETURNING revision",
+            (statut_cible, id_fiche, statut_attendu, int(revision_attendue)),
+        )
+    else:
+        cursor.execute(
+            "UPDATE fiche SET statut = %s, revision = revision + 1, updated_at = now() "
+            "WHERE id_fiche = %s AND revision = %s RETURNING revision",
+            (statut_cible, id_fiche, int(revision_attendue)),
+        )
     ligne = cursor.fetchone()
     if ligne is None:
         raise _conflit_decision(
