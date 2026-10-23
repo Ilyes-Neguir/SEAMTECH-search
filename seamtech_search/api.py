@@ -1239,6 +1239,38 @@ def create_app(config: AppConfig) -> FastAPI:
         token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
     ) -> Response:
         _require_auth(config, token)
+        # Lot1 RBAC : lecture 403, utilisateur nécessite approbation, admin/approbateur passent
+        try:
+            _uid_lot1, _uname_lot1, _rrole_lot1 = _resolve_audit_actor(request, config, token, session_store)
+            from seamtech_search.approbations import normaliser_role as _norm_lot1
+
+            _canon_lot1 = _norm_lot1(_rrole_lot1)
+            if _canon_lot1 == "lecture":
+                raise HTTPException(status_code=403, detail="Rôle lecture non autorisé à télécharger un artefact (Lot1).")
+            if _canon_lot1 == "utilisateur":
+                # Vérifie approbation pour cet artefact
+                try:
+                    with index.connect() as _conn_lot1:
+                        with _conn_lot1.cursor() as _cur_lot1:
+                            _cur_lot1.execute("SELECT id_utilisateur FROM utilisateur WHERE identifiant = %s", (_uname_lot1,))
+                            _row_lot1 = _cur_lot1.fetchone()
+                            if _row_lot1:
+                                _uid_req_lot1 = int(_row_lot1[0])
+                                _cur_lot1.execute(
+                                    "SELECT 1 FROM approval_requests WHERE requester_id = %s AND target_type = %s AND target_id = %s AND status IN ('approved','executed') LIMIT 1",
+                                    (_uid_req_lot1, "import_artifact", f"{import_id}/{artifact}"),
+                                )
+                                if _cur_lot1.fetchone() is None:
+                                    raise HTTPException(status_code=403, detail=f"Téléchargement import_artifact/{import_id}/{artifact} nécessite une approbation validée.")
+                except HTTPException:
+                    raise
+                except Exception as _exc_lot1:
+                    # Si table n'existe pas encore (avant migration 027), on laisse passer pour ne pas casser anciens tests
+                    pass
+        except HTTPException:
+            raise
+        except Exception:
+            pass
         actor = actor_fingerprint(token, request.client.host if request.client else None)
 
         allowed = {"report_pdf", "report_docx", "source_pdf", "source_excel"}

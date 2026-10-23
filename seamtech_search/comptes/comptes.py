@@ -16,8 +16,9 @@ du cookie signé. Côté Python, ils ne sont honorés QUE si ``X-SEAMTECH-TOKEN`
 est valide sur la même requête : une requête qui porte l'attribution sans le
 jeton de service répond 401 (``resoudre_attribution``).
 
-Rôles : ``operateur`` (valide et corrige) et ``administrateur`` (gère les
-comptes). Toute autre valeur est refusée à la création.
+Rôles (Lot1) : ``admin`` (technique, pas d'approbation), ``lecture`` (lecture seule),
+``utilisateur`` (demande), ``approbateur`` (décide). Legacy ``operateur``→``utilisateur``,
+``administrateur``→``admin`` conservés pour compatibilité.
 """
 
 from __future__ import annotations
@@ -39,8 +40,12 @@ from .securite import (
 
 LOGGER = logging.getLogger("seamtech_search.comptes")
 
-ROLES = ("operateur", "administrateur")
-ROLE_DEFAUT = "operateur"
+# Lot1 — 4 rôles stricts + legacy pour compatibilité Lot0a/0b/2
+ROLES = ("admin", "lecture", "utilisateur", "approbateur", "operateur", "administrateur")
+ROLE_DEFAUT = "utilisateur"
+# Aliases legacy → canonique
+ROLE_ALIASES = {"operateur": "utilisateur", "administrateur": "admin"}
+ROLES_CANONIQUES = ("admin", "lecture", "utilisateur", "approbateur")
 DUREE_SESSION_DEFAUT_H = 8
 # Verrouillage des connexions : 5 échecs sur un identifiant en 5 minutes ⇒ 429
 # pendant 5 minutes. Demandé « souhaitable » par la mission, et donc implémenté.

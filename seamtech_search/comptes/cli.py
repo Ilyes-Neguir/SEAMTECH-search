@@ -97,7 +97,7 @@ def construire_analyseur() -> argparse.ArgumentParser:
     p_creer = sous.add_parser("creer", help="Crée un compte nominatif.")
     p_creer.add_argument("--identifiant", required=True)
     p_creer.add_argument("--nom", required=True)
-    p_creer.add_argument("--role", default="operateur", choices=("operateur", "administrateur"))
+    p_creer.add_argument("--role", default="utilisateur", choices=("admin", "lecture", "utilisateur", "approbateur", "operateur", "administrateur"))
     p_creer.add_argument(
         "--mot-de-passe-definitif",
         action="store_true",

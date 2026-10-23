@@ -22,6 +22,7 @@ const LIENS = [
   { href: "/validation", libelle: "Validation", icone: ClipboardCheck },
   { href: "/qualite", libelle: "Qualité", icone: BarChart3 },
   { href: "/gabarits", libelle: "Gabarits", icone: Shapes },
+  { href: "/approbations", libelle: "Approbations", icone: ClipboardCheck },
 ]
 
 type Action = "logout" | "logout-all"

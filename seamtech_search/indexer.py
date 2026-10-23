@@ -1246,6 +1246,39 @@ class SearchIndex:
                 # Re-lève pour que run_migrations logge 'Migration 026 failed' avec SQLSTATE/position
                 raise
 
+    def _migration_027_roles_approbations(self, connection: Any) -> None:
+        """027 — Lot 1 : 4 rôles + workflow d'approbation (approvals + notifications).
+
+        Crée approval_requests (demandes utilisateur->approbateur) + in_app_notifications.
+        Anti-auto-approbation vérifiée côté applicatif (SEAMTECH_ALLOW_SELF_APPROVAL).
+        Idempotent via IF NOT EXISTS, testée sur base vide/upgrade/rejeu.
+        PostgreSQL uniquement ; sur SQLite : warning, migration enregistrée.
+        """
+        if not self.is_postgres:
+            logger.warning(
+                "Migration 027_roles_approbations ignorée : la couche métier est PostgreSQL "
+                "uniquement — conséquence : aucun workflow d'approbation en mode SQLite."
+            )
+            return
+        with connection.cursor() as cursor:
+            # Découpe respectant les dollar-quotes pour diagnostic précis
+            stmts = schema_metier.split_sql_respecting_dollar_quote(
+                schema_metier.SQL_027_ROLES_APPROBATIONS
+            )
+            for idx_stmt, stmt in enumerate(stmts, start=1):
+                try:
+                    cursor.execute(stmt)
+                except Exception as exc_stmt:
+                    sqlstate = getattr(exc_stmt, "pgcode", None)
+                    diag = getattr(exc_stmt, "diag", None)
+                    primary = getattr(diag, "message_primary", None) if diag else None
+                    diag_msg = (
+                        f"027 diagnostic — instruction {idx_stmt}/{len(stmts)} "
+                        f"échec SQLSTATE={sqlstate} primary={primary!r} stmt={stmt[:800]!r} — original: {exc_stmt}"
+                    )
+                    logger.error(diag_msg, exc_info=True)
+                    raise RuntimeError(diag_msg) from exc_stmt
+
     def run_migrations(self) -> None:
         """Run pending schema migrations once at startup."""
         with self.connect() as connection:
@@ -1305,6 +1338,7 @@ class SearchIndex:
                 ("024_invalidation_sessions", self._migration_024_invalidation_sessions),
                 ("025_audit_logs", self._migration_025_audit_logs),
                 ("026_boat_models_and_aliases", self._migration_026_boat_models_and_aliases),
+                ("027_roles_approbations", self._migration_027_roles_approbations),
             ]
 
             for version, func in migrations:

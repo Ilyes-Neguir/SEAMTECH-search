@@ -26,7 +26,7 @@ from __future__ import annotations
 from typing import Any
 
 # Version du schéma métier — incrémentée à chaque nouvelle migration.
-VERSION_SCHEMA_METIER = "026_boat_models_and_aliases"
+VERSION_SCHEMA_METIER = "027_roles_approbations"
 
 # Marqueur injecté par le code au moment de la migration (constat 1 de revue) :
 # le nom de la configuration de recherche effective — 'seamtech_unaccent' ou
@@ -87,6 +87,9 @@ TABLES_METIER: tuple[str, ...] = (
     "search_synonyms",
     # 025 — Lot 0b : journal d'audit nominatif persistant
     "audit_logs",
+    # 027 — Lot 1 : rôles et workflow d'approbation (approvals + notifications)
+    "approval_requests",
+    "in_app_notifications",
 )
 
 SQL_006_FICHE_TECHNIQUE = """
@@ -1767,6 +1770,67 @@ CREATE INDEX IF NOT EXISTS idx_boat_models_aliases_join
     ON boat_model_aliases(boat_model_id, status);
 """
 
+# ---------------------------------------------------------------------------
+# 027 — Lot 1 : rôles et workflow d'approbation (4 rôles + demandes + notifs)
+# ---------------------------------------------------------------------------
+# Objectif Lot 1 — Règles d'or :
+# - 4 rôles stricts : admin (technique), lecture, utilisateur, approbateur
+#   Legacy operateur/administrateur conservés pour compatibilité (même droits que utilisateur/admin)
+# - Anti-auto-approbation : requester_id != approver_id si SEAMTECH_ALLOW_SELF_APPROVAL=false
+# - Tables approval_requests + in_app_notifications, idempotentes
+SQL_027_ROLES_APPROBATIONS = """
+-- 027_roles_approbations — Lot 1 : 4 rôles + workflow d'approbation in-app
+-- Rôle : pas de nouvelle colonne, la colonne utilisateur.role existe (006) ; la contrainte applicative est dans le code (ROLES)
+-- Tables : approval_requests + in_app_notifications
+
+CREATE TABLE IF NOT EXISTS approval_requests (
+    id              BIGSERIAL PRIMARY KEY,
+    requester_id    BIGINT NOT NULL REFERENCES utilisateur(id_utilisateur) ON DELETE CASCADE,
+    action_type     TEXT NOT NULL CHECK (action_type IN ('download_piece', 'download_artifact', 'modify_record', 'delete_record', 'update_item', 'delete_item')),
+    target_type     TEXT NOT NULL,
+    target_id       TEXT NOT NULL,
+    payload_json    JSONB NOT NULL DEFAULT '{}'::jsonb,
+    reason          TEXT,
+    status          TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected', 'executed', 'cancelled')),
+    approver_id     BIGINT REFERENCES utilisateur(id_utilisateur) ON DELETE SET NULL,
+    decision_note   TEXT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    decided_at      TIMESTAMPTZ,
+    executed_at     TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_approval_requests_requester ON approval_requests(requester_id);
+CREATE INDEX IF NOT EXISTS idx_approval_requests_status ON approval_requests(status);
+CREATE INDEX IF NOT EXISTS idx_approval_requests_target ON approval_requests(target_type, target_id);
+CREATE INDEX IF NOT EXISTS idx_approval_requests_created_at ON approval_requests(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_approval_requests_approver ON approval_requests(approver_id);
+
+COMMENT ON TABLE approval_requests IS 'Lot1 — demandes approbation: requester_id != approver_id si SEAMTECH_ALLOW_SELF_APPROVAL=false';
+COMMENT ON COLUMN approval_requests.action_type IS 'download_piece|download_artifact|modify_record|delete_record (alias update_item/delete_item)';
+COMMENT ON COLUMN approval_requests.status IS 'pending|approved|rejected|executed|cancelled';
+
+CREATE TABLE IF NOT EXISTS in_app_notifications (
+    id                  BIGSERIAL PRIMARY KEY,
+    recipient_user_id   BIGINT NOT NULL REFERENCES utilisateur(id_utilisateur) ON DELETE CASCADE,
+    user_id             BIGINT REFERENCES utilisateur(id_utilisateur) ON DELETE CASCADE,
+    type                TEXT NOT NULL,
+    title               TEXT NOT NULL,
+    body                TEXT,
+    message             TEXT,
+    link                TEXT,
+    link_url            TEXT,
+    is_read             BOOLEAN NOT NULL DEFAULT false,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_notifications_recipient ON in_app_notifications(recipient_user_id);
+CREATE INDEX IF NOT EXISTS idx_notifications_user_id ON in_app_notifications(user_id);
+CREATE INDEX IF NOT EXISTS idx_notifications_is_read ON in_app_notifications(is_read) WHERE is_read = false;
+CREATE INDEX IF NOT EXISTS idx_notifications_created_at ON in_app_notifications(created_at DESC);
+
+COMMENT ON TABLE in_app_notifications IS 'Lot1 — notifications in-app (approbateur <-> utilisateur)';
+"""
+
 def split_sql_respecting_dollar_quote(sql_text: str) -> list[str]:
     """Découpe un bloc SQL multi-statements en respectant les dollar-quotes.
 
@@ -1855,6 +1919,7 @@ MIGRATIONS_METIER: tuple[tuple[str, str], ...] = (
     ("024_invalidation_sessions", SQL_024_INVALIDATION_SESSIONS),
     ("025_audit_logs", SQL_025_AUDIT_LOGS),
     ("026_boat_models_and_aliases", SQL_026_BOAT_MODELS_AND_ALIASES),
+    ("027_roles_approbations", SQL_027_ROLES_APPROBATIONS),
 )
 
 

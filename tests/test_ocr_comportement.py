@@ -986,9 +986,9 @@ def test_migration_019_existe() -> None:
 def test_version_schema_et_tables() -> None:
     from seamtech_search.schema_metier import TABLES_METIER, VERSION_SCHEMA_METIER
 
-    assert VERSION_SCHEMA_METIER == "026_boat_models_and_aliases"
-    # 019-024 n'ajoutent pas de table (024 = colonne invalidation), 025 audit_logs (1), 026 ajoute 4 tables boat_models etc. → 38.
-    assert len(TABLES_METIER) == 38
+    assert VERSION_SCHEMA_METIER == "027_roles_approbations"
+    # 019-024 n'ajoutent pas de table (024 = colonne invalidation), 025 audit_logs (1), 026 ajoute 4 tables boat_models etc., 027 ajoute 2 tables approvals → 40.
+    assert len(TABLES_METIER) == 40
     assert "ocr_etage3" in TABLES_METIER
     assert "boat_models" in TABLES_METIER
     assert "search_synonyms" in TABLES_METIER

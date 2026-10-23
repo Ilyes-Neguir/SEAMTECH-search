@@ -90,8 +90,9 @@ def test_migrations_sur_base_vide(base_metier: dict[str, Any]) -> None:
     # d'attribution et les index ne créent rien) = 32,
     # +1 (017 : ocr_etage3 — staging OCR, jamais chunk/document) = 33,
     # +1 (025 : audit_logs) = 34,
-    # +4 (026 : boat_models, boat_model_aliases, boat_model_merge_history, search_synonyms) = 38.
-    assert len(schema_metier.TABLES_METIER) == 38
+    # +4 (026 : boat_models, boat_model_aliases, boat_model_merge_history, search_synonyms) = 38,
+    # +2 (027 : approval_requests, in_app_notifications) = 40.
+    assert len(schema_metier.TABLES_METIER) == 40
     print(f"\n[mesure] migrations 006-009 sur base vide : {base_metier['duree_migrations_s']:.2f} s")
 
 
@@ -116,8 +117,8 @@ def test_idempotence_rejeu_sans_erreur(base_metier: dict[str, Any]) -> None:
             nb_tables = int(cursor.fetchone()[0])
     assert apres == avant
     # pg_tables ne compte pas les vues (v_fiche_recherche, v_qualite).
-    # 38 métier (33 +1 etage3 +1 audit_logs +4 Lot2 boat_models) + 6 héritées = 44
-    assert nb_tables == len(schema_metier.TABLES_METIER) + len(TABLES_HERITEES) == 44
+    # 40 métier (33 +1 etage3 +1 audit_logs +4 Lot2 boat_models +2 Lot1 approvals) + 6 héritées = 46
+    assert nb_tables == len(schema_metier.TABLES_METIER) + len(TABLES_HERITEES) == 46
 
 
 @pytest.mark.postgres

@@ -157,14 +157,34 @@ def _session_authentifiee(
 
 
 def _exiger_administrateur(utilisateur: dict[str, Any]) -> dict[str, Any]:
-    """403 pour un opérateur identifié (401 est réservé à « non identifié »)."""
-    if utilisateur.get("role") != "administrateur":
+    """403 pour un non-admin (401 est réservé à « non identifié »). Lot1 : admin/administrateur."""
+    from ..approbations import normaliser_role as _norm
+
+    role_canon = _norm(utilisateur.get("role"))
+    if role_canon != "admin":
         raise HTTPException(
             status_code=403,
             detail=(
                 "Gestion des comptes réservée au rôle « administrateur » "
                 f"(rôle de la session : « {utilisateur.get('role')} »)."
             ),
+        )
+    return utilisateur
+
+
+def _role_canonique(utilisateur: dict[str, Any]) -> str:
+    from ..approbations import normaliser_role as _norm
+
+    return _norm(utilisateur.get("role"))
+
+
+def _exiger_role(utilisateur: dict[str, Any], roles_autorises: tuple[str, ...]) -> dict[str, Any]:
+    """RBAC serveur Lot1 : 403 si rôle non autorisé (masquer bouton ne suffit pas)."""
+    canon = _role_canonique(utilisateur)
+    if canon not in tuple(r.lower() for r in roles_autorises):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Rôle « {canon} » non autorisé pour cette action (requis : {', '.join(roles_autorises)}).",
         )
     return utilisateur
 
@@ -907,7 +927,159 @@ def enregistrer_routes_auth(app: Any, index: Any, config: Any, verifier_auth: An
         # Le test vérifie header Cache-Control: no-store
         return {"count": len(logs), "offset": offset, "limit": limit, "results": logs}
 
+    # -----------------------------------------------------------------------
+    # Lot 1 — RBAC + workflow d'approbation (027) : rôle & demandes
+    # -----------------------------------------------------------------------
+    @app.post("/api/admin/utilisateurs/{identifiant}/role")
+    def route_changer_role(
+        identifiant: str,
+        corps: dict[str, Any],
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+        entete_sid: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-SID")] = None,
+        entete_session: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION")] = None,
+        entete_jeton: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-JETON")] = None,
+    ) -> dict[str, Any]:
+        """Admin change le rôle d'un utilisateur → révocation immédiate + audit."""
+        administrateur = _admin(token, entete_sid, entete_session, entete_jeton)
+        _exiger_postgres(index)
+        nouveau_role = str(corps.get("role") or "").strip().lower()
+        from ..comptes.comptes import ROLES as _ROLES
 
+        if nouveau_role not in _ROLES:
+            raise HTTPException(status_code=422, detail=f"Rôle invalide : « {nouveau_role} » (attendu : {', '.join(_ROLES)})")
+        cible_id = id_utilisateur_par_identifiant(index, identifiant)
+        if cible_id is None:
+            raise HTTPException(status_code=404, detail=f"Utilisateur « {identifiant} » introuvable")
+        # Lecture rôle actuel pour audit
+        ancien = profil_utilisateur(index, int(cible_id))
+        ancien_role = str(ancien.get("role")) if ancien else "unknown"
+        # Mise à jour role + updated_at + sessions_invalidees_le (révocation durable Lot0a)
+        with index.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE utilisateur SET role = %s, sessions_invalidees_le = now() WHERE id_utilisateur = %s RETURNING id_utilisateur",
+                    (nouveau_role, int(cible_id)),
+                )
+                if cur.rowcount == 0:
+                    raise HTTPException(status_code=404, detail="Mise à jour impossible")
+        # Révocation Redis immédiate (Lot0a)
+        redis_revoquees = 0
+        try:
+            redis_revoquees = sessions.revoquer_toutes_sessions(int(cible_id))
+        except SessionStoreIndisponible as exc:
+            LOGGER.error("Changement rôle mais révocation Redis impossible : %s", exc)
+            raise HTTPException(status_code=503, detail=_DETAIL_REDIS) from exc
+        try:
+            record_audit_log(
+                index,
+                actor_user_id=administrateur.get("id_utilisateur"),
+                actor_username=str(administrateur.get("identifiant", "unknown")),
+                actor_role=str(administrateur.get("role", "unknown")),
+                action="ACCOUNT_ROLE_CHANGE",
+                target_type="utilisateur",
+                target_id=identifiant,
+                outcome="success",
+                details={"ancien_role": ancien_role, "nouveau_role": nouveau_role},
+            )
+        except Exception as exc:
+            LOGGER.debug("audit ACCOUNT_ROLE_CHANGE best-effort échoué: %s", exc)
+        return {"ok": True, "identifiant": identifiant, "ancien_role": ancien_role, "nouveau_role": nouveau_role, "sessions_redis_revoquees": redis_revoquees}
+
+    @app.post("/api/approvals")
+    def route_creer_approbation(
+        corps: dict[str, Any],
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+        entete_sid: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-SID")] = None,
+        entete_session: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION")] = None,
+        entete_jeton: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-JETON")] = None,
+    ) -> dict[str, Any]:
+        verifier_auth(config, token)
+        demandeur = _utilisateur_requete(index, sessions, entete_sid=entete_sid, entete_session=entete_session, entete_jeton=entete_jeton, inactivite_minutes=inactivite)
+        from ..approbations import creer_demande
+
+        return creer_demande(
+            index,
+            demandeur,
+            str(corps.get("action_type") or corps.get("action") or ""),
+            str(corps.get("target_type") or ""),
+            str(corps.get("target_id") or ""),
+            payload_json=corps.get("payload_json") if isinstance(corps.get("payload_json"), dict) else corps.get("payload"),
+            reason=corps.get("reason") or corps.get("motif"),
+        )
+
+    @app.get("/api/approvals")
+    def route_lister_approbations(
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+        entete_sid: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-SID")] = None,
+        entete_session: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION")] = None,
+        entete_jeton: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-JETON")] = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        verifier_auth(config, token)
+        utilisateur = _utilisateur_requete(index, sessions, entete_sid=entete_sid, entete_session=entete_session, entete_jeton=entete_jeton, inactivite_minutes=inactivite)
+        from ..approbations import lister_demandes
+
+        return lister_demandes(index, utilisateur, status=status)
+
+    @app.get("/api/approvals/{demande_id}")
+    def route_obtenir_approbation(
+        demande_id: int,
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+        entete_sid: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-SID")] = None,
+        entete_session: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION")] = None,
+        entete_jeton: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-JETON")] = None,
+    ) -> dict[str, Any]:
+        verifier_auth(config, token)
+        _utilisateur_requete(index, sessions, entete_sid=entete_sid, entete_session=entete_session, entete_jeton=entete_jeton, inactivite_minutes=inactivite)
+        from ..approbations import obtenir_demande
+
+        demande = obtenir_demande(index, int(demande_id))
+        if not demande:
+            raise HTTPException(status_code=404, detail=f"Demande {demande_id} introuvable")
+        return demande
+
+    @app.post("/api/approvals/{demande_id}/decide")
+    def route_decider_approbation(
+        demande_id: int,
+        corps: dict[str, Any],
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+        entete_sid: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-SID")] = None,
+        entete_session: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION")] = None,
+        entete_jeton: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-JETON")] = None,
+    ) -> dict[str, Any]:
+        verifier_auth(config, token)
+        approbateur = _utilisateur_requete(index, sessions, entete_sid=entete_sid, entete_session=entete_session, entete_jeton=entete_jeton, inactivite_minutes=inactivite)
+        from ..approbations import decider_demande
+
+        return decider_demande(index, approbateur, int(demande_id), str(corps.get("decision") or corps.get("action") or ""), decision_note=corps.get("decision_note") or corps.get("commentaire"), config=config)
+
+    @app.get("/api/notifications")
+    def route_lister_notifications(
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+        entete_sid: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-SID")] = None,
+        entete_session: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION")] = None,
+        entete_jeton: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-JETON")] = None,
+    ) -> list[dict[str, Any]]:
+        verifier_auth(config, token)
+        utilisateur = _utilisateur_requete(index, sessions, entete_sid=entete_sid, entete_session=entete_session, entete_jeton=entete_jeton, inactivite_minutes=inactivite)
+        from ..approbations import lister_notifications
+
+        return lister_notifications(index, utilisateur)
+
+    @app.post("/api/notifications/{notif_id}/read")
+    def route_marquer_notification_lue(
+        notif_id: int,
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+        entete_sid: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-SID")] = None,
+        entete_session: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION")] = None,
+        entete_jeton: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-JETON")] = None,
+    ) -> dict[str, Any]:
+        verifier_auth(config, token)
+        utilisateur = _utilisateur_requete(index, sessions, entete_sid=entete_sid, entete_session=entete_session, entete_jeton=entete_jeton, inactivite_minutes=inactivite)
+        from ..approbations import marquer_notification_lue
+
+        marquer_notification_lue(index, utilisateur, int(notif_id))
+        return {"ok": True, "id": int(notif_id)}
 
     @app.post("/auth/utilisateurs/{identifiant}/mot-de-passe")
     def route_reinitialiser_mot_de_passe(
