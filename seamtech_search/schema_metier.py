@@ -1852,14 +1852,14 @@ CREATE TABLE IF NOT EXISTS sail_extractions (
     extraction_status       TEXT NOT NULL DEFAULT 'pending' CHECK (extraction_status IN ('pending', 'completed', 'failed', 'needs_review')),
     extraction_method       TEXT NOT NULL DEFAULT 'regex_rules' CHECK (extraction_method IN ('regex_rules', 'llm_assist', 'manual')),
 
-    -- Données extraites (extraits bruts tels que trouvés ; normalisés côté applicatif)
+    -- Donnees extraites (extraits bruts tels que trouves, normalises cote applicatif)
     sail_type_raw           TEXT,
     sail_type_normalized    TEXT,
     boat_model_raw          TEXT,
     boat_model_id           BIGINT REFERENCES boat_models(id) ON DELETE SET NULL,
     material_raw            TEXT,
 
-    -- Dimensions : lues brutes, converties en cm en applicatif ; on stocke cm entiers
+    -- Dimensions : lues brutes, converties en cm en applicatif - on stocke cm entiers
     luff_length_cm          INTEGER,
     leech_length_cm         INTEGER,
     foot_length_cm          INTEGER,
