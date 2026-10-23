@@ -138,4 +138,4 @@ Implémentation bloquée jusqu'à cette matrice ; tests IDOR non-régression (`A
 
 ---
 
-*Fichier généré pour handoff revue indépendante — SHA gelé `d68842b92e793468a196d7058ab578b7a98e3cb9` (code `de62c4f`). Ne pas déclarer ILY-10 Done avant revue.*
+*Handoff mis à jour revue indépendante 2026-10-23 — SHA gelé `ed256e1e6e4076e46760fb84faba6ef3c758394b` (code strict S3 + Lot1 corrigé). 4/4 verts `39955146049/026/025/014`. Ne pas déclarer ILY-10 Done avant revue + décisions A/B.*
