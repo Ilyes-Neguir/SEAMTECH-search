@@ -184,6 +184,11 @@ def test_audit_s3_piece_et_artifact_minio(tmp_path: Path):
     contenu_piece = b"%PDF-1.4 S3 proof piece " + uuid.uuid4().hex.encode()
     contenu_artifact = b"%PDF-1.4 artifact proof " + uuid.uuid4().hex.encode()
 
+    def _annotate(msg: str):
+        # GitHub annotation visible via API even when log blob is unreachable
+        print(f"::error title=s3-audit::{msg[:1500].replace(chr(10), ' | ')}")
+        print(f"[s3-audit] {msg}")
+
     try:
         assert access != "minioadmin", f"identité applicative ne doit pas être admin, got {access}"
         s3_client = S3StorageClient(
@@ -218,14 +223,21 @@ def test_audit_s3_piece_et_artifact_minio(tmp_path: Path):
         with index.connect() as conn:
             with conn.cursor() as cur:
                 path_key = f"s3://{bucket}/{remote_key_piece}"
-                cur.execute(
-                    "INSERT INTO documents (path_key, path, name, parent_path, extension, size, modified_at, is_dir, object_key, object_bucket) "
-                    "VALUES (%s,%s,%s,%s,%s,%s,%s, FALSE, %s, %s) RETURNING id",
-                    (path_key, str(local_pdf), "s3_piece.pdf", str(tmp_path), ".pdf", len(contenu_piece), time.time(), remote_key_piece, bucket),
-                )
-                piece_id = int(cur.fetchone()[0])
+                try:
+                    cur.execute(
+                        "INSERT INTO documents (path_key, path, name, parent_path, extension, size, modified_at, is_dir, object_key, object_bucket) "
+                        "VALUES (%s,%s,%s,%s,%s,%s,%s, FALSE, %s, %s) RETURNING id",
+                        (path_key, str(local_pdf), "s3_piece.pdf", str(tmp_path), ".pdf", len(contenu_piece), time.time(), remote_key_piece, bucket),
+                    )
+                    piece_id = int(cur.fetchone()[0])
+                except Exception as e:
+                    _annotate(f"INSERT document piece failed: {e}")
+                    raise
 
         resp_dl = client.get(f"/pieces/{piece_id}/telecharger", headers={"X-SEAMTECH-TOKEN": JETON_SERVICE, "X-SEAMTECH-SESSION-SID": sid})
+        print(f"[s3-audit] PIECE telecharger status={resp_dl.status_code} headers={dict(resp_dl.headers)} len={len(resp_dl.content) if hasattr(resp_dl, 'content') else 'n/a'}")
+        if resp_dl.status_code not in (200, 302):
+            _annotate(f"PIECE S3 status {resp_dl.status_code}: {resp_dl.text[:500]}")
         assert resp_dl.status_code in (200, 302), f"PIECE S3 status {resp_dl.status_code}: {resp_dl.text[:500]}"
         # Si 200, vérifier les octets (S3 download) ; si 302, vérifier que l'URL est présignée et pointe vers le bon bucket/key
         # Tolérance octet/nosniff : en CI l'octet exact peut varier selon headers/proxy, on log un warn sans faire échouer.
@@ -236,6 +248,8 @@ def test_audit_s3_piece_et_artifact_minio(tmp_path: Path):
                 print(f"[warn] X-Content-Type-Options manquant PIECE: {resp_dl.headers.get('X-Content-Type-Options')}")
         else:
             loc = resp_dl.headers.get("location", "") or resp_dl.headers.get("Location", "")
+            if not (remote_key_piece in loc or bucket in loc):
+                _annotate(f"302 PIECE location ne contient pas key/bucket: loc={loc} key={remote_key_piece}")
             assert remote_key_piece in loc or bucket in loc, f"302 location ne contient pas le S3 key/bucket: {loc}"
 
         # Vérif audit PIECE_DOWNLOAD complet
@@ -246,12 +260,19 @@ def test_audit_s3_piece_et_artifact_minio(tmp_path: Path):
                     (str(piece_id),),
                 )
                 row = cur.fetchone()
+                print(f"[s3-audit] PIECE audit row={row}")
+                if row is None:
+                    _annotate(f"PIECE_DOWNLOAD S3 non journalisé piece_id={piece_id}")
                 assert row is not None, "PIECE_DOWNLOAD S3 non journalisé"
+                if row[0] != created["id_utilisateur"]:
+                    _annotate(f"actor_user_id PIECE mismatch: got {row[0]} expected {created['id_utilisateur']} row={row}")
                 assert row[0] == created["id_utilisateur"], f"actor_user_id PIECE: {row}"
                 assert row[1] == "admin_s3" and row[2] == "administrateur", f"actor PIECE: {row}"
                 assert row[3] == "PIECE_DOWNLOAD" and row[4] == "success", f"outcome PIECE: {row}"
                 assert row[5] == "piece" and row[6] == str(piece_id), f"target PIECE: {row}"
                 # ip_address doit être présent (TestClient => testclient) : row[8] est ip_address, row[7] details_json
+                if row[8] is None:
+                    _annotate(f"PIECE ip_address None row={row}")
                 assert row[8] is not None
                 assert row[7] is not None
 
@@ -276,12 +297,17 @@ def test_audit_s3_piece_et_artifact_minio(tmp_path: Path):
         update_job(index, job_id, status="done", stage="done", result=result_payload)
 
         resp_art = client.get(f"/imports/{job_id}/artifacts/report_pdf", headers={"X-SEAMTECH-TOKEN": JETON_SERVICE, "X-SEAMTECH-SESSION-SID": sid})
+        print(f"[s3-audit] ARTIFACT status={resp_art.status_code} len={len(resp_art.content) if hasattr(resp_art, 'content') else 'n/a'}")
+        if resp_art.status_code not in (200, 302):
+            _annotate(f"ARTIFACT S3 status {resp_art.status_code}: {resp_art.text[:500]}")
         assert resp_art.status_code in (200, 302), f"ARTIFACT S3 status {resp_art.status_code}: {resp_art.text[:500]}"
         if resp_art.status_code == 200:
             if resp_art.content != contenu_artifact:
                 print(f"[warn] octets ARTIFACT via S3 diffèrent: got {len(resp_art.content)} vs {len(contenu_artifact)}")
         else:
             loc = resp_art.headers.get("location", "") or resp_art.headers.get("Location", "")
+            if not (remote_key_artifact in loc or bucket in loc):
+                _annotate(f"302 ARTIFACT location sans key/bucket: loc={loc}")
             assert remote_key_artifact in loc or bucket in loc, f"302 ARTIFACT location sans key: {loc}"
 
         with index.connect() as conn:
