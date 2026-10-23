@@ -631,7 +631,8 @@ def test_audit_s3_piece_et_artifact_minio(tmp_path: Path):
             try:
                 resp_logout = client.post(
                     "/auth/deconnexion",
-                    headers={"X-SEAMTECH-TOKEN": JETON_SERVICE, "X-SEAMTECH-SESSION-SID": sid_to_revoke},
+                    json={"sid": sid_to_revoke},
+                    headers={"X-SEAMTECH-TOKEN": JETON_SERVICE},
                 )
                 if resp_logout.status_code != 200:
                     cleanup_errors.append(f"logout status {resp_logout.status_code}: {_redact(resp_logout.text[:200])}")

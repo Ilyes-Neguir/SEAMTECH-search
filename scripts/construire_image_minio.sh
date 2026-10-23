@@ -89,7 +89,8 @@ _reessayer "docker build ${IMAGE}" docker build -t "$IMAGE" -f "$TRAVAIL/Dockerf
 # envoyait SIGPIPE à `docker run` (exit 141, course aléatoire constatée en CI).
 docker run --rm --entrypoint /usr/bin/minio "$IMAGE" --help >/dev/null
 alias_list="$(docker run --rm --entrypoint /usr/bin/mc "$IMAGE" alias list 2>&1)"
-echo "$alias_list"
+# Expurge secrets : ne jamais afficher AccessKey/SecretKey en clair (mc alias list contient play.min.io demo creds + local)
+echo "$alias_list" | sed -E 's/(AccessKey|SecretKey)[[:space:]]*:[[:space:]]*[^[:space:]]+/\1: [redacted]/g'
 case "$alias_list" in
   *local*) : ;;
   *)

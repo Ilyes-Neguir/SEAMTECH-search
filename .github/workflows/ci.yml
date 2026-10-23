@@ -747,6 +747,19 @@ jobs:
       SEAMTECH_BACKUP_SECRET_KEY: ci-backup-secret-not-for-production
     steps:
       - uses: actions/checkout@v7
+      - name: Mask test secrets for diagnostics criterion (add-mask)
+        run: |
+          echo "::add-mask::test_password"
+          echo "::add-mask::redis_test_password"
+          echo "::add-mask::minioadmin"
+          echo "::add-mask::minioadmin123"
+          echo "::add-mask::test-token-123"
+          echo "::add-mask::ci-ui-password"
+          echo "::add-mask::ci-session-secret-not-for-production"
+          echo "::add-mask::ci-app-secret-not-for-production"
+          echo "::add-mask::ci-backup-secret-not-for-production"
+          echo "::add-mask::seamtech-app-ci"
+          echo "::add-mask::seamtech-sauvegarde-ci"
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
