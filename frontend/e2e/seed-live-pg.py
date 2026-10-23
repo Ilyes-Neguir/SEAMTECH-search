@@ -231,6 +231,42 @@ def semer_doublon(idx) -> None:
         )
 
 
+def semer_fiche_valide_recherche(idx) -> None:
+    """Crée une fiche VALIDE stable pour la recherche badge, sans toucher 7792-SO.
+
+    Contexte : `recherche-badge.spec.ts:10` traitait 7792-SO comme `CODE_VALIDEE`
+    (sans badge) alors que `validation.spec.ts` documente que le seed crée
+    7792-SO en `a_valider` puis la valide plus tard. Sur la même base partagée,
+    les deux attentes ne peuvent coexister ; le locator `hasText` aggravait
+    l’ambiguïté (le bandeau de doublon de BIS-7792 cite 7792-SO). On préserve
+    7792-SO en `a_valider` pour son parcours machine et on fournit une fiche
+    réellement `valide` et stable, non consommée par la validation.
+
+    Code choisi : 7792-RECH-VALIDE (contient 7792 pour q=7792, distinct de
+    7792-SO et BIS-7792, ne sera jamais validé par la file).
+    """
+    CODE_RECH_VALIDE = "7792-RECH-VALIDE"
+    with idx.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1 FROM fiche WHERE code = %s", (CODE_RECH_VALIDE,))
+            if cur.fetchone() is not None:
+                return
+            cur.execute("SELECT id_fiche FROM fiche WHERE code = %s", ("7792-SO",))
+            ligne = cur.fetchone()
+            if ligne is None:
+                print("Seed e2e : fiche 7792-SO absente — la fiche valide de recherche ne peut pas être semée.", file=sys.stderr)
+                sys.exit(1)
+            id_source = int(ligne[0])
+            id_nouveau = _copier_lignes(cur, "fiche", id_source, exclusions=("id_fiche", "code", "statut"), surcharges={"code": CODE_RECH_VALIDE, "statut": "valide"})
+            _copier_lignes(cur, "fiche_champ_extrait", id_source, exclusions=("id_champ", "id_fiche"), id_fiche=id_nouveau)
+            # Pièce optionnelle mais utile pour la cohérence des données
+            try:
+                _copier_lignes(cur, "fiche_piece_jointe", id_source, exclusions=("id_piece", "id_fiche"), id_fiche=id_nouveau)
+            except Exception:
+                pass
+    print(f"Seed e2e : fiche {CODE_RECH_VALIDE} (valide) créée pour la recherche badge.", file=sys.stderr)
+
+
 def semer_comptes(idx) -> None:
     """Crée les deux comptes nominatifs de l'e2e (Lot L.2).
 
@@ -334,6 +370,7 @@ def main() -> None:
             codes[dossier] = str(resultat.get("fiche"))
         semer_piece_distincte(idx, codes["CLIENT-E2E-TROIS"])
         semer_doublon(idx)
+        semer_fiche_valide_recherche(idx)
         semer_comptes(idx)
         idx.close()
 

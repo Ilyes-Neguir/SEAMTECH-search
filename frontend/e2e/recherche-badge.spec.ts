@@ -4,10 +4,11 @@ import { signIn } from "./helpers"
 // Contrat 2026-09-29 (production-readiness Phase 2.1) : les fiches A_VALIDER
 // sont cherchables PAR DÉFAUT, badgées « Non vérifiée » ; le filtre « Validées
 // uniquement » (inclure_a_valider=false) les retire. Le statut n'est jamais
-// masqué. Données : le seed crée BIS-7792 (copie a_valider de 7792-SO).
+// masqué. Données : le seed crée BIS-7792 (a_valider, copie de 7792-SO) et
+// 7792-RECH-VALIDE (valide, stable, non consommée par la validation).
 
 const CODE_A_VALIDER = "BIS-7792"
-const CODE_VALIDEE = "7792-SO"
+const CODE_VALIDEE = "7792-RECH-VALIDE"
 
 test.describe("Recherche — badge « Non vérifiée » et archive de confiance", () => {
   // e2e « live » : la recherche de fiches exige PostgreSQL (503 en SQLite) et
@@ -19,13 +20,13 @@ test.describe("Recherche — badge « Non vérifiée » et archive de confiance"
     await page.goto("/recherche?q=7792")
 
     // Par défaut : la fiche a_valider EST présente, avec son badge.
-    const ligneAValider = page.locator("li", { hasText: CODE_A_VALIDER }).first()
+    const ligneAValider = page.locator(`li[data-code="${CODE_A_VALIDER}"]`)
     await expect(ligneAValider).toBeVisible({ timeout: 15000 })
     await expect(ligneAValider.getByTestId("badge-non-verifiee")).toBeVisible()
     await expect(ligneAValider).toContainText("Non vérifiée")
 
     // La fiche validée, elle, ne porte PAS de badge.
-    const ligneValidee = page.locator("li", { hasText: CODE_VALIDEE }).first()
+    const ligneValidee = page.locator(`li[data-code="${CODE_VALIDEE}"]`)
     await expect(ligneValidee).toBeVisible({ timeout: 15000 })
     await expect(ligneValidee.getByTestId("badge-non-verifiee")).toHaveCount(0)
 
@@ -33,7 +34,7 @@ test.describe("Recherche — badge « Non vérifiée » et archive de confiance"
     const caseArchive = page.getByTestId("case-validees-uniquement")
     await expect(caseArchive).toBeVisible()
     await caseArchive.check()
-    await expect(page.locator("li", { hasText: CODE_A_VALIDER })).toHaveCount(0, { timeout: 15000 })
+    await expect(page.locator(`li[data-code="${CODE_A_VALIDER}"]`)).toHaveCount(0, { timeout: 15000 })
     await expect(ligneValidee).toBeVisible()
     // …et l'état est partageable dans l'URL.
     await expect(page).toHaveURL(/inclure_a_valider=false/, { timeout: 5000 })
@@ -41,7 +42,7 @@ test.describe("Recherche — badge « Non vérifiée » et archive de confiance"
 
     // Décocher ré-affiche la fiche badgée (l'état n'est jamais caché).
     await caseArchive.uncheck()
-    await expect(page.locator("li", { hasText: CODE_A_VALIDER }).first()).toBeVisible({ timeout: 15000 })
-    await expect(page.locator("li", { hasText: CODE_A_VALIDER }).first().getByTestId("badge-non-verifiee")).toBeVisible()
+    await expect(page.locator(`li[data-code="${CODE_A_VALIDER}"]`)).toBeVisible({ timeout: 15000 })
+    await expect(page.locator(`li[data-code="${CODE_A_VALIDER}"]`).getByTestId("badge-non-verifiee")).toBeVisible()
   })
 })

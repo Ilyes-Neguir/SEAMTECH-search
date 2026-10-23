@@ -774,7 +774,7 @@ export function RechercheFichesApp({ assistantActif = true }: { assistantActif?:
               )}
               <ul className="space-y-2">
                 {reponse.resultats.map((fiche, position) => (
-                  <li key={`${fiche.code ?? position}`}>
+                  <li key={`${fiche.code ?? position}`} data-code={fiche.code ?? ""}>
                     <article className="rounded-lg border border-border bg-background/60 px-4 py-3">
                       <div className="flex flex-wrap items-baseline gap-2">
                         {fiche.code ? <Link href={`/fiches/${encodeURIComponent(fiche.code)}`} className="font-mono text-xs text-primary underline-offset-2 hover:underline" aria-label={`Ouvrir la fiche ${fiche.code}`}>{fiche.code}</Link> : <span className="font-mono text-xs text-muted-foreground">—</span>}
