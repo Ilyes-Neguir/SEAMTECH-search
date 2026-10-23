@@ -12,7 +12,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 
 from .comparaison import comparer_sails, fetch_sail, inserer_comparaison
-from .comptes.comptes import normaliser_role
+from .approbations import normaliser_role
 from .confiance import fetch_evaluation, upsert_evaluation
 from .extraction import extraire_sail, inserer_extraction, lister_extractions_par_document
 from .linking import attacher_extraction, corriger_extraction, lister_extractions_a_valider

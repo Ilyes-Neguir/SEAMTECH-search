@@ -78,10 +78,12 @@ def creer_demande(
     action_canonique = ACTION_ALIASES.get(action_type, action_type)
     if not target_type or not target_id:
         raise HTTPException(status_code=422, detail="target_type et target_id requis")
-    # RBAC serveur : seul utilisateur peut créer une demande
+    # RBAC serveur : seul utilisateur peut créer une demande (lecture => 453 specifique Lot1)
     role_canon = normaliser_role(requester.get("role"))
+    if role_canon == "lecture":
+        raise HTTPException(status_code=453, detail=f"Rôle « {role_canon} » non autorisé à créer une demande (seul utilisateur peut demander).")
     if role_canon != "utilisateur":
-        raise HTTPException(status_code=403, detail=f"Rôle « {role_canon} » non autorisé à créer une demande (seul utilisateur peut demander).")
+        raise HTTPException(status_code=453, detail=f"Rôle « {role_canon} » non autorisé à créer une demande (seul utilisateur peut demander).")
     payload_json = payload_json if isinstance(payload_json, dict) else {}
     requester_id = int(requester.get("id_utilisateur") or requester.get("id") or 0)
     if not requester_id:
@@ -179,9 +181,9 @@ def lister_demandes(index: Any, utilisateur: dict[str, Any], status: str | None 
         where.append("requester_id = %s")
         params.append(uid)
     elif role_canon == "lecture":
-        raise HTTPException(status_code=403, detail="Rôle lecture non autorisé à lister les demandes.")
+        raise HTTPException(status_code=453, detail="Rôle lecture non autorisé à lister les demandes.")
     else:
-        raise HTTPException(status_code=403, detail=f"Rôle « {role_canon} » non autorisé.")
+        raise HTTPException(status_code=453, detail=f"Rôle « {role_canon} » non autorisé.")
 
     sql = "SELECT id, requester_id, action_type, target_type, target_id, payload_json, reason, status, approver_id, decision_note, created_at, decided_at, executed_at FROM approval_requests"
     if where:
@@ -254,7 +256,7 @@ def decider_demande(
     _verifier_postgres(index)
     role_canon = normaliser_role(approbateur.get("role"))
     if role_canon != "approbateur":
-        raise HTTPException(status_code=403, detail=f"Rôle « {role_canon} » non autorisé à décider (seul approbateur peut approuver/refuser).")
+        raise HTTPException(status_code=453, detail=f"Rôle « {role_canon} » non autorisé à décider (seul approbateur peut approuver/refuser).")
     decision = str(decision or "").strip().lower()
     if decision not in ("approve", "approved", "reject", "rejected"):
         raise HTTPException(status_code=422, detail="decision doit être approve ou reject")
@@ -269,7 +271,7 @@ def decider_demande(
     if demande["status"] != "pending":
         raise HTTPException(status_code=409, detail=f"Demande {demande_id} déjà décidée (statut {demande['status']})")
     if not allow_self and int(demande["requester_id"]) == approbateur_id:
-        raise HTTPException(status_code=403, detail="Auto-approbation interdite (demandeur == approbateur, SEAMTECH_ALLOW_SELF_APPROVAL=false)")
+        raise HTTPException(status_code=453, detail="Auto-approbation interdite (demandeur == approbateur, SEAMTECH_ALLOW_SELF_APPROVAL=false)")
 
     with index.connect() as conn:
         with conn.cursor() as cur:

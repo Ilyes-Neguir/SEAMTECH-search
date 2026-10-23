@@ -106,10 +106,10 @@ def _cree_piece_pour_download(tmp_path: Path, index: SearchIndex) -> int:
                 (code_fiche, "Fiche Lot1", id_type, id_client, id_bateau),
             )
             id_fiche = cur.fetchone()[0]
-            # documents + fiche_piece_jointe
+            # documents + fiche_piece_jointe (Postgres: parent_path + modified_at + is_dir)
             cur.execute(
-                "INSERT INTO documents (path, path_key, parent, name, extension, size, mtime, content, search_vector) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, ''::tsvector) RETURNING id",
-                (str(pdf_path), str(pdf_path).lower(), str(tmp_path), pdf_path.name, ".pdf", 123, 0, "fake"),
+                "INSERT INTO documents (path_key, path, name, parent_path, extension, size, modified_at, is_dir, content, search_vector) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, ''::tsvector) RETURNING id",
+                (str(pdf_path).lower(), str(pdf_path), pdf_path.name, str(tmp_path), ".pdf", 123, 0, False, "fake"),
             )
             id_doc = cur.fetchone()[0]
             cur.execute(
