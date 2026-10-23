@@ -23,6 +23,9 @@ const LIENS = [
   { href: "/qualite", libelle: "Qualité", icone: BarChart3 },
   { href: "/gabarits", libelle: "Gabarits", icone: Shapes },
   { href: "/approbations", libelle: "Approbations", icone: ClipboardCheck },
+  { href: "/extractions", libelle: "Extractions", icone: FilePlus2 },
+  { href: "/compare", libelle: "Comparer", icone: Shapes },
+  { href: "/confiance", libelle: "Confiance", icone: BarChart3 },
 ]
 
 type Action = "logout" | "logout-all"

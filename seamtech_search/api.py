@@ -254,6 +254,8 @@ def create_app(config: AppConfig) -> FastAPI:
     # Eager init for TestClient usage that does not trigger lifespan, but health
     # itself remains read-only (does not call initialize).
     _initialize_schema(index, "app construction")
+    # Expose index for routes that use app.state.index (Lots 3a/4b/5)
+    app.state.index = index  # type: ignore[attr-defined]
 
     request_timestamps: dict[str, list[float]] = defaultdict(list)
     rate_limit_lock = asyncio.Lock()
@@ -1545,6 +1547,16 @@ def create_app(config: AppConfig) -> FastAPI:
     from seamtech_search.comptes.routes import enregistrer_routes_auth
 
     enregistrer_routes_auth(app, index, config, _require_auth)
+
+    # Lots 3a/3b/4b/5 : extraction structurée, rattachement, comparaison, confiance
+    try:
+        from seamtech_search.extractions_routes import register_extraction_routes
+
+        register_extraction_routes(app)
+    except Exception as exc:
+        import logging as _logging
+
+        _logging.getLogger("seamtech.api").warning("Routes extraction indisponibles : %s", exc)
 
     if optionnels_actifs:
         from seamtech_search.ml.routes import enregistrer_routes_ml
