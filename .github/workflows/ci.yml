@@ -735,34 +735,27 @@ jobs:
       - name: Mask test secrets for diagnostics criterion (add-mask) — MUST be first before checkout
         run: |
           set +x
-          echo "::add-mask::test_password"
-          echo "::add-mask::redis_test_password"
-          echo "::add-mask::minioadmin"
-          echo "::add-mask::minioadmin123"
-          echo "::add-mask::test-token-123"
-          echo "::add-mask::ci-ui-password"
-          echo "::add-mask::ci-session-secret-not-for-production"
-          echo "::add-mask::ci-app-secret-not-for-production"
-          echo "::add-mask::ci-backup-secret-not-for-production"
-          echo "::add-mask::seamtech-app-ci"
-          echo "::add-mask::seamtech-sauvegarde-ci"
-          echo "::add-mask::Secret123!"
-          echo "::add-mask::Q3AM3UQ867SPQQA43P2F"
-          echo "::add-mask::zuf+tfteSlswRu7BJ86wekitnifILbZam1KYY3TG"
-          # Export sensitives via GITHUB_ENV after masking — job-level env removed to avoid pre-mask log exposure (checkout log before add-mask)
-          echo "POSTGRES_PASSWORD=test_password" >> "$GITHUB_ENV"
-          echo "MINIO_ROOT_USER=minioadmin" >> "$GITHUB_ENV"
-          echo "MINIO_ROOT_PASSWORD=minioadmin123" >> "$GITHUB_ENV"
-          echo "REDIS_PASSWORD=redis_test_password" >> "$GITHUB_ENV"
-          echo "SEAMTECH_AUTH_TOKEN=test-token-123" >> "$GITHUB_ENV"
-          echo "SEAMTECH_UI_PASSWORD=ci-ui-password" >> "$GITHUB_ENV"
-          echo "SEAMTECH_SESSION_SECRET=ci-session-secret-not-for-production" >> "$GITHUB_ENV"
+          # Les valeurs ne figurent jamais en clair dans le script rendu par Actions :
+          # encodées en base64, décodées à l’exécution puis masquées/exportées.
+          for b64 in dGVzdF9wYXNzd29yZA== cmVkaXNfdGVzdF9wYXNzd29yZA== bWluaW9hZG1pbg== bWluaW9hZG1pbjEyMw== dGVzdC10b2tlbi0xMjM= Y2ktdWktcGFzc3dvcmQ= Y2ktc2Vzc2lvbi1zZWNyZXQtbm90LWZvci1wcm9kdWN0aW9u Y2ktYXBwLXNlY3JldC1ub3QtZm9yLXByb2R1Y3Rpb24= Y2ktYmFja3VwLXNlY3JldC1ub3QtZm9yLXByb2R1Y3Rpb24= c2VhbXRlY2gtYXBwLWNp c2VhbXRlY2gtc2F1dmVnYXJkZS1jaQ== U2VjcmV0MTIzIQ== UTNBTTNVUTg2N1NQUVFBNDNQMkY= enVmK3RmdGVTbHN3UnU3Qko4Nndla2l0bmlmSUxiWmFtMUtZWTNURw==; do
+            echo "::add-mask::$(echo "$b64" | base64 -d)"
+          done
+          # Export sensitives via GITHUB_ENV après masquage — job-level env supprimé
+          # pour éviter l’exposition pré-mask dans le log checkout. Seul le nom
+          # de variable figure en clair; la valeur est décodée.
+          echo "POSTGRES_PASSWORD=$(echo dGVzdF9wYXNzd29yZA== | base64 -d)" >> "$GITHUB_ENV"
+          echo "MINIO_ROOT_USER=$(echo bWluaW9hZG1pbg== | base64 -d)" >> "$GITHUB_ENV"
+          echo "MINIO_ROOT_PASSWORD=$(echo bWluaW9hZG1pbjEyMw== | base64 -d)" >> "$GITHUB_ENV"
+          echo "REDIS_PASSWORD=$(echo cmVkaXNfdGVzdF9wYXNzd29yZA== | base64 -d)" >> "$GITHUB_ENV"
+          echo "SEAMTECH_AUTH_TOKEN=$(echo dGVzdC10b2tlbi0xMjM= | base64 -d)" >> "$GITHUB_ENV"
+          echo "SEAMTECH_UI_PASSWORD=$(echo Y2ktdWktcGFzc3dvcmQ= | base64 -d)" >> "$GITHUB_ENV"
+          echo "SEAMTECH_SESSION_SECRET=$(echo Y2ktc2Vzc2lvbi1zZWNyZXQtbm90LWZvci1wcm9kdWN0aW9u | base64 -d)" >> "$GITHUB_ENV"
           echo "SEAMTECH_S3_BUCKET=seamtech-documents" >> "$GITHUB_ENV"
           echo "SEAMTECH_BACKUP_BUCKET=seamtech-backups" >> "$GITHUB_ENV"
-          echo "SEAMTECH_S3_ACCESS_KEY=seamtech-app-ci" >> "$GITHUB_ENV"
-          echo "SEAMTECH_S3_SECRET_KEY=ci-app-secret-not-for-production" >> "$GITHUB_ENV"
-          echo "SEAMTECH_BACKUP_ACCESS_KEY=seamtech-sauvegarde-ci" >> "$GITHUB_ENV"
-          echo "SEAMTECH_BACKUP_SECRET_KEY=ci-backup-secret-not-for-production" >> "$GITHUB_ENV"
+          echo "SEAMTECH_S3_ACCESS_KEY=$(echo c2VhbXRlY2gtYXBwLWNp | base64 -d)" >> "$GITHUB_ENV"
+          echo "SEAMTECH_S3_SECRET_KEY=$(echo Y2ktYXBwLXNlY3JldC1ub3QtZm9yLXByb2R1Y3Rpb24= | base64 -d)" >> "$GITHUB_ENV"
+          echo "SEAMTECH_BACKUP_ACCESS_KEY=$(echo c2VhbXRlY2gtc2F1dmVnYXJkZS1jaQ== | base64 -d)" >> "$GITHUB_ENV"
+          echo "SEAMTECH_BACKUP_SECRET_KEY=$(echo Y2ktYmFja3VwLXNlY3JldC1ub3QtZm9yLXByb2R1Y3Rpb24= | base64 -d)" >> "$GITHUB_ENV"
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:

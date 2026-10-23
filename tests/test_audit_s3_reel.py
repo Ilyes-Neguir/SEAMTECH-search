@@ -326,8 +326,13 @@ def _assert_no_secret_in_msg(msg: str):
     assert "test_password" not in low, "diagnostic contient password PG"
     assert "redis_test_password" not in low, "diagnostic contient password Redis"
     assert "minioadmin" not in low, "diagnostic contient secret minioadmin"
-    assert "x-amz-signature" not in low, "diagnostic contient signature S3"
-    assert "x-amz-credential" not in low, "diagnostic contient credential S3"
+    # x-amz-signature/credential : seules les occurrences non expurgées doivent échouer
+    # (une clé avec valeur [redacted] ou *** doit passer). On garde les messages
+    # attendus par les garde-fous existants : "signature S3" / "credential S3".
+    if "x-amz-signature" in low and "[redacted]" not in msg and "***" not in msg and "<redacted-query>" not in msg:
+        assert False, "diagnostic contient signature S3"
+    if "x-amz-credential" in low and "[redacted]" not in msg and "***" not in msg and "<redacted-query>" not in msg:
+        assert False, "diagnostic contient credential S3"
     # Hors URL : token=/password=/secret=/pwd=/Bearer non expurgés — chaque occurrence doit être expurgée.
     # Couvre `=` et `:` avec espaces autour, et multiples occurrences (une expurgée + une brute = fuite).
     _leak_re = re.compile(

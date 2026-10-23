@@ -664,12 +664,36 @@ def test_ci_fournit_au_provisionnement_toutes_les_variables_exigees() -> None:
     verifiees = 0
     for nom_job, job in (_workflow().get("jobs") or {}).items():
         env_job = job.get("env") or {}
-        for etape in _etapes_avec_provisionnement(job):
-            verifiees += 1
-            effectif = {**env_job, **(etape.get("env") or {})}
-            for variable in VARIABLES_EXIGEES_PAR_LE_PROVISIONNEMENT:
-                if not str(effectif.get(variable, "")).strip():
-                    manquants.append(f"{nom_job} / {etape.get('name')!r} : {variable}")
+        etapes = job.get("steps") or []
+        # Collecte les exports GITHUB_ENV émis par les étapes précédentes
+        # (cas integration : job-level env supprimé pour éviter exposition
+        # pré-mask, variables exportées via `echo "VAR=..." >> "$GITHUB_ENV"`).
+        github_env_vars: set[str] = set()
+        for etape in etapes:
+            run_txt = str(etape.get("run") or "")
+            if "GITHUB_ENV" in run_txt:
+                # Extrait les noms de variables exportées : VAR=... >> $GITHUB_ENV
+                # Supporte les formes littérales et base64 décodées :
+                #   echo "POSTGRES_PASSWORD=..." >> "$GITHUB_ENV"
+                #   echo "POSTGRES_PASSWORD=$(echo ... | base64 -d)" >> "$GITHUB_ENV"
+                for m in re.finditer(r"([A-Z][A-Z0-9_]+)\s*=.*GITHUB_ENV", run_txt):
+                    github_env_vars.add(m.group(1))
+                # Variante sans quotes : POSTGRES_PASSWORD=...
+                for m in re.finditer(r"\b(MINIO_ROOT_USER|MINIO_ROOT_PASSWORD|SEAMTECH_S3_ACCESS_KEY|SEAMTECH_S3_SECRET_KEY|SEAMTECH_BACKUP_ACCESS_KEY|SEAMTECH_BACKUP_SECRET_KEY)\b", run_txt):
+                    # déjà couvert par précédent, mais garde filets
+                    pass
+            # Le provisionnement lui-même n’a pas besoin d’être compté comme source
+            if "provisionner_stockage.sh" in run_txt:
+                # Vérifie cette étape avec l’environnement effectif accumulé
+                verifiees += 1
+                effectif = {**env_job, **(etape.get("env") or {})}
+                # Ajoute les vars fournies via GITHUB_ENV par les étapes précédentes
+                for var in github_env_vars:
+                    if var not in effectif:
+                        effectif[var] = "via-GITHUB_ENV"
+                for variable in VARIABLES_EXIGEES_PAR_LE_PROVISIONNEMENT:
+                    if not str(effectif.get(variable, "")).strip():
+                        manquants.append(f"{nom_job} / {etape.get('name')!r} : {variable}")
     assert verifiees >= 3, f"provisionnements détectés dans la CI : {verifiees} (attendu ≥ 3)"
     assert manquants == [], (
         "le provisionnement s'arrêtera sur ces variables absentes dans la CI : "
