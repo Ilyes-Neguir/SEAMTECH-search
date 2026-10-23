@@ -120,25 +120,21 @@ Implémentation bloquée jusqu'à cette matrice ; tests IDOR non-régression (`A
 
 ## 7. Lot 1 — plan de démarrage migration `027` (sans implémenter)
 
-**Objectif `027`** : à définir après revue Lot0b (ex: `027_quotas_lots` ou `027_index_secure` selon roadmap — ne pas supposer). Hypothèse la plus probable si suite logique métier : durcissement index `fiche` + quotas.
+**Objectif `027` — fixé plan directeur : rôles et workflow d'approbation (migration réservée `027`). Ne pas inventer autre objectif (quotas/index_secure hors périmètre).**
 
 | Dépendance | Pourquoi bloquant |
 |------------|-------------------|
-| Re-vue Lot0b `de62c4f`/`d68842b` signée | `027` s'appuie sur `audit_logs` et `seamtech_texte_recherche` Lot2 — ne pas empiler avant socle gelé |
-| Décision **A** (`SEAMTECH_UI_PASSWORD`) | `027` peut toucher `utilisateur.sessions_invalidees_le` — politique secours = invalidation sessions |
-| Décision **B** (matrice IDOR) | `027` ne doit pas coder droits objet `pièces/artifacts` avant matrice — sinon réécriture |
+| Re-vue Lot0b `d68842b`/`da19c07` signée | `027` s'appuie sur `audit_logs` (025) et `boat_models` (026) — ne pas empiler avant socle gelé |
+| Décision **A** (`SEAMTECH_UI_PASSWORD`) | `027` rôles/workflow touche `utilisateur.sessions_invalidees_le` — politique secours = invalidation sessions |
+| Décision **B** (matrice IDOR) | Droits objet `pièces/artifacts` dépendent de B — ne pas coder avant matrice, sinon réécriture |
 
-**Tests Lot1 (préparer, pas coder) :**
+**Démarrage `027` (préparer, ne pas coder droits objet) :**
 - Migration `027` idempotente `IF NOT EXISTS` sur PG réel rôle limité (`init/migration` chemin exact qualification), re-jeu sans erreur, backup/restore `pg_dump` pré-027, `TABLES_METIER` `38→39` cohérent `health`.
-- `027` préserve `audit_logs`+`boat_models`+`session_ui`+`fiche` (pas de `DROP` sans pg_dump).
-- Si `027` touche quotas/lots : tests PG/Redis réels 0 skip, rollback documenté/testé (même motif Lot0b).
-- Si `027` touche recherche : vérifier `seamtech_texte_recherche` normalisation étendue (sans régression `023`/`026` synonymes `GV/GE/SPI`).
+- `027` préserve `audit_logs`+`boat_models`+`session_ui`+`fiche` (pas de `DROP` sans `pg_dump`).
+- Tests `027` PG/Redis réels 0 skip, rollback documenté/testé (même motif Lot0b).
 - Sécurité inchangée : `SEAMTECH_EXPOSE_DOCS=false` + `500 générique+X-Request-ID` + requêtes paramétrées + pas de secret en logs/tests.
 
-**Ordre recommandé (security-first, à confirmer) :**
-1. Verrouiller Lot0b (revue `d68842b` + décisions A/B signées).
-2. Exécuter `027` seule (1 migration, pas de lot groupé).
-3. Ensuite seulement droits objet (dépend de B) — préparer Lot `028` (RBAC fines) après `027` verte.
+> **Note périmètre vérif SQL** : `scripts/verif_sql_parametrise.py` ne couvre que `audit_logs.py` (12 requêtes) — ne pas le présenter comme preuve globale. Consigné séparément, périmètre Lot0b fixé.
 
 ---
 
