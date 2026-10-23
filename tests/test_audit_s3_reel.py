@@ -328,22 +328,16 @@ def _assert_no_secret_in_msg(msg: str):
     assert "minioadmin" not in low, "diagnostic contient secret minioadmin"
     assert "x-amz-signature" not in low, "diagnostic contient signature S3"
     assert "x-amz-credential" not in low, "diagnostic contient credential S3"
-    # Hors URL : token=/password=/secret=/Bearer non expurgés
-    if "token=" in low and "token=[redacted]" not in low and "token=<redacted" not in low:
-        # token= sans redaction → fuite
-        if re.search(r"(?i)token\s*=\s*\S+", msg):
-            assert False, "diagnostic contient token= non expurgé"
-    if "password=" in low and "password=[redacted]" not in low:
-        if re.search(r"(?i)password\s*=\s*\S+", msg):
-            assert False, "diagnostic contient password= non expurgé"
-    if "secret=" in low and "secret=[redacted]" not in low:
-        if re.search(r"(?i)secret\s*=\s*\S+", msg):
-            assert False, "diagnostic contient secret= non expurgé"
-    if "x-amz-security-token" in low and "x-amz-security-token=[redacted]" not in low:
-        assert False, "diagnostic contient X-Amz-Security-Token non expurgé"
-    if "authorization:" in low and "bearer" in low and "[redacted]" not in msg:
-        if re.search(r"(?i)Authorization\s*:\s*Bearer\s+\S+", msg):
-            assert False, "diagnostic contient Authorization Bearer non expurgé"
+    # Hors URL : token=/password=/secret=/pwd=/Bearer non expurgés — chaque occurrence doit être expurgée.
+    # Couvre `=` et `:` avec espaces autour, et multiples occurrences (une expurgée + une brute = fuite).
+    _leak_re = re.compile(
+        r"(?i)(token|X-Amz-Security-Token|X-Amz-Credential|X-Amz-Signature|password|secret|pwd)\s*[:=]\s*(?!(?:\[redacted\]|\*\*\*|\<redacted-query\>))[^\s&;\"'<>]+"
+    )
+    m = _leak_re.search(msg)
+    if m:
+        assert False, f"diagnostic contient {m.group(1)} non expurgé: {m.group(0)!r}"
+    if re.search(r"(?i)Authorization\s*:\s*Bearer\s+(?!(?:\[redacted\]|\*\*\*))[^\s\"'<>]+", msg):
+        assert False, "diagnostic contient Authorization Bearer non expurgé"
     for sent in _SENTINELS:
         assert sent.lower() not in low, f"diagnostic contient sentinelle {sent}"
         assert sent not in msg, f"diagnostic contient sentinelle {sent}"
@@ -790,6 +784,61 @@ def test_diagnostics_expurgés_ne_fuient_pas_secrets():
         assert "abc123" not in sanitized
         assert "s3cr3t" not in sanitized
         _assert_no_secret_in_msg(sanitized)
+    # pwd= variants — espaces autour `=`/`:` et multiples occurrences (une expurgée + une brute = fuite)
+    for raw_pwd in [
+        "pwd=abc123",
+        "pwd =abc123",
+        "pwd= abc123",
+        "pwd = abc123",
+        "pwd:abc123",
+        "pwd :abc123",
+        "pwd: abc123",
+        "pwd : abc123",
+        "PWD=abc123",
+    ]:
+        red_pwd = _redact(raw_pwd)
+        assert "abc123" not in red_pwd, f"pwd non expurgé: {raw_pwd} -> {red_pwd}"
+        assert "[redacted]" in red_pwd
+        with pytest.raises(AssertionError):
+            _assert_no_secret_in_msg(raw_pwd)
+        _assert_no_secret_in_msg(red_pwd)
+    # token/password/secret/pwd avec espaces et `:` — doivent tous être détectés
+    for raw_spaced in [
+        "token = abc123",
+        "token : abc123",
+        "password : s3cr3t",
+        "password = s3cr3t",
+        "secret : xyz",
+        "secret= xyz",
+        "X-Amz-Security-Token : abc123",
+        "X-Amz-Credential = AKIAEXAMPLE",
+    ]:
+        red_spaced = _redact(raw_spaced)
+        assert "[redacted]" in red_spaced or "<redacted-query>" in red_spaced, f"espaces non expurgés: {raw_spaced} -> {red_spaced}"
+        with pytest.raises(AssertionError):
+            _assert_no_secret_in_msg(raw_spaced)
+        _assert_no_secret_in_msg(red_spaced)
+    # Multiples occurrences : une expurgée coexistant avec une brute doit toujours échouer
+    for multi in [
+        "token=[redacted] token=leakSecond",
+        "password=[redacted] password = leak2",
+        "secret=[redacted] secret:leak3",
+        "pwd=[redacted] pwd = leak4",
+        "token=firstLeak token=[redacted]",
+        "pwd=[redacted] et pwd= encoreLeak",
+    ]:
+        with pytest.raises(AssertionError):
+            _assert_no_secret_in_msg(multi)
+        # Double expurgé doit passer
+    assert _redact("token=abc token=def") == "token=[redacted] token=[redacted]"
+    _assert_no_secret_in_msg("token=[redacted] token=[redacted]")
+    assert _redact("pwd=abc pwd=def") == "pwd=[redacted] pwd=[redacted]"
+    _assert_no_secret_in_msg("pwd=[redacted] pwd=[redacted]")
+    # pwd via _redact direct
+    assert _redact("pwd=abc") == "pwd=[redacted]"
+    assert _redact("pwd = abc") == "pwd=[redacted]"
+    assert _redact("pwd:abc") == "pwd=[redacted]"
+    assert _redact("pwd : abc") == "pwd=[redacted]"
 
 
 def test_redirect_validation_rejects_bad_inputs():

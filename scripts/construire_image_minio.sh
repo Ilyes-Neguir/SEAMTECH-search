@@ -87,16 +87,14 @@ _reessayer "docker build ${IMAGE}" docker build -t "$IMAGE" -f "$TRAVAIL/Dockerf
 # le healthcheck compose `mc ready local`) est bien présent. Aucun pipeline vers
 # `grep -q` ici : sous `set -o pipefail`, grep -q sortant au premier match
 # envoyait SIGPIPE à `docker run` (exit 141, course aléatoire constatée en CI).
+# Secrets : ne jamais capturer ni afficher AccessKey/SecretKey en clair
+# (mc alias list contient play.min.io demo creds + local) — vérification seule, set +x évite trace debug.
 docker run --rm --entrypoint /usr/bin/minio "$IMAGE" --help >/dev/null
-alias_list="$(docker run --rm --entrypoint /usr/bin/mc "$IMAGE" alias list 2>&1)"
-# Expurge secrets : ne jamais afficher AccessKey/SecretKey en clair (mc alias list contient play.min.io demo creds + local)
-echo "$alias_list" | sed -E 's/(AccessKey|SecretKey)[[:space:]]*:[[:space:]]*[^[:space:]]+/\1: [redacted]/g'
-case "$alias_list" in
-  *local*) : ;;
-  *)
-    echo "alias local absent de l'image reconstruite — le healthcheck compose échouerait" >&2
-    exit 1
-    ;;
-esac
+set +x
+if ! docker run --rm --entrypoint /usr/bin/mc "$IMAGE" alias list 2>&1 | grep -q "local"; then
+  echo "alias local absent de l'image reconstruite — le healthcheck compose échouerait" >&2
+  exit 1
+fi
 
+# Restaure xtrace désactivé (pas de fuite)
 echo "Image ${IMAGE} prête (minio ${MINIO_TAG} + mc ${MC_TAG}, sources officielles archivées)."

@@ -731,24 +731,10 @@ jobs:
     # dédiée, jamais l'administrateur MinIO. Ces valeurs sont des identités
     # restreintes : `scripts/provisionner_stockage.sh` les crée juste après le
     # démarrage de MinIO (étape « Provisionner les identités restreintes »).
-    env:
-      POSTGRES_PASSWORD: test_password
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin123
-      REDIS_PASSWORD: redis_test_password
-      SEAMTECH_AUTH_TOKEN: test-token-123
-      SEAMTECH_UI_PASSWORD: ci-ui-password
-      SEAMTECH_SESSION_SECRET: ci-session-secret-not-for-production
-      SEAMTECH_S3_BUCKET: seamtech-documents
-      SEAMTECH_BACKUP_BUCKET: seamtech-backups
-      SEAMTECH_S3_ACCESS_KEY: seamtech-app-ci
-      SEAMTECH_S3_SECRET_KEY: ci-app-secret-not-for-production
-      SEAMTECH_BACKUP_ACCESS_KEY: seamtech-sauvegarde-ci
-      SEAMTECH_BACKUP_SECRET_KEY: ci-backup-secret-not-for-production
     steps:
-      - uses: actions/checkout@v7
-      - name: Mask test secrets for diagnostics criterion (add-mask)
+      - name: Mask test secrets for diagnostics criterion (add-mask) — MUST be first before checkout
         run: |
+          set +x
           echo "::add-mask::test_password"
           echo "::add-mask::redis_test_password"
           echo "::add-mask::minioadmin"
@@ -760,6 +746,24 @@ jobs:
           echo "::add-mask::ci-backup-secret-not-for-production"
           echo "::add-mask::seamtech-app-ci"
           echo "::add-mask::seamtech-sauvegarde-ci"
+          echo "::add-mask::Secret123!"
+          echo "::add-mask::Q3AM3UQ867SPQQA43P2F"
+          echo "::add-mask::zuf+tfteSlswRu7BJ86wekitnifILbZam1KYY3TG"
+          # Export sensitives via GITHUB_ENV after masking — job-level env removed to avoid pre-mask log exposure (checkout log before add-mask)
+          echo "POSTGRES_PASSWORD=test_password" >> "$GITHUB_ENV"
+          echo "MINIO_ROOT_USER=minioadmin" >> "$GITHUB_ENV"
+          echo "MINIO_ROOT_PASSWORD=minioadmin123" >> "$GITHUB_ENV"
+          echo "REDIS_PASSWORD=redis_test_password" >> "$GITHUB_ENV"
+          echo "SEAMTECH_AUTH_TOKEN=test-token-123" >> "$GITHUB_ENV"
+          echo "SEAMTECH_UI_PASSWORD=ci-ui-password" >> "$GITHUB_ENV"
+          echo "SEAMTECH_SESSION_SECRET=ci-session-secret-not-for-production" >> "$GITHUB_ENV"
+          echo "SEAMTECH_S3_BUCKET=seamtech-documents" >> "$GITHUB_ENV"
+          echo "SEAMTECH_BACKUP_BUCKET=seamtech-backups" >> "$GITHUB_ENV"
+          echo "SEAMTECH_S3_ACCESS_KEY=seamtech-app-ci" >> "$GITHUB_ENV"
+          echo "SEAMTECH_S3_SECRET_KEY=ci-app-secret-not-for-production" >> "$GITHUB_ENV"
+          echo "SEAMTECH_BACKUP_ACCESS_KEY=seamtech-sauvegarde-ci" >> "$GITHUB_ENV"
+          echo "SEAMTECH_BACKUP_SECRET_KEY=ci-backup-secret-not-for-production" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
