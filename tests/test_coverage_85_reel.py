@@ -28,11 +28,15 @@ def test_storage_s3_client_configured(tmp_path):
 
 
 def test_config_from_env(tmp_path, monkeypatch):
+    import json
+
     from seamtech_search.config import AppConfig
 
+    cfg_file = tmp_path / "cfg.json"
+    cfg_file.write_text(json.dumps({"root_paths": [str(tmp_path)], "database_path": str(tmp_path / "db.db")}))
     monkeypatch.setenv("SEAMTECH_S3_BUCKET", "env-bucket")
-    cfg = AppConfig(root_paths=[tmp_path])
-    # couvre branche env var
+    cfg = AppConfig.load(str(cfg_file))
+    # couvre branche env var via load
     assert cfg.s3_bucket == "env-bucket"
     # couvre expose_docs default
     assert cfg.expose_docs is False
