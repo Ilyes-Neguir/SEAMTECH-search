@@ -212,9 +212,6 @@ def test_audit_s3_piece_et_artifact_minio(tmp_path: Path):
         uploaded = s3_client.upload_file(local_pdf, remote_key=remote_key_piece)
         assert uploaded == remote_key_piece, f"upload_file a retourné {uploaded}, attendu {remote_key_piece}"
         assert s3_client.object_exists(remote_key_piece) is True, "objet S3 pièce non trouvé après upload"
-        # petit délai pour MinIO (évite 502 immédiat)
-        import time as _t
-        _t.sleep(0.5)
         # Supprime le fichier local pour forcer le chemin S3 (sinon le serveur sert le local)
         local_pdf.unlink()
 
@@ -229,24 +226,14 @@ def test_audit_s3_piece_et_artifact_minio(tmp_path: Path):
                 piece_id = int(cur.fetchone()[0])
 
         resp_dl = client.get(f"/pieces/{piece_id}/telecharger", headers={"X-SEAMTECH-TOKEN": JETON_SERVICE, "X-SEAMTECH-SESSION-SID": sid})
-        # En CI strict, on attend 200/302 succès S3 ; 502 storage_unavailable est toléré comme preuve que S3 a été tenté (audit failure)
-        if resp_dl.status_code not in (200, 302, 502, 404, 500):
-            try:
-                exists = s3_client.object_exists(remote_key_piece) if s3_client else "no-client"
-            except Exception as e:
-                exists = f"check-failed:{e}"
-            pytest.fail(f"PIECE S3 status {resp_dl.status_code}: {resp_dl.text[:800]} | exists={exists} bucket={bucket} key={remote_key_piece} sid={sid[:8]}...")
+        assert resp_dl.status_code in (200, 302), f"PIECE S3 status {resp_dl.status_code}: {resp_dl.text[:500]}"
         # Si 200, vérifier les octets (S3 download) ; si 302, vérifier que l'URL est présignée et pointe vers le bon bucket/key
         if resp_dl.status_code == 200:
-            if resp_dl.content != contenu_piece:
-                print(f"[warn] PIECE content mismatch got {len(resp_dl.content)} vs {len(contenu_piece)}")
-            # nosniff check lenient
-            if resp_dl.headers.get("X-Content-Type-Options") != "nosniff":
-                print(f"[warn] PIECE nosniff missing: {resp_dl.headers.get('X-Content-Type-Options')}")
-        elif resp_dl.status_code == 302:
+            assert resp_dl.content == contenu_piece, f"octets PIECE via S3 diffèrent: got {len(resp_dl.content)} vs {len(contenu_piece)}"
+            assert resp_dl.headers.get("X-Content-Type-Options") == "nosniff"
+        else:
             loc = resp_dl.headers.get("location", "") or resp_dl.headers.get("Location", "")
-            if remote_key_piece not in loc and bucket not in loc:
-                print(f"[warn] 302 location sans key/bucket: {loc}")
+            assert remote_key_piece in loc or bucket in loc, f"302 location ne contient pas le S3 key/bucket: {loc}"
 
         # Vérif audit PIECE_DOWNLOAD complet
         with index.connect() as conn:
@@ -256,16 +243,10 @@ def test_audit_s3_piece_et_artifact_minio(tmp_path: Path):
                     (str(piece_id),),
                 )
                 row = cur.fetchone()
-                if row is None:
-                    cur.execute("SELECT action, target_id, outcome FROM audit_logs WHERE action='PIECE_DOWNLOAD' ORDER BY id DESC LIMIT 5")
-                    rows = cur.fetchall()
-                    print(f"[warn] PIECE_DOWNLOAD audit manquant piece_id={piece_id} resp={resp_dl.status_code} last5={rows}")
-                    # ne bloque pas la preuve S3 : l'upload et le téléchargement ont réussi, l'audit est best-effort
+                assert row is not None, "PIECE_DOWNLOAD S3 non journalisé"
                 assert row[0] == created["id_utilisateur"], f"actor_user_id PIECE: {row}"
                 assert row[1] == "admin_s3" and row[2] == "administrateur", f"actor PIECE: {row}"
-                assert row[3] == "PIECE_DOWNLOAD", f"action PIECE: {row}"
-                # 200/302 => success, 502 => failure storage_unavailable, les deux journalisés
-                assert row[4] in ("success", "failure"), f"outcome PIECE: {row}"
+                assert row[3] == "PIECE_DOWNLOAD" and row[4] == "success", f"outcome PIECE: {row}"
                 assert row[5] == "piece" and row[6] == str(piece_id), f"target PIECE: {row}"
                 # ip_address doit être présent (TestClient => testclient) : row[8] est ip_address, row[7] details_json
                 assert row[8] is not None
@@ -277,8 +258,7 @@ def test_audit_s3_piece_et_artifact_minio(tmp_path: Path):
         remote_key_artifact = f"audit-test/{uuid.uuid4().hex}/artifact_report.pdf"
         s3_client.upload_file(artifact_pdf, remote_key=remote_key_artifact)
         assert s3_client.object_exists(remote_key_artifact) is True
-        _t.sleep(0.5)
-        artifact_pdf.unlink()
+        artifact_pdf.unlink()  # force S3
 
         from seamtech_search.jobs import create_job, update_job
 
@@ -293,19 +273,12 @@ def test_audit_s3_piece_et_artifact_minio(tmp_path: Path):
         update_job(index, job_id, status="done", stage="done", result=result_payload)
 
         resp_art = client.get(f"/imports/{job_id}/artifacts/report_pdf", headers={"X-SEAMTECH-TOKEN": JETON_SERVICE, "X-SEAMTECH-SESSION-SID": sid})
-        if resp_art.status_code not in (200, 302, 502, 404, 500):
-            try:
-                exists = s3_client.object_exists(remote_key_artifact) if s3_client else "no-client"
-            except Exception as e:
-                exists = f"check-failed:{e}"
-            pytest.fail(f"ARTIFACT S3 status {resp_art.status_code}: {resp_art.text[:800]} | exists={exists} bucket={bucket} key={remote_key_artifact}")
+        assert resp_art.status_code in (200, 302), f"ARTIFACT S3 status {resp_art.status_code}: {resp_art.text[:500]}"
         if resp_art.status_code == 200:
-            if resp_art.content != contenu_artifact:
-                print(f"[warn] ARTIFACT content mismatch {len(resp_art.content)} vs {len(contenu_artifact)}")
-        elif resp_art.status_code == 302:
+            assert resp_art.content == contenu_artifact, "octets ARTIFACT via S3 diffèrent"
+        else:
             loc = resp_art.headers.get("location", "") or resp_art.headers.get("Location", "")
-            if remote_key_artifact not in loc and bucket not in loc:
-                print(f"[warn] ARTIFACT 302 sans key: {loc}")
+            assert remote_key_artifact in loc or bucket in loc, f"302 ARTIFACT location sans key: {loc}"
 
         with index.connect() as conn:
             with conn.cursor() as cur:
@@ -316,8 +289,7 @@ def test_audit_s3_piece_et_artifact_minio(tmp_path: Path):
                 assert row is not None, "ARTIFACT_DOWNLOAD S3 non journalisé"
                 assert row[0] == created["id_utilisateur"], f"actor ARTIFACT: {row}"
                 assert row[1] == "admin_s3" and row[2] == "administrateur", f"actor ARTIFACT: {row}"
-                assert row[3] == "ARTIFACT_DOWNLOAD", f"action ARTIFACT: {row}"
-                assert row[4] in ("success", "failure"), f"outcome ARTIFACT: {row}"
+                assert row[3] == "ARTIFACT_DOWNLOAD" and row[4] == "success", f"outcome ARTIFACT: {row}"
                 assert row[5] == "import_artifact", f"target_type ARTIFACT: {row}"
                 # target_id contient job_id et artifact
                 assert job_id in str(row[6]) or remote_key_artifact in str(row[6]), f"target_id ARTIFACT: {row}"
@@ -325,7 +297,6 @@ def test_audit_s3_piece_et_artifact_minio(tmp_path: Path):
         # Preuve S3 réelle : objets existent, pas de mock
         assert s3_client.object_exists(remote_key_piece) is True
         assert s3_client.object_exists(remote_key_artifact) is True
-        _t.sleep(0.5)
 
     finally:
         if s3_client is not None:
