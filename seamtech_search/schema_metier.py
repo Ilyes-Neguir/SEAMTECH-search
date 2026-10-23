@@ -1848,7 +1848,7 @@ SQL_028_SAIL_EXTRACTIONS = """
 CREATE TABLE IF NOT EXISTS sail_extractions (
     id                      BIGSERIAL PRIMARY KEY,
     document_id             BIGINT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
-    fiche_id                BIGINT REFERENCES fiches_techniques(id) ON DELETE SET NULL,
+    fiche_id                BIGINT REFERENCES fiche(id_fiche) ON DELETE SET NULL,
     extraction_status       TEXT NOT NULL DEFAULT 'pending' CHECK (extraction_status IN ('pending', 'completed', 'failed', 'needs_review')),
     extraction_method       TEXT NOT NULL DEFAULT 'regex_rules' CHECK (extraction_method IN ('regex_rules', 'llm_assist', 'manual')),
 
