@@ -1,22 +1,23 @@
-import { NextRequest, NextResponse } from "next/server";
-import { requireAuthValide } from "@/lib/auth-helpers";
+import { NextResponse } from "next/server"
+import { backendBase, backendHeaders, requireAuthValide } from "@/lib/backend"
 
-export const dynamic = "force-dynamic";
-const backendBase = process.env.SEAMTECH_API_URL || "http://localhost:8000";
+export const dynamic = "force-dynamic"
 
-export async function POST(req: NextRequest) {
-  const auth = await requireAuthValide();
-  if (!auth.ok) return NextResponse.json({ detail: "Non authentifié" }, { status: 401, headers: { "Cache-Control": "no-store" } });
-  const headers: Record<string, string> = { "Content-Type": "application/json", "X-SEAMTECH-TOKEN": process.env.SEAMTECH_AUTH_TOKEN || "" };
-  if (auth.sessionId) headers["X-SEAMTECH-SESSION"] = auth.sessionId;
-  if (auth.user?.role) headers["X-Role"] = auth.user.role;
-  if (auth.user?.id) headers["X-User-Id"] = String(auth.user.id);
-  const body = await req.text();
+export async function POST(req: Request) {
+  const denied = await requireAuthValide()
+  if (denied) return denied
+  const base = backendBase()
+  if (!base) return NextResponse.json({ detail: "Backend non configuré (SEAMTECH_API_URL)." }, { status: 503 })
+  const payload = await req.text()
   try {
-    const resp = await fetch(`${backendBase}/evaluations/confiance/calcul`, { method: "POST", headers, body, cache: "no-store" });
-    const text = await resp.text();
-    return new NextResponse(text, { status: resp.status, headers: { "Content-Type": resp.headers.get("Content-Type") || "application/json", "Cache-Control": "no-store" } });
+    const res = await fetch(`${base}/api/evaluations/confiance/calcul`, {
+      method: "POST",
+      headers: await backendHeaders({ "Content-Type": "application/json" }),
+      body: payload,
+      cache: "no-store",
+    })
+    return NextResponse.json(await res.json(), { status: res.status, headers: { "Cache-Control": "no-store" } })
   } catch {
-    return NextResponse.json({ detail: "Backend indisponible" }, { status: 502, headers: { "Cache-Control": "no-store" } });
+    return NextResponse.json({ detail: "Backend SEAMTECH injoignable." }, { status: 502 })
   }
 }

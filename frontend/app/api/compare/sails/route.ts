@@ -1,25 +1,24 @@
-import { NextRequest, NextResponse } from "next/server";
-import { requireAuthValide } from "@/lib/auth-helpers";
+import { NextResponse } from "next/server"
+import { backendBase, backendHeaders, requireAuthValide } from "@/lib/backend"
 
-export const dynamic = "force-dynamic";
-const backendBase = process.env.SEAMTECH_API_URL || "http://localhost:8000";
+export const dynamic = "force-dynamic"
 
-export async function GET(req: NextRequest) {
-  const auth = await requireAuthValide();
-  if (!auth.ok) return NextResponse.json({ detail: "Non authentifié" }, { status: 401, headers: { "Cache-Control": "no-store" } });
-  const headers: Record<string, string> = { "X-SEAMTECH-TOKEN": process.env.SEAMTECH_AUTH_TOKEN || "" };
-  if (auth.sessionId) headers["X-SEAMTECH-SESSION"] = auth.sessionId;
-  if (auth.user?.role) headers["X-Role"] = auth.user.role;
-  if (auth.user?.id) headers["X-User-Id"] = String(auth.user.id);
-  const url = new URL(req.url);
-  const a = url.searchParams.get("a");
-  const b = url.searchParams.get("b");
-  if (!a || !b) return NextResponse.json({ detail: "a et b requis" }, { status: 422, headers: { "Cache-Control": "no-store" } });
+export async function GET(req: Request) {
+  const denied = await requireAuthValide()
+  if (denied) return denied
+  const base = backendBase()
+  if (!base) return NextResponse.json({ detail: "Backend non configuré (SEAMTECH_API_URL)." }, { status: 503 })
+  const url = new URL(req.url)
+  const a = url.searchParams.get("a")
+  const b = url.searchParams.get("b")
+  if (!a || !b) return NextResponse.json({ detail: "a et b requis" }, { status: 422 })
   try {
-    const resp = await fetch(`${backendBase}/compare/sails?a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}`, { headers, cache: "no-store" });
-    const text = await resp.text();
-    return new NextResponse(text, { status: resp.status, headers: { "Content-Type": resp.headers.get("Content-Type") || "application/json", "Cache-Control": "no-store" } });
+    const res = await fetch(`${base}/api/compare/sails?a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}`, {
+      headers: await backendHeaders(),
+      cache: "no-store",
+    })
+    return NextResponse.json(await res.json(), { status: res.status, headers: { "Cache-Control": "no-store" } })
   } catch {
-    return NextResponse.json({ detail: "Backend indisponible" }, { status: 502, headers: { "Cache-Control": "no-store" } });
+    return NextResponse.json({ detail: "Backend SEAMTECH injoignable." }, { status: 502 })
   }
 }

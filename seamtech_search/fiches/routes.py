@@ -337,11 +337,8 @@ def _verifier_acces_telechargement_lot1(
 ) -> None:
     """Lot1 RBAC serveur pour téléchargements : lecture 403, utilisateur nécessite approbation."""
     from seamtech_search.comptes.comptes import ROLES as _ALL_ROLES  # noqa: F401
-    from seamtech_search.comptes.comptes import profil_utilisateur
 
     # Résout identité depuis en-têtes (comme _attribution) + fallback session
-    # On récupère sid si présent pour une vérif plus fiable
-    sid = request.headers.get("x-seamtech-session-sid") or request.headers.get("X-SEAMTECH-SESSION-SID") or request.headers.get("X-SEAMTECH-SESSION")
     identifiant = None
     role = None
     # Tente via SessionStore si disponible dans app (non importé ici, on utilise profil_utilisateur si sid connu)

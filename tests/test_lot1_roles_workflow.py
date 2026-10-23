@@ -166,8 +166,8 @@ def test_migration_027_tables_et_idempotence(tmp_path: Path):
 
 
 def test_roles_quatre_stricts_et_alias(tmp_path: Path):
-    from seamtech_search.comptes.comptes import ROLES, ROLES_CANONIQUES, ROLE_ALIASES
     from seamtech_search.approbations import normaliser_role
+    from seamtech_search.comptes.comptes import ROLES, ROLES_CANONIQUES
 
     # 4 canoniques + 2 legacy
     assert set(ROLES_CANONIQUES) == {"admin", "lecture", "utilisateur", "approbateur"}

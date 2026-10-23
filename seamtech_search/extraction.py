@@ -8,7 +8,7 @@ Niveau protégé par secret : hors dépôt, non journalisé.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from typing import Any
 
 # Normalisation des clés : réutilise la fonction Lot2 si dispo, sinon fallback local.

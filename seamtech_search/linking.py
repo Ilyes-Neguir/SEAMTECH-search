@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
+
 def _norm(s: str) -> str:
     try:
         from .recherche import normaliser_cle_recherche
