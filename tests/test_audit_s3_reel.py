@@ -284,17 +284,35 @@ def test_audit_s3_piece_et_artifact_minio(tmp_path: Path):
         assert s3_client.object_exists(remote_key_artifact) is True
         artifact_pdf.unlink()  # force S3
 
-        from seamtech_search.jobs import create_job, update_job
+        # L'endpoint /imports/{id}/artifacts lit la table `imports`, pas `jobs` (import_pipeline.get_import).
+        # On insère donc directement un import minimal avec le payload attendu par la route.
+        import json as _json
 
-        job_id = uuid.uuid4().hex
-        create_job(index, job_id, str(tmp_path), status="done", stage="done")
+        job_id = uuid.uuid4().hex  # utilisé comme import_id pour la route
         fake_local_path = str(tmp_path / f"missing_{job_id}.pdf")
         result_payload = {
             "report_path": fake_local_path,
             "report_docx_path": None,
             "artifacts": [{"name": "technical-report.pdf", "key": remote_key_artifact}],
         }
-        update_job(index, job_id, status="done", stage="done", result=result_payload)
+        # Insertion directe dans `imports` (la route ne lit pas `jobs`)
+        try:
+            with index.connect() as conn:
+                if index.is_postgres:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            "INSERT INTO imports (id, source_path, status, payload, created_at) VALUES (%s, %s, %s, %s, now()) ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status, payload = EXCLUDED.payload",
+                            (job_id, str(tmp_path), "completed", _json.dumps(result_payload)),
+                        )
+                else:
+                    conn.execute(
+                        "INSERT INTO imports (id, source_path, status, payload, created_at) VALUES (?, ?, ?, ?, datetime('now')) ON CONFLICT(id) DO UPDATE SET status=excluded.status, payload=excluded.payload",
+                        (job_id, str(tmp_path), "completed", _json.dumps(result_payload)),
+                    )
+                conn.commit()
+        except Exception as e:
+            _annotate(f"INSERT imports failed: {e}")
+            raise
 
         resp_art = client.get(f"/imports/{job_id}/artifacts/report_pdf", headers={"X-SEAMTECH-TOKEN": JETON_SERVICE, "X-SEAMTECH-SESSION-SID": sid})
         print(f"[s3-audit] ARTIFACT status={resp_art.status_code} len={len(resp_art.content) if hasattr(resp_art, 'content') else 'n/a'}")
@@ -348,7 +366,12 @@ def test_audit_s3_piece_et_artifact_minio(tmp_path: Path):
                     if piece_id is not None:
                         cur.execute("DELETE FROM documents WHERE id = %s", (piece_id,))
                     if job_id is not None:
-                        cur.execute("DELETE FROM jobs WHERE job_id = %s", (job_id,))
+                        # L'artifact est dans `imports` (pas `jobs`) depuis le fix 404 Import not found
+                        cur.execute("DELETE FROM imports WHERE id = %s", (job_id,))
+                        try:
+                            cur.execute("DELETE FROM jobs WHERE job_id = %s", (job_id,))
+                        except Exception:
+                            pass
                     # Ne pas supprimer audit_logs (historique utile), mais on peut nettoyer ceux de ce test si besoin
                 conn.commit()
         except Exception as e:
