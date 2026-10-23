@@ -31,7 +31,10 @@ JETON_SERVICE = "jeton-de-service-de-test"
 
 _URL_RE = re.compile(r"https?://[^\s\"'<>]+")
 _ORIGIN_RE = re.compile(r"https?://[^/\s\"'<>]+")
-
+_HORS_URL_RE = re.compile(
+    r"(?i)(token|X-Amz-Security-Token|X-Amz-Credential|X-Amz-Signature|password|secret|pwd)\s*[:=]\s*[^\s&;\"'<>]+"
+)
+_BEARER_RE = re.compile(r"(?i)Authorization\s*:\s*Bearer\s+[^\s\"'<>]+")
 # Sentinel values that must never appear in redacted output
 _SENTINELS = ["user:secret", "my-t0ken", "s3cr3t-v4lue"]
 
@@ -76,15 +79,20 @@ def _redact(msg: str) -> str:
 
         msg = _URL_RE.sub(_repl, msg)
         low = msg.lower()
+    # Hors URL : token=, password=, secret=, X-Amz-Security-Token=, Authorization Bearer — masque valeur
+    # Doit se faire après URLs (évite double) mais avant sentinelles
+    if _HORS_URL_RE.search(msg):
+        msg = _HORS_URL_RE.sub(lambda m: f"{m.group(1)}=[redacted]", msg)
+        low = msg.lower()
+    if _BEARER_RE.search(msg):
+        msg = _BEARER_RE.sub("Authorization: Bearer [redacted]", msg)
+        low = msg.lower()
     # Masque générique si signature/token reste hors URL capturée
     if "x-amz-" in low or "signature=" in low or "awsaccesskey" in low:
         if "?" in msg and "?<redacted-query>" not in msg:
             return msg.split("?", 1)[0] + "?<redacted-query>"
         if "?<redacted-query>" in msg:
             return msg
-        # Si pas de ?, mais marqueur sensible, évite de retourner valeur brute
-        # On a déjà expurgé les URLs ; on retourne msg tel quel s'il ne contient plus de secret brut
-        # (les sentinelles de test seront vérifiées par _assert_no_secret_in_msg)
     # Bannit toute occurrence résiduelle de sentinelles connues (défense en profondeur)
     for sent in _SENTINELS:
         if sent.lower() in low:
@@ -320,6 +328,22 @@ def _assert_no_secret_in_msg(msg: str):
     assert "minioadmin" not in low, "diagnostic contient secret minioadmin"
     assert "x-amz-signature" not in low, "diagnostic contient signature S3"
     assert "x-amz-credential" not in low, "diagnostic contient credential S3"
+    # Hors URL : token=/password=/secret=/Bearer non expurgés
+    if "token=" in low and "token=[redacted]" not in low and "token=<redacted" not in low:
+        # token= sans redaction → fuite
+        if re.search(r"(?i)token\s*=\s*\S+", msg):
+            assert False, "diagnostic contient token= non expurgé"
+    if "password=" in low and "password=[redacted]" not in low:
+        if re.search(r"(?i)password\s*=\s*\S+", msg):
+            assert False, "diagnostic contient password= non expurgé"
+    if "secret=" in low and "secret=[redacted]" not in low:
+        if re.search(r"(?i)secret\s*=\s*\S+", msg):
+            assert False, "diagnostic contient secret= non expurgé"
+    if "x-amz-security-token" in low and "x-amz-security-token=[redacted]" not in low:
+        assert False, "diagnostic contient X-Amz-Security-Token non expurgé"
+    if "authorization:" in low and "bearer" in low and "[redacted]" not in msg:
+        if re.search(r"(?i)Authorization\s*:\s*Bearer\s+\S+", msg):
+            assert False, "diagnostic contient Authorization Bearer non expurgé"
     for sent in _SENTINELS:
         assert sent.lower() not in low, f"diagnostic contient sentinelle {sent}"
         assert sent not in msg, f"diagnostic contient sentinelle {sent}"
@@ -734,6 +758,37 @@ def test_diagnostics_expurgés_ne_fuient_pas_secrets():
     assert "?<redacted-query>" in out
     # _redact ne doit pas retourner une sortie contenant volontairement user:secret
     assert out == "https://s3.example.com/b/k?<redacted-query>"
+    # Hors URL : token=, X-Amz-Security-Token=, password=, secret=, Authorization Bearer
+    for raw in [
+        "token=abc123 ne doit pas fuir",
+        "X-Amz-Security-Token=abc123 dans header",
+        "password=s3cr3t123 login failed",
+        "secret=abc123 valeur",
+        "Authorization: Bearer abc123.def.ghi",
+        "prefix token=my-t0ken suffix",
+        "erreur Authorization: Bearer eyJhbGci token leaked",
+    ]:
+        red_hors = _redact(raw)
+        assert "abc123" not in red_hors, f"hors URL non expurgé: {raw} -> {red_hors}"
+        assert "my-t0ken" not in red_hors.lower()
+        assert "[redacted]" in red_hors
+        with pytest.raises(AssertionError):
+            _assert_no_secret_in_msg(raw)
+        _assert_no_secret_in_msg(red_hors)
+    # Vérifie que _redact retire valeur sans exposer origine
+    assert _redact("token=abc") == "token=[redacted]"
+    assert _redact("X-Amz-Security-Token=abc") == "X-Amz-Security-Token=[redacted]"
+    assert _redact("password=abc") == "password=[redacted]"
+    assert _redact("secret=abc") == "secret=[redacted]"
+    assert _redact("Authorization: Bearer abc") == "Authorization: Bearer [redacted]"
+    # Ne pas laisser exception brute avec secret hors URL atteindre annotation
+    try:
+        raise ValueError("oups token=abc123 + password=s3cr3t")
+    except Exception as e:
+        sanitized = _redact(str(e))
+        assert "abc123" not in sanitized
+        assert "s3cr3t" not in sanitized
+        _assert_no_secret_in_msg(sanitized)
 
 
 def test_redirect_validation_rejects_bad_inputs():
@@ -767,8 +822,8 @@ def test_redirect_validation_rejects_bad_inputs():
     # Mauvaise clé
     with pytest.raises(AssertionError, match="path non conforme"):
         _validate_redirect_url(f"https://s3.example.com:9000/{bucket}/wrong/key.pdf", allowed_https, bucket, key)
-    # Bucket/clé seulement en query
-    with pytest.raises(AssertionError, match="path non conforme"):
+    # Bucket/clé seulement en query — sous-chaîne interdite (pas path)
+    with pytest.raises(AssertionError, match="bucket trouvé"):
         _validate_redirect_url(
             f"https://s3.example.com:9000/other/path?bucket={bucket}&key={key}", allowed_https, bucket, key
         )
