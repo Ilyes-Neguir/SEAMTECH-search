@@ -1,5 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { backendBase, authHeaders, requireAuthValide } from "@/lib/backend"
+import { backendBase, backendHeaders, requireAuthValide } from "@/lib/backend"
 
 export const dynamic = "force-dynamic"
 
@@ -12,7 +12,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   try {
     const response = await fetch(`${base}/imports/${encodeURIComponent(id)}/retry-upload`, {
       method: "POST",
-      headers: { ...authHeaders() },
+      headers: await backendHeaders(),
       cache: "no-store",
     })
     return NextResponse.json(await response.json(), { status: response.status })

@@ -1,5 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { backendBase, authHeaders, requireAuthValide } from "@/lib/backend"
+import { backendBase, backendHeaders, requireAuthValide } from "@/lib/backend"
 
 // Proxy Lot E : suggestions de recherche (valeurs réellement présentes dans
 // le corpus — référentiels + textes, jamais de lexique inventé).
@@ -14,7 +14,7 @@ export async function GET(req: NextRequest) {
   const query = req.nextUrl.searchParams.toString()
   try {
     const res = await fetch(`${base}/recherche/suggestions${query ? `?${query}` : ""}`, {
-      headers: authHeaders(),
+      headers: await backendHeaders(),
       cache: "no-store",
     })
     return NextResponse.json(await res.json(), { status: res.status })

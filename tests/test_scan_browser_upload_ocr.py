@@ -102,6 +102,7 @@ def test_upload_scan_ocr_recherche_telechargement(tmp_path: Path):
         root_paths=[tmp_path],
         database_path=tmp_path / "search.db",
         database_url=url,
+        auth_token="jeton-scan-ocr-test",
         enable_ocr=True,
         tesseract_command=tesseract,
         min_free_bytes=0,
@@ -112,6 +113,16 @@ def test_upload_scan_ocr_recherche_telechargement(tmp_path: Path):
     try:
         app = create_app(config)
         with TestClient(app) as client:
+            # Lot 0b : le téléchargement de l'original exige un humain en
+            # PostgreSQL. Le secours derrière le jeton de service représente
+            # le poste connecté pour tout ce parcours navigateur simulé.
+            client.headers.update(
+                {
+                    "X-SEAMTECH-TOKEN": "jeton-scan-ocr-test",
+                    "X-SEAMTECH-UTILISATEUR": "secours",
+                    "X-SEAMTECH-ROLE": "administrateur",
+                }
+            )
             # 1. Upload via /imports/upload (simule le dépôt navigateur)
             # Le front envoie folder + files avec chemin relatif
             with open(pdf_fr, "rb") as f:

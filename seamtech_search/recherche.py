@@ -45,6 +45,7 @@ from typing import Annotated, Any, Callable, Mapping, Sequence
 from fastapi import Header, HTTPException, Query
 
 from seamtech_search.fiches.normalisation import normaliser_cle_recherche, sans_accents, vers_metres
+from seamtech_search.securite_requetes import exiger_administrateur_requete
 
 LOGGER = logging.getLogger("seamtech.recherche")
 
@@ -1460,8 +1461,23 @@ def enregistrer_routes_recherche(
         limite_top: int = Query(20, ge=1, le=100),
         limite_sans: int = Query(100, ge=1, le=500),
         token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+        entete_utilisateur: Annotated[str | None, Header(alias="X-SEAMTECH-UTILISATEUR")] = None,
+        entete_role: Annotated[str | None, Header(alias="X-SEAMTECH-ROLE")] = None,
+        entete_session: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION")] = None,
+        entete_jeton: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-JETON")] = None,
     ) -> dict[str, Any]:
         verifier_auth(config, token)
         _exiger_postgres(index)
+        # Les termes de recherche des utilisateurs sont une donnée
+        # d'exploitation : administrateur humain uniquement (Lot 0b).
+        exiger_administrateur_requete(
+            index,
+            config,
+            token=token,
+            entete_utilisateur=entete_utilisateur,
+            entete_role=entete_role,
+            entete_session=entete_session,
+            entete_jeton=entete_jeton,
+        )
         from seamtech_search.journal_recherche import rapport_journal
         return rapport_journal(index, periode_jours=jours, limite_top=limite_top, limite_sans_resultat=limite_sans)

@@ -97,6 +97,10 @@ SOURCES = Path(os.environ.get("RECETTE_SOURCES", "/app/data/recette-sources"))
 TRAVAIL = Path(os.environ.get("RECETTE_TRAVAIL", "/app/data/recette-lot"))
 
 ECHECS: list[str] = []
+# En-têtes de la session nominative de recette, remplis après connexion.
+# Depuis le Lot 0b, le contenu des pièces exige cette session en PostgreSQL ;
+# le jeton de service seul ne suffit plus pour télécharger les octets.
+SESSION_RECETTE: dict[str, str] = {}
 
 
 def _ligne(controle: str, ok: bool, detail: str) -> None:
@@ -132,7 +136,7 @@ def _appel(
     """Appel HTTP vers l'API (jamais d'exception : retourne (code, corps, entêtes))."""
     url = f"{BASE}{chemin}"
     donnees = None
-    entetes_totales = {"X-SEAMTECH-TOKEN": JETON}
+    entetes_totales = {"X-SEAMTECH-TOKEN": JETON, **SESSION_RECETTE}
     if entetes:
         entetes_totales.update(entetes)
     if corps is not None:
@@ -277,10 +281,19 @@ def _creer_compte() -> None:
         {"identifiant": UTILISATEUR, "mot_de_passe": MOT_DE_PASSE},
     )
     ok = code == 200 and isinstance(corps, dict) and corps.get("id_session")
+    if ok:
+        SESSION_RECETTE.update(
+            {
+                "X-SEAMTECH-UTILISATEUR": str(corps.get("identifiant") or UTILISATEUR),
+                "X-SEAMTECH-ROLE": str(corps.get("role") or "operateur"),
+                "X-SEAMTECH-SESSION": str(corps["id_session"]),
+                "X-SEAMTECH-SESSION-JETON": str(corps.get("jeton_session") or ""),
+            }
+        )
     _ligne(
         "compte-recette",
         ok,
-        f"compte « {UTILISATEUR} » {creation} ; connexion HTTP {code} {_extrait(corps, 120)}",
+        f"compte « {UTILISATEUR} » {creation} ; connexion HTTP {code} ; session ouverte={bool(ok)}",
     )
 
 

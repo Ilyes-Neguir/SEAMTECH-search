@@ -107,10 +107,23 @@ def test_journal_route_api(base_recherche: dict[str, Any]) -> None:
                 ("test journal", "{}", 0),
             )
 
-    config = AppConfig(root_paths=[Path("/tmp")], database_url=base_recherche["url"], min_free_bytes=0)
+    config = AppConfig(
+        root_paths=[Path("/tmp")],
+        database_url=base_recherche["url"],
+        min_free_bytes=0,
+        auth_token="jeton-journal-test",
+    )
     app = create_app(config)
     with TestClient(app) as client:
-        r = client.get("/recherche/journal", params={"limite_top": 5, "limite_sans": 5})
+        r = client.get(
+            "/recherche/journal",
+            params={"limite_top": 5, "limite_sans": 5},
+            headers={
+                "X-SEAMTECH-TOKEN": "jeton-journal-test",
+                "X-SEAMTECH-UTILISATEUR": "secours",
+                "X-SEAMTECH-ROLE": "administrateur",
+            },
+        )
         assert r.status_code == 200
         corps = r.json()
         assert "total_recherches" in corps

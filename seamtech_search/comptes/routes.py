@@ -25,6 +25,7 @@ from typing import Annotated, Any
 
 from fastapi import Header, HTTPException
 
+from ..audit import record_audit_event
 from ..sessions_redis import (
     RegistreSessionsRedis,
     SessionsRedisIndisponible,
@@ -142,6 +143,30 @@ def enregistrer_routes_auth(app: Any, index: Any, config: Any, verifier_auth: An
     def _idle() -> int:
         return int(getattr(config, "session_idle_minutes", 30))
 
+    def _auditer_compte(
+        action: str,
+        acteur: dict[str, Any],
+        cible: str,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        """Événement de compte Lot 0b — jamais de mot de passe ni de jeton."""
+        record_audit_event(
+            index,
+            action=action,
+            actor=str(acteur.get("identifiant") or "inconnu"),
+            resource=cible,
+            status="200",
+            details=details or {},
+            actor_type="utilisateur",
+            id_utilisateur=int(acteur["id_utilisateur"]) if acteur.get("id_utilisateur") else None,
+            identifiant=str(acteur.get("identifiant")) if acteur.get("identifiant") else None,
+            role=str(acteur.get("role")) if acteur.get("role") else None,
+            id_session=int(acteur["id_session"]) if acteur.get("id_session") else None,
+            resource_type="utilisateur",
+            resource_id=cible,
+            code_statut=200,
+        )
+
 
     @app.post("/auth/connexion")
     def route_connexion(
@@ -203,7 +228,13 @@ def enregistrer_routes_auth(app: Any, index: Any, config: Any, verifier_auth: An
                 status_code=401,
                 detail="Jeton de session non conforme : révocation refusée.",
             )
-        return {"ok": True, **revoquer_session(index, identifiant_session, registre=_registre())}
+        utilisateur = utilisateur_dune_session(index, identifiant_session) or {}
+        if utilisateur:
+            utilisateur["id_session"] = identifiant_session
+        resultat = revoquer_session(index, identifiant_session, registre=_registre())
+        if utilisateur:
+            _auditer_compte("deconnexion", utilisateur, str(utilisateur.get("identifiant") or identifiant_session))
+        return {"ok": True, **resultat}
 
     @app.post("/auth/deconnexion-tout")
     def route_deconnexion_tout(
@@ -220,7 +251,9 @@ def enregistrer_routes_auth(app: Any, index: Any, config: Any, verifier_auth: An
         verifier_auth(config, token)
         _exiger_postgres(index)
         utilisateur = _session_authentifiee(index, entete_session, entete_jeton, idle_minutes=_idle(), registre=_registre())
-        return {"ok": True, **revoquer_sessions_utilisateur(index, utilisateur["id_utilisateur"], registre=_registre())}
+        resultat = revoquer_sessions_utilisateur(index, utilisateur["id_utilisateur"], registre=_registre())
+        _auditer_compte("deconnexion_tout", utilisateur, str(utilisateur["identifiant"]), resultat)
+        return {"ok": True, **resultat}
 
     @app.get("/auth/session")
     def route_session(
@@ -245,16 +278,15 @@ def enregistrer_routes_auth(app: Any, index: Any, config: Any, verifier_auth: An
         verifier_auth(config, token)
         _exiger_postgres(index)
         utilisateur = _session_authentifiee(index, entete_session, entete_jeton, idle_minutes=_idle(), registre=_registre())
-        return {
-            "ok": True,
-            **changer_mot_de_passe(
-                index,
-                utilisateur["id_utilisateur"],
-                str(corps.get("mot_de_passe_actuel") or ""),
-                str(corps.get("nouveau_mot_de_passe") or ""),
-                registre=_registre(),
-            ),
-        }
+        resultat = changer_mot_de_passe(
+            index,
+            utilisateur["id_utilisateur"],
+            str(corps.get("mot_de_passe_actuel") or ""),
+            str(corps.get("nouveau_mot_de_passe") or ""),
+            registre=_registre(),
+        )
+        _auditer_compte("mot_de_passe_change", utilisateur, str(utilisateur["identifiant"]))
+        return {"ok": True, **resultat}
 
     # -----------------------------------------------------------------------
     # Gestion des comptes — administrateur uniquement
@@ -290,13 +322,20 @@ def enregistrer_routes_auth(app: Any, index: Any, config: Any, verifier_auth: An
             "Création du compte « %s » demandée par « %s ».",
             corps.get("identifiant"), administrateur["identifiant"],
         )
-        return creer_utilisateur(
+        resultat = creer_utilisateur(
             index,
             str(corps.get("identifiant") or ""),
             str(corps.get("nom") or ""),
             str(corps["mot_de_passe"]),
             str(corps.get("role") or "operateur"),
         )
+        _auditer_compte(
+            "compte_cree",
+            administrateur,
+            str(resultat["identifiant"]),
+            {"role_cible": resultat.get("role"), "id_utilisateur_cible": resultat.get("id_utilisateur")},
+        )
+        return resultat
 
     @app.post("/auth/utilisateurs/{identifiant}/desactiver")
     def route_desactiver_utilisateur(
@@ -307,8 +346,10 @@ def enregistrer_routes_auth(app: Any, index: Any, config: Any, verifier_auth: An
     ) -> dict[str, Any]:
         verifier_auth(config, token)
         _exiger_postgres(index)
-        _exiger_administrateur(index, entete_session, entete_jeton, idle_minutes=_idle(), registre=_registre())
-        return {"ok": True, **desactiver_utilisateur(index, identifiant, registre=_registre())}
+        administrateur = _exiger_administrateur(index, entete_session, entete_jeton, idle_minutes=_idle(), registre=_registre())
+        resultat = desactiver_utilisateur(index, identifiant, registre=_registre())
+        _auditer_compte("compte_desactive", administrateur, identifiant, resultat)
+        return {"ok": True, **resultat}
 
     @app.post("/auth/utilisateurs/{identifiant}/mot-de-passe")
     def route_reinitialiser_mot_de_passe(
@@ -320,10 +361,9 @@ def enregistrer_routes_auth(app: Any, index: Any, config: Any, verifier_auth: An
     ) -> dict[str, Any]:
         verifier_auth(config, token)
         _exiger_postgres(index)
-        _exiger_administrateur(index, entete_session, entete_jeton, idle_minutes=_idle(), registre=_registre())
+        administrateur = _exiger_administrateur(index, entete_session, entete_jeton, idle_minutes=_idle(), registre=_registre())
         if not corps.get("mot_de_passe"):
             raise HTTPException(status_code=422, detail="« mot_de_passe » requis.")
-        return {
-            "ok": True,
-            **reinitialiser_mot_de_passe(index, identifiant, str(corps["mot_de_passe"]), registre=_registre()),
-        }
+        resultat = reinitialiser_mot_de_passe(index, identifiant, str(corps["mot_de_passe"]), registre=_registre())
+        _auditer_compte("mot_de_passe_reinitialise", administrateur, identifiant)
+        return {"ok": True, **resultat}

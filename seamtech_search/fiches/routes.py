@@ -59,6 +59,7 @@ from seamtech_search.fiches.persistance import verifier_autorisation_validation_
 from seamtech_search.import_pipeline import staging_root
 from seamtech_search.jobs import create_job, register_job_cancel
 from seamtech_search.redis_store import RedisStore
+from seamtech_search.securite_requetes import acteur_session_si_presente, exiger_acteur_humain
 from seamtech_search.storage import S3StorageClient, StorageError
 
 LOGGER = logging.getLogger("seamtech_search.fiches.routes")
@@ -289,23 +290,38 @@ _SQL_JOURNAL = (
 
 
 def _attribution(
-    config: Any,
+    index: Any,  # noqa: ANN401 - SearchIndex réel
+    config: Any,  # noqa: ANN401 - AppConfig
     token: str | None,
     corps_utilisateur: Any,  # noqa: ANN401 - valeur brute du corps JSON
     entete_utilisateur: str | None,
     entete_role: str | None,
+    entete_session: str | None = None,
+    entete_jeton: str | None = None,
 ) -> str | None:
-    """Qui agit ? — L.2 : la SESSION prime, le corps n'est qu'un repli.
+    """Qui agit ? — L.2 puis Lot 0b : la SESSION VÉRIFIÉE prime.
 
     Jusqu'à L.2, l'attribution venait EXCLUSIVEMENT de ``corps["utilisateur"]``,
     c'est-à-dire du navigateur : n'importe qui pouvait valider une fiche au nom
-    d'un autre en changeant un champ JSON. Désormais l'identité vient des
-    en-têtes posés par le proxy serveur depuis la session nominative
-    (``X-SEAMTECH-UTILISATEUR`` / ``X-SEAMTECH-ROLE``), et ``resoudre_attribution``
-    refuse (401) ces en-têtes si ``X-SEAMTECH-TOKEN`` n'est pas valide sur la
-    même requête. Le corps reste accepté en repli pour l'outillage existant
-    (scripts, tests), mais il ne peut plus usurper une session.
+    d'un autre en changeant un champ JSON. L.2 a fait primer les en-têtes posés
+    par le proxy serveur. Le Lot 0b va au bout de cette frontière : quand les
+    en-têtes de session sont présents, la session est revérifiée (PostgreSQL +
+    Redis) et l'identifiant est RELU en base ; un en-tête utilisateur/rôle
+    incompatible vaut 401. Sans session présentée, l'ancien repli explicite
+    (secours derrière jeton de service, puis corps pour l'outillage) reste en
+    place jusqu'à la généralisation des rôles du Lot 1.
     """
+    acteur = acteur_session_si_presente(
+        index,
+        config,
+        token=token,
+        entete_utilisateur=entete_utilisateur,
+        entete_role=entete_role,
+        entete_session=entete_session,
+        entete_jeton=entete_jeton,
+    )
+    if acteur is not None:
+        return acteur.identifiant
     identifiant, _role = resoudre_attribution(
         config, token, entete_utilisateur, entete_role, corps_utilisateur
     )
@@ -1615,8 +1631,22 @@ def enregistrer_routes_fiches(
         piece_id: int,
         request: Request,
         token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+        entete_utilisateur: Annotated[str | None, Header(alias="X-SEAMTECH-UTILISATEUR")] = None,
+        entete_role: Annotated[str | None, Header(alias="X-SEAMTECH-ROLE")] = None,
+        entete_session: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION")] = None,
+        entete_jeton: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-JETON")] = None,
     ) -> Response:
         verifier_auth(config, token)
+        exiger_acteur_humain(
+            index,
+            config,
+            token=token,
+            entete_utilisateur=entete_utilisateur,
+            entete_role=entete_role,
+            entete_session=entete_session,
+            entete_jeton=entete_jeton,
+            client_host=request.client.host if request.client else None,
+        )
         return servir_piece(piece_id, request, apercu=True)
 
     @app.api_route("/pieces/{piece_id}/telecharger", methods=["GET", "HEAD"])
@@ -1624,8 +1654,22 @@ def enregistrer_routes_fiches(
         piece_id: int,
         request: Request,
         token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+        entete_utilisateur: Annotated[str | None, Header(alias="X-SEAMTECH-UTILISATEUR")] = None,
+        entete_role: Annotated[str | None, Header(alias="X-SEAMTECH-ROLE")] = None,
+        entete_session: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION")] = None,
+        entete_jeton: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-JETON")] = None,
     ) -> Response:
         verifier_auth(config, token)
+        exiger_acteur_humain(
+            index,
+            config,
+            token=token,
+            entete_utilisateur=entete_utilisateur,
+            entete_role=entete_role,
+            entete_session=entete_session,
+            entete_jeton=entete_jeton,
+            client_host=request.client.host if request.client else None,
+        )
         return servir_piece(piece_id, request, apercu=False)
 
     @app.get("/fiches/{code}")
@@ -1699,6 +1743,11 @@ def enregistrer_routes_fiches(
         dossier = str(corps.get("dossier") or "").strip()
         if not dossier:
             raise HTTPException(status_code=422, detail='Corps attendu : {"dossier": "/chemin/du/dossier"}.')
+        if not _path_autorise(Path(dossier), config):
+            raise HTTPException(
+                status_code=403,
+                detail="Dossier hors des racines configurées : dépôt refusé (Lot 0b).",
+            )
         try:
             resultat = deposer_dossier(index, Path(dossier))
         except DepotImpossible as erreur:
@@ -1733,6 +1782,11 @@ def enregistrer_routes_fiches(
         racine = str(corps.get("racine") or "").strip()
         if not racine:
             raise HTTPException(status_code=422, detail='Corps attendu : {"racine": "/chemin/de/la/racine"}.')
+        if not _path_autorise(Path(racine), config):
+            raise HTTPException(
+                status_code=403,
+                detail="Racine de lot hors des racines configurées : création refusée (Lot 0b).",
+            )
         try:
             id_lot = creer_lot(index, Path(racine), notes=corps.get("notes"))
         except DepotImpossible as erreur:
@@ -1890,6 +1944,8 @@ def enregistrer_routes_fiches(
         token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
         entete_utilisateur: Annotated[str | None, Header(alias="X-SEAMTECH-UTILISATEUR")] = None,
         entete_role: Annotated[str | None, Header(alias="X-SEAMTECH-ROLE")] = None,
+        entete_session: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION")] = None,
+        entete_jeton: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-JETON")] = None,
     ) -> dict[str, Any]:
         """Réconciliation EXPLICITE et journalisée d'une fiche (jamais globale)."""
         verifier_auth(config, token)
@@ -1904,7 +1960,14 @@ def enregistrer_routes_fiches(
                 ),
             )
         utilisateur = _attribution(
-            config, token, corps.get("utilisateur"), entete_utilisateur, entete_role
+            index,
+            config,
+            token,
+            corps.get("utilisateur"),
+            entete_utilisateur,
+            entete_role,
+            entete_session,
+            entete_jeton,
         )
         try:
             return reconcilier_fiche(index, code, utilisateur=utilisateur, confirmer=True)
@@ -1946,13 +2009,18 @@ def enregistrer_routes_fiches(
         token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
         entete_utilisateur: Annotated[str | None, Header(alias="X-SEAMTECH-UTILISATEUR")] = None,
         entete_role: Annotated[str | None, Header(alias="X-SEAMTECH-ROLE")] = None,
+        entete_session: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION")] = None,
+        entete_jeton: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-JETON")] = None,
     ) -> dict[str, Any]:
         verifier_auth(config, token)
         _exiger_postgres(index)
         return corriger_champ(
             index, code,
             corps.get("champ"), corps.get("valeur"),
-            _attribution(config, token, corps.get("utilisateur"), entete_utilisateur, entete_role),
+            _attribution(
+                index, config, token, corps.get("utilisateur"), entete_utilisateur, entete_role,
+                entete_session, entete_jeton,
+            ),
             rang=corps.get("rang"), commentaire=corps.get("commentaire"),
             revision=corps.get("revision"), exiger_revision=exiger_revision,
         )
@@ -1964,12 +2032,17 @@ def enregistrer_routes_fiches(
         token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
         entete_utilisateur: Annotated[str | None, Header(alias="X-SEAMTECH-UTILISATEUR")] = None,
         entete_role: Annotated[str | None, Header(alias="X-SEAMTECH-ROLE")] = None,
+        entete_session: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION")] = None,
+        entete_jeton: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-JETON")] = None,
     ) -> dict[str, Any]:
         verifier_auth(config, token)
         _exiger_postgres(index)
         return valider_fiche(
             index, code,
-            _attribution(config, token, corps.get("utilisateur"), entete_utilisateur, entete_role),
+            _attribution(
+                index, config, token, corps.get("utilisateur"), entete_utilisateur, entete_role,
+                entete_session, entete_jeton,
+            ),
             corps.get("commentaire"),
             revision=corps.get("revision"), exiger_revision=exiger_revision,
             # Acceptation EXPLICITE et journalisée (409 sinon) : c'est une
@@ -1984,12 +2057,17 @@ def enregistrer_routes_fiches(
         token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
         entete_utilisateur: Annotated[str | None, Header(alias="X-SEAMTECH-UTILISATEUR")] = None,
         entete_role: Annotated[str | None, Header(alias="X-SEAMTECH-ROLE")] = None,
+        entete_session: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION")] = None,
+        entete_jeton: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-JETON")] = None,
     ) -> dict[str, Any]:
         verifier_auth(config, token)
         _exiger_postgres(index)
         return rejeter_fiche(
             index, code,
-            _attribution(config, token, corps.get("utilisateur"), entete_utilisateur, entete_role),
+            _attribution(
+                index, config, token, corps.get("utilisateur"), entete_utilisateur, entete_role,
+                entete_session, entete_jeton,
+            ),
             corps.get("motif") or "",
             revision=corps.get("revision"), exiger_revision=exiger_revision,
         )
@@ -2001,12 +2079,17 @@ def enregistrer_routes_fiches(
         token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
         entete_utilisateur: Annotated[str | None, Header(alias="X-SEAMTECH-UTILISATEUR")] = None,
         entete_role: Annotated[str | None, Header(alias="X-SEAMTECH-ROLE")] = None,
+        entete_session: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION")] = None,
+        entete_jeton: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-JETON")] = None,
     ) -> dict[str, Any]:
         verifier_auth(config, token)
         _exiger_postgres(index)
         return rouvrir_fiche(
             index, code,
-            _attribution(config, token, corps.get("utilisateur"), entete_utilisateur, entete_role),
+            _attribution(
+                index, config, token, corps.get("utilisateur"), entete_utilisateur, entete_role,
+                entete_session, entete_jeton,
+            ),
             corps.get("commentaire"), bool(corps.get("effacer_corrections")),
             revision=corps.get("revision"), exiger_revision=exiger_revision,
         )
@@ -2027,6 +2110,8 @@ def enregistrer_routes_fiches(
         token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
         entete_utilisateur: Annotated[str | None, Header(alias="X-SEAMTECH-UTILISATEUR")] = None,
         entete_role: Annotated[str | None, Header(alias="X-SEAMTECH-ROLE")] = None,
+        entete_session: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION")] = None,
+        entete_jeton: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-JETON")] = None,
     ) -> dict[str, Any]:
         verifier_auth(config, token)
         _exiger_postgres(index)
@@ -2035,7 +2120,10 @@ def enregistrer_routes_fiches(
             raise HTTPException(status_code=422, detail="Liste « codes » vide — rien à valider.")
         return valider_lot(
             index, codes,
-            _attribution(config, token, corps.get("utilisateur"), entete_utilisateur, entete_role),
+            _attribution(
+                index, config, token, corps.get("utilisateur"), entete_utilisateur, entete_role,
+                entete_session, entete_jeton,
+            ),
             acquittement_humain=bool(corps.get("acquittement_humain")), commentaire=corps.get("commentaire"),
             revisions=corps.get("revisions"), exiger_revision=exiger_revision,
             accepter_divergences=bool(corps.get("accepter_divergences")),

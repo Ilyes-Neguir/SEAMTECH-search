@@ -291,6 +291,28 @@ warning, while this document and [TLS.md](TLS.md) both describe exposing the app
 to the office LAN and to a VPS behind Caddy. Sign-in is the control that makes
 those deployments safe; a warning does not.
 
+### Lot 0b — audit journal and sensitive backend surfaces
+
+On upgrade, migrations `024_sessions_redis` (marker, no DDL) and
+`025_audit_logs` run automatically at startup. The latter creates the
+append-only, hash-chained PostgreSQL `audit_logs` table and copies the legacy
+`audit_log` history into it in chronological order. Keep both tables in
+backups: `audit_log` still backs login lockout, `audit_logs` is the canonical
+security journal and is **not** pruned by the historical retention job.
+
+Operator scripts that call the backend directly must be reviewed: on
+PostgreSQL, `/audit`, `/metrics`, `/preview`, `/maintenance/*`, `/ml/*` and the
+search journal require a human administrator session (or the documented
+`secours` identity behind the service token); piece/artifact bytes require a
+live human session. Browser traffic already satisfies this through Next.js.
+The local recette script keeps its nominative session after sign-in and sends
+it on subsequent calls.
+
+Rollback is a code revert plus redeploy; the additive `audit_logs` table can
+remain in place (older code simply keeps using `audit_log`). Do not drop it
+during rollback — it is evidence. A later redeploy of the Lot 0b code resumes
+the hash chain from its last row.
+
 ## Office LAN access
 
 The default deployment is safe for a local-only installation: all published

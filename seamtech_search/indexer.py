@@ -1053,6 +1053,49 @@ class SearchIndex:
                     exc,
                 )
 
+    def _migration_024_sessions_redis(self, connection: Any) -> None:
+        """Marqueur Lot 0a : sessions Redis, sans DDL.
+
+        L'état vivant des sessions est porté par Redis ; PostgreSQL conserve
+        l'historique ``session_ui``. La migration est néanmoins enregistrée
+        dans les deux modes pour garder une séquence 001…025 sans trou — un
+        trou ferait échouer les gardes de sauvegarde qui comparent la base à
+        ``VERSION_SCHEMA_METIER``.
+        """
+        if self.is_postgres:
+            with connection.cursor() as cursor:
+                cursor.execute(schema_metier.SQL_024_SESSIONS_REDIS)
+                cursor.fetchone()
+        logger.info(
+            "Migration 024_sessions_redis : marqueur Lot 0a appliqué (aucune DDL ; "
+            "les sessions vivantes sont dans Redis)."
+        )
+
+    def _migration_025_audit_logs(self, connection: Any) -> None:
+        """Journal d'audit canonique append-only (Lot 0b).
+
+        PostgreSQL : crée ``audit_logs``, ses index et son trigger
+        anti-modification, puis recopie l'historique ``audit_log`` dans
+        l'ordre chronologique en construisant la chaîne d'empreintes.
+        SQLite : no-op enregistré — le journal canonique appartient à la
+        couche PostgreSQL, comme les comptes nominatifs.
+        """
+        if not self.is_postgres:
+            logger.warning(
+                "Migration 025_audit_logs ignorée : la couche métier est PostgreSQL uniquement — "
+                "conséquence : SQLite conserve uniquement la table historique audit_log."
+            )
+            return
+        with connection.cursor() as cursor:
+            cursor.execute(schema_metier.SQL_025_AUDIT_LOGS)
+        from .audit import migrer_audit_log_postgres
+
+        copies = migrer_audit_log_postgres(connection)
+        logger.info(
+            "Migration 025_audit_logs : journal canonique créé, %d événement(s) historique(s) chaîné(s).",
+            copies,
+        )
+
     def run_migrations(self) -> None:
         """Run pending schema migrations once at startup."""
         with self.connect() as connection:
@@ -1109,6 +1152,12 @@ class SearchIndex:
                 # d'enregistrement : une migration oubliée ici ferait échouer
                 # sauvegarde/restauration (VERSION_SCHEMA_METIER absente).
                 ("023_recherche_normalisee", self._migration_023_recherche_normalisee),
+                # Lot 0a/0b — 024 est le marqueur sans DDL des sessions Redis ;
+                # 025 crée le journal d'audit canonique. Les deux sont
+                # enregistrées : VERSION_SCHEMA_METIER vaut désormais 025 et
+                # une migration oubliée ferait échouer sauvegarde/restauration.
+                ("024_sessions_redis", self._migration_024_sessions_redis),
+                ("025_audit_logs", self._migration_025_audit_logs),
             ]
 
             for version, func in migrations:
@@ -1212,6 +1261,16 @@ class SearchIndex:
         )
         return "en_place"
 
+    @staticmethod
+    def _ident_sqlite(nom: str) -> str:
+        """Cite un identifiant lu dans le schéma SQLite.
+
+        Les noms viennent de ``sqlite_master``/``PRAGMA foreign_key_list``,
+        pas d'une requête HTTP, mais un identifiant ne peut pas être lié : la
+        citation avec doublement des guillemets est donc systématique (Lot 0b).
+        """
+        return '"' + str(nom).replace('"', '""') + '"'
+
     def _references_sqlite(self, connection: sqlite3.Connection) -> list[tuple[str, str]]:
         """Tables SQLite qui référencent ``documents`` (table, colonne)."""
         references: list[tuple[str, str]] = []
@@ -1224,7 +1283,9 @@ class SearchIndex:
         for table in tables:
             if table in {"documents", "documents_fts"}:
                 continue
-            for cle in connection.execute(f'PRAGMA foreign_key_list("{table}")').fetchall():
+            for cle in connection.execute(
+                f"PRAGMA foreign_key_list({self._ident_sqlite(str(table))})"
+            ).fetchall():
                 # colonnes : id, seq, table, from, to, on_update, on_delete, match
                 if str(cle[2]) == "documents":
                     references.append((str(table), str(cle[3])))
@@ -1256,9 +1317,9 @@ class SearchIndex:
             return "recreation"
         for table, colonne in references:
             ligne = connection.execute(
-                f'SELECT EXISTS (SELECT 1 FROM "{table}" r '
-                f'WHERE r."{colonne}" IS NOT NULL '
-                f'AND EXISTS (SELECT 1 FROM documents d WHERE d.id = r."{colonne}"))'
+                f"SELECT EXISTS (SELECT 1 FROM {self._ident_sqlite(table)} r "
+                f"WHERE r.{self._ident_sqlite(colonne)} IS NOT NULL "
+                f"AND EXISTS (SELECT 1 FROM documents d WHERE d.id = r.{self._ident_sqlite(colonne)}))"
             ).fetchone()
             if ligne and int(ligne[0]):
                 logger.warning(
@@ -1338,8 +1399,11 @@ class SearchIndex:
         """Supprime les documents absents du disque, SAUF ceux qu'une fiche
         référence (E-40) : un lien de pièce jointe ne doit jamais devenir
         orphelin parce qu'un fichier a bougé."""
+        def ident(nom: str) -> str:
+            return '"' + str(nom).replace('"', '""') + '"'
+
         garde = "".join(
-            f" AND NOT EXISTS (SELECT 1 FROM {table} ref WHERE ref.{colonne} = d.id)"
+            f" AND NOT EXISTS (SELECT 1 FROM {ident(table)} ref WHERE ref.{ident(colonne)} = d.id)"
             for table, colonne, action in self._contraintes_vers_documents(cursor)
             if action in {"a", "r"}
         )
@@ -1816,7 +1880,8 @@ class SearchIndex:
                 reference = False
                 for table, colonne in references:
                     ligne = connection.execute(
-                        f'SELECT EXISTS (SELECT 1 FROM "{table}" r WHERE r."{colonne}" = ?)',
+                        f"SELECT EXISTS (SELECT 1 FROM {self._ident_sqlite(table)} r "
+                        f"WHERE r.{self._ident_sqlite(colonne)} = ?)",
                         (row_id,),
                     ).fetchone()
                     if ligne and int(ligne[0]):

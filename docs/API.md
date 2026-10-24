@@ -319,6 +319,49 @@ sel de 16 octets via `secrets`), vérification `hmac.compare_digest`, **biblioth
 uniquement** (aucune dépendance nouvelle). Les jetons de session ne sont stockés que par leur
 empreinte SHA-256 — un dump de la base ne permet pas de rejouer une session.
 
+## Journal d'audit canonique et surfaces sensibles (Lot 0b)
+
+La migration `025_audit_logs` ajoute `audit_logs`, journal PostgreSQL
+**append-only** (trigger refusant `UPDATE`/`DELETE`) et chaîné par empreinte
+SHA-256 : chaque ligne porte l'empreinte de la précédente, un `request_id`,
+l'acteur structuré (`actor_type`, `id_utilisateur`, `identifiant`, `role`,
+`id_session`), la ressource (`resource_type` + `resource_id`), le code HTTP et
+des `details` expurgés (aucun mot de passe, jeton, cookie ou secret). La
+migration `024_sessions_redis` est le marqueur sans DDL du Lot 0a. La table
+historique `audit_log` reste écrite pour compatibilité (SQLite et verrouillage
+des connexions) ; en PostgreSQL, `GET /audit` lit `audit_logs` dès qu'il
+contient des événements, en conservant les clés historiques (`id`, `timestamp`,
+`actor`, `action`, `resource`, `status`, `details`) enrichies des nouveaux
+champs.
+
+Le middleware journalise dans ce journal toutes les mutations, tous les refus
+HTTP et les lectures sensibles (octets de pièces/artefacts, audit, maintenance,
+administration, journal de recherche), sans corps ni query string. Les actions
+de compte (connexion, déconnexions, création, désactivation, changements de mot
+de passe) sont aussi des événements explicites.
+
+**Gardes PostgreSQL du Lot 0b** (le mode SQLite conserve le contrat
+d'outillage derrière le jeton de service, faute de comptes nominatifs) :
+
+| Surface | Exigence en PostgreSQL |
+|---|---|
+| `GET /audit`, `GET /metrics`, `GET /preview`, `/maintenance/*`, `/ml/*`, `GET /recherche/journal` | session humaine `administrateur` vérifiée (ou compte `secours` derrière le jeton de service) ; service seul ⇒ 401, opérateur ⇒ 403 |
+| `GET|HEAD /pieces/{id}/apercu`, `/pieces/{id}/telecharger`, `GET /imports/{id}/artifacts/{artifact}` | session humaine vivante ; l'objet est ensuite relu par ID et confiné aux racines/staging/rapports |
+| corrections/validations de fiches | si les en-têtes de session sont présents, l'identité est revérifiée et relue en base ; un en-tête utilisateur/rôle incompatible ⇒ 401 |
+| `POST /fiches/doublons/scan` avec `appliquer=true` | session humaine vivante (le dry-run reste un comptage) |
+| `POST /imports/dossier`, `POST /imports/dossier/lot` | dossier/racine obligatoirement sous une racine configurée ou le staging, sinon 403 |
+
+`POST /open` reste l'endpoint historique des scripts serveur de qualification :
+le navigateur ne l'utilise plus (`/api/open` = 410, pièces par ID). En
+PostgreSQL, il exige désormais en plus que le chemin désigne un document
+**catalogué** : un fichier simplement présent sous une racine mais absent de
+`documents` répond 404.
+
+Tous les proxys Next de données transmettent désormais `backendHeaders()`
+(jeton de service + identité/session recalculées depuis le cookie signé), pas
+le seul jeton de service. Les exceptions restent les routes d'authentification
+elles-mêmes et `/api/health`.
+
 ## Tableau de bord qualité (Lot K.1 + L + M)
 
 `GET /qualite/tableau-de-bord` — 10 indicateurs, chacun avec sa `definition`, son `unite` et

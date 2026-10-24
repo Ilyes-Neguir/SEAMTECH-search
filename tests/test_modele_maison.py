@@ -226,14 +226,22 @@ def test_endpoints_ml_live(base_ml: dict[str, Any], tmp_path: Path) -> None:
         root_paths=[tmp_path],
         database_path=tmp_path / "unused.db",
         database_url=base_ml["url"],
+        auth_token="jeton-ml-test",
     )
     dossier_modeles = tmp_path / "modeles"
     os.environ["SEAMTECH_ML_MODELE_DIR"] = str(dossier_modeles)
     try:
         client = TestClient(create_app(config))
+        # Lot 0b : /ml est une surface d'exploitation. Le compte de secours
+        # (derrière le jeton de service) est l'acteur d'outillage documenté.
+        entetes_admin = {
+            "X-SEAMTECH-TOKEN": "jeton-ml-test",
+            "X-SEAMTECH-UTILISATEUR": "secours",
+            "X-SEAMTECH-ROLE": "administrateur",
+        }
 
         # GET : encodeur absent (pas de poids e5 ici) — annoncé, pas caché.
-        reponse = client.get("/ml/modeles")
+        reponse = client.get("/ml/modeles", headers=entetes_admin)
         assert reponse.status_code == 200
         assert reponse.json()["encodeur"]["nom"] is None
 
@@ -241,16 +249,17 @@ def test_endpoints_ml_live(base_ml: dict[str, Any], tmp_path: Path) -> None:
         reponse = client.post(
             "/ml/modeles",
             json={"version": "manuel_v1", "algorithme": "manuel", "chemin": str(tmp_path / "manuel.json")},
+            headers=entetes_admin,
         )
         assert reponse.status_code == 201, reponse.text
 
         # POST /ml/entrainer sans poids e5 : refus explicite (pas de repli silencieux).
-        reponse = client.post("/ml/entrainer", json={})
+        reponse = client.post("/ml/entrainer", json={}, headers=entetes_admin)
         assert reponse.status_code == 422
         assert "telecharger" in reponse.json()["detail"]
 
         # Essai de câblage sur repli EXPLICITE : les chiffres seront étiquetés.
-        reponse = client.post("/ml/entrainer", json={"encodeur": "repli-deterministe"})
+        reponse = client.post("/ml/entrainer", json={"encodeur": "repli-deterministe"}, headers=entetes_admin)
         assert reponse.status_code == 200, reponse.text
         corps = reponse.json()
         assert corps["version"] == "classifieur_type_voile_v1"
@@ -260,9 +269,9 @@ def test_endpoints_ml_live(base_ml: dict[str, Any], tmp_path: Path) -> None:
         assert "conclusion" in mesures
 
         # Versionnement non destructif : v2 active, v1 conservée et désactivée.
-        reponse = client.post("/ml/entrainer", json={"encodeur": "repli-deterministe"})
+        reponse = client.post("/ml/entrainer", json={"encodeur": "repli-deterministe"}, headers=entetes_admin)
         assert reponse.json()["version"] == "classifieur_type_voile_v2"
-        versions = client.get("/ml/modeles").json()["modeles"]
+        versions = client.get("/ml/modeles", headers=entetes_admin).json()["modeles"]
         par_version = {m["version"]: m for m in versions}
         assert par_version["classifieur_type_voile_v1"]["actif"] is False
         assert par_version["classifieur_type_voile_v2"]["actif"] is True
@@ -271,11 +280,11 @@ def test_endpoints_ml_live(base_ml: dict[str, Any], tmp_path: Path) -> None:
         dossier_modeles.mkdir(parents=True, exist_ok=True)
         with (dossier_modeles / ".entrainement.lock").open("w") as verrou:
             fcntl.flock(verrou.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            reponse = client.post("/ml/entrainer", json={"encodeur": "repli-deterministe"})
+            reponse = client.post("/ml/entrainer", json={"encodeur": "repli-deterministe"}, headers=entetes_admin)
             assert reponse.status_code == 409
 
         # POST /ml/peupler : active la source via l'API.
-        reponse = client.post("/ml/peupler", json={"encodeur": "repli-deterministe"})
+        reponse = client.post("/ml/peupler", json={"encodeur": "repli-deterministe"}, headers=entetes_admin)
         assert reponse.status_code == 200
         assert reponse.json()["fiches"] == 1
     finally:

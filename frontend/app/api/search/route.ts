@@ -1,5 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { backendBase, authHeaders, requireAuthValide } from "@/lib/backend"
+import { backendBase, backendHeaders, requireAuthValide } from "@/lib/backend"
 import { searchSample } from "@/lib/sample-data"
 import type { SearchResponse } from "@/lib/types"
 
@@ -35,7 +35,7 @@ export async function GET(req: NextRequest) {
   if (base) {
     try {
       const url = `${base}/search?q=${encodeURIComponent(q)}&limit=${limit}&offset=${offset}`
-      const res = await fetch(url, { headers: authHeaders(), cache: "no-store" })
+      const res = await fetch(url, { headers: await backendHeaders(), cache: "no-store" })
       const body = await res.json()
       return NextResponse.json(masquerChemins(body), { status: res.status })
     } catch {

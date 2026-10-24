@@ -45,6 +45,11 @@ from .jobs import (
 )
 from .redis_store import RedisStore
 from .retention import InsufficientStorageError, ensure_free_space, run_retention_cleanup
+from .securite_requetes import (
+    exiger_acteur_humain,
+    exiger_administrateur_requete,
+    resoudre_acteur_audit,
+)
 from .storage import S3StorageClient
 from .worker import file_durable_disponible, start_background_worker, stop_background_worker
 
@@ -260,6 +265,97 @@ def create_app(config: AppConfig) -> FastAPI:
     }
 
     # ---------------------------------------------------------------------------
+    # Lot 0b — acteur, audit HTTP et confinement des artefacts
+    # ---------------------------------------------------------------------------
+
+    def _ressource_audit(chemin: str) -> tuple[str, str]:
+        """Type/identifiant d'objet pour le journal, sans query string."""
+        segments = [segment for segment in chemin.split("/") if segment]
+        if len(segments) >= 3 and segments[0] == "pieces":
+            return "piece", segments[1]
+        if len(segments) >= 4 and segments[0] == "imports" and segments[2] == "artifacts":
+            return "import_artifact", f"{segments[1]}/{segments[3]}"
+        if len(segments) >= 2 and segments[0] == "fiches":
+            return "fiche", segments[1]
+        if len(segments) >= 2 and segments[0] == "lots":
+            return "lot", segments[1]
+        if len(segments) >= 3 and segments[0] == "gabarits" and segments[1] == "brouillons":
+            return "gabarit_brouillon", segments[2]
+        if len(segments) >= 3 and segments[0] == "auth" and segments[1] == "utilisateurs":
+            return "utilisateur", segments[2]
+        return "route", chemin
+
+    def _requete_a_auditer(methode: str, chemin: str, code_statut: int) -> bool:
+        """Événements HTTP versés au journal canonique.
+
+        Toutes les mutations, tous les refus et les lectures sensibles
+        (fichiers, audit, maintenance, administration, journal de recherche)
+        sont tracés. Les lectures ordinaires de recherche restent couvertes
+        par leurs journaux métier dédiés, sans doubler chaque frappe dans
+        ``audit_logs``. Ni corps ni query string ne sont persistés ici.
+        """
+        if chemin in {"/live", "/ready", "/health"}:
+            return False
+        if methode.upper() in {"POST", "PUT", "PATCH", "DELETE"}:
+            return True
+        if code_statut >= 400:
+            return True
+        if chemin in {"/audit", "/metrics", "/recherche/journal", "/auth/utilisateurs"}:
+            return True
+        if chemin.startswith("/maintenance/"):
+            return True
+        if re.fullmatch(r"/pieces/\d+/(apercu|telecharger)", chemin):
+            return True
+        if re.fullmatch(r"/imports/[^/]+/artifacts/[^/]+", chemin):
+            return True
+        return False
+
+    def _chemin_artefact_autorise(chemin: Path) -> bool:
+        """Un chemin lu depuis un payload d'import reste confiné.
+
+        Le payload est produit par le serveur, mais le Lot 0b ne le traite pas
+        comme une autorisation : seules les racines d'archive, le staging et
+        le dossier des rapports générés peuvent être servis ou alimentés en
+        cache depuis S3.
+        """
+        try:
+            cible = chemin.expanduser().resolve()
+            racines = [Path(root).expanduser().resolve() for root in config.root_paths]
+            racines.append(staging_root(config).expanduser().resolve())
+            racines.append((Path(config.database_path).expanduser().resolve().parent / "reports"))
+            return any(cible == racine or racine in cible.parents for racine in racines)
+        except (OSError, RuntimeError, TypeError, ValueError):
+            return False
+
+    def _enregistrer_audit_http(
+        *,
+        methode: str,
+        chemin: str,
+        code_statut: int,
+        request_id: str,
+        entetes: dict[str, str],
+        client_host: str | None,
+        user_agent: str | None,
+    ) -> None:
+        acteur = resoudre_acteur_audit(index, config, entetes, client_host)
+        resource_type, resource_id = _ressource_audit(chemin)
+        record_audit_event(
+            index,
+            action="http_request",
+            actor=acteur.libelle_audit,
+            resource=chemin,
+            status=str(code_statut),
+            details={"method": methode, "path": chemin},
+            request_id=request_id,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            code_statut=code_statut,
+            adresse_ip=client_host,
+            user_agent=user_agent,
+            **acteur.contexte_audit(),
+        )
+
+    # ---------------------------------------------------------------------------
     # Middleware: X-Request-ID & Sliding-Window Rate Limiter
     # ---------------------------------------------------------------------------
 
@@ -330,6 +426,20 @@ def create_app(config: AppConfig) -> FastAPI:
             # Lot 0a : aucune réponse authentifiée ne doit survivre dans un
             # cache navigateur/proxy après déconnexion (bouton Retour).
             response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, private"
+        if _requete_a_auditer(request.method, path, response.status_code):
+            # Résolution d'acteur vérifiée (PostgreSQL + Redis) et écriture du
+            # journal dans un thread : jamais d'accès base bloquant sur la
+            # boucle d'événements, et jamais d'identité crue sur en-tête.
+            await asyncio.to_thread(
+                _enregistrer_audit_http,
+                methode=request.method,
+                chemin=path,
+                code_statut=response.status_code,
+                request_id=request_id,
+                entetes=dict(request.headers),
+                client_host=request.client.host if request.client else None,
+                user_agent=request.headers.get("User-Agent"),
+            )
         return response
 
     # ---------------------------------------------------------------------------
@@ -495,16 +605,51 @@ def create_app(config: AppConfig) -> FastAPI:
         }
 
     @app.get("/metrics")
-    def get_metrics(token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None) -> dict[str, object]:
+    def get_metrics(
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+        entete_utilisateur: Annotated[str | None, Header(alias="X-SEAMTECH-UTILISATEUR")] = None,
+        entete_role: Annotated[str | None, Header(alias="X-SEAMTECH-ROLE")] = None,
+        entete_session: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION")] = None,
+        entete_jeton: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-JETON")] = None,
+    ) -> dict[str, object]:
         _require_auth(config, token)
+        exiger_administrateur_requete(
+            index,
+            config,
+            token=token,
+            entete_utilisateur=entete_utilisateur,
+            entete_role=entete_role,
+            entete_session=entete_session,
+            entete_jeton=entete_jeton,
+        )
         return {**metrics, "health": health(token)}
 
     @app.get("/preview")
     def preview(
         path: str = Query(..., min_length=1, max_length=4_096),
         token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+        entete_utilisateur: Annotated[str | None, Header(alias="X-SEAMTECH-UTILISATEUR")] = None,
+        entete_role: Annotated[str | None, Header(alias="X-SEAMTECH-ROLE")] = None,
+        entete_session: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION")] = None,
+        entete_jeton: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-JETON")] = None,
     ) -> dict[str, object]:
+        """Explorateur historique par chemin — surface d'exploitation.
+
+        Le navigateur utilise les pièces par identifiant (``/api/preview``
+        répond 410). Côté backend PostgreSQL, ce parcours de fichiers par
+        chemin est désormais réservé à un administrateur humain ; le mode
+        SQLite conserve le contrat d'outillage historique.
+        """
         _require_auth(config, token)
+        exiger_administrateur_requete(
+            index,
+            config,
+            token=token,
+            entete_utilisateur=entete_utilisateur,
+            entete_role=entete_role,
+            entete_session=entete_session,
+            entete_jeton=entete_jeton,
+        )
         target = _validated_path(path, config)
         if target.is_dir():
             children = sorted(target.iterdir(), key=lambda item: (not item.is_dir(), item.name.lower()))
@@ -548,28 +693,66 @@ def create_app(config: AppConfig) -> FastAPI:
         path: str = Query(..., min_length=1, max_length=4_096),
         token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
     ) -> Response:
+        """Ouverture historique par chemin, réservée à l'outillage serveur.
+
+        Le navigateur ne l'utilise plus (``/api/open`` = 410 ; pièces par ID).
+        En PostgreSQL, le chemin doit en plus désigner un document CATALOGUÉ :
+        être physiquement sous une racine ne suffit plus à rendre un fichier
+        ouvrable. Les scripts de qualification qui ouvrent les originaux par
+        leur chemin les prennent dans le catalogue, donc le contrat utile est
+        conservé sans rouvrir une lecture arbitraire du système de fichiers.
+        """
         _require_auth(config, token)
-        actor = actor_fingerprint(token, request.client.host if request.client else None)
+        acteur = resoudre_acteur_audit(
+            index, config, request.headers, request.client.host if request.client else None
+        )
+        actor = acteur.libelle_audit
         target = _validated_path(path, config, exiger_existence=False)
 
         # Try to find object storage key for this path
         object_key = None
+        document_trouve = False
+        cle_chemin = os.path.normcase(str(target.resolve()))
         try:
             with index.connect() as conn:
                 if index.is_postgres:
                     with conn.cursor() as cursor:
-                        cursor.execute("SELECT object_key FROM documents WHERE path_key = %s", (str(target.resolve()),))
+                        cursor.execute(
+                            "SELECT object_key FROM documents WHERE path_key = %s",
+                            (cle_chemin,),
+                        )
                         row = cursor.fetchone()
+                        document_trouve = row is not None
                         if row and row[0]:
                             object_key = row[0]
                 else:
-                    row = conn.execute("SELECT object_key FROM documents WHERE path_key = ?", (str(target.resolve()),)).fetchone()
+                    row = conn.execute(
+                        "SELECT object_key FROM documents WHERE path_key = ?", (cle_chemin,)
+                    ).fetchone()
+                    document_trouve = row is not None
                     if row and row["object_key"]:
                         object_key = row["object_key"]
         except Exception as exc:
-            # Falling back to the local file is fine, but a DB error here is a
-            # signal of a broken schema/index and must not vanish silently.
+            # Falling back to the local file is fine in SQLite tooling, but a DB
+            # error here is a signal of a broken schema/index and must not
+            # vanish silently. In PostgreSQL, the catalogue check below fails
+            # closed (404) rather than serving an unverified path.
             logger.warning("Could not look up object_key for %s: %s", target, exc)
+
+        if index.is_postgres and not document_trouve:
+            record_audit_event(
+                index,
+                action="open",
+                actor=actor,
+                resource=str(target),
+                status="404",
+                details={"reason": "document_non_catalogue"},
+                resource_type="document",
+                resource_id=cle_chemin,
+                code_statut=404,
+                **acteur.contexte_audit(),
+            )
+            raise HTTPException(status_code=404, detail="Document non catalogué.")
 
         url_publique = _url_presignee_navigateur(object_key, storage_client, config)
         if url_publique:
@@ -1152,9 +1335,37 @@ def create_app(config: AppConfig) -> FastAPI:
         artifact: str,
         request: Request,
         token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+        entete_utilisateur: Annotated[str | None, Header(alias="X-SEAMTECH-UTILISATEUR")] = None,
+        entete_role: Annotated[str | None, Header(alias="X-SEAMTECH-ROLE")] = None,
+        entete_session: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION")] = None,
+        entete_jeton: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-JETON")] = None,
     ) -> Response:
         _require_auth(config, token)
-        actor = actor_fingerprint(token, request.client.host if request.client else None)
+        acteur = exiger_acteur_humain(
+            index,
+            config,
+            token=token,
+            entete_utilisateur=entete_utilisateur,
+            entete_role=entete_role,
+            entete_session=entete_session,
+            entete_jeton=entete_jeton,
+            client_host=request.client.host if request.client else None,
+        )
+        actor = acteur.libelle_audit
+
+        def _audit_artefact(status: str, details: dict[str, Any] | None = None) -> None:
+            record_audit_event(
+                index,
+                action="artifact_download",
+                actor=actor,
+                resource=f"{import_id}/{artifact}",
+                status=status,
+                details=details or {},
+                request_id=getattr(request.state, "request_id", None),
+                resource_type="import_artifact",
+                resource_id=f"{import_id}/{artifact}",
+                **acteur.contexte_audit(),
+            )
 
         allowed = {"report_pdf", "report_docx", "source_pdf", "source_excel"}
         if artifact not in allowed:
@@ -1162,7 +1373,7 @@ def create_app(config: AppConfig) -> FastAPI:
 
         payload = get_import(index, import_id)
         if payload is None:
-            record_audit_event(index, action="artifact_download", actor=actor, resource=f"{import_id}/{artifact}", status="404")
+            _audit_artefact("404")
             raise HTTPException(status_code=404, detail="Import not found.")
 
         # Resolve file path and object key from payload
@@ -1206,32 +1417,33 @@ def create_app(config: AppConfig) -> FastAPI:
                     object_key = f["object_key"]
                     break
 
+        if file_path is not None and not _chemin_artefact_autorise(file_path):
+            # Le payload ne peut pas désigner un fichier hors racines : on
+            # neutralise le chemin local (lecture ET cache S3). Une éventuelle
+            # clé d'objet rattachée à cet import reste servable par l'API ou
+            # par redirection publique, mais jamais écrite hors confinement.
+            logger.warning(
+                "Chemin d'artefact hors racines refusé pour l'import %s (%s).",
+                import_id,
+                artifact,
+            )
+            file_path = None
+
         # Redirection présignée UNIQUEMENT vers un endpoint public déclaré : le
         # endpoint interne (nom d'hôte « minio » du réseau des conteneurs, port
         # 9000) n'est résolvable depuis AUCUN poste de l'atelier. Par défaut on
         # sert donc les octets par l'API.
         url_publique = _url_presignee_navigateur(object_key, storage_client, config)
         if url_publique:
-            record_audit_event(
-                index,
-                action="artifact_download",
-                actor=actor,
-                resource=f"{import_id}/{artifact}",
-                status="302",
-                details={"object_key": object_key, "filename": filename, "servi_par": "redirection_publique"},
+            _audit_artefact(
+                "302",
+                {"object_key": object_key, "filename": filename, "servi_par": "redirection_publique"},
             )
             return RedirectResponse(url=url_publique, status_code=302)
 
         # Fallback: serve from local disk (cache) or download from S3 to cache
         if file_path and file_path.exists():
-            record_audit_event(
-                index,
-                action="artifact_download",
-                actor=actor,
-                resource=f"{import_id}/{artifact}",
-                status="200",
-                details={"path": str(file_path), "filename": filename},
-            )
+            _audit_artefact("200", {"path": str(file_path), "filename": filename})
             return FileResponse(path=file_path, filename=filename, media_type=media_type)
 
         # If local cache cold but we have object_key, try to download from S3 to cache dir
@@ -1240,19 +1452,15 @@ def create_app(config: AppConfig) -> FastAPI:
                 file_path.parent.mkdir(parents=True, exist_ok=True)
                 storage_client.download_file(object_key, file_path)
                 if file_path.exists():
-                    record_audit_event(
-                        index,
-                        action="artifact_download",
-                        actor=actor,
-                        resource=f"{import_id}/{artifact}",
-                        status="200",
-                        details={"object_key": object_key, "filename": filename, "cache": "miss_downloaded"},
+                    _audit_artefact(
+                        "200",
+                        {"object_key": object_key, "filename": filename, "cache": "miss_downloaded"},
                     )
                     return FileResponse(path=file_path, filename=filename, media_type=media_type)
             except Exception as exc:
                 logger.warning("Failed to download %s from storage: %s", object_key, exc)
 
-        record_audit_event(index, action="artifact_download", actor=actor, resource=f"{import_id}/{artifact}", status="404")
+        _audit_artefact("404")
         raise HTTPException(status_code=404, detail="Artifact not found. It may not have been generated or uploaded yet.")
 
     # ---------------------------------------------------------------------------
@@ -1264,14 +1472,36 @@ def create_app(config: AppConfig) -> FastAPI:
         request: Request,
         limit: int = Query(10, ge=1, le=100),
         token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+        entete_utilisateur: Annotated[str | None, Header(alias="X-SEAMTECH-UTILISATEUR")] = None,
+        entete_role: Annotated[str | None, Header(alias="X-SEAMTECH-ROLE")] = None,
+        entete_session: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION")] = None,
+        entete_jeton: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-JETON")] = None,
     ) -> dict[str, object]:
         _require_auth(config, token)
-        actor = actor_fingerprint(token, request.client.host if request.client else None)
+        acteur = exiger_administrateur_requete(
+            index,
+            config,
+            token=token,
+            entete_utilisateur=entete_utilisateur,
+            entete_role=entete_role,
+            entete_session=entete_session,
+            entete_jeton=entete_jeton,
+            client_host=request.client.host if request.client else None,
+        )
+        actor = acteur.libelle_audit
         if not redis_store.is_configured():
             raise HTTPException(status_code=503, detail="Redis not configured")
         count = redis_store.replay_deadletters("imports", limit=limit)
         record_audit_event(
-            index, action="replay_deadletters", actor=actor, status="success", details={"replayed": count}
+            index,
+            action="replay_deadletters",
+            actor=actor,
+            status="success",
+            details={"replayed": count},
+            request_id=getattr(request.state, "request_id", None),
+            resource_type="maintenance",
+            resource_id="deadletters",
+            **acteur.contexte_audit(),
         )
         return {"status": "ok", "replayed": count}
 
@@ -1280,8 +1510,22 @@ def create_app(config: AppConfig) -> FastAPI:
         request: Request,
         limit: int = Query(50, ge=1, le=200),
         token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+        entete_utilisateur: Annotated[str | None, Header(alias="X-SEAMTECH-UTILISATEUR")] = None,
+        entete_role: Annotated[str | None, Header(alias="X-SEAMTECH-ROLE")] = None,
+        entete_session: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION")] = None,
+        entete_jeton: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-JETON")] = None,
     ) -> dict[str, object]:
         _require_auth(config, token)
+        exiger_administrateur_requete(
+            index,
+            config,
+            token=token,
+            entete_utilisateur=entete_utilisateur,
+            entete_role=entete_role,
+            entete_session=entete_session,
+            entete_jeton=entete_jeton,
+            client_host=request.client.host if request.client else None,
+        )
         if not redis_store.is_configured():
             raise HTTPException(status_code=503, detail="Redis not configured")
         dead = redis_store.get_deadletters("imports", limit=limit)
@@ -1291,11 +1535,35 @@ def create_app(config: AppConfig) -> FastAPI:
     async def maintenance_cleanup(
         request: Request,
         token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+        entete_utilisateur: Annotated[str | None, Header(alias="X-SEAMTECH-UTILISATEUR")] = None,
+        entete_role: Annotated[str | None, Header(alias="X-SEAMTECH-ROLE")] = None,
+        entete_session: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION")] = None,
+        entete_jeton: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-JETON")] = None,
     ) -> dict[str, object]:
         _require_auth(config, token)
-        actor = actor_fingerprint(token, request.client.host if request.client else None)
+        acteur = exiger_administrateur_requete(
+            index,
+            config,
+            token=token,
+            entete_utilisateur=entete_utilisateur,
+            entete_role=entete_role,
+            entete_session=entete_session,
+            entete_jeton=entete_jeton,
+            client_host=request.client.host if request.client else None,
+        )
+        actor = acteur.libelle_audit
         res = await asyncio.to_thread(run_retention_cleanup, config, index)
-        record_audit_event(index, action="maintenance_cleanup", actor=actor, status="success", details=res)
+        record_audit_event(
+            index,
+            action="maintenance_cleanup",
+            actor=actor,
+            status="success",
+            details=res,
+            request_id=getattr(request.state, "request_id", None),
+            resource_type="maintenance",
+            resource_id="cleanup",
+            **acteur.contexte_audit(),
+        )
         return {"status": "ok", "cleanup": res}
 
     @app.get("/audit")
@@ -1303,8 +1571,21 @@ def create_app(config: AppConfig) -> FastAPI:
         limit: int = Query(50, ge=1, le=200),
         offset: int = Query(0, ge=0, le=1_000_000),
         token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+        entete_utilisateur: Annotated[str | None, Header(alias="X-SEAMTECH-UTILISATEUR")] = None,
+        entete_role: Annotated[str | None, Header(alias="X-SEAMTECH-ROLE")] = None,
+        entete_session: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION")] = None,
+        entete_jeton: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-JETON")] = None,
     ) -> dict[str, object]:
         _require_auth(config, token)
+        exiger_administrateur_requete(
+            index,
+            config,
+            token=token,
+            entete_utilisateur=entete_utilisateur,
+            entete_role=entete_role,
+            entete_session=entete_session,
+            entete_jeton=entete_jeton,
+        )
         logs = get_audit_logs(index, limit=limit, offset=offset)
         return {
             "count": len(logs),

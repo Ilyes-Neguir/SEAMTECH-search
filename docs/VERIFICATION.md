@@ -98,7 +98,7 @@ sed -n '850,960p' seamtech_search/api.py | grep -n "download_file\|FileResponse\
 ```
 
 ### 2.3 /open not dead
-**Claim:** `/open` serves the file (local copy, or the stored object streamed by the API when the local copy is absent — restore case); 302 presigned only with a declared public endpoint; dir JSON for directories; no `os.startfile`.
+**Claim:** `/open` serves the file (local copy, or the stored object streamed by the API when the local copy is absent — restore case); 302 presigned only with a declared public endpoint; dir JSON for directories; no `os.startfile`. On PostgreSQL the path must also be catalogued (Lot 0b).
 **Proof:**
 ```bash
 grep -n "os.startfile" seamtech_search/api.py || echo "no os.startfile — fixed"
@@ -241,8 +241,10 @@ grep "redis:" docker-compose.yml | head
 # Worker thread not separate service:
 grep "worker" docker-compose.yml || echo "no worker service — thread inside web"
 grep "start_background_worker\|worker_loop" seamtech_search/api.py seamtech_search/worker.py
-# Audit not immutable:
+# Legacy audit table is pruned; canonical PostgreSQL audit_logs is append-only:
 grep "prune_audit_logs\|audit_log" seamtech_search/retention.py seamtech_search/indexer.py
+grep -n "trg_audit_logs_append_only\|empreinte_precedente" seamtech_search/schema_metier.py seamtech_search/audit.py
+python -m pytest tests/test_lot0b_audit_securite.py -q
 # Scratch purged only when verified:
 grep "truly_uploaded\|quarantine" seamtech_search/worker.py
 # Download works from another PC: bytes served by the API (200), no internal-host redirect

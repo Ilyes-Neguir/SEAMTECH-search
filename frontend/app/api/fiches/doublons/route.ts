@@ -1,5 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { backendBase, authHeaders, requireAuthValide } from "@/lib/backend"
+import { backendBase, backendHeaders, requireAuthValide } from "@/lib/backend"
 
 // Proxy Lot L.1 : détection de doublons (GET /fiches/doublons côté FastAPI).
 //
@@ -21,7 +21,7 @@ export async function GET(req: NextRequest) {
   const query = req.nextUrl.searchParams.toString()
   try {
     const res = await fetch(`${base}/fiches/doublons${query ? `?${query}` : ""}`, {
-      headers: authHeaders(),
+      headers: await backendHeaders(),
       cache: "no-store",
     })
     return NextResponse.json(await res.json(), { status: res.status })
@@ -39,7 +39,7 @@ export async function POST(req: NextRequest) {
   try {
     const res = await fetch(`${base}/fiches/doublons/scan`, {
       method: "POST",
-      headers: { ...authHeaders(), "Content-Type": "application/json" },
+      headers: await backendHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({
         seuil: corps?.seuil ?? 0.55,
         // Jamais true par défaut : écrire des liens doit rester un geste explicite.

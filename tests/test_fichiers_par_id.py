@@ -519,6 +519,21 @@ def test_postgres_catalogue_apercu_head_et_range_par_id(tmp_path: Path, monkeypa
                 cursor.execute("SELECT id FROM documents WHERE name = %s", (remote_pdf.name,))
                 remote_id = int(cursor.fetchone()[0])
 
+        # Lot 0b : le CONTENU d'une pièce exige une session humaine vivante en
+        # PostgreSQL. Le catalogue (métadonnées) reste derrière le jeton de
+        # service pour l'outillage ; les octets, non.
+        from seamtech_search.comptes.comptes import creer_utilisateur, ouvrir_session
+
+        lecteur = creer_utilisateur(
+            index,
+            "lecteur-piece",
+            "Lecteur de test",
+            "mot-de-passe-piece",
+            role="operateur",
+            doit_changer_mot_de_passe=False,
+        )
+        session = ouvrir_session(index, lecteur["id_utilisateur"])
+
         config = AppConfig(
             root_paths=[root],
             database_path=tmp_path / "api-unused.db",
@@ -532,6 +547,13 @@ def test_postgres_catalogue_apercu_head_et_range_par_id(tmp_path: Path, monkeypa
         )
         with TestClient(create_app(config)) as client:
             headers = {"X-SEAMTECH-TOKEN": TOKEN}
+            headers_session = {
+                **headers,
+                "X-SEAMTECH-UTILISATEUR": "lecteur-piece",
+                "X-SEAMTECH-ROLE": "operateur",
+                "X-SEAMTECH-SESSION": str(session["id_session"]),
+                "X-SEAMTECH-SESSION-JETON": session["jeton"],
+            }
             catalogue = client.get(
                 "/pieces",
                 params={"q": "voile", "extension": "pdf", "dossier": "CLIENT", "limit": 1},
@@ -556,7 +578,10 @@ def test_postgres_catalogue_apercu_head_et_range_par_id(tmp_path: Path, monkeypa
             assert str(root) not in fiche_pieces.text
             assert "private/objects/schema-atelier.pdf" not in fiche_pieces.text
 
-            head = client.head(f"/pieces/{remote_id}/apercu", headers=headers)
+            sans_humain = client.head(f"/pieces/{remote_id}/apercu", headers=headers)
+            assert sans_humain.status_code == 401
+
+            head = client.head(f"/pieces/{remote_id}/apercu", headers=headers_session)
             assert head.status_code == 200
             assert head.headers["content-length"] == str(len(remote_content))
             assert head.headers["etag"] == '"fake-etag"'
@@ -564,7 +589,7 @@ def test_postgres_catalogue_apercu_head_et_range_par_id(tmp_path: Path, monkeypa
 
             ranged = client.get(
                 f"/pieces/{remote_id}/apercu",
-                headers={**headers, "Range": "bytes=5-9"},
+                headers={**headers_session, "Range": "bytes=5-9"},
             )
             assert ranged.status_code == 206
             assert ranged.content == remote_content[5:10]
@@ -573,7 +598,7 @@ def test_postgres_catalogue_apercu_head_et_range_par_id(tmp_path: Path, monkeypa
 
             local_id_row = client.get("/pieces", params={"q": "voile-local.pdf"}, headers=headers).json()
             local_id = next(piece["id"] for piece in local_id_row["pieces"] if piece["name"] == local_pdf.name)
-            local = client.get(f"/pieces/{local_id}/apercu", headers=headers)
+            local = client.get(f"/pieces/{local_id}/apercu", headers=headers_session)
             assert local.status_code == 200
             assert local.content == local_content
     finally:

@@ -1,5 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { backendBase, authHeaders, requireAuthValide } from "@/lib/backend"
+import { backendBase, backendHeaders, requireAuthValide } from "@/lib/backend"
 
 export const dynamic = "force-dynamic"
 
@@ -12,7 +12,7 @@ export async function POST(req: NextRequest) {
     const form = await req.formData()
     const res = await fetch(`${base}/gabarits/brouillon/from-pdf`, {
       method: "POST",
-      headers: authHeaders(),
+      headers: await backendHeaders(),
       body: form,
     })
     const json = await res.json()

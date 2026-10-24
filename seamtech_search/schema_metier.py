@@ -1,4 +1,4 @@
-"""Schéma métier « fiche technique » — migrations 006 à 023 (Lots A → correctifs d'audit).
+"""Schéma métier « fiche technique » — migrations 006 à 025 (Lots A → Lot 0b).
 
 DÉCISION DE COUCHE ACTÉE (plan v3.0 §17.1) : la couche métier est
 **PostgreSQL uniquement**. Elle s'appuie sur pgvector, pg_trgm, les index GIN,
@@ -26,7 +26,7 @@ from __future__ import annotations
 from typing import Any
 
 # Version du schéma métier — incrémentée à chaque nouvelle migration.
-VERSION_SCHEMA_METIER = "023_recherche_normalisee"
+VERSION_SCHEMA_METIER = "025_audit_logs"
 
 # Marqueur injecté par le code au moment de la migration (constat 1 de revue) :
 # le nom de la configuration de recherche effective — 'seamtech_unaccent' ou
@@ -80,6 +80,11 @@ TABLES_METIER: tuple[str, ...] = (
     "session_ui",
     # 017 — Lot M : staging OCR étage 3 (texte OCR par page, jamais dans chunk/document)
     "ocr_etage3",
+    # 025 — Lot 0b : journal d'audit canonique, append-only et chaîné par
+    # empreinte. La table héritée `audit_log` reste le substrat de
+    # compatibilité (SQLite, verrouillage des connexions), mais ce n'est plus
+    # la source d'autorité en PostgreSQL.
+    "audit_logs",
 )
 
 SQL_006_FICHE_TECHNIQUE = """
@@ -1517,6 +1522,88 @@ CREATE INDEX IF NOT EXISTS idx_fiche_gamme_trgm_norm
     ON fiche USING gin (seamtech_texte_recherche(gamme) gin_trgm_ops);
 """
 
+# 024 — Lot 0a : les sessions nominatives vivent dans Redis (invalidation
+# immédiate) et les anciens jetons `v1.*` sont rejetés. Aucune DDL : la
+# migration est un marqueur de séquence et de déploiement. Elle évite aussi un
+# trou 024 avant la 025, que les gardes de sauvegarde refuseraient.
+SQL_024_SESSIONS_REDIS = """
+-- 024_sessions_redis : marqueur sans DDL (état de session porté par Redis).
+SELECT 1;
+"""
+
+# 025 — Lot 0b : journal d'audit canonique PostgreSQL.
+#
+# Invariants portés par la base, pas seulement par le code applicatif :
+# - une ligne par événement, jamais modifiée ni supprimée (trigger) ;
+# - chaque ligne porte l'empreinte SHA-256 de son contenu canonique et celle
+#   de la ligne précédente : une altération hors API casse la chaîne ;
+# - l'acteur est structuré (type, compte, session, rôle) sans jamais stocker
+#   un jeton ou un mot de passe ;
+# - la ressource est à la fois lisible (`resource`, compatibilité historique)
+#   et adressable (`resource_type` + `resource_id`) pour les contrôles IDOR.
+SQL_025_AUDIT_LOGS = """
+CREATE TABLE IF NOT EXISTS audit_logs (
+    id_audit             BIGSERIAL PRIMARY KEY,
+    cree_le              TIMESTAMPTZ NOT NULL DEFAULT now(),
+    request_id           TEXT,
+    actor_type           TEXT NOT NULL DEFAULT 'systeme'
+                         CHECK (actor_type IN ('utilisateur', 'secours', 'service', 'systeme', 'anonyme')),
+    id_utilisateur       BIGINT REFERENCES utilisateur(id_utilisateur) ON DELETE SET NULL,
+    identifiant          TEXT,
+    role                 TEXT,
+    id_session           BIGINT REFERENCES session_ui(id_session) ON DELETE SET NULL,
+    actor                TEXT NOT NULL,
+    action               TEXT NOT NULL,
+    resource_type        TEXT NOT NULL DEFAULT '',
+    resource_id          TEXT NOT NULL DEFAULT '',
+    resource             TEXT NOT NULL DEFAULT '',
+    status               TEXT NOT NULL DEFAULT 'success',
+    code_statut          INTEGER CHECK (code_statut IS NULL OR (code_statut BETWEEN 100 AND 599)),
+    adresse_ip           TEXT,
+    user_agent           TEXT,
+    details              JSONB NOT NULL DEFAULT '{}'::jsonb,
+    empreinte_precedente TEXT CHECK (
+                             empreinte_precedente IS NULL
+                             OR empreinte_precedente ~ '^[0-9a-f]{64}$'
+                         ),
+    empreinte            TEXT NOT NULL CHECK (empreinte ~ '^[0-9a-f]{64}$')
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_logs_cree_le
+    ON audit_logs (cree_le DESC, id_audit DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_actor_action
+    ON audit_logs (actor, action, cree_le DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_identifiant
+    ON audit_logs (identifiant, cree_le DESC)
+    WHERE identifiant IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_audit_logs_resource
+    ON audit_logs (resource_type, resource_id, cree_le DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_request_id
+    ON audit_logs (request_id)
+    WHERE request_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_audit_logs_empreinte
+    ON audit_logs (empreinte);
+
+CREATE OR REPLACE FUNCTION seamtech_audit_logs_append_only()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $fonction$
+BEGIN
+    RAISE EXCEPTION 'audit_logs est append-only : opération % interdite', TG_OP
+        USING ERRCODE = '42501';
+END;
+$fonction$;
+
+DROP TRIGGER IF EXISTS trg_audit_logs_append_only ON audit_logs;
+CREATE TRIGGER trg_audit_logs_append_only
+    BEFORE UPDATE OR DELETE ON audit_logs
+    FOR EACH ROW
+    EXECUTE FUNCTION seamtech_audit_logs_append_only();
+
+COMMENT ON TABLE audit_logs IS
+    'Journal d''audit canonique du Lot 0b : append-only, chaîné par empreinte SHA-256, sans secret en clair.';
+"""
+
 MIGRATIONS_METIER: tuple[tuple[str, str], ...] = (
     ("006_fiche_technique", SQL_006_FICHE_TECHNIQUE),
     ("007_recherche_index", SQL_007_RECHERCHE_INDEX),
@@ -1536,6 +1623,8 @@ MIGRATIONS_METIER: tuple[tuple[str, str], ...] = (
     ("021_revision_fiche", SQL_021_REVISION_FICHE),
     ("022_selections_durables", SQL_022_SELECTIONS_DURABLES),
     ("023_recherche_normalisee", SQL_023_FONCTION_UNACCENT),
+    ("024_sessions_redis", SQL_024_SESSIONS_REDIS),
+    ("025_audit_logs", SQL_025_AUDIT_LOGS),
 )
 
 
