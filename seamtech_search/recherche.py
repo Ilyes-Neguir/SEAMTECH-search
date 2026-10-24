@@ -489,13 +489,16 @@ def _extraits_documents(
     requete_1 = variantes[0] if variantes else ""
     requete_2 = variantes[1] if len(variantes) > 1 else ""
 
+    # pg_catalog direct plutôt qu'information_schema : cette détection est sur
+    # le chemin chaud de chaque recherche et la vue information_schema coûte
+    # plusieurs millisecondes à elle seule sur les runners de mesure.
     cursor.execute(
         "SELECT to_regclass('public.documents') IS NOT NULL, "
         "to_regclass('public.chunk') IS NOT NULL, "
-        "to_regclass('public.fiche_piece_jointe') IS NOT NULL AND EXISTS ("
-        "SELECT 1 FROM information_schema.columns "
-        "WHERE table_schema = 'public' AND table_name = 'fiche_piece_jointe' "
-        "AND column_name = 'id_document')"
+        "EXISTS ("
+        "SELECT 1 FROM pg_attribute "
+        "WHERE attrelid = to_regclass('public.fiche_piece_jointe') "
+        "AND attname = 'id_document' AND NOT attisdropped)"
     )
     documents_disponibles, chunks_disponibles, pieces_disponibles = (
         bool(valeur) for valeur in cursor.fetchone()
@@ -597,18 +600,11 @@ def _extraits_documents(
                        + COALESCE(ts_rank_cd(c.vecteur, r.q2, 16), 0) AS score
             FROM candidats c
             CROSS JOIN requetes r
-        ), choisis AS MATERIALIZED (
-            SELECT classes.*
-            FROM (
-                SELECT n.*,
-                       row_number() OVER (
-                           PARTITION BY n.id_fiche
-                           ORDER BY n.correspondance DESC, n.score DESC,
-                                    n.priorite ASC, n.id_source ASC
-                       ) AS rang
-                FROM notes n
-            ) classes
-            WHERE classes.rang = 1
+        ), choisis AS (
+            SELECT DISTINCT ON (n.id_fiche) n.*
+            FROM notes n
+            ORDER BY n.id_fiche, n.correspondance DESC, n.score DESC,
+                     n.priorite ASC, n.id_source ASC
         )
         SELECT ch.id_fiche, ch.source, ch.libelle_source,
                CASE
