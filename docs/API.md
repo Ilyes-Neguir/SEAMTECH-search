@@ -13,7 +13,7 @@ La recherche « comme Google » des fiches validées. La route Phase 0 `GET /sea
 
 | Route | Rôle |
 |---|---|
-| `GET /recherche?q=&type_voile=&client=&bateau=&boat_model_id=&matiere=&gamme=&annee=&annee_min=&annee_max=&cote=&min=&max=&cote_min=&cote_max=&tri=&page=&limit=&offset=&inclure_a_valider=` | Recherche hybride : lexical tsvector pondéré A/B/C + trigrammes (volet dégradable) + texte des PDF (chunks/documents) + vecteurs (dormants, activables par injection `encode_requete`), fusionnés par **RRF k=60** ; depuis la migration 019, une **dimension détectée dans `q`** bascule sur le chemin numérique (voir « Recherche par dimension (Phase 1) » ci-dessous). Par défaut : fiches `valide` seulement. Réponse : `{requete, modeles_bateaux_detectes:[{id_modele, nom_canonique, cle_normalisee, type_correspondance, rang, score, alias}], nb_resultats, resultats:[{code, titre, type_voile, client, bateau, id_modele_bateau, modele_bateau, modele_bateau_cle, gamme, statut, annee, extrait, score, sources}], facettes:{groupe:[{valeur, effectif}]}, facettes_cotes:{cote:{unite, min, max, effectif, intervalles:[{min,max,effectif,label}] }}, cote_active, cotes_unites, dimension_active, tri, page, sources_actives, sans_resultat, duree_ms}`. **Les 7 cotes d'un résultat (`slu_m`, `sle_m`, `sf_m`, `shw_m`, `spa_m2`, `tetiere_cm`, `poids_kg`) ne sont présentes QUE si un filtre dimension, une recherche par dimension ou un tri par cote est demandé — voir « Chargement conditionnel des cotes » ci-dessous.** |
+| `GET /recherche?q=&type_voile=&client=&bateau=&boat_model_id=&matiere=&gamme=&annee=&annee_min=&annee_max=&cote=&min=&max=&cote_min=&cote_max=&tri=&page=&limit=&offset=&inclure_a_valider=` | Recherche hybride : lexical tsvector pondéré A/B/C + trigrammes (volet dégradable) + texte des PDF (chunks/documents) + vecteurs (dormants, activables par injection `encode_requete`), fusionnés par **RRF k=60** ; depuis la migration 019, une **dimension détectée dans `q`** bascule sur le chemin numérique (voir « Recherche par dimension (Phase 1) » ci-dessous). Par défaut : fiches `valide` seulement. Réponse : `{requete, modeles_bateaux_detectes:[{id_modele, nom_canonique, cle_normalisee, type_correspondance, rang, score, alias}], nb_resultats, resultats:[{code, titre, type_voile, client, bateau, id_modele_bateau, modele_bateau, modele_bateau_cle, gamme, statut, annee, extrait, extrait_document:{texte, segments:[{texte, correspondance}], source, libelle_source, correspondance_requete}|null, score, sources}], facettes:{groupe:[{valeur, effectif}]}, facettes_cotes:{cote:{unite, min, max, effectif, intervalles:[{min,max,effectif,label}] }}, cote_active, cotes_unites, dimension_active, tri, page, sources_actives, sans_resultat, duree_ms}`. **Les 7 cotes d'un résultat (`slu_m`, `sle_m`, `sf_m`, `shw_m`, `spa_m2`, `tetiere_cm`, `poids_kg`) ne sont présentes QUE si un filtre dimension, une recherche par dimension ou un tri par cote est demandé — voir « Chargement conditionnel des cotes » ci-dessous.** |
 | `GET /search/suggestions?prefix=&limit=` | Route canonique Lot 2 des suggestions au fil de la frappe : **valeurs réellement présentes seulement**, classées **exact > alias/synonyme > préfixe > flou (pg_trgm)**. Réponse : `{prefixe, suggestions:[{nature, valeur, type_correspondance, rang, score, alias?, id_modele_bateau?}]}`. Le proxy navigateur correspondant est `GET /api/search/suggestions`. |
 | `GET /recherche/suggestions?prefix=&limit=` | Alias historique strictement équivalent à `/search/suggestions` (compatibilité) ; le proxy `/api/recherche/suggestions` est conservé. |
 | `GET /referentiel/bateaux?inclure_fusionnes=` | Référentiel canonique Lot 2 : modèles finaux, alias et compteurs réels de bateaux/fiches. Lecture derrière le jeton de service. Réponse : `{modeles:[{id_modele, nom_canonique, cle_normalisee, source, actif, id_modele_fusion, alias:[{alias, cle_normalisee, source}], nb_bateaux, nb_fiches}]}`. |
@@ -154,6 +154,19 @@ La recherche « comme Google » des fiches validées. La route Phase 0 `GET /sea
   sa forme canonique votent en **OU** dans les sources textuelles : remplacer
   aveuglément `spi` par `spinnaker` ferait perdre les fiches dont le libellé
   réel est « Spi Asymétrique ».
+- **Extrait du document (Lot 4a, sans migration)** : chaque résultat de la
+  page porte `extrait_document` — un aperçu d'au plus 360 caractères centré
+  sur le passage pertinent et reconstruit par PostgreSQL (`ts_headline`). La
+  provenance retenue est, après pertinence, un document réellement extrait
+  rattaché directement, par le chemin du PDF source ou par une pièce jointe ;
+  puis un chunk documentaire ; puis les champs de la fiche. Les chunks
+  `resume_champs` (résumés générés pour les vecteurs) sont exclus afin de ne
+  jamais les présenter comme du texte source. `segments` distingue le texte
+  ordinaire des correspondances (`correspondance=true`) sans HTML : le
+  navigateur affiche ces segments comme des nœuds de texte et des éléments
+  `<mark>`. Quand aucun texte documentaire n'existe, `source="fiche"` rend
+  l'origine explicite. L'ancien champ `extrait` reste inchangé pour les
+  clients existants.
 - **Référentiel bateaux (migration 026)** : `boat_models`,
   `boat_model_aliases`, `boat_model_merge_history`, `search_synonyms` et le
   lien nullable `bateau.boat_model_id`. L’identité dérive de `bateau.nom` ;

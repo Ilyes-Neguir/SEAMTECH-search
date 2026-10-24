@@ -33,6 +33,19 @@ interface FacetteCote {
   intervalles: IntervalleCote[]
 }
 
+interface SegmentExtraitDocument {
+  texte: string
+  correspondance: boolean
+}
+
+interface ExtraitDocument {
+  texte: string
+  segments: SegmentExtraitDocument[]
+  source: "document" | "chunk" | "fiche"
+  libelle_source: string | null
+  correspondance_requete: boolean
+}
+
 interface ResultatFiche {
   code: string | null
   titre: string | null
@@ -46,6 +59,7 @@ interface ResultatFiche {
   statut: string | null
   annee: number | null
   extrait: string
+  extrait_document?: ExtraitDocument | null
   score: number
   sources: string[]
   slu_m?: number | null
@@ -271,6 +285,62 @@ function buildApiParams(
   if (page) params.set("page", String(page))
   if (limit) params.set("limit", String(limit))
   return params
+}
+
+function extraitDocumentAffiche(fiche: ResultatFiche): ExtraitDocument | null {
+  if (fiche.extrait_document !== undefined) {
+    return fiche.extrait_document && fiche.extrait_document.segments.length > 0
+      ? fiche.extrait_document
+      : null
+  }
+  // Compatibilité de déploiement : un ancien backend ne fournit que
+  // l'aperçu des champs (`extrait`). Un backend Lot 4a qui répond
+  // explicitement `null` reste, lui, sans aperçu.
+  const texte = fiche.extrait.trim()
+  if (!texte) return null
+  return {
+    texte,
+    segments: [{ texte, correspondance: false }],
+    source: "fiche",
+    libelle_source: "Champs de la fiche",
+    correspondance_requete: false,
+  }
+}
+
+function ExtraitDocumentResultat({ fiche }: { fiche: ResultatFiche }) {
+  const extrait = extraitDocumentAffiche(fiche)
+  if (!extrait) return null
+
+  const libelle = extrait.source === "fiche" ? "Aperçu des champs de la fiche" : "Extrait du document"
+
+  return (
+    <section
+      className="mt-3 rounded-md border-l-2 border-primary/50 bg-muted/30 px-3 py-2"
+      data-testid="fiche-extrait"
+      data-source={extrait.source}
+      aria-label={`${libelle} pour la fiche ${fiche.code ?? fiche.titre ?? "sans code"}`}
+    >
+      <div className="flex items-baseline justify-between gap-3">
+        <h3 className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{libelle}</h3>
+        {extrait.source !== "fiche" && extrait.libelle_source && (
+          <span className="min-w-0 truncate text-[10px] text-muted-foreground" title={extrait.libelle_source}>
+            {extrait.libelle_source}
+          </span>
+        )}
+      </div>
+      <p className="mt-1 line-clamp-3 text-xs leading-relaxed text-foreground/80">
+        {extrait.segments.map((segment, index) =>
+          segment.correspondance ? (
+            <mark key={index} data-testid="extrait-correspondance">
+              {segment.texte}
+            </mark>
+          ) : (
+            <span key={index}>{segment.texte}</span>
+          ),
+        )}
+      </p>
+    </section>
+  )
 }
 
 export function RechercheFichesApp({ assistantActif = true }: { assistantActif?: boolean }) {
@@ -832,7 +902,7 @@ export function RechercheFichesApp({ assistantActif = true }: { assistantActif?:
               )}
               <ul className="space-y-2">
                 {reponse.resultats.map((fiche, position) => (
-                  <li key={`${fiche.code ?? position}`}>
+                  <li key={`${fiche.code ?? position}`} data-code={fiche.code ?? undefined}>
                     <article className="rounded-lg border border-border bg-background/60 px-4 py-3">
                       <div className="flex flex-wrap items-baseline gap-2">
                         {fiche.code ? <Link href={`/fiches/${encodeURIComponent(fiche.code)}`} className="font-mono text-xs text-primary underline-offset-2 hover:underline" aria-label={`Ouvrir la fiche ${fiche.code}`}>{fiche.code}</Link> : <span className="font-mono text-xs text-muted-foreground">—</span>}
@@ -880,6 +950,7 @@ export function RechercheFichesApp({ assistantActif = true }: { assistantActif?:
                             .join(" · ")}
                         </p>
                       )}
+                      <ExtraitDocumentResultat fiche={fiche} />
                       <div className="mt-2 flex items-center gap-1.5">
                         {fiche.sources.map((s) => (
                           <span

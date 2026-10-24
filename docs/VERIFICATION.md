@@ -12,6 +12,41 @@ jour vivent dans :
 * `docs/verite_terrain/TRACABILITE_LIVRAISON.md` — une ligne par affirmation,
   y compris la revue indépendante du 2026-10-07 et la passe de clôture.
 
+## Addendum Lot 4a — extrait du document dans la recherche (2026-10-24)
+
+Branche : `arena/b02ed560-seamtech-search`. Aucune migration. Les preuves
+centrales sont `tests/test_lot4a_extrait_document.py` (parser pur + PostgreSQL
+réel + route HTTP) et `frontend/e2e/recherche-extrait.spec.ts` (parcours
+navigateur live intégré à la porte CI à 12 tests, 0 flaky, 0 saut) :
+
+- segments structurés sans HTML, texte hostile conservé comme donnée,
+  fenêtre de 360 caractères centrée sur la correspondance ;
+- chunk documentaire retrouvé par une requête sans accent avec l'accent
+  d'origine conservé et surligné (`forcees` → `forcées`) ;
+- document réellement extrait prioritaire, chunks générés `resume_champs`
+  exclus, liens par `documents.id_fiche`, pièce jointe et chemin du PDF
+  source tous éprouvés ;
+- navigation sans document rattaché explicitement repliée sur
+  `source="fiche"`, jamais présentée comme un extrait PDF ;
+- carte résultat navigateur avec `data-testid="fiche-extrait"`, vrai
+  élément `<mark>` et aucun marqueur interne visible.
+
+Commandes de reproduction :
+
+```bash
+ruff check seamtech_search/recherche.py tests/test_lot4a_extrait_document.py
+python -m compileall -q seamtech_search/recherche.py
+pytest -q tests/test_lot4a_extrait_document.py -m "not postgres"
+SEAMTECH_TEST_DATABASE_URL=postgresql://… pytest -q -m postgres \
+  tests/test_lot4a_extrait_document.py tests/test_recherche_hybride.py
+cd frontend && corepack pnpm exec tsc --noEmit && corepack pnpm build
+SEAMTECH_E2E_DATABASE_URL=postgresql://… corepack pnpm exec playwright test \
+  e2e/recherche-extrait.spec.ts --reporter=list
+```
+
+Les identifiants des workflows du SHA exact sont consignés dans
+`docs/PLAN_DIRECTEUR_V2_LOT4A.md` après lecture de GitHub Actions.
+
 ## Addendum Lot 2 — référentiel bateaux et recherche étendue (2026-10-24)
 
 Branche : `arena/b02ed560-seamtech-search`. La preuve fonctionnelle centrale

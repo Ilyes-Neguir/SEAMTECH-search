@@ -75,6 +75,17 @@ SEUIL_TRIGRAMMES = 0.30   # word_similarity minimale pour la source tolérante
 SUGGESTION_LIMITE_DEFAUT = 10
 SYNONYMES_TTL_S = 30.0    # le référentiel synonyme est petit et modifiable à chaud
 
+# Lot 4a — aperçu « Extrait du document » des résultats. L'extrait est borné
+# côté API (jamais un document entier), et ses correspondances sont rendues en
+# segments textuels structurés : le contenu source ne devient jamais du HTML.
+EXTRAIT_DOCUMENT_MAX_CARACTERES = 360
+_MARQUEUR_EXTRAIT_DEBUT = "[[SEAMTECH_CORRESPONDANCE]]"
+_MARQUEUR_EXTRAIT_FIN = "[[/SEAMTECH_CORRESPONDANCE]]"
+_RE_MARQUEURS_EXTRAIT = re.compile(
+    r"(\[\[SEAMTECH_CORRESPONDANCE\]\]|\[\[/SEAMTECH_CORRESPONDANCE\]\])"
+)
+_RE_ESPACES_EXTRAIT = re.compile(r"\s+")
+
 # Unités métier des cotes (normalisées à l'extraction, documentées dans docs/API.md) :
 # - slu_m, sle_m, sf_m, shw_m : mètres (m)
 # - spa_m2 : mètres carrés (m²)
@@ -302,6 +313,339 @@ def _capacites(cursor: Any) -> dict[str, bool]:  # noqa: ANN401 - curseur psycop
     pu être omis) : on interroge pg_extension, jamais la configuration."""
     cursor.execute("SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm'")
     return {"pg_trgm": cursor.fetchone() is not None}
+
+
+def _nettoyer_segment_extrait(texte: str) -> str:
+    """Texte affichable d'un segment : contrôles neutralisés, espaces unifiés."""
+    sans_controle = "".join(
+        " " if ord(caractere) < 32 or ord(caractere) == 127 else caractere
+        for caractere in texte
+    )
+    return _RE_ESPACES_EXTRAIT.sub(" ", sans_controle)
+
+
+def _fusionner_segments_extrait(
+    segments: Sequence[tuple[str, bool]],
+) -> list[dict[str, Any]]:
+    fusionnes: list[list[Any]] = []
+    for texte, correspondance in segments:
+        if not texte:
+            continue
+        if fusionnes and fusionnes[-1][1] is correspondance:
+            fusionnes[-1][0] += texte
+        else:
+            fusionnes.append([texte, correspondance])
+    if fusionnes:
+        fusionnes[0][0] = str(fusionnes[0][0]).lstrip()
+        fusionnes[-1][0] = str(fusionnes[-1][0]).rstrip()
+    return [
+        {"texte": str(texte), "correspondance": bool(correspondance)}
+        for texte, correspondance in fusionnes
+        if str(texte)
+    ]
+
+
+def _borner_segments_extrait(
+    segments: Sequence[dict[str, Any]],
+    limite: int,
+) -> list[dict[str, Any]]:
+    """Fenêtre bornée centrée sur la première correspondance quand elle existe."""
+    if limite <= 0:
+        return []
+    positions: list[tuple[int, int, dict[str, Any]]] = []
+    position = 0
+    for segment in segments:
+        texte = str(segment["texte"])
+        positions.append((position, position + len(texte), segment))
+        position += len(texte)
+    if position <= limite:
+        return list(segments)
+
+    texte_complet = "".join(str(segment["texte"]) for segment in segments)
+    correspondance_debut: int | None = None
+    correspondance_fin: int | None = None
+    for debut, fin, segment in positions:
+        if segment["correspondance"] is True:
+            correspondance_debut, correspondance_fin = debut, fin
+            break
+
+    if correspondance_debut is None or correspondance_fin is None:
+        debut_fenetre, fin_fenetre = 0, limite
+    else:
+        longueur_correspondance = correspondance_fin - correspondance_debut
+        if longueur_correspondance >= limite:
+            debut_fenetre = correspondance_debut
+            fin_fenetre = correspondance_debut + limite
+        else:
+            debut_fenetre = correspondance_debut - (limite - longueur_correspondance) // 2
+            debut_fenetre = max(0, min(debut_fenetre, position - limite))
+            fin_fenetre = debut_fenetre + limite
+
+    if debut_fenetre > 0:
+        espace_suivant = texte_complet.find(" ", debut_fenetre)
+        if espace_suivant != -1 and (
+            correspondance_debut is None or espace_suivant < correspondance_debut
+        ):
+            debut_fenetre = espace_suivant + 1
+    if fin_fenetre < position:
+        espace_precedent = texte_complet.rfind(" ", debut_fenetre, fin_fenetre)
+        if espace_precedent > debut_fenetre and (
+            correspondance_fin is None or espace_precedent >= correspondance_fin
+        ):
+            fin_fenetre = espace_precedent
+
+    extraits: list[tuple[str, bool]] = []
+    for debut, fin, segment in positions:
+        if fin <= debut_fenetre or debut >= fin_fenetre:
+            continue
+        texte = str(segment["texte"])
+        extraits.append(
+            (
+                texte[max(0, debut_fenetre - debut) : len(texte) - max(0, fin - fin_fenetre)],
+                segment["correspondance"] is True,
+            )
+        )
+    return _fusionner_segments_extrait(extraits)
+
+
+def _segments_extrait_document(
+    texte: str,
+    limite: int = EXTRAIT_DOCUMENT_MAX_CARACTERES,
+) -> list[dict[str, Any]]:
+    """Convertit les marqueurs PostgreSQL en segments JSON sûrs à afficher."""
+    brut: list[tuple[str, bool]] = []
+    correspondance = False
+    for morceau in _RE_MARQUEURS_EXTRAIT.split(texte or ""):
+        if morceau == _MARQUEUR_EXTRAIT_DEBUT:
+            correspondance = True
+            continue
+        if morceau == _MARQUEUR_EXTRAIT_FIN:
+            correspondance = False
+            continue
+        nettoye = _nettoyer_segment_extrait(morceau)
+        if nettoye:
+            brut.append((nettoye, correspondance))
+    return _borner_segments_extrait(_fusionner_segments_extrait(brut), limite)
+
+
+def _libelle_source_extrait(source: str, libelle_source: str | None) -> str:
+    if source == "fiche":
+        return "Champs de la fiche"
+    brut = _nettoyer_segment_extrait(str(libelle_source or "")).strip()
+    nom = re.split(r"[\\/]", brut)[-1].strip() if brut else ""
+    nom = nom[:120].rstrip()
+    if source == "chunk":
+        return f"Texte du document · {nom}" if nom else "Texte du document"
+    return nom or "Document rattaché"
+
+
+def _construire_extrait_document(
+    texte: str,
+    *,
+    source: str,
+    libelle_source: str | None,
+) -> dict[str, Any] | None:
+    """Contrat Lot 4a : texte intégralement reconstructible depuis ses segments."""
+    source_retenue = source if source in {"document", "chunk", "fiche"} else "fiche"
+    segments = _segments_extrait_document(texte)
+    if not segments:
+        return None
+    return {
+        "texte": "".join(str(segment["texte"]) for segment in segments),
+        "segments": segments,
+        "source": source_retenue,
+        "libelle_source": _libelle_source_extrait(source_retenue, libelle_source),
+        "correspondance_requete": any(
+            segment["correspondance"] is True for segment in segments
+        ),
+    }
+
+
+def _extraits_documents(
+    cursor: Any,  # noqa: ANN401 - curseur psycopg2 réel
+    ids: Sequence[int],
+    ts_config: str,
+    requetes: Sequence[str],
+) -> dict[int, dict[str, Any]]:
+    """Meilleur aperçu documentaire pour les fiches d'une page de résultats.
+
+    Ordre de provenance, après pertinence plein texte : document réellement
+    extrait (lien direct, PDF source ou pièce jointe), chunk documentaire,
+    puis champs de la fiche. Les chunks ``resume_champs`` sont exclus : ce
+    sont des résumés générés pour les vecteurs, pas le texte du document.
+    ``requetes`` contient au plus deux variantes alternatives (texte étendu
+    par synonymes et texte saisi), réunies en OU pour le surlignage.
+    """
+    if not ids:
+        return {}
+
+    variantes: list[str] = []
+    for requete in requetes:
+        texte = str(requete or "").strip()
+        if texte and texte not in variantes:
+            variantes.append(texte)
+        if len(variantes) == 2:
+            break
+    requete_1 = variantes[0] if variantes else ""
+    requete_2 = variantes[1] if len(variantes) > 1 else ""
+
+    cursor.execute(
+        "SELECT to_regclass('public.documents') IS NOT NULL, "
+        "to_regclass('public.chunk') IS NOT NULL, "
+        "to_regclass('public.fiche_piece_jointe') IS NOT NULL AND EXISTS ("
+        "SELECT 1 FROM information_schema.columns "
+        "WHERE table_schema = 'public' AND table_name = 'fiche_piece_jointe' "
+        "AND column_name = 'id_document')"
+    )
+    documents_disponibles, chunks_disponibles, pieces_disponibles = (
+        bool(valeur) for valeur in cursor.fetchone()
+    )
+
+    branches: list[str] = []
+    if documents_disponibles:
+        branches.extend(
+            [
+                """
+                SELECT p.id_fiche, 'document'::text AS source,
+                       d.name AS libelle_source, d.content AS texte_source,
+                       d.search_vector AS vecteur, 0 AS priorite, d.id AS id_source
+                FROM page p
+                JOIN documents d ON d.id_fiche = p.id_fiche
+                WHERE NOT d.is_dir AND d.extraction_status = 'extracted'
+                  AND btrim(coalesce(d.content, '')) <> ''
+                """,
+                """
+                SELECT p.id_fiche, 'document'::text AS source,
+                       d.name AS libelle_source, d.content AS texte_source,
+                       d.search_vector AS vecteur, 0 AS priorite, d.id AS id_source
+                FROM page p
+                JOIN fiche f ON f.id_fiche = p.id_fiche
+                JOIN documents d
+                  ON d.path = f.fichier_source
+                  OR d.path_key = lower(f.fichier_source)
+                WHERE btrim(coalesce(f.fichier_source, '')) <> ''
+                  AND NOT d.is_dir AND d.extraction_status = 'extracted'
+                  AND btrim(coalesce(d.content, '')) <> ''
+                """,
+            ]
+        )
+        if pieces_disponibles:
+            branches.append(
+                """
+                SELECT p.id_fiche, 'document'::text AS source,
+                       d.name AS libelle_source, d.content AS texte_source,
+                       d.search_vector AS vecteur, 10 AS priorite, d.id AS id_source
+                FROM page p
+                JOIN fiche_piece_jointe pj ON pj.id_fiche = p.id_fiche
+                JOIN documents d ON d.id = pj.id_document
+                WHERE NOT d.is_dir AND d.extraction_status = 'extracted'
+                  AND btrim(coalesce(d.content, '')) <> ''
+                """
+            )
+    if chunks_disponibles:
+        branches.append(
+            """
+            SELECT p.id_fiche, 'chunk'::text AS source,
+                   c.nature AS libelle_source, c.contenu AS texte_source,
+                   c.tsv AS vecteur, 20 AS priorite, c.id_chunk AS id_source
+            FROM page p
+            JOIN chunk c ON c.id_fiche = p.id_fiche
+            WHERE c.nature <> 'resume_champs'
+              AND btrim(coalesce(c.contenu, '')) <> ''
+            """
+        )
+    branches.append(
+        """
+        SELECT p.id_fiche, 'fiche'::text AS source,
+               'Champs de la fiche'::text AS libelle_source,
+               f.champs_texte AS texte_source, f.search_vector AS vecteur,
+               40 AS priorite, f.id_fiche AS id_source
+        FROM page p
+        JOIN fiche f ON f.id_fiche = p.id_fiche
+        WHERE btrim(coalesce(f.champs_texte, '')) <> ''
+        """
+    )
+
+    options_headline = (
+        f"StartSel={_MARQUEUR_EXTRAIT_DEBUT}, StopSel={_MARQUEUR_EXTRAIT_FIN}, "
+        "MaxFragments=1, MaxWords=42, MinWords=12, ShortWord=2, HighlightAll=false"
+    )
+    cursor.execute(
+        f"""
+        WITH page AS (
+            SELECT unnest(%s::bigint[]) AS id_fiche
+        ), requetes AS (
+            SELECT
+                CASE WHEN btrim(%s) = '' THEN NULL::tsquery
+                     ELSE websearch_to_tsquery(%s, %s) END AS q1,
+                CASE WHEN btrim(%s) = '' THEN NULL::tsquery
+                     ELSE websearch_to_tsquery(%s, %s) END AS q2
+        ), requete_unifiee AS (
+            SELECT CASE
+                       WHEN q1 IS NULL THEN q2
+                       WHEN q2 IS NULL THEN q1
+                       ELSE q1 || q2
+                   END AS q
+            FROM requetes
+        ), candidats AS (
+            {' UNION ALL '.join(branches)}
+        ), notes AS (
+            SELECT c.*,
+                   COALESCE(c.vecteur @@ r.q1, false)
+                       OR COALESCE(c.vecteur @@ r.q2, false) AS correspondance,
+                   COALESCE(ts_rank_cd(c.vecteur, r.q1, 16), 0)
+                       + COALESCE(ts_rank_cd(c.vecteur, r.q2, 16), 0) AS score
+            FROM candidats c
+            CROSS JOIN requetes r
+        ), choisis AS MATERIALIZED (
+            SELECT classes.*
+            FROM (
+                SELECT n.*,
+                       row_number() OVER (
+                           PARTITION BY n.id_fiche
+                           ORDER BY n.correspondance DESC, n.score DESC,
+                                    n.priorite ASC, n.id_source ASC
+                       ) AS rang
+                FROM notes n
+            ) classes
+            WHERE classes.rang = 1
+        )
+        SELECT ch.id_fiche, ch.source, ch.libelle_source,
+               CASE
+                   WHEN ru.q IS NULL THEN left(
+                       regexp_replace(ch.texte_source, '\\s+', ' ', 'g'), 600
+                   )
+                   ELSE ts_headline(
+                       %s::regconfig, ch.texte_source, ru.q, %s
+                   )
+               END AS extrait_brut
+        FROM choisis ch
+        CROSS JOIN requete_unifiee ru
+        ORDER BY ch.id_fiche
+        """,
+        (
+            list(ids),
+            requete_1,
+            ts_config,
+            requete_1,
+            requete_2,
+            ts_config,
+            requete_2,
+            ts_config,
+            options_headline,
+        ),
+    )
+
+    extraits: dict[int, dict[str, Any]] = {}
+    for id_fiche, source, libelle_source, extrait_brut in cursor.fetchall():
+        extrait = _construire_extrait_document(
+            str(extrait_brut or ""),
+            source=str(source),
+            libelle_source=None if libelle_source is None else str(libelle_source),
+        )
+        if extrait is not None:
+            extraits[int(id_fiche)] = extrait
+    return extraits
 
 
 def _cle_suggestion(texte: str) -> str:
@@ -1381,6 +1725,21 @@ def rechercher_fiches(
             # Tri final sur la page si tri != pertinence (déjà fait sur fusion, mais on ré-applique pour sûreté)
             if tri_pur != "pertinence":
                 resultats_ordonnes = _appliquer_tri(resultats_ordonnes, tri_pur)
+
+            # Lot 4a : l'aperçu documentaire n'est calculé que pour la page
+            # affichée (jamais pour toute la fusion), avec le texte étendu par
+            # synonymes et le texte réellement saisi comme variantes de
+            # surlignage en OU.
+            extraits_page = _extraits_documents(
+                cursor,
+                [ligne["id_fiche"] for ligne in page],
+                ts_config,
+                [texte, texte_original_sources],
+            )
+            for ligne in page:
+                detail = resultats.get(ligne["id_fiche"])
+                if detail is not None:
+                    detail["extrait_document"] = extraits_page.get(ligne["id_fiche"])
 
             facettes = _facettes(
                 cursor, ts_config, texte, filtres_purs, inclure_a_valider,

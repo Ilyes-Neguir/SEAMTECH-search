@@ -356,6 +356,28 @@ keeps reading the historical `bateau` labels. Do not drop
 only required if the business also wants to erase referential decisions made
 after the upgrade.
 
+### Lot 4a — document excerpt in fiche search results
+
+Lot 4a has **no migration and no reindex command**. On upgrade, deploy the
+backend and frontend together: `/recherche` adds `extrait_document` to each
+result while keeping the legacy `extrait` field unchanged. The preview is
+computed only for the displayed page from already-indexed PostgreSQL text:
+an actually extracted linked document first (direct fiche link, source-PDF
+path, or attachment), then a non-summary document chunk, then the fiche
+fields with `source="fiche"`. Generated `resume_champs` vector chunks are
+deliberately excluded so generated field summaries are never mislabelled as
+source-document text. No document bytes are fetched and no external service
+is called.
+
+Accept the upgrade by signing in, searching for a term known to occur only in
+an indexed PDF, and checking that its result card shows “Extrait du document”
+with the term highlighted and the source filename. A browse/filter result
+without extracted document text may honestly show “Aperçu des champs de la
+fiche” instead. Rollback is a code revert plus redeploy; there is no schema
+or data cleanup. During a mixed deployment, the new frontend falls back to
+the legacy `extrait` only when an older backend omits `extrait_document`
+entirely; an explicit Lot 4a `null` remains no preview.
+
 ## Office LAN access
 
 The default deployment is safe for a local-only installation: all published
