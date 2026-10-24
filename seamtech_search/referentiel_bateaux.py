@@ -233,6 +233,15 @@ def assurer_alias(
             "cle_normalisee": cle,
             "cree": False,
         }
+    # Une clé canonique appartient déjà à son modèle, même si la ligne
+    # d'alias automatique correspondante était absente (insertion directe,
+    # restauration partielle) : elle ne peut pas devenir l'alias d'un autre.
+    cursor.execute("SELECT id_modele FROM boat_models WHERE cle_normalisee = %s", (cle,))
+    ligne_canonique = cursor.fetchone()
+    if ligne_canonique is not None:
+        final_canonique = resoudre_modele_final(cursor, int(ligne_canonique[0]))
+        if final_canonique.id_modele != modele.id_modele:
+            raise AliasBateauEnConflit(alias, final_canonique.id_modele, modele.id_modele)
     cursor.execute(
         "INSERT INTO boat_model_aliases (id_modele, alias_brut, cle_normalisee, source, cree_par) "
         "VALUES (%s, %s, %s, %s, %s) "

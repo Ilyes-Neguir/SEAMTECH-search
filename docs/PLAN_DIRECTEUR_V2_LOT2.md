@@ -199,9 +199,27 @@ Preuves locales déjà obtenues dans le bac à sable (sans PostgreSQL local) :
 
 ### Preuve CI au SHA exact
 
-À COMPLÉTER après lecture des quatre workflows GitHub du commit final du lot.
-Le lot n'est pas déclaré terminé tant que CI, Qualification native,
-Qualification réservés et Perf comparaison ne sont pas verts au même SHA.
+Premier passage complet vert au SHA
+`d3447de185e0be85847183fdfd5c4c2e3fce09b6` :
+
+- CI : run `40083446832`, **13/13 jobs `success`** ;
+- Qualification native : run `40083446777`, `success` ;
+- Qualification réservés : run `40083446831`, `success` ;
+- Perf comparaison : run `40083446765`, `success`.
+
+Annotations du job backend Python 3.12 : PostgreSQL **283 passed, 0 skipped**
+(279 avant Lot 2, +4 épreuves PostgreSQL du lot), file durable Redis
+**89 passed, 0 skipped**, couverture globale **85,94 %** pour un plancher de
+85 %. Le passage précédent au SHA `7071961` avait échoué pour deux causes
+réelles — constante de secours mal nommée dans le test d'endpoints et lecture
+des détails sur une base arrêtée avant 026 — toutes deux corrigées et
+reprouvées par le passage ci-dessus.
+
+Le commit final du lot (durcissement du conflit alias/canonique + la présente
+consignation) est à son tour revérifié sur les quatre workflows à son SHA
+exact ; ces identifiants finaux sont rapportés dans le compte rendu de
+livraison, sans être pré-écrits ici. Le lot n'est déclaré terminé que si ce
+dernier passage est lui aussi intégralement vert.
 
 ## Déploiement et rollback
 
