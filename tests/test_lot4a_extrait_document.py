@@ -264,7 +264,7 @@ def test_route_recherche_expose_extrait_document(base_recherche: dict[str, Any])
         auth_token="jeton-service-lot4a",
         min_free_bytes=0,
     )
-    with TestClient(create_app(config, base_recherche["index"])) as client:
+    with TestClient(create_app(config)) as client:
         reponse = client.get(
             "/recherche",
             params={"q": "kevlar"},
