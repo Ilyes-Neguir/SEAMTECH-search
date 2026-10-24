@@ -47,6 +47,8 @@ dedup-scan = "seamtech_search.dedup.cli:main"
 comptes = "seamtech_search.comptes.cli:main"
 # Lot M : pipeline OCR par étages, exécutable la nuit.
 ocr-nuit = "seamtech_search.ocr.cli:main"
+# Lot 2 : réindexation référentiel bateaux + recherche (simulation par défaut).
+reindex-recherche = "seamtech_search.reindex_recherche:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

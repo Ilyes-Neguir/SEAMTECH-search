@@ -1058,7 +1058,7 @@ class SearchIndex:
 
         L'état vivant des sessions est porté par Redis ; PostgreSQL conserve
         l'historique ``session_ui``. La migration est néanmoins enregistrée
-        dans les deux modes pour garder une séquence 001…025 sans trou — un
+        dans les deux modes pour garder une séquence de migrations sans trou — un
         trou ferait échouer les gardes de sauvegarde qui comparent la base à
         ``VERSION_SCHEMA_METIER``.
         """
@@ -1094,6 +1094,33 @@ class SearchIndex:
         logger.info(
             "Migration 025_audit_logs : journal canonique créé, %d événement(s) historique(s) chaîné(s).",
             copies,
+        )
+
+    def _migration_026_boat_models_aliases(self, connection: Any) -> None:
+        """Référentiel canonique des bateaux et synonymes (Lot 2).
+
+        PostgreSQL : crée les quatre tables, ajoute le lien nullable
+        ``bateau.boat_model_id``, recopie les synonymes historiques, puis
+        rattache les bateaux existants par la clé canonique Python testée.
+        Les libellés sources ne sont pas réécrits et les suffixes métier
+        distincts (45 / 45.1 / 45 CC) restent des modèles séparés.
+        SQLite : no-op enregistré, comme le reste de la couche métier.
+        """
+        if not self.is_postgres:
+            logger.warning(
+                "Migration 026_boat_models_aliases ignorée : la couche métier est PostgreSQL uniquement — "
+                "conséquence : SQLite conserve uniquement la recherche de fichiers héritée."
+            )
+            return
+        with connection.cursor() as cursor:
+            cursor.execute(schema_metier.SQL_026_BOAT_MODELS_ALIASES)
+            from .referentiel_bateaux import synchroniser_referentiel_bateaux
+
+            rapport = synchroniser_referentiel_bateaux(cursor, source="migration_026")
+        logger.info(
+            "Migration 026_boat_models_aliases : %d bateau(x) relié(s), %d modèle(s) créé(s).",
+            rapport["bateaux_lies"],
+            rapport["modeles_crees"],
         )
 
     def run_migrations(self) -> None:
@@ -1158,6 +1185,11 @@ class SearchIndex:
                 # une migration oubliée ferait échouer sauvegarde/restauration.
                 ("024_sessions_redis", self._migration_024_sessions_redis),
                 ("025_audit_logs", self._migration_025_audit_logs),
+                # Lot 2 — référentiel canonique des modèles de bateaux,
+                # alias/fusions réversibles et synonymes de recherche.
+                # Enregistrée comme les autres : VERSION_SCHEMA_METIER vaut
+                # 026 et une migration oubliée ferait échouer sauvegarde.
+                ("026_boat_models_aliases", self._migration_026_boat_models_aliases),
             ]
 
             for version, func in migrations:

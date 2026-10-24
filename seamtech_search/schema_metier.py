@@ -1,4 +1,4 @@
-"""Schéma métier « fiche technique » — migrations 006 à 025 (Lots A → Lot 0b).
+"""Schéma métier « fiche technique » — migrations 006 à 026 (Lots A → Lot 2).
 
 DÉCISION DE COUCHE ACTÉE (plan v3.0 §17.1) : la couche métier est
 **PostgreSQL uniquement**. Elle s'appuie sur pgvector, pg_trgm, les index GIN,
@@ -26,7 +26,7 @@ from __future__ import annotations
 from typing import Any
 
 # Version du schéma métier — incrémentée à chaque nouvelle migration.
-VERSION_SCHEMA_METIER = "025_audit_logs"
+VERSION_SCHEMA_METIER = "026_boat_models_aliases"
 
 # Marqueur injecté par le code au moment de la migration (constat 1 de revue) :
 # le nom de la configuration de recherche effective — 'seamtech_unaccent' ou
@@ -85,6 +85,14 @@ TABLES_METIER: tuple[str, ...] = (
     # compatibilité (SQLite, verrouillage des connexions), mais ce n'est plus
     # la source d'autorité en PostgreSQL.
     "audit_logs",
+    # 026 — Lot 2 : référentiel canonique unique des modèles de bateaux,
+    # alias réversibles/historisés et synonymes de recherche versionnés.
+    # La table historique `bateau` reste le libellé source ; elle reçoit un
+    # lien nullable vers `boat_models`, jamais une réécriture destructive.
+    "boat_models",
+    "boat_model_aliases",
+    "boat_model_merge_history",
+    "search_synonyms",
 )
 
 SQL_006_FICHE_TECHNIQUE = """
@@ -1604,6 +1612,129 @@ COMMENT ON TABLE audit_logs IS
     'Journal d''audit canonique du Lot 0b : append-only, chaîné par empreinte SHA-256, sans secret en clair.';
 """
 
+# 026 — Lot 2 : référentiel canonique des modèles de bateaux et recherche
+# étendue. La migration est additive : les libellés `bateau.nom` restent la
+# source historique, `boat_model_id` les rattache à une identité canonique.
+# Le backfill des groupes (casse/accents/ponctuation/abréviations ponctuées)
+# est fait en Python par `synchroniser_referentiel_bateaux`, car la clé
+# canonique est une règle métier testée — pas une approximation SQL. Les
+# suffixes distinctifs (`45`, `45.1`, `45 CC`) produisent des clés distinctes.
+SQL_026_BOAT_MODELS_ALIASES = """
+CREATE TABLE IF NOT EXISTS boat_models (
+    id_modele          BIGSERIAL PRIMARY KEY,
+    nom_canonique      TEXT NOT NULL,
+    cle_normalisee     TEXT NOT NULL UNIQUE CHECK (cle_normalisee <> ''),
+    source             TEXT NOT NULL DEFAULT 'manuel',
+    actif              BOOLEAN NOT NULL DEFAULT true,
+    id_modele_fusion   BIGINT REFERENCES boat_models(id_modele) ON DELETE SET NULL,
+    fusionne_le        TIMESTAMPTZ,
+    fusionne_par       BIGINT REFERENCES utilisateur(id_utilisateur) ON DELETE SET NULL,
+    cree_par           BIGINT REFERENCES utilisateur(id_utilisateur) ON DELETE SET NULL,
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CHECK (id_modele_fusion IS NULL OR id_modele_fusion <> id_modele),
+    CHECK ((id_modele_fusion IS NULL) = (fusionne_le IS NULL))
+);
+
+CREATE TABLE IF NOT EXISTS boat_model_aliases (
+    id_alias           BIGSERIAL PRIMARY KEY,
+    id_modele          BIGINT NOT NULL REFERENCES boat_models(id_modele) ON DELETE CASCADE,
+    alias_brut         TEXT NOT NULL,
+    cle_normalisee     TEXT NOT NULL UNIQUE CHECK (cle_normalisee <> ''),
+    source             TEXT NOT NULL DEFAULT 'manuel',
+    cree_par           BIGINT REFERENCES utilisateur(id_utilisateur) ON DELETE SET NULL,
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS boat_model_merge_history (
+    id_historique          BIGSERIAL PRIMARY KEY,
+    action                 TEXT NOT NULL CHECK (action IN ('fusion', 'defusion')),
+    id_modele_source       BIGINT NOT NULL REFERENCES boat_models(id_modele) ON DELETE RESTRICT,
+    id_modele_cible        BIGINT NOT NULL REFERENCES boat_models(id_modele) ON DELETE RESTRICT,
+    id_historique_origine  BIGINT REFERENCES boat_model_merge_history(id_historique) ON DELETE SET NULL,
+    effectue_par           BIGINT REFERENCES utilisateur(id_utilisateur) ON DELETE SET NULL,
+    motif                  TEXT,
+    instantane             JSONB NOT NULL DEFAULT '{}'::jsonb,
+    cree_le                TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CHECK (id_modele_source <> id_modele_cible)
+);
+
+CREATE TABLE IF NOT EXISTS search_synonyms (
+    id_synonyme        BIGSERIAL PRIMARY KEY,
+    terme              TEXT NOT NULL,
+    terme_normalise    TEXT NOT NULL CHECK (terme_normalise <> ''),
+    cible              TEXT NOT NULL,
+    cible_normalisee   TEXT NOT NULL CHECK (cible_normalisee <> ''),
+    domaine            TEXT,
+    source             TEXT NOT NULL DEFAULT 'manuel',
+    actif              BOOLEAN NOT NULL DEFAULT true,
+    cree_par           BIGINT REFERENCES utilisateur(id_utilisateur) ON DELETE SET NULL,
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (terme_normalise, cible_normalisee)
+);
+
+ALTER TABLE bateau
+    ADD COLUMN IF NOT EXISTS boat_model_id BIGINT
+    REFERENCES boat_models(id_modele) ON DELETE SET NULL;
+
+CREATE INDEX IF NOT EXISTS idx_bateau_boat_model
+    ON bateau (boat_model_id) WHERE boat_model_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_boat_model_aliases_modele
+    ON boat_model_aliases (id_modele);
+CREATE INDEX IF NOT EXISTS idx_boat_model_merge_history_source
+    ON boat_model_merge_history (id_modele_source, cree_le DESC);
+CREATE INDEX IF NOT EXISTS idx_boat_model_merge_history_cible
+    ON boat_model_merge_history (id_modele_cible, cree_le DESC);
+CREATE INDEX IF NOT EXISTS idx_search_synonyms_terme
+    ON search_synonyms (terme_normalise) WHERE actif;
+
+DO $lot2_trgm$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm') THEN
+        EXECUTE 'CREATE INDEX IF NOT EXISTS idx_boat_models_cle_trgm '
+             || 'ON boat_models USING gin (cle_normalisee gin_trgm_ops)';
+        EXECUTE 'CREATE INDEX IF NOT EXISTS idx_boat_model_aliases_cle_trgm '
+             || 'ON boat_model_aliases USING gin (cle_normalisee gin_trgm_ops)';
+        EXECUTE 'CREATE INDEX IF NOT EXISTS idx_search_synonyms_terme_trgm '
+             || 'ON search_synonyms USING gin (terme_normalise gin_trgm_ops)';
+    END IF;
+END
+$lot2_trgm$;
+
+INSERT INTO search_synonyms
+    (terme, terme_normalise, cible, cible_normalisee, domaine, source)
+VALUES
+    ('GV', 'gv', 'Grand-voile', 'grand voile', 'type_voile', 'lot2'),
+    ('spi', 'spi', 'Spinnaker', 'spinnaker', 'type_voile', 'lot2'),
+    ('gen', 'gen', 'Génois', 'genois', 'type_voile', 'lot2'),
+    ('genoa', 'genoa', 'Génois', 'genois', 'type_voile', 'lot2'),
+    ('voile de portant', 'voile de portant', 'Spinnaker', 'spinnaker', 'type_voile', 'lot2'),
+    ('spinnaker asymétrique', 'spinnaker asymetrique', 'Spi Asymétrique', 'spi asymetrique', 'type_voile', 'lot2'),
+    ('m2', 'm 2', 'm²', 'm²', 'unite', 'lot2')
+ON CONFLICT (terme_normalise, cible_normalisee) DO NOTHING;
+
+INSERT INTO search_synonyms
+    (terme, terme_normalise, cible, cible_normalisee, domaine, source)
+SELECT terme,
+       seamtech_texte_recherche(terme),
+       cible,
+       seamtech_texte_recherche(cible),
+       domaine,
+       'legacy_synonyme'
+FROM synonyme
+ON CONFLICT (terme_normalise, cible_normalisee) DO NOTHING;
+
+COMMENT ON TABLE boat_models IS
+    'Référentiel canonique unique des modèles de bateaux (Lot 2).';
+COMMENT ON TABLE boat_model_aliases IS
+    'Formes rencontrées ou apprises désignant un modèle canonique (Lot 2).';
+COMMENT ON TABLE boat_model_merge_history IS
+    'Fusions et défusions de modèles, avec instantané de restauration (Lot 2).';
+COMMENT ON TABLE search_synonyms IS
+    'Synonymes de recherche normalisés et versionnés (Lot 2).';
+"""
+
 MIGRATIONS_METIER: tuple[tuple[str, str], ...] = (
     ("006_fiche_technique", SQL_006_FICHE_TECHNIQUE),
     ("007_recherche_index", SQL_007_RECHERCHE_INDEX),
@@ -1625,6 +1756,7 @@ MIGRATIONS_METIER: tuple[tuple[str, str], ...] = (
     ("023_recherche_normalisee", SQL_023_FONCTION_UNACCENT),
     ("024_sessions_redis", SQL_024_SESSIONS_REDIS),
     ("025_audit_logs", SQL_025_AUDIT_LOGS),
+    ("026_boat_models_aliases", SQL_026_BOAT_MODELS_ALIASES),
 )
 
 

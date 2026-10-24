@@ -30,6 +30,7 @@ from typing import Any
 from seamtech_search.fiches import normalisation as norm
 from seamtech_search.fiches.modeles import FicheExtraite
 from seamtech_search.fiches.verite_7792 import VERITE_7792, VERITE_7792_COMPLETE
+from seamtech_search.referentiel_bateaux import lier_bateau_au_modele
 
 LOGGER = logging.getLogger("seamtech_search.fiches.persistance")
 
@@ -466,6 +467,15 @@ def _ecrire_fiche_dans(index: Any, fiche: FicheExtraite, connexion: Any) -> Resu
             id_bateau = None
             if fiche.bateau_nom:
                 id_bateau = _resoudre(cursor, _SQL_BATEAU, _SQL_BATEAU_INS, (fiche.bateau_nom, fiche.bateau_taille))
+                # Lot 2 : le libellé historique reste intact, mais la ligne est
+                # rattachée au modèle canonique FINAL dans la même transaction.
+                # Une variante de casse/ponctuation ne crée donc pas un nouveau
+                # modèle métier ; un suffixe distinct (45.1, 45 CC) en crée un.
+                lier_bateau_au_modele(
+                    cursor,
+                    id_bateau,
+                    source="persistance_fiche",
+                )
             id_commande = None
             if fiche.commande_numero:
                 cursor.execute(_SQL_COMMANDE, (fiche.commande_numero,))
