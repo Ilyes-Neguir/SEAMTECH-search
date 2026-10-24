@@ -313,6 +313,49 @@ remain in place (older code simply keeps using `audit_log`). Do not drop it
 during rollback — it is evidence. A later redeploy of the Lot 0b code resumes
 the hash chain from its last row.
 
+### Lot 2 — canonical boat-model referential and search reindex
+
+On upgrade, migration `026_boat_models_aliases` runs automatically at API
+startup. It creates `boat_models`, `boat_model_aliases`,
+`boat_model_merge_history` and `search_synonyms`, adds the nullable link
+`bateau.boat_model_id`, copies the legacy `synonyme` rows, then backfills the
+link from the historical `bateau.nom` labels with the tested Python canonical
+key. Source labels are not rewritten. Folding case/accents/punctuation does
+not merge distinct suffixes: `45`, `45.1` and `45 CC` remain separate until an
+administrator explicitly records a reversible merge. Keep the four new tables
+in PostgreSQL backups; the merge history is the evidence needed to undo a
+merge.
+
+After startup, measure first, then apply the operator reindex in a maintenance
+window:
+
+```bash
+python -m seamtech_search.reindex_recherche --json --rapport reindex-lot2-avant.json
+python -m seamtech_search.reindex_recherche --appliquer --json --rapport reindex-lot2-applique.json
+```
+
+The installed entry point is `reindex-recherche`. Simulation is the default:
+it reports before/after counts but does not synchronize boats/synonyms or
+refresh fiche vectors. Like the other operator CLIs, however, process startup
+applies pending schema migrations before measuring — run the first command
+after the backend upgrade, not as a supposedly schema-neutral pre-check.
+`--appliquer` resynchronizes the boat referential and legacy synonyms, then
+refreshes every fiche search text/vector. That final statement uses a bounded
+30-minute batch timeout by default (`--statement-timeout-ms` or
+`SEAMTECH_STATEMENT_TIMEOUT_MS`), not the 5-second interactive API timeout.
+Accept the reindex only when the applied report shows
+`bateaux_sans_modele: 0` (apart from deliberately blank historical labels,
+which the service reports as ignored rather than inventing a model) and a
+representative folded query such as `Bav. 45` returns the same canonical model
+as `Bavaria 45` without also claiming `45.1` or `45 CC`.
+
+Rollback is a code revert plus redeploy. The additive Lot 2 tables and
+`bateau.boat_model_id` may remain in place: pre-Lot-2 code ignores them and
+keeps reading the historical `bateau` labels. Do not drop
+`boat_model_merge_history` during rollback; restoring a database backup is
+only required if the business also wants to erase referential decisions made
+after the upgrade.
+
 ## Office LAN access
 
 The default deployment is safe for a local-only installation: all published

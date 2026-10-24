@@ -32,6 +32,11 @@ from seamtech_search.referentiel_bateaux import (
     synchroniser_referentiel_bateaux,
 )
 
+# Le rafraîchissement ensembliste de toutes les fiches est un batch
+# d'exploitation, pas une requête interactive : le timeout applicatif de
+# 5 s ne doit pas l'arrêter au milieu d'un gros corpus.
+TIMEOUT_BATCH_DEFAUT_MS = 1_800_000  # 30 minutes, borne explicite
+
 
 def _compter(cursor: Any, sql: str) -> int:  # noqa: ANN401
     cursor.execute(sql)
@@ -175,7 +180,25 @@ def _construire_parseur() -> argparse.ArgumentParser:
         help="Écrit aussi le rapport JSON dans ce fichier (avant/après).",
     )
     parseur.add_argument("--database-url", default=None, help="URL PostgreSQL (sinon environnement)")
+    parseur.add_argument(
+        "--statement-timeout-ms",
+        type=int,
+        default=None,
+        help="Timeout SQL du batch en ms (défaut : SEAMTECH_STATEMENT_TIMEOUT_MS ou 1800000)",
+    )
     return parseur
+
+
+def _timeout_batch_ms(valeur_cli: int | None) -> int:
+    if valeur_cli is not None:
+        timeout = valeur_cli
+    else:
+        brut = os.environ.get("SEAMTECH_STATEMENT_TIMEOUT_MS")
+        try:
+            timeout = int(brut) if brut else TIMEOUT_BATCH_DEFAUT_MS
+        except ValueError:
+            timeout = TIMEOUT_BATCH_DEFAUT_MS
+    return max(100, int(timeout))
 
 
 def _afficher_texte(rapport: dict[str, Any]) -> None:
@@ -216,7 +239,11 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 2
-    index = SearchIndex(database_path=Path(":memory:"), database_url=db_url)
+    index = SearchIndex(
+        database_path=Path(":memory:"),
+        database_url=db_url,
+        statement_timeout_ms=_timeout_batch_ms(args.statement_timeout_ms),
+    )
     index.initialize()
     index.run_migrations()
     try:

@@ -12,6 +12,47 @@ jour vivent dans :
 * `docs/verite_terrain/TRACABILITE_LIVRAISON.md` — une ligne par affirmation,
   y compris la revue indépendante du 2026-10-07 et la passe de clôture.
 
+## Addendum Lot 2 — référentiel bateaux et recherche étendue (2026-10-24)
+
+Branche : `arena/b02ed560-seamtech-search`. La preuve fonctionnelle centrale
+est `tests/test_lot2_referentiel_recherche.py`, exécutée sur PostgreSQL réel
+en CI (le bac à sable de développement ne fournit pas PostgreSQL) :
+
+- normalisation conservative (`BAVARIA 45` ≡ `Bavaria-45` ≡ `Bav. 45`, mais
+  `45` ≠ `45.1` ≠ `45 CC`) ;
+- migration `026_boat_models_aliases` et réindexation avant/après
+  (simulation sans écriture, puis application jusqu’à zéro bateau sans
+  modèle sur le corpus semé) ;
+- suggestions exact > alias/synonyme > préfixe > flou pg_trgm, y compris
+  `spi` → valeur réelle `Spinnaker` ;
+- recherche par alias, modèle décimal exact, faute tolérée et filtre
+  `bateau=Bav. 45` résolu vers le modèle final ;
+- fusion explicite `45.1 → 45` historisée puis défusion restaurant le lien
+  d’origine ;
+- écriture d’une fiche qui conserve `bateau.nom` tout en posant
+  `boat_model_id` ;
+- équivalence `/search/suggestions` ↔ `/recherche/suggestions` et gardes
+  401/403/200/409 des mutations du référentiel.
+
+Commandes de reproduction :
+
+```bash
+ruff check seamtech_search tests/test_lot2_referentiel_recherche.py
+python -m compileall -q seamtech_search
+pytest -q tests/test_lot2_referentiel_recherche.py::test_normalisation_modele_bateau_prudente \
+  tests/test_lot2_referentiel_recherche.py::test_reindex_cli_simulation_par_defaut_et_timeout_borne
+SEAMTECH_TEST_DATABASE_URL=postgresql://… pytest -q -m postgres \
+  tests/test_lot2_referentiel_recherche.py tests/test_migrations_metier.py \
+  tests/test_recherche_hybride.py tests/test_recherche_fonds_reel.py
+cd frontend && corepack pnpm exec tsc --noEmit && corepack pnpm build
+python -m seamtech_search.reindex_recherche --json
+python -m seamtech_search.reindex_recherche --appliquer --json
+```
+
+Les identifiants des quatre workflows du SHA exact sont consignés dans
+`docs/PLAN_DIRECTEUR_V2_LOT2.md` après lecture de GitHub Actions ; aucun
+résultat CI n’est pré-écrit ici.
+
 ## Ground rules (Phase 0)
 
 - Test fails before change, passes after: each phase has unit test demonstrating.

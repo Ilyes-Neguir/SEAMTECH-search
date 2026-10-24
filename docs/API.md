@@ -13,8 +13,13 @@ La recherche « comme Google » des fiches validées. La route Phase 0 `GET /sea
 
 | Route | Rôle |
 |---|---|
-| `GET /recherche?q=&type_voile=&client=&bateau=&matiere=&gamme=&annee=&annee_min=&annee_max=&cote=&min=&max=&cote_min=&cote_max=&tri=&page=&limit=&offset=&inclure_a_valider=` | Recherche hybride : lexical tsvector pondéré A/B/C + trigrammes (volet dégradable) + texte des PDF (chunks/documents) + vecteurs (dormants, activables par injection `encode_requete`), fusionnés par **RRF k=60** ; depuis la migration 019, une **dimension détectée dans `q`** bascule sur le chemin numérique (voir « Recherche par dimension (Phase 1) » ci-dessous). Par défaut : fiches `valide` seulement. Réponse : `{requete, nb_resultats, resultats:[{code, titre, type_voile, client, bateau, gamme, statut, annee, extrait, score, sources}], facettes:{groupe:[{valeur, effectif}]}, facettes_cotes:{cote:{unite, min, max, effectif, intervalles:[{min,max,effectif,label}] }}, cote_active, cotes_unites, dimension_active, tri, page, sources_actives, sans_resultat, duree_ms}`. **Les 7 cotes d'un résultat (`slu_m`, `sle_m`, `sf_m`, `shw_m`, `spa_m2`, `tetiere_cm`, `poids_kg`) ne sont présentes QUE si un filtre dimension, une recherche par dimension ou un tri par cote est demandé — voir « Chargement conditionnel des cotes » ci-dessous.** |
-| `GET /recherche/suggestions?prefix=&limite=` | Suggestions au fil de la frappe : **valeurs réellement présentes seulement** (référentiels, codes, gammes) par préfixe, complétées par tolérance aux fautes trigrammes sur les référentiels si le préfixe ne donne rien. Réponse : `{prefixe, suggestions:[{nature, valeur}]}`. |
+| `GET /recherche?q=&type_voile=&client=&bateau=&boat_model_id=&matiere=&gamme=&annee=&annee_min=&annee_max=&cote=&min=&max=&cote_min=&cote_max=&tri=&page=&limit=&offset=&inclure_a_valider=` | Recherche hybride : lexical tsvector pondéré A/B/C + trigrammes (volet dégradable) + texte des PDF (chunks/documents) + vecteurs (dormants, activables par injection `encode_requete`), fusionnés par **RRF k=60** ; depuis la migration 019, une **dimension détectée dans `q`** bascule sur le chemin numérique (voir « Recherche par dimension (Phase 1) » ci-dessous). Par défaut : fiches `valide` seulement. Réponse : `{requete, modeles_bateaux_detectes:[{id_modele, nom_canonique, cle_normalisee, type_correspondance, rang, score, alias}], nb_resultats, resultats:[{code, titre, type_voile, client, bateau, id_modele_bateau, modele_bateau, modele_bateau_cle, gamme, statut, annee, extrait, score, sources}], facettes:{groupe:[{valeur, effectif}]}, facettes_cotes:{cote:{unite, min, max, effectif, intervalles:[{min,max,effectif,label}] }}, cote_active, cotes_unites, dimension_active, tri, page, sources_actives, sans_resultat, duree_ms}`. **Les 7 cotes d'un résultat (`slu_m`, `sle_m`, `sf_m`, `shw_m`, `spa_m2`, `tetiere_cm`, `poids_kg`) ne sont présentes QUE si un filtre dimension, une recherche par dimension ou un tri par cote est demandé — voir « Chargement conditionnel des cotes » ci-dessous.** |
+| `GET /search/suggestions?prefix=&limit=` | Route canonique Lot 2 des suggestions au fil de la frappe : **valeurs réellement présentes seulement**, classées **exact > alias/synonyme > préfixe > flou (pg_trgm)**. Réponse : `{prefixe, suggestions:[{nature, valeur, type_correspondance, rang, score, alias?, id_modele_bateau?}]}`. Le proxy navigateur correspondant est `GET /api/search/suggestions`. |
+| `GET /recherche/suggestions?prefix=&limit=` | Alias historique strictement équivalent à `/search/suggestions` (compatibilité) ; le proxy `/api/recherche/suggestions` est conservé. |
+| `GET /referentiel/bateaux?inclure_fusionnes=` | Référentiel canonique Lot 2 : modèles finaux, alias et compteurs réels de bateaux/fiches. Lecture derrière le jeton de service. Réponse : `{modeles:[{id_modele, nom_canonique, cle_normalisee, source, actif, id_modele_fusion, alias:[{alias, cle_normalisee, source}], nb_bateaux, nb_fiches}]}`. |
+| `POST /referentiel/bateaux/{id_modele}/alias` | Ajoute un alias (`{"alias": "…"}`), administrateur humain uniquement. Un alias déjà affecté à un autre modèle final répond **409** ; modèle inconnu **404**. |
+| `POST /referentiel/bateaux/{id_modele}/fusion` | Fusion explicite et historisée vers `{"id_modele_cible": …, "motif": "…"}` ; administrateur humain uniquement. Aucune fusion n’est jamais inférée par la normalisation. |
+| `POST /referentiel/bateaux/{id_modele}/defusion` | Annule la dernière fusion (ou `{"id_historique": …}` si fourni) depuis l’instantané historisé ; administrateur humain uniquement. Seules les lignes encore rattachées à la cible enregistrée sont restaurées. |
 | `GET /recherche/journal?jours=&limite_top=&limite_sans=` | Exploitation du journal : agrégé depuis `recherche_log` réelle. Retour : `{periode_jours, total_recherches, total_sans_resultat, top_requetes:[{requete, nb_occurrences, nb_sans_resultat, dernier}], sans_resultat:[{requete, nb_occurrences, dernier, exemple_filtres}]}`. Période paramétrable en jours. |
 
 **Comportements (Lot J)** :
@@ -143,7 +148,24 @@ La recherche « comme Google » des fiches validées. La route Phase 0 `GET /sea
 - **Limite** : une faute *et* un accent manquant (`genios` pour « Génois »)
   reste une question de **seuil de trigrammes**, pas de normalisation. La
   normalisation garantit seulement que `GENOIS` et `GÉNOIS` votent pareil.
-- **Synonymes** : table `synonyme` (terme → canonique), rafraîchie toutes les 30 s.
+- **Synonymes** : `search_synonyms` (Lot 2, normalisés/versionnés) fusionné
+  avec la table historique `synonyme`, cette dernière gardant priorité en cas
+  de même terme ; cache de 30 s. Dans la recherche soumise, le texte tapé et
+  sa forme canonique votent en **OU** dans les sources textuelles : remplacer
+  aveuglément `spi` par `spinnaker` ferait perdre les fiches dont le libellé
+  réel est « Spi Asymétrique ».
+- **Référentiel bateaux (migration 026)** : `boat_models`,
+  `boat_model_aliases`, `boat_model_merge_history`, `search_synonyms` et le
+  lien nullable `bateau.boat_model_id`. L’identité dérive de `bateau.nom` ;
+  `bateau.taille` est un détail et le libellé complet `nom + taille` est un
+  alias. La clé plie casse/accents/ponctuation et frontières lettre-chiffre,
+  protège le séparateur décimal et ne développe que les abréviations
+  ponctuées connues (`Bav.`, `ben.`, `duf.`, `jan.`). Ainsi `BAVARIA 45`,
+  `Bavaria-45` et `Bav. 45` sont un modèle, mais `45`, `45.1` et `45 CC`
+  restent trois modèles. Un suffixe décimal appartenant à un modèle
+  exact/alias gagne sur l’analyseur de dimensions. Le filtre `bateau=` est
+  résolu en exact/alias vers le modèle final ; `boat_model_id=` filtre
+  directement ce modèle.
 - **Journal** : TOUTES les recherches sont écrites dans `recherche_log` ;
   `nb_resultats = 0` marque la recherche sans résultat (index partiel, migration
   012) — critère de sortie Phase 3, matière première de l'amélioration du lexique.
@@ -349,6 +371,7 @@ d'outillage derrière le jeton de service, faute de comptes nominatifs) :
 | `GET|HEAD /pieces/{id}/apercu`, `/pieces/{id}/telecharger`, `GET /imports/{id}/artifacts/{artifact}` | session humaine vivante ; l'objet est ensuite relu par ID et confiné aux racines/staging/rapports |
 | corrections/validations de fiches | si les en-têtes de session sont présents, l'identité est revérifiée et relue en base ; un en-tête utilisateur/rôle incompatible ⇒ 401 |
 | `POST /fiches/doublons/scan` avec `appliquer=true` | session humaine vivante (le dry-run reste un comptage) |
+| `POST /referentiel/bateaux/{id}/*` (Lot 2) | session humaine `administrateur` vérifiée (ou `secours` derrière le jeton de service) ; service seul ⇒ 401, opérateur ⇒ 403. `GET /referentiel/bateaux` reste une lecture derrière le jeton de service |
 | `POST /imports/dossier`, `POST /imports/dossier/lot` | dossier/racine obligatoirement sous une racine configurée ou le staging, sinon 403 |
 
 `POST /open` reste l'endpoint historique des scripts serveur de qualification :

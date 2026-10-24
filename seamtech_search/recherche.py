@@ -1484,15 +1484,36 @@ def _details_fiches(
     """
     if not ids:
         return {}
+    # Compatibilité de lecture avec une base arrêtée avant 026 (tests de
+    # migration historique) : les champs canoniques existent dans la réponse
+    # mais valent NULL tant que la couche Lot 2 n'est pas migrée. En service
+    # normal, les migrations ont tourné au démarrage et le JOIN est actif.
+    cursor.execute(
+        "SELECT to_regclass('public.boat_models') IS NOT NULL AND EXISTS ("
+        "SELECT 1 FROM information_schema.columns "
+        "WHERE table_schema = 'public' AND table_name = 'bateau' "
+        "AND column_name = 'boat_model_id')"
+    )
+    referentiel_disponible = bool(cursor.fetchone()[0])
+    colonnes_modele = (
+        "b.boat_model_id, bm.nom_canonique, bm.cle_normalisee"
+        if referentiel_disponible
+        else "NULL::bigint, NULL::text, NULL::text"
+    )
+    jointure_modele = (
+        "LEFT JOIN boat_models bm ON bm.id_modele = b.boat_model_id"
+        if referentiel_disponible
+        else ""
+    )
     # Requête de base sans cotes — évite JOIN fiche_cotes, permet élimination
     # par le planificateur et réduit le coût du chemin par défaut.
     cursor.execute(
-        """
+        f"""
         SELECT f.id_fiche, f.code, f.titre,
                tv.libelle AS type_voile,
                c.nom AS client,
                b.nom || ' ' || coalesce(b.taille,'') AS bateau,
-               b.boat_model_id, bm.nom_canonique, bm.cle_normalisee,
+               {colonnes_modele},
                f.gamme, f.statut,
                CASE WHEN f.date_edition IS NULL THEN NULL
                     ELSE extract(year FROM f.date_edition)::int END,
@@ -1501,7 +1522,7 @@ def _details_fiches(
         LEFT JOIN type_voile tv ON tv.id_type_voile = f.id_type_voile
         LEFT JOIN client c ON c.id_client = f.id_client
         LEFT JOIN bateau b ON b.id_bateau = f.id_bateau
-        LEFT JOIN boat_models bm ON bm.id_modele = b.boat_model_id
+        {jointure_modele}
         WHERE f.id_fiche = ANY(%s)
         """,
         (list(ids),),
@@ -1717,8 +1738,10 @@ def suggerer(index: Any, prefixe: str, limite: int = SUGGESTION_LIMITE_DEFAUT) -
                         )
 
             if capacites["pg_trgm"] and len(candidats) < limite:
-                for correspondance in rechercher_modeles_flous(
-                    cursor, prefixe, limite=max(limite, 5)
+                for correspondance in (
+                    rechercher_modeles_flous(cursor, prefixe, limite=max(limite, 5))
+                    if cles_modeles
+                    else []
                 ):
                     ajouter(
                         "bateau",

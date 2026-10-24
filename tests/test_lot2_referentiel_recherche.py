@@ -30,7 +30,12 @@ from seamtech_search.referentiel_bateaux import (
     normaliser_modele_bateau,
     resoudre_modele_depuis_texte,
 )
-from seamtech_search.reindex_recherche import rapport_reindex
+from seamtech_search.reindex_recherche import (
+    _afficher_texte,
+    _construire_parseur,
+    _timeout_batch_ms,
+    rapport_reindex,
+)
 
 CODES_45 = {"LOT2-45-A", "LOT2-45-B", "LOT2-45-C"}
 
@@ -49,6 +54,43 @@ def test_normalisation_modele_bateau_prudente() -> None:
         normaliser_modele_bateau("Bavaria 45 CC"),
     }
     assert len(cles) == 3, "les suffixes métier ne doivent jamais être écrasés"
+
+
+def test_reindex_cli_simulation_par_defaut_et_timeout_borne(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    args = _construire_parseur().parse_args([])
+    assert args.appliquer is False
+    assert args.dry_run is False  # la simulation reste le défaut de main()
+
+    monkeypatch.delenv("SEAMTECH_STATEMENT_TIMEOUT_MS", raising=False)
+    assert _timeout_batch_ms(None) == 1_800_000
+    assert _timeout_batch_ms(1) == 100
+    monkeypatch.setenv("SEAMTECH_STATEMENT_TIMEOUT_MS", "valeur-invalide")
+    assert _timeout_batch_ms(None) == 1_800_000
+
+    mesures = {
+        "fiches_total": 3,
+        "fiches_sans_search_vector": 1,
+        "bateaux_sans_modele": 2,
+        "modeles_actifs": 4,
+        "alias_bateaux": 5,
+        "synonymes_recherche": 6,
+    }
+    _afficher_texte(
+        {
+            "dry_run": True,
+            "avant": mesures,
+            "apres": mesures,
+            "actions": {
+                "bateaux_lies": 0,
+                "modeles_crees": 0,
+                "synonymes_copies": 0,
+                "fiches_rafraichies": 0,
+            },
+        }
+    )
+    assert "SIMULATION" in capsys.readouterr().out
 
 
 def _ajouter_bateaux_et_fiches(index: Any) -> dict[str, dict[str, int]]:  # noqa: ANN401
@@ -276,7 +318,7 @@ def test_lot2_endpoints_suggestions_et_referentiel(base_recherche: dict[str, Any
     from fastapi.testclient import TestClient
 
     from seamtech_search.api import create_app
-    from seamtech_search.comptes.comptes import ID_SECOURS, creer_utilisateur, ouvrir_session
+    from seamtech_search.comptes.comptes import IDENTIFIANT_SECOURS, creer_utilisateur, ouvrir_session
     from seamtech_search.config import AppConfig
 
     index = base_recherche["index"]
@@ -325,7 +367,7 @@ def test_lot2_endpoints_suggestions_et_referentiel(base_recherche: dict[str, Any
 
     secours = {
         **entetes_service,
-        "X-SEAMTECH-UTILISATEUR": ID_SECOURS,
+        "X-SEAMTECH-UTILISATEUR": IDENTIFIANT_SECOURS,
         "X-SEAMTECH-ROLE": "administrateur",
     }
     with TestClient(create_app(config)) as client:
