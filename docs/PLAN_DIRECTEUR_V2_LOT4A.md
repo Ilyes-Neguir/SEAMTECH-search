@@ -212,6 +212,16 @@ quatre workflows à son SHA exact ; ses identifiants finaux sont rapportés
 dans le compte rendu de livraison, sans être pré-écrits ici. Le lot n'est
 déclaré terminé que si ce dernier passage est intégralement vert.
 
+Premier passage du commit de consignation `d4f123e` : Qualification native
+`40092767394`, Qualification réservés `40092767458` et Perf comparaison
+`40092767434` sont verts ; CI `40092767448` compte 12 jobs verts sur 13. Le
+job e2e y est refusé par son garde-fou anti-flaky : la suite concurrence
+mesure **6 passés, 1 flaky, 0 en échec**, le scénario multi-postes ayant
+dépassé 15 s à attendre `validation-app` au premier essai avant de passer au
+retry. Ce passage n'est donc pas accepté comme preuve finale malgré
+l'absence d'échec fonctionnel après retry ; un nouveau passage complet au
+SHA exact du présent ajout est exigé.
+
 ## Déploiement et rollback
 
 ### Déploiement
