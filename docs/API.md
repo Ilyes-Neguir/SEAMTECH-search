@@ -156,7 +156,8 @@ La recherche « comme Google » des fiches validées. La route Phase 0 `GET /sea
   réel est « Spi Asymétrique ».
 - **Extrait du document (Lot 4a, sans migration)** : chaque résultat de la
   page porte `extrait_document` — un aperçu d'au plus 360 caractères centré
-  sur le passage pertinent et reconstruit par PostgreSQL (`ts_headline`). La
+  sur le passage pertinent (construction locale bornée pour un texte court,
+  `ts_headline` PostgreSQL pour un long document). La
   provenance retenue est, après pertinence, un document réellement extrait
   rattaché directement, par le chemin du PDF source ou par une pièce jointe ;
   puis un chunk documentaire ; puis les champs de la fiche. Les chunks
