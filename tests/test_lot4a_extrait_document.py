@@ -22,6 +22,7 @@ from seamtech_search.recherche import (
     EXTRAIT_DOCUMENT_MAX_CARACTERES,
     _construire_extrait_document,
     _extraits_documents,
+    _segments_extrait_depuis_texte,
     _segments_extrait_document,
     rechercher_fiches,
 )
@@ -82,6 +83,21 @@ def test_extrait_document_borne_autour_de_la_premiere_correspondance() -> None:
     # simple début du document.
     assert not texte.startswith("avant0")
     assert not texte.endswith("apres89")
+
+
+def test_extrait_document_texte_court_surligne_sans_casse_ni_accents() -> None:
+    segments = _segments_extrait_depuis_texte(
+        "Grand-voile LATTÉE, renforts forcées sur la bordure",
+        ["lattee forcees"],
+    )
+
+    assert "".join(str(segment["texte"]) for segment in segments) == (
+        "Grand-voile LATTÉE, renforts forcées sur la bordure"
+    )
+    assert [segment["texte"] for segment in segments if segment["correspondance"]] == [
+        "LATTÉE",
+        "forcées",
+    ]
 
 
 def test_extrait_document_marqueurs_imbriques_ou_non_fermes_sans_crash() -> None:
@@ -179,6 +195,31 @@ def test_recherche_extrait_document_reel_prioritaire_sur_resume_genere(
     assert "renfort carbone tisse serge" in extrait["texte"]
     assert "Résumé généré" not in extrait["texte"]
     assert set(_segments_correspondants(extrait)) == {"carbone", "tisse", "serge"}
+
+
+@pytest.mark.postgres
+def test_recherche_extrait_document_long_centre_sur_le_passage_pertinent(
+    base_recherche: dict[str, Any],
+) -> None:
+    index = base_recherche["index"]
+    id_fiche = int(base_recherche["fiches"]["0801-GEN-001"])
+    remplissage = " ".join(f"controle{i}" for i in range(520))
+    _inserer_document(
+        index,
+        id_fiche=id_fiche,
+        chemin="/archive/lot4a/document-long.pdf",
+        nom="document-long.pdf",
+        contenu=f"{remplissage} marqueurdocumentlong verification finale atelier",
+    )
+
+    reponse = rechercher_fiches(index, requete="marqueurdocumentlong", limit=20)
+    extrait = _resultat(reponse, "0801-GEN-001")["extrait_document"]
+
+    assert extrait["source"] == "document"
+    assert extrait["libelle_source"] == "document-long.pdf"
+    assert _segments_correspondants(extrait) == ["marqueurdocumentlong"]
+    assert len(extrait["texte"]) <= EXTRAIT_DOCUMENT_MAX_CARACTERES
+    assert not extrait["texte"].startswith("controle0")
 
 
 @pytest.mark.postgres

@@ -79,12 +79,14 @@ SYNONYMES_TTL_S = 30.0    # le référentiel synonyme est petit et modifiable à
 # côté API (jamais un document entier), et ses correspondances sont rendues en
 # segments textuels structurés : le contenu source ne devient jamais du HTML.
 EXTRAIT_DOCUMENT_MAX_CARACTERES = 360
+EXTRAIT_DOCUMENT_TEXTE_COURT_MAX = 2000
 _MARQUEUR_EXTRAIT_DEBUT = "[[SEAMTECH_CORRESPONDANCE]]"
 _MARQUEUR_EXTRAIT_FIN = "[[/SEAMTECH_CORRESPONDANCE]]"
 _RE_MARQUEURS_EXTRAIT = re.compile(
     r"(\[\[SEAMTECH_CORRESPONDANCE\]\]|\[\[/SEAMTECH_CORRESPONDANCE\]\])"
 )
 _RE_ESPACES_EXTRAIT = re.compile(r"\s+")
+_RE_MOTS_EXTRAIT = re.compile(r"\w+", re.UNICODE)
 
 # Unités métier des cotes (normalisées à l'extraction, documentées dans docs/API.md) :
 # - slu_m, sle_m, sf_m, shw_m : mètres (m)
@@ -428,6 +430,46 @@ def _segments_extrait_document(
     return _borner_segments_extrait(_fusionner_segments_extrait(brut), limite)
 
 
+def _segments_extrait_depuis_texte(
+    texte: str,
+    requetes: Sequence[str],
+    limite: int = EXTRAIT_DOCUMENT_MAX_CARACTERES,
+) -> list[dict[str, Any]]:
+    """Surligne un texte court en Python, sans payer ``ts_headline`` par résultat.
+
+    Réservé aux candidats bornés par ``EXTRAIT_DOCUMENT_TEXTE_COURT_MAX`` :
+    la comparaison plie casse/accents/ligatures via la même clé que la
+    recherche, puis la fenêtre existante centre l'extrait sur le premier mot
+    correspondant. Les longs documents restent traités par PostgreSQL.
+    """
+    nettoye = _nettoyer_segment_extrait(texte or "")
+    if not nettoye.strip():
+        return []
+    termes = {
+        normaliser_cle_recherche(mot)
+        for requete in requetes
+        for mot in _RE_MOTS_EXTRAIT.findall(str(requete or ""))
+        if len(mot) >= 2
+    }
+    termes.discard("")
+    if not termes:
+        return _borner_segments_extrait(
+            _fusionner_segments_extrait([(nettoye, False)]), limite
+        )
+
+    brut: list[tuple[str, bool]] = []
+    position = 0
+    for correspondance in _RE_MOTS_EXTRAIT.finditer(nettoye):
+        if correspondance.start() > position:
+            brut.append((nettoye[position : correspondance.start()], False))
+        mot = correspondance.group(0)
+        brut.append((mot, normaliser_cle_recherche(mot) in termes))
+        position = correspondance.end()
+    if position < len(nettoye):
+        brut.append((nettoye[position:], False))
+    return _borner_segments_extrait(_fusionner_segments_extrait(brut), limite)
+
+
 def _libelle_source_extrait(source: str, libelle_source: str | None) -> str:
     if source == "fiche":
         return "Champs de la fiche"
@@ -444,10 +486,16 @@ def _construire_extrait_document(
     *,
     source: str,
     libelle_source: str | None,
+    requetes: Sequence[str] = (),
+    texte_integral: bool = False,
 ) -> dict[str, Any] | None:
     """Contrat Lot 4a : texte intégralement reconstructible depuis ses segments."""
     source_retenue = source if source in {"document", "chunk", "fiche"} else "fiche"
-    segments = _segments_extrait_document(texte)
+    segments = (
+        _segments_extrait_depuis_texte(texte, requetes)
+        if texte_integral
+        else _segments_extrait_document(texte)
+    )
     if not segments:
         return None
     return {
@@ -608,13 +656,17 @@ def _extraits_documents(
         )
         SELECT ch.id_fiche, ch.source, ch.libelle_source,
                CASE
+                   WHEN char_length(ch.texte_source) <= {EXTRAIT_DOCUMENT_TEXTE_COURT_MAX}
+                       THEN ch.texte_source
                    WHEN ru.q IS NULL THEN left(
                        regexp_replace(ch.texte_source, '\\s+', ' ', 'g'), 600
                    )
                    ELSE ts_headline(
                        %s::regconfig, ch.texte_source, ru.q, %s
                    )
-               END AS extrait_brut
+               END AS extrait_brut,
+               char_length(ch.texte_source) <= {EXTRAIT_DOCUMENT_TEXTE_COURT_MAX}
+                   AS texte_integral
         FROM choisis ch
         CROSS JOIN requete_unifiee ru
         ORDER BY ch.id_fiche
@@ -633,11 +685,13 @@ def _extraits_documents(
     )
 
     extraits: dict[int, dict[str, Any]] = {}
-    for id_fiche, source, libelle_source, extrait_brut in cursor.fetchall():
+    for id_fiche, source, libelle_source, extrait_brut, texte_integral in cursor.fetchall():
         extrait = _construire_extrait_document(
             str(extrait_brut or ""),
             source=str(source),
             libelle_source=None if libelle_source is None else str(libelle_source),
+            requetes=variantes,
+            texte_integral=texte_integral is True,
         )
         if extrait is not None:
             extraits[int(id_fiche)] = extrait
