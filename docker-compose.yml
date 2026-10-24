@@ -146,6 +146,11 @@ services:
       #     à une promesse non tenue.
       SEAMTECH_WEB_WORKER_ENABLED: ${SEAMTECH_WEB_WORKER_ENABLED:-false}
       SEAMTECH_REQUIRE_DURABLE_QUEUE: ${SEAMTECH_REQUIRE_DURABLE_QUEUE:-true}
+      # Sessions nominatives (Lot 0a) : expiration absolue, inactivité et
+      # registre Redis obligatoire en production (fail-closed 503).
+      SEAMTECH_SESSION_HOURS: ${SEAMTECH_SESSION_HOURS:-8}
+      SEAMTECH_SESSION_IDLE_MINUTES: ${SEAMTECH_SESSION_IDLE_MINUTES:-30}
+      SEAMTECH_REQUIRE_REDIS_SESSIONS: ${SEAMTECH_REQUIRE_REDIS_SESSIONS:-true}
       # Verrou optimiste OBLIGATOIRE (défaut true) : une correction ou une
       # décision (valider/rejeter/rouvrir) sans révision de fiche est REFUSÉE
       # (428) au lieu d'être appliquée sans protection, et une fiche modifiée
@@ -294,7 +299,7 @@ services:
       # endpoint fails closed (503) rather than letting everyone in.
       SEAMTECH_UI_PASSWORD: ${SEAMTECH_UI_PASSWORD:?Set SEAMTECH_UI_PASSWORD in the environment}
       SEAMTECH_SESSION_SECRET: ${SEAMTECH_SESSION_SECRET:?Set SEAMTECH_SESSION_SECRET in the environment}
-      SEAMTECH_SESSION_HOURS: ${SEAMTECH_SESSION_HOURS:-12}
+      SEAMTECH_SESSION_HOURS: ${SEAMTECH_SESSION_HOURS:-8}
       SEAMTECH_OPTIONAL_FEATURES_ENABLED: ${SEAMTECH_OPTIONAL_FEATURES_ENABLED:-true}
       # Marks the session cookie Secure when a TLS terminator is in front.
       #

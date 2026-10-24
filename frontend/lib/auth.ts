@@ -31,11 +31,12 @@
 import { createHmac, randomBytes, timingSafeEqual } from "crypto"
 import { cookies } from "next/headers"
 import { NextResponse } from "next/server"
+import { CSRF_COOKIE, SESSION_COOKIE } from "@/lib/security-cookies"
 
-export const SESSION_COOKIE = "seamtech_session"
+export { CSRF_COOKIE, SESSION_COOKIE }
 
 const TOKEN_VERSION = "v2"
-const DEFAULT_SESSION_HOURS = 12
+const DEFAULT_SESSION_HOURS = 8
 const MAX_TOKEN_AGE_MS = 1000 * 60 * 60 * 24 * 30 // refuse absurd expiry claims
 
 // The rescue account. Its password is the historical SEAMTECH_UI_PASSWORD and
@@ -113,6 +114,11 @@ export function sessionSecret(): string {
 
 function sign(payload: string): string {
   return createHmac("sha256", sessionSecret()).update(payload).digest("base64url")
+}
+
+/** Fresh double-submit CSRF token for one browser session (256 random bits). */
+export function createCsrfToken(): string {
+  return randomBytes(32).toString("base64url")
 }
 
 export function sessionLifetimeMs(): number {

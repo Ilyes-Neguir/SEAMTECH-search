@@ -3,10 +3,12 @@ import {
   IDENTIFIANT_SECOURS,
   MODE_NOMINATIF,
   MODE_SECOURS,
+  CSRF_COOKIE,
   SESSION_COOKIE,
   clearFailedAttempts,
   clientIdentifier,
   cookieMaxAgeSeconds,
+  createCsrfToken,
   createSessionToken,
   isAuthConfigured,
   lockoutRemaining,
@@ -92,6 +94,10 @@ export async function POST(req: NextRequest) {
     path: "/",
     maxAge: cookieMaxAgeSeconds(),
   }
+  // Double-submit CSRF cookie: deliberately readable by same-origin JS so
+  // authedFetch can mirror it into X-CSRF-Token. It is random per login and
+  // carries no identity or backend secret.
+  const csrfCookieOptions = { ...cookieOptions, httpOnly: false }
 
   // --- 1. Compte de secours (mot de passe partagé) -------------------------
   if (identifiant === IDENTIFIANT_SECOURS) {
@@ -130,6 +136,7 @@ export async function POST(req: NextRequest) {
       }),
       cookieOptions,
     )
+    reponse.cookies.set(CSRF_COOKIE, createCsrfToken(), csrfCookieOptions)
     return reponse
   }
 
@@ -202,5 +209,6 @@ export async function POST(req: NextRequest) {
     }),
     cookieOptions,
   )
+  reponse.cookies.set(CSRF_COOKIE, createCsrfToken(), csrfCookieOptions)
   return reponse
 }

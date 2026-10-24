@@ -63,6 +63,9 @@ def test_env_overrides_host_port_and_network_access(tmp_path: Path, monkeypatch:
     monkeypatch.setenv("SEAMTECH_BEHIND_TLS_PROXY", "true")
     monkeypatch.setenv("SEAMTECH_RATE_LIMIT_PER_MINUTE", "1200")
     monkeypatch.setenv("SEAMTECH_MIN_FREE_BYTES", "0")
+    monkeypatch.setenv("SEAMTECH_SESSION_HOURS", "4")
+    monkeypatch.setenv("SEAMTECH_SESSION_IDLE_MINUTES", "15")
+    monkeypatch.setenv("SEAMTECH_REQUIRE_REDIS_SESSIONS", "true")
 
     config = AppConfig.load(config_file)
 
@@ -73,6 +76,17 @@ def test_env_overrides_host_port_and_network_access(tmp_path: Path, monkeypatch:
     assert config.behind_tls_proxy is True
     assert config.rate_limit_per_minute == 1200
     assert config.min_free_bytes == 0
+    assert config.session_hours == 4
+    assert config.session_idle_minutes == 15
+    assert config.require_redis_sessions is True
+
+
+def test_session_defaults_are_8_hours_absolute_30_minutes_idle(tmp_path: Path) -> None:
+    config = AppConfig(root_paths=[tmp_path])
+
+    assert config.session_hours == 8
+    assert config.session_idle_minutes == 30
+    assert config.require_redis_sessions is False
 
 
 def test_optional_extraction_tools_default_to_disabled(tmp_path: Path) -> None:

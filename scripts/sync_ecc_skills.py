@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Sync the curated ECC skills vendored under ``.agents/``.
+"""RG14_EXCEPTION: explicit operator-only ECC sync tool — never imported by the service.
+
+Sync the curated ECC skills vendored under ``.agents/``.
 
 Source: https://github.com/affaan-m/ECC (MIT — see ``.agents/ECC-LICENSE``).
 

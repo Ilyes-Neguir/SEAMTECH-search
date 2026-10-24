@@ -3,9 +3,9 @@
 import { useState } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
+import { authedFetch } from "@/lib/authed-fetch"
 
-/** Clear the httpOnly session cookie and return to the sign-in screen. */
-export function SignOutButton() {
+function useSignOut(endpoint: "/api/auth/logout" | "/api/auth/logout-all") {
   const router = useRouter()
   const [busy, setBusy] = useState(false)
 
@@ -13,20 +13,46 @@ export function SignOutButton() {
     if (busy) return
     setBusy(true)
     try {
-      await fetch("/api/auth/logout", { method: "POST", cache: "no-store" })
+      await authedFetch(endpoint, { method: "POST", cache: "no-store" })
     } catch {
-      // Even if the request fails, drop the user back to /login: the cookie is
-      // httpOnly so we cannot clear it client-side, but the gated routes will
-      // reject it once it expires, and /login will re-authenticate cleanly.
+      // Even if the request fails, drop the user back to /login: the session
+      // cookie is httpOnly so we cannot clear it client-side, but the gated
+      // routes reject an expired/revoked session and /login re-authenticates
+      // cleanly.
     } finally {
       router.replace("/login")
       router.refresh()
     }
   }
 
+  return { busy, signOut }
+}
+
+/** Revoke THIS browser session server-side, then return to sign-in. */
+export function SignOutButton() {
+  const { busy, signOut } = useSignOut("/api/auth/logout")
+
   return (
     <Button variant="ghost" size="sm" onClick={signOut} disabled={busy} aria-label="Se déconnecter">
       {busy ? "Déconnexion…" : "Se déconnecter"}
+    </Button>
+  )
+}
+
+/** Revoke every live session for the signed-in account, on every device. */
+export function SignOutAllButton() {
+  const { busy, signOut } = useSignOut("/api/auth/logout-all")
+
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      onClick={signOut}
+      disabled={busy}
+      aria-label="Déconnecter tous mes appareils"
+      title="Déconnecter tous mes appareils"
+    >
+      {busy ? "Déconnexion…" : "Tous mes appareils"}
     </Button>
   )
 }

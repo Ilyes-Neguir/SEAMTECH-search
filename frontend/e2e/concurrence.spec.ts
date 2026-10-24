@@ -40,7 +40,7 @@
 
 import { expect, test, type Browser, type BrowserContext, type Page } from "@playwright/test"
 import path from "node:path"
-import { ADMIN, OPERATEUR, signInWith } from "./helpers"
+import { ADMIN, OPERATEUR, csrfHeadersForPage, signInWith } from "./helpers"
 
 test.describe("concurrence entre postes (sessions indépendantes)", () => {
   test.skip(
@@ -361,6 +361,7 @@ test.describe("concurrence entre postes (sessions indépendantes)", () => {
       const refusLecture = await posteA.request.get("/api/auth/utilisateurs")
       expect(refusLecture.status()).toBe(403)
       const refusEcriture = await posteA.request.post("/api/auth/utilisateurs", {
+        headers: await csrfHeadersForPage(posteA),
         data: { identifiant, nom: "Intrus e2e", role: "operateur", mot_de_passe: "mot-de-passe-intrus" },
       })
       expect(refusEcriture.status()).toBe(403)
@@ -406,6 +407,7 @@ test.describe("concurrence entre postes (sessions indépendantes)", () => {
     let etat = await etatReel(poste, code)
     if (etat.statut !== "a_valider") {
       const reouverture = await poste.request.post(`/api/fiches/${encodeURIComponent(code)}/rouvrir`, {
+        headers: await csrfHeadersForPage(poste),
         data: { revision: etat.revision, effacer_corrections: false },
       })
       expect(reouverture.status(), await reouverture.text()).toBe(200)
@@ -551,10 +553,12 @@ test.describe("concurrence entre postes (sessions indépendantes)", () => {
       // REQUÊTE DIRECTE SANS RÉVISION (ce que ferait un script ou un ancien
       // client) : le BACKEND refuse aussi — 428, et rien n'est écrit.
       const directe = await posteB.request.post(`/api/fiches/${encodeURIComponent(code)}/corriger`, {
+        headers: await csrfHeadersForPage(posteB),
         data: { champ: "fiche.designation", valeur: "ECRITURE-SANS-REVISION" },
       })
       expect(directe.status(), await directe.text()).toBe(428)
       const decisionDirecte = await posteB.request.post(`/api/fiches/${encodeURIComponent(code)}/valider`, {
+        headers: await csrfHeadersForPage(posteB),
         data: {},
       })
       expect(decisionDirecte.status(), await decisionDirecte.text()).toBe(428)

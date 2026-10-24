@@ -4,7 +4,8 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { BarChart3, ClipboardCheck, FilePlus2, FolderOpen, FolderSearch, LogOut, Search, Shapes } from "lucide-react"
+import { BarChart3, ClipboardCheck, FilePlus2, FolderOpen, FolderSearch, Search, Shapes } from "lucide-react"
+import { SignOutAllButton, SignOutButton } from "@/components/sign-out-button"
 import { cn } from "@/lib/utils"
 
 const LIENS = [
@@ -35,9 +36,8 @@ export function Nav() {
         </Link>
       ))}
       <span className="flex-1" />
-      <a href="/api/auth/logout" className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground">
-        <LogOut className="size-3.5" /> Quitter
-      </a>
+      <SignOutAllButton />
+      <SignOutButton />
     </nav>
   )
 }

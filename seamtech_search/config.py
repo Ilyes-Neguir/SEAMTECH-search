@@ -117,6 +117,17 @@ class AppConfig(BaseModel):
 
     # Redis settings
     redis_url: str | None = None
+
+    # Sessions nominatives (Lot 0a — invalidation côté serveur, OWASP A07).
+    # Durées CONTRÔLÉES CÔTÉ SERVEUR (base + registre Redis), jamais par le
+    # seul cookie : expiration ABSOLUE en heures et timeout d'INACTIVITÉ en
+    # minutes (défauts figés par le plan directeur : 8 h / 30 min).
+    session_hours: int = Field(default=8, ge=1, le=24 * 30)
+    session_idle_minutes: int = Field(default=30, ge=1, le=24 * 60)
+    # Exiger le registre Redis des sessions même si redis_url vient d'ailleurs
+    # que l'environnement. La composition de production configure toujours
+    # Redis : sans URL joignable, la connexion échoue en 503 (fail-closed).
+    require_redis_sessions: bool = False
     # Exiger une acceptation DURABLE : quand vrai, une API sans Redis joignable
     # refuse le job (503) au lieu de le garder en mémoire. Défaut False pour ne
     # pas casser les postes de développement ; la composition de production le
@@ -313,6 +324,17 @@ class AppConfig(BaseModel):
             data["s3_prefix"] = os.environ["SEAMTECH_S3_PREFIX"]
         if os.environ.get("SEAMTECH_REDIS_URL"):
             data["redis_url"] = os.environ["SEAMTECH_REDIS_URL"]
+        if os.environ.get("SEAMTECH_SESSION_HOURS"):
+            data["session_hours"] = os.environ["SEAMTECH_SESSION_HOURS"]
+        if os.environ.get("SEAMTECH_SESSION_IDLE_MINUTES"):
+            data["session_idle_minutes"] = os.environ["SEAMTECH_SESSION_IDLE_MINUTES"]
+        if os.environ.get("SEAMTECH_REQUIRE_REDIS_SESSIONS"):
+            data["require_redis_sessions"] = os.environ["SEAMTECH_REQUIRE_REDIS_SESSIONS"].strip().lower() in {
+                "1",
+                "true",
+                "yes",
+                "on",
+            }
         if os.environ.get("SEAMTECH_ENABLE_OCR") is not None:
             data["enable_ocr"] = os.environ["SEAMTECH_ENABLE_OCR"].strip().lower() in {
                 "1",

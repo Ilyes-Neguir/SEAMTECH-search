@@ -1,5 +1,5 @@
 import { test, expect, request as pwRequest } from "@playwright/test"
-import { ADMIN, OPERATEUR, UI_PASSWORD } from "./helpers"
+import { ADMIN, OPERATEUR, UI_PASSWORD, csrfHeadersForRequestContext } from "./helpers"
 
 /**
  * Regression coverage for audit issue #5 (Option B).
@@ -159,8 +159,20 @@ test.describe("Authentication gate (audit issue #5)", () => {
       })
       expect(login.status()).toBe(200)
 
-      const logout = await context.fetch("/api/auth/logout", { method: "POST", failOnStatusCode: false })
+      // Lot 0a CSRF: a cookie-authenticated mutation without the double-submit
+      // header is refused BEFORE it can sign the user out; the session lives on.
+      const sansCsrf = await context.fetch("/api/auth/logout", { method: "POST", failOnStatusCode: false })
+      expect(sansCsrf.status()).toBe(403)
+      const encore = await context.fetch("/api/auth/session", { failOnStatusCode: false })
+      expect((await encore.json()).authenticated).toBe(true)
+
+      const logout = await context.fetch("/api/auth/logout", {
+        method: "POST",
+        headers: await csrfHeadersForRequestContext(context),
+        failOnStatusCode: false,
+      })
       expect(logout.status()).toBe(200)
+      expect(logout.headers()["clear-site-data"] ?? "").toMatch(/cookies/)
 
       const after = await context.fetch("/api/search?q=CLIENT", { failOnStatusCode: false })
       expect(after.status()).toBe(401)
@@ -311,7 +323,11 @@ test.describe("Comptes nominatifs (Lot L.2)", () => {
       const cookie = (await context.storageState()).cookies.find((c) => c.name === "seamtech_session")
       expect(cookie, "la connexion doit avoir posé un cookie").toBeTruthy()
 
-      const deconnexion = await context.fetch("/api/auth/logout", { method: "POST", failOnStatusCode: false })
+      const deconnexion = await context.fetch("/api/auth/logout", {
+        method: "POST",
+        headers: await csrfHeadersForRequestContext(context),
+        failOnStatusCode: false,
+      })
       expect(deconnexion.status()).toBe(200)
 
       const copie = await pwRequest.newContext({

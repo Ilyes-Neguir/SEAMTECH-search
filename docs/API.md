@@ -236,13 +236,23 @@ c'est ce qui rend les en-têtes d'attribution dignes de foi.
 | Route | Rôle |
 |---|---|
 | `POST /auth/connexion` | Corps `{"identifiant", "mot_de_passe"}`. Vérifie `utilisateur.empreinte_mot_de_passe` (scrypt) et ouvre une session : `{"ok", "id_utilisateur", "identifiant", "nom", "role", "id_session", "jeton_session", "expire_le"}`. 401 si les identifiants sont faux (réponse identique pour un compte inexistant), 429 si 5 tentatives ont échoué en 5 minutes (`Retry-After` renseigné). |
-| `POST /auth/deconnexion` | Corps `{"id_session", "jeton_session"}` ; exige le JETON (un `id_session` seul est devinable). Pose `revoque_le` : le cookie, même encore signé, ne vaut plus rien. Idempotent. 401 si le jeton ne correspond pas. |
-| `GET /auth/session` | En-têtes `X-SEAMTECH-SESSION` + `X-SEAMTECH-SESSION-JETON` → identité de la session. 401 si la session est expirée, révoquée, ou si le compte a été désactivé. **Jamais** d'empreinte, de sel ni de jeton dans la réponse. |
-| `POST /auth/mot-de-passe` | Changement par l'intéressé : `{"mot_de_passe_actuel", "nouveau_mot_de_passe"}`. Éteint `doit_changer_mot_de_passe`. 401 si l'actuel est faux. |
+| `POST /auth/deconnexion` | Corps `{"id_session", "jeton_session"}` ; exige le JETON (un `id_session` seul est devinable). Pose `revoque_le` et supprime la clé Redis : le cookie, même encore signé, ne vaut plus rien. Idempotent. 401 si le jeton ne correspond pas. |
+| `POST /auth/deconnexion-tout` | « Déconnecter tous mes appareils » : en-têtes de session vivante exigés, puis révocation PostgreSQL + Redis de **toutes** les sessions du compte, y compris l'appelante. |
+| `GET /auth/session` | En-têtes `X-SEAMTECH-SESSION` + `X-SEAMTECH-SESSION-JETON` → identité de la session. 401 si la session est expirée (absolue 8 h ou inactive 30 min par défaut), révoquée, absente du registre Redis, ou si le compte a été désactivé ; 503 si Redis exigé est injoignable (fail-closed). **Jamais** d'empreinte, de sel ni de jeton dans la réponse. |
+| `POST /auth/mot-de-passe` | Changement par l'intéressé : `{"mot_de_passe_actuel", "nouveau_mot_de_passe"}`. Éteint `doit_changer_mot_de_passe` et révoque toutes les sessions du compte. 401 si l'actuel est faux. |
 | `GET /auth/utilisateurs` | Liste des comptes : `identifiant`, `nom`, `role`, `actif`, dates, `mot_de_passe_defini` (booléen) — jamais l'empreinte. **403 si la session n'est pas `administrateur`**, 401 sans session. |
 | `POST /auth/utilisateurs` | Crée un compte (`identifiant`, `nom`, `role`, `mot_de_passe`). 403 pour un opérateur, 409 si l'identifiant existe, 422 si rôle inconnu. |
 | `POST /auth/utilisateurs/{identifiant}/desactiver` | `actif=false` ET révocation des sessions ouvertes (désactiver sans révoquer laisserait un cookie travailler). 404 si inconnu. **Aucune suppression** de compte ni d'historique. |
 | `POST /auth/utilisateurs/{identifiant}/mot-de-passe` | Réinitialise (changement imposé à la prochaine connexion) et révoque les sessions. |
+
+**Politique de session (Lot 0a).** PostgreSQL `session_ui` reste l'historique
+durable ; Redis est le registre vivant consulté à chaque validation.
+`SEAMTECH_SESSION_HOURS` borne la durée absolue (défaut `8`),
+`SEAMTECH_SESSION_IDLE_MINUTES` l'inactivité (défaut `30`), et
+`SEAMTECH_REQUIRE_REDIS_SESSIONS=true` rend Redis obligatoire en production.
+Le jeton est régénéré à chaque connexion ; seuls les hachages SHA-256 sont
+stockés. Le front ajoute un CSRF double-submit (cookie `seamtech_csrf` +
+en-tête `X-CSRF-Token`) sur toutes les mutations navigateur authentifiées.
 
 **Frontière de confiance (à ne pas déplacer).** Le proxy Next.js pose
 `X-SEAMTECH-UTILISATEUR` et `X-SEAMTECH-ROLE` depuis le cookie signé. Côté Python ces

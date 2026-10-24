@@ -317,11 +317,19 @@ def create_app(config: AppConfig) -> FastAPI:
                 return JSONResponse(
                     status_code=429,
                     content={"detail": "Too Many Requests. Rate limit exceeded."},
-                    headers={"Retry-After": str(retry_after), "X-Request-ID": request_id},
+                    headers={
+                        "Retry-After": str(retry_after),
+                        "X-Request-ID": request_id,
+                        "Cache-Control": "no-store, no-cache, must-revalidate, private",
+                    },
                 )
 
         response: Response = await call_next(request)
         response.headers["X-Request-ID"] = request_id
+        if path not in exempt_paths:
+            # Lot 0a : aucune réponse authentifiée ne doit survivre dans un
+            # cache navigateur/proxy après déconnexion (bouton Retour).
+            response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, private"
         return response
 
     # ---------------------------------------------------------------------------

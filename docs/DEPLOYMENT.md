@@ -239,17 +239,22 @@ How it works:
 - `/login` collects a single shared operator password (`SEAMTECH_UI_PASSWORD`)
   and `POST`s it to `/api/auth/login`.
 - On success the frontend sets an **httpOnly, SameSite=Lax** session cookie
-  (`seamtech_session`) containing an HMAC-SHA256-signed token
-  (`v1.<issuedAt>.<expiresAt>.<signature>`), signed with
-  `SEAMTECH_SESSION_SECRET`. The cookie is unreadable from JavaScript, so an
-  XSS bug cannot exfiltrate it. Sessions are stateless — no table, no Redis.
+  (`seamtech_session`) containing an HMAC-SHA256-signed **v2** token, signed
+  with `SEAMTECH_SESSION_SECRET`; old `v1.*` tokens are refused. Nominative
+  sessions are stateful on the backend: PostgreSQL `session_ui` is the durable
+  audit record and Redis is the live revocation registry. The rescue account
+  remains the documented exception (no database row to revoke).
 - Every route under `frontend/app/api/*` calls `requireAuth()` first and returns
   `401` without a valid session, so the backend token is never forwarded on an
   unauthenticated caller's behalf.
 - `app/page.tsx` is a server component that redirects to `/login` when the
   session is missing, so the search screen is never rendered either.
-- Sessions last `SEAMTECH_SESSION_HOURS` (default 12). Any `401` received by the
-  UI sends the operator back to `/login` with a `?next=` return path.
+- Sessions have an absolute lifetime `SEAMTECH_SESSION_HOURS` (default `8`)
+  and an idle timeout `SEAMTECH_SESSION_IDLE_MINUTES` (default `30`). Logout
+  and logout-all revoke server-side state immediately and return
+  `Clear-Site-Data`; authenticated backend responses are `Cache-Control:
+  no-store`. Any `401` received by the UI sends the operator back to `/login`
+  with a `?next=` return path.
 - Failed sign-ins are throttled in memory: 5 attempts per 5 minutes, then a
   5-minute lockout. This is per-process, not distributed — adequate for one
   operator on one container, and not a substitute for network-level controls.
@@ -258,7 +263,7 @@ Two routes are intentionally **not** gated:
 
 | Route | Why |
 | --- | --- |
-| `/api/auth/*` | `login` creates the session; `logout` must work when already signed out; `session` only reports whether the caller is authenticated. |
+| `/api/auth/*` | `login` creates the session + CSRF cookie; `logout`/`logout-all` are POST-only and must work when already signed out; `session` only reports whether the caller is authenticated. Other browser mutations require `X-CSRF-Token`. |
 | `/api/health` | Target of the compose healthcheck and the CI probe. Unauthenticated callers get a static liveness payload only — **no** archive counts and **no** backend call — so the probe works without a session and leaks nothing. |
 
 Required environment:
@@ -267,7 +272,9 @@ Required environment:
 | --- | --- | --- |
 | `SEAMTECH_UI_PASSWORD` | yes | The shared password typed at `/login`. Unset ⇒ login returns `503` and nobody gets in (fails closed). |
 | `SEAMTECH_SESSION_SECRET` | yes | Signs the session cookie. Unset ⇒ a random per-process secret is used and sessions die on restart; a warning is logged. |
-| `SEAMTECH_SESSION_HOURS` | no | Session lifetime, default `12`. |
+| `SEAMTECH_SESSION_HOURS` | no | Absolute session lifetime, default `8`. |
+| `SEAMTECH_SESSION_IDLE_MINUTES` | no | Idle session timeout, default `30`. |
+| `SEAMTECH_REQUIRE_REDIS_SESSIONS` | no | Set `true` in production: Redis session registry is mandatory and nominative auth fails closed with `503` when it is unavailable. |
 | `SEAMTECH_SECURE_COOKIES` | no | Force the `Secure` cookie flag. Otherwise it is set automatically when `SEAMTECH_BEHIND_TLS_PROXY=true` or the request arrived over HTTPS. |
 
 `docker-compose.yml` requires `SEAMTECH_UI_PASSWORD` and

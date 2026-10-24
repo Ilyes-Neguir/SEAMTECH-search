@@ -228,7 +228,13 @@ EXCEPTIONS_RG14: dict[str, str] = {
         "et le frontend publiés en processus hôtes — cible LOOPBACK uniquement "
         "(127.0.0.1). Documenté dans PROCEDURE_NATIVE.md"
     ),
+    "scripts/sync_ecc_skills.py": (
+        "outil OPÉRATEUR explicite uniquement (synchronisation des skills ECC "
+        "vendorés par git clone du dépôt public affaan-m/ECC épinglé) ; jamais "
+        "importé ni exécuté par le service, aucun accès réseau au runtime"
+    ),
 }
+
 
 DOCS_MARQUEURS_EXCEPTIONS = {
     "seamtech_search/ml/telecharger.py": "EXPLICITE",
@@ -237,6 +243,7 @@ DOCS_MARQUEURS_EXCEPTIONS = {
     "scripts/recette_verif.py": "RG14_EXCEPTION",
     "scripts/verifier_hors_ligne.py": "RG14_EXCEPTION",
     "scripts/qualification_native_controles.py": "RG14_EXCEPTION",
+    "scripts/sync_ecc_skills.py": "RG14_EXCEPTION",
 }
 
 
