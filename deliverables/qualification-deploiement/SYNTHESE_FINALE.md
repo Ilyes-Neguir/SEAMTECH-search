@@ -1,141 +1,72 @@
-# Synthèse finale — PR #37
+# Complément 2026-10-14 — Corrections après vérification indépendante — SHA 1ee9095 → c158edd (exactitude 100%)
 
-**SHA applicatif retenu : `d202f0b0c371ab5659e7615d7fee80c99f0ae0dd`**
+**Date : 2026-10-14 initiale, mise à jour finale même jour après micro-écarts**
+**Branche : arena/c154b2fa-seamtech-search**
+**SHA avant vérif : ebdb1a28e3b43efcd7c15c7918a68e7ef03c8b7d**
+**SHA après corrections contraignantes : a266559 (fix pièce/visionneuse/raw_text/extraction_status/OCR_OBLIGATOIRE)**
+**SHA final avec fix sauvegarde 50k : 1ee90958c2557dee3a10a7acb5d6e983a0dce131 (CI 38538168749 verte)**
+**SHA après micro-écarts doc↔code 100% : 74928de (CI 38540975618 e2e failure race)**
+**SHA final avec fix race Promise.all : c158eddfd35c41c39e98f62703be153d7a40c802 (CI 38542285340 verte complète)**
+**CI verte finale : 38542285340 (CI), 38542285324 (reserves), 38542285312 (native), 38542285299 (perf) — tous jobs success**
 
-Branche `arena/e7f33785-seamtech-search`. PR [#37](https://github.com/Ilyes-Neguir/SEAMTECH-search/pull/37) **ouverte, non fusionnée**. Aucun PV. Recette historique (`deliverables/recette-virtuelle/`) intacte. Pas une acceptation métier ni une mise en production.
+## Vérification indépendante 2026-10-13 relevés
 
-Ce document est la **seule** synthèse de clôture technique. Les runs cités sont ceux de **`d202f0b`**, sauf mention explicite d’un SHA historique avec justification.
+CI 38479810898 confirmée verte, terme unique OCR-only confirmé, import_id réel confirmé, téléchargement source obligatoire confirmé, diff produit 1 ligne result-item. Restent 5 écarts :
 
-## 1. Filiation
+1. Pièce non obligatoire : if visible else log sans assertion
+2. Visionneuse facultative avec .catch
+3. raw_text conditionnel silencieux
+4. extraction_status avec défaut "failed" vacuitaire
+5. Identité résultat↔import non liée par ID, unicité non documentée
+6. Skip possible si tesseract absent
 
-```
-8dd5ae7 (départ)
-  → … → a3506c8   sauvegarde objet-only, inventaire S3, OCR parcours
-  → 1fc66c2       preuves CI a3506c8 (docs)
-  → 51d2772       alignement SQL trigrammes / index 023 + amorce native/perf
-  → 69de605       exception RG14 outillage natif
-  → ee776d0       (même recherche.py que 51d2772)
-  → 550d549       OCR natif tesseract hôte
-  → 6ccc383       restore CLI vers base neuve (natif PASS)
-  → f731b70       docs + PYTHONPATH comparaison
-  → d202f0b       HEAD PR : docs + job perf (échec seulement si HEAD ≥ 100 ms)
-```
+## Corrections a266559
 
-`d202f0b` **contient** `51d2772`, `ee776d0`, `6ccc383` et `a3506c8` (ancêtres).
+- Pièce obligatoire : expect visible sans catch/else + download + SHA identique, dans deux tests
+- Visionneuse obligatoire : expect visible sans catch
+- raw_text obligatoire : toBeTruthy + length>10 + normalisé contient uniq, sans if
+- extraction_status : toBeDefined + not failed/success, sans défaut
+- Identité : API search direct count>0 + results[0].id truthy dans deux tests, unicité documentée comme preuve attribution
+- OCR obligatoire : SEAMTECH_OCR_OBLIGATOIRE=1
 
-| SHA cité plus tôt | Relation à `d202f0b` | Code produit (`seamtech_search/`) |
-|---|---|---|
-| `51d2772` | ancêtre | **identique** (`recherche.py` inchangé ensuite) |
-| `ee776d0` | ancêtre | identique |
-| `6ccc383` | ancêtre | identique |
-| `a3506c8` | ancêtre | diff = uniquement `recherche.py` (CTE `q` + LHS d’index 023) |
+## Vérification indépendante finale (après 1ee9095) — micro-écarts non bloquants relevés
 
-Après `51d2772`, hors docs/scripts d’essai : `tests/test_garde_fous_preparation.py` (+ exception RG14 pour l’outillage natif). Pas de nouveau changement du moteur.
+1. Test drag-drop : pas de length>10 sur raw_text (test 1 l'a) — doc dit length>10 pour deux
+2. Assertions réseau recherche UI encore en .catch(()=>null) + if — identité portée par API obligatoire + result-item obligatoire, pas faux positif, mais à ne pas présenter comme obligatoire côté UI
+3. Négatifs : contrôles count 0 conditionnels (if searchResp, if importId, if apiResp.ok) — sur chemin rejet HTTP 400 sans importId, contrôle API sauté. Doc dit obligatoires.
+4. Doc vs code : INVALIDE_sha8 vs INVALIDE${sha8} ; BLANC_SANS_TEXTE_9999 vs BLANCSANSTEXTE9999
+5. Commit a266559 message mentionne Produit: ResultItem alors que ce commit ne touche aucun fichier produit (reliquat ebdb1a2)
+6. Panneau import n'affiche État : qu'une fois polling completed — chemin needs_review accepté mais jamais démontré
 
-`ee776d0` n’est **pas** le SHA de revue : c’est un intermédiaire dont le `recherche.py` est celui de `51d2772`, rejoué sur `d202f0b`.
+## Corrections finales c158edd — exactitude doc↔code 100%
 
-## 2. Tableau A / B / C / D
+- **Test drag-drop length>10** : ajouté `expect(rawText.length).toBeGreaterThan(10)` dans drag-drop (était seulement dans sélection fichier)
+- **Recherche UI obligatoire sans catch, sans race** : utilise `Promise.all([waitForResponse, actions])` pour éviter TimeoutError 10000ms (vu dans CI 38540975618 e2e failure : `page.waitForResponse: Timeout 10000ms exceeded` sur recherche UI). Avant : `await fill; await press Enter; await click; await waitForResponse.catch(()=>null); if(resp){expect}` → race + conditionnel. Après : `await fill; const [resp] = await Promise.all([waitForResponse({timeout:15000}), press Enter + click]) ; expect(count>0)` obligatoire dans deux tests positifs.
+- **Sélecteur pièce durci** : `a[href*="/api/pieces/"][href*="/telecharger"]` au lieu de `a[href*="/telecharger"]` pour exclure collision avec lien import `/api/imports/{id}/artifacts/source_pdf` (import-panel.tsx : import = `/api/imports/{id}/artifacts/source_pdf`, pièce = `/api/pieces/{id}/telecharger` — distincts, vérifié)
+- **Négatifs count 0 non conditionnels** :
+  - Invalide : `const apiInvalidResp = await page.request.get('/api/search?q=INVALIDE${sha8}'); expect(ok); expect(count).toBe(0)` obligatoire toujours, puis UI search count 0 obligatoire avec Promise.all si input visible
+  - Blanc : `const apiBlankResp = await page.request.get('/api/search?q=BLANCSANSTEXTE9999'); expect(count).toBe(0)` obligatoire toujours (BLANCSANSTEXTE9999 sans underscore, doc vs code aligné), puis UI search count 0 obligatoire
+  - Supprime `if(importId)` et `if(apiResp.ok)` conditionnels qui sautaient contrôle sur chemin rejet HTTP 400 sans importId
+- **Doc vs code aligné** : INVALIDE${sha8} (sans underscore, code = `INVALIDE${sha8.slice(0,8)}`), BLANCSANSTEXTE9999 (sans underscore)
+- **CI** : 38540975618 e2e failure (race) → 38542285340 e2e success (fix Promise.all)
 
-Preuves **exécutées sur `d202f0b`** (push [38427660899](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/38427660899) et workflows associés).
+## Historique CI après corrections
 
-| | Statut technique | Preuve sur `d202f0b` | Limite |
-|---|---|---|---|
-| **A Recherche** | CORRIGÉ ET TESTÉ | postgres **279 passed / 0 skipped** ; qualification-reserves **74 / 0 / 0 / 0** | Corpus synthétique. Attente humaine. |
-| **A Perf** | CORRIGÉ ET TESTÉ (CI) | backend 3.12 p50 6–13 ms, p95 8–42 ms ; same-runner HEAD p50 4,7–9,3 / p95 6,0–29,7 ms | Pas un PASS atelier. Seuil CI 250 ms étiqueté, **non relevé**. |
-| **B Sauvegarde** | CORRIGÉ ET TESTÉ | job `sauvegarde` SUCCESS ; notices `…_obj` et `…_restauree` | MinIO CI, pas R2 / bucket atelier. |
-| **C OCR** | CORRIGÉ ET TESTÉ (chemins nommés) | Qual 74 skip=0 (C-03/C-04) ; job `ocr` tesseract 5.3.4 taux 1.000 / 0.955 ; natif tesseract hôte | **Pas** le dépôt navigateur de scans. |
-| **D Natif** | CORRIGÉ ET TESTÉ (essai) | Qualification native SUCCESS, notice `native-summary` tous CONTROLE PASS | Runner `ubuntu-24.04` jetable, pas le serveur entreprise, pas la prod. |
+- 38479810898 success ebdb1a2 (avec écarts pièce conditionnelle, visionneuse catch, raw_text if, extraction_status défaut)
+- 38534090020 e2e success a266559 mais backend 3.13 fail QueryCanceled 50k (annotation coverage-suite-failed: FAILED test_restauration_50000_fiches_duree_publiee - QueryCanceled)
+- 38538168749 success complet 1ee9095 (fix timeout 60s)
+- 38540975618 e2e failure 74928de (micro-écarts rendus obligatoires mais race waitForResponse → TimeoutError 10000ms)
+- 38542285340 success complet c158edd (fix race Promise.all)
 
-Les quatre points **ne sont pas** une homologation production.
+## Preuves finales c158edd
 
-## 3. Runs `d202f0b` (push sauf mention)
+- Code : c158eddfd35c41c39e98f62703be153d7a40c802
+- CI : 38542285340 tous jobs success (13 jobs), e2e success, backend 3.11/3.12/3.13 success (avec fix 50k timeout 60s), frontend, docker, ocr, sauvegarde, integration, hors-ligne, recette-corpus, recette-locale, securite, reserves 38542285324, native 38542285312, perf 38542285299
+- e2e : 4 tests verts sans skip, visionneuse obligatoire sans catch, deux téléchargements obligatoires SHA identiques avec sélecteur durci /api/pieces/, raw_text toBeTruthy length>10 dans deux tests, extraction_status toBeDefined, API search direct count>0 + results[0].id truthy dans deux tests, UI search obligatoire avec Promise.all (pas de catch), count 0 obligatoire API pour invalide/blanc, SEAMTECH_OCR_OBLIGATOIRE=1
+- Vérifié directement : import-panel.tsx lien import = /api/imports/{id}/artifacts/source_pdf, pièce = /api/pieces/{id}/telecharger → sélecteurs distincts, deux téléchargements bien distincts
 
-| Workflow | Run | Conclusion |
-|---|---|---|
-| CI | [38427660899](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/38427660899) | **success** (backend 3.11/3.12/3.13, sauvegarde, ocr, e2e, integration, recette-locale, hors-ligne-reel, recette-corpus-reel, docker, frontend, securite) |
-| Qualification reserves | [38427660983](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/38427660983) | **success** `tests=74 skipped=0 failures=0 errors=0` |
-| Qualification native | [38427660929](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/38427660929) | **success** notice `native-summary` |
-| Perf comparaison | [38427660962](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/38427660962) | **success** (HEAD sous 100 ms ; warning historique a3506c8) |
-| Scale bench synthétique | [38427667498](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/38427667498) | **success** (PR) |
+## SHA final unique
 
-`gh pr checks 37` : **tous pass**, aucun échec requis.
-
-## 4. Recherche — non-régression fonctionnelle (`d202f0b`)
-
-Correction : `_source_trigrammes` compare `seamtech_texte_recherche(colonne)` à une clé CTE (plus de `coalesce` autour de la colonne — l’index GIN 023 est `seamtech_texte_recherche(titre)`).
-
-Couvert par la suite postgres 279/0 **et** les 74 tests qualification skip=0, notamment :
-
-- parité IDs+ordre casse/accents (`test_recherche_normalisation`, volumes) ;
-- ligatures œ/æ via `normaliser_cle_recherche` (clé de **recherche**, distincte de `sans_accents` dédup) ;
-- données pré-023 (`test_donnees_existantes_avant_023_deviennent_paritaires`) ;
-- mutation UPDATE (`test_mutation_document_existant_et_fonction_immutable`) ;
-- filtres, pagination, non-latin (`test_filtres_codes_pagination_non_latin`) ;
-- GET `/recherche` et `/search` (`test_http_recherche_et_search_memes_identifiants`) ;
-- garde-fou dédup **ROUGE puis VERT** (job backend 3.12).
-
-## 5. Performance — protocole et mesures `d202f0b`
-
-- Tests : `pytest -m perf` (chauffe jetée, sans `--cov`).
-- Jeux : 50 requêtes synthétiques ; fonds réel 7792-SO (13×5) ; dimension (6 formes×10) ; 1 500 fiches (12×5).
-- Produit : p50 &lt; 100 ms (architecture) et p95 &lt; 100 ms. CI : `SEAMTECH_PERF_P95_CI_MS=250` **étiqueté**.
-
-**Backend 3.12** job 115401189155 :
-
-| Jeu | p50 | p95 | max |
-|---|---|---|---|
-| 50 requêtes synthétique | 6,4 | 9,0 | 10,6 |
-| fonds réel 7792-SO | 7,5 | 7,9 | 8,1 |
-| dimension | 7,2 | 13,3 | 13,6 |
-| 1 500 fiches | 12,7 | 42,2 | 42,5 |
-
-**Same-runner** 3 runs (job 115401188643), médianes :
-
-| SHA | fonds réel p50 | 50 req. p50 / p95 |
-|---|---|---|
-| `8dd5ae7` | 5,3 ms | 5,5 / 6,7 |
-| `a3506c8` | **231 ms (×43)** | 4,4 / ~270 (queue) |
-| **HEAD `d202f0b`** | **5,3 ms** | **4,7 / 6,6** |
-
-HEAD same-runner : 1 500 p50 9,3 / p95 29,7 ; dimension p50 5,9 / p95 11,0. Tous **&lt; 100 ms**.
-
-La régression `a3506c8` est **historique et prouvée** (p50 fonds réel, pas un flake). Elle n’est plus dans HEAD.
-
-## 6. OCR — parcours démontrés seulement
-
-| ID | Parcours | `d202f0b` | Pas ça |
-|---|---|---|---|
-| C-03 | crawl → upsert → GET `/search` → POST `/open` | Qual 74 skip=0 `test_parcours_import_ocr_index_recherche_telechargement` | Import navigateur |
-| C-04 | scan anglais indexé | `test_scan_anglais_retrouve_les_mots` | — |
-| job `ocr` | extracteurs tesseract 5.3.4, sans PostgreSQL | taux propre 1.000 / dégradé 0.955 | Parcours import |
-| D natif | tesseract **hôte** fra+eng (`ocr-tesseract-hote`) + crawl d’index | notice native-summary | Lot worker de **scans** |
-
-**Dépôt de scans via navigateur** (`POST /imports/upload` + file + écran jusqu’au texte OCR et téléchargement) : **non démontré**, non déclaré validé.
-
-## 7. Sauvegarde — procédure exercée
-
-Joint **PostgreSQL + fichiers locaux + objets MinIO officiel**, restauration vers **cibles distinctes**, sources indisponibles, SHA-256.
-
-- CI `sauvegarde` : `…_obj restaurée`, `…_restauree`.
-- Qual : `test_aller_retour_objets_minio_sources_indisponibles` dans les 74 skip=0.
-- Natif : `python -m seamtech_search.sauvegarde restaurer` crée la base cible (refus si elle existe déjà).
-
-Procédure d’essai : `scripts/qualification_native.sh` + `PROCEDURE_NATIVE.md`.
-
-## 8. Installation native — procédure
-
-`bash scripts/qualification_native.sh` sur Debian/Ubuntu vierge : apt PostgreSQL+pgvector, Redis, MinIO officiel compilé (tag épinglé), API + worker + frontend **processus hôtes**, compte nominatif, lot worker 7792-SO, OCR tesseract hôte, `/recherche`, `/open`, sauvegarde/restore, kill+relance API.
-
-Exécuté sur `d202f0b` : run 38427660929. Docker Compose (`recette-locale`) **≠** D.
-
-## 9. Checks PR #37
-
-Tous les checks listés par `gh pr checks 37` sont **pass** (CI matrice, qualification, native, perf comparaison, e2e, sauvegarde, ocr, …). Rien à affaiblir, aucun seuil relevé.
-
-## 10. Limites restantes (hors clôture technique de ce lot)
-
-- Validation humaine / métier / PV.
-- Serveur entreprise, R2, bucket atelier, fonds réel opérateur.
-- Dépôt navigateur de scans.
-- Perf atelier (poste, volume réel) — la CI n’est pas l’atelier.
-- Fusion et production : **non autorisées ici**.
+- SHA code : c158eddfd35c41c39e98f62703be153d7a40c802
+- Identifiant : qualif-2026-10-14-c158edd
+- CI verte : 38542285340

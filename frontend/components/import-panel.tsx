@@ -314,6 +314,7 @@ export function ImportPanel() {
 
         {/* Drag & drop */}
         <div
+          data-testid="drop-zone"
           className={`mt-3 rounded-md border border-dashed px-4 py-5 text-center transition-colors ${
             dragActive ? "border-primary bg-primary/5" : "border-input bg-background/60"
           }`}
