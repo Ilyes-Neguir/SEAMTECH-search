@@ -32,7 +32,7 @@ from seamtech_search.dedup.detection import (
     liens_depuis_probables,
     liens_dune_fiche,
 )
-from seamtech_search.securite_requetes import exiger_acteur_humain
+from seamtech_search.securite_requetes import exiger_approbateur_requete
 
 
 def enregistrer_routes_dedup(app: Any, index: Any, config: Any, verifier_auth: Any) -> None:  # noqa: ANN401
@@ -93,10 +93,10 @@ def enregistrer_routes_dedup(app: Any, index: Any, config: Any, verifier_auth: A
         seuil = float(corps.get("seuil", SEUIL_PROBABLE_DEFAUT))
         appliquer = bool(corps.get("appliquer", False))
         if appliquer:
-            # Écrire des liens est une mutation : en PostgreSQL, elle exige
-            # une session humaine vérifiée (Lot 0b). Le dry-run reste un
+            # Écrire des liens est une décision métier : en PostgreSQL protégé,
+            # elle exige un approbateur nominatif (Lot 1). Le dry-run reste un
             # comptage derrière le jeton de service.
-            exiger_acteur_humain(
+            exiger_approbateur_requete(
                 index,
                 config,
                 token=token,

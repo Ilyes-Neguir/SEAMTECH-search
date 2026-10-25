@@ -16,8 +16,10 @@ du cookie signé. Côté Python, ils ne sont honorés QUE si ``X-SEAMTECH-TOKEN`
 est valide sur la même requête : une requête qui porte l'attribution sans le
 jeton de service répond 401 (``resoudre_attribution``).
 
-Rôles : ``operateur`` (valide et corrige) et ``administrateur`` (gère les
-comptes). Toute autre valeur est refusée à la création.
+Rôles Lot 1 : ``admin`` (technique et comptes, jamais décideur métier),
+``lecture`` (lecture seule), ``utilisateur`` (demandes) et ``approbateur``
+(correction et décision). Toute autre valeur est refusée à la création ; les
+anciens libellés ne sont convertis que par la migration 027.
 """
 
 from __future__ import annotations
@@ -42,8 +44,14 @@ LOGGER = logging.getLogger("seamtech_search.comptes")
 if TYPE_CHECKING:  # pragma: no cover - typage seul, aucun cycle d'import
     from ..sessions_redis import RegistreSessionsRedis
 
-ROLES = ("operateur", "administrateur")
-ROLE_DEFAUT = "operateur"
+ROLE_ADMIN = "admin"
+ROLE_LECTURE = "lecture"
+ROLE_UTILISATEUR = "utilisateur"
+ROLE_APPROBATEUR = "approbateur"
+ROLES = (ROLE_ADMIN, ROLE_LECTURE, ROLE_UTILISATEUR, ROLE_APPROBATEUR)
+# Défaut fermé : omettre un rôle ne doit jamais créer un compte capable
+# d'écrire. L'élévation est toujours une décision explicite d'un admin.
+ROLE_DEFAUT = ROLE_LECTURE
 # Lot 0a (plan directeur v2 §3) : 8 h absolu + 30 min d'inactivité, contrôlés
 # CÔTÉ SERVEUR. Les routes passent les valeurs de AppConfig ; ces constantes
 # ne sont que le défaut des appels directs (tests, CLI).
@@ -65,11 +73,13 @@ MAX_ECHECS = 5
 FENETRE_ECHECS_MIN = 5
 VERROU_MIN = 5
 
-# Rôle du compte de secours partagé (SEAMTECH_UI_PASSWORD). Il reste
-# administrateur pour permettre d'ouvrir une session et de créer les comptes
-# nominatifs quand aucun n'existe encore — sinon on se verrouille dehors.
+# Rôle du compte de secours partagé (SEAMTECH_UI_PASSWORD). Il reste admin
+# technique pour ouvrir une session et créer les comptes nominatifs quand
+# aucun n'existe encore — sinon on se verrouille dehors. Lot 1 lui retire en
+# revanche toute capacité métier : il ne corrige, ne valide, ne télécharge
+# et ne décide aucune demande.
 IDENTIFIANT_SECOURS = "secours"
-ROLE_SECOURS = "administrateur"
+ROLE_SECOURS = ROLE_ADMIN
 
 
 def _exiger_postgres(index: Any) -> None:  # noqa: ANN401 - SearchIndex réel
@@ -162,6 +172,81 @@ def lister_utilisateurs(index: Any) -> list[dict[str, Any]]:  # noqa: ANN401
                 }
                 for ligne in cursor.fetchall()
             ]
+
+
+def changer_role_utilisateur(
+    index: Any,  # noqa: ANN401
+    identifiant: str,
+    nouveau_role: str,
+    registre: RegistreSessionsRedis | None = None,
+) -> dict[str, Any]:
+    """Change le rôle d'un compte et révoque immédiatement ses sessions.
+
+    Le compte est verrouillé (``FOR UPDATE``), le rôle et la révocation
+    PostgreSQL sont commis dans la même transaction, puis le miroir Redis est
+    révoqué au mieux. Même si Redis est momentanément injoignable, la ligne
+    PostgreSQL révoquée reste l'autorité et les gardes échouent fermées.
+    Redemander le rôle actuel est un no-op explicite : aucune session n'est
+    coupée pour une opération qui n'a rien changé.
+    """
+    _exiger_postgres(index)
+    identifiant = (identifiant or "").strip()
+    role = (nouveau_role or "").strip().lower()
+    if not identifiant:
+        raise HTTPException(status_code=422, detail="Identifiant obligatoire.")
+    if role not in ROLES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Rôle invalide : « {nouveau_role} » (attendu : {', '.join(ROLES)}).",
+        )
+
+    revoquees = 0
+    with index.connect() as connexion:
+        with connexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT id_utilisateur, role FROM utilisateur WHERE identifiant = %s FOR UPDATE",
+                (identifiant,),
+            )
+            ligne = cursor.fetchone()
+            if ligne is None:
+                raise HTTPException(status_code=404, detail=f"Compte « {identifiant} » inconnu.")
+            id_utilisateur = int(ligne[0])
+            ancien_role = str(ligne[1])
+            if ancien_role != role:
+                cursor.execute(
+                    "UPDATE utilisateur SET role = %s WHERE id_utilisateur = %s",
+                    (role, id_utilisateur),
+                )
+                cursor.execute(
+                    "UPDATE session_ui SET revoque_le = now() "
+                    "WHERE id_utilisateur = %s AND revoque_le IS NULL",
+                    (id_utilisateur,),
+                )
+                revoquees = int(cursor.rowcount)
+
+    if ancien_role != role and registre is not None:
+        try:
+            registre.revoquer_utilisateur(id_utilisateur)
+        except SessionsRedisIndisponible:
+            LOGGER.warning(
+                "Redis injoignable pendant la révocation post-changement de rôle "
+                "(sessions déjà révoquées en base)."
+            )
+    LOGGER.info(
+        "Rôle du compte « %s » : %s -> %s, %d session(s) révoquée(s).",
+        identifiant,
+        ancien_role,
+        role,
+        revoquees,
+    )
+    return {
+        "id_utilisateur": id_utilisateur,
+        "identifiant": identifiant,
+        "ancien_role": ancien_role,
+        "nouveau_role": role,
+        "role": role,
+        "sessions_revoquees": revoquees,
+    }
 
 
 def desactiver_utilisateur(

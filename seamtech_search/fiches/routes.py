@@ -30,7 +30,12 @@ from fastapi import File, Header, HTTPException, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from starlette.responses import Response
 
-from seamtech_search.comptes.comptes import resoudre_attribution
+from seamtech_search.comptes.comptes import (
+    ROLE_ADMIN,
+    ROLE_APPROBATEUR,
+    ROLE_UTILISATEUR,
+    resoudre_attribution,
+)
 from seamtech_search.fiches.corrections_canoniques import (
     CorrectionCanoniqueRefusee,
     appliquer_correction_canonique,
@@ -59,7 +64,12 @@ from seamtech_search.fiches.persistance import verifier_autorisation_validation_
 from seamtech_search.import_pipeline import staging_root
 from seamtech_search.jobs import create_job, register_job_cancel
 from seamtech_search.redis_store import RedisStore
-from seamtech_search.securite_requetes import acteur_session_si_presente, exiger_acteur_humain
+from seamtech_search.securite_requetes import (
+    acteur_session_si_presente,
+    exiger_acteur_humain,
+    exiger_approbateur_requete,
+    exiger_role_si_humain,
+)
 from seamtech_search.storage import S3StorageClient, StorageError
 
 LOGGER = logging.getLogger("seamtech_search.fiches.routes")
@@ -328,8 +338,46 @@ def _attribution(
     return identifiant
 
 
+def _attribution_approbateur(
+    index: Any,  # noqa: ANN401
+    config: Any,  # noqa: ANN401
+    token: str | None,
+    corps_utilisateur: Any,  # noqa: ANN401
+    entete_utilisateur: str | None,
+    entete_role: str | None,
+    entete_session: str | None = None,
+    entete_jeton: str | None = None,
+) -> tuple[str | None, int | None]:
+    """Attribution d'une capacité directe réservée à l'approbateur (Lot 1).
+
+    La garde tranche avant l'attribution : admin/secours, lecture et
+    utilisateur reçoivent 403 ; en PostgreSQL protégé, le jeton de service
+    seul reçoit 401. Le repli service historique ne subsiste qu'en SQLite ou
+    sans jeton de service configuré, pour l'outillage local explicite.
+    """
+    acteur = exiger_approbateur_requete(
+        index,
+        config,
+        token=token,
+        entete_utilisateur=entete_utilisateur,
+        entete_role=entete_role,
+        entete_session=entete_session,
+        entete_jeton=entete_jeton,
+    )
+    if acteur.est_humain:
+        return acteur.identifiant, acteur.id_utilisateur
+    identifiant, _role = resoudre_attribution(
+        config, token, entete_utilisateur, entete_role, corps_utilisateur
+    )
+    return identifiant, None
+
+
+def _roles_operationnels() -> tuple[str, str, str]:
+    return (ROLE_ADMIN, ROLE_UTILISATEUR, ROLE_APPROBATEUR)
+
+
 def _resoudre_utilisateur(cursor: Any, identifiant: str | None) -> int | None:
-    """Résout (ou crée, rôle opérateur) l'identifiant d'opérateur : le journal
+    """Résout (ou crée, rôle lecture par défaut) l'identifiant : le journal
     de validation doit porter QUI a décidé (traçabilité §10.1)."""
     if not identifiant:
         return None
@@ -338,7 +386,7 @@ def _resoudre_utilisateur(cursor: Any, identifiant: str | None) -> int | None:
     if ligne is not None:
         return int(ligne[0])
     cursor.execute("INSERT INTO utilisateur (identifiant) VALUES (%s) RETURNING id_utilisateur", (identifiant,))
-    LOGGER.info("Utilisateur « %s » créé (rôle opérateur) — première action de validation.", identifiant)
+    LOGGER.info("Utilisateur « %s » créé (rôle lecture par défaut) — première action de validation.", identifiant)
     return int(cursor.fetchone()[0])
 
 
@@ -551,118 +599,187 @@ def _avancer_revision(
     return int(ligne[0])
 
 
-def corriger_champ(
-    index: Any, code: str, champ: str, valeur: str, utilisateur: str | None,
-    rang: int | None = None, commentaire: str | None = None, revision: int | str | None = None,
-    *, exiger_revision: bool = True,
+def corriger_champ_sous_curseur(
+    cursor: Any, index: Any, code: str, champ: str, valeur: str,
+    utilisateur: str | None = None, *, id_utilisateur_explicite: int | None = None,
+    rang: int | None = None, commentaire: str | None = None,
+    revision: int | str | None = None, exiger_revision: bool = True,
 ) -> dict[str, Any]:
-    """Corrige UN champ (RG11 : refusé sur une fiche validée ; la correction
-    est tracée sur la ligne fiche_champ_extrait ET au journal).
+    """Noyau transactionnel de correction, sur le curseur de l'appelant.
 
-    VERROU OPTIMISTE (migration 021, revue indépendante du 2026-10-07) : le
-    corps peut porter ``revision`` — la révision de fiche lue à l'ouverture.
-    Si un autre poste a enregistré entre-temps, la correction est REFUSÉE (409)
-    avec la valeur du collègue, au lieu de l'écraser en silence. Sans
-    ``revision``, la correction est REFUSÉE (428) quand ``exiger_revision`` est
-    vrai — le défaut : une protection qui disparaît silencieusement n'est pas
-    une protection. Un client ancien ne peut écrire sans verrou que si
-    l'exploitant l'a explicitement autorisé, et l'écriture est alors
-    JOURNALISÉE comme non protégée."""
+    Lot 1 : l'exécution d'une demande de modification approuvée doit commettre
+    ou annuler ENSEMBLE le verrouillage de la demande, la correction RG11, le
+    journal de fiche, le changement de statut de demande et la notification.
+    Ce noyau ne possède donc ni connexion ni transaction. Quand l'appelant a
+    déjà résolu un acteur nominatif vérifié, il passe son identifiant numérique
+    : aucune création implicite de compte ne peut alors masquer une identité.
+    """
     revision_attendue = _revision_attendue(revision, exiger=exiger_revision, action="Correction")
     if not champ:
         raise HTTPException(status_code=422, detail="Préciser le champ à corriger.")
     if valeur is None:
         raise HTTPException(status_code=422, detail="Préciser la valeur corrigée.")
+    id_fiche, statut, revision_fiche = _fiche_statut(cursor, code)
+    if statut == "valide":
+        raise HTTPException(
+            status_code=409,
+            detail="RG11 : fiche validée — rouvrez-la d'abord (POST /fiches/{code}/rouvrir) avant de corriger.",
+        )
+    if statut == "supprimee":
+        raise HTTPException(
+            status_code=409,
+            detail="Fiche supprimée logiquement — un approbateur doit d'abord la rouvrir avant toute correction.",
+        )
+    cursor.execute(
+        "SELECT id_champ, rang, valeur_brute, valeur_normalisee, table_cible, colonne_cible "
+        "FROM fiche_champ_extrait "
+        "WHERE id_fiche = %s AND champ = %s ORDER BY rang",
+        (id_fiche, champ),
+    )
+    lignes = cursor.fetchall()
+    if not lignes:
+        raise HTTPException(status_code=404, detail=f"Champ « {champ} » inconnu sur la fiche {code}.")
+    rangs = [None if x[1] is None else int(x[1]) for x in lignes]
+    if rang is None:
+        if len(lignes) > 1:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Champ « {champ} » présent {len(lignes)} fois — préciser rang ({rangs}).",
+            )
+        ligne_cible = lignes[0]
+    else:
+        correspondantes = [x for x in lignes if x[1] is not None and int(x[1]) == rang]
+        if not correspondantes:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Champ « {champ} » rang {rang} inconnu (rangs : {rangs}).",
+            )
+        ligne_cible = correspondantes[0]
+    rang_cible = None if ligne_cible[1] is None else int(ligne_cible[1])
+    id_champ, brute, avant = int(ligne_cible[0]), ligne_cible[2], ligne_cible[3]
+    # L'ORDRE COMPTE : la révision est arbitrée AVANT toute écriture (et
+    # avant la création éventuelle d'un compte opérateur), pour qu'un
+    # conflit ne laisse AUCUNE trace de travail non appliqué.
+    nouvelle_revision = _avancer_revision(
+        cursor, id_fiche, revision_attendue, code, id_champ, exiger_revision=exiger_revision,
+    )
+    id_utilisateur = id_utilisateur_explicite if id_utilisateur_explicite is not None else _resoudre_utilisateur(cursor, utilisateur)
+    # PROPAGATION CANONIQUE (défaut A01 de l'audit du 2026-10-08) : une
+    # correction qui ne change que la TRACE laisse la donnée métier, le
+    # texte de recherche et les filtres numériques sur l'ancienne valeur
+    # — l'écran dit « corrigé » et l'atelier cherche « 6,6 ». La cible
+    # est résolue par un registre EXPLICITE (littéraux du code, valeurs
+    # liées) ; toute valeur invalide refuse AVANT la moindre écriture.
+    cible_canonique, raison_non_supportee = resoudre_cible(
+        champ, ligne_cible[4], ligne_cible[5]
+    )
+    propagation: dict[str, Any]
+    if cible_canonique is not None:
+        try:
+            detail = appliquer_correction_canonique(
+                cursor, index, id_fiche, id_champ, cible_canonique, str(valeur)
+            )
+        except CorrectionCanoniqueRefusee as refus:
+            # Aucune écriture n'a eu lieu : la transaction est annulée
+            # par la remontée — ni trace, ni journal, ni révision
+            # avancée. L'opérateur reçoit la raison exacte.
+            raise HTTPException(status_code=422, detail=str(refus)) from refus
+        propagation = {"statut": "appliquee", **detail}
+    elif raison_non_supportee:
+        propagation = {"statut": "non_supportee", "raison": raison_non_supportee}
+    else:
+        propagation = {"statut": "aucune_cible"}
+    cursor.execute(
+        "UPDATE fiche_champ_extrait SET valeur_normalisee = %s, corrige = TRUE, corrige_par = %s, corrige_le = now() "
+        "WHERE id_champ = %s",
+        (str(valeur), id_utilisateur, id_champ),
+    )
+    _jouter_journal(
+        cursor, id_fiche, id_utilisateur, "corriger", statut, statut,
+        commentaire or (
+            f"{champ} (rang {rang_cible if rang_cible is not None else '—'}) : {avant!r} → {str(valeur)!r} "
+            f"— propagation {propagation['statut']}"
+            + (f" ({propagation.get('raison')})" if propagation.get("raison") else "")
+        ),
+    )
+    LOGGER.info(
+        "Champ %s (rang %s) de %s corrigé : %r → %r — propagation canonique %s ; "
+        "conséquence : corrige=TRUE, verrou RG11 armé sur cette fiche.",
+        champ, rang_cible, code, avant, str(valeur), propagation["statut"],
+    )
+    return {
+        "code": code, "champ": champ, "rang": rang_cible, "valeur_brute": brute,
+        "avant": avant, "apres": str(valeur), "revision": nouvelle_revision,
+        "revision_ouverte": revision_fiche, "propagation": propagation,
+    }
+
+
+def corriger_champ(
+    index: Any, code: str, champ: str, valeur: str, utilisateur: str | None,
+    rang: int | None = None, commentaire: str | None = None, revision: int | str | None = None,
+    *, exiger_revision: bool = True, id_utilisateur: int | None = None,
+) -> dict[str, Any]:
+    """Corrige UN champ dans sa propre transaction (voir le noyau ci-dessus)."""
     with index.connect() as connexion:
         with connexion.cursor() as cursor:
-            id_fiche, statut, revision_fiche = _fiche_statut(cursor, code)
-            if statut == "valide":
-                raise HTTPException(
-                    status_code=409,
-                    detail="RG11 : fiche validée — rouvrez-la d'abord (POST /fiches/{code}/rouvrir) avant de corriger.",
-                )
-            cursor.execute(
-                "SELECT id_champ, rang, valeur_brute, valeur_normalisee, table_cible, colonne_cible "
-                "FROM fiche_champ_extrait "
-                "WHERE id_fiche = %s AND champ = %s ORDER BY rang",
-                (id_fiche, champ),
+            return corriger_champ_sous_curseur(
+                cursor,
+                index,
+                code,
+                champ,
+                valeur,
+                utilisateur,
+                id_utilisateur_explicite=id_utilisateur,
+                rang=rang,
+                commentaire=commentaire,
+                revision=revision,
+                exiger_revision=exiger_revision,
             )
-            lignes = cursor.fetchall()
-            if not lignes:
-                raise HTTPException(status_code=404, detail=f"Champ « {champ} » inconnu sur la fiche {code}.")
-            rangs = [None if x[1] is None else int(x[1]) for x in lignes]
-            if rang is None:
-                if len(lignes) > 1:
-                    raise HTTPException(
-                        status_code=422,
-                        detail=f"Champ « {champ} » présent {len(lignes)} fois — préciser rang ({rangs}).",
-                    )
-                ligne_cible = lignes[0]
-            else:
-                correspondantes = [x for x in lignes if x[1] is not None and int(x[1]) == rang]
-                if not correspondantes:
-                    raise HTTPException(
-                        status_code=404,
-                        detail=f"Champ « {champ} » rang {rang} inconnu (rangs : {rangs}).",
-                    )
-                ligne_cible = correspondantes[0]
-            rang_cible = None if ligne_cible[1] is None else int(ligne_cible[1])
-            id_champ, brute, avant = int(ligne_cible[0]), ligne_cible[2], ligne_cible[3]
-            # L'ORDRE COMPTE : la révision est arbitrée AVANT toute écriture (et
-            # avant la création éventuelle d'un compte opérateur), pour qu'un
-            # conflit ne laisse AUCUNE trace de travail non appliqué.
-            nouvelle_revision = _avancer_revision(
-                cursor, id_fiche, revision_attendue, code, id_champ, exiger_revision=exiger_revision,
-            )
-            id_utilisateur = _resoudre_utilisateur(cursor, utilisateur)
-            # PROPAGATION CANONIQUE (défaut A01 de l'audit du 2026-10-08) : une
-            # correction qui ne change que la TRACE laisse la donnée métier, le
-            # texte de recherche et les filtres numériques sur l'ancienne valeur
-            # — l'écran dit « corrigé » et l'atelier cherche « 6,6 ». La cible
-            # est résolue par un registre EXPLICITE (littéraux du code, valeurs
-            # liées) ; toute valeur invalide refuse AVANT la moindre écriture.
-            cible_canonique, raison_non_supportee = resoudre_cible(
-                champ, ligne_cible[4], ligne_cible[5]
-            )
-            propagation: dict[str, Any]
-            if cible_canonique is not None:
-                try:
-                    detail = appliquer_correction_canonique(
-                        cursor, index, id_fiche, id_champ, cible_canonique, str(valeur)
-                    )
-                except CorrectionCanoniqueRefusee as refus:
-                    # Aucune écriture n'a eu lieu : la transaction est annulée
-                    # par la remontée — ni trace, ni journal, ni révision
-                    # avancée. L'opérateur reçoit la raison exacte.
-                    raise HTTPException(status_code=422, detail=str(refus)) from refus
-                propagation = {"statut": "appliquee", **detail}
-            elif raison_non_supportee:
-                propagation = {"statut": "non_supportee", "raison": raison_non_supportee}
-            else:
-                propagation = {"statut": "aucune_cible"}
-            cursor.execute(
-                "UPDATE fiche_champ_extrait SET valeur_normalisee = %s, corrige = TRUE, corrige_par = %s, corrige_le = now() "
-                "WHERE id_champ = %s",
-                (str(valeur), id_utilisateur, id_champ),
-            )
-            _jouter_journal(
-                cursor, id_fiche, id_utilisateur, "corriger", statut, statut,
-                commentaire or (
-                    f"{champ} (rang {rang_cible if rang_cible is not None else '—'}) : {avant!r} → {str(valeur)!r} "
-                    f"— propagation {propagation['statut']}"
-                    + (f" ({propagation.get('raison')})" if propagation.get("raison") else "")
-                ),
-            )
-            LOGGER.info(
-                "Champ %s (rang %s) de %s corrigé : %r → %r — propagation canonique %s ; "
-                "conséquence : corrige=TRUE, verrou RG11 armé sur cette fiche.",
-                champ, rang_cible, code, avant, str(valeur), propagation["statut"],
-            )
-            return {
-                "code": code, "champ": champ, "rang": rang_cible, "valeur_brute": brute,
-                "avant": avant, "apres": str(valeur), "revision": nouvelle_revision,
-                "revision_ouverte": revision_fiche, "propagation": propagation,
-            }
+
+
+def supprimer_fiche_sous_curseur(
+    cursor: Any,
+    code: str,
+    *,
+    id_utilisateur: int,
+    commentaire: str | None = None,
+    revision: int | str | None = None,
+    exiger_revision: bool = True,
+) -> dict[str, Any]:
+    """Suppression LOGIQUE d'une fiche, sur le curseur de l'appelant.
+
+    Lot 1 ne supprime ni la ligne métier ni le fichier d'archive : effacer la
+    fiche détruirait la traçabilité et violerait la règle d'archive en lecture
+    seule. Le statut ``supprimee`` l'exclut des parcours actifs ; seul un
+    approbateur peut la restaurer explicitement par réouverture. La décision
+    reste arbitrée par statut + révision dans la transaction de l'approbation.
+    """
+    revision_attendue = _revision_attendue(
+        revision, exiger=exiger_revision, action="Décision « supprimer »"
+    )
+    id_fiche, statut, _revision_fiche = _fiche_statut(cursor, code)
+    if statut == "supprimee":
+        raise HTTPException(status_code=409, detail=f"Fiche {code} déjà supprimée logiquement.")
+    nouvelle_revision = _decision_sous_verrou(
+        cursor,
+        id_fiche=id_fiche,
+        code=code,
+        action="supprimer",
+        statut_cible="supprimee",
+        statut_attendu=statut,
+        revision_attendue=revision_attendue,
+        exiger_revision=exiger_revision,
+    )
+    _jouter_journal(
+        cursor,
+        id_fiche,
+        int(id_utilisateur),
+        "supprimer",
+        statut,
+        "supprimee",
+        commentaire,
+    )
+    return {"code": code, "statut": "supprimee", "revision": nouvelle_revision}
 
 
 def valider_fiche(
@@ -1660,7 +1777,7 @@ def enregistrer_routes_fiches(
         entete_jeton: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-JETON")] = None,
     ) -> Response:
         verifier_auth(config, token)
-        exiger_acteur_humain(
+        acteur = exiger_acteur_humain(
             index,
             config,
             token=token,
@@ -1670,6 +1787,11 @@ def enregistrer_routes_fiches(
             entete_jeton=entete_jeton,
             client_host=request.client.host if request.client else None,
         )
+        # Import local : approbations réutilise les noyaux transactionnels de
+        # ce module ; un import de tête créerait un cycle.
+        from seamtech_search.approbations import autoriser_telechargement_piece
+
+        autoriser_telechargement_piece(index, acteur, piece_id, methode=request.method)
         return servir_piece(piece_id, request, apercu=False)
 
     @app.get("/fiches/{code}")
@@ -1720,8 +1842,17 @@ def enregistrer_routes_fiches(
         code: str,
         corps: dict[str, Any],
         token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+        entete_utilisateur: Annotated[str | None, Header(alias="X-SEAMTECH-UTILISATEUR")] = None,
+        entete_role: Annotated[str | None, Header(alias="X-SEAMTECH-ROLE")] = None,
+        entete_session: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION")] = None,
+        entete_jeton: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-JETON")] = None,
     ) -> dict[str, Any]:
         verifier_auth(config, token)
+        exiger_role_si_humain(
+            index, config, (ROLE_ADMIN,), token=token,
+            entete_utilisateur=entete_utilisateur, entete_role=entete_role,
+            entete_session=entete_session, entete_jeton=entete_jeton,
+        )
         return publier_nouvelle_version(
             index,
             code,
@@ -1734,12 +1865,21 @@ def enregistrer_routes_fiches(
     def route_deposer_dossier(
         corps: dict[str, Any],
         token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+        entete_utilisateur: Annotated[str | None, Header(alias="X-SEAMTECH-UTILISATEUR")] = None,
+        entete_role: Annotated[str | None, Header(alias="X-SEAMTECH-ROLE")] = None,
+        entete_session: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION")] = None,
+        entete_jeton: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-JETON")] = None,
     ) -> dict[str, Any]:
         """Dépose UN dossier (immédiat, synchrone) : fiche extraite + pièces
         jointes rattachées + lot suivi. L'archive est LUE, jamais modifiée.
         Corps : {"dossier": "/chemin/du/dossier"}."""
         verifier_auth(config, token)
         _exiger_postgres(index)
+        exiger_role_si_humain(
+            index, config, _roles_operationnels(), token=token,
+            entete_utilisateur=entete_utilisateur, entete_role=entete_role,
+            entete_session=entete_session, entete_jeton=entete_jeton,
+        )
         dossier = str(corps.get("dossier") or "").strip()
         if not dossier:
             raise HTTPException(status_code=422, detail='Corps attendu : {"dossier": "/chemin/du/dossier"}.')
@@ -1760,6 +1900,10 @@ def enregistrer_routes_fiches(
         corps: dict[str, Any],
         fond: Annotated[bool, Header(alias="X-SEAMTECH-BACKGROUND")] = True,
         token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+        entete_utilisateur: Annotated[str | None, Header(alias="X-SEAMTECH-UTILISATEUR")] = None,
+        entete_role: Annotated[str | None, Header(alias="X-SEAMTECH-ROLE")] = None,
+        entete_session: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION")] = None,
+        entete_jeton: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-JETON")] = None,
     ) -> dict[str, Any]:
         """Crée un lot multi-dossiers (une racine, un sous-dossier par affaire).
 
@@ -1779,6 +1923,11 @@ def enregistrer_routes_fiches(
         """
         verifier_auth(config, token)
         _exiger_postgres(index)
+        exiger_role_si_humain(
+            index, config, _roles_operationnels(), token=token,
+            entete_utilisateur=entete_utilisateur, entete_role=entete_role,
+            entete_session=entete_session, entete_jeton=entete_jeton,
+        )
         racine = str(corps.get("racine") or "").strip()
         if not racine:
             raise HTTPException(status_code=422, detail='Corps attendu : {"racine": "/chemin/de/la/racine"}.')
@@ -1884,6 +2033,10 @@ def enregistrer_routes_fiches(
     def route_annuler_lot(
         id_lot: int,
         token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+        entete_utilisateur: Annotated[str | None, Header(alias="X-SEAMTECH-UTILISATEUR")] = None,
+        entete_role: Annotated[str | None, Header(alias="X-SEAMTECH-ROLE")] = None,
+        entete_session: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION")] = None,
+        entete_jeton: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-JETON")] = None,
     ) -> dict[str, Any]:
         """Demande l'arrêt d'un lot en cours (annulation inter-processus).
 
@@ -1895,6 +2048,11 @@ def enregistrer_routes_fiches(
         """
         verifier_auth(config, token)
         _exiger_postgres(index)
+        exiger_role_si_humain(
+            index, config, _roles_operationnels(), token=token,
+            entete_utilisateur=entete_utilisateur, entete_role=entete_role,
+            entete_session=entete_session, entete_jeton=entete_jeton,
+        )
         etat_avant = etat_lot(index, id_lot)
         if etat_avant["statut"] in {"termine", "annule"}:
             return {"id_lot": id_lot, "statut": etat_avant["statut"], "annulation": "sans_objet", "etat": etat_avant}
@@ -1950,16 +2108,7 @@ def enregistrer_routes_fiches(
         """Réconciliation EXPLICITE et journalisée d'une fiche (jamais globale)."""
         verifier_auth(config, token)
         _exiger_postgres(index)
-        if not corps.get("confirmer"):
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    "Réconciliation refusée : lister d'abord GET /fiches/corrections/divergences, "
-                    "puis renvoyer {\"confirmer\": true} en connaissance de cause. "
-                    "Aucune valeur historique ambiguë n'est interprétée automatiquement."
-                ),
-            )
-        utilisateur = _attribution(
+        utilisateur, _id_utilisateur = _attribution_approbateur(
             index,
             config,
             token,
@@ -1969,6 +2118,15 @@ def enregistrer_routes_fiches(
             entete_session,
             entete_jeton,
         )
+        if not corps.get("confirmer"):
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Réconciliation refusée : lister d'abord GET /fiches/corrections/divergences, "
+                    "puis renvoyer {\"confirmer\": true} en connaissance de cause. "
+                    "Aucune valeur historique ambiguë n'est interprétée automatiquement."
+                ),
+            )
         try:
             return reconcilier_fiche(index, code, utilisateur=utilisateur, confirmer=True)
         except KeyError as erreur:
@@ -1977,11 +2135,20 @@ def enregistrer_routes_fiches(
     @app.post("/gabarits/detecter")
     async def route_detecter(
         token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+        entete_utilisateur: Annotated[str | None, Header(alias="X-SEAMTECH-UTILISATEUR")] = None,
+        entete_role: Annotated[str | None, Header(alias="X-SEAMTECH-ROLE")] = None,
+        entete_session: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION")] = None,
+        entete_jeton: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-JETON")] = None,
         fichier: UploadFile | None = File(default=None),
     ) -> dict[str, Any]:
         """Détection seule (aucune écriture) — PDF envoyé en multipart."""
         verifier_auth(config, token)
         _exiger_postgres(index)
+        exiger_role_si_humain(
+            index, config, (ROLE_ADMIN,), token=token,
+            entete_utilisateur=entete_utilisateur, entete_role=entete_role,
+            entete_session=entete_session, entete_jeton=entete_jeton,
+        )
         if fichier is None:
             raise HTTPException(status_code=422, detail="Envoyer le PDF en multipart (champ « fichier »).")
         contenu = await fichier.read()
@@ -2014,15 +2181,16 @@ def enregistrer_routes_fiches(
     ) -> dict[str, Any]:
         verifier_auth(config, token)
         _exiger_postgres(index)
+        utilisateur, id_utilisateur = _attribution_approbateur(
+            index, config, token, corps.get("utilisateur"), entete_utilisateur, entete_role,
+            entete_session, entete_jeton,
+        )
         return corriger_champ(
             index, code,
-            corps.get("champ"), corps.get("valeur"),
-            _attribution(
-                index, config, token, corps.get("utilisateur"), entete_utilisateur, entete_role,
-                entete_session, entete_jeton,
-            ),
+            corps.get("champ"), corps.get("valeur"), utilisateur,
             rang=corps.get("rang"), commentaire=corps.get("commentaire"),
             revision=corps.get("revision"), exiger_revision=exiger_revision,
+            id_utilisateur=id_utilisateur,
         )
 
     @app.post("/fiches/{code}/valider")
@@ -2037,12 +2205,12 @@ def enregistrer_routes_fiches(
     ) -> dict[str, Any]:
         verifier_auth(config, token)
         _exiger_postgres(index)
+        utilisateur, _id_utilisateur = _attribution_approbateur(
+            index, config, token, corps.get("utilisateur"), entete_utilisateur, entete_role,
+            entete_session, entete_jeton,
+        )
         return valider_fiche(
-            index, code,
-            _attribution(
-                index, config, token, corps.get("utilisateur"), entete_utilisateur, entete_role,
-                entete_session, entete_jeton,
-            ),
+            index, code, utilisateur,
             corps.get("commentaire"),
             revision=corps.get("revision"), exiger_revision=exiger_revision,
             # Acceptation EXPLICITE et journalisée (409 sinon) : c'est une
@@ -2062,12 +2230,12 @@ def enregistrer_routes_fiches(
     ) -> dict[str, Any]:
         verifier_auth(config, token)
         _exiger_postgres(index)
+        utilisateur, _id_utilisateur = _attribution_approbateur(
+            index, config, token, corps.get("utilisateur"), entete_utilisateur, entete_role,
+            entete_session, entete_jeton,
+        )
         return rejeter_fiche(
-            index, code,
-            _attribution(
-                index, config, token, corps.get("utilisateur"), entete_utilisateur, entete_role,
-                entete_session, entete_jeton,
-            ),
+            index, code, utilisateur,
             corps.get("motif") or "",
             revision=corps.get("revision"), exiger_revision=exiger_revision,
         )
@@ -2084,12 +2252,12 @@ def enregistrer_routes_fiches(
     ) -> dict[str, Any]:
         verifier_auth(config, token)
         _exiger_postgres(index)
+        utilisateur, _id_utilisateur = _attribution_approbateur(
+            index, config, token, corps.get("utilisateur"), entete_utilisateur, entete_role,
+            entete_session, entete_jeton,
+        )
         return rouvrir_fiche(
-            index, code,
-            _attribution(
-                index, config, token, corps.get("utilisateur"), entete_utilisateur, entete_role,
-                entete_session, entete_jeton,
-            ),
+            index, code, utilisateur,
             corps.get("commentaire"), bool(corps.get("effacer_corrections")),
             revision=corps.get("revision"), exiger_revision=exiger_revision,
         )
@@ -2115,15 +2283,15 @@ def enregistrer_routes_fiches(
     ) -> dict[str, Any]:
         verifier_auth(config, token)
         _exiger_postgres(index)
+        utilisateur, _id_utilisateur = _attribution_approbateur(
+            index, config, token, corps.get("utilisateur"), entete_utilisateur, entete_role,
+            entete_session, entete_jeton,
+        )
         codes = [str(c) for c in (corps.get("codes") or [])]
         if not codes:
             raise HTTPException(status_code=422, detail="Liste « codes » vide — rien à valider.")
         return valider_lot(
-            index, codes,
-            _attribution(
-                index, config, token, corps.get("utilisateur"), entete_utilisateur, entete_role,
-                entete_session, entete_jeton,
-            ),
+            index, codes, utilisateur,
             acquittement_humain=bool(corps.get("acquittement_humain")), commentaire=corps.get("commentaire"),
             revisions=corps.get("revisions"), exiger_revision=exiger_revision,
             accepter_divergences=bool(corps.get("accepter_divergences")),
@@ -2156,6 +2324,10 @@ def enregistrer_routes_fiches(
     @app.post("/gabarits/brouillon/from-pdf")
     async def route_brouillon_from_pdf(
         token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+        entete_utilisateur: Annotated[str | None, Header(alias="X-SEAMTECH-UTILISATEUR")] = None,
+        entete_role: Annotated[str | None, Header(alias="X-SEAMTECH-ROLE")] = None,
+        entete_session: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION")] = None,
+        entete_jeton: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-JETON")] = None,
         fichier: UploadFile | None = File(default=None),
         code: str | None = None,
     ) -> dict[str, Any]:
@@ -2167,6 +2339,11 @@ def enregistrer_routes_fiches(
         """
         verifier_auth(config, token)
         _exiger_postgres(index)
+        exiger_role_si_humain(
+            index, config, (ROLE_ADMIN,), token=token,
+            entete_utilisateur=entete_utilisateur, entete_role=entete_role,
+            entete_session=entete_session, entete_jeton=entete_jeton,
+        )
         if fichier is None:
             raise HTTPException(status_code=422, detail="Envoyer le PDF en multipart (champ fichier).")
         contenu = await fichier.read()
@@ -2211,8 +2388,17 @@ def enregistrer_routes_fiches(
     def route_valider_brouillon(
         id_brouillon: int,
         token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+        entete_utilisateur: Annotated[str | None, Header(alias="X-SEAMTECH-UTILISATEUR")] = None,
+        entete_role: Annotated[str | None, Header(alias="X-SEAMTECH-ROLE")] = None,
+        entete_session: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION")] = None,
+        entete_jeton: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-JETON")] = None,
     ) -> dict[str, Any]:
         """Valide un brouillon → nouvelle version active dans registre gabarit existant."""
         verifier_auth(config, token)
         _exiger_postgres(index)
+        exiger_role_si_humain(
+            index, config, (ROLE_ADMIN,), token=token,
+            entete_utilisateur=entete_utilisateur, entete_role=entete_role,
+            entete_session=entete_session, entete_jeton=entete_jeton,
+        )
         return valider_brouillon_vers_gabarit(index, id_brouillon)

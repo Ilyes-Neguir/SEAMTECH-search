@@ -1123,6 +1123,28 @@ class SearchIndex:
             rapport["modeles_crees"],
         )
 
+    def _migration_027_roles_approbations(self, connection: Any) -> None:
+        """Quatre rôles canoniques et approbations locales (Lot 1).
+
+        PostgreSQL : convertit les anciens rôles sans retirer les capacités
+        historiques (``operateur`` -> ``approbateur``), ferme toute valeur
+        inconnue en ``lecture``, révoque les sessions existantes, puis crée
+        les demandes et notifications. SQLite : no-op enregistré, comme le
+        reste de la couche métier et des comptes nominatifs.
+        """
+        if not self.is_postgres:
+            logger.warning(
+                "Migration 027_roles_approbations ignorée : la couche métier est PostgreSQL uniquement — "
+                "conséquence : SQLite conserve uniquement la recherche de fichiers héritée."
+            )
+            return
+        with connection.cursor() as cursor:
+            cursor.execute(schema_metier.SQL_027_ROLES_APPROBATIONS)
+        logger.info(
+            "Migration 027_roles_approbations : rôles canoniques appliqués, anciennes sessions "
+            "PostgreSQL révoquées, tables d'approbation et de notification créées."
+        )
+
     def run_migrations(self) -> None:
         """Run pending schema migrations once at startup."""
         with self.connect() as connection:
@@ -1190,6 +1212,11 @@ class SearchIndex:
                 # Enregistrée comme les autres : VERSION_SCHEMA_METIER vaut
                 # 026 et une migration oubliée ferait échouer sauvegarde.
                 ("026_boat_models_aliases", self._migration_026_boat_models_aliases),
+                # Lot 1 — quatre rôles canoniques, demandes d'approbation et
+                # notifications applicatives. Enregistrée comme les autres :
+                # VERSION_SCHEMA_METIER vaut 027 et une migration oubliée
+                # ferait échouer sauvegarde/restauration.
+                ("027_roles_approbations", self._migration_027_roles_approbations),
             ]
 
             for version, func in migrations:

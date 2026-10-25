@@ -159,6 +159,9 @@ services:
       # un script ancien identifié : l'écran d'atelier, lui, envoie toujours la
       # révision qu'il affiche.
       SEAMTECH_REQUIRE_REVISION: ${SEAMTECH_REQUIRE_REVISION:-true}
+      # Lot 1 : séparation demandeur/décideur. Rester à false : `true` permet
+      # à un approbateur de décider sa propre demande et supprime ce contrôle.
+      SEAMTECH_ALLOW_SELF_APPROVAL: ${SEAMTECH_ALLOW_SELF_APPROVAL:-false}
       # Relecture des octets stockés pour prouver l'intégrité AVANT toute purge
       # locale (GET + SHA-256 côté worker). Mettre à false interdit la purge :
       # une empreinte fournie par l'application ne prouve pas le contenu.

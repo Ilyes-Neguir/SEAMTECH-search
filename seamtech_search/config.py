@@ -124,6 +124,11 @@ class AppConfig(BaseModel):
     # minutes (défauts figés par le plan directeur : 8 h / 30 min).
     session_hours: int = Field(default=8, ge=1, le=24 * 30)
     session_idle_minutes: int = Field(default=30, ge=1, le=24 * 60)
+    # Lot 1 : séparation demandeur/décideur. Le défaut est fermé : un
+    # approbateur ne peut pas décider sa propre demande. L'activation est un
+    # choix d'exploitation explicite pour un atelier ne comptant qu'un seul
+    # approbateur ; elle supprime cette séparation et doit rester visible.
+    allow_self_approval: bool = False
     # Exiger le registre Redis des sessions même si redis_url vient d'ailleurs
     # que l'environnement. La composition de production configure toujours
     # Redis : sans URL joignable, la connexion échoue en 503 (fail-closed).
@@ -328,6 +333,13 @@ class AppConfig(BaseModel):
             data["session_hours"] = os.environ["SEAMTECH_SESSION_HOURS"]
         if os.environ.get("SEAMTECH_SESSION_IDLE_MINUTES"):
             data["session_idle_minutes"] = os.environ["SEAMTECH_SESSION_IDLE_MINUTES"]
+        if os.environ.get("SEAMTECH_ALLOW_SELF_APPROVAL") is not None:
+            data["allow_self_approval"] = os.environ["SEAMTECH_ALLOW_SELF_APPROVAL"].strip().lower() in {
+                "1",
+                "true",
+                "yes",
+                "on",
+            }
         if os.environ.get("SEAMTECH_REQUIRE_REDIS_SESSIONS"):
             data["require_redis_sessions"] = os.environ["SEAMTECH_REQUIRE_REDIS_SESSIONS"].strip().lower() in {
                 "1",

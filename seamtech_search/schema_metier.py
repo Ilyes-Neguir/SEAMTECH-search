@@ -1,4 +1,4 @@
-"""Schéma métier « fiche technique » — migrations 006 à 026 (Lots A → Lot 2).
+"""Schéma métier « fiche technique » — migrations 006 à 027 (Lots A → Lot 1).
 
 DÉCISION DE COUCHE ACTÉE (plan v3.0 §17.1) : la couche métier est
 **PostgreSQL uniquement**. Elle s'appuie sur pgvector, pg_trgm, les index GIN,
@@ -26,7 +26,7 @@ from __future__ import annotations
 from typing import Any
 
 # Version du schéma métier — incrémentée à chaque nouvelle migration.
-VERSION_SCHEMA_METIER = "026_boat_models_aliases"
+VERSION_SCHEMA_METIER = "027_roles_approbations"
 
 # Marqueur injecté par le code au moment de la migration (constat 1 de revue) :
 # le nom de la configuration de recherche effective — 'seamtech_unaccent' ou
@@ -93,6 +93,11 @@ TABLES_METIER: tuple[str, ...] = (
     "boat_model_aliases",
     "boat_model_merge_history",
     "search_synonyms",
+    # 027 — Lot 1 : demandes métier soumises à décision d'un approbateur et
+    # notifications applicatives instantanées. Aucun e-mail ni service externe :
+    # la notification est une ligne PostgreSQL relue par l'interface locale.
+    "approval_requests",
+    "in_app_notifications",
 )
 
 SQL_006_FICHE_TECHNIQUE = """
@@ -1735,6 +1740,125 @@ COMMENT ON TABLE search_synonyms IS
     'Synonymes de recherche normalisés et versionnés (Lot 2).';
 """
 
+# 027 — Lot 1 : quatre rôles canoniques et approbations instantanées.
+#
+# La conversion préserve les capacités historiques : avant Lot 1, un
+# ``operateur`` corrigeait et validait. Le convertir en ``utilisateur``
+# pourrait laisser une installation sans aucun approbateur et retirer en
+# silence une capacité métier ; il devient donc ``approbateur``. Un admin
+# peut ensuite rétrograder explicitement les comptes concernés. Toute valeur
+# inconnue tombe fermée en ``lecture``. Toutes les sessions PostgreSQL
+# existantes sont révoquées : un cookie émis sous l'ancien vocabulaire ne
+# doit pas continuer avec une sémantique de rôle différente.
+SQL_027_ROLES_APPROBATIONS = """
+UPDATE utilisateur
+SET role = CASE lower(btrim(role))
+    WHEN 'administrateur' THEN 'admin'
+    WHEN 'operateur' THEN 'approbateur'
+    WHEN 'admin' THEN 'admin'
+    WHEN 'lecture' THEN 'lecture'
+    WHEN 'utilisateur' THEN 'utilisateur'
+    WHEN 'approbateur' THEN 'approbateur'
+    ELSE 'lecture'
+END;
+
+UPDATE session_ui SET revoque_le = now() WHERE revoque_le IS NULL;
+
+ALTER TABLE utilisateur ALTER COLUMN role SET DEFAULT 'lecture';
+
+DO $lot1_role_check$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'utilisateur_role_canonique'
+    ) THEN
+        ALTER TABLE utilisateur
+            ADD CONSTRAINT utilisateur_role_canonique
+            CHECK (role IN ('admin', 'lecture', 'utilisateur', 'approbateur'));
+    END IF;
+END
+$lot1_role_check$;
+
+CREATE TABLE IF NOT EXISTS approval_requests (
+    id_demande           BIGSERIAL PRIMARY KEY,
+    id_demandeur         BIGINT NOT NULL REFERENCES utilisateur(id_utilisateur) ON DELETE RESTRICT,
+    type_demande         TEXT NOT NULL CHECK (type_demande IN ('telechargement', 'modification', 'suppression')),
+    statut               TEXT NOT NULL DEFAULT 'en_attente'
+                         CHECK (statut IN ('en_attente', 'approuvee', 'refusee', 'annulee', 'executee', 'expiree')),
+    id_fiche             BIGINT REFERENCES fiche(id_fiche) ON DELETE RESTRICT,
+    id_piece             BIGINT REFERENCES documents(id) ON DELETE RESTRICT,
+    champ                TEXT,
+    rang                 INTEGER,
+    valeur_proposee      TEXT,
+    revision_fiche       INTEGER,
+    motif                TEXT NOT NULL CHECK (char_length(btrim(motif)) BETWEEN 1 AND 1000),
+    id_decideur          BIGINT REFERENCES utilisateur(id_utilisateur) ON DELETE SET NULL,
+    decidee_le           TIMESTAMPTZ,
+    commentaire_decision TEXT CHECK (commentaire_decision IS NULL OR char_length(commentaire_decision) <= 1000),
+    executee_le          TIMESTAMPTZ,
+    expire_le            TIMESTAMPTZ,
+    resultat_execution   JSONB NOT NULL DEFAULT '{}'::jsonb,
+    cree_le              TIMESTAMPTZ NOT NULL DEFAULT now(),
+    maj_le               TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CHECK (
+        (type_demande = 'telechargement' AND id_piece IS NOT NULL)
+        OR (type_demande = 'modification' AND id_fiche IS NOT NULL AND champ IS NOT NULL
+            AND valeur_proposee IS NOT NULL AND revision_fiche IS NOT NULL)
+        OR (type_demande = 'suppression' AND id_fiche IS NOT NULL AND revision_fiche IS NOT NULL)
+    ),
+    CHECK (revision_fiche IS NULL OR revision_fiche >= 0),
+    CHECK (expire_le IS NULL OR expire_le > cree_le)
+);
+
+CREATE INDEX IF NOT EXISTS idx_approval_requests_demandeur
+    ON approval_requests (id_demandeur, cree_le DESC, id_demande DESC);
+CREATE INDEX IF NOT EXISTS idx_approval_requests_file
+    ON approval_requests (statut, cree_le, id_demande);
+CREATE INDEX IF NOT EXISTS idx_approval_requests_fiche
+    ON approval_requests (id_fiche, cree_le DESC, id_demande DESC)
+    WHERE id_fiche IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_approval_requests_piece_active
+    ON approval_requests (id_piece, statut, expire_le)
+    WHERE id_piece IS NOT NULL;
+
+-- Une seule demande en attente par objet et par demandeur : la borne est dans
+-- la base, pas seulement dans un pré-contrôle applicatif soumis aux courses.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_approval_pending_download
+    ON approval_requests (id_demandeur, id_piece)
+    WHERE statut = 'en_attente' AND type_demande = 'telechargement';
+CREATE UNIQUE INDEX IF NOT EXISTS uq_approval_pending_modification
+    ON approval_requests (id_demandeur, id_fiche, champ, COALESCE(rang, -1))
+    WHERE statut = 'en_attente' AND type_demande = 'modification';
+CREATE UNIQUE INDEX IF NOT EXISTS uq_approval_pending_suppression
+    ON approval_requests (id_demandeur, id_fiche)
+    WHERE statut = 'en_attente' AND type_demande = 'suppression';
+
+CREATE TABLE IF NOT EXISTS in_app_notifications (
+    id_notification   BIGSERIAL PRIMARY KEY,
+    id_destinataire   BIGINT NOT NULL REFERENCES utilisateur(id_utilisateur) ON DELETE CASCADE,
+    id_demande        BIGINT REFERENCES approval_requests(id_demande) ON DELETE CASCADE,
+    type_notification TEXT NOT NULL CHECK (
+        type_notification IN ('nouvelle_demande', 'decision', 'execution', 'information')
+    ),
+    titre             TEXT NOT NULL CHECK (char_length(btrim(titre)) BETWEEN 1 AND 200),
+    message           TEXT NOT NULL CHECK (char_length(btrim(message)) BETWEEN 1 AND 1000),
+    lue               BOOLEAN NOT NULL DEFAULT false,
+    lue_le            TIMESTAMPTZ,
+    cree_le           TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CHECK ((lue AND lue_le IS NOT NULL) OR (NOT lue AND lue_le IS NULL))
+);
+
+CREATE INDEX IF NOT EXISTS idx_notifications_destinataire
+    ON in_app_notifications (id_destinataire, lue, cree_le DESC, id_notification DESC);
+CREATE INDEX IF NOT EXISTS idx_notifications_demande
+    ON in_app_notifications (id_demande, cree_le DESC)
+    WHERE id_demande IS NOT NULL;
+
+COMMENT ON TABLE approval_requests IS
+    'Demandes métier Lot 1 : téléchargement, modification ou suppression logique, décidées par un approbateur.';
+COMMENT ON TABLE in_app_notifications IS
+    'Notifications applicatives locales du Lot 1, sans service externe.';
+"""
+
 MIGRATIONS_METIER: tuple[tuple[str, str], ...] = (
     ("006_fiche_technique", SQL_006_FICHE_TECHNIQUE),
     ("007_recherche_index", SQL_007_RECHERCHE_INDEX),
@@ -1757,6 +1881,7 @@ MIGRATIONS_METIER: tuple[tuple[str, str], ...] = (
     ("024_sessions_redis", SQL_024_SESSIONS_REDIS),
     ("025_audit_logs", SQL_025_AUDIT_LOGS),
     ("026_boat_models_aliases", SQL_026_BOAT_MODELS_ALIASES),
+    ("027_roles_approbations", SQL_027_ROLES_APPROBATIONS),
 )
 
 

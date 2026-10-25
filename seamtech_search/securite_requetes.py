@@ -12,7 +12,7 @@ Ce module centralise la règle désormais appliquée aux surfaces sensibles :
    (PostgreSQL + registre Redis du Lot 0a) et l'identité est RELUE en base ;
    un en-tête utilisateur/rôle incompatible avec la session vaut 401 ;
 2. le compte de secours reste possible, mais uniquement derrière un jeton de
-   service valide et avec le rôle administrateur documenté ;
+   service valide et avec le rôle ``admin`` documenté ;
 3. en PostgreSQL, une identité nominative sans jeton de session ne suffit pas
    pour les gardes de ce module ;
 4. en SQLite, les comptes nominatifs n'existent pas (§17.1) : les gardes
@@ -32,6 +32,8 @@ from fastapi import HTTPException
 from .audit import actor_fingerprint
 from .comptes.comptes import (
     IDENTIFIANT_SECOURS,
+    ROLE_ADMIN,
+    ROLE_APPROBATEUR,
     ROLE_SECOURS,
     session_valide,
     utilisateur_dune_session,
@@ -56,7 +58,15 @@ class ActeurRequete:
 
     @property
     def est_administrateur(self) -> bool:
-        return self.est_humain and self.role == "administrateur"
+        return self.est_humain and self.role == ROLE_ADMIN
+
+    @property
+    def est_admin(self) -> bool:
+        return self.est_administrateur
+
+    @property
+    def est_approbateur(self) -> bool:
+        return self.type_acteur == "utilisateur" and self.role == ROLE_APPROBATEUR
 
     def contexte_audit(self) -> dict[str, Any]:
         """Champs structurés acceptés par ``record_audit_event``."""
@@ -279,19 +289,113 @@ def exiger_administrateur_requete(
     config: Any,  # noqa: ANN401
     **entetes: Any,  # noqa: ANN401
 ) -> ActeurRequete:
-    """Exige un administrateur humain en PostgreSQL (surface d'exploitation)."""
+    """Exige un admin humain en PostgreSQL (surface d'exploitation)."""
     acteur = resoudre_acteur_requete(index, config, **entetes)
     if not getattr(index, "is_postgres", False):
         return acteur
     if not acteur.est_humain:
         raise HTTPException(
             status_code=401,
-            detail="Session administrateur requise pour cette surface d'exploitation (Lot 0b).",
+            detail="Session admin requise pour cette surface d'exploitation (Lot 0b).",
         )
     if not acteur.est_administrateur:
         raise HTTPException(
             status_code=403,
-            detail="Surface réservée au rôle administrateur.",
+            detail="Surface réservée au rôle admin.",
+        )
+    return acteur
+
+
+def _libelle_roles(roles: tuple[str, ...]) -> str:
+    return ", ".join(roles)
+
+
+def exiger_roles_requete(
+    index: Any,  # noqa: ANN401
+    config: Any,  # noqa: ANN401
+    roles: tuple[str, ...],
+    **entetes: Any,  # noqa: ANN401
+) -> ActeurRequete:
+    """Garde stricte Lot 1 pour une capacité métier réservée à des rôles.
+
+    Un humain présenté est toujours arbitré sur le rôle relu en base. En
+    PostgreSQL avec jeton de service configuré, le jeton seul ne devient pas
+    un humain : une session nominative du bon rôle est requise. Le mode
+    historique sans jeton de service (backend local explicitement non
+    protégé) et SQLite conservent l'acteur de service pour l'outillage de
+    développement ; ce repli ne s'applique jamais au déploiement protégé.
+    """
+    acteur = resoudre_acteur_requete(index, config, **entetes)
+    if acteur.est_humain:
+        if acteur.role not in roles:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Capacité réservée au(x) rôle(s) {_libelle_roles(roles)} (rôle actuel : {acteur.role}).",
+            )
+        return acteur
+    if not getattr(index, "is_postgres", False) or _jeton_service_attendu(config) is None:
+        return acteur
+    raise HTTPException(
+        status_code=401,
+        detail=f"Session nominative requise avec le rôle {_libelle_roles(roles)}.",
+    )
+
+
+def exiger_approbateur_requete(
+    index: Any,  # noqa: ANN401
+    config: Any,  # noqa: ANN401
+    **entetes: Any,  # noqa: ANN401
+) -> ActeurRequete:
+    """Seul un approbateur nominatif peut corriger ou décider directement."""
+    return exiger_roles_requete(index, config, (ROLE_APPROBATEUR,), **entetes)
+
+
+def exiger_role_si_humain(
+    index: Any,  # noqa: ANN401
+    config: Any,  # noqa: ANN401
+    roles: tuple[str, ...],
+    **entetes: Any,  # noqa: ANN401
+) -> ActeurRequete:
+    """Refuse un humain présenté hors rôles, sans retirer l'outillage service.
+
+    Sert aux surfaces opérationnelles historiques aussi appelées par des
+    scripts de confiance. Dès qu'une identité humaine est présentée, elle est
+    revérifiée et bornée ; en particulier ``lecture`` ne peut plus traverser
+    une mutation sous prétexte que la route acceptait le jeton de service.
+    """
+    acteur = resoudre_acteur_requete(index, config, **entetes)
+    if acteur.est_humain and acteur.role not in roles:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Capacité réservée au(x) rôle(s) {_libelle_roles(roles)} (rôle actuel : {acteur.role}).",
+        )
+    return acteur
+
+
+def exiger_acteur_nominatif(
+    index: Any,  # noqa: ANN401
+    config: Any,  # noqa: ANN401
+    roles: tuple[str, ...] | None = None,
+    **entetes: Any,  # noqa: ANN401
+) -> ActeurRequete:
+    """Exige un compte nominatif réel (jamais secours ni service).
+
+    Les demandes et notifications portent des clés étrangères vers
+    ``utilisateur`` : le secours et le jeton de service n'ont pas d'identité
+    persistable et sont donc refusés même lorsque leur rôle technique est
+    ``admin``.
+    """
+    acteur = resoudre_acteur_requete(index, config, **entetes)
+    if acteur.type_acteur != "utilisateur" or acteur.id_utilisateur is None:
+        statut = 403 if acteur.type_acteur == "secours" else 401
+        raise HTTPException(
+            status_code=statut,
+            detail="Un compte nominatif connecté est requis pour cette capacité.",
+        )
+    if roles is not None and acteur.role not in roles:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Capacité réservée au(x) rôle(s) {_libelle_roles(roles)} (rôle actuel : {acteur.role}).",
         )
     return acteur
 

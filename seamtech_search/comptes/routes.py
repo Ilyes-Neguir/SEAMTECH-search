@@ -13,9 +13,9 @@ de mot de passe, le sel, l'``empreinte_jeton``. Le jeton de session lui-même
 n'est renvoyé qu'une fois, à l'ouverture de la session (c'est sa définition : il
 n'existe nulle part en clair côté serveur, seulement son SHA-256).
 
-Gestion des comptes : réservée au rôle ``administrateur``. Un opérateur
-authentifié reçoit 403 (et non 401 : il EST identifié, il n'a simplement pas le
-droit). Sans session valide : 401.
+Gestion des comptes : réservée au rôle ``admin``. Tout autre rôle authentifié
+reçoit 403 (et non 401 : il EST identifié, il n'a simplement pas le droit).
+Sans session valide : 401.
 """
 
 from __future__ import annotations
@@ -32,7 +32,10 @@ from ..sessions_redis import (
     registre_depuis_config,
 )
 from .comptes import (
+    ROLE_ADMIN,
+    ROLE_DEFAUT,
     changer_mot_de_passe,
+    changer_role_utilisateur,
     correspondance_jeton,
     creer_utilisateur,
     desactiver_utilisateur,
@@ -106,13 +109,13 @@ def _exiger_administrateur(
     idle_minutes: int = 30,
     registre: RegistreSessionsRedis | None = None,
 ) -> dict[str, Any]:
-    """Comme ``_session_authentifiee``, plus le rôle. 403 pour un opérateur."""
+    """Comme ``_session_authentifiee``, plus le rôle. 403 hors admin."""
     utilisateur = _session_authentifiee(index, id_session, jeton, idle_minutes=idle_minutes, registre=registre)
-    if utilisateur.get("role") != "administrateur":
+    if utilisateur.get("role") != ROLE_ADMIN:
         raise HTTPException(
             status_code=403,
             detail=(
-                "Gestion des comptes réservée au rôle « administrateur » "
+                "Gestion des comptes réservée au rôle « admin » "
                 f"(rôle de la session : « {utilisateur.get('role')} »)."
             ),
         )
@@ -289,7 +292,7 @@ def enregistrer_routes_auth(app: Any, index: Any, config: Any, verifier_auth: An
         return {"ok": True, **resultat}
 
     # -----------------------------------------------------------------------
-    # Gestion des comptes — administrateur uniquement
+    # Gestion des comptes — admin uniquement
     # -----------------------------------------------------------------------
 
     @app.get("/auth/utilisateurs")
@@ -327,7 +330,7 @@ def enregistrer_routes_auth(app: Any, index: Any, config: Any, verifier_auth: An
             str(corps.get("identifiant") or ""),
             str(corps.get("nom") or ""),
             str(corps["mot_de_passe"]),
-            str(corps.get("role") or "operateur"),
+            str(corps.get("role") or ROLE_DEFAUT),
         )
         _auditer_compte(
             "compte_cree",
@@ -336,6 +339,37 @@ def enregistrer_routes_auth(app: Any, index: Any, config: Any, verifier_auth: An
             {"role_cible": resultat.get("role"), "id_utilisateur_cible": resultat.get("id_utilisateur")},
         )
         return resultat
+
+    @app.post("/auth/utilisateurs/{identifiant}/role")
+    def route_changer_role_utilisateur(
+        identifiant: str,
+        corps: dict[str, Any],
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+        entete_session: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION")] = None,
+        entete_jeton: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-JETON")] = None,
+    ) -> dict[str, Any]:
+        verifier_auth(config, token)
+        _exiger_postgres(index)
+        administrateur = _exiger_administrateur(
+            index, entete_session, entete_jeton, idle_minutes=_idle(), registre=_registre()
+        )
+        resultat = changer_role_utilisateur(
+            index,
+            identifiant,
+            str(corps.get("role") or ""),
+            registre=_registre(),
+        )
+        _auditer_compte(
+            "compte_role_change",
+            administrateur,
+            identifiant,
+            {
+                "ancien_role": resultat.get("ancien_role"),
+                "nouveau_role": resultat.get("nouveau_role"),
+                "sessions_revoquees": resultat.get("sessions_revoquees"),
+            },
+        )
+        return {"ok": True, **resultat}
 
     @app.post("/auth/utilisateurs/{identifiant}/desactiver")
     def route_desactiver_utilisateur(

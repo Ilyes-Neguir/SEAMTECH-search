@@ -18,6 +18,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Stre
 from pydantic import BaseModel, Field
 
 from .audit import actor_fingerprint, get_audit_logs, record_audit_event
+from .comptes.comptes import ROLE_ADMIN, ROLE_APPROBATEUR, ROLE_UTILISATEUR
 from .config import AppConfig
 from .etat_exploitation import etat_sauvegarde, s3_credential_kind
 from .extractors import extract_file
@@ -48,6 +49,7 @@ from .retention import InsufficientStorageError, ensure_free_space, run_retentio
 from .securite_requetes import (
     exiger_acteur_humain,
     exiger_administrateur_requete,
+    exiger_role_si_humain,
     resoudre_acteur_audit,
 )
 from .storage import S3StorageClient
@@ -144,6 +146,29 @@ def create_app(config: AppConfig) -> FastAPI:
     )
 
     redis_store = RedisStore(config=config)
+
+    def _exiger_role_si_humain_depuis_requete(
+        request: Request,
+        token: str | None,
+        roles: tuple[str, ...],
+    ) -> None:
+        """Applique la matrice Lot 1 dès qu'un humain est présenté.
+
+        Les routes d'import historiques restent appelables par l'outillage de
+        service de confiance ; un compte ``lecture`` présenté par le proxy ne
+        peut en revanche plus traverser une mutation grâce au jeton de service.
+        """
+        exiger_role_si_humain(
+            index,
+            config,
+            roles,
+            token=token,
+            entete_utilisateur=request.headers.get("X-SEAMTECH-UTILISATEUR"),
+            entete_role=request.headers.get("X-SEAMTECH-ROLE"),
+            entete_session=request.headers.get("X-SEAMTECH-SESSION"),
+            entete_jeton=request.headers.get("X-SEAMTECH-SESSION-JETON"),
+            client_host=request.client.host if request.client else None,
+        )
 
     # One client for the whole app lifetime: it carries the versioning probe
     # cache that /health reports from, so a health-check loop does not turn into
@@ -703,6 +728,7 @@ def create_app(config: AppConfig) -> FastAPI:
         conservé sans rouvrir une lecture arbitraire du système de fichiers.
         """
         _require_auth(config, token)
+        _exiger_role_si_humain_depuis_requete(request, token, (ROLE_APPROBATEUR,))
         acteur = resoudre_acteur_audit(
             index, config, request.headers, request.client.host if request.client else None
         )
@@ -854,6 +880,9 @@ def create_app(config: AppConfig) -> FastAPI:
         token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
     ) -> Response:
         _require_auth(config, token)
+        _exiger_role_si_humain_depuis_requete(
+            request, token, (ROLE_ADMIN, ROLE_UTILISATEUR, ROLE_APPROBATEUR)
+        )
         actor = actor_fingerprint(token, request.client.host if request.client else None)
         source = Path(request_body.source_path)
         excel_path = Path(request_body.excel_file) if request_body.excel_file else None
@@ -991,6 +1020,9 @@ def create_app(config: AppConfig) -> FastAPI:
         token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
     ) -> dict[str, object]:
         _require_auth(config, token)
+        _exiger_role_si_humain_depuis_requete(
+            request, token, (ROLE_ADMIN, ROLE_UTILISATEUR, ROLE_APPROBATEUR)
+        )
         actor = actor_fingerprint(token, request.client.host if request.client else None)
         try:
             res = await asyncio.to_thread(scan_folder, Path(request_body.source_path), config)
@@ -1017,6 +1049,9 @@ def create_app(config: AppConfig) -> FastAPI:
         token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
     ) -> Response:
         _require_auth(config, token)
+        _exiger_role_si_humain_depuis_requete(
+            request, token, (ROLE_ADMIN, ROLE_UTILISATEUR, ROLE_APPROBATEUR)
+        )
         actor = actor_fingerprint(token, request.client.host if request.client else None)
         source = Path(request_body.source_path)
         technical_pdf = Path(request_body.technical_pdf)
@@ -1126,6 +1161,9 @@ def create_app(config: AppConfig) -> FastAPI:
         token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
     ) -> dict[str, object]:
         _require_auth(config, token)
+        _exiger_role_si_humain_depuis_requete(
+            request, token, (ROLE_ADMIN, ROLE_UTILISATEUR, ROLE_APPROBATEUR)
+        )
         actor = actor_fingerprint(token, request.client.host if request.client else None)
         if len(files) > MAX_UPLOAD_FILES:
             raise HTTPException(
@@ -1259,6 +1297,9 @@ def create_app(config: AppConfig) -> FastAPI:
         token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
     ) -> dict[str, object]:
         _require_auth(config, token)
+        _exiger_role_si_humain_depuis_requete(
+            request, token, (ROLE_ADMIN, ROLE_UTILISATEUR, ROLE_APPROBATEUR)
+        )
         actor = actor_fingerprint(token, request.client.host if request.client else None)
         updated = cancel_job(index, import_id)
         record_audit_event(
@@ -1283,6 +1324,7 @@ def create_app(config: AppConfig) -> FastAPI:
         token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
     ) -> dict[str, object]:
         _require_auth(config, token)
+        _exiger_role_si_humain_depuis_requete(request, token, (ROLE_APPROBATEUR,))
         actor = actor_fingerprint(token, request.client.host if request.client else None)
         corrections = request_body.model_dump(exclude_none=True)
         try:
@@ -1312,6 +1354,9 @@ def create_app(config: AppConfig) -> FastAPI:
         token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
     ) -> dict[str, object]:
         _require_auth(config, token)
+        _exiger_role_si_humain_depuis_requete(
+            request, token, (ROLE_ADMIN, ROLE_UTILISATEUR, ROLE_APPROBATEUR)
+        )
         actor = actor_fingerprint(token, request.client.host if request.client else None)
         try:
             res = await asyncio.to_thread(retry_upload, index, config, import_id)
@@ -1370,6 +1415,23 @@ def create_app(config: AppConfig) -> FastAPI:
         allowed = {"report_pdf", "report_docx", "source_pdf", "source_excel"}
         if artifact not in allowed:
             raise HTTPException(status_code=400, detail=f"Unknown artifact. Allowed: {', '.join(sorted(allowed))}")
+
+        # Exception technique Lot 1, distincte des pièces : un rapport généré
+        # peut être relu par admin ou approbateur ; un fichier source reste
+        # réservé à l'approbateur. Un utilisateur ne peut donc pas contourner
+        # l'approbation de pièce par les artefacts d'import, et lecture ne
+        # télécharge rien. L'acteur de service SQLite historique est conservé.
+        roles_artefact = (
+            (ROLE_ADMIN, ROLE_APPROBATEUR)
+            if artifact in {"report_pdf", "report_docx"}
+            else (ROLE_APPROBATEUR,)
+        )
+        if acteur.est_humain and acteur.role not in roles_artefact:
+            _audit_artefact("403", {"reason": "role_not_authorized", "roles": list(roles_artefact)})
+            raise HTTPException(
+                status_code=403,
+                detail=f"Téléchargement de cet artefact réservé au(x) rôle(s) {', '.join(roles_artefact)}.",
+            )
 
         payload = get_import(index, import_id)
         if payload is None:
@@ -1643,6 +1705,14 @@ def create_app(config: AppConfig) -> FastAPI:
     from seamtech_search.comptes.routes import enregistrer_routes_auth
 
     enregistrer_routes_auth(app, index, config, _require_auth)
+
+    # Lot 1 : demandes de téléchargement/modification/suppression et
+    # notifications applicatives. Le navigateur passe exclusivement par les
+    # relais Next.js /api/approvals et /api/notifications ; ces routes backend
+    # revérifient le jeton de service puis la session nominative et son rôle.
+    from seamtech_search.approbations import enregistrer_routes_approbations
+
+    enregistrer_routes_approbations(app, index, config, _require_auth)
 
     if optionnels_actifs:
         from seamtech_search.ml.routes import enregistrer_routes_ml
