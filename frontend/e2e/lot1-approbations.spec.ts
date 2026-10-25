@@ -353,7 +353,7 @@ test.describe("Lot 1 — rôles, approbations et notifications", () => {
       const avantApprobation = await utilisateur.request.get(
         `/api/pieces/${piece.id}/telecharger`,
       )
-      expect(await statutDe(avantApprobation), await avantApprobation.text()).toBe(403)
+      expect(await statutDe(avantApprobation), "téléchargement avant approbation").toBe(403)
 
       const motif = `Besoin du PDF pour preparer la decoupe (${suffixe("telechargement")}).`
       await utilisateur.goto(`/fiches/${CODE_REFERENCE}`)
@@ -719,7 +719,7 @@ test.describe("Lot 1 — rôles, approbations et notifications", () => {
       ).toHaveAttribute("href", `/api/pieces/${piece.id}/apercu`)
 
       const telechargement = await lecture.request.get(`/api/pieces/${piece.id}/telecharger`)
-      expect(telechargement.status(), await telechargement.text()).toBe(403)
+      expect(telechargement.status(), "téléchargement en lecture seule").toBe(403)
       const creation = await lecture.request.post("/api/approvals", {
         headers: await csrfHeadersForPage(lecture),
         data: {
@@ -815,7 +815,7 @@ test.describe("Lot 1 — rôles, approbations et notifications", () => {
       })
       expect(creationAdmin.status(), await creationAdmin.text()).toBe(403)
       const telechargementAdmin = await admin.request.get(`/api/pieces/${piece.id}/telecharger`)
-      expect(telechargementAdmin.status(), await telechargementAdmin.text()).toBe(403)
+      expect(telechargementAdmin.status(), "téléchargement direct par admin").toBe(403)
 
       const secours = await ouvrirPoste(browser, contextes)
       expect(await sessionDe(secours)).toMatchObject({
