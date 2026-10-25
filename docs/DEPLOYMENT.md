@@ -442,6 +442,17 @@ invisible to the older release. Restore a pre-upgrade backup only on an
 explicit business decision, accepting the loss of approver decisions made
 since the upgrade — otherwise fix forward.
 
+### Lot 4b — sail comparison (Function A)
+
+No migration and no writes: this lot only adds read-only comparison routes
+(`/comparaison-voiles`, `/comparaison-voiles/candidats`) and the
+`/comparaison` screen. Deploy backend + frontend together. Acceptance check:
+open `/comparaison`, compare two known sails and verify one delta by hand
+(lengths show Δ in cm and % against sail A); then confirm an unlinked
+extraction proposes no “same model” candidate (`raison = non_liee`).
+Rollback is a plain code revert to the Lot 3b release (`21de51b`) — the lot
+wrote nothing to the database, so there is no data cleanup.
+
 ## Office LAN access
 
 The default deployment is safe for a local-only installation: all published

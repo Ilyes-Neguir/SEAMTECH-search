@@ -12,6 +12,40 @@ jour vivent dans :
 * `docs/verite_terrain/TRACABILITE_LIVRAISON.md` — une ligne par affirmation,
   y compris la revue indépendante du 2026-10-07 et la passe de clôture.
 
+## Addendum Lot 4b — Fonction A, comparaison de voiles (2026-10-25)
+
+Branche : `arena/b02ed560-seamtech-search` ; implémentation prouvée au SHA
+`97f6b8560efa8472ab8443e82e159e172f1ad832` (CI `40241173904`, 13/13). La
+preuve centrale est `tests/test_lot4b_comparaison_voile.py` :
+
+- écarts par dimension : B − A, Δ en cm pour les longueurs, Δ % par rapport
+  à A ; manquants explicites, aucun écart inventé ; synthèse sans moyenne
+  (écart % maximal nommé) ;
+- « comparable » = même `boat_model_id` canonique ET même type normalisé ;
+  modèles différents/non liés/types différents/chevauchement < 2/implausible
+  ⇒ avertissements, jamais « même modèle » ;
+- candidats : même modèle + même type uniquement ; source non liée ⇒
+  `raison = "non_liee"` ; la valeur comparée est la valeur corrigée par
+  l'approbateur (Lot 3b) ; rôles 401/200/422/404.
+- Parcours navigateur `frontend/e2e/lot4b-comparaison.spec.ts` (garde CI
+  `report-lot4b.json`, 3/3 au premier essai) : Δ SLU réel +160 cm relu à
+  l'écran, badge « indicative » sur modèles différents, lecture par lien
+  profond, secours refusé. Suite PostgreSQL globale : 314 passés / 0 sauté.
+- Mesure locale hors Git sur 9 fiches d'entreprise transmises le 2026-10-25 :
+  gabarits génois/GV/jade partiels (voir `docs/PLAN_DIRECTEUR_V2_LOT4B.md`) —
+  aucun extrait versionné.
+
+```bash
+ruff check seamtech_search/comparaison_voile.py \
+  seamtech_search/comparaison_voile_routes.py tests/test_lot4b_comparaison_voile.py
+pytest -q tests/test_lot4b_comparaison_voile.py -m "not postgres"
+SEAMTECH_TEST_DATABASE_URL=postgresql://… pytest -q -m postgres \
+  tests/test_lot4b_comparaison_voile.py
+cd frontend && pnpm exec tsc --noEmit && pnpm build
+SEAMTECH_E2E_DATABASE_URL=postgresql://… \
+  pnpm exec playwright test e2e/lot4b-comparaison.spec.ts
+```
+
 ## Addendum Lot 3b — résolution bateau, corrections et apprentissage (2026-10-25)
 
 Branche : `arena/b02ed560-seamtech-search` ; implémentation prouvée au SHA
