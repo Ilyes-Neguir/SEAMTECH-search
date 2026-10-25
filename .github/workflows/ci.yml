@@ -1447,6 +1447,81 @@ jobs:
             exit "$rc"
           fi
 
+      # Lot 3b — écran approbateur des extractions de voiles : file réelle
+      # (dépôts du seed), PDF source côte à côte, correction du libellé de
+      # bateau brut, décision de liaison vers le référentiel canonique
+      # (création de modèle + alias appris), cote corrigée et historisée.
+      # Lecture/utilisateur : aucun accès à l'écran de décision.
+      - name: Run live E2E Lot 3b (extractions voiles, liaison bateau, corrections)
+        working-directory: frontend
+        env:
+          SEAMTECH_E2E_DATABASE_URL: postgresql://seamtech:seamtech_test_password@localhost:5432/seamtech_search_test
+          PLAYWRIGHT_JSON_OUTPUT_NAME: report-lot3b.json
+        run: |
+          set -uo pipefail
+          set +e
+          pnpm exec playwright test e2e/lot3b-extractions.spec.ts --reporter=list,json 2>&1 | tee /tmp/e2e_lot3b.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            echo "::error title=e2e-lot3b-failed::$(grep -aE '✘|✓|failed|Error|expect|attendu|Timeout' /tmp/e2e_lot3b.log | head -30 | tr -d '\000-\010\013\014\016-\037' | sed 's/%/%25/g' | tr '\n' ';' | head -c 2500)"
+            echo "::error title=e2e-lot3b-tail::$(tail -50 /tmp/e2e_lot3b.log | tr -d '\000-\010\013\014\016-\037' | sed 's/%/%25/g' | tr '\n' ';' | head -c 2500)"
+            # Ne pas sortir ici : le parseur JSON ci-dessous publie les causes
+            # par test (premier essai compris), puis le code Playwright est
+            # restitué tel quel après le parseur.
+          fi
+          python - <<'PY'
+          import json
+          import os
+
+          if not os.path.exists("report-lot3b.json"):
+              print("::error title=e2e-lot3b-count::report-lot3b.json absent — rien n'a été mesuré")
+              raise SystemExit("GARDE-FOU e2e Lot 3b : report-lot3b.json absent.")
+          d = json.load(open("report-lot3b.json"))
+          stats = d["stats"]
+          passes = stats["expected"]
+          flaky = stats.get("flaky", 0)
+          sautes = stats.get("skipped", 0)
+          inattendus = stats.get("unexpected", 0)
+
+          def problemes(suites):
+              for suite in suites or []:
+                  for spec in suite.get("specs") or []:
+                      for test in spec.get("tests") or []:
+                          etat = test.get("status") or test.get("outcome")
+                          if etat in {"flaky", "unexpected", "skipped"}:
+                              causes = []
+                              for resultat in test.get("results") or []:
+                                  erreur = resultat.get("error") or {}
+                                  brut = str(erreur.get("message") or "")
+                                  message = "".join(c if c >= " " else " " for c in brut)
+                                  message = message.replace("%", "%25").strip()
+                                  lieu = erreur.get("location") or {}
+                                  if lieu.get("file"):
+                                      message = f"{lieu.get('file')}:{lieu.get('line', '?')} — {message}"
+                                  if message:
+                                      causes.append(message[:500])
+                              yield f"{etat}: {spec.get('title', '?')} — {causes[0] if causes else 'cause non consignée'}"
+                  yield from problemes(suite.get("suites") or [])
+
+          if sautes or flaky or inattendus or passes != 3:
+              detail = "; ".join(list(problemes(d.get("suites") or []))[:5]) or "aucun test nommé dans le rapport"
+              print(
+                  "::error title=e2e-lot3b-count::attendu 3 tests passés au premier essai, "
+                  f"0 flaky, 0 sautés — mesuré {passes} passés, {flaky} flaky, "
+                  f"{sautes} sautés, {inattendus} en échec. Détail : {detail}"
+              )
+              raise SystemExit(
+                  "GARDE-FOU e2e Lot 3b : attendu 3 tests passés au premier essai, "
+                  f"0 flaky, 0 sautés — mesuré {passes} passés, {flaky} flaky, "
+                  f"{sautes} sautés, {inattendus} en échec. Détail : {detail}"
+              )
+          print("::notice title=e2e-lot3b::3 parcours Lot 3b verts au premier essai (approbateur lie/corrige côte à côte, lecture/utilisateur refusés)")
+          PY
+          if [ "$rc" -ne 0 ]; then
+            exit "$rc"
+          fi
+
       # Parcours live canonisés par Lot 1 : les écrans de validation et les
       # liens directs sont désormais exercés par un approbateur nominatif, le
       # dépôt suivi par un utilisateur. Ils ne doivent plus dépendre du
