@@ -466,7 +466,14 @@ function ExtractionsAppInterne() {
             <div className="space-y-4 p-3">
               <header>
                 <h2 className="font-mono text-sm font-semibold" data-testid="code-extraction">
-                  {extraction.code_fiche ?? `#${extraction.id_extraction}`}
+                  {extraction.code_fiche ?? `#${extraction.id_extraction}`}{" "}
+                  <a
+                    href={`/comparaison?a=${extraction.id_extraction}`}
+                    className="ml-2 rounded border border-border px-1.5 py-0.5 font-sans text-[11px] font-semibold hover:bg-accent"
+                    data-testid="lien-comparer"
+                  >
+                    Comparer…
+                  </a>
                 </h2>
                 <p className="mt-0.5 text-xs text-muted-foreground">
                   {extraction.nom_fichier_source ?? "fichier source inconnu"}
