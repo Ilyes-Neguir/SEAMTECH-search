@@ -1,6 +1,5 @@
 import { expect, test, type Page } from "@playwright/test"
 import { mkdtemp, mkdir, copyFile, rm } from "node:fs/promises"
-import { tmpdir } from "node:os"
 import path from "node:path"
 import { UTILISATEUR, signIn, signInWith } from "./helpers"
 
@@ -22,9 +21,13 @@ import { UTILISATEUR, signIn, signInWith } from "./helpers"
  * du suivi — le minuteur d'un lot abandonné ne doit pas réécrire l'écran).
  */
 
-/** Dossier temporaire : copie d'un PDF réel du dépôt, jamais une donnée client inventée. */
+/**
+ * Dossier temporaire : copie d'un PDF réel du dépôt, jamais une donnée client inventée.
+ * Il vit sous `sample_data`, racine d'archive configurée de la pile E2E : depuis le
+ * Lot 0b, le backend refuse (403) tout dépôt hors des racines autorisées.
+ */
 async function dossierTemporaire(): Promise<string> {
-  const racine = await mkdtemp(path.join(tmpdir(), "seamtech-e2e-a08-"))
+  const racine = await mkdtemp(path.join(path.resolve(__dirname, "../../sample_data"), ".e2e-a08-"))
   await mkdir(racine, { recursive: true })
   await copyFile(
     path.resolve(__dirname, "../../sample_data/CLIENT-GENOA/fiche-genois.pdf"),
