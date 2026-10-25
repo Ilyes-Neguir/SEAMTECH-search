@@ -363,12 +363,13 @@ jobs:
         # Motif EXACTEMENT calqué sur « Garde-fou dédup » ci-dessus. Ce qui est
         # prouvé : l'attribution d'une validation vient de la SESSION, jamais de
         # ce que le navigateur écrit dans le corps de la requête. Depuis le
-        # Lot 0b, le chemin nominal est la branche « session vérifiée »
-        # (`acteur_session_si_presente`) ; saboter le seul repli historique
-        # laisserait donc le garde-fou aveugle. Le sabotage fige LES DEUX
-        # branches sur un identifiant littéral (« premier », le premier compte
-        # créé par le test) : le test doit ROUGIR sur son ASSERTION, pas sur une
-        # erreur SQL (rouge historique mesuré : « attribution = 1 (attendu 2) »).
+        # Lot 1, le chemin nominal d'une validation est la branche approbateur
+        # (`_attribution_approbateur`, vérification de session par
+        # `exiger_approbateur_requete`) ; saboter un ancien repli laisserait
+        # donc le garde-fou aveugle. Le sabotage fige LES DEUX branches de ce
+        # chemin réel sur un identifiant littéral (« premier », le premier
+        # compte créé par le test) : le test doit ROUGIR sur son ASSERTION,
+        # pas sur une erreur SQL (« attribution = premier, attendu second »).
         if: matrix.python-version == '3.12'
         env:
           SEAMTECH_TEST_DATABASE_URL: postgresql://seamtech:seamtech_test_password@localhost:5432/seamtech_search_test
@@ -385,16 +386,17 @@ jobs:
           chemin = pathlib.Path(sys.argv[1])
           texte = chemin.read_text(encoding="utf-8")
           attendu = (
-              "    if acteur is not None:\n"
-              "        return acteur.identifiant\n"
+              "    if acteur.est_humain:\n"
+              "        return acteur.identifiant, acteur.id_utilisateur\n"
               "    identifiant, _role = resoudre_attribution(\n"
               "        config, token, entete_utilisateur, entete_role, corps_utilisateur\n"
               "    )\n"
-              "    return identifiant"
+              "    return identifiant, None"
           )
           sabotage = attendu.replace(
-              "return acteur.identifiant", 'return "premier"  # SABOTAGE'
-          ).replace("return identifiant", 'return "premier"  # SABOTAGE')
+              "return acteur.identifiant, acteur.id_utilisateur",
+              'return "premier", None  # SABOTAGE',
+          ).replace("return identifiant, None", 'return "premier", None  # SABOTAGE')
           if attendu not in texte or sabotage.count("SABOTAGE") != 2:
               raise SystemExit("motif d'attribution introuvable — le garde-fou doit être mis à jour")
           chemin.write_text(texte.replace(attendu, sabotage), encoding="utf-8")

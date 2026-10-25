@@ -65,7 +65,6 @@ from seamtech_search.import_pipeline import staging_root
 from seamtech_search.jobs import create_job, register_job_cancel
 from seamtech_search.redis_store import RedisStore
 from seamtech_search.securite_requetes import (
-    acteur_session_si_presente,
     exiger_acteur_humain,
     exiger_approbateur_requete,
     exiger_role_si_humain,
@@ -297,45 +296,6 @@ _SQL_JOURNAL = (
     "INSERT INTO fiche_validation (id_fiche, id_utilisateur, action, etat_avant, etat_apres, commentaire) "
     "VALUES (%s, %s, %s, %s, %s, %s)"
 )
-
-
-def _attribution(
-    index: Any,  # noqa: ANN401 - SearchIndex réel
-    config: Any,  # noqa: ANN401 - AppConfig
-    token: str | None,
-    corps_utilisateur: Any,  # noqa: ANN401 - valeur brute du corps JSON
-    entete_utilisateur: str | None,
-    entete_role: str | None,
-    entete_session: str | None = None,
-    entete_jeton: str | None = None,
-) -> str | None:
-    """Qui agit ? — L.2 puis Lot 0b : la SESSION VÉRIFIÉE prime.
-
-    Jusqu'à L.2, l'attribution venait EXCLUSIVEMENT de ``corps["utilisateur"]``,
-    c'est-à-dire du navigateur : n'importe qui pouvait valider une fiche au nom
-    d'un autre en changeant un champ JSON. L.2 a fait primer les en-têtes posés
-    par le proxy serveur. Le Lot 0b va au bout de cette frontière : quand les
-    en-têtes de session sont présents, la session est revérifiée (PostgreSQL +
-    Redis) et l'identifiant est RELU en base ; un en-tête utilisateur/rôle
-    incompatible vaut 401. Sans session présentée, l'ancien repli explicite
-    (secours derrière jeton de service, puis corps pour l'outillage) reste en
-    place jusqu'à la généralisation des rôles du Lot 1.
-    """
-    acteur = acteur_session_si_presente(
-        index,
-        config,
-        token=token,
-        entete_utilisateur=entete_utilisateur,
-        entete_role=entete_role,
-        entete_session=entete_session,
-        entete_jeton=entete_jeton,
-    )
-    if acteur is not None:
-        return acteur.identifiant
-    identifiant, _role = resoudre_attribution(
-        config, token, entete_utilisateur, entete_role, corps_utilisateur
-    )
-    return identifiant
 
 
 def _attribution_approbateur(

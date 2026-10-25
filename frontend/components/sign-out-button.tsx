@@ -4,6 +4,7 @@ import { useState } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { authedFetch } from "@/lib/authed-fetch"
+import { rafraichirSessionGlobale } from "@/lib/use-session"
 
 function useSignOut(endpoint: "/api/auth/logout" | "/api/auth/logout-all") {
   const router = useRouter()
@@ -20,6 +21,9 @@ function useSignOut(endpoint: "/api/auth/logout" | "/api/auth/logout-all") {
       // routes reject an expired/revoked session and /login re-authenticates
       // cleanly.
     } finally {
+      // Do not leave the previous identity/role in the persistent layout's
+      // SWR cache while the login screen is shown.
+      await rafraichirSessionGlobale().catch(() => undefined)
       router.replace("/login")
       router.refresh()
     }

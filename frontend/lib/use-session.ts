@@ -1,8 +1,10 @@
 "use client"
 
-import useSWR from "swr"
+import useSWR, { mutate } from "swr"
 import { authedFetch } from "@/lib/authed-fetch"
 import { ROLE_DEFAUT, roleOuLecture, type Role } from "@/lib/roles"
+
+export const CLE_SESSION_SWR = "/api/auth/session"
 
 export type SessionClient = {
   authenticated: boolean
@@ -50,8 +52,8 @@ async function chargerSession(url: string): Promise<SessionClient> {
  * every mutation still passes through a Next guard and the backend guard.
  */
 export function useSession() {
-  const { data, error, isLoading, mutate } = useSWR<SessionClient>(
-    "/api/auth/session",
+  const { data, error, isLoading, mutate: rafraichir } = useSWR<SessionClient>(
+    CLE_SESSION_SWR,
     chargerSession,
     { revalidateOnFocus: true, shouldRetryOnError: false },
   )
@@ -62,6 +64,19 @@ export function useSession() {
     estNominatif: session.mode === "nominatif",
     chargement: isLoading,
     erreur: error,
-    rafraichir: mutate,
+    rafraichir,
   }
+}
+
+/**
+ * Force every mounted session consumer to re-read /api/auth/session.
+ *
+ * The root layout (and therefore Nav/useSession) stays mounted across the
+ * SPA login/logout transitions. Without this explicit revalidation, SWR can
+ * retain the pre-login anonymous session (role=lecture) after the cookie has
+ * been set, hiding role-gated work until a focus/reconnect event happens.
+ * Identity transitions must invalidate that cache immediately.
+ */
+export async function rafraichirSessionGlobale(): Promise<void> {
+  await mutate(CLE_SESSION_SWR)
 }
