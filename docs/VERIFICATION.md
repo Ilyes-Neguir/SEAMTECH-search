@@ -12,6 +12,43 @@ jour vivent dans :
 * `docs/verite_terrain/TRACABILITE_LIVRAISON.md` — une ligne par affirmation,
   y compris la revue indépendante du 2026-10-07 et la passe de clôture.
 
+## Addendum Lot 3a — extraction structurée des voiles (2026-10-25)
+
+Branche : `arena/b02ed560-seamtech-search` ; implémentation prouvée au SHA
+`be3a6fa1cf98666426182cc12937007744c39000`. La preuve centrale est
+`tests/test_lot3a_extraction_voile.py` :
+
+- migration `028_sail_extractions` relue par pglast et appliquée sur
+  PostgreSQL réel ; aucun `boat_model_id` dans la table Lot 3a ;
+- conversions d'unités explicites mm/cm/cm²/g vers m/m²/kg, refus de
+  rescaler une valeur nue hors plage et refus d'une unité incompatible ;
+- `modele_bateau_brut` conservé tel que lu (`BAVARIA-45`, `29er (15')`),
+  provenance valeur brute/canonique, méthode, confiance, page et zone ;
+- PDF réel 7792-SO : Lot 3a 17/17 et vérité historique 74/74 ; génois
+  synthétique : 11/11 ; rapport CLI global 102/102 ;
+- PostgreSQL réel : écriture de fiche idempotente, enregistrement autonome
+  lié à un document, dépôt de dossier liant l'extraction au PDF source et à
+  son SHA-256.
+
+Commandes de reproduction :
+
+```bash
+ruff check seamtech_search/extractions_voile.py \
+  seamtech_search/fiches/persistance.py seamtech_search/fiches/depot.py \
+  scripts/rapport_extraction_or.py tests/test_lot3a_extraction_voile.py
+pytest -q tests/test_lot3a_extraction_voile.py -m "not postgres"
+SEAMTECH_TEST_DATABASE_URL=postgresql://… pytest -q -m postgres \
+  tests/test_lot3a_extraction_voile.py tests/test_migrations_metier.py \
+  tests/test_fiches_persistance.py tests/test_depot_transactionnel.py
+python scripts/rapport_extraction_or.py --format json
+```
+
+Les quatre workflows du SHA exact (CI `40225963741`, Qualification native
+`40225963627`, Qualification réservés `40225963613`, Perf comparaison
+`40225963568`) sont verts ; PostgreSQL 300/0, Redis 89/0, couverture
+85,90 %. Le détail et le rollback vivent dans
+`docs/PLAN_DIRECTEUR_V2_LOT3A.md`.
+
 ## Addendum Lot 4a — extrait du document dans la recherche (2026-10-24)
 
 Branche : `arena/b02ed560-seamtech-search`. Aucune migration. Les preuves

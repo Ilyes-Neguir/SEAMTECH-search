@@ -378,6 +378,44 @@ or data cleanup. During a mixed deployment, the new frontend falls back to
 the legacy `extrait` only when an older backend omits `extrait_document`
 entirely; an explicit Lot 4a `null` remains no preview.
 
+### Lot 3a — structured sail extraction (`sail_extractions`)
+
+On upgrade, migration `028_sail_extractions` runs automatically at API
+startup on PostgreSQL. It only adds the `sail_extractions` table and its
+indexes: existing fiches and boat labels are not rewritten, and the stored
+boat model remains the **raw PDF label** (`modele_bateau_brut`). Canonical
+resolution and human correction are Lot 3b; do not infer a boat-model link
+from this table yet.
+
+The migration does **not** backfill existing fiches. New fiche writes and
+folder deposits upsert the normalized extraction in the same transaction,
+and a deposit also links it to the source `documents` row and SHA-256.
+Before accepting the upgrade, run the local gold report read-only and keep
+its output with the deployment record (never commit a report generated from
+company PDFs):
+
+```bash
+python scripts/rapport_extraction_or.py --format json \
+  --sortie /var/tmp/rapport-extraction-or-lot3a.json
+```
+
+The versioned bench must report 102/102 at the default 100% threshold
+(7792-SO Lot 3a 17/17 + historical fiche truth 74/74 + synthetic genoa
+11/11). Then deposit or rewrite one unvalidated test fiche and check that
+exactly one current `sail_extractions` row is linked to it; after a folder
+deposit it must also carry the source document id and SHA-256. Existing
+archive PDFs may be registered explicitly with `--enregistrer` and a local
+manifest: this links by an existing fiche code, creates no fiche, and must
+only be used with the exact source PDF. It is not a correction path and does
+not replace the RG11 rules for validated/human-corrected fiches.
+
+Rollback is a code revert plus redeploy of the pre-Lot-3a backend
+(`b534723`) after a PostgreSQL backup. Leave `sail_extractions` and its
+`schema_migrations` row in place: the older code ignores the additive table
+and keeps reading the historical fiche tables. Do not drop the table during
+rollback; restore the pre-upgrade backup only if the business explicitly
+requires the exact pre-Lot-3a database state and accepts losing later writes.
+
 ## Office LAN access
 
 The default deployment is safe for a local-only installation: all published
