@@ -41,7 +41,15 @@ test.describe("Validation — pièces jointes et fiche active (constat A09)", ()
         corps.pieces.find((p) => p.is_primary_pdf) ?? corps.pieces.find((p) => p.kind === "pdf")
       // DEUX DOCUMENTS DISTINCTS sont indispensables : avec un seul PDF rattaché
       // aux deux fiches, le mélange serait invisible et le test ne prouverait rien.
-      if (piece && !avecPdf.some((f) => f.idPdf === piece.id)) avecPdf.push({ code, idPdf: piece.id })
+      // « À montrer » se prouve par les octets servis : une pièce cataloguée dont
+      // le fichier d'archive n'est plus présent ne peut pas servir de témoin PDF.js.
+      if (!piece || avecPdf.some((f) => f.idPdf === piece.id)) continue
+      const apercu = await page.request.get(`/api/pieces/${piece.id}/apercu`, {
+        headers: { Range: "bytes=0-4" },
+      })
+      if (![200, 206].includes(apercu.status())) continue
+      if (!(await apercu.body()).subarray(0, 4).equals(Buffer.from("%PDF"))) continue
+      avecPdf.push({ code, idPdf: piece.id })
       if (avecPdf.length === 2) break
     }
     expect(
