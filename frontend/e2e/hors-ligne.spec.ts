@@ -41,7 +41,7 @@
 
 import { expect, test } from "@playwright/test"
 import path from "node:path"
-import { OPERATEUR, signInWith } from "./helpers"
+import { APPROBATEUR, signInWith } from "./helpers"
 
 test.describe("hors ligne — pile réelle, sortie réseau bloquée", () => {
   test.skip(
@@ -79,7 +79,7 @@ test.describe("hors ligne — pile réelle, sortie réseau bloquée", () => {
       if (!["127.0.0.1", "localhost", "::1"].includes(hote)) requetesExternes.push(url)
     })
     // 1. CONNEXION nominative (formulaire réel, cookie signé).
-    await signInWith(page, OPERATEUR)
+    await signInWith(page, APPROBATEUR)
 
     // 2. IMPORT d'un dossier réel par l'interface : le pipeline complet tourne
     //    (détection, extraction, écriture en base, stockage objet configuré).

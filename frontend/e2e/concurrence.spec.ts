@@ -14,9 +14,9 @@
  *      PDF), pas seulement un message d'interface ;
  *   3. la session d'un poste EXPIRE en pleine correction : aucun faux succès,
  *      et l'état en base est INCHANGÉ ;
- *   4. un opérateur se voit REFUSER par le BACKEND une action réservée à
- *      l'administrateur (l'administrateur, lui, obtient 200) — la règle est
- *      appliquée côté serveur, pas seulement cachée dans l'interface ;
+ *   4. un approbateur se voit REFUSER par le BACKEND une action réservée à
+ *      l'admin (l'admin, lui, obtient 200) — la règle est appliquée côté
+ *      serveur, pas seulement cachée dans l'interface ;
  *   5. une DÉCISION (valider) est liée à la révision revue : A ne peut pas
  *      approuver un écran que B vient de changer (409, aucune écriture, aucune
  *      ligne « valider » au journal) ;
@@ -40,7 +40,13 @@
 
 import { expect, test, type Browser, type BrowserContext, type Page } from "@playwright/test"
 import path from "node:path"
-import { ADMIN, OPERATEUR, csrfHeadersForPage, signInWith } from "./helpers"
+import {
+  ADMIN,
+  APPROBATEUR,
+  APPROBATEUR_2,
+  csrfHeadersForPage,
+  signInWith,
+} from "./helpers"
 
 test.describe("concurrence entre postes (sessions indépendantes)", () => {
   test.skip(
@@ -61,8 +67,8 @@ test.describe("concurrence entre postes (sessions indépendantes)", () => {
     const ctxB = await browser.newContext()
     const posteA = await ctxA.newPage()
     const posteB = await ctxB.newPage()
-    await signInWith(posteA, OPERATEUR) // poste A : opérateur nominatif
-    await signInWith(posteB, ADMIN) // poste B : administrateur nominatif
+    await signInWith(posteA, APPROBATEUR) // poste A : premier approbateur nominatif
+    await signInWith(posteB, APPROBATEUR_2) // poste B : second approbateur nominatif
     return { ctxA, ctxB, posteA, posteB }
   }
 
@@ -240,7 +246,7 @@ test.describe("concurrence entre postes (sessions indépendantes)", () => {
       await expect(conflit).toContainText("NON appliquée")
       // La valeur du collègue est MONTRÉE, avec son auteur : B comprend.
       await expect(posteB.getByTestId("conflit-valeur")).toHaveText("MATERIAU-POSTE-A")
-      await expect(posteB.getByTestId("conflit-auteur")).toHaveText(OPERATEUR.identifiant)
+      await expect(posteB.getByTestId("conflit-auteur")).toHaveText(APPROBATEUR.identifiant)
       await expect(posteB.getByTestId("conflit-revisions")).toContainText("→")
       // AUCUN faux succès : le bandeau vert ne doit pas apparaître.
       await expect(posteB.getByTestId("message-ok")).toHaveCount(0)
@@ -352,31 +358,36 @@ test.describe("concurrence entre postes (sessions indépendantes)", () => {
     }
   })
 
-  test("un opérateur est refusé par le BACKEND sur une action d'administrateur", async ({ browser }) => {
-    const { ctxA, ctxB, posteA, posteB } = await deuxPostes(browser)
+  test("un approbateur est refusé par le BACKEND sur une action d'admin", async ({ browser }) => {
+    const { ctxA, ctxB, posteA } = await deuxPostes(browser)
+    const ctxAdmin = await browser.newContext()
+    const posteAdmin = await ctxAdmin.newPage()
     try {
+      await signInWith(posteAdmin, ADMIN)
       const identifiant = `intrus-e2e-${Date.now()}`
 
-      // POSTE A (opérateur) : la création de compte est réservée à l'administrateur.
+      // POSTE A (approbateur) : décider le métier ne donne aucun droit
+      // d'administration des comptes.
       const refusLecture = await posteA.request.get("/api/auth/utilisateurs")
       expect(refusLecture.status()).toBe(403)
       const refusEcriture = await posteA.request.post("/api/auth/utilisateurs", {
         headers: await csrfHeadersForPage(posteA),
-        data: { identifiant, nom: "Intrus e2e", role: "operateur", mot_de_passe: "mot-de-passe-intrus" },
+        data: { identifiant, nom: "Intrus e2e", role: "utilisateur", mot_de_passe: "mot-de-passe-intrus" },
       })
       expect(refusEcriture.status()).toBe(403)
       const detail = (await refusEcriture.json()) as { detail?: string }
-      expect(String(detail.detail ?? "")).toMatch(/administrateur/)
+      expect(String(detail.detail ?? "")).toMatch(/admin/)
 
-      // POSTE B (administrateur) : la MÊME requête passe — c'est bien le rôle,
-      // et seulement lui, qui décide (côté backend).
-      const autorise = await posteB.request.get("/api/auth/utilisateurs")
+      // POSTE ADMIN : la MÊME lecture passe — c'est bien le rôle, et seulement
+      // lui, qui décide (côté backend).
+      const autorise = await posteAdmin.request.get("/api/auth/utilisateurs")
       expect(autorise.status(), await autorise.text()).toBe(200)
 
       // PREUVE EN BASE : le compte refusé n'existe pas.
       const liste = (await autorise.json()) as Array<{ identifiant?: string }>
       expect(liste.some((compte) => compte.identifiant === identifiant)).toBe(false)
     } finally {
+      await ctxAdmin.close()
       await ctxA.close()
       await ctxB.close()
     }

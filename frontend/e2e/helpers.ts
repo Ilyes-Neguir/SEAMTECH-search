@@ -23,6 +23,20 @@ export const ADMIN = {
   identifiant: "e2e-admin",
   motDePasse: process.env.SEAMTECH_E2E_ADMIN_PASSWORD ?? "e2e-admin-password",
 }
+/** Lot 1 canonical aliases. OPERATEUR is kept only as the historical identifier. */
+export const APPROBATEUR = OPERATEUR
+export const APPROBATEUR_2 = {
+  identifiant: "e2e-approbateur-2",
+  motDePasse: process.env.SEAMTECH_E2E_APPROBATEUR2_PASSWORD ?? "e2e-approbateur2-password",
+}
+export const UTILISATEUR = {
+  identifiant: "e2e-utilisateur",
+  motDePasse: process.env.SEAMTECH_E2E_UTILISATEUR_PASSWORD ?? "e2e-utilisateur-password",
+}
+export const LECTURE = {
+  identifiant: "e2e-lecture",
+  motDePasse: process.env.SEAMTECH_E2E_LECTURE_PASSWORD ?? "e2e-lecture-password",
+}
 
 export type Identifiants = { identifiant?: string; motDePasse: string }
 

@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test"
-import { signIn } from "./helpers"
+import { APPROBATEUR, signIn, signInWith } from "./helpers"
 import path from "path"
 import fs from "fs"
 import crypto from "crypto"
@@ -25,6 +25,22 @@ function uniqueTerm(prefix: string): string {
   const suffix = Date.now().toString().slice(-4)
   const cleanPrefix = prefix.replace(/[^A-Z0-9]/gi, "").toUpperCase().slice(0, 10)
   return `${cleanPrefix}${hex}${suffix}`
+}
+
+const MODE_LIVE = Boolean(process.env.SEAMTECH_E2E_DATABASE_URL)
+
+/**
+ * Les cas d'erreur n'exercent ni téléchargement ni décision métier : ils
+ * restent jouables sur l'outillage SQLite avec la session de secours. En
+ * PostgreSQL, ils utilisent le même approbateur nominatif que les parcours
+ * complets — jamais le secours comme substitut d'un compte métier.
+ */
+async function seConnecterCasErreur(page: any): Promise<void> {
+  if (MODE_LIVE) {
+    await signInWith(page, APPROBATEUR)
+  } else {
+    await signIn(page)
+  }
 }
 
 /**
@@ -85,6 +101,13 @@ test.describe("Scan navigateur → OCR → Recherche → Téléchargement", () =
   test("dépôt PDF image par sélection fichier (setInputFiles), OCR, recherche terme unique, téléchargement SHA obligatoire", async ({
     page,
   }, testInfo) => {
+    if (!MODE_LIVE) {
+      test.skip(
+        true,
+        "téléchargements source et pièce : requiert SEAMTECH_E2E_DATABASE_URL et un approbateur nominatif",
+      )
+      return
+    }
     const ocrObligatoire = process.env.SEAMTECH_OCR_OBLIGATOIRE === "1"
     try {
       execSync("which tesseract", { stdio: "ignore" })
@@ -104,7 +127,7 @@ test.describe("Scan navigateur → OCR → Recherche → Téléchargement", () =
 
     console.log(`PDF généré: ${pdfPath} sha=${originalSha} uniq=${uniq}`)
 
-    await signIn(page)
+    await signInWith(page, APPROBATEUR)
 
     await page.getByRole("button", { name: "Recherche avancée" }).click()
     await expect(page.getByText("Importer un dossier").first()).toBeVisible({ timeout: 10000 })
@@ -272,6 +295,13 @@ test.describe("Scan navigateur → OCR → Recherche → Téléchargement", () =
   test("dépôt PDF image par véritable glisser-déposer (simulation dragenter/dragover/drop avec DataTransfer natif dans vrai navigateur), OCR, recherche, SHA obligatoire", async ({
     page,
   }, testInfo) => {
+    if (!MODE_LIVE) {
+      test.skip(
+        true,
+        "téléchargements source et pièce : requiert SEAMTECH_E2E_DATABASE_URL et un approbateur nominatif",
+      )
+      return
+    }
     const ocrObligatoire = process.env.SEAMTECH_OCR_OBLIGATOIRE === "1"
     try {
       execSync("which tesseract", { stdio: "ignore" })
@@ -291,7 +321,7 @@ test.describe("Scan navigateur → OCR → Recherche → Téléchargement", () =
 
     console.log(`PDF généré (drag-drop): ${pdfPath} sha=${originalSha} uniq=${uniq}`)
 
-    await signIn(page)
+    await signInWith(page, APPROBATEUR)
 
     await page.getByRole("button", { name: "Recherche avancée" }).click()
     await expect(page.getByText("Importer un dossier").first()).toBeVisible({ timeout: 10000 })
@@ -446,7 +476,7 @@ test.describe("Scan navigateur → OCR → Recherche → Téléchargement", () =
   })
 
   test("cas d'erreur : PDF invalide — contrat : échec signalé avec issue explicite, pas de fiche inventée", async ({ page }) => {
-    await signIn(page)
+    await seConnecterCasErreur(page)
     await page.getByRole("button", { name: "Recherche avancée" }).click()
     await expect(page.getByText("Importer un dossier").first()).toBeVisible({ timeout: 10000 })
 
@@ -582,7 +612,7 @@ test.describe("Scan navigateur → OCR → Recherche → Téléchargement", () =
   test("cas d'erreur : fichier sans texte exploitable — contrat : conservé sans extraction, pas de faux texte, issue explicite", async ({
     page,
   }) => {
-    await signIn(page)
+    await seConnecterCasErreur(page)
     await page.getByRole("button", { name: "Recherche avancée" }).click()
     await expect(page.getByText("Importer un dossier").first()).toBeVisible({ timeout: 10000 })
 

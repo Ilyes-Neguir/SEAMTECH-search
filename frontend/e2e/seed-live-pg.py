@@ -232,26 +232,70 @@ def semer_doublon(idx) -> None:
 
 
 def semer_comptes(idx) -> None:
-    """Crée les deux comptes nominatifs de l'e2e (Lot L.2).
+    """Crée/normalise les comptes nominatifs canoniques de l'e2e (Lot 1).
 
-    Un opérateur et un administrateur, avec des mots de passe connus du test :
-    les specs peuvent alors prouver les règles réelles — un opérateur reçoit 403
-    sur la gestion des comptes, un administrateur passe — sans jamais dépendre du
-    compte de secours partagé.
+    L'ancien identifiant ``e2e-operateur`` est conservé comme alias historique,
+    mais son rôle stocké est ``approbateur`` : il corrigeait et validait déjà.
+    Deux approbateurs distincts permettent de prouver la concurrence métier et
+    l'interdiction d'auto-approbation sans utiliser l'admin comme décideur.
+
+    Au rejeu, les comptes existants sont remis actifs, au rôle attendu et sans
+    changement de mot de passe forcé : un seed ne doit pas dépendre de l'état
+    laissé par un run précédent.
     """
     from seamtech_search.comptes import creer_utilisateur, lister_utilisateurs
 
-    operateur = os.environ.get("SEAMTECH_E2E_OPERATEUR_PASSWORD", "e2e-operateur-password")
-    admin = os.environ.get("SEAMTECH_E2E_ADMIN_PASSWORD", "e2e-admin-password")
+    comptes = (
+        (
+            "e2e-operateur",
+            "Approbateur e2e",
+            "approbateur",
+            os.environ.get("SEAMTECH_E2E_OPERATEUR_PASSWORD", "e2e-operateur-password"),
+        ),
+        (
+            "e2e-admin",
+            "Administrateur e2e",
+            "admin",
+            os.environ.get("SEAMTECH_E2E_ADMIN_PASSWORD", "e2e-admin-password"),
+        ),
+        (
+            "e2e-utilisateur",
+            "Utilisateur e2e",
+            "utilisateur",
+            os.environ.get("SEAMTECH_E2E_UTILISATEUR_PASSWORD", "e2e-utilisateur-password"),
+        ),
+        (
+            "e2e-lecture",
+            "Lecture e2e",
+            "lecture",
+            os.environ.get("SEAMTECH_E2E_LECTURE_PASSWORD", "e2e-lecture-password"),
+        ),
+        (
+            "e2e-approbateur-2",
+            "Second approbateur e2e",
+            "approbateur",
+            os.environ.get("SEAMTECH_E2E_APPROBATEUR2_PASSWORD", "e2e-approbateur2-password"),
+        ),
+    )
     existants = {compte["identifiant"] for compte in lister_utilisateurs(idx)}
-    for identifiant, nom, role, mot_de_passe in (
-        ("e2e-operateur", "Opérateur e2e", "operateur", operateur),
-        ("e2e-admin", "Administrateur e2e", "administrateur", admin),
-    ):
-        if identifiant in existants:
-            continue
-        creer_utilisateur(idx, identifiant, nom, mot_de_passe, role)
-        print(f"Seed e2e : compte nominatif « {identifiant} » ({role}) créé.", file=sys.stderr)
+    for identifiant, nom, role, mot_de_passe in comptes:
+        if identifiant not in existants:
+            creer_utilisateur(
+                idx,
+                identifiant,
+                nom,
+                mot_de_passe,
+                role,
+                doit_changer_mot_de_passe=False,
+            )
+            print(f"Seed e2e : compte nominatif « {identifiant} » ({role}) créé.", file=sys.stderr)
+        with idx.connect() as connexion:
+            with connexion.cursor() as curseur:
+                curseur.execute(
+                    "UPDATE utilisateur SET role = %s, actif = true, doit_changer_mot_de_passe = false "
+                    "WHERE identifiant = %s",
+                    (role, identifiant),
+                )
 
 
 def main() -> None:

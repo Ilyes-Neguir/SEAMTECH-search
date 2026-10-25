@@ -1,9 +1,9 @@
 import { expect, test, type Locator, type Page } from "@playwright/test"
-import { signIn } from "./helpers"
+import { APPROBATEUR, signInWith } from "./helpers"
 
 /** Ouvre /validation et attend la file (au moins une fiche). */
 async function ouvrirFile(page: Page): Promise<Locator> {
-  await signIn(page)
+  await signInWith(page, APPROBATEUR)
   await page.goto("/validation")
   const file = page.getByTestId("file-validation")
   await expect(file).toBeVisible()
@@ -97,7 +97,7 @@ test.describe("validation de bout en bout", () => {
   })
 
   test("V confirme les anomalies; R + Entrée rejette et affiche le chrono local", async ({ page }) => {
-    await signIn(page)
+    await signInWith(page, APPROBATEUR)
     let validationEnvoyee = false
     let rejetEnregistre = false
     await page.route("**/api/validation/file**", (route) => route.fulfill({
@@ -168,7 +168,7 @@ test.describe("validation de bout en bout", () => {
   })
 
   test("la vraie fiche 7792-SO : parcours machine complet (< 2 min)", async ({ page }) => {
-    await signIn(page)
+    await signInWith(page, APPROBATEUR)
     // Chrono du PARCOURS MACHINE COMPLET — correction de l'audit indépendant
     // du 22/09 : la fiche 7792-SO est AUTO-SÉLECTIONNÉE à l'arrivée sur la
     // page (validation-app.tsx sélectionne la première de la file, triée par

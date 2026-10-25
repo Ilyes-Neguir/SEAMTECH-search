@@ -1,5 +1,11 @@
 import { test, expect, request as pwRequest } from "@playwright/test"
-import { ADMIN, OPERATEUR, UI_PASSWORD, csrfHeadersForRequestContext } from "./helpers"
+import {
+  ADMIN,
+  APPROBATEUR,
+  UI_PASSWORD,
+  UTILISATEUR,
+  csrfHeadersForRequestContext,
+} from "./helpers"
 
 /**
  * Regression coverage for audit issue #5 (Option B).
@@ -33,6 +39,14 @@ const GATED_ROUTES: Array<{ name: string; method: "GET" | "POST" | "PATCH"; path
   { name: "import cancel", method: "POST", path: "/api/imports/does-not-exist/cancel" },
   { name: "import retry", method: "POST", path: "/api/imports/does-not-exist/retry" },
   { name: "import artifact", method: "GET", path: "/api/imports/does-not-exist/artifacts/report_pdf" },
+  { name: "approvals list", method: "GET", path: "/api/approvals" },
+  { name: "approval creation", method: "POST", path: "/api/approvals", data: { type_demande: "suppression" } },
+  { name: "approval detail", method: "GET", path: "/api/approvals/1" },
+  { name: "approval decision", method: "POST", path: "/api/approvals/1/decide", data: { decision: "approuver" } },
+  { name: "approval cancellation", method: "POST", path: "/api/approvals/1/annuler", data: {} },
+  { name: "notifications", method: "GET", path: "/api/notifications" },
+  { name: "notifications read all", method: "POST", path: "/api/notifications/tout-lire", data: {} },
+  { name: "notification read", method: "POST", path: "/api/notifications/1/lu", data: {} },
 ]
 
 async function anonymousContext() {
@@ -111,7 +125,13 @@ test.describe("Authentication gate (audit issue #5)", () => {
 
       const session = await context.fetch("/api/auth/session", { failOnStatusCode: false })
       expect(session.status()).toBe(200)
-      expect(await session.json()).toMatchObject({ authenticated: true, configured: true })
+      expect(await session.json()).toMatchObject({
+        authenticated: true,
+        configured: true,
+        identifiant: "secours",
+        mode: "secours",
+        role: "admin",
+      })
     } finally {
       await context.dispose()
     }
@@ -217,13 +237,14 @@ test.describe("Authentication gate (audit issue #5)", () => {
 })
 
 // ---------------------------------------------------------------------------
-// Lot L.2 — comptes nominatifs (« qui a validé quoi »).
+// Comptes nominatifs (« qui a fait quoi »), canonisés par le Lot 1.
 //
-// Ces tests portent sur la couche live (PostgreSQL) : les comptes e2e-operateur
-// et e2e-admin sont créés par e2e/seed-live-pg.py, comme des comptes réels.
+// Ces tests portent sur la couche live (PostgreSQL) : les cinq comptes e2e
+// des rôles canoniques sont créés par e2e/seed-live-pg.py, comme des comptes
+// réels. L'identifiant historique e2e-operateur porte le rôle approbateur.
 // ---------------------------------------------------------------------------
 
-test.describe("Comptes nominatifs (Lot L.2)", () => {
+test.describe("Comptes nominatifs (rôles canoniques)", () => {
   test.skip(!process.env.SEAMTECH_E2E_DATABASE_URL, "e2e live : requiert SEAMTECH_E2E_DATABASE_URL (PostgreSQL)")
 
   test("la connexion nominative renvoie l'identité et pose le cookie httpOnly", async () => {
@@ -231,12 +252,17 @@ test.describe("Comptes nominatifs (Lot L.2)", () => {
     try {
       const login = await context.fetch("/api/auth/login", {
         method: "POST",
-        data: { identifiant: OPERATEUR.identifiant, mot_de_passe: OPERATEUR.motDePasse },
+        data: { identifiant: APPROBATEUR.identifiant, mot_de_passe: APPROBATEUR.motDePasse },
         failOnStatusCode: false,
       })
       expect(login.status()).toBe(200)
       const corps = await login.json()
-      expect(corps).toMatchObject({ ok: true, mode: "nominatif", identifiant: OPERATEUR.identifiant, role: "operateur" })
+      expect(corps).toMatchObject({
+        ok: true,
+        mode: "nominatif",
+        identifiant: APPROBATEUR.identifiant,
+        role: "approbateur",
+      })
 
       const setCookie = login.headers()["set-cookie"] ?? ""
       expect(setCookie).toMatch(/seamtech_session=/)
@@ -248,7 +274,11 @@ test.describe("Comptes nominatifs (Lot L.2)", () => {
       const session = await context.fetch("/api/auth/session", { failOnStatusCode: false })
       expect(session.status()).toBe(200)
       const etat = await session.json()
-      expect(etat).toMatchObject({ authenticated: true, identifiant: OPERATEUR.identifiant, role: "operateur" })
+      expect(etat).toMatchObject({
+        authenticated: true,
+        identifiant: APPROBATEUR.identifiant,
+        role: "approbateur",
+      })
       expect(JSON.stringify(etat)).not.toMatch(/scrypt\$/)
       expect(etat.jeton_session).toBeUndefined()
     } finally {
@@ -261,7 +291,7 @@ test.describe("Comptes nominatifs (Lot L.2)", () => {
     try {
       const response = await context.fetch("/api/auth/login", {
         method: "POST",
-        data: { identifiant: OPERATEUR.identifiant, mot_de_passe: `${OPERATEUR.motDePasse}-faux` },
+        data: { identifiant: APPROBATEUR.identifiant, mot_de_passe: `${APPROBATEUR.motDePasse}-faux` },
         failOnStatusCode: false,
       })
       expect(response.status()).toBe(401)
@@ -275,18 +305,18 @@ test.describe("Comptes nominatifs (Lot L.2)", () => {
     }
   })
 
-  test("un opérateur reçoit 403 sur la gestion des comptes, un administrateur 200", async () => {
-    const operateur = await anonymousContext()
+  test("un utilisateur reçoit 403 sur la gestion des comptes, un admin 200", async () => {
+    const utilisateur = await anonymousContext()
     const admin = await anonymousContext()
     try {
-      await operateur.fetch("/api/auth/login", {
+      await utilisateur.fetch("/api/auth/login", {
         method: "POST",
-        data: { identifiant: OPERATEUR.identifiant, mot_de_passe: OPERATEUR.motDePasse },
+        data: { identifiant: UTILISATEUR.identifiant, mot_de_passe: UTILISATEUR.motDePasse },
         failOnStatusCode: false,
       })
-      const refus = await operateur.fetch("/api/auth/utilisateurs", { failOnStatusCode: false })
+      const refus = await utilisateur.fetch("/api/auth/utilisateurs", { failOnStatusCode: false })
       expect(refus.status()).toBe(403)
-      expect((await refus.json()).detail).toMatch(/administrateur/i)
+      expect((await refus.json()).detail).toMatch(/admin/i)
 
       await admin.fetch("/api/auth/login", {
         method: "POST",
@@ -297,12 +327,21 @@ test.describe("Comptes nominatifs (Lot L.2)", () => {
       expect(liste.status()).toBe(200)
       const comptes = await liste.json()
       expect(comptes.map((c: { identifiant: string }) => c.identifiant)).toEqual(
-        expect.arrayContaining([OPERATEUR.identifiant, ADMIN.identifiant]),
+        expect.arrayContaining([APPROBATEUR.identifiant, ADMIN.identifiant, UTILISATEUR.identifiant]),
       )
+      expect(comptes.find((c: { identifiant: string }) => c.identifiant === APPROBATEUR.identifiant)).toMatchObject({
+        role: "approbateur",
+      })
+      expect(comptes.find((c: { identifiant: string }) => c.identifiant === ADMIN.identifiant)).toMatchObject({
+        role: "admin",
+      })
+      expect(comptes.find((c: { identifiant: string }) => c.identifiant === UTILISATEUR.identifiant)).toMatchObject({
+        role: "utilisateur",
+      })
       // Jamais d'empreinte ni de mot de passe dans la liste.
       expect(JSON.stringify(comptes)).not.toMatch(/scrypt\$/)
     } finally {
-      await operateur.dispose()
+      await utilisateur.dispose()
       await admin.dispose()
     }
   })
@@ -312,7 +351,7 @@ test.describe("Comptes nominatifs (Lot L.2)", () => {
     try {
       const login = await context.fetch("/api/auth/login", {
         method: "POST",
-        data: { identifiant: OPERATEUR.identifiant, mot_de_passe: OPERATEUR.motDePasse },
+        data: { identifiant: APPROBATEUR.identifiant, mot_de_passe: APPROBATEUR.motDePasse },
         failOnStatusCode: false,
       })
       expect(login.status()).toBe(200)

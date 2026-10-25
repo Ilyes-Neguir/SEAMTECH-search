@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test"
-import { signIn } from "./helpers"
+import { APPROBATEUR, signInWith } from "./helpers"
 
 /**
  * Lot L.1 — le bandeau de doublon, vérifié À L'ÉCRAN (correctif C.2).
@@ -11,7 +11,7 @@ import { signIn } from "./helpers"
  *     PUIS ajoute la fiche 7792-SO-BIS, deuxième fiche rattachée au MÊME PDF
  *     (même chemin, même empreinte SHA-256), et lance le scan propositif —
  *     le lien exact existe donc vraiment en base ;
- *   * le bandeau doit être VISIBLE avant toute action de l'opérateur : c'est
+ *   * le bandeau doit être VISIBLE avant toute action de l'approbateur : c'est
  *     tout l'intérêt du lot, voir le doublon AVANT de valider ;
  *   * aucune commande de fusion ne doit exister : la décision reste humaine.
  *
@@ -28,7 +28,7 @@ test.describe("bandeau de doublon avant validation", () => {
   test.skip(!process.env.SEAMTECH_E2E_DATABASE_URL, "e2e live : requiert SEAMTECH_E2E_DATABASE_URL (PostgreSQL)")
 
   test("le doublon exact est visible AVANT toute validation", async ({ page }) => {
-    await signIn(page)
+    await signInWith(page, APPROBATEUR)
     await page.goto("/validation")
 
     const file = page.getByTestId("file-validation")
@@ -54,8 +54,8 @@ test.describe("bandeau de doublon avant validation", () => {
     await expect(page.getByTestId("bandeau-doublon").first()).toContainText("Doublon exact de")
   })
 
-  test("aucune commande de fusion n'est proposée à l'opérateur", async ({ page }) => {
-    await signIn(page)
+  test("aucune commande de fusion n'est proposée à l'approbateur", async ({ page }) => {
+    await signInWith(page, APPROBATEUR)
     await page.goto("/validation")
     await expect(page.getByTestId("file-validation")).toBeVisible()
 
