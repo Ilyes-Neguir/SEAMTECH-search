@@ -1,4 +1,4 @@
-"""Schéma métier « fiche technique » — migrations 006 à 027 (Lots A → Lot 1).
+"""Schéma métier « fiche technique » — migrations 006 à 028 (Lots A → Lot 3a).
 
 DÉCISION DE COUCHE ACTÉE (plan v3.0 §17.1) : la couche métier est
 **PostgreSQL uniquement**. Elle s'appuie sur pgvector, pg_trgm, les index GIN,
@@ -26,7 +26,7 @@ from __future__ import annotations
 from typing import Any
 
 # Version du schéma métier — incrémentée à chaque nouvelle migration.
-VERSION_SCHEMA_METIER = "027_roles_approbations"
+VERSION_SCHEMA_METIER = "028_sail_extractions"
 
 # Marqueur injecté par le code au moment de la migration (constat 1 de revue) :
 # le nom de la configuration de recherche effective — 'seamtech_unaccent' ou
@@ -98,6 +98,10 @@ TABLES_METIER: tuple[str, ...] = (
     # la notification est une ligne PostgreSQL relue par l'interface locale.
     "approval_requests",
     "in_app_notifications",
+    # 028 — Lot 3a : extraction de voile normalisée et traçable. Le modèle de
+    # bateau y reste un libellé BRUT non résolu ; la résolution vers le
+    # référentiel canonique appartient au Lot 3b.
+    "sail_extractions",
 )
 
 SQL_006_FICHE_TECHNIQUE = """
@@ -1859,6 +1863,93 @@ COMMENT ON TABLE in_app_notifications IS
     'Notifications applicatives locales du Lot 1, sans service externe.';
 """
 
+# 028 — Lot 3a : extraction structurée d'une voile depuis son PDF.
+#
+# ``sail_extractions`` est la projection normalisée et requêtable d'une
+# extraction par gabarit : dimensions canoniques (m, m², kg), matériaux,
+# provenance champ par champ (valeur brute/normalisée, méthode, confiance,
+# page, zone) et anomalies de plausibilité. Elle ne remplace ni la fiche ni
+# ``fiche_champ_extrait`` : elle donne aux lots suivants une forme stable de
+# voile, indépendante des tables filles historiques.
+#
+# Le libellé de bateau est volontairement BRUT et non résolu dans ce lot.
+# La résolution vers le référentiel canonique et les corrections humaines
+# appartiennent au Lot 3b ; aucune fusion silencieuse ne doit donc être
+# déduite de cette table.
+SQL_028_SAIL_EXTRACTIONS = """
+CREATE TABLE IF NOT EXISTS sail_extractions (
+    id_extraction       BIGSERIAL PRIMARY KEY,
+    cle_idempotence     TEXT NOT NULL UNIQUE
+                        CHECK (char_length(btrim(cle_idempotence)) BETWEEN 1 AND 240),
+    id_fiche            BIGINT REFERENCES fiche(id_fiche) ON DELETE SET NULL,
+    id_document         BIGINT REFERENCES documents(id) ON DELETE SET NULL,
+    code_fiche          TEXT,
+    nom_fichier_source  TEXT,
+    empreinte_sha256    CHAR(64)
+                        CHECK (empreinte_sha256 IS NULL OR empreinte_sha256 ~ '^[0-9a-f]{64}$'),
+    gabarit_code        TEXT,
+    gabarit_version     INTEGER CHECK (gabarit_version IS NULL OR gabarit_version > 0),
+    version_extracteur  TEXT NOT NULL CHECK (char_length(btrim(version_extracteur)) BETWEEN 1 AND 80),
+    methode_principale  TEXT NOT NULL CHECK (
+        methode_principale IN ('gabarit', 'gabarit_inconnu', 'ocr', 'fiche_extraite', 'inconnue')
+    ),
+    type_voile          TEXT,
+    gamme               TEXT,
+    designation_brute   TEXT,
+    modele_bateau_brut  TEXT,
+    taille_bateau_brute TEXT,
+    slu_m               NUMERIC(10, 3) CHECK (slu_m IS NULL OR slu_m > 0),
+    sle_m               NUMERIC(10, 3) CHECK (sle_m IS NULL OR sle_m > 0),
+    sf_m                NUMERIC(10, 3) CHECK (sf_m IS NULL OR sf_m > 0),
+    shw_m               NUMERIC(10, 3) CHECK (shw_m IS NULL OR shw_m > 0),
+    spa_m2              NUMERIC(12, 3) CHECK (spa_m2 IS NULL OR spa_m2 > 0),
+    tetiere_m           NUMERIC(10, 3) CHECK (tetiere_m IS NULL OR tetiere_m > 0),
+    poids_kg            NUMERIC(10, 3) CHECK (poids_kg IS NULL OR poids_kg > 0),
+    materiaux           JSONB NOT NULL DEFAULT '[]'::jsonb
+                        CHECK (jsonb_typeof(materiaux) = 'array'),
+    champs              JSONB NOT NULL DEFAULT '[]'::jsonb
+                        CHECK (jsonb_typeof(champs) = 'array'),
+    anomalies           JSONB NOT NULL DEFAULT '[]'::jsonb
+                        CHECK (jsonb_typeof(anomalies) = 'array'),
+    score_qualite       NUMERIC(5, 4)
+                        CHECK (score_qualite IS NULL OR score_qualite BETWEEN 0 AND 1),
+    confiance_moyenne   NUMERIC(5, 4)
+                        CHECK (confiance_moyenne IS NULL OR confiance_moyenne BETWEEN 0 AND 1),
+    statut_extraction   TEXT NOT NULL CHECK (
+        statut_extraction IN ('complete', 'partielle', 'a_reprendre')
+    ),
+    statut_plausibilite TEXT NOT NULL CHECK (
+        statut_plausibilite IN ('plausible', 'a_verifier', 'implausible', 'indeterminee')
+    ),
+    extrait_le          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    cree_le             TIMESTAMPTZ NOT NULL DEFAULT now(),
+    maj_le              TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_sail_extractions_fiche
+    ON sail_extractions (id_fiche, extrait_le DESC, id_extraction DESC)
+    WHERE id_fiche IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_sail_extractions_document
+    ON sail_extractions (id_document, extrait_le DESC, id_extraction DESC)
+    WHERE id_document IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_sail_extractions_empreinte
+    ON sail_extractions (empreinte_sha256)
+    WHERE empreinte_sha256 IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_sail_extractions_code
+    ON sail_extractions (code_fiche)
+    WHERE code_fiche IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_sail_extractions_a_reprendre
+    ON sail_extractions (statut_extraction, statut_plausibilite, cree_le, id_extraction)
+    WHERE statut_extraction <> 'complete' OR statut_plausibilite <> 'plausible';
+
+COMMENT ON TABLE sail_extractions IS
+    'Extractions de voiles normalisées du Lot 3a : dimensions canoniques, matériaux, provenance et plausibilité. Le modèle de bateau reste brut et non résolu.';
+COMMENT ON COLUMN sail_extractions.modele_bateau_brut IS
+    'Libellé de bateau tel que lu dans le PDF, sans résolution canonique (Lot 3b).';
+COMMENT ON COLUMN sail_extractions.champs IS
+    'Provenance champ par champ : valeurs brute et canonique, unités, méthode, confiance, page et zone.';
+"""
+
 MIGRATIONS_METIER: tuple[tuple[str, str], ...] = (
     ("006_fiche_technique", SQL_006_FICHE_TECHNIQUE),
     ("007_recherche_index", SQL_007_RECHERCHE_INDEX),
@@ -1882,6 +1973,7 @@ MIGRATIONS_METIER: tuple[tuple[str, str], ...] = (
     ("025_audit_logs", SQL_025_AUDIT_LOGS),
     ("026_boat_models_aliases", SQL_026_BOAT_MODELS_ALIASES),
     ("027_roles_approbations", SQL_027_ROLES_APPROBATIONS),
+    ("028_sail_extractions", SQL_028_SAIL_EXTRACTIONS),
 )
 
 

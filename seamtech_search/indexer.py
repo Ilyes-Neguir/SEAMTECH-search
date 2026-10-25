@@ -1145,6 +1145,28 @@ class SearchIndex:
             "PostgreSQL révoquées, tables d'approbation et de notification créées."
         )
 
+    def _migration_028_sail_extractions(self, connection: Any) -> None:
+        """Extractions de voiles normalisées et traçables (Lot 3a).
+
+        PostgreSQL : crée ``sail_extractions`` sans réécrire les fiches ni
+        résoudre les modèles de bateaux. La table est remplie par les
+        écritures/dépôts ultérieurs et par l'outil d'or en mode explicite
+        d'enregistrement. SQLite : no-op enregistré, comme le reste de la
+        couche métier.
+        """
+        if not self.is_postgres:
+            logger.warning(
+                "Migration 028_sail_extractions ignorée : la couche métier est PostgreSQL uniquement — "
+                "conséquence : SQLite conserve uniquement la recherche de fichiers héritée."
+            )
+            return
+        with connection.cursor() as cursor:
+            cursor.execute(schema_metier.SQL_028_SAIL_EXTRACTIONS)
+        logger.info(
+            "Migration 028_sail_extractions : table des extractions de voiles créée "
+            "(modèles de bateaux toujours bruts et non résolus)."
+        )
+
     def run_migrations(self) -> None:
         """Run pending schema migrations once at startup."""
         with self.connect() as connection:
@@ -1217,6 +1239,10 @@ class SearchIndex:
                 # VERSION_SCHEMA_METIER vaut 027 et une migration oubliée
                 # ferait échouer sauvegarde/restauration.
                 ("027_roles_approbations", self._migration_027_roles_approbations),
+                # Lot 3a — extraction PDF structurée des voiles. Enregistrée
+                # comme les autres : VERSION_SCHEMA_METIER vaut 028 et une
+                # migration oubliée ferait échouer sauvegarde/restauration.
+                ("028_sail_extractions", self._migration_028_sail_extractions),
             ]
 
             for version, func in migrations:

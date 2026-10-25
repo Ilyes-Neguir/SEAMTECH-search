@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from seamtech_search.extractions_voile import lier_extraction_voile_document_curseur
 from seamtech_search.fiches.extraction import extraire_fiche
 from seamtech_search.fiches.gabarits import GabaritDef, charger_gabarits
 from seamtech_search.fiches.persistance import ecrire_fiche_resultat
@@ -401,6 +402,17 @@ def deposer_dossier(index: Any, dossier: Path, gabarits: list[GabaritDef] | None
                 )
                 id_document_pdf = cursor.fetchone()[0]
                 cursor.execute(_SQL_DOCUMENT_VECTOR, (id_document_pdf,))
+                # Lot 3a : l'extraction écrite avec la fiche reçoit, dans la
+                # même transaction de dépôt, l'identifiant du PDF source et
+                # son empreinte SHA-256. Aucun chemin d'archive n'est copié
+                # dans sail_extractions.
+                lier_extraction_voile_document_curseur(
+                    cursor,
+                    id_fiche=id_fiche,
+                    id_document=int(id_document_pdf),
+                    empreinte_sha256=empreinte,
+                    nom_fichier_source=pdf_fiche.name,
+                )
 
                 for piece in plan.pieces:
                     chemin_piece = Path(piece.chemin)

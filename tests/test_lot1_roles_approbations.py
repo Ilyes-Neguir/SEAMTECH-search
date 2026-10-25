@@ -39,6 +39,7 @@ from seamtech_search.comptes.comptes import (
 )
 from seamtech_search.config import AppConfig
 from seamtech_search.schema_metier import (
+    MIGRATIONS_METIER,
     SQL_027_ROLES_APPROBATIONS,
     TABLES_METIER,
     VERSION_SCHEMA_METIER,
@@ -68,10 +69,13 @@ def test_vocabulaire_des_roles_et_defauts_fermes(tmp_path: Path) -> None:
 
 
 def test_migration_027_version_tables_et_conversion_des_anciens_roles() -> None:
-    assert VERSION_SCHEMA_METIER == "027_roles_approbations"
+    # La migration 027 reste déclarée dans la séquence ; la version
+    # courante a depuis avancé avec les lots suivants.
+    assert dict(MIGRATIONS_METIER)["027_roles_approbations"] is SQL_027_ROLES_APPROBATIONS
+    assert VERSION_SCHEMA_METIER == MIGRATIONS_METIER[-1][0]
     assert "approval_requests" in TABLES_METIER
     assert "in_app_notifications" in TABLES_METIER
-    assert len(TABLES_METIER) == 40
+    assert len(TABLES_METIER) >= 40
 
     sql = SQL_027_ROLES_APPROBATIONS
     # Conversion préservant les capacités historiques : un ancien opérateur
