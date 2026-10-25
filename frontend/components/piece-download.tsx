@@ -49,7 +49,7 @@ export function PieceDownload({
   })
 
   const href = `/api/pieces/${encodeURIComponent(piece.id)}/telecharger`
-  const nomAccessible = ariaLabel ?? `Télécharger ${piece.name}`
+  const nomAccessible = ariaLabel ?? label ?? `Télécharger ${piece.name}`
 
   function arreter(event: MouseEvent) {
     if (stopPropagation) event.stopPropagation()
