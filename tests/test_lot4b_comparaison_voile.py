@@ -35,8 +35,8 @@ from seamtech_search.comparaison_voile import (
     DIMENSIONS_COMPAREES,
     ComparaisonRefusee,
     candidats_comparaison,
-    comparer_extractions,
     comparaison_entre,
+    comparer_extractions,
     normaliser_type_voile,
 )
 from seamtech_search.comptes import creer_utilisateur, ouvrir_session
@@ -120,8 +120,9 @@ def test_deltas_dimensions_en_cm_et_pourcentages() -> None:
 
     synthese = comparaison["synthese"]
     assert synthese["dimensions_communes"] == 6
-    assert synthese["ecart_max_champ"] == "slu_m"
-    assert synthese["ecart_max_pct"] == pytest.approx(24.24, abs=0.01)
+    # SF : (3,90 − 3,08) / 3,08 = +26,62 % — plus que la SLU (+24,24 %).
+    assert synthese["ecart_max_champ"] == "sf_m"
+    assert synthese["ecart_max_pct"] == pytest.approx(26.62, abs=0.01)
 
 
 def test_comparable_exige_meme_modele_canonique_et_meme_type() -> None:

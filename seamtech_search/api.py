@@ -1723,6 +1723,13 @@ def create_app(config: AppConfig) -> FastAPI:
 
     enregistrer_routes_extractions_voile(app, index, config, _require_auth)
 
+    # Lot 4b (Fonction A) : comparaison de voiles bloc par bloc sur les
+    # valeurs vérifiées du Lot 3b — lecture seule, session nominative.
+    # Le navigateur passe par le relais Next.js /api/comparaison-voiles.
+    from seamtech_search.comparaison_voile_routes import enregistrer_routes_comparaison_voile
+
+    enregistrer_routes_comparaison_voile(app, index, config, _require_auth)
+
     if optionnels_actifs:
         from seamtech_search.ml.routes import enregistrer_routes_ml
 
