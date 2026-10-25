@@ -276,8 +276,9 @@ c'est ce qui rend les en-têtes d'attribution dignes de foi.
 | `POST /auth/deconnexion-tout` | « Déconnecter tous mes appareils » : en-têtes de session vivante exigés, puis révocation PostgreSQL + Redis de **toutes** les sessions du compte, y compris l'appelante. |
 | `GET /auth/session` | En-têtes `X-SEAMTECH-SESSION` + `X-SEAMTECH-SESSION-JETON` → identité de la session. 401 si la session est expirée (absolue 8 h ou inactive 30 min par défaut), révoquée, absente du registre Redis, ou si le compte a été désactivé ; 503 si Redis exigé est injoignable (fail-closed). **Jamais** d'empreinte, de sel ni de jeton dans la réponse. |
 | `POST /auth/mot-de-passe` | Changement par l'intéressé : `{"mot_de_passe_actuel", "nouveau_mot_de_passe"}`. Éteint `doit_changer_mot_de_passe` et révoque toutes les sessions du compte. 401 si l'actuel est faux. |
-| `GET /auth/utilisateurs` | Liste des comptes : `identifiant`, `nom`, `role`, `actif`, dates, `mot_de_passe_defini` (booléen) — jamais l'empreinte. **403 si la session n'est pas `administrateur`**, 401 sans session. |
-| `POST /auth/utilisateurs` | Crée un compte (`identifiant`, `nom`, `role`, `mot_de_passe`). 403 pour un opérateur, 409 si l'identifiant existe, 422 si rôle inconnu. |
+| `GET /auth/utilisateurs` | Liste des comptes : `identifiant`, `nom`, `role`, `actif`, dates, `mot_de_passe_defini` (booléen) — jamais l'empreinte. **403 si la session n'est pas `admin`**, 401 sans session. |
+| `POST /auth/utilisateurs` | Crée un compte (`identifiant`, `nom`, `role`, `mot_de_passe`). `role` ∈ `admin|lecture|utilisateur|approbateur` (défaut sécurisé `lecture`). 403 hors session `admin`, 409 si l'identifiant existe, 422 si rôle inconnu. |
+| `POST /auth/utilisateurs/{identifiant}/role` | `admin` uniquement. Corps `{"role"}` ; change le rôle canonique **et révoque immédiatement toutes les sessions du compte cible** (PostgreSQL + Redis). 404 si inconnu, 422 si rôle inconnu. |
 | `POST /auth/utilisateurs/{identifiant}/desactiver` | `actif=false` ET révocation des sessions ouvertes (désactiver sans révoquer laisserait un cookie travailler). 404 si inconnu. **Aucune suppression** de compte ni d'historique. |
 | `POST /auth/utilisateurs/{identifiant}/mot-de-passe` | Réinitialise (changement imposé à la prochaine connexion) et révoque les sessions. |
 
@@ -294,10 +295,10 @@ en-tête `X-CSRF-Token`) sur toutes les mutations navigateur authentifiées.
 `X-SEAMTECH-UTILISATEUR` et `X-SEAMTECH-ROLE` depuis le cookie signé. Côté Python ces
 en-têtes ne sont honorés **que si `X-SEAMTECH-TOKEN` est valide sur la même requête** :
 une requête qui les porte sans le jeton de service reçoit **401** et la fiche n'est pas
-attribuée. Les routes de validation (`POST /fiches/{code}/corriger|valider|rejeter|rouvrir`,
-`POST /validation/lot`) prennent l'identité de cette session ; le champ `utilisateur` du
-corps de requête n'est plus qu'un **repli d'outillage** (scripts, tests), jamais
-prioritaire. L'écran ne l'envoie plus : une seule source de vérité.
+attribuée. Les routes métier humaines (`POST /fiches/{code}/corriger|valider|rejeter|rouvrir`,
+`POST /validation/lot`, approbations) exigent une session nominative vérifiée et prennent
+l'identité de cette session ; le champ `utilisateur` du corps ne peut ni attribuer ni
+autoriser une décision humaine. Une seule source de vérité : la session serveur.
 
 **Concurrence entre postes (verrou optimiste, migration `021_revision_fiche`).** Une
 fiche porte un numéro de `revision` (entier ≥ 1), publié par `GET /fiches/{code}` et
@@ -338,22 +339,56 @@ liste les tentatives. Une connexion réussie (`action='connexion'`) remet le com
 aucune purge automatique n'est faite (on ne supprime jamais de données).
 
 **CLI** : `python -m seamtech_search.comptes.cli` (alias installé : `comptes`) —
-`creer --identifiant --nom --role operateur|administrateur`, `lister`, `desactiver`,
+`creer --identifiant --nom --role admin|lecture|utilisateur|approbateur`, `changer-role --identifiant --role`, `lister`, `desactiver`,
 `reinitialiser-mot-de-passe`, `sessions --identifiant`, `revoquer-session --id-session`,
 `verifier --identifiant`. Le mot de passe est **toujours lu sur STDIN, jamais en argument**
 (un mot de passe en argument finit dans l'historique du shell et dans `ps`).
 
 **Compte de secours (limite assumée)** : `SEAMTECH_UI_PASSWORD`, identifiant `secours`,
-rôle `administrateur`. Il n'existe PAS en base : sa session n'est donc ni révocable ni
-attribuable (`X-SEAMTECH-UTILISATEUR: secours`), et il sert uniquement à créer les premiers
-comptes nominatifs puis à dépanner. À désactiver (`SEAMTECH_UI_PASSWORD` vide) une fois les
-comptes nominatifs en place — dans ce cas le front refuse toute connexion et l'application
-n'est accessible que par les comptes nominatifs.
+rôle technique `admin`. Il n'existe PAS en base : sa session n'est donc ni révocable ni
+attribuable à un compte (`X-SEAMTECH-UTILISATEUR: secours`). Il peut administrer les
+comptes pour créer les premiers accès nominatifs et dépanner, mais **ne peut jamais**
+créer/décider une approbation, corriger/valider une fiche ni télécharger directement une
+pièce. À désactiver (`SEAMTECH_UI_PASSWORD` vide) une fois les comptes nominatifs en place.
 
 **Sécurité** : empreintes `scrypt$n=16384$r=8$p=1$<sel_b64>$<hash_b64>` (`hashlib.scrypt`,
 sel de 16 octets via `secrets`), vérification `hmac.compare_digest`, **bibliothèque standard
 uniquement** (aucune dépendance nouvelle). Les jetons de session ne sont stockés que par leur
 empreinte SHA-256 — un dump de la base ne permet pas de rejouer une session.
+
+## Quatre rôles, approbations et notifications (Lot 1)
+
+La migration `027_quatre_roles_approbations` rend canoniques les rôles
+`admin|lecture|utilisateur|approbateur` et ajoute `approval_requests` et
+`in_app_notifications`. Les anciens libellés sont convertis sans élévation
+silencieuse (`operateur → approbateur`, `administrateur → admin`, inconnu →
+`lecture`) et toutes les sessions vivantes sont révoquées pendant la migration.
+
+| Rôle | Périmètre serveur |
+|---|---|
+| `admin` | Technique et comptes uniquement ; ne crée ni ne décide d'approbation, ne corrige/valide pas les fiches et ne télécharge pas directement les pièces. |
+| `lecture` | Recherche, consultation et aperçu ; aucune demande, mutation ni téléchargement. |
+| `utilisateur` | Dépôts/imports autorisés, création et annulation de ses demandes, téléchargement seulement pendant une approbation valide. |
+| `approbateur` | Seul décideur ; corrige/valide/rejette/rouvre et télécharge directement les pièces. |
+
+| Route | Contrat |
+|---|---|
+| `POST /approvals` | Session nominative `utilisateur|approbateur`. `type_demande` ∈ `telechargement|modification|suppression`, `motif` obligatoire. Téléchargement : `id_piece` (+ `code_fiche` optionnel, vérifié). Modification : `code_fiche` + `modification={champ,valeur,revision}`. Suppression : `code_fiche` + `revision`. Retourne 201 ; doublon en attente = 409 ; pièce/fiche incohérentes = 422. |
+| `GET /approvals` | `vue=miennes` pour le demandeur ; `a_decider|file|toutes` réservées à `approbateur`. Filtres `statut`, `type_demande`, `code_fiche`, pagination bornée. |
+| `GET /approvals/{id}` | Demandeur ou approbateur ; toute autre identité reçoit 404 (anti-IDOR, existence non confirmée). |
+| `POST /approvals/{id}/decide` | `approbateur` nominatif uniquement. Corps `{"decision":"approuver|refuser","commentaire","revision_confirmee"?}`. Refus sans commentaire = 422 ; auto-approbation = 403 sauf `SEAMTECH_ALLOW_SELF_APPROVAL=true` explicitement assumé. |
+| `POST /approvals/{id}/annuler` | Demandeur uniquement, demande encore `en_attente` ; sinon 403/409. |
+| `GET /notifications` | Notifications du seul compte courant (`seulement_non_lues`, pagination). |
+| `POST /notifications/tout-lire` | Marque toutes les notifications du compte courant comme lues. |
+| `POST /notifications/{id}/lu` | Marque une notification du compte courant ; une notification d'autrui reçoit 404. |
+
+L'exécution est transactionnelle : une modification approuvée applique la valeur
+proposée après contrôle de révision et termine en `executee` ; une suppression
+approuvée est strictement logique (`supprimee`, aucun fichier ni historique
+effacé) ; un téléchargement approuvé autorise le demandeur, pour cette seule
+pièce, pendant 24 heures. Le premier GET réussi est horodaté ; HEAD/Range ne
+consomme pas l'autorisation. Chaque création notifie les approbateurs actifs et
+chaque décision notifie le demandeur dans la même transaction métier.
 
 ## Journal d'audit canonique et surfaces sensibles (Lot 0b)
 
