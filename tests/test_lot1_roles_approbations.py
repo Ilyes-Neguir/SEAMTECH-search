@@ -107,6 +107,13 @@ def monde_lot1(base_recherche: dict[str, Any], tmp_path: Path) -> dict[str, Any]
     chemin_pdf = archive / "fiche-lot1.pdf"
     contenu_pdf = b"%PDF-1.4\n% SEAMTECH Lot 1 synthetic approval fixture\n" + (b"0" * 2048)
     chemin_pdf.write_bytes(contenu_pdf)
+    # PDF « source seule » : ni documents.id_fiche ni pièce jointe moderne —
+    # uniquement fiche.fichier_source + une ancienne pièce jointe reliée par
+    # son chemin (id_document NULL). C'est la forme réelle mesurée par l'e2e
+    # sur 7792-SO (PDF visible dans la fiche, demande refusée 422).
+    chemin_pdf_source = archive / "source-seule-lot1.pdf"
+    contenu_pdf_source = b"%PDF-1.4\n% SEAMTECH Lot 1 source-only fixture\n" + (b"1" * 1024)
+    chemin_pdf_source.write_bytes(contenu_pdf_source)
 
     comptes: dict[str, dict[str, Any]] = {}
     for cle, identifiant, role in (
@@ -170,6 +177,38 @@ def monde_lot1(base_recherche: dict[str, Any], tmp_path: Path) -> dict[str, Any]
                     len(contenu_pdf),
                 ),
             )
+            id_fiche_suppression = int(base_recherche["fiches"][CODE_SUPPRESSION])
+            curseur.execute(
+                "INSERT INTO documents "
+                "(path_key, path, name, parent_path, extension, size, modified_at, is_dir, "
+                "content, search_vector, id_fiche, role, category, extraction_status) "
+                "VALUES (%s, %s, %s, %s, '.pdf', %s, %s, FALSE, '', ''::tsvector, NULL, "
+                "'fiche_pdf', 'analyzed', 'metadata') RETURNING id",
+                (
+                    os.path.normcase(str(chemin_pdf_source.resolve())),
+                    str(chemin_pdf_source.resolve()),
+                    chemin_pdf_source.name,
+                    str(archive.resolve()),
+                    len(contenu_pdf_source),
+                    time.time(),
+                ),
+            )
+            id_piece_source = int(curseur.fetchone()[0])
+            curseur.execute(
+                "UPDATE fiche SET fichier_source = %s WHERE id_fiche = %s",
+                (str(chemin_pdf_source.resolve()), id_fiche_suppression),
+            )
+            curseur.execute(
+                "INSERT INTO fiche_piece_jointe "
+                "(id_fiche, id_document, chemin, role, empreinte_sha256, taille_octets) "
+                "VALUES (%s, NULL, %s, 'fiche', %s, %s)",
+                (
+                    id_fiche_suppression,
+                    str(chemin_pdf_source.resolve()),
+                    hashlib.sha256(contenu_pdf_source).hexdigest(),
+                    len(contenu_pdf_source),
+                ),
+            )
             curseur.execute("SELECT revision FROM fiche WHERE code = %s", (CODE_MODIFICATION,))
             revision = int(curseur.fetchone()[0])
             curseur.execute("SELECT revision FROM fiche WHERE code = %s", (CODE_SUPPRESSION,))
@@ -190,6 +229,9 @@ def monde_lot1(base_recherche: dict[str, Any], tmp_path: Path) -> dict[str, Any]
         "client": TestClient(create_app(config)),
         "comptes": comptes,
         "id_piece": id_piece,
+        "id_piece_source": id_piece_source,
+        "chemin_pdf_source": chemin_pdf_source,
+        "archive": archive,
         "revision": revision,
         "revision_suppression": revision_suppression,
         "contenu_pdf": contenu_pdf,
@@ -431,6 +473,102 @@ def test_telechargement_approuve_range_et_refus_des_autres_roles(
 
     direct = client.get(f"/pieces/{id_piece}/telecharger", headers=_entetes(comptes["approbateur"]))
     assert direct.status_code == 200
+
+
+@pytest.mark.postgres
+def test_pdf_source_seule_affiche_une_fois_et_reste_demandable(
+    monde_lot1: dict[str, Any],
+) -> None:
+    """Régression mesurée par l'e2e navigateur sur la vraie fiche 7792-SO.
+
+    Le PDF source d'un dépôt n'a ni ``documents.id_fiche`` ni pièce jointe
+    moderne : il est relié par le chemin (ancienne pièce jointe), par
+    ``fiche.fichier_source`` ou par la clé du lot de dépôt. Il doit donc
+    apparaître UNE fois dans la liste de la fiche (pas en double : source +
+    pièce jointe de même chemin) et rester demandable en téléchargement —
+    avant correction, la création répondait 422 « pièce non rattachée ».
+    """
+    client: TestClient = monde_lot1["client"]
+    comptes = monde_lot1["comptes"]
+    id_piece_source = int(monde_lot1["id_piece_source"])
+
+    pieces = client.get(
+        f"/fiches/{CODE_SUPPRESSION}/pieces",
+        headers=_entetes(comptes["utilisateur"]),
+    )
+    assert pieces.status_code == 200, pieces.text
+    lignes = [p for p in pieces.json()["pieces"] if int(p["id"]) == id_piece_source]
+    assert len(lignes) == 1, pieces.text
+    assert lignes[0]["is_primary_pdf"] is True
+    assert lignes[0]["empreinte_sha256"] == hashlib.sha256(
+        Path(monde_lot1["chemin_pdf_source"]).read_bytes()
+    ).hexdigest()
+
+    creee = client.post(
+        "/approvals",
+        headers=_entetes(comptes["utilisateur"]),
+        json={
+            "type_demande": "telechargement",
+            "code_fiche": CODE_SUPPRESSION,
+            "id_piece": id_piece_source,
+            "motif": "PDF source relié par son chemin, comme en production.",
+        },
+    )
+    assert creee.status_code == 201, creee.text
+    assert creee.json()["code_fiche"] == CODE_SUPPRESSION
+    assert int(creee.json()["id_piece"]) == id_piece_source
+
+    # Même exigence pour le lien par lot de dépôt seul (aucun autre lien).
+    archive = Path(monde_lot1["archive"])
+    chemin_lot = (archive / "source-par-lot.pdf").resolve()
+    index = monde_lot1["index"]
+    with index.connect() as connexion:
+        with connexion.cursor() as curseur:
+            curseur.execute(
+                "INSERT INTO documents "
+                "(path_key, path, name, parent_path, extension, size, modified_at, is_dir, "
+                "content, search_vector, id_fiche, role, category, extraction_status) "
+                "VALUES (%s, %s, %s, %s, '.pdf', 64, %s, FALSE, '', ''::tsvector, NULL, "
+                "'fiche_pdf', 'analyzed', 'metadata') RETURNING id",
+                (
+                    os.path.normcase(str(chemin_lot)),
+                    str(chemin_lot),
+                    chemin_lot.name,
+                    str(archive.resolve()),
+                    time.time(),
+                ),
+            )
+            id_piece_lot = int(curseur.fetchone()[0])
+            curseur.execute(
+                "INSERT INTO lot_import (dossier_racine, notes) VALUES (%s, %s) RETURNING id_lot",
+                (str(archive.resolve()), "régression Lot 1 : PDF source par lot"),
+            )
+            id_lot = int(curseur.fetchone()[0])
+            curseur.execute(
+                "INSERT INTO lot_dossier "
+                "(id_lot, chemin_dossier, cle_idempotence, statut, id_fiche, nb_pieces, traite_le) "
+                "VALUES (%s, %s, %s, 'traite', %s, 0, now())",
+                (
+                    id_lot,
+                    str(archive.resolve()),
+                    f"{os.path.normcase(str(chemin_lot))}|{'a' * 64}",
+                    int(monde_lot1["fiches"][CODE_SUPPRESSION]),
+                ),
+            )
+
+    creee_lot = client.post(
+        "/approvals",
+        headers=_entetes(comptes["utilisateur"]),
+        json={
+            "type_demande": "telechargement",
+            "code_fiche": CODE_SUPPRESSION,
+            "id_piece": id_piece_lot,
+            "motif": "PDF source relié uniquement par son lot de dépôt.",
+        },
+    )
+    assert creee_lot.status_code == 201, creee_lot.text
+    assert creee_lot.json()["code_fiche"] == CODE_SUPPRESSION
+    assert int(creee_lot.json()["id_piece"]) == id_piece_lot
 
 
 @pytest.mark.postgres

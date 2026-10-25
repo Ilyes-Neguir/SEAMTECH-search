@@ -1463,8 +1463,10 @@ def pieces_de_fiche(index: Any, code: str, config: Any | None = None) -> dict[st
             lignes_pieces = cursor.fetchall()
 
             pieces: list[dict[str, Any]] = []
+            ids_documents_vus: set[int] = set()
             if principal is not None:
                 id_document, nom, extension, taille, chemin, _object_key, _role = principal
+                ids_documents_vus.add(int(id_document))
                 pieces.append(
                     _piece_payload(
                         int(id_document),
@@ -1484,6 +1486,19 @@ def pieces_de_fiche(index: Any, code: str, config: Any | None = None) -> dict[st
                     if document is None:
                         continue
                     id_document, nom, extension, taille_doc, chemin_doc, _object_key, _role_doc = document
+                if int(id_document) in ids_documents_vus:
+                    # Le PDF source peut aussi exister comme fiche_piece_jointe
+                    # (cas réel semé pour les doublons exacts) : un même
+                    # document ne doit apparaître qu'UNE fois, sinon l'écran
+                    # rend deux contrôles pour le même id. L'empreinte de la
+                    # pièce jointe est conservée sur l'entrée déjà publiée.
+                    if empreinte is not None:
+                        for deja in pieces:
+                            if deja["id"] == int(id_document) and "empreinte_sha256" not in deja:
+                                deja["empreinte_sha256"] = str(empreinte)
+                                break
+                    continue
+                ids_documents_vus.add(int(id_document))
                 nom_piece = str(nom or Path(str(chemin_piece)).name)
                 pieces.append(
                     _piece_payload(

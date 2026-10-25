@@ -268,12 +268,50 @@ def _resoudre_piece(
     id_piece: int,
     code_fiche: str | None,
 ) -> tuple[int | None, str | None, str | None]:
+    # Une pièce affichée par /fiches/{code}/pieces doit pouvoir être demandée
+    # depuis ce même écran. Or le lien fiche↔document a plusieurs formes
+    # réelles, toutes déjà reconnues par pieces_de_fiche :
+    #   0. documents.id_fiche (lien direct moderne) ;
+    #   1. fiche_piece_jointe.id_document ;
+    #   2. ancienne pièce jointe sans id_document, reliée par son chemin ;
+    #   3. PDF principal d'un dépôt, relié par lot_dossier.cle_idempotence
+    #      (le dépôt ne crée pas de fiche_piece_jointe pour le PDF source) ;
+    #   4. fiche.fichier_source quand il contient le chemin du document.
+    # Ne reconnaître que (0)/(1) rendait le PDF source visible mais
+    # impossible à demander (422), ce que l'e2e Lot 1 a mesuré sur 7792-SO.
     curseur.execute(
-        "SELECT d.id, d.name, COALESCE(d.id_fiche, p.id_fiche), f.code, f.statut "
-        "FROM documents d "
-        "LEFT JOIN fiche_piece_jointe p ON p.id_document = d.id "
-        "LEFT JOIN fiche f ON f.id_fiche = COALESCE(d.id_fiche, p.id_fiche) "
-        "WHERE d.id = %s AND NOT d.is_dir ORDER BY f.id_fiche NULLS LAST",
+        "WITH piece AS ("
+        "  SELECT id, name, path, path_key, id_fiche FROM documents "
+        "  WHERE id = %s AND NOT is_dir"
+        "), liens AS ("
+        "  SELECT piece.id_fiche AS id_fiche, 0 AS priorite FROM piece "
+        "  WHERE piece.id_fiche IS NOT NULL "
+        "  UNION ALL "
+        "  SELECT p.id_fiche, 1 FROM piece "
+        "  JOIN fiche_piece_jointe p ON p.id_document = piece.id "
+        "  UNION ALL "
+        "  SELECT p.id_fiche, 2 FROM piece "
+        "  JOIN fiche_piece_jointe p ON p.id_document IS NULL "
+        "  AND (p.chemin = piece.path OR lower(btrim(p.chemin)) = lower(piece.path_key)) "
+        "  UNION ALL "
+        "  SELECT ld.id_fiche, 3 FROM piece "
+        "  JOIN lot_dossier ld ON ld.id_fiche IS NOT NULL "
+        "  AND ld.statut = 'traite' AND ld.cle_idempotence IS NOT NULL "
+        "  AND (split_part(ld.cle_idempotence, '|', 1) = piece.path "
+        "       OR split_part(ld.cle_idempotence, '|', 1) = piece.path_key "
+        "       OR lower(split_part(ld.cle_idempotence, '|', 1)) = lower(piece.path_key)) "
+        "  UNION ALL "
+        "  SELECT f.id_fiche, 4 FROM piece "
+        "  JOIN fiche f ON btrim(COALESCE(f.fichier_source, '')) <> '' "
+        "  AND (f.fichier_source = piece.path "
+        "       OR lower(btrim(f.fichier_source)) = lower(piece.path_key))"
+        ") "
+        "SELECT piece.id, piece.name, liens.id_fiche, f.code, f.statut, liens.priorite "
+        "FROM piece "
+        "LEFT JOIN liens ON TRUE "
+        "LEFT JOIN fiche f ON f.id_fiche = liens.id_fiche "
+        "ORDER BY CASE WHEN f.statut = 'supprimee' THEN 1 ELSE 0 END, "
+        "liens.priorite NULLS LAST, f.id_fiche NULLS LAST",
         (int(id_piece),),
     )
     lignes = curseur.fetchall()
