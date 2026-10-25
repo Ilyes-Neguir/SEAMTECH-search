@@ -1,4 +1,4 @@
-"""Schéma métier « fiche technique » — migrations 006 à 028 (Lots A → Lot 3a).
+"""Schéma métier « fiche technique » — migrations 006 à 029 (Lots A → Lot 3b).
 
 DÉCISION DE COUCHE ACTÉE (plan v3.0 §17.1) : la couche métier est
 **PostgreSQL uniquement**. Elle s'appuie sur pgvector, pg_trgm, les index GIN,
@@ -26,7 +26,7 @@ from __future__ import annotations
 from typing import Any
 
 # Version du schéma métier — incrémentée à chaque nouvelle migration.
-VERSION_SCHEMA_METIER = "028_sail_extractions"
+VERSION_SCHEMA_METIER = "029_extraction_liaison_corrections"
 
 # Marqueur injecté par le code au moment de la migration (constat 1 de revue) :
 # le nom de la configuration de recherche effective — 'seamtech_unaccent' ou
@@ -102,6 +102,13 @@ TABLES_METIER: tuple[str, ...] = (
     # bateau y reste un libellé BRUT non résolu ; la résolution vers le
     # référentiel canonique appartient au Lot 3b.
     "sail_extractions",
+    # 029 — Lot 3b : résolution du modèle de bateau des extractions
+    # (colonnes de liaison sur `sail_extractions`), historique des corrections
+    # d'approbateur et motifs de correction appris localement. L'apprentissage
+    # n'écrit jamais seul une donnée métier : il alimente des alias (décision
+    # humaine) et des suggestions affichées à l'approbateur.
+    "extraction_corrections",
+    "extraction_motifs_appris",
 )
 
 SQL_006_FICHE_TECHNIQUE = """
@@ -1950,6 +1957,104 @@ COMMENT ON COLUMN sail_extractions.champs IS
     'Provenance champ par champ : valeurs brute et canonique, unités, méthode, confiance, page et zone.';
 """
 
+SQL_029_EXTRACTION_LIAISON_CORRECTIONS = """
+-- Lot 3b : résolution du modèle de bateau d'une extraction vers le référentiel
+-- canonique du Lot 2 (`boat_models`). La liaison automatique ne repose que
+-- sur des preuves déterministes (clé exacte, alias exact, bateau de la fiche
+-- déjà lié) : tout le reste est `ambigu` ou `non_resolu` et attend un
+-- approbateur — jamais de fusion silencieuse « 45 » → « 45.1 ».
+ALTER TABLE sail_extractions
+    ADD COLUMN IF NOT EXISTS boat_model_id BIGINT REFERENCES boat_models(id_modele) ON DELETE SET NULL,
+    ADD COLUMN IF NOT EXISTS statut_liaison TEXT NOT NULL DEFAULT 'non_resolu' CHECK (
+        statut_liaison IN ('non_resolu', 'lie_automatique', 'lie_humain', 'ambigu', 'sans_modele')
+    ),
+    ADD COLUMN IF NOT EXISTS methode_liaison TEXT CHECK (
+        methode_liaison IS NULL OR methode_liaison IN (
+            'cle_exacte', 'alias_exact', 'fiche_bateau', 'humain', 'humain_nouveau_modele'
+        )
+    ),
+    ADD COLUMN IF NOT EXISTS lie_le TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS lie_par BIGINT REFERENCES utilisateur(id_utilisateur) ON DELETE SET NULL;
+
+-- Cohérence portée par la base : un statut « lié » exige un modèle, un statut
+-- non lié l'interdit. Aucun état intermédiaire silencieux n'est représentable.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'sail_extractions_liaison_coherente'
+    ) THEN
+        ALTER TABLE sail_extractions
+            ADD CONSTRAINT sail_extractions_liaison_coherente CHECK (
+                (statut_liaison IN ('lie_automatique', 'lie_humain') AND boat_model_id IS NOT NULL)
+                OR (
+                    statut_liaison IN ('non_resolu', 'ambigu', 'sans_modele')
+                    AND boat_model_id IS NULL
+                )
+            );
+    END IF;
+END $$;
+
+-- Les extractions antérieures au Lot 3b sans libellé de bateau lu sont
+-- explicitement « sans modèle » ; les autres attendent la résolution.
+UPDATE sail_extractions
+SET statut_liaison = 'sans_modele'
+WHERE statut_liaison = 'non_resolu'
+  AND (modele_bateau_brut IS NULL OR btrim(modele_bateau_brut) = '');
+
+CREATE INDEX IF NOT EXISTS idx_sail_extractions_liaison
+    ON sail_extractions (statut_liaison, cree_le, id_extraction)
+    WHERE statut_liaison IN ('non_resolu', 'ambigu');
+CREATE INDEX IF NOT EXISTS idx_sail_extractions_modele_bateau
+    ON sail_extractions (boat_model_id)
+    WHERE boat_model_id IS NOT NULL;
+
+-- Historique des corrections d'approbateur sur une extraction : la provenance
+-- machine (`sail_extractions.champs`) n'est jamais réécrite ; la correction
+-- humaine vit ici, avec valeur avant/après, auteur, motif et propagation
+-- éventuelle vers la fiche (cotes canoniques, révision arbitrée côté code).
+CREATE TABLE IF NOT EXISTS extraction_corrections (
+    id_correction         BIGSERIAL PRIMARY KEY,
+    id_extraction         BIGINT NOT NULL REFERENCES sail_extractions(id_extraction) ON DELETE CASCADE,
+    champ                 TEXT NOT NULL CHECK (char_length(btrim(champ)) BETWEEN 1 AND 80),
+    valeur_avant          JSONB,
+    valeur_apres          JSONB,
+    id_utilisateur        BIGINT REFERENCES utilisateur(id_utilisateur) ON DELETE SET NULL,
+    motif                 TEXT,
+    propagation           TEXT NOT NULL DEFAULT 'aucune' CHECK (
+        propagation IN ('aucune', 'fiche')
+    ),
+    cree_le               TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_extraction_corrections_extraction
+    ON extraction_corrections (id_extraction, cree_le, id_correction);
+
+-- Motifs de correction appris LOCALEMENT : « sur ce gabarit, ce champ lu X a
+-- déjà été corrigé en Y, N fois ». Ils ne servent qu'à SUGGÉRER à
+-- l'approbateur ; ils n'appliquent jamais une valeur sans décision humaine.
+CREATE TABLE IF NOT EXISTS extraction_motifs_appris (
+    id_motif              BIGSERIAL PRIMARY KEY,
+    gabarit_code          TEXT NOT NULL DEFAULT '',
+    champ                 TEXT NOT NULL CHECK (char_length(btrim(champ)) BETWEEN 1 AND 80),
+    valeur_brute_cle      TEXT NOT NULL CHECK (char_length(btrim(valeur_brute_cle)) >= 1),
+    valeur_corrigee       TEXT NOT NULL CHECK (char_length(btrim(valeur_corrigee)) >= 1),
+    occurrences           INTEGER NOT NULL DEFAULT 1 CHECK (occurrences >= 1),
+    dernier_utilisateur   BIGINT REFERENCES utilisateur(id_utilisateur) ON DELETE SET NULL,
+    cree_le               TIMESTAMPTZ NOT NULL DEFAULT now(),
+    maj_le                TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (gabarit_code, champ, valeur_brute_cle, valeur_corrigee)
+);
+
+COMMENT ON COLUMN sail_extractions.boat_model_id IS
+    'Modèle de bateau canonique résolu au Lot 3b (référentiel Lot 2). NULL tant que la liaison n''est pas prouvée ou décidée.';
+COMMENT ON COLUMN sail_extractions.statut_liaison IS
+    'non_resolu | lie_automatique | lie_humain | ambigu | sans_modele — ambigu et non_resolu attendent un approbateur.';
+COMMENT ON TABLE extraction_corrections IS
+    'Corrections approbateur des extractions de voiles (Lot 3b) : avant/après, auteur, motif, propagation fiche.';
+COMMENT ON TABLE extraction_motifs_appris IS
+    'Motifs de correction récurrents appris localement (Lot 3b) : suggestions à l''approbateur, jamais d''application silencieuse.';
+"""
+
 MIGRATIONS_METIER: tuple[tuple[str, str], ...] = (
     ("006_fiche_technique", SQL_006_FICHE_TECHNIQUE),
     ("007_recherche_index", SQL_007_RECHERCHE_INDEX),
@@ -1974,6 +2079,7 @@ MIGRATIONS_METIER: tuple[tuple[str, str], ...] = (
     ("026_boat_models_aliases", SQL_026_BOAT_MODELS_ALIASES),
     ("027_roles_approbations", SQL_027_ROLES_APPROBATIONS),
     ("028_sail_extractions", SQL_028_SAIL_EXTRACTIONS),
+    ("029_extraction_liaison_corrections", SQL_029_EXTRACTION_LIAISON_CORRECTIONS),
 )
 
 

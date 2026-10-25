@@ -51,6 +51,9 @@ VERSION_EXTRACTEUR_VOILE = "lot3a-v1"
 
 StatutExtraction = Literal["complete", "partielle", "a_reprendre"]
 StatutPlausibilite = Literal["plausible", "a_verifier", "implausible", "indeterminee"]
+# Lot 3b : liaison du libellé brut vers le référentiel canonique (migration 029).
+StatutLiaison = Literal["non_resolu", "lie_automatique", "lie_humain", "ambigu", "sans_modele"]
+MethodeLiaison = Literal["cle_exacte", "alias_exact", "fiche_bateau", "humain", "humain_nouveau_modele"]
 
 
 class AnomalieExtractionVoile(BaseModel):
@@ -130,6 +133,15 @@ class ExtractionVoile(BaseModel):
     confiance_moyenne: float | None = Field(default=None, ge=0.0, le=1.0)
     statut_extraction: StatutExtraction = "a_reprendre"
     statut_plausibilite: StatutPlausibilite = "indeterminee"
+    # Lot 3b — résolution du modèle de bateau (migration 029). Le constructeur
+    # Lot 3a ne résout toujours rien : ces champs naissent « non_resolu » et
+    # sont arbitrés ensuite par `liaison_voile` (automatisme déterministe ou
+    # décision d'approbateur), jamais devinés à l'extraction.
+    boat_model_id: int | None = None
+    statut_liaison: StatutLiaison = "non_resolu"
+    methode_liaison: MethodeLiaison | None = None
+    lie_le: datetime | None = None
+    lie_par: int | None = None
     extrait_le: datetime | None = None
     cree_le: datetime | None = None
     maj_le: datetime | None = None
@@ -970,6 +982,13 @@ _COLONNES_EXTRACTION_VOILE = (
     "extrait_le",
     "cree_le",
     "maj_le",
+    # Lot 3b (migration 029) — toujours en fin de liste : les requêtes Lot 3a
+    # relisent par position via cette même liste.
+    "boat_model_id",
+    "statut_liaison",
+    "methode_liaison",
+    "lie_le",
+    "lie_par",
 )
 
 _SQL_UPSERT_EXTRACTION_VOILE = """
@@ -1141,7 +1160,15 @@ def enregistrer_extraction_voile_curseur(
     ligne = curseur.fetchone()
     if ligne is None:
         raise RuntimeError("L'enregistrement de l'extraction de voile n'a rendu aucun identifiant.")
-    return int(ligne[0])
+    id_extraction = int(ligne[0])
+    # Lot 3b : résolution déterministe du modèle de bateau dans la MÊME
+    # transaction que l'écriture. Import paresseux pour éviter tout cycle
+    # (liaison_voile lit ce module), et décision humaine préservée : une
+    # extraction déjà « lie_humain » n'est jamais revisitée (esprit RG11).
+    from seamtech_search.liaison_voile import resoudre_extraction_curseur
+
+    resoudre_extraction_curseur(curseur, id_extraction)
+    return id_extraction
 
 
 def enregistrer_extraction_voile(

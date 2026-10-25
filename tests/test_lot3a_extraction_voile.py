@@ -208,10 +208,12 @@ def _fiche_unites_explicites() -> FicheExtraite:
 
 
 def test_migration_028_sail_extractions_sans_resolution_bateau() -> None:
-    assert VERSION_SCHEMA_METIER == "028_sail_extractions"
-    assert MIGRATIONS_METIER[-1] == ("028_sail_extractions", SQL_028_SAIL_EXTRACTIONS)
+    # La 028 reste figée ; depuis le Lot 3b, la version du schéma est 029 et
+    # la résolution vit dans la migration suivante (SQL_029), pas dans la 028.
+    assert VERSION_SCHEMA_METIER == "029_extraction_liaison_corrections"
+    assert dict(MIGRATIONS_METIER)["028_sail_extractions"] == SQL_028_SAIL_EXTRACTIONS
     assert "sail_extractions" in TABLES_METIER
-    assert len(TABLES_METIER) == 41
+    assert len(TABLES_METIER) == 43
 
     sql = SQL_028_SAIL_EXTRACTIONS
     assert "CREATE TABLE IF NOT EXISTS sail_extractions" in sql
@@ -275,7 +277,10 @@ def test_construction_convertit_unites_explicites_et_preserve_le_brut() -> None:
     assert extraction.gamme == "Medium"
     assert extraction.modele_bateau_brut == "BAVARIA-45"  # jamais « Bavaria 45 »
     assert extraction.taille_bateau_brute == "45"
-    assert not hasattr(extraction, "boat_model_id")
+    # Le constructeur Lot 3a ne résout toujours rien : la liaison naît vide
+    # et sera arbitrée par le Lot 3b (déterministe ou approbateur).
+    assert extraction.boat_model_id is None
+    assert extraction.statut_liaison == "non_resolu"
 
     assert extraction.slu_m == pytest.approx(6.6)
     assert extraction.sle_m == pytest.approx(5.5)

@@ -1167,6 +1167,31 @@ class SearchIndex:
             "(modèles de bateaux toujours bruts et non résolus)."
         )
 
+    def _migration_029_extraction_liaison_corrections(self, connection: Any) -> None:
+        """Résolution du modèle de bateau et corrections d'extractions (Lot 3b).
+
+        PostgreSQL : ajoute les colonnes de liaison à ``sail_extractions``
+        (référentiel canonique du Lot 2), la cohérence statut/modèle portée
+        par contrainte, l'historique des corrections d'approbateur et les
+        motifs appris localement. Aucune extraction existante n'est résolue
+        par la migration elle-même : elle ne fait que marquer « sans modèle »
+        celles sans libellé lu. SQLite : no-op enregistré, comme le reste de
+        la couche métier.
+        """
+        if not self.is_postgres:
+            logger.warning(
+                "Migration 029_extraction_liaison_corrections ignorée : la couche métier est "
+                "PostgreSQL uniquement — conséquence : SQLite conserve uniquement la "
+                "recherche de fichiers héritée."
+            )
+            return
+        with connection.cursor() as cursor:
+            cursor.execute(schema_metier.SQL_029_EXTRACTION_LIAISON_CORRECTIONS)
+        logger.info(
+            "Migration 029_extraction_liaison_corrections : colonnes de liaison bateau, "
+            "historique de corrections et motifs appris créés (résolution jamais devinée)."
+        )
+
     def run_migrations(self) -> None:
         """Run pending schema migrations once at startup."""
         with self.connect() as connection:
@@ -1243,6 +1268,14 @@ class SearchIndex:
                 # comme les autres : VERSION_SCHEMA_METIER vaut 028 et une
                 # migration oubliée ferait échouer sauvegarde/restauration.
                 ("028_sail_extractions", self._migration_028_sail_extractions),
+                # Lot 3b — résolution du modèle de bateau des extractions,
+                # corrections approbateur et motifs appris. Enregistrée comme
+                # les autres : VERSION_SCHEMA_METIER vaut 029 et une migration
+                # oubliée ferait échouer sauvegarde/restauration.
+                (
+                    "029_extraction_liaison_corrections",
+                    self._migration_029_extraction_liaison_corrections,
+                ),
             ]
 
             for version, func in migrations:

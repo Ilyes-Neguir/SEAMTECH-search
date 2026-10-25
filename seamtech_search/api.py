@@ -1714,6 +1714,15 @@ def create_app(config: AppConfig) -> FastAPI:
 
     enregistrer_routes_approbations(app, index, config, _require_auth)
 
+    # Lot 3b : file et détail des extractions de voiles, résolution du modèle
+    # de bateau vers le référentiel canonique (Lot 2), corrections approbateur
+    # et apprentissage local (alias + motifs suggérés). Le navigateur passe
+    # par le relais Next.js /api/extractions-voile ; ces routes revérifient le
+    # jeton de service puis la session nominative (mutations : approbateur).
+    from seamtech_search.extractions_voile_routes import enregistrer_routes_extractions_voile
+
+    enregistrer_routes_extractions_voile(app, index, config, _require_auth)
+
     if optionnels_actifs:
         from seamtech_search.ml.routes import enregistrer_routes_ml
 
