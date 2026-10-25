@@ -686,7 +686,10 @@ def test_postgres_ecrire_fiche_cree_une_extraction_idempotente(
                 "SELECT column_name FROM information_schema.columns "
                 "WHERE table_name = 'sail_extractions' AND column_name = 'boat_model_id'"
             )
-            assert curseur.fetchone() is None
+            # Au Lot 3a cette colonne ne devait pas exister ; le Lot 3b l'a
+            # ajoutée (migration 029). La résolution qu'elle porte est
+            # prouvée par tests/test_lot3b_liaison_voile.py.
+            assert curseur.fetchone() is not None
 
 
 @pytest.mark.postgres

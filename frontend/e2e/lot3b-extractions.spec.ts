@@ -20,6 +20,10 @@ const LIBELLE_TEST = `Bateau Démo Lot3b ${Date.now()}`
 const MODELE_TEST = `Modèle Démo Lot3b ${Date.now()}`
 
 test.describe("Lot 3b — extractions de voiles", () => {
+  test.skip(
+    !process.env.SEAMTECH_E2E_DATABASE_URL,
+    "Lot 3b navigateur : requiert SEAMTECH_E2E_DATABASE_URL (PostgreSQL et comptes nominatifs)",
+  )
   test("approbateur : file, PDF, correction du libellé, liaison décidée, cote corrigée", async ({ page }) => {
     await signInWith(page, APPROBATEUR)
 
