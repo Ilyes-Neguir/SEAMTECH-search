@@ -18,6 +18,7 @@ import {
   uiPassword,
 } from "@/lib/auth"
 import { authHeaders, backendBase } from "@/lib/backend"
+import { ROLE_SECOURS, roleOuLecture } from "@/lib/roles"
 
 export const dynamic = "force-dynamic"
 
@@ -120,7 +121,7 @@ export async function POST(req: NextRequest) {
     }
     clearFailedAttempts(identifiantClient)
     const reponse = NextResponse.json(
-      { ok: true, mode: MODE_SECOURS, identifiant: IDENTIFIANT_SECOURS, role: "administrateur", redirectTo: "/" },
+      { ok: true, mode: MODE_SECOURS, identifiant: IDENTIFIANT_SECOURS, role: ROLE_SECOURS, redirectTo: "/" },
       { status: 200, headers: { "Cache-Control": "no-store" } },
     )
     reponse.cookies.set(
@@ -129,7 +130,7 @@ export async function POST(req: NextRequest) {
         mode: MODE_SECOURS,
         identifiant: IDENTIFIANT_SECOURS,
         nom: "Compte de secours",
-        role: "administrateur",
+        role: ROLE_SECOURS,
         idSession: null,
         jeton: null,
         idUtilisateur: null,
@@ -189,7 +190,7 @@ export async function POST(req: NextRequest) {
       mode: MODE_NOMINATIF,
       identifiant: corpsBackend.identifiant,
       nom: corpsBackend.nom ?? null,
-      role: corpsBackend.role,
+      role: roleOuLecture(corpsBackend.role),
       doit_changer_mot_de_passe: corpsBackend.doit_changer_mot_de_passe === true,
       redirectTo: "/",
     },
@@ -201,7 +202,7 @@ export async function POST(req: NextRequest) {
       mode: MODE_NOMINATIF,
       identifiant: String(corpsBackend.identifiant),
       nom: typeof corpsBackend.nom === "string" ? corpsBackend.nom : null,
-      role: String(corpsBackend.role),
+      role: roleOuLecture(corpsBackend.role),
       idSession: Number(corpsBackend.id_session),
       jeton: String(corpsBackend.jeton_session),
       idUtilisateur: Number(corpsBackend.id_utilisateur),

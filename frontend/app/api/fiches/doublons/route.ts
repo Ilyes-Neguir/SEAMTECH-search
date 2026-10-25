@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { backendBase, backendHeaders, requireAuthValide } from "@/lib/backend"
+import { backendBase, backendHeaders, requireAuthValide, requireNominativeRoles, requireRolesServer } from "@/lib/backend"
+import { ROLE_ADMIN, ROLE_APPROBATEUR, ROLE_UTILISATEUR } from "@/lib/roles"
 
 // Proxy Lot L.1 : détection de doublons (GET /fiches/doublons côté FastAPI).
 //
@@ -31,11 +32,15 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const denied = await requireAuthValide()
+  const denied = await requireRolesServer(ROLE_ADMIN, ROLE_UTILISATEUR, ROLE_APPROBATEUR)
   if (denied) return denied
   const base = backendBase()
   if (!base) return NextResponse.json({ detail: "Backend non configuré (SEAMTECH_API_URL)." }, { status: 503 })
   const corps = await req.json().catch(() => ({}))
+  if (corps?.appliquer === true) {
+    const deniedApply = await requireNominativeRoles(ROLE_APPROBATEUR)
+    if (deniedApply) return deniedApply
+  }
   try {
     const res = await fetch(`${base}/fiches/doublons/scan`, {
       method: "POST",

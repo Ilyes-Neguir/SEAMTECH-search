@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { backendBase, backendHeaders, requireAuthValide } from "@/lib/backend"
+import { backendBase, backendHeaders, requireAuthValide, requireNominativeRoles } from "@/lib/backend"
+import { ROLE_APPROBATEUR } from "@/lib/roles"
 
 export const dynamic = "force-dynamic"
 
@@ -21,7 +22,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const denied = await requireAuthValide()
+  const denied = await requireNominativeRoles(ROLE_APPROBATEUR)
   if (denied) return denied
   const { id } = await params
   const payload = await req.json().catch(() => null)

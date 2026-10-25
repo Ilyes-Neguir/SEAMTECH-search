@@ -1,10 +1,11 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { backendBase, backendHeaders, requireAuthValide } from "@/lib/backend"
+import { backendBase, backendHeaders, requireRolesServer } from "@/lib/backend"
+import { ROLE_ADMIN, ROLE_APPROBATEUR, ROLE_UTILISATEUR } from "@/lib/roles"
 
 export const dynamic = "force-dynamic"
 
 export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const denied = await requireAuthValide()
+  const denied = await requireRolesServer(ROLE_ADMIN, ROLE_UTILISATEUR, ROLE_APPROBATEUR)
   if (denied) return denied
   const { id } = await params
   const base = backendBase()

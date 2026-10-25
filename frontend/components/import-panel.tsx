@@ -2,8 +2,11 @@
 
 import { useRef, useState, useEffect } from "react"
 import type { ImportCorrection, ImportJobPayload, ImportResultPayload, ImportScanPayload } from "@/lib/types"
+import { AccesRefuse } from "@/components/acces-refuse"
 import { CorrectionForm } from "@/components/correction-form"
 import { authedFetch } from "@/lib/authed-fetch"
+import { estApprobateur, peutDeposer, ROLE_ADMIN } from "@/lib/roles"
+import { useSession } from "@/lib/use-session"
 
 interface DroppedFile {
   file: File
@@ -63,7 +66,10 @@ function formatStage(stage: string): string {
   }
 }
 
-export function ImportPanel() {
+function ImportPanelInterne() {
+  const { session, role } = useSession()
+  const peutRapport = role === ROLE_ADMIN || (session.mode === "nominatif" && estApprobateur(role))
+  const peutSource = session.mode === "nominatif" && estApprobateur(role)
   const [sourcePath, setSourcePath] = useState("")
   const [scan, setScan] = useState<ImportScanPayload | null>(null)
   const [selectedPdf, setSelectedPdf] = useState<string | null>(null)
@@ -549,7 +555,7 @@ export function ImportPanel() {
             </div>
             {/* Boutons de téléchargement des rapports et fichiers source. */}
             <div className="mt-3 flex flex-wrap gap-2">
-              {result.report_path && (
+              {result.report_path && peutRapport && (
                 <a
                   href={`/api/imports/${encodeURIComponent(result.import_id)}/artifacts/report_pdf`}
                   className="inline-flex min-h-8 items-center rounded-md bg-primary px-3 text-xs font-semibold text-primary-foreground hover:bg-primary/90"
@@ -558,7 +564,7 @@ export function ImportPanel() {
                   Télécharger le rapport PDF
                 </a>
               )}
-              {result.report_docx_path && (
+              {result.report_docx_path && peutRapport && (
                 <a
                   href={`/api/imports/${encodeURIComponent(result.import_id)}/artifacts/report_docx`}
                   className="inline-flex min-h-8 items-center rounded-md border border-input bg-background px-3 text-xs font-medium hover:bg-muted"
@@ -567,7 +573,7 @@ export function ImportPanel() {
                   Télécharger le rapport Word
                 </a>
               )}
-              {result.technical_pdf && (
+              {result.technical_pdf && peutSource && (
                 <a
                   href={`/api/imports/${encodeURIComponent(result.import_id)}/artifacts/source_pdf`}
                   className="inline-flex min-h-8 items-center rounded-md border border-input bg-background px-3 text-xs font-medium hover:bg-muted"
@@ -576,7 +582,7 @@ export function ImportPanel() {
                   Télécharger le PDF source
                 </a>
               )}
-              {result.excel_file && (
+              {result.excel_file && peutSource && (
                 <a
                   href={`/api/imports/${encodeURIComponent(result.import_id)}/artifacts/source_excel`}
                   className="inline-flex min-h-8 items-center rounded-md border border-input bg-background px-3 text-xs font-medium hover:bg-muted"
@@ -700,7 +706,7 @@ export function ImportPanel() {
                 </button>
               </div>
             )}
-            {result.data && (
+            {result.data && peutSource && (
               <CorrectionForm data={result.data} saving={busy === "correct"} onSave={saveCorrection} />
             )}
           </div>
@@ -708,4 +714,14 @@ export function ImportPanel() {
       </div>
     </section>
   )
+}
+
+
+export function ImportPanel() {
+  const { role, chargement } = useSession()
+  if (chargement) return <section className="border-b border-border px-4 py-5 text-sm text-muted-foreground">Vérification de votre rôle…</section>
+  if (!peutDeposer(role)) {
+    return <AccesRefuse message="L’import de dossiers est réservé aux rôles admin, utilisateur et approbateur. Le rôle lecture peut rechercher et prévisualiser les documents existants." />
+  }
+  return <ImportPanelInterne />
 }

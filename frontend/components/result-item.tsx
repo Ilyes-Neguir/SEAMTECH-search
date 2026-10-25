@@ -9,11 +9,11 @@ import {
   FileArchive,
   File,
   Eye,
-  Download,
 } from "lucide-react"
 import type { SearchResult } from "@/lib/types"
 import { formatBytes, formatDate } from "@/lib/format"
 import { MatchBadge } from "./match-badge"
+import { PieceDownload } from "@/components/piece-download"
 import { cn } from "@/lib/utils"
 
 function iconFor(r: SearchResult) {
@@ -145,15 +145,11 @@ export function ResultItem({ result, selected, onSelect }: ResultItemProps) {
           <Eye className="size-4" />
         </button>
         {!result.is_dir && (
-          <a
-            href={`/api/pieces/${encodeURIComponent(result.id)}/telecharger`}
-            onClick={(event) => event.stopPropagation()}
-            aria-label={`Télécharger ${result.name}`}
-            title="Télécharger"
+          <PieceDownload
+            piece={{ id: result.id, name: result.name }}
             className="rounded-md p-2 text-muted-foreground transition-colors hover:bg-white/10 hover:text-foreground"
-          >
-            <Download className="size-4" />
-          </a>
+            stopPropagation
+          />
         )}
       </div>
     </div>

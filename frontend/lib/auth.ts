@@ -32,6 +32,7 @@ import { createHmac, randomBytes, timingSafeEqual } from "crypto"
 import { cookies } from "next/headers"
 import { NextResponse } from "next/server"
 import { CSRF_COOKIE, SESSION_COOKIE } from "@/lib/security-cookies"
+import { normaliserRole, roleOuLecture, type Role } from "@/lib/roles"
 
 export { CSRF_COOKIE, SESSION_COOKIE }
 
@@ -63,7 +64,7 @@ export type SessionPayload = {
   mode: string
   identifiant: string
   nom: string | null
-  role: string
+  role: Role
   /** null in rescue mode: there is no database session to revoke. */
   idSession: number | null
   /** Backend session token — never leaves the server. */
@@ -153,7 +154,7 @@ export function createSessionToken(
     mode: session.mode,
     identifiant: session.identifiant,
     nom: session.nom ?? null,
-    role: session.role,
+    role: roleOuLecture(session.role),
     idSession: session.idSession ?? null,
     jeton: session.jeton ?? null,
     idUtilisateur: session.idUtilisateur ?? null,
@@ -167,7 +168,8 @@ export function createSessionToken(
 function decodeCharge(encoded: string): Omit<SessionPayload, "expiresAt"> | null {
   try {
     const parsed = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"))
-    if (typeof parsed?.identifiant !== "string" || typeof parsed?.role !== "string") return null
+    const role = normaliserRole(parsed?.role)
+    if (typeof parsed?.identifiant !== "string" || !role) return null
     if (parsed.mode !== MODE_NOMINATIF && parsed.mode !== MODE_SECOURS) return null
     if (parsed.mode === MODE_NOMINATIF && (!Number.isInteger(parsed?.idSession) || typeof parsed?.jeton !== "string")) {
       return null
@@ -176,7 +178,7 @@ function decodeCharge(encoded: string): Omit<SessionPayload, "expiresAt"> | null
       mode: parsed.mode,
       identifiant: parsed.identifiant,
       nom: typeof parsed.nom === "string" ? parsed.nom : null,
-      role: parsed.role,
+      role,
       idSession: Number.isInteger(parsed.idSession) ? parsed.idSession : null,
       jeton: typeof parsed.jeton === "string" ? parsed.jeton : null,
       idUtilisateur: Number.isInteger(parsed.idUtilisateur) ? parsed.idUtilisateur : null,

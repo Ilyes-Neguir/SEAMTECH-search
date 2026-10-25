@@ -2,6 +2,7 @@ import { cookies } from "next/headers"
 import { NextResponse } from "next/server"
 import { MODE_NOMINATIF, SESSION_COOKIE, isAuthConfigured, readSessionToken } from "@/lib/auth"
 import { authHeaders, backendBase } from "@/lib/backend"
+import { roleOuLecture } from "@/lib/roles"
 
 export const dynamic = "force-dynamic"
 
@@ -63,7 +64,7 @@ export async function GET() {
           configured: configure,
           identifiant: session.identifiant,
           nom: session.nom,
-          role: session.role,
+          role: roleOuLecture((backend as Record<string, unknown>)?.role ?? session.role),
           mode: session.mode,
           doit_changer_mot_de_passe:
             backend?.doit_changer_mot_de_passe === true || session.doitChangerMotDePasse,

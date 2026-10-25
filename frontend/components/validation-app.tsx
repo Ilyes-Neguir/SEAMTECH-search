@@ -8,9 +8,12 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import { Check, ChevronRight, CircleX, Lock, RefreshCw, RotateCcw, Undo2 } from "lucide-react"
+import { AccesRefuse } from "@/components/acces-refuse"
 import { PalierBadge } from "@/components/palier-badge"
 import { VisionneusePiece, type ZoneASurligner } from "@/components/visionneuse-piece"
 import { authedFetch } from "@/lib/authed-fetch"
+import { estApprobateur } from "@/lib/roles"
+import { useSession } from "@/lib/use-session"
 import { palierDeChamp, type ChampExtrait, type FicheFileEntry, type PieceJointe, type PiecesDeFiche } from "@/lib/fiche"
 import { cn } from "@/lib/utils"
 
@@ -99,7 +102,7 @@ async function jsonFetch<T>(url: string, init?: RequestInit): Promise<T> {
   return body as T
 }
 
-export function ValidationApp() {
+function ValidationAppInterne() {
   const [file, setFile] = useState<FicheFileEntry[]>([])
   const [filtreGabarit, setFiltreGabarit] = useState("")
   const [codeActif, setCodeActif] = useState<string | null>(null)
@@ -920,4 +923,17 @@ function ChampsFiche({
       })}
     </div>
   )
+}
+
+export function ValidationApp() {
+  const { session, role, chargement } = useSession()
+  if (chargement) {
+    return <main className="p-6 text-sm text-muted-foreground">Vérification de votre rôle…</main>
+  }
+  if (session.mode !== "nominatif" || !estApprobateur(role)) {
+    return (
+      <AccesRefuse message="La correction et la décision directe des fiches sont réservées à un approbateur nominatif. Les autres comptes peuvent consulter les fiches et, selon leur rôle, créer une demande d’approbation." />
+    )
+  }
+  return <ValidationAppInterne />
 }

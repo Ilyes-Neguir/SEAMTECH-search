@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { backendBase, backendHeaders, requireAuthValide } from "@/lib/backend"
+import { backendBase, backendHeaders, requireAuthValide, requireNominativeRoles, requireRolesServer } from "@/lib/backend"
+import { ROLE_ADMIN, ROLE_APPROBATEUR } from "@/lib/roles"
 
 export const dynamic = "force-dynamic"
 
@@ -25,6 +26,10 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   if (!allowed.includes(artifact)) {
     return NextResponse.json({ detail: "Type de document inconnu." }, { status: 400 })
   }
+  const deniedRole = artifact.startsWith("report_")
+    ? await requireRolesServer(ROLE_ADMIN, ROLE_APPROBATEUR)
+    : await requireNominativeRoles(ROLE_APPROBATEUR)
+  if (deniedRole) return deniedRole
 
   const base = backendBase()
   if (!base) {
