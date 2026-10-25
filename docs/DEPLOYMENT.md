@@ -416,6 +416,32 @@ and keeps reading the historical fiche tables. Do not drop the table during
 rollback; restore the pre-upgrade backup only if the business explicitly
 requires the exact pre-Lot-3a database state and accepts losing later writes.
 
+### Lot 3b — boat-model resolution and extraction corrections
+
+On upgrade, migration `029_extraction_liaison_corrections` runs automatically
+at API startup on PostgreSQL. It adds the link columns to `sail_extractions`
+(`boat_model_id`, `statut_liaison`, `methode_liaison`, `lie_le`, `lie_par`)
+plus `extraction_corrections` and `extraction_motifs_appris`. The migration
+resolves nothing by itself: existing extractions stay `non_resolu` (or
+`sans_modele` when no label was read) until new writes auto-resolve them or
+an approver presses “Résoudre le lot” on `/extractions`. Automatic linking
+only ever uses exact proof (canonical key, learned alias, the fiche's own
+linked boat); prefix/fuzzy candidates stay `ambigu` for a human decision.
+
+Acceptance check after upgrade: sign in as an approver, open `/extractions`,
+run the batch resolution, and confirm no `ambigu` row was linked without a
+decision. Then link one extraction by hand and deposit (or rewrite) another
+extraction with the same raw label: it must come back `lie_automatique` with
+method `alias_exact` — that is the local learning loop working.
+
+Rollback is a code revert plus redeploy of the pre-Lot-3b release (`480ecea`)
+after a PostgreSQL backup. The 029 columns and tables are additive and are
+ignored by the older code; learned aliases live in the Lot 2 referential and
+stay valid; approver link/correction history stays in the database but is
+invisible to the older release. Restore a pre-upgrade backup only on an
+explicit business decision, accepting the loss of approver decisions made
+since the upgrade — otherwise fix forward.
+
 ## Office LAN access
 
 The default deployment is safe for a local-only installation: all published

@@ -12,6 +12,45 @@ jour vivent dans :
 * `docs/verite_terrain/TRACABILITE_LIVRAISON.md` — une ligne par affirmation,
   y compris la revue indépendante du 2026-10-07 et la passe de clôture.
 
+## Addendum Lot 3b — résolution bateau, corrections et apprentissage (2026-10-25)
+
+Branche : `arena/b02ed560-seamtech-search` ; implémentation prouvée au SHA
+`52a61feae7b00da66741f9f5d18f85683b865dda` (CI `40235516711`, 13/13). La
+preuve centrale est `tests/test_lot3b_liaison_voile.py` :
+
+- migration `029_extraction_liaison_corrections` : colonnes de liaison sur
+  `sail_extractions` + contrainte de cohérence statut/modèle,
+  `extraction_corrections`, `extraction_motifs_appris` (43 tables métier) ;
+- résolution automatique uniquement sur preuve exacte (clé, alias, bateau de
+  la fiche) ; « 45 » ne fusionne jamais dans « 45.1 » ; préfixe/flou ⇒
+  `ambigu` avec candidats ; conflit clé exacte ≠ fiche ⇒ `ambigu` ;
+- décision d'approbateur : rattacher ou créer le modèle, alias appris
+  (`apprentissage_lot3b`) prouvé de bout en bout (l'extraction suivante se
+  lie en `alias_exact`) ; conflit d'alias ⇒ 409, rien d'écrit ; liaison
+  humaine préservée à la ré-extraction ;
+- corrections : historique avant/après + plausibilité RG16 recalculée +
+  motif appris suggéré (jamais appliqué seul) ; cote avec trace fiche
+  propagée sous révision (428/409/200) ; rôles API 401/403/404/422/200.
+- Parcours navigateur `frontend/e2e/lot3b-extractions.spec.ts` (PostgreSQL
+  réel, garde CI `report-lot3b.json`, 3/3 au premier essai) : file, PDF,
+  correction du libellé, création+liaison, cote corrigée, refus
+  lecture/utilisateur. Suite PostgreSQL globale : 311 passés / 0 sautés.
+
+Commandes de reproduction :
+
+```bash
+ruff check seamtech_search/liaison_voile.py \
+  seamtech_search/extractions_voile_routes.py \
+  tests/test_lot3b_liaison_voile.py
+pytest -q tests/test_lot3b_liaison_voile.py -m "not postgres"
+SEAMTECH_TEST_DATABASE_URL=postgresql://… pytest -q -m postgres \
+  tests/test_lot3b_liaison_voile.py tests/test_lot3a_extraction_voile.py \
+  tests/test_migrations_metier.py
+cd frontend && pnpm exec tsc --noEmit && pnpm build
+SEAMTECH_E2E_DATABASE_URL=postgresql://… \
+  pnpm exec playwright test e2e/lot3b-extractions.spec.ts
+```
+
 ## Addendum Lot 3a — extraction structurée des voiles (2026-10-25)
 
 Branche : `arena/b02ed560-seamtech-search` ; implémentation prouvée au SHA
