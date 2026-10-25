@@ -459,7 +459,12 @@ def parcours(
             index.run_migrations()
             try:
                 creer_utilisateur(
-                    index, "hors-ligne-operateur", "Opérateur hors ligne", "motdepasse-hors-ligne"
+                    index,
+                    "hors-ligne-operateur",
+                    "Opérateur hors ligne",
+                    "motdepasse-hors-ligne",
+                    role="approbateur",
+                    doit_changer_mot_de_passe=False,
                 )
             except Exception:
                 pass  # déjà créé : la vérification est rejouable

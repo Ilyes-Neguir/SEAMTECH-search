@@ -122,7 +122,7 @@ _OUVREUR_SANS_REDIRECTION = urllib.request.build_opener(_SansRedirection)
 
 ENTETES_SECOURS = {
     "X-SEAMTECH-UTILISATEUR": "secours",
-    "X-SEAMTECH-ROLE": "administrateur",
+    "X-SEAMTECH-ROLE": "admin",
 }
 
 

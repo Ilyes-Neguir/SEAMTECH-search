@@ -82,7 +82,7 @@ def base_sessions() -> Iterator[dict[str, Any]]:
         IDENTIFIANT,
         "Compte Lot 0a",
         MOT_DE_PASSE,
-        "operateur",
+        "approbateur",
         doit_changer_mot_de_passe=False,
     )
     try:

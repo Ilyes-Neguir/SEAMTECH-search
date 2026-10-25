@@ -121,7 +121,7 @@ def test_journal_route_api(base_recherche: dict[str, Any]) -> None:
             headers={
                 "X-SEAMTECH-TOKEN": "jeton-journal-test",
                 "X-SEAMTECH-UTILISATEUR": "secours",
-                "X-SEAMTECH-ROLE": "administrateur",
+                "X-SEAMTECH-ROLE": "admin",
             },
         )
         assert r.status_code == 200

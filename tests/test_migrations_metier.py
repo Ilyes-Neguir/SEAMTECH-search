@@ -91,9 +91,10 @@ def test_migrations_sur_base_vide(base_metier: dict[str, Any]) -> None:
     # +1 (017 : ocr_etage3 — staging OCR, jamais chunk/document) = 33,
     # +1 (025 : audit_logs — journal canonique Lot 0b) = 34, puis +4 (026 :
     # boat_models, boat_model_aliases, boat_model_merge_history,
-    # search_synonyms — référentiel Lot 2) = 38. La 024 est un marqueur sans
-    # DDL pour les sessions Redis du Lot 0a.
-    assert len(schema_metier.TABLES_METIER) == 38
+    # search_synonyms — référentiel Lot 2) = 38, puis +2 (027 :
+    # approval_requests, in_app_notifications — Lot 1) = 40. La 024 est un
+    # marqueur sans DDL pour les sessions Redis du Lot 0a.
+    assert len(schema_metier.TABLES_METIER) == 40
     print(f"\n[mesure] migrations 006-009 sur base vide : {base_metier['duree_migrations_s']:.2f} s")
 
 
@@ -118,8 +119,8 @@ def test_idempotence_rejeu_sans_erreur(base_metier: dict[str, Any]) -> None:
             nb_tables = int(cursor.fetchone()[0])
     assert apres == avant
     # pg_tables ne compte pas les vues (v_fiche_recherche, v_qualite).
-    # 38 métier (34 après 025 + 4 tables Lot 2 en 026) + 6 héritées = 44
-    assert nb_tables == len(schema_metier.TABLES_METIER) + len(TABLES_HERITEES) == 44
+    # 40 métier (38 après 026 + 2 tables Lot 1 en 027) + 6 héritées = 46
+    assert nb_tables == len(schema_metier.TABLES_METIER) + len(TABLES_HERITEES) == 46
 
 
 @pytest.mark.postgres

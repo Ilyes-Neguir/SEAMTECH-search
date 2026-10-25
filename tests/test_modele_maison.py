@@ -237,7 +237,7 @@ def test_endpoints_ml_live(base_ml: dict[str, Any], tmp_path: Path) -> None:
         entetes_admin = {
             "X-SEAMTECH-TOKEN": "jeton-ml-test",
             "X-SEAMTECH-UTILISATEUR": "secours",
-            "X-SEAMTECH-ROLE": "administrateur",
+            "X-SEAMTECH-ROLE": "admin",
         }
 
         # GET : encodeur absent (pas de poids e5 ici) — annoncé, pas caché.

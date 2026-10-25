@@ -328,7 +328,7 @@ def test_lot2_endpoints_suggestions_et_referentiel(base_recherche: dict[str, Any
         "lot2-admin",
         "Admin Lot2",
         "Secret!2026",
-        role="administrateur",
+        role="admin",
         doit_changer_mot_de_passe=False,
     )
     compte_operateur = creer_utilisateur(
@@ -336,7 +336,7 @@ def test_lot2_endpoints_suggestions_et_referentiel(base_recherche: dict[str, Any
         "lot2-operateur",
         "Opérateur Lot2",
         "Secret!2026",
-        role="operateur",
+        role="approbateur",
         doit_changer_mot_de_passe=False,
     )
     admin = {
@@ -368,7 +368,7 @@ def test_lot2_endpoints_suggestions_et_referentiel(base_recherche: dict[str, Any
     secours = {
         **entetes_service,
         "X-SEAMTECH-UTILISATEUR": IDENTIFIANT_SECOURS,
-        "X-SEAMTECH-ROLE": "administrateur",
+        "X-SEAMTECH-ROLE": "admin",
     }
     with TestClient(create_app(config)) as client:
         ancien = client.get(
@@ -394,14 +394,14 @@ def test_lot2_endpoints_suggestions_et_referentiel(base_recherche: dict[str, Any
         refuse_operateur = client.post(
             f"/referentiel/bateaux/{first30['id_modele']}/alias",
             json={"alias": "First Thirty"},
-            headers=entetes(operateur, "operateur"),
+            headers=entetes(operateur, "approbateur"),
         )
         assert refuse_operateur.status_code == 403
 
         cree = client.post(
             f"/referentiel/bateaux/{first30['id_modele']}/alias",
             json={"alias": "First Thirty"},
-            headers=entetes(admin, "administrateur"),
+            headers=entetes(admin, "admin"),
         )
         assert cree.status_code == 200, cree.text
         assert cree.json()["alias"] == "First Thirty"

@@ -98,6 +98,18 @@ def test_upload_scan_ocr_recherche_telechargement(tmp_path: Path):
     index.initialize()
     index.run_migrations()
 
+    from seamtech_search.comptes.comptes import creer_utilisateur, ouvrir_session
+
+    compte = creer_utilisateur(
+        index,
+        "scan-approbateur",
+        "Approbateur scan OCR",
+        "mot-de-passe-scan-ocr",
+        role="approbateur",
+        doit_changer_mot_de_passe=False,
+    )
+    session = ouvrir_session(index, int(compte["id_utilisateur"]))
+
     config = AppConfig(
         root_paths=[tmp_path],
         database_path=tmp_path / "search.db",
@@ -113,14 +125,16 @@ def test_upload_scan_ocr_recherche_telechargement(tmp_path: Path):
     try:
         app = create_app(config)
         with TestClient(app) as client:
-            # Lot 0b : le téléchargement de l'original exige un humain en
-            # PostgreSQL. Le secours derrière le jeton de service représente
-            # le poste connecté pour tout ce parcours navigateur simulé.
+            # Lot 1 : le parcours import peut être opéré par un approbateur,
+            # qui est aussi le seul rôle autorisé à télécharger le fichier
+            # source. Le secours admin ne peut donc plus servir de raccourci.
             client.headers.update(
                 {
                     "X-SEAMTECH-TOKEN": "jeton-scan-ocr-test",
-                    "X-SEAMTECH-UTILISATEUR": "secours",
-                    "X-SEAMTECH-ROLE": "administrateur",
+                    "X-SEAMTECH-UTILISATEUR": compte["identifiant"],
+                    "X-SEAMTECH-ROLE": compte["role"],
+                    "X-SEAMTECH-SESSION": str(session["id_session"]),
+                    "X-SEAMTECH-SESSION-JETON": str(session["jeton"]),
                 }
             )
             # 1. Upload via /imports/upload (simule le dépôt navigateur)

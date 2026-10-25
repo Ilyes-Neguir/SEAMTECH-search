@@ -96,7 +96,7 @@ def test_resolveur_acteur_service_secours_et_refus() -> None:
         config,
         token=JETON_SERVICE,
         entete_utilisateur="secours",
-        entete_role="administrateur",
+        entete_role="admin",
     )
     assert secours.type_acteur == "secours"
     assert secours.est_administrateur
@@ -107,7 +107,7 @@ def test_resolveur_acteur_service_secours_et_refus() -> None:
             config,
             token="mauvais",
             entete_utilisateur="secours",
-            entete_role="administrateur",
+            entete_role="admin",
         )
     assert refus.value.status_code == 401
 
@@ -117,7 +117,7 @@ def test_resolveur_acteur_service_secours_et_refus() -> None:
             config,
             token=JETON_SERVICE,
             entete_utilisateur="alice",
-            entete_role="operateur",
+            entete_role="approbateur",
         )
     assert sans_session.value.status_code == 401
 
@@ -141,7 +141,7 @@ def test_acteur_audit_ne_croit_jamais_des_entetes_non_verifies() -> None:
         {
             "X-SEAMTECH-TOKEN": JETON_SERVICE,
             "X-SEAMTECH-UTILISATEUR": "secours",
-            "X-SEAMTECH-ROLE": "operateur",  # incompatible avec le secours
+            "X-SEAMTECH-ROLE": "approbateur",  # incompatible avec le secours
             "X-SEAMTECH-SESSION": "999",
         },
         client_host="127.0.0.1",
@@ -288,10 +288,11 @@ def test_lot0b_postgres_audit_append_only_et_gardes(tmp_path: Path) -> None:
                     "FROM audit_logs ORDER BY id_audit"
                 )
                 lignes = curseur.fetchall()
-        assert versions[-3:] == [
+        assert versions[-4:] == [
             "024_sessions_redis",
             "025_audit_logs",
             "026_boat_models_aliases",
+            "027_roles_approbations",
         ]
         assert len(lignes) == 1
         assert lignes[0][0] == "connexion_refusee"
@@ -305,7 +306,7 @@ def test_lot0b_postgres_audit_append_only_et_gardes(tmp_path: Path) -> None:
             "admin-lot0b",
             "Administrateur Lot 0b",
             "mot-de-passe-admin-lot0b",
-            role="administrateur",
+            role="admin",
             doit_changer_mot_de_passe=False,
         )
         operateur_compte = creer_utilisateur(
@@ -313,7 +314,7 @@ def test_lot0b_postgres_audit_append_only_et_gardes(tmp_path: Path) -> None:
             "operateur-lot0b",
             "Opérateur Lot 0b",
             "mot-de-passe-operateur-lot0b",
-            role="operateur",
+            role="approbateur",
             doit_changer_mot_de_passe=False,
         )
         session_admin = ouvrir_session(index, administrateur_compte["id_utilisateur"])
@@ -336,8 +337,8 @@ def test_lot0b_postgres_audit_append_only_et_gardes(tmp_path: Path) -> None:
                 "X-SEAMTECH-SESSION-JETON": str(session["jeton"]),
             }
 
-        entetes_admin = entetes_session(administrateur_compte, session_admin, "administrateur")
-        entetes_operateur = entetes_session(operateur_compte, session_operateur, "operateur")
+        entetes_admin = entetes_session(administrateur_compte, session_admin, "admin")
+        entetes_operateur = entetes_session(operateur_compte, session_operateur, "approbateur")
 
         # Le résolveur relit l'identité en base : un en-tête usurpé est refusé.
         with pytest.raises(HTTPException) as usurpation:
@@ -346,7 +347,7 @@ def test_lot0b_postgres_audit_append_only_et_gardes(tmp_path: Path) -> None:
                 config,
                 token=JETON_SERVICE,
                 entete_utilisateur="admin-lot0b",
-                entete_role="administrateur",
+                entete_role="admin",
                 entete_session=str(session_operateur["id_session"]),
                 entete_jeton=str(session_operateur["jeton"]),
             )
@@ -399,7 +400,7 @@ def test_lot0b_postgres_audit_append_only_et_gardes(tmp_path: Path) -> None:
             actor_type="utilisateur",
             id_utilisateur=int(administrateur_compte["id_utilisateur"]),
             identifiant="admin-lot0b",
-            role="administrateur",
+            role="admin",
             id_session=int(session_admin["id_session"]),
             resource_type="piece",
             resource_id="42",

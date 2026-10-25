@@ -262,7 +262,7 @@ try:
         os.environ["SEAMTECH_NATIF_IDENTIFIANT"],
         "Essai natif",
         os.environ["SEAMTECH_NATIF_MOT_DE_PASSE"],
-        role="administrateur",
+        role="admin",
         doit_changer_mot_de_passe=False,
     )
     print("compte créé")

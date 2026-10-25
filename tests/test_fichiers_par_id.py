@@ -529,7 +529,7 @@ def test_postgres_catalogue_apercu_head_et_range_par_id(tmp_path: Path, monkeypa
             "lecteur-piece",
             "Lecteur de test",
             "mot-de-passe-piece",
-            role="operateur",
+            role="approbateur",
             doit_changer_mot_de_passe=False,
         )
         session = ouvrir_session(index, lecteur["id_utilisateur"])
@@ -550,7 +550,7 @@ def test_postgres_catalogue_apercu_head_et_range_par_id(tmp_path: Path, monkeypa
             headers_session = {
                 **headers,
                 "X-SEAMTECH-UTILISATEUR": "lecteur-piece",
-                "X-SEAMTECH-ROLE": "operateur",
+                "X-SEAMTECH-ROLE": "approbateur",
                 "X-SEAMTECH-SESSION": str(session["id_session"]),
                 "X-SEAMTECH-SESSION-JETON": session["jeton"],
             }

@@ -238,7 +238,7 @@ def _creer_compte() -> None:
         _ligne("compte-recette", False, "RECETTE_MOT_DE_PASSE absente de l'environnement")
         return
     try:
-        from seamtech_search.comptes.comptes import ROLES, creer_utilisateur
+        from seamtech_search.comptes.comptes import ROLE_APPROBATEUR, creer_utilisateur
         from seamtech_search.config import AppConfig
         from seamtech_search.indexer import SearchIndex
 
@@ -257,7 +257,7 @@ def _creer_compte() -> None:
                 UTILISATEUR,
                 "Compte de recette locale",
                 MOT_DE_PASSE,
-                role=ROLES[0],
+                role=ROLE_APPROBATEUR,
                 doit_changer_mot_de_passe=True,
             )
             creation = "créé"
@@ -285,7 +285,7 @@ def _creer_compte() -> None:
         SESSION_RECETTE.update(
             {
                 "X-SEAMTECH-UTILISATEUR": str(corps.get("identifiant") or UTILISATEUR),
-                "X-SEAMTECH-ROLE": str(corps.get("role") or "operateur"),
+                "X-SEAMTECH-ROLE": str(corps.get("role") or ROLE_APPROBATEUR),
                 "X-SEAMTECH-SESSION": str(corps["id_session"]),
                 "X-SEAMTECH-SESSION-JETON": str(corps.get("jeton_session") or ""),
             }

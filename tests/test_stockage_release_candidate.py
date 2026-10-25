@@ -730,7 +730,7 @@ def test_migrations_sequentielles_001_a_017_sur_base_vide(tmp_path: Path) -> Non
     enregistrée dans la liste ⇒ job ``sauvegarde`` rouge. Ce test tourne sans
     PostgreSQL (les migrations métier sont des no-op enregistrés en SQLite),
     donc il protège aussi la suite « non-PostgreSQL ». (Identifiant historique
-    conservé ; les assertions vérifient la séquence complète 001..026.)
+    conservé ; les assertions vérifient la séquence complète 001..027.)
     """
     from seamtech_search.schema_metier import MIGRATIONS_METIER, VERSION_SCHEMA_METIER
 
@@ -742,8 +742,8 @@ def test_migrations_sequentielles_001_a_017_sur_base_vide(tmp_path: Path) -> Non
             versions = [ligne[0] for ligne in connexion.execute("SELECT version FROM schema_migrations")]
         numeros = [int(version.split("_", 1)[0]) for version in sorted(versions)]
 
-        assert numeros == list(range(1, 27)), f"séquence attendue 001..026, mesurée {numeros}"
-        assert sorted(versions)[-1] == VERSION_SCHEMA_METIER == "026_boat_models_aliases"
+        assert numeros == list(range(1, 28)), f"séquence attendue 001..027, mesurée {numeros}"
+        assert sorted(versions)[-1] == VERSION_SCHEMA_METIER == "027_roles_approbations"
         # Toute migration métier déclarée DOIT être enregistrée à l'exécution.
         manquantes = {version for version, _sql in MIGRATIONS_METIER} - set(versions)
         assert manquantes == set(), f"migrations métier déclarées mais jamais appliquées : {manquantes}"
@@ -769,9 +769,9 @@ def test_version_schema_metier_est_la_derniere_migration_declaree() -> None:
     declarees = [version for version, _sql in MIGRATIONS_METIER]
     assert declarees == sorted(declarees), "les migrations métier doivent être déclarées dans l'ordre"
     assert declarees[-1] == VERSION_SCHEMA_METIER
-    assert len(TABLES_METIER) == 38, (
-        "38 tables métier (018-024 n'ajoutent aucune table ; la 025 ajoute audit_logs, "
-        "puis la 026 ajoute les quatre tables du référentiel bateaux/recherche du Lot 2)"
+    assert len(TABLES_METIER) == 40, (
+        "40 tables métier (018-024 n'ajoutent aucune table ; la 025 ajoute audit_logs, "
+        "la 026 les quatre tables du Lot 2, puis la 027 les demandes et notifications du Lot 1)"
     )
 
 

@@ -794,7 +794,7 @@ def test_09_rapport_pdf_telecharge(app_client) -> None:
         f"/imports/{import_id}/artifacts/report_pdf",
         headers={
             "X-SEAMTECH-UTILISATEUR": "secours",
-            "X-SEAMTECH-ROLE": "administrateur",
+            "X-SEAMTECH-ROLE": "admin",
         },
     )
     assert reponse.status_code in {200, 302}, (
