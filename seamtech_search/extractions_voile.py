@@ -172,7 +172,7 @@ class ExtractionVoile(BaseModel):
 # ---------------------------------------------------------------------------
 
 _RE_NOMBRE_UNITE = re.compile(
-    r"(?P<nombre>[+-]?\d+(?:[.,]\d+)?)\s*(?P<unite>mm²|mm2|cm²|cm2|m²|m2|mm|cm|m|kg|g)?",
+    r"(?P<nombre>[+-]?\d+(?:[.,]\d+)?)\s*(?P<unite>mm²|mm2|cm²|cm2|m²|m2|mm|cm|m|kg|g)?(?![A-Za-zÀ-ÿ0-9²])",
     re.IGNORECASE,
 )
 
@@ -294,7 +294,8 @@ def _modele_bateau_depuis_fiche(fiche: FicheExtraite, trace: ChampExtrait | None
     # « 45 pieds »), la répéter créerait un libellé qui n'existe pas.
     jetons_nom = set(re.findall(r"[a-z0-9]+", norm.sans_accents(nom).casefold()))
     jetons_taille = [jeton for jeton in re.findall(r"[a-z0-9']+", norm.sans_accents(taille).casefold()) if jeton]
-    if jetons_taille and all(jeton in jetons_nom for jeton in jetons_taille if jeton.isdigit()):
+    jetons_numeriques = [jeton for jeton in jetons_taille if jeton.isdigit()]
+    if jetons_numeriques and all(jeton in jetons_nom for jeton in jetons_numeriques):
         return nom
     if norm.sans_accents(taille).casefold() in norm.sans_accents(nom).casefold():
         return nom
@@ -401,6 +402,27 @@ def construire_extraction_voile(
             )
 
             avertissements: list[str] = []
+            if unite_explicite and nombre_brut is not None and canonique_brute is None:
+                # Une unité explicitement incompatible (« kg » pour une
+                # longueur) n'autorise pas à relire le nombre comme des
+                # mètres : la trace reste visible, la cote structurée non.
+                anomalies.append(
+                    AnomalieExtractionVoile(
+                        code="unite_incompatible",
+                        gravite="forte",
+                        champ=nom_champ,
+                        message=(
+                            f"{nom_champ} : unité « {unite_brute} » incompatible avec "
+                            f"une valeur en {unite_canonique}."
+                        ),
+                    )
+                )
+                if typee is None:
+                    if trace is not None and id(trace) in champ_par_trace:
+                        entree_incompatible = champ_par_trace[id(trace)]
+                        entree_incompatible.etat = "non_normalise"
+                        entree_incompatible.avertissements.append("unite_incompatible")
+                    continue
             if canonique_brute is not None:
                 valeur_canonique = canonique_brute
                 if canonique_typee is not None and _ecart_relatif(canonique_brute, canonique_typee):
@@ -419,7 +441,7 @@ def construire_extraction_voile(
                     )
             elif canonique_typee is not None:
                 valeur_canonique = canonique_typee
-            elif nombre_brut is not None:
+            elif nombre_brut is not None and not unite_explicite:
                 valeur_canonique = _convertir(nombre_brut, unite_nue, famille)
             if valeur_canonique is None:
                 continue
@@ -443,6 +465,23 @@ def construire_extraction_voile(
             entree.unite_canonique = unite_canonique
             entree.valeur_canonique = valeur_canonique
             entree.avertissements.extend(avertissements)
+
+            if valeur_canonique <= 0:
+                # Une dimension physique non positive est une donnée à
+                # signaler, jamais un motif de faire échouer toute
+                # l'extraction ni une valeur à écrire dans la colonne
+                # canonique positive.
+                entree.etat = "implausible"
+                anomalies.append(
+                    AnomalieExtractionVoile(
+                        code="cote_hors_plage",
+                        gravite="forte",
+                        champ=nom_champ,
+                        message=f"{nom_champ} = {valeur_canonique:g} {unite_canonique} : dimension non positive.",
+                    )
+                )
+                valeur_canonique = None
+                break
 
             plage = _plage_dimension(attribut, valeur_canonique)
             if plage is not None and not unite_explicite:
@@ -474,10 +513,14 @@ def construire_extraction_voile(
     gamme = _texte(fiche.gamme)
     if trace_designation is not None and trace_designation.valeur_normalisee:
         morceaux = [morceau.strip() for morceau in trace_designation.valeur_normalisee.split("|", 1)]
-        if type_voile is None and morceaux and morceaux[0]:
-            type_voile = morceaux[0]
-        if gamme is None and len(morceaux) == 2 and morceaux[1]:
-            gamme = morceaux[1]
+        # Seule une décomposition explicite « type | gamme » permet de
+        # déduire le type de la trace. Une désignation inconnue en un seul
+        # morceau reste une gamme/texte à reprendre, pas un type inventé.
+        if len(morceaux) == 2:
+            if type_voile is None and morceaux[0]:
+                type_voile = morceaux[0]
+            if gamme is None and morceaux[1]:
+                gamme = morceaux[1]
     if designation_brute is None and trace_designation is not None:
         designation_brute = _texte(trace_designation.valeur_normalisee)
 

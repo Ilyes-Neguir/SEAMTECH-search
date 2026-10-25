@@ -253,6 +253,7 @@ def test_sql_persistance_lot3a_grammaire_postgres() -> None:
         "_SQL_UPSERT_EXTRACTION_VOILE",
         "_SQL_LIRE_EXTRACTION_PAR_FICHE",
         "_SQL_LIER_EXTRACTION_DOCUMENT",
+        "_SQL_CLE_EXISTANTE_EXTRACTION_VOILE",
     ):
         sql = getattr(extractions_voile, nom)
         # pglast ne connaît pas les paramètres psycopg2 : on les remplace par
@@ -377,6 +378,87 @@ def test_gabarit_inconnu_reste_a_reprendre_et_preserve_les_mesures_libres() -> N
     assert extraction.slu_m is None, "une mesure libre ne devient pas une cote structurée"
     trace = extraction.champ("libre.guindant")
     assert trace is not None and trace.valeur_brute == "Guindant : 8,20"
+
+
+def _fiche_simple_lot3a(**remplacements: Any) -> FicheExtraite:
+    fiche = _fiche_unites_explicites()
+    for nom, valeur in remplacements.items():
+        setattr(fiche, nom, valeur)
+    return fiche
+
+
+def test_unite_absente_hors_plage_n_est_jamais_rescalee() -> None:
+    fiche = _fiche_simple_lot3a()
+    fiche.cotes = [
+        Cotes(
+            jeu="finie",
+            slu_m=6600.0,
+            sf_m=3080.0,
+            champs=[
+                _trace("cotes.finie.slu_m", "6600", "6600", colonne="slu_m"),
+                _trace("cotes.finie.sf_m", "3080", "3080", colonne="sf_m"),
+            ],
+        )
+    ]
+
+    extraction = construire_extraction_voile(fiche)
+
+    assert extraction.slu_m == pytest.approx(6600.0), "6600 sans unité ne devient pas 6,6 m par devinette"
+    assert extraction.sf_m == pytest.approx(3080.0)
+    assert extraction.statut_plausibilite == "implausible"
+    assert "unite_suspecte" in {anomalie.code for anomalie in extraction.anomalies}
+
+
+def test_valeur_negative_et_unite_incompatible_ne_cassent_pas_extraction() -> None:
+    fiche = _fiche_simple_lot3a()
+    fiche.cotes = [
+        Cotes(
+            jeu="finie",
+            slu_m=-3.0,
+            sle_m=None,
+            sf_m=2.0,
+            champs=[
+                _trace("cotes.finie.slu_m", "-3 m", "-3", colonne="slu_m"),
+                _trace("cotes.finie.sle_m", "5.5 kg", "5.5", colonne="sle_m"),
+                _trace("cotes.finie.sf_m", "2 m", "2", colonne="sf_m"),
+            ],
+        )
+    ]
+
+    extraction = construire_extraction_voile(fiche)
+
+    assert extraction.slu_m is None
+    assert extraction.sle_m is None, "des kilogrammes ne sont pas une chute en mètres"
+    assert extraction.sf_m == pytest.approx(2.0)
+    assert extraction.statut_plausibilite == "implausible"
+    codes = {anomalie.code for anomalie in extraction.anomalies}
+    assert {"cote_hors_plage", "unite_incompatible"} <= codes
+    slu = extraction.champ("cotes.finie.slu_m")
+    assert slu is not None and slu.valeur_canonique == pytest.approx(-3.0)
+
+
+def test_designation_inconnue_et_taille_textuelle_sans_trace() -> None:
+    fiche = _fiche_simple_lot3a(
+        type_voile_libelle=None,
+        gamme="Voile spéciale X",
+        bateau_nom="Bavaria",
+        bateau_taille="Cruiser",
+    )
+    fiche.champs = [
+        _trace(
+            "fiche.designation",
+            "Voile spéciale X",
+            "Voile spéciale X",
+            colonne="designation",
+        )
+    ]
+
+    extraction = construire_extraction_voile(fiche)
+
+    assert extraction.type_voile is None
+    assert extraction.modele_bateau_brut == "Bavaria Cruiser"
+    assert extraction.statut_extraction == "partielle"
+    assert "type_voile_manquant" in {anomalie.code for anomalie in extraction.anomalies}
 
 
 # ---------------------------------------------------------------------------
@@ -563,6 +645,11 @@ def test_postgres_ecrire_fiche_cree_une_extraction_idempotente(
 
     index = base_recherche["index"]
     fiche = _fiche_unites_explicites()
+    # La table historique fiche_cotes borne spa_m2 à NUMERIC(8,3) : la
+    # valeur typée de ce test d'intégration tient dans cette borne, tandis
+    # que la valeur brute explicite (157100 cm²) prouve la canonisation
+    # Lot 3a à 15,71 m². Le cas 157100 typé reste couvert en pur ci-dessus.
+    fiche.cotes[0].spa_m2 = 15710.0
 
     id_fiche, action = ecrire_fiche(index, fiche)
     assert action == "creee"
