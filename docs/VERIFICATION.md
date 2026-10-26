@@ -12,6 +12,47 @@ jour vivent dans :
 * `docs/verite_terrain/TRACABILITE_LIVRAISON.md` — une ligne par affirmation,
   y compris la revue indépendante du 2026-10-07 et la passe de clôture.
 
+## Addendum Lot 5 — Fonction B, confiance de réutilisation (2026-10-26)
+
+Branche : `arena/b02ed560-seamtech-search` ; implémentation prouvée au SHA
+`921669b9d80d58a03fef40fb6511a1b5e5ec41fc` (CI `40249015850`, 13/13). La
+preuve centrale est `tests/test_lot5_confiance_reutilisation.py` :
+
+- statistiques robustes : médiane, quartiles (interpolation linéaire type 7),
+  IQR, MAD ; score par dimension `100·exp(−z²/2)` (z robuste IQR/MAD), score
+  global = **médiane** des scores par dimension (≥ 2 dimensions, n ≥ 3) ;
+- honnêteté : N < 5 ⇒ « Données insuffisantes (N/5) », score `None` ;
+  population hétérogène (IQR/médiane > 7,5 % sur la moitié des dimensions)
+  ⇒ aucun score, statistiques visibles ; seuil d'alerte 75 ⇒ `a_examiner`
+  sans verdict positif ; justification obligatoire (N, dispersion par
+  dimension, matériaux, fiches sources) ;
+- base réelle : candidate exclue de sa population (N=5 pour 6 voiles liées),
+  évaluation persistée relue (migration 030, contrainte de cohérence
+  score/verdict), refus sans modèle lié ; rôles 401/403/200/404/422.
+- Parcours navigateur `frontend/e2e/lot5-confiance.spec.ts` (garde CI
+  `report-lot5.json`, 3/3 au premier essai) : vraie 7792-SO évaluée contre
+  5 voiles de référence semées — verdict compatible justifié et persisté ;
+  lecture sans bouton d'évaluation ; secours refusé. Suite PostgreSQL
+  globale : 317 passés / 0 sauté.
+
+Corpus Dropbox du commanditaire (`VOILES 2024.zip`, 1 205 608 885 octets) :
+inaccessible depuis l'environnement de développement en l'état (fichier
+> 100 Mio refusé par le connecteur, CDN Dropbox non joignable depuis la
+sandbox). Extraction du ZIP dans l'interface web Dropbox demandée au
+commanditaire ; traitement ensuite local/éphémère, agrégats uniquement,
+jamais dans Git. Détails : `docs/PLAN_DIRECTEUR_V2_LOT5.md`.
+
+```bash
+ruff check seamtech_search/confiance_reutilisation.py \
+  seamtech_search/confiance_reutilisation_routes.py tests/test_lot5_confiance_reutilisation.py
+pytest -q tests/test_lot5_confiance_reutilisation.py -m "not postgres"
+SEAMTECH_TEST_DATABASE_URL=postgresql://… pytest -q -m postgres \
+  tests/test_lot5_confiance_reutilisation.py
+cd frontend && pnpm exec tsc --noEmit && pnpm build
+SEAMTECH_E2E_DATABASE_URL=postgresql://… \
+  pnpm exec playwright test e2e/lot5-confiance.spec.ts
+```
+
 ## Addendum Lot 4b — Fonction A, comparaison de voiles (2026-10-25)
 
 Branche : `arena/b02ed560-seamtech-search` ; implémentation prouvée au SHA

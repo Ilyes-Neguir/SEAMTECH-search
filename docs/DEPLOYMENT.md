@@ -453,6 +453,19 @@ extraction proposes no “same model” candidate (`raison = non_liee`).
 Rollback is a plain code revert to the Lot 3b release (`21de51b`) — the lot
 wrote nothing to the database, so there is no data cleanup.
 
+### Lot 5 — reuse confidence (Function B)
+
+Migration 030 adds one table (`evaluations_confiance`); it applies at backend
+startup. Deploy backend + frontend together. Acceptance check: open
+`/confiance`, pick a linked sail with at least five same-model/type peers,
+evaluate as approver and verify one median by hand; then confirm a sail with
+fewer than five peers shows “Données insuffisantes (N/5)” with no percentage,
+and that the persisted evaluation appears in the history. Rollback is a code
+revert to the Lot 4b release (`98fce87`); the `evaluations_confiance` table
+then stays in the database, invisible to the older release. Restore a
+pre-upgrade backup only on an explicit business decision, accepting the loss
+of evaluations recorded since the upgrade — otherwise fix forward.
+
 ## Office LAN access
 
 The default deployment is safe for a local-only installation: all published
