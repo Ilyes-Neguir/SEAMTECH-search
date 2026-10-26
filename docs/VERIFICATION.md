@@ -12,6 +12,54 @@ jour vivent dans :
 * `docs/verite_terrain/TRACABILITE_LIVRAISON.md` — une ligne par affirmation,
   y compris la revue indépendante du 2026-10-07 et la passe de clôture.
 
+## Addendum Lot 6 — cohérence UI globale, parcours 3 clics (2026-10-26)
+
+Branche : `arena/b02ed560-seamtech-search` ; implémentation prouvée au SHA
+`41b01d8b8f2824f1bca7196dfcc479d779eaa84a` (CI `40253683828`, 13/13).
+Preuves :
+
+- `tests/test_lot6_coherence_ui.py` (suite standard) : chaque lien de
+  navigation pointe vers une page existante ; matrice de visibilité par
+  rôle figée dans `nav.tsx` ; liens croisés présents (détail d'extraction
+  → « Confiance… », comparaison/confiance → `/fiches/{code}` seulement si
+  `code_fiche_metier` résolu côté backend — jamais de lien mort).
+- `frontend/e2e/lot6-parcours-3clics.spec.ts` (garde CI `report-lot6.json`,
+  3/3 au premier essai) : demande de téléchargement en **3 clics** depuis
+  la recherche, décision approbateur en **3 clics** depuis la liste,
+  téléchargement autorisé en **1 clic** avec octets `%PDF` relus ; matrice
+  navigation × rôle (secours = admin d'urgence documenté, lecture,
+  utilisateur, admin) — chaque lien promis ouvert sans refus ; chaîne
+  Extractions → Confiance… → fiche source → fiche métier 7792-SO.
+- PostgreSQL 317/0 (aucune migration dans ce lot), parcours 7792-SO 578 ms.
+
+```bash
+pytest -q tests/test_lot6_coherence_ui.py
+cd frontend && pnpm exec tsc --noEmit && pnpm build
+SEAMTECH_E2E_DATABASE_URL=postgresql://… \
+  pnpm exec playwright test e2e/lot6-parcours-3clics.spec.ts
+```
+
+## Addendum DEP — transfert hors ligne et runbook serveur (2026-10-26)
+
+- `scripts/preparer_transfert_hors_ligne.sh` : paquet transférable hors
+  réseau (bundle Git au SHA figé — arbre sale refusé —, `docker save` des
+  images Compose + infra, `MANIFESTE.txt`, `SHA256SUMS`) ; modes
+  `verifier` (empreintes + `git bundle verify`) et `charger`
+  (`docker load`). Aucun secret transporté (`.env` créé sur le serveur).
+- `tests/test_dep_transfert_hors_ligne.py` : gardes statiques du script et
+  du runbook (`docs/PLAN_DIRECTEUR_V2_DEP.md` : dimensionnement 3 × corpus
+  \+ 20 Go, preflight lecture seule, inventaire + dédup SHA-256 avant OCR,
+  ingestion par vagues avec reprise, désactivation du compte de secours).
+- Outil d'inventaire prouvé en réel (arborescence synthétique locale, le
+  2026-10-26) : le même PDF sous deux noms produit exactement 1 groupe de
+  doublons dans `inventaire_doublons.csv`.
+
+```bash
+pytest -q tests/test_dep_transfert_hors_ligne.py
+bash scripts/preparer_transfert_hors_ligne.sh preparer /tmp/seamtech-dep   # poste connecté, Docker requis
+python3 scripts/inventaire_archive.py /chemin/archive --sortie /chemin/rapports
+```
+
 ## Addendum Lot 5 — Fonction B, confiance de réutilisation (2026-10-26)
 
 Branche : `arena/b02ed560-seamtech-search` ; implémentation prouvée au SHA
