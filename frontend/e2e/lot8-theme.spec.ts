@@ -97,6 +97,6 @@ test.describe("Lot 8 — thème voilerie (jour/nuit)", () => {
       await expect(page.getByTestId(`nav-groupe-${groupe}`)).toBeVisible()
     }
     // Les liens métier gardent leurs noms (Lot 6) : seule la peau change.
-    await expect(nav.getByRole("link", { name: "Recherche" })).toBeVisible()
+    await expect(nav.getByRole("link", { name: "Recherche", exact: true })).toBeVisible()
   })
 })

@@ -82,7 +82,7 @@ export function Nav() {
       className="relative flex h-14 items-center gap-1 overflow-x-auto bg-background/95 px-4"
       data-testid="nav"
     >
-      <Link href="/recherche" className="group mr-3 flex shrink-0 items-center gap-2" aria-label="SEAMTECH — retour à la recherche">
+      <Link href="/recherche" className="group mr-3 flex shrink-0 items-center gap-2" aria-label="SEAMTECH — accueil de l’atelier">
         <RoseDesVents className="size-7 text-primary transition-transform duration-700 group-hover:rotate-45" />
         <span className="leading-none">
           <span className="titre-voile block text-[13px]">Seamtech</span>
