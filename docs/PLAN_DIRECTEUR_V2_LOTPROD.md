@@ -101,6 +101,10 @@ documentés et assumés pour un déploiement local d'atelier.
   « motdepasse » — littéralement un secret d'exemple — et mourait sur le
   nouveau garde-fou avant le contrôle Redis visé. Fixture rendue réaliste
   (la politique, elle, n'a pas bougé), test forcé et vert en local.
+  Le cycle suivant (`2fe0f70`, documentation seule) a rencontré le flake
+  OCR préexistant documenté (Tesseract lit `0` pour `O` dans
+  scan-browser-ocr, test vert à la relance, garde-fou « 0 flaky » rouge) —
+  d'où ce dernier push de reprouve, la relance API étant refusée par GitHub.
 
 ## Prochaine action proposée
 
