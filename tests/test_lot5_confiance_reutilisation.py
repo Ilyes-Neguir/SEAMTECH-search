@@ -109,8 +109,9 @@ def test_constantes_verdicts_et_migration_030() -> None:
         "score IS NULL",
     ):
         assert fragment in sql, fragment
-    assert len(TABLES_METIER) == 44
-    assert TABLES_METIER[-1] == "evaluations_confiance"
+    # La 031 (Lot 7) a suivi : 46 tables, evaluations_confiance reste à sa place.
+    assert len(TABLES_METIER) == 46
+    assert TABLES_METIER[-3] == "evaluations_confiance"
 
 
 def test_statistiques_robustes_mediane_mad_iqr() -> None:
