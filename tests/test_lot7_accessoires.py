@@ -337,6 +337,12 @@ def test_depot_categorie_projection_et_reclassification(monde_lot7: dict[str, An
     # catégorie, exactement celle écrite au dépôt.
     ligne = next(f for f in resultats["resultats"] if f["code"] == "LOT7-ACC-1")
     assert ligne["categorie"] == "accessoire"
+    # EXCLUSION prouvée (leçon CI e2e) : le filtre ne doit rien laisser
+    # passer d'autre — la base de recherche contient des voiles.
+    assert resultats["resultats"], "le filtre accessoire ne rend rien"
+    assert all(f["categorie"] == "accessoire" for f in resultats["resultats"]), (
+        "une fiche voile a traversé le filtre categorie"
+    )
     facettes = resultats.get("facettes") or {}
     assert any(
         ligne.get("valeur") == "accessoire" for ligne in facettes.get("categorie", [])

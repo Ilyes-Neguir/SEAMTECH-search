@@ -268,6 +268,9 @@ def _cle_cote(cote: str) -> str:
 # SQL construit depuis un nom de champ inconnu).
 FILTRES_AUTORISES = frozenset(
     {
+        # Lot 7 : « categorie » — sans cette entrée, le filtre serait
+        # silencieusement écarté ici même (vécu en CI e2e).
+        "categorie",
         "type_voile", "client", "bateau", "matiere", "gamme",
         "annee", "annee_min", "annee_max", "boat_model_id",
         "cote", "min", "max", "cote_min", "cote_max",
