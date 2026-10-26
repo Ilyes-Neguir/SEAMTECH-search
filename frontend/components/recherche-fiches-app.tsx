@@ -56,6 +56,7 @@ interface ResultatFiche {
   modele_bateau?: string | null
   modele_bateau_cle?: string | null
   gamme: string | null
+  categorie?: string | null
   statut: string | null
   annee: number | null
   extrait: string
@@ -110,6 +111,9 @@ interface Suggestion {
 }
 
 const GROUPES_FACETTES: Array<{ cle: string; libelle: string }> = [
+  // Lot 7 : la famille du document se filtre en premier — voiles et
+  // accessoires partagent le même moteur, jamais le même schéma métier.
+  { cle: "categorie", libelle: "Catégorie" },
   { cle: "type_voile", libelle: "Type de voile" },
   { cle: "client", libelle: "Client" },
   { cle: "bateau", libelle: "Bateau" },
@@ -151,6 +155,7 @@ const TRIS: Array<{ valeur: string; libelle: string }> = [
 ]
 
 const FILTRES_CLES = [
+  "categorie",
   "type_voile",
   "client",
   "bateau",
@@ -186,6 +191,12 @@ const NATURE_SUGGESTION: Record<string, string> = {
   matiere: "matière",
   gamme: "gamme",
   fiche: "code",
+}
+
+// Libellés humains pour les valeurs de facettes codées (la valeur brute
+// reste la clé du filtre envoyé au backend).
+const LIBELLES_VALEURS_FACETTES: Record<string, Record<string, string>> = {
+  categorie: { voile: "Voiles", accessoire: "Accessoires" },
 }
 
 const LIMITE_DEFAUT = 20
@@ -735,7 +746,7 @@ export function RechercheFichesApp({ assistantActif = true }: { assistantActif?:
           </div>
 
           {facettesActives.map(({ cle, libelle }) => (
-            <div key={cle}>
+            <div key={cle} data-testid={`facette-${cle}`}>
               <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                 {libelle}
               </div>
@@ -750,7 +761,9 @@ export function RechercheFichesApp({ assistantActif = true }: { assistantActif?:
                         filtres[cle] === entree.valeur && "bg-accent text-accent-foreground",
                       )}
                     >
-                      <span className="truncate">{entree.valeur}</span>
+                      <span className="truncate">
+                        {LIBELLES_VALEURS_FACETTES[cle]?.[entree.valeur] ?? entree.valeur}
+                      </span>
                       <span className="ml-2 shrink-0 tabular-nums text-muted-foreground">{entree.effectif}</span>
                     </button>
                   </li>
@@ -907,6 +920,15 @@ export function RechercheFichesApp({ assistantActif = true }: { assistantActif?:
                       <div className="flex flex-wrap items-baseline gap-2">
                         {fiche.code ? <Link href={`/fiches/${encodeURIComponent(fiche.code)}`} className="font-mono text-xs text-primary underline-offset-2 hover:underline" aria-label={`Ouvrir la fiche ${fiche.code}`}>{fiche.code}</Link> : <span className="font-mono text-xs text-muted-foreground">—</span>}
                         <h2 className="text-sm font-medium">{fiche.titre ?? "Sans titre"}</h2>
+                        {fiche.categorie === "accessoire" && (
+                          <span
+                            className="shrink-0 rounded-full border border-border bg-muted px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
+                            data-testid="badge-categorie"
+                            title="Fiche d’accessoire (Lot 7) — schéma métier distinct des voiles"
+                          >
+                            Accessoire
+                          </span>
+                        )}
                         {fiche.statut === "a_valider" && (
                           <span
                             className="shrink-0 rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-300"
