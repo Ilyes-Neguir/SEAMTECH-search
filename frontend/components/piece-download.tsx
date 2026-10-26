@@ -116,7 +116,7 @@ export function PieceDownload({
       <Link
         href="/approvals?vue=miennes"
         onClick={arreter}
-        className={cn("inline-flex items-center gap-1.5 text-amber-300", className)}
+        className={cn("texte-attention inline-flex items-center gap-1.5", className)}
         aria-label={`Demande de téléchargement en attente pour ${piece.name}`}
         title="Demande en attente de décision"
         data-testid={`piece-download-pending-${piece.id}`}
@@ -176,7 +176,7 @@ export function PieceDownload({
       </button>
 
       {message && (
-        <span className="inline-flex items-center gap-1 text-[10px] text-emerald-300" role="status">
+        <span className="inline-flex items-center gap-1 text-[10px] text-success" role="status">
           <CheckCircle2 className="size-3.5" aria-hidden /> {message}
         </span>
       )}

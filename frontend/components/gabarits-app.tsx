@@ -151,7 +151,7 @@ export function GabaritsApp() {
       </section>
 
       {!peutAdministrerGabarits && (
-        <p className="rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200" role="alert">
+        <p className="badge-attention rounded px-3 py-2 text-xs" role="alert">
           La création et la publication de gabarits sont réservées au rôle admin. Vous pouvez consulter le registre ci-dessus.
         </p>
       )}

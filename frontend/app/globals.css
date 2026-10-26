@@ -36,45 +36,245 @@
   --radius-xl: calc(var(--radius) * 1.4);
 }
 
-/* Palette d’atelier : surfaces charbon, contraste ivoire et accent lagon.
-   L’ambre reste réservé aux alertes et aux états à vérifier. */
+/* ==========================================================================
+   LOT 8 — « L'atelier prend le large »
+   Deux quarts, une seule voilerie :
+   · Quart de jour  : toile à voile chaude, encre marine, laiton vieilli.
+   · Quart de nuit  : encre de mer profonde, ambre de signal qui veille.
+   L'ambre est l'accent de marque UNIQUE (fil d'insigne cousu sur la voile) ;
+   l'alerte passe à l'orange-rouge des fanaux. Contrastes ≥ 4,5:1 mesurés
+   (docs/PLAN_DIRECTEUR_V2_LOT8.md), aucun webfont (100 % local).
+   ========================================================================== */
+
 :root {
-  color-scheme: dark;
-  --background: #0d0e10;
-  --foreground: #f6f6f6;
-  --card: #17181b;
-  --card-foreground: #f6f6f6;
-  --popover: #17181b;
-  --popover-foreground: #f6f6f6;
-  --primary: #55b9aa;
-  --primary-foreground: #071613;
-  --secondary: #232428;
-  --secondary-foreground: #f6f6f6;
-  --muted: #1c1d21;
-  --muted-foreground: #9a9ba1;
-  --accent: #232428;
-  --accent-foreground: #f6f6f6;
-  --destructive: #ff4c4c;
-  --success: #4cbb6c;
-  --warning: #ff9a52;
-  --border: rgba(255, 255, 255, 0.1);
-  --input: rgba(255, 255, 255, 0.14);
-  --ring: #55b9aa;
+  color-scheme: light;
+  --background: #f6f1e6;
+  --foreground: #152730;
+  --card: #fffdf7;
+  --card-foreground: #152730;
+  --popover: #fffdf7;
+  --popover-foreground: #152730;
+  --primary: #8f5c07;
+  --primary-foreground: #fffaf0;
+  --secondary: #eae1cd;
+  --secondary-foreground: #26343a;
+  --muted: #ece4d3;
+  --muted-foreground: #5c665f;
+  --accent: #eadfc6;
+  --accent-foreground: #152730;
+  --destructive: #b3261e;
+  --success: #1e7a4c;
+  --success-texte: #14532d;
+  --warning: #c2410c;
+  --warning-texte: #93330a;
+  --info: #2e6f8e;
+  --info-texte: #1e40af;
+  --corrige: #7c3aed;
+  --corrige-texte: #6d28d9;
+  --chart-2: #2e6f8e;
+  --border: rgba(21, 39, 48, 0.16);
+  --input: rgba(21, 39, 48, 0.22);
+  --ring: #8f5c07;
   --radius: 0.5rem;
+}
+
+.dark {
+  color-scheme: dark;
+  --background: #08111a;
+  --foreground: #edf2ee;
+  --card: #0d1b28;
+  --card-foreground: #edf2ee;
+  --popover: #0d1b28;
+  --popover-foreground: #edf2ee;
+  --primary: #f2a93b;
+  --primary-foreground: #241503;
+  --secondary: #12232f;
+  --secondary-foreground: #edf2ee;
+  --muted: #0f1f2b;
+  --muted-foreground: #9db2ab;
+  --accent: #16303f;
+  --accent-foreground: #edf2ee;
+  --destructive: #ff6b5e;
+  --success: #4cc38a;
+  --success-texte: #4cc38a;
+  --warning: #ff7a45;
+  --warning-texte: #ffa07a;
+  --info: #3d8fa8;
+  --info-texte: #93c5fd;
+  --corrige: #8b5cf6;
+  --corrige-texte: #c4b5fd;
+  --chart-2: #3d8fa8;
+  --border: rgba(237, 242, 238, 0.13);
+  --input: rgba(237, 242, 238, 0.18);
+  --ring: #f2a93b;
+  --radius: 0.5rem;
+}
+
+/* --- Gestes d'atelier ---------------------------------------------------- */
+
+/* Couture double aiguille : deux rangs de points, comme le zigzag des laizes.
+   S'utilise en séparateur horizontal (élément bloc aria-hidden). */
+@utility couture {
+  display: block;
+  height: 8px;
+  background-image:
+    repeating-linear-gradient(
+      90deg,
+      color-mix(in oklab, var(--primary) 55%, transparent) 0 8px,
+      transparent 8px 15px
+    ),
+    repeating-linear-gradient(
+      90deg,
+      color-mix(in oklab, var(--primary) 38%, transparent) 0 8px,
+      transparent 8px 15px
+    );
+  background-size: 100% 2px, 100% 2px;
+  background-position: 0 1px, 4px 5px;
+  background-repeat: repeat-x;
+}
+
+/* La même couture, verticale (séparateur de groupes dans la navigation). */
+@utility couture-verticale {
+  display: block;
+  width: 8px;
+  align-self: stretch;
+  background-image:
+    repeating-linear-gradient(
+      0deg,
+      color-mix(in oklab, var(--foreground) 28%, transparent) 0 6px,
+      transparent 6px 12px
+    );
+  background-size: 2px 100%;
+  background-position: 3px 0;
+  background-repeat: repeat-y;
+}
+
+/* Lettres d'insigne : capitales espacées comme peintes sur la grand-voile. */
+@utility titre-voile {
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  font-weight: 650;
+}
+
+/* Badge « attention » : orange-rouge des fanaux, lisible dans les deux quarts
+   (--warning-texte est calé ≥ 4,5:1 sur ce fond teinté). */
+@utility badge-attention {
+  background-color: color-mix(in oklab, var(--warning) 14%, transparent);
+  color: var(--warning-texte);
+  border: 1px solid color-mix(in oklab, var(--warning) 35%, transparent);
+}
+
+/* Texte « attention » nu (sans fond) : même encre calée ≥ 4,5:1. */
+@utility texte-attention {
+  color: var(--warning-texte);
+}
+
+/* Texte « corrigé » nu : même encre de retouche que le badge. */
+@utility texte-corrige {
+  color: var(--corrige-texte);
+}
+
+/* Badge « succès » : le vert de la mer calme, encre sombre au jour. */
+@utility badge-succes {
+  background-color: color-mix(in oklab, var(--success) 13%, transparent);
+  color: var(--success-texte);
+  border: 1px solid color-mix(in oklab, var(--success) 32%, transparent);
+}
+
+/* Badge « danger » : l'encre destructive sur sa teinte, AA dans les 2 quarts. */
+@utility badge-danger {
+  background-color: color-mix(in oklab, var(--destructive) 11%, transparent);
+  color: var(--destructive);
+  border: 1px solid color-mix(in oklab, var(--destructive) 32%, transparent);
+}
+
+/* Badge « info » : bleu de carte marine (remplace l'ancien cyan hérité). */
+@utility badge-info {
+  background-color: color-mix(in oklab, var(--info) 13%, transparent);
+  color: var(--info-texte);
+  border: 1px solid color-mix(in oklab, var(--info) 32%, transparent);
+}
+
+/* Badge « corrigé » : la main de l'approbateur, violet d'encre de retouche. */
+@utility badge-corrige {
+  background-color: color-mix(in oklab, var(--corrige) 13%, transparent);
+  color: var(--corrige-texte);
+  border: 1px solid color-mix(in oklab, var(--corrige) 32%, transparent);
+}
+
+/* Hissage : le contenu monte comme une voile qu'on hisse — bref et franc. */
+@keyframes hisser {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@utility hisser {
+  /* `backwards` seulement : après le hissage, aucun transform résiduel —
+     les éléments `fixed` des écrans gardent la fenêtre pour repère. */
+  animation: hisser 0.55s cubic-bezier(0.22, 0.8, 0.24, 1) backwards;
+}
+
+/* La rose des vents cherche son nord, très lentement. */
+@keyframes rose-lente {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@utility rose-lente {
+  animation: rose-lente 240s linear infinite;
+}
+
+/* Dérive des vagues d'horizon (SVG doublé, translation continue). */
+@keyframes derive {
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+@utility vague-derive {
+  animation: derive 18s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hisser,
+  .rose-lente,
+  .vague-derive {
+    animation: none !important;
+  }
 }
 
 @layer base {
   * {
     @apply border-border outline-ring/50;
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in oklab, var(--primary) 45%, transparent) transparent;
   }
   body {
     @apply bg-background text-foreground;
     font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+    /* Laizes de la toile : filets horizontaux presque invisibles, la trame
+       du tissu à voile sous chaque écran. */
+    background-image: repeating-linear-gradient(
+      0deg,
+      transparent 0 76px,
+      color-mix(in oklab, var(--foreground) 3.2%, transparent) 76px 77px
+    );
   }
-  /* highlighted search snippets returned by the backend (<mark> / <em>) */
+  ::selection {
+    background: color-mix(in oklab, var(--primary) 32%, transparent);
+  }
+  /* highlighted search snippets returned by the backend (<mark> / <em>) —
+     surlignés au fil d'insigne ambre. */
   mark,
   .snippet em {
-    background: color-mix(in oklab, var(--primary) 28%, transparent);
+    background: color-mix(in oklab, var(--primary) 30%, transparent);
     color: var(--foreground);
     font-style: normal;
     border-radius: 2px;

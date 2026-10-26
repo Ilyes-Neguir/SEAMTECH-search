@@ -68,10 +68,11 @@ CHAMP_COTE = "cotes.finie.slu_m"
 
 
 def test_migration_029_version_tables_et_garde_fous() -> None:
-    # Depuis le Lot 5, la version courante est 030 ; la 029 reste figée.
-    assert VERSION_SCHEMA_METIER == "030_evaluations_confiance"
-    assert MIGRATIONS_METIER[-1][0] == "030_evaluations_confiance"
-    assert MIGRATIONS_METIER[-2][0] == "029_extraction_liaison_corrections"
+    # Depuis le Lot 7, la version courante est 031 ; la 029 reste figée.
+    assert VERSION_SCHEMA_METIER == "031_accessoires"
+    assert MIGRATIONS_METIER[-1][0] == "031_accessoires"
+    assert MIGRATIONS_METIER[-2][0] == "030_evaluations_confiance"
+    assert MIGRATIONS_METIER[-3][0] == "029_extraction_liaison_corrections"
     sql = SQL_029_EXTRACTION_LIAISON_CORRECTIONS
     for fragment in (
         "ADD COLUMN IF NOT EXISTS boat_model_id BIGINT REFERENCES boat_models(id_modele)",
@@ -92,13 +93,15 @@ def test_migration_029_version_tables_et_garde_fous() -> None:
         assert fragment in sql, fragment
     # La migration 028 reste figée : le Lot 3a ne résolvait toujours rien.
     assert "boat_model_id" not in SQL_028_SAIL_EXTRACTIONS
-    # La 030 (Lot 5) a ajouté evaluations_confiance après les deux tables
-    # du Lot 3b — l'ordre historique du schéma reste prouvé.
-    assert len(TABLES_METIER) == 44
-    assert TABLES_METIER[-3:] == (
+    # La 030 (Lot 5) puis la 031 (Lot 7) ont suivi les deux tables du
+    # Lot 3b — l'ordre historique du schéma reste prouvé.
+    assert len(TABLES_METIER) == 46
+    assert TABLES_METIER[-5:] == (
         "extraction_corrections",
         "extraction_motifs_appris",
         "evaluations_confiance",
+        "accessory_extractions",
+        "accessory_corrections",
     )
 
 

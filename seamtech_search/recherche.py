@@ -268,6 +268,9 @@ def _cle_cote(cote: str) -> str:
 # SQL construit depuis un nom de champ inconnu).
 FILTRES_AUTORISES = frozenset(
     {
+        # Lot 7 : « categorie » — sans cette entrée, le filtre serait
+        # silencieusement écarté ici même (vécu en CI e2e).
+        "categorie",
         "type_voile", "client", "bateau", "matiere", "gamme",
         "annee", "annee_min", "annee_max", "boat_model_id",
         "cote", "min", "max", "cote_min", "cote_max",
@@ -852,7 +855,8 @@ def _fragment_filtres(
         morceaux.append("v.statut IN ('valide', 'a_valider')")
     else:
         morceaux.append("v.statut = 'valide'")
-    for cle in ("type_voile", "client", "bateau", "gamme"):
+    # Lot 7 : « categorie » est un axe comme les autres (filtre + facette).
+    for cle in ("type_voile", "client", "bateau", "gamme", "categorie"):
         valeur = filtres.get(cle)
         if valeur not in (None, "") and cle not in exclure:
             morceaux.append(f"v.{cle} = %s")
@@ -1209,6 +1213,11 @@ _FACETTES_AXES: tuple[tuple[str, frozenset[str], str], ...] = (
     ("gamme", frozenset({"gamme"}),
      "SELECT 'gamme' AS facette, gamme AS valeur, count(*)::int AS effectif "
      "FROM {base} WHERE gamme IS NOT NULL AND gamme <> '' GROUP BY gamme"),
+    # Lot 7 : famille du document (voile | accessoire) — toujours présente
+    # (défaut 'voile' en base, jamais NULL).
+    ("categorie", frozenset({"categorie"}),
+     "SELECT 'categorie' AS facette, categorie AS valeur, count(*)::int AS effectif "
+     "FROM {base} GROUP BY categorie"),
     ("annee", GROUPE_ANNEE,
      "SELECT 'annee' AS facette, to_char(date_edition, 'YYYY') AS valeur, count(*)::int AS effectif "
      "FROM {base} WHERE date_edition IS NOT NULL GROUP BY to_char(date_edition, 'YYYY')"),
@@ -1417,8 +1426,20 @@ def _facettes(
     else:
         predicat_texte = ""
 
+    # Compatibilité historique (bases arrêtées avant 031) : la vue ne porte
+    # pas encore `categorie` — l'axe est simplement absent, comme la couche
+    # Lot 2 avant la 026. En service, les migrations ont tourné au démarrage.
+    cursor.execute(
+        "SELECT EXISTS (SELECT 1 FROM information_schema.columns "
+        "WHERE table_schema = 'public' AND table_name = 'v_fiche_recherche' "
+        "AND column_name = 'categorie')"
+    )
+    axes = _FACETTES_AXES
+    if not bool(cursor.fetchone()[0]):
+        axes = tuple(a for a in _FACETTES_AXES if a[0] != "categorie")
+
     unions: list[str] = []
-    for nom, exclure, select_facette in _FACETTES_AXES:
+    for nom, exclure, select_facette in axes:
         fragment, params_fragment = _fragment_filtres(
             filtres, inclure_a_valider, exclure, dimension_toutes=dimension_toutes
         )
@@ -1901,9 +1922,16 @@ def _details_fiches(
         "SELECT to_regclass('public.boat_models') IS NOT NULL AND EXISTS ("
         "SELECT 1 FROM information_schema.columns "
         "WHERE table_schema = 'public' AND table_name = 'bateau' "
-        "AND column_name = 'boat_model_id')"
+        "AND column_name = 'boat_model_id'), "
+        "EXISTS (SELECT 1 FROM information_schema.columns "
+        "WHERE table_schema = 'public' AND table_name = 'fiche' "
+        "AND column_name = 'categorie')"
     )
-    referentiel_disponible = bool(cursor.fetchone()[0])
+    _probe = cursor.fetchone()
+    referentiel_disponible = bool(_probe[0])
+    # Lot 7, même compatibilité de lecture qu'en 026 : avant la 031, toute
+    # fiche EST une voile (la catégorie n'existait pas) — littéral, pas NULL.
+    colonne_categorie = "f.categorie" if _probe[1] else "'voile'::text"
     colonnes_modele = (
         "b.boat_model_id, bm.nom_canonique, bm.cle_normalisee"
         if referentiel_disponible
@@ -1926,7 +1954,8 @@ def _details_fiches(
                f.gamme, f.statut,
                CASE WHEN f.date_edition IS NULL THEN NULL
                     ELSE extract(year FROM f.date_edition)::int END,
-               left(f.champs_texte, 400)
+               left(f.champs_texte, 400),
+               {colonne_categorie}
         FROM fiche f
         LEFT JOIN type_voile tv ON tv.id_type_voile = f.id_type_voile
         LEFT JOIN client c ON c.id_client = f.id_client
@@ -1952,6 +1981,7 @@ def _details_fiches(
             "statut": ligne[10],
             "annee": None if ligne[11] is None else int(ligne[11]),
             "extrait": ligne[12] or "",
+            "categorie": ligne[13],
         }
 
     if avec_cotes:
@@ -2258,6 +2288,7 @@ def enregistrer_routes_recherche(
         boat_model_id: int | None = Query(None, gt=0, description="Modèle canonique Lot 2"),
         matiere: str | None = Query(None, max_length=200),
         gamme: str | None = Query(None, max_length=200),
+        categorie: str | None = Query(None, max_length=20, description="Famille Lot 7 : voile | accessoire"),
         annee: int | None = Query(None, ge=1900, le=2100),
         annee_min: int | None = Query(None, ge=1900, le=2100),
         annee_max: int | None = Query(None, ge=1900, le=2100),
@@ -2290,6 +2321,7 @@ def enregistrer_routes_recherche(
             "boat_model_id": boat_model_id,
             "matiere": matiere,
             "gamme": gamme,
+            "categorie": categorie,
             "annee": annee,
             "annee_min": annee_min,
             "annee_max": annee_max,

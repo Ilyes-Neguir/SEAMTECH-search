@@ -164,7 +164,7 @@ export function ApprovalRequestActions({ code }: { code: string }) {
               <FilePenLine className="size-4 text-primary" aria-hidden /> Modification d’un champ
             </h3>
             {etat.statut === "valide" ? (
-              <p className="text-[11px] text-amber-200">
+              <p className="texte-attention text-[11px]">
                 RG11 : une fiche validée doit d’abord être rouverte par un approbateur avant toute proposition de modification.
               </p>
             ) : etat.champs.length === 0 ? (

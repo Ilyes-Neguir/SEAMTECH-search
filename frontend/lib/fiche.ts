@@ -55,6 +55,9 @@ export interface FicheDetail {
   bateau_taille: string
   date_edition: string | null
   nb_fichiers: number
+  id_fiche?: number
+  categorie?: string
+  categorie_source?: string
 }
 
 export interface HistoriqueFiche {

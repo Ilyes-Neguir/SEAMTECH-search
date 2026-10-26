@@ -27,7 +27,7 @@ type Vue = "a_decider" | "miennes" | "toutes"
 function statutClasses(statut: DemandeApprobation["statut"]): string {
   switch (statut) {
     case "en_attente":
-      return "border-amber-500/50 bg-amber-500/10 text-amber-200"
+      return "badge-attention"
     case "approuvee":
     case "executee":
       return "border-emerald-500/50 bg-emerald-500/10 text-emerald-200"
@@ -409,7 +409,7 @@ export function DemandesApp() {
                     <div><dt className="text-muted-foreground">Révision actuelle</dt><dd className="mt-0.5">{detail.revision_fiche_actuelle ?? "—"}</dd></div>
                   </dl>
                   {revisionDivergente && (
-                    <p className="mt-3 rounded border border-amber-500/40 bg-amber-500/10 p-2 text-amber-200" role="alert">
+                    <p className="badge-attention mt-3 rounded p-2" role="alert">
                       La fiche a changé depuis la proposition. Relisez sa valeur actuelle avant de confirmer explicitement la nouvelle révision.
                     </p>
                   )}
@@ -467,7 +467,7 @@ export function DemandesApp() {
                 <form onSubmit={soumettreDecision} className="mt-6 space-y-3 border-t border-border pt-5" data-testid="decision-form">
                   <h3 className="text-sm font-semibold">Décider cette demande</h3>
                   {estMaDemande && (
-                    <p className="rounded border border-amber-500/40 bg-amber-500/10 p-3 text-xs leading-relaxed text-amber-200" role="alert">
+                    <p className="badge-attention rounded p-3 text-xs leading-relaxed" role="alert">
                       Vous êtes le demandeur. Par défaut, l’auto-approbation est interdite : le serveur refusera votre décision et un autre approbateur devra trancher.
                     </p>
                   )}

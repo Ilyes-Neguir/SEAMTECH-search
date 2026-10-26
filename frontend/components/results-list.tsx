@@ -90,7 +90,7 @@ export function ResultsList({
             type="button"
             onClick={onLoadMore}
             disabled={loadingMore}
-            className="inline-flex items-center gap-2 rounded-lg border border-input bg-card px-5 py-2 text-sm font-medium text-foreground transition-colors hover:bg-white/5 disabled:opacity-60"
+            className="inline-flex items-center gap-2 rounded-lg border border-input bg-card px-5 py-2 text-sm font-medium text-foreground transition-colors hover:bg-accent/60 disabled:opacity-60"
           >
             {loadingMore && <Loader2 className="size-4 animate-spin" />}
             Charger plus de résultats

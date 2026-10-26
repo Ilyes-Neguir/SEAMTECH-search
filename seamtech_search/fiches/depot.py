@@ -375,10 +375,21 @@ def deposer_dossier(index: Any, dossier: Path, gabarits: list[GabaritDef] | None
         with index.connect() as connexion:
             with connexion.cursor() as cursor:
                 fiche = extraire_fiche(plan.pdf_fiche, gabarits=gabarits, gabarit_code=plan.gabarit_code)
+                # Lot 7 : la catégorie est proposée ICI, explicitement — nom
+                # du dossier (« accessoire ») d'abord, famille du gabarit
+                # gagnant ensuite. La persistance tranche et ne contredit
+                # jamais une catégorie déjà décidée par un humain.
+                from seamtech_search.accessoires import proposer_categorie
+
+                categorie_proposee = proposer_categorie(
+                    Path(dossier).name, plan.gabarit_code
+                )
                 # ResultatEcriture : la révision qui accompagne le contenu écrit
                 # est publiée au lot (A02) — un dépôt qui REMPLACE une fiche
                 # fait avancer sa révision, et le dépôt le DIT.
-                ecriture = ecrire_fiche_resultat(index, fiche, connexion=connexion)
+                ecriture = ecrire_fiche_resultat(
+                    index, fiche, connexion=connexion, categorie=categorie_proposee
+                )
                 id_fiche, action = ecriture.id_fiche, ecriture.action
                 revision_fiche = ecriture.revision
 
@@ -402,17 +413,34 @@ def deposer_dossier(index: Any, dossier: Path, gabarits: list[GabaritDef] | None
                 )
                 id_document_pdf = cursor.fetchone()[0]
                 cursor.execute(_SQL_DOCUMENT_VECTOR, (id_document_pdf,))
-                # Lot 3a : l'extraction écrite avec la fiche reçoit, dans la
-                # même transaction de dépôt, l'identifiant du PDF source et
-                # son empreinte SHA-256. Aucun chemin d'archive n'est copié
-                # dans sail_extractions.
-                lier_extraction_voile_document_curseur(
-                    cursor,
-                    id_fiche=id_fiche,
-                    id_document=int(id_document_pdf),
-                    empreinte_sha256=empreinte,
-                    nom_fichier_source=pdf_fiche.name,
+                # Lots 3a/7 : l'extraction écrite avec la fiche reçoit, dans
+                # la même transaction de dépôt, l'identifiant du PDF source
+                # et son empreinte SHA-256 — dans la famille RÉELLEMENT
+                # écrite (relu en base : une catégorie humaine prime sur la
+                # proposition). Aucun chemin d'archive n'est copié.
+                cursor.execute(
+                    "SELECT categorie FROM fiche WHERE id_fiche = %s", (id_fiche,)
                 )
+                if str(cursor.fetchone()[0]) == "accessoire":
+                    from seamtech_search.accessoires import (
+                        lier_extraction_accessoire_document_curseur,
+                    )
+
+                    lier_extraction_accessoire_document_curseur(
+                        cursor,
+                        id_fiche=id_fiche,
+                        id_document=int(id_document_pdf),
+                        empreinte_sha256=empreinte,
+                        nom_fichier_source=pdf_fiche.name,
+                    )
+                else:
+                    lier_extraction_voile_document_curseur(
+                        cursor,
+                        id_fiche=id_fiche,
+                        id_document=int(id_document_pdf),
+                        empreinte_sha256=empreinte,
+                        nom_fichier_source=pdf_fiche.name,
+                    )
 
                 for piece in plan.pieces:
                     chemin_piece = Path(piece.chemin)

@@ -303,6 +303,67 @@ def semer_population_lot5(idx) -> None:
     )
 
 
+CODE_ACCESSOIRE_LOT7 = "LOT7-E2E-1"
+
+
+def semer_accessoires_lot7(idx) -> None:
+    """Lot 7 — un dossier « ACCESSOIRES E2E » déposé pour de vrai.
+
+    Le PDF texte est généré (reportlab, aucun document client) : le dépôt
+    réel prouve la proposition de catégorie par le nom du dossier, la lecture
+    par libellés du gabarit FICHE_ACCESSOIRE_V1 et la naissance de la
+    projection `accessory_extractions` — le navigateur n'a plus qu'à décider
+    la liaison et corriger. Le libellé de bateau est volontairement inconnu
+    du référentiel pour que la décision reste à l'approbateur (écran)."""
+    from reportlab.pdfgen import canvas
+
+    from seamtech_search.fiches import depot
+
+    racine = Path(f"/tmp/e2e-accessoires-{uuid.uuid4().hex[:8]}")
+    dossier = racine / "ACCESSOIRES E2E"
+    dossier.mkdir(parents=True)
+    pdf = dossier / "fiche-accessoire-e2e.pdf"
+    toile = canvas.Canvas(str(pdf))
+    lignes = [
+        "FICHE ACCESSOIRE",
+        f"Reference : {CODE_ACCESSOIRE_LOT7}",
+        "Type : Coussin de cockpit",
+        "Matiere : Sunbrella Plus",
+        "Couleur : Captain bleu",
+        "Dimensions : 1200 mm x 450 mm x 100 mm",
+        "Quantite : 4",
+        "Bateau : Prototype E2E Lot7",
+    ]
+    y = 780
+    for ligne in lignes:
+        toile.drawString(60, y, ligne)
+        y -= 24
+    toile.save()
+
+    resultat = depot.deposer_dossier(idx, dossier)
+    if resultat.get("statut") != "traite":
+        print(
+            f"Dépôt e2e accessoires en échec ({resultat}) — conséquence : "
+            "l'e2e Lot 7 manque sa fiche.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    with idx.connect() as connexion:
+        with connexion.cursor() as cur:
+            cur.execute(
+                "SELECT categorie, categorie_source FROM fiche WHERE code = %s",
+                (CODE_ACCESSOIRE_LOT7,),
+            )
+            ligne = cur.fetchone()
+            if ligne is None or tuple(ligne) != ("accessoire", "dossier"):
+                print(
+                    f"Seed e2e Lot 7 : catégorie inattendue {ligne!r} — le dépôt "
+                    "n'a pas routé la fiche en accessoire.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+
+
 def semer_comptes(idx) -> None:
     """Crée/normalise les comptes nominatifs canoniques de l'e2e (Lot 1).
 
@@ -451,6 +512,7 @@ def main() -> None:
         semer_piece_distincte(idx, codes["CLIENT-E2E-TROIS"])
         semer_doublon(idx)
         semer_population_lot5(idx)
+        semer_accessoires_lot7(idx)
         semer_comptes(idx)
         idx.close()
 

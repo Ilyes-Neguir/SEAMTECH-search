@@ -1743,6 +1743,79 @@ jobs:
             exit "$rc"
           fi
 
+      # Lot 7 — famille accessoires : onglet, file, liaison à un modèle
+      # créée par l'approbateur, correction historisée, facette catégorie
+      # + badge, catégorie relisible sur la fiche, lecture refusée.
+      - name: Run live E2E Lot 7 (accessoires)
+        working-directory: frontend
+        env:
+          SEAMTECH_E2E_DATABASE_URL: postgresql://seamtech:seamtech_test_password@localhost:5432/seamtech_search_test
+          PLAYWRIGHT_JSON_OUTPUT_NAME: report-lot7.json
+        run: |
+          set -uo pipefail
+          set +e
+          pnpm exec playwright test e2e/lot7-accessoires.spec.ts --reporter=list,json 2>&1 | tee /tmp/e2e_lot7.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            echo "::error title=e2e-lot7-failed::$(grep -aE '✘|✓|failed|Error|expect|attendu|Timeout' /tmp/e2e_lot7.log | head -30 | tr -d '\000-\010\013\014\016-\037' | sed 's/%/%25/g' | tr '\n' ';' | head -c 2500)"
+            echo "::error title=e2e-lot7-tail::$(tail -50 /tmp/e2e_lot7.log | tr -d '\000-\010\013\014\016-\037' | sed 's/%/%25/g' | tr '\n' ';' | head -c 2500)"
+            # Ne pas sortir ici : le parseur JSON ci-dessous publie les causes
+            # par test (premier essai compris), puis le code Playwright est
+            # restitué tel quel après le parseur.
+          fi
+          python - <<'PY'
+          import json
+          import os
+
+          if not os.path.exists("report-lot7.json"):
+              print("::error title=e2e-lot7-count::report-lot7.json absent — rien n'a été mesuré")
+              raise SystemExit("GARDE-FOU e2e Lot 7 : report-lot7.json absent.")
+          d = json.load(open("report-lot7.json"))
+          stats = d["stats"]
+          passes = stats["expected"]
+          flaky = stats.get("flaky", 0)
+          sautes = stats.get("skipped", 0)
+          inattendus = stats.get("unexpected", 0)
+
+          def problemes(suites):
+              for suite in suites or []:
+                  for spec in suite.get("specs") or []:
+                      for test in spec.get("tests") or []:
+                          etat = test.get("status") or test.get("outcome")
+                          if etat in {"flaky", "unexpected", "skipped"}:
+                              causes = []
+                              for resultat in test.get("results") or []:
+                                  erreur = resultat.get("error") or {}
+                                  brut = str(erreur.get("message") or "")
+                                  message = "".join(c if c >= " " else " " for c in brut)
+                                  message = message.replace("%", "%25").strip()
+                                  lieu = erreur.get("location") or {}
+                                  if lieu.get("file"):
+                                      message = f"{lieu.get('file')}:{lieu.get('line', '?')} — {message}"
+                                  if message:
+                                      causes.append(message[:500])
+                              yield f"{etat}: {spec.get('title', '?')} — {causes[0] if causes else 'cause non consignée'}"
+                  yield from problemes(suite.get("suites") or [])
+
+          if sautes or flaky or inattendus or passes != 4:
+              detail = "; ".join(list(problemes(d.get("suites") or []))[:5]) or "aucun test nommé dans le rapport"
+              print(
+                  "::error title=e2e-lot7-count::attendu 4 tests passés au premier essai, "
+                  f"0 flaky, 0 sautés — mesuré {passes} passés, {flaky} flaky, "
+                  f"{sautes} sautés, {inattendus} en échec. Détail : {detail}"
+              )
+              raise SystemExit(
+                  "GARDE-FOU e2e Lot 7 : attendu 4 tests passés au premier essai, "
+                  f"0 flaky, 0 sautés — mesuré {passes} passés, {flaky} flaky, "
+                  f"{sautes} sautés, {inattendus} en échec. Détail : {detail}"
+              )
+          print("::notice title=e2e-lot7::4 parcours Lot 7 verts au premier essai (file accessoires, liaison créée, correction, facette catégorie, lecture refusée)")
+          PY
+          if [ "$rc" -ne 0 ]; then
+            exit "$rc"
+          fi
+
       # Parcours live canonisés par Lot 1 : les écrans de validation et les
       # liens directs sont désormais exercés par un approbateur nominatif, le
       # dépôt suivi par un utilisateur. Ils ne doivent plus dépendre du

@@ -144,7 +144,7 @@ function BadgeVerdict({ evaluation }: { evaluation: Evaluation }) {
     evaluation.verdict === "compatible"
       ? "bg-emerald-100 text-emerald-900 border-emerald-300"
       : evaluation.verdict === "a_examiner"
-        ? "bg-amber-100 text-amber-900 border-amber-300"
+        ? "badge-attention"
         : "bg-slate-100 text-slate-800 border-slate-300"
   return (
     <div className={cn("rounded-lg border p-4", classes)} role="status">
@@ -197,7 +197,7 @@ function TableDimensions({ dimensions }: { dimensions: DimensionJustifiee[] }) {
               <td className="py-2 pr-3 font-medium">
                 {LIBELLES_DIMENSIONS[d.champ] ?? d.champ}
                 {d.heterogene ? (
-                  <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-semibold text-amber-900">
+                  <span className="badge-attention ml-2 rounded px-1.5 py-0.5 text-[11px] font-semibold">
                     hétérogène
                   </span>
                 ) : null}
@@ -397,7 +397,7 @@ function ConfianceAppInterne({ role }: { role: Role }) {
                   </div>
                 </div>
                 {selection.boat_model_id === null ? (
-                  <p className="text-sm text-amber-800">
+                  <p className="texte-attention text-sm">
                     Modèle de bateau non résolu : aucune population de référence. Liez la voile dans l’écran
                     Extractions.
                   </p>

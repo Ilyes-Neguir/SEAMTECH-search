@@ -1531,7 +1531,7 @@ def detail_fiche(index: Any, code: str) -> dict[str, Any]:
                 "COALESCE(c.nom, ''), COALESCE(b.nom, ''), COALESCE(b.taille, ''), f.date_edition, "
                 "(SELECT COUNT(*) FROM fiche_piece_jointe p WHERE p.id_fiche = f.id_fiche) "
                 "+ CASE WHEN f.fichier_source IS NULL THEN 0 ELSE 1 END, "
-                "f.revision "
+                "f.revision, f.id_fiche, f.categorie, f.categorie_source "
                 "FROM fiche f LEFT JOIN gabarit g ON g.id_gabarit = f.id_gabarit "
                 "LEFT JOIN client c ON c.id_client = f.id_client "
                 "LEFT JOIN bateau b ON b.id_bateau = f.id_bateau WHERE f.code = %s",
@@ -1554,6 +1554,11 @@ def detail_fiche(index: Any, code: str) -> dict[str, Any]:
         # Révision de la fiche : le poste la renvoie à chaque correction, ce qui
         # permet de REFUSER une écriture fondée sur un état périmé (migration 021).
         "revision": int(row[9] if row[9] is not None else 1),
+        # Lot 7 : la catégorie et sa source sont toujours relisibles — et
+        # l'id permet à l'approbateur de reclasser depuis cette page.
+        "id_fiche": int(row[10]),
+        "categorie": str(row[11]),
+        "categorie_source": str(row[12]),
     }
 
 

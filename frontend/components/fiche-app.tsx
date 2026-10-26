@@ -9,6 +9,8 @@ import { PieceDownload } from "@/components/piece-download"
 import { VisionneusePiece, type ZoneASurligner } from "@/components/visionneuse-piece"
 import { authedFetch } from "@/lib/authed-fetch"
 import { palierDeChamp, type ChampExtrait, type FicheDetail, type HistoriqueFiche, type PieceJointe, type PiecesDeFiche } from "@/lib/fiche"
+import { estApprobateur } from "@/lib/roles"
+import { useSession } from "@/lib/use-session"
 import { cn } from "@/lib/utils"
 
 async function jsonFetch<T>(url: string): Promise<T> {
@@ -23,6 +25,90 @@ function tailleLisible(octets: number | null): string {
   if (octets < 1024) return `${octets} o`
   if (octets < 1024 * 1024) return `${(octets / 1024).toFixed(1)} Ko`
   return `${(octets / (1024 * 1024)).toFixed(1)} Mo`
+}
+
+const LIBELLES_CATEGORIE: Record<string, string> = {
+  voile: "Voile",
+  accessoire: "Accessoire",
+}
+
+const LIBELLES_SOURCE_CATEGORIE: Record<string, string> = {
+  dossier: "proposée par le nom du dossier",
+  document: "proposée par le document (gabarit)",
+  humain: "décidée par un approbateur",
+}
+
+// Lot 7 — la catégorie se lit toujours (valeur + source) et l'approbateur
+// peut la corriger ici même : la projection métier est reconstruite dans la
+// bonne famille par le backend (ou refusée si des corrections humaines
+// existent — rien ne disparaît en silence).
+function CategorieFiche({ detail }: { detail: FicheDetail }) {
+  const { session, role } = useSession()
+  const [cible, setCible] = useState(detail.categorie ?? "voile")
+  const [retour, setRetour] = useState<string | null>(null)
+  const [occupe, setOccupe] = useState(false)
+  const peutReclasser =
+    session.mode === "nominatif" && estApprobateur(role) && detail.id_fiche !== undefined
+
+  async function reclasser() {
+    if (!detail.id_fiche || cible === detail.categorie) return
+    setOccupe(true)
+    setRetour(null)
+    try {
+      const res = await authedFetch(`/api/accessoires/fiches/${detail.id_fiche}/categorie`, {
+        method: "POST",
+        body: JSON.stringify({ categorie: cible }),
+      })
+      const corps = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(String(corps?.detail ?? `HTTP ${res.status}`))
+      window.location.reload()
+    } catch (e) {
+      setRetour(e instanceof Error ? e.message : "Reclassification refusée.")
+      setOccupe(false)
+    }
+  }
+
+  return (
+    <div>
+      <dt className="text-muted-foreground">Catégorie</dt>
+      <dd className="mt-0.5 font-medium" data-testid="fiche-categorie">
+        {LIBELLES_CATEGORIE[detail.categorie ?? ""] ?? detail.categorie ?? "—"}
+        {detail.categorie_source && (
+          <span className="ml-1 text-[10px] font-normal text-muted-foreground">
+            ({LIBELLES_SOURCE_CATEGORIE[detail.categorie_source] ?? detail.categorie_source})
+          </span>
+        )}
+      </dd>
+      {peutReclasser && (
+        <div className="mt-1 flex items-center gap-1">
+          <select
+            value={cible}
+            onChange={(e) => setCible(e.target.value)}
+            className="rounded border border-border bg-input px-1.5 py-0.5 text-[11px]"
+            data-testid="select-categorie"
+            aria-label="Nouvelle catégorie"
+          >
+            <option value="voile">Voile</option>
+            <option value="accessoire">Accessoire</option>
+          </select>
+          <button
+            type="button"
+            disabled={occupe || cible === detail.categorie}
+            onClick={() => void reclasser()}
+            className="rounded border border-border px-2 py-0.5 text-[11px] font-semibold disabled:opacity-40"
+            data-testid="bouton-reclasser"
+          >
+            Reclasser
+          </button>
+        </div>
+      )}
+      {retour && (
+        <p role="alert" className="mt-1 text-[11px] text-destructive" data-testid="erreur-reclassification">
+          {retour}
+        </p>
+      )}
+    </div>
+  )
 }
 
 export function FicheApp({ code }: { code: string }) {
@@ -137,6 +223,7 @@ export function FicheApp({ code }: { code: string }) {
               <div><dt className="text-muted-foreground">Bateau</dt><dd className="mt-0.5 font-medium">{[detailAffiche.bateau, detailAffiche.bateau_taille].filter(Boolean).join(" · ") || "—"}</dd></div>
               <div><dt className="text-muted-foreground">Gabarit</dt><dd className="mt-0.5 font-medium">{detailAffiche.gabarit || "—"}</dd></div>
               <div><dt className="text-muted-foreground">Édition</dt><dd className="mt-0.5 font-medium">{detailAffiche.date_edition || "—"}</dd></div>
+              <CategorieFiche detail={detailAffiche} />
             </dl>
           )}
         </header>
@@ -177,7 +264,7 @@ export function FicheApp({ code }: { code: string }) {
                   <span className="truncate font-mono text-muted-foreground">{champ.champ}{champ.rang != null ? ` [${champ.rang}]` : ""}</span>
                   <span className="truncate" data-testid={`valeur-${champ.champ}`}>
                     {champ.valeur_normalisee ?? <span className="text-muted-foreground">—</span>}
-                    {champ.corrige && <span className="ml-1 text-[10px] text-violet-300">(corrigé par {champ.corrige_par})</span>}
+                    {champ.corrige && <span className="texte-corrige ml-1 text-[10px]">(corrigé par {champ.corrige_par})</span>}
                   </span>
                   <span className="flex items-center gap-1">
                     <span className="max-w-32 truncate font-mono text-[10px] text-muted-foreground" title={`brute : ${champ.valeur_brute ?? "—"}`}>{champ.valeur_brute ?? "—"}</span>

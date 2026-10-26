@@ -1,4 +1,4 @@
-"""Schéma métier « fiche technique » — migrations 006 à 030 (Lots A → Lot 5).
+"""Schéma métier « fiche technique » — migrations 006 à 031 (Lots A → Lot 7).
 
 DÉCISION DE COUCHE ACTÉE (plan v3.0 §17.1) : la couche métier est
 **PostgreSQL uniquement**. Elle s'appuie sur pgvector, pg_trgm, les index GIN,
@@ -26,7 +26,7 @@ from __future__ import annotations
 from typing import Any
 
 # Version du schéma métier — incrémentée à chaque nouvelle migration.
-VERSION_SCHEMA_METIER = "030_evaluations_confiance"
+VERSION_SCHEMA_METIER = "031_accessoires"
 
 # Marqueur injecté par le code au moment de la migration (constat 1 de revue) :
 # le nom de la configuration de recherche effective — 'seamtech_unaccent' ou
@@ -113,6 +113,12 @@ TABLES_METIER: tuple[str, ...] = (
     # persistées. Un score ne vit jamais sans sa justification (population,
     # dispersion robuste par dimension, sources) : la ligne EST la preuve.
     "evaluations_confiance",
+    # 031 — Lot 7 : famille accessoires (coussins, housses, tauds…), schéma
+    # propre mais même discipline de provenance que les voiles (Lot 3a/3b) ;
+    # la catégorie voile/accessoire vit sur la fiche, jamais devinée sans
+    # source tracée (nom de dossier, gabarit du document, ou humain).
+    "accessory_extractions",
+    "accessory_corrections",
 )
 
 SQL_006_FICHE_TECHNIQUE = """
@@ -2095,6 +2101,148 @@ COMMENT ON TABLE evaluations_confiance IS
     'Évaluations de confiance de réutilisation (Lot 5, Fonction B) : score robuste médiane/MAD/IQR, verdict et justification complète. Score NULL obligatoire si données insuffisantes ou population hétérogène.';
 """
 
+SQL_031_ACCESSOIRES = """
+-- Lot 7 : la famille « accessoires » (coussins, housses, tauds, sellerie…)
+-- devient un document de première classe, au même niveau d'exigence que les
+-- voiles (Lots 3a/3b) : schéma propre, provenance par champ, liaison à UN
+-- modèle de bateau canonique. La catégorie (voile|accessoire) vit sur la
+-- fiche : proposée au dépôt (nom du dossier, puis gabarit du document) avec
+-- sa SOURCE tracée, corrigeable par l'approbateur — jamais devinée en silence.
+ALTER TABLE fiche
+    ADD COLUMN IF NOT EXISTS categorie TEXT NOT NULL DEFAULT 'voile' CHECK (
+        categorie IN ('voile', 'accessoire')
+    ),
+    ADD COLUMN IF NOT EXISTS categorie_source TEXT NOT NULL DEFAULT 'document' CHECK (
+        categorie_source IN ('dossier', 'document', 'humain')
+    );
+
+CREATE INDEX IF NOT EXISTS idx_fiche_categorie ON fiche (categorie);
+
+CREATE TABLE IF NOT EXISTS accessory_extractions (
+    id_extraction       BIGSERIAL PRIMARY KEY,
+    cle_idempotence     TEXT NOT NULL UNIQUE
+                        CHECK (char_length(btrim(cle_idempotence)) BETWEEN 1 AND 240),
+    id_fiche            BIGINT REFERENCES fiche(id_fiche) ON DELETE SET NULL,
+    id_document         BIGINT REFERENCES documents(id) ON DELETE SET NULL,
+    code_fiche          TEXT,
+    nom_fichier_source  TEXT,
+    empreinte_sha256    CHAR(64)
+                        CHECK (empreinte_sha256 IS NULL OR empreinte_sha256 ~ '^[0-9a-f]{64}$'),
+    gabarit_code        TEXT,
+    gabarit_version     INTEGER CHECK (gabarit_version IS NULL OR gabarit_version > 0),
+    version_extracteur  TEXT NOT NULL CHECK (char_length(btrim(version_extracteur)) BETWEEN 1 AND 80),
+    methode_principale  TEXT NOT NULL CHECK (
+        methode_principale IN ('gabarit', 'gabarit_inconnu', 'ocr', 'fiche_extraite', 'inconnue')
+    ),
+    type_accessoire     TEXT,
+    designation_brute   TEXT,
+    matiere             TEXT,
+    couleur             TEXT,
+    dimensions_texte    TEXT,
+    longueur_m          NUMERIC(10, 3) CHECK (longueur_m IS NULL OR longueur_m > 0),
+    largeur_m           NUMERIC(10, 3) CHECK (largeur_m IS NULL OR largeur_m > 0),
+    hauteur_m           NUMERIC(10, 3) CHECK (hauteur_m IS NULL OR hauteur_m > 0),
+    quantite            INTEGER CHECK (quantite IS NULL OR quantite >= 1),
+    modele_bateau_brut  TEXT,
+    taille_bateau_brute TEXT,
+    champs              JSONB NOT NULL DEFAULT '[]'::jsonb
+                        CHECK (jsonb_typeof(champs) = 'array'),
+    anomalies           JSONB NOT NULL DEFAULT '[]'::jsonb
+                        CHECK (jsonb_typeof(anomalies) = 'array'),
+    score_qualite       NUMERIC(5, 4)
+                        CHECK (score_qualite IS NULL OR score_qualite BETWEEN 0 AND 1),
+    confiance_moyenne   NUMERIC(5, 4)
+                        CHECK (confiance_moyenne IS NULL OR confiance_moyenne BETWEEN 0 AND 1),
+    statut_extraction   TEXT NOT NULL CHECK (
+        statut_extraction IN ('complete', 'partielle', 'a_reprendre')
+    ),
+    statut_plausibilite TEXT NOT NULL CHECK (
+        statut_plausibilite IN ('plausible', 'a_verifier', 'implausible', 'indeterminee')
+    ),
+    boat_model_id       BIGINT REFERENCES boat_models(id_modele) ON DELETE SET NULL,
+    statut_liaison      TEXT NOT NULL DEFAULT 'non_resolu' CHECK (
+        statut_liaison IN ('non_resolu', 'lie_automatique', 'lie_humain', 'ambigu', 'sans_modele')
+    ),
+    methode_liaison     TEXT CHECK (
+        methode_liaison IS NULL OR methode_liaison IN (
+            'cle_exacte', 'alias_exact', 'fiche_bateau', 'humain', 'humain_nouveau_modele'
+        )
+    ),
+    lie_le              TIMESTAMPTZ,
+    lie_par             BIGINT REFERENCES utilisateur(id_utilisateur) ON DELETE SET NULL,
+    extrait_le          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    cree_le             TIMESTAMPTZ NOT NULL DEFAULT now(),
+    maj_le              TIMESTAMPTZ NOT NULL DEFAULT now(),
+    -- Même cohérence que sail_extractions (Lot 3b) : un statut « lié »
+    -- exige un modèle, un statut non lié l'interdit.
+    CONSTRAINT accessory_extractions_liaison_coherente CHECK (
+        (statut_liaison IN ('lie_automatique', 'lie_humain') AND boat_model_id IS NOT NULL)
+        OR (
+            statut_liaison IN ('non_resolu', 'ambigu', 'sans_modele')
+            AND boat_model_id IS NULL
+        )
+    )
+);
+
+CREATE INDEX IF NOT EXISTS idx_accessory_extractions_fiche
+    ON accessory_extractions (id_fiche, extrait_le DESC, id_extraction DESC)
+    WHERE id_fiche IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_accessory_extractions_liaison
+    ON accessory_extractions (statut_liaison, cree_le, id_extraction)
+    WHERE statut_liaison IN ('non_resolu', 'ambigu');
+CREATE INDEX IF NOT EXISTS idx_accessory_extractions_modele_bateau
+    ON accessory_extractions (boat_model_id)
+    WHERE boat_model_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_accessory_extractions_code
+    ON accessory_extractions (code_fiche)
+    WHERE code_fiche IS NOT NULL;
+
+-- Corrections approbateur des extractions d'accessoires (miroir 3b) : la
+-- provenance machine (`champs`) n'est jamais réécrite.
+CREATE TABLE IF NOT EXISTS accessory_corrections (
+    id_correction         BIGSERIAL PRIMARY KEY,
+    id_extraction         BIGINT NOT NULL REFERENCES accessory_extractions(id_extraction) ON DELETE CASCADE,
+    champ                 TEXT NOT NULL CHECK (char_length(btrim(champ)) BETWEEN 1 AND 80),
+    valeur_avant          JSONB,
+    valeur_apres          JSONB,
+    id_utilisateur        BIGINT REFERENCES utilisateur(id_utilisateur) ON DELETE SET NULL,
+    motif                 TEXT,
+    cree_le               TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_accessory_corrections_extraction
+    ON accessory_corrections (id_extraction, cree_le, id_correction);
+
+-- La vue de recherche expose la catégorie (facette Lot 7). DROP + CREATE :
+-- on ajoute la colonne en fin de liste, sans changer l'ordre existant (014).
+DROP VIEW IF EXISTS v_fiche_recherche;
+CREATE VIEW v_fiche_recherche AS
+SELECT f.id_fiche,
+       f.code,
+       f.titre,
+       f.statut,
+       tv.libelle                    AS type_voile,
+       c.nom                         AS client,
+       b.nom || ' ' || coalesce(b.taille,'') AS bateau,
+       f.gamme,
+       f.segment,
+       f.date_edition,
+       cd.slu_m, cd.sle_m, cd.sf_m, cd.shw_m, cd.spa_m2, cd.tetiere_cm, cd.poids_kg,
+       f.categorie
+FROM fiche f
+LEFT JOIN type_voile tv ON tv.id_type_voile = f.id_type_voile
+LEFT JOIN client     c  ON c.id_client      = f.id_client
+LEFT JOIN bateau     b  ON b.id_bateau      = f.id_bateau
+LEFT JOIN fiche_cotes cd ON cd.id_fiche = f.id_fiche AND cd.jeu = 'finie';
+
+COMMENT ON TABLE accessory_extractions IS
+    'Extractions d''accessoires normalisées (Lot 7) : type, matière, couleur, dimensions, quantité, provenance par champ et liaison à un modèle de bateau canonique.';
+COMMENT ON COLUMN fiche.categorie IS
+    'voile | accessoire — famille du document (Lot 7). Proposée au dépôt, décidée par l''approbateur en cas de doute.';
+COMMENT ON COLUMN fiche.categorie_source IS
+    'dossier (nom du dossier déposé) | document (gabarit gagnant) | humain (décision approbateur) — la catégorie n''est jamais muette sur son origine.';
+"""
+
 MIGRATIONS_METIER: tuple[tuple[str, str], ...] = (
     ("006_fiche_technique", SQL_006_FICHE_TECHNIQUE),
     ("007_recherche_index", SQL_007_RECHERCHE_INDEX),
@@ -2121,6 +2269,7 @@ MIGRATIONS_METIER: tuple[tuple[str, str], ...] = (
     ("028_sail_extractions", SQL_028_SAIL_EXTRACTIONS),
     ("029_extraction_liaison_corrections", SQL_029_EXTRACTION_LIAISON_CORRECTIONS),
     ("030_evaluations_confiance", SQL_030_EVALUATIONS_CONFIANCE),
+    ("031_accessoires", SQL_031_ACCESSOIRES),
 )
 
 

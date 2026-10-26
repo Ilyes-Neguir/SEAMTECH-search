@@ -83,13 +83,13 @@ export function ResultItem({ result, selected, onSelect }: ResultItemProps) {
         "group flex cursor-pointer items-start gap-3 border-l-2 px-4 py-3 transition-colors",
         selected
           ? "border-l-primary bg-primary/5"
-          : "border-l-transparent hover:border-l-primary/40 hover:bg-white/[0.03]",
+          : "border-l-transparent hover:border-l-primary/40 hover:bg-accent/50",
       )}
     >
       <div
         className={cn(
           "mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-md",
-          result.is_dir ? "bg-primary/10 text-primary" : "bg-white/5 text-muted-foreground",
+          result.is_dir ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground",
         )}
       >
         <Icon className="size-5" />
@@ -100,7 +100,7 @@ export function ResultItem({ result, selected, onSelect }: ResultItemProps) {
           <h3 className="truncate text-[15px] font-medium text-foreground">{result.name}</h3>
           <MatchBadge type={result.match_type} />
           {extractionLabel(result.extraction_status) && (
-            <span className="shrink-0 text-[10px] uppercase tracking-wide text-amber-300">
+            <span className="texte-attention shrink-0 text-[10px] uppercase tracking-wide">
               {extractionLabel(result.extraction_status)}
             </span>
           )}
@@ -140,14 +140,14 @@ export function ResultItem({ result, selected, onSelect }: ResultItemProps) {
           }}
           aria-label="Prévisualiser"
           title="Prévisualiser"
-          className="rounded-md p-2 text-muted-foreground transition-colors hover:bg-white/10 hover:text-foreground"
+          className="rounded-md p-2 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
         >
           <Eye className="size-4" />
         </button>
         {!result.is_dir && (
           <PieceDownload
             piece={{ id: result.id, name: result.name }}
-            className="rounded-md p-2 text-muted-foreground transition-colors hover:bg-white/10 hover:text-foreground"
+            className="rounded-md p-2 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
             stopPropagation
           />
         )}
