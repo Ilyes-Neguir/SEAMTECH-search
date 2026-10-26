@@ -1,6 +1,6 @@
 # Plan directeur v2 — Lot 8 : « L'atelier prend le large » (refonte visuelle)
 
-> Branche : `arena/82958474-seamtech-search` · RED : `5619734` · GREEN : `9e80da9`
+> Branche : `arena/82958474-seamtech-search` · RED : `5619734` · GREEN : `9e80da9` → prouvé : `bd91fe7`
 > · Skin uniquement — **aucune migration, aucun parcours métier modifié**.
 > Vérifié avec les workflows ECC (`verification-loop`, `frontend-a11y`).
 
@@ -82,7 +82,11 @@ Comme à bord, on travaille par **quarts** :
   mesurés dans le navigateur** sur `/login` dans les deux quarts
   (texte/fond, texte/carte, bouton ≥ 4,5), groupes de navigation visibles
   après connexion, lien « Recherche » toujours là.
-- **CI au SHA exact `9e80da9`** : _à compléter à la clôture (4 workflows)._
+- **CI au SHA exact `bd91fe7` — 4/4 verts** : CI `40344514549` (13 jobs dont
+  e2e complet), Qualification native `40344515232`, Qualification reserves
+  `40344514593`, Perf comparaison `40344514120`. Le premier passage (`9e80da9`)
+  avait échoué sur le seul job e2e — collision de nom accessible, voir
+  « Échecs honnêtes » ; corrigé par `bd91fe7`.
 - **Vérification ECC locale** : build ✓, types ✓, ruff ✓, 1058 tests Python
   passés (442 live ignorés dans le bac à sable), scan de secrets du diff
   propre, diff relu = peau uniquement. Revue `frontend-a11y` : bascule
@@ -103,6 +107,11 @@ Comme à bord, on travaille par **quarts** :
   sont mutuellement annulées en silence — détectées par l'absence d'une
   utilité dans le CSS compilé, puis par grep de contrôle après chaque edit.
   Règle : un edit par message et par fichier, vérification systématique.
+- **Collision de nom accessible** : le lien de marque « SEAMTECH — retour à
+  la recherche » répondait, comme le lien « Recherche », au localisateur par
+  rôle/nom (sous-chaîne) → violation de mode strict en CI (`9e80da9`, job e2e
+  seul rouge). Ambigu aussi pour la commande vocale : la marque devient
+  « accueil de l'atelier » et la recette vise le nom exact (`bd91fe7`, 4/4).
 - **`/login` sans `SEAMTECH_UI_PASSWORD`** affiche volontairement l'écran
   « fail closed » : le premier aperçu semblait vide — comportement de sécurité
   correct, confirmé, contourné pour l'aperçu seulement.
