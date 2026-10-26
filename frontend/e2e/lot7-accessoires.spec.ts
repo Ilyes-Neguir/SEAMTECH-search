@@ -65,11 +65,12 @@ test.describe("Lot 7 — accessoires", () => {
     await expect(facette).toBeVisible({ timeout: 30000 })
     await facette.getByRole("button", { name: /Accessoires/ }).click()
 
-    const carte = page.locator("li", { hasText: CODE }).first()
+    const carte = page.locator(`li[data-code="${CODE}"]`).first()
     await expect(carte).toBeVisible({ timeout: 30000 })
     await expect(carte.getByTestId("badge-categorie")).toContainText("Accessoire")
-    // Le filtre ne garde que la famille : la fiche voile de référence sort.
-    await expect(page.locator("li", { hasText: "7792-SO" })).toHaveCount(0, { timeout: 15000 })
+    // Le filtre ne garde que la famille : la fiche voile de référence sort
+    // (data-code cible les CARTES de résultat, pas les li imbriqués).
+    await expect(page.locator('li[data-code="7792-SO"]')).toHaveCount(0, { timeout: 15000 })
   })
 
   test("fiche : catégorie relisible avec sa source", async ({ page }) => {
