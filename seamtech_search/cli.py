@@ -9,7 +9,7 @@ from pathlib import Path
 import uvicorn
 
 from .api import create_app
-from .config import AppConfig
+from .config import AppConfig, exiger_secrets_production
 from .crawler import ScanIncompleteError, crawl
 from .indexer import SearchIndex
 from .retention import run_retention_cleanup
@@ -185,5 +185,7 @@ def run_cleanup(config_path: str) -> dict[str, int]:
 
 def run_server(config_path: str) -> None:
     config = AppConfig.load(config_path)
+    # Lot PROD : un secret d'exemple refuse le démarrage (voir config.py).
+    exiger_secrets_production(config)
     app = create_app(config)
     uvicorn.run(app, host=config.host, port=config.port)

@@ -37,7 +37,7 @@ import sys
 import threading
 from typing import Any
 
-from .config import AppConfig, default_config_path
+from .config import AppConfig, default_config_path, exiger_secrets_production
 from .indexer import SearchIndex
 from .jobs import compter_jobs_par_statut
 from .redis_store import RedisStore
@@ -52,6 +52,8 @@ def _construire(config_path: str | None, verbose: bool) -> tuple[AppConfig, Sear
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
     config = AppConfig.load(config_path or default_config_path())
+    # Lot PROD : même garde-fou qu'au serveur web (voir cli.run_server).
+    exiger_secrets_production(config)
     index = SearchIndex(
         config.database_path,
         config.database_url,

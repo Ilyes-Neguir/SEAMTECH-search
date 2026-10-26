@@ -17,6 +17,7 @@ from fastapi import FastAPI, File, Form, Header, HTTPException, Query, Request, 
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
+from . import __version__
 from .audit import actor_fingerprint, get_audit_logs, record_audit_event
 from .comptes.comptes import ROLE_ADMIN, ROLE_APPROBATEUR, ROLE_UTILISATEUR
 from .config import AppConfig
@@ -265,7 +266,7 @@ def create_app(config: AppConfig) -> FastAPI:
     docs_enabled = not bool(config.auth_token)
     app = FastAPI(
         title="SEAMTECH Search",
-        version="0.4.0",
+        version=__version__,
         lifespan=lifespan,
         docs_url="/docs" if docs_enabled else None,
         redoc_url="/redoc" if docs_enabled else None,
@@ -539,6 +540,9 @@ def create_app(config: AppConfig) -> FastAPI:
 
         return {
             "status": "ok",
+            # Lot PROD : en incident, « quelle version tourne ? » se répond
+            # sans ouvrir une session sur la machine.
+            "version": __version__,
             **health_details,
             "disk_free_bytes": disk_usage.free,
             "disk_total_bytes": disk_usage.total,

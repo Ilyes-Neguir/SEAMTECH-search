@@ -82,12 +82,47 @@ function stableCompare(a: string, b: string): boolean {
 }
 
 /**
+ * Lot PROD — example secrets are "not configured". `.env.example` publishes
+ * placeholder values (« change-me »); accepting them would sign sessions and
+ * guard the rescue account with public knowledge. Mirrors the backend
+ * `exiger_secrets_production` (config.py): placeholder or shorter than 8
+ * characters → unconfigured, and the login page keeps failing closed with
+ * its explicit "not configured" screen instead of silently running open.
+ */
+const SECRETS_EXEMPLES = new Set([
+  "change-me",
+  "changeme",
+  "change_me",
+  "changez-moi",
+  "exemple",
+  "example",
+  "motdepasse",
+  "mot-de-passe",
+  "password",
+  "votre-secret",
+  "votre-mot-de-passe",
+])
+
+function secretInacceptable(valeur: string): boolean {
+  const nettoyee = valeur.trim()
+  return SECRETS_EXEMPLES.has(nettoyee.toLowerCase()) || nettoyee.length < 8
+}
+
+/**
  * The shared rescue password. Empty string means "not configured", which makes
  * the rescue path fail — the nominative accounts (backend side) remain the way
  * in, and with no password at all nobody authenticates.
  */
 export function uiPassword(): string {
-  return process.env.SEAMTECH_UI_PASSWORD?.trim() ?? ""
+  const brut = process.env.SEAMTECH_UI_PASSWORD?.trim() ?? ""
+  if (brut && secretInacceptable(brut)) {
+    console.error(
+      "[auth] SEAMTECH_UI_PASSWORD is an example/too-short value: treated as NOT configured. " +
+        "Generate a dedicated secret (see .env.example).",
+    )
+    return ""
+  }
+  return brut
 }
 
 export function isAuthConfigured(): boolean {
@@ -102,7 +137,14 @@ export function isAuthConfigured(): boolean {
  */
 export function sessionSecret(): string {
   const configured = process.env.SEAMTECH_SESSION_SECRET?.trim()
-  if (configured) return configured
+  if (configured && secretInacceptable(configured)) {
+    // A public example value must never sign sessions: per-process random is
+    // strictly safer (sessions die at restart, but nobody can forge them).
+    console.error(
+      "[auth] SEAMTECH_SESSION_SECRET is an example/too-short value: ignored. " +
+        "Generate a dedicated secret (see .env.example).",
+    )
+  } else if (configured) return configured
   if (!processSecret) {
     processSecret = randomBytes(32).toString("base64url")
     console.warn(
