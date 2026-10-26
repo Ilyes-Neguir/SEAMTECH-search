@@ -945,12 +945,14 @@ def _reconstruire_fiche_curseur(curseur: Any, id_fiche: int, code_fiche: str | N
     )
     champs: list[ChampExtrait] = []
     for nom, brut, normalisee, confiance, page, zone, rang, table_c, colonne_c, methode in curseur.fetchall():
-        zone_modele = Zone()
+        # ChampExtrait.zone est nullable : une zone absente/illisible reste
+        # absente (Zone exige ses 4 coordonnées — jamais de zone inventée).
+        zone_modele: Zone | None = None
         if zone:
             try:
                 zone_modele = Zone.model_validate(zone if isinstance(zone, dict) else json.loads(zone))
-            except Exception:  # noqa: BLE001 - zone illisible → zone vide, jamais d'échec
-                zone_modele = Zone()
+            except Exception:  # noqa: BLE001 - zone illisible → absente, jamais d'échec
+                zone_modele = None
         champs.append(
             ChampExtrait(
                 champ=str(nom),
