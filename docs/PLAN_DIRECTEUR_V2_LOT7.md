@@ -180,3 +180,27 @@ Overall:   READY
 Note honnête : la couverture locale de `accessoires.py` est de 48 % sans
 PostgreSQL (sandbox) — les chemins PG sont ceux prouvés par la CI au SHA
 exact. Aucun correctif issu de cette re-vérification.
+
+## Mesure sur échantillons réels (2026-10-26, Dropbox — structures seules)
+
+Le téléversement contient déjà les arborescences accessoires 2024/2025/2026
+(dizaines de dossiers « LAZY BAG 1P/2P ST5xx », housses, cagnards…). Un
+dossier type contient : série DXF de découpe numérotée, `ST###.dxf`, `.xin`,
+`.PLX` (coloris dans le nom de fichier), `ST### FINI.pdf` et une « Prises
+mesures … .pdf ». Mesures faites en local (aucun document committé, aucune
+donnée nominative consignée) :
+
+- **Les deux PDF sont des images** (1 page, 0 mot texte) : le « FINI » est
+  un plan coté (cartouche « Commande : ST### », « Unité : cm », options du
+  type « SANS LATTES / SANS LOGO ») ; la « prise de cotes » est le formulaire
+  maison « Fiche de prise de cotes — LazyBag » (champs imprimés : N° de
+  commande, type de bateau, type de lazybag, bordure en mm, nuancier
+  Sunbrella à cocher ; valeurs **manuscrites**, cotes en cm sur schéma).
+- Conséquences honnêtes : les dépôts réels passeront par l'OCR ; les
+  libellés imprimés sont de bonnes ancres, les valeurs manuscrites resteront
+  souvent à confirmer par l'approbateur (l'écran de correction existe déjà).
+- Pistes de calibration (à valider avec le commanditaire, hors code Lot 7) :
+  ancres supplémentaires (« prise de cotes », « type de bateau », « couleurs
+  sunbrella », « N° de commande »), code depuis le motif `ST###`, et question
+  ouverte de l'unité documentaire (« Unité : cm ») pour les cotes nues des
+  plans — aujourd'hui elles restent du texte, jamais converties.
