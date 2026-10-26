@@ -17,9 +17,9 @@ interface ReponseListe {
 }
 
 const STATUT_STYLE: Record<string, string> = {
-  a_valider: "bg-amber-500/15 text-amber-300 border-amber-500/30",
-  valide: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30",
-  rejete: "bg-orange-600/15 text-orange-300 border-orange-600/30",
+  a_valider: "badge-attention",
+  valide: "badge-succes",
+  rejete: "badge-attention",
 }
 
 async function jsonFetch<T>(url: string): Promise<T> {

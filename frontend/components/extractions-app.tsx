@@ -185,7 +185,7 @@ function BadgeLiaison({ statut }: { statut: string }) {
         "inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold",
         statut === "lie_automatique" && "bg-emerald-500/20 text-emerald-800 dark:text-emerald-200",
         statut === "lie_humain" && "bg-violet-500/20 text-violet-800 dark:text-violet-200",
-        statut === "ambigu" && "bg-amber-500/20 text-amber-800 dark:text-amber-200",
+        statut === "ambigu" && "badge-attention",
         (statut === "non_resolu" || statut === "sans_modele") && "bg-muted text-muted-foreground",
       )}
       data-testid="statut-liaison"
@@ -443,7 +443,7 @@ function ExtractionsAppInterne() {
                   <span className="mt-1 flex flex-wrap gap-1">
                     <BadgeLiaison statut={entree.statut_liaison} />
                     {entree.statut_plausibilite !== "plausible" && (
-                      <span className="inline-block rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] text-amber-800 dark:text-amber-200">
+                      <span className="inline-block badge-attention rounded px-1.5 py-0.5 text-[10px]">
                         {entree.statut_plausibilite}
                       </span>
                     )}
@@ -497,7 +497,7 @@ function ExtractionsAppInterne() {
                       "rounded px-1.5 py-0.5",
                       extraction.statut_plausibilite === "plausible"
                         ? "bg-emerald-500/20"
-                        : "bg-amber-500/20 text-amber-800 dark:text-amber-200",
+                        : "badge-attention",
                     )}
                     data-testid="statut-plausibilite"
                   >

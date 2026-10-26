@@ -54,11 +54,11 @@ const LIBELLE_ETAT: Record<ReponseAssistante["etat"], string> = {
 }
 
 const STYLE_ETAT: Record<ReponseAssistante["etat"], string> = {
-  ok: "border-emerald-500/40 bg-emerald-500/10 text-emerald-300",
-  ambigu: "border-amber-500/40 bg-amber-500/10 text-amber-300",
+  ok: "badge-succes",
+  ambigu: "badge-attention",
   sans_source: "border-border bg-background/60 text-muted-foreground",
-  occupe: "border-amber-500/40 bg-amber-500/10 text-amber-300",
-  indisponible: "border-red-500/40 bg-red-500/10 text-red-300",
+  occupe: "badge-attention",
+  indisponible: "badge-danger",
 }
 
 function Citation({ citation }: { citation: CitationAssistante }) {
@@ -160,7 +160,7 @@ export function AssistantPanneau() {
         </p>
       )}
       {erreur && !chargement && (
-        <p className="mt-3 rounded border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300" data-testid="assistant-erreur">
+        <p className="badge-danger mt-3 rounded px-3 py-2 text-sm" data-testid="assistant-erreur">
           {erreur}
         </p>
       )}

@@ -11,8 +11,8 @@ const LABELS: Record<MatchType, string> = {
 const STYLES: Record<MatchType, string> = {
   exact_name: "border-primary/40 bg-primary/15 text-primary",
   name: "border-primary/25 bg-primary/10 text-primary",
-  path: "border-white/15 bg-white/5 text-muted-foreground",
-  content: "border-[#5bc0de]/30 bg-[#5bc0de]/10 text-[#8fd6e8]",
+  path: "border-border bg-muted text-muted-foreground",
+  content: "badge-info",
 }
 
 export function MatchBadge({ type }: { type: MatchType }) {

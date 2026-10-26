@@ -554,7 +554,7 @@ function ValidationAppInterne() {
         <div
           className={cn(
             "flex items-start gap-2 border-b px-4 py-2 text-xs",
-            erreur ? "border-destructive/40 bg-destructive/10 text-destructive" : "border-emerald-500/30 bg-emerald-500/10 text-emerald-300",
+            erreur ? "badge-danger" : "badge-succes",
           )}
           data-testid={erreur ? "message-erreur" : "message-ok"}
         >
@@ -594,7 +594,7 @@ function ValidationAppInterne() {
            n'a été appliquée — on le dit, on montre SA valeur, et on laisse
            recharger. Aucun « succès » trompeur, aucun travail perdu en silence. */
         <div
-          className="flex flex-col gap-1 border-b border-amber-500/40 bg-amber-500/10 px-4 py-2 text-xs text-amber-200"
+          className="badge-attention flex flex-col gap-1 px-4 py-2 text-xs"
           data-testid="conflit-revision"
           role="alert"
         >
@@ -710,7 +710,7 @@ function ValidationAppInterne() {
                     </span>
                     <span className="block truncate text-muted-foreground">{entree.titre}</span>
                     <span className="sr-only" data-testid="confiance-file">{entree.confiance_min ?? "sans confiance"}</span>
-                    {entree.a_anomalies && <span className="mt-1 inline-block rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] text-amber-800">Anomalie à vérifier</span>}
+                    {entree.a_anomalies && <span className="badge-attention mt-1 inline-block rounded px-1.5 py-0.5 text-[10px]">Anomalie à vérifier</span>}
                     <span className="mt-1 flex flex-wrap gap-1" aria-label="Comptes par palier">
                       {entree.paliers.certain > 0 && <PalierBadge palier="certain" />}
                       {entree.paliers.lu > 0 && <PalierBadge palier="lu" />}

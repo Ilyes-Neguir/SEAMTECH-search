@@ -198,7 +198,7 @@ function NouveauAppInterne() {
             {lot.dossiers.map((ligne) => (
               <li key={ligne.chemin_dossier} className="flex items-center justify-between gap-2" data-testid="ligne-lot">
                 <span className="truncate font-mono">{ligne.chemin_dossier}</span>
-                <span className={ligne.statut === "traite" ? "text-emerald-300" : "text-orange-300"}>
+                <span className={ligne.statut === "traite" ? "text-success" : "texte-attention"}>
                   {ligne.statut}
                   {ligne.raison ? ` — ${ligne.raison}` : ""}
                 </span>

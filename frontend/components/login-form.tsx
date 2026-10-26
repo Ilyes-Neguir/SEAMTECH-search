@@ -4,6 +4,7 @@ import { useEffect, useState, type FormEvent } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { RoseDesVents } from "@/components/rose-des-vents"
 import { SeamtechLogo } from "@/components/seamtech-logo"
 import { resolveNextPath } from "@/lib/authed-fetch"
 import { rafraichirSessionGlobale } from "@/lib/use-session"
@@ -67,17 +68,51 @@ export function LoginForm() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-background px-4 py-10">
-      <div className="w-full max-w-sm">
+    <main className="flex min-h-screen bg-background">
+      {/* Lot 8 — la voile d'accueil : purement décorative (aria-hidden),
+          la mer dérive lentement, la rose des vents tourne à peine. */}
+      <aside
+        aria-hidden="true"
+        className="relative hidden w-[44%] overflow-hidden bg-[linear-gradient(165deg,color-mix(in_srgb,var(--primary)_16%,var(--background))_0%,var(--background)_55%,color-mix(in_srgb,var(--chart-2)_14%,var(--background))_100%)] lg:block"
+      >
+        <RoseDesVents className="rose-lente absolute -left-24 -top-24 size-[26rem] text-primary/25" />
+        <RoseDesVents className="rose-lente absolute -bottom-40 right-[-6rem] size-[30rem] text-primary/15 [animation-direction:reverse]" />
+        <div className="absolute inset-x-10 top-1/3">
+          <p className="titre-voile text-4xl leading-tight text-foreground xl:text-5xl">
+            L’atelier
+            <br />
+            prend le large
+          </p>
+          <div className="couture my-6 w-56" />
+          <p className="max-w-md text-sm leading-relaxed text-muted-foreground">
+            Dix mille plans, cotes et gabarits de la voilerie — cousus, classés,
+            retrouvés en un souffle. Montez à bord : le quart commence.
+          </p>
+        </div>
+        <svg viewBox="0 0 600 60" preserveAspectRatio="none" className="vague-derive absolute bottom-0 left-0 h-14 w-[200%] text-primary/30">
+          <path
+            d="M0 30 Q 25 12 50 30 T 100 30 T 150 30 T 200 30 T 250 30 T 300 30 T 350 30 T 400 30 T 450 30 T 500 30 T 550 30 T 600 30"
+            fill="none" stroke="currentColor" strokeWidth="2"
+          />
+          <path
+            d="M0 44 Q 25 30 50 44 T 100 44 T 150 44 T 200 44 T 250 44 T 300 44 T 350 44 T 400 44 T 450 44 T 500 44 T 550 44 T 600 44"
+            fill="none" stroke="currentColor" strokeWidth="1.4" opacity="0.6"
+          />
+        </svg>
+      </aside>
+
+      <div className="flex flex-1 items-center justify-center px-4 py-10">
+      <div className="hisser w-full max-w-sm">
         <div className="mb-6 flex justify-center">
           <SeamtechLogo className="h-auto w-44" />
         </div>
         <form
           onSubmit={onSubmit}
-          className="rounded-xl border border-border bg-card p-5 shadow-sm"
+          className="rounded-2xl border border-border bg-card p-6 shadow-[0_18px_50px_-18px_color-mix(in_srgb,var(--foreground)_30%,transparent)]"
           aria-label="Connexion à SEAMTECH Search"
         >
           <h1 className="text-base font-semibold text-foreground">Connexion</h1>
+          <div className="couture my-3 w-32" aria-hidden />
           <p className="mt-1 text-xs text-muted-foreground">
             SEAMTECH Search est un outil interne. Connectez-vous avec votre compte nominatif — les
             validations sont tracées à votre nom.
@@ -130,6 +165,10 @@ export function LoginForm() {
             l'atelier. Ses actions sont attribuées à « secours » et sa session n'est pas révocable.
           </p>
         </form>
+        <p className="mt-5 text-center text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+          Service local de la voilerie — aucun envoi externe
+        </p>
+      </div>
       </div>
     </main>
   )

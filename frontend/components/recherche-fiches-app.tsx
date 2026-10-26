@@ -864,7 +864,7 @@ export function RechercheFichesApp({ assistantActif = true }: { assistantActif?:
         <section>
           {chargement && <p className="text-sm text-muted-foreground">Recherche…</p>}
           {erreur && !chargement && (
-            <p className="rounded border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">{erreur}</p>
+            <p className="badge-danger rounded px-3 py-2 text-sm">{erreur}</p>
           )}
           {!chargement && !erreur && reponse && (
             <>
@@ -931,7 +931,7 @@ export function RechercheFichesApp({ assistantActif = true }: { assistantActif?:
                         )}
                         {fiche.statut === "a_valider" && (
                           <span
-                            className="shrink-0 rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-300"
+                            className="badge-attention shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide"
                             data-testid="badge-non-verifiee"
                             title="Fiche déposée, pas encore vérifiée par un humain"
                           >

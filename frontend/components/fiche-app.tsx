@@ -264,7 +264,7 @@ export function FicheApp({ code }: { code: string }) {
                   <span className="truncate font-mono text-muted-foreground">{champ.champ}{champ.rang != null ? ` [${champ.rang}]` : ""}</span>
                   <span className="truncate" data-testid={`valeur-${champ.champ}`}>
                     {champ.valeur_normalisee ?? <span className="text-muted-foreground">—</span>}
-                    {champ.corrige && <span className="ml-1 text-[10px] text-violet-300">(corrigé par {champ.corrige_par})</span>}
+                    {champ.corrige && <span className="texte-corrige ml-1 text-[10px]">(corrigé par {champ.corrige_par})</span>}
                   </span>
                   <span className="flex items-center gap-1">
                     <span className="max-w-32 truncate font-mono text-[10px] text-muted-foreground" title={`brute : ${champ.valeur_brute ?? "—"}`}>{champ.valeur_brute ?? "—"}</span>

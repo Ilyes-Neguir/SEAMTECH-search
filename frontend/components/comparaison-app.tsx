@@ -150,7 +150,7 @@ function classeEcart(pct: number | null): string {
   if (pct === null) return "bg-muted text-muted-foreground"
   const absolu = Math.abs(pct)
   if (absolu <= 1) return "bg-emerald-500/20 text-emerald-800 dark:text-emerald-200"
-  if (absolu <= 5) return "bg-amber-500/20 text-amber-800 dark:text-amber-200"
+  if (absolu <= 5) return "badge-attention"
   return "bg-red-500/20 text-red-800 dark:text-red-200"
 }
 
@@ -361,7 +361,7 @@ function ComparaisonAppInterne() {
                 "flex items-center gap-1 rounded px-2 py-1 text-xs font-semibold",
                 comparaison.comparable
                   ? "bg-emerald-500/20 text-emerald-800 dark:text-emerald-200"
-                  : "bg-amber-500/20 text-amber-800 dark:text-amber-200",
+                  : "badge-attention",
               )}
               data-testid="badge-comparable"
               data-comparable={comparaison.comparable ? "oui" : "non"}
@@ -432,7 +432,7 @@ function ComparaisonAppInterne() {
                     <span className="text-right">
                       {ligne.a ?? "—"} <span className="text-muted-foreground">/</span> {ligne.b ?? "—"}
                       {ligne.identique !== null && (
-                        <span className={cn("ml-1 font-semibold", ligne.identique ? "text-emerald-600" : "text-amber-600")}>
+                        <span className={cn("ml-1 font-semibold", ligne.identique ? "text-success" : "texte-attention")}>
                           {ligne.identique ? "=" : "≠"}
                         </span>
                       )}

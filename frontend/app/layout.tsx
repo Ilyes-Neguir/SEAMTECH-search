@@ -9,6 +9,11 @@ import { Nav } from '@/components/nav'
 // ui-monospace) when --font-inter/--font-roboto-mono are unset, so dropping
 // this keeps the app fully self-contained for production builds.
 
+// Lot 8 — le quart (jour/nuit) est posé AVANT la première peinture : choix
+// persisté (localStorage « seamtech-quart »), sinon préférence système,
+// sinon le quart de nuit historique de l'application. Aucun clignotement.
+const SCRIPT_QUART_INITIAL = `(function(){try{var q=window.localStorage.getItem('seamtech-quart');var nuit=q?q==='nuit':!(window.matchMedia&&window.matchMedia('(prefers-color-scheme: light)').matches);if(nuit){document.documentElement.classList.add('dark');}document.documentElement.style.colorScheme=nuit?'dark':'light';}catch(e){document.documentElement.classList.add('dark');document.documentElement.style.colorScheme='dark';}})();`
+
 export const metadata: Metadata = {
   title: 'SEAMTECH Search — Archives techniques',
   description:
@@ -20,8 +25,11 @@ export const metadata: Metadata = {
 }
 
 export const viewport: Viewport = {
-  colorScheme: 'dark',
-  themeColor: '#0d0e10',
+  colorScheme: 'dark light',
+  themeColor: [
+    { media: '(prefers-color-scheme: light)', color: '#f6f1e6' },
+    { media: '(prefers-color-scheme: dark)', color: '#08111a' },
+  ],
 }
 
 export default function RootLayout({
@@ -30,10 +38,13 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="fr">
+    <html lang="fr" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: SCRIPT_QUART_INITIAL }} />
+      </head>
       <body className="antialiased font-sans">
         <Nav />
-        {children}
+        <div className="hisser">{children}</div>
       </body>
     </html>
   )

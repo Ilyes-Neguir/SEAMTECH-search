@@ -249,7 +249,7 @@ export function ComptesApp() {
                 {estSoi ? (
                   <p className="mt-2 text-[10px] text-muted-foreground">Vous ne pouvez pas changer votre propre rôle depuis cette session : demandez à un autre admin.</p>
                 ) : choix !== compte.role ? (
-                  <p className="mt-2 text-[10px] text-amber-200" role="alert">
+                  <p className="texte-attention mt-2 text-[10px]" role="alert">
                     Attention : appliquer ce changement déconnectera immédiatement {compte.identifiant} sur tous ses postes.
                   </p>
                 ) : null}
