@@ -174,6 +174,7 @@ class ExtractionAccessoire(BaseModel):
     gabarit_code: str | None = None
     gabarit_version: int | None = None
     version_extracteur: str = VERSION_EXTRACTEUR_ACCESSOIRE
+    methode_principale: str = "gabarit"
     nom_fichier_source: str | None = None
     empreinte_sha256: str | None = None
 
@@ -460,7 +461,7 @@ def _cle_idempotence(extraction: ExtractionAccessoire) -> str:
 
 _COLONNES = (
     "cle_idempotence", "id_document", "id_fiche", "code_fiche", "gabarit_code",
-    "gabarit_version", "version_extracteur", "nom_fichier_source", "empreinte_sha256",
+    "gabarit_version", "version_extracteur", "methode_principale", "nom_fichier_source", "empreinte_sha256",
     "type_accessoire", "designation_brute", "matiere", "couleur", "dimensions_texte",
     "longueur_m", "largeur_m", "hauteur_m", "quantite", "modele_bateau_brut",
     "taille_bateau_brute", "champs", "anomalies", "score_qualite", "confiance_moyenne",

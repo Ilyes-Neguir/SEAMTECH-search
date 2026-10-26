@@ -1423,8 +1423,20 @@ def _facettes(
     else:
         predicat_texte = ""
 
+    # Compatibilité historique (bases arrêtées avant 031) : la vue ne porte
+    # pas encore `categorie` — l'axe est simplement absent, comme la couche
+    # Lot 2 avant la 026. En service, les migrations ont tourné au démarrage.
+    cursor.execute(
+        "SELECT EXISTS (SELECT 1 FROM information_schema.columns "
+        "WHERE table_schema = 'public' AND table_name = 'v_fiche_recherche' "
+        "AND column_name = 'categorie')"
+    )
+    axes = _FACETTES_AXES
+    if not bool(cursor.fetchone()[0]):
+        axes = tuple(a for a in _FACETTES_AXES if a[0] != "categorie")
+
     unions: list[str] = []
-    for nom, exclure, select_facette in _FACETTES_AXES:
+    for nom, exclure, select_facette in axes:
         fragment, params_fragment = _fragment_filtres(
             filtres, inclure_a_valider, exclure, dimension_toutes=dimension_toutes
         )
@@ -1907,9 +1919,16 @@ def _details_fiches(
         "SELECT to_regclass('public.boat_models') IS NOT NULL AND EXISTS ("
         "SELECT 1 FROM information_schema.columns "
         "WHERE table_schema = 'public' AND table_name = 'bateau' "
-        "AND column_name = 'boat_model_id')"
+        "AND column_name = 'boat_model_id'), "
+        "EXISTS (SELECT 1 FROM information_schema.columns "
+        "WHERE table_schema = 'public' AND table_name = 'fiche' "
+        "AND column_name = 'categorie')"
     )
-    referentiel_disponible = bool(cursor.fetchone()[0])
+    _probe = cursor.fetchone()
+    referentiel_disponible = bool(_probe[0])
+    # Lot 7, même compatibilité de lecture qu'en 026 : avant la 031, toute
+    # fiche EST une voile (la catégorie n'existait pas) — littéral, pas NULL.
+    colonne_categorie = "f.categorie" if _probe[1] else "'voile'::text"
     colonnes_modele = (
         "b.boat_model_id, bm.nom_canonique, bm.cle_normalisee"
         if referentiel_disponible
@@ -1933,7 +1952,7 @@ def _details_fiches(
                CASE WHEN f.date_edition IS NULL THEN NULL
                     ELSE extract(year FROM f.date_edition)::int END,
                left(f.champs_texte, 400),
-               f.categorie
+               {colonne_categorie}
         FROM fiche f
         LEFT JOIN type_voile tv ON tv.id_type_voile = f.id_type_voile
         LEFT JOIN client c ON c.id_client = f.id_client
