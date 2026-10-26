@@ -112,6 +112,12 @@ Comme à bord, on travaille par **quarts** :
   rôle/nom (sous-chaîne) → violation de mode strict en CI (`9e80da9`, job e2e
   seul rouge). Ambigu aussi pour la commande vocale : la marque devient
   « accueil de l'atelier » et la recette vise le nom exact (`bd91fe7`, 4/4).
+- **Flake de timing préexistant (Lot 6)** : au run `40349449962` (commit de
+  documentation seul, code identique au `bd91fe7` vert), le parcours Lot 6
+  « liens croisés voiles » a dépassé `waitForURL` (20 s) vers `/confiance`
+  puis **passé à la relance** — le garde-fou « 0 flaky » a légitimement rougi
+  le job. Aucun lien avec l'habillage (aucune requête ajoutée) ; relance API
+  refusée par GitHub, d'où un nouveau push pour reprouver le HEAD final.
 - **`/login` sans `SEAMTECH_UI_PASSWORD`** affiche volontairement l'écran
   « fail closed » : le premier aperçu semblait vide — comportement de sécurité
   correct, confirmé, contourné pour l'aperçu seulement.
