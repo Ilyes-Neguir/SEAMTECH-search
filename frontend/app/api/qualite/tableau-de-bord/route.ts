@@ -1,5 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { backendBase, authHeaders, requireAuthValide } from "@/lib/backend"
+import { backendBase, backendHeaders, requireAuthValide } from "@/lib/backend"
 
 export const dynamic = "force-dynamic"
 
@@ -10,7 +10,7 @@ export async function GET(req: NextRequest) {
   if (!base) return NextResponse.json({ detail: "Backend non configuré" }, { status: 503 })
   try {
     const res = await fetch(`${base}/qualite/tableau-de-bord`, {
-      headers: authHeaders(),
+      headers: await backendHeaders(),
       cache: "no-store",
     })
     return NextResponse.json(await res.json(), { status: res.status })

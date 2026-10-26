@@ -97,6 +97,10 @@ SOURCES = Path(os.environ.get("RECETTE_SOURCES", "/app/data/recette-sources"))
 TRAVAIL = Path(os.environ.get("RECETTE_TRAVAIL", "/app/data/recette-lot"))
 
 ECHECS: list[str] = []
+# En-têtes de la session nominative de recette, remplis après connexion.
+# Depuis le Lot 0b, le contenu des pièces exige cette session en PostgreSQL ;
+# le jeton de service seul ne suffit plus pour télécharger les octets.
+SESSION_RECETTE: dict[str, str] = {}
 
 
 def _ligne(controle: str, ok: bool, detail: str) -> None:
@@ -132,7 +136,7 @@ def _appel(
     """Appel HTTP vers l'API (jamais d'exception : retourne (code, corps, entêtes))."""
     url = f"{BASE}{chemin}"
     donnees = None
-    entetes_totales = {"X-SEAMTECH-TOKEN": JETON}
+    entetes_totales = {"X-SEAMTECH-TOKEN": JETON, **SESSION_RECETTE}
     if entetes:
         entetes_totales.update(entetes)
     if corps is not None:
@@ -234,7 +238,7 @@ def _creer_compte() -> None:
         _ligne("compte-recette", False, "RECETTE_MOT_DE_PASSE absente de l'environnement")
         return
     try:
-        from seamtech_search.comptes.comptes import ROLES, creer_utilisateur
+        from seamtech_search.comptes.comptes import ROLE_APPROBATEUR, creer_utilisateur
         from seamtech_search.config import AppConfig
         from seamtech_search.indexer import SearchIndex
 
@@ -253,7 +257,7 @@ def _creer_compte() -> None:
                 UTILISATEUR,
                 "Compte de recette locale",
                 MOT_DE_PASSE,
-                role=ROLES[0],
+                role=ROLE_APPROBATEUR,
                 doit_changer_mot_de_passe=True,
             )
             creation = "créé"
@@ -277,10 +281,19 @@ def _creer_compte() -> None:
         {"identifiant": UTILISATEUR, "mot_de_passe": MOT_DE_PASSE},
     )
     ok = code == 200 and isinstance(corps, dict) and corps.get("id_session")
+    if ok:
+        SESSION_RECETTE.update(
+            {
+                "X-SEAMTECH-UTILISATEUR": str(corps.get("identifiant") or UTILISATEUR),
+                "X-SEAMTECH-ROLE": str(corps.get("role") or ROLE_APPROBATEUR),
+                "X-SEAMTECH-SESSION": str(corps["id_session"]),
+                "X-SEAMTECH-SESSION-JETON": str(corps.get("jeton_session") or ""),
+            }
+        )
     _ligne(
         "compte-recette",
         ok,
-        f"compte « {UTILISATEUR} » {creation} ; connexion HTTP {code} {_extrait(corps, 120)}",
+        f"compte « {UTILISATEUR} » {creation} ; connexion HTTP {code} ; session ouverte={bool(ok)}",
     )
 
 

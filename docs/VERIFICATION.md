@@ -12,6 +12,281 @@ jour vivent dans :
 * `docs/verite_terrain/TRACABILITE_LIVRAISON.md` — une ligne par affirmation,
   y compris la revue indépendante du 2026-10-07 et la passe de clôture.
 
+## Addendum Lot 6 — cohérence UI globale, parcours 3 clics (2026-10-26)
+
+Branche : `arena/b02ed560-seamtech-search` ; implémentation prouvée au SHA
+`41b01d8b8f2824f1bca7196dfcc479d779eaa84a` (CI `40253683828`, 13/13).
+Preuves :
+
+- `tests/test_lot6_coherence_ui.py` (suite standard) : chaque lien de
+  navigation pointe vers une page existante ; matrice de visibilité par
+  rôle figée dans `nav.tsx` ; liens croisés présents (détail d'extraction
+  → « Confiance… », comparaison/confiance → `/fiches/{code}` seulement si
+  `code_fiche_metier` résolu côté backend — jamais de lien mort).
+- `frontend/e2e/lot6-parcours-3clics.spec.ts` (garde CI `report-lot6.json`,
+  3/3 au premier essai) : demande de téléchargement en **3 clics** depuis
+  la recherche, décision approbateur en **3 clics** depuis la liste,
+  téléchargement autorisé en **1 clic** avec octets `%PDF` relus ; matrice
+  navigation × rôle (secours = admin d'urgence documenté, lecture,
+  utilisateur, admin) — chaque lien promis ouvert sans refus ; chaîne
+  Extractions → Confiance… → fiche source → fiche métier 7792-SO.
+- PostgreSQL 317/0 (aucune migration dans ce lot), parcours 7792-SO 578 ms.
+
+```bash
+pytest -q tests/test_lot6_coherence_ui.py
+cd frontend && pnpm exec tsc --noEmit && pnpm build
+SEAMTECH_E2E_DATABASE_URL=postgresql://… \
+  pnpm exec playwright test e2e/lot6-parcours-3clics.spec.ts
+```
+
+## Addendum DEP — transfert hors ligne et runbook serveur (2026-10-26)
+
+- `scripts/preparer_transfert_hors_ligne.sh` : paquet transférable hors
+  réseau (bundle Git au SHA figé — arbre sale refusé —, `docker save` des
+  images Compose + infra, `MANIFESTE.txt`, `SHA256SUMS`) ; modes
+  `verifier` (empreintes + `git bundle verify`) et `charger`
+  (`docker load`). Aucun secret transporté (`.env` créé sur le serveur).
+- `tests/test_dep_transfert_hors_ligne.py` : gardes statiques du script et
+  du runbook (`docs/PLAN_DIRECTEUR_V2_DEP.md` : dimensionnement 3 × corpus
+  \+ 20 Go, preflight lecture seule, inventaire + dédup SHA-256 avant OCR,
+  ingestion par vagues avec reprise, désactivation du compte de secours).
+- Outil d'inventaire prouvé en réel (arborescence synthétique locale, le
+  2026-10-26) : le même PDF sous deux noms produit exactement 1 groupe de
+  doublons dans `inventaire_doublons.csv`.
+
+```bash
+pytest -q tests/test_dep_transfert_hors_ligne.py
+bash scripts/preparer_transfert_hors_ligne.sh preparer /tmp/seamtech-dep   # poste connecté, Docker requis
+python3 scripts/inventaire_archive.py /chemin/archive --sortie /chemin/rapports
+```
+
+## Addendum Lot 5 — Fonction B, confiance de réutilisation (2026-10-26)
+
+Branche : `arena/b02ed560-seamtech-search` ; implémentation prouvée au SHA
+`921669b9d80d58a03fef40fb6511a1b5e5ec41fc` (CI `40249015850`, 13/13). La
+preuve centrale est `tests/test_lot5_confiance_reutilisation.py` :
+
+- statistiques robustes : médiane, quartiles (interpolation linéaire type 7),
+  IQR, MAD ; score par dimension `100·exp(−z²/2)` (z robuste IQR/MAD), score
+  global = **médiane** des scores par dimension (≥ 2 dimensions, n ≥ 3) ;
+- honnêteté : N < 5 ⇒ « Données insuffisantes (N/5) », score `None` ;
+  population hétérogène (IQR/médiane > 7,5 % sur la moitié des dimensions)
+  ⇒ aucun score, statistiques visibles ; seuil d'alerte 75 ⇒ `a_examiner`
+  sans verdict positif ; justification obligatoire (N, dispersion par
+  dimension, matériaux, fiches sources) ;
+- base réelle : candidate exclue de sa population (N=5 pour 6 voiles liées),
+  évaluation persistée relue (migration 030, contrainte de cohérence
+  score/verdict), refus sans modèle lié ; rôles 401/403/200/404/422.
+- Parcours navigateur `frontend/e2e/lot5-confiance.spec.ts` (garde CI
+  `report-lot5.json`, 3/3 au premier essai) : vraie 7792-SO évaluée contre
+  5 voiles de référence semées — verdict compatible justifié et persisté ;
+  lecture sans bouton d'évaluation ; secours refusé. Suite PostgreSQL
+  globale : 317 passés / 0 sauté.
+
+Corpus Dropbox du commanditaire (`VOILES 2024.zip`, 1 205 608 885 octets) :
+inaccessible depuis l'environnement de développement en l'état (fichier
+> 100 Mio refusé par le connecteur, CDN Dropbox non joignable depuis la
+sandbox). Extraction du ZIP dans l'interface web Dropbox demandée au
+commanditaire ; traitement ensuite local/éphémère, agrégats uniquement,
+jamais dans Git. Détails : `docs/PLAN_DIRECTEUR_V2_LOT5.md`.
+
+```bash
+ruff check seamtech_search/confiance_reutilisation.py \
+  seamtech_search/confiance_reutilisation_routes.py tests/test_lot5_confiance_reutilisation.py
+pytest -q tests/test_lot5_confiance_reutilisation.py -m "not postgres"
+SEAMTECH_TEST_DATABASE_URL=postgresql://… pytest -q -m postgres \
+  tests/test_lot5_confiance_reutilisation.py
+cd frontend && pnpm exec tsc --noEmit && pnpm build
+SEAMTECH_E2E_DATABASE_URL=postgresql://… \
+  pnpm exec playwright test e2e/lot5-confiance.spec.ts
+```
+
+## Addendum Lot 4b — Fonction A, comparaison de voiles (2026-10-25)
+
+Branche : `arena/b02ed560-seamtech-search` ; implémentation prouvée au SHA
+`97f6b8560efa8472ab8443e82e159e172f1ad832` (CI `40241173904`, 13/13). La
+preuve centrale est `tests/test_lot4b_comparaison_voile.py` :
+
+- écarts par dimension : B − A, Δ en cm pour les longueurs, Δ % par rapport
+  à A ; manquants explicites, aucun écart inventé ; synthèse sans moyenne
+  (écart % maximal nommé) ;
+- « comparable » = même `boat_model_id` canonique ET même type normalisé ;
+  modèles différents/non liés/types différents/chevauchement < 2/implausible
+  ⇒ avertissements, jamais « même modèle » ;
+- candidats : même modèle + même type uniquement ; source non liée ⇒
+  `raison = "non_liee"` ; la valeur comparée est la valeur corrigée par
+  l'approbateur (Lot 3b) ; rôles 401/200/422/404.
+- Parcours navigateur `frontend/e2e/lot4b-comparaison.spec.ts` (garde CI
+  `report-lot4b.json`, 3/3 au premier essai) : Δ SLU réel +160 cm relu à
+  l'écran, badge « indicative » sur modèles différents, lecture par lien
+  profond, secours refusé. Suite PostgreSQL globale : 314 passés / 0 sauté.
+- Mesure locale hors Git sur 9 fiches d'entreprise transmises le 2026-10-25 :
+  gabarits génois/GV/jade partiels (voir `docs/PLAN_DIRECTEUR_V2_LOT4B.md`) —
+  aucun extrait versionné.
+
+```bash
+ruff check seamtech_search/comparaison_voile.py \
+  seamtech_search/comparaison_voile_routes.py tests/test_lot4b_comparaison_voile.py
+pytest -q tests/test_lot4b_comparaison_voile.py -m "not postgres"
+SEAMTECH_TEST_DATABASE_URL=postgresql://… pytest -q -m postgres \
+  tests/test_lot4b_comparaison_voile.py
+cd frontend && pnpm exec tsc --noEmit && pnpm build
+SEAMTECH_E2E_DATABASE_URL=postgresql://… \
+  pnpm exec playwright test e2e/lot4b-comparaison.spec.ts
+```
+
+## Addendum Lot 3b — résolution bateau, corrections et apprentissage (2026-10-25)
+
+Branche : `arena/b02ed560-seamtech-search` ; implémentation prouvée au SHA
+`52a61feae7b00da66741f9f5d18f85683b865dda` (CI `40235516711`, 13/13). La
+preuve centrale est `tests/test_lot3b_liaison_voile.py` :
+
+- migration `029_extraction_liaison_corrections` : colonnes de liaison sur
+  `sail_extractions` + contrainte de cohérence statut/modèle,
+  `extraction_corrections`, `extraction_motifs_appris` (43 tables métier) ;
+- résolution automatique uniquement sur preuve exacte (clé, alias, bateau de
+  la fiche) ; « 45 » ne fusionne jamais dans « 45.1 » ; préfixe/flou ⇒
+  `ambigu` avec candidats ; conflit clé exacte ≠ fiche ⇒ `ambigu` ;
+- décision d'approbateur : rattacher ou créer le modèle, alias appris
+  (`apprentissage_lot3b`) prouvé de bout en bout (l'extraction suivante se
+  lie en `alias_exact`) ; conflit d'alias ⇒ 409, rien d'écrit ; liaison
+  humaine préservée à la ré-extraction ;
+- corrections : historique avant/après + plausibilité RG16 recalculée +
+  motif appris suggéré (jamais appliqué seul) ; cote avec trace fiche
+  propagée sous révision (428/409/200) ; rôles API 401/403/404/422/200.
+- Parcours navigateur `frontend/e2e/lot3b-extractions.spec.ts` (PostgreSQL
+  réel, garde CI `report-lot3b.json`, 3/3 au premier essai) : file, PDF,
+  correction du libellé, création+liaison, cote corrigée, refus
+  lecture/utilisateur. Suite PostgreSQL globale : 311 passés / 0 sautés.
+
+Commandes de reproduction :
+
+```bash
+ruff check seamtech_search/liaison_voile.py \
+  seamtech_search/extractions_voile_routes.py \
+  tests/test_lot3b_liaison_voile.py
+pytest -q tests/test_lot3b_liaison_voile.py -m "not postgres"
+SEAMTECH_TEST_DATABASE_URL=postgresql://… pytest -q -m postgres \
+  tests/test_lot3b_liaison_voile.py tests/test_lot3a_extraction_voile.py \
+  tests/test_migrations_metier.py
+cd frontend && pnpm exec tsc --noEmit && pnpm build
+SEAMTECH_E2E_DATABASE_URL=postgresql://… \
+  pnpm exec playwright test e2e/lot3b-extractions.spec.ts
+```
+
+## Addendum Lot 3a — extraction structurée des voiles (2026-10-25)
+
+Branche : `arena/b02ed560-seamtech-search` ; implémentation prouvée au SHA
+`be3a6fa1cf98666426182cc12937007744c39000`. La preuve centrale est
+`tests/test_lot3a_extraction_voile.py` :
+
+- migration `028_sail_extractions` relue par pglast et appliquée sur
+  PostgreSQL réel ; aucun `boat_model_id` dans la table Lot 3a ;
+- conversions d'unités explicites mm/cm/cm²/g vers m/m²/kg, refus de
+  rescaler une valeur nue hors plage et refus d'une unité incompatible ;
+- `modele_bateau_brut` conservé tel que lu (`BAVARIA-45`, `29er (15')`),
+  provenance valeur brute/canonique, méthode, confiance, page et zone ;
+- PDF réel 7792-SO : Lot 3a 17/17 et vérité historique 74/74 ; génois
+  synthétique : 11/11 ; rapport CLI global 102/102 ;
+- PostgreSQL réel : écriture de fiche idempotente, enregistrement autonome
+  lié à un document, dépôt de dossier liant l'extraction au PDF source et à
+  son SHA-256.
+
+Commandes de reproduction :
+
+```bash
+ruff check seamtech_search/extractions_voile.py \
+  seamtech_search/fiches/persistance.py seamtech_search/fiches/depot.py \
+  scripts/rapport_extraction_or.py tests/test_lot3a_extraction_voile.py
+pytest -q tests/test_lot3a_extraction_voile.py -m "not postgres"
+SEAMTECH_TEST_DATABASE_URL=postgresql://… pytest -q -m postgres \
+  tests/test_lot3a_extraction_voile.py tests/test_migrations_metier.py \
+  tests/test_fiches_persistance.py tests/test_depot_transactionnel.py
+python scripts/rapport_extraction_or.py --format json
+```
+
+Les quatre workflows du SHA exact (CI `40225963741`, Qualification native
+`40225963627`, Qualification réservés `40225963613`, Perf comparaison
+`40225963568`) sont verts ; PostgreSQL 300/0, Redis 89/0, couverture
+85,90 %. Le détail et le rollback vivent dans
+`docs/PLAN_DIRECTEUR_V2_LOT3A.md`.
+
+## Addendum Lot 4a — extrait du document dans la recherche (2026-10-24)
+
+Branche : `arena/b02ed560-seamtech-search`. Aucune migration. Les preuves
+centrales sont `tests/test_lot4a_extrait_document.py` (parser pur + PostgreSQL
+réel + route HTTP) et `frontend/e2e/recherche-extrait.spec.ts` (parcours
+navigateur live intégré à la porte CI à 12 tests, 0 flaky, 0 saut) :
+
+- segments structurés sans HTML, texte hostile conservé comme donnée,
+  fenêtre de 360 caractères centrée sur la correspondance ;
+- chunk documentaire retrouvé par une requête sans accent avec l'accent
+  d'origine conservé et surligné (`forcees` → `forcées`) ;
+- document réellement extrait prioritaire, chunks générés `resume_champs`
+  exclus, liens par `documents.id_fiche`, pièce jointe et chemin du PDF
+  source tous éprouvés ;
+- navigation sans document rattaché explicitement repliée sur
+  `source="fiche"`, jamais présentée comme un extrait PDF ;
+- carte résultat navigateur avec `data-testid="fiche-extrait"`, vrai
+  élément `<mark>` et aucun marqueur interne visible.
+
+Commandes de reproduction :
+
+```bash
+ruff check seamtech_search/recherche.py tests/test_lot4a_extrait_document.py
+python -m compileall -q seamtech_search/recherche.py
+pytest -q tests/test_lot4a_extrait_document.py -m "not postgres"
+SEAMTECH_TEST_DATABASE_URL=postgresql://… pytest -q -m postgres \
+  tests/test_lot4a_extrait_document.py tests/test_recherche_hybride.py
+cd frontend && corepack pnpm exec tsc --noEmit && corepack pnpm build
+SEAMTECH_E2E_DATABASE_URL=postgresql://… corepack pnpm exec playwright test \
+  e2e/recherche-extrait.spec.ts --reporter=list
+```
+
+Les identifiants des workflows du SHA exact sont consignés dans
+`docs/PLAN_DIRECTEUR_V2_LOT4A.md` après lecture de GitHub Actions.
+
+## Addendum Lot 2 — référentiel bateaux et recherche étendue (2026-10-24)
+
+Branche : `arena/b02ed560-seamtech-search`. La preuve fonctionnelle centrale
+est `tests/test_lot2_referentiel_recherche.py`, exécutée sur PostgreSQL réel
+en CI (le bac à sable de développement ne fournit pas PostgreSQL) :
+
+- normalisation conservative (`BAVARIA 45` ≡ `Bavaria-45` ≡ `Bav. 45`, mais
+  `45` ≠ `45.1` ≠ `45 CC`) ;
+- migration `026_boat_models_aliases` et réindexation avant/après
+  (simulation sans écriture, puis application jusqu’à zéro bateau sans
+  modèle sur le corpus semé) ;
+- suggestions exact > alias/synonyme > préfixe > flou pg_trgm, y compris
+  `spi` → valeur réelle `Spinnaker` ;
+- recherche par alias, modèle décimal exact, faute tolérée et filtre
+  `bateau=Bav. 45` résolu vers le modèle final ;
+- fusion explicite `45.1 → 45` historisée puis défusion restaurant le lien
+  d’origine ;
+- écriture d’une fiche qui conserve `bateau.nom` tout en posant
+  `boat_model_id` ;
+- équivalence `/search/suggestions` ↔ `/recherche/suggestions` et gardes
+  401/403/200/409 des mutations du référentiel.
+
+Commandes de reproduction :
+
+```bash
+ruff check seamtech_search tests/test_lot2_referentiel_recherche.py
+python -m compileall -q seamtech_search
+pytest -q tests/test_lot2_referentiel_recherche.py::test_normalisation_modele_bateau_prudente \
+  tests/test_lot2_referentiel_recherche.py::test_reindex_cli_simulation_par_defaut_et_timeout_borne
+SEAMTECH_TEST_DATABASE_URL=postgresql://… pytest -q -m postgres \
+  tests/test_lot2_referentiel_recherche.py tests/test_migrations_metier.py \
+  tests/test_recherche_hybride.py tests/test_recherche_fonds_reel.py
+cd frontend && corepack pnpm exec tsc --noEmit && corepack pnpm build
+python -m seamtech_search.reindex_recherche --json
+python -m seamtech_search.reindex_recherche --appliquer --json
+```
+
+Les identifiants des quatre workflows du SHA exact sont consignés dans
+`docs/PLAN_DIRECTEUR_V2_LOT2.md` après lecture de GitHub Actions ; aucun
+résultat CI n’est pré-écrit ici.
+
 ## Ground rules (Phase 0)
 
 - Test fails before change, passes after: each phase has unit test demonstrating.
@@ -98,7 +373,7 @@ sed -n '850,960p' seamtech_search/api.py | grep -n "download_file\|FileResponse\
 ```
 
 ### 2.3 /open not dead
-**Claim:** `/open` serves the file (local copy, or the stored object streamed by the API when the local copy is absent — restore case); 302 presigned only with a declared public endpoint; dir JSON for directories; no `os.startfile`.
+**Claim:** `/open` serves the file (local copy, or the stored object streamed by the API when the local copy is absent — restore case); 302 presigned only with a declared public endpoint; dir JSON for directories; no `os.startfile`. On PostgreSQL the path must also be catalogued (Lot 0b).
 **Proof:**
 ```bash
 grep -n "os.startfile" seamtech_search/api.py || echo "no os.startfile — fixed"
@@ -241,8 +516,10 @@ grep "redis:" docker-compose.yml | head
 # Worker thread not separate service:
 grep "worker" docker-compose.yml || echo "no worker service — thread inside web"
 grep "start_background_worker\|worker_loop" seamtech_search/api.py seamtech_search/worker.py
-# Audit not immutable:
+# Legacy audit table is pruned; canonical PostgreSQL audit_logs is append-only:
 grep "prune_audit_logs\|audit_log" seamtech_search/retention.py seamtech_search/indexer.py
+grep -n "trg_audit_logs_append_only\|empreinte_precedente" seamtech_search/schema_metier.py seamtech_search/audit.py
+python -m pytest tests/test_lot0b_audit_securite.py -q
 # Scratch purged only when verified:
 grep "truly_uploaded\|quarantine" seamtech_search/worker.py
 # Download works from another PC: bytes served by the API (200), no internal-host redirect

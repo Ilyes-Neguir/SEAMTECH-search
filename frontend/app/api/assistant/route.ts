@@ -1,5 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { backendBase, authHeaders, requireAuthValide } from "@/lib/backend"
+import { backendBase, backendHeaders, requireAuthValide } from "@/lib/backend"
 
 // Proxy Lot I : assistant sourcé (POST /assistant côté FastAPI). Miroir du
 // patron app/api/recherche/route.ts — l'assistant est EXTRACTIF (réponses
@@ -29,7 +29,7 @@ export async function POST(req: NextRequest) {
   try {
     const res = await fetch(`${base}/assistant`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeaders() },
+      headers: await backendHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(corps),
       cache: "no-store",
     })

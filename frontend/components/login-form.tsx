@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { SeamtechLogo } from "@/components/seamtech-logo"
 import { resolveNextPath } from "@/lib/authed-fetch"
+import { rafraichirSessionGlobale } from "@/lib/use-session"
 
 /**
  * Sign-in form (Lot L.2).
@@ -49,6 +50,9 @@ export function LoginForm() {
       })
       if (response.ok) {
         setPassword("")
+        // The persistent root layout may hold the anonymous session fetched on
+        // /login. Re-read it now, before any role-gated surface mounts.
+        await rafraichirSessionGlobale().catch(() => undefined)
         router.replace(next)
         router.refresh()
         return

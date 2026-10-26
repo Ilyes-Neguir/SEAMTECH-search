@@ -72,7 +72,7 @@ jobs:
           PY
       - name: Config applicative de test
         run: cp config/config.example.json config/config.json
-      - name: Tests qualification (A volume, B objets, C OCR)
+      - name: Tests qualification (A volume, B objets, C OCR + scan navigateur upload)
         env:
           SEAMTECH_OCR_OBLIGATOIRE: "1"
           SEAMTECH_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
@@ -86,6 +86,7 @@ jobs:
             tests/test_sauvegarde_references.py \
             tests/test_ocr_qualification.py \
             tests/test_ocr_parcours_qualification.py \
+            tests/test_scan_browser_upload_ocr.py \
             tests/test_extractors.py \
             tests/test_qualification_junit.py \
             | tee qualification-reserves.log

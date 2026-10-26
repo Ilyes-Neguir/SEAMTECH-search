@@ -1,4 +1,4 @@
-"""Schéma métier « fiche technique » — migrations 006 à 023 (Lots A → correctifs d'audit).
+"""Schéma métier « fiche technique » — migrations 006 à 030 (Lots A → Lot 5).
 
 DÉCISION DE COUCHE ACTÉE (plan v3.0 §17.1) : la couche métier est
 **PostgreSQL uniquement**. Elle s'appuie sur pgvector, pg_trgm, les index GIN,
@@ -26,7 +26,7 @@ from __future__ import annotations
 from typing import Any
 
 # Version du schéma métier — incrémentée à chaque nouvelle migration.
-VERSION_SCHEMA_METIER = "023_recherche_normalisee"
+VERSION_SCHEMA_METIER = "030_evaluations_confiance"
 
 # Marqueur injecté par le code au moment de la migration (constat 1 de revue) :
 # le nom de la configuration de recherche effective — 'seamtech_unaccent' ou
@@ -80,6 +80,39 @@ TABLES_METIER: tuple[str, ...] = (
     "session_ui",
     # 017 — Lot M : staging OCR étage 3 (texte OCR par page, jamais dans chunk/document)
     "ocr_etage3",
+    # 025 — Lot 0b : journal d'audit canonique, append-only et chaîné par
+    # empreinte. La table héritée `audit_log` reste le substrat de
+    # compatibilité (SQLite, verrouillage des connexions), mais ce n'est plus
+    # la source d'autorité en PostgreSQL.
+    "audit_logs",
+    # 026 — Lot 2 : référentiel canonique unique des modèles de bateaux,
+    # alias réversibles/historisés et synonymes de recherche versionnés.
+    # La table historique `bateau` reste le libellé source ; elle reçoit un
+    # lien nullable vers `boat_models`, jamais une réécriture destructive.
+    "boat_models",
+    "boat_model_aliases",
+    "boat_model_merge_history",
+    "search_synonyms",
+    # 027 — Lot 1 : demandes métier soumises à décision d'un approbateur et
+    # notifications applicatives instantanées. Aucun e-mail ni service externe :
+    # la notification est une ligne PostgreSQL relue par l'interface locale.
+    "approval_requests",
+    "in_app_notifications",
+    # 028 — Lot 3a : extraction de voile normalisée et traçable. Le modèle de
+    # bateau y reste un libellé BRUT non résolu ; la résolution vers le
+    # référentiel canonique appartient au Lot 3b.
+    "sail_extractions",
+    # 029 — Lot 3b : résolution du modèle de bateau des extractions
+    # (colonnes de liaison sur `sail_extractions`), historique des corrections
+    # d'approbateur et motifs de correction appris localement. L'apprentissage
+    # n'écrit jamais seul une donnée métier : il alimente des alias (décision
+    # humaine) et des suggestions affichées à l'approbateur.
+    "extraction_corrections",
+    "extraction_motifs_appris",
+    # 030 — Lot 5 (Fonction B) : évaluations de confiance de réutilisation
+    # persistées. Un score ne vit jamais sans sa justification (population,
+    # dispersion robuste par dimension, sources) : la ligne EST la preuve.
+    "evaluations_confiance",
 )
 
 SQL_006_FICHE_TECHNIQUE = """
@@ -1517,6 +1550,551 @@ CREATE INDEX IF NOT EXISTS idx_fiche_gamme_trgm_norm
     ON fiche USING gin (seamtech_texte_recherche(gamme) gin_trgm_ops);
 """
 
+# 024 — Lot 0a : les sessions nominatives vivent dans Redis (invalidation
+# immédiate) et les anciens jetons `v1.*` sont rejetés. Aucune DDL : la
+# migration est un marqueur de séquence et de déploiement. Elle évite aussi un
+# trou 024 avant la 025, que les gardes de sauvegarde refuseraient.
+SQL_024_SESSIONS_REDIS = """
+-- 024_sessions_redis : marqueur sans DDL (état de session porté par Redis).
+SELECT 1;
+"""
+
+# 025 — Lot 0b : journal d'audit canonique PostgreSQL.
+#
+# Invariants portés par la base, pas seulement par le code applicatif :
+# - une ligne par événement, jamais modifiée ni supprimée (trigger) ;
+# - chaque ligne porte l'empreinte SHA-256 de son contenu canonique et celle
+#   de la ligne précédente : une altération hors API casse la chaîne ;
+# - l'acteur est structuré (type, compte, session, rôle) sans jamais stocker
+#   un jeton ou un mot de passe ;
+# - la ressource est à la fois lisible (`resource`, compatibilité historique)
+#   et adressable (`resource_type` + `resource_id`) pour les contrôles IDOR.
+SQL_025_AUDIT_LOGS = """
+CREATE TABLE IF NOT EXISTS audit_logs (
+    id_audit             BIGSERIAL PRIMARY KEY,
+    cree_le              TIMESTAMPTZ NOT NULL DEFAULT now(),
+    request_id           TEXT,
+    actor_type           TEXT NOT NULL DEFAULT 'systeme'
+                         CHECK (actor_type IN ('utilisateur', 'secours', 'service', 'systeme', 'anonyme')),
+    id_utilisateur       BIGINT REFERENCES utilisateur(id_utilisateur) ON DELETE SET NULL,
+    identifiant          TEXT,
+    role                 TEXT,
+    id_session           BIGINT REFERENCES session_ui(id_session) ON DELETE SET NULL,
+    actor                TEXT NOT NULL,
+    action               TEXT NOT NULL,
+    resource_type        TEXT NOT NULL DEFAULT '',
+    resource_id          TEXT NOT NULL DEFAULT '',
+    resource             TEXT NOT NULL DEFAULT '',
+    status               TEXT NOT NULL DEFAULT 'success',
+    code_statut          INTEGER CHECK (code_statut IS NULL OR (code_statut BETWEEN 100 AND 599)),
+    adresse_ip           TEXT,
+    user_agent           TEXT,
+    details              JSONB NOT NULL DEFAULT '{}'::jsonb,
+    empreinte_precedente TEXT CHECK (
+                             empreinte_precedente IS NULL
+                             OR empreinte_precedente ~ '^[0-9a-f]{64}$'
+                         ),
+    empreinte            TEXT NOT NULL CHECK (empreinte ~ '^[0-9a-f]{64}$')
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_logs_cree_le
+    ON audit_logs (cree_le DESC, id_audit DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_actor_action
+    ON audit_logs (actor, action, cree_le DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_identifiant
+    ON audit_logs (identifiant, cree_le DESC)
+    WHERE identifiant IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_audit_logs_resource
+    ON audit_logs (resource_type, resource_id, cree_le DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_request_id
+    ON audit_logs (request_id)
+    WHERE request_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_audit_logs_empreinte
+    ON audit_logs (empreinte);
+
+CREATE OR REPLACE FUNCTION seamtech_audit_logs_append_only()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $fonction$
+BEGIN
+    RAISE EXCEPTION 'audit_logs est append-only : opération % interdite', TG_OP
+        USING ERRCODE = '42501';
+END;
+$fonction$;
+
+DROP TRIGGER IF EXISTS trg_audit_logs_append_only ON audit_logs;
+CREATE TRIGGER trg_audit_logs_append_only
+    BEFORE UPDATE OR DELETE ON audit_logs
+    FOR EACH ROW
+    EXECUTE FUNCTION seamtech_audit_logs_append_only();
+
+COMMENT ON TABLE audit_logs IS
+    'Journal d''audit canonique du Lot 0b : append-only, chaîné par empreinte SHA-256, sans secret en clair.';
+"""
+
+# 026 — Lot 2 : référentiel canonique des modèles de bateaux et recherche
+# étendue. La migration est additive : les libellés `bateau.nom` restent la
+# source historique, `boat_model_id` les rattache à une identité canonique.
+# Le backfill des groupes (casse/accents/ponctuation/abréviations ponctuées)
+# est fait en Python par `synchroniser_referentiel_bateaux`, car la clé
+# canonique est une règle métier testée — pas une approximation SQL. Les
+# suffixes distinctifs (`45`, `45.1`, `45 CC`) produisent des clés distinctes.
+SQL_026_BOAT_MODELS_ALIASES = """
+CREATE TABLE IF NOT EXISTS boat_models (
+    id_modele          BIGSERIAL PRIMARY KEY,
+    nom_canonique      TEXT NOT NULL,
+    cle_normalisee     TEXT NOT NULL UNIQUE CHECK (cle_normalisee <> ''),
+    source             TEXT NOT NULL DEFAULT 'manuel',
+    actif              BOOLEAN NOT NULL DEFAULT true,
+    id_modele_fusion   BIGINT REFERENCES boat_models(id_modele) ON DELETE SET NULL,
+    fusionne_le        TIMESTAMPTZ,
+    fusionne_par       BIGINT REFERENCES utilisateur(id_utilisateur) ON DELETE SET NULL,
+    cree_par           BIGINT REFERENCES utilisateur(id_utilisateur) ON DELETE SET NULL,
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CHECK (id_modele_fusion IS NULL OR id_modele_fusion <> id_modele),
+    CHECK ((id_modele_fusion IS NULL) = (fusionne_le IS NULL))
+);
+
+CREATE TABLE IF NOT EXISTS boat_model_aliases (
+    id_alias           BIGSERIAL PRIMARY KEY,
+    id_modele          BIGINT NOT NULL REFERENCES boat_models(id_modele) ON DELETE CASCADE,
+    alias_brut         TEXT NOT NULL,
+    cle_normalisee     TEXT NOT NULL UNIQUE CHECK (cle_normalisee <> ''),
+    source             TEXT NOT NULL DEFAULT 'manuel',
+    cree_par           BIGINT REFERENCES utilisateur(id_utilisateur) ON DELETE SET NULL,
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS boat_model_merge_history (
+    id_historique          BIGSERIAL PRIMARY KEY,
+    action                 TEXT NOT NULL CHECK (action IN ('fusion', 'defusion')),
+    id_modele_source       BIGINT NOT NULL REFERENCES boat_models(id_modele) ON DELETE RESTRICT,
+    id_modele_cible        BIGINT NOT NULL REFERENCES boat_models(id_modele) ON DELETE RESTRICT,
+    id_historique_origine  BIGINT REFERENCES boat_model_merge_history(id_historique) ON DELETE SET NULL,
+    effectue_par           BIGINT REFERENCES utilisateur(id_utilisateur) ON DELETE SET NULL,
+    motif                  TEXT,
+    instantane             JSONB NOT NULL DEFAULT '{}'::jsonb,
+    cree_le                TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CHECK (id_modele_source <> id_modele_cible)
+);
+
+CREATE TABLE IF NOT EXISTS search_synonyms (
+    id_synonyme        BIGSERIAL PRIMARY KEY,
+    terme              TEXT NOT NULL,
+    terme_normalise    TEXT NOT NULL CHECK (terme_normalise <> ''),
+    cible              TEXT NOT NULL,
+    cible_normalisee   TEXT NOT NULL CHECK (cible_normalisee <> ''),
+    domaine            TEXT,
+    source             TEXT NOT NULL DEFAULT 'manuel',
+    actif              BOOLEAN NOT NULL DEFAULT true,
+    cree_par           BIGINT REFERENCES utilisateur(id_utilisateur) ON DELETE SET NULL,
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (terme_normalise, cible_normalisee)
+);
+
+ALTER TABLE bateau
+    ADD COLUMN IF NOT EXISTS boat_model_id BIGINT
+    REFERENCES boat_models(id_modele) ON DELETE SET NULL;
+
+CREATE INDEX IF NOT EXISTS idx_bateau_boat_model
+    ON bateau (boat_model_id) WHERE boat_model_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_boat_model_aliases_modele
+    ON boat_model_aliases (id_modele);
+CREATE INDEX IF NOT EXISTS idx_boat_model_merge_history_source
+    ON boat_model_merge_history (id_modele_source, cree_le DESC);
+CREATE INDEX IF NOT EXISTS idx_boat_model_merge_history_cible
+    ON boat_model_merge_history (id_modele_cible, cree_le DESC);
+CREATE INDEX IF NOT EXISTS idx_search_synonyms_terme
+    ON search_synonyms (terme_normalise) WHERE actif;
+
+DO $lot2_trgm$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm') THEN
+        EXECUTE 'CREATE INDEX IF NOT EXISTS idx_boat_models_cle_trgm '
+             || 'ON boat_models USING gin (cle_normalisee gin_trgm_ops)';
+        EXECUTE 'CREATE INDEX IF NOT EXISTS idx_boat_model_aliases_cle_trgm '
+             || 'ON boat_model_aliases USING gin (cle_normalisee gin_trgm_ops)';
+        EXECUTE 'CREATE INDEX IF NOT EXISTS idx_search_synonyms_terme_trgm '
+             || 'ON search_synonyms USING gin (terme_normalise gin_trgm_ops)';
+    END IF;
+END
+$lot2_trgm$;
+
+INSERT INTO search_synonyms
+    (terme, terme_normalise, cible, cible_normalisee, domaine, source)
+VALUES
+    ('GV', 'gv', 'Grand-voile', 'grand voile', 'type_voile', 'lot2'),
+    ('spi', 'spi', 'Spinnaker', 'spinnaker', 'type_voile', 'lot2'),
+    ('gen', 'gen', 'Génois', 'genois', 'type_voile', 'lot2'),
+    ('genoa', 'genoa', 'Génois', 'genois', 'type_voile', 'lot2'),
+    ('voile de portant', 'voile de portant', 'Spinnaker', 'spinnaker', 'type_voile', 'lot2'),
+    ('spinnaker asymétrique', 'spinnaker asymetrique', 'Spi Asymétrique', 'spi asymetrique', 'type_voile', 'lot2'),
+    ('m2', 'm 2', 'm²', 'm²', 'unite', 'lot2')
+ON CONFLICT (terme_normalise, cible_normalisee) DO NOTHING;
+
+INSERT INTO search_synonyms
+    (terme, terme_normalise, cible, cible_normalisee, domaine, source)
+SELECT terme,
+       seamtech_texte_recherche(terme),
+       cible,
+       seamtech_texte_recherche(cible),
+       domaine,
+       'legacy_synonyme'
+FROM synonyme
+ON CONFLICT (terme_normalise, cible_normalisee) DO NOTHING;
+
+COMMENT ON TABLE boat_models IS
+    'Référentiel canonique unique des modèles de bateaux (Lot 2).';
+COMMENT ON TABLE boat_model_aliases IS
+    'Formes rencontrées ou apprises désignant un modèle canonique (Lot 2).';
+COMMENT ON TABLE boat_model_merge_history IS
+    'Fusions et défusions de modèles, avec instantané de restauration (Lot 2).';
+COMMENT ON TABLE search_synonyms IS
+    'Synonymes de recherche normalisés et versionnés (Lot 2).';
+"""
+
+# 027 — Lot 1 : quatre rôles canoniques et approbations instantanées.
+#
+# La conversion préserve les capacités historiques : avant Lot 1, un
+# ``operateur`` corrigeait et validait. Le convertir en ``utilisateur``
+# pourrait laisser une installation sans aucun approbateur et retirer en
+# silence une capacité métier ; il devient donc ``approbateur``. Un admin
+# peut ensuite rétrograder explicitement les comptes concernés. Toute valeur
+# inconnue tombe fermée en ``lecture``. Toutes les sessions PostgreSQL
+# existantes sont révoquées : un cookie émis sous l'ancien vocabulaire ne
+# doit pas continuer avec une sémantique de rôle différente.
+SQL_027_ROLES_APPROBATIONS = """
+UPDATE utilisateur
+SET role = CASE lower(btrim(role))
+    WHEN 'administrateur' THEN 'admin'
+    WHEN 'operateur' THEN 'approbateur'
+    WHEN 'admin' THEN 'admin'
+    WHEN 'lecture' THEN 'lecture'
+    WHEN 'utilisateur' THEN 'utilisateur'
+    WHEN 'approbateur' THEN 'approbateur'
+    ELSE 'lecture'
+END;
+
+UPDATE session_ui SET revoque_le = now() WHERE revoque_le IS NULL;
+
+ALTER TABLE utilisateur ALTER COLUMN role SET DEFAULT 'lecture';
+
+DO $lot1_role_check$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'utilisateur_role_canonique'
+    ) THEN
+        ALTER TABLE utilisateur
+            ADD CONSTRAINT utilisateur_role_canonique
+            CHECK (role IN ('admin', 'lecture', 'utilisateur', 'approbateur'));
+    END IF;
+END
+$lot1_role_check$;
+
+CREATE TABLE IF NOT EXISTS approval_requests (
+    id_demande           BIGSERIAL PRIMARY KEY,
+    id_demandeur         BIGINT NOT NULL REFERENCES utilisateur(id_utilisateur) ON DELETE RESTRICT,
+    type_demande         TEXT NOT NULL CHECK (type_demande IN ('telechargement', 'modification', 'suppression')),
+    statut               TEXT NOT NULL DEFAULT 'en_attente'
+                         CHECK (statut IN ('en_attente', 'approuvee', 'refusee', 'annulee', 'executee', 'expiree')),
+    id_fiche             BIGINT REFERENCES fiche(id_fiche) ON DELETE RESTRICT,
+    id_piece             BIGINT REFERENCES documents(id) ON DELETE RESTRICT,
+    champ                TEXT,
+    rang                 INTEGER,
+    valeur_proposee      TEXT,
+    revision_fiche       INTEGER,
+    motif                TEXT NOT NULL CHECK (char_length(btrim(motif)) BETWEEN 1 AND 1000),
+    id_decideur          BIGINT REFERENCES utilisateur(id_utilisateur) ON DELETE SET NULL,
+    decidee_le           TIMESTAMPTZ,
+    commentaire_decision TEXT CHECK (commentaire_decision IS NULL OR char_length(commentaire_decision) <= 1000),
+    executee_le          TIMESTAMPTZ,
+    expire_le            TIMESTAMPTZ,
+    resultat_execution   JSONB NOT NULL DEFAULT '{}'::jsonb,
+    cree_le              TIMESTAMPTZ NOT NULL DEFAULT now(),
+    maj_le               TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CHECK (
+        (type_demande = 'telechargement' AND id_piece IS NOT NULL)
+        OR (type_demande = 'modification' AND id_fiche IS NOT NULL AND champ IS NOT NULL
+            AND valeur_proposee IS NOT NULL AND revision_fiche IS NOT NULL)
+        OR (type_demande = 'suppression' AND id_fiche IS NOT NULL AND revision_fiche IS NOT NULL)
+    ),
+    CHECK (revision_fiche IS NULL OR revision_fiche >= 0),
+    CHECK (expire_le IS NULL OR expire_le > cree_le)
+);
+
+CREATE INDEX IF NOT EXISTS idx_approval_requests_demandeur
+    ON approval_requests (id_demandeur, cree_le DESC, id_demande DESC);
+CREATE INDEX IF NOT EXISTS idx_approval_requests_file
+    ON approval_requests (statut, cree_le, id_demande);
+CREATE INDEX IF NOT EXISTS idx_approval_requests_fiche
+    ON approval_requests (id_fiche, cree_le DESC, id_demande DESC)
+    WHERE id_fiche IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_approval_requests_piece_active
+    ON approval_requests (id_piece, statut, expire_le)
+    WHERE id_piece IS NOT NULL;
+
+-- Une seule demande en attente par objet et par demandeur : la borne est dans
+-- la base, pas seulement dans un pré-contrôle applicatif soumis aux courses.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_approval_pending_download
+    ON approval_requests (id_demandeur, id_piece)
+    WHERE statut = 'en_attente' AND type_demande = 'telechargement';
+CREATE UNIQUE INDEX IF NOT EXISTS uq_approval_pending_modification
+    ON approval_requests (id_demandeur, id_fiche, champ, COALESCE(rang, -1))
+    WHERE statut = 'en_attente' AND type_demande = 'modification';
+CREATE UNIQUE INDEX IF NOT EXISTS uq_approval_pending_suppression
+    ON approval_requests (id_demandeur, id_fiche)
+    WHERE statut = 'en_attente' AND type_demande = 'suppression';
+
+CREATE TABLE IF NOT EXISTS in_app_notifications (
+    id_notification   BIGSERIAL PRIMARY KEY,
+    id_destinataire   BIGINT NOT NULL REFERENCES utilisateur(id_utilisateur) ON DELETE CASCADE,
+    id_demande        BIGINT REFERENCES approval_requests(id_demande) ON DELETE CASCADE,
+    type_notification TEXT NOT NULL CHECK (
+        type_notification IN ('nouvelle_demande', 'decision', 'execution', 'information')
+    ),
+    titre             TEXT NOT NULL CHECK (char_length(btrim(titre)) BETWEEN 1 AND 200),
+    message           TEXT NOT NULL CHECK (char_length(btrim(message)) BETWEEN 1 AND 1000),
+    lue               BOOLEAN NOT NULL DEFAULT false,
+    lue_le            TIMESTAMPTZ,
+    cree_le           TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CHECK ((lue AND lue_le IS NOT NULL) OR (NOT lue AND lue_le IS NULL))
+);
+
+CREATE INDEX IF NOT EXISTS idx_notifications_destinataire
+    ON in_app_notifications (id_destinataire, lue, cree_le DESC, id_notification DESC);
+CREATE INDEX IF NOT EXISTS idx_notifications_demande
+    ON in_app_notifications (id_demande, cree_le DESC)
+    WHERE id_demande IS NOT NULL;
+
+COMMENT ON TABLE approval_requests IS
+    'Demandes métier Lot 1 : téléchargement, modification ou suppression logique, décidées par un approbateur.';
+COMMENT ON TABLE in_app_notifications IS
+    'Notifications applicatives locales du Lot 1, sans service externe.';
+"""
+
+# 028 — Lot 3a : extraction structurée d'une voile depuis son PDF.
+#
+# ``sail_extractions`` est la projection normalisée et requêtable d'une
+# extraction par gabarit : dimensions canoniques (m, m², kg), matériaux,
+# provenance champ par champ (valeur brute/normalisée, méthode, confiance,
+# page, zone) et anomalies de plausibilité. Elle ne remplace ni la fiche ni
+# ``fiche_champ_extrait`` : elle donne aux lots suivants une forme stable de
+# voile, indépendante des tables filles historiques.
+#
+# Le libellé de bateau est volontairement BRUT et non résolu dans ce lot.
+# La résolution vers le référentiel canonique et les corrections humaines
+# appartiennent au Lot 3b ; aucune fusion silencieuse ne doit donc être
+# déduite de cette table.
+SQL_028_SAIL_EXTRACTIONS = """
+CREATE TABLE IF NOT EXISTS sail_extractions (
+    id_extraction       BIGSERIAL PRIMARY KEY,
+    cle_idempotence     TEXT NOT NULL UNIQUE
+                        CHECK (char_length(btrim(cle_idempotence)) BETWEEN 1 AND 240),
+    id_fiche            BIGINT REFERENCES fiche(id_fiche) ON DELETE SET NULL,
+    id_document         BIGINT REFERENCES documents(id) ON DELETE SET NULL,
+    code_fiche          TEXT,
+    nom_fichier_source  TEXT,
+    empreinte_sha256    CHAR(64)
+                        CHECK (empreinte_sha256 IS NULL OR empreinte_sha256 ~ '^[0-9a-f]{64}$'),
+    gabarit_code        TEXT,
+    gabarit_version     INTEGER CHECK (gabarit_version IS NULL OR gabarit_version > 0),
+    version_extracteur  TEXT NOT NULL CHECK (char_length(btrim(version_extracteur)) BETWEEN 1 AND 80),
+    methode_principale  TEXT NOT NULL CHECK (
+        methode_principale IN ('gabarit', 'gabarit_inconnu', 'ocr', 'fiche_extraite', 'inconnue')
+    ),
+    type_voile          TEXT,
+    gamme               TEXT,
+    designation_brute   TEXT,
+    modele_bateau_brut  TEXT,
+    taille_bateau_brute TEXT,
+    slu_m               NUMERIC(10, 3) CHECK (slu_m IS NULL OR slu_m > 0),
+    sle_m               NUMERIC(10, 3) CHECK (sle_m IS NULL OR sle_m > 0),
+    sf_m                NUMERIC(10, 3) CHECK (sf_m IS NULL OR sf_m > 0),
+    shw_m               NUMERIC(10, 3) CHECK (shw_m IS NULL OR shw_m > 0),
+    spa_m2              NUMERIC(12, 3) CHECK (spa_m2 IS NULL OR spa_m2 > 0),
+    tetiere_m           NUMERIC(10, 3) CHECK (tetiere_m IS NULL OR tetiere_m > 0),
+    poids_kg            NUMERIC(10, 3) CHECK (poids_kg IS NULL OR poids_kg > 0),
+    materiaux           JSONB NOT NULL DEFAULT '[]'::jsonb
+                        CHECK (jsonb_typeof(materiaux) = 'array'),
+    champs              JSONB NOT NULL DEFAULT '[]'::jsonb
+                        CHECK (jsonb_typeof(champs) = 'array'),
+    anomalies           JSONB NOT NULL DEFAULT '[]'::jsonb
+                        CHECK (jsonb_typeof(anomalies) = 'array'),
+    score_qualite       NUMERIC(5, 4)
+                        CHECK (score_qualite IS NULL OR score_qualite BETWEEN 0 AND 1),
+    confiance_moyenne   NUMERIC(5, 4)
+                        CHECK (confiance_moyenne IS NULL OR confiance_moyenne BETWEEN 0 AND 1),
+    statut_extraction   TEXT NOT NULL CHECK (
+        statut_extraction IN ('complete', 'partielle', 'a_reprendre')
+    ),
+    statut_plausibilite TEXT NOT NULL CHECK (
+        statut_plausibilite IN ('plausible', 'a_verifier', 'implausible', 'indeterminee')
+    ),
+    extrait_le          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    cree_le             TIMESTAMPTZ NOT NULL DEFAULT now(),
+    maj_le              TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_sail_extractions_fiche
+    ON sail_extractions (id_fiche, extrait_le DESC, id_extraction DESC)
+    WHERE id_fiche IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_sail_extractions_document
+    ON sail_extractions (id_document, extrait_le DESC, id_extraction DESC)
+    WHERE id_document IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_sail_extractions_empreinte
+    ON sail_extractions (empreinte_sha256)
+    WHERE empreinte_sha256 IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_sail_extractions_code
+    ON sail_extractions (code_fiche)
+    WHERE code_fiche IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_sail_extractions_a_reprendre
+    ON sail_extractions (statut_extraction, statut_plausibilite, cree_le, id_extraction)
+    WHERE statut_extraction <> 'complete' OR statut_plausibilite <> 'plausible';
+
+COMMENT ON TABLE sail_extractions IS
+    'Extractions de voiles normalisées du Lot 3a : dimensions canoniques, matériaux, provenance et plausibilité. Le modèle de bateau reste brut et non résolu.';
+COMMENT ON COLUMN sail_extractions.modele_bateau_brut IS
+    'Libellé de bateau tel que lu dans le PDF, sans résolution canonique (Lot 3b).';
+COMMENT ON COLUMN sail_extractions.champs IS
+    'Provenance champ par champ : valeurs brute et canonique, unités, méthode, confiance, page et zone.';
+"""
+
+SQL_029_EXTRACTION_LIAISON_CORRECTIONS = """
+-- Lot 3b : résolution du modèle de bateau d'une extraction vers le référentiel
+-- canonique du Lot 2 (`boat_models`). La liaison automatique ne repose que
+-- sur des preuves déterministes (clé exacte, alias exact, bateau de la fiche
+-- déjà lié) : tout le reste est `ambigu` ou `non_resolu` et attend un
+-- approbateur — jamais de fusion silencieuse « 45 » → « 45.1 ».
+ALTER TABLE sail_extractions
+    ADD COLUMN IF NOT EXISTS boat_model_id BIGINT REFERENCES boat_models(id_modele) ON DELETE SET NULL,
+    ADD COLUMN IF NOT EXISTS statut_liaison TEXT NOT NULL DEFAULT 'non_resolu' CHECK (
+        statut_liaison IN ('non_resolu', 'lie_automatique', 'lie_humain', 'ambigu', 'sans_modele')
+    ),
+    ADD COLUMN IF NOT EXISTS methode_liaison TEXT CHECK (
+        methode_liaison IS NULL OR methode_liaison IN (
+            'cle_exacte', 'alias_exact', 'fiche_bateau', 'humain', 'humain_nouveau_modele'
+        )
+    ),
+    ADD COLUMN IF NOT EXISTS lie_le TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS lie_par BIGINT REFERENCES utilisateur(id_utilisateur) ON DELETE SET NULL;
+
+-- Cohérence portée par la base : un statut « lié » exige un modèle, un statut
+-- non lié l'interdit. Aucun état intermédiaire silencieux n'est représentable.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'sail_extractions_liaison_coherente'
+    ) THEN
+        ALTER TABLE sail_extractions
+            ADD CONSTRAINT sail_extractions_liaison_coherente CHECK (
+                (statut_liaison IN ('lie_automatique', 'lie_humain') AND boat_model_id IS NOT NULL)
+                OR (
+                    statut_liaison IN ('non_resolu', 'ambigu', 'sans_modele')
+                    AND boat_model_id IS NULL
+                )
+            );
+    END IF;
+END $$;
+
+-- Les extractions antérieures au Lot 3b sans libellé de bateau lu sont
+-- explicitement « sans modèle » ; les autres attendent la résolution.
+UPDATE sail_extractions
+SET statut_liaison = 'sans_modele'
+WHERE statut_liaison = 'non_resolu'
+  AND (modele_bateau_brut IS NULL OR btrim(modele_bateau_brut) = '');
+
+CREATE INDEX IF NOT EXISTS idx_sail_extractions_liaison
+    ON sail_extractions (statut_liaison, cree_le, id_extraction)
+    WHERE statut_liaison IN ('non_resolu', 'ambigu');
+CREATE INDEX IF NOT EXISTS idx_sail_extractions_modele_bateau
+    ON sail_extractions (boat_model_id)
+    WHERE boat_model_id IS NOT NULL;
+
+-- Historique des corrections d'approbateur sur une extraction : la provenance
+-- machine (`sail_extractions.champs`) n'est jamais réécrite ; la correction
+-- humaine vit ici, avec valeur avant/après, auteur, motif et propagation
+-- éventuelle vers la fiche (cotes canoniques, révision arbitrée côté code).
+CREATE TABLE IF NOT EXISTS extraction_corrections (
+    id_correction         BIGSERIAL PRIMARY KEY,
+    id_extraction         BIGINT NOT NULL REFERENCES sail_extractions(id_extraction) ON DELETE CASCADE,
+    champ                 TEXT NOT NULL CHECK (char_length(btrim(champ)) BETWEEN 1 AND 80),
+    valeur_avant          JSONB,
+    valeur_apres          JSONB,
+    id_utilisateur        BIGINT REFERENCES utilisateur(id_utilisateur) ON DELETE SET NULL,
+    motif                 TEXT,
+    propagation           TEXT NOT NULL DEFAULT 'aucune' CHECK (
+        propagation IN ('aucune', 'fiche')
+    ),
+    cree_le               TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_extraction_corrections_extraction
+    ON extraction_corrections (id_extraction, cree_le, id_correction);
+
+-- Motifs de correction appris LOCALEMENT : « sur ce gabarit, ce champ lu X a
+-- déjà été corrigé en Y, N fois ». Ils ne servent qu'à SUGGÉRER à
+-- l'approbateur ; ils n'appliquent jamais une valeur sans décision humaine.
+CREATE TABLE IF NOT EXISTS extraction_motifs_appris (
+    id_motif              BIGSERIAL PRIMARY KEY,
+    gabarit_code          TEXT NOT NULL DEFAULT '',
+    champ                 TEXT NOT NULL CHECK (char_length(btrim(champ)) BETWEEN 1 AND 80),
+    valeur_brute_cle      TEXT NOT NULL CHECK (char_length(btrim(valeur_brute_cle)) >= 1),
+    valeur_corrigee       TEXT NOT NULL CHECK (char_length(btrim(valeur_corrigee)) >= 1),
+    occurrences           INTEGER NOT NULL DEFAULT 1 CHECK (occurrences >= 1),
+    dernier_utilisateur   BIGINT REFERENCES utilisateur(id_utilisateur) ON DELETE SET NULL,
+    cree_le               TIMESTAMPTZ NOT NULL DEFAULT now(),
+    maj_le                TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (gabarit_code, champ, valeur_brute_cle, valeur_corrigee)
+);
+
+COMMENT ON COLUMN sail_extractions.boat_model_id IS
+    'Modèle de bateau canonique résolu au Lot 3b (référentiel Lot 2). NULL tant que la liaison n''est pas prouvée ou décidée.';
+COMMENT ON COLUMN sail_extractions.statut_liaison IS
+    'non_resolu | lie_automatique | lie_humain | ambigu | sans_modele — ambigu et non_resolu attendent un approbateur.';
+COMMENT ON TABLE extraction_corrections IS
+    'Corrections approbateur des extractions de voiles (Lot 3b) : avant/après, auteur, motif, propagation fiche.';
+COMMENT ON TABLE extraction_motifs_appris IS
+    'Motifs de correction récurrents appris localement (Lot 3b) : suggestions à l''approbateur, jamais d''application silencieuse.';
+"""
+
+SQL_030_EVALUATIONS_CONFIANCE = """
+-- Lot 5 (Fonction B) : évaluations de confiance de réutilisation persistées.
+-- La règle d'honnêteté est portée par la base elle-même : un score NULL est
+-- OBLIGATOIRE quand les données sont insuffisantes ou la population
+-- hétérogène (jamais de pourcentage fabriqué), et un score est EXIGÉ pour
+-- les verdicts chiffrés. La justification complète (N, dispersion robuste
+-- par dimension, matériaux, fiches sources) vit dans le JSONB de la ligne.
+CREATE TABLE IF NOT EXISTS evaluations_confiance (
+    id_evaluation   BIGSERIAL PRIMARY KEY,
+    id_extraction   BIGINT NOT NULL REFERENCES sail_extractions(id_extraction) ON DELETE CASCADE,
+    boat_model_id   BIGINT NOT NULL REFERENCES boat_models(id_modele) ON DELETE CASCADE,
+    type_voile      TEXT NOT NULL CHECK (char_length(btrim(type_voile)) >= 1),
+    n_echantillons  INTEGER NOT NULL CHECK (n_echantillons >= 0),
+    score           NUMERIC(5, 1) CHECK (score IS NULL OR score BETWEEN 0 AND 100),
+    verdict         TEXT NOT NULL CHECK (
+        verdict IN ('donnees_insuffisantes', 'heterogene', 'a_examiner', 'compatible')
+    ),
+    justification   JSONB NOT NULL DEFAULT '{}'::jsonb
+                    CHECK (jsonb_typeof(justification) = 'object'),
+    cree_par        BIGINT REFERENCES utilisateur(id_utilisateur) ON DELETE SET NULL,
+    cree_le         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT evaluations_confiance_score_coherent CHECK (
+        (verdict IN ('donnees_insuffisantes', 'heterogene') AND score IS NULL)
+        OR (verdict IN ('a_examiner', 'compatible') AND score IS NOT NULL)
+    )
+);
+
+CREATE INDEX IF NOT EXISTS idx_evaluations_confiance_extraction
+    ON evaluations_confiance (id_extraction, cree_le DESC, id_evaluation DESC);
+CREATE INDEX IF NOT EXISTS idx_evaluations_confiance_modele
+    ON evaluations_confiance (boat_model_id, cree_le DESC);
+
+COMMENT ON TABLE evaluations_confiance IS
+    'Évaluations de confiance de réutilisation (Lot 5, Fonction B) : score robuste médiane/MAD/IQR, verdict et justification complète. Score NULL obligatoire si données insuffisantes ou population hétérogène.';
+"""
+
 MIGRATIONS_METIER: tuple[tuple[str, str], ...] = (
     ("006_fiche_technique", SQL_006_FICHE_TECHNIQUE),
     ("007_recherche_index", SQL_007_RECHERCHE_INDEX),
@@ -1536,6 +2114,13 @@ MIGRATIONS_METIER: tuple[tuple[str, str], ...] = (
     ("021_revision_fiche", SQL_021_REVISION_FICHE),
     ("022_selections_durables", SQL_022_SELECTIONS_DURABLES),
     ("023_recherche_normalisee", SQL_023_FONCTION_UNACCENT),
+    ("024_sessions_redis", SQL_024_SESSIONS_REDIS),
+    ("025_audit_logs", SQL_025_AUDIT_LOGS),
+    ("026_boat_models_aliases", SQL_026_BOAT_MODELS_ALIASES),
+    ("027_roles_approbations", SQL_027_ROLES_APPROBATIONS),
+    ("028_sail_extractions", SQL_028_SAIL_EXTRACTIONS),
+    ("029_extraction_liaison_corrections", SQL_029_EXTRACTION_LIAISON_CORRECTIONS),
+    ("030_evaluations_confiance", SQL_030_EVALUATIONS_CONFIANCE),
 )
 
 

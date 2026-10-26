@@ -1,5 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { MODE_NOMINATIF, SESSION_COOKIE, currentSession, shouldMarkCookieSecure } from "@/lib/auth"
+import { CSRF_COOKIE, MODE_NOMINATIF, SESSION_COOKIE, currentSession, shouldMarkCookieSecure } from "@/lib/auth"
 import { authHeaders, backendBase } from "@/lib/backend"
 
 export const dynamic = "force-dynamic"
@@ -36,9 +36,25 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const response = NextResponse.json({ ok: true }, { status: 200, headers: { "Cache-Control": "no-store" } })
+  const response = NextResponse.json(
+    { ok: true },
+    {
+      status: 200,
+      headers: {
+        "Cache-Control": "no-store",
+        "Clear-Site-Data": '"cache", "cookies", "storage"',
+      },
+    },
+  )
   response.cookies.set(SESSION_COOKIE, "", {
     httpOnly: true,
+    sameSite: "lax",
+    secure: shouldMarkCookieSecure(req.headers.get("x-forwarded-proto")),
+    path: "/",
+    maxAge: 0,
+  })
+  response.cookies.set(CSRF_COOKIE, "", {
+    httpOnly: false,
     sameSite: "lax",
     secure: shouldMarkCookieSecure(req.headers.get("x-forwarded-proto")),
     path: "/",

@@ -120,6 +120,12 @@ class _SansRedirection(urllib.request.HTTPRedirectHandler):
 _OUVREUR_SANS_REDIRECTION = urllib.request.build_opener(_SansRedirection)
 
 
+ENTETES_SECOURS = {
+    "X-SEAMTECH-UTILISATEUR": "secours",
+    "X-SEAMTECH-ROLE": "admin",
+}
+
+
 def _requete(
     chemin: str,
     *,
@@ -462,7 +468,12 @@ def _scenario_partage(tmp_path: Path) -> None:
 
     # b) Le rapport est téléchargeable par HTTP (donc depuis un autre poste
     #    de l'atelier) — pas seulement présent sur le disque du serveur.
-    code, contenu, entetes = _requete(f"/imports/{job_id}/artifacts/report_pdf")
+    # Lot 0b : les octets d'un artefact exigent un acteur humain en
+    # PostgreSQL ; le secours derrière le jeton de service est l'acteur
+    # d'outillage documenté pour cette preuve d'infrastructure.
+    code, contenu, entetes = _requete(
+        f"/imports/{job_id}/artifacts/report_pdf", entetes=ENTETES_SECOURS
+    )
     assert code == 200, f"téléchargement du rapport impossible (HTTP {code}) : {contenu[:400]!r}"
     assert contenu[:4] == b"%PDF", "le rapport servi n'est pas un PDF"
     assert "attachment" in entetes.get("content-disposition", ""), entetes
@@ -471,7 +482,9 @@ def _scenario_partage(tmp_path: Path) -> None:
     # résolvable depuis un poste de l'atelier. Le test ne suit pas les
     # redirections ici : c'est la réponse brute qui compte.
     code_brut, _, entetes_brutes = _requete(
-        f"/imports/{job_id}/artifacts/report_pdf", suivre_redirections=False
+        f"/imports/{job_id}/artifacts/report_pdf",
+        entetes=ENTETES_SECOURS,
+        suivre_redirections=False,
     )
     assert code_brut == 200, (
         f"le téléchargement ne doit pas rediriger vers un hôte interne (HTTP {code_brut}, "

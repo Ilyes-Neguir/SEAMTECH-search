@@ -7,7 +7,10 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import { FolderInput, RefreshCw } from "lucide-react"
+import { AccesRefuse } from "@/components/acces-refuse"
 import { authedFetch } from "@/lib/authed-fetch"
+import { peutDeposer } from "@/lib/roles"
+import { useSession } from "@/lib/use-session"
 import type { LotDetail } from "@/lib/fiche"
 import { cn } from "@/lib/utils"
 
@@ -32,7 +35,7 @@ const LIBELLES_LOT: Record<string, string> = {
   relance: "relancé",
 }
 
-export function NouveauApp() {
+function NouveauAppInterne() {
   const [dossier, setDossier] = useState("")
   const [resultat, setResultat] = useState<{ statut: string; fiche: string | null; raison: string | null; pieces: number } | null>(null)
   const [idLot, setIdLot] = useState<number | null>(null)
@@ -207,4 +210,14 @@ export function NouveauApp() {
       )}
     </div>
   )
+}
+
+
+export function NouveauApp() {
+  const { role, chargement } = useSession()
+  if (chargement) return <main className="p-6 text-sm text-muted-foreground">Vérification de votre rôle…</main>
+  if (!peutDeposer(role)) {
+    return <AccesRefuse message="Le dépôt de dossiers est réservé aux rôles admin, utilisateur et approbateur. Le rôle lecture peut consulter et prévisualiser l’archive, sans y déposer de fichiers." />
+  }
+  return <NouveauAppInterne />
 }

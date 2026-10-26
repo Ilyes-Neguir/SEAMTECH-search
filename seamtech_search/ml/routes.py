@@ -31,6 +31,7 @@ from seamtech_search.ml.corpus import (
 )
 from seamtech_search.ml.encodeur import EncodeurDeterministe, charger_encodeur
 from seamtech_search.ml.peuplement import peupler_vecteurs
+from seamtech_search.securite_requetes import exiger_administrateur_requete
 
 LOGGER = logging.getLogger(__name__)
 
@@ -71,6 +72,27 @@ def _exiger_postgres(index: Any) -> None:
         )
 
 
+def _exiger_administrateur(
+    index: Any,  # noqa: ANN401
+    config: Any,  # noqa: ANN401
+    token: str | None,
+    entete_utilisateur: str | None,
+    entete_role: str | None,
+    entete_session: str | None,
+    entete_jeton: str | None,
+) -> None:
+    """Surface ML d'exploitation : administrateur humain en PostgreSQL."""
+    exiger_administrateur_requete(
+        index,
+        config,
+        token=token,
+        entete_utilisateur=entete_utilisateur,
+        entete_role=entete_role,
+        entete_session=entete_session,
+        entete_jeton=entete_jeton,
+    )
+
+
 def _choisir_encodeur(modeles_dir: Path, demande: str) -> tuple[Any, str | None]:
     """L'encodeur demandé + l'avertissement éventuel à publier dans la réponse."""
     if demande == "repli-deterministe":
@@ -107,9 +129,10 @@ def enregistrer_routes_ml(
     # fait au moment d'écrire, avec un refus explicite si non inscriptible.
 
     @app.get("/ml/modeles")
-    def route_ml_modeles(token: str | None = Header(None, alias="X-SEAMTECH-TOKEN")) -> dict[str, Any]:
+    def route_ml_modeles(token: str | None = Header(None, alias="X-SEAMTECH-TOKEN"), entete_utilisateur: str | None = Header(None, alias="X-SEAMTECH-UTILISATEUR"), entete_role: str | None = Header(None, alias="X-SEAMTECH-ROLE"), entete_session: str | None = Header(None, alias="X-SEAMTECH-SESSION"), entete_jeton: str | None = Header(None, alias="X-SEAMTECH-SESSION-JETON")) -> dict[str, Any]:
         _verifier_auth(config, verifier_auth, token)
         _exiger_postgres(index)
+        _exiger_administrateur(index, config, token, entete_utilisateur, entete_role, entete_session, entete_jeton)
         encodeur = charger_encodeur(modeles_dir)
         with index.connect() as connexion:
             with connexion.cursor() as cursor:
@@ -140,10 +163,11 @@ def enregistrer_routes_ml(
 
     @app.post("/ml/modeles", status_code=201)
     def route_ml_modeles_creer(
-        corps: CorpsModele, token: str | None = Header(None, alias="X-SEAMTECH-TOKEN")
+        corps: CorpsModele, token: str | None = Header(None, alias="X-SEAMTECH-TOKEN"), entete_utilisateur: str | None = Header(None, alias="X-SEAMTECH-UTILISATEUR"), entete_role: str | None = Header(None, alias="X-SEAMTECH-ROLE"), entete_session: str | None = Header(None, alias="X-SEAMTECH-SESSION"), entete_jeton: str | None = Header(None, alias="X-SEAMTECH-SESSION-JETON")
     ) -> dict[str, Any]:
         _verifier_auth(config, verifier_auth, token)
         _exiger_postgres(index)
+        _exiger_administrateur(index, config, token, entete_utilisateur, entete_role, entete_session, entete_jeton)
         with index.connect() as connexion:
             with connexion.cursor() as cursor:
                 try:
@@ -171,10 +195,11 @@ def enregistrer_routes_ml(
     @app.post("/ml/entrainer")
     def route_ml_entrainer(
         corps: CorpsEntrainement = Body(default_factory=CorpsEntrainement),
-        token: str | None = Header(None, alias="X-SEAMTECH-TOKEN"),
+        token: str | None = Header(None, alias="X-SEAMTECH-TOKEN"), entete_utilisateur: str | None = Header(None, alias="X-SEAMTECH-UTILISATEUR"), entete_role: str | None = Header(None, alias="X-SEAMTECH-ROLE"), entete_session: str | None = Header(None, alias="X-SEAMTECH-SESSION"), entete_jeton: str | None = Header(None, alias="X-SEAMTECH-SESSION-JETON"),
     ) -> dict[str, Any]:
         _verifier_auth(config, verifier_auth, token)
         _exiger_postgres(index)
+        _exiger_administrateur(index, config, token, entete_utilisateur, entete_role, entete_session, entete_jeton)
         chemin_verrou = modeles_dir / FICHIER_VERROU
         try:
             modeles_dir.mkdir(parents=True, exist_ok=True)
@@ -206,10 +231,11 @@ def enregistrer_routes_ml(
     @app.post("/ml/peupler")
     def route_ml_peupler(
         corps: CorpsPeuplement = Body(default_factory=CorpsPeuplement),
-        token: str | None = Header(None, alias="X-SEAMTECH-TOKEN"),
+        token: str | None = Header(None, alias="X-SEAMTECH-TOKEN"), entete_utilisateur: str | None = Header(None, alias="X-SEAMTECH-UTILISATEUR"), entete_role: str | None = Header(None, alias="X-SEAMTECH-ROLE"), entete_session: str | None = Header(None, alias="X-SEAMTECH-SESSION"), entete_jeton: str | None = Header(None, alias="X-SEAMTECH-SESSION-JETON"),
     ) -> dict[str, Any]:
         _verifier_auth(config, verifier_auth, token)
         _exiger_postgres(index)
+        _exiger_administrateur(index, config, token, entete_utilisateur, entete_role, entete_session, entete_jeton)
         encodeur, avertissement = _choisir_encodeur(modeles_dir, corps.encodeur)
         resultat = peupler_vecteurs(index, encodeur)
         if avertissement:

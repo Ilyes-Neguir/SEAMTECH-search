@@ -239,7 +239,14 @@ def test_restauration_50000_fiches_duree_publiee(tmp_path: Path, monkeypatch: py
     url_base = URL_PG.rsplit("/", 1)[0] + f"/{nom_base}"
 
     try:
-        index = SearchIndex(Path(f"/tmp/unused-{nom_base}.db"), url_base)
+        # Insertion 50k lignes peut dépasser le statement_timeout par défaut (5 s)
+        # sur runners lents (constaté en CI Python 3.13 : QueryCanceled). On
+        # lève le garde-fou pour ce test de montée en charge uniquement.
+        index = SearchIndex(
+            Path(f"/tmp/unused-{nom_base}.db"),
+            url_base,
+            statement_timeout_ms=60000,
+        )
         index.initialize()
         index.run_migrations()
         with index.connect() as connexion:

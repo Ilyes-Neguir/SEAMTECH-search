@@ -19,14 +19,16 @@ RUN pip install --no-cache-dir -r requirements.txt
 # scannées avant OCR. Sans ces paquets, tout PDF scanné est dégradé en silence
 # dans la pile Docker (« tesseract absent ») alors que la CI les installe —
 # l'image doit porter le MÊME outillage que la CI. `tesseract-ocr-fra` fournit
-# fra.traineddata (la langue par défaut de l'OCR est « fra »).
+# fra.traineddata (la langue par défaut de l'OCR est « fra »), eng pour les scans anglais.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         tesseract-ocr \
         tesseract-ocr-fra \
+        tesseract-ocr-eng \
         poppler-utils \
     && rm -rf /var/lib/apt/lists/* \
-    && tesseract --list-langs 2>&1 | grep -q fra
+    && tesseract --list-langs 2>&1 | grep -q fra \
+    && tesseract --list-langs 2>&1 | grep -q eng
 
 # The server refuses to start without config/config.json (by design, to avoid
 # silent misconfiguration on the desktop app). Container deployments configure

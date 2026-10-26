@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { backendBase, authHeaders, requireAuthValide } from "@/lib/backend"
+import { backendBase, backendHeaders, requireAuthValide, requireNominativeRoles } from "@/lib/backend"
+import { ROLE_APPROBATEUR } from "@/lib/roles"
 
 export const dynamic = "force-dynamic"
 
@@ -11,7 +12,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   if (!base) return NextResponse.json({ detail: "Import requires a configured backend." }, { status: 503 })
   try {
     const response = await fetch(`${base}/imports/${encodeURIComponent(id)}`, {
-      headers: { ...authHeaders() },
+      headers: await backendHeaders(),
       cache: "no-store",
     })
     return NextResponse.json(await response.json(), { status: response.status })
@@ -21,7 +22,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const denied = await requireAuthValide()
+  const denied = await requireNominativeRoles(ROLE_APPROBATEUR)
   if (denied) return denied
   const { id } = await params
   const payload = await req.json().catch(() => null)
@@ -33,7 +34,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   try {
     const response = await fetch(`${base}/imports/${encodeURIComponent(id)}`, {
       method: "PATCH",
-      headers: { ...authHeaders(), "Content-Type": "application/json" },
+      headers: await backendHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(payload),
       cache: "no-store",
     })

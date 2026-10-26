@@ -1,0 +1,254 @@
+{
+  "source": "https://github.com/affaan-m/ECC",
+  "license": "MIT (see ECC-LICENSE)",
+  "ecc_version": "2.2.3",
+  "ecc_commit": "90606c8315ee09cafc303515c5f33024db6b9882",
+  "skills": [
+    "ai-regression-testing",
+    "api-design",
+    "architecture-decision-records",
+    "coding-standards",
+    "contract-first",
+    "database-migrations",
+    "deployment-patterns",
+    "docker-patterns",
+    "documentation-lookup",
+    "e2e-testing",
+    "error-handling",
+    "fastapi-patterns",
+    "frontend-a11y",
+    "frontend-patterns",
+    "git-workflow",
+    "github-ops",
+    "nextjs-turbopack",
+    "postgres-patterns",
+    "production-audit",
+    "python-patterns",
+    "python-testing",
+    "react-patterns",
+    "react-performance",
+    "react-testing",
+    "redis-patterns",
+    "regex-vs-llm-structured-text",
+    "search-first",
+    "security-review",
+    "tdd-workflow",
+    "verification-loop"
+  ],
+  "agents": [
+    "architect",
+    "build-error-resolver",
+    "code-reviewer",
+    "database-reviewer",
+    "doc-updater",
+    "e2e-runner",
+    "fastapi-reviewer",
+    "performance-optimizer",
+    "planner",
+    "python-reviewer",
+    "rag-pipeline-reviewer",
+    "react-reviewer",
+    "refactor-cleaner",
+    "security-reviewer",
+    "tdd-guide",
+    "typescript-reviewer"
+  ],
+  "files": {
+    ".agents/skills/ai-regression-testing/SKILL.md": {
+      "sha256": "83f2f5c4083af5762dd658f742d4a390eb3a6f969d835f69e8f47efba296c127",
+      "size": 11659
+    },
+    ".agents/skills/api-design/SKILL.md": {
+      "sha256": "250e464413a13c0eb93cc73447b423df1f9aa8e4f80e5e68c41f895b2c33e352",
+      "size": 13224
+    },
+    ".agents/skills/architecture-decision-records/SKILL.md": {
+      "sha256": "263b20e81801aa5fa7e75eaec6c38345c0ac028ca0edbd67b1b9071c5fcbe11f",
+      "size": 7182
+    },
+    ".agents/skills/coding-standards/SKILL.md": {
+      "sha256": "e80544c3d1eac5b14f22022146bd91a6b0ecc30e099cf5181894853aeb81dee1",
+      "size": 12866
+    },
+    ".agents/skills/contract-first/SKILL.md": {
+      "sha256": "3eaacf16a9bbd92888659e9c1e15b0fa4eb96a41c257dd9e08f2e63b824f0cea",
+      "size": 9761
+    },
+    ".agents/skills/database-migrations/SKILL.md": {
+      "sha256": "dad2f1964295eee14a96e06213ce3f60992bbcdc1f37a50c828bbc2e1abd79dd",
+      "size": 12034
+    },
+    ".agents/skills/deployment-patterns/SKILL.md": {
+      "sha256": "b864abd1954570c4a469b7e1deb897e57858d25db2fd98d035ff7bca4a15b9b6",
+      "size": 11113
+    },
+    ".agents/skills/docker-patterns/SKILL.md": {
+      "sha256": "c0cedeb9b64d4468f5af3bb0a97659c654f0ceb916acbec867a29dc682dd633f",
+      "size": 16807
+    },
+    ".agents/skills/documentation-lookup/SKILL.md": {
+      "sha256": "81ad2b5b4acbe02259f4b6cbfd9111d81d5cfe51025051b6048959c45f6516c1",
+      "size": 4912
+    },
+    ".agents/skills/e2e-testing/SKILL.md": {
+      "sha256": "b0e00e7e17cb259101139900816c5528aed18dd10bcf5f9cb42cfc35baf8a755",
+      "size": 8170
+    },
+    ".agents/skills/error-handling/SKILL.md": {
+      "sha256": "e8eec6756c950b570486493e64e3bf14c12baf6bf0858bf3928097fe2bfeaf79",
+      "size": 10984
+    },
+    ".agents/skills/fastapi-patterns/SKILL.md": {
+      "sha256": "f54c2bf5a61eeda47c939da265b1431d609c231611e71b688b0b734a064b18f3",
+      "size": 15637
+    },
+    ".agents/skills/frontend-a11y/SKILL.md": {
+      "sha256": "e00991a3f4d47fcf1529dd74a080afcf46137dc5061e70dc6e3da7b27f2ae3f3",
+      "size": 12861
+    },
+    ".agents/skills/frontend-patterns/SKILL.md": {
+      "sha256": "a5b971eb9e74cd763c7e3308bfd888e0d9cf69f8b88477659889d77182479740",
+      "size": 15432
+    },
+    ".agents/skills/git-workflow/SKILL.md": {
+      "sha256": "7094ab94802d7e839dc33c6ea230020327260518b1b1ce62b42d56d051c1d7c5",
+      "size": 15308
+    },
+    ".agents/skills/github-ops/SKILL.md": {
+      "sha256": "281e19fbf138c8d7ac7379864825721aa6f6efcf4008e976a6ea34b3c96e2b54",
+      "size": 6202
+    },
+    ".agents/skills/github-ops/references/ecc-release-checklist.md": {
+      "sha256": "abeda37b5364854c0b3610227d3029706d6f42ec287573397abe795f4af8a463",
+      "size": 6940
+    },
+    ".agents/skills/nextjs-turbopack/SKILL.md": {
+      "sha256": "336034322d2022f47b097e55b5448cbc1e204c11f964910fa6fb3baeab06a474",
+      "size": 3141
+    },
+    ".agents/skills/postgres-patterns/SKILL.md": {
+      "sha256": "9c8c391ae9e9aa87faa7ca091e1d395c97766df14080d0bfbea8a97721776163",
+      "size": 3914
+    },
+    ".agents/skills/production-audit/SKILL.md": {
+      "sha256": "3ab3dd8a364ee17566e9361f0ebed2aec3b3146ede44e1db0a72c5ceae1ca0a4",
+      "size": 7727
+    },
+    ".agents/skills/python-patterns/SKILL.md": {
+      "sha256": "103e0130dac33a49d26705fc5a2df804980fcab6a0138d65bc7f370a987d49f6",
+      "size": 16914
+    },
+    ".agents/skills/python-testing/SKILL.md": {
+      "sha256": "b9f7a158dae3b6c06c9c75ffe84e27a1edc86092d2afdcb39e96fc2569902eb7",
+      "size": 18955
+    },
+    ".agents/skills/react-patterns/SKILL.md": {
+      "sha256": "f3208d44a5d553038c42e046cec4dc16e4a3d90a9dbf931f883a2e21919a64a9",
+      "size": 11466
+    },
+    ".agents/skills/react-performance/SKILL.md": {
+      "sha256": "ac76e8694d4f802a7bccc3c07a73ac68ace6d82a65ea10f10d8b7384dda61a8f",
+      "size": 18184
+    },
+    ".agents/skills/react-testing/SKILL.md": {
+      "sha256": "51c18b4e28285bb876ef469e47c6f53108b5a9f900950a60e897c3c24826a65e",
+      "size": 13168
+    },
+    ".agents/skills/redis-patterns/SKILL.md": {
+      "sha256": "6cabb1cd03174a0584ff3538371c780aba90da156db15260691278ed3307d8fe",
+      "size": 11977
+    },
+    ".agents/skills/regex-vs-llm-structured-text/SKILL.md": {
+      "sha256": "5d7d04591ad656ba7b8064b2fa25e83936f8bd077449dac6cc599b4c41ce662a",
+      "size": 6749
+    },
+    ".agents/skills/search-first/SKILL.md": {
+      "sha256": "76835db48dd910061d2e4271b1151793d2fddbabeb2d2866eed068b3580c55d5",
+      "size": 8210
+    },
+    ".agents/skills/security-review/SKILL.md": {
+      "sha256": "b9eb6416eebc8dda046674f0a2dbb3be88aff526d182b60a0f55998d3d6d0d8d",
+      "size": 12955
+    },
+    ".agents/skills/security-review/cloud-infrastructure-security.md": {
+      "sha256": "7d9a83852475a9396e04c59c73df84ac24ee0f41322016de7c11c62138c2a8ca",
+      "size": 10171
+    },
+    ".agents/skills/tdd-workflow/SKILL.md": {
+      "sha256": "8887afa786ef30de834e7567115d3df71934b343c3d9d849714f8ea43f979ee0",
+      "size": 21596
+    },
+    ".agents/skills/verification-loop/SKILL.md": {
+      "sha256": "5b06be54d4852f60e6cf1b04c6e9a4748554334eb3e41af6c0959b544e6464ae",
+      "size": 3064
+    },
+    ".agents/agents/architect.md": {
+      "sha256": "6b8e1e8bd274995f3949691731f4334820c061d3054eaea3be2ce163386d1f24",
+      "size": 7276
+    },
+    ".agents/agents/build-error-resolver.md": {
+      "sha256": "acc9e14df59dd28d00f966b3a6cf0d9aeeda7e8a9ab7f1bc442466c0219c35ec",
+      "size": 4749
+    },
+    ".agents/agents/code-reviewer.md": {
+      "sha256": "9dd23be23d65f18126e10f7680fc1eb2576ec54a427d076ff2f870bd0bafd5d2",
+      "size": 13877
+    },
+    ".agents/agents/database-reviewer.md": {
+      "sha256": "945c107dea01ca74e3e9bc3a5841e79e744673e8f14697e88cf1cfd9c01a1cc5",
+      "size": 5314
+    },
+    ".agents/agents/doc-updater.md": {
+      "sha256": "5018d3a0bf740d2263fd4b7a92412d53a62d4be151a71221d6549cacba62d72c",
+      "size": 4376
+    },
+    ".agents/agents/e2e-runner.md": {
+      "sha256": "94811f4bbc491c351cdf220ab103d6bd251fb1d88d9d46ba4c8162637a236a5b",
+      "size": 5079
+    },
+    ".agents/agents/fastapi-reviewer.md": {
+      "sha256": "d8704e52fda045fa72cfc51de7937aa4e313b2161279ff8e11d878f6ab8a0d81",
+      "size": 3514
+    },
+    ".agents/agents/performance-optimizer.md": {
+      "sha256": "76d00a70fcc07a0b207f6b517d54078fa7a59f29e157fea72bf5f1d9cab8f9b2",
+      "size": 13454
+    },
+    ".agents/agents/planner.md": {
+      "sha256": "63aba865206bac9cb5887542fb01b97656e7701faff98e091aa77057ba9860bc",
+      "size": 8055
+    },
+    ".agents/agents/python-reviewer.md": {
+      "sha256": "d2180b115f5840383268c13d5d075b0541fe7ef2a1ac8ecd5d835266ca1b27ce",
+      "size": 4391
+    },
+    ".agents/agents/rag-pipeline-reviewer.md": {
+      "sha256": "793432a0c4e44aa4c640cb85ec24b47062ed044782852b0ba67323d860154fec",
+      "size": 6249
+    },
+    ".agents/agents/react-reviewer.md": {
+      "sha256": "17d0286b4f101e27b818cad026a6bfc1f9fd3e7f9b52c8414e6ea2a05481995a",
+      "size": 11411
+    },
+    ".agents/agents/refactor-cleaner.md": {
+      "sha256": "13704c3aee163bcbf6bcbf7a7933630a70d6c312ff3ee5a29bff63b8800484cc",
+      "size": 3686
+    },
+    ".agents/agents/security-reviewer.md": {
+      "sha256": "813e4062bed5f42ab25dd02a0070f682058ffe9508198fcfdbb2c31296f93b7b",
+      "size": 5446
+    },
+    ".agents/agents/tdd-guide.md": {
+      "sha256": "979afbb40c42bfdd02fc308c130d7e257f5d6dd5f6531ef2562644862f6b7771",
+      "size": 3865
+    },
+    ".agents/agents/typescript-reviewer.md": {
+      "sha256": "6b012db1a9039870c4f040975144a0d4e3592510d6332e2d260f02859ec66da1",
+      "size": 9068
+    },
+    ".agents/ECC-LICENSE": {
+      "sha256": "326146379f01bb137c0a5d3c54770c1aa31076705c8b88a7f6b26a460f6221b2",
+      "size": 1071
+    }
+  }
+}

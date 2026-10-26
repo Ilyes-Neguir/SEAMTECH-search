@@ -239,17 +239,22 @@ How it works:
 - `/login` collects a single shared operator password (`SEAMTECH_UI_PASSWORD`)
   and `POST`s it to `/api/auth/login`.
 - On success the frontend sets an **httpOnly, SameSite=Lax** session cookie
-  (`seamtech_session`) containing an HMAC-SHA256-signed token
-  (`v1.<issuedAt>.<expiresAt>.<signature>`), signed with
-  `SEAMTECH_SESSION_SECRET`. The cookie is unreadable from JavaScript, so an
-  XSS bug cannot exfiltrate it. Sessions are stateless — no table, no Redis.
+  (`seamtech_session`) containing an HMAC-SHA256-signed **v2** token, signed
+  with `SEAMTECH_SESSION_SECRET`; old `v1.*` tokens are refused. Nominative
+  sessions are stateful on the backend: PostgreSQL `session_ui` is the durable
+  audit record and Redis is the live revocation registry. The rescue account
+  remains the documented exception (no database row to revoke).
 - Every route under `frontend/app/api/*` calls `requireAuth()` first and returns
   `401` without a valid session, so the backend token is never forwarded on an
   unauthenticated caller's behalf.
 - `app/page.tsx` is a server component that redirects to `/login` when the
   session is missing, so the search screen is never rendered either.
-- Sessions last `SEAMTECH_SESSION_HOURS` (default 12). Any `401` received by the
-  UI sends the operator back to `/login` with a `?next=` return path.
+- Sessions have an absolute lifetime `SEAMTECH_SESSION_HOURS` (default `8`)
+  and an idle timeout `SEAMTECH_SESSION_IDLE_MINUTES` (default `30`). Logout
+  and logout-all revoke server-side state immediately and return
+  `Clear-Site-Data`; authenticated backend responses are `Cache-Control:
+  no-store`. Any `401` received by the UI sends the operator back to `/login`
+  with a `?next=` return path.
 - Failed sign-ins are throttled in memory: 5 attempts per 5 minutes, then a
   5-minute lockout. This is per-process, not distributed — adequate for one
   operator on one container, and not a substitute for network-level controls.
@@ -258,7 +263,7 @@ Two routes are intentionally **not** gated:
 
 | Route | Why |
 | --- | --- |
-| `/api/auth/*` | `login` creates the session; `logout` must work when already signed out; `session` only reports whether the caller is authenticated. |
+| `/api/auth/*` | `login` creates the session + CSRF cookie; `logout`/`logout-all` are POST-only and must work when already signed out; `session` only reports whether the caller is authenticated. Other browser mutations require `X-CSRF-Token`. |
 | `/api/health` | Target of the compose healthcheck and the CI probe. Unauthenticated callers get a static liveness payload only — **no** archive counts and **no** backend call — so the probe works without a session and leaks nothing. |
 
 Required environment:
@@ -267,7 +272,9 @@ Required environment:
 | --- | --- | --- |
 | `SEAMTECH_UI_PASSWORD` | yes | The shared password typed at `/login`. Unset ⇒ login returns `503` and nobody gets in (fails closed). |
 | `SEAMTECH_SESSION_SECRET` | yes | Signs the session cookie. Unset ⇒ a random per-process secret is used and sessions die on restart; a warning is logged. |
-| `SEAMTECH_SESSION_HOURS` | no | Session lifetime, default `12`. |
+| `SEAMTECH_SESSION_HOURS` | no | Absolute session lifetime, default `8`. |
+| `SEAMTECH_SESSION_IDLE_MINUTES` | no | Idle session timeout, default `30`. |
+| `SEAMTECH_REQUIRE_REDIS_SESSIONS` | no | Set `true` in production: Redis session registry is mandatory and nominative auth fails closed with `503` when it is unavailable. |
 | `SEAMTECH_SECURE_COOKIES` | no | Force the `Secure` cookie flag. Otherwise it is set automatically when `SEAMTECH_BEHIND_TLS_PROXY=true` or the request arrived over HTTPS. |
 
 `docker-compose.yml` requires `SEAMTECH_UI_PASSWORD` and
@@ -283,6 +290,181 @@ breaks the stack rather than hardening it. That would have left only a README
 warning, while this document and [TLS.md](TLS.md) both describe exposing the app
 to the office LAN and to a VPS behind Caddy. Sign-in is the control that makes
 those deployments safe; a warning does not.
+
+### Lot 0b — audit journal and sensitive backend surfaces
+
+On upgrade, migrations `024_sessions_redis` (marker, no DDL) and
+`025_audit_logs` run automatically at startup. The latter creates the
+append-only, hash-chained PostgreSQL `audit_logs` table and copies the legacy
+`audit_log` history into it in chronological order. Keep both tables in
+backups: `audit_log` still backs login lockout, `audit_logs` is the canonical
+security journal and is **not** pruned by the historical retention job.
+
+Operator scripts that call the backend directly must be reviewed: on
+PostgreSQL, `/audit`, `/metrics`, `/preview`, `/maintenance/*`, `/ml/*` and the
+search journal require a human administrator session (or the documented
+`secours` identity behind the service token); piece/artifact bytes require a
+live human session. Browser traffic already satisfies this through Next.js.
+The local recette script keeps its nominative session after sign-in and sends
+it on subsequent calls.
+
+Rollback is a code revert plus redeploy; the additive `audit_logs` table can
+remain in place (older code simply keeps using `audit_log`). Do not drop it
+during rollback — it is evidence. A later redeploy of the Lot 0b code resumes
+the hash chain from its last row.
+
+### Lot 2 — canonical boat-model referential and search reindex
+
+On upgrade, migration `026_boat_models_aliases` runs automatically at API
+startup. It creates `boat_models`, `boat_model_aliases`,
+`boat_model_merge_history` and `search_synonyms`, adds the nullable link
+`bateau.boat_model_id`, copies the legacy `synonyme` rows, then backfills the
+link from the historical `bateau.nom` labels with the tested Python canonical
+key. Source labels are not rewritten. Folding case/accents/punctuation does
+not merge distinct suffixes: `45`, `45.1` and `45 CC` remain separate until an
+administrator explicitly records a reversible merge. Keep the four new tables
+in PostgreSQL backups; the merge history is the evidence needed to undo a
+merge.
+
+After startup, measure first, then apply the operator reindex in a maintenance
+window:
+
+```bash
+python -m seamtech_search.reindex_recherche --json --rapport reindex-lot2-avant.json
+python -m seamtech_search.reindex_recherche --appliquer --json --rapport reindex-lot2-applique.json
+```
+
+The installed entry point is `reindex-recherche`. Simulation is the default:
+it reports before/after counts but does not synchronize boats/synonyms or
+refresh fiche vectors. Like the other operator CLIs, however, process startup
+applies pending schema migrations before measuring — run the first command
+after the backend upgrade, not as a supposedly schema-neutral pre-check.
+`--appliquer` resynchronizes the boat referential and legacy synonyms, then
+refreshes every fiche search text/vector. That final statement uses a bounded
+30-minute batch timeout by default (`--statement-timeout-ms` or
+`SEAMTECH_STATEMENT_TIMEOUT_MS`), not the 5-second interactive API timeout.
+Accept the reindex only when the applied report shows
+`bateaux_sans_modele: 0` (apart from deliberately blank historical labels,
+which the service reports as ignored rather than inventing a model) and a
+representative folded query such as `Bav. 45` returns the same canonical model
+as `Bavaria 45` without also claiming `45.1` or `45 CC`.
+
+Rollback is a code revert plus redeploy. The additive Lot 2 tables and
+`bateau.boat_model_id` may remain in place: pre-Lot-2 code ignores them and
+keeps reading the historical `bateau` labels. Do not drop
+`boat_model_merge_history` during rollback; restoring a database backup is
+only required if the business also wants to erase referential decisions made
+after the upgrade.
+
+### Lot 4a — document excerpt in fiche search results
+
+Lot 4a has **no migration and no reindex command**. On upgrade, deploy the
+backend and frontend together: `/recherche` adds `extrait_document` to each
+result while keeping the legacy `extrait` field unchanged. The preview is
+computed only for the displayed page from already-indexed PostgreSQL text:
+an actually extracted linked document first (direct fiche link, source-PDF
+path, or attachment), then a non-summary document chunk, then the fiche
+fields with `source="fiche"`. Generated `resume_champs` vector chunks are
+deliberately excluded so generated field summaries are never mislabelled as
+source-document text. No document bytes are fetched and no external service
+is called.
+
+Accept the upgrade by signing in, searching for a term known to occur only in
+an indexed PDF, and checking that its result card shows “Extrait du document”
+with the term highlighted and the source filename. A browse/filter result
+without extracted document text may honestly show “Aperçu des champs de la
+fiche” instead. Rollback is a code revert plus redeploy; there is no schema
+or data cleanup. During a mixed deployment, the new frontend falls back to
+the legacy `extrait` only when an older backend omits `extrait_document`
+entirely; an explicit Lot 4a `null` remains no preview.
+
+### Lot 3a — structured sail extraction (`sail_extractions`)
+
+On upgrade, migration `028_sail_extractions` runs automatically at API
+startup on PostgreSQL. It only adds the `sail_extractions` table and its
+indexes: existing fiches and boat labels are not rewritten, and the stored
+boat model remains the **raw PDF label** (`modele_bateau_brut`). Canonical
+resolution and human correction are Lot 3b; do not infer a boat-model link
+from this table yet.
+
+The migration does **not** backfill existing fiches. New fiche writes and
+folder deposits upsert the normalized extraction in the same transaction,
+and a deposit also links it to the source `documents` row and SHA-256.
+Before accepting the upgrade, run the local gold report read-only and keep
+its output with the deployment record (never commit a report generated from
+company PDFs):
+
+```bash
+python scripts/rapport_extraction_or.py --format json \
+  --sortie /var/tmp/rapport-extraction-or-lot3a.json
+```
+
+The versioned bench must report 102/102 at the default 100% threshold
+(7792-SO Lot 3a 17/17 + historical fiche truth 74/74 + synthetic genoa
+11/11). Then deposit or rewrite one unvalidated test fiche and check that
+exactly one current `sail_extractions` row is linked to it; after a folder
+deposit it must also carry the source document id and SHA-256. Existing
+archive PDFs may be registered explicitly with `--enregistrer` and a local
+manifest: this links by an existing fiche code, creates no fiche, and must
+only be used with the exact source PDF. It is not a correction path and does
+not replace the RG11 rules for validated/human-corrected fiches.
+
+Rollback is a code revert plus redeploy of the pre-Lot-3a backend
+(`b534723`) after a PostgreSQL backup. Leave `sail_extractions` and its
+`schema_migrations` row in place: the older code ignores the additive table
+and keeps reading the historical fiche tables. Do not drop the table during
+rollback; restore the pre-upgrade backup only if the business explicitly
+requires the exact pre-Lot-3a database state and accepts losing later writes.
+
+### Lot 3b — boat-model resolution and extraction corrections
+
+On upgrade, migration `029_extraction_liaison_corrections` runs automatically
+at API startup on PostgreSQL. It adds the link columns to `sail_extractions`
+(`boat_model_id`, `statut_liaison`, `methode_liaison`, `lie_le`, `lie_par`)
+plus `extraction_corrections` and `extraction_motifs_appris`. The migration
+resolves nothing by itself: existing extractions stay `non_resolu` (or
+`sans_modele` when no label was read) until new writes auto-resolve them or
+an approver presses “Résoudre le lot” on `/extractions`. Automatic linking
+only ever uses exact proof (canonical key, learned alias, the fiche's own
+linked boat); prefix/fuzzy candidates stay `ambigu` for a human decision.
+
+Acceptance check after upgrade: sign in as an approver, open `/extractions`,
+run the batch resolution, and confirm no `ambigu` row was linked without a
+decision. Then link one extraction by hand and deposit (or rewrite) another
+extraction with the same raw label: it must come back `lie_automatique` with
+method `alias_exact` — that is the local learning loop working.
+
+Rollback is a code revert plus redeploy of the pre-Lot-3b release (`480ecea`)
+after a PostgreSQL backup. The 029 columns and tables are additive and are
+ignored by the older code; learned aliases live in the Lot 2 referential and
+stay valid; approver link/correction history stays in the database but is
+invisible to the older release. Restore a pre-upgrade backup only on an
+explicit business decision, accepting the loss of approver decisions made
+since the upgrade — otherwise fix forward.
+
+### Lot 4b — sail comparison (Function A)
+
+No migration and no writes: this lot only adds read-only comparison routes
+(`/comparaison-voiles`, `/comparaison-voiles/candidats`) and the
+`/comparaison` screen. Deploy backend + frontend together. Acceptance check:
+open `/comparaison`, compare two known sails and verify one delta by hand
+(lengths show Δ in cm and % against sail A); then confirm an unlinked
+extraction proposes no “same model” candidate (`raison = non_liee`).
+Rollback is a plain code revert to the Lot 3b release (`21de51b`) — the lot
+wrote nothing to the database, so there is no data cleanup.
+
+### Lot 5 — reuse confidence (Function B)
+
+Migration 030 adds one table (`evaluations_confiance`); it applies at backend
+startup. Deploy backend + frontend together. Acceptance check: open
+`/confiance`, pick a linked sail with at least five same-model/type peers,
+evaluate as approver and verify one median by hand; then confirm a sail with
+fewer than five peers shows “Données insuffisantes (N/5)” with no percentage,
+and that the persisted evaluation appears in the history. Rollback is a code
+revert to the Lot 4b release (`98fce87`); the `evaluations_confiance` table
+then stays in the database, invisible to the older release. Restore a
+pre-upgrade backup only on an explicit business decision, accepting the loss
+of evaluations recorded since the upgrade — otherwise fix forward.
 
 ## Office LAN access
 

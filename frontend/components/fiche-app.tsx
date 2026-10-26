@@ -2,8 +2,10 @@
 
 import { useEffect, useRef, useState } from "react"
 import { useSearchParams } from "next/navigation"
-import { Download, FileText } from "lucide-react"
+import { FileText } from "lucide-react"
+import { ApprovalRequestActions } from "@/components/approval-request-actions"
 import { PalierBadge } from "@/components/palier-badge"
+import { PieceDownload } from "@/components/piece-download"
 import { VisionneusePiece, type ZoneASurligner } from "@/components/visionneuse-piece"
 import { authedFetch } from "@/lib/authed-fetch"
 import { palierDeChamp, type ChampExtrait, type FicheDetail, type HistoriqueFiche, type PieceJointe, type PiecesDeFiche } from "@/lib/fiche"
@@ -155,13 +157,15 @@ export function FicheApp({ code }: { code: string }) {
                       <span className="shrink-0 text-[10px] text-muted-foreground">{tailleLisible(piece.size)}</span>
                       {piece.is_primary_pdf && <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[9px] text-primary">PDF source</span>}
                     </button>
-                    <a href={`/api/pieces/${piece.id}/telecharger`} className="rounded p-1 text-muted-foreground hover:text-foreground" aria-label={`Télécharger ${piece.name}`} title="Télécharger"><Download className="size-3.5" /></a>
+                    <PieceDownload piece={piece} codeFiche={code} className="rounded p-1 text-muted-foreground hover:text-foreground" />
                   </div>
                 </li>
               ))}
             </ul>
           ) : <p className="text-xs text-muted-foreground">Aucun fichier catalogué pour cette fiche.</p>}
         </section>
+
+        <ApprovalRequestActions code={code} />
 
         <section className="border-b border-border">
           <h2 className="px-4 pb-2 pt-4 text-sm font-semibold">Champs extraits</h2>

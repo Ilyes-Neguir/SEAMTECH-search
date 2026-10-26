@@ -1,14 +1,13 @@
 import { expect, test, type Page } from "@playwright/test"
 import { mkdtemp, mkdir, copyFile, rm } from "node:fs/promises"
-import { tmpdir } from "node:os"
 import path from "node:path"
-import { signIn } from "./helpers"
+import { UTILISATEUR, signIn, signInWith } from "./helpers"
 
 /**
  * Constat A08 de l'audit du 2026-10-08 — « Nouveau dossier » appelle
  * `/api/lots/{id}` après un dépôt, et cette route FRONT n'existait pas : Next
  * répondait son propre 404, l'écran avalait l'erreur et n'affichait AUCUN suivi.
- * L'opérateur lisait « Dossier traité » puis plus rien : ni progression, ni
+ * La personne qui dépose lisait « Dossier traité » puis plus rien : ni progression, ni
  * raison d'échec, ni fichiers restants.
  *
  * Ce que la première spec prouve SANS navigateur (donc exécutable partout) :
@@ -22,9 +21,13 @@ import { signIn } from "./helpers"
  * du suivi — le minuteur d'un lot abandonné ne doit pas réécrire l'écran).
  */
 
-/** Dossier temporaire : copie d'un PDF réel du dépôt, jamais une donnée client inventée. */
+/**
+ * Dossier temporaire : copie d'un PDF réel du dépôt, jamais une donnée client inventée.
+ * Il vit sous `sample_data`, racine d'archive configurée de la pile E2E : depuis le
+ * Lot 0b, le backend refuse (403) tout dépôt hors des racines autorisées.
+ */
 async function dossierTemporaire(): Promise<string> {
-  const racine = await mkdtemp(path.join(tmpdir(), "seamtech-e2e-a08-"))
+  const racine = await mkdtemp(path.join(path.resolve(__dirname, "../../sample_data"), ".e2e-a08-"))
   await mkdir(racine, { recursive: true })
   await copyFile(
     path.resolve(__dirname, "../../sample_data/CLIENT-GENOA/fiche-genois.pdf"),
@@ -78,7 +81,7 @@ test.describe("Suivi de lot après dépôt (constat A08)", () => {
       !process.env.SEAMTECH_E2E_DATABASE_URL,
       "parcours live : requiert SEAMTECH_E2E_DATABASE_URL (PostgreSQL)",
     )
-    await signIn(page)
+    await signInWith(page, UTILISATEUR)
 
     // Réponse du premier lot RETARDÉE : sans garde de génération, elle
     // reviendrait après le second dépôt et réafficherait le premier lot.

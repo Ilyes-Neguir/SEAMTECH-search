@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server"
-import { backendBase, backendHeaders, requireAuthValide } from "@/lib/backend"
+import { backendBase, backendHeaders, requireNominativeRoles } from "@/lib/backend"
+import { ROLE_APPROBATEUR } from "@/lib/roles"
 
 const ACTIONS = new Set(["corriger", "valider", "rejeter", "rouvrir"])
 
 export const dynamic = "force-dynamic"
 
 export async function POST(req: Request, { params }: { params: Promise<{ code: string; action: string }> }) {
-  const denied = await requireAuthValide()
+  const denied = await requireNominativeRoles(ROLE_APPROBATEUR)
   if (denied) return denied
   const { code, action } = await params
   if (!ACTIONS.has(action)) return NextResponse.json({ detail: "Action inconnue." }, { status: 404 })

@@ -1,6 +1,9 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
+import { authedFetch } from "@/lib/authed-fetch"
+import { estAdmin } from "@/lib/roles"
+import { useSession } from "@/lib/use-session"
 
 interface Brouillon {
   id_brouillon?: number
@@ -29,6 +32,8 @@ interface Gabarit {
 }
 
 export function GabaritsApp() {
+  const { role } = useSession()
+  const peutAdministrerGabarits = estAdmin(role)
   const [gabarits, setGabarits] = useState<Gabarit[]>([])
   const [brouillons, setBrouillons] = useState<Brouillon[]>([])
   const [brouillonCourant, setBrouillonCourant] = useState<Brouillon | null>(null)
@@ -55,7 +60,7 @@ export function GabaritsApp() {
     setMessage("Génération brouillon…")
     const fd = new FormData()
     fd.append("fichier", pdfFile)
-    const r = await fetch("/api/gabarits/brouillon/from-pdf", { method: "POST", body: fd })
+    const r = await authedFetch("/api/gabarits/brouillon/from-pdf", { method: "POST", body: fd })
     if (!r.ok) {
       setMessage(`Erreur: ${await r.text()}`)
       return
@@ -117,7 +122,7 @@ export function GabaritsApp() {
       setMessage("Brouillon non enregistré — rechargez")
       return
     }
-    const r = await fetch(`/api/gabarits/brouillons/${brouillonCourant.id_brouillon}/valider`, { method: "POST" })
+    const r = await authedFetch(`/api/gabarits/brouillons/${brouillonCourant.id_brouillon}/valider`, { method: "POST" })
     if (!r.ok) {
       setMessage(`Erreur publication: ${await r.text()}`)
       return
@@ -145,6 +150,13 @@ export function GabaritsApp() {
         </ul>
       </section>
 
+      {!peutAdministrerGabarits && (
+        <p className="rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200" role="alert">
+          La création et la publication de gabarits sont réservées au rôle admin. Vous pouvez consulter le registre ci-dessus.
+        </p>
+      )}
+
+      {peutAdministrerGabarits && (
       <section className="rounded border p-4">
         <h2 className="font-semibold">Créer brouillon depuis PDF variante (§10.2)</h2>
         <div className="mt-2 flex items-center gap-2">
@@ -185,6 +197,7 @@ export function GabaritsApp() {
           </div>
         )}
       </section>
+      )}
 
       <section className="rounded border p-4">
         <h2 className="font-semibold">Brouillons existants</h2>

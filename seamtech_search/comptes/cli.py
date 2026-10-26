@@ -1,6 +1,7 @@
 """CLI des comptes nominatifs — Lot L.2.
 
-    python3 -m seamtech_search.comptes.cli creer --identifiant imrane --nom "I. N." --role operateur
+    python3 -m seamtech_search.comptes.cli creer --identifiant imrane --nom "I. N." --role approbateur
+    python3 -m seamtech_search.comptes.cli changer-role --identifiant imrane --role utilisateur
     python3 -m seamtech_search.comptes.cli lister [--json]
     python3 -m seamtech_search.comptes.cli desactiver --identifiant imrane
     python3 -m seamtech_search.comptes.cli reinitialiser-mot-de-passe --identifiant imrane
@@ -31,6 +32,8 @@ import sys
 from typing import Any
 
 from seamtech_search.comptes.comptes import (
+    ROLES,
+    changer_role_utilisateur,
     creer_utilisateur,
     desactiver_utilisateur,
     lister_utilisateurs,
@@ -97,12 +100,24 @@ def construire_analyseur() -> argparse.ArgumentParser:
     p_creer = sous.add_parser("creer", help="Crée un compte nominatif.")
     p_creer.add_argument("--identifiant", required=True)
     p_creer.add_argument("--nom", required=True)
-    p_creer.add_argument("--role", default="operateur", choices=("operateur", "administrateur"))
+    p_creer.add_argument(
+        "--role",
+        default="lecture",
+        choices=ROLES,
+        help="Rôle canonique Lot 1 (défaut fermé : lecture).",
+    )
     p_creer.add_argument(
         "--mot-de-passe-definitif",
         action="store_true",
         help="N'impose pas le changement à la prochaine connexion (par défaut il est imposé).",
     )
+
+    p_role = sous.add_parser(
+        "changer-role",
+        help="Change le rôle d'un compte et révoque immédiatement ses sessions.",
+    )
+    p_role.add_argument("--identifiant", required=True)
+    p_role.add_argument("--role", required=True, choices=ROLES)
 
     sous.add_parser("lister", help="Liste les comptes (jamais les empreintes).")
 
@@ -143,6 +158,17 @@ def executer(arguments: argparse.Namespace) -> int:
             print(f"Compte « {resultat['identifiant']} » créé (rôle {resultat['role']}, id {resultat['id_utilisateur']}).")
             if resultat["doit_changer_mot_de_passe"]:
                 print("Changement de mot de passe imposé à la première connexion.")
+        return 0
+
+    if commande == "changer-role":
+        resultat = changer_role_utilisateur(index, arguments.identifiant, arguments.role)
+        if arguments.json:
+            print(json.dumps(resultat, ensure_ascii=False, indent=2))
+        else:
+            print(
+                f"Compte « {resultat['identifiant']} » : rôle {resultat['ancien_role']} -> "
+                f"{resultat['nouveau_role']} ; {resultat['sessions_revoquees']} session(s) révoquée(s)."
+            )
         return 0
 
     if commande == "lister":

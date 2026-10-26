@@ -88,8 +88,16 @@ def test_migrations_sur_base_vide(base_metier: dict[str, Any]) -> None:
     # fiche_piece_jointe) = 30, +1 (015 gabarit_brouillon) = 31,
     # +1 (016 : session_ui — la 016 n'ajoute QUE cette table, les colonnes
     # d'attribution et les index ne créent rien) = 32,
-    # +1 (017 : ocr_etage3 — staging OCR, jamais chunk/document) = 33.
-    assert len(schema_metier.TABLES_METIER) == 33
+    # +1 (017 : ocr_etage3 — staging OCR, jamais chunk/document) = 33,
+    # +1 (025 : audit_logs — journal canonique Lot 0b) = 34, puis +4 (026 :
+    # boat_models, boat_model_aliases, boat_model_merge_history,
+    # search_synonyms — référentiel Lot 2) = 38, puis +2 (027 :
+    # approval_requests, in_app_notifications — Lot 1) = 40, puis +1
+    # (028 : sail_extractions — Lot 3a) = 41, puis +2 (029 :
+    # extraction_corrections, extraction_motifs_appris — Lot 3b) = 43,
+    # puis +1 (030 : evaluations_confiance — Lot 5) = 44.
+    # La 024 est un marqueur sans DDL pour les sessions Redis du Lot 0a.
+    assert len(schema_metier.TABLES_METIER) == 44
     print(f"\n[mesure] migrations 006-009 sur base vide : {base_metier['duree_migrations_s']:.2f} s")
 
 
@@ -114,8 +122,8 @@ def test_idempotence_rejeu_sans_erreur(base_metier: dict[str, Any]) -> None:
             nb_tables = int(cursor.fetchone()[0])
     assert apres == avant
     # pg_tables ne compte pas les vues (v_fiche_recherche, v_qualite).
-    # 33 métier (32 + ocr_etage3 en 017) + 6 héritées = 39
-    assert nb_tables == len(schema_metier.TABLES_METIER) + len(TABLES_HERITEES) == 39
+    # 44 métier (43 après 029 + évaluations de confiance en 030) + 6 héritées = 50
+    assert nb_tables == len(schema_metier.TABLES_METIER) + len(TABLES_HERITEES) == 50
 
 
 @pytest.mark.postgres

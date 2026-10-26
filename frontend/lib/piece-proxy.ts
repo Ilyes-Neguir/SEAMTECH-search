@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
-import { backendBase, backendHeaders, requireAuthValide } from "@/lib/backend"
+import { backendBase, backendHeaders, requireAuthValide, requireNominativeRoles } from "@/lib/backend"
+import { ROLE_APPROBATEUR, ROLE_UTILISATEUR } from "@/lib/roles"
 
 const RESPONSE_HEADERS = [
   "accept-ranges",
@@ -17,7 +18,9 @@ const RESPONSE_HEADERS = [
  * The backend streams bytes directly; unexpected redirects are rejected so
  * service/session headers can never be forwarded to an object-storage host. */
 export async function proxyPiece(request: Request, params: Promise<{ id: string }>, action: "apercu" | "telecharger") {
-  const denied = await requireAuthValide()
+  const denied = action === "telecharger"
+    ? await requireNominativeRoles(ROLE_UTILISATEUR, ROLE_APPROBATEUR)
+    : await requireAuthValide()
   if (denied) return denied
   const { id } = await params
   if (!/^\d+$/.test(id)) return NextResponse.json({ detail: "Identifiant de fichier invalide." }, { status: 404 })

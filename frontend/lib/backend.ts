@@ -5,6 +5,7 @@
 import { NextResponse } from "next/server"
 import { MODE_NOMINATIF, SESSION_COOKIE, currentSession, isTokenValid } from "@/lib/auth"
 import { cookies } from "next/headers"
+import type { Role } from "@/lib/roles"
 
 export function backendBase(): string | null {
   const url = process.env.SEAMTECH_API_URL?.trim()
@@ -97,4 +98,42 @@ export async function requireAuthValide(): Promise<NextResponse | null> {
     { detail: "Session expirée ou révoquée. Reconnectez-vous." },
     { status: 401, headers: { "Cache-Control": "no-store" } },
   )
+}
+
+/** Canonical role of the signed-in human, read from the signed cookie. */
+export async function currentRole(): Promise<Role | null> {
+  return (await currentSession())?.role ?? null
+}
+
+/**
+ * Defence-in-depth role gate for browser routes. It never replaces the
+ * backend guard: the same signed identity/session headers are still forwarded
+ * and FastAPI re-resolves the role from PostgreSQL for protected actions.
+ */
+export async function requireRolesServer(...roles: Role[]): Promise<NextResponse | null> {
+  const denied = await requireAuthValide()
+  if (denied) return denied
+  const role = await currentRole()
+  if (role && roles.includes(role)) return null
+  return NextResponse.json(
+    { detail: `Accès réservé au(x) rôle(s) ${roles.join(", ")}.` },
+    { status: 403, headers: { "Cache-Control": "no-store" } },
+  )
+}
+
+/** Like requireRolesServer, but rescue/shared sessions can never pass. */
+export async function requireNominativeRoles(...roles: Role[]): Promise<NextResponse | null> {
+  const denied = await requireAuthValide()
+  if (denied) return denied
+  const session = await currentSession()
+  if (!session || session.mode !== MODE_NOMINATIF || !roles.includes(session.role)) {
+    return NextResponse.json(
+      {
+        detail:
+          "Cette action exige un compte nominatif avec un rôle autorisé ; le compte de secours ne peut pas l'exécuter.",
+      },
+      { status: 403, headers: { "Cache-Control": "no-store" } },
+    )
+  }
+  return null
 }

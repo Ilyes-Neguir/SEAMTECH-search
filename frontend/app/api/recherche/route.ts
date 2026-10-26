@@ -1,5 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { backendBase, authHeaders, requireAuthValide } from "@/lib/backend"
+import { backendBase, backendHeaders, requireAuthValide } from "@/lib/backend"
 
 // Proxy Lot E : recherche hybride des fiches (GET /recherche côté FastAPI).
 // Miroir du patron app/api/lots/route.ts — la route Phase 0 /api/search
@@ -15,7 +15,7 @@ export async function GET(req: NextRequest) {
   const query = req.nextUrl.searchParams.toString()
   try {
     const res = await fetch(`${base}/recherche${query ? `?${query}` : ""}`, {
-      headers: authHeaders(),
+      headers: await backendHeaders(),
       cache: "no-store",
     })
     return NextResponse.json(await res.json(), { status: res.status })

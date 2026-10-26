@@ -12,7 +12,7 @@
 // jamais transformée en 404 silencieux.
 
 import { type NextRequest, NextResponse } from "next/server"
-import { backendBase, authHeaders, requireAuthValide } from "@/lib/backend"
+import { backendBase, backendHeaders, requireAuthValide } from "@/lib/backend"
 
 export const dynamic = "force-dynamic"
 
@@ -35,7 +35,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 
   try {
     const response = await fetch(`${base}/lots/${encodeURIComponent(id)}`, {
-      headers: authHeaders(),
+      headers: await backendHeaders(),
       cache: "no-store",
     })
     const corps = await response.json().catch(() => ({ detail: `Réponse backend illisible (HTTP ${response.status}).` }))

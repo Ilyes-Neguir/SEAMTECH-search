@@ -23,6 +23,13 @@ logger = logging.getLogger("seamtech_search.jobs")
 _cancellation_lock = threading.Lock()
 _cancelled_job_ids: set[str] = set()
 
+#: Colonnes que ``update_job`` peut interpoler comme IDENTIFIANTS SQL. Toutes
+#: les valeurs restent liées ; cette liste fermée est la garde du Lot 0b contre
+#: l'ajout accidentel d'un nom de colonne venu d'ailleurs.
+COLONNES_MAJ_JOB_AUTORISEES = frozenset(
+    {"status", "progress", "stage", "error", "failure_reason", "result"}
+)
+
 
 class ImportCancelledError(Exception):
     """Raised when an import job is cooperatively cancelled during execution."""
@@ -248,6 +255,15 @@ def update_job(
 
     if not fields:
         return get_job(index, job_id)
+
+    # Les noms de colonnes ci-dessous sont interpolés dans le SQL (un
+    # identifiant ne peut pas être un paramètre lié). Ils proviennent des
+    # seuls paramètres nommés de cette fonction ; la liste blanche rend
+    # l'invariant vérifiable et refuse toute évolution accidentelle.
+    if not set(fields) <= COLONNES_MAJ_JOB_AUTORISEES:
+        raise ValueError(
+            f"Colonnes de job non autorisées : {sorted(set(fields) - COLONNES_MAJ_JOB_AUTORISEES)}"
+        )
 
     rowcount = 0
     with index.connect() as conn:

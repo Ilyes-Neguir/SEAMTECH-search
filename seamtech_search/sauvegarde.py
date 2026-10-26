@@ -56,6 +56,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import psycopg2
+from psycopg2 import sql
 
 from .schema_metier import VERSION_SCHEMA_METIER
 
@@ -421,7 +422,7 @@ def _compter_tables(connexion) -> dict[str, int]:
         )
         tables = [ligne[0] for ligne in cursor.fetchall()]
         for table in tables:
-            cursor.execute(f'SELECT COUNT(*) FROM "{table}"')
+            cursor.execute(sql.SQL("SELECT COUNT(*) FROM {}").format(sql.Identifier(table)))
             comptes[table] = int(cursor.fetchone()[0])
     return comptes
 
@@ -725,7 +726,7 @@ def restaurer(
                     f"la base cible « {nom_cible} » existe déjà — restauration refusée "
                     "(choisissez une base neuve ou supprimez-la explicitement)"
                 )
-            cursor.execute(f'CREATE DATABASE "{nom_cible}"')
+            cursor.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(nom_cible)))
     finally:
         connexion_admin.close()
 

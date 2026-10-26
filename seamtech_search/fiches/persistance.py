@@ -11,6 +11,9 @@ Règles appliquées ici, toutes testées :
   et n'écrase JAMAIS une fiche déjà validée par un humain.
 - **Traçabilité** : chaque valeur arrive dans ``fiche_champ_extrait`` avec
   méthode, confiance, page, zone et version du gabarit.
+- **Lot 3a** : la même transaction upsert la projection normalisée dans
+  ``sail_extractions`` ; une fiche validée ou corrigée préservée par RG11
+  ne voit donc pas son extraction normalisée remplacée en silence.
 - **Routage** : consommation des seuils ``config/seuils_confiance.json``
   (§10.3) — voie proposée = passage direct / relecture ciblée / reprise
   complète. Les seuils restent des points de départ à calibrer (Tâche 3).
@@ -27,9 +30,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from seamtech_search.extractions_voile import (
+    construire_extraction_voile,
+    enregistrer_extraction_voile_curseur,
+)
 from seamtech_search.fiches import normalisation as norm
 from seamtech_search.fiches.modeles import FicheExtraite
 from seamtech_search.fiches.verite_7792 import VERITE_7792, VERITE_7792_COMPLETE
+from seamtech_search.referentiel_bateaux import lier_bateau_au_modele
 
 LOGGER = logging.getLogger("seamtech_search.fiches.persistance")
 
@@ -466,6 +474,15 @@ def _ecrire_fiche_dans(index: Any, fiche: FicheExtraite, connexion: Any) -> Resu
             id_bateau = None
             if fiche.bateau_nom:
                 id_bateau = _resoudre(cursor, _SQL_BATEAU, _SQL_BATEAU_INS, (fiche.bateau_nom, fiche.bateau_taille))
+                # Lot 2 : le libellé historique reste intact, mais la ligne est
+                # rattachée au modèle canonique FINAL dans la même transaction.
+                # Une variante de casse/ponctuation ne crée donc pas un nouveau
+                # modèle métier ; un suffixe distinct (45.1, 45 CC) en crée un.
+                lier_bateau_au_modele(
+                    cursor,
+                    id_bateau,
+                    source="persistance_fiche",
+                )
             id_commande = None
             if fiche.commande_numero:
                 cursor.execute(_SQL_COMMANDE, (fiche.commande_numero,))
@@ -589,6 +606,12 @@ def _ecrire_fiche_dans(index: Any, fiche: FicheExtraite, connexion: Any) -> Resu
                 )
             for anomalie in fiche.anomalies:
                 cursor.execute(_SQL_ANOMALIE_INS, (id_fiche, anomalie.code, anomalie.gravite, anomalie.message))
+            # Lot 3a : projection normalisée de la voile, dans LA MÊME
+            # transaction que la fiche et ses tables filles. Le modèle de
+            # bateau reste brut/non résolu ; seul le libellé historique de la
+            # fiche suit le rattachement Lot 2 déjà effectué ci-dessus.
+            extraction_voile = construire_extraction_voile(fiche, id_fiche=id_fiche)
+            enregistrer_extraction_voile_curseur(cursor, extraction_voile)
     # Phase 2.1 (production-readiness, décision commanditaire du 2026-09-29) :
     # le texte de recherche pondéré est rempli DÈS L'ÉCRITURE (statut
     # a_valider) — une fiche déposée est cherchable immédiatement, badgée

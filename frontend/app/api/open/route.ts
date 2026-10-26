@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
-import { requireAuthValide } from "@/lib/backend"
+import { requireNominativeRoles } from "@/lib/backend"
+import { ROLE_APPROBATEUR } from "@/lib/roles"
 
 export const dynamic = "force-dynamic"
 
@@ -9,7 +10,7 @@ export const dynamic = "force-dynamic"
  * ni chemin local ni URL présignée au client.
  */
 export async function POST() {
-  const denied = await requireAuthValide()
+  const denied = await requireNominativeRoles(ROLE_APPROBATEUR)
   if (denied) return denied
   return NextResponse.json(
     { detail: "Cette route a été remplacée par l’ouverture des fichiers par identifiant." },

@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { backendBase, authHeaders, requireAuthValide } from "@/lib/backend"
+import { backendBase, backendHeaders, requireAuthValide, requireNominativeRoles, requireRolesServer } from "@/lib/backend"
+import { ROLE_ADMIN, ROLE_APPROBATEUR } from "@/lib/roles"
 
 export const dynamic = "force-dynamic"
 
@@ -25,6 +26,10 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   if (!allowed.includes(artifact)) {
     return NextResponse.json({ detail: "Type de document inconnu." }, { status: 400 })
   }
+  const deniedRole = artifact.startsWith("report_")
+    ? await requireRolesServer(ROLE_ADMIN, ROLE_APPROBATEUR)
+    : await requireNominativeRoles(ROLE_APPROBATEUR)
+  if (deniedRole) return deniedRole
 
   const base = backendBase()
   if (!base) {
@@ -34,7 +39,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   try {
     const url = `${base}/imports/${encodeURIComponent(id)}/artifacts/${encodeURIComponent(artifact)}`
     const reponseBackend = await fetch(url, {
-      headers: authHeaders(),
+      headers: await backendHeaders(),
       cache: "no-store",
       redirect: "manual",
     })
@@ -46,7 +51,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
       if (!cible) {
         return NextResponse.json({ detail: "Le stockage a renvoyé une redirection invalide." }, { status: 502 })
       }
-      // Important : ne pas réutiliser authHeaders() pour cet appel. Le lien est
+      // Important : ne pas réutiliser backendHeaders() pour cet appel. Le lien est
       // déjà signé et le jeton de service ne doit jamais quitter le backend.
       upstream = await fetch(cible, { cache: "no-store", redirect: "follow" })
     }

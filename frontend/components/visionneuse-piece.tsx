@@ -1,7 +1,8 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
-import { Download, ExternalLink, Minus, Plus, RotateCw } from "lucide-react"
+import { ExternalLink, Minus, Plus, RotateCw } from "lucide-react"
+import { PieceDownload } from "@/components/piece-download"
 import type { PieceJointe } from "@/lib/fiche"
 
 export interface ZoneASurligner {
@@ -22,7 +23,6 @@ type PdfjsModule = typeof import("pdfjs-dist")
 type PdfDocument = Awaited<ReturnType<PdfjsModule["getDocument"]>["promise"]>
 
 const PREVIEW_URL = (id: number) => `/api/pieces/${encodeURIComponent(id)}/apercu`
-const DOWNLOAD_URL = (id: number) => `/api/pieces/${encodeURIComponent(id)}/telecharger`
 
 function messageErreur(status: number, detail: string): string {
   if (status === 404) return "Le fichier n’est plus disponible dans l’archive."
@@ -166,7 +166,6 @@ export function VisionneusePiece({ piece, zone = null, donneesPrechargees = null
   }
 
   const apercuUrl = PREVIEW_URL(piece.id)
-  const telechargerUrl = DOWNLOAD_URL(piece.id)
   const estImage = piece.kind === "other" && [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tif", ".tiff"].includes(piece.extension.toLowerCase())
   const estTexte = piece.kind === "other" && [".txt", ".csv", ".md", ".log", ".json", ".xml"].includes(piece.extension.toLowerCase())
 
@@ -190,7 +189,7 @@ export function VisionneusePiece({ piece, zone = null, donneesPrechargees = null
             </>
           )}
           {piece.previewable && <a href={apercuUrl} target="_blank" rel="noreferrer" className="rounded border border-border p-1.5 text-muted-foreground hover:text-foreground" aria-label="Ouvrir l’aperçu dans un nouvel onglet" title="Ouvrir dans un nouvel onglet"><ExternalLink className="size-3.5" /></a>}
-          <a href={telechargerUrl} className="rounded border border-border p-1.5 text-muted-foreground hover:text-foreground" aria-label="Télécharger le fichier" title="Télécharger"><Download className="size-3.5" /></a>
+          <PieceDownload piece={piece} className="rounded border border-border p-1.5 text-muted-foreground hover:text-foreground" ariaLabel="Télécharger le fichier" />
         </div>
       </header>
 
@@ -201,7 +200,7 @@ export function VisionneusePiece({ piece, zone = null, donneesPrechargees = null
             <p role="alert" className="max-w-md text-sm text-muted-foreground">{erreur}</p>
             <div className="flex flex-wrap justify-center gap-2">
               <button type="button" onClick={() => setTentative((value) => value + 1)} className="inline-flex items-center gap-2 rounded border border-border px-3 py-2 text-xs font-medium hover:bg-accent"><RotateCw className="size-3.5" /> Réessayer</button>
-              {piece.kind === "pdf" && <a href={telechargerUrl} className="rounded bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground">Télécharger le PDF</a>}
+              {piece.kind === "pdf" && <PieceDownload piece={piece} className="rounded bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground" label="Télécharger le PDF" />}
             </div>
           </div>
         )}

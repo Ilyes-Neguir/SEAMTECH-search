@@ -32,6 +32,7 @@ from seamtech_search.dedup.detection import (
     liens_depuis_probables,
     liens_dune_fiche,
 )
+from seamtech_search.securite_requetes import exiger_approbateur_requete
 
 
 def enregistrer_routes_dedup(app: Any, index: Any, config: Any, verifier_auth: Any) -> None:  # noqa: ANN401
@@ -74,6 +75,10 @@ def enregistrer_routes_dedup(app: Any, index: Any, config: Any, verifier_auth: A
     def route_scan(
         corps: dict[str, Any] | None = None,
         token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+        entete_utilisateur: Annotated[str | None, Header(alias="X-SEAMTECH-UTILISATEUR")] = None,
+        entete_role: Annotated[str | None, Header(alias="X-SEAMTECH-ROLE")] = None,
+        entete_session: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION")] = None,
+        entete_jeton: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-JETON")] = None,
     ) -> dict[str, Any]:
         """Relance le scan. ``appliquer`` vaut ``false`` par défaut.
 
@@ -87,6 +92,19 @@ def enregistrer_routes_dedup(app: Any, index: Any, config: Any, verifier_auth: A
         corps = corps or {}
         seuil = float(corps.get("seuil", SEUIL_PROBABLE_DEFAUT))
         appliquer = bool(corps.get("appliquer", False))
+        if appliquer:
+            # Écrire des liens est une décision métier : en PostgreSQL protégé,
+            # elle exige un approbateur nominatif (Lot 1). Le dry-run reste un
+            # comptage derrière le jeton de service.
+            exiger_approbateur_requete(
+                index,
+                config,
+                token=token,
+                entete_utilisateur=entete_utilisateur,
+                entete_role=entete_role,
+                entete_session=entete_session,
+                entete_jeton=entete_jeton,
+            )
 
         groupes = doublons_exacts(index)
         probables = doublons_probables(index, seuil=seuil)

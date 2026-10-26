@@ -3,7 +3,7 @@ import { signIn } from "./helpers"
 
 test.describe("Search Workflow", () => {
   test("should search for documents and display results with preview", async ({ page }) => {
-    await signIn(page)
+    await signIn(page) // Session de secours : lecture et aperçu, jamais de téléchargement direct.
 
     // Le catalogue de pièces est l’écran Fichiers par défaut ; la recherche
     // historique reste disponible sans perte dans le mode « Recherche avancée ».
@@ -34,9 +34,13 @@ test.describe("Search Workflow", () => {
     const firstResult = page.locator('[role="button"][tabindex="0"]').filter({ hasText: /fiche-7792-SO_ffab\.pdf/i }).first()
     await expect(firstResult).toBeVisible({ timeout: 10000 })
 
-    // L’aperçu et le téléchargement passent par l’identifiant du catalogue.
+    // L’aperçu passe par l’identifiant du catalogue. Le compte de secours
+    // (admin technique) ne reçoit en revanche aucun lien de téléchargement.
     await firstResult.click()
     await expect(page.locator('[data-testid="visionneuse-piece"]')).toBeVisible()
-    await expect(page.getByRole("link", { name: "Télécharger le fichier" })).toBeVisible()
+    await expect(
+      page.getByRole("link", { name: "Ouvrir l’aperçu dans un nouvel onglet" }),
+    ).toHaveAttribute("href", /^\/api\/pieces\/\d+\/apercu$/)
+    await expect(page.getByRole("link", { name: "Télécharger le fichier" })).toHaveCount(0)
   })
 })

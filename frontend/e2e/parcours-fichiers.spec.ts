@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test"
 import { readFile } from "node:fs/promises"
 import path from "node:path"
-import { signIn } from "./helpers"
+import { APPROBATEUR, signIn, signInWith } from "./helpers"
 
 const CODE_REEL = "7792-SO"
 
@@ -11,7 +11,7 @@ test.describe("Parcours fichiers dans les vues métier", () => {
   test.skip(!process.env.SEAMTECH_E2E_DATABASE_URL, "parcours live : requiert SEAMTECH_E2E_DATABASE_URL (PostgreSQL)")
 
   test("Recherche dimensionnelle → fiche et fichiers", async ({ page }) => {
-    await signIn(page)
+    await signInWith(page, APPROBATEUR)
     await page.goto(`/recherche?q=${encodeURIComponent("6,60")}`)
     const ouvrirFiche = page.getByRole("link", { name: `Ouvrir la fiche ${CODE_REEL}` })
     await expect(ouvrirFiche).toBeVisible({ timeout: 15000 })
@@ -23,7 +23,7 @@ test.describe("Parcours fichiers dans les vues métier", () => {
   })
 
   test("Dossiers → détail → téléchargement par identifiant", async ({ page }) => {
-    await signIn(page)
+    await signInWith(page, APPROBATEUR)
     await page.goto("/dossiers")
     const lien = page.locator(`[data-testid="tableau-fiches"] a[href="/fiches/${CODE_REEL}"]`).first()
     await expect(lien).toBeVisible({ timeout: 15000 })
@@ -35,7 +35,7 @@ test.describe("Parcours fichiers dans les vues métier", () => {
   })
 
   test("Validation → PDF source servi par id et rendu PDF.js", async ({ page }) => {
-    await signIn(page)
+    await signInWith(page, APPROBATEUR)
     await page.goto("/validation")
     const ligne = page.locator(`li[data-code="${CODE_REEL}"]`)
     await expect(ligne).toBeVisible({ timeout: 15000 })
@@ -47,7 +47,7 @@ test.describe("Parcours fichiers dans les vues métier", () => {
   })
 
   test("/fiches/[code] ouvre directement le PDF et l’historique", async ({ page }) => {
-    await signIn(page)
+    await signInWith(page, APPROBATEUR)
     await page.goto(`/fiches/${CODE_REEL}`)
     await expect(page.getByTestId("fiche-code")).toHaveText(CODE_REEL)
     await expect(page.getByTestId("historique-fiche")).toBeVisible()
@@ -56,8 +56,8 @@ test.describe("Parcours fichiers dans les vues métier", () => {
   })
 })
 
-test("Fichiers affiche un PDF et les actions restent sur les routes par id", async ({ page }) => {
-  await signIn(page)
+test("Fichiers affiche un PDF, route l’aperçu par id et refuse le téléchargement direct au secours", async ({ page }) => {
+  await signIn(page) // Session de secours (admin technique), jamais un compte métier.
   const pdf = await readFile(path.resolve(__dirname, "live-fixtures/CLIENT-E2E-TROIS/fiche-trois.pdf"))
   const bytes = new Uint8Array(pdf)
   await page.route("**/api/pieces?**", (route) => route.fulfill({
@@ -101,5 +101,8 @@ test("Fichiers affiche un PDF et les actions restent sur les routes par id", asy
   await expect(page.getByTestId("archive-piece-9027")).toContainText("fiche-trois.pdf")
   await expect(page.getByTestId("pdf-page")).toHaveText("1 / 1", { timeout: 15000 })
   await expect(page.getByTestId("pdf-canvas")).toBeVisible()
-  await expect(page.getByRole("link", { name: "Télécharger le fichier" })).toHaveAttribute("href", "/api/pieces/9027/telecharger")
+  await expect(
+    page.getByRole("link", { name: "Ouvrir l’aperçu dans un nouvel onglet" }),
+  ).toHaveAttribute("href", "/api/pieces/9027/apercu")
+  await expect(page.getByRole("link", { name: "Télécharger le fichier" })).toHaveCount(0)
 })

@@ -3,10 +3,12 @@ import {
   IDENTIFIANT_SECOURS,
   MODE_NOMINATIF,
   MODE_SECOURS,
+  CSRF_COOKIE,
   SESSION_COOKIE,
   clearFailedAttempts,
   clientIdentifier,
   cookieMaxAgeSeconds,
+  createCsrfToken,
   createSessionToken,
   isAuthConfigured,
   lockoutRemaining,
@@ -16,6 +18,7 @@ import {
   uiPassword,
 } from "@/lib/auth"
 import { authHeaders, backendBase } from "@/lib/backend"
+import { ROLE_SECOURS, roleOuLecture } from "@/lib/roles"
 
 export const dynamic = "force-dynamic"
 
@@ -92,6 +95,10 @@ export async function POST(req: NextRequest) {
     path: "/",
     maxAge: cookieMaxAgeSeconds(),
   }
+  // Double-submit CSRF cookie: deliberately readable by same-origin JS so
+  // authedFetch can mirror it into X-CSRF-Token. It is random per login and
+  // carries no identity or backend secret.
+  const csrfCookieOptions = { ...cookieOptions, httpOnly: false }
 
   // --- 1. Compte de secours (mot de passe partagé) -------------------------
   if (identifiant === IDENTIFIANT_SECOURS) {
@@ -114,7 +121,7 @@ export async function POST(req: NextRequest) {
     }
     clearFailedAttempts(identifiantClient)
     const reponse = NextResponse.json(
-      { ok: true, mode: MODE_SECOURS, identifiant: IDENTIFIANT_SECOURS, role: "administrateur", redirectTo: "/" },
+      { ok: true, mode: MODE_SECOURS, identifiant: IDENTIFIANT_SECOURS, role: ROLE_SECOURS, redirectTo: "/" },
       { status: 200, headers: { "Cache-Control": "no-store" } },
     )
     reponse.cookies.set(
@@ -123,13 +130,14 @@ export async function POST(req: NextRequest) {
         mode: MODE_SECOURS,
         identifiant: IDENTIFIANT_SECOURS,
         nom: "Compte de secours",
-        role: "administrateur",
+        role: ROLE_SECOURS,
         idSession: null,
         jeton: null,
         idUtilisateur: null,
       }),
       cookieOptions,
     )
+    reponse.cookies.set(CSRF_COOKIE, createCsrfToken(), csrfCookieOptions)
     return reponse
   }
 
@@ -182,7 +190,7 @@ export async function POST(req: NextRequest) {
       mode: MODE_NOMINATIF,
       identifiant: corpsBackend.identifiant,
       nom: corpsBackend.nom ?? null,
-      role: corpsBackend.role,
+      role: roleOuLecture(corpsBackend.role),
       doit_changer_mot_de_passe: corpsBackend.doit_changer_mot_de_passe === true,
       redirectTo: "/",
     },
@@ -194,7 +202,7 @@ export async function POST(req: NextRequest) {
       mode: MODE_NOMINATIF,
       identifiant: String(corpsBackend.identifiant),
       nom: typeof corpsBackend.nom === "string" ? corpsBackend.nom : null,
-      role: String(corpsBackend.role),
+      role: roleOuLecture(corpsBackend.role),
       idSession: Number(corpsBackend.id_session),
       jeton: String(corpsBackend.jeton_session),
       idUtilisateur: Number(corpsBackend.id_utilisateur),
@@ -202,5 +210,6 @@ export async function POST(req: NextRequest) {
     }),
     cookieOptions,
   )
+  reponse.cookies.set(CSRF_COOKIE, createCsrfToken(), csrfCookieOptions)
   return reponse
 }

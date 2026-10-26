@@ -13,8 +13,13 @@ La recherche « comme Google » des fiches validées. La route Phase 0 `GET /sea
 
 | Route | Rôle |
 |---|---|
-| `GET /recherche?q=&type_voile=&client=&bateau=&matiere=&gamme=&annee=&annee_min=&annee_max=&cote=&min=&max=&cote_min=&cote_max=&tri=&page=&limit=&offset=&inclure_a_valider=` | Recherche hybride : lexical tsvector pondéré A/B/C + trigrammes (volet dégradable) + texte des PDF (chunks/documents) + vecteurs (dormants, activables par injection `encode_requete`), fusionnés par **RRF k=60** ; depuis la migration 019, une **dimension détectée dans `q`** bascule sur le chemin numérique (voir « Recherche par dimension (Phase 1) » ci-dessous). Par défaut : fiches `valide` seulement. Réponse : `{requete, nb_resultats, resultats:[{code, titre, type_voile, client, bateau, gamme, statut, annee, extrait, score, sources}], facettes:{groupe:[{valeur, effectif}]}, facettes_cotes:{cote:{unite, min, max, effectif, intervalles:[{min,max,effectif,label}] }}, cote_active, cotes_unites, dimension_active, tri, page, sources_actives, sans_resultat, duree_ms}`. **Les 7 cotes d'un résultat (`slu_m`, `sle_m`, `sf_m`, `shw_m`, `spa_m2`, `tetiere_cm`, `poids_kg`) ne sont présentes QUE si un filtre dimension, une recherche par dimension ou un tri par cote est demandé — voir « Chargement conditionnel des cotes » ci-dessous.** |
-| `GET /recherche/suggestions?prefix=&limite=` | Suggestions au fil de la frappe : **valeurs réellement présentes seulement** (référentiels, codes, gammes) par préfixe, complétées par tolérance aux fautes trigrammes sur les référentiels si le préfixe ne donne rien. Réponse : `{prefixe, suggestions:[{nature, valeur}]}`. |
+| `GET /recherche?q=&type_voile=&client=&bateau=&boat_model_id=&matiere=&gamme=&annee=&annee_min=&annee_max=&cote=&min=&max=&cote_min=&cote_max=&tri=&page=&limit=&offset=&inclure_a_valider=` | Recherche hybride : lexical tsvector pondéré A/B/C + trigrammes (volet dégradable) + texte des PDF (chunks/documents) + vecteurs (dormants, activables par injection `encode_requete`), fusionnés par **RRF k=60** ; depuis la migration 019, une **dimension détectée dans `q`** bascule sur le chemin numérique (voir « Recherche par dimension (Phase 1) » ci-dessous). Par défaut : fiches `valide` seulement. Réponse : `{requete, modeles_bateaux_detectes:[{id_modele, nom_canonique, cle_normalisee, type_correspondance, rang, score, alias}], nb_resultats, resultats:[{code, titre, type_voile, client, bateau, id_modele_bateau, modele_bateau, modele_bateau_cle, gamme, statut, annee, extrait, extrait_document:{texte, segments:[{texte, correspondance}], source, libelle_source, correspondance_requete}|null, score, sources}], facettes:{groupe:[{valeur, effectif}]}, facettes_cotes:{cote:{unite, min, max, effectif, intervalles:[{min,max,effectif,label}] }}, cote_active, cotes_unites, dimension_active, tri, page, sources_actives, sans_resultat, duree_ms}`. **Les 7 cotes d'un résultat (`slu_m`, `sle_m`, `sf_m`, `shw_m`, `spa_m2`, `tetiere_cm`, `poids_kg`) ne sont présentes QUE si un filtre dimension, une recherche par dimension ou un tri par cote est demandé — voir « Chargement conditionnel des cotes » ci-dessous.** |
+| `GET /search/suggestions?prefix=&limit=` | Route canonique Lot 2 des suggestions au fil de la frappe : **valeurs réellement présentes seulement**, classées **exact > alias/synonyme > préfixe > flou (pg_trgm)**. Réponse : `{prefixe, suggestions:[{nature, valeur, type_correspondance, rang, score, alias?, id_modele_bateau?}]}`. Le proxy navigateur correspondant est `GET /api/search/suggestions`. |
+| `GET /recherche/suggestions?prefix=&limit=` | Alias historique strictement équivalent à `/search/suggestions` (compatibilité) ; le proxy `/api/recherche/suggestions` est conservé. |
+| `GET /referentiel/bateaux?inclure_fusionnes=` | Référentiel canonique Lot 2 : modèles finaux, alias et compteurs réels de bateaux/fiches. Lecture derrière le jeton de service. Réponse : `{modeles:[{id_modele, nom_canonique, cle_normalisee, source, actif, id_modele_fusion, alias:[{alias, cle_normalisee, source}], nb_bateaux, nb_fiches}]}`. |
+| `POST /referentiel/bateaux/{id_modele}/alias` | Ajoute un alias (`{"alias": "…"}`), administrateur humain uniquement. Un alias déjà affecté à un autre modèle final répond **409** ; modèle inconnu **404**. |
+| `POST /referentiel/bateaux/{id_modele}/fusion` | Fusion explicite et historisée vers `{"id_modele_cible": …, "motif": "…"}` ; administrateur humain uniquement. Aucune fusion n’est jamais inférée par la normalisation. |
+| `POST /referentiel/bateaux/{id_modele}/defusion` | Annule la dernière fusion (ou `{"id_historique": …}` si fourni) depuis l’instantané historisé ; administrateur humain uniquement. Seules les lignes encore rattachées à la cible enregistrée sont restaurées. |
 | `GET /recherche/journal?jours=&limite_top=&limite_sans=` | Exploitation du journal : agrégé depuis `recherche_log` réelle. Retour : `{periode_jours, total_recherches, total_sans_resultat, top_requetes:[{requete, nb_occurrences, nb_sans_resultat, dernier}], sans_resultat:[{requete, nb_occurrences, dernier, exemple_filtres}]}`. Période paramétrable en jours. |
 
 **Comportements (Lot J)** :
@@ -143,7 +148,38 @@ La recherche « comme Google » des fiches validées. La route Phase 0 `GET /sea
 - **Limite** : une faute *et* un accent manquant (`genios` pour « Génois »)
   reste une question de **seuil de trigrammes**, pas de normalisation. La
   normalisation garantit seulement que `GENOIS` et `GÉNOIS` votent pareil.
-- **Synonymes** : table `synonyme` (terme → canonique), rafraîchie toutes les 30 s.
+- **Synonymes** : `search_synonyms` (Lot 2, normalisés/versionnés) fusionné
+  avec la table historique `synonyme`, cette dernière gardant priorité en cas
+  de même terme ; cache de 30 s. Dans la recherche soumise, le texte tapé et
+  sa forme canonique votent en **OU** dans les sources textuelles : remplacer
+  aveuglément `spi` par `spinnaker` ferait perdre les fiches dont le libellé
+  réel est « Spi Asymétrique ».
+- **Extrait du document (Lot 4a, sans migration)** : chaque résultat de la
+  page porte `extrait_document` — un aperçu d'au plus 360 caractères centré
+  sur le passage pertinent (construction locale bornée pour un texte court,
+  `ts_headline` PostgreSQL pour un long document). La
+  provenance retenue est, après pertinence, un document réellement extrait
+  rattaché directement, par le chemin du PDF source ou par une pièce jointe ;
+  puis un chunk documentaire ; puis les champs de la fiche. Les chunks
+  `resume_champs` (résumés générés pour les vecteurs) sont exclus afin de ne
+  jamais les présenter comme du texte source. `segments` distingue le texte
+  ordinaire des correspondances (`correspondance=true`) sans HTML : le
+  navigateur affiche ces segments comme des nœuds de texte et des éléments
+  `<mark>`. Quand aucun texte documentaire n'existe, `source="fiche"` rend
+  l'origine explicite. L'ancien champ `extrait` reste inchangé pour les
+  clients existants.
+- **Référentiel bateaux (migration 026)** : `boat_models`,
+  `boat_model_aliases`, `boat_model_merge_history`, `search_synonyms` et le
+  lien nullable `bateau.boat_model_id`. L’identité dérive de `bateau.nom` ;
+  `bateau.taille` est un détail et le libellé complet `nom + taille` est un
+  alias. La clé plie casse/accents/ponctuation et frontières lettre-chiffre,
+  protège le séparateur décimal et ne développe que les abréviations
+  ponctuées connues (`Bav.`, `ben.`, `duf.`, `jan.`). Ainsi `BAVARIA 45`,
+  `Bavaria-45` et `Bav. 45` sont un modèle, mais `45`, `45.1` et `45 CC`
+  restent trois modèles. Un suffixe décimal appartenant à un modèle
+  exact/alias gagne sur l’analyseur de dimensions. Le filtre `bateau=` est
+  résolu en exact/alias vers le modèle final ; `boat_model_id=` filtre
+  directement ce modèle.
 - **Journal** : TOUTES les recherches sont écrites dans `recherche_log` ;
   `nb_resultats = 0` marque la recherche sans résultat (index partiel, migration
   012) — critère de sortie Phase 3, matière première de l'amélioration du lexique.
@@ -236,22 +272,33 @@ c'est ce qui rend les en-têtes d'attribution dignes de foi.
 | Route | Rôle |
 |---|---|
 | `POST /auth/connexion` | Corps `{"identifiant", "mot_de_passe"}`. Vérifie `utilisateur.empreinte_mot_de_passe` (scrypt) et ouvre une session : `{"ok", "id_utilisateur", "identifiant", "nom", "role", "id_session", "jeton_session", "expire_le"}`. 401 si les identifiants sont faux (réponse identique pour un compte inexistant), 429 si 5 tentatives ont échoué en 5 minutes (`Retry-After` renseigné). |
-| `POST /auth/deconnexion` | Corps `{"id_session", "jeton_session"}` ; exige le JETON (un `id_session` seul est devinable). Pose `revoque_le` : le cookie, même encore signé, ne vaut plus rien. Idempotent. 401 si le jeton ne correspond pas. |
-| `GET /auth/session` | En-têtes `X-SEAMTECH-SESSION` + `X-SEAMTECH-SESSION-JETON` → identité de la session. 401 si la session est expirée, révoquée, ou si le compte a été désactivé. **Jamais** d'empreinte, de sel ni de jeton dans la réponse. |
-| `POST /auth/mot-de-passe` | Changement par l'intéressé : `{"mot_de_passe_actuel", "nouveau_mot_de_passe"}`. Éteint `doit_changer_mot_de_passe`. 401 si l'actuel est faux. |
-| `GET /auth/utilisateurs` | Liste des comptes : `identifiant`, `nom`, `role`, `actif`, dates, `mot_de_passe_defini` (booléen) — jamais l'empreinte. **403 si la session n'est pas `administrateur`**, 401 sans session. |
-| `POST /auth/utilisateurs` | Crée un compte (`identifiant`, `nom`, `role`, `mot_de_passe`). 403 pour un opérateur, 409 si l'identifiant existe, 422 si rôle inconnu. |
+| `POST /auth/deconnexion` | Corps `{"id_session", "jeton_session"}` ; exige le JETON (un `id_session` seul est devinable). Pose `revoque_le` et supprime la clé Redis : le cookie, même encore signé, ne vaut plus rien. Idempotent. 401 si le jeton ne correspond pas. |
+| `POST /auth/deconnexion-tout` | « Déconnecter tous mes appareils » : en-têtes de session vivante exigés, puis révocation PostgreSQL + Redis de **toutes** les sessions du compte, y compris l'appelante. |
+| `GET /auth/session` | En-têtes `X-SEAMTECH-SESSION` + `X-SEAMTECH-SESSION-JETON` → identité de la session. 401 si la session est expirée (absolue 8 h ou inactive 30 min par défaut), révoquée, absente du registre Redis, ou si le compte a été désactivé ; 503 si Redis exigé est injoignable (fail-closed). **Jamais** d'empreinte, de sel ni de jeton dans la réponse. |
+| `POST /auth/mot-de-passe` | Changement par l'intéressé : `{"mot_de_passe_actuel", "nouveau_mot_de_passe"}`. Éteint `doit_changer_mot_de_passe` et révoque toutes les sessions du compte. 401 si l'actuel est faux. |
+| `GET /auth/utilisateurs` | Liste des comptes : `identifiant`, `nom`, `role`, `actif`, dates, `mot_de_passe_defini` (booléen) — jamais l'empreinte. **403 si la session n'est pas `admin`**, 401 sans session. |
+| `POST /auth/utilisateurs` | Crée un compte (`identifiant`, `nom`, `role`, `mot_de_passe`). `role` ∈ `admin|lecture|utilisateur|approbateur` (défaut sécurisé `lecture`). 403 hors session `admin`, 409 si l'identifiant existe, 422 si rôle inconnu. |
+| `POST /auth/utilisateurs/{identifiant}/role` | `admin` uniquement. Corps `{"role"}` ; change le rôle canonique **et révoque immédiatement toutes les sessions du compte cible** (PostgreSQL + Redis). 404 si inconnu, 422 si rôle inconnu. |
 | `POST /auth/utilisateurs/{identifiant}/desactiver` | `actif=false` ET révocation des sessions ouvertes (désactiver sans révoquer laisserait un cookie travailler). 404 si inconnu. **Aucune suppression** de compte ni d'historique. |
 | `POST /auth/utilisateurs/{identifiant}/mot-de-passe` | Réinitialise (changement imposé à la prochaine connexion) et révoque les sessions. |
+
+**Politique de session (Lot 0a).** PostgreSQL `session_ui` reste l'historique
+durable ; Redis est le registre vivant consulté à chaque validation.
+`SEAMTECH_SESSION_HOURS` borne la durée absolue (défaut `8`),
+`SEAMTECH_SESSION_IDLE_MINUTES` l'inactivité (défaut `30`), et
+`SEAMTECH_REQUIRE_REDIS_SESSIONS=true` rend Redis obligatoire en production.
+Le jeton est régénéré à chaque connexion ; seuls les hachages SHA-256 sont
+stockés. Le front ajoute un CSRF double-submit (cookie `seamtech_csrf` +
+en-tête `X-CSRF-Token`) sur toutes les mutations navigateur authentifiées.
 
 **Frontière de confiance (à ne pas déplacer).** Le proxy Next.js pose
 `X-SEAMTECH-UTILISATEUR` et `X-SEAMTECH-ROLE` depuis le cookie signé. Côté Python ces
 en-têtes ne sont honorés **que si `X-SEAMTECH-TOKEN` est valide sur la même requête** :
 une requête qui les porte sans le jeton de service reçoit **401** et la fiche n'est pas
-attribuée. Les routes de validation (`POST /fiches/{code}/corriger|valider|rejeter|rouvrir`,
-`POST /validation/lot`) prennent l'identité de cette session ; le champ `utilisateur` du
-corps de requête n'est plus qu'un **repli d'outillage** (scripts, tests), jamais
-prioritaire. L'écran ne l'envoie plus : une seule source de vérité.
+attribuée. Les routes métier humaines (`POST /fiches/{code}/corriger|valider|rejeter|rouvrir`,
+`POST /validation/lot`, approbations) exigent une session nominative vérifiée et prennent
+l'identité de cette session ; le champ `utilisateur` du corps ne peut ni attribuer ni
+autoriser une décision humaine. Une seule source de vérité : la session serveur.
 
 **Concurrence entre postes (verrou optimiste, migration `021_revision_fiche`).** Une
 fiche porte un numéro de `revision` (entier ≥ 1), publié par `GET /fiches/{code}` et
@@ -292,22 +339,100 @@ liste les tentatives. Une connexion réussie (`action='connexion'`) remet le com
 aucune purge automatique n'est faite (on ne supprime jamais de données).
 
 **CLI** : `python -m seamtech_search.comptes.cli` (alias installé : `comptes`) —
-`creer --identifiant --nom --role operateur|administrateur`, `lister`, `desactiver`,
+`creer --identifiant --nom --role admin|lecture|utilisateur|approbateur`, `changer-role --identifiant --role`, `lister`, `desactiver`,
 `reinitialiser-mot-de-passe`, `sessions --identifiant`, `revoquer-session --id-session`,
 `verifier --identifiant`. Le mot de passe est **toujours lu sur STDIN, jamais en argument**
 (un mot de passe en argument finit dans l'historique du shell et dans `ps`).
 
 **Compte de secours (limite assumée)** : `SEAMTECH_UI_PASSWORD`, identifiant `secours`,
-rôle `administrateur`. Il n'existe PAS en base : sa session n'est donc ni révocable ni
-attribuable (`X-SEAMTECH-UTILISATEUR: secours`), et il sert uniquement à créer les premiers
-comptes nominatifs puis à dépanner. À désactiver (`SEAMTECH_UI_PASSWORD` vide) une fois les
-comptes nominatifs en place — dans ce cas le front refuse toute connexion et l'application
-n'est accessible que par les comptes nominatifs.
+rôle technique `admin`. Il n'existe PAS en base : sa session n'est donc ni révocable ni
+attribuable à un compte (`X-SEAMTECH-UTILISATEUR: secours`). Il peut administrer les
+comptes pour créer les premiers accès nominatifs et dépanner, mais **ne peut jamais**
+créer/décider une approbation, corriger/valider une fiche ni télécharger directement une
+pièce. À désactiver (`SEAMTECH_UI_PASSWORD` vide) une fois les comptes nominatifs en place.
 
 **Sécurité** : empreintes `scrypt$n=16384$r=8$p=1$<sel_b64>$<hash_b64>` (`hashlib.scrypt`,
 sel de 16 octets via `secrets`), vérification `hmac.compare_digest`, **bibliothèque standard
 uniquement** (aucune dépendance nouvelle). Les jetons de session ne sont stockés que par leur
 empreinte SHA-256 — un dump de la base ne permet pas de rejouer une session.
+
+## Quatre rôles, approbations et notifications (Lot 1)
+
+La migration `027_quatre_roles_approbations` rend canoniques les rôles
+`admin|lecture|utilisateur|approbateur` et ajoute `approval_requests` et
+`in_app_notifications`. Les anciens libellés sont convertis sans élévation
+silencieuse (`operateur → approbateur`, `administrateur → admin`, inconnu →
+`lecture`) et toutes les sessions vivantes sont révoquées pendant la migration.
+
+| Rôle | Périmètre serveur |
+|---|---|
+| `admin` | Technique et comptes uniquement ; ne crée ni ne décide d'approbation, ne corrige/valide pas les fiches et ne télécharge pas directement les pièces. |
+| `lecture` | Recherche, consultation et aperçu ; aucune demande, mutation ni téléchargement. |
+| `utilisateur` | Dépôts/imports autorisés, création et annulation de ses demandes, téléchargement seulement pendant une approbation valide. |
+| `approbateur` | Seul décideur ; corrige/valide/rejette/rouvre et télécharge directement les pièces. |
+
+| Route | Contrat |
+|---|---|
+| `POST /approvals` | Session nominative `utilisateur|approbateur`. `type_demande` ∈ `telechargement|modification|suppression`, `motif` obligatoire. Téléchargement : `id_piece` (+ `code_fiche` optionnel, vérifié). Modification : `code_fiche` + `modification={champ,valeur,revision}`. Suppression : `code_fiche` + `revision`. Retourne 201 ; doublon en attente = 409 ; pièce/fiche incohérentes = 422. |
+| `GET /approvals` | `vue=miennes` pour le demandeur ; `a_decider|file|toutes` réservées à `approbateur`. Filtres `statut`, `type_demande`, `code_fiche`, pagination bornée. |
+| `GET /approvals/{id}` | Demandeur ou approbateur ; toute autre identité reçoit 404 (anti-IDOR, existence non confirmée). |
+| `POST /approvals/{id}/decide` | `approbateur` nominatif uniquement. Corps `{"decision":"approuver|refuser","commentaire","revision_confirmee"?}`. Refus sans commentaire = 422 ; auto-approbation = 403 sauf `SEAMTECH_ALLOW_SELF_APPROVAL=true` explicitement assumé. |
+| `POST /approvals/{id}/annuler` | Demandeur uniquement, demande encore `en_attente` ; sinon 403/409. |
+| `GET /notifications` | Notifications du seul compte courant (`seulement_non_lues`, pagination). |
+| `POST /notifications/tout-lire` | Marque toutes les notifications du compte courant comme lues. |
+| `POST /notifications/{id}/lu` | Marque une notification du compte courant ; une notification d'autrui reçoit 404. |
+
+L'exécution est transactionnelle : une modification approuvée applique la valeur
+proposée après contrôle de révision et termine en `executee` ; une suppression
+approuvée est strictement logique (`supprimee`, aucun fichier ni historique
+effacé) ; un téléchargement approuvé autorise le demandeur, pour cette seule
+pièce, pendant 24 heures. Le premier GET réussi est horodaté ; HEAD/Range ne
+consomme pas l'autorisation. Chaque création notifie les approbateurs actifs et
+chaque décision notifie le demandeur dans la même transaction métier.
+
+## Journal d'audit canonique et surfaces sensibles (Lot 0b)
+
+La migration `025_audit_logs` ajoute `audit_logs`, journal PostgreSQL
+**append-only** (trigger refusant `UPDATE`/`DELETE`) et chaîné par empreinte
+SHA-256 : chaque ligne porte l'empreinte de la précédente, un `request_id`,
+l'acteur structuré (`actor_type`, `id_utilisateur`, `identifiant`, `role`,
+`id_session`), la ressource (`resource_type` + `resource_id`), le code HTTP et
+des `details` expurgés (aucun mot de passe, jeton, cookie ou secret). La
+migration `024_sessions_redis` est le marqueur sans DDL du Lot 0a. La table
+historique `audit_log` reste écrite pour compatibilité (SQLite et verrouillage
+des connexions) ; en PostgreSQL, `GET /audit` lit `audit_logs` dès qu'il
+contient des événements, en conservant les clés historiques (`id`, `timestamp`,
+`actor`, `action`, `resource`, `status`, `details`) enrichies des nouveaux
+champs.
+
+Le middleware journalise dans ce journal toutes les mutations, tous les refus
+HTTP et les lectures sensibles (octets de pièces/artefacts, audit, maintenance,
+administration, journal de recherche), sans corps ni query string. Les actions
+de compte (connexion, déconnexions, création, désactivation, changements de mot
+de passe) sont aussi des événements explicites.
+
+**Gardes PostgreSQL du Lot 0b** (le mode SQLite conserve le contrat
+d'outillage derrière le jeton de service, faute de comptes nominatifs) :
+
+| Surface | Exigence en PostgreSQL |
+|---|---|
+| `GET /audit`, `GET /metrics`, `GET /preview`, `/maintenance/*`, `/ml/*`, `GET /recherche/journal` | session humaine `administrateur` vérifiée (ou compte `secours` derrière le jeton de service) ; service seul ⇒ 401, opérateur ⇒ 403 |
+| `GET|HEAD /pieces/{id}/apercu`, `/pieces/{id}/telecharger`, `GET /imports/{id}/artifacts/{artifact}` | session humaine vivante ; l'objet est ensuite relu par ID et confiné aux racines/staging/rapports |
+| corrections/validations de fiches | si les en-têtes de session sont présents, l'identité est revérifiée et relue en base ; un en-tête utilisateur/rôle incompatible ⇒ 401 |
+| `POST /fiches/doublons/scan` avec `appliquer=true` | session humaine vivante (le dry-run reste un comptage) |
+| `POST /referentiel/bateaux/{id}/*` (Lot 2) | session humaine `administrateur` vérifiée (ou `secours` derrière le jeton de service) ; service seul ⇒ 401, opérateur ⇒ 403. `GET /referentiel/bateaux` reste une lecture derrière le jeton de service |
+| `POST /imports/dossier`, `POST /imports/dossier/lot` | dossier/racine obligatoirement sous une racine configurée ou le staging, sinon 403 |
+
+`POST /open` reste l'endpoint historique des scripts serveur de qualification :
+le navigateur ne l'utilise plus (`/api/open` = 410, pièces par ID). En
+PostgreSQL, il exige désormais en plus que le chemin désigne un document
+**catalogué** : un fichier simplement présent sous une racine mais absent de
+`documents` répond 404.
+
+Tous les proxys Next de données transmettent désormais `backendHeaders()`
+(jeton de service + identité/session recalculées depuis le cookie signé), pas
+le seul jeton de service. Les exceptions restent les routes d'authentification
+elles-mêmes et `/api/health`.
 
 ## Tableau de bord qualité (Lot K.1 + L + M)
 

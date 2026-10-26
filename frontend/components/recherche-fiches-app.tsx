@@ -33,16 +33,33 @@ interface FacetteCote {
   intervalles: IntervalleCote[]
 }
 
+interface SegmentExtraitDocument {
+  texte: string
+  correspondance: boolean
+}
+
+interface ExtraitDocument {
+  texte: string
+  segments: SegmentExtraitDocument[]
+  source: "document" | "chunk" | "fiche"
+  libelle_source: string | null
+  correspondance_requete: boolean
+}
+
 interface ResultatFiche {
   code: string | null
   titre: string | null
   type_voile: string | null
   client: string | null
   bateau: string | null
+  id_modele_bateau?: number | null
+  modele_bateau?: string | null
+  modele_bateau_cle?: string | null
   gamme: string | null
   statut: string | null
   annee: number | null
   extrait: string
+  extrait_document?: ExtraitDocument | null
   score: number
   sources: string[]
   slu_m?: number | null
@@ -54,8 +71,19 @@ interface ResultatFiche {
   poids_kg?: number | null
 }
 
+interface ModeleBateauDetecte {
+  id_modele: number
+  nom_canonique: string
+  cle_normalisee: string
+  type_correspondance: string
+  rang: number
+  score: number
+  alias?: string | null
+}
+
 interface ReponseRecherche {
   requete: string
+  modeles_bateaux_detectes?: ModeleBateauDetecte[]
   nb_resultats: number
   resultats: ResultatFiche[]
   facettes: Record<string, FacetteEntree[]>
@@ -74,6 +102,11 @@ interface ReponseRecherche {
 interface Suggestion {
   nature: string
   valeur: string
+  type_correspondance?: string
+  rang?: number
+  score?: number
+  alias?: string | null
+  id_modele_bateau?: number
 }
 
 const GROUPES_FACETTES: Array<{ cle: string; libelle: string }> = [
@@ -121,6 +154,7 @@ const FILTRES_CLES = [
   "type_voile",
   "client",
   "bateau",
+  "boat_model_id",
   "matiere",
   "gamme",
   "annee",
@@ -130,11 +164,19 @@ const FILTRES_CLES = [
 ]
 
 const LIBELLE_SOURCE: Record<string, string> = {
+  modele_bateau: "Modèle bateau",
   lexical: "Recherche lexicale",
   trigrammes: "Faute tolérée",
   texte_pdf: "Texte PDF",
   vecteurs: "Vecteurs",
   parcours: "Parcours",
+}
+
+const LIBELLE_CORRESPONDANCE: Record<string, string> = {
+  exact: "exact",
+  alias: "alias",
+  prefixe: "préfixe",
+  flou: "approché",
 }
 
 const NATURE_SUGGESTION: Record<string, string> = {
@@ -245,6 +287,62 @@ function buildApiParams(
   return params
 }
 
+function extraitDocumentAffiche(fiche: ResultatFiche): ExtraitDocument | null {
+  if (fiche.extrait_document !== undefined) {
+    return fiche.extrait_document && fiche.extrait_document.segments.length > 0
+      ? fiche.extrait_document
+      : null
+  }
+  // Compatibilité de déploiement : un ancien backend ne fournit que
+  // l'aperçu des champs (`extrait`). Un backend Lot 4a qui répond
+  // explicitement `null` reste, lui, sans aperçu.
+  const texte = fiche.extrait.trim()
+  if (!texte) return null
+  return {
+    texte,
+    segments: [{ texte, correspondance: false }],
+    source: "fiche",
+    libelle_source: "Champs de la fiche",
+    correspondance_requete: false,
+  }
+}
+
+function ExtraitDocumentResultat({ fiche }: { fiche: ResultatFiche }) {
+  const extrait = extraitDocumentAffiche(fiche)
+  if (!extrait) return null
+
+  const libelle = extrait.source === "fiche" ? "Aperçu des champs de la fiche" : "Extrait du document"
+
+  return (
+    <section
+      className="mt-3 rounded-md border-l-2 border-primary/50 bg-muted/30 px-3 py-2"
+      data-testid="fiche-extrait"
+      data-source={extrait.source}
+      aria-label={`${libelle} pour la fiche ${fiche.code ?? fiche.titre ?? "sans code"}`}
+    >
+      <div className="flex items-baseline justify-between gap-3">
+        <h3 className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{libelle}</h3>
+        {extrait.source !== "fiche" && extrait.libelle_source && (
+          <span className="min-w-0 truncate text-[10px] text-muted-foreground" title={extrait.libelle_source}>
+            {extrait.libelle_source}
+          </span>
+        )}
+      </div>
+      <p className="mt-1 line-clamp-3 text-xs leading-relaxed text-foreground/80">
+        {extrait.segments.map((segment, index) =>
+          segment.correspondance ? (
+            <mark key={index} data-testid="extrait-correspondance">
+              {segment.texte}
+            </mark>
+          ) : (
+            <span key={index}>{segment.texte}</span>
+          ),
+        )}
+      </p>
+    </section>
+  )
+}
+
 export function RechercheFichesApp({ assistantActif = true }: { assistantActif?: boolean }) {
   const [saisie, setSaisie] = useState("")
   const [requete, setRequete] = useState("")
@@ -341,7 +439,7 @@ export function RechercheFichesApp({ assistantActif = true }: { assistantActif?:
     const minuterie = setTimeout(async () => {
       try {
         const corps = await jsonFetch<{ suggestions: Suggestion[] }>(
-          `/api/recherche/suggestions?prefix=${encodeURIComponent(prefixe)}`,
+          `/api/search/suggestions?prefix=${encodeURIComponent(prefixe)}`,
         )
         setSuggestions(corps.suggestions)
       } catch {
@@ -541,9 +639,17 @@ export function RechercheFichesApp({ assistantActif = true }: { assistantActif?:
                   }}
                 >
                   <Search className="size-3.5 shrink-0 text-muted-foreground" />
-                  <span>{s.valeur}</span>
-                  <span className="ml-auto text-[10px] uppercase tracking-wide text-muted-foreground">
+                  <span className="truncate">{s.valeur}</span>
+                  {s.alias && s.alias !== s.valeur && (
+                    <span className="hidden truncate text-xs text-muted-foreground sm:inline">
+                      alias : {s.alias}
+                    </span>
+                  )}
+                  <span className="ml-auto shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground">
                     {NATURE_SUGGESTION[s.nature] ?? s.nature}
+                    {s.type_correspondance
+                      ? ` · ${LIBELLE_CORRESPONDANCE[s.type_correspondance] ?? s.type_correspondance}`
+                      : ""}
                   </span>
                 </button>
               </li>
@@ -761,6 +867,28 @@ export function RechercheFichesApp({ assistantActif = true }: { assistantActif?:
                 {reponse.sources_actives.map((s) => LIBELLE_SOURCE[s] ?? s).join(", ") || "—"} · page {reponse.page ?? page}/
                 {totalPages}
               </p>
+              {(reponse.modeles_bateaux_detectes ?? []).length > 0 && (
+                <div
+                  className="mb-4 flex flex-wrap items-center gap-2 rounded border border-border bg-background/60 px-3 py-2"
+                  data-testid="modeles-bateaux-detectes"
+                >
+                  <span className="text-xs text-muted-foreground">Modèle bateau détecté :</span>
+                  {(reponse.modeles_bateaux_detectes ?? []).map((modele) => (
+                    <span
+                      key={modele.id_modele}
+                      className="rounded-full border border-border bg-accent/30 px-2 py-0.5 text-xs"
+                    >
+                      {modele.nom_canonique}
+                      <span className="ml-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+                        {LIBELLE_CORRESPONDANCE[modele.type_correspondance] ?? modele.type_correspondance}
+                      </span>
+                      {modele.alias && modele.alias !== modele.nom_canonique && (
+                        <span className="ml-1 text-muted-foreground">via {modele.alias}</span>
+                      )}
+                    </span>
+                  ))}
+                </div>
+              )}
               {reponse.sans_resultat && (
                 <div
                   className="rounded border border-border bg-background/60 px-4 py-6 text-center"
@@ -774,7 +902,7 @@ export function RechercheFichesApp({ assistantActif = true }: { assistantActif?:
               )}
               <ul className="space-y-2">
                 {reponse.resultats.map((fiche, position) => (
-                  <li key={`${fiche.code ?? position}`}>
+                  <li key={`${fiche.code ?? position}`} data-code={fiche.code ?? undefined}>
                     <article className="rounded-lg border border-border bg-background/60 px-4 py-3">
                       <div className="flex flex-wrap items-baseline gap-2">
                         {fiche.code ? <Link href={`/fiches/${encodeURIComponent(fiche.code)}`} className="font-mono text-xs text-primary underline-offset-2 hover:underline" aria-label={`Ouvrir la fiche ${fiche.code}`}>{fiche.code}</Link> : <span className="font-mono text-xs text-muted-foreground">—</span>}
@@ -794,6 +922,12 @@ export function RechercheFichesApp({ assistantActif = true }: { assistantActif?:
                           .filter((v): v is string | number => v !== null && v !== "")
                           .join(" · ")}
                       </p>
+                      {fiche.modele_bateau &&
+                        fiche.modele_bateau.trim().toLowerCase() !== (fiche.bateau ?? "").trim().toLowerCase() && (
+                          <p className="mt-1 text-[11px] text-muted-foreground" data-testid="modele-bateau-canonique">
+                            Modèle canonique : <span className="text-foreground/80">{fiche.modele_bateau}</span>
+                          </p>
+                        )}
                       {/* Cotes */}
                       {(fiche.slu_m != null ||
                         fiche.sle_m != null ||
@@ -816,6 +950,7 @@ export function RechercheFichesApp({ assistantActif = true }: { assistantActif?:
                             .join(" · ")}
                         </p>
                       )}
+                      <ExtraitDocumentResultat fiche={fiche} />
                       <div className="mt-2 flex items-center gap-1.5">
                         {fiche.sources.map((s) => (
                           <span
@@ -881,5 +1016,6 @@ export function RechercheFichesApp({ assistantActif = true }: { assistantActif?:
 }
 
 function GROUPE_LIBELLE(cle: string): string {
+  if (cle === "boat_model_id") return "Modèle bateau"
   return GROUPES_FACETTES.find((g) => g.cle === cle)?.libelle ?? cle
 }

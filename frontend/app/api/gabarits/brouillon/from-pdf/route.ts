@@ -1,10 +1,11 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { backendBase, authHeaders, requireAuthValide } from "@/lib/backend"
+import { backendBase, backendHeaders, requireRolesServer } from "@/lib/backend"
+import { ROLE_ADMIN } from "@/lib/roles"
 
 export const dynamic = "force-dynamic"
 
 export async function POST(req: NextRequest) {
-  const denied = await requireAuthValide()
+  const denied = await requireRolesServer(ROLE_ADMIN)
   if (denied) return denied
   const base = backendBase()
   if (!base) return NextResponse.json({ detail: "Backend non configuré" }, { status: 503 })
@@ -12,7 +13,7 @@ export async function POST(req: NextRequest) {
     const form = await req.formData()
     const res = await fetch(`${base}/gabarits/brouillon/from-pdf`, {
       method: "POST",
-      headers: authHeaders(),
+      headers: await backendHeaders(),
       body: form,
     })
     const json = await res.json()

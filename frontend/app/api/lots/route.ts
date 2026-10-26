@@ -1,5 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { backendBase, authHeaders, requireAuthValide } from "@/lib/backend"
+import { backendBase, backendHeaders, requireAuthValide } from "@/lib/backend"
 
 export const dynamic = "force-dynamic"
 
@@ -11,7 +11,7 @@ export async function GET(req: NextRequest) {
   const query = req.nextUrl.searchParams.toString()
   try {
     const res = await fetch(`${base}/lots${query ? `?${query}` : ""}`, {
-      headers: authHeaders(),
+      headers: await backendHeaders(),
       cache: "no-store",
     })
     return NextResponse.json(await res.json(), { status: res.status })

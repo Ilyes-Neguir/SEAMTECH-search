@@ -790,7 +790,13 @@ def test_08_ouverture_pdf_telechargeable_sans_redirection_interne(app_client) ->
 def test_09_rapport_pdf_telecharge(app_client) -> None:
     """Le rapport d'import se télécharge (302 présigné ou 200 direct) en PDF."""
     import_id = RECETTE["refs"]["REF-001"]["import_id"]
-    reponse = app_client.get(f"/imports/{import_id}/artifacts/report_pdf")
+    reponse = app_client.get(
+        f"/imports/{import_id}/artifacts/report_pdf",
+        headers={
+            "X-SEAMTECH-UTILISATEUR": "secours",
+            "X-SEAMTECH-ROLE": "admin",
+        },
+    )
     assert reponse.status_code in {200, 302}, (
         f"téléchargement rapport : HTTP {reponse.status_code}"
     )

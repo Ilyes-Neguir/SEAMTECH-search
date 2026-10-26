@@ -231,27 +231,143 @@ def semer_doublon(idx) -> None:
         )
 
 
-def semer_comptes(idx) -> None:
-    """Crée les deux comptes nominatifs de l'e2e (Lot L.2).
+def semer_population_lot5(idx) -> None:
+    """Population de référence pour la Fonction B (Lot 5) autour de 7792-SO.
 
-    Un opérateur et un administrateur, avec des mots de passe connus du test :
-    les specs peuvent alors prouver les règles réelles — un opérateur reçoit 403
-    sur la gestion des comptes, un administrateur passe — sans jamais dépendre du
-    compte de secours partagé.
+    La vraie fiche 7792-SO (spi) devient la candidate : cinq extractions
+    synthétiques du MÊME modèle canonique et du MÊME type, valeurs serrées
+    autour des siennes (facteurs 0,99 → 1,01, surface en facteur² pour
+    garder la géométrie plausible), forment sa population (N=5 = le seuil
+    CONFIANCE_MIN_ECHANTILLONS). Sans elles, l'écran /confiance n'aurait
+    rien d'honnête à montrer : « Données insuffisantes » partout.
+    L'échec est bruyant (exit 1) : un seed silencieux invaliderait la spec.
+    """
+    import hashlib
+
+    from seamtech_search.extractions_voile import (
+        ExtractionVoile,
+        enregistrer_extraction_voile,
+    )
+    from seamtech_search.liaison_voile import resoudre_extractions
+
+    resoudre_extractions(idx)
+    with idx.connect() as connexion:
+        with connexion.cursor() as curseur:
+            curseur.execute(
+                "SELECT id_extraction, type_voile, boat_model_id FROM sail_extractions "
+                "WHERE code_fiche LIKE %s ORDER BY id_extraction ASC LIMIT 1",
+                ("%7792%",),
+            )
+            ligne = curseur.fetchone()
+    if ligne is None or ligne[2] is None:
+        print(
+            "Seed e2e Lot 5 : extraction 7792 absente ou non liée — la population "
+            "de confiance ne peut pas être semée.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    type_voile = ligne[1] or "Spi Asymétrique"
+    with idx.connect() as connexion:
+        with connexion.cursor() as curseur:
+            curseur.execute(
+                "SELECT nom_canonique FROM boat_models WHERE id_modele = %s", (ligne[2],)
+            )
+            nom_modele = curseur.fetchone()[0]
+    base = {"slu_m": 6.6, "sle_m": 5.5, "sf_m": 3.08, "shw_m": 3.14, "spa_m2": 15.71}
+    for i, facteur in enumerate((0.99, 0.995, 1.0, 1.005, 1.01)):
+        enregistrer_extraction_voile(
+            idx,
+            ExtractionVoile(
+                code_fiche=f"LOT5-POP-{i}",
+                nom_fichier_source=f"fiche-lot5-pop-{i}.pdf",
+                empreinte_sha256=hashlib.sha256(f"lot5-pop-{i}".encode()).hexdigest(),
+                gabarit_code="FICHE_PORTANT_V1",
+                gabarit_version=2,
+                methode_principale="fiche_extraite",
+                type_voile=type_voile,
+                modele_bateau_brut=nom_modele,
+                slu_m=round(base["slu_m"] * facteur, 3),
+                sle_m=round(base["sle_m"] * facteur, 3),
+                sf_m=round(base["sf_m"] * facteur, 3),
+                shw_m=round(base["shw_m"] * facteur, 3),
+                spa_m2=round(base["spa_m2"] * facteur * facteur, 3),
+                statut_extraction="complete",
+                statut_plausibilite="plausible",
+            ),
+        )
+    resoudre_extractions(idx)
+    print(
+        f"Seed e2e Lot 5 : 5 voiles de référence semées pour « {nom_modele} » "
+        f"({type_voile}) autour de 7792-SO.",
+        file=sys.stderr,
+    )
+
+
+def semer_comptes(idx) -> None:
+    """Crée/normalise les comptes nominatifs canoniques de l'e2e (Lot 1).
+
+    L'ancien identifiant ``e2e-operateur`` est conservé comme alias historique,
+    mais son rôle stocké est ``approbateur`` : il corrigeait et validait déjà.
+    Deux approbateurs distincts permettent de prouver la concurrence métier et
+    l'interdiction d'auto-approbation sans utiliser l'admin comme décideur.
+
+    Au rejeu, les comptes existants sont remis actifs, au rôle attendu et sans
+    changement de mot de passe forcé : un seed ne doit pas dépendre de l'état
+    laissé par un run précédent.
     """
     from seamtech_search.comptes import creer_utilisateur, lister_utilisateurs
 
-    operateur = os.environ.get("SEAMTECH_E2E_OPERATEUR_PASSWORD", "e2e-operateur-password")
-    admin = os.environ.get("SEAMTECH_E2E_ADMIN_PASSWORD", "e2e-admin-password")
+    comptes = (
+        (
+            "e2e-operateur",
+            "Approbateur e2e",
+            "approbateur",
+            os.environ.get("SEAMTECH_E2E_OPERATEUR_PASSWORD", "e2e-operateur-password"),
+        ),
+        (
+            "e2e-admin",
+            "Administrateur e2e",
+            "admin",
+            os.environ.get("SEAMTECH_E2E_ADMIN_PASSWORD", "e2e-admin-password"),
+        ),
+        (
+            "e2e-utilisateur",
+            "Utilisateur e2e",
+            "utilisateur",
+            os.environ.get("SEAMTECH_E2E_UTILISATEUR_PASSWORD", "e2e-utilisateur-password"),
+        ),
+        (
+            "e2e-lecture",
+            "Lecture e2e",
+            "lecture",
+            os.environ.get("SEAMTECH_E2E_LECTURE_PASSWORD", "e2e-lecture-password"),
+        ),
+        (
+            "e2e-approbateur-2",
+            "Second approbateur e2e",
+            "approbateur",
+            os.environ.get("SEAMTECH_E2E_APPROBATEUR2_PASSWORD", "e2e-approbateur2-password"),
+        ),
+    )
     existants = {compte["identifiant"] for compte in lister_utilisateurs(idx)}
-    for identifiant, nom, role, mot_de_passe in (
-        ("e2e-operateur", "Opérateur e2e", "operateur", operateur),
-        ("e2e-admin", "Administrateur e2e", "administrateur", admin),
-    ):
-        if identifiant in existants:
-            continue
-        creer_utilisateur(idx, identifiant, nom, mot_de_passe, role)
-        print(f"Seed e2e : compte nominatif « {identifiant} » ({role}) créé.", file=sys.stderr)
+    for identifiant, nom, role, mot_de_passe in comptes:
+        if identifiant not in existants:
+            creer_utilisateur(
+                idx,
+                identifiant,
+                nom,
+                mot_de_passe,
+                role,
+                doit_changer_mot_de_passe=False,
+            )
+            print(f"Seed e2e : compte nominatif « {identifiant} » ({role}) créé.", file=sys.stderr)
+        with idx.connect() as connexion:
+            with connexion.cursor() as curseur:
+                curseur.execute(
+                    "UPDATE utilisateur SET role = %s, actif = true, doit_changer_mot_de_passe = false "
+                    "WHERE identifiant = %s",
+                    (role, identifiant),
+                )
 
 
 def main() -> None:
@@ -334,6 +450,7 @@ def main() -> None:
             codes[dossier] = str(resultat.get("fiche"))
         semer_piece_distincte(idx, codes["CLIENT-E2E-TROIS"])
         semer_doublon(idx)
+        semer_population_lot5(idx)
         semer_comptes(idx)
         idx.close()
 

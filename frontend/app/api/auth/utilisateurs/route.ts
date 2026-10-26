@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
-import { backendBase, authHeaders, backendHeaders, requireAuthValide } from "@/lib/backend"
+import { backendBase, backendHeaders, requireRolesServer } from "@/lib/backend"
+import { ROLE_ADMIN } from "@/lib/roles"
 
 export const dynamic = "force-dynamic"
 
@@ -8,16 +9,16 @@ export const dynamic = "force-dynamic"
  *
  * The browser never talks to the Python API: this route forwards to
  * /auth/utilisateurs with the service token AND the session headers taken from
- * the signed cookie. The backend then decides — an operator gets 403, an
- * administrator 200 — and its decision is passed through unchanged. The
- * frontend deliberately does NOT re-implement the role check: two places
- * deciding the same rule is how they drift apart.
+ * the signed cookie. The backend then decides — a non-admin gets 403, an
+ * admin 200 — and its decision is passed through unchanged. The
+ * frontend adds a defence-in-depth admin gate, while the backend remains
+ * authoritative and re-resolves the role in PostgreSQL.
  *
  * No password, hash or salt ever reaches the browser: the backend already
  * refuses to return them, and this route does not add anything to the payload.
  */
 export async function GET() {
-  const denied = await requireAuthValide()
+  const denied = await requireRolesServer(ROLE_ADMIN)
   if (denied) return denied
   const base = backendBase()
   if (!base) return NextResponse.json({ detail: "Backend non configuré (SEAMTECH_API_URL)." }, { status: 503 })
@@ -30,7 +31,7 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
-  const denied = await requireAuthValide()
+  const denied = await requireRolesServer(ROLE_ADMIN)
   if (denied) return denied
   const base = backendBase()
   if (!base) return NextResponse.json({ detail: "Backend non configuré (SEAMTECH_API_URL)." }, { status: 503 })

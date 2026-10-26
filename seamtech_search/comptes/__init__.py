@@ -6,6 +6,7 @@ utilisateurs et des sessions), ``routes`` (API ``/auth``).
 
 from .comptes import (
     changer_mot_de_passe,
+    changer_role_utilisateur,
     correspondance_jeton,
     creer_utilisateur,
     desactiver_utilisateur,
@@ -28,6 +29,7 @@ __all__ = [
     "desactiver_utilisateur",
     "reinitialiser_mot_de_passe",
     "changer_mot_de_passe",
+    "changer_role_utilisateur",
     "verifier_identifiants",
     "verrou_actif",
     "ouvrir_session",

@@ -1,5 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { backendBase, authHeaders, requireAuthValide } from "@/lib/backend"
+import { backendBase, backendHeaders, requireAuthValide } from "@/lib/backend"
 
 // Proxy Lot L.1 : liens de doublon pour la file de /validation.
 //
@@ -19,7 +19,7 @@ async function relayer(codes: string[]) {
   try {
     const res = await fetch(`${base}/validation/doublons`, {
       method: "POST",
-      headers: { ...authHeaders(), "Content-Type": "application/json" },
+      headers: await backendHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ codes }),
       cache: "no-store",
     })

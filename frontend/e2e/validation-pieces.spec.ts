@@ -1,16 +1,16 @@
 import { expect, test } from "@playwright/test"
-import { signIn } from "./helpers"
+import { APPROBATEUR, signInWith } from "./helpers"
 
 /**
  * Constat A09 de l'audit du 2026-10-08 — sur l'écran de validation, `/etat`
  * portait une garde de génération mais `/pieces` n'en avait pas : une réponse
  * en retard pouvait poser le document de la fiche A alors que l'écran affichait
  * déjà la fiche B. Champs, code et révision d'un côté, PDF de l'autre : sur une
- * fiche de fabrication, c'est le pire des mélanges (l'opérateur relit un
+ * fiche de fabrication, c'est le pire des mélanges (l'approbateur relit un
  * document qui n'est pas celui dont il valide les valeurs).
  *
  * Le test force la course AU LIEU d'espérer la rencontrer : la réponse
- * `/pieces` de la fiche A est RETARDÉE de 3 s, l'opérateur passe à la fiche B
+ * `/pieces` de la fiche A est RETARDÉE de 3 s, l'approbateur passe à la fiche B
  * dans cet intervalle, puis la réponse de A arrive. L'écran doit rester sur le
  * document de B — et sa visionneuse doit rendre le PDF de B, pas celui de A.
  *
@@ -24,7 +24,7 @@ test.describe("Validation — pièces jointes et fiche active (constat A09)", ()
   )
 
   test("une réponse /pieces en retard ne pose pas le PDF d'une autre fiche", async ({ page }) => {
-    await signIn(page)
+    await signInWith(page, APPROBATEUR)
 
     // Deux fiches de la file qui ont RÉELLEMENT un PDF à montrer.
     const file = await page.request.get("/api/validation/file")
@@ -41,7 +41,15 @@ test.describe("Validation — pièces jointes et fiche active (constat A09)", ()
         corps.pieces.find((p) => p.is_primary_pdf) ?? corps.pieces.find((p) => p.kind === "pdf")
       // DEUX DOCUMENTS DISTINCTS sont indispensables : avec un seul PDF rattaché
       // aux deux fiches, le mélange serait invisible et le test ne prouverait rien.
-      if (piece && !avecPdf.some((f) => f.idPdf === piece.id)) avecPdf.push({ code, idPdf: piece.id })
+      // « À montrer » se prouve par les octets servis : une pièce cataloguée dont
+      // le fichier d'archive n'est plus présent ne peut pas servir de témoin PDF.js.
+      if (!piece || avecPdf.some((f) => f.idPdf === piece.id)) continue
+      const apercu = await page.request.get(`/api/pieces/${piece.id}/apercu`, {
+        headers: { Range: "bytes=0-4" },
+      })
+      if (![200, 206].includes(apercu.status())) continue
+      if (!(await apercu.body()).subarray(0, 4).equals(Buffer.from("%PDF"))) continue
+      avecPdf.push({ code, idPdf: piece.id })
       if (avecPdf.length === 2) break
     }
     expect(

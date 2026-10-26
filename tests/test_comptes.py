@@ -149,7 +149,7 @@ def client_comptes(base_comptes: dict[str, Any]) -> TestClient:
     return TestClient(create_app(config))
 
 
-def _creer(base: dict[str, Any], identifiant: str, mot_de_passe: str, role: str = "operateur") -> dict[str, Any]:
+def _creer(base: dict[str, Any], identifiant: str, mot_de_passe: str, role: str = "approbateur") -> dict[str, Any]:
     return creer_utilisateur(base["index"], identifiant, f"Nom {identifiant}", mot_de_passe, role)
 
 
@@ -244,7 +244,7 @@ def test_creation_compte_et_refus_des_doublons(base_comptes: dict[str, Any]) -> 
     base = base_comptes
     compte = _creer(base, "imrane", "Secret!2026")
     assert compte["id_utilisateur"] > 0
-    assert compte["role"] == "operateur"
+    assert compte["role"] == "approbateur"
     assert compte["doit_changer_mot_de_passe"] is True
 
     with pytest.raises(HTTPException) as doublon:
@@ -269,7 +269,7 @@ def test_connexion_et_session_nominative(base_comptes: dict[str, Any]) -> None:
 
     utilisateur = verifier_identifiants(base["index"], "imrane", "Secret!2026")
     assert utilisateur["identifiant"] == "imrane"
-    assert utilisateur["role"] == "operateur"
+    assert utilisateur["role"] == "approbateur"
 
     session = ouvrir_session(base["index"], utilisateur["id_utilisateur"], user_agent="pytest/1.0")
     assert session["id_session"] > 0
@@ -466,8 +466,8 @@ def test_gestion_des_comptes_reservee_administrateur(
     base_comptes: dict[str, Any], client_comptes: TestClient
 ) -> None:
     base = base_comptes
-    _creer(base, "imrane", "Secret!2026", role="operateur")
-    _creer(base, "chef", "Secret!2026", role="administrateur")
+    _creer(base, "imrane", "Secret!2026", role="approbateur")
+    _creer(base, "chef", "Secret!2026", role="admin")
 
     operateur = _ouvrir_cookie(base, "imrane", "Secret!2026")
     administrateur = _ouvrir_cookie(base, "chef", "Secret!2026")
@@ -477,7 +477,7 @@ def test_gestion_des_comptes_reservee_administrateur(
 
     interdit = client_comptes.get("/auth/utilisateurs", headers=_entetes_session(operateur))
     assert interdit.status_code == 403, interdit.text
-    assert "administrateur" in interdit.json()["detail"]
+    assert "admin" in interdit.json()["detail"]
 
     autorise = client_comptes.get("/auth/utilisateurs", headers=_entetes_session(administrateur))
     assert autorise.status_code == 200, autorise.text
@@ -487,7 +487,7 @@ def test_gestion_des_comptes_reservee_administrateur(
 
     creation = client_comptes.post(
         "/auth/utilisateurs",
-        json={"identifiant": "nouveau", "nom": "Nouveau", "role": "operateur", "mot_de_passe": "Provisoire!2026"},
+        json={"identifiant": "nouveau", "nom": "Nouveau", "role": "approbateur", "mot_de_passe": "Provisoire!2026"},
         headers=_entetes_session(administrateur),
     )
     assert creation.status_code == 200, creation.text
@@ -522,7 +522,7 @@ def test_attribution_refusee_sans_jeton_de_service(
     sans_jeton = client.post(
         f"/fiches/{code}/valider",
         json={"utilisateur": "usurpateur"},
-        headers={"X-SEAMTECH-UTILISATEUR": "usurpateur", "X-SEAMTECH-ROLE": "administrateur"},
+        headers={"X-SEAMTECH-UTILISATEUR": "usurpateur", "X-SEAMTECH-ROLE": "admin"},
     )
     assert sans_jeton.status_code == 401, sans_jeton.text
 
@@ -532,7 +532,7 @@ def test_attribution_refusee_sans_jeton_de_service(
         headers={
             "X-SEAMTECH-TOKEN": "mauvais",
             "X-SEAMTECH-UTILISATEUR": "usurpateur",
-            "X-SEAMTECH-ROLE": "administrateur",
+            "X-SEAMTECH-ROLE": "admin",
         },
     )
     assert mauvais_jeton.status_code == 401, mauvais_jeton.text
@@ -589,7 +589,7 @@ def test_validation_attribuee_au_compte_connecte(base_comptes_corpus: dict[str, 
         headers={
             **_entetes_session(cookie),
             "X-SEAMTECH-UTILISATEUR": "second",
-            "X-SEAMTECH-ROLE": "operateur",
+            "X-SEAMTECH-ROLE": "approbateur",
         },
     )
     assert reponse.status_code == 200, reponse.text
@@ -636,7 +636,7 @@ def test_indicateur_qualite_taux_par_utilisateur(base_comptes_corpus: dict[str, 
     )
     entree = next(e for e in indicateur["par_utilisateur"] if e["identifiant"] == "second")
     assert entree["actions"] == indicateur["actions_attribuees"]
-    assert entree["role"] == "operateur"
+    assert entree["role"] == "approbateur"
     assert "sans_utilisateur" not in " ".join(indicateur["par_utilisateur"][0].keys())
 
 

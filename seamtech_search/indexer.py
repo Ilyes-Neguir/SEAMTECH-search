@@ -1053,6 +1053,167 @@ class SearchIndex:
                     exc,
                 )
 
+    def _migration_024_sessions_redis(self, connection: Any) -> None:
+        """Marqueur Lot 0a : sessions Redis, sans DDL.
+
+        L'état vivant des sessions est porté par Redis ; PostgreSQL conserve
+        l'historique ``session_ui``. La migration est néanmoins enregistrée
+        dans les deux modes pour garder une séquence de migrations sans trou — un
+        trou ferait échouer les gardes de sauvegarde qui comparent la base à
+        ``VERSION_SCHEMA_METIER``.
+        """
+        if self.is_postgres:
+            with connection.cursor() as cursor:
+                cursor.execute(schema_metier.SQL_024_SESSIONS_REDIS)
+                cursor.fetchone()
+        logger.info(
+            "Migration 024_sessions_redis : marqueur Lot 0a appliqué (aucune DDL ; "
+            "les sessions vivantes sont dans Redis)."
+        )
+
+    def _migration_025_audit_logs(self, connection: Any) -> None:
+        """Journal d'audit canonique append-only (Lot 0b).
+
+        PostgreSQL : crée ``audit_logs``, ses index et son trigger
+        anti-modification, puis recopie l'historique ``audit_log`` dans
+        l'ordre chronologique en construisant la chaîne d'empreintes.
+        SQLite : no-op enregistré — le journal canonique appartient à la
+        couche PostgreSQL, comme les comptes nominatifs.
+        """
+        if not self.is_postgres:
+            logger.warning(
+                "Migration 025_audit_logs ignorée : la couche métier est PostgreSQL uniquement — "
+                "conséquence : SQLite conserve uniquement la table historique audit_log."
+            )
+            return
+        with connection.cursor() as cursor:
+            cursor.execute(schema_metier.SQL_025_AUDIT_LOGS)
+        from .audit import migrer_audit_log_postgres
+
+        copies = migrer_audit_log_postgres(connection)
+        logger.info(
+            "Migration 025_audit_logs : journal canonique créé, %d événement(s) historique(s) chaîné(s).",
+            copies,
+        )
+
+    def _migration_026_boat_models_aliases(self, connection: Any) -> None:
+        """Référentiel canonique des bateaux et synonymes (Lot 2).
+
+        PostgreSQL : crée les quatre tables, ajoute le lien nullable
+        ``bateau.boat_model_id``, recopie les synonymes historiques, puis
+        rattache les bateaux existants par la clé canonique Python testée.
+        Les libellés sources ne sont pas réécrits et les suffixes métier
+        distincts (45 / 45.1 / 45 CC) restent des modèles séparés.
+        SQLite : no-op enregistré, comme le reste de la couche métier.
+        """
+        if not self.is_postgres:
+            logger.warning(
+                "Migration 026_boat_models_aliases ignorée : la couche métier est PostgreSQL uniquement — "
+                "conséquence : SQLite conserve uniquement la recherche de fichiers héritée."
+            )
+            return
+        with connection.cursor() as cursor:
+            cursor.execute(schema_metier.SQL_026_BOAT_MODELS_ALIASES)
+            from .referentiel_bateaux import synchroniser_referentiel_bateaux
+
+            rapport = synchroniser_referentiel_bateaux(cursor, source="migration_026")
+        logger.info(
+            "Migration 026_boat_models_aliases : %d bateau(x) relié(s), %d modèle(s) créé(s).",
+            rapport["bateaux_lies"],
+            rapport["modeles_crees"],
+        )
+
+    def _migration_027_roles_approbations(self, connection: Any) -> None:
+        """Quatre rôles canoniques et approbations locales (Lot 1).
+
+        PostgreSQL : convertit les anciens rôles sans retirer les capacités
+        historiques (``operateur`` -> ``approbateur``), ferme toute valeur
+        inconnue en ``lecture``, révoque les sessions existantes, puis crée
+        les demandes et notifications. SQLite : no-op enregistré, comme le
+        reste de la couche métier et des comptes nominatifs.
+        """
+        if not self.is_postgres:
+            logger.warning(
+                "Migration 027_roles_approbations ignorée : la couche métier est PostgreSQL uniquement — "
+                "conséquence : SQLite conserve uniquement la recherche de fichiers héritée."
+            )
+            return
+        with connection.cursor() as cursor:
+            cursor.execute(schema_metier.SQL_027_ROLES_APPROBATIONS)
+        logger.info(
+            "Migration 027_roles_approbations : rôles canoniques appliqués, anciennes sessions "
+            "PostgreSQL révoquées, tables d'approbation et de notification créées."
+        )
+
+    def _migration_028_sail_extractions(self, connection: Any) -> None:
+        """Extractions de voiles normalisées et traçables (Lot 3a).
+
+        PostgreSQL : crée ``sail_extractions`` sans réécrire les fiches ni
+        résoudre les modèles de bateaux. La table est remplie par les
+        écritures/dépôts ultérieurs et par l'outil d'or en mode explicite
+        d'enregistrement. SQLite : no-op enregistré, comme le reste de la
+        couche métier.
+        """
+        if not self.is_postgres:
+            logger.warning(
+                "Migration 028_sail_extractions ignorée : la couche métier est PostgreSQL uniquement — "
+                "conséquence : SQLite conserve uniquement la recherche de fichiers héritée."
+            )
+            return
+        with connection.cursor() as cursor:
+            cursor.execute(schema_metier.SQL_028_SAIL_EXTRACTIONS)
+        logger.info(
+            "Migration 028_sail_extractions : table des extractions de voiles créée "
+            "(modèles de bateaux toujours bruts et non résolus)."
+        )
+
+    def _migration_029_extraction_liaison_corrections(self, connection: Any) -> None:
+        """Résolution du modèle de bateau et corrections d'extractions (Lot 3b).
+
+        PostgreSQL : ajoute les colonnes de liaison à ``sail_extractions``
+        (référentiel canonique du Lot 2), la cohérence statut/modèle portée
+        par contrainte, l'historique des corrections d'approbateur et les
+        motifs appris localement. Aucune extraction existante n'est résolue
+        par la migration elle-même : elle ne fait que marquer « sans modèle »
+        celles sans libellé lu. SQLite : no-op enregistré, comme le reste de
+        la couche métier.
+        """
+        if not self.is_postgres:
+            logger.warning(
+                "Migration 029_extraction_liaison_corrections ignorée : la couche métier est "
+                "PostgreSQL uniquement — conséquence : SQLite conserve uniquement la "
+                "recherche de fichiers héritée."
+            )
+            return
+        with connection.cursor() as cursor:
+            cursor.execute(schema_metier.SQL_029_EXTRACTION_LIAISON_CORRECTIONS)
+        logger.info(
+            "Migration 029_extraction_liaison_corrections : colonnes de liaison bateau, "
+            "historique de corrections et motifs appris créés (résolution jamais devinée)."
+        )
+
+    def _migration_030_evaluations_confiance(self, connection: Any) -> None:
+        """Évaluations de confiance de réutilisation persistées (Lot 5).
+
+        PostgreSQL : crée ``evaluations_confiance`` avec la cohérence
+        score/verdict portée par contrainte (score NULL obligatoire quand les
+        données sont insuffisantes ou la population hétérogène). SQLite :
+        no-op enregistré, comme le reste de la couche métier.
+        """
+        if not self.is_postgres:
+            logger.warning(
+                "Migration 030_evaluations_confiance ignorée : la couche métier est "
+                "PostgreSQL uniquement — conséquence : SQLite conserve uniquement la "
+                "recherche de fichiers héritée."
+            )
+            return
+        with connection.cursor() as cursor:
+            cursor.execute(schema_metier.SQL_030_EVALUATIONS_CONFIANCE)
+        logger.info(
+            "Migration 030_evaluations_confiance : table des évaluations de confiance "
+            "créée (aucun pourcentage sans échantillon ni justification)."
+        )
+
     def run_migrations(self) -> None:
         """Run pending schema migrations once at startup."""
         with self.connect() as connection:
@@ -1109,6 +1270,39 @@ class SearchIndex:
                 # d'enregistrement : une migration oubliée ici ferait échouer
                 # sauvegarde/restauration (VERSION_SCHEMA_METIER absente).
                 ("023_recherche_normalisee", self._migration_023_recherche_normalisee),
+                # Lot 0a/0b — 024 est le marqueur sans DDL des sessions Redis ;
+                # 025 crée le journal d'audit canonique. Les deux sont
+                # enregistrées : VERSION_SCHEMA_METIER vaut désormais 025 et
+                # une migration oubliée ferait échouer sauvegarde/restauration.
+                ("024_sessions_redis", self._migration_024_sessions_redis),
+                ("025_audit_logs", self._migration_025_audit_logs),
+                # Lot 2 — référentiel canonique des modèles de bateaux,
+                # alias/fusions réversibles et synonymes de recherche.
+                # Enregistrée comme les autres : VERSION_SCHEMA_METIER vaut
+                # 026 et une migration oubliée ferait échouer sauvegarde.
+                ("026_boat_models_aliases", self._migration_026_boat_models_aliases),
+                # Lot 1 — quatre rôles canoniques, demandes d'approbation et
+                # notifications applicatives. Enregistrée comme les autres :
+                # VERSION_SCHEMA_METIER vaut 027 et une migration oubliée
+                # ferait échouer sauvegarde/restauration.
+                ("027_roles_approbations", self._migration_027_roles_approbations),
+                # Lot 3a — extraction PDF structurée des voiles. Enregistrée
+                # comme les autres : VERSION_SCHEMA_METIER vaut 028 et une
+                # migration oubliée ferait échouer sauvegarde/restauration.
+                ("028_sail_extractions", self._migration_028_sail_extractions),
+                # Lot 3b — résolution du modèle de bateau des extractions,
+                # corrections approbateur et motifs appris. Enregistrée comme
+                # les autres : VERSION_SCHEMA_METIER vaut 029 et une migration
+                # oubliée ferait échouer sauvegarde/restauration.
+                (
+                    "029_extraction_liaison_corrections",
+                    self._migration_029_extraction_liaison_corrections,
+                ),
+                # Lot 5 — Fonction B : évaluations de confiance de
+                # réutilisation persistées. Enregistrée comme les autres :
+                # VERSION_SCHEMA_METIER vaut 030 et une migration oubliée
+                # ferait échouer sauvegarde/restauration.
+                ("030_evaluations_confiance", self._migration_030_evaluations_confiance),
             ]
 
             for version, func in migrations:
@@ -1212,6 +1406,16 @@ class SearchIndex:
         )
         return "en_place"
 
+    @staticmethod
+    def _ident_sqlite(nom: str) -> str:
+        """Cite un identifiant lu dans le schéma SQLite.
+
+        Les noms viennent de ``sqlite_master``/``PRAGMA foreign_key_list``,
+        pas d'une requête HTTP, mais un identifiant ne peut pas être lié : la
+        citation avec doublement des guillemets est donc systématique (Lot 0b).
+        """
+        return '"' + str(nom).replace('"', '""') + '"'
+
     def _references_sqlite(self, connection: sqlite3.Connection) -> list[tuple[str, str]]:
         """Tables SQLite qui référencent ``documents`` (table, colonne)."""
         references: list[tuple[str, str]] = []
@@ -1224,7 +1428,9 @@ class SearchIndex:
         for table in tables:
             if table in {"documents", "documents_fts"}:
                 continue
-            for cle in connection.execute(f'PRAGMA foreign_key_list("{table}")').fetchall():
+            for cle in connection.execute(
+                f"PRAGMA foreign_key_list({self._ident_sqlite(str(table))})"
+            ).fetchall():
                 # colonnes : id, seq, table, from, to, on_update, on_delete, match
                 if str(cle[2]) == "documents":
                     references.append((str(table), str(cle[3])))
@@ -1256,9 +1462,9 @@ class SearchIndex:
             return "recreation"
         for table, colonne in references:
             ligne = connection.execute(
-                f'SELECT EXISTS (SELECT 1 FROM "{table}" r '
-                f'WHERE r."{colonne}" IS NOT NULL '
-                f'AND EXISTS (SELECT 1 FROM documents d WHERE d.id = r."{colonne}"))'
+                f"SELECT EXISTS (SELECT 1 FROM {self._ident_sqlite(table)} r "
+                f"WHERE r.{self._ident_sqlite(colonne)} IS NOT NULL "
+                f"AND EXISTS (SELECT 1 FROM documents d WHERE d.id = r.{self._ident_sqlite(colonne)}))"
             ).fetchone()
             if ligne and int(ligne[0]):
                 logger.warning(
@@ -1338,8 +1544,11 @@ class SearchIndex:
         """Supprime les documents absents du disque, SAUF ceux qu'une fiche
         référence (E-40) : un lien de pièce jointe ne doit jamais devenir
         orphelin parce qu'un fichier a bougé."""
+        def ident(nom: str) -> str:
+            return '"' + str(nom).replace('"', '""') + '"'
+
         garde = "".join(
-            f" AND NOT EXISTS (SELECT 1 FROM {table} ref WHERE ref.{colonne} = d.id)"
+            f" AND NOT EXISTS (SELECT 1 FROM {ident(table)} ref WHERE ref.{ident(colonne)} = d.id)"
             for table, colonne, action in self._contraintes_vers_documents(cursor)
             if action in {"a", "r"}
         )
@@ -1816,7 +2025,8 @@ class SearchIndex:
                 reference = False
                 for table, colonne in references:
                     ligne = connection.execute(
-                        f'SELECT EXISTS (SELECT 1 FROM "{table}" r WHERE r."{colonne}" = ?)',
+                        f"SELECT EXISTS (SELECT 1 FROM {self._ident_sqlite(table)} r "
+                        f"WHERE r.{self._ident_sqlite(colonne)} = ?)",
                         (row_id,),
                     ).fetchone()
                     if ligne and int(ligne[0]):

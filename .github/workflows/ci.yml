@@ -100,7 +100,7 @@ jobs:
           # `and not redis_queue` : les tests de file durable ont leur étape
           # dédiée (Redis réel exigé) — les exécuter ici les ferait sauter
           # silencieusement, et un test qui saute n'est pas un test.
-          pytest -q -rf -m "not postgres and not s3 and not perf and not redis_queue" 2>&1 | tee /tmp/sqlite.log
+          pytest -q -rf -m "not postgres and not s3 and not perf and not redis_queue and not ocr_suite" 2>&1 | tee /tmp/sqlite.log
           rc=${PIPESTATUS[0]}
           set -e
           if [ "$rc" -ne 0 ]; then
@@ -148,7 +148,7 @@ jobs:
           # avec MinIO réel — ici ils seraient sautés, et un saut fait
           # échouer cette porte.
           set +e
-          pytest -m "postgres and not perf and not sauvegarde and not redis_queue" -v -rf 2>&1 | tee /tmp/pg.log
+          pytest -m "postgres and not perf and not sauvegarde and not redis_queue and not ocr_suite" -v -rf 2>&1 | tee /tmp/pg.log
           rc=${PIPESTATUS[0]}
           set -e
           if [ "$rc" -ne 0 ]; then
@@ -359,14 +359,17 @@ jobs:
             exit 1
           fi
           echo "Garde-fou dédup : ROUGE puis VERT prouvé"
-      - name: Garde-fou attribution — ROUGE puis VERT (Lot L.2, « qui a validé quoi »)
+      - name: Garde-fou attribution — ROUGE puis VERT (Lot L.2 + Lot 0b, « qui a validé quoi »)
         # Motif EXACTEMENT calqué sur « Garde-fou dédup » ci-dessus. Ce qui est
         # prouvé : l'attribution d'une validation vient de la SESSION, jamais de
-        # ce que le navigateur écrit dans le corps de la requête. Le sabotage
-        # fige l'attribution sur un identifiant littéral (« premier », le premier
-        # compte créé par le test) : le test doit ROUGIR sur son ASSERTION, pas
-        # sur une erreur SQL — vérifié localement avant d'écrire cette étape
-        # (rouge mesuré : « attribution = 1 (attendu 2) »).
+        # ce que le navigateur écrit dans le corps de la requête. Depuis le
+        # Lot 1, le chemin nominal d'une validation est la branche approbateur
+        # (`_attribution_approbateur`, vérification de session par
+        # `exiger_approbateur_requete`) ; saboter un ancien repli laisserait
+        # donc le garde-fou aveugle. Le sabotage fige LES DEUX branches de ce
+        # chemin réel sur un identifiant littéral (« premier », le premier
+        # compte créé par le test) : le test doit ROUGIR sur son ASSERTION,
+        # pas sur une erreur SQL (« attribution = premier, attendu second »).
         if: matrix.python-version == '3.12'
         env:
           SEAMTECH_TEST_DATABASE_URL: postgresql://seamtech:seamtech_test_password@localhost:5432/seamtech_search_test
@@ -383,13 +386,18 @@ jobs:
           chemin = pathlib.Path(sys.argv[1])
           texte = chemin.read_text(encoding="utf-8")
           attendu = (
+              "    if acteur.est_humain:\n"
+              "        return acteur.identifiant, acteur.id_utilisateur\n"
               "    identifiant, _role = resoudre_attribution(\n"
               "        config, token, entete_utilisateur, entete_role, corps_utilisateur\n"
               "    )\n"
-              "    return identifiant"
+              "    return identifiant, None"
           )
-          sabotage = attendu.replace("return identifiant", 'return "premier"  # SABOTAGE')
-          if attendu not in texte:
+          sabotage = attendu.replace(
+              "return acteur.identifiant, acteur.id_utilisateur",
+              'return "premier", None  # SABOTAGE',
+          ).replace("return identifiant, None", 'return "premier", None  # SABOTAGE')
+          if attendu not in texte or sabotage.count("SABOTAGE") != 2:
               raise SystemExit("motif d'attribution introuvable — le garde-fou doit être mis à jour")
           chemin.write_text(texte.replace(attendu, sabotage), encoding="utf-8")
           print("sabotage appliqué : l'attribution ne vient plus de la session")
@@ -1003,6 +1011,12 @@ jobs:
       - uses: pnpm/action-setup@v6
         with:
           version: 9
+      - name: Install OCR binaries (tesseract fra+eng + poppler) for scan-browser-ocr
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq tesseract-ocr tesseract-ocr-fra tesseract-ocr-eng poppler-utils
+          tesseract --version
+          tesseract --list-langs
       - name: Install backend dependencies
         run: |
           python -m pip install --upgrade pip
@@ -1015,6 +1029,8 @@ jobs:
         run: pnpm exec playwright install --with-deps chromium
       - name: Run E2E tests (suite par défaut, SQLite)
         working-directory: frontend
+        env:
+          SEAMTECH_OCR_OBLIGATOIRE: "1"
         run: |
           set -uo pipefail
           set +e
@@ -1054,7 +1070,7 @@ jobs:
         # (409) puis se reprend ; un poste importe pendant qu'un autre cherche
         # et télécharge (contenu PDF vérifié) ; une session expirée ne produit
         # aucun faux succès ; le BACKEND refuse une action d'administration à un
-        # opérateur. Exécutée AVANT la porte live : chaque invocation Playwright
+        # approbateur. Exécutée AVANT la porte live : chaque invocation Playwright
         # recrée sa propre base e2e jetable, les deux épreuves sont indépendantes.
         working-directory: frontend
         env:
@@ -1148,7 +1164,7 @@ jobs:
           print(
               "Concurrence : 7 scénarios multi-sessions exécutés au premier essai "
               "(conflit de révision + reprise, import pendant recherche/téléchargement, "
-              "session expirée sans faux succès, refus administrateur par le backend, "
+              "session expirée sans faux succès, refus d'une action admin à un approbateur, "
               "décision liée à la révision revue, révision non lue = écriture bloquée, "
               "réponse tardive sans écrasement de la fiche affichée)."
           )
@@ -1169,13 +1185,14 @@ jobs:
           # du parcours machine complet (annotation mesure-phase1) est donc
           # extrait du rapport JSON et publié en ::notice — c'est le seul
           # mécanisme qui le rende lisible dans les journaux CI. Garde-fous de
-          # porte de sortie : 10 passés au premier essai (3 du parcours validation,
+          # porte de sortie : 12 passés au premier essai (3 du parcours validation,
           # 1 badge « Non vérifiée », 4 tests Phase 2.2, 2 recherche par
-          # dimension Phase 1), 0 flaky (un échec rattrapé par retry fait
-          # échouer la porte), 0 saut, et le chrono doit avoir été produit.
+          # dimension Phase 1, 2 extraits documentaires Lot 4a), 0 flaky (un échec
+          # rattrapé par retry fait échouer la porte), 0 saut, et le chrono doit
+          # avoir été produit.
           set -uo pipefail
           set +e
-          pnpm exec playwright test e2e/validation.spec.ts e2e/recherche-badge.spec.ts e2e/recherche-dimension.spec.ts --reporter=list,json 2>&1 | tee /tmp/e2e_validation.log
+          pnpm exec playwright test e2e/validation.spec.ts e2e/recherche-badge.spec.ts e2e/recherche-dimension.spec.ts e2e/recherche-extrait.spec.ts --reporter=list,json 2>&1 | tee /tmp/e2e_validation.log
           rc=${PIPESTATUS[0]}
           set -e
           if [ "$rc" -ne 0 ]; then
@@ -1208,7 +1225,7 @@ jobs:
           # échoue puis passe au retry (compté « flaky » par Playwright avec
           # retries: 2) n'est PAS un test réellement assaini — il doit faire
           # échouer la porte, pas compter comme « réellement exécuté ».
-          if sautes or flaky or passes != 10:
+          if sautes or flaky or passes != 12:
               # NOMMER ce qui a bougé : « 1 flaky » sans nom n'est pas
               # diagnosticable depuis un poste qui n'atteint pas les journaux
               # d'Actions (leçon du 2026-10-07 : un flake a rendu un run rouge
@@ -1223,7 +1240,7 @@ jobs:
                               coupables.append(f"{etat}: {spec.get('title', '?')} [{titres[:120]}]")
               detail = "; ".join(coupables[:5]) or "aucun test nommé dans le rapport"
               raise SystemExit(
-                  f"GARDE-FOU live e2e : attendu 10 tests passés au premier essai, "
+                  f"GARDE-FOU live e2e : attendu 12 tests passés au premier essai, "
                   f"0 flaky, 0 sautés — mesuré {passes} passés, {flaky} flaky, "
                   f"{sautes} sautés. Les tests live ne doivent jamais s'ignorer "
                   "silencieusement ni masquer une instabilité par retry. "
@@ -1289,31 +1306,28 @@ jobs:
           passes = stats["expected"]
           flaky = stats.get("flaky", 0)
           sautes = stats.get("skipped", 0)
-          # Politique de comptage : les 2 tests doivent VERDIR, aucun ne doit
-          # être sauté. Un test qui n'est vert qu'à la reprise (flaky) reste
-          # accepté — la CI mesurait sinon un rouge pour une reprise interne de
-          # Playwright — mais il est PUBLIÉ en ::warning : un flaky silencieux
-          # finirait par cacher une régression réelle.
-          if sautes or passes + flaky != 2:
+          inattendus = stats.get("unexpected", 0)
+          # Politique de comptage stricte : les 2 tests doivent passer au
+          # premier essai. Un vert obtenu seulement après retry est une
+          # instabilité à instruire, jamais une preuve silencieusement acquise.
+          if sautes or flaky or inattendus or passes != 2:
               print(
-                  f"::error title=e2e-doublons-count::attendu 2 tests verts, 0 sautés — "
-                  f"mesuré {passes} passés au premier essai, {flaky} flaky, {sautes} sautés"
+                  f"::error title=e2e-doublons-count::attendu 2 tests passés au premier essai, "
+                  f"0 flaky, 0 sautés — mesuré {passes} passés, {flaky} flaky, "
+                  f"{sautes} sautés, {inattendus} en échec"
               )
               raise SystemExit(
-                  f"GARDE-FOU e2e doublons : attendu 2 tests verts, 0 sautés — "
-                  f"mesuré {passes} passés au premier essai, {flaky} flaky, {sautes} sautés."
+                  f"GARDE-FOU e2e doublons : attendu 2 tests passés au premier essai, "
+                  f"0 flaky, 0 sautés — mesuré {passes} passés, {flaky} flaky, "
+                  f"{sautes} sautés, {inattendus} en échec."
               )
-          if flaky:
-              print(
-                  f"::warning title=e2e-doublons-flaky::{flaky} test(s) vert(s) seulement à la reprise "
-                  f"({passes} verts au premier essai) — à instruire, la porte reste ouverte."
-              )
-          print(f"::notice title=e2e-doublons::2 tests verts (bandeau visible, aucune fusion proposée)")
+          print("::notice title=e2e-doublons::2 tests verts au premier essai (bandeau visible, aucune fusion proposée)")
           PY
-      # Lot L.2 (L.2.10) — les comptes nominatifs, éprouvés en conditions
-      # réelles : connexion nominative, 403 pour un opérateur, 200 pour un
-      # administrateur, et surtout un cookie COPIÉ qui ne vaut plus rien après
-      # déconnexion (session révoquée en base).
+      # Lot L.2 (L.2.10) + Lot 1 — les comptes nominatifs, éprouvés en
+      # conditions réelles : connexion nominative, rôles canoniques stockés,
+      # 403 pour un utilisateur sur la gestion des comptes, 200 pour un admin,
+      # routes d'approbation/notification fermées aux anonymes, et surtout un
+      # cookie COPIÉ qui ne vaut plus rien après déconnexion.
       - name: Run live E2E auth nominatif (comptes, rôles, révocation)
         working-directory: frontend
         env:
@@ -1338,30 +1352,528 @@ jobs:
           passes = stats["expected"]
           flaky = stats.get("flaky", 0)
           sautes = stats.get("skipped", 0)
-          # 26 tests : les 23 existants (19 sondes d'auth + 4 comptes
-          # nominatifs) et 3 nouvelles sondes pour le catalogue et les pièces
-          # par ID. Le compte reste EXACT : aucun test ne peut s'ignorer en CI.
-          # Même politique que l'étape doublons : tous doivent verdir et aucun
-          # ne doit être sauté ; une reprise interne est publiée en ::warning.
-          if sautes or passes + flaky != 26:
+          inattendus = stats.get("unexpected", 0)
+          # 34 tests : 23 sondes anonymes (dont les 8 routes Lot 1
+          # d'approbation et de notification), 7 parcours de session de
+          # secours/santé, et 4 parcours de comptes nominatifs. Le compte reste
+          # EXACT et strict : premier essai uniquement, aucun saut en CI.
+          if sautes or flaky or inattendus or passes != 34:
               # Message aussi en annotation : c'est le seul canal lisible en CI.
               print(
-                  f"::error title=e2e-auth-count::attendu 26 tests verts, 0 sautés — "
-                  f"mesuré {passes} passés au premier essai, {flaky} flaky, {sautes} sautés"
+                  f"::error title=e2e-auth-count::attendu 34 tests passés au premier essai, "
+                  f"0 flaky, 0 sautés — mesuré {passes} passés, {flaky} flaky, "
+                  f"{sautes} sautés, {inattendus} en échec"
               )
               raise SystemExit(
-                  f"GARDE-FOU e2e auth : attendu 26 tests verts, 0 sautés — "
-                  f"mesuré {passes} passés au premier essai, {flaky} flaky, {sautes} sautés."
+                  f"GARDE-FOU e2e auth : attendu 34 tests passés au premier essai, "
+                  f"0 flaky, 0 sautés — mesuré {passes} passés, {flaky} flaky, "
+                  f"{sautes} sautés, {inattendus} en échec."
               )
-          if flaky:
-              print(
-                  f"::warning title=e2e-auth-flaky::{flaky} test(s) vert(s) seulement à la reprise "
-                  f"({passes} verts au premier essai) — à instruire, la porte reste ouverte."
-              )
-          print(f"::notice title=e2e-auth-nominatif::26 tests verts (dont 4 sur les comptes nominatifs)")
+          print("::notice title=e2e-auth-nominatif::34 tests verts au premier essai (dont 4 sur les comptes nominatifs)")
           PY
 
-      - name: Upload live E2E reports on failure (doublons, auth nominatif)
+      # Lot 1 — parcours navigateur complets des quatre rôles : demande de
+      # téléchargement relue en octets, modification et suppression logique
+      # exécutées après décision, notifications et cloche, auto-approbation
+      # refusée, lecture/admin/secours cantonnés à leur rôle, et changement
+      # de rôle avec révocation immédiate des sessions.
+      - name: Run live E2E Lot 1 (rôles, approbations, notifications)
+        working-directory: frontend
+        env:
+          SEAMTECH_E2E_DATABASE_URL: postgresql://seamtech:seamtech_test_password@localhost:5432/seamtech_search_test
+          PLAYWRIGHT_JSON_OUTPUT_NAME: report-lot1.json
+        run: |
+          set -uo pipefail
+          set +e
+          pnpm exec playwright test e2e/lot1-approbations.spec.ts --reporter=list,json 2>&1 | tee /tmp/e2e_lot1.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            echo "::error title=e2e-lot1-failed::$(grep -aE '✘|✓|failed|Error|expect|attendu|Timeout' /tmp/e2e_lot1.log | head -30 | tr -d '\000-\010\013\014\016-\037' | sed 's/%/%25/g' | tr '\n' ';' | head -c 2500)"
+            echo "::error title=e2e-lot1-tail::$(tail -50 /tmp/e2e_lot1.log | tr -d '\000-\010\013\014\016-\037' | sed 's/%/%25/g' | tr '\n' ';' | head -c 2500)"
+            # Ne pas sortir ici : le parseur JSON ci-dessous publie les causes
+            # par test (premier essai compris), puis le code Playwright est
+            # restitué tel quel après le parseur.
+          fi
+          python - <<'PY'
+          import json
+          import os
+
+          if not os.path.exists("report-lot1.json"):
+              print("::error title=e2e-lot1-count::report-lot1.json absent — rien n'a été mesuré")
+              raise SystemExit("GARDE-FOU e2e Lot 1 : report-lot1.json absent.")
+          d = json.load(open("report-lot1.json"))
+          stats = d["stats"]
+          passes = stats["expected"]
+          flaky = stats.get("flaky", 0)
+          sautes = stats.get("skipped", 0)
+          inattendus = stats.get("unexpected", 0)
+
+          def problemes(suites):
+              for suite in suites or []:
+                  for spec in suite.get("specs") or []:
+                      for test in spec.get("tests") or []:
+                          etat = test.get("status") or test.get("outcome")
+                          if etat in {"flaky", "unexpected", "skipped"}:
+                              causes = []
+                              for resultat in test.get("results") or []:
+                                  erreur = resultat.get("error") or {}
+                                  brut = str(erreur.get("message") or "")
+                                  message = "".join(c if c >= " " else " " for c in brut)
+                                  message = message.replace("%", "%25").strip()
+                                  lieu = erreur.get("location") or {}
+                                  if lieu.get("file"):
+                                      message = f"{lieu.get('file')}:{lieu.get('line', '?')} — {message}"
+                                  if message:
+                                      causes.append(message[:500])
+                              yield f"{etat}: {spec.get('title', '?')} — {causes[0] if causes else 'cause non consignée'}"
+                  yield from problemes(suite.get("suites") or [])
+
+          if sautes or flaky or inattendus or passes != 7:
+              detail = "; ".join(list(problemes(d.get("suites") or []))[:5]) or "aucun test nommé dans le rapport"
+              print(
+                  "::error title=e2e-lot1-count::attendu 7 tests passés au premier essai, "
+                  f"0 flaky, 0 sautés — mesuré {passes} passés, {flaky} flaky, "
+                  f"{sautes} sautés, {inattendus} en échec. Détail : {detail}"
+              )
+              raise SystemExit(
+                  "GARDE-FOU e2e Lot 1 : attendu 7 tests passés au premier essai, "
+                  f"0 flaky, 0 sautés — mesuré {passes} passés, {flaky} flaky, "
+                  f"{sautes} sautés, {inattendus} en échec. Détail : {detail}"
+              )
+          print("::notice title=e2e-lot1::7 parcours Lot 1 verts au premier essai (4 rôles, téléchargement, modification, suppression, notifications, révocation)")
+          PY
+          if [ "$rc" -ne 0 ]; then
+            exit "$rc"
+          fi
+
+      # Lot 3b — écran approbateur des extractions de voiles : file réelle
+      # (dépôts du seed), PDF source côte à côte, correction du libellé de
+      # bateau brut, décision de liaison vers le référentiel canonique
+      # (création de modèle + alias appris), cote corrigée et historisée.
+      # Lecture/utilisateur : aucun accès à l'écran de décision.
+      - name: Run live E2E Lot 3b (extractions voiles, liaison bateau, corrections)
+        working-directory: frontend
+        env:
+          SEAMTECH_E2E_DATABASE_URL: postgresql://seamtech:seamtech_test_password@localhost:5432/seamtech_search_test
+          PLAYWRIGHT_JSON_OUTPUT_NAME: report-lot3b.json
+        run: |
+          set -uo pipefail
+          set +e
+          pnpm exec playwright test e2e/lot3b-extractions.spec.ts --reporter=list,json 2>&1 | tee /tmp/e2e_lot3b.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            echo "::error title=e2e-lot3b-failed::$(grep -aE '✘|✓|failed|Error|expect|attendu|Timeout' /tmp/e2e_lot3b.log | head -30 | tr -d '\000-\010\013\014\016-\037' | sed 's/%/%25/g' | tr '\n' ';' | head -c 2500)"
+            echo "::error title=e2e-lot3b-tail::$(tail -50 /tmp/e2e_lot3b.log | tr -d '\000-\010\013\014\016-\037' | sed 's/%/%25/g' | tr '\n' ';' | head -c 2500)"
+            # Ne pas sortir ici : le parseur JSON ci-dessous publie les causes
+            # par test (premier essai compris), puis le code Playwright est
+            # restitué tel quel après le parseur.
+          fi
+          python - <<'PY'
+          import json
+          import os
+
+          if not os.path.exists("report-lot3b.json"):
+              print("::error title=e2e-lot3b-count::report-lot3b.json absent — rien n'a été mesuré")
+              raise SystemExit("GARDE-FOU e2e Lot 3b : report-lot3b.json absent.")
+          d = json.load(open("report-lot3b.json"))
+          stats = d["stats"]
+          passes = stats["expected"]
+          flaky = stats.get("flaky", 0)
+          sautes = stats.get("skipped", 0)
+          inattendus = stats.get("unexpected", 0)
+
+          def problemes(suites):
+              for suite in suites or []:
+                  for spec in suite.get("specs") or []:
+                      for test in spec.get("tests") or []:
+                          etat = test.get("status") or test.get("outcome")
+                          if etat in {"flaky", "unexpected", "skipped"}:
+                              causes = []
+                              for resultat in test.get("results") or []:
+                                  erreur = resultat.get("error") or {}
+                                  brut = str(erreur.get("message") or "")
+                                  message = "".join(c if c >= " " else " " for c in brut)
+                                  message = message.replace("%", "%25").strip()
+                                  lieu = erreur.get("location") or {}
+                                  if lieu.get("file"):
+                                      message = f"{lieu.get('file')}:{lieu.get('line', '?')} — {message}"
+                                  if message:
+                                      causes.append(message[:500])
+                              yield f"{etat}: {spec.get('title', '?')} — {causes[0] if causes else 'cause non consignée'}"
+                  yield from problemes(suite.get("suites") or [])
+
+          if sautes or flaky or inattendus or passes != 3:
+              detail = "; ".join(list(problemes(d.get("suites") or []))[:5]) or "aucun test nommé dans le rapport"
+              print(
+                  "::error title=e2e-lot3b-count::attendu 3 tests passés au premier essai, "
+                  f"0 flaky, 0 sautés — mesuré {passes} passés, {flaky} flaky, "
+                  f"{sautes} sautés, {inattendus} en échec. Détail : {detail}"
+              )
+              raise SystemExit(
+                  "GARDE-FOU e2e Lot 3b : attendu 3 tests passés au premier essai, "
+                  f"0 flaky, 0 sautés — mesuré {passes} passés, {flaky} flaky, "
+                  f"{sautes} sautés, {inattendus} en échec. Détail : {detail}"
+              )
+          print("::notice title=e2e-lot3b::3 parcours Lot 3b verts au premier essai (approbateur lie/corrige côte à côte, lecture/utilisateur refusés)")
+          PY
+          if [ "$rc" -ne 0 ]; then
+            exit "$rc"
+          fi
+
+      # Lot 4b (Fonction A) — comparaison de voiles bloc par bloc : choix A/B
+      # à l'écran sur les extractions réelles du seed, écart SLU réel de
+      # +160 cm relu, badge « indicative » quand les modèles diffèrent,
+      # lecture seule ouverte au rôle lecture, secours refusé.
+      - name: Run live E2E Lot 4b (comparaison de voiles)
+        working-directory: frontend
+        env:
+          SEAMTECH_E2E_DATABASE_URL: postgresql://seamtech:seamtech_test_password@localhost:5432/seamtech_search_test
+          PLAYWRIGHT_JSON_OUTPUT_NAME: report-lot4b.json
+        run: |
+          set -uo pipefail
+          set +e
+          pnpm exec playwright test e2e/lot4b-comparaison.spec.ts --reporter=list,json 2>&1 | tee /tmp/e2e_lot4b.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            echo "::error title=e2e-lot4b-failed::$(grep -aE '✘|✓|failed|Error|expect|attendu|Timeout' /tmp/e2e_lot4b.log | head -30 | tr -d '\000-\010\013\014\016-\037' | sed 's/%/%25/g' | tr '\n' ';' | head -c 2500)"
+            echo "::error title=e2e-lot4b-tail::$(tail -50 /tmp/e2e_lot4b.log | tr -d '\000-\010\013\014\016-\037' | sed 's/%/%25/g' | tr '\n' ';' | head -c 2500)"
+            # Ne pas sortir ici : le parseur JSON ci-dessous publie les causes
+            # par test (premier essai compris), puis le code Playwright est
+            # restitué tel quel après le parseur.
+          fi
+          python - <<'PY'
+          import json
+          import os
+
+          if not os.path.exists("report-lot4b.json"):
+              print("::error title=e2e-lot4b-count::report-lot4b.json absent — rien n'a été mesuré")
+              raise SystemExit("GARDE-FOU e2e Lot 4b : report-lot4b.json absent.")
+          d = json.load(open("report-lot4b.json"))
+          stats = d["stats"]
+          passes = stats["expected"]
+          flaky = stats.get("flaky", 0)
+          sautes = stats.get("skipped", 0)
+          inattendus = stats.get("unexpected", 0)
+
+          def problemes(suites):
+              for suite in suites or []:
+                  for spec in suite.get("specs") or []:
+                      for test in spec.get("tests") or []:
+                          etat = test.get("status") or test.get("outcome")
+                          if etat in {"flaky", "unexpected", "skipped"}:
+                              causes = []
+                              for resultat in test.get("results") or []:
+                                  erreur = resultat.get("error") or {}
+                                  brut = str(erreur.get("message") or "")
+                                  message = "".join(c if c >= " " else " " for c in brut)
+                                  message = message.replace("%", "%25").strip()
+                                  lieu = erreur.get("location") or {}
+                                  if lieu.get("file"):
+                                      message = f"{lieu.get('file')}:{lieu.get('line', '?')} — {message}"
+                                  if message:
+                                      causes.append(message[:500])
+                              yield f"{etat}: {spec.get('title', '?')} — {causes[0] if causes else 'cause non consignée'}"
+                  yield from problemes(suite.get("suites") or [])
+
+          if sautes or flaky or inattendus or passes != 3:
+              detail = "; ".join(list(problemes(d.get("suites") or []))[:5]) or "aucun test nommé dans le rapport"
+              print(
+                  "::error title=e2e-lot4b-count::attendu 3 tests passés au premier essai, "
+                  f"0 flaky, 0 sautés — mesuré {passes} passés, {flaky} flaky, "
+                  f"{sautes} sautés, {inattendus} en échec. Détail : {detail}"
+              )
+              raise SystemExit(
+                  "GARDE-FOU e2e Lot 4b : attendu 3 tests passés au premier essai, "
+                  f"0 flaky, 0 sautés — mesuré {passes} passés, {flaky} flaky, "
+                  f"{sautes} sautés, {inattendus} en échec. Détail : {detail}"
+              )
+          print("::notice title=e2e-lot4b::3 parcours Lot 4b verts au premier essai (écarts cm réels, honnêteté même-modèle, lecture seule)")
+          PY
+          if [ "$rc" -ne 0 ]; then
+            exit "$rc"
+          fi
+
+      # Lot 5 (Fonction B) — confiance de réutilisation : la vraie fiche
+      # 7792-SO évaluée contre les cinq voiles de référence semées du même
+      # modèle/type (score robuste justifié et persisté), lecture sans
+      # bouton d'évaluation, secours refusé.
+      - name: Run live E2E Lot 5 (confiance de réutilisation)
+        working-directory: frontend
+        env:
+          SEAMTECH_E2E_DATABASE_URL: postgresql://seamtech:seamtech_test_password@localhost:5432/seamtech_search_test
+          PLAYWRIGHT_JSON_OUTPUT_NAME: report-lot5.json
+        run: |
+          set -uo pipefail
+          set +e
+          pnpm exec playwright test e2e/lot5-confiance.spec.ts --reporter=list,json 2>&1 | tee /tmp/e2e_lot5.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            echo "::error title=e2e-lot5-failed::$(grep -aE '✘|✓|failed|Error|expect|attendu|Timeout' /tmp/e2e_lot5.log | head -30 | tr -d '\000-\010\013\014\016-\037' | sed 's/%/%25/g' | tr '\n' ';' | head -c 2500)"
+            echo "::error title=e2e-lot5-tail::$(tail -50 /tmp/e2e_lot5.log | tr -d '\000-\010\013\014\016-\037' | sed 's/%/%25/g' | tr '\n' ';' | head -c 2500)"
+            # Ne pas sortir ici : le parseur JSON ci-dessous publie les causes
+            # par test (premier essai compris), puis le code Playwright est
+            # restitué tel quel après le parseur.
+          fi
+          python - <<'PY'
+          import json
+          import os
+
+          if not os.path.exists("report-lot5.json"):
+              print("::error title=e2e-lot5-count::report-lot5.json absent — rien n'a été mesuré")
+              raise SystemExit("GARDE-FOU e2e Lot 5 : report-lot5.json absent.")
+          d = json.load(open("report-lot5.json"))
+          stats = d["stats"]
+          passes = stats["expected"]
+          flaky = stats.get("flaky", 0)
+          sautes = stats.get("skipped", 0)
+          inattendus = stats.get("unexpected", 0)
+
+          def problemes(suites):
+              for suite in suites or []:
+                  for spec in suite.get("specs") or []:
+                      for test in spec.get("tests") or []:
+                          etat = test.get("status") or test.get("outcome")
+                          if etat in {"flaky", "unexpected", "skipped"}:
+                              causes = []
+                              for resultat in test.get("results") or []:
+                                  erreur = resultat.get("error") or {}
+                                  brut = str(erreur.get("message") or "")
+                                  message = "".join(c if c >= " " else " " for c in brut)
+                                  message = message.replace("%", "%25").strip()
+                                  lieu = erreur.get("location") or {}
+                                  if lieu.get("file"):
+                                      message = f"{lieu.get('file')}:{lieu.get('line', '?')} — {message}"
+                                  if message:
+                                      causes.append(message[:500])
+                              yield f"{etat}: {spec.get('title', '?')} — {causes[0] if causes else 'cause non consignée'}"
+                  yield from problemes(suite.get("suites") or [])
+
+          if sautes or flaky or inattendus or passes != 3:
+              detail = "; ".join(list(problemes(d.get("suites") or []))[:5]) or "aucun test nommé dans le rapport"
+              print(
+                  "::error title=e2e-lot5-count::attendu 3 tests passés au premier essai, "
+                  f"0 flaky, 0 sautés — mesuré {passes} passés, {flaky} flaky, "
+                  f"{sautes} sautés, {inattendus} en échec. Détail : {detail}"
+              )
+              raise SystemExit(
+                  "GARDE-FOU e2e Lot 5 : attendu 3 tests passés au premier essai, "
+                  f"0 flaky, 0 sautés — mesuré {passes} passés, {flaky} flaky, "
+                  f"{sautes} sautés, {inattendus} en échec. Détail : {detail}"
+              )
+          print("::notice title=e2e-lot5::3 parcours Lot 5 verts au premier essai (score robuste justifié et persisté, lecture sans évaluation)")
+          PY
+          if [ "$rc" -ne 0 ]; then
+            exit "$rc"
+          fi
+
+      # Lot 6 — parcours métier comptés en clics (3 demande + 3 décision
+      # + 1 téléchargement, octets PDF relus), matrice navigation × rôle
+      # sans refus sur lien promis, liens croisés voiles → fiche métier.
+      - name: Run live E2E Lot 6 (parcours 3 clics, cohérence)
+        working-directory: frontend
+        env:
+          SEAMTECH_E2E_DATABASE_URL: postgresql://seamtech:seamtech_test_password@localhost:5432/seamtech_search_test
+          PLAYWRIGHT_JSON_OUTPUT_NAME: report-lot6.json
+        run: |
+          set -uo pipefail
+          set +e
+          pnpm exec playwright test e2e/lot6-parcours-3clics.spec.ts --reporter=list,json 2>&1 | tee /tmp/e2e_lot6.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            echo "::error title=e2e-lot6-failed::$(grep -aE '✘|✓|failed|Error|expect|attendu|Timeout' /tmp/e2e_lot6.log | head -30 | tr -d '\000-\010\013\014\016-\037' | sed 's/%/%25/g' | tr '\n' ';' | head -c 2500)"
+            echo "::error title=e2e-lot6-tail::$(tail -50 /tmp/e2e_lot6.log | tr -d '\000-\010\013\014\016-\037' | sed 's/%/%25/g' | tr '\n' ';' | head -c 2500)"
+            # Ne pas sortir ici : le parseur JSON ci-dessous publie les causes
+            # par test (premier essai compris), puis le code Playwright est
+            # restitué tel quel après le parseur.
+          fi
+          python - <<'PY'
+          import json
+          import os
+
+          if not os.path.exists("report-lot6.json"):
+              print("::error title=e2e-lot6-count::report-lot6.json absent — rien n'a été mesuré")
+              raise SystemExit("GARDE-FOU e2e Lot 6 : report-lot6.json absent.")
+          d = json.load(open("report-lot6.json"))
+          stats = d["stats"]
+          passes = stats["expected"]
+          flaky = stats.get("flaky", 0)
+          sautes = stats.get("skipped", 0)
+          inattendus = stats.get("unexpected", 0)
+
+          def problemes(suites):
+              for suite in suites or []:
+                  for spec in suite.get("specs") or []:
+                      for test in spec.get("tests") or []:
+                          etat = test.get("status") or test.get("outcome")
+                          if etat in {"flaky", "unexpected", "skipped"}:
+                              causes = []
+                              for resultat in test.get("results") or []:
+                                  erreur = resultat.get("error") or {}
+                                  brut = str(erreur.get("message") or "")
+                                  message = "".join(c if c >= " " else " " for c in brut)
+                                  message = message.replace("%", "%25").strip()
+                                  lieu = erreur.get("location") or {}
+                                  if lieu.get("file"):
+                                      message = f"{lieu.get('file')}:{lieu.get('line', '?')} — {message}"
+                                  if message:
+                                      causes.append(message[:500])
+                              yield f"{etat}: {spec.get('title', '?')} — {causes[0] if causes else 'cause non consignée'}"
+                  yield from problemes(suite.get("suites") or [])
+
+          if sautes or flaky or inattendus or passes != 3:
+              detail = "; ".join(list(problemes(d.get("suites") or []))[:5]) or "aucun test nommé dans le rapport"
+              print(
+                  "::error title=e2e-lot6-count::attendu 3 tests passés au premier essai, "
+                  f"0 flaky, 0 sautés — mesuré {passes} passés, {flaky} flaky, "
+                  f"{sautes} sautés, {inattendus} en échec. Détail : {detail}"
+              )
+              raise SystemExit(
+                  "GARDE-FOU e2e Lot 6 : attendu 3 tests passés au premier essai, "
+                  f"0 flaky, 0 sautés — mesuré {passes} passés, {flaky} flaky, "
+                  f"{sautes} sautés, {inattendus} en échec. Détail : {detail}"
+              )
+          print("::notice title=e2e-lot6::3 parcours Lot 6 verts au premier essai (3 clics par acteur, navigation sans impasse, liens croisés)")
+          PY
+          if [ "$rc" -ne 0 ]; then
+            exit "$rc"
+          fi
+
+      # Parcours live canonisés par Lot 1 : les écrans de validation et les
+      # liens directs sont désormais exercés par un approbateur nominatif, le
+      # dépôt suivi par un utilisateur. Ils ne doivent plus dépendre du
+      # compte de secours pour une action métier.
+      - name: Run live E2E parcours canonisés (fichiers, pièces, suivi de lot)
+        working-directory: frontend
+        env:
+          SEAMTECH_E2E_DATABASE_URL: postgresql://seamtech:seamtech_test_password@localhost:5432/seamtech_search_test
+          PLAYWRIGHT_JSON_OUTPUT_NAME: report-parcours-lot1.json
+        run: |
+          set -uo pipefail
+          set +e
+          pnpm exec playwright test e2e/parcours-fichiers.spec.ts e2e/validation-pieces.spec.ts e2e/nouveau-suivi.spec.ts --reporter=list,json 2>&1 | tee /tmp/e2e_parcours_lot1.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            echo "::error title=e2e-parcours-lot1-failed::$(grep -E '✘|✓|failed|Error|expect|attendu|Timeout' /tmp/e2e_parcours_lot1.log | head -30 | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 2500)"
+            echo "::error title=e2e-parcours-lot1-tail::$(tail -50 /tmp/e2e_parcours_lot1.log | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 2500)"
+            exit "$rc"
+          fi
+          python - <<'PY'
+          import json
+          import os
+
+          if not os.path.exists("report-parcours-lot1.json"):
+              print("::error title=e2e-parcours-lot1-count::report-parcours-lot1.json absent — rien n'a été mesuré")
+              raise SystemExit("GARDE-FOU e2e parcours Lot 1 : rapport absent.")
+          d = json.load(open("report-parcours-lot1.json"))
+          stats = d["stats"]
+          passes = stats["expected"]
+          flaky = stats.get("flaky", 0)
+          sautes = stats.get("skipped", 0)
+          inattendus = stats.get("unexpected", 0)
+
+          def problemes(suites):
+              for suite in suites or []:
+                  for spec in suite.get("specs") or []:
+                      for test in spec.get("tests") or []:
+                          etat = test.get("status") or test.get("outcome")
+                          if etat in {"flaky", "unexpected", "skipped"}:
+                              causes = []
+                              for resultat in test.get("results") or []:
+                                  erreur = resultat.get("error") or {}
+                                  message = str(erreur.get("message") or "").strip().replace("\n", " ")
+                                  if message:
+                                      causes.append(message[:300])
+                              yield f"{etat}: {spec.get('title', '?')} — {causes[0] if causes else 'cause non consignée'}"
+                  yield from problemes(suite.get("suites") or [])
+
+          # 8 tests : 5 parcours fichiers, 1 course /pieces, 2 suivi de lot.
+          if sautes or flaky or inattendus or passes != 8:
+              detail = "; ".join(list(problemes(d.get("suites") or []))[:5]) or "aucun test nommé dans le rapport"
+              print(
+                  "::error title=e2e-parcours-lot1-count::attendu 8 tests passés au premier essai, "
+                  f"0 flaky, 0 sautés — mesuré {passes} passés, {flaky} flaky, "
+                  f"{sautes} sautés, {inattendus} en échec. Détail : {detail}"
+              )
+              raise SystemExit(
+                  "GARDE-FOU e2e parcours Lot 1 : attendu 8 tests passés au premier essai, "
+                  f"0 flaky, 0 sautés — mesuré {passes} passés, {flaky} flaky, "
+                  f"{sautes} sautés, {inattendus} en échec. Détail : {detail}"
+              )
+          print("::notice title=e2e-parcours-lot1::8 parcours live canonisés verts au premier essai")
+          PY
+
+      # OCR navigateur en PostgreSQL : les téléchargements source/pièce sont
+      # désormais réservés à un approbateur nominatif. La suite SQLite garde
+      # les cas d'erreur, mais cette étape rejoue les quatre scénarios dans
+      # la pile métier réelle, sans aucun saut silencieux.
+      - name: Run live E2E scan navigateur OCR (approbateur nominatif)
+        working-directory: frontend
+        env:
+          SEAMTECH_E2E_DATABASE_URL: postgresql://seamtech:seamtech_test_password@localhost:5432/seamtech_search_test
+          SEAMTECH_OCR_OBLIGATOIRE: "1"
+          PLAYWRIGHT_JSON_OUTPUT_NAME: report-scan-ocr-live.json
+        run: |
+          set -uo pipefail
+          set +e
+          pnpm exec playwright test e2e/scan-browser-ocr.spec.ts --reporter=list,json 2>&1 | tee /tmp/e2e_scan_ocr_live.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            echo "::error title=e2e-scan-ocr-live-failed::$(grep -E '✘|✓|failed|Error|expect|attendu|Timeout|tesseract' /tmp/e2e_scan_ocr_live.log | head -35 | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 3000)"
+            echo "::error title=e2e-scan-ocr-live-tail::$(tail -60 /tmp/e2e_scan_ocr_live.log | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 3000)"
+            exit "$rc"
+          fi
+          python - <<'PY'
+          import json
+          import os
+
+          if not os.path.exists("report-scan-ocr-live.json"):
+              print("::error title=e2e-scan-ocr-live-count::report-scan-ocr-live.json absent — rien n'a été mesuré")
+              raise SystemExit("GARDE-FOU e2e scan OCR live : rapport absent.")
+          d = json.load(open("report-scan-ocr-live.json"))
+          stats = d["stats"]
+          passes = stats["expected"]
+          flaky = stats.get("flaky", 0)
+          sautes = stats.get("skipped", 0)
+          inattendus = stats.get("unexpected", 0)
+
+          def problemes(suites):
+              for suite in suites or []:
+                  for spec in suite.get("specs") or []:
+                      for test in spec.get("tests") or []:
+                          etat = test.get("status") or test.get("outcome")
+                          if etat in {"flaky", "unexpected", "skipped"}:
+                              causes = []
+                              for resultat in test.get("results") or []:
+                                  erreur = resultat.get("error") or {}
+                                  message = str(erreur.get("message") or "").strip().replace("\n", " ")
+                                  if message:
+                                      causes.append(message[:300])
+                              yield f"{etat}: {spec.get('title', '?')} — {causes[0] if causes else 'cause non consignée'}"
+                  yield from problemes(suite.get("suites") or [])
+
+          if sautes or flaky or inattendus or passes != 4:
+              detail = "; ".join(list(problemes(d.get("suites") or []))[:5]) or "aucun test nommé dans le rapport"
+              print(
+                  "::error title=e2e-scan-ocr-live-count::attendu 4 tests passés au premier essai, "
+                  f"0 flaky, 0 sautés — mesuré {passes} passés, {flaky} flaky, "
+                  f"{sautes} sautés, {inattendus} en échec. Détail : {detail}"
+              )
+              raise SystemExit(
+                  "GARDE-FOU e2e scan OCR live : attendu 4 tests passés au premier essai, "
+                  f"0 flaky, 0 sautés — mesuré {passes} passés, {flaky} flaky, "
+                  f"{sautes} sautés, {inattendus} en échec. Détail : {detail}"
+              )
+          print("::notice title=e2e-scan-ocr-live::4 scénarios OCR navigateur verts au premier essai en PostgreSQL")
+          PY
+
+      - name: Upload live E2E reports on failure (doublons, auth, Lot 1, parcours, scan OCR)
         if: failure()
         uses: actions/upload-artifact@v7
         with:
@@ -1369,6 +1881,9 @@ jobs:
           path: |
             frontend/report-doublons.json
             frontend/report-auth.json
+            frontend/report-lot1.json
+            frontend/report-parcours-lot1.json
+            frontend/report-scan-ocr-live.json
             frontend/test-results/
           if-no-files-found: ignore
           retention-days: 5

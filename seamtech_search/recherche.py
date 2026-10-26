@@ -42,9 +42,28 @@ import time
 from dataclasses import dataclass
 from typing import Annotated, Any, Callable, Mapping, Sequence
 
-from fastapi import Header, HTTPException, Query
+from fastapi import Body, Header, HTTPException, Query
 
 from seamtech_search.fiches.normalisation import normaliser_cle_recherche, sans_accents, vers_metres
+from seamtech_search.referentiel_bateaux import (
+    ORDRE_CORRESPONDANCES,
+    TYPE_ALIAS,
+    TYPE_EXACT,
+    TYPE_FLOU,
+    TYPE_PREFIXE,
+    AliasBateauEnConflit,
+    assurer_alias,
+    charger_cles_modeles,
+    classer_correspondances_modeles,
+    correspondances_dans_requete,
+    defusionner_modele,
+    fusionner_modeles,
+    lister_modeles,
+    normaliser_modele_bateau,
+    rechercher_modeles_flous,
+    resoudre_modele_depuis_texte,
+)
+from seamtech_search.securite_requetes import exiger_administrateur_requete
 
 LOGGER = logging.getLogger("seamtech.recherche")
 
@@ -55,6 +74,19 @@ FACETTE_LIMITE = 20       # valeurs max par facette affichée
 SEUIL_TRIGRAMMES = 0.30   # word_similarity minimale pour la source tolérante
 SUGGESTION_LIMITE_DEFAUT = 10
 SYNONYMES_TTL_S = 30.0    # le référentiel synonyme est petit et modifiable à chaud
+
+# Lot 4a — aperçu « Extrait du document » des résultats. L'extrait est borné
+# côté API (jamais un document entier), et ses correspondances sont rendues en
+# segments textuels structurés : le contenu source ne devient jamais du HTML.
+EXTRAIT_DOCUMENT_MAX_CARACTERES = 360
+EXTRAIT_DOCUMENT_TEXTE_COURT_MAX = 2000
+_MARQUEUR_EXTRAIT_DEBUT = "[[SEAMTECH_CORRESPONDANCE]]"
+_MARQUEUR_EXTRAIT_FIN = "[[/SEAMTECH_CORRESPONDANCE]]"
+_RE_MARQUEURS_EXTRAIT = re.compile(
+    r"(\[\[SEAMTECH_CORRESPONDANCE\]\]|\[\[/SEAMTECH_CORRESPONDANCE\]\])"
+)
+_RE_ESPACES_EXTRAIT = re.compile(r"\s+")
+_RE_MOTS_EXTRAIT = re.compile(r"\w+", re.UNICODE)
 
 # Unités métier des cotes (normalisées à l'extraction, documentées dans docs/API.md) :
 # - slu_m, sle_m, sf_m, shw_m : mètres (m)
@@ -237,7 +269,7 @@ def _cle_cote(cote: str) -> str:
 FILTRES_AUTORISES = frozenset(
     {
         "type_voile", "client", "bateau", "matiere", "gamme",
-        "annee", "annee_min", "annee_max",
+        "annee", "annee_min", "annee_max", "boat_model_id",
         "cote", "min", "max", "cote_min", "cote_max",
     }
 )
@@ -261,6 +293,7 @@ TRIS_AUTORISES = frozenset(
 # base, car les tests (et les déploiements) changent de base jetable ; un
 # cache global sans clé servirait des synonymes d'une autre base.
 _SYNONYMES_CACHE: dict[str, tuple[float, dict[str, str]]] = {}
+_MODELES_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 
 
 def _exiger_postgres(index: Any) -> None:  # noqa: ANN401 - SearchIndex réel
@@ -284,8 +317,420 @@ def _capacites(cursor: Any) -> dict[str, bool]:  # noqa: ANN401 - curseur psycop
     return {"pg_trgm": cursor.fetchone() is not None}
 
 
+def _nettoyer_segment_extrait(texte: str) -> str:
+    """Texte affichable d'un segment : contrôles neutralisés, espaces unifiés."""
+    sans_controle = "".join(
+        " " if ord(caractere) < 32 or ord(caractere) == 127 else caractere
+        for caractere in texte
+    )
+    return _RE_ESPACES_EXTRAIT.sub(" ", sans_controle)
+
+
+def _fusionner_segments_extrait(
+    segments: Sequence[tuple[str, bool]],
+) -> list[dict[str, Any]]:
+    fusionnes: list[list[Any]] = []
+    for texte, correspondance in segments:
+        if not texte:
+            continue
+        if fusionnes and fusionnes[-1][1] is correspondance:
+            fusionnes[-1][0] += texte
+        else:
+            fusionnes.append([texte, correspondance])
+    if fusionnes:
+        fusionnes[0][0] = str(fusionnes[0][0]).lstrip()
+        fusionnes[-1][0] = str(fusionnes[-1][0]).rstrip()
+    return [
+        {"texte": str(texte), "correspondance": bool(correspondance)}
+        for texte, correspondance in fusionnes
+        if str(texte)
+    ]
+
+
+def _borner_segments_extrait(
+    segments: Sequence[dict[str, Any]],
+    limite: int,
+) -> list[dict[str, Any]]:
+    """Fenêtre bornée centrée sur la première correspondance quand elle existe."""
+    if limite <= 0:
+        return []
+    positions: list[tuple[int, int, dict[str, Any]]] = []
+    position = 0
+    for segment in segments:
+        texte = str(segment["texte"])
+        positions.append((position, position + len(texte), segment))
+        position += len(texte)
+    if position <= limite:
+        return list(segments)
+
+    texte_complet = "".join(str(segment["texte"]) for segment in segments)
+    correspondance_debut: int | None = None
+    correspondance_fin: int | None = None
+    for debut, fin, segment in positions:
+        if segment["correspondance"] is True:
+            correspondance_debut, correspondance_fin = debut, fin
+            break
+
+    if correspondance_debut is None or correspondance_fin is None:
+        debut_fenetre, fin_fenetre = 0, limite
+    else:
+        longueur_correspondance = correspondance_fin - correspondance_debut
+        if longueur_correspondance >= limite:
+            debut_fenetre = correspondance_debut
+            fin_fenetre = correspondance_debut + limite
+        else:
+            debut_fenetre = correspondance_debut - (limite - longueur_correspondance) // 2
+            debut_fenetre = max(0, min(debut_fenetre, position - limite))
+            fin_fenetre = debut_fenetre + limite
+
+    if debut_fenetre > 0:
+        espace_suivant = texte_complet.find(" ", debut_fenetre)
+        if espace_suivant != -1 and (
+            correspondance_debut is None or espace_suivant < correspondance_debut
+        ):
+            debut_fenetre = espace_suivant + 1
+    if fin_fenetre < position:
+        espace_precedent = texte_complet.rfind(" ", debut_fenetre, fin_fenetre)
+        if espace_precedent > debut_fenetre and (
+            correspondance_fin is None or espace_precedent >= correspondance_fin
+        ):
+            fin_fenetre = espace_precedent
+
+    extraits: list[tuple[str, bool]] = []
+    for debut, fin, segment in positions:
+        if fin <= debut_fenetre or debut >= fin_fenetre:
+            continue
+        texte = str(segment["texte"])
+        extraits.append(
+            (
+                texte[max(0, debut_fenetre - debut) : len(texte) - max(0, fin - fin_fenetre)],
+                segment["correspondance"] is True,
+            )
+        )
+    return _fusionner_segments_extrait(extraits)
+
+
+def _segments_extrait_document(
+    texte: str,
+    limite: int = EXTRAIT_DOCUMENT_MAX_CARACTERES,
+) -> list[dict[str, Any]]:
+    """Convertit les marqueurs PostgreSQL en segments JSON sûrs à afficher."""
+    brut: list[tuple[str, bool]] = []
+    correspondance = False
+    for morceau in _RE_MARQUEURS_EXTRAIT.split(texte or ""):
+        if morceau == _MARQUEUR_EXTRAIT_DEBUT:
+            correspondance = True
+            continue
+        if morceau == _MARQUEUR_EXTRAIT_FIN:
+            correspondance = False
+            continue
+        nettoye = _nettoyer_segment_extrait(morceau)
+        if nettoye:
+            brut.append((nettoye, correspondance))
+    return _borner_segments_extrait(_fusionner_segments_extrait(brut), limite)
+
+
+def _segments_extrait_depuis_texte(
+    texte: str,
+    requetes: Sequence[str],
+    limite: int = EXTRAIT_DOCUMENT_MAX_CARACTERES,
+) -> list[dict[str, Any]]:
+    """Surligne un texte court en Python, sans payer ``ts_headline`` par résultat.
+
+    Réservé aux candidats bornés par ``EXTRAIT_DOCUMENT_TEXTE_COURT_MAX`` :
+    la comparaison plie casse/accents/ligatures via la même clé que la
+    recherche, puis la fenêtre existante centre l'extrait sur le premier mot
+    correspondant. Les longs documents restent traités par PostgreSQL.
+    """
+    nettoye = _nettoyer_segment_extrait(texte or "")
+    if not nettoye.strip():
+        return []
+    termes = {
+        normaliser_cle_recherche(mot)
+        for requete in requetes
+        for mot in _RE_MOTS_EXTRAIT.findall(str(requete or ""))
+        if len(mot) >= 2
+    }
+    termes.discard("")
+    if not termes:
+        return _borner_segments_extrait(
+            _fusionner_segments_extrait([(nettoye, False)]), limite
+        )
+
+    brut: list[tuple[str, bool]] = []
+    position = 0
+    for correspondance in _RE_MOTS_EXTRAIT.finditer(nettoye):
+        if correspondance.start() > position:
+            brut.append((nettoye[position : correspondance.start()], False))
+        mot = correspondance.group(0)
+        brut.append((mot, normaliser_cle_recherche(mot) in termes))
+        position = correspondance.end()
+    if position < len(nettoye):
+        brut.append((nettoye[position:], False))
+    return _borner_segments_extrait(_fusionner_segments_extrait(brut), limite)
+
+
+def _libelle_source_extrait(source: str, libelle_source: str | None) -> str:
+    if source == "fiche":
+        return "Champs de la fiche"
+    brut = _nettoyer_segment_extrait(str(libelle_source or "")).strip()
+    nom = re.split(r"[\\/]", brut)[-1].strip() if brut else ""
+    nom = nom[:120].rstrip()
+    if source == "chunk":
+        return f"Texte du document · {nom}" if nom else "Texte du document"
+    return nom or "Document rattaché"
+
+
+def _construire_extrait_document(
+    texte: str,
+    *,
+    source: str,
+    libelle_source: str | None,
+    requetes: Sequence[str] = (),
+    texte_integral: bool = False,
+) -> dict[str, Any] | None:
+    """Contrat Lot 4a : texte intégralement reconstructible depuis ses segments."""
+    source_retenue = source if source in {"document", "chunk", "fiche"} else "fiche"
+    segments = (
+        _segments_extrait_depuis_texte(texte, requetes)
+        if texte_integral
+        else _segments_extrait_document(texte)
+    )
+    if not segments:
+        return None
+    return {
+        "texte": "".join(str(segment["texte"]) for segment in segments),
+        "segments": segments,
+        "source": source_retenue,
+        "libelle_source": _libelle_source_extrait(source_retenue, libelle_source),
+        "correspondance_requete": any(
+            segment["correspondance"] is True for segment in segments
+        ),
+    }
+
+
+def _extraits_documents(
+    cursor: Any,  # noqa: ANN401 - curseur psycopg2 réel
+    ids: Sequence[int],
+    ts_config: str,
+    requetes: Sequence[str],
+) -> dict[int, dict[str, Any]]:
+    """Meilleur aperçu documentaire pour les fiches d'une page de résultats.
+
+    Ordre de provenance, après pertinence plein texte : document réellement
+    extrait (lien direct, PDF source ou pièce jointe), chunk documentaire,
+    puis champs de la fiche. Les chunks ``resume_champs`` sont exclus : ce
+    sont des résumés générés pour les vecteurs, pas le texte du document.
+    ``requetes`` contient au plus deux variantes alternatives (texte étendu
+    par synonymes et texte saisi), réunies en OU pour le surlignage.
+    """
+    if not ids:
+        return {}
+
+    variantes: list[str] = []
+    for requete in requetes:
+        texte = str(requete or "").strip()
+        if texte and texte not in variantes:
+            variantes.append(texte)
+        if len(variantes) == 2:
+            break
+    requete_1 = variantes[0] if variantes else ""
+    requete_2 = variantes[1] if len(variantes) > 1 else ""
+
+    # pg_catalog direct plutôt qu'information_schema : cette détection est sur
+    # le chemin chaud de chaque recherche et la vue information_schema coûte
+    # plusieurs millisecondes à elle seule sur les runners de mesure.
+    cursor.execute(
+        "SELECT to_regclass('public.documents') IS NOT NULL, "
+        "to_regclass('public.chunk') IS NOT NULL, "
+        "EXISTS ("
+        "SELECT 1 FROM pg_attribute "
+        "WHERE attrelid = to_regclass('public.fiche_piece_jointe') "
+        "AND attname = 'id_document' AND NOT attisdropped)"
+    )
+    documents_disponibles, chunks_disponibles, pieces_disponibles = (
+        bool(valeur) for valeur in cursor.fetchone()
+    )
+
+    branches: list[str] = []
+    if documents_disponibles:
+        branches.extend(
+            [
+                """
+                SELECT p.id_fiche, 'document'::text AS source,
+                       d.name AS libelle_source, d.content AS texte_source,
+                       d.search_vector AS vecteur, 0 AS priorite, d.id AS id_source
+                FROM page p
+                JOIN documents d ON d.id_fiche = p.id_fiche
+                WHERE NOT d.is_dir AND d.extraction_status = 'extracted'
+                  AND btrim(coalesce(d.content, '')) <> ''
+                """,
+                """
+                SELECT p.id_fiche, 'document'::text AS source,
+                       d.name AS libelle_source, d.content AS texte_source,
+                       d.search_vector AS vecteur, 0 AS priorite, d.id AS id_source
+                FROM page p
+                JOIN fiche f ON f.id_fiche = p.id_fiche
+                JOIN documents d
+                  ON d.path = f.fichier_source
+                  OR d.path_key = lower(f.fichier_source)
+                WHERE btrim(coalesce(f.fichier_source, '')) <> ''
+                  AND NOT d.is_dir AND d.extraction_status = 'extracted'
+                  AND btrim(coalesce(d.content, '')) <> ''
+                """,
+            ]
+        )
+        if pieces_disponibles:
+            branches.append(
+                """
+                SELECT p.id_fiche, 'document'::text AS source,
+                       d.name AS libelle_source, d.content AS texte_source,
+                       d.search_vector AS vecteur, 10 AS priorite, d.id AS id_source
+                FROM page p
+                JOIN fiche_piece_jointe pj ON pj.id_fiche = p.id_fiche
+                JOIN documents d ON d.id = pj.id_document
+                WHERE NOT d.is_dir AND d.extraction_status = 'extracted'
+                  AND btrim(coalesce(d.content, '')) <> ''
+                """
+            )
+    if chunks_disponibles:
+        branches.append(
+            """
+            SELECT p.id_fiche, 'chunk'::text AS source,
+                   c.nature AS libelle_source, c.contenu AS texte_source,
+                   c.tsv AS vecteur, 20 AS priorite, c.id_chunk AS id_source
+            FROM page p
+            JOIN chunk c ON c.id_fiche = p.id_fiche
+            WHERE c.nature <> 'resume_champs'
+              AND btrim(coalesce(c.contenu, '')) <> ''
+            """
+        )
+    branches.append(
+        """
+        SELECT p.id_fiche, 'fiche'::text AS source,
+               'Champs de la fiche'::text AS libelle_source,
+               f.champs_texte AS texte_source, f.search_vector AS vecteur,
+               40 AS priorite, f.id_fiche AS id_source
+        FROM page p
+        JOIN fiche f ON f.id_fiche = p.id_fiche
+        WHERE btrim(coalesce(f.champs_texte, '')) <> ''
+        """
+    )
+
+    options_headline = (
+        f"StartSel={_MARQUEUR_EXTRAIT_DEBUT}, StopSel={_MARQUEUR_EXTRAIT_FIN}, "
+        "MaxFragments=1, MaxWords=42, MinWords=12, ShortWord=2, HighlightAll=false"
+    )
+    cursor.execute(
+        f"""
+        WITH page AS (
+            SELECT unnest(%s::bigint[]) AS id_fiche
+        ), requetes AS (
+            SELECT
+                CASE WHEN btrim(%s) = '' THEN NULL::tsquery
+                     ELSE websearch_to_tsquery(%s, %s) END AS q1,
+                CASE WHEN btrim(%s) = '' THEN NULL::tsquery
+                     ELSE websearch_to_tsquery(%s, %s) END AS q2
+        ), requete_unifiee AS (
+            SELECT CASE
+                       WHEN q1 IS NULL THEN q2
+                       WHEN q2 IS NULL THEN q1
+                       ELSE q1 || q2
+                   END AS q
+            FROM requetes
+        ), candidats AS (
+            {' UNION ALL '.join(branches)}
+        ), notes AS (
+            SELECT c.*,
+                   COALESCE(c.vecteur @@ r.q1, false)
+                       OR COALESCE(c.vecteur @@ r.q2, false) AS correspondance,
+                   COALESCE(ts_rank_cd(c.vecteur, r.q1, 16), 0)
+                       + COALESCE(ts_rank_cd(c.vecteur, r.q2, 16), 0) AS score
+            FROM candidats c
+            CROSS JOIN requetes r
+        ), choisis AS (
+            SELECT DISTINCT ON (n.id_fiche) n.*
+            FROM notes n
+            ORDER BY n.id_fiche, n.correspondance DESC, n.score DESC,
+                     n.priorite ASC, n.id_source ASC
+        )
+        SELECT ch.id_fiche, ch.source, ch.libelle_source,
+               CASE
+                   WHEN char_length(ch.texte_source) <= {EXTRAIT_DOCUMENT_TEXTE_COURT_MAX}
+                       THEN ch.texte_source
+                   WHEN ru.q IS NULL THEN left(
+                       regexp_replace(ch.texte_source, '\\s+', ' ', 'g'), 600
+                   )
+                   ELSE ts_headline(
+                       %s::regconfig, ch.texte_source, ru.q, %s
+                   )
+               END AS extrait_brut,
+               char_length(ch.texte_source) <= {EXTRAIT_DOCUMENT_TEXTE_COURT_MAX}
+                   AS texte_integral
+        FROM choisis ch
+        CROSS JOIN requete_unifiee ru
+        ORDER BY ch.id_fiche
+        """,
+        (
+            list(ids),
+            requete_1,
+            ts_config,
+            requete_1,
+            requete_2,
+            ts_config,
+            requete_2,
+            ts_config,
+            options_headline,
+        ),
+    )
+
+    extraits: dict[int, dict[str, Any]] = {}
+    for id_fiche, source, libelle_source, extrait_brut, texte_integral in cursor.fetchall():
+        extrait = _construire_extrait_document(
+            str(extrait_brut or ""),
+            source=str(source),
+            libelle_source=None if libelle_source is None else str(libelle_source),
+            requetes=variantes,
+            texte_integral=texte_integral is True,
+        )
+        if extrait is not None:
+            extraits[int(id_fiche)] = extrait
+    return extraits
+
+
+def _cle_suggestion(texte: str) -> str:
+    """Clé de comparaison des suggestions et synonymes (Lot 2).
+
+    Même normalisation conservative que les modèles de bateaux : casse,
+    accents et ponctuation disparaissent, les abréviations ponctuées connues
+    sont développées, mais aucun suffixe métier n'est tronqué.
+    """
+    return normaliser_modele_bateau(texte)
+
+
+def _charger_cles_modeles_bateaux(cursor: Any, nom_base: str) -> list[dict[str, Any]]:  # noqa: ANN401
+    """Clés canoniques + alias du référentiel, avec TTL court par base."""
+    maintenant = time.monotonic()
+    en_cache = _MODELES_CACHE.get(nom_base)
+    if en_cache is not None and maintenant - en_cache[0] < SYNONYMES_TTL_S:
+        return en_cache[1]
+    cursor.execute("SELECT to_regclass('public.boat_models')")
+    ligne = cursor.fetchone()
+    if ligne is None or ligne[0] is None:
+        cles: list[dict[str, Any]] = []
+    else:
+        cles = charger_cles_modeles(cursor)
+    _MODELES_CACHE[nom_base] = (maintenant, cles)
+    return cles
+
+
+def invalider_cache_modeles_bateaux() -> None:
+    """Invalidate explicite après alias/fusion/défusion ou réindexation."""
+    _MODELES_CACHE.clear()
+
+
 # ---------------------------------------------------------------------------
-# Synonymes (table `synonyme`, modifiable sans redéploiement — §11.4)
+# Synonymes (`search_synonyms` Lot 2 + table historique `synonyme`)
 # ---------------------------------------------------------------------------
 
 def _charger_synonymes(cursor: Any, nom_base: str) -> dict[str, str]:  # noqa: ANN401
@@ -293,8 +738,25 @@ def _charger_synonymes(cursor: Any, nom_base: str) -> dict[str, str]:  # noqa: A
     en_cache = _SYNONYMES_CACHE.get(nom_base)
     if en_cache is not None and maintenant - en_cache[0] < SYNONYMES_TTL_S:
         return en_cache[1]
-    cursor.execute("SELECT terme, cible FROM synonyme")
-    table = {str(ligne[0]).lower(): str(ligne[1]) for ligne in cursor.fetchall()}
+    table: dict[str, str] = {}
+    cursor.execute("SELECT to_regclass('public.search_synonyms')")
+    ligne = cursor.fetchone()
+    if ligne is not None and ligne[0] is not None:
+        cursor.execute(
+            "SELECT terme, cible FROM search_synonyms WHERE actif ORDER BY id_synonyme"
+        )
+        for terme, cible in cursor.fetchall():
+            cle = _cle_suggestion(str(terme or ""))
+            if cle:
+                table[cle] = str(cible)
+    # La table historique reste l'autorité de compatibilité : ses entrées,
+    # modifiées par les outils existants, écrasent une copie Lot 2 du même
+    # terme au lieu de créer deux comportements selon le chemin de lecture.
+    cursor.execute("SELECT terme, cible FROM synonyme ORDER BY terme")
+    for terme, cible in cursor.fetchall():
+        cle = _cle_suggestion(str(terme or ""))
+        if cle:
+            table[cle] = str(cible)
     _SYNONYMES_CACHE[nom_base] = (maintenant, table)
     return table
 
@@ -305,14 +767,52 @@ def invalider_cache_synonymes() -> None:
 
 
 def _appliquer_synonymes(texte: str, synonymes: Mapping[str, str]) -> str:
-    """Remplace les termes connus par leur cible, mot à mot, sans casse.
-    « spi asymétrique » → « spinnaker asymétrique » avant tokenisation."""
+    """Remplace un terme connu par sa cible, y compris les locutions.
+
+    La comparaison se fait sur la clé normalisée (casse/accents/ponctuation),
+    jamais par sous-chaîne : « spi » ne réécrit pas « spinnaker », et une
+    locution comme « voile de portant » est consommée en une seule fois.
+    """
     if not synonymes or not texte:
         return texte
-    resultat = texte
+    table: dict[tuple[str, ...], str] = {}
     for terme, cible in synonymes.items():
-        resultat = re.sub(rf"\b{re.escape(terme)}\b", cible, resultat, flags=re.IGNORECASE)
-    return resultat
+        morceaux = tuple(_cle_suggestion(str(terme)).split())
+        if morceaux:
+            table[morceaux] = str(cible)
+    if not table:
+        return texte
+    mots = texte.split()
+    normes: list[str] = []
+    origines: list[int] = []
+    for indice, mot in enumerate(mots):
+        parties = _cle_suggestion(mot).split() or [mot.lower()]
+        for partie in parties:
+            normes.append(partie)
+            origines.append(indice)
+    longueur_max = max(len(cle) for cle in table)
+    resultat: list[str] = []
+    consommes: set[int] = set()
+    position = 0
+    while position < len(normes):
+        trouve: tuple[int, str] | None = None
+        for longueur in range(min(longueur_max, len(normes) - position), 0, -1):
+            cle = tuple(normes[position:position + longueur])
+            if cle in table:
+                trouve = (longueur, table[cle])
+                break
+        if trouve is not None:
+            longueur, cible = trouve
+            resultat.append(cible)
+            consommes.update(origines[position:position + longueur])
+            position += longueur
+            continue
+        origine = origines[position]
+        if origine not in consommes:
+            resultat.append(mots[origine])
+            consommes.add(origine)
+        position += 1
+    return " ".join(resultat)
 
 
 def _normaliser_separateurs(texte: str) -> str:
@@ -357,6 +857,12 @@ def _fragment_filtres(
         if valeur not in (None, "") and cle not in exclure:
             morceaux.append(f"v.{cle} = %s")
             params.append(str(valeur))
+    if filtres.get("boat_model_id") not in (None, "") and "bateau" not in exclure:
+        morceaux.append(
+            "EXISTS (SELECT 1 FROM bateau bf WHERE bf.id_bateau = f.id_bateau "
+            "AND bf.boat_model_id = %s)"
+        )
+        params.append(int(filtres["boat_model_id"]))
     if filtres.get("matiere") not in (None, "") and "matiere" not in exclure:
         morceaux.append(
             "EXISTS (SELECT 1 FROM fiche_materiau fm JOIN materiau m "
@@ -412,6 +918,41 @@ def _fragment_filtres(
 # ---------------------------------------------------------------------------
 # Sources de classement — chacune rend une liste ORDONNÉE d'id_fiche
 # ---------------------------------------------------------------------------
+
+def _source_modele_bateau(
+    cursor: Any,  # noqa: ANN401
+    correspondances: list[dict[str, Any]],
+    fragment: str,
+    params_filtres: list[Any],
+    limite: int,
+) -> list[int]:
+    """Source RRF du référentiel canonique des bateaux (Lot 2).
+
+    Les correspondances sont déjà bornées par le classement conservatif :
+    exact/alias d'abord, puis préfixe/floue seulement sans correspondance
+    complète. La source ne réinterprète donc jamais « 45 » en « 45.1 ».
+    """
+    ids: list[int] = []
+    for correspondance in correspondances:
+        identifiant = int(correspondance["id_modele"])
+        if identifiant not in ids:
+            ids.append(identifiant)
+    if not ids:
+        return []
+    cursor.execute(
+        f"""
+        SELECT v.id_fiche
+        FROM fiche f
+        JOIN v_fiche_recherche v ON v.id_fiche = f.id_fiche
+        JOIN bateau bm ON bm.id_bateau = f.id_bateau
+        WHERE bm.boat_model_id = ANY(%s) AND {fragment}
+        ORDER BY array_position(%s::bigint[], bm.boat_model_id), v.code
+        LIMIT %s
+        """,
+        (ids, *params_filtres, ids, limite),
+    )
+    return [int(ligne[0]) for ligne in cursor.fetchall()]
+
 
 def _source_lexicale(
     cursor: Any, ts_config: str, texte: str, filtres_sql: str, params: Sequence[Any], limite: int,
@@ -909,6 +1450,23 @@ def _facettes(
 # Point d'entrée du moteur
 # ---------------------------------------------------------------------------
 
+def _fusionner_sources_ids(principale: Sequence[int], secondaire: Sequence[int]) -> list[int]:
+    """Union ordonnée de deux classements d'une même source.
+
+    Sert à l'expansion par synonymes : la forme tapée par l'opérateur reste
+    principale, la forme canonique ajoute ses résultats sans pouvoir faire
+    disparaître un libellé réel qui contient déjà le terme d'origine
+    (« Spi Asymétrique » ne doit pas perdre contre « spinnaker »).
+    """
+    resultat: list[int] = []
+    vues: set[int] = set()
+    for id_fiche in (*principale, *secondaire):
+        identifiant = int(id_fiche)
+        if identifiant not in vues:
+            vues.add(identifiant)
+            resultat.append(identifiant)
+    return resultat
+
 def _appliquer_tri(
     resultats: list[dict[str, Any]],
     tri: str | None,
@@ -953,6 +1511,17 @@ def rechercher_fiches(
         for cle, valeur in (filtres or {}).items()
         if cle in FILTRES_AUTORISES and valeur not in (None, "")
     }
+    if "boat_model_id" in filtres_purs:
+        valeur_modele = filtres_purs["boat_model_id"]
+        try:
+            if isinstance(valeur_modele, bool):
+                raise ValueError
+            identifiant_modele = int(valeur_modele)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=422, detail="boat_model_id doit être un entier positif.") from None
+        if identifiant_modele <= 0:
+            raise HTTPException(status_code=422, detail="boat_model_id doit être un entier positif.")
+        filtres_purs["boat_model_id"] = identifiant_modele
     tri_pur = tri if tri in TRIS_AUTORISES else "pertinence"
     debut = time.perf_counter()
     with index.connect() as connexion:
@@ -960,8 +1529,32 @@ def rechercher_fiches(
             ts_config = index._postgres_ts_config(connexion)
             capacites = _capacites(cursor)
             nom_base = getattr(getattr(connexion, "info", None), "dbname", "") or ""
+            texte_sans_synonymes = _normaliser_separateurs(requete.strip())
             texte = _appliquer_synonymes(
-                _normaliser_separateurs(requete.strip()), _charger_synonymes(cursor, nom_base)
+                texte_sans_synonymes, _charger_synonymes(cursor, nom_base)
+            )
+            cles_modeles = _charger_cles_modeles_bateaux(cursor, nom_base)
+            valeur_bateau = filtres_purs.get("bateau")
+            if isinstance(valeur_bateau, str) and cles_modeles and "boat_model_id" not in filtres_purs:
+                modele_filtre = resoudre_modele_depuis_texte(cursor, valeur_bateau)
+                if modele_filtre is not None:
+                    filtres_purs = {
+                        **filtres_purs,
+                        "boat_model_id": modele_filtre.id_modele,
+                    }
+                    filtres_purs.pop("bateau", None)
+            correspondances_modeles = (
+                correspondances_dans_requete(cursor, texte, cles=cles_modeles)
+                if texte
+                else []
+            )
+            # Un suffixe décimal qui fait partie d'un modèle exact/alias
+            # (« Bavaria 45.1 ») est une identité, pas une cote de voile :
+            # le référentiel gagne sur l'analyseur de dimensions.
+            modele_decimal_exact = any(
+                correspondance["type_correspondance"] in {TYPE_EXACT, TYPE_ALIAS}
+                and re.search(r"\b\d+[.,]\d+\b", str(correspondance.get("cle_normalisee") or ""))
+                for correspondance in correspondances_modeles
             )
 
             # Phase 1 — recherche par dimension : la requête est scindée en
@@ -970,7 +1563,11 @@ def rechercher_fiches(
             # tsvector ; « spi 6,60 » → mots + filtre numérique ; « SLU 6,60 » →
             # cote nommée (filtre de cote existant). Les entiers nus ne sont
             # jamais des dimensions (« spi sailonet 2026 » reste textuel).
-            analyse = analyser_requete_dimension(texte)
+            analyse = (
+                RequeteDimension(texte=texte)
+                if modele_decimal_exact
+                else analyser_requete_dimension(texte)
+            )
             dimension: RequeteDimension | None = None
             dimension_toutes: tuple[float, float] | None = None
             if analyse.active:
@@ -997,25 +1594,93 @@ def rechercher_fiches(
                 elif not bornes_explicites:
                     dimension_toutes = analyse.bornes_tolerance(analyse.valeur_convergente())
 
+            if texte and not modele_decimal_exact:
+                correspondances_modeles = correspondances_dans_requete(
+                    cursor, texte, cles=cles_modeles
+                )
+            # Expansion par synonymes en OU : on conserve aussi le texte tapé
+            # pour les sources textuelles. Le remplacement seul ferait perdre
+            # les fiches dont le libellé réel contient le terme d'origine.
+            texte_original_sources = ""
+            if texte_sans_synonymes != texte:
+                if dimension is not None:
+                    analyse_originale = analyser_requete_dimension(texte_sans_synonymes)
+                    texte_original_sources = (
+                        analyse_originale.texte
+                        if analyse_originale.active
+                        else texte_sans_synonymes
+                    )
+                else:
+                    texte_original_sources = texte_sans_synonymes
+                if texte_original_sources == texte:
+                    texte_original_sources = ""
             fragment, params = _fragment_filtres(
                 filtres_purs, inclure_a_valider, dimension_toutes=dimension_toutes
             )
             classements: dict[str, list[int]] = {}
             if texte:
-                classements["lexical"] = _source_lexicale(
-                    cursor, ts_config, texte, fragment, params, PROFONDEUR_SOURCES
-                )
-                if (
-                    capacites["pg_trgm"]
-                    and len(classements["lexical"]) < PROFONDEUR_SOURCES
-                    and " " not in texte
-                ):
-                    classements["trigrammes"] = _source_trigrammes(
-                        cursor, texte, fragment, params, PROFONDEUR_SOURCES
+                if correspondances_modeles:
+                    classements["modele_bateau"] = _source_modele_bateau(
+                        cursor,
+                        correspondances_modeles,
+                        fragment,
+                        params,
+                        PROFONDEUR_SOURCES,
                     )
-                classements["texte_pdf"] = _source_texte_pdf(
+                lexical = _source_lexicale(
                     cursor, ts_config, texte, fragment, params, PROFONDEUR_SOURCES
                 )
+                if texte_original_sources:
+                    lexical = _fusionner_sources_ids(
+                        _source_lexicale(
+                            cursor,
+                            ts_config,
+                            texte_original_sources,
+                            fragment,
+                            params,
+                            PROFONDEUR_SOURCES,
+                        ),
+                        lexical,
+                    )
+                classements["lexical"] = lexical
+                if capacites["pg_trgm"] and len(classements["lexical"]) < PROFONDEUR_SOURCES:
+                    trigrammes: list[int] = []
+                    trigrammes_applicable = False
+                    if " " not in texte:
+                        trigrammes_applicable = True
+                        trigrammes = _source_trigrammes(
+                            cursor, texte, fragment, params, PROFONDEUR_SOURCES
+                        )
+                    if texte_original_sources and " " not in texte_original_sources:
+                        trigrammes_applicable = True
+                        trigrammes = _fusionner_sources_ids(
+                            _source_trigrammes(
+                                cursor,
+                                texte_original_sources,
+                                fragment,
+                                params,
+                                PROFONDEUR_SOURCES,
+                            ),
+                            trigrammes,
+                        )
+                    if trigrammes_applicable:
+                        classements["trigrammes"] = trigrammes
+                texte_pdf = _source_texte_pdf(
+                    cursor, ts_config, texte, fragment, params, PROFONDEUR_SOURCES
+                )
+                if texte_original_sources:
+                    texte_pdf = _fusionner_sources_ids(
+                        _source_texte_pdf(
+                            cursor,
+                            ts_config,
+                            texte_original_sources,
+                            fragment,
+                            params,
+                            PROFONDEUR_SOURCES,
+                        ),
+                        texte_pdf,
+                    )
+                classements["texte_pdf"] = texte_pdf
                 if encode_requete is not None:
                     embedding = encode_requete(texte)
                     if embedding:
@@ -1111,6 +1776,21 @@ def rechercher_fiches(
             if tri_pur != "pertinence":
                 resultats_ordonnes = _appliquer_tri(resultats_ordonnes, tri_pur)
 
+            # Lot 4a : l'aperçu documentaire n'est calculé que pour la page
+            # affichée (jamais pour toute la fusion), avec le texte étendu par
+            # synonymes et le texte réellement saisi comme variantes de
+            # surlignage en OU.
+            extraits_page = _extraits_documents(
+                cursor,
+                [ligne["id_fiche"] for ligne in page],
+                ts_config,
+                [texte, texte_original_sources],
+            )
+            for ligne in page:
+                detail = resultats.get(ligne["id_fiche"])
+                if detail is not None:
+                    detail["extrait_document"] = extraits_page.get(ligne["id_fiche"])
+
             facettes = _facettes(
                 cursor, ts_config, texte, filtres_purs, inclure_a_valider,
                 dimension_toutes=dimension_toutes,
@@ -1159,6 +1839,7 @@ def rechercher_fiches(
     duree_ms = (time.perf_counter() - debut) * 1000.0
     return {
         "requete": requete,
+        "modeles_bateaux_detectes": correspondances_modeles,
         "nb_resultats": total,
         "offset": offset,
         "limit": limit,
@@ -1212,14 +1893,36 @@ def _details_fiches(
     """
     if not ids:
         return {}
+    # Compatibilité de lecture avec une base arrêtée avant 026 (tests de
+    # migration historique) : les champs canoniques existent dans la réponse
+    # mais valent NULL tant que la couche Lot 2 n'est pas migrée. En service
+    # normal, les migrations ont tourné au démarrage et le JOIN est actif.
+    cursor.execute(
+        "SELECT to_regclass('public.boat_models') IS NOT NULL AND EXISTS ("
+        "SELECT 1 FROM information_schema.columns "
+        "WHERE table_schema = 'public' AND table_name = 'bateau' "
+        "AND column_name = 'boat_model_id')"
+    )
+    referentiel_disponible = bool(cursor.fetchone()[0])
+    colonnes_modele = (
+        "b.boat_model_id, bm.nom_canonique, bm.cle_normalisee"
+        if referentiel_disponible
+        else "NULL::bigint, NULL::text, NULL::text"
+    )
+    jointure_modele = (
+        "LEFT JOIN boat_models bm ON bm.id_modele = b.boat_model_id"
+        if referentiel_disponible
+        else ""
+    )
     # Requête de base sans cotes — évite JOIN fiche_cotes, permet élimination
     # par le planificateur et réduit le coût du chemin par défaut.
     cursor.execute(
-        """
+        f"""
         SELECT f.id_fiche, f.code, f.titre,
                tv.libelle AS type_voile,
                c.nom AS client,
                b.nom || ' ' || coalesce(b.taille,'') AS bateau,
+               {colonnes_modele},
                f.gamme, f.statut,
                CASE WHEN f.date_edition IS NULL THEN NULL
                     ELSE extract(year FROM f.date_edition)::int END,
@@ -1228,6 +1931,7 @@ def _details_fiches(
         LEFT JOIN type_voile tv ON tv.id_type_voile = f.id_type_voile
         LEFT JOIN client c ON c.id_client = f.id_client
         LEFT JOIN bateau b ON b.id_bateau = f.id_bateau
+        {jointure_modele}
         WHERE f.id_fiche = ANY(%s)
         """,
         (list(ids),),
@@ -1241,10 +1945,13 @@ def _details_fiches(
             "type_voile": ligne[3],
             "client": ligne[4],
             "bateau": ligne[5],
-            "gamme": ligne[6],
-            "statut": ligne[7],
-            "annee": None if ligne[8] is None else int(ligne[8]),
-            "extrait": ligne[9] or "",
+            "id_modele_bateau": None if ligne[6] is None else int(ligne[6]),
+            "modele_bateau": ligne[7],
+            "modele_bateau_cle": ligne[8],
+            "gamme": ligne[9],
+            "statut": ligne[10],
+            "annee": None if ligne[11] is None else int(ligne[11]),
+            "extrait": ligne[12] or "",
         }
 
     if avec_cotes:
@@ -1310,54 +2017,175 @@ _SOURCES_SUGGESTIONS_TRGM: tuple[tuple[str, str], ...] = (
 
 
 def suggerer(index: Any, prefixe: str, limite: int = SUGGESTION_LIMITE_DEFAUT) -> dict[str, Any]:  # noqa: ANN401
+    """Suggestions classées exact > alias/synonyme > préfixe > flou.
+
+    Les valeurs proposées existent réellement dans les référentiels. Les
+    bateaux passent d'abord par le référentiel canonique (Lot 2), avec la
+    table historique en filet de compatibilité pour une ligne non encore
+    resynchronisée ; les synonymes (``spi`` → ``Spinnaker``) sont classés en
+    alias, jamais confondus avec une simple coïncidence de préfixe.
+    """
     prefixe = prefixe.strip()
-    if not prefixe:
+    if not prefixe or limite <= 0:
         return {"prefixe": prefixe, "suggestions": []}
+    candidats: dict[str, dict[str, Any]] = {}
+
+    def ajouter(
+        nature: str,
+        valeur: str | None,
+        type_correspondance: str,
+        score: float,
+        *,
+        alias: str | None = None,
+        id_modele_bateau: int | None = None,
+    ) -> None:
+        if valeur is None or not str(valeur).strip():
+            return
+        valeur_propre = str(valeur).strip()
+        candidat: dict[str, Any] = {
+            "nature": nature,
+            "valeur": valeur_propre,
+            "type_correspondance": type_correspondance,
+            "rang": ORDRE_CORRESPONDANCES[type_correspondance],
+            "score": round(float(score), 4),
+        }
+        if alias:
+            candidat["alias"] = alias
+        if id_modele_bateau is not None:
+            candidat["id_modele_bateau"] = int(id_modele_bateau)
+        cle = _cle_suggestion(valeur_propre)
+        existant = candidats.get(cle)
+        if existant is None:
+            candidats[cle] = candidat
+            return
+        meilleur = (candidat["rang"], -candidat["score"]) < (
+            existant["rang"],
+            -existant["score"],
+        )
+        if meilleur:
+            for champ in ("alias", "id_modele_bateau"):
+                if champ not in candidat and champ in existant:
+                    candidat[champ] = existant[champ]
+            candidats[cle] = candidat
+        else:
+            for champ in ("alias", "id_modele_bateau"):
+                if champ not in existant and champ in candidat:
+                    existant[champ] = candidat[champ]
+
     with index.connect() as connexion:
         with connexion.cursor() as cursor:
             capacites = _capacites(cursor)
-            vues: set[str] = set()
-            suggestions: list[dict[str, str]] = []
-            # Préfixe comparé sur la clé normalisée (casse/accents/ligatures),
-            # pas sur le texte affiché. Les valeurs renvoyées restent originales.
-            motif_norm = normaliser_cle_recherche(prefixe)
-            motif = motif_norm.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+            nom_base = getattr(getattr(connexion, "info", None), "dbname", "") or ""
+            synonymes = _charger_synonymes(cursor, nom_base)
+            requete_cle = _cle_suggestion(prefixe)
+            cible_synonyme = synonymes.get(requete_cle)
+            cible_cle = _cle_suggestion(cible_synonyme) if cible_synonyme else ""
 
-            def _ajouter(nature: str, valeur: str | None) -> None:
-                if valeur is None or not valeur.strip():
-                    return
-                cle = valeur.strip().lower()
-                if cle in vues:
-                    return
-                vues.add(cle)
-                suggestions.append({"nature": nature, "valeur": valeur.strip()})
+            cles_modeles = _charger_cles_modeles_bateaux(cursor, nom_base)
+            for correspondance in classer_correspondances_modeles(
+                cles_modeles,
+                prefixe,
+                limite=max(limite * 2, 10),
+            ):
+                ajouter(
+                    "bateau",
+                    str(correspondance["nom_canonique"]),
+                    str(correspondance["type_correspondance"]),
+                    float(correspondance["score"]),
+                    alias=(
+                        str(correspondance["alias"])
+                        if correspondance.get("alias")
+                        else None
+                    ),
+                    id_modele_bateau=int(correspondance["id_modele"]),
+                )
 
-            # 1) Préfixe exact (les valeurs réellement présentes, rien d'autre).
+            def motif_sql(texte: str) -> str:
+                motif_norm = normaliser_cle_recherche(texte)
+                return (
+                    motif_norm.replace("\\", "\\\\")
+                    .replace("%", "\\%")
+                    .replace("_", "\\_")
+                    + "%"
+                )
+
+            def classer_generique(
+                valeur: str, *, via_synonyme: bool = False
+            ) -> tuple[str, float]:
+                candidat_cle = _cle_suggestion(valeur)
+                if candidat_cle == requete_cle:
+                    return TYPE_EXACT, 1.0
+                if cible_cle and candidat_cle == cible_cle:
+                    return TYPE_ALIAS, 0.98
+                if via_synonyme and cible_cle and candidat_cle.startswith(cible_cle):
+                    return TYPE_ALIAS, 0.90 + 0.05 * len(cible_cle) / max(len(candidat_cle), 1)
+                return TYPE_PREFIXE, 0.70 + 0.25 * len(requete_cle) / max(len(candidat_cle), 1)
+
             for nature, sql in _SOURCES_SUGGESTIONS_PREFIXE:
-                cursor.execute(sql, (motif,))
+                cursor.execute(f"{sql} ORDER BY 1 LIMIT 50", (motif_sql(prefixe),))
                 for (valeur,) in cursor.fetchall():
-                    _ajouter(nature, valeur)
-                    if len(suggestions) >= limite:
-                        break
-                if len(suggestions) >= limite:
-                    break
+                    type_correspondance, score = classer_generique(str(valeur))
+                    ajouter(
+                        nature,
+                        valeur,
+                        type_correspondance,
+                        score,
+                        alias=prefixe if type_correspondance == TYPE_ALIAS else None,
+                    )
+                if cible_synonyme:
+                    cursor.execute(f"{sql} ORDER BY 1 LIMIT 50", (motif_sql(cible_synonyme),))
+                    for (valeur,) in cursor.fetchall():
+                        type_correspondance, score = classer_generique(
+                            str(valeur), via_synonyme=True
+                        )
+                        ajouter(
+                            nature,
+                            valeur,
+                            type_correspondance,
+                            score,
+                            alias=prefixe if type_correspondance == TYPE_ALIAS else None,
+                        )
 
-            # 2) Tolérance aux fautes sur les référentiels (volet dégradable 012).
-            if capacites["pg_trgm"] and len(suggestions) < limite:
+            if capacites["pg_trgm"] and len(candidats) < limite:
+                for correspondance in (
+                    rechercher_modeles_flous(cursor, prefixe, limite=max(limite, 5))
+                    if cles_modeles
+                    else []
+                ):
+                    ajouter(
+                        "bateau",
+                        str(correspondance["nom_canonique"]),
+                        TYPE_FLOU,
+                        float(correspondance["score"]),
+                        alias=(
+                            str(correspondance["alias"])
+                            if correspondance.get("alias")
+                            else None
+                        ),
+                        id_modele_bateau=int(correspondance["id_modele"]),
+                    )
                 for nature, sql in _SOURCES_SUGGESTIONS_TRGM:
                     cursor.execute(sql, (prefixe, prefixe))
-                    for valeur, _score in cursor.fetchall():
-                        _ajouter(nature, valeur)
-                        if len(suggestions) >= limite:
-                            break
-                    if len(suggestions) >= limite:
-                        break
+                    for valeur, score in cursor.fetchall():
+                        if _cle_suggestion(str(valeur)) == requete_cle:
+                            ajouter(nature, valeur, TYPE_EXACT, 1.0)
+                        else:
+                            ajouter(nature, valeur, TYPE_FLOU, float(score or 0.0))
 
+    suggestions = sorted(
+        candidats.values(),
+        key=lambda candidat: (
+            int(candidat["rang"]),
+            -float(candidat["score"]),
+            str(candidat["valeur"]).casefold(),
+            str(candidat["nature"]),
+        ),
+    )
     return {"prefixe": prefixe, "suggestions": suggestions[:limite]}
 
 
 # ---------------------------------------------------------------------------
-# Routes FastAPI — GET /recherche, GET /recherche/suggestions
+# Routes FastAPI — recherche, suggestions et référentiel bateaux (Lot 2)
 # ---------------------------------------------------------------------------
 
 def enregistrer_routes_recherche(
@@ -1368,6 +2196,56 @@ def enregistrer_routes_recherche(
     metriques: dict[str, Any] | None = None,
     encode_requete: Callable[[str], str | None] | None = None,
 ) -> None:
+    def _administrateur_referentiel(
+        token: str | None,
+        entete_utilisateur: str | None,
+        entete_role: str | None,
+        entete_session: str | None,
+        entete_jeton: str | None,
+    ) -> Any:  # noqa: ANN401
+        return exiger_administrateur_requete(
+            index,
+            config,
+            token=token,
+            entete_utilisateur=entete_utilisateur,
+            entete_role=entete_role,
+            entete_session=entete_session,
+            entete_jeton=entete_jeton,
+        )
+
+    def _payload_entier(payload: Mapping[str, Any], champ: str) -> int:
+        valeur = payload.get(champ)
+        if isinstance(valeur, bool):
+            raise HTTPException(status_code=422, detail=f"{champ} doit être un entier positif.")
+        try:
+            entier = int(valeur)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=422, detail=f"{champ} doit être un entier positif.") from None
+        if entier <= 0:
+            raise HTTPException(status_code=422, detail=f"{champ} doit être un entier positif.")
+        return entier
+
+    def _payload_texte(payload: Mapping[str, Any], champ: str) -> str:
+        valeur = payload.get(champ)
+        if not isinstance(valeur, str) or not valeur.strip():
+            raise HTTPException(status_code=422, detail=f"{champ} est requis.")
+        if len(valeur.strip()) > 200:
+            raise HTTPException(status_code=422, detail=f"{champ} dépasse 200 caractères.")
+        return valeur.strip()
+
+    def _payload_motif(payload: Mapping[str, Any]) -> str | None:
+        motif = payload.get("motif")
+        if motif is None:
+            return None
+        if not isinstance(motif, str) or len(motif.strip()) > 500:
+            raise HTTPException(status_code=422, detail="motif doit être un texte de 500 caractères maximum.")
+        return motif.strip() or None
+
+    def _exiger_modele(cursor: Any, id_modele: int) -> None:  # noqa: ANN401
+        cursor.execute("SELECT 1 FROM boat_models WHERE id_modele = %s", (id_modele,))
+        if cursor.fetchone() is None:
+            raise HTTPException(status_code=404, detail="Modèle de bateau introuvable.")
+
     @app.get("/recherche")
     def route_recherche(
         q: str = Query("", max_length=500),
@@ -1377,6 +2255,7 @@ def enregistrer_routes_recherche(
         type_voile: str | None = Query(None, max_length=200),
         client: str | None = Query(None, max_length=200),
         bateau: str | None = Query(None, max_length=200),
+        boat_model_id: int | None = Query(None, gt=0, description="Modèle canonique Lot 2"),
         matiere: str | None = Query(None, max_length=200),
         gamme: str | None = Query(None, max_length=200),
         annee: int | None = Query(None, ge=1900, le=2100),
@@ -1408,6 +2287,7 @@ def enregistrer_routes_recherche(
             "type_voile": type_voile,
             "client": client,
             "bateau": bateau,
+            "boat_model_id": boat_model_id,
             "matiere": matiere,
             "gamme": gamme,
             "annee": annee,
@@ -1443,15 +2323,27 @@ def enregistrer_routes_recherche(
         reponse["page"] = (offset_effectif // limit) + 1 if limit else 1
         return reponse
 
+    def _reponse_suggestions(prefix: str, limit: int, token: str | None) -> dict[str, Any]:
+        verifier_auth(config, token)
+        _exiger_postgres(index)
+        return suggerer(index, prefix, limit)
+
     @app.get("/recherche/suggestions")
     def route_suggestions(
         prefix: str = Query("", max_length=200),
         limit: int = Query(SUGGESTION_LIMITE_DEFAUT, ge=1, le=25),
         token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
     ) -> dict[str, Any]:
-        verifier_auth(config, token)
-        _exiger_postgres(index)
-        return suggerer(index, prefix, limit)
+        return _reponse_suggestions(prefix, limit, token)
+
+    @app.get("/search/suggestions")
+    def route_search_suggestions(
+        prefix: str = Query("", max_length=200),
+        limit: int = Query(SUGGESTION_LIMITE_DEFAUT, ge=1, le=25),
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+    ) -> dict[str, Any]:
+        """Route canonique Lot 2 ; l'ancienne route reste compatible."""
+        return _reponse_suggestions(prefix, limit, token)
 
     # Journal de recherche — exploitation (Lot J §3)
     @app.get("/recherche/journal")
@@ -1460,8 +2352,141 @@ def enregistrer_routes_recherche(
         limite_top: int = Query(20, ge=1, le=100),
         limite_sans: int = Query(100, ge=1, le=500),
         token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+        entete_utilisateur: Annotated[str | None, Header(alias="X-SEAMTECH-UTILISATEUR")] = None,
+        entete_role: Annotated[str | None, Header(alias="X-SEAMTECH-ROLE")] = None,
+        entete_session: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION")] = None,
+        entete_jeton: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-JETON")] = None,
     ) -> dict[str, Any]:
         verifier_auth(config, token)
         _exiger_postgres(index)
+        # Les termes de recherche des utilisateurs sont une donnée
+        # d'exploitation : administrateur humain uniquement (Lot 0b).
+        exiger_administrateur_requete(
+            index,
+            config,
+            token=token,
+            entete_utilisateur=entete_utilisateur,
+            entete_role=entete_role,
+            entete_session=entete_session,
+            entete_jeton=entete_jeton,
+        )
         from seamtech_search.journal_recherche import rapport_journal
         return rapport_journal(index, periode_jours=jours, limite_top=limite_top, limite_sans_resultat=limite_sans)
+
+    @app.get("/referentiel/bateaux")
+    def route_referentiel_bateaux(
+        inclure_fusionnes: bool = Query(False, description="Inclure les modèles fusionnés"),
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+    ) -> dict[str, Any]:
+        verifier_auth(config, token)
+        _exiger_postgres(index)
+        with index.connect() as connexion:
+            with connexion.cursor() as cursor:
+                modeles = lister_modeles(cursor, inclure_fusionnes=inclure_fusionnes)
+        return {"modeles": modeles}
+
+    @app.post("/referentiel/bateaux/{id_modele}/alias")
+    def route_ajouter_alias_bateau(
+        id_modele: int,
+        payload: Annotated[dict[str, Any], Body()],
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+        entete_utilisateur: Annotated[str | None, Header(alias="X-SEAMTECH-UTILISATEUR")] = None,
+        entete_role: Annotated[str | None, Header(alias="X-SEAMTECH-ROLE")] = None,
+        entete_session: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION")] = None,
+        entete_jeton: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-JETON")] = None,
+    ) -> dict[str, Any]:
+        verifier_auth(config, token)
+        _exiger_postgres(index)
+        acteur = _administrateur_referentiel(
+            token, entete_utilisateur, entete_role, entete_session, entete_jeton
+        )
+        alias = _payload_texte(payload, "alias")
+        try:
+            with index.connect() as connexion:
+                with connexion.cursor() as cursor:
+                    _exiger_modele(cursor, id_modele)
+                    resultat = assurer_alias(
+                        cursor,
+                        id_modele,
+                        alias,
+                        source="manuel",
+                        cree_par=getattr(acteur, "id_utilisateur", None),
+                    )
+        except AliasBateauEnConflit as erreur:
+            raise HTTPException(status_code=409, detail=str(erreur)) from erreur
+        except ValueError as erreur:
+            raise HTTPException(status_code=400, detail=str(erreur)) from erreur
+        invalider_cache_modeles_bateaux()
+        return resultat
+
+    @app.post("/referentiel/bateaux/{id_modele}/fusion")
+    def route_fusionner_bateau(
+        id_modele: int,
+        payload: Annotated[dict[str, Any], Body()],
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+        entete_utilisateur: Annotated[str | None, Header(alias="X-SEAMTECH-UTILISATEUR")] = None,
+        entete_role: Annotated[str | None, Header(alias="X-SEAMTECH-ROLE")] = None,
+        entete_session: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION")] = None,
+        entete_jeton: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-JETON")] = None,
+    ) -> dict[str, Any]:
+        verifier_auth(config, token)
+        _exiger_postgres(index)
+        acteur = _administrateur_referentiel(
+            token, entete_utilisateur, entete_role, entete_session, entete_jeton
+        )
+        id_cible = _payload_entier(payload, "id_modele_cible")
+        motif = _payload_motif(payload)
+        try:
+            with index.connect() as connexion:
+                with connexion.cursor() as cursor:
+                    _exiger_modele(cursor, id_modele)
+                    _exiger_modele(cursor, id_cible)
+                    resultat = fusionner_modeles(
+                        cursor,
+                        id_modele,
+                        id_cible,
+                        effectue_par=getattr(acteur, "id_utilisateur", None),
+                        motif=motif,
+                    )
+        except ValueError as erreur:
+            raise HTTPException(status_code=400, detail=str(erreur)) from erreur
+        invalider_cache_modeles_bateaux()
+        return resultat
+
+    @app.post("/referentiel/bateaux/{id_modele}/defusion")
+    def route_defusionner_bateau(
+        id_modele: int,
+        payload: Annotated[dict[str, Any] | None, Body()] = None,
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+        entete_utilisateur: Annotated[str | None, Header(alias="X-SEAMTECH-UTILISATEUR")] = None,
+        entete_role: Annotated[str | None, Header(alias="X-SEAMTECH-ROLE")] = None,
+        entete_session: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION")] = None,
+        entete_jeton: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-JETON")] = None,
+    ) -> dict[str, Any]:
+        verifier_auth(config, token)
+        _exiger_postgres(index)
+        acteur = _administrateur_referentiel(
+            token, entete_utilisateur, entete_role, entete_session, entete_jeton
+        )
+        donnees = payload or {}
+        motif = _payload_motif(donnees)
+        id_historique = (
+            _payload_entier(donnees, "id_historique")
+            if donnees.get("id_historique") is not None
+            else None
+        )
+        try:
+            with index.connect() as connexion:
+                with connexion.cursor() as cursor:
+                    _exiger_modele(cursor, id_modele)
+                    resultat = defusionner_modele(
+                        cursor,
+                        id_modele,
+                        id_historique=id_historique,
+                        effectue_par=getattr(acteur, "id_utilisateur", None),
+                        motif=motif,
+                    )
+        except ValueError as erreur:
+            raise HTTPException(status_code=400, detail=str(erreur)) from erreur
+        invalider_cache_modeles_bateaux()
+        return resultat

@@ -1,4 +1,4 @@
-import { expect, type Page } from "@playwright/test"
+import { expect, type APIRequestContext, type Page } from "@playwright/test"
 
 /**
  * Shared sign-in helper for the e2e suite.
@@ -23,8 +23,39 @@ export const ADMIN = {
   identifiant: "e2e-admin",
   motDePasse: process.env.SEAMTECH_E2E_ADMIN_PASSWORD ?? "e2e-admin-password",
 }
+/** Lot 1 canonical aliases. OPERATEUR is kept only as the historical identifier. */
+export const APPROBATEUR = OPERATEUR
+export const APPROBATEUR_2 = {
+  identifiant: "e2e-approbateur-2",
+  motDePasse: process.env.SEAMTECH_E2E_APPROBATEUR2_PASSWORD ?? "e2e-approbateur2-password",
+}
+export const UTILISATEUR = {
+  identifiant: "e2e-utilisateur",
+  motDePasse: process.env.SEAMTECH_E2E_UTILISATEUR_PASSWORD ?? "e2e-utilisateur-password",
+}
+export const LECTURE = {
+  identifiant: "e2e-lecture",
+  motDePasse: process.env.SEAMTECH_E2E_LECTURE_PASSWORD ?? "e2e-lecture-password",
+}
 
 export type Identifiants = { identifiant?: string; motDePasse: string }
+
+/** CSRF double-submit header for a browser Page already signed in. */
+export async function csrfHeadersForPage(page: Page): Promise<Record<string, string>> {
+  const cookies = await page.context().cookies()
+  const csrf = cookies.find((cookie) => cookie.name === "seamtech_csrf")?.value
+  expect(csrf, "login must set the seamtech_csrf cookie").toBeTruthy()
+  return { "x-csrf-token": csrf as string }
+}
+
+/** CSRF double-submit header for a Playwright APIRequestContext signed in. */
+export async function csrfHeadersForRequestContext(
+  context: APIRequestContext,
+): Promise<Record<string, string>> {
+  const csrf = (await context.storageState()).cookies.find((cookie) => cookie.name === "seamtech_csrf")?.value
+  expect(csrf, "login must set the seamtech_csrf cookie").toBeTruthy()
+  return { "x-csrf-token": csrf as string }
+}
 
 /** Sign in through the real form (French labels). */
 export async function signInWith(page: Page, identifiants: Identifiants): Promise<void> {
