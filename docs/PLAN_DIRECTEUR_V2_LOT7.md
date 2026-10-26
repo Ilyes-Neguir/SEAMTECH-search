@@ -150,3 +150,33 @@ toujours explicite** avec facette et badge.
   aucune migration) : naval/atelier clair+sombre, bascule persistée,
   ambre en accent de marque unique, navigation groupée par domaine,
   contrastes ≥ 4,5 testés dans les deux thèmes.
+
+## Vérification ECC (skill `verification-loop`, rejouée le 2026-10-26)
+
+À la demande du commanditaire, le Lot 7 livré a été re-vérifié selon le
+workflow ECC en 6 phases (`.agents/skills/verification-loop`) :
+
+```
+VERIFICATION REPORT
+==================
+
+Build:     PASS (pnpm build, rc=0)
+Types:     PASS (tsc --noEmit, 0 erreur)
+Lint:      PASS (ruff sur seamtech_search/ + tests Lot 7, 0 avertissement)
+Tests:     PASS — local : 1027 passed / 112 skipped (hors PG/Redis, sandbox
+           sans services) ; CI au SHA 6113121 : 4 workflows success,
+           couverture 85.98 % (seuil repo 85 %, cible ECC 80 %)
+Security:  PASS — 0 secret, 0 console.log ; identifiants SQL uniquement en
+           listes blanches (_CHAMPS_CORRIGABLES, _TABLES_FAMILLE,
+           constantes) ; 6/6 routes FastAPI sous verifier_auth + acteur ;
+           relais Next à rôles re-vérifiés
+Diff:      33 fichiers (+3482/−66) ; zones figées intactes
+           (extractions_voile, liaison_voile, comparaison, confiance :
+           diff vide ; anciennes migrations SQL inchangées)
+
+Overall:   READY
+```
+
+Note honnête : la couverture locale de `accessoires.py` est de 48 % sans
+PostgreSQL (sandbox) — les chemins PG sont ceux prouvés par la CI au SHA
+exact. Aucun correctif issu de cette re-vérification.
