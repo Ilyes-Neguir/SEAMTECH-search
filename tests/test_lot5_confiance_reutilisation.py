@@ -94,9 +94,11 @@ def test_constantes_verdicts_et_migration_030() -> None:
     assert CONFIANCE_MIN_ECHANTILLONS == 5
     assert CONFIANCE_SEUIL_ALERTE == 75
     assert VERDICTS == ("donnees_insuffisantes", "heterogene", "a_examiner", "compatible")
-    assert VERSION_SCHEMA_METIER == "030_evaluations_confiance"
-    assert MIGRATIONS_METIER[-1][0] == "030_evaluations_confiance"
-    assert MIGRATIONS_METIER[-2][0] == "029_extraction_liaison_corrections"
+    # La 030 reste figée ; depuis le Lot 7 la version courante est 031.
+    assert VERSION_SCHEMA_METIER == "031_accessoires"
+    assert MIGRATIONS_METIER[-1][0] == "031_accessoires"
+    assert MIGRATIONS_METIER[-2][0] == "030_evaluations_confiance"
+    assert MIGRATIONS_METIER[-3][0] == "029_extraction_liaison_corrections"
     sql = SQL_030_EVALUATIONS_CONFIANCE
     for fragment in (
         "CREATE TABLE IF NOT EXISTS evaluations_confiance",
