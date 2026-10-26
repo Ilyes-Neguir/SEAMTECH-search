@@ -135,7 +135,7 @@ class TestPointsEntreeValidentLesSecrets:
         # La validation suit immédiatement le chargement de la config, avant
         # toute construction d'index ou de file.
         assert source.index("AppConfig.load") < source.index("exiger_secrets_production")
-        assert source.index("exiger_secrets_production") < source.index("SearchIndex")
+        assert source.index("exiger_secrets_production") < source.index("SearchIndex(")
 
 
 # ---------------------------------------------------------------------------
