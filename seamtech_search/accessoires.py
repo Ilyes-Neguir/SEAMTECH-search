@@ -37,7 +37,8 @@ from seamtech_search.extractions_voile import (
 )
 
 # Réexporté : les appelants (dépôt, API, tests) parlent au module accessoires.
-from seamtech_search.fiches.gabarits import (  # noqa: E402
+from seamtech_search.fiches.gabarits import (
+    CODE_GABARIT_ACCESSOIRE,
     GABARIT_ACCESSOIRE_V1,
     GabaritDef,
 )
@@ -45,6 +46,31 @@ from seamtech_search.fiches.modeles import ChampExtrait, FicheExtraite, Zone
 from seamtech_search.liaison_voile import ExtractionIntrouvable, decider_resolution
 
 LOGGER = logging.getLogger("seamtech-search.accessoires")
+
+# CODE_GABARIT_ACCESSOIRE est un réexport délibéré : les appelants (dépôt,
+# API, tests) parlent au module accessoires, pas aux gabarits.
+__all__ = [
+    "CODE_GABARIT_ACCESSOIRE",
+    "VERSION_EXTRACTEUR_ACCESSOIRE",
+    "AccessoireIntrouvable",
+    "AccessoireRefuse",
+    "AnomalieAccessoire",
+    "ChampAccessoire",
+    "ExtractionAccessoire",
+    "FicheIntrouvable",
+    "changer_categorie_fiche",
+    "construire_extraction_accessoire",
+    "corriger_accessoire",
+    "detail_extraction_accessoire",
+    "enregistrer_extraction_accessoire",
+    "enregistrer_extraction_accessoire_curseur",
+    "gabarit_accessoire_v1",
+    "lier_accessoire",
+    "lier_extraction_accessoire_document_curseur",
+    "lister_extractions_accessoire",
+    "proposer_categorie",
+    "resoudre_accessoire_curseur",
+]
 
 VERSION_EXTRACTEUR_ACCESSOIRE = "accessoire-v1"
 
