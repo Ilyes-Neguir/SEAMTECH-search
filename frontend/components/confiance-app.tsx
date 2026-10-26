@@ -61,7 +61,12 @@ interface Justification {
       part_meme_materiau: number | null
     }>
   }
-  sources: Array<{ id_extraction: number | null; code_fiche: string | null; nom_fichier_source: string | null }>
+  sources: Array<{
+    id_extraction: number | null
+    code_fiche: string | null
+    nom_fichier_source: string | null
+    code_fiche_metier?: string | null
+  }>
 }
 
 interface Evaluation {
@@ -431,7 +436,17 @@ function ConfianceAppInterne({ role }: { role: Role }) {
                       <ul className="mt-1 list-disc space-y-0.5 pl-5 text-muted-foreground">
                         {evaluation.justification.sources.map((s) => (
                           <li key={s.id_extraction ?? s.code_fiche ?? ""}>
-                            {s.code_fiche ?? `#${s.id_extraction}`} — {s.nom_fichier_source ?? "fichier inconnu"}
+                            {s.code_fiche_metier ? (
+                              <a
+                                href={`/fiches/${encodeURIComponent(s.code_fiche_metier)}`}
+                                className="font-medium text-primary underline-offset-2 hover:underline"
+                              >
+                                {s.code_fiche ?? `#${s.id_extraction}`}
+                              </a>
+                            ) : (
+                              (s.code_fiche ?? `#${s.id_extraction}`)
+                            )}{" "}
+                            — {s.nom_fichier_source ?? "fichier inconnu"}
                           </li>
                         ))}
                       </ul>

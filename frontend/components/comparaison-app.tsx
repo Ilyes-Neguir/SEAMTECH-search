@@ -16,6 +16,7 @@ import { cn } from "@/lib/utils"
 interface ResumeExtraction {
   id_extraction: number
   code_fiche: string | null
+  code_fiche_metier?: string | null
   nom_fichier_source: string | null
   type_voile: string | null
   gamme: string | null
@@ -107,6 +108,28 @@ function nomModele(resume: ResumeExtraction | null | undefined): string {
   if (typeof resume.modele_lie === "string" && resume.modele_lie) return resume.modele_lie
   if (resume.modele_lie && typeof resume.modele_lie === "object") return resume.modele_lie.nom_canonique
   return resume.modele_bateau_brut ?? "bateau non lu"
+}
+
+// Lot 6 — le code d'une voile comparée ouvre sa fiche métier quand elle est
+// rattachée à une fiche (code_fiche_metier résolu côté backend) ; sinon le
+// code reste du texte — jamais de lien mort.
+function EnteteVoile({ lettre, resume }: { lettre: string; resume: ResumeExtraction }) {
+  const libelle = resume.code_fiche ?? `#${resume.id_extraction}`
+  return (
+    <>
+      {lettre} —{" "}
+      {resume.code_fiche_metier ? (
+        <a
+          href={`/fiches/${encodeURIComponent(resume.code_fiche_metier)}`}
+          className="text-primary underline-offset-2 hover:underline"
+        >
+          {libelle}
+        </a>
+      ) : (
+        libelle
+      )}
+    </>
+  )
 }
 
 function fmt(nombre: number | null, decimales = 2): string {
@@ -369,8 +392,8 @@ function ComparaisonAppInterne() {
               <thead>
                 <tr className="border-b border-border bg-muted/50 text-left">
                   <th className="px-2 py-1.5">Dimension</th>
-                  <th className="px-2 py-1.5">A — {comparaison.a.code_fiche ?? `#${comparaison.a.id_extraction}`}</th>
-                  <th className="px-2 py-1.5">B — {comparaison.b.code_fiche ?? `#${comparaison.b.id_extraction}`}</th>
+                  <th className="px-2 py-1.5"><EnteteVoile lettre="A" resume={comparaison.a} /></th>
+                  <th className="px-2 py-1.5"><EnteteVoile lettre="B" resume={comparaison.b} /></th>
                   <th className="px-2 py-1.5">Δ (B − A)</th>
                   <th className="px-2 py-1.5">Δ cm</th>
                   <th className="px-2 py-1.5">Δ % / A</th>

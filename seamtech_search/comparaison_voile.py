@@ -72,10 +72,17 @@ def _arrondi(valeur: float, decimales: int) -> float:
     return round(float(valeur), decimales)
 
 
-def _resume(extraction: ExtractionVoile, nom_modele: str | None) -> dict[str, Any]:
+def _resume(
+    extraction: ExtractionVoile,
+    nom_modele: str | None,
+    code_fiche_metier: str | None = None,
+) -> dict[str, Any]:
     return {
         "id_extraction": extraction.id_extraction,
         "code_fiche": extraction.code_fiche,
+        # Code de la fiche métier rattachée (Lot 6) : l'écran ne rend un lien
+        # vers /fiches/{code} que s'il est résolu — jamais de lien mort.
+        "code_fiche_metier": code_fiche_metier,
         "nom_fichier_source": extraction.nom_fichier_source,
         "type_voile": extraction.type_voile,
         "gamme": extraction.gamme,
@@ -107,6 +114,7 @@ def comparer_extractions(
     *,
     noms_modeles: tuple[str | None, str | None] = (None, None),
     corrections: tuple[int | None, int | None] = (None, None),
+    codes_fiches: tuple[str | None, str | None] = (None, None),
 ) -> dict[str, Any]:
     """Compare deux extractions bloc par bloc (fonction pure).
 
@@ -287,8 +295,8 @@ def comparer_extractions(
     ]
 
     return {
-        "a": _resume(a, noms_modeles[0]),
-        "b": _resume(b, noms_modeles[1]),
+        "a": _resume(a, noms_modeles[0], codes_fiches[0]),
+        "b": _resume(b, noms_modeles[1], codes_fiches[1]),
         "meme_modele_bateau": meme_modele,
         "meme_type_voile": meme_type,
         "comparable": comparable,
@@ -350,6 +358,17 @@ def _nombre_corrections(curseur: Any, id_extraction: int) -> int:  # noqa: ANN40
     return int(curseur.fetchone()[0])
 
 
+def _code_fiche_metier(curseur: Any, extraction: ExtractionVoile) -> str | None:  # noqa: ANN401
+    """Code de la fiche métier rattachée à l'extraction (None si aucune)."""
+    if extraction.id_fiche is None:
+        return None
+    curseur.execute(
+        "SELECT code FROM fiche WHERE id_fiche = %s", (extraction.id_fiche,)
+    )
+    ligne = curseur.fetchone()
+    return str(ligne[0]) if ligne is not None and ligne[0] else None
+
+
 def comparaison_entre(index: Any, id_a: int, id_b: int) -> dict[str, Any]:  # noqa: ANN401
     """Comparaison complète de deux extractions persistées (lecture seule)."""
     _exiger_postgres(index, "La comparaison de voiles")
@@ -366,6 +385,10 @@ def comparaison_entre(index: Any, id_a: int, id_b: int) -> dict[str, Any]:  # no
                 corrections=(
                     _nombre_corrections(curseur, int(id_a)),
                     _nombre_corrections(curseur, int(id_b)),
+                ),
+                codes_fiches=(
+                    _code_fiche_metier(curseur, a),
+                    _code_fiche_metier(curseur, b),
                 ),
             )
 

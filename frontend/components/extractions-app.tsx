@@ -473,6 +473,13 @@ function ExtractionsAppInterne() {
                     data-testid="lien-comparer"
                   >
                     Comparer…
+                  </a>{" "}
+                  <a
+                    href={`/confiance?id=${extraction.id_extraction}`}
+                    className="ml-2 rounded border border-border px-1.5 py-0.5 font-sans text-[11px] font-semibold hover:bg-accent"
+                    data-testid="lien-confiance"
+                  >
+                    Confiance…
                   </a>
                 </h2>
                 <p className="mt-0.5 text-xs text-muted-foreground">

@@ -381,6 +381,25 @@ def evaluer_extraction(
                 exclure_id=candidat.id_extraction,
             )
             resultat = evaluer_population(candidat, population)
+            # Liens fiches métier des sources (Lot 6) : résolus seulement si
+            # la source est réellement rattachée à une fiche — l'écran ne
+            # rend un lien que dans ce cas (jamais de lien mort).
+            ids_fiches = {
+                fiche.id_extraction: fiche.id_fiche
+                for fiche in population
+                if fiche.id_fiche is not None
+            }
+            if ids_fiches:
+                curseur.execute(
+                    "SELECT id_fiche, code FROM fiche WHERE id_fiche = ANY(%s)",
+                    (list(ids_fiches.values()),),
+                )
+                codes = {int(id_fiche): str(code) for id_fiche, code in curseur.fetchall()}
+                for source in resultat["justification"]["sources"]:
+                    id_fiche = ids_fiches.get(source.get("id_extraction"))
+                    source["code_fiche_metier"] = (
+                        codes.get(int(id_fiche)) if id_fiche is not None else None
+                    )
             curseur.execute(
                 "INSERT INTO evaluations_confiance "
                 "(id_extraction, boat_model_id, type_voile, n_echantillons, "
