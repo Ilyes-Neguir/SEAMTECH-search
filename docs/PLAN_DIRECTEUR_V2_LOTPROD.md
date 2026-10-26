@@ -1,6 +1,6 @@
 # Plan directeur v2 — Lot PROD : mise en production (audit ECC)
 
-> Branche : `arena/82958474-seamtech-search` · RED : `1059d74` · GREEN : `64812a1`
+> Branche : `arena/82958474-seamtech-search` · RED : `1059d74` · GREEN : `64812a1` → prouvé : `f8bf885`
 > · Méthode : skill ECC **`production-audit`** (preuves locales, aucun envoi
 > externe), correctifs prouvés par la boucle `verification-loop`.
 > Préalable livré le même jour : fusion des Lots 7+8 dans `main`
@@ -94,7 +94,13 @@ documentés et assumés pour un déploiement local d'atelier.
 - Local : contrat 20/20, suite Python **1078 passés** (442 live ignorés),
   `ruff` ✓, `tsc` ✓, build de production ✓, en-têtes `curl` ✓, refus de
   démarrage et fail-closed `change-me` en direct ✓.
-- **CI au SHA exact `64812a1`** : _à compléter à la clôture (4 workflows)._
+- **CI au SHA exact `f8bf885` — 4/4 verts** : CI `40375447362`, Qualification
+  native `40375447227`, Qualification reserves `40375447419`, Perf comparaison
+  `40375447340`. Le premier passage (`64812a1`) était vert partout sauf
+  `backend (3.13)` : un test du worker réel utilisait le mot de passe Redis
+  « motdepasse » — littéralement un secret d'exemple — et mourait sur le
+  nouveau garde-fou avant le contrôle Redis visé. Fixture rendue réaliste
+  (la politique, elle, n'a pas bougé), test forcé et vert en local.
 
 ## Prochaine action proposée
 
