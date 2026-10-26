@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlparse
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -398,3 +399,81 @@ class AppConfig(BaseModel):
             for extension, command in config.external_extractors.items()
         }
         return config
+
+
+# ---------------------------------------------------------------------------
+# Lot PROD — refus des secrets d'exemple aux points d'entrée déployés.
+#
+# `.env.example` publie des valeurs d'exemple ; compose n'exige que du
+# non-vide (`${VAR:?}`). Sans ce garde-fou, copier l'exemple démarre un
+# service « protégé » par des secrets publics. La validation vit aux points
+# d'entrée de production (`serve`, worker, sauvegarde planifiée), jamais
+# dans `create_app`/`AppConfig` : les tests y construisent des configs à
+# jetons courts en toute légitimité. Les messages nomment les CHAMPS,
+# jamais les valeurs — un journal ne doit pas devenir le canal de fuite.
+# ---------------------------------------------------------------------------
+
+SECRETS_EXEMPLES: frozenset[str] = frozenset(
+    {
+        "change-me",
+        "changeme",
+        "change_me",
+        "changez-moi",
+        "exemple",
+        "example",
+        "motdepasse",
+        "mot-de-passe",
+        "password",
+        "votre-secret",
+        "votre-mot-de-passe",
+    }
+)
+
+_HOTES_LOOPBACK: frozenset[str] = frozenset({"127.0.0.1", "localhost", "::1"})
+
+_LONGUEUR_MINIMALE_SECRET = 8
+
+
+def _secret_inacceptable(valeur: str) -> bool:
+    nettoyee = valeur.strip()
+    return nettoyee.lower() in SECRETS_EXEMPLES or len(nettoyee) < _LONGUEUR_MINIMALE_SECRET
+
+
+def _mot_de_passe_url(url: str | None) -> str | None:
+    if not url:
+        return None
+    try:
+        mot_de_passe = urlparse(url).password
+    except ValueError:
+        return None
+    return unquote(mot_de_passe) if mot_de_passe else None
+
+
+def exiger_secrets_production(config: AppConfig) -> None:
+    """Lève ``ValueError`` si un secret de la config est d'exemple ou trop court.
+
+    Appelée par les points d'entrée déployés juste après ``AppConfig.load`` :
+    un conteneur qui refuse de démarrer se diagnostique (`docker compose
+    logs`), un service ouvert avec des secrets publics ne se voit pas.
+    """
+    problemes: list[str] = []
+    if config.auth_token is None:
+        if config.host not in _HOTES_LOOPBACK:
+            problemes.append("auth_token absent alors que host n'est pas en loopback")
+    elif _secret_inacceptable(config.auth_token):
+        problemes.append("auth_token (valeur d'exemple ou trop courte)")
+    if config.s3_secret_key and _secret_inacceptable(config.s3_secret_key):
+        problemes.append("s3_secret_key (valeur d'exemple ou trop courte)")
+    mot_de_passe_base = _mot_de_passe_url(config.database_url)
+    if mot_de_passe_base and _secret_inacceptable(mot_de_passe_base):
+        problemes.append("mot de passe de database_url (valeur d'exemple ou trop courte)")
+    mot_de_passe_redis = _mot_de_passe_url(config.redis_url)
+    if mot_de_passe_redis and _secret_inacceptable(mot_de_passe_redis):
+        problemes.append("mot de passe de redis_url (valeur d'exemple ou trop courte)")
+    if problemes:
+        raise ValueError(
+            "Secrets de production inacceptables : "
+            + " ; ".join(problemes)
+            + ". Générez des secrets dédiés (par exemple `openssl rand -base64 32`),"
+            " voir .env.example. Démarrage refusé."
+        )

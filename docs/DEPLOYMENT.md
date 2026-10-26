@@ -53,6 +53,15 @@ which breaks the URL — in a Redis URL the `/` silently becomes the database
 selector. The application refuses to start with an explicit message when a
 password in either URL is not encoded (`AppConfig.validate_connection_urls`).
 
+**Example secrets are refused (Lot PROD).** Copying `.env.example` without
+editing it does not start a weakly-protected stack: the deployed entry points
+(`serve`, `worker`, `sauvegarde`) reject known example values (`change-me`, …)
+and secrets shorter than 8 characters with an explicit, value-free error
+(`exiger_secrets_production`), and the frontend treats an example
+`SEAMTECH_UI_PASSWORD` / `SEAMTECH_SESSION_SECRET` as *not configured* — the
+login page then shows its fail-closed screen. If a container keeps restarting
+right after an install, `docker compose logs web` names the offending field.
+
 ```dotenv
 POSTGRES_PASSWORD=<long-random-postgres-password>
 MINIO_ROOT_USER=<long-random-minio-admin-user>
@@ -642,11 +651,25 @@ attachments, search + download path, interrupted scan, failed rollback) and
 
 ## Backups and recovery
 
+**Scheduled by default (Lot PROD).** The `sauvegarde` compose service runs the
+proven backup machinery (`seamtech_search.sauvegarde`: dump + archive
+inventory + manifest + retention + off-site upload) on a schedule: it checks
+every `SEAMTECH_BACKUP_VERIFICATION_MINUTES` (60) and backs up whenever the
+last successful manifest is older than `SEAMTECH_BACKUP_INTERVAL_HEURES` (24),
+keeping `SEAMTECH_BACKUP_RETENTION` (5) backups. Dumps and manifests land in
+`data/backups` — the same folder `/health` reads, so `backup.statut` tells the
+truth (« ancienne » beyond the threshold, with the age). Off-site upload uses
+the dedicated `SEAMTECH_BACKUP_*` identity when provisioned; without it the
+service logs loudly that backups are local-only. A failed run never kills the
+scheduler: it logs and retries at the next check.
+
 Back up PostgreSQL and MinIO together so the index and document objects remain
 consistent. The repository includes PowerShell helpers for PostgreSQL backups;
 run them from an elevated or appropriately permissioned PowerShell session and
 store the resulting files off the deployment machine. Also back up the MinIO
 volume or use an S3-compatible bucket with its own retention and backup policy.
+Which version is running is always answerable without a shell: `/health`
+reports `version`.
 
 Before an upgrade, record the running image and schema state:
 

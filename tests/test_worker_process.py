@@ -233,7 +233,10 @@ def test_worker_service_refuse_de_demarrer_sans_redis(tmp_path: Path) -> None:
     racine_donnees = tmp_path / "archive"
     racine_donnees.mkdir()
     config = json.loads(_rediger_config(tmp_path, racine_donnees, 30).read_text(encoding="utf-8"))
-    config["redis_url"] = "redis://:motdepasse@127.0.0.1:6399/0"
+    # Mot de passe volontairement NON-trivial : depuis le Lot PROD, le worker
+    # refuse les secrets d'exemple avant même le contrôle Redis — ce test
+    # vise l'absence de Redis, sa fixture doit donc passer le garde-fou.
+    config["redis_url"] = "redis://:mot-de-passe-redis-de-recette@127.0.0.1:6399/0"
     chemin = tmp_path / "config.sans-redis.json"
     chemin.write_text(json.dumps(config), encoding="utf-8")
 
