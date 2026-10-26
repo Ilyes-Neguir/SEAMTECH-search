@@ -82,7 +82,19 @@ ST) → tout appui sur le nom de fichier ne peut être qu'une suggestion.
   croquis, scanner fiche vs commande boutique).
 - Suite complète locale (sélection par marqueurs du dépôt) : **1056 verts**,
   17 ignorés, `ruff check .` propre — aucune régression.
-- CI GitHub au HEAD exact : _à remplir après poussée._
+- CI GitHub — **cycle 1 au commit `204c1e8`** : Qualification native
+  `40398591973` ✅, Qualification réserves `40398592408` ✅, Perf
+  comparaison `40398592290` ✅ ; CI `40398592152` : **12/13 jobs ✅**
+  (backends 3.11/3.12/3.13 — dont l'activation PostgreSQL de la v2 et le
+  dépôt Lot 7 —, docker, frontend, sécurité-dépendances,
+  recette-corpus-réel, ocr, intégration, sauvegarde, hors-ligne-réel,
+  recette-locale). Seul le job `e2e` échoue, sur son garde-fou « 0
+  flaky » : 2 passés, **1 flaky, 0 en échec** — le parcours Lot 6 « liens
+  croisés voiles » en timeout de 30 s au premier essai, vert au réessai.
+  Instabilité **préexistante et déjà consignée** (Lot PROD), sans rapport
+  avec ce lot (test voile ; delta = données du gabarit accessoire). Le
+  présent commit (documentation seule) re-prouve le HEAD ; les identifiants
+  du cycle vert final sont donnés dans le résumé de livraison.
 
 ## 5. Limites mesurées et suites proposées (hors Lot CAL)
 
