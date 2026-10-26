@@ -106,21 +106,13 @@ def enregistrer_routes_accessoires(
             entete_jeton=jeton,
         )
 
-    _entetes = (
-        Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")],
-        Annotated[str | None, Header(alias="X-SEAMTECH-UTILISATEUR")],
-        Annotated[str | None, Header(alias="X-SEAMTECH-ROLE")],
-        Annotated[str | None, Header(alias="X-SEAMTECH-SESSION")],
-        Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-JETON")],
-    )
-
     @app.get("/accessoires/extractions")
     def route_lister_accessoires(
-        token: _entetes[0] = None,
-        entete_utilisateur: _entetes[1] = None,
-        entete_role: _entetes[2] = None,
-        entete_session: _entetes[3] = None,
-        entete_jeton: _entetes[4] = None,
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+        entete_utilisateur: Annotated[str | None, Header(alias="X-SEAMTECH-UTILISATEUR")] = None,
+        entete_role: Annotated[str | None, Header(alias="X-SEAMTECH-ROLE")] = None,
+        entete_session: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION")] = None,
+        entete_jeton: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-JETON")] = None,
         statut_liaison: str | None = Query(default=None, max_length=50),
         recherche: str | None = Query(default=None, max_length=200),
         limite: int = Query(default=50, ge=1, le=200),
@@ -140,11 +132,11 @@ def enregistrer_routes_accessoires(
     @app.get("/accessoires/extractions/{id_extraction}")
     def route_detail_accessoire(
         id_extraction: int,
-        token: _entetes[0] = None,
-        entete_utilisateur: _entetes[1] = None,
-        entete_role: _entetes[2] = None,
-        entete_session: _entetes[3] = None,
-        entete_jeton: _entetes[4] = None,
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+        entete_utilisateur: Annotated[str | None, Header(alias="X-SEAMTECH-UTILISATEUR")] = None,
+        entete_role: Annotated[str | None, Header(alias="X-SEAMTECH-ROLE")] = None,
+        entete_session: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION")] = None,
+        entete_jeton: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-JETON")] = None,
     ) -> dict[str, Any]:
         verifier_auth(config, token)
         _exiger_postgres(index)
@@ -158,11 +150,11 @@ def enregistrer_routes_accessoires(
     def route_resoudre_accessoire(
         id_extraction: int,
         corps: dict[str, Any] | None = None,
-        token: _entetes[0] = None,
-        entete_utilisateur: _entetes[1] = None,
-        entete_role: _entetes[2] = None,
-        entete_session: _entetes[3] = None,
-        entete_jeton: _entetes[4] = None,
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+        entete_utilisateur: Annotated[str | None, Header(alias="X-SEAMTECH-UTILISATEUR")] = None,
+        entete_role: Annotated[str | None, Header(alias="X-SEAMTECH-ROLE")] = None,
+        entete_session: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION")] = None,
+        entete_jeton: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-JETON")] = None,
     ) -> dict[str, Any]:
         verifier_auth(config, token)
         _exiger_postgres(index)
@@ -185,11 +177,11 @@ def enregistrer_routes_accessoires(
     def route_lier_accessoire(
         id_extraction: int,
         corps: dict[str, Any] | None = None,
-        token: _entetes[0] = None,
-        entete_utilisateur: _entetes[1] = None,
-        entete_role: _entetes[2] = None,
-        entete_session: _entetes[3] = None,
-        entete_jeton: _entetes[4] = None,
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+        entete_utilisateur: Annotated[str | None, Header(alias="X-SEAMTECH-UTILISATEUR")] = None,
+        entete_role: Annotated[str | None, Header(alias="X-SEAMTECH-ROLE")] = None,
+        entete_session: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION")] = None,
+        entete_jeton: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-JETON")] = None,
     ) -> dict[str, Any]:
         verifier_auth(config, token)
         _exiger_postgres(index)
@@ -228,11 +220,11 @@ def enregistrer_routes_accessoires(
     def route_corriger_accessoire(
         id_extraction: int,
         corps: dict[str, Any] | None = None,
-        token: _entetes[0] = None,
-        entete_utilisateur: _entetes[1] = None,
-        entete_role: _entetes[2] = None,
-        entete_session: _entetes[3] = None,
-        entete_jeton: _entetes[4] = None,
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+        entete_utilisateur: Annotated[str | None, Header(alias="X-SEAMTECH-UTILISATEUR")] = None,
+        entete_role: Annotated[str | None, Header(alias="X-SEAMTECH-ROLE")] = None,
+        entete_session: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION")] = None,
+        entete_jeton: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-JETON")] = None,
     ) -> dict[str, Any]:
         verifier_auth(config, token)
         _exiger_postgres(index)
@@ -267,11 +259,11 @@ def enregistrer_routes_accessoires(
     def route_changer_categorie_fiche(
         id_fiche: int,
         corps: dict[str, Any] | None = None,
-        token: _entetes[0] = None,
-        entete_utilisateur: _entetes[1] = None,
-        entete_role: _entetes[2] = None,
-        entete_session: _entetes[3] = None,
-        entete_jeton: _entetes[4] = None,
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+        entete_utilisateur: Annotated[str | None, Header(alias="X-SEAMTECH-UTILISATEUR")] = None,
+        entete_role: Annotated[str | None, Header(alias="X-SEAMTECH-ROLE")] = None,
+        entete_session: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION")] = None,
+        entete_jeton: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-JETON")] = None,
     ) -> dict[str, Any]:
         """Reclassification d'une fiche — décision approbateur (source humain)."""
         verifier_auth(config, token)

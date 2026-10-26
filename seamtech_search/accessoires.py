@@ -769,7 +769,7 @@ def corriger_accessoire(
         )
         curseur.execute(
             "INSERT INTO accessory_corrections (id_extraction, champ, valeur_avant, "
-            "valeur_apres, motif, corrige_par) VALUES (%s, %s, %s::jsonb, %s::jsonb, %s, %s)",
+            "valeur_apres, motif, id_utilisateur) VALUES (%s, %s, %s::jsonb, %s::jsonb, %s, %s)",
             (
                 int(id_extraction),
                 champ,
@@ -804,7 +804,7 @@ _COLONNES_LECTURE = (
     "a.modele_bateau_brut, a.taille_bateau_brute, a.champs, a.anomalies, "
     "a.score_qualite, a.confiance_moyenne, a.statut_extraction, a.statut_plausibilite, "
     "a.boat_model_id, a.statut_liaison, a.methode_liaison, a.lie_le, a.lie_par, "
-    "a.cree_le, a.maj_le, bm.nom_affiche AS nom_modele_lie"
+    "a.cree_le, a.maj_le, bm.nom_canonique AS nom_modele_lie"
 )
 
 _NOMS_LECTURE = (
@@ -892,8 +892,8 @@ def detail_extraction_accessoire(index: Any, id_extraction: int) -> dict[str, An
             )
         extraction, nom_modele_lie = _extraction_depuis_ligne(ligne)
         curseur.execute(
-            "SELECT champ, valeur_avant, valeur_apres, motif, corrige_par, corrige_le "
-            "FROM accessory_corrections WHERE id_extraction = %s ORDER BY corrige_le, id_correction",
+            "SELECT champ, valeur_avant, valeur_apres, motif, id_utilisateur, cree_le "
+            "FROM accessory_corrections WHERE id_extraction = %s ORDER BY cree_le, id_correction",
             (int(id_extraction),),
         )
         corrections = [

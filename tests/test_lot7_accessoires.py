@@ -333,7 +333,10 @@ def test_depot_categorie_projection_et_reclassification(monde_lot7: dict[str, An
 
     # La recherche filtre et facette par catégorie.
     resultats = rechercher_fiches(index, requete="", filtres={"categorie": "accessoire"})
-    assert any(int(f["id_fiche"]) == id_fiche for f in resultats["resultats"])
+    # Les lignes publiques portent le code (jamais l'id interne) — et leur
+    # catégorie, exactement celle écrite au dépôt.
+    ligne = next(f for f in resultats["resultats"] if f["code"] == "LOT7-ACC-1")
+    assert ligne["categorie"] == "accessoire"
     facettes = resultats.get("facettes") or {}
     assert any(
         ligne.get("valeur") == "accessoire" for ligne in facettes.get("categorie", [])

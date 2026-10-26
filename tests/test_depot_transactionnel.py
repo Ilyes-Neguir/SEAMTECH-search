@@ -181,7 +181,7 @@ class TestEcritureEntiereOuPasDuTout:
         # testée, elle, ne change pas : un crash APRÈS l'écriture ne laisse rien.
         vraie_ecriture = depot.ecrire_fiche_resultat
 
-        def ecrire_puis_crash(idx: Any, fiche: Any, connexion: Any = None) -> Any:
+        def ecrire_puis_crash(idx: Any, fiche: Any, connexion: Any = None, **_kwargs: Any) -> Any:
             vraie_ecriture(idx, fiche, connexion=connexion)
             raise RuntimeError("crash simulé après l'écriture de la fiche")
 
