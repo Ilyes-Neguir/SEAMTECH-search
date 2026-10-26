@@ -100,11 +100,13 @@ def test_proposer_categorie_priorites_et_sources() -> None:
 def test_gabarit_accessoire_detection_et_regles() -> None:
     gabarit = gabarit_accessoire_v1()
     assert gabarit.code == CODE_GABARIT_ACCESSOIRE == "FICHE_ACCESSOIRE_V1"
-    from seamtech_search.fiches.extraction import texte_normalise
+    # normaliser_terme est la normalisation appliquée aux lignes par
+    # texte_normalise(pages) — même entrant que le scanner de dépôt.
+    from seamtech_search.fiches.extraction import normaliser_terme
 
-    texte_accessoire = texte_normalise("COUSSIN DE COCKPIT mousse sellerie housse de protection")
+    texte_accessoire = normaliser_terme("COUSSIN DE COCKPIT mousse sellerie housse de protection")
     assert gabarit.score_detection(texte_accessoire) >= 2
-    texte_voile = texte_normalise("GRAND VOILE SLU SLE SF SHW guindant bordure chute lattes ris œillets têtière")
+    texte_voile = normaliser_terme("GRAND VOILE SLU SLE SF SHW guindant bordure chute lattes ris œillets têtière")
     assert gabarit.score_detection(texte_voile) == 0
     cibles = {regle.cible for regle in gabarit.champs}
     assert {
@@ -129,7 +131,7 @@ def test_construire_extraction_accessoire_provenance_et_dimensions() -> None:
     assert extraction.modele_bateau_brut == "Bavaria 45"
     assert extraction.statut_extraction == "complete"
     assert extraction.id_fiche == 7
-    champs = {c.champ: c for c in extraction.champs}
+    champs = {c.nom: c for c in extraction.champs}
     assert champs["type_accessoire"].confiance == pytest.approx(0.95)
     assert champs["type_accessoire"].page == 1
 
@@ -160,7 +162,7 @@ def test_migration_031_contrats_schema() -> None:
     for fragment in (
         "CREATE TABLE IF NOT EXISTS accessory_extractions",
         "CREATE TABLE IF NOT EXISTS accessory_corrections",
-        "ALTER TABLE fiche ADD COLUMN IF NOT EXISTS categorie",
+        "ADD COLUMN IF NOT EXISTS categorie",
         "categorie IN ('voile', 'accessoire')",
         "categorie_source IN ('dossier', 'document', 'humain')",
         "REFERENCES boat_models(id_modele)",

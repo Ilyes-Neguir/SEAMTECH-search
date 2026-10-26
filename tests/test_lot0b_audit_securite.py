@@ -288,7 +288,7 @@ def test_lot0b_postgres_audit_append_only_et_gardes(tmp_path: Path) -> None:
                     "FROM audit_logs ORDER BY id_audit"
                 )
                 lignes = curseur.fetchall()
-        assert versions[-7:] == [
+        assert versions[-8:] == [
             "024_sessions_redis",
             "025_audit_logs",
             "026_boat_models_aliases",
@@ -296,6 +296,7 @@ def test_lot0b_postgres_audit_append_only_et_gardes(tmp_path: Path) -> None:
             "028_sail_extractions",
             "029_extraction_liaison_corrections",
             "030_evaluations_confiance",
+            "031_accessoires",
         ]
         assert len(lignes) == 1
         assert lignes[0][0] == "connexion_refusee"

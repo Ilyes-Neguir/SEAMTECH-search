@@ -1214,6 +1214,28 @@ class SearchIndex:
             "créée (aucun pourcentage sans échantillon ni justification)."
         )
 
+    def _migration_031_accessoires(self, connection: Any) -> None:
+        """Famille accessoires (Lot 7) : catégorie sur la fiche + extractions.
+
+        PostgreSQL : ajoute `categorie`/`categorie_source` à `fiche`, crée
+        `accessory_extractions`/`accessory_corrections` et expose la
+        catégorie dans la vue de recherche. SQLite : no-op enregistré,
+        comme le reste de la couche métier.
+        """
+        if not self.is_postgres:
+            logger.warning(
+                "Migration 031_accessoires ignorée : la couche métier est "
+                "PostgreSQL uniquement — conséquence : SQLite conserve uniquement la "
+                "recherche de fichiers héritée."
+            )
+            return
+        with connection.cursor() as cursor:
+            cursor.execute(schema_metier.SQL_031_ACCESSOIRES)
+        logger.info(
+            "Migration 031_accessoires : catégorie voile/accessoire sur la fiche "
+            "et tables d'extractions d'accessoires créées."
+        )
+
     def run_migrations(self) -> None:
         """Run pending schema migrations once at startup."""
         with self.connect() as connection:
@@ -1303,6 +1325,9 @@ class SearchIndex:
                 # VERSION_SCHEMA_METIER vaut 030 et une migration oubliée
                 # ferait échouer sauvegarde/restauration.
                 ("030_evaluations_confiance", self._migration_030_evaluations_confiance),
+                # Lot 7 — Accessoires : enregistrée comme les autres,
+                # VERSION_SCHEMA_METIER vaut 031.
+                ("031_accessoires", self._migration_031_accessoires),
             ]
 
             for version, func in migrations:

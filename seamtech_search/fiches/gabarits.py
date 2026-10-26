@@ -338,6 +338,43 @@ GABARIT_GV_FULLBATTEN = GabaritDef(
     ],
 )
 
+# Lot 7 — famille accessoires. Gabarit GÉNÉRIQUE par libellés : à la
+# rédaction, aucun échantillon accessoire réel n'est encore disponible dans
+# le dépôt (téléversement Dropbox en cours) — les ancres sont les libellés
+# métier ordinaires, à calibrer sur les vrais PDFs dès leur arrivée, sans
+# toucher au moteur (les règles sont des données, versionnées en base).
+# Aucune ancre ne doit exister sur une fiche de voile (jamais « coulisseaux »,
+# qui est une ancre GV fullbatten).
+CODE_GABARIT_ACCESSOIRE = "FICHE_ACCESSOIRE_V1"
+
+GABARIT_ACCESSOIRE_V1 = GabaritDef(
+    code=CODE_GABARIT_ACCESSOIRE,
+    version=1,
+    description=(
+        "Fiche de fabrication d'accessoire (Lazy Bag, housse, taud, capote…) : "
+        "lecture par libellés (type, matière, couleur, dimensions, quantité, "
+        "bateau). Gabarit générique v1, à calibrer sur les échantillons réels."
+    ),
+    ancres_detection=[
+        "accessoire",
+        "accessoires",
+        "housse",
+        "taud",
+        "capote",
+        "Lazy Bag",
+        "bimini",
+        "sellerie",
+    ],
+    champs=[
+        RegleChamp(cible="accessoire.type", ancres=["type", "accessoire", "article"], type="texte"),
+        RegleChamp(cible="accessoire.matiere", ancres=["matiere", "matière", "tissu", "materiau"], type="texte"),
+        RegleChamp(cible="accessoire.couleur", ancres=["couleur", "coloris"], type="texte"),
+        RegleChamp(cible="accessoire.dimensions", ancres=["dimensions", "dimension", "longueur"], type="texte"),
+        RegleChamp(cible="accessoire.quantite", ancres=["quantite", "quantité", "qte"], type="entier"),
+        RegleChamp(cible="accessoire.modele_bateau", ancres=["bateau", "modele", "modèle"], type="texte"),
+    ],
+)
+
 # Ordre significatif : à score d'ancres égal, la version la plus récente
 # d'un code gagne la détection (v2 devant v1) ; les gabarits du corpus réel
 # viennent EN DERNIER pour que les gabarits historiques (génois, portant)
@@ -348,6 +385,10 @@ GABARITS_EMBARQUES: tuple[GabaritDef, ...] = (
     GABARIT_GENOIS,
     GABARIT_GV_FULLBATTEN,
     GABARIT_JADE,
+    # Lot 7 : le gabarit accessoire vient en dernier — ses ancres sont
+    # absentes des fiches de voiles, il ne peut donc pas voler une fiche
+    # voile ; sur un document accessoire, il gagne les égalités.
+    GABARIT_ACCESSOIRE_V1,
 )
 
 
