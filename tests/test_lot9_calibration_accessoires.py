@@ -101,7 +101,7 @@ LIGNES_FICHE_COMPLETE = [
     "N° de commande : CAL-2026-001",
     "Type de bateau : Voilier Fictif 42",
     "Type : Housse de protection fictive",
-    "Matière : Tissu fictif tissé",
+    "Matière : Acrylique fictif",
     "Couleurs Sunbrella : bleu fictif",
     "Dimensions : 120 cm x 45 cm",
     "Quantité : 3",
@@ -277,7 +277,7 @@ def test_extraction_libelles_reels(fiche_complete) -> None:
     # jamais la ligne « Type de bateau : … » placée AVANT dans le document.
     assert traces["accessoire.type"].valeur_brute == "Housse de protection fictive"
     assert traces["accessoire.modele_bateau"].valeur_brute == "Voilier Fictif 42"
-    assert traces["accessoire.matiere"].valeur_brute == "Tissu fictif tissé"
+    assert traces["accessoire.matiere"].valeur_brute == "Acrylique fictif"
     # « Couleurs Sunbrella : … » (libellé du nuancier) → couleur.
     assert traces["accessoire.couleur"].valeur_brute == "bleu fictif"
     assert traces["accessoire.dimensions"].valeur_brute == "120 cm x 45 cm"
@@ -290,7 +290,7 @@ def test_projection_fiche_complete(fiche_complete) -> None:
     assert extraction.gabarit_code == CODE_GABARIT_ACCESSOIRE
     assert extraction.gabarit_version == 2
     assert extraction.type_accessoire == "Housse de protection fictive"
-    assert extraction.matiere == "Tissu fictif tissé"
+    assert extraction.matiere == "Acrylique fictif"
     assert extraction.couleur == "bleu fictif"
     assert extraction.longueur_m == pytest.approx(1.2)
     assert extraction.largeur_m == pytest.approx(0.45)
