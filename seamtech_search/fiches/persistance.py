@@ -385,15 +385,24 @@ class ResultatEcriture:
 
 
 def ecrire_fiche_resultat(
-    index: Any, fiche: FicheExtraite, connexion: Any = None
+    index: Any,
+    fiche: FicheExtraite,
+    connexion: Any = None,
+    *,
+    categorie: tuple[str, str] | None = None,
 ) -> ResultatEcriture:
-    """Comme :func:`ecrire_fiche`, mais rend aussi la révision résultante."""
+    """Comme :func:`ecrire_fiche`, mais rend aussi la révision résultante.
+
+    ``categorie`` (Lot 7) : ``(categorie, source)`` proposée au dépôt —
+    ``None`` retombe sur la famille du gabarit (source ``document``). Une
+    catégorie déjà décidée par un humain n'est jamais écrasée ici.
+    """
     if not fiche.code:
         raise ValueError("Fiche sans code : écriture refusée (reprise complète requise avant stockage).")
     if connexion is not None:
-        return _ecrire_fiche_dans(index, fiche, connexion)
+        return _ecrire_fiche_dans(index, fiche, connexion, categorie=categorie)
     with index.connect() as connexion_ext:
-        return _ecrire_fiche_dans(index, fiche, connexion_ext)
+        return _ecrire_fiche_dans(index, fiche, connexion_ext, categorie=categorie)
 
 
 def ecrire_fiche(index: Any, fiche: FicheExtraite, connexion: Any = None) -> tuple[int, str]:
@@ -415,7 +424,74 @@ def ecrire_fiche(index: Any, fiche: FicheExtraite, connexion: Any = None) -> tup
     return ecrire_fiche_resultat(index, fiche, connexion).as_tuple()
 
 
-def _ecrire_fiche_dans(index: Any, fiche: FicheExtraite, connexion: Any) -> ResultatEcriture:
+def _resoudre_categorie_depot(
+    cursor: Any,
+    *,
+    id_fiche: int,
+    fiche: FicheExtraite,
+    categorie: tuple[str, str] | None,
+) -> str:
+    """Catégorie effective d'une fiche au dépôt (Lot 7) — jamais silencieuse.
+
+    Une catégorie déjà décidée par un humain (``categorie_source = 'humain'``)
+    est conservée telle quelle, quoi que propose le dossier ou le document.
+    Sinon la proposition fournie s'applique (ou, par défaut, la famille du
+    gabarit). La projection de l'autre famille est retirée seulement si elle
+    ne porte AUCUNE correction humaine — sinon on conserve l'ancienne
+    catégorie plutôt que de perdre un travail humain (avec journal).
+    """
+    from seamtech_search.accessoires import proposer_categorie
+
+    cursor.execute(
+        "SELECT categorie, categorie_source FROM fiche WHERE id_fiche = %s",
+        (int(id_fiche),),
+    )
+    ligne = cursor.fetchone()
+    actuelle, source_actuelle = (str(ligne[0]), str(ligne[1])) if ligne else ("voile", "document")
+    if source_actuelle == "humain":
+        return actuelle
+    proposee, source_proposee = categorie or proposer_categorie(None, fiche.gabarit_code)
+    if proposee not in ("voile", "accessoire") or source_proposee not in (
+        "dossier",
+        "document",
+        "humain",
+    ):
+        raise ValueError(f"Catégorie invalide au dépôt : {(proposee, source_proposee)!r}.")
+    if proposee != actuelle:
+        autre_table, autre_corrections = (
+            ("sail_extractions", "extraction_corrections")
+            if actuelle == "voile"
+            else ("accessory_extractions", "accessory_corrections")
+        )
+        cursor.execute(
+            f"SELECT count(*) FROM {autre_corrections} c JOIN {autre_table} e "  # noqa: S608 - liste blanche
+            "ON e.id_extraction = c.id_extraction WHERE e.id_fiche = %s",
+            (int(id_fiche),),
+        )
+        if int(cursor.fetchone()[0]) > 0:
+            LOGGER.warning(
+                "Fiche %d : catégorie %s conservée (corrections humaines sur la "
+                "projection) malgré la proposition %s.",
+                id_fiche, actuelle, proposee,
+            )
+            return actuelle
+        cursor.execute(
+            f"DELETE FROM {autre_table} WHERE id_fiche = %s", (int(id_fiche),)  # noqa: S608
+        )
+    cursor.execute(
+        "UPDATE fiche SET categorie = %s, categorie_source = %s WHERE id_fiche = %s",
+        (proposee, source_proposee, int(id_fiche)),
+    )
+    return proposee
+
+
+def _ecrire_fiche_dans(
+    index: Any,
+    fiche: FicheExtraite,
+    connexion: Any,
+    *,
+    categorie: tuple[str, str] | None = None,
+) -> ResultatEcriture:
     action = "creee"
     id_fiche: int | None = None  # positionné tôt si remplacement sur place
     revision_avant: int | None = None
@@ -606,12 +682,27 @@ def _ecrire_fiche_dans(index: Any, fiche: FicheExtraite, connexion: Any) -> Resu
                 )
             for anomalie in fiche.anomalies:
                 cursor.execute(_SQL_ANOMALIE_INS, (id_fiche, anomalie.code, anomalie.gravite, anomalie.message))
-            # Lot 3a : projection normalisée de la voile, dans LA MÊME
-            # transaction que la fiche et ses tables filles. Le modèle de
-            # bateau reste brut/non résolu ; seul le libellé historique de la
-            # fiche suit le rattachement Lot 2 déjà effectué ci-dessus.
-            extraction_voile = construire_extraction_voile(fiche, id_fiche=id_fiche)
-            enregistrer_extraction_voile_curseur(cursor, extraction_voile)
+            # Lots 3a/7 : projection normalisée de la FAMILLE de la fiche,
+            # dans LA MÊME transaction que la fiche et ses tables filles. La
+            # catégorie (voile|accessoire + sa source) est tranchée ici,
+            # jamais contre une décision humaine. Le modèle de bateau suit
+            # ensuite la résolution déterministe propre à chaque famille.
+            categorie_finale = _resoudre_categorie_depot(
+                cursor, id_fiche=id_fiche, fiche=fiche, categorie=categorie
+            )
+            if categorie_finale == "accessoire":
+                from seamtech_search.accessoires import (
+                    construire_extraction_accessoire,
+                    enregistrer_extraction_accessoire_curseur,
+                )
+
+                extraction_accessoire = construire_extraction_accessoire(
+                    fiche, id_fiche=id_fiche
+                )
+                enregistrer_extraction_accessoire_curseur(cursor, extraction_accessoire)
+            else:
+                extraction_voile = construire_extraction_voile(fiche, id_fiche=id_fiche)
+                enregistrer_extraction_voile_curseur(cursor, extraction_voile)
     # Phase 2.1 (production-readiness, décision commanditaire du 2026-09-29) :
     # le texte de recherche pondéré est rempli DÈS L'ÉCRITURE (statut
     # a_valider) — une fiche déposée est cherchable immédiatement, badgée

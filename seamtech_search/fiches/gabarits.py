@@ -366,6 +366,11 @@ GABARIT_ACCESSOIRE_V1 = GabaritDef(
         "sellerie",
     ],
     champs=[
+        # Le dépôt exige un code de fiche (règle produit : pas de référence,
+        # pas de stockage) — l'ancre « référence/commande » donne aux fiches
+        # accessoires autonomes leur code quand la ligne existe ; sinon le
+        # dossier part en reprise complète, comme une voile sans code.
+        RegleChamp(cible="fiche.code", ancres=["reference", "référence", "commande", "code"], type="texte"),
         RegleChamp(cible="accessoire.type", ancres=["type", "accessoire", "article"], type="texte"),
         RegleChamp(cible="accessoire.matiere", ancres=["matiere", "matière", "tissu", "materiau"], type="texte"),
         RegleChamp(cible="accessoire.couleur", ancres=["couleur", "coloris"], type="texte"),

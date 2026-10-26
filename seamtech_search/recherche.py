@@ -852,7 +852,8 @@ def _fragment_filtres(
         morceaux.append("v.statut IN ('valide', 'a_valider')")
     else:
         morceaux.append("v.statut = 'valide'")
-    for cle in ("type_voile", "client", "bateau", "gamme"):
+    # Lot 7 : « categorie » est un axe comme les autres (filtre + facette).
+    for cle in ("type_voile", "client", "bateau", "gamme", "categorie"):
         valeur = filtres.get(cle)
         if valeur not in (None, "") and cle not in exclure:
             morceaux.append(f"v.{cle} = %s")
@@ -1209,6 +1210,11 @@ _FACETTES_AXES: tuple[tuple[str, frozenset[str], str], ...] = (
     ("gamme", frozenset({"gamme"}),
      "SELECT 'gamme' AS facette, gamme AS valeur, count(*)::int AS effectif "
      "FROM {base} WHERE gamme IS NOT NULL AND gamme <> '' GROUP BY gamme"),
+    # Lot 7 : famille du document (voile | accessoire) — toujours présente
+    # (défaut 'voile' en base, jamais NULL).
+    ("categorie", frozenset({"categorie"}),
+     "SELECT 'categorie' AS facette, categorie AS valeur, count(*)::int AS effectif "
+     "FROM {base} GROUP BY categorie"),
     ("annee", GROUPE_ANNEE,
      "SELECT 'annee' AS facette, to_char(date_edition, 'YYYY') AS valeur, count(*)::int AS effectif "
      "FROM {base} WHERE date_edition IS NOT NULL GROUP BY to_char(date_edition, 'YYYY')"),
@@ -1926,7 +1932,8 @@ def _details_fiches(
                f.gamme, f.statut,
                CASE WHEN f.date_edition IS NULL THEN NULL
                     ELSE extract(year FROM f.date_edition)::int END,
-               left(f.champs_texte, 400)
+               left(f.champs_texte, 400),
+               f.categorie
         FROM fiche f
         LEFT JOIN type_voile tv ON tv.id_type_voile = f.id_type_voile
         LEFT JOIN client c ON c.id_client = f.id_client
@@ -1952,6 +1959,7 @@ def _details_fiches(
             "statut": ligne[10],
             "annee": None if ligne[11] is None else int(ligne[11]),
             "extrait": ligne[12] or "",
+            "categorie": ligne[13],
         }
 
     if avec_cotes:

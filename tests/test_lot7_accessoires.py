@@ -234,7 +234,6 @@ def _accessoire(**remplacements: Any) -> ExtractionAccessoire:  # noqa: ANN401
         "code_fiche": "LOT7-ACC-9",
         "nom_fichier_source": "accessoire-lot7.pdf",
         "gabarit_code": CODE_GABARIT_ACCESSOIRE,
-        "methode_principale": "gabarit",
         "type_accessoire": "housse",
         "matiere": "Sunbrella Plus",
         "couleur": "Captain bleu",
@@ -351,6 +350,61 @@ def test_depot_categorie_projection_et_reclassification(monde_lot7: dict[str, An
             assert int(curseur.fetchone()[0]) == 0
             curseur.execute("SELECT COUNT(*) FROM sail_extractions WHERE id_fiche = %s", (id_fiche,))
             assert int(curseur.fetchone()[0]) == 1
+
+
+@pytest.mark.postgres
+def test_depot_dossier_accessoires_bout_en_bout(
+    monde_lot7: dict[str, Any], tmp_path: Path
+) -> None:
+    """Dépôt réel : un PDF texte dans un dossier « ACCESSOIRES » naît en
+    fiche accessoire (source dossier) avec sa projection — aucune voile."""
+    from reportlab.pdfgen import canvas
+
+    from seamtech_search.fiches import depot
+
+    dossier = tmp_path / "ACCESSOIRES 2026"
+    dossier.mkdir(parents=True)
+    pdf = dossier / "fiche-accessoire.pdf"
+    toile = canvas.Canvas(str(pdf))
+    lignes = [
+        "FICHE ACCESSOIRE",
+        "Reference : LOT7-DEPOT-1",
+        "Type : Coussin de cockpit",
+        "Matiere : Sunbrella Plus",
+        "Couleur : Captain bleu",
+        "Dimensions : 1200 mm x 450 mm x 100 mm",
+        "Quantite : 4",
+        "Bateau : Bavaria 45",
+    ]
+    y = 780
+    for ligne in lignes:
+        toile.drawString(60, y, ligne)
+        y -= 24
+    toile.save()
+
+    resultat = depot.deposer_dossier(monde_lot7["index"], dossier)
+    assert resultat.get("statut") == "traite", resultat
+
+    with monde_lot7["index"].connect() as connexion:
+        with connexion.cursor() as curseur:
+            curseur.execute(
+                "SELECT id_fiche, categorie, categorie_source FROM fiche WHERE code = %s",
+                ("LOT7-DEPOT-1",),
+            )
+            id_fiche, categorie, source = curseur.fetchone()
+            assert (categorie, source) == ("accessoire", "dossier")
+            curseur.execute(
+                "SELECT type_accessoire, longueur_m, quantite, statut_liaison "
+                "FROM accessory_extractions WHERE id_fiche = %s",
+                (id_fiche,),
+            )
+            ligne = curseur.fetchone()
+            assert ligne is not None
+            assert ligne[0] is not None  # un type a été lu, jamais inventé
+            curseur.execute(
+                "SELECT COUNT(*) FROM sail_extractions WHERE id_fiche = %s", (id_fiche,)
+            )
+            assert int(curseur.fetchone()[0]) == 0
 
 
 @pytest.mark.postgres

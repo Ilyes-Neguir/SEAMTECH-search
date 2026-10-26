@@ -1723,6 +1723,13 @@ def create_app(config: AppConfig) -> FastAPI:
 
     enregistrer_routes_extractions_voile(app, index, config, _require_auth)
 
+    # Lot 7 : file et détail des extractions d'accessoires + reclassification
+    # — même contrat d'acteurs que le Lot 3b (lecture nominative, mutation
+    # approbateur), servi au navigateur par le relais /api/accessoires.
+    from seamtech_search.accessoires_routes import enregistrer_routes_accessoires
+
+    enregistrer_routes_accessoires(app, index, config, _require_auth)
+
     # Lot 4b (Fonction A) : comparaison de voiles bloc par bloc sur les
     # valeurs vérifiées du Lot 3b — lecture seule, session nominative.
     # Le navigateur passe par le relais Next.js /api/comparaison-voiles.
