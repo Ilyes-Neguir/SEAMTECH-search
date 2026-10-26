@@ -208,12 +208,14 @@ def _fiche_unites_explicites() -> FicheExtraite:
 
 
 def test_migration_028_sail_extractions_sans_resolution_bateau() -> None:
-    # La 028 reste figée ; depuis le Lot 3b, la version du schéma est 029 et
-    # la résolution vit dans la migration suivante (SQL_029), pas dans la 028.
-    assert VERSION_SCHEMA_METIER == "029_extraction_liaison_corrections"
+    # La 028 reste figée ; depuis le Lot 5, la version du schéma est 030 et
+    # la résolution vit dans les migrations suivantes (SQL_029+), pas dans
+    # la 028 — le contrat 3a « aucune résolution bateau » reste prouvé sur
+    # le SQL de la 028 lui-même.
+    assert VERSION_SCHEMA_METIER == "030_evaluations_confiance"
     assert dict(MIGRATIONS_METIER)["028_sail_extractions"] == SQL_028_SAIL_EXTRACTIONS
     assert "sail_extractions" in TABLES_METIER
-    assert len(TABLES_METIER) == 43
+    assert len(TABLES_METIER) == 44
 
     sql = SQL_028_SAIL_EXTRACTIONS
     assert "CREATE TABLE IF NOT EXISTS sail_extractions" in sql

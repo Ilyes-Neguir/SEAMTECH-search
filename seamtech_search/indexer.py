@@ -1192,6 +1192,28 @@ class SearchIndex:
             "historique de corrections et motifs appris créés (résolution jamais devinée)."
         )
 
+    def _migration_030_evaluations_confiance(self, connection: Any) -> None:
+        """Évaluations de confiance de réutilisation persistées (Lot 5).
+
+        PostgreSQL : crée ``evaluations_confiance`` avec la cohérence
+        score/verdict portée par contrainte (score NULL obligatoire quand les
+        données sont insuffisantes ou la population hétérogène). SQLite :
+        no-op enregistré, comme le reste de la couche métier.
+        """
+        if not self.is_postgres:
+            logger.warning(
+                "Migration 030_evaluations_confiance ignorée : la couche métier est "
+                "PostgreSQL uniquement — conséquence : SQLite conserve uniquement la "
+                "recherche de fichiers héritée."
+            )
+            return
+        with connection.cursor() as cursor:
+            cursor.execute(schema_metier.SQL_030_EVALUATIONS_CONFIANCE)
+        logger.info(
+            "Migration 030_evaluations_confiance : table des évaluations de confiance "
+            "créée (aucun pourcentage sans échantillon ni justification)."
+        )
+
     def run_migrations(self) -> None:
         """Run pending schema migrations once at startup."""
         with self.connect() as connection:
@@ -1276,6 +1298,11 @@ class SearchIndex:
                     "029_extraction_liaison_corrections",
                     self._migration_029_extraction_liaison_corrections,
                 ),
+                # Lot 5 — Fonction B : évaluations de confiance de
+                # réutilisation persistées. Enregistrée comme les autres :
+                # VERSION_SCHEMA_METIER vaut 030 et une migration oubliée
+                # ferait échouer sauvegarde/restauration.
+                ("030_evaluations_confiance", self._migration_030_evaluations_confiance),
             ]
 
             for version, func in migrations:

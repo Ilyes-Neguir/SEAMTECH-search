@@ -1,4 +1,4 @@
-"""Schéma métier « fiche technique » — migrations 006 à 029 (Lots A → Lot 3b).
+"""Schéma métier « fiche technique » — migrations 006 à 030 (Lots A → Lot 5).
 
 DÉCISION DE COUCHE ACTÉE (plan v3.0 §17.1) : la couche métier est
 **PostgreSQL uniquement**. Elle s'appuie sur pgvector, pg_trgm, les index GIN,
@@ -26,7 +26,7 @@ from __future__ import annotations
 from typing import Any
 
 # Version du schéma métier — incrémentée à chaque nouvelle migration.
-VERSION_SCHEMA_METIER = "029_extraction_liaison_corrections"
+VERSION_SCHEMA_METIER = "030_evaluations_confiance"
 
 # Marqueur injecté par le code au moment de la migration (constat 1 de revue) :
 # le nom de la configuration de recherche effective — 'seamtech_unaccent' ou
@@ -109,6 +109,10 @@ TABLES_METIER: tuple[str, ...] = (
     # humaine) et des suggestions affichées à l'approbateur.
     "extraction_corrections",
     "extraction_motifs_appris",
+    # 030 — Lot 5 (Fonction B) : évaluations de confiance de réutilisation
+    # persistées. Un score ne vit jamais sans sa justification (population,
+    # dispersion robuste par dimension, sources) : la ligne EST la preuve.
+    "evaluations_confiance",
 )
 
 SQL_006_FICHE_TECHNIQUE = """
@@ -2055,6 +2059,42 @@ COMMENT ON TABLE extraction_motifs_appris IS
     'Motifs de correction récurrents appris localement (Lot 3b) : suggestions à l''approbateur, jamais d''application silencieuse.';
 """
 
+SQL_030_EVALUATIONS_CONFIANCE = """
+-- Lot 5 (Fonction B) : évaluations de confiance de réutilisation persistées.
+-- La règle d'honnêteté est portée par la base elle-même : un score NULL est
+-- OBLIGATOIRE quand les données sont insuffisantes ou la population
+-- hétérogène (jamais de pourcentage fabriqué), et un score est EXIGÉ pour
+-- les verdicts chiffrés. La justification complète (N, dispersion robuste
+-- par dimension, matériaux, fiches sources) vit dans le JSONB de la ligne.
+CREATE TABLE IF NOT EXISTS evaluations_confiance (
+    id_evaluation   BIGSERIAL PRIMARY KEY,
+    id_extraction   BIGINT NOT NULL REFERENCES sail_extractions(id_extraction) ON DELETE CASCADE,
+    boat_model_id   BIGINT NOT NULL REFERENCES boat_models(id_modele) ON DELETE CASCADE,
+    type_voile      TEXT NOT NULL CHECK (char_length(btrim(type_voile)) >= 1),
+    n_echantillons  INTEGER NOT NULL CHECK (n_echantillons >= 0),
+    score           NUMERIC(5, 1) CHECK (score IS NULL OR score BETWEEN 0 AND 100),
+    verdict         TEXT NOT NULL CHECK (
+        verdict IN ('donnees_insuffisantes', 'heterogene', 'a_examiner', 'compatible')
+    ),
+    justification   JSONB NOT NULL DEFAULT '{}'::jsonb
+                    CHECK (jsonb_typeof(justification) = 'object'),
+    cree_par        BIGINT REFERENCES utilisateur(id_utilisateur) ON DELETE SET NULL,
+    cree_le         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT evaluations_confiance_score_coherent CHECK (
+        (verdict IN ('donnees_insuffisantes', 'heterogene') AND score IS NULL)
+        OR (verdict IN ('a_examiner', 'compatible') AND score IS NOT NULL)
+    )
+);
+
+CREATE INDEX IF NOT EXISTS idx_evaluations_confiance_extraction
+    ON evaluations_confiance (id_extraction, cree_le DESC, id_evaluation DESC);
+CREATE INDEX IF NOT EXISTS idx_evaluations_confiance_modele
+    ON evaluations_confiance (boat_model_id, cree_le DESC);
+
+COMMENT ON TABLE evaluations_confiance IS
+    'Évaluations de confiance de réutilisation (Lot 5, Fonction B) : score robuste médiane/MAD/IQR, verdict et justification complète. Score NULL obligatoire si données insuffisantes ou population hétérogène.';
+"""
+
 MIGRATIONS_METIER: tuple[tuple[str, str], ...] = (
     ("006_fiche_technique", SQL_006_FICHE_TECHNIQUE),
     ("007_recherche_index", SQL_007_RECHERCHE_INDEX),
@@ -2080,6 +2120,7 @@ MIGRATIONS_METIER: tuple[tuple[str, str], ...] = (
     ("027_roles_approbations", SQL_027_ROLES_APPROBATIONS),
     ("028_sail_extractions", SQL_028_SAIL_EXTRACTIONS),
     ("029_extraction_liaison_corrections", SQL_029_EXTRACTION_LIAISON_CORRECTIONS),
+    ("030_evaluations_confiance", SQL_030_EVALUATIONS_CONFIANCE),
 )
 
 

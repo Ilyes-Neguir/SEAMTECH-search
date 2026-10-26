@@ -1730,6 +1730,15 @@ def create_app(config: AppConfig) -> FastAPI:
 
     enregistrer_routes_comparaison_voile(app, index, config, _require_auth)
 
+    # Lot 5 (Fonction B) : confiance de réutilisation (médiane/MAD/IQR,
+    # justification obligatoire, évaluation approbateur persistée en 030).
+    # Le navigateur passe par le relais Next.js /api/confiance-reutilisation.
+    from seamtech_search.confiance_reutilisation_routes import (
+        enregistrer_routes_confiance_reutilisation,
+    )
+
+    enregistrer_routes_confiance_reutilisation(app, index, config, _require_auth)
+
     if optionnels_actifs:
         from seamtech_search.ml.routes import enregistrer_routes_ml
 
