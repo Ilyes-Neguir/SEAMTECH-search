@@ -141,9 +141,13 @@ test.describe("Lot 6 — parcours 3 clics et cohérence globale", () => {
     const contextes: BrowserContext[] = []
     const attendus: Array<{ nom: string; compte?: Identifiants; visibles: string[]; masques: string[] }> = [
       {
+        // Compte de secours = admin d'urgence documenté (ROLE_SECOURS =
+        // ROLE_ADMIN, « Secours admin » à l'écran) : il dépose et administre
+        // techniquement, mais n'a AUCUNE identité nominative — tous les
+        // écrans métier nominatifs lui sont fermés (Lot 1).
         nom: "secours",
-        visibles: ["Recherche", "Dossiers", "Fichiers", "Qualité"],
-        masques: ["Nouveau dossier", "Validation", "Extractions", "Comparaison", "Confiance", "Demandes", "Gabarits", "Comptes"],
+        visibles: ["Recherche", "Dossiers", "Fichiers", "Qualité", "Nouveau dossier", "Gabarits", "Comptes"],
+        masques: ["Validation", "Extractions", "Comparaison", "Confiance", "Demandes"],
       },
       {
         nom: "lecture",
