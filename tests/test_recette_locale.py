@@ -86,6 +86,42 @@ def test_dockerfile_installe_tesseract_et_le_pack_francais() -> None:
     assert not manquants, f"Dockerfile : paquets OCR absents : {manquants}"
 
 
+def test_dockerfile_dependances_cachees_avant_sources_et_reseau_lent() -> None:
+    """Une mise à jour de code ne doit pas retélécharger apt + pip.
+
+    Constat terrain du 2026-10-27 : sur le poste de validation, `pypi.org`
+    répond mais le téléchargement d'un wheel depuis `files.pythonhosted.org`
+    expire avec le timeout pip par défaut. Le Dockerfile doit donc :
+
+    * installer les paquets système puis Python AVANT de copier les sources,
+      afin qu'un changement de code/documentation réutilise ces couches ;
+    * conserver les caches BuildKit apt/pip entre deux tentatives ;
+    * laisser à pip/apt un timeout et des réessais compatibles avec un
+      réseau d'atelier lent, sans changer les versions épinglées.
+    """
+    contenu = DOCKERFILE.read_text(encoding="utf-8")
+
+    assert contenu.startswith("# syntax=docker/dockerfile:1")
+    assert "ARG PIP_DEFAULT_TIMEOUT=120" in contenu
+    assert "ARG PIP_RETRIES=10" in contenu
+    assert "ARG APT_RETRIES=5" in contenu
+
+    position_apt = contenu.index("apt-get")
+    position_requirements = contenu.index("COPY requirements.txt ./")
+    position_pip = contenu.index("pip install")
+    position_sources = contenu.index("COPY seamtech_search ./seamtech_search")
+    assert position_apt < position_requirements < position_pip < position_sources
+
+    assert "--mount=type=cache,target=/var/cache/apt" in contenu
+    assert "--mount=type=cache,target=/var/lib/apt/lists" in contenu
+    assert "--mount=type=cache,target=/root/.cache/pip" in contenu
+    assert "--default-timeout ${PIP_DEFAULT_TIMEOUT}" in contenu
+    assert "--retries ${PIP_RETRIES}" in contenu
+    assert "Acquire::Retries=${APT_RETRIES}" in contenu
+    assert "--no-cache-dir" not in contenu
+    assert "COPY requirements.txt pyproject.toml README.md" not in contenu
+
+
 def test_scripts_recette_locale_existants() -> None:
     for chemin in (VERIF, WRAPPER_SH, WRAPPER_PS1):
         assert chemin.is_file(), f"script de recette manquant : {chemin.name}"

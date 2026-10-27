@@ -616,6 +616,16 @@ docker compose up -d --build
 docker compose ps
 ```
 
+The backend image installs system packages and the pinned Python dependencies
+**before** copying application sources, with BuildKit cache mounts for apt and
+pip. A code-only update should therefore reuse those dependency layers instead
+of downloading every wheel again. The defaults tolerate a slow workshop
+network (pip: 120 s read timeout, 10 retries; apt: 5 retries). If a package CDN
+still stalls, rebuild once with larger build-only values, for example
+`docker compose build --build-arg PIP_DEFAULT_TIMEOUT=180 --build-arg PIP_RETRIES=15 web worker sauvegarde`,
+then start the services normally. Do not edit pinned dependency versions to
+work around a download timeout.
+
 To stop the stack without deleting data:
 
 ```powershell
