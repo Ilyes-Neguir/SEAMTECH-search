@@ -100,7 +100,11 @@ qu'un faux succès.
 Le gabarit `FICHE_GV_FFAB_V1` lit de façon générique :
 
 - titre de fiche de fabrication grand-voile et désignation/bateau/client/
-  commande/code lorsqu'ils sont corroborés par la ligne fichier ;
+  commande/code lorsqu'ils sont corroborés par la ligne fichier, y compris
+  lorsque l'export morcelle ce titre en plusieurs lignes physiques voisines ;
+- à défaut de titre décomposable, le code est repris uniquement de la ligne
+  « Fichier » du document, avec sa trace localisée ; l'identité reste alors à
+  relire par l'approbateur et n'est jamais déduite d'un nom de fichier ;
 - grille `Cotes (tissu)` alignée par en-têtes et positions ;
 - matière principale, montage et fil ;
 - nombre de lattes et mesures non modélisées conservées comme mesures libres

@@ -30,8 +30,16 @@ def _ecrire_pdf(chemin: Path, lignes: list[tuple[float, list[tuple[float, str]]]
     return chemin
 
 
-def _fiche_ffab(tmp_path: Path, *, code_dans_titre: bool = True, nom: str = "gv-demo_ffab.pdf") -> Path:
-    code = "ZZ 001" if code_dans_titre else "ZZ 002"
+def _fiche_ffab(
+    tmp_path: Path,
+    *,
+    code_dans_titre: bool = True,
+    code_explicite: str | None = None,
+    titre_morcele: bool = False,
+    sans_titre: bool = False,
+    nom: str = "gv-demo_ffab.pdf",
+) -> Path:
+    code = code_explicite or ("ZZ 001" if code_dans_titre else "ZZ 002")
     titre = (
         'Fiche de fabrication "Grand-voile" Grand-voile classique semi-lattée '
         "gamme Démo, pour Bateau Démo 40 (40') de Client Démo "
@@ -39,8 +47,30 @@ def _fiche_ffab(tmp_path: Path, *, code_dans_titre: bool = True, nom: str = "gv-
     )
     if code_dans_titre:
         titre += f" {code}"
+    if sans_titre:
+        lignes_titre: list[tuple[float, list[tuple[float, str]]]] = [
+            (30.0, [(20, "Grand-voile classique semi-lattée gamme Démo")]),
+        ]
+    elif titre_morcele:
+        suffixe_code = f" {code}" if code_dans_titre else ""
+        lignes_titre = [
+            (30.0, [(20, "Fiche de fabrication Grand-voile")]),
+            (
+                46.0,
+                [
+                    (
+                        20,
+                        "Grand-voile classique semi-lattée gamme Démo, pour "
+                        "Bateau Démo 40 (40') de Client Démo "
+                        f"(Commande #CMD-DEMO-003){suffixe_code}",
+                    )
+                ],
+            ),
+        ]
+    else:
+        lignes_titre = [(30.0, [(20, titre)])]
     lignes: list[tuple[float, list[tuple[float, str]]]] = [
-        (30.0, [(20, titre)]),
+        *lignes_titre,
         (
             55.0,
             [
@@ -119,6 +149,45 @@ class TestCalibrationGvFfab:
 
         assert fiche.gabarit_code == "FICHE_GV_FFAB_V1"
         assert fiche.code == "ZZ 002"
+
+    def test_titre_ffab_morcele_sur_plusieurs_lignes(self, tmp_path: Path) -> None:
+        fiche = _extraire(
+            _fiche_ffab(
+                tmp_path,
+                code_explicite="ZZ 003",
+                titre_morcele=True,
+                nom="gv-titre-morcele_ffab.pdf",
+            )
+        )
+
+        assert fiche.gabarit_code == "FICHE_GV_FFAB_V1"
+        assert fiche.code == "ZZ 003"
+        assert fiche.commande_numero == "CMD-DEMO-003"
+        assert fiche.client_nom == "Client Démo"
+        assert fiche.bateau_nom == "Bateau Démo 40"
+        assert fiche.type_voile_libelle == "Grand-voile"
+
+    def test_code_ffab_repris_de_la_ligne_fichier_sans_titre_analysable(
+        self, tmp_path: Path
+    ) -> None:
+        fiche = _extraire(
+            _fiche_ffab(
+                tmp_path,
+                code_explicite="ZZ 004",
+                sans_titre=True,
+                nom="gv-sans-titre_ffab.pdf",
+            )
+        )
+
+        assert fiche.gabarit_code == "FICHE_GV_FFAB_V1"
+        assert fiche.code == "ZZ 004"
+        assert fiche.client_nom is None
+        assert fiche.bateau_nom is None
+        assert fiche.commande_numero is None
+        traces = {champ.champ: champ for champ in fiche.tous_les_champs()}
+        assert traces["fiche.code"].valeur_normalisee == "ZZ 004"
+        assert traces["fiche.code"].zone is not None
+        assert not any(champ.champ.startswith("traitement:") for champ in fiche.tous_les_champs())
 
     def test_grille_cotes_tissu_et_largeurs_non_modelees(self, tmp_path: Path) -> None:
         fiche = _extraire(_fiche_ffab(tmp_path))
@@ -226,6 +295,23 @@ class TestChoixPdfPrincipal:
 
         assert plan.pdf_fiche is not None
         assert plan.pdf_fiche.name == "z-document_ffab.pdf"
+
+    def test_scanner_retient_ffab_sans_titre_mais_avec_code_fichier(self, tmp_path: Path) -> None:
+        dossier = tmp_path / "DOSSIER-FFAB-SANS-TITRE"
+        dossier.mkdir()
+        _fiche_ffab(
+            dossier,
+            code_explicite="ZZ 005",
+            sans_titre=True,
+            nom="fiche_ffab.pdf",
+        )
+
+        plan = depot.scanner_dossier(dossier, list(GABARITS_EMBARQUES))
+
+        assert plan.accepte
+        assert plan.gabarit_code == "FICHE_GV_FFAB_V1"
+        assert plan.fiche_extraite is not None
+        assert plan.fiche_extraite.code == "ZZ 005"
 
     def test_un_code_seul_ne_suffit_pas_a_rendre_un_pdf_viable(self, tmp_path: Path) -> None:
         gabarit_code_seul = GabaritDef(

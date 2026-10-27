@@ -2246,50 +2246,165 @@ def _code_corroboré_ligne_fichier(pages: list[PageAnalysee]) -> tuple[str | Non
     return None, [], 0
 
 
-def _traiter_ligne_titre_ffab(fiche: FicheExtraite, brut: str, base: ChampExtrait, contexte: dict) -> None:
-    """Ligne de titre FFab complète : catégorie, désignation, bateau,
-    client, numéro de commande externe et code de fiche en fin de ligne."""
-    pages: list[PageAnalysee] = contexte.get("pages") or []
-    ligne_titre: Ligne | None = None
-    page_titre = 0
+def _reprendre_code_ffab_depuis_ligne_fichier(
+    fiche: FicheExtraite, pages: list[PageAnalysee]
+) -> bool:
+    """Pose le code FFAB lu dans le document quand le titre n'a pas pu
+    être décomposé.
+
+    La source reste la ligne « Fichier … » du PDF (jamais le nom du
+    fichier PDF) et la valeur reçoit sa propre trace localisée. Les
+    autres champs du titre restent absents : ils seront relus par
+    l'approbateur, jamais inventés pour rendre la fiche présentable.
+    """
+    if fiche.code:
+        return False
+    code, mots_code, page_code = _code_corroboré_ligne_fichier(pages)
+    if not code:
+        return False
+    fiche.code = code
+    fiche.champs.append(
+        ChampExtrait(
+            champ="fiche.code",
+            valeur_brute=code,
+            valeur_normalisee=code,
+            methode="gabarit",
+            confiance=CONFIANCE_CERTAIN,
+            page=page_code,
+            zone=_zone_des_mots(mots_code),
+            table_cible="fiche",
+            colonne_cible="code",
+        )
+    )
+    return True
+
+
+def _indice_sequence_mots(mots: list[Mot], jetons: list[str]) -> int | None:
+    """Premier indice où les mots normalisés forment exactement la séquence."""
+    if not jetons or len(mots) < len(jetons):
+        return None
+    normes = [mot.normalise for mot in mots]
+    for depart in range(len(normes) - len(jetons) + 1):
+        if normes[depart : depart + len(jetons)] == jetons:
+            return depart
+    return None
+
+
+def _sequences_titre_ffab(pages: list[PageAnalysee]) -> list[tuple[list[Mot], int]]:
+    """Séquences candidates pour le titre FFAB.
+
+    Les exports tableur morcellent parfois un titre logiquement unique
+    en plusieurs lignes physiques (retour à la ligne de cellule, fontes
+    ou blocs voisins). On essaie donc d'abord chaque ligne seule — le
+    comportement historique — puis des fenêtres de deux à quatre lignes
+    physiquement voisines, ramenées au début de « Fiche de fabrication ».
+    Une fenêtre n'est candidate que si les repères du titre apparaissent
+    dans l'ordre ; la décomposition stricte décide ensuite.
+    """
+    sequences: list[tuple[list[Mot], int]] = []
     for page in pages[:2]:
         for ligne in page.lignes:
             normalise = ligne.normalise
             if "fiche de fabrication" in normalise and "grand-voile" in normalise and " pour " in normalise:
-                ligne_titre = ligne
-                page_titre = page.numero
-                break
-        if ligne_titre is not None:
-            break
-    if ligne_titre is None:
-        return
+                sequences.append((list(ligne.mots), page.numero))
 
-    mots = list(ligne_titre.mots)
-    valeur = " ".join(mot.texte for mot in mots).strip()
+    for page in pages[:2]:
+        lignes = [ligne for ligne in page.lignes if ligne.mots]
+        for debut in range(len(lignes)):
+            mots: list[Mot] = []
+            for fin in range(debut, min(len(lignes), debut + 4)):
+                if fin > debut:
+                    haut_precedent = min(mot.haut for mot in lignes[fin - 1].mots)
+                    haut_courant = min(mot.haut for mot in lignes[fin].mots)
+                    if haut_courant - haut_precedent > 45:
+                        break
+                mots.extend(lignes[fin].mots)
+                if fin == debut:
+                    continue
+                depart_titre = _indice_sequence_mots(mots, ["fiche", "de", "fabrication"])
+                if depart_titre is None:
+                    continue
+                sequence = list(mots[depart_titre:])
+                normalise = " ".join(mot.normalise for mot in sequence)
+                trouve_grand_voile = re.search(r"\bgrand[-\s]voile\b", normalise)
+                if trouve_grand_voile is None:
+                    continue
+                if " pour " not in normalise[trouve_grand_voile.end() :]:
+                    continue
+                sequences.append((sequence, page.numero))
+                break
+    return sequences
+
+
+def _analyser_titre_ffab(valeur: str) -> tuple[str | None, str, str, str] | None:
+    """Décompose un titre FFAB en catégorie, désignation, bateau et reste."""
     correspondance = re.search(
         r"^\s*fiche\s+de\s+fabrication\s+[\"«](?P<categorie>[^\"»]+)[\"»]\s+"
         r"(?P<designation>.+?),\s+pour\s+(?P<bateau>.+?)\s+de\s+(?P<reste>.+?)\s*$",
         valeur,
         flags=re.I,
     )
-    categorie: str | None = None
     if correspondance:
-        categorie = correspondance.group("categorie").strip()
-        designation = correspondance.group("designation").strip()
-        bateau_brut = correspondance.group("bateau").strip()
-        reste_client = correspondance.group("reste").strip()
-    else:
-        repli = re.search(
-            r"^(?P<designation>.+?)\s+pour\s+(?P<bateau>.+?)\s+de\s+(?P<reste>.+?)\s*$",
-            valeur,
-            flags=re.I,
+        return (
+            correspondance.group("categorie").strip(),
+            correspondance.group("designation").strip(),
+            correspondance.group("bateau").strip(),
+            correspondance.group("reste").strip(),
         )
-        if repli is None:
-            return
-        designation = re.sub(r"^\s*fiche\s+de\s+fabrication\s*", "", repli.group("designation"), flags=re.I)
-        designation = re.sub(r"^[\"«][^\"»]+[\"»]\s*", "", designation).strip(" ,")
-        bateau_brut = repli.group("bateau").strip()
-        reste_client = repli.group("reste").strip()
+
+    repli = re.search(
+        r"^(?P<designation>.+?)\s+pour\s+(?P<bateau>.+?)\s+de\s+(?P<reste>.+?)\s*$",
+        valeur,
+        flags=re.I,
+    )
+    if repli is None:
+        return None
+    designation = re.sub(r"^\s*fiche\s+de\s+fabrication\s*", "", repli.group("designation"), flags=re.I)
+    designation = re.sub(r"^[\"«][^\"»]+[\"»]\s*", "", designation).strip(" ,")
+    return (
+        None,
+        designation,
+        repli.group("bateau").strip(),
+        repli.group("reste").strip(),
+    )
+
+
+def _traiter_ligne_titre_ffab(fiche: FicheExtraite, brut: str, base: ChampExtrait, contexte: dict) -> None:
+    """Ligne de titre FFab complète : catégorie, désignation, bateau,
+    client, numéro de commande externe et code de fiche en fin de ligne."""
+    pages: list[PageAnalysee] = contexte.get("pages") or []
+    analyse_titre: tuple[str | None, str, str, str] | None = None
+    mots: list[Mot] = []
+    valeur = ""
+    page_titre = 0
+    sequences_vues: set[tuple[int, str]] = set()
+    for mots_candidats, page_candidate in _sequences_titre_ffab(pages):
+        valeur_candidate = " ".join(mot.texte for mot in mots_candidats).strip()
+        cle_sequence = (page_candidate, valeur_candidate)
+        if cle_sequence in sequences_vues:
+            continue
+        sequences_vues.add(cle_sequence)
+        analyse = _analyser_titre_ffab(valeur_candidate)
+        if analyse is None:
+            continue
+        analyse_titre = analyse
+        mots = list(mots_candidats)
+        valeur = valeur_candidate
+        page_titre = page_candidate
+        break
+
+    if analyse_titre is None:
+        # Le titre n'est pas décomposable sans deviner : on retire la
+        # trace générique de la règle et l'on conserve uniquement le
+        # code corroboré par la ligne « Fichier » du document, s'il
+        # existe. La fiche reste à relire, mais elle n'est plus perdue
+        # au dépôt pour la seule absence d'une ligne physique unique.
+        if base in fiche.champs:
+            fiche.champs.remove(base)
+        _reprendre_code_ffab_depuis_ligne_fichier(fiche, pages)
+        return
+
+    categorie, designation, bateau_brut, reste_client = analyse_titre
 
     commande: str | None = None
     trouve_commande = _RE_COMMANDE_TITRE_FFAB.search(reste_client)
@@ -2740,12 +2855,14 @@ def _executer_regle(fiche: FicheExtraite, regle, pages: list[PageAnalysee]) -> N
                 numero_page = page.numero
                 break
     if brut is None or brut.strip() == "":
-        if traitement == "designation" and ancre_trouvee and regle.ancres:
-            # Voie dégradée du gabarit génois : l'ancre du titre EST le type
-            # (« Voile de génois » → type Génois). Elle n'est ouverte que si
-            # l'ancre a réellement été lue — sinon le libellé d'ancre d'une
-            # fiche qui n'en contient pas deviendrait une valeur (RG6).
-            _executer_regle_traitement(fiche, regle, "", 0, [])
+        if traitement in {"designation", "ligne_titre_ffab"} and ancre_trouvee and regle.ancres:
+            # Voies où l'ancre lue suffit à autoriser une relecture de page :
+            # le gabarit génois pose le type porté par l'ancre, et le titre
+            # FFAB peut être morcelé juste après « grand-voile » (aucun mot
+            # de valeur sur la ligne physique de l'ancre). Le traitement
+            # relit alors les pages ; sans ancre réellement lue, rien n'est
+            # inventé (RG6).
+            _executer_regle_traitement(fiche, regle, "", 0, [], pages=pages)
         else:
             LOGGER.debug("Champ non lu : %s (ancres %s) — absent du rapport, à relire.", cible, regle.ancres)
         return
