@@ -130,6 +130,7 @@ export interface LotResume {
 
 export interface LotDossierLigne {
   chemin_dossier: string
+  chemin_relatif?: string
   statut: string
   raison: string | null
   id_fiche: number | null

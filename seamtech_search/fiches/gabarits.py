@@ -338,6 +338,51 @@ GABARIT_GV_FULLBATTEN = GabaritDef(
     ],
 )
 
+# Lot 10 — famille « FFab » des grand-voiles : ligne de titre complète
+# (parenté Portant), ligne Fichier corroborante et grille « Cotes (tissu) »
+# à neuf colonnes. Calibration STRUCTURES uniquement : seuls des libellés
+# génériques de voilerie figurent ici, jamais une valeur d'un document.
+CODE_GABARIT_GV_FFAB = "FICHE_GV_FFAB_V1"
+
+GABARIT_GV_FFAB = GabaritDef(
+    code=CODE_GABARIT_GV_FFAB,
+    version=VERSION_COURANTE,
+    description=(
+        "Fiche de fabrication grand-voile au format FFab : ligne de titre "
+        "complète (désignation, bateau, client, commande, code), grille "
+        "Cotes (tissu) Guindant/Bordure/Chute/Têtière/Surface/Poids et "
+        "largeurs MHW/MTW/MUW conservées en mesures libres."
+    ),
+    ancres_detection=[
+        "cotes (tissu)",
+        "mesures voile finie",
+        "boitier guindant",
+        "boitier chute",
+        "coulisseaux de guindant",
+        "montage fil",
+        "grand-voile",
+        "ris 1",
+    ],
+    champs=[
+        RegleChamp(cible="traitement:ligne_titre_ffab", ancres=["grand-voile"], type="texte"),
+        RegleChamp(cible="fiche.atelier", ancres=["découpe et fabrication"], type="texte", stop=["fichier"]),
+        RegleChamp(cible="fiche.dessinateur", ancres=["dessiné par"], type="texte", traitement="dessinateur", stop=["fichier"]),
+        RegleChamp(cible="fiche.quantite", ancres=["quantité"], type="entier"),
+        RegleChamp(cible="traitement:fichier_edite", ancres=["fichier"], type="texte"),
+        RegleChamp(cible="traitement:cotes_ffab", ancres=["cotes (tissu)", "guindant"], type="texte"),
+        RegleChamp(
+            cible="materiau.tissu_principal",
+            ancres=["tissu(s)", "tissu"],
+            type="texte",
+            traitement="tissu_principal",
+            stop=["cotes", "mesures voile finie"],
+        ),
+        RegleChamp(cible="fiche.montage_type", ancres=["zigzag", "zig"], type="texte", traitement="montage_jade"),
+        RegleChamp(cible="traitement:lattes_ffab", ancres=["lattes"], type="texte"),
+        RegleChamp(cible="fiche.notes", ancres=["notes"], type="texte", traitement="notes", stop=["fichier"]),
+    ],
+)
+
 # Lot 7 — famille accessoires. Gabarit GÉNÉRIQUE par libellés : à la
 # rédaction, aucun échantillon accessoire réel n'est encore disponible dans
 # le dépôt (téléversement Dropbox en cours) — les ancres sont les libellés
@@ -531,6 +576,7 @@ GABARITS_EMBARQUES: tuple[GabaritDef, ...] = (
     GABARIT_GENOIS,
     GABARIT_GV_FULLBATTEN,
     GABARIT_JADE,
+    GABARIT_GV_FFAB,
     # Lots 7 + CAL : les gabarits accessoires viennent en dernier (v2
     # calibrée devant v1 publiée) — leurs ancres sont absentes des fiches
     # de voiles, ils ne peuvent donc pas voler une fiche voile ; sur un
@@ -558,3 +604,40 @@ def initialiser_gabarits(index: Any) -> None:
                     "   SELECT max(version) FROM gabarit WHERE code = %s)",
                     (code, code),
                 )
+
+
+def synchroniser_gabarits_embarques(index: Any) -> list[str]:
+    """Ajoute au registre les seuls gabarits embarqués ABSENTS.
+
+    Utilisée au démarrage lors d'une mise à jour : une base déjà initialisée
+    reçoit les nouvelles familles/versions livrées par le code, sans jamais
+    réécrire une ligne existante (un gabarit publié ou personnalisé n'est pas
+    écrasé). Quand une nouvelle version d'un code est ajoutée, les anciennes
+    versions de CE code sont désactivées, comme par ``initialiser_gabarits``.
+    Retourne les libellés ajoutés (``"CODE vN"``), pour le journal.
+    """
+    with index.connect() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT code, version FROM gabarit")
+            existants = {(str(code), int(version)) for code, version in cursor.fetchall()}
+
+    ajoutes: list[str] = []
+    codes_touches: set[str] = set()
+    for gabarit in GABARITS_EMBARQUES:
+        if (gabarit.code, gabarit.version) in existants:
+            continue
+        enregistrer_gabarit(index, gabarit)
+        ajoutes.append(f"{gabarit.code} v{gabarit.version}")
+        codes_touches.add(gabarit.code)
+        LOGGER.info("Gabarit embarqué absent ajouté au registre : %s v%d", gabarit.code, gabarit.version)
+
+    if codes_touches:
+        with index.connect() as connection:
+            with connection.cursor() as cursor:
+                for code in sorted(codes_touches):
+                    cursor.execute(
+                        "UPDATE gabarit SET actif = false WHERE code = %s AND version < ("
+                        "   SELECT max(version) FROM gabarit WHERE code = %s)",
+                        (code, code),
+                    )
+    return ajoutes

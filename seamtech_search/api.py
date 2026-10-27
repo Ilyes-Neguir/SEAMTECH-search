@@ -220,28 +220,24 @@ def create_app(config: AppConfig) -> FastAPI:
         # Initialize DB and run versioned migrations once at startup.
         # Health must not call initialize (read-only probe).
         _initialize_schema(index, "startup")
-        # Registre des gabarits : sur une base NEUVE, semer les gabarits
-        # embarqués — sans cette graine, tout dépôt est refusé « gabarit
-        # inconnu » (les tests, la CLI et les scripts sèment explicitement ;
-        # le serveur seul ne le faisait pas). Garde : uniquement si le
-        # registre est VIDE — jamais d'écrasement de règles personnalisées
-        # (la CLI reste le canal explicite de mise à jour, RG11). Registre
-        # PostgreSQL-only, comme le dépôt de dossiers lui-même.
+        # Registre des gabarits : semer les gabarits embarqués absents —
+        # sans eux, tout dépôt est refusé « gabarit inconnu ». La
+        # synchronisation est ADDITIVE : elle couvre la base neuve comme la
+        # mise à jour d'une base existante (nouvelle famille livrée par le
+        # code), sans jamais réécrire une ligne déjà publiée ou
+        # personnalisée (RG11). Registre PostgreSQL-only, comme le dépôt de
+        # dossiers lui-même.
         if index.is_postgres:
             try:
-                with index.connect() as connexion:
-                    with connexion.cursor() as curseur:
-                        curseur.execute("SELECT 1 FROM gabarit LIMIT 1")
-                        registre_vide = curseur.fetchone() is None
-                if registre_vide:
-                    from seamtech_search.fiches.gabarits import initialiser_gabarits
+                from seamtech_search.fiches.gabarits import synchroniser_gabarits_embarques
 
-                    initialiser_gabarits(index)
-                    logger.info("Registre des gabarits vide : gabarits embarqués enregistrés.")
+                ajoutes = synchroniser_gabarits_embarques(index)
+                if ajoutes:
+                    logger.info("Gabarits embarqués ajoutés au registre : %s.", ", ".join(ajoutes))
             except Exception:
                 logger.exception(
-                    "Échec de la graine des gabarits — conséquence : les dépôts seront "
-                    "refusés « gabarit inconnu » tant que la table reste vide."
+                    "Échec de la synchronisation des gabarits — conséquence : les dépôts "
+                    "seront refusés « gabarit inconnu » pour les familles absentes du registre."
                 )
         recovered = recover_stale_jobs(index, redis_store=redis_store)
         if recovered > 0:

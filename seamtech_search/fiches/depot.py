@@ -27,19 +27,26 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
 from seamtech_search.extractions_voile import lier_extraction_voile_document_curseur
-from seamtech_search.fiches.extraction import extraire_fiche
+from seamtech_search.fiches.extraction import analyser_candidat_fiche, extraire_fiche
 from seamtech_search.fiches.gabarits import GabaritDef, charger_gabarits
+from seamtech_search.fiches.modeles import FicheExtraite
 from seamtech_search.fiches.persistance import ecrire_fiche_resultat
 from seamtech_search.indexer import PG_UNACCENT_CONFIG
 
 LOGGER = logging.getLogger("seamtech_search.fiches.depot")
 
 SEPARATEUR_CLE = "|"
+# Bornes explicites de la découverte récursive : l'archive complète mesurée
+# reste très en dessous, et un dépassement est un refus nommé — jamais une
+# troncature silencieuse d'un lot de plusieurs milliers de dossiers.
+LOT_MAX_DOSSIERS = 5000
+LOT_MAX_PROFONDEUR = 32
 # Rôles de pièces jointes (suffixe → rôle) : valeurs fermées, documentées dans
 # docs/API.md ; tout suffixe inconnu part en « piece_jointe ».
 ROLES_PIECES: tuple[tuple[str, str], ...] = (
@@ -165,12 +172,28 @@ class DepotImpossible(RuntimeError):
 
 @dataclass
 class FichierDossier:
-    """Un fichier du dossier, lu en lecture seule (chemin, rôle, empreinte)."""
+    """Un fichier du dossier, lu en lecture seule (chemin, rôle, empreinte).
+
+    L'empreinte est PARESSEUSE : scanner un dossier volumineux ne relit pas
+    toutes ses pièces avant même de savoir si son PDF produit une fiche
+    viable. Elle est calculée au premier accès (écriture des pièces d'un
+    dépôt accepté) puis mise en cache.
+    """
 
     chemin: Path
     role: str
     taille_octets: int
-    empreinte_sha256: str
+    _empreinte_sha256: str | None = field(default=None, repr=False)
+
+    @property
+    def empreinte_sha256(self) -> str:
+        if self._empreinte_sha256 is None:
+            self._empreinte_sha256 = empreinte_fichier(self.chemin)
+        return self._empreinte_sha256
+
+    @empreinte_sha256.setter
+    def empreinte_sha256(self, valeur: str | None) -> None:
+        self._empreinte_sha256 = valeur
 
 
 @dataclass
@@ -183,6 +206,7 @@ class PlanDossier:
     score: int = 0
     pieces: list[FichierDossier] = field(default_factory=list)
     raison_refus: str | None = None
+    fiche_extraite: FicheExtraite | None = field(default=None, repr=False)
 
     @property
     def accepte(self) -> bool:
@@ -209,12 +233,124 @@ def role_piece(chemin: Path) -> str:
     return next((role for motif, role in ROLES_PIECES if suffixe == motif), "piece_jointe")
 
 
+def decouvrir_dossiers_candidats(racine: Path) -> list[Path]:
+    """Dossiers d'une racine contenant au moins un PDF DIRECT.
+
+    La racine peut être une année, une catégorie ou un dossier d'affaire :
+    chaque niveau qui porte directement un PDF devient une ligne de lot.
+    Les dossiers cachés et les liens symboliques de dossiers ne sont pas
+    suivis (cycles et artefacts d'outils exclus, explicitement). La lecture
+    est déterministe et ne modifie rien.
+    """
+    racine = Path(racine)
+    if not racine.is_dir():
+        raise DepotImpossible(f"Racine de lot introuvable : {racine}")
+    racine_resolue = racine
+    candidats: list[Path] = []
+    for courant, sous_dossiers, fichiers in os.walk(racine_resolue, topdown=True, followlinks=False):
+        dossier = Path(courant)
+        relatif = dossier.relative_to(racine_resolue)
+        profondeur = len(relatif.parts)
+        if profondeur > LOT_MAX_PROFONDEUR:
+            raise DepotImpossible(
+                f"Profondeur de lot supérieure à {LOT_MAX_PROFONDEUR} niveaux sous {racine} — "
+                "scindez la racine ; conséquence : aucun lot n'a été créé."
+            )
+        sous_dossiers[:] = sorted(
+            (
+                nom
+                for nom in sous_dossiers
+                if not nom.startswith(".") and not (dossier / nom).is_symlink()
+            ),
+            key=str.casefold,
+        )
+        if any(not nom.startswith(".") and nom.lower().endswith(".pdf") for nom in fichiers):
+            candidats.append(dossier)
+            if len(candidats) > LOT_MAX_DOSSIERS:
+                raise DepotImpossible(
+                    f"Plus de {LOT_MAX_DOSSIERS} dossiers avec PDF sous {racine} — "
+                    "scindez le lot par année ou catégorie ; conséquence : aucun lot n'a été créé."
+                )
+    return sorted(candidats, key=lambda chemin: str(chemin).casefold())
+
+
+def _nom_evoque_ffab(chemin: Path) -> bool:
+    """Indice de nom de fichier seulement : jamais une preuve de contenu."""
+    tige = chemin.stem.casefold()
+    return tige.endswith("ffab") or "ffab" in re.split(r"[^a-z0-9]+", tige)
+
+
+def _groupes_preuve_fiche(fiche: FicheExtraite) -> set[str]:
+    """Groupes de structure réellement lus, hors code de fiche."""
+    champs = {
+        champ.champ
+        for champ in fiche.tous_les_champs()
+        if champ.valeur_normalisee not in (None, "")
+    }
+
+    def _a_prefixe(*prefixes: str) -> bool:
+        return any(champ.startswith(prefixe) for champ in champs for prefixe in prefixes)
+
+    groupes: set[str] = set()
+    if (
+        fiche.client_nom or fiche.bateau_nom or fiche.commande_numero
+        or _a_prefixe("fiche.client", "fiche.bateau", "fiche.commande", "accessoire.modele_bateau")
+    ):
+        groupes.add("identite")
+    if (
+        fiche.type_voile_libelle or fiche.gamme
+        or _a_prefixe("fiche.designation", "fiche.titre", "accessoire.type")
+    ):
+        groupes.add("type")
+    if fiche.cotes or fiche.mesures_libres or _a_prefixe("cotes.", "libre.", "accessoire.dimensions"):
+        groupes.add("mesures")
+    if (
+        fiche.materiaux or fiche.tissu_texte
+        or _a_prefixe("materiau.", "fiche.tissu_texte", "accessoire.matiere", "accessoire.couleur")
+    ):
+        groupes.add("matieres")
+    if (
+        fiche.galons or fiche.jonctions or fiche.finitions or fiche.options or fiche.renforts
+        or fiche.montage_type or fiche.montage_fil
+        or _a_prefixe("galon.", "jonction.", "finition.", "option", "renfort", "fiche.montage", "accessoire.quantite")
+    ):
+        groupes.add("fabrication")
+    return groupes
+
+
+def _extraction_viable(fiche: FicheExtraite) -> bool:
+    """Une fiche persistable : code + gabarit + au moins deux groupes lus.
+
+    Un code isolé (mauvaise famille, imprimé de commande…) ne suffit donc
+    jamais à voler le rôle de PDF principal à une vraie fiche du dossier.
+    """
+    return bool(fiche.code and fiche.code.strip() and fiche.gabarit_code and len(_groupes_preuve_fiche(fiche)) >= 2)
+
+
+def _extraction_selectionnable(fiche: FicheExtraite) -> bool:
+    """Repli historique du scanner quand aucune fiche n'est pleinement viable.
+
+    Un formulaire riche sans code lisible reste le PDF principal (le dépôt
+    refusera ensuite explicitement « fiche sans code »), et un code assorti
+    d'au moins un groupe de structure reste persistable. En revanche, un
+    code seul — ou une seule trace de fabrication sans code — ne désigne
+    pas une fiche : le dossier est refusé dès le scan, avec sa raison.
+    """
+    groupes = len(_groupes_preuve_fiche(fiche))
+    if not fiche.gabarit_code:
+        return False
+    if fiche.code and fiche.code.strip():
+        return groupes >= 1
+    return groupes >= 2
+
+
 def scanner_dossier(dossier: Path, gabarits: list[GabaritDef]) -> PlanDossier:
     """Repère le PDF de fiche et les pièces jointes d'un dossier — SANS écriture.
 
-    Le PDF de fiche est celui dont le score d'ancres de détection est le plus
-    élevé (strictement positif) ; les autres fichiers deviennent des pièces
-    jointes. Un dossier sans PDF détectable est un REFUS documenté (raison).
+    Les PDF sont classés par score d'ancres (le nom « …ffab.pdf » ne sert
+    qu'à départager les égalités), puis le premier qui produit une fiche
+    VIABLE devient le PDF principal ; les autres fichiers deviennent des
+    pièces jointes. Un dossier sans fiche viable est un REFUS documenté.
     """
     dossier = Path(dossier)
     if not dossier.is_dir():
@@ -238,40 +374,69 @@ def scanner_dossier(dossier: Path, gabarits: list[GabaritDef]) -> PlanDossier:
                 chemin=element,
                 role=role_piece(element),
                 taille_octets=element.stat().st_size,
-                empreinte_sha256=empreinte_fichier(element),
             )
         )
     if not pdfs:
         plan.raison_refus = "aucun PDF dans le dossier"
         return plan
-    from seamtech_search.fiches.extraction import analyser_pdf, texte_normalise
 
-    meilleur: tuple[int, GabaritDef | None, Path | None] = (0, None, None)
+    candidats: list[tuple[Path, Any]] = []
     scores: dict[str, int] = {}
     for pdf in pdfs:
         try:
-            texte = texte_normalise(analyser_pdf(pdf))
+            candidat = analyser_candidat_fiche(pdf, gabarits)
         except Exception as erreur:  # PDF illisible : raison explicite, pas de crash
             scores[pdf.name] = -1
             LOGGER.warning("PDF illisible (%s) : %s — conséquence : exclu de la détection.", pdf, erreur)
             continue
-        scores_pdf = {gabarit.code: gabarit.score_detection(texte) for gabarit in gabarits}
-        code, score = max(scores_pdf.items(), key=lambda paire: paire[1])
-        scores[pdf.name] = score
-        if score > meilleur[0]:
-            meilleur = (score, next(g for g in gabarits if g.code == code), pdf)
-    if meilleur[1] is None or meilleur[2] is None:
+        scores[pdf.name] = 0 if candidat is None else candidat.score_detection
+        if candidat is not None:
+            candidats.append((pdf, candidat))
+
+    if not candidats:
         detail = ", ".join(f"{nom}={score}" for nom, score in scores.items())
         plan.raison_refus = f"gabarit inconnu (scores de détection : {detail})"
         return plan
-    plan.pdf_fiche = meilleur[2]
-    plan.gabarit_code = meilleur[1].code
-    plan.score = meilleur[0]
+
+    # Preuves d'abord : meilleur score d'ancres, puis — à score égal
+    # seulement — le nom évoquant une fiche de fabrication (« …ffab.pdf »),
+    # puis l'ordre alphabétique stable. Le premier candidat VIABLE gagne :
+    # un PDF mieux noté mais sans code/structure ne bloque plus le dossier.
+    candidats_tries = sorted(
+        candidats,
+        key=lambda paire: (
+            -paire[1].score_detection,
+            not _nom_evoque_ffab(paire[0]),
+            paire[0].name.casefold(),
+        ),
+    )
+    choisi = next((paire for paire in candidats_tries if _extraction_viable(paire[1].fiche)), None)
+    if choisi is None:
+        choisi = next(
+            (paire for paire in candidats_tries if _extraction_selectionnable(paire[1].fiche)),
+            None,
+        )
+    if choisi is None:
+        meilleur_pdf, meilleur_candidat = candidats_tries[0]
+        plan.gabarit_code = meilleur_candidat.gabarit.code
+        plan.score = meilleur_candidat.score_detection
+        detail = ", ".join(f"{nom}={score}" for nom, score in scores.items())
+        plan.raison_refus = (
+            "aucun PDF candidat n'a produit une fiche sélectionnable (code + structure, "
+            f"ou structure riche sans code ; meilleur candidat : {meilleur_pdf.name} ; scores : {detail})"
+        )
+        return plan
+
+    pdf_choisi, candidat_choisi = choisi
+    plan.pdf_fiche = pdf_choisi
+    plan.gabarit_code = candidat_choisi.gabarit.code
+    plan.score = candidat_choisi.score_detection
+    plan.fiche_extraite = candidat_choisi.fiche
     # les autres PDF (non reconnus ou seconds) restent des pièces jointes
     plan.pieces.extend(
-        FichierDossier(chemin=pdf, role="piece_jointe", taille_octets=pdf.stat().st_size, empreinte_sha256=empreinte_fichier(pdf))
+        FichierDossier(chemin=pdf, role="piece_jointe", taille_octets=pdf.stat().st_size)
         for pdf in pdfs
-        if pdf != meilleur[2]
+        if pdf != pdf_choisi
     )
     return plan
 
@@ -323,11 +488,14 @@ def deposer_dossier(index: Any, dossier: Path, gabarits: list[GabaritDef] | None
             dossier,
             raison,
         )
+        lot_isole_cree = False
         if id_lot_dossier is None:
             id_lot_local, id_lot_dossier = _creer_lot_isole(index, Path(dossier))
+            lot_isole_cree = True
         _maj_ligne(index, id_lot_dossier, "echec", raison, None, None, 0)
         _rafraichir_compteurs(index, id_lot_local)
-        _finaliser_lot(index, id_lot_local)
+        if isolé or lot_isole_cree:
+            _finaliser_lot(index, id_lot_local)
         return {"statut": "echec", "fiche": None, "raison": raison, "pieces": 0, "id_lot": id_lot_local}
 
     try:
@@ -374,7 +542,9 @@ def deposer_dossier(index: Any, dossier: Path, gabarits: list[GabaritDef] | None
         # écriture entière ou pas du tout (fiche + pièces jointes).
         with index.connect() as connexion:
             with connexion.cursor() as cursor:
-                fiche = extraire_fiche(plan.pdf_fiche, gabarits=gabarits, gabarit_code=plan.gabarit_code)
+                fiche = plan.fiche_extraite or extraire_fiche(
+                    plan.pdf_fiche, gabarits=gabarits, gabarit_code=plan.gabarit_code
+                )
                 # Lot 7 : la catégorie est proposée ICI, explicitement — nom
                 # du dossier (« accessoire ») d'abord, famille du gabarit
                 # gagnant ensuite. La persistance tranche et ne contredit
@@ -528,15 +698,28 @@ def deposer_dossier(index: Any, dossier: Path, gabarits: list[GabaritDef] | None
     }
 
 
-def creer_lot(index: Any, racine: Path, notes: str | None = None) -> int:
-    """Crée un lot : chaque sous-dossier direct de la racine devient une ligne
-    en attente. Lecture seule sur l'archive (un ``iterdir`` + un ``is_dir``)."""
+def creer_lot(index: Any, racine: Path, notes: str | None = None, *, recursif: bool = True) -> int:
+    """Crée un lot en attente, sans exécuter aucun dossier.
+
+    Par défaut, la découverte est RÉCURSIVE : tout dossier portant un PDF
+    direct devient une ligne, qu'il soit sous une année, une catégorie ou
+    à la racine même. ``recursif=False`` conserve l'ancien comportement
+    (sous-dossiers directs, y compris sans PDF). Lecture seule sur
+    l'archive dans les deux cas.
+    """
     racine = Path(racine)
     if not racine.is_dir():
         raise DepotImpossible(f"Racine de lot introuvable : {racine}")
-    sous_dossiers = sorted(chemin for chemin in racine.iterdir() if chemin.is_dir())
-    if not sous_dossiers:
-        raise DepotImpossible(f"Aucun sous-dossier à traiter dans {racine} (un dossier par affaire attendu).")
+    if recursif:
+        sous_dossiers = decouvrir_dossiers_candidats(racine)
+        if not sous_dossiers:
+            raise DepotImpossible(
+                f"Aucun dossier contenant un PDF direct sous {racine} — conséquence : aucun lot créé."
+            )
+    else:
+        sous_dossiers = sorted(chemin for chemin in racine.iterdir() if chemin.is_dir())
+        if not sous_dossiers:
+            raise DepotImpossible(f"Aucun sous-dossier à traiter dans {racine} (un dossier par affaire attendu).")
     with index.connect() as connexion:
         with connexion.cursor() as cursor:
             cursor.execute(_SQL_LOT_INS, (str(racine), notes))
@@ -709,6 +892,22 @@ def _rafraichir_compteurs(index: Any, id_lot: int) -> None:
             )
 
 
+def _chemin_relatif_lot(racine: str, chemin_dossier: str) -> str:
+    """Chemin d'un dossier de lot relatif à sa racine, pour l'affichage.
+
+    Le chemin absolu reste exposé dans ``chemin_dossier`` (traçabilité et
+    compatibilité), mais l'écran de suivi n'a pas à montrer l'arborescence
+    interne du serveur — en particulier le dossier d'une session de
+    téléversement. Un chemin incohérent retombe sur son nom final, jamais
+    sur une exception qui rendrait tout le lot illisible.
+    """
+    try:
+        relatif = Path(chemin_dossier).relative_to(Path(racine))
+    except (TypeError, ValueError):
+        return Path(chemin_dossier).name or chemin_dossier
+    return "." if str(relatif) == "." else relatif.as_posix()
+
+
 def etat_lot(index: Any, id_lot: int) -> dict[str, Any]:
     """État complet d'un lot : progression, dossiers, échecs avec raisons,
     fichiers restants — tout ce que GET /lots/{id} retournera."""
@@ -738,6 +937,7 @@ def etat_lot(index: Any, id_lot: int) -> dict[str, Any]:
             {
                 "id_lot_dossier": int(ligne[0]),
                 "chemin_dossier": str(ligne[1]),
+                "chemin_relatif": _chemin_relatif_lot(str(racine), str(ligne[1])),
                 "statut": ligne[2],
                 "raison": ligne[3],
                 "id_fiche": ligne[4],

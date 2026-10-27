@@ -115,7 +115,7 @@ class TestLot100InterrompuPuisRepris:
         archive = base_lot["archive"]
         empreintes_avant = depot.empreintes_arbre(archive)
 
-        id_lot = depot.creer_lot(index, archive)
+        id_lot = depot.creer_lot(index, archive, recursif=False)
         etat_initial = depot.etat_lot(index, id_lot)
         assert etat_initial["nb_dossiers"] == NB_DOSSIERS
         assert len(etat_initial["restants"]) == NB_DOSSIERS
@@ -177,11 +177,11 @@ class TestLot100InterrompuPuisRepris:
         shutil.copy(ARCHIVE_7792, mini / "UN" / "fiche.pdf")
         (mini / "DEUX" / "vide.txt").write_text("x", encoding="utf-8")
 
-        premier_lot = depot.creer_lot(index, mini)
+        premier_lot = depot.creer_lot(index, mini, recursif=False)
         depot.executer_lot(index, premier_lot)
         avant = _comptes_globaux(index)
 
-        id_lot2 = depot.creer_lot(index, mini, notes="rejeu complet")
+        id_lot2 = depot.creer_lot(index, mini, notes="rejeu complet", recursif=False)
         etat = depot.executer_lot(index, id_lot2)
         apres = _comptes_globaux(index)
         # les DONNÉES ne bougent pas (la traçabilité, elle, trace chaque tentative) :
@@ -197,7 +197,129 @@ class TestLot100InterrompuPuisRepris:
 
     def test_racine_sans_sous_dossier_refusee(self, base_lot: dict, tmp_path: Path) -> None:
         with pytest.raises(DepotImpossible, match="Aucun sous-dossier"):
-            depot.creer_lot(base_lot["index"], tmp_path)
+            depot.creer_lot(base_lot["index"], tmp_path, recursif=False)
+
+
+class TestLotRecursifEtTeleversement:
+    def test_lot_recursif_sous_annee_et_categorie(self, base_lot: dict, tmp_path: Path) -> None:
+        """Le mode par défaut trouve les affaires sous année/catégorie, sans
+        exiger un sous-dossier direct par affaire."""
+        index = base_lot["index"]
+        racine = tmp_path / "VOILES-DEMO"
+        affaire_un = racine / "2031" / "Croisière" / "AFFAIRE-UN"
+        affaire_deux = racine / "ACCESSOIRES" / "AFFAIRE-DEUX"
+        affaire_corrompue = racine / "2031" / "AFFAIRE-CORROMPUE"
+        for dossier in (affaire_un, affaire_deux, affaire_corrompue):
+            dossier.mkdir(parents=True)
+        shutil.copy(ARCHIVE_7792, affaire_un / "fiche_ffab.pdf")
+        (affaire_un / "photo.jpg").write_bytes(b"photo-synthetique")
+        shutil.copy(ARCHIVE_GENOIS, affaire_deux / "fiche.pdf")
+        (affaire_corrompue / "corrompu.pdf").write_bytes(b"%PDF-ceci-n-est-pas-un-pdf")
+        (racine / "2031" / "LISEZ-MOI.txt").write_text("pas une affaire", encoding="utf-8")
+
+        id_lot = depot.creer_lot(index, racine)
+        etat_initial = depot.etat_lot(index, id_lot)
+        assert etat_initial["nb_dossiers"] == 3
+        assert {dossier["chemin_relatif"] for dossier in etat_initial["dossiers"]} == {
+            "2031/AFFAIRE-CORROMPUE",
+            "2031/Croisière/AFFAIRE-UN",
+            "ACCESSOIRES/AFFAIRE-DEUX",
+        }
+
+        statuts_intermediaires: list[str] = []
+
+        def observer(traites: int, _total: int) -> None:
+            if traites == 1:
+                statuts_intermediaires.append(depot.etat_lot(index, id_lot)["statut"])
+
+        etat = depot.executer_lot(index, id_lot, progress_cb=observer)
+        assert statuts_intermediaires == ["relance"], (
+            "le premier dossier est en échec : le lot ne doit pas passer terminé "
+            "avant le traitement des dossiers restants"
+        )
+        assert etat["statut"] == "termine"
+        assert etat["nb_traites"] == 2
+        assert etat["nb_echecs"] == 1
+        echec = next(dossier for dossier in etat["dossiers"] if dossier["statut"] == "echec")
+        assert echec["chemin_relatif"] == "2031/AFFAIRE-CORROMPUE"
+        assert echec["raison"]
+
+    def test_api_televersement_puis_lot_recursif_idempotent(self, base_lot: dict, tmp_path: Path) -> None:
+        """HTTP réel : session → fichiers → finalisation → lot synchrone.
+        Rejouer la création avec le même jeton rend le lot existant."""
+        import json
+        from io import BytesIO
+
+        from fastapi.testclient import TestClient
+
+        from seamtech_search.api import create_app
+        from seamtech_search.config import AppConfig
+
+        racine = tmp_path / "archive-http"
+        racine.mkdir()
+        config = AppConfig(
+            root_paths=[racine],
+            database_path=tmp_path / "data" / "search.db",
+            database_url=base_lot["url"],
+            storage_backend="local",
+            redis_url=None,
+            min_free_bytes=0,
+        )
+        fichiers = {
+            "VOILES-DEMO/2031/AFFAIRE-TELEVERSEE/fiche_ffab.pdf": ARCHIVE_7792.read_bytes(),
+            "VOILES-DEMO/2031/AFFAIRE-TELEVERSEE/notes.txt": b"piece synthetique",
+        }
+        with TestClient(create_app(config)) as client:
+            creation = client.post(
+                "/imports/dossier/televersements",
+                json={
+                    "nom_racine": "VOILES-DEMO",
+                    "nombre_fichiers": len(fichiers),
+                    "taille_totale_octets": sum(len(contenu) for contenu in fichiers.values()),
+                },
+            )
+            assert creation.status_code == 201, creation.text
+            session = creation.json()
+            jeton = session["token"]
+            assert session["nombre_fichiers_attendus"] == 2
+            assert session["limites"]["taille_envoi_recommandee_octets"] > 0
+            assert session["limites"]["taille_fichier_max_octets"] > 0
+
+            envoi = client.post(
+                f"/imports/dossier/televersements/{jeton}/fichiers",
+                data={"chemins": json.dumps(list(fichiers))},
+                files=[
+                    ("fichiers", (Path(nom).name, BytesIO(contenu), "application/octet-stream"))
+                    for nom, contenu in fichiers.items()
+                ],
+            )
+            assert envoi.status_code == 200, envoi.text
+            assert envoi.json()["nombre_fichiers_recus"] == 2
+            assert envoi.json()["taille_recue_octets"] == sum(len(contenu) for contenu in fichiers.values())
+
+            fin = client.post(f"/imports/dossier/televersements/{jeton}/terminer")
+            assert fin.status_code == 200, fin.text
+            assert fin.json()["statut"] == "pret"
+
+            lot = client.post(
+                "/imports/dossier/lot",
+                json={"token_televersement": jeton, "recursif": True},
+                headers={"X-SEAMTECH-BACKGROUND": "false"},
+            )
+            assert lot.status_code == 202, lot.text
+            corps = lot.json()
+            assert corps["etat"]["nb_traites"] == 1
+            assert corps["etat"]["nb_echecs"] == 0
+            assert corps["etat"]["dossiers"][0]["chemin_relatif"] == "VOILES-DEMO/2031/AFFAIRE-TELEVERSEE"
+
+            rejeu = client.post(
+                "/imports/dossier/lot",
+                json={"token_televersement": jeton, "recursif": True},
+                headers={"X-SEAMTECH-BACKGROUND": "false"},
+            )
+            assert rejeu.status_code == 202, rejeu.text
+            assert rejeu.json()["id_lot"] == corps["id_lot"]
+            assert rejeu.json()["deja_cree"] is True
 
 
 class TestPontImportPipeline:
@@ -229,7 +351,7 @@ class TestTachesDeFond:
         shutil.copy(ARCHIVE_7792, mini / "UN" / "fiche.pdf")
         (mini / "DEUX").mkdir()
         (mini / "DEUX" / "vide.txt").write_text("x", encoding="utf-8")
-        id_lot = depot.creer_lot(index, mini)
+        id_lot = depot.creer_lot(index, mini, recursif=False)
         thread = threading.Thread(target=depot.executer_lot, args=(index, id_lot), daemon=True)
         thread.start()
         thread.join(timeout=60)
@@ -249,7 +371,7 @@ class TestFiletSecuriteLot:
         """
         index = base_lot["index"]
         archive = base_lot["archive"]
-        id_lot = depot.creer_lot(index, archive)
+        id_lot = depot.creer_lot(index, archive, recursif=False)
 
         def _panne_simulee(*args: Any, **kwargs: Any) -> dict[str, Any]:
             raise RuntimeError("panne simulée")

@@ -1773,11 +1773,12 @@ def importer_lot_dossiers(
     *,
     notes: str | None = None,
     interrompre_apres: int | None = None,
+    recursif: bool = True,
 ) -> dict[str, Any]:
     """Porte A bis : crée et exécute un lot de dossiers (archive historique).
     Délègue à :func:`seamtech_search.fiches.depot.creer_lot` +
     :func:`seamtech_search.fiches.depot.executer_lot` (reprise = rappeler)."""
     from .fiches.depot import creer_lot, executer_lot
 
-    id_lot = creer_lot(index, Path(racine), notes=notes)
+    id_lot = creer_lot(index, Path(racine), notes=notes, recursif=recursif)
     return {"id_lot": id_lot, "etat": executer_lot(index, id_lot, interrompre_apres=interrompre_apres)}

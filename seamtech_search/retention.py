@@ -141,8 +141,11 @@ def prune_staged_uploads(
     pruned_count = 0
 
     for child in staging_path.iterdir():
-        # Never delete quarantine even if it lives inside staging (defensive)
-        if child.name == "quarantine":
+        # Never delete quarantine even if it lives inside staging (defensive).
+        # Les lots téléversés sont une racine de travail durable : les fiches
+        # déposées référencent leurs fichiers par chemin, ils ne sont donc
+        # jamais élagués sur le seul critère d'âge.
+        if child.name in {"quarantine", "lots-televerses"}:
             continue
         try:
             if child.stat().st_mtime >= cutoff_seconds:

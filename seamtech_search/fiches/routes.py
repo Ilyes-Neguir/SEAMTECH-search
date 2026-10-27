@@ -17,6 +17,7 @@ n'existent pas côté SQLite, les routes répondent 503 avec l'explication.
 
 from __future__ import annotations
 
+import json
 import logging
 import mimetypes
 import os
@@ -26,7 +27,7 @@ from pathlib import Path, PureWindowsPath
 from typing import Annotated, Any
 from urllib.parse import quote
 
-from fastapi import File, Header, HTTPException, Query, Request, UploadFile
+from fastapi import File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from starlette.responses import Response
 
@@ -61,6 +62,20 @@ from seamtech_search.fiches.extraction import (
 )
 from seamtech_search.fiches.gabarits import GabaritInconnu, charger_gabarits, detecter_gabarit
 from seamtech_search.fiches.persistance import verifier_autorisation_validation_lot
+from seamtech_search.fiches.televersement_lot import (
+    TeleversementLotConflit,
+    TeleversementLotErreur,
+    TeleversementLotEspaceInsuffisant,
+    TeleversementLotIntrouvable,
+    TeleversementLotTropGrand,
+    annuler_session_televersement_lot,
+    associer_lot_session_televersement,
+    creer_session_televersement_lot,
+    etat_session_televersement_lot,
+    racine_session_televersement_lot,
+    recevoir_fichiers_televersement_lot,
+    terminer_session_televersement_lot,
+)
 from seamtech_search.import_pipeline import staging_root
 from seamtech_search.jobs import create_job, register_job_cancel
 from seamtech_search.redis_store import RedisStore
@@ -1841,6 +1856,137 @@ def enregistrer_routes_fiches(
             dict(corps.get("regles") or {}),
         )
 
+    def _http_televersement(erreur: TeleversementLotErreur) -> HTTPException:
+        if isinstance(erreur, TeleversementLotIntrouvable):
+            statut = 404
+        elif isinstance(erreur, TeleversementLotEspaceInsuffisant):
+            statut = 507
+        elif isinstance(erreur, TeleversementLotTropGrand):
+            statut = 413
+        elif isinstance(erreur, TeleversementLotConflit):
+            statut = 409
+        else:
+            statut = 422
+        return HTTPException(status_code=statut, detail=str(erreur))
+
+    def _autoriser_televersement(
+        token: str | None,
+        entete_utilisateur: str | None,
+        entete_role: str | None,
+        entete_session: str | None,
+        entete_jeton: str | None,
+    ) -> None:
+        verifier_auth(config, token)
+        exiger_role_si_humain(
+            index, config, _roles_operationnels(), token=token,
+            entete_utilisateur=entete_utilisateur, entete_role=entete_role,
+            entete_session=entete_session, entete_jeton=entete_jeton,
+        )
+
+    @app.post("/imports/dossier/televersements", status_code=201)
+    def route_creer_televersement(
+        corps: dict[str, Any],
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+        entete_utilisateur: Annotated[str | None, Header(alias="X-SEAMTECH-UTILISATEUR")] = None,
+        entete_role: Annotated[str | None, Header(alias="X-SEAMTECH-ROLE")] = None,
+        entete_session: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION")] = None,
+        entete_jeton: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-JETON")] = None,
+    ) -> dict[str, Any]:
+        """Ouvre une session de téléversement d'un dossier complet.
+
+        Corps : ``{"nom_racine", "nombre_fichiers", "taille_totale_octets"}``.
+        La réponse donne un jeton opaque et les bornes à utiliser pour les
+        envois successifs ; aucun chemin serveur n'est exposé.
+        """
+        _autoriser_televersement(token, entete_utilisateur, entete_role, entete_session, entete_jeton)
+        try:
+            return creer_session_televersement_lot(
+                config,
+                nom_racine=corps.get("nom_racine"),
+                nombre_fichiers=corps.get("nombre_fichiers"),
+                taille_totale_octets=corps.get("taille_totale_octets"),
+            )
+        except TeleversementLotErreur as erreur:
+            raise _http_televersement(erreur) from erreur
+
+    @app.get("/imports/dossier/televersements/{jeton_session}")
+    def route_etat_televersement(
+        jeton_session: str,
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+        entete_utilisateur: Annotated[str | None, Header(alias="X-SEAMTECH-UTILISATEUR")] = None,
+        entete_role: Annotated[str | None, Header(alias="X-SEAMTECH-ROLE")] = None,
+        entete_session: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION")] = None,
+        entete_jeton: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-JETON")] = None,
+    ) -> dict[str, Any]:
+        _autoriser_televersement(token, entete_utilisateur, entete_role, entete_session, entete_jeton)
+        try:
+            return etat_session_televersement_lot(config, jeton_session, reconcilier=True)
+        except TeleversementLotErreur as erreur:
+            raise _http_televersement(erreur) from erreur
+
+    @app.post("/imports/dossier/televersements/{jeton_session}/fichiers")
+    def route_recevoir_televersement(
+        jeton_session: str,
+        chemins: Annotated[str, Form()],
+        fichiers: Annotated[list[UploadFile], File()],
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+        entete_utilisateur: Annotated[str | None, Header(alias="X-SEAMTECH-UTILISATEUR")] = None,
+        entete_role: Annotated[str | None, Header(alias="X-SEAMTECH-ROLE")] = None,
+        entete_session: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION")] = None,
+        entete_jeton: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-JETON")] = None,
+    ) -> dict[str, Any]:
+        """Reçoit un envoi borné ; ``chemins`` est la liste JSON, dans le
+        même ordre, des chemins relatifs des fichiers multipart."""
+        _autoriser_televersement(token, entete_utilisateur, entete_role, entete_session, entete_jeton)
+        try:
+            chemins_parses = json.loads(chemins)
+        except json.JSONDecodeError as erreur:
+            raise HTTPException(status_code=422, detail="Le champ chemins doit être une liste JSON.") from erreur
+        if not isinstance(chemins_parses, list) or not all(isinstance(item, str) for item in chemins_parses):
+            raise HTTPException(status_code=422, detail="Le champ chemins doit être une liste JSON de chaînes.")
+        try:
+            return recevoir_fichiers_televersement_lot(
+                config,
+                jeton_session,
+                chemins_relatives=chemins_parses,
+                flux=[fichier.file for fichier in fichiers],
+            )
+        except TeleversementLotErreur as erreur:
+            raise _http_televersement(erreur) from erreur
+        finally:
+            for fichier in fichiers:
+                fichier.file.close()
+
+    @app.post("/imports/dossier/televersements/{jeton_session}/terminer")
+    def route_terminer_televersement(
+        jeton_session: str,
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+        entete_utilisateur: Annotated[str | None, Header(alias="X-SEAMTECH-UTILISATEUR")] = None,
+        entete_role: Annotated[str | None, Header(alias="X-SEAMTECH-ROLE")] = None,
+        entete_session: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION")] = None,
+        entete_jeton: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-JETON")] = None,
+    ) -> dict[str, Any]:
+        _autoriser_televersement(token, entete_utilisateur, entete_role, entete_session, entete_jeton)
+        try:
+            return terminer_session_televersement_lot(config, jeton_session)
+        except TeleversementLotErreur as erreur:
+            raise _http_televersement(erreur) from erreur
+
+    @app.delete("/imports/dossier/televersements/{jeton_session}")
+    def route_annuler_televersement(
+        jeton_session: str,
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+        entete_utilisateur: Annotated[str | None, Header(alias="X-SEAMTECH-UTILISATEUR")] = None,
+        entete_role: Annotated[str | None, Header(alias="X-SEAMTECH-ROLE")] = None,
+        entete_session: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION")] = None,
+        entete_jeton: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-JETON")] = None,
+    ) -> dict[str, Any]:
+        _autoriser_televersement(token, entete_utilisateur, entete_role, entete_session, entete_jeton)
+        try:
+            return annuler_session_televersement_lot(config, jeton_session)
+        except TeleversementLotErreur as erreur:
+            raise _http_televersement(erreur) from erreur
+
     @app.post("/imports/dossier", status_code=201)
     def route_deposer_dossier(
         corps: dict[str, Any],
@@ -1909,17 +2055,49 @@ def enregistrer_routes_fiches(
             entete_session=entete_session, entete_jeton=entete_jeton,
         )
         racine = str(corps.get("racine") or "").strip()
-        if not racine:
-            raise HTTPException(status_code=422, detail='Corps attendu : {"racine": "/chemin/de/la/racine"}.')
-        if not _path_autorise(Path(racine), config):
+        jeton_televersement = str(corps.get("token_televersement") or "").strip()
+        if bool(racine) == bool(jeton_televersement):
+            raise HTTPException(
+                status_code=422,
+                detail='Corps attendu : {"racine": "/chemin/de/la/racine"} OU {"token_televersement": "…"} — exactement une source.',
+            )
+        recursif = corps.get("recursif", True)
+        if not isinstance(recursif, bool):
+            raise HTTPException(status_code=422, detail="Le champ recursif doit être un booléen.")
+        if jeton_televersement:
+            try:
+                session = etat_session_televersement_lot(config, jeton_televersement, reconcilier=True)
+                if session.get("id_lot") is not None:
+                    id_existant = int(session["id_lot"])
+                    etat_existant = etat_lot(index, id_existant)
+                    return {
+                        "id_lot": id_existant,
+                        "job_id": f"lot-{id_existant}",
+                        "statut": etat_existant["statut"],
+                        "traitement": "deja_cree",
+                        "deja_cree": True,
+                        "etat": etat_existant,
+                        "suivi": f"/lots/{id_existant}",
+                    }
+                racine = str(racine_session_televersement_lot(config, jeton_televersement))
+            except TeleversementLotErreur as erreur:
+                raise _http_televersement(erreur) from erreur
+            except DepotImpossible as erreur:
+                raise HTTPException(status_code=404, detail=str(erreur)) from erreur
+        elif not _path_autorise(Path(racine), config):
             raise HTTPException(
                 status_code=403,
                 detail="Racine de lot hors des racines configurées : création refusée (Lot 0b).",
             )
         try:
-            id_lot = creer_lot(index, Path(racine), notes=corps.get("notes"))
+            id_lot = creer_lot(index, Path(racine), notes=corps.get("notes"), recursif=recursif)
         except DepotImpossible as erreur:
             raise HTTPException(status_code=422, detail=str(erreur)) from erreur
+        if jeton_televersement:
+            try:
+                associer_lot_session_televersement(config, jeton_televersement, id_lot)
+            except TeleversementLotErreur as erreur:
+                raise _http_televersement(erreur) from erreur
 
         if not fond:
             return {"id_lot": id_lot, "statut": "termine", "traitement": "synchrone", "etat": executer_lot(index, id_lot)}
