@@ -88,6 +88,41 @@ from seamtech_search.storage import S3StorageClient, StorageError
 LOGGER = logging.getLogger("seamtech_search.fiches.routes")
 
 TAILLE_PDF_MAX = 20 * 1024 * 1024  # 20 Mo : une fiche technique ne dépasse pas ça
+_TAILLE_MORCEAU_UPLOAD = 1024 * 1024
+
+
+async def _ecrire_pdf_temporaire_borne(fichier: UploadFile, prefixe: str) -> Path:
+    """Copie un upload PDF vers un fichier temporaire, par morceaux bornés.
+
+    La taille est refusée pendant la lecture : un envoi géant ne doit jamais
+    être matérialisé entièrement en mémoire avant le contrôle de 20 Mo.
+    L'appelant possède le fichier retourné et doit le supprimer.
+    """
+    descripteur, chemin_brut = tempfile.mkstemp(suffix=".pdf", prefix=prefixe)
+    chemin = Path(chemin_brut)
+    total = 0
+    signature = bytearray()
+    try:
+        with os.fdopen(descripteur, "wb") as sortie:
+            while morceau := await fichier.read(_TAILLE_MORCEAU_UPLOAD):
+                if len(signature) < 4:
+                    signature.extend(morceau[: 4 - len(signature)])
+                total += len(morceau)
+                if total > TAILLE_PDF_MAX:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"PDF trop gros (plus de {TAILLE_PDF_MAX} octets, maximum {TAILLE_PDF_MAX}).",
+                    )
+                sortie.write(morceau)
+        if bytes(signature) != b"%PDF":
+            raise HTTPException(
+                status_code=422,
+                detail="Le contenu reçu n'est pas un PDF (signature %PDF absente).",
+            )
+    except Exception:
+        chemin.unlink(missing_ok=True)
+        raise
+    return chemin
 
 _SQL_CHAMPS = (
     "SELECT e.champ, e.rang, e.table_cible, e.colonne_cible, e.valeur_brute, e.valeur_normalisee, "
@@ -2217,7 +2252,10 @@ def enregistrer_routes_fiches(
             entete_utilisateur=entete_utilisateur, entete_role=entete_role,
             entete_session=entete_session, entete_jeton=entete_jeton,
         )
-        etat_avant = etat_lot(index, id_lot)
+        try:
+            etat_avant = etat_lot(index, id_lot)
+        except DepotImpossible as erreur:
+            raise HTTPException(status_code=404, detail=str(erreur)) from erreur
         if etat_avant["statut"] in {"termine", "annule"}:
             return {"id_lot": id_lot, "statut": etat_avant["statut"], "annulation": "sans_objet", "etat": etat_avant}
         redis_store = RedisStore(config=config)
@@ -2315,16 +2353,9 @@ def enregistrer_routes_fiches(
         )
         if fichier is None:
             raise HTTPException(status_code=422, detail="Envoyer le PDF en multipart (champ « fichier »).")
-        contenu = await fichier.read()
-        if len(contenu) > TAILLE_PDF_MAX:
-            raise HTTPException(status_code=413, detail=f"PDF trop gros ({len(contenu)} octets, maximum {TAILLE_PDF_MAX}).")
-        if not contenu.startswith(b"%PDF"):
-            raise HTTPException(status_code=422, detail="Le contenu reçu n'est pas un PDF (signature %PDF absente).")
-        descripteur, chemin = tempfile.mkstemp(suffix=".pdf", prefix="detection-")
+        chemin = await _ecrire_pdf_temporaire_borne(fichier, "detection-")
         try:
-            with os.fdopen(descripteur, "wb") as sortie:
-                sortie.write(contenu)
-            return detecter_pdf(index, Path(chemin))
+            return detecter_pdf(index, chemin)
         except ExtractionImpossible as erreur:
             raise HTTPException(status_code=422, detail=str(erreur)) from erreur
         finally:
@@ -2510,21 +2541,22 @@ def enregistrer_routes_fiches(
         )
         if fichier is None:
             raise HTTPException(status_code=422, detail="Envoyer le PDF en multipart (champ fichier).")
-        contenu = await fichier.read()
-        if len(contenu) > TAILLE_PDF_MAX:
-            raise HTTPException(status_code=413, detail=f"PDF trop gros ({len(contenu)} octets, max {TAILLE_PDF_MAX}).")
-        if not contenu.startswith(b"%PDF"):
-            raise HTTPException(status_code=422, detail="Le contenu reçu n'est pas un PDF (signature %PDF absente).")
-        descripteur, chemin = tempfile.mkstemp(suffix=".pdf", prefix="brouillon-")
+        chemin = await _ecrire_pdf_temporaire_borne(fichier, "brouillon-")
         try:
-            with os.fdopen(descripteur, "wb") as sortie:
-                sortie.write(contenu)
-            brouillon = generer_brouillon_depuis_pdf(Path(chemin), code_propose=code)
+            brouillon = generer_brouillon_depuis_pdf(chemin, code_propose=code)
             enregistre = enregistrer_brouillon(index, brouillon)
             return {**brouillon, **enregistre}
+        except ExtractionImpossible as exc:
+            # PDF illisible = erreur de l'appelant, pas du serveur ; le détail
+            # ne doit pas exposer le chemin temporaire interne.
+            LOGGER.warning("Brouillon refusé, PDF illisible : %s", exc)
+            raise HTTPException(
+                status_code=422,
+                detail="Ce PDF est illisible : impossible d'en générer un brouillon de gabarit.",
+            ) from exc
         except Exception as exc:
             LOGGER.exception("Échec génération brouillon depuis PDF: %s", exc)
-            raise HTTPException(status_code=500, detail=f"Échec génération brouillon: {exc}") from exc
+            raise HTTPException(status_code=500, detail="Échec de la génération du brouillon.") from exc
         finally:
             try:
                 os.unlink(chemin)

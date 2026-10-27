@@ -4,6 +4,7 @@ import asyncio
 import logging
 import os
 import re
+import secrets
 import shutil
 import time
 import uuid
@@ -441,6 +442,36 @@ def create_app(config: AppConfig) -> FastAPI:
                         "Cache-Control": "no-store, no-cache, must-revalidate, private",
                     },
                 )
+
+        # La porte de service est vérifiée avant le routage/validation : un
+        # jeton absent ou faux ne doit révéler ni le schéma d'entrée, ni
+        # déclencher le parsing d'un corps (multipart compris). Les gardes
+        # par route restent en place en défense en profondeur.
+        if config.auth_token and path not in {"/live", "/ready"}:
+            jeton_fourni = request.headers.get("X-SEAMTECH-TOKEN")
+            if jeton_fourni is None or not secrets.compare_digest(
+                jeton_fourni.encode("utf-8"), config.auth_token.encode("utf-8")
+            ):
+                reponse_refus = JSONResponse(
+                    status_code=401,
+                    content={"detail": "Authentication required."},
+                    headers={
+                        "X-Request-ID": request_id,
+                        "Cache-Control": "no-store, no-cache, must-revalidate, private",
+                    },
+                )
+                if _requete_a_auditer(request.method, path, reponse_refus.status_code):
+                    await asyncio.to_thread(
+                        _enregistrer_audit_http,
+                        methode=request.method,
+                        chemin=path,
+                        code_statut=reponse_refus.status_code,
+                        request_id=request_id,
+                        entetes=dict(request.headers),
+                        client_host=request.client.host if request.client else None,
+                        user_agent=request.headers.get("User-Agent"),
+                    )
+                return reponse_refus
 
         response: Response = await call_next(request)
         response.headers["X-Request-ID"] = request_id

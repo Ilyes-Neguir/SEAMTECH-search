@@ -122,6 +122,105 @@ export async function requireRolesServer(...roles: Role[]): Promise<NextResponse
 }
 
 /** Like requireRolesServer, but rescue/shared sessions can never pass. */
+/**
+ * Relaie un multipart au backend sans jamais le tamponner dans Next.js.
+ *
+ * `req.formData()` lirait tout le corps avant que le backend puisse appliquer
+ * ses propres bornes. Ici les octets traversent en flux, sont comptés au fil
+ * de l'eau et le relais est interrompu dès que le plafond de la route est
+ * franchi — y compris sans Content-Length fiable.
+ */
+export async function proxyMultipartBorne(
+  req: Request,
+  cheminBackend: string,
+  maxOctets: number,
+): Promise<NextResponse> {
+  const base = backendBase()
+  if (!base) {
+    return NextResponse.json(
+      { detail: "Backend non configuré (SEAMTECH_API_URL)." },
+      { status: 503, headers: { "Cache-Control": "no-store" } },
+    )
+  }
+  const contentType = req.headers.get("content-type") ?? ""
+  if (!contentType.toLowerCase().startsWith("multipart/form-data")) {
+    return NextResponse.json(
+      { detail: "Envoi multipart/form-data requis." },
+      { status: 415, headers: { "Cache-Control": "no-store" } },
+    )
+  }
+  const longueurDeclaree = req.headers.get("content-length")
+  let longueur: number | null = null
+  if (longueurDeclaree !== null) {
+    longueur = Number(longueurDeclaree)
+    if (!Number.isSafeInteger(longueur) || longueur < 0) {
+      return NextResponse.json(
+        { detail: "Content-Length invalide." },
+        { status: 400, headers: { "Cache-Control": "no-store" } },
+      )
+    }
+    if (longueur > maxOctets) {
+      return NextResponse.json(
+        { detail: `Envoi trop volumineux (${longueur} octets, maximum ${maxOctets}).` },
+        { status: 413, headers: { "Cache-Control": "no-store" } },
+      )
+    }
+  }
+  if (!req.body) {
+    return NextResponse.json(
+      { detail: "Corps multipart absent." },
+      { status: 400, headers: { "Cache-Control": "no-store" } },
+    )
+  }
+
+  let total = 0
+  let tropGrand = false
+  const corpsBorne = req.body.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        total += chunk.byteLength
+        if (total > maxOctets) {
+          tropGrand = true
+          controller.error(new Error("Envoi multipart trop volumineux"))
+          return
+        }
+        controller.enqueue(chunk)
+      },
+    }),
+  )
+  const extra: Record<string, string> = { "content-type": contentType }
+  if (longueur !== null) extra["content-length"] = String(longueur)
+  try {
+    const response = await fetch(`${base}${cheminBackend}`, {
+      method: "POST",
+      headers: await backendHeaders(extra),
+      body: corpsBorne,
+      cache: "no-store",
+      duplex: "half",
+    } as RequestInit & { duplex: "half" })
+    const typeReponse = response.headers.get("content-type")
+    return new NextResponse(response.body, {
+      status: response.status,
+      headers: {
+        "Cache-Control": "no-store",
+        ...(typeReponse ? { "content-type": typeReponse } : {}),
+      },
+    })
+  } catch {
+    if (tropGrand) {
+      return NextResponse.json(
+        { detail: `Envoi trop volumineux (maximum ${maxOctets} octets).` },
+        { status: 413, headers: { "Cache-Control": "no-store" } },
+      )
+    }
+    console.error("[proxy] Backend SEAMTECH injoignable pendant un envoi multipart.")
+    return NextResponse.json(
+      { detail: "Backend SEAMTECH injoignable." },
+      { status: 502, headers: { "Cache-Control": "no-store" } },
+    )
+  }
+}
+
 export async function requireNominativeRoles(...roles: Role[]): Promise<NextResponse | null> {
   const denied = await requireAuthValide()
   if (denied) return denied

@@ -270,6 +270,76 @@ class TestRejeuSansDoublon:
         pieces = pieces_de_fiche(index, "7792-SO")["pieces"]
         assert any(p["is_primary_pdf"] for p in pieces), pieces
 
+    def test_pdf_televerse_modifie_meme_chemin_ne_duplique_pas_les_annexes(
+        self, base_depot: dict, tmp_path: Path
+    ) -> None:
+        """Le même dossier envoyé dans une autre session avec un PDF modifié
+        remplace la fiche, mais une annexe inchangée reste une seule pièce.
+
+        Sans identité logique des pièces stagées, le nouveau jeton crée un
+        second document et un second lien pour la même annexe : l'écran
+        afficherait deux fois le même fichier.
+        """
+        index = base_depot["index"]
+        source_pdf = (ARCHIVE_7792 / "fiche-7792-SO_ffab.pdf").read_bytes()
+
+        def dossier_stage(jeton: str, pdf_octets: bytes, annexe: str) -> Path:
+            dossier = (
+                tmp_path
+                / "uploads"
+                / "lots-televerses"
+                / jeton
+                / "fichiers"
+                / "ANNEE-MODIFIEE"
+                / "AFFAIRE-STAGEE"
+            )
+            dossier.mkdir(parents=True)
+            (dossier / "fiche-7792-SO_ffab.pdf").write_bytes(pdf_octets)
+            (dossier / "annexe-suivi-modifications.txt").write_text(annexe, encoding="utf-8")
+            return dossier
+
+        premier = depot.deposer_dossier(
+            index,
+            dossier_stage("jeton-modifie-A", source_pdf, "repère des renforts"),
+        )
+        assert premier["statut"] == "traite", premier
+        avant = _comptes(index)
+
+        pdf_modifie = source_pdf + b"\n% variante synthetique meme chemin logique\n"
+        second = depot.deposer_dossier(
+            index,
+            dossier_stage("jeton-modifie-B", pdf_modifie, "repère des renforts"),
+        )
+        apres = _comptes(index)
+        assert second["statut"] == "traite", second
+        assert apres["fiche"] == avant["fiche"]
+        assert apres["pieces"] == avant["pieces"], "une annexe inchangée a été dupliquée"
+
+        from seamtech_search.fiches.routes import pieces_de_fiche
+
+        pieces = pieces_de_fiche(index, "7792-SO")["pieces"]
+        noms = [piece["name"] for piece in pieces]
+        assert noms.count("annexe-suivi-modifications.txt") == 1, noms
+        principal = next(piece for piece in pieces if piece["is_primary_pdf"])
+        assert principal["size"] == len(pdf_modifie)
+
+        troisieme = depot.deposer_dossier(
+            index,
+            dossier_stage(
+                "jeton-modifie-C",
+                pdf_modifie + b"% seconde variante synthetique\n",
+                "repère des renforts, version 2",
+            ),
+        )
+        assert troisieme["statut"] == "traite", troisieme
+        assert _comptes(index)["pieces"] == avant["pieces"], (
+            "une annexe modifiée au même chemin logique doit remplacer son lien"
+        )
+        pieces = pieces_de_fiche(index, "7792-SO")["pieces"]
+        annexes = [piece for piece in pieces if piece["name"] == "annexe-suivi-modifications.txt"]
+        assert len(annexes) == 1, pieces
+        assert annexes[0]["size"] == len("repère des renforts, version 2".encode("utf-8"))
+
     def test_rejeu_televerse_reconnait_une_ancienne_cle_absolue(
         self, base_depot: dict, tmp_path: Path
     ) -> None:

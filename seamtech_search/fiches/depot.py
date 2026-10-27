@@ -680,6 +680,33 @@ def deposer_dossier(index: Any, dossier: Path, gabarits: list[GabaritDef] | None
 
                 for piece in plan.pieces:
                     chemin_piece = Path(piece.chemin)
+                    # Une pièce stagée garde la même identité d'une session à
+                    # l'autre : chemin relatif envoyé, hors jeton. Si le PDF
+                    # de fiche a changé, le dépôt remplace la fiche ; il ne
+                    # doit pas pour autant créer un second lien pour une
+                    # annexe inchangée. Une annexe modifiée remplace le lien
+                    # existant vers son nouveau document, sans réécrire
+                    # l'ancien document (les approbations déjà accordées sur
+                    # ses octets restent donc attachées à ces octets-là).
+                    logique_piece = _chemin_logique_televersement(chemin_piece)
+                    piece_existante: tuple[Any, ...] | None = None
+                    if logique_piece is not None:
+                        cursor.execute(
+                            "SELECT id_piece, id_document, chemin, empreinte_sha256 "
+                            "FROM fiche_piece_jointe WHERE id_fiche = %s "
+                            "ORDER BY id_piece",
+                            (id_fiche,),
+                        )
+                        for candidate in cursor.fetchall():
+                            if _chemin_logique_televersement(str(candidate[2])) == logique_piece:
+                                piece_existante = candidate
+                                break
+                    if (
+                        piece_existante is not None
+                        and piece_existante[1] is not None
+                        and str(piece_existante[3] or "") == str(piece.empreinte_sha256)
+                    ):
+                        continue
                     # RG12 — décision revue 21/09 : le fichier est décrit UNE FOIS,
                     # dans `documents` (métadonnées indexées), path_key = normcase
                     # (même clé que le crawler ⇒ réconciliation, jamais duplication) ;
@@ -705,17 +732,32 @@ def deposer_dossier(index: Any, dossier: Path, gabarits: list[GabaritDef] | None
                     )
                     id_document = cursor.fetchone()[0]
                     cursor.execute(_SQL_DOCUMENT_VECTOR, (id_document,))
-                    cursor.execute(
-                        _SQL_PIECE_INS,
-                        (
-                            id_fiche,
-                            id_document,
-                            str(piece.chemin),
-                            piece.role,
-                            piece.empreinte_sha256,
-                            piece.taille_octets,
-                        ),
-                    )
+                    if piece_existante is not None:
+                        cursor.execute(
+                            "UPDATE fiche_piece_jointe SET id_document = %s, chemin = %s, "
+                            "role = %s, empreinte_sha256 = %s, taille_octets = %s "
+                            "WHERE id_piece = %s",
+                            (
+                                id_document,
+                                str(piece.chemin),
+                                piece.role,
+                                piece.empreinte_sha256,
+                                piece.taille_octets,
+                                piece_existante[0],
+                            ),
+                        )
+                    else:
+                        cursor.execute(
+                            _SQL_PIECE_INS,
+                            (
+                                id_fiche,
+                                id_document,
+                                str(piece.chemin),
+                                piece.role,
+                                piece.empreinte_sha256,
+                                piece.taille_octets,
+                            ),
+                        )
     except Exception as erreur:
         LOGGER.exception(
             "Échec d'écriture du dossier %s : %s: %s — conséquence : RIEN n'est persisté (transaction annulée), dossier listé en échec.",

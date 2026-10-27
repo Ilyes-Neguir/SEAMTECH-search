@@ -141,6 +141,39 @@ class TestRegistreGabaritsUnitaire:
             assert getattr(attrape.value, "status_code", None) == 422
 
 
+class TestLecturePdfBornee:
+    def test_ecriture_temporaire_par_morceaux_jamais_en_memoire_entiere(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import asyncio
+        import io
+
+        class FauxUpload:
+            def __init__(self, contenu: bytes) -> None:
+                self._flux = io.BytesIO(contenu)
+                self.tailles_demandees: list[int] = []
+
+            async def read(self, taille: int = -1) -> bytes:
+                self.tailles_demandees.append(taille)
+                assert taille > 0, "lecture non bornée d'un upload"
+                return self._flux.read(taille)
+
+        monkeypatch.setattr(routes, "TAILLE_PDF_MAX", 16)
+        upload = FauxUpload(b"%PDF-12345678901")
+        chemin = asyncio.run(routes._ecrire_pdf_temporaire_borne(upload, "test-borne-"))
+        try:
+            assert chemin.read_bytes() == b"%PDF-12345678901"
+        finally:
+            chemin.unlink(missing_ok=True)
+        assert upload.tailles_demandees and max(upload.tailles_demandees) <= 1024 * 1024
+
+        trop_gros = FauxUpload(b"%PDF-" + b"x" * 32)
+        with pytest.raises(Exception) as attrape:
+            asyncio.run(routes._ecrire_pdf_temporaire_borne(trop_gros, "test-borne-"))
+        assert getattr(attrape.value, "status_code", None) == 413
+        assert trop_gros.tailles_demandees and max(trop_gros.tailles_demandees) <= 1024 * 1024
+
+
 class TestDetectionUnitaire:
     def test_detecter_pdf_inconnu_est_un_resultat(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Aucun gabarit en base → 200 « reprise_complete », jamais un crash."""
