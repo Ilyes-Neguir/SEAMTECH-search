@@ -33,7 +33,7 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, BinaryIO, Iterator, Sequence
+from typing import Any, BinaryIO, Callable, Iterator, Sequence
 
 try:
     import fcntl
@@ -676,3 +676,52 @@ def racine_session_televersement_lot(config: Any, token: str) -> Path:
 def associer_lot_session_televersement(config: Any, token: str, id_lot: int) -> dict[str, Any]:
     with _verrou_session(config, token):
         return _associer_lot_session_televersement_interne(config, token, id_lot)
+
+
+def _creer_lot_session_televersement_interne(
+    config: Any,
+    token: str,
+    *,
+    creer_lot: Callable[[Path], int],
+) -> dict[str, Any]:
+    dossier, manifeste = _charger_manifeste(config, token)
+    racine = dossier / DOSSIER_FICHIERS
+    existant = manifeste.get("id_lot")
+    if existant is not None:
+        return {
+            "session": _etat_public(config, manifeste),
+            "racine": racine,
+            "id_lot": int(existant),
+            "lot_cree": False,
+        }
+
+    racine = _racine_session_televersement_lot_interne(config, token)
+    id_lot = int(creer_lot(racine))
+    if id_lot <= 0:
+        raise TeleversementLotErreur("La création du lot n'a pas renvoyé d'identifiant valide.")
+    session = _associer_lot_session_televersement_interne(config, token, id_lot)
+    return {
+        "session": session,
+        "racine": racine,
+        "id_lot": id_lot,
+        "lot_cree": True,
+    }
+
+
+def creer_lot_session_televersement(
+    config: Any,
+    token: str,
+    *,
+    creer_lot: Callable[[Path], int],
+) -> dict[str, Any]:
+    """Crée ou retrouve le lot d'une session, en une seule section critique.
+
+    Le verrou inter-processus de la session est conservé pendant l'appel à
+    ``creer_lot`` puis l'association au manifeste. Une annulation concurrente
+    attend donc la fin de la création et échoue ensuite explicitement, tandis
+    qu'une seconde création retrouve le lot existant sans appeler le callback
+    une deuxième fois. Le callback ne doit pas rappeler les fonctions
+    publiques de cette même session (elles attendraient le même verrou).
+    """
+    with _verrou_session(config, token):
+        return _creer_lot_session_televersement_interne(config, token, creer_lot=creer_lot)

@@ -69,10 +69,9 @@ from seamtech_search.fiches.televersement_lot import (
     TeleversementLotIntrouvable,
     TeleversementLotTropGrand,
     annuler_session_televersement_lot,
-    associer_lot_session_televersement,
+    creer_lot_session_televersement,
     creer_session_televersement_lot,
     etat_session_televersement_lot,
-    racine_session_televersement_lot,
     recevoir_fichiers_televersement_lot,
     terminer_session_televersement_lot,
 )
@@ -2064,40 +2063,47 @@ def enregistrer_routes_fiches(
         recursif = corps.get("recursif", True)
         if not isinstance(recursif, bool):
             raise HTTPException(status_code=422, detail="Le champ recursif doit être un booléen.")
+        id_lot: int | None = None
         if jeton_televersement:
+            def _creer_lot_depuis_racine_session(racine_session: Path) -> int:
+                return creer_lot(index, racine_session, notes=corps.get("notes"), recursif=recursif)
+
             try:
-                session = etat_session_televersement_lot(config, jeton_televersement, reconcilier=True)
-                if session.get("id_lot") is not None:
-                    id_existant = int(session["id_lot"])
-                    etat_existant = etat_lot(index, id_existant)
-                    return {
-                        "id_lot": id_existant,
-                        "job_id": f"lot-{id_existant}",
-                        "statut": etat_existant["statut"],
-                        "traitement": "deja_cree",
-                        "deja_cree": True,
-                        "etat": etat_existant,
-                        "suivi": f"/lots/{id_existant}",
-                    }
-                racine = str(racine_session_televersement_lot(config, jeton_televersement))
+                creation = creer_lot_session_televersement(
+                    config,
+                    jeton_televersement,
+                    creer_lot=_creer_lot_depuis_racine_session,
+                )
             except TeleversementLotErreur as erreur:
                 raise _http_televersement(erreur) from erreur
             except DepotImpossible as erreur:
-                raise HTTPException(status_code=404, detail=str(erreur)) from erreur
+                raise HTTPException(status_code=422, detail=str(erreur)) from erreur
+            id_lot = int(creation["id_lot"])
+            racine = str(creation["racine"])
+            if not creation["lot_cree"]:
+                try:
+                    etat_existant = etat_lot(index, id_lot)
+                except DepotImpossible as erreur:
+                    raise HTTPException(status_code=404, detail=str(erreur)) from erreur
+                return {
+                    "id_lot": id_lot,
+                    "job_id": f"lot-{id_lot}",
+                    "statut": etat_existant["statut"],
+                    "traitement": "deja_cree",
+                    "deja_cree": True,
+                    "etat": etat_existant,
+                    "suivi": f"/lots/{id_lot}",
+                }
         elif not _path_autorise(Path(racine), config):
             raise HTTPException(
                 status_code=403,
                 detail="Racine de lot hors des racines configurées : création refusée (Lot 0b).",
             )
-        try:
-            id_lot = creer_lot(index, Path(racine), notes=corps.get("notes"), recursif=recursif)
-        except DepotImpossible as erreur:
-            raise HTTPException(status_code=422, detail=str(erreur)) from erreur
-        if jeton_televersement:
+        if id_lot is None:
             try:
-                associer_lot_session_televersement(config, jeton_televersement, id_lot)
-            except TeleversementLotErreur as erreur:
-                raise _http_televersement(erreur) from erreur
+                id_lot = creer_lot(index, Path(racine), notes=corps.get("notes"), recursif=recursif)
+            except DepotImpossible as erreur:
+                raise HTTPException(status_code=422, detail=str(erreur)) from erreur
 
         if not fond:
             return {"id_lot": id_lot, "statut": "termine", "traitement": "synchrone", "etat": executer_lot(index, id_lot)}

@@ -137,6 +137,81 @@ class TestServiceTeleversement:
         etat = televersement.terminer_session_televersement_lot(config, session["token"])
         assert etat["nombre_fichiers_recus"] == 40
 
+    def test_creation_lot_atomique_annulation_attend_et_rejeu_sans_doublon(self, tmp_path: Path) -> None:
+        import threading
+
+        config = _config(tmp_path)
+        contenu = b"%PDF-synthetique"
+        session = _session(config, {"AFFAIRE/fiche.pdf": contenu})
+        token = session["token"]
+        televersement.recevoir_fichiers_televersement_lot(
+            config,
+            token,
+            chemins_relatives=["AFFAIRE/fiche.pdf"],
+            flux=[BytesIO(contenu)],
+        )
+        televersement.terminer_session_televersement_lot(config, token)
+
+        creation_commencee = threading.Event()
+        liberer_creation = threading.Event()
+        annulation_terminee = threading.Event()
+        appels_creation: list[Path] = []
+        resultats: dict[str, Any] = {}
+        erreurs: dict[str, BaseException] = {}
+
+        def creer_lot_factice(racine: Path) -> int:
+            appels_creation.append(racine)
+            creation_commencee.set()
+            assert liberer_creation.wait(timeout=10)
+            return 4242
+
+        def lancer_creation(nom: str) -> None:
+            try:
+                resultats[nom] = televersement.creer_lot_session_televersement(
+                    config,
+                    token,
+                    creer_lot=creer_lot_factice,
+                )
+            except BaseException as erreur:  # le test vérifie ensuite le résultat exact
+                erreurs[nom] = erreur
+
+        def lancer_annulation() -> None:
+            try:
+                resultats["annulation"] = televersement.annuler_session_televersement_lot(config, token)
+            except BaseException as erreur:  # le test vérifie ensuite le résultat exact
+                erreurs["annulation"] = erreur
+            finally:
+                annulation_terminee.set()
+
+        premier = threading.Thread(target=lancer_creation, args=("premier",), daemon=True)
+        annulation = threading.Thread(target=lancer_annulation, daemon=True)
+        second = threading.Thread(target=lancer_creation, args=("second",), daemon=True)
+        premier.start()
+        try:
+            assert creation_commencee.wait(timeout=10)
+            annulation.start()
+            second.start()
+            assert not annulation_terminee.wait(timeout=0.25), (
+                "l'annulation doit attendre la fin atomique de la création du lot"
+            )
+        finally:
+            liberer_creation.set()
+        premier.join(timeout=10)
+        annulation.join(timeout=10)
+        second.join(timeout=10)
+
+        assert not premier.is_alive() and not annulation.is_alive() and not second.is_alive()
+        assert erreurs.keys() == {"annulation"}
+        assert isinstance(erreurs["annulation"], televersement.TeleversementLotConflit)
+        assert len(appels_creation) == 1
+        assert resultats["premier"]["id_lot"] == 4242
+        assert resultats["premier"]["lot_cree"] is True
+        assert resultats["second"]["id_lot"] == 4242
+        assert resultats["second"]["lot_cree"] is False
+        racine = resultats["premier"]["racine"]
+        assert resultats["second"]["racine"] == racine
+        assert (racine / "AFFAIRE/fiche.pdf").read_bytes() == contenu
+
     def test_normalisation_unicode_evite_les_collisions(self, tmp_path: Path) -> None:
         import unicodedata
 

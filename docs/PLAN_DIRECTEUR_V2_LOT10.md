@@ -42,8 +42,12 @@ promus par `os.replace`. Rejouer un envoi dont la réponse a été perdue est do
 sûr : mêmes octets = déjà reçus ; octets différents = conflit explicite.
 
 Toutes les mutations d'une session sont sérialisées par un verrou fichier
-inter-processus. La réconciliation relit les fichiers déjà promus si le serveur
-s'est arrêté entre promotion et sauvegarde du manifeste.
+inter-processus. Ce même verrou couvre la découverte des dossiers, la création
+du lot et son association au manifeste : une annulation concurrente attend la
+fin de cette section critique puis est refusée, et deux créations simultanées
+avec le même jeton produisent un seul lot. La réconciliation relit les fichiers
+déjà promus si le serveur s'est arrêté entre promotion et sauvegarde du
+manifeste.
 
 ### Bornes
 
@@ -127,8 +131,9 @@ réécrit jamais une version déjà publiée.
 ## Validation attendue avant usage réel
 
 - tests service/API de téléversement (`tests/test_lot10_televersement_lot.py`) ;
-- tests PostgreSQL de lot récursif et de création idempotente depuis jeton
-  (`tests/test_lot_ingestion.py::TestLotRecursifEtTeleversement`) ;
+- tests PostgreSQL de lot récursif, de création idempotente depuis jeton et de
+  synchronisation additive du gabarit FFab sur une base existante
+  (`tests/test_lot_ingestion.py`) ;
 - calibration synthétique FFab et scanner
   (`tests/test_lot10_calibration_gv_ffab.py`) ;
 - build TypeScript/Next et parcours Playwright

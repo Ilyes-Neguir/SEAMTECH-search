@@ -322,6 +322,62 @@ class TestLotRecursifEtTeleversement:
             assert rejeu.json()["deja_cree"] is True
 
 
+class TestSynchronisationGabaritsPostgres:
+    def test_ajoute_ffab_absent_sans_reecrire_un_gabarit_existant(self, base_lot: dict) -> None:
+        """Mise à jour d'une base existante : seule la paire absente est
+        insérée ; une ligne déjà présente conserve son contenu local."""
+        from seamtech_search.fiches import gabarits as gabarits_module
+
+        index = base_lot["index"]
+        gabarit_ffab = next(
+            gabarit for gabarit in gabarits_module.GABARITS_EMBARQUES if gabarit.code == "FICHE_GV_FFAB_V1"
+        )
+        gabarit_temoin = next(
+            gabarit for gabarit in gabarits_module.GABARITS_EMBARQUES if gabarit.code == "FICHE_JADE_V1"
+        )
+        description_locale = "Description locale synthétique à préserver"
+
+        with index.connect() as connexion:
+            with connexion.cursor() as curseur:
+                curseur.execute(
+                    "DELETE FROM gabarit WHERE code = %s AND version = %s",
+                    (gabarit_ffab.code, gabarit_ffab.version),
+                )
+                curseur.execute(
+                    "UPDATE gabarit SET description = %s WHERE code = %s AND version = %s",
+                    (description_locale, gabarit_temoin.code, gabarit_temoin.version),
+                )
+        try:
+            ajoutes = gabarits_module.synchroniser_gabarits_embarques(index)
+            assert ajoutes == ["FICHE_GV_FFAB_V1 v1"]
+
+            with index.connect() as connexion:
+                with connexion.cursor() as curseur:
+                    curseur.execute(
+                        "SELECT description, actif FROM gabarit WHERE code = %s AND version = %s",
+                        (gabarit_ffab.code, gabarit_ffab.version),
+                    )
+                    ligne_ffab = curseur.fetchone()
+                    curseur.execute(
+                        "SELECT description FROM gabarit WHERE code = %s AND version = %s",
+                        (gabarit_temoin.code, gabarit_temoin.version),
+                    )
+                    ligne_temoin = curseur.fetchone()
+            assert ligne_ffab is not None
+            assert ligne_ffab[0] == gabarit_ffab.description
+            assert ligne_ffab[1] is True
+            assert ligne_temoin is not None
+            assert ligne_temoin[0] == description_locale
+        finally:
+            gabarits_module.enregistrer_gabarit(index, gabarit_ffab)
+            with index.connect() as connexion:
+                with connexion.cursor() as curseur:
+                    curseur.execute(
+                        "UPDATE gabarit SET description = %s WHERE code = %s AND version = %s",
+                        (gabarit_temoin.description, gabarit_temoin.code, gabarit_temoin.version),
+                    )
+
+
 class TestPontImportPipeline:
     def test_porte_a_via_import_pipeline(self, base_lot: dict, tmp_path: Path) -> None:
         """« Étendre, ne pas réécrire » : la porte A est exposée par le module
