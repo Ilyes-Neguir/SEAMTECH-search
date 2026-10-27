@@ -25,6 +25,12 @@ RUN groupadd -r seamtech && useradd -r -g seamtech -d /app -s /bin/false seamtec
 # dans la pile Docker (« tesseract absent ») alors que la CI les installe —
 # l'image doit porter le MÊME outillage que la CI. `tesseract-ocr-fra` fournit
 # fra.traineddata (la langue par défaut de l'OCR est « fra »), eng pour les scans anglais.
+#
+# `postgresql-client` (OBS-04) : le service `sauvegarde` partage cette image
+# et seamtech_search.sauvegarde appelle les binaires pg_dump/pg_restore —
+# sans eux, chaque sauvegarde planifiée échouait (« binaire introuvable »)
+# alors que le reste de la pile semblait sain. Le client Debian (majeure >=
+# serveur 16) sait dumper le serveur pgvector/pg16 de la composition.
 RUN --mount=type=cache,target=/var/cache/apt,id=seamtech-apt-cache,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,id=seamtech-apt-lists,sharing=locked \
     rm -f /etc/apt/apt.conf.d/docker-clean \
@@ -35,8 +41,11 @@ RUN --mount=type=cache,target=/var/cache/apt,id=seamtech-apt-cache,sharing=locke
         tesseract-ocr-fra \
         tesseract-ocr-eng \
         poppler-utils \
+        postgresql-client \
     && tesseract --list-langs 2>&1 | grep -q fra \
-    && tesseract --list-langs 2>&1 | grep -q eng
+    && tesseract --list-langs 2>&1 | grep -q eng \
+    && pg_dump --version \
+    && pg_restore --version
 
 # Dépendances Python ensuite, elles aussi avant les sources. Le cache pip
 # BuildKit survit à un échec réseau : un nouvel essai ne repart pas de zéro

@@ -86,6 +86,19 @@ def test_dockerfile_installe_tesseract_et_le_pack_francais() -> None:
     assert not manquants, f"Dockerfile : paquets OCR absents : {manquants}"
 
 
+def test_dockerfile_installe_les_outils_client_postgresql_pour_la_sauvegarde() -> None:
+    """OBS-04 : le service `sauvegarde` partage cette image et appelle
+    `pg_dump`/`pg_restore` (seamtech_search.sauvegarde) — sans client
+    PostgreSQL dans l'image, chaque sauvegarde planifiée échoue avec
+    « binaire introuvable » alors que la pile semble saine."""
+    contenu = DOCKERFILE.read_text(encoding="utf-8")
+    assert "postgresql-client" in contenu, "Dockerfile : postgresql-client absent"
+    # Vérifiés AU BUILD : un paquet renommé/retiré casse la construction,
+    # pas la première sauvegarde de production.
+    assert "pg_dump --version" in contenu
+    assert "pg_restore --version" in contenu
+
+
 def test_dockerfile_dependances_cachees_avant_sources_et_reseau_lent() -> None:
     """Une mise à jour de code ne doit pas retélécharger apt + pip.
 

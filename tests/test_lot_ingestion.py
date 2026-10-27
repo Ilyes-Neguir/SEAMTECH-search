@@ -149,7 +149,7 @@ class TestLot100InterrompuPuisRepris:
         assert len(raisons) == NB_DOSSIERS - NB_A_FICHE
         assert all(d["raison"] for d in raisons)
         assert any("aucun PDF" in d["raison"] for d in raisons)
-        assert any("gabarit inconnu" in d["raison"] for d in raisons)
+        assert any("PDF illisible" in d["raison"] for d in raisons)
 
         # --- archive intacte (RG13) : empreintes avant == après ---
         assert depot.empreintes_arbre(archive) == empreintes_avant

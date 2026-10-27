@@ -146,9 +146,51 @@ réécrit jamais une version déjà publiée.
 
 Après redéploiement sur le poste de validation : rejouer d'abord le petit cas
 réel déjà en échec propre, contrôler uniquement des compteurs/statuts/raisons,
-puis importer une année complète. OBS-04 (outils `pg_dump`/`pg_restore` absents
-de l'image de sauvegarde) reste un point séparé : ne pas considérer la
-sauvegarde automatisée comme prouvée tant qu'il n'est pas clos.
+puis importer une année complète. OBS-04 est corrigé dans le code (l'image
+installe et vérifie `pg_dump`/`pg_restore` au build, et la sonde du service
+`sauvegarde` les contrôle à l'exécution) ; il ne sera clos qu'après un build
+d'image canonique réussi sur le poste et une première sauvegarde planifiée
+constatée.
+
+## Campagne d'acceptation en bac à sable (2026-10-27)
+
+Campagne complète rejouée par l'assistant sur une pile locale jetable
+(PostgreSQL, Redis, API, worker, frontend de production, navigateur réel),
+corpus synthétique de 122 fichiers / 25 dossiers, base et données reparties
+de zéro après chaque correction :
+
+- parcours principal navigateur 12/12 : connexion nominative, « Choisir un
+  dossier » complet récursif, envoi borné, lot terminal (24 traités, 1 échec
+  explicite « PDF illisible »), validation/correction et rejet motivé,
+  recherche métier (code, commande, client, bateau, type, dimensions) ;
+- parcours étendu 9/9 : glisser-déposer récursif avec nom accentué, rejeu du
+  même dossier téléversé sans doublon (`deja_traite`, pièces et révision
+  inchangées), annulation en cours de transfert, téléchargement approuvé par
+  un second approbateur avec SHA-256 vérifié, matrice des rôles, écrans
+  Dossiers/Fichiers/Qualité/Gabarits ;
+- sécurité 8/8 : refus sans session (BFF et backend direct), CSRF,
+  traversées de chemin, bornes de taille/nombre, rôles, entrées hostiles,
+  verrouillage après 5 échecs de connexion ;
+- exploitation : lot en attente traité après redémarrage complet API+worker,
+  sauvegarde `pg_dump` restaurée dans une base isolée (compteurs vérifiés) ;
+- correctifs issus de la campagne : MAN-01 (`/health.version` applicative),
+  MAN-02 (rejeu inter-sessions d'un dossier téléversé reconnu par chemin
+  relatif envoyé + SHA-256, sans changer le format de clé stocké lu par les
+  pièces/approbations — régression « PDF principal absent des pièces »
+  détectée par la campagne et couverte par test), MAN-03 (Échap ferme les
+  suggestions de recherche), MAN-04 (raison « PDF illisible » explicite),
+  MAN-05 (échec réseau d'envoi affiché en français), OBS-03 (sonde du service
+  `sauvegarde` faillible et métier), OBS-04 (outils PostgreSQL dans l'image) ;
+- suites : audit du dépôt 14/14 (1440 tests backend verts sur PostgreSQL
+  réel), Playwright ciblé Lot 10 5/5, typecheck et build frontend verts.
+
+Limites résiduelles assumées : OBS-05 (les octets déposés par lot restent
+sous `uploads/lots-televerses`, à sauvegarder avec `./data`, pas d'envoi
+MinIO) ; la route BFF de téléversement met en mémoire le corps multipart
+authentifié avant les bornes backend (risque de pression mémoire par un
+compte autorisé) ; le bac à sable diffère de la cible (versions
+PostgreSQL/Redis, pas d'exécution Docker locale — la preuve d'image reste
+la CI sur le commit exact puis le build du poste).
 
 ## Rollback
 

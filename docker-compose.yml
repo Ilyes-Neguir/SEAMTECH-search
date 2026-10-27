@@ -338,6 +338,20 @@ services:
       - ./logs:/app/logs
       - ./data:/app/data
       - ./data/backups:/app/data/backups
+    healthcheck:
+      # OBS-03 : l'image déclare un HEALTHCHECK HTTP (/live:8000) pensé pour
+      # `web`. Ce service ne sert pas HTTP : héritée telle quelle, la sonde
+      # le déclarait « unhealthy » à vie alors qu'il planifiait correctement.
+      # Ici, « sain » = le service peut réellement sauvegarder : base
+      # joignable, pg_dump/pg_restore présents (OBS-04) et dossier des
+      # sauvegardes inscriptible. Si le planificateur (PID 1) meurt, le
+      # conteneur s'arrête et la politique de redémarrage s'applique ; la
+      # fraîcheur des sauvegardes, elle, se lit dans /health.
+      test: ["CMD-SHELL", "pg_isready -d \"$$SEAMTECH_DATABASE_URL\" >/dev/null && pg_dump --version >/dev/null && pg_restore --version >/dev/null && test -w /app/data/backups"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
   frontend:
     build: ./frontend

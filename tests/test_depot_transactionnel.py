@@ -56,7 +56,9 @@ class TestScannerUnitaire:
         (dossier / "corrompu.pdf").write_bytes(b"%PDF-1.4 pas un vrai PDF")
         plan = scanner_dossier(dossier, list(GABARITS_EMBARQUES))
         assert not plan.accepte
-        assert "gabarit inconnu" in plan.raison_refus and "corrompu.pdf=-1" in plan.raison_refus
+        # MAN-04 : l'opérateur doit lire la cause (« PDF illisible »), pas
+        # seulement un score brut — le score reste cité pour le diagnostic.
+        assert "PDF illisible" in plan.raison_refus and "corrompu.pdf=-1" in plan.raison_refus
 
     def test_dossier_absent_leve_avec_chemin(self, tmp_path: Path) -> None:
         with pytest.raises(DepotImpossible, match="introuvable"):
@@ -229,6 +231,89 @@ class TestRejeuSansDoublon:
                 assert cursor.fetchone()[0] == "termine", "le lot du rejeu est resté en_cours"
         assert "deja_traite" in second["raison"]
 
+    def test_rejeu_televerse_dans_une_nouvelle_session_ne_duplique_rien(
+        self, base_depot: dict, tmp_path: Path
+    ) -> None:
+        """MAN-02 (campagne manuelle Lot 10) : re-téléverser le MÊME dossier
+        crée une nouvelle session (nouveau jeton, donc un autre chemin absolu
+        de staging) — le rejeu doit rester sans effet, comme l'annonce l'écran
+        (« rejouer un dossier ne crée rien »)."""
+        index = base_depot["index"]
+
+        def dossier_stage(jeton: str) -> Path:
+            dossier = (
+                tmp_path
+                / "uploads"
+                / "lots-televerses"
+                / jeton
+                / "fichiers"
+                / "ANNEE-DEMO"
+                / "AFFAIRE-STAGEE"
+            )
+            dossier.mkdir(parents=True)
+            shutil.copy(ARCHIVE_7792 / "fiche-7792-SO_ffab.pdf", dossier / "fiche-7792-SO_ffab.pdf")
+            (dossier / "croquis-atelier.txt").write_text("repère des renforts", encoding="utf-8")
+            return dossier
+
+        premier = depot.deposer_dossier(index, dossier_stage("jeton-session-A"))
+        assert premier["statut"] == "traite"
+        avant = _comptes(index)
+        second = depot.deposer_dossier(index, dossier_stage("jeton-session-B"))
+        apres = _comptes(index)
+        assert second["statut"] == "deja_traite", second
+        assert apres["fiche"] == avant["fiche"] and apres["pieces"] == avant["pieces"]
+        assert apres["champs"] == avant["champs"], "le rejeu téléversé a dupliqué des données"
+        # Le PDF principal reste ouvrable depuis la fiche : la clé stockée
+        # garde son format chemin absolu, lu par pieces_de_fiche/approbations.
+        from seamtech_search.fiches.routes import pieces_de_fiche
+
+        pieces = pieces_de_fiche(index, "7792-SO")["pieces"]
+        assert any(p["is_primary_pdf"] for p in pieces), pieces
+
+    def test_rejeu_televerse_reconnait_une_ancienne_cle_absolue(
+        self, base_depot: dict, tmp_path: Path
+    ) -> None:
+        """Une base alimentée AVANT la clé logique porte des clés absolues
+        stagées (jeton inclus) : le premier rejeu après mise à jour doit lui
+        aussi être reconnu, sinon il duplique une dernière fois."""
+        index = base_depot["index"]
+
+        def dossier_stage(jeton: str) -> Path:
+            dossier = (
+                tmp_path
+                / "uploads"
+                / "lots-televerses"
+                / jeton
+                / "fichiers"
+                / "ANNEE-ANCIENNE-CLE"
+                / "AFFAIRE-STAGEE"
+            )
+            dossier.mkdir(parents=True)
+            shutil.copy(ARCHIVE_7792 / "fiche-7792-SO_ffab.pdf", dossier / "fiche-7792-SO_ffab.pdf")
+            (dossier / "croquis-atelier.txt").write_text("repère des renforts", encoding="utf-8")
+            return dossier
+
+        dossier_a = dossier_stage("jeton-ancien-A")
+        premier = depot.deposer_dossier(index, dossier_a)
+        assert premier["statut"] == "traite"
+        # Réécrire la clé sous son ANCIENNE forme absolue (pré-correctif).
+        pdf_a = dossier_a / "fiche-7792-SO_ffab.pdf"
+        ancienne_cle = (
+            os.path.normcase(str(pdf_a.resolve())) + "|" + depot.empreinte_fichier(pdf_a)
+        )
+        id_ligne = depot.etat_lot(index, premier["id_lot"])["dossiers"][0]["id_lot_dossier"]
+        with index.connect() as connexion:
+            with connexion.cursor() as cursor:
+                cursor.execute(
+                    "UPDATE lot_dossier SET cle_idempotence = %s WHERE id_lot_dossier = %s",
+                    (ancienne_cle, id_ligne),
+                )
+        avant = _comptes(index)
+        second = depot.deposer_dossier(index, dossier_stage("jeton-ancien-B"))
+        apres = _comptes(index)
+        assert second["statut"] == "deja_traite", second
+        assert apres["pieces"] == avant["pieces"] and apres["champs"] == avant["champs"]
+
     def test_cle_idempotence_normcase_plus_empreinte(self, dossier_ok: Path) -> None:
         empreinte = depot.empreinte_fichier(dossier_ok / "fiche-7792-SO_ffab.pdf")
         cle = depot.cle_idempotence(dossier_ok / "fiche-7792-SO_ffab.pdf", empreinte)
@@ -237,6 +322,12 @@ class TestRejeuSansDoublon:
         # une empreinte différente (fiche corrigée) donne une clé différente
         autre = depot.cle_idempotence(dossier_ok / "fiche-7792-SO_ffab.pdf", "0" * 64)
         assert autre != cle
+        # Chemins stagés (Lot 10) : le format STOCKÉ reste le chemin absolu
+        # (des lecteurs retrouvent le PDF par cette clé) — la reconnaissance
+        # inter-sessions est prouvée par les tests de rejeu ci-dessus.
+        stage = Path("/data/uploads/lots-televerses/jeton-A/fichiers/ANNEE/AFFAIRE/fiche.pdf")
+        assert depot._chemin_logique_televersement(stage) == "ANNEE/AFFAIRE/fiche.pdf"
+        assert depot._chemin_logique_televersement(dossier_ok / "fiche-7792-SO_ffab.pdf") is None
 
     def test_pieces_jointes_stables_au_rejeu(self, base_depot: dict, dossier_ok: Path) -> None:
         index = base_depot["index"]

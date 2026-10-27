@@ -2324,7 +2324,9 @@ class SearchIndex:
                 "database_url_configured": True,
                 "database_bytes": database_bytes,
                 "database_integrity": integrity,
-                "version": version,
+                # Jamais ``version`` tout court : dans la réponse /health,
+                # cette clé désigne la version de l'APPLICATION (MAN-01).
+                "version_postgresql": version,
                 "schema_migrations": metier.get("schema_migrations", []),
                 "schema_metier_a_jour": metier.get("schema_metier_a_jour", False),
                 "extensions": metier.get("extensions", {}),

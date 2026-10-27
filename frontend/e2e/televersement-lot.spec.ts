@@ -185,4 +185,33 @@ test.describe("Téléversement d'un dossier complet", () => {
     await expect(page.getByTestId("resume-televersement")).toContainText("VOILES-DEMO — 3 fichier(s)")
     await expect(page.getByTestId("resume-televersement")).toContainText("2 dossier(s) contenant au moins un PDF direct")
   })
+
+  test("un échec réseau s'affiche en français pour l'opérateur (MAN-05)", async ({ page }) => {
+    await signIn(page)
+
+    const parent = await mkdtemp(path.join(os.tmpdir(), "seamtech-e2e-televersement-"))
+    const racine = path.join(parent, "VOILES-DEMO")
+    const cible = path.join(racine, "2031", "AFFAIRE-UN", "fiche_ffab.pdf")
+    await mkdir(path.dirname(cible), { recursive: true })
+    await writeFile(cible, "0123456789")
+
+    await page.route("**/api/imports/dossier/televersements", async (route) => {
+      await route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify(etatSession(0, 0)) })
+    })
+    await page.route(`**/api/imports/dossier/televersements/${jeton}/fichiers`, async (route) => {
+      await route.abort("failed")
+    })
+
+    try {
+      await page.goto("/nouveau")
+      await page.getByTestId("input-dossier-lot").setInputFiles(racine)
+      await expect(page.getByTestId("resume-televersement")).toContainText("1 fichier(s)")
+      await page.getByTestId("bouton-televerser-lot").click()
+      const erreur = page.getByTestId("erreur-depot")
+      await expect(erreur).toContainText("Connexion au serveur impossible ou interrompue", { timeout: 15000 })
+      await expect(erreur).not.toContainText("Failed to fetch")
+    } finally {
+      await rm(parent, { recursive: true, force: true })
+    }
+  })
 })

@@ -33,6 +33,19 @@ async function jsonFetch<T>(url: string, init?: RequestInit): Promise<T> {
   return body as T
 }
 
+/** Message d'échec de transfert lisible par l'opérateur (MAN-05).
+ *
+ * Un échec réseau du navigateur arrive en ``TypeError`` au libellé anglais
+ * dépendant du navigateur (« Failed to fetch ») : l'écran ne doit jamais
+ * l'afficher tel quel. Les refus métier (Error avec detail serveur) sont,
+ * eux, déjà rédigés pour l'opérateur et passent inchangés. */
+function messageErreurTeleversement(e: unknown): string {
+  if (e instanceof TypeError) {
+    return "Connexion au serveur impossible ou interrompue pendant le transfert. Vérifiez le réseau, puis réessayez."
+  }
+  return e instanceof Error ? e.message : "Téléversement impossible."
+}
+
 //: Statuts de lot pour lesquels on arrête d'interroger le serveur. « interrompu »
 //: et « relance » sont des états où un worker peut encore reprendre le lot : on
 //: continue de suivre tant que le lot n'est pas terminal.
@@ -235,7 +248,7 @@ function NouveauAppInterne() {
           setProgression(null)
         }
       } else {
-        setErreur(e instanceof Error ? e.message : "Téléversement impossible.")
+        setErreur(messageErreurTeleversement(e))
         setCreationLotReprisePossible(
           Boolean(jetonTeleversementRef.current) &&
             (phaseTransfertRef.current === "finalisation" || phaseTransfertRef.current === "creation_lot"),

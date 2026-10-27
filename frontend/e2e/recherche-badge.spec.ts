@@ -44,4 +44,24 @@ test.describe("Recherche — badge « Non vérifiée » et archive de confiance"
     await expect(page.locator("li", { hasText: CODE_A_VALIDER }).first()).toBeVisible({ timeout: 15000 })
     await expect(page.locator("li", { hasText: CODE_A_VALIDER }).first().getByTestId("badge-non-verifiee")).toBeVisible()
   })
+
+  test("Échap ferme les suggestions et libère les filtres (MAN-03)", async ({ page }) => {
+    // Campagne manuelle Lot 10 : avec un préfixe fréquent, la liste de
+    // suggestions (ouverte par l'autofocus) recouvrait les filtres et le
+    // premier clic partait dans une suggestion. Échap doit la fermer.
+    await signIn(page)
+    await page.goto("/recherche")
+
+    const saisie = page.getByTestId("recherche-saisie")
+    await saisie.fill("77")
+    const suggestions = page.getByTestId("recherche-suggestions")
+    await expect(suggestions).toBeVisible({ timeout: 15000 })
+
+    await saisie.press("Escape")
+    await expect(suggestions).toHaveCount(0, { timeout: 5000 })
+
+    // Le filtre redevient cliquable immédiatement après fermeture.
+    await page.getByTestId("case-validees-uniquement").check()
+    await expect(page).toHaveURL(/inclure_a_valider=false/, { timeout: 5000 })
+  })
 })

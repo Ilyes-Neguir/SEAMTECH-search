@@ -201,6 +201,10 @@ def test_health_expose_schema_et_extensions(base_metier: dict[str, Any]) -> None
     details = index.health_details()
 
     assert details["backend"] == "postgresql"
+    # MAN-01 : la bannière PostgreSQL ne doit jamais emprunter la clé
+    # ``version`` — dans /health, cette clé est la version de l'application.
+    assert "version" not in details
+    assert details["version_postgresql"].startswith("PostgreSQL")
     migrations = details["schema_migrations"]
     assert {"006_fiche_technique", "007_recherche_index", "008_ml_corpus", "009_qualite_et_gabarits"} <= set(migrations)
     assert details["schema_metier_a_jour"] is True
@@ -257,6 +261,11 @@ def test_demarrage_application_sur_base_metier(base_metier: dict[str, Any]) -> N
         assert sante.status_code == 200
         corps = sante.json()
         assert corps["backend"] == "postgresql"
+        # Les deux versions coexistent, sans collision : application et PostgreSQL.
+        import seamtech_search
+
+        assert corps["version"] == seamtech_search.__version__
+        assert corps["version_postgresql"].startswith("PostgreSQL")
         assert {"006_fiche_technique", "007_recherche_index", "008_ml_corpus", "009_qualite_et_gabarits"} <= set(
             corps["schema_migrations"]
         )

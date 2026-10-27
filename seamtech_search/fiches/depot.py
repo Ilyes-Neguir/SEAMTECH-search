@@ -42,6 +42,11 @@ from seamtech_search.indexer import PG_UNACCENT_CONFIG
 LOGGER = logging.getLogger("seamtech_search.fiches.depot")
 
 SEPARATEUR_CLE = "|"
+# Agencement du staging Lot 10 (miroir de televersement_lot.DOSSIER_*) :
+# uploads/lots-televerses/<jeton>/fichiers/<arborescence envoyée>. Le jeton
+# est propre à chaque envoi — il ne fait pas partie de l'identité du dossier.
+_SEGMENT_LOTS_TELEVERSES = "lots-televerses"
+_SEGMENT_FICHIERS_STAGING = "fichiers"
 # Bornes explicites de la découverte récursive : l'archive complète mesurée
 # reste très en dessous, et un dépassement est un refus nommé — jamais une
 # troncature silencieuse d'un lot de plusieurs milliers de dossiers.
@@ -86,6 +91,13 @@ _SQL_LIGNE_MAJ = (
 _SQL_DEJA_TRAITE = (
     "SELECT id_lot_dossier, id_lot FROM lot_dossier WHERE cle_idempotence = %s "
     "AND statut = 'traite' ORDER BY id_lot_dossier LIMIT 1"
+)
+# Reconnaissance d'un rejeu téléversé (MAN-02) : les clés stockées portent
+# le chemin absolu stagé (jeton de session inclus) suivi de l'empreinte ; on
+# compare donc, à empreinte égale, le chemin relatif envoyé.
+_SQL_CANDIDATS_MEME_EMPREINTE = (
+    "SELECT id_lot_dossier, id_lot, cle_idempotence FROM lot_dossier "
+    "WHERE statut = 'traite' AND cle_idempotence LIKE %s ORDER BY id_lot_dossier"
 )
 _SQL_DOCUMENT_UPSERT = (
     "INSERT INTO documents (path_key, path, name, parent_path, extension, size, modified_at, "
@@ -222,8 +234,34 @@ def empreinte_fichier(chemin: Path) -> str:
     return empreinte.hexdigest()
 
 
+def _chemin_logique_televersement(chemin: Path | str) -> str | None:
+    """Chemin RELATIF envoyé par le navigateur, si ``chemin`` est stagé (Lot 10).
+
+    ``…/lots-televerses/<jeton>/fichiers/ANNEE/AFFAIRE/fiche.pdf`` →
+    ``ANNEE/AFFAIRE/fiche.pdf``. Hors staging : ``None`` (l'identité reste le
+    chemin d'archive). Les séparateurs ``/`` et ``\\`` sont acceptés : une clé
+    écrite sous Windows doit rester reconnaissable sous Linux et inversement.
+    """
+    segments = [s for s in str(chemin).replace("\\", "/").split("/") if s not in ("", ".")]
+    for indice, segment in enumerate(segments):
+        if segment != _SEGMENT_LOTS_TELEVERSES:
+            continue
+        if indice + 2 >= len(segments) or segments[indice + 2] != _SEGMENT_FICHIERS_STAGING:
+            return None
+        relatif = segments[indice + 3 :]
+        return "/".join(relatif) if relatif else None
+    return None
+
+
 def cle_idempotence(chemin_pdf: Path, empreinte_pdf: str) -> str:
-    """Chemin normalisé (os.path.normcase — même fonction que crawler.py:154) + empreinte."""
+    """Chemin normalisé (os.path.normcase — même fonction que crawler.py:154) + empreinte.
+
+    Le format stocké ne change pas : d'autres lecteurs (pièces d'une fiche,
+    approbations) retrouvent le PDF principal par la partie chemin de cette
+    clé. La reconnaissance d'un rejeu TÉLÉVERSÉ dans une nouvelle session
+    (MAN-02) se fait en plus, à la lecture, par chemin relatif envoyé +
+    empreinte — voir deposer_dossier.
+    """
     return os.path.normcase(str(chemin_pdf.resolve())) + SEPARATEUR_CLE + empreinte_pdf
 
 
@@ -382,11 +420,13 @@ def scanner_dossier(dossier: Path, gabarits: list[GabaritDef]) -> PlanDossier:
 
     candidats: list[tuple[Path, Any]] = []
     scores: dict[str, int] = {}
+    illisibles: list[str] = []
     for pdf in pdfs:
         try:
             candidat = analyser_candidat_fiche(pdf, gabarits)
         except Exception as erreur:  # PDF illisible : raison explicite, pas de crash
             scores[pdf.name] = -1
+            illisibles.append(pdf.name)
             LOGGER.warning("PDF illisible (%s) : %s — conséquence : exclu de la détection.", pdf, erreur)
             continue
         scores[pdf.name] = 0 if candidat is None else candidat.score_detection
@@ -395,7 +435,16 @@ def scanner_dossier(dossier: Path, gabarits: list[GabaritDef]) -> PlanDossier:
 
     if not candidats:
         detail = ", ".join(f"{nom}={score}" for nom, score in scores.items())
-        plan.raison_refus = f"gabarit inconnu (scores de détection : {detail})"
+        if illisibles:
+            # MAN-04 : dire la cause lisible par l'opérateur d'abord, les
+            # scores ensuite (diagnostic) — « gabarit inconnu » seul laissait
+            # croire à un PDF sain d'un format nouveau.
+            plan.raison_refus = (
+                f"PDF illisible : {', '.join(illisibles)} (lecture impossible) "
+                f"(scores de détection : {detail})"
+            )
+        else:
+            plan.raison_refus = f"gabarit inconnu (scores de détection : {detail})"
         return plan
 
     # Preuves d'abord : meilleur score d'ancres, puis — à score égal
@@ -515,6 +564,23 @@ def deposer_dossier(index: Any, dossier: Path, gabarits: list[GabaritDef] | None
             with connexion.cursor() as cursor:
                 cursor.execute(_SQL_DEJA_TRAITE, (cle,))
                 existant = cursor.fetchone()
+                if existant is None:
+                    # Rejeu téléversé dans une NOUVELLE session (MAN-02) :
+                    # le jeton change, donc la clé absolue aussi — mais le
+                    # chemin relatif envoyé et l'empreinte sont identiques.
+                    # Sans cette reconnaissance, le rejeu remplaçait la fiche
+                    # et dupliquait ses pièces.
+                    logique = _chemin_logique_televersement(plan.pdf_fiche)
+                    if logique is not None:
+                        cursor.execute(
+                            _SQL_CANDIDATS_MEME_EMPREINTE,
+                            (f"%{SEPARATEUR_CLE}{empreinte}",),
+                        )
+                        for id_ligne, id_lot_candidat, cle_candidate in cursor.fetchall():
+                            ancien_chemin = str(cle_candidate or "").rsplit(SEPARATEUR_CLE, 1)[0]
+                            if _chemin_logique_televersement(ancien_chemin) == logique:
+                                existant = (id_ligne, id_lot_candidat)
+                                break
         if existant is not None:
             LOGGER.info(
                 "Dossier %s déjà traité (lot #%d, ligne #%d) : rejeu sans effet (idempotence).",

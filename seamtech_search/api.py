@@ -536,10 +536,12 @@ def create_app(config: AppConfig) -> FastAPI:
 
         return {
             "status": "ok",
-            # Lot PROD : en incident, « quelle version tourne ? » se répond
-            # sans ouvrir une session sur la machine.
-            "version": __version__,
             **health_details,
+            # Lot PROD : en incident, « quelle version tourne ? » se répond
+            # sans ouvrir une session sur la machine. La clé est posée APRÈS
+            # les détails d'index : aucun diagnostic (version PostgreSQL,
+            # schéma…) ne peut plus l'écraser (MAN-01).
+            "version": __version__,
             "disk_free_bytes": disk_usage.free,
             "disk_total_bytes": disk_usage.total,
             "documents": stats.total_documents,
