@@ -600,6 +600,11 @@ export function RechercheFichesApp({ assistantActif = true }: { assistantActif?:
               }}
               onFocus={() => setSuggestionsVisibles(true)}
               onBlur={() => setTimeout(() => setSuggestionsVisibles(false), 150)}
+              onKeyDown={(e) => {
+                // MAN-03 : la liste recouvre les filtres tant qu'elle est
+                // ouverte — Échap doit pouvoir la fermer sans clic préalable.
+                if (e.key === "Escape") setSuggestionsVisibles(false)
+              }}
               placeholder="Rechercher une fiche — code, voile, client, matière…"
               className="w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground"
               data-testid="recherche-saisie"
@@ -636,7 +641,7 @@ export function RechercheFichesApp({ assistantActif = true }: { assistantActif?:
         </div>
         {suggestionsVisibles && suggestions.length > 0 && (
           <ul
-            className="absolute z-30 mt-1 w-full overflow-hidden rounded-lg border border-border bg-background shadow-lg"
+            className="absolute z-30 mt-1 max-h-80 w-full overflow-y-auto rounded-lg border border-border bg-background shadow-lg"
             data-testid="recherche-suggestions"
           >
             {suggestions.map((s) => (

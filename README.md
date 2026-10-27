@@ -125,7 +125,8 @@ Env overrides (all `SEAMTECH_` prefixed) or `config/config.json` (must exist, no
 | `POST` | `/imports/confirm` | |
 | `POST` | `/imports` | 202 async via the durable Redis queue (`durability: "durable"`), `?wait=true` for sync. With `SEAMTECH_REQUIRE_DURABLE_QUEUE=true` and Redis down: **503, no job created**; without it (development) the 202 carries `durability: "process_memory"` |
 | `POST` | `/imports/dossier` | Lot C — porte A : deposit a complete fabrication folder → fiche `a_valider` + attachments, one transaction, idempotent (refusal = traced result with reason, never a 500) |
-| `POST` | `/imports/dossier/lot` | Lot C — door A bis: batch of folders. Queued on the durable Redis queue (`kind: "lot"`) and executed by the `worker` service; resumable, cancellable (`POST /lots/{id}/annuler`), and `X-SEAMTECH-BACKGROUND: false` still runs it synchronously |
+| `POST` | `/imports/dossier/televersements` (+ `/{token}`, `/{token}/fichiers`, `/{token}/terminer`, `DELETE /{token}`) | Lot 10 — browser upload of one complete folder tree in bounded, SHA-256-checked, resumable batches (recommended 100 files/32 MiB per request; no global 500-file ceiling); finalized sessions feed one recursive lot |
+| `POST` | `/imports/dossier/lot` | Lot C/Lot 10 — create a batch from exactly one source: server `racine` or finalized `token_televersement`. Recursive PDF-folder discovery is the default (`recursif:false` keeps legacy direct-child mode); queued on the durable Redis queue, resumable/cancellable, and `X-SEAMTECH-BACKGROUND: false` still runs it synchronously |
 | `GET` | `/lots`, `/lots/{id}` | Lot C — batch progress, per-folder status **with failure reasons**, remaining files (`/imports/{id}` stays Phase-0 single import) |
 | `GET` | `/imports/{id}` | DB-first to avoid stale Redis cache shadowing after PATCH |
 | `POST` | `/imports/{id}/cancel` | Redis flag read by the worker (cross-process) + memory fallback |

@@ -101,6 +101,19 @@ class PageAnalysee:
     tableaux: list[list[list[str | None]]] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class CandidatFiche:
+    """Un PDF analysé une seule fois : gabarit détecté, score et extraction.
+
+    Le scanner de dossier compare plusieurs PDF d'un même dossier sans
+    rouvrir chaque fichier pour la détection puis pour l'extraction.
+    """
+
+    gabarit: GabaritDef
+    score_detection: int
+    fiche: FicheExtraite
+
+
 def analyser_pdf(chemin: Path) -> list[PageAnalysee]:
     """Lit le PDF et reconstruit lignes + tableaux par page."""
     if not chemin.is_file():
@@ -705,6 +718,9 @@ def _traiter_tissu_principal(fiche: FicheExtraite, brut: str, base: ChampExtrait
     (« Voir avec JFC suivant stock ») n'est pas un matériau.
     """
     valeur = brut.strip()
+    # Forme FFab : « Tissu(s) (précision imprimée) : matière… » — la
+    # parenthèse appartient au libellé, pas à la désignation du matériau.
+    valeur = re.sub(r"^\([^)]*\)\s*:\s*", "", valeur)
     if not valeur:
         return
     fiche.tissu_texte = valeur
@@ -1572,6 +1588,10 @@ def _traiter_fichier_edite(fiche: FicheExtraite, brut: str, base: ChampExtrait, 
                 base.valeur_normalisee += f" | {date_iso}"
             base.confiance = max(base.confiance, 0.9)
             return
+    # Aucun nom de fichier avec extension n'a été lu : ne pas laisser la
+    # trace générique de la règle prétendre le contraire.
+    if base in fiche.champs:
+        fiche.champs.remove(base)
 
 
 # ---------------------------------------------------------------------------
@@ -2044,7 +2064,7 @@ def _traiter_montage_jade(fiche: FicheExtraite, brut: str, base: ChampExtrait, c
         base.valeur_normalisee = fiche.montage_type
         base.confiance = 0.85
         base.zone = _zone_des_mots(ligne_montage[1].mots)
-        trouve_fil = re.search(r"\bfil\s+(\d+)\b", texte, re.I)
+        trouve_fil = re.search(r"\bfil\s+v?(\d+)\b", texte, re.I)
         if trouve_fil and fiche.montage_fil is None:
             fiche.montage_fil = trouve_fil.group(1)
             base.valeur_normalisee += f" | fil {fiche.montage_fil}"
@@ -2183,6 +2203,542 @@ def _traiter_libres_gv(fiche: FicheExtraite, brut: str, base: ChampExtrait, cont
                 )
 
 
+# ---------------------------------------------------------------------------
+# Traitements « FFab grand-voile » (Lot 10). La famille observée en
+# validation réelle a la parenté Portant (ligne de titre complète, ligne
+# Fichier) mais une grille « Cotes (tissu) » sans libellé de rangée. Le code
+# n'est jamais cherché par un motif libre dans tout le document : il doit
+# terminer la ligne de titre ou être corroboré par la ligne Fichier du PDF.
+# ---------------------------------------------------------------------------
+
+_MOTIF_CODE_FFAB = r"(?:[A-Za-z]{1,4}\s+\d{2,5}[A-Za-z]?|\d{3,5}-[A-Za-z]{2,4})"
+_RE_CODE_FFAB_FIN = re.compile(rf"(?P<code>{_MOTIF_CODE_FFAB})\s*$")
+_RE_CODE_FFAB_FICHIER = re.compile(rf"\bFichier\s+(?P<code>{_MOTIF_CODE_FFAB})(?:\.(?:xlsm|xlsx|pdf))?\b", re.I)
+_RE_CODE_FFAB_COMMANDE = re.compile(rf"\(\s*commande\s+(?P<code>{_MOTIF_CODE_FFAB})\s*\)", re.I)
+_RE_COMMANDE_TITRE_FFAB = re.compile(r"\(\s*commande\s+#\s*([^)]+?)\s*\)", re.I)
+
+
+def _normaliser_code_ffab(code: str) -> str:
+    return re.sub(r"\s+", " ", code.strip().upper())
+
+
+def _code_corroboré_ligne_fichier(pages: list[PageAnalysee]) -> tuple[str | None, list[Mot], int]:
+    """Code lu sur une ligne « Fichier … (commande …) » du document.
+
+    Si les deux mentions existent, elles doivent concorder. À défaut, aucun
+    code n'est proposé par cette voie : mieux vaut une reprise complète
+    qu'une référence choisie arbitrairement entre deux lectures.
+    """
+    for page in pages[:2]:
+        for ligne in page.lignes:
+            texte = " ".join(mot.texte for mot in ligne.mots)
+            if not re.search(r"\bfichier\b", texte, re.I):
+                continue
+            dans_fichier = _RE_CODE_FFAB_FICHIER.search(texte)
+            dans_commande = _RE_CODE_FFAB_COMMANDE.search(texte)
+            code_fichier = _normaliser_code_ffab(dans_fichier.group("code")) if dans_fichier else None
+            code_commande = _normaliser_code_ffab(dans_commande.group("code")) if dans_commande else None
+            if code_fichier and code_commande and code_fichier != code_commande:
+                continue
+            code = code_fichier or code_commande
+            if code:
+                return code, _localiser_sequence(ligne.mots, normaliser_terme(code).split()) or list(ligne.mots), page.numero
+    return None, [], 0
+
+
+def _reprendre_code_ffab_depuis_ligne_fichier(
+    fiche: FicheExtraite, pages: list[PageAnalysee]
+) -> bool:
+    """Pose le code FFAB lu dans le document quand le titre n'a pas pu
+    être décomposé.
+
+    La source reste la ligne « Fichier … » du PDF (jamais le nom du
+    fichier PDF) et la valeur reçoit sa propre trace localisée. Les
+    autres champs du titre restent absents : ils seront relus par
+    l'approbateur, jamais inventés pour rendre la fiche présentable.
+    """
+    if fiche.code:
+        return False
+    code, mots_code, page_code = _code_corroboré_ligne_fichier(pages)
+    if not code:
+        return False
+    fiche.code = code
+    fiche.champs.append(
+        ChampExtrait(
+            champ="fiche.code",
+            valeur_brute=code,
+            valeur_normalisee=code,
+            methode="gabarit",
+            confiance=CONFIANCE_CERTAIN,
+            page=page_code,
+            zone=_zone_des_mots(mots_code),
+            table_cible="fiche",
+            colonne_cible="code",
+        )
+    )
+    return True
+
+
+def _indice_sequence_mots(mots: list[Mot], jetons: list[str]) -> int | None:
+    """Premier indice où les mots normalisés forment exactement la séquence."""
+    if not jetons or len(mots) < len(jetons):
+        return None
+    normes = [mot.normalise for mot in mots]
+    for depart in range(len(normes) - len(jetons) + 1):
+        if normes[depart : depart + len(jetons)] == jetons:
+            return depart
+    return None
+
+
+def _sequences_titre_ffab(pages: list[PageAnalysee]) -> list[tuple[list[Mot], int]]:
+    """Séquences candidates pour le titre FFAB.
+
+    Les exports tableur morcellent parfois un titre logiquement unique
+    en plusieurs lignes physiques (retour à la ligne de cellule, fontes
+    ou blocs voisins). On essaie donc d'abord chaque ligne seule — le
+    comportement historique — puis des fenêtres de deux à quatre lignes
+    physiquement voisines, ramenées au début de « Fiche de fabrication ».
+    Une fenêtre n'est candidate que si les repères du titre apparaissent
+    dans l'ordre ; la décomposition stricte décide ensuite.
+    """
+    sequences: list[tuple[list[Mot], int]] = []
+    for page in pages[:2]:
+        for ligne in page.lignes:
+            normalise = ligne.normalise
+            if "fiche de fabrication" in normalise and "grand-voile" in normalise and " pour " in normalise:
+                sequences.append((list(ligne.mots), page.numero))
+
+    for page in pages[:2]:
+        lignes = [ligne for ligne in page.lignes if ligne.mots]
+        for debut in range(len(lignes)):
+            mots: list[Mot] = []
+            for fin in range(debut, min(len(lignes), debut + 4)):
+                if fin > debut:
+                    haut_precedent = min(mot.haut for mot in lignes[fin - 1].mots)
+                    haut_courant = min(mot.haut for mot in lignes[fin].mots)
+                    if haut_courant - haut_precedent > 45:
+                        break
+                mots.extend(lignes[fin].mots)
+                if fin == debut:
+                    continue
+                depart_titre = _indice_sequence_mots(mots, ["fiche", "de", "fabrication"])
+                if depart_titre is None:
+                    continue
+                sequence = list(mots[depart_titre:])
+                normalise = " ".join(mot.normalise for mot in sequence)
+                trouve_grand_voile = re.search(r"\bgrand[-\s]voile\b", normalise)
+                if trouve_grand_voile is None:
+                    continue
+                if " pour " not in normalise[trouve_grand_voile.end() :]:
+                    continue
+                sequences.append((sequence, page.numero))
+                break
+    return sequences
+
+
+def _analyser_titre_ffab(valeur: str) -> tuple[str | None, str, str, str] | None:
+    """Décompose un titre FFAB en catégorie, désignation, bateau et reste."""
+    correspondance = re.search(
+        r"^\s*fiche\s+de\s+fabrication\s+[\"«](?P<categorie>[^\"»]+)[\"»]\s+"
+        r"(?P<designation>.+?),\s+pour\s+(?P<bateau>.+?)\s+de\s+(?P<reste>.+?)\s*$",
+        valeur,
+        flags=re.I,
+    )
+    if correspondance:
+        return (
+            correspondance.group("categorie").strip(),
+            correspondance.group("designation").strip(),
+            correspondance.group("bateau").strip(),
+            correspondance.group("reste").strip(),
+        )
+
+    repli = re.search(
+        r"^(?P<designation>.+?)\s+pour\s+(?P<bateau>.+?)\s+de\s+(?P<reste>.+?)\s*$",
+        valeur,
+        flags=re.I,
+    )
+    if repli is None:
+        return None
+    designation = re.sub(r"^\s*fiche\s+de\s+fabrication\s*", "", repli.group("designation"), flags=re.I)
+    designation = re.sub(r"^[\"«][^\"»]+[\"»]\s*", "", designation).strip(" ,")
+    return (
+        None,
+        designation,
+        repli.group("bateau").strip(),
+        repli.group("reste").strip(),
+    )
+
+
+def _traiter_ligne_titre_ffab(fiche: FicheExtraite, brut: str, base: ChampExtrait, contexte: dict) -> None:
+    """Ligne de titre FFab complète : catégorie, désignation, bateau,
+    client, numéro de commande externe et code de fiche en fin de ligne."""
+    pages: list[PageAnalysee] = contexte.get("pages") or []
+    analyse_titre: tuple[str | None, str, str, str] | None = None
+    mots: list[Mot] = []
+    valeur = ""
+    page_titre = 0
+    sequences_vues: set[tuple[int, str]] = set()
+    for mots_candidats, page_candidate in _sequences_titre_ffab(pages):
+        valeur_candidate = " ".join(mot.texte for mot in mots_candidats).strip()
+        cle_sequence = (page_candidate, valeur_candidate)
+        if cle_sequence in sequences_vues:
+            continue
+        sequences_vues.add(cle_sequence)
+        analyse = _analyser_titre_ffab(valeur_candidate)
+        if analyse is None:
+            continue
+        analyse_titre = analyse
+        mots = list(mots_candidats)
+        valeur = valeur_candidate
+        page_titre = page_candidate
+        break
+
+    if analyse_titre is None:
+        # Le titre n'est pas décomposable sans deviner : on retire la
+        # trace générique de la règle et l'on conserve uniquement le
+        # code corroboré par la ligne « Fichier » du document, s'il
+        # existe. La fiche reste à relire, mais elle n'est plus perdue
+        # au dépôt pour la seule absence d'une ligne physique unique.
+        if base in fiche.champs:
+            fiche.champs.remove(base)
+        _reprendre_code_ffab_depuis_ligne_fichier(fiche, pages)
+        return
+
+    categorie, designation, bateau_brut, reste_client = analyse_titre
+
+    commande: str | None = None
+    trouve_commande = _RE_COMMANDE_TITRE_FFAB.search(reste_client)
+    if trouve_commande:
+        commande = trouve_commande.group(1).strip() or None
+        reste_client = (
+            reste_client[: trouve_commande.start()] + " " + reste_client[trouve_commande.end() :]
+        ).strip()
+
+    code_fichier, mots_code_fichier, page_code_fichier = _code_corroboré_ligne_fichier(pages)
+    code: str | None = None
+    mots_code: list[Mot] = []
+    page_code = page_titre
+    client_brut = reste_client
+    trouve_code = _RE_CODE_FFAB_FIN.search(reste_client)
+    if trouve_code:
+        candidat = _normaliser_code_ffab(trouve_code.group("code"))
+        client_brut = reste_client[: trouve_code.start()].strip()
+        if code_fichier is None or code_fichier == candidat:
+            code = candidat
+            mots_code = _localiser_sequence(mots, normaliser_terme(code).split())
+    elif code_fichier:
+        code = code_fichier
+        mots_code = mots_code_fichier
+        page_code = page_code_fichier
+
+    if fiche.titre is None:
+        fiche.titre = categorie or "Grand-voile"
+    if fiche.code is None and code:
+        fiche.code = code
+    if fiche.commande_numero is None and commande:
+        fiche.commande_numero = commande
+    if fiche.bateau_nom is None and bateau_brut:
+        nom, taille = norm.separer_nom_et_detail(bateau_brut)
+        fiche.bateau_nom = nom or bateau_brut
+        fiche.bateau_taille = taille
+    if fiche.client_nom is None and client_brut:
+        nom, chantier = norm.separer_nom_et_detail(client_brut)
+        fiche.client_nom = nom or client_brut
+        fiche.client_chantier = chantier
+    if designation and fiche.type_voile_libelle is None:
+        _traiter_designation(fiche, designation, base)
+
+    base.champ = "fiche.designation"
+    base.valeur_brute = valeur
+    base.page = page_titre
+    base.zone = _zone_des_mots(mots)
+    sous_traces: list[ChampExtrait] = []
+    if fiche.titre:
+        sous_traces.append(
+            _reprendre_base(
+                fiche,
+                base,
+                champ="fiche.titre",
+                valeur_brute=valeur,
+                valeur_normalisee=fiche.titre,
+                confiance=CONFIANCE_CERTAIN,
+                page=page_titre,
+                zone=_zone_des_mots(_localiser_sequence(mots, normaliser_terme(fiche.titre).split()) or mots),
+                table_cible="fiche",
+                colonne_cible="titre",
+            )
+        )
+    if fiche.code:
+        sous_traces.append(
+            _reprendre_base(
+                fiche,
+                base,
+                champ="fiche.code",
+                valeur_brute=fiche.code,
+                valeur_normalisee=fiche.code,
+                confiance=CONFIANCE_CERTAIN,
+                page=page_code,
+                zone=_zone_des_mots(mots_code or mots),
+                table_cible="fiche",
+                colonne_cible="code",
+            )
+        )
+    if fiche.commande_numero:
+        sous_traces.append(
+            _reprendre_base(
+                fiche,
+                base,
+                champ="fiche.commande",
+                valeur_brute=fiche.commande_numero,
+                valeur_normalisee=fiche.commande_numero,
+                confiance=CONFIANCE_CERTAIN,
+                page=page_titre,
+                zone=_zone_des_mots(mots),
+                table_cible="fiche",
+                colonne_cible="commande_numero",
+            )
+        )
+    if fiche.client_nom:
+        sous_traces.append(
+            _reprendre_base(
+                fiche,
+                base,
+                champ="fiche.client",
+                valeur_brute=client_brut,
+                valeur_normalisee=(
+                    f"{fiche.client_nom} | {fiche.client_chantier}" if fiche.client_chantier else fiche.client_nom
+                ),
+                confiance=CONFIANCE_CERTAIN,
+                page=page_titre,
+                zone=_zone_des_mots(_localiser_sequence(mots, normaliser_terme(client_brut).split()) or mots),
+                table_cible="fiche",
+                colonne_cible="client",
+            )
+        )
+    if fiche.bateau_nom:
+        sous_traces.append(
+            _reprendre_base(
+                fiche,
+                base,
+                champ="fiche.bateau",
+                valeur_brute=bateau_brut,
+                valeur_normalisee=(
+                    f"{fiche.bateau_nom} | {fiche.bateau_taille}" if fiche.bateau_taille else fiche.bateau_nom
+                ),
+                confiance=CONFIANCE_CERTAIN,
+                page=page_titre,
+                zone=_zone_des_mots(_localiser_sequence(mots, normaliser_terme(bateau_brut).split()) or mots),
+                table_cible="fiche",
+                colonne_cible="bateau",
+            )
+        )
+    if base not in fiche.champs:
+        fiche.champs.append(base)
+    fiche.champs.extend(sous_traces)
+
+
+_COTES_FFAB_CONNUES: dict[str, str | None] = {
+    "guindant": "slu_m",
+    "bordure": "sf_m",
+    "chute": "sle_m",
+    "tetiere": "tetiere_cm",
+    "surface": "spa_m2",
+    "poids": "poids_kg",
+    "shw": "shw_m",
+    "mhw": None,
+    "mtw": None,
+    "muw": None,
+}
+_UNites_cote_FFAB = {"m", "m²", "m2", "kg", "cm", "mm"}
+
+
+def _jeton_cote_ffab(mot: Mot) -> str:
+    return re.sub(r"[^a-z0-9²]", "", mot.normalise)
+
+
+def _tetiere_en_cm(brut: str) -> float | None:
+    valeur = norm.extraire_decimal(brut)
+    if valeur is None:
+        return None
+    if re.search(r"\bmm\b", brut, re.I):
+        return round(valeur / 10.0, 3)
+    if re.search(r"\bcm\b", brut, re.I):
+        return valeur
+    if re.search(r"\bm\b(?!m)", brut, re.I):
+        return round(valeur * 100.0, 3)
+    return None  # sans unité explicite, aucune conversion n'est inventée
+
+
+def _groupes_valeurs_ffab(ligne: Ligne) -> list[list[Mot]]:
+    groupes: list[list[Mot]] = []
+    indice = 0
+    while indice < len(ligne.mots):
+        mot = ligne.mots[indice]
+        if re.search(r"\d", mot.texte) and norm.extraire_decimal(mot.texte) is not None:
+            groupe = [mot]
+            if indice + 1 < len(ligne.mots) and _jeton_cote_ffab(ligne.mots[indice + 1]) in _UNites_cote_FFAB:
+                groupe.append(ligne.mots[indice + 1])
+                indice += 1
+            groupes.append(groupe)
+        indice += 1
+    return groupes
+
+
+def _traiter_cotes_ffab(fiche: FicheExtraite, brut: str, base: ChampExtrait, contexte: dict) -> None:
+    """Grille « Cotes (tissu) » : en-têtes sur une ligne, valeurs alignées
+    sur la suivante. L'ordre fait foi quand les comptes concordent ; sinon
+    l'alignement horizontal départage. MHW/MTW/MUW n'ont pas de colonne du
+    schéma : ils sont conservés en mesures libres tracées (RG6)."""
+    pages: list[PageAnalysee] = contexte.get("pages") or []
+    if base in fiche.champs:
+        fiche.champs.remove(base)
+
+    for page in pages:
+        for indice_ligne, ligne in enumerate(page.lignes):
+            etiquettes: list[tuple[str, list[Mot]]] = []
+            vus: set[str] = set()
+            indice_mot = 0
+            while indice_mot < len(ligne.mots):
+                jeton = _jeton_cote_ffab(ligne.mots[indice_mot])
+                if jeton in _COTES_FFAB_CONNUES and jeton not in vus:
+                    mots_etiquette = [ligne.mots[indice_mot]]
+                    if (
+                        jeton == "poids"
+                        and indice_mot + 1 < len(ligne.mots)
+                        and _jeton_cote_ffab(ligne.mots[indice_mot + 1]) == "tissu"
+                    ):
+                        mots_etiquette.append(ligne.mots[indice_mot + 1])
+                        indice_mot += 1
+                    etiquettes.append((jeton, mots_etiquette))
+                    vus.add(jeton)
+                indice_mot += 1
+            if len(etiquettes) < 4 or "guindant" not in vus or not ({"bordure", "chute"} & vus):
+                continue
+
+            valeurs: list[list[Mot]] = []
+            for suivante in page.lignes[indice_ligne + 1 : indice_ligne + 5]:
+                if not suivante.mots or not ligne.mots:
+                    continue
+                if suivante.mots[0].haut - ligne.mots[0].haut > 70:
+                    break
+                candidate = _groupes_valeurs_ffab(suivante)
+                if len(candidate) >= min(4, len(etiquettes)):
+                    valeurs = candidate
+                    break
+            if not valeurs:
+                continue
+
+            paires: list[tuple[str, list[Mot]]] = []
+            lecture_exacte = len(valeurs) == len(etiquettes)
+            if lecture_exacte:
+                paires = [(etiquettes[i][0], valeurs[i]) for i in range(len(etiquettes))]
+            else:
+                utilisees: set[int] = set()
+                centres = [
+                    (min(mot.x0 for mot in mots) + max(mot.x1 for mot in mots)) / 2
+                    for _cle, mots in etiquettes
+                ]
+                for groupe in valeurs:
+                    centre = (min(mot.x0 for mot in groupe) + max(mot.x1 for mot in groupe)) / 2
+                    choix = min(
+                        (abs(centre - centres[i]), i)
+                        for i in range(len(etiquettes))
+                        if i not in utilisees
+                    )
+                    if choix[0] <= 55:
+                        utilisees.add(choix[1])
+                        paires.append((etiquettes[choix[1]][0], groupe))
+                if len(paires) < 4:
+                    paires = [(etiquettes[i][0], valeurs[i]) for i in range(min(len(etiquettes), len(valeurs)))]
+
+            confiance = CONFIANCE_CERTAIN if lecture_exacte else 0.85
+            for cle, mots_valeur in paires:
+                brut_cote = " ".join(mot.texte for mot in mots_valeur).strip()
+                if not brut_cote or brut_cote == "~":
+                    continue
+                colonne = _COTES_FFAB_CONNUES[cle]
+                if colonne is None:
+                    decimal = norm.extraire_decimal(brut_cote)
+                    if decimal is None or any(m.champ == f"libre.{cle}" for m in fiche.mesures_libres):
+                        continue
+                    fiche.mesures_libres.append(
+                        ChampExtrait(
+                            champ=f"libre.{cle}",
+                            valeur_brute=f"{cle.upper()} {brut_cote}",
+                            valeur_normalisee=str(decimal),
+                            methode="gabarit",
+                            confiance=confiance,
+                            page=page.numero,
+                            zone=_zone_des_mots(mots_valeur),
+                        )
+                    )
+                    continue
+                cible = f"cotes.finie.{colonne}"
+                if _cote_deja_lue(fiche, cible):
+                    continue
+                if colonne == "tetiere_cm":
+                    valeur = _tetiere_en_cm(brut_cote)
+                    if valeur is None:
+                        if not any(m.champ == "libre.tetiere" for m in fiche.mesures_libres):
+                            decimal = norm.extraire_decimal(brut_cote)
+                            fiche.mesures_libres.append(
+                                ChampExtrait(
+                                    champ="libre.tetiere",
+                                    valeur_brute=f"Têtière {brut_cote}",
+                                    valeur_normalisee=None if decimal is None else str(decimal),
+                                    methode="gabarit",
+                                    confiance=0.7,
+                                    page=page.numero,
+                                    zone=_zone_des_mots(mots_valeur),
+                                )
+                            )
+                        continue
+                elif colonne in {"spa_m2", "poids_kg"}:
+                    valeur = norm.extraire_decimal(brut_cote)
+                else:
+                    valeur = norm.cote_en_metres(brut_cote)
+                if valeur is None:
+                    continue
+                champ = ChampExtrait(
+                    champ=cible,
+                    valeur_brute=brut_cote,
+                    valeur_normalisee=str(valeur),
+                    methode="gabarit",
+                    confiance=confiance,
+                    page=page.numero,
+                    zone=_zone_des_mots(mots_valeur),
+                    table_cible="fiche_cotes",
+                    colonne_cible=colonne,
+                )
+                _ranger_cote(fiche, cible, valeur, champ)
+            return
+
+
+def _traiter_lattes_ffab(fiche: FicheExtraite, brut: str, base: ChampExtrait, contexte: dict) -> None:
+    """« 4 lattes » : le nombre précède l'ancre, la ligne est donc relue."""
+    pages: list[PageAnalysee] = contexte.get("pages") or []
+    if base in fiche.champs:
+        fiche.champs.remove(base)
+    if any(mesure.champ == "libre.nombre_lattes" for mesure in fiche.mesures_libres):
+        return
+    for page in pages:
+        for ligne in page.lignes:
+            trouve = re.search(r"\b(\d{1,2})\s+lattes\b", ligne.normalise)
+            if trouve:
+                fiche.mesures_libres.append(
+                    ChampExtrait(
+                        champ="libre.nombre_lattes",
+                        valeur_brute=" ".join(mot.texte for mot in ligne.mots),
+                        valeur_normalisee=trouve.group(1),
+                        methode="gabarit",
+                        confiance=0.85,
+                        page=page.numero,
+                        zone=_zone_des_mots(ligne.mots),
+                    )
+                )
+                return
+
+
 TRAITEMENTS = {
     "titre": lambda fiche, brut, base, contexte: _traiter_titre(fiche, brut, base),
     "ligne_titre_portant": lambda fiche, brut, base, contexte: _traiter_ligne_titre_portant(fiche, brut, base, contexte),
@@ -2219,6 +2775,10 @@ TRAITEMENTS = {
     "montage_jade": lambda fiche, brut, base, contexte: _traiter_montage_jade(fiche, brut, base, contexte),
     "renforts_jade": lambda fiche, brut, base, contexte: _traiter_renforts_jade(fiche, brut, base, contexte),
     "libres_gv": lambda fiche, brut, base, contexte: _traiter_libres_gv(fiche, brut, base, contexte),
+    # Format FFab grand-voile (Lot 10).
+    "ligne_titre_ffab": lambda fiche, brut, base, contexte: _traiter_ligne_titre_ffab(fiche, brut, base, contexte),
+    "cotes_ffab": lambda fiche, brut, base, contexte: _traiter_cotes_ffab(fiche, brut, base, contexte),
+    "lattes_ffab": lambda fiche, brut, base, contexte: _traiter_lattes_ffab(fiche, brut, base, contexte),
 }
 
 
@@ -2295,12 +2855,14 @@ def _executer_regle(fiche: FicheExtraite, regle, pages: list[PageAnalysee]) -> N
                 numero_page = page.numero
                 break
     if brut is None or brut.strip() == "":
-        if traitement == "designation" and ancre_trouvee and regle.ancres:
-            # Voie dégradée du gabarit génois : l'ancre du titre EST le type
-            # (« Voile de génois » → type Génois). Elle n'est ouverte que si
-            # l'ancre a réellement été lue — sinon le libellé d'ancre d'une
-            # fiche qui n'en contient pas deviendrait une valeur (RG6).
-            _executer_regle_traitement(fiche, regle, "", 0, [])
+        if traitement in {"designation", "ligne_titre_ffab"} and ancre_trouvee and regle.ancres:
+            # Voies où l'ancre lue suffit à autoriser une relecture de page :
+            # le gabarit génois pose le type porté par l'ancre, et le titre
+            # FFAB peut être morcelé juste après « grand-voile » (aucun mot
+            # de valeur sur la ligne physique de l'ancre). Le traitement
+            # relit alors les pages ; sans ancre réellement lue, rien n'est
+            # inventé (RG6).
+            _executer_regle_traitement(fiche, regle, "", 0, [], pages=pages)
         else:
             LOGGER.debug("Champ non lu : %s (ancres %s) — absent du rapport, à relire.", cible, regle.ancres)
         return
@@ -2393,10 +2955,17 @@ def _construire_et_ranger(
                 champ.valeur_normalisee = str(normalise)
 
 
-def _executer_regle_traitement(fiche: FicheExtraite, regle, brut: str, numero_page: int, mots_valeur: list[Mot]) -> None:
+def _executer_regle_traitement(
+    fiche: FicheExtraite,
+    regle,
+    brut: str,
+    numero_page: int,
+    mots_valeur: list[Mot],
+    pages: list[PageAnalysee] | None = None,
+) -> None:
     """Dispatch d'un traitement sur une valeur déjà bornée (utilisé aussi par
-    la voie dégradée « désignation posée par l'ancre » du gabarit génois)."""
-    _construire_et_ranger(fiche, regle, brut, numero_page, mots_valeur)
+    les voies où l'ancre seule autorise une relecture de page)."""
+    _construire_et_ranger(fiche, regle, brut, numero_page, mots_valeur, pages=pages)
 
 
 def _lire_cote(pages: list[PageAnalysee], ancres: list[str]) -> tuple[str | None, list[Mot], bool]:
@@ -2463,6 +3032,29 @@ def _collecter_libres(fiche: FicheExtraite, pages: list[PageAnalysee], ancres_co
                 )
 
 
+def _extraire_pages(
+    pages: list[PageAnalysee],
+    chemin: Path,
+    gabarit: GabaritDef,
+    gabarits: list[GabaritDef] | None,
+    vocabulaire_libres: set[str] | None = None,
+) -> FicheExtraite:
+    """Exécute un gabarit sur des pages déjà analysées (aucune réouverture)."""
+    fiche = FicheExtraite(fichier_pdf=str(chemin))
+    fiche.gabarit_code = gabarit.code
+    fiche.gabarit_version = gabarit.version
+    consommees: set[str] = set()
+    for regle in gabarit.champs:
+        consommees.update(regle.ancres)
+        try:
+            _executer_regle(fiche, regle, pages)
+        except Exception:
+            LOGGER.exception("Échec de la règle %s — champ ignoré, à relire (conséquence : champ absent).", regle.cible)
+    _collecter_libres(fiche, pages, consommees, vocabulaire_libres or {ancre for g in (gabarits or [gabarit]) for ancre in g.ancres_detection} | {ancre for r in gabarit.champs for ancre in r.ancres})
+    fiche.anomalies = evaluer_anomalies(fiche)
+    return fiche
+
+
 def extraire_fiche(
     chemin: Path,
     gabarits: list[GabaritDef] | None = None,
@@ -2477,7 +3069,6 @@ def extraire_fiche(
     """
     pages = analyser_pdf(chemin)
     texte = texte_normalise(pages)
-    fiche = FicheExtraite(fichier_pdf=str(chemin))
     if gabarit_code is not None:
         if not gabarits:
             raise ValueError("gabarit_code exigé : fournir aussi la liste des gabarits.")
@@ -2486,18 +3077,30 @@ def extraire_fiche(
             raise GabaritInconnu(f"Gabarit « {gabarit_code} » absent du registre.")
     else:
         gabarit = detecter_gabarit(texte, gabarits or [])
-    fiche.gabarit_code = gabarit.code
-    fiche.gabarit_version = gabarit.version
-    consommees: set[str] = set()
-    for regle in gabarit.champs:
-        consommees.update(regle.ancres)
-        try:
-            _executer_regle(fiche, regle, pages)
-        except Exception:
-            LOGGER.exception("Échec de la règle %s — champ ignoré, à relire (conséquence : champ absent).", regle.cible)
-    _collecter_libres(fiche, pages, consommees, vocabulaire_libres or {ancre for g in (gabarits or [gabarit]) for ancre in g.ancres_detection} | {ancre for r in gabarit.champs for ancre in r.ancres})
-    fiche.anomalies = evaluer_anomalies(fiche)
-    return fiche
+    return _extraire_pages(pages, chemin, gabarit, gabarits, vocabulaire_libres)
+
+
+def analyser_candidat_fiche(
+    chemin: Path,
+    gabarits: list[GabaritDef],
+    vocabulaire_libres: set[str] | None = None,
+) -> CandidatFiche | None:
+    """Analyse un PDF une seule fois pour le scanner multi-PDF.
+
+    Retourne ``None`` quand aucun gabarit n'a d'ancre présente. Les erreurs
+    de lecture PDF sont laissées à l'appelant, qui les transforme en raison
+    explicite du dossier sans interrompre le lot.
+    """
+    pages = analyser_pdf(chemin)
+    texte = texte_normalise(pages)
+    scores = [(gabarit.score_detection(texte), indice, gabarit) for indice, gabarit in enumerate(gabarits)]
+    if not scores:
+        return None
+    score, _indice, gabarit = max(scores, key=lambda item: (item[0], -item[1]))
+    if score <= 0:
+        return None
+    fiche = _extraire_pages(pages, chemin, gabarit, gabarits, vocabulaire_libres)
+    return CandidatFiche(gabarit=gabarit, score_detection=score, fiche=fiche)
 
 
 def extraire_avec_filet(chemin: Path, gabarits: list[GabaritDef], vocabulaire_libres: set[str] | None = None) -> FicheExtraite:

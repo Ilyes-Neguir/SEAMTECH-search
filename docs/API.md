@@ -421,7 +421,8 @@ d'outillage derrière le jeton de service, faute de comptes nominatifs) :
 | corrections/validations de fiches | si les en-têtes de session sont présents, l'identité est revérifiée et relue en base ; un en-tête utilisateur/rôle incompatible ⇒ 401 |
 | `POST /fiches/doublons/scan` avec `appliquer=true` | session humaine vivante (le dry-run reste un comptage) |
 | `POST /referentiel/bateaux/{id}/*` (Lot 2) | session humaine `administrateur` vérifiée (ou `secours` derrière le jeton de service) ; service seul ⇒ 401, opérateur ⇒ 403. `GET /referentiel/bateaux` reste une lecture derrière le jeton de service |
-| `POST /imports/dossier`, `POST /imports/dossier/lot` | dossier/racine obligatoirement sous une racine configurée ou le staging, sinon 403 |
+| `POST /imports/dossier`, `POST /imports/dossier/lot` | dossier/racine obligatoirement sous une racine configurée ou le staging, sinon 403 ; pour un lot, `token_televersement` peut remplacer `racine` (exactement une source), sans exposer le chemin de session |
+| `/imports/dossier/televersements*` | session humaine opérationnelle (`admin`, `utilisateur`, `approbateur`) revérifiée côté backend ; jeton de session opaque, chemins relatifs NFC confinés à la session, collisions et dépassements refusés explicitement |
 
 `POST /open` reste l'endpoint historique des scripts serveur de qualification :
 le navigateur ne l'utilise plus (`/api/open` = 410, pièces par ID). En
@@ -505,14 +506,23 @@ Documentée dans `docs/OCR_ETAGES.md` (Windows `schtasks`, Linux `cron`), non ex
 - Image isolée (png/jpg/tif) : traitée comme scan d'une page
 - Seuil paramétrable, défaut 20 justifié (voir `docs/OCR_ETAGES.md`)
 
-## Ingestion par dossier complet et lots (Lot C)
+## Ingestion par dossier complet et lots (Lot C + Lot 10)
 
 | Route | Rôle |
 |---|---|
-| `POST /imports/dossier` | Porte A (plan §9.1) : corps `{"dossier": "/chemin/du/dossier"}`. Reconnaît la fiche (meilleur `score_detection`), l'extrait via le moteur du lot B, rattache les autres PDF du dossier comme pièces jointes, écrit **fiche + pièces en une transaction** → fiche `a_valider` (jamais valide, RG3). Idempotent (clé = chemin normalisé + SHA-256 : rejouer = `deja_traite`, 0 nouveau). Un refus est un **résultat** avec raison (« aucun PDF dans le dossier », « gabarit inconnu (scores…) »), jamais une erreur 500 : il est tracé dans son propre lot suivi. 201. |
-| `POST /imports/dossier/lot` | Porte A bis : lot de dossiers en tâche de fond (thread in-process, **sans Redis** ; `X-SEAMTECH-BACKGROUND: false` → synchrone). Corps `{"racine": "/archive", "interrompre_apres": N}` (option). 202 → `{"id_lot", "nb_dossiers"}`. Reprise après interruption : rappeler la même route (les dossiers `traite` sont sautés par idempotence, les `echec` retentés). |
-| `GET /lots` | Liste des lots : `id_lot`, `racine`, `statut` (`en_cours`/`termine`/`interrompu`), compteurs (`nb_dossiers`, `nb_traites`, `nb_echecs`), `progression_pct`. |
-| `GET /lots/{id_lot}` | État complet : progression, **dossiers avec leur statut et leur raison d'échec** (« fiche non reconnue », « gabarit inconnu (scores de détection : …) », « PDF illisible », « déjà traité (lot #N) ») et **fichiers restants**. 404 si lot inconnu. |
+| `POST /imports/dossier` | Porte A (plan §9.1) : corps `{"dossier": "/chemin/du/dossier"}`. Reconnaît la fiche viable (score, puis preuve structurée ; l'indice de nom `ffab` ne départage qu'à score égal), l'extrait via le moteur du lot B, rattache les autres fichiers comme pièces, écrit **fiche + pièces en une transaction** → fiche `a_valider` (jamais valide, RG3). Idempotent (clé = chemin normalisé + SHA-256 : rejouer = `deja_traite`, 0 nouveau ; un dossier stagé par téléversement est en plus reconnu d'une session à l'autre par son chemin **relatif envoyé** + SHA-256 — le jeton de session change à chaque envoi, pas l'identité du dossier). Un refus est un **résultat** avec raison, tracé dans son lot. 201. |
+| `POST /imports/dossier/televersements` | Lot 10 : ouvre une session navigateur pour un dossier complet. Corps `{"nom_racine", "nombre_fichiers", "taille_totale_octets"}` → 201 avec `token`, compteurs (`nombre_fichiers_attendus`, `taille_totale_attendue_octets`, `nombre_fichiers_recus`, `taille_recue_octets`) et `limites`. Aucun chemin serveur n'est retourné. Bornes : 100 000 fichiers et 20 Gio par session ; envoi recommandé 100 fichiers/32 Mio, maximum 200 fichiers/512 Mio ; profondeur relative maximale 32 dossiers. |
+| `GET /imports/dossier/televersements/{token}` | État réconcilié de la session (fichiers promus avant un arrêt brutal relus par taille/SHA-256). 404 si le jeton est inconnu ou mal formé. |
+| `POST /imports/dossier/televersements/{token}/fichiers` | Reçoit un envoi multipart borné : champ texte `chemins` (liste JSON ordonnée) et champs répétés `fichiers`. Les octets sont écrits en `.part`, hachés en SHA-256, fsyncés puis promus atomiquement. Rejouer les mêmes octets est idempotent ; contenu différent, collision de casse/NFC, fichier↔dossier ou dépassement de l'annonce ⇒ refus explicite (409/413/422 selon le cas). |
+| `POST /imports/dossier/televersements/{token}/terminer` | Finalise uniquement si le nombre **et** la taille reçus égalent l'annonce ; idempotent après succès. |
+| `DELETE /imports/dossier/televersements/{token}` | Annule et supprime une session non associée à un lot ; refus explicite si un lot utilise déjà les fichiers. |
+| `POST /imports/dossier/lot` | Crée un lot depuis exactement une source : `{"racine": "/archive"}` **ou** `{"token_televersement": "…"}`. `recursif` vaut `true` par défaut : tout dossier avec PDF direct, à tout niveau sous année/catégorie, devient une ligne (maximum 5 000 dossiers et 32 niveaux) ; `recursif:false` conserve le mode historique des seuls sous-dossiers directs. Le lot est remis à la file durable Redis quand elle est disponible ; `X-SEAMTECH-BACKGROUND:false` force le synchrone. Depuis un jeton, découverte des dossiers, création PostgreSQL et association au manifeste se déroulent sous le même verrou inter-processus de session : une annulation concurrente attend puis est refusée, et rejouer — même simultanément — rend le même `id_lot` (`deja_cree:true`) sans second lot. |
+| `GET /lots` | Liste des lots : `id_lot`, `dossier_racine`, `statut`, compteurs (`nb_dossiers`, `nb_traites`, `nb_echecs`), `progression_pct`. |
+| `GET /lots/{id_lot}` | État complet : progression, dossiers (`chemin_dossier` pour la traçabilité et `chemin_relatif` pour l'affichage), statut/raison de chaque échec et fichiers restants. 404 si lot inconnu. |
+
+Les sessions finalisées vivent sous `uploads/lots-televerses/<token>/fichiers` et
+**ne sont jamais élaguées par âge** : tant qu'OBS-05 n'est pas clos, les fiches
+déposées référencent ces fichiers par chemin pour aperçu/téléchargement.
 
 **Écart documenté (assumé)** : la consultation des lots se fait sous `GET /lots` et
 `GET /lots/{id_lot}` — le chemin `GET /imports/{id}` est déjà pris par l'import unitaire
@@ -537,4 +547,5 @@ curl -H "X-SEAMTECH-TOKEN: $TOKEN" -H "X-SEAMTECH-TOKEN: $TOKEN" \
 (valeur, confiance, page, zone) ; `ecrire` (transaction, statut `a_valider`), `init`,
 `banc` (non-régression `gabarit_test`). Détection isolée : `POST /gabarits/detecter` (lot B.2) ;
 l'écran d'extraction interactive arrive avec le lot D. Dépôt d'un dossier : `deposer DOSSIER`
-et lots : `lot RACINE [--interrompre-apres N]` (reprise = rappeler).
+et lots : `lot RACINE [--non-recursif] [--interrompre-apres N]` (récursif par défaut ;
+reprise = rappeler le traitement du lot, sans recréer les dossiers déjà traités).

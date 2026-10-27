@@ -2,8 +2,9 @@
 
 Les accessoires (Lazy Bag, housses, tauds, capotes…) ne sont pas des voiles
 soustraites : ils ont leur propre schéma métier (`accessory_extractions`,
-migration 031), leur gabarit (`FICHE_ACCESSOIRE_V1`, générique par libellés
-en attendant les échantillons réels) et une liaison bateau SIMPLIFIÉE —
+migration 031), leur gabarit (`FICHE_ACCESSOIRE_V1` — code de famille,
+définitions versionnées : v1 générique du Lot 7, v2 calibrée au Lot CAL sur
+la structure des formulaires réels) et une liaison bateau SIMPLIFIÉE —
 exactement un modèle canonique ou aucun. Les invariants des Lots 3a/3b
 restent entiers : provenance par champ, aucune valeur inventée (des
 dimensions sans unité restent du texte), décision humaine jamais écrasée,
@@ -40,6 +41,7 @@ from seamtech_search.extractions_voile import (
 from seamtech_search.fiches.gabarits import (
     CODE_GABARIT_ACCESSOIRE,
     GABARIT_ACCESSOIRE_V1,
+    GABARIT_ACCESSOIRE_V2,
     GabaritDef,
 )
 from seamtech_search.fiches.modeles import ChampExtrait, FicheExtraite, Zone
@@ -64,6 +66,7 @@ __all__ = [
     "detail_extraction_accessoire",
     "enregistrer_extraction_accessoire",
     "enregistrer_extraction_accessoire_curseur",
+    "gabarit_accessoire",
     "gabarit_accessoire_v1",
     "lier_accessoire",
     "lier_extraction_accessoire_document_curseur",
@@ -125,8 +128,17 @@ def proposer_categorie(
 
 
 def gabarit_accessoire_v1() -> GabaritDef:
-    """Le gabarit générique accessoires (défini avec les gabarits embarqués)."""
+    """Le gabarit générique accessoires du Lot 7 — définition historique
+    publiée (version 1), jamais réécrite (RG11)."""
     return GABARIT_ACCESSOIRE_V1
+
+
+def gabarit_accessoire() -> GabaritDef:
+    """Le gabarit accessoires COURANT — Lot CAL : version 2, calibrée sur la
+    structure des formulaires réels (fiche de prise de cotes, plans CAD).
+    Les nouveaux appelants passent par ici ; l'accès versionné reste
+    disponible pour relire les anciennes définitions."""
+    return GABARIT_ACCESSOIRE_V2
 
 
 # ---------------------------------------------------------------------------

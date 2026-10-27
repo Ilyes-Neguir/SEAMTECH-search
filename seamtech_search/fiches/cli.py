@@ -184,7 +184,7 @@ def _cmd_lot(arguments: argparse.Namespace) -> int:
     from seamtech_search.fiches.depot import creer_lot, executer_lot
 
     index = _index(arguments.database_url)
-    id_lot = creer_lot(index, Path(arguments.racine))
+    id_lot = creer_lot(index, Path(arguments.racine), recursif=not arguments.non_recursif)
     print(f"Lot #{id_lot} créé ({arguments.racine}).")
     etat = executer_lot(index, id_lot, interrompre_apres=arguments.interrompre_apres)
     print(
@@ -219,9 +219,17 @@ def principal(argv: list[str] | None = None) -> int:
     deposer.add_argument("dossier")
     deposer.add_argument("--database-url", required=True)
 
-    lot = sous.add_parser("lot", help="Lot C : crée et exécute un lot (une racine, un sous-dossier par affaire)")
+    lot = sous.add_parser(
+        "lot",
+        help="crée et exécute un lot (récursif par défaut : tout dossier avec PDF direct, à tout niveau)",
+    )
     lot.add_argument("racine")
     lot.add_argument("--database-url", required=True)
+    lot.add_argument(
+        "--non-recursif",
+        action="store_true",
+        help="comportement historique : seuls les sous-dossiers directs, y compris sans PDF",
+    )
     lot.add_argument("--interrompre-apres", type=int, default=None, help="interruption volontaire (tests de reprise)")
 
     banc = sous.add_parser("banc", help="non-régression : fiche extraite vs vérité gabarit_test")

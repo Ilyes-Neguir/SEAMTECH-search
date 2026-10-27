@@ -338,6 +338,51 @@ GABARIT_GV_FULLBATTEN = GabaritDef(
     ],
 )
 
+# Lot 10 — famille « FFab » des grand-voiles : ligne de titre complète
+# (parenté Portant), ligne Fichier corroborante et grille « Cotes (tissu) »
+# à neuf colonnes. Calibration STRUCTURES uniquement : seuls des libellés
+# génériques de voilerie figurent ici, jamais une valeur d'un document.
+CODE_GABARIT_GV_FFAB = "FICHE_GV_FFAB_V1"
+
+GABARIT_GV_FFAB = GabaritDef(
+    code=CODE_GABARIT_GV_FFAB,
+    version=VERSION_COURANTE,
+    description=(
+        "Fiche de fabrication grand-voile au format FFab : ligne de titre "
+        "complète (désignation, bateau, client, commande, code), grille "
+        "Cotes (tissu) Guindant/Bordure/Chute/Têtière/Surface/Poids et "
+        "largeurs MHW/MTW/MUW conservées en mesures libres."
+    ),
+    ancres_detection=[
+        "cotes (tissu)",
+        "mesures voile finie",
+        "boitier guindant",
+        "boitier chute",
+        "coulisseaux de guindant",
+        "montage fil",
+        "grand-voile",
+        "ris 1",
+    ],
+    champs=[
+        RegleChamp(cible="traitement:ligne_titre_ffab", ancres=["grand-voile"], type="texte"),
+        RegleChamp(cible="fiche.atelier", ancres=["découpe et fabrication"], type="texte", stop=["fichier"]),
+        RegleChamp(cible="fiche.dessinateur", ancres=["dessiné par"], type="texte", traitement="dessinateur", stop=["fichier"]),
+        RegleChamp(cible="fiche.quantite", ancres=["quantité"], type="entier"),
+        RegleChamp(cible="traitement:fichier_edite", ancres=["fichier"], type="texte"),
+        RegleChamp(cible="traitement:cotes_ffab", ancres=["cotes (tissu)", "guindant"], type="texte"),
+        RegleChamp(
+            cible="materiau.tissu_principal",
+            ancres=["tissu(s)", "tissu"],
+            type="texte",
+            traitement="tissu_principal",
+            stop=["cotes", "mesures voile finie"],
+        ),
+        RegleChamp(cible="fiche.montage_type", ancres=["zigzag", "zig"], type="texte", traitement="montage_jade"),
+        RegleChamp(cible="traitement:lattes_ffab", ancres=["lattes"], type="texte"),
+        RegleChamp(cible="fiche.notes", ancres=["notes"], type="texte", traitement="notes", stop=["fichier"]),
+    ],
+)
+
 # Lot 7 — famille accessoires. Gabarit GÉNÉRIQUE par libellés : à la
 # rédaction, aucun échantillon accessoire réel n'est encore disponible dans
 # le dépôt (téléversement Dropbox en cours) — les ancres sont les libellés
@@ -380,6 +425,147 @@ GABARIT_ACCESSOIRE_V1 = GabaritDef(
     ],
 )
 
+# Lot CAL — calibration sur les formulaires réels (structures mesurées en
+# local, aucun document client dans le dépôt). Le code reste
+# FICHE_ACCESSOIRE_V1 (identifiant de famille) ; les définitions sont
+# versionnées : la v2 devient la seule ACTIVE, la v1 demeure au registre
+# (RG11). Mêmes cibles que la v1 — la projection Lot 7 et la migration 031
+# sont inchangées, aucune migration requise ; seules les ancres (détection
+# et libellés) sont calibrées.
+GABARIT_ACCESSOIRE_V2 = GabaritDef(
+    code=CODE_GABARIT_ACCESSOIRE,
+    version=2,
+    description=(
+        "Fiche d'accessoire (Lazy Bag, housse, taud, cagnard, sac de pont…) "
+        "calibrée sur les formulaires réels de l'atelier : fiche de prise de "
+        "cotes imprimée (« Réservé pour le CLIENT », N° de commande, Type de "
+        "bateau, Type de LazyBag, Couleurs Sunbrella) et plans CAD. Lecture "
+        "par libellés ; les cases à cocher et les cotes sans libellé ne "
+        "produisent aucun champ — l'approbateur décide."
+    ),
+    ancres_detection=[
+        # Corpus v1 conservé (ancres absentes des fiches de voiles).
+        "accessoire",
+        "accessoires",
+        "housse",
+        "taud",
+        "capote",
+        "Lazy Bag",
+        "bimini",
+        "sellerie",
+        # Lot CAL — formes réelles mesurées : « lazybag » en un seul mot sur
+        # le formulaire, familles sac de pont/cagnard, et libellés propres à
+        # la fiche de prise de cotes. Le formulaire cite « FullBatten » (une
+        # ancre GV fullbatten) : ces ancres nombreuses et spécifiques le
+        # font rester accessoire, sans qu'aucune n'existe sur une voile.
+        "lazybag",
+        "sac de pont",
+        "cagnard",
+        "prise de cotes",
+        "réservé pour le client",
+        "couleurs sunbrella",
+        "ancrages",
+        "bordure de la grand-voile",
+        "bordure de la grand voile",
+    ],
+    champs=[
+        # Libellés réels d'identification, du plus spécifique au générique.
+        # Sans ligne lisible, aucun code n'est inventé : le dossier part en
+        # reprise complète (règle produit « pas de référence, pas de
+        # stockage », inchangée).
+        RegleChamp(
+            cible="fiche.code",
+            ancres=[
+                "n° de commande", "no de commande", "numéro de commande",
+                "numero commande", "n° commande", "commande n°",
+                "référence commande", "ref commande", "code fiche",
+                "référence", "reference", "commande", "code",
+            ],
+            type="texte",
+            stop=[
+                "client", "date", "bateau", "type de bateau", "produit",
+                "tissu", "matière", "couleur", "dimensions", "quantité",
+                "atelier", "livraison", "port",
+            ],
+        ),
+        # « type » NU est volontairement absent : sur le formulaire réel, il
+        # lirait la ligne « Type de bateau : … » comme le type d'accessoire.
+        # L'ancre gardée « type : » exige le deux-points immédiatement après
+        # le mot (séquence de jetons), ce que « Type de bateau : » ne
+        # satisfait pas. « Type de LazyBag » est un en-tête de cases à
+        # cocher : sans valeur sur sa propre ligne, il ne produit rien —
+        # la case cochée reste à l'approbateur.
+        RegleChamp(
+            cible="accessoire.type",
+            ancres=[
+                "type de lazybag", "type de Lazy Bag", "type d'accessoire",
+                "type accessoire", "type de produit", "type d'article",
+                "type article", "type :", "produit", "article",
+                "désignation", "designation", "accessoire",
+            ],
+            type="texte",
+            stop=[
+                "nombre d'ancrages", "nombre ancrages", "type de grand-voile",
+                "type de grand voile", "couleurs sunbrella", "couleur",
+                "bordure", "matière", "tissu", "dimensions", "quantité",
+                "bateau", "port", "emplacement",
+            ],
+        ),
+        RegleChamp(
+            cible="accessoire.matiere",
+            ancres=["matière", "matiere", "matériau", "materiau", "composition", "tissu"],
+            type="texte",
+            stop=["couleur", "coloris", "couleurs sunbrella", "dimensions", "quantité", "type"],
+        ),
+        # « teinte » est volontairement absent : le texte imprimé des
+        # formulaires contient « teinté masse » (tissu Sunbrella), dont la
+        # forme normalisée percuterait cette ancre et lirait « masse »
+        # comme une couleur. « Couleurs Sunbrella » est l'en-tête réel du
+        # nuancier ; « autres coloris » est son champ libre.
+        RegleChamp(
+            cible="accessoire.couleur",
+            ancres=[
+                "couleurs sunbrella", "couleur sunbrella", "coloris sunbrella",
+                "autres coloris", "couleur", "coloris",
+            ],
+            type="texte",
+            stop=["matière", "tissu", "dimensions", "quantité", "bateau", "bordure"],
+        ),
+        # Sur les documents réels, les cotes sont des nombres SANS libellé
+        # (schémas, plans de coupe) : le moteur libellé→valeur ne les lie
+        # pas et ne doit pas les inventer. Ancres v1 conservées.
+        RegleChamp(
+            cible="accessoire.dimensions",
+            ancres=["dimensions", "dimension", "longueur"],
+            type="texte",
+            stop=["quantité", "couleur", "matière", "bateau", "type"],
+        ),
+        # « nombre » NU est volontairement absent : « Nombre d'ancrages »
+        # du formulaire n'est pas une quantité d'accessoires.
+        RegleChamp(
+            cible="accessoire.quantite",
+            ancres=["quantité", "quantite", "nombre d'exemplaires", "exemplaires", "qte", "qté"],
+            type="entier",
+            stop=["bateau", "dimensions", "couleur", "matière"],
+        ),
+        # « Type de bateau » est le libellé réel de l'en-tête client du
+        # formulaire ; il précède les génériques. Les voisines de la même
+        # ligne d'en-tête (Port, Emplacement…) bornent la valeur.
+        RegleChamp(
+            cible="accessoire.modele_bateau",
+            ancres=[
+                "type de bateau", "modèle de bateau", "modele de bateau",
+                "modèle du bateau", "bateau", "modèle", "modele", "navire",
+            ],
+            type="texte",
+            stop=[
+                "port", "emplacement", "tél", "tel", "nom", "prénom",
+                "prenom", "client", "date",
+            ],
+        ),
+    ],
+)
+
 # Ordre significatif : à score d'ancres égal, la version la plus récente
 # d'un code gagne la détection (v2 devant v1) ; les gabarits du corpus réel
 # viennent EN DERNIER pour que les gabarits historiques (génois, portant)
@@ -390,9 +576,12 @@ GABARITS_EMBARQUES: tuple[GabaritDef, ...] = (
     GABARIT_GENOIS,
     GABARIT_GV_FULLBATTEN,
     GABARIT_JADE,
-    # Lot 7 : le gabarit accessoire vient en dernier — ses ancres sont
-    # absentes des fiches de voiles, il ne peut donc pas voler une fiche
-    # voile ; sur un document accessoire, il gagne les égalités.
+    GABARIT_GV_FFAB,
+    # Lots 7 + CAL : les gabarits accessoires viennent en dernier (v2
+    # calibrée devant v1 publiée) — leurs ancres sont absentes des fiches
+    # de voiles, ils ne peuvent donc pas voler une fiche voile ; sur un
+    # document accessoire, la v2 gagne.
+    GABARIT_ACCESSOIRE_V2,
     GABARIT_ACCESSOIRE_V1,
 )
 
@@ -415,3 +604,40 @@ def initialiser_gabarits(index: Any) -> None:
                     "   SELECT max(version) FROM gabarit WHERE code = %s)",
                     (code, code),
                 )
+
+
+def synchroniser_gabarits_embarques(index: Any) -> list[str]:
+    """Ajoute au registre les seuls gabarits embarqués ABSENTS.
+
+    Utilisée au démarrage lors d'une mise à jour : une base déjà initialisée
+    reçoit les nouvelles familles/versions livrées par le code, sans jamais
+    réécrire une ligne existante (un gabarit publié ou personnalisé n'est pas
+    écrasé). Quand une nouvelle version d'un code est ajoutée, les anciennes
+    versions de CE code sont désactivées, comme par ``initialiser_gabarits``.
+    Retourne les libellés ajoutés (``"CODE vN"``), pour le journal.
+    """
+    with index.connect() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT code, version FROM gabarit")
+            existants = {(str(code), int(version)) for code, version in cursor.fetchall()}
+
+    ajoutes: list[str] = []
+    codes_touches: set[str] = set()
+    for gabarit in GABARITS_EMBARQUES:
+        if (gabarit.code, gabarit.version) in existants:
+            continue
+        enregistrer_gabarit(index, gabarit)
+        ajoutes.append(f"{gabarit.code} v{gabarit.version}")
+        codes_touches.add(gabarit.code)
+        LOGGER.info("Gabarit embarqué absent ajouté au registre : %s v%d", gabarit.code, gabarit.version)
+
+    if codes_touches:
+        with index.connect() as connection:
+            with connection.cursor() as cursor:
+                for code in sorted(codes_touches):
+                    cursor.execute(
+                        "UPDATE gabarit SET actif = false WHERE code = %s AND version < ("
+                        "   SELECT max(version) FROM gabarit WHERE code = %s)",
+                        (code, code),
+                    )
+    return ajoutes

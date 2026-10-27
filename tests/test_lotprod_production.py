@@ -239,6 +239,20 @@ class TestComposeSauvegarde:
             "le dossier des sauvegardes doit être un volume persistant"
         )
 
+    def test_healthcheck_sauvegarde_ne_sonde_pas_un_serveur_http_absent(self, services: dict) -> None:
+        """OBS-03 : l'image porte un HEALTHCHECK HTTP (/live:8000) pour `web`.
+        Le planificateur ne sert pas HTTP : sans surcharge, Docker le déclare
+        « unhealthy » à vie alors qu'il tourne — la sonde doit vérifier le
+        processus du planificateur lui-même."""
+        healthcheck = services["sauvegarde"].get("healthcheck") or {}
+        sonde = " ".join(str(morceau) for morceau in healthcheck.get("test") or [])
+        assert sonde, "sauvegarde doit surcharger le HEALTHCHECK HTTP hérité de l'image"
+        assert "/live" not in sonde and "8000" not in sonde
+        # Sonde faillible et métier : base joignable + outils de dump présents
+        # (OBS-04) + dossier inscriptible — jamais un simple « PID 1 existe ».
+        assert "pg_isready" in sonde and "pg_dump" in sonde and "pg_restore" in sonde
+        assert "/proc/1" not in sonde
+
 
 # ---------------------------------------------------------------------------
 # 3. Version identifiable

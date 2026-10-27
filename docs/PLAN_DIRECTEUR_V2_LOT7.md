@@ -204,3 +204,11 @@ donnée nominative consignée) :
   sunbrella », « N° de commande »), code depuis le motif `ST###`, et question
   ouverte de l'unité documentaire (« Unité : cm ») pour les cotes nues des
   plans — aujourd'hui elles restent du texte, jamais converties.
+
+**Suite donnée — Lot CAL (voir `PLAN_DIRECTEUR_V2_LOTCAL.md`) :** la
+calibration a été validée par la commanditaire et livrée comme **version 2**
+du gabarit `FICHE_ACCESSOIRE_V1` (ancres et libellés réels ci-dessus, mêmes
+cibles, aucune migration ; la v1 reste au registre). Restent ouverts, en
+décision commanditaire : le code `ST###` depuis le nom de dossier (suggestion
+tracée à confirmer — jamais en silence) et l'unité documentaire des cotes
+nues (toujours du texte).
