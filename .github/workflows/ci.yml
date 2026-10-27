@@ -1240,7 +1240,7 @@ jobs:
                               coupables.append(f"{etat}: {spec.get('title', '?')} [{titres[:120]}]")
               detail = "; ".join(coupables[:5]) or "aucun test nommé dans le rapport"
               raise SystemExit(
-                  f"GARDE-FOU live e2e : attendu 12 tests passés au premier essai, "
+                  f"GARDE-FOU live e2e : attendu 13 tests passés au premier essai, "
                   f"0 flaky, 0 sautés — mesuré {passes} passés, {flaky} flaky, "
                   f"{sautes} sautés. Les tests live ne doivent jamais s'ignorer "
                   "silencieusement ni masquer une instabilité par retry. "
