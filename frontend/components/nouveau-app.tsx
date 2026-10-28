@@ -606,7 +606,7 @@ function NouveauAppInterne() {
 
 export function NouveauApp() {
   const { role, chargement } = useSession()
-  if (chargement) return <main className="p-6 text-sm text-muted-foreground">Vérification de votre rôle…</main>
+  if (chargement) return <div className="p-6 text-sm text-muted-foreground">Vérification de votre rôle…</div>
   if (!peutDeposer(role)) {
     return <AccesRefuse message="Le dépôt de dossiers est réservé aux rôles admin, utilisateur et approbateur. Le rôle lecture peut consulter et prévisualiser l’archive, sans y déposer de fichiers." />
   }

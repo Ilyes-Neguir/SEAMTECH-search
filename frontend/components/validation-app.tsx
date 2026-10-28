@@ -940,7 +940,7 @@ function ChampsFiche({
 export function ValidationApp() {
   const { session, role, chargement } = useSession()
   if (chargement) {
-    return <main className="p-6 text-sm text-muted-foreground">Vérification de votre rôle…</main>
+    return <div className="p-6 text-sm text-muted-foreground">Vérification de votre rôle…</div>
   }
   if (session.mode !== "nominatif" || !estApprobateur(role)) {
     return (

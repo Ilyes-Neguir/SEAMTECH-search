@@ -59,7 +59,7 @@ export function SearchApp() {
       <ImportPanel />
 
       {/* Body */}
-      <main className="mx-auto flex w-full max-w-6xl flex-1 gap-0 px-4 sm:px-6">
+      <div className="mx-auto flex w-full max-w-6xl flex-1 gap-0 px-4 sm:px-6">
         <div
           className={cn(
             "min-w-0 flex-1 border-x border-border bg-card/40",
@@ -87,7 +87,7 @@ export function SearchApp() {
             </div>
           </div>
         )}
-      </main>
+      </div>
 
       <footer className="border-t border-border py-4">
         <div className="mx-auto w-full max-w-6xl px-4 text-center text-xs text-muted-foreground sm:px-6">

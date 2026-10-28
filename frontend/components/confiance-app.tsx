@@ -321,7 +321,7 @@ function ConfianceAppInterne({ role }: { role: Role }) {
   }, [extractions, filtre])
 
   return (
-    <main className="mx-auto max-w-7xl space-y-4 p-4">
+    <div className="mx-auto max-w-7xl space-y-4 p-4">
       <header className="flex items-center gap-2">
         <Gauge className="h-6 w-6" aria-hidden />
         <div>
@@ -522,14 +522,14 @@ function ConfianceAppInterne({ role }: { role: Role }) {
           )}
         </section>
       </div>
-    </main>
+    </div>
   )
 }
 
 export function ConfianceApp() {
   const { session, chargement } = useSession()
   if (chargement) {
-    return <main className="p-6 text-sm text-muted-foreground">Vérification de votre session…</main>
+    return <div className="p-6 text-sm text-muted-foreground">Vérification de votre session…</div>
   }
   if (session.mode !== "nominatif") {
     return (

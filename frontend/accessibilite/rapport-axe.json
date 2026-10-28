@@ -1,15 +1,113 @@
 {
- "ecrans_scannes": 59,
+ "ecrans_scannes": 73,
  "ecrans_avec_violation": 0,
  "constats": [
   {
    "ecran": "/",
+   "role": "secours",
+   "url": "/fichiers",
+   "violations": [],
+   "bonnes_pratiques": []
+  },
+  {
+   "ecran": "/recherche",
+   "role": "secours",
+   "url": "/recherche",
+   "violations": [],
+   "bonnes_pratiques": [
+    "page-has-heading-one"
+   ]
+  },
+  {
+   "ecran": "/fichiers",
+   "role": "secours",
+   "url": "/fichiers",
+   "violations": [],
+   "bonnes_pratiques": []
+  },
+  {
+   "ecran": "/dossiers",
+   "role": "secours",
+   "url": "/dossiers",
+   "violations": [],
+   "bonnes_pratiques": []
+  },
+  {
+   "ecran": "/nouveau",
+   "role": "secours",
+   "url": "/nouveau",
+   "violations": [],
+   "bonnes_pratiques": []
+  },
+  {
+   "ecran": "/extractions",
+   "role": "secours",
+   "url": "/extractions",
+   "violations": [],
+   "bonnes_pratiques": []
+  },
+  {
+   "ecran": "/comparaison",
+   "role": "secours",
+   "url": "/comparaison",
+   "violations": [],
+   "bonnes_pratiques": []
+  },
+  {
+   "ecran": "/confiance",
+   "role": "secours",
+   "url": "/confiance",
+   "violations": [],
+   "bonnes_pratiques": []
+  },
+  {
+   "ecran": "/approvals",
+   "role": "secours",
+   "url": "/approvals",
+   "violations": [],
+   "bonnes_pratiques": []
+  },
+  {
+   "ecran": "/validation",
+   "role": "secours",
+   "url": "/validation",
+   "violations": [],
+   "bonnes_pratiques": []
+  },
+  {
+   "ecran": "/qualite",
+   "role": "secours",
+   "url": "/qualite",
+   "violations": [],
+   "bonnes_pratiques": []
+  },
+  {
+   "ecran": "/notifications",
+   "role": "secours",
+   "url": "/notifications",
+   "violations": [],
+   "bonnes_pratiques": []
+  },
+  {
+   "ecran": "/comptes",
+   "role": "secours",
+   "url": "/fichiers",
+   "violations": [],
+   "bonnes_pratiques": []
+  },
+  {
+   "ecran": "/gabarits",
+   "role": "secours",
+   "url": "/gabarits",
+   "violations": [],
+   "bonnes_pratiques": []
+  },
+  {
+   "ecran": "/",
    "role": "admin",
    "url": "/fichiers",
    "violations": [],
-   "bonnes_pratiques": [
-    "region"
-   ]
+   "bonnes_pratiques": []
   },
   {
    "ecran": "/recherche",
@@ -17,9 +115,7 @@
    "url": "/recherche",
    "violations": [],
    "bonnes_pratiques": [
-    "landmark-one-main",
-    "page-has-heading-one",
-    "region"
+    "page-has-heading-one"
    ]
   },
   {
@@ -27,29 +123,21 @@
    "role": "admin",
    "url": "/fichiers",
    "violations": [],
-   "bonnes_pratiques": [
-    "region"
-   ]
+   "bonnes_pratiques": []
   },
   {
    "ecran": "/dossiers",
    "role": "admin",
    "url": "/dossiers",
    "violations": [],
-   "bonnes_pratiques": [
-    "landmark-one-main",
-    "region"
-   ]
+   "bonnes_pratiques": []
   },
   {
    "ecran": "/nouveau",
    "role": "admin",
    "url": "/nouveau",
    "violations": [],
-   "bonnes_pratiques": [
-    "landmark-one-main",
-    "region"
-   ]
+   "bonnes_pratiques": []
   },
   {
    "ecran": "/extractions",
@@ -64,9 +152,7 @@
    "url": "/comparaison",
    "violations": [],
    "bonnes_pratiques": [
-    "heading-order",
-    "landmark-one-main",
-    "region"
+    "heading-order"
    ]
   },
   {
@@ -95,10 +181,7 @@
    "role": "admin",
    "url": "/qualite",
    "violations": [],
-   "bonnes_pratiques": [
-    "landmark-one-main",
-    "region"
-   ]
+   "bonnes_pratiques": []
   },
   {
    "ecran": "/notifications",
@@ -119,19 +202,14 @@
    "role": "admin",
    "url": "/gabarits",
    "violations": [],
-   "bonnes_pratiques": [
-    "landmark-one-main",
-    "region"
-   ]
+   "bonnes_pratiques": []
   },
   {
    "ecran": "/",
    "role": "approbateur",
    "url": "/fichiers",
    "violations": [],
-   "bonnes_pratiques": [
-    "region"
-   ]
+   "bonnes_pratiques": []
   },
   {
    "ecran": "/recherche",
@@ -139,9 +217,7 @@
    "url": "/recherche",
    "violations": [],
    "bonnes_pratiques": [
-    "landmark-one-main",
-    "page-has-heading-one",
-    "region"
+    "page-has-heading-one"
    ]
   },
   {
@@ -149,29 +225,21 @@
    "role": "approbateur",
    "url": "/fichiers",
    "violations": [],
-   "bonnes_pratiques": [
-    "region"
-   ]
+   "bonnes_pratiques": []
   },
   {
    "ecran": "/dossiers",
    "role": "approbateur",
    "url": "/dossiers",
    "violations": [],
-   "bonnes_pratiques": [
-    "landmark-one-main",
-    "region"
-   ]
+   "bonnes_pratiques": []
   },
   {
    "ecran": "/nouveau",
    "role": "approbateur",
    "url": "/nouveau",
    "violations": [],
-   "bonnes_pratiques": [
-    "landmark-one-main",
-    "region"
-   ]
+   "bonnes_pratiques": []
   },
   {
    "ecran": "/extractions",
@@ -179,10 +247,8 @@
    "url": "/extractions",
    "violations": [],
    "bonnes_pratiques": [
-    "landmark-one-main",
     "landmark-unique",
-    "page-has-heading-one",
-    "region"
+    "page-has-heading-one"
    ]
   },
   {
@@ -191,9 +257,7 @@
    "url": "/comparaison",
    "violations": [],
    "bonnes_pratiques": [
-    "heading-order",
-    "landmark-one-main",
-    "region"
+    "heading-order"
    ]
   },
   {
@@ -216,10 +280,8 @@
    "url": "/validation",
    "violations": [],
    "bonnes_pratiques": [
-    "landmark-one-main",
     "landmark-unique",
-    "page-has-heading-one",
-    "region"
+    "page-has-heading-one"
    ]
   },
   {
@@ -227,10 +289,7 @@
    "role": "approbateur",
    "url": "/qualite",
    "violations": [],
-   "bonnes_pratiques": [
-    "landmark-one-main",
-    "region"
-   ]
+   "bonnes_pratiques": []
   },
   {
    "ecran": "/notifications",
@@ -251,19 +310,14 @@
    "role": "approbateur",
    "url": "/gabarits",
    "violations": [],
-   "bonnes_pratiques": [
-    "landmark-one-main",
-    "region"
-   ]
+   "bonnes_pratiques": []
   },
   {
    "ecran": "/",
    "role": "utilisateur",
    "url": "/fichiers",
    "violations": [],
-   "bonnes_pratiques": [
-    "region"
-   ]
+   "bonnes_pratiques": []
   },
   {
    "ecran": "/recherche",
@@ -271,9 +325,7 @@
    "url": "/recherche",
    "violations": [],
    "bonnes_pratiques": [
-    "landmark-one-main",
-    "page-has-heading-one",
-    "region"
+    "page-has-heading-one"
    ]
   },
   {
@@ -281,29 +333,21 @@
    "role": "utilisateur",
    "url": "/fichiers",
    "violations": [],
-   "bonnes_pratiques": [
-    "region"
-   ]
+   "bonnes_pratiques": []
   },
   {
    "ecran": "/dossiers",
    "role": "utilisateur",
    "url": "/dossiers",
    "violations": [],
-   "bonnes_pratiques": [
-    "landmark-one-main",
-    "region"
-   ]
+   "bonnes_pratiques": []
   },
   {
    "ecran": "/nouveau",
    "role": "utilisateur",
    "url": "/nouveau",
    "violations": [],
-   "bonnes_pratiques": [
-    "landmark-one-main",
-    "region"
-   ]
+   "bonnes_pratiques": []
   },
   {
    "ecran": "/extractions",
@@ -318,9 +362,7 @@
    "url": "/comparaison",
    "violations": [],
    "bonnes_pratiques": [
-    "heading-order",
-    "landmark-one-main",
-    "region"
+    "heading-order"
    ]
   },
   {
@@ -349,10 +391,7 @@
    "role": "utilisateur",
    "url": "/qualite",
    "violations": [],
-   "bonnes_pratiques": [
-    "landmark-one-main",
-    "region"
-   ]
+   "bonnes_pratiques": []
   },
   {
    "ecran": "/notifications",
@@ -373,19 +412,14 @@
    "role": "utilisateur",
    "url": "/gabarits",
    "violations": [],
-   "bonnes_pratiques": [
-    "landmark-one-main",
-    "region"
-   ]
+   "bonnes_pratiques": []
   },
   {
    "ecran": "/",
    "role": "lecture",
    "url": "/fichiers",
    "violations": [],
-   "bonnes_pratiques": [
-    "region"
-   ]
+   "bonnes_pratiques": []
   },
   {
    "ecran": "/recherche",
@@ -393,9 +427,7 @@
    "url": "/recherche",
    "violations": [],
    "bonnes_pratiques": [
-    "landmark-one-main",
-    "page-has-heading-one",
-    "region"
+    "page-has-heading-one"
    ]
   },
   {
@@ -403,19 +435,14 @@
    "role": "lecture",
    "url": "/fichiers",
    "violations": [],
-   "bonnes_pratiques": [
-    "region"
-   ]
+   "bonnes_pratiques": []
   },
   {
    "ecran": "/dossiers",
    "role": "lecture",
    "url": "/dossiers",
    "violations": [],
-   "bonnes_pratiques": [
-    "landmark-one-main",
-    "region"
-   ]
+   "bonnes_pratiques": []
   },
   {
    "ecran": "/nouveau",
@@ -437,9 +464,7 @@
    "url": "/comparaison",
    "violations": [],
    "bonnes_pratiques": [
-    "heading-order",
-    "landmark-one-main",
-    "region"
+    "heading-order"
    ]
   },
   {
@@ -468,10 +493,7 @@
    "role": "lecture",
    "url": "/qualite",
    "violations": [],
-   "bonnes_pratiques": [
-    "landmark-one-main",
-    "region"
-   ]
+   "bonnes_pratiques": []
   },
   {
    "ecran": "/notifications",
@@ -492,10 +514,7 @@
    "role": "lecture",
    "url": "/gabarits",
    "violations": [],
-   "bonnes_pratiques": [
-    "landmark-one-main",
-    "region"
-   ]
+   "bonnes_pratiques": []
   },
   {
    "ecran": "/login",
@@ -506,13 +525,11 @@
   },
   {
    "ecran": "/recherche?vide",
-   "role": "utilisateur",
+   "role": "secours",
    "url": "/recherche",
    "violations": [],
    "bonnes_pratiques": [
-    "landmark-one-main",
-    "page-has-heading-one",
-    "region"
+    "page-has-heading-one"
    ]
   },
   {

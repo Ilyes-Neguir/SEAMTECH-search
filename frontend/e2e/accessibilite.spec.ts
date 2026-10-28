@@ -54,8 +54,42 @@ async function codesFiches(page: Page): Promise<string[]> {
   return codes.slice(0, 3)
 }
 
+/**
+ * Fige les animations avant l'analyse.
+ *
+ * Le contenu est révélé par une animation d'opacité (0 → 1 sur 0,55 s, utilitaire
+ * `hisser`). Une analyse lancée pendant la révélation mesure des couleurs
+ * MÉLANGÉES au fond et fabrique de faux échecs de contraste (2,1:1 au lieu de
+ * 7:1), différents à chaque exécution. Axe recommande explicitement de figer
+ * les animations avant `analyze()` : on le fait, une fois par page.
+ */
+const FIGER_ANIMATIONS = `*, *::before, *::after {
+  animation-duration: 0s !important;
+  animation-delay: 0s !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0s !important;
+  transition-delay: 0s !important;
+}`
+
 async function scanner(page: Page, ecran: string, role: string): Promise<void> {
-  await page.waitForLoadState("networkidle")
+  // `networkidle` n'aboutit jamais sur les écrans qui sondent en continu
+  // (notifications, file de validation) : on attend le document, puis un
+  // court temps de peinture. Axe analyse le DOM rendu, pas le réseau.
+  await page.waitForLoadState("load")
+  await page.waitForTimeout(120)
+  // Une navigation a pu remplacer le document entre-temps (redirection de
+  // session, rechargement après hydratation) : on réessaie une fois plutôt que
+  // d'échouer sur « execution context was destroyed ».
+  for (let essai = 1; ; essai += 1) {
+    try {
+      await page.addStyleTag({ content: FIGER_ANIMATIONS })
+      break
+    } catch (erreur) {
+      if (essai >= 2) throw erreur
+      await page.waitForLoadState("load")
+      await page.waitForTimeout(150)
+    }
+  }
   const resultat = await new AxeBuilder({ page }).withTags(TAGS).analyze()
   const bonnes = await new AxeBuilder({ page }).withTags(["best-practice"]).analyze()
   const constat: Constat = {
@@ -103,6 +137,25 @@ const ECRANS = [
 ]
 
 test.describe("Accessibilité axe-core — tous les écrans", () => {
+  // Le compte de secours existe dans TOUS les modes : c'est lui qui garantit
+  // que chaque écran est scanné même quand la CI tourne sans PostgreSQL
+  // nominatif. Les rôles canoniques n'existent qu'en mode « e2e live ».
+  test("tous les écrans — compte de secours", async ({ page }) => {
+    test.setTimeout(240_000) // 14 écrans × (chargement + 2 analyses axe)
+    await signIn(page)
+    for (const ecran of ECRANS) {
+      const reponse = await page.goto(ecran)
+      if (reponse && reponse.status() >= 500) {
+        throw new Error(`${ecran} a répondu ${reponse.status()} pour le compte de secours`)
+      }
+      if (reponse && reponse.status() === 403) {
+        constats.push({ ecran, role: "secours", url: ecran, violations: [], bonnes_pratiques: [] })
+        continue
+      }
+      await scanner(page, ecran, "secours")
+    }
+  })
+
   for (const role of [
     { nom: "admin", identifiants: ADMIN },
     { nom: "approbateur", identifiants: APPROBATEUR },
@@ -110,6 +163,11 @@ test.describe("Accessibilité axe-core — tous les écrans", () => {
     { nom: "lecture", identifiants: LECTURE },
   ]) {
     test(`écrans principaux — ${role.nom}`, async ({ page }) => {
+      test.skip(
+        !process.env.SEAMTECH_E2E_DATABASE_URL,
+        "rôles canoniques : requiert SEAMTECH_E2E_DATABASE_URL (PostgreSQL nominatif)",
+      )
+      test.setTimeout(240_000)
       await signInWith(page, role.identifiants)
       for (const ecran of ECRANS) {
         const reponse = await page.goto(ecran)
@@ -128,6 +186,11 @@ test.describe("Accessibilité axe-core — tous les écrans", () => {
   }
 
   test("écrans de détail (fiche, dossier) — admin", async ({ page }) => {
+    test.setTimeout(180_000)
+    test.skip(
+      !process.env.SEAMTECH_E2E_DATABASE_URL,
+      "rôles canoniques : requiert SEAMTECH_E2E_DATABASE_URL (PostgreSQL nominatif)",
+    )
     await signInWith(page, ADMIN)
     for (const code of await codesFiches(page)) {
       const reponse = await page.goto(`/fiches/${encodeURIComponent(code)}`)
@@ -140,15 +203,16 @@ test.describe("Accessibilité axe-core — tous les écrans", () => {
   })
 
   test("écrans d'état : login, recherche vide, session expirée", async ({ page, context }) => {
+    test.setTimeout(120_000)
     await page.goto("/login")
     await scanner(page, "/login", "anonyme")
 
-    await signInWith(page, UTILISATEUR)
+    await signIn(page)
     await page.goto("/recherche")
     await page.getByTestId("recherche-saisie").fill("zzzz-aucun-resultat-zzzz")
     await page.keyboard.press("Enter")
     await page.waitForLoadState("networkidle")
-    await scanner(page, "/recherche?vide", "utilisateur")
+    await scanner(page, "/recherche?vide", "secours")
 
     // Session expirée : le cookie est conservé mais le serveur ne la reconnaît
     // plus — l'écran de refus doit rester accessible et lisible.

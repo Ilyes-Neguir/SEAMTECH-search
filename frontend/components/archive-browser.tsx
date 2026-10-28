@@ -73,7 +73,7 @@ export function ArchiveBrowser() {
   }
 
   return (
-    <main className="flex min-h-[calc(100vh-7rem)] flex-col" data-testid="archive-browser">
+    <div className="flex min-h-[calc(100vh-7rem)] flex-col" data-testid="archive-browser">
       <header className="border-b border-border bg-card/30 px-4 py-4 sm:px-6">
         <div className="mx-auto flex max-w-[1600px] flex-wrap items-end justify-between gap-4">
           <div>
@@ -149,6 +149,6 @@ export function ArchiveBrowser() {
           {pieceActive && <button type="button" onClick={() => setPieceActive(null)} className="absolute left-4 top-2 z-20 rounded border border-border bg-background px-2 py-1 text-xs lg:hidden"><ChevronLeft className="mr-1 inline size-3.5" />Retour aux fichiers</button>}
         </section>
       </div>
-    </main>
+    </div>
   )
 }
