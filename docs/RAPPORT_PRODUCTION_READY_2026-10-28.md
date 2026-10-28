@@ -5,7 +5,9 @@ accord explicite). Ce rapport répond aux deux documents du 28/10/2026
 (campagne complémentaire + synthèse NON GO). Il dit **PRÊT** ou **NON PRÊT**
 point par point, avec la commande exécutée et son résultat brut.
 
-Commit de référence : **`9c483e1`** (branche poussée, PR #42). Les 4 workflows
+SHA de code de référence : **`9c483e1`** (branche `arena/a4dbb7f0-seamtech-search`,
+PR #42) ; le présent rapport et ses mises à jour sont des commits `docs` posés
+au-dessus, sans changement de code. Les 4 workflows
 GitHub Actions (`CI`, `Qualification native`, `Qualification reserves`,
 `Perf comparaison`) sont **verts sur ce SHA exact**, en `push` comme en
 `pull_request` (runs `40780335856`/`40780345402` pour `CI`).
