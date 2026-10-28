@@ -9,7 +9,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from zipfile import BadZipFile, ZipFile
 
+from .pdf_orientation import (
+    caracteres_minoritaires,
+    lignes_minoritaires,
+    page_a_orienter,
+    texte_page,
+)
+
 logger = logging.getLogger("seamtech_search.extractors")
+
 
 # Bump this whenever extraction logic changes for any format. The indexer
 # uses it (alongside size/modified_at) to decide whether a previously
@@ -22,7 +30,12 @@ logger = logging.getLogger("seamtech_search.extractors")
 # pipeline when ocrmypdf is absent — previously they stayed « unavailable »
 # even with tesseract installed.
 # v6: OCR tesseract fra+eng when both language packs are present.
-CURRENT_EXTRACTOR_VERSION = 6
+# v7: rotation-aware PDF text (90/180/270 degrees rebuilt along the real
+# glyph direction, tables kept in reading order) and minority-orientation
+# glyphs (vertical stamps, margin notes) excluded from the page body before
+# extraction — a fix that MUST re-extract already-indexed PDFs, otherwise the
+# old reversed words ("NOPMAT") stay in the index forever.
+CURRENT_EXTRACTOR_VERSION = 7
 
 EXTRACTION_STATUSES = {"extracted", "unavailable", "skipped", "error", "timeout", "not_applicable"}
 
@@ -341,6 +354,10 @@ def _table_row_already_in_text(cells: list[str], normalized_text: str) -> bool:
     return all(" ".join(cell.split()) in normalized_text for cell in cells)
 
 
+class _TableauxNonDetectes(RuntimeError):
+    """Sur une page pivotée, la détection de tableaux n'est pas fiable (voir pdf_orientation)."""
+
+
 def _extract_pdf_with_plumber(path: Path, max_chars: int) -> str | None:
     """Return extracted text, an unavailable marker, or None to fall back."""
     try:
@@ -352,8 +369,33 @@ def _extract_pdf_with_plumber(path: Path, max_chars: int) -> str | None:
         total = 0
         with pdfplumber.open(str(path)) as pdf:
             for page in pdf.pages:
-                text = page.extract_text(x_tolerance=2, y_tolerance=2) or ""
+                # Le test d'orientation est fait UNE fois : il parcourt les
+                # caractères de la page.
+                pivote = page_a_orienter(page)
+                if pivote:
+                    # Page pivotée : `extract_text` regroupe les glyphes par
+                    # ordonnée et rend un mot par ligne (90°/270°) ou le texte
+                    # à l'envers (180°). On reconstruit les lignes le long de
+                    # la direction réelle des glyphes (voir pdf_orientation).
+                    # Les tableaux ne sont pas redétectés ici : leurs cellules
+                    # restent extraites, dans l'ordre de lecture, via les
+                    # caractères (limite documentée, testée).
+                    text = texte_page(page.chars, float(page.height)) or ""
+                else:
+                    # Texte d'orientation minoritaire (tampon vertical, mention
+                    # en marge) : extrait à part et retiré de la page avant
+                    # `extract_text`, sinon pdfplumber le rend inversé
+                    # (« NOPMAT ») et l'index se remplit de faux mots.
+                    ids_minoritaires = {id(c) for c in caracteres_minoritaires(page.chars)}
+                    page_travail = (
+                        page.filter(lambda objet: id(objet) not in ids_minoritaires)
+                        if ids_minoritaires
+                        else page
+                    )
+                    text = page_travail.extract_text(x_tolerance=2, y_tolerance=2) or ""
                 try:
+                    if pivote:
+                        raise _TableauxNonDetectes("page pivotée")
                     # extract_text() already yields the words inside table
                     # cells, so a table row whose cells all appear in the page
                     # text would only duplicate content: every document stored
@@ -361,7 +403,7 @@ def _extract_pdf_with_plumber(path: Path, max_chars: int) -> str | None:
                     # Keep only the rows that add new information (e.g. pages
                     # where the plain-text layer garbles the table layout).
                     normalized = " ".join(text.split())
-                    for table in page.extract_tables() or []:
+                    for table in page_travail.extract_tables() or []:
                         fresh_rows = [
                             " | ".join(cell.strip() if cell else "" for cell in cells)
                             for cells in table
@@ -373,6 +415,21 @@ def _extract_pdf_with_plumber(path: Path, max_chars: int) -> str | None:
                 except Exception as exc:
                     # Tables are a bonus; plain text is still usable.
                     logger.debug("Table extraction failed for %s: %s", path.name, exc)
+                # Texte d'orientation minoritaire (tampon vertical, mention en
+                # marge) : pdfplumber ne le rend pas dans extract_text, il
+                # disparaîtrait donc de l'index. Ajouté une seule fois, jamais
+                # dupliqué avec le corps de page.
+                try:
+                    corps = " ".join(text.split())
+                    marginales = [
+                        ligne
+                        for ligne in lignes_minoritaires(page.chars, float(page.height))
+                        if " ".join(ligne.split()) not in corps
+                    ]
+                    if marginales:
+                        text += "\n" + "\n".join(marginales)
+                except Exception as exc:
+                    logger.debug("Texte marginal non extrait pour %s: %s", path.name, exc)
                 if text.strip():
                     chunks.append(text)
                     total += len(text)

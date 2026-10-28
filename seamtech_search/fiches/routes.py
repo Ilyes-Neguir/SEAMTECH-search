@@ -2014,7 +2014,7 @@ def enregistrer_routes_fiches(
                 detail="Dossier hors des racines configurées : dépôt refusé (Lot 0b).",
             )
         try:
-            resultat = deposer_dossier(index, Path(dossier))
+            resultat = deposer_dossier(index, Path(dossier), config=config)
         except DepotImpossible as erreur:
             raise HTTPException(status_code=422, detail=str(erreur)) from erreur
         lot = etat_lot(index, int(resultat.get("id_lot") or 0)) if resultat.get("id_lot") else None
@@ -2106,7 +2106,12 @@ def enregistrer_routes_fiches(
                 raise HTTPException(status_code=422, detail=str(erreur)) from erreur
 
         if not fond:
-            return {"id_lot": id_lot, "statut": "termine", "traitement": "synchrone", "etat": executer_lot(index, id_lot)}
+            return {
+                "id_lot": id_lot,
+                "statut": "termine",
+                "traitement": "synchrone",
+                "etat": executer_lot(index, id_lot, config=config),
+            }
 
         job_id = f"lot-{id_lot}"
         redis_store = RedisStore(config=config)
@@ -2153,6 +2158,7 @@ def enregistrer_routes_fiches(
 
         thread = threading.Thread(
             target=executer_lot,
+            kwargs={"config": config},
             args=(index, id_lot),
             name=f"lot-{id_lot}",
             daemon=True,

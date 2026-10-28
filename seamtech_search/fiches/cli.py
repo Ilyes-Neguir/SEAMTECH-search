@@ -22,6 +22,7 @@ import argparse
 import logging
 import sys
 from pathlib import Path
+from typing import Any
 
 from seamtech_search.fiches.extraction import extraire_avec_filet, extraire_fiche
 from seamtech_search.fiches.gabarits import (
@@ -42,6 +43,21 @@ from seamtech_search.fiches.persistance import (
 )
 
 LOGGER = logging.getLogger("seamtech_search.fiches.cli")
+
+
+def _config() -> Any:
+    """Configuration d'exécution pour la CLI (stockage objet inclus).
+
+    Priorité au fichier de configuration standard s'il existe ; sinon une
+    configuration minimale construite sur le répertoire courant, complétée par
+    les variables d'environnement ``SEAMTECH_S3_*`` (AppConfig.load les lit).
+    """
+    from seamtech_search.config import AppConfig, default_config_path
+
+    chemin = default_config_path()
+    if chemin and Path(chemin).exists():
+        return AppConfig.load(chemin)
+    return AppConfig(root_paths=[Path.cwd()])
 
 
 def _index(database_url: str):
@@ -169,7 +185,7 @@ def _cmd_deposer(arguments: argparse.Namespace) -> int:
     from seamtech_search.fiches.depot import deposer_dossier, etat_lot
 
     index = _index(arguments.database_url)
-    resultat = deposer_dossier(index, Path(arguments.dossier))
+    resultat = deposer_dossier(index, Path(arguments.dossier), config=_config())
     print(f"Dossier : {arguments.dossier}")
     print(f"  statut : {resultat['statut']}" + (f" — {resultat['raison']}" if resultat["raison"] else ""))
     if resultat.get("fiche"):
@@ -186,7 +202,9 @@ def _cmd_lot(arguments: argparse.Namespace) -> int:
     index = _index(arguments.database_url)
     id_lot = creer_lot(index, Path(arguments.racine), recursif=not arguments.non_recursif)
     print(f"Lot #{id_lot} créé ({arguments.racine}).")
-    etat = executer_lot(index, id_lot, interrompre_apres=arguments.interrompre_apres)
+    etat = executer_lot(
+        index, id_lot, interrompre_apres=arguments.interrompre_apres, config=_config()
+    )
     print(
         f"  statut : {etat['statut']} — {etat['nb_traites']} traité(s), {etat['nb_echecs']} échec(s), "
         f"{len(etat['restants'])} restant(s)"
@@ -195,6 +213,20 @@ def _cmd_lot(arguments: argparse.Namespace) -> int:
         if dossier["statut"] == "echec":
             print(f"    ÉCHEC {dossier['chemin_dossier']} : {dossier['raison']}")
     return 0 if etat["statut"] == "termine" else 1
+
+
+def _cmd_promouvoir(arguments: argparse.Namespace) -> int:
+    """Reprise : envoie vers le stockage objet les fichiers de lots non promus."""
+    from seamtech_search.fiches.promotion import promouvoir_en_attente
+
+    index = _index(arguments.database_url)
+    resultat = promouvoir_en_attente(index, _config(), limite=arguments.limite)
+    print(f"Promotion : {resultat['statut']} — {resultat.get('promus', 0)}/{resultat.get('candidats', 0)} promu(s)")
+    for absent in resultat.get("absents", [])[:10]:
+        print(f"  fichier absent (non promouvable) : {absent}")
+    for echec in resultat.get("echecs", [])[:10]:
+        print(f"  échec : {echec}")
+    return 0 if resultat["statut"] in ("uploaded", "not_configured") else 1
 
 
 def principal(argv: list[str] | None = None) -> int:
@@ -232,6 +264,13 @@ def principal(argv: list[str] | None = None) -> int:
     )
     lot.add_argument("--interrompre-apres", type=int, default=None, help="interruption volontaire (tests de reprise)")
 
+    promouvoir = sous.add_parser(
+        "promouvoir",
+        help="P0.2 : (re)envoie vers MinIO/S3/R2 les fichiers de lots non encore promus",
+    )
+    promouvoir.add_argument("--database-url", required=True)
+    promouvoir.add_argument("--limite", type=int, default=200)
+
     banc = sous.add_parser("banc", help="non-régression : fiche extraite vs vérité gabarit_test")
     banc.add_argument("chemin")
     banc.add_argument("--database-url", default=None, help="base PostgreSQL (si omis : banc autonome)")
@@ -248,6 +287,7 @@ def principal(argv: list[str] | None = None) -> int:
             "banc": _cmd_banc,
             "deposer": _cmd_deposer,
             "lot": _cmd_lot,
+            "promouvoir": _cmd_promouvoir,
         }[arguments.commande](arguments)
     except Exception as erreur:
         LOGGER.exception("Échec du traitement (conséquence : rien n'a été écrit).")

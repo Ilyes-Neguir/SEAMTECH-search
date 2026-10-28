@@ -402,6 +402,192 @@ def restaurer_objets_s3(manifeste: dict, racine_sauvegarde: Path, client_s3) -> 
     return {"nb": len(restaures), "objets": restaures}
 
 
+#: Motifs ignorés dans une sauvegarde de répertoire de données : ce sont des
+#: fichiers VOLATILES (verrous, temporaires d'écriture, pid), dont la copie
+#: donnerait une fausse impression d'exhaustivité tout en produisant une
+#: restauration inutilisable (un verrou restauré bloque le démarrage).
+MOTIFS_VOLATILES = ("*.lock", "*.tmp", "*.pid", "*.lck", ".~lock.*")
+
+
+def inventorier_data(racines_data: list[Path], exclure: list[Path] | None = None) -> dict:
+    """Inventaire COMPLET des répertoires de données (pas seulement le référencé).
+
+    Le rapport du 28/10 reprochait exactement cela : la sauvegarde ne couvrait
+    que les fichiers *référencés en base*. Or ``./data`` contient aussi les
+    lots téléversés en cours de promotion (``uploads/lots-televerses``), la
+    quarantaine, les rapports générés — des octets qui n'ont aucune ligne dans
+    ``documents`` et qu'aucune sauvegarde ne restituait.
+
+    Aucune écriture, aucun suivi de lien symbolique sortant : un lien qui sort
+    de la racine est signalé, jamais suivi (il ferait entrer un fichier hors
+    périmètre dans la sauvegarde).
+    """
+    racines = [Path(racine) for racine in racines_data or []]
+    exclusions = [Path(chemin).resolve() for chemin in (exclure or [])]
+    fichiers: list[dict] = []
+    ignorés_volatiles = 0
+    liens_sortants: list[dict] = []
+    absentes: list[str] = []
+    for numero, racine in enumerate(racines):
+        if not racine.exists():
+            absentes.append(str(racine))
+            continue
+        if not racine.is_dir():
+            absentes.append(str(racine))
+            continue
+        for chemin in sorted(racine.rglob("*")):
+            if any(chemin.resolve() == exclusion or exclusion in chemin.resolve().parents for exclusion in exclusions):
+                continue
+            if chemin.is_symlink():
+                try:
+                    chemin.resolve().relative_to(racine.resolve())
+                except ValueError:
+                    liens_sortants.append({"racine": str(racine), "chemin": str(chemin.relative_to(racine))})
+                    continue
+            if not chemin.is_file():
+                continue
+            if any(chemin.match(motif) for motif in MOTIFS_VOLATILES):
+                ignorés_volatiles += 1
+                continue
+            try:
+                taille = chemin.stat().st_size
+                empreinte = _sha256_fichier(chemin)
+            except OSError as exc:
+                files_illisible = {"racine": str(racine), "chemin": str(chemin.relative_to(racine)), "erreur": type(exc).__name__}
+                fichiers.append({**files_illisible, "taille": 0, "sha256": ""})
+                continue
+            fichiers.append(
+                {
+                    "racine_index": numero,
+                    "racine": str(racine),
+                    "chemin": str(chemin.relative_to(racine)),
+                    "taille": taille,
+                    "sha256": empreinte,
+                }
+            )
+    return {
+        "racines": [str(racine) for racine in racines],
+        "absentes": absentes,
+        "nb_fichiers": len(fichiers),
+        "octets": sum(f["taille"] for f in fichiers),
+        "ignores_volatiles": ignorés_volatiles,
+        "liens_sortants": liens_sortants,
+        "illisibles": [f for f in fichiers if not f["sha256"]],
+        "fichiers": [f for f in fichiers if f["sha256"]],
+    }
+
+
+def copier_data(racines_data: list[Path], destination: Path, exclure: list[Path] | None = None) -> dict:
+    """Copie l'arborescence de données dans le bundle, en conservant les chemins.
+
+    L'arborescence est reproduite à l'identique sous ``data/<n>/`` : une
+    restauration remet chaque fichier à SA place, pas dans un vrac indexé par
+    identifiant. Les volatiles sont ignorés, les liens sortants signalés.
+    """
+    inventaire = inventorier_data(racines_data, exclure=exclure)
+    base = Path(destination)
+    copies: list[dict] = []
+    echecs: list[dict] = []
+    for fichier in inventaire["fichiers"]:
+        source = Path(fichier["racine"]) / fichier["chemin"]
+        relatif = Path("data") / str(fichier["racine_index"]) / fichier["chemin"]
+        cible = base / relatif
+        try:
+            cible.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, cible)
+        except OSError as exc:
+            echecs.append({"chemin": fichier["chemin"], "erreur": type(exc).__name__})
+            continue
+        empreinte = _sha256_fichier(cible)
+        if empreinte != fichier["sha256"]:
+            echecs.append({"chemin": fichier["chemin"], "erreur": "empreinte copiée différente"})
+            continue
+        copies.append({**fichier, "path_relatif": relatif.as_posix()})
+    return {
+        "copies": copies,
+        "echecs": echecs,
+        "nb_copies": len(copies),
+        "nb_echecs": len(echecs),
+        "ignores_volatiles": inventaire["ignores_volatiles"],
+        "liens_sortants": inventaire["liens_sortants"],
+        "absentes": inventaire["absentes"],
+    }
+
+
+def restaurer_data(manifeste: dict, racine_sauvegarde: Path, destination: Path) -> dict:
+    """Restaure l'arborescence de données du bundle vers ``destination``.
+
+    Chaque fichier est vérifié (SHA-256 du manifeste) AVANT d'être écrit à sa
+    place ; un écart arrête la restauration — mieux vaut zéro fichier restauré
+    qu'une arborescence partiellement fausse qu'on croirait complète.
+    """
+    destination = Path(destination)
+    restaures: list[dict] = []
+    for copie in (manifeste.get("data") or {}).get("copies") or []:
+        source = Path(racine_sauvegarde) / copie["path_relatif"]
+        if not source.is_file():
+            raise SauvegardeError(f"fichier de données absent du bundle : {copie['path_relatif']}")
+        empreinte = _sha256_fichier(source)
+        if empreinte != copie["sha256"]:
+            raise SauvegardeError(
+                f"empreinte données {copie['chemin']} {empreinte[:12]}… ≠ manifeste {copie['sha256'][:12]}…"
+            )
+        cible = destination / copie["chemin"]
+        cible.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, cible)
+        restaures.append({"chemin": copie["chemin"], "sha256": empreinte, "path": str(cible)})
+    return {"nb": len(restaures), "fichiers": restaures}
+
+
+def restaurer_complet(
+    base_cible_url: str,
+    manifeste: dict,
+    racine_sauvegarde: Path,
+    *,
+    data_cible: Path | None = None,
+    fichiers_cible: Path | None = None,
+    client_s3=None,
+    verifier_apres: bool = True,
+    chemin_dump_local: Path | None = None,
+) -> dict:
+    """Restauration COORDONNÉE : base + arborescence de données + objets, puis contrôle.
+
+    C'est le point que le rapport jugeait « non prouvé » : un dump restauré seul
+    ne dit rien des fichiers, et des fichiers restaurés seuls ne disent rien de
+    l'état métier. Ici les trois composants sont restaurés depuis le MÊME
+    manifeste (donc du même instantané), et le compte rendu dit, composant par
+    composant, ce qui a été restauré, vérifié ou refusé.
+
+    Ordre volontaire : base d'abord (elle valide le manifeste et échoue vite),
+    puis données, puis objets. Un échec arrête tout et laisse le compte rendu
+    des composants déjà traités — jamais un succès partiel tu.
+    """
+    rapport: dict = {"base": None, "data": None, "fichiers": None, "objets": None, "verification": None}
+    if chemin_dump_local is None:
+        # Le dump est attendu DANS le bundle, à côté du manifeste : c'est
+        # l'agencement produit par `sauver`. Sans ce repli, une restauration
+        # locale exigerait une clé S3 pour un dump présent sur le disque.
+        candidat = Path(racine_sauvegarde) / manifeste["dump"]["fichier"]
+        chemin_dump_local = candidat if candidat.is_file() else None
+    rapport["base"] = restaurer(
+        base_cible_url, manifeste, chemin_dump_local=chemin_dump_local, client_s3=client_s3
+    )
+    if data_cible is not None and (manifeste.get("data") or {}).get("copies"):
+        rapport["data"] = restaurer_data(manifeste, Path(racine_sauvegarde), Path(data_cible))
+    if fichiers_cible is not None and (manifeste.get("fichiers_locaux") or {}).get("copies"):
+        rapport["fichiers"] = restaurer_fichiers_locaux(manifeste, Path(racine_sauvegarde), Path(fichiers_cible))
+    if client_s3 is not None and (manifeste.get("objets_s3") or {}).get("copies"):
+        rapport["objets"] = restaurer_objets_s3(manifeste, Path(racine_sauvegarde), client_s3)
+    if verifier_apres:
+        rapport["verification"] = verifier(base_cible_url, manifeste)
+        if not rapport["verification"]["ok"]:
+            raise SauvegardeError(
+                "restauration terminée mais NON conforme au manifeste : "
+                + "; ".join(rapport["verification"]["ecarts"][:5])
+            )
+    return rapport
+
+
 def rediger_config(valeurs: dict) -> dict:
     """Instantané de configuration sans secrets (valeurs masquées)."""
     redige: dict = {}
@@ -484,6 +670,7 @@ def sauver(
     inclure_references_base: bool = False,
     client_documents_s3=None,
     verrouiller: bool = True,
+    racines_data: list[Path] | None = None,
 ) -> dict:
     """Sauvegarde : dump + inventaire archive + (optionnel) copies des pièces
     référencées + manifeste, puis envoi hors-site si ``client_s3`` est fourni.
@@ -513,6 +700,7 @@ def sauver(
             inclure_references_base=inclure_references_base,
             client_documents_s3=client_documents_s3,
             debut=debut,
+            racines_data=racines_data,
         )
     finally:
         if verrou is not None:
@@ -529,6 +717,7 @@ def _sauver_corps(
     inclure_references_base: bool = False,
     client_documents_s3=None,
     debut: float = 0.0,
+    racines_data: list[Path] | None = None,
 ) -> dict:
     horodatage = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     nom_dump = f"seamtech-search-{horodatage}.dump"
@@ -559,6 +748,26 @@ def _sauver_corps(
         "coherence": "pg_dump MVCC puis copie des références de cet instantané",
         "complet": True,
     }
+    # P0.1 : l'arborescence de données est sauvegardée EN ENTIER (pas seulement
+    # ce que la base référence). C'est ce qui couvre les lots téléversés en
+    # attente de promotion, la quarantaine et les rapports générés.
+    if racines_data:
+        lot_data = copier_data(
+            [Path(racine) for racine in racines_data],
+            dossier_local,
+            exclure=[dossier_local],
+        )
+        manifeste["data"] = {
+            "nb_copies": lot_data["nb_copies"],
+            "nb_echecs": lot_data["nb_echecs"],
+            "ignores_volatiles": lot_data["ignores_volatiles"],
+            "liens_sortants": lot_data["liens_sortants"],
+            "absentes": lot_data["absentes"],
+            "echecs": lot_data["echecs"],
+            "copies": lot_data["copies"],
+        }
+        if lot_data["nb_echecs"]:
+            manifeste["complet"] = False
     if inclure_references_base:
         refs = inventorier_references_documents(base_url)
         manifeste["references"] = {
@@ -896,6 +1105,12 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="copie les fichiers locaux et objets S3 réellement référencés par documents",
     )
+    p_sauver.add_argument(
+        "--data",
+        nargs="*",
+        default=None,
+        help="répertoire(s) de données à sauvegarder EN ENTIER (ex. ./data : lots téléversés, quarantaine)",
+    )
 
     p_restaurer = sous.add_parser("restaurer", help="restaure depuis un manifeste (local ou S3)")
     p_restaurer.add_argument("--manifeste", help="chemin local du manifeste")
@@ -913,6 +1128,15 @@ def main(argv: list[str] | None = None) -> int:
         "--restaurer-objets",
         action="store_true",
         help="restaure les objets du bundle vers le bucket documents configuré",
+    )
+    p_restaurer.add_argument(
+        "--data-cible",
+        help="répertoire où remettre l'arborescence de données du bundle (./data)",
+    )
+    p_restaurer.add_argument(
+        "--coordonnee",
+        action="store_true",
+        help="restauration COORDONNÉE (base + données + objets) avec contrôle final du manifeste",
     )
 
     p_verifier = sous.add_parser("verifier", help="compare une base vivante au manifeste")
@@ -946,6 +1170,7 @@ def main(argv: list[str] | None = None) -> int:
             retention=args.retention,
             inclure_references_base=bool(args.avec_references),
             client_documents_s3=client_documents,
+            racines_data=[Path(r) for r in (args.data or [])] or None,
         )
         sortie = {
             "manifeste": str(Path(args.dossier) / (manifeste["dump"]["fichier"] + ".manifest.json")),
@@ -962,6 +1187,31 @@ def main(argv: list[str] | None = None) -> int:
     if args.commande == "restaurer":
         client = _client_s3_depuis_env()
         manifeste = charger_manifeste(Path(args.manifeste) if args.manifeste else None, args.cle_manifeste, client)
+        if args.coordonnee:
+            racine_bundle = Path(args.manifeste).parent if args.manifeste else None
+            if racine_bundle is None:
+                raise SauvegardeError("restauration coordonnée : fournir --manifeste (bundle local)")
+            rapport = restaurer_complet(
+                args.base_cible,
+                manifeste,
+                racine_bundle,
+                data_cible=Path(args.data_cible) if args.data_cible else None,
+                fichiers_cible=Path(args.fichiers_cible) if args.fichiers_cible else None,
+                client_s3=client if args.restaurer_objets else None,
+            )
+            print(
+                json.dumps(
+                    {
+                        "base": rapport["base"]["base"],
+                        "data": (rapport["data"] or {}).get("nb", 0),
+                        "fichiers": (rapport["fichiers"] or {}).get("nb", 0),
+                        "objets": (rapport["objets"] or {}).get("nb", 0),
+                        "verification_ok": (rapport["verification"] or {}).get("ok"),
+                    },
+                    ensure_ascii=False,
+                )
+            )
+            return 0
         if args.dump:
             dump_local: Path | None = Path(args.dump)
         elif args.manifeste:

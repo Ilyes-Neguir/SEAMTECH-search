@@ -37,6 +37,7 @@ from seamtech_search.fiches.extraction import analyser_candidat_fiche, extraire_
 from seamtech_search.fiches.gabarits import GabaritDef, charger_gabarits
 from seamtech_search.fiches.modeles import FicheExtraite
 from seamtech_search.fiches.persistance import ecrire_fiche_resultat
+from seamtech_search.fiches.promotion import fichiers_pour_promotion, promouvoir_fichiers
 from seamtech_search.indexer import PG_UNACCENT_CONFIG
 
 LOGGER = logging.getLogger("seamtech_search.fiches.depot")
@@ -515,7 +516,15 @@ def _maj_ligne(index: Any, id_lot_dossier: int, statut: str, raison: str | None,
             cursor.execute(_SQL_LIGNE_MAJ, (statut, raison, id_fiche, cle, nb_pieces, id_lot_dossier))
 
 
-def deposer_dossier(index: Any, dossier: Path, gabarits: list[GabaritDef] | None = None, id_lot: int | None = None, id_lot_dossier: int | None = None) -> dict[str, Any]:
+def deposer_dossier(
+    index: Any,
+    dossier: Path,
+    gabarits: list[GabaritDef] | None = None,
+    id_lot: int | None = None,
+    id_lot_dossier: int | None = None,
+    *,
+    config: Any | None = None,
+) -> dict[str, Any]:
     """Dépose UN dossier : détecte, extrait, écrit fiche + pièces jointes en UNE
     transaction, puis met à jour la ligne de lot. Retourne un RÉSULTAT (jamais
     d'exception métier) :
@@ -523,6 +532,12 @@ def deposer_dossier(index: Any, dossier: Path, gabarits: list[GabaritDef] | None
 
     ``gabarits`` : registre (chargé de base si absent). Sans ``id_lot_dossier``,
     l'opération devient son propre lot suivi (refus compris).
+
+    ``config`` : configuration d'exécution. Quand elle porte un stockage objet,
+    les OCTETS du PDF de fiche et de ses pièces jointes sont promus vers
+    MinIO/S3/R2 après le commit (voir :mod:`seamtech_search.fiches.promotion`).
+    Sans ``config`` — appel interne hors API — le dépôt reste strictement local
+    et la promotion est laissée à ``promouvoir_en_attente``.
     """
     if not index.is_postgres:
         raise DepotImpossible("Le dépôt de dossier exige PostgreSQL (tables fiche_*, §17.1).")
@@ -596,12 +611,33 @@ def deposer_dossier(index: Any, dossier: Path, gabarits: list[GabaritDef] | None
                 _rafraichir_compteurs(index, id_lot_local)
                 if isolé:
                     _finaliser_lot(index, id_lot_local)  # un rejeu isolé = un lot qui se termine aussi
+            # P0.2 (suite) — les OCTETS du rejeu n'ont aucune raison de rester
+            # sur disque : la fiche d'origine a déjà ses fichiers, et le rejeu
+            # est identique au SHA-256 près. Sans ce nettoyage, chaque nouvel
+            # envoi du même dossier laissait une copie complète sous
+            # ``uploads/lots-televerses/<nouveau jeton>/`` que RIEN ne
+            # référençait et que la rétention ne pouvait pas élaguer (elle ne
+            # touche pas aux sessions de téléversement, par conception).
+            # On ne supprime QUE des copies stagées ET dont l'empreinte est
+            # encore celle qui a été reconnue : jamais une archive déposée par
+            # chemin, jamais un fichier modifié entre-temps.
+            copies_supprimees = _supprimer_copies_rejeu(
+                index, existant[0], plan.pdf_fiche, plan.pieces, empreinte
+            )
+            if copies_supprimees:
+                LOGGER.info(
+                    "Rejeu du dossier %s : %d copie(s) stagée(s) identique(s) supprimée(s) "
+                    "(les octets d'origine sont déjà en stockage objet).",
+                    dossier,
+                    copies_supprimees,
+                )
             return {
                 "statut": "deja_traite",
                 "fiche": None,
                 "raison": f"deja_traite (lot #{existant[1]})",
                 "pieces": len(plan.pieces),
                 "id_lot": id_lot_local,
+                "copies_rejeu_supprimees": copies_supprimees,
             }
         # L'EXCEPTION doit franchir le « with » pour déclencher le rollback de
         # la connexion : le except est donc VOLONTAIREMENT à l'extérieur —
@@ -739,6 +775,17 @@ def deposer_dossier(index: Any, dossier: Path, gabarits: list[GabaritDef] | None
         _rafraichir_compteurs(index, id_lot_local)
         if isolé:
             _finaliser_lot(index, id_lot_local)  # un dossier isolé = un lot qui se termine
+    # P0.2 / OBS-05 : les OCTETS du dossier remontent vers le stockage objet
+    # APRÈS le commit (un objet est externe : le tenir dans la transaction
+    # reviendrait à bloquer PostgreSQL sur un réseau). Un échec de stockage ne
+    # défait pas la fiche : il publie upload_status='failed' et laisse la
+    # reprise à `promouvoir_en_attente`.
+    promotion = promouvoir_fichiers(
+        index,
+        config,
+        fichiers_pour_promotion(plan.pdf_fiche, plan.pieces),
+        nom_espace=_espace_promotion(dossier, id_lot_local),
+    )
     LOGGER.info(
         "Dossier %s déposé : fiche %s (%s), %d pièce(s) jointe(s), lot #%d.",
         dossier,
@@ -761,7 +808,93 @@ def deposer_dossier(index: Any, dossier: Path, gabarits: list[GabaritDef] | None
         "revision": revision_fiche,
         "revision_avant": ecriture.revision_avant,
         "contenu_remplace": ecriture.remplacee,
+        # P0.2 : ce que le stockage objet a réellement accepté et vérifié.
+        "promotion": promotion,
     }
+
+
+def _supprimer_copies_rejeu(
+    index: Any,
+    id_lot_dossier: int,
+    pdf_fiche: Path,
+    pieces: list[Any],
+    empreinte_fiche: str,
+) -> int:
+    """Supprime les copies stagées d'un dossier REJOUÉ (idempotence).
+
+    Le rejeu a été reconnu : la fiche existante porte DÉJÀ ces octets. Les
+    copies de la nouvelle session de téléversement ne sont donc référencées par
+    rien, et la rétention ne les élague pas (elle ne touche jamais aux sessions
+    de téléversement, par conception). Sans ce nettoyage, chaque réenvoi d'une
+    affaire laissait une copie complète sous ``uploads/lots-televerses``.
+
+    Conditions cumulatives, vérifiées AVANT toute suppression :
+
+    * le fichier est sous une session de téléversement
+      (``…/lots-televerses/<jeton>/fichiers/…``) — une archive déposée par
+      chemin n'est jamais touchée (lecture seule, RG13) ;
+    * ses octets sont DÉJÀ ENREGISTRÉS pour cette fiche : le PDF de fiche a
+      l'empreinte qui a servi à reconnaître le rejeu, une pièce a l'une des
+      empreintes enregistrées dans ``fiche_piece_jointe`` pour cette fiche. Un
+      fichier modifié entre-temps n'est donc JAMAIS supprimé : ses octets ne
+      sont nulle part ailleurs ;
+    * une suppression impossible (droits, fichier déjà absent) est journalisée
+      et n'échoue jamais le dépôt.
+
+    Renvoie le nombre de copies effectivement supprimées.
+    """
+    empreintes_pieces: set[str] = set()
+    with index.connect() as connexion:
+        with connexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT p.empreinte_sha256 FROM fiche_piece_jointe p "
+                "JOIN lot_dossier l ON l.id_fiche = p.id_fiche "
+                "WHERE l.id_lot_dossier = %s",
+                (id_lot_dossier,),
+            )
+            empreintes_pieces = {str(ligne[0]) for ligne in cursor.fetchall()}
+
+    supprimes = 0
+    cibles: list[tuple[Path, bool]] = [(Path(pdf_fiche), True)]  # True = déjà enregistré
+    for piece in pieces:
+        chemin = getattr(piece, "chemin", None)
+        if chemin is None:
+            continue
+        enregistree = empreintes_pieces.__contains__(piece.empreinte_sha256)
+        cibles.append((Path(chemin), enregistree))
+    for chemin, enregistree in cibles:
+        if _chemin_logique_televersement(chemin) is None:
+            continue
+        if not enregistree:
+            LOGGER.info(
+                "Rejeu : %s n'a pas d'équivalent enregistré pour cette fiche — copie CONSERVÉE "
+                "(ses octets ne sont nulle part ailleurs).",
+                chemin,
+            )
+            continue
+        try:
+            if not chemin.is_file():
+                continue
+            chemin.unlink()
+            supprimes += 1
+        except OSError as erreur:
+            LOGGER.warning("Rejeu : copie stagée %s non supprimée (%s).", chemin, erreur)
+    return supprimes
+
+
+def _espace_promotion(dossier: Path, id_lot: int | None) -> str:
+    """Préfixe de clés du stockage objet pour un dossier de lot.
+
+    La session de téléversement est conservée quand elle est reconnaissable
+    (``uploads/lots-teverses/<jeton>/fichiers/…``) : deux envois du même nom de
+    dossier restent ainsi séparés dans le bucket, comme ils le sont sur disque.
+    """
+    parties = Path(dossier).parts
+    if _SEGMENT_LOTS_TELEVERSES in parties:
+        index_jeton = parties.index(_SEGMENT_LOTS_TELEVERSES) + 1
+        if index_jeton < len(parties):
+            return f"lots/{parties[index_jeton]}"
+    return f"lots/lot-{id_lot}" if id_lot is not None else "lots/depot"
 
 
 def creer_lot(index: Any, racine: Path, notes: str | None = None, *, recursif: bool = True) -> int:
@@ -806,6 +939,7 @@ def executer_lot(
     doit_continuer: Callable[[], bool] | None = None,
     progress_cb: Callable[[int, int], None] | None = None,
     worker_id: str | None = None,
+    config: Any | None = None,
 ) -> dict[str, Any]:
     """Traite séquentiellement les dossiers en attente d'un lot.
 
@@ -875,7 +1009,14 @@ def executer_lot(
                 )
         LOGGER.info("Lot #%s : traitement du dossier %s (%s)…", id_lot, id_lot_dossier, chemin)
         try:
-            resultat = deposer_dossier(index, chemin, gabarits=gabarits, id_lot=id_lot, id_lot_dossier=id_lot_dossier)
+            resultat = deposer_dossier(
+                index,
+                chemin,
+                gabarits=gabarits,
+                id_lot=id_lot,
+                id_lot_dossier=id_lot_dossier,
+                config=config,
+            )
         except Exception as erreur:  # filet : « le lot continue » quoi qu'il arrive
             LOGGER.exception("Lot #%s : erreur non gérée sur le dossier %s", id_lot, chemin)
             _maj_ligne(index, id_lot_dossier, "echec", f"{type(erreur).__name__}: {erreur}", None, None, 0)

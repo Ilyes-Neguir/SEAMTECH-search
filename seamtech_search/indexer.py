@@ -1236,8 +1236,15 @@ class SearchIndex:
             "et tables d'extractions d'accessoires créées."
         )
 
-    def run_migrations(self) -> None:
-        """Run pending schema migrations once at startup."""
+    def run_migrations(self, jusqu_a: str | None = None) -> None:
+        """Applique les migrations en attente au démarrage.
+
+        ``jusqu_a`` (facultatif) n'applique que les versions jusqu'à cet
+        identifiant inclus, dans l'ordre du registre : c'est ce qui permet de
+        reconstituer une installation ANTÉRIEURE (montée de version et retour
+        arrière sur une copie représentative) sans tenir une seconde liste de
+        migrations, qui divergerait de la première.
+        """
         with self.connect() as connection:
             self._ensure_migrations_table(connection)
             applied = self._get_applied_migrations(connection)
@@ -1329,6 +1336,18 @@ class SearchIndex:
                 # VERSION_SCHEMA_METIER vaut 031.
                 ("031_accessoires", self._migration_031_accessoires),
             ]
+
+            if jusqu_a is not None:
+                # Reconstitution d'une installation ANTÉRIEURE (montée de
+                # version / retour arrière sur une copie) : on tronque le
+                # registre à la version demandée au lieu d'entretenir une
+                # seconde liste de migrations qui divergerait de la première.
+                versions_connues = [version for version, _ in migrations]
+                if jusqu_a not in versions_connues:
+                    raise ValueError(
+                        f"migration inconnue : {jusqu_a!r} (connues : {', '.join(versions_connues)})"
+                    )
+                migrations = migrations[: versions_connues.index(jusqu_a) + 1]
 
             for version, func in migrations:
                 if version not in applied:

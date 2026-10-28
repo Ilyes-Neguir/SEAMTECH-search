@@ -645,6 +645,13 @@ jobs:
         # is deliberately out of scope: its transitive CVEs never reach the
         # deployed app.
         run: pnpm audit --prod --audit-level=high
+      - name: Tests unitaires (relais multipart durci)
+        # Le relais d'envoi est le seul endroit où le BFF manipule des octets de
+        # client : bornes (413), abandon client, inactivité backend (504),
+        # concurrence (429), recopie du statut réel. Ces propriétés sont
+        # éprouvées hors navigateur, en millisecondes, sur `Request`/`Response`
+        # standard — donc sans serveur ni base.
+        run: pnpm exec node --experimental-strip-types --test lib/*.test.ts
       - name: Build
         run: pnpm build
 

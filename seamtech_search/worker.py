@@ -355,6 +355,9 @@ def _process_lot_task(
             doit_continuer=doit_continuer,
             progress_cb=progress_cb,
             worker_id=worker_id,
+            # P0.2 : le worker est le seul acteur des lots en production — il
+            # doit donc promouvoir les fichiers vers le stockage objet.
+            config=config,
         )
     except DepotImpossible as erreur:
         message = f"Lot #{id_lot} impossible : {erreur}"

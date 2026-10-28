@@ -19,6 +19,7 @@ proprement au lieu de simuler une preuve.
 from __future__ import annotations
 
 import os
+import socket
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -51,6 +52,21 @@ NOUVEAU_MOT_DE_PASSE = "NouveauMotDePasse!2026"
 IDENTIFIANT = "lot0a-sessions"
 
 pytestmark = [pytest.mark.postgres, pytest.mark.redis_queue]
+
+
+def _url_redis_injoignable() -> str:
+    """URL d'un Redis VOLONTAIREMENT injoignable, choisie à l'exécution.
+
+    Le port était écrit en dur (6390) : sur toute machine où Redis écoute
+    réellement sur ce port — un bac à sable, un poste de développement, un
+    second service — le « registre mort » répondait et le test échouait alors
+    que le code testé était correct. On demande donc au système un port libre
+    et on le rend immédiatement : plus aucune collision possible.
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sonde:
+        sonde.bind(("127.0.0.1", 0))
+        port = sonde.getsockname()[1]
+    return f"redis://127.0.0.1:{port}/15"
 
 
 @pytest.fixture()
@@ -216,7 +232,7 @@ def test_changement_mot_de_passe_revoque_sessions(base_sessions: dict[str, Any])
 def test_redis_indisponible_ouverture_et_validation_fail_closed(
     base_sessions: dict[str, Any],
 ) -> None:
-    registre_mort = RegistreSessionsRedis("redis://127.0.0.1:6390/15")
+    registre_mort = RegistreSessionsRedis(_url_redis_injoignable())
 
     with pytest.raises(HTTPException) as erreur_ouverture:
         ouvrir_session(

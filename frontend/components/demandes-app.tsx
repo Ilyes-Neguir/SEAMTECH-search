@@ -478,7 +478,7 @@ export function DemandesApp() {
                         type="button"
                         onClick={() => setDecision("approuver")}
                         aria-pressed={decision === "approuver"}
-                        className={cn("inline-flex items-center gap-1.5 rounded px-3 py-2 text-xs font-semibold", decision === "approuver" ? "bg-emerald-600 text-white" : "bg-accent text-muted-foreground")}
+                        className={cn("inline-flex items-center gap-1.5 rounded px-3 py-2 text-xs font-semibold", decision === "approuver" ? "bg-emerald-700 text-white" : "bg-accent text-muted-foreground")}
                       >
                         <Check className="size-3.5" aria-hidden /> Approuver
                       </button>
