@@ -5,6 +5,11 @@ accord explicite). Ce rapport répond aux deux documents du 28/10/2026
 (campagne complémentaire + synthèse NON GO). Il dit **PRÊT** ou **NON PRÊT**
 point par point, avec la commande exécutée et son résultat brut.
 
+Commit de référence : **`9c483e1`** (branche poussée, PR #42). Les 4 workflows
+GitHub Actions (`CI`, `Qualification native`, `Qualification reserves`,
+`Perf comparaison`) sont **verts sur ce SHA exact**, en `push` comme en
+`pull_request` (runs `40780335856`/`40780345402` pour `CI`).
+
 > Règle appliquée partout : ce qui n'a pas été exécuté ici n'est pas déclaré
 > corrigé. Une limite non reproduvable en bac à sable est listée en §7 au lieu
 > d'être maquillée en preuve.
@@ -149,10 +154,11 @@ L'audit ne couvrait que deux écrans. Nouvelle spec `e2e/accessibilite.spec.ts`
 vide, login, 403, session absente.
 
 ```bash
-cd frontend && npx playwright test e2e/accessibilite.spec.ts   # 7 passed
+cd frontend && npx playwright test e2e/accessibilite.spec.ts   # 8 passed (1,6 min)
 ```
 
-**59 écrans scannés, 0 violation** (`frontend/accessibilite/rapport-axe.json`).
+**73 écrans scannés, 0 violation**, 6 rôles (`admin`, `lecture`, `utilisateur`,
+`approbateur`, `anonyme`, `secours`) — `frontend/accessibilite/rapport-axe.json`.
 Défauts réels trouvés puis corrigés :
 
 | Défaut | Gravité axe | Correctif |
@@ -165,6 +171,34 @@ Défauts réels trouvés puis corrigés :
 | contraste 4,26:1 (bandeau doublon) | serious | couleur de texte ambre 900 |
 | contraste 3,65:1 (bouton vert « Valider ») | serious | `emerald-700` (4,8:1) |
 | aucun repère `<main>` | best-practice | `<main id="contenu">` + lien d'évitement |
+| **plusieurs `<main>`** (le layout + 14 pages) | best-practice / mode strict | les 14 pages utilisent un `<div>` : un seul repère principal |
+| contraste du badge de recherche 4,36:1 | serious | `text-foreground/85` |
+
+### Stabilité de la mesure axe et mode CI sans comptes nommés — **PRÊT**
+
+Le job `e2e` de la CI est devenu rouge sur le premier SHA de cette campagne, pour
+deux raisons distinctes, toutes deux traitées :
+
+1. **Faux positifs de contraste pendant les animations** : les écrans apparaissent
+   en fondu (opacité 0 → 1 sur 0,55 s). Une analyse lancée pendant le fondu
+   mesure des couleurs mélangées (2,1:1 au lieu de ~7:1) et le verdict changeait
+   d'une exécution à l'autre. La spec injecte désormais
+   `animation-duration/transition-duration: 0s` avant `analyze()` ; l'injection
+   est rejouée une fois si Playwright lève « execution context was destroyed »
+   (navigation/hydratation), et `waitForLoadState("load")` + 120 ms remplace
+   `networkidle`, qui ne se stabilise jamais sur les écrans qui interrogent en
+   boucle (notifications, file de validation).
+2. **La CI n'expose pas `SEAMTECH_E2E_DATABASE_URL`** : les comptes de rôle
+   nommés n'existent pas dans ce mode. Un test « tous les écrans — compte de
+   secours » couvre les 14 écrans sans aucun compte nommé ; les tests qui
+   exigent un rôle canonique ou un écran de détail sont explicitement `skipped`
+   dans ce mode. Vérifié en reproduisant la CI (`SEAMTECH_E2E_DATABASE_URL`
+   retiré) : **4 passed, 5 skipped** ; avec PostgreSQL + Redis : **8 passed**.
+
+```bash
+cd frontend && unset SEAMTECH_E2E_DATABASE_URL && npx playwright test \
+  e2e/accessibilite.spec.ts e2e/search.spec.ts     # 4 passed, 5 skipped (mode CI)
+```
 
 ### Défauts d'ORDRE dans la suite e2e (cause de rouge CI) — **PRÊT**
 
@@ -183,7 +217,7 @@ Trois tests ne passaient qu'isolés ; la suite complète était donc
 
 ---
 
-## 3. Résultats bruts (commit de référence : voir `git rev-parse HEAD`)
+## 3. Résultats bruts (commit de référence : `9c483e1`)
 
 | Commande | Résultat |
 |---|---|
@@ -191,9 +225,13 @@ Trois tests ne passaient qu'isolés ; la suite complète était donc
 | `pytest -m "not postgres and not s3 and not perf and not redis_queue and not ocr_suite"` | **1060 passed**, 573 deselected (128,75 s) |
 | `pytest -m "postgres and not perf and not ocr_suite"` | **372 passed, 3 skipped** (201,17 s) |
 | `npx playwright test` (Chromium 153 réel, Next build de production, PostgreSQL 16 + Redis) | **108 passed, 3 skipped** (4,9 min) |
-| `npx playwright test e2e/accessibilite.spec.ts` | **7 passed** — 59 écrans, 0 violation |
+| `npx playwright test e2e/accessibilite.spec.ts` (PG 16 + Redis, 4 rôles + anonyme + secours) | **8 passed** — **73 écrans, 0 violation** |
+| `npx playwright test e2e/accessibilite.spec.ts e2e/search.spec.ts` (sans `SEAMTECH_E2E_DATABASE_URL`, comme la CI) | **4 passed, 5 skipped** |
 | `node --test lib/*.test.ts` | **10 passed** |
 | `tsc --noEmit` | aucune erreur |
+| `npm run build` | rc=0 |
+| CI GitHub Actions, run `40780345402` (SHA `9c483e1`) | **13/13 jobs verts** (`backend` 3.11/3.12/3.13, `frontend`, `e2e`, `docker`, `integration`, `ocr`, `recette-locale`, `recette-corpus-reel`, `sauvegarde`, `securite-dependances`, `hors-ligne-reel`) |
+| `Qualification native`, `Qualification reserves`, `Perf comparaison` (SHA `9c483e1`) | verts, en `push` et en `pull_request` |
 
 Les 3 tests e2e « skipped » sont des tests qui exigent un stockage S3 réel
 (MinIO) : ils ne sont pas comptés comme verts.
@@ -258,8 +296,9 @@ Les 3 tests e2e « skipped » sont des tests qui exigent un stockage S3 réel
 | Rotation PDF 90/180/270 | **PRÊT** |
 | OCR navigateur en CI | **PRÊT** (invariants verrouillés, aucun retry) |
 | Relais multipart (débordement, interruption, concurrence, panne) | **PRÊT** |
-| Accessibilité axe sur tous les écrans | **PRÊT** (59 écrans, 0 violation A/AA) |
-| Stabilité de la suite e2e (ordre) | **PRÊT** (isolée à la source) |
+| Accessibilité axe sur tous les écrans | **PRÊT** (73 écrans, 6 rôles, 0 violation A/AA) |
+| Stabilité de la suite e2e (ordre, animations, mode CI sans comptes nommés) | **PRÊT** (isolée à la source) |
+| CI verte sur le SHA livré | **PRÊT** — `9c483e1`, 13/13 jobs `CI` + 3 autres workflows, `push` et `pull_request` |
 | MinIO/R2 réel, Docker/Windows natif, 100k fichiers, endurance | **NON PROUVÉ** — voir §5 |
 
 La mention « production ready » au sens du critère du commanditaire (« les tests
