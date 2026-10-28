@@ -263,10 +263,9 @@ def test_recherche_retrouve_terme_dans_pdf_pivote() -> None:
     correction, la ligne ressort découpée (« Guindant »/« 12.50 »/« m » sur des
     lignes distinctes) et le tableau à 90° n'est pas cherchable comme ligne.
     """
-    from seamtech_search.indexer import SearchIndex
-
     from seamtech_search.config import AppConfig
     from seamtech_search.crawler import crawl
+    from seamtech_search.indexer import SearchIndex
 
     with tempfile.TemporaryDirectory() as dossier:
         dossier_racine = Path(dossier)

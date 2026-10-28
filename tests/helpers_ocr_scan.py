@@ -34,7 +34,6 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas as pdf_canvas
 
-
 #: Polices candidates, dans l'ordre de préférence. La MONOSPACE d'abord :
 #: mesuré le 28/10 sur ce dépôt, la police proportionnelle fait halluciner des
 #: caractères à tesseract sur les termes techniques (mesure reproductible :
