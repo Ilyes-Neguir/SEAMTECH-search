@@ -404,6 +404,33 @@ class TestListeEtPieces:
         reponse = client.get("/fiches", params={"statut": "inexistant"})
         assert reponse.status_code == 200 and reponse.json()["fiches"] == []
 
+    def test_detail_fiche_expose_les_anomalies_enregistrees(
+        self, base_workflow: dict, client: TestClient
+    ) -> None:
+        """L'approbateur voit POURQUOI une fiche est incomplète, sur la fiche.
+
+        Sans cette clé, une fiche sans cote (formulaire, plan, PDF image)
+        s'ouvrait sur des champs vides sans explication : l'anomalie n'existait
+        que sous forme de badge sur l'écran de validation.
+        """
+        index = base_workflow["index"]
+        with index.connect() as connexion:
+            with connexion.cursor() as cursor:
+                cursor.execute("SELECT id_fiche FROM fiche WHERE code = %s", ("0901-MM",))
+                id_fiche = int(cursor.fetchone()[0])
+                cursor.execute(
+                    "INSERT INTO fiche_anomalie (id_fiche, code, gravite, message, statut) "
+                    "VALUES (%s, %s, %s, %s, %s)",
+                    (id_fiche, "champ_manquant", "moyenne", "Cotes absentes du document — saisie manuelle.", "a_traiter"),
+                )
+
+        corps = client.get("/fiches/0901-MM").json()
+        assert [a["code"] for a in corps["anomalies"]] == ["champ_manquant"]
+        assert corps["anomalies"][0]["message"].startswith("Cotes absentes")
+        assert corps["anomalies"][0]["statut"] == "a_traiter"
+        # Une fiche sans anomalie renvoie une liste vide, jamais l'absence de clé.
+        assert client.get("/fiches/7792-SO").json()["anomalies"] == []
+
     def test_pieces_jointes_avec_description_documents(self, base_workflow: dict, client: TestClient) -> None:
         """RG12 : la pièce déposée apparaît ici avec sa référence catalogue."""
         from seamtech_search.fiches import depot

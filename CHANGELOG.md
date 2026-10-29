@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-10-29 (suite 7) — la fiche dit pourquoi elle est incomplète
+
+- **`GET /fiches/{code}` renvoie `anomalies`** (code, gravité, message, statut)
+  et l'écran de la fiche affiche un bloc « Points à vérifier avant validation ».
+  Les 21 dossiers réels sans fiche de fabrication et les 6 accessoires à champ
+  manquant s'ouvraient sur des valeurs vides sans explication : l'anomalie
+  n'existait qu'en badge sur l'écran de validation.
+- **Provenance des fiches de reprise** : `FICHE_REPRISE_V1` est enregistré à
+  l'initialisation (couple code + version, sinon `id_gabarit` reste nul) et un
+  test verrouille l'égalité entre `gabarits.GABARIT_REPRISE` et
+  `reprise.CODE_GABARIT_REPRISE`.
+- **Compteur de fichiers** : `nb_fichiers` / `a_pdf` lisent le lot traité et les
+  pièces jointes ; `fichier_source` ne compte que s'il désigne un `.pdf`
+  (détail dans l'entrée « suite 6 »).
+
 ## 2026-10-29 (suite 6) — l'écran dit la vérité sur les fichiers réellement déposés
 
 Mesuré sur le dépôt des 58 dossiers réels (arborescence `/home/user/demo`) :

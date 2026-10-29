@@ -5,9 +5,9 @@
 | Commande | Résultat |
 |---|---|
 | `.venv/bin/ruff check seamtech_search/ tests/` | `All checks passed!` |
-| `pytest tests -m "not postgres"` | **1302 passés, 139 sautés**, 439 désélectionnés (128 s) |
+| `pytest tests -m "not postgres"` | **1303 passés, 139 sautés**, 440 désélectionnés (105 s) |
 | `pytest tests -m postgres` (PG 18.6, port 5433) | **403 passés, 21 sautés, 15 échecs d'environnement** (195 s) |
-| `pytest tests/test_validation_workflow.py -m postgres` | **19 passés** (dont les 2 tests neufs) |
+| `pytest tests/test_validation_workflow.py -m postgres` | **20 passés** (dont les 3 tests neufs) |
 
 Les 15 échecs de la passe PostgreSQL sont **environnementaux** et sans rapport
 avec le diff : `pg_dump: error: aborting because of server version mismatch`

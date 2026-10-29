@@ -120,3 +120,18 @@ def test_nom_du_bateau_deduit_du_dossier_sans_le_code() -> None:
     assert nom_sans_code("CAVAILLE ST76", "ST76") == "Cavaille"
     assert nom_sans_code("FIRST 38 MSL - 030424OS", "030424OS") == "First 38 Msl"
     assert nom_sans_code("SANS REFERENCE", None) is None
+
+def test_le_gabarit_de_reprise_est_connu_des_deux_cotes() -> None:
+    """Le code du gabarit de reprise ne peut pas diverger entre les modules.
+
+    `reprise.py` le pose sur la fiche, `gabarits.py` l'enregistre pour que
+    l'écran affiche une provenance ; la persistance résout `id_gabarit` sur le
+    COUPLE (code, version) — une divergence laisserait la colonne vide.
+    """
+    from seamtech_search.fiches import gabarits, reprise
+
+    assert gabarits.GABARIT_REPRISE.code == reprise.CODE_GABARIT_REPRISE
+    assert gabarits.GABARIT_REPRISE.version == reprise.VERSION_GABARIT_REPRISE
+    # Aucun document ne porte cette ancre : le gabarit ne doit jamais être
+    # proposé à la détection.
+    assert gabarits.GABARIT_REPRISE.champs == []

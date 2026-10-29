@@ -821,7 +821,7 @@ def synchroniser_gabarits_embarques(index: Any) -> list[str]:
 #: « gabarit » vide sur les dossiers sans fiche de fabrication — 21 des 58
 #: dossiers réels mesurés.
 GABARIT_REPRISE = GabaritDef(
-    code="FICHE_REPRISE_V1",
+    code="FICHE_REPRISE_V1",  # doit valoir reprise.CODE_GABARIT_REPRISE (test dédié)
     version=1,
     description=(
         "Fiche de reprise : dossier réel sans fiche de fabrication (plan SailPack, "

@@ -1578,6 +1578,21 @@ def detail_fiche(index: Any, code: str) -> dict[str, Any]:
                 (code,),
             )
             row = cursor.fetchone()
+            anomalies: list[dict[str, Any]] = []
+            if row is not None:
+                # Une fiche sans cote n'est pas un mystère pour l'approbateur :
+                # l'anomalie enregistrée au dépôt dit POURQUOI (fiche de
+                # fabrication absente, champ manquant, PDF image). Elle vivait
+                # seulement sur l'écran de validation, en badge.
+                cursor.execute(
+                    "SELECT code, gravite, message, statut FROM fiche_anomalie "
+                    "WHERE id_fiche = %s ORDER BY id_anomalie",
+                    (int(row[10]),),
+                )
+                anomalies = [
+                    {"code": a[0], "gravite": a[1], "message": a[2], "statut": a[3]}
+                    for a in cursor.fetchall()
+                ]
     if row is None:
         raise HTTPException(status_code=404, detail=f"Fiche {code} inconnue.")
     date_edition = row[7].isoformat() if hasattr(row[7], "isoformat") else row[7]
@@ -1599,6 +1614,7 @@ def detail_fiche(index: Any, code: str) -> dict[str, Any]:
         "id_fiche": int(row[10]),
         "categorie": str(row[11]),
         "categorie_source": str(row[12]),
+        "anomalies": anomalies,
     }
 
 
