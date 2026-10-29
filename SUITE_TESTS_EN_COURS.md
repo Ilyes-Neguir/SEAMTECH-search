@@ -1,5 +1,28 @@
 # SUITE DES TESTS — état exact (mis à jour à chaque passe)
 
+## Passe du 29/10/2026 (nuit) — aucun dossier réel refusé
+
+| Commande | Résultat |
+|---|---|
+| `.venv/bin/ruff check seamtech_search/ tests/` | `All checks passed!` |
+| `pytest tests -m "not postgres"` | **1302 passés, 139 sautés**, 437 désélectionnés (113 s) |
+| `pytest tests -m postgres` (PG 18.6, port 5433) | **416 passés, 21 sautés** (181 s) |
+
+Dépôt réel rejoué sur base neuve (PostgreSQL 16.2 + stockage objet) :
+**58 dossiers déposés, 58 traités, 0 refusé** ; 58/58 fiches avec titre ET code,
+38 avec cotes.
+
+Ce qui a été corrigé : voir `CHANGELOG.md`, entrée « suite 5 » (fiche de reprise,
+crash `min()` des cotes FFAB, grille SAILONET, couple « 60x260 », plafond poids).
+
+Reste hors de portée du bac à sable : **OCR** (binaires `tesseract`/`pdftoppm`
+absents) — les 8 PDF image entrent comme « Document scanné » à saisir à la main,
+et la lecture des racines Dropbox `ACCESSOIRES 2024/2025/2026`, le reste de
+`VOILES 2025`/`VOILES 2026` et `ADONNANTE` (~300 dossiers), que le connecteur ne
+descend qu'un fichier par appel.
+
+---
+
 ## Passe du 29/10/2026 (soir) — dépôt en LOT des dossiers réels
 
 | Commande | Résultat |

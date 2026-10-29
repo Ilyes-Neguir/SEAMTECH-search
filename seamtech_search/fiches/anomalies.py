@@ -21,7 +21,11 @@ LOGGER = logging.getLogger("seamtech_search.fiches.anomalies")
 # §10.3, à caler sur les fiches réelles ; une cote hors plage est suspecte,
 # pas forcément fausse (gravite « moyenne », à confirmer par l'opérateur).
 PLAGES_METRES = {"slu_m": (0.5, 30.0), "sle_m": (0.5, 30.0), "sf_m": (0.2, 12.0), "shw_m": (0.2, 12.0)}
-PLAGES_AUTRES = {"spa_m2": (0.5, 300.0), "tetiere_cm": (0.5, 60.0), "poids_kg": (0.02, 30.0)}
+#: ``poids_kg`` : plafond porté à 120 kg après MESURE sur une fiche réelle —
+#: `/VOILES 2025/PROTO ST430/ST 430_ffab.pdf` imprime « 46,2 m² … 42,4 kg »
+#: (guindant 18,65 m). L'ancien plafond de 30 kg levait une fausse anomalie
+#: « cote hors plage » sur un document parfaitement lu.
+PLAGES_AUTRES = {"spa_m2": (0.5, 300.0), "tetiere_cm": (0.5, 60.0), "poids_kg": (0.02, 120.0)}
 
 # Cohérence surface (portants) — TOLÉRANCE NOMMÉE (constat A de revue, voir
 # docs/CONTROLES_RG16.md) : facteur = SPA / (½·SLU·SLE) accepté dans

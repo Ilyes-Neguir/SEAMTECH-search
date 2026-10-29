@@ -43,6 +43,7 @@ from seamtech_search.fiches.gabarits import GabaritDef, charger_gabarits
 from seamtech_search.fiches.modeles import ChampExtrait, FicheExtraite
 from seamtech_search.fiches.persistance import ecrire_fiche_resultat
 from seamtech_search.fiches.promotion import fichiers_pour_promotion, promouvoir_fichiers
+from seamtech_search.fiches.reprise import construire_fiche_de_reprise
 
 LOGGER = logging.getLogger("seamtech_search.fiches.depot")
 
@@ -420,6 +421,66 @@ def _raison_documents_non_fiche(classements: dict[str, str]) -> str:
     )
 
 
+def _tenter_fiche_de_reprise(
+    plan: PlanDossier,
+    dossier: Path,
+    pdfs: list[Path],
+    classements: dict[str, str],
+    illisibles: list[str] | None = None,
+) -> bool:
+    """Dernier recours : ne PERDRE aucun dossier réel (voir `reprise.py`).
+
+    Mesuré sur `VOILES 2024` : 21 dossiers réels sur 24 étaient refusés parce
+    qu'ils ne contiennent pas de fiche de fabrication (plan SailPack, formulaire
+    de prise de cotes, PDF image). Le document existe pourtant, et l'atelier a
+    besoin de le retrouver dans l'application. On crée donc une fiche de
+    reprise — titre qui dit ce qu'est le document, code tracé avec sa
+    provenance, anomalie « fiche de fabrication absente » qui exige la saisie
+    manuelle — au lieu de jeter le dossier.
+
+    Un dossier dont AUCUN PDF n'est lisible (fichier corrompu, tronqué) n'entre
+    pas : ce n'est pas un document « sans fiche », c'est un fichier abîmé — le
+    refus reste la bonne réponse, avec ses scores.
+    """
+    if illisibles and not classements:
+        return False
+    code_dossier = code_depuis_nom_dossier(dossier.name)
+    code_fichier = None
+    for pdf in pdfs:
+        code_fichier = code_depuis_nom_fichier(pdf.name)
+        if code_fichier:
+            break
+    fiche = construire_fiche_de_reprise(
+        dossier, pdfs, classements, code_dossier=code_dossier, code_fichier=code_fichier
+    )
+    if fiche is None:
+        return False
+    reference = next(
+        (pdf for pdf in pdfs if classements.get(pdf.name) == CLASSEMENT_PLANCHE),
+        pdfs[0],
+    )
+    plan.pdf_fiche = reference
+    plan.gabarit_code = fiche.gabarit_code
+    plan.score = 0
+    plan.fiche_extraite = fiche
+    plan.raison_refus = None
+    plan.pieces.extend(
+        FichierDossier(chemin=pdf, role="piece_jointe", taille_octets=pdf.stat().st_size)
+        for pdf in pdfs
+        if pdf != reference
+    )
+    LOGGER.info(
+        "Dossier %s : aucune fiche de fabrication — FICHE DE REPRISE créée depuis %s "
+        "(code %s, titre « %s ») ; %d PDF attaché(s) en pièces.",
+        dossier,
+        reference.name,
+        fiche.code,
+        fiche.titre,
+        len(pdfs) - 1,
+    )
+    return True
+
+
 def _nom_evoque_ffab(chemin: Path) -> bool:
     """Indice de nom de fichier seulement : jamais une preuve de contenu."""
     tige = chemin.stem.casefold()
@@ -716,6 +777,8 @@ def scanner_dossier(dossier: Path, gabarits: list[GabaritDef]) -> PlanDossier:
                 "Les fichiers n'ont pas été modifiés ; vérifier que le dossier contient bien "
                 "la fiche technique, et non seulement un plan ou une pièce jointe."
             )
+        if _tenter_fiche_de_reprise(plan, dossier, pdfs, classements, illisibles):
+            return plan
         return plan
 
     # Preuves d'abord : meilleur score d'ancres, puis — à score égal
@@ -748,6 +811,8 @@ def scanner_dossier(dossier: Path, gabarits: list[GabaritDef]) -> PlanDossier:
                 "aucun PDF candidat n'a produit une fiche sélectionnable (code + structure, "
                 f"ou structure riche sans code ; meilleur candidat : {meilleur_pdf.name} ; scores : {detail})"
             )
+        if _tenter_fiche_de_reprise(plan, dossier, pdfs, classements, illisibles):
+            return plan
         return plan
 
     pdf_choisi, candidat_choisi = choisi

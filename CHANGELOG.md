@@ -1,5 +1,66 @@
 # Changelog
 
+## 2026-10-29 (suite 5) — plus aucun dossier réel perdu : les 21 refus de `VOILES 2024` entrent dans l'application
+
+Constat mesuré sur les vrais dossiers du Dropbox : sur `VOILES 2024`, **21
+dossiers sur 24 étaient refusés**. Ce n'était pas une panne de lecture — le
+dossier ne contient simplement pas de « fiche de fabrication ». Trois familles,
+toutes ouvertes et mesurées :
+
+| Famille | Exemples réels | Ce que le document imprime |
+|---|---|---|
+| Plan de fabrication **SailPack** (BSG) | `ST 076.pdf`, `ST 088.pdf`, `ST 097.pdf`, `GuepardRFG_CC.pdf`, `280224VA.pdf` | `Date:`, `Sail:`, `Boat:`, `Customer:`, `Order Ref.:`, `Panel layout`, `True area`, `Geoluff/Geoleech/Geofoot` |
+| **Formulaire de prise de cotes** | `CavailleGV.pdf`, `GSE Oceanis411.pdf`, `MerianGvTanton43.pdf` | libellés seuls (document à remplir) |
+| **PDF image** (aucune couche texte) | `boivent.pdf`, `inter Durand.pdf`, `WOSSA FICHE DE COTES.pdf` | rien — OCR non disponible sur le poste d'essai |
+
+### Ce qui change
+
+**1. Fiche de reprise (`seamtech_search/fiches/reprise.py`).** Un dossier sans
+fiche de fabrication n'est plus jeté : il entre en `a_valider` avec
+
+- un titre qui dit ce que le document EST — « Plan de fabrication », « Prise de
+  cotes », « Document scanné » — jamais « Fiche de fabrication » ;
+- pour un plan SailPack, les champs **réellement imprimés** (code `Order Ref.`,
+  bateau, client, n° de commande, date, surface, guindant/chute/bordure via
+  `Geoluff/Geoleech/Geofoot`), chacun tracé `document` ;
+- pour les deux autres familles, la référence lue dans le **nom du dossier**
+  (tracée `nom_dossier`, confiance 0,55) ;
+- une anomalie `fiche_de_fabrication_absente` qui exige la saisie manuelle ;
+- **tous** les PDF du dossier attachés en pièces.
+
+Rien n'est inventé : un code de voile inconnu (`Smd`, `Gk`) reste brut avec une
+anomalie `type_voile_non_traduction` ; un PDF corrompu reste refusé (ce n'est
+pas un « document sans fiche »).
+
+**2. Trois défauts de lecture corrigés sur documents réels.**
+
+- `_traiter_cotes_ffab` levait `ValueError: min() arg is an empty sequence`
+  quand la ligne de valeurs portait un groupe de plus que d'étiquettes :
+  la règle ENTIÈRE était perdue et la fiche sortait sans aucune cote
+  (reproduit sur `ST 263a`, `ST 430`, `ST 458`). La règle est désormais bornée.
+- Grille de cotes **SAILONET** (4e famille) lue dans l'ordre de son en-tête :
+  `/VOILES 2026/ETAP 32S ST685/FFAB_gse234269.pdf` donne 7,65 / 6,87 / 2,92 m,
+  9,8 m², têtière 4 cm, 4 kg — la fiche sortait auparavant sans aucune cote.
+- `cote_en_metres` refusait de prendre un couple de dimensions pour une cote :
+  « chute 60x260 polyester » produisait une bordure de **60 m** (anomalie RG16).
+- Plafond de poids porté à 120 kg : `ST 430` imprime réellement « 46,2 m² …
+  42,4 kg » ; l'ancien plafond de 30 kg levait une fausse anomalie.
+
+### Mesure finale, sur les 58 dossiers réels déposés
+
+| Indicateur | Avant | Après |
+|---|---|---|
+| Dossiers déposés | 37 traités / 21 refusés | **58 traités / 0 refusé** |
+| Fiches avec titre | 36 | **58 / 58** |
+| Fiches avec code | 36 | **58 / 58** |
+| Fiches avec cotes | 12 | **38** |
+| Anomalies | — | 21 `fiche_de_fabrication_absente`, 6 `champ_manquant`, 2 `type_voile_non_traduit` |
+
+Preuves : `tests/test_reprise_dossier_sans_fiche.py` (5 tests),
+`tests/test_titre_depuis_entete.py` (3 tests dont la grille SAILONET),
+`tests/test_classement_documents_non_fiche.py` réécrit sur le nouveau contrat
+(7 tests), ruff OK, SQLite **1302 passés**, PostgreSQL **416 passés**.
+
 ## 2026-10-29 (suite 4) — 50 dossiers réels déposés, fiche « pour », et dépôt en lot
 
 Trois défauts trouvés en déposant les documents RÉELS de `VOILES 2024` puis

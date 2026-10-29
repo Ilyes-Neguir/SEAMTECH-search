@@ -76,3 +76,27 @@ def test_aucun_titre_invente_sans_famille_imprimee(tmp_path: Path) -> None:
     _poser_titre_depuis_entete(fiche, [_Page("ATTESTATION DE CONFORMITE 2026")])
     assert fiche.titre is None
     assert fiche.champs == []
+
+
+def test_grille_de_cotes_sailonet_lue_dans_l_ordre_de_l_entete(tmp_path: Path) -> None:
+    """En-tête « cotes guindant bordure chute têtière SURFACE poids » + valeurs.
+
+    Mesuré sur le même document : la grille n'était lue par aucun gabarit, la
+    fiche sortait sans aucune cote alors que les valeurs sont imprimées.
+    """
+    pdf = _ecrire(
+        tmp_path / "FFAB_demo000002.pdf",
+        [
+            "SAILONET",
+            "FICHE FABRICATION",
+            "GENOIS / FOCS",
+            "TYPE GÉNOIS SUR ENROULEUR",
+            "cotes guindant bordure chute têtière SURFACE poids (tissu) LP HHW HTW HUW",
+            "tissu 7.65 2.92 6.87 0.04 9.8 4",
+        ],
+    )
+    fiche = extraire_fiche(pdf, gabarits=list(GABARITS_EMBARQUES))
+    assert fiche.cotes, "la grille imprimée doit être lue"
+    finie = fiche.cotes[0]
+    assert (finie.slu_m, finie.sf_m, finie.sle_m) == (7.65, 2.92, 6.87)
+    assert (finie.spa_m2, finie.tetiere_cm, finie.poids_kg) == (9.8, 4.0, 4.0)

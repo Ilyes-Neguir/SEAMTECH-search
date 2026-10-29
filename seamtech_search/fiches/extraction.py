@@ -2948,11 +2948,19 @@ def _traiter_cotes_ffab(fiche: FicheExtraite, brut: str, base: ChampExtrait, con
                     for _cle, mots in etiquettes
                 ]
                 for groupe in valeurs:
+                    # Autant de valeurs que d'étiquettes au maximum : mesuré sur
+                    # les fiches réelles `ST 263a`, `ST 430`, `ST 458`…, la ligne
+                    # de valeurs porte parfois un groupe de PLUS que d'étiquettes
+                    # (colonne parasite). Sans cette garde, le générateur était
+                    # vide au dernier tour et `min()` levait ValueError — la règle
+                    # entière était perdue et la fiche sortait SANS AUCUNE COTE.
+                    restants = [i for i in range(len(etiquettes)) if i not in utilisees]
+                    if not restants:
+                        break
                     centre = (min(mot.x0 for mot in groupe) + max(mot.x1 for mot in groupe)) / 2
                     choix = min(
                         (abs(centre - centres[i]), i)
-                        for i in range(len(etiquettes))
-                        if i not in utilisees
+                        for i in restants
                     )
                     if choix[0] <= 55:
                         utilisees.add(choix[1])
@@ -3450,6 +3458,63 @@ def _poser_titre_depuis_entete(fiche: FicheExtraite, pages: list[PageAnalysee]) 
             return
 
 
+#: Ordre des colonnes de la grille de cotes SAILONET (4e famille du corpus) :
+#: en-tête mesuré sur `/VOILES 2026/ETAP 32S ST685/FFAB_gse234269.pdf`
+#: « cotes guindant bordure chute têtière SURFACE poids (tissu) LP HHW … »,
+#: valeurs sur la ligne suivante « tissu 7.65 2.92 6.87 0.04 9.8 4 ».
+_SAILONET_COLONNES = {
+    "guindant": ("slu_m", 1.0),
+    "bordure": ("sf_m", 1.0),
+    "chute": ("sle_m", 1.0),
+    "têtière": ("tetiere_cm", 100.0),
+    "surface": ("spa_m2", 1.0),
+    "poids": ("poids_kg", 1.0),
+}
+
+
+def _lire_grille_sailonet(fiche: FicheExtraite, pages: list[PageAnalysee]) -> bool:
+    """Lit la grille de cotes SAILONET quand aucun gabarit ne l'a fait.
+
+    Cette famille (fiches « FICHE FABRICATION / GENOIS », « …/ FOCS ») n'a
+    encore aucun gabarit dédié : la fiche sortait avec `titre` renseigné mais
+    SANS AUCUNE COTE, alors que les valeurs sont imprimées. La grille est
+    reconnue par son EN-TÊTE (au moins guindant + bordure + chute + surface sur
+    une même ligne), et les valeurs sont lues dans l'ordre des colonnes de cet
+    en-tête — jamais dans un ordre supposé.
+    """
+    if fiche.cotes:
+        return False
+    for page in pages:
+        for indice, ligne in enumerate(page.lignes):
+            entete = norm.sans_accents(" ".join(mot.texte for mot in ligne.mots).casefold())
+            if not all(etiquette in entete for etiquette in ("guindant", "bordure", "chute", "surface")):
+                continue
+            colonnes = [
+                (cle, _SAILONET_COLONNES[cle])
+                for cle in ("guindant", "bordure", "chute", "têtière", "surface", "poids")
+                if norm.sans_accents(cle) in entete
+            ]
+            if len(colonnes) < 4:
+                continue
+            for suivante in page.lignes[indice + 1 : indice + 3]:
+                nombres = [
+                    float(mot.texte.replace(",", "."))
+                    for mot in suivante.mots
+                    if re.fullmatch(r"-?\d+(?:[.,]\d+)?", mot.texte)
+                ]
+                if len(nombres) < len(colonnes):
+                    continue
+                valeurs = nombres[len(nombres) - len(colonnes) :]
+                lues = {
+                    champ: round(valeur * facteur, 3)
+                    for (champ, facteur), valeur in zip((c for _cle, c in colonnes), valeurs, strict=False)
+                }
+                fiche.cotes.append(Cotes(jeu="finie", **{k: v for k, v in lues.items() if v}))
+                LOGGER.info("Grille de cotes SAILONET lue : %s", lues)
+                return True
+    return False
+
+
 def _extraire_pages(
     pages: list[PageAnalysee],
     chemin: Path,
@@ -3470,6 +3535,7 @@ def _extraire_pages(
             LOGGER.exception("Échec de la règle %s — champ ignoré, à relire (conséquence : champ absent).", regle.cible)
     _collecter_libres(fiche, pages, consommees, vocabulaire_libres or {ancre for g in (gabarits or [gabarit]) for ancre in g.ancres_detection} | {ancre for r in gabarit.champs for ancre in r.ancres})
     _poser_titre_depuis_entete(fiche, pages)
+    _lire_grille_sailonet(fiche, pages)
     _aligner_titre_sur_type(fiche)
     fiche.anomalies = evaluer_anomalies(fiche)
     return fiche
