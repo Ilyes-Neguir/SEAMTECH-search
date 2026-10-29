@@ -1,5 +1,13 @@
 import { expect, test, type Browser, type BrowserContext, type Page } from "@playwright/test"
-import { ADMIN, APPROBATEUR_2, LECTURE, UTILISATEUR, signIn, type Identifiants } from "./helpers"
+import {
+  ADMIN,
+  APPROBATEUR_2,
+  LECTURE,
+  UTILISATEUR,
+  csrfHeadersForRequestContext,
+  signIn,
+  type Identifiants,
+} from "./helpers"
 import { signInWith } from "./helpers"
 
 /**
@@ -18,6 +26,33 @@ import { signInWith } from "./helpers"
  */
 
 const CODE_REFERENCE = "7792-SO"
+
+/**
+ * Compte `utilisateur` DÉDIÉ à ce parcours, créé par un administrateur.
+ *
+ * Pourquoi : `lot1-approbations` approuve un téléchargement pour le compte
+ * partagé `e2e-utilisateur`, valable 24 h. En exécution séquentielle (CI), ce
+ * parcours héritait d'une autorisation encore valide : sa précondition « pas
+ * d'autorisation préexistante » tombait alors qu'il passait seul. Comme il
+ * n'existe aucune API de révocation d'une autorisation accordée (et c'est
+ * voulu : une autorisation ne se reprend pas silencieusement), l'isolation se
+ * fait à la SOURCE — un compte neuf par exécution, sans historique.
+ */
+async function creerUtilisateurDedie(browser: Browser, contextes: BrowserContext[]): Promise<Identifiants> {
+  const identifiant = `e2e-parcours-${Date.now()}`
+  const motDePasse = `Parcours!${Date.now()}`
+  const admin = await ouvrirPoste(browser, contextes, ADMIN)
+  const entetes = await csrfHeadersForRequestContext(admin.context().request)
+  const creation = await admin.request.post("/api/auth/utilisateurs", {
+    headers: entetes,
+    data: { identifiant, nom: "Compte e2e parcours Lot 6", mot_de_passe: motDePasse, role: "utilisateur" },
+  })
+  expect(
+    creation.ok(),
+    `la création du compte dédié doit réussir (HTTP ${creation.status()} : ${(await creation.text()).slice(0, 200)})`,
+  ).toBeTruthy()
+  return { identifiant, motDePasse }
+}
 
 async function ouvrirPoste(
   browser: Browser,
@@ -39,6 +74,49 @@ interface Piece {
   id: number | string
   is_primary_pdf?: boolean
   kind?: string
+}
+
+/**
+ * Fiche + pièce que CET utilisateur n'est PAS déjà autorisé à télécharger.
+ *
+ * Défaut d'isolation corrigé le 28/10 : `lot1-approbations` approuve un
+ * téléchargement pour `e2e-utilisateur`, valable 24 h. En exécution
+ * SÉQUENTIELLE (celle de la CI), `lot6` héritait donc d'une autorisation
+ * encore valide, sa précondition « pas d'autorisation préexistante » tombait,
+ * alors que le même test passait seul. On choisit maintenant le sujet sur une
+ * PREUVE (l'API répond 403) au lieu de supposer que le monde est vierge — et
+ * on le cherche sur toutes les fiches que la recherche renvoie, pas seulement
+ * sur la fiche de référence.
+ */
+interface SujetParcours {
+  code: string
+  piece: Piece
+}
+
+async function sujetSansAutorisation(page: Page, terme: string): Promise<SujetParcours> {
+  const reponse = await page.request.get(`/api/recherche?q=${encodeURIComponent(terme)}`)
+  expect(reponse.ok(), "la recherche doit répondre").toBeTruthy()
+  const corps = (await reponse.json()) as { fiches?: { code: string | null }[]; resultats?: { code?: string | null }[] }
+  const codes = [...(corps.fiches ?? []), ...(corps.resultats ?? [])]
+    .map((f) => f.code)
+    .filter((code): code is string => Boolean(code))
+  expect(codes.length, `aucune fiche renvoyée pour « ${terme} »`).toBeGreaterThan(0)
+
+  for (const code of [...new Set(codes)]) {
+    const pieces = await page.request.get(`/api/fiches/${encodeURIComponent(code)}/pieces`)
+    if (!pieces.ok()) continue
+    const brut = (await pieces.json()) as { pieces?: Piece[] } | Piece[]
+    const liste = Array.isArray(brut) ? brut : (brut.pieces ?? [])
+    for (const candidate of liste) {
+      if ((await page.request.get(`/api/pieces/${candidate.id}/telecharger`)).status() === 403) {
+        return { code, piece: candidate }
+      }
+    }
+  }
+  throw new Error(
+    `aucune (fiche, pièce) de « ${terme} » n'est libre d'autorisation pour ce compte : ` +
+      "impossible d'éprouver un parcours de demande",
+  )
 }
 
 async function piecePrincipale(page: Page, code: string): Promise<Piece> {
@@ -75,8 +153,9 @@ test.describe("Lot 6 — parcours 3 clics et cohérence globale", () => {
   }) => {
     const contextes: BrowserContext[] = []
     try {
-      const utilisateur = await ouvrirPoste(browser, contextes, UTILISATEUR)
-      const piece = await piecePrincipale(utilisateur, CODE_REFERENCE)
+      const identifiants = await creerUtilisateurDedie(browser, contextes)
+      const utilisateur = await ouvrirPoste(browser, contextes, identifiants)
+      const { code: codeSujet, piece } = await sujetSansAutorisation(utilisateur, "7792")
       await nettoyerDemandesTelechargement(utilisateur, piece.id)
       // Une autorisation encore valide fausserait le parcours de demande.
       const avantDemande = await utilisateur.request.get(`/api/pieces/${piece.id}/telecharger`)
@@ -85,9 +164,9 @@ test.describe("Lot 6 — parcours 3 clics et cohérence globale", () => {
       // --- Utilisateur : 3 clics depuis les résultats de recherche.
       await utilisateur.goto(`/recherche?q=${encodeURIComponent("7792")}`)
       let clicsUtilisateur = 0
-      await utilisateur.getByRole("link", { name: `Ouvrir la fiche ${CODE_REFERENCE}` }).click()
+      await utilisateur.getByRole("link", { name: `Ouvrir la fiche ${codeSujet}` }).click()
       clicsUtilisateur += 1
-      await expect(utilisateur.getByTestId("fiche-code")).toHaveText(CODE_REFERENCE, { timeout: 30000 })
+      await expect(utilisateur.getByTestId("fiche-code")).toHaveText(codeSujet, { timeout: 30000 })
       const listePieces = utilisateur.getByTestId("pieces-jointes")
       await listePieces.getByTestId(`piece-download-request-${piece.id}`).click()
       clicsUtilisateur += 1
@@ -123,7 +202,7 @@ test.describe("Lot 6 — parcours 3 clics et cohérence globale", () => {
       expect(clicsApprobateur, "décision en 3 clics depuis la liste à décider").toBe(3)
 
       // --- Utilisateur : 1 clic pour le téléchargement autorisé, octets relus.
-      await utilisateur.goto(`/fiches/${CODE_REFERENCE}`)
+      await utilisateur.goto(`/fiches/${codeSujet}`)
       const bouton = utilisateur.getByTestId("pieces-jointes").getByTestId(`piece-download-${piece.id}`)
       await expect(bouton).toBeVisible({ timeout: 30000 })
       const [telechargement] = await Promise.all([utilisateur.waitForEvent("download"), bouton.click()])

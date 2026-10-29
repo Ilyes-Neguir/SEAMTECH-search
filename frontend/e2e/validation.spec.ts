@@ -133,6 +133,10 @@ test.describe("validation de bout en bout", () => {
     await page.goto("/validation")
     await expect(page.getByTestId("titre-fiche")).toHaveText("ANOMALIE-E2E")
     await expect(page.getByText("Anomalie à vérifier")).toBeVisible()
+    // La décision exige la révision RELUE (verrou optimiste) : on attend que
+    // l'écran l'ait chargée, sinon le test daterait la décision d'un état
+    // inexistant — mesuré instable (1 échec sur 2) sous charge.
+    await expect(page.getByTestId("validation-app")).toHaveAttribute("data-revision", "1")
     page.once("dialog", async (dialog) => {
       expect(dialog.message()).toContain("anomalie")
       await dialog.dismiss()

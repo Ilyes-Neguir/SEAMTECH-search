@@ -82,7 +82,14 @@ export function Nav() {
       className="relative flex h-14 items-center gap-1 overflow-x-auto bg-background/95 px-4"
       data-testid="nav"
     >
-      <Link href="/recherche" className="group mr-3 flex shrink-0 items-center gap-2" aria-label="SEAMTECH — accueil de l’atelier">
+      {/*
+        Pas de `aria-label` ici : le nom accessible est le texte VISIBLE
+        (« Seamtech / voilerie · archives »). C'est l'exigence
+        WCAG 2.5.3 (label-content-name-mismatch) : un libellé qui ne reprend
+        pas le texte affiché casse la commande vocale — l'utilisateur dit
+        « Seamtech » et rien ne s'active.
+      */}
+      <Link href="/recherche" className="group mr-3 flex shrink-0 items-center gap-2">
         <RoseDesVents className="size-7 text-primary transition-transform duration-700 group-hover:rotate-45" />
         <span className="leading-none">
           <span className="titre-voile block text-[13px]">Seamtech</span>

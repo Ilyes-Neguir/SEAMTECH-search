@@ -20,11 +20,34 @@ function generatePdfViaPython(tmpDir: string, variant: string, uniqueTerm?: stri
   return out.split("\n").pop()!.trim()
 }
 
-function uniqueTerm(prefix: string): string {
-  const hex = crypto.randomBytes(4).toString("hex").toUpperCase()
-  const suffix = Date.now().toString().slice(-4)
-  const cleanPrefix = prefix.replace(/[^A-Z0-9]/gi, "").toUpperCase().slice(0, 10)
-  return `${cleanPrefix}${hex}${suffix}`
+/**
+ * Terme unique de preuve, tiré côté Python.
+ *
+ * Cause de l'échec CI du 28/10 : le terme était tiré ici en hexadécimal
+ * (`crypto.randomBytes`), donc contenait des « 0 » que tesseract lit « O » sur
+ * une image de synthèse. L'assertion stricte échouait alors sur un document
+ * parfaitement océrisé — un faux négatif qui masquait le vrai contrat.
+ *
+ * Le terme vient maintenant de `tests.helpers_ocr_scan.terme_unique_ocr_sur`
+ * (majuscules sans I ni O, aucun chiffre), où un test unitaire verrouille
+ * l'invariant. La force de l'assertion n'est PAS réduite : aucune tolérance
+ * 0/O n'est ajoutée au test, et aucun réessai n'est autorisé.
+ */
+function generatePdfAvecTermeSur(
+  tmpDir: string,
+  variant: string,
+  prefix: string,
+): { pdfPath: string; uniqueTerm: string } {
+  const scriptPath = path.resolve(__dirname, "generate_scan_pdf.py")
+  const sortie = execSync(
+    `python3 "${scriptPath}" "${tmpDir}" "${variant}" --prefix "${prefix}" --json`,
+    { encoding: "utf-8" },
+  ).trim()
+  const donnees = JSON.parse(sortie.split("\n").pop()!.trim())
+  if (!donnees.pdf || !donnees.terme) {
+    throw new Error(`génération du PDF échouée : ${sortie}`)
+  }
+  return { pdfPath: donnees.pdf, uniqueTerm: donnees.terme }
 }
 
 const MODE_LIVE = Boolean(process.env.SEAMTECH_E2E_DATABASE_URL)
@@ -120,8 +143,7 @@ test.describe("Scan navigateur → OCR → Recherche → Téléchargement", () =
     const tmpDir = path.join(os.tmpdir(), `scan-e2e-${testInfo.testId}`)
     fs.mkdirSync(tmpDir, { recursive: true })
 
-    const uniq = uniqueTerm("ZEPHYRINE")
-    const pdfPath = generatePdfViaPython(tmpDir, "fr", uniq)
+    const { pdfPath, uniqueTerm: uniq } = generatePdfAvecTermeSur(tmpDir, "fr", "ZEPHYRINE")
     const originalSha = sha256(pdfPath)
     const fileName = path.basename(pdfPath)
 
@@ -314,8 +336,7 @@ test.describe("Scan navigateur → OCR → Recherche → Téléchargement", () =
     const tmpDir = path.join(os.tmpdir(), `scan-drag-${testInfo.testId}`)
     fs.mkdirSync(tmpDir, { recursive: true })
 
-    const uniq = uniqueTerm("GENOA")
-    const pdfPath = generatePdfViaPython(tmpDir, "en", uniq)
+    const { pdfPath, uniqueTerm: uniq } = generatePdfAvecTermeSur(tmpDir, "en", "GENOA")
     const originalSha = sha256(pdfPath)
     const fileName = path.basename(pdfPath)
 

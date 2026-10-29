@@ -87,10 +87,15 @@ function BandeauDoublon({ liens }: { liens: LienDoublon[] }) {
       {liens.map((lien) => (
         <div key={lien.id_lien}>
           <span className="font-semibold">{libelleDoublon(lien)}</span>{" "}
-          <span className="text-muted-foreground">({detailDoublon(lien)})</span>
+          {/* Contraste : `text-muted-foreground` sur le fond ambre donne 4,26:1
+              (sous le seuil AA de 4,5). On hérite de la couleur du bandeau
+              (ambre 900) qui, elle, passe — et le sens reste lisible. */}
+          <span className="text-amber-900/90 dark:text-amber-200/90">({detailDoublon(lien)})</span>
         </div>
       ))}
-      <div className="text-muted-foreground">À arbitrer avant validation — aucune fusion automatique.</div>
+      <div className="text-amber-900/90 dark:text-amber-200/90">
+        À arbitrer avant validation — aucune fusion automatique.
+      </div>
     </div>
   )
 }
@@ -766,7 +771,8 @@ function ValidationAppInterne() {
                   type="button"
                   onClick={() => void validerFiche()}
                   disabled={occupe}
-                  className="flex items-center gap-1 rounded bg-emerald-600 px-3 py-1 text-xs font-semibold text-white disabled:opacity-40"
+                  /* emerald-600 + blanc = 3,65:1 (< AA) ; emerald-700 = 4,8:1. */
+                  className="flex items-center gap-1 rounded bg-emerald-700 px-3 py-1 text-xs font-semibold text-white hover:bg-emerald-800 disabled:opacity-40"
                   data-testid="bouton-valider"
                   title="Raccourci : V"
                 >
@@ -875,6 +881,11 @@ function ChampsFiche({
               {champ.rang != null ? ` [${champ.rang}]` : ""}
             </span>
             <span className="flex items-center gap-2">
+              {/* Nom accessible OBLIGATOIRE (axe « label », critique) : la
+                  colonne de gauche affiche le nom du champ en texte, mais un
+                  texte voisin n'étiquette pas un <input> pour un lecteur
+                  d'écran. Le libellé dit aussi le rang quand le champ est
+                  répété (matériaux 1, 2, 3…). */}
               <input
                 value={brouillon}
                 onChange={(e) => setBrouillons((b) => ({ ...b, [cle]: e.target.value }))}
@@ -882,6 +893,7 @@ function ChampsFiche({
                 className="w-full rounded border border-transparent bg-input px-1.5 py-0.5 focus:border-primary"
                 data-testid={`champ-${champ.champ}`}
                 data-zone={champ.zone ? "true" : "false"}
+                aria-label={`Valeur extraite — ${champ.champ}${champ.rang != null ? ` ${champ.rang}` : ""}`}
               />
               {modifie && (
                 <button
@@ -928,7 +940,7 @@ function ChampsFiche({
 export function ValidationApp() {
   const { session, role, chargement } = useSession()
   if (chargement) {
-    return <main className="p-6 text-sm text-muted-foreground">Vérification de votre rôle…</main>
+    return <div className="p-6 text-sm text-muted-foreground">Vérification de votre rôle…</div>
   }
   if (session.mode !== "nominatif" || !estApprobateur(role)) {
     return (

@@ -68,7 +68,7 @@ export function LoginForm() {
   }
 
   return (
-    <main className="flex min-h-screen bg-background">
+    <div className="flex min-h-screen bg-background">
       {/* Lot 8 — la voile d'accueil : purement décorative (aria-hidden),
           la mer dérive lentement, la rose des vents tourne à peine. */}
       <aside
@@ -170,6 +170,6 @@ export function LoginForm() {
         </p>
       </div>
       </div>
-    </main>
+    </div>
   )
 }

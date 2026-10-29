@@ -482,7 +482,7 @@ function ComparaisonAppInterne() {
 export function ComparaisonApp() {
   const { session, chargement } = useSession()
   if (chargement) {
-    return <main className="p-6 text-sm text-muted-foreground">Vérification de votre session…</main>
+    return <div className="p-6 text-sm text-muted-foreground">Vérification de votre session…</div>
   }
   if (session.mode !== "nominatif") {
     return (

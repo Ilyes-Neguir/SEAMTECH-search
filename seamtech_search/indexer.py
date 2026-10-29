@@ -613,6 +613,19 @@ class SearchIndex:
             )
         return self._pg_ts_config
 
+    def config_recherche_texte(self, connection: Any) -> str:
+        """Configuration de recherche plein-texte à utiliser dans CETTE base.
+
+        Accesseur PUBLIC de ``_postgres_ts_config`` : les modules métier qui
+        écrivent un ``tsvector`` (dépôt de fiche, pièces jointes) doivent
+        employer la MÊME configuration que l'indexeur. Écrire en dur
+        ``seamtech_unaccent`` casserait le repli documenté : sur une base où
+        ``CREATE EXTENSION unaccent`` est refusé (rôle non privilégié), la
+        configuration n'existe pas et l'écriture échouerait en
+        ``UndefinedObject`` au lieu de dégrader.
+        """
+        return self._postgres_ts_config(connection)
+
     def _migration_005_unaccent_search_vector(self, connection: Any) -> None:
         """Make Postgres accent parity match SQLite's accent-folding FTS5 index."""
         if not self.is_postgres:
@@ -1236,8 +1249,15 @@ class SearchIndex:
             "et tables d'extractions d'accessoires créées."
         )
 
-    def run_migrations(self) -> None:
-        """Run pending schema migrations once at startup."""
+    def run_migrations(self, jusqu_a: str | None = None) -> None:
+        """Applique les migrations en attente au démarrage.
+
+        ``jusqu_a`` (facultatif) n'applique que les versions jusqu'à cet
+        identifiant inclus, dans l'ordre du registre : c'est ce qui permet de
+        reconstituer une installation ANTÉRIEURE (montée de version et retour
+        arrière sur une copie représentative) sans tenir une seconde liste de
+        migrations, qui divergerait de la première.
+        """
         with self.connect() as connection:
             self._ensure_migrations_table(connection)
             applied = self._get_applied_migrations(connection)
@@ -1329,6 +1349,18 @@ class SearchIndex:
                 # VERSION_SCHEMA_METIER vaut 031.
                 ("031_accessoires", self._migration_031_accessoires),
             ]
+
+            if jusqu_a is not None:
+                # Reconstitution d'une installation ANTÉRIEURE (montée de
+                # version / retour arrière sur une copie) : on tronque le
+                # registre à la version demandée au lieu d'entretenir une
+                # seconde liste de migrations qui divergerait de la première.
+                versions_connues = [version for version, _ in migrations]
+                if jusqu_a not in versions_connues:
+                    raise ValueError(
+                        f"migration inconnue : {jusqu_a!r} (connues : {', '.join(versions_connues)})"
+                    )
+                migrations = migrations[: versions_connues.index(jusqu_a) + 1]
 
             for version, func in migrations:
                 if version not in applied:

@@ -143,6 +143,22 @@ def _fichiers_suivis() -> list[str]:
     return sorted(ligne for ligne in sortie.stdout.splitlines() if ligne.strip())
 
 
+# Fixtures SYNTHÉTIQUES régénérées par un script du dépôt : leurs octets
+# contiennent une date de création (reportlab/Pillow), donc les épingler par
+# SHA-256 serait instable d'une régénération à l'autre. Elles ne sont pas pour
+# autant hors surveillance : chaque dossier est produit par un générateur
+# versionné ET consommé par un test qui échouerait si le contenu changeait de
+# nature (rotation lue, glyphes attendus, texte attendu).
+_FIXTURES_SYNTHETIQUES = (
+    "tests/fixtures/ocr/",
+    "tests/fixtures/pdf_rotation/",
+)
+
+
+def _fixture_synthetique(chemin: str) -> bool:
+    return Path(chemin).suffix.lower() == ".pdf" and chemin.startswith(_FIXTURES_SYNTHETIQUES)
+
+
 def test_aucun_document_hors_inventaire_epingle() -> None:
     """Tout PDF/ZIP/format machine suivi doit être épinglé ci-dessus."""
     inventaire = {chemin for chemin, _sha, _taille in INVENTAIRE_EPINGLE}
@@ -151,7 +167,7 @@ def test_aucun_document_hors_inventaire_epingle() -> None:
         for chemin in _fichiers_suivis()
         if Path(chemin).suffix.lower() in _SUFFIXES_SURVEILLES
         and chemin not in inventaire
-        and not (chemin.startswith("tests/fixtures/ocr/") and Path(chemin).suffix.lower() == ".pdf")
+        and not _fixture_synthetique(chemin)
     ]
     assert not suspects, (
         "Fichier(s) documentaire(s) suivi(s) par Git mais ABSENT(S) de l'inventaire "

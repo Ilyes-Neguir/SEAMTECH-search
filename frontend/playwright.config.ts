@@ -67,7 +67,19 @@ export default defineConfig({
   projects: [
     {
       name: "chromium",
-      use: { ...devices["Desktop Chrome"] },
+      use: {
+        ...devices["Desktop Chrome"],
+        // Chromium SYSTEME : sur une machine sans navigateur Playwright
+        // installable (bac à sable d'audit, image Debian sans libnss), la
+        // campagne doit pouvoir pointer un binaire fourni par
+        // l'environnement. Sans la variable, comportement Playwright standard.
+        launchOptions: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE
+          ? {
+              executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE,
+              args: ["--no-sandbox", "--disable-dev-shm-usage"],
+            }
+          : {},
+      },
     },
   ],
   webServer: [

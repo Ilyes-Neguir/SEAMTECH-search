@@ -18,6 +18,34 @@ mesures publiées en annotations `::notice title=sauvegarde-*`.
 | Base PostgreSQL (pg_dump -Fc) | local + bucket S3/MinIO (`backups/seamtech-search-<horodatage>.dump`) | re-lecture du dump depuis le bucket et comparaison d'empreinte APRÈS chaque envoi |
 | État de l'archive (jamais l'archive elle-même — RG13 : lecture seule, aucune copie) | dans le manifeste : chemins + tailles + sha256 de chaque fichier | `verifier` re-parcourt l'archive et signale tout fichier PERDU, ALTÉRÉ ou ajouté |
 | Manifeste | `<dump>.manifest.json` local + bucket | date, taille et sha256 du dump, VERSION_SCHEMA_METIER, comptes par table, fiches par statut, nb documents, commit de l'application |
+| **Répertoires de données** (`./data` : lots téléversés, quarantaine, rapports générés) — option `--data` | copies vérifiées (SHA-256) sous `<bundle>/data/<racine>/<chemin relatif>` | clé `data` du manifeste : `nb_copies`, `nb_echecs`, `ignores_volatiles` (verrous/`.tmp`), `liens_sortants`, `absentes`, et la liste des **échecs** ; `complet` passe à `false` au moindre échec |
+| **Objets du stockage objet** (MinIO/R2) référencés par `documents` | copies sous `<bundle>/objets/…` | clé `objets_s3` du manifeste : nombre d'objets copiés, absents et échecs |
+
+> **Ce que la sauvegarde NE fait pas** : elle ne sauvegarde l'archive
+> d'origine que sous forme d'INVENTAIRE (RG13, lecture seule) — voir
+> `restaurer --fichiers-cible` pour remettre les copies référencées ailleurs
+> que sous les racines d'archive.
+
+## 1 bis. Sauvegarde COMPLÈTE (base + données + objets) — commande de référence
+
+```bash
+python -m seamtech_search.sauvegarde sauver \
+  --base-url "postgresql://seamtech:<motdepasse>@127.0.0.1:5432/seamtech_search" \
+  --archive "D:/SEAMTECH/DesignFiles" \
+  --data ./data \
+  --avec-references \
+  --dossier data/backups --retention 5
+```
+
+`--data` est **nécessaire** dès que des dossiers ont été téléversés depuis le
+navigateur : leurs octets vivent sous `uploads/lots-televerses/…` (hors
+archive). Une sauvegarde qui l'omet n'est pas « complète » : le manifeste le
+signale (`data` absent) et la restauration ne pourra pas restituer ces pièces.
+
+Le manifeste publie `complet: true|false`. **Une sauvegarde n'est utilisable
+que si `complet` vaut `true`** — sinon les échecs sont listés dans
+`data.echecs` / `fichiers_locaux.absents` et doivent être traités avant de
+considérer que le poste est protégé.
 
 ## 2. Commandes (CLI portable — Linux, macOS, Windows/PowerShell)
 
@@ -78,6 +106,99 @@ python -m seamtech_search.sauvegarde verifier \
 ```
 
 Sortie attendue : `{"ok": true, "ecarts": []}` et code retour 0.
+
+### Restauration COORDONNÉE (base + `./data` + objets) — le scénario de sinistre
+
+Un sinistre ne détruit pas seulement PostgreSQL : le disque des téléversements
+et le bucket peuvent être perdus en même temps. `--coordonnee` remet les trois
+ensemble, dans cet ordre, puis **re-vérifie le manifeste** :
+
+```bash
+python -m seamtech_search.sauvegarde restaurer \
+  --manifeste data/backups/<…>.dump.manifest.json \
+  --base-cible "postgresql://seamtech:<motdepasse>@127.0.0.1:5432/seamtech_restore" \
+  --data-cible /srv/seamtech/data \
+  --restaurer-objets \
+  --coordonnee
+```
+
+Sortie (une ligne JSON) : `{"base": …, "data": {"nb": <copies restaurées>},
+"verification": {"ok": true, "ecarts": []}}`, code retour 0 seulement si
+`verification.ok` est `true`.
+
+Ordre appliqué, non modifiable : **base → données → fichiers → objets →
+vérification**. Un échec à n'importe quelle étape arrête la restauration avec
+une erreur explicite ; rien n'est déclaré « restauré » sans contrôle final.
+
+- La base cible doit être NEUVE (même règle que ci-dessus).
+- `--data-cible` doit être un répertoire distinct de `./data` en production :
+  on restaure À CÔTÉ, on contrôle, puis on bascule.
+- Chaque copie de données est revérifiée par SHA-256 **avant** écriture : un
+  fichier altéré dans le bundle fait échouer la restauration au lieu de
+  remettre en service des octets faux.
+
+## 2 ter. Téléversements de lots : promotion vers le stockage objet
+
+Depuis le correctif P0.2, les octets d'un dossier téléversé **remontent vers le
+stockage objet** (MinIO/R2) juste après l'écriture de la fiche ; la copie locale
+reste en place (aucune purge : les fiches déposées la référencent encore).
+
+| Situation | État publié | Action |
+|---|---|---|
+| envoi réussi et relecture identique | `documents.upload_status = 'uploaded'`, `object_key` renseigné | aucune |
+| stockage indisponible pendant le dépôt | `upload_status = 'failed'`, dépôt **réussi** (la fiche existe) | relancer `python -m seamtech_search.fiches promouvoir` quand le stockage revient |
+| intégrité non prouvée (relecture désactivée) | `upload_status` ≠ `uploaded`, **aucune** `object_key` | ne pas considérer le document comme archivé hors-site |
+| stockage non configuré | `upload_status = 'not_configured'` | configurer le stockage, puis `promouvoir` |
+
+```bash
+# Reprise idempotente : n'envoie que ce qui n'est pas encore promu.
+python -m seamtech_search.fiches promouvoir --config config.json
+```
+
+Après une reprise, contrôler :
+```sql
+SELECT upload_status, COUNT(*) FROM documents GROUP BY upload_status ORDER BY 1;
+```
+Attendu après reprise : aucune ligne `failed` ou `pending` résiduelle.
+
+## 2 quater. Montée de version et retour arrière (prouvés sur une copie)
+
+La montée de version n'est **pas** autorisée sans filet. La procédure est un
+module :
+
+```bash
+# 1. AVANT : photographie (versions de schéma, comptes, empreintes de contenu)
+#    + dump de sécurité. Refuse de continuer si le dump échoue.
+python -m seamtech_search.migration_securee avant \
+  --base-url "postgresql://seamtech:<motdepasse>@127.0.0.1:5432/seamtech_search" \
+  --dossier data/backups/migrations
+
+# 2. Déployer la nouvelle version (les migrations s'appliquent au démarrage).
+
+# 3. APRÈS : comparaison à la photographie. Code retour 1 si un écart est
+#    constaté (table disparue, lignes perdues, contenu réécrit, schéma inchangé).
+python -m seamtech_search.migration_securee apres \
+  --base-url "postgresql://…/seamtech_search" \
+  --etat-avant data/backups/migrations/<dump>.etat-avant.json
+
+# 4. RETOUR ARRIÈRE (si l'étape 3 échoue) : le dump de sécurité est restauré
+#    dans une base NEUVE, puis comparé à la photographie d'avant.
+python -m seamtech_search.migration_securee rollback \
+  --etat-avant data/backups/migrations/<dump>.etat-avant.json \
+  --dossier data/backups/migrations \
+  --base-cible "postgresql://…/seamtech_rollback_test"
+```
+
+Ce qui est prouvé par exécution (`tests/test_migration_rollback.py`, PostgreSQL
+réel) : installation reconstituée à la version `025_audit_logs`, semée de
+données métier, migrée jusqu'à la version courante — **aucune table perdue,
+aucune ligne perdue, contenu inchangé** — puis **deux retours arrière
+successifs** vers des bases neuves, chacun rendant exactement l'état d'avant
+(versions de schéma, comptes et empreintes), et l'index de recherche
+fonctionnel après restauration.
+
+Ce qui n'est **pas** prouvé : la montée de version sur le poste Windows réel
+(Docker Desktop), et un arrêt brutal PENDANT la migration.
 
 ## 3. Si la sortie ne correspond pas
 

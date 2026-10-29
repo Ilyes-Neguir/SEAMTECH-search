@@ -608,6 +608,9 @@ export function RechercheFichesApp({ assistantActif = true }: { assistantActif?:
               placeholder="Rechercher une fiche — code, voile, client, matière…"
               className="w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground"
               data-testid="recherche-saisie"
+              /* Un placeholder n'est PAS un nom accessible : il disparaît à la
+                 saisie et n'est pas lu de façon fiable. */
+              aria-label="Rechercher une fiche — code, voile, client, matière"
               autoFocus
             />
             <button
@@ -617,11 +620,15 @@ export function RechercheFichesApp({ assistantActif = true }: { assistantActif?:
               Rechercher
             </button>
           </div>
+          {/* `aria-label` OBLIGATOIRE : un <select> sans nom accessible est un
+              défaut critique (axe « select-name ») — un lecteur d'écran annonce
+              « liste déroulante » sans dire de quoi il s'agit. */}
           <select
             value={tri}
             onChange={(e) => changerTri(e.target.value)}
             className="rounded border border-border bg-background px-2 py-2 text-xs"
             data-testid="recherche-tri"
+            aria-label="Trier les résultats"
           >
             {TRIS.map((t) => (
               <option key={t.valeur} value={t.valeur}>
@@ -787,6 +794,7 @@ export function RechercheFichesApp({ assistantActif = true }: { assistantActif?:
               onChange={(e) => changerCoteExploration(e.target.value)}
               className="mb-2 w-full rounded border border-border bg-background px-2 py-1.5 text-xs"
               data-testid="dimension-cote"
+              aria-label="Dimension à explorer"
             >
               {COTES_LISTE.map((c) => (
                 <option key={c.cle} value={c.cle}>
@@ -925,9 +933,12 @@ export function RechercheFichesApp({ assistantActif = true }: { assistantActif?:
                       <div className="flex flex-wrap items-baseline gap-2">
                         {fiche.code ? <Link href={`/fiches/${encodeURIComponent(fiche.code)}`} className="font-mono text-xs text-primary underline-offset-2 hover:underline" aria-label={`Ouvrir la fiche ${fiche.code}`}>{fiche.code}</Link> : <span className="font-mono text-xs text-muted-foreground">—</span>}
                         <h2 className="text-sm font-medium">{fiche.titre ?? "Sans titre"}</h2>
+                        {/* Contraste : `text-muted-foreground` sur `bg-muted` donne
+                            4,36:1, sous le seuil AA de 4,5 (relevé par axe avec le compte
+                            de secours). `text-foreground/85` passe largement. */}
                         {fiche.categorie === "accessoire" && (
                           <span
-                            className="shrink-0 rounded-full border border-border bg-muted px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
+                            className="shrink-0 rounded-full border border-border bg-muted px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-foreground/85"
                             data-testid="badge-categorie"
                             title="Fiche d’accessoire (Lot 7) — schéma métier distinct des voiles"
                           >

@@ -1,5 +1,73 @@
 # Changelog
 
+## 2026-10-28 — Correctifs P0 « production ready » (campagne complémentaire)
+
+Corrige les P0 des deux rapports du 28/10/2026. Chaque point ci-dessous est
+prouvé par une exécution reproductible ; ce qui n'est pas prouvé est dit.
+
+- **P0.1 — sauvegarde/restauration COMPLÈTE et vérifiable** :
+  `sauver --data <répertoires>` inventorie et copie l'arborescence `./data`
+  (lots téléversés, quarantaine, rapports) avec vérification SHA-256,
+  en ignorant explicitement les fichiers volatils (`*.lock`, `*.tmp`,
+  `*.pid`, `.~lock.*`) et en refusant de suivre un lien sortant de la racine ;
+  le manifeste publie `data` (`nb_copies`, `nb_echecs`, `ignores_volatiles`,
+  `liens_sortants`, `absentes`, `echecs`) et `complet=false` au moindre échec.
+  Nouveau `restaurer --data-cible … --coordonnee` : base → données → fichiers →
+  objets → `verifier()`, dans cet ordre, avec refus de restaurer sur une base
+  existante et empreinte de chaque copie revérifiée AVANT écriture.
+  Preuve : `tests/test_sauvegarde_complete.py` (5 tests PG) — base + `./data`
+  + bucket détruits, puis restauration coordonnée et `verifier()["ok"] is True`.
+- **P0.2 (suite) — rejeu de dépôt** : un dossier rejoué (`deja_traite`) ne
+  laisse plus ses copies stagées sous `uploads/lots-televerses`. La suppression
+  n'est faite que si les octets sont DÉJÀ enregistrés pour cette fiche (le PDF
+  de fiche est celui dont l'empreinte a servi à reconnaître le rejeu ; une pièce
+  doit figurer dans `fiche_piece_jointe`), jamais sur une archive déposée par
+  chemin (RG13), jamais sur un fichier modifié entre-temps.
+  Preuve : `tests/test_promotion_lots.py` (7 tests PG, dont 3 nouveaux).
+- **P0.3 — montée de version et retour arrière prouvés** : nouveau module
+  `seamtech_search.migration_securee` (`avant`, `apres`, `rollback`,
+  `diagnostic`) et option `run_migrations(jusqu_a=…)` pour reconstituer une
+  installation ANTÉRIEURE sans entretenir une seconde liste de migrations.
+  `avant` refuse de laisser migrer sans dump de sécurité ; `apres` liste les
+  écarts (table disparue, lignes perdues, contenu réécrit à compte constant,
+  schéma inchangé) ; `rollback` restaure dans une base NEUVE et compare.
+  Preuve : `tests/test_migration_rollback.py` (4 tests PG) — migration depuis
+  `025_audit_logs` avec données métier conservées, puis DEUX retours arrière
+  successifs rendant exactement l'état d'avant.
+- **Relais multipart durci** (`frontend/lib/relais-multipart.ts`, branché sur
+  les trois routes d'envoi) : plus de `req.formData()` (tout l'envoi en
+  mémoire du BFF, sans plafond) ; 400 si le corps n'est pas multipart, 413 avant
+  lecture si `Content-Length` dépasse la borne ET en cours de flux sinon,
+  429 au-delà de deux envois simultanés par session, abandon du backend si le
+  client disparaît, 504 si le backend ne progresse plus, 502 réservé à une
+  vraie panne de liaison (message générique), et corps/statut du backend
+  recopiés tels quels (une page d'erreur HTML n'est plus transformée en 502).
+  Preuve : `frontend/lib/relais-multipart.test.ts` (10 tests, exécutés en CI).
+- **Accessibilité — axe-core sur TOUS les écrans** : nouvelle spec
+  `frontend/e2e/accessibilite.spec.ts` (WCAG 2.1 A/AA, 4 rôles, écrans de
+  détail, recherche vide, login, 403, session absente). 59 écrans scannés,
+  **0 violation**. Défauts réels trouvés et corrigés : nom accessible du logo
+  (WCAG 2.5.3), deux `<select>` sans nom (`select-name`, critique), champ de
+  recherche sans nom (placeholder ≠ nom), trois champs de validation et
+  l'entrée de fichier des gabarits sans `aria-label`, contrastes 4,26:1 et
+  3,65:1 sous le seuil AA, absence de repère `<main>` (et lien d'évitement).
+  Rapport machine : `frontend/accessibilite/rapport-axe.json`.
+- **Isolation de la suite e2e** (défauts d'ORDRE, causes de rouge en CI) :
+  `lot3b` renommait le libellé de modèle de la fiche de référence sans le
+  restaurer (le lot 5 ne trouvait plus sa population) ; `lot6` supposait
+  qu'aucune autorisation de téléchargement n'existait alors que
+  `lot1-approbations` en accorde une valable 24 h (il crée désormais son propre
+  compte) ; `test_sessions_redis` codait en dur le port d'un Redis « mort » qui
+  pouvait être vivant. Les trois passent maintenant SEULS et EN SÉQUENCE.
+- **Version d'extracteur 6 → 7** : la correction d'orientation PDF (rotation
+  90/180/270 et glyphes d'orientation minoritaire) DOIT ré-extraire les PDF
+  déjà indexés, sinon les anciens mots inversés (« NOPMAT ») restent dans
+  l'index.
+
+Non prouvé ici, et donc non revendiqué : Docker Desktop/natif Windows,
+PostgreSQL 16 natif, Chrome/Edge natif, volume réel de 100 000 fichiers,
+endurance de plusieurs jours.
+
 ## Unreleased — Qualification des réserves A–D (`arena/e7f33785-seamtech-search`)
 
 Complément à la recette historique (`3304b91`, PR #36) : ne réécrit aucun

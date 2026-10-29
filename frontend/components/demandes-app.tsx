@@ -230,7 +230,7 @@ export function DemandesApp() {
   }
 
   return (
-    <main className="mx-auto min-h-[calc(100vh-3.5rem)] w-full max-w-[1500px] p-4 sm:p-6" data-testid="approvals-app">
+    <div className="mx-auto min-h-[calc(100vh-3.5rem)] w-full max-w-[1500px] p-4 sm:p-6" data-testid="approvals-app">
       <header className="flex flex-wrap items-start justify-between gap-4 border-b border-border pb-4">
         <div>
           <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-primary">Circuit d’approbation</p>
@@ -478,7 +478,7 @@ export function DemandesApp() {
                         type="button"
                         onClick={() => setDecision("approuver")}
                         aria-pressed={decision === "approuver"}
-                        className={cn("inline-flex items-center gap-1.5 rounded px-3 py-2 text-xs font-semibold", decision === "approuver" ? "bg-emerald-600 text-white" : "bg-accent text-muted-foreground")}
+                        className={cn("inline-flex items-center gap-1.5 rounded px-3 py-2 text-xs font-semibold", decision === "approuver" ? "bg-emerald-700 text-white" : "bg-accent text-muted-foreground")}
                       >
                         <Check className="size-3.5" aria-hidden /> Approuver
                       </button>
@@ -526,6 +526,6 @@ export function DemandesApp() {
           )}
         </section>
       </div>
-    </main>
+    </div>
   )
 }
