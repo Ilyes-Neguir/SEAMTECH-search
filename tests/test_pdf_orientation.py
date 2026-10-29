@@ -1,7 +1,8 @@
 """PDF pivotés : comportement attendu établi par orientation réelle.
 
-Ces tests remplacent les trois ``xfail`` de la campagne précédente par des
-assertions de comportement, sur des échantillons représentatifs :
+Ces tests couvrent les trois orientations signalées comme non traitées par la
+campagne précédente (90°, 180°, 270°) par des assertions de comportement, sur
+des échantillons représentatifs et reproductibles :
 
 * ``page_XX.pdf`` — contenu horizontal, page déclarée pivotée par ``/Rotate``
   (ce que produit un scanner ou un export de DAO en paysage) ;
