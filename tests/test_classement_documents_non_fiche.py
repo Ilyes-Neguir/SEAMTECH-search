@@ -166,3 +166,48 @@ def test_une_vraie_fiche_a_cote_d_une_planche_reste_deposee(tmp_path) -> None:
     assert plan.raison_refus is None
     assert plan.pdf_fiche is not None and plan.pdf_fiche.name == "ZZ 705_ffab.pdf"
     assert {piece.chemin.name for piece in plan.pieces} == {"PLAN.pdf"}
+
+
+# ---------------------------------------------------------------------------
+# Un formulaire n'est jamais une fiche, et un mot n'est jamais un code
+# (mesuré sur /VOILES 2024/NS44 ST88 : une fiche « pour » était apparue)
+# ---------------------------------------------------------------------------
+
+
+def test_formulaire_riche_n_est_jamais_retenu_comme_fiche(tmp_path) -> None:
+    """Un formulaire de cotes reste un formulaire même si un gabarit l'accroche.
+
+    Mesure réelle : `/VOILES 2024/NS44 ST88/NS44 GV.pdf` — le gabarit
+    accessoire le reconnaissait faiblement (score 1) et le dossier était
+    « traité » avec un code lu dans le formulaire. Le formulaire ne doit plus
+    être candidat du tout.
+    """
+    dossier = tmp_path / "ZZ 706"
+    dossier.mkdir()
+    _ecrire(
+        dossier / "NS44 GV.pdf",
+        [
+            "Fiche de prise de cotes",
+            "Ancienne Grand-voile Ancien Artimon",
+            "Compléter et retourner à contact@seamtech.tn",
+            "Nom : Prénom :",
+            "Port : Emplacement:",
+            "Tel :",
+            "Ris automatiques : Non Oui",
+            "Ris auto. pour : 1 1 et 2 1 et 2 et 3",
+            "Commentaires",
+        ],
+    )
+    plan = scanner_dossier(dossier, list(GABARITS_EMBARQUES))
+    assert plan.pdf_fiche is None
+    assert "formulaire de prise de cotes" in plan.raison_refus
+
+
+def test_un_mot_sans_chiffre_n_est_jamais_un_code() -> None:
+    """Tous les codes réels portent un chiffre ; « pour » n'en est pas un."""
+    from seamtech_search.fiches.extraction import _code_plausible
+
+    for vrai in ("ST64", "ST 074b", "170124CS", "250821JA", "ST 508V2", "ST 089"):
+        assert _code_plausible(vrai) is True, vrai
+    for faux in ("pour", "Commande", "", "   ", None, "Longueur du lazy"):
+        assert _code_plausible(faux) is False, faux

@@ -664,6 +664,14 @@ def scanner_dossier(dossier: Path, gabarits: list[GabaritDef]) -> PlanDossier:
         scores[pdf.name] = 0 if candidat is None else candidat.score_detection
         if _diagnostic_formulaire_prise_de_cotes(pdf) is not None:
             classements[pdf.name] = CLASSEMENT_FORMULAIRE
+            # Un formulaire de prise de cotes n'est JAMAIS une fiche : il ne
+            # doit donc pas rester candidat, même quand un gabarit le reconnaît
+            # faiblement. Mesuré sur `/VOILES 2024/NS44 ST88` : le formulaire
+            # « NS44 GV.pdf » était retenu par le gabarit accessoire et une
+            # fiche « pour » (mot lu dans le formulaire) apparaissait en base.
+            candidats = [paire for paire in candidats if paire[0] != pdf]
+            scores[pdf.name] = 0
+            continue
         elif _est_planche_sailpack(pdf):
             classements[pdf.name] = CLASSEMENT_PLANCHE
         if candidat is not None:

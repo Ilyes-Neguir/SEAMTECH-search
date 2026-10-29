@@ -58,6 +58,25 @@ GAP_COLONNE_PT = 14.0  # écart horizontal marquant un changement de colonne (bo
 #     lettres : c'est le format qui manquait, pas l'information.
 # Aucun séparateur interne (tiret, point, barre) n'est accepté : « 01-02-2024 »
 # ou « 884.68 » ne sont pas des codes, et restent refusés.
+def _code_plausible(valeur: str | None) -> bool:
+    """Un code de fiche contient TOUJOURS au moins un chiffre.
+
+    Mesuré sur `/VOILES 2024/NS44 ST88` : le gabarit accessoire lisait le mot
+    « pour » dans une ligne du formulaire de prise de cotes (« Ris auto. pour :
+    1 1 et 2 … ») et l'écrivait comme CODE de fiche — une fiche « pour » est
+    apparue en base. Aucun code réel de l'archive n'est fait uniquement de
+    lettres (« ST64 », « ST 074b », « 170124CS », « 250821JA », « ST 508V2 »
+    portent tous des chiffres) : exiger au moins un chiffre ne retire donc
+    aucune référence réelle, et ferme la porte aux mots du formulaire.
+    """
+    if valeur is None:
+        return False
+    texte = valeur.strip()
+    if not texte or len(texte) > 24:
+        return False
+    return re.search(r"\d", texte) is not None
+
+
 _RE_CODE_ACCESSOIRE = re.compile(r"^[A-Za-z]{0,4}\s?\d{1,6}[A-Za-z]{0,3}$")
 
 # Familles de type de voile connues (valeur → (libellé canonique, famille)).
@@ -486,7 +505,12 @@ def _traiter_designation(fiche: FicheExtraite, brut: str, base: ChampExtrait, fa
             # type reconnu parmi les motifs connus : lecture déterministe
             base.confiance = max(base.confiance, CONFIANCE_CERTAIN)
             return
-    fiche.gamme = fiche.gamme or valeur
+    # Fragment de libellé (« / FOCS » lu après l'ancre « génois » sur la fiche
+    # SAILONET « FICHE FABRICATION GENOIS / FOCS ») : la valeur reste tracée
+    # telle quelle, mais elle ne devient PAS la gamme — un morceau de libellé
+    # n'est pas une gamme commerciale.
+    if not valeur.lstrip().startswith(("/", "-", "–")):
+        fiche.gamme = fiche.gamme or valeur
     base.valeur_normalisee = valeur
     base.confiance = max(base.confiance, 0.7)
 
@@ -526,6 +550,8 @@ def _poser_code_accessoire(
     fiche: FicheExtraite, base: ChampExtrait, valeur: str, mots: list[Mot]
 ) -> None:
     code = _normaliser_code_ffab(valeur)
+    if not _code_plausible(code):
+        return
     base.valeur_brute = valeur
     base.valeur_normalisee = code
     base.confiance = max(base.confiance, CONFIANCE_CERTAIN)
@@ -1016,7 +1042,7 @@ def _traiter_ligne_titre_portant(fiche: FicheExtraite, brut: str, base: ChampExt
         return
 
     if fiche.code is None:
-        codes = _RE_CODE_FICHE.findall(valeur)
+        codes = [code for code in _RE_CODE_FICHE.findall(valeur) if _code_plausible(code)]
         if codes:
             fiche.code = codes[-1].upper()
 
@@ -2466,7 +2492,7 @@ def _reprendre_code_ffab_depuis_ligne_fichier(
     if fiche.code:
         return False
     code, mots_code, page_code = _code_corroboré_ligne_fichier(pages)
-    if not code:
+    if not code or not _code_plausible(code):
         return False
     fiche.code = code
     fiche.champs.append(
@@ -2716,7 +2742,7 @@ def _traiter_ligne_titre_ffab(fiche: FicheExtraite, brut: str, base: ChampExtrai
         # génois comme une grand-voile.
         famille = _FAMILLES_VOILE_TITRE.search(designation or "")
         fiche.titre = categorie or (famille.group(1) if famille else None) or "Voile"
-    if fiche.code is None and code:
+    if fiche.code is None and code and _code_plausible(code):
         fiche.code = code
     if fiche.commande_numero is None and commande:
         fiche.commande_numero = commande
@@ -3387,6 +3413,43 @@ def _aligner_titre_sur_type(fiche: FicheExtraite) -> None:
             champ.methode = "gabarit_designation"
 
 
+def _poser_titre_depuis_entete(fiche: FicheExtraite, pages: list[PageAnalysee]) -> None:
+    """Complète un titre ABSENT avec le type de voile imprimé en tête.
+
+    Mesuré sur `/VOILES 2026/ETAP 32S ST685/FFAB_gse234269.pdf` (fiche
+    SAILONET « FICHE FABRICATION GENOIS / FOCS », ligne « TYPE GÉNOIS SUR
+    ENROULEUR ») : le gabarit générique génois ne porte aucune règle de titre,
+    la fiche sortait donc avec ``titre = NULL`` alors que le type est imprimé
+    noir sur blanc. On ne lit QUE les trois premières lignes de la page 1, et
+    seulement si l'une d'elles nomme une famille de voile connue ; sinon rien
+    n'est posé (jamais de « Voile » par défaut).
+    """
+    if fiche.titre:
+        return
+    for page in pages[:1]:
+        for ligne in page.lignes[:6]:
+            texte_ligne = " ".join(mot.texte for mot in ligne.mots).strip()
+            trouve = _FAMILLES_VOILE_TITRE.search(texte_ligne)
+            if trouve is None:
+                continue
+            titre = trouve.group(1).strip()
+            fiche.titre = titre[:1].upper() + titre[1:].lower() if titre.isupper() else titre
+            fiche.champs.append(
+                ChampExtrait(
+                    champ="fiche.titre",
+                    valeur_brute=texte_ligne,
+                    valeur_normalisee=fiche.titre,
+                    methode="document",
+                    confiance=0.9,
+                    page=page.numero,
+                    zone=_zone_des_mots(ligne.mots),
+                    table_cible="fiche",
+                    colonne_cible="titre",
+                )
+            )
+            return
+
+
 def _extraire_pages(
     pages: list[PageAnalysee],
     chemin: Path,
@@ -3406,6 +3469,7 @@ def _extraire_pages(
         except Exception:
             LOGGER.exception("Échec de la règle %s — champ ignoré, à relire (conséquence : champ absent).", regle.cible)
     _collecter_libres(fiche, pages, consommees, vocabulaire_libres or {ancre for g in (gabarits or [gabarit]) for ancre in g.ancres_detection} | {ancre for r in gabarit.champs for ancre in r.ancres})
+    _poser_titre_depuis_entete(fiche, pages)
     _aligner_titre_sur_type(fiche)
     fiche.anomalies = evaluer_anomalies(fiche)
     return fiche

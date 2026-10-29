@@ -1,5 +1,34 @@
 # SUITE DES TESTS — état exact (mis à jour à chaque passe)
 
+## Passe du 29/10/2026 (soir) — dépôt en LOT des dossiers réels
+
+| Commande | Résultat |
+|---|---|
+| `.venv/bin/ruff check seamtech_search/ tests/` | `All checks passed!` |
+| `pytest tests -m "not postgres"` | **1296 passés, 139 sautés**, 437 désélectionnés (100 s) |
+| `pytest tests -m postgres` (PG 18.6, port 5433) | **416 passés, 21 sautés** (159 s) |
+
+Ce qui a été corrigé (détail et preuves : `CHANGELOG.md`, entrée « suite 4 ») :
+
+1. le mot « pour » d'un formulaire ne peut plus devenir un code de fiche
+   (`_code_plausible` : un code contient toujours un chiffre) ; la fiche
+   « pour » créée à tort a été rejetée dans l'application ;
+2. un formulaire de prise de cotes n'est plus jamais candidat au rôle de fiche ;
+3. titre lu dans l'en-tête imprimé quand le gabarit n'en porte pas (SAILONET) ;
+4. nouvelle commande `deposer-arborescence` (+ `seamtech_search/fiches/arborescence.py`)
+   pour déposer TOUT un Dropbox et produire un rapport CSV.
+
+Mesures réelles : `VOILES 2024` 24 dossiers → 3 traités / 21 refusés (formulaires
+de cotes, planches SailPack, PDF image) ; `VOILES 2026` 12/12 traités ;
+`VOILES 2025` 14/14 traités. Base de démonstration : **38 fiches**.
+
+Reste à faire (état honnête) : les racines Dropbox `ACCESSOIRES 2024/2025/2026`,
+le reste de `VOILES 2025`/`VOILES 2026` (~300 dossiers) et `ADONNANTE`
+(modèles DXF/PLX, aucun PDF de fiche) ne sont PAS encore rapatriées : le
+connecteur Dropbox ne descend qu'un fichier par appel.
+
+---
+
 Branche : `arena/6d05a833-seamtech-search` — **HEAD `cb2dee4`**
 (`9009676` → `8b4b3fe` → `feb1d2a` → `b54f27c` → `cb2dee4`).
 

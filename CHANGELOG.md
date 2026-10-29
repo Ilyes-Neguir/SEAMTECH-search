@@ -1,5 +1,56 @@
 # Changelog
 
+## 2026-10-29 (suite 4) — 50 dossiers réels déposés, fiche « pour », et dépôt en lot
+
+Trois défauts trouvés en déposant les documents RÉELS de `VOILES 2024` puis
+`VOILES 2025` / `VOILES 2026` dans l'application, plus une commande manquante.
+
+**1. Une fiche « pour » est entrée en base.** Sur
+`/VOILES 2024/NS44 ST88/` (formulaire « Fiche de prise de cotes » + planche
+SailPack), le gabarit accessoire accrochait le formulaire et lisait le mot
+« pour » de la ligne « Ris auto. pour : 1 1 et 2 … » comme CODE de fiche. Deux
+corrections :
+
+- `_code_plausible()` : un code de fiche contient **toujours au moins un
+  chiffre** (mesuré : `ST64`, `ST 074b`, `170124CS`, `250821JA`, `ST 508V2`,
+  `ST 089` — tous en portent ; aucun code réel n'est fait de lettres seules).
+  Appliqué aux 4 points d'écriture du code lus dans le document.
+- Un **formulaire de prise de cotes n'est plus candidat** au rôle de fiche,
+  même si un gabarit l'accroche faiblement : il est classé « formulaire » et
+  retiré de la liste des candidats. Le dossier est refusé avec sa raison, au
+  lieu d'être « traité » à tort.
+
+La fiche erronée a été **rejetée** dans l'application (motif tracé, révision 2) ;
+le dossier `NS44 ST88` est désormais refusé honnêtement.
+
+**2. Titre perdu sur le format SAILONET.** `/VOILES 2026/ETAP 32S
+ST685/FFAB_gse234269.pdf` (« FICHE FABRICATION / GENOIS / FOCS », ligne
+« TYPE GÉNOIS SUR ENROULEUR ») sortait avec `titre = NULL` : le gabarit génois
+n'a pas de règle de titre. `_poser_titre_depuis_entete()` lit désormais la
+famille de voile imprimée dans les 6 premières lignes de la page 1 — et RIEN
+d'autre (aucun « Voile » par défaut, provenance `document` tracée avec la ligne
+imprimée en `valeur_brute`). Un fragment de libellé (« / FOCS ») ne devient
+plus une gamme.
+
+**3. Le dépôt d'un Dropbox entier n'existait pas.** Nouvelle commande
+opérateur `deposer-arborescence` (`seamtech_search/fiches/arborescence.py`) :
+elle parcourt une arborescence locale, dépose **chaque** dossier contenant au
+moins un PDF, n'en saute aucun, et écrit un rapport CSV (Excel, `;`,
+UTF-8-BOM) avec le statut et la raison exacte de chaque dossier.
+
+Vérifié de bout en bout sur les documents réels (PostgreSQL + stockage objet) :
+
+| Lot | Dossiers | Traités | Refusés |
+|---|---|---|---|
+| `VOILES 2024` (24 dossiers, 27 PDF) | 24 | 3 | 21 (formulaires, planches, PDF image) |
+| `VOILES 2026` (12 dossiers réels) | 12 | **12** | 0 |
+| `VOILES 2025` (14 dossiers réels) | 14 | **14** | 0 |
+
+Preuves : `tests/test_arborescence_depot.py` (5 tests),
+`tests/test_titre_depuis_entete.py` (2 tests), 2 tests ajoutés à
+`tests/test_classement_documents_non_fiche.py`, ruff OK, SQLite **1294+ passés**,
+PostgreSQL **416 passés**, aucune régression.
+
 ## 2026-10-29 (suite 3) — dossier réel refusé à tort : référence de commande datée
 
 Défaut trouvé en déposant les VRAIS documents dans l'application (pas en
