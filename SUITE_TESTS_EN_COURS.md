@@ -15,8 +15,8 @@ puis corriger le code pour les **voiles ET les accessoires**, et retester sur
 | Commande | Résultat |
 |---|---|
 | `.venv/bin/ruff check .` | `All checks passed!` |
-| suite SQLite `pytest tests -m "not postgres"` | **1283 passés, 139 sautés**, 437 désélectionnés (96 s) |
-| suite PostgreSQL `pytest tests -m postgres` | **416 passés, 21 sautés** (175 s) |
+| suite SQLite `pytest tests -m "not postgres"` | **1287 passés, 139 sautés**, 437 désélectionnés (101 s) |
+| suite PostgreSQL `pytest tests -m postgres` | **416 passés, 21 sautés** (160 s) |
 | CI GitHub sur `cb2dee4` | 4/4 workflows verts (CI 17 min, Qualification native, Qualification réserves, Perf comparaison) |
 
 ## Audit Dropbox (29/10/2026)
@@ -81,6 +81,25 @@ documents ouverts). Formats non extractibles classés explicitement :
 | `/VOILES 2026/AURA 51 ST795` | `20260410 Gennak Aura51.pdf` = planche SailPack | idem |
 | `/ACCESSOIRES 2026/CAGNARD ST756` | 2 plans raster | « PDF sans couche texte … REVUE MANUELLE » |
 | `/TOILE ST792` (+ sous-dossier `toile`) | `TOILE ST792 COUPE.pdf` raster | idem |
+
+## Documents réels DANS l'application (29/10, 4e passe)
+
+Pile complète lancée sans Docker : PostgreSQL (pgserver), stockage objet
+compatible S3, API `uvicorn`, interface Next.js en développement.
+
+| dossier réel | code lu | gabarit | type |
+|---|---|---|---|
+| `/YACHET CLASSIC ST508` | ST 508 | GV FFab | voile |
+| `/WESTERLY PENTLAND ST660B` | ST 660B | GV FFab | voile |
+| `/ACCESSOIRES 2024/LAZY BAG 2 PARTIES DUFOUR 385` | 170124CS (après correctif) | Accessoire imprimé | accessoire |
+| `/ACCESSOIRES 2024/HOUSSE DE GSE ST96` | ST96 | Accessoire imprimé | accessoire |
+| `/ACCESSOIRES 2024/HOUSSE DE GSE ST101` | ST101 | Accessoire imprimé | accessoire |
+| `/ACCESSOIRES 2024/SAC DE PONT ST74B` | ST 074B | Accessoire imprimé | accessoire |
+| `/ACCESSOIRES 2025/LAZY BAG 2P ST105` | ST105 | Accessoire imprimé | accessoire |
+| `/ACCESSOIRES 2025/SAC DE PONT ST265B` | ST 256B | Accessoire imprimé | accessoire |
+
+8 fiches `a_valider`, 19 documents indexés (recherche opérationnelle), 8 objets
+promus et vérifiés (relecture SHA-256).
 
 ## Reste à faire
 

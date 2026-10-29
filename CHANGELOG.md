@@ -1,5 +1,33 @@
 # Changelog
 
+## 2026-10-29 (suite 3) — dossier réel refusé à tort : référence de commande datée
+
+Défaut trouvé en déposant les VRAIS documents dans l'application (pas en
+laboratoire) : `/ACCESSOIRES 2024/LAZY BAG 2 PARTIES DUFOUR 385/LB FINI.pdf`
+était refusé au dépôt —
+
+    aucun code de fiche lisible : ni le PDF, ni son nom « LB FINI.pdf », ni le
+    nom du dossier « LAZY BAG 2 PARTIES DUFOUR 385 » ne portent de référence
+
+— alors que le formulaire est entièrement lisible : titre « Lazy Bag », client
+« SEAMTECH PRO (CLASS SAILS) », bateau « DUFOUR 385 », gousset de latte
+3.96 m, ralingue 2.55 m, coulisseaux A031 (x3), lazy 4.1 m. La cause n'est pas
+le document mais le motif du code d'accès : il n'acceptait que « lettres puis
+chiffres » (« ST64 », « ST 074b »). Ce formulaire imprime l'inverse :
+`Commande 170124CS` — six chiffres puis deux lettres.
+
+Le motif accepte désormais les deux sens, sans séparateur interne : une date
+(« 01-02-2024 »), un montant (« 884.68 ») ou une phrase restent refusés, et les
+références déjà lues (« ST96 », « ST105 », « ST 074b », « ST 256b ») sont
+inchangées.
+
+Vérifié de bout en bout dans l'application (PostgreSQL + stockage objet) :
+8 dossiers réels déposés, **8 fiches** en base, chacune avec son PDF promu et
+vérifié par relecture SHA-256.
+
+Preuves : `tests/test_accessoire_reference_commande_datee.py` (4 tests), ruff
+OK, SQLite **1287 passés**, PostgreSQL **416 passés**.
+
 ## 2026-10-29 (suite 2) — refus qui nomme le contenu réel du dossier
 
 Trois familles de documents réels produisaient le même refus « aucune fiche de

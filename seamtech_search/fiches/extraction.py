@@ -46,10 +46,19 @@ LOGGER = logging.getLogger("seamtech_search.fiches.extraction")
 TOLERANCE_LIGNE_PT = 2.5  # écart vertical maximal entre deux mots d'une même ligne
 GAP_COLONNE_PT = 14.0  # écart horizontal marquant un changement de colonne (bordure de valeur)
 
-# Forme d'un code d'affaire d'accessoire, mesurée sur les formulaires réels :
-# « ST64 », « ST105 », « ST96 », « ST 074b », « ST 256b ». Un code porte au
-# plus quatre lettres, au plus cinq chiffres, au plus une lettre de version.
-_RE_CODE_ACCESSOIRE = re.compile(r"^[A-Za-z]{0,4}\s?\d{1,5}[A-Za-z]?$")
+# Forme d'un code d'affaire d'accessoire, mesurée sur les formulaires réels.
+# Deux formes imprimées coexistent dans l'archive :
+#   * « ST64 », « ST105 », « ST96 », « ST 074b », « ST 256b » — préfixe de
+#     lettres, puis chiffres, puis éventuellement une lettre de version ;
+#   * « 170124CS » — référence de commande datée, chiffres PUIS lettres, lue
+#     sur `/ACCESSOIRES 2024/LAZY BAG 2 PARTIES DUFOUR 385/LB FINI.pdf`
+#     (ligne « Commande 170124CS »). Le formulaire est entièrement lisible
+#     (titre « Lazy Bag », client, gousset, ralingue, coulisseaux, cotes) et
+#     n'était refusé QUE parce que sa référence ne commence pas par des
+#     lettres : c'est le format qui manquait, pas l'information.
+# Aucun séparateur interne (tiret, point, barre) n'est accepté : « 01-02-2024 »
+# ou « 884.68 » ne sont pas des codes, et restent refusés.
+_RE_CODE_ACCESSOIRE = re.compile(r"^[A-Za-z]{0,4}\s?\d{1,6}[A-Za-z]{0,3}$")
 
 # Familles de type de voile connues (valeur → (libellé canonique, famille)).
 TYPES_VOILE: tuple[tuple[str, str, str], ...] = (
