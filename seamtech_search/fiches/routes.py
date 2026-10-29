@@ -1986,6 +1986,74 @@ def enregistrer_routes_fiches(
         except TeleversementLotErreur as erreur:
             raise _http_televersement(erreur) from erreur
 
+    @app.post("/imports/{id_import}/creer-fiche", status_code=201)
+    def route_creer_fiche_depuis_import(
+        id_import: str,
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+        entete_utilisateur: Annotated[str | None, Header(alias="X-SEAMTECH-UTILISATEUR")] = None,
+        entete_role: Annotated[str | None, Header(alias="X-SEAMTECH-ROLE")] = None,
+        entete_session: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION")] = None,
+        entete_jeton: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-JETON")] = None,
+    ) -> dict[str, Any]:
+        """Crée la FICHE d'un import déjà analysé (« Importer les fichiers sélectionnés »).
+
+        L'import classique produit un RAPPORT d'analyse (``imports`` +
+        ``import_jobs``) : il n'écrit ni fiche, ni dossier, et l'opérateur qui
+        vient de voir ses champs « Matériau / Dimensions » à l'écran ne
+        comprend pas pourquoi rien n'apparaît dans les dossiers. Cette route
+        est le passage EXPLICITE d'un rapport à une fiche : elle dépose le
+        dossier qui contient le PDF technique identifié, exactement comme un
+        dépôt de dossier (mêmes règles, même transaction, même idempotence).
+
+        Aucun chemin n'est deviné : sans PDF technique dans le rapport, la
+        route refuse en le disant. Le dossier source est LU, jamais modifié.
+        """
+        from seamtech_search.import_pipeline import get_import
+
+        verifier_auth(config, token)
+        _exiger_postgres(index)
+        exiger_role_si_humain(
+            index, config, _roles_operationnels(), token=token,
+            entete_utilisateur=entete_utilisateur, entete_role=entete_role,
+            entete_session=entete_session, entete_jeton=entete_jeton,
+        )
+        try:
+            analyse = get_import(index, id_import)
+        except KeyError:
+            analyse = None
+        if not analyse:
+            raise HTTPException(status_code=404, detail=f"Import inconnu : {id_import}.")
+        pdf = str(analyse.get("technical_pdf") or "").strip()
+        if not pdf:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Cet import n'a identifié aucun PDF technique : il n'y a pas de fiche à "
+                    "créer. Déposez le DOSSIER (fiche + pièces jointes) plutôt que des fichiers "
+                    "isolés — seule une fiche de fabrication donne une référence."
+                ),
+            )
+        dossier = Path(pdf).parent
+        if not dossier.is_dir():
+            raise HTTPException(
+                status_code=410,
+                detail=(
+                    f"Le dossier d'origine n'existe plus sur le serveur ({dossier}) : "
+                    "l'import a été analysé mais ses fichiers ne sont plus accessibles."
+                ),
+            )
+        if not _path_autorise(dossier, config):
+            raise HTTPException(
+                status_code=403,
+                detail="Dossier hors des racines configurées : création de fiche refusée.",
+            )
+        try:
+            resultat = deposer_dossier(index, dossier, config=config)
+        except DepotImpossible as erreur:
+            raise HTTPException(status_code=422, detail=str(erreur)) from erreur
+        lot = etat_lot(index, int(resultat.get("id_lot") or 0)) if resultat.get("id_lot") else None
+        return {**resultat, "dossier": str(dossier), "lot": lot}
+
     @app.post("/imports/dossier", status_code=201)
     def route_deposer_dossier(
         corps: dict[str, Any],

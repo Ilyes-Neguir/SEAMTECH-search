@@ -1,5 +1,43 @@
 # Changelog
 
+## 2026-10-30 — Extraction client/bateau, code de fiche et passage import → fiche
+
+Correctifs tirés de l'exploitation réelle (archives de l'atelier, jamais
+recopiées dans le dépôt : tous les tests ci-dessous sont SYNTHÉTIQUES).
+
+- **Client et bateau non lus sur les fiches GV « FFab »** : un export tableur
+  place l'en-tête, la ligne d'atelier et la ligne de désignation dans des
+  CELLULES distinctes ; chaque cellule est une ligne physique, et la fenêtre
+  de lecture du titre s'arrêtait à quatre lignes. La fiche sortait avec
+  « Sans titre », client et bateau vides. La fenêtre va désormais jusqu'à
+  huit lignes (écart vertical 60 pt) et une troisième voie accepte toute
+  ligne portant à la fois une famille de voile, « pour » et « de ».
+  La désignation est ROGNÉE sur le dernier mot de famille : une cellule
+  voisine (« Fichier …, dessiné par … ») ne devient plus la désignation.
+  Preuve : `tests/test_passe_31_10_2026_ffab_client_bateau_code.py`.
+- **Référence d'affaire dans le nom du client** : la parenthèse finale
+  (« (ZZ75 - XXXX) ») est le numéro de commande externe, plus un morceau du
+  nom du client — le rattachement au référentiel bateau redevient possible.
+- **Ancres entre guillemets ignorées** : `_indice_ancre` compare désormais les
+  mots sans guillemets collés. Un libellé d'export (`"Grand-voile"`) ne
+  faisait jamais correspondre l'ancre du gabarit (`grand-voile`) : la règle
+  entière était ignorée, code de fiche compris.
+- **« écriture annulée : ValueError: Fiche sans code »** (4 dossiers réels
+  perdus) : le code est d'abord repris du DOCUMENT, puis, en repli explicite
+  et tracé (`methode="nom_fichier"`, confiance 0,75), du NOM du PDF
+  (« ZZ 075a_ffab.pdf » → « ZZ 075A »). Sans aucune référence, le refus est
+  explicite, tracé dans le lot, et n'écrit rien.
+- **Refus « gabarit inconnu » rendu lisible** : la raison nomme les PDF
+  examinés et rappelle que les fichiers n'ont pas été modifiés.
+- **« Ça analyse mais ça n'ajoute rien dans la base »** : l'import classique
+  produit un RAPPORT, pas une fiche. Nouvelle route
+  `POST /imports/{id}/creer-fiche` (relais BFF
+  `frontend/app/api/imports/[id]/creer-fiche`) et bouton « Créer la fiche
+  dans la base » : elle dépose le dossier du PDF technique identifié, avec
+  les mêmes règles, la même transaction et la même idempotence qu'un dépôt
+  de dossier. Sans PDF technique : 422 expliqué ; dossier disparu : 410 ;
+  hors racines configurées : 403.
+
 ## 2026-10-28 — Correctifs P0 « production ready » (campagne complémentaire)
 
 Corrige les P0 des deux rapports du 28/10/2026. Chaque point ci-dessous est

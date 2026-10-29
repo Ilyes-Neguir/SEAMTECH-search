@@ -179,10 +179,23 @@ def texte_normalise(pages: list[PageAnalysee]) -> str:
 # ---------------------------------------------------------------------------
 
 
+#: Guillemets et apostrophes typographiques retirés en tête/queue d'un mot
+#: AVANT comparaison d'ancre. Un libellé d'export tableur arrive souvent
+#: encadré de guillemets (« "Grand-voile" »), et l'ancre du gabarit
+#: (« grand-voile ») ne le reconnaissait alors jamais : la règle entière était
+#: silencieusement ignorée, code de fiche compris.
+_GUILLEMETS = "\"'«»“”‘’"
+
+
+def _jeton_comparable(mot_normalise: str) -> str:
+    """Mot normalisé, sans guillemets collés en tête ou en queue."""
+    return mot_normalise.strip(_GUILLEMETS)
+
+
 def _indice_ancre(ligne: Ligne, ancre_norm: str) -> int | None:
     """Premier mot de la ligne où commence la séquence d'ancres (ou None)."""
     jetons = ancre_norm.split()
-    mots_norm = [mot.normalise for mot in ligne.mots]
+    mots_norm = [_jeton_comparable(mot.normalise) for mot in ligne.mots]
     for depart in range(len(mots_norm) - len(jetons) + 1):
         if mots_norm[depart : depart + len(jetons)] == jetons:
             return depart
@@ -2216,6 +2229,14 @@ _RE_CODE_FFAB_FIN = re.compile(rf"(?P<code>{_MOTIF_CODE_FFAB})\s*$")
 _RE_CODE_FFAB_FICHIER = re.compile(rf"\bFichier\s+(?P<code>{_MOTIF_CODE_FFAB})(?:\.(?:xlsm|xlsx|pdf))?\b", re.I)
 _RE_CODE_FFAB_COMMANDE = re.compile(rf"\(\s*commande\s+(?P<code>{_MOTIF_CODE_FFAB})\s*\)", re.I)
 _RE_COMMANDE_TITRE_FFAB = re.compile(r"\(\s*commande\s+#\s*([^)]+?)\s*\)", re.I)
+#: Référence d'affaire entre parenthèses en fin de ligne de titre, forme
+#: « (ST75 - TOAOWEUYQ) » / « (AB 1234 - XYZ) » : ce n'est ni le client ni un
+#: détail de chantier, c'est le numéro de commande externe. Sans cette règle,
+#: la parenthèse restait collée au nom du client et le référentiel bateau ne
+#: pouvait plus rattacher la fiche.
+_RE_REFERENCE_TITRE_FFAB = re.compile(
+    r"\(\s*(?P<prefixe>[A-Za-z]{1,4}\s*\d{2,5})\s*-\s*(?P<suffixe>[A-Za-z0-9]{3,})\s*\)\s*$"
+)
 
 
 def _normaliser_code_ffab(code: str) -> str:
@@ -2290,13 +2311,46 @@ def _indice_sequence_mots(mots: list[Mot], jetons: list[str]) -> int | None:
     return None
 
 
+#: Bornes de la fenêtre multi-lignes du titre FFab. Un export tableur met
+#: l'en-tête (« Fiche de fabrication "Grand-voile" »), la ligne d'atelier et
+#: la ligne de désignation dans des CELLULES distinctes : chaque cellule est
+#: une ligne physique. Quatre lignes ne suffisaient donc pas dès qu'une
+#: cellule supplémentaire (tissu, quantité) s'intercalait, et le titre
+#: n'était jamais analysé — d'où des fiches sans client ni bateau.
+_FENETRE_TITRE_FFAB_LIGNES = 8
+_FENETRE_TITRE_FFAB_ECART_PT = 60.0
+
+#: Familles de voiles servant à ROGNER une désignation polluée par une
+#: cellule voisine lue sur la même ligne physique (la désignation commence
+#: au dernier de ces mots, jamais avant).
+_FAMILLES_VOILE_TITRE = re.compile(
+    r"\b(grand[-\s]?voiles?|genois|g[eé]nois|spis?|spinnakers?|gennakers?|"
+    r"code[-\s]?0|trinquettes?|solents?|tourmentins?|asym[eé]triques?|sym[eé]triques?)\b",
+    re.I,
+)
+
+
+def _rogner_designation(designation: str) -> str:
+    """Retire le bruit lu avant le nom de la voile (« Fichier …, dessiné par… »).
+
+    Une fenêtre multi-lignes peut préfixer la désignation par une cellule
+    voisine (« Fichier ZZ 075a dessiné par… »). La désignation réelle
+    commence au mot de famille de voile : on repart de sa DERNIÈRE
+    occurrence, jamais d'une invention de valeur.
+    """
+    occurrences = list(_FAMILLES_VOILE_TITRE.finditer(designation))
+    if not occurrences:
+        return designation.strip(" ,;")
+    return designation[occurrences[-1].start() :].strip(" ,;")
+
+
 def _sequences_titre_ffab(pages: list[PageAnalysee]) -> list[tuple[list[Mot], int]]:
     """Séquences candidates pour le titre FFAB.
 
     Les exports tableur morcellent parfois un titre logiquement unique
     en plusieurs lignes physiques (retour à la ligne de cellule, fontes
     ou blocs voisins). On essaie donc d'abord chaque ligne seule — le
-    comportement historique — puis des fenêtres de deux à quatre lignes
+    comportement historique — puis des fenêtres de deux à huit lignes
     physiquement voisines, ramenées au début de « Fiche de fabrication ».
     Une fenêtre n'est candidate que si les repères du titre apparaissent
     dans l'ordre ; la décomposition stricte décide ensuite.
@@ -2312,11 +2366,11 @@ def _sequences_titre_ffab(pages: list[PageAnalysee]) -> list[tuple[list[Mot], in
         lignes = [ligne for ligne in page.lignes if ligne.mots]
         for debut in range(len(lignes)):
             mots: list[Mot] = []
-            for fin in range(debut, min(len(lignes), debut + 4)):
+            for fin in range(debut, min(len(lignes), debut + _FENETRE_TITRE_FFAB_LIGNES)):
                 if fin > debut:
                     haut_precedent = min(mot.haut for mot in lignes[fin - 1].mots)
                     haut_courant = min(mot.haut for mot in lignes[fin].mots)
-                    if haut_courant - haut_precedent > 45:
+                    if haut_courant - haut_precedent > _FENETRE_TITRE_FFAB_ECART_PT:
                         break
                 mots.extend(lignes[fin].mots)
                 if fin == debut:
@@ -2333,11 +2387,32 @@ def _sequences_titre_ffab(pages: list[PageAnalysee]) -> list[tuple[list[Mot], in
                     continue
                 sequences.append((sequence, page.numero))
                 break
+
+    # Troisième voie — mise en page en CELLULES où l'en-tête
+    # « Fiche de fabrication » n'est pas physiquement voisin du titre (titre
+    # déporté sur une autre ligne du tableau) : toute ligne qui porte à la
+    # fois un mot de famille de voile, « pour » et « de » est candidate. La
+    # désignation est ensuite rognée sur le mot de famille, donc une cellule
+    # voisine lue sur la même ligne ne peut pas polluer la valeur.
+    for page in pages[:2]:
+        for ligne in page.lignes:
+            normalise = ligne.normalise
+            if " pour " not in normalise or " de " not in normalise:
+                continue
+            if _FAMILLES_VOILE_TITRE.search(normalise) is None:
+                continue
+            sequences.append((list(ligne.mots), page.numero))
     return sequences
 
 
 def _analyser_titre_ffab(valeur: str) -> tuple[str | None, str, str, str] | None:
-    """Décompose un titre FFAB en catégorie, désignation, bateau et reste."""
+    """Décompose un titre FFAB en catégorie, désignation, bateau et reste.
+
+    La désignation est ROGNÉE sur le dernier mot de famille de voile : dans
+    un export tableur, la ligne physique porte parfois une cellule voisine
+    avant le titre (« … Fichier ZZ 075a dessiné par … Grand-voile … »), et
+    cette cellule ne doit jamais devenir la désignation.
+    """
     correspondance = re.search(
         r"^\s*fiche\s+de\s+fabrication\s+[\"«](?P<categorie>[^\"»]+)[\"»]\s+"
         r"(?P<designation>.+?),\s+pour\s+(?P<bateau>.+?)\s+de\s+(?P<reste>.+?)\s*$",
@@ -2347,7 +2422,7 @@ def _analyser_titre_ffab(valeur: str) -> tuple[str | None, str, str, str] | None
     if correspondance:
         return (
             correspondance.group("categorie").strip(),
-            correspondance.group("designation").strip(),
+            _rogner_designation(correspondance.group("designation")),
             correspondance.group("bateau").strip(),
             correspondance.group("reste").strip(),
         )
@@ -2361,6 +2436,9 @@ def _analyser_titre_ffab(valeur: str) -> tuple[str | None, str, str, str] | None
         return None
     designation = re.sub(r"^\s*fiche\s+de\s+fabrication\s*", "", repli.group("designation"), flags=re.I)
     designation = re.sub(r"^[\"«][^\"»]+[\"»]\s*", "", designation).strip(" ,")
+    designation = _rogner_designation(designation)
+    if not designation:
+        return None
     return (
         None,
         designation,
@@ -2413,6 +2491,16 @@ def _traiter_ligne_titre_ffab(fiche: FicheExtraite, brut: str, base: ChampExtrai
         reste_client = (
             reste_client[: trouve_commande.start()] + " " + reste_client[trouve_commande.end() :]
         ).strip()
+    if commande is None:
+        # Référence d'affaire en fin de ligne (« (ST75 - TOAOWEUYQ) ») :
+        # commande externe, jamais un morceau du nom du client.
+        trouve_reference = _RE_REFERENCE_TITRE_FFAB.search(reste_client)
+        if trouve_reference:
+            commande = (
+                f"{_normaliser_code_ffab(trouve_reference.group('prefixe'))} - "
+                f"{trouve_reference.group('suffixe').upper()}"
+            )
+            reste_client = reste_client[: trouve_reference.start()].strip(" ,;")
 
     code_fichier, mots_code_fichier, page_code_fichier = _code_corroboré_ligne_fichier(pages)
     code: str | None = None

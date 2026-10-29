@@ -35,7 +35,7 @@ from typing import Any, Callable
 from seamtech_search.extractions_voile import lier_extraction_voile_document_curseur
 from seamtech_search.fiches.extraction import analyser_candidat_fiche, extraire_fiche
 from seamtech_search.fiches.gabarits import GabaritDef, charger_gabarits
-from seamtech_search.fiches.modeles import FicheExtraite
+from seamtech_search.fiches.modeles import ChampExtrait, FicheExtraite
 from seamtech_search.fiches.persistance import ecrire_fiche_resultat
 from seamtech_search.fiches.promotion import fichiers_pour_promotion, promouvoir_fichiers
 
@@ -359,6 +359,70 @@ def _groupes_preuve_fiche(fiche: FicheExtraite) -> set[str]:
     return groupes
 
 
+#: Référence de fiche dans un NOM DE FICHIER. Deux formes observées dans les
+#: archives de l'atelier : la référence en tête (« ZZ 075a_ffab.pdf ») et la
+#: référence de commande en fin de nom (« fiche GV 250329 AJA.pdf »). Motif
+#: volontairement étroit : quelques lettres puis 2 à 5 chiffres, avec une
+#: lettre finale facultative. Aucune valeur n'est inventée : sans motif, il
+#: n'y a pas de repli.
+#: ``(?![A-Za-z0-9])`` et non ``\b`` : dans « ZZ 075a_ffab », le souligné
+#: est un caractère de mot, donc ``\b`` ne se déclenche PAS après le « a ».
+_RE_CODE_NOM_FICHIER_TETE = re.compile(
+    r"^\s*(?P<code>[A-Za-z]{1,4}\s?\d{2,5}[A-Za-z]?)(?![A-Za-z0-9])"
+)
+_RE_CODE_NOM_FICHIER_QUEUE = re.compile(
+    r"(?<![A-Za-z0-9])(?P<code>\d{3,6}[\s-][A-Za-z]{2,4})(?![A-Za-z0-9])"
+)
+
+
+def code_depuis_nom_fichier(nom: str) -> str | None:
+    """Référence de fiche déductible d'un nom de fichier, ou ``None``.
+
+    Le code d'une fiche est une DONNÉE LUE dans le document ; le nom du
+    fichier n'est qu'un repli explicite, utilisé quand le PDF n'en porte
+    aucun (mise en page sans ligne « Fichier », formulaire sans référence).
+    La provenance est conservée dans la trace du champ, jamais maquillée.
+    """
+    tige = Path(nom).stem
+    tete = _RE_CODE_NOM_FICHIER_TETE.match(tige)
+    if tete:
+        return re.sub(r"\s+", " ", tete.group("code").strip().upper())
+    queue = _RE_CODE_NOM_FICHIER_QUEUE.search(tige)
+    if queue:
+        return re.sub(r"\s+", " ", queue.group("code").strip().upper())
+    return None
+
+
+def reprendre_code_depuis_nom(fiche: FicheExtraite, pdf: Path) -> str | None:
+    """Complète le code d'une fiche extraite depuis le nom du PDF.
+
+    Ne touche jamais une fiche qui a déjà un code (le document fait foi),
+    et rend le code retenu (ou ``None``). La trace ajoutée porte
+    ``methode="nom_fichier"`` et une confiance inférieure à une lecture :
+    l'approbateur voit d'où vient la référence.
+    """
+    if (fiche.code or "").strip():
+        return fiche.code
+    code = code_depuis_nom_fichier(Path(pdf).name)
+    if not code:
+        return None
+    fiche.code = code
+    fiche.champs.append(
+        ChampExtrait(
+            champ="fiche.code",
+            valeur_brute=Path(pdf).name,
+            valeur_normalisee=code,
+            methode="nom_fichier",
+            confiance=0.75,
+            page=0,
+            zone=None,
+            table_cible="fiche",
+            colonne_cible="code",
+        )
+    )
+    return code
+
+
 def _extraction_viable(fiche: FicheExtraite) -> bool:
     """Une fiche persistable : code + gabarit + au moins deux groupes lus.
 
@@ -447,7 +511,18 @@ def scanner_dossier(dossier: Path, gabarits: list[GabaritDef]) -> PlanDossier:
                 f"(scores de détection : {detail})"
             )
         else:
-            plan.raison_refus = f"gabarit inconnu (scores de détection : {detail})"
+            # « gabarit inconnu » seul se lit comme une panne. La cause réelle
+            # est presque toujours documentaire : le dossier ne contient qu'un
+            # plan, une facture ou un PDF sans libellé de fiche. On le dit avec
+            # les fichiers réellement examinés, et l'on rappelle que rien n'a
+            # été modifié (RG13).
+            examines = ", ".join(f"{nom} (score {score})" for nom, score in scores.items())
+            plan.raison_refus = (
+                "aucune fiche de fabrication reconnue dans ce dossier : aucun PDF ne "
+                f"porte les libellés d'une fiche (gabarit inconnu) — PDF examinés : {examines}. "
+                "Les fichiers n'ont pas été modifiés ; vérifier que le dossier contient bien "
+                "la fiche technique, et non seulement un plan ou une pièce jointe."
+            )
         return plan
 
     # Preuves d'abord : meilleur score d'ancres, puis — à score égal
@@ -641,14 +716,28 @@ def deposer_dossier(
                 "id_lot": id_lot_local,
                 "copies_rejeu_supprimees": copies_supprimees,
             }
+        # Le code de fiche est l'IDENTITÉ de ce qu'on écrit : sans lui, la
+        # transaction lèverait ValueError et le dossier finirait en « écriture
+        # annulée : ValueError: Fiche sans code », message illisible pour un
+        # opérateur et sans issue. On prépare donc la fiche AVANT d'ouvrir la
+        # transaction : repli explicite sur le nom du fichier, puis refus
+        # documenté s'il n'existe vraiment aucune référence.
+        fiche_preparee = plan.fiche_extraite or extraire_fiche(
+            plan.pdf_fiche, gabarits=gabarits, gabarit_code=plan.gabarit_code
+        )
+        if reprendre_code_depuis_nom(fiche_preparee, Path(plan.pdf_fiche)) is None:
+            return _enregistrer_echec(
+                "aucun code de fiche lisible : le PDF n'en porte aucun et son nom "
+                f"« {Path(plan.pdf_fiche).name} » n'en contient pas non plus — la fiche "
+                "n'est PAS enregistrée. Renommer le PDF avec sa référence "
+                "(exemple : « ZZ 001_ffab.pdf ») puis redéposer le dossier."
+            )
         # L'EXCEPTION doit franchir le « with » pour déclencher le rollback de
         # la connexion : le except est donc VOLONTAIREMENT à l'extérieur —
         # écriture entière ou pas du tout (fiche + pièces jointes).
         with index.connect() as connexion:
             with connexion.cursor() as cursor:
-                fiche = plan.fiche_extraite or extraire_fiche(
-                    plan.pdf_fiche, gabarits=gabarits, gabarit_code=plan.gabarit_code
-                )
+                fiche = fiche_preparee
                 # Lot 7 : la catégorie est proposée ICI, explicitement — nom
                 # du dossier (« accessoire ») d'abord, famille du gabarit
                 # gagnant ensuite. La persistance tranche et ne contredit
