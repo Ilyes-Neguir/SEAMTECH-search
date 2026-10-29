@@ -46,6 +46,11 @@ LOGGER = logging.getLogger("seamtech_search.fiches.extraction")
 TOLERANCE_LIGNE_PT = 2.5  # écart vertical maximal entre deux mots d'une même ligne
 GAP_COLONNE_PT = 14.0  # écart horizontal marquant un changement de colonne (bordure de valeur)
 
+# Forme d'un code d'affaire d'accessoire, mesurée sur les formulaires réels :
+# « ST64 », « ST105 », « ST96 », « ST 074b », « ST 256b ». Un code porte au
+# plus quatre lettres, au plus cinq chiffres, au plus une lettre de version.
+_RE_CODE_ACCESSOIRE = re.compile(r"^[A-Za-z]{0,4}\s?\d{1,5}[A-Za-z]?$")
+
 # Familles de type de voile connues (valeur → (libellé canonique, famille)).
 TYPES_VOILE: tuple[tuple[str, str, str], ...] = (
     ("spi asymétrique", "Spi Asymétrique", "portant"),
@@ -61,6 +66,11 @@ TYPES_VOILE: tuple[tuple[str, str, str], ...] = (
     ("solent", "Solent", "interface"),
     ("code 0", "Code 0", "portant"),
     ("staysail", "Staysail", "portant"),
+    # Mesuré le 2026-10-29 sur `/WESTERLY PENTLAND ST660B/ST 660b_ffab.pdf` :
+    # « Artimon classique semi-latté, gamme Ocean, pour … ». L'artimon est une
+    # voile d'interface (mât d'artimon) ; sans cette entrée la fiche sortait
+    # avec `type_voile_libelle = None` alors que la désignation était lue.
+    ("artimon", "Artimon", "interface"),
 )
 
 
@@ -428,6 +438,124 @@ def _traiter_designation(fiche: FicheExtraite, brut: str, base: ChampExtrait, fa
     fiche.gamme = fiche.gamme or valeur
     base.valeur_normalisee = valeur
     base.confiance = max(base.confiance, 0.7)
+
+
+def _traiter_code_accessoire(
+    fiche: FicheExtraite, brut: str, base: ChampExtrait, contexte: dict | None = None
+) -> None:
+    """Code d'une fiche d'accessoire : les DEUX formes imprimées mesurées.
+
+    Formulaire « fourreau de gse » / « Sac de Pont » : ``Commande ST96`` /
+    ``Commande ST 074b`` — le code suit le libellé. Formulaire « Lazy Bag » :
+    le libellé ``Commande`` est imprimé SEUL (valeur vide) et le code occupe la
+    ligne NUE juste sous le titre (``ST64``, ``ST105``). Aucune autre ligne
+    n'est prise pour un code : une valeur qui n'a pas la forme d'un code
+    (date, nom de bateau, phrase) est refusée plutôt que tronquée.
+    """
+    pages = (contexte or {}).get("pages") or []
+    for page in pages[:2]:
+        lignes = [ligne for ligne in page.lignes if ligne.mots]
+        for indice, ligne in enumerate(lignes):
+            texte = " ".join(mot.texte for mot in ligne.mots).strip()
+            if texte.lower().startswith("commande"):
+                valeur = texte[len("commande") :].strip(" :;-–")
+                if valeur and _RE_CODE_ACCESSOIRE.match(valeur):
+                    _poser_code_accessoire(fiche, base, valeur, ligne.mots[1:])
+                    return
+                continue
+            if not _RE_CODE_ACCESSOIRE.match(texte):
+                continue
+            precedente = lignes[indice - 1].normalise if indice else ""
+            if precedente.startswith("fiche de ") and not precedente.startswith("fiche de fabrication"):
+                _poser_code_accessoire(fiche, base, texte, ligne.mots)
+                return
+
+
+def _poser_code_accessoire(
+    fiche: FicheExtraite, base: ChampExtrait, valeur: str, mots: list[Mot]
+) -> None:
+    code = _normaliser_code_ffab(valeur)
+    base.valeur_brute = valeur
+    base.valeur_normalisee = code
+    base.confiance = max(base.confiance, CONFIANCE_CERTAIN)
+    base.zone = _zone_des_mots(mots)
+    if fiche.code is None:
+        fiche.code = code
+
+
+def _traiter_titre_accessoire(
+    fiche: FicheExtraite, brut: str, base: ChampExtrait, contexte: dict | None = None
+) -> None:
+    """« Fiche de Lazy Bag » → type d'accessoire « Lazy Bag ».
+
+    Le titre EST l'ancre : la valeur n'est pas à droite du libellé mais après
+    « Fiche de ». « Fiche de fabrication … » (fiches de voiles) est exclu
+    explicitement : ce gabarit ne doit jamais lire un titre de voile.
+    """
+    pages = (contexte or {}).get("pages") or []
+    for page in pages[:2]:
+        for ligne in page.lignes:
+            normalise = ligne.normalise
+            if not normalise.startswith("fiche de ") or normalise.startswith("fiche de fabrication"):
+                continue
+            mots_titre = ligne.mots[2:]
+            valeur = " ".join(mot.texte for mot in mots_titre).strip()
+            if not valeur:
+                continue
+            valeur = valeur[0].upper() + valeur[1:]
+            base.valeur_brute = valeur
+            base.valeur_normalisee = valeur
+            base.confiance = max(base.confiance, CONFIANCE_CERTAIN)
+            base.zone = _zone_des_mots(mots_titre)
+            if fiche.titre is None:
+                fiche.titre = valeur
+            return
+
+
+def _traiter_dimension_nommee(
+    fiche: FicheExtraite, brut: str, base: ChampExtrait, contexte: dict | None = None
+) -> None:
+    """Ne garde que la MESURE de tête d'une ligne de dimension nommée.
+
+    Mesuré sur les formulaires réels : « Longueur du gousset de latte 3.22m -
+    Latte jonc 12mm avec manchons et embouts ». La valeur brute contient DEUX
+    mesures (3,22 m puis 12 mm) ; la projection d'accessoire range la seconde
+    en « largeur_m » — soit une cote de largeur inventée. On ne conserve donc
+    que ``<nombre> <unité>`` de tête ; sans unité explicite, rien n'est lu.
+    """
+    trouve = re.match(r"\s*(\d+(?:[.,]\d+)?\s*(?:mm|cm|m)\b)", brut, re.I)
+    if trouve is None:
+        return
+    valeur = re.sub(r"\s+", " ", trouve.group(1)).strip()
+    base.valeur_brute = brut
+    base.valeur_normalisee = valeur
+    base.confiance = max(base.confiance, CONFIANCE_CERTAIN)
+
+
+def _traiter_logo_accessoire(
+    fiche: FicheExtraite, brut: str, base: ChampExtrait, contexte: dict | None = None
+) -> None:
+    """« Logo Pas de logo » / « Logo sans » / « SANS LOGO » → ``sans``.
+
+    Trois formes imprimées mesurées ; « avec logo » n'a pas été observé, il
+    n'est donc pas deviné — toute autre forme laisse le champ vide (RG6).
+    """
+    candidats = [brut]
+    # « Observations/Notes SANS LOGO » (mesuré sur les deux fiches Lazy Bag) :
+    # le mot « logo » termine la ligne, aucun mot de valeur ne le suit. On
+    # relit alors les lignes de la page au lieu de laisser le champ vide.
+    for page in ((contexte or {}).get("pages") or [])[:2]:
+        for ligne in page.lignes:
+            if "logo" in ligne.normalise:
+                candidats.append(" ".join(mot.texte for mot in ligne.mots))
+    for candidat in candidats:
+        normalise = normaliser_terme(candidat)
+        if "sans" in normalise or re.search(r"\bpas de\b", normalise):
+            base.valeur_brute = candidat.strip() or base.valeur_brute
+            base.valeur_normalisee = "sans"
+            base.confiance = max(base.confiance, CONFIANCE_CERTAIN)
+            fiche.logo = fiche.logo or "sans"
+            return
 
 
 def _traiter_support(fiche: FicheExtraite, brut: str, base: ChampExtrait) -> None:
@@ -2877,6 +3005,11 @@ TRAITEMENTS = {
     "ligne_titre_ffab": lambda fiche, brut, base, contexte: _traiter_ligne_titre_ffab(fiche, brut, base, contexte),
     "cotes_ffab": lambda fiche, brut, base, contexte: _traiter_cotes_ffab(fiche, brut, base, contexte),
     "lattes_ffab": lambda fiche, brut, base, contexte: _traiter_lattes_ffab(fiche, brut, base, contexte),
+    # Formulaires accessoires réels (Lot CAL-2, 2026-10-29).
+    "titre_accessoire": lambda fiche, brut, base, contexte: _traiter_titre_accessoire(fiche, brut, base, contexte),
+    "code_accessoire": lambda fiche, brut, base, contexte: _traiter_code_accessoire(fiche, brut, base, contexte),
+    "dimension_nommee": lambda fiche, brut, base, contexte: _traiter_dimension_nommee(fiche, brut, base, contexte),
+    "logo_accessoire": lambda fiche, brut, base, contexte: _traiter_logo_accessoire(fiche, brut, base, contexte),
 }
 
 
@@ -2978,13 +3111,17 @@ def _executer_regle(fiche: FicheExtraite, regle, pages: list[PageAnalysee]) -> N
         relecture_page = ancre_trouvee or (
             traitement == "ligne_titre_ffab" and _porte_entete_fiche_fabrication(pages)
         )
-        if traitement in {"designation", "ligne_titre_ffab"} and relecture_page and regle.ancres:
-            # Voies où l'ancre lue suffit à autoriser une relecture de page :
-            # le gabarit génois pose le type porté par l'ancre, et le titre
-            # FFAB peut être morcelé juste après « grand-voile » (aucun mot
-            # de valeur sur la ligne physique de l'ancre). Le traitement
-            # relit alors les pages ; sans ancre réellement lue, rien n'est
-            # inventé (RG6).
+        # Traitements « l'ancre EST la valeur » : sur les formulaires
+        # d'accessoires réels, le type est porté par le titre lui-même
+        # (« Fiche de Lazy Bag ») et le code par la ligne nue suivante ou par
+        # « Commande ». Aucun mot de valeur n'est donc à droite de l'ancre :
+        # sans cette autorisation, la règle s'arrêtait avant le traitement et
+        # la fiche sortait sans titre ni code. Le traitement relit les pages et
+        # n'invente rien si la forme attendue est absente (RG6).
+        if traitement in {"designation", "ligne_titre_ffab", "titre_accessoire", "code_accessoire", "logo_accessoire"} and relecture_page and regle.ancres:
+            # Le gabarit génois pose le type porté par l'ancre, le titre FFAB
+            # peut être morcelé juste après « grand-voile », et les deux
+            # traitements accessoires ci-dessus lisent la page entière.
             _executer_regle_traitement(fiche, regle, "", 0, [], pages=pages)
         else:
             LOGGER.debug("Champ non lu : %s (ancres %s) — absent du rapport, à relire.", cible, regle.ancres)

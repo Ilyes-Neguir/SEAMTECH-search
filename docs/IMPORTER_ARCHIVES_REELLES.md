@@ -139,3 +139,29 @@ ordinaires :
   de fiche + clé d'idempotence).
 - Aucun nom de client ni contenu de fiche n'est journalisé dans les sorties
   ci-dessus : uniquement des statuts, des compteurs et des raisons.
+
+---
+
+## Les accessoires (Lazy Bag, fourreau de gse, sac de pont…)
+
+Les dossiers `ACCESSOIRES 20xx` contiennent les mêmes pièces que les voiles
+(`.PLX` du traceur, `.dxf`, `.xin`, `.3dm`, `.mi2`, photos) et une **fiche PDF
+imprimée**. Trois formulaires ont été mesurés sur les documents réels :
+
+| Formulaire | Où est le code | Champs lus |
+|---|---|---|
+| `Fiche de Lazy Bag` (paysage) | ligne NUE sous le titre (`ST64`) ; « Commande » est imprimé sans valeur | type, code, client, logo, longueur du lazy/gousset |
+| `Fiche de fourreau de gse` (paysage) | après « Commande » (`Commande ST96`) | type, code, client, longueur du fourreau |
+| `Fiche de Sac de Pont` (A4 portrait) | après « Commande » (`Commande ST 074b`) | type, code, client (+ référence d'affaire), bateau, couleur, logo, longueur du sac |
+
+Règles appliquées, visibles dans l'interface de validation :
+
+- la fiche est classée `accessoire` (et non « voile ») : elle apparaît dans la
+  file de validation avec son type et son code ;
+- **une seule** dimension nommée est convertie en mètres (celle de la ligne
+  « Longueur du … ») ; les autres restent du texte, jamais une cote rebaptisée ;
+- les plans du traceur (`TAUD DE GV.pdf`, `ST40 FINI.pdf`, `ST298.pdf`) n'ont
+  **aucune couche texte** : ils sont comptés comme pièces/refus explicites,
+  jamais comme une fiche à moitié lue ;
+- un dossier dont le seul PDF est un plan est refusé avec la raison
+  `aucune fiche de fabrication reconnue` — c'est le comportement attendu.

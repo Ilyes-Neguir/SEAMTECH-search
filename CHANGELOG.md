@@ -1,5 +1,46 @@
 # Changelog
 
+## 2026-10-29 — « l'analyse ne lit pas les accessoires » : formulaires imprimés
+
+Audit Dropbox complet des dossiers d'accessoires (documents réels ouverts avec
+pdfplumber, jamais recopiés dans le dépôt) : **trois** formulaires imprimés
+coexistent, tous préfixés « Fiche de … », plus les plans du traceur.
+
+Défauts prouvés, mesurés avec `extraire_fiche` sur les documents réels :
+
+- la **fiche Lazy Bag** sortait en `FICHE_GV_FULLBATTEN_V1` : la ligne « Type
+  des coulisseaux » porte l'ancre `coulisseaux` de la grand-voile lattée ;
+  à score égal, la GV passait avant les accessoires ⇒ titre, code, client et
+  dimensions **tous vides** ;
+- la **fiche fourreau de gse** n'était reconnue par **aucun** gabarit
+  (« fourreau » n'était une ancre nulle part) ;
+- la **fiche Sac de Pont** n'était lue qu'à moitié (code seul : ni type, ni
+  bateau, ni couleur) ;
+- sur la fiche Lazy Bag, la ligne « Longueur du gousset de latte 3.22m - Latte
+  jonc 12mm … » livrait DEUX mesures : la seconde (12 mm) était rangée en
+  `largeur_m` — une cote de largeur **inventée** ;
+- une désignation « **Artimon** … » (mesurée sur `ST 660b_ffab.pdf`) ne
+  produisait aucun type de voile.
+
+Correctifs :
+
+- nouvelle famille `FICHE_ACCESSOIRE_IMPRIME_V1` (code distinct, pas une
+  version de plus : le formulaire imprimé et la prise de cotes sont deux
+  documents différents, tous deux réels et tous deux actifs). Elle passe avant
+  la prise de cotes dans le registre pour gagner l'égalité sur « sac de pont » ;
+- deux traitements « l'ancre EST la valeur » (`titre_accessoire`,
+  `code_accessoire`) : le titre donne le type (« Fiche de Lazy Bag » → « Lazy
+  Bag ») et le code se lit soit après « Commande », soit sur la ligne NUE sous
+  le titre (les deux formes mesurées) ;
+- `dimension_nommee` ne conserve que la mesure de tête (fini la largeur de
+  12 mm) ; `logo_accessoire` traduit « Logo sans » / « Pas de logo » /
+  « SANS LOGO » en `sans` ;
+- `TYPES_VOILE` reçoit **Artimon** ;
+- preuve : `tests/test_accessoires_formulaires_imprimes.py` (15 tests,
+  synthétiques, mise en page mesurée) et E2E réel : les 6 fiches d'accessoires
+  réelles se déposent (`categorie = accessoire`, score 0,99), les 3 plans sans
+  couche texte sont refusés explicitement, les 2 fiches de voile restent voiles.
+
 ## 2026-10-30 (suite) — « ça a marché une fois, pas les deux autres »
 
 Cause exacte, mesurée : la règle de titre de la famille FFab n'avait qu'UNE
