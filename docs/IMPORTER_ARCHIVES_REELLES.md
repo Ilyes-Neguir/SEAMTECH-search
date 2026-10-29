@@ -174,3 +174,34 @@ Règles appliquées, visibles dans l'interface de validation :
   « Longueur du … » du formulaire, astérisque imprimé compris. Les autres
   (hauteur, ralingue, coulisseaux) restent du texte : jamais une cote
   rebaptisée.
+
+## Ce qu'un dossier contient quand ce n'est pas une fiche (29/10/2026)
+
+Mesuré sur des dossiers réels **complets** (jusqu'à 6 PDF, sous-dossier,
+150 DXF) et sur des dossiers de `/VOILES 2024` : trois familles de documents
+provoquaient le même refus sec « gabarit inconnu », qui se lit comme une panne
+de reconnaissance alors que le dossier ne contient tout simplement pas de
+fiche de fabrication. Le refus **nomme désormais le contenu réel**, fichier par
+fichier, et ne prétend plus qu'un document est illisible quand il est
+seulement sans texte.
+
+| Ce que contient le dossier | Ce qui est écrit dans le refus |
+|---|---|
+| `Fiche de prise de cotes` (formulaire client à remplir, `Nom :`/`Tel :`/`N° de commande :` vides) | « formulaire de prise de cotes : … » + rappel qu'il ne porte ni code commande ni cote, et qu'il faut joindre le `…ffab.pdf` |
+| Planche de tracé **SailPack** (`Panel layout` + pied de page `S a i l P a c k V3.0`) | « planche de tracé SailPack (plan de panneaux BSG) : … » |
+| PDF **sans couche texte** (plan exporté du traceur, scan, photo) | « PDF sans couche texte (image ou plan exporté) : … — l'OCR n'est pas encore appliqué au dépôt de fiches : ce dossier relève d'une REVUE MANUELLE » |
+| Mélange des trois | les trois lignes, chacune avec ses fichiers |
+
+Deux garde-fous, vérifiés par tests :
+
+- la classification **ne bloque jamais** un dossier qui contient sa fiche : la
+  planche SailPack redevient une simple pièce jointe dès qu'une fiche viable
+  est présente ;
+- un PDF image n'est plus dit « illisible » (lecture impossible) : le message
+  ne parle plus de panne de lecture, il parle de revue manuelle.
+
+**Limite assumée, à qualifier en conditions réelles** : l'OCR (`seamtech_search/ocr`,
+CLI `ocr-nuit`) existe et sait océriser des pages sans texte, mais il n'est
+**pas** branché sur le dépôt de fiches. Tant qu'il ne l'est pas, aucun dossier
+dont la fiche est une image ne peut être déposé : il est classé en revue
+manuelle, sans invention de valeurs.

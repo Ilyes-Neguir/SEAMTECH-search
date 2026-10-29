@@ -33,7 +33,12 @@ from pathlib import Path
 from typing import Any, Callable
 
 from seamtech_search.extractions_voile import lier_extraction_voile_document_curseur
-from seamtech_search.fiches.extraction import analyser_candidat_fiche, extraire_fiche
+from seamtech_search.fiches.extraction import (
+    analyser_candidat_fiche,
+    analyser_pdf,
+    extraire_fiche,
+    texte_normalise,
+)
 from seamtech_search.fiches.gabarits import GabaritDef, charger_gabarits
 from seamtech_search.fiches.modeles import ChampExtrait, FicheExtraite
 from seamtech_search.fiches.persistance import ecrire_fiche_resultat
@@ -323,6 +328,98 @@ def decouvrir_dossiers_candidats(racine: Path) -> list[Path]:
     return sorted(candidats, key=lambda chemin: str(chemin).casefold())
 
 
+# Signature MESURÉE des formulaires de prise de cotes du client (trois
+# exemplaires réels : `/VOILES 2024/CAVAILLE ST76/CavailleGV.pdf`,
+# `/VOILES 2024/FIRST 210 ST106/GSE First210.pdf`,
+# `/VOILES 2024/FIRST 325 ST74A/LF DeveloppementSolentFirst325.pdf`).
+# Ils portent « Fiche de prise de cotes » + « Compléter et retourner à
+# contact@seamtech.tn » et des champs vides (« Nom : », « Tel : »,
+# « N° de commande : » sans valeur). Ce ne sont PAS des fiches de fabrication :
+# aucun code commande, aucune cote produite. Les confondre avec un « gabarit
+# inconnu » enverrait l'opérateur chercher un bug de reconnaissance au lieu du
+# document manquant.
+_MOTIF_FORMULAIRE_PRISE_DE_COTES = re.compile(r"fiche\s+de\s+prise\s+de\s+cotes")
+_MOTIF_RETOUR_FORMULAIRE = re.compile(r"compl[ée]ter\s+et\s+retourner")
+_MOTIF_CODE_DANS_FORMULAIRE = re.compile(r"\b[A-Z]{2}\s?\d{2,5}[A-Za-z]?\b")
+
+
+def _diagnostic_formulaire_prise_de_cotes(chemin: Path) -> str | None:
+    """Décrit le formulaire de prise de cotes, ou ``None`` si ce n'en est pas un.
+
+    Lecture seule, jamais d'exception propagée : un PDF illisible n'est pas un
+    formulaire, l'appelant garde alors sa raison de refus habituelle.
+    """
+    try:
+        texte = texte_normalise(analyser_pdf(chemin))
+    except Exception:  # PDF illisible : ce n'est pas à cette fonction de le dire
+        return None
+    if not _MOTIF_FORMULAIRE_PRISE_DE_COTES.search(texte):
+        return None
+    if not _MOTIF_RETOUR_FORMULAIRE.search(texte):
+        return None
+    if _MOTIF_CODE_DANS_FORMULAIRE.search(texte.replace("ST ", "ST ")):
+        return None
+    return "formulaire de prise de cotes (document à remplir, sans code commande ni cote de fabrication)"
+
+
+# Signature MESURÉE des planches de tracé SailPack (BSG Développements) :
+# `/VOILES 2026/ATHENA 44 ST761/JW26050B.pdf`, `/VOILES 2026/AURA 51 ST795/
+# 20260410 Gennak Aura51.pdf`, `/WESTERLY PENTLAND ST660B/ST 660b.pdf`. Le
+# texte porte « Panel layout » et le pied de page « S a i l P a c k V3.0 »
+# (lettres espacées). Ce sont des PLANS de panneaux/patches : ni code de
+# fiche, ni cotes de fiche. Mesuré : score 0 sur tous les gabarits.
+_MOTIF_PLANCHE_SAILPACK = re.compile(r"s\s*a\s*i\s*l\s*p\s*a\s*c\s*k", re.IGNORECASE)
+_MOTIF_PANEL_LAYOUT = re.compile(r"panel\s+layout", re.IGNORECASE)
+
+
+def _est_planche_sailpack(chemin: Path) -> bool:
+    """Vrai si le PDF est une planche de tracé SailPack (jamais une fiche)."""
+    try:
+        texte = texte_normalise(analyser_pdf(chemin))
+    except Exception:  # sans couche texte : classé ailleurs, pas ici
+        return False
+    return bool(_MOTIF_PANEL_LAYOUT.search(texte) and _MOTIF_PLANCHE_SAILPACK.search(texte))
+
+
+CLASSEMENT_FORMULAIRE = "formulaire de prise de cotes"
+CLASSEMENT_PLANCHE = "planche de tracé SailPack (plan de panneaux BSG)"
+CLASSEMENT_SANS_TEXTE = "PDF sans couche texte (image ou plan exporté)"
+
+
+def _raison_documents_non_fiche(classements: dict[str, str]) -> str:
+    """Raison de refus qui NOMME ce que contient réellement le dossier.
+
+    Un refus « gabarit inconnu » se lit comme une panne de reconnaissance.
+    Sur l'archive réelle, la cause est presque toujours documentaire : le
+    dossier ne contient qu'un formulaire de prise de cotes, une planche de
+    tracé SailPack ou un PDF sans couche texte. On le dit, fichier par
+    fichier, sans jamais inventer de fiche ni modifier un octet (RG13).
+    """
+    par_classe: dict[str, list[str]] = {}
+    for nom, classe in classements.items():
+        par_classe.setdefault(classe, []).append(nom)
+    phrases = [f"{classe} : {', '.join(sorted(noms))}" for classe, noms in sorted(par_classe.items())]
+    suite = ""
+    if CLASSEMENT_SANS_TEXTE in par_classe:
+        suite = (
+            " L'OCR n'est pas appliqué au dépôt de fiches : ces PDF relèvent d'une "
+            "REVUE MANUELLE."
+        )
+    if CLASSEMENT_FORMULAIRE in par_classe:
+        suite += (
+            " Un formulaire de prise de cotes sert à recueillir les mesures du client : "
+            "il ne porte ni code commande ni cote de fabrication."
+        )
+    return (
+        "aucune fiche de fabrication dans ce dossier — contenu réellement reconnu : "
+        + " ; ".join(phrases)
+        + "."
+        + suite
+        + " Aucun fichier n'a été modifié ; joindre la fiche de fabrication "
+        "(document « …ffab.pdf ») du dossier pour le déposer."
+    )
+
+
 def _nom_evoque_ffab(chemin: Path) -> bool:
     """Indice de nom de fichier seulement : jamais une preuve de contenu."""
     tige = chemin.stem.casefold()
@@ -540,28 +637,64 @@ def scanner_dossier(dossier: Path, gabarits: list[GabaritDef]) -> PlanDossier:
     candidats: list[tuple[Path, Any]] = []
     scores: dict[str, int] = {}
     illisibles: list[str] = []
+    sans_texte: list[str] = []
+    #: nom du PDF → ce qu'il est RÉELLEMENT quand ce n'est pas une fiche.
+    #: Sert à écrire un refus qui décrit le dossier au lieu de « gabarit inconnu ».
+    classements: dict[str, str] = {}
     for pdf in pdfs:
         try:
             candidat = analyser_candidat_fiche(pdf, gabarits)
         except Exception as erreur:  # PDF illisible : raison explicite, pas de crash
             scores[pdf.name] = -1
-            illisibles.append(pdf.name)
+            # Deux causes très différentes derrière « lecture impossible » :
+            # un fichier abîmé, ou un PDF SANS COUCHE TEXTE (plan exporté du
+            # traceur, scan, photo de fiche). Mesuré sur l'archive réelle :
+            # `/ACCESSOIRES 2026/CAGNARD ST756/*.pdf`, `/TOILE ST792 COUPE.pdf`,
+            # `/ACCESSOIRES 2025/…/TAUD DE GV.pdf` — 0 caractère extrait.
+            # Le second cas n'est pas une panne : c'est une revue manuelle
+            # (le module OCR existe mais n'est pas branché sur le dépôt de
+            # fiches). Les confondre ferait chercher un bug inexistant.
+            if "sans texte lisible" in str(erreur):
+                sans_texte.append(pdf.name)
+                classements[pdf.name] = CLASSEMENT_SANS_TEXTE
+            else:
+                illisibles.append(pdf.name)
             LOGGER.warning("PDF illisible (%s) : %s — conséquence : exclu de la détection.", pdf, erreur)
             continue
         scores[pdf.name] = 0 if candidat is None else candidat.score_detection
+        if _diagnostic_formulaire_prise_de_cotes(pdf) is not None:
+            classements[pdf.name] = CLASSEMENT_FORMULAIRE
+        elif _est_planche_sailpack(pdf):
+            classements[pdf.name] = CLASSEMENT_PLANCHE
         if candidat is not None:
             candidats.append((pdf, candidat))
 
     if not candidats:
         detail = ", ".join(f"{nom}={score}" for nom, score in scores.items())
-        if illisibles:
+        if sans_texte and not illisibles and len(sans_texte) == len(scores):
+            plan.raison_refus = (
+                "PDF sans couche texte (image ou plan exporté) : "
+                f"{', '.join(sans_texte)} — l'OCR n'est pas encore appliqué au dépôt de "
+                "fiches : ce dossier relève d'une REVUE MANUELLE. Aucun fichier n'a été "
+                "modifié ; si la fiche existe en PDF texte (« …ffab.pdf »), la joindre au dossier."
+            )
+        elif illisibles:
             # MAN-04 : dire la cause lisible par l'opérateur d'abord, les
             # scores ensuite (diagnostic) — « gabarit inconnu » seul laissait
             # croire à un PDF sain d'un format nouveau.
-            plan.raison_refus = (
-                f"PDF illisible : {', '.join(illisibles)} (lecture impossible) "
-                f"(scores de détection : {detail})"
+            detail_manque = (
+                f" ; PDF sans couche texte (revue manuelle) : {', '.join(sans_texte)}"
+                if sans_texte else ""
             )
+            plan.raison_refus = (
+                f"PDF illisible : {', '.join(illisibles)} (lecture impossible)"
+                f"{detail_manque} (scores de détection : {detail})"
+            )
+        elif classements and len(classements) == len(scores):
+            # TOUS les PDF examinés sont identifiés comme autre chose qu'une
+            # fiche : ce n'est pas un défaut de reconnaissance. On nomme le
+            # contenu réel (formulaire, planche SailPack, PDF sans texte).
+            plan.raison_refus = _raison_documents_non_fiche(classements)
         else:
             # « gabarit inconnu » seul se lit comme une panne. La cause réelle
             # est presque toujours documentaire : le dossier ne contient qu'un
@@ -600,10 +733,13 @@ def scanner_dossier(dossier: Path, gabarits: list[GabaritDef]) -> PlanDossier:
         plan.gabarit_code = meilleur_candidat.gabarit.code
         plan.score = meilleur_candidat.score_detection
         detail = ", ".join(f"{nom}={score}" for nom, score in scores.items())
-        plan.raison_refus = (
-            "aucun PDF candidat n'a produit une fiche sélectionnable (code + structure, "
-            f"ou structure riche sans code ; meilleur candidat : {meilleur_pdf.name} ; scores : {detail})"
-        )
+        if classements and len(classements) == len(scores):
+            plan.raison_refus = _raison_documents_non_fiche(classements)
+        else:
+            plan.raison_refus = (
+                "aucun PDF candidat n'a produit une fiche sélectionnable (code + structure, "
+                f"ou structure riche sans code ; meilleur candidat : {meilleur_pdf.name} ; scores : {detail})"
+            )
         return plan
 
     pdf_choisi, candidat_choisi = choisi

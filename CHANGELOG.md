@@ -1,5 +1,30 @@
 # Changelog
 
+## 2026-10-29 (suite 2) — refus qui nomme le contenu réel du dossier
+
+Trois familles de documents réels produisaient le même refus « aucune fiche de
+fabrication reconnue (gabarit inconnu) », qui se lit comme une panne de
+reconnaissance :
+
+- **formulaire de prise de cotes** (`Fiche de prise de cotes`, « Compléter et
+  retourner à contact@seamtech.tn », champs vides) — mesuré sur
+  `/VOILES 2024/CAVAILLE ST76`, `/FIRST 210 ST106`, `/FIRST 325 ST74A` ;
+- **planche de tracé SailPack** (`Panel layout` + `S a i l P a c k V3.0`) —
+  mesuré sur `/VOILES 2026/ATHENA 44 ST761`, `/VOILES 2026/AURA 51 ST795`,
+  `/WESTERLY PENTLAND ST660B/ST 660b.pdf` ;
+- **PDF sans couche texte** — mesuré sur `/ACCESSOIRES 2026/CAGNARD ST756`
+  (2 plans), `/TOILE ST792 COUPE.pdf`, `/ACCESSOIRES 2025/…/ST298.pdf`.
+
+Le refus nomme désormais le contenu réel, fichier par fichier, et ne dit plus
+« lecture impossible » pour un PDF image : il parle de **revue manuelle**
+(l'OCR existe dans le dépôt, il n'est pas branché sur le dépôt de fiches —
+limite explicite, non maquillée). La classification ne bloque jamais un
+dossier qui contient sa fiche : la planche redevient une pièce jointe.
+
+Preuves : `tests/test_classement_documents_non_fiche.py` (5 tests), ruff OK,
+SQLite **1283 passés**, PostgreSQL **416 passés**, E2E 9 dossiers de
+`/home/user/repro/dbx2` + 11 fiches de `/home/user/repro/dbx`.
+
 ## 2026-10-29 (suite) — dossiers d'affaire COMPLETS : deux fiches, sous-dossiers, plans SailPack
 
 Élargissement du test à des dossiers réels plus lourds (jusqu'à 159 fichiers,

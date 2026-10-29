@@ -15,8 +15,8 @@ puis corriger le code pour les **voiles ET les accessoires**, et retester sur
 | Commande | Résultat |
 |---|---|
 | `.venv/bin/ruff check .` | `All checks passed!` |
-| suite SQLite `pytest tests -m "not postgres"` | **1278 passés, 139 sautés**, 437 désélectionnés (89 s) |
-| suite PostgreSQL `pytest tests -m postgres` | **416 passés, 21 sautés** (157 s) |
+| suite SQLite `pytest tests -m "not postgres"` | **1283 passés, 139 sautés**, 437 désélectionnés (96 s) |
+| suite PostgreSQL `pytest tests -m postgres` | **416 passés, 21 sautés** (175 s) |
 | CI GitHub sur `cb2dee4` | 4/4 workflows verts (CI 17 min, Qualification native, Qualification réserves, Perf comparaison) |
 
 ## Audit Dropbox (29/10/2026)
@@ -69,6 +69,18 @@ documents ouverts). Formats non extractibles classés explicitement :
 | `/VOILES 2026/ATHENA 44 ST761` | 1 (+104 DXF dans l'archive) | 1 (SailPack GENNAKER) | refus « aucune fiche » — c'est une planche |
 | `/VOILES 2026/AURA 51 ST795` | 1 (+180 DXF dans l'archive) | 1 (SailPack CODE 0) | refus « aucune fiche » — c'est une planche |
 | dossier reconstitué 159 fichiers | 159 | 6 | `traite`, 157 pièces, ~2 s |
+
+## Refus qui nomment le contenu réel (29/10, 3e passe)
+
+| dossier réel | contenu | refus écrit |
+|---|---|---|
+| `/VOILES 2024/CAVAILLE ST76` | `CavailleGV.pdf` = formulaire de prise de cotes | « formulaire de prise de cotes : CavailleGV.pdf » |
+| `/VOILES 2024/FIRST 210 ST106` | `GSE First210.pdf` = formulaire | idem |
+| `/VOILES 2024/FIRST 325 ST74A` | `LF DeveloppementSolentFirst325.pdf` = formulaire | idem |
+| `/VOILES 2026/ATHENA 44 ST761` | `JW26050B.pdf` = planche SailPack | « planche de tracé SailPack » |
+| `/VOILES 2026/AURA 51 ST795` | `20260410 Gennak Aura51.pdf` = planche SailPack | idem |
+| `/ACCESSOIRES 2026/CAGNARD ST756` | 2 plans raster | « PDF sans couche texte … REVUE MANUELLE » |
+| `/TOILE ST792` (+ sous-dossier `toile`) | `TOILE ST792 COUPE.pdf` raster | idem |
 
 ## Reste à faire
 
