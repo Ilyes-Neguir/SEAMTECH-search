@@ -1,5 +1,33 @@
 # Changelog
 
+## 2026-10-30 (suite) — « ça a marché une fois, pas les deux autres »
+
+Cause exacte, mesurée : la règle de titre de la famille FFab n'avait qu'UNE
+ancre, « grand-voile ». Sur une fiche de **voile d'avant** (en-tête
+« Fiche de fabrication "Voile d'avant" », puis « Génois … pour X de Y »), le
+mot « grand-voile » n'existe nulle part : la règle n'était jamais exécutée,
+donc titre, client et bateau restaient vides. Une fiche de grand-voile
+passait — d'où l'impression d'un fonctionnement intermittent.
+
+- la relecture de page est autorisée dès que le document porte l'en-tête
+  « fiche de fabrication », quelle que soit la catégorie
+  (`_porte_entete_fiche_fabrication`) ;
+- la fenêtre multi-lignes n'exige plus le mot « grand-voile », seulement le
+  contrat « … pour … de … » ; la décomposition stricte décide ensuite et
+  n'invente rien si elle échoue (RG6) ;
+- le titre vient de la CATÉGORIE lue (« Voile d'avant », « Grand-voile »), plus
+  d'un « Grand-voile » codé en dur qui affichait un génois comme une GV ;
+- les familles de voiles reconnues incluent « voile d'avant » / « voile avant ».
+  Preuve : `tests/test_passe_31_10_2026_ffab_client_bateau_code.py`
+  (`TestFicheVoileDAvantSansLeMotGrandVoile`).
+- **Archive de l'atelier montée pour `web` ET `worker`**, en lecture seule :
+  `SEAMTECH_IMPORT_ARCHIVE_HOST_PATH` (défaut inoffensif `./data`) monté sur
+  `/archives:ro`. Sans ce montage, tout dossier de l'hôte était refusé
+  « hors des racines configurées » (403) et rien ne pouvait être déposé.
+  `/archives` reste à ajouter explicitement à `SEAMTECH_ROOT_PATHS`.
+  Preuve : `TestMontageArchive` + `tests/test_compose_hardening.py` (qui
+  vérifie désormais que le défaut d'un montage paramétré est bien un chemin).
+
 ## 2026-10-30 — Extraction client/bateau, code de fiche et passage import → fiche
 
 Correctifs tirés de l'exploitation réelle (archives de l'atelier, jamais

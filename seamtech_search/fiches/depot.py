@@ -393,27 +393,70 @@ def code_depuis_nom_fichier(nom: str) -> str | None:
     return None
 
 
-def reprendre_code_depuis_nom(fiche: FicheExtraite, pdf: Path) -> str | None:
-    """Complète le code d'une fiche extraite depuis le nom du PDF.
+#: Référence dans un NOM DE DOSSIER d'affaire. Les archives de l'atelier
+#: nomment le dossier d'une affaire « BATEAU TAILLE RÉFÉRENCE » (« … ST103 »,
+#: « … ST67A ») ou « BATEAU - jjmmaannée initiales » (« … 250821JA »). Ces
+#: dossiers contiennent souvent une fiche dont NI le PDF ni le nom de fichier
+#: ne portent la référence : sans cette source, l'écriture était refusée et le
+#: dossier « ne rentrait pas » alors que sa référence était sous les yeux.
+_RE_CODE_NOM_DOSSIER = re.compile(
+    r"(?<![A-Za-z0-9])(?P<code>[A-Za-z]{1,4}\s?\d{2,5}[A-Za-z]?)(?![A-Za-z0-9])"
+)
+_RE_CODE_NOM_DOSSIER_DATE = re.compile(
+    r"(?<![A-Za-z0-9])(?P<code>\d{6}\s?[A-Za-z]{2,4})(?![A-Za-z0-9])"
+)
 
-    Ne touche jamais une fiche qui a déjà un code (le document fait foi),
-    et rend le code retenu (ou ``None``). La trace ajoutée porte
-    ``methode="nom_fichier"`` et une confiance inférieure à une lecture :
-    l'approbateur voit d'où vient la référence.
+
+def code_depuis_nom_dossier(nom: str) -> str | None:
+    """Référence d'affaire déductible d'un NOM DE DOSSIER, ou ``None``.
+
+    Dernière source de la chaîne (document → fichier → dossier). Motif étroit :
+    des lettres puis 2 à 5 chiffres (« ST103 », « ST67A ») ou une date de
+    commande suivie d'initiales (« 250821JA »). Le dernier motif du nom gagne,
+    c'est celui qui porte la référence dans la convention de l'atelier.
+    """
+    candidats = [m.group("code") for m in _RE_CODE_NOM_DOSSIER.finditer(nom)]
+    candidats += [m.group("code") for m in _RE_CODE_NOM_DOSSIER_DATE.finditer(nom)]
+    if not candidats:
+        return None
+    return re.sub(r"\s+", " ", candidats[-1].strip().upper())
+
+
+def reprendre_code_depuis_nom(
+    fiche: FicheExtraite, pdf: Path, dossier: Path | str | None = None
+) -> str | None:
+    """Complète le code d'une fiche : document, puis fichier, puis dossier.
+
+    Ne touche jamais une fiche qui a déjà un code (le document fait foi). La
+    provenance de la valeur retenue est TOUJOURS tracée
+    (``methode="nom_fichier"`` ou ``"nom_dossier"``) avec une confiance
+    inférieure à une lecture — l'approbateur voit d'où vient la référence et
+    peut la corriger. Sans aucune des trois sources, rend ``None`` : rien
+    n'est inventé.
     """
     if (fiche.code or "").strip():
         return fiche.code
-    code = code_depuis_nom_fichier(Path(pdf).name)
-    if not code:
+    sources: list[tuple[str, str, float]] = []
+    nom_fichier = Path(pdf).name
+    code_fichier = code_depuis_nom_fichier(nom_fichier)
+    if code_fichier:
+        sources.append((code_fichier, nom_fichier, 0.75))
+    if dossier is not None:
+        nom_dossier = Path(dossier).name
+        code_dossier = code_depuis_nom_dossier(nom_dossier)
+        if code_dossier:
+            sources.append((code_dossier, nom_dossier, 0.60))
+    if not sources:
         return None
+    code, brut, confiance = sources[0]
     fiche.code = code
     fiche.champs.append(
         ChampExtrait(
             champ="fiche.code",
-            valeur_brute=Path(pdf).name,
+            valeur_brute=brut,
             valeur_normalisee=code,
-            methode="nom_fichier",
-            confiance=0.75,
+            methode="nom_fichier" if brut == nom_fichier else "nom_dossier",
+            confiance=confiance,
             page=0,
             zone=None,
             table_cible="fiche",
@@ -725,12 +768,28 @@ def deposer_dossier(
         fiche_preparee = plan.fiche_extraite or extraire_fiche(
             plan.pdf_fiche, gabarits=gabarits, gabarit_code=plan.gabarit_code
         )
-        if reprendre_code_depuis_nom(fiche_preparee, Path(plan.pdf_fiche)) is None:
+        code_retenu = reprendre_code_depuis_nom(
+            fiche_preparee, Path(plan.pdf_fiche), Path(dossier)
+        )
+        if code_retenu is None:
             return _enregistrer_echec(
-                "aucun code de fiche lisible : le PDF n'en porte aucun et son nom "
-                f"« {Path(plan.pdf_fiche).name} » n'en contient pas non plus — la fiche "
-                "n'est PAS enregistrée. Renommer le PDF avec sa référence "
-                "(exemple : « ZZ 001_ffab.pdf ») puis redéposer le dossier."
+                "aucun code de fiche lisible : ni le PDF, ni son nom "
+                f"« {Path(plan.pdf_fiche).name} », ni le nom du dossier "
+                f"« {Path(dossier).name} » ne portent de référence — la fiche "
+                "n'est PAS enregistrée. Renommer le dossier ou le PDF avec sa "
+                "référence (exemple : « ZZ 001 ») puis redéposer."
+            )
+        provenance_code = next(
+            (champ.methode for champ in fiche_preparee.champs if champ.champ == "fiche.code"),
+            "document",
+        )
+        if provenance_code != "document":
+            LOGGER.info(
+                "Dossier %s : code de fiche « %s » repris de la provenance « %s » — trace "
+                "conservée pour l'approbateur (ce n'est pas une lecture du document).",
+                dossier,
+                code_retenu,
+                provenance_code,
             )
         # L'EXCEPTION doit franchir le « with » pour déclencher le rollback de
         # la connexion : le except est donc VOLONTAIREMENT à l'extérieur —

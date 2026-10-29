@@ -2324,7 +2324,7 @@ _FENETRE_TITRE_FFAB_ECART_PT = 60.0
 #: cellule voisine lue sur la même ligne physique (la désignation commence
 #: au dernier de ces mots, jamais avant).
 _FAMILLES_VOILE_TITRE = re.compile(
-    r"\b(grand[-\s]?voiles?|genois|g[eé]nois|spis?|spinnakers?|gennakers?|"
+    r"\b(grand[-\s]?voiles?|voiles?\s+d['’]?avants?|voiles?\s+avants?|genois|g[eé]nois|spis?|spinnakers?|gennakers?|"
     r"code[-\s]?0|trinquettes?|solents?|tourmentins?|asym[eé]triques?|sym[eé]triques?)\b",
     re.I,
 )
@@ -2380,10 +2380,15 @@ def _sequences_titre_ffab(pages: list[PageAnalysee]) -> list[tuple[list[Mot], in
                     continue
                 sequence = list(mots[depart_titre:])
                 normalise = " ".join(mot.normalise for mot in sequence)
-                trouve_grand_voile = re.search(r"\bgrand[-\s]voile\b", normalise)
-                if trouve_grand_voile is None:
-                    continue
-                if " pour " not in normalise[trouve_grand_voile.end() :]:
+                # Défaut mesuré le 30/10/2026 : cette voie exigeait le mot
+                # « grand-voile ». Une fiche de voile d'avant (« Fiche de
+                # fabrication "Voile d'avant" » puis « Génois … pour X de Y »)
+                # n'en contient aucun : la fenêtre n'était jamais candidate,
+                # donc client et bateau restaient vides. La seule exigence qui
+                # reste est celle du CONTRAT de décomposition (« … pour … de
+                # … ») ; la décomposition stricte décide ensuite et n'invente
+                # rien quand elle échoue (RG6).
+                if " pour " not in normalise:
                     continue
                 sequences.append((sequence, page.numero))
                 break
@@ -2415,7 +2420,7 @@ def _analyser_titre_ffab(valeur: str) -> tuple[str | None, str, str, str] | None
     """
     correspondance = re.search(
         r"^\s*fiche\s+de\s+fabrication\s+[\"«](?P<categorie>[^\"»]+)[\"»]\s+"
-        r"(?P<designation>.+?),\s+pour\s+(?P<bateau>.+?)\s+de\s+(?P<reste>.+?)\s*$",
+        r"(?P<designation>.+?),?\s+pour\s+(?P<bateau>.+?)\s+de\s+(?P<reste>.+?)\s*$",
         valeur,
         flags=re.I,
     )
@@ -2520,7 +2525,12 @@ def _traiter_ligne_titre_ffab(fiche: FicheExtraite, brut: str, base: ChampExtrai
         page_code = page_code_fichier
 
     if fiche.titre is None:
-        fiche.titre = categorie or "Grand-voile"
+        # Le titre est la CATÉGORIE lue dans l'en-tête (« Grand-voile »,
+        # « Voile d'avant »…). À défaut, celui de la famille reconnue dans la
+        # désignation ; jamais un « Grand-voile » codé en dur, qui affichait un
+        # génois comme une grand-voile.
+        famille = _FAMILLES_VOILE_TITRE.search(designation or "")
+        fiche.titre = categorie or (famille.group(1) if famille else None) or "Voile"
     if fiche.code is None and code:
         fiche.code = code
     if fiche.commande_numero is None and commande:
@@ -2910,6 +2920,19 @@ _GROUPE_DU_TRAITEMENT: dict[str, str] = {
 }
 
 
+def _porte_entete_fiche_fabrication(pages: list[PageAnalysee]) -> bool:
+    """Le document porte-t-il l'en-tête « fiche de fabrication » (toute catégorie) ?
+
+    Sert d'autorisation de relecture pour la règle de titre FFab, dont l'ancre
+    historique (« grand-voile ») n'existe pas sur une fiche de voile d'avant.
+    """
+    for page in pages[:2]:
+        for ligne in page.lignes:
+            if "fiche de fabrication" in ligne.normalise:
+                return True
+    return False
+
+
 def _executer_regle(fiche: FicheExtraite, regle, pages: list[PageAnalysee]) -> None:
     """Lit un champ selon sa règle ; ne lève jamais : un champ non trouvé est
     journalisé avec sa conséquence (absent du rapport, à relire)."""
@@ -2943,7 +2966,19 @@ def _executer_regle(fiche: FicheExtraite, regle, pages: list[PageAnalysee]) -> N
                 numero_page = page.numero
                 break
     if brut is None or brut.strip() == "":
-        if traitement in {"designation", "ligne_titre_ffab"} and ancre_trouvee and regle.ancres:
+        # Défaut mesuré le 30/10/2026 : la règle de titre FFab n'a qu'une ancre
+        # (« grand-voile »). Sur une fiche de VOILE D'AVANT — en-tête
+        # « Fiche de fabrication "Voile d'avant" », puis « Génois … pour X de
+        # Y » — le mot « grand-voile » n'existe nulle part : la règle n'était
+        # jamais exécutée, donc titre, client et bateau restaient vides. C'est
+        # ce qui donnait « ça a marché une fois et pas les deux autres ».
+        # On autorise donc la relecture de page dès que le document porte
+        # l'en-tête « fiche de fabrication » : le traitement relit les pages et
+        # n'invente rien si la décomposition stricte échoue (RG6).
+        relecture_page = ancre_trouvee or (
+            traitement == "ligne_titre_ffab" and _porte_entete_fiche_fabrication(pages)
+        )
+        if traitement in {"designation", "ligne_titre_ffab"} and relecture_page and regle.ancres:
             # Voies où l'ancre lue suffit à autoriser une relecture de page :
             # le gabarit génois pose le type porté par l'ancre, et le titre
             # FFAB peut être morcelé juste après « grand-voile » (aucun mot

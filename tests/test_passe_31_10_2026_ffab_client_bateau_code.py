@@ -469,3 +469,269 @@ class TestEnTeteSansLibelleFicheDeFabrication:
         fiche = _extraire(_fiche_entete_sans_libelle(tmp_path, designation=False))
 
         assert fiche.client_nom is None and fiche.bateau_nom is None
+
+
+class TestCodeDepuisNomDeDossier:
+    """Chaîne document → nom du fichier → nom du DOSSIER d'affaire.
+
+    Les dossiers de l'atelier portent leur référence (« BATEAU TAILLE ST103 »,
+    « BATEAU - date initiales ») alors que la fiche qu'ils contiennent n'en
+    porte aucune : sans cette troisième source, l'écriture était refusée et le
+    dossier « ne rentrait pas ».
+    """
+
+    @pytest.mark.parametrize(
+        ("nom", "attendu"),
+        [
+            ("OCEANIS 411 ST103", "ST103"),
+            ("DJINN 7 ST95", "ST95"),
+            ("FIRST 31.7 ST81", "ST81"),
+            ("SUN ODYSSEY 49i ST86A", "ST86A"),
+            ("TRINTELLA 34 ST34", "ST34"),
+            ("ALLURES 45 ST67A", "ST67A"),
+            ("BALI 4.5 - 280224VA", "280224VA"),
+            ("DAMIEN 4 - 250821JA", "250821JA"),
+            ("DEHLER 39 - 250329AJA", "250329AJA"),
+            ("VOILES 2024", None),
+            ("FICHE_GV_FFAB", None),
+            ("dossier sans reference", None),
+        ],
+    )
+    def test_motif_conservateur(self, nom: str, attendu: str | None) -> None:
+        from seamtech_search.fiches.depot import code_depuis_nom_dossier
+
+        assert code_depuis_nom_dossier(nom) == attendu
+
+    def test_priorite_document_puis_fichier_puis_dossier(self, tmp_path: Path) -> None:
+        dossier = tmp_path / "OCEANIS 411 ST103"
+        dossier.mkdir()
+        fichier = dossier / "ZZ 075a_ffab.pdf"
+
+        avec_document = FicheExtraite(code="LU-001")
+        assert reprendre_code_depuis_nom(avec_document, fichier, dossier) == "LU-001"
+
+        sans_document = FicheExtraite()
+        assert reprendre_code_depuis_nom(sans_document, fichier, dossier) == "ZZ 075A"
+        assert sans_document.champs[-1].methode == "nom_fichier"
+
+    def test_repli_dossier_trace_avec_sa_provenance(self, tmp_path: Path) -> None:
+        dossier = tmp_path / "OCEANIS 411 ST103"
+        dossier.mkdir()
+        fiche = FicheExtraite()
+
+        assert reprendre_code_depuis_nom(fiche, dossier / "fiche.pdf", dossier) == "ST103"
+        trace = fiche.champs[-1]
+        assert trace.methode == "nom_dossier"
+        assert trace.valeur_brute == "OCEANIS 411 ST103"
+        assert trace.confiance < 0.75, "le dossier est moins fiable que le nom du fichier"
+
+    def test_aucune_source_rend_none(self, tmp_path: Path) -> None:
+        dossier = tmp_path / "dossier sans reference"
+        dossier.mkdir()
+        fiche = FicheExtraite()
+
+        assert reprendre_code_depuis_nom(fiche, dossier / "fiche.pdf", dossier) is None
+        assert fiche.code is None and not fiche.champs
+
+
+@pytest.mark.postgres
+class TestDepotCodeDepuisDossier:
+    """Le cas « ça a marché une fois et les deux autres non ».
+
+    Une même campagne contient des dossiers dont la fiche ne porte AUCUNE
+    référence : seul le nom du dossier la porte. Sans ce repli, ils sortaient
+    en « écriture annulée » alors que leur référence était visible dans le
+    nom du dossier.
+    """
+
+    @pytest.fixture()
+    def base(self, tmp_path: Path):
+        import uuid
+
+        from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
+
+        if not URL_PG:
+            pytest.skip("SEAMTECH_TEST_DATABASE_URL absent")
+        nom_base = f"dossier_code_{uuid.uuid4().hex[:10]}"
+        admin = psycopg2.connect(URL_PG)
+        admin.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
+        try:
+            with admin.cursor() as cursor:
+                cursor.execute(f'CREATE DATABASE "{nom_base}"')
+        finally:
+            admin.close()
+        url_base = URL_PG.rsplit("/", 1)[0] + f"/{nom_base}"
+        from seamtech_search.fiches.gabarits import initialiser_gabarits
+        from seamtech_search.indexer import SearchIndex
+
+        index = SearchIndex(Path(f"/tmp/unused-dc-{nom_base}.db"), url_base)
+        index.initialize()
+        index.run_migrations()
+        initialiser_gabarits(index)
+        try:
+            yield index
+        finally:
+            index.close()
+            admin = psycopg2.connect(URL_PG)
+            admin.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
+            try:
+                with admin.cursor() as cursor:
+                    cursor.execute(
+                        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+                        "WHERE datname = %s AND pid <> pg_backend_pid()",
+                        (nom_base,),
+                    )
+                    cursor.execute(f'DROP DATABASE IF EXISTS "{nom_base}"')
+            finally:
+                admin.close()
+
+    def test_dossier_portant_la_reference_produit_la_fiche(self, base, tmp_path: Path) -> None:
+        dossier = tmp_path / "OCEANIS 411 ST103"
+        dossier.mkdir()
+        shutil.copy(_fiche_entete_sans_libelle(tmp_path, nom="fiche.pdf"), dossier / "fiche.pdf")
+
+        resultat = depot.deposer_dossier(base, dossier)
+
+        assert resultat["statut"] == "traite", resultat["raison"]
+        assert resultat["fiche"] == "ST103"
+        with base.connect() as connexion:
+            with connexion.cursor() as cursor:
+                cursor.execute("SELECT code, titre FROM fiche WHERE code = %s", ("ST103",))
+                assert cursor.fetchone() == ("ST103", "Grand-voile")
+                cursor.execute(
+                    "SELECT methode FROM fiche_champ_extrait WHERE champ = 'fiche.code'"
+                )
+                methodes = {ligne[0] for ligne in cursor.fetchall()}
+        assert "nom_dossier" in methodes, "la provenance de la référence doit être conservée"
+
+    def test_dossier_muet_refuse_en_nommant_les_trois_sources(self, base, tmp_path: Path) -> None:
+        dossier = tmp_path / "dossier sans reference"
+        dossier.mkdir()
+        shutil.copy(_fiche_entete_sans_libelle(tmp_path, nom="fiche.pdf"), dossier / "fiche.pdf")
+
+        resultat = depot.deposer_dossier(base, dossier)
+
+        assert resultat["statut"] == "echec"
+        assert "ni le PDF, ni son nom" in resultat["raison"]
+        assert "ni le nom du dossier" in resultat["raison"]
+        with base.connect() as connexion:
+            with connexion.cursor() as cursor:
+                cursor.execute("SELECT COUNT(*) FROM fiche")
+                assert cursor.fetchone()[0] == 0
+
+
+def _fiche_voile_d_avant(
+    tmp_path: Path,
+    *,
+    nom: str = "fiche.pdf",
+    categorie: str = "Voile d'avant",
+    designation: str = "Genois medium Ocean",
+) -> Path:
+    """Mise en page mesurée en exploitation (« ça a marché une fois, pas les
+    deux autres ») : l'en-tête annonce une VOILE D'AVANT, et le mot
+    « grand-voile » n'apparaît nulle part dans le document."""
+    return _ecrire(
+        tmp_path / nom,
+        [
+            (150.0, 100.0, f'Fiche de fabrication "{categorie}"'),
+            (455.0, 100.0, "Fiche  ZZ 111 dessine par A. le 21/12/2031"),
+            (
+                20.0,
+                112.0,
+                f"{designation} pour Bateau Demo 36 (36') de Chantier Demo "
+                "(Commande #111 DEMO1234)",
+            ),
+            (20.0, 124.0, "Decoupe et fabrication Demo"),
+            (150.0, 124.0, "Tissu(s) (Pas de carbone): MATIERE-DEMO Blanc"),
+            (430.0, 124.0, "Quantite: 1"),
+            (20.0, 165.0, "Cotes (tissu):"),
+            (330.0, 172.0, "Guindant   Bordure   Chute   Tetiere   Surface   Poids (tissu)"),
+            (330.0, 188.0, "12,10 m   6,20 m    11,92 m 4 cm      34,7 m2   17,2 kg"),
+            (20.0, 210.0, "Montage fil V92 : 2 zigzag 6 tps 30 mm"),
+        ],
+    )
+
+
+class TestFicheVoileDAvantSansLeMotGrandVoile:
+    """Le défaut EXACT observé : la règle de titre n'avait qu'une ancre
+    (« grand-voile »). Sur une fiche de voile d'avant, l'ancre est absente :
+    la règle n'était jamais exécutée, donc titre, client et bateau vides.
+    Une fiche de grand-voile passait — d'où « ça a marché une fois »."""
+
+    def test_client_bateau_et_titre_lus_sur_une_voile_d_avant(self, tmp_path: Path) -> None:
+        fiche = _extraire(_fiche_voile_d_avant(tmp_path))
+
+        assert fiche.gabarit_code == "FICHE_GV_FFAB_V1"
+        assert fiche.titre == "Voile d'avant"
+        assert fiche.type_voile_libelle == "Génois"
+        assert fiche.client_nom == "Chantier Demo"
+        assert fiche.bateau_nom == "Bateau Demo 36"
+        assert fiche.bateau_taille == "36'"
+        assert fiche.commande_numero == "111 DEMO1234"
+
+    @pytest.mark.parametrize(
+        ("categorie", "designation", "titre_attendu", "type_attendu"),
+        [
+            ("Voile d'avant", "Genois medium Ocean", "Voile d'avant", "Génois"),
+            ("Grand-voile", "Grand-voile full-batten gamme Demo", "Grand-voile", "Grand-voile"),
+            ("Voile d'avant", "Trinquette medium", "Voile d'avant", "Trinquette"),
+        ],
+    )
+    def test_toutes_les_familles(
+        self,
+        tmp_path: Path,
+        categorie: str,
+        designation: str,
+        titre_attendu: str,
+        type_attendu: str,
+    ) -> None:
+        fiche = _extraire(
+            _fiche_voile_d_avant(tmp_path, categorie=categorie, designation=designation)
+        )
+
+        assert fiche.titre == titre_attendu
+        assert fiche.type_voile_libelle == type_attendu
+        assert fiche.client_nom == "Chantier Demo"
+        assert fiche.bateau_nom == "Bateau Demo 36"
+
+    def test_aucune_ligne_de_titre_rien_n_est_invente(self, tmp_path: Path) -> None:
+        """Sans ligne « … pour … de … », la relecture de page ne fabrique rien."""
+        chemin = _ecrire(
+            tmp_path / "fiche.pdf",
+            [
+                (150.0, 100.0, 'Fiche de fabrication "Voile d\'avant"'),
+                (20.0, 165.0, "Cotes (tissu):"),
+                (330.0, 172.0, "Guindant   Bordure   Chute"),
+                (330.0, 188.0, "12,10 m   6,20 m    11,92 m"),
+            ],
+        )
+        fiche = _extraire(chemin)
+
+        assert fiche.client_nom is None
+        assert fiche.bateau_nom is None
+
+
+class TestMontageArchive:
+    """Plan de correction, point 2 : le montage doit être en LECTURE SEULE et
+    présent sur `web` ET `worker`. Absent de `web`, /imports/scan ne voit pas
+    l'archive et répond 403 ; le worker, lui, peut importer — incohérence qui
+    fait croire à une panne intermittente."""
+
+    @staticmethod
+    def _compose() -> dict:
+        yaml = pytest.importorskip("yaml")
+        return yaml.safe_load((RACINE / "docker-compose.yml").read_text(encoding="utf-8"))
+
+    @pytest.mark.parametrize("service", ["web", "worker"])
+    def test_montage_archives_lecture_seule_sur_web_et_worker(self, service: str) -> None:
+        montages = self._compose()["services"][service]["volumes"]
+
+        archives = [m for m in montages if isinstance(m, str) and ":/archives" in m]
+        assert archives, f"{service} ne monte pas /archives : l'API ne verra jamais l'archive"
+        assert all(m.endswith(":ro") for m in archives), "l'archive doit être montée en LECTURE SEULE (RG13)"
+
+    def test_variable_documentee_dans_le_modele_env(self) -> None:
+        modele = (RACINE / ".env.example").read_text(encoding="utf-8")
+
+        assert "SEAMTECH_IMPORT_ARCHIVE_HOST_PATH=" in modele
+        assert "/archives" in modele, "la racine autorisée doit être expliquée à côté de la variable"
