@@ -198,8 +198,18 @@ _GUILLEMETS = "\"'«»“”‘’"
 
 
 def _jeton_comparable(mot_normalise: str) -> str:
-    """Mot normalisé, sans guillemets collés en tête ou en queue."""
-    return mot_normalise.strip(_GUILLEMETS)
+    """Mot normalisé, sans guillemets ni astérisque collés.
+
+    L'astérisque est un repère typographique des formulaires imprimés
+    (« Longueur du lazy* », « Hauteur du capot* », « Longueur du sac* ») : il ne
+    fait pas partie du mot. Sans ce retrait, une ancre « longueur du lazy » ne
+    trouvait PAS la ligne réelle « longueur du lazy* 3.32 m » et la lecture
+    retombait sur la ligne suivante de la liste des ancres — « longueur du
+    gousset de latte 3.22m » — soit la longueur du GOUSSET présentée comme
+    longueur du Lazy Bag (mesuré sur `/ACCESSOIRES 2024/LAZY BAG 2P ST64/LB 2
+    parties.pdf` : 3,22 m au lieu de 3,32 m).
+    """
+    return mot_normalise.strip(_GUILLEMETS).strip("*")
 
 
 def _indice_ancre(ligne: Ligne, ancre_norm: str) -> int | None:
@@ -210,6 +220,37 @@ def _indice_ancre(ligne: Ligne, ancre_norm: str) -> int | None:
         if mots_norm[depart : depart + len(jetons)] == jetons:
             return depart
     return None
+
+
+def _sauter_annotation_parenthesee(mots: list[Mot], debut: int) -> int:
+    """Déplace le début de la valeur après une annotation ENTRE PARENTHÈSES
+    collée au libellé, quand cette annotation porte les deux-points.
+
+    Mesuré le 2026-10-29 sur `/WESTERLY PENTLAND ST660B/ST 660b_ffab.pdf`
+    (idem `/YACHET CLASSIC ST508/ST 508_ffab.pdf`) : la ligne imprimée est
+
+        ``Tissu(s) (Pas de carbon): Newport 9.45 AP Blanc - White  Quantité : 1``
+
+    et le PDF ne livre pas de mot « : » isolé : les deux-points sont soudés au
+    mot ``carbon):``. Sans ce saut, la lecture s'arrêtait au changement de
+    colonne juste après la parenthèse et le tissu principal valait
+    ``(Pas de carbon):`` — un libellé de formulaire présenté comme matière.
+
+    Le saut est STRICT : il ne s'applique que si le groupe parenthésé se ferme
+    sur un mot terminé par ``):`` (ou suivi d'un mot ``:``). Une parenthèse qui
+    EST la valeur (« Type gousset (voile) ») n'est donc jamais avalée.
+    """
+    if debut >= len(mots) or not mots[debut].texte.startswith("("):
+        return debut
+    for position in range(debut, len(mots)):
+        texte = mots[position].texte
+        if texte.endswith("):"):
+            return position + 1
+        if texte.endswith(")") and position + 1 < len(mots) and mots[position + 1].texte == ":":
+            return position + 2
+        if not texte.endswith(")") and ")" not in texte and position - debut > 8:
+            return debut  # parenthèse non refermée à portée raisonnable
+    return debut
 
 
 def _mots_valeur(
@@ -228,6 +269,7 @@ def _mots_valeur(
     stop a coupé la valeur (ambiguïté résiduelle → confiance réduite)."""
     mots = ligne.mots
     fin_ancre = debut_ancre + nb_mots_ancre
+    fin_ancre = _sauter_annotation_parenthesee(mots, fin_ancre)
     # saute l'ancre puis cherche les deux-points qui la suivent
     deux_points = None
     for position in range(fin_ancre, len(mots)):
@@ -3292,6 +3334,44 @@ def _collecter_libres(fiche: FicheExtraite, pages: list[PageAnalysee], ancres_co
                 )
 
 
+def _type_imprime(texte: str | None) -> str | None:
+    """Type de voile reconnu dans un texte court (titre imprimé), ou None."""
+    if not texte:
+        return None
+    normalise = norm.sans_accents(texte).strip()
+    for motif, libelle, _famille in TYPES_VOILE:
+        if normalise.startswith(norm.sans_accents(motif)):
+            return libelle
+    return None
+
+
+def _aligner_titre_sur_type(fiche: FicheExtraite) -> None:
+    """Quand l'en-tête imprimé et la ligne de désignation nomment DEUX types
+    différents, c'est la désignation qui décrit la voile : le titre la suit.
+
+    Mesuré le 2026-10-29 sur `/WESTERLY PENTLAND ST660B/ST 660b_ffab.pdf` :
+
+        ``Fiche de fabrication "Grand-voile"``          ← en-tête du FORMULAIRE
+        ``Artimon classique semi-latté, gamme Ocean, pour Westerly Pentland 32 …``
+
+    L'en-tête est un libellé de gabarit d'impression, pas la voile fabriquée :
+    la fiche sortait avec ``titre = Grand-voile`` et ``type = Artimon`` — deux
+    champs qui se contredisent dans l'écran de validation. La valeur imprimée
+    reste dans ``valeur_brute`` (traçabilité intacte).
+
+    Aucun effet quand le titre n'est pas un type connu (« Voile d'avant »,
+    « Fiche de fabrication ») : rien n'est deviné.
+    """
+    type_du_titre = _type_imprime(fiche.titre)
+    if type_du_titre is None or fiche.type_voile_libelle in (None, type_du_titre):
+        return
+    fiche.titre = fiche.type_voile_libelle
+    for champ in fiche.champs:
+        if champ.champ == "fiche.titre":
+            champ.valeur_normalisee = fiche.titre
+            champ.methode = "gabarit_designation"
+
+
 def _extraire_pages(
     pages: list[PageAnalysee],
     chemin: Path,
@@ -3311,6 +3391,7 @@ def _extraire_pages(
         except Exception:
             LOGGER.exception("Échec de la règle %s — champ ignoré, à relire (conséquence : champ absent).", regle.cible)
     _collecter_libres(fiche, pages, consommees, vocabulaire_libres or {ancre for g in (gabarits or [gabarit]) for ancre in g.ancres_detection} | {ancre for r in gabarit.champs for ancre in r.ancres})
+    _aligner_titre_sur_type(fiche)
     fiche.anomalies = evaluer_anomalies(fiche)
     return fiche
 

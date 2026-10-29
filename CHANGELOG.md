@@ -36,10 +36,32 @@ Correctifs :
   12 mm) ; `logo_accessoire` traduit « Logo sans » / « Pas de logo » /
   « SANS LOGO » en `sans` ;
 - `TYPES_VOILE` reçoit **Artimon** ;
-- preuve : `tests/test_accessoires_formulaires_imprimes.py` (15 tests,
+- preuve : `tests/test_accessoires_formulaires_imprimes.py` (16 tests,
   synthétiques, mise en page mesurée) et E2E réel : les 6 fiches d'accessoires
   réelles se déposent (`categorie = accessoire`, score 0,99), les 3 plans sans
   couche texte sont refusés explicitement, les 2 fiches de voile restent voiles.
+
+Trois défauts de plus, trouvés en relisant les mêmes documents réels :
+
+- **`Longueur du lazy*` ignorée** : l'astérisque imprimé faisait partie du mot
+  pour la comparaison d'ancres, donc la ligne réelle « longueur du lazy* 3.32 m »
+  ne matchait pas et la lecture retombait sur « longueur du gousset de latte
+  3.22m ». La fiche Lazy Bag annonçait **3,22 m — la longueur du gousset** au
+  lieu de 3,32 m (`_jeton_comparable` ignore désormais l'astérisque) ;
+- **`titre` contredit par l'en-tête du formulaire** : sur `ST 660b_ffab.pdf`,
+  l'en-tête imprimé est « Fiche de fabrication \"Grand-voile\" » alors que la
+  voile est un **Artimon** : la fiche sortait avec `titre = Grand-voile` et
+  `type = Artimon`. Quand les deux nomment des types différents, c'est la ligne
+  de désignation — celle qui décrit la voile — qui fait foi
+  (`_aligner_titre_sur_type`, méthode `gabarit_designation`, valeur imprimée
+  conservée dans `valeur_brute`) ; aucun effet si le titre n'est pas un type
+  connu (« Voile d'avant ») ;
+- **libellé de formulaire pris pour la matière** : la ligne réelle
+  « Tissu(s) (Pas de carbon): Newport 9.45 AP Blanc - White » a ses deux-points
+  soudés au mot `carbon):` ; la lecture s'arrêtait au changement de colonne et
+  `materiau.tissu_principal` valait `(Pas de carbon):`. Le tissu principal est
+  maintenant `Newport 9.45 AP Blanc - White` (et 6.45 sur le 660 b).
+  Preuve : `tests/test_ffab_en_tete_artimon_et_tissu.py` (6 tests).
 
 ## 2026-10-30 (suite) — « ça a marché une fois, pas les deux autres »
 

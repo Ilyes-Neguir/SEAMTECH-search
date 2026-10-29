@@ -164,4 +164,13 @@ Règles appliquées, visibles dans l'interface de validation :
   **aucune couche texte** : ils sont comptés comme pièces/refus explicites,
   jamais comme une fiche à moitié lue ;
 - un dossier dont le seul PDF est un plan est refusé avec la raison
-  `aucune fiche de fabrication reconnue` — c'est le comportement attendu.
+  `aucune fiche de fabrication reconnue` — c'est le comportement attendu ;
+- **le nom du client est celui que le formulaire imprime** (les archives
+  contiennent « VBO Sails » sur un formulaire de 2025 et « Voilerie VBO » sur
+  celui de 2024 : les deux sont réels, aucun n'est corrigé en douce). La
+  référence d'affaire entre parenthèses est conservée à part, après « | »
+  (« Voilerie VBO | ST74 - SAOODXJBQ ») ;
+- une seule dimension est projetée en mètres : celle de la ligne
+  « Longueur du … » du formulaire, astérisque imprimé compris. Les autres
+  (hauteur, ralingue, coulisseaux) restent du texte : jamais une cote
+  rebaptisée.

@@ -223,13 +223,40 @@ def test_lazy_bag_champs_reels(fiche_lazy_bag) -> None:
 
 
 def test_lazy_bag_ne_fabrique_aucune_largeur(fiche_lazy_bag) -> None:
-    """« 3.22m - Latte jonc 12mm … » ne doit produire qu'UNE mesure."""
+    """UNE seule mesure, et la BONNE : la longueur du Lazy Bag (3,32 m).
+
+    Défaut mesuré sur `/ACCESSOIRES 2024/LAZY BAG 2P ST64/LB 2 parties.pdf` :
+    l'astérisque de « Longueur du lazy* 3.32 m » empêchait l'ancre de trouver
+    la ligne ; la lecture retombait sur « Longueur du gousset de latte 3.22m »
+    et annonçait 3,22 m — la longueur du GOUSSET, pas celle du Lazy Bag.
+    """
     extraction = construire_extraction_accessoire(fiche_lazy_bag)
     assert extraction.type_accessoire == "Lazy Bag"
-    assert extraction.longueur_m == pytest.approx(3.22)
+    assert extraction.longueur_m == pytest.approx(3.32)  # « Longueur du lazy* »
     assert extraction.largeur_m is None  # 12 mm n'est PAS une largeur
     assert extraction.hauteur_m is None
-    assert extraction.dimensions_texte == "3.22m"
+    assert extraction.dimensions_texte == "3.32 m"
+
+
+def test_asterisque_imprime_ne_cache_plus_la_ligne(fiche_lazy_bag, tmp_path) -> None:
+    """L'astérisque des formulaires n'est pas un caractère du libellé.
+
+    Deux lectures comparées sur la MÊME mise en page : avec la ligne
+    « Longueur du lazy* 3.32 m » la longueur vaut 3,32 m ; sans elle, la seule
+    dimension longueur restante est celle du gousset (3,22 m). Si l'astérisque
+    cachait la ligne, les deux lectures donneraient 3,22 m.
+    """
+    extraction = construire_extraction_accessoire(fiche_lazy_bag)
+    assert extraction.longueur_m == pytest.approx(3.32)
+
+    sans_lazy = [
+        ligne for ligne in LIGNES_LAZY_BAG if not ligne.startswith("Longueur du lazy")
+    ]
+    fiche = extraire_fiche(
+        _ecrire(tmp_path / "lazy-sans-ligne-lazy.pdf", sans_lazy),
+        gabarits=list(GABARITS_EMBARQUES),
+    )
+    assert construire_extraction_accessoire(fiche).longueur_m == pytest.approx(3.22)
 
 
 def test_fourreau_champs_reels(fiche_fourreau) -> None:
