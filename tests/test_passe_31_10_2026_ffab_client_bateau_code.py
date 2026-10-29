@@ -407,3 +407,65 @@ class TestRefusExplique:
         assert "aucune fiche de fabrication reconnue" in plan.raison_refus
         assert "plan.pdf" in plan.raison_refus, "l'opérateur doit savoir quel fichier a été examiné"
         assert "n'ont pas été modifiés" in plan.raison_refus
+
+
+def _fiche_entete_sans_libelle(
+    tmp_path: Path,
+    *,
+    nom: str = "ZZ 075a_ffab.pdf",
+    designation: bool = True,
+) -> Path:
+    """En-tête RÉEL : « Fiche <code> dessiné par … », sans les mots
+    « fiche de fabrication » ni « Fichier ».
+
+    C'est la mise en page qui a produit « Sans titre / Client — / Bateau — » :
+    les deux voies de lecture du titre exigeaient la séquence exacte « fiche de
+    fabrication », absente de ce gabarit, donc la ligne de désignation n'était
+    jamais examinée et la fiche sortait sans client ni bateau.
+    """
+    cellules: list[tuple[float, float, str]] = [
+        (330.0, 100.0, "Fiche  ZZ 075a dessiné par A. le 18 septembre 2031"),
+        (20.0, 121.0, "Découpe et fabrication Atelier Démo"),
+        (150.0, 121.7, "Tissu(s) (Pas de carbone): MATIERE-DEMO Blanc - White"),
+        (430.0, 122.4, "Quantité: 2"),
+    ]
+    if designation:
+        cellules.append(
+            (
+                20.0,
+                143.0,
+                "Grand-voile full-batten, gamme Demo, pour Bateau Demo 43 (43') "
+                "de Client Demo (ZZ75 - XXXX)",
+            )
+        )
+    cellules += [
+        (20.0, 165.0, "Cotes (tissu):"),
+        (330.0, 172.0, "Guindant   Bordure   Chute   Têtière   Surface   Poids (tissu)"),
+        (330.0, 188.0, "12,00 m   4,00 m    12,50 m 15 cm     38,0 m²   20,0 kg"),
+        (20.0, 210.0, "Montage fil V138 : 2 zigzag 6 temps"),
+        (20.0, 230.0, "4 lattes"),
+    ]
+    return _ecrire(tmp_path / nom, cellules)
+
+
+class TestEnTeteSansLibelleFicheDeFabrication:
+    def test_client_et_bateau_lus_sans_la_sequence_fiche_de_fabrication(self, tmp_path: Path) -> None:
+        """Le défaut réel : l'en-tête est « Fiche <code> dessiné par … »."""
+        fiche = _extraire(_fiche_entete_sans_libelle(tmp_path))
+
+        assert fiche.gabarit_code == "FICHE_GV_FFAB_V1"
+        assert fiche.titre == "Grand-voile"
+        assert fiche.client_nom == "Client Demo"
+        assert fiche.bateau_nom == "Bateau Demo 43"
+        assert fiche.commande_numero == "ZZ75 - XXXX"
+
+    def test_aucun_code_dans_le_document_reste_absent_a_ce_stade(self, tmp_path: Path) -> None:
+        """Ni « Fichier » ni « fiche de fabrication » : le code vient du NOM (dépôt)."""
+        fiche = _extraire(_fiche_entete_sans_libelle(tmp_path))
+
+        assert fiche.code is None, "aucun code ne doit être inventé par l'extraction"
+
+    def test_rien_invente_sans_ligne_de_designation(self, tmp_path: Path) -> None:
+        fiche = _extraire(_fiche_entete_sans_libelle(tmp_path, designation=False))
+
+        assert fiche.client_nom is None and fiche.bateau_nom is None
