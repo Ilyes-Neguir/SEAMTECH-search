@@ -1,5 +1,46 @@
 # Changelog
 
+## 2026-10-29 (suite) — dossiers d'affaire COMPLETS : deux fiches, sous-dossiers, plans SailPack
+
+Élargissement du test à des dossiers réels plus lourds (jusqu'à 159 fichiers,
+6 PDF, sous-dossier) pris dans `/YACHET CLASSIC ST508`, `/WESTERLY PENTLAND
+ST660B`, `/ACCESSOIRES 2026/CAGNARD ST756`, `/VOILES 2026/ATHENA 44 ST761`,
+`/VOILES 2026/AURA 51 ST795`.
+
+Défauts trouvés et corrigés :
+
+- **la fiche « ST 508V2 » sortait SANS CODE** : le motif de référence FFab
+  s'arrêtait à UNE lettre après les chiffres (`ST 660b`, `ST449A`). Sur
+  « … ST 508V2 », le `\b` échouait sur le « V » : le document — une vraie fiche
+  de fabrication entièrement lisible — était jugé « non viable » par le
+  scanner, qui retenait alors la révision précédente. Le motif accepte
+  désormais une lettre suivie de 1-2 chiffres de révision ;
+- **deux fiches dans un même dossier étaient départagées en SILENCE** : le
+  choix reste déterministe (score, puis nom « …ffab », puis ordre
+  alphabétique) et la seconde fiche reste une pièce jointe, mais le dépôt
+  expose maintenant `autres_fiches` et journalise un avertissement nommant le
+  PDF écarté ;
+- **les fichiers d'un sous-dossier n'étaient référencés par RIEN** : mesuré sur
+  `/YACHET CLASSIC ST508/TISSU`, `/LAZY BAG 2 PARTIES DUFOUR 385/PLC`,
+  `/ACCESSOIRES 2026/TOILE ST792/toile` — ces sous-dossiers ne portent aucun
+  PDF, ne sont donc jamais un dossier de lot, et leurs fichiers restaient
+  invisibles depuis l'application. Ils sont désormais rattachés en pièces
+  jointes du dossier parent. Un sous-dossier qui porte un PDF reste un dossier
+  de lot à part : aucun doublon.
+
+Vérifié sans changement de code (comportements attendus, documentés) :
+
+- les **planches SailPack** (`ST 508.pdf`, `JW26050B.pdf`, `… Gennak Aura51.pdf`,
+  `ST 660b.pdf`) ne portent aucun libellé de fiche : elles sont refusées comme
+  « aucune fiche de fabrication reconnue » — jamais prises pour une fiche ;
+- `CAGNARD ST756` (deux plans raster, 0 caractère) : refus « PDF illisible » ;
+- dossier de 159 fichiers (1 fiche + 2 révisions + 150 DXF + PLX) : bonne fiche
+  choisie, 157 pièces jointes, dépôt `traite` en ~2 s.
+
+Preuves : `tests/test_ffab_code_version_et_concurrence.py` (8 tests), E2E sur
+5 dossiers réels supplémentaires, ruff OK, SQLite **1278 passés**,
+PostgreSQL **416 passés**.
+
 ## 2026-10-29 — « l'analyse ne lit pas les accessoires » : formulaires imprimés
 
 Audit Dropbox complet des dossiers d'accessoires (documents réels ouverts avec

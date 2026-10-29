@@ -15,8 +15,8 @@ puis corriger le code pour les **voiles ET les accessoires**, et retester sur
 | Commande | Résultat |
 |---|---|
 | `.venv/bin/ruff check .` | `All checks passed!` |
-| suite SQLite `pytest tests -m "not postgres"` | **1270 passés, 139 sautés**, 437 désélectionnés (86 s) |
-| suite PostgreSQL `pytest tests -m postgres` | **416 passés, 21 sautés** (151 s) |
+| suite SQLite `pytest tests -m "not postgres"` | **1278 passés, 139 sautés**, 437 désélectionnés (89 s) |
+| suite PostgreSQL `pytest tests -m postgres` | **416 passés, 21 sautés** (157 s) |
 | CI GitHub sur `cb2dee4` | 4/4 workflows verts (CI 17 min, Qualification native, Qualification réserves, Perf comparaison) |
 
 ## Audit Dropbox (29/10/2026)
@@ -58,6 +58,17 @@ documents ouverts). Formats non extractibles classés explicitement :
 | acc_lb1p_st298 | — | refus | — | — | PDF sans texte (plan) |
 | acc_taud_st131 | — | refus | — | — | aucune fiche : plan |
 | acc_taud_st40_fini | — | refus | — | — | aucune fiche : plan |
+
+## Dossiers complets retestés (29/10, 2e passe)
+
+| dossier réel | fichiers | PDF | résultat |
+|---|---|---|---|
+| `/YACHET CLASSIC ST508` | 8 + sous-dossier TISSU | 6 (2 fiches, 2 planches SailPack, cahier des charges, détail œillets raster) | fiche `ST 508` retenue, `ST 508V2_ffab.pdf` signalée en `autres_fiches`, 7 pièces |
+| `/WESTERLY PENTLAND ST660B` | 2 | 2 (planche + fiche) | fiche `ST 660B` (Artimon) retenue, le plan devient pièce |
+| `/ACCESSOIRES 2026/CAGNARD ST756` | 3 | 2 (raster) | refus « PDF illisible », rien d'inventé |
+| `/VOILES 2026/ATHENA 44 ST761` | 1 (+104 DXF dans l'archive) | 1 (SailPack GENNAKER) | refus « aucune fiche » — c'est une planche |
+| `/VOILES 2026/AURA 51 ST795` | 1 (+180 DXF dans l'archive) | 1 (SailPack CODE 0) | refus « aucune fiche » — c'est une planche |
+| dossier reconstitué 159 fichiers | 159 | 6 | `traite`, 157 pièces, ~2 s |
 
 ## Reste à faire
 

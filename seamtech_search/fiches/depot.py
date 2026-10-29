@@ -221,6 +221,14 @@ class PlanDossier:
     score: int = 0
     pieces: list[FichierDossier] = field(default_factory=list)
     raison_refus: str | None = None
+    #: Autres PDF du dossier qui portent EUX AUSSI une fiche exploitable.
+    #: Mesuré sur `/YACHET CLASSIC ST508` : la même voile y est archivée en
+    #: deux révisions (`ST 508_ffab.pdf` et `ST 508V2_ffab.pdf`, toutes deux
+    #: viables, score 6). Le scanner doit trancher — il le fait de façon
+    #: déterministe (score, puis nom « …ffab », puis ordre alphabétique) — mais
+    #: il ne doit pas le faire EN SILENCE : ces PDF sont conservés en pièces
+    #: jointes et listés ici pour l'opérateur.
+    autres_fiches: list[Path] = field(default_factory=list)
     fiche_extraite: FicheExtraite | None = field(default=None, repr=False)
 
     @property
@@ -524,6 +532,7 @@ def scanner_dossier(dossier: Path, gabarits: list[GabaritDef]) -> PlanDossier:
                 taille_octets=element.stat().st_size,
             )
         )
+    plan.pieces.extend(_pieces_des_sous_dossiers(dossier))
     if not pdfs:
         plan.raison_refus = "aucun PDF dans le dossier"
         return plan
@@ -598,6 +607,20 @@ def scanner_dossier(dossier: Path, gabarits: list[GabaritDef]) -> PlanDossier:
         return plan
 
     pdf_choisi, candidat_choisi = choisi
+    plan.autres_fiches = [
+        pdf for pdf, candidat in candidats_tries
+        if pdf != pdf_choisi and _extraction_viable(candidat.fiche)
+    ]
+    if plan.autres_fiches:
+        LOGGER.warning(
+            "Dossier %s : %d autre(s) PDF portent aussi une fiche exploitable (%s) — "
+            "fiche retenue : %s ; les autres sont conservés en pièces jointes et "
+            "cités dans le résultat du dépôt (aucun fichier n'est supprimé).",
+            dossier,
+            len(plan.autres_fiches),
+            ", ".join(pdf.name for pdf in plan.autres_fiches),
+            pdf_choisi.name,
+        )
     plan.pdf_fiche = pdf_choisi
     plan.gabarit_code = candidat_choisi.gabarit.code
     plan.score = candidat_choisi.score_detection
@@ -609,6 +632,41 @@ def scanner_dossier(dossier: Path, gabarits: list[GabaritDef]) -> PlanDossier:
         if pdf != pdf_choisi
     )
     return plan
+
+
+def _pieces_des_sous_dossiers(dossier: Path) -> list[FichierDossier]:
+    """Fichiers des sous-dossiers SANS PDF direct, rattachés comme pièces.
+
+    Mesuré sur l'archive réelle : `/YACHET CLASSIC ST508/TISSU` (échantillons),
+    `/LAZY BAG 2 PARTIES DUFOUR 385/PLC` (fichiers du traceur),
+    `/ACCESSOIRES 2026/TOILE ST792/toile`. Ces sous-dossiers ne portent AUCUN
+    PDF : ils ne deviennent donc jamais un dossier de lot à eux seuls, et leurs
+    fichiers n'étaient référencés par RIEN — invisibles depuis l'application
+    alors qu'ils font partie de l'affaire (RG13 : on ne perd rien).
+
+    Un sous-dossier qui porte un PDF est laissé de côté : il est déjà un
+    dossier de lot à part entière, ses pièces lui appartiennent — les compter
+    ici les dupliquerait. Les fichiers cachés sont ignorés, comme partout
+    ailleurs dans la découverte des dossiers.
+    """
+    pieces: list[FichierDossier] = []
+    for sous_dossier in sorted(
+        (element for element in dossier.iterdir() if element.is_dir() and not element.name.startswith(".")),
+        key=lambda chemin: chemin.name.casefold(),
+    ):
+        if any(fichier.suffix.lower() == ".pdf" for fichier in sous_dossier.rglob("*") if fichier.is_file()):
+            continue
+        for fichier in sorted(sous_dossier.rglob("*"), key=lambda chemin: str(chemin).casefold()):
+            if not fichier.is_file() or fichier.name.startswith("."):
+                continue
+            pieces.append(
+                FichierDossier(
+                    chemin=fichier,
+                    role=role_piece(fichier),
+                    taille_octets=fichier.stat().st_size,
+                )
+            )
+    return pieces
 
 
 def _creer_lot_isole(index: Any, dossier: Path) -> tuple[int, int]:
@@ -966,6 +1024,10 @@ def deposer_dossier(
         "contenu_remplace": ecriture.remplacee,
         # P0.2 : ce que le stockage objet a réellement accepté et vérifié.
         "promotion": promotion,
+        # Transparence : d'autres PDF du dossier portaient AUSSI une fiche
+        # (révision antérieure, variante…). Ils sont conservés en pièces
+        # jointes ; l'opérateur doit pouvoir le voir sans lire les journaux.
+        "autres_fiches": [pdf.name for pdf in plan.autres_fiches],
     }
 
 

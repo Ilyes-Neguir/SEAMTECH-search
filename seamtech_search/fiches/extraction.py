@@ -2394,7 +2394,13 @@ def _traiter_libres_gv(fiche: FicheExtraite, brut: str, base: ChampExtrait, cont
 # terminer la ligne de titre ou être corroboré par la ligne Fichier du PDF.
 # ---------------------------------------------------------------------------
 
-_MOTIF_CODE_FFAB = r"(?:[A-Za-z]{1,4}\s+\d{2,5}[A-Za-z]?|\d{3,5}-[A-Za-z]{2,4})"
+#: Référence imprimée par l'atelier. Suffixe admis : une lettre SEULE
+#: (« ST 660b », « ST449A ») ou une lettre suivie de 1-2 chiffres de révision
+#: (« ST 508V2 », mesuré sur `/YACHET CLASSIC ST508/ST 508V2_ffab.pdf`).
+#: Sans ce second chiffre, le `\b` qui suit échouait sur le « V » de « V2 » :
+#: la fiche V2 sortait SANS CODE (donc « non viable ») alors que le document
+#: porte « … ST 508V2 » et « Fichier ST 508V2 (commande ST 508V2) ».
+_MOTIF_CODE_FFAB = r"(?:[A-Za-z]{1,4}\s+\d{2,5}[A-Za-z]?(?:\d{1,2})?|\d{3,5}-[A-Za-z]{2,4})"
 _RE_CODE_FFAB_FIN = re.compile(rf"(?P<code>{_MOTIF_CODE_FFAB})\s*$")
 _RE_CODE_FFAB_FICHIER = re.compile(rf"\bFichier\s+(?P<code>{_MOTIF_CODE_FFAB})(?:\.(?:xlsm|xlsx|pdf))?\b", re.I)
 _RE_CODE_FFAB_COMMANDE = re.compile(rf"\(\s*commande\s+(?P<code>{_MOTIF_CODE_FFAB})\s*\)", re.I)
