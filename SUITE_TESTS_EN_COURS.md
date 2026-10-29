@@ -23,6 +23,13 @@ Fiches de reprise : `GET /fiches?statut=a_valider` → `sans_pdf 0`,
 `sans_fichier 0`, `sans_gabarit 0` (avant cette passe : 58 « 0 fichier »,
 21 gabarits vides).
 
+Parcours de décision réellement exercé sur une fiche déposée (`ST96`, via
+l'API de l'interface, jeton CSRF double soumission) : `valider` → statut
+`valide`, révision 2, puis `rouvrir` → `a_valider`, révision 3, deux lignes
+dans `fiche_validation`. Aperçu des pièces déposées : `GET /pieces/{id}/apercu`
+répond `200 application/pdf` avec exactement la taille du fichier d'origine
+(`ST63` 568 956 o, `ST 508` 395 626 o, `ST 430` 176 286 o).
+
 ---
 
 ## Passe du 29/10/2026 (nuit) — aucun dossier réel refusé
