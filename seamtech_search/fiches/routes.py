@@ -2223,7 +2223,14 @@ def enregistrer_routes_fiches(
             entete_utilisateur=entete_utilisateur, entete_role=entete_role,
             entete_session=entete_session, entete_jeton=entete_jeton,
         )
-        etat_avant = etat_lot(index, id_lot)
+        try:
+            etat_avant = etat_lot(index, id_lot)
+        except DepotImpossible as erreur:
+            # Même contrat que GET /lots/{id} : un lot inexistant est un 404
+            # explicite, jamais une exception non gérée (500). Constaté le
+            # 29/10/2026 par la matrice de rôles : POST /lots/1/annuler sur une
+            # base sans lot levait DepotImpossible jusqu'à la couche ASGI.
+            raise HTTPException(status_code=404, detail=str(erreur)) from erreur
         if etat_avant["statut"] in {"termine", "annule"}:
             return {"id_lot": id_lot, "statut": etat_avant["statut"], "annulation": "sans_objet", "etat": etat_avant}
         redis_store = RedisStore(config=config)
