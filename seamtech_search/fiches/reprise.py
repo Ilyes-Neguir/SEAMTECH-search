@@ -43,6 +43,7 @@ from seamtech_search.fiches.extraction import ExtractionImpossible, analyser_pdf
 from seamtech_search.fiches.modeles import Anomalie, ChampExtrait, Cotes, FicheExtraite
 
 CODE_GABARIT_REPRISE = "FICHE_REPRISE_V1"
+VERSION_GABARIT_REPRISE = 1
 
 TITRE_PLAN = "Plan de fabrication"
 TITRE_COTES = "Prise de cotes"
@@ -293,6 +294,9 @@ def construire_fiche_de_reprise(
 
     fiche = FicheExtraite(fichier_pdf=str(pdfs[0] if pdfs else dossier))
     fiche.gabarit_code = CODE_GABARIT_REPRISE
+    # La persistance résout ``id_gabarit`` sur le COUPLE (code, version) :
+    # sans version, la fiche gardait une provenance vide à l'écran.
+    fiche.gabarit_version = VERSION_GABARIT_REPRISE
     methode_code = "document" if lecture is not None and lecture.code else (
         "nom_dossier" if code_dossier else "nom_fichier"
     )

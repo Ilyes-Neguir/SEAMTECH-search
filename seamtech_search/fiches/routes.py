@@ -1348,6 +1348,35 @@ def lister_pieces_archive(
     }
 
 
+#: « Combien de fichiers cette fiche a-t-elle VRAIMENT ? »
+#:
+#: Le dépôt par arborescence ne remplit pas `fiche_piece_jointe` : compter
+#: seulement cette table annonçait « 0 fichier » sur des fiches dont le PDF
+#: était bel et bien promu (mesuré sur les 58 dossiers réels). Le lot traité
+#: porte le chemin du PDF déposé, c'est la preuve d'un fichier réel.
+#:
+#: Ces deux fragments sont des EXPRESSIONS (pas des instructions) : ils
+#: s'insèrent dans un SELECT et ne passent donc pas la grammaire pglast.
+#:
+#: `fichier_source` ne compte que s'il désigne lui-même un PDF : sur une fiche
+#: FFAB il porte le classeur d'origine (« 508.xlsm »), qui n'est PAS le
+#: document déposé — l'écran ne doit pas le présenter comme un PDF.
+EXPR_FICHIERS_DE_LA_FICHE = (
+    "(SELECT COUNT(*) FROM fiche_piece_jointe p WHERE p.id_fiche = f.id_fiche) "
+    "+ CASE WHEN EXISTS (SELECT 1 FROM lot_dossier ld WHERE ld.id_fiche = f.id_fiche "
+    "AND ld.statut = 'traite' AND ld.cle_idempotence IS NOT NULL) THEN 1 "
+    "WHEN (SELECT COUNT(*) FROM fiche_piece_jointe p2 WHERE p2.id_fiche = f.id_fiche) = 0 "
+    "AND right(lower(COALESCE(f.fichier_source, '')), 4) = '.pdf' THEN 1 ELSE 0 END"
+)
+
+EXPR_A_PDF = (
+    "CASE WHEN EXISTS (SELECT 1 FROM lot_dossier ld2 WHERE ld2.id_fiche = f.id_fiche "
+    "AND ld2.statut = 'traite' AND ld2.cle_idempotence IS NOT NULL) "
+    "OR (SELECT COUNT(*) FROM fiche_piece_jointe p3 WHERE p3.id_fiche = f.id_fiche) > 0 "
+    "OR right(lower(COALESCE(f.fichier_source, '')), 4) = '.pdf' THEN TRUE ELSE FALSE END"
+)
+
+
 def liste_fiches(index: Any, statut: str | None = None, page: int = 1, taille: int = 50) -> dict[str, Any]:
     """Écran Dossiers (lot D) : liste paginée + facettes (compteurs par statut)."""
     page = max(1, page)
@@ -1359,9 +1388,7 @@ def liste_fiches(index: Any, statut: str | None = None, page: int = 1, taille: i
             cursor.execute(
                 "SELECT f.code, COALESCE(f.titre, ''), f.statut, f.score_qualite, COALESCE(g.code, ''), "
                 "COALESCE(c.nom, ''), COALESCE(b.nom, ''), COALESCE(b.taille, ''), "
-                "(SELECT COUNT(*) FROM fiche_piece_jointe p WHERE p.id_fiche = f.id_fiche) "
-                "+ CASE WHEN f.fichier_source IS NULL THEN 0 ELSE 1 END AS nb_fichiers, "
-                "CASE WHEN f.fichier_source IS NULL THEN FALSE ELSE TRUE END AS a_pdf "
+                + EXPR_FICHIERS_DE_LA_FICHE + " AS nb_fichiers, " + EXPR_A_PDF + " AS a_pdf "
                 "FROM fiche f LEFT JOIN gabarit g ON g.id_gabarit = f.id_gabarit "
                 "LEFT JOIN client c ON c.id_client = f.id_client "
                 "LEFT JOIN bateau b ON b.id_bateau = f.id_bateau "
@@ -1543,8 +1570,7 @@ def detail_fiche(index: Any, code: str) -> dict[str, Any]:
             cursor.execute(
                 "SELECT f.code, COALESCE(f.titre, ''), f.statut, COALESCE(g.code, ''), "
                 "COALESCE(c.nom, ''), COALESCE(b.nom, ''), COALESCE(b.taille, ''), f.date_edition, "
-                "(SELECT COUNT(*) FROM fiche_piece_jointe p WHERE p.id_fiche = f.id_fiche) "
-                "+ CASE WHEN f.fichier_source IS NULL THEN 0 ELSE 1 END, "
+                + EXPR_FICHIERS_DE_LA_FICHE + ", "
                 "f.revision, f.id_fiche, f.categorie, f.categorie_source "
                 "FROM fiche f LEFT JOIN gabarit g ON g.id_gabarit = f.id_gabarit "
                 "LEFT JOIN client c ON c.id_client = f.id_client "

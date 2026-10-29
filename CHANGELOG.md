@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026-10-29 (suite 6) — l'écran dit la vérité sur les fichiers réellement déposés
+
+Mesuré sur le dépôt des 58 dossiers réels (arborescence `/home/user/demo`) :
+
+- **`nb_fichiers` / `a_pdf` comptent enfin les fichiers déposés.** Le dépôt par
+  arborescence ne remplit pas `fiche_piece_jointe` : la liste des fiches
+  annonçait « 0 fichier » sur 58 fiches dont le PDF était promu, et « PDF » sur
+  des fiches dont le `fichier_source` était un classeur (`508.xlsm`). Le
+  compteur lit désormais le lot traité (chemin du PDF déposé) et le nombre de
+  pièces jointes ; `fichier_source` ne compte que s'il désigne un `.pdf`.
+- **Provenance visible sur les fiches de reprise.** `FICHE_REPRISE_V1` est
+  enregistré à l'initialisation : les 21 dossiers sans fiche de fabrication
+  affichent une provenance au lieu d'une colonne « gabarit » vide (le couple
+  code + version est nécessaire pour que la persistance résolve `id_gabarit`).
+- **Régression verrouillée :** un `%` littéral dans une requête paramétrée fait
+  échouer psycopg2 (`IndexError`) alors que la suite SQLite reste verte — la
+  route `GET /fiches` répondait 500. Deux tests neufs (compteur de fichiers,
+  absence de `%`) tournent sur PostgreSQL 18.6.
+
 ## 2026-10-29 (suite 5) — plus aucun dossier réel perdu : les 21 refus de `VOILES 2024` entrent dans l'application
 
 Constat mesuré sur les vrais dossiers du Dropbox : sur `VOILES 2024`, **21

@@ -26,8 +26,10 @@ from typing import Any
 
 from seamtech_search.fiches.extraction import extraire_avec_filet, extraire_fiche
 from seamtech_search.fiches.gabarits import (
+    GABARIT_REPRISE,
     GABARITS_EMBARQUES,
     charger_gabarits,
+    enregistrer_gabarit,
     initialiser_gabarits,
 )
 from seamtech_search.fiches.modeles import FicheExtraite
@@ -146,6 +148,7 @@ def _cmd_init(arguments: argparse.Namespace) -> int:
     index.initialize()
     index.run_migrations()
     initialiser_gabarits(index)
+    enregistrer_gabarit(index, GABARIT_REPRISE)
     initialiser_verite_7792(index, Path(arguments.pdf) if arguments.pdf else None)
     print(f"Gabarits enregistrés : {', '.join(g.code for g in charger_gabarits(index))}")
     print("Vérité 7792 enregistrée dans gabarit_test (seuil 0,90).")

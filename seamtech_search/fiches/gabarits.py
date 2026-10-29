@@ -812,3 +812,22 @@ def synchroniser_gabarits_embarques(index: Any) -> list[str]:
                         (code, code),
                     )
     return ajoutes
+
+#: Gabarit « document » de la FICHE DE REPRISE (voir `reprise.py`).
+#:
+#: Il n'est JAMAIS proposé à la détection : son ancre est technique et
+#: n'existe dans aucun document. Il n'est enregistré en base que pour que
+#: l'écran de validation affiche une provenance lisible au lieu d'une colonne
+#: « gabarit » vide sur les dossiers sans fiche de fabrication — 21 des 58
+#: dossiers réels mesurés.
+GABARIT_REPRISE = GabaritDef(
+    code="FICHE_REPRISE_V1",
+    version=1,
+    description=(
+        "Fiche de reprise : dossier réel sans fiche de fabrication (plan SailPack, "
+        "formulaire de prise de cotes ou PDF image). Les valeurs sont lues dans le "
+        "document ou dans le nom du dossier, et une anomalie exige la saisie manuelle."
+    ),
+    ancres_detection=["fiche de reprise (aucune ancre documentaire)"],
+    champs=[],
+)

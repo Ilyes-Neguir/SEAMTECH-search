@@ -460,6 +460,13 @@ def _tenter_fiche_de_reprise(
         pdfs[0],
     )
     plan.pdf_fiche = reference
+    # ``fichier_source`` est la colonne que l'écran de validation lit pour
+    # afficher/ouvrir le PDF de la fiche (`nb_fichiers`, `a_pdf`). Sans elle,
+    # une fiche de reprise apparaissait SANS document — vérifié sur `ST63`
+    # (`nb_fichiers: 0`) alors que le PDF était bien promu dans le stockage.
+    if not fiche.fichier_source:
+        fiche.fichier_source = reference.name
+    fiche.fichier_pdf = str(reference)
     plan.gabarit_code = fiche.gabarit_code
     plan.score = 0
     plan.fiche_extraite = fiche
@@ -1035,6 +1042,13 @@ def deposer_dossier(
         fiche_preparee = plan.fiche_extraite or extraire_fiche(
             plan.pdf_fiche, gabarits=gabarits, gabarit_code=plan.gabarit_code
         )
+        # Le PDF retenu EST le document de la fiche : la colonne
+        # ``fichier_source`` alimente l'affichage (`nb_fichiers`, `a_pdf`) de
+        # l'écran de validation. Elle restait vide pour les fiches d'accessoires
+        # et de reprise — la fiche s'ouvrait alors sans document, alors que le
+        # fichier était bien promu. Mesuré sur `ST63`, `ST101`, `ST96`.
+        if not fiche_preparee.fichier_source:
+            fiche_preparee.fichier_source = Path(plan.pdf_fiche).name
         code_retenu = reprendre_code_depuis_nom(
             fiche_preparee, Path(plan.pdf_fiche), Path(dossier)
         )

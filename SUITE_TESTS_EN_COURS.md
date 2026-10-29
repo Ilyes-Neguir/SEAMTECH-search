@@ -1,5 +1,30 @@
 # SUITE DES TESTS — état exact (mis à jour à chaque passe)
 
+## Passe du 29/10/2026 (nuit, suite 6) — écran honnête sur les fichiers déposés
+
+| Commande | Résultat |
+|---|---|
+| `.venv/bin/ruff check seamtech_search/ tests/` | `All checks passed!` |
+| `pytest tests -m "not postgres"` | **1302 passés, 139 sautés**, 439 désélectionnés (128 s) |
+| `pytest tests -m postgres` (PG 18.6, port 5433) | **403 passés, 21 sautés, 15 échecs d'environnement** (195 s) |
+| `pytest tests/test_validation_workflow.py -m postgres` | **19 passés** (dont les 2 tests neufs) |
+
+Les 15 échecs de la passe PostgreSQL sont **environnementaux** et sans rapport
+avec le diff : `pg_dump: error: aborting because of server version mismatch`
+(`pg_dump` PG16 fourni par `pgserver` face à un serveur PG18.6). Tous dans
+`test_sauvegarde_*` / `test_migration_rollback`. **NON PROUVÉ EN SANDBOX** : à
+rejouer sur un PostgreSQL dont le client et le serveur partagent la version (CI).
+
+Dépôt réel rejoué (base neuve PostgreSQL) : **58 dossiers, 58 traités, 0 refusé**.
+Après correctifs : **58/58 fiches avec code ET titre, 58/58 avec un fichier
+réellement déposé et un gabarit renseigné, 38 avec cotes**.
+
+Fiches de reprise : `GET /fiches?statut=a_valider` → `sans_pdf 0`,
+`sans_fichier 0`, `sans_gabarit 0` (avant cette passe : 58 « 0 fichier »,
+21 gabarits vides).
+
+---
+
 ## Passe du 29/10/2026 (nuit) — aucun dossier réel refusé
 
 | Commande | Résultat |
