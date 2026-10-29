@@ -38,7 +38,6 @@ from seamtech_search.fiches.gabarits import GabaritDef, charger_gabarits
 from seamtech_search.fiches.modeles import FicheExtraite
 from seamtech_search.fiches.persistance import ecrire_fiche_resultat
 from seamtech_search.fiches.promotion import fichiers_pour_promotion, promouvoir_fichiers
-from seamtech_search.indexer import PG_UNACCENT_CONFIG
 
 LOGGER = logging.getLogger("seamtech_search.fiches.depot")
 
@@ -167,8 +166,11 @@ def _texte_indexable_fiche(fiche: Any) -> str:
 
     return " ".join(dict.fromkeys(valeurs))
 # Même expression que l'indexeur (RG12 : contenu indexé = métadonnées seulement).
+# La configuration est passée en PARAMÈTRE (avec cast explicite) : elle est
+# résolue par l'indexeur (``config_recherche_texte``), donc identique à celle
+# qui a servi à créer les index, et le repli ``simple`` reste utilisable.
 _SQL_DOCUMENT_VECTOR = (
-    f"UPDATE documents SET search_vector = to_tsvector('{PG_UNACCENT_CONFIG}', "
+    "UPDATE documents SET search_vector = to_tsvector(%s::regconfig, "
     "concat_ws(E'\\n', name, path, extension, content)) WHERE id = %s"
 )
 _SQL_PIECE_INS = (
@@ -684,7 +686,10 @@ def deposer_dossier(
                     ),
                 )
                 id_document_pdf = cursor.fetchone()[0]
-                cursor.execute(_SQL_DOCUMENT_VECTOR, (id_document_pdf,))
+                cursor.execute(
+                    _SQL_DOCUMENT_VECTOR,
+                    (index.config_recherche_texte(connexion), id_document_pdf),
+                )
                 # Lots 3a/7 : l'extraction écrite avec la fiche reçoit, dans
                 # la même transaction de dépôt, l'identifiant du PDF source
                 # et son empreinte SHA-256 — dans la famille RÉELLEMENT
@@ -740,7 +745,10 @@ def deposer_dossier(
                         ),
                     )
                     id_document = cursor.fetchone()[0]
-                    cursor.execute(_SQL_DOCUMENT_VECTOR, (id_document,))
+                    cursor.execute(
+                        _SQL_DOCUMENT_VECTOR,
+                        (index.config_recherche_texte(connexion), id_document),
+                    )
                     cursor.execute(
                         _SQL_PIECE_INS,
                         (

@@ -613,6 +613,19 @@ class SearchIndex:
             )
         return self._pg_ts_config
 
+    def config_recherche_texte(self, connection: Any) -> str:
+        """Configuration de recherche plein-texte à utiliser dans CETTE base.
+
+        Accesseur PUBLIC de ``_postgres_ts_config`` : les modules métier qui
+        écrivent un ``tsvector`` (dépôt de fiche, pièces jointes) doivent
+        employer la MÊME configuration que l'indexeur. Écrire en dur
+        ``seamtech_unaccent`` casserait le repli documenté : sur une base où
+        ``CREATE EXTENSION unaccent`` est refusé (rôle non privilégié), la
+        configuration n'existe pas et l'écriture échouerait en
+        ``UndefinedObject`` au lieu de dégrader.
+        """
+        return self._postgres_ts_config(connection)
+
     def _migration_005_unaccent_search_vector(self, connection: Any) -> None:
         """Make Postgres accent parity match SQLite's accent-folding FTS5 index."""
         if not self.is_postgres:
