@@ -1,4 +1,4 @@
-# Recette locale SEAMTECH Search — variante Windows (commanditaire).
+﻿# Recette locale SEAMTECH Search — variante Windows (commanditaire).
 #
 # Une commande qui vérifie que la pile COMPLÈTE fonctionne en local :
 #   prereqs -> ports libres -> .env (secrets aléatoires, jamais dans Git)
