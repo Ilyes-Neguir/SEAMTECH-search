@@ -214,7 +214,10 @@ if (-not $Bash) {
     Rapport "provisionnement-stockage" "FAIL" "bash (Git for Windows) requis pour scripts/provisionner_stockage.sh"
     exit 1
 }
-docker compose up -d minio 2>&1 | Out-Null
+# --quiet : docker compose écrit « Network ... Creating » sur stderr, et avec
+# $ErrorActionPreference = "Stop" PowerShell transforme ce texte en erreur
+# fatale (NativeCommandError). --quiet supprime la sortie de stdout et stderr.
+docker compose up -d --quiet minio
 $PretMinio = $false
 $FinMinio = (Get-Date).AddSeconds(120)
 while ((Get-Date) -lt $FinMinio) {
@@ -238,7 +241,12 @@ Rapport "provisionnement-stockage" "PASS" "buckets + versioning + identités res
 # ---------------------------------------------------------------------------
 # 5. Pile complète : build + démarrage + santé avec timeout clair.
 # ---------------------------------------------------------------------------
-docker compose up -d --build 2>&1 | Tee-Object -Variable SortieUp | Out-Null
+# $ErrorActionPreference = "Stop" transforme la sortie stderr de docker compose
+# en erreur fatale (NativeCommandError) : on temporise localement pour capturer
+# la sortie (stdout + stderr) sans arrêt du script.
+$ErrorActionPreference = "Continue"
+$SortieUp = docker compose up -d --build 2>&1
+$ErrorActionPreference = "Stop"
 if ($LASTEXITCODE -ne 0) {
     Rapport "pile-sante" "FAIL" ("docker compose up en échec : " + (($SortieUp | Select-Object -Last 5) -join " "))
     docker compose ps
