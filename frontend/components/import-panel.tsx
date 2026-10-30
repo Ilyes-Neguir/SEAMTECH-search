@@ -80,6 +80,9 @@ function ImportPanelInterne() {
   const [busy, setBusy] = useState<string | null>(null)
   const [dragActive, setDragActive] = useState(false)
   const [dropped, setDropped] = useState<DroppedFile[]>([])
+  // Résultat du passage EXPLICITE rapport d'import → fiche (« ça analyse mais
+  // rien n'apparaît dans les dossiers ») : message affiché sous les boutons.
+  const [creationFiche, setCreationFiche] = useState<string | null>(null)
   const filesInput = useRef<HTMLInputElement>(null)
   const folderInput = useRef<HTMLInputElement>(null)
   const pollTimerRef = useRef<NodeJS.Timeout | null>(null)
@@ -243,6 +246,27 @@ function ImportPanelInterne() {
       if (!result) return
       const payload = (await callJson(`/api/imports/${result.import_id}/retry`, "POST")) as ImportResultPayload
       setResult(payload)
+    })
+
+  // Un rapport d'analyse n'est PAS une fiche : rien n'apparaît dans les
+  // dossiers tant que ce passage explicite n'a pas été fait. On l'annonce au
+  // lieu de laisser croire que l'import a enregistré quelque chose.
+  const creerFiche = () =>
+    run("fiche", async () => {
+      if (!result) return
+      setCreationFiche(null)
+      try {
+        const payload = await callJson(`/api/imports/${encodeURIComponent(result.import_id)}/creer-fiche`, "POST")
+        if (payload.statut === "traite") {
+          setCreationFiche(`Fiche ${payload.fiche} créée (dossier ${payload.pieces} pièce(s) jointe(s)).`)
+        } else if (payload.statut === "deja_traite") {
+          setCreationFiche("Ce dossier avait déjà produit une fiche : rien n'a été dupliqué.")
+        } else {
+          setCreationFiche(`Fiche non créée : ${payload.raison ?? "raison inconnue"}`)
+        }
+      } catch (err) {
+        setCreationFiche(err instanceof Error ? err.message : "La création de la fiche a échoué.")
+      }
     })
 
   const loading = busy !== null || activeJob !== null
@@ -591,7 +615,27 @@ function ImportPanelInterne() {
                   Télécharger le fichier Excel
                 </a>
               )}
+              {result.technical_pdf && peutSource && (
+                <button
+                  className="inline-flex min-h-8 items-center rounded-md border border-primary bg-primary/10 px-3 text-xs font-semibold text-primary hover:bg-primary/20 disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={loading}
+                  onClick={creerFiche}
+                >
+                  {busy === "fiche" ? "Création…" : "Créer la fiche dans la base"}
+                </button>
+              )}
             </div>
+            {result.technical_pdf && (
+              <p className="mt-2 text-xs text-muted-foreground">
+                Un rapport d’analyse n’enregistre aucune fiche : utilisez « Créer la fiche dans la base » pour la
+                ranger dans les dossiers (ou déposez directement le dossier).
+              </p>
+            )}
+            {creationFiche && (
+              <p className="mt-2 rounded-md border border-primary/40 bg-primary/5 px-3 py-2 text-xs font-medium text-primary" role="status">
+                {creationFiche}
+              </p>
+            )}
             {result.technical_pdf && (
               <p className="mt-2 truncate font-mono text-xs text-muted-foreground">PDF: {result.technical_pdf}</p>
             )}

@@ -1,4 +1,4 @@
-﻿# Recette locale SEAMTECH Search — variante Windows (commanditaire).
+# Recette locale SEAMTECH Search — variante Windows (commanditaire).
 #
 # Une commande qui vérifie que la pile COMPLÈTE fonctionne en local :
 #   prereqs -> ports libres -> .env (secrets aléatoires, jamais dans Git)
@@ -205,16 +205,28 @@ if ($LASTEXITCODE -eq 0) {
 # désormais SEAMTECH_S3_ACCESS_KEY/SEAMTECH_S3_SECRET_KEY (aucun repli
 # administrateur), donc sans cette étape web/worker ne démarrent pas.
 # ---------------------------------------------------------------------------
+# Préférer Git Bash : le shim « bash » de PATH peut être le relay WSL
+# (CreateProcessCommon: execvpe(/bin/bash) failed), qui ne peut pas exécuter
+# un script .sh. On vérifie que bash répond vraiment à --version.
 $Bash = $null
-foreach ($candidat in @("bash", "C:\Program Files\Git\bin\bash.exe", "C:\Program Files (x86)\Git\bin\bash.exe")) {
-    if (Get-Command $candidat -ErrorAction SilentlyContinue) { $Bash = $candidat; break }
-    if (Test-Path $candidat) { $Bash = $candidat; break }
+foreach ($candidat in @("C:\Program Files\Git\bin\bash.exe", "C:\Program Files (x86)\Git\bin\bash.exe", "bash")) {
+    $chemin = $null
+    if (Get-Command $candidat -ErrorAction SilentlyContinue) { $chemin = (Get-Command $candidat).Source }
+    elseif (Test-Path $candidat) { $chemin = $candidat }
+    if (-not $chemin) { continue }
+    # Vérification fonctionnelle : bash --version doit répondre (élimine le shim WSL).
+    $verif = $null
+    try { $verif = (& $chemin --version 2>&1 | Select-Object -First 1) } catch { }
+    if ($verif -and $verif -match "GNU bash|GNU/bash|bash version") { $Bash = $chemin; break }
 }
 if (-not $Bash) {
-    Rapport "provisionnement-stockage" "FAIL" "bash (Git for Windows) requis pour scripts/provisionner_stockage.sh"
+    Rapport "provisionnement-stockage" "FAIL" "bash (Git for Windows) requis pour scripts/provisionner_stockage.sh — installez Git for Windows ou ajoutez son bin à PATH"
     exit 1
 }
-docker compose up -d minio 2>&1 | Out-Null
+# *> $null : docker compose écrit « Network ... Creating » sur stderr, et avec
+# $ErrorActionPreference = "Stop" PowerShell transforme ce texte en erreur
+# fatale (NativeCommandError). *> $null supprime toutes les sorties.
+docker compose up -d minio *> $null
 $PretMinio = $false
 $FinMinio = (Get-Date).AddSeconds(120)
 while ((Get-Date) -lt $FinMinio) {
@@ -238,7 +250,12 @@ Rapport "provisionnement-stockage" "PASS" "buckets + versioning + identités res
 # ---------------------------------------------------------------------------
 # 5. Pile complète : build + démarrage + santé avec timeout clair.
 # ---------------------------------------------------------------------------
-docker compose up -d --build 2>&1 | Tee-Object -Variable SortieUp | Out-Null
+# $ErrorActionPreference = "Stop" transforme la sortie stderr de docker compose
+# en erreur fatale (NativeCommandError) : on temporise localement pour capturer
+# la sortie (stdout + stderr) sans arrêt du script.
+$ErrorActionPreference = "Continue"
+$SortieUp = docker compose up -d --build 2>&1
+$ErrorActionPreference = "Stop"
 if ($LASTEXITCODE -ne 0) {
     Rapport "pile-sante" "FAIL" ("docker compose up en échec : " + (($SortieUp | Select-Object -Last 5) -join " "))
     docker compose ps

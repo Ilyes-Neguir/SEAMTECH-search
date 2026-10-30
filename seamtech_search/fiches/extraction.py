@@ -46,6 +46,39 @@ LOGGER = logging.getLogger("seamtech_search.fiches.extraction")
 TOLERANCE_LIGNE_PT = 2.5  # écart vertical maximal entre deux mots d'une même ligne
 GAP_COLONNE_PT = 14.0  # écart horizontal marquant un changement de colonne (bordure de valeur)
 
+# Forme d'un code d'affaire d'accessoire, mesurée sur les formulaires réels.
+# Deux formes imprimées coexistent dans l'archive :
+#   * « ST64 », « ST105 », « ST96 », « ST 074b », « ST 256b » — préfixe de
+#     lettres, puis chiffres, puis éventuellement une lettre de version ;
+#   * « 170124CS » — référence de commande datée, chiffres PUIS lettres, lue
+#     sur `/ACCESSOIRES 2024/LAZY BAG 2 PARTIES DUFOUR 385/LB FINI.pdf`
+#     (ligne « Commande 170124CS »). Le formulaire est entièrement lisible
+#     (titre « Lazy Bag », client, gousset, ralingue, coulisseaux, cotes) et
+#     n'était refusé QUE parce que sa référence ne commence pas par des
+#     lettres : c'est le format qui manquait, pas l'information.
+# Aucun séparateur interne (tiret, point, barre) n'est accepté : « 01-02-2024 »
+# ou « 884.68 » ne sont pas des codes, et restent refusés.
+def _code_plausible(valeur: str | None) -> bool:
+    """Un code de fiche contient TOUJOURS au moins un chiffre.
+
+    Mesuré sur `/VOILES 2024/NS44 ST88` : le gabarit accessoire lisait le mot
+    « pour » dans une ligne du formulaire de prise de cotes (« Ris auto. pour :
+    1 1 et 2 … ») et l'écrivait comme CODE de fiche — une fiche « pour » est
+    apparue en base. Aucun code réel de l'archive n'est fait uniquement de
+    lettres (« ST64 », « ST 074b », « 170124CS », « 250821JA », « ST 508V2 »
+    portent tous des chiffres) : exiger au moins un chiffre ne retire donc
+    aucune référence réelle, et ferme la porte aux mots du formulaire.
+    """
+    if valeur is None:
+        return False
+    texte = valeur.strip()
+    if not texte or len(texte) > 24:
+        return False
+    return re.search(r"\d", texte) is not None
+
+
+_RE_CODE_ACCESSOIRE = re.compile(r"^[A-Za-z]{0,4}\s?\d{1,6}[A-Za-z]{0,3}$")
+
 # Familles de type de voile connues (valeur → (libellé canonique, famille)).
 TYPES_VOILE: tuple[tuple[str, str, str], ...] = (
     ("spi asymétrique", "Spi Asymétrique", "portant"),
@@ -61,6 +94,11 @@ TYPES_VOILE: tuple[tuple[str, str, str], ...] = (
     ("solent", "Solent", "interface"),
     ("code 0", "Code 0", "portant"),
     ("staysail", "Staysail", "portant"),
+    # Mesuré le 2026-10-29 sur `/WESTERLY PENTLAND ST660B/ST 660b_ffab.pdf` :
+    # « Artimon classique semi-latté, gamme Ocean, pour … ». L'artimon est une
+    # voile d'interface (mât d'artimon) ; sans cette entrée la fiche sortait
+    # avec `type_voile_libelle = None` alors que la désignation était lue.
+    ("artimon", "Artimon", "interface"),
 )
 
 
@@ -179,14 +217,68 @@ def texte_normalise(pages: list[PageAnalysee]) -> str:
 # ---------------------------------------------------------------------------
 
 
+#: Guillemets et apostrophes typographiques retirés en tête/queue d'un mot
+#: AVANT comparaison d'ancre. Un libellé d'export tableur arrive souvent
+#: encadré de guillemets (« "Grand-voile" »), et l'ancre du gabarit
+#: (« grand-voile ») ne le reconnaissait alors jamais : la règle entière était
+#: silencieusement ignorée, code de fiche compris.
+_GUILLEMETS = "\"'«»“”‘’"
+
+
+def _jeton_comparable(mot_normalise: str) -> str:
+    """Mot normalisé, sans guillemets ni astérisque collés.
+
+    L'astérisque est un repère typographique des formulaires imprimés
+    (« Longueur du lazy* », « Hauteur du capot* », « Longueur du sac* ») : il ne
+    fait pas partie du mot. Sans ce retrait, une ancre « longueur du lazy » ne
+    trouvait PAS la ligne réelle « longueur du lazy* 3.32 m » et la lecture
+    retombait sur la ligne suivante de la liste des ancres — « longueur du
+    gousset de latte 3.22m » — soit la longueur du GOUSSET présentée comme
+    longueur du Lazy Bag (mesuré sur `/ACCESSOIRES 2024/LAZY BAG 2P ST64/LB 2
+    parties.pdf` : 3,22 m au lieu de 3,32 m).
+    """
+    return mot_normalise.strip(_GUILLEMETS).strip("*")
+
+
 def _indice_ancre(ligne: Ligne, ancre_norm: str) -> int | None:
     """Premier mot de la ligne où commence la séquence d'ancres (ou None)."""
     jetons = ancre_norm.split()
-    mots_norm = [mot.normalise for mot in ligne.mots]
+    mots_norm = [_jeton_comparable(mot.normalise) for mot in ligne.mots]
     for depart in range(len(mots_norm) - len(jetons) + 1):
         if mots_norm[depart : depart + len(jetons)] == jetons:
             return depart
     return None
+
+
+def _sauter_annotation_parenthesee(mots: list[Mot], debut: int) -> int:
+    """Déplace le début de la valeur après une annotation ENTRE PARENTHÈSES
+    collée au libellé, quand cette annotation porte les deux-points.
+
+    Mesuré le 2026-10-29 sur `/WESTERLY PENTLAND ST660B/ST 660b_ffab.pdf`
+    (idem `/YACHET CLASSIC ST508/ST 508_ffab.pdf`) : la ligne imprimée est
+
+        ``Tissu(s) (Pas de carbon): Newport 9.45 AP Blanc - White  Quantité : 1``
+
+    et le PDF ne livre pas de mot « : » isolé : les deux-points sont soudés au
+    mot ``carbon):``. Sans ce saut, la lecture s'arrêtait au changement de
+    colonne juste après la parenthèse et le tissu principal valait
+    ``(Pas de carbon):`` — un libellé de formulaire présenté comme matière.
+
+    Le saut est STRICT : il ne s'applique que si le groupe parenthésé se ferme
+    sur un mot terminé par ``):`` (ou suivi d'un mot ``:``). Une parenthèse qui
+    EST la valeur (« Type gousset (voile) ») n'est donc jamais avalée.
+    """
+    if debut >= len(mots) or not mots[debut].texte.startswith("("):
+        return debut
+    for position in range(debut, len(mots)):
+        texte = mots[position].texte
+        if texte.endswith("):"):
+            return position + 1
+        if texte.endswith(")") and position + 1 < len(mots) and mots[position + 1].texte == ":":
+            return position + 2
+        if not texte.endswith(")") and ")" not in texte and position - debut > 8:
+            return debut  # parenthèse non refermée à portée raisonnable
+    return debut
 
 
 def _mots_valeur(
@@ -205,6 +297,7 @@ def _mots_valeur(
     stop a coupé la valeur (ambiguïté résiduelle → confiance réduite)."""
     mots = ligne.mots
     fin_ancre = debut_ancre + nb_mots_ancre
+    fin_ancre = _sauter_annotation_parenthesee(mots, fin_ancre)
     # saute l'ancre puis cherche les deux-points qui la suivent
     deux_points = None
     for position in range(fin_ancre, len(mots)):
@@ -412,9 +505,134 @@ def _traiter_designation(fiche: FicheExtraite, brut: str, base: ChampExtrait, fa
             # type reconnu parmi les motifs connus : lecture déterministe
             base.confiance = max(base.confiance, CONFIANCE_CERTAIN)
             return
-    fiche.gamme = fiche.gamme or valeur
+    # Fragment de libellé (« / FOCS » lu après l'ancre « génois » sur la fiche
+    # SAILONET « FICHE FABRICATION GENOIS / FOCS ») : la valeur reste tracée
+    # telle quelle, mais elle ne devient PAS la gamme — un morceau de libellé
+    # n'est pas une gamme commerciale.
+    if not valeur.lstrip().startswith(("/", "-", "–")):
+        fiche.gamme = fiche.gamme or valeur
     base.valeur_normalisee = valeur
     base.confiance = max(base.confiance, 0.7)
+
+
+def _traiter_code_accessoire(
+    fiche: FicheExtraite, brut: str, base: ChampExtrait, contexte: dict | None = None
+) -> None:
+    """Code d'une fiche d'accessoire : les DEUX formes imprimées mesurées.
+
+    Formulaire « fourreau de gse » / « Sac de Pont » : ``Commande ST96`` /
+    ``Commande ST 074b`` — le code suit le libellé. Formulaire « Lazy Bag » :
+    le libellé ``Commande`` est imprimé SEUL (valeur vide) et le code occupe la
+    ligne NUE juste sous le titre (``ST64``, ``ST105``). Aucune autre ligne
+    n'est prise pour un code : une valeur qui n'a pas la forme d'un code
+    (date, nom de bateau, phrase) est refusée plutôt que tronquée.
+    """
+    pages = (contexte or {}).get("pages") or []
+    for page in pages[:2]:
+        lignes = [ligne for ligne in page.lignes if ligne.mots]
+        for indice, ligne in enumerate(lignes):
+            texte = " ".join(mot.texte for mot in ligne.mots).strip()
+            if texte.lower().startswith("commande"):
+                valeur = texte[len("commande") :].strip(" :;-–")
+                if valeur and _RE_CODE_ACCESSOIRE.match(valeur):
+                    _poser_code_accessoire(fiche, base, valeur, ligne.mots[1:])
+                    return
+                continue
+            if not _RE_CODE_ACCESSOIRE.match(texte):
+                continue
+            precedente = lignes[indice - 1].normalise if indice else ""
+            if precedente.startswith("fiche de ") and not precedente.startswith("fiche de fabrication"):
+                _poser_code_accessoire(fiche, base, texte, ligne.mots)
+                return
+
+
+def _poser_code_accessoire(
+    fiche: FicheExtraite, base: ChampExtrait, valeur: str, mots: list[Mot]
+) -> None:
+    code = _normaliser_code_ffab(valeur)
+    if not _code_plausible(code):
+        return
+    base.valeur_brute = valeur
+    base.valeur_normalisee = code
+    base.confiance = max(base.confiance, CONFIANCE_CERTAIN)
+    base.zone = _zone_des_mots(mots)
+    if fiche.code is None:
+        fiche.code = code
+
+
+def _traiter_titre_accessoire(
+    fiche: FicheExtraite, brut: str, base: ChampExtrait, contexte: dict | None = None
+) -> None:
+    """« Fiche de Lazy Bag » → type d'accessoire « Lazy Bag ».
+
+    Le titre EST l'ancre : la valeur n'est pas à droite du libellé mais après
+    « Fiche de ». « Fiche de fabrication … » (fiches de voiles) est exclu
+    explicitement : ce gabarit ne doit jamais lire un titre de voile.
+    """
+    pages = (contexte or {}).get("pages") or []
+    for page in pages[:2]:
+        for ligne in page.lignes:
+            normalise = ligne.normalise
+            if not normalise.startswith("fiche de ") or normalise.startswith("fiche de fabrication"):
+                continue
+            mots_titre = ligne.mots[2:]
+            valeur = " ".join(mot.texte for mot in mots_titre).strip()
+            if not valeur:
+                continue
+            valeur = valeur[0].upper() + valeur[1:]
+            base.valeur_brute = valeur
+            base.valeur_normalisee = valeur
+            base.confiance = max(base.confiance, CONFIANCE_CERTAIN)
+            base.zone = _zone_des_mots(mots_titre)
+            if fiche.titre is None:
+                fiche.titre = valeur
+            return
+
+
+def _traiter_dimension_nommee(
+    fiche: FicheExtraite, brut: str, base: ChampExtrait, contexte: dict | None = None
+) -> None:
+    """Ne garde que la MESURE de tête d'une ligne de dimension nommée.
+
+    Mesuré sur les formulaires réels : « Longueur du gousset de latte 3.22m -
+    Latte jonc 12mm avec manchons et embouts ». La valeur brute contient DEUX
+    mesures (3,22 m puis 12 mm) ; la projection d'accessoire range la seconde
+    en « largeur_m » — soit une cote de largeur inventée. On ne conserve donc
+    que ``<nombre> <unité>`` de tête ; sans unité explicite, rien n'est lu.
+    """
+    trouve = re.match(r"\s*(\d+(?:[.,]\d+)?\s*(?:mm|cm|m)\b)", brut, re.I)
+    if trouve is None:
+        return
+    valeur = re.sub(r"\s+", " ", trouve.group(1)).strip()
+    base.valeur_brute = brut
+    base.valeur_normalisee = valeur
+    base.confiance = max(base.confiance, CONFIANCE_CERTAIN)
+
+
+def _traiter_logo_accessoire(
+    fiche: FicheExtraite, brut: str, base: ChampExtrait, contexte: dict | None = None
+) -> None:
+    """« Logo Pas de logo » / « Logo sans » / « SANS LOGO » → ``sans``.
+
+    Trois formes imprimées mesurées ; « avec logo » n'a pas été observé, il
+    n'est donc pas deviné — toute autre forme laisse le champ vide (RG6).
+    """
+    candidats = [brut]
+    # « Observations/Notes SANS LOGO » (mesuré sur les deux fiches Lazy Bag) :
+    # le mot « logo » termine la ligne, aucun mot de valeur ne le suit. On
+    # relit alors les lignes de la page au lieu de laisser le champ vide.
+    for page in ((contexte or {}).get("pages") or [])[:2]:
+        for ligne in page.lignes:
+            if "logo" in ligne.normalise:
+                candidats.append(" ".join(mot.texte for mot in ligne.mots))
+    for candidat in candidats:
+        normalise = normaliser_terme(candidat)
+        if "sans" in normalise or re.search(r"\bpas de\b", normalise):
+            base.valeur_brute = candidat.strip() or base.valeur_brute
+            base.valeur_normalisee = "sans"
+            base.confiance = max(base.confiance, CONFIANCE_CERTAIN)
+            fiche.logo = fiche.logo or "sans"
+            return
 
 
 def _traiter_support(fiche: FicheExtraite, brut: str, base: ChampExtrait) -> None:
@@ -824,7 +1042,7 @@ def _traiter_ligne_titre_portant(fiche: FicheExtraite, brut: str, base: ChampExt
         return
 
     if fiche.code is None:
-        codes = _RE_CODE_FICHE.findall(valeur)
+        codes = [code for code in _RE_CODE_FICHE.findall(valeur) if _code_plausible(code)]
         if codes:
             fiche.code = codes[-1].upper()
 
@@ -2211,11 +2429,25 @@ def _traiter_libres_gv(fiche: FicheExtraite, brut: str, base: ChampExtrait, cont
 # terminer la ligne de titre ou être corroboré par la ligne Fichier du PDF.
 # ---------------------------------------------------------------------------
 
-_MOTIF_CODE_FFAB = r"(?:[A-Za-z]{1,4}\s+\d{2,5}[A-Za-z]?|\d{3,5}-[A-Za-z]{2,4})"
+#: Référence imprimée par l'atelier. Suffixe admis : une lettre SEULE
+#: (« ST 660b », « ST449A ») ou une lettre suivie de 1-2 chiffres de révision
+#: (« ST 508V2 », mesuré sur `/YACHET CLASSIC ST508/ST 508V2_ffab.pdf`).
+#: Sans ce second chiffre, le `\b` qui suit échouait sur le « V » de « V2 » :
+#: la fiche V2 sortait SANS CODE (donc « non viable ») alors que le document
+#: porte « … ST 508V2 » et « Fichier ST 508V2 (commande ST 508V2) ».
+_MOTIF_CODE_FFAB = r"(?:[A-Za-z]{1,4}\s+\d{2,5}[A-Za-z]?(?:\d{1,2})?|\d{3,5}-[A-Za-z]{2,4})"
 _RE_CODE_FFAB_FIN = re.compile(rf"(?P<code>{_MOTIF_CODE_FFAB})\s*$")
 _RE_CODE_FFAB_FICHIER = re.compile(rf"\bFichier\s+(?P<code>{_MOTIF_CODE_FFAB})(?:\.(?:xlsm|xlsx|pdf))?\b", re.I)
 _RE_CODE_FFAB_COMMANDE = re.compile(rf"\(\s*commande\s+(?P<code>{_MOTIF_CODE_FFAB})\s*\)", re.I)
 _RE_COMMANDE_TITRE_FFAB = re.compile(r"\(\s*commande\s+#\s*([^)]+?)\s*\)", re.I)
+#: Référence d'affaire entre parenthèses en fin de ligne de titre, forme
+#: « (ST75 - TOAOWEUYQ) » / « (AB 1234 - XYZ) » : ce n'est ni le client ni un
+#: détail de chantier, c'est le numéro de commande externe. Sans cette règle,
+#: la parenthèse restait collée au nom du client et le référentiel bateau ne
+#: pouvait plus rattacher la fiche.
+_RE_REFERENCE_TITRE_FFAB = re.compile(
+    r"\(\s*(?P<prefixe>[A-Za-z]{1,4}\s*\d{2,5})\s*-\s*(?P<suffixe>[A-Za-z0-9]{3,})\s*\)\s*$"
+)
 
 
 def _normaliser_code_ffab(code: str) -> str:
@@ -2260,7 +2492,7 @@ def _reprendre_code_ffab_depuis_ligne_fichier(
     if fiche.code:
         return False
     code, mots_code, page_code = _code_corroboré_ligne_fichier(pages)
-    if not code:
+    if not code or not _code_plausible(code):
         return False
     fiche.code = code
     fiche.champs.append(
@@ -2290,13 +2522,46 @@ def _indice_sequence_mots(mots: list[Mot], jetons: list[str]) -> int | None:
     return None
 
 
+#: Bornes de la fenêtre multi-lignes du titre FFab. Un export tableur met
+#: l'en-tête (« Fiche de fabrication "Grand-voile" »), la ligne d'atelier et
+#: la ligne de désignation dans des CELLULES distinctes : chaque cellule est
+#: une ligne physique. Quatre lignes ne suffisaient donc pas dès qu'une
+#: cellule supplémentaire (tissu, quantité) s'intercalait, et le titre
+#: n'était jamais analysé — d'où des fiches sans client ni bateau.
+_FENETRE_TITRE_FFAB_LIGNES = 8
+_FENETRE_TITRE_FFAB_ECART_PT = 60.0
+
+#: Familles de voiles servant à ROGNER une désignation polluée par une
+#: cellule voisine lue sur la même ligne physique (la désignation commence
+#: au dernier de ces mots, jamais avant).
+_FAMILLES_VOILE_TITRE = re.compile(
+    r"\b(grand[-\s]?voiles?|voiles?\s+d['’]?avants?|voiles?\s+avants?|genois|g[eé]nois|spis?|spinnakers?|gennakers?|"
+    r"code[-\s]?0|trinquettes?|solents?|tourmentins?|asym[eé]triques?|sym[eé]triques?)\b",
+    re.I,
+)
+
+
+def _rogner_designation(designation: str) -> str:
+    """Retire le bruit lu avant le nom de la voile (« Fichier …, dessiné par… »).
+
+    Une fenêtre multi-lignes peut préfixer la désignation par une cellule
+    voisine (« Fichier ZZ 075a dessiné par… »). La désignation réelle
+    commence au mot de famille de voile : on repart de sa DERNIÈRE
+    occurrence, jamais d'une invention de valeur.
+    """
+    occurrences = list(_FAMILLES_VOILE_TITRE.finditer(designation))
+    if not occurrences:
+        return designation.strip(" ,;")
+    return designation[occurrences[-1].start() :].strip(" ,;")
+
+
 def _sequences_titre_ffab(pages: list[PageAnalysee]) -> list[tuple[list[Mot], int]]:
     """Séquences candidates pour le titre FFAB.
 
     Les exports tableur morcellent parfois un titre logiquement unique
     en plusieurs lignes physiques (retour à la ligne de cellule, fontes
     ou blocs voisins). On essaie donc d'abord chaque ligne seule — le
-    comportement historique — puis des fenêtres de deux à quatre lignes
+    comportement historique — puis des fenêtres de deux à huit lignes
     physiquement voisines, ramenées au début de « Fiche de fabrication ».
     Une fenêtre n'est candidate que si les repères du titre apparaissent
     dans l'ordre ; la décomposition stricte décide ensuite.
@@ -2312,11 +2577,11 @@ def _sequences_titre_ffab(pages: list[PageAnalysee]) -> list[tuple[list[Mot], in
         lignes = [ligne for ligne in page.lignes if ligne.mots]
         for debut in range(len(lignes)):
             mots: list[Mot] = []
-            for fin in range(debut, min(len(lignes), debut + 4)):
+            for fin in range(debut, min(len(lignes), debut + _FENETRE_TITRE_FFAB_LIGNES)):
                 if fin > debut:
                     haut_precedent = min(mot.haut for mot in lignes[fin - 1].mots)
                     haut_courant = min(mot.haut for mot in lignes[fin].mots)
-                    if haut_courant - haut_precedent > 45:
+                    if haut_courant - haut_precedent > _FENETRE_TITRE_FFAB_ECART_PT:
                         break
                 mots.extend(lignes[fin].mots)
                 if fin == debut:
@@ -2326,28 +2591,54 @@ def _sequences_titre_ffab(pages: list[PageAnalysee]) -> list[tuple[list[Mot], in
                     continue
                 sequence = list(mots[depart_titre:])
                 normalise = " ".join(mot.normalise for mot in sequence)
-                trouve_grand_voile = re.search(r"\bgrand[-\s]voile\b", normalise)
-                if trouve_grand_voile is None:
-                    continue
-                if " pour " not in normalise[trouve_grand_voile.end() :]:
+                # Défaut mesuré le 30/10/2026 : cette voie exigeait le mot
+                # « grand-voile ». Une fiche de voile d'avant (« Fiche de
+                # fabrication "Voile d'avant" » puis « Génois … pour X de Y »)
+                # n'en contient aucun : la fenêtre n'était jamais candidate,
+                # donc client et bateau restaient vides. La seule exigence qui
+                # reste est celle du CONTRAT de décomposition (« … pour … de
+                # … ») ; la décomposition stricte décide ensuite et n'invente
+                # rien quand elle échoue (RG6).
+                if " pour " not in normalise:
                     continue
                 sequences.append((sequence, page.numero))
                 break
+
+    # Troisième voie — mise en page en CELLULES où l'en-tête
+    # « Fiche de fabrication » n'est pas physiquement voisin du titre (titre
+    # déporté sur une autre ligne du tableau) : toute ligne qui porte à la
+    # fois un mot de famille de voile, « pour » et « de » est candidate. La
+    # désignation est ensuite rognée sur le mot de famille, donc une cellule
+    # voisine lue sur la même ligne ne peut pas polluer la valeur.
+    for page in pages[:2]:
+        for ligne in page.lignes:
+            normalise = ligne.normalise
+            if " pour " not in normalise or " de " not in normalise:
+                continue
+            if _FAMILLES_VOILE_TITRE.search(normalise) is None:
+                continue
+            sequences.append((list(ligne.mots), page.numero))
     return sequences
 
 
 def _analyser_titre_ffab(valeur: str) -> tuple[str | None, str, str, str] | None:
-    """Décompose un titre FFAB en catégorie, désignation, bateau et reste."""
+    """Décompose un titre FFAB en catégorie, désignation, bateau et reste.
+
+    La désignation est ROGNÉE sur le dernier mot de famille de voile : dans
+    un export tableur, la ligne physique porte parfois une cellule voisine
+    avant le titre (« … Fichier ZZ 075a dessiné par … Grand-voile … »), et
+    cette cellule ne doit jamais devenir la désignation.
+    """
     correspondance = re.search(
         r"^\s*fiche\s+de\s+fabrication\s+[\"«](?P<categorie>[^\"»]+)[\"»]\s+"
-        r"(?P<designation>.+?),\s+pour\s+(?P<bateau>.+?)\s+de\s+(?P<reste>.+?)\s*$",
+        r"(?P<designation>.+?),?\s+pour\s+(?P<bateau>.+?)\s+de\s+(?P<reste>.+?)\s*$",
         valeur,
         flags=re.I,
     )
     if correspondance:
         return (
             correspondance.group("categorie").strip(),
-            correspondance.group("designation").strip(),
+            _rogner_designation(correspondance.group("designation")),
             correspondance.group("bateau").strip(),
             correspondance.group("reste").strip(),
         )
@@ -2361,6 +2652,9 @@ def _analyser_titre_ffab(valeur: str) -> tuple[str | None, str, str, str] | None
         return None
     designation = re.sub(r"^\s*fiche\s+de\s+fabrication\s*", "", repli.group("designation"), flags=re.I)
     designation = re.sub(r"^[\"«][^\"»]+[\"»]\s*", "", designation).strip(" ,")
+    designation = _rogner_designation(designation)
+    if not designation:
+        return None
     return (
         None,
         designation,
@@ -2413,6 +2707,16 @@ def _traiter_ligne_titre_ffab(fiche: FicheExtraite, brut: str, base: ChampExtrai
         reste_client = (
             reste_client[: trouve_commande.start()] + " " + reste_client[trouve_commande.end() :]
         ).strip()
+    if commande is None:
+        # Référence d'affaire en fin de ligne (« (ST75 - TOAOWEUYQ) ») :
+        # commande externe, jamais un morceau du nom du client.
+        trouve_reference = _RE_REFERENCE_TITRE_FFAB.search(reste_client)
+        if trouve_reference:
+            commande = (
+                f"{_normaliser_code_ffab(trouve_reference.group('prefixe'))} - "
+                f"{trouve_reference.group('suffixe').upper()}"
+            )
+            reste_client = reste_client[: trouve_reference.start()].strip(" ,;")
 
     code_fichier, mots_code_fichier, page_code_fichier = _code_corroboré_ligne_fichier(pages)
     code: str | None = None
@@ -2432,8 +2736,13 @@ def _traiter_ligne_titre_ffab(fiche: FicheExtraite, brut: str, base: ChampExtrai
         page_code = page_code_fichier
 
     if fiche.titre is None:
-        fiche.titre = categorie or "Grand-voile"
-    if fiche.code is None and code:
+        # Le titre est la CATÉGORIE lue dans l'en-tête (« Grand-voile »,
+        # « Voile d'avant »…). À défaut, celui de la famille reconnue dans la
+        # désignation ; jamais un « Grand-voile » codé en dur, qui affichait un
+        # génois comme une grand-voile.
+        famille = _FAMILLES_VOILE_TITRE.search(designation or "")
+        fiche.titre = categorie or (famille.group(1) if famille else None) or "Voile"
+    if fiche.code is None and code and _code_plausible(code):
         fiche.code = code
     if fiche.commande_numero is None and commande:
         fiche.commande_numero = commande
@@ -2639,11 +2948,19 @@ def _traiter_cotes_ffab(fiche: FicheExtraite, brut: str, base: ChampExtrait, con
                     for _cle, mots in etiquettes
                 ]
                 for groupe in valeurs:
+                    # Autant de valeurs que d'étiquettes au maximum : mesuré sur
+                    # les fiches réelles `ST 263a`, `ST 430`, `ST 458`…, la ligne
+                    # de valeurs porte parfois un groupe de PLUS que d'étiquettes
+                    # (colonne parasite). Sans cette garde, le générateur était
+                    # vide au dernier tour et `min()` levait ValueError — la règle
+                    # entière était perdue et la fiche sortait SANS AUCUNE COTE.
+                    restants = [i for i in range(len(etiquettes)) if i not in utilisees]
+                    if not restants:
+                        break
                     centre = (min(mot.x0 for mot in groupe) + max(mot.x1 for mot in groupe)) / 2
                     choix = min(
                         (abs(centre - centres[i]), i)
-                        for i in range(len(etiquettes))
-                        if i not in utilisees
+                        for i in restants
                     )
                     if choix[0] <= 55:
                         utilisees.add(choix[1])
@@ -2779,6 +3096,11 @@ TRAITEMENTS = {
     "ligne_titre_ffab": lambda fiche, brut, base, contexte: _traiter_ligne_titre_ffab(fiche, brut, base, contexte),
     "cotes_ffab": lambda fiche, brut, base, contexte: _traiter_cotes_ffab(fiche, brut, base, contexte),
     "lattes_ffab": lambda fiche, brut, base, contexte: _traiter_lattes_ffab(fiche, brut, base, contexte),
+    # Formulaires accessoires réels (Lot CAL-2, 2026-10-29).
+    "titre_accessoire": lambda fiche, brut, base, contexte: _traiter_titre_accessoire(fiche, brut, base, contexte),
+    "code_accessoire": lambda fiche, brut, base, contexte: _traiter_code_accessoire(fiche, brut, base, contexte),
+    "dimension_nommee": lambda fiche, brut, base, contexte: _traiter_dimension_nommee(fiche, brut, base, contexte),
+    "logo_accessoire": lambda fiche, brut, base, contexte: _traiter_logo_accessoire(fiche, brut, base, contexte),
 }
 
 
@@ -2822,6 +3144,19 @@ _GROUPE_DU_TRAITEMENT: dict[str, str] = {
 }
 
 
+def _porte_entete_fiche_fabrication(pages: list[PageAnalysee]) -> bool:
+    """Le document porte-t-il l'en-tête « fiche de fabrication » (toute catégorie) ?
+
+    Sert d'autorisation de relecture pour la règle de titre FFab, dont l'ancre
+    historique (« grand-voile ») n'existe pas sur une fiche de voile d'avant.
+    """
+    for page in pages[:2]:
+        for ligne in page.lignes:
+            if "fiche de fabrication" in ligne.normalise:
+                return True
+    return False
+
+
 def _executer_regle(fiche: FicheExtraite, regle, pages: list[PageAnalysee]) -> None:
     """Lit un champ selon sa règle ; ne lève jamais : un champ non trouvé est
     journalisé avec sa conséquence (absent du rapport, à relire)."""
@@ -2855,13 +3190,29 @@ def _executer_regle(fiche: FicheExtraite, regle, pages: list[PageAnalysee]) -> N
                 numero_page = page.numero
                 break
     if brut is None or brut.strip() == "":
-        if traitement in {"designation", "ligne_titre_ffab"} and ancre_trouvee and regle.ancres:
-            # Voies où l'ancre lue suffit à autoriser une relecture de page :
-            # le gabarit génois pose le type porté par l'ancre, et le titre
-            # FFAB peut être morcelé juste après « grand-voile » (aucun mot
-            # de valeur sur la ligne physique de l'ancre). Le traitement
-            # relit alors les pages ; sans ancre réellement lue, rien n'est
-            # inventé (RG6).
+        # Défaut mesuré le 30/10/2026 : la règle de titre FFab n'a qu'une ancre
+        # (« grand-voile »). Sur une fiche de VOILE D'AVANT — en-tête
+        # « Fiche de fabrication "Voile d'avant" », puis « Génois … pour X de
+        # Y » — le mot « grand-voile » n'existe nulle part : la règle n'était
+        # jamais exécutée, donc titre, client et bateau restaient vides. C'est
+        # ce qui donnait « ça a marché une fois et pas les deux autres ».
+        # On autorise donc la relecture de page dès que le document porte
+        # l'en-tête « fiche de fabrication » : le traitement relit les pages et
+        # n'invente rien si la décomposition stricte échoue (RG6).
+        relecture_page = ancre_trouvee or (
+            traitement == "ligne_titre_ffab" and _porte_entete_fiche_fabrication(pages)
+        )
+        # Traitements « l'ancre EST la valeur » : sur les formulaires
+        # d'accessoires réels, le type est porté par le titre lui-même
+        # (« Fiche de Lazy Bag ») et le code par la ligne nue suivante ou par
+        # « Commande ». Aucun mot de valeur n'est donc à droite de l'ancre :
+        # sans cette autorisation, la règle s'arrêtait avant le traitement et
+        # la fiche sortait sans titre ni code. Le traitement relit les pages et
+        # n'invente rien si la forme attendue est absente (RG6).
+        if traitement in {"designation", "ligne_titre_ffab", "titre_accessoire", "code_accessoire", "logo_accessoire"} and relecture_page and regle.ancres:
+            # Le gabarit génois pose le type porté par l'ancre, le titre FFAB
+            # peut être morcelé juste après « grand-voile », et les deux
+            # traitements accessoires ci-dessus lisent la page entière.
             _executer_regle_traitement(fiche, regle, "", 0, [], pages=pages)
         else:
             LOGGER.debug("Champ non lu : %s (ancres %s) — absent du rapport, à relire.", cible, regle.ancres)
@@ -3032,6 +3383,138 @@ def _collecter_libres(fiche: FicheExtraite, pages: list[PageAnalysee], ancres_co
                 )
 
 
+def _type_imprime(texte: str | None) -> str | None:
+    """Type de voile reconnu dans un texte court (titre imprimé), ou None."""
+    if not texte:
+        return None
+    normalise = norm.sans_accents(texte).strip()
+    for motif, libelle, _famille in TYPES_VOILE:
+        if normalise.startswith(norm.sans_accents(motif)):
+            return libelle
+    return None
+
+
+def _aligner_titre_sur_type(fiche: FicheExtraite) -> None:
+    """Quand l'en-tête imprimé et la ligne de désignation nomment DEUX types
+    différents, c'est la désignation qui décrit la voile : le titre la suit.
+
+    Mesuré le 2026-10-29 sur `/WESTERLY PENTLAND ST660B/ST 660b_ffab.pdf` :
+
+        ``Fiche de fabrication "Grand-voile"``          ← en-tête du FORMULAIRE
+        ``Artimon classique semi-latté, gamme Ocean, pour Westerly Pentland 32 …``
+
+    L'en-tête est un libellé de gabarit d'impression, pas la voile fabriquée :
+    la fiche sortait avec ``titre = Grand-voile`` et ``type = Artimon`` — deux
+    champs qui se contredisent dans l'écran de validation. La valeur imprimée
+    reste dans ``valeur_brute`` (traçabilité intacte).
+
+    Aucun effet quand le titre n'est pas un type connu (« Voile d'avant »,
+    « Fiche de fabrication ») : rien n'est deviné.
+    """
+    type_du_titre = _type_imprime(fiche.titre)
+    if type_du_titre is None or fiche.type_voile_libelle in (None, type_du_titre):
+        return
+    fiche.titre = fiche.type_voile_libelle
+    for champ in fiche.champs:
+        if champ.champ == "fiche.titre":
+            champ.valeur_normalisee = fiche.titre
+            champ.methode = "gabarit_designation"
+
+
+def _poser_titre_depuis_entete(fiche: FicheExtraite, pages: list[PageAnalysee]) -> None:
+    """Complète un titre ABSENT avec le type de voile imprimé en tête.
+
+    Mesuré sur `/VOILES 2026/ETAP 32S ST685/FFAB_gse234269.pdf` (fiche
+    SAILONET « FICHE FABRICATION GENOIS / FOCS », ligne « TYPE GÉNOIS SUR
+    ENROULEUR ») : le gabarit générique génois ne porte aucune règle de titre,
+    la fiche sortait donc avec ``titre = NULL`` alors que le type est imprimé
+    noir sur blanc. On ne lit QUE les trois premières lignes de la page 1, et
+    seulement si l'une d'elles nomme une famille de voile connue ; sinon rien
+    n'est posé (jamais de « Voile » par défaut).
+    """
+    if fiche.titre:
+        return
+    for page in pages[:1]:
+        for ligne in page.lignes[:6]:
+            texte_ligne = " ".join(mot.texte for mot in ligne.mots).strip()
+            trouve = _FAMILLES_VOILE_TITRE.search(texte_ligne)
+            if trouve is None:
+                continue
+            titre = trouve.group(1).strip()
+            fiche.titre = titre[:1].upper() + titre[1:].lower() if titre.isupper() else titre
+            fiche.champs.append(
+                ChampExtrait(
+                    champ="fiche.titre",
+                    valeur_brute=texte_ligne,
+                    valeur_normalisee=fiche.titre,
+                    methode="document",
+                    confiance=0.9,
+                    page=page.numero,
+                    zone=_zone_des_mots(ligne.mots),
+                    table_cible="fiche",
+                    colonne_cible="titre",
+                )
+            )
+            return
+
+
+#: Ordre des colonnes de la grille de cotes SAILONET (4e famille du corpus) :
+#: en-tête mesuré sur `/VOILES 2026/ETAP 32S ST685/FFAB_gse234269.pdf`
+#: « cotes guindant bordure chute têtière SURFACE poids (tissu) LP HHW … »,
+#: valeurs sur la ligne suivante « tissu 7.65 2.92 6.87 0.04 9.8 4 ».
+_SAILONET_COLONNES = {
+    "guindant": ("slu_m", 1.0),
+    "bordure": ("sf_m", 1.0),
+    "chute": ("sle_m", 1.0),
+    "têtière": ("tetiere_cm", 100.0),
+    "surface": ("spa_m2", 1.0),
+    "poids": ("poids_kg", 1.0),
+}
+
+
+def _lire_grille_sailonet(fiche: FicheExtraite, pages: list[PageAnalysee]) -> bool:
+    """Lit la grille de cotes SAILONET quand aucun gabarit ne l'a fait.
+
+    Cette famille (fiches « FICHE FABRICATION / GENOIS », « …/ FOCS ») n'a
+    encore aucun gabarit dédié : la fiche sortait avec `titre` renseigné mais
+    SANS AUCUNE COTE, alors que les valeurs sont imprimées. La grille est
+    reconnue par son EN-TÊTE (au moins guindant + bordure + chute + surface sur
+    une même ligne), et les valeurs sont lues dans l'ordre des colonnes de cet
+    en-tête — jamais dans un ordre supposé.
+    """
+    if fiche.cotes:
+        return False
+    for page in pages:
+        for indice, ligne in enumerate(page.lignes):
+            entete = norm.sans_accents(" ".join(mot.texte for mot in ligne.mots).casefold())
+            if not all(etiquette in entete for etiquette in ("guindant", "bordure", "chute", "surface")):
+                continue
+            colonnes = [
+                (cle, _SAILONET_COLONNES[cle])
+                for cle in ("guindant", "bordure", "chute", "têtière", "surface", "poids")
+                if norm.sans_accents(cle) in entete
+            ]
+            if len(colonnes) < 4:
+                continue
+            for suivante in page.lignes[indice + 1 : indice + 3]:
+                nombres = [
+                    float(mot.texte.replace(",", "."))
+                    for mot in suivante.mots
+                    if re.fullmatch(r"-?\d+(?:[.,]\d+)?", mot.texte)
+                ]
+                if len(nombres) < len(colonnes):
+                    continue
+                valeurs = nombres[len(nombres) - len(colonnes) :]
+                lues = {
+                    champ: round(valeur * facteur, 3)
+                    for (champ, facteur), valeur in zip((c for _cle, c in colonnes), valeurs, strict=False)
+                }
+                fiche.cotes.append(Cotes(jeu="finie", **{k: v for k, v in lues.items() if v}))
+                LOGGER.info("Grille de cotes SAILONET lue : %s", lues)
+                return True
+    return False
+
+
 def _extraire_pages(
     pages: list[PageAnalysee],
     chemin: Path,
@@ -3051,6 +3534,9 @@ def _extraire_pages(
         except Exception:
             LOGGER.exception("Échec de la règle %s — champ ignoré, à relire (conséquence : champ absent).", regle.cible)
     _collecter_libres(fiche, pages, consommees, vocabulaire_libres or {ancre for g in (gabarits or [gabarit]) for ancre in g.ancres_detection} | {ancre for r in gabarit.champs for ancre in r.ancres})
+    _poser_titre_depuis_entete(fiche, pages)
+    _lire_grille_sailonet(fiche, pages)
+    _aligner_titre_sur_type(fiche)
     fiche.anomalies = evaluer_anomalies(fiche)
     return fiche
 

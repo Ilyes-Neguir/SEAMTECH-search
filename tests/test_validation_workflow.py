@@ -404,6 +404,33 @@ class TestListeEtPieces:
         reponse = client.get("/fiches", params={"statut": "inexistant"})
         assert reponse.status_code == 200 and reponse.json()["fiches"] == []
 
+    def test_detail_fiche_expose_les_anomalies_enregistrees(
+        self, base_workflow: dict, client: TestClient
+    ) -> None:
+        """L'approbateur voit POURQUOI une fiche est incomplète, sur la fiche.
+
+        Sans cette clé, une fiche sans cote (formulaire, plan, PDF image)
+        s'ouvrait sur des champs vides sans explication : l'anomalie n'existait
+        que sous forme de badge sur l'écran de validation.
+        """
+        index = base_workflow["index"]
+        with index.connect() as connexion:
+            with connexion.cursor() as cursor:
+                cursor.execute("SELECT id_fiche FROM fiche WHERE code = %s", ("0901-MM",))
+                id_fiche = int(cursor.fetchone()[0])
+                cursor.execute(
+                    "INSERT INTO fiche_anomalie (id_fiche, code, gravite, message, statut) "
+                    "VALUES (%s, %s, %s, %s, %s)",
+                    (id_fiche, "champ_manquant", "moyenne", "Cotes absentes du document — saisie manuelle.", "a_traiter"),
+                )
+
+        corps = client.get("/fiches/0901-MM").json()
+        assert [a["code"] for a in corps["anomalies"]] == ["champ_manquant"]
+        assert corps["anomalies"][0]["message"].startswith("Cotes absentes")
+        assert corps["anomalies"][0]["statut"] == "a_traiter"
+        # Une fiche sans anomalie renvoie une liste vide, jamais l'absence de clé.
+        assert client.get("/fiches/7792-SO").json()["anomalies"] == []
+
     def test_pieces_jointes_avec_description_documents(self, base_workflow: dict, client: TestClient) -> None:
         """RG12 : la pièce déposée apparaît ici avec sa référence catalogue."""
         from seamtech_search.fiches import depot
@@ -422,3 +449,41 @@ class TestListeEtPieces:
         assert cible["role"] == "piece_jointe" and isinstance(cible["id"], int)
         assert cible["id_document"] == cible["id"] and cible["empreinte_sha256"]
         assert client.get("/fiches/INCONNU/pieces").status_code == 404
+
+    def test_liste_compte_les_fichiers_reellement_deposes(
+        self, base_workflow: dict, client: TestClient
+    ) -> None:
+        """`nb_fichiers`/`a_pdf` décrivent les fichiers DÉPOSÉS, pas une chaîne.
+
+        Mesuré sur les 58 dossiers réels du dépôt par arborescence : le lot
+        traité porte le chemin du PDF, mais `fiche_piece_jointe` est vide, et
+        `fichier_source` peut désigner le classeur d'origine (« 508.xlsm »).
+        L'écran annonçait alors « 0 fichier » sur une fiche dont le PDF était
+        promu, et « PDF » sur une fiche qui n'en avait pas.
+        """
+        from seamtech_search.fiches import depot
+
+        dossier = base_workflow["racine_essai"] / "CLIENT-LOT-SEUl"
+        dossier.mkdir(parents=True, exist_ok=True)
+        (dossier / "fiche.pdf").write_bytes((RACINE / "sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf").read_bytes())
+        depot.deposer_dossier(base_workflow["index"], dossier)
+
+        corps = client.get("/fiches", params={"taille": 200}).json()
+        portant = next(f for f in corps["fiches"] if f["code"] == "7792-SO")
+        assert portant["nb_fichiers"] >= 1 and portant["a_pdf"] is True
+        assert portant["gabarit"], "un dossier déposé garde sa provenance (gabarit)"
+
+    def test_le_compteur_de_fichiers_n_utilise_aucun_litteral_pour_cent(
+        self,
+    ) -> None:
+        """Régression : un `%` littéral casse psycopg2 (`IndexError`), pas SQLite.
+
+        Constaté en vrai sur `GET /fiches?statut=a_valider` après un
+        `LIKE '%.pdf'` : la route répondait 500 en PostgreSQL alors que la
+        suite SQLite restait verte. On garde donc un compteur sans `%`.
+        """
+        from seamtech_search.fiches import routes
+
+        for requete in (routes.EXPR_FICHIERS_DE_LA_FICHE, routes.EXPR_A_PDF):
+            assert "%" not in requete
+            assert ".pdf" in requete

@@ -33,11 +33,17 @@ from pathlib import Path
 from typing import Any, Callable
 
 from seamtech_search.extractions_voile import lier_extraction_voile_document_curseur
-from seamtech_search.fiches.extraction import analyser_candidat_fiche, extraire_fiche
+from seamtech_search.fiches.extraction import (
+    analyser_candidat_fiche,
+    analyser_pdf,
+    extraire_fiche,
+    texte_normalise,
+)
 from seamtech_search.fiches.gabarits import GabaritDef, charger_gabarits
-from seamtech_search.fiches.modeles import FicheExtraite
+from seamtech_search.fiches.modeles import ChampExtrait, FicheExtraite
 from seamtech_search.fiches.persistance import ecrire_fiche_resultat
 from seamtech_search.fiches.promotion import fichiers_pour_promotion, promouvoir_fichiers
+from seamtech_search.fiches.reprise import construire_fiche_de_reprise
 
 LOGGER = logging.getLogger("seamtech_search.fiches.depot")
 
@@ -221,6 +227,14 @@ class PlanDossier:
     score: int = 0
     pieces: list[FichierDossier] = field(default_factory=list)
     raison_refus: str | None = None
+    #: Autres PDF du dossier qui portent EUX AUSSI une fiche exploitable.
+    #: Mesuré sur `/YACHET CLASSIC ST508` : la même voile y est archivée en
+    #: deux révisions (`ST 508_ffab.pdf` et `ST 508V2_ffab.pdf`, toutes deux
+    #: viables, score 6). Le scanner doit trancher — il le fait de façon
+    #: déterministe (score, puis nom « …ffab », puis ordre alphabétique) — mais
+    #: il ne doit pas le faire EN SILENCE : ces PDF sont conservés en pièces
+    #: jointes et listés ici pour l'opérateur.
+    autres_fiches: list[Path] = field(default_factory=list)
     fiche_extraite: FicheExtraite | None = field(default=None, repr=False)
 
     @property
@@ -315,6 +329,165 @@ def decouvrir_dossiers_candidats(racine: Path) -> list[Path]:
     return sorted(candidats, key=lambda chemin: str(chemin).casefold())
 
 
+# Signature MESURÉE des formulaires de prise de cotes du client (trois
+# exemplaires réels : `/VOILES 2024/CAVAILLE ST76/CavailleGV.pdf`,
+# `/VOILES 2024/FIRST 210 ST106/GSE First210.pdf`,
+# `/VOILES 2024/FIRST 325 ST74A/LF DeveloppementSolentFirst325.pdf`).
+# Ils portent « Fiche de prise de cotes » + « Compléter et retourner à
+# contact@seamtech.tn » et des champs vides (« Nom : », « Tel : »,
+# « N° de commande : » sans valeur). Ce ne sont PAS des fiches de fabrication :
+# aucun code commande, aucune cote produite. Les confondre avec un « gabarit
+# inconnu » enverrait l'opérateur chercher un bug de reconnaissance au lieu du
+# document manquant.
+_MOTIF_FORMULAIRE_PRISE_DE_COTES = re.compile(r"fiche\s+de\s+prise\s+de\s+cotes")
+_MOTIF_RETOUR_FORMULAIRE = re.compile(r"compl[ée]ter\s+et\s+retourner")
+_MOTIF_CODE_DANS_FORMULAIRE = re.compile(r"\b[A-Z]{2}\s?\d{2,5}[A-Za-z]?\b")
+
+
+def _diagnostic_formulaire_prise_de_cotes(chemin: Path) -> str | None:
+    """Décrit le formulaire de prise de cotes, ou ``None`` si ce n'en est pas un.
+
+    Lecture seule, jamais d'exception propagée : un PDF illisible n'est pas un
+    formulaire, l'appelant garde alors sa raison de refus habituelle.
+    """
+    try:
+        texte = texte_normalise(analyser_pdf(chemin))
+    except Exception:  # PDF illisible : ce n'est pas à cette fonction de le dire
+        return None
+    if not _MOTIF_FORMULAIRE_PRISE_DE_COTES.search(texte):
+        return None
+    if not _MOTIF_RETOUR_FORMULAIRE.search(texte):
+        return None
+    if _MOTIF_CODE_DANS_FORMULAIRE.search(texte.replace("ST ", "ST ")):
+        return None
+    return "formulaire de prise de cotes (document à remplir, sans code commande ni cote de fabrication)"
+
+
+# Signature MESURÉE des planches de tracé SailPack (BSG Développements) :
+# `/VOILES 2026/ATHENA 44 ST761/JW26050B.pdf`, `/VOILES 2026/AURA 51 ST795/
+# 20260410 Gennak Aura51.pdf`, `/WESTERLY PENTLAND ST660B/ST 660b.pdf`. Le
+# texte porte « Panel layout » et le pied de page « S a i l P a c k V3.0 »
+# (lettres espacées). Ce sont des PLANS de panneaux/patches : ni code de
+# fiche, ni cotes de fiche. Mesuré : score 0 sur tous les gabarits.
+_MOTIF_PLANCHE_SAILPACK = re.compile(r"s\s*a\s*i\s*l\s*p\s*a\s*c\s*k", re.IGNORECASE)
+_MOTIF_PANEL_LAYOUT = re.compile(r"panel\s+layout", re.IGNORECASE)
+
+
+def _est_planche_sailpack(chemin: Path) -> bool:
+    """Vrai si le PDF est une planche de tracé SailPack (jamais une fiche)."""
+    try:
+        texte = texte_normalise(analyser_pdf(chemin))
+    except Exception:  # sans couche texte : classé ailleurs, pas ici
+        return False
+    return bool(_MOTIF_PANEL_LAYOUT.search(texte) and _MOTIF_PLANCHE_SAILPACK.search(texte))
+
+
+CLASSEMENT_FORMULAIRE = "formulaire de prise de cotes"
+CLASSEMENT_PLANCHE = "planche de tracé SailPack (plan de panneaux BSG)"
+CLASSEMENT_SANS_TEXTE = "PDF sans couche texte (image ou plan exporté)"
+
+
+def _raison_documents_non_fiche(classements: dict[str, str]) -> str:
+    """Raison de refus qui NOMME ce que contient réellement le dossier.
+
+    Un refus « gabarit inconnu » se lit comme une panne de reconnaissance.
+    Sur l'archive réelle, la cause est presque toujours documentaire : le
+    dossier ne contient qu'un formulaire de prise de cotes, une planche de
+    tracé SailPack ou un PDF sans couche texte. On le dit, fichier par
+    fichier, sans jamais inventer de fiche ni modifier un octet (RG13).
+    """
+    par_classe: dict[str, list[str]] = {}
+    for nom, classe in classements.items():
+        par_classe.setdefault(classe, []).append(nom)
+    phrases = [f"{classe} : {', '.join(sorted(noms))}" for classe, noms in sorted(par_classe.items())]
+    suite = ""
+    if CLASSEMENT_SANS_TEXTE in par_classe:
+        suite = (
+            " L'OCR n'est pas appliqué au dépôt de fiches : ces PDF relèvent d'une "
+            "REVUE MANUELLE."
+        )
+    if CLASSEMENT_FORMULAIRE in par_classe:
+        suite += (
+            " Un formulaire de prise de cotes sert à recueillir les mesures du client : "
+            "il ne porte ni code commande ni cote de fabrication."
+        )
+    return (
+        "aucune fiche de fabrication dans ce dossier — contenu réellement reconnu : "
+        + " ; ".join(phrases)
+        + "."
+        + suite
+        + " Aucun fichier n'a été modifié ; joindre la fiche de fabrication "
+        "(document « …ffab.pdf ») du dossier pour le déposer."
+    )
+
+
+def _tenter_fiche_de_reprise(
+    plan: PlanDossier,
+    dossier: Path,
+    pdfs: list[Path],
+    classements: dict[str, str],
+    illisibles: list[str] | None = None,
+) -> bool:
+    """Dernier recours : ne PERDRE aucun dossier réel (voir `reprise.py`).
+
+    Mesuré sur `VOILES 2024` : 21 dossiers réels sur 24 étaient refusés parce
+    qu'ils ne contiennent pas de fiche de fabrication (plan SailPack, formulaire
+    de prise de cotes, PDF image). Le document existe pourtant, et l'atelier a
+    besoin de le retrouver dans l'application. On crée donc une fiche de
+    reprise — titre qui dit ce qu'est le document, code tracé avec sa
+    provenance, anomalie « fiche de fabrication absente » qui exige la saisie
+    manuelle — au lieu de jeter le dossier.
+
+    Un dossier dont AUCUN PDF n'est lisible (fichier corrompu, tronqué) n'entre
+    pas : ce n'est pas un document « sans fiche », c'est un fichier abîmé — le
+    refus reste la bonne réponse, avec ses scores.
+    """
+    if illisibles and not classements:
+        return False
+    code_dossier = code_depuis_nom_dossier(dossier.name)
+    code_fichier = None
+    for pdf in pdfs:
+        code_fichier = code_depuis_nom_fichier(pdf.name)
+        if code_fichier:
+            break
+    fiche = construire_fiche_de_reprise(
+        dossier, pdfs, classements, code_dossier=code_dossier, code_fichier=code_fichier
+    )
+    if fiche is None:
+        return False
+    reference = next(
+        (pdf for pdf in pdfs if classements.get(pdf.name) == CLASSEMENT_PLANCHE),
+        pdfs[0],
+    )
+    plan.pdf_fiche = reference
+    # ``fichier_source`` est la colonne que l'écran de validation lit pour
+    # afficher/ouvrir le PDF de la fiche (`nb_fichiers`, `a_pdf`). Sans elle,
+    # une fiche de reprise apparaissait SANS document — vérifié sur `ST63`
+    # (`nb_fichiers: 0`) alors que le PDF était bien promu dans le stockage.
+    if not fiche.fichier_source:
+        fiche.fichier_source = reference.name
+    fiche.fichier_pdf = str(reference)
+    plan.gabarit_code = fiche.gabarit_code
+    plan.score = 0
+    plan.fiche_extraite = fiche
+    plan.raison_refus = None
+    plan.pieces.extend(
+        FichierDossier(chemin=pdf, role="piece_jointe", taille_octets=pdf.stat().st_size)
+        for pdf in pdfs
+        if pdf != reference
+    )
+    LOGGER.info(
+        "Dossier %s : aucune fiche de fabrication — FICHE DE REPRISE créée depuis %s "
+        "(code %s, titre « %s ») ; %d PDF attaché(s) en pièces.",
+        dossier,
+        reference.name,
+        fiche.code,
+        fiche.titre,
+        len(pdfs) - 1,
+    )
+    return True
+
+
 def _nom_evoque_ffab(chemin: Path) -> bool:
     """Indice de nom de fichier seulement : jamais une preuve de contenu."""
     tige = chemin.stem.casefold()
@@ -357,6 +530,113 @@ def _groupes_preuve_fiche(fiche: FicheExtraite) -> set[str]:
     ):
         groupes.add("fabrication")
     return groupes
+
+
+#: Référence de fiche dans un NOM DE FICHIER. Deux formes observées dans les
+#: archives de l'atelier : la référence en tête (« ZZ 075a_ffab.pdf ») et la
+#: référence de commande en fin de nom (« fiche GV 250329 AJA.pdf »). Motif
+#: volontairement étroit : quelques lettres puis 2 à 5 chiffres, avec une
+#: lettre finale facultative. Aucune valeur n'est inventée : sans motif, il
+#: n'y a pas de repli.
+#: ``(?![A-Za-z0-9])`` et non ``\b`` : dans « ZZ 075a_ffab », le souligné
+#: est un caractère de mot, donc ``\b`` ne se déclenche PAS après le « a ».
+_RE_CODE_NOM_FICHIER_TETE = re.compile(
+    r"^\s*(?P<code>[A-Za-z]{1,4}\s?\d{2,5}[A-Za-z]?)(?![A-Za-z0-9])"
+)
+_RE_CODE_NOM_FICHIER_QUEUE = re.compile(
+    r"(?<![A-Za-z0-9])(?P<code>\d{3,6}[\s-][A-Za-z]{2,4})(?![A-Za-z0-9])"
+)
+
+
+def code_depuis_nom_fichier(nom: str) -> str | None:
+    """Référence de fiche déductible d'un nom de fichier, ou ``None``.
+
+    Le code d'une fiche est une DONNÉE LUE dans le document ; le nom du
+    fichier n'est qu'un repli explicite, utilisé quand le PDF n'en porte
+    aucun (mise en page sans ligne « Fichier », formulaire sans référence).
+    La provenance est conservée dans la trace du champ, jamais maquillée.
+    """
+    tige = Path(nom).stem
+    tete = _RE_CODE_NOM_FICHIER_TETE.match(tige)
+    if tete:
+        return re.sub(r"\s+", " ", tete.group("code").strip().upper())
+    queue = _RE_CODE_NOM_FICHIER_QUEUE.search(tige)
+    if queue:
+        return re.sub(r"\s+", " ", queue.group("code").strip().upper())
+    return None
+
+
+#: Référence dans un NOM DE DOSSIER d'affaire. Les archives de l'atelier
+#: nomment le dossier d'une affaire « BATEAU TAILLE RÉFÉRENCE » (« … ST103 »,
+#: « … ST67A ») ou « BATEAU - jjmmaannée initiales » (« … 250821JA »). Ces
+#: dossiers contiennent souvent une fiche dont NI le PDF ni le nom de fichier
+#: ne portent la référence : sans cette source, l'écriture était refusée et le
+#: dossier « ne rentrait pas » alors que sa référence était sous les yeux.
+_RE_CODE_NOM_DOSSIER = re.compile(
+    r"(?<![A-Za-z0-9])(?P<code>[A-Za-z]{1,4}\s?\d{2,5}[A-Za-z]?)(?![A-Za-z0-9])"
+)
+_RE_CODE_NOM_DOSSIER_DATE = re.compile(
+    r"(?<![A-Za-z0-9])(?P<code>\d{6}\s?[A-Za-z]{2,4})(?![A-Za-z0-9])"
+)
+
+
+def code_depuis_nom_dossier(nom: str) -> str | None:
+    """Référence d'affaire déductible d'un NOM DE DOSSIER, ou ``None``.
+
+    Dernière source de la chaîne (document → fichier → dossier). Motif étroit :
+    des lettres puis 2 à 5 chiffres (« ST103 », « ST67A ») ou une date de
+    commande suivie d'initiales (« 250821JA »). Le dernier motif du nom gagne,
+    c'est celui qui porte la référence dans la convention de l'atelier.
+    """
+    candidats = [m.group("code") for m in _RE_CODE_NOM_DOSSIER.finditer(nom)]
+    candidats += [m.group("code") for m in _RE_CODE_NOM_DOSSIER_DATE.finditer(nom)]
+    if not candidats:
+        return None
+    return re.sub(r"\s+", " ", candidats[-1].strip().upper())
+
+
+def reprendre_code_depuis_nom(
+    fiche: FicheExtraite, pdf: Path, dossier: Path | str | None = None
+) -> str | None:
+    """Complète le code d'une fiche : document, puis fichier, puis dossier.
+
+    Ne touche jamais une fiche qui a déjà un code (le document fait foi). La
+    provenance de la valeur retenue est TOUJOURS tracée
+    (``methode="nom_fichier"`` ou ``"nom_dossier"``) avec une confiance
+    inférieure à une lecture — l'approbateur voit d'où vient la référence et
+    peut la corriger. Sans aucune des trois sources, rend ``None`` : rien
+    n'est inventé.
+    """
+    if (fiche.code or "").strip():
+        return fiche.code
+    sources: list[tuple[str, str, float]] = []
+    nom_fichier = Path(pdf).name
+    code_fichier = code_depuis_nom_fichier(nom_fichier)
+    if code_fichier:
+        sources.append((code_fichier, nom_fichier, 0.75))
+    if dossier is not None:
+        nom_dossier = Path(dossier).name
+        code_dossier = code_depuis_nom_dossier(nom_dossier)
+        if code_dossier:
+            sources.append((code_dossier, nom_dossier, 0.60))
+    if not sources:
+        return None
+    code, brut, confiance = sources[0]
+    fiche.code = code
+    fiche.champs.append(
+        ChampExtrait(
+            champ="fiche.code",
+            valeur_brute=brut,
+            valeur_normalisee=code,
+            methode="nom_fichier" if brut == nom_fichier else "nom_dossier",
+            confiance=confiance,
+            page=0,
+            zone=None,
+            table_cible="fiche",
+            colonne_cible="code",
+        )
+    )
+    return code
 
 
 def _extraction_viable(fiche: FicheExtraite) -> bool:
@@ -417,6 +697,7 @@ def scanner_dossier(dossier: Path, gabarits: list[GabaritDef]) -> PlanDossier:
                 taille_octets=element.stat().st_size,
             )
         )
+    plan.pieces.extend(_pieces_des_sous_dossiers(dossier))
     if not pdfs:
         plan.raison_refus = "aucun PDF dans le dossier"
         return plan
@@ -424,30 +705,87 @@ def scanner_dossier(dossier: Path, gabarits: list[GabaritDef]) -> PlanDossier:
     candidats: list[tuple[Path, Any]] = []
     scores: dict[str, int] = {}
     illisibles: list[str] = []
+    sans_texte: list[str] = []
+    #: nom du PDF → ce qu'il est RÉELLEMENT quand ce n'est pas une fiche.
+    #: Sert à écrire un refus qui décrit le dossier au lieu de « gabarit inconnu ».
+    classements: dict[str, str] = {}
     for pdf in pdfs:
         try:
             candidat = analyser_candidat_fiche(pdf, gabarits)
         except Exception as erreur:  # PDF illisible : raison explicite, pas de crash
             scores[pdf.name] = -1
-            illisibles.append(pdf.name)
+            # Deux causes très différentes derrière « lecture impossible » :
+            # un fichier abîmé, ou un PDF SANS COUCHE TEXTE (plan exporté du
+            # traceur, scan, photo de fiche). Mesuré sur l'archive réelle :
+            # `/ACCESSOIRES 2026/CAGNARD ST756/*.pdf`, `/TOILE ST792 COUPE.pdf`,
+            # `/ACCESSOIRES 2025/…/TAUD DE GV.pdf` — 0 caractère extrait.
+            # Le second cas n'est pas une panne : c'est une revue manuelle
+            # (le module OCR existe mais n'est pas branché sur le dépôt de
+            # fiches). Les confondre ferait chercher un bug inexistant.
+            if "sans texte lisible" in str(erreur):
+                sans_texte.append(pdf.name)
+                classements[pdf.name] = CLASSEMENT_SANS_TEXTE
+            else:
+                illisibles.append(pdf.name)
             LOGGER.warning("PDF illisible (%s) : %s — conséquence : exclu de la détection.", pdf, erreur)
             continue
         scores[pdf.name] = 0 if candidat is None else candidat.score_detection
+        if _diagnostic_formulaire_prise_de_cotes(pdf) is not None:
+            classements[pdf.name] = CLASSEMENT_FORMULAIRE
+            # Un formulaire de prise de cotes n'est JAMAIS une fiche : il ne
+            # doit donc pas rester candidat, même quand un gabarit le reconnaît
+            # faiblement. Mesuré sur `/VOILES 2024/NS44 ST88` : le formulaire
+            # « NS44 GV.pdf » était retenu par le gabarit accessoire et une
+            # fiche « pour » (mot lu dans le formulaire) apparaissait en base.
+            candidats = [paire for paire in candidats if paire[0] != pdf]
+            scores[pdf.name] = 0
+            continue
+        elif _est_planche_sailpack(pdf):
+            classements[pdf.name] = CLASSEMENT_PLANCHE
         if candidat is not None:
             candidats.append((pdf, candidat))
 
     if not candidats:
         detail = ", ".join(f"{nom}={score}" for nom, score in scores.items())
-        if illisibles:
+        if sans_texte and not illisibles and len(sans_texte) == len(scores):
+            plan.raison_refus = (
+                "PDF sans couche texte (image ou plan exporté) : "
+                f"{', '.join(sans_texte)} — l'OCR n'est pas encore appliqué au dépôt de "
+                "fiches : ce dossier relève d'une REVUE MANUELLE. Aucun fichier n'a été "
+                "modifié ; si la fiche existe en PDF texte (« …ffab.pdf »), la joindre au dossier."
+            )
+        elif illisibles:
             # MAN-04 : dire la cause lisible par l'opérateur d'abord, les
             # scores ensuite (diagnostic) — « gabarit inconnu » seul laissait
             # croire à un PDF sain d'un format nouveau.
-            plan.raison_refus = (
-                f"PDF illisible : {', '.join(illisibles)} (lecture impossible) "
-                f"(scores de détection : {detail})"
+            detail_manque = (
+                f" ; PDF sans couche texte (revue manuelle) : {', '.join(sans_texte)}"
+                if sans_texte else ""
             )
+            plan.raison_refus = (
+                f"PDF illisible : {', '.join(illisibles)} (lecture impossible)"
+                f"{detail_manque} (scores de détection : {detail})"
+            )
+        elif classements and len(classements) == len(scores):
+            # TOUS les PDF examinés sont identifiés comme autre chose qu'une
+            # fiche : ce n'est pas un défaut de reconnaissance. On nomme le
+            # contenu réel (formulaire, planche SailPack, PDF sans texte).
+            plan.raison_refus = _raison_documents_non_fiche(classements)
         else:
-            plan.raison_refus = f"gabarit inconnu (scores de détection : {detail})"
+            # « gabarit inconnu » seul se lit comme une panne. La cause réelle
+            # est presque toujours documentaire : le dossier ne contient qu'un
+            # plan, une facture ou un PDF sans libellé de fiche. On le dit avec
+            # les fichiers réellement examinés, et l'on rappelle que rien n'a
+            # été modifié (RG13).
+            examines = ", ".join(f"{nom} (score {score})" for nom, score in scores.items())
+            plan.raison_refus = (
+                "aucune fiche de fabrication reconnue dans ce dossier : aucun PDF ne "
+                f"porte les libellés d'une fiche (gabarit inconnu) — PDF examinés : {examines}. "
+                "Les fichiers n'ont pas été modifiés ; vérifier que le dossier contient bien "
+                "la fiche technique, et non seulement un plan ou une pièce jointe."
+            )
+        if _tenter_fiche_de_reprise(plan, dossier, pdfs, classements, illisibles):
+            return plan
         return plan
 
     # Preuves d'abord : meilleur score d'ancres, puis — à score égal
@@ -473,13 +811,32 @@ def scanner_dossier(dossier: Path, gabarits: list[GabaritDef]) -> PlanDossier:
         plan.gabarit_code = meilleur_candidat.gabarit.code
         plan.score = meilleur_candidat.score_detection
         detail = ", ".join(f"{nom}={score}" for nom, score in scores.items())
-        plan.raison_refus = (
-            "aucun PDF candidat n'a produit une fiche sélectionnable (code + structure, "
-            f"ou structure riche sans code ; meilleur candidat : {meilleur_pdf.name} ; scores : {detail})"
-        )
+        if classements and len(classements) == len(scores):
+            plan.raison_refus = _raison_documents_non_fiche(classements)
+        else:
+            plan.raison_refus = (
+                "aucun PDF candidat n'a produit une fiche sélectionnable (code + structure, "
+                f"ou structure riche sans code ; meilleur candidat : {meilleur_pdf.name} ; scores : {detail})"
+            )
+        if _tenter_fiche_de_reprise(plan, dossier, pdfs, classements, illisibles):
+            return plan
         return plan
 
     pdf_choisi, candidat_choisi = choisi
+    plan.autres_fiches = [
+        pdf for pdf, candidat in candidats_tries
+        if pdf != pdf_choisi and _extraction_viable(candidat.fiche)
+    ]
+    if plan.autres_fiches:
+        LOGGER.warning(
+            "Dossier %s : %d autre(s) PDF portent aussi une fiche exploitable (%s) — "
+            "fiche retenue : %s ; les autres sont conservés en pièces jointes et "
+            "cités dans le résultat du dépôt (aucun fichier n'est supprimé).",
+            dossier,
+            len(plan.autres_fiches),
+            ", ".join(pdf.name for pdf in plan.autres_fiches),
+            pdf_choisi.name,
+        )
     plan.pdf_fiche = pdf_choisi
     plan.gabarit_code = candidat_choisi.gabarit.code
     plan.score = candidat_choisi.score_detection
@@ -491,6 +848,41 @@ def scanner_dossier(dossier: Path, gabarits: list[GabaritDef]) -> PlanDossier:
         if pdf != pdf_choisi
     )
     return plan
+
+
+def _pieces_des_sous_dossiers(dossier: Path) -> list[FichierDossier]:
+    """Fichiers des sous-dossiers SANS PDF direct, rattachés comme pièces.
+
+    Mesuré sur l'archive réelle : `/YACHET CLASSIC ST508/TISSU` (échantillons),
+    `/LAZY BAG 2 PARTIES DUFOUR 385/PLC` (fichiers du traceur),
+    `/ACCESSOIRES 2026/TOILE ST792/toile`. Ces sous-dossiers ne portent AUCUN
+    PDF : ils ne deviennent donc jamais un dossier de lot à eux seuls, et leurs
+    fichiers n'étaient référencés par RIEN — invisibles depuis l'application
+    alors qu'ils font partie de l'affaire (RG13 : on ne perd rien).
+
+    Un sous-dossier qui porte un PDF est laissé de côté : il est déjà un
+    dossier de lot à part entière, ses pièces lui appartiennent — les compter
+    ici les dupliquerait. Les fichiers cachés sont ignorés, comme partout
+    ailleurs dans la découverte des dossiers.
+    """
+    pieces: list[FichierDossier] = []
+    for sous_dossier in sorted(
+        (element for element in dossier.iterdir() if element.is_dir() and not element.name.startswith(".")),
+        key=lambda chemin: chemin.name.casefold(),
+    ):
+        if any(fichier.suffix.lower() == ".pdf" for fichier in sous_dossier.rglob("*") if fichier.is_file()):
+            continue
+        for fichier in sorted(sous_dossier.rglob("*"), key=lambda chemin: str(chemin).casefold()):
+            if not fichier.is_file() or fichier.name.startswith("."):
+                continue
+            pieces.append(
+                FichierDossier(
+                    chemin=fichier,
+                    role=role_piece(fichier),
+                    taille_octets=fichier.stat().st_size,
+                )
+            )
+    return pieces
 
 
 def _creer_lot_isole(index: Any, dossier: Path) -> tuple[int, int]:
@@ -641,14 +1033,51 @@ def deposer_dossier(
                 "id_lot": id_lot_local,
                 "copies_rejeu_supprimees": copies_supprimees,
             }
+        # Le code de fiche est l'IDENTITÉ de ce qu'on écrit : sans lui, la
+        # transaction lèverait ValueError et le dossier finirait en « écriture
+        # annulée : ValueError: Fiche sans code », message illisible pour un
+        # opérateur et sans issue. On prépare donc la fiche AVANT d'ouvrir la
+        # transaction : repli explicite sur le nom du fichier, puis refus
+        # documenté s'il n'existe vraiment aucune référence.
+        fiche_preparee = plan.fiche_extraite or extraire_fiche(
+            plan.pdf_fiche, gabarits=gabarits, gabarit_code=plan.gabarit_code
+        )
+        # Le PDF retenu EST le document de la fiche : la colonne
+        # ``fichier_source`` alimente l'affichage (`nb_fichiers`, `a_pdf`) de
+        # l'écran de validation. Elle restait vide pour les fiches d'accessoires
+        # et de reprise — la fiche s'ouvrait alors sans document, alors que le
+        # fichier était bien promu. Mesuré sur `ST63`, `ST101`, `ST96`.
+        if not fiche_preparee.fichier_source:
+            fiche_preparee.fichier_source = Path(plan.pdf_fiche).name
+        code_retenu = reprendre_code_depuis_nom(
+            fiche_preparee, Path(plan.pdf_fiche), Path(dossier)
+        )
+        if code_retenu is None:
+            return _enregistrer_echec(
+                "aucun code de fiche lisible : ni le PDF, ni son nom "
+                f"« {Path(plan.pdf_fiche).name} », ni le nom du dossier "
+                f"« {Path(dossier).name} » ne portent de référence — la fiche "
+                "n'est PAS enregistrée. Renommer le dossier ou le PDF avec sa "
+                "référence (exemple : « ZZ 001 ») puis redéposer."
+            )
+        provenance_code = next(
+            (champ.methode for champ in fiche_preparee.champs if champ.champ == "fiche.code"),
+            "document",
+        )
+        if provenance_code != "document":
+            LOGGER.info(
+                "Dossier %s : code de fiche « %s » repris de la provenance « %s » — trace "
+                "conservée pour l'approbateur (ce n'est pas une lecture du document).",
+                dossier,
+                code_retenu,
+                provenance_code,
+            )
         # L'EXCEPTION doit franchir le « with » pour déclencher le rollback de
         # la connexion : le except est donc VOLONTAIREMENT à l'extérieur —
         # écriture entière ou pas du tout (fiche + pièces jointes).
         with index.connect() as connexion:
             with connexion.cursor() as cursor:
-                fiche = plan.fiche_extraite or extraire_fiche(
-                    plan.pdf_fiche, gabarits=gabarits, gabarit_code=plan.gabarit_code
-                )
+                fiche = fiche_preparee
                 # Lot 7 : la catégorie est proposée ICI, explicitement — nom
                 # du dossier (« accessoire ») d'abord, famille du gabarit
                 # gagnant ensuite. La persistance tranche et ne contredit
@@ -818,6 +1247,10 @@ def deposer_dossier(
         "contenu_remplace": ecriture.remplacee,
         # P0.2 : ce que le stockage objet a réellement accepté et vérifié.
         "promotion": promotion,
+        # Transparence : d'autres PDF du dossier portaient AUSSI une fiche
+        # (révision antérieure, variante…). Ils sont conservés en pièces
+        # jointes ; l'opérateur doit pouvoir le voir sans lire les journaux.
+        "autres_fiches": [pdf.name for pdf in plan.autres_fiches],
     }
 
 

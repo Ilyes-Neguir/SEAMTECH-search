@@ -1,5 +1,374 @@
 # Changelog
 
+## 2026-10-29 (suite 7) — la fiche dit pourquoi elle est incomplète
+
+- **`GET /fiches/{code}` renvoie `anomalies`** (code, gravité, message, statut)
+  et l'écran de la fiche affiche un bloc « Points à vérifier avant validation ».
+  Les 21 dossiers réels sans fiche de fabrication et les 6 accessoires à champ
+  manquant s'ouvraient sur des valeurs vides sans explication : l'anomalie
+  n'existait qu'en badge sur l'écran de validation.
+- **Provenance des fiches de reprise** : `FICHE_REPRISE_V1` est enregistré à
+  l'initialisation (couple code + version, sinon `id_gabarit` reste nul) et un
+  test verrouille l'égalité entre `gabarits.GABARIT_REPRISE` et
+  `reprise.CODE_GABARIT_REPRISE`.
+- **Compteur de fichiers** : `nb_fichiers` / `a_pdf` lisent le lot traité et les
+  pièces jointes ; `fichier_source` ne compte que s'il désigne un `.pdf`
+  (détail dans l'entrée « suite 6 »).
+
+## 2026-10-29 (suite 6) — l'écran dit la vérité sur les fichiers réellement déposés
+
+Mesuré sur le dépôt des 58 dossiers réels (arborescence `/home/user/demo`) :
+
+- **`nb_fichiers` / `a_pdf` comptent enfin les fichiers déposés.** Le dépôt par
+  arborescence ne remplit pas `fiche_piece_jointe` : la liste des fiches
+  annonçait « 0 fichier » sur 58 fiches dont le PDF était promu, et « PDF » sur
+  des fiches dont le `fichier_source` était un classeur (`508.xlsm`). Le
+  compteur lit désormais le lot traité (chemin du PDF déposé) et le nombre de
+  pièces jointes ; `fichier_source` ne compte que s'il désigne un `.pdf`.
+- **Provenance visible sur les fiches de reprise.** `FICHE_REPRISE_V1` est
+  enregistré à l'initialisation : les 21 dossiers sans fiche de fabrication
+  affichent une provenance au lieu d'une colonne « gabarit » vide (le couple
+  code + version est nécessaire pour que la persistance résolve `id_gabarit`).
+- **Régression verrouillée :** un `%` littéral dans une requête paramétrée fait
+  échouer psycopg2 (`IndexError`) alors que la suite SQLite reste verte — la
+  route `GET /fiches` répondait 500. Deux tests neufs (compteur de fichiers,
+  absence de `%`) tournent sur PostgreSQL 18.6.
+
+## 2026-10-29 (suite 5) — plus aucun dossier réel perdu : les 21 refus de `VOILES 2024` entrent dans l'application
+
+Constat mesuré sur les vrais dossiers du Dropbox : sur `VOILES 2024`, **21
+dossiers sur 24 étaient refusés**. Ce n'était pas une panne de lecture — le
+dossier ne contient simplement pas de « fiche de fabrication ». Trois familles,
+toutes ouvertes et mesurées :
+
+| Famille | Exemples réels | Ce que le document imprime |
+|---|---|---|
+| Plan de fabrication **SailPack** (BSG) | `ST 076.pdf`, `ST 088.pdf`, `ST 097.pdf`, `GuepardRFG_CC.pdf`, `280224VA.pdf` | `Date:`, `Sail:`, `Boat:`, `Customer:`, `Order Ref.:`, `Panel layout`, `True area`, `Geoluff/Geoleech/Geofoot` |
+| **Formulaire de prise de cotes** | `CavailleGV.pdf`, `GSE Oceanis411.pdf`, `MerianGvTanton43.pdf` | libellés seuls (document à remplir) |
+| **PDF image** (aucune couche texte) | `boivent.pdf`, `inter Durand.pdf`, `WOSSA FICHE DE COTES.pdf` | rien — OCR non disponible sur le poste d'essai |
+
+### Ce qui change
+
+**1. Fiche de reprise (`seamtech_search/fiches/reprise.py`).** Un dossier sans
+fiche de fabrication n'est plus jeté : il entre en `a_valider` avec
+
+- un titre qui dit ce que le document EST — « Plan de fabrication », « Prise de
+  cotes », « Document scanné » — jamais « Fiche de fabrication » ;
+- pour un plan SailPack, les champs **réellement imprimés** (code `Order Ref.`,
+  bateau, client, n° de commande, date, surface, guindant/chute/bordure via
+  `Geoluff/Geoleech/Geofoot`), chacun tracé `document` ;
+- pour les deux autres familles, la référence lue dans le **nom du dossier**
+  (tracée `nom_dossier`, confiance 0,55) ;
+- une anomalie `fiche_de_fabrication_absente` qui exige la saisie manuelle ;
+- **tous** les PDF du dossier attachés en pièces.
+
+Rien n'est inventé : un code de voile inconnu (`Smd`, `Gk`) reste brut avec une
+anomalie `type_voile_non_traduction` ; un PDF corrompu reste refusé (ce n'est
+pas un « document sans fiche »).
+
+**2. Trois défauts de lecture corrigés sur documents réels.**
+
+- `_traiter_cotes_ffab` levait `ValueError: min() arg is an empty sequence`
+  quand la ligne de valeurs portait un groupe de plus que d'étiquettes :
+  la règle ENTIÈRE était perdue et la fiche sortait sans aucune cote
+  (reproduit sur `ST 263a`, `ST 430`, `ST 458`). La règle est désormais bornée.
+- Grille de cotes **SAILONET** (4e famille) lue dans l'ordre de son en-tête :
+  `/VOILES 2026/ETAP 32S ST685/FFAB_gse234269.pdf` donne 7,65 / 6,87 / 2,92 m,
+  9,8 m², têtière 4 cm, 4 kg — la fiche sortait auparavant sans aucune cote.
+- `cote_en_metres` refusait de prendre un couple de dimensions pour une cote :
+  « chute 60x260 polyester » produisait une bordure de **60 m** (anomalie RG16).
+- Plafond de poids porté à 120 kg : `ST 430` imprime réellement « 46,2 m² …
+  42,4 kg » ; l'ancien plafond de 30 kg levait une fausse anomalie.
+
+### Mesure finale, sur les 58 dossiers réels déposés
+
+| Indicateur | Avant | Après |
+|---|---|---|
+| Dossiers déposés | 37 traités / 21 refusés | **58 traités / 0 refusé** |
+| Fiches avec titre | 36 | **58 / 58** |
+| Fiches avec code | 36 | **58 / 58** |
+| Fiches avec cotes | 12 | **38** |
+| Anomalies | — | 21 `fiche_de_fabrication_absente`, 6 `champ_manquant`, 2 `type_voile_non_traduit` |
+
+Preuves : `tests/test_reprise_dossier_sans_fiche.py` (5 tests),
+`tests/test_titre_depuis_entete.py` (3 tests dont la grille SAILONET),
+`tests/test_classement_documents_non_fiche.py` réécrit sur le nouveau contrat
+(7 tests), ruff OK, SQLite **1302 passés**, PostgreSQL **416 passés**.
+
+## 2026-10-29 (suite 4) — 50 dossiers réels déposés, fiche « pour », et dépôt en lot
+
+Trois défauts trouvés en déposant les documents RÉELS de `VOILES 2024` puis
+`VOILES 2025` / `VOILES 2026` dans l'application, plus une commande manquante.
+
+**1. Une fiche « pour » est entrée en base.** Sur
+`/VOILES 2024/NS44 ST88/` (formulaire « Fiche de prise de cotes » + planche
+SailPack), le gabarit accessoire accrochait le formulaire et lisait le mot
+« pour » de la ligne « Ris auto. pour : 1 1 et 2 … » comme CODE de fiche. Deux
+corrections :
+
+- `_code_plausible()` : un code de fiche contient **toujours au moins un
+  chiffre** (mesuré : `ST64`, `ST 074b`, `170124CS`, `250821JA`, `ST 508V2`,
+  `ST 089` — tous en portent ; aucun code réel n'est fait de lettres seules).
+  Appliqué aux 4 points d'écriture du code lus dans le document.
+- Un **formulaire de prise de cotes n'est plus candidat** au rôle de fiche,
+  même si un gabarit l'accroche faiblement : il est classé « formulaire » et
+  retiré de la liste des candidats. Le dossier est refusé avec sa raison, au
+  lieu d'être « traité » à tort.
+
+La fiche erronée a été **rejetée** dans l'application (motif tracé, révision 2) ;
+le dossier `NS44 ST88` est désormais refusé honnêtement.
+
+**2. Titre perdu sur le format SAILONET.** `/VOILES 2026/ETAP 32S
+ST685/FFAB_gse234269.pdf` (« FICHE FABRICATION / GENOIS / FOCS », ligne
+« TYPE GÉNOIS SUR ENROULEUR ») sortait avec `titre = NULL` : le gabarit génois
+n'a pas de règle de titre. `_poser_titre_depuis_entete()` lit désormais la
+famille de voile imprimée dans les 6 premières lignes de la page 1 — et RIEN
+d'autre (aucun « Voile » par défaut, provenance `document` tracée avec la ligne
+imprimée en `valeur_brute`). Un fragment de libellé (« / FOCS ») ne devient
+plus une gamme.
+
+**3. Le dépôt d'un Dropbox entier n'existait pas.** Nouvelle commande
+opérateur `deposer-arborescence` (`seamtech_search/fiches/arborescence.py`) :
+elle parcourt une arborescence locale, dépose **chaque** dossier contenant au
+moins un PDF, n'en saute aucun, et écrit un rapport CSV (Excel, `;`,
+UTF-8-BOM) avec le statut et la raison exacte de chaque dossier.
+
+Vérifié de bout en bout sur les documents réels (PostgreSQL + stockage objet) :
+
+| Lot | Dossiers | Traités | Refusés |
+|---|---|---|---|
+| `VOILES 2024` (24 dossiers, 27 PDF) | 24 | 3 | 21 (formulaires, planches, PDF image) |
+| `VOILES 2026` (12 dossiers réels) | 12 | **12** | 0 |
+| `VOILES 2025` (14 dossiers réels) | 14 | **14** | 0 |
+
+Preuves : `tests/test_arborescence_depot.py` (5 tests),
+`tests/test_titre_depuis_entete.py` (2 tests), 2 tests ajoutés à
+`tests/test_classement_documents_non_fiche.py`, ruff OK, SQLite **1294+ passés**,
+PostgreSQL **416 passés**, aucune régression.
+
+## 2026-10-29 (suite 3) — dossier réel refusé à tort : référence de commande datée
+
+Défaut trouvé en déposant les VRAIS documents dans l'application (pas en
+laboratoire) : `/ACCESSOIRES 2024/LAZY BAG 2 PARTIES DUFOUR 385/LB FINI.pdf`
+était refusé au dépôt —
+
+    aucun code de fiche lisible : ni le PDF, ni son nom « LB FINI.pdf », ni le
+    nom du dossier « LAZY BAG 2 PARTIES DUFOUR 385 » ne portent de référence
+
+— alors que le formulaire est entièrement lisible : titre « Lazy Bag », client
+« SEAMTECH PRO (CLASS SAILS) », bateau « DUFOUR 385 », gousset de latte
+3.96 m, ralingue 2.55 m, coulisseaux A031 (x3), lazy 4.1 m. La cause n'est pas
+le document mais le motif du code d'accès : il n'acceptait que « lettres puis
+chiffres » (« ST64 », « ST 074b »). Ce formulaire imprime l'inverse :
+`Commande 170124CS` — six chiffres puis deux lettres.
+
+Le motif accepte désormais les deux sens, sans séparateur interne : une date
+(« 01-02-2024 »), un montant (« 884.68 ») ou une phrase restent refusés, et les
+références déjà lues (« ST96 », « ST105 », « ST 074b », « ST 256b ») sont
+inchangées.
+
+Vérifié de bout en bout dans l'application (PostgreSQL + stockage objet) :
+8 dossiers réels déposés, **8 fiches** en base, chacune avec son PDF promu et
+vérifié par relecture SHA-256.
+
+Preuves : `tests/test_accessoire_reference_commande_datee.py` (4 tests), ruff
+OK, SQLite **1287 passés**, PostgreSQL **416 passés**.
+
+## 2026-10-29 (suite 2) — refus qui nomme le contenu réel du dossier
+
+Trois familles de documents réels produisaient le même refus « aucune fiche de
+fabrication reconnue (gabarit inconnu) », qui se lit comme une panne de
+reconnaissance :
+
+- **formulaire de prise de cotes** (`Fiche de prise de cotes`, « Compléter et
+  retourner à contact@seamtech.tn », champs vides) — mesuré sur
+  `/VOILES 2024/CAVAILLE ST76`, `/FIRST 210 ST106`, `/FIRST 325 ST74A` ;
+- **planche de tracé SailPack** (`Panel layout` + `S a i l P a c k V3.0`) —
+  mesuré sur `/VOILES 2026/ATHENA 44 ST761`, `/VOILES 2026/AURA 51 ST795`,
+  `/WESTERLY PENTLAND ST660B/ST 660b.pdf` ;
+- **PDF sans couche texte** — mesuré sur `/ACCESSOIRES 2026/CAGNARD ST756`
+  (2 plans), `/TOILE ST792 COUPE.pdf`, `/ACCESSOIRES 2025/…/ST298.pdf`.
+
+Le refus nomme désormais le contenu réel, fichier par fichier, et ne dit plus
+« lecture impossible » pour un PDF image : il parle de **revue manuelle**
+(l'OCR existe dans le dépôt, il n'est pas branché sur le dépôt de fiches —
+limite explicite, non maquillée). La classification ne bloque jamais un
+dossier qui contient sa fiche : la planche redevient une pièce jointe.
+
+Preuves : `tests/test_classement_documents_non_fiche.py` (5 tests), ruff OK,
+SQLite **1283 passés**, PostgreSQL **416 passés**, E2E 9 dossiers de
+`/home/user/repro/dbx2` + 11 fiches de `/home/user/repro/dbx`.
+
+## 2026-10-29 (suite) — dossiers d'affaire COMPLETS : deux fiches, sous-dossiers, plans SailPack
+
+Élargissement du test à des dossiers réels plus lourds (jusqu'à 159 fichiers,
+6 PDF, sous-dossier) pris dans `/YACHET CLASSIC ST508`, `/WESTERLY PENTLAND
+ST660B`, `/ACCESSOIRES 2026/CAGNARD ST756`, `/VOILES 2026/ATHENA 44 ST761`,
+`/VOILES 2026/AURA 51 ST795`.
+
+Défauts trouvés et corrigés :
+
+- **la fiche « ST 508V2 » sortait SANS CODE** : le motif de référence FFab
+  s'arrêtait à UNE lettre après les chiffres (`ST 660b`, `ST449A`). Sur
+  « … ST 508V2 », le `\b` échouait sur le « V » : le document — une vraie fiche
+  de fabrication entièrement lisible — était jugé « non viable » par le
+  scanner, qui retenait alors la révision précédente. Le motif accepte
+  désormais une lettre suivie de 1-2 chiffres de révision ;
+- **deux fiches dans un même dossier étaient départagées en SILENCE** : le
+  choix reste déterministe (score, puis nom « …ffab », puis ordre
+  alphabétique) et la seconde fiche reste une pièce jointe, mais le dépôt
+  expose maintenant `autres_fiches` et journalise un avertissement nommant le
+  PDF écarté ;
+- **les fichiers d'un sous-dossier n'étaient référencés par RIEN** : mesuré sur
+  `/YACHET CLASSIC ST508/TISSU`, `/LAZY BAG 2 PARTIES DUFOUR 385/PLC`,
+  `/ACCESSOIRES 2026/TOILE ST792/toile` — ces sous-dossiers ne portent aucun
+  PDF, ne sont donc jamais un dossier de lot, et leurs fichiers restaient
+  invisibles depuis l'application. Ils sont désormais rattachés en pièces
+  jointes du dossier parent. Un sous-dossier qui porte un PDF reste un dossier
+  de lot à part : aucun doublon.
+
+Vérifié sans changement de code (comportements attendus, documentés) :
+
+- les **planches SailPack** (`ST 508.pdf`, `JW26050B.pdf`, `… Gennak Aura51.pdf`,
+  `ST 660b.pdf`) ne portent aucun libellé de fiche : elles sont refusées comme
+  « aucune fiche de fabrication reconnue » — jamais prises pour une fiche ;
+- `CAGNARD ST756` (deux plans raster, 0 caractère) : refus « PDF illisible » ;
+- dossier de 159 fichiers (1 fiche + 2 révisions + 150 DXF + PLX) : bonne fiche
+  choisie, 157 pièces jointes, dépôt `traite` en ~2 s.
+
+Preuves : `tests/test_ffab_code_version_et_concurrence.py` (8 tests), E2E sur
+5 dossiers réels supplémentaires, ruff OK, SQLite **1278 passés**,
+PostgreSQL **416 passés**.
+
+## 2026-10-29 — « l'analyse ne lit pas les accessoires » : formulaires imprimés
+
+Audit Dropbox complet des dossiers d'accessoires (documents réels ouverts avec
+pdfplumber, jamais recopiés dans le dépôt) : **trois** formulaires imprimés
+coexistent, tous préfixés « Fiche de … », plus les plans du traceur.
+
+Défauts prouvés, mesurés avec `extraire_fiche` sur les documents réels :
+
+- la **fiche Lazy Bag** sortait en `FICHE_GV_FULLBATTEN_V1` : la ligne « Type
+  des coulisseaux » porte l'ancre `coulisseaux` de la grand-voile lattée ;
+  à score égal, la GV passait avant les accessoires ⇒ titre, code, client et
+  dimensions **tous vides** ;
+- la **fiche fourreau de gse** n'était reconnue par **aucun** gabarit
+  (« fourreau » n'était une ancre nulle part) ;
+- la **fiche Sac de Pont** n'était lue qu'à moitié (code seul : ni type, ni
+  bateau, ni couleur) ;
+- sur la fiche Lazy Bag, la ligne « Longueur du gousset de latte 3.22m - Latte
+  jonc 12mm … » livrait DEUX mesures : la seconde (12 mm) était rangée en
+  `largeur_m` — une cote de largeur **inventée** ;
+- une désignation « **Artimon** … » (mesurée sur `ST 660b_ffab.pdf`) ne
+  produisait aucun type de voile.
+
+Correctifs :
+
+- nouvelle famille `FICHE_ACCESSOIRE_IMPRIME_V1` (code distinct, pas une
+  version de plus : le formulaire imprimé et la prise de cotes sont deux
+  documents différents, tous deux réels et tous deux actifs). Elle passe avant
+  la prise de cotes dans le registre pour gagner l'égalité sur « sac de pont » ;
+- deux traitements « l'ancre EST la valeur » (`titre_accessoire`,
+  `code_accessoire`) : le titre donne le type (« Fiche de Lazy Bag » → « Lazy
+  Bag ») et le code se lit soit après « Commande », soit sur la ligne NUE sous
+  le titre (les deux formes mesurées) ;
+- `dimension_nommee` ne conserve que la mesure de tête (fini la largeur de
+  12 mm) ; `logo_accessoire` traduit « Logo sans » / « Pas de logo » /
+  « SANS LOGO » en `sans` ;
+- `TYPES_VOILE` reçoit **Artimon** ;
+- preuve : `tests/test_accessoires_formulaires_imprimes.py` (16 tests,
+  synthétiques, mise en page mesurée) et E2E réel : les 6 fiches d'accessoires
+  réelles se déposent (`categorie = accessoire`, score 0,99), les 3 plans sans
+  couche texte sont refusés explicitement, les 2 fiches de voile restent voiles.
+
+Trois défauts de plus, trouvés en relisant les mêmes documents réels :
+
+- **`Longueur du lazy*` ignorée** : l'astérisque imprimé faisait partie du mot
+  pour la comparaison d'ancres, donc la ligne réelle « longueur du lazy* 3.32 m »
+  ne matchait pas et la lecture retombait sur « longueur du gousset de latte
+  3.22m ». La fiche Lazy Bag annonçait **3,22 m — la longueur du gousset** au
+  lieu de 3,32 m (`_jeton_comparable` ignore désormais l'astérisque) ;
+- **`titre` contredit par l'en-tête du formulaire** : sur `ST 660b_ffab.pdf`,
+  l'en-tête imprimé est « Fiche de fabrication \"Grand-voile\" » alors que la
+  voile est un **Artimon** : la fiche sortait avec `titre = Grand-voile` et
+  `type = Artimon`. Quand les deux nomment des types différents, c'est la ligne
+  de désignation — celle qui décrit la voile — qui fait foi
+  (`_aligner_titre_sur_type`, méthode `gabarit_designation`, valeur imprimée
+  conservée dans `valeur_brute`) ; aucun effet si le titre n'est pas un type
+  connu (« Voile d'avant ») ;
+- **libellé de formulaire pris pour la matière** : la ligne réelle
+  « Tissu(s) (Pas de carbon): Newport 9.45 AP Blanc - White » a ses deux-points
+  soudés au mot `carbon):` ; la lecture s'arrêtait au changement de colonne et
+  `materiau.tissu_principal` valait `(Pas de carbon):`. Le tissu principal est
+  maintenant `Newport 9.45 AP Blanc - White` (et 6.45 sur le 660 b).
+  Preuve : `tests/test_ffab_en_tete_artimon_et_tissu.py` (6 tests).
+
+## 2026-10-30 (suite) — « ça a marché une fois, pas les deux autres »
+
+Cause exacte, mesurée : la règle de titre de la famille FFab n'avait qu'UNE
+ancre, « grand-voile ». Sur une fiche de **voile d'avant** (en-tête
+« Fiche de fabrication "Voile d'avant" », puis « Génois … pour X de Y »), le
+mot « grand-voile » n'existe nulle part : la règle n'était jamais exécutée,
+donc titre, client et bateau restaient vides. Une fiche de grand-voile
+passait — d'où l'impression d'un fonctionnement intermittent.
+
+- la relecture de page est autorisée dès que le document porte l'en-tête
+  « fiche de fabrication », quelle que soit la catégorie
+  (`_porte_entete_fiche_fabrication`) ;
+- la fenêtre multi-lignes n'exige plus le mot « grand-voile », seulement le
+  contrat « … pour … de … » ; la décomposition stricte décide ensuite et
+  n'invente rien si elle échoue (RG6) ;
+- le titre vient de la CATÉGORIE lue (« Voile d'avant », « Grand-voile »), plus
+  d'un « Grand-voile » codé en dur qui affichait un génois comme une GV ;
+- les familles de voiles reconnues incluent « voile d'avant » / « voile avant ».
+  Preuve : `tests/test_passe_31_10_2026_ffab_client_bateau_code.py`
+  (`TestFicheVoileDAvantSansLeMotGrandVoile`).
+- **Archive de l'atelier montée pour `web` ET `worker`**, en lecture seule :
+  `SEAMTECH_IMPORT_ARCHIVE_HOST_PATH` (défaut inoffensif `./data`) monté sur
+  `/archives:ro`. Sans ce montage, tout dossier de l'hôte était refusé
+  « hors des racines configurées » (403) et rien ne pouvait être déposé.
+  `/archives` reste à ajouter explicitement à `SEAMTECH_ROOT_PATHS`.
+  Preuve : `TestMontageArchive` + `tests/test_compose_hardening.py` (qui
+  vérifie désormais que le défaut d'un montage paramétré est bien un chemin).
+
+## 2026-10-30 — Extraction client/bateau, code de fiche et passage import → fiche
+
+Correctifs tirés de l'exploitation réelle (archives de l'atelier, jamais
+recopiées dans le dépôt : tous les tests ci-dessous sont SYNTHÉTIQUES).
+
+- **Client et bateau non lus sur les fiches GV « FFab »** : un export tableur
+  place l'en-tête, la ligne d'atelier et la ligne de désignation dans des
+  CELLULES distinctes ; chaque cellule est une ligne physique, et la fenêtre
+  de lecture du titre s'arrêtait à quatre lignes. La fiche sortait avec
+  « Sans titre », client et bateau vides. La fenêtre va désormais jusqu'à
+  huit lignes (écart vertical 60 pt) et une troisième voie accepte toute
+  ligne portant à la fois une famille de voile, « pour » et « de ».
+  La désignation est ROGNÉE sur le dernier mot de famille : une cellule
+  voisine (« Fichier …, dessiné par … ») ne devient plus la désignation.
+  Preuve : `tests/test_passe_31_10_2026_ffab_client_bateau_code.py`.
+- **Référence d'affaire dans le nom du client** : la parenthèse finale
+  (« (ZZ75 - XXXX) ») est le numéro de commande externe, plus un morceau du
+  nom du client — le rattachement au référentiel bateau redevient possible.
+- **Ancres entre guillemets ignorées** : `_indice_ancre` compare désormais les
+  mots sans guillemets collés. Un libellé d'export (`"Grand-voile"`) ne
+  faisait jamais correspondre l'ancre du gabarit (`grand-voile`) : la règle
+  entière était ignorée, code de fiche compris.
+- **« écriture annulée : ValueError: Fiche sans code »** (4 dossiers réels
+  perdus) : le code est d'abord repris du DOCUMENT, puis, en repli explicite
+  et tracé (`methode="nom_fichier"`, confiance 0,75), du NOM du PDF
+  (« ZZ 075a_ffab.pdf » → « ZZ 075A »). Sans aucune référence, le refus est
+  explicite, tracé dans le lot, et n'écrit rien.
+- **Refus « gabarit inconnu » rendu lisible** : la raison nomme les PDF
+  examinés et rappelle que les fichiers n'ont pas été modifiés.
+- **« Ça analyse mais ça n'ajoute rien dans la base »** : l'import classique
+  produit un RAPPORT, pas une fiche. Nouvelle route
+  `POST /imports/{id}/creer-fiche` (relais BFF
+  `frontend/app/api/imports/[id]/creer-fiche`) et bouton « Créer la fiche
+  dans la base » : elle dépose le dossier du PDF technique identifié, avec
+  les mêmes règles, la même transaction et la même idempotence qu'un dépôt
+  de dossier. Sans PDF technique : 422 expliqué ; dossier disparu : 410 ;
+  hors racines configurées : 403.
+
 ## 2026-10-28 — Correctifs P0 « production ready » (campagne complémentaire)
 
 Corrige les P0 des deux rapports du 28/10/2026. Chaque point ci-dessous est

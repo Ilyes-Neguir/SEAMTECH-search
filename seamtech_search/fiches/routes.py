@@ -1348,6 +1348,35 @@ def lister_pieces_archive(
     }
 
 
+#: « Combien de fichiers cette fiche a-t-elle VRAIMENT ? »
+#:
+#: Le dépôt par arborescence ne remplit pas `fiche_piece_jointe` : compter
+#: seulement cette table annonçait « 0 fichier » sur des fiches dont le PDF
+#: était bel et bien promu (mesuré sur les 58 dossiers réels). Le lot traité
+#: porte le chemin du PDF déposé, c'est la preuve d'un fichier réel.
+#:
+#: Ces deux fragments sont des EXPRESSIONS (pas des instructions) : ils
+#: s'insèrent dans un SELECT et ne passent donc pas la grammaire pglast.
+#:
+#: `fichier_source` ne compte que s'il désigne lui-même un PDF : sur une fiche
+#: FFAB il porte le classeur d'origine (« 508.xlsm »), qui n'est PAS le
+#: document déposé — l'écran ne doit pas le présenter comme un PDF.
+EXPR_FICHIERS_DE_LA_FICHE = (
+    "(SELECT COUNT(*) FROM fiche_piece_jointe p WHERE p.id_fiche = f.id_fiche) "
+    "+ CASE WHEN EXISTS (SELECT 1 FROM lot_dossier ld WHERE ld.id_fiche = f.id_fiche "
+    "AND ld.statut = 'traite' AND ld.cle_idempotence IS NOT NULL) THEN 1 "
+    "WHEN (SELECT COUNT(*) FROM fiche_piece_jointe p2 WHERE p2.id_fiche = f.id_fiche) = 0 "
+    "AND right(lower(COALESCE(f.fichier_source, '')), 4) = '.pdf' THEN 1 ELSE 0 END"
+)
+
+EXPR_A_PDF = (
+    "CASE WHEN EXISTS (SELECT 1 FROM lot_dossier ld2 WHERE ld2.id_fiche = f.id_fiche "
+    "AND ld2.statut = 'traite' AND ld2.cle_idempotence IS NOT NULL) "
+    "OR (SELECT COUNT(*) FROM fiche_piece_jointe p3 WHERE p3.id_fiche = f.id_fiche) > 0 "
+    "OR right(lower(COALESCE(f.fichier_source, '')), 4) = '.pdf' THEN TRUE ELSE FALSE END"
+)
+
+
 def liste_fiches(index: Any, statut: str | None = None, page: int = 1, taille: int = 50) -> dict[str, Any]:
     """Écran Dossiers (lot D) : liste paginée + facettes (compteurs par statut)."""
     page = max(1, page)
@@ -1359,9 +1388,7 @@ def liste_fiches(index: Any, statut: str | None = None, page: int = 1, taille: i
             cursor.execute(
                 "SELECT f.code, COALESCE(f.titre, ''), f.statut, f.score_qualite, COALESCE(g.code, ''), "
                 "COALESCE(c.nom, ''), COALESCE(b.nom, ''), COALESCE(b.taille, ''), "
-                "(SELECT COUNT(*) FROM fiche_piece_jointe p WHERE p.id_fiche = f.id_fiche) "
-                "+ CASE WHEN f.fichier_source IS NULL THEN 0 ELSE 1 END AS nb_fichiers, "
-                "CASE WHEN f.fichier_source IS NULL THEN FALSE ELSE TRUE END AS a_pdf "
+                + EXPR_FICHIERS_DE_LA_FICHE + " AS nb_fichiers, " + EXPR_A_PDF + " AS a_pdf "
                 "FROM fiche f LEFT JOIN gabarit g ON g.id_gabarit = f.id_gabarit "
                 "LEFT JOIN client c ON c.id_client = f.id_client "
                 "LEFT JOIN bateau b ON b.id_bateau = f.id_bateau "
@@ -1543,8 +1570,7 @@ def detail_fiche(index: Any, code: str) -> dict[str, Any]:
             cursor.execute(
                 "SELECT f.code, COALESCE(f.titre, ''), f.statut, COALESCE(g.code, ''), "
                 "COALESCE(c.nom, ''), COALESCE(b.nom, ''), COALESCE(b.taille, ''), f.date_edition, "
-                "(SELECT COUNT(*) FROM fiche_piece_jointe p WHERE p.id_fiche = f.id_fiche) "
-                "+ CASE WHEN f.fichier_source IS NULL THEN 0 ELSE 1 END, "
+                + EXPR_FICHIERS_DE_LA_FICHE + ", "
                 "f.revision, f.id_fiche, f.categorie, f.categorie_source "
                 "FROM fiche f LEFT JOIN gabarit g ON g.id_gabarit = f.id_gabarit "
                 "LEFT JOIN client c ON c.id_client = f.id_client "
@@ -1552,6 +1578,21 @@ def detail_fiche(index: Any, code: str) -> dict[str, Any]:
                 (code,),
             )
             row = cursor.fetchone()
+            anomalies: list[dict[str, Any]] = []
+            if row is not None:
+                # Une fiche sans cote n'est pas un mystère pour l'approbateur :
+                # l'anomalie enregistrée au dépôt dit POURQUOI (fiche de
+                # fabrication absente, champ manquant, PDF image). Elle vivait
+                # seulement sur l'écran de validation, en badge.
+                cursor.execute(
+                    "SELECT code, gravite, message, statut FROM fiche_anomalie "
+                    "WHERE id_fiche = %s ORDER BY id_anomalie",
+                    (int(row[10]),),
+                )
+                anomalies = [
+                    {"code": a[0], "gravite": a[1], "message": a[2], "statut": a[3]}
+                    for a in cursor.fetchall()
+                ]
     if row is None:
         raise HTTPException(status_code=404, detail=f"Fiche {code} inconnue.")
     date_edition = row[7].isoformat() if hasattr(row[7], "isoformat") else row[7]
@@ -1573,6 +1614,7 @@ def detail_fiche(index: Any, code: str) -> dict[str, Any]:
         "id_fiche": int(row[10]),
         "categorie": str(row[11]),
         "categorie_source": str(row[12]),
+        "anomalies": anomalies,
     }
 
 
@@ -1985,6 +2027,74 @@ def enregistrer_routes_fiches(
             return annuler_session_televersement_lot(config, jeton_session)
         except TeleversementLotErreur as erreur:
             raise _http_televersement(erreur) from erreur
+
+    @app.post("/imports/{id_import}/creer-fiche", status_code=201)
+    def route_creer_fiche_depuis_import(
+        id_import: str,
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+        entete_utilisateur: Annotated[str | None, Header(alias="X-SEAMTECH-UTILISATEUR")] = None,
+        entete_role: Annotated[str | None, Header(alias="X-SEAMTECH-ROLE")] = None,
+        entete_session: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION")] = None,
+        entete_jeton: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-JETON")] = None,
+    ) -> dict[str, Any]:
+        """Crée la FICHE d'un import déjà analysé (« Importer les fichiers sélectionnés »).
+
+        L'import classique produit un RAPPORT d'analyse (``imports`` +
+        ``import_jobs``) : il n'écrit ni fiche, ni dossier, et l'opérateur qui
+        vient de voir ses champs « Matériau / Dimensions » à l'écran ne
+        comprend pas pourquoi rien n'apparaît dans les dossiers. Cette route
+        est le passage EXPLICITE d'un rapport à une fiche : elle dépose le
+        dossier qui contient le PDF technique identifié, exactement comme un
+        dépôt de dossier (mêmes règles, même transaction, même idempotence).
+
+        Aucun chemin n'est deviné : sans PDF technique dans le rapport, la
+        route refuse en le disant. Le dossier source est LU, jamais modifié.
+        """
+        from seamtech_search.import_pipeline import get_import
+
+        verifier_auth(config, token)
+        _exiger_postgres(index)
+        exiger_role_si_humain(
+            index, config, _roles_operationnels(), token=token,
+            entete_utilisateur=entete_utilisateur, entete_role=entete_role,
+            entete_session=entete_session, entete_jeton=entete_jeton,
+        )
+        try:
+            analyse = get_import(index, id_import)
+        except KeyError:
+            analyse = None
+        if not analyse:
+            raise HTTPException(status_code=404, detail=f"Import inconnu : {id_import}.")
+        pdf = str(analyse.get("technical_pdf") or "").strip()
+        if not pdf:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Cet import n'a identifié aucun PDF technique : il n'y a pas de fiche à "
+                    "créer. Déposez le DOSSIER (fiche + pièces jointes) plutôt que des fichiers "
+                    "isolés — seule une fiche de fabrication donne une référence."
+                ),
+            )
+        dossier = Path(pdf).parent
+        if not dossier.is_dir():
+            raise HTTPException(
+                status_code=410,
+                detail=(
+                    f"Le dossier d'origine n'existe plus sur le serveur ({dossier}) : "
+                    "l'import a été analysé mais ses fichiers ne sont plus accessibles."
+                ),
+            )
+        if not _path_autorise(dossier, config):
+            raise HTTPException(
+                status_code=403,
+                detail="Dossier hors des racines configurées : création de fiche refusée.",
+            )
+        try:
+            resultat = deposer_dossier(index, dossier, config=config)
+        except DepotImpossible as erreur:
+            raise HTTPException(status_code=422, detail=str(erreur)) from erreur
+        lot = etat_lot(index, int(resultat.get("id_lot") or 0)) if resultat.get("id_lot") else None
+        return {**resultat, "dossier": str(dossier), "lot": lot}
 
     @app.post("/imports/dossier", status_code=201)
     def route_deposer_dossier(
