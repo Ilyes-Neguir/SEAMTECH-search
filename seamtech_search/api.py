@@ -1660,6 +1660,19 @@ def create_app(config: AppConfig) -> FastAPI:
 
     # Lot B.2 (§17.11) : traçabilité des champs et registre de gabarits —
     # lecture et publication uniquement, aucune écriture de fiche par ces routes.
+    # Lot L.1 (§17.4) : détection de doublons — PROPOSITIVE (liens seulement,
+    # jamais de fusion ni d'effacement). Les routes vivent sous /fiches, la
+    # ressource concernée, et alimentent le bandeau de /validation.
+    #
+    # ENREGISTRÉ AVANT les routes de fiche : `GET /fiches/{code}` (ci-dessous)
+    # capturait `/fiches/doublons` et répondait « Fiche doublons inconnue » —
+    # l'écran des doublons affichait une 404 alors que le scan répondait 200.
+    # FastAPI résout dans l'ordre d'enregistrement ; mesuré en sandbox le
+    # 2026-10-30 sur la pile réelle (API + interface Next).
+    from seamtech_search.dedup.routes import enregistrer_routes_dedup
+
+    enregistrer_routes_dedup(app, index, config, _require_auth)
+
     from seamtech_search.fiches.routes import enregistrer_routes_fiches
 
     enregistrer_routes_fiches(app, index, config, _require_auth, storage_client=storage_client)
@@ -1692,13 +1705,6 @@ def create_app(config: AppConfig) -> FastAPI:
     from seamtech_search.qualite.routes import enregistrer_routes_qualite
 
     enregistrer_routes_qualite(app, index, config, _require_auth)
-
-    # Lot L.1 (§17.4) : détection de doublons — PROPOSITIVE (liens seulement,
-    # jamais de fusion ni d'effacement). Les routes vivent sous /fiches, la
-    # ressource concernée, et alimentent le bandeau de /validation.
-    from seamtech_search.dedup.routes import enregistrer_routes_dedup
-
-    enregistrer_routes_dedup(app, index, config, _require_auth)
 
     # Lot L.2 (§10.1, §17.5) : authentification nominative — /auth/connexion,
     # /auth/deconnexion, /auth/session, gestion des comptes. Ces routes exigent
