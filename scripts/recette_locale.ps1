@@ -73,7 +73,9 @@ if ($Manquants.Count -gt 0) {
     Rapport "prereqs" "FAIL" ("outils absents : " + ($Manquants -join ", "))
     exit 1
 }
+$ErrorActionPreference = "Continue"
 docker compose version *> $null
+$ErrorActionPreference = "Stop"
 if ($LASTEXITCODE -ne 0) {
     Rapport "prereqs" "FAIL" "docker compose v2 absent (Docker Desktop requis)"
     exit 1
@@ -223,10 +225,12 @@ if (-not $Bash) {
     Rapport "provisionnement-stockage" "FAIL" "bash (Git for Windows) requis pour scripts/provisionner_stockage.sh — installez Git for Windows ou ajoutez son bin à PATH"
     exit 1
 }
-# *> $null : docker compose écrit « Network ... Creating » sur stderr, et avec
+# docker compose écrit « Container ... Running » sur stderr → avec
 # $ErrorActionPreference = "Stop" PowerShell transforme ce texte en erreur
-# fatale (NativeCommandError). *> $null supprime toutes les sorties.
+# fatale (NativeCommandError). On temporise comme pour `docker compose up --build`.
+$ErrorActionPreference = "Continue"
 docker compose up -d minio *> $null
+$ErrorActionPreference = "Stop"
 $PretMinio = $false
 $FinMinio = (Get-Date).AddSeconds(120)
 while ((Get-Date) -lt $FinMinio) {
@@ -341,7 +345,9 @@ $DumpSortie = (docker compose exec -T postgres pg_dump -U seamtech --format=cust
 $CodeDump = $LASTEXITCODE
 $ShaInterneBrut = ((docker compose exec -T postgres sha256sum /tmp/recette-backup.dump 2>&1) | Out-String).Trim()
 $ShaInterne = if ($ShaInterneBrut) { $ShaInterneBrut.Split(" ")[0].Trim().ToLower() } else { "" }
+$ErrorActionPreference = "Continue"
 docker compose cp "postgres:/tmp/recette-backup.dump" $Dump *> $null
+$ErrorActionPreference = "Stop"
 $CodeCp = $LASTEXITCODE
 $DumpValide = $false
 if (($CodeDump -eq 0) -and ($CodeCp -eq 0) -and (Test-Path $Dump) -and ((Get-Item $Dump).Length -gt 0)) {
@@ -413,7 +419,9 @@ if (-not $DumpValide) {
                 $Supprime = (docker compose exec -T postgres psql -U seamtech -d seamtech_search -tA `
                     -c "DELETE FROM fiche WHERE code = '$FicheSql'" 2>&1) | Out-String
                 $RestaurationTente = $true
+$ErrorActionPreference = "Continue"
                 docker compose cp $Dump "postgres:/tmp/recette-restore.dump" *> $null
+$ErrorActionPreference = "Stop"
                 $Restaure = (docker compose exec -T postgres pg_restore --clean --if-exists --no-owner `
                     -U seamtech -d seamtech_search /tmp/recette-restore.dump 2>&1) | Out-String
                 $CodeRestore = $LASTEXITCODE
@@ -426,7 +434,9 @@ if (-not $DumpValide) {
         # Si une destruction a eu lieu mais que le restore a échoué, un avertissement strict est émis.
         if ($EcrivainsArretes) {
             if (-not $RestaurationTente -or $CodeRestore -eq 0) {
+$ErrorActionPreference = "Continue"
                 docker compose start @Ecrivains *> $null
+$ErrorActionPreference = "Stop"
             } else {
                 Write-Host "ÉCHEC CRITIQUE DE RESTAURATION : pg_restore a échoué (code $CodeRestore). Les écrivains (@Ecrivains) restent ARRÊTÉS pour protéger les données." -ForegroundColor Red
             }
@@ -454,8 +464,12 @@ if (-not $DumpValide) {
 # ---------------------------------------------------------------------------
 # 10. Persistance : docker compose down && up -> les données reviennent.
 # ---------------------------------------------------------------------------
+$ErrorActionPreference = "Continue"
 docker compose down *> $null
+$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Continue"
 docker compose up -d *> $null
+$ErrorActionPreference = "Stop"
 $Persist = "000"
 $Fin = (Get-Date).AddSeconds(300)
 while ((Get-Date) -lt $Fin) {
