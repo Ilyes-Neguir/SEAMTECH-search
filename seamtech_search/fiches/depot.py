@@ -33,7 +33,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from seamtech_search.extractions_voile import lier_extraction_voile_document_curseur
-from seamtech_search.fiches.extraction import analyser_candidat_fiche, extraire_fiche
+from seamtech_search.fiches.extraction import DetectionMixteIndeterminee, analyser_candidat_fiche, extraire_fiche
 from seamtech_search.fiches.gabarits import GabaritDef, charger_gabarits
 from seamtech_search.fiches.modeles import FicheExtraite
 from seamtech_search.fiches.persistance import ecrire_fiche_resultat
@@ -104,8 +104,16 @@ _SQL_DOCUMENT_UPSERT = (
     "is_dir, content, content_hash, extraction_status, role) "
     "VALUES (%s, %s, %s, %s, %s, %s, %s, FALSE, %s, %s, 'metadata', %s) "
     "ON CONFLICT (path_key) DO UPDATE SET role = EXCLUDED.role, content_hash = EXCLUDED.content_hash, "
-    "size = EXCLUDED.size, modified_at = EXCLUDED.modified_at, content = EXCLUDED.content "
-    "RETURNING id"
+    "size = EXCLUDED.size, modified_at = EXCLUDED.modified_at, content = EXCLUDED.content, "
+    "source_sha256 = NULL "
+    "WHERE documents.content_hash = EXCLUDED.content_hash OR ("
+    "documents.role IS NULL AND documents.id_fiche IS NULL AND documents.object_key IS NULL "
+    "AND NOT EXISTS (SELECT 1 FROM fiche_piece_jointe p WHERE p.id_document = documents.id) "
+    "AND NOT EXISTS (SELECT 1 FROM approval_requests a WHERE a.id_piece = documents.id) "
+    "AND NOT EXISTS (SELECT 1 FROM sail_extractions s WHERE s.id_document = documents.id) "
+    "AND NOT EXISTS (SELECT 1 FROM accessory_extractions a WHERE a.id_document = documents.id) "
+    "AND NOT EXISTS (SELECT 1 FROM lot_dossier l WHERE l.statut = 'traite' "
+    "AND split_part(l.cle_idempotence, '|', 1) = documents.path)) RETURNING id"
 )
 _SQL_DOCUMENT_FICHE_UPSERT = (
     "INSERT INTO documents (path_key, path, name, parent_path, extension, size, modified_at, "
@@ -115,7 +123,15 @@ _SQL_DOCUMENT_FICHE_UPSERT = (
     "parent_path = EXCLUDED.parent_path, extension = EXCLUDED.extension, size = EXCLUDED.size, "
     "modified_at = EXCLUDED.modified_at, "
     "content = CASE WHEN COALESCE(documents.content, '') = '' THEN EXCLUDED.content ELSE documents.content END, "
-    "content_hash = EXCLUDED.content_hash, category = 'analyzed', role = 'fiche_pdf' RETURNING id"
+    "content_hash = EXCLUDED.content_hash, source_sha256 = NULL, category = 'analyzed', role = 'fiche_pdf' "
+    "WHERE documents.content_hash = EXCLUDED.content_hash OR ("
+    "documents.role IS NULL AND documents.id_fiche IS NULL AND documents.object_key IS NULL "
+    "AND NOT EXISTS (SELECT 1 FROM fiche_piece_jointe p WHERE p.id_document = documents.id) "
+    "AND NOT EXISTS (SELECT 1 FROM approval_requests a WHERE a.id_piece = documents.id) "
+    "AND NOT EXISTS (SELECT 1 FROM sail_extractions s WHERE s.id_document = documents.id) "
+    "AND NOT EXISTS (SELECT 1 FROM accessory_extractions a WHERE a.id_document = documents.id) "
+    "AND NOT EXISTS (SELECT 1 FROM lot_dossier l WHERE l.statut = 'traite' "
+    "AND split_part(l.cle_idempotence, '|', 1) = documents.path)) RETURNING id"
 )
 
 
@@ -180,6 +196,54 @@ _SQL_COMPTE_PIECES = "SELECT COUNT(*) FROM fiche_piece_jointe"
 
 class DepotImpossible(RuntimeError):
     """Le dossier ne peut même pas être lu (absent, pas un dossier)."""
+
+
+# Seules ces raisons internes constantes peuvent être exposées sans risquer
+# d'y inclure un chemin, une valeur métier ou le texte d'une exception tierce.
+_RAISON_DEPOT_SURE = frozenset({
+    "Rejeu refusé : des pièces précédentes sont absentes ; revue nécessaire.",
+    "Rejeu impossible : fiche précédente non identifiée.",
+    "Les pièces ont changé pendant la préparation du dépôt.",
+    "RG11 : fiche validée ; dépôt différent refusé sans modification des pièces.",
+    "Un PDF existant au même chemin a changé ; revue nécessaire.",
+    "Une pièce existante au même chemin a changé ; revue nécessaire.",
+    "Une copie objet vérifiée manque pour ce dossier.",
+    "L'intégrité d'un fichier a changé après sa promotion.",
+    "Le document ou son objet a changé pendant le dépôt.",
+    "Rejeu sans PDF source.",
+    "Rejeu historique : la fiche courante a changé ; revue nécessaire.",
+    "Rejeu impossible : document précédent non identifié.",
+    "Rejeu impossible : fiche précédente absente.",
+    "Rejeu impossible : pièces modifiées pendant la vérification.",
+    "Rejeu impossible : PDF précédent non identifié.",
+    "Rejeu impossible : pièces jointes différentes ou ambiguës.",
+    "Rejeu impossible : nombre de pièces jointes différent.",
+})
+
+
+def _raison_ecriture_sure(erreur: Exception) -> str:
+    prefixe = f"écriture annulée : {type(erreur).__name__}"
+    if type(erreur) is DepotImpossible and str(erreur) in _RAISON_DEPOT_SURE:
+        return f"{prefixe}: {erreur}"
+    return prefixe
+
+
+class DepotAnnule(DepotImpossible):
+    """Le traitement a été interrompu à la demande de l'opérateur."""
+
+
+class DepotClaimPerdu(RuntimeError):
+    """Le worker n'est plus propriétaire du job PostgreSQL."""
+
+
+def _verrouiller_claim(cursor: Any, claim: tuple[str, str] | None) -> None:
+    """Sérialise les mutations métier avec le transfert du propriétaire PG."""
+    if claim is None:
+        return
+    cursor.execute("SELECT claimed_by FROM import_jobs WHERE id = %s FOR UPDATE", (claim[0],))
+    ligne = cursor.fetchone()
+    if not ligne or ligne[0] != claim[1]:
+        raise DepotClaimPerdu("Le worker ne détient plus le job.")
 
 
 @dataclass
@@ -421,13 +485,18 @@ def scanner_dossier(dossier: Path, gabarits: list[GabaritDef]) -> PlanDossier:
     candidats: list[tuple[Path, Any]] = []
     scores: dict[str, int] = {}
     illisibles: list[str] = []
+    detection_mixte = False
     for pdf in pdfs:
         try:
             candidat = analyser_candidat_fiche(pdf, gabarits)
+        except DetectionMixteIndeterminee:
+            scores[pdf.name] = -1
+            detection_mixte = True
+            continue
         except Exception as erreur:  # PDF illisible : raison explicite, pas de crash
             scores[pdf.name] = -1
             illisibles.append(pdf.name)
-            LOGGER.warning("PDF illisible (%s) : %s — conséquence : exclu de la détection.", pdf, erreur)
+            LOGGER.warning("PDF illisible (%s) — conséquence : exclu de la détection.", type(erreur).__name__)
             continue
         scores[pdf.name] = 0 if candidat is None else candidat.score_detection
         if candidat is not None:
@@ -435,7 +504,9 @@ def scanner_dossier(dossier: Path, gabarits: list[GabaritDef]) -> PlanDossier:
 
     if not candidats:
         detail = ", ".join(f"{nom}={score}" for nom, score in scores.items())
-        if illisibles:
+        if detection_mixte:
+            plan.raison_refus = "Détection incertaine : orientations mixtes ou non vérifiées, relecture complète nécessaire."
+        elif illisibles:
             # MAN-04 : dire la cause lisible par l'opérateur d'abord, les
             # scores ensuite (diagnostic) — « gabarit inconnu » seul laissait
             # croire à un PDF sain d'un format nouveau.
@@ -466,6 +537,12 @@ def scanner_dossier(dossier: Path, gabarits: list[GabaritDef]) -> PlanDossier:
             None,
         )
     if choisi is None:
+        if detection_mixte or any(
+            anomalie.code in {"orientations_pdf_mixtes", "orientation_pdf_non_verifiee"}
+            for _, candidat in candidats_tries for anomalie in candidat.fiche.anomalies
+        ):
+            plan.raison_refus = "Détection incertaine : orientations mixtes ou non vérifiées, relecture complète nécessaire."
+            return plan
         meilleur_pdf, meilleur_candidat = candidats_tries[0]
         plan.gabarit_code = meilleur_candidat.gabarit.code
         plan.score = meilleur_candidat.score_detection
@@ -508,14 +585,137 @@ def _creer_lot_isole(index: Any, dossier: Path) -> tuple[int, int]:
             return id_lot, int(cursor.fetchone()[0])
 
 
-def _maj_ligne(index: Any, id_lot_dossier: int, statut: str, raison: str | None, id_fiche: int | None, cle: str | None, nb_pieces: int) -> None:
+def _maj_ligne(index: Any, id_lot_dossier: int, statut: str, raison: str | None, id_fiche: int | None, cle: str | None, nb_pieces: int, *, claim: tuple[str, str] | None = None) -> None:
     """Met à jour la ligne de lot (hors transaction fiche : simple suivi)."""
     with index.connect() as connexion:
         with connexion.cursor() as cursor:
+            _verrouiller_claim(cursor, claim)
             cursor.execute(_SQL_LIGNE_MAJ, (statut, raison, id_fiche, cle, nb_pieces, id_lot_dossier))
 
 
-def deposer_dossier(index: Any, dossier: Path, gabarits: list[GabaritDef] | None = None, id_lot: int | None = None, id_lot_dossier: int | None = None) -> dict[str, Any]:
+def _verrouiller_document_existant(cursor: Any, chemin: Path) -> None:
+    """Réserve le chemin et sérialise l'adoption avec les nouvelles références FK.
+
+    Une ligne absente ne peut pas être verrouillée ; l'insertion provisoire,
+    annulée avec la transaction en cas d'échec, réserve aussi ce cas.
+    """
+    cle = os.path.normcase(str(chemin.resolve()))
+    stat = chemin.stat()
+    cursor.execute(
+        "INSERT INTO documents (path_key, path, name, parent_path, extension, size, modified_at, is_dir, extraction_status) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, FALSE, 'metadata') ON CONFLICT (path_key) DO NOTHING",
+        (cle, str(chemin), chemin.name, str(chemin.parent), chemin.suffix.lower(), stat.st_size, stat.st_mtime),
+    )
+    cursor.execute(
+        "SELECT id FROM documents WHERE path_key = %s FOR UPDATE",
+        (cle,),
+    )
+    cursor.fetchone()
+
+
+def _lier_objet_promu(cursor: Any, id_document: int, chemin: Path, empreinte: str, objets_promus: dict[str, dict[str, str]] | None, *, remplacer_cle: bool = False) -> None:
+    """Lie une copie déjà vérifiée à son document dans la transaction métier."""
+    if objets_promus is None:
+        return
+    objet = objets_promus.get(str(chemin.resolve()))
+    if not objet or not objet.get("object_key") or not objet.get("object_bucket"):
+        raise DepotImpossible("Une copie objet vérifiée manque pour ce dossier.")
+    if objet.get("sha256") != empreinte or empreinte_fichier(chemin) != empreinte:
+        raise DepotImpossible("L'intégrité d'un fichier a changé après sa promotion.")
+    cursor.execute(
+        "UPDATE documents SET object_key = %s, object_bucket = %s, upload_status = 'uploaded', "
+        "uploaded_at = EXTRACT(EPOCH FROM now()) WHERE id = %s AND content_hash = %s "
+        "AND (%s OR object_key IS NULL OR (object_key = %s AND object_bucket = %s))",
+        (objet["object_key"], objet["object_bucket"], id_document, empreinte, remplacer_cle, objet["object_key"], objet["object_bucket"]),
+    )
+    if cursor.rowcount != 1:
+        raise DepotImpossible("Le document ou son objet a changé pendant le dépôt.")
+
+
+def _comparer_pieces_rejeu_curseur(cursor: Any, id_ligne_precedente: int, plan: PlanDossier, empreinte_pdf: str) -> tuple[bool, bool, tuple[tuple[str, str], ...]]:
+    if plan.pdf_fiche is None:
+        raise DepotImpossible("Rejeu sans PDF source.")
+    parent = Path(plan.pdf_fiche).parent
+    parent_logique = _chemin_logique_televersement(parent)
+    cursor.execute("SELECT id_fiche FROM lot_dossier WHERE id_lot_dossier = %s", (id_ligne_precedente,))
+    ligne = cursor.fetchone()
+    if not ligne or not ligne[0]:
+        raise DepotImpossible("Rejeu impossible : fiche précédente non identifiée.")
+    cursor.execute("SELECT cle_idempotence FROM lot_dossier WHERE id_fiche = %s AND statut = 'traite' "
+                   "AND cle_idempotence IS NOT NULL ORDER BY traite_le DESC, id_lot_dossier DESC LIMIT 1", (ligne[0],))
+    source_courante = cursor.fetchone()
+    if not source_courante or str(source_courante[0]).rsplit(SEPARATEUR_CLE, 1)[-1] != empreinte_pdf:
+        raise DepotImpossible("Rejeu historique : la fiche courante a changé ; revue nécessaire.")
+    cursor.execute("SELECT chemin, empreinte_sha256 FROM fiche_piece_jointe WHERE id_fiche = %s", (ligne[0],))
+    anciennes = cursor.fetchall()
+
+    def identite(chemin: Path) -> str:
+        logique = _chemin_logique_televersement(chemin)
+        return logique if logique is not None else str(chemin.resolve())
+
+    precedentes = {
+        identite(Path(str(chemin))): str(empreinte or "")
+        for chemin, empreinte in anciennes
+        if (_chemin_logique_televersement(Path(str(chemin)).parent) == parent_logique
+            if parent_logique is not None else Path(str(chemin)).parent.resolve() == parent.resolve())
+    }
+    nouvelles = {identite(Path(p.chemin)): p.empreinte_sha256 for p in plan.pieces}
+    return precedentes != nouvelles, bool(precedentes.keys() - nouvelles.keys()), tuple(sorted(precedentes.items()))
+
+
+def _comparer_pieces_rejeu(index: Any, id_ligne_precedente: int, plan: PlanDossier, empreinte_pdf: str) -> tuple[bool, bool, tuple[tuple[str, str], ...]]:
+    """Détecte les changements et retraits dans le dossier logique rejoué."""
+    with index.connect() as connexion:
+        with connexion.cursor() as cursor:
+            return _comparer_pieces_rejeu_curseur(cursor, id_ligne_precedente, plan, empreinte_pdf)
+
+
+def _lier_rejeu_objets(index: Any, id_ligne_precedente: int, id_ligne_courante: int, id_lot_precedent: int, plan: PlanDossier, empreinte_pdf: str, objets_promus: dict[str, dict[str, str]] | None, *, claim: tuple[str, str] | None = None, verifier_claim_externe: Callable[[], bool] | None = None) -> None:
+    """Vérifie la fiche verrouillée et publie le rejeu dans une seule transaction."""
+    with index.connect() as connexion:
+        with connexion.cursor() as cursor:
+            _verrouiller_claim(cursor, claim)
+            cursor.execute("SELECT id_fiche, cle_idempotence FROM lot_dossier WHERE id_lot_dossier = %s", (id_ligne_precedente,))
+            ligne = cursor.fetchone()
+            if not ligne or not ligne[0] or not ligne[1] or plan.pdf_fiche is None:
+                raise DepotImpossible("Rejeu impossible : document précédent non identifié.")
+            cursor.execute("SELECT id_fiche FROM fiche WHERE id_fiche = %s FOR UPDATE", (ligne[0],))
+            if not cursor.fetchone():
+                raise DepotImpossible("Rejeu impossible : fiche précédente absente.")
+            modifiees, _, _ = _comparer_pieces_rejeu_curseur(cursor, id_ligne_precedente, plan, empreinte_pdf)
+            if modifiees:
+                raise DepotImpossible("Rejeu impossible : pièces modifiées pendant la vérification.")
+            if objets_promus is not None:
+                ancien_pdf = str(ligne[1]).rsplit(SEPARATEUR_CLE, 1)[0]
+                cursor.execute("SELECT id FROM documents WHERE path_key = %s AND content_hash = %s", (os.path.normcase(ancien_pdf), empreinte_pdf))
+                document = cursor.fetchone()
+                if not document:
+                    raise DepotImpossible("Rejeu impossible : PDF précédent non identifié.")
+                _lier_objet_promu(cursor, int(document[0]), Path(plan.pdf_fiche), empreinte_pdf, objets_promus, remplacer_cle=True)
+                cursor.execute("SELECT id_document, chemin, empreinte_sha256 FROM fiche_piece_jointe WHERE id_fiche = %s", (ligne[0],))
+                anciennes = cursor.fetchall()
+                dossier_logique = _chemin_logique_televersement(Path(plan.pdf_fiche).parent)
+                anciennes = [p for p in anciennes if (
+                    _chemin_logique_televersement(Path(str(p[1])).parent) == dossier_logique
+                    if dossier_logique is not None else Path(str(p[1])).parent.resolve() == Path(plan.pdf_fiche).parent.resolve()
+                )]
+                for piece in plan.pieces:
+                    chemin = Path(piece.chemin)
+                    logique = _chemin_logique_televersement(chemin)
+                    candidats = [p for p in anciennes if p[0] is not None and str(p[2] or "") == piece.empreinte_sha256
+                                 and ((_chemin_logique_televersement(str(p[1])) == logique) if logique is not None
+                                      else Path(str(p[1])).resolve() == chemin.resolve())]
+                    if len(candidats) != 1:
+                        raise DepotImpossible("Rejeu impossible : pièces jointes différentes ou ambiguës.")
+                    _lier_objet_promu(cursor, int(candidats[0][0]), chemin, piece.empreinte_sha256, objets_promus, remplacer_cle=True)
+                if len(anciennes) != len(plan.pieces):
+                    raise DepotImpossible("Rejeu impossible : nombre de pièces jointes différent.")
+            if verifier_claim_externe is not None and not verifier_claim_externe():
+                raise DepotClaimPerdu("Le worker ne détient plus le claim externe.")
+            cursor.execute(_SQL_LIGNE_MAJ, ("traite", f"deja_traite (lot #{id_lot_precedent})", None, None, len(plan.pieces), id_ligne_courante))
+
+
+def deposer_dossier(index: Any, dossier: Path, gabarits: list[GabaritDef] | None = None, id_lot: int | None = None, id_lot_dossier: int | None = None, *, objets_promus: dict[str, dict[str, str]] | None = None, claim: tuple[str, str] | None = None, verifier_claim_externe: Callable[[], bool] | None = None) -> dict[str, Any]:
     """Dépose UN dossier : détecte, extrait, écrit fiche + pièces jointes en UNE
     transaction, puis met à jour la ligne de lot. Retourne un RÉSULTAT (jamais
     d'exception métier) :
@@ -532,17 +732,13 @@ def deposer_dossier(index: Any, dossier: Path, gabarits: list[GabaritDef] | None
 
     def _enregistrer_echec(raison: str) -> dict[str, Any]:
         nonlocal id_lot_local, id_lot_dossier
-        LOGGER.warning(
-            "Dossier %s refusé : %s — conséquence : dossier listé en échec, le lot continue.",
-            dossier,
-            raison,
-        )
+        LOGGER.warning("Dossier refusé — conséquence : dossier listé en échec, le lot continue.")
         lot_isole_cree = False
         if id_lot_dossier is None:
             id_lot_local, id_lot_dossier = _creer_lot_isole(index, Path(dossier))
             lot_isole_cree = True
-        _maj_ligne(index, id_lot_dossier, "echec", raison, None, None, 0)
-        _rafraichir_compteurs(index, id_lot_local)
+        _maj_ligne(index, id_lot_dossier, "echec", raison, None, None, 0, claim=claim)
+        _rafraichir_compteurs(index, id_lot_local, claim=claim)
         if isolé or lot_isole_cree:
             _finaliser_lot(index, id_lot_local)
         return {"statut": "echec", "fiche": None, "raison": raison, "pieces": 0, "id_lot": id_lot_local}
@@ -550,8 +746,14 @@ def deposer_dossier(index: Any, dossier: Path, gabarits: list[GabaritDef] | None
     try:
         plan = scanner_dossier(Path(dossier), gabarits)
     except DepotImpossible as erreur:
-        LOGGER.error("Dépôt refusé (%s) : %s — conséquence : dossier compté en échec.", dossier, erreur)
-        return _enregistrer_echec(str(erreur))
+        LOGGER.error("Dépôt refusé (%s) — conséquence : dossier compté en échec.", type(erreur).__name__)
+        raison = str(erreur)
+        gabarit_absent = (
+            "aucun gabarit actif en base (table gabarit vide ou tout inactif) — "
+            "exécutez la CLI d'initialisation des gabarits ; conséquence : "
+            "aucune détection n'est possible."
+        )
+        return _enregistrer_echec(raison if raison == gabarit_absent else "dossier impossible à analyser")
     if not plan.accepte or plan.pdf_fiche is None:
         return _enregistrer_echec(plan.raison_refus or "dossier non reconnu")
 
@@ -564,6 +766,7 @@ def deposer_dossier(index: Any, dossier: Path, gabarits: list[GabaritDef] | None
             with connexion.cursor() as cursor:
                 cursor.execute(_SQL_DEJA_TRAITE, (cle,))
                 existant = cursor.fetchone()
+                cle_deja_utilisee = existant is not None
                 if existant is None:
                     # Rejeu téléversé dans une NOUVELLE session (MAN-02) :
                     # le jeton change, donc la clé absolue aussi — mais le
@@ -581,19 +784,28 @@ def deposer_dossier(index: Any, dossier: Path, gabarits: list[GabaritDef] | None
                             if _chemin_logique_televersement(ancien_chemin) == logique:
                                 existant = (id_ligne, id_lot_candidat)
                                 break
+        reference_rejeu = None
+        empreintes_precedentes = None
         if existant is not None:
+            pieces_modifiees, pieces_retires, empreintes_precedentes = _comparer_pieces_rejeu(index, int(existant[0]), plan, empreinte)
+            if pieces_retires:
+                raise DepotImpossible("Rejeu refusé : des pièces précédentes sont absentes ; revue nécessaire.")
+            if pieces_modifiees:
+                reference_rejeu = int(existant[0])
+                existant = None
+        if existant is not None:
+            _lier_rejeu_objets(index, int(existant[0]), int(id_lot_dossier), int(existant[1]), plan, empreinte,
+                                objets_promus, claim=claim, verifier_claim_externe=verifier_claim_externe)
             LOGGER.info(
-                "Dossier %s déjà traité (lot #%d, ligne #%d) : rejeu sans effet (idempotence).",
-                dossier,
+                "Dossier déjà traité (lot #%d, ligne #%d) : rejeu sans effet (idempotence).",
                 existant[1],
                 existant[0],
             )
             # NB : cle_idempotence reste NULL ici — l'index unique partiel
             # interdit DEUX lignes traite avec la même clé, et la ligne
             # originale (lot #{existant[1]}) est la seule qui la porte.
-            _maj_ligne(index, id_lot_dossier, "traite", f"deja_traite (lot #{existant[1]})", None, None, len(plan.pieces))
             if id_lot_local is not None:
-                _rafraichir_compteurs(index, id_lot_local)
+                _rafraichir_compteurs(index, id_lot_local, claim=claim)
                 if isolé:
                     _finaliser_lot(index, id_lot_local)  # un rejeu isolé = un lot qui se termine aussi
             return {
@@ -608,6 +820,18 @@ def deposer_dossier(index: Any, dossier: Path, gabarits: list[GabaritDef] | None
         # écriture entière ou pas du tout (fiche + pièces jointes).
         with index.connect() as connexion:
             with connexion.cursor() as cursor:
+                _verrouiller_claim(cursor, claim)
+                if reference_rejeu is not None:
+                    cursor.execute("SELECT id_fiche FROM lot_dossier WHERE id_lot_dossier = %s", (reference_rejeu,))
+                    ligne_reference = cursor.fetchone()
+                    if not ligne_reference or not ligne_reference[0]:
+                        raise DepotImpossible("Rejeu impossible : fiche précédente non identifiée.")
+                    cursor.execute("SELECT id_fiche FROM fiche WHERE id_fiche = %s FOR UPDATE", (ligne_reference[0],))
+                    if not cursor.fetchone():
+                        raise DepotImpossible("Rejeu impossible : fiche précédente absente.")
+                    _, _, empreintes_actuelles = _comparer_pieces_rejeu_curseur(cursor, reference_rejeu, plan, empreinte)
+                    if empreintes_actuelles != empreintes_precedentes:
+                        raise DepotImpossible("Les pièces ont changé pendant la préparation du dépôt.")
                 fiche = plan.fiche_extraite or extraire_fiche(
                     plan.pdf_fiche, gabarits=gabarits, gabarit_code=plan.gabarit_code
                 )
@@ -628,11 +852,14 @@ def deposer_dossier(index: Any, dossier: Path, gabarits: list[GabaritDef] | None
                 )
                 id_fiche, action = ecriture.id_fiche, ecriture.action
                 revision_fiche = ecriture.revision
+                if action == "conservee_validee":
+                    raise DepotImpossible("RG11 : fiche validée ; dépôt différent refusé sans modification des pièces.")
 
                 # Le PDF principal a lui aussi un identifiant de catalogue : toutes
                 # les vues l'ouvrent par /pieces/{id}, sans transmettre son chemin.
                 pdf_fiche = Path(plan.pdf_fiche)
                 pdf_stat = pdf_fiche.stat()
+                _verrouiller_document_existant(cursor, pdf_fiche)
                 cursor.execute(
                     _SQL_DOCUMENT_FICHE_UPSERT,
                     (
@@ -647,7 +874,11 @@ def deposer_dossier(index: Any, dossier: Path, gabarits: list[GabaritDef] | None
                         empreinte,
                     ),
                 )
-                id_document_pdf = cursor.fetchone()[0]
+                ligne_document_pdf = cursor.fetchone()
+                if ligne_document_pdf is None:
+                    raise DepotImpossible("Un PDF existant au même chemin a changé ; revue nécessaire.")
+                id_document_pdf = ligne_document_pdf[0]
+                _lier_objet_promu(cursor, int(id_document_pdf), pdf_fiche, empreinte, objets_promus)
                 cursor.execute(_SQL_DOCUMENT_VECTOR, (id_document_pdf,))
                 # Lots 3a/7 : l'extraction écrite avec la fiche reçoit, dans
                 # la même transaction de dépôt, l'identifiant du PDF source
@@ -680,6 +911,34 @@ def deposer_dossier(index: Any, dossier: Path, gabarits: list[GabaritDef] | None
 
                 for piece in plan.pieces:
                     chemin_piece = Path(piece.chemin)
+                    # Une pièce stagée garde la même identité d'une session à
+                    # l'autre : chemin relatif envoyé, hors jeton. Si le PDF
+                    # de fiche a changé, le dépôt remplace la fiche ; il ne
+                    # doit pas pour autant créer un second lien pour une
+                    # annexe inchangée. Une annexe modifiée remplace le lien
+                    # existant vers son nouveau document, sans réécrire
+                    # l'ancien document (les approbations déjà accordées sur
+                    # ses octets restent donc attachées à ces octets-là).
+                    logique_piece = _chemin_logique_televersement(chemin_piece)
+                    piece_existante: tuple[Any, ...] | None = None
+                    if logique_piece is not None:
+                        cursor.execute(
+                            "SELECT id_piece, id_document, chemin, empreinte_sha256 "
+                            "FROM fiche_piece_jointe WHERE id_fiche = %s "
+                            "ORDER BY id_piece",
+                            (id_fiche,),
+                        )
+                        for candidate in cursor.fetchall():
+                            if _chemin_logique_televersement(str(candidate[2])) == logique_piece:
+                                piece_existante = candidate
+                                break
+                    if (
+                        piece_existante is not None
+                        and piece_existante[1] is not None
+                        and str(piece_existante[3] or "") == str(piece.empreinte_sha256)
+                    ):
+                        _lier_objet_promu(cursor, int(piece_existante[1]), chemin_piece, piece.empreinte_sha256, objets_promus, remplacer_cle=True)
+                        continue
                     # RG12 — décision revue 21/09 : le fichier est décrit UNE FOIS,
                     # dans `documents` (métadonnées indexées), path_key = normcase
                     # (même clé que le crawler ⇒ réconciliation, jamais duplication) ;
@@ -688,6 +947,7 @@ def deposer_dossier(index: Any, dossier: Path, gabarits: list[GabaritDef] | None
                         f"pièce jointe ({piece.role}) de la fiche {fiche.code} — "
                         "non analysée (RG12 : métadonnées seulement)"
                     )
+                    _verrouiller_document_existant(cursor, chemin_piece)
                     cursor.execute(
                         _SQL_DOCUMENT_UPSERT,
                         (
@@ -703,46 +963,73 @@ def deposer_dossier(index: Any, dossier: Path, gabarits: list[GabaritDef] | None
                             piece.role,
                         ),
                     )
-                    id_document = cursor.fetchone()[0]
+                    ligne_document = cursor.fetchone()
+                    if ligne_document is None:
+                        raise DepotImpossible("Une pièce existante au même chemin a changé ; revue nécessaire.")
+                    id_document = ligne_document[0]
+                    _lier_objet_promu(cursor, int(id_document), chemin_piece, piece.empreinte_sha256, objets_promus)
                     cursor.execute(_SQL_DOCUMENT_VECTOR, (id_document,))
-                    cursor.execute(
-                        _SQL_PIECE_INS,
-                        (
-                            id_fiche,
-                            id_document,
-                            str(piece.chemin),
-                            piece.role,
-                            piece.empreinte_sha256,
-                            piece.taille_octets,
-                        ),
-                    )
+                    if piece_existante is not None:
+                        cursor.execute(
+                            "UPDATE fiche_piece_jointe SET id_document = %s, chemin = %s, "
+                            "role = %s, empreinte_sha256 = %s, taille_octets = %s "
+                            "WHERE id_piece = %s",
+                            (
+                                id_document,
+                                str(piece.chemin),
+                                piece.role,
+                                piece.empreinte_sha256,
+                                piece.taille_octets,
+                                piece_existante[0],
+                            ),
+                        )
+                    else:
+                        cursor.execute(
+                            _SQL_PIECE_INS,
+                            (
+                                id_fiche,
+                                id_document,
+                                str(piece.chemin),
+                                piece.role,
+                                piece.empreinte_sha256,
+                                piece.taille_octets,
+                            ),
+                        )
+                # Le claim Redis est contrôlé au plus près du commit sans
+                # ouvrir une seconde transaction PostgreSQL sur le verrou tenu.
+                if verifier_claim_externe is not None and not verifier_claim_externe():
+                    raise DepotClaimPerdu("Le worker ne détient plus le claim externe.")
+                # La traçabilité et la clé d'idempotence sont publiées dans
+                # la même transaction que la fiche et ses documents.
+                cursor.execute(
+                    _SQL_LIGNE_MAJ,
+                    ("traite", None if action == "creee" else action, id_fiche, None if cle_deja_utilisee else cle, len(plan.pieces), id_lot_dossier),
+                )
+    except DepotClaimPerdu:
+        raise
     except Exception as erreur:
-        LOGGER.exception(
-            "Échec d'écriture du dossier %s : %s: %s — conséquence : RIEN n'est persisté (transaction annulée), dossier listé en échec.",
-            dossier,
+        LOGGER.error(
+            "Échec d'écriture (%s) — conséquence : transaction annulée, dossier listé en échec.",
             type(erreur).__name__,
-            erreur,
         )
-        _maj_ligne(index, id_lot_dossier, "echec", f"écriture annulée : {type(erreur).__name__}: {erreur}", None, cle, 0)
-        _rafraichir_compteurs(index, id_lot_local)
+        raison_sure = _raison_ecriture_sure(erreur)
+        _maj_ligne(index, id_lot_dossier, "echec", raison_sure, None, cle, 0, claim=claim)
+        _rafraichir_compteurs(index, id_lot_local, claim=claim)
         if isolé:
             _finaliser_lot(index, id_lot_local)
         return {
             "statut": "echec",
             "fiche": None,
-            "raison": f"écriture annulée : {type(erreur).__name__}: {erreur}",
+            "raison": raison_sure,
             "pieces": 0,
             "id_lot": id_lot_local,
         }
-    _maj_ligne(index, id_lot_dossier, "traite", None if action == "creee" else action, id_fiche, cle, len(plan.pieces))
     if id_lot_local is not None:
-        _rafraichir_compteurs(index, id_lot_local)
+        _rafraichir_compteurs(index, id_lot_local, claim=claim)
         if isolé:
             _finaliser_lot(index, id_lot_local)  # un dossier isolé = un lot qui se termine
     LOGGER.info(
-        "Dossier %s déposé : fiche %s (%s), %d pièce(s) jointe(s), lot #%d.",
-        dossier,
-        fiche.code,
+        "Dossier déposé (%s), %d pièce(s) jointe(s), lot #%d.",
         action,
         len(plan.pieces),
         id_lot_local,
@@ -794,8 +1081,56 @@ def creer_lot(index: Any, racine: Path, notes: str | None = None, *, recursif: b
             cursor.execute(_SQL_LOT_COMPTE, (id_lot,))
             nb = int(cursor.fetchone()[0])
             cursor.execute(_SQL_LOT_MAJ, (nb, "en_cours", "en_cours", id_lot))
-    LOGGER.info("Lot #%d créé : %d dossier(s) en attente sous %s.", id_lot, nb, racine)
+    LOGGER.info("Lot #%d créé : %d dossier(s) en attente.", id_lot, nb)
     return id_lot
+
+
+def _preparer_objets_lot(
+    index: Any, id_lot: int, config: Any, client_documents: Any | None,
+    doit_continuer: Callable[[], bool] | None,
+) -> dict[str, dict[str, str]] | None:
+    """Préserve une session stagée avant son dépôt ; les archives restent en lecture seule."""
+    from seamtech_search.fiches import televersement_lot as televersement
+    from seamtech_search.import_pipeline import staging_root
+    from seamtech_search.storage import S3StorageClient
+
+    with index.connect() as connexion:
+        with connexion.cursor() as cursor:
+            cursor.execute("SELECT dossier_racine FROM lot_import WHERE id_lot = %s", (id_lot,))
+            ligne = cursor.fetchone()
+    if ligne is None:
+        raise DepotImpossible(f"Lot #{id_lot} inconnu.")
+    racine_brute = Path(os.path.abspath(ligne[0]))
+    racine_lots_brute = Path(os.path.abspath(staging_root(config) / televersement.DOSSIER_LOTS_TELEVERSES))
+    racine_lots = racine_lots_brute.resolve()
+    racine = racine_brute.resolve()
+    if not racine_brute.is_relative_to(racine_lots_brute):
+        if racine.is_relative_to(racine_lots):
+            raise DepotImpossible("Racine de session téléversée indirecte interdite.")
+        return None
+    parties = racine_brute.relative_to(racine_lots_brute).parts
+    if len(parties) != 2 or parties[1] != televersement.DOSSIER_FICHIERS:
+        raise DepotImpossible("Racine de session téléversée invalide.")
+    if (racine_lots_brute / parties[0]).is_symlink() or racine_brute.is_symlink() or racine != racine_lots.joinpath(*parties):
+        raise DepotImpossible("Racine de session téléversée remplacée par un lien symbolique.")
+    token = parties[0]
+    try:
+        session = televersement.etat_session_televersement_lot(config, token)
+        if session.get("id_lot") != id_lot:
+            raise DepotImpossible("Session non associée au lot demandé.")
+        if getattr(config, "storage_backend", "s3") != "s3":
+            return None
+        client = client_documents if client_documents is not None else S3StorageClient(config=config)
+        if not client.is_configured():
+            raise DepotImpossible("Stockage objet non configuré pour le lot téléversé.")
+        resultat = televersement.promouvoir_session_televersement_objets(
+            config, token, client, doit_continuer=doit_continuer,
+        )
+    except televersement.TeleversementLotInterrompu as erreur:
+        raise DepotAnnule("Promotion objet interrompue ; fichiers locaux conservés.") from erreur
+    except televersement.TeleversementLotErreur as erreur:
+        raise DepotImpossible("Promotion objet du lot impossible ; fichiers locaux conservés.") from erreur
+    return resultat["objets_promus"]
 
 
 def executer_lot(
@@ -806,6 +1141,11 @@ def executer_lot(
     doit_continuer: Callable[[], bool] | None = None,
     progress_cb: Callable[[int, int], None] | None = None,
     worker_id: str | None = None,
+    claim_job_id: str | None = None,
+    verifier_claim_externe: Callable[[], bool] | None = None,
+    objets_promus: dict[str, dict[str, str]] | None = None,
+    config: Any | None = None,
+    client_documents: Any | None = None,
 ) -> dict[str, Any]:
     """Traite séquentiellement les dossiers en attente d'un lot.
 
@@ -823,6 +1163,11 @@ def executer_lot(
     """
     if not getattr(index, "is_postgres", False):
         raise DepotImpossible("Le traitement de lot exige PostgreSQL (tables fiche_*, §17.1).")
+    if claim_job_id and not worker_id:
+        raise DepotImpossible("Identité du claim de lot incomplète.")
+    claim = (claim_job_id, worker_id) if claim_job_id and worker_id else None
+    if config is not None and objets_promus is None:
+        objets_promus = _preparer_objets_lot(index, id_lot, config, client_documents, doit_continuer)
     LOGGER.info("Lot #%s : chargement des gabarits actifs…", id_lot)
     gabarits = charger_gabarits(index)
     LOGGER.info("Lot #%s : %d gabarit(s) actif(s) chargé(s).", id_lot, len(gabarits))
@@ -832,6 +1177,7 @@ def executer_lot(
     # passe initiale, et le worker propriétaire est tracé.
     with index.connect() as connexion:
         with connexion.cursor() as cursor:
+            _verrouiller_claim(cursor, claim)
             cursor.execute(
                 "UPDATE lot_import SET statut = 'relance', worker_id = %s, heartbeat_at = now() "
                 "WHERE id_lot = %s AND statut IN ('en_cours', 'relance')",
@@ -847,15 +1193,7 @@ def executer_lot(
                 "les dossiers restants restent « en_attente » (repris si le lot est relancé).",
                 id_lot,
             )
-            with index.connect() as connexion:
-                with connexion.cursor() as cursor:
-                    cursor.execute(
-                        "UPDATE lot_import SET statut = 'annule', annule_le = now() WHERE id_lot = %s",
-                        (id_lot,),
-                    )
-            etat = etat_lot(index, id_lot)
-            etat["annule"] = True
-            return etat
+            return annuler_lot(index, id_lot, claim=claim)
         with index.connect() as connexion:
             with connexion.cursor() as cursor:
                 cursor.execute(
@@ -869,27 +1207,32 @@ def executer_lot(
         id_lot_dossier, chemin = int(ligne[0]), Path(ligne[1])
         with index.connect() as connexion:
             with connexion.cursor() as cursor:
+                _verrouiller_claim(cursor, claim)
                 cursor.execute(
                     "UPDATE lot_import SET heartbeat_at = now() WHERE id_lot = %s",
                     (id_lot,),
                 )
-        LOGGER.info("Lot #%s : traitement du dossier %s (%s)…", id_lot, id_lot_dossier, chemin)
+        LOGGER.info("Lot #%s : traitement du dossier #%s…", id_lot, id_lot_dossier)
         try:
-            resultat = deposer_dossier(index, chemin, gabarits=gabarits, id_lot=id_lot, id_lot_dossier=id_lot_dossier)
+            resultat = deposer_dossier(
+                index, chemin, gabarits=gabarits, id_lot=id_lot, id_lot_dossier=id_lot_dossier,
+                objets_promus=objets_promus, claim=claim, verifier_claim_externe=verifier_claim_externe,
+            )
+        except DepotClaimPerdu:
+            raise
         except Exception as erreur:  # filet : « le lot continue » quoi qu'il arrive
-            LOGGER.exception("Lot #%s : erreur non gérée sur le dossier %s", id_lot, chemin)
-            _maj_ligne(index, id_lot_dossier, "echec", f"{type(erreur).__name__}: {erreur}", None, None, 0)
-            _rafraichir_compteurs(index, id_lot)
+            LOGGER.error("Lot #%s : erreur non gérée (%s) sur le dossier #%s", id_lot, type(erreur).__name__, id_lot_dossier)
+            _maj_ligne(index, id_lot_dossier, "echec", f"erreur non gérée : {type(erreur).__name__}", None, None, 0, claim=claim)
+            _rafraichir_compteurs(index, id_lot, claim=claim)
             continue
         if resultat["statut"] == "echec":
             LOGGER.warning(
-                "Dossier %s en échec dans le lot #%d : %s — conséquence : compté en échec, le lot continue.",
-                chemin,
+                "Dossier #%s en échec dans le lot #%d — conséquence : compté en échec, le lot continue.",
+                id_lot_dossier,
                 id_lot,
-                resultat["raison"],
             )
         traites_cette_passe += 1
-        _rafraichir_compteurs(index, id_lot)
+        _rafraichir_compteurs(index, id_lot, claim=claim)
         if progress_cb is not None:
             try:
                 progress_cb(traites_cette_passe, total)
@@ -898,6 +1241,7 @@ def executer_lot(
         if interrompre_apres is not None and traites_cette_passe >= interrompre_apres:
             with index.connect() as connexion:
                 with connexion.cursor() as cursor:
+                    _verrouiller_claim(cursor, claim)
                     cursor.execute("UPDATE lot_import SET statut = 'interrompu' WHERE id_lot = %s", (id_lot,))
             LOGGER.warning(
                 "Lot #%d interrompu volontairement après %d traitement(s) — conséquence : les dossiers restants sont en attente, la reprise se fait en rappelant executer_lot.",
@@ -907,6 +1251,7 @@ def executer_lot(
             return etat_lot(index, id_lot)
     with index.connect() as connexion:
         with connexion.cursor() as cursor:
+            _verrouiller_claim(cursor, claim)
             cursor.execute(
                 "UPDATE lot_import SET statut = 'termine', termine_le = now() WHERE id_lot = %s",
                 (id_lot,),
@@ -921,7 +1266,7 @@ def _compter_dossiers(index: Any, id_lot: int) -> int:
             return int(cursor.fetchone()[0])
 
 
-def annuler_lot(index: Any, id_lot: int) -> dict[str, Any]:
+def annuler_lot(index: Any, id_lot: int, *, claim: tuple[str, str] | None = None) -> dict[str, Any]:
     """Marque un lot annulé (état terminal explicite, distinct d'un échec).
 
     Ne supprime ni dossier ni fiche : un lot annulé puis relancé reprend les
@@ -930,6 +1275,7 @@ def annuler_lot(index: Any, id_lot: int) -> dict[str, Any]:
     """
     with index.connect() as connexion:
         with connexion.cursor() as cursor:
+            _verrouiller_claim(cursor, claim)
             cursor.execute(
                 "UPDATE lot_import SET statut = 'annule', annule_le = now() WHERE id_lot = %s",
                 (id_lot,),
@@ -946,9 +1292,10 @@ def _finaliser_lot(index: Any, id_lot: int) -> None:
             cursor.execute("UPDATE lot_import SET statut = 'termine', termine_le = now() WHERE id_lot = %s", (id_lot,))
 
 
-def _rafraichir_compteurs(index: Any, id_lot: int) -> None:
+def _rafraichir_compteurs(index: Any, id_lot: int, *, claim: tuple[str, str] | None = None) -> None:
     with index.connect() as connexion:
         with connexion.cursor() as cursor:
+            _verrouiller_claim(cursor, claim)
             cursor.execute(
                 "UPDATE lot_import SET nb_dossiers = (SELECT COUNT(*) FROM lot_dossier WHERE id_lot = %s), "
                 "nb_traites = (SELECT COUNT(*) FROM lot_dossier WHERE id_lot = %s AND statut = 'traite'), "

@@ -27,7 +27,9 @@ from __future__ import annotations
 
 import argparse
 import logging
+import math
 import os
+import threading
 import time
 from collections.abc import Callable
 
@@ -43,6 +45,9 @@ RETENTION_DEFAUT = 5
 
 def sauvegarde_due(config: AppConfig, intervalle_heures: float) -> bool:
     """Vrai si la dernière sauvegarde dépasse l'intervalle — ou n'existe pas."""
+    if not math.isfinite(intervalle_heures) or intervalle_heures <= 0:
+        # Un appel direct invalide ne doit jamais masquer une sauvegarde due.
+        return True
     etat = etat_sauvegarde(config)
     age = etat.get("age_heures")
     if age is None:
@@ -52,7 +57,7 @@ def sauvegarde_due(config: AppConfig, intervalle_heures: float) -> bool:
     return bool(age >= intervalle_heures)
 
 
-def _sauver_reel(config: AppConfig) -> None:
+def _sauver_reel(config: AppConfig) -> dict:
     from .sauvegarde import _client_s3_depuis_env, sauver
 
     retention = int(os.environ.get("SEAMTECH_BACKUP_RETENTION", str(RETENTION_DEFAUT)))
@@ -62,7 +67,7 @@ def _sauver_reel(config: AppConfig) -> None:
             "S3 hors-site non configuré : sauvegarde LOCALE seule "
             "(une copie sur le même serveur n'est pas une reprise)."
         )
-    sauver(
+    return sauver(
         config.database_url or "",
         list(config.root_paths),
         dossier_sauvegardes(config),
@@ -77,7 +82,7 @@ def executer_si_du(
     intervalle_heures: float,
     fonction_sauver: Callable[[], object] | None = None,
 ) -> bool:
-    """Un passage du planificateur. Retourne Vrai si une sauvegarde a eu lieu.
+    """Un passage du planificateur. Retourne Faux pour une copie non qualifiée.
 
     Ne lève jamais : un échec de sauvegarde est journalisé et retourne Faux —
     la boucle doit survivre pour retenter au passage suivant.
@@ -88,9 +93,16 @@ def executer_si_du(
     if not sauvegarde_due(config, intervalle_heures):
         return False
     try:
-        (fonction_sauver or (lambda: _sauver_reel(config)))()
-    except Exception:
-        logger.exception("Sauvegarde planifiée en échec ; nouvel essai au prochain passage.")
+        resultat = (fonction_sauver or (lambda: _sauver_reel(config)))()
+    except Exception as exc:
+        # L'exception ou la trace peuvent contenir une URI, des identifiants,
+        # ou des chemins privés. Seul le type est conservé au journal.
+        logger.error("Sauvegarde planifiée en échec (%s) ; nouvel essai au prochain passage.", type(exc).__name__)
+        return False
+    if not isinstance(resultat, dict) or (
+        resultat.get("protection_globale_prouvee") is not True or resultat.get("complet") is not True
+    ):
+        logger.error("Sauvegarde planifiée non qualifiée comme protection globale ; rétention suspendue.")
         return False
     logger.info("Sauvegarde planifiée terminée.")
     return True
@@ -115,10 +127,18 @@ def main(argv: list[str] | None = None) -> int:
         logger.info("Mode SQLite : le planificateur n'a rien à faire, arrêt propre.")
         return 0
 
-    intervalle = float(os.environ.get("SEAMTECH_BACKUP_INTERVAL_HEURES", str(INTERVALLE_HEURES_DEFAUT)))
-    verification = float(
-        os.environ.get("SEAMTECH_BACKUP_VERIFICATION_MINUTES", str(VERIFICATION_MINUTES_DEFAUT))
-    )
+    try:
+        intervalle = float(os.environ.get("SEAMTECH_BACKUP_INTERVAL_HEURES", str(INTERVALLE_HEURES_DEFAUT)))
+        verification = float(
+            os.environ.get("SEAMTECH_BACKUP_VERIFICATION_MINUTES", str(VERIFICATION_MINUTES_DEFAUT))
+        )
+        if (not math.isfinite(intervalle) or intervalle <= 0 or
+                not math.isfinite(verification) or verification <= 0 or
+                verification * 60 > threading.TIMEOUT_MAX):
+            raise ValueError
+    except ValueError:
+        logger.error("Intervalles de sauvegarde invalides : valeurs finies positives attendues.")
+        return 2
     logger.info(
         "Planificateur de sauvegardes : intervalle %.1f h, vérification toutes les %.0f min, dossier %s.",
         intervalle,

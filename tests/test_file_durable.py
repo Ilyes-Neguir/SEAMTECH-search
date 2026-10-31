@@ -33,7 +33,7 @@ REDIS_URL = os.environ.get("SEAMTECH_TEST_REDIS_URL", "")
 pytestmark = pytest.mark.redis_queue
 
 @pytest.fixture(autouse=True)
-def _redis_requis() -> None:
+def _redis_requis(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
     """Saute au niveau du TEST, jamais au niveau du MODULE.
 
     Un ``pytest.skip(allow_module_level=True)`` apparaît comme « sauté » dans le
@@ -48,14 +48,18 @@ def _redis_requis() -> None:
             "Set SEAMTECH_TEST_REDIS_URL (ex. redis://:motdepasse@127.0.0.1:6379/1) "
             "to run durable-queue tests"
         )
+    url_isolee = request.getfixturevalue("redis_isole")
+    monkeypatch.setitem(globals(), "REDIS_URL", url_isolee)
+    monkeypatch.delenv("SEAMTECH_REDIS_URL", raising=False)
+    monkeypatch.delenv("SEAMTECH_DATABASE_URL", raising=False)
 
 
 @pytest.fixture()
-def store() -> RedisStore:
+def store(redis_isole: str) -> RedisStore:
     """Redis réel, clés nettoyées avant/après (jamais les données d'un autre test)."""
-    magasin = RedisStore(redis_url=REDIS_URL)
+    magasin = RedisStore(redis_url=redis_isole)
     client = magasin._get_client()
-    assert client is not None, "Redis injoignable : SEAMTECH_TEST_REDIS_URL est-il correct ?"
+    assert client is not None, "Redis dédié injoignable"
     assert magasin.ping(), "Redis ne répond pas au PING"
     _vider(magasin)
     yield magasin
@@ -674,4 +678,39 @@ def test_point_de_crash_apres_envoi_objet_avant_ecriture_en_base(tmp_path: Path)
     assert len(magasin.objets) == 2, "les deux objets doivent coexister dans le stockage"
     assert magasin.objets[cle_1]["donnees"] == fichier.read_bytes()
     assert magasin.objets[cle_2]["donnees"] == fichier.read_bytes()
+    index.close()
+
+
+def test_worker_redis_transport_verifie_en_revue_sans_renvoi(store: RedisStore, tmp_path: Path, monkeypatch) -> None:
+    from seamtech_search.storage import S3StorageClient
+    from seamtech_search.worker import worker_loop
+    from tests.s3_en_memoire import S3EnMemoire
+
+    config = _config(tmp_path, s3_endpoint_url='https://s3.invalide', s3_bucket='bucket-synthetique',
+                     s3_access_key='cle-synthetique', s3_secret_key='secret-synthetique')
+    index = _index(config)
+    source = tmp_path / 'source-revue'
+    source.mkdir()
+    original = source / 'piece.txt'
+    original.write_bytes(b'contenu-synthetique')
+    magasin = S3EnMemoire()
+    monkeypatch.setattr(S3StorageClient, '_get_client', lambda self, **kwargs: magasin)
+    monkeypatch.setattr(S3StorageClient, 'ensure_bucket_exists', lambda self: True)
+    create_job(index, 'job-revue', str(source), durability='durable')
+    charge = {'job_id': 'job-revue', 'source_path': str(source)}
+    store.enqueue_task('imports', charge)
+    worker_loop(config, index, store, worker_id='worker-test', run_once=True)
+    job = get_job(index, 'job-revue')
+    assert job['status'] == 'needs_review'
+    assert not job['result']['all_verified'] and job['result']['preservation']['transport_verifie']
+    assert job['claimed_by'] is None
+    assert store.profondeur_file('imports')['queue'] == 0
+    assert not store.get_deadletters('imports')
+    assert len(magasin.envois) == 1
+    store.enqueue_task('imports', charge)
+    worker_loop(config, index, store, worker_id='worker-test-2', run_once=True)
+    assert len(magasin.envois) == 1
+    assert get_job(index, 'job-revue')['status'] == 'needs_review'
+    assert store.profondeur_file('imports')['queue'] == 0
+    assert original.read_bytes() == b'contenu-synthetique'
     index.close()

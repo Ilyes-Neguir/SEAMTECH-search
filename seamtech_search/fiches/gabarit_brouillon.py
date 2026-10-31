@@ -26,6 +26,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
@@ -82,33 +83,62 @@ def _sha256_fichier(chemin: Path) -> str:
 
 def _extraire_mots_avec_bbox(chemin: Path) -> list[dict[str, Any]]:
     """Extrait mots avec bbox via pdfplumber si disponible, sinon fallback texte."""
+    from seamtech_search.fiches.extraction import OrientationsMixtesBrouillon
+
     try:
         import pdfplumber  # type: ignore
 
+        from seamtech_search.fiches.extraction import _analyser_page, _zone_des_mots
+        from seamtech_search.pdf_orientation import (
+            boite_vue,
+            fermer_page_lecture,
+            lectures_mixtes_verifiees,
+            orientation_non_verifiee,
+            orientations_visibles,
+            page_de_lecture,
+            unite_vue,
+        )
+
         mots = []
         with pdfplumber.open(str(chemin)) as pdf:
-            for page_num, page in enumerate(pdf.pages, start=1):
-                # words avec bbox
-                for w in page.extract_words(x_tolerance=2, y_tolerance=2) or []:
-                    mots.append(
-                        {
-                            "page": page_num,
-                            "texte": w.get("text", ""),
-                            "x0": float(w.get("x0", 0)),
-                            "y0": float(w.get("top", 0)),
-                            "x1": float(w.get("x1", 0)),
-                            "y1": float(w.get("bottom", 0)),
-                            "largeur_page": float(page.width),
-                            "hauteur_page": float(page.height),
-                        }
-                    )
+            for numero, page in enumerate(pdf.pages):
+                vue, unite = boite_vue(page), unite_vue(page)
+                lecture, rotation = page_de_lecture(page)
+                try:
+                    mixte, compatible, _ = orientations_visibles(page)
+                    if mixte:
+                        raise OrientationsMixtesBrouillon("PDF à orientations mixtes : brouillon automatique refusé.")
+                    with lectures_mixtes_verifiees(page) if not compatible else nullcontext(None) as lectures:
+                        if orientation_non_verifiee(page, rotation, lectures):
+                            raise OrientationsMixtesBrouillon("Orientation PDF non vérifiée : brouillon automatique refusé.")
+                        vue_lecture, transformation = lectures[0] if lectures else (lecture, rotation)
+                        analysee = _analyser_page(vue_lecture, numero, transformation, vue[:2], unite,
+                                                 options_mots={"x_tolerance": 2, "y_tolerance": 2}, tableaux=False)
+                        for ligne in analysee.lignes:
+                            for mot in ligne.mots:
+                                zone = _zone_des_mots([mot])
+                                if zone is None:
+                                    continue
+                                mots.append({
+                                    "page": numero + 1,
+                                    "texte": mot.texte,
+                                    "x0": zone.x0, "y0": zone.y0, "x1": zone.x1, "y1": zone.y1,
+                                    "largeur_page": (vue[2] - vue[0]) * unite,
+                                    "hauteur_page": (vue[3] - vue[1]) * unite,
+                                })
+                finally:
+                    fermer_page_lecture(page, lecture)
         return mots
+    except OrientationsMixtesBrouillon:
+        raise
     except Exception as e:
-        LOGGER.warning("pdfplumber indisponible ou échec extraction bbox: %s — fallback texte", e)
+        LOGGER.warning("pdfplumber indisponible ou échec extraction bbox (%s) — fallback texte", type(e).__name__)
         # Fallback : lecture via extraction existante
         from seamtech_search.fiches.extraction import analyser_pdf, texte_normalise
 
         pages = analyser_pdf(chemin)
+        if any(page.orientations_mixtes or page.orientations_non_verifiees for page in pages):
+            raise OrientationsMixtesBrouillon("PDF à orientations mixtes ou non vérifiées : brouillon automatique refusé.")
         texte = texte_normalise(pages)
         # Pas de bbox, on propose zones vides avec confiance basse
         return [

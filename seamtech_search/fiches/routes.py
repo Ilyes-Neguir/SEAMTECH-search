@@ -28,7 +28,6 @@ from typing import Annotated, Any
 from urllib.parse import quote
 
 from fastapi import File, Form, Header, HTTPException, Query, Request, UploadFile
-from fastapi.responses import StreamingResponse
 from starlette.responses import Response
 
 from seamtech_search.comptes.comptes import (
@@ -57,6 +56,7 @@ from seamtech_search.fiches.extraction import (
     CONFIANCE_CERTAIN,
     CONFIANCE_LUE,
     ExtractionImpossible,
+    OrientationsMixtesBrouillon,
     analyser_pdf,
     texte_normalise,
 )
@@ -75,6 +75,12 @@ from seamtech_search.fiches.televersement_lot import (
     recevoir_fichiers_televersement_lot,
     terminer_session_televersement_lot,
 )
+from seamtech_search.fichiers_securises import (
+    _copie_flux_verifiee,
+    _ouvrir_artefact_confine,
+    _ReponseFichierEpingle,
+    _ReponseFluxFerme,
+)
 from seamtech_search.import_pipeline import staging_root
 from seamtech_search.jobs import create_job, register_job_cancel
 from seamtech_search.redis_store import RedisStore
@@ -88,6 +94,41 @@ from seamtech_search.storage import S3StorageClient, StorageError
 LOGGER = logging.getLogger("seamtech_search.fiches.routes")
 
 TAILLE_PDF_MAX = 20 * 1024 * 1024  # 20 Mo : une fiche technique ne dépasse pas ça
+_TAILLE_MORCEAU_UPLOAD = 1024 * 1024
+
+
+async def _ecrire_pdf_temporaire_borne(fichier: UploadFile, prefixe: str) -> Path:
+    """Copie un upload PDF vers un fichier temporaire, par morceaux bornés.
+
+    La taille est refusée pendant la lecture : un envoi géant ne doit jamais
+    être matérialisé entièrement en mémoire avant le contrôle de 20 Mo.
+    L'appelant possède le fichier retourné et doit le supprimer.
+    """
+    descripteur, chemin_brut = tempfile.mkstemp(suffix=".pdf", prefix=prefixe)
+    chemin = Path(chemin_brut)
+    total = 0
+    signature = bytearray()
+    try:
+        with os.fdopen(descripteur, "wb") as sortie:
+            while morceau := await fichier.read(_TAILLE_MORCEAU_UPLOAD):
+                if len(signature) < 4:
+                    signature.extend(morceau[: 4 - len(signature)])
+                total += len(morceau)
+                if total > TAILLE_PDF_MAX:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"PDF trop gros (plus de {TAILLE_PDF_MAX} octets, maximum {TAILLE_PDF_MAX}).",
+                    )
+                sortie.write(morceau)
+        if bytes(signature) != b"%PDF":
+            raise HTTPException(
+                status_code=422,
+                detail="Le contenu reçu n'est pas un PDF (signature %PDF absente).",
+            )
+    except Exception:
+        chemin.unlink(missing_ok=True)
+        raise
+    return chemin
 
 _SQL_CHAMPS = (
     "SELECT e.champ, e.rang, e.table_cible, e.colonne_cible, e.valeur_brute, e.valeur_normalisee, "
@@ -265,7 +306,7 @@ def publier_nouvelle_version(
             )
             version_publiee = int(cursor.fetchone()[0])
             cursor.execute(_SQL_RETIRED_VERSIONS, (code, version_publiee))
-    LOGGER.info("Gabarit %s : version %d publiée (les versions précédentes restent lisibles).", code, version_publiee)
+    LOGGER.info("Version %d d'un gabarit publiée (les versions précédentes restent lisibles).", version_publiee)
     return {"code": code, "version": version_publiee, "nb_ancres": len(ancres_detection), "nb_regles": len(regles)}
 
 
@@ -280,10 +321,17 @@ def detecter_pdf(index: Any, chemin_pdf: Path) -> dict[str, Any]:
     pages = analyser_pdf(chemin_pdf)
     texte = texte_normalise(pages)
     scores = {gabarit.code: gabarit.score_detection(texte) for gabarit in gabarits}
+    mixte = any(page.orientations_mixtes for page in pages)
+    non_verifiee = any(page.orientations_non_verifiees for page in pages)
+    signal: dict[str, Any] = {"orientations_pdf_mixtes": mixte, "orientations_pdf_non_verifiees": non_verifiee}
+    if mixte:
+        signal.update({"voie": "reprise_complete", "avertissement": "PDF à orientations mixtes : détection incertaine, relecture complète nécessaire."})
+    elif non_verifiee:
+        signal.update({"voie": "reprise_complete", "avertissement": "Orientation du PDF non vérifiée : détection à relire intégralement."})
     try:
         gabarit = detecter_gabarit(texte, gabarits)
     except GabaritInconnu as erreur:
-        return {"detecte": False, "voie": "reprise_complete", "scores": scores, "detail": str(erreur)}
+        return {"detecte": False, "voie": "reprise_complete", "scores": scores, "detail": str(erreur), **signal}
     ancres_trouvees = [ancre for ancre in gabarit.ancres_detection if any(ancre.lower() in page_brute for page_brute in [texte])]
     return {
         "detecte": True,
@@ -293,6 +341,7 @@ def detecter_pdf(index: Any, chemin_pdf: Path) -> dict[str, Any]:
         "ancres_trouvees": ancres_trouvees,
         "scores": scores,
         "pages": len(pages),
+        **signal,
     }
 
 
@@ -360,7 +409,7 @@ def _resoudre_utilisateur(cursor: Any, identifiant: str | None) -> int | None:
     if ligne is not None:
         return int(ligne[0])
     cursor.execute("INSERT INTO utilisateur (identifiant) VALUES (%s) RETURNING id_utilisateur", (identifiant,))
-    LOGGER.info("Utilisateur « %s » créé (rôle lecture par défaut) — première action de validation.", identifiant)
+    LOGGER.info("Utilisateur créé (rôle lecture par défaut) — première action de validation.")
     return int(cursor.fetchone()[0])
 
 
@@ -461,9 +510,8 @@ def _decision_sous_verrou(
         if exiger_revision:
             raise HTTPException(status_code=428, detail=_message_sans_revision(f"Décision « {action} »"))
         LOGGER.warning(
-            "Décision %s sur la fiche %s SANS révision fournie (client ancien explicitement "
-            "autorisé) : elle s'applique à l'état COURANT, que le poste n'a pas forcément relu.",
-            action, code,
+            "Décision SANS révision fournie (client ancien explicitement autorisé) : "
+            "elle s'applique à l'état COURANT, que le poste n'a pas forcément relu.",
         )
         cursor.execute(
             "UPDATE fiche SET statut = %s, revision = revision + 1, updated_at = now() "
@@ -517,10 +565,9 @@ def _avancer_revision(
         if exiger_revision:
             raise HTTPException(status_code=428, detail=_message_sans_revision("Correction"))
         LOGGER.warning(
-            "Correction de la fiche %s SANS révision fournie (client ancien) : écriture "
+            "Correction SANS révision fournie (client ancien) : écriture "
             "inconditionnelle — deux postes simultanés peuvent s'écraser mutuellement. "
             "Conséquence : aucune détection de conflit sur cet enregistrement.",
-            code,
         )
         cursor.execute(
             "UPDATE fiche SET revision = revision + 1, updated_at = now() WHERE id_fiche = %s "
@@ -677,9 +724,8 @@ def corriger_champ_sous_curseur(
         ),
     )
     LOGGER.info(
-        "Champ %s (rang %s) de %s corrigé : %r → %r — propagation canonique %s ; "
-        "conséquence : corrige=TRUE, verrou RG11 armé sur cette fiche.",
-        champ, rang_cible, code, avant, str(valeur), propagation["statut"],
+        "Champ corrigé — propagation canonique %s ; verrou RG11 armé.",
+        propagation["statut"],
     )
     return {
         "code": code, "champ": champ, "rang": rang_cible, "valeur_brute": brute,
@@ -835,9 +881,7 @@ def valider_fiche(
                 )
             _jouter_journal(cursor, id_fiche, id_utilisateur, "valider", statut, "valide", commentaire_final)
             LOGGER.info(
-                "Fiche %s VALIDÉE par %s — conséquence : verrou RG11 (aucune ré-extraction ne l'écrase) "
-                "et texte de recherche pondéré rafraîchi (visible par GET /recherche).%s",
-                code, utilisateur,
+                "Fiche VALIDÉE — verrou RG11 et texte de recherche pondéré rafraîchi.%s",
                 f" {len(divergences)} divergence(s) canonique(s) acceptée(s) explicitement."
                 if divergences else "",
             )
@@ -872,7 +916,7 @@ def rejeter_fiche(
                 exiger_revision=exiger_revision,
             )
             _jouter_journal(cursor, id_fiche, id_utilisateur, "rejeter", statut, "rejete", motif.strip())
-            LOGGER.info("Fiche %s rejetée par %s (motif : %s).", code, utilisateur, motif.strip())
+            LOGGER.info("Fiche rejetée ; motif conservé dans le journal métier.")
             return {"code": code, "statut": "rejete", "revision": nouvelle_revision}
 
 
@@ -918,7 +962,7 @@ def rouvrir_fiche(
             if corrections_effacees:
                 motif_journal = (motif_journal + " ; " if motif_journal else "") + "corrections humaines effacées (verrou RG11 levé explicitement)"
             _jouter_journal(cursor, id_fiche, id_utilisateur, "rouvrir", statut, "a_valider", motif_journal or None)
-            LOGGER.info("Fiche %s rouverte (%s → a_valider) par %s%s — conséquence : ré-extraction possible.", code, statut, utilisateur, " avec effacement des corrections" if corrections_effacees else "")
+            LOGGER.info("Fiche rouverte%s — ré-extraction possible.", " avec effacement des corrections" if corrections_effacees else "")
             return {
                 "code": code, "statut": "a_valider",
                 "corrections_effacees": corrections_effacees, "revision": revision_apres,
@@ -952,7 +996,11 @@ def fichier_validation(index: Any, gabarit: str | None = None, anomalie: str | N
         "EXISTS (SELECT 1 FROM fiche_anomalie a WHERE a.id_fiche = f.id_fiche AND a.statut = 'a_traiter'), "
         # Révision AFFICHÉE de chaque fiche : la validation en lot la renvoie pour
         # que chaque décision porte sur l'état que l'opérateur a sélectionné.
-        "f.revision "
+        "f.revision, "
+        "EXISTS (SELECT 1 FROM fiche_anomalie a WHERE a.id_fiche = f.id_fiche "
+        "AND a.statut = 'a_traiter' AND a.code = 'orientations_pdf_mixtes'), "
+        "EXISTS (SELECT 1 FROM fiche_anomalie a WHERE a.id_fiche = f.id_fiche "
+        "AND a.statut = 'a_traiter' AND a.code = 'orientation_pdf_non_verifiee') "
         "FROM fiche f "
         "LEFT JOIN fiche_champ_extrait c ON c.id_fiche = f.id_fiche "
         "LEFT JOIN gabarit g ON g.id_gabarit = f.id_gabarit "
@@ -976,6 +1024,8 @@ def fichier_validation(index: Any, gabarit: str | None = None, anomalie: str | N
             "confiance_min": float(ligne[9]) if ligne[9] is not None else None,
             "a_anomalies": bool(ligne[10]),
             "revision": int(ligne[11] if ligne[11] is not None else 1),
+            "orientations_pdf_mixtes": bool(ligne[12]),
+            "orientations_pdf_non_verifiees": bool(ligne[13]),
         }
         for ligne in lignes
     ]
@@ -1014,6 +1064,14 @@ def valider_lot(
                 id_fiche, statut, revision_actuelle = int(ligne[0]), str(ligne[1]), int(ligne[2] if ligne[2] is not None else 1)
                 if statut != "a_valider":
                     ignorees.append({"code": code, "raison": f"statut « {statut} » — rouvrez d'abord"})
+                    continue
+                cursor.execute(
+                    "SELECT EXISTS (SELECT 1 FROM fiche_anomalie WHERE id_fiche = %s "
+                    "AND code IN ('orientations_pdf_mixtes', 'orientation_pdf_non_verifiee') "
+                    "AND statut = 'a_traiter')", (id_fiche,),
+                )
+                if cursor.fetchone()[0]:
+                    ignorees.append({"code": code, "raison": "orientations PDF mixtes ou non vérifiées — relecture et décision individuelles requises"})
                     continue
                 # Même cohérence qu'en validation unitaire (investigation
                 # « cohérence inter-parcours ») : une correction qui n'a pas
@@ -1061,9 +1119,8 @@ def valider_lot(
                         })
                         continue
                     LOGGER.warning(
-                        "Validation en lot de la fiche %s SANS révision fournie (client ancien) : "
+                        "Validation en lot SANS révision fournie (client ancien) : "
                         "elle s'applique à l'état COURANT, que le poste n'a pas forcément relu.",
-                        code,
                     )
                 if attendue is None:
                     cursor.execute(
@@ -1098,8 +1155,8 @@ def valider_lot(
                 _jouter_journal(cursor, id_fiche, id_utilisateur, "valider", statut, "valide", commentaire or "validation en lot")
                 validees.append(code)
     LOGGER.info(
-        "Validation en lot : %d validée(s), %d ignorée(s) (utilisateur %s, acquittement=%s) — conséquence : les fiches validées sont verrouillées (RG11).",
-        len(validees), len(ignorees), utilisateur, acquittement_humain,
+        "Validation en lot : %d validée(s), %d ignorée(s) (acquittement=%s) — fiches validées verrouillées (RG11).",
+        len(validees), len(ignorees), acquittement_humain,
     )
     return {"nb_validees": len(validees), "validees": validees, "nb_ignorees": len(ignorees), "ignorees": ignorees}
 
@@ -1157,6 +1214,25 @@ def _path_autorise(path: str | Path, config: Any) -> bool:
         racines = [Path(root).expanduser().resolve() for root in getattr(config, "root_paths", [])]
         racines.append(staging_root(config).expanduser().resolve())
         return any(cible == racine or racine in cible.parents for racine in racines)
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return False
+
+
+def _chemin_lexical_autorise(path: str | Path, config: Any) -> bool:
+    """Autorise une identité de catalogue sans suivre le chemin au préalable.
+
+    La lecture locale doit ensuite utiliser une ouverture confinée sans liens ;
+    cette vérification lexicale permet aussi de retrouver l'objet si le chemin
+    source a été remplacé entre-temps.
+    """
+    try:
+        brut = Path(path).expanduser()
+        if not brut.is_absolute() or ".." in brut.parts:
+            return False
+        cible = Path(os.path.abspath(brut))
+        racines = [Path(os.path.abspath(Path(root).expanduser())) for root in getattr(config, "root_paths", [])]
+        racines.append(Path(os.path.abspath(staging_root(config))))
+        return any(cible != racine and cible.is_relative_to(racine) for racine in racines)
     except (OSError, RuntimeError, TypeError, ValueError):
         return False
 
@@ -1622,15 +1698,15 @@ def enregistrer_routes_fiches(
             if index.is_postgres:
                 with connexion.cursor() as cursor:
                     cursor.execute(
-                        "SELECT id, path, path_key, name, extension, size, parent_path, object_key, is_dir "
-                        "FROM documents WHERE id = %s",
+                        "SELECT id, path, path_key, name, extension, size, parent_path, object_key, is_dir, "
+                        "object_bucket, source_sha256 FROM documents WHERE id = %s",
                         (piece_id,),
                     )
                     row = cursor.fetchone()
             else:
                 row = connexion.execute(
-                    "SELECT id, path, path_key, name, extension, size, parent_path, object_key, is_dir "
-                    "FROM documents WHERE id = ?",
+                    "SELECT id, path, path_key, name, extension, size, parent_path, object_key, is_dir, "
+                    "object_bucket, source_sha256 FROM documents WHERE id = ?",
                     (piece_id,),
                 ).fetchone()
                 row = dict(row) if row is not None else None
@@ -1639,14 +1715,15 @@ def enregistrer_routes_fiches(
         if index.is_postgres:
             row = dict(
                 zip(
-                    ("id", "path", "path_key", "name", "extension", "size", "parent_path", "object_key", "is_dir"),
+                    ("id", "path", "path_key", "name", "extension", "size", "parent_path", "object_key", "is_dir",
+                     "object_bucket", "source_sha256"),
                     row,
                 )
             )
         if bool(row["is_dir"]):
             raise HTTPException(status_code=404, detail="Fichier inconnu.")
         chemin = str(row["path"] or row["path_key"] or "")
-        if not _path_autorise(chemin, config):
+        if not _chemin_lexical_autorise(chemin, config):
             raise HTTPException(status_code=403, detail="Accès à ce fichier interdit.")
         return row
 
@@ -1675,6 +1752,45 @@ def enregistrer_routes_fiches(
         methode = request.method.upper()
         range_header = request.headers.get("range") if methode == "GET" else None
 
+        empreinte = document.get("source_sha256")
+        if empreinte is not None:
+            if not isinstance(empreinte, str) or re.fullmatch(r"[0-9a-f]{64}", empreinte) is None:
+                raise HTTPException(status_code=409, detail="Identité du fichier invalide.")
+            fd_verifie: int | None = None
+            if (storage_client is not None and object_key
+                    and document.get("object_bucket") == storage_client.bucket_name):
+                try:
+                    objet = storage_client.get_object(str(object_key))
+                    corps = objet["Body"]
+                    try:
+                        fd_verifie = _copie_flux_verifiee(corps, empreinte, config.max_file_size_bytes)
+                    finally:
+                        corps.close()
+                except Exception as erreur:
+                    if fd_verifie is not None:
+                        os.close(fd_verifie)
+                        fd_verifie = None
+                    LOGGER.warning("Pièce objet non vérifiable (%s)", type(erreur).__name__)
+            if fd_verifie is None:
+                try:
+                    racines = [Path(root) for root in config.root_paths] + [staging_root(config)]
+                    fd_source = _ouvrir_artefact_confine(chemin, racines)
+                    with os.fdopen(fd_source, "rb") as flux:
+                        fd_verifie = _copie_flux_verifiee(flux, empreinte, config.max_file_size_bytes)
+                except (OSError, ValueError):
+                    raise HTTPException(status_code=404, detail="Fichier conforme non disponible.") from None
+            try:
+                if range_header:
+                    _tranche_octets(range_header, os.fstat(fd_verifie).st_size)
+            except BaseException:
+                os.close(fd_verifie)
+                raise
+            return _ReponseFichierEpingle(fd_verifie, filename=nom, media_type=media_type, headers=headers,
+                                          ignorer_plage_head=True)
+
+        # Compatibilité héritée : en l'absence de SHA initial il n'est pas
+        # possible de revendiquer une identité d'octets. L'accès local reste
+        # toutefois confiné et épinglé contre les substitutions de chemin.
         if storage_client is not None and object_key:
             if methode == "HEAD":
                 try:
@@ -1708,22 +1824,27 @@ def enregistrer_routes_fiches(
                 headers["ETag"] = str(objet["ETag"])
             if objet.get("LastModified"):
                 headers["Last-Modified"] = objet["LastModified"].strftime("%a, %d %b %Y %H:%M:%S GMT")
-            corps = objet["Body"].iter_chunks(chunk_size=1024 * 1024)
-            return StreamingResponse(corps, status_code=206 if objet.get("ContentRange") else 200, headers=headers)
+            corps = objet["Body"]
+
+            def blocs():
+                yield from corps.iter_chunks(chunk_size=1024 * 1024)
+
+            return _ReponseFluxFerme(corps, blocs(), status_code=206 if objet.get("ContentRange") else 200,
+                                     headers=headers)
 
         try:
-            stat = chemin.stat()
-        except OSError as erreur:
-            raise HTTPException(status_code=404, detail="Fichier non disponible.") from erreur
-        taille = stat.st_size
-        headers["Content-Length"] = str(taille)
-        if methode == "HEAD":
-            return Response(status_code=200, headers=headers)
-        debut, fin, statut = _tranche_octets(range_header, taille)
-        if statut == 206:
-            headers["Content-Range"] = f"bytes {debut}-{fin}/{taille}"
-            headers["Content-Length"] = str(fin - debut + 1)
-        return StreamingResponse(_flux_fichier(chemin, debut, fin), status_code=statut, headers=headers)
+            racines = [Path(root) for root in config.root_paths] + [staging_root(config)]
+            fd = _ouvrir_artefact_confine(chemin, racines)
+        except (OSError, ValueError):
+            raise HTTPException(status_code=404, detail="Fichier non disponible.") from None
+        try:
+            if range_header:
+                _tranche_octets(range_header, os.fstat(fd).st_size)
+        except BaseException:
+            os.close(fd)
+            raise
+        return _ReponseFichierEpingle(fd, filename=nom, media_type=media_type, headers=headers,
+                                      ignorer_plage_head=True)
 
     @app.get("/pieces")
     def route_lister_pieces(
@@ -1882,9 +2003,22 @@ def enregistrer_routes_fiches(
             entete_session=entete_session, entete_jeton=entete_jeton,
         )
 
+    @app.get("/imports/dossier/televersements/capacites")
+    def route_capacites_televersement(
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+        entete_utilisateur: Annotated[str | None, Header(alias="X-SEAMTECH-UTILISATEUR")] = None,
+        entete_role: Annotated[str | None, Header(alias="X-SEAMTECH-ROLE")] = None,
+        entete_session: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION")] = None,
+        entete_jeton: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-JETON")] = None,
+    ) -> dict[str, int]:
+        _autoriser_televersement(token, entete_utilisateur, entete_role, entete_session, entete_jeton)
+        return {"creation_idempotente": 1}
+
+    @app.post("/imports/dossier/televersements/v2", status_code=201)
     @app.post("/imports/dossier/televersements", status_code=201)
     def route_creer_televersement(
         corps: dict[str, Any],
+        request: Request,
         token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
         entete_utilisateur: Annotated[str | None, Header(alias="X-SEAMTECH-UTILISATEUR")] = None,
         entete_role: Annotated[str | None, Header(alias="X-SEAMTECH-ROLE")] = None,
@@ -1899,11 +2033,17 @@ def enregistrer_routes_fiches(
         """
         _autoriser_televersement(token, entete_utilisateur, entete_role, entete_session, entete_jeton)
         try:
+            if request.url.path.endswith("/v2"):
+                if corps.get("cle_idempotence") is None:
+                    raise TeleversementLotErreur("Clé d'idempotence obligatoire pour la création v2.")
+            elif corps.get("cle_idempotence") is not None:
+                raise TeleversementLotErreur("Une clé d'idempotence exige la route de création v2.")
             return creer_session_televersement_lot(
                 config,
                 nom_racine=corps.get("nom_racine"),
                 nombre_fichiers=corps.get("nombre_fichiers"),
                 taille_totale_octets=corps.get("taille_totale_octets"),
+                cle_idempotence=corps.get("cle_idempotence"),
             )
         except TeleversementLotErreur as erreur:
             raise _http_televersement(erreur) from erreur
@@ -2106,7 +2246,14 @@ def enregistrer_routes_fiches(
                 raise HTTPException(status_code=422, detail=str(erreur)) from erreur
 
         if not fond:
-            return {"id_lot": id_lot, "statut": "termine", "traitement": "synchrone", "etat": executer_lot(index, id_lot)}
+            try:
+                etat = executer_lot(index, id_lot, config=config)
+            except DepotImpossible as erreur:
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"Lot #{id_lot} non terminé ; consultez son suivi avant reprise. Les fichiers locaux sont conservés.",
+                ) from erreur
+            return {"id_lot": id_lot, "statut": "termine", "traitement": "synchrone", "etat": etat}
 
         job_id = f"lot-{id_lot}"
         redis_store = RedisStore(config=config)
@@ -2138,7 +2285,12 @@ def enregistrer_routes_fiches(
                 job_id,
                 {"id": job_id, "status": "pending", "progress": 0, "stage": "queued", "source_path": racine},
             )
-            redis_store.enqueue_task("imports", {"job_id": job_id, "kind": "lot", "id_lot": id_lot})
+            if not redis_store.enqueue_task("imports", {"job_id": job_id, "kind": "lot", "id_lot": id_lot}):
+                raise HTTPException(
+                    status_code=503,
+                    detail=(f"Lot #{id_lot} : remise en file non confirmée. Consultez son suivi avant toute reprise ; "
+                            "une exécution différée reste possible et les fichiers locaux sont conservés."),
+                )
             LOGGER.info("Lot #%d remis à la file durable (job %s).", id_lot, job_id)
             return {
                 "id_lot": id_lot,
@@ -2151,9 +2303,21 @@ def enregistrer_routes_fiches(
 
         import threading
 
+        from seamtech_search.jobs import terminer_job, update_job
+        from seamtech_search.worker import _process_lot_task
+
+        def executer_local() -> None:
+            try:
+                update_job(index, job_id, status="running", stage="lot")
+                _process_lot_task({"job_id": job_id, "id_lot": id_lot}, config, index, redis_store,
+                                  worker_id=None, heartbeat=None)
+            except Exception as exc:
+                LOGGER.error("Lot local #%d interrompu par une erreur inattendue (%s).", id_lot, type(exc).__name__)
+                terminer_job(index, job_id, status="failed", stage="failed",
+                             failure_reason="Erreur inattendue pendant le traitement local.")
+
         thread = threading.Thread(
-            target=executer_lot,
-            args=(index, id_lot),
+            target=executer_local,
             name=f"lot-{id_lot}",
             daemon=True,
         )
@@ -2217,7 +2381,10 @@ def enregistrer_routes_fiches(
             entete_utilisateur=entete_utilisateur, entete_role=entete_role,
             entete_session=entete_session, entete_jeton=entete_jeton,
         )
-        etat_avant = etat_lot(index, id_lot)
+        try:
+            etat_avant = etat_lot(index, id_lot)
+        except DepotImpossible as erreur:
+            raise HTTPException(status_code=404, detail=str(erreur)) from erreur
         if etat_avant["statut"] in {"termine", "annule"}:
             return {"id_lot": id_lot, "statut": etat_avant["statut"], "annulation": "sans_objet", "etat": etat_avant}
         redis_store = RedisStore(config=config)
@@ -2315,23 +2482,17 @@ def enregistrer_routes_fiches(
         )
         if fichier is None:
             raise HTTPException(status_code=422, detail="Envoyer le PDF en multipart (champ « fichier »).")
-        contenu = await fichier.read()
-        if len(contenu) > TAILLE_PDF_MAX:
-            raise HTTPException(status_code=413, detail=f"PDF trop gros ({len(contenu)} octets, maximum {TAILLE_PDF_MAX}).")
-        if not contenu.startswith(b"%PDF"):
-            raise HTTPException(status_code=422, detail="Le contenu reçu n'est pas un PDF (signature %PDF absente).")
-        descripteur, chemin = tempfile.mkstemp(suffix=".pdf", prefix="detection-")
+        chemin = await _ecrire_pdf_temporaire_borne(fichier, "detection-")
         try:
-            with os.fdopen(descripteur, "wb") as sortie:
-                sortie.write(contenu)
-            return detecter_pdf(index, Path(chemin))
+            return detecter_pdf(index, chemin)
         except ExtractionImpossible as erreur:
-            raise HTTPException(status_code=422, detail=str(erreur)) from erreur
+            LOGGER.warning("Détection refusée : PDF illisible (%s).", type(erreur).__name__)
+            raise HTTPException(status_code=422, detail="Ce PDF est illisible : détection impossible.") from erreur
         finally:
             try:
                 os.unlink(chemin)
             except OSError:
-                LOGGER.warning("Fichier temporaire de detection non supprimé : %s (conséquence : résidu disque).", chemin)
+                LOGGER.warning("Fichier temporaire de détection non supprimé (conséquence : résidu disque).")
 
     @app.post("/fiches/{code}/corriger")
     def route_corriger_champ(
@@ -2510,21 +2671,28 @@ def enregistrer_routes_fiches(
         )
         if fichier is None:
             raise HTTPException(status_code=422, detail="Envoyer le PDF en multipart (champ fichier).")
-        contenu = await fichier.read()
-        if len(contenu) > TAILLE_PDF_MAX:
-            raise HTTPException(status_code=413, detail=f"PDF trop gros ({len(contenu)} octets, max {TAILLE_PDF_MAX}).")
-        if not contenu.startswith(b"%PDF"):
-            raise HTTPException(status_code=422, detail="Le contenu reçu n'est pas un PDF (signature %PDF absente).")
-        descripteur, chemin = tempfile.mkstemp(suffix=".pdf", prefix="brouillon-")
+        chemin = await _ecrire_pdf_temporaire_borne(fichier, "brouillon-")
         try:
-            with os.fdopen(descripteur, "wb") as sortie:
-                sortie.write(contenu)
-            brouillon = generer_brouillon_depuis_pdf(Path(chemin), code_propose=code)
+            brouillon = generer_brouillon_depuis_pdf(chemin, code_propose=code)
             enregistre = enregistrer_brouillon(index, brouillon)
             return {**brouillon, **enregistre}
+        except OrientationsMixtesBrouillon as exc:
+            LOGGER.warning("Brouillon refusé : PDF à orientations mixtes.")
+            raise HTTPException(
+                status_code=422,
+                detail="Ce PDF contient des orientations mixtes : génération automatique du brouillon refusée.",
+            ) from exc
+        except ExtractionImpossible as exc:
+            # PDF illisible = erreur de l'appelant, pas du serveur ; le détail
+            # ne doit pas exposer le chemin temporaire interne.
+            LOGGER.warning("Brouillon refusé, PDF illisible (%s)", type(exc).__name__)
+            raise HTTPException(
+                status_code=422,
+                detail="Ce PDF est illisible : impossible d'en générer un brouillon de gabarit.",
+            ) from exc
         except Exception as exc:
-            LOGGER.exception("Échec génération brouillon depuis PDF: %s", exc)
-            raise HTTPException(status_code=500, detail=f"Échec génération brouillon: {exc}") from exc
+            LOGGER.error("Échec génération brouillon depuis PDF (%s)", type(exc).__name__)
+            raise HTTPException(status_code=500, detail="Échec de la génération du brouillon.") from exc
         finally:
             try:
                 os.unlink(chemin)

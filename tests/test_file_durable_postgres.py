@@ -36,6 +36,7 @@ from seamtech_search.config import AppConfig
 from seamtech_search.indexer import SearchIndex
 from seamtech_search.jobs import create_job
 from seamtech_search.redis_store import RedisStore
+from tests.helpers_postgres_isole import url_base_jetable
 
 RACINE = Path(__file__).resolve().parents[1]
 URL_PG = os.environ.get("SEAMTECH_TEST_DATABASE_URL", "")
@@ -63,7 +64,7 @@ def _creer_base_jetable() -> tuple[str, str]:
             cursor.execute(f'CREATE DATABASE "{nom_base}"')
     finally:
         admin.close()
-    url = URL_PG.rsplit("/", 1)[0] + f"/{nom_base}"
+    url = url_base_jetable(URL_PG, nom_base)
     return nom_base, url
 
 
@@ -81,36 +82,38 @@ def _supprimer_base(nom_base: str) -> None:
 
 
 @pytest.fixture()
-def base_durable() -> Iterator[dict[str, Any]]:
-    """Base PostgreSQL jetable neuve (schéma complet + gabarits) + Redis vidé."""
+def base_durable(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, Any]]:
+    """Base PostgreSQL et serveur Redis dédiés : aucune purge de service externe."""
     if not URL_PG:
         pytest.skip("Set SEAMTECH_TEST_DATABASE_URL to run PostgreSQL integration tests")
     if not URL_REDIS:
-        pytest.skip("Set SEAMTECH_TEST_REDIS_URL to run durable-queue tests")
+        pytest.skip("Set SEAMTECH_TEST_REDIS_URL to enable durable-queue tests")
+    from tests.helpers_redis_isole import serveur_redis_isole
 
-    nom_base, url_base = _creer_base_jetable()
+    # Les helpers de workers utilisés par ces tests écrivent l'URL dans une
+    # configuration lue ensuite par un processus séparé.
+    with serveur_redis_isole(version_minimale=7) as url_redis:
+        import tests.test_worker_process as helpers_worker
+        monkeypatch.setattr(helpers_worker, "REDIS_URL", url_redis)
+        monkeypatch.setitem(globals(), "URL_REDIS", url_redis)
+        # AppConfig.load applique ces variables en priorité sur le JSON.
+        monkeypatch.delenv("SEAMTECH_REDIS_URL", raising=False)
+        monkeypatch.delenv("SEAMTECH_DATABASE_URL", raising=False)
 
-    # Gabarits : sans eux, aucun dossier ne peut être déposé (le dépôt refuse
-    # un dossier sans gabarit actif) et le test mesurerait autre chose.
-    from seamtech_search.fiches.gabarits import initialiser_gabarits
+        nom_base, url_base = _creer_base_jetable()
+        index = SearchIndex(Path("/tmp") / f"unused-durable-{nom_base}.db", url_base)
+        try:
+            from seamtech_search.fiches.gabarits import initialiser_gabarits
 
-    index = SearchIndex(Path(f"/tmp/unused-durable-{nom_base}.db"), url_base)
-    index.initialize()
-    index.run_migrations()
-    initialiser_gabarits(index)
-
-    magasin = RedisStore(redis_url=URL_REDIS)
-    assert magasin.ping(), "Redis injoignable : SEAMTECH_TEST_REDIS_URL est-il correct ?"
-    client = magasin._get_client()
-    for motif in ("seamtech:*",):
-        for cle in client.scan_iter(match=motif, count=200):
-            client.delete(cle)
-
-    try:
-        yield {"index": index, "url": url_base, "nom": nom_base, "redis": magasin}
-    finally:
-        index.close()
-        _supprimer_base(nom_base)
+            index.initialize()
+            index.run_migrations()
+            initialiser_gabarits(index)
+            magasin = RedisStore(redis_url=url_redis)
+            assert magasin.ping()
+            yield {"index": index, "url": url_base, "nom": nom_base, "redis": magasin}
+        finally:
+            index.close()
+            _supprimer_base(nom_base)
 
 
 def _archive_lot(tmp_path: Path) -> Path:
@@ -351,6 +354,8 @@ def test_lot_interrompu_reprend_sans_refaire_les_dossiers_traites(
     charge = {"job_id": f"lot-{id_lot}", "kind": "lot", "id_lot": id_lot, "source_path": str(racine)}
     assert magasin.enqueue_task("imports", charge)
     assert magasin.dequeue_task("imports", timeout=2) is not None
+    # Comme la boucle du worker : prise du claim Redis avant traitement.
+    assert magasin.revendiquer_tache("imports", f"lot-{id_lot}", "worker-reprise")
 
     from seamtech_search.worker import process_import_task
 
@@ -483,3 +488,58 @@ def test_redemarrage_de_redis_conserve_la_tache_acceptee(tmp_path: Path) -> None
         if serveur.poll() is None:
             serveur.kill()
             serveur.wait(timeout=10)
+
+
+def test_lot_echec_transitoire_reprogramme_puis_reussit(
+    base_durable: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from seamtech_search.fiches import depot
+    from seamtech_search.jobs import get_job
+    from seamtech_search.worker import worker_loop
+
+    index = base_durable['index']
+    magasin = base_durable['redis']
+    config = AppConfig(root_paths=[tmp_path], min_free_bytes=0, redis_url=URL_REDIS, max_task_attempts=2)
+    create_job(index, 'lot-123456', str(tmp_path), durability='durable')
+    assert magasin.enqueue_task('imports', {'job_id': 'lot-123456', 'kind': 'lot', 'id_lot': 123456})
+    appels = []
+    def executer(_index, _id_lot, **_kwargs):
+        appels.append(1)
+        if len(appels) == 1:
+            raise depot.DepotImpossible('panne temporaire simulée')
+        return {'nb_echecs': 0}
+    monkeypatch.setattr(depot, 'executer_lot', executer)
+    worker_loop(config, index, magasin, worker_id='worker-lot-a', run_once=True)
+    job = get_job(index, 'lot-123456')
+    assert job['status'] == 'pending'
+    client = magasin._get_client()
+    for element in client.zrange('seamtech:retry:imports', 0, -1):
+        client.zadd('seamtech:retry:imports', {element: 0})
+    worker_loop(config, index, magasin, worker_id='worker-lot-b', run_once=True)
+    job = get_job(index, 'lot-123456')
+    assert job['status'] == 'completed'
+    assert len(appels) == 2
+
+
+def test_reconciliation_nefface_pas_claim_du_nouveau_worker(
+    base_durable: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from seamtech_search import worker
+    from seamtech_search.jobs import get_job, marquer_job_claim
+    index, magasin = base_durable['index'], base_durable['redis']
+    create_job(index, 'job-reprise-concurrente', str(tmp_path), durability='durable')
+    assert marquer_job_claim(index, 'job-reprise-concurrente', 'ancien')
+    assert magasin.enqueue_task('imports', {'job_id': 'job-reprise-concurrente', 'source_path': str(tmp_path)})
+    assert magasin.dequeue_task('imports', timeout=1)
+    original = worker._decisions_reprise
+    def reprise_puis_prise(*args, **kwargs):
+        decisions = original(*args, **kwargs)
+        livraison = magasin.dequeue_task('imports', timeout=1)
+        assert livraison
+        assert magasin.revendiquer_tache('imports', 'job-reprise-concurrente', 'nouveau', livraison=livraison)
+        assert marquer_job_claim(index, 'job-reprise-concurrente', 'nouveau')
+        return decisions
+    monkeypatch.setattr(worker, '_decisions_reprise', reprise_puis_prise)
+    worker.reconcilier_file(index, magasin)
+    job = get_job(index, 'job-reprise-concurrente')
+    assert job['status'] == 'running' and job['claimed_by'] == 'nouveau'

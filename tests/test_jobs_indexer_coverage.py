@@ -242,9 +242,9 @@ def test_extractors_and_crawler(tmp_path: Path):
     from seamtech_search.crawler import crawl
     from seamtech_search.extractors import ExtractionResult, extract_file
 
-    cfg = make_cfg(tmp_path)
     # Create some files
     src = tmp_path / "src"
+    cfg = make_cfg(tmp_path, root_paths=[src])
     src.mkdir()
     (src / "a.txt").write_text("hello")
     (src / "b.pdf").write_bytes(b"%PDF-1.4 fake")
@@ -299,8 +299,11 @@ def test_cli_and_main_and_extraction_worker(tmp_path: Path):
         pass
 
     # Test extraction_worker main via mock
+    import io
     from unittest.mock import patch
-    with patch("sys.argv", ["extraction_worker", str(tmp_path / "a.txt"), "1000", "1000000", "{}"]):
+    requete = json.dumps({"path": str(tmp_path / "a.txt"), "max_chars": 1000,
+                          "max_file_size_bytes": 1000000, "options": {}})
+    with patch("sys.stdin", io.StringIO(requete)):
         (tmp_path / "a.txt").write_text("test content")
         # Capture stdout
         import io

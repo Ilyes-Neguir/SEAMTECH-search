@@ -77,14 +77,34 @@ def run_index(config_path: str, rebuild: bool = False) -> dict[str, float | int]
     index = _build_index(config)
     try:
         with index.scan_lock():
-            with index.scan_snapshot():
-                return _run_index(index, config, rebuild)
+            # Le registre du scan est créé avant la transaction métier : en
+            # cas de rollback, son échec peut être enregistré indépendamment.
+            index.initialize()
+            index.run_migrations()
+            scan_id = index.start_scan()
+            try:
+                with index.scan_transaction():
+                    return _run_index(index, config, rebuild, scan_id=scan_id, initialise=True)
+            except BaseException as erreur:
+                comptes = getattr(erreur, "_seamtech_scan_counts", (0, 0))
+                try:
+                    index.finish_scan(scan_id, "failed", comptes[0], comptes[1], 0,
+                                      type(erreur).__name__ + ": " + str(erreur))
+                except Exception as erreur_suivi:
+                    LOGGER.exception("Impossible d'enregistrer l'échec après rollback du scan")
+                    if hasattr(erreur, "add_note"):
+                        erreur.add_note(f"Suivi après rollback impossible : {erreur_suivi!r}")
+                raise
     finally:
         index.close()
 
 
-def _run_index(index: SearchIndex, config: AppConfig, rebuild: bool = False) -> dict[str, float | int]:
-    index.initialize(rebuild=rebuild)
+def _run_index(index: SearchIndex, config: AppConfig, rebuild: bool = False, *, scan_id: int | None = None, initialise: bool = False) -> dict[str, float | int]:
+    if not initialise or rebuild:
+        index.initialize(rebuild=rebuild)
+        # Une recréation retire aussi les migrations et déclencheurs. Leur
+        # réinstallation fait partie de la même transaction que le scan.
+        index.run_migrations()
     if rebuild:
         # Dire NOIR SUR BLANC ce qui a été reconstruit : la table peut avoir été
         # conservée si des pièces jointes de fiches la référencent (E-40).
@@ -95,13 +115,14 @@ def _run_index(index: SearchIndex, config: AppConfig, rebuild: bool = False) -> 
     scanned = 0
     changed = 0
     started_at = time.perf_counter()
-    scan_id = index.start_scan()
+    if scan_id is None:
+        scan_id = index.start_scan()
     # Un rebuild ré-extrait TOUT : le manifeste (taille, date de modification,
     # version d'extracteur) ne doit pas servir à sauter des fichiers — sinon
     # « rebuild » ne reconstruirait rien. C'est ce qui rend le mode « en place »
     # équivalent au mode « recréation » du point de vue du contenu.
-    existing_metadata = {} if rebuild else index.stored_manifest()
     try:
+        existing_metadata = {} if rebuild else index.stored_manifest()
         for document in crawl(config, existing_metadata):
             scanned += 1
             seen.add(document.path_key)
@@ -112,19 +133,24 @@ def _run_index(index: SearchIndex, config: AppConfig, rebuild: bool = False) -> 
             if scanned % 500 == 0:
                 elapsed = max(time.perf_counter() - started_at, 0.001)
                 LOGGER.info("Scanned %s items, updated %s items, %.1f items/sec", scanned, changed, scanned / elapsed)
-    except Exception as exc:
-        index.finish_scan(scan_id, "failed", scanned, changed, 0, type(exc).__name__ + ": " + str(exc))
+        if batch:
+            changed += index.upsert_documents(batch)
+        removed = index.remove_missing(seen, scan_complete=True)
+        index.finish_scan(scan_id, "completed", scanned, changed, removed)
+    except BaseException as exc:
+        exc._seamtech_scan_counts = (scanned, changed)  # type: ignore[attr-defined]
+        try:
+            index.finish_scan(scan_id, "failed", scanned, changed, 0, type(exc).__name__ + ": " + str(exc))
+        except Exception as erreur_suivi:
+            LOGGER.exception("Impossible d'enregistrer l'échec du scan")
+            if hasattr(exc, "add_note"):
+                exc.add_note(f"Suivi du scan impossible : {erreur_suivi!r}")
         if isinstance(exc, ScanIncompleteError):
-            LOGGER.exception("Indexing aborted because the scan was incomplete; existing index was preserved")
+            LOGGER.exception("Indexing aborted because the scan was incomplete; rollback requested")
         else:
-            LOGGER.exception("Indexing failed; existing index was preserved")
+            LOGGER.exception("Indexing failed; rollback requested")
         raise
 
-    if batch:
-        changed += index.upsert_documents(batch)
-
-    removed = index.remove_missing(seen, scan_complete=True)
-    index.finish_scan(scan_id, "completed", scanned, changed, removed)
     elapsed = max(time.perf_counter() - started_at, 0.001)
     LOGGER.info(
         "Indexing complete. scanned=%s updated=%s removed=%s elapsed_seconds=%.2f items_per_second=%.1f",

@@ -1,5 +1,5 @@
 import { expect, test, type Browser, type BrowserContext, type Page } from "@playwright/test"
-import { ADMIN, APPROBATEUR_2, LECTURE, UTILISATEUR, signIn, type Identifiants } from "./helpers"
+import { ADMIN, APPROBATEUR_2, LECTURE, UTILISATEUR, UTILISATEUR_PARCOURS, signIn, type Identifiants } from "./helpers"
 import { signInWith } from "./helpers"
 
 /**
@@ -75,7 +75,7 @@ test.describe("Lot 6 — parcours 3 clics et cohérence globale", () => {
   }) => {
     const contextes: BrowserContext[] = []
     try {
-      const utilisateur = await ouvrirPoste(browser, contextes, UTILISATEUR)
+      const utilisateur = await ouvrirPoste(browser, contextes, UTILISATEUR_PARCOURS)
       const piece = await piecePrincipale(utilisateur, CODE_REFERENCE)
       await nettoyerDemandesTelechargement(utilisateur, piece.id)
       // Une autorisation encore valide fausserait le parcours de demande.
@@ -204,16 +204,15 @@ test.describe("Lot 6 — parcours 3 clics et cohérence globale", () => {
       const corps = (await reponse.json()) as {
         extractions: { id_extraction: number; code_fiche: string | null }[]
       }
-      // Candidate LOT5-POP-2 : sa population (5) contient la vraie fiche
-      // 7792-SO, seule source rattachée à une fiche métier — donc la seule
-      // rendue comme lien (jamais de lien mort).
-      const candidate = corps.extractions.find((e) => (e.code_fiche ?? "") === "LOT5-POP-2")
-      expect(candidate, "extraction LOT5-POP-2 dans la base live").toBeTruthy()
+      // Jeu dédié : sa population contient la fiche BIS-7792 ; elle reste
+      // liée même si le scénario de correction Lot 3b modifie 7792-SO.
+      const candidate = corps.extractions.find((e) => (e.code_fiche ?? "") === "LOT5-ISO-2")
+      expect(candidate, "extraction LOT5-ISO-2 dans la base live").toBeTruthy()
 
       await page.goto(`/extractions`)
-      await page.getByTestId("recherche-extractions").fill("LOT5-POP-2")
+      await page.getByTestId("recherche-extractions").fill("LOT5-ISO-2")
       const ligne = page.getByTestId("file-extractions").getByTestId("extraction-item").first()
-      await expect(ligne).toContainText("LOT5-POP-2", { timeout: 30000 })
+      await expect(ligne).toContainText("LOT5-ISO-2", { timeout: 30000 })
       await ligne.click()
       const lienConfiance = page.getByTestId("lien-confiance")
       await expect(lienConfiance).toBeVisible({ timeout: 30000 })
@@ -225,8 +224,8 @@ test.describe("Lot 6 — parcours 3 clics et cohérence globale", () => {
       await expect(resultat).toBeVisible({ timeout: 30000 })
       // Une fiche source de la population ouvre la fiche métier.
       await resultat.getByText(/Fiches sources de la population/).click()
-      await resultat.getByRole("link", { name: new RegExp(CODE_REFERENCE) }).first().click()
-      await expect(page.getByTestId("fiche-code")).toHaveText(CODE_REFERENCE, { timeout: 30000 })
+      await resultat.getByRole("link", { name: /BIS-7792/ }).first().click()
+      await expect(page.getByTestId("fiche-code")).toHaveText("BIS-7792", { timeout: 30000 })
     } finally {
       for (const contexte of contextes) await contexte.close()
     }

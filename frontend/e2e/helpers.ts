@@ -1,4 +1,25 @@
 import { expect, type APIRequestContext, type Page } from "@playwright/test"
+import path from "path"
+
+/** Dépose un fichier ou dossier local par le protocole Chrome DevTools.
+ * Le navigateur crée de vrais FileSystemEntry ; ce n'est pas un geste OS manuel.
+ */
+export async function deposerCheminParCDP(page: Page, chemin: string, testId: string): Promise<void> {
+  if (!path.isAbsolute(chemin)) throw new Error("Le chemin de test doit être absolu")
+  const zone = await page.getByTestId(testId).boundingBox()
+  if (!zone) throw new Error("Zone de dépôt invisible")
+  const session = await page.context().newCDPSession(page)
+  try {
+    const data = { items: [], files: [chemin], dragOperationsMask: 1 }
+    for (const type of ["dragEnter", "dragOver", "drop"] as const) {
+      await session.send("Input.dispatchDragEvent", {
+        type, x: zone.x + zone.width / 2, y: zone.y + zone.height / 2, data,
+      })
+    }
+  } finally {
+    await session.detach()
+  }
+}
 
 /**
  * Shared sign-in helper for the e2e suite.
@@ -32,6 +53,12 @@ export const APPROBATEUR_2 = {
 export const UTILISATEUR = {
   identifiant: "e2e-utilisateur",
   motDePasse: process.env.SEAMTECH_E2E_UTILISATEUR_PASSWORD ?? "e2e-utilisateur-password",
+}
+// Compte réservé au parcours d'approbation : aucune autorisation héritée
+// des scénarios qui utilisent le compte utilisateur générique.
+export const UTILISATEUR_PARCOURS = {
+  identifiant: "e2e-utilisateur-parcours",
+  motDePasse: process.env.SEAMTECH_E2E_PARCOURS_PASSWORD ?? "e2e-parcours-password",
 }
 export const LECTURE = {
   identifiant: "e2e-lecture",

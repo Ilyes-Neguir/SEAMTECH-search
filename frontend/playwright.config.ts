@@ -21,7 +21,7 @@ import { randomUUID } from "crypto"
 // gabarits, trois dossiers d'exemple) et le backend spawné ci-dessous démarre
 // dessus — le parcours validation est alors éprouvé de bout en bout en
 // conditions réelles (couche métier PostgreSQL, §17.1), et répétable (base
-// jetable recréée à chaque exécution, les anciennes e2e_% sont purgées).
+// jetable recréée à chaque exécution, sans purge des bases préexistantes).
 // Sans cette variable, la suite tourne sur le SQLite de backend.config.json.
 //
 // SEAMTECH_E2E_RUN_ID identifie LE RUN : le processus principal l'instancie
@@ -39,7 +39,11 @@ if (process.env.SEAMTECH_E2E_DATABASE_URL) {
     stdio: ["pipe", "pipe", "inherit"], // stderr visible : décisions du seed traçées
     env: process.env,
   })
-  baseLive = (JSON.parse(sortie.trim().split("\n").pop()!) as { url: string }).url
+  const { nom } = JSON.parse(sortie.trim().split("\n").pop()!) as { nom: string }
+  if (!/^e2e_[0-9a-f]{32}$/.test(nom)) throw new Error("Nom de base e2e invalide")
+  const url = new URL(process.env.SEAMTECH_E2E_DATABASE_URL!)
+  url.pathname = `/${nom}`
+  baseLive = url.toString()
 }
 
 export default defineConfig({
@@ -67,7 +71,12 @@ export default defineConfig({
   projects: [
     {
       name: "chromium",
-      use: { ...devices["Desktop Chrome"] },
+      use: {
+        ...devices["Desktop Chrome"],
+        ...(process.env.SEAMTECH_E2E_CHROMIUM_EXECUTABLE
+          ? { launchOptions: { executablePath: process.env.SEAMTECH_E2E_CHROMIUM_EXECUTABLE } }
+          : {}),
+      },
     },
   ],
   webServer: [

@@ -94,6 +94,7 @@ def test_indexer_postgres_extra(tmp_path: Path):
     idx6 = SearchIndex(tmp_path / "unused6.db", database_url="postgresql://user:pass@localhost/db")
     mock_conn6 = MagicMock()
     mock_cursor6 = MagicMock()
+    mock_cursor6.fetchone.return_value = (None,)
     mock_conn6.cursor.return_value.__enter__.return_value = mock_cursor6
     mock_conn6.cursor.return_value.__exit__.return_value = None
     with patch.object(idx6, "connect") as mc:
@@ -195,3 +196,53 @@ def test_indexer_postgres_extra(tmp_path: Path):
         mc.return_value.__enter__.return_value = mock_conn_latest
         mc.return_value.__exit__.return_value = None
         assert idx_pg_latest.latest_scan() is None
+
+
+def test_pool_degrade_ne_masque_pas_erreur_originale(tmp_path):
+    import pytest
+
+    from seamtech_search.indexer import SearchIndex
+
+    class Connexion:
+        def rollback(self):
+            raise OSError('rollback indisponible')
+    class Pool:
+        def getconn(self):
+            return Connexion()
+        def putconn(self, _connexion, **_kwargs):
+            raise OSError('pool indisponible')
+    index = SearchIndex(tmp_path / 'unused.db', database_url='postgresql://postgres@127.0.0.1:1/db')
+    index._pool = Pool()
+    with pytest.raises(ValueError, match='erreur initiale') as capture:
+        with index.connect():
+            raise ValueError('erreur initiale')
+    notes = ' '.join(getattr(capture.value, '__notes__', []))
+    assert 'rollback indisponible' in notes and 'pool indisponible' in notes
+
+
+def test_echec_commit_transaction_scan_annule_et_reste_visible(tmp_path):
+    import pytest
+
+    from seamtech_search.indexer import SearchIndex
+
+    class Connexion:
+        annulee = False
+        def commit(self):
+            raise OSError('commit indisponible')
+        def rollback(self):
+            self.annulee = True
+    class Pool:
+        def __init__(self):
+            self.connexion = Connexion()
+            self.retournee = False
+        def getconn(self):
+            return self.connexion
+        def putconn(self, _connexion, **_kwargs):
+            self.retournee = True
+    index = SearchIndex(tmp_path / 'unused.db', database_url='postgresql://postgres@127.0.0.1:1/db')
+    pool = Pool()
+    index._pool = pool
+    with pytest.raises(OSError, match='commit indisponible'):
+        with index.scan_transaction():
+            pass
+    assert pool.connexion.annulee and pool.retournee

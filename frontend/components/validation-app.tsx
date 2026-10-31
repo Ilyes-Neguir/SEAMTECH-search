@@ -87,10 +87,10 @@ function BandeauDoublon({ liens }: { liens: LienDoublon[] }) {
       {liens.map((lien) => (
         <div key={lien.id_lien}>
           <span className="font-semibold">{libelleDoublon(lien)}</span>{" "}
-          <span className="text-muted-foreground">({detailDoublon(lien)})</span>
+          <span>({detailDoublon(lien)})</span>
         </div>
       ))}
-      <div className="text-muted-foreground">À arbitrer avant validation — aucune fusion automatique.</div>
+      <div>À arbitrer avant validation — aucune fusion automatique.</div>
     </div>
   )
 }
@@ -445,7 +445,14 @@ function ValidationAppInterne() {
 
   async function validerFiche() {
     const entree = file.find((ligne) => ligne.code === codeActif)
-    if (entree?.a_anomalies && !window.confirm(`Cette fiche comporte des champs signalés en anomalie. Valider ${codeActif} malgré ces alertes ?`)) return
+    if (entree?.a_anomalies) {
+      const avertissement = entree.orientations_pdf_mixtes
+        ? `Le PDF de ${codeActif} contient des orientations mixtes. L'extraction peut être incorrecte : relisez intégralement le PDF et la fiche. Valider malgré cette alerte ?`
+        : entree.orientations_pdf_non_verifiees
+          ? `L'orientation non vérifiée du PDF de ${codeActif} rend l'extraction incertaine : relisez intégralement le PDF et la fiche. Valider malgré cette alerte ?`
+          : `Cette fiche comporte des champs signalés en anomalie. Valider ${codeActif} malgré ces alertes ?`
+      if (!window.confirm(avertissement)) return
+    }
     await action("valider")
   }
 
@@ -521,7 +528,7 @@ function ValidationAppInterne() {
     }
     window.addEventListener("keydown", clavier)
     return () => window.removeEventListener("keydown", clavier)
-  }, [file, codeActif, motifRejet, occupe, champs, aideRaccourcis])
+  }, [file, codeActif, motifRejet, occupe, champs, aideRaccourcis, revisionFiche])
 
   const tempsTries = [...tempsFiches].sort((a, b) => a - b)
   const medianeMs = tempsTries.length === 0 ? 0 : tempsTries.length % 2
@@ -711,6 +718,8 @@ function ValidationAppInterne() {
                     <span className="block truncate text-muted-foreground">{entree.titre}</span>
                     <span className="sr-only" data-testid="confiance-file">{entree.confiance_min ?? "sans confiance"}</span>
                     {entree.a_anomalies && <span className="badge-attention mt-1 inline-block rounded px-1.5 py-0.5 text-[10px]">Anomalie à vérifier</span>}
+                    {entree.orientations_pdf_mixtes && <span className="badge-attention mt-1 block rounded px-1.5 py-0.5 text-xs">PDF à orientations mixtes : relecture complète nécessaire</span>}
+                    {entree.orientations_pdf_non_verifiees && <span className="badge-attention mt-1 block rounded px-1.5 py-0.5 text-xs">Orientation PDF non vérifiée : relecture complète nécessaire</span>}
                     <span className="mt-1 flex flex-wrap gap-1" aria-label="Comptes par palier">
                       {entree.paliers.certain > 0 && <PalierBadge palier="certain" />}
                       {entree.paliers.lu > 0 && <PalierBadge palier="lu" />}
@@ -766,7 +775,7 @@ function ValidationAppInterne() {
                   type="button"
                   onClick={() => void validerFiche()}
                   disabled={occupe}
-                  className="flex items-center gap-1 rounded bg-emerald-600 px-3 py-1 text-xs font-semibold text-white disabled:opacity-40"
+                  className="flex items-center gap-1 rounded bg-emerald-700 px-3 py-1 text-xs font-semibold text-white disabled:opacity-40"
                   data-testid="bouton-valider"
                   title="Raccourci : V"
                 >
@@ -882,6 +891,7 @@ function ChampsFiche({
                 className="w-full rounded border border-transparent bg-input px-1.5 py-0.5 focus:border-primary"
                 data-testid={`champ-${champ.champ}`}
                 data-zone={champ.zone ? "true" : "false"}
+                aria-label={`Valeur du champ ${champ.champ}${champ.rang != null ? ` (rang ${champ.rang})` : ""}`}
               />
               {modifie && (
                 <button

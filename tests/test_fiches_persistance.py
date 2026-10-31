@@ -25,6 +25,7 @@ from seamtech_search.fiches.persistance import (
     verifier_non_regression,
 )
 from seamtech_search.indexer import SearchIndex
+from tests.helpers_postgres_isole import url_base_jetable
 
 RACINE = Path(__file__).resolve().parent.parent
 PDF_7792 = RACINE / "sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf"
@@ -50,8 +51,7 @@ def base_fiches() -> Iterator[dict[str, Any]]:
             cursor.execute(f'CREATE DATABASE "{nom_base}"')
     finally:
         administrateur.close()
-    partie = DATABASE_URL.rsplit("/", 1)
-    url_base = f"{partie[0]}/{nom_base}"
+    url_base = url_base_jetable(DATABASE_URL, nom_base)
     index = SearchIndex(Path(f"/tmp/unused-fiches-{nom_base}.db"), url_base)
     index.initialize()
     index.run_migrations()

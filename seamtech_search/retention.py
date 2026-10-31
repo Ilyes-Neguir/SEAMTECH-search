@@ -2,8 +2,7 @@
 
 Provides:
 - Disk space check guard (throws InsufficientStorageError -> HTTP 507)
-- Pruning of old reports (default 90 days)
-- Pruning of staged uploads (default 7 days)
+- Report and staged-upload pruning suspended until safe identity verification
 - Pruning of audit log entries (default 365 days)
 - Orchestration via run_retention_cleanup
 """
@@ -11,9 +10,7 @@ Provides:
 from __future__ import annotations
 
 import logging
-import os
 import shutil
-import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -54,47 +51,12 @@ def ensure_free_space(path: str | Path, min_free_bytes: int) -> None:
 
 
 def prune_reports(base_dir: str | Path, max_age_days: int, *, proteges: set[Path] | None = None) -> int:
-    """Prune generated PDF and Word report files older than max_age_days.
+    """Conserver les rapports jusqu'à une rétention à identité vérifiable.
 
-    ``proteges`` : depuis l'audit du 2026-10-08, les rapports font partie de
-    l'inventaire de reprise (constat A07) : supprimer le rapport d'un import non
-    préservé ferait échouer la reprise sur un fichier manquant. Un rapport
-    encore référencé par un travail non terminé est donc conservé, quel que soit
-    son âge.
+    Une racine ou un sous-arbre substitué peut désigner des originaux et une
+    preuve passée ne couvre pas un rapport modifié depuis sa publication.
     """
-    reports_dir = Path(base_dir) / "reports"
-    if not reports_dir.exists() or not reports_dir.is_dir():
-        return 0
-
-    cutoff_seconds = time.time() - (max_age_days * 86400)
-    pruned_count = 0
-
-    for root, dirs, files in os.walk(reports_dir, topdown=False):
-        for file_name in files:
-            file_path = Path(root) / file_name
-            try:
-                if file_path.stat().st_mtime < cutoff_seconds:
-                    if _est_protege(file_path, proteges):
-                        logger.warning(
-                            "Rétention : rapport %s conservé — référencé par un import non préservé.",
-                            file_path,
-                        )
-                        continue
-                    file_path.unlink()
-                    pruned_count += 1
-            except OSError as exc:
-                logger.warning("Failed to delete old report file %s: %s", file_path, exc)
-        # Remove directory if empty
-        if root != str(reports_dir):
-            try:
-                if not os.listdir(root):
-                    os.rmdir(root)
-            except OSError as exc:
-                # Best-effort cleanup of an empty directory; harmless if it
-                # stays, but not silently.
-                logger.debug("Could not remove empty report directory %s: %s", root, exc)
-
-    return pruned_count
+    return 0
 
 
 def _est_protege(chemin: Path, proteges: set[Path] | None) -> bool:
@@ -124,48 +86,12 @@ def _est_protege(chemin: Path, proteges: set[Path] | None) -> bool:
 def prune_staged_uploads(
     staging_dir: str | Path, max_age_days: int, *, proteges: set[Path] | None = None
 ) -> int:
-    """Prune temporary staged upload directories older than max_age_days.
+    """Conserver les dépôts : l'âge ne prouve pas que leurs octets sont sauvegardés.
 
-    ``proteges`` : chemins encore nécessaires (travail actif, ou copie locale
-    qui est la seule copie d'un import non préservé). Défaut ``None`` = aucun
-    chemin protégé — c'est la rétention HISTORIQUE, par âge seul ; les appelants
-    qui ont un registre de jobs DOIVENT fournir la liste
-    (:func:`run_retention_cleanup` le fait). L'élagage ne se fonde jamais sur le
-    seul âge quand un travail dépend du dossier.
+    Le registre peut omettre un dépôt, et une preuve ancienne ne couvre pas
+    les ajouts ultérieurs. Rétention suspendue jusqu'à un protocole sûr.
     """
-    staging_path = Path(staging_dir)
-    if not staging_path.exists() or not staging_path.is_dir():
-        return 0
-
-    cutoff_seconds = time.time() - (max_age_days * 86400)
-    pruned_count = 0
-
-    for child in staging_path.iterdir():
-        # Never delete quarantine even if it lives inside staging (defensive).
-        # Les lots téléversés sont une racine de travail durable : les fiches
-        # déposées référencent leurs fichiers par chemin, ils ne sont donc
-        # jamais élagués sur le seul critère d'âge.
-        if child.name in {"quarantine", "lots-televerses"}:
-            continue
-        try:
-            if child.stat().st_mtime >= cutoff_seconds:
-                continue
-            if _est_protege(child, proteges):
-                logger.warning(
-                    "Rétention : %s conservé malgré son âge — travail non terminé ou copie "
-                    "locale d'un import non préservé (la supprimer détruirait la seule copie).",
-                    child,
-                )
-                continue
-            if child.is_dir():
-                shutil.rmtree(child, ignore_errors=True)
-            else:
-                child.unlink()
-            pruned_count += 1
-        except OSError as exc:
-            logger.warning("Failed to remove old staged upload %s: %s", child, exc)
-
-    return pruned_count
+    return 0
 
 
 def prune_audit_logs(index: SearchIndex, max_age_days: int) -> int:

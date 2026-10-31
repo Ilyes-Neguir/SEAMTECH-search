@@ -17,6 +17,8 @@ config.json
 *.tsbuildinfo
 e2e-data/
 package-lock.json
+!tests/fixtures/s3rver/package-lock.json
+tests/fixtures/s3rver/node_modules/
 .coverage
 coverage.json
 perf-mesures.json

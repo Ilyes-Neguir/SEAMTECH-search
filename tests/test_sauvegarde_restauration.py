@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import time
 from pathlib import Path
@@ -33,6 +34,7 @@ from seamtech_search.sauvegarde import (
     sauver,
     verifier,
 )
+from tests.helpers_postgres_isole import url_base_jetable
 from tests.test_sauvegarde_unites import S3EnMemoire
 
 pytestmark = [pytest.mark.postgres, pytest.mark.sauvegarde]
@@ -48,14 +50,25 @@ N_FICHES_50K = 50_000
 SEUIL_RESTAURATION_50K_S = 600.0
 
 
-def _detruire_base(url_base: str) -> None:
-    """DROP DATABASE WITH FORCE — la destruction que la restauration doit réparer."""
-    nom = url_base.rsplit("/", 1)[1]
+def _detruire_base(url_base: str, nom_attendu: str) -> None:
+    """Détruit uniquement la base créée explicitement par la fixture du test."""
+    from psycopg2 import sql
+    from psycopg2.extensions import parse_dsn
+
+    if not re.fullmatch(r"(?:recherche_test|restaur50k)_[0-9a-f]{10}", nom_attendu):
+        raise ValueError("Nom de base de test invalide")
+    cible = parse_dsn(url_base)
+    admin = parse_dsn(URL_PG)
+    if cible.pop("dbname", None) != nom_attendu or admin.get("dbname") == nom_attendu:
+        raise ValueError("La cible ne correspond pas à la base de test créée")
+    admin.pop("dbname", None)
+    if cible != admin:
+        raise ValueError("La cible n'utilise pas le serveur de test configuré")
     administrateur = psycopg2.connect(URL_PG)
     administrateur.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
     try:
         with administrateur.cursor() as cursor:
-            cursor.execute(f'DROP DATABASE IF EXISTS "{nom}" WITH (FORCE)')
+            cursor.execute(sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(nom_attendu)))
     finally:
         administrateur.close()
 
@@ -136,7 +149,7 @@ def test_aller_retour_complet_base_detruite(
     # QUE le bucket.
     for fichier in dossiers_backups.glob("*.dump*"):
         fichier.unlink()
-    _detruire_base(url_base)
+    _detruire_base(url_base, nom_base)
     with pytest.raises(Exception):
         _meilleur_code_recherche(url_base, "régatier")
 
@@ -236,7 +249,7 @@ def test_restauration_50000_fiches_duree_publiee(tmp_path: Path, monkeypatch: py
             cursor.execute(f'CREATE DATABASE "{nom_base}"')
     finally:
         administrateur.close()
-    url_base = URL_PG.rsplit("/", 1)[0] + f"/{nom_base}"
+    url_base = url_base_jetable(URL_PG, nom_base)
 
     try:
         # Insertion 50k lignes peut dépasser le statement_timeout par défaut (5 s)
@@ -266,7 +279,7 @@ def test_restauration_50000_fiches_duree_publiee(tmp_path: Path, monkeypatch: py
 
         for fichier in (tmp_path / "backups").glob("*.dump*"):
             fichier.unlink()
-        _detruire_base(url_base)
+        _detruire_base(url_base, nom_base)
 
         debut = time.perf_counter()
         resume = restaurer(url_base, manifeste, client_s3=client)
@@ -295,7 +308,7 @@ def test_restauration_50000_fiches_duree_publiee(tmp_path: Path, monkeypatch: py
             f"restauration 50k : {duree:.0f} s ≥ seuil environnement {SEUIL_RESTAURATION_50K_S:.0f} s"
         )
     finally:
-        _detruire_base(url_base)
+        _detruire_base(url_base, nom_base)
 
 
 # ---------------------------------------------------------------------------
@@ -303,7 +316,8 @@ def test_restauration_50000_fiches_duree_publiee(tmp_path: Path, monkeypatch: py
 # ---------------------------------------------------------------------------
 
 
-def test_cli_sans_s3_aller_retour(base_recherche: dict, tmp_path: Path) -> None:
+@pytest.mark.parametrize("url_par_env", [False, True])
+def test_cli_sans_s3_aller_retour(base_recherche: dict, tmp_path: Path, url_par_env: bool) -> None:
     """Les commandes exactes du RUNBOOK_RESTAURATION.md (mode local, sans S3)
     s'exécutent telles quelles : sauver → destruction → restaurer → vérifier."""
     import subprocess
@@ -313,29 +327,39 @@ def test_cli_sans_s3_aller_retour(base_recherche: dict, tmp_path: Path) -> None:
     archive = _creer_archive_fixture(tmp_path)
     dossiers = tmp_path / "backups"
 
+    environnement = os.environ.copy()
+    if url_par_env:
+        environnement["SEAMTECH_DATABASE_URL"] = url_base
+        environnement["SEAMTECH_RESTORE_DATABASE_URL"] = url_base
+
     def cli(*arguments: str) -> subprocess.CompletedProcess:
         return subprocess.run(
             [sys.executable, "-m", "seamtech_search.sauvegarde", *arguments],
             capture_output=True,
             text=True,
             cwd=str(Path(__file__).resolve().parents[1]),
+            env=environnement,
         )
 
     # 1) SAUVEGARDE locale (sans S3 — le mode repli documenté).
-    resultat = cli("sauver", "--base-url", url_base, "--archive", str(archive), "--dossier", str(dossiers), "--sans-s3")
-    assert resultat.returncode == 0, resultat.stderr
+    source = () if url_par_env else ("--base-url", url_base)
+    resultat = cli("sauver", *source, "--archive", str(archive), "--dossier", str(dossiers), "--sans-s3")
+    assert resultat.returncode == 2, resultat.stderr  # copie partielle : pas de faux succès global
     sortie = json.loads(resultat.stdout.strip().splitlines()[-1])
+    assert sortie["protection_globale_prouvee"] is False
+    assert sortie["retention_automatique_autorisee"] is False
     manifeste_local = sortie["manifeste"]
 
     # 2) DESTRUCTION.
-    _detruire_base(url_base)
+    _detruire_base(url_base, base_recherche["nom"])
 
     # 3) RESTAURATION depuis le manifeste local (dump à côté du manifeste).
-    resultat = cli("restaurer", "--manifeste", manifeste_local, "--base-cible", url_base)
+    cible = () if url_par_env else ("--base-cible", url_base)
+    resultat = cli("restaurer", "--manifeste", manifeste_local, *cible)
     assert resultat.returncode == 0, resultat.stderr
 
     # 4) VÉRIFICATION : comptes, schéma, archive.
-    resultat = cli("verifier", "--manifeste", manifeste_local, "--base-url", url_base, "--archive", str(archive))
+    resultat = cli("verifier", "--manifeste", manifeste_local, *source, "--archive", str(archive))
     assert resultat.returncode == 0, resultat.stderr
     assert json.loads(resultat.stdout.strip().splitlines()[-1])["ok"]
 
@@ -377,7 +401,7 @@ def test_aller_retour_via_client_s3_reel(base_recherche: dict, tmp_path: Path, m
     # Destruction : copies locales ET base supprimées — seul le bucket survit.
     for fichier in dossiers.glob("*.dump*"):
         fichier.unlink()
-    _detruire_base(url_base)
+    _detruire_base(url_base, base_recherche["nom"])
 
     # Restauration depuis le bucket seul.
     restaurer(url_base, manifeste, client_s3=client)

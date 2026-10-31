@@ -27,6 +27,8 @@ from typing import Any
 
 # Version du schéma métier — incrémentée à chaque nouvelle migration.
 VERSION_SCHEMA_METIER = "031_accessoires"
+# Dernière migration de l'index commun ; distincte du schéma strictement métier.
+VERSION_SCHEMA_APPLICATION = "032_identite_octets_documents"
 
 # Marqueur injecté par le code au moment de la migration (constat 1 de revue) :
 # le nom de la configuration de recherche effective — 'seamtech_unaccent' ou
@@ -2271,6 +2273,29 @@ MIGRATIONS_METIER: tuple[tuple[str, str], ...] = (
     ("030_evaluations_confiance", SQL_030_EVALUATIONS_CONFIANCE),
     ("031_accessoires", SQL_031_ACCESSOIRES),
 )
+
+
+def schema_identite_octets_valide_pg(cursor: Any) -> bool:  # noqa: ANN401 - curseur psycopg2 réel
+    """Vérifie la colonne et un déclencheur actif sur la table visible.
+
+    Ce contrôle détecte l'absence ou la désactivation ; il ne constitue pas
+    une authentification cryptographique de la définition SQL du schéma.
+    """
+    cursor.execute("""
+        SELECT EXISTS (
+            SELECT 1 FROM pg_catalog.pg_attribute
+            WHERE attrelid = 'documents'::regclass AND attname = 'source_sha256'
+              AND NOT attisdropped
+        ) AND EXISTS (
+            SELECT 1 FROM pg_catalog.pg_trigger t
+            JOIN pg_catalog.pg_proc p ON p.oid = t.tgfoid
+            WHERE t.tgrelid = 'documents'::regclass
+              AND t.tgname = 'documents_invalider_source_sha256'
+              AND NOT t.tgisinternal AND t.tgenabled IN ('O', 'A')
+              AND p.proname = 'seamtech_invalider_source_sha256'
+        )
+    """)
+    return bool(cursor.fetchone()[0])
 
 
 def diagnostic_metier(cursor: Any) -> dict[str, Any]:  # noqa: ANN401 - curseur psycopg2 réel

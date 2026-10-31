@@ -321,10 +321,7 @@ def enregistrer_routes_auth(app: Any, index: Any, config: Any, verifier_auth: An
                 status_code=422,
                 detail="« mot_de_passe » requis (jamais journalisé, jamais renvoyé).",
             )
-        LOGGER.info(
-            "Création du compte « %s » demandée par « %s ».",
-            corps.get("identifiant"), administrateur["identifiant"],
-        )
+        LOGGER.info("Création de compte demandée par un administrateur.")
         resultat = creer_utilisateur(
             index,
             str(corps.get("identifiant") or ""),

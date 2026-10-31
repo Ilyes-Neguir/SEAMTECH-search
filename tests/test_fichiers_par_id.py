@@ -23,6 +23,7 @@ from seamtech_search.fiches.modeles import ChampExtrait, FicheExtraite
 from seamtech_search.indexer import SearchIndex
 from seamtech_search.models import Document
 from seamtech_search.storage import S3StorageClient, StorageError
+from tests.helpers_postgres_isole import url_base_jetable
 
 TOKEN = "test-service-token"
 S3_LAST_MODIFIED = datetime(2026, 10, 1, 12, 0, tzinfo=UTC)
@@ -389,6 +390,9 @@ class _FauxCorpsS3:
         for debut in range(0, len(self.contenu), chunk_size):
             yield self.contenu[debut : debut + chunk_size]
 
+    def close(self):
+        pass
+
 
 class _FauxS3:
     def __init__(self, contenu: bytes):
@@ -445,7 +449,7 @@ def test_postgres_catalogue_apercu_head_et_range_par_id(tmp_path: Path, monkeypa
     finally:
         admin.close()
 
-    database_url_test = database_url.rsplit("/", 1)[0] + f"/{name}"
+    database_url_test = url_base_jetable(database_url, name)
     root = tmp_path / "archive"
     local_pdf = root / "CLIENT" / "voile-local.pdf"
     remote_pdf = root / "CLIENT" / "voile-s3.pdf"

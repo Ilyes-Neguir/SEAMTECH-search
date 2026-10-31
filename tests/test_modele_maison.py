@@ -38,6 +38,7 @@ from seamtech_search.ml.corpus import (
     regles_type_voile,
 )
 from seamtech_search.ml.encodeur import DIMENSION_EMBEDDING, EncodeurDeterministe, ModeleAbsent
+from tests.helpers_postgres_isole import url_base_jetable
 
 RACINE = Path(__file__).resolve().parents[1]
 VERITE_7792 = RACINE / "docs/verite_terrain/7792-SO_ffab.json"
@@ -150,7 +151,7 @@ def base_ml() -> Iterator[dict[str, Any]]:
             cursor.execute(f'CREATE DATABASE "{nom_base}"')
     finally:
         admin.close()
-    url_base = URL_PG.rsplit("/", 1)[0] + f"/{nom_base}"
+    url_base = url_base_jetable(URL_PG, nom_base)
     index = SearchIndex(Path(f"/tmp/unused-ml-{nom_base}.db"), url_base)
     index.initialize()
     index.run_migrations()

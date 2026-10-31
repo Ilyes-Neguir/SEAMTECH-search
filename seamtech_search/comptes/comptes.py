@@ -137,7 +137,7 @@ def creer_utilisateur(
                 (identifiant, nom, role, empreinte_mot_de_passe(mot_de_passe), doit_changer_mot_de_passe),
             )
             id_utilisateur = int(cursor.fetchone()[0])
-    LOGGER.info("Compte « %s » créé (rôle %s).", identifiant, role)
+    LOGGER.info("Compte créé (rôle %s).", role)
     return {
         "id_utilisateur": id_utilisateur,
         "identifiant": identifiant,
@@ -233,8 +233,7 @@ def changer_role_utilisateur(
                 "(sessions déjà révoquées en base)."
             )
     LOGGER.info(
-        "Rôle du compte « %s » : %s -> %s, %d session(s) révoquée(s).",
-        identifiant,
+        "Rôle du compte : %s -> %s, %d session(s) révoquée(s).",
         ancien_role,
         role,
         revoquees,
@@ -282,7 +281,7 @@ def desactiver_utilisateur(
             LOGGER.warning("Redis injoignable pendant la révocation post-désactivation (base déjà révoquée).")
     # Pas de compte de secours désactivable : ce serait le seul moyen de se
     # verrouiller définitivement dehors (il n'a même pas de ligne en base).
-    LOGGER.info("Compte « %s » désactivé, %d session(s) révoquée(s).", identifiant, revoquees)
+    LOGGER.info("Compte désactivé, %d session(s) révoquée(s).", revoquees)
     return {"identifiant": identifiant, "actif": False, "sessions_revoquees": revoquees}
 
 
@@ -316,7 +315,7 @@ def reinitialiser_mot_de_passe(
             registre.revoquer_utilisateur(id_utilisateur)
         except SessionsRedisIndisponible:
             LOGGER.warning("Redis injoignable pendant la révocation post-réinitialisation (base déjà révoquée).")
-    LOGGER.info("Mot de passe de « %s » réinitialisé (changement forcé).", identifiant)
+    LOGGER.info("Mot de passe réinitialisé (changement forcé).")
     return {"identifiant": identifiant, "doit_changer_mot_de_passe": True}
 
 
@@ -432,12 +431,12 @@ def verifier_identifiants(
             ligne = cursor.fetchone()
             if ligne is None or not bool(ligne[3]) or not verifier_mot_de_passe(mot_de_passe, ligne[4]):
                 _noter_tentative(index, identifiant, adresse)
-                LOGGER.warning("Connexion refusée pour « %s » (échec journalisé dans audit_log).", identifiant)
+                LOGGER.warning("Connexion refusée (échec journalisé dans audit_log).")
                 raise HTTPException(status_code=401, detail="Identifiant ou mot de passe incorrect.")
             id_utilisateur = int(ligne[0])
             cursor.execute("UPDATE utilisateur SET derniere_connexion = now() WHERE id_utilisateur = %s", (id_utilisateur,))
     _noter_connexion(index, identifiant, str(ligne[2]), adresse)
-    LOGGER.info("Connexion de « %s » (rôle %s).", identifiant, ligne[2])
+    LOGGER.info("Connexion acceptée (rôle %s).", ligne[2])
     return {
         "id_utilisateur": id_utilisateur,
         "identifiant": identifiant,
@@ -676,7 +675,7 @@ def changer_mot_de_passe(
             registre.revoquer_utilisateur(int(id_utilisateur))
         except SessionsRedisIndisponible:
             LOGGER.warning("Redis injoignable pendant la révocation post-changement (base déjà révoquée).")
-    LOGGER.info("Mot de passe changé par « %s » (%d session(s) révoquée(s)).", ligne[0], revoquees)
+    LOGGER.info("Mot de passe changé (%d session(s) révoquée(s)).", revoquees)
     return {"identifiant": str(ligne[0]), "doit_changer_mot_de_passe": False, "sessions_revoquees": revoquees}
 
 

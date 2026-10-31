@@ -1,24 +1,14 @@
-import { type NextRequest, NextResponse } from "next/server"
-import { backendBase, backendHeaders, requireRolesServer } from "@/lib/backend"
+import { type NextRequest } from "next/server"
+import { proxyMultipartBorne, requireRolesServer } from "@/lib/backend"
 import { ROLE_ADMIN } from "@/lib/roles"
 
 export const dynamic = "force-dynamic"
 
+// 20 Mio de PDF côté backend + marge pour l'encadrement multipart.
+const MAX_ENVOI_MULTIPART = 21 * 1024 * 1024
+
 export async function POST(req: NextRequest) {
   const denied = await requireRolesServer(ROLE_ADMIN)
   if (denied) return denied
-  const base = backendBase()
-  if (!base) return NextResponse.json({ detail: "Backend non configuré" }, { status: 503 })
-  try {
-    const form = await req.formData()
-    const res = await fetch(`${base}/gabarits/brouillon/from-pdf`, {
-      method: "POST",
-      headers: await backendHeaders(),
-      body: form,
-    })
-    const json = await res.json()
-    return NextResponse.json(json, { status: res.status })
-  } catch (e) {
-    return NextResponse.json({ detail: `Backend injoignable: ${e}` }, { status: 502 })
-  }
+  return proxyMultipartBorne(req, "/gabarits/brouillon/from-pdf", MAX_ENVOI_MULTIPART)
 }

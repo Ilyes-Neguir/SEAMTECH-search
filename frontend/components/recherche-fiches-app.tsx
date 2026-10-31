@@ -622,6 +622,7 @@ export function RechercheFichesApp({ assistantActif = true }: { assistantActif?:
             onChange={(e) => changerTri(e.target.value)}
             className="rounded border border-border bg-background px-2 py-2 text-xs"
             data-testid="recherche-tri"
+            aria-label="Trier les résultats"
           >
             {TRIS.map((t) => (
               <option key={t.valeur} value={t.valeur}>
@@ -787,6 +788,7 @@ export function RechercheFichesApp({ assistantActif = true }: { assistantActif?:
               onChange={(e) => changerCoteExploration(e.target.value)}
               className="mb-2 w-full rounded border border-border bg-background px-2 py-1.5 text-xs"
               data-testid="dimension-cote"
+              aria-label="Cote à explorer (facette dimension)"
             >
               {COTES_LISTE.map((c) => (
                 <option key={c.cle} value={c.cle}>

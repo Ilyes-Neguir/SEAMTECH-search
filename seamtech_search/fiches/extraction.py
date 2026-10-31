@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 import re
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -28,6 +29,7 @@ from seamtech_search.fiches import normalisation as norm
 from seamtech_search.fiches.anomalies import evaluer_anomalies
 from seamtech_search.fiches.gabarits import GabaritDef, GabaritInconnu, detecter_gabarit
 from seamtech_search.fiches.modeles import (
+    Anomalie,
     ChampExtrait,
     Cotes,
     FicheExtraite,
@@ -68,6 +70,14 @@ class ExtractionImpossible(RuntimeError):
     """Le PDF ne peut pas être lu (fichier absent, illisible, vide)."""
 
 
+class OrientationsMixtesBrouillon(ExtractionImpossible):
+    """Le brouillon automatique serait incertain ; aucune zone ne doit être créée."""
+
+
+class DetectionMixteIndeterminee(ExtractionImpossible):
+    """Aucun gabarit détecté et des orientations mixtes empêchent de conclure."""
+
+
 # ---------------------------------------------------------------------------
 # Analyse du PDF : mots, lignes, tableaux
 # ---------------------------------------------------------------------------
@@ -82,6 +92,7 @@ class Mot:
     haut: float  # « top » pdfplumber
     bas: float  # « bottom » pdfplumber
     page: int
+    zone_affichee: tuple[float, float, float, float] | None = None
 
 
 @dataclass
@@ -99,6 +110,8 @@ class PageAnalysee:
     numero: int  # index 0-based
     lignes: list[Ligne] = field(default_factory=list)
     tableaux: list[list[list[str | None]]] = field(default_factory=list)
+    orientations_mixtes: bool = False
+    orientations_non_verifiees: bool = False
 
 
 @dataclass(frozen=True)
@@ -121,8 +134,47 @@ def analyser_pdf(chemin: Path) -> list[PageAnalysee]:
     try:
         with pdfplumber.open(str(chemin)) as pdf:
             pages: list[PageAnalysee] = []
+            from seamtech_search.pdf_orientation import (
+                boite_vue,
+                fermer_page_lecture,
+                lectures_mixtes_verifiees,
+                orientation_non_verifiee,
+                orientations_visibles,
+                page_de_lecture,
+                unite_vue,
+            )
+
             for numero, page in enumerate(pdf.pages):
-                pages.append(_analyser_page(page, numero))
+                mixte, compatible, _exploitable = orientations_visibles(page)
+                lecture, rotation = page_de_lecture(page)
+                try:
+                    origine, unite = boite_vue(page)[:2], unite_vue(page)
+                    with lectures_mixtes_verifiees(page) if mixte or not compatible else nullcontext(None) as lectures:
+                        incertaine = orientation_non_verifiee(page, rotation, lectures)
+                        if lectures is None:
+                            analysee = _analyser_page(lecture, numero, rotation, origine, unite)
+                        else:
+                            analysee = PageAnalysee(numero=numero)
+                            for vue, transformation in lectures:
+                                groupe = _analyser_page(vue, numero, transformation, origine, unite)
+                                analysee.lignes.extend(groupe.lignes)
+                                analysee.tableaux.extend(
+                                    tableau for tableau in groupe.tableaux
+                                    if any(cellule and cellule.strip() for rangee in tableau for cellule in rangee)
+                                )
+                            # Chaque groupe utilise son propre repère de lecture ;
+                            # leur ordre global est celui des zones affichées.
+                            analysee.lignes.sort(key=lambda ligne: (
+                                min(((mot.zone_affichee or (mot.x0, mot.x1, mot.haut, mot.bas))[2]
+                                     for mot in ligne.mots), default=0),
+                                min(((mot.zone_affichee or (mot.x0, mot.x1, mot.haut, mot.bas))[0]
+                                     for mot in ligne.mots), default=0),
+                            ))
+                    analysee.orientations_mixtes = mixte
+                    analysee.orientations_non_verifiees = incertaine
+                    pages.append(analysee)
+                finally:
+                    fermer_page_lecture(page, lecture)
     except ExtractionImpossible:
         raise
     except Exception as erreur:  # pdfplumber lève des erreurs variées selon le PDF
@@ -132,11 +184,42 @@ def analyser_pdf(chemin: Path) -> list[PageAnalysee]:
     return pages
 
 
-def _analyser_page(page: object, numero: int) -> PageAnalysee:
+def _corriger_lignes_quasi_horizontales(page: object) -> None:
+    """Corrige l'arrondi machine des traits horizontaux pour pdfplumber.
+
+    Une rotation compensée peut donner à un trait horizontal une hauteur
+    d'environ 1e-13 point. pdfplumber le classe alors vertical par comparaison
+    exacte et perd le tableau. La tolérance de 1e-7 point ne redresse pas les
+    lignes visiblement inclinées ; seules les arêtes de type ligne sont visées.
+    Les coordonnées des mots, utilisées pour les zones affichées, ne changent pas.
+    """
+    tolerance = 1e-7
+    for edge in page.edges:
+        if (edge.get("object_type") == "line" and edge.get("orientation") == "v"
+                and abs(edge["bottom"] - edge["top"]) <= tolerance
+                and edge["x1"] - edge["x0"] > tolerance):
+            edge["orientation"] = "h"
+            edge["bottom"] = edge["top"]
+            edge["height"] = 0.0
+
+
+def _analyser_page(
+    page: object, numero: int, rotation: object = None, origine_vue: tuple[float, float] = (0.0, 0.0),
+    unite_vue: float = 1.0, *, options_mots: dict[str, float] | None = None, tableaux: bool = True,
+) -> PageAnalysee:
     analysee = PageAnalysee(numero=numero)
-    mots_bruts = sorted(page.extract_words(), key=lambda mot: (mot["top"], mot["x0"]))
+    mots_bruts = sorted(page.extract_words(**(options_mots or {})), key=lambda mot: (mot["top"], mot["x0"]))
     courante = Ligne(page=numero)
     for brut in mots_bruts:
+        boite = (brut["x0"], brut["x1"], brut["top"], brut["bottom"])
+        if rotation is not None:
+            boite = rotation.boite(*boite)
+        if rotation is not None or origine_vue != (0.0, 0.0) or unite_vue != 1.0:
+            dx, dy = origine_vue
+            boite_affichee = ((boite[0] - dx) * unite_vue, (boite[1] - dx) * unite_vue,
+                              (boite[2] - dy) * unite_vue, (boite[3] - dy) * unite_vue)
+        else:
+            boite_affichee = None
         mot = Mot(
             texte=brut["text"],
             normalise=normaliser_terme(brut["text"]),
@@ -145,6 +228,7 @@ def _analyser_page(page: object, numero: int) -> PageAnalysee:
             haut=brut["top"],
             bas=brut["bottom"],
             page=numero,
+            zone_affichee=boite_affichee,
         )
         if courante.mots and mot.haut - courante.mots[-1].haut > TOLERANCE_LIGNE_PT:
             analysee.lignes.append(courante)
@@ -158,7 +242,9 @@ def _analyser_page(page: object, numero: int) -> PageAnalysee:
     # (top, x0) de pdfplumber n'est pas l'ordre de lecture — on re-trie.
     for ligne in analysee.lignes:
         ligne.mots.sort(key=lambda mot: mot.x0)
-    analysee.tableaux = page.extract_tables() or []
+    if tableaux:
+        _corriger_lignes_quasi_horizontales(page)
+        analysee.tableaux = page.extract_tables() or []
     return analysee
 
 
@@ -242,11 +328,12 @@ def _mots_valeur(
 def _zone_des_mots(mots: list[Mot]) -> Zone | None:
     if not mots:
         return None
+    boites = [mot.zone_affichee or (mot.x0, mot.x1, mot.haut, mot.bas) for mot in mots]
     return Zone(
-        x0=min(mot.x0 for mot in mots),
-        x1=max(mot.x1 for mot in mots),
-        y0=min(mot.haut for mot in mots),
-        y1=max(mot.bas for mot in mots),
+        x0=min(boite[0] for boite in boites),
+        x1=max(boite[1] for boite in boites),
+        y0=min(boite[2] for boite in boites),
+        y1=max(boite[3] for boite in boites),
         page=mots[0].page,
     )
 
@@ -2864,7 +2951,7 @@ def _executer_regle(fiche: FicheExtraite, regle, pages: list[PageAnalysee]) -> N
             # inventé (RG6).
             _executer_regle_traitement(fiche, regle, "", 0, [], pages=pages)
         else:
-            LOGGER.debug("Champ non lu : %s (ancres %s) — absent du rapport, à relire.", cible, regle.ancres)
+            LOGGER.debug("Champ non lu — absent du rapport, à relire.")
         return
     _construire_et_ranger(fiche, regle, brut.strip(), numero_page, mots_valeur, borne_naturelle, pages)
 
@@ -2910,7 +2997,7 @@ def _construire_et_ranger(
             fiche.champs.append(champ)
             fonction = TRAITEMENTS.get(traitement)
             if fonction is None:
-                LOGGER.warning("Traitement inconnu « %s » (cote %s).", traitement, cible)
+                LOGGER.warning("Traitement inconnu pour une cote : champ à relire.")
                 return
             contexte = {
                 "ancre": normaliser_terme(regle.ancres[0]),
@@ -2924,7 +3011,7 @@ def _construire_et_ranger(
             # L'ancre a été trouvée mais la cellule n'est pas une cote
             # (en-tête de colonne relu, « ~ »…) : rien n'est lu, aucune trace
             # fantôme à confiance dégradée n'est émise (RG6).
-            LOGGER.debug("Cote non convertible : %s (lu « %s ») — absente du rapport.", cible, brut)
+            LOGGER.debug("Cote non convertible — absente du rapport.")
             return
         fiche.champs.append(champ)
         _ranger_cote(fiche, cible, normalise, champ)
@@ -2933,7 +3020,7 @@ def _construire_et_ranger(
     if traitement is not None:
         fonction = TRAITEMENTS.get(traitement)
         if fonction is None:
-            LOGGER.warning("Traitement inconnu « %s » (champ %s) : valeur conservée en tête de fiche.", traitement, cible)
+            LOGGER.warning("Traitement inconnu : valeur conservée en tête de fiche.")
             return
         contexte = {
             "ancre": normaliser_terme(regle.ancres[0]),
@@ -3048,11 +3135,25 @@ def _extraire_pages(
         consommees.update(regle.ancres)
         try:
             _executer_regle(fiche, regle, pages)
-        except Exception:
-            LOGGER.exception("Échec de la règle %s — champ ignoré, à relire (conséquence : champ absent).", regle.cible)
+        except Exception as erreur:
+            LOGGER.error("Échec de règle (%s) — champ ignoré, à relire (conséquence : champ absent).", type(erreur).__name__)
     _collecter_libres(fiche, pages, consommees, vocabulaire_libres or {ancre for g in (gabarits or [gabarit]) for ancre in g.ancres_detection} | {ancre for r in gabarit.champs for ancre in r.ancres})
     fiche.anomalies = evaluer_anomalies(fiche)
+    _signaler_orientations_mixtes(fiche, pages)
     return fiche
+
+
+def _signaler_orientations_mixtes(fiche: FicheExtraite, pages: list[PageAnalysee]) -> None:
+    if any(page.orientations_mixtes for page in pages):
+        fiche.anomalies.append(Anomalie(
+            code="orientations_pdf_mixtes", gravite="forte",
+            message="Le PDF contient des orientations de texte multiples ; relire intégralement la fiche et le PDF.",
+        ))
+    if any(page.orientations_non_verifiees for page in pages):
+        fiche.anomalies.append(Anomalie(
+            code="orientation_pdf_non_verifiee", gravite="forte",
+            message="L'orientation de certains caractères n'a pas pu être vérifiée ; relire intégralement le PDF.",
+        ))
 
 
 def extraire_fiche(
@@ -3098,6 +3199,8 @@ def analyser_candidat_fiche(
         return None
     score, _indice, gabarit = max(scores, key=lambda item: (item[0], -item[1]))
     if score <= 0:
+        if any(page.orientations_mixtes or page.orientations_non_verifiees for page in pages):
+            raise DetectionMixteIndeterminee("Orientation PDF incertaine : détection non concluante.")
         return None
     fiche = _extraire_pages(pages, chemin, gabarit, gabarits, vocabulaire_libres)
     return CandidatFiche(gabarit=gabarit, score_detection=score, fiche=fiche)
@@ -3113,10 +3216,8 @@ def extraire_avec_filet(chemin: Path, gabarits: list[GabaritDef], vocabulaire_li
     try:
         return extraire_fiche(chemin, gabarits=gabarits, vocabulaire_libres=vocabulaire_libres)
     except GabaritInconnu as erreur:
-        LOGGER.warning("%s (conséquence : fiche conservée en mesures libres, voie « reprise complète » §10.3).", erreur)
+        LOGGER.warning("Gabarit inconnu : fiche conservée en mesures libres, voie « reprise complète » §10.3.")
         pages = analyser_pdf(chemin)
-        from seamtech_search.fiches.modeles import Anomalie
-
         fiche = FicheExtraite(fichier_pdf=str(chemin))
         vocabulaire = vocabulaire_libres
         if vocabulaire is None:
@@ -3125,4 +3226,5 @@ def extraire_avec_filet(chemin: Path, gabarits: list[GabaritDef], vocabulaire_li
             vocabulaire |= {ancre for gabarit in gabarits for regle in gabarit.champs for ancre in regle.ancres}
         _collecter_libres(fiche, pages, set(), vocabulaire)
         fiche.anomalies.append(Anomalie(code="gabarit_inconnu", gravite="forte", message=str(erreur)))
+        _signaler_orientations_mixtes(fiche, pages)
         return fiche

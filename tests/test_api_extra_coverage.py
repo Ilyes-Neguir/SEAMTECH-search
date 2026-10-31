@@ -131,12 +131,14 @@ def test_imports_create_and_poll(tmp_path: Path):
 
     # cancel
     r5 = client.post(f"/imports/{job_id}/cancel")
-    # Could be 200 or 404 if job already done
-    assert r5.status_code in (200, 404)
+    # L'annulation active réussit ; un travail déjà clos répond 409, sans mentir.
+    assert r5.status_code in (200, 409)
+    if r5.status_code == 200:
+        assert r5.json()["status"] == "cancelled"
 
     # cancel missing
     r6 = client.post("/imports/notfound/cancel")
-    assert r6.status_code in (200, 404)
+    assert r6.status_code == 404
 
 
 def test_imports_patch_and_retry(tmp_path: Path):

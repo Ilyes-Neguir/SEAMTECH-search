@@ -29,6 +29,7 @@ from seamtech_search.securite_requetes import (
     resoudre_acteur_audit,
     resoudre_acteur_requete,
 )
+from tests.helpers_postgres_isole import url_base_jetable
 
 JETON_SERVICE = "jeton-service-lot0b"
 
@@ -262,7 +263,7 @@ def test_lot0b_postgres_audit_append_only_et_gardes(tmp_path: Path) -> None:
     finally:
         admin.close()
 
-    url_base = url_admin.rsplit("/", 1)[0] + f"/{nom_base}"
+    url_base = url_base_jetable(url_admin, nom_base)
     racine = tmp_path / "archive"
     racine.mkdir()
     index = SearchIndex(tmp_path / "inutilise.db", url_base)
@@ -288,7 +289,7 @@ def test_lot0b_postgres_audit_append_only_et_gardes(tmp_path: Path) -> None:
                     "FROM audit_logs ORDER BY id_audit"
                 )
                 lignes = curseur.fetchall()
-        assert versions[-8:] == [
+        assert versions[-9:] == [
             "024_sessions_redis",
             "025_audit_logs",
             "026_boat_models_aliases",
@@ -297,6 +298,7 @@ def test_lot0b_postgres_audit_append_only_et_gardes(tmp_path: Path) -> None:
             "029_extraction_liaison_corrections",
             "030_evaluations_confiance",
             "031_accessoires",
+            "032_identite_octets_documents",
         ]
         assert len(lignes) == 1
         assert lignes[0][0] == "connexion_refusee"

@@ -78,7 +78,6 @@ function CategorieFiche({ detail }: { detail: FicheDetail }) {
             ({LIBELLES_SOURCE_CATEGORIE[detail.categorie_source] ?? detail.categorie_source})
           </span>
         )}
-      </dd>
       {peutReclasser && (
         <div className="mt-1 flex items-center gap-1">
           <select
@@ -107,6 +106,7 @@ function CategorieFiche({ detail }: { detail: FicheDetail }) {
           {retour}
         </p>
       )}
+      </dd>
     </div>
   )
 }
@@ -206,7 +206,7 @@ export function FicheApp({ code }: { code: string }) {
 
   return (
     <div className="grid h-[calc(100vh-3.5rem)] min-h-0 grid-cols-[minmax(20rem,0.9fr)_minmax(0,1.1fr)]" data-testid="fiche-app">
-      <section className="min-h-0 overflow-auto">
+      <section className="min-h-0 overflow-auto" tabIndex={0} aria-label="Détails de la fiche">
         <header className="border-b border-border p-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>

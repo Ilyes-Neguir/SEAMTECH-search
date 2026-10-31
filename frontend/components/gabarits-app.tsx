@@ -160,7 +160,7 @@ export function GabaritsApp() {
       <section className="rounded border p-4">
         <h2 className="font-semibold">Créer brouillon depuis PDF variante (§10.2)</h2>
         <div className="mt-2 flex items-center gap-2">
-          <input type="file" accept="application/pdf" onChange={onFileChange} data-testid="input-pdf" />
+          <input type="file" accept="application/pdf" onChange={onFileChange} data-testid="input-pdf" aria-label="Choisir le PDF d’une variante inconnue" />
           <button className="rounded bg-primary px-3 py-1 text-xs text-primary-foreground" onClick={onUpload} data-testid="btn-generer">
             Générer brouillon
           </button>

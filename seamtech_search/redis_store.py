@@ -67,6 +67,104 @@ return 0
 #: Libérer SEULEMENT sa propre revendication. Un worker dont le verrou a expiré
 #: et dont la tâche a été reprise ne doit pas effacer la revendication du
 #: nouveau propriétaire (sinon un troisième worker croirait la place libre).
+_SCRIPT_RAFRAICHIR = """
+local brut = redis.call('GET', KEYS[1])
+if not brut then return 0 end
+local ok, claim = pcall(cjson.decode, brut)
+if not ok or type(claim) ~= 'table' or claim.worker_id ~= ARGV[1] then return 0 end
+return redis.call('EXPIRE', KEYS[1], ARGV[2])
+"""
+
+# Le transfert et le constat d'absence de claim doivent être une seule
+# opération. Un second balayeur ne doit pas réenfiler le même élément.
+_SCRIPT_REPRENDRE_ORPHELINE = """
+if ARGV[1] ~= '' and redis.call('EXISTS', KEYS[3]) == 1 then
+  return 0
+end
+local destination_type = redis.call('TYPE', KEYS[2]).ok
+if destination_type ~= 'none' and destination_type ~= 'list' then
+  return redis.error_reply('destination de reprise non-list')
+end
+local retire = redis.call('LREM', KEYS[1], 1, ARGV[2])
+if retire == 0 then return 0 end
+redis.call('RPUSH', KEYS[2], ARGV[3])
+return 1
+"""
+
+# Le balayage peut déplacer une livraison entre BLMOVE et revendication.
+# Ne revendiquer QUE si cette livraison précise est encore en traitement.
+_SCRIPT_REVENDIQUER_LIVRAISON = """
+local items = redis.call('LRANGE', KEYS[2], 0, -1)
+local present = false
+for _, item in ipairs(items) do
+  local ok, value = pcall(cjson.decode, item)
+  if item == ARGV[4] or (ARGV[5] ~= '' and ok and type(value) == 'table'
+    and tostring(value.job_id or '') == ARGV[6]
+    and tostring(value.task_id or '') == ARGV[5]
+    and tonumber(value.attempt or 0) == tonumber(ARGV[7])) then
+    present = true
+    break
+  end
+end
+if not present then return 0 end
+local brut = redis.call('GET', KEYS[1])
+if not brut then
+  redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
+  return 1
+end
+local ok, claim = pcall(cjson.decode, brut)
+if ok and type(claim) == 'table' and claim.worker_id == ARGV[3] then
+  redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
+  return 1
+end
+return 0
+"""
+
+# Recréation d'un job manquant : le contrôle et l'insertion doivent être
+# indivisibles entre plusieurs réconciliateurs. Les listes sont parcourues ici
+# comme dans job_est_dans_file ; leur coût doit être qualifié sous charge.
+_SCRIPT_ENFILER_SI_ABSENT = """
+if redis.call('EXISTS', KEYS[4]) == 1 then return 0 end
+local function contient(items)
+  for _, item in ipairs(items) do
+    local ok, value = pcall(cjson.decode, item)
+    if ok and type(value) == 'table' and tostring(value.job_id or '') == ARGV[1] then
+      return true
+    end
+  end
+  return false
+end
+local queue_type = redis.call('TYPE', KEYS[1]).ok
+if queue_type ~= 'none' and queue_type ~= 'list' then return redis.error_reply('file non-list') end
+if contient(redis.call('LRANGE', KEYS[1], 0, -1)) then return 0 end
+if contient(redis.call('LRANGE', KEYS[2], 0, -1)) then return 0 end
+if contient(redis.call('ZRANGE', KEYS[3], 0, -1)) then return 0 end
+redis.call('RPUSH', KEYS[1], ARGV[2])
+return 1
+"""
+
+_SCRIPT_PROMOUVOIR_RETRY = """
+local kind = redis.call('TYPE', KEYS[2]).ok
+if kind ~= 'none' and kind ~= 'list' then
+  return redis.error_reply('destination retry non-list')
+end
+local score = redis.call('ZSCORE', KEYS[1], ARGV[1])
+if not score or tonumber(score) > tonumber(ARGV[2]) then return 0 end
+if redis.call('ZREM', KEYS[1], ARGV[1]) == 0 then return 0 end
+redis.call('RPUSH', KEYS[2], ARGV[1])
+return 1
+"""
+
+_SCRIPT_NETTOYER_ANNULATION = """
+local brut = redis.call('GET', KEYS[1])
+if not brut then return 0 end
+local ok, claim = pcall(cjson.decode, brut)
+if not ok or type(claim) ~= 'table' or claim.worker_id ~= ARGV[1] then return 0 end
+redis.call('DEL', KEYS[2])
+redis.call('EXPIRE', KEYS[3], 1)
+return 1
+"""
+
 _SCRIPT_LIBERER = """
 local brut = redis.call('GET', KEYS[1])
 if not brut then
@@ -159,6 +257,7 @@ class ClaimMixin:
         *,
         attempt: int = 0,
         reprendre: bool = False,
+        livraison: dict[str, Any] | None = None,
     ) -> bool:
         """Revendique une tâche — **atomiquement** et sans voler un pair vivant.
 
@@ -184,6 +283,15 @@ class ClaimMixin:
         )
         cle = f"{CLAIM_PREFIX}:{queue_name}:{job_id}"
         try:
+            if livraison is not None:
+                if reprendre or str(livraison.get('job_id') or '') != job_id:
+                    return False
+                resultat = client.eval(
+                    _SCRIPT_REVENDIQUER_LIVRAISON, 2, cle, queue_keys(queue_name)['processing'],
+                    charge, max(5, ttl_seconds), worker_id, json.dumps(livraison, ensure_ascii=False),
+                    str(livraison.get('task_id') or ''), job_id, int(livraison.get('attempt', 0)),
+                )
+                return int(resultat) == 1
             if reprendre:
                 client.set(cle, charge, ex=max(5, ttl_seconds))
                 return True
@@ -207,15 +315,9 @@ class ClaimMixin:
             return 0
         prolonges = 0
         for job_id in job_ids:
-            charge = json.dumps(
-                {"job_id": job_id, "worker_id": worker_id, "revendique_le": time.time()},
-                ensure_ascii=False,
-            )
             cle = f"{CLAIM_PREFIX}:{queue_name}:{job_id}"
             try:
-                prolonges += int(
-                    client.eval(_SCRIPT_REVENDIQUER, 1, cle, charge, max(5, ttl_seconds), worker_id)
-                )
+                prolonges += int(client.eval(_SCRIPT_RAFRAICHIR, 1, cle, worker_id, max(5, ttl_seconds)))
             except Exception as exc:
                 logger.warning("Impossible de rafraîchir la revendication %s : %s", job_id, exc)
         return prolonges
@@ -369,48 +471,47 @@ class ClaimMixin:
         for brute in en_traitement:
             try:
                 charge = json.loads(brute)
-            except Exception:
-                # Charge corrompue : elle ne sera jamais exécutable. On la sort
-                # de la file de traitement et on la met en lettre morte AVEC la
-                # raison — c'est visible, pas perdu.
-                client.lrem(cles["processing"], 1, brute)
-                client.rpush(
-                    cles["deadletter"],
-                    json.dumps({"raison": "charge illisible", "brut": brute[:2000]}, ensure_ascii=False),
-                )
-                decisions.append({"job_id": None, "action": "dead_lettered", "attempt": 0, "raison": "charge illisible"})
-                continue
-
-            job_id = str(charge.get("job_id") or "")
-            claim = self.revendication(queue_name, job_id) if job_id else None
-            if claim is not None:
-                # Claim vivant : un worker travaille dessus, on ne touche à rien.
-                continue
-            tentative = int(charge.get("attempt", 0))
-            client.lrem(cles["processing"], 1, brute)
-            if job_id and tentative + 1 < max_tentatives:
-                charge["attempt"] = tentative + 1
-                charge["reprise"] = raison
-                client.rpush(cles["queue"], json.dumps(charge, ensure_ascii=False))
-                decisions.append(
-                    {
-                        "job_id": job_id,
-                        "action": "requeued",
-                        "attempt": charge["attempt"],
-                        "raison": raison,
-                    }
-                )
+                if not isinstance(charge, dict):
+                    raise ValueError("charge non objet")
+                tentative = int(charge.get("attempt", 0))
+                if tentative < 0:
+                    raise ValueError("tentative négative")
+            except (ValueError, TypeError, json.JSONDecodeError):
+                job_id = ""
+                action = "dead_lettered"
+                cible = cles["deadletter"]
+                destination = json.dumps({"raison": "charge illisible", "brut": brute[:2000]}, ensure_ascii=False)
+                decision = {"job_id": None, "action": action, "attempt": 0, "raison": "charge illisible"}
             else:
-                charge["raison_lettre_morte"] = f"{raison} — tentatives épuisées ({tentative + 1}/{max_tentatives})"
-                client.rpush(cles["deadletter"], json.dumps(charge, ensure_ascii=False))
-                decisions.append(
-                    {
-                        "job_id": job_id or None,
-                        "action": "dead_lettered",
-                        "attempt": tentative + 1,
-                        "raison": charge["raison_lettre_morte"],
-                    }
+                job_id = str(charge.get("job_id") or "")
+                if job_id and tentative + 1 < max_tentatives:
+                    charge["attempt"] = tentative + 1
+                    charge["reprise"] = raison
+                    action = "requeued"
+                    cible = cles["queue"]
+                else:
+                    charge["raison_lettre_morte"] = f"{raison} — tentatives épuisées ({tentative + 1}/{max_tentatives})"
+                    action = "dead_lettered"
+                    cible = cles["deadletter"]
+                destination = json.dumps(charge, ensure_ascii=False)
+                decision = {
+                    "job_id": job_id or None,
+                    "action": action,
+                    "attempt": tentative + 1,
+                    "raison": charge.get("raison_lettre_morte", raison),
+                }
+            try:
+                transfere = client.eval(
+                    _SCRIPT_REPRENDRE_ORPHELINE, 3, cles["processing"], cible,
+                    f"{cles['claim_prefix']}:{job_id}", job_id, brute, destination,
                 )
+            except Exception as exc:
+                # Redis n'offre pas de rollback des écritures effectuées par un
+                # script en erreur ; ses types sont vérifiés avant le LREM.
+                logger.warning("Reprise atomique impossible pour %s : %s", job_id or "charge illisible", exc)
+                continue
+            if int(transfere) == 1:
+                decisions.append(decision)
         return decisions
 
 
@@ -449,7 +550,7 @@ if removed > 0 then
     return {1, "removed_exact"}
 end
 
-if target_id ~= "" then
+if expected_worker == "" and target_id ~= "" then
     local items = redis.call('LRANGE', processing_key, 0, -1)
     for i, item in ipairs(items) do
         local ok, decoded = pcall(cjson.decode, item)
@@ -488,8 +589,13 @@ if expected_worker ~= "" then
     end
 end
 
+local target_type = redis.call('TYPE', target_key).ok
+local expected_type = mode == 'zadd' and 'zset' or 'list'
+if target_type ~= 'none' and target_type ~= expected_type then
+    return redis.error_reply('type destination retry incorrect')
+end
 local removed = redis.call('LREM', processing_key, 1, raw_payload)
-if removed == 0 and target_id ~= "" then
+if removed == 0 and expected_worker == "" and target_id ~= "" then
     local items = redis.call('LRANGE', processing_key, 0, -1)
     for i, item in ipairs(items) do
         local ok, decoded = pcall(cjson.decode, item)
@@ -500,6 +606,8 @@ if removed == 0 and target_id ~= "" then
         end
     end
 end
+
+if removed == 0 and expected_worker ~= "" then return {0, "not_found"} end
 
 if mode == "zadd" then
     redis.call('ZADD', target_key, score, new_payload)
@@ -532,8 +640,12 @@ if expected_worker ~= "" then
     end
 end
 
+local target_type = redis.call('TYPE', dead_key).ok
+if target_type ~= 'none' and target_type ~= 'list' then
+    return redis.error_reply('type destination deadletter incorrect')
+end
 local removed = redis.call('LREM', processing_key, 1, raw_payload)
-if removed == 0 and target_id ~= "" then
+if removed == 0 and expected_worker == "" and target_id ~= "" then
     local items = redis.call('LRANGE', processing_key, 0, -1)
     for i, item in ipairs(items) do
         local ok, decoded = pcall(cjson.decode, item)
@@ -545,6 +657,7 @@ if removed == 0 and target_id ~= "" then
     end
 end
 
+if removed == 0 and expected_worker ~= '' then return {0, 'not_found'} end
 redis.call('RPUSH', dead_key, raw_payload)
 return {1, "deadlettered"}
 """
@@ -708,6 +821,21 @@ class RedisStore(ClaimMixin):
         except Exception:
             return False
 
+    def clear_cancel_flag_if_claimed(self, job_id: str, worker_id: str, queue_name: str = "imports") -> bool:
+        """Nettoie uniquement si le claim Redis appartient encore au worker, atomiquement."""
+        client = self._get_client()
+        if client is None:
+            return False
+        try:
+            return bool(client.eval(
+                _SCRIPT_NETTOYER_ANNULATION, 3,
+                f"{CLAIM_PREFIX}:{queue_name}:{job_id}",
+                f"seamtech:cancel:{job_id}", f"seamtech:heartbeat:{job_id}", worker_id,
+            ))
+        except Exception as exc:
+            logger.warning("Nettoyage conditionnel de l'annulation %s impossible : %s", job_id, exc)
+            return False
+
     def clear_cancel_flag(self, job_id: str) -> bool:
         client = self._get_client()
         if client is None:
@@ -764,33 +892,38 @@ class RedisStore(ClaimMixin):
             logger.error("Failed to enqueue task to Redis %s: %s", queue_name, exc)
             return False
 
+    def enqueue_task_si_absent(self, queue_name: str, payload: dict[str, Any]) -> bool:
+        """Réenfile un job uniquement s'il n'a ni livraison active ni claim Redis."""
+        client = self._get_client()
+        job_id = str(payload.get("job_id") or "")
+        if client is None or not job_id:
+            return False
+        cles = queue_keys(queue_name)
+        charge = dict(payload)
+        charge.setdefault("attempt", 0)
+        charge.setdefault("task_id", uuid.uuid4().hex)
+        charge.setdefault("enqueued_at", time.time())
+        try:
+            return bool(client.eval(
+                _SCRIPT_ENFILER_SI_ABSENT, 4, cles['queue'], cles['processing'], cles['retry'],
+                f"{cles['claim_prefix']}:{job_id}", job_id, json.dumps(charge, ensure_ascii=False),
+            ))
+        except Exception as exc:
+            logger.warning("Réenfilage conditionnel impossible pour %s : %s", job_id, exc)
+            return False
+
     def dequeue_task(self, queue_name: str, timeout: int = 2) -> dict[str, Any] | None:
         client = self._get_client()
         if client is None:
             return None
         try:
-            # Use BLMOVE to move from queue to processing list for ack semantics
-            # Fallback to BLPOP if BLMOVE not available (older redis-py)
+            # Sans transfert atomique, dépiler puis pousser en traitement peut
+            # perdre une livraison sur crash. Refuser les clients incompatibles.
             processing_key = f"seamtech:processing:{queue_name}"
-            try:
-                item = client.blmove(f"seamtech:queue:{queue_name}", processing_key, timeout=timeout)
-                if item:
-                    return json.loads(item)
-                return None
-            except AttributeError:
-                # blmove not available, fallback
-                res = client.blpop(f"seamtech:queue:{queue_name}", timeout=timeout)
-                if res:
-                    _, item = res
-                    # Also push to processing for tracking
-                    try:
-                        client.rpush(processing_key, item)
-                    except Exception as exc:
-                        # The task is still processed; only its processing-key
-                        # tracking is lost, so this is debug-level visibility.
-                        logger.debug("Could not track task in processing key %s: %s", processing_key, exc)
-                    return json.loads(item)
-                return None
+            item = client.blmove(f"seamtech:queue:{queue_name}", processing_key, timeout=timeout)
+            if item:
+                return json.loads(item)
+            return None
         except Exception as exc:
             logger.error("Failed to dequeue task from Redis %s: %s", queue_name, exc)
             return None
@@ -813,13 +946,11 @@ class RedisStore(ClaimMixin):
                 if isinstance(res, (list, tuple)) and len(res) >= 2:
                     if res[0] == 0:
                         reason = res[1].decode("utf-8") if isinstance(res[1], bytes) else str(res[1])
-                        if reason in ("lost_claim", "no_claim"):
-                            logger.warning(
-                                "Acquittement refusé atomiquement : la tâche %s n'appartient plus à %s "
-                                "(raison: %s) — sa copie reste dans la file.",
-                                job_id, worker_id, reason,
-                            )
-                            return False
+                        logger.warning(
+                            "Acquittement refusé atomiquement : tâche %s, worker %s, raison %s.",
+                            job_id, worker_id, reason,
+                        )
+                        return False
                     return True
                 return True
             except Exception as exc:
@@ -850,6 +981,7 @@ class RedisStore(ClaimMixin):
         delay_seconds: int = 0,
         *,
         worker_id: str | None = None,
+        original_payload: dict[str, Any] | None = None,
     ) -> bool:
         """Reprogramme une tâche de façon atomique conditionnée au verrou (R2)."""
         client = self._get_client()
@@ -866,7 +998,7 @@ class RedisStore(ClaimMixin):
 
         new_payload = dict(payload)
         new_payload["attempt"] = new_payload.get("attempt", 0) + 1
-        raw_payload = json.dumps(payload, ensure_ascii=False)
+        raw_payload = json.dumps(original_payload if original_payload is not None else payload, ensure_ascii=False)
         new_raw_payload = json.dumps(new_payload, ensure_ascii=False)
 
         if hasattr(client, "eval") and type(getattr(client, "eval")).__name__ != "MagicMock":
@@ -987,10 +1119,11 @@ class RedisStore(ClaimMixin):
             queue_key = f"seamtech:queue:{queue_name}"
             count = 0
             for _ in range(limit):
-                item = client.lpop(dead_key)
-                if not item:
+                # LMOVE est indivisible : ni panne entre LPOP/RPUSH, ni
+                # destination de mauvais type ne retirent la seule copie.
+                item = client.lmove(dead_key, queue_key, src="LEFT", dest="RIGHT")
+                if item is None:
                     break
-                client.rpush(queue_key, item)
                 count += 1
             return count
         except Exception as exc:
@@ -1008,12 +1141,10 @@ class RedisStore(ClaimMixin):
             items = client.zrangebyscore(retry_key, 0, now, start=0, num=100)
             if not items:
                 return 0
-            pipe = client.pipeline()
+            nombre = 0
             for item in items:
-                pipe.zrem(retry_key, item)
-                pipe.rpush(queue_key, item)
-            pipe.execute()
-            return len(items)
+                nombre += int(client.eval(_SCRIPT_PROMOUVOIR_RETRY, 2, retry_key, queue_key, item, now))
+            return nombre
         except Exception as exc:
             logger.warning("Failed to process retry queue %s: %s", queue_name, exc)
             return 0

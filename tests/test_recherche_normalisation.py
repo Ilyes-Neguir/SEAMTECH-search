@@ -19,6 +19,7 @@ import pytest
 from seamtech_search.fiches.normalisation import normaliser_cle_recherche
 from seamtech_search.indexer import SearchIndex
 from seamtech_search.recherche import rechercher_fiches, suggerer
+from tests.helpers_postgres_isole import url_base_jetable
 
 DATABASE_URL = os.environ.get("SEAMTECH_TEST_DATABASE_URL", "")
 
@@ -56,8 +57,7 @@ def base_norm() -> Iterator[dict[str, Any]]:
     with admin.cursor() as cur:
         cur.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(nom)))
     admin.close()
-    principale, sep, requete = DATABASE_URL.partition("?")
-    url = principale.rsplit("/", 1)[0] + "/" + nom + (f"?{requete}" if sep else "")
+    url = url_base_jetable(DATABASE_URL, nom)
     index = SearchIndex(Path(f"/tmp/unused-{nom}.db"), url)
     index.initialize()
     index.run_migrations()

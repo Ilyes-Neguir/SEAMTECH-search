@@ -13,6 +13,13 @@ interface DroppedFile {
   rel: string
 }
 
+// Ne conserver dans l'onglet que l'identifiant opaque et son propriétaire,
+// jamais le chemin source, les données extraites ni un jeton de session.
+const CLE_SUIVI_IMPORT = "seamtech:suivi-import:v1"
+const DELAI_REQUETE_SUIVI_MS = 8_000
+const DELAI_REPRISE_SUIVI_MS = 1_500
+const ID_IMPORT_VALIDE = /^[A-Za-z0-9_-]{1,128}$/
+
 async function readEntry(entry: any, base: string, out: DroppedFile[]): Promise<void> {
   if (entry.isFile) {
     const fichier: File = await new Promise((resolve, reject) => entry.file(resolve, reject))
@@ -24,18 +31,22 @@ async function readEntry(entry: any, base: string, out: DroppedFile[]): Promise<
       batch = await new Promise((resolve, reject) => reader.readEntries(resolve, reject))
       for (const child of batch) await readEntry(child, `${base}${entry.name}/`, out)
     } while (batch.length > 0)
+  } else {
+    throw new Error("Entrée de dépôt non reconnue")
   }
 }
 
 async function filesFromDrop(dt: DataTransfer): Promise<DroppedFile[]> {
-  const items = Array.from(dt.items ?? [])
-  const entries = items.map((i: any) => i.webkitGetAsEntry?.()).filter(Boolean)
-  if (entries.length > 0) {
-    const out: DroppedFile[] = []
-    for (const entry of entries) await readEntry(entry, "", out)
-    if (out.length > 0) return out
+  const items = Array.from(dt.items ?? []).filter((item) => !item.kind || item.kind === "file")
+  const entries = items.map((item) => item.webkitGetAsEntry?.())
+  // `files` peut être aplati ou omettre des sous-dossiers. Ne jamais le
+  // présenter comme un dossier complet si certaines entrées sont illisibles.
+  if (entries.some((entry) => !entry) || (entries.length === 0 && dt.files?.length)) {
+    throw new Error("Entrées de dépôt indisponibles")
   }
-  return Array.from(dt.files ?? []).map((f) => ({ file: f, rel: (f as any).webkitRelativePath || f.name }))
+  const out: DroppedFile[] = []
+  for (const entry of entries) await readEntry(entry, "", out)
+  return out
 }
 
 function formatBytes(size: number): string {
@@ -78,21 +89,118 @@ function ImportPanelInterne() {
   const [activeJob, setActiveJob] = useState<ImportJobPayload | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
+  const [annulationEnCours, setAnnulationEnCours] = useState(false)
+  const [erreurSuivi, setErreurSuivi] = useState<string | null>(null)
+  const [stockageSuiviIndisponible, setStockageSuiviIndisponible] = useState(false)
+  const [idManuel, setIdManuel] = useState("")
   const [dragActive, setDragActive] = useState(false)
+  const [lectureDepotEnCours, setLectureDepotEnCours] = useState(false)
   const [dropped, setDropped] = useState<DroppedFile[]>([])
   const filesInput = useRef<HTMLInputElement>(null)
   const folderInput = useRef<HTMLInputElement>(null)
-  const pollTimerRef = useRef<NodeJS.Timeout | null>(null)
+  const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const pollAbortRef = useRef<AbortController | null>(null)
+  const pollGenerationRef = useRef(0)
+  const annulationRef = useRef(false)
+  const annulationAbortRef = useRef<AbortController | null>(null)
+  const operationGenerationRef = useRef(0)
+  const operationEnCoursRef = useRef(false)
+  const lectureDepotRef = useRef(false)
+
+  function stopPollingJob() {
+    pollGenerationRef.current += 1
+    if (pollTimerRef.current) clearTimeout(pollTimerRef.current)
+    pollTimerRef.current = null
+    pollAbortRef.current?.abort()
+    pollAbortRef.current = null
+  }
+
+  function memoriserSuivi(id: string) {
+    if (!ID_IMPORT_VALIDE.test(id)) {
+      throw new Error("Identifiant de suivi invalide. Ne relancez pas l’import avant vérification.")
+    }
+    try {
+      if (!session.authenticated || !session.mode || !session.identifiant) throw new Error("Session indisponible")
+      window.sessionStorage.setItem(CLE_SUIVI_IMPORT, JSON.stringify({
+        id, mode: session.mode, identifiant: session.identifiant,
+      }))
+      setStockageSuiviIndisponible(false)
+    } catch {
+      // Le job reste suivi en mémoire et son identifiant est affiché pour une
+      // reprise explicite. Un stockage bloqué ne doit pas masquer ce risque.
+      setStockageSuiviIndisponible(true)
+    }
+  }
+
+  function effacerSuiviMemorise() {
+    try {
+      window.sessionStorage.removeItem(CLE_SUIVI_IMPORT)
+      setStockageSuiviIndisponible(false)
+    } catch {
+      setStockageSuiviIndisponible(true)
+    }
+  }
 
   useEffect(() => {
-    return () => {
-      if (pollTimerRef.current) {
-        clearInterval(pollTimerRef.current)
+    // L'état d'un autre compte ne doit jamais être restauré dans cet onglet.
+    // On le nettoie également lors d'une transition de session en cours.
+    stopPollingJob()
+    annulationAbortRef.current?.abort()
+    operationGenerationRef.current += 1
+    operationEnCoursRef.current = false
+    lectureDepotRef.current = false
+    setLectureDepotEnCours(false)
+    annulationRef.current = false
+    setAnnulationEnCours(false)
+    setBusy(null)
+    setError(null)
+    setErreurSuivi(null)
+    setResult(null)
+    setActiveJob(null)
+    setScan(null)
+    setSourcePath("")
+    setSelectedPdf(null)
+    setSelectedExcel(null)
+    setDropped([])
+    setDragActive(false)
+    if (filesInput.current) filesInput.current.value = ""
+    if (folderInput.current) folderInput.current.value = ""
+    setIdManuel("")
+    setStockageSuiviIndisponible(false)
+    try {
+      const brut = window.sessionStorage.getItem(CLE_SUIVI_IMPORT)
+      if (brut && session.authenticated && session.mode && session.identifiant) {
+        const suivi = JSON.parse(brut)
+        if (suivi?.mode === session.mode && suivi?.identifiant === session.identifiant &&
+            typeof suivi?.id === "string" && ID_IMPORT_VALIDE.test(suivi.id)) {
+          setActiveJob({ id: suivi.id, job_id: suivi.id, status: "pending", progress: 0, stage: "starting" })
+          startPollingJob(suivi.id)
+        } else {
+          window.sessionStorage.removeItem(CLE_SUIVI_IMPORT)
+        }
       }
+    } catch {
+      // Aucune reprise silencieuse possible si le stockage ou le contenu est
+      // invalide. La reprise manuelle reste disponible pour l'identifiant connu.
     }
-  }, [])
+    return () => {
+      operationGenerationRef.current += 1
+      stopPollingJob()
+      annulationAbortRef.current?.abort()
+      annulationAbortRef.current = null
+    }
+  }, [session.authenticated, session.mode, session.identifiant])
+
+  function effacerAnalysePrecedente() {
+    setScan(null)
+    setSelectedPdf(null)
+    setSelectedExcel(null)
+  }
 
   function resetAfterScan(next: ImportScanPayload) {
+    stopPollingJob()
+    effacerSuiviMemorise()
+    setErreurSuivi(null)
     setScan(next)
     setSelectedPdf(next.candidates[0]?.path ?? null)
     setSelectedExcel(next.excel_candidates?.[0]?.path ?? null)
@@ -100,11 +208,12 @@ function ImportPanelInterne() {
     setActiveJob(null)
   }
 
-  async function callJson(url: string, method: string, body?: unknown) {
+  async function callJson(url: string, method: string, body?: unknown, signal?: AbortSignal) {
     const response = await authedFetch(url, {
       method,
       headers: body !== undefined ? { "Content-Type": "application/json" } : undefined,
       body: body !== undefined ? JSON.stringify(body) : undefined,
+      signal,
     })
     const payload = await response.json().catch(() => ({}))
     if (!response.ok) throw new Error(payload?.detail ?? "La requête a échoué.")
@@ -112,82 +221,173 @@ function ImportPanelInterne() {
   }
 
   function startPollingJob(jobId: string) {
-    if (pollTimerRef.current) clearInterval(pollTimerRef.current)
+    stopPollingJob()
+    const generation = pollGenerationRef.current
 
-    pollTimerRef.current = setInterval(async () => {
+    // Une seule requête à la fois, chacune bornée. Une réponse d'une ancienne
+    // génération ne peut pas réactiver un job annulé ou un autre compte.
+    async function suivre() {
+      if (generation !== pollGenerationRef.current) return
+      const controleur = new AbortController()
+      pollAbortRef.current = controleur
+      const expiration = setTimeout(() => controleur.abort(), DELAI_REQUETE_SUIVI_MS)
       try {
-        const payload: ImportJobPayload = await callJson(`/api/imports/${encodeURIComponent(jobId)}`, "GET")
-        setActiveJob(payload)
+        const payload: ImportJobPayload = await callJson(
+          `/api/imports/${encodeURIComponent(jobId)}`, "GET", undefined, controleur.signal,
+        )
+        if (generation !== pollGenerationRef.current) return
+        const identifiants = [payload.id, payload.job_id, payload.import_id].filter((id) => id != null)
+        if (identifiants.some((id) => id !== jobId) ||
+            !["pending", "running", "completed", "failed", "cancelled", "needs_review",
+              "upload_incomplete", "needs_confirmation"].includes(payload.status)) {
+          throw new Error("Réponse de suivi incohérente")
+        }
+        setErreurSuivi(null)
+        if (payload.status === "pending" || payload.status === "running") {
+          setActiveJob({ ...payload, id: jobId })
+          pollTimerRef.current = setTimeout(suivre, 500)
+          return
+        }
 
-        if (payload.status === "completed") {
-          if (pollTimerRef.current) clearInterval(pollTimerRef.current)
-          setResult(payload.result || (payload as unknown as ImportResultPayload))
-          setActiveJob(null)
+        stopPollingJob()
+        setActiveJob(null)
+        const avecResultat = Boolean(payload.result || payload.files_detected !== undefined || payload.publication_pending)
+        if (avecResultat) {
+          // Le niveau supérieur est l'état durable le plus récent ; ne pas le
+          // masquer par un ancien objet result imbriqué.
+          setResult({ ...payload.result, ...payload, import_id: jobId } as ImportResultPayload)
+        } else {
+          setResult(null)
+        }
+        if (payload.status === "failed") {
+          setError(payload.error || "L’import a échoué.")
+        } else if (payload.status === "cancelled") {
+          setError(`Import annulé. Les opérations déjà commencées peuvent nécessiter une vérification.${
+            payload.error ? ` ${payload.error}` : ""
+          }`)
+        } else if (!avecResultat) {
+          setError("Résultat de l’import indisponible : vérifiez son état avant de le relancer.")
+        } else {
+          setError(null)
+        }
+        if (payload.status === "completed" || payload.status === "needs_review" || payload.status === "upload_incomplete") {
           setScan(null)
           setSelectedPdf(null)
           setSelectedExcel(null)
-        } else if (payload.status === "failed") {
-          if (pollTimerRef.current) clearInterval(pollTimerRef.current)
-          setError(payload.error || "L’import a échoué.")
-          setActiveJob(null)
-        } else if (payload.status === "cancelled") {
-          if (pollTimerRef.current) clearInterval(pollTimerRef.current)
-          setActiveJob(null)
-          setError("L’import a été annulé.")
         }
-      } catch (err) {
-        if (pollTimerRef.current) clearInterval(pollTimerRef.current)
-        setError(err instanceof Error ? err.message : "Erreur lors du suivi de l’import.")
-        setActiveJob(null)
+      } catch {
+        if (generation !== pollGenerationRef.current) return
+        // Un échec de lecture ne dit rien sur l'état du travail. Conserver
+        // l'identifiant, empêcher un nouvel import et réessayer le GET seul.
+        setErreurSuivi("Suivi momentanément indisponible : nouvelle vérification automatique. L’import peut encore être en cours ; ne le relancez pas.")
+        pollTimerRef.current = setTimeout(suivre, DELAI_REPRISE_SUIVI_MS)
+      } finally {
+        clearTimeout(expiration)
+        if (pollAbortRef.current === controleur) pollAbortRef.current = null
       }
-    }, 500)
+    }
+    pollTimerRef.current = setTimeout(suivre, 500)
   }
 
-  async function run(label: string, fn: () => Promise<void>) {
+  async function run(label: string, fn: (estActuel: () => boolean) => Promise<void>) {
+    if (operationEnCoursRef.current) return
+    operationEnCoursRef.current = true
+    const generation = operationGenerationRef.current
+    const estActuel = () => generation === operationGenerationRef.current
     setError(null)
     setBusy(label)
     try {
-      await fn()
+      await fn(estActuel)
     } catch (err) {
-      setError(err instanceof Error ? err.message : "La requête a échoué.")
+      if (estActuel()) setError(err instanceof Error ? err.message : "La requête a échoué.")
     } finally {
-      setBusy(null)
+      if (estActuel()) {
+        operationEnCoursRef.current = false
+        setBusy(null)
+      }
     }
   }
 
   const cancelActiveJob = async () => {
-    if (!activeJob?.id && !activeJob?.job_id && !activeJob?.import_id) return
+    if (annulationRef.current || (!activeJob?.id && !activeJob?.job_id && !activeJob?.import_id)) return
     const id = activeJob.id || activeJob.job_id || activeJob.import_id
+    annulationRef.current = true
+    setAnnulationEnCours(true)
+    stopPollingJob()
+    const generation = pollGenerationRef.current
+    const controleur = new AbortController()
+    annulationAbortRef.current = controleur
+    const expiration = setTimeout(() => controleur.abort(), DELAI_REQUETE_SUIVI_MS)
     try {
-      await callJson(`/api/imports/${encodeURIComponent(id!)}/cancel`, "POST")
-      if (pollTimerRef.current) clearInterval(pollTimerRef.current)
-      setActiveJob(null)
-      setError("Import annulé.")
+      const reponse = await callJson(`/api/imports/${encodeURIComponent(id!)}/cancel`, "POST", undefined, controleur.signal)
+      if (generation !== pollGenerationRef.current) return
+      if (reponse.status !== "cancelled") throw new Error("Annulation non confirmée : vérification du statut en cours.")
+      // L'accusé n'affirme pas qu'une opération externe déjà engagée s'est
+      // arrêtée. Relire aussi les intentions et le résultat durable.
+      setError("Annulation demandée. Vérification du statut en cours.")
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Impossible d’annuler l’import.")
+      if (generation !== pollGenerationRef.current) return
+      setError(controleur.signal.aborted
+        ? "Annulation non confirmée : vérification du statut en cours."
+        : err instanceof Error ? err.message : "Impossible d’annuler l’import.")
+    } finally {
+      clearTimeout(expiration)
+      if (annulationAbortRef.current === controleur) annulationAbortRef.current = null
+      if (generation === pollGenerationRef.current) {
+        annulationRef.current = false
+        setAnnulationEnCours(false)
+        startPollingJob(id!)
+      }
     }
   }
 
   const scanFolder = () =>
-    run("scan", async () => {
+    run("scan", async (estActuel) => {
       const payload = (await callJson("/api/imports/scan", "POST", { source_path: sourcePath.trim() })) as ImportScanPayload
-      resetAfterScan(payload)
+      if (estActuel()) resetAfterScan(payload)
     })
 
+  function suivreImport(id: string, payload?: Partial<ImportJobPayload>) {
+    memoriserSuivi(id)
+    setError(null)
+    setErreurSuivi(null)
+    setResult(null)
+    setActiveJob({
+      id, job_id: id, status: payload?.status || "pending",
+      progress: payload?.progress || 0, stage: payload?.stage || "starting",
+    })
+    startPollingJob(id)
+  }
+
+  const reprendreSuivi = () => {
+    const id = idManuel.trim()
+    if (!ID_IMPORT_VALIDE.test(id)) {
+      setError("Identifiant de suivi invalide.")
+      return
+    }
+    suivreImport(id)
+  }
+
+  const arreterSuivi = () => {
+    const id = activeJob?.id || activeJob?.job_id || activeJob?.import_id
+    if (!id || !window.confirm("Arrêter le suivi n’annule pas le traitement. Il peut encore être en cours. Continuer ?")) return
+    stopPollingJob()
+    effacerSuiviMemorise()
+    setIdManuel(id)
+    setActiveJob(null)
+    setErreurSuivi(null)
+    setError("Suivi arrêté. Le traitement peut encore être en cours : vérifiez son état avant de lancer un nouvel import.")
+  }
+
   const quickImport = () =>
-    run("import", async () => {
+    run("import", async (estActuel) => {
       const payload = await callJson("/api/imports", "POST", { source_path: sourcePath.trim() })
+      if (!estActuel()) return
       if (payload.job_id || payload.id) {
-        const jobId = payload.job_id || payload.id
-        setActiveJob({
-          id: jobId,
-          status: payload.status || "pending",
-          progress: payload.progress || 0,
-          stage: payload.stage || "queued",
-          source_path: sourcePath.trim(),
-        })
-        startPollingJob(jobId)
+        suivreImport(payload.job_id || payload.id, payload)
       } else {
+        if (typeof payload.import_id === "string" && ID_IMPORT_VALIDE.test(payload.import_id)) memoriserSuivi(payload.import_id)
+        else setStockageSuiviIndisponible(true)
         setResult(payload as ImportResultPayload)
         setScan(null)
         setSelectedPdf(null)
@@ -196,29 +396,25 @@ function ImportPanelInterne() {
     })
 
   const confirmImport = () =>
-    run("confirm", async () => {
+    run("confirm", async (estActuel) => {
       if (!scan || !selectedPdf) return
       const payload = await callJson("/api/imports/confirm", "POST", {
         source_path: scan.staged_path ?? scan.source_path,
         technical_pdf: selectedPdf,
         excel_file: selectedExcel || undefined,
       })
+      if (!estActuel()) return
       if (payload.job_id || payload.id) {
-        const jobId = payload.job_id || payload.id
-        setActiveJob({
-          id: jobId,
-          status: payload.status || "pending",
-          progress: payload.progress || 0,
-          stage: payload.stage || "queued",
-        })
-        startPollingJob(jobId)
+        suivreImport(payload.job_id || payload.id, payload)
       } else {
+        if (typeof payload.import_id === "string" && ID_IMPORT_VALIDE.test(payload.import_id)) memoriserSuivi(payload.import_id)
+        else setStockageSuiviIndisponible(true)
         setResult(payload as ImportResultPayload)
       }
     })
 
   const uploadAndScan = () =>
-    run("upload", async () => {
+    run("upload", async (estActuel) => {
       if (dropped.length === 0) return
       const form = new FormData()
       const top = dropped[0].rel.includes("/") ? dropped[0].rel.split("/")[0] : "upload"
@@ -227,25 +423,26 @@ function ImportPanelInterne() {
       const response = await authedFetch("/api/imports/upload", { method: "POST", body: form })
       const payload = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(payload?.detail ?? "L’envoi des fichiers a échoué.")
+      if (!estActuel()) return
       resetAfterScan(payload as ImportScanPayload)
       setDropped([])
     })
 
   const saveCorrection = (correction: ImportCorrection) =>
-    run("correct", async () => {
+    run("correct", async (estActuel) => {
       if (!result) return
       const payload = (await callJson(`/api/imports/${result.import_id}`, "PATCH", correction)) as ImportResultPayload
-      setResult(payload)
+      if (estActuel()) setResult(payload)
     })
 
   const retryUpload = () =>
-    run("retry", async () => {
+    run("retry", async (estActuel) => {
       if (!result) return
       const payload = (await callJson(`/api/imports/${result.import_id}/retry`, "POST")) as ImportResultPayload
-      setResult(payload)
+      if (estActuel()) setResult(payload)
     })
 
-  const loading = busy !== null || activeJob !== null
+  const loading = busy !== null || activeJob !== null || lectureDepotEnCours
   const candidates = scan?.candidates ?? []
   const excelCandidates = scan?.excel_candidates ?? []
   const effectiveSource = scan?.staged_path ?? scan?.source_path ?? ""
@@ -267,7 +464,14 @@ function ImportPanelInterne() {
             className="min-h-10 flex-1 rounded-md border border-input bg-background px-3 text-sm outline-none ring-primary focus:ring-2"
             placeholder="Chemin du dossier sur le serveur, ex. C:\\SEAMTECH\\Reference_001"
             value={sourcePath}
-            onChange={(event) => setSourcePath(event.target.value)}
+            disabled={loading}
+            onChange={(event) => {
+              if (loading || operationEnCoursRef.current || lectureDepotRef.current) return
+              setSourcePath(event.target.value)
+              effacerAnalysePrecedente()
+              setDropped([])
+              setError(null)
+            }}
           />
           <button
             className="min-h-10 rounded-md border border-input bg-background px-5 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50"
@@ -287,6 +491,26 @@ function ImportPanelInterne() {
         <p className="mt-2 text-xs text-muted-foreground">
           Le serveur doit pouvoir accéder à ce dossier. Analysez-le pour choisir le PDF technique et le fichier Excel, ou lancez l’importation rapide.
         </p>
+        <div className="mt-3 flex flex-wrap items-end gap-2">
+          <label htmlFor="id-reprise-import" className="flex min-w-0 flex-col gap-1 text-xs text-muted-foreground">
+            Identifiant d’un import à suivre
+            <input
+              id="id-reprise-import"
+              className="min-h-9 w-72 max-w-full rounded-md border border-input bg-background px-3 font-mono text-sm text-foreground"
+              value={idManuel}
+              maxLength={128}
+              onChange={(event) => setIdManuel(event.target.value)}
+              disabled={loading}
+            />
+          </label>
+          <button
+            className="min-h-9 rounded-md border border-input bg-background px-4 text-xs font-medium disabled:opacity-50"
+            disabled={loading || !ID_IMPORT_VALIDE.test(idManuel.trim())}
+            onClick={reprendreSuivi}
+          >
+            Reprendre le suivi
+          </button>
+        </div>
 
         {/* Active Job Progress Panel */}
         {activeJob && (
@@ -302,7 +526,8 @@ function ImportPanelInterne() {
               <div className="flex items-center gap-3">
                 <span className="font-mono text-xs text-muted-foreground">{activeJob.progress}%</span>
                 <button
-                  className="rounded border border-destructive/60 bg-background px-3 py-1 text-xs font-medium text-destructive hover:bg-destructive/10"
+                  className="rounded border border-destructive/60 bg-background px-3 py-1 text-xs font-medium text-destructive hover:bg-destructive/10 disabled:opacity-50"
+                  disabled={annulationEnCours}
                   onClick={cancelActiveJob}
                 >
                   Annuler
@@ -315,12 +540,31 @@ function ImportPanelInterne() {
                 style={{ width: `${Math.max(5, activeJob.progress)}%` }}
               />
             </div>
+            <p className="mt-2 text-xs text-muted-foreground">Identifiant de suivi : <code>{activeJob.id || activeJob.job_id || activeJob.import_id}</code></p>
+            {erreurSuivi && (
+              <div className="mt-2">
+                <p role="status" className="text-warning">{erreurSuivi}</p>
+                <button
+                  className="mt-2 rounded border border-input bg-background px-3 py-1 text-xs font-medium disabled:opacity-50"
+                  disabled={annulationEnCours}
+                  onClick={arreterSuivi}
+                >
+                  Arrêter le suivi
+                </button>
+              </div>
+            )}
           </div>
+        )}
+        {stockageSuiviIndisponible && (activeJob || result) && (
+          <p role="status" className="mt-2 text-xs text-warning">
+            Le suivi ne peut pas être enregistré dans cet onglet. Conservez son identifiant pour le reprendre après rechargement.
+          </p>
         )}
 
         {/* Drag & drop */}
         <div
           data-testid="drop-zone"
+          aria-busy={lectureDepotEnCours}
           className={`mt-3 rounded-md border border-dashed px-4 py-5 text-center transition-colors ${
             dragActive ? "border-primary bg-primary/5" : "border-input bg-background/60"
           }`}
@@ -332,10 +576,26 @@ function ImportPanelInterne() {
           onDrop={(e) => {
             e.preventDefault()
             setDragActive(false)
+            if (loading || operationEnCoursRef.current || lectureDepotRef.current) return
+            const generation = operationGenerationRef.current
+            lectureDepotRef.current = true
+            setLectureDepotEnCours(true)
+            // Une nouvelle tentative remplace l'ancienne sélection, même si
+            // sa lecture échoue ensuite : ne pas envoyer une liste périmée.
+            setSourcePath("")
+            effacerAnalysePrecedente()
+            setDropped([])
+            setError(null)
             filesFromDrop(e.dataTransfer).then((items) => {
-              if (items.length > 0) {
-                setDropped(items)
-                setError(null)
+              if (generation !== operationGenerationRef.current) return
+              if (items.length > 0) setDropped(items)
+              else setError("Aucun fichier lisible dans ce dépôt. Aucun fichier n’a été envoyé.")
+            }).catch(() => {
+              if (generation === operationGenerationRef.current) setError("Lecture du dossier impossible. Aucun fichier n’a été envoyé.")
+            }).finally(() => {
+              if (generation === operationGenerationRef.current) {
+                lectureDepotRef.current = false
+                setLectureDepotEnCours(false)
               }
             })
           }}
@@ -344,6 +604,7 @@ function ImportPanelInterne() {
           <p className="mt-1 text-xs text-muted-foreground">
             Les fichiers sont copiés dans une zone temporaire pour analyse ; les originaux restent intacts.
           </p>
+          {lectureDepotEnCours && <p role="status" className="mt-2 text-xs text-muted-foreground">Lecture du dossier en cours…</p>}
           <div className="mt-3 flex justify-center gap-2">
             <button
               className="min-h-9 rounded-md border border-input bg-background px-4 text-sm font-medium disabled:opacity-50"
@@ -364,13 +625,19 @@ function ImportPanelInterne() {
             ref={filesInput}
             type="file"
             multiple
+            disabled={loading}
             className="hidden"
             onChange={(e) => {
               const list = Array.from(e.target.files ?? []).map((f) => ({
                 file: f,
                 rel: (f as any).webkitRelativePath || f.name,
               }))
-              if (list.length > 0) setDropped(list)
+              if (list.length > 0 && !operationEnCoursRef.current && !lectureDepotRef.current) {
+                setSourcePath("")
+                effacerAnalysePrecedente()
+                setDropped(list)
+                setError(null)
+              }
               e.target.value = ""
             }}
           />
@@ -378,6 +645,7 @@ function ImportPanelInterne() {
             ref={folderInput}
             type="file"
             multiple
+            disabled={loading}
             className="hidden"
             {...({ webkitdirectory: "", directory: "" } as any)}
             onChange={(e) => {
@@ -385,7 +653,12 @@ function ImportPanelInterne() {
                 file: f,
                 rel: (f as any).webkitRelativePath || f.name,
               }))
-              if (list.length > 0) setDropped(list)
+              if (list.length > 0 && !operationEnCoursRef.current && !lectureDepotRef.current) {
+                setSourcePath("")
+                effacerAnalysePrecedente()
+                setDropped(list)
+                setError(null)
+              }
               e.target.value = ""
             }}
           />
@@ -454,6 +727,7 @@ function ImportPanelInterne() {
                           type="radio"
                           name="technical-pdf"
                           className="mt-1"
+                          disabled={loading}
                           checked={selectedPdf === candidate.path}
                           onChange={() => setSelectedPdf(candidate.path)}
                         />
@@ -490,6 +764,7 @@ function ImportPanelInterne() {
                         type="radio"
                         name="excel-file"
                         className="mt-0.5"
+                        disabled={loading}
                         checked={selectedExcel === null}
                         onChange={() => setSelectedExcel(null)}
                       />
@@ -507,6 +782,7 @@ function ImportPanelInterne() {
                           type="radio"
                           name="excel-file"
                           className="mt-1"
+                          disabled={loading}
                           checked={selectedExcel === candidate.path}
                           onChange={() => setSelectedExcel(candidate.path)}
                         />
@@ -539,6 +815,7 @@ function ImportPanelInterne() {
         {/* Result */}
         {result && (
           <div className="mt-4 rounded-md border border-border bg-background p-4 text-sm">
+            <p className="mb-2 text-xs text-muted-foreground">Identifiant de suivi : <code>{result.import_id}</code></p>
             <div className="flex flex-wrap gap-x-6 gap-y-2">
               <span>
                 État : <strong>{result.status}</strong>
@@ -600,10 +877,31 @@ function ImportPanelInterne() {
             )}
             {result.warnings?.length > 0 && <p className="mt-3 text-warning">{result.warnings.join(" ")}</p>}
             
-            {/* Envoi incomplet : les originaux sont conservés en quarantaine. */}
+            {result.publication_pending && (
+              <div role="status" className="mt-3 rounded-md border border-warning/40 bg-warning/10 p-3 text-xs">
+                <strong>Publication incertaine :</strong> une réconciliation est nécessaire avant toute nouvelle tentative.
+                Conservez les fichiers source ; ne relancez pas l’envoi à l’aveugle.
+              </div>
+            )}
+            {result.report_generation_pending && (
+              <div role="status" className="mt-3 rounded-md border border-warning/40 bg-warning/10 p-3 text-xs">
+                La régénération des rapports est interrompue.{" "}
+                {result.publication_pending
+                  ? "La publication doit d’abord être réconciliée."
+                  : "Une correction autorisée peut reprendre la génération ; ne relancez pas encore l’envoi."}
+              </div>
+            )}
             {(result.upload_status === "upload_incomplete" || result.status === "upload_incomplete") && (
               <div className="mt-3 rounded-md border border-warning/40 bg-warning/10 p-3 text-xs">
-                <strong>Envoi incomplet :</strong> Certains fichiers n’ont pas pu être envoyés vers le stockage documentaire. Le dossier source a été placé en quarantaine et ne sera pas supprimé. Vous pouvez relancer l’envoi.
+                <strong>Envoi incomplet :</strong> certains fichiers n’ont pas de copie durable prouvée.{" "}
+                {result.quarantine?.erreur
+                  ? "L’emplacement de la source n’a pas pu être confirmé ; vérifiez-le avant toute opération."
+                  : result.quarantine?.deplace === true
+                    ? "Le dossier a été déplacé vers la quarantaine. Vérifiez son emplacement avant toute opération."
+                    : result.quarantine?.deplace === false
+                      ? "Aucun déplacement n’a été effectué : vérifiez que le dossier est conservé sur place."
+                      : "L’emplacement de la source n’a pas été confirmé ; vérifiez-le avant toute opération."}
+                {result.cleanup?.purge === false && " Aucune purge automatique n’a été réalisée pour cet import."}
               </div>
             )}
 
@@ -653,16 +951,16 @@ function ImportPanelInterne() {
               <div className="mt-4 rounded border border-border/80 bg-muted/20 p-3">
                 <div className="flex items-center justify-between">
                   <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    Résumé du classeur Excel ({result.excel_summary.name})
+                    Résumé du classeur Excel ({result.excel_summary.filename})
                   </p>
                   <span className="text-xs font-medium text-muted-foreground">
                     {result.excel_summary.total_sheets} feuille{result.excel_summary.total_sheets === 1 ? "" : "s"}
                   </span>
                 </div>
                 {result.excel_summary.sheets.map((sheet) => (
-                  <div key={sheet.name} className="mt-2">
+                  <div key={sheet.sheet_name} className="mt-2">
                     <p className="text-xs font-medium text-foreground">
-                      Feuille : <span className="font-semibold">{sheet.name}</span> ({sheet.max_row} lignes × {sheet.max_column} colonnes)
+                      Feuille : <span className="font-semibold">{sheet.sheet_name}</span> ({sheet.row_count} lignes × {sheet.column_count} colonnes)
                     </p>
                     {sheet.sample_rows && sheet.sample_rows.length > 0 && (
                       <div className="mt-1 overflow-x-auto">
@@ -679,9 +977,9 @@ function ImportPanelInterne() {
                           <tbody>
                             {sheet.sample_rows.map((row, rIdx) => (
                               <tr key={rIdx} className="border-t border-border/20 hover:bg-muted/30">
-                                {sheet.headers.map((h, cIdx) => (
+                                {sheet.headers.map((_header, cIdx) => (
                                   <td key={cIdx} className="p-1.5 font-mono text-[11px]">
-                                    {row[h] || "—"}
+                                    {row[cIdx] || "—"}
                                   </td>
                                 ))}
                               </tr>
@@ -695,7 +993,8 @@ function ImportPanelInterne() {
               </div>
             )}
 
-            {(result.upload_status === "pending_retry" || result.upload_status === "upload_incomplete") && (
+            {(result.upload_status === "pending_retry" || result.upload_status === "upload_incomplete") &&
+              result.publication_pending === false && !result.report_generation_pending && (
               <div className="mt-3 flex justify-end">
                 <button
                   className="min-h-9 rounded-md border border-input bg-background px-4 text-sm font-medium disabled:opacity-50"
@@ -706,7 +1005,7 @@ function ImportPanelInterne() {
                 </button>
               </div>
             )}
-            {result.data && peutSource && (
+            {result.data && peutSource && !result.publication_pending && (
               <CorrectionForm data={result.data} saving={busy === "correct"} onSave={saveCorrection} />
             )}
           </div>

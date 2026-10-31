@@ -54,7 +54,7 @@ export async function backendHeaders(extra?: Record<string, string>): Promise<Re
  * A backend we cannot reach is treated as "not alive": failing open here would
  * mean serving a revoked session for as long as the backend is down.
  */
-export async function sessionServeurVivante(): Promise<boolean> {
+export async function sessionServeurVivante(signal?: AbortSignal): Promise<boolean> {
   const session = await currentSession()
   if (!session) return false
   if (session.mode !== MODE_NOMINATIF) return true
@@ -69,9 +69,19 @@ export async function sessionServeurVivante(): Promise<boolean> {
         "X-SEAMTECH-SESSION-JETON": session.jeton,
       },
       cache: "no-store",
+      signal,
     })
+    // Pour un appelant qui sait traiter une indisponibilité, seul un refus
+    // d'authentification signifie que la session ne peut plus être utilisée.
+    if (signal && !res.ok && res.status !== 401 && res.status !== 403) {
+      throw new Error("Vérification de session indisponible")
+    }
     return res.ok
-  } catch {
+  } catch (erreur) {
+    // Une panne, annulation ou expiration n'est pas une preuve de révocation.
+    // L'appelant muni d'un signal peut la présenter distinctement sans ouvrir
+    // l'accès ; les autres gardent leur contrat historique fail-closed.
+    if (signal) throw erreur
     console.error("[auth] Backend injoignable : session non confirmée, requête refusée.")
     return false
   }
@@ -85,7 +95,7 @@ export async function sessionServeurVivante(): Promise<boolean> {
  * effective everywhere: reusing a copied cookie after signing out now gets 401
  * from EVERY route, not just from /api/auth/session.
  */
-export async function requireAuthValide(): Promise<NextResponse | null> {
+export async function requireAuthValide(signal?: AbortSignal): Promise<NextResponse | null> {
   const store = await cookies()
   if (!isTokenValid(store.get(SESSION_COOKIE)?.value)) {
     return NextResponse.json(
@@ -93,7 +103,7 @@ export async function requireAuthValide(): Promise<NextResponse | null> {
       { status: 401, headers: { "Cache-Control": "no-store" } },
     )
   }
-  if (await sessionServeurVivante()) return null
+  if (await sessionServeurVivante(signal)) return null
   return NextResponse.json(
     { detail: "Session expirée ou révoquée. Reconnectez-vous." },
     { status: 401, headers: { "Cache-Control": "no-store" } },
@@ -122,6 +132,105 @@ export async function requireRolesServer(...roles: Role[]): Promise<NextResponse
 }
 
 /** Like requireRolesServer, but rescue/shared sessions can never pass. */
+/**
+ * Relaie un multipart au backend sans jamais le tamponner dans Next.js.
+ *
+ * `req.formData()` lirait tout le corps avant que le backend puisse appliquer
+ * ses propres bornes. Ici les octets traversent en flux, sont comptés au fil
+ * de l'eau et le relais est interrompu dès que le plafond de la route est
+ * franchi — y compris sans Content-Length fiable.
+ */
+export async function proxyMultipartBorne(
+  req: Request,
+  cheminBackend: string,
+  maxOctets: number,
+): Promise<NextResponse> {
+  const base = backendBase()
+  if (!base) {
+    return NextResponse.json(
+      { detail: "Backend non configuré (SEAMTECH_API_URL)." },
+      { status: 503, headers: { "Cache-Control": "no-store" } },
+    )
+  }
+  const contentType = req.headers.get("content-type") ?? ""
+  if (!contentType.toLowerCase().startsWith("multipart/form-data")) {
+    return NextResponse.json(
+      { detail: "Envoi multipart/form-data requis." },
+      { status: 415, headers: { "Cache-Control": "no-store" } },
+    )
+  }
+  const longueurDeclaree = req.headers.get("content-length")
+  let longueur: number | null = null
+  if (longueurDeclaree !== null) {
+    longueur = Number(longueurDeclaree)
+    if (!Number.isSafeInteger(longueur) || longueur < 0) {
+      return NextResponse.json(
+        { detail: "Content-Length invalide." },
+        { status: 400, headers: { "Cache-Control": "no-store" } },
+      )
+    }
+    if (longueur > maxOctets) {
+      return NextResponse.json(
+        { detail: `Envoi trop volumineux (${longueur} octets, maximum ${maxOctets}).` },
+        { status: 413, headers: { "Cache-Control": "no-store" } },
+      )
+    }
+  }
+  if (!req.body) {
+    return NextResponse.json(
+      { detail: "Corps multipart absent." },
+      { status: 400, headers: { "Cache-Control": "no-store" } },
+    )
+  }
+
+  let total = 0
+  let tropGrand = false
+  const corpsBorne = req.body.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        total += chunk.byteLength
+        if (total > maxOctets) {
+          tropGrand = true
+          controller.error(new Error("Envoi multipart trop volumineux"))
+          return
+        }
+        controller.enqueue(chunk)
+      },
+    }),
+  )
+  const extra: Record<string, string> = { "content-type": contentType }
+  if (longueur !== null) extra["content-length"] = String(longueur)
+  try {
+    const response = await fetch(`${base}${cheminBackend}`, {
+      method: "POST",
+      headers: await backendHeaders(extra),
+      body: corpsBorne,
+      cache: "no-store",
+      duplex: "half",
+    } as RequestInit & { duplex: "half" })
+    const typeReponse = response.headers.get("content-type")
+    return new NextResponse(response.body, {
+      status: response.status,
+      headers: {
+        "Cache-Control": "no-store",
+        ...(typeReponse ? { "content-type": typeReponse } : {}),
+      },
+    })
+  } catch {
+    if (tropGrand) {
+      return NextResponse.json(
+        { detail: `Envoi trop volumineux (maximum ${maxOctets} octets).` },
+        { status: 413, headers: { "Cache-Control": "no-store" } },
+      )
+    }
+    console.error("[proxy] Backend SEAMTECH injoignable pendant un envoi multipart.")
+    return NextResponse.json(
+      { detail: "Backend SEAMTECH injoignable." },
+      { status: 502, headers: { "Cache-Control": "no-store" } },
+    )
+  }
+}
+
 export async function requireNominativeRoles(...roles: Role[]): Promise<NextResponse | null> {
   const denied = await requireAuthValide()
   if (denied) return denied

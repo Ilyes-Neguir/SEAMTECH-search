@@ -98,8 +98,44 @@ INVENTAIRE_S3_REEL = {
     "tests/test_recette_corpus_reel.py::test_11_zip_inchanges_apres_recette",
 }
 
+# S3rver est exécuté par une étape CI dédiée ; les résultats xfail restent des
+# limites ouvertes, pas une qualification MinIO/R2.
+INVENTAIRE_S3RVER = {
+    "tests/test_snapshot_import_network.py::test_capture_envoi_reel_ignore_substitution_source",
+    "tests/test_snapshot_import_network.py::test_crash_apres_envoi_reseau_conserve_intention_sans_double_envoi",
+    "tests/test_snapshot_import_network.py::test_reprise_reseau_ne_reexpedie_pas_source_modifiee",
+    "tests/test_snapshot_import_network.py::test_correction_reseau_reponse_perdue_conserve_cles_sans_renvoi",
+    "tests/test_snapshot_import_network.py::test_correction_reseau_echec_preflight_permet_reprise_rapports",
+    "tests/test_snapshot_import_network.py::test_acces_reseau_refuse_objet_corrompu_et_sert_copie_conforme",
+    "tests/test_snapshot_import_network.py::test_reimport_reseau_conserve_piece_catalogue_et_expose_conflit",
+    "tests/test_sauvegarde_objet_checksum.py::test_s3rver_sans_checksum_complet_refuse_copie_plutot_que_faux_succes",
+    "tests/test_restauration_bundle_s3rver.py::test_bundle_objet_fige_puis_transfere_par_reseau",
+    "tests/test_restauration_bundle_s3rver.py::test_precondition_atomique_de_creation_supportee_par_emulateur",
+    "tests/test_restauration_bundle_s3rver.py::test_references_objet_dupliquees_sur_reseau_isole",
+    "tests/test_restauration_bundle_s3rver.py::test_s3rver_restauration_objet_refusee_sans_ecraser",
+    "tests/test_restauration_bundle_s3rver.py::test_sauvegarde_copie_objet_par_reseau_isole",
+}
+# Sondes spécifiquement liées à une vieille version non recommandée, exécutées
+# uniquement sur banc opt-in authentifié ; elles ne sont PAS couvertes en CI.
+INVENTAIRE_MINIO_HISTORIQUE_OPTIONNEL = {
+    "tests/test_minio_historique.py::test_minio_historique_aba_get_version_epinglee",
+    "tests/test_minio_historique.py::test_minio_historique_checksum_simple_et_multipart",
+    "tests/test_minio_historique.py::test_minio_historique_copie_objet_avec_entetes",
+    "tests/test_minio_historique.py::test_minio_historique_creation_conditionnelle_preserve_objet",
+    "tests/test_minio_historique.py::test_minio_historique_envoi_simple_et_multipart_checksum",
+    "tests/test_minio_historique.py::test_minio_historique_restauration_interdite_preserve_cle",
+    "tests/test_minio_historique.py::test_minio_historique_version_epinglee",
+}
+INVENTAIRE_S3_REEL |= INVENTAIRE_S3RVER | INVENTAIRE_MINIO_HISTORIQUE_OPTIONNEL
+# Ces deux tests exigent aussi PostgreSQL et tournent dans l'étape PG du backend.
+INVENTAIRE_PG_S3RVER = {
+    "tests/test_depot_transactionnel.py::test_s3_emule_http_lot_promeut_et_vues_lisent_sans_source",
+    "tests/test_depot_transactionnel.py::test_s3_emule_http_de_bout_en_bout_sans_source_locale",
+}
+
 #: Variables d'environnement qui, LUES par un test, désignent un endpoint réel.
-VARIABLES_ENDPOINT_REEL = ("SEAMTECH_TEST_S3_URL", "SEAMTECH_S3_ENDPOINT_URL")
+VARIABLES_ENDPOINT_REEL = ("SEAMTECH_TEST_S3_URL", "SEAMTECH_S3_ENDPOINT_URL",
+                           "SEAMTECH_TEST_S3RVER_URL", "SEAMTECH_TEST_MINIO_2023_URL")
 
 #: Catégories qui ne doivent JAMAIS être exclues par sous-chaîne de nom.
 CATEGORIES = ("postgres", "s3", "perf", "sauvegarde")
@@ -252,7 +288,7 @@ def test_tout_fichier_qui_vise_un_stockage_reel_a_un_test_dans_l_inventaire() ->
     pas décidé, explicitement, si son test exige un service (marqueur ``s3`` +
     inventaire) ou non.
     """
-    fichiers_inventaire = {identifiant.split("::")[0] for identifiant in INVENTAIRE_S3_REEL}
+    fichiers_inventaire = {identifiant.split("::")[0] for identifiant in INVENTAIRE_S3_REEL | INVENTAIRE_PG_S3RVER}
     for fichier in sorted(DOSSIER_TESTS.glob("test_*.py")):
         if fichier.name == Path(__file__).name:
             continue  # le garde-fou lui-même cite ces noms : c'est son objet
@@ -588,3 +624,48 @@ def test_le_garde_fou_live_nomme_les_tests_en_cause_et_publie_la_raison() -> Non
 
     # Et il doit REFUSER, pas seulement journaliser : la porte est un exit non nul.
     assert "raise SystemExit" in texte_python, "le garde-fou doit lever (sortie non nulle)"
+
+
+def test_ci_installe_redis_avant_les_tests_pouvant_utiliser_redis_isole():
+    workflow = CI.read_text(encoding="utf-8")
+    installation = workflow.index("- name: Installer redis-server pour le test de redémarrage réel")
+    sqlite = workflow.index("- name: Run SQLite suite")
+    postgres = workflow.index("- name: Run PostgreSQL integration suite")
+    assert installation < sqlite < postgres
+
+
+def test_ci_backend_prevoit_l_emulateur_s3_des_tests_postgres():
+    workflow = CI.read_text(encoding="utf-8")
+    backend = workflow.split("  backend:", 1)[1].split("\n  frontend:", 1)[0]
+    assert 'SEAMTECH_TEST_S3RVER_URL: http://127.0.0.1:14569' in backend
+    assert 'npm ci --prefix tests/fixtures/s3rver' in backend
+    assert 'tests/fixtures/s3rver/node_modules/.bin/s3rver' in backend
+    assert backend.index('- name: Démarrer S3rver de test isolé') < backend.index('- name: Run PostgreSQL integration suite')
+
+
+def test_ci_exige_la_campagne_s3rver_et_classe_les_sondes_historiques():
+    """L'émulateur tourne effectivement en CI ; MinIO historique est opt-in, pas une preuve CI."""
+    contenu = CI.read_text(encoding="utf-8")
+    bloc = contenu.split("  backend:", 1)[1].split("\n  frontend:", 1)[0]
+    assert 'pytest -m "s3rver"' in bloc
+    assert "s3rver-ci.log" in bloc
+    assert '9 passed' in bloc and '4 xfailed' in bloc
+    assert 'skipped' in bloc and 'raise SystemExit' in bloc
+    selection = _collecter("-m", "s3rver")
+    assert selection == INVENTAIRE_S3RVER
+    historique = _collecter("-m", "minio_historique")
+    assert historique == INVENTAIRE_MINIO_HISTORIQUE_OPTIONNEL
+    assert not (selection & historique)
+    pg = _collecter("-m", "postgres and not perf and not sauvegarde and not redis_queue and not ocr_suite")
+    assert INVENTAIRE_PG_S3RVER <= pg
+
+
+def test_ci_ocr_navigateur_interdit_les_reessais_et_maintient_quatre_scenarios() -> None:
+    contenu = CI.read_text(encoding='utf-8')
+    debut = contenu.index('name: Run live E2E scan navigateur OCR')
+    fin = contenu.index('name: Upload live E2E reports on failure', debut)
+    etape = contenu[debut:fin]
+    assert re.search(r'playwright test e2e/scan-browser-ocr\.spec\.ts\s+--retries=0\b', etape)
+    assert 'passes != 4' in etape
+    assert 'sautes or flaky or inattendus' in etape
+    assert 'SEAMTECH_OCR_OBLIGATOIRE: "1"' in etape

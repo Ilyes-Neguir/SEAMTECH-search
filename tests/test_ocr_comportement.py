@@ -34,7 +34,7 @@ from seamtech_search.ocr.cli import _parse_pages
 from seamtech_search.ocr.cli import main as cli_main
 from seamtech_search.ocr.etat import EtatOCR, VerrouOCR, empreinte_sha256, get_travail_dir, verifier_budget
 from seamtech_search.ocr.pipeline import (
-    _extraire_images_pypdf,
+    _extraire_images_pdf_borne,
     _has_command,
     _ocr_image_via_tesseract,
     _rendre_page_pdf_via_pdftoppm,
@@ -344,8 +344,10 @@ def test_tesseract_timeout(tmp_path: Path) -> None:
                 assert res["succes"] is False
                 assert "timeout" in res["motif"].lower()
 
-                # via ocriser_fichier aussi
-                res2 = ocriser_fichier(PDF_PROPRE, tesseract_command="tesseract", timeout_par_page_s=1)
+                # Le mock vise Tesseract, pas les nouveaux sous-processus PDF bornés.
+                with mock.patch("seamtech_search.ocr.pipeline._page_pdf_vue_integrale_bornee", return_value=True), \
+                     mock.patch("seamtech_search.ocr.pipeline._extraire_images_pdf_borne", return_value=[tmp_path / "image.png"]):
+                    res2 = ocriser_fichier(PDF_PROPRE, tesseract_command="tesseract", timeout_par_page_s=1)
                 # pages non océrisées, motif timeout
                 assert res2["nb_pages_ocerisees"] == 0
                 # au moins un motif contient timeout ou absent
@@ -767,17 +769,20 @@ def test_texte_natif_par_page_pdf(tmp_path: Path) -> None:
     assert len(textes) >= 1
     assert any("SEAMTECH" in t for t in textes)
 
-    # PDF inexistant → []
-    textes2 = _texte_natif_par_page_pdf(tmp_path / "nope.pdf")
-    assert textes2 == []
+    # Une source disparue ne doit pas être considérée comme une page vide.
+    with pytest.raises(RuntimeError, match="Fichier PDF indisponible"):
+        _texte_natif_par_page_pdf(tmp_path / "nope.pdf")
 
-    # fallback pypdf si pdfplumber échoue
+    # Le texte existe toujours dans l'original, mais ne doit pas être publié
+    # si l'inspection échoue : le repli pypdf ignore notamment les clips.
+    from pypdf import PdfReader
+    assert "SEAMTECH" in PdfReader(pdf_path).pages[0].extract_text()
     with mock.patch("pdfplumber.open", side_effect=Exception("fail")):
-        textes3 = _texte_natif_par_page_pdf(pdf_path)
-        assert len(textes3) >= 1
+        with pytest.raises(RuntimeError, match="Inspection PDF"):
+            _texte_natif_par_page_pdf(pdf_path)
 
 
-def test_extraire_images_pypdf(tmp_path: Path) -> None:
+def test_extraire_images_pdf_borne(tmp_path: Path) -> None:
     # PDF sans image → []
     try:
         from reportlab.lib.pagesizes import A4
@@ -791,15 +796,15 @@ def test_extraire_images_pypdf(tmp_path: Path) -> None:
     except ImportError:
         pytest.skip("reportlab absent")
 
-    imgs = _extraire_images_pypdf(pdf_path, 0, tmp_path)
-    assert isinstance(imgs, list)
+    imgs = _extraire_images_pdf_borne(pdf_path, 0, tmp_path, 10)
+    assert imgs == []
 
     # PDF inexistant → []
-    imgs2 = _extraire_images_pypdf(tmp_path / "nope.pdf", 0, tmp_path)
+    imgs2 = _extraire_images_pdf_borne(tmp_path / "nope.pdf", 0, tmp_path, 10)
     assert imgs2 == []
 
     # page hors borne → []
-    imgs3 = _extraire_images_pypdf(pdf_path, 999, tmp_path)
+    imgs3 = _extraire_images_pdf_borne(pdf_path, 999, tmp_path, 10)
     assert imgs3 == []
 
 
@@ -839,10 +844,9 @@ def test_ocriser_fichier_avec_pages_et_empreinte(tmp_path: Path) -> None:
     assert "empreinte_sha256" in res
     assert len(res["empreinte_sha256"]) == 64
 
-    # fichier inexistant → empreinte vide mais pas de crash
-    res2 = ocriser_fichier(tmp_path / "nope.pdf", tesseract_command=str(FAKE_TESSERACT))
-    assert res2["empreinte_sha256"] == ""
-    assert res2["nb_pages"] == 0 or res2["pages"] == []
+    # Une source disparue est un échec explicite, pas un traitement vide réussi.
+    with pytest.raises(RuntimeError, match="Fichier PDF indisponible"):
+        ocriser_fichier(tmp_path / "nope.pdf", tesseract_command=str(FAKE_TESSERACT))
 
 
 def test_inventaire_lister_fichiers_et_erreurs(tmp_path: Path) -> None:

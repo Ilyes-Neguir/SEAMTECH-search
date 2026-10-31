@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 
 from seamtech_search.config import AppConfig
 from seamtech_search.fiches import routes
+from tests.helpers_postgres_isole import url_base_jetable
 
 RACINE = Path(__file__).resolve().parent.parent
 PDF_7792 = RACINE / "sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf"
@@ -141,6 +142,39 @@ class TestRegistreGabaritsUnitaire:
             assert getattr(attrape.value, "status_code", None) == 422
 
 
+class TestLecturePdfBornee:
+    def test_ecriture_temporaire_par_morceaux_jamais_en_memoire_entiere(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import asyncio
+        import io
+
+        class FauxUpload:
+            def __init__(self, contenu: bytes) -> None:
+                self._flux = io.BytesIO(contenu)
+                self.tailles_demandees: list[int] = []
+
+            async def read(self, taille: int = -1) -> bytes:
+                self.tailles_demandees.append(taille)
+                assert taille > 0, "lecture non bornée d'un upload"
+                return self._flux.read(taille)
+
+        monkeypatch.setattr(routes, "TAILLE_PDF_MAX", 16)
+        upload = FauxUpload(b"%PDF-12345678901")
+        chemin = asyncio.run(routes._ecrire_pdf_temporaire_borne(upload, "test-borne-"))
+        try:
+            assert chemin.read_bytes() == b"%PDF-12345678901"
+        finally:
+            chemin.unlink(missing_ok=True)
+        assert upload.tailles_demandees and max(upload.tailles_demandees) <= 1024 * 1024
+
+        trop_gros = FauxUpload(b"%PDF-" + b"x" * 32)
+        with pytest.raises(Exception) as attrape:
+            asyncio.run(routes._ecrire_pdf_temporaire_borne(trop_gros, "test-borne-"))
+        assert getattr(attrape.value, "status_code", None) == 413
+        assert trop_gros.tailles_demandees and max(trop_gros.tailles_demandees) <= 1024 * 1024
+
+
 class TestDetectionUnitaire:
     def test_detecter_pdf_inconnu_est_un_resultat(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Aucun gabarit en base → 200 « reprise_complete », jamais un crash."""
@@ -215,7 +249,7 @@ class TestRoutesLivePostgreSQL:
                 cursor.execute(f'CREATE DATABASE "{nom_base}"')
         finally:
             admin.close()
-        url_base = URL_PG.rsplit("/", 1)[0] + f"/{nom_base}"
+        url_base = url_base_jetable(URL_PG, nom_base)
         from seamtech_search.fiches.gabarits import initialiser_gabarits
         from seamtech_search.fiches.persistance import initialiser_verite_7792
         from seamtech_search.indexer import SearchIndex
@@ -302,3 +336,130 @@ class TestRoutesLivePostgreSQL:
         assert any(c["zone"] and c["zone"]["page"] == 0 for c in champs)
         inconnue = client_live.get("/fiches/ABSENTE/champs")
         assert inconnue.status_code == 404
+
+    def test_lot_synchrone_signale_echec_de_promotion(self, client_live: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        import shutil
+
+        from seamtech_search.fiches.depot import DepotImpossible
+
+        racine = tmp_path / 'archive'
+        dossier = racine / 'synthese'
+        dossier.mkdir(parents=True)
+        shutil.copy(PDF_7792, dossier / 'fiche.pdf')
+        def echec(*args: Any, **kwargs: Any) -> dict:
+            raise DepotImpossible('stockage indisponible')
+        monkeypatch.setattr(routes, 'executer_lot', echec)
+        reponse = client_live.post('/imports/dossier/lot', json={'racine': str(racine)},
+                                  headers={'X-SEAMTECH-BACKGROUND': 'false'})
+        assert reponse.status_code == 503
+        assert 'lot' in reponse.json()['detail'].lower()
+        assert 'non' in reponse.json()['detail'].lower()
+        assert (dossier / 'fiche.pdf').is_file()
+
+    def test_lot_en_fond_local_rend_echec_visible_dans_registre(self, client_live: TestClient, base_live: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        import shutil
+        import threading
+        import time
+
+        from seamtech_search.fiches import depot
+        from seamtech_search.jobs import get_job
+
+        racine = tmp_path / 'archive-local'
+        dossier = racine / 'synthese'
+        dossier.mkdir(parents=True)
+        shutil.copy(PDF_7792, dossier / 'fiche.pdf')
+        declenche = threading.Event()
+        def echec(*args: Any, **kwargs: Any) -> dict:
+            declenche.set()
+            raise depot.DepotImpossible('panne synthetique')
+        monkeypatch.setattr(routes, 'executer_lot', echec)
+        monkeypatch.setattr(depot, 'executer_lot', echec)
+        reponse = client_live.post('/imports/dossier/lot', json={'racine': str(racine)})
+        assert reponse.status_code == 202
+        contenu = reponse.json()
+        assert contenu['traitement'] == 'processus_memoire'
+        assert declenche.wait(3)
+        limite = time.monotonic() + 3
+        while time.monotonic() < limite:
+            job = get_job(base_live['index'], contenu['job_id'])
+            if job['status'] == 'failed':
+                break
+            time.sleep(0.02)
+        assert job['status'] == 'failed'
+        assert (dossier / 'fiche.pdf').is_file()
+
+    def test_lot_en_fond_local_rend_exception_inattendue_visible(self, client_live: TestClient, base_live: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        import shutil
+        import time
+
+        from seamtech_search.fiches import depot
+        from seamtech_search.jobs import get_job
+
+        racine = tmp_path / 'archive-erreur'
+        dossier = racine / 'synthese'
+        dossier.mkdir(parents=True)
+        shutil.copy(PDF_7792, dossier / 'fiche.pdf')
+        def echec(*args: Any, **kwargs: Any) -> dict:
+            raise RuntimeError('erreur synthetique inattendue')
+        monkeypatch.setattr(depot, 'executer_lot', echec)
+        reponse = client_live.post('/imports/dossier/lot', json={'racine': str(racine)})
+        assert reponse.status_code == 202
+        contenu = reponse.json()
+        limite = time.monotonic() + 3
+        while time.monotonic() < limite:
+            job = get_job(base_live['index'], contenu['job_id'])
+            if job['status'] == 'failed':
+                break
+            time.sleep(0.02)
+        assert job['status'] == 'failed'
+        assert 'inattendue' in job['failure_reason']
+
+    def test_lot_local_exception_ne_journalise_pas_secret(self, client_live, base_live, tmp_path, monkeypatch, caplog) -> None:
+        import shutil
+        import time
+
+        from seamtech_search import worker
+        from seamtech_search.jobs import get_job
+
+        dossier = tmp_path / 'archive-secret' / 'synthese'
+        dossier.mkdir(parents=True)
+        shutil.copy(PDF_7792, dossier / 'fiche.pdf')
+        secret = 'SECRET-SYNTHETIQUE-TEST'
+        def echec(*args: Any, **kwargs: Any) -> None:
+            raise RuntimeError(secret)
+        monkeypatch.setattr(worker, '_process_lot_task', echec)
+        with caplog.at_level('INFO', logger=routes.LOGGER.name):
+            reponse = client_live.post('/imports/dossier/lot', json={'racine': str(dossier.parent)})
+            assert reponse.status_code == 202
+            limite = time.monotonic() + 5
+            while time.monotonic() < limite:
+                job = get_job(base_live['index'], reponse.json()['job_id'])
+                if job['status'] == 'failed':
+                    break
+                time.sleep(0.02)
+            assert job['status'] == 'failed'
+        assert secret not in caplog.text
+        assert all(record.exc_info is None for record in caplog.records if record.name == routes.LOGGER.name)
+
+    def test_lot_file_echec_enfilage_reponse_non_acceptee(self, client_live: TestClient, base_live: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        import shutil
+
+        from seamtech_search import worker
+        from seamtech_search.jobs import get_job
+        from seamtech_search.redis_store import RedisStore
+
+        racine = tmp_path / 'archive-enfilage'
+        dossier = racine / 'synthese'
+        dossier.mkdir(parents=True)
+        shutil.copy(PDF_7792, dossier / 'fiche.pdf')
+        monkeypatch.setattr(worker, 'file_durable_disponible', lambda store: True)
+        monkeypatch.setattr(RedisStore, 'enqueue_task', lambda *args, **kwargs: False)
+        reponse = client_live.post('/imports/dossier/lot', json={'racine': str(racine)})
+        assert reponse.status_code == 503
+        assert 'suivi' in reponse.json()['detail'].lower()
+        with base_live['index'].connect() as connexion:
+            with connexion.cursor() as curseur:
+                curseur.execute('SELECT id_lot FROM lot_import ORDER BY id_lot DESC LIMIT 1')
+                id_lot = curseur.fetchone()[0]
+        assert get_job(base_live['index'], f'lot-{id_lot}')['status'] == 'pending'
+        assert (dossier / 'fiche.pdf').is_file()

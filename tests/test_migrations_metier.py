@@ -26,6 +26,7 @@ import pytest
 
 from seamtech_search import schema_metier
 from seamtech_search.indexer import SearchIndex
+from tests.helpers_postgres_isole import url_base_jetable
 
 DATABASE_URL = os.environ.get("SEAMTECH_TEST_DATABASE_URL", "")
 TABLES_HERITEES = {"documents", "scan_runs", "imports", "import_jobs", "audit_log", "schema_migrations"}
@@ -50,8 +51,7 @@ def base_metier() -> Iterator[dict[str, Any]]:
     finally:
         administrateur.close()
 
-    partie = DATABASE_URL.rsplit("/", 1)
-    url_base = f"{partie[0]}/{nom_base}"
+    url_base = url_base_jetable(DATABASE_URL, nom_base)
     index = SearchIndex(Path(f"/tmp/unused-{nom_base}.db"), url_base)
     debut = time.perf_counter()
     index.initialize()
@@ -340,7 +340,7 @@ def _installer_extension(url_admin: str, nom_base: str, extension: str) -> None:
     from psycopg2 import sql
     from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 
-    admin = psycopg2.connect(f"{url_admin.rsplit('/', 1)[0]}/{nom_base}")
+    admin = psycopg2.connect(url_base_jetable(url_admin, nom_base))
     admin.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
     try:
         with admin.cursor() as cursor:
@@ -364,8 +364,19 @@ def _detruire_base(url_admin: str, nom_base: str) -> None:
 
 
 def _url_limite(url_admin: str, nom_base: str) -> str:
-    hote = url_admin.split("@", 1)[1].split("/", 1)[0]
-    return f"postgresql://{ROLE_LIMITE}:{MOT_DE_PASSE_LIMITE}@{hote}/{nom_base}"
+    from urllib.parse import quote, urlsplit, urlunsplit
+
+    from psycopg2.extensions import parse_dsn
+
+    base = url_base_jetable(url_admin, nom_base)
+    parties = urlsplit(base)
+    hote = parties.netloc.rsplit("@", 1)[-1]
+    identite = f"{quote(ROLE_LIMITE, safe='')}:{quote(MOT_DE_PASSE_LIMITE, safe='')}"
+    resultat = urlunsplit((parties.scheme, f"{identite}@{hote}", parties.path, parties.query, ""))
+    dsn = parse_dsn(resultat)
+    if dsn.get("user") != ROLE_LIMITE or dsn.get("password") != MOT_DE_PASSE_LIMITE:
+        raise ValueError("L'URL détourne l'identité du rôle limité")
+    return resultat
 
 
 @pytest.mark.postgres

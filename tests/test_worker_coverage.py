@@ -66,7 +66,7 @@ def fake_result(tmp_path: Path, upload_status: str, all_verified: bool, with_key
     )
 
 
-def test_truly_uploaded_purges_staged(tmp_path: Path) -> None:
+def test_truly_uploaded_conserve_staged(tmp_path: Path) -> None:
     cfg = make_config(tmp_path)
     cfg.database_path.parent.mkdir(parents=True, exist_ok=True)
     staged = staging_root(cfg)
@@ -91,7 +91,7 @@ def test_truly_uploaded_purges_staged(tmp_path: Path) -> None:
             payload = {"job_id": "job-123", "source_path": str(src)}
             out = process_import_task(payload, cfg, idx, redis_store=None)
             assert out["status"] == "completed"
-            assert not src.exists()
+            assert src.exists()
 
 
 def test_not_configured_keeps_completed(tmp_path: Path) -> None:
@@ -112,18 +112,8 @@ def test_not_configured_keeps_completed(tmp_path: Path) -> None:
             assert src.exists()
 
 
-def test_upload_incomplete_quarantine_le_staging(tmp_path: Path) -> None:
-    """Envoi incomplet d'une source STAGÉE : mise en quarantaine (dossier à nous).
-
-    La source vient du staging applicatif (téléversement navigateur) : c'est
-    notre brouillon, on le déplace pour qu'il soit inspectable/rejouable et
-    exclu du balayage. Les octets restent intégralement présents.
-
-    NB (audit A04) : le test historique portait cette source HORS staging et
-    attendait le déplacement — c'était le défaut (déplacement d'une archive
-    externe, références de reprise périmées). Le cas externe est désormais
-    couvert par ``test_upload_incomplete_archive_externe_non_deplacee``.
-    """
+def test_upload_incomplete_conserve_staging_pour_reprise(tmp_path: Path) -> None:
+    """Le staging reste entier et ses références restent valides après un échec."""
     cfg = make_config(tmp_path)
     staged = staging_root(cfg)
     src = staged / "uuid_folder_fail"
@@ -139,16 +129,11 @@ def test_upload_incomplete_quarantine_le_staging(tmp_path: Path) -> None:
             out = process_import_task(payload, cfg, idx, redis_store=None)
             assert out["status"] == "upload_incomplete"
             assert out["upload_status"] == "upload_incomplete"
-            q_root = quarantine_root(cfg)
-            assert q_root.exists()
-            assert not src.exists()
-            dest = q_root / "job-123_uuid_folder_fail"
-            assert (dest / "file.txt").read_text() == "data", "octets préservés à l'identique"
-            assert out["quarantine"]["deplace"] is True
-            assert out["quarantine"]["destination"] == str(dest)
-            # La reprise doit retrouver ses fichiers : la nouvelle référence est publiée.
-            assert out["source_path"] == str(dest)
-            assert "source_path" in out["quarantine"]["references_mises_a_jour"]
+            assert (src / "file.txt").read_text() == "data", "octets préservés à l'identique"
+            assert out["quarantine"]["deplace"] is False
+            assert out["quarantine"]["destination"] is None
+            assert out["source_path"] == str(src)
+            assert out["quarantine"]["references_mises_a_jour"] == []
 
 
 def test_upload_incomplete_archive_externe_non_deplacee(tmp_path: Path) -> None:
@@ -198,7 +183,7 @@ def test_cancelled_and_exception(tmp_path: Path) -> None:
             payload = {"job_id": "job-123", "source_path": str(src)}
             out = process_import_task(payload, cfg, idx, redis_store=None)
             assert out["status"] == "failed"
-            assert "boom" in out.get("error", "")
+            assert out.get("error") == "Import impossible (Exception)."
 
 
 def test_with_redis_store(tmp_path: Path) -> None:
@@ -234,20 +219,18 @@ def test_worker_loop_ack_retry_deadletter(tmp_path: Path) -> None:
     result_incomplete = {"job_id": "job-1", "status": "upload_incomplete"}
     result_failed = {"job_id": "job-2", "status": "failed"}
 
+    from seamtech_search.jobs import create_job
+
+    create_job(idx, "job-1", str(tmp_path))
+    create_job(idx, "job-2", str(tmp_path))
     with patch("seamtech_search.worker.process_import_task", side_effect=[result_incomplete, result_failed]):
-        import threading
+        worker_loop(cfg, idx, mock_redis, run_once=True)
 
-        def stop_after():
-            time.sleep(0.4)
-            from seamtech_search import worker as w
-            w._worker_running = False
-
-        threading.Thread(target=stop_after, daemon=True).start()
-        worker_loop(cfg, idx, mock_redis)
-
-        assert mock_redis.ack_task.call_count >= 1
-        # One retry, one deadletter
-        assert mock_redis.retry_task.call_count >= 1 or mock_redis.deadletter_task.call_count >= 1
+        # Retry et lettre morte transfèrent chacun la livraison atomiquement ;
+        # un ack préalable créerait une fenêtre de perte en cas de crash.
+        mock_redis.ack_task.assert_not_called()
+        assert mock_redis.retry_task.call_count == 1
+        assert mock_redis.deadletter_task.call_count == 1
 
 
 def test_start_stop_worker(tmp_path: Path) -> None:
@@ -267,3 +250,70 @@ def test_start_stop_worker(tmp_path: Path) -> None:
         stop_background_worker()
         from seamtech_search import worker as w
         assert w._worker_running is False
+
+
+def test_transport_prouve_mais_snapshot_absent_necessite_revue_sans_reenvoi(tmp_path: Path) -> None:
+    src = tmp_path / 'source-synthetique'
+    src.mkdir()
+    fichier = src / 'piece.txt'
+    fichier.write_bytes(b'synthetique')
+    cfg = make_config(tmp_path)
+    idx = make_index(tmp_path / 'index-synthetique')
+    result = fake_result(tmp_path, upload_status='partial', all_verified=False, with_key=True, src_path=src)
+    result = replace(result, files=[replace(result.files[0], path=str(fichier), object_key='cle',
+                                            object_bucket='bucket', upload_status='uploaded')],
+                     source_path=str(src), transport_verifie=True)
+    with patch('seamtech_search.worker.import_folder', return_value=result), \
+         patch('seamtech_search.worker.update_job'):
+        payload = process_import_task({'job_id': 'job-test', 'source_path': str(src)}, cfg, idx, redis_store=None)
+    assert payload['status'] == 'needs_review'
+    assert payload['preservation']['integrite_prouvee'] is False
+    assert payload['preservation']['transport_verifie'] is True
+    assert payload['quarantine']['deplace'] is False
+    assert fichier.read_bytes() == b'synthetique'
+
+
+def test_redelivraison_job_revision_transportee_ne_reimporte_pas(tmp_path: Path) -> None:
+    src = tmp_path / 'source-synthetique'
+    src.mkdir()
+    cfg = make_config(tmp_path)
+    idx = make_index(tmp_path / 'index-synthetique')
+    ancien = {'status': 'needs_review', 'result': {'all_verified': False,
+              'preservation': {'transport_verifie': True, 'integrite_prouvee': False}}}
+    with patch('seamtech_search.worker.get_job', return_value=ancien), \
+         patch('seamtech_search.worker.import_folder') as importer:
+        resultat = process_import_task({'job_id': 'job-test', 'source_path': str(src)}, cfg, idx, redis_store=None)
+    importer.assert_not_called()
+    assert resultat['status'] == 'needs_review'
+    assert resultat['duplicate_delivery'] is True
+
+
+def test_import_reel_transport_revue_et_redelivraison_sans_double_envoi(tmp_path: Path, monkeypatch) -> None:
+    from seamtech_search.jobs import create_job, get_job
+    from seamtech_search.storage import S3StorageClient
+    from tests.s3_en_memoire import S3EnMemoire
+
+    src = tmp_path / 'source-reelle'
+    src.mkdir()
+    piece = src / 'piece.txt'
+    piece.write_bytes(b'contenu-synthetique')
+    cfg = make_config(tmp_path, {'s3_endpoint_url': 'https://s3.invalide', 's3_bucket': 'bucket-test',
+                                 's3_access_key': 'cle-synthetique', 's3_secret_key': 'secret-synthetique'})
+    idx = SearchIndex(cfg.database_path)
+    idx.initialize(rebuild=True)
+    magasin = S3EnMemoire()
+    monkeypatch.setattr(S3StorageClient, '_get_client', lambda self, **kwargs: magasin)
+    monkeypatch.setattr(S3StorageClient, 'ensure_bucket_exists', lambda self: True)
+    create_job(idx, 'job-reel', str(src))
+    task = {'job_id': 'job-reel', 'source_path': str(src)}
+    premier = process_import_task(task, cfg, idx, redis_store=None)
+    assert premier['status'] == 'needs_review'
+    assert not premier['all_verified'] and premier['preservation']['transport_verifie']
+    assert get_job(idx, 'job-reel')['status'] == 'needs_review'
+    nombre_envois = len(magasin.envois)
+    assert nombre_envois == 1
+    second = process_import_task(task, cfg, idx, redis_store=None)
+    assert second['status'] == 'needs_review' and second['duplicate_delivery']
+    assert len(magasin.envois) == nombre_envois
+    assert piece.read_bytes() == b'contenu-synthetique'
+    idx.close()

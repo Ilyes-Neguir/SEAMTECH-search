@@ -5,6 +5,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from zipfile import BadZipFile, ZipFile
@@ -22,7 +23,13 @@ logger = logging.getLogger("seamtech_search.extractors")
 # pipeline when ocrmypdf is absent — previously they stayed « unavailable »
 # even with tesseract installed.
 # v6: OCR tesseract fra+eng when both language packs are present.
-CURRENT_EXTRACTOR_VERSION = 6
+# v7: normalize verified, uniformly rotated PDF text for indexing.
+# v8: inspect mixed native/image PDFs and reject unsafe or incomplete OCR.
+# v9: preserve partial native text and extraction status across worker IPC.
+# v10: read verified orthogonal mixed orientations separately for indexing.
+# v11: retain partial text without certifying unsupported PDF orientations.
+# v12: do not publish uninspected fallback text; clip to the actual page view.
+CURRENT_EXTRACTOR_VERSION = 12
 
 EXTRACTION_STATUSES = {"extracted", "unavailable", "skipped", "error", "timeout", "not_applicable"}
 
@@ -55,6 +62,15 @@ class ExtractionResult:
             "timeout": "extraction timed out",
         }.get(self.status, "extraction unavailable")
         return f"[{prefix}: {self.detail}]" if self.detail else f"[{prefix}]"
+
+
+def _resultat_ocr_borne(texte: str, max_chars: int) -> ExtractionResult:
+    """Conserve un éventuel préfixe OCR sans qualifier de complet un texte tronqué."""
+    if len(texte) > max_chars:
+        return ExtractionResult(texte[:max_chars], "unavailable", "OCR tronqué : limite de texte atteinte")
+    if not texte.strip():
+        return ExtractionResult("", "unavailable", "OCR n'a produit aucun texte")
+    return ExtractionResult(texte, "extracted")
 
 
 TEXT_EXTENSIONS = {
@@ -118,26 +134,33 @@ def extract_file(
             return ExtractionResult("", "skipped", f"file exceeds {max_file_size_bytes} bytes")
         suffix = path.suffix.lower()
         if suffix == ".pdf":
-            result = _from_legacy(_extract_pdf(path, max_chars))
-            if result.status != "unavailable" or not enable_ocr:
+            resultat_pdf = _extract_pdf(path, max_chars)
+            if isinstance(resultat_pdf, ExtractionResult):
+                # Un texte natif partiel ne doit pas être remplacé par un OCR
+                # qui pourrait paraître complet sans vérifier l'orientation.
+                return resultat_pdf
+            result = _from_legacy(resultat_pdf)
+            if not enable_ocr:
                 return result
+            if result.status != "unavailable":
+                return _completer_pdf_natif_images(
+                    path, result, max_chars, tesseract_command, external_extraction_timeout_seconds
+                )
             if _has_command(ocrmypdf_command):
                 try:
-                    return ExtractionResult(
-                        _extract_with_ocrmypdf(
-                            path, max_chars, ocrmypdf_command, external_extraction_timeout_seconds
-                        ),
-                        "extracted",
+                    texte_ocr = _extract_with_ocrmypdf(
+                        path, max_chars, ocrmypdf_command, external_extraction_timeout_seconds
                     )
+                    return _resultat_ocr_borne(texte_ocr, max_chars)
                 except Exception as exc:
-                    logger.warning("ocrmypdf a échoué sur %s (%s) — repli tesseract si présent", path.name, exc)
+                    logger.warning("ocrmypdf a échoué (%s) — repli tesseract si présent", type(exc).__name__)
             if _has_command(tesseract_command):
                 texte, motif = _extract_pdf_via_pipeline_ocr(
                     path, max_chars, tesseract_command, external_extraction_timeout_seconds
                 )
-                if texte.strip():
-                    return ExtractionResult(texte, "extracted")
-                return ExtractionResult("", "unavailable", motif or "OCR n'a produit aucun texte")
+                if motif:
+                    return ExtractionResult(texte, "unavailable", motif)
+                return _resultat_ocr_borne(texte, max_chars)
             return ExtractionResult("", "unavailable", "OCR activé mais ocrmypdf et tesseract absents")
         if suffix == ".docx":
             return _from_legacy(_extract_docx(path, max_chars))
@@ -159,10 +182,8 @@ def extract_file(
                 return ExtractionResult("", "unavailable", "OCR is disabled")
             if not _has_command(tesseract_command):
                 return ExtractionResult("", "unavailable", "Tesseract is not installed")
-            return ExtractionResult(
-                _extract_with_tesseract(path, max_chars, tesseract_command, external_extraction_timeout_seconds),
-                "extracted",
-            )
+            texte_ocr = _extract_with_tesseract(path, max_chars, tesseract_command, external_extraction_timeout_seconds)
+            return _resultat_ocr_borne(texte_ocr, max_chars)
         if external_extractors and suffix in external_extractors:
             command = external_extractors[suffix]
             if not command or not _has_command(command[0]):
@@ -236,7 +257,8 @@ def _extract_with_tesseract(path: Path, max_chars: int, command: str, timeout: i
     )
     if completed.returncode != 0:
         raise RuntimeError("Tesseract could not read the image")
-    return completed.stdout[:max_chars]
+    # Garder un caractère supplémentaire pour détecter la troncature.
+    return completed.stdout[:max_chars + 1]
 
 
 def _extract_with_ocrmypdf(path: Path, max_chars: int, command: str, timeout: int) -> str:
@@ -259,7 +281,8 @@ def _extract_with_ocrmypdf(path: Path, max_chars: int, command: str, timeout: in
         )
         if completed.returncode != 0 or not output_path.exists():
             raise RuntimeError("OCRmyPDF could not extract text from the PDF")
-        return output_path.read_text(encoding="utf-8", errors="ignore")[:max_chars]
+        with output_path.open(encoding="utf-8", errors="ignore") as sidecar:
+            return sidecar.read(max_chars + 1)
 
 
 def _langue_ocr_disponible(tesseract_command: str) -> str:
@@ -302,26 +325,29 @@ def _extract_pdf_via_pipeline_ocr(
     except Exception as exc:
         return "", f"échec OCR : {type(exc).__name__}"
     pages = rapport.get("pages") or []
+    if rapport.get("nb_echecs", 0):
+        return "", "OCR incomplet : une ou plusieurs pages n'ont pas pu être traitées"
     textes = [str(p.get("texte_final") or "") for p in pages]
     texte = "\n".join(morceau for morceau in textes if morceau.strip()).strip()
     if texte:
-        return texte[:max_chars], ""
+        if len(texte) > max_chars:
+            return texte[:max_chars], "OCR tronqué : limite de texte atteinte"
+        return texte, ""
     motifs = [str(p.get("motif") or "") for p in pages if p.get("motif")]
     return "", "; ".join(m for m in motifs if m) or "OCR n'a produit aucun texte"
 
 
-def _extract_pdf(path: Path, max_chars: int) -> str:
-    """Extract PDF text with pdfplumber first, pypdf as a fallback.
+def _extract_pdf(path: Path, max_chars: int) -> str | ExtractionResult:
+    """Extract PDF text and tables only when the page inspection is available.
 
-    pdfplumber is layout-aware (word coordinates) and also yields tables,
-    which is what the fixed-template technical sheets need. Any pdfplumber
-    failure (missing dependency, malformed file) falls back to pypdf so a
-    parser regression can never make a previously readable PDF unreadable.
+    A text-only fallback cannot check clipping or orientation. Publishing it
+    would index content outside the displayed page even with ``unavailable``
+    status, so fail closed and leave the source PDF untouched instead.
     """
     plumber_text = _extract_pdf_with_plumber(path, max_chars)
     if plumber_text is not None:
         return plumber_text
-    return _extract_pdf_with_pypdf(path, max_chars)
+    return ExtractionResult("", "unavailable", "Inspection PDF indisponible : relecture nécessaire")
 
 
 def _table_row_already_in_text(cells: list[str], normalized_text: str) -> bool:
@@ -341,63 +367,134 @@ def _table_row_already_in_text(cells: list[str], normalized_text: str) -> bool:
     return all(" ".join(cell.split()) in normalized_text for cell in cells)
 
 
-def _extract_pdf_with_plumber(path: Path, max_chars: int) -> str | None:
-    """Return extracted text, an unavailable marker, or None to fall back."""
+def _texte_page_plumber(page: object) -> str:
+    """Même lecture native et tableaux pour l'extraction classique et mixte."""
+    text = page.extract_text(x_tolerance=2, y_tolerance=2) or ""
+    try:
+        normalized = " ".join(text.split())
+        for table in page.extract_tables() or []:
+            fresh_rows = [
+                " | ".join(cell.strip() if cell else "" for cell in cells)
+                for cells in table
+                if not _table_row_already_in_text(cells, normalized)
+            ]
+            fresh_rows = [row for row in fresh_rows if row.strip(" |")]
+            if fresh_rows:
+                text += "\n" + "\n".join(fresh_rows)
+    except Exception as exc:
+        logger.debug("Table extraction failed (%s)", type(exc).__name__)
+    return text
+
+
+def _texte_page_orientee(originale: object, *, inspecter_images: bool = False) -> tuple[str, bool, bool]:
+    """Lit les groupes vérifiés et signale une éventuelle lecture incertaine."""
+    from seamtech_search.pdf_orientation import (
+        fermer_page_lecture,
+        lectures_mixtes_verifiees,
+        orientation_non_verifiee,
+        orientations_visibles,
+        page_de_lecture,
+    )
+
+    mixte, compatible, _ = orientations_visibles(originale)
+    page, rotation = page_de_lecture(originale)
+    try:
+        with lectures_mixtes_verifiees(originale) if mixte or not compatible else nullcontext(None) as lectures:
+            incertaine = orientation_non_verifiee(originale, rotation, lectures)
+            if lectures is None:
+                texte = _texte_page_plumber(page)
+            else:
+                texte = "\n".join(_texte_page_plumber(vue) for vue, _ in lectures).strip()
+        return texte, bool(page.images) if inspecter_images else False, incertaine
+    finally:
+        fermer_page_lecture(originale, page)
+
+
+def _completer_pdf_natif_images(
+    path: Path, native: ExtractionResult, max_chars: int, command: str, timeout: int
+) -> ExtractionResult:
+    """Complète les pages image sans modifier les pages à texte natif.
+
+    Refuse le succès si une des pages image identifiées ne peut être traitée.
+    Les PDF purement natifs conservent strictement l'extraction antérieure.
+    """
+    try:
+        import pdfplumber
+
+        textes: list[str] = []
+        pages_images: list[int] = []
+        with pdfplumber.open(str(path)) as pdf:
+            for numero, originale in enumerate(pdf.pages):
+                texte, a_images, incertaine = _texte_page_orientee(originale, inspecter_images=True)
+                if incertaine:
+                    return ExtractionResult(native.text, "unavailable", "Orientation PDF non vérifiée : relecture nécessaire")
+                # Une page avec texte natif n'est jamais océrisée : son logo
+                # ou ses figures ne justifient pas de remplacer ce texte.
+                if not texte.strip() and a_images:
+                    pages_images.append(numero)
+                textes.append(texte)
+    except Exception:
+        # Ne pas déclarer complète une extraction quand les pages image
+        # n'ont pas pu être inspectées ; conserver le texte natif disponible.
+        return ExtractionResult(native.text, "unavailable", "Inspection des pages image indisponible")
+
+    if not pages_images:
+        return native
+    if not _has_command(command):
+        return ExtractionResult(native.text, "unavailable", "OCR incomplet : Tesseract indisponible")
+    try:
+        from seamtech_search.ocr.pipeline import ocriser_fichier
+
+        rapport = ocriser_fichier(
+            path, pages=pages_images, tesseract_command=command,
+            timeout_par_page_s=max(5, min(int(timeout), 60)),
+            langue=_langue_ocr_disponible(command),
+        )
+        par_page = {page["page"]: page for page in rapport.get("pages", [])}
+        for numero in pages_images:
+            page = par_page.get(numero)
+            if not page or not page.get("page_ocerisee") or not str(page.get("texte_ocr") or "").strip():
+                return ExtractionResult(native.text, "unavailable", "OCR incomplet : page image non reconnue")
+            textes[numero] = str(page["texte_ocr"])
+        return _resultat_ocr_borne("\n".join(t for t in textes if t.strip()).strip(), max_chars)
+    except Exception as exc:
+        return ExtractionResult(native.text, "unavailable", f"OCR incomplet : {type(exc).__name__}")
+
+
+def _extract_pdf_with_plumber(path: Path, max_chars: int) -> str | ExtractionResult | None:
+    """Return text, an explicitly partial result, or None for the pypdf fallback."""
     try:
         import pdfplumber
     except ImportError:
+        logger.warning("Inspection PDF indisponible : pdfplumber absent")
         return None
     try:
         chunks: list[str] = []
         total = 0
+        incertaine = False
+        tronquee = False
         with pdfplumber.open(str(path)) as pdf:
-            for page in pdf.pages:
-                text = page.extract_text(x_tolerance=2, y_tolerance=2) or ""
-                try:
-                    # extract_text() already yields the words inside table
-                    # cells, so a table row whose cells all appear in the page
-                    # text would only duplicate content: every document stored
-                    # twice over, index inflated, field regexes double-matching.
-                    # Keep only the rows that add new information (e.g. pages
-                    # where the plain-text layer garbles the table layout).
-                    normalized = " ".join(text.split())
-                    for table in page.extract_tables() or []:
-                        fresh_rows = [
-                            " | ".join(cell.strip() if cell else "" for cell in cells)
-                            for cells in table
-                            if not _table_row_already_in_text(cells, normalized)
-                        ]
-                        fresh_rows = [row for row in fresh_rows if row.strip(" |")]
-                        if fresh_rows:
-                            text += "\n" + "\n".join(fresh_rows)
-                except Exception as exc:
-                    # Tables are a bonus; plain text is still usable.
-                    logger.debug("Table extraction failed for %s: %s", path.name, exc)
+            for numero, originale in enumerate(pdf.pages):
+                text, _a_images, page_incertaine = _texte_page_orientee(originale)
+                incertaine |= page_incertaine
                 if text.strip():
+                    total += len(text) + (1 if chunks else 0)
                     chunks.append(text)
-                    total += len(text)
                 if total >= max_chars:
+                    tronquee = total > max_chars or numero + 1 < len(pdf.pages)
                     break
-    except Exception:
-        return None  # Let the pypdf fallback try instead.
+    except Exception as erreur:
+        logger.warning("Inspection PDF indisponible (%s) : aucun texte non vérifié publié", type(erreur).__name__)
+        return None
     text = "\n".join(chunks)[:max_chars].strip()
+    if incertaine or tronquee:
+        motifs = []
+        if incertaine:
+            motifs.append("Orientation PDF non vérifiée")
+        if tronquee:
+            motifs.append("Limite de texte atteinte : extraction tronquée ou pages non inspectées")
+        return ExtractionResult(text, "unavailable", "; ".join(motifs) + " : relecture nécessaire")
     return text or "[extraction unavailable: PDF contains no embedded text]"
-
-
-def _extract_pdf_with_pypdf(path: Path, max_chars: int) -> str:
-    from pypdf import PdfReader
-
-    reader = PdfReader(str(path), strict=False)
-    chunks: list[str] = []
-    total = 0
-    for page in reader.pages:
-        text = page.extract_text() or ""
-        if text:
-            chunks.append(text)
-            total += len(text)
-        if total >= max_chars:
-            break
-    return "\n".join(chunks)[:max_chars] or "[extraction unavailable: PDF contains no embedded text]"
 
 
 def _extract_docx(path: Path, max_chars: int) -> str:

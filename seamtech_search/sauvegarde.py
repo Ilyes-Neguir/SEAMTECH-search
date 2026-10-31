@@ -18,21 +18,29 @@ portable, testable et planifiable :
   table, version de schéma, inventaire de l'archive) — c'est la différence
   entre « sauvegarde configurée » et « base détruite reconstruite à
   l'identique, prouvé ».
-- Rétention : N sauvegardes conservées hors-site (paramétrable), purge des
-  plus anciennes, JAMAIS la dernière.
+- Rétention : la purge automatique est suspendue tant qu'une protection
+  globale et une restauration coordonnée ne sont pas prouvées ; surveiller
+  l'espace disponible. La fonction de rétention reste testable séparément.
 - Vérification après envoi : le dump est RE-LU depuis le bucket et son
   empreinte doit correspondre à celle du manifeste.
 
 Usage :
-    python -m seamtech_search.sauvegarde sauver --base-url URL \\
+    # SEAMTECH_DATABASE_URL et SEAMTECH_RESTORE_DATABASE_URL sont fournis
+    # par le gestionnaire de secrets ; ne pas les afficher dans le terminal.
+    python -m seamtech_search.sauvegarde sauver \\
         --archive RACINE [RACINE ...] --dossier data/backups [--retention 5]
-    python -m seamtech_search.sauvegarde restaurer --manifeste FICHIER --base-cible URL
-    python -m seamtech_search.sauvegarde restaurer --cle-manifeste CLE --base-cible URL
-    python -m seamtech_search.sauvegarde verifier --manifeste FICHIER --base-url URL \\
+    python -m seamtech_search.sauvegarde restaurer --manifeste FICHIER
+    python -m seamtech_search.sauvegarde restaurer --cle-manifeste CLE
+    python -m seamtech_search.sauvegarde verifier --manifeste FICHIER \\
         --archive RACINE [RACINE ...]
 
 La publication des résultats (CI) passe par ``SEAMTECH_SAUVEGARDE_JSON``
 (fichier JSONL, une mesure par ligne — même mécanique que ``perf-latence``).
+``sauver`` renvoie actuellement le code 2 : le dump est créé, mais la
+protection globale n'est pas qualifiée. ``complet`` est toujours faux tant
+que la restauration globale n'est pas prouvée ; ``complet_perimetre_demande``
+signale uniquement l'état des copies effectivement demandées.
+
 Les binaires ``pg_dump``/``pg_restore`` sont découverts via ``PATH``, puis
 ``/usr/lib/postgresql/*/bin``, puis ``SEAMTECH_PG_BINDIR``.
 """
@@ -40,7 +48,7 @@ Les binaires ``pg_dump``/``pg_restore`` sont découverts via ``PATH``, puis
 from __future__ import annotations
 
 import argparse
-import fcntl
+import base64
 import glob
 import hashlib
 import json
@@ -48,17 +56,27 @@ import logging
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
+import threading
 import time
+import uuid
+from contextlib import ExitStack, contextmanager, nullcontext
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import urlparse
+from typing import BinaryIO
+from urllib.parse import parse_qsl, quote, unquote, urlparse
+
+try:
+    import fcntl
+except ImportError:  # Windows : le verrou doit refuser plutôt que fonctionner sans exclusion.
+    fcntl = None
 
 import psycopg2
 from psycopg2 import sql
 
-from .schema_metier import VERSION_SCHEMA_METIER
+from .schema_metier import VERSION_SCHEMA_APPLICATION, VERSION_SCHEMA_METIER, schema_identite_octets_valide_pg
 
 logger = logging.getLogger("seamtech_search.sauvegarde")
 
@@ -76,14 +94,14 @@ _RE_SECRET = re.compile(r"(password|secret|token|access_key|secret_key|passwd)",
 
 #: Perte de données maximale admissible / temps de reprise : DÉCISIONS
 #: D'EXPLOITATION À PRENDRE (non figées ici). La stratégie de cohérence
-#: retenue : pg_dump (instantané MVCC de la base) PUIS copie des fichiers
-#: et objets listés par cet instantané. Les écritures pendant la copie
-#: peuvent produire un écart fichiers/base ; les fichiers référencés
-#: absents sont signalés et interdisent le statut « complet ».
+#: actuelle : pg_dump, comptages et références partagent un instantané MVCC
+#: exporté. L'archive et les octets locaux/S3 sont copiés ensuite sans gel :
+#: leur correspondance avec le dump n'est donc pas garantie. Le booléen
+#: « complet » reste faux ; l'état des copies demandées est distinct.
 RPO_RTO_A_DECIDER = {
     "rpo": "décision d'exploitation à prendre (période entre deux sauvegardes + durée de copie)",
     "rto": "décision d'exploitation à prendre (durée pg_restore + recopie fichiers/objets + redémarrage)",
-    "coherence": "instantané MVCC PostgreSQL puis copie des références de cet instantané ; pas de gel applicatif automatique",
+    "coherence": "dump et références dans un snapshot MVCC partagé ; copies et inventaire indépendants, sans gel applicatif",
 }
 
 
@@ -100,12 +118,22 @@ def _publier(mesure: dict) -> None:
         f.write(json.dumps(mesure, ensure_ascii=False) + "\n")
 
 
-def _sha256_fichier(chemin: Path) -> str:
+def _chemin_absolu_sans_traversee(chemin: Path) -> Path:
+    if ".." in chemin.parts:
+        raise SauvegardeError("chemin contenant une traversée de répertoire refusé")
+    return Path(os.path.abspath(chemin))
+
+
+def _sha256_flux(flux: BinaryIO) -> str:
     hacheur = hashlib.sha256()
-    with open(chemin, "rb") as f:
-        while bloc := f.read(TAILLE_BLOC_SHA256):
-            hacheur.update(bloc)
+    while bloc := flux.read(TAILLE_BLOC_SHA256):
+        hacheur.update(bloc)
     return hacheur.hexdigest()
+
+
+def _sha256_fichier(chemin: Path) -> str:
+    with open(chemin, "rb") as flux:
+        return _sha256_flux(flux)
 
 
 def _repertoire_binaires_pgserver() -> Path | None:
@@ -127,15 +155,19 @@ def _trouver_binaire(nom: str) -> str:
     direct = shutil.which(nom)
     if direct:
         return direct
+    def utilisable(candidat: Path) -> bool:
+        return candidat.is_file() and os.access(candidat, os.X_OK)
+
     bindir_env = os.environ.get("SEAMTECH_PG_BINDIR")
     if bindir_env:
         candidat = Path(bindir_env) / nom
-        if candidat.exists():
+        if utilisable(candidat):
             return str(candidat)
     for candidat in sorted(glob.glob(f"/usr/lib/postgresql/*/bin/{nom}"), reverse=True):
-        return candidat
+        if utilisable(Path(candidat)):
+            return candidat
     bindir_pgserver = _repertoire_binaires_pgserver()
-    if bindir_pgserver is not None and (bindir_pgserver / nom).exists():
+    if bindir_pgserver is not None and utilisable(bindir_pgserver / nom):
         return str(bindir_pgserver / nom)
     raise SauvegardeError(
         f"binaire « {nom} » introuvable (PATH, SEAMTECH_PG_BINDIR, /usr/lib/postgresql/*/bin) — "
@@ -144,28 +176,69 @@ def _trouver_binaire(nom: str) -> str:
 
 
 def _connecter(base_url: str, *, autocommit: bool = False):
-    connexion = psycopg2.connect(base_url)
+    try:
+        connexion = psycopg2.connect(base_url)
+    except psycopg2.Error:
+        # libpq peut inclure l'URI (et son mot de passe) dans les erreurs de
+        # syntaxe. Ne pas exposer cette exception ni son contexte aux logs.
+        raise SauvegardeError("Connexion PostgreSQL impossible ou paramètres invalides") from None
     if autocommit:
         connexion.autocommit = True
     return connexion
 
 
+def _parametres_pg_process(base_url: str) -> tuple[str, dict[str, str]]:
+    """Évite d'exposer le mot de passe libpq dans les arguments du processus.
+
+    L'environnement du processus reste accessible aux utilisateurs autorisés
+    du même compte : ce n'est pas un coffre-fort ni une isolation du système.
+    """
+    from psycopg2.extensions import make_dsn, parse_dsn
+
+    try:
+        parametres = parse_dsn(base_url)
+        mot_de_passe = parametres.pop("password", None)
+        dsn = make_dsn(**parametres)
+    except (psycopg2.Error, ValueError):
+        raise SauvegardeError("Paramètres PostgreSQL invalides") from None
+    environnement = os.environ.copy()
+    if mot_de_passe is not None:
+        environnement["PGPASSWORD"] = mot_de_passe
+    return dsn, environnement
+
+
 def _url_sans_base(base_url: str) -> str:
-    """URL libpq vers le serveur SANS la base (pour CREATE/DROP DATABASE)."""
-    parse = urlparse(base_url)
-    return parse._replace(path="/postgres").geturl()
+    """URL de la base administrative sur le même serveur libpq."""
+    return _remplacer_nom_base(base_url, "postgres")
 
 
 def _nom_base(base_url: str) -> str:
-    nom = urlparse(base_url).path.lstrip("/")
-    if not nom:
-        raise SauvegardeError(f"URL sans nom de base : {base_url!r}")
+    """Vérifie que libpq et le chemin désignent la même base explicite."""
+    from psycopg2.extensions import parse_dsn
+
+    try:
+        parties = urlparse(base_url)
+        if parties.scheme not in {"postgres", "postgresql"} or parties.fragment:
+            raise ValueError
+        nom = unquote(parties.path.lstrip("/"))
+        if not nom or any(cle == "dbname" for cle, _ in parse_qsl(parties.query, keep_blank_values=True)):
+            raise ValueError
+        if parse_dsn(base_url).get("dbname") != nom:
+            raise ValueError
+    except (ValueError, psycopg2.Error):
+        raise SauvegardeError("URL PostgreSQL sans base explicite ou ambiguë") from None
     return nom
 
 
 def _remplacer_nom_base(base_url: str, nouveau_nom: str) -> str:
-    parse = urlparse(base_url)
-    return parse._replace(path=f"/{nouveau_nom}").geturl()
+    _nom_base(base_url)
+    if not nouveau_nom or "\x00" in nouveau_nom:
+        raise SauvegardeError("Nom de base PostgreSQL invalide")
+    parties = urlparse(base_url)
+    url = f"{parties.scheme}://{parties.netloc}/{quote(nouveau_nom, safe='')}"
+    if parties.query:
+        url += f"?{parties.query}"
+    return url
 
 
 # ---------------------------------------------------------------------------
@@ -202,9 +275,9 @@ def inventorier_archive(racines: list[Path]) -> dict:
 class VerrouSauvegarde:
     """Un seul ``sauver`` à la fois sur un dossier de destination.
 
-    Fichier ``sauvegarde.lock`` + ``fcntl.LOCK_EX | LOCK_NB``. Pas de
-    chevauchement silencieux. Le verrou est relâché à la sortie, y compris
-    après échec (``with`` / ``close``).
+    Verrouille le dossier puis ``sauvegarde.lock`` avec ``flock`` non bloquant.
+    Le second verrou conserve la coordination avec les anciennes versions qui
+    verrouillent uniquement le fichier. Les deux sont relâchés à la sortie.
     """
 
     def __init__(self, dossier: Path):
@@ -212,60 +285,108 @@ class VerrouSauvegarde:
         self.dossier.mkdir(parents=True, exist_ok=True)
         self.chemin = self.dossier / NOM_VERROU
         self._flux = None
+        self._fd_dossier = None
+        self._garde_instance = threading.Lock()
 
     def __enter__(self) -> "VerrouSauvegarde":
-        self._flux = open(self.chemin, "a+", encoding="utf-8")
+        if not self._garde_instance.acquire(blocking=False):
+            raise SauvegardeError("Réentrée du verrou de sauvegarde interdite")
         try:
+            return self._acquerir()
+        except BaseException:
+            self._garde_instance.release()
+            raise
+
+    def _acquerir(self) -> "VerrouSauvegarde":
+        if (fcntl is None or not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_DIRECTORY")
+                or os.open not in os.supports_dir_fd):
+            raise SauvegardeError("Verrouillage sûr indisponible sur cette plateforme")
+        fd = None
+        try:
+            self._fd_dossier = os.open(self.dossier, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            fcntl.flock(self._fd_dossier, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fd = os.open(NOM_VERROU, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0),
+                         0o600, dir_fd=self._fd_dossier)
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                raise SauvegardeError("Fichier de verrou invalide")
+            self._flux = os.fdopen(fd, "r+", encoding="utf-8")
+            fd = None
             fcntl.flock(self._flux.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
-            self._flux.close()
-            self._flux = None
-            raise SauvegardeError(
-                f"une sauvegarde est déjà en cours sur {self.dossier} "
-                f"(verrou {self.chemin}) — chevauchement refusé"
-            ) from exc
-        self._flux.seek(0)
-        self._flux.truncate()
-        self._flux.write(f"pid={os.getpid()} debut={datetime.now(timezone.utc).isoformat()}\n")
-        self._flux.flush()
+        except BaseException as erreur:
+            try:
+                if fd is not None:
+                    os.close(fd)
+            finally:
+                try:
+                    if self._flux is not None:
+                        try:
+                            self._flux.close()
+                        finally:
+                            self._flux = None
+                finally:
+                    if self._fd_dossier is not None:
+                        try:
+                            os.close(self._fd_dossier)
+                        finally:
+                            self._fd_dossier = None
+            if isinstance(erreur, BlockingIOError):
+                raise SauvegardeError("une sauvegarde est déjà en cours — chevauchement refusé") from None
+            if isinstance(erreur, OSError):
+                raise SauvegardeError("Impossible d'acquérir le verrou de sauvegarde") from None
+            raise
         return self
 
     def __exit__(self, *exc: object) -> None:
-        if self._flux is not None:
+        try:
+            if self._flux is not None:
+                try:
+                    fcntl.flock(self._flux.fileno(), fcntl.LOCK_UN)
+                finally:
+                    self._flux.close()
+                    self._flux = None
+        finally:
             try:
-                fcntl.flock(self._flux.fileno(), fcntl.LOCK_UN)
+                if self._fd_dossier is not None:
+                    try:
+                        fcntl.flock(self._fd_dossier, fcntl.LOCK_UN)
+                    finally:
+                        os.close(self._fd_dossier)
+                        self._fd_dossier = None
             finally:
-                self._flux.close()
-                self._flux = None
+                self._garde_instance.release()
 
 
-def inventorier_references_documents(base_url: str) -> dict:
+def inventorier_references_documents(base_url: str, *, connexion=None) -> dict:
     """Toutes les pièces référencées en base : chemin local et/ou clé objet.
 
     Ne copie rien. Signale ``present: false`` pour un chemin local absent.
     L'import d'arborescence locale n'impose PAS une copie S3 : un document
     peut n'avoir que ``path`` (contrat actuel, à ne pas transformer).
     """
-    connexion = _connecter(base_url)
+    connexion_interne = connexion is None
+    if connexion_interne:
+        connexion = _connecter(base_url)
     try:
         with connexion.cursor() as cursor:
             cursor.execute(
                 "SELECT id, path, name, size, object_key, object_bucket, "
-                "coalesce(upload_status, ''), coalesce(category, '') "
+                "coalesce(upload_status, ''), coalesce(category, ''), coalesce(is_dir, false), source_sha256 "
                 "FROM documents ORDER BY id"
             )
             lignes = cursor.fetchall()
     finally:
-        connexion.close()
+        if connexion_interne:
+            connexion.close()
     documents: list[dict] = []
     manquants_locaux = 0
-    for identifiant, chemin, nom, taille, cle, bucket, upload, categorie in lignes:
+    for identifiant, chemin, nom, taille, cle, bucket, upload, categorie, est_dossier, source_sha256 in lignes:
         chemin_txt = str(chemin or "")
         cle_txt = str(cle or "")
         present = bool(chemin_txt) and not chemin_txt.startswith("s3://") and Path(chemin_txt).is_file()
         # Un document déjà stocké comme objet n'est pas un fichier local manquant
         # (l'import local n'impose pas S3 ; l'inverse non plus).
-        if chemin_txt and not chemin_txt.startswith("s3://") and not present and not cle_txt:
+        if not est_dossier and not present and not cle_txt:
             manquants_locaux += 1
         documents.append(
             {
@@ -278,6 +399,8 @@ def inventorier_references_documents(base_url: str) -> dict:
                 "upload_status": upload,
                 "category": categorie,
                 "local_present": present,
+                "is_dir": bool(est_dossier),
+                "source_sha256": source_sha256,
             }
         )
     return {
@@ -288,39 +411,110 @@ def inventorier_references_documents(base_url: str) -> dict:
     }
 
 
+def _empreinte_capture_reference(document: dict) -> str | None:
+    """Valide l'identité connue du snapshot ; None reste explicitement inconnu."""
+    empreinte = document.get("source_sha256")
+    if empreinte is not None and (
+        not isinstance(empreinte, str) or re.fullmatch(r"[0-9a-f]{64}", empreinte) is None
+    ):
+        raise SauvegardeError("empreinte de capture du catalogue invalide")
+    return empreinte
+
+
 def copier_fichiers_locaux(references: dict, destination: Path) -> dict:
     """Copie les fichiers locaux présents vers ``destination/fichiers/{id}/nom``.
 
     Les absents sont listés, jamais ignorés. Aucune purge de la source.
+    Les octets ne peuvent pas contredire l'identité connue du snapshot PG.
     """
+    documents = references.get("documents") or []
+    for document in documents:
+        _empreinte_capture_reference(document)
     dest = Path(destination) / "fichiers"
+    if not dest.resolve().is_relative_to(Path(destination).resolve()):
+        raise SauvegardeError("destination de sauvegarde hors du bundle")
     dest.mkdir(parents=True, exist_ok=True)
     copies: list[dict] = []
     manquants: list[dict] = []
-    for doc in references.get("documents") or []:
+    for doc in documents:
+        if doc.get("is_dir"):
+            continue
+        empreinte_attendue = _empreinte_capture_reference(doc)
         chemin = Path(doc["path"]) if doc.get("path") else None
         chemin_txt = str(doc.get("path") or "")
-        if chemin is None or not chemin_txt:
+        if chemin is None or not chemin_txt or chemin_txt.startswith("s3://"):
+            if not doc.get("object_key"):
+                manquants.append({"id": doc["id"], "path": chemin_txt, "name": doc.get("name")})
             continue
-        if chemin_txt.startswith("s3://") or (doc.get("object_key") and not chemin.is_file()):
+        if doc.get("object_key") and not chemin.is_file():
             continue
         if not chemin.is_file():
             manquants.append({"id": doc["id"], "path": doc["path"], "name": doc.get("name")})
             continue
-        cible_dir = dest / str(doc["id"])
-        cible_dir.mkdir(parents=True, exist_ok=True)
-        cible = cible_dir / (doc.get("name") or chemin.name)
-        shutil.copy2(chemin, cible)
+        identifiant = doc.get("id")
+        nom = doc.get("name") or chemin.name
+        if (
+            not isinstance(identifiant, int) or isinstance(identifiant, bool) or identifiant <= 0
+            or not isinstance(nom, str) or nom in {"", ".", ".."}
+            or "/" in nom or "\\" in nom or "\x00" in nom
+        ):
+            raise SauvegardeError("identifiant ou nom de document invalide pour la sauvegarde")
+        cible_dir = dest / str(identifiant)
+        cible = cible_dir / nom
+        if not cible.resolve().is_relative_to(dest.resolve()):
+            raise SauvegardeError("destination de sauvegarde hors du bundle")
+        try:
+            source_absolue = _chemin_absolu_sans_traversee(chemin)
+            with _ouvrir_source_bundle(source_absolue.parent, Path(source_absolue.name)) as flux:
+                initial = os.fstat(flux.fileno())
+                empreinte = _sha256_flux(flux)
+                if empreinte_attendue is not None and empreinte != empreinte_attendue:
+                    manquants.append({"id": doc["id"], "path": doc["path"], "name": doc.get("name"),
+                                      "erreur": "identite_catalogue_differente"})
+                    continue
+                flux.seek(0)
+                _ecrire_copie_confinee(flux, Path(os.path.abspath(cible)), empreinte)
+                flux.seek(0)
+                if _sha256_flux(flux) != empreinte:
+                    raise SauvegardeError("empreinte de la source modifiée pendant la sauvegarde")
+                with _ouvrir_source_bundle(source_absolue.parent, Path(source_absolue.name)) as courante:
+                    final = os.fstat(courante.fileno())
+                    if (initial.st_dev, initial.st_ino) != (final.st_dev, final.st_ino):
+                        raise SauvegardeError("identité de la source modifiée pendant la sauvegarde")
+            taille_copie = cible.stat().st_size
+        except OSError:
+            raise SauvegardeError("Impossible de vérifier une copie locale de sauvegarde") from None
         copies.append(
             {
                 "id": doc["id"],
                 "path_source": doc["path"],
                 "path_relatif": str(cible.relative_to(destination)),
-                "taille": cible.stat().st_size,
-                "sha256": _sha256_fichier(cible),
+                "taille": taille_copie,
+                "sha256": empreinte,
+                "identite_catalogue": "verifiee" if empreinte_attendue is not None else "inconnue",
             }
         )
     return {"copies": copies, "manquants": manquants, "nb_copies": len(copies), "nb_manquants": len(manquants)}
+
+
+def _identite_objet_s3(client_s3, cle: str) -> tuple[int, str, str | None, str | None]:
+    """Observe l'identité et un éventuel SHA-256 fournisseur de l'objet entier."""
+    try:
+        lecture = getattr(client_s3, "head_object_avec_checksum", client_s3.head_object)
+        entete = lecture(cle)
+        taille = entete.get("ContentLength")
+        etag = entete.get("ETag")
+        version = entete.get("VersionId")
+        checksum = entete.get("ChecksumSHA256") if entete.get("ChecksumType") == "FULL_OBJECT" else None
+        if checksum is not None:
+            decode = base64.b64decode(checksum, validate=True)
+            checksum = decode.hex() if len(decode) == 32 else None
+    except Exception:
+        raise SauvegardeError("métadonnées de l'objet source indisponibles") from None
+    if (type(taille) is not int or taille < 0 or not isinstance(etag, str) or not etag
+            or (version is not None and (not isinstance(version, str) or not version))):
+        raise SauvegardeError("métadonnées de l'objet source invalides")
+    return taille, etag, version, checksum
 
 
 def copier_objets_s3(references: dict, client_s3, destination: Path) -> dict:
@@ -328,78 +522,400 @@ def copier_objets_s3(references: dict, client_s3, destination: Path) -> dict:
 
     Un objet manquant est signalé. Le substitut S3 n'est pas une qualification
     MinIO : l'appelant documente le fournisseur réellement utilisé.
+    L'identité connue du snapshot PG est vérifiée en plus du checksum fournisseur.
     """
+    documents = references.get("documents") or []
+    for document in documents:
+        _empreinte_capture_reference(document)
     dest = Path(destination) / "objets"
+    if not dest.resolve().is_relative_to(Path(destination).resolve()):
+        raise SauvegardeError("destination de sauvegarde hors du bundle")
     dest.mkdir(parents=True, exist_ok=True)
     copies: list[dict] = []
     manquants: list[dict] = []
-    for doc in references.get("documents") or []:
+    for doc in documents:
         cle = doc.get("object_key") or ""
         if not cle:
             continue
-        cible = dest / str(doc["id"]) / Path(cle).name
-        cible.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            client_s3.download_file(cle, cible)
-        except Exception as exc:
-            manquants.append({"id": doc["id"], "object_key": cle, "erreur": type(exc).__name__})
+        empreinte_attendue = _empreinte_capture_reference(doc)
+        bucket_reference = doc.get("object_bucket") or ""
+        if bucket_reference and bucket_reference != getattr(client_s3, "bucket_name", None):
+            manquants.append({"id": doc["id"], "object_key": cle, "erreur": "bucket_documents_different"})
             continue
+        identifiant = doc.get("id")
+        if isinstance(identifiant, bool) or not isinstance(identifiant, int) or identifiant <= 0:
+            raise SauvegardeError("identifiant de document invalide pour la sauvegarde")
+        nom_objet = Path(cle).name
+        if not nom_objet or nom_objet in {".", ".."} or "\\" in nom_objet or "\x00" in nom_objet:
+            raise SauvegardeError("nom d'objet invalide pour la sauvegarde")
+        cible = dest / str(identifiant) / nom_objet
+        if not cible.resolve().is_relative_to(dest.resolve()):
+            raise SauvegardeError("destination de sauvegarde hors du bundle")
+        try:
+            identite_avant = _identite_objet_s3(client_s3, cle)
+        except SauvegardeError:
+            manquants.append({"id": doc["id"], "object_key": cle, "erreur": "identite_source_indisponible"})
+            continue
+        # Le téléchargement ne doit jamais suivre les chemins du bundle :
+        # leur substitution pourrait écraser un fichier tiers.
+        import tempfile
+
+        dossier_temp = os.environ.get("SEAMTECH_SAUVEGARDE_TMP")
+        try:
+            if dossier_temp:
+                Path(dossier_temp).mkdir(parents=True, exist_ok=True)
+            with tempfile.TemporaryDirectory(prefix="seamtech-backup-object-", dir=dossier_temp) as tmp:
+                telecharge = Path(tmp) / "objet"
+                try:
+                    # "null" est la version mutable d'un bucket sans versioning
+                    # actif ou suspendu ; elle ne constitue pas une version figée.
+                    version = identite_avant[2]
+                    if version is not None and version != "null":
+                        client_s3.download_file(cle, telecharge, version_id=version)
+                    else:
+                        client_s3.download_file(cle, telecharge)
+                except Exception as exc:
+                    manquants.append({"id": doc["id"], "object_key": cle, "erreur": type(exc).__name__})
+                    continue
+                with _ouvrir_source_bundle(Path(tmp), Path("objet")) as flux:
+                    try:
+                        identite_apres = _identite_objet_s3(client_s3, cle)
+                    except SauvegardeError:
+                        manquants.append({"id": doc["id"], "object_key": cle, "erreur": "identite_source_indisponible"})
+                        continue
+                    if identite_apres != identite_avant or os.fstat(flux.fileno()).st_size != identite_avant[0]:
+                        manquants.append({"id": doc["id"], "object_key": cle, "erreur": "source_modifiee_ou_tronquee"})
+                        continue
+                    empreinte = _sha256_flux(flux)
+                    if identite_avant[3] is None or empreinte != identite_avant[3]:
+                        manquants.append({"id": doc["id"], "object_key": cle, "erreur": "integrite_source_non_prouvee"})
+                        continue
+                    if empreinte_attendue is not None and empreinte != empreinte_attendue:
+                        manquants.append({"id": doc["id"], "object_key": cle, "erreur": "identite_catalogue_differente"})
+                        continue
+                    flux.seek(0)
+                    _ecrire_copie_confinee(flux, _chemin_absolu_sans_traversee(cible), empreinte)
+                taille_copie = cible.stat().st_size
+        except OSError:
+            raise SauvegardeError("Impossible de préparer une copie d'objet de sauvegarde") from None
         copies.append(
             {
                 "id": doc["id"],
                 "object_key": cle,
                 "path_relatif": str(cible.relative_to(destination)),
-                "taille": cible.stat().st_size,
-                "sha256": _sha256_fichier(cible),
+                "taille": taille_copie,
+                "sha256": empreinte,
+                "identite_catalogue": "verifiee" if empreinte_attendue is not None else "inconnue",
+                "verification": "checksum_sha256_fournisseur_full_object",
             }
         )
     return {"copies": copies, "manquants": manquants, "nb_copies": len(copies), "nb_manquants": len(manquants)}
 
 
-def restaurer_fichiers_locaux(manifeste: dict, racine_sauvegarde: Path, destination: Path) -> dict:
-    """Restaure les copies locales du bundle vers une cible DISTINCTE.
+@contextmanager
+def _ouvrir_source_bundle(racine: Path, relatif: Path):
+    """Ouvre les composants sans liens, depuis une racine fixée par descripteur."""
+    if (os.name != "posix" or not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_DIRECTORY")
+            or os.open not in os.supports_dir_fd):
+        raise SauvegardeError("Lecture confinée du bundle indisponible sur cette plateforme")
+    fd = None
+    fichier = None
+    try:
+        fd = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
+        for composant in (*racine.parts[1:], *relatif.parts[:-1]):
+            nouveau = os.open(composant, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            os.close(fd)
+            fd = nouveau
+        fichier = os.open(relatif.name, os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0), dir_fd=fd)
+        if not stat.S_ISREG(os.fstat(fichier).st_mode):
+            raise SauvegardeError("La source du bundle doit être un fichier ordinaire")
+        with os.fdopen(fichier, "rb") as flux:
+            fichier = None
+            yield flux
+    except OSError:
+        raise SauvegardeError("Impossible de lire une source confinée du bundle") from None
+    finally:
+        if fichier is not None:
+            os.close(fichier)
+        if fd is not None:
+            os.close(fd)
 
-    Ne lit pas les sources d'origine. Vérifie chaque empreinte. Refuse
-    d'écrire si une empreinte ne correspond pas.
+
+def _verifier_copies_bundle(copies: list[dict], racine_sauvegarde: Path) -> list[tuple[dict, Path, str]]:
+    """Valide toutes les sources AVANT toute copie ou écriture distante.
+
+    Le manifeste est une entrée non fiable : ni chemin absolu, ni traversée,
+    ni lien symbolique vers l'extérieur du bundle ne sont autorisés.
     """
-    destination = Path(destination)
-    destination.mkdir(parents=True, exist_ok=True)
-    restaures: list[dict] = []
-    for copie in (manifeste.get("fichiers_locaux") or {}).get("copies") or []:
-        source = Path(racine_sauvegarde) / copie["path_relatif"]
-        if not source.is_file():
-            raise SauvegardeError(f"fichier du bundle absent : {copie['path_relatif']}")
-        empreinte = _sha256_fichier(source)
-        if empreinte != copie["sha256"]:
-            raise SauvegardeError(
-                f"empreinte bundle {copie['path_relatif']} {empreinte[:12]}… ≠ manifeste {copie['sha256'][:12]}…"
-            )
-        cible = destination / str(copie["id"]) / Path(copie["path_relatif"]).name
+    racine = Path(racine_sauvegarde).resolve()
+    valides: list[tuple[dict, Path, str]] = []
+    for copie in copies:
+        relatif = copie.get("path_relatif")
+        if (not isinstance(relatif, str) or not relatif or "\\" in relatif or "\x00" in relatif
+                or Path(relatif).is_absolute() or ".." in Path(relatif).parts or not Path(relatif).parts):
+            raise SauvegardeError("chemin de bundle invalide")
+        chemin_relatif = Path(relatif)
+        source = racine / chemin_relatif
+        hacheur = hashlib.sha256()
+        with _ouvrir_source_bundle(racine, chemin_relatif) as flux:
+            for bloc in iter(lambda: flux.read(1024 * 1024), b""):
+                hacheur.update(bloc)
+        empreinte = hacheur.hexdigest()
+        if empreinte != copie.get("sha256"):
+            raise SauvegardeError("empreinte du bundle différente du manifeste")
+        valides.append((copie, source, empreinte))
+    return valides
+
+
+def _telecharger_bundle_distant(manifeste: dict, client_s3, destination: Path, sections: tuple[str, ...]) -> None:
+    """Reconstitue en zone temporaire privée les copies demandées, avec contrôle SHA-256."""
+    plan: list[tuple[dict, Path, str]] = []
+    cibles: set[Path] = set()
+    racine = destination.resolve()
+    for section in sections:
+        for copie in (manifeste.get(section) or {}).get("copies") or []:
+            relatif = copie.get("path_relatif")
+            cle = copie.get("cle_s3_sauvegarde")
+            if (not isinstance(relatif, str) or not relatif or "\\" in relatif or "\x00" in relatif
+                    or Path(relatif).is_absolute() or ".." in Path(relatif).parts
+                    or not isinstance(cle, str) or not cle):
+                raise SauvegardeError("copie distante invalide dans le manifeste")
+            cible = (racine / relatif).resolve()
+            if not cible.is_relative_to(racine) or cible == racine or cible in cibles:
+                raise SauvegardeError("destination de copie distante invalide ou dupliquée")
+            cibles.add(cible)
+            plan.append((copie, cible, cle))
+    for copie, cible, cle in plan:
         cible.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, cible)
+        client_s3.download_file(cle, cible)
+        if _sha256_fichier(cible) != copie.get("sha256"):
+            raise SauvegardeError("empreinte de copie distante différente du manifeste")
+
+
+def _plan_restaurer_fichiers(manifeste: dict, racine_sauvegarde: Path, destination: Path) -> list:
+    """Vérifie les entrées et les cibles sans écrire."""
+    destination = Path(destination).resolve()
+    copies = _verifier_copies_bundle(
+        (manifeste.get("fichiers_locaux") or {}).get("copies") or [], racine_sauvegarde
+    )
+    plan: list[tuple[dict, Path, str, Path]] = []
+    cibles: set[Path] = set()
+    for copie, source, empreinte in copies:
+        identifiant = copie.get("id")
+        if isinstance(identifiant, bool) or not isinstance(identifiant, int) or identifiant <= 0:
+            raise SauvegardeError("identifiant de document invalide dans le manifeste")
+        cible = destination / str(identifiant) / source.name
+        resolue = cible.resolve()
+        if not resolue.is_relative_to(destination) or cible in cibles:
+            raise SauvegardeError("destination de restauration invalide ou dupliquée")
+        if os.path.lexists(cible):
+            raise SauvegardeError("une cible de restauration existe déjà")
+        cibles.add(cible)
+        plan.append((copie, source, empreinte, cible))
+    return plan
+
+
+@contextmanager
+def _instantane_bundle_prive(racine: Path, source: Path):
+    import tempfile
+
+    dossier = os.environ.get("SEAMTECH_SAUVEGARDE_TMP")
+    try:
+        if dossier:
+            Path(dossier).mkdir(parents=True, exist_ok=True)
+        temporaire = tempfile.TemporaryDirectory(prefix="seamtech-restore-copy-", dir=dossier)
+    except OSError:
+        raise SauvegardeError("Impossible de préparer la copie privée du bundle") from None
+    with temporaire as repertoire:
+        copie = Path(repertoire) / "piece"
+        try:
+            try:
+                relatif = source.relative_to(racine)
+            except ValueError:
+                raise SauvegardeError("La racine du bundle a changé pendant la restauration") from None
+            with _ouvrir_source_bundle(racine, relatif) as entree:
+                fd = os.open(copie, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                with os.fdopen(fd, "wb") as sortie:
+                    shutil.copyfileobj(entree, sortie, length=1024 * 1024)
+        except OSError:
+            raise SauvegardeError("Impossible de copier une source confinée du bundle") from None
+        yield copie
+
+
+@contextmanager
+def _figer_plan_restauration(plan: list, racine_sauvegarde: Path):
+    """Fige et revérifie TOUTES les sources avant la première publication."""
+    racine = Path(racine_sauvegarde).resolve()
+    with ExitStack() as pile:
+        figes = []
+        for copie, source, empreinte, *reste in plan:
+            privee = pile.enter_context(_instantane_bundle_prive(racine, source))
+            try:
+                identique = _sha256_fichier(privee) == empreinte
+            except OSError:
+                raise SauvegardeError("Impossible de vérifier une copie privée du bundle") from None
+            if not identique:
+                raise SauvegardeError("empreinte de copie privée différente du manifeste")
+            figes.append((copie, privee, empreinte, *reste))
+        yield figes
+
+
+def _ecrire_copie_confinee(source: Path | BinaryIO, cible: Path, empreinte_attendue: str) -> None:
+    """Crée exclusivement un fichier sous des répertoires ouverts sans liens."""
+    if (os.name != "posix" or not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_DIRECTORY")
+            or os.open not in os.supports_dir_fd or os.mkdir not in os.supports_dir_fd
+            or os.link not in os.supports_dir_fd or os.link not in os.supports_follow_symlinks):
+        raise SauvegardeError("Restauration locale sûre indisponible sur cette plateforme")
+    fd_dir = None
+    fd_fichier = None
+    temporaire = f".seamtech-restore-{uuid.uuid4().hex}"
+    identite = None
+    try:
+        fd_dir = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
+        for partie in cible.parent.parts[1:]:
+            try:
+                os.mkdir(partie, 0o700, dir_fd=fd_dir)
+            except FileExistsError:
+                pass
+            suivant = os.open(partie, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd_dir)
+            os.close(fd_dir)
+            fd_dir = suivant
+        fd_fichier = os.open(temporaire, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=fd_dir)
+        info = os.fstat(fd_fichier)
+        identite = (info.st_dev, info.st_ino)
+        entree_contexte = source.open("rb") if isinstance(source, Path) else nullcontext(source)
+        with entree_contexte as entree, os.fdopen(fd_fichier, "w+b") as sortie:
+            fd_fichier = None
+            shutil.copyfileobj(entree, sortie, length=1024 * 1024)
+            sortie.flush()
+            sortie.seek(0)
+            hacheur = hashlib.sha256()
+            for bloc in iter(lambda: sortie.read(1024 * 1024), b""):
+                hacheur.update(bloc)
+            if hacheur.hexdigest() != empreinte_attendue:
+                raise SauvegardeError("empreinte du fichier restauré différente du manifeste")
+        # Publication atomique, sans remplacer une cible créée en concurrence.
+        os.link(temporaire, cible.name, src_dir_fd=fd_dir, dst_dir_fd=fd_dir, follow_symlinks=False)
+    except OSError:
+        raise SauvegardeError("Impossible de créer la cible de restauration sans écrasement") from None
+    finally:
+        if fd_fichier is not None:
+            os.close(fd_fichier)
+        if fd_dir is not None:
+            if identite is not None:
+                try:
+                    info = os.stat(temporaire, dir_fd=fd_dir, follow_symlinks=False)
+                    if (info.st_dev, info.st_ino) == identite:
+                        os.unlink(temporaire, dir_fd=fd_dir)
+                except OSError:
+                    pass
+            os.close(fd_dir)
+
+
+def _publier_fichiers_restaures(plan: list) -> dict:
+    restaures: list[dict] = []
+    for copie, source, empreinte, cible in plan:
+        _ecrire_copie_confinee(source, cible, empreinte)
         restaures.append({"id": copie["id"], "path": str(cible), "sha256": empreinte})
     return {"nb": len(restaures), "fichiers": restaures}
 
 
-def restaurer_objets_s3(manifeste: dict, racine_sauvegarde: Path, client_s3) -> dict:
-    """Restaure les objets du bundle vers un bucket cible (sources inaccessibles)."""
+def restaurer_fichiers_locaux(manifeste: dict, racine_sauvegarde: Path, destination: Path) -> dict:
+    """Vérifie puis restaure les copies locales du bundle vers la cible."""
+    plan = _plan_restaurer_fichiers(manifeste, racine_sauvegarde, destination)
+    with _figer_plan_restauration(plan, racine_sauvegarde) as figes:
+        return _publier_fichiers_restaures(figes)
+
+
+def _plan_restaurer_objets(manifeste: dict, racine_sauvegarde: Path) -> list:
+    """Vérifie les objets avant toute écriture."""
+    copies = _verifier_copies_bundle(
+        (manifeste.get("objets_s3") or {}).get("copies") or [], racine_sauvegarde
+    )
+    _valider_cles_objets(copies)
+    return copies
+
+
+def _valider_cles_objets(plan: list) -> None:
+    empreintes: dict[str, str] = {}
+    for copie, _, empreinte, *_ in plan:
+        cle = copie.get("object_key")
+        if not isinstance(cle, str) or not cle:
+            raise SauvegardeError("clé objet absente du manifeste")
+        if cle in empreintes and empreintes[cle] != empreinte:
+            raise SauvegardeError("clé objet associée à plusieurs empreintes dans le manifeste")
+        empreintes[cle] = empreinte
+
+
+def _verifier_cles_client_objets(plan: list, client_s3) -> None:
+    _valider_cles_objets(plan)
+    appliquer_prefixe = getattr(client_s3, "_apply_prefix", None)
+    if not callable(appliquer_prefixe):
+        return  # Les doubles sans préfixe déclarent une clé identique à l'appel.
+    for copie, *_ in plan:
+        try:
+            cle_effective = appliquer_prefixe(copie["object_key"])
+        except Exception:
+            raise SauvegardeError("Impossible de vérifier les clés de restauration objet") from None
+        if cle_effective != copie["object_key"]:
+            raise SauvegardeError("Le préfixe du client modifie une clé du manifeste")
+
+
+def _verifier_publication_objets_exclusive(plan: list, client_s3) -> None:
+    """N'accepte que l'interface explicite de création atomique sans écrasement.
+
+    Aucun adaptateur S3 de production n'implémente actuellement ce contrat :
+    une méthode ordinaire d'upload et un HEAD préalable ne sont pas suffisants.
+    L'implémentation future devra être qualifiée pour le fournisseur et sa
+    configuration, notamment en présence d'écrivains concurrents.
+    """
+    if plan and not callable(getattr(client_s3, "creer_fichier_exclusif", None)):
+        raise SauvegardeError("Restauration objet refusée : création exclusive atomique non disponible")
+
+
+def _publier_objets_restaures(plan: list, client_s3) -> dict:
+    _verifier_cles_client_objets(plan, client_s3)
+    _verifier_publication_objets_exclusive(plan, client_s3)
     restaures: list[dict] = []
-    for copie in (manifeste.get("objets_s3") or {}).get("copies") or []:
-        source = Path(racine_sauvegarde) / copie["path_relatif"]
-        if not source.is_file():
-            raise SauvegardeError(f"objet du bundle absent : {copie['path_relatif']}")
-        empreinte = _sha256_fichier(source)
-        if empreinte != copie["sha256"]:
-            raise SauvegardeError(
-                f"empreinte objet {copie['path_relatif']} {empreinte[:12]}… ≠ manifeste {copie['sha256'][:12]}…"
-            )
+    deja_restaures: set[str] = set()
+    for copie, source, empreinte in plan:
         cle = copie["object_key"]
-        # Restaurer DOIT réécrire la clé d'origine (les sources sont coupées).
-        # avoid_overwrite=True irait sur une clé -2 et laisserait le catalogue
-        # pointer vers un objet absent.
-        cle_ecrite = client_s3.upload_file(source, cle, avoid_overwrite=False)
+        if cle in deja_restaures:
+            restaures.append({"object_key": cle, "sha256": empreinte})
+            continue
+        # Le contrat exige une création atomique de la clé exacte : aucun
+        # HEAD préalable ni réécriture automatique sur conflit ne suffit.
+        try:
+            cle_ecrite = client_s3.creer_fichier_exclusif(source, cle)
+        except Exception:
+            raise SauvegardeError("Création exclusive de l'objet restauré impossible") from None
+        if cle_ecrite != cle:
+            raise SauvegardeError("La clé de l'objet restauré diffère de celle du manifeste")
+        import tempfile
+
+        dossier = os.environ.get("SEAMTECH_SAUVEGARDE_TMP")
+        try:
+            if dossier:
+                Path(dossier).mkdir(parents=True, exist_ok=True)
+            with tempfile.TemporaryDirectory(prefix="seamtech-restore-readback-", dir=dossier) as tmp:
+                relu = Path(tmp) / "objet"
+                client_s3.download_file(cle, relu)
+                empreinte_relue = _sha256_fichier(relu)
+        except Exception:
+            # Un backend peut inclure des chemins ou secrets dans ses exceptions.
+            raise SauvegardeError("Impossible de vérifier l'objet restauré par relecture") from None
+        if empreinte_relue != empreinte:
+            raise SauvegardeError("L'empreinte de l'objet relu diffère du manifeste")
+        deja_restaures.add(cle)
         restaures.append({"object_key": cle_ecrite, "sha256": empreinte})
     return {"nb": len(restaures), "objets": restaures}
+
+
+def restaurer_objets_s3(manifeste: dict, racine_sauvegarde: Path, client_s3) -> dict:
+    """Restaure les objets du bundle vers un bucket cible (sources inaccessibles)."""
+    copies = _plan_restaurer_objets(manifeste, racine_sauvegarde)
+    with _figer_plan_restauration(copies, racine_sauvegarde) as figes:
+        return _publier_objets_restaures(figes, client_s3)
 
 
 def rediger_config(valeurs: dict) -> dict:
@@ -433,9 +949,11 @@ def _versions_schema(connexion) -> list[str]:
         return [ligne[0] for ligne in cursor.fetchall()]
 
 
-def _etat_base(base_url: str) -> dict:
+def _etat_base(base_url: str, *, connexion=None) -> dict:
     """Comptes par table, fiches par statut, documents, versions de schéma."""
-    connexion = _connecter(base_url)
+    connexion_interne = connexion is None
+    if connexion_interne:
+        connexion = _connecter(base_url)
     try:
         tables = _compter_tables(connexion)
         with connexion.cursor() as cursor:
@@ -443,14 +961,17 @@ def _etat_base(base_url: str) -> dict:
             fiches_par_statut = {statut: int(n) for statut, n in cursor.fetchall()}
             cursor.execute("SELECT COUNT(*) FROM documents")
             documents = int(cursor.fetchone()[0])
+            identite_valide = schema_identite_octets_valide_pg(cursor)
         return {
             "tables": tables,
             "fiches_par_statut": fiches_par_statut,
             "documents": documents,
             "versions_schema": _versions_schema(connexion),
+            "schema_identite_octets_valide": identite_valide,
         }
     finally:
-        connexion.close()
+        if connexion_interne:
+            connexion.close()
 
 
 def _commit_courant() -> str:
@@ -530,43 +1051,72 @@ def _sauver_corps(
     client_documents_s3=None,
     debut: float = 0.0,
 ) -> dict:
-    horodatage = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    horodatage = f"{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S-%f')}-{uuid.uuid4().hex}"
     nom_dump = f"seamtech-search-{horodatage}.dump"
     chemin_dump = dossier_local / nom_dump
 
     pg_dump = _trouver_binaire("pg_dump")
-    etat = _etat_base(base_url)
-    if VERSION_SCHEMA_METIER not in etat["versions_schema"]:
-        raise SauvegardeError(
-            f"la base n'est pas à jour ({VERSION_SCHEMA_METIER} absent de schema_migrations) — "
-            "refus de sauvegarder un état non migré"
+    # Le snapshot exporté reste vivant jusqu'à la fin du dump ET de la lecture
+    # des références. Ce mécanisme coordonne uniquement les données PostgreSQL,
+    # pas les octets du filesystem ou des buckets copiés ensuite.
+    connexion = _connecter(base_url)
+    try:
+        connexion.set_session(isolation_level="REPEATABLE READ", readonly=True)
+        with connexion.cursor() as cursor:
+            cursor.execute("SELECT pg_export_snapshot()")
+            snapshot = cursor.fetchone()[0]
+        etat = _etat_base(base_url, connexion=connexion)
+        for version in (VERSION_SCHEMA_METIER, VERSION_SCHEMA_APPLICATION):
+            if version not in etat["versions_schema"]:
+                raise SauvegardeError(
+                    f"la base n'est pas à jour ({version} absent de schema_migrations) — "
+                    "refus de sauvegarder un état non migré"
+                )
+        if not etat.get("schema_identite_octets_valide", False):
+            raise SauvegardeError("Schéma d'identité des octets incomplet : colonne ou déclencheur absent ou désactivé")
+        dsn_public, environnement = _parametres_pg_process(base_url)
+        resultat = subprocess.run(
+            [pg_dump, "--format=custom", f"--file={chemin_dump}", f"--snapshot={snapshot}", dsn_public],
+            capture_output=True, text=True, env=environnement,
         )
-    resultat = subprocess.run([pg_dump, "--format=custom", f"--file={chemin_dump}", base_url], capture_output=True, text=True)
-    if resultat.returncode != 0:
-        raise SauvegardeError(f"pg_dump a échoué (rc={resultat.returncode}) : {resultat.stderr[-800:]}")
+        if resultat.returncode != 0:
+            # stderr peut contenir une URI ou d'autres secrets de configuration.
+            raise SauvegardeError(f"pg_dump a échoué (rc={resultat.returncode})")
+        refs = inventorier_references_documents(base_url, connexion=connexion) if inclure_references_base else None
+    finally:
+        connexion.close()
 
     inventaire = inventorier_archive(racines_archive)
     manifeste: dict = {
         "date_iso": datetime.now(timezone.utc).isoformat(),
         "commit": _commit_courant(),
         "version_schema_metier": VERSION_SCHEMA_METIER,
+        "version_schema_application": VERSION_SCHEMA_APPLICATION,
         "dump": {"fichier": nom_dump, "octets": chemin_dump.stat().st_size, "sha256": _sha256_fichier(chemin_dump)},
         "tables": etat["tables"],
         "fiches_par_statut": etat["fiches_par_statut"],
         "documents": etat["documents"],
         "archive": inventaire,
         "rpo_rto": RPO_RTO_A_DECIDER,
-        "coherence": "pg_dump MVCC puis copie des références de cet instantané",
-        "complet": True,
+        "coherence": "dump et références dans un snapshot MVCC partagé ; copies et inventaire indépendants, sans gel applicatif",
+        "coherence_references_snapshot": inclure_references_base,
+        "references_incluses": inclure_references_base,
+        "protection_globale_prouvee": False,
+        "retention_automatique_autorisee": False,
+        "complet": False,
+        "complet_perimetre_demande": True,
     }
     if inclure_references_base:
-        refs = inventorier_references_documents(base_url)
+        assert refs is not None
         manifeste["references"] = {
             "nb_documents": refs["nb_documents"],
             "nb_locaux_manquants": refs["nb_locaux_manquants"],
             "nb_avec_objet": refs["nb_avec_objet"],
         }
-        fichiers = copier_fichiers_locaux(refs, dossier_local)
+        dossier_bundle = dossier_local / "bundles" / nom_dump
+        fichiers = copier_fichiers_locaux(refs, dossier_bundle)
+        for copie in fichiers["copies"]:
+            copie["path_relatif"] = str(Path("bundles") / nom_dump / copie["path_relatif"])
         manifeste["fichiers_locaux"] = {
             "nb_copies": fichiers["nb_copies"],
             "nb_manquants": fichiers["nb_manquants"],
@@ -574,9 +1124,11 @@ def _sauver_corps(
             "manquants": fichiers["manquants"],
         }
         if fichiers["nb_manquants"]:
-            manifeste["complet"] = False
+            manifeste["complet_perimetre_demande"] = False
         if client_documents_s3 is not None:
-            objets = copier_objets_s3(refs, client_documents_s3, dossier_local)
+            objets = copier_objets_s3(refs, client_documents_s3, dossier_bundle)
+            for copie in objets["copies"]:
+                copie["path_relatif"] = str(Path("bundles") / nom_dump / copie["path_relatif"])
             manifeste["objets_s3"] = {
                 "nb_copies": objets["nb_copies"],
                 "nb_manquants": objets["nb_manquants"],
@@ -584,9 +1136,19 @@ def _sauver_corps(
                 "manquants": objets["manquants"],
             }
             if objets["nb_manquants"]:
-                manifeste["complet"] = False
+                manifeste["complet_perimetre_demande"] = False
         else:
-            manifeste["objets_s3"] = {"nb_copies": 0, "nb_manquants": 0, "copies": [], "manquants": [], "note": "client documents S3 non fourni"}
+            objets_non_copies = [
+                {"id": doc["id"], "object_key": doc["object_key"], "erreur": "client documents S3 non fourni"}
+                for doc in refs["documents"] if doc.get("object_key")
+            ]
+            manifeste["objets_s3"] = {
+                "nb_copies": 0, "nb_manquants": len(objets_non_copies),
+                "copies": [], "manquants": objets_non_copies,
+                "note": "client documents S3 non fourni",
+            }
+            if objets_non_copies:
+                manifeste["complet_perimetre_demande"] = False
     chemin_manifeste = dossier_local / f"{nom_dump}.manifest.json"
     chemin_manifeste.write_text(json.dumps(manifeste, ensure_ascii=False, indent=1), encoding="utf-8")
 
@@ -606,12 +1168,38 @@ def _sauver_corps(
                 f"manifeste {manifeste['dump']['sha256'][:12]}…"
             )
         manifeste["dump"]["cle_s3"] = cle_dump
+        # Chaque copie référencée reçoit une clé spécifique à cette génération.
+        # Les clés ne contiennent ni chemin d'origine ni nom de document.
+        # Aucun manifeste n'est publié et aucune rétention n'a lieu si une
+        # copie envoyée ne peut pas être relue à l'identique.
+        for section, categorie in (("fichiers_locaux", "fichiers"), ("objets_s3", "objets")):
+            copies = (manifeste.get(section) or {}).get("copies") or []
+            for copie, source, empreinte in _verifier_copies_bundle(copies, dossier_local):
+                cle = f"{PREFIXE_SAUVEGARDES}{horodatage}/{categorie}/{copie['id']}"
+                cle_ecrite = client_s3.upload_file(source, cle, avoid_overwrite=True)
+                with tempfile.TemporaryDirectory() as tmp:
+                    relecture = Path(tmp) / "copie"
+                    client_s3.download_file(cle_ecrite, relecture)
+                    if _sha256_fichier(relecture) != empreinte:
+                        raise SauvegardeError("vérification après envoi d'une copie ÉCHOUÉE")
+                copie["cle_s3_sauvegarde"] = cle_ecrite
+        # Le fichier envoyé doit contenir la clé réellement attribuée au dump,
+        # y compris lorsque le stockage a évité une collision de nom.
+        chemin_manifeste.write_text(json.dumps(manifeste, ensure_ascii=False, indent=1), encoding="utf-8")
+        empreinte_manifeste = _sha256_fichier(chemin_manifeste)
         cle_manifeste = client_s3.upload_file(
             chemin_manifeste, f"{PREFIXE_SAUVEGARDES}{horodatage}.dump.manifest.json", avoid_overwrite=True
         )
+        with tempfile.TemporaryDirectory() as tmp:
+            manifeste_relu = Path(tmp) / "manifeste.json"
+            client_s3.download_file(cle_manifeste, manifeste_relu)
+            if _sha256_fichier(manifeste_relu) != empreinte_manifeste:
+                raise SauvegardeError("vérification après envoi du manifeste ÉCHOUÉE")
         manifeste["manifeste_cle_s3"] = cle_manifeste
         chemin_manifeste.write_text(json.dumps(manifeste, ensure_ascii=False, indent=1), encoding="utf-8")
-        purges = appliquer_retention(client_s3, retention, dossier_local=dossier_local)
+        # Une copie partielle/non coordonnée ne doit jamais remplacer une
+        # sauvegarde globale lors de l'élagage automatique.
+        purges = appliquer_retention(client_s3, retention, dossier_local=dossier_local) if manifeste["complet"] and manifeste["protection_globale_prouvee"] and manifeste["retention_automatique_autorisee"] else []
         manifeste["retention_purgees"] = purges
         chemin_manifeste.write_text(json.dumps(manifeste, ensure_ascii=False, indent=1), encoding="utf-8")
         _publier(
@@ -625,7 +1213,7 @@ def _sauver_corps(
             }
         )
     else:
-        purges = appliquer_retention(None, retention, dossier_local=dossier_local)
+        purges = appliquer_retention(None, retention, dossier_local=dossier_local) if manifeste["complet"] and manifeste["protection_globale_prouvee"] and manifeste["retention_automatique_autorisee"] else []
         manifeste["retention_purgees"] = purges
         chemin_manifeste.write_text(json.dumps(manifeste, ensure_ascii=False, indent=1), encoding="utf-8")
         _publier(
@@ -650,39 +1238,72 @@ def appliquer_retention(
     les plus récentes, supprime les plus anciennes — JAMAIS la dernière.
     Une sauvegarde = la paire (dump, manifeste).
     Renvoie les identifiants supprimés (clés S3 et/ou chemins locaux)."""
+    import tempfile
+
     nb_a_garder = max(1, int(conserver))
     supprimees: list[str] = []
-
+    # Construire l'intégralité du plan AVANT les suppressions. Un manifeste
+    # absent, illisible ou d'état inconnu interdit toute purge automatique.
+    complets_s3: list[str] = []
+    complets_locaux: list[Path] = []
+    cles: list[str] = []
     if client_s3 is not None:
         cles = client_s3.list_keys(PREFIXE_SAUVEGARDES)
-        dumps = [c for c in cles if c.endswith(".dump")]
-        dumps_tries = sorted(dumps)  # horodatage dans la clé ⇒ ordre chronologique
-        a_purger_s3 = dumps_tries[:-nb_a_garder]
-        for cle in a_purger_s3:
-            if client_s3.delete_file(cle):
-                supprimees.append(cle)
-            cle_manifeste = f"{cle}.manifest.json"
-            if any(c == cle_manifeste for c in cles) and client_s3.delete_file(cle_manifeste):
-                supprimees.append(cle_manifeste)
+        with tempfile.TemporaryDirectory(prefix="seamtech-retention-") as tmp:
+            for cle in sorted(c for c in cles if c.endswith(".dump")):
+                cle_manifeste = f"{cle}.manifest.json"
+                if cle_manifeste not in cles:
+                    return []
+                chemin = Path(tmp) / "manifeste.json"
+                try:
+                    client_s3.download_file(cle_manifeste, chemin)
+                    etat = json.loads(chemin.read_text(encoding="utf-8"))
+                    complet = etat.get("complet")
+                    qualification = etat.get("protection_globale_prouvee")
+                except (OSError, ValueError, AttributeError, RuntimeError):
+                    return []
+                if type(complet) is not bool or type(qualification) is not bool or complet != qualification:
+                    return []
+                if complet and qualification:
+                    complets_s3.append(cle)
 
     if dossier_local is not None:
         dossier = Path(dossier_local)
         if dossier.is_dir():
-            dumps_locaux = sorted(dossier.glob("*.dump"))
-            a_purger_locaux = dumps_locaux[:-nb_a_garder]
-            for dump_f in a_purger_locaux:
+            for dump_f in sorted(dossier.glob("*.dump")):
+                chemin = dossier / f"{dump_f.name}.manifest.json"
                 try:
-                    dump_f.unlink()
-                    supprimees.append(str(dump_f))
-                except OSError:
-                    pass
-                for cand in [dossier / f"{dump_f.name}.manifest.json", dump_f.with_suffix(".manifest.json")]:
-                    if cand.is_file():
-                        try:
-                            cand.unlink()
-                            supprimees.append(str(cand))
-                        except OSError:
-                            pass
+                    etat = json.loads(chemin.read_text(encoding="utf-8"))
+                    complet = etat.get("complet")
+                    qualification = etat.get("protection_globale_prouvee")
+                except (OSError, ValueError, AttributeError):
+                    return []
+                if type(complet) is not bool or type(qualification) is not bool or complet != qualification:
+                    return []
+                if complet and qualification:
+                    complets_locaux.append(dump_f)
+
+    if client_s3 is not None:
+        for cle in complets_s3[:-nb_a_garder]:
+            if not client_s3.delete_file(cle):
+                continue
+            supprimees.append(cle)
+            cle_manifeste = f"{cle}.manifest.json"
+            if client_s3.delete_file(cle_manifeste):
+                supprimees.append(cle_manifeste)
+
+    for dump_f in complets_locaux[:-nb_a_garder]:
+        try:
+            dump_f.unlink()
+            supprimees.append(str(dump_f))
+        except OSError:
+            continue
+        chemin = dump_f.parent / f"{dump_f.name}.manifest.json"
+        try:
+            chemin.unlink()
+            supprimees.append(str(chemin))
+        except OSError:
+            pass
 
     return supprimees
 
@@ -690,6 +1311,39 @@ def appliquer_retention(
 # ---------------------------------------------------------------------------
 # Restauration
 # ---------------------------------------------------------------------------
+
+@contextmanager
+def _instantane_dump_prive(chemin: Path):
+    """Copie privée vérifiable : pg_restore ne relit jamais le chemin d'origine."""
+    import tempfile
+
+    dossier = os.environ.get("SEAMTECH_SAUVEGARDE_TMP")
+    try:
+        if dossier:
+            Path(dossier).mkdir(parents=True, exist_ok=True)
+        temporaire = tempfile.TemporaryDirectory(prefix="seamtech-restore-copy-", dir=dossier)
+    except OSError:
+        raise SauvegardeError("Impossible de préparer la copie privée du dump") from None
+    with temporaire as repertoire:
+        copie = Path(repertoire) / "dump"
+        try:
+            chemin_absolu = _chemin_absolu_sans_traversee(chemin)
+            with _ouvrir_source_bundle(chemin_absolu.parent, Path(chemin_absolu.name)) as source:
+                fd_copie = os.open(copie, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                with os.fdopen(fd_copie, "wb") as destination:
+                    shutil.copyfileobj(source, destination, length=1024 * 1024)
+        except OSError:
+            raise SauvegardeError("Impossible de copier de manière sûre le dump de restauration") from None
+        yield copie
+
+
+def _nom_dump_manifeste(manifeste: dict) -> str:
+    nom = (manifeste.get("dump") or {}).get("fichier")
+    if (not isinstance(nom, str) or nom in {"", ".", ".."}
+            or "/" in nom or "\\" in nom or "\x00" in nom):
+        raise SauvegardeError("nom du dump invalide dans le manifeste")
+    return nom
+
 
 def restaurer(
     base_cible_url: str,
@@ -705,11 +1359,27 @@ def restaurer(
     if chemin_dump_local is None:
         if client_s3 is None or "cle_s3" not in manifeste.get("dump", {}):
             raise SauvegardeError("aucun dump local fourni et pas de clé S3 dans le manifeste")
-        chemin_dump_local = Path(os.environ.get("SEAMTECH_SAUVEGARDE_TMP", "data/backups")) / manifeste["dump"]["fichier"]
-        chemin_dump_local.parent.mkdir(parents=True, exist_ok=True)
-        client_s3.download_file(manifeste["dump"]["cle_s3"], chemin_dump_local)
+        nom_dump = _nom_dump_manifeste(manifeste)
+        # Un répertoire privé évite de remplacer un fichier ou de suivre un
+        # lien déjà présent à un chemin contrôlé par le manifeste.
+        import tempfile
 
-    empreinte = _sha256_fichier(Path(chemin_dump_local))
+        dossier_temp = Path(os.environ.get("SEAMTECH_SAUVEGARDE_TMP", "data/backups"))
+        dossier_temp.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="seamtech-restore-", dir=dossier_temp) as tmp:
+            chemin_telecharge = Path(tmp) / nom_dump
+            client_s3.download_file(manifeste["dump"]["cle_s3"], chemin_telecharge)
+            return restaurer(base_cible_url, manifeste, chemin_dump_local=chemin_telecharge)
+
+    with _instantane_dump_prive(Path(chemin_dump_local)) as copie:
+        return _restaurer_dump_verifie(base_cible_url, manifeste, copie, debut)
+
+
+def _restaurer_dump_verifie(base_cible_url: str, manifeste: dict, chemin_dump: Path, debut: float) -> dict:
+    try:
+        empreinte = _sha256_fichier(chemin_dump)
+    except OSError:
+        raise SauvegardeError("Impossible de vérifier la copie privée du dump") from None
     if empreinte != manifeste["dump"]["sha256"]:
         raise SauvegardeError(
             f"empreinte du dump {empreinte[:12]}… ≠ manifeste {manifeste['dump']['sha256'][:12]}… — "
@@ -717,6 +1387,27 @@ def restaurer(
         )
 
     nom_cible = _nom_base(base_cible_url)
+    taille_attendue = manifeste["dump"].get("octets")
+    try:
+        taille_copie = chemin_dump.stat().st_size
+    except OSError:
+        raise SauvegardeError("Impossible de vérifier la taille de la copie privée du dump") from None
+    if type(taille_attendue) is not int or taille_attendue < 0 or taille_attendue != taille_copie:
+        raise SauvegardeError("taille du dump invalide ou différente du manifeste — restauration refusée")
+    pg_restore = _trouver_binaire("pg_restore")
+    dsn_public, environnement = _parametres_pg_process(base_cible_url)
+    # Lit et décompresse les données de l'archive sans exécuter les commandes
+    # SQL ni exposer leur contenu ou les diagnostics potentiellement sensibles.
+    try:
+        controle = subprocess.run(
+            [pg_restore, "--exit-on-error", "--file=-", str(chemin_dump)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except OSError:
+        raise SauvegardeError("Impossible de lancer pg_restore pour vérifier l'archive") from None
+    if controle.returncode != 0:
+        raise SauvegardeError("archive illisible ou incompatible avec pg_restore — restauration refusée")
     connexion_admin = _connecter(_url_sans_base(base_cible_url), autocommit=True)
     try:
         with connexion_admin.cursor() as cursor:
@@ -730,16 +1421,28 @@ def restaurer(
     finally:
         connexion_admin.close()
 
-    pg_restore = _trouver_binaire("pg_restore")
-    resultat = subprocess.run(
-        [pg_restore, "--no-owner", "--exit-on-error", f"--dbname={base_cible_url}", str(chemin_dump_local)],
-        capture_output=True,
-        text=True,
-    )
+    try:
+        resultat = subprocess.run(
+            [pg_restore, "--no-owner", "--exit-on-error", f"--dbname={dsn_public}", str(chemin_dump)],
+            capture_output=True,
+            text=True,
+            env=environnement,
+        )
+    except OSError:
+        raise SauvegardeError("Impossible de lancer pg_restore ; la base cible peut être partielle") from None
     if resultat.returncode != 0:
-        raise SauvegardeError(f"pg_restore a échoué (rc={resultat.returncode}) : {resultat.stderr[-800:]}")
+        # stderr peut contenir une URI ou d'autres secrets de configuration.
+        raise SauvegardeError(f"pg_restore a échoué (rc={resultat.returncode}) ; la base cible peut être partielle")
 
     etat = _etat_base(base_cible_url)
+    version_application = manifeste.get("version_schema_application")
+    if version_application and (
+        version_application not in etat["versions_schema"] or not etat.get("schema_identite_octets_valide", False)
+    ):
+        raise SauvegardeError(
+            "Restauration incomplète : schéma d'identité des octets absent ou déclencheur désactivé ; "
+            "la base cible peut être partielle"
+        )
     duree = time.perf_counter() - debut
     _publier(
         {
@@ -791,6 +1494,11 @@ def verifier(base_url: str, manifeste: dict, racines_archive: list[Path] | None 
         ecarts.append(
             f"VERSION_SCHEMA_METIER {manifeste['version_schema_metier']} absente de schema_migrations"
         )
+    version_application = manifeste.get("version_schema_application")
+    if version_application and version_application not in etat["versions_schema"]:
+        ecarts.append(f"VERSION_SCHEMA_APPLICATION {version_application} absente de schema_migrations")
+    if version_application and not etat.get("schema_identite_octets_valide", False):
+        ecarts.append("Schéma d'identité des octets incomplet : colonne ou déclencheur absent ou désactivé")
     if etat["fiches_par_statut"] != manifeste["fiches_par_statut"]:
         ecarts.append(
             f"fiches par statut : restauré {etat['fiches_par_statut']} ≠ manifeste {manifeste['fiches_par_statut']}"
@@ -886,7 +1594,9 @@ def main(argv: list[str] | None = None) -> int:
     sous = parser.add_subparsers(dest="commande", required=True)
 
     p_sauver = sous.add_parser("sauver", help="dump + inventaire archive + manifeste + envoi hors-site")
-    p_sauver.add_argument("--base-url", required=True)
+    base_url_env = os.environ.get("SEAMTECH_DATABASE_URL")
+    p_sauver.add_argument("--base-url", default=base_url_env, required=not bool(base_url_env),
+                          help="URL PostgreSQL ; préférer SEAMTECH_DATABASE_URL pour éviter le mot de passe en argument")
     p_sauver.add_argument("--archive", nargs="+", required=True, help="racine(s) de l'archive, en lecture seule")
     p_sauver.add_argument("--dossier", default="data/backups")
     p_sauver.add_argument("--retention", type=int, default=5)
@@ -900,7 +1610,9 @@ def main(argv: list[str] | None = None) -> int:
     p_restaurer = sous.add_parser("restaurer", help="restaure depuis un manifeste (local ou S3)")
     p_restaurer.add_argument("--manifeste", help="chemin local du manifeste")
     p_restaurer.add_argument("--cle-manifeste", help="clé S3 du manifeste (téléchargé)")
-    p_restaurer.add_argument("--base-cible", required=True)
+    cible_url_env = os.environ.get("SEAMTECH_RESTORE_DATABASE_URL")
+    p_restaurer.add_argument("--base-cible", default=cible_url_env, required=not bool(cible_url_env),
+                             help="base distincte ; préférer SEAMTECH_RESTORE_DATABASE_URL")
     p_restaurer.add_argument(
         "--dump",
         help="chemin local du dump ; par défaut : dossier du manifeste + nom du manifeste",
@@ -918,7 +1630,8 @@ def main(argv: list[str] | None = None) -> int:
     p_verifier = sous.add_parser("verifier", help="compare une base vivante au manifeste")
     p_verifier.add_argument("--manifeste", help="chemin local du manifeste")
     p_verifier.add_argument("--cle-manifeste", help="clé S3 du manifeste (téléchargé)")
-    p_verifier.add_argument("--base-url", required=True)
+    p_verifier.add_argument("--base-url", default=base_url_env, required=not bool(base_url_env),
+                            help="URL PostgreSQL ; préférer SEAMTECH_DATABASE_URL")
     p_verifier.add_argument("--archive", nargs="*", default=None)
 
     args = parser.parse_args(argv)
@@ -950,14 +1663,22 @@ def main(argv: list[str] | None = None) -> int:
         sortie = {
             "manifeste": str(Path(args.dossier) / (manifeste["dump"]["fichier"] + ".manifest.json")),
             "dump_sha256": manifeste["dump"]["sha256"],
-            "complet": manifeste.get("complet", True),
+            "complet": manifeste.get("complet", False),
+            "complet_perimetre_demande": manifeste.get("complet_perimetre_demande", False),
+            "protection_globale_prouvee": manifeste.get("protection_globale_prouvee", False),
+            "coherence_references_snapshot": manifeste.get("coherence_references_snapshot", False),
+            "references_incluses": manifeste.get("references_incluses", False),
+            "retention_automatique_autorisee": manifeste.get("retention_automatique_autorisee", False),
         }
         if "cle_s3" in manifeste["dump"]:
             sortie["cle_dump_s3"] = manifeste["dump"]["cle_s3"]
         if "manifeste_cle_s3" in manifeste:
             sortie["cle_manifeste_s3"] = manifeste["manifeste_cle_s3"]
         print(json.dumps(sortie, ensure_ascii=False))
-        return 0 if manifeste.get("complet", True) else 2
+        if manifeste.get("protection_globale_prouvee") is not True:
+            logger.warning("Sauvegarde non qualifiée comme protection globale : rétention automatique suspendue.")
+            return 2
+        return 0 if manifeste.get("complet") is True else 2
 
     if args.commande == "restaurer":
         client = _client_s3_depuis_env()
@@ -966,38 +1687,57 @@ def main(argv: list[str] | None = None) -> int:
             dump_local: Path | None = Path(args.dump)
         elif args.manifeste:
             # Repli local : le dump est attendu À CÔTÉ du manifeste.
-            dump_local = Path(args.manifeste).parent / manifeste["dump"]["fichier"]
+            dump_local = Path(args.manifeste).parent / _nom_dump_manifeste(manifeste)
         else:
             dump_local = None  # re-téléchargé depuis le bucket
-        resume = restaurer(args.base_cible, manifeste, chemin_dump_local=dump_local, client_s3=client)
-        extra: dict = {}
-        racine_bundle = Path(args.manifeste).parent if args.manifeste else Path(args.dump).parent if args.dump else None
-        if args.fichiers_cible:
-            if racine_bundle is None:
-                raise SauvegardeError("restauration des fichiers : fournir --manifeste (bundle local)")
-            extra["fichiers"] = restaurer_fichiers_locaux(manifeste, racine_bundle, Path(args.fichiers_cible))
-        if args.restaurer_objets:
-            if racine_bundle is None:
-                raise SauvegardeError("restauration des objets : fournir --manifeste (bundle local)")
-            from .config import AppConfig
-            from .storage import S3StorageClient
+        import tempfile
+        from contextlib import ExitStack
 
-            try:
-                config_docs = AppConfig.load()
-            except FileNotFoundError as exc:
-                raise SauvegardeError(
-                    "restauration des objets : configuration applicative absente "
-                    "(identité du bucket DOCUMENTS, distincte de la sauvegarde)"
-                ) from exc
-            extra["objets"] = restaurer_objets_s3(manifeste, racine_bundle, S3StorageClient(config=config_docs))
-        print(
-            json.dumps(
-                {"restaure": resume["base"], "duree_s": round(resume["duree_s"], 2), **extra},
-                ensure_ascii=False,
-                default=str,
+        with ExitStack() as pile:
+            racine_bundle = Path(args.manifeste).parent if args.manifeste else Path(args.dump).parent if args.dump else None
+            if (args.fichiers_cible or args.restaurer_objets) and racine_bundle is None:
+                if client is None:
+                    raise SauvegardeError("restauration des pièces : client de sauvegarde absent")
+                racine_bundle = Path(pile.enter_context(tempfile.TemporaryDirectory(prefix="seamtech-bundle-")))
+                sections = tuple(section for active, section in (
+                    (args.fichiers_cible, "fichiers_locaux"), (args.restaurer_objets, "objets_s3")
+                ) if active)
+                _telecharger_bundle_distant(manifeste, client, racine_bundle, sections)
+            fichiers_figes = None
+            objets_figes = None
+            if args.fichiers_cible:
+                plan_fichiers = _plan_restaurer_fichiers(manifeste, racine_bundle, Path(args.fichiers_cible))
+                fichiers_figes = pile.enter_context(_figer_plan_restauration(plan_fichiers, racine_bundle))
+            if args.restaurer_objets:
+                plan_objets = _plan_restaurer_objets(manifeste, racine_bundle)
+                objets_figes = pile.enter_context(_figer_plan_restauration(plan_objets, racine_bundle))
+                from .config import AppConfig
+                from .storage import S3StorageClient
+
+                try:
+                    config_docs = AppConfig.load()
+                except FileNotFoundError as exc:
+                    raise SauvegardeError(
+                        "restauration des objets : configuration applicative absente "
+                        "(identité du bucket DOCUMENTS, distincte de la sauvegarde)"
+                    ) from exc
+                client_documents = S3StorageClient(config=config_docs)
+                _verifier_cles_client_objets(objets_figes, client_documents)
+                _verifier_publication_objets_exclusive(objets_figes, client_documents)
+            resume = restaurer(args.base_cible, manifeste, chemin_dump_local=dump_local, client_s3=client)
+            extra: dict = {}
+            if fichiers_figes is not None:
+                extra["fichiers"] = _publier_fichiers_restaures(fichiers_figes)
+            if objets_figes is not None:
+                extra["objets"] = _publier_objets_restaures(objets_figes, client_documents)
+            print(
+                json.dumps(
+                    {"restaure": resume["base"], "duree_s": round(resume["duree_s"], 2), **extra},
+                    ensure_ascii=False,
+                    default=str,
+                )
             )
-        )
-        return 0
+            return 0
 
     if args.commande == "verifier":
         client = _client_s3_depuis_env()

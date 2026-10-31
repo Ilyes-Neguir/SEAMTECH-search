@@ -14,7 +14,9 @@ import { useSession } from "@/lib/use-session"
 import type { LotDetail } from "@/lib/fiche"
 import {
   annulerTeleversement,
-  creerLotDepuisTeleversement,
+  ErreurProtocoleCreation,
+  creerOuRetrouverSession,
+  nouvelleCleCreation,
   fichiersDepuisDepot,
   fichiersDepuisListe,
   formaterOctets,
@@ -107,6 +109,8 @@ function NouveauAppInterne() {
   const [jetonSuivi, setJetonSuivi] = useState(0)
   const [dragActif, setDragActif] = useState(false)
   const [analyseDossier, setAnalyseDossier] = useState(false)
+  // La ref ferme aussi la fenêtre entre deux événements avant le rendu React.
+  const analyseDossierRef = useRef(false)
   const [preparation, setPreparation] = useState<PreparationTeleversement | null>(null)
   const [progression, setProgression] = useState<ProgressionTeleversement | null>(null)
   const [jetonTeleversement, setJetonTeleversement] = useState<string | null>(null)
@@ -116,6 +120,10 @@ function NouveauAppInterne() {
   const controleurTransfert = useRef<AbortController | null>(null)
   const annulationDemandee = useRef(false)
   const jetonTeleversementRef = useRef<string | null>(null)
+  const sessionInconnueRef = useRef(false)
+  const cleCreationRef = useRef<string | null>(null)
+  const creationNonSureRef = useRef(false)
+  const annulationEnCoursRef = useRef(false)
   const phaseTransfertRef = useRef<ProgressionTeleversement["phase"]>("analyse")
   const profondeurDrag = useRef(0)
   const inputDossierLot = useRef<HTMLInputElement>(null)
@@ -169,13 +177,32 @@ function NouveauAppInterne() {
     }
   }, [])
 
+  function selectionBloqueeParSession(): boolean {
+    if (annulationEnCoursRef.current) {
+      setErreur("Changement refusé pendant l'annulation de la session.")
+      return true
+    }
+    if (sessionInconnueRef.current) {
+      setErreur("Changement refusé : état de création de session inconnu, aucun jeton reçu.")
+      return true
+    }
+    if (jetonTeleversementRef.current && phaseTransfertRef.current !== "termine") {
+      setErreur("Changement refusé : une session en cours doit d'abord être reprise ou annulée.")
+      return true
+    }
+    return false
+  }
+
   function selectionnerFichiers(bruts: FichierATeleverser[]) {
-    if (transfertEnCours) return
+    if (transfertEnCours || selectionBloqueeParSession()) return
     setErreur(null)
     setMessageTeleversement(null)
     setResultat(null)
     setCreationLotReprisePossible(false)
     jetonTeleversementRef.current = null
+    sessionInconnueRef.current = false
+    cleCreationRef.current = null
+    creationNonSureRef.current = false
     setJetonTeleversement(null)
     try {
       const prep = preparerFichiers(bruts)
@@ -198,8 +225,36 @@ function NouveauAppInterne() {
     }
   }
 
+  async function retrouverJetonPourAnnulation(): Promise<string> {
+    if (jetonTeleversementRef.current) return jetonTeleversementRef.current
+    if (creationNonSureRef.current) throw new Error("Le serveur n'a pas confirmé l'idempotence ; nouvelle création interdite.")
+    if (!preparation || !cleCreationRef.current) throw new Error("état de création de session inconnu, aucun jeton reçu")
+    let session
+    try {
+      session = await creerOuRetrouverSession(preparation, cleCreationRef.current)
+    } catch (e) {
+      if (e instanceof ErreurProtocoleCreation) creationNonSureRef.current = true
+      throw e
+    }
+    if (!session.token) throw new Error("état de création de session inconnu, aucun jeton reçu")
+    jetonTeleversementRef.current = session.token
+    setJetonTeleversement(session.token)
+    sessionInconnueRef.current = false
+    return session.token
+  }
+
   async function lancerTeleversement() {
-    if (!preparation || transfertEnCours) return
+    if (!preparation || transfertEnCours || annulationEnCoursRef.current) return
+    if (creationNonSureRef.current) {
+      setErreur("Le serveur n'a pas confirmé l'idempotence ; nouvelle création interdite.")
+      return
+    }
+    try {
+      if (!cleCreationRef.current) cleCreationRef.current = nouvelleCleCreation()
+    } catch {
+      setErreur("Création impossible : le générateur aléatoire sécurisé du navigateur est indisponible.")
+      return
+    }
     const controleur = new AbortController()
     controleurTransfert.current = controleur
     annulationDemandee.current = false
@@ -215,7 +270,11 @@ function NouveauAppInterne() {
     try {
       const resultatTeleversement = await televerserEtCreerLot(preparation, {
         signal: controleur.signal,
+        jetonExistant: jetonTeleversementRef.current ?? undefined,
+        cleCreation: cleCreationRef.current,
+        onCreationEmise: () => { sessionInconnueRef.current = true },
         onSession: (jeton) => {
+          sessionInconnueRef.current = false
           jetonTeleversementRef.current = jeton
           setJetonTeleversement(jeton)
         },
@@ -230,25 +289,34 @@ function NouveauAppInterne() {
       )
       setIdLot(resultatTeleversement.lot.id_lot)
     } catch (e) {
+      if (e instanceof ErreurProtocoleCreation) creationNonSureRef.current = true
       if (annulationDemandee.current) {
-        const jeton = jetonTeleversementRef.current
         try {
+          const jeton = jetonTeleversementRef.current ??
+            (sessionInconnueRef.current ? await retrouverJetonPourAnnulation() : null)
           if (jeton) await annulerTeleversement(jeton)
-          setMessageTeleversement("Téléversement annulé : les fichiers déjà reçus pour cette session ont été supprimés.")
-        } catch (erreurAnnulation) {
-          setErreur(
-            erreurAnnulation instanceof Error
-              ? `Transfert arrêté, mais suppression de la session impossible : ${erreurAnnulation.message}`
-              : "Transfert arrêté, mais suppression de la session impossible.",
-          )
-        } finally {
+          setMessageTeleversement(jeton
+            ? "Téléversement annulé : les fichiers déjà reçus pour cette session ont été supprimés."
+            : "Téléversement annulé avant toute création de session.")
           jetonTeleversementRef.current = null
+          cleCreationRef.current = null
+          sessionInconnueRef.current = false
           setJetonTeleversement(null)
           setPreparation(null)
           setProgression(null)
+        } catch (erreurAnnulation) {
+          // Conserver la session et la sélection : une panne de suppression
+          // doit rester réessayable et ne prouve pas que les données ont disparu.
+          setErreur(
+            erreurAnnulation instanceof Error
+              ? `Transfert arrêté, mais suppression de la session impossible : ${erreurAnnulation.message}${!jetonTeleversementRef.current ? " ; état de création de session inconnu, aucun jeton reçu." : ""}`
+              : "Transfert arrêté, mais suppression de la session impossible.",
+          )
         }
       } else {
-        setErreur(messageErreurTeleversement(e))
+        setErreur(sessionInconnueRef.current
+          ? `${messageErreurTeleversement(e)} État de création de session inconnu, aucun jeton reçu.`
+          : messageErreurTeleversement(e))
         setCreationLotReprisePossible(
           Boolean(jetonTeleversementRef.current) &&
             (phaseTransfertRef.current === "finalisation" || phaseTransfertRef.current === "creation_lot"),
@@ -261,49 +329,41 @@ function NouveauAppInterne() {
     }
   }
 
-  async function reprendreCreationLot() {
-    const jeton = jetonTeleversementRef.current ?? jetonTeleversement
-    if (!jeton || transfertEnCours) return
-    setTransfertEnCours(true)
-    setErreur(null)
-    try {
-      const lotCree = await creerLotDepuisTeleversement(jeton)
-      setCreationLotReprisePossible(false)
-      setMessageTeleversement(`Création reprise : le lot #${lotCree.id_lot} est suivi ci-dessous.`)
-      setIdLot(lotCree.id_lot)
-    } catch (e) {
-      setErreur(e instanceof Error ? e.message : "Création du lot impossible.")
-    } finally {
-      setTransfertEnCours(false)
-    }
-  }
-
   async function demanderAnnulationTeleversement() {
     if (transfertEnCours) {
       annulationDemandee.current = true
       controleurTransfert.current?.abort()
       return
     }
-    const jeton = jetonTeleversementRef.current ?? jetonTeleversement
+    if (annulationEnCoursRef.current) return
+    annulationEnCoursRef.current = true
     setErreur(null)
     try {
+      let jeton = jetonTeleversementRef.current ?? jetonTeleversement
+      if (!jeton && sessionInconnueRef.current) jeton = await retrouverJetonPourAnnulation()
       if (jeton) await annulerTeleversement(jeton)
       setMessageTeleversement(
         jeton
           ? "Session de téléversement annulée et supprimée."
           : "Sélection retirée. Aucun fichier n'avait encore été envoyé.",
       )
+      jetonTeleversementRef.current = null
+      cleCreationRef.current = null
+      sessionInconnueRef.current = false
+      setJetonTeleversement(null)
+      setCreationLotReprisePossible(false)
+      setPreparation(null)
+      setProgression(null)
+      if (inputDossierLot.current) inputDossierLot.current.value = ""
+      if (inputFichiersLot.current) inputFichiersLot.current.value = ""
     } catch (e) {
-      setErreur(e instanceof Error ? e.message : "Annulation impossible.")
-      return
+      const detail = e instanceof Error ? e.message : "Annulation impossible."
+      setErreur(!jetonTeleversementRef.current && sessionInconnueRef.current
+        ? `Suppression non confirmée : état de création de session inconnu, aucun jeton reçu. ${detail}`
+        : detail)
+    } finally {
+      annulationEnCoursRef.current = false
     }
-    jetonTeleversementRef.current = null
-    setJetonTeleversement(null)
-    setCreationLotReprisePossible(false)
-    setPreparation(null)
-    setProgression(null)
-    if (inputDossierLot.current) inputDossierLot.current.value = ""
-    if (inputFichiersLot.current) inputFichiersLot.current.value = ""
   }
 
   async function deposer() {
@@ -379,14 +439,28 @@ function NouveauAppInterne() {
             e.preventDefault()
             profondeurDrag.current = 0
             setDragActif(false)
-            if (transfertEnCours) return
+            if (transfertEnCours || analyseDossierRef.current || selectionBloqueeParSession()) return
+            analyseDossierRef.current = true
+            // Une nouvelle sélection remplace l'ancienne même si sa lecture
+            // échoue : ne jamais proposer d'envoyer le dossier précédent.
+            setPreparation(null)
+            setProgression(null)
+            setErreur(null)
+            setMessageTeleversement(null)
+            setResultat(null)
+            setCreationLotReprisePossible(false)
+            jetonTeleversementRef.current = null
+            setJetonTeleversement(null)
             setAnalyseDossier(true)
             void fichiersDepuisDepot(e.dataTransfer)
               .then(selectionnerFichiers)
               .catch((erreurDepot) => {
                 setErreur(erreurDepot instanceof Error ? erreurDepot.message : "Lecture du dossier déposé impossible.")
               })
-              .finally(() => setAnalyseDossier(false))
+              .finally(() => {
+                analyseDossierRef.current = false
+                setAnalyseDossier(false)
+              })
           }}
         >
           <Upload className="mx-auto size-7 text-primary" aria-hidden="true" />
@@ -466,7 +540,7 @@ function NouveauAppInterne() {
               {creationLotReprisePossible && jetonTeleversement && (
                 <button
                   type="button"
-                  onClick={() => void reprendreCreationLot()}
+                  onClick={() => void lancerTeleversement()}
                   disabled={transfertEnCours}
                   className="rounded border border-primary bg-background px-4 py-2 text-sm font-medium text-primary disabled:opacity-40"
                   data-testid="bouton-reprendre-creation-lot"

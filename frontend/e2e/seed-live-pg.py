@@ -2,22 +2,26 @@
 # réelles (métier PostgreSQL, §17.1). Appelé par playwright.config.ts quand
 # SEAMTECH_E2E_DATABASE_URL est défini (URL d'administration sur le serveur
 # PostgreSQL de test). La base est créée une fois par RUN puis réutilisée par
-# les rechargements de config (playwright réimporte ce module par processus) ;
-# une base déjà consommée par un run précédent est recréée : l'e2e reste
-# répétable sans nettoyage manuel.
+# les rechargements de config (playwright réimporte ce module par processus).
+# Chaque nouveau run utilise une base neuve ; aucune base préexistante n'est
+# automatiquement supprimée ni déconnectée.
 #
 # Toutes les décisions (réutilisation, création, raison) sont journalisées sur
 # stderr — visible dans la sortie playwright — jamais d'échec silencieux.
 #
-# Sortie (stdout) : {"url": "postgresql://...", "nom": "e2e_xxxx"}
+# Sortie (stdout) : {"nom": "e2e_<identifiant aléatoire>"}, sans secret.
 
 import fcntl
 import json
 import os
+import re
+import stat
 import sys
+import tempfile
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import psycopg2
 from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
@@ -39,26 +43,83 @@ def verrou_exclusif():
     """Sérialise les chargements concurrents de la config playwright :
     sans ce verrou, deux processus peuvent se disputer la purge/création
     et le second détruirait la base du premier (observé en pratique)."""
-    with VERROU.open("w") as handle:
+    if not hasattr(os, "O_NOFOLLOW"):
+        raise RuntimeError("Verrou de seed sans protection des liens non pris en charge")
+    fd = os.open(VERROU, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "r+") as handle:
+        if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+            raise RuntimeError("Le verrou de seed doit être un fichier ordinaire")
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-        yield
-        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def lire_run() -> dict:
+    """Lit seulement un fichier ordinaire sans suivre un lien symbolique."""
+    if not hasattr(os, "O_NOFOLLOW"):
+        raise RuntimeError("Lecture de seed sans protection des liens non prise en charge")
+    fd = os.open(FICHIER_RUN, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, "r", encoding="utf-8") as fichier:
+        if not stat.S_ISREG(os.fstat(fichier.fileno()).st_mode):
+            raise RuntimeError("Le fichier de run doit être ordinaire")
+        contenu = fichier.read(4097)
+        if len(contenu) > 4096:
+            raise RuntimeError("Fichier de run trop volumineux")
+        return json.loads(contenu)
+
+
+def ecrire_run(run_id: str, nom: str) -> None:
+    """Remplace le fichier lui-même, sans suivre un lien à la destination."""
+    fd, temporaire = tempfile.mkstemp(prefix=".live-pg-run-", dir=FICHIER_RUN.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fichier:
+            json.dump({"run_id": run_id, "nom": nom}, fichier)
+        os.replace(temporaire, FICHIER_RUN)
+    finally:
+        if os.path.exists(temporaire):
+            os.unlink(temporaire)
+
+
+def url_base(admin_url: str, nom: str) -> str:
+    """Reconstitue l'URL sans conserver ses identifiants dans le fichier de run."""
+    if not re.fullmatch(r"e2e_[0-9a-f]{32}", nom):
+        raise ValueError("Nom de base e2e invalide")
+    parties = urlsplit(admin_url)
+    if parties.scheme not in {"postgres", "postgresql"} or (not parties.netloc and not parties.path.startswith("/")):
+        raise ValueError("URL PostgreSQL requise")
+    if parties.fragment:
+        raise ValueError("URL PostgreSQL invalide")
+    url = f"{parties.scheme}://{parties.netloc}/{nom}"
+    if parties.query:
+        url += f"?{parties.query}"
+    try:
+        nom_effectif = psycopg2.extensions.parse_dsn(url).get("dbname")
+    except psycopg2.Error:
+        raise ValueError("URL PostgreSQL invalide") from None
+    if nom_effectif != nom:
+        raise ValueError("L'URL détourne la base de test")
+    return url
 
 
 def base_vivante(url: str) -> bool:
     """La base répond-elle et porte-t-elle encore la table fiche ? Une base
     partiellement consommée (fiches validées au fil des tests) reste vivante :
     les chargements du MÊME run doivent la réutiliser tels quels."""
+    conn = None
     try:
         conn = psycopg2.connect(url, connect_timeout=5)
         with conn.cursor() as cur:
             cur.execute("SELECT count(*) FROM fiche")
             cur.fetchone()
-        conn.close()
         return True
     except Exception as exc:
-        print(f"Seed e2e : base {url} injoignable ({type(exc).__name__} : {exc}).", file=sys.stderr)
+        print(f"Seed e2e : base injoignable ({type(exc).__name__}).", file=sys.stderr)
         return False
+    finally:
+        if conn is not None:
+            conn.close()
 
 
 def _copier_lignes(cur, table: str, id_source: int, exclusions: tuple[str, ...], surcharges=None,
@@ -296,6 +357,44 @@ def semer_population_lot5(idx) -> None:
             ),
         )
     resoudre_extractions(idx)
+
+    # Les tests de correction du Lot 3b modifient la vraie extraction utilisée
+    # ci-dessus. Un jeu distinct garantit que la confiance reste testable dans
+    # la suite entière, pas seulement lors d'une exécution isolée.
+    from seamtech_search.referentiel_bateaux import assurer_modele
+
+    modele_isole = "Modele de test confiance E2E"
+    with idx.connect() as connexion:
+        with connexion.cursor() as curseur:
+            assert assurer_modele(curseur, modele_isole, source="manuel") is not None
+            curseur.execute("SELECT id_fiche FROM fiche WHERE code = %s", (CODE_DOUBLON,))
+            source_liee = curseur.fetchone()
+            if source_liee is None:
+                raise RuntimeError("Fiche source isolée absente pour les liens de confiance")
+            id_fiche_source = int(source_liee[0])
+    for i, facteur in enumerate((1.0, 0.99, 0.995, 1.0, 1.005, 1.01)):
+        code = "LOT5-CANDIDATE" if i == 0 else CODE_DOUBLON if i == 1 else f"LOT5-ISO-{i}"
+        enregistrer_extraction_voile(
+            idx,
+            ExtractionVoile(
+                id_fiche=id_fiche_source if i == 1 else None,
+                code_fiche=code,
+                nom_fichier_source=f"{code}.pdf",
+                empreinte_sha256=hashlib.sha256(code.encode()).hexdigest(),
+                gabarit_code="FICHE_PORTANT_V1",
+                gabarit_version=2,
+                methode_principale="fiche_extraite",
+                type_voile=type_voile,
+                modele_bateau_brut=modele_isole,
+                slu_m=round(base["slu_m"] * facteur, 3),
+                sle_m=round(base["sle_m"] * facteur, 3),
+                sf_m=round(base["sf_m"] * facteur, 3),
+                shw_m=round(base["shw_m"] * facteur, 3),
+                spa_m2=round(base["spa_m2"] * facteur * facteur, 3),
+                statut_extraction="complete",
+                statut_plausibilite="plausible",
+            ),
+        )
     print(
         f"Seed e2e Lot 5 : 5 voiles de référence semées pour « {nom_modele} » "
         f"({type_voile}) autour de 7792-SO.",
@@ -398,6 +497,12 @@ def semer_comptes(idx) -> None:
             os.environ.get("SEAMTECH_E2E_UTILISATEUR_PASSWORD", "e2e-utilisateur-password"),
         ),
         (
+            "e2e-utilisateur-parcours",
+            "Utilisateur parcours e2e",
+            "utilisateur",
+            os.environ.get("SEAMTECH_E2E_PARCOURS_PASSWORD", "e2e-parcours-password"),
+        ),
+        (
             "e2e-lecture",
             "Lecture e2e",
             "lecture",
@@ -437,22 +542,31 @@ def main() -> None:
         print(json.dumps({"erreur": "SEAMTECH_E2E_DATABASE_URL absent"}))
         sys.exit(1)
     run_id = os.environ.get("SEAMTECH_E2E_RUN_ID", "")
+    if run_id and not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", run_id):
+        raise SystemExit("Identifiant de run e2e invalide")
+    try:
+        url_base(admin_url, "e2e_" + "0" * 32)
+    except ValueError:
+        raise SystemExit("URL PostgreSQL e2e invalide ou non isolable.") from None
 
     with verrou_exclusif():
-        admin = psycopg2.connect(admin_url)
+        try:
+            admin = psycopg2.connect(admin_url)
+        except Exception as exc:
+            raise SystemExit(f"Connexion PostgreSQL e2e impossible ({type(exc).__name__}).") from None
         admin.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
 
         # réutilisation au sein du MÊME run playwright : la base peut être
         # partiellement consommée par les tests déjà exécutés — on la garde.
         if run_id and FICHIER_RUN.exists():
             try:
-                enregistre = json.loads(FICHIER_RUN.read_text(encoding="utf-8"))
-                if enregistre.get("run_id") == run_id and base_vivante(enregistre["url"]):
+                enregistre = lire_run()
+                if enregistre.get("run_id") == run_id and base_vivante(url_base(admin_url, enregistre["nom"])):
                     print(
                         f"Seed e2e : run {run_id[:8]} — réutilisation de {enregistre['nom']}.",
                         file=sys.stderr,
                     )
-                    print(json.dumps({"url": enregistre["url"], "nom": enregistre["nom"], "reutilisee": True}))
+                    print(json.dumps({"nom": enregistre["nom"], "reutilisee": True}))
                     admin.close()
                     return
                 print(
@@ -462,28 +576,17 @@ def main() -> None:
                 )
             except Exception as exc:
                 print(
-                    f"Fichier run illisible ({type(exc).__name__} : {exc}) — nouvelle base.",
+                    f"Fichier run illisible ({type(exc).__name__}) — nouvelle base.",
                     file=sys.stderr,
                 )
 
         with admin.cursor() as cur:
-            # bases e2e des exécutions précédentes : nettoyage best-effort
-            cur.execute(
-                "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
-                "WHERE datname LIKE 'e2e\\_%' AND datname <> current_database()"
-            )
-            cur.execute(
-                "SELECT datname FROM pg_database WHERE datname LIKE 'e2e\\_%' "
-                "AND datname <> current_database()"
-            )
-            anciennes = [r[0] for r in cur.fetchall()]
-            for nom_ancien in anciennes:
-                cur.execute(f'DROP DATABASE IF EXISTS "{nom_ancien}"')
-            nom = f"e2e_{uuid.uuid4().hex[:8]}"
+            # Le préfixe d'une base ne prouve pas qu'elle nous appartient :
+            # ne jamais terminer ses connexions ni la supprimer par motif.
+            nom = f"e2e_{uuid.uuid4().hex}"
+            url = url_base(admin_url, nom)
             cur.execute(f'CREATE DATABASE "{nom}"')
         admin.close()
-
-        url = admin_url.rsplit("/", 1)[0] + f"/{nom}"
 
         # import tardif : ne compte que si la base existe (métier PostgreSQL)
         sys.path.insert(0, str(REPO))
@@ -516,9 +619,9 @@ def main() -> None:
         semer_comptes(idx)
         idx.close()
 
-        FICHIER_RUN.write_text(json.dumps({"run_id": run_id, "url": url, "nom": nom}), encoding="utf-8")
+        ecrire_run(run_id, nom)
         print(f"Seed e2e : base {nom} créée et semée (3 dossiers) pour le run {run_id[:8]}.", file=sys.stderr)
-        print(json.dumps({"url": url, "nom": nom}))
+        print(json.dumps({"nom": nom}))
 
 
 if __name__ == "__main__":

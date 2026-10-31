@@ -4,7 +4,8 @@ import logging
 import os
 import re
 import sqlite3
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator
@@ -57,6 +58,7 @@ CREATE TABLE IF NOT EXISTS documents (
     is_dir INTEGER NOT NULL,
     extractor_version INTEGER NOT NULL DEFAULT 0,
     content_hash TEXT NOT NULL DEFAULT '',
+    source_sha256 TEXT,
     extraction_status TEXT NOT NULL DEFAULT 'extracted',
     extraction_detail TEXT NOT NULL DEFAULT '',
     category TEXT NOT NULL DEFAULT 'storage_direct',
@@ -142,6 +144,7 @@ CREATE TABLE IF NOT EXISTS documents (
     search_vector TSVECTOR NOT NULL DEFAULT ''::tsvector,
     extractor_version INTEGER NOT NULL DEFAULT 0,
     content_hash TEXT NOT NULL DEFAULT '',
+    source_sha256 TEXT,
     extraction_status TEXT NOT NULL DEFAULT 'extracted',
     extraction_detail TEXT NOT NULL DEFAULT '',
     category TEXT NOT NULL DEFAULT 'storage_direct',
@@ -257,6 +260,7 @@ class SearchIndex:
         # que des pièces jointes de fiches référencent documents — E-40).
         self.rebuild_mode: str | None = None
         self._pool: Any = None
+        self._scan_connection: ContextVar[Any | None] = ContextVar(f"scan_connection_{id(self)}", default=None)
         # Resolved Postgres text-search configuration name, cached per index
         # instance. See `_postgres_ts_config`.
         self._pg_ts_config: str | None = None
@@ -285,21 +289,58 @@ class SearchIndex:
                 logger.warning("Could not initialize psycopg2 ThreadedConnectionPool: %s", exc)
                 self._pool = None
 
+    def _effectuer_rollback(self, connexion: Any) -> None:
+        connexion.rollback()
+
+    def _annuler_transaction(self, connexion: Any, erreur: BaseException) -> bool:
+        try:
+            self._effectuer_rollback(connexion)
+            return True
+        except Exception as erreur_rollback:
+            logger.exception("Échec de l'annulation de transaction ; connexion abandonnée")
+            erreur._seamtech_rollback_failed = True  # type: ignore[attr-defined]
+            if hasattr(erreur, "add_note"):
+                erreur.add_note(f"Retour arrière de transaction impossible : {erreur_rollback!r}")
+            return False
+
     @contextmanager
     def connect(self) -> Iterator[Any]:
+        connexion_scan = self._scan_connection.get()
+        if connexion_scan is not None:
+            # La transaction appartient à scan_transaction ; les appels imbriqués
+            # n'en valident ni n'en annulent les modifications individuellement.
+            yield connexion_scan
+            return
         if self.is_postgres:
             if self._pool is None and self.database_url:
                 self._init_pool()
             if self._pool is not None:
                 conn = self._pool.getconn()
+                abandonner = False
+                erreur_origine: BaseException | None = None
                 try:
                     yield conn
                     conn.commit()
-                except Exception:
-                    conn.rollback()
+                except BaseException as erreur:
+                    erreur_origine = erreur
+                    abandonner = not self._annuler_transaction(conn, erreur)
                     raise
                 finally:
-                    self._pool.putconn(conn)
+                    try:
+                        if abandonner:
+                            self._pool.putconn(conn, close=True)
+                        else:
+                            self._pool.putconn(conn)
+                    except Exception as erreur_pool:
+                        logger.exception("Impossible de rendre la connexion au pool")
+                        try:
+                            conn.close()
+                        except Exception:
+                            logger.exception("Impossible de fermer la connexion abandonnée")
+                        if erreur_origine is None:
+                            raise
+                        if hasattr(erreur_origine, "add_note"):
+                            erreur_origine.add_note(f"Libération du pool impossible : {erreur_pool!r}")
                 return
             else:
                 import psycopg2
@@ -312,8 +353,8 @@ class SearchIndex:
                 try:
                     yield conn
                     conn.commit()
-                except Exception:
-                    conn.rollback()
+                except BaseException as erreur:
+                    self._annuler_transaction(conn, erreur)
                     raise
                 finally:
                     conn.close()
@@ -324,8 +365,8 @@ class SearchIndex:
         try:
             yield connection
             connection.commit()
-        except Exception:
-            connection.rollback()
+        except BaseException as erreur:
+            self._annuler_transaction(connection, erreur)
             raise
         finally:
             connection.close()
@@ -1236,6 +1277,47 @@ class SearchIndex:
             "et tables d'extractions d'accessoires créées."
         )
 
+    def _migration_032_identite_octets_documents(self, connection: Any) -> None:
+        """Ajout nullable et invalidation même pour un ancien écrivain SQL.
+
+        Toute réécriture de la représentation du document efface l'identité.
+        Un écrivain qui a réellement capturé les octets doit la rétablir dans
+        une seconde instruction de sa transaction, après cette réécriture.
+        """
+        if self.is_postgres:
+            with connection.cursor() as cursor:
+                cursor.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS source_sha256 TEXT")
+                cursor.execute("""
+                    CREATE OR REPLACE FUNCTION seamtech_invalider_source_sha256() RETURNS trigger
+                    LANGUAGE plpgsql AS $$
+                    BEGIN
+                        NEW.source_sha256 := NULL;
+                        RETURN NEW;
+                    END;
+                    $$
+                """)
+                cursor.execute("DROP TRIGGER IF EXISTS documents_invalider_source_sha256 ON documents")
+                cursor.execute("""
+                    CREATE TRIGGER documents_invalider_source_sha256
+                    BEFORE UPDATE OF path_key, path, name, parent_path, extension, size,
+                        modified_at, is_dir, content, search_vector, extractor_version,
+                        content_hash, extraction_status, extraction_detail, category
+                    ON documents FOR EACH ROW EXECUTE FUNCTION seamtech_invalider_source_sha256()
+                """)
+        else:
+            colonnes = {ligne["name"] for ligne in connection.execute("PRAGMA table_info(documents)").fetchall()}
+            if "source_sha256" not in colonnes:
+                connection.execute("ALTER TABLE documents ADD COLUMN source_sha256 TEXT")
+            connection.execute("""
+                CREATE TRIGGER IF NOT EXISTS documents_invalider_source_sha256
+                AFTER UPDATE OF path_key, path, name, parent_path, extension, size,
+                    modified_at, is_dir, extractor_version, content_hash,
+                    extraction_status, extraction_detail, category ON documents
+                FOR EACH ROW BEGIN
+                    UPDATE documents SET source_sha256 = NULL WHERE id = NEW.id;
+                END
+            """)
+
     def run_migrations(self) -> None:
         """Run pending schema migrations once at startup."""
         with self.connect() as connection:
@@ -1328,6 +1410,8 @@ class SearchIndex:
                 # Lot 7 — Accessoires : enregistrée comme les autres,
                 # VERSION_SCHEMA_METIER vaut 031.
                 ("031_accessoires", self._migration_031_accessoires),
+                # 032 — identité des octets, distincte du hash de texte.
+                ("032_identite_octets_documents", self._migration_032_identite_octets_documents),
             ]
 
             for version, func in migrations:
@@ -1340,6 +1424,20 @@ class SearchIndex:
                     except Exception as exc:
                         logger.error("Migration %s failed: %s", version, exc)
                         raise
+            if not self._schema_identite_octets_valide(connection):
+                raise RuntimeError("Schéma d'identité des octets incomplet : colonne ou déclencheur absent ou désactivé.")
+
+    def _schema_identite_octets_valide(self, connection: Any) -> bool:
+        """Contrôle minimal de la migration : un marqueur seul n'est pas une preuve."""
+        if self.is_postgres:
+            with connection.cursor() as cursor:
+                return schema_metier.schema_identite_octets_valide_pg(cursor)
+        colonnes = {ligne['name'] for ligne in connection.execute('PRAGMA table_info(documents)').fetchall()}
+        declencheur = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'documents' AND name = ?",
+            ('documents_invalider_source_sha256',),
+        ).fetchone()
+        return 'source_sha256' in colonnes and declencheur is not None
 
     def _ensure_documents_columns_postgres(self, cursor: Any) -> None:
         """Legacy helper kept for backward compat, now delegates to migration."""
@@ -1418,11 +1516,26 @@ class SearchIndex:
         if not self._table_documents_existe(cursor):
             return "recreation"
         contraintes = self._contraintes_vers_documents(cursor)
-        if not contraintes:
+        cursor.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema = 'public' AND table_name = 'documents' "
+            "AND column_name IN ('object_key', 'source_sha256')"
+        )
+        colonnes = {ligne[0] for ligne in cursor.fetchall()}
+        objets = False
+        protections = [nom for nom in ('object_key', 'source_sha256') if nom in colonnes]
+        if protections:
+            clause = ' OR '.join(f'{nom} IS NOT NULL' for nom in protections)
+            cursor.execute(f"SELECT EXISTS (SELECT 1 FROM documents WHERE {clause})")
+            ligne_objets = cursor.fetchone()
+            objets = bool(ligne_objets and ligne_objets[0])
+        if not contraintes and not objets:
             cursor.execute("DROP TABLE IF EXISTS documents")
             cursor.execute("DROP TABLE IF EXISTS schema_migrations")
             return "recreation"
         detail = ", ".join(f"{table}.{colonne}" for table, colonne, _ in contraintes)
+        if objets:
+            detail = ", ".join(filter(None, (detail, "copies objet ou captures")))
         logger.warning(
             "Rebuild EN PLACE : %s référence(nt) documents — la table est conservée avec ses "
             "identifiants pour ne pas casser les pièces jointes des fiches (E-40) ; tout est "
@@ -1461,6 +1574,21 @@ class SearchIndex:
                     references.append((str(table), str(cle[3])))
         return references
 
+    def _executer_script_sqlite(self, connection: sqlite3.Connection, script: str) -> None:
+        """Évite le COMMIT implicite d'executescript dans une transaction de scan."""
+        if self._scan_connection.get() is None:
+            connection.executescript(script)
+            return
+        instruction = ""
+        for caractere in script:
+            instruction += caractere
+            if caractere == ";" and sqlite3.complete_statement(instruction):
+                if not instruction.strip().lower().startswith("pragma journal_mode"):
+                    connection.execute(instruction)
+                instruction = ""
+        if instruction.strip():
+            raise ValueError("Script SQLite incomplet dans la transaction de scan.")
+
     def _preparer_rebuild_sqlite(self, connection: sqlite3.Connection) -> str:
         """Même politique que PostgreSQL, pour ne pas laisser de liens orphelins.
 
@@ -1475,9 +1603,17 @@ class SearchIndex:
         ).fetchone()
         if not existe:
             return "recreation"
+        colonnes = {str(ligne[1]) for ligne in connection.execute("PRAGMA table_info(documents)")}
+        protections = [nom for nom in ('object_key', 'source_sha256') if nom in colonnes]
+        if protections:
+            clause = ' OR '.join(f'{nom} IS NOT NULL' for nom in protections)
+            objets = connection.execute(f"SELECT EXISTS (SELECT 1 FROM documents WHERE {clause})").fetchone()
+            if objets and int(objets[0]):
+                logger.warning("Rebuild EN PLACE : des copies objet ou captures sont associées au catalogue.")
+                return "en_place"
         references = self._references_sqlite(connection)
         if not references:
-            connection.executescript(
+            self._executer_script_sqlite(connection,
                 """
                 DROP TABLE IF EXISTS documents_fts;
                 DROP TABLE IF EXISTS documents;
@@ -1501,7 +1637,7 @@ class SearchIndex:
                 return "en_place"
         # Des clés étrangères existent mais AUCUNE ligne ne référence un
         # document : l'ancien comportement reste sans danger.
-        connection.executescript(
+        self._executer_script_sqlite(connection,
             """
             DROP TABLE IF EXISTS documents_fts;
             DROP TABLE IF EXISTS documents;
@@ -1511,59 +1647,52 @@ class SearchIndex:
         return "recreation"
 
     def _restaurer_documents(self, cursor: Any, backup_table: str) -> dict[str, int]:
-        """Restaure ``documents`` depuis l'instantané — SANS jamais supprimer un
-        document référencé, et avec une identité IDENTIQUE (E-40).
+        """Vérifie une ancienne copie de scan, sans la rejouer aveuglément.
 
-        Ordre : (1) retirer les lignes ajoutées par le scan raté (sauf celles
-        qu'une table de liens référence), (2) réinsérer les lignes disparues
-        AVEC leur identifiant d'origine (`SETVAL` de la séquence en fin), (3)
-        remettre les valeurs sauvegardées des lignes présentes des deux côtés.
+        Le scan courant utilise un rollback transactionnel. Cette copie ne
+        contient ni journal d'appartenance des écritures ni jeton de fencing :
+        toute différence peut provenir d'un autre écrivain. L'ancien rejeu
+        supprimait des captures et écrasait des changements concurrents, même
+        sans empreinte ; il est donc refusé, y compris pour les références en
+        cascade. Une copie exactement identique ne nécessite aucune écriture.
+        Ceci n'est pas une restauration coordonnée des autres ressources.
+
+        Le verrou partagé, sans attente et tenu jusqu'à la fin de la transaction
+        appelante, stabilise les deux tables pendant le contrôle. Une collision
+        avec un écrivain échoue avant toute modification.
         """
         def ident(nom: str) -> str:
             return '"' + str(nom).replace('"', '""') + '"'
 
-        cursor.execute(
-            "SELECT column_name FROM information_schema.columns "
-            "WHERE table_schema = 'public' AND table_name = 'documents'"
-        )
-        colonnes = [str(ligne[0]) for ligne in cursor.fetchall()]
-        cursor.execute(
-            "SELECT column_name FROM information_schema.columns "
-            "WHERE table_schema = 'public' AND table_name = %s",
-            (backup_table,),
-        )
-        colonnes_instantane = {str(ligne[0]) for ligne in cursor.fetchall()}
-        communes = [colonne for colonne in colonnes if colonne in colonnes_instantane]
-        if not communes or "id" not in communes:
-            raise RuntimeError(f"instantané {backup_table} inutilisable (colonnes absentes)")
+        if backup_table == "documents":
+            raise RuntimeError("instantané invalide : la copie est la table courante")
+        copie = f"public.{ident(backup_table)}"
+        cursor.execute(f"LOCK TABLE public.documents, {copie} IN SHARE MODE NOWAIT")
 
-        listes = ", ".join(ident(colonne) for colonne in communes)
-        garde = "".join(
-            f" AND NOT EXISTS (SELECT 1 FROM {ident(table)} ref WHERE ref.{ident(colonne)} = d.id)"
-            for table, colonne, action in self._contraintes_vers_documents(cursor)
-            if action in {"a", "r"}
-        )
+        def schema(table: str) -> dict[str, tuple[str, str, str]]:
+            cursor.execute(
+                "SELECT column_name, data_type, udt_schema, udt_name "
+                "FROM information_schema.columns WHERE table_schema = 'public' AND table_name = %s",
+                (table,),
+            )
+            return {str(nom): (str(type_sql), str(udt_schema), str(udt))
+                    for nom, type_sql, udt_schema, udt in cursor.fetchall()}
+
+        colonnes = schema("documents")
+        colonnes_copie = schema(backup_table)
+        if "id" not in colonnes or "source_sha256" not in colonnes or colonnes != colonnes_copie:
+            raise RuntimeError("instantané sans identité complète ou schéma compatible : rejeu refusé")
+
+        cursor.execute(f"SELECT EXISTS (SELECT id FROM {copie} GROUP BY id HAVING id IS NULL OR count(*) > 1)")
+        if cursor.fetchone()[0]:
+            raise RuntimeError("instantané ambigu : identifiants manquants ou dupliqués, rejeu refusé")
         cursor.execute(
-            f"DELETE FROM documents d "
-            f"WHERE NOT EXISTS (SELECT 1 FROM {ident(backup_table)} b WHERE b.id = d.id){garde}"
+            f"SELECT EXISTS (SELECT 1 FROM public.documents d FULL JOIN {copie} b ON b.id = d.id "
+            "WHERE d.id IS NULL OR b.id IS NULL OR to_jsonb(d) IS DISTINCT FROM to_jsonb(b))"
         )
-        supprimees = int(cursor.rowcount)
-        cursor.execute(
-            f"INSERT INTO documents ({listes}) "
-            f"SELECT {listes} FROM {ident(backup_table)} b "
-            f"WHERE NOT EXISTS (SELECT 1 FROM documents d WHERE d.id = b.id)"
-        )
-        reinserees = int(cursor.rowcount)
-        maj = ", ".join(
-            f"{ident(colonne)} = b.{ident(colonne)}" for colonne in communes if colonne != "id"
-        )
-        if maj:
-            cursor.execute(f"UPDATE documents d SET {maj} FROM {ident(backup_table)} b WHERE b.id = d.id")
-        cursor.execute(
-            "SELECT setval(pg_get_serial_sequence('documents', 'id'), "
-            "GREATEST(COALESCE((SELECT MAX(id) FROM documents), 1), 1))"
-        )
-        return {"supprimees": supprimees, "reinserees": reinserees, "colonnes": len(communes)}
+        if cursor.fetchone()[0]:
+            raise RuntimeError("instantané ambigu : écritures concurrentes possibles, rejeu refusé")
+        return {"supprimees": 0, "reinserees": 0, "colonnes": len(colonnes)}
 
     def _supprimer_documents_non_references(self, cursor: Any, path_keys: list[str]) -> list[str]:
         """Supprime les documents absents du disque, SAUF ceux qu'une fiche
@@ -1577,6 +1706,20 @@ class SearchIndex:
             for table, colonne, action in self._contraintes_vers_documents(cursor)
             if action in {"a", "r"}
         )
+        cursor.execute(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns "
+            "WHERE table_schema = current_schema() AND table_name = 'documents' AND column_name = 'role')"
+        )
+        ligne_schema = cursor.fetchone()
+        if ligne_schema and ligne_schema[0]:
+            garde += (
+                " AND d.role IS NULL AND d.id_fiche IS NULL"
+                " AND NOT EXISTS (SELECT 1 FROM lot_dossier l WHERE l.statut = 'traite' "
+                "AND split_part(l.cle_idempotence, '|', 1) = d.path)"
+            )
+        # Les copies objet ET les captures sans objet restent des identités
+        # utiles à la reprise ou à la revue, même si leur source a disparu.
+        garde += " AND d.object_key IS NULL AND d.source_sha256 IS NULL"
         cursor.execute(
             "DELETE FROM documents d WHERE d.path_key = ANY(%s)" + garde + " RETURNING d.path_key",
             (path_keys,),
@@ -1612,7 +1755,7 @@ class SearchIndex:
             else:
                 if rebuild:
                     self.rebuild_mode = self._preparer_rebuild_sqlite(connection)
-                connection.executescript(SQLITE_SCHEMA)
+                self._executer_script_sqlite(connection, SQLITE_SCHEMA)
                 connection.execute(
                     """
                     CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -1665,86 +1808,83 @@ class SearchIndex:
                 pass
 
     @contextmanager
-    def scan_snapshot(self) -> Iterator[None]:
-        """Snapshot documents table for rollback on scan failure.
+    def scan_transaction(self) -> Iterator[None]:
+        """Transaction du scan sur une seule connexion, isolée des autres écritures.
 
-        Note: this does a full table copy (CREATE TABLE AS / sqlite backup).
-        Acceptable for <100k docs (current scale), but at larger scale should
-        be replaced by a transaction with savepoint instead of full copy.
-        Documented limit: O(N) storage/time per scan.
+        SQLite réserve le verrou d'écriture pour éviter l'écrasement de commits
+        étrangers. PostgreSQL verrouille uniquement les lignes effectivement
+        modifiées ; le rollback est limité à la transaction du scan.
         """
+        if self._scan_connection.get() is not None:
+            raise RuntimeError("Une transaction de scan est déjà active dans ce contexte.")
+        with self.connect() as connexion:
+            if not self.is_postgres:
+                connexion.execute("BEGIN IMMEDIATE")
+            jeton = self._scan_connection.set(connexion)
+            try:
+                yield
+            finally:
+                self._scan_connection.reset(jeton)
+
+    def _supprimer_instantane_scan(self, backup_table: str, backup_path: Path) -> None:
         if self.is_postgres:
-            backup_table = f"scan_backup_documents_{os.getpid()}"
             with self.connect() as connection:
                 with connection.cursor() as cursor:
                     cursor.execute("DROP TABLE IF EXISTS " + backup_table)
-                    has_documents = self._table_documents_existe(cursor)
-                    if has_documents:
-                        cursor.execute(f"CREATE TABLE {backup_table} AS TABLE documents")
-            # L'instantané n'est JETÉ que si le retour arrière a abouti : s'il
-            # échoue, il est CONSERVÉ pour une reprise manuelle (E-40).
-            instantane_encore_utile = False
-            try:
-                yield
-            except Exception as erreur_scan:
-                if has_documents:
-                    try:
-                        with self.connect() as connection:
-                            with connection.cursor() as cursor:
-                                rapport = self._restaurer_documents(cursor, backup_table)
-                        logger.warning("Scan en échec : instantané restauré (%s)", rapport)
-                    except Exception as erreur_restauration:
-                        instantane_encore_utile = True
-                        # L'erreur ORIGINALE reste l'erreur levée — un échec du
-                        # retour arrière ne doit JAMAIS la masquer (défaut
-                        # mesuré : « TRUNCATE ... cannot truncate » remplaçait la
-                        # vraie cause). Le détail est attaché à l'erreur
-                        # d'origine et tracé en entier.
-                        logger.exception(
-                            "Retour arrière de l'instantané ÉCHOUÉ (instantané %s conservé pour reprise)",
-                            backup_table,
-                        )
-                        ajouter_note = getattr(erreur_scan, "add_note", None)
-                        if callable(ajouter_note):
-                            ajouter_note(
-                                "Retour arrière de l'instantané ÉCHOUÉ : "
-                                f"{erreur_restauration!r}. La table documents peut être "
-                                f"partiellement restaurée ; l'instantané {backup_table} est "
-                                "CONSERVÉ pour reprise manuelle."
-                            )
-                raise
-            finally:
-                if not instantane_encore_utile:
-                    with self.connect() as connection:
-                        with connection.cursor() as cursor:
-                            cursor.execute("DROP TABLE IF EXISTS " + backup_table)
-            return
+        else:
+            backup_path.unlink(missing_ok=True)
 
+    @contextmanager
+    def scan_snapshot(self) -> Iterator[None]:
+        """Compatibilité : scan transactionnel et copie de secours non rejouée.
+
+        L'ancien retour arrière par copie écrasait les écritures concurrentes.
+        La copie est conservée pour investigation si le rollback échoue ; son
+        rejeu n'est pas sûr tant que les écritures ne sont pas attribuables.
+        """
+        backup_table = f"scan_backup_documents_{os.getpid()}"
         backup_path = self.database_path.with_suffix(self.database_path.suffix + ".scan-backup")
-        backup_path.unlink(missing_ok=True)
-        with sqlite3.connect(self.database_path) as source, sqlite3.connect(backup_path) as target:
-            source.backup(target)
-        try:
-            yield
-        except Exception:
+        cree = not self.is_postgres
+        if self.is_postgres:
             with self.connect() as connection:
-                scan_runs = connection.execute("SELECT * FROM scan_runs ORDER BY id").fetchall()
-            source = sqlite3.connect(backup_path)
-            target = sqlite3.connect(self.database_path)
+                with connection.cursor() as cursor:
+                    cursor.execute("SELECT to_regclass(%s)", (backup_table,))
+                    ligne = cursor.fetchone()
+                    if ligne and ligne[0] is not None:
+                        raise RuntimeError("Un instantané PostgreSQL précédent est à récupérer avant un nouveau scan.")
+                    if self._table_documents_existe(cursor):
+                        cursor.execute(f"CREATE TABLE {backup_table} AS TABLE documents")
+                        cree = True
+        else:
             try:
+                descripteur = os.open(backup_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            except FileExistsError as erreur:
+                raise RuntimeError("Un instantané SQLite précédent est à récupérer avant un nouveau scan.") from erreur
+            os.close(descripteur)
+            with closing(sqlite3.connect(self.database_path)) as source, closing(sqlite3.connect(backup_path)) as target:
                 source.backup(target)
-            finally:
-                target.close()
-                source.close()
-            with self.connect() as connection:
-                connection.execute("DELETE FROM scan_runs")
-                connection.executemany(
-                    "INSERT INTO scan_runs VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                    [tuple(row) for row in scan_runs],
-                )
+
+        conserver = False
+        erreur_scan: BaseException | None = None
+        try:
+            with self.scan_transaction():
+                yield
+        except BaseException as erreur:
+            erreur_scan = erreur
+            conserver = bool(getattr(erreur, "_seamtech_rollback_failed", False))
+            if conserver and hasattr(erreur, "add_note"):
+                erreur.add_note("Retour arrière incertain : instantané conservé pour investigation, sans rejeu automatique.")
             raise
         finally:
-            backup_path.unlink(missing_ok=True)
+            if cree and not conserver:
+                try:
+                    self._supprimer_instantane_scan(backup_table, backup_path)
+                except Exception as erreur_nettoyage:
+                    if erreur_scan is None:
+                        raise
+                    logger.exception("Échec du nettoyage de l'instantané après un scan en échec")
+                    if hasattr(erreur_scan, "add_note"):
+                        erreur_scan.add_note(f"Nettoyage de l'instantané impossible : {erreur_nettoyage!r}")
 
     def start_scan(self) -> int:
         with self.connect() as connection:
@@ -1862,7 +2002,7 @@ class SearchIndex:
             "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'documents_fts'"
         ).fetchone()
         if schema and "content" not in schema[0]:
-            connection.executescript(
+            self._executer_script_sqlite(connection,
                 """
                 DROP TABLE documents_fts;
                 CREATE VIRTUAL TABLE documents_fts USING fts5(
@@ -1876,29 +2016,150 @@ class SearchIndex:
                 """
             )
 
+    def etat_captures_catalogue(self, cles: list[str]) -> dict[str, tuple[str | None, str | None, str | None]]:
+        """Lit en lots l'identité et l'objet des lignes, dans la transaction courante."""
+        resultat: dict[str, tuple[str | None, str | None, str | None]] = {}
+        uniques = list(dict.fromkeys(cles))
+        with self.connect() as connection:
+            for debut in range(0, len(uniques), 500):
+                lot = uniques[debut:debut + 500]
+                if self.is_postgres:
+                    with connection.cursor() as curseur:
+                        curseur.execute(
+                            "SELECT path_key, source_sha256, object_key, object_bucket FROM documents WHERE path_key = ANY(%s)",
+                            (lot,),
+                        )
+                        lignes = curseur.fetchall()
+                else:
+                    marques = ','.join('?' for _ in lot)
+                    lignes = connection.execute(
+                        f"SELECT path_key, source_sha256, object_key, object_bucket FROM documents WHERE path_key IN ({marques})",
+                        lot,
+                    ).fetchall()
+                for ligne in lignes:
+                    resultat[str(ligne[0])] = (ligne[1], ligne[2], ligne[3])
+        return resultat
+
+    def lier_objets_capture(
+        self, correspondances: list[tuple[str, str, str, str, float]],
+    ) -> set[str]:
+        """Lie des objets prouvés aux seuls documents de même identité d'octets.
+
+        Les clés ne sont jamais remplacées. L'appelant doit fournir les preuves
+        déjà vérifiées et inclure cet appel dans la transaction de publication de
+        l'import. La liste rendue est l'ensemble des clés effectivement liées ;
+        une absence, un document changé ou une autre clé est un conflit.
+        """
+        if not correspondances:
+            return set()
+        cles = [c[0] for c in correspondances]
+        if len(set(cles)) != len(cles) or any(
+            not chemin or re.fullmatch(r"[0-9a-f]{64}", sha) is None or not cle or not bucket
+            for chemin, sha, cle, bucket, _date in correspondances
+        ):
+            raise ValueError("Liaison catalogue invalide ou ambiguë")
+        correspondances = sorted(correspondances, key=lambda c: c[0])
+        liees: set[str] = set()
+        with self.connect() as connection:
+            if self.is_postgres:
+                import psycopg2.extras
+
+                with connection.cursor() as cursor:
+                    # Un ordre de verrous commun évite que deux imports se
+                    # croisent dans un ordre arbitraire entre les lots SQL.
+                    for debut in range(0, len(correspondances), 500):
+                        lot = correspondances[debut:debut + 500]
+                        cursor.execute(
+                            'SELECT path_key FROM documents WHERE path_key = ANY(%s) ORDER BY path_key COLLATE "C" FOR UPDATE',
+                            ([c[0] for c in lot],),
+                        )
+                        cursor.fetchall()
+                        lignes = psycopg2.extras.execute_values(
+                            cursor,
+                            """UPDATE documents AS d SET object_key = v.cle, object_bucket = v.bucket,
+                                   uploaded_at = v.date_envoi, upload_status = 'uploaded'
+                               FROM (VALUES %s) AS v(path_key, sha, cle, bucket, date_envoi)
+                               WHERE d.path_key = v.path_key AND NOT d.is_dir AND d.source_sha256 = v.sha
+                                 AND ((d.object_key IS NULL AND d.object_bucket IS NULL)
+                                      OR (d.object_key = v.cle AND d.object_bucket = v.bucket))
+                               RETURNING d.path_key""",
+                            lot,
+                            template="(%s, %s, %s, %s, %s::double precision)",
+                            page_size=len(lot),
+                            fetch=True,
+                        )
+                        liees.update(str(ligne[0]) for ligne in lignes)
+            else:
+                for chemin, sha, cle, bucket, date in correspondances:
+                    cursor = connection.execute(
+                        """UPDATE documents SET object_key = ?, object_bucket = ?, uploaded_at = ?,
+                               upload_status = 'uploaded'
+                           WHERE path_key = ? AND is_dir = 0 AND source_sha256 = ?
+                             AND ((object_key IS NULL AND object_bucket IS NULL)
+                                  OR (object_key = ? AND object_bucket = ?))""",
+                        (cle, bucket, date, chemin, sha, cle, bucket),
+                    )
+                    if cursor.rowcount == 1:
+                        liees.add(chemin)
+        return liees
+
     def upsert_document(self, document: Document) -> bool:
         return self.upsert_documents([document]) > 0
 
-    def upsert_documents(self, documents: list[Document]) -> int:
+    def upsert_documents(
+        self, documents: list[Document], *, strict: bool = False, proteges: set[str] | None = None,
+    ) -> int:
+        """Retourne le nombre modifié ; ``proteges`` recueille les clés refusées."""
         if not documents:
             return 0
         if self.is_postgres:
-            return self._upsert_documents_postgres(documents)
-        return self._upsert_documents_sqlite(documents)
+            return self._upsert_documents_postgres(documents, strict=strict, proteges=proteges)
+        return self._upsert_documents_sqlite(documents, strict=strict, proteges=proteges)
 
-    def _upsert_documents_sqlite(self, documents: list[Document]) -> int:
+    def _upsert_documents_sqlite(
+        self, documents: list[Document], *, strict: bool = False, proteges: set[str] | None = None,
+    ) -> int:
         changed = 0
         with self.connect() as connection:
+            # Le SELECT des protections et la mise à jour doivent partager le
+            # même verrou d'écriture, y compris hors scan_transaction().
+            if not connection.in_transaction:
+                connection.execute("BEGIN IMMEDIATE")
+            references = self._references_sqlite(connection)
             for document in documents:
                 existing = connection.execute(
-                    "SELECT id, size, modified_at, extractor_version FROM documents WHERE path_key = ?",
+                    "SELECT id, size, modified_at, extractor_version, object_key, source_sha256 "
+                    "FROM documents WHERE path_key = ?",
                     (document.path_key,),
                 ).fetchone()
+                protege = bool(existing and (
+                    existing["object_key"] is not None
+                    or (existing["source_sha256"] is not None
+                        and existing["source_sha256"] != document.source_sha256)
+                ))
+                if existing and not protege:
+                    for table, colonne in references:
+                        ligne = connection.execute(
+                            f"SELECT EXISTS (SELECT 1 FROM {self._ident_sqlite(table)} r "
+                            f"WHERE r.{self._ident_sqlite(colonne)} = ?)", (existing["id"],)
+                        ).fetchone()
+                        if ligne and int(ligne[0]):
+                            protege = True
+                            break
+                if protege:
+                    if proteges is not None:
+                        proteges.add(document.path_key)
+                    if strict:
+                        raise RuntimeError("Indexation refusée : un document avec objet, capture ou référence exige une voie protégée.")
+                    logger.warning("Document avec objet, capture ou référence conservé sans réindexation.")
+                    continue
                 if (
                     existing
                     and existing["size"] == document.size
                     and existing["modified_at"] == document.modified_at
                     and existing["extractor_version"] == document.extractor_version
+                    and document.object_key is None
+                    and (document.source_sha256 is None or existing["source_sha256"] == document.source_sha256)
                 ):
                     continue
 
@@ -1908,23 +2169,29 @@ class SearchIndex:
                         """
                         UPDATE documents
                         SET path = ?, name = ?, parent_path = ?, extension = ?, size = ?,
-                            modified_at = ?, is_dir = ?, extractor_version = ?, content_hash = ?,
+                            modified_at = ?, is_dir = ?, extractor_version = ?, content_hash = ?, source_sha256 = ?,
                             extraction_status = ?, extraction_detail = ?, category = ?,
                             object_key = ?, object_bucket = ?, uploaded_at = ?, upload_status = ?
                         WHERE id = ?
                         """,
                         _document_values(document) + (row_id,),
                     )
+                    # La migration 032 invalide tout UPDATE de contenu, y
+                    # compris celui d'un ancien binaire ignorant la colonne.
+                    # Seule la capture courante autorise à la rétablir.
+                    if document.source_sha256 is not None:
+                        connection.execute("UPDATE documents SET source_sha256 = ? WHERE id = ?",
+                                           (document.source_sha256, row_id))
                     connection.execute("DELETE FROM documents_fts WHERE rowid = ?", (row_id,))
                 else:
                     cursor = connection.execute(
                         """
                         INSERT INTO documents (
                             path_key, path, name, parent_path, extension, size, modified_at, is_dir,
-                            extractor_version, content_hash, extraction_status, extraction_detail, category,
+                            extractor_version, content_hash, source_sha256, extraction_status, extraction_detail, category,
                             object_key, object_bucket, uploaded_at, upload_status
                         )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (document.path_key,) + _document_values(document),
                     )
@@ -1946,7 +2213,9 @@ class SearchIndex:
                 changed += 1
         return changed
 
-    def _upsert_documents_postgres(self, documents: list[Document]) -> int:
+    def _upsert_documents_postgres(
+        self, documents: list[Document], *, strict: bool = False, proteges: set[str] | None = None,
+    ) -> int:
         values = [
             (
                 document.path_key,
@@ -1961,6 +2230,7 @@ class SearchIndex:
                 document.searchable_text,
                 document.extractor_version,
                 document.content_hash,
+                document.source_sha256,
                 document.extraction_status,
                 document.extraction_detail,
                 document.category,
@@ -1979,13 +2249,33 @@ class SearchIndex:
                 # user input, so interpolating it into the template is safe.
                 ts_config = self._postgres_ts_config(connection)
                 assert ts_config in PG_TS_CONFIGS, f"unexpected ts config {ts_config!r}"
+                cursor.execute(
+                    "SELECT EXISTS (SELECT 1 FROM information_schema.columns "
+                    "WHERE table_schema = current_schema() AND table_name = 'documents' AND column_name = 'role')"
+                )
+                ligne_schema = cursor.fetchone()
+                metier_present = bool(ligne_schema and ligne_schema[0])
+                garde_metier = """
+                    WHERE documents.role IS NULL AND documents.id_fiche IS NULL
+                        AND documents.object_key IS NULL
+                        AND (documents.source_sha256 IS NULL OR documents.source_sha256 = EXCLUDED.source_sha256)
+                        AND NOT EXISTS (SELECT 1 FROM fiche_piece_jointe p WHERE p.id_document = documents.id)
+                        AND NOT EXISTS (SELECT 1 FROM approval_requests a WHERE a.id_piece = documents.id)
+                        AND NOT EXISTS (SELECT 1 FROM sail_extractions s WHERE s.id_document = documents.id)
+                        AND NOT EXISTS (SELECT 1 FROM accessory_extractions a WHERE a.id_document = documents.id)
+                        AND NOT EXISTS (SELECT 1 FROM lot_dossier l WHERE l.statut = 'traite'
+                                        AND split_part(l.cle_idempotence, '|', 1) = documents.path)
+                """ if metier_present else (
+                    "WHERE documents.object_key IS NULL "
+                    "AND (documents.source_sha256 IS NULL OR documents.source_sha256 = EXCLUDED.source_sha256)"
+                )
 
-                psycopg2.extras.execute_values(
+                modifiees = psycopg2.extras.execute_values(
                     cursor,
                     """
                     INSERT INTO documents (
                         path_key, path, name, parent_path, extension, size, modified_at, is_dir, content, search_vector,
-                        extractor_version, content_hash, extraction_status, extraction_detail, category,
+                        extractor_version, content_hash, source_sha256, extraction_status, extraction_detail, category,
                         object_key, object_bucket, uploaded_at, upload_status
                     )
                     VALUES %s
@@ -2001,6 +2291,7 @@ class SearchIndex:
                         search_vector = EXCLUDED.search_vector,
                         extractor_version = EXCLUDED.extractor_version,
                         content_hash = EXCLUDED.content_hash,
+                        source_sha256 = EXCLUDED.source_sha256,
                         extraction_status = EXCLUDED.extraction_status,
                         extraction_detail = EXCLUDED.extraction_detail,
                         category = EXCLUDED.category,
@@ -2008,15 +2299,68 @@ class SearchIndex:
                         object_bucket = EXCLUDED.object_bucket,
                         uploaded_at = EXCLUDED.uploaded_at,
                         upload_status = EXCLUDED.upload_status
-                    """,
+                    __GARDE_METIER__
+                    RETURNING path_key
+                    """.replace("__GARDE_METIER__", garde_metier),
                     values,
                     template=(
                         "(%s, %s, %s, %s, %s, %s, %s, %s, %s, "
                         f"to_tsvector('{ts_config}', %s), "
-                        "%s, %s, %s, %s, %s, %s, %s, %s, %s)"
+                        "%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
                     ),
+                    fetch=True,
                 )
-                return cursor.rowcount
+                if metier_present and modifiees:
+                    cles_modifiees = [ligne[0] for ligne in modifiees]
+                    # Un UPDATE ordinaire n'empêche pas une insertion de FK
+                    # (KEY SHARE). Prendre FOR UPDATE, puis relire sous une
+                    # nouvelle instruction READ COMMITTED : une référence qui
+                    # aurait été créée après l'UPSERT impose son rollback.
+                    cursor.execute(
+                        "SELECT id FROM documents WHERE path_key = ANY(%s) ORDER BY path_key FOR UPDATE",
+                        (cles_modifiees,),
+                    )
+                    cursor.fetchall()
+                    cursor.execute(
+                        "SELECT EXISTS (SELECT 1 FROM documents d WHERE d.path_key = ANY(%s) AND ("
+                        "EXISTS (SELECT 1 FROM fiche_piece_jointe p WHERE p.id_document = d.id) OR "
+                        "EXISTS (SELECT 1 FROM approval_requests a WHERE a.id_piece = d.id) OR "
+                        "EXISTS (SELECT 1 FROM sail_extractions s WHERE s.id_document = d.id) OR "
+                        "EXISTS (SELECT 1 FROM accessory_extractions a WHERE a.id_document = d.id)))",
+                        (cles_modifiees,),
+                    )
+                    reference = cursor.fetchone()
+                    if reference and reference[0]:
+                        raise RuntimeError("Indexation annulée : référence concurrente sur un document modifié.")
+                # L'UPSERT peut avoir déclenché l'invalidation 032. Rétablir
+                # uniquement les SHA apportés par une capture de cet appel,
+                # sur les lignes effectivement modifiées et encore verrouillées.
+                cles_modifiees = {ligne[0] for ligne in modifiees}
+                captures = [(d.path_key, d.source_sha256) for d in documents
+                            if d.source_sha256 is not None and d.path_key in cles_modifiees]
+                if captures:
+                    psycopg2.extras.execute_values(
+                        cursor,
+                        "UPDATE documents d SET source_sha256 = v.sha FROM (VALUES %s) AS v(path_key, sha) "
+                        "WHERE d.path_key = v.path_key",
+                        captures,
+                        page_size=500,
+                    )
+                if len(modifiees) != len(values):
+                    if proteges is not None:
+                        proteges.update(d.path_key for d in documents if d.path_key not in cles_modifiees)
+                    # Le dépôt utilise content_hash pour le SHA des octets, tandis
+                    # que le crawler y stocke un hash de texte. Écraser ces lignes
+                    # effacerait aussi la clé objet et pourrait invalider une décision.
+                    if strict:
+                        raise RuntimeError(
+                            "Indexation refusée : un document de fiche ou objet nécessite une voie de mise à jour protégée."
+                        )
+                    logger.warning(
+                        "%d document(s) de fiche conservé(s) sans réindexation : "
+                        "empreintes et objets protégés.", len(values) - len(modifiees)
+                    )
+                return len(modifiees)
 
     def remove_missing(self, seen_path_keys: set[str], scan_complete: bool = False) -> int:
         if not seen_path_keys and not scan_complete:
@@ -2041,13 +2385,14 @@ class SearchIndex:
                         )
                     return len(supprimes)
         with self.connect() as connection:
-            rows = connection.execute("SELECT id, path_key FROM documents").fetchall()
-            missing = [(row["id"], row["path_key"]) for row in rows if row["path_key"] not in seen_path_keys]
+            rows = connection.execute("SELECT id, path_key, object_key, source_sha256 FROM documents").fetchall()
+            missing = [(row["id"], row["path_key"], row["object_key"], row["source_sha256"])
+                       for row in rows if row["path_key"] not in seen_path_keys]
             references = self._references_sqlite(connection)
             supprimes = 0
             conserves = 0
-            for row_id, _path_key in missing:
-                reference = False
+            for row_id, _path_key, object_key, source_sha256 in missing:
+                reference = object_key is not None or source_sha256 is not None
                 for table, colonne in references:
                     ligne = connection.execute(
                         f"SELECT EXISTS (SELECT 1 FROM {self._ident_sqlite(table)} r "
@@ -2310,9 +2655,17 @@ class SearchIndex:
             # Diagnostic Lot A : version de schéma appliquée + présence
             # EFFECTIVE des extensions (pg_extension, pas la configuration).
             metier: dict[str, Any] = {"schema_migrations": [], "schema_metier_a_jour": False, "extensions": {}}
+            application_a_jour = False
             try:
-                with connection.cursor() as cursor:
-                    metier = schema_metier.diagnostic_metier(cursor)
+                # La connexion précédente est déjà rendue au pool : conserver
+                # la propriété exclusive de celle-ci pendant tout le diagnostic.
+                with self.connect() as connection:
+                    with connection.cursor() as cursor:
+                        metier = schema_metier.diagnostic_metier(cursor)
+                    application_a_jour = (
+                        schema_metier.VERSION_SCHEMA_APPLICATION in metier['schema_migrations']
+                        and self._schema_identite_octets_valide(connection)
+                    )
             except Exception as exc:
                 # Conséquence : /health reste répondant, mais signale que le
                 # diagnostic métier est indisponible (base non migrée ?).
@@ -2329,12 +2682,15 @@ class SearchIndex:
                 "version_postgresql": version,
                 "schema_migrations": metier.get("schema_migrations", []),
                 "schema_metier_a_jour": metier.get("schema_metier_a_jour", False),
+                "schema_application_a_jour": application_a_jour,
                 "extensions": metier.get("extensions", {}),
             }
 
         with self.connect() as connection:
             integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
             versions = [row["version"] for row in connection.execute("SELECT version FROM schema_migrations").fetchall()]
+            application_a_jour = (schema_metier.VERSION_SCHEMA_APPLICATION in versions
+                                   and self._schema_identite_octets_valide(connection))
         return {
             "backend": "sqlite",
             "database_path": str(self.database_path),
@@ -2344,13 +2700,14 @@ class SearchIndex:
             "schema_migrations": versions,
             # Couche métier PostgreSQL uniquement (§17.1) : extensions non applicables.
             "schema_metier_a_jour": False,
+            "schema_application_a_jour": application_a_jour,
             "extensions": {"vector": False, "pg_trgm": False, "unaccent": False, "applicables": False},
         }
 
 
 def _document_values(
     document: Document,
-) -> tuple[str, str, str, str, int, float, int, int, str, str, str, str, str | None, str | None, float | None, str]:
+) -> tuple[str, str, str, str, int, float, int, int, str, str | None, str, str, str, str | None, str | None, float | None, str]:
     return (
         str(document.path),
         document.name,
@@ -2361,6 +2718,7 @@ def _document_values(
         1 if document.is_dir else 0,
         document.extractor_version,
         document.content_hash,
+        document.source_sha256,
         document.extraction_status,
         document.extraction_detail,
         document.category,

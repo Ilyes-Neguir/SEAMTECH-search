@@ -132,7 +132,7 @@ def _import_en_base(config: AppConfig, tmp_path: Path, *, avec_cle: bool, rappor
         "status": "completed",
         "report_path": str(rapport),
         "artifacts": (
-            [{"name": "technical-report.pdf", "key": "IMP-1/abc/technical-report.pdf"}] if avec_cle else []
+            [{"path": str(rapport), "name": "technical-report.pdf", "key": "IMP-1/abc/technical-report.pdf", "bucket": "seamtech-documents", "status": "uploaded", "verified": True}] if avec_cle else []
         ),
         "files": [],
     }
@@ -464,3 +464,58 @@ def test_objet_seul_sans_copie_locale_est_servi_par_l_api(
     assert reponse.content == b"%PDF-1.4 plan restaure"
     assert "location" not in {cle.lower() for cle in reponse.headers}
     assert not fichier.exists(), "l'ouverture ne réécrit jamais dans l'archive (lecture seule)"
+
+
+def test_artefact_s3_sans_copie_locale_est_transmis_sans_ecrire_dans_la_source(tmp_path: Path) -> None:
+    import io
+
+    config = _config(tmp_path, 'artefact_proxy.db', endpoint_public=None)
+    rapport = _import_en_base(config, tmp_path, avec_cle=True, rapport_existe=False)
+    contenu = b'%PDF-1.4 contenu synthetique'
+    double = _boto3_double()
+    double.head_object.return_value = {'ContentLength': len(contenu)}
+    flux = io.BytesIO(contenu)
+    double.get_object.return_value = {'Body': flux}
+    reponse = _appeler(config, double, lambda http: http.get('/imports/IMP-1/artifacts/report_pdf'))
+    assert reponse.status_code == 200 and reponse.content == contenu
+    assert not rapport.exists()
+    assert flux.closed
+    double.download_file.assert_not_called()
+
+
+def test_proxy_objet_encode_un_nom_unicode_sans_injection_d_entete() -> None:
+    import io
+
+    from seamtech_search.api import _reponse_objet_s3
+
+    stockage = MagicMock()
+    stockage.head_object.return_value = {'ContentLength': 1}
+    stockage.get_object.return_value = {'Body': io.BytesIO(b'x')}
+    response = _reponse_objet_s3('cle', 'voile ⛵\r\nX-Faux: oui.pdf', 'application/pdf', stockage)
+    disposition = response.headers['content-disposition']
+    assert '\r' not in disposition and '\n' not in disposition
+    assert "filename*=utf-8''" in disposition.lower()
+    assert '%E2%9B%B5' in disposition
+    assert '%0D' not in disposition and '%0A' not in disposition
+
+
+@pytest.mark.parametrize('preuve', [
+    {'status': 'failed', 'verified': False, 'bucket': 'seamtech-documents'},
+    {'status': 'uploaded', 'verified': False, 'bucket': 'seamtech-documents'},
+    {'status': 'uploaded', 'verified': True, 'bucket': 'autre-bucket'},
+])
+def test_artefact_non_verifie_ne_declenche_pas_redirection_objet(tmp_path: Path, preuve: dict) -> None:
+    from seamtech_search.import_pipeline import get_import, update_import
+
+    config = _config(tmp_path, 'artefact-echec.db')
+    _import_en_base(config, tmp_path, avec_cle=True, rapport_existe=False)
+    index = SearchIndex(config.database_path)
+    payload = get_import(index, 'IMP-1')
+    payload['artifacts'][0].update(preuve)
+    update_import(index, 'IMP-1', 'needs_review', payload)
+    index.close()
+    double = _boto3_double()
+    reponse = _appeler(config, double, lambda http: http.get('/imports/IMP-1/artifacts/report_pdf'))
+    assert reponse.status_code == 404
+    double.generate_presigned_url.assert_not_called()
+    double.get_object.assert_not_called()

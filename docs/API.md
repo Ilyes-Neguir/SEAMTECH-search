@@ -6,6 +6,26 @@ de couche §17.1) : sans `database_url`, elles répondent **503** avec l'explica
 Authentification : mêmes règles que le reste de l'API (en-tête `X-SEAMTECH-TOKEN`
 quand `SEAMTECH_AUTH_TOKEN` est configuré).
 
+## Suivi d'un import
+
+`GET /imports/{id}` renvoie l'état opérationnel `status`. Lorsqu'un job et un
+résultat d'import persistent tous deux, `job_status` et `import_status` portent
+respectivement leurs états **enregistrés**, qui peuvent différer. Un job actif,
+annulé ou en échec ne devient pas un succès parce qu'un ancien résultat est
+`completed`. Si `publication_pending` ou `report_generation_pending` est vrai,
+un ancien `completed` est présenté en `needs_review` dans `status` et dans
+`result.status` (sauf qu'un état non réussi du job reste prioritaire dans
+`status`) ; `import_status` reste la valeur réellement enregistrée. Une
+publication incertaine nécessite une réconciliation et interdit le renvoi
+aveugle. `all_verified` n'est pas une preuve de présence actuelle des objets ni
+une autorisation de purge.
+
+L'API Python vérifie le jeton de service ; le proxy navigateur
+`GET /api/imports/{id}` exige une session valide et borne l'attente réseau.
+Le suivi n'est pas actuellement lié à un propriétaire de job côté serveur :
+l'isolation de la mémoire du navigateur ne remplace pas une autorisation par
+identité. Cette limite reste à traiter avant qualification de sécurité.
+
 ## Recherche hybride des fiches (Lot E, plan v3.0 §10 / §17.6)
 
 La recherche « comme Google » des fiches validées. La route Phase 0 `GET /search`

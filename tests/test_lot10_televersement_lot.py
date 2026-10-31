@@ -363,9 +363,9 @@ class TestProtectionRetentionEtGabarits:
 
         supprimes = prune_staged_uploads(staging, 7)
 
-        assert supprimes == 1
+        assert supprimes == 0
         assert (conserve / "fiche.pdf").exists()
-        assert not ancien.exists()
+        assert (ancien / "temporaire.txt").exists()
 
     def test_synchronisation_gabarits_strictement_additive(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import seamtech_search.fiches.gabarits as gabarits_module
@@ -509,3 +509,314 @@ class TestApiTeleversement:
         session_dir = televersement.racine_session_televersement_lot(config, session["token"]).parent
         manifeste = json.loads((session_dir / "session.json").read_text(encoding="utf-8"))
         assert manifeste["fichiers"]["a/b.txt"]["empreinte_sha256"] == hashlib.sha256(b"abc").hexdigest()
+
+
+@pytest.mark.parametrize('apres_finalisation', [False, True])
+@pytest.mark.parametrize('modifie', [b'BAD', b'PLUS LONG'])
+def test_integrite_fichier_recue_avant_utilisation(tmp_path: Path, apres_finalisation: bool, modifie: bytes) -> None:
+    config = _config(tmp_path)
+    token = _session(config, {'piece.pdf': b'BON'})['token']
+    televersement.recevoir_fichiers_televersement_lot(
+        config, token, chemins_relatives=['piece.pdf'], flux=[BytesIO(b'BON')]
+    )
+    if apres_finalisation:
+        televersement.terminer_session_televersement_lot(config, token)
+    fichier = config.database_path.parent / 'uploads' / 'lots-televerses' / token / 'fichiers' / 'piece.pdf'
+    fichier.write_bytes(modifie)
+    with pytest.raises(televersement.TeleversementLotConflit, match='intégrité'):
+        if apres_finalisation:
+            televersement.racine_session_televersement_lot(config, token)
+        else:
+            televersement.terminer_session_televersement_lot(config, token)
+    # Ne pas « accepter » le contenu altéré comme nouvelle vérité.
+    manifest = json.loads((fichier.parent.parent / 'session.json').read_text())
+    assert manifest['fichiers']['piece.pdf']['empreinte_sha256'] == hashlib.sha256(b'BON').hexdigest()
+
+
+def test_session_associee_refuse_fichier_disparu(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    token = _session(config, {'piece.pdf': b'BON'})['token']
+    televersement.recevoir_fichiers_televersement_lot(
+        config, token, chemins_relatives=['piece.pdf'], flux=[BytesIO(b'BON')]
+    )
+    televersement.terminer_session_televersement_lot(config, token)
+    televersement.associer_lot_session_televersement(config, token, 1)
+    fichier = config.database_path.parent / 'uploads' / 'lots-televerses' / token / 'fichiers' / 'piece.pdf'
+    fichier.unlink()
+    with pytest.raises(televersement.TeleversementLotConflit):
+        televersement.racine_session_televersement_lot(config, token)
+
+
+def test_reprise_lot_associe_refuse_source_modifiee(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    token = _session(config, {'piece.pdf': b'BON'})['token']
+    televersement.recevoir_fichiers_televersement_lot(
+        config, token, chemins_relatives=['piece.pdf'], flux=[BytesIO(b'BON')]
+    )
+    televersement.terminer_session_televersement_lot(config, token)
+    cree = televersement.creer_lot_session_televersement(config, token, creer_lot=lambda racine: 1)
+    assert cree['lot_cree'] is True
+    fichier = config.database_path.parent / 'uploads' / 'lots-televerses' / token / 'fichiers' / 'piece.pdf'
+    fichier.write_bytes(b'BAD')
+    with pytest.raises(televersement.TeleversementLotConflit, match='intégrité'):
+        televersement.creer_lot_session_televersement(config, token, creer_lot=lambda racine: 2)
+
+
+def test_finalisation_refuse_lien_vers_fichier_exterieur(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    token = _session(config, {'piece.pdf': b'BON'})['token']
+    televersement.recevoir_fichiers_televersement_lot(
+        config, token, chemins_relatives=['piece.pdf'], flux=[BytesIO(b'BON')]
+    )
+    fichier = config.database_path.parent / 'uploads' / 'lots-televerses' / token / 'fichiers' / 'piece.pdf'
+    externe = tmp_path / 'externe.pdf'
+    externe.write_bytes(b'BON')
+    fichier.unlink()
+    fichier.symlink_to(externe)
+    with pytest.raises(televersement.TeleversementLotConflit):
+        televersement.terminer_session_televersement_lot(config, token)
+
+
+def test_envoi_refuse_parent_lien_vers_exterieur(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    token = _session(config, {'dossier/piece.pdf': b'BON'})['token']
+    racine = config.database_path.parent / 'uploads' / 'lots-televerses' / token / 'fichiers'
+    externe = tmp_path / 'externe'
+    externe.mkdir()
+    (racine / 'dossier').symlink_to(externe, target_is_directory=True)
+    with pytest.raises(televersement.TeleversementLotConflit):
+        televersement.recevoir_fichiers_televersement_lot(
+            config, token, chemins_relatives=['dossier/piece.pdf'], flux=[BytesIO(b'BON')]
+        )
+    assert not (externe / 'piece.pdf').exists()
+
+
+def test_repli_sans_fcntl_serialise_deux_threads(tmp_path: Path, monkeypatch) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    config = _config(tmp_path)
+    token = _session(config, {'a.txt': b'a'})['token']
+    monkeypatch.setattr(televersement, 'fcntl', None)
+    essaye = Event()
+    entre = Event()
+
+    def concurrent() -> None:
+        essaye.set()
+        with televersement._verrou_session(config, token):
+            entre.set()
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with televersement._verrou_session(config, token):
+            futur = pool.submit(concurrent)
+            assert essaye.wait(5)
+            est_entre_trop_tot = entre.wait(.2)
+        futur.result(timeout=5)
+    assert not est_entre_trop_tot
+    assert entre.is_set()
+
+
+def _process_verrou_repli(config, token, avant, dedans, attente):
+    from seamtech_search.fiches import televersement_lot as module
+
+    module.fcntl = None
+    avant.set()
+    with module._verrou_session(config, token):
+        dedans.set()
+        attente.wait(10)
+
+
+def test_repli_sans_fcntl_serialise_deux_processus(tmp_path: Path, monkeypatch) -> None:
+    import multiprocessing
+
+    config = _config(tmp_path)
+    token = _session(config, {'a.txt': b'a'})['token']
+    monkeypatch.setattr(televersement, 'fcntl', None)
+    contexte = multiprocessing.get_context('spawn')
+    avant, dedans, fin = contexte.Event(), contexte.Event(), contexte.Event()
+    processus = contexte.Process(target=_process_verrou_repli, args=(config, token, avant, dedans, fin))
+    try:
+        with televersement._verrou_session(config, token):
+            processus.start()
+            assert avant.wait(10)
+            est_entre_trop_tot = dedans.wait(.5)
+        assert dedans.wait(10)
+        fin.set()
+        processus.join(10)
+        assert not est_entre_trop_tot
+        assert processus.exitcode == 0
+    finally:
+        fin.set()
+        if processus.is_alive():
+            processus.terminate()
+            processus.join(10)
+
+
+def test_repli_sans_fcntl_libere_verrou_apres_crash(tmp_path: Path, monkeypatch) -> None:
+    import multiprocessing
+
+    config = _config(tmp_path)
+    token = _session(config, {'a.txt': b'a'})['token']
+    monkeypatch.setattr(televersement, 'fcntl', None)
+    contexte = multiprocessing.get_context('spawn')
+    avant, dedans, fin = contexte.Event(), contexte.Event(), contexte.Event()
+    processus = contexte.Process(target=_process_verrou_repli, args=(config, token, avant, dedans, fin))
+    try:
+        processus.start()
+        assert dedans.wait(10)
+        processus.kill()
+        processus.join(10)
+        assert not processus.is_alive()
+        with televersement._verrou_session(config, token):
+            pass
+    finally:
+        # Ne pas toucher à l'Event après SIGKILL : un sémaphore peut être
+        # resté pris par le processus mort.
+        if processus.is_alive():
+            processus.terminate()
+            processus.join(10)
+
+
+def _envoi_process_repli(config, token, debut, pret):
+    from io import BytesIO
+
+    from seamtech_search.fiches import televersement_lot as module
+
+    module.fcntl = None
+    pret.wait(10)
+    noms = [f'fichier-{indice}.txt' for indice in range(debut, debut + 10)]
+    module.recevoir_fichiers_televersement_lot(
+        config, token, chemins_relatives=noms, flux=[BytesIO(b'x') for _ in noms],
+    )
+
+
+def test_repli_sans_fcntl_envois_concurrents_sans_perte(tmp_path: Path, monkeypatch) -> None:
+    import multiprocessing
+
+    config = _config(tmp_path)
+    fichiers = {f'fichier-{indice}.txt': b'x' for indice in range(20)}
+    token = _session(config, fichiers)['token']
+    monkeypatch.setattr(televersement, 'fcntl', None)
+    contexte = multiprocessing.get_context('spawn')
+    pret = contexte.Event()
+    processus = [contexte.Process(target=_envoi_process_repli, args=(config, token, debut, pret)) for debut in (0, 10)]
+    try:
+        for process in processus:
+            process.start()
+        pret.set()
+        for process in processus:
+            process.join(30)
+        assert [process.exitcode for process in processus] == [0, 0]
+        etat = televersement.terminer_session_televersement_lot(config, token)
+        assert etat['nombre_fichiers_recus'] == 20
+        racine = televersement.racine_session_televersement_lot(config, token)
+        assert all((racine / nom).read_bytes() == contenu for nom, contenu in fichiers.items())
+    finally:
+        for process in processus:
+            if process.is_alive():
+                process.terminate()
+                process.join(10)
+
+
+def test_repli_sans_fcntl_refuse_erreur_de_verrou(tmp_path: Path, monkeypatch) -> None:
+    import sqlite3
+
+    config = _config(tmp_path)
+    token = _session(config, {'a.txt': b'a'})['token']
+    monkeypatch.setattr(televersement, 'fcntl', None)
+
+    def erreur(*_args, **_kwargs):
+        raise sqlite3.OperationalError('erreur synthetique')
+
+    monkeypatch.setattr(televersement.sqlite3, 'connect', erreur)
+    with pytest.raises(televersement.TeleversementLotConflit, match='Verrou de session indisponible'):
+        with televersement._verrou_session(config, token):
+            pytest.fail('section critique non protégée')
+
+
+def test_verrous_fcntl_et_repli_ne_se_contredisent_pas(tmp_path: Path) -> None:
+    import multiprocessing
+
+    if televersement.fcntl is None:
+        pytest.skip('comparaison des deux modes uniquement quand fcntl est disponible')
+    config = _config(tmp_path)
+    token = _session(config, {'a.txt': b'a'})['token']
+    contexte = multiprocessing.get_context('spawn')
+    avant, dedans, fin = contexte.Event(), contexte.Event(), contexte.Event()
+    processus = contexte.Process(target=_process_verrou_repli, args=(config, token, avant, dedans, fin))
+    try:
+        with televersement._verrou_session(config, token):
+            processus.start()
+            assert avant.wait(10)
+            est_entre_trop_tot = dedans.wait(.5)
+        assert dedans.wait(10)
+        fin.set()
+        processus.join(10)
+        assert not est_entre_trop_tot
+        assert processus.exitcode == 0
+    finally:
+        fin.set()
+        if processus.is_alive():
+            processus.terminate()
+            processus.join(10)
+
+
+def test_api_creation_idempotente_et_capacite(tmp_path: Path) -> None:
+    client, _ = _client_api(tmp_path)
+    capacites = client.get("/imports/dossier/televersements/capacites")
+    assert capacites.status_code == 200
+    assert capacites.json()["creation_idempotente"] == 1
+    corps = {"nom_racine": "DOSSIER-SYNTHESE", "nombre_fichiers": 1, "taille_totale_octets": 3, "cle_idempotence": "ab" * 32}
+    endpoint = "/imports/dossier/televersements/v2"
+    premiere = client.post(endpoint, json=corps)
+    seconde = client.post(endpoint, json=corps)
+    assert premiere.status_code == seconde.status_code == 201
+    assert premiere.json()["token"] == seconde.json()["token"]
+    assert premiere.json()["idempotence_creation"] == 1
+    assert client.post(endpoint, json={**corps, "taille_totale_octets": 4}).status_code == 409
+    assert client.post(endpoint, json={**corps, "cle_idempotence": "invalide"}).status_code == 422
+    assert client.post(endpoint, json={k: v for k, v in corps.items() if k != "cle_idempotence"}).status_code == 422
+    assert client.post("/imports/dossier/televersements", json=corps).status_code == 422
+
+
+def test_api_registre_sature_refuse_nouvelles_sessions_mais_pas_rejeux(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    client, _ = _client_api(tmp_path)
+    monkeypatch.setattr(televersement, "MAX_RESERVATIONS_CREATION", 1)
+    endpoint = "/imports/dossier/televersements/v2"
+    corps = {"nom_racine": "DOSSIER-SYNTHESE", "nombre_fichiers": 1, "taille_totale_octets": 3, "cle_idempotence": "ab" * 32}
+    premiere = client.post(endpoint, json=corps)
+    assert premiere.status_code == 201
+    assert client.post(endpoint, json={**corps, "cle_idempotence": "cd" * 32}).status_code == 507
+    reprise = client.post(endpoint, json=corps)
+    assert reprise.status_code == 201
+    assert reprise.json()["token"] == premiere.json()["token"]
+
+
+@pytest.mark.parametrize("phase", ["lecture", "publication"])
+def test_erreur_televersement_masque_details_et_trace(tmp_path: Path, monkeypatch, phase: str):
+    import traceback
+    from io import BytesIO
+    from types import SimpleNamespace
+
+    from seamtech_search.fiches import televersement_lot as t
+
+    config = SimpleNamespace(database_path=tmp_path / "data" / "search.db", max_file_size_bytes=1024,
+                             min_free_bytes=0)
+    token = t.creer_session_televersement_lot(config, nom_racine="TEST", nombre_fichiers=1,
+                                              taille_totale_octets=4)["token"]
+    class LecturePanne(BytesIO):
+        def read(self, *args):
+            raise OSError("chemin-secret-synthetique")
+    if phase == "lecture":
+        source = LecturePanne(b"test")
+    else:
+        source = BytesIO(b"test")
+        monkeypatch.setattr(t.os, "replace", lambda *_a: (_ for _ in ()).throw(OSError("chemin-secret-synthetique")))
+    with pytest.raises(t.TeleversementLotErreur) as erreur:
+        t.recevoir_fichiers_televersement_lot(config, token, chemins_relatives=["a.txt"], flux=[source])
+    trace = "".join(traceback.format_exception(erreur.value))
+    assert "chemin-secret-synthetique" not in trace
+    dossier, manifeste = t._charger_manifeste(config, token)
+    assert not manifeste["fichiers"]
+    assert not list((dossier / t.DOSSIER_TEMPORAIRE).iterdir())
+    assert not (dossier / "fichiers" / "a.txt").exists()

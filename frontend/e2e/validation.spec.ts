@@ -1,5 +1,9 @@
 import { expect, test, type Locator, type Page } from "@playwright/test"
 import { APPROBATEUR, signInWith } from "./helpers"
+import { execFileSync } from "node:child_process"
+import { mkdtempSync, readFileSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
+import path from "node:path"
 
 /** Ouvre /validation et attend la file (au moins une fiche). */
 async function ouvrirFile(page: Page): Promise<Locator> {
@@ -130,9 +134,18 @@ test.describe("validation de bout en bout", () => {
       rejetEnregistre = true
       return route.fulfill({ status: 200, contentType: "application/json", body: "{}" })
     })
+    // Synchronisation explicite sur l'instantané : sans elle, les frappes
+    // clavier peuvent partir avant le retour de `/etat` — la révision est
+    // alors inconnue et l'écran bloque la décision (fail-closed, à raison).
+    // Course mesurée en bac à sable le 27/10 : échec déterministe local,
+    // passe en CI par vitesse — un test ne doit pas dépendre de la vitesse.
+    const etatLue = page.waitForResponse(
+      (resp) => resp.url().includes("/api/fiches/ANOMALIE-E2E/etat") && resp.ok(),
+    )
     await page.goto("/validation")
     await expect(page.getByTestId("titre-fiche")).toHaveText("ANOMALIE-E2E")
     await expect(page.getByText("Anomalie à vérifier")).toBeVisible()
+    await etatLue
     page.once("dialog", async (dialog) => {
       expect(dialog.message()).toContain("anomalie")
       await dialog.dismiss()
@@ -143,6 +156,10 @@ test.describe("validation de bout en bout", () => {
     await page.keyboard.press("r")
     await expect(page.getByTestId("motif-rejet")).toBeFocused()
     await page.getByTestId("motif-rejet").fill("anomalie confirmée par opérateur")
+    // La décision exige la révision EFFECTIVEMENT affichée (data-revision),
+    // pas seulement la réponse réseau : l'enchaînement dialogue/rechargement
+    // peut la repasser transitoirement à inconnue.
+    await expect(page.locator('[data-revision="1"]')).toHaveCount(1)
     await page.keyboard.press("Enter")
     await expect(page.getByTestId("message-ok")).toContainText("rejeter")
     expect(rejetEnregistre).toBe(true)
@@ -233,6 +250,79 @@ test.describe("validation de bout en bout", () => {
       description: `parcours machine complet de la vraie fiche 7792-SO (navigation → fiche ouverte, champs et PDF rendus → correction RG11 → validation) : ${dureeMs} ms ; lecture humaine hors chrono (critère < 120 000 ms)`,
     })
     expect(dureeMs).toBeLessThan(120_000)
+  })
+
+  test("zones PDF pivotées et rognées : surlignage du texte réellement rendu", async ({ page }) => {
+    const dossier = mkdtempSync(path.join(tmpdir(), "seamtech-zone-e2e-"))
+    try {
+      const generation = execFileSync("python3", [path.resolve(__dirname, "generate_rotation_pdf.py"), dossier], {
+        cwd: path.resolve(__dirname, "../.."), encoding: "utf-8", timeout: 30000,
+      })
+      const jeux = JSON.parse(generation) as Array<{ angle: number; fichier: string; zone: { x0: number; x1: number; y0: number; y1: number; page: number } }>
+      expect(jeux.map((j) => j.angle)).toEqual([0, 90, 180, 270])
+      await signInWith(page, APPROBATEUR)
+      let jeu = jeux[0]
+      await page.route("**/api/validation/file**", (route) => route.fulfill({
+        status: 200, contentType: "application/json", body: JSON.stringify([{
+          code: "ZONE-E2E", titre: "Document synthétique", score_qualite: 1, gabarit: "TEST", nb_champs: 1,
+          paliers: { certain: 1, lu: 0, decompose: 0, partiel: 0 }, confiance_min: 1, a_anomalies: false,
+        }]),
+      }))
+      await page.route("**/api/validation/doublons", (route) => route.fulfill({
+        status: 200, contentType: "application/json", body: JSON.stringify({ par_code: {} }),
+      }))
+      await page.route("**/api/fiches/ZONE-E2E/etat", (route) => route.fulfill({
+        status: 200, contentType: "application/json", body: JSON.stringify({
+          code: "ZONE-E2E", revision: 1, statut: "a_valider", champs: [{
+            champ: "fiche.mesure", rang: null, valeur_brute: "MESURE", valeur_normalisee: "MESURE",
+            methode: "gabarit", confiance: 1, page: 0, zone: jeu.zone, corrige: false, corrige_par: null,
+          }],
+        }),
+      }))
+      await page.route("**/api/fiches/ZONE-E2E/pieces", (route) => route.fulfill({
+        status: 200, contentType: "application/json", body: JSON.stringify({ pieces: [{
+          id: 9088, name: "synthese.pdf", extension: ".pdf", size: null, kind: "pdf", is_primary_pdf: true, previewable: true,
+        }] }),
+      }))
+      await page.route("**/api/pieces/9088/apercu", (route) => route.fulfill({
+        status: 200, contentType: "application/pdf", body: readFileSync(jeu.fichier),
+      }))
+      for (const courant of jeux) {
+        jeu = courant
+        await page.goto("/validation")
+        await expect(page.getByTestId("titre-fiche")).toHaveText("ZONE-E2E")
+        const canvas = page.getByTestId("pdf-canvas")
+        await expect(page.getByTestId("pdf-page")).toHaveText("1 / 1")
+        const pixels = async () => canvas.evaluate((element, z) => {
+          const c = element as HTMLCanvasElement
+          const ctx = c.getContext("2d")!
+          const zoom = 1.25
+          const x = Math.max(0, Math.ceil(z.x0 * zoom + 2))
+          const y = Math.max(0, Math.ceil(z.y0 * zoom + 2))
+          const w = Math.max(1, Math.floor((z.x1 - z.x0) * zoom - 4))
+          const h = Math.max(1, Math.floor((z.y1 - z.y0) * zoom - 4))
+          const data = ctx.getImageData(x, y, w, h).data
+          let sombre = 0, surligne = 0
+          for (let i = 0; i < data.length; i += 4) {
+            if (data[i] < 100 && data[i + 1] < 100 && data[i + 2] < 100) sombre++
+            if (data[i + 1] - data[i] > 20 && data[i + 2] - data[i] > 15) surligne++
+          }
+          return { sombre, surligne, total: w * h }
+        }, courant.zone)
+        // Avant le focus, la zone backend contient réellement des pixels de texte.
+        await expect.poll(async () => (await pixels()).sombre, { timeout: 20000 }).toBeGreaterThan(10)
+        await page.getByTestId("champ-fiche.mesure").focus()
+        await expect(canvas).toHaveAttribute("data-zone-active", "true")
+        // Le rendu est asynchrone : attendre que le surlignage effectif, pas
+        // seulement l'attribut React, recouvre une partie significative de la zone.
+        await expect.poll(async () => {
+          const p = await pixels()
+          return p.surligne / p.total
+        }, { timeout: 20000 }).toBeGreaterThan(0.3)
+      }
+    } finally {
+      rmSync(dossier, { recursive: true, force: true })
+    }
   })
 
   test("validation en lot du reste : verrou de calibration puis acquittement explicite", async ({ page }) => {

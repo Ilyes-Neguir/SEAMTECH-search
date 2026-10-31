@@ -17,6 +17,7 @@ import pytest
 
 from seamtech_search.indexer import SearchIndex
 from seamtech_search.recherche import rechercher_fiches
+from tests.helpers_postgres_isole import url_base_jetable
 
 DATABASE_URL = os.environ.get("SEAMTECH_TEST_DATABASE_URL", "")
 pytestmark = pytest.mark.postgres
@@ -42,8 +43,7 @@ REQUETES_EQUIV = (
 
 
 def _url_base(nom: str) -> str:
-    principale, sep, requete = DATABASE_URL.partition("?")
-    return principale.rsplit("/", 1)[0] + "/" + nom + (f"?{requete}" if sep else "")
+    return url_base_jetable(DATABASE_URL, nom)
 
 
 def _creer_index() -> tuple[str, SearchIndex]:

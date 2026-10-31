@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import signal
 import subprocess
 import sys
 from collections.abc import Iterator
@@ -48,7 +49,7 @@ def _extract_with_timeout(path: Path, config: AppConfig) -> ExtractionResult:
         executor.shutdown(wait=False)
         return _structured_from_legacy(result)
     except FutureTimeoutError:
-        LOGGER.warning("Extraction timed out after %ss: %s", config.extraction_timeout_seconds, path)
+        LOGGER.warning("Extraction timed out after %ss", config.extraction_timeout_seconds)
         # wait=False: don't block the scan on a thread that may never return.
         executor.shutdown(wait=False)
         return ExtractionResult("", "timeout")
@@ -64,30 +65,49 @@ def _extract_in_process(path: Path, config: AppConfig) -> ExtractionResult:
         "external_extraction_timeout_seconds": config.external_extraction_timeout_seconds,
         "external_extractors": config.external_extractors,
     }
-    command = [
-        sys.executable,
-        "-m",
-        "seamtech_search.extraction_worker",
-        str(path),
-        str(config.max_extract_chars),
-        str(config.max_file_size_bytes),
-        json.dumps(options),
-    ]
+    command = [sys.executable, "-m", "seamtech_search.extraction_worker"]
+    requete = json.dumps({"path": str(path), "max_chars": config.max_extract_chars,
+                          "max_file_size_bytes": config.max_file_size_bytes, "options": options})
     try:
-        completed = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            timeout=config.extraction_timeout_seconds,
-            check=False,
-            cwd=Path(__file__).resolve().parents[1],
+        process = subprocess.Popen(
+            command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, cwd=Path(__file__).resolve().parents[1], start_new_session=(os.name == "posix"),
         )
-    except subprocess.TimeoutExpired:
-        LOGGER.warning("Extraction timed out after %ss: %s", config.extraction_timeout_seconds, path)
-        return ExtractionResult("", "timeout")
-    if completed.returncode != 0:
+    except OSError:
         return ExtractionResult("", "error", "extraction worker failed")
-    return _structured_from_legacy(completed.stdout)
+    try:
+        stdout, _ = process.communicate(input=requete, timeout=config.extraction_timeout_seconds)
+    except BaseException as exc:
+        try:
+            if os.name == "posix":
+                os.killpg(process.pid, signal.SIGKILL)
+            else:
+                process.kill()
+        except ProcessLookupError:
+            pass
+        try:
+            process.communicate(timeout=2)
+        except subprocess.TimeoutExpired:
+            # An independently detached descendant may still hold a pipe.
+            for pipe in (process.stdin, process.stdout, process.stderr):
+                if pipe is not None:
+                    pipe.close()
+            process.wait()
+        if isinstance(exc, subprocess.TimeoutExpired):
+            LOGGER.warning("Extraction timed out after %ss", config.extraction_timeout_seconds)
+            return ExtractionResult("", "timeout")
+        raise
+    if process.returncode != 0:
+        return ExtractionResult("", "error", "extraction worker failed")
+    try:
+        payload = json.loads(stdout)
+        if not isinstance(payload, dict) or set(payload) != {"text", "status", "detail"}:
+            raise ValueError("invalid extraction response")
+        if not all(isinstance(payload[key], str) for key in ("text", "status", "detail")):
+            raise ValueError("invalid extraction response")
+        return ExtractionResult(payload["text"], payload["status"], payload["detail"])
+    except (ValueError, TypeError):
+        return ExtractionResult("", "error", "invalid extraction worker response")
 
 
 def _structured_from_legacy(text: str) -> ExtractionResult:
@@ -108,6 +128,24 @@ class ScanIncompleteError(RuntimeError):
 
 def crawl(config: AppConfig, existing_metadata: ExistingMetadata | None = None) -> Iterator[Document]:
     existing_metadata = existing_metadata or {}
+    # Tant qu'une exclusion sûre ne sait pas préserver les lignes existantes
+    # lors de remove_missing, refuser tout recouvrement potentiel. Même absent
+    # au départ, le staging peut apparaître pendant le parcours.
+    staging = config.database_path.parent / "uploads"
+    try:
+        staging_resolu = staging.resolve(strict=False)
+        staging_lexical = Path(os.path.abspath(staging))
+        for root in config.root_paths:
+            racine = Path(root).resolve(strict=True)
+            racine_lexicale = Path(os.path.abspath(root))
+            if any(a == b or a in b.parents or b in a.parents for a, b in (
+                (racine, staging_resolu), (racine_lexicale, staging_lexical),
+            )):
+                raise ScanIncompleteError("Racine de scan en recouvrement avec le staging : scan refusé")
+    except (OSError, RuntimeError) as erreur:
+        if isinstance(erreur, ScanIncompleteError):
+            raise
+        raise ScanIncompleteError("Impossible de vérifier les racines du scan et du staging") from erreur
     for root in config.root_paths:
         root_path = Path(root)
         if not root_path.exists() or not root_path.is_dir():

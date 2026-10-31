@@ -54,51 +54,13 @@ def _lister_fichiers(dossier: Path) -> list[Path]:
 
 
 def _texte_par_page_pdf(chemin: Path) -> list[str]:
-    """Extrait le texte natif par page (pdfplumber puis pypdf en repli).
+    """Lit la vue vérifiée ou refuse explicitement un inventaire partiel."""
+    if importlib.util.find_spec("pdfplumber") is None:
+        raise RuntimeError("parseur PDF indisponible : installer pdfplumber avant l'inventaire OCR")
 
-    Refuse explicitement de produire un inventaire partiel si aucun parseur PDF
-    n'est installé : retourner ``[]`` dans ce cas ferait passer tous les PDF
-    sous silence et pourrait être pris à tort pour un corpus sans texte natif.
-    """
-    if importlib.util.find_spec("pdfplumber") is None and importlib.util.find_spec("pypdf") is None:
-        raise RuntimeError("parseur PDF indisponible : installer pdfplumber ou pypdf avant l'inventaire OCR")
+    from seamtech_search.ocr.pipeline import _texte_natif_par_page_pdf
 
-    # pdfplumber d'abord (layout-aware)
-    try:
-        import pdfplumber  # type: ignore
-
-        texts: list[str] = []
-        with pdfplumber.open(str(chemin)) as pdf:
-            for page in pdf.pages:
-                try:
-                    t = page.extract_text(x_tolerance=2, y_tolerance=2) or ""
-                except Exception as exc:
-                    _ = exc
-                    t = ""
-                texts.append(t)
-        if texts:
-            return texts
-    except Exception as exc:
-        # pdfplumber indisponible ou PDF illisible — fallback pypdf
-        _ = exc
-
-    # Repli pypdf
-    try:
-        from pypdf import PdfReader  # type: ignore
-
-        reader = PdfReader(str(chemin), strict=False)
-        texts = []
-        for page in reader.pages:
-            try:
-                t = page.extract_text() or ""
-            except Exception as exc:
-                _ = exc
-                t = ""
-            texts.append(t)
-        return texts
-    except Exception as exc:
-        _ = exc
-        return []
+    return _texte_natif_par_page_pdf(chemin)
 
 
 def inventaire_etage1(index: Any, dossier: str | Path) -> dict[str, Any]:

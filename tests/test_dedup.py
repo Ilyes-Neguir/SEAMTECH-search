@@ -31,6 +31,7 @@ import pytest
 from seamtech_search.dedup import detection
 from seamtech_search.fiches.depot import empreinte_fichier
 from seamtech_search.indexer import SearchIndex
+from tests.helpers_postgres_isole import url_base_jetable
 
 RACINE = Path(__file__).resolve().parent.parent
 PDF_REEL_7792 = RACINE / "sample_data" / "CLIENT-7792-SO" / "fiche-7792-SO_ffab.pdf"
@@ -64,7 +65,7 @@ def base_dedup() -> Iterator[dict[str, Any]]:
             cursor.execute(f'CREATE DATABASE "{nom_base}"')
     finally:
         admin.close()
-    url_base = URL_PG.rsplit("/", 1)[0] + f"/{nom_base}"
+    url_base = url_base_jetable(URL_PG, nom_base)
     index = SearchIndex(Path(f"/tmp/unused-dedup-{nom_base}.db"), url_base)
     index.initialize()
     index.run_migrations()

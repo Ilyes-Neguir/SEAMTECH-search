@@ -55,8 +55,7 @@ def evaluer_anomalies(fiche: FicheExtraite) -> list[Anomalie]:
     anomalies.extend(_controles_plages(finie))
     anomalies.extend(_controle_ordre_cotes(fiche, finie))
     anomalies.extend(_controle_surface(fiche, finie))
-    for anomalie in anomalies:
-        LOGGER.debug("Anomalie RG16 (%s) sur fiche %s : %s", anomalie.code, fiche.code or "?", anomalie.message)
+    LOGGER.debug("Contrôles RG16 : %d anomalie(s).", len(anomalies))
     return anomalies
 
 

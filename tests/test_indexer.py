@@ -104,3 +104,43 @@ def test_index_stats_counts_files_and_folders(tmp_path: Path) -> None:
     assert stats.total_documents == 2
     assert stats.files == 1
     assert stats.folders == 1
+
+
+def test_sqlite_preserve_objet_durant_indexation_suppression_et_rebuild(tmp_path: Path) -> None:
+    import pytest
+
+    index = SearchIndex(tmp_path / 'search.db')
+    index.initialize()
+    chemin = tmp_path / 'objet.pdf'
+    initial = Document(path=chemin, name=chemin.name, parent_path=tmp_path, extension='.pdf',
+                       size=3, modified_at=1, is_dir=False, object_key='cle-objet',
+                       object_bucket='seau-test', upload_status='uploaded')
+    assert index.upsert_documents([initial]) == 1
+    nouveau = Document(path=chemin, name=chemin.name, parent_path=tmp_path, extension='.pdf',
+                       size=4, modified_at=2, is_dir=False)
+    assert index.upsert_documents([nouveau]) == 0
+    with pytest.raises(RuntimeError, match='document.*objet'):
+        index.upsert_documents([nouveau], strict=True)
+    assert index.remove_missing(set(), scan_complete=True) == 0
+    index.initialize(rebuild=True)
+    assert index.rebuild_mode == 'en_place'
+    with index.connect() as connexion:
+        ligne = connexion.execute('SELECT object_key, object_bucket, size FROM documents WHERE path_key=?', (initial.path_key,)).fetchone()
+        assert tuple(ligne) == ('cle-objet', 'seau-test', 3)
+
+
+def test_sqlite_import_lie_objet_meme_si_metadonnees_inchangees(tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    index = SearchIndex(tmp_path / 'search.db')
+    index.initialize()
+    chemin = tmp_path / 'source.pdf'
+    initial = Document(path=chemin, name=chemin.name, parent_path=tmp_path, extension='.pdf',
+                       size=3, modified_at=1, is_dir=False)
+    assert index.upsert_documents([initial]) == 1
+    avec_objet = replace(initial, object_key='cle-nouvelle', object_bucket='seau-test', upload_status='uploaded')
+    assert index.upsert_documents([avec_objet], strict=True) == 1
+    with index.connect() as connexion:
+        ligne = connexion.execute('SELECT object_key, object_bucket, upload_status FROM documents WHERE path_key=?',
+                                  (initial.path_key,)).fetchone()
+        assert tuple(ligne) == ('cle-nouvelle', 'seau-test', 'uploaded')

@@ -101,7 +101,7 @@ def detecter_gabarit(texte_normalise: str, gabarits: list[GabaritDef]) -> Gabari
             "conservés en mesures libres (RG6)."
         )
     meilleur_score, meilleur = scores[0]
-    LOGGER.debug("Gabarit détecté : %s (score %d) ; scores : %s", meilleur.code, meilleur_score, [(g.code, s) for s, g in scores])
+    LOGGER.debug("Gabarit détecté (score %d ; %d gabarits évalués).", meilleur_score, len(scores))
     return meilleur
 
 

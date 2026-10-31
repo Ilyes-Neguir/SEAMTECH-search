@@ -11,12 +11,19 @@ Features:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import os
 import re
+import shutil
+import stat
+import tempfile
 import time
 import uuid
-from dataclasses import asdict, dataclass, field
+from contextlib import AbstractContextManager, ExitStack, contextmanager, nullcontext
+from dataclasses import asdict, dataclass, field, replace
+from functools import wraps
 from pathlib import Path
 from typing import Any, Callable
 
@@ -29,9 +36,26 @@ from .indexer import SearchIndex
 from .jobs import ImportCancelledError
 from .models import Document
 from .retention import ensure_free_space
-from .storage import UploadBatch, upload_artifacts_to_storage
+from .storage import S3StorageClient, UploadBatch, artifact_object_key, empreinte_sha256, upload_artifacts_to_storage
 
 logger = logging.getLogger("seamtech_search.import_pipeline")
+
+
+class ImportMutationEnCours(Exception):
+    """Une autre correction ou reprise de cet import est déjà active."""
+
+
+class ImportMutationIncertitude(Exception):
+    """Le verrou a été perdu ; le résultat de la mutation peut être incertain."""
+
+
+class RapportsEnRegeneration(Exception):
+    """Une génération de rapports interrompue doit être relancée avant reprise."""
+
+
+class PublicationIncertaine(RuntimeError):
+    """Une intention d'envoi interrompue doit être réconciliée avant mutation."""
+
 
 __all__ = [
     "TECHNICAL_ANCHORS",
@@ -166,6 +190,11 @@ class ImportFile:
     object_key: str | None = None
     object_bucket: str | None = None
     uploaded_at: float | None = None
+    # Empreinte de la copie capturée, y compris si l'envoi a échoué. Ce n'est
+    # pas une preuve que le dossier entier formait un snapshot atomique.
+    source_sha256: str | None = None
+    # None : aucune liaison objet à établir ; False : conflit non résolu.
+    catalogue_lie: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -201,6 +230,10 @@ class ImportResult:
     analyzed_items: list[dict[str, Any]] = field(default_factory=list)
     all_verified: bool = False
     artifacts: list[dict[str, Any]] = field(default_factory=list)
+    transport_verifie: bool = False
+    # Vrai entre la persistance de l'intention et la publication transactionnelle.
+    # Après une interruption, ne jamais supposer qu'aucun objet n'a été écrit.
+    publication_pending: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -460,64 +493,66 @@ def extract_excel_summary(path: Path) -> ExcelSummary:
         import openpyxl
 
         wb = openpyxl.load_workbook(str(path), read_only=True, data_only=True)
-        sheets: list[ExcelSheetSummary] = []
-        sheet_names: list[str] = []
-        total_rows = 0
-        detected_ref: str | None = None
-        detected_mat: str | None = None
-        detected_qty: int | None = None
+        try:
+            sheets: list[ExcelSheetSummary] = []
+            sheet_names: list[str] = []
+            total_rows = 0
+            detected_ref: str | None = None
+            detected_mat: str | None = None
+            detected_qty: int | None = None
 
-        for sheet_name in wb.sheetnames:
-            ws = wb[sheet_name]
-            rows_data: list[list[str]] = []
-            for row in ws.iter_rows(values_only=True):
-                cleaned_row = [str(cell).strip() if cell is not None else "" for cell in row]
-                if any(cleaned_row):
-                    rows_data.append(cleaned_row)
+            for sheet_name in wb.sheetnames:
+                ws = wb[sheet_name]
+                rows_data: list[list[str]] = []
+                for row in ws.iter_rows(values_only=True):
+                    cleaned_row = [str(cell).strip() if cell is not None else "" for cell in row]
+                    if any(cleaned_row):
+                        rows_data.append(cleaned_row)
 
-            if not rows_data:
-                continue
+                if not rows_data:
+                    continue
 
-            sheet_names.append(sheet_name)
-            total_rows += len(rows_data)
-            headers = rows_data[0]
-            col_count = len(headers)
-            sample_rows = rows_data[1:20]
+                sheet_names.append(sheet_name)
+                total_rows += len(rows_data)
+                headers = rows_data[0]
+                col_count = len(headers)
+                sample_rows = rows_data[1:20]
 
-            metrics: dict[str, str] = {
-                "Total Lignes": str(len(rows_data)),
-                "Colonnes": str(col_count),
-            }
+                metrics: dict[str, str] = {
+                    "Total Lignes": str(len(rows_data)),
+                    "Colonnes": str(col_count),
+                }
 
-            for row in rows_data:
-                row_str = " ".join(row)
-                if not detected_ref:
-                    ref_m = re.search(r"(?:réf|ref|reference|commande)\s*[:\-]?\s*([A-Z0-9_\-]+)", row_str, re.I)
-                    if ref_m:
-                        detected_ref = ref_m.group(1).strip()
-                if not detected_mat:
-                    mat_m = re.search(r"(?:tissu|mati[èe]re|material)\s*[:\-]?\s*([^\n,;]+)", row_str, re.I)
-                    if mat_m:
-                        detected_mat = mat_m.group(1).strip()
-                if detected_qty is None:
-                    qty_m = re.search(r"quantit[ée]\s*[:\-]?\s*(\d+)", row_str, re.I)
-                    if qty_m:
-                        try:
-                            detected_qty = int(qty_m.group(1))
-                        except ValueError:
-                            pass
+                for row in rows_data:
+                    row_str = " ".join(row)
+                    if not detected_ref:
+                        ref_m = re.search(r"(?:réf|ref|reference|commande)\s*[:\-]?\s*([A-Z0-9_\-]+)", row_str, re.I)
+                        if ref_m:
+                            detected_ref = ref_m.group(1).strip()
+                    if not detected_mat:
+                        mat_m = re.search(r"(?:tissu|mati[èe]re|material)\s*[:\-]?\s*([^\n,;]+)", row_str, re.I)
+                        if mat_m:
+                            detected_mat = mat_m.group(1).strip()
+                    if detected_qty is None:
+                        qty_m = re.search(r"quantit[ée]\s*[:\-]?\s*(\d+)", row_str, re.I)
+                        if qty_m:
+                            try:
+                                detected_qty = int(qty_m.group(1))
+                            except ValueError:
+                                pass
 
-            sheets.append(
-                ExcelSheetSummary(
-                    sheet_name=sheet_name,
-                    row_count=len(rows_data),
-                    column_count=col_count,
-                    headers=headers,
-                    sample_rows=sample_rows,
-                    metrics=metrics,
+                sheets.append(
+                    ExcelSheetSummary(
+                        sheet_name=sheet_name,
+                        row_count=len(rows_data),
+                        column_count=col_count,
+                        headers=headers,
+                        sample_rows=sample_rows,
+                        metrics=metrics,
+                    )
                 )
-            )
-        wb.close()
+        finally:
+            wb.close()
 
         sheets_desc = ", ".join(f"{s.sheet_name} ({s.row_count} lig.)" for s in sheets)
         summary_text = f"{len(sheets)} feuille(s): {sheets_desc}" if sheets else "Feuille vide"
@@ -535,11 +570,11 @@ def extract_excel_summary(path: Path) -> ExcelSummary:
             summary_text=summary_text,
         )
     except Exception as exc:
-        logger.warning("Could not extract Excel file %s: %s", path, exc)
+        logger.warning("Could not extract Excel file (%s)", type(exc).__name__)
         return ExcelSummary(
             filename=path.name,
             path=str(path),
-            summary_text=f"Analyse Excel indisponible: {exc}",
+            summary_text=f"Analyse Excel indisponible ({type(exc).__name__}).",
         )
 
 
@@ -952,7 +987,200 @@ def _validated_source(source: Path, config: AppConfig) -> Path:
 
 
 def _walk_files(source: Path) -> list[Path]:
-    return sorted((p for p in source.rglob("*") if p.is_file()), key=lambda p: str(p).lower())
+    # Examiner tout l'arbre avant d'ouvrir un fichier. Un lien, y compris de
+    # répertoire ou cassé, n'est pas un fichier déposé et peut sortir de la
+    # racine autorisée. Ce contrôle ne verrouille pas le système de fichiers
+    # contre une substitution concurrente après l'inventaire.
+    fichiers = []
+    for chemin in source.rglob("*"):
+        if chemin.is_symlink():
+            raise ValueError("Symbolic link or file outside the scanned folder is not allowed")
+        if chemin.is_file():
+            if source not in chemin.resolve().parents:
+                raise ValueError("File outside the scanned folder is not allowed")
+            fichiers.append(chemin)
+    return sorted(fichiers, key=lambda p: str(p).lower())
+
+
+@contextmanager
+def _racine_scan_confinee(source: Path):
+    """Ancre le scan à une arborescence ouverte sans suivre de liens POSIX."""
+    if (os.name != "posix" or not all(hasattr(os, nom) for nom in ("O_NOFOLLOW", "O_DIRECTORY"))
+            or os.open not in os.supports_dir_fd or os.scandir not in os.supports_fd):
+        raise OSError("Secure folder scanning is not supported on this platform")
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    fd = os.open(source.anchor, flags)
+    try:
+        for composant in source.parts[1:]:
+            suivant = os.open(composant, flags, dir_fd=fd)
+            os.close(fd)
+            fd = suivant
+        yield fd
+    finally:
+        os.close(fd)
+
+
+def _inventaire_scan_confine(racine_fd: int, source: Path) -> list[Path]:
+    """Inventorie sans traverser de liens, uniquement depuis des répertoires épinglés."""
+    fichiers: list[Path] = []
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+
+    def parcourir(fd: int, chemin: Path) -> None:
+        with os.scandir(fd) as entrees:
+            for entree in entrees:
+                mode = entree.stat(follow_symlinks=False).st_mode
+                if stat.S_ISLNK(mode):
+                    raise ValueError("Symbolic link or file outside the scanned folder is not allowed")
+                enfant = chemin / entree.name
+                if stat.S_ISDIR(mode):
+                    enfant_fd = os.open(entree.name, flags, dir_fd=fd)
+                    try:
+                        parcourir(enfant_fd, enfant)
+                    finally:
+                        os.close(enfant_fd)
+                elif stat.S_ISREG(mode):
+                    fichiers.append(enfant)
+                else:
+                    raise ValueError("Only regular files and directories can be scanned")
+
+    parcourir(racine_fd, source)
+    return sorted(fichiers, key=lambda p: str(p).lower())
+
+
+def _extension_copie(chemin: Path) -> str:
+    """Garde l'extension utile sans dépasser les limites usuelles du système de fichiers."""
+    extension = chemin.suffix.lower()
+    return extension if len(os.fsencode(extension)) <= 200 else ""
+
+
+@contextmanager
+def _copie_scan_confinee(
+    racine_fd: int, source: Path, chemin: Path, limite: int, *,
+    metadata: dict[str, Any] | None = None,
+    cancel_check: Callable[[], bool] | None = None,
+    allocation_dir: Path | None = None,
+    reserve_min_bytes: int | None = None,
+):
+    """Lit une entrée relative sans suivre de liens, puis analyse une copie privée."""
+    relatif = chemin.relative_to(source)
+    if not relatif.parts or any(part in ("", ".", "..") for part in relatif.parts):
+        raise ValueError("Invalid path in scanned folder")
+    flags_dir = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    parent = os.dup(racine_fd)
+    fd = None
+    try:
+        for part in relatif.parts[:-1]:
+            suivant = os.open(part, flags_dir, dir_fd=parent)
+            os.close(parent)
+            parent = suivant
+        fd = os.open(relatif.parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+        avant = os.fstat(fd)
+        if metadata is not None:
+            metadata["modified_at"] = avant.st_mtime
+        if not stat.S_ISREG(avant.st_mode):
+            raise ValueError("Only regular files can be scanned")
+        if avant.st_nlink != 1:
+            raise ValueError("Files with hard links cannot be scanned")
+        if avant.st_size > limite:
+            raise ValueError("File exceeds scanning size limit")
+        with tempfile.TemporaryDirectory(prefix="seamtech-scan-", dir=allocation_dir) as temporaire:
+            if reserve_min_bytes is not None:
+                ensure_free_space(temporaire, reserve_min_bytes + avant.st_size)
+            copie = Path(temporaire) / ("document" + _extension_copie(chemin))
+            entree = os.fdopen(fd, "rb")
+            fd = None  # le contexte possède désormais le descripteur
+            empreinte = hashlib.sha256() if metadata is not None else None
+            with entree, copie.open("xb") as sortie:
+                total = 0
+                while True:
+                    if cancel_check and cancel_check():
+                        raise ImportCancelledError("Import cancelled by user")
+                    bloc = entree.read(min(1024 * 1024, limite - total + 1))
+                    if not bloc:
+                        break
+                    total += len(bloc)
+                    if total > limite:
+                        raise ValueError("File exceeds scanning size limit")
+                    sortie.write(bloc)
+                    if empreinte is not None:
+                        empreinte.update(bloc)
+                apres = os.fstat(entree.fileno())
+                if total != avant.st_size or (avant.st_size, avant.st_mtime_ns, avant.st_ctime_ns, avant.st_nlink) != (apres.st_size, apres.st_mtime_ns, apres.st_ctime_ns, apres.st_nlink):
+                    raise ValueError("File changed during scanning")
+            if metadata is not None and empreinte is not None:
+                metadata["sha256"] = empreinte.hexdigest()
+            yield copie, avant.st_size
+    finally:
+        if fd is not None:
+            os.close(fd)
+        os.close(parent)
+
+
+@dataclass(frozen=True)
+class _FichierCapture:
+    copie: Path
+    taille: int
+    modified_at: float
+    sha256: str
+
+
+@contextmanager
+def _capturer_fichiers_import(
+    source: Path, config: AppConfig, *, cancel_check: Callable[[], bool] | None = None,
+):
+    """Capture chaque fichier sans lien dans un répertoire privé éphémère.
+
+    Les copies garantissent l'identité des lectures ultérieures, mais leur
+    collecte séquentielle n'est PAS un snapshot atomique de tout le dossier.
+    """
+    with _racine_scan_confinee(source) as racine_fd, tempfile.TemporaryDirectory(prefix="seamtech-import-") as dossier:
+        temporaire = Path(dossier)
+        captures: dict[Path, _FichierCapture] = {}
+        inventaire = _inventaire_scan_confine(racine_fd, source)
+        for nombre, chemin in enumerate(inventaire):
+            if cancel_check and cancel_check():
+                raise ImportCancelledError("Import cancelled by user")
+            metadata: dict[str, Any] = {}
+            with _copie_scan_confinee(
+                racine_fd, source, chemin, config.max_file_size_bytes, metadata=metadata,
+                cancel_check=cancel_check, allocation_dir=temporaire, reserve_min_bytes=config.min_free_bytes,
+            ) as (copie, taille):
+                destination = temporaire / f"{nombre:012d}{_extension_copie(chemin)}"
+                os.replace(copie, destination)
+                os.chmod(destination, 0o400)
+            captures[chemin] = _FichierCapture(destination, taille, metadata["modified_at"], metadata["sha256"])
+        yield captures
+
+
+def _verifier_copie_capture(capture: _FichierCapture, cancel_check: Callable[[], bool] | None) -> bool:
+    """Compare les octets de la copie à ceux lus pendant la capture.
+
+    Ce contrôle ponctuel ne protège pas contre un processus du même UID qui
+    modifierait puis restaurerait la copie entre deux lectures.
+    """
+    fd = os.open(capture.copie, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, "rb") as fichier:
+        avant = os.fstat(fichier.fileno())
+        if not stat.S_ISREG(avant.st_mode) or avant.st_nlink != 1 or avant.st_size != capture.taille:
+            return False
+        digest = hashlib.sha256()
+        total = 0
+        while True:
+            if cancel_check and cancel_check():
+                raise ImportCancelledError("Import cancelled by user")
+            bloc = fichier.read(1024 * 1024)
+            if not bloc:
+                break
+            total += len(bloc)
+            if total > capture.taille:
+                return False
+            digest.update(bloc)
+        apres = os.fstat(fichier.fileno())
+        if (avant.st_size, avant.st_mtime_ns, avant.st_ctime_ns, avant.st_nlink) != (
+            apres.st_size, apres.st_mtime_ns, apres.st_ctime_ns, apres.st_nlink,
+        ):
+            return False
+        return total == capture.taille and digest.hexdigest() == capture.sha256
 
 
 # ---------------------------------------------------------------------------
@@ -966,37 +1194,40 @@ def scan_folder(source: Path, config: AppConfig) -> dict[str, Any]:
     excel_files: list[dict[str, Any]] = []
     files_detected = 0
 
-    for path in _walk_files(resolved):
-        files_detected += 1
-        ext = path.suffix.lower()
-        if ext == ".pdf":
-            extracted = extract_structured_pdf(path, config)
-            anchors = matched_anchors(extracted.raw_text) if extracted.raw_text else []
-            classification = classify_pdf_text(extracted.raw_text) if extracted.raw_text else "plan_pdf"
-            # Return ALL PDFs with anchor score as ranking hint (4.8), not filter
-            candidates.append(
-                {
-                    "path": str(path),
-                    "name": path.name,
-                    "size": path.stat().st_size,
-                    "anchors_matched": anchors,
-                    "anchor_count": len(anchors),
-                    "classification": classification,
-                    "is_technical": classification == "technical_pdf",
-                }
-            )
-        elif ext in {".xlsx", ".xls"}:
-            summary = extract_excel_summary(path)
-            excel_files.append(
-                {
-                    "path": str(path),
-                    "name": path.name,
-                    "size": path.stat().st_size,
-                    "sheets": summary.sheet_names,
-                    "total_rows": summary.total_rows,
-                    "summary_text": summary.summary_text,
-                }
-            )
+    with _racine_scan_confinee(resolved) as racine_fd:
+        for path in _inventaire_scan_confine(racine_fd, resolved):
+            files_detected += 1
+            ext = path.suffix.lower()
+            if ext not in {".pdf", ".xlsx", ".xls"}:
+                continue
+            with _copie_scan_confinee(racine_fd, resolved, path, config.max_file_size_bytes) as (copie, taille):
+                if ext == ".pdf":
+                    extracted = extract_structured_pdf(copie, config)
+                    anchors = matched_anchors(extracted.raw_text) if extracted.raw_text else []
+                    classification = classify_pdf_text(extracted.raw_text) if extracted.raw_text else "plan_pdf"
+                    candidates.append(
+                        {
+                            "path": str(path),
+                            "name": path.name,
+                            "size": taille,
+                            "anchors_matched": anchors,
+                            "anchor_count": len(anchors),
+                            "classification": classification,
+                            "is_technical": classification == "technical_pdf",
+                        }
+                    )
+                else:
+                    summary = extract_excel_summary(copie)
+                    excel_files.append(
+                        {
+                            "path": str(path),
+                            "name": path.name,
+                            "size": taille,
+                            "sheets": summary.sheet_names,
+                            "total_rows": summary.total_rows,
+                            "summary_text": summary.summary_text,
+                        }
+                    )
 
     warnings: list[str] = []
     technical_count = sum(1 for c in candidates if c.get("is_technical"))
@@ -1024,6 +1255,24 @@ def scan_folder(source: Path, config: AppConfig) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+def _serialiser_import_initial(fonction):
+    @wraps(fonction)
+    def executer(
+        source: Path, config: AppConfig, index: SearchIndex,
+        selected_pdf: str | Path | None = None, import_id: str | None = None,
+        progress_callback: Callable[[str, int], None] | None = None,
+        cancel_check: Callable[[], bool] | None = None,
+        selected_excel: str | Path | None = None,
+        publication_context: Callable[[], AbstractContextManager[Any]] | None = None,
+    ) -> ImportResult:
+        identifiant = import_id if import_id is not None else uuid.uuid4().hex
+        with _verrou_mutation_import(index, config, identifiant):
+            return fonction(source, config, index, selected_pdf, identifiant, progress_callback,
+                            cancel_check, selected_excel, publication_context)
+    return executer
+
+
+@_serialiser_import_initial
 def import_folder(
     source: Path,
     config: AppConfig,
@@ -1033,6 +1282,7 @@ def import_folder(
     progress_callback: Callable[[str, int], None] | None = None,
     cancel_check: Callable[[], bool] | None = None,
     selected_excel: str | Path | None = None,
+    publication_context: Callable[[], AbstractContextManager[Any]] | None = None,
 ) -> ImportResult:
     # 1. Disk space check
     ensure_free_space(config.database_path.parent, config.min_free_bytes)
@@ -1045,8 +1295,55 @@ def import_folder(
 
     resolved = _validated_source(source, config)
 
-    actual_import_id = import_id or uuid.uuid4().hex
-    report_dir = config.database_path.parent / "reports" / actual_import_id
+    actual_import_id = import_id if import_id is not None else uuid.uuid4().hex
+    # La même contrainte que pour la correction empêche un identifiant de
+    # choisir un répertoire de rapport en dehors de reports/<import_id>.
+    report_dir = _report_dir_for({}, config, actual_import_id)
+    if report_dir.is_relative_to(resolved) or report_dir.resolve().is_relative_to(resolved):
+        raise ValueError("Le répertoire des rapports ne peut pas être dans l'arbre source")
+    precedent = None
+    if import_id is not None:
+        precedent = get_import(index, actual_import_id)
+        if precedent and precedent.get("source_path") != str(resolved):
+            raise PublicationIncertaine("La source de l'import a changé : reprise suspendue.")
+        if precedent and precedent.get("publication_pending"):
+            raise PublicationIncertaine("Publication interrompue : réconciliation requise avant reprise.")
+        if precedent and (
+            any(a.get("key") for a in precedent.get("artifacts", []) if isinstance(a, dict))
+            or any(f.get("object_key") for f in precedent.get("files", []) if isinstance(f, dict))
+        ):
+            # Même sans preuve, une clé peut désigner un objet écrit avec une
+            # réponse perdue. Ne pas régénérer ni réenvoyer avant réconciliation.
+            raise RuntimeError("Import déjà partiellement préservé : reprise complète suspendue")
+    # La copie est gardée jusqu'à la fin des lectures, de l'envoi et de la
+    # publication. Ce n'est pas un instantané atomique du dossier entier.
+    with _capturer_fichiers_import(resolved, config, cancel_check=cancel_check) as captures:
+        anciens_fichiers = precedent.get("files", []) if precedent else []
+        if any(isinstance(f, dict) and f.get("source_sha256") is not None for f in anciens_fichiers):
+            empreintes: dict[str, str] = {}
+            for ancien in anciens_fichiers:
+                if not isinstance(ancien, dict) or not isinstance(ancien.get("path"), str):
+                    raise PublicationIncertaine("Inventaire initial invalide : reprise suspendue.")
+                chemin, sha = ancien["path"], ancien.get("source_sha256")
+                if chemin in empreintes or not isinstance(sha, str) or re.fullmatch(r"[0-9a-f]{64}", sha) is None:
+                    raise PublicationIncertaine("Empreinte initiale invalide : reprise suspendue.")
+                empreintes[chemin] = sha
+            if (set(empreintes) != {str(chemin) for chemin in captures}
+                    or any(empreintes[str(chemin)] != capture.sha256 for chemin, capture in captures.items())):
+                raise PublicationIncertaine("Source différente de la capture initiale : reprise suspendue.")
+        return _traiter_import_capture(
+            resolved, config, index, captures, actual_import_id, report_dir,
+            selected_pdf, selected_excel, progress_callback, cancel_check, publication_context,
+        )
+
+
+def _traiter_import_capture(
+    resolved: Path, config: AppConfig, index: SearchIndex, captures: dict[Path, _FichierCapture],
+    actual_import_id: str, report_dir: Path, selected_pdf: str | Path | None,
+    selected_excel: str | Path | None, progress_callback: Callable[[str, int], None] | None,
+    cancel_check: Callable[[], bool] | None,
+    publication_context: Callable[[], AbstractContextManager[Any]] | None,
+) -> ImportResult:
     files: list[ImportFile] = []
     pdfs: list[Path] = []
     excels: list[Path] = []
@@ -1054,14 +1351,14 @@ def import_folder(
     # Cache extractions to avoid extracting each PDF twice (Phase 4.9)
     extracted_cache: dict[str, ExtractedData] = {}
 
-    for path in _walk_files(resolved):
+    for path, capture in captures.items():
         if cancel_check and cancel_check():
             raise ImportCancelledError("Import cancelled by user")
         category = classify_path(path)
         status = "pending" if category in ("pdf_candidate", "excel_sheet") else "not_applicable"
 
         if path.suffix.lower() == ".pdf":
-            extracted = extract_structured_pdf(path, config)
+            extracted = extract_structured_pdf(capture.copie, config)
             extracted_cache[str(path)] = extracted
             category = classify_pdf_text(extracted.raw_text) if extracted.raw_text else "plan_pdf"
             status = "pending" if category == "technical_pdf" else "not_applicable"
@@ -1072,7 +1369,7 @@ def import_folder(
                     {
                         "path": str(path),
                         "name": path.name,
-                        "size": path.stat().st_size,
+                        "size": capture.taille,
                         "anchors_matched": anchors,
                         "anchor_count": len(anchors),
                     }
@@ -1082,18 +1379,17 @@ def import_folder(
             category = "excel_sheet"
             status = "pending"
 
-        files.append(ImportFile(str(path), path.name, category, path.stat().st_size, path.suffix.lower(), status))
+        files.append(ImportFile(str(path), path.name, category, capture.taille, path.suffix.lower(), status))
 
     warnings: list[str] = []
     technical_pdf: Path | None
     if selected_pdf is not None:
         chosen = Path(selected_pdf).expanduser()
-        chosen = chosen if chosen.is_absolute() else (resolved / chosen)
-        chosen = chosen.resolve()
-        if not chosen.exists() or not chosen.is_file():
-            raise ValueError("Selected PDF does not exist")
-        if not (chosen == resolved or resolved in chosen.parents):
+        chosen = Path(os.path.abspath(chosen if chosen.is_absolute() else resolved / chosen))
+        if resolved not in chosen.parents:
             raise ValueError("Selected PDF is outside the scanned folder")
+        if chosen not in captures:
+            raise ValueError("Selected PDF does not exist")
         technical_pdf = chosen
         if str(chosen) not in {str(p) for p in pdfs}:
             warnings.append("Selected PDF was not classified as technical; importing it anyway")
@@ -1108,9 +1404,12 @@ def import_folder(
     chosen_excel: Path | None = None
     if selected_excel is not None:
         c_excel = Path(selected_excel).expanduser()
-        c_excel = c_excel if c_excel.is_absolute() else (resolved / c_excel)
-        if c_excel.exists() and c_excel.is_file():
-            chosen_excel = c_excel.resolve()
+        c_excel = Path(os.path.abspath(c_excel if c_excel.is_absolute() else resolved / c_excel))
+        if resolved not in c_excel.parents:
+            raise ValueError("Selected Excel file is outside the scanned folder")
+        if c_excel not in captures:
+            raise ValueError("Selected Excel file does not exist")
+        chosen_excel = c_excel
     elif excels:
         chosen_excel = excels[0]
 
@@ -1122,7 +1421,7 @@ def import_folder(
 
     if technical_pdf:
         cached = extracted_cache.get(str(technical_pdf))
-        data = cached if cached is not None else extract_structured_pdf(technical_pdf, config)
+        data = cached if cached is not None else extract_structured_pdf(captures[technical_pdf].copie, config)
     else:
         data = None
     extra_pdfs = [p for p in pdfs if p != technical_pdf]
@@ -1130,7 +1429,7 @@ def import_folder(
     if data and extra_pdfs:
         for p in extra_pdfs:
             cached_p = extracted_cache.get(str(p))
-            extracted_p = cached_p if cached_p is not None else extract_structured_pdf(p, config)
+            extracted_p = cached_p if cached_p is not None else extract_structured_pdf(captures[p].copie, config)
             extra_extractions[str(p)] = extracted_p
             data.additional_sheets.append(
                 AnalyzedSheet(
@@ -1146,7 +1445,10 @@ def import_folder(
                 )
             )
 
-    excel_summary = extract_excel_summary(chosen_excel) if chosen_excel else None
+    excel_summary = extract_excel_summary(captures[chosen_excel].copie) if chosen_excel else None
+    if excel_summary and chosen_excel:
+        # Le chemin physique éphémère ne doit pas devenir l'identité métier.
+        excel_summary = excel_summary.model_copy(update={"filename": chosen_excel.name, "path": str(chosen_excel)})
 
     # Enrich PDF data from Excel if available
     if data and excel_summary:
@@ -1164,30 +1466,94 @@ def import_folder(
     if progress_callback:
         progress_callback("generating_reports", 55)
 
-    report_path = (
-        generate_report(data, report_dir / "technical-report.pdf", excel_summary=excel_summary) if data else None
+    contexte_rapports = (
+        _generer_rapports_confines(data, config, actual_import_id, report_dir, excel_summary)
+        if data else nullcontext((None, None, None, None))
     )
-    report_docx_path = (
-        generate_docx_report(data, report_dir / "technical-report.docx", excel_summary=excel_summary) if data else None
-    )
+    # L'envoi utilise les copies privées produites sous le descripteur épinglé,
+    # non les chemins publiés qui peuvent être substitués pendant l'envoi.
+    with contexte_rapports as (report_path, report_docx_path, pdf_prive, docx_prive):
+        if cancel_check and cancel_check():
+            raise ImportCancelledError("Import cancelled by user")
 
-    if cancel_check and cancel_check():
-        raise ImportCancelledError("Import cancelled by user")
+        if progress_callback:
+            progress_callback("uploading", 75)
 
-    if progress_callback:
-        progress_callback("uploading", 75)
-
-    all_upload_targets = [Path(f.path) for f in files] + [p for p in (report_path, report_docx_path) if p]
-    upload_batch = upload_artifacts_to_storage(
-        folder_name=resolved.name,
-        files_to_upload=all_upload_targets,
-        config=config,
-        import_id=actual_import_id,
-        source_root=resolved,
-    )
+        chemins_logiques = {str(capture.copie): chemin for chemin, capture in captures.items()}
+        attendues = {str(chemin): capture.sha256 for chemin, capture in captures.items()}
+        for capture in captures.values():
+            if not _verifier_copie_capture(capture, cancel_check):
+                raise ValueError("Une copie de capture a changé avant l'envoi")
+        for prive, public in ((pdf_prive, report_path), (docx_prive, report_docx_path)):
+            if prive is not None and public is not None:
+                chemins_logiques[str(prive)] = public
+                attendues[str(public)] = empreinte_sha256(prive)
+        all_upload_targets = [capture.copie for capture in captures.values()] + [p for p in (pdf_prive, docx_prive) if p]
+        stockage = S3StorageClient(config=config)
+        if all_upload_targets and stockage.is_configured():
+            # Persister l'intention AVANT la première écriture distante. En cas
+            # de crash ou de réponse perdue, elle interdit un renvoi aveugle ;
+            # elle ne prouve pas à elle seule quels objets ont été écrits.
+            intention = ImportResult(
+                import_id=actual_import_id, source_path=str(resolved), status="needs_review",
+                files_detected=len(files), analyzed_files=len(pdfs),
+                technical_pdf=str(technical_pdf) if technical_pdf else None,
+                data=data.model_dump() if data else None,
+                report_path=str(report_path) if report_path else None,
+                report_docx_path=str(report_docx_path) if report_docx_path else None,
+                upload_status="pending", warnings=warnings + (data.warnings if data else []),
+                files=[replace(f, source_sha256=captures[Path(f.path)].sha256) for f in files],
+                candidates=candidates, excel_file=str(chosen_excel) if chosen_excel else None,
+                excel_summary=excel_summary.model_dump() if excel_summary else None,
+                artifacts=[
+                    {"path": chemin, "name": Path(chemin).name, "status": "pending", "verified": False,
+                     "expected_sha256": sha, "expected_bucket": stockage.bucket_name,
+                     "expected_key_base": artifact_object_key(
+                         actual_import_id, chemin, source_root=resolved, prefix=stockage.prefix, lexical=True,
+                     )}
+                    for chemin, sha in attendues.items()
+                ],
+                publication_pending=True,
+            )
+            with publication_context() if publication_context is not None else index.scan_transaction():
+                _save_import(index, intention)
+        upload_batch = upload_artifacts_to_storage(
+            folder_name=resolved.name,
+            files_to_upload=all_upload_targets,
+            config=config,
+            import_id=actual_import_id,
+            source_root=resolved,
+            logical_paths=chemins_logiques,
+        )
+        invalide = False
+        for artefact in upload_batch.artifacts:
+            # Compatibilité des doubles : le stockage réel renvoie déjà le
+            # chemin logique, pas le chemin de la copie éphémère.
+            if artefact.path in chemins_logiques:
+                logique = chemins_logiques[artefact.path]
+                artefact.path, artefact.name = str(logique), logique.name
+            if artefact.verified and (
+                not _preuve_identifiable(artefact.to_dict())
+                or artefact.sha256 != attendues.get(artefact.path)
+            ):
+                # L'objet peut exister, mais ce n'est pas une preuve de la
+                # capture : conserver sa clé pour diagnostic, ne pas la lier.
+                artefact.status = "failed"
+                artefact.verified = False
+                artefact.error = "Preuve absente ou objet différent de la capture"
+                invalide = True
+        if invalide:
+            upload_batch.status = "partial" if any(a.status == "uploaded" for a in upload_batch.artifacts) else "failed"
     upload_status = upload_batch.status
     upload_status_by_path = {a.path: a.status for a in upload_batch.artifacts}
     artifact_by_path = {a.path: a for a in upload_batch.artifacts}
+    chemins_attendus = {f.path for f in files} | {str(p) for p in (report_path, report_docx_path) if p}
+    transport_verifie = (
+        bool(chemins_attendus) and set(artifact_by_path) == chemins_attendus
+        and len(upload_batch.artifacts) == len(chemins_attendus) and upload_batch.all_verified
+        and all(_preuve_identifiable(a.to_dict()) and a.sha256 == attendues.get(a.path)
+                for a in upload_batch.artifacts)
+    )
     # Use wall-clock for uploaded_at; tests mock object_exists so time is fine.
     import time as _time
 
@@ -1209,10 +1575,14 @@ def import_folder(
             doc_text = excel_summary.summary_text
 
         artifact = artifact_by_path.get(item.path)
-        obj_key = artifact.key if artifact else None
-        obj_bucket = artifact.bucket if artifact else None
+        objet_verifie = bool(
+            artifact and _preuve_identifiable(artifact.to_dict())
+            and artifact.sha256 == captures[item_path].sha256
+        )
+        obj_key = artifact.key if objet_verifie else None
+        obj_bucket = artifact.bucket if objet_verifie else None
         obj_status = artifact.status if artifact else upload_status_by_path.get(item.path, upload_status)
-        uploaded_at = _time.time() if obj_status == "uploaded" else None
+        uploaded_at = _time.time() if objet_verifie else None
 
         indexed_documents.append(
             Document(
@@ -1221,7 +1591,7 @@ def import_folder(
                 parent_path=item_path.parent,
                 extension=item.extension,
                 size=item.size,
-                modified_at=item_path.stat().st_mtime,
+                modified_at=captures[item_path].modified_at,
                 is_dir=False,
                 text=doc_text,
                 category=item.category,
@@ -1229,10 +1599,10 @@ def import_folder(
                 object_bucket=obj_bucket,
                 uploaded_at=uploaded_at,
                 upload_status=obj_status,
+                lexical_path_key=True,
+                source_sha256=captures[item_path].sha256,
             )
         )
-    index.upsert_documents(indexed_documents)
-
     final_files = []
     for f in files:
         if f.path == str(technical_pdf) and data:
@@ -1250,9 +1620,13 @@ def import_folder(
 
         artifact = artifact_by_path.get(f.path)
         per_file_status = upload_status_by_path.get(f.path, upload_status)
-        obj_key = artifact.key if artifact else None
-        obj_bucket = artifact.bucket if artifact else None
-        uploaded_at = _time.time() if per_file_status == "uploaded" else None
+        objet_verifie = bool(
+            artifact and _preuve_identifiable(artifact.to_dict())
+            and artifact.sha256 == captures[Path(f.path)].sha256
+        )
+        obj_key = artifact.key if objet_verifie else None
+        obj_bucket = artifact.bucket if objet_verifie else None
+        uploaded_at = _time.time() if objet_verifie else None
 
         final_files.append(
             ImportFile(
@@ -1267,10 +1641,26 @@ def import_folder(
                 object_key=obj_key,
                 object_bucket=obj_bucket,
                 uploaded_at=uploaded_at,
+                source_sha256=captures[Path(f.path)].sha256,
             )
         )
 
+    # Une clé non prouvée, un résultat omis ou un doublon peut masquer une
+    # écriture distante. L'intention n'est effacée que si chaque cible possède
+    # un résultat unique (y compris un échec explicite avant écriture).
+    resultat_incomplet = bool(stockage.is_configured() and all_upload_targets and (
+        len(upload_batch.artifacts) != len(chemins_attendus) or set(artifact_by_path) != chemins_attendus
+    ))
+    publication_pending = resultat_incomplet or any(
+        a.key and not _preuve_identifiable(a.to_dict()) for a in upload_batch.artifacts
+    )
     status = "completed" if data and data.extraction_status == "success" else "needs_review" if data else "failed"
+    if publication_pending:
+        status = "needs_review"
+    if status == "completed" and upload_status not in ("not_configured", "not_applicable"):
+        # L'extraction peut avoir réussi alors que la préservation globale ne
+        # peut pas encore être qualifiée : l'API ne doit pas annoncer terminé.
+        status = "needs_review"
     result = ImportResult(
         import_id=actual_import_id,
         source_path=str(resolved),
@@ -1280,7 +1670,7 @@ def import_folder(
         technical_pdf=str(technical_pdf) if technical_pdf else None,
         data=data.model_dump() if data else None,
         report_path=str(report_path) if report_path else None,
-        upload_status=upload_status,
+        upload_status="partial" if upload_status == "uploaded" else upload_status,
         warnings=warnings + (data.warnings if data else []),
         files=final_files,
         candidates=candidates,
@@ -1291,16 +1681,72 @@ def import_folder(
             {
                 "path": str(p),
                 "name": p.name,
-                "size": p.stat().st_size,
+                "size": captures[p].taille,
                 "anchors_matched": ["excel_workbook"],
                 "anchor_count": 1,
             }
             for p in excels
         ],
-        all_verified=upload_batch.all_verified,
-        artifacts=[a.to_dict() for a in upload_batch.artifacts],
+        # La vérification d'un lot d'objets ne prouve pas le snapshot de
+        # l'inventaire ni l'identité des octets analysés et indexés.
+        all_verified=False,
+        artifacts=[
+            {
+                **a.to_dict(),
+                **({
+                    "expected_sha256": attendues.get(a.path), "expected_bucket": a.bucket,
+                    "expected_key_base": artifact_object_key(
+                        actual_import_id, a.path, source_root=resolved, prefix=stockage.prefix, lexical=True,
+                    ),
+                } if not _preuve_identifiable(a.to_dict()) else {}),
+            }
+            for a in upload_batch.artifacts
+        ] + ([
+            {
+                "path": chemin, "name": Path(chemin).name, "status": "pending", "verified": False,
+                "error": "résultat d'envoi absent : publication incertaine",
+                "expected_sha256": attendues[chemin], "expected_bucket": stockage.bucket_name,
+                "expected_key_base": artifact_object_key(
+                    actual_import_id, chemin, source_root=resolved, prefix=stockage.prefix, lexical=True,
+                ),
+            }
+            for chemin in sorted(chemins_attendus - set(artifact_by_path))
+        ] if resultat_incomplet else []),
+        transport_verifie=transport_verifie,
+        publication_pending=publication_pending,
     )
-    _save_import(index, result)
+    # La publication de l'import et du catalogue partage toujours la même
+    # transaction. Dans le worker durable, le contexte protège aussi le claim.
+    with publication_context() if publication_context is not None else index.scan_transaction():
+        # Une ligne protégée reste intacte. La conserver ne suffit cependant
+        # pas à prétendre que la nouvelle capture lui est liée : on compare
+        # sous la même transaction les identités et les clés réellement écrites.
+        proteges: set[str] = set()
+        index.upsert_documents(indexed_documents, strict=False, proteges=proteges)
+        etat = index.etat_captures_catalogue([document.path_key for document in indexed_documents])
+        fichiers_publication = []
+        conflits = 0
+        for fichier in result.files:
+            cle = os.path.normcase(os.path.abspath(fichier.path))
+            ligne = etat.get(cle)
+            identique = bool(ligne and ligne[0] == fichier.source_sha256)
+            objet_identique = bool(identique and fichier.object_key and
+                                   ligne[1:] == (fichier.object_key, fichier.object_bucket))
+            conflit = cle in proteges or not identique or (fichier.object_key is not None and not objet_identique)
+            if conflit:
+                conflits += 1
+            liaison = (objet_identique and not conflit) if fichier.object_key is not None else (False if conflit else None)
+            fichiers_publication.append(replace(fichier, catalogue_lie=liaison))
+        if conflits:
+            result = replace(
+                result,
+                status="needs_review" if result.status != "failed" else result.status,
+                warnings=result.warnings + [
+                    f"Conflit catalogue pour {conflits} fichier(s) : identité ou objet non liés, revue requise."
+                ],
+            )
+        result = replace(result, files=fichiers_publication)
+        _save_import(index, result)
 
     if progress_callback:
         progress_callback("done", 100)
@@ -1403,12 +1849,178 @@ def _correction_status(data: dict[str, Any]) -> tuple[str, float, list[str]]:
     return "partial", confidence, ["One or more fields still need review after manual correction."]
 
 
+
+@contextmanager
+def _generer_rapports_confines(
+    data: ExtractedData, config: AppConfig, import_id: str, report_dir: Path,
+    excel_summary: ExcelSummary | None,
+) -> Any:
+    """Publie les rapports depuis un dossier privé, ancré aux descripteurs POSIX.
+
+    Les deux fichiers sont d'abord entièrement produits, puis renommés sans
+    suivre les liens de destination. L'état persistant reste en régénération
+    tant que l'ensemble n'a pas été envoyé et enregistré.
+    """
+    if os.name != "posix" or not os.path.isdir("/proc/self/fd"):
+        raise OSError("Génération confinée indisponible sur cette plateforme")
+    base = Path(os.path.abspath(config.database_path.parent.expanduser()))
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    with _racine_scan_confinee(base) as base_fd:
+        parent = os.dup(base_fd)
+        try:
+            for composant in ("reports", import_id):
+                try:
+                    os.mkdir(composant, mode=0o700, dir_fd=parent)
+                except FileExistsError:
+                    pass
+                suivant = os.open(composant, flags, dir_fd=parent)
+                os.close(parent)
+                parent = suivant
+            with tempfile.TemporaryDirectory(prefix=".correction-", dir=f"/proc/self/fd/{parent}") as temporaire:
+                tmp = Path(temporaire)
+                pdf = generate_report(data, tmp / "technical-report.pdf", excel_summary=excel_summary)
+                docx = generate_docx_report(data, tmp / "technical-report.docx", excel_summary=excel_summary)
+                if pdf == docx or pdf.parent != tmp or docx.parent != tmp:
+                    raise ValueError("Les rapports générés doivent avoir des chemins distincts et confinés")
+                if pdf.name not in {"technical-report.pdf", "technical-report.json"} or docx.name not in {"technical-report.docx", "technical-report.json"}:
+                    raise ValueError("Nom de rapport généré invalide")
+                tmp_fd = os.open(tmp, flags)
+                try:
+                    for rapport in (pdf, docx):
+                        fd = os.open(rapport.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=tmp_fd)
+                        try:
+                            info = os.fstat(fd)
+                            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                                raise ValueError("Rapport généré non ordinaire ou lié")
+                            os.fsync(fd)
+                        finally:
+                            os.close(fd)
+                    # Le répertoire logique peut avoir été remplacé pendant
+                    # la génération : ne pas annoncer/publier ces rapports.
+                    with _racine_scan_confinee(report_dir) as parent_actuel:
+                        attendu, actuel = os.fstat(parent), os.fstat(parent_actuel)
+                        if (attendu.st_dev, attendu.st_ino) != (actuel.st_dev, actuel.st_ino):
+                            raise ValueError("Répertoire de rapports remplacé")
+                    for rapport in (pdf, docx):
+                        # Deux inodes distincts : une mutation du rapport
+                        # publié ne doit pas changer la copie privée à envoyer.
+                        nom_publication = ".rapport-" + uuid.uuid4().hex
+                        try:
+                            source_fd = os.open(rapport.name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=tmp_fd)
+                            try:
+                                destination_fd = os.open(nom_publication, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                                                         0o600, dir_fd=parent)
+                                with os.fdopen(destination_fd, "wb") as destination, os.fdopen(source_fd, "rb", closefd=False) as source:
+                                    shutil.copyfileobj(source, destination, length=1024 * 1024)
+                                    destination.flush()
+                                    os.fsync(destination.fileno())
+                            finally:
+                                os.close(source_fd)
+                            os.replace(nom_publication, rapport.name, src_dir_fd=parent, dst_dir_fd=parent)
+                        finally:
+                            try:
+                                os.unlink(nom_publication, dir_fd=parent)
+                            except FileNotFoundError:
+                                pass
+                    os.fsync(parent)
+                    yield (report_dir / pdf.name, report_dir / docx.name, pdf, docx)
+                finally:
+                    os.close(tmp_fd)
+        finally:
+            os.close(parent)
+
+@contextmanager
+def _verrou_mutation_import(index: SearchIndex | None, config: AppConfig, import_id: str):
+    """Exclusion coopérative par import ; les anciennes versions ne participent pas."""
+    if not isinstance(import_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", import_id):
+        raise ValueError("Identifiant d'import invalide")
+    digest = hashlib.sha256(("seamtech-import-mutation:" + import_id).encode("ascii")).digest()
+    if index is not None and index.is_postgres:
+        import psycopg2
+
+        # Connexion indépendante du pool : elle garde le verrou de session
+        # pendant les commits nécessaires à la révocation des anciens rapports.
+        cle = int.from_bytes(digest[:8], byteorder="big", signed=True)
+        connexion = psycopg2.connect(index.database_url, connect_timeout=10)
+        connexion.autocommit = True
+        verrouille = False
+        erreur_operation = False
+        try:
+            with connexion.cursor() as curseur:
+                curseur.execute("SELECT pg_try_advisory_lock(%s)", (cle,))
+                verrouille = bool(curseur.fetchone()[0])
+            if not verrouille:
+                raise ImportMutationEnCours("Une opération est déjà en cours sur cet import.")
+            try:
+                yield
+            except BaseException:
+                erreur_operation = True
+                raise
+        finally:
+            try:
+                if verrouille:
+                    try:
+                        with connexion.cursor() as curseur:
+                            curseur.execute("SELECT pg_advisory_unlock(%s)", (cle,))
+                            libere = bool(curseur.fetchone()[0])
+                        if not libere and not erreur_operation:
+                            raise ImportMutationIncertitude("État de la mutation incertain : verrou perdu.")
+                    except psycopg2.Error:
+                        logger.warning("Libération du verrou d'import impossible : connexion abandonnée")
+                        if not erreur_operation:
+                            raise ImportMutationIncertitude("État de la mutation incertain : verrou perdu.") from None
+            finally:
+                connexion.close()
+        return
+
+    if os.name != "posix":
+        raise OSError("Verrouillage des imports indisponible sur cette plateforme")
+    import fcntl
+
+    base = Path(os.path.abspath(config.database_path.parent.expanduser()))
+    with _racine_scan_confinee(base) as base_fd:
+        try:
+            os.mkdir("import-locks", mode=0o700, dir_fd=base_fd)
+        except FileExistsError:
+            pass
+        dossier_fd = os.open("import-locks", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=base_fd)
+        try:
+            fd = os.open(digest.hex(), os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600, dir_fd=dossier_fd)
+            try:
+                info = os.fstat(fd)
+                if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                    raise ValueError("Fichier de verrou d'import non sûr")
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    raise ImportMutationEnCours("Une opération est déjà en cours sur cet import.") from None
+                try:
+                    yield
+                finally:
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+            finally:
+                os.close(fd)
+        finally:
+            os.close(dossier_fd)
+
+
+def _serialiser_mutation_import(fonction):
+    @wraps(fonction)
+    def executer(index: SearchIndex, config: AppConfig, import_id: str, *args: Any, **kwargs: Any):
+        with _verrou_mutation_import(index, config, import_id):
+            return fonction(index, config, import_id, *args, **kwargs)
+    return executer
+
+
+@_serialiser_mutation_import
 def correct_import(
     index: SearchIndex, config: AppConfig, import_id: str, corrections: dict[str, Any]
 ) -> dict[str, Any]:
     payload = get_import(index, import_id)
     if payload is None:
         raise KeyError(f"Import not found: {import_id}")
+    if payload.get("publication_pending"):
+        raise PublicationIncertaine("Publication interrompue : réconciliation requise avant correction.")
     stored = payload.get("data") or {}
     if not stored:
         raise ValueError("This import has no extracted data to correct")
@@ -1437,38 +2049,191 @@ def correct_import(
         raise ValueError(f"Corrected data is invalid: {exc}") from exc
 
     report_dir = _report_dir_for(payload, config, import_id)
+    # Contrôle AVANT la génération : ces fonctions ouvrent leurs sorties en
+    # écriture et ne doivent jamais réutiliser une pièce d'origine.
+    source_path = payload.get("source_path")
+    racine_source = Path(source_path).resolve() if source_path else None
+    fichiers_sources = {Path(e["path"]).resolve() for e in payload.get("files", []) if e.get("path")}
+    sorties_possibles = [report_dir / f"technical-report.{ext}" for ext in ("pdf", "docx", "json")]
+    for sortie in sorties_possibles:
+        cible = sortie.resolve()
+        if cible in fichiers_sources or (racine_source is not None and cible.is_relative_to(racine_source)):
+            raise ValueError("Un rapport ne peut pas remplacer un fichier source")
+        try:
+            existant = sortie.lstat()
+        except FileNotFoundError:
+            pass
+        else:
+            if not stat.S_ISREG(existant.st_mode) or existant.st_nlink != 1:
+                raise ValueError("Le rapport existant doit être un fichier ordinaire non lié")
+    # Révoquer et persister les preuves AVANT toute écriture. Une panne pendant
+    # la régénération ne doit pas laisser une ancienne preuve valable en base.
+    payload["report_path"] = str(report_dir / "technical-report.pdf")
+    payload["report_docx_path"] = str(report_dir / "technical-report.docx")
+    manifeste_avant = construire_manifeste(payload)
+    for entree in manifeste_avant:
+        if entree["role"] in ("rapport_pdf", "rapport_docx"):
+            entree.update({"status": "pending", "verified": False, "key": None, "bucket": None,
+                           "verification": "non_verifie", "verification_detail": None, "sha256": None,
+                           "error": "rapport en cours de régénération"})
+    payload["artifacts"] = manifeste_avant
+    payload["report_generation_pending"] = True
+    # Les données corrigées restent distinctes des données déjà publiées tant
+    # que les nouveaux rapports n'ont pas été enregistrés avec leur preuve.
+    payload["pending_correction_data"] = data.model_dump()
+    if payload.get("status") != "cancelled":
+        payload["status"] = "needs_review"
+    payload["all_verified"] = False
+    payload["transport_verifie"] = False
+    payload["upload_status"] = "partial"
+    payload["cleanup"] = {"purge": False, "raison": "régénération des rapports en cours"}
+    payload["preservation"] = {
+        "upload_status": "partial", "integrite_prouvee": False,
+        "artefacts_total": len(manifeste_avant),
+        "artefacts_verifies": sum(_preuve_artefact_valide(e) for e in manifeste_avant),
+        "artefacts_non_verifies": [e["path"] for e in manifeste_avant if not _preuve_artefact_valide(e)],
+        "destination_configuree": any(e.get("key") for e in manifeste_avant),
+        "transport_verifie": False,
+    }
+    payload["inventaire"] = {
+        "total": len(manifeste_avant), "verifies": payload["preservation"]["artefacts_verifies"],
+        "manquants_localement": [], "renvoyes": 0,
+        "conserves": payload["preservation"]["artefacts_verifies"],
+    }
+    payload["files_uploaded"] = payload["preservation"]["artefacts_verifies"]
+    update_import(index, import_id, str(payload.get("status") or "needs_review"), payload)
     excel_summary = (
         ExcelSummary.model_validate(stored["excel_summary"]) if stored.get("excel_summary") else None
     )
-    report_pdf = generate_report(data, report_dir / "technical-report.pdf", excel_summary=excel_summary)
-    report_docx = generate_docx_report(data, report_dir / "technical-report.docx", excel_summary=excel_summary)
-
-    technical_pdf = Path(payload["technical_pdf"]) if payload.get("technical_pdf") else None
-    excel_file = Path(payload["excel_file"]) if payload.get("excel_file") else None
-    extra_files = [excel_file] if excel_file else []
-    folder = Path(payload.get("source_path", "")).name or "import"
-    upload_batch = (
-        upload_artifacts_to_storage(
-            folder_name=folder,
-            files_to_upload=[technical_pdf, report_pdf, report_docx] + extra_files,
-            config=config,
-            import_id=import_id,
-            source_root=payload.get("source_path") or None,
+    # Envoi depuis les fichiers temporaires ancrés au descripteur ; le chemin
+    # public du rapport peut être remplacé après publication.
+    with _generer_rapports_confines(data, config, import_id, report_dir, excel_summary) as sorties:
+        report_pdf, report_docx, copie_pdf, copie_docx = sorties
+        ancien_manifeste = {e["path"]: e for e in construire_manifeste(payload)}
+        chemins_rapports = {str(report_pdf), str(report_docx)}
+        if any(e["path"] in chemins_rapports for e in ancien_manifeste.values()
+               if e["role"] not in ("rapport_pdf", "rapport_docx")):
+            raise ValueError("Un rapport ne peut pas remplacer un fichier source")
+        folder = Path(payload.get("source_path", "")).name or "import"
+        chemins_logiques = {str(copie_pdf): report_pdf, str(copie_docx): report_docx}
+        attendues = {str(report_pdf): empreinte_sha256(copie_pdf), str(report_docx): empreinte_sha256(copie_docx)}
+        stockage = S3StorageClient(config=config)
+        if stockage.is_configured():
+            for rapport, role in ((report_pdf, "rapport_pdf"), (report_docx, "rapport_docx")):
+                chemin = str(rapport)
+                entree = ancien_manifeste.setdefault(chemin, {
+                    "path": chemin, "name": rapport.name, "role": role, "required": True,
+                    "status": "pending", "verified": False,
+                })
+                entree.update({
+                    "expected_sha256": attendues[chemin], "expected_bucket": stockage.bucket_name,
+                    "expected_key_base": artifact_object_key(
+                        import_id, chemin, source_root=payload.get("source_path") or None,
+                        prefix=stockage.prefix, lexical=True,
+                    ),
+                })
+            payload["artifacts"] = list(ancien_manifeste.values())
+            payload["publication_pending"] = True
+            # La révocation et l'intention sont durables avant l'envoi des
+            # nouveaux rapports ; un crash impose une réconciliation.
+            update_import(index, import_id, str(payload.get("status") or "needs_review"), payload)
+        upload_batch = upload_artifacts_to_storage(
+            folder_name=folder, files_to_upload=[copie_pdf, copie_docx], config=config,
+            import_id=import_id, source_root=payload.get("source_path") or None, logical_paths=chemins_logiques,
         )
-        if technical_pdf
-        else UploadBatch(status="not_applicable")
+        invalide = False
+        for artefact in upload_batch.artifacts:
+            # Compatibilité des doubles : le stockage réel renvoie déjà
+            # l'identité logique, et non le chemin de la copie temporaire.
+            if artefact.path in chemins_logiques:
+                logique = chemins_logiques[artefact.path]
+                artefact.path, artefact.name = str(logique), logique.name
+            if artefact.path not in chemins_rapports:
+                raise ValueError("Résultat de préservation hors des rapports")
+            if artefact.verified and (
+                not _preuve_identifiable(artefact.to_dict()) or artefact.sha256 != attendues[artefact.path]
+            ):
+                artefact.status, artefact.verified = "failed", False
+                artefact.error = "Preuve absente ou objet différent du rapport généré"
+                invalide = True
+        if invalide:
+            upload_batch.status = "partial" if any(a.status == "uploaded" for a in upload_batch.artifacts) else "failed"
+    resultats = {a.path: a for a in upload_batch.artifacts}
+    if set(resultats) - chemins_rapports:
+        raise ValueError("Résultat de préservation hors des rapports")
+    for rapport, role in ((report_pdf, "rapport_pdf"), (report_docx, "rapport_docx")):
+        chemin = str(rapport)
+        artefact = resultats.get(chemin)
+        # Les rapports viennent d'être régénérés : une preuve d'une version
+        # antérieure du même chemin ne prouve pas ces nouveaux octets.
+        ancien_manifeste[chemin] = {
+            "path": chemin, "name": rapport.name, "key": artefact.key if artefact else None,
+            "bucket": artefact.bucket if artefact else None,
+            "status": artefact.status if artefact else "pending",
+            "verified": bool(artefact and artefact.verified),
+            "verification": artefact.verification if artefact else "non_verifie",
+            "verification_detail": artefact.verification_detail if artefact else None,
+            "sha256": artefact.sha256 if artefact and artefact.verified else None,
+            "error": artefact.error if artefact else "nouveau rapport non préservé",
+            "required": True, "role": role, "uploaded_at": None,
+            **({
+                "expected_sha256": attendues[chemin], "expected_bucket": stockage.bucket_name,
+                "expected_key_base": artifact_object_key(
+                    import_id, chemin, source_root=payload.get("source_path") or None,
+                    prefix=stockage.prefix, lexical=True,
+                ),
+            } if not artefact or not _preuve_identifiable(artefact.to_dict()) else {}),
+        }
+    manifeste = [ancien_manifeste[chemin] for chemin in sorted(ancien_manifeste)]
+    destination_configuree = upload_batch.status not in ("not_configured", "not_applicable") or any(
+        e.get("key") for e in manifeste
     )
-    upload_status = upload_batch.status
-    status_by_path = {a.path: a.status for a in upload_batch.artifacts}
-    artifact_by_path = {a.path: a for a in upload_batch.artifacts}
-
+    upload_status, preuves_acquises = agreger_preservation(manifeste, destination_configuree=destination_configuree)
+    # Un résultat omis ou dupliqué n'établit pas qu'aucun effet distant n'a eu
+    # lieu. Conserver l'intention, même si toutes les preuves reçues sont bonnes.
+    resultat_incomplet = stockage.is_configured() and (
+        len(upload_batch.artifacts) != len(chemins_rapports) or set(resultats) != chemins_rapports
+    )
+    publication_pending = bool(resultat_incomplet or any(
+        e.get("key") and not _preuve_identifiable(e) for e in manifeste
+    ))
+    transport_verifie = not publication_pending and preuves_acquises and all(
+        _preuve_identifiable(e) for e in manifeste
+    )
+    # Le transport prouvé ne prouve ni le snapshot source ni la liaison des
+    # documents : la correction ne peut pas rétablir le succès global.
+    all_verified = False
+    if upload_status == "uploaded":
+        upload_status = "partial"
+    non_verifies = [e["path"] for e in manifeste if not _preuve_artefact_valide(e)]
     payload["data"] = data.model_dump()
+    payload.pop("pending_correction_data", None)
+    payload["report_generation_pending"] = False
     payload["report_path"] = str(report_pdf)
     payload["report_docx_path"] = str(report_docx)
     payload["upload_status"] = upload_status
-    payload["all_verified"] = upload_batch.all_verified
-    payload["artifacts"] = [a.to_dict() for a in upload_batch.artifacts]
-    payload["status"] = "completed" if status == "success" else "needs_review"
+    payload["all_verified"] = all_verified
+    payload["transport_verifie"] = transport_verifie
+    payload["publication_pending"] = publication_pending
+    payload["artifacts"] = manifeste
+    payload["inventaire"] = {
+        "total": len(manifeste), "verifies": len(manifeste) - len(non_verifies),
+        "manquants_localement": [], "renvoyes": len(resultats), "conserves": len(manifeste) - len(chemins_rapports),
+    }
+    payload["preservation"] = {
+        "upload_status": upload_status, "integrite_prouvee": all_verified,
+        "artefacts_total": len(manifeste), "artefacts_verifies": len(manifeste) - len(non_verifies),
+        "artefacts_non_verifies": non_verifies, "destination_configuree": destination_configuree,
+        "transport_verifie": transport_verifie,
+        "raison_integrite": "succès global suspendu : snapshot et liaison catalogue non prouvés",
+    }
+    payload["cleanup"] = {
+        "purge": False,
+        "raison": "purge automatique suspendue : identité actuelle du dossier non prouvée",
+        "artefacts_non_verifies": non_verifies,
+    }
+    payload["files_uploaded"] = len(manifeste) - len(non_verifies)
+    payload["status"] = "completed" if status == "success" and not destination_configuree else "needs_review"
     payload["warnings"] = (
         [w for w in payload.get("warnings", []) if "first PDF was selected" in w or "technical PDFs detected" in w]
         + warnings
@@ -1477,27 +2242,25 @@ def correct_import(
         if entry.get("path") in (payload.get("technical_pdf"), payload.get("excel_file")):
             entry["extraction_status"] = status
             entry["report_path"] = str(report_pdf)
-        # per-file upload status
-        p = entry.get("path")
-        if p in status_by_path:
-            entry["upload_status"] = status_by_path[p]
-            artifact = artifact_by_path.get(p)
-            if artifact:
-                entry["object_key"] = artifact.key
-                entry["object_bucket"] = artifact.bucket
-                entry["verified"] = artifact.verified
     update_import(index, import_id, payload["status"], payload)
     return payload
 
 
 def _report_dir_for(payload: dict[str, Any], config: AppConfig, import_id: str) -> Path:
-    existing = payload.get("report_path")
-    if existing:
-        try:
-            return Path(existing).parent
-        except (TypeError, ValueError):
-            pass
-    return config.database_path.parent / "reports" / import_id
+    # Un chemin persistant n'autorise pas à écrire arbitrairement sur le disque.
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", import_id):
+        raise ValueError("Identifiant d'import invalide")
+    attendu = Path(os.path.abspath(config.database_path.parent / "reports" / import_id))
+    for cle in ("report_path", "report_docx_path"):
+        existant = payload.get(cle)
+        if existant:
+            try:
+                parent = Path(os.path.abspath(Path(existant).expanduser())).parent
+            except (TypeError, ValueError, OSError):
+                raise ValueError("Chemin de rapport invalide") from None
+            if parent != attendu:
+                raise ValueError("Chemin de rapport hors du dossier de l'import")
+    return attendu
 
 
 def construire_manifeste(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1518,7 +2281,8 @@ def construire_manifeste(payload: dict[str, Any]) -> list[dict[str, Any]]:
     """
     entetes_connues = {
         "path", "name", "key", "bucket", "status", "verified", "verification",
-        "verification_detail", "error", "required", "role", "uploaded_at",
+        "verification_detail", "error", "required", "role", "uploaded_at", "sha256",
+        "expected_sha256", "expected_bucket", "expected_key_base",
     }
     # 1. Preuves acquises lors des envois PRÉCÉDENTS (jamais perdues).
     preuves: dict[str, dict[str, Any]] = {}
@@ -1531,22 +2295,30 @@ def construire_manifeste(payload: dict[str, Any]) -> list[dict[str, Any]]:
 
     manifeste: dict[str, dict[str, Any]] = {}
 
-    def _entree(chemin: str, nom: str, role: str, statut: str, cle_objet: str | None) -> dict[str, Any]:
+    def _entree(chemin: str, nom: str, role: str, statut: str, cle_objet: str | None,
+                bucket_objet: str | None = None) -> dict[str, Any]:
         precedente = preuves.get(chemin, {})
+        cle = cle_objet or precedente.get("key")
+        bucket = bucket_objet or precedente.get("bucket")
+        preuve_coherente = (cle == precedente.get("key") and bucket == precedente.get("bucket"))
         entree: dict[str, Any] = {
             "path": chemin,
             "name": nom,
-            "key": cle_objet or precedente.get("key"),
-            "bucket": precedente.get("bucket"),
+            "key": cle,
+            "bucket": bucket,
             "status": statut,
-            "verified": bool(precedente.get("verified")) and statut == "uploaded",
+            "verified": bool(precedente.get("verified")) and statut == "uploaded" and preuve_coherente and bool(cle) and bool(bucket),
             "verification": precedente.get("verification", "non_verifie"),
             "verification_detail": precedente.get("verification_detail"),
+            "sha256": precedente.get("sha256") if preuve_coherente and precedente.get("verified") else None,
             "error": precedente.get("error"),
             "required": True,
             "role": role,
             "uploaded_at": precedente.get("uploaded_at"),
         }
+        for cle_attendue in ("expected_sha256", "expected_bucket", "expected_key_base"):
+            if cle_attendue in precedente:
+                entree[cle_attendue] = precedente[cle_attendue]
         if entree["status"] == "uploaded" and not entree["verified"]:
             # « uploaded » sans preuve d'intégrité n'est PAS une préservation :
             # l'entrée reste à renvoyer (ou à re-vérifier), jamais comptée comme
@@ -1564,6 +2336,7 @@ def construire_manifeste(payload: dict[str, Any]) -> list[dict[str, Any]]:
             str(entree_fichier.get("category") or "piece"),
             str(entree_fichier.get("upload_status") or "pending"),
             entree_fichier.get("object_key"),
+            entree_fichier.get("object_bucket"),
         )
 
     # 2. Les rapports générés ne figurent pas dans ``files`` : sans cette
@@ -1577,7 +2350,7 @@ def construire_manifeste(payload: dict[str, Any]) -> list[dict[str, Any]]:
         if chemin in manifeste:
             continue
         manifeste[chemin] = _entree(
-            chemin, Path(chemin).name, role, "pending", None
+            chemin, Path(chemin).name, role, str(preuves.get(chemin, {}).get("status") or "pending"), None
         )
 
     # 3. Un rapport annoncé « envoyé » seulement parce que le drapeau global
@@ -1588,6 +2361,19 @@ def construire_manifeste(payload: dict[str, Any]) -> list[dict[str, Any]]:
             entree["verified"] = False
             entree["error"] = "clé d'objet absente : envoi non prouvé"
     return [manifeste[chemin] for chemin in sorted(manifeste)]
+
+
+def _preuve_artefact_valide(entree: dict[str, Any]) -> bool:
+    return bool(entree.get("status") == "uploaded" and entree.get("verified") and entree.get("key") and entree.get("bucket"))
+
+
+def _preuve_identifiable(entree: dict[str, Any]) -> bool:
+    sha = entree.get("sha256")
+    return bool(
+        _preuve_artefact_valide(entree)
+        and entree.get("verification") in {"relecture_sha256", "checksum_serveur"}
+        and isinstance(sha, str) and re.fullmatch(r"[0-9a-f]{64}", sha)
+    )
 
 
 def agreger_preservation(
@@ -1603,7 +2389,7 @@ def agreger_preservation(
         return ("not_applicable", False)
     if not destination_configuree:
         return ("not_configured", False)
-    verifies = [e for e in manifeste if e.get("status") == "uploaded" and e.get("verified") and e.get("key")]
+    verifies = [e for e in manifeste if _preuve_artefact_valide(e)]
     if len(verifies) == len(manifeste):
         return ("uploaded", True)
     if verifies:
@@ -1611,37 +2397,225 @@ def agreger_preservation(
     return ("failed", False)
 
 
-def retry_upload(index: SearchIndex, config: AppConfig, import_id: str) -> dict[str, Any]:
+def _identite_locale_reprise(
+    manifeste: list[dict[str, Any]], source: Path, report_dir: Path, limite: int,
+) -> bool:
+    """Comparer l'inventaire et les octets à la preuve stockée, sans suivre de liens.
+
+    Cette observation n'est pas un snapshot transactionnel : elle ne justifie
+    jamais de supprimer la source et peut devenir périmée dès son retour.
+    """
+    try:
+        with ExitStack() as pile:
+            racines: dict[Path, int] = {}
+            for entree in manifeste:
+                racine = report_dir if entree["role"] in ("rapport_pdf", "rapport_docx") else source
+                if racine not in racines:
+                    racines[racine] = pile.enter_context(_racine_scan_confinee(racine))
+            if source not in racines:
+                return False
+            attendus = {Path(e["path"]) for e in manifeste if e["role"] not in ("rapport_pdf", "rapport_docx")}
+            if set(_inventaire_scan_confine(racines[source], source)) != attendus:
+                return False
+            for entree in manifeste:
+                sha = entree.get("sha256")
+                if not isinstance(sha, str) or re.fullmatch(r"[0-9a-f]{64}", sha) is None:
+                    return False
+                racine = report_dir if entree["role"] in ("rapport_pdf", "rapport_docx") else source
+                with _copie_scan_confinee(racines[racine], racine, Path(entree["path"]), limite) as (copie, _):
+                    digest = hashlib.sha256()
+                    with copie.open("rb") as flux:
+                        for bloc in iter(lambda: flux.read(1024 * 1024), b""):
+                            digest.update(bloc)
+                    if digest.hexdigest() != sha:
+                        return False
+            if set(_inventaire_scan_confine(racines[source], source)) != attendus:
+                return False
+            for racine, fd in racines.items():
+                with _racine_scan_confinee(racine) as courant:
+                    avant, apres = os.fstat(fd), os.fstat(courant)
+                    if (avant.st_dev, avant.st_ino) != (apres.st_dev, apres.st_ino):
+                        return False
+            return True
+    except (OSError, ValueError, RuntimeError):
+        return False
+
+
+@_serialiser_mutation_import
+def retry_upload(
+    index: SearchIndex, config: AppConfig, import_id: str,
+    publication_context: Callable[[], AbstractContextManager[Any]] | None = None,
+) -> dict[str, Any]:
     payload = get_import(index, import_id)
     if payload is None:
         raise KeyError(f"Import not found: {import_id}")
+    if payload.get("publication_pending"):
+        raise PublicationIncertaine("Publication interrompue : réconciliation requise avant reprise.")
+    if payload.get("report_generation_pending"):
+        raise RapportsEnRegeneration("Régénération des rapports inachevée : relancer la correction avant l'envoi.")
 
     manifeste = construire_manifeste(payload)
-    a_renvoyer: list[Path] = []
+    empreintes_capture: dict[str, str] = {}
+    for fichier in payload.get("files") or []:
+        if not isinstance(fichier, dict) or fichier.get("source_sha256") is None:
+            continue  # anciens imports : aucune identité initiale n'est inventée
+        sha = fichier["source_sha256"]
+        chemin = str(fichier.get("path") or "")
+        if not chemin or not isinstance(sha, str) or re.fullmatch(r"[0-9a-f]{64}", sha) is None:
+            raise ValueError("Empreinte de capture invalide pour la reprise")
+        if chemin in empreintes_capture and empreintes_capture[chemin] != sha:
+            raise ValueError("Empreintes de capture contradictoires")
+        empreintes_capture[chemin] = sha
+    # Les chemins persistés ne sont pas des autorisations. Contrôler l'ensemble
+    # avant le premier envoi et ancrer ensuite chaque lecture à sa racine.
+    source_brute = Path(str(payload.get("source_path") or "")).expanduser()
+    if not source_brute.is_absolute() or ".." in source_brute.parts:
+        raise ValueError("Racine de source invalide pour la reprise")
+    source = Path(os.path.abspath(source_brute))
+    racines = [Path(os.path.abspath(Path(r).expanduser())) for r in config.root_paths]
+    racines += [Path(os.path.abspath(staging_root(config))), Path(os.path.abspath(quarantine_root(config)))]
+    if not any(source == racine or source.is_relative_to(racine) for racine in racines):
+        raise PermissionError("Source hors racines autorisées pour la reprise")
+    report_dir = _report_dir_for(payload, config, import_id)
+    try:
+        rapport_resolu = report_dir.resolve()
+    except (OSError, RuntimeError):
+        raise ValueError("Répertoire de rapports invalide pour la reprise") from None
+    if report_dir.is_relative_to(source) or rapport_resolu.is_relative_to(source):
+        raise ValueError("Le répertoire des rapports ne peut pas être dans l'arbre source")
+    a_renvoyer: list[tuple[Path, Path]] = []
     absents: list[str] = []
+    sources_modifiees: list[str] = []
+    rapports_modifies: list[str] = []
     for entree in manifeste:
-        if entree["status"] == "uploaded" and entree["verified"] and entree["key"]:
-            continue  # preuve acquise : on ne renvoie pas, on ne réécrit pas
         chemin = Path(entree["path"])
-        if chemin.exists() and chemin.is_file():
-            a_renvoyer.append(chemin)
+        if not chemin.is_absolute() or ".." in chemin.parts:
+            raise ValueError("Chemin d'artefact invalide pour la reprise")
+        chemin = Path(os.path.abspath(chemin))
+        if entree["role"] in ("rapport_pdf", "rapport_docx"):
+            if chemin.parent != report_dir or chemin.name not in {"technical-report.pdf", "technical-report.docx", "technical-report.json"}:
+                raise ValueError("Rapport hors du dossier de l'import")
+            racine = report_dir
         else:
-            # Fichier requis INTROUVABLE localement : échec EXPLICITE (jamais
-            # un silence, jamais un « uploaded » de complaisance).
-            absents.append(entree["path"])
+            if not chemin.is_relative_to(source) or chemin == source:
+                raise ValueError("Fichier hors de la source de l'import")
+            racine = source
+        if not _preuve_artefact_valide(entree):
+            a_renvoyer.append((chemin, racine))
 
-    folder = Path(payload.get("source_path", "")).name or "import"
-    upload_batch = (
-        upload_artifacts_to_storage(
-            folder_name=folder,
-            files_to_upload=a_renvoyer,
-            config=config,
-            import_id=import_id,
-            source_root=payload.get("source_path") or None,
-        )
-        if a_renvoyer
-        else UploadBatch(status="not_applicable")
-    )
+    stockage = S3StorageClient(config=config)
+    if a_renvoyer and stockage.is_configured():
+        # Même pour une reprise, journaliser l'intention avant tout effet S3.
+        # Le manifeste conserve les preuves précédemment acquises.
+        for entree in manifeste:
+            if not _preuve_artefact_valide(entree):
+                empreinte = empreintes_capture.get(entree["path"]) or entree.get("expected_sha256")
+                if empreinte is not None and (
+                    not isinstance(empreinte, str) or re.fullmatch(r"[0-9a-f]{64}", empreinte) is None
+                ):
+                    raise ValueError("Empreinte d'artefact invalide pour la reprise")
+                entree.update({
+                    "expected_sha256": empreinte, "expected_bucket": stockage.bucket_name,
+                    "expected_key_base": artifact_object_key(
+                        import_id, entree["path"], source_root=source, prefix=stockage.prefix, lexical=True,
+                    ),
+                })
+        payload["publication_pending"] = True
+        payload["all_verified"] = False
+        payload["artifacts"] = manifeste
+        contexte = (publication_context() if publication_context is not None
+                    else index.scan_transaction() if index is not None else nullcontext())
+        with contexte:
+            update_import(index, import_id, str(payload.get("status") or "needs_review"), payload)
+
+    attendues_manifeste = {e["path"]: e.get("expected_sha256") for e in manifeste}
+    folder = source.name or "import"
+    artefacts_renvoyes = []
+    statuts_lots = []
+    resultat_incomplet = False
+    with ExitStack() as racines_epinglees:
+        descripteurs: dict[Path, int | None] = {}
+        for racine in dict.fromkeys(racine for _chemin, racine in a_renvoyer):
+            try:
+                descripteurs[racine] = racines_epinglees.enter_context(_racine_scan_confinee(racine))
+            except FileNotFoundError:
+                descripteurs[racine] = None
+
+        def verifier_racine(racine: Path, fd: int) -> None:
+            with _racine_scan_confinee(racine) as courant:
+                avant, apres = os.fstat(fd), os.fstat(courant)
+                if (avant.st_dev, avant.st_ino) != (apres.st_dev, apres.st_ino):
+                    raise ValueError("Racine de reprise remplacée pendant l'envoi")
+
+        for chemin, racine in a_renvoyer:
+            racine_fd = descripteurs[racine]
+            if racine_fd is None:
+                absents.append(str(chemin))
+                continue
+            verifier_racine(racine, racine_fd)
+            with ExitStack() as pile:
+                metadata: dict[str, Any] = {}
+                try:
+                    copie, _taille = pile.enter_context(_copie_scan_confinee(
+                        racine_fd, racine, chemin, config.max_file_size_bytes, metadata=metadata,
+                    ))
+                except FileNotFoundError:
+                    absents.append(str(chemin))
+                    continue
+                verifier_racine(racine, racine_fd)
+                attendue = empreintes_capture.get(str(chemin)) or attendues_manifeste.get(str(chemin))
+                if attendue is not None and metadata["sha256"] != attendue:
+                    # Ne pas envoyer une autre version sous l'identité de la
+                    # source analysée ou du rapport initialement produit.
+                    (sources_modifiees if racine == source else rapports_modifies).append(str(chemin))
+                    continue
+                lot = upload_artifacts_to_storage(
+                    folder_name=folder,
+                    files_to_upload=[copie],
+                    config=config,
+                    import_id=import_id,
+                    source_root=source,
+                    logical_paths={str(copie): chemin},
+                )
+                verifier_racine(racine, racine_fd)
+                # Compatibilité des doubles de tests ; l'implémentation de
+                # stockage rend déjà le chemin logique, jamais la copie.
+                invalide = False
+                for artefact in lot.artifacts:
+                    if artefact.path == str(copie):
+                        artefact.path, artefact.name = str(chemin), chemin.name
+                    if artefact.verified and (
+                        artefact.path != str(chemin) or not _preuve_identifiable(artefact.to_dict())
+                        or artefact.sha256 != metadata["sha256"]
+                    ):
+                        artefact.status = "failed"
+                        artefact.verified = False
+                        artefact.error = "Preuve absente ou objet différent de la copie de reprise"
+                        invalide = True
+                if invalide:
+                    lot.status = "partial" if any(a.status == "uploaded" for a in lot.artifacts) else "failed"
+                if stockage.is_configured() and (
+                    len(lot.artifacts) != 1 or any(a.path != str(chemin) for a in lot.artifacts)
+                ):
+                    # La fonction appelée a pu écrire avant d'omettre son
+                    # résultat : ne pas assimiler cette absence à un préflight.
+                    resultat_incomplet = True
+                artefacts_renvoyes.extend(lot.artifacts)
+                statuts_lots.append(lot.status)
+        for racine, fd in descripteurs.items():
+            if fd is not None:
+                verifier_racine(racine, fd)
+    if not statuts_lots:
+        statut_lot = "not_applicable"
+    elif all(statut == "not_configured" for statut in statuts_lots):
+        statut_lot = "not_configured"
+    elif all(statut == "uploaded" for statut in statuts_lots):
+        statut_lot = "uploaded"
+    elif any(statut in ("uploaded", "partial") for statut in statuts_lots):
+        statut_lot = "partial"
+    else:
+        statut_lot = "failed"
+    upload_batch = UploadBatch(status=statut_lot, artifacts=artefacts_renvoyes)
     resultats = {a.path: a.to_dict() for a in upload_batch.artifacts}
 
     # Fusion : le manifeste reste COMPLET. Les entrées déjà vérifiées gardent
@@ -1661,6 +2635,7 @@ def retry_upload(index: SearchIndex, config: AppConfig, import_id: str) -> dict[
                 "verified": bool(resultat.get("verified")),
                 "verification": resultat.get("verification", "non_verifie"),
                 "verification_detail": resultat.get("verification_detail"),
+                "sha256": resultat.get("sha256") if resultat.get("verified") else None,
                 "error": resultat.get("error"),
             }
         )
@@ -1674,14 +2649,37 @@ def retry_upload(index: SearchIndex, config: AppConfig, import_id: str) -> dict[
                     "error": "fichier source absent localement : copie durable non prouvée",
                 }
             )
+    for chemin in sources_modifiees + rapports_modifies:
+        cible = par_chemin.get(chemin)
+        if cible is not None:
+            cible.update({
+                "status": "failed", "verified": False, "sha256": None,
+                "error": "artefact différent de la capture initiale : reprise suspendue",
+            })
 
     manifeste = [par_chemin[chemin] for chemin in sorted(par_chemin)]
-    destination_configuree = upload_batch.status not in ("not_configured", "not_applicable") or any(
-        e.get("key") for e in manifeste
+    destination_configuree = (
+        S3StorageClient(config=config).is_configured()
+        or upload_batch.status not in ("not_configured", "not_applicable")
+        or any(e.get("key") for e in manifeste)
     )
     upload_status, all_verified = agreger_preservation(
         manifeste, destination_configuree=destination_configuree
     )
+    transport_verifie = not resultat_incomplet and all_verified and all(
+        _preuve_identifiable(e) and (
+            e["path"] not in empreintes_capture or e.get("sha256") == empreintes_capture[e["path"]]
+        ) for e in manifeste
+    )
+    identite_locale_observee = transport_verifie and _identite_locale_reprise(
+        manifeste, source, report_dir, config.max_file_size_bytes
+    )
+    # Ni l'observation ponctuelle ni les preuves d'objets ne garantissent
+    # un snapshot durable ou une liaison transactionnelle au catalogue.
+    # Suspendre le succès global jusqu'à ce que ces garanties existent.
+    all_verified = False
+    if upload_status == "uploaded":
+        upload_status = "partial"
     if not destination_configuree:
         # Aucune destination : les preuves antérieures, s'il y en a, font foi ;
         # sinon on l'annonce tel quel au lieu d'un « uploaded » vide de sens.
@@ -1689,13 +2687,21 @@ def retry_upload(index: SearchIndex, config: AppConfig, import_id: str) -> dict[
 
     payload["upload_status"] = upload_status
     payload["all_verified"] = all_verified
+    payload["transport_verifie"] = transport_verifie
+    payload["publication_pending"] = bool(resultat_incomplet or any(
+        e.get("key") and not _preuve_identifiable(e) for e in manifeste
+    ))
+    if payload["publication_pending"] and payload.get("status") != "cancelled":
+        payload["status"] = "needs_review"
     payload["artifacts"] = manifeste
     payload["inventaire"] = {
         "total": len(manifeste),
-        "verifies": sum(1 for e in manifeste if e.get("verified") and e.get("key")),
+        "verifies": sum(1 for e in manifeste if _preuve_artefact_valide(e)),
         "manquants_localement": absents,
+        "sources_modifiees": sources_modifiees,
+        "rapports_modifies": rapports_modifies,
         "renvoyes": len(upload_batch.artifacts),
-        "conserves": len(manifeste) - len(resultats) - len(absents),
+        "conserves": len(manifeste) - len(resultats) - len(absents) - len(sources_modifiees) - len(rapports_modifies),
     }
     payload["preservation"] = {
         "upload_status": upload_status,
@@ -1703,24 +2709,17 @@ def retry_upload(index: SearchIndex, config: AppConfig, import_id: str) -> dict[
         "artefacts_total": len(manifeste),
         "artefacts_verifies": payload["inventaire"]["verifies"],
         "artefacts_non_verifies": [
-            e["path"] for e in manifeste if not (e.get("verified") and e.get("key"))
+            e["path"] for e in manifeste if not _preuve_artefact_valide(e)
         ],
         "destination_configuree": destination_configuree,
+        "identite_locale_observee": identite_locale_observee,
+        "transport_verifie": transport_verifie,
+        "raison_integrite": "succès global suspendu : snapshot et liaison catalogue non prouvés",
     }
-    # Éligibilité à la purge locale : elle découle de l'agrégat COMPLET, jamais
-    # du succès du sous-ensemble renvoyé.
+    # La preuve historique ne couvre pas les mutations locales ultérieures.
     payload["cleanup"] = {
-        "purge": bool(all_verified and getattr(config, "delete_local_after_upload", False)),
-        "raison": (
-            "inventaire entier vérifié et purge demandée par l'exploitant"
-            if all_verified and getattr(config, "delete_local_after_upload", False)
-            else (
-                "inventaire entier vérifié, mais purge locale non demandée "
-                "(SEAMTECH_DELETE_LOCAL_AFTER_UPLOAD désactivé)"
-                if all_verified
-                else "préservation incomplète : la copie locale reste nécessaire"
-            )
-        ),
+        "purge": False,
+        "raison": "purge automatique suspendue : identité actuelle du dossier non prouvée",
         "artefacts_non_verifies": payload["preservation"]["artefacts_non_verifies"],
     }
 
@@ -1731,16 +2730,54 @@ def retry_upload(index: SearchIndex, config: AppConfig, import_id: str) -> dict[
         if cible is None:
             continue
         entree_fichier["upload_status"] = cible["status"]
-        entree_fichier["object_key"] = cible.get("key")
-        entree_fichier["object_bucket"] = cible.get("bucket")
-        entree_fichier["verified"] = bool(cible.get("verified"))
-        if cible.get("status") == "uploaded" and cible.get("verified"):
-            entree_fichier["uploaded_at"] = entree_fichier.get("uploaded_at") or time.time()
+        preuve_valide = _preuve_artefact_valide(cible)
+        entree_fichier["object_key"] = cible.get("key") if preuve_valide else None
+        entree_fichier["object_bucket"] = cible.get("bucket") if preuve_valide else None
+        entree_fichier["verified"] = preuve_valide
+        entree_fichier["uploaded_at"] = (entree_fichier.get("uploaded_at") or time.time()) if preuve_valide else None
     payload["files_uploaded"] = sum(
-        1 for e in manifeste if e.get("status") == "uploaded" and e.get("verified")
+        1 for e in manifeste if _preuve_artefact_valide(e)
     )
 
-    update_import(index, import_id, payload.get("status", "needs_review"), payload)
+    # Ne lier que la preuve identifiable des octets initiaux, et uniquement à
+    # la ligne qui porte encore cette identité. Le chemin seul, une taille ou
+    # content_hash (ambigu entre texte et octets) ne sont pas des preuves.
+    correspondances: list[tuple[str, str, str, str, float]] = []
+    fichiers_par_cle: dict[str, dict[str, Any]] = {}
+    preuves_sans_identite = 0
+    for fichier in payload.get("files") or []:
+        if not isinstance(fichier, dict):
+            continue
+        fichier["catalogue_lie"] = False
+        chemin = str(fichier.get("path") or "")
+        preuve = par_chemin.get(chemin)
+        if not preuve or not _preuve_identifiable(preuve):
+            continue
+        sha = empreintes_capture.get(chemin)
+        if not sha or preuve.get("sha256") != sha:
+            preuves_sans_identite += 1
+            continue
+        cle_chemin = os.path.normcase(os.path.abspath(chemin))
+        if cle_chemin in fichiers_par_cle:
+            raise ValueError("Fichier dupliqué dans le manifeste de reprise")
+        fichiers_par_cle[cle_chemin] = fichier
+        correspondances.append((cle_chemin, sha, str(preuve["key"]), str(preuve["bucket"]), time.time()))
+
+    contexte = (publication_context() if publication_context is not None
+                else index.scan_transaction() if index is not None else nullcontext())
+    with contexte:
+        # Un ancien manifeste sans identité n'a aucune liaison à effectuer.
+        # Ne pas appeler le catalogue lorsqu'il n'y a aucune correspondance.
+        liees = index.lier_objets_capture(correspondances) if correspondances else set()
+        for cle_chemin in liees:
+            fichiers_par_cle[cle_chemin]["catalogue_lie"] = True
+        conflits = preuves_sans_identite + len(correspondances) - len(liees)
+        payload["liaison_catalogue"] = {
+            "preuves_identifiables": len(correspondances), "reliees": len(liees), "conflits": conflits,
+        }
+        if conflits and payload.get("status") != "cancelled":
+            payload["status"] = "needs_review"
+        update_import(index, import_id, payload.get("status", "needs_review"), payload)
     return payload
 
 

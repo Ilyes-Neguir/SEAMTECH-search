@@ -3,9 +3,9 @@ import { APPROBATEUR, LECTURE, signIn, signInWith } from "./helpers"
 
 /**
  * Lot 5 (Fonction B) — confiance de réutilisation dans le navigateur, contre
- * PostgreSQL réel. La base live sème la vraie fiche 7792-SO (spi) et cinq
- * voiles de référence serrées du même modèle/type (LOT5-POP-*, valeurs
- * ±1 %) : la candidate 7792-SO doit donc obtenir un score « compatible »
+ * PostgreSQL réel. La base live sème une candidate synthétique et cinq
+ * voiles de référence serrées du même modèle/type (LOT5-ISO-*, valeurs
+ * ±1 %) : la candidate doit obtenir un score « compatible »
  * élevé, AVEC sa justification (médiane/IQR par dimension, sources).
  * L'approbateur évalue et persiste ; la lecture consulte sans pouvoir
  * évaluer ; le compte de secours est refusé.
@@ -26,9 +26,9 @@ test.describe("Lot 5 — confiance de réutilisation", () => {
     "Lot 5 navigateur : requiert SEAMTECH_E2E_DATABASE_URL (PostgreSQL et comptes nominatifs)",
   )
 
-  test("approbateur : évalue 7792-SO, score compatible justifié et persisté", async ({ page }) => {
+  test("approbateur : évalue la candidate, score compatible justifié et persisté", async ({ page }) => {
     await signInWith(page, APPROBATEUR)
-    const idCandidate = await idExtractionParCode(page, "7792")
+    const idCandidate = await idExtractionParCode(page, "LOT5-CANDIDATE")
     await page.getByRole("link", { name: "Confiance" }).click()
     await page.waitForURL(/\/confiance$/, { timeout: 20000 })
     await page.goto(`/confiance?id=${idCandidate}`)
@@ -52,7 +52,7 @@ test.describe("Lot 5 — confiance de réutilisation", () => {
 
   test("lecture : consulte population et historique, aucun bouton d'évaluation", async ({ page }) => {
     await signInWith(page, LECTURE)
-    const idCandidate = await idExtractionParCode(page, "7792")
+    const idCandidate = await idExtractionParCode(page, "LOT5-CANDIDATE")
     await page.goto(`/confiance?id=${idCandidate}`)
     await expect(page.getByTestId("confiance-population")).toBeVisible({ timeout: 30000 })
     await expect(page.getByRole("button", { name: "Évaluer la confiance" })).toHaveCount(0)

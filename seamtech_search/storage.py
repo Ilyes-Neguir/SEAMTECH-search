@@ -25,6 +25,7 @@ import base64
 import hashlib
 import logging
 import mimetypes
+import os
 import threading
 import time
 import urllib.parse
@@ -49,6 +50,18 @@ class StorageError(Exception):
     """Raised when an object storage operation fails."""
 
 
+class StoragePreflightError(StorageError):
+    """Aucune écriture d'objet n'a été tentée par ce client."""
+
+
+class StorageWriteUncertain(StorageError):
+    """Une écriture a été tentée ; sa réponse peut avoir été perdue."""
+
+    def __init__(self, key: str) -> None:
+        super().__init__("Upload failed; remote state may be ambiguous")
+        self.key = key  # la clé n'est jamais incluse dans le message d'erreur
+
+
 @dataclass
 class UploadedArtifact:
     """One file that was (or was to be) stored in object storage."""
@@ -67,9 +80,10 @@ class UploadedArtifact:
     verification: str = "non_verifie"
     verification_detail: str | None = None
     error: str | None = None
+    sha256: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        resultat = {
             "path": self.path,
             "name": self.name,
             "key": self.key,
@@ -80,6 +94,9 @@ class UploadedArtifact:
             "verification_detail": self.verification_detail,
             "error": self.error,
         }
+        if self.sha256 is not None:
+            resultat["sha256"] = self.sha256
+        return resultat
 
 
 @dataclass
@@ -92,7 +109,7 @@ class UploadBatch:
     @property
     def all_verified(self) -> bool:
         return bool(self.artifacts) and all(
-            a.status == "uploaded" and a.verified for a in self.artifacts
+            a.status == "uploaded" and a.verified and bool(a.key) and bool(a.bucket) for a in self.artifacts
         )
 
     def to_dict(self) -> list[dict[str, Any]]:
@@ -108,6 +125,7 @@ def artifact_object_key(
     *,
     source_root: Path | str | None = None,
     prefix: str = "",
+    lexical: bool = False,
 ) -> str:
     """Build the storage key of one import artifact: ``{prefix}/{import_id}/{sha256(relpath)}/{filename}``.
 
@@ -120,14 +138,18 @@ def artifact_object_key(
     documents is gone.
     """
     path = Path(file_path)
+    # Lorsqu'une copie épinglée est envoyée, le chemin logique ne doit pas
+    # être rouvert/résolu : il a pu être substitué depuis la prise de copie.
+    identite = Path(os.path.abspath(path)) if lexical else path.resolve()
     digest_input: str | None = None
     if source_root is not None:
         try:
-            digest_input = path.resolve().relative_to(Path(source_root).resolve()).as_posix()
+            racine = Path(os.path.abspath(source_root)) if lexical else Path(source_root).resolve()
+            digest_input = identite.relative_to(racine).as_posix()
         except (ValueError, OSError):
             digest_input = None
     if digest_input is None:
-        digest_input = str(path.resolve())
+        digest_input = str(identite)
     digest = hashlib.sha256(digest_input.encode("utf-8")).hexdigest()
     key = f"{import_id}/{digest}/{path.name}"
     return f"{prefix.rstrip('/')}/{key}" if prefix else key
@@ -149,11 +171,13 @@ METADATA_TAILLE = "seamtech-taille"
 METADATA_CHEMIN = "seamtech-chemin"
 
 
-def chemin_relatif_origine(chemin: Path, racine: Path | str | None = None) -> str:
+def chemin_relatif_origine(chemin: Path, racine: Path | str | None = None, *, lexical: bool = False) -> str:
     """Chemin d'origine d'un artefact : relatif à ``racine`` si possible, sinon son nom."""
     if racine is not None:
         try:
-            return Path(chemin).resolve().relative_to(Path(racine).resolve()).as_posix()
+            fichier = Path(os.path.abspath(chemin)) if lexical else Path(chemin).resolve()
+            base = Path(os.path.abspath(racine)) if lexical else Path(racine).resolve()
+            return fichier.relative_to(base).as_posix()
         except (ValueError, OSError):
             pass
     return Path(chemin).name
@@ -181,6 +205,7 @@ class ResultatVerification:
     integrite_prouvee: bool
     methode: str
     detail: str
+    sha256: str | None = None
 
 
 def empreinte_sha256(chemin: Path) -> str:
@@ -217,7 +242,7 @@ def _versioning_failure(exc: Exception) -> dict[str, Any]:
         }
     return {
         "versioning_available": None,
-        "versioning_detail": f"bucket versioning state could not be determined: {exc}",
+        "versioning_detail": "bucket versioning state could not be determined",
     }
 
 
@@ -300,7 +325,12 @@ class S3StorageClient:
         settings: dict[str, Any] = {
             "signature_version": "s3v4",
             "s3": {"addressing_style": "path" if self.force_path_style else "auto"},
-            "retries": {"max_attempts": 3, "mode": "standard"},
+            # Un PUT dont la réponse a été perdue peut déjà avoir abouti ;
+            # un réessai automatique écraserait un écrivain concurrent. Le
+            # client partagé ne réessaie donc aucune opération automatiquement.
+            # Cela réduit aussi la résilience des lectures et ne résout pas la
+            # course entre vérification de clé et première écriture.
+            "retries": {"total_max_attempts": 1, "mode": "standard"},
         }
         if probe_timeout is not None:
             settings["connect_timeout"] = probe_timeout
@@ -353,18 +383,22 @@ class S3StorageClient:
         try:
             self._s3 = self._make_client()
             return self._s3
+        except StorageError:
+            raise
         except Exception as exc:
-            logger.error("Failed to initialize boto3 S3 client: %s", exc)
-            raise StorageError(f"S3 initialization failed: {exc}") from exc
+            logger.error("Failed to initialize boto3 S3 client (%s)", type(exc).__name__)
+            raise StorageError("S3 initialization failed") from None
 
     def _get_probe_client(self):
         """A short-timeout client, so a health probe cannot hang on a dead endpoint."""
         if self._probe_s3 is None:
             try:
                 self._probe_s3 = self._make_client(VERSIONING_PROBE_TIMEOUT_SECONDS)
+            except StorageError:
+                raise
             except Exception as exc:
-                logger.error("Failed to initialize S3 probe client: %s", exc)
-                raise StorageError(f"S3 initialization failed: {exc}") from exc
+                logger.error("Failed to initialize S3 probe client (%s)", type(exc).__name__)
+                raise StorageError("S3 initialization failed") from None
         return self._probe_s3
 
     def _apply_prefix(self, remote_key: str) -> str:
@@ -388,16 +422,16 @@ class S3StorageClient:
             except ClientError as err:
                 error_code = str(err.response.get("Error", {}).get("Code", ""))
                 if error_code in ("404", "NoSuchBucket", "NotFound"):
-                    logger.info("Bucket %s does not exist. Creating it...", self.bucket_name)
+                    logger.info("S3 bucket does not exist; creating it")
                     create_kwargs: dict[str, Any] = {"Bucket": self.bucket_name}
                     if self.region_name and self.region_name not in ("us-east-1", "auto"):
                         create_kwargs["CreateBucketConfiguration"] = {"LocationConstraint": self.region_name}
                     s3.create_bucket(**create_kwargs)
-                    logger.info("Bucket %s created successfully.", self.bucket_name)
+                    logger.info("S3 bucket created")
                 else:
                     raise
         except Exception as exc:
-            logger.warning("Could not verify or create bucket %s: %s", self.bucket_name, exc)
+            logger.warning("Could not verify or create S3 bucket (%s)", type(exc).__name__)
 
         # Always attempted once per client: versioning is what makes an overwrite
         # recoverable, and the outcome is reported by versioning_status().
@@ -425,7 +459,7 @@ class S3StorageClient:
         etat = self._read_versioning()
         if etat.get("versioning_available") is True:
             self._versioning_state = etat
-            logger.info("Object versioning already enabled on bucket %s", self.bucket_name)
+            logger.info("S3 object versioning already enabled")
             return
         try:
             s3 = self._get_client()
@@ -434,15 +468,10 @@ class S3StorageClient:
                 "versioning_available": True,
                 "versioning_detail": "bucket versioning is enabled",
             }
-            logger.info("Object versioning enabled on bucket %s", self.bucket_name)
+            logger.info("S3 object versioning enabled")
         except Exception as exc:
             self._versioning_state = _versioning_failure(exc)
-            logger.warning(
-                "Object versioning unavailable on bucket %s (%s); overwrite protection relies on never "
-                "reusing an existing object key",
-                self.bucket_name,
-                exc,
-            )
+            logger.warning("Object versioning unavailable (%s)", type(exc).__name__)
         self._versioning_checked_at = time.monotonic()
 
     def versioning_status(self, *, refresh: bool = False) -> dict[str, Any]:
@@ -473,15 +502,14 @@ class S3StorageClient:
         try:
             response = self._get_probe_client().get_bucket_versioning(Bucket=self.bucket_name)
         except Exception as exc:
-            logger.warning("Could not read versioning state of bucket %s: %s", self.bucket_name, exc)
+            logger.warning("Could not read S3 versioning state (%s)", type(exc).__name__)
             return _versioning_failure(exc)
-        status = str(response.get("Status") or "")
+        status = response.get("Status")
         if status == "Enabled":
             return {"versioning_available": True, "versioning_detail": "bucket versioning is enabled"}
-        return {
-            "versioning_available": False,
-            "versioning_detail": f"bucket versioning is not enabled (status: {status or 'unset'})",
-        }
+        if status is None or status in ("", "Suspended"):
+            return {"versioning_available": False, "versioning_detail": "bucket versioning is not enabled"}
+        return {"versioning_available": None, "versioning_detail": "bucket versioning state is unrecognized"}
 
     def object_key_taken(self, remote_key: str) -> bool:
         """Read-only check: is this exact key already occupied?
@@ -503,30 +531,22 @@ class S3StorageClient:
             code = str(err.response.get("Error", {}).get("Code", ""))
             if code in ("404", "NoSuchKey", "NotFound"):
                 return False
-            raise StorageError(
-                f"Could not check whether {key} exists in bucket {self.bucket_name}: {err}"
-            ) from err
-        except Exception as exc:
-            raise StorageError(
-                f"Could not check whether {key} exists in bucket {self.bucket_name}: {exc}"
-            ) from exc
+            raise StorageError("Could not check S3 object occupancy") from None
+        except Exception:
+            raise StorageError("Could not check S3 object occupancy") from None
 
     def first_free_key(self, base_key: str, max_candidates: int = 50) -> str:
         """Return ``base_key`` or the first ``-2``/``-3``/… variant that is unused.
 
-        This is what stops an upload from destroying an object that is already
-        stored: an occupied key is skipped, never overwritten.
+        Occupied keys observed by HEAD are skipped. HEAD followed by upload is
+        not atomic and cannot prevent a concurrent writer from using that key.
         """
         for index, candidate in enumerate([base_key, *(_suffixed_key(base_key, i) for i in range(2, max_candidates + 2))]):
             if not self.object_key_taken(candidate):
                 if index:
-                    logger.warning(
-                        "Object key %s is already in use; storing this upload under %s instead",
-                        base_key,
-                        candidate,
-                    )
+                    logger.warning("S3 object key already in use; using an alternative")
                 return candidate
-        raise StorageError(f"Could not find a free object key for {base_key} after {max_candidates} attempts")
+        raise StorageError(f"Could not find a free object key after {max_candidates} attempts")
 
     def object_exists(self, remote_key: str) -> bool:
         """Confirm an object really is in the bucket.
@@ -546,10 +566,10 @@ class S3StorageClient:
             code = str(err.response.get("Error", {}).get("Code", ""))
             if code in ("404", "NoSuchKey", "NotFound"):
                 return False
-            logger.warning("Could not confirm object %s in bucket %s: %s", key, self.bucket_name, err)
+            logger.warning("Could not confirm S3 object (%s)", type(err).__name__)
             return False
         except Exception as exc:
-            logger.warning("Could not confirm object %s in bucket %s: %s", key, self.bucket_name, exc)
+            logger.warning("Could not confirm S3 object (%s)", type(exc).__name__)
             return False
 
     def upload_file(
@@ -563,56 +583,43 @@ class S3StorageClient:
     ) -> str:
         """Upload a local file to S3/MinIO and return the key it was stored under.
 
-        With ``avoid_overwrite`` (the default) an occupied key is never reused:
-        the object already there is left untouched and this upload lands on the
-        next free ``-2``/``-3``/… key. The caller must use the *returned* key,
-        which is the only thing that is guaranteed to point at this upload.
+        With ``avoid_overwrite`` (the default), occupied keys observed before
+        upload are skipped. This check is not atomic with the write and does
+        not protect against concurrent writers. Callers must use the returned key.
         """
         local = Path(local_path)
-        if not local.exists() or not local.is_file():
-            raise StorageError(f"Local file does not exist: {local}")
-
-        s3 = self._get_client()
-        self.ensure_bucket_exists()
-
-        key = self._apply_prefix(remote_key or local.name)
-        if avoid_overwrite:
-            key = self.first_free_key(key)
-
-        mime = content_type or mimetypes.guess_type(local.name)[0] or "application/octet-stream"
-        taille = local.stat().st_size
-        empreinte = empreinte_sha256(local)
-        metadonnees = {METADATA_SHA256: empreinte, METADATA_TAILLE: str(taille)}
-        if relative_path:
-            metadonnees[METADATA_CHEMIN] = urllib.parse.quote(relative_path, safe="/")
-        extra_args = {"ContentType": mime, "Metadata": metadonnees}
-
-        def _envoyer(arguments: dict[str, Any]) -> None:
-            s3.upload_file(Filename=str(local), Bucket=self.bucket_name, Key=key, ExtraArgs=arguments)
+        try:
+            if not local.exists() or not local.is_file():
+                raise StoragePreflightError("Local file does not exist or is not a regular file")
+            s3 = self._get_client()
+            self.ensure_bucket_exists()
+            key = self._apply_prefix(remote_key or local.name)
+            if avoid_overwrite:
+                key = self.first_free_key(key)
+            mime = content_type or mimetypes.guess_type(local.name)[0] or "application/octet-stream"
+            taille = local.stat().st_size
+            empreinte = empreinte_sha256(local)
+            metadonnees = {METADATA_SHA256: empreinte, METADATA_TAILLE: str(taille)}
+            if relative_path:
+                metadonnees[METADATA_CHEMIN] = urllib.parse.quote(relative_path, safe="/")
+            extra_args = {"ContentType": mime, "Metadata": metadonnees}
+        except StoragePreflightError:
+            raise
+        except Exception as exc:
+            logger.error("S3 upload preparation failed (%s)", type(exc).__name__)
+            raise StoragePreflightError("Upload preparation failed before object write") from None
 
         try:
-            # ChecksumAlgorithm demande au FOURNISSEUR de recalculer l'empreinte
-            # sur les octets qu'il reçoit et de refuser l'envoi en cas
-            # d'incohérence : une corruption pendant le transfert est détectée
-            # à l'ingestion, pas six mois plus tard. Tous les fournisseurs
-            # compatibles ne l'implémentent pas (et certaines versions de
-            # botocore non plus) : dans ce cas on réessaie sans, et la
-            # vérification de relecture ci-dessous reste la preuve.
-            try:
-                _envoyer({**extra_args, "ChecksumAlgorithm": "SHA256"})
-            except Exception as exc:
-                logger.warning(
-                    "Envoi sans checksum d'ingestion pour %s (%s) — conséquence : "
-                    "l'intégrité sera établie par relecture de l'objet.",
-                    local.name,
-                    exc,
-                )
-                _envoyer(extra_args)
-            logger.info("Uploaded %s to S3 bucket %s with key %s", local.name, self.bucket_name, key)
+            # Ne pas réémettre un PUT sans checksum après un échec : une réponse
+            # perdue peut cacher une écriture réussie ou un écrivain concurrent.
+            # Les fournisseurs sans checksum d'ingestion sont refusés.
+            s3.upload_file(Filename=str(local), Bucket=self.bucket_name, Key=key,
+                           ExtraArgs={**extra_args, "ChecksumAlgorithm": "SHA256"})
+            logger.info("Uploaded S3 object")
             return key
         except Exception as exc:
-            logger.error("Failed to upload %s to S3: %s", local, exc)
-            raise StorageError(f"Upload failed: {exc}") from exc
+            logger.error("Failed to upload S3 object (%s)", type(exc).__name__)
+            raise StorageWriteUncertain(key) from None
 
     def upload_bytes(
         self,
@@ -625,8 +632,8 @@ class S3StorageClient:
     ) -> str:
         """Upload in-memory bytes directly to S3/MinIO without writing to local disk.
 
-        Refuses to overwrite an existing object in exactly the same way as
-        :meth:`upload_file`, and returns the key the bytes were stored under.
+        Checks occupied keys as in :meth:`upload_file`; the check is not atomic
+        against concurrent writers. Returns the key the bytes were stored under.
         """
         s3 = self._get_client()
         self.ensure_bucket_exists()
@@ -647,29 +654,28 @@ class S3StorageClient:
                     METADATA_TAILLE: str(len(data)),
                 },
             }
-            try:
-                s3.put_object(**parametres, ChecksumAlgorithm="SHA256")
-            except Exception:
-                s3.put_object(**parametres)
+            s3.put_object(**parametres, ChecksumAlgorithm="SHA256")
             return key
         except Exception as exc:
-            logger.error("Failed to upload bytes to S3 key %s: %s", key, exc)
-            raise StorageError(f"Upload bytes failed: {exc}") from exc
+            logger.error("Failed to upload S3 bytes (%s)", type(exc).__name__)
+            raise StorageError("Upload bytes failed; remote state may be ambiguous") from None
 
-    def download_file(self, remote_key: str, destination_path: Path) -> Path:
-        """Download an object from S3 to a local scratch destination."""
+    def download_file(self, remote_key: str, destination_path: Path, *, version_id: str | None = None) -> Path:
+        """Download an object, optionally pinning an S3 version, to a scratch destination."""
         s3 = self._get_client()
         destination_path.parent.mkdir(parents=True, exist_ok=True)
         try:
+            extra = {"ExtraArgs": {"VersionId": version_id}} if version_id is not None else {}
             s3.download_file(
                 Bucket=self.bucket_name,
                 Key=remote_key,
                 Filename=str(destination_path),
+                **extra,
             )
             return destination_path
         except Exception as exc:
-            logger.error("Failed to download S3 key %s: %s", remote_key, exc)
-            raise StorageError(f"Download failed: {exc}") from exc
+            logger.error("Failed to download S3 object (%s)", type(exc).__name__)
+            raise StorageError("Download failed") from None
 
     def get_presigned_url(
         self, remote_key: str, expiration_seconds: int = 3600, *, endpoint_url: str | None = None
@@ -682,19 +688,19 @@ class S3StorageClient:
         ce qui ne doit JAMAIS être remis à un navigateur (nom d'hôte non
         résolvable depuis un autre poste).
         """
-        if endpoint_url and endpoint_url != self.endpoint_url:
-            s3 = self._client_pour_endpoint(endpoint_url)
-        else:
-            s3 = self._get_client()
         try:
+            if endpoint_url and endpoint_url != self.endpoint_url:
+                s3 = self._client_pour_endpoint(endpoint_url)
+            else:
+                s3 = self._get_client()
             return s3.generate_presigned_url(
                 ClientMethod="get_object",
                 Params={"Bucket": self.bucket_name, "Key": remote_key},
                 ExpiresIn=expiration_seconds,
             )
         except Exception as exc:
-            logger.error("Failed to generate presigned URL for %s: %s", remote_key, exc)
-            raise StorageError(f"Presigned URL generation failed: {exc}") from exc
+            logger.error("Failed to generate presigned S3 URL (%s)", type(exc).__name__)
+            raise StorageError("Presigned URL generation failed") from None
 
     def head_object(self, remote_key: str) -> dict[str, Any]:
         """Return object metadata for an authenticated API HEAD request."""
@@ -702,8 +708,16 @@ class S3StorageClient:
         try:
             return s3.head_object(Bucket=self.bucket_name, Key=remote_key)
         except Exception as exc:
-            logger.warning("Could not read metadata for S3 key %s: %s", remote_key, exc)
-            raise StorageError(f"Object metadata lookup failed: {exc}") from exc
+            logger.warning("Could not read S3 object metadata (%s)", type(exc).__name__)
+            raise StorageError("Object metadata lookup failed") from None
+
+    def head_object_avec_checksum(self, remote_key: str) -> dict[str, Any]:
+        """Demande explicitement les checksums calculés par le fournisseur."""
+        try:
+            return self._get_client().head_object(Bucket=self.bucket_name, Key=remote_key, ChecksumMode="ENABLED")
+        except Exception as exc:
+            logger.warning("Could not read S3 object checksum (%s)", type(exc).__name__)
+            raise StorageError("Object checksum lookup failed") from None
 
     def get_object(self, remote_key: str, *, range_header: str | None = None) -> dict[str, Any]:
         """Ouvre un objet, éventuellement sur une plage d'octets.
@@ -720,8 +734,8 @@ class S3StorageClient:
         try:
             return self._get_client().get_object(**params)
         except Exception as exc:
-            logger.warning("Could not stream S3 key %s: %s", remote_key, exc)
-            raise StorageError(f"Object stream lookup failed: {exc}") from exc
+            logger.warning("Could not stream S3 object (%s)", type(exc).__name__)
+            raise StorageError("Object stream lookup failed") from None
 
     def verifier_integrite(
         self,
@@ -753,7 +767,7 @@ class S3StorageClient:
         """
         local = Path(chemin_local)
         try:
-            entete = self.head_object(remote_key)
+            entete = self.head_object(remote_key) if relire else self.head_object_avec_checksum(remote_key)
         except StorageError as exc:
             return ResultatVerification(False, "echec", f"objet illisible: {exc}")
 
@@ -769,12 +783,24 @@ class S3StorageClient:
         if relire:
             try:
                 corps = self.get_object(remote_key)["Body"]
-                digest = hashlib.sha256()
-                for bloc in iter(lambda: corps.read(1024 * 1024), b""):
-                    digest.update(bloc)
-                empreinte_distante = digest.hexdigest()
-            except Exception as exc:
-                return ResultatVerification(False, "echec", f"relecture impossible: {exc}")
+                try:
+                    digest = hashlib.sha256()
+                    taille_lue = 0
+                    while True:
+                        bloc = corps.read(min(1024 * 1024, taille_locale - taille_lue + 1))
+                        if not bloc:
+                            break
+                        taille_lue += len(bloc)
+                        if taille_lue > taille_locale:
+                            return ResultatVerification(False, "echec", "taille du corps supérieure à la taille locale")
+                        digest.update(bloc)
+                    if taille_lue != taille_locale:
+                        return ResultatVerification(False, "echec", "taille du corps inférieure à la taille locale")
+                    empreinte_distante = digest.hexdigest()
+                finally:
+                    corps.close()
+            except Exception:
+                return ResultatVerification(False, "echec", "relecture impossible")
             if empreinte_distante != empreinte_locale:
                 return ResultatVerification(
                     False,
@@ -782,7 +808,7 @@ class S3StorageClient:
                     f"relecture: sha256 different (local={empreinte_locale[:12]} distant={empreinte_distante[:12]})",
                 )
             return ResultatVerification(
-                True, "relecture_sha256", "octets relus et empreinte recalculée sur l'objet stocké"
+                True, "relecture_sha256", "octets relus et empreinte recalculée sur l'objet stocké", empreinte_distante
             )
 
         checksum = entete.get("ChecksumSHA256")
@@ -794,7 +820,7 @@ class S3StorageClient:
                     False, "echec", f"checksum serveur different: {str(checksum)[:16]}…"
                 )
             return ResultatVerification(
-                True, "checksum_serveur", "checksum du fournisseur sur l'objet entier (FULL_OBJECT)"
+                True, "checksum_serveur", "checksum du fournisseur sur l'objet entier (FULL_OBJECT)", empreinte_locale
             )
 
         metadonnees = {str(cle).lower(): str(valeur) for cle, valeur in (entete.get("Metadata") or {}).items()}
@@ -814,13 +840,13 @@ class S3StorageClient:
         )
 
     def delete_file(self, remote_key: str) -> bool:
-        """Delete an object from S3."""
+        """Request deletion; False means an unknown outcome, not preserved data."""
         s3 = self._get_client()
         try:
             s3.delete_object(Bucket=self.bucket_name, Key=remote_key)
             return True
         except Exception as exc:
-            logger.warning("Failed to delete S3 key %s: %s", remote_key, exc)
+            logger.warning("Failed to delete S3 object (%s)", type(exc).__name__)
             return False
 
     def list_keys(self, prefix: str) -> list[str]:
@@ -837,8 +863,8 @@ class S3StorageClient:
                     cles.append(objet["Key"])
             return sorted(cles)
         except Exception as exc:
-            logger.error("Failed to list S3 keys under %s: %s", prefixe_complet, exc)
-            raise StorageError(f"List failed: {exc}") from exc
+            logger.error("Failed to list S3 keys (%s)", type(exc).__name__)
+            raise StorageError("List failed") from None
 
 
 def upload_artifacts_to_storage(
@@ -847,6 +873,7 @@ def upload_artifacts_to_storage(
     config: AppConfig,
     import_id: str | None = None,
     source_root: Path | str | None = None,
+    logical_paths: dict[str, Path] | None = None,
 ) -> UploadBatch:
     """Upload an import's files and report what really landed in storage.
 
@@ -888,18 +915,21 @@ def upload_artifacts_to_storage(
         namespace = import_id or folder_name or "import"
         artifacts: list[UploadedArtifact] = []
         for file_path in valid_files:
+            logical_path = (logical_paths or {}).get(str(file_path), file_path)
             base_key = artifact_object_key(
                 namespace,
-                file_path,
+                logical_path,
                 source_root=source_root,
                 prefix=s3_client.prefix,
+                lexical=logical_paths is not None,
             )
             artifact = UploadedArtifact(
-                path=str(file_path),
-                name=file_path.name,
+                path=str(logical_path),
+                name=logical_path.name,
                 key=base_key,
                 bucket=s3_client.bucket_name,
             )
+            envoi_termine = False
             try:
                 # The client refuses to reuse an occupied key and tells us which
                 # key it really used; verifying that exact key is what authorises
@@ -907,9 +937,10 @@ def upload_artifacts_to_storage(
                 key = s3_client.upload_file(
                     file_path,
                     remote_key=base_key,
-                    relative_path=chemin_relatif_origine(file_path, source_root),
+                    relative_path=chemin_relatif_origine(logical_path, source_root, lexical=logical_paths is not None),
                 )
                 artifact.key = key
+                envoi_termine = True
                 artifact.status = "uploaded"
                 # Vérification des OCTETS stockés (relecture + empreinte
                 # recalculée, ou checksum du fournisseur sur objet entier).
@@ -921,6 +952,7 @@ def upload_artifacts_to_storage(
                 artifact.verified = resultat.integrite_prouvee
                 artifact.verification = resultat.methode
                 artifact.verification_detail = resultat.detail
+                artifact.sha256 = resultat.sha256 if resultat.integrite_prouvee else None
                 if not resultat.integrite_prouvee and resultat.methode == "echec":
                     artifact.status = "failed"
                     artifact.error = f"objet {key} non conforme après envoi ({resultat.detail})"
@@ -931,9 +963,23 @@ def upload_artifacts_to_storage(
                     artifact.error = (
                         f"intégrité non prouvée ({resultat.methode}) — copie locale conservée"
                     )
+            except StoragePreflightError as exc:
+                # Aucune écriture d'objet n'a été tentée : la clé de base est
+                # seulement une prévision et ne doit pas devenir ambiguë.
+                artifact.status = "failed"
+                if not envoi_termine:
+                    artifact.key = None
+                artifact.error = f"Échec de la préservation ({type(exc).__name__})"
+            except StorageWriteUncertain as exc:
+                # La clé sélectionnée peut être suffixée ; la conserver même
+                # lorsque la réponse de l'écriture est perdue.
+                artifact.status = "failed"
+                if not envoi_termine:
+                    artifact.key = exc.key
+                artifact.error = f"Échec de la préservation ({type(exc).__name__})"
             except Exception as exc:
                 artifact.status = "failed"
-                artifact.error = str(exc)
+                artifact.error = f"Échec de la préservation ({type(exc).__name__})"
             artifacts.append(artifact)
 
         if not artifacts:

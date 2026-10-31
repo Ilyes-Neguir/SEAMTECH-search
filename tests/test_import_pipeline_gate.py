@@ -72,7 +72,7 @@ def test_scan_and_import_branches(tmp_path: Path):
     idx.initialize(rebuild=True)
 
     # scan_folder with permission error - mock _walk_files
-    with patch("seamtech_search.import_pipeline._walk_files", side_effect=PermissionError("perm")):
+    with patch("seamtech_search.import_pipeline._inventaire_scan_confine", side_effect=PermissionError("perm")):
         try:
             scan_folder(tmp_path, cfg)
             assert False, "should have raised"

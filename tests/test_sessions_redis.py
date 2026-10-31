@@ -54,7 +54,7 @@ pytestmark = [pytest.mark.postgres, pytest.mark.redis_queue]
 
 
 @pytest.fixture()
-def base_sessions() -> Iterator[dict[str, Any]]:
+def base_sessions(redis_isole: str) -> Iterator[dict[str, Any]]:
     """PostgreSQL jetable migrée + vrai Redis + un compte de test isolé."""
     if not URL_PG or not URL_REDIS:
         pytest.skip(
@@ -69,7 +69,7 @@ def base_sessions() -> Iterator[dict[str, Any]]:
     index.initialize()
     index.run_migrations()
 
-    registre = RegistreSessionsRedis(URL_REDIS)
+    registre = RegistreSessionsRedis(redis_isole)
     try:
         assert registre.ping(), "Redis injoignable : SEAMTECH_TEST_REDIS_URL est-il correct ?"
     except SessionsRedisIndisponible as erreur:  # pragma: no cover - dépend de l'environnement CI

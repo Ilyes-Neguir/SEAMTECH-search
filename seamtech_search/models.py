@@ -34,6 +34,12 @@ class Document:
     object_bucket: str | None = None
     uploaded_at: float | None = None
     upload_status: str = "pending"
+    # Une capture confinée conserve son identité logique même si le chemin
+    # source est remplacé entre la lecture et l'indexation.
+    lexical_path_key: bool = False
+    # Empreinte des octets capturés, distincte du hash de texte historique.
+    # None signifie « identité inconnue », notamment pour les anciens scans.
+    source_sha256: str | None = None
 
     def __post_init__(self) -> None:
         if not self.is_dir and self.extraction_status == "not_applicable":
@@ -53,6 +59,8 @@ class Document:
 
     @property
     def path_key(self) -> str:
+        if self.lexical_path_key:
+            return os.path.normcase(os.path.abspath(self.path))
         return os.path.normcase(str(self.path.resolve()))
 
     @property

@@ -43,12 +43,15 @@ pytestmark = pytest.mark.redis_queue
 
 
 @pytest.fixture(autouse=True)
-def _redis_requis() -> None:
+def _redis_requis(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
     """Saute au niveau du TEST (jamais du module) : un module sauté apparaît
     comme « skipped » dans le rapport JUnit même quand ``-m`` l'a désélectionné,
     ce qui ferait échouer les garde-fous CI « 0 test sauté »."""
     if not REDIS_URL:
         pytest.skip("Set SEAMTECH_TEST_REDIS_URL (ex. redis://:motdepasse@127.0.0.1:6379/1)")
+    monkeypatch.setitem(globals(), "REDIS_URL", request.getfixturevalue("redis_isole"))
+    monkeypatch.delenv("SEAMTECH_REDIS_URL", raising=False)
+    monkeypatch.delenv("SEAMTECH_DATABASE_URL", raising=False)
 
 
 def _vider(magasin: RedisStore) -> None:
@@ -72,8 +75,8 @@ def _vider(magasin: RedisStore) -> None:
 
 
 @pytest.fixture()
-def store() -> object:
-    magasin = RedisStore(redis_url=REDIS_URL)
+def store(redis_isole: str) -> object:
+    magasin = RedisStore(redis_url=redis_isole)
     assert magasin.ping(), "Redis injoignable : SEAMTECH_TEST_REDIS_URL est-il correct ?"
     _vider(magasin)
     yield magasin
@@ -626,7 +629,7 @@ def test_reconcilier_file_charge_absente_et_file_illisible(
     create_job(index, "job-file-ko", str(source), durability="durable")
     with index.connect() as connexion:
         connexion.execute("UPDATE import_jobs SET status='running' WHERE id='job-file-ko'")
-    monkeypatch.setattr(store, "enqueue_task", lambda *a, **k: False)
+    monkeypatch.setattr(store, "enqueue_task_si_absent", lambda *a, **k: False)
 
     resume = reconcilier_file(index, store, max_tentatives=3)
     assert resume["relanced_from_db"] == [] and resume["failed_from_db"] == [], resume
@@ -851,10 +854,12 @@ def test_traitement_de_lot_annule_et_partiellement_en_echec(
     index = _index(config)
     create_job(index, "lot-1001", "", durability="durable")
     create_job(index, "lot-1002", "", durability="durable")
+    assert store.revendiquer_tache("imports", "lot-1001", "worker-lot")
+    assert store.revendiquer_tache("imports", "lot-1002", "worker-lot")
 
     annulations: list[int] = []
 
-    def faux_annuler_lot(index_: object, id_lot: int) -> dict:
+    def faux_annuler_lot(index_: object, id_lot: int, **kwargs: object) -> dict:
         annulations.append(id_lot)
         return {"id_lot": id_lot, "statut": "annule"}
 
@@ -893,6 +898,7 @@ def test_traitement_de_lot_impossible_est_visible_en_base(
     config = _config(tmp_path)
     index = _index(config)
     create_job(index, "lot-1003", "", durability="durable")
+    assert store.revendiquer_tache("imports", "lot-1003", "worker-lot")
 
     def refus(*args: object, **kwargs: object) -> dict:
         raise module_depot.DepotImpossible("gabarit manquant")
@@ -904,5 +910,55 @@ def test_traitement_de_lot_impossible_est_visible_en_base(
     assert resultat["status"] == "failed", resultat
     assert "gabarit manquant" in resultat["error"], resultat
     job = get_job(index, "lot-1003")
-    assert job is not None and job["status"] == "failed", job
+    # L'échec est visible, mais reste récupérable jusqu'à la transition
+    # atomique retry/deadletter exécutée par la boucle du worker.
+    assert job is not None and job["status"] == "running", job
+    assert job["stage"] == "failed" and "gabarit manquant" in job["error"]
+    assert job["claimed_by"] == "worker-lot"
+    index.close()
+
+
+def test_crash_entre_ack_et_retry_ne_perd_pas_livraison(
+    store: RedisStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from seamtech_search import worker
+
+    config = _config(tmp_path, max_task_attempts=2)
+    index = _index(config)
+    source = tmp_path / 'absent'
+    create_job(index, 'job-crash-transition', str(source), durability='durable')
+    assert store.enqueue_task('imports', {'job_id': 'job-crash-transition', 'source_path': str(source)})
+    monkeypatch.setattr(worker, 'process_import_task', lambda *args, **kwargs: {'status': 'failed'})
+    ack_reel = store.ack_task
+    def crash_apres_ack(*args, **kwargs):
+        assert ack_reel(*args, **kwargs)
+        raise KeyboardInterrupt('crash après ack')
+    monkeypatch.setattr(store, 'ack_task', crash_apres_ack)
+    try:
+        worker.worker_loop(config, index, store, worker_id='worker-crash', run_once=True)
+    except KeyboardInterrupt:
+        pass
+    profondeur = store.profondeur_file('imports')
+    assert sum(profondeur[k] for k in ('queue', 'processing', 'retry', 'deadletter')) == 1
+    index.close()
+
+
+def test_redelivrance_job_termine_ne_reactive_pas_le_registre(
+    store: RedisStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from seamtech_search import worker
+    from seamtech_search.jobs import update_job
+    config = _config(tmp_path)
+    index = _index(config)
+    source = _dossier_source(tmp_path, 'rejeu-termine')
+    create_job(index, 'job-termine-rejoue', str(source), durability='durable')
+    update_job(index, 'job-termine-rejoue', status='completed', result={'preuve': 'termine'})
+    assert store.enqueue_task('imports', {'job_id': 'job-termine-rejoue', 'source_path': str(source)})
+    appels = []
+    monkeypatch.setattr(worker, 'process_import_task', lambda *a, **kw: appels.append(True) or {'status': 'failed'})
+    worker.worker_loop(config, index, store, worker_id='worker-rejeu', run_once=True)
+    job = get_job(index, 'job-termine-rejoue')
+    assert job['status'] == 'completed' and job['result'] == {'preuve': 'termine'}
+    assert not appels
+    assert store.profondeur_file('imports')['processing'] == 0
     index.close()

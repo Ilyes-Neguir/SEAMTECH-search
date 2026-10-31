@@ -1,0 +1,12 @@
+{
+  "name": "seamtech-s3rver-test-fixture",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Émulateur HTTP S3 pour les seuls tests ; ne qualifie pas MinIO ou R2.",
+  "dependencies": {
+    "s3rver": "2.2.9"
+  },
+  "overrides": {
+    "xml2js": "0.6.2"
+  }
+}

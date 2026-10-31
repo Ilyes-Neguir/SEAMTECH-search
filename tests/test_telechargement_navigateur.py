@@ -116,7 +116,7 @@ def _semer_import(
         "report_path": str(chemin_rapport) if chemin_rapport else None,
         "report_docx_path": str(chemin_rapport) if chemin_rapport else None,
         "technical_pdf": str(tmp_path / "fiche.pdf"),
-        "artifacts": [{"name": nom_artefact, "key": cle}],
+        "artifacts": [{"path": str(chemin_rapport) if chemin_rapport else "", "name": nom_artefact, "key": cle, "bucket": "seamtech-documents", "status": "uploaded", "verified": True}],
         "files": [],
     }
     with index.connect() as conn:
@@ -154,8 +154,8 @@ def test_artefact_servi_par_l_api_sans_endpoint_public(
     assert "minio" not in json.dumps(dict(reponse.headers)).lower(), (
         "l'endpoint interne ne doit jamais apparaître dans une réponse navigateur"
     )
-    # Le cache local a été reconstitué au passage : le stockage reste la source.
-    assert (tmp_path / "reports" / "absent.pdf").read_bytes() == CONTENU
+    # Aucun téléchargement ne réécrit un chemin local potentiellement substitué.
+    assert not (tmp_path / "reports" / "absent.pdf").exists()
 
 
 def test_artefact_local_servi_directement_sans_redirection(tmp_path: Path, usine_app) -> None:
