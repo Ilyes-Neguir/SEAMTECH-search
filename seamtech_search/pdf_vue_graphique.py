@@ -11,7 +11,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from pdfminer.layout import LTChar, LTCurve, LTFigure, LTImage
+from pdfminer.layout import LTCurve, LTFigure, LTImage
 from pdfminer.pdffont import PDFType3Font
 from pdfminer.pdfinterp import PDFPageInterpreter
 from pdfminer.utils import apply_matrix_pt
@@ -127,7 +127,7 @@ def _au_moins_visible(rectangle: Any, vue: tuple[float, float, float, float]) ->
     return recouvrement_x > 0 or recouvrement_y > 0
 
 
-def _objet_visible_sous_clip(objet: Any, vue: tuple[float, float, float, float]) -> bool:
+def _objet_visible_sous_clip(objet: Any, clip: _Clip) -> bool:
     """Contenu extractible : entièrement visible. Géométrie : au moins visible.
 
     Un glyphe ou une image partiellement coupés sont refusés : le lecteur
@@ -137,14 +137,313 @@ def _objet_visible_sous_clip(objet: Any, vue: tuple[float, float, float, float])
     indisponible ; un tracé entièrement hors clip reste refusé car il ne
     produirait que des arêtes fictives.
     """
-    if isinstance(objet, (LTChar, LTImage)):
-        return _contenu_dans(objet.bbox, vue)
     if isinstance(objet, LTCurve):
-        return _au_moins_visible(objet.bbox, vue)
-    return _contenu_dans(objet.bbox, vue)
+        return _visible_dans_clip(objet.bbox, clip)
+    return _contenu_dans_clip(objet.bbox, clip)
 
 
 _CLIP_INDETERMINE = object()
+_MAX_SOMMETS = 4096
+_ECHANTILLONS_COURBE = 8
+
+
+def _bezier_cubique(
+    p0: tuple[float, float], p1: tuple[float, float], p2: tuple[float, float], p3: tuple[float, float], t: float
+) -> tuple[float, float]:
+    u = 1 - t
+    return (
+        u * u * u * p0[0] + 3 * u * u * t * p1[0] + 3 * u * t * t * p2[0] + t * t * t * p3[0],
+        u * u * u * p0[1] + 3 * u * u * t * p1[1] + 3 * u * t * t * p2[1] + t * t * t * p3[1],
+    )
+
+
+def _bezier_quadratique(
+    p0: tuple[float, float], p1: tuple[float, float], p2: tuple[float, float], t: float
+) -> tuple[float, float]:
+    u = 1 - t
+    return (
+        u * u * p0[0] + 2 * u * t * p1[0] + t * t * p2[0],
+        u * u * p0[1] + 2 * u * t * p1[1] + t * t * p2[1],
+    )
+
+
+def _distance_point_droite(p: tuple[float, float], a: tuple[float, float], b: tuple[float, float]) -> float:
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    if dx == 0 and dy == 0:
+        return math.hypot(p[0] - a[0], p[1] - a[1])
+    return abs(dx * (a[1] - p[1]) - dy * (a[0] - p[0])) / math.hypot(dx, dy)
+
+
+def _ecart_courbe(
+    p0: tuple[float, float],
+    p1: tuple[float, float],
+    p2: tuple[float, float],
+    p3: tuple[float, float],
+    operateur: str,
+    polygone: list[tuple[float, float]],
+) -> float:
+    """Écart maximal prouvé entre la courbe et le polygone échantillonné.
+
+    Chaque sous-intervalle est redécoupé par de Casteljau : la sous-courbe
+    reste dans l'enveloppe convexe de ses points de contrôle, donc son écart à
+    la corde (l'arête du polygone) est borné par l'écart de ces points
+    (Nairn, Peters, Lutterkort). La borne porte sur l'arête réellement tracée,
+    pas sur la corde entière : elle décroît comme le carré du nombre
+    d'échantillons au lieu de rester aussi grossière.
+    """
+    if operateur == "v":
+        controle = [p0, p2, p3]
+        debut = len(polygone)
+    elif operateur == "y":
+        controle = [p0, p1, p3]
+        debut = len(polygone)
+    else:
+        controle = [p0, p1, p2, p3]
+        debut = len(polygone)
+    if debut < 1:
+        return math.inf
+    ecart = 0.0
+    for i in range(_ECHANTILLONS_COURBE):
+        t0 = i / _ECHANTILLONS_COURBE
+        t1 = (i + 1) / _ECHANTILLONS_COURBE
+        sous = _sous_controle(controle, t0, t1)
+        a = _evaluer_bezier(controle, t0)
+        b = _evaluer_bezier(controle, t1)
+        for point in sous:
+            ecart = max(ecart, _distance_point_droite(point, a, b))
+    return ecart * (0.5 if len(controle) == 3 else 0.75)
+
+
+def _evaluer_bezier(controle: list[tuple[float, float]], t: float) -> tuple[float, float]:
+    if len(controle) == 3:
+        return _bezier_quadratique(controle[0], controle[1], controle[2], t)
+    return _bezier_cubique(controle[0], controle[1], controle[2], controle[3], t)
+
+
+def _sous_controle(controle: list[tuple[float, float]], t0: float, t1: float) -> list[tuple[float, float]]:
+    """Points de contrôle de la sous-courbe sur [t0, t1] (de Casteljau)."""
+    if t1 <= t0:
+        return list(controle)
+
+    def derivee(t: float) -> tuple[float, float]:
+        if len(controle) == 3:
+            p0, p1, p2 = controle
+            return (
+                2 * ((1 - t) * (p1[0] - p0[0]) + t * (p2[0] - p1[0])),
+                2 * ((1 - t) * (p1[1] - p0[1]) + t * (p2[1] - p1[1])),
+            )
+        p0, p1, p2, p3 = controle
+        return (
+            3 * ((1 - t) ** 2 * (p1[0] - p0[0]) + 2 * (1 - t) * t * (p2[0] - p1[0]) + t * t * (p3[0] - p2[0])),
+            3 * ((1 - t) ** 2 * (p1[1] - p0[1]) + 2 * (1 - t) * t * (p2[1] - p1[1]) + t * t * (p3[1] - p2[1])),
+        )
+
+    debut = _evaluer_bezier(controle, t0)
+    fin = _evaluer_bezier(controle, t1)
+    d0 = derivee(t0)
+    d1 = derivee(t1)
+    largeur = (t1 - t0) / (len(controle) - 1)
+    if len(controle) == 3:
+        return [
+            debut,
+            (debut[0] + largeur * d0[0], debut[1] + largeur * d0[1]),
+            (fin[0] - largeur * d1[0], fin[1] - largeur * d1[1]),
+            fin,
+        ]
+    return [
+        debut,
+        (debut[0] + largeur * d0[0], debut[1] + largeur * d0[1]),
+        (fin[0] - largeur * d1[0], fin[1] - largeur * d1[1]),
+        fin,
+    ]
+
+
+class _Clip:
+    """Région de clipping modélisée : rectangle axe-aligné ou polygone.
+
+    ``marge`` est l'écart maximal, prouvé, entre le polygone échantillonné et la
+    courbe réelle (borne de Nairn/Peters/Lutterkort). Toute boîte doit rester
+    dans le polygone après avoir été élargie de cette marge : la conclusion
+    reste donc valable pour la courbe elle-même, pas seulement pour l'échantillon.
+    """
+
+    __slots__ = ("points", "marge", "boite", "rectangulaire")
+
+    def __init__(self, points: list[tuple[float, float]], marge: float = 0.0, *, rectangulaire: bool = False) -> None:
+        if len(points) < 3 or len(points) > _MAX_SOMMETS:
+            raise VueGraphiqueNonVerifiee("Clipping non modélisable")
+        if any(not math.isfinite(x) or not math.isfinite(y) for x, y in points):
+            raise VueGraphiqueNonVerifiee("Clipping non fini")
+        self.points = tuple(points)
+        self.marge = marge if math.isfinite(marge) and marge > 0 else 0.0
+        self.rectangulaire = rectangulaire
+        xs = [p[0] for p in points]
+        ys = [p[1] for p in points]
+        self.boite = (min(xs), min(ys), max(xs), max(ys))
+
+
+def _rectangle_en_clip(boite: tuple[float, float, float, float]) -> _Clip:
+    x0, y0, x1, y1 = boite
+    return _Clip([(x0, y0), (x1, y0), (x1, y1), (x0, y1)], 0.0, rectangulaire=True)
+
+
+def _point_dans_polygone(point: tuple[float, float], points: tuple[tuple[float, float], ...]) -> bool:
+    x, y = point
+    dedans = False
+    for (ax, ay), (bx, by) in zip(points, points[1:] + points[:1]):
+        if (ay > y) != (by > y):
+            intersection = ax + (y - ay) * (bx - ax) / (by - ay)
+            if x < intersection:
+                dedans = not dedans
+    return dedans
+
+
+def _produit_vectoriel(ax: float, ay: float, bx: float, by: float, cx: float, cy: float) -> float:
+    return (bx - ax) * (cy - ay) - (by - ay) * (cx - ax)
+
+
+def _segments_croisent(
+    a: tuple[float, float], b: tuple[float, float], c: tuple[float, float], d: tuple[float, float]
+) -> bool:
+    d1 = _produit_vectoriel(c[0], c[1], d[0], d[1], a[0], a[1])
+    d2 = _produit_vectoriel(c[0], c[1], d[0], d[1], b[0], b[1])
+    d3 = _produit_vectoriel(a[0], a[1], b[0], b[1], c[0], c[1])
+    d4 = _produit_vectoriel(a[0], a[1], b[0], b[1], d[0], d[1])
+    # Un simple contact est traité comme un croisement : refuser plutôt que
+    # publier une boîte qui ne fait qu'effleurer la frontière.
+    if ((d1 > 0) != (d2 > 0)) and ((d3 > 0) != (d4 > 0)):
+        return True
+    return any(
+        d == 0 and _sur_segment(a, b, p)
+        for d, p, (a, b) in ((d1, a, (c, d)), (d2, b, (c, d)), (d3, c, (a, b)), (d4, d, (a, b)))
+    )
+
+
+def _sur_segment(a: tuple[float, float], b: tuple[float, float], p: tuple[float, float]) -> bool:
+    if min(a[0], b[0]) > p[0] or p[0] > max(a[0], b[0]):
+        return False
+    return min(a[1], b[1]) <= p[1] <= max(a[1], b[1])
+
+
+def _boites_croisent(boite: tuple[float, float, float, float], clip: _Clip) -> bool:
+    x0, y0, x1, y1 = boite
+    cx0, cy0, cx1, cy1 = clip.boite
+    return not (x1 < cx0 or cx1 < x0 or y1 < cy0 or cy1 < y0)
+
+
+def _contenu_dans_clip(boite: tuple[float, float, float, float], clip: _Clip) -> bool:
+    x0, y0, x1, y1 = _rectangle(boite)
+    marge = clip.marge
+    coins = [(x0 - marge, y0 - marge), (x1 + marge, y0 - marge), (x1 + marge, y1 + marge), (x0 - marge, y1 + marge)]
+    if clip.rectangulaire:
+        cx0, cy0, cx1, cy1 = clip.boite
+        return all(cx0 <= x <= cx1 and cy0 <= y <= cy1 for x, y in coins)
+    if not all(_point_dans_polygone(coin, clip.points) for coin in coins):
+        return False
+    aretes_boite = (coins[0], coins[1]), (coins[1], coins[2]), (coins[2], coins[3]), (coins[3], coins[0])
+    for sommet, suivant in zip(clip.points, clip.points[1:] + clip.points[:1]):
+        for a, b in aretes_boite:
+            if _segments_croisent(sommet, suivant, a, b):
+                return False
+    return True
+
+
+def _visible_dans_clip(boite: tuple[float, float, float, float], clip: _Clip) -> bool:
+    """Vrai si une portion non vide de la boîte tombe dans la région visible."""
+    x0, y0, x1, y1 = _rectangle(boite)
+    if not _boites_croisent((x0, y0, x1, y1), clip):
+        return False
+    if clip.rectangulaire:
+        return _au_moins_visible((x0, y0, x1, y1), clip.boite)
+    coins = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+    if any(_point_dans_polygone(coin, clip.points) for coin in coins):
+        return True
+    if any(x0 <= x <= x1 and y0 <= y <= y1 for x, y in clip.points):
+        return True
+    aretes_boite = (coins[0], coins[1]), (coins[1], coins[2]), (coins[2], coins[3]), (coins[3], coins[0])
+    for sommet, suivant in zip(clip.points, clip.points[1:] + clip.points[:1]):
+        for a, b in aretes_boite:
+            if _segments_croisent(sommet, suivant, a, b):
+                return True
+    return False
+
+
+def _intersection_clips(parent: _Clip, enfant: _Clip) -> _Clip:
+    if parent.rectangulaire and enfant.rectangulaire:
+        boite = (
+            max(parent.boite[0], enfant.boite[0]),
+            max(parent.boite[1], enfant.boite[1]),
+            min(parent.boite[2], enfant.boite[2]),
+            min(parent.boite[3], enfant.boite[3]),
+        )
+        return _rectangle_en_clip(_rectangle(boite))
+    if parent.rectangulaire or enfant.rectangulaire:
+        rect = parent if parent.rectangulaire else enfant
+        polygone = enfant if parent.rectangulaire else parent
+        return _Clip(
+            _rogner_polygone(polygone.points, rect.boite),
+            polygone.marge,
+        )
+    # Deux régions non rectangulaires : l'intersection exacte de polygones
+    # quelconques n'est pas démontrée ici — refus plutôt que fausse preuve.
+    raise VueGraphiqueNonVerifiee("Clipping emboîté non modélisable")
+
+
+def _rogner_polygone(
+    points: tuple[tuple[float, float], ...], boite: tuple[float, float, float, float]
+) -> list[tuple[float, float]]:
+    """Sutherland–Hodgman : exact car la région de coupe (rectangle) est convexe."""
+    x0, y0, x1, y1 = boite
+    # Chaque demi-plan : fonction « dedans » puis fonction d'intersection avec
+    # le bord correspondant (vertical x = borne, ou horizontal y = borne).
+    if x1 < x0 or y1 < y0:
+        raise VueGraphiqueNonVerifiee("Bornes graphiques inversées")
+
+    def dedans_gauche(p: tuple[float, float]) -> bool:
+        return p[0] >= x0
+
+    def dedans_droite(p: tuple[float, float]) -> bool:
+        return p[0] <= x1
+
+    def dedans_bas(p: tuple[float, float]) -> bool:
+        return p[1] >= y0
+
+    def dedans_haut(p: tuple[float, float]) -> bool:
+        return p[1] <= y1
+
+    def coupe_verticale(a: tuple[float, float], b: tuple[float, float], borne: float) -> tuple[float, float]:
+        if a[0] == b[0]:
+            return (borne, a[1])
+        t = (borne - a[0]) / (b[0] - a[0])
+        return (borne, a[1] + t * (b[1] - a[1]))
+
+    def coupe_horizontale(a: tuple[float, float], b: tuple[float, float], borne: float) -> tuple[float, float]:
+        if a[1] == b[1]:
+            return (a[0], borne)
+        t = (borne - a[1]) / (b[1] - a[1])
+        return (a[0] + t * (b[0] - a[0]), borne)
+
+    demi_plans = (
+        (dedans_gauche, lambda a, b: coupe_verticale(a, b, x0)),
+        (dedans_droite, lambda a, b: coupe_verticale(a, b, x1)),
+        (dedans_bas, lambda a, b: coupe_horizontale(a, b, y0)),
+        (dedans_haut, lambda a, b: coupe_horizontale(a, b, y1)),
+    )
+    resultat = list(points)
+    for dedans, coupe in demi_plans:
+        if not resultat:
+            break
+        suivant = resultat[1:] + resultat[:1]
+        sortie: list[tuple[float, float]] = []
+        for courant, prochain in zip(resultat, suivant):
+            if dedans(courant):
+                sortie.append(courant)
+                if not dedans(prochain):
+                    sortie.append(coupe(courant, prochain))
+            elif dedans(prochain):
+                sortie.append(coupe(courant, prochain))
+        resultat = sortie
+    return resultat
 
 
 class _CollecteurClips(PDFPageAggregatorWithMarkedContent):
@@ -158,9 +457,9 @@ class _CollecteurClips(PDFPageAggregatorWithMarkedContent):
         if not objets or self.clip_courant is None:
             return
         if self.clip_courant is _CLIP_INDETERMINE:
-            raise VueGraphiqueNonVerifiee("Clipping non rectangulaire")
+            raise VueGraphiqueNonVerifiee("Clipping non modélisable")
         if any(not _objet_visible_sous_clip(objet, self.clip_courant) for objet in objets):
-            raise VueGraphiqueNonVerifiee("Objet hors clipping rectangulaire")
+            raise VueGraphiqueNonVerifiee("Objet hors clipping")
 
     def render_char(self, *args: Any, **kwargs: Any) -> float:
         police = args[1] if len(args) > 1 else kwargs.get("font")
@@ -239,31 +538,103 @@ class _InterpreteurClips(PDFPageInterpreter):
 
     def _appliquer_clip(self) -> None:
         chemin = self.curpath
-        if self._chemin_incertain or [segment[0] for segment in chemin] != ["m", "l", "l", "l", "h"]:
-            self._clip = _CLIP_INDETERMINE
+        if self._chemin_incertain:
+            self._poser_indetermine()
+            return
+        operations = [segment[0] for segment in chemin]
+        # Un tracé de clipping est fermé implicitement : « h » est facultatif.
+        if (
+            operations
+            and operations.count("m") == 1
+            and all(operation in {"m", "l", "h"} for operation in operations)
+            and operations.count("l") in {2, 3}
+        ):
+            self._clip_rectangle(chemin)
+            return
+        self._clip_polygonal(chemin)
+
+    def _clip_rectangle(self, chemin: list[Any]) -> None:
+        points = [apply_matrix_pt(self.ctm, (segment[1], segment[2])) for segment in chemin if segment[0] in {"m", "l"}]
+        xs = sorted({x for x, _y in points})
+        ys = sorted({y for _x, y in points})
+        aretes = zip(points, points[1:] + points[:1])
+        rectangle = (
+            len(points) == 4
+            and len(xs) == 2
+            and len(ys) == 2
+            and set(points) == {(x, y) for x in xs for y in ys}
+            and all((a[0] == b[0]) != (a[1] == b[1]) for a, b in aretes)
+        )
+        if rectangle:
+            self._poser_clip(_rectangle_en_clip((xs[0], ys[0], xs[1], ys[1])))
         else:
-            points = [apply_matrix_pt(self.ctm, (segment[1], segment[2])) for segment in chemin[:4]]
-            xs = sorted({x for x, _y in points})
-            ys = sorted({y for _x, y in points})
-            aretes = zip(points, points[1:] + points[:1])
-            rectangle = (
-                len(xs) == 2
-                and len(ys) == 2
-                and set(points) == {(x, y) for x in xs for y in ys}
-                and all((a[0] == b[0]) != (a[1] == b[1]) for a, b in aretes)
-            )
-            if not rectangle:
+            # Triangle ou quadrilatère quelconque : traité comme un polygone.
+            self._poser_clip(_Clip([(round(x, 9), round(y, 9)) for x, y in points]))
+
+    def _clip_polygonal(self, chemin: list[Any]) -> None:
+        """Modélise un tracé fermé unique : polygone exact ou courbes bornées."""
+        if not chemin or chemin[0][0] != "m":
+            self._poser_indetermine()
+            return
+        if sum(1 for segment in chemin if segment[0] == "m") != 1:
+            # Plusieurs sous-tracés (règle even-odd incluse) : non démontré.
+            self._poser_indetermine()
+            return
+        polygone: list[tuple[float, float]] = []
+        marge = 0.0
+        origine = apply_matrix_pt(self.ctm, (chemin[0][1], chemin[0][2]))
+        courant = origine
+        polygone.append(origine)
+        for segment in chemin[1:]:
+            operateur = segment[0]
+            if operateur == "l":
+                point = apply_matrix_pt(self.ctm, (segment[1], segment[2]))
+                polygone.append(point)
+                courant = point
+            elif operateur in {"c", "v", "y"}:
+                if operateur == "c":
+                    p1 = apply_matrix_pt(self.ctm, (segment[1], segment[2]))
+                    p2 = apply_matrix_pt(self.ctm, (segment[3], segment[4]))
+                elif operateur == "v":
+                    p1 = courant
+                    p2 = apply_matrix_pt(self.ctm, (segment[1], segment[2]))
+                else:
+                    p1 = apply_matrix_pt(self.ctm, (segment[1], segment[2]))
+                    p2 = apply_matrix_pt(self.ctm, (segment[3], segment[4]))
+                fin = apply_matrix_pt(self.ctm, (segment[-2], segment[-1]))
+                marge = max(marge, _ecart_courbe(courant, p1, p2, fin, operateur, polygone))
+                for i in range(1, _ECHANTILLONS_COURBE + 1):
+                    t = i / _ECHANTILLONS_COURBE
+                    if operateur == "v":
+                        polygone.append(_bezier_quadratique(courant, p2, fin, t))
+                    else:
+                        polygone.append(_bezier_cubique(courant, p1, p2, fin, t))
+                courant = fin
+            elif operateur == "h":
+                break
+            else:
+                self._poser_indetermine()
+                return
+        if len(polygone) < 3:
+            self._poser_indetermine()
+            return
+        try:
+            self._poser_clip(_Clip(polygone, marge))
+        except VueGraphiqueNonVerifiee:
+            self._poser_indetermine()
+
+    def _poser_indetermine(self) -> None:
+        self._clip = _CLIP_INDETERMINE
+        self.device.clip_courant = self._clip
+
+    def _poser_clip(self, clip: _Clip) -> None:
+        if self._clip is _CLIP_INDETERMINE or self._clip is None:
+            self._clip = clip
+        else:
+            try:
+                self._clip = _intersection_clips(self._clip, clip)
+            except VueGraphiqueNonVerifiee:
                 self._clip = _CLIP_INDETERMINE
-            elif self._clip is not _CLIP_INDETERMINE:
-                vue = _rectangle((xs[0], ys[0], xs[1], ys[1]))
-                if self._clip is not None:
-                    vue = (
-                        max(vue[0], self._clip[0]),
-                        max(vue[1], self._clip[1]),
-                        min(vue[2], self._clip[2]),
-                        min(vue[3], self._clip[3]),
-                    )
-                self._clip = vue
         self.device.clip_courant = self._clip
 
     def do_W(self) -> None:
@@ -287,7 +658,7 @@ def _verifier_clips(page: Any) -> None:
 
 def _verifier_formes(objet: Any, vues: tuple[tuple[float, float, float, float], ...] = ()) -> None:
     """Vérifie les BBox des formes, y compris leurs descendants imbriqués."""
-    from pdfminer.layout import LTAnno, LTFigure, LTImage, LTItem
+    from pdfminer.layout import LTAnno, LTFigure, LTItem
 
     enfants = list(objet) if hasattr(objet, "__iter__") else []
     if isinstance(objet, LTFigure):

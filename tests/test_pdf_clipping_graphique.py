@@ -317,3 +317,104 @@ def test_police_a_largeurs_nulles_refusee_sous_clip(tmp_path):
     resultat = extract_file(falsifie)
     assert resultat.status == "unavailable"
     assert resultat.text == ""
+
+
+def _pdf_clip_forme(tmp_path: Path, nom: str, forme: str, position: str, angle: int = 0) -> Path:
+    """PDF à clip non rectangulaire : le texte est placé dedans, dehors ou à cheval."""
+    source = tmp_path / f"{forme}-{position}-{angle}.pdf"
+    pdf = canvas.Canvas(str(source), pagesize=(400, 300))
+    pdf.drawString(30, 260, "VISIBLE SYNTHETIQUE")
+    chemin = pdf.beginPath()
+    if forme == "cercle":
+        chemin.circle(200, 120, 70)
+    elif forme == "polygone":
+        chemin.moveTo(120, 60)
+        chemin.lineTo(280, 60)
+        chemin.lineTo(280, 200)
+        chemin.lineTo(120, 200)
+        chemin.close()
+    elif forme == "diamant":
+        chemin.moveTo(200, 210)
+        chemin.lineTo(270, 130)
+        chemin.lineTo(200, 50)
+        chemin.lineTo(130, 130)
+        chemin.close()
+    elif forme == "triangle":
+        chemin.moveTo(200, 200)
+        chemin.lineTo(280, 60)
+        chemin.lineTo(120, 60)
+        chemin.close()
+    else:  # rectangle arrondi : le piège qui rendait la page indisponible
+        chemin.roundRect(120, 60, 160, 140, 18)
+    pdf.saveState()
+    pdf.clipPath(chemin, fill=0, stroke=0)
+    if position == "dedans":
+        pdf.drawString(180, 118, "INTERNE")
+    elif position == "dehors":
+        pdf.drawString(150, 265, "ZONE EXTERNE")
+    else:  # à cheval sur la frontière
+        pdf.drawString(240, 118, "ZONE FRONTALIERE")
+    pdf.restoreState()
+    pdf.showPage()
+    pdf.save()
+    if angle:
+        lecteur = PdfReader(source)
+        writer = PdfWriter()
+        writer.append(lecteur)
+        writer.pages[0].rotate(angle)
+        with source.open("wb") as sortie:
+            writer.write(sortie)
+    return source
+
+
+@pytest.mark.parametrize("angle", [0, 90, 180, 270])
+@pytest.mark.parametrize("forme", ["cercle", "polygone", "arrondi", "diamant", "triangle"])
+def test_clip_non_rectangulaire_laisse_la_page_exploitable(tmp_path, forme, angle):
+    """Un clip décoratif (cercle, polygone, coins arrondis) reste modélisé.
+
+    Refuser toute page portant un clip non rectangulaire rendait le produit
+    inutilisable sur des documents réels : un simple cadre à coins arrondis
+    suffisait. La région est maintenant calculée avec une marge prouvée.
+    """
+    source = _pdf_clip_forme(tmp_path, "ok", forme, "dedans", angle)
+    avant = hashlib.sha256(source.read_bytes()).digest()
+    resultat = extract_file(source)
+    assert resultat.status == "extracted"
+    assert "VISIBLE" in resultat.text and "INTERNE" in resultat.text
+    assert hashlib.sha256(source.read_bytes()).digest() == avant
+
+
+@pytest.mark.parametrize("angle", [0, 90, 180, 270])
+@pytest.mark.parametrize("forme", ["cercle", "polygone", "arrondi", "diamant", "triangle"])
+@pytest.mark.parametrize("position", ["dehors", "cheval"])
+def test_clip_non_rectangulaire_refuse_le_texte_non_demontre(tmp_path, forme, position, angle):
+    """Hors de la région, ou à cheval sur sa frontière : rien n'est publié."""
+    source = _pdf_clip_forme(tmp_path, "ko", forme, position, angle)
+    with pdfplumber.open(source) as doc:
+        brut = "".join(c["text"] for c in doc.pages[0].chars).replace(" ", "")
+    assert "EXTERNE" in brut or "FRONTALIERE" in brut
+    resultat = extract_file(source)
+    assert resultat.status == "unavailable"
+    assert resultat.text == ""
+
+
+def test_clip_emboite_rectangle_et_polygone(tmp_path):
+    """Un clip polygonal à l'intérieur d'un clip rectangulaire reste exact."""
+    source = tmp_path / "emboite.pdf"
+    pdf = canvas.Canvas(str(source), pagesize=(400, 300))
+    externe = pdf.beginPath()
+    externe.rect(0, 0, 300, 300)
+    pdf.saveState()
+    pdf.clipPath(externe, fill=0, stroke=0)
+    interne = pdf.beginPath()
+    interne.circle(120, 120, 60)
+    pdf.saveState()
+    pdf.clipPath(interne, fill=0, stroke=0)
+    pdf.drawString(95, 118, "AU CENTRE")
+    pdf.restoreState()
+    pdf.restoreState()
+    pdf.drawString(320, 260, "HORS CADRE SYNTHETIQUE")
+    pdf.save()
+    resultat = extract_file(source)
+    assert resultat.status == "extracted"
+    assert "CENTRE" in resultat.text and "HORS CADRE" in resultat.text

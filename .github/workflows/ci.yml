@@ -2978,6 +2978,53 @@ jobs:
               raise SystemExit(f"::error title=extraction::attendu 7 dossiers, trouvé {len(dossiers)}")
           print(f"corpus extrait : {extraits} fichiers, 7 dossiers (répertoire temporaire du runner)")
           PY
+      - name: Diagnostic garde PDF sur le corpus réel (agrégats, sans contenu)
+        # La garde de vue (clips, formes, MediaBox) peut refuser une page. Sur un
+        # corpus réel, un refus massif rendrait le produit inutilisable : cette
+        # étape publie des AGRÉGATS (nombre de pages, nombre de refus, motifs
+        # génériques issus du code) — jamais un extrait, un nom de fichier ou un
+        # contenu de document. C'est le seul canal lisible via l'API quand
+        # l'hôte des journaux est injoignable.
+        env:
+          SEAMTECH_RECETTE_CORPUS_RACINE: ${{ runner.temp }}/corpus-recette
+        run: |
+          python - <<'PY'
+          import collections
+          import os
+          import traceback
+          from pathlib import Path
+
+          racine = Path(os.environ["SEAMTECH_RECETTE_CORPUS_RACINE"])
+          motifs = collections.Counter()
+          pages = 0
+          refuses = 0
+          fichiers = 0
+          try:
+              import pdfplumber
+
+              from seamtech_search.pdf_vue_graphique import verifier_vue_graphique
+
+              for pdf in sorted(racine.rglob("*.pdf")):
+                  fichiers += 1
+                  try:
+                      with pdfplumber.open(pdf) as doc:
+                          for page in doc.pages:
+                              pages += 1
+                              try:
+                                  verifier_vue_graphique(page)
+                              except Exception as erreur:
+                                  refuses += 1
+                                  motifs[str(erreur).split(" (")[0][:80]] += 1
+                  except Exception:
+                      motifs["ouverture_illisible"] += 1
+          except Exception:
+              traceback.print_exc()
+          resume = "; ".join(f"{k}={v}" for k, v in motifs.most_common(8)) or "aucun"
+          print(
+              f"::error title=garde-pdf-corpus::fichiers={fichiers} pages={pages} "
+              f"refus={refuses} motifs[{resume}]"
+          )
+          PY
       - name: Run full recette suite (fails explicitly on any step)
         env:
           SEAMTECH_RECETTE_CORPUS_RACINE: ${{ runner.temp }}/corpus-recette
