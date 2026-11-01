@@ -843,6 +843,31 @@ def create_app(config: AppConfig) -> FastAPI:
         if empreinte_capture is not None:
             if not isinstance(empreinte_capture, str) or re.fullmatch(r"[0-9a-f]{64}", empreinte_capture) is None:
                 raise HTTPException(status_code=409, detail="Identité du fichier invalide.")
+            # Endpoint PUBLIC déclaré + objet prouvé : la redirection est permise.
+            #
+            # Le catalogue ne porte `object_key` que si l'objet a été lié SOUS
+            # l'identité d'octets de la ligne (``lier_objets_capture`` : UPDATE
+            # … WHERE source_sha256 = l'empreinte de l'envoi vérifié). L'objet
+            # est donc CES octets, preuve à l'appui : une redirection le sert
+            # sans revérification, exactement comme pour un document sans
+            # empreinte. Sans cette preuve (objet d'un autre compartiment,
+            # envoi non vérifié, ligne non liée), on garde le repli : l'API lit
+            # et vérifie les octets contre le SHA de capture.
+            # Honnêteté : cette preuve est datée (elle ne couvre pas une
+            # réécriture ultérieure de l'objet) ; le repli, lui, revérifie.
+            if (object_key and (object_bucket is None or object_bucket == (
+                    storage_client.bucket_name if storage_client is not None else None))):
+                url_capture = _url_presignee_navigateur(object_key, storage_client, config)
+                if url_capture:
+                    record_audit_event(
+                        index,
+                        action="open",
+                        actor=actor,
+                        resource=str(target),
+                        status="302",
+                        details={"object_key": object_key, "servi_par": "redirection_publique_capture"},
+                    )
+                    return RedirectResponse(url=url_capture, status_code=302)
             fd_verifie: int | None = None
             try:
                 fd_source = _ouvrir_artefact_confine(target, [Path(root) for root in config.root_paths])
@@ -1676,6 +1701,9 @@ def create_app(config: AppConfig) -> FastAPI:
         # Resolve file path and object key from payload
         file_path: Path | None = None
         object_key: str | None = None
+        # Vrai quand l'objet retenu prouve l'identité CAPTURÉE du fichier
+        # (envoi vérifié, SHA égal) : voir la redirection présignée plus bas.
+        identite_capture_prouvee = False
         filename: str = ""
         media_type: str = "application/octet-stream"
 
@@ -1750,6 +1778,10 @@ def create_app(config: AppConfig) -> FastAPI:
                             _preuve_identifiable(entree) and entree.get("sha256") == empreinte_capture
                         ))):
                     object_key = entree["key"]
+                    # L'objet ne peut être retenu avec une empreinte de capture
+                    # que si son SHA vérifié EST cette empreinte : la preuve
+                    # d'identité est donc déjà faite (envoi vérifié, SHA égal).
+                    identite_capture_prouvee = empreinte_capture is not None
                     break
 
         if file_path is not None and not _chemin_artefact_autorise(file_path):
@@ -1767,10 +1799,21 @@ def create_app(config: AppConfig) -> FastAPI:
         # Redirection présignée UNIQUEMENT vers un endpoint public déclaré : le
         # endpoint interne (nom d'hôte « minio » du réseau des conteneurs, port
         # 9000) n'est résolvable depuis AUCUN poste de l'atelier. Par défaut on
-        # sert donc les octets par l'API. Pour une source capturée, une URL
-        # directe ne peut pas vérifier les octets contre le SHA initial.
+        # sert donc les octets par l'API.
+        #
+        # Une source capturée (staging promu, P0.2) porte une empreinte : une
+        # URL directe ne peut pas, elle, RE-vérifier les octets au moment de la
+        # lecture. Mais l'objet retenu ci-dessus n'est éligible qu'avec un envoi
+        # VÉRIFIÉ dont le SHA EST l'empreinte de capture : l'identité est déjà
+        # prouvée, et refuser la redirection condamnerait alors tout déploiement
+        # qui déclare un endpoint public (R2/CloudFront) à faire transiter
+        # chaque octet par l'API. Dès que cette preuve manque — empreinte sans
+        # objet vérifié, objet d'un autre compartiment, envoi échoué — on garde
+        # le repli : l'API sert les octets et les vérifie contre le SHA initial.
+        # Honnêteté : la preuve d'envoi est datée (elle ne couvre pas une
+        # réécriture ultérieure de l'objet) ; le repli local, lui, revérifie.
         url_publique = (_url_presignee_navigateur(object_key, storage_client, config)
-                        if empreinte_capture is None else None)
+                        if (empreinte_capture is None or identite_capture_prouvee) else None)
         if url_publique:
             _audit_artefact(
                 "302",
