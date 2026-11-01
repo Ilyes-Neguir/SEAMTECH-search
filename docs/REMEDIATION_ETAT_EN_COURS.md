@@ -1245,3 +1245,131 @@ d'écrire les tests.
    `compose-partage-web-worker`) et réexaminer `e2e` ;
 4. rejouer la suite complète et la campagne PG après chaque lot ;
 5. ne RIEN résumer dans le chat avant le rapport final PRÊT/NON PRÊT.
+
+---
+
+## 2026-11-01 (suite) — `integration` résolu, `/open` corrigé, scan élagué, 2 xfail levés
+
+HEAD poussé à la fin de ce bloc : **`9bf0c72`**. Tous les commits ci-dessous sont
+poussés sur `arena/b936b3c0-seamtech-search`. Aucune fusion vers `main`.
+
+### 1. `integration` / `compose-partage-web-worker` — CAUSE TROUVÉE (PermissionError avalée)
+
+Symptôme, run après run : « dossier de rapports vide », alors que la sonde
+conteneur voyait `technical-report.pdf` + `technical-report.docx` dans
+`/app/data/reports/<id>`.
+
+Cause réelle (`9bf0c72`) : le dossier de rapports d'un import est créé en
+**0700** (`import_pipeline._generer_rapports_confines` :
+`os.mkdir(composant, mode=0o700, dir_fd=parent)` — confinement des données
+extraites). Web, worker et sauvegarde partagent la même image, donc le même UID,
+et y accèdent ; **l'hôte n'est pas propriétaire** et ne peut ni parcourir ni
+statuer. Or le test lisait le dossier depuis l'hôte avec `Path.rglob`, **qui
+avale silencieusement les `PermissionError`** : un dossier confiné y est
+indiscernable d'un dossier vide. Diagnostic tombé grâce au témoin ajouté au run
+précédent, qui a fait remonter l'erreur réelle :
+
+```
+PermissionError: [Errno 13] Permission denied: '.../data/reports/<id>/.sonde-partage-rapports'
+```
+
+Correctif : la preuve de partage se fait **dans** les conteneurs (le service
+`web` liste les rapports écrits par le `worker`, avec tailles ; le worker relit
+les siens au même chemin), le confinement est **verrouillé** par une assertion
+(`mode & 0o077 == 0`), et l'observation hôte est désormais **non silencieuse**
+(`_observation_hote` : existence, mode, refus de parcours, refus de stat —
+annoncés dans une annotation). Fenêtre d'attente bornée de 30 s conservée
+(publication par renommage depuis un dossier temporaire). Témoin retiré : la
+lecture par le web le remplace avantageusement.
+
+**Leçon à garder** : jamais de `rglob`/`glob` pour constater un contenu — ils
+transforment un refus d'accès en absence.
+
+### 2. `recette-corpus-reel` — `/open` et l'endpoint public (`57c5701`)
+
+Échec : `test_10_sauvegarde_restauration_base_neuve` — « endpoint public déclaré
+: HTTP 200 (attendu 302) ». Après le correctif 04c (`f10627f`), le reste de la
+recette passe (`fichiers=14 pages=30 refus=0 motifs[aucun]`) ; seul ce point
+restait.
+
+Cause : depuis la promotion des dépôts vers l'objet (P0.2), un document stagé
+porte une empreinte d'octets, et `POST /open` réservait la redirection
+présignée aux documents SANS empreinte — condamnant tout déploiement déclarant
+un endpoint public à faire transiter chaque octet par l'API, contre le contrat
+2026-10-07 (E-28).
+
+Règle retenue (preuve, pas préférence) : la table `documents` ne reçoit
+`object_key` que par `lier_objets_capture`, dont l'`UPDATE` exige
+`source_sha256` = l'empreinte de l'envoi **vérifié** et le bon compartiment. La
+ligne prouve donc que l'objet est CES octets → redirection permise. Sinon,
+repli antérieur au mot près : l'API lit et vérifie les octets. Même règle sur
+`/imports/{id}/artifacts/{artifact}`. La preuve est **datée** (elle ne couvre
+pas une réécriture ultérieure de l'objet) : écrit dans le code et les tests.
+
+Nouveau fichier `tests/test_open_capture_endpoint_public.py` (5 tests) :
+capture prouvée → 302 vers l'hôte PUBLIC (jamais un hôte interne) ;
+capture + objet d'un autre compartiment → 200 vérifié, aucune présignature ;
+sans endpoint public → 200 sans `Location` ; fichier non conforme → 404 ;
+et le garde-fou : `lier_objets_capture` n'attache aucune clé à un document
+d'une autre empreinte. **Rouge → vert mesuré** : sans le correctif, le premier
+test échoue avec le message exact de la CI.
+
+Mesures : `74 passed, 24 skipped` (présignature/téléchargement/API/stockage).
+
+### 3. Scan : élaguer staging et quarantaine au lieu de refuser la racine (`b1901de`)
+
+`xfail(strict)` levé : « le balayage indexe le staging conservé lorsque data est
+sous une racine ». Le choix assumé était de **refuser** tout recouvrement
+(`ScanIncompleteError`) tant qu'une exclusion ne savait pas préserver les
+lignes d'index. Conséquence bien plus grave que le xfail : une racine contenant
+le répertoire `data` n'était plus balayable **du tout**.
+
+L'exclusion sûre est maintenant écrite, des deux bouts : `crawl` élague
+`uploads` et `quarantine` (filtre par nom + confirmation par résolution, liens
+symboliques résolus), une racine **dans** une zone reste refusée ; et
+`remove_missing` accepte des **préfixes protégés** transmis par
+`cli.run_index`, sans quoi exclure un sous-arbre le ferait *supprimer* de
+l'index.
+
+Tests : racine dans le staging → refus, index intact (2 formes) ; racine
+contenant le staging → scan effectué, reste de la racine indexé, aucun document
+du staging indexé, lignes préexistantes conservées (2 formes) ; quarantaine
+élaguée (nouveau) ; staging absent puis apparu (exclusion indépendante de son
+existence). Mesures : **253 passed, 19 skipped**.
+
+### 4. Reprise après envoi partiel : le bon chemin prouvé (`bf7f397`)
+
+`xfail(strict)` « Reprise après upload partiel refuse le document déjà
+préservé » : le test appelait `import_folder` une seconde fois et attendait
+`transport_verifie`, ce que le produit **refuse volontairement** (garde voisine
+`test_reimport_partiel_refuse_avant_regeneration_et_nouvel_envoi`). Les deux
+attentes étaient incompatibles ; le vrai chemin de reprise est `retry_upload`
+(bouton « renvoyer », idem worker). Le test le prouve désormais : rien n'est
+régénéré (`generate_report` piégé + octets du rapport comparés), les preuves
+acquises gardent leur clé, les documents déjà liés gardent leur `object_key`,
+les envois manquants sont complétés (`transport_verifie`), et le succès global
+reste suspendu (`all_verified` faux — ni snapshot ni liaison transactionnelle).
+Aucune assertion affaiblie, `import_pipeline` **non modifié**.
+
+### 5. État CI au moment de l'arrêt
+
+| Run | HEAD | Jobs |
+|---|---|---|
+| `41347433108` | `d4b3489` | échecs : `integration` (rapports vides → corrigé `9bf0c72`), `recette-corpus-reel` (`/open` → corrigé `57c5701`) |
+| `41348061461` | `1b278cb` | échecs : `integration` (PermissionError révélée), `recette-corpus-reel` (avant `57c5701`) ; `backend (3.11/3.12/3.13` en cours) |
+| `41349826847` | `b1901de` | en cours (ne contient pas encore `bf7f397`/`9bf0c72`) |
+
+`xfail(strict)` restants (documentés, non levés) : `test_import_simple_fencing_pg`
+(atomicité distribuée), `test_minio_historique` (MinIO 2023, substitut
+historique), `test_restauration_bundle_s3rver` ×3 (limites du substitut S3rver),
+`test_restauration_confinement` (publication multi-fichiers non transactionnelle),
+`test_sauvegarde_snapshot_pg` (octets locaux non figés au snapshot),
+`test_sauvegarde_unites` ×2 (verrou de dossier), `test_verrou_mutation_import` ×2
+(verrou SQLite / session advisory).
+
+**Prochaine action précise :** (1) relire le CI de `9bf0c72` job par job —
+`integration` et `recette-corpus-reel` doivent passer, sinon repartir des
+annotations ; (2) vérifier `backend (3.11/3.12/3.13)` sur le HEAD exact ;
+(3) reprendre `test_scan_propre_retrouve_les_mots_attendus` (OCR) ; (4) attaquer
+les xfail restants un par un, chacun avec un test rouge→vert ; (5) ne RIEN
+résumer dans le chat avant le rapport final PRÊT/NON PRÊT.
