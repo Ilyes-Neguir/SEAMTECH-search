@@ -92,7 +92,7 @@ def test_checksum_malforme_ne_permet_pas_une_copie(tmp_path, checksum):
 
 @pytest.mark.s3
 @pytest.mark.s3rver
-def test_s3rver_sans_checksum_complet_refuse_copie_plutot_que_faux_succes(tmp_path):
+def test_s3rver_sans_checksum_complet_nomme_la_preuve_de_la_copie(tmp_path):
     import os
     import uuid
     from urllib.parse import urlsplit
@@ -112,9 +112,17 @@ def test_s3rver_sans_checksum_complet_refuse_copie_plutot_que_faux_succes(tmp_pa
     try:
         assert client.get_object(cle)['Body'].read() == b'contenu synthetique'
         resultat = copier_objets_s3({'documents': [{'id': 1, 'object_key': cle}]}, client, tmp_path)
-        assert resultat['nb_copies'] == 0
-        assert resultat['nb_manquants'] == 1
-        assert not (tmp_path / 'objets' / '1' / 'piece').exists()
+        # S3rver ne renvoie pas de SHA-256 plein objet : la copie n'est publiée
+        # que si les octets stockés sont prouvés par un condensé calculé côté
+        # serveur (ETag MD5 d'un dépôt en une seule partie). Le bundle DOIT
+        # dire quelle preuve il a retenue — une copie « non prouvée » reste
+        # refusée (voir les tests sur doubles, plus bas).
+        assert resultat['nb_copies'] == 1
+        assert resultat['nb_manquants'] == 0
+        copie = resultat['copies'][0]
+        assert copie['verification'] == 'etag_md5_fournisseur', copie
+        assert copie['sha256'] == hashlib.sha256(b'contenu synthetique').hexdigest()
+        assert (tmp_path / 'objets' / '1' / 'piece').read_bytes() == b'contenu synthetique'
     finally:
         client.delete_file(cle)
         client._get_client().delete_bucket(Bucket=client.bucket_name)

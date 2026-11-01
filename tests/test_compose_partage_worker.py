@@ -165,7 +165,9 @@ def _annonce(niveau: str, titre: str, message: str) -> None:
     lisibles. Un échec de ce test doit donc dire POURQUOI dans une annotation,
     plutôt que de renvoyer le lecteur vers un log inaccessible.
     """
-    propre = " ".join(str(message).split())[:1500]
+    # 1500 caractères tronquaient les journaux au point de masquer la cause ;
+    # la limite d'une annotation GitHub est de 64 Kio, 8000 reste très en deçà.
+    propre = " ".join(str(message).split())[:8000]
     print(f"::{niveau} title={titre}::{propre}")
 
 
@@ -452,7 +454,54 @@ def _scenario_partage(tmp_path: Path) -> None:
     assert rapports_conteneur.name == job_id and str(rapports_conteneur).startswith("/app/data/")
     assert rapports_hote.exists(), f"aucun rapport pour {job_id} sous {rapports_hote}"
     fichiers_rapport = [f for f in sorted(rapports_hote.rglob("*")) if f.is_file()]
-    assert fichiers_rapport, f"dossier de rapports vide : {rapports_hote}"
+    if not fichiers_rapport:
+        # Un dossier créé mais vide n'est pas une explication : il faut dire où
+        # le worker écrit VRAIMENT ses rapports et ce qu'il a produit.
+        sonde = _exec(
+            "worker",
+            "python",
+            "-c",
+            (
+                "import json,pathlib;"
+                "from seamtech_search.config import AppConfig;"
+                "from seamtech_search.import_pipeline import _report_dir_for;"
+                "c=AppConfig.load('/app/config/config.json');"
+                "d=_report_dir_for({}, c, __import__('sys').argv[1]);"
+                "print(json.dumps({'database_path': str(c.database_path), 'report_dir': str(d),"
+                " 'existe': d.exists(), 'contenu': sorted(p.name for p in d.iterdir()) if d.exists() else None}))"
+            ),
+            job_id,
+        )
+        resultat_job = job.get("result") or {}
+        raise AssertionError(
+            "dossier de rapports vide : "
+            + json.dumps(
+                {
+                    "hote": str(rapports_hote),
+                    "contenu_rapports_hote": sorted(p.name for p in (donnees_hote / "reports").iterdir())
+                    if (donnees_hote / "reports").exists()
+                    else None,
+                    "sonde_worker": f"{sonde.stdout.strip()} {sonde.stderr.strip()}"[:2000],
+                    "statut_job": job.get("status"),
+                    "statut_import": resultat_job.get("status"),
+                    "erreur": resultat_job.get("error"),
+                    "upload_status": resultat_job.get("upload_status"),
+                    "publication_pending": resultat_job.get("publication_pending"),
+                    "artefacts": [
+                        {
+                            "role": a.get("role"),
+                            "status": a.get("status"),
+                            "verified": a.get("verified"),
+                            "key": a.get("key"),
+                            "erreur": a.get("error"),
+                        }
+                        for a in (resultat_job.get("artifacts") or [])
+                    ],
+                },
+                ensure_ascii=False,
+                default=str,
+            )[:3000]
+        )
     assert all(f.stat().st_size > 0 for f in fichiers_rapport), "rapport vide"
     # …et le processus WEB les voit au même endroit.
     vu_par_web = _exec(

@@ -124,7 +124,6 @@ def test_references_objet_dupliquees_sur_reseau_isole(tmp_path: Path):
 
 
 @pytest.mark.s3
-@pytest.mark.xfail(strict=True, reason="S3rver ne fournit pas le SHA-256 serveur FULL_OBJECT requis pour la copie")
 def test_sauvegarde_copie_objet_par_reseau_isole(tmp_path: Path):
     from seamtech_search.sauvegarde import copier_objets_s3
 
@@ -148,6 +147,14 @@ def test_sauvegarde_copie_objet_par_reseau_isole(tmp_path: Path):
         copie = resultat["copies"][0]
         assert (tmp_path / "bundle" / copie["path_relatif"]).read_bytes() == b"objet-synthetique"
         assert copie["sha256"] == hashlib.sha256(b"objet-synthetique").hexdigest()
+        # La preuve est NOMMÉE : un objet déposé en une seule partie sans
+        # checksum plein objet est prouvé par l'ETag MD5 calculé par le
+        # serveur sur les octets stockés — jamais par une affirmation.
+        assert copie["verification"] in {
+            "checksum_sha256_fournisseur_full_object",
+            "etag_md5_fournisseur",
+            "identite_catalogue_source_sha256",
+        }, copie
         assert s3.get_object(Bucket=bucket, Key=cle)["Body"].read() == b"objet-synthetique"
     finally:
         s3.delete_object(Bucket=bucket, Key=cle)
@@ -174,7 +181,11 @@ def test_s3rver_restauration_objet_refusee_sans_ecraser(tmp_path):
         (tmp_path / "piece").write_bytes(b"sauvegarde")
         manifeste = {"objets_s3": {"copies": [{"id": 1, "path_relatif": "piece", "object_key": "piece",
                                                 "sha256": hashlib.sha256(b"sauvegarde").hexdigest()}]}}
-        with pytest.raises(SauvegardeError, match="exclusive"):
+        # Le refus doit dire POURQUOI (octets différents), pas seulement
+        # « exclusif » : c'est la clé existante qui est protégée, et le
+        # fournisseur qui ignore la précondition ne doit pas passer entre
+        # les mailles (contrôle de l'existence AVANT l'écriture).
+        with pytest.raises(SauvegardeError, match="octets différents"):
             restaurer_objets_s3(manifeste, tmp_path, client)
         assert s3.get_object(Bucket=bucket, Key="piece")["Body"].read() == b"temoin"
     finally:

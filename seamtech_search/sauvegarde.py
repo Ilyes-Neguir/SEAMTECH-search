@@ -931,6 +931,27 @@ def _verifier_publication_objets_exclusive(plan: list, client_s3) -> None:
         raise SauvegardeError("Restauration objet refusée : création exclusive atomique non disponible")
 
 
+def _objet_existe(client_s3, cle: str) -> bool:
+    """Vrai si la clé existe déjà — aucune écriture, aucun écrasement.
+
+    Un fournisseur qui IGNORE ``If-None-Match: *`` (S3rver 2.2.9 le fait, et
+    certains passerelles/proxys aussi) laisserait ``creer_fichier_exclusif``
+    écraser la clé sans rien signaler : la restauration se terminerait « bien »
+    en ayant détruit la seule copie restante d'un document. Savoir si la clé
+    existe AVANT d'écrire ferme cette brèche ; la création exclusive reste le
+    mécanisme atomique pour les fournisseurs qui l'honorent (elle couvre la
+    concurrence, ce qu'un HEAD ne fait pas).
+
+    Illisible ou absent : on s'en remet à la création exclusive, qui refuse
+    l'écrasement chez tout fournisseur conforme.
+    """
+    try:
+        client_s3.head_object(cle)
+    except Exception:
+        return False
+    return True
+
+
 def _objet_deja_conforme(client_s3, cle: str, empreinte: str) -> bool:
     """Vrai si la clé existe DÉJÀ avec exactement ces octets (aucune écriture)."""
     import tempfile
@@ -960,6 +981,19 @@ def _publier_objets_restaures(plan: list, client_s3) -> dict:
             continue
         # Le contrat exige une création atomique de la clé exacte : aucun
         # HEAD préalable ni réécriture automatique sur conflit ne suffit.
+        #
+        # Mais ce HEAD est AUSSI la seule défense contre un fournisseur qui
+        # ignorerait la précondition : sans lui, la création exclusive passerait
+        # en écrasant la clé. Voir ``_objet_existe``.
+        if _objet_existe(client_s3, cle):
+            if not _objet_deja_conforme(client_s3, cle, empreinte):
+                raise SauvegardeError(
+                    "Restauration objet refusée : la clé existe avec des octets différents "
+                    "(aucun écrasement)."
+                )
+            deja_restaures.add(cle)
+            restaures.append({"object_key": cle, "sha256": empreinte, "deja_present": True})
+            continue
         try:
             cle_ecrite = client_s3.creer_fichier_exclusif(source, cle)
         except Exception as exc:
