@@ -73,7 +73,9 @@ if ($Manquants.Count -gt 0) {
     Rapport "prereqs" "FAIL" ("outils absents : " + ($Manquants -join ", "))
     exit 1
 }
+$ErrorActionPreference = "Continue"
 docker compose version *> $null
+$ErrorActionPreference = "Stop"
 if ($LASTEXITCODE -ne 0) {
     Rapport "prereqs" "FAIL" "docker compose v2 absent (Docker Desktop requis)"
     exit 1
@@ -205,16 +207,30 @@ if ($LASTEXITCODE -eq 0) {
 # désormais SEAMTECH_S3_ACCESS_KEY/SEAMTECH_S3_SECRET_KEY (aucun repli
 # administrateur), donc sans cette étape web/worker ne démarrent pas.
 # ---------------------------------------------------------------------------
+# Préférer Git Bash : le shim « bash » de PATH peut être le relay WSL
+# (CreateProcessCommon: execvpe(/bin/bash) failed), qui ne peut pas exécuter
+# un script .sh. On vérifie que bash répond vraiment à --version.
 $Bash = $null
-foreach ($candidat in @("bash", "C:\Program Files\Git\bin\bash.exe", "C:\Program Files (x86)\Git\bin\bash.exe")) {
-    if (Get-Command $candidat -ErrorAction SilentlyContinue) { $Bash = $candidat; break }
-    if (Test-Path $candidat) { $Bash = $candidat; break }
+foreach ($candidat in @("C:\Program Files\Git\bin\bash.exe", "C:\Program Files (x86)\Git\bin\bash.exe", "bash")) {
+    $chemin = $null
+    if (Get-Command $candidat -ErrorAction SilentlyContinue) { $chemin = (Get-Command $candidat).Source }
+    elseif (Test-Path $candidat) { $chemin = $candidat }
+    if (-not $chemin) { continue }
+    # Vérification fonctionnelle : bash --version doit répondre (élimine le shim WSL).
+    $verif = $null
+    try { $verif = (& $chemin --version 2>&1 | Select-Object -First 1) } catch { }
+    if ($verif -and $verif -match "GNU bash|GNU/bash|bash version") { $Bash = $chemin; break }
 }
 if (-not $Bash) {
-    Rapport "provisionnement-stockage" "FAIL" "bash (Git for Windows) requis pour scripts/provisionner_stockage.sh"
+    Rapport "provisionnement-stockage" "FAIL" "bash (Git for Windows) requis pour scripts/provisionner_stockage.sh — installez Git for Windows ou ajoutez son bin à PATH"
     exit 1
 }
-docker compose up -d minio 2>&1 | Out-Null
+# docker compose écrit « Container ... Running » sur stderr → avec
+# $ErrorActionPreference = "Stop" PowerShell transforme ce texte en erreur
+# fatale (NativeCommandError). On temporise comme pour `docker compose up --build`.
+$ErrorActionPreference = "Continue"
+docker compose up -d minio *> $null
+$ErrorActionPreference = "Stop"
 $PretMinio = $false
 $FinMinio = (Get-Date).AddSeconds(120)
 while ((Get-Date) -lt $FinMinio) {
@@ -238,7 +254,12 @@ Rapport "provisionnement-stockage" "PASS" "buckets + versioning + identités res
 # ---------------------------------------------------------------------------
 # 5. Pile complète : build + démarrage + santé avec timeout clair.
 # ---------------------------------------------------------------------------
-docker compose up -d --build 2>&1 | Tee-Object -Variable SortieUp | Out-Null
+# $ErrorActionPreference = "Stop" transforme la sortie stderr de docker compose
+# en erreur fatale (NativeCommandError) : on temporise localement pour capturer
+# la sortie (stdout + stderr) sans arrêt du script.
+$ErrorActionPreference = "Continue"
+$SortieUp = docker compose up -d --build 2>&1
+$ErrorActionPreference = "Stop"
 if ($LASTEXITCODE -ne 0) {
     Rapport "pile-sante" "FAIL" ("docker compose up en échec : " + (($SortieUp | Select-Object -Last 5) -join " "))
     docker compose ps
@@ -324,7 +345,9 @@ $DumpSortie = (docker compose exec -T postgres pg_dump -U seamtech --format=cust
 $CodeDump = $LASTEXITCODE
 $ShaInterneBrut = ((docker compose exec -T postgres sha256sum /tmp/recette-backup.dump 2>&1) | Out-String).Trim()
 $ShaInterne = if ($ShaInterneBrut) { $ShaInterneBrut.Split(" ")[0].Trim().ToLower() } else { "" }
+$ErrorActionPreference = "Continue"
 docker compose cp "postgres:/tmp/recette-backup.dump" $Dump *> $null
+$ErrorActionPreference = "Stop"
 $CodeCp = $LASTEXITCODE
 $DumpValide = $false
 if (($CodeDump -eq 0) -and ($CodeCp -eq 0) -and (Test-Path $Dump) -and ((Get-Item $Dump).Length -gt 0)) {
@@ -396,7 +419,9 @@ if (-not $DumpValide) {
                 $Supprime = (docker compose exec -T postgres psql -U seamtech -d seamtech_search -tA `
                     -c "DELETE FROM fiche WHERE code = '$FicheSql'" 2>&1) | Out-String
                 $RestaurationTente = $true
+$ErrorActionPreference = "Continue"
                 docker compose cp $Dump "postgres:/tmp/recette-restore.dump" *> $null
+$ErrorActionPreference = "Stop"
                 $Restaure = (docker compose exec -T postgres pg_restore --clean --if-exists --no-owner `
                     -U seamtech -d seamtech_search /tmp/recette-restore.dump 2>&1) | Out-String
                 $CodeRestore = $LASTEXITCODE
@@ -409,7 +434,9 @@ if (-not $DumpValide) {
         # Si une destruction a eu lieu mais que le restore a échoué, un avertissement strict est émis.
         if ($EcrivainsArretes) {
             if (-not $RestaurationTente -or $CodeRestore -eq 0) {
+$ErrorActionPreference = "Continue"
                 docker compose start @Ecrivains *> $null
+$ErrorActionPreference = "Stop"
             } else {
                 Write-Host "ÉCHEC CRITIQUE DE RESTAURATION : pg_restore a échoué (code $CodeRestore). Les écrivains (@Ecrivains) restent ARRÊTÉS pour protéger les données." -ForegroundColor Red
             }
@@ -437,8 +464,12 @@ if (-not $DumpValide) {
 # ---------------------------------------------------------------------------
 # 10. Persistance : docker compose down && up -> les données reviennent.
 # ---------------------------------------------------------------------------
+$ErrorActionPreference = "Continue"
 docker compose down *> $null
+$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Continue"
 docker compose up -d *> $null
+$ErrorActionPreference = "Stop"
 $Persist = "000"
 $Fin = (Get-Date).AddSeconds(300)
 while ((Get-Date) -lt $Fin) {

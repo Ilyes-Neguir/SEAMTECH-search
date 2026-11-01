@@ -1,5 +1,5 @@
-import { expect, test } from "@playwright/test"
-import { APPROBATEUR, LECTURE, UTILISATEUR, signInWith } from "./helpers"
+import { expect, test, type Page } from "@playwright/test"
+import { APPROBATEUR, LECTURE, UTILISATEUR, csrfHeadersForPage, signInWith } from "./helpers"
 
 /**
  * Lot 3b — l'écran approbateur des extractions de voiles, éprouvé dans le
@@ -18,6 +18,42 @@ import { APPROBATEUR, LECTURE, UTILISATEUR, signInWith } from "./helpers"
 const CODE_REFERENCE = "7792-SO"
 const LIBELLE_TEST = `Bateau Démo Lot3b ${Date.now()}`
 const MODELE_TEST = `Modèle Démo Lot3b ${Date.now()}`
+
+/**
+ * Remet la fiche de référence dans l'état où le seed l'a laissée.
+ *
+ * `libelleOriginal` est lu AVANT la correction ; on le réapplique via l'API de
+ * correction (motif explicite : une correction sans motif est refusée), puis on
+ * relance la résolution, qui relie la candidate à son modèle canonique d'origine
+ * grâce à l'alias exact déjà présent dans `boat_models`.
+ */
+async function restaurerModeleDeReference(
+  page: Page,
+  idExtraction: number,
+  libelleOriginal: string,
+): Promise<void> {
+  // Les mutations passent par la double soumission CSRF du BFF : sans l'en-tête
+  // `x-csrf-token`, la requête est refusée (403) — c'est le comportement voulu.
+  const entetes = await csrfHeadersForPage(page)
+  const restaurer = await page.request.post(`/api/extractions-voile/${idExtraction}/corriger`, {
+    headers: entetes,
+    data: {
+      champ: "modele_bateau_brut",
+      valeur: libelleOriginal,
+      motif: "Nettoyage e2e Lot 3b : remise en état du libellé de référence.",
+      revision_fiche: null,
+    },
+  })
+  expect(
+    restaurer.ok(),
+    `la remise en état du libellé de modèle doit réussir (HTTP ${restaurer.status()} : ${(await restaurer.text()).slice(0, 300)})`,
+  ).toBeTruthy()
+  const resolution = await page.request.post("/api/extractions-voile/resoudre-lot", {
+    headers: entetes,
+    data: {},
+  })
+  expect(resolution.ok(), `la résolution de remise en état doit réussir (HTTP ${resolution.status()})`).toBeTruthy()
+}
 
 test.describe("Lot 3b — extractions de voiles", () => {
   test.skip(
@@ -47,6 +83,18 @@ test.describe("Lot 3b — extractions de voiles", () => {
 
     await expect(page.getByTestId("code-extraction")).toContainText(CODE_REFERENCE, { timeout: 20000 })
     await expect(page.getByTestId("panneau-liaison")).toBeVisible()
+    // État d'origine relevé AVANT toute correction : c'est lui qu'on remettra.
+    const libelleOriginal = (await page.getByTestId("libelle-brut").textContent())?.trim() ?? ""
+    expect(libelleOriginal, "le libellé brut d'origine doit être lisible").not.toBe("")
+    // L'identifiant n'est pas dans l'URL : il vient de l'API (source de vérité).
+    const listeExtractions = await page.request.get("/api/extractions-voile?limite=100")
+    expect(listeExtractions.ok(), "la liste des extractions doit répondre").toBeTruthy()
+    const corpsExtractions = (await listeExtractions.json()) as {
+      extractions: { id_extraction: number; code_fiche: string | null }[]
+    }
+    const reference = corpsExtractions.extractions.find((e) => (e.code_fiche ?? "").includes(CODE_REFERENCE))
+    expect(reference, "l'extraction de la fiche de référence doit exister").toBeTruthy()
+    const idExtraction = reference!.id_extraction
     const canevas = page.getByTestId("pdf-canvas")
     await expect(canevas).toBeVisible({ timeout: 30000 })
     await expect(page.getByTestId("pdf-page")).toContainText("/", { timeout: 30000 })
@@ -84,6 +132,22 @@ test.describe("Lot 3b — extractions de voiles", () => {
     await expect(historique).toContainText("modele_bateau_brut")
     await expect(historique).toContainText("sf_m")
     await expect(historique).toContainText("3.09")
+
+    // ---------------------------------------------------------------------
+    // REMISE EN ÉTAT (isolation des specs) — défaut d'ordre corrigé le 28/10.
+    //
+    // Ce test RENOMME le libellé de modèle de la fiche de référence 7792-SO
+    // puis la lie à un modèle de démonstration. Sans remise en état, la
+    // population de référence du Lot 5 (5 voiles du modèle « 29er ») ne
+    // contient plus la candidate : `lot5-confiance` échouait alors qu'il passe
+    // SEUL. Autrement dit la suite dépendait de l'ordre alphabétique des
+    // fichiers — une suite qui ne dit la vérité que dans un ordre est une suite
+    // qui ment.
+    //
+    // On restaure par l'API du produit (correction + résolution), pas par SQL :
+    // on éprouve le chemin réel de reprise en main.
+    // ---------------------------------------------------------------------
+    await restaurerModeleDeReference(page, idExtraction, libelleOriginal)
   })
 
   test("lecture : ni lien de navigation, ni accès à l’écran", async ({ page }) => {

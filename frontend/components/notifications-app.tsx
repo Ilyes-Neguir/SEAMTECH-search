@@ -92,7 +92,7 @@ export function NotificationsApp() {
   }
 
   return (
-    <main className="mx-auto min-h-[calc(100vh-3.5rem)] w-full max-w-4xl p-4 sm:p-6" data-testid="notifications-app">
+    <div className="mx-auto min-h-[calc(100vh-3.5rem)] w-full max-w-4xl p-4 sm:p-6" data-testid="notifications-app">
       <header className="flex flex-wrap items-start justify-between gap-4 border-b border-border pb-4">
         <div>
           <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-primary">Boîte personnelle</p>
@@ -168,6 +168,6 @@ export function NotificationsApp() {
           </button>
         </div>
       )}
-    </main>
+    </div>
   )
 }

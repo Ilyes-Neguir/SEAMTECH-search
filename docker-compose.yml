@@ -204,6 +204,15 @@ services:
       - ./sample_data:/app/sample_data:ro
       - ./logs:/app/logs
       - ./data:/app/data
+      # ARCHIVE DE L'ATELIER, montée en LECTURE SEULE et partagée avec le
+      # worker. Sans ce montage, tout chemin de dossier situé sur l'hôte
+      # (« C:\...\VOILES 2024 ») est invisible dans le conteneur : l'API
+      # répond « dossier hors des racines configurées » (403) et rien ne peut
+      # être déposé. Défaut volontairement inoffensif (./data) pour qu'un
+      # poste sans archive ne monte pas un chemin inexistant ; pour un vrai
+      # atelier, renseigner SEAMTECH_IMPORT_ARCHIVE_HOST_PATH dans `.env` et
+      # ajouter `/archives` à SEAMTECH_ROOT_PATHS.
+      - "${SEAMTECH_IMPORT_ARCHIVE_HOST_PATH:-./data}:/archives:ro"
     healthcheck:
       test: ["CMD", "python", "-c", "import os, urllib.request; request = urllib.request.Request('http://127.0.0.1:8000/health', headers={'X-SEAMTECH-TOKEN': os.environ['SEAMTECH_AUTH_TOKEN']}); urllib.request.urlopen(request, timeout=5)"]
       interval: 30s
@@ -276,6 +285,9 @@ services:
       # Le worker écrit les rapports générés et la quarantaine des imports
       # incomplets — jamais dans l'archive.
       - ./data:/app/data
+      # Même archive que `web`, en lecture seule (un import ne modifie jamais
+      # l'archive d'origine : RG13).
+      - "${SEAMTECH_IMPORT_ARCHIVE_HOST_PATH:-./data}:/archives:ro"
     healthcheck:
       # `--verifier` ne traite RIEN : il répond sur la file, le nombre de jobs
       # par statut et les workers vivants. Un worker « up » mais sans Redis est

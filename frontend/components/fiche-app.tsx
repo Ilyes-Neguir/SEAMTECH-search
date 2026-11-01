@@ -252,6 +252,29 @@ export function FicheApp({ code }: { code: string }) {
           ) : <p className="text-xs text-muted-foreground">Aucun fichier catalogué pour cette fiche.</p>}
         </section>
 
+        {detailAffiche && (detailAffiche.anomalies?.length ?? 0) > 0 && (
+          <section className="border-b border-border p-4" data-testid="anomalies-fiche">
+            <h2 className="mb-2 text-sm font-semibold">Points à vérifier avant validation</h2>
+            <ul className="space-y-1.5">
+              {detailAffiche.anomalies!.map((anomalie) => (
+                <li
+                  key={`${anomalie.code}-${anomalie.message}`}
+                  className={cn(
+                    "rounded border-l-2 bg-accent/40 px-2.5 py-1.5 text-xs",
+                    anomalie.gravite === "haute" ? "border-l-destructive" : "border-l-primary/60",
+                  )}
+                >
+                  <p className="font-medium">{anomalie.message}</p>
+                  <p className="mt-0.5 font-mono text-[10px] text-muted-foreground">
+                    {anomalie.code}
+                    {anomalie.gravite ? ` · ${anomalie.gravite}` : ""}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+
         <ApprovalRequestActions code={code} />
 
         <section className="border-b border-border">

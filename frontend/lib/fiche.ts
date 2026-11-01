@@ -60,6 +60,15 @@ export interface FicheDetail {
   id_fiche?: number
   categorie?: string
   categorie_source?: string
+  /** Ce que le dépôt a signalé (fiche de fabrication absente, champ manquant…). */
+  anomalies?: AnomalieFiche[]
+}
+
+export interface AnomalieFiche {
+  code: string
+  gravite: string | null
+  message: string
+  statut: string
 }
 
 export interface HistoriqueFiche {

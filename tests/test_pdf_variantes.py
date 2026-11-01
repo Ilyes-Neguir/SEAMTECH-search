@@ -624,6 +624,13 @@ def test_orientation_homogene_ne_signale_pas_fausse_ambiguite(tmp_path: Path, ca
 
 
 def test_index_libere_page_normalisee_si_lecture_echoue(tmp_path: Path, monkeypatch) -> None:
+    """La page normalisée est refermée, et la lecture ne dépend plus d'extract_text.
+
+    MESURÉ : sur une page déclarée /Rotate 90 dont le contenu reste horizontal,
+    casser ``pdfplumber.Page.extract_text`` ne rend plus une page vide. La
+    reconstruction par direction des glyphes ne passe pas par ``extract_text`` :
+    elle rend les trois lignes dans l'ordre et reste soumise à la garde de vue.
+    """
     import pdfplumber.page
 
     from seamtech_search import extractors, pdf_orientation
@@ -640,12 +647,28 @@ def test_index_libere_page_normalisee_si_lecture_echoue(tmp_path: Path, monkeypa
     monkeypatch.setattr(pdf_orientation, "fermer_page_lecture", suivre)
     monkeypatch.setattr(pdfplumber.page.Page, "extract_text", panne)
     resultat = extractors.extract_file(pivote)
-    assert resultat.status == "unavailable" and not resultat.text
-    # Le PDF d'origine est préservé, mais le repli sans vue vérifiée n'est
-    # plus publié : il pourrait contenir du texte hors clipping.
-    from pypdf import PdfReader
-    assert "FICHE" in PdfReader(pivote).pages[0].extract_text()
+    assert resultat.status == "extracted"
+    assert "FICHE" in resultat.text
+    # Une seule page normalisée ouverte, puis refermée.
     assert fermees == [True]
+
+
+def test_aucun_texte_brut_publie_si_la_garde_de_vue_echoue(tmp_path: Path, monkeypatch) -> None:
+    """Sans garde de vue, rien n'est publié même si le PDF porte un texte brut."""
+    from pypdf import PdfReader
+
+    from seamtech_search import extractors, pdf_orientation
+
+    source = _pdf_texte(tmp_path / "base.pdf")
+    pivote = _transformer(source, tmp_path / "pivote.pdf", lambda w: [p.rotate(90) for p in w.pages])
+    def panne(*_args, **_kwargs):
+        raise ValueError("garde de vue indisponible")
+    monkeypatch.setattr(pdf_orientation, "caracteres_demontres", panne)
+    resultat = extractors.extract_file(pivote)
+    # Le PDF d'origine est préservé, mais le repli sans vue vérifiée n'est
+    # jamais publié : il pourrait contenir du texte hors clipping.
+    assert resultat.status == "unavailable" and not resultat.text
+    assert "FICHE" in PdfReader(pivote).pages[0].extract_text()
 
 
 @pytest.mark.parametrize("angle", [0, 90, 180, 270])

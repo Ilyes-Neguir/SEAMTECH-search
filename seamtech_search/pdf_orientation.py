@@ -10,9 +10,10 @@ from __future__ import annotations
 import copy
 import logging
 import math
+from collections import Counter
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
-from typing import Iterator
+from typing import Any, Iterable, Iterator
 
 LOGGER = logging.getLogger(__name__)
 
@@ -372,6 +373,35 @@ def _page_sans_objets_non_demontres(
     return vue.filter(autorise)
 
 
+def caracteres_demontres(page: Any) -> tuple[list[Any], float]:
+    """Caractères dont la visibilité est démontrée, et hauteur de page affichée.
+
+    La garde de vue retire les objets qu'un clip ne montre pas (texte masqué,
+    hors cadre). Une reconstruction par direction des glyphes doit partir de
+    ces caractères-là, sinon elle publierait un texte que le lecteur n'affiche
+    pas — exactement ce que la garde interdit.
+
+    Aucune exception n'est avalée : une faute structurelle de la garde doit
+    faire échouer la lecture (jamais publier une page non vérifiée).
+    """
+    from seamtech_search.pdf_vue_graphique import objets_a_supprimer, verifier_vue_graphique
+
+    hauteur = float(getattr(page, "height", 0.0) or 0.0)
+    boites = objets_a_supprimer(verifier_vue_graphique(page))
+    interdits = _boites_retirees_en_haut_de_page(boites, hauteur)
+    # Deux filtres, dans cet ordre : le clip (ce que la page ne montre pas) puis
+    # le cadre (ce qui est hors de la page). Le second a longtemps semblé
+    # imputable à un contenu tourné : avant correction des échantillons, un
+    # contenu portrait tourné de 90° sur une page portrait débordait de 123,5 pt
+    # et ses premières lignes (x0 = −47,8 sur couche_90.pdf) étaient rapportées
+    # hors boîte. Ce n'était pas un défaut du filtre mais de l'échantillon : une
+    # page paysage contient ce contenu, et le filtre ne touche alors à rien.
+    vue = boite_vue(page)
+    return [
+        c for c in page.chars if _caractere_visible(c, vue) and not _objet_retire(c, interdits)
+    ], hauteur
+
+
 def _boites_retirees_en_haut_de_page(
     boites: tuple[tuple[float, float, float, float], ...], hauteur_affichee: float
 ) -> tuple[tuple[float, float, float, float], ...]:
@@ -459,3 +489,297 @@ def page_de_lecture(page: object) -> tuple[object, RotationAffichage | None]:
             return _rogner_vue(page, vue, None), None
     vue = _page_sans_objets_non_demontres(normalisee, boites, rotation, hauteur)
     return _rogner_vue(page, vue, rotation), rotation
+
+# ---------------------------------------------------------------------------
+# Lignes reconstruites le long de la direction réelle des glyphes
+# ---------------------------------------------------------------------------
+#
+# Deux besoins distincts cohabitent volontairement dans ce module :
+#
+# 1. le REPÈRE AFFICHÉ (ci-dessus) sert à la vue et au rognage : il projette
+#    les boîtes des objets dans le repère du lecteur (MediaBox/CropBox, puis
+#    /Rotate) et retire les objets non démontrés ;
+# 2. les LIGNES CI-DESSOUS servent à l'EXTRACTION DU TEXTE d'une page
+#    pivotée : pdfplumber regroupe les caractères par ordonnée d'affichage,
+#    ce qui est faux dès que la page est tournée (un mot par ligne à 90/270,
+#    texte à l'envers à 180). On regroupe donc les caractères selon leur
+#    direction réelle, mesurée sur la matrice rapportée par pdfminer.
+#
+# L'orientation dominante doit porter au moins 60 % des caractères ; en
+# dessous, la page est laissée dans son sens principal (un tampon vertical
+# minoritaire ne doit pas réorienter toute la page).
+
+#: Orientations reconnues (quarts de tour, dans le repère d'affichage).
+ORIENTATIONS = (0, 90, 180, 270)
+
+#: Part des caractères qu'une orientation doit porter pour être « dominante ».
+PART_DOMINANTE = 0.60
+
+#: Tolérance verticale de regroupement, en cadratins (bornée en points).
+TOLERANCE_LIGNE_CADRATINS = 0.40
+TOLERANCE_LIGNE_MIN_PT = 1.5
+
+#: Écart horizontal, en cadratins, au-delà duquel on insère une espace.
+ECART_ESPACE_CADRATINS = 0.25
+
+
+def _matrice(caractere: Any) -> tuple[float, ...] | None:
+    """Matrice du caractère, si pdfminer en fournit une exploitable."""
+    matrice = caractere.get("matrix") if hasattr(caractere, "get") else None
+    if not matrice or len(matrice) < 6:
+        return None
+    try:
+        return tuple(float(valeur) for valeur in matrice[:6])
+    except (TypeError, ValueError):
+        return None
+
+
+def _direction_affichage(caractere: Any) -> tuple[float, float]:
+    """Direction d'avance du texte, dans le repère d'affichage (y vers le bas).
+
+    La matrice pdfminer est exprimée dans le repère PDF (y vers le haut) : on
+    inverse donc l'ordonnée pour se placer dans le repère de pdfplumber, celui
+    dans lequel ``top``/``bottom`` sont donnés.
+    """
+    matrice = _matrice(caractere)
+    if matrice is None:
+        return (1.0, 0.0)
+    a, b = matrice[0], matrice[1]
+    longueur = math.hypot(a, b)
+    if longueur == 0:
+        return (1.0, 0.0)
+    return (a / longueur, -b / longueur)
+
+
+def _quart_de_tour(direction: tuple[float, float]) -> int:
+    """Quantifie une direction au quart de tour le plus proche (0/90/180/270)."""
+    angle = math.degrees(math.atan2(direction[1], direction[0]))
+    return int(round(angle / 90.0) * 90) % 360
+
+
+def orientations_par_caractere(caracteres: Iterable[Any]) -> Counter:
+    """Nombre de caractères par orientation quantifiée (poids = longueur du texte)."""
+    compte: Counter = Counter()
+    for caractere in caracteres:
+        texte = (caractere.get("text") if hasattr(caractere, "get") else None) or ""
+        compte[_quart_de_tour(_direction_affichage(caractere))] += len(texte) or 1
+    return compte
+
+
+def orientation_dominante(caracteres: Iterable[Any]) -> int:
+    """Orientation de lecture de la page : 0, 90, 180 ou 270.
+
+    0 signifie « horizontale » — y compris pour une page dont les glyphes
+    verticaux sont minoritaires (tampon, mention marginale) : on ne réécrit
+    pas l'ordre de lecture d'une page lisible.
+    """
+    compte = orientations_par_caractere(caracteres)
+    if not compte:
+        return 0
+    total = sum(compte.values())
+    if total <= 0:
+        return 0
+    orientation, poids = compte.most_common(1)[0]
+    if orientation not in ORIENTATIONS:
+        return 0
+    return orientation if poids / total >= PART_DOMINANTE else 0
+
+
+def page_a_orienter(page: Any) -> bool:
+    """Vrai si la page exige une reconstruction dans l'ordre de lecture.
+
+    Le critère est l'orientation DOMINANTE des glyphes telle que la voit
+    l'extracteur, pas le ``/Rotate`` déclaré : sur un scan paysage correctement
+    étiqueté, pdfminer applique déjà le ``/Rotate`` et les glyphes ressortent
+    verticaux — la page suit alors le chemin historique, tableaux compris. À
+    l'inverse, une page dont le texte est couché dans le repère d'affichage
+    (notre cas bloquant) est reconstruite.
+    """
+    return orientation_dominante(page.chars) != 0
+
+
+def _origine_affichage(caractere: Any, hauteur_page: float) -> tuple[float, float]:
+    """Origine du glyphe (x, y) dans le repère d'affichage."""
+    matrice = _matrice(caractere)
+    if matrice is None:
+        return (float(caractere.get("x0", 0.0)), float(caractere.get("top", 0.0)))
+    return (matrice[4], hauteur_page - matrice[5])
+
+
+def _coordonnees_texte(
+    caractere: Any, orientation: int, hauteur_page: float
+) -> tuple[float, float, float]:
+    """(u0, u1, v) : étendue le long du texte et position en travers du texte.
+
+    * ``u0``/``u1`` encadrent le glyphe le long de la direction de lecture ;
+    * ``v`` est la ligne (constante pour tous les glyphes d'une même ligne).
+    """
+    x0 = float(caractere.get("x0", 0.0))
+    x1 = float(caractere.get("x1", x0))
+    haut = float(caractere.get("top", 0.0))
+    bas = float(caractere.get("bottom", haut))
+    origine_x, origine_y = _origine_affichage(caractere, hauteur_page)
+    if orientation == 90:  # texte qui descend : la lecture suit « top -> bottom »
+        return (haut, bas, -origine_x)
+    if orientation == 180:  # texte à l'envers : la lecture suit « droite -> gauche »
+        return (-x1, -x0, -origine_y)
+    if orientation == 270:  # texte qui monte
+        return (-bas, -haut, origine_x)
+    return (x0, x1, origine_y)
+
+
+def _lignes_pour_orientation(
+    caracteres: list[Any], hauteur_page: float, orientation: int
+) -> list[tuple[float, float, float, str]]:
+    """Lignes reconstruites avec leurs coordonnées : ``(v, u0, u1, texte)``.
+
+    ``v`` est la position en travers du texte (ordonnée dans le repère de
+    lecture), ``u0``/``u1`` l'étendue le long du texte. Les lignes sont
+    rendues dans l'ordre de lecture (``v`` croissant), les caractères dans
+    l'ordre de lecture (``u`` croissant). Ces coordonnées sont ce qui permet
+    de vérifier qu'un tableau pivoté reste lu de gauche à droite, ligne par
+    ligne, et non dans un ordre quelconque.
+    """
+    if not caracteres:
+        return []
+    glyphes: list[tuple[float, float, float, str, float]] = []
+    for caractere in caracteres:
+        texte = (caractere.get("text") if hasattr(caractere, "get") else None) or ""
+        try:
+            taille = float(caractere.get("size") or 0.0)
+        except (TypeError, ValueError):
+            taille = 0.0
+        if taille <= 0:
+            taille = max(4.0, float(caractere.get("bottom", 0.0)) - float(caractere.get("top", 0.0)) or 10.0)
+        u0, u1, v = _coordonnees_texte(caractere, orientation, hauteur_page)
+        glyphes.append((v, u0, u1, texte, taille))
+    # Coordonnées positives : sur une page à 180°/270°, « le long du texte »
+    # est un axe miroir (u négatif). On translate l'axe entier plutôt que
+    # chaque ligne, pour que l'ordre relatif entre lignes reste comparable.
+    decalage_u = min((glyphe[1] for glyphe in glyphes), default=0.0)
+    if decalage_u:
+        glyphes = [(v, u0 - decalage_u, u1 - decalage_u, texte, taille) for v, u0, u1, texte, taille in glyphes]
+    glyphes.sort(key=lambda glyphe: (glyphe[0], glyphe[1]))
+
+    groupes: list[list[tuple[float, float, float, str, float]]] = []
+    courant: list[tuple[float, float, float, str, float]] = []
+    reference: float | None = None
+    for glyphe in glyphes:
+        tolerance = max(TOLERANCE_LIGNE_MIN_PT, TOLERANCE_LIGNE_CADRATINS * glyphe[4])
+        if reference is None or abs(glyphe[0] - reference) <= tolerance:
+            courant.append(glyphe)
+            # Moyenne glissante DANS la ligne : sur une page de texte serré, les
+            # ordonnées varient de quelques dixièmes de point d'un glyphe à
+            # l'autre (accent, jambage) et une comparaison au seul premier
+            # glyphe finirait par couper la ligne en deux.
+            reference = glyphe[0] if reference is None else (reference * 0.5 + glyphe[0] * 0.5)
+        else:
+            groupes.append(courant)
+            courant = [glyphe]
+            # Nouvelle ligne : la référence repart de SON premier glyphe. La
+            # conserver ferait dériver la moyenne vers la ligne précédente et
+            # détacherait le deuxième caractère de chaque ligne.
+            reference = glyphe[0]
+    if courant:
+        groupes.append(courant)
+
+    lignes: list[tuple[float, float, float, str]] = []
+    for groupe in groupes:
+        groupe.sort(key=lambda glyphe: glyphe[1])
+        morceau = ""
+        fin_precedente: float | None = None
+        debut_ligne = groupe[0][1]
+        fin_ligne = groupe[0][2]
+        for v, u0, u1, texte, taille in groupe:
+            if (
+                fin_precedente is not None
+                and u0 - fin_precedente > ECART_ESPACE_CADRATINS * taille
+                and morceau
+                and not morceau.endswith(" ")
+                and texte != " "
+            ):
+                morceau += " "
+            morceau += texte
+            fin_precedente = u1 if fin_precedente is None else max(u1, fin_precedente)
+            fin_ligne = max(fin_ligne, u1)
+        ligne = morceau.rstrip()
+        if ligne.strip():
+            lignes.append((groupe[0][0], debut_ligne, fin_ligne, ligne))
+    lignes.sort(key=lambda ligne: ligne[0])
+    return lignes
+
+
+def lignes_orientees(caracteres: Iterable[Any], hauteur_page: float) -> list[str]:
+    """Lignes de texte dans l'ordre de lecture, quelle que soit l'orientation."""
+    return [ligne[3] for ligne in lignes_avec_coordonnees(caracteres, hauteur_page)]
+
+
+def texte_page(caracteres: Iterable[Any], hauteur_page: float, max_chars: int | None = None) -> str:
+    """Texte d'une page reconstruit dans l'ordre de lecture (borné si demandé)."""
+    texte = "\n".join(lignes_orientees(caracteres, hauteur_page))
+    if max_chars is not None:
+        return texte[:max_chars]
+    return texte
+
+
+def lignes_avec_coordonnees(
+    caracteres: Iterable[Any], hauteur_page: float
+) -> list[tuple[float, float, float, str]]:
+    """Lignes reconstruites avec leurs coordonnées : ``(v, u0, u1, texte)``.
+
+    ``v`` est la position en travers du texte (ordonnée dans le repère de
+    lecture), ``u0``/``u1`` l'étendue le long du texte. Les lignes sont
+    rendues dans l'ordre de lecture (``v`` croissant), les caractères dans
+    l'ordre de lecture (``u`` croissant). Ces coordonnées sont ce qui permet
+    de vérifier qu'un tableau pivoté reste lu de gauche à droite, ligne par
+    ligne, et non dans un ordre quelconque.
+    """
+    caracteres = list(caracteres)
+    return _lignes_pour_orientation(caracteres, hauteur_page, orientation_dominante(caracteres))
+
+
+def lignes_minoritaires(caracteres: Iterable[Any], hauteur_page: float) -> list[str]:
+    """Lignes dont l'orientation diffère de celle du corps de la page.
+
+    Cas réel : un tampon vertical, une mention marginale, une cote écrite le
+    long d'un bord. pdfplumber ne les rend **pas** dans ``extract_text`` (ils
+    n'appartiennent à aucune ligne horizontale) : sans ce complément, leur
+    contenu — parfois une référence client — disparaît de l'index.
+
+    Le corps de page n'est pas répété : seules les lignes des orientations
+    minoritaires sont rendues.
+    """
+    caracteres = list(caracteres)
+    if not caracteres:
+        return []
+    par_orientation: dict[int, list[Any]] = {}
+    for caractere in caracteres_minoritaires(caracteres):
+        orientation = _quart_de_tour(_direction_affichage(caractere))
+        par_orientation.setdefault(orientation, []).append(caractere)
+    lignes: list[str] = []
+    for orientation in sorted(par_orientation):
+        groupe = par_orientation[orientation]
+        if len(groupe) < 2:
+            continue
+        lignes.extend(
+            ligne[3] for ligne in _lignes_pour_orientation(groupe, hauteur_page, orientation)
+        )
+    return lignes
+
+
+def caracteres_minoritaires(caracteres: Iterable[Any]) -> list[Any]:
+    """Caractères dont l'orientation diffère de celle du corps de la page.
+
+    Sert à les retirer de la page avant ``extract_text`` : livrés tels quels
+    par pdfplumber, ils ressortent inversés ou entrelacés (« NOPMAT » pour
+    « TAMPON »), ce qui pollue l'index avec des mots qui n'existent pas.
+    """
+    caracteres = list(caracteres)
+    if not caracteres:
+        return []
+    dominante = orientation_dominante(caracteres)
+    return [
+        caractere
+        for caractere in caracteres
+        if _quart_de_tour(_direction_affichage(caractere)) != dominante
+    ]

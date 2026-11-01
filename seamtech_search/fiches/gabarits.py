@@ -391,6 +391,11 @@ GABARIT_GV_FFAB = GabaritDef(
 # Aucune ancre ne doit exister sur une fiche de voile (jamais « coulisseaux »,
 # qui est une ancre GV fullbatten).
 CODE_GABARIT_ACCESSOIRE = "FICHE_ACCESSOIRE_V1"
+# Famille DISTINCTE (pas une version de plus) : le formulaire imprimé et la
+# fiche de prise de cotes sont deux documents différents, tous deux réels et
+# tous deux actifs. Les fusionner en v3 aurait désactivé la v2 en base et fait
+# perdre à la prise de cotes ses lectures de matière/quantité (mesuré).
+CODE_GABARIT_ACCESSOIRE_IMPRIME = "FICHE_ACCESSOIRE_IMPRIME_V1"
 
 GABARIT_ACCESSOIRE_V1 = GabaritDef(
     code=CODE_GABARIT_ACCESSOIRE,
@@ -566,10 +571,174 @@ GABARIT_ACCESSOIRE_V2 = GabaritDef(
     ],
 )
 
+# Lot CAL-2 — calibration sur les FORMULAIRES ACCESSOIRES RÉELS de l'atelier
+# (documents Dropbox ouverts et mesurés le 2026-10-29 ; aucun PDF client n'est
+# versionné dans ce dépôt). Trois gabarits d'impression distincts ont été
+# observés, tous préfixés « Fiche de … » :
+#
+#   1. « Fiche de Lazy Bag » (paysage 792×612), mesuré sur
+#      `/ACCESSOIRES 2024/LAZY BAG 2P ST64/LB 2 parties.pdf` et
+#      `/ACCESSOIRES 2025/LAZY BAG 2P ST105/LB ST105 FINI.pdf` :
+#          Fiche de Lazy Bag
+#          ST64                       ← ligne de code NUE, sous le titre
+#          Commande                   ← libellé présent, valeur SOUVENT VIDE
+#          Client (réf.) SEAMTECH PRO
+#          Longueur du gousset de latte 3.22m - Latte jonc 12mm … Contrôle
+#          Diametre de ralingue* 8 mm
+#          Longueur de la ralingue* 1.77 m
+#          Type des coulisseaux A031 (X3)
+#          Longueur du lazy* 3.32 m
+#          Hauteur du lazy* 0.29m
+#          Hauteur du capot* 0.84m
+#          Observations/Notes SANS LOGO
+#   2. « Fiche de fourreau de gse » (paysage 792×612), mesuré sur
+#      `/ACCESSOIRES 2024/HOUSSE DE GSE ST96/FICHE FINIE.pdf` et
+#      `/ACCESSOIRES 2024/HOUSSE DE GSE ST101/ST101 FINI.pdf` :
+#          Fiche de fourreau de gse
+#          Commande ST96              ← ici le code est APRÈS « Commande »
+#          Client (réf.) SEAMTECH PRO
+#          Contrôle
+#          Longueur du fourreau 10.50 m
+#          Hauteur du fourreau 0.62 m
+#          longueur point decoute 0.85m
+#          Hauteur du point d'ecoute 0.42 m
+#          Observations/Notes [SANS LOGO]
+#   3. « Fiche de Sac de Pont » (A4 portrait 595×842), mesuré sur
+#      `/ACCESSOIRES 2025/SAC DE PONT ST265B/ST 256b_ffab.pdf` et
+#      `/ACCESSOIRES 2024/SAC DE PONT ST74B/ST 074b_ffab.pdf` :
+#          Fiche de Sac de Pont
+#          04/10/2024
+#          Bateau First 325
+#          Commande ST 074b
+#          Client (réf.) Voilerie VBO (ST74 - SAOODXJBQ) Contrôle
+#          Logo Pas de logo
+#          Couleur Captain Navy 5057
+#          Longueur du sac* 3,19 m
+#          Hauteur avant* 1,14 m
+#          Observations/Notes
+#
+# Défaut PROUVÉ sur ces documents (mesuré avec `extraire_fiche`) : la fiche
+# Lazy Bag était détectée comme `FICHE_GV_FULLBATTEN_V1` — la ligne « Type des
+# coulisseaux » porte l'ancre `coulisseaux` de la GV lattée, score 1 partout,
+# et la GV passe avant les accessoires à score égal : titre, client, code et
+# dimensions sortaient TOUS vides. La fiche « fourreau de gse » n'était
+# reconnue par AUCUN gabarit (« fourreau » n'était une ancre nulle part), et la
+# fiche « Sac de Pont » n'était reconnue que par la v1 (code seul, sans type,
+# ni couleur, ni bateau). La v3 ci-dessous est calibrée sur ces trois
+# formulaires : ses ancres de titre pèsent PLUS que l'ancre isolée de la GV.
+#
+# Les documents SANS COUCHE TEXTE (plans exportés du traceur : `TAUD DE GV.pdf`,
+# `ST298.pdf`, `ST40 FINI.pdf` — 0 à 13 caractères extraits) ne sont PAS des
+# fiches : `analyser_pdf` lève `ExtractionImpossible` et le scanner les compte
+# comme pièces illisibles, jamais comme « gabarit inconnu ».
+GABARIT_ACCESSOIRE_IMPRIME = GabaritDef(
+    code=CODE_GABARIT_ACCESSOIRE_IMPRIME,
+    version=1,
+    description=(
+        "Fiche d'accessoire imprimée par l'atelier, calibrée sur les trois "
+        "formulaires réels mesurés (Fiche de Lazy Bag, Fiche de fourreau de "
+        "gse, Fiche de Sac de Pont) : titre = type d'accessoire, code lu sur "
+        "la ligne « Commande » ou sur la ligne nue sous le titre, client "
+        "« (réf.) », bateau, couleur, logo, première dimension nommée. Les "
+        "autres dimensions restent en mesures libres (RG6) : aucune n'est "
+        "forcée dans une cote mal nommée."
+    ),
+    ancres_detection=[
+        # Chaînes RÉELLES des trois formulaires imprimés mesurés. Aucune
+        # n'existe sur une fiche de voile (vérifié le 2026-10-29 sur
+        # `ST 508_ffab.pdf` et `ST 660b_ffab.pdf`, qui ne portent que
+        # « coulisseaux » et « lattes ») ni sur le formulaire de prise de
+        # cotes (famille FICHE_ACCESSOIRE_V1, v2 restée active pour lui).
+        "fiche de lazy bag",
+        "fiche de fourreau de gse",
+        "fourreau",
+        "fiche de sac de pont",
+        "gousset de latte",
+        "diametre de ralingue",
+        "hauteur du capot",
+    ],
+    champs=[
+        # 1) Le TITRE donne le type d'accessoire (« Fiche de Lazy Bag » →
+        #    « Lazy Bag »). Le traitement relit la page : la valeur n'est pas
+        #    sur la ligne de l'ancre au sens strict, elle EST l'ancre.
+        RegleChamp(
+            cible="accessoire.type",
+            ancres=["fiche de lazy bag", "fiche de fourreau de gse", "fiche de sac de pont"],
+            type="texte",
+            traitement="titre_accessoire",
+        ),
+        # 2) Code : ligne « Commande ST 074b » (formulaires 2 et 3) ou ligne
+        #    NUE « ST64 »/« ST105 » juste sous le titre (formulaire 1, où
+        #    « Commande » est imprimé sans valeur). Un seul traitement couvre
+        #    les deux formes mesurées.
+        RegleChamp(
+            cible="fiche.code",
+            ancres=["fiche de lazy bag", "fiche de fourreau de gse", "fiche de sac de pont", "commande"],
+            type="texte",
+            traitement="code_accessoire",
+        ),
+        # 3) Client : « Client (réf.) … ». « Contrôle » est un en-tête de
+        #    colonne imprimé sur la MÊME ligne (mesuré sur les trois
+        #    formulaires) : il borne la valeur, il n'appartient pas au client.
+        RegleChamp(
+            cible="fiche.client",
+            ancres=["client (réf.)", "client (ref.)", "client"],
+            type="texte",
+            traitement="client",
+            stop=["contrôle", "controle", "logo", "couleur", "date", "bateau"],
+        ),
+        # 4) Bateau : présent sur le formulaire « Sac de Pont » uniquement
+        #    (« Bateau First 325 »). Absent des deux autres : rien n'est lu,
+        #    aucune valeur n'est inventée.
+        RegleChamp(
+            cible="accessoire.modele_bateau",
+            ancres=["bateau"],
+            type="texte",
+            stop=["commande", "client", "date", "logo", "couleur", "longueur", "hauteur"],
+        ),
+        # 5) Couleur / coloris du tissu (« Couleur Captain Navy 5057 »).
+        RegleChamp(
+            cible="accessoire.couleur",
+            ancres=["couleur", "coloris"],
+            type="texte",
+            stop=["longueur", "hauteur", "logo", "observations", "commande", "client"],
+        ),
+        # 6) UNE seule dimension nommée est projetée dans `dimensions` : la
+        #    première longueur mesurée, dont l'unité est explicite. La projeter
+        #    en « longueur_m » est exact ; y joindre la hauteur la ferait
+        #    ranger en « largeur_m », ce qui serait un faux libellé. Les autres
+        #    dimensions restent des mesures libres (RG6).
+        #    L'astérisque est imprimé sur le formulaire (« Longueur du sac* ») et
+        #    la normalisation le conserve : les deux formes sont donc listées.
+        RegleChamp(
+            cible="accessoire.dimensions",
+            ancres=[
+                "longueur du sac*",
+                "longueur du sac",
+                "longueur du fourreau",
+                "longueur du lazy",
+                "longueur du gousset de latte",
+            ],
+            type="texte",
+            traitement="dimension_nommee",
+            stop=["hauteur", "diametre", "type", "observations", "contrôle", "controle"],
+        ),
+        # 7) Logo : « Logo sans » / « Logo Pas de logo » (mesuré sur le
+        #    formulaire Sac de Pont) et « SANS LOGO » en observations.
+        RegleChamp(
+            cible="fiche.logo",
+            ancres=["logo"],
+            type="texte",
+            traitement="logo_accessoire",
+            stop=["couleur", "longueur", "hauteur", "observations", "commande", "client"],
+        ),
+    ],
+)
+
 # Ordre significatif : à score d'ancres égal, la version la plus récente
-# d'un code gagne la détection (v2 devant v1) ; les gabarits du corpus réel
-# viennent EN DERNIER pour que les gabarits historiques (génois, portant)
-# gagnent les égalités de score sur leurs propres documents.
+# d'un code gagne la détection (v3 devant v2 devant v1) ; les gabarits du
+# corpus réel viennent EN DERNIER pour que les gabarits historiques (génois,
+# portant) gagnent les égalités de score sur leurs propres documents.
 GABARITS_EMBARQUES: tuple[GabaritDef, ...] = (
     GABARIT_PORTANT_V2,
     GABARIT_PORTANT,
@@ -577,10 +746,12 @@ GABARITS_EMBARQUES: tuple[GabaritDef, ...] = (
     GABARIT_GV_FULLBATTEN,
     GABARIT_JADE,
     GABARIT_GV_FFAB,
-    # Lots 7 + CAL : les gabarits accessoires viennent en dernier (v2
-    # calibrée devant v1 publiée) — leurs ancres sont absentes des fiches
-    # de voiles, ils ne peuvent donc pas voler une fiche voile ; sur un
-    # document accessoire, la v2 gagne.
+    # Lots 7 + CAL : les gabarits accessoires viennent en dernier — leurs
+    # ancres de titre (« fiche de lazy bag », « fiche de fourreau de gse »,
+    # « fiche de sac de pont »…) sont absentes des fiches de voiles, vérifié
+    # sur les fiches réelles. La famille « imprimé » passe AVANT la prise de
+    # cotes pour gagner l'égalité de score sur « sac de pont ».
+    GABARIT_ACCESSOIRE_IMPRIME,
     GABARIT_ACCESSOIRE_V2,
     GABARIT_ACCESSOIRE_V1,
 )
@@ -641,3 +812,22 @@ def synchroniser_gabarits_embarques(index: Any) -> list[str]:
                         (code, code),
                     )
     return ajoutes
+
+#: Gabarit « document » de la FICHE DE REPRISE (voir `reprise.py`).
+#:
+#: Il n'est JAMAIS proposé à la détection : son ancre est technique et
+#: n'existe dans aucun document. Il n'est enregistré en base que pour que
+#: l'écran de validation affiche une provenance lisible au lieu d'une colonne
+#: « gabarit » vide sur les dossiers sans fiche de fabrication — 21 des 58
+#: dossiers réels mesurés.
+GABARIT_REPRISE = GabaritDef(
+    code="FICHE_REPRISE_V1",  # doit valoir reprise.CODE_GABARIT_REPRISE (test dédié)
+    version=1,
+    description=(
+        "Fiche de reprise : dossier réel sans fiche de fabrication (plan SailPack, "
+        "formulaire de prise de cotes ou PDF image). Les valeurs sont lues dans le "
+        "document ou dans le nom du dossier, et une anomalie exige la saisie manuelle."
+    ),
+    ancres_detection=["fiche de reprise (aucune ancre documentaire)"],
+    champs=[],
+)

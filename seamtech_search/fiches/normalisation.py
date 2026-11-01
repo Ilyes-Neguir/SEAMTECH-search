@@ -132,6 +132,13 @@ def cote_en_metres(texte: str | None) -> float | None:
     """« 6,60 m » / « 6.60 » / « 660 cm » → mètres (2 jeux de cotes du §13)."""
     if not texte:
         return None
+    # « chute 60x260 polyester » : un COUPLE de dimensions (renfort, sangle),
+    # pas une cote de voile. Mesuré sur la fiche SAILONET
+    # `/VOILES 2026/ETAP 32S ST685/FFAB_gse234269.pdf`, où la bordure sortait à
+    # 60 m — cote physiquement impossible, remontée ensuite en anomalie RG16.
+    # Le contrôle est posé à la SOURCE : un couple « NxM » n'est jamais une cote.
+    if re.search(r"\d\s*[x×]\s*\d", texte):
+        return None
     valeur = extraire_decimal(texte)
     if valeur is None:
         return None

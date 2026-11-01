@@ -12,6 +12,7 @@ from zipfile import BadZipFile, ZipFile
 
 logger = logging.getLogger("seamtech_search.extractors")
 
+
 # Bump this whenever extraction logic changes for any format. The indexer
 # uses it (alongside size/modified_at) to decide whether a previously
 # indexed file needs to be re-extracted even though it hasn't changed on
@@ -29,7 +30,9 @@ logger = logging.getLogger("seamtech_search.extractors")
 # v10: read verified orthogonal mixed orientations separately for indexing.
 # v11: retain partial text without certifying unsupported PDF orientations.
 # v12: do not publish uninspected fallback text; clip to the actual page view.
-CURRENT_EXTRACTOR_VERSION = 12
+# v13: read minority-orientation glyphs (vertical stamps, margin notes) apart
+# from the page body instead of letting pdfplumber reverse them ("NOPMAT").
+CURRENT_EXTRACTOR_VERSION = 13
 
 EXTRACTION_STATUSES = {"extracted", "unavailable", "skipped", "error", "timeout", "not_applicable"}
 
@@ -354,6 +357,51 @@ def _extract_pdf_via_pipeline_ocr(
     return "", "; ".join(m for m in motifs if m) or "OCR n'a produit aucun texte"
 
 
+#: Longueur d'en-tête inspectée : la spécification tolère un préfixe quelconque
+#: avant la signature ``%PDF-``.
+_SIGNATURE_PDF = b"%PDF-"
+_TAILLE_ENTETE_PDF = 1024
+
+
+def _verdict_pdf_illisible(path: Path) -> ExtractionResult | None:
+    """Classe un PDF inexploitable, ou ``None`` s'il faut laisser tenter pypdf.
+
+    MESURÉ (passe finale du 29/10/2026) : sans ce tri, un PDF chiffré et un
+    fichier ``.pdf`` qui n'en est pas un rendent ``unavailable`` — exactement le
+    statut d'une page image à relire. L'opérateur ne peut alors pas distinguer
+    un fichier à réparer d'un PDF simplement non exploitable.
+
+    Seuls deux cas non ambigus sont classés ``error`` : signature PDF absente,
+    et chiffrement non ouvrable sans mot de passe. Un PDF que pypdf n'arrive pas
+    à analyser reste confié au statut « relecture » : des PDF imparfaits (xref
+    abîmée, page tronquée) restent parfois lisibles et ne doivent pas être
+    déclarés en erreur sur le seul avis de pypdf.
+    """
+    try:
+        with path.open("rb") as flux:
+            entete = flux.read(_TAILLE_ENTETE_PDF)
+    except OSError:
+        return None
+    if _SIGNATURE_PDF not in entete:
+        return ExtractionResult("", "error", "Signature %PDF- absente : ce fichier n'est pas un PDF")
+    try:
+        from pypdf import PdfReader
+
+        lecteur = PdfReader(str(path))
+        if not lecteur.is_encrypted:
+            return None
+        try:
+            ouvert = lecteur.decrypt("")
+        except Exception:
+            ouvert = 0
+    except Exception:
+        # pypdf n'analyse pas le fichier : pdfplumber reste juge.
+        return None
+    if not ouvert:
+        return ExtractionResult("", "error", "PDF chiffré : mot de passe requis")
+    return None
+
+
 def _extract_pdf(path: Path, max_chars: int) -> str | ExtractionResult:
     """Extract PDF text and tables only when the page inspection is available.
 
@@ -364,7 +412,11 @@ def _extract_pdf(path: Path, max_chars: int) -> str | ExtractionResult:
     plumber_text = _extract_pdf_with_plumber(path, max_chars)
     if plumber_text is not None:
         return plumber_text
-    return ExtractionResult("", "unavailable", "Inspection PDF indisponible : relecture nécessaire")
+    # L'inspection a échoué : dire si le fichier est inexploitable (erreur
+    # explicite) ou si son texte n'a pas pu être lu (relecture nécessaire).
+    return _verdict_pdf_illisible(path) or ExtractionResult(
+        "", "unavailable", "Inspection PDF indisponible : relecture nécessaire"
+    )
 
 
 def _table_row_already_in_text(cells: list[str], normalized_text: str) -> bool:
@@ -384,12 +436,35 @@ def _table_row_already_in_text(cells: list[str], normalized_text: str) -> bool:
     return all(" ".join(cell.split()) in normalized_text for cell in cells)
 
 
-def _texte_page_plumber(page: object) -> str:
-    """Même lecture native et tableaux pour l'extraction classique et mixte."""
-    text = page.extract_text(x_tolerance=2, y_tolerance=2) or ""
+def _texte_page_plumber(page: object, *, filtrer_orientations_minoritaires: bool = True) -> str:
+    """Même lecture native et tableaux pour l'extraction classique et mixte.
+
+    Sur une page non pivotée, les caractères d'orientation minoritaire (tampon
+    vertical, mention en marge) sont retirés du corps avant ``extract_text`` :
+    pdfplumber les regroupe par ordonnée d'affichage et les rend donc INVERSÉS
+    (« NOPMAT » pour « TAMPON »), ce qui remplit l'index de faux mots. Ils sont
+    relus à part, dans leur ordre réel, et ajoutés une seule fois à la suite.
+
+    Sur une vue déjà pivotée (``filtrer_orientations_minoritaires=False``), ce
+    tri ne s'applique PAS : les caractères y sont projetés dans le repère
+    d'affichage alors que leur matrice reste celle du flux de contenu, tous
+    seraient donc vus comme minoritaires. Les groupes d'orientation y sont déjà
+    séparés par ``lectures_mixtes_verifiees``.
+    """
+    page_travail = page
+    try:
+        if filtrer_orientations_minoritaires:
+            from seamtech_search.pdf_orientation import caracteres_minoritaires
+
+            ids_minoritaires = {id(c) for c in caracteres_minoritaires(page.chars)}
+            if ids_minoritaires:
+                page_travail = page.filter(lambda objet: id(objet) not in ids_minoritaires)
+    except Exception as exc:
+        logger.debug("Tri des orientations minoritaires indisponible (%s)", type(exc).__name__)
+    text = page_travail.extract_text(x_tolerance=2, y_tolerance=2) or ""
     try:
         normalized = " ".join(text.split())
-        for table in page.extract_tables() or []:
+        for table in page_travail.extract_tables() or []:
             fresh_rows = [
                 " | ".join(cell.strip() if cell else "" for cell in cells)
                 for cells in table
@@ -400,14 +475,78 @@ def _texte_page_plumber(page: object) -> str:
                 text += "\n" + "\n".join(fresh_rows)
     except Exception as exc:
         logger.debug("Table extraction failed (%s)", type(exc).__name__)
+    if filtrer_orientations_minoritaires:
+        # Le texte minoritaire est ajouté UNE fois, jamais dupliqué : sans lui
+        # un tampon vertical disparaîtrait purement et simplement de l'index.
+        try:
+            from seamtech_search.pdf_orientation import lignes_minoritaires
+
+            corps = " ".join(text.split())
+            marginales = [
+                ligne
+                for ligne in lignes_minoritaires(page.chars, float(page.height))
+                if " ".join(ligne.split()) not in corps
+            ]
+            if marginales:
+                text += "\n" + "\n".join(marginales)
+        except Exception as exc:
+            logger.debug("Texte d'orientation minoritaire non extrait (%s)", type(exc).__name__)
     return text
 
 
+def _texte_glyphes(caracteres: list, hauteur: float) -> str:
+    """Lignes reconstruites le long de la direction réelle des glyphes.
+
+    Les orientations minoritaires (tampon vertical) sont ajoutées à la suite :
+    ``texte_page`` ne couvre que l'orientation dominante.
+    """
+    from seamtech_search.pdf_orientation import lignes_minoritaires, texte_page
+
+    texte = texte_page(caracteres, hauteur) or ""
+    corps = " ".join(texte.split())
+    try:
+        marginales = [
+            ligne
+            for ligne in lignes_minoritaires(caracteres, hauteur)
+            if " ".join(ligne.split()) not in corps
+        ]
+    except Exception:
+        marginales = []
+    if marginales:
+        texte += "\n" + "\n".join(marginales)
+    return texte
+
+
 def _texte_page_orientee(originale: object, *, inspecter_images: bool = False) -> tuple[str, bool, bool]:
-    """Lit les groupes vérifiés et signale une éventuelle lecture incertaine."""
+    """Lit une page et signale une éventuelle lecture incertaine.
+
+    Deux mécanismes complémentaires, selon ce que porte réellement la page :
+
+    * les GLYPHES sont tournés dans le repère d'affichage (contenu couché,
+      ``/Rotate`` absent ou qui ne compense pas) : les lignes sont reconstruites
+      le long de la direction réelle des caractères. Les regrouper par ordonnée
+      d'affichage — ce que fait pdfplumber — rendrait un mot par ligne (90°/270°)
+      ou le texte à l'envers (180°) ;
+    * sinon, la lecture se fait dans le repère du lecteur : groupes d'orientation
+      vérifiés lus séparément (``lectures_mixtes_verifiees``), caractères
+      d'orientation minoritaire extraits à part, tableaux compris.
+
+    Cas mesuré (matrice contenu × ``/Rotate``) : une page déclarée pivotée de 90°
+    ou 270° voit ses axes échangés ; la vue normalisée peut alors ne plus porter
+    les glyphes. On ne publie jamais une page vide pour autant : si la lecture
+    dans le repère du lecteur ne rend rien alors que la page porte des caractères
+    démontrés, la reconstruction par direction des glyphes est utilisée.
+
+    La garde de vue s'applique aux deux mécanismes : un glyphe masqué par un clip
+    n'est jamais publié. Une transformation non orthogonale (oblique, miroir,
+    cisaillement) ne se rattache à aucune orientation : elle reste signalée
+    « incertaine » et le texte disponible est conservé sans être certifié.
+    """
     from seamtech_search.pdf_orientation import (
+        caracteres_demontres,
         fermer_page_lecture,
         lectures_mixtes_verifiees,
+        orientation_dominante,
         orientation_non_verifiee,
         orientations_visibles,
         page_de_lecture,
@@ -418,10 +557,23 @@ def _texte_page_orientee(originale: object, *, inspecter_images: bool = False) -
     try:
         with lectures_mixtes_verifiees(originale) if mixte or not compatible else nullcontext(None) as lectures:
             incertaine = orientation_non_verifiee(originale, rotation, lectures)
-            if lectures is None:
-                texte = _texte_page_plumber(page)
+            if orientation_dominante(originale.chars) != 0:
+                gardes, hauteur = caracteres_demontres(originale)
+                texte = _texte_glyphes(gardes, hauteur) if gardes else ""
             else:
-                texte = "\n".join(_texte_page_plumber(vue) for vue, _ in lectures).strip()
+                if lectures is None:
+                    texte = _texte_page_plumber(page)
+                else:
+                    # Vues déjà pivotées : pas de tri minoritaire (leurs
+                    # caractères sont projetés mais leur matrice reste celle du
+                    # flux de contenu).
+                    texte = "\n".join(
+                        _texte_page_plumber(vue, filtrer_orientations_minoritaires=False) for vue, _ in lectures
+                    ).strip()
+                if not texte.strip():
+                    gardes, hauteur = caracteres_demontres(originale)
+                    if gardes:
+                        texte = _texte_glyphes(gardes, hauteur)
         return texte, bool(page.images) if inspecter_images else False, incertaine
     finally:
         fermer_page_lecture(originale, page)

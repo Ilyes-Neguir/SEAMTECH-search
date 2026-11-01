@@ -503,6 +503,8 @@ def _process_lot_task(
             worker_id=worker_id,
             claim_job_id=str(job_id) if worker_id is not None else None,
             verifier_claim_externe=verifier_claim_externe,
+            # P0.2 : le worker est le seul acteur des lots en production — il
+            # doit donc promouvoir les fichiers vers le stockage objet.
             config=config,
         )
         if doit_continuer is not None and not doit_continuer():

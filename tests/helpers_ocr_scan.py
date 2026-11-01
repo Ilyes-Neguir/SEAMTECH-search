@@ -9,27 +9,87 @@ Usage:
 - gen_pdf_en(tmp_path) -> Path
 - gen_pdf_multi(tmp_path) -> Path
 - gen_pdf_degrade(tmp_path) -> Path
+- gen_pdf_custom(tmp_path, terme, ...) -> Path
+- terme_unique_ocr_sur(prefixe) -> str
+
+Termes uniques et lisibilité OCR
+--------------------------------
+Un terme unique sert de preuve : s'il ressort de l'OCR, c'est bien CE document
+qui a été océrisé puis indexé. Il doit donc être **lisible sans ambiguïté** par
+tesseract. Un tirage hexadécimal contient « 0 », que tesseract lit « O » sur une
+image de synthèse — d'où l'échec de CI du 28/10 (« GENOA0FFF… » océrisé
+« GENOAOFFF… »). Le terme est désormais tiré dans ``ALPHABET_OCR_SUR`` :
+majuscules sans I ni O, donc aucune paire 0/O, 1/I/l, 5/S, 8/B, 2/Z à confondre.
+L'assertion du test reste stricte : aucune tolérance n'est ajoutée côté test.
 """
 
 from __future__ import annotations
 
 import hashlib
 import random
+import secrets
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas as pdf_canvas
 
+#: Polices candidates, dans l'ordre de préférence. La MONOSPACE d'abord :
+#: mesuré le 28/10 sur ce dépôt, la police proportionnelle fait halluciner des
+#: caractères à tesseract sur les termes techniques (mesure reproductible :
+#: « GENOABMWFX » océrisé « GENOABMWEFX » en DejaVu Sans 32 px, correct en
+#: DejaVu Sans Mono 32 px ; « …FXJ » océrisé « …FX] » en proportionnelle,
+#: correct en monospace). L'écart de largeur entre glyphes d'une police
+#: proportionnelle est ce que tesseract interprète comme un caractère absent.
+POLICES_OCR = (
+    ("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", 32),
+    ("/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf", 32),
+    ("DejaVuSansMono.ttf", 32),
+    ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 32),
+    ("DejaVuSans.ttf", 32),
+)
+
 
 def _get_font(size: int = 32):
-    try:
-        return ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", size)
-    except Exception:
+    """Police de rendu des échantillons : monospace si disponible.
+
+    Une police à chasse fixe donne un pas régulier, seule condition pour que
+    l'OCR ne « voit » pas de caractère là où il n'y a qu'un blanc de kerning.
+    """
+    for chemin, taille_defaut in POLICES_OCR:
         try:
-            return ImageFont.truetype("DejaVuSans.ttf", size)
+            return ImageFont.truetype(chemin, size or taille_defaut)
         except Exception:
-            return ImageFont.load_default()
+            continue
+    return ImageFont.load_default()
+
+
+#: Majuscules « sûres » pour l'OCR, mesurées et non supposées (28/10/2026) :
+#:
+#: * aucun chiffre — « 0 » est océrisé « O » de façon reproductible, y compris
+#:   en monospace (« GENOA0FFF… » → « GENOAOFFF… », l'échec de CI du 28/10) ;
+#: * ni ``I`` ni ``O`` — confusions 1/I et 0/O avec n'importe quel contexte ;
+#: * ni ``J`` — mesuré : « QZMJNP » océrisé « QZMJNP » mais « …HJX… » océrisé
+#:   « …HJIX… » et « …FXJ » océrisé « …FX] » selon le glyphe suivant ; le J
+#:   n'est pas fiable sur une image de synthèse.
+#:
+#: 23 lettres, 23**10 ≈ 4,1e13 combinaisons : l'unicité n'est pas compromise.
+ALPHABET_OCR_SUR = "ABCDEFGHKLMNPQRSTUVWXYZ"
+
+#: Longueur du suffixe aléatoire : assez pour l'unicité, assez court pour tenir
+#: sur une ligne à 32 px.
+LONGUEUR_SUFFIXE_OCR = 10
+
+
+def terme_unique_ocr_sur(prefixe: str = "TERME") -> str:
+    """Terme unique fait de caractères qu'aucun OCR ne peut confondre.
+
+    Préfixe nettoyé (majuscules, alphabet sûr uniquement) + suffixe aléatoire
+    cryptographiquement tiré dans :data:`ALPHABET_OCR_SUR`.
+    """
+    propre = "".join(caractere for caractere in prefixe.upper() if caractere in ALPHABET_OCR_SUR)
+    suffixe = "".join(secrets.choice(ALPHABET_OCR_SUR) for _ in range(LONGUEUR_SUFFIXE_OCR))
+    return f"{propre or 'TERME'}{suffixe}"
 
 
 def _create_image(text: str, dest: Path, degraded: bool = False, size=(1200, 800)) -> Path:

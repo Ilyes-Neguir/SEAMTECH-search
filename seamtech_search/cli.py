@@ -11,6 +11,7 @@ import uvicorn
 from .api import create_app
 from .config import AppConfig, exiger_secrets_production
 from .crawler import ScanIncompleteError, crawl
+from .fiches.arborescence import ResultatArborescence
 from .indexer import SearchIndex
 from .retention import run_retention_cleanup
 
@@ -47,6 +48,19 @@ def main(argv: Sequence[str] | None = None) -> None:
     serve_parser = subparsers.add_parser("serve", help="Run the FastAPI web server")
     serve_parser.add_argument("--config", default=str(default_config))
 
+    arbo_parser = subparsers.add_parser(
+        "deposer-arborescence",
+        help="Déposer TOUS les dossiers d'une arborescence (Dropbox synchronisé, année…)",
+    )
+    arbo_parser.add_argument("racine")
+    # RG14_EXCEPTION : cette URL n'est jamais contactée par l'application en
+    # service ; seul l'opérateur qui lance « deposer-arborescence » joint l'API
+    # SEAMTECH de sa propre machine (127.0.0.1 par défaut, surchargeable).
+    arbo_parser.add_argument("--url-api", default="http://127.0.0.1:8000")
+    arbo_parser.add_argument("--jeton", default=None, help="jeton d'API (défaut : SEAMTECH_TOKEN)")
+    arbo_parser.add_argument("--rapport-csv", default=None)
+    arbo_parser.add_argument("--delai", type=float, default=180.0)
+
     args = parser.parse_args(argv)
 
     if args.command == "index":
@@ -59,6 +73,35 @@ def main(argv: Sequence[str] | None = None) -> None:
         run_cleanup(args.config)
     elif args.command == "serve":
         run_server(args.config)
+    elif args.command == "deposer-arborescence":
+        run_deposer_arborescence(
+            args.racine, args.url_api, args.jeton, args.rapport_csv, args.delai
+        )
+
+
+def run_deposer_arborescence(
+    racine: str,
+    url_api: str,
+    jeton: str | None,
+    rapport_csv: str | None,
+    delai: float = 180.0,
+) -> list[ResultatArborescence]:
+    """Dépose toute une arborescence et affiche une ligne par dossier."""
+    import os
+
+    from .fiches.arborescence import deposer_arborescence, ecrire_rapport_csv, resume
+
+    jeton_effectif = jeton or os.environ.get("SEAMTECH_TOKEN", "")
+    if not jeton_effectif:
+        raise SystemExit("jeton requis : --jeton ou SEAMTECH_TOKEN")
+    resultats = deposer_arborescence(Path(racine), url_api, jeton_effectif, delai=delai)
+    if rapport_csv:
+        ecrire_rapport_csv(resultats, rapport_csv)
+    for ligne in resultats:
+        etat = ligne.statut if ligne.statut != "echec" else "REFUS"
+        print(f"{etat:12} {ligne.dossier} — {ligne.raison or ligne.fiche or ''}")
+    print("\nBilan : " + ", ".join(f"{k}={v}" for k, v in sorted(resume(resultats).items())))
+    return resultats
 
 
 def _build_index(config: AppConfig) -> SearchIndex:

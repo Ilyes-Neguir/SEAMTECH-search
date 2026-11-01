@@ -73,9 +73,23 @@ export default defineConfig({
       name: "chromium",
       use: {
         ...devices["Desktop Chrome"],
-        ...(process.env.SEAMTECH_E2E_CHROMIUM_EXECUTABLE
-          ? { launchOptions: { executablePath: process.env.SEAMTECH_E2E_CHROMIUM_EXECUTABLE } }
-          : {}),
+        // Chromium SYSTÈME : sur une machine sans navigateur Playwright
+        // installable (bac à sable d'audit, image sans libnss), la campagne
+        // doit pouvoir pointer un binaire fourni par l'environnement. Les deux
+        // noms de variable sont acceptés : `SEAMTECH_E2E_*` par les workflows
+        // historiques, `PLAYWRIGHT_*` par les piles de qualification. Aucune
+        // variable : comportement Playwright standard.
+        launchOptions: process.env.SEAMTECH_E2E_CHROMIUM_EXECUTABLE
+          ? {
+              executablePath: process.env.SEAMTECH_E2E_CHROMIUM_EXECUTABLE,
+              args: ["--no-sandbox", "--disable-dev-shm-usage"],
+            }
+          : process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE
+            ? {
+                executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE,
+                args: ["--no-sandbox", "--disable-dev-shm-usage"],
+              }
+            : {},
       },
     },
   ],

@@ -8,7 +8,7 @@ export function AccesRefuse({
   message: string
 }) {
   return (
-    <main className="flex min-h-[calc(100vh-3.5rem)] items-center justify-center p-6" data-testid="acces-refuse">
+    <div className="flex min-h-[calc(100vh-3.5rem)] items-center justify-center p-6" data-testid="acces-refuse">
       <section className="w-full max-w-lg rounded-xl border border-destructive/40 bg-card p-6" role="alert">
         <div className="flex items-start gap-3">
           <ShieldAlert className="mt-0.5 size-6 shrink-0 text-destructive" aria-hidden />
@@ -18,6 +18,6 @@ export function AccesRefuse({
           </div>
         </div>
       </section>
-    </main>
+    </div>
   )
 }

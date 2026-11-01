@@ -366,7 +366,9 @@ def test_les_jobs_dedies_selectionnent_par_chemin_et_ne_sont_pas_ampute_par_le_m
     """Nodeid historique conservé; les jobs dédiés emploient maintenant -m eux aussi."""
     contenu = CI.read_text(encoding="utf-8")
     assert "pytest -m integration_docker -v" in contenu
-    assert "python -m pytest -m sauvegarde -v --junitxml=sauvegarde-junit.xml" in contenu
+    # ``-rs`` : les raisons de saut sont publiées, un test sauté est alors
+    # identifiable sans rouvrir le journal complet.
+    assert "python -m pytest -m sauvegarde -v -rs --junitxml=sauvegarde-junit.xml" in contenu
     assert "pytest -m recette_corpus -v" in contenu
     assert "pytest -m ocr_suite -v" in contenu
     for commande in _commandes_pytest_du_workflow():

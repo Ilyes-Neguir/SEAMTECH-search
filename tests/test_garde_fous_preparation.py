@@ -204,6 +204,17 @@ EXCEPTIONS_RG14: dict[str, str] = {
         "connexion sortante est impossible (namespace réseau isolé), aucun "
         "appel sortant à l'exécution normale"
     ),
+    "seamtech_search/fiches/arborescence.py": (
+        "dépôt en LOT d'une arborescence locale (tout un Dropbox synchronisé) : "
+        "appel HTTP EXPLICITE vers l'API SEAMTECH de la machine (127.0.0.1 par "
+        "défaut), déclenché uniquement par la commande opérateur "
+        "« deposer-arborescence » ; aucun appel sortant au runtime de l'application"
+    ),
+    "seamtech_search/cli.py": (
+        "même commande opérateur « deposer-arborescence » : valeur PAR DÉFAUT de "
+        "--url-api pointant sur l'API locale (http://127.0.0.1:8000), surchargeable ; "
+        "aucune URL externe, aucun appel au runtime"
+    ),
     "scripts/audit_dependency_policy.py": (
         "job CI uniquement : résolution de sévérité CVSS des avis pip-audit via OSV "
         "pour appliquer le seuil HIGH/CRITICAL ; jamais importé/exécuté par le service. "
@@ -244,6 +255,8 @@ DOCS_MARQUEURS_EXCEPTIONS = {
     "scripts/verifier_hors_ligne.py": "RG14_EXCEPTION",
     "scripts/qualification_native_controles.py": "RG14_EXCEPTION",
     "scripts/sync_ecc_skills.py": "RG14_EXCEPTION",
+    "seamtech_search/fiches/arborescence.py": "RG14_EXCEPTION",
+    "seamtech_search/cli.py": "RG14_EXCEPTION",
 }
 
 

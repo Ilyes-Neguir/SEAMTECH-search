@@ -43,8 +43,23 @@ export default function RootLayout({
         <script dangerouslySetInnerHTML={{ __html: SCRIPT_QUART_INITIAL }} />
       </head>
       <body className="antialiased font-sans">
+        {/*
+          Repère de navigation (a11y) : un lecteur d'écran doit pouvoir sauter
+          directement au contenu. `Nav` rend un <nav>, le contenu un <main> —
+          sans ces repères, axe signale « region » et « landmark-one-main » sur
+          TOUS les écrans, et la navigation au clavier oblige à retraverser le
+          menu à chaque page. `id="contenu"` permet le lien d'évitement.
+        */}
+        <a
+          href="#contenu"
+          className="sr-only focus:not-sr-only focus:absolute focus:left-2 focus:top-2 focus:z-50 focus:rounded focus:bg-background focus:px-3 focus:py-1.5 focus:text-xs focus:shadow"
+        >
+          Aller au contenu principal
+        </a>
         <Nav />
-        <div className="hisser">{children}</div>
+        <main id="contenu" className="hisser" tabIndex={-1}>
+          {children}
+        </main>
       </body>
     </html>
   )

@@ -210,5 +210,17 @@ def test_compose_file_parses_and_declares_expected_services(compose: dict) -> No
             text = str(mount)
             if text.startswith("./") or text.startswith("/") or ":" not in text:
                 continue
+            if text.startswith("${"):
+                # Montage paramétré par l'environnement (archive de l'atelier) :
+                # c'est un CHEMIN D'HÔTE, pas un volume nommé — mais le défaut
+                # doit rester un chemin, jamais un volume déclaré nulle part.
+                fermant = text.find("}")
+                assert fermant != -1, f"{name} : montage env mal formé {text!r}"
+                expression = text[: fermant + 1]
+                defaut = expression.split(":-", 1)[-1].rstrip("}")
+                assert defaut.startswith(("./", "/")), (
+                    f"{name} : le défaut de {expression!r} doit être un chemin d'hôte"
+                )
+                continue
             source = text.split(":", 1)[0]
             assert source in declared, f"{name} mounts undeclared volume {source!r}"

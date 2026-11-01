@@ -8,6 +8,20 @@
 // En développement uniquement, Turbopack/HMR exigent 'unsafe-eval' et le
 // websocket — la production ne les reçoit jamais.
 const estDev = process.env.NODE_ENV === "development"
+
+// Origins supplémentaires autorisées en DÉVELOPPEMENT seulement (hôte de
+// prévisualisation d'un bac à sable, etc.), fournies par l'environnement.
+// Elles servent à deux choses : servir /_next/* (sinon la page s'affiche sans
+// hydratation) et autoriser l'affichage dans un cadre (sinon l'aperçu intégré
+// est refusé par `frame-ancestors 'none'`). Un build de production ne les
+// reçoit jamais : la CSP y reste `frame-ancestors 'none'`.
+const originesDev = (process.env.SEAMTECH_DEV_ORIGINS ?? "")
+  .split(",")
+  .map((origine) => origine.trim())
+  .filter(Boolean)
+  // Une CSP n'accepte pas `**` : `**.e2b.app` (motif Next) devient `*.e2b.app`.
+  .map((origine) => `https://${origine.replace("**.", "*.")}`)
+
 const csp = [
   "default-src 'self'",
   `script-src 'self' 'unsafe-inline'${estDev ? " 'unsafe-eval'" : ""}`,
@@ -19,13 +33,16 @@ const csp = [
   "object-src 'none'",
   "base-uri 'self'",
   "form-action 'self'",
-  "frame-ancestors 'none'",
+  estDev ? `frame-ancestors 'self' ${originesDev.join(" ")}`.trim() : "frame-ancestors 'none'",
 ].join("; ")
 
 const enTetesSecurite = [
   { key: "Content-Security-Policy", value: csp },
   { key: "X-Content-Type-Options", value: "nosniff" },
-  { key: "X-Frame-Options", value: "DENY" },
+  // X-Frame-Options ne sait pas exprimer « self + un hôte précis » : en
+  // développement on laisse la CSP seule décider, sinon l'aperçu intégré est
+  // bloqué avant même que frame-ancestors soit lu.
+  ...(estDev ? [] : [{ key: "X-Frame-Options", value: "DENY" }]),
   { key: "Referrer-Policy", value: "same-origin" },
   { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
 ]
@@ -49,7 +66,18 @@ const nextConfig = {
   // permanently disabled. Allow-listing the loopback address keeps the dev
   // server usable at the origin the e2e suite (and developers) actually use.
   // Development-only setting; it has no effect on production builds.
-  allowedDevOrigins: ["127.0.0.1"],
+  // Origins supplémentaires acceptés par le serveur de développement, fournis
+  // par l'environnement (ex. l'hôte de prévisualisation d'un bac à sable).
+  // Sans cela, Next refuse de servir /_next/* à un Origin inconnu et la page
+  // s'affiche sans hydratation. Développement uniquement, aucun effet sur un
+  // build de production.
+  allowedDevOrigins: [
+    "127.0.0.1",
+    ...(process.env.SEAMTECH_DEV_ORIGINS ?? "")
+      .split(",")
+      .map((origine) => origine.trim())
+      .filter(Boolean),
+  ],
 }
 
 export default nextConfig
