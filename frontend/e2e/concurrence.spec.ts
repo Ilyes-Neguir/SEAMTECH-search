@@ -315,7 +315,12 @@ test.describe("concurrence entre postes (sessions indépendantes)", () => {
 
       // L'IMPORT DE A ABOUTIT MALGRÉ LA CHARGE SIMULTANÉE.
       await expect(posteA.getByText(/État :/i)).toBeVisible({ timeout: 60000 })
-      await expect(posteA.getByText(/REF-2026-CLIENT123/i)).toBeVisible({ timeout: 60000 })
+            // La référence est affichée DEUX FOIS après un import : dans le
+      // tableau des valeurs extraites et, lorsqu'un classeur est analysé,
+      // dans l'aperçu de ses lignes. Playwright est en mode strict : un
+      // sélecteur ambigu échoue. C'est le MÊME résultat métier qui est
+      // exigé (la référence est visible), sur l'occurrence affichée.
+await expect(posteA.getByText(/REF-2026-CLIENT123/i).first()).toBeVisible({ timeout: 60000 })
 
       // Et B, toujours connecté, obtient une réponse complète (sa session et sa
       // recherche n'ont pas été cassées par l'import concurrent).

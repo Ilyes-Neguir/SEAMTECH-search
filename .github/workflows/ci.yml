@@ -3184,7 +3184,37 @@ jobs:
     # Lot M — 9e job (les 8 existants restent SANS OCR) : pipeline OCR par étages
     # sur échantillons commités, avec tesseract local, publication compte rendu
     # et qualité en annotations, plus garde ROUGE→VERT sabotage forcer True.
+    #
+    # PostgreSQL + Redis sont déclarés ici depuis la remédiation du 01/11 :
+    # sans eux, les deux tests du parcours navigateur (dépôt → OCR → recherche
+    # → téléchargement) sautaient dans CE job, donc le parcours prioritaire
+    # n'était exécuté nulle part en CI. Un saut n'est pas un test.
     runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: seamtech
+          POSTGRES_PASSWORD: seamtech_test_password
+          POSTGRES_DB: seamtech_search_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      SEAMTECH_TEST_DATABASE_URL: postgresql://seamtech:seamtech_test_password@localhost:5432/seamtech_search_test
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -3232,9 +3262,36 @@ jobs:
           set -e
           # GARDE-FOU : aucun test ne doit être sauté parce qu'un moteur OCR
           # est absent — ce serait un vert par absence de preuve.
-          if grep -E "^SKIPPED" /tmp/ocr.log | grep -qiE "moteur|tesseract|ocr"; then
+          #
+          # Le motif seul est examiné, jamais le nom du fichier : la ligne
+          # « tests/test_scan_browser_upload_ocr.py:51: SEAMTECH_TEST_DATABASE_URL
+          # manquant » contient « ocr » par le NOM DU FICHIER alors que le saut
+          # vient de l'absence de PostgreSQL. Une grep naïve sur toute la ligne
+          # faisait donc échouer ce job pour un saut qui n'a rien à voir avec
+          # un moteur (et masquait le vrai sujet : le parcours navigateur
+          # n'était pas exécuté). Le motif est isolé en retirant le préfixe
+          # « SKIPPED [n] fichier:ligne: ».
+          motifs_sauts=$(grep -E "^SKIPPED" /tmp/ocr.log \
+            | sed -E 's/^SKIPPED \[[0-9]+\] //; s/^[^ ]+:[0-9]+: //' || true)
+          if echo "$motifs_sauts" | grep -qiE "tesseract|moteur (ocr )?(absent|indisponible)|faute de moteur"; then
             echo "::error title=ocr-moteur-absent::des tests OCR ont été sautés faute de moteur :"
-            grep -E "^SKIPPED" /tmp/ocr.log | grep -iE "moteur|tesseract|ocr" | head -20
+            echo "$motifs_sauts" | grep -iE "tesseract|moteur (ocr )?(absent|indisponible)|faute de moteur" | head -20
+            exit 1
+          fi
+          # Garde-fou d'obsolescence : un saut motivé par un outil de RENDU
+          # (pdftoppm/poppler) n'a plus lieu d'être — le rendu est interne au
+          # produit. Un tel saut ferait du parcours navigateur un test fantôme.
+          if echo "$motifs_sauts" | grep -qiE "pdftoppm|poppler|rendu"; then
+            echo "::error title=ocr-rendu-absent::parcours OCR sauté faute d'outil de rendu — le rendu est interne, la condition de saut est obsolète"
+            echo "$motifs_sauts" | grep -iE "pdftoppm|poppler|rendu" | head -10
+            exit 1
+          fi
+          # Second garde-fou, distinct et explicite : le parcours navigateur
+          # (dépôt → OCR → recherche → téléchargement) exige PostgreSQL. S'il
+          # saute faute de base, le job échoue AU LIEU de publier un vert.
+          if grep -E "^SKIPPED" /tmp/ocr.log | grep -q "SEAMTECH_TEST_DATABASE_URL manquant"; then
+            echo "::error title=ocr-pg-absent::parcours navigateur OCR sauté faute de PostgreSQL — service du job ocr absent ou non démarré"
+            grep -E "^SKIPPED" /tmp/ocr.log | grep "SEAMTECH_TEST_DATABASE_URL manquant" | head -10
             exit 1
           fi
           # Publie qualité et compte rendu même en cas d'échec partiel

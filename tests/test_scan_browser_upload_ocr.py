@@ -42,10 +42,6 @@ def _tesseract_cmd() -> str:
     pytest.skip("tesseract absent")
 
 
-def _has_poppler() -> bool:
-    return shutil.which("pdftoppm") is not None
-
-
 def _require_postgres():
     if not os.environ.get("SEAMTECH_TEST_DATABASE_URL"):
         pytest.skip("SEAMTECH_TEST_DATABASE_URL manquant — parcours complet exige PostgreSQL")
@@ -54,8 +50,12 @@ def _require_postgres():
 def test_upload_scan_ocr_recherche_telechargement(tmp_path: Path):
     _require_postgres()
     tesseract = _tesseract_cmd()
-    if not _has_poppler():
-        pytest.skip("pdftoppm absent — rendu PDF→image nécessaire pour OCR")
+    # Ancienne condition obsolète, retirée le 01/11 : le pipeline rend désormais
+    # la page en image PAR LUI-MÊME (sous-processus de rendu confiné,
+    # seamtech_search/ocr/rendu_pdf.py) et n'utilise pdftoppm (poppler) que
+    # s'il est disponible. Sauter le test faute de poppler laissait le parcours
+    # navigateur OCR sans exécution réelle ; l'OCR est exigé plus bas par la
+    # présence du terme unique de l'image, jamais par une option de rendu.
 
     # Génération PDF image sans couche texte, termes uniques
     from tests.helpers_ocr_scan import gen_pdf_degrade, gen_pdf_en, gen_pdf_fr, gen_pdf_multi, sha256_file

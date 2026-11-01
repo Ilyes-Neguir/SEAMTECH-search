@@ -1207,3 +1207,79 @@ def test_reprise_ne_valide_pas_une_source_modifiee_apres_preuve(tmp_path: Path, 
     reprise = retry_upload(index, config, 'test-source-modifiee')
     assert not reprise['all_verified']
     index.close()
+
+
+def test_envoi_integralement_prouve_reste_uploaded(tmp_path: Path, monkeypatch) -> None:
+    """Un envoi dont CHAQUE artefact est prouvé reste « uploaded ».
+
+    Régression verrouillée (CI « recette-corpus-reel » / « recette-locale ») :
+    une version rabaissait systématiquement « uploaded » en « partial » dès
+    qu'une destination était configurée, interdisant de qualifier la moindre
+    réussite. Le rabaissement doit dépendre des PREUVES, pas de la destination.
+    """
+    from seamtech_search.storage import UploadBatch, UploadedArtifact
+
+    source = make_source(tmp_path)
+    config = make_config(tmp_path, tmp_path / "roots")
+    index = SearchIndex(config.database_path)
+    index.initialize(rebuild=True)
+
+    def upload(**kwargs):
+        arts = []
+        for i, fichier in enumerate(kwargs["files_to_upload"]):
+            if not fichier:
+                continue
+            chemin = Path(fichier)
+            arts.append(
+                UploadedArtifact(
+                    str(chemin), chemin.name, key=f"cle-{i}", bucket="bucket-synthetique",
+                    status="uploaded", verified=True, verification="relecture_sha256",
+                    sha256=hashlib.sha256(chemin.read_bytes()).hexdigest(),
+                )
+            )
+        return UploadBatch("uploaded", arts)
+
+    monkeypatch.setattr(import_pipeline, "upload_artifacts_to_storage", upload)
+    result = import_folder(source, config, index, import_id="test-upload-prouve")
+    assert result.upload_status == "uploaded", result.upload_status
+    assert result.status == "completed", (result.status, result.warnings)
+    index.close()
+
+
+def test_envoi_avec_cle_non_prouvee_est_partial_et_a_revoir(tmp_path: Path, monkeypatch) -> None:
+    """Une clé NON PROUVÉE au milieu d'un envoi réussi → « partial » + à revoir.
+
+    Inverse du test précédent : « uploaded » n'est annoncé que sur preuve. Une
+    métadonnée déclarative (fournie par l'application) ne prouve pas les octets
+    réellement stockés ; l'artefact est reclassé en échec et l'import reste à
+    revoir au lieu d'annoncer un succès de préservation.
+    """
+    from seamtech_search.storage import UploadBatch, UploadedArtifact
+
+    source = make_source(tmp_path)
+    config = make_config(tmp_path, tmp_path / "roots")
+    index = SearchIndex(config.database_path)
+    index.initialize(rebuild=True)
+
+    def upload(**kwargs):
+        arts = []
+        for i, fichier in enumerate(kwargs["files_to_upload"]):
+            if not fichier:
+                continue
+            chemin = Path(fichier)
+            prouve = i != 1  # le second artefact déclare une clé sans preuve
+            arts.append(
+                UploadedArtifact(
+                    str(chemin), chemin.name, key=f"cle-{i}", bucket="bucket-synthetique",
+                    status="uploaded", verified=True,
+                    verification="relecture_sha256" if prouve else "metadata_seule",
+                    sha256=hashlib.sha256(chemin.read_bytes()).hexdigest(),
+                )
+            )
+        return UploadBatch("uploaded", arts)
+
+    monkeypatch.setattr(import_pipeline, "upload_artifacts_to_storage", upload)
+    result = import_folder(source, config, index, import_id="test-upload-non-prouve")
+    assert result.upload_status == "partial", result.upload_status
+    assert result.status == "needs_review", result.status
+    index.close()

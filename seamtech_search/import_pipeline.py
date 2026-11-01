@@ -1691,11 +1691,23 @@ def _traiter_import_capture(
         a.key and not _preuve_identifiable(a.to_dict()) for a in upload_batch.artifacts
     )
     status = "completed" if data and data.extraction_status == "success" else "needs_review" if data else "failed"
-    if publication_pending:
-        status = "needs_review"
-    if status == "completed" and upload_status not in ("not_configured", "not_applicable"):
-        # L'extraction peut avoir réussi alors que la préservation globale ne
-        # peut pas encore être qualifiée : l'API ne doit pas annoncer terminé.
+    # « uploaded » exige une PREUVE par artefact (clé + empreinte relue ou
+    # checksum serveur). Sans cette preuve, le statut global est rabaissé à
+    # « partial » et l'import reste à revoir : jamais un succès annoncé sur
+    # une préservation non prouvée.
+    #
+    # Le rabaissement est CONDITIONNEL, jamais systématique : une version
+    # précédente rabaissait tout envoi réussi dès qu'une destination était
+    # configurée (« partial » sur un import intégralement prouvé), ce qui
+    # interdisait de qualifier la moindre réussite et faisait échouer la
+    # recette sur un envoi parfaitement préservé (CI : recette-corpus-reel,
+    # recette-locale). La règle tient donc aux preuves, pas à la destination.
+    preservation_prouvee = not publication_pending and all(
+        _preuve_identifiable(a.to_dict()) for a in upload_batch.artifacts if a.key
+    )
+    if upload_status == "uploaded" and not preservation_prouvee:
+        upload_status = "partial"
+    if status == "completed" and (publication_pending or upload_status == "partial"):
         status = "needs_review"
     result = ImportResult(
         import_id=actual_import_id,
@@ -1706,7 +1718,7 @@ def _traiter_import_capture(
         technical_pdf=str(technical_pdf) if technical_pdf else None,
         data=data.model_dump() if data else None,
         report_path=str(report_path) if report_path else None,
-        upload_status="partial" if upload_status == "uploaded" else upload_status,
+        upload_status=upload_status,
         warnings=warnings + (data.warnings if data else []),
         files=final_files,
         candidates=candidates,
