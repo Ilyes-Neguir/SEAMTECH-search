@@ -158,9 +158,12 @@ jobs:
               capture_output=True, text=True, check=True,
           ).stdout
           collectes = len([l for l in collecte.splitlines() if '::' in l])
+          # ``findall`` renvoie (nombre, nom) : l'ordre des variables compte —
+          # l'inverser faisait échouer l'étape sur une conversion impossible
+          # (vu en CI au premier passage de ce garde-fou).
           chiffres = {
-              nom: int(total)
-              for nom, total in re.findall(r'([0-9]+) (passed|failed|skipped|xfailed|error)', texte)
+              nom: int(nombre)
+              for nombre, nom in re.findall(r'([0-9]+) (passed|failed|skipped|xfailed|error)', texte)
           }
           passes = chiffres.get('passed', 0)
           xfail = chiffres.get('xfailed', 0)
@@ -2264,16 +2267,34 @@ jobs:
 
           journal = pathlib.Path("/tmp/sauvegarde.log")
           texte_journal = journal.read_text(encoding="utf-8", errors="replace") if journal.exists() else ""
-          marques_xfail = set(re.findall(r"^XFAIL (\S+)", texte_journal, re.M))
-          xfail_noms = [
-              (c, n, m)
-              for c, n, m, t in (
-                  (tc.get("classname", ""), tc.get("name", ""), saut.get("message", ""), saut.get("type", ""))
-                  for tc in testsuite.iter("testcase")
-                  if (saut := tc.find("skipped")) is not None
+          # Avec « -v » la ligne est « noeud::test XFAIL [ 12%] » : la marque
+          # n'est PAS en début de ligne. Un « ^XFAIL » ne trouvait donc rien :
+          # les échecs attendus repassaient pour des sauts et le garde-fou
+          # échouait (vu en CI au premier passage). Le XML reste la source
+          # primaire ; la console ne sert que de recoupement quand elle parle.
+          # En mode « -v » la ligne est « noeud::test XFAIL [ 40%] » :
+          # l'identifiant du test PRÉCÈDE la marque, il ne la suit pas.
+          marques_xfail = set(re.findall(r"(\S+)\s+XFAIL\b", texte_journal))
+          def _est_xfail(nom: str, type_xml: str) -> bool:
+              if "xfail" not in type_xml:
+                  return False
+              if not marques_xfail:
+                  return True
+              return any(noeud.split("::")[-1] == nom for noeud in marques_xfail)
+
+          # Les éléments sont d'abord collectés dans une simple boucle : une
+          # expression de type « := » n'est pas autorisée dans l'itérable d'une
+          # compréhension imbriquée (SyntaxError, vu au premier passage CI) —
+          # un garde-fou qui ne se compile pas ne garde rien.
+          elements_xml = []
+          for tc in testsuite.iter("testcase"):
+              saut = tc.find("skipped")
+              if saut is None:
+                  continue
+              elements_xml.append(
+                  (tc.get("classname", ""), tc.get("name", ""), saut.get("message", ""), saut.get("type", "") or "")
               )
-              if "xfail" in t and any(noeud.split("::")[-1] == n for noeud in marques_xfail)
-          ]
+          xfail_noms = [(c, n, m) for c, n, m, t in elements_xml if _est_xfail(n, t)]
           saut_noms = [(c, n, m) for c, n, m in saut_elements if (c, n, m) not in xfail_noms]
           sautes_effectifs = len(saut_noms)
           if xfail_noms:
