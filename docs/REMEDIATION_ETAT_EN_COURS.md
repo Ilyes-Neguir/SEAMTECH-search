@@ -1652,3 +1652,80 @@ nettoie, on ne propage pas un faux succès (couvre aussi `CancelledError`).
 Confidentialité : le journal ne cite plus le chemin de staging.
 
 Mesures : 3 nouveaux tests ; **187 passed** sur upload/API/import/idempotence.
+
+### 16. Suite complète locale — mesure et lecture des 43 échecs
+
+Commande (bancs PostgreSQL 16.2 + Redis 7.4.7 + s3rver) :
+
+```
+SEAMTECH_TEST_DATABASE_URL=postgresql://postgres@127.0.0.1:55498/postgres \
+SEAMTECH_TEST_REDIS_URL=redis://127.0.0.1:6390/1 \
+SEAMTECH_TEST_REDIS_SERVER=/tmp/redis-banc/redis-7.4.7/src/redis-server \
+SEAMTECH_TEST_S3RVER_URL=http://127.0.0.1:14569 \
+PYTHONPATH=$PWD .venv/bin/python -m pytest -q -p no:randomly --ignore=tests/test_recette_corpus_reel.py
+```
+
+Résultat : **3090 passed, 43 failed, 52 skipped, 8 xfailed, 4 errors** en
+14 min 32 s.
+
+Lecture des échecs — ils ont une cause unique et elle est environnementale :
+l'image `pgserver` n'embarque pas les modules `contrib`. Deux avertissements,
+émis au démarrage de chaque base, le disent sans ambiguïté :
+
+```
+unaccent indisponible pour seamtech_texte_recherche (extension "unaccent" is not available)
+pg_trgm indisponible (extension "pg_trgm" is not available)
+```
+
+Tous les échecs relèvent de la recherche accentuée/tolérante aux fautes et de
+la déduplication probabiliste — exactement les fonctions bâties sur ces deux
+modules : `test_recherche_normalisation`, `test_recherche_hybride`,
+`test_recherche_dimension`, `test_recherche_fonds_reel`,
+`test_passe_finale_recherche_variantes`, `test_qualification_chemins_volume`,
+`test_lot4a_extrait_document`, `test_migrations_metier` (capacités/extensions),
+`test_dedup`, `test_sauvegarde_references` (1 test), et les 4 erreurs de
+`test_migration_rollback` (`text search configuration "seamtech_unaccent"
+does not exist`).
+
+Le produit **documente lui-même les replis** : sans `pg_trgm`, la détection des
+doublons « probables » bascule sur un repli déterministe (titre identique **et**
+même client+bateau+gamme+année), ce qui explique très exactement l'échec de
+`test_meme_titre_clients_differents_pas_de_doublon_exact` (clients différents ⇒
+le repli ne les rapproche pas).
+
+La contre-épreuve est la CI, qui utilise `pgvector/pgvector:pg16` (contrib
+complet) : c'est elle qui tranche.
+
+### 17. Qualification Windows — un runner, pas le poste de l'utilisatrice
+
+`.github/workflows/qualification-windows.yml` (P1). Le plan demande de
+qualifier Windows / Docker Desktop / PostgreSQL 16 / Redis 7 / Chrome / Edge.
+Aucun de ces points n'est atteignable depuis un banc Linux, et le poste de
+l'utilisatrice ne doit pas servir de banc de découverte.
+
+Le job installe PostgreSQL 16 et Redis 7 sur l'hôte (les services de
+conteneurs GitHub ne fonctionnent pas sur Windows), exécute la suite hors
+services, la suite PostgreSQL + Redis, le CLI, et un chemin à accents et
+espaces.
+
+Trois limites écrites dans le workflow, pas passées sous silence : Docker
+Desktop n'est pas qualifiable (pas de conteneurs Linux sur un runner Windows
+standard), Chrome et Edge ne sont pas exécutés ici (l'interface est qualifiée
+par le job e2e sur Linux), et les fichiers POSIX-only (`SIGKILL`, `fork()`)
+sont écartés **et nommés** dans la commande.
+
+### 18. Limites dites franchement (aucune n'est maquillée)
+
+1. **Modules `contrib` PostgreSQL** (`unaccent`, `pg_trgm`) absents du banc
+   local → 43 échecs locaux, non reproductibles en CI. La CI tranche.
+2. **Docker Desktop, Chrome, Edge, Windows réel** : non qualifiés (voir §17).
+3. **Volumétrie annuelle réelle** (100 000 fichiers / 20 Gio, une année
+   d'archives) : non mesurée. Les bornes de session sont testées à 100 000, un
+   dépôt réel de cette taille exige le corpus du commanditaire — qui ne doit
+   pas entrer dans Git. Le job `Scale benchmark (SYNTHÉTIQUE)` ne prouve que le
+   synthétique.
+4. **Endurance « plusieurs jours »** : non exécutée. Le soak prouve les
+   invariants de fuite sur 300 cycles, pas la tenue à trois jours d'horloge.
+5. **MinIO/R2 réels** : les tests d'historique MinIO (`-m minio_historique`,
+   7 tests) sautent sans l'instance isolée ; le transport réel est exercé
+   ailleurs (intégration compose, qualification réserves).
