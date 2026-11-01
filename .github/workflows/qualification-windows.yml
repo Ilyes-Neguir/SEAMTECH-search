@@ -131,14 +131,21 @@ jobs:
         # fichiers sont NOMMÉS ici, pas simplement absents : un test écarté
         # doit rester visible dans la configuration.
         run: |
-          # GitHub exécute pwsh avec $ErrorActionPreference = 'Stop'. Un
-          # exécutable natif qui écrit sur sa sortie d'ERREUR devient alors une
-          # erreur terminante : avec « 2>&1 | Tee-Object », la moindre ligne
-          # d'avertissement de pytest tue l'étape AVANT les lignes suivantes,
-          # diagnostic compris (vu au run 41361547004 : échec code 1 et aucune
-          # annotation émise, donc rien de lisible). On repasse en 'Continue'
-          # et on juge sur les CODES DE SORTIE, vérifiés explicitement plus bas.
           $ErrorActionPreference = 'Continue'
+          # Publier un diagnostic : les journaux complets sont stockés sur un
+          # hôte de blobs injoignable depuis le banc d'analyse, et les
+          # ARTEFACTS aussi. L'annotation est le seul canal lisible — d'où
+          # l'échappement exigé par GitHub (%, retours chariot) et le
+          # tronçonnage : un message non conforme est SILENCIEUSEMENT ignoré,
+          # ce qui donne une étape rouge sans rien à lire. Le message de début
+          # sert de témoin : s'il manque, l'étape est morte avant d'agir.
+          function Publier([string]$titre, [string]$texte) {
+            if ($null -eq $texte) { $texte = '' }
+            $propre = $texte -replace '%', '%25' -replace "`r", '%0D' -replace "`n", '%0A'
+            if ($propre.Length -gt 3000) { $propre = $propre.Substring(0, 3000) }
+            Write-Host "::notice title=$titre::$propre"
+          }
+          Publier "windows-sans-service-debut" "lancement de la suite"
           New-Item -ItemType Directory -Force -Path logs | Out-Null
           python -m pytest -q -rf `
             -m "not postgres and not s3 and not perf and not redis_queue and not ocr_suite" `
@@ -148,15 +155,16 @@ jobs:
             --ignore=tests/test_worker_crash_terminal.py `
             --ignore=tests/test_securite_banc_suivi.py `
             --ignore=tests/test_migration_rollback.py `
-            --ignore=tests/test_partage_web_worker.py 2>&1 | Tee-Object -FilePath logs\windows-sans-service.log
+            --ignore=tests/test_partage_web_worker.py > logs\windows-sans-service.log 2>&1
           $rc = $LASTEXITCODE
+          Get-Content logs\windows-sans-service.log -Tail 60 | ForEach-Object { Write-Host $_ }
           $resume = (Select-String -Path logs\windows-sans-service.log -Pattern '^(FAILED|ERROR)|passed|failed' |
                      Select-Object -Last 10 | ForEach-Object { $_.Line }) -join ' ; '
-          Write-Host "::notice title=windows-sans-service::rc=$rc ; $resume"
+          Publier "windows-sans-service" "rc=$rc ; $resume"
           if ($rc -ne 0) {
             $echecs = (Select-String -Path logs\windows-sans-service.log -Pattern '^(FAILED|ERROR)' |
                        Select-Object -First 15 | ForEach-Object { $_.Line }) -join ' ; '
-            Write-Host "::error title=windows-sans-service-echec::$echecs"
+            Publier "windows-sans-service-echec" "$echecs"
             exit $rc
           }
       - name: Suite PostgreSQL + Redis sur Windows
@@ -164,14 +172,21 @@ jobs:
           SEAMTECH_TEST_DATABASE_URL: postgresql://seamtech:seamtech_test_password@127.0.0.1:5432/seamtech_search_test
           SEAMTECH_TEST_REDIS_URL: redis://127.0.0.1:6379/1
         run: |
-          # GitHub exécute pwsh avec $ErrorActionPreference = 'Stop'. Un
-          # exécutable natif qui écrit sur sa sortie d'ERREUR devient alors une
-          # erreur terminante : avec « 2>&1 | Tee-Object », la moindre ligne
-          # d'avertissement de pytest tue l'étape AVANT les lignes suivantes,
-          # diagnostic compris (vu au run 41361547004 : échec code 1 et aucune
-          # annotation émise, donc rien de lisible). On repasse en 'Continue'
-          # et on juge sur les CODES DE SORTIE, vérifiés explicitement plus bas.
           $ErrorActionPreference = 'Continue'
+          # Publier un diagnostic : les journaux complets sont stockés sur un
+          # hôte de blobs injoignable depuis le banc d'analyse, et les
+          # ARTEFACTS aussi. L'annotation est le seul canal lisible — d'où
+          # l'échappement exigé par GitHub (%, retours chariot) et le
+          # tronçonnage : un message non conforme est SILENCIEUSEMENT ignoré,
+          # ce qui donne une étape rouge sans rien à lire. Le message de début
+          # sert de témoin : s'il manque, l'étape est morte avant d'agir.
+          function Publier([string]$titre, [string]$texte) {
+            if ($null -eq $texte) { $texte = '' }
+            $propre = $texte -replace '%', '%25' -replace "`r", '%0D' -replace "`n", '%0A'
+            if ($propre.Length -gt 3000) { $propre = $propre.Substring(0, 3000) }
+            Write-Host "::notice title=$titre::$propre"
+          }
+          Publier "windows-postgres-redis-debut" "lancement de la suite"
           New-Item -ItemType Directory -Force -Path logs | Out-Null
           python -m pytest -q -rf `
             -m "postgres and not s3 and not perf and not ocr_suite and not redis_queue" `
@@ -181,15 +196,16 @@ jobs:
             --ignore=tests/test_worker_crash_terminal.py `
             --ignore=tests/test_securite_banc_suivi.py `
             --ignore=tests/test_migration_rollback.py `
-            --ignore=tests/test_partage_web_worker.py 2>&1 | Tee-Object -FilePath logs\windows-postgres-redis.log
+            --ignore=tests/test_partage_web_worker.py > logs\windows-postgres-redis.log 2>&1
           $rc = $LASTEXITCODE
+          Get-Content logs\windows-postgres-redis.log -Tail 60 | ForEach-Object { Write-Host $_ }
           $resume = (Select-String -Path logs\windows-postgres-redis.log -Pattern '^(FAILED|ERROR)|passed|failed' |
                      Select-Object -Last 10 | ForEach-Object { $_.Line }) -join ' ; '
-          Write-Host "::notice title=windows-postgres-redis::rc=$rc ; $resume"
+          Publier "windows-postgres-redis" "rc=$rc ; $resume"
           if ($rc -ne 0) {
             $echecs = (Select-String -Path logs\windows-postgres-redis.log -Pattern '^(FAILED|ERROR)' |
                        Select-Object -First 15 | ForEach-Object { $_.Line }) -join ' ; '
-            Write-Host "::error title=windows-postgres-redis-echec::$echecs"
+            Publier "windows-postgres-redis-echec" "$echecs"
             exit $rc
           }
       - name: Ligne de commande et chemins Windows
