@@ -2399,14 +2399,48 @@ class SearchIndex:
                     )
                 return len(modifiees)
 
-    def remove_missing(self, seen_path_keys: set[str], scan_complete: bool = False) -> int:
-        if not seen_path_keys and not scan_complete:
+    @staticmethod
+    def _est_protege(path_key: str, prefixes: tuple[str, ...]) -> bool:
+        """Vrai si ce chemin appartient à un sous-arbre que le scan n'a pas parcouru.
+
+        La comparaison porte sur des préfixes de RÉPERTOIRE : ``…/uploads``
+        protège ``…/uploads/lot/piece.pdf`` mais pas ``…/uploads-bis``.
+        """
+        if not prefixes:
+            return False
+        cle = os.path.normcase(str(path_key))
+        for prefixe in prefixes:
+            base = prefixe.rstrip(os.sep) if len(prefixe) > 1 else prefixe
+            if cle == base or cle.startswith(base + os.sep):
+                return True
+        return False
+
+    def remove_missing(
+        self,
+        seen_path_keys: set[str],
+        scan_complete: bool = False,
+        *,
+        prefixes_proteges: set[str] | None = None,
+    ) -> int:
+        """Supprime les lignes disparues du disque, jamais celles d'une zone protégée.
+
+        ``prefixes_proteges`` (chemins normalisés, comparés par préfixe de
+        répertoire) désigne des sous-arbres que le scan N'A PAS parcourus —
+        typiquement le staging et la quarantaine, élagués volontairement. Sans
+        cette protection, l'élagage du scan ferait supprimer les lignes d'index
+        de ces zones : une exclusion deviendrait une perte de données.
+        """
+        if not seen_path_keys and not scan_complete and not prefixes_proteges:
             return 0
+        proteges = tuple(sorted(prefixes_proteges or ()))
         if self.is_postgres:
             with self.connect() as connection:
                 with connection.cursor() as cursor:
                     cursor.execute("SELECT path_key FROM documents")
-                    missing = [row[0] for row in cursor.fetchall() if row[0] not in seen_path_keys]
+                    missing = [
+                        row[0] for row in cursor.fetchall()
+                        if row[0] not in seen_path_keys and not self._est_protege(row[0], proteges)
+                    ]
                     if not missing:
                         return 0
                     supprimes = self._supprimer_documents_non_references(cursor, missing)
@@ -2424,7 +2458,8 @@ class SearchIndex:
         with self.connect() as connection:
             rows = connection.execute("SELECT id, path_key, object_key, source_sha256 FROM documents").fetchall()
             missing = [(row["id"], row["path_key"], row["object_key"], row["source_sha256"])
-                       for row in rows if row["path_key"] not in seen_path_keys]
+                       for row in rows if row["path_key"] not in seen_path_keys
+                       and not self._est_protege(row["path_key"], proteges)]
             references = self._references_sqlite(connection)
             supprimes = 0
             conserves = 0

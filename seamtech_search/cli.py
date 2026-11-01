@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import time
 from collections.abc import Sequence
 from pathlib import Path
@@ -10,7 +11,7 @@ import uvicorn
 
 from .api import create_app
 from .config import AppConfig, exiger_secrets_production
-from .crawler import ScanIncompleteError, crawl
+from .crawler import ScanIncompleteError, crawl, zones_reservees
 from .fiches.arborescence import ResultatArborescence
 from .indexer import SearchIndex
 from .retention import run_retention_cleanup
@@ -178,7 +179,13 @@ def _run_index(index: SearchIndex, config: AppConfig, rebuild: bool = False, *, 
                 LOGGER.info("Scanned %s items, updated %s items, %.1f items/sec", scanned, changed, scanned / elapsed)
         if batch:
             changed += index.upsert_documents(batch)
-        removed = index.remove_missing(seen, scan_complete=True)
+        # Les zones de travail (staging, quarantaine) sont ÉLAGUÉES du parcours :
+        # leurs lignes d'index ne doivent donc jamais être traitées comme
+        # « disparues du disque ». Sans ces préfixes protégés, l'élagage
+        # supprimerait des documents déjà indexés — une exclusion deviendrait
+        # une perte de données.
+        prefixes_proteges = {os.path.normcase(str(zone)) for zone in zones_reservees(config)}
+        removed = index.remove_missing(seen, scan_complete=True, prefixes_proteges=prefixes_proteges)
         index.finish_scan(scan_id, "completed", scanned, changed, removed)
     except BaseException as exc:
         exc._seamtech_scan_counts = (scanned, changed)  # type: ignore[attr-defined]

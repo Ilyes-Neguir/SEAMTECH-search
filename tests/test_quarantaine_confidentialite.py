@@ -90,7 +90,6 @@ def test_interruption_mise_a_jour_conserve_chemin_original_pour_reprise(tmp_path
     assert payload['source_path'] == str(source)
 
 
-@pytest.mark.xfail(strict=True, reason='Le balayage indexe le staging conservé lorsque data est sous une racine')
 def test_balayage_nindexe_pas_un_depot_conserve_sur_place(tmp_path):
     from seamtech_search.crawler import crawl
 

@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -397,24 +398,20 @@ def test_ecriture_sqlite_attend_scan_puis_reussit(tmp_path: Path) -> None:
         assert c.execute('SELECT valeur FROM operation_concurrente').fetchone()[0] == 'concurrent'
 
 
-@pytest.mark.parametrize("forme", ["parent", "staging", "enfant", "parent_apres_autre"])
-def test_scan_refuse_recouvrement_staging_sans_modifier_lindex(tmp_path: Path, forme: str) -> None:
-    """Un staging conservé ne doit jamais entrer dans un scan ni être supprimé de l'index."""
+@pytest.mark.parametrize("forme", ["staging", "enfant"])
+def test_scan_refuse_une_racine_dans_le_staging_sans_modifier_lindex(tmp_path: Path, forme: str) -> None:
+    """Une racine À L'INTÉRIEUR du staging est refusée : ce serait indexer le staging.
+
+    Refus sans dégât : l'index existant reste intact, le fichier n'est pas
+    touché, et le scan est enregistré « failed » (jamais un faux succès).
+    """
     database = tmp_path / "data" / "search.db"
     staging = database.parent / "uploads"
     source = staging / "lot"
     source.mkdir(parents=True)
     piece = source / "piece.txt"
     piece.write_text("source synthétique", encoding="utf-8")
-    externe = tmp_path / "externe"
-    externe.mkdir()
-    (externe / "autre.txt").write_text("autre", encoding="utf-8")
-    roots = {
-        "parent": [database.parent],
-        "staging": [staging],
-        "enfant": [source],
-        "parent_apres_autre": [externe, database.parent],
-    }[forme]
+    roots = {"staging": [staging], "enfant": [source]}[forme]
     index = SearchIndex(database)
     index.initialize(rebuild=True)
     index.upsert_document(Document(piece, piece.name, source, '.txt', 1, 1.0, False, 'index precieux'))
@@ -427,6 +424,88 @@ def test_scan_refuse_recouvrement_staging_sans_modifier_lindex(tmp_path: Path, f
     assert index.latest_scan()["status"] == "failed"
     assert piece.read_text(encoding="utf-8") == "source synthétique"
     index.close()
+
+
+@pytest.mark.parametrize("forme", ["parent", "parent_apres_autre"])
+def test_scan_elague_le_staging_sous_une_racine_sans_supprimer_les_lignes(tmp_path: Path, forme: str) -> None:
+    """Une racine qui CONTIENT le staging est balayée en l'élaguant.
+
+    Exigences cumulées (elles sont la raison d'être de l'élagage) :
+
+    1. le reste de la racine EST indexé (une exclusion ne doit pas vider le scan) ;
+    2. aucun document du staging n'entre dans l'index ;
+    3. les lignes du staging DÉJÀ indexées ne sont PAS supprimées — l'élagage
+       n'est pas une suppression (``remove_missing`` reçoit les préfixes) ;
+    4. le fichier de travail lui-même n'est pas modifié.
+    """
+    database = tmp_path / "data" / "search.db"
+    staging = database.parent / "uploads"
+    source = staging / "lot"
+    source.mkdir(parents=True)
+    piece = source / "piece.txt"
+    piece.write_text("source synthétique", encoding="utf-8")
+    # Un document ORDINAIRE sous la même racine : il doit, lui, être indexé.
+    (database.parent / "archive.txt").write_text("document archive ordinaire", encoding="utf-8")
+    externe = tmp_path / "externe"
+    externe.mkdir()
+    (externe / "autre.txt").write_text("autre", encoding="utf-8")
+    roots = {"parent": [database.parent], "parent_apres_autre": [externe, database.parent]}[forme]
+    index = SearchIndex(database)
+    index.initialize(rebuild=True)
+    # Ligne « précieuse » préexistante DANS le staging : l'élagage ne doit pas
+    # la faire disparaître (c'est la réserve qui rendait l'exclusion risquée).
+    index.upsert_document(Document(piece, piece.name, source, '.txt', 1, 1.0, False, 'index precieux'))
+    before = index.search('precieux')
+    assert before, "la ligne de départ doit exister pour que le test prouve quelque chose"
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps({"root_paths": [str(root) for root in roots], "database_path": str(database)}))
+
+    resume = run_index(str(config_path))
+
+    assert resume["scanned"] >= 1, "une racine qui contient le staging doit quand même être balayée"
+    # Le score FTS dépend du corpus (une autre racine a pu être balayée) :
+    # ce qui doit être invariant, c'est la PRÉSENCE de la ligne et son chemin.
+    assert [ligne["path"] for ligne in index.search('precieux')] == [ligne["path"] for ligne in before], (
+        "l'élagage du staging a supprimé une ligne déjà indexée : exclusion devenue perte de données"
+    )
+    assert index.latest_scan()["status"] == "completed"
+    assert piece.read_text(encoding="utf-8") == "source synthétique"
+    # Le dossier ordinaire de la même racine EST indexé (l'élagage est ciblé).
+    assert index.search("ordinaire"), "l'élagage du staging a vidé le scan : le reste de la racine n'est plus indexé"
+    # Aucun NOUVEAU document du staging : la seule ligne du staging est celle
+    # qui existait déjà (ni doublon indexé, ni suppression).
+    staging_key = os.path.normcase(str(piece))
+    with index.connect() as connexion:
+        if index.is_postgres:
+            with connexion.cursor() as curseur:
+                curseur.execute("SELECT path_key FROM documents")
+                cles = [str(ligne[0]) for ligne in curseur.fetchall()]
+        else:
+            cles = [str(ligne["path_key"]) for ligne in connexion.execute("SELECT path_key FROM documents").fetchall()]
+    sous_staging = [cle for cle in cles if os.path.normcase(str(staging)) in cle]
+    assert sous_staging == [staging_key], (
+        f"le staging a été partiellement indexé ou purgé : {sous_staging}"
+    )
+    index.close()
+
+
+def test_scan_elague_aussi_la_quarantine(tmp_path: Path) -> None:
+    """La quarantaine est une zone de travail, exactement comme le staging."""
+    from seamtech_search.config import AppConfig
+    from seamtech_search.crawler import crawl
+
+    base = tmp_path / "racine"
+    data = base / "data"
+    (data / "quarantine" / "lot").mkdir(parents=True)
+    (data / "quarantine" / "lot" / "incomplet.txt").write_text("import inachevé", encoding="utf-8")
+    archive = base / "archive"
+    archive.mkdir()
+    (archive / "bon.txt").write_text("document archive", encoding="utf-8")
+    config = AppConfig(root_paths=[base], database_path=data / "index.db")
+    documents = list(crawl(config))
+    chemins = [str(doc.path) for doc in documents]
+    assert not any("quarantine" in chemin for chemin in chemins), f"la quarantaine a été indexée : {chemins}"
+    assert any(chemin.endswith("bon.txt") for chemin in chemins), f"l'archive n'a pas été indexée : {chemins}"
 
 
 def test_scan_refuse_alias_staging_et_accepte_racine_independante(tmp_path: Path) -> None:
@@ -453,17 +532,42 @@ def test_scan_refuse_alias_staging_et_accepte_racine_independante(tmp_path: Path
     assert fichier in [doc.path for doc in crawl(config)]
 
 
-def test_recouvrement_refuse_meme_si_staging_pas_encore_cree(tmp_path: Path) -> None:
+def test_staging_absent_puis_cree_est_toujours_exclu(tmp_path: Path) -> None:
+    """Le staging peut apparaître PENDANT le parcours : l'exclusion ne dépend pas de son existence.
+
+    L'ancienne règle refusait tout recouvrement « même si le staging n'existe
+    pas encore ». L'élagage tient la même promesse sans condamner la racine :
+    que le staging existe ou non au départ, ses fichiers n'entrent pas dans
+    l'index — et une racine située DANS le staging reste refusée.
+    """
     from seamtech_search.config import AppConfig
     from seamtech_search.crawler import crawl
 
     base = tmp_path / 'racine'
     data = base / 'data'
     data.mkdir(parents=True)
+    archive = base / 'archive'
+    archive.mkdir()
+    (archive / 'bon.txt').write_text('document archive', encoding='utf-8')
     config = AppConfig(root_paths=[base], database_path=data / 'index.db')
-    assert not (data / 'uploads').exists()
+    assert not (data / 'uploads').exists(), "le staging ne doit pas exister au départ"
+
+    # 1. Staging ABSENT : le scan se déroule (l'ancienne règle le refusait).
+    chemins = [str(doc.path) for doc in crawl(config)]
+    assert any(chemin.endswith('bon.txt') for chemin in chemins), f"archive non indexée : {chemins}"
+
+    # 2. Staging apparu : ses fichiers restent exclus, le reste toujours indexé.
+    staging = data / 'uploads' / 'lot'
+    staging.mkdir(parents=True)
+    (staging / 'piece.txt').write_text('dépôt en cours', encoding='utf-8')
+    chemins = [str(doc.path) for doc in crawl(config)]
+    assert not any('uploads' in chemin for chemin in chemins), f"le staging a été indexé : {chemins}"
+    assert any(chemin.endswith('bon.txt') for chemin in chemins), f"archive non indexée : {chemins}"
+
+    # 3. Une racine DANS le staging reste un refus explicite.
+    config_dans_staging = AppConfig(root_paths=[staging], database_path=data / 'index.db')
     with pytest.raises(ScanIncompleteError, match='staging'):
-        next(crawl(config))
+        next(crawl(config_dans_staging))
 
 
 def test_cli_scan_et_rebuild_maintiennent_la_migration_identite(tmp_path: Path):
