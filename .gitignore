@@ -22,3 +22,4 @@ tests/fixtures/s3rver/node_modules/
 .coverage
 coverage.json
 perf-mesures.json
+coverage-bancs*.json

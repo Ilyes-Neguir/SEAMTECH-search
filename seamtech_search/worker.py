@@ -48,6 +48,7 @@ from .jobs import (
     terminer_job,
     update_job,
 )
+from .purge_locale import BilanPurge, purger_copie_prouvee
 from .redis_store import RedisStore
 
 if TYPE_CHECKING:
@@ -331,15 +332,40 @@ def process_import_task(
                 },
             )
 
-        # Une preuve d'envoi ne couvre pas les fichiers ajoutés ou modifiés
-        # après l'inventaire. Aucune suppression récursive n'est sûre ici.
-        _, raison_purge = decider_purge(
-            preservation, config, Path(final_payload.get("source_path") or source_path)
-        )
-        final_payload["cleanup"] = {"purge": False, "raison": raison_purge}
+        # 3. PURGE — fichier par fichier, preuve relue À L'INSTANT DE LA
+        #    SUPPRESSION. Une preuve d'envoi est un souvenir : elle ne couvre
+        #    ni les fichiers ajoutés ni les modifications survenues après
+        #    l'inventaire, et elle ne dit rien de l'état présent de l'objet.
+        #    Aucune suppression récursive n'est sûre ; seule l'est la
+        #    suppression de ce qui vient d'être prouvé (``purge_locale``).
+        chemin_purge = Path(final_payload.get("source_path") or source_path)
+        accord_purge, raison_purge = decider_purge(preservation, config, chemin_purge)
+        # Ordre volontaire : annulation ET propriété sont revérifiées juste
+        # avant toute suppression. Un worker déchu n'efface rien.
         if cancel_check():
             raise ImportCancelledError("Job was cancelled by user")
-        logger.info("Copie locale conservée : purge automatique suspendue.")
+        if accord_purge and not est_proprietaire_actif():
+            logger.warning(
+                "Job %s : worker %s déchu avant purge — aucune suppression.", job_id, worker_id
+            )
+            return {"job_id": job_id, "status": "stale_worker", "lost_claim": True}
+        if accord_purge:
+            bilan_purge = purger_copie_prouvee(
+                racine=chemin_purge,
+                entrees=list(final_payload.get("files") or []),
+                sous_staging=True,  # décidé par decider_purge, qui détient config
+                verifier_objet=_verificateur_objet_purge(config),
+            )
+        else:
+            bilan_purge = BilanPurge(False, raison_purge)
+        final_payload["cleanup"] = bilan_purge.to_dict()
+        if bilan_purge.purge:
+            logger.info(
+                "Import %s : %d fichier(s) de la copie locale purgé(s) (%d octets) — %s",
+                job_id, len(bilan_purge.supprimes), bilan_purge.octets_liberes, bilan_purge.raison,
+            )
+        else:
+            logger.info("Import %s : copie locale conservée — %s", job_id, bilan_purge.raison)
         if est_proprietaire_actif():
             update_job(index, job_id, result=final_payload, expected_worker=worker_id)
 
@@ -993,13 +1019,51 @@ def mettre_en_quarantaine(
     return DecisionQuarantaine(False, None, "déplacement suspendu : source conservée pour reprise", [])
 
 
+def _verificateur_objet_purge(config: AppConfig) -> Callable[[str, Path], Any] | None:
+    """Relit l'objet distant au moment de la purge ; ``None`` si impossible.
+
+    « Je n'ai pas pu vérifier » n'autorise aucune suppression : sans
+    vérificateur, la copie locale est conservée et la raison est dite.
+    """
+    try:
+        from .storage import S3StorageClient
+
+        # ``config=`` est impératif : le premier paramètre positional est
+        # ``endpoint_url``. Passer la configuration à sa place fabriquerait un
+        # client qui se déclare configuré sans l'être.
+        client = S3StorageClient(config=config)
+    except Exception as exc:  # pragma: no cover - dépend de la configuration
+        logger.warning("Purge : client de stockage indisponible (%s) — aucune suppression.", type(exc).__name__)
+        return None
+    try:
+        if not client.is_configured():
+            return None
+    except Exception:  # pragma: no cover
+        return None
+
+    def verifier(cle: str, chemin: Path) -> Any:
+        return client.verifier_integrite(cle, chemin, relire=True)
+
+    return verifier
+
+
 def decider_purge(
     preservation: Preservation, config: AppConfig, source_path: Path
 ) -> tuple[bool, str]:
-    """Conserver la source : une preuve passée ne prouve pas son état présent.
+    """ACCORDER la purge — la suppression, elle, reste prouvée fichier par fichier.
 
-    La purge est suspendue pour le staging et les archives, même si elle est
-    configurée. Un protocole d'identité et de suppression sûr reste nécessaire.
+    Longtemps la réponse a été « jamais » et c'était juste au vu de ce qui
+    existait : une preuve d'envoi ne couvre ni les ajouts ni les modifications
+    postérieurs à l'inventaire, et rien ne garantissait l'état présent de
+    l'objet. La conséquence était une autre panne, silencieuse celle-là : le
+    serveur se remplissait sans jamais rien libérer.
+
+    La décision est donc déplacée du souvenir vers l'instant : cette fonction
+    n'accorde qu'un DROIT D'EXAMEN (intégrité prouvée, dossier de staging
+    appartenant à l'application) ; chaque suppression est ensuite conditionnée
+    à une relecture des octets distants et à une empreinte locale revérifiée
+    (``purge_locale.purger_copie_prouvee``). Ce qui n'est pas prouvé à cet
+    instant est conservé et nommé.
     """
     if not preservation.integrite_prouvee:
         if not preservation.destination_configuree:
@@ -1018,10 +1082,13 @@ def decider_purge(
                 + ", ".join(preservation.artefacts_non_verifies[:5])
             )
         return False, f"intégrité non prouvée (upload_status={preservation.upload_status})"
-    return False, (
-        "purge automatique suspendue : la preuve d'envoi ne couvre pas "
-        "les modifications du dossier après inventaire"
-    )
+    try:
+        sous_staging = est_sous_staging(Path(source_path), config)
+    except Exception:  # pragma: no cover - chemin exotique
+        sous_staging = False
+    if not sous_staging:
+        return False, "source hors staging : l'application n'a aucun mandat pour la supprimer"
+    return True, "intégrité prouvée sur le staging : examen fichier par fichier"
 
 
 def _charge_depuis_job(job: dict[str, Any]) -> dict[str, Any] | None:
