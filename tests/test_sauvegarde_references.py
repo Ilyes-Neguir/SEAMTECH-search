@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -855,3 +856,114 @@ def test_copie_objet_version_null_n_est_pas_epinglee(tmp_path):
             destination.write_bytes(b"original")
     resultat = copier_objets_s3({"documents": [{"id": 1, "object_key": "piece"}]}, Client(), tmp_path)
     assert resultat["nb_copies"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Preuve d'identité des objets copiés : hiérarchie explicite, jamais implicite
+# ---------------------------------------------------------------------------
+
+
+def _fournisseur_objet(octets: bytes, *, etag: str | None = None, checksum_sha256: bytes | None = None,
+                       type_checksum: str | None = None):
+    """Fournisseur minimal : en-têtes tels que les renvoie un bucket réel.
+
+    - ``etag`` None → ETag « contenu » (MD5, dépôt en une seule partie) ;
+    - ``checksum_sha256`` → SHA-256 plein objet, si le fournisseur le calcule.
+    """
+    import base64 as _b64
+    import hashlib as _hl
+
+    entete = {"ContentLength": len(octets)}
+    entete["ETag"] = etag if etag is not None else f'"{_hl.md5(octets).hexdigest()}"'
+    if checksum_sha256 is not None:
+        entete["ChecksumSHA256"] = _b64.b64encode(checksum_sha256).decode()
+        entete["ChecksumType"] = type_checksum or "FULL_OBJECT"
+
+    class Client:
+        def head_object(self, _cle):
+            return dict(entete)
+
+        def download_file(self, _cle, destination):
+            destination.write_bytes(octets)
+
+    return Client()
+
+
+def _copier_objet(tmp_path: Path, octets: bytes, document: dict, **fournisseur) -> dict:
+    from seamtech_search.sauvegarde import copier_objets_s3
+
+    return copier_objets_s3(
+        {"documents": [{"id": 1, "object_key": "piece", **document}]},
+        _fournisseur_objet(octets, **fournisseur),
+        tmp_path / "bundle",
+    )
+
+
+def test_preuve_identite_etag_md5_suffit_sans_checksum_fournisseur(tmp_path: Path) -> None:
+    """ETag « contenu » : condensé calculé par le fournisseur au dépôt."""
+    octets = b"octets de la piece a sauvegarder"
+    resultat = _copier_objet(tmp_path, octets, {})
+    assert resultat["nb_copies"] == 1 and resultat["nb_manquants"] == 0
+    assert resultat["copies"][0]["verification"] == "etag_md5_fournisseur"
+    assert resultat["copies"][0]["sha256"] == hashlib.sha256(octets).hexdigest()
+
+
+def test_preuve_identite_etag_multipart_ne_prouve_rien(tmp_path: Path) -> None:
+    """Un ETag multipart ne prouve pas les octets : refus, pas de copie."""
+    import hashlib as _hl
+
+    octets = b"objet depose en plusieurs parties"
+    etag = f'"{_hl.md5(octets).hexdigest()}-2"'
+    resultat = _copier_objet(tmp_path, octets, {}, etag=etag)
+    assert resultat["nb_copies"] == 0 and resultat["nb_manquants"] == 1
+    assert resultat["manquants"][0]["erreur"] == "integrite_source_non_prouvee"
+
+
+def test_preuve_identite_etag_en_desaccord_avec_les_octets_est_refusee(tmp_path: Path) -> None:
+    """ETag d'un autre contenu : la copie ne peut pas être déclarée fidèle."""
+    import hashlib as _hl
+
+    resultat = _copier_objet(tmp_path, b"vrais octets", {}, etag=f'"{_hl.md5(b"autres").hexdigest()}"')
+    assert resultat["nb_copies"] == 0
+    assert resultat["manquants"][0]["erreur"] == "integrite_source_non_prouvee"
+
+
+def test_preuve_identite_catalogue_acceptee_si_etag_multipart(tmp_path: Path) -> None:
+    """À défaut d'ETag contenu, l'identité connue du snapshot PostgreSQL."""
+    import hashlib as _hl
+
+    octets = b"objet connu du catalogue"
+    resultat = _copier_objet(
+        tmp_path,
+        octets,
+        {"source_sha256": _hl.sha256(octets).hexdigest()},
+        etag=f'"{_hl.md5(octets).hexdigest()}-3"',
+    )
+    assert resultat["nb_copies"] == 1
+    assert resultat["copies"][0]["verification"] == "identite_catalogue_source_sha256"
+
+
+def test_preuve_identite_checksum_fournisseur_prime_sur_etag(tmp_path: Path) -> None:
+    """Le SHA-256 plein objet du fournisseur reste la preuve la plus forte."""
+    import hashlib as _hl
+
+    octets = b"objet avec checksum plein objet"
+    resultat = _copier_objet(
+        tmp_path,
+        octets,
+        {},
+        etag='"' + _hl.md5(b"etag errone").hexdigest() + '"',
+        checksum_sha256=_hl.sha256(octets).digest(),
+    )
+    assert resultat["nb_copies"] == 1
+    assert resultat["copies"][0]["verification"] == "checksum_sha256_fournisseur_full_object"
+
+
+def test_preuve_identite_checksum_fournisseur_en_desaccord_est_refusee(tmp_path: Path) -> None:
+    """Un checksum fournisseur contraire l'emporte sur un ETag concordant."""
+    import hashlib as _hl
+
+    octets = b"objet dont le checksum serveur est faux"
+    resultat = _copier_objet(tmp_path, octets, {}, checksum_sha256=_hl.sha256(b"autre chose").digest())
+    assert resultat["nb_copies"] == 0
+    assert resultat["manquants"][0]["erreur"] == "integrite_source_non_prouvee"

@@ -131,6 +131,40 @@ def _sha256_flux(flux: BinaryIO) -> str:
     return hacheur.hexdigest()
 
 
+def _empreintes_flux(flux: BinaryIO) -> tuple[str, str]:
+    """SHA-256 (identité du bundle) et MD5 (comparaison à l'ETag du fournisseur).
+
+    Le MD5 n'est pas utilisé comme fonction de sécurité ici : il sert
+    uniquement à comparer nos octets à l'ETag « contenu » que renvoie un
+    objet S3 déposé en une seule partie (MinIO, R2, AWS). C'est un
+    condensé CALCULÉ PAR LE FOURNISSEUR au dépôt, donc indépendant de
+    notre catalogue.
+    """
+    sha256 = hashlib.sha256()
+    md5 = hashlib.md5()  # noqa: S324 - comparaison d'ETag, pas de la sécurité
+    while bloc := flux.read(TAILLE_BLOC_SHA256):
+        sha256.update(bloc)
+        md5.update(bloc)
+    return sha256.hexdigest(), md5.hexdigest()
+
+
+def _etag_contenu(etag: str) -> str | None:
+    """MD5 hexadécimal porté par un ETag « contenu » (None si multipart).
+
+    Un ETag de la forme ``"d41d8c..."`` est le MD5 des octets ; un ETag
+    multipart se termine par ``-N`` et NE prouve pas les octets : on ne
+    l'utilise donc jamais comme preuve d'identité.
+    """
+    brut = (etag or "").strip().strip('"').strip("'")
+    if len(brut) != 32:
+        return None
+    try:
+        int(brut, 16)
+    except ValueError:
+        return None
+    return brut.lower()
+
+
 def _sha256_fichier(chemin: Path) -> str:
     with open(chemin, "rb") as flux:
         return _sha256_flux(flux)
@@ -586,19 +620,27 @@ def copier_objets_s3(references: dict, client_s3, destination: Path) -> dict:
                     if identite_apres != identite_avant or os.fstat(flux.fileno()).st_size != identite_avant[0]:
                         manquants.append({"id": doc["id"], "object_key": cle, "erreur": "source_modifiee_ou_tronquee"})
                         continue
-                    empreinte = _sha256_flux(flux)
+                    empreinte, md5_octets = _empreintes_flux(flux)
+                    etag_contenu = _etag_contenu(identite_avant[1])
                     # Preuve d'identité, par ordre de force : le SHA-256 complet
                     # fourni par le stockage s'il existe (objet déposé avec
-                    # checksum plein objet), sinon l'identité CONNUE du
-                    # snapshot PostgreSQL. Sans l'un des deux, les octets
-                    # téléchargés ne prouvent rien et la copie n'est pas
-                    # publiée : jamais une copie « non prouvée » dans un bundle
-                    # qui se déclare complet.
+                    # checksum plein objet), sinon l'ETag « contenu » du
+                    # fournisseur (MD5 calculé au dépôt en une seule partie),
+                    # sinon l'identité CONNUE du snapshot PostgreSQL. Sans
+                    # aucune de ces trois références, les octets téléchargés
+                    # ne prouvent rien et la copie n'est pas publiée : jamais
+                    # une copie « non prouvée » dans un bundle qui se déclare
+                    # complet.
                     if identite_avant[3] is not None:
                         if empreinte != identite_avant[3]:
                             manquants.append({"id": doc["id"], "object_key": cle, "erreur": "integrite_source_non_prouvee"})
                             continue
                         preuve = "checksum_sha256_fournisseur_full_object"
+                    elif etag_contenu is not None:
+                        if md5_octets != etag_contenu:
+                            manquants.append({"id": doc["id"], "object_key": cle, "erreur": "integrite_source_non_prouvee"})
+                            continue
+                        preuve = "etag_md5_fournisseur"
                     elif empreinte_attendue is not None and empreinte == empreinte_attendue:
                         preuve = "identite_catalogue_source_sha256"
                     else:
