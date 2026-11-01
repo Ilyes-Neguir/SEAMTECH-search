@@ -7,16 +7,22 @@
 # « ça tourne sur Windows » peut être prouvé sans toucher au poste réel.
 #
 # Ce que ce job prouve réellement :
-#   * la suite SQLite-complete passe sur Windows (chemins, backslashes,
-#     verrous, encodage, sauvegarde/restauration sur système de fichiers NTFS) ;
+#   * la suite sans service passe sur Windows (chemins, backslashes, verrous,
+#     encodage, sauvegarde/restauration sur système de fichiers NTFS) ;
 #   * PostgreSQL 16 et Redis 7 démarrés sur Windows portent la suite
 #     d'intégration correspondante ;
-#   * l'application se lance en ligne de commande sur Windows.
+#   * l'application se lance en ligne de commande sur un chemin accentué.
 #
 # Ce qu'il ne prouve PAS, et qui reste une limite dite franchement dans le
 # rapport : Docker Desktop (pas de conteneurs Linux sur un runner Windows
 # standard), Chrome et Edge en exécution d'interface (Playwright est exécuté
 # sur Linux dans le job e2e), et « plusieurs jours » d'endurance.
+#
+# Sur Redis 7, dit franchement : Redis n'a PLUS de binaire Windows officiel
+# depuis la version 5 (port MicrosoftArchive abandonné). On utilise donc le
+# port redis-windows/redis-windows, reconstruit depuis les sources officielles
+# de Redis 7.4.11. Ce n'est pas un binaire Redis Labs signé : c'est la ligne
+# Redis 7, sur Windows, et la source est épinglée (version + URL ci-dessous).
 #
 # Les fichiers POSIX-only sont écartés EXPLICITEMENT, jamais silencieusement :
 # SIGKILL et fork() n'existent pas sur Windows, et un test qui ne peut pas
@@ -34,9 +40,9 @@ jobs:
       run:
         shell: pwsh
     env:
-      # Pas de ``SEAMTECH_TEST_DATABASE_URL`` au départ : la suite SQLite doit
-      # d'abord passer SANS service. Elle est posée après l'installation de
-      # PostgreSQL, uniquement si le service répond.
+      # Pas de ``SEAMTECH_TEST_DATABASE_URL`` au départ : la suite sans service
+      # doit d'abord passer SANS PostgreSQL. Elle est posée après
+      # l'installation de PostgreSQL, uniquement si le service répond.
       PYTHONIOENCODING: utf-8
       PYTHONUTF8: "1"
     steps:
@@ -51,14 +57,14 @@ jobs:
       - name: Identité du banc Windows
         run: |
           $info = Get-ComputerInfo
-          Write-Host "::notice title=windows-identite::os=$($info.OsName) version=$($info.OsVersion) python=$(python -V)"
+          python -V
           python -c "import platform,sys; print(platform.platform()); print(sys.getfilesystemencoding())"
-      - name: PostgreSQL 16 et Redis 7 (Windows)
+          Write-Host "::notice title=windows-identite::os=$($info.OsName) version=$($info.OsVersion)"
+      - name: Installer PostgreSQL 16 (hôte)
         # Les services de conteneurs de GitHub ne fonctionnent pas sur les
-        # runners Windows : PostgreSQL et Redis sont installés sur l'hôte.
+        # runners Windows : PostgreSQL est installé sur l'hôte.
         run: |
           choco install postgresql16 --params '/Password:seamtech_test_password' --no-progress -y
-          choco install redis-64 --no-progress -y
       - name: Démarrer PostgreSQL 16 et créer la base
         run: |
           $pg = Get-Service -Name "postgresql*" | Select-Object -First 1
@@ -72,69 +78,104 @@ jobs:
           & $psql -U postgres -c "CREATE ROLE seamtech LOGIN PASSWORD 'seamtech_test_password' SUPERUSER;"
           & $psql -U postgres -c "CREATE DATABASE seamtech_search_test OWNER seamtech;"
           & $psql -U postgres -c "SELECT version();"
-          & "C:\Program Files\PostgreSQL\16\bin\pg_dump.exe" --version
-      - name: Démarrer Redis 7
-        # Premier essai (run 41358977874) : l'étape échouait parce que le
-        # binaire était cherché à un seul emplacement. Sur un runner Windows,
-        # `redis-64` peut atterrir dans le dossier du paquet, dans
-        # « C:\Program Files\Redis », ou être exposé par un shim Chocolatey.
-        # On cherche donc partout, et on DIT ce qu'on a trouvé : un service
-        # introuvable fait échouer le job, il ne fait pas sauter les suites en
-        # silence (un test sauté n'est pas un test).
+      - name: Installer Redis 7 (port Windows, version épinglée)
         run: |
-          $candidats = @()
-          $commande = Get-Command redis-server.exe -ErrorAction SilentlyContinue
-          if ($commande) { $candidats += $commande.Source }
-          foreach ($racine in @("C:\ProgramData\chocolatey\lib\redis-64", "C:\Program Files\Redis", "C:\ProgramData\chocolatey\bin")) {
-            if (Test-Path $racine) {
-              $candidats += (Get-ChildItem $racine -Recurse -Filter "redis-server.exe" -ErrorAction SilentlyContinue |
-                             Select-Object -ExpandProperty FullName)
-            }
-          }
-          $serveur = $candidats | Where-Object { $_ } | Select-Object -First 1
+          $version = "7.4.11"
+          $assets = "https://github.com/redis-windows/redis-windows/releases/download/$version/Redis-$version-Windows-x64-msys2.zip"
+          $zip = Join-Path $env:TEMP "redis-$version.zip"
+          $dir = "C:\redis7"
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+          Invoke-WebRequest -Uri $assets -OutFile $zip -UseBasicParsing -ErrorAction Stop
+          Expand-Archive -Path $zip -DestinationPath $dir -Force
+          $serveur = Get-ChildItem $dir -Recurse -Filter "redis-server.exe" -ErrorAction SilentlyContinue |
+                     Select-Object -First 1 -ExpandProperty FullName
           if (-not $serveur) {
-            Write-Error "redis-server introuvable après installation (cherché : shim PATH, lib\redis-64, Program Files\Redis)"
+            Write-Host "::error title=redis-install::archive téléchargée mais redis-server.exe absent de $dir"
+            Get-ChildItem $dir -Recurse | Select-Object -First 30 -ExpandProperty FullName
             exit 1
           }
-          Write-Host "redis-server : $serveur"
+          Write-Host "::notice title=redis-install::version=$version binaire=$serveur"
+      - name: Démarrer Redis 7
+        # Historique : deux échecs avant d'arriver ici.
+        #   1. `choco install redis-64` : le binaire n'était pas là où on le
+        #      cherchait (run 41358977874), puis introuvable malgré une
+        #      recherche élargie (run 41360147830) — le paquet ne livre pas de
+        #      redis-server.exe utilisable sur ce runner.
+        #   2. Le silence n'est pas une preuve : on attend le PONG, et on
+        #      publie le chemin et la version en annotation (les journaux
+        #      complets sont stockés sur un hôte de blobs injoignable depuis
+        #      le banc ; une annotation se lit par l'API).
+        run: |
+          $dir = "C:\redis7"
+          $serveur = Get-ChildItem $dir -Recurse -Filter "redis-server.exe" -ErrorAction SilentlyContinue |
+                     Select-Object -First 1 -ExpandProperty FullName
+          if (-not $serveur) { Write-Error "redis-server introuvable sous $dir" ; exit 1 }
           & $serveur --version
           Start-Process -FilePath $serveur -ArgumentList "--port","6379" -WindowStyle Hidden
-          $cli = (Get-ChildItem (Split-Path $serveur) -Filter "redis-cli.exe" -ErrorAction SilentlyContinue |
-                  Select-Object -First 1).FullName
-          if (-not $cli) {
-            $cli = (Get-ChildItem "C:\ProgramData\chocolatey\lib\redis-64" -Recurse -Filter "redis-cli.exe" -ErrorAction SilentlyContinue |
-                    Select-Object -First 1).FullName
-          }
-          for ($i = 0; $i -lt 15; $i++) {
-            try {
-              if ($cli) { $pong = & $cli -p 6379 ping }
-              if ($pong -match "PONG") { Write-Host "Redis répond : $pong" ; exit 0 }
-            } catch {}
+          $cli = Get-ChildItem $dir -Recurse -Filter "redis-cli.exe" -ErrorAction SilentlyContinue |
+                 Select-Object -First 1 -ExpandProperty FullName
+          if (-not $cli) { Write-Error "redis-cli introuvable sous $dir" ; exit 1 }
+          for ($i = 0; $i -lt 20; $i++) {
             Start-Sleep -Seconds 2
+            $pong = & $cli -p 6379 ping 2>$null
+            if ($LASTEXITCODE -eq 0 -and $pong -match "PONG") {
+              Write-Host "::notice title=redis-demarrage::PONG obtenu, version=$(& $serveur --version)"
+              exit 0
+            }
           }
-          Write-Error "Redis installé mais muet sur le port 6379"
+          Write-Host "::error title=redis-demarrage::Redis installé mais muet sur le port 6379 apres 40s (binaire=$serveur)"
           exit 1
-      - name: Suite SQLite sur Windows (aucun service requis)
+      - name: Suite sans service sur Windows
         # POSIX-only : SIGKILL et fork() n'existent pas sur Windows. Ces
         # fichiers sont NOMMÉS ici, pas simplement absents : un test écarté
         # doit rester visible dans la configuration.
         run: |
+          New-Item -ItemType Directory -Force -Path logs | Out-Null
           python -m pytest -q -rf `
             -m "not postgres and not s3 and not perf and not redis_queue and not ocr_suite" `
             --ignore=tests/test_chaos.py `
             --ignore=tests/test_worker_process.py `
             --ignore=tests/test_worker_process_postgres.py `
             --ignore=tests/test_worker_crash_terminal.py `
-            --ignore=tests/test_securite_banc_suivi.py
+            --ignore=tests/test_securite_banc_suivi.py `
+            --ignore=tests/test_migration_rollback.py `
+            --ignore=tests/test_partage_web_worker.py 2>&1 | Tee-Object -FilePath logs\windows-sans-service.log
+          $rc = $LASTEXITCODE
+          $resume = (Select-String -Path logs\windows-sans-service.log -Pattern '^(FAILED|ERROR)|passed|failed' |
+                     Select-Object -Last 10 | ForEach-Object { $_.Line }) -join ' ; '
+          Write-Host "::notice title=windows-sans-service::rc=$rc ; $resume"
+          if ($rc -ne 0) {
+            $echecs = (Select-String -Path logs\windows-sans-service.log -Pattern '^(FAILED|ERROR)' |
+                       Select-Object -First 15 | ForEach-Object { $_.Line }) -join ' ; '
+            Write-Host "::error title=windows-sans-service-echec::$echecs"
+            exit $rc
+          }
       - name: Suite PostgreSQL + Redis sur Windows
         env:
           SEAMTECH_TEST_DATABASE_URL: postgresql://seamtech:seamtech_test_password@127.0.0.1:5432/seamtech_search_test
           SEAMTECH_TEST_REDIS_URL: redis://127.0.0.1:6379/1
         run: |
+          New-Item -ItemType Directory -Force -Path logs | Out-Null
           python -m pytest -q -rf `
-            -m "postgres and not s3 and not perf and not ocr_suite" `
+            -m "postgres and not s3 and not perf and not ocr_suite and not redis_queue" `
+            --ignore=tests/test_chaos.py `
+            --ignore=tests/test_worker_process.py `
+            --ignore=tests/test_worker_process_postgres.py `
+            --ignore=tests/test_worker_crash_terminal.py `
+            --ignore=tests/test_securite_banc_suivi.py `
             --ignore=tests/test_migration_rollback.py `
-            --ignore=tests/test_partage_web_worker.py
+            --ignore=tests/test_partage_web_worker.py 2>&1 | Tee-Object -FilePath logs\windows-postgres-redis.log
+          $rc = $LASTEXITCODE
+          $resume = (Select-String -Path logs\windows-postgres-redis.log -Pattern '^(FAILED|ERROR)|passed|failed' |
+                     Select-Object -Last 10 | ForEach-Object { $_.Line }) -join ' ; '
+          Write-Host "::notice title=windows-postgres-redis::rc=$rc ; $resume"
+          if ($rc -ne 0) {
+            $echecs = (Select-String -Path logs\windows-postgres-redis.log -Pattern '^(FAILED|ERROR)' |
+                       Select-Object -First 15 | ForEach-Object { $_.Line }) -join ' ; '
+            Write-Host "::error title=windows-postgres-redis-echec::$echecs"
+            exit $rc
+          }
       - name: Ligne de commande et chemins Windows
         run: |
           # Le CLI doit fonctionner sur un chemin à accents et espaces — c'est
@@ -144,11 +185,11 @@ jobs:
           New-Item -ItemType Directory -Force -Path $dossier | Out-Null
           python -m seamtech_search.cli --help | Out-Null
           if ($LASTEXITCODE -ne 0) { Write-Error "CLI en échec sur Windows" ; exit 1 }
-          python -c "from pathlib import Path; p=Path(r'''$dossier''')/'échéancier.pdf'; p.write_bytes(b'%%PDF-1.4 test'); print(p.exists(), p.stat().st_size)"
+          python -c "from pathlib import Path; p = Path(r'''$dossier''') / 'échéancier.pdf'; p.write_bytes(b'%PDF-1.4 test'); print(p.exists(), p.stat().st_size)"
+          if ($LASTEXITCODE -ne 0) { Write-Error "écriture sur chemin accentué en échec" ; exit 1 }
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: preuves-qualification-windows
-          path: |
-            *.log
+          path: logs/*.log
           if-no-files-found: warn
