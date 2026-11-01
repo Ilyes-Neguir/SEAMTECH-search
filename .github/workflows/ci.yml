@@ -1348,7 +1348,48 @@ jobs:
           # du parcours machine complet (annotation mesure-phase1) est donc
           # extrait du rapport JSON et publié en ::notice — c'est le seul
           # mécanisme qui le rende lisible dans les journaux CI. Garde-fous de
-          if sautes or flaky or passes != 19:              # NOMMER ce qui a bougé : « 1 flaky » sans nom n'est pas
+          # porte de sortie : 19 tests exécutés au premier essai (6 fichiers :
+          # validation, orientations mixtes, révision clavier, badge « Non
+          # vérifiée » + fermeture des suggestions, recherche par dimension,
+          # extrait documentaire), 0 flaky (un échec rattrapé par retry fait
+          # échouer la porte), 0 saut, et le chrono doit avoir été produit.
+          set -uo pipefail
+          set +e
+          pnpm exec playwright test e2e/validation.spec.ts e2e/orientation-mixte.spec.ts e2e/validation-raccourcis-regression.spec.ts e2e/recherche-badge.spec.ts e2e/recherche-dimension.spec.ts e2e/recherche-extrait.spec.ts --reporter=list,json 2>&1 | tee /tmp/e2e_validation.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            echo "::error title=live-validation-details::$(grep -E '✘|failed|Error|expect|toHave|Timeout|expected|not.to' /tmp/e2e_validation.log | tail -20 | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 3000)"
+            echo "::error title=live-validation-tail::$(tail -40 /tmp/e2e_validation.log | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 3000)"
+            exit "$rc"
+          fi
+          set +e
+          python - <<'PY' 2>&1 | tee /tmp/live-validation-gardefou.log
+          import json
+          import os
+
+          if not os.path.exists("report.json"):
+              raise SystemExit(
+                  "GARDE-FOU live e2e : report.json absent — PLAYWRIGHT_JSON_OUTPUT_NAME "
+                  "doit être positionné pour que le reporter json écrive un fichier."
+              )
+          d = json.load(open("report.json"))
+
+          def iterer_specs(suite):
+              yield from suite.get("specs", [])
+              for enfant in suite.get("suites", []):
+                  yield from iterer_specs(enfant)
+
+          stats = d["stats"]
+          passes = stats["expected"]
+          flaky = stats.get("flaky", 0)
+          sautes = stats.get("skipped", 0)
+          # Porte de sortie de phase (audit indépendant du 22/09) : un test qui
+          # échoue puis passe au retry (compté « flaky » par Playwright avec
+          # retries: 2) n'est PAS un test réellement assaini — il doit faire
+          # échouer la porte, pas compter comme « réellement exécuté ».
+          if sautes or flaky or passes != 19:
+              # NOMMER ce qui a bougé : « 1 flaky » sans nom n'est pas
               # diagnosticable depuis un poste qui n'atteint pas les journaux
               # d'Actions (leçon du 2026-10-07 : un flake a rendu un run rouge
               # sans que le test concerné soit lisible nulle part).
@@ -1362,7 +1403,8 @@ jobs:
                               coupables.append(f"{etat}: {spec.get('title', '?')} [{titres[:120]}]")
               detail = "; ".join(coupables[:5]) or "aucun test nommé dans le rapport"
               raise SystemExit(
-                  f"GARDE-FOU live e2e : attendu 19 tests passés au premier essai, "                  f"0 flaky, 0 sautés — mesuré {passes} passés, {flaky} flaky, "
+                  f"GARDE-FOU live e2e : attendu 19 tests passés au premier essai, "
+                  f"0 flaky, 0 sautés — mesuré {passes} passés, {flaky} flaky, "
                   f"{sautes} sautés. Les tests live ne doivent jamais s'ignorer "
                   "silencieusement ni masquer une instabilité par retry. "
                   f"Détail : {detail}"
