@@ -74,15 +74,46 @@ jobs:
           & $psql -U postgres -c "SELECT version();"
           & "C:\Program Files\PostgreSQL\16\bin\pg_dump.exe" --version
       - name: Démarrer Redis 7
+        # Premier essai (run 41358977874) : l'étape échouait parce que le
+        # binaire était cherché à un seul emplacement. Sur un runner Windows,
+        # `redis-64` peut atterrir dans le dossier du paquet, dans
+        # « C:\Program Files\Redis », ou être exposé par un shim Chocolatey.
+        # On cherche donc partout, et on DIT ce qu'on a trouvé : un service
+        # introuvable fait échouer le job, il ne fait pas sauter les suites en
+        # silence (un test sauté n'est pas un test).
         run: |
-          $redis = Get-ChildItem "C:\ProgramData\chocolatey\lib\redis-64" -Recurse -Filter "redis-server.exe" |
-                   Select-Object -First 1
-          if (-not $redis) { Write-Error "redis-server introuvable" ; exit 1 }
-          Start-Process -FilePath $redis.FullName -ArgumentList "--port","6379" -WindowStyle Hidden
-          Start-Sleep -Seconds 3
-          $cli = Get-ChildItem "C:\ProgramData\chocolatey\lib\redis-64" -Recurse -Filter "redis-cli.exe" |
-                 Select-Object -First 1
-          & $cli.FullName -p 6379 ping
+          $candidats = @()
+          $commande = Get-Command redis-server.exe -ErrorAction SilentlyContinue
+          if ($commande) { $candidats += $commande.Source }
+          foreach ($racine in @("C:\ProgramData\chocolatey\lib\redis-64", "C:\Program Files\Redis", "C:\ProgramData\chocolatey\bin")) {
+            if (Test-Path $racine) {
+              $candidats += (Get-ChildItem $racine -Recurse -Filter "redis-server.exe" -ErrorAction SilentlyContinue |
+                             Select-Object -ExpandProperty FullName)
+            }
+          }
+          $serveur = $candidats | Where-Object { $_ } | Select-Object -First 1
+          if (-not $serveur) {
+            Write-Error "redis-server introuvable après installation (cherché : shim PATH, lib\redis-64, Program Files\Redis)"
+            exit 1
+          }
+          Write-Host "redis-server : $serveur"
+          & $serveur --version
+          Start-Process -FilePath $serveur -ArgumentList "--port","6379" -WindowStyle Hidden
+          $cli = (Get-ChildItem (Split-Path $serveur) -Filter "redis-cli.exe" -ErrorAction SilentlyContinue |
+                  Select-Object -First 1).FullName
+          if (-not $cli) {
+            $cli = (Get-ChildItem "C:\ProgramData\chocolatey\lib\redis-64" -Recurse -Filter "redis-cli.exe" -ErrorAction SilentlyContinue |
+                    Select-Object -First 1).FullName
+          }
+          for ($i = 0; $i -lt 15; $i++) {
+            try {
+              if ($cli) { $pong = & $cli -p 6379 ping }
+              if ($pong -match "PONG") { Write-Host "Redis répond : $pong" ; exit 0 }
+            } catch {}
+            Start-Sleep -Seconds 2
+          }
+          Write-Error "Redis installé mais muet sur le port 6379"
+          exit 1
       - name: Suite SQLite sur Windows (aucun service requis)
         # POSIX-only : SIGKILL et fork() n'existent pas sur Windows. Ces
         # fichiers sont NOMMÉS ici, pas simplement absents : un test écarté
