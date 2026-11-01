@@ -50,14 +50,16 @@ def test_traversee_de_chemin_dans_le_nom_de_fichier_reste_confinee(tmp_path: Pat
     """``../../../../tmp/pwned.pdf`` ne doit pas écrire hors du staging."""
     racine = tmp_path / "racine"
     racine.mkdir()
+    # La cible est HORS du staging mais DANS le dossier du test : écrire dans
+    # /tmp rendrait le test dépendant des essais précédents et des exécutions
+    # parallèles (xdist), donc non reproductible.
+    cible = tmp_path / "hors-staging" / "pwned.pdf"
+    cible.parent.mkdir(parents=True, exist_ok=True)
     client = _client(tmp_path, racine)
-    cible = Path("/tmp/pwned-seamtech.pdf")
-    if cible.exists():  # pragma: no cover - nettoyage d'un essai précédent
-        cible.unlink()
 
     reponse = client.post(
         "/imports/upload",
-        files=[("files", ("../../../../tmp/pwned-seamtech.pdf", _pdf(), "application/pdf"))],
+        files=[("files", ("../../../../hors-staging/pwned.pdf", _pdf(), "application/pdf"))],
         data={"folder": "depot-offensif"},
     )
 
