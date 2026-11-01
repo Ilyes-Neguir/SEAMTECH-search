@@ -1156,3 +1156,53 @@ Limites ouvertes à ce stade
 - Chromium n'est pas reconstruit : les specs Playwright ne sont pas rejouées localement.
 
 **Prochaine action précise :** lire le CI du commit `7735701` (`gh run view <id> --json jobs`), traiter `integration` (dossier de rapports vide : relire les annotations du job `compose-partage-web-worker`), puis mesurer la couverture (`coverage_gate`, plancher 85 % global et par module) et compléter si un module passe sous son seuil. Mettre à jour ce fichier avant tout arrêt.
+
+---
+
+## Reprise (suite) — `8c4b833`…`b16882f` : CI, dépôt, statut d'envoi
+
+### Jobs CI : état mesuré par commit
+
+| Job | `e218134` | `556ccad` | `7735701`/`3be3b5e` | Cause / correction |
+|---|---|---|---|---|
+| `ocr` | rouge | **vert** | vert | garde-fou sur le motif du saut (plus sur le nom du fichier) + services `postgres`/`redis` dans le job + condition « pdftoppm » obsolète retirée |
+| `hors-ligne-reel` | rouge | **vert** | vert | sélecteur Playwright ambigu (référence affichée deux fois) |
+| `recette-locale` | rouge | **vert** | vert | « upload=partial » ⇒ envoi prouvé désormais annoncé « uploaded » |
+| `sauvegarde` | rouge (`objets_s3.nb_copies = 0`) | rouge (garde-fou) | **suite verte, garde-fou à corriger** | preuve d'identité par ETag contenu ; garde-fou : `SyntaxError` (`:=` dans une compréhension imbriquée) + marque XFAIL cherchée après le motif au lieu d'avant |
+| `backend (3.11/3.12/3.13)` | rouge | rouge | rouge (étape S3rver) | chaîne figée « 9 passed, 4 xfailed » puis couples `findall` dépouillés à l'envers (`int("skipped")`) |
+| `integration` | rouge | rouge | rouge | dossier de rapports vide (Docker : non reproductible ici) |
+| `e2e` | rouge | rouge | rouge | à ré examiner après `3be3b5e` |
+| `recette-corpus-reel` | rouge | rouge | — | REF-001..007 « envoi S3 en échec » (corrigé) puis « dépôt non traité — Un PDF existant au même chemin a changé » (corrigé par `1f37d16`) |
+
+### Défauts corrigés depuis le précédent point
+
+| Défaut | Cause | Correction | Preuve |
+|---|---|---|---|
+| Dépôt refusé sur un fichier déjà importé | la reprise ne comparait que le texte indexé (`content_hash`), jamais l'identité des octets | reprise accordée si texte identique, OU `source_sha256` identique, OU ligne vierge ; identité RÉTABLIE après l'upsert (`_etablir_identite_octets`) car le déclencheur `documents_invalider_source_sha256` la met à NULL sur toute mise à jour surveillée (y compris le rafraîchissement du vecteur) | nouveau test `test_meme_pdf_deja_passe_par_un_autre_flux_est_repris` ; `tests/test_depot_transactionnel.py` **66 réussis / 4 ignorés / 0 échec** |
+| Publication incertaine déclarée « failed » | `status` = failed quand aucune donnée n'est extraite, même si un objet a pu être écrit | publication en attente ⇒ « à revoir », jamais un échec clos | `tests/test_snapshot_import.py` **54 réussis** |
+| Envoi prouvé annoncé « partial » | rabaissement inconditionnel lié à la destination | « uploaded » conditionné aux preuves ; succès global (`all_verified`) toujours suspendu | sonde locale `POST /imports/confirm` : `upload_status = uploaded`, `transport_verifie = True`, `all_verified = False`, `status = needs_review` |
+| Garde-fou S3rver | couples `(nombre, nom)` dépouillés à l'envers | ordre corrigé, logique rejouée sur un résumé synthétique (9 + 4 = 13) | exécution locale du bloc extrait du YAML |
+| Garde-fou sauvegarde | `SyntaxError` + regex `^XFAIL` | boucle simple + « l'identifiant précède la marque » ; bloc EXÉCUTÉ sur un vrai junitxml : « 0 sauté (2 xfail exécutés) », motifs publiés | voir ci-dessus |
+
+### Couverture (mesure locale, PostgreSQL + Redis réels, commande exacte CI)
+
+`SEAMTECH_TEST_DATABASE_URL=… SEAMTECH_TEST_REDIS_SERVER=… pytest -m "not s3 and not perf" -q --cov=seamtech_search --cov-report=json:coverage.json`
+→ **2929 réussis / 149 ignorés / 8 xfail / 7 échecs en 1057 s**, dont 6 échecs « environnement banc » ou règles désormais corrigées (1 échec restant : `test_ocr_qualification.py::test_scan_propre_retrouve_les_mots_attendus`, faute de moteur OCR lisible dans ce sandbox).
+
+`python scripts/coverage_gate.py coverage.json` :
+
+| Module | Mesuré | Plancher | Verdict |
+|---|---|---|---|
+| **TOTAL** | **85,5 %** | ≥ 85 % | **ok** |
+| `api.py` | 91,5 % | 87 % | ok |
+| `import_pipeline.py` | 94,2 % | 90 % | ok |
+| `indexer.py` | 95,7 % | 90 % | ok |
+| `ocr/*` (4 modules) | 75,2…92,6 % | 40…80 % | ok |
+| `jobs.py` | 88,8 % | 94 % | **FAIL** |
+| `redis_store.py` | 70,5 % | 92 % | **FAIL** |
+| `storage.py` | 95,6 % | 97 % | **FAIL** |
+| `worker.py` | 82,9 % | 92 % | **FAIL** |
+
+Ces quatre modules ont grossi pendant la remédiation (worker 642 instructions, redis_store et storage réécrits) sans que leur couverture suive : la mesure est faite SANS s3rver ni MinIO (les tests qui les exigent sont ignorés), elle doit donc être refaite sur un banc complet avant de conclure — mais l'écart (jusqu'à −21,5 pts sur `redis_store`) est trop grand pour n'être qu'un effet de banc.
+
+**Prochaine action précise :** (1) relire le CI de `b16882f` ; (2) combler la couverture de `redis_store.py`, `worker.py`, `jobs.py` et `storage.py` par des tests qui EXÉCUTENT les chemins ajoutés (aucun ajustement de plancher — les planchers sont une exigence produit) ; (3) traiter `integration` (dossier de rapports vide) à partir des annotations du job `compose-part-web-worker` ; (4) réexaminer `e2e`. Mettre à jour ce fichier avant tout arrêt.
