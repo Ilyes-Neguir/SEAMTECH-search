@@ -1373,3 +1373,49 @@ annotations ; (2) vérifier `backend (3.11/3.12/3.13)` sur le HEAD exact ;
 (3) reprendre `test_scan_propre_retrouve_les_mots_attendus` (OCR) ; (4) attaquer
 les xfail restants un par un, chacun avec un test rouge→vert ; (5) ne RIEN
 résumer dans le chat avant le rapport final PRÊT/NON PRÊT.
+
+### 6. Correction de `57c5701` (CI) — deux routes, deux contrats (`d68b905`)
+
+La CI a refusé l'extension de la règle `/open` à la route artefacts :
+
+```
+FAILED tests/test_integrite_telechargement_import.py::
+  test_telechargement_verifie_ne_redirige_pas_vers_s3[source_pdf-None]
+  test_telechargement_verifie_ne_redirige_pas_vers_s3[report_pdf-report_path]
+```
+
+À juste titre : la route artefacts est le « téléchargement VÉRIFIÉ » (octets
+relus et contrôlés à la réponse ; une URL présignée ne peut pas revérifier —
+jamais de 302 pour une source capturée), `/open` est la route historique dont
+le contrat E-28 impose la redirection dès qu'un endpoint PUBLIC est déclaré.
+La règle artefacts est rétablie au mot près, la différence est commentée dans
+le code, et le garde-fou de comptage des appels reste à 4. Mesures locales :
+`55 passed`.
+
+### 7. Verrou de sauvegarde : dossier remplacé (`4d38e3a`)
+
+`VerrouSauvegarde` verrouille désormais aussi le **parent** du dossier de
+sauvegarde. Sans lui, un détenteur dont le dossier est renommé (l'inode
+verrouillé n'est plus le chemin) laissait un second venu verrouiller le
+nouveau dossier du même nom : deux sauvegardes simultanées, invisibles l'une
+pour l'autre. xfail strict levé (rouge → vert mesuré). Non-régression sur toute
+la surface sauvegarde/restauration : **306 passed, 2 skipped, 6 xfailed**.
+
+### 8. État CI relu sur `e5c2439` (run `41350813297`)
+
+- **succès** : `recette-corpus-reel` (le correctif `/open` est donc validé par
+  la CI), `sauvegarde`, `ocr`, `docker`, `securite-dependances`,
+  `hors-ligne-reel`, `frontend`, `Qualification native`, `Perf comparaison` ;
+- **échec** : `backend (3.13)` — 2 tests, la route artefacts (voir §6, corrigé
+  dans `d68b905`) ;
+- `backend (3.11)` et `backend (3.12)` : `cancelled` (annulés, pas échoués) —
+  à relire sur le HEAD suivant ;
+- `integration`, `recette-locale`, `e2e` : en cours au moment de l'arrêt.
+
+**Prochaine action précise :** (1) relire le CI de `d68b905` : `backend
+(3.11/3.12/3.13)`, `integration` (le correctif `9bf0c72` doit le faire passer)
+et `recette-locale` ; (2) si `integration` échoue encore, repartir de
+l'annotation « rapports vus par le web » ; (3) reprendre
+`test_scan_propre_retrouve_les_mots_attendus` (OCR) ; (4) xfail restants, un
+par un, chacun avec un test rouge→vert ; (5) ne RIEN résumer dans le chat avant
+le rapport final PRÊT/NON PRÊT.
