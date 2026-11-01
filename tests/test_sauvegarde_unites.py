@@ -727,7 +727,16 @@ def test_verrou_double_libere_apres_mort_du_processus(tmp_path):
         pass
 
 
-@pytest.mark.xfail(strict=True, reason="L'ancienne version ne verrouille pas le dossier")
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "Une ancienne version qui ne verrouille QUE le fichier, fichier ensuite "
+        "supprimé : rien dans le système de fichiers ne désigne plus son verrou "
+        "(inode détaché). Le verrou du parent couvre le dossier remplacé, pas ce "
+        "cas-là ; le départager supposerait un inventaire des descripteurs ouverts "
+        "par processus, hors de portée d'un verrou POSIX portable."
+    ),
+)
 def test_version_mixte_et_fichier_efface_refuse_chevauchement(tmp_path):
     import fcntl
 
@@ -741,7 +750,6 @@ def test_version_mixte_et_fichier_efface_refuse_chevauchement(tmp_path):
                 pass
 
 
-@pytest.mark.xfail(strict=True, reason="Remplacement du dossier change l'inode verrouillé")
 def test_remplacement_dossier_sauvegarde_refuse_chevauchement(tmp_path):
     dossier = tmp_path / "backup"
     dossier.mkdir()

@@ -309,9 +309,17 @@ def inventorier_archive(racines: list[Path]) -> dict:
 class VerrouSauvegarde:
     """Un seul ``sauver`` à la fois sur un dossier de destination.
 
-    Verrouille le dossier puis ``sauvegarde.lock`` avec ``flock`` non bloquant.
-    Le second verrou conserve la coordination avec les anciennes versions qui
-    verrouillent uniquement le fichier. Les deux sont relâchés à la sortie.
+    Verrouille le PARENT, puis le dossier, puis ``sauvegarde.lock`` avec
+    ``flock`` non bloquant. Le verrou du fichier conserve la coordination avec
+    les anciennes versions qui verrouillent uniquement le fichier. Les trois
+    sont relâchés à la sortie.
+
+    Verrouiller le PARENT n'est pas une précaution de plus : c'est ce qui
+    empêche le scénario du dossier REMPLACÉ. Sans lui, un détenteur dont le
+    dossier est renommé (l'inode verrouillé n'est plus le chemin) laisse un
+    second venu verrouiller le nouveau dossier du même nom — deux sauvegardes
+    simultanées, sans qu'aucun des deux ne le sache. Le parent, lui, ne bouge
+    pas.
     """
 
     def __init__(self, dossier: Path):
@@ -320,6 +328,7 @@ class VerrouSauvegarde:
         self.chemin = self.dossier / NOM_VERROU
         self._flux = None
         self._fd_dossier = None
+        self._fd_parent = None
         self._garde_instance = threading.Lock()
 
     def __enter__(self) -> "VerrouSauvegarde":
@@ -337,6 +346,10 @@ class VerrouSauvegarde:
             raise SauvegardeError("Verrouillage sûr indisponible sur cette plateforme")
         fd = None
         try:
+            # Le parent d'abord : un renommage du dossier de sauvegarde ne doit
+            # pas permettre un second détenteur sur le même chemin.
+            self._fd_parent = os.open(self.dossier.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            fcntl.flock(self._fd_parent, fcntl.LOCK_EX | fcntl.LOCK_NB)
             self._fd_dossier = os.open(self.dossier, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
             fcntl.flock(self._fd_dossier, fcntl.LOCK_EX | fcntl.LOCK_NB)
             fd = os.open(NOM_VERROU, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0),
@@ -364,6 +377,11 @@ class VerrouSauvegarde:
                             os.close(self._fd_dossier)
                         finally:
                             self._fd_dossier = None
+                    if self._fd_parent is not None:
+                        try:
+                            os.close(self._fd_parent)
+                        finally:
+                            self._fd_parent = None
             if isinstance(erreur, BlockingIOError):
                 raise SauvegardeError("une sauvegarde est déjà en cours — chevauchement refusé") from None
             if isinstance(erreur, OSError):
@@ -388,7 +406,15 @@ class VerrouSauvegarde:
                         os.close(self._fd_dossier)
                         self._fd_dossier = None
             finally:
-                self._garde_instance.release()
+                try:
+                    if self._fd_parent is not None:
+                        try:
+                            fcntl.flock(self._fd_parent, fcntl.LOCK_UN)
+                        finally:
+                            os.close(self._fd_parent)
+                            self._fd_parent = None
+                finally:
+                    self._garde_instance.release()
 
 
 def inventorier_references_documents(base_url: str, *, connexion=None) -> dict:
