@@ -998,8 +998,24 @@ def test_import_echoue_ne_publie_pas_cle_objet_non_verifiee(tmp_path: Path, monk
     index.close()
 
 
-@pytest.mark.xfail(strict=True, reason='Reprise après upload partiel refuse le document déjà préservé')
-def test_reprise_import_apres_envoi_partiel_conserve_documents_deja_proteges(tmp_path: Path, monkeypatch) -> None:
+def test_reprise_apres_envoi_partiel_conserve_les_preuves_deja_acquises(tmp_path: Path, monkeypatch) -> None:
+    """Un envoi PARTIEL se complète par ``retry_upload``, jamais par un re-import aveugle.
+
+    Scénaria de l'atelier : un gros dossier part, le réseau coupe — une partie
+    des objets est déjà en stockage et VÉRIFIÉE. La reprise doit :
+
+    1. ne RIEN régénérer (le rapport reste celui de la première passe) ;
+    2. n'envoyer que ce qui manque, sans remplacer les preuves acquises ;
+    3. conserver les documents déjà liés au catalogue (jamais de lien cassé) ;
+    4. aboutir à un transport prouvé — sans pour autant proclamer un succès
+       global, que ni le snapshot ni la liaison ne permettent de revendiquer.
+
+    ``import_folder`` sur un import déjà partiellement préservé reste REFUSÉ :
+    c'est la garde ``test_reimport_partiel_refuse_avant_regeneration_et_nouvel_envoi``.
+    La reprise passe par ``retry_upload`` (le même chemin que le bouton
+    « renvoyer » de l'interface).
+    """
+    from seamtech_search.import_pipeline import retry_upload
     from seamtech_search.storage import UploadBatch, UploadedArtifact
 
     root = tmp_path / 'roots'
@@ -1013,6 +1029,7 @@ def test_reprise_import_apres_envoi_partiel_conserve_documents_deja_proteges(tmp
         compteur += 1
         arts = []
         for nombre, f in enumerate(p for p in kwargs['files_to_upload'] if p):
+            # Première passe : seul le premier fichier aboutit (envoi partiel).
             ok = compteur > 1 or nombre == 0
             arts.append(UploadedArtifact(str(f), Path(f).name, key=('cle-' + str(nombre)) if ok else None,
                                          bucket='bucket-synthetique', status='uploaded' if ok else 'failed',
@@ -1022,8 +1039,45 @@ def test_reprise_import_apres_envoi_partiel_conserve_documents_deja_proteges(tmp
     monkeypatch.setattr(import_pipeline, 'upload_artifacts_to_storage', envoyer)
     premier = import_folder(source, config, index, import_id='test-reprise')
     assert not premier.all_verified
-    second = import_folder(source, config, index, import_id='test-reprise')
-    assert not second.all_verified and second.transport_verifie
+    prouvees_avant = {a['path']: a['key'] for a in premier.artifacts if a.get('verified') and a.get('key')}
+    assert prouvees_avant, "le scénario exige au moins un objet déjà prouvé"
+    with index.connect() as connexion:
+        liees_avant = {
+            ligne['path']: ligne['object_key']
+            for ligne in connexion.execute(
+                'SELECT path, object_key FROM documents WHERE is_dir = 0 AND object_key IS NOT NULL'
+            ).fetchall()
+        }
+    rapport = Path(premier.report_path)
+    contenu_rapport = rapport.read_bytes()
+
+    # Une reprise qui régénérerait le rapport casserait la preuve acquise.
+    monkeypatch.setattr(import_pipeline, 'generate_report', lambda *_a, **_k: pytest.fail('rapport régénéré'))
+
+    payload = retry_upload(index, config, 'test-reprise')
+
+    manifeste = {a['path']: a for a in payload['artifacts']}
+    for chemin, cle in prouvees_avant.items():
+        assert manifeste[chemin]['key'] == cle, (
+            f"la preuve acquise de {chemin} a été remplacée : {cle} → {manifeste[chemin].get('key')}"
+        )
+    assert all(a.get('verified') for a in payload['artifacts']), (
+        "la reprise n'a pas complété les envois manquants : "
+        f"{[a['path'] for a in payload['artifacts'] if not a.get('verified')]}"
+    )
+    assert payload['transport_verifie'], "transport non prouvé après une reprise complète"
+    # Le succès GLOBAL reste suspendu : ni snapshot ni liaison transactionnelle.
+    assert not payload['all_verified']
+    assert rapport.read_bytes() == contenu_rapport, "le rapport a été régénéré par la reprise"
+    with index.connect() as connexion:
+        liees_apres = {
+            ligne['path']: ligne['object_key']
+            for ligne in connexion.execute(
+                'SELECT path, object_key FROM documents WHERE is_dir = 0 AND object_key IS NOT NULL'
+            ).fetchall()
+        }
+    for chemin, cle in liees_avant.items():
+        assert liees_apres.get(chemin) == cle, f"lien catalogue perdu ou remplacé pour {chemin}"
     index.close()
 
 
