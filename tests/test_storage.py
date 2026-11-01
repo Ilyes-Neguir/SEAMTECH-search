@@ -548,3 +548,233 @@ def test_import_sync_s3_ne_declare_pas_termine_sans_snapshot(tmp_path: Path, mon
     assert data['transport_verifie'] and not data['all_verified']
     assert data['status'] == 'needs_review'
     assert client.get('/imports/' + data['import_id']).json()['status'] == 'needs_review'
+
+
+# ---------------------------------------------------------------------------
+# Création exclusive et preuves de relecture : chemins d'erreur réellement
+# exécutés (aucun n'est un « beau temps » — chacun est un refus exigé).
+# ---------------------------------------------------------------------------
+
+
+def _client_double(monkeypatch, magasin, tmp_path: Path) -> S3StorageClient:
+    cfg = AppConfig(
+        root_paths=[tmp_path],
+        database_path=tmp_path / "data" / "search.db",
+        min_free_bytes=0,
+        s3_endpoint_url="https://s3.invalide",
+        s3_bucket="bucket-test",
+        s3_access_key="cle-synthetique",
+        s3_secret_key="secret-synthetique",
+    )
+    monkeypatch.setattr(S3StorageClient, "_get_client", lambda self, **kwargs: magasin)
+    monkeypatch.setattr(S3StorageClient, "ensure_bucket_exists", lambda self: True)
+    return S3StorageClient(config=cfg)
+
+
+def test_creation_exclusive_refuse_cle_occupee_sans_rien_ecraser(tmp_path: Path, monkeypatch) -> None:
+    """La clé existe déjà : refus net et AUCUNE écriture (la copie vivante survit)."""
+    from seamtech_search.storage import StorageCleExistante
+
+    magasin = S3EnMemoire()
+    client = _client_double(monkeypatch, magasin, tmp_path)
+    source = tmp_path / "piece.pdf"
+    source.write_bytes(b"contenu-deja-en-place")
+    assert client.creer_fichier_exclusif(source, "imports/piece.pdf") == "imports/piece.pdf"
+
+    autre = tmp_path / "autre.pdf"
+    autre.write_bytes(b"contenu-different-et-plus-long")
+    with pytest.raises(StorageCleExistante):
+        client.creer_fichier_exclusif(autre, "imports/piece.pdf")
+    assert magasin.objets["imports/piece.pdf"]["donnees"] == b"contenu-deja-en-place"
+
+
+def test_creation_exclusive_sans_condition_ne_bascule_pas_en_ecriture(tmp_path: Path, monkeypatch) -> None:
+    """Fournisseur sans écriture conditionnelle : refus, jamais de PUT inconditionnel."""
+    from botocore.exceptions import ParamValidationError
+
+    from seamtech_search.storage import StockageExclusiviteIndisponible
+
+    class SansCondition:
+        def put_object(self, **_kwargs):
+            raise ParamValidationError(report="IfNoneMatch")
+
+    client = _client_double(monkeypatch, SansCondition(), tmp_path)
+    source = tmp_path / "piece.pdf"
+    source.write_bytes(b"contenu")
+    with pytest.raises(StockageExclusiviteIndisponible):
+        client.creer_fichier_exclusif(source, "imports/piece.pdf")
+
+
+def test_creation_exclusive_incertaine_est_signalee(tmp_path: Path, monkeypatch) -> None:
+    """Une panne inconnue laisse l'état distant incertain : jamais un succès déclaré."""
+    from seamtech_search.storage import StorageWriteUncertain
+
+    class Panne:
+        def put_object(self, **_kwargs):
+            raise RuntimeError("reseau coupe en cours d'ecriture")
+
+    client = _client_double(monkeypatch, Panne(), tmp_path)
+    source = tmp_path / "piece.pdf"
+    source.write_bytes(b"contenu")
+    with pytest.raises(StorageWriteUncertain):
+        client.creer_fichier_exclusif(source, "imports/piece.pdf")
+
+
+def test_creation_exclusive_fichier_local_absent(tmp_path: Path, monkeypatch) -> None:
+    """Sans fichier local, aucune tentative d'écriture."""
+    from seamtech_search.storage import StoragePreflightError
+
+    client = _client_double(monkeypatch, S3EnMemoire(), tmp_path)
+    with pytest.raises(StoragePreflightError):
+        client.creer_fichier_exclusif(tmp_path / "introuvable.pdf", "imports/piece.pdf")
+
+
+def test_versioning_deja_actif_n_est_pas_redemande(tmp_path: Path, monkeypatch) -> None:
+    """Un bucket déjà versionné n'entraîne aucune demande de configuration."""
+    cfg = AppConfig(
+        root_paths=[tmp_path],
+        database_path=tmp_path / "data" / "search.db",
+        min_free_bytes=0,
+        s3_endpoint_url="https://s3.invalide",
+        s3_bucket="bucket-test",
+        s3_access_key="cle-synthetique",
+        s3_secret_key="secret-synthetique",
+    )
+    monkeypatch.setattr(
+        S3StorageClient,
+        "_read_versioning",
+        lambda self: {"versioning_available": True, "versioning_detail": "bucket versioning is enabled"},
+    )
+    client = S3StorageClient(config=cfg)
+    client._enable_versioning_once()
+    etat = client.versioning_status()
+    assert etat["versioning_available"] is True
+
+
+def test_head_object_avec_checksum_illisitable(tmp_path: Path, monkeypatch) -> None:
+    """Unhead illisible remonte en erreur explicite, sans divulguer la clé."""
+
+    class Illisible:
+        def head_object(self, **_kwargs):
+            raise RuntimeError("panne de lecture")
+
+    client = _client_double(monkeypatch, Illisible(), tmp_path)
+    with pytest.raises(StorageError):
+        client.head_object_avec_checksum("imports/piece.pdf")
+
+
+def _magasin_trompeur(taille_annoncee: int, corps: bytes):
+    """Tête conforme, corps réellement different : le pire cas d'un envoi."""
+    from io import BytesIO
+
+    class Magasin:
+        def head_object(self, Bucket, Key, ChecksumMode=None, **_kwargs):  # noqa: N803, ANN201
+            return {"ContentLength": taille_annoncee, "ETag": '"etag-quelconque"'}
+
+        def get_object(self, Bucket, Key, **_kwargs):  # noqa: N803, ANN201
+            return {"Body": BytesIO(corps)}
+
+    return Magasin()
+
+
+def test_relecture_corps_plus_long_que_la_source_est_un_echec(tmp_path: Path, monkeypatch) -> None:
+    """Le service renvoie plus d'octets que la source : échec, pas une troncature acceptée."""
+    local = tmp_path / "piece.bin"
+    local.write_bytes(b"0123456789")
+    client = _client_double(monkeypatch, _magasin_trompeur(10, b"0123456789-EN-TROP"), tmp_path)
+    resultat = client.verifier_integrite("imports/piece.bin", local)
+    assert resultat.integrite_prouvee is False and resultat.methode == "echec"
+    assert "supérieure" in (resultat.detail or "")
+
+
+def test_relecture_corps_plus_court_que_la_source_est_un_echec(tmp_path: Path, monkeypatch) -> None:
+    """Objet tronqué : la taille annoncée ne suffit pas, les octets comptent."""
+    local = tmp_path / "piece.bin"
+    local.write_bytes(b"0123456789")
+    client = _client_double(monkeypatch, _magasin_trompeur(10, b"0123"), tmp_path)
+    resultat = client.verifier_integrite("imports/piece.bin", local)
+    assert resultat.integrite_prouvee is False and resultat.methode == "echec"
+    assert "inférieure" in (resultat.detail or "")
+
+
+def test_checksum_serveur_different_est_un_echec(tmp_path: Path, monkeypatch) -> None:
+    """Le fournisseur annonce un checksum qui n'est pas celui du fichier : échec."""
+    import base64
+    import hashlib
+
+    class Magasin:
+        def head_object(self, Bucket, Key, ChecksumMode=None, **_kwargs):  # noqa: N803, ANN201
+            return {
+                "ContentLength": 10,
+                "ETag": '"etag-quelconque"',
+                "ChecksumSHA256": base64.b64encode(hashlib.sha256(b"autre-chose").digest()).decode("ascii"),
+                "ChecksumType": "FULL_OBJECT",
+            }
+
+    local = tmp_path / "piece.bin"
+    local.write_bytes(b"0123456789")
+    client = _client_double(monkeypatch, Magasin(), tmp_path)
+    resultat = client.verifier_integrite("imports/piece.bin", local, relire=False)
+    assert resultat.integrite_prouvee is False and resultat.methode == "echec"
+    assert "checksum serveur" in (resultat.detail or "")
+
+
+def test_envoi_sans_fichier_n_est_pas_un_envoi(tmp_path: Path) -> None:
+    """Aucun fichier à envoyer : « not_applicable », pas « uploaded » vide de sens."""
+    cfg = AppConfig(
+        root_paths=[tmp_path],
+        database_path=tmp_path / "data" / "search.db",
+        min_free_bytes=0,
+        s3_endpoint_url="https://s3.invalide",
+        s3_bucket="bucket-test",
+        s3_access_key="cle-synthetique",
+        s3_secret_key="secret-synthetique",
+    )
+    lot = upload_artifacts_to_storage(folder_name="vide", files_to_upload=[None], config=cfg)
+    assert lot.status == "not_applicable"
+
+
+def test_panne_d_initialisation_deja_typee_n_est_pas_requalifiee(tmp_path: Path, monkeypatch) -> None:
+    """Un ``StorageError`` explicite traverse le client tel quel : pas de message générique par-dessus."""
+    from seamtech_search.storage import StorageError
+
+    cfg = AppConfig(
+        root_paths=[tmp_path],
+        database_path=tmp_path / "data" / "search.db",
+        min_free_bytes=0,
+        s3_endpoint_url="https://s3.invalide",
+        s3_bucket="bucket-test",
+        s3_access_key="cle-synthetique",
+        s3_secret_key="secret-synthetique",
+    )
+
+    def _echouer(self) -> None:
+        raise StorageError("identifiants refusés par le fournisseur")
+
+    monkeypatch.setattr(S3StorageClient, "_make_client", _echouer)
+    client = S3StorageClient(config=cfg)
+    with pytest.raises(StorageError, match="identifiants refusés"):
+        client._get_client()
+
+
+def test_metadonnee_divergente_est_un_echec(tmp_path: Path, monkeypatch) -> None:
+    """Métadonnée présente mais différente : divergence prouvée, jamais une présomption."""
+    import hashlib
+
+    from seamtech_search.storage import METADATA_SHA256
+
+    class Magasin:
+        def head_object(self, Bucket, Key, ChecksumMode=None, **_kwargs):  # noqa: N803, ANN201
+            return {
+                "ContentLength": 10,
+                "ETag": '"etag-quelconque"',
+                "Metadata": {METADATA_SHA256: hashlib.sha256(b"un-autre-contenu").hexdigest()},
+            }
+
+    local = tmp_path / "piece.bin"
+    local.write_bytes(b"0123456789")
+    client = _client_double(monkeypatch, Magasin(), tmp_path)
+    resultat = client.verifier_integrite("imports/piece.bin", local, relire=False)
+    assert resultat.integrite_prouvee is False
+    assert resultat.methode == "echec"
+    assert "divergente" in (resultat.detail or "")

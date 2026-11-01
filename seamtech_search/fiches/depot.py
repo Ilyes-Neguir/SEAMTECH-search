@@ -1864,6 +1864,18 @@ def executer_lot(
                 objets_promus=objets_promus, claim=claim, verifier_claim_externe=verifier_claim_externe,
                 config=config,
             )
+        except DepotClaimPerdu:
+            # Perdre le claim n'est PAS un défaut du dossier : la transaction est
+            # annulée (aucune fiche écrite) et le dossier reste « en_attente »
+            # pour le worker propriétaire. Le marquer « echec » le ferait
+            # disparaître de la reprise alors qu'il n'a jamais été traité.
+            LOGGER.warning(
+                "Lot #%s : claim perdu sur le dossier #%s — conséquence : aucune écriture, "
+                "dossier laissé « en_attente », traitement arrêté pour laisser la place.",
+                id_lot,
+                id_lot_dossier,
+            )
+            raise
         except Exception as erreur:  # filet : « le lot continue » quoi qu'il arrive
             LOGGER.error("Lot #%s : erreur non gérée (%s) sur le dossier #%s", id_lot, type(erreur).__name__, id_lot_dossier)
             _maj_ligne(index, id_lot_dossier, "echec", f"erreur non gérée : {type(erreur).__name__}", None, None, 0, claim=claim)

@@ -1,6 +1,7 @@
 """Réimport sans écrasement d'un document déjà lié à une fiche."""
 from __future__ import annotations
 
+import hashlib
 import shutil
 from pathlib import Path
 
@@ -55,7 +56,10 @@ def test_reimport_conflit_publie_sans_remplacer_la_piece_protegee(base_depot, tm
         curseur.execute('SELECT id, content_hash, source_sha256, object_key, role, id_fiche FROM documents WHERE path = %s',
                         (str(pdf),))
         avant = curseur.fetchone()
-    assert avant and avant[2] is None
+    # L'identité par les octets est établie DÈS le premier dépôt (``source_sha256``
+    # restait NULL avant la correction) : c'est elle qui rend le réimport traçable.
+    assert avant and avant[1] is not None
+    assert avant[2] == hashlib.sha256(pdf.read_bytes()).hexdigest()
     # La nouvelle version ne doit ni être reliée arbitrairement à l'ancien
     # document ni empêcher la conservation de son objet propre.
     pdf.write_bytes(pdf.read_bytes() + b'\n%version-synthetique-modifiee')
