@@ -1103,3 +1103,56 @@ Limites ouvertes à ce stade
 - P0.2 (promotion effective des originaux), sauvegarde/restauration coordonnée PG + `./data` + objet + hors-site, migration/rollback sur copie représentative, OCR navigateur CI sans assertion affaiblie, qualification Windows/Docker Desktop/PG16/Redis7/Chrome/Edge, volume annuel, matrice route × rôle × session × état métier, multipart sous charge/interruption/concurrence, injections de pannes, sécurité offensive, axe-core étendu et endurance plusieurs jours restent **non prêts**.
 
 **Prochaine action précise :** rejouer sur arbre figé les campagnes PostgreSQL 16.2, Redis 7.4.7 et S3rver après fusion, puis reprendre les jobs CI ouverts un par un (`ocr`, `sauvegarde`, `integration`, `recette-*`, `e2e`, `hors-ligne-reel`) avec les bancs locaux du dépôt, en corrigeant chaque échec sans affaiblir d'assertion ni ajouter de skip. Poursuivre ensuite P0.2 et la sauvegarde coordonnée. Mettre à jour ce fichier avant tout arrêt ; aucun bilan intermédiaire dans le chat.
+
+---
+
+## Reprise du 01/11 — bancs reconstruits, campagnes PG/Redis, corrections CI (commits `8c4b833`, `d549cbf`, `556ccad`, `7735701`)
+
+### Bancs reconstruits (perdus avec `/tmp`)
+
+| Banc | État | Commande / preuve |
+|---|---|---|
+| PostgreSQL 16.2 TCP UTF8 | **opérationnel** | `initdb -D /tmp/seamtech-pgtcp/data -U postgres --encoding=UTF8 --locale=C.utf8` ; `pg_ctl -D /tmp/seamtech-pgtcp/data -o "-p 55498 -k /tmp/seamtech-pgtcp -c listen_addresses=127.0.0.1" -l /tmp/seamtech-pgtcp/server.log start` ; extensions `vector`, `unaccent`, `pg_trgm` créées |
+| Redis 7.4.7 | **opérationnel** | compilé depuis `redis/redis` tag 7.4.7 (`make -j2 MALLOC=libc BUILD_TLS=no`) ; service sur `127.0.0.1:6390` |
+| Tesseract 5.5.1 + Leptonica 1.85.0 | **compilé mais inutilisable** | `cmake` installé par pip, leptonica et tesseract construits dans `/tmp/outillage-seamtech` ; leptonica **sans PNG/TIFF** (aucun en-tête `png.h`/`zlib.h`/`tiffio.h` dans l'image, aucun dépôt système joignable) ⇒ `pixReadStreamPng: function not present`. Le banc OCR **reste non qualifiant** dans ce sandbox. |
+| S3rver / MinIO / Chromium | **absents** | npm `s3rver` non qualifiant ; MinIO indisponible (registries retirés) ; Chromium non reconstruit |
+
+### Campagnes exécutées (arbre figé, `-p no:randomly`)
+
+| Campagne | Commande | Résultat |
+|---|---|---|
+| Suite non-PG | `pytest -q -rf -p no:randomly -m "not postgres and not s3 and not perf and not redis_queue"` | **2331 réussis / 58 ignorés / 6 xfail / 0 échec en 296 s** (`/tmp/seamtech-suite-fusion5.log`) |
+| PostgreSQL | `SEAMTECH_TEST_DATABASE_URL="postgresql://postgres@127.0.0.1:55498/postgres" pytest -q -rf -p no:randomly -m postgres` | **558 réussis / 50 ignorés / 2 xfail / 0 échec / 3 erreurs en 404 s** (`/tmp/seamtech-pg-fusion7.log`) ; les 3 erreurs = `redis-server introuvable`, rejouées avec le banc Redis : **3 réussis / 0 échec** ⇒ 561 réussis / 0 échec |
+| Redis durable | `SEAMTECH_TEST_REDIS_SERVER=… SEAMTECH_TEST_REDIS_URL="redis://127.0.0.1:6390/1" pytest -q -rf -p no:randomly -m redis_queue` | **100 réussis / 41 ignorés / 0 échec en 107 s** (`/tmp/seamtech-redis-fusion2.log`) |
+| Sauvegarde | `pytest -q -rf -p no:randomly tests/test_sauvegarde_*.py` | **73 réussis / 3 ignorés / 0 échec en 23 s** |
+| Latence 1 500 fiches | `SEAMTECH_TEST_DATABASE_URL=… pytest -q -p no:randomly tests/test_recherche_hybride.py::test_charge_modeste_1500_fiches` | 3 mesures : p95 = **109,6 / 95,1 / 114,8 ms**, p50 = 31,9 / 40,5 / 42,1 ms, max ≈ 116 ms. Le critère produit p95 < 100 ms **flotte** sur ce banc 2 vCPU partagé (1 passage sur 3 au-dessus) ; `SEAMTECH_PERF_P95_CI_MS` permet de l'étiqueter sans jamais le desserrer. |
+
+### Défauts corrigés (avec mesure avant/après)
+
+| Défaut | Cause mesurée | Correction | Preuve |
+|---|---|---|---|
+| Restauration objet impossible | `copier_objets_s3` exigeait le `ChecksumSHA256` FULL_OBJECT du fournisseur | preuve hiérarchisée : checksum fournisseur → **ETag « contenu » (MD5 calculé au dépôt)** → identité `source_sha256` du catalogue → refus | 6 nouveaux tests (`tests/test_sauvegarde_references.py`, dont 1 rouge avant / vert après) + série sauvegarde 73 réussis |
+| `S3StorageClient` sans création exclusive | méthode absente | `creer_fichier_exclusif()` (`IfNoneMatch: *`, `ChecksumAlgorithm=SHA256`) ; `StorageCleExistante` si 412, `StockageExclusiviteIndisponible` si paramètre non supporté, **jamais** de PUT inconditionnel en repli | `test_aller_retour_complet_base_donnees_et_objets` vert |
+| Double S3 qui n'acceptait pas un flux | `bytes(Body)` sur un fichier ouvert ⇒ `TypeError` | le double lit un flux comme boto3 | idem |
+| Migration PG : reconstitution arrêtée à une version antérieure impossible | le contrôle du schéma d'identité des octets s'appliquait même à une migration non demandée | le contrôle ne porte que sur une migration qui **devait** être appliquée | `tests/test_migrations_metier.py` **11 réussis** |
+| Tout import annoncé « partial » et « à revoir » | rabaissement **inconditionnel** de `uploaded` dès qu'une destination est configurée (introduit par `8d03693`) | rabaissement **conditionnel aux preuves** : `uploaded` conservé si chaque artefact porte clé + empreinte vérifiée | 2 nouveaux tests (`tests/test_import_workflow.py`) ; explique `recette-corpus-reel` (REF-001..007 « envoi S3 en échec ») et `recette-locale` (`upload=partial`) |
+| CI `ocr` : garde-fou déclenché par un nom de fichier | `grep -qiE "moteur|tesseract|ocr"` sur toute la ligne `SKIPPED … tests/test_scan_browser_upload_ocr.py` | garde-fou sur le **motif** seul + services `postgres`/`redis` ajoutés au job + échec explicite si le parcours saute faute de PostgreSQL ou d'outil de rendu | YAML validé (`yaml.safe_load`) |
+| Parcours navigateur OCR jamais exécuté | condition de saut `pdftoppm absent` obsolète (le rendu est interne : `ocr/rendu_pdf.py`) | condition retirée ; l'OCR est exigé par la présence du terme unique de l'image | `ruff` vert |
+| E2E `concurrence.spec.ts` / `hors-ligne.spec.ts` | `getByText(/REF-2026-CLIENT123/i)` résolu à 2 éléments (valeurs extraites **et** aperçu du classeur) — Playwright en mode strict | occurrence désignée explicitement (`.first()`), exigence métier inchangée | `tsc --noEmit` vert |
+| Garde-fou `sauvegarde` comptant les xfail comme sautés | pytest range les xfail dans les `<skipped>` du JUnit XML (`type="pytest.xfail"`) | séparation xfail / saut réel (croisement XML + console), échecs attendus **publiés** avec motif | logique rejouée localement sur un vrai `junitxml` : `{'pytest.xfail'}` |
+| Garde-fou S3rver figé | chaîne attendue `9 passed, … 4 xfailed` gravée ; la campagne compte **13** tests | exigence par comptage réel : collectés == passés + xfail, 0 saut, 0 échec, deux catégories non vides | collecte locale `-m s3rver` : 13 tests |
+
+### CI au moment de l'écriture
+
+- `main@bc2d4b2` (référence) : **tous les jobs verts** (run 41076604936).
+- Branche à `e218134` : 8 jobs rouges (backend, ocr, sauvegarde, integration, e2e, hors-ligne-reel, recette-locale, recette-corpus-reel).
+- Après `d549cbf` : `sauvegarde` ne présente plus `objets_s3.nb_copies = 0` (le défaut est corrigé) mais échoue sur le garde-fou xfail/saut ; `backend (3.13)` échoue sur **« Qualification réseau S3rver isolé »** (chaîne figée).
+- `7735701` corrige ces deux garde-fous ; **résultat CI non encore connu**.
+
+### Limites dites franchement
+
+- Le banc **OCR n'est pas qualifiant** : tesseract construit ne sait pas lire d'image (leptonica sans PNG). Les tests `-m ocr_suite` qui exigent un moteur réel échouent ici de façon **environnementale** (11 échecs localement, tous « tesseract obligatoire … mais absent »).
+- Docker n'est pas disponible dans le sandbox : `integration`, `recette-locale`, `recette-corpus-reel`, `hors-ligne-reel`, `e2e` ne sont reproductibles **que par lecture de code et d'annotations CI**.
+- Chromium n'est pas reconstruit : les specs Playwright ne sont pas rejouées localement.
+
+**Prochaine action précise :** lire le CI du commit `7735701` (`gh run view <id> --json jobs`), traiter `integration` (dossier de rapports vide : relire les annotations du job `compose-partage-web-worker`), puis mesurer la couverture (`coverage_gate`, plancher 85 % global et par module) et compléter si un module passe sous son seuil. Mettre à jour ce fichier avant tout arrêt.
