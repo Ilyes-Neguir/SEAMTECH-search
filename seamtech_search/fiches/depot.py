@@ -124,14 +124,30 @@ _SQL_DOCUMENT_UPSERT = (
 )
 _SQL_DOCUMENT_FICHE_UPSERT = (
     "INSERT INTO documents (path_key, path, name, parent_path, extension, size, modified_at, "
-    "is_dir, content, content_hash, extraction_status, category, role) "
-    "VALUES (%s, %s, %s, %s, %s, %s, %s, FALSE, %s, %s, 'metadata', 'analyzed', 'fiche_pdf') "
+    "is_dir, content, content_hash, source_sha256, extraction_status, category, role) "
+    "VALUES (%s, %s, %s, %s, %s, %s, %s, FALSE, %s, %s, %s, 'metadata', 'analyzed', 'fiche_pdf') "
     "ON CONFLICT (path_key) DO UPDATE SET name = EXCLUDED.name, path = EXCLUDED.path, "
     "parent_path = EXCLUDED.parent_path, extension = EXCLUDED.extension, size = EXCLUDED.size, "
     "modified_at = EXCLUDED.modified_at, "
     "content = CASE WHEN COALESCE(documents.content, '') = '' THEN EXCLUDED.content ELSE documents.content END, "
     "content_hash = EXCLUDED.content_hash, source_sha256 = NULL, category = 'analyzed', role = 'fiche_pdf' "
-    "WHERE documents.content_hash = EXCLUDED.content_hash OR ("
+    # Reprise refusée SAUF preuve que c'est bien le même fichier : (a) le texte
+    # indexé est identique, (b) l'IDENTITÉ DES OCTETS déjà enregistrée est
+    # identique, ou (c) la ligne est vierge (aucune liaison, aucune pièce,
+    # aucun objet).
+    #
+    # Le cas (b) manquait : un même PDF déjà passé par le flux d'import porte
+    # un `content_hash` différent (texte extrait d'un côté, métadonnées de
+    # l'autre) alors que les octets n'ont pas changé — le dépôt était refusé à
+    # tort (« Un PDF existant au même chemin a changé »), vu en CI sur
+    # `recette-corpus-reel` (REF-001..007, lot C). La comparaison porte donc
+    # aussi sur l'identité des octets, jamais sur le seul texte indexé.
+    #
+    # Le déclencheur `documents_invalider_source_sha256` met `source_sha256` à
+    # NULL sur toute mise à jour de taille/mtime/contenu : l'identité est donc
+    # RéTABLIE juste après, par un UPDATE qui ne touche aucune des colonnes
+    # surveillées (voir `_etablir_identite_octets`).
+    "WHERE documents.content_hash = EXCLUDED.content_hash OR documents.source_sha256 = %s OR ("
     "documents.role IS NULL AND documents.id_fiche IS NULL AND documents.object_key IS NULL "
     "AND NOT EXISTS (SELECT 1 FROM fiche_piece_jointe p WHERE p.id_document = documents.id) "
     "AND NOT EXISTS (SELECT 1 FROM approval_requests a WHERE a.id_piece = documents.id) "
@@ -140,6 +156,19 @@ _SQL_DOCUMENT_FICHE_UPSERT = (
     "AND NOT EXISTS (SELECT 1 FROM lot_dossier l WHERE l.statut = 'traite' "
     "AND split_part(l.cle_idempotence, '|', 1) = documents.path)) RETURNING id"
 )
+
+
+def _etablir_identite_octets(cursor: Any, id_document: int, empreinte: str) -> None:
+    """Rétablit l'identité des octets après l'upsert.
+
+    Le déclencheur ``documents_invalider_source_sha256`` met ``source_sha256``
+    à NULL dès qu'une colonne surveillée bouge — y compris pendant notre propre
+    upsert. Sans ce rétablissement, l'identité serait perdue à chaque dépôt et
+    le prochain dépôt ne pourrait plus prouver que le fichier n'a pas changé.
+    Cet UPDATE ne touche AUCUNE colonne surveillée : le déclencheur ne se
+    déclenche donc pas.
+    """
+    cursor.execute("UPDATE documents SET source_sha256 = %s WHERE id = %s", (empreinte, id_document))
 
 
 def _texte_indexable_fiche(fiche: Any) -> str:
@@ -1359,6 +1388,10 @@ def deposer_dossier(
                         pdf_stat.st_mtime,
                         _texte_indexable_fiche(fiche),
                         empreinte,
+                        # Identité des octets, deux fois : à l'insertion, puis
+                        # dans la condition de reprise (ordre des marqueurs).
+                        empreinte,
+                        empreinte,
                     ),
                 )
                 ligne_document_pdf = cursor.fetchone()
@@ -1370,6 +1403,12 @@ def deposer_dossier(
                     _SQL_DOCUMENT_VECTOR,
                     (index.config_recherche_texte(connexion), id_document_pdf),
                 )
+                # L'upsert ET le rafraîchissement du vecteur passent par des
+                # colonnes surveillées par `documents_invalider_source_sha256` :
+                # l'identité est donc rétablie EN DERNIER, sinon elle serait
+                # perdue dès ce dépôt et le suivant ne pourrait plus prouver
+                # que le fichier n'a pas changé.
+                _etablir_identite_octets(cursor, int(id_document_pdf), empreinte)
                 # Lots 3a/7 : l'extraction écrite avec la fiche reçoit, dans
                 # la même transaction de dépôt, l'identifiant du PDF source
                 # et son empreinte SHA-256 — dans la famille RÉELLEMENT

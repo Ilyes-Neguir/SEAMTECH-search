@@ -1932,3 +1932,56 @@ def test_file_lot_erreur_inattendue_ne_divulgue_ni_chemin_ni_exception(base_depo
     assert "RuntimeError" in etat["dossiers"][0]["raison"]
     assert secret not in etat["dossiers"][0]["raison"] and secret not in caplog.text
     assert all(record.exc_info is None for record in caplog.records if record.name == depot.LOGGER.name)
+
+
+def test_meme_pdf_deja_passe_par_un_autre_flux_est_repris(base_depot: dict, tmp_path: Path) -> None:
+    """MÊMES octets, ligne déjà écrite par un autre flux : le dépôt reprend la ligne.
+
+    Régression verrouillée (CI « recette-corpus-reel », dépôt lot C REF-001..007) :
+    le dépôt refusait (« Un PDF existant au même chemin a changé ») dès que le
+    fichier était déjà passé par le flux d'import, parce que la comparaison ne
+    portait que sur le texte indexé — l'import y met le texte extrait, le dépôt
+    les métadonnées — alors que les OCTETS, eux, n'avaient pas changé. La ligne
+    porte ici un objet et une identité d'octets, comme après un import.
+    """
+    index = base_depot['index']
+    dossier = tmp_path / 'deja-importe'
+    dossier.mkdir()
+    pdf = dossier / 'fiche.pdf'
+    shutil.copy(ARCHIVE_7792 / 'fiche-7792-SO_ffab.pdf', pdf)
+    empreinte = depot.empreinte_fichier(pdf)
+
+    with index.connect() as connexion:
+        with connexion.cursor() as curseur:
+            curseur.execute(
+                "INSERT INTO documents (path_key, path, name, parent_path, extension, size, "
+                "modified_at, is_dir, content, content_hash, source_sha256, extraction_status, "
+                "category, object_key, object_bucket) "
+                "VALUES (%s, %s, %s, %s, '.pdf', %s, %s, FALSE, 'texte extrait sinthetique', "
+                "'empreinte-texte', %s, 'extracted', 'analyzed', 'objets/1/source.pdf', 'seamtech-documents') "
+                "RETURNING id",
+                (
+                    os.path.normcase(str(pdf.resolve())),
+                    str(pdf),
+                    pdf.name,
+                    str(pdf.parent),
+                    pdf.stat().st_size,
+                    pdf.stat().st_mtime,
+                    empreinte,
+                ),
+            )
+            identifiant = curseur.fetchone()[0]
+
+    resultat = depot.deposer_dossier(index, dossier)
+    assert resultat['statut'] == 'traite', resultat
+
+    with index.connect() as connexion:
+        with connexion.cursor() as curseur:
+            curseur.execute(
+                "SELECT source_sha256, object_key, role FROM documents WHERE id = %s", (identifiant,)
+            )
+            ligne = curseur.fetchone()
+    # L'identité des octets est conservée (ce sont les mêmes) et la ligne porte
+    # le rôle de PDF de fiche : la reprise est prouvée, pas un écrasement.
+    assert ligne[0] == empreinte
+    assert ligne[2] == 'fiche_pdf'
