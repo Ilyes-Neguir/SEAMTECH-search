@@ -168,3 +168,54 @@ export function GabaritsApp() {
             data-testid="input-pdf"
             aria-label="PDF de la variante de gabarit à analyser"
           />
+          <button className="rounded bg-primary px-3 py-1 text-xs text-primary-foreground" onClick={onUpload} data-testid="btn-generer">
+            Générer brouillon
+          </button>
+        </div>
+        {message && <p className="mt-2 text-xs text-muted-foreground">{message}</p>}
+
+        {brouillonCourant && (
+          <div className="mt-4 grid grid-cols-2 gap-4">
+            <div>
+              <h3 className="text-sm font-semibold">Brouillon {brouillonCourant.code}</h3>
+              <p className="text-xs">{brouillonCourant.description}</p>
+              <p className="mt-1 text-xs">
+                {brouillonCourant.nb_champs_detectes}/{brouillonCourant.nb_champs_total} champs détectés
+              </p>
+              <ul className="mt-2 text-xs">
+                {brouillonCourant.zones?.map((z, i) => (
+                  <li key={i} className="font-mono">
+                    {z.champ} p{z.page} conf={z.confiance} ancre={z.ancre} rect={z.rectangle.map((n) => n.toFixed(0)).join(",")}
+                  </li>
+                ))}
+              </ul>
+              <details className="mt-2">
+                <summary className="cursor-pointer text-xs">Règles JSON</summary>
+                <pre className="mt-1 max-h-64 overflow-auto rounded bg-muted p-2 text-[10px]">{JSON.stringify(brouillonCourant.regles, null, 2)}</pre>
+              </details>
+              <button className="mt-3 rounded bg-green-600 px-3 py-1 text-xs text-white" onClick={publier} data-testid="btn-publier">
+                Publier comme nouvelle version (registre existant)
+              </button>
+            </div>
+            <div>
+              <p className="text-xs">Prévisualisation PDF (viewer existant, zones surlignées)</p>
+              <canvas ref={canvasRef} className="mt-1 max-w-full border bg-white" data-testid="pdf-canvas-brouillon" />
+            </div>
+          </div>
+        )}
+      </section>
+      )}
+
+      <section className="rounded border p-4">
+        <h2 className="font-semibold">Brouillons existants</h2>
+        <ul className="mt-2 text-xs">
+          {brouillons.map((b) => (
+            <li key={b.id_brouillon} className="font-mono">
+              #{b.id_brouillon} {b.code} — {b.statut} — {b.source_pdf_nom} — {b.description}
+            </li>
+          ))}
+        </ul>
+      </section>
+    </div>
+  )
+}
