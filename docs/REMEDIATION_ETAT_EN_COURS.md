@@ -1419,3 +1419,43 @@ l'annotation « rapports vus par le web » ; (3) reprendre
 `test_scan_propre_retrouve_les_mots_attendus` (OCR) ; (4) xfail restants, un
 par un, chacun avec un test rouge→vert ; (5) ne RIEN résumer dans le chat avant
 le rapport final PRÊT/NON PRÊT.
+
+### 9. `integration` — la sonde conteneur était elle-même cassée (`3900a06`)
+
+Le run `41350813297` (HEAD `e5c2439`) a livré un diagnostic complet… et
+trompeur :
+
+- hôte : `data/reports/<id>` **existe**, mode **0o700**, parcours refusé
+  (`refus_attendu: true`) — l'analyse du §1 est confirmée ;
+- `data/reports` : mode 0755, contient bien le dossier du job ;
+- la sonde `_report_dir_for` du worker voit `technical-report.docx` +
+  `technical-report.pdf` ;
+- **mais** `vu_par_web = null` et `vu_par_worker = null`.
+
+Ce n'était pas le produit : c'était la sonde. `import json,os,sys;p=sys.argv[1];try: …`
+est un **SyntaxError** (un `try:` ne peut pas suivre un point-virgule). stdout
+restait vide, `json.loads` échouait, la fonction rendait `(False, None, None)`
+— « le conteneur ne voit rien », alors que rien ne s'était exécuté.
+
+Corrigé par un vrai script multiligne, **vérifié hors conteneur** (dossier 0700
+→ `{"existe": true, "contenu": [{"nom": "a.pdf", "taille": 0}], "mode": 448}`).
+Et une sonde illisible est désormais ANNONCÉE (rc, stdout, stderr) : un défaut
+de mesure ne doit plus jamais se faire passer pour une absence de fichier.
+
+À noter, vérifié dans `docker-compose.yml` : aucun `user:` n'est surchargé —
+`web`, `worker` et `sauvegarde` partagent la même image, donc le même UID, et
+peuvent lire les rapports en 0700. C'est ce qui rend la preuve « le web voit les
+fichiers du worker » valide malgré le confinement.
+
+**État à l'arrêt du tour** (HEAD `3900a06`, poussé) : les `backend (3.11/3.12)`
+étaient `cancelled` sur `e5c2439` et n'ont donc PAS été lus ; `backend (3.13)`
+échouait sur les 2 tests de la route artefacts, corrigés par `d68b905`. Aucun
+run n'a encore été lu sur `d68b905`/`3900a06`.
+
+**Prochaine action précise :** relire le CI du HEAD `3900a06` job par job —
+`integration` (le correctif de sonde doit le faire passer), `backend
+(3.11/3.12/3.13)`, `recette-corpus-reel`, `e2e` ; puis reprendre
+`test_scan_propre_retrouve_les_mots_attendus` (OCR), puis les xfail restants un
+par un (chacun avec un test rouge→vert), puis P0 sauvegarde hors-site, P1
+rotations PDF, P2 matrice/charge/pannes. Ne RIEN résumer dans le chat avant le
+rapport final PRÊT/NON PRÊT.
