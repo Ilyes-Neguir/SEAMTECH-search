@@ -238,9 +238,18 @@ def lectures_mixtes_verifiees(page: object) -> Iterator[list[tuple[object, Rotat
 
     from pdfplumber.page import Page
 
+    # Les objets dont la visibilité n'est pas démontrée sont retirés de chaque
+    # lecture : ces vues, et non la page d'origine, fournissent le texte publié
+    # pour une page à orientations mixtes. La garde lève pour une faute
+    # structurelle, comme dans ``page_de_lecture``.
+    from seamtech_search.pdf_vue_graphique import objets_a_supprimer, verifier_vue_graphique
+
+    boites = objets_a_supprimer(verifier_vue_graphique(page))
+    hauteur = float(getattr(page, "height", 0.0) or 0.0)
+    interdits = _boites_retirees_en_haut_de_page(boites, hauteur)
     vue = boite_vue(page)
     originaux = [c for c in page.chars if c.get("text", "").strip()]
-    visibles = [c for c in originaux if _caractere_visible(c, vue)]
+    visibles = [c for c in originaux if _caractere_visible(c, vue) and not _objet_retire(c, interdits)]
     quadrants = {_quadrant_caractere(c) for c in visibles}
     if None in quadrants or not quadrants:
         yield None
@@ -285,8 +294,11 @@ def lectures_mixtes_verifiees(page: object) -> Iterator[list[tuple[object, Rotat
                     ):
                         raise ValueError("projection des glyphes incertaine")
 
-                rognee = _rogner_vue(page, normalisee, rotation)
-                if rognee is not normalisee:
+                normale_filtree = _page_sans_objets_non_demontres(normalisee, boites, rotation, hauteur)
+                if normale_filtree is not normalisee:
+                    ressources.callback(normale_filtree.close)
+                rognee = _rogner_vue(page, normale_filtree, rotation)
+                if rognee is not normale_filtree:
                     ressources.callback(rognee.close)
                 filtree = rognee.filter(
                     lambda objet: objet.get("object_type") != "char" or _quadrant_caractere(objet) == 0
@@ -309,6 +321,75 @@ def lectures_mixtes_verifiees(page: object) -> Iterator[list[tuple[object, Rotat
             yield lectures
 
 
+def _page_sans_objets_non_demontres(
+    vue: object,
+    boites: tuple[tuple[float, float, float, float], ...],
+    rotation: RotationAffichage | None,
+    hauteur_affichee: float,
+) -> object:
+    """Copie de la vue dont les objets non démontrés sont retirés.
+
+    ``boites`` sont les boîtes mesurées par la garde dans le repère DEVICE de la
+    page AFFICHÉE (y vers le haut) ; pdfplumber mesure depuis le haut de page
+    (``top``/``bottom``), d'où la conversion par ``hauteur_affichee``. Quand la
+    vue a été normalisée (rotation appliquée), les boîtes sont projetées dans
+    son repère par ``RotationAffichage.inverse``.
+
+    pdfplumber publie des objets ``dict`` (pas d'attribut ``bbox``) ; une
+    tolérance absorbe l'arrondi entre les repères. Un objet retiré n'est ni
+    remplacé ni deviné.
+    """
+    if not boites:
+        return vue
+    affichees = [
+        (x0, hauteur_affichee - y1, x1, hauteur_affichee - y0) for x0, y0, x1, y1 in boites
+    ]
+    if rotation is not None:
+        projetees = []
+        for x0, haut, x1, bas in affichees:
+            bx0, bx1, bhaut, bbas = rotation.inverse(x0, x1, haut, bas)
+            projetees.append((bx0, bhaut, bx1, bbas))
+        cibles = projetees
+    else:
+        cibles = affichees
+
+    def cle(objet: object) -> tuple[float, float, float, float] | None:
+        if not isinstance(objet, dict):
+            return None
+        valeurs = (objet.get("x0"), objet.get("top"), objet.get("x1"), objet.get("bottom"))
+        if any(isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) for v in valeurs):
+            return None
+        return (float(valeurs[0]), float(valeurs[1]), float(valeurs[2]), float(valeurs[3]))
+
+    def autorise(objet: object) -> bool:
+        boite = cle(objet)
+        if boite is None:
+            return True
+        return not any(
+            all(abs(a - b) <= 0.05 for a, b in zip(boite, cible, strict=True)) for cible in cibles
+        )
+
+    return vue.filter(autorise)
+
+
+def _boites_retirees_en_haut_de_page(
+    boites: tuple[tuple[float, float, float, float], ...], hauteur_affichee: float
+) -> tuple[tuple[float, float, float, float], ...]:
+    """Boîtes device de la page affichée -> (x0, top, x1, bottom) pdfplumber."""
+    return tuple(
+        (x0, hauteur_affichee - y1, x1, hauteur_affichee - y0) for x0, y0, x1, y1 in boites
+    )
+
+
+def _objet_retire(objet: dict, interdits: tuple[tuple[float, float, float, float], ...]) -> bool:
+    """Vrai si la boîte pdfplumber de l'objet correspond à un objet retiré."""
+    valeurs = (objet.get("x0"), objet.get("top"), objet.get("x1"), objet.get("bottom"))
+    if any(isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) for v in valeurs):
+        return False
+    boite = (float(valeurs[0]), float(valeurs[1]), float(valeurs[2]), float(valeurs[3]))
+    return any(all(abs(a - b) <= 0.05 for a, b in zip(boite, interdite, strict=True)) for interdite in interdits)
+
+
 def page_de_lecture(page: object) -> tuple[object, RotationAffichage | None]:
     """Normalise uniquement une rotation homogène, vérifiée caractère par caractère.
 
@@ -317,18 +398,29 @@ def page_de_lecture(page: object) -> tuple[object, RotationAffichage | None]:
     y compris si une rotation ne peut pas être normalisée. L'API ``Page`` de pdfplumber est utilisée avec une copie privée
     de PDFPage, sans réécriture du fichier ou mutation de la page originale.
     """
-    # pdfminer ne suit pas tous les clips graphiques : refuser avant toute
-    # publication si les vues de texte, image ou forme restent indéterminées.
-    from seamtech_search.pdf_vue_graphique import verifier_vue_graphique
+    # pdfminer ne suit pas tous les clips graphiques : les objets dont la
+    # visibilité n'est pas démontrée sont retirés de la vue publiée. La garde
+    # est appelée sur la page affichée (une faute structurelle la refuse) ; le
+    # retrait lui-même a lieu après la normalisation, sinon les glyphes retirés
+    # empêcheraient d'apparier la vue normalisée avec la vue affichée.
+    from seamtech_search.pdf_vue_graphique import objets_a_supprimer, verifier_vue_graphique
 
-    verifier_vue_graphique(page)
+    a_supprimer = verifier_vue_graphique(page)
+    boites = objets_a_supprimer(a_supprimer)
+    if boites:
+        LOGGER.warning(
+            "Page PDF : %d objet(s) retiré(s) de la publication (visibilité non démontrée).",
+            len(a_supprimer),
+        )
+    hauteur = float(getattr(page, "height", 0.0) or 0.0)
     angle = getattr(page, "rotation", 0)
     caracteres = [c for c in page.chars if c.get("text", "").strip()]
     mixte, compatible, exploitable = orientations_visibles(page)
     if mixte:
         LOGGER.warning("Page PDF à orientations mixtes : extraction potentiellement incorrecte, contrôle nécessaire.")
     if angle not in (90, 180, 270) or not compatible or not exploitable:
-        return _rogner_vue(page, page, None), None
+        vue = _page_sans_objets_non_demontres(page, boites, None, hauteur)
+        return _rogner_vue(page, vue, None), None
 
     from pdfplumber.page import Page
 
@@ -340,7 +432,8 @@ def page_de_lecture(page: object) -> tuple[object, RotationAffichage | None]:
     source = [c for c in normalisee.chars if c.get("text", "").strip()]
     if len(source) != len(caracteres):
         normalisee.close()
-        return _rogner_vue(page, page, None), None
+        vue = _page_sans_objets_non_demontres(page, boites, None, hauteur)
+        return _rogner_vue(page, vue, None), None
     premier, affiche = source[0], caracteres[0]
     if angle == 90:
         dx, dy = affiche["x0"] + premier["bottom"], affiche["top"] - premier["x0"]
@@ -352,13 +445,17 @@ def page_de_lecture(page: object) -> tuple[object, RotationAffichage | None]:
     for brut, visible in zip(source, caracteres, strict=True):
         if brut.get("text") != visible.get("text"):
             normalisee.close()
-            return _rogner_vue(page, page, None), None
+            vue = _page_sans_objets_non_demontres(page, boites, None, hauteur)
+            return _rogner_vue(page, vue, None), None
         estimee = rotation.boite(brut["x0"], brut["x1"], brut["top"], brut["bottom"])
         reelle = (visible["x0"], visible["x1"], visible["top"], visible["bottom"])
         if any(not math.isfinite(v) for v in (*estimee, *reelle)):
             normalisee.close()
-            return _rogner_vue(page, page, None), None
+            vue = _page_sans_objets_non_demontres(page, boites, None, hauteur)
+            return _rogner_vue(page, vue, None), None
         if any(abs(a - b) > 0.01 for a, b in zip(estimee, reelle, strict=True)):
             normalisee.close()
-            return _rogner_vue(page, page, None), None
-    return _rogner_vue(page, normalisee, rotation), rotation
+            vue = _page_sans_objets_non_demontres(page, boites, None, hauteur)
+            return _rogner_vue(page, vue, None), None
+    vue = _page_sans_objets_non_demontres(normalisee, boites, rotation, hauteur)
+    return _rogner_vue(page, vue, rotation), rotation

@@ -11,7 +11,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from pdfminer.layout import LTCurve, LTFigure, LTImage
+from pdfminer.layout import LTChar, LTCurve, LTFigure, LTImage
 from pdfminer.pdffont import PDFType3Font
 from pdfminer.pdfinterp import PDFPageInterpreter
 from pdfminer.utils import apply_matrix_pt
@@ -127,24 +127,100 @@ def _au_moins_visible(rectangle: Any, vue: tuple[float, float, float, float]) ->
     return recouvrement_x > 0 or recouvrement_y > 0
 
 
-def _objet_visible_sous_clip(objet: Any, clip: _Clip) -> bool:
-    """Contenu extractible : entièrement visible. Géométrie : au moins visible.
+def _glyphe_visible_sous_clip(boite: tuple[float, float, float, float], clip: _Clip) -> bool:
+    """Un glyphe n'est publié que si son ENCRE est dans la région visible.
 
-    Un glyphe ou une image partiellement coupés sont refusés : le lecteur
-    publierait la totalité de leur contenu, y compris la partie masquée. Un
-    tracé vectoriel partiellement coupé est accepté dès qu'une portion est
-    visible, faute de quoi le moindre clip décoratif rendrait la page
-    indisponible ; un tracé entièrement hors clip reste refusé car il ne
-    produirait que des arêtes fictives.
+    La boîte d'un glyphe est nominale : elle couvre la hauteur de police
+    (ascendantes/descendantes) et non l'encre réellement tracée. Un clip dont
+    le bord est celui d'une cellule ou d'un cadre de texte laisse donc
+    dépasser de quelques dixièmes de point une boîte dont l'encre est entière
+    visible. Deux conditions, toutes deux nécessaires :
+
+    * le centre de la boîte est dans la région : un glyphe réellement masqué a
+      son centre hors du clip ;
+    * le dépassement reste inférieur à 15 % de la hauteur de la boîte (et à
+      1,5 pt au maximum) : l'encre d'un caractère tient dans cette marge, un
+      contenu masqué par un clip l'est de bien plus.
     """
-    if isinstance(objet, LTCurve):
+    if _contenu_dans_clip(boite, clip):
+        return True
+    x0, y0, x1, y1 = _rectangle(boite)
+    centre = ((x0 + x1) / 2, (y0 + y1) / 2)
+    if clip.rectangulaire:
+        cx0, cy0, cx1, cy1 = clip.boite
+        if not (cx0 < centre[0] < cx1 and cy0 < centre[1] < cy1):
+            return False
+    elif not _point_dans_polygone(centre, clip.points):
+        return False
+    tolerance = min(_TOLERANCE_MAX_PT, max(_TOLERANCE_MIN_PT, _TOLERANCE_RELATIVE * (y1 - y0)))
+    return _contenu_dans_clip(boite, clip, tolerance=tolerance)
+
+
+def _objet_visible_sous_clip(objet: Any, clip: _Clip) -> bool:
+    """Glyphe : entièrement visible. Image et tracé : au moins visibles.
+
+    Un glyphe partiellement coupé est refusé : le lecteur publierait TOUT son
+    texte, y compris la partie que l'opérateur ne voit pas. C'est le seul objet
+    dont le contenu textuel est recopié tel quel dans l'extraction.
+
+    Une image ou un tracé partiellement coupés sont acceptés dès qu'une portion
+    est visible, et refusés s'ils sont entièrement hors clip (ils ne
+    fabriqueraient que des arêtes ou des métadonnées fictives). Le produit ne
+    lit aucun texte dans un objet image : l'OCR part de la page RENDUE, qui
+    applique les clips ; une image à moitié masquée ne publie donc rien de plus
+    que ce que l'opérateur voit.
+    """
+    if isinstance(objet, LTChar):
+        return _glyphe_visible_sous_clip(objet.bbox, clip)
+    if isinstance(objet, (LTCurve, LTImage)):
         return _visible_dans_clip(objet.bbox, clip)
     return _contenu_dans_clip(objet.bbox, clip)
+
+
+def _nature_objet(objet: Any) -> str:
+    if isinstance(objet, LTImage):
+        return "image"
+    if isinstance(objet, LTCurve):
+        return "tracé"
+    if isinstance(objet, LTChar):
+        return "glyphe"
+    return type(objet).__name__
+
+
+def _cle_objet(objet: Any) -> tuple[str, tuple[float, ...], str] | None:
+    """Identité d'un objet à retirer : nature, boîte device arrondie, texte.
+
+    Le texte du glyphe sert au diagnostic et à la preuve de retrait ; un objet
+    est retiré par sa boîte mesurée, jamais par son contenu.
+    """
+    boite = getattr(objet, "bbox", None)
+    if boite is None:
+        return None
+    texte = objet.get_text() if isinstance(objet, LTChar) else ""
+    return (_nature_objet(objet), tuple(round(float(v), 2) for v in boite), texte)
 
 
 _CLIP_INDETERMINE = object()
 _MAX_SOMMETS = 4096
 _ECHANTILLONS_COURBE = 8
+
+# Tolérance de coïncidence des bords, en points PDF. Les documents réels
+# tracent des clips dont le bord est CONFONDU avec la boîte du glyphe (cellule
+# de tableau, cadre de texte) : les coordonnées diffèrent alors de quelques
+# millièmes de point par le jeu des conversions de matrices. Refuser pour un
+# débord de 0,01 pt rendait indisponible la moitié d'un corpus réel, pour un
+# gain de confidentialité nul : 0,05 pt vaut 0,28 px à 400 ppp (résolution
+# maximale de rendu du produit), donc INFÉRIEUR au pixel. La garantie reste :
+# tout glyphe publié est dans la région visible à moins d'un demi-pixel près ;
+# un contenu réellement masqué l'est de bien davantage.
+_TOLERANCE_PT = 0.05
+
+# Dépassement admis pour la boîte NOMINALE d'un glyphe (jamais pour une image
+# ou un tracé, dont la boîte est exacte) : fraction de la hauteur de la boîte,
+# bornée par un plancher et un plafond absolus.
+_TOLERANCE_RELATIVE = 0.15
+_TOLERANCE_MIN_PT = 0.05
+_TOLERANCE_MAX_PT = 1.5
 
 
 def _bezier_cubique(
@@ -331,9 +407,9 @@ def _boites_croisent(boite: tuple[float, float, float, float], clip: _Clip) -> b
     return not (x1 < cx0 or cx1 < x0 or y1 < cy0 or cy1 < y0)
 
 
-def _contenu_dans_clip(boite: tuple[float, float, float, float], clip: _Clip) -> bool:
+def _contenu_dans_clip(boite: tuple[float, float, float, float], clip: _Clip, tolerance: float = _TOLERANCE_PT) -> bool:
     x0, y0, x1, y1 = _rectangle(boite)
-    marge = clip.marge
+    marge = clip.marge - tolerance
     coins = [(x0 - marge, y0 - marge), (x1 + marge, y0 - marge), (x1 + marge, y1 + marge), (x0 - marge, y1 + marge)]
     if clip.rectangulaire:
         cx0, cy0, cx1, cy1 = clip.boite
@@ -452,14 +528,25 @@ class _CollecteurClips(PDFPageAggregatorWithMarkedContent):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.clip_courant: Any = None
+        self.a_supprimer: set[tuple[str, tuple[float, ...], str]] = set()
 
     def _verifier_objets(self, objets: Any) -> None:
         if not objets or self.clip_courant is None:
             return
+        # Un clip non modélisable ne prouve rien : tout objet tracé sous cet
+        # état est retiré de la publication, la page reste exploitable.
         if self.clip_courant is _CLIP_INDETERMINE:
-            raise VueGraphiqueNonVerifiee("Clipping non modélisable")
-        if any(not _objet_visible_sous_clip(objet, self.clip_courant) for objet in objets):
-            raise VueGraphiqueNonVerifiee("Objet hors clipping")
+            for objet in objets:
+                self._signaler(objet)
+            return
+        for objet in objets:
+            if not _objet_visible_sous_clip(objet, self.clip_courant):
+                self._signaler(objet)
+
+    def _signaler(self, objet: Any) -> None:
+        cle = _cle_objet(objet)
+        if cle is not None:
+            self.a_supprimer.add(cle)
 
     def render_char(self, *args: Any, **kwargs: Any) -> float:
         police = args[1] if len(args) > 1 else kwargs.get("font")
@@ -470,11 +557,10 @@ class _CollecteurClips(PDFPageAggregatorWithMarkedContent):
         if self.clip_courant is not None and objet is not None:
             # Une avance nulle ou une boîte réduite à un point empêchent de situer
             # le glyphe : le clip ne peut plus rien prouver, on refuse.
-            if not isinstance(avance, (int, float)) or avance <= 0:
-                raise VueGraphiqueNonVerifiee("Avance de glyphe non vérifiable")
             x0, y0, x1, y1 = _rectangle(objet.bbox)
-            if x0 == x1 and y0 == y1:
-                raise VueGraphiqueNonVerifiee("Boîte de glyphe dégénérée")
+            if (not isinstance(avance, (int, float)) or avance <= 0) or (x0 == x1 and y0 == y1):
+                self._signaler(objet)
+                return avance
         self._verifier_objets(self.cur_item._objs[-1:])
         return avance
 
@@ -650,14 +736,26 @@ class _InterpreteurClips(PDFPageInterpreter):
             self.device.clip_courant = self._clip
 
 
-def _verifier_clips(page: Any) -> None:
+def _verifier_clips(page: Any) -> set[tuple[str, tuple[float, ...], str]]:
     collecteur = _CollecteurClips(page.pdf.rsrcmgr, pageno=page.page_number, laparams=page.pdf.laparams)
     interpreteur = _InterpreteurClips(page.pdf.rsrcmgr, collecteur)
     interpreteur.process_page(page.page_obj)
+    return collecteur.a_supprimer
 
 
-def _verifier_formes(objet: Any, vues: tuple[tuple[float, float, float, float], ...] = ()) -> None:
-    """Vérifie les BBox des formes, y compris leurs descendants imbriqués."""
+def _verifier_formes(
+    objet: Any,
+    vues: tuple[tuple[float, float, float, float], ...] = (),
+    a_supprimer: set[tuple[str, tuple[float, ...], str]] | None = None,
+) -> set[tuple[str, tuple[float, ...], str]]:
+    """Signale les objets dessinés hors de la BBox de leur forme.
+
+    Un Form XObject est découpé à sa BBox par les lecteurs conformes : un objet
+    dessiné au-delà n'est pas visible à l'écran. Il est donc RETIRÉ de la
+    publication au lieu de rendre la page indisponible — même garantie de
+    confidentialité, document exploitable. Seules les formes dont la matrice
+    n'est pas modélisable (non orthogonale, invalide) restent refusées.
+    """
     from pdfminer.layout import LTAnno, LTFigure, LTItem
 
     enfants = list(objet) if hasattr(objet, "__iter__") else []
@@ -666,7 +764,7 @@ def _verifier_formes(objet: Any, vues: tuple[tuple[float, float, float, float], 
         # exactement celle de l'image elle-même. Sa rotation propre n'indique
         # pas un clip de forme ; les vues parentes restent toutefois vérifiées.
         if len(enfants) == 1 and isinstance(enfants[0], LTImage):
-            _verifier_formes(enfants[0], vues)
+            _verifier_formes(enfants[0], vues, a_supprimer)
             return
         matrice = objet.matrix
         if len(matrice) < 6 or any(
@@ -678,20 +776,57 @@ def _verifier_formes(objet: Any, vues: tuple[tuple[float, float, float, float], 
         if not alignee:
             raise VueGraphiqueNonVerifiee("Forme non orthogonale")
         vues = (*vues, _rectangle(objet.bbox))
+    if a_supprimer is None:
+        a_supprimer = set()
     if not enfants and isinstance(objet, LTItem) and not isinstance(objet, LTAnno) and hasattr(objet, "bbox"):
         if any(not _contenu_dans(objet.bbox, vue) for vue in vues):
-            raise VueGraphiqueNonVerifiee("Objet hors BBox de forme")
+            cle = _cle_objet(objet)
+            if cle is not None:
+                a_supprimer.add(cle)
     for enfant in enfants:
-        _verifier_formes(enfant, vues)
+        _verifier_formes(enfant, vues, a_supprimer)
+    return a_supprimer
 
 
-def verifier_vue_graphique(page: Any) -> None:
-    """Refuse les cas non démontrés ; ne révèle aucun contenu dans l'erreur."""
+def verifier_vue_graphique(page: Any) -> set[tuple[str, tuple[float, ...], str]]:
+    """Signale les objets dont la visibilité n'est pas démontrée.
+
+    Renvoie l'ensemble des objets à RETIRER de la publication (nature, boîte en
+    coordonnées du lecteur, texte du glyphe). La page reste exploitable : seuls
+    ces objets sont retirés. Refuser une page entière parce qu'un document y
+    masque un libellé rendait le produit inutilisable sur un corpus réel.
+
+    Deux familles déclenchent un retrait : les objets non démontrés sous clip
+    (hors région, région non modélisable, glyphe à cheval sur la frontière) et
+    les objets dessinés hors de la BBox de leur forme, que les lecteurs
+    découpent.
+
+    Les erreurs STRUCTURELLES (XObject cyclique ou non pris en charge, forme
+    non orthogonale, flux incomplet, mode de texte servant à détourer,
+    imbrication excessive) lèvent ``VueGraphiqueNonVerifiee`` : aucune lecture
+    n'est possible. Aucun contenu n'est jamais recopié dans l'erreur.
+    """
     try:
         _scanner_flux(page.page_obj.contents, page.page_obj.resources or {}, frozenset(), 0, [0])
-        _verifier_clips(page)
-        _verifier_formes(page.layout)
+        a_supprimer = _verifier_clips(page)
+        _verifier_formes(page.layout, a_supprimer=a_supprimer)
     except VueGraphiqueNonVerifiee:
         raise
     except Exception as erreur:
         raise VueGraphiqueNonVerifiee("Inspection graphique PDF impossible") from erreur
+    return a_supprimer
+
+
+def objets_a_supprimer(
+    a_supprimer: set[tuple[str, tuple[float, ...], str]],
+) -> tuple[tuple[float, float, float, float], ...]:
+    """Boîtes (repère device : x0, y0, x1, y1) des objets à ne pas publier.
+
+    Le texte du glyphe n'entre pas dans la clé : un objet est retiré par sa
+    POSITION mesurée, jamais par son contenu, qui n'est donc pas recopié.
+    """
+    boites = []
+    for _nature, boite, _texte in a_supprimer:
+        if len(boite) == 4 and all(isinstance(v, (int, float)) and math.isfinite(v) for v in boite):
+            boites.append((float(boite[0]), float(boite[1]), float(boite[2]), float(boite[3])))
+    return tuple(boites)

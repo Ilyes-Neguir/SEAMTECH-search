@@ -3020,10 +3020,14 @@ jobs:
           except Exception:
               traceback.print_exc()
           resume = "; ".join(f"{k}={v}" for k, v in motifs.most_common(8)) or "aucun"
-          print(
-              f"::error title=garde-pdf-corpus::fichiers={fichiers} pages={pages} "
-              f"refus={refuses} motifs[{resume}]"
+          message = (
+              f"fichiers={fichiers} pages={pages} refus={refuses} motifs[{resume}]"
           )
+          # Les annotations sont le seul canal lisible via l'API : notice ET
+          # erreur (la première survit aux étapes réussies).
+          print(f"::notice title=garde-pdf-corpus::{message}")
+          print(f"::error title=garde-pdf-corpus::{message}")
+          print(f"garde-pdf-corpus {message}")
           PY
       - name: Run full recette suite (fails explicitly on any step)
         env:
