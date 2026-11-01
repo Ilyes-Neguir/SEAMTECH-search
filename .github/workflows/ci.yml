@@ -2208,11 +2208,13 @@ jobs:
           # pas seulement compté. C'est ainsi qu'on repère un test qui passe
           # son tour au lieu de prouver l'aller-retour.
           if grep -qE "^SKIPPED" /tmp/sauvegarde.log; then
-            echo "::notice title=sauvegarde-sauts::$(grep -E '^SKIPPED' /tmp/sauvegarde.log | tr -d '\\000-\\010\\013\\014\\016-\\037' | tr '\\n' ';' | head -c 1800)"
+            echo "::notice title=sauvegarde-sauts::$(grep -E '^SKIPPED' /tmp/sauvegarde.log | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 1800)"
           fi
           if [ "$rc" -ne 0 ]; then
-            echo "::error title=sauvegarde-failed::$(grep -E '^(FAILED|ERROR)' /tmp/sauvegarde.log | head -25 | tr -d '\\000-\\010\\013\\014\\016-\\037' | tr '\\n' ';' | head -c 1500)"
-            echo "::error title=sauvegarde-tail::$(tail -40 /tmp/sauvegarde.log | tr -d '\\000-\\010\\013\\014\\016-\\037' | tr '\\n' ';' | head -c 1800)"
+            echo "::error title=sauvegarde-failed::$(grep -E '^(FAILED|ERROR)' /tmp/sauvegarde.log | head -25 | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 1500)"
+            # Le détail de l'assertion : sans lui, « - assert » ne dit rien.
+            echo "::error title=sauvegarde-assertions::$(grep -aE '^(E   |_____)' /tmp/sauvegarde.log | head -40 | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 1800)"
+            echo "::error title=sauvegarde-tail::$(tail -40 /tmp/sauvegarde.log | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 1800)"
             exit "$rc"
           fi
       - name: GARDE-FOU — every round-trip test ran, none skipped
@@ -3359,8 +3361,8 @@ jobs:
               print(f"::warning title=ocr-compte-rendu-erreur::compte rendu a échoué: {exc}")
           PY
           if [ "$rc" -ne 0 ]; then
-            echo "::error title=ocr-suite-failed::$(grep -E '^(FAILED|ERROR)' /tmp/ocr.log | head -20 | tr -d '\000-\010\013\014\016-\\037' | tr '\n' ';' | head -c 1800)"
-            echo "::error title=ocr-suite-tail::$(tail -40 /tmp/ocr.log | tr -d '\000-\010\013\014\016-\\037' | tr '\n' ';' | head -c 1800)"
+            echo "::error title=ocr-suite-failed::$(grep -E '^(FAILED|ERROR)' /tmp/ocr.log | head -20 | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 1800)"
+            echo "::error title=ocr-suite-tail::$(tail -40 /tmp/ocr.log | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 1800)"
             exit "$rc"
           fi
       - name: Garde-fou OCR étage 3 — ROUGE puis VERT
@@ -3400,9 +3402,9 @@ jobs:
           rc_vert=${PIPESTATUS[0]}
           set -e
           echo "rc_vert=$rc_vert"
-          echo "::error title=garde-fou-ocr-rouge::$(grep -E 'FAILED|AssertionError|assert|ne doit PAS' /tmp/ocr_rouge.log | head -20 | tr -d '\000-\010\013\014\016-\\037' | tr '\n' ';' | head -c 1800)"
-          echo "::notice title=garde-fou-ocr-vert::$(tail -20 /tmp/ocr_vert.log | tr -d '\000-\010\013\014\016-\\037' | tr '\n' ';' | head -c 1800)"
-          echo "::notice title=garde-fou-ocr-rouge-tail::$(tail -40 /tmp/ocr_rouge.log | tr -d '\000-\010\013\014\016-\\037' | tr '\n' ';' | head -c 1800)"
+          echo "::error title=garde-fou-ocr-rouge::$(grep -E 'FAILED|AssertionError|assert|ne doit PAS' /tmp/ocr_rouge.log | head -20 | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 1800)"
+          echo "::notice title=garde-fou-ocr-vert::$(tail -20 /tmp/ocr_vert.log | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 1800)"
+          echo "::notice title=garde-fou-ocr-rouge-tail::$(tail -40 /tmp/ocr_rouge.log | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 1800)"
           if [ "$rc_rouge" -eq 0 ]; then
             echo "::error title=garde-fou-ocr-echec::Le test aurait dû ROUGIR avec doit_oceriser_page forcé à True (OCR partout), mais il est resté VERT"
             exit 1
