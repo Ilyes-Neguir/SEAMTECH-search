@@ -163,7 +163,7 @@ def test_pdf_multi_pages_ocr_vide_ne_peut_pas_passer_pour_complet(tmp_path, monk
     monkeypatch.setattr(pipeline, '_tesseract_version', lambda *args: 'synthetique')
     monkeypatch.setattr(extractors, '_langue_ocr_disponible', lambda *args: 'eng')
 
-    def ocr(_pdf, numero, *_args):
+    def ocr(_pdf, numero, *args, **kwargs):
         return {'texte': 'texte synthetique' if numero == 0 else '', 'confiance': None,
                 'duree_s': 0.1, 'succes': True, 'motif': '', 'moteur': 'tesseract',
                 'version_moteur': 'synthetique'}

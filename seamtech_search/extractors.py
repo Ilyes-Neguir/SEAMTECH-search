@@ -154,14 +154,14 @@ def extract_file(
                     return _resultat_ocr_borne(texte_ocr, max_chars)
                 except Exception as exc:
                     logger.warning("ocrmypdf a échoué (%s) — repli tesseract si présent", type(exc).__name__)
-            if _has_command(tesseract_command):
+            if _moteur_ocr_disponible(tesseract_command):
                 texte, motif = _extract_pdf_via_pipeline_ocr(
                     path, max_chars, tesseract_command, external_extraction_timeout_seconds
                 )
                 if motif:
                     return ExtractionResult(texte, "unavailable", motif)
                 return _resultat_ocr_borne(texte, max_chars)
-            return ExtractionResult("", "unavailable", "OCR activé mais ocrmypdf et tesseract absents")
+            return ExtractionResult("", "unavailable", "OCR activé mais ocrmypdf et aucun moteur OCR disponibles")
         if suffix == ".docx":
             return _from_legacy(_extract_docx(path, max_chars))
         if suffix in OFFICE_XML_EXTENSIONS:
@@ -180,8 +180,8 @@ def extract_file(
         if suffix in OCR_IMAGE_EXTENSIONS:
             if not enable_ocr:
                 return ExtractionResult("", "unavailable", "OCR is disabled")
-            if not _has_command(tesseract_command):
-                return ExtractionResult("", "unavailable", "Tesseract is not installed")
+            if not _moteur_ocr_disponible(tesseract_command):
+                return ExtractionResult("", "unavailable", "OCR engine is not installed")
             texte_ocr = _extract_with_tesseract(path, max_chars, tesseract_command, external_extraction_timeout_seconds)
             return _resultat_ocr_borne(texte_ocr, max_chars)
         if external_extractors and suffix in external_extractors:
@@ -285,8 +285,25 @@ def _extract_with_ocrmypdf(path: Path, max_chars: int, command: str, timeout: in
             return sidecar.read(max_chars + 1)
 
 
+def _moteur_ocr_disponible(tesseract_command: str) -> bool:
+    """Un moteur OCR local est-il exploitable ? (RapidOCR ou Tesseract)."""
+    from seamtech_search.ocr.moteur import moteur_disponible
+
+    return bool(moteur_disponible(tesseract_command, sonde=_has_command))
+
+
 def _langue_ocr_disponible(tesseract_command: str) -> str:
-    """fra+eng si les deux paquets sont installés, sinon fra, sinon eng."""
+    """fra+eng si les deux paquets sont installés, sinon fra, sinon eng.
+
+    RapidOCR (PP-OCRv6) reconnaît le français et l'anglais avec un seul jeu de
+    modèles multilingues : la question des paquets de langue ne se pose pas, la
+    langue déclarée reste ``fra`` par cohérence avec le reste du produit.
+    """
+    from seamtech_search.ocr.moteur import MOTEUR_TESSERACT, choisir_moteur
+
+    moteur = choisir_moteur(tesseract_command)
+    if moteur is not None and moteur.nom != MOTEUR_TESSERACT:
+        return "fra"
     try:
         completed = subprocess.run(
             [tesseract_command, "--list-langs"],

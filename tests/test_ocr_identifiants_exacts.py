@@ -14,7 +14,7 @@ import pytest
 
 from seamtech_search.extractors import extract_file
 from tests.helpers_ocr_scan import gen_pdf_custom
-from tests.test_ocr_qualification import _exiger_tesseract
+from tests.test_ocr_qualification import exiger_moteur_ocr
 
 pytestmark = pytest.mark.ocr_suite
 
@@ -30,11 +30,13 @@ pytestmark = pytest.mark.ocr_suite
     ],
 )
 def test_ocr_identifiant_exact_et_original_preserve(tmp_path: Path, terme: str) -> None:
-    tesseract = _exiger_tesseract()
+    # Moteur du produit (RapidOCR par défaut, Tesseract en repli) — jamais un
+    # faux moteur : la reconnaissance doit être réelle.
+    exiger_moteur_ocr()
     source = gen_pdf_custom(tmp_path, terme)
     avant = hashlib.sha256(source.read_bytes()).digest()
 
-    resultat = extract_file(source, enable_ocr=True, tesseract_command=tesseract)
+    resultat = extract_file(source, enable_ocr=True)
 
     assert hashlib.sha256(source.read_bytes()).digest() == avant
     assert resultat.status == "extracted"

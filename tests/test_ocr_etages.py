@@ -40,6 +40,13 @@ REF_PROPRE = FIXTURES_OCR / "reference_propre.txt"
 REF_DEGRADE = FIXTURES_OCR / "reference_degrade.txt"
 
 
+def _moteur_ocr_disponible() -> bool:
+    """Un moteur OCR local (RapidOCR ou Tesseract) est-il réellement utilisable ?"""
+    from seamtech_search.ocr.moteur import moteur_disponible
+
+    return bool(moteur_disponible("tesseract"))
+
+
 def _has_tesseract() -> bool:
     return bool(shutil.which("tesseract"))
 
@@ -173,16 +180,17 @@ def test_image_isolee_traitee_comme_scan() -> None:
 
     # Une image = 1 page, doit être considérée comme scan
     assert res["nb_pages"] == 1
-    # Si tesseract présent, doit être océrisée
-    if _has_tesseract():
+    # Si un moteur OCR est disponible, doit être océrisée
+    if _moteur_ocr_disponible():
         # Au moins tentative d'OCR
         assert res["pages"][0]["texte_natif"] == ""
         # Soit océrisée, soit échec avec motif lisible, mais jamais "texte natif présent"
         assert res["pages"][0]["motif"] != "texte natif présent"
     else:
-        # Si tesseract absent, statut unavailable avec motif lisible, pas de crash
+        # Si aucun moteur OCR n'est disponible, statut unavailable avec motif
+        # lisible, pas de crash : le motif nomme la famille de moteur absente.
         assert res["pages"][0]["page_ocerisee"] is False
-        assert "tesseract absent" in res["pages"][0]["motif"]
+        assert "absent" in res["pages"][0]["motif"]
 
 
 def test_idempotence_meme_empreinte_jamais_retraite() -> None:

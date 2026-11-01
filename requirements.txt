@@ -29,3 +29,12 @@ psycopg2-binary==2.9.10
 numpy==2.4.6
 onnxruntime==1.30.0
 tokenizers==0.23.2
+# Lot OCR — moteur de reconnaissance local (RG14 : aucun appel réseau).
+# RapidOCR (PP-OCRv6, ONNX) est le moteur par DÉFAUT du produit : ses modèles
+# sont livrés DANS la roue (rapidocr/models/*.onnx) et leurs chemins sont
+# passés explicitement, donc aucun téléchargement n'est jamais tenté — y
+# compris au premier lancement. Tesseract reste géré en repli pour les
+# environnements sans roue ONNX, mais il n'est plus un prérequis : mesuré à
+# 1/5 identifiants reconnus exactement là où RapidOCR atteint 5/5
+# (docs/OCR_MOTEURS.md).
+rapidocr==3.10.0

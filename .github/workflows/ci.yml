@@ -3219,13 +3219,42 @@ jobs:
           tesseract --version
           tesseract --list-langs
           pdftoppm -v 2>&1 | head -5 || true
+      - name: Moteur OCR résolu (diagnostic)
+        # Le produit utilise RapidOCR (modèles groupés dans la roue) quand il
+        # est installé, sinon Tesseract. Afficher le moteur élu et la preuve
+        # qu'aucun modèle n'est distant : sinon un « vert » pourrait venir d'un
+        # moteur qu'on croit absent.
+        run: |
+          python - << 'PY'
+          from seamtech_search.ocr import moteur
+          choix = moteur.choisir_moteur("tesseract")
+          print(f"::notice title=ocr-moteur::demande={moteur.moteur_demande()} "
+                f"rapidocr_installable={moteur._rapidocr_installable()} "
+                f"elu={type(choix).__name__ if choix else 'aucun'}")
+          if choix is None:
+              raise SystemExit("aucun moteur OCR installé dans le job ocr — "
+                               "RapidOCR (requirements.txt) ou tesseract-ocr sont requis")
+          if hasattr(choix, "version"):
+              print(f"version={choix.version}")
+          PY
       - name: Run OCR suite on committed samples
+        env:
+          # Un test de reconnaissance ne doit jamais SAUTER faute de moteur :
+          # en CI les deux moteurs sont installés.
+          SEAMTECH_OCR_OBLIGATOIRE: "1"
         run: |
           set -uo pipefail
           set +e
-          pytest -m ocr_suite -v 2>&1 | tee /tmp/ocr.log
+          pytest -m ocr_suite -v -rs 2>&1 | tee /tmp/ocr.log
           rc=${PIPESTATUS[0]}
           set -e
+          # GARDE-FOU : aucun test ne doit être sauté parce qu'un moteur OCR
+          # est absent — ce serait un vert par absence de preuve.
+          if grep -E "^SKIPPED" /tmp/ocr.log | grep -qiE "moteur|tesseract|ocr"; then
+            echo "::error title=ocr-moteur-absent::des tests OCR ont été sautés faute de moteur :"
+            grep -E "^SKIPPED" /tmp/ocr.log | grep -iE "moteur|tesseract|ocr" | head -20
+            exit 1
+          fi
           # Publie qualité et compte rendu même en cas d'échec partiel
           python - << 'PY'
           import json

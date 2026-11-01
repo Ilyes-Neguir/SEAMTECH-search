@@ -424,6 +424,28 @@ def _page_pdf_vue_integrale(pdf_path: Path, numero_page: int) -> bool:
         return False
 
 
+def _nom_moteur_absent(tesseract_command: str) -> str:
+    """Nom déclaré quand aucun moteur n'est exploitable."""
+    from seamtech_search.ocr.moteur import MOTEUR_TESSERACT, moteur_demande
+
+    demande = moteur_demande()
+    if demande == MOTEUR_TESSERACT or tesseract_command != "tesseract":
+        return MOTEUR_TESSERACT
+    return MOTEUR_TESSERACT if demande != "rapidocr" else "rapidocr"
+
+
+def _motif_moteur_absent(tesseract_command: str) -> str:
+    """Motif lisible quand l'OCR ne peut pas être exécuté (jamais de repli)."""
+    from seamtech_search.ocr.moteur import MOTEUR_TESSERACT, moteur_demande
+
+    demande = moteur_demande()
+    if demande == MOTEUR_TESSERACT or tesseract_command != "tesseract":
+        return "tesseract absent (OCR désactivé, statut unavailable)"
+    if demande == "rapidocr":
+        return "RapidOCR absent (OCR désactivé, statut unavailable)"
+    return "moteur OCR absent : ni RapidOCR ni tesseract (OCR désactivé, statut unavailable)"
+
+
 def _ocr_page_pdf(
     pdf_path: Path,
     numero_page: int,
@@ -432,6 +454,7 @@ def _ocr_page_pdf(
     tesseract_command: str,
     dpi: int,
     dossier_temp: Path,
+    moteur: Any = None,
 ) -> dict[str, Any]:
     """OCR d'une page PDF (scannée).
 
@@ -439,16 +462,31 @@ def _ocr_page_pdf(
     1. Pour une image unique vérifiée, la décoder dans un sous-processus borné.
     2. Sinon, rendre la vue PDF dans un sous-processus borné.
     3. En cas d'échec, refuser sans repli vers une lecture brute non confinée.
+
+    ``moteur`` est l'interface commune (``ocr/moteur.py``) : RapidOCR par
+    défaut, Tesseract en repli. Sans moteur fourni, Tesseract est utilisé
+    avec ``tesseract_command`` — comportement historique.
     """
-    version = _tesseract_version(tesseract_command)
+    from seamtech_search.ocr.moteur import MoteurTesseract
+
+    moteur = moteur or MoteurTesseract(tesseract_command)
+    version = moteur.version
+    nom_moteur = moteur.nom
+
+    def reconnaitre(image: Path) -> dict[str, Any]:
+        debut = time.perf_counter()
+        resultat = moteur.reconnaitre(image, timeout_s, langue)._asdict()
+        resultat["duree_s"] = time.perf_counter() - debut
+        return resultat
+
     if not _page_pdf_vue_integrale_bornee(pdf_path, numero_page, timeout_s):
         rendu = _rendre_page_pdf_borne(pdf_path, numero_page, dossier_temp, dpi, timeout_s)
         if rendu is not None:
-            return _ocr_image_via_tesseract(rendu, langue, timeout_s, tesseract_command)
+            return reconnaitre(rendu)
         return {
             "texte": "", "confiance": None, "duree_s": 0.0, "succes": False,
             "motif": "OCR impossible : vue PDF recadrée, composée ou indéterminée",
-            "moteur": "tesseract", "version_moteur": version,
+            "moteur": nom_moteur, "version_moteur": version,
         }
 
     # 1. Images extraites
@@ -461,7 +499,7 @@ def _ocr_page_pdf(
         timeout_any = False
 
         for img_path in images:
-            res = _ocr_image_via_tesseract(img_path, langue, timeout_s, tesseract_command)
+            res = reconnaitre(img_path)
             duree_tot += res["duree_s"]
             if res["succes"]:
                 if res["texte"].strip():
@@ -479,7 +517,7 @@ def _ocr_page_pdf(
                 "duree_s": duree_tot,
                 "succes": True,
                 "motif": "",
-                "moteur": "tesseract",
+                "moteur": nom_moteur,
                 "version_moteur": version,
             }
         else:
@@ -490,17 +528,17 @@ def _ocr_page_pdf(
                 "duree_s": duree_tot,
                 "succes": False,
                 "motif": (
-                    "timeout tesseract sur une ou plusieurs images de la page"
-                    if timeout_any else "échec tesseract sur une ou plusieurs images de la page"
+                    f"timeout du moteur {nom_moteur} sur une ou plusieurs images de la page"
+                    if timeout_any else f"échec du moteur {nom_moteur} sur une ou plusieurs images de la page"
                 ),
-                "moteur": "tesseract",
+                "moteur": nom_moteur,
                 "version_moteur": version,
             }
 
     return {
         "texte": "", "confiance": None, "duree_s": 0.0, "succes": False,
-        "motif": "OCR impossible : extraction bornée de l'image avant tesseract en échec",
-        "moteur": "tesseract", "version_moteur": version,
+        "motif": "OCR impossible : extraction bornée de l'image avant reconnaissance en échec",
+        "moteur": nom_moteur, "version_moteur": version,
     }
 
 
@@ -512,6 +550,37 @@ def ocriser_pages(
     timeout_par_page_s: int = 30,
     tesseract_command: str = "tesseract",
     resolution_dpi: int = 300,
+) -> list[dict[str, Any]]:
+    """OCR par pages — cœur testable (choix du moteur inclus)."""
+    from seamtech_search.ocr.moteur import choisir_moteur
+
+    moteur = choisir_moteur(tesseract_command)
+    try:
+        return _ocriser_pages_avec_moteur(
+            chemin,
+            pages=pages,
+            seuil=seuil,
+            langue=langue,
+            timeout_par_page_s=timeout_par_page_s,
+            tesseract_command=tesseract_command,
+            resolution_dpi=resolution_dpi,
+            moteur=moteur,
+        )
+    finally:
+        # L'esclave RapidOCR (s'il a été démarré) ne survit pas au fichier.
+        if moteur is not None:
+            moteur.fermer()
+
+
+def _ocriser_pages_avec_moteur(
+    chemin: Path,
+    pages: list[int] | None = None,
+    seuil: int = SEUIL_DEFAUT,
+    langue: str = "fra",
+    timeout_par_page_s: int = 30,
+    tesseract_command: str = "tesseract",
+    resolution_dpi: int = 300,
+    moteur: Any = None,
 ) -> list[dict[str, Any]]:
     """OCR par pages — cœur testable.
 
@@ -543,8 +612,9 @@ def ocriser_pages(
     chemin = Path(chemin)
     ext = chemin.suffix.lower()
 
-    # Vérifie existence tesseract pour message lisible
-    tesseract_present = _has_command(tesseract_command)
+    moteur_present = moteur is not None
+    nom_absent = _nom_moteur_absent(tesseract_command)
+    motif_absent = _motif_moteur_absent(tesseract_command)
 
     resultats: list[dict[str, Any]] = []
 
@@ -554,9 +624,15 @@ def ocriser_pages(
         with tempfile.TemporaryDirectory(prefix="seamtech-ocr-img-") as tmpdir:
             tmp_path = Path(tmpdir)
             # Pour uniformité, on copie ou utilise directement
-            ocr_res = _ocr_image_via_tesseract(
-                chemin, langue, timeout_par_page_s, tesseract_command
-            )
+            if moteur is None:
+                ocr_res = {
+                    "texte": "", "confiance": None, "succes": False, "motif": motif_absent,
+                    "moteur": nom_absent, "version_moteur": None, "duree_s": 0.0,
+                }
+            else:
+                debut = time.perf_counter()
+                ocr_res = moteur.reconnaitre(chemin, timeout_par_page_s, langue)._asdict()
+                ocr_res["duree_s"] = time.perf_counter() - debut
             texte_natif = ""
             page_ocerisee = ocr_res["succes"] and bool(ocr_res["texte"].strip())
             motif = "" if page_ocerisee else ocr_res["motif"] or "aucun texte détecté"
@@ -614,7 +690,7 @@ def ocriser_pages(
                     continue
 
                 # Doit océriser
-                if not tesseract_present:
+                if not moteur_present:
                     resultats.append(
                         {
                             "page": num_page,
@@ -622,11 +698,11 @@ def ocriser_pages(
                             "texte_ocr": "",
                             "texte_final": texte_natif,
                             "confiance": None,
-                            "moteur": "tesseract",
+                            "moteur": nom_absent,
                             "version_moteur": None,
                             "duree_s": 0.0,
                             "page_ocerisee": False,
-                            "motif": "tesseract absent (OCR désactivé, statut unavailable)",
+                            "motif": motif_absent,
                             "fichier": str(chemin),
                         }
                     )
@@ -640,6 +716,7 @@ def ocriser_pages(
                     tesseract_command,
                     resolution_dpi,
                     tmp_path,
+                    moteur=moteur,
                 )
 
                 page_ocerisee = ocr_res["succes"] and bool(ocr_res["texte"].strip())

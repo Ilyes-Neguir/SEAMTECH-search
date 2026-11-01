@@ -325,7 +325,6 @@ def test_manifeste_corrompu_est_refuse(tmp_path: Path) -> None:
 @pytest.mark.postgres
 @pytest.mark.sauvegarde
 @pytest.mark.s3
-@pytest.mark.xfail(strict=True, reason="Aucun adaptateur MinIO de restauration exclusive qualifié")
 def test_aller_retour_objets_minio_sources_indisponibles(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

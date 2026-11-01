@@ -330,9 +330,13 @@ def test_tesseract_absent(tmp_path: Path) -> None:
             assert "absent" in p["motif"].lower()
 
 
-def test_tesseract_timeout(tmp_path: Path) -> None:
+def test_tesseract_timeout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     if not PDF_PROPRE.exists():
         pytest.skip("Échantillon absent")
+    # Ce test simule un binaire Tesseract qui expire : il vise le moteur
+    # Tesseract, pas le moteur ONNX. Sans ce forçage, RapidOCR (s'il est
+    # installé) prendrait la main et le simulation n'atteindrait plus rien.
+    monkeypatch.setenv("SEAMTECH_OCR_MOTEUR", "tesseract")
 
     def fake_run(*args, **kwargs):
         raise subprocess.TimeoutExpired(cmd=args[0], timeout=kwargs.get("timeout", 1))
