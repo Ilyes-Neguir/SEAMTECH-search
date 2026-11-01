@@ -1701,9 +1701,6 @@ def create_app(config: AppConfig) -> FastAPI:
         # Resolve file path and object key from payload
         file_path: Path | None = None
         object_key: str | None = None
-        # Vrai quand l'objet retenu prouve l'identité CAPTURÉE du fichier
-        # (envoi vérifié, SHA égal) : voir la redirection présignée plus bas.
-        identite_capture_prouvee = False
         filename: str = ""
         media_type: str = "application/octet-stream"
 
@@ -1778,10 +1775,6 @@ def create_app(config: AppConfig) -> FastAPI:
                             _preuve_identifiable(entree) and entree.get("sha256") == empreinte_capture
                         ))):
                     object_key = entree["key"]
-                    # L'objet ne peut être retenu avec une empreinte de capture
-                    # que si son SHA vérifié EST cette empreinte : la preuve
-                    # d'identité est donc déjà faite (envoi vérifié, SHA égal).
-                    identite_capture_prouvee = empreinte_capture is not None
                     break
 
         if file_path is not None and not _chemin_artefact_autorise(file_path):
@@ -1801,19 +1794,15 @@ def create_app(config: AppConfig) -> FastAPI:
         # 9000) n'est résolvable depuis AUCUN poste de l'atelier. Par défaut on
         # sert donc les octets par l'API.
         #
-        # Une source capturée (staging promu, P0.2) porte une empreinte : une
-        # URL directe ne peut pas, elle, RE-vérifier les octets au moment de la
-        # lecture. Mais l'objet retenu ci-dessus n'est éligible qu'avec un envoi
-        # VÉRIFIÉ dont le SHA EST l'empreinte de capture : l'identité est déjà
-        # prouvée, et refuser la redirection condamnerait alors tout déploiement
-        # qui déclare un endpoint public (R2/CloudFront) à faire transiter
-        # chaque octet par l'API. Dès que cette preuve manque — empreinte sans
-        # objet vérifié, objet d'un autre compartiment, envoi échoué — on garde
-        # le repli : l'API sert les octets et les vérifie contre le SHA initial.
-        # Honnêteté : la preuve d'envoi est datée (elle ne couvre pas une
-        # réécriture ultérieure de l'objet) ; le repli local, lui, revérifie.
+        # ICI, une source capturée n'est JAMAIS servie par redirection, même
+        # avec un endpoint public déclaré : c'est la route « téléchargement
+        # VÉRIFIÉ », et la vérification est faite au moment de la lecture
+        # (l'objet peut avoir été réécrit, la copie locale aussi —
+        # `test_telechargement_verifie_ne_redirige_pas_vers_s3` le verrouille).
+        # `/open` est une autre route, historique, avec un autre contrat
+        # (E-28 : redirection dès qu'un endpoint PUBLIC est déclaré).
         url_publique = (_url_presignee_navigateur(object_key, storage_client, config)
-                        if (empreinte_capture is None or identite_capture_prouvee) else None)
+                        if empreinte_capture is None else None)
         if url_publique:
             _audit_artefact(
                 "302",

@@ -387,9 +387,9 @@ def test_les_deux_routes_signalees_par_l_audit_passent_bien_900_secondes() -> No
     appels = re.findall(r"get_presigned_url\(\s*object_key,\s*expiration_seconds=(\d+)", source)
     assert appels == ["900"], f"attendu un appel à 900 s (helper des deux routes), trouvé : {appels}"
     # Les DEUX routes passent bien par ce helper (4 occurrences : la définition,
-    # `/open` sans empreinte, `/open` avec empreinte prouvée par le catalogue et
-    # la route artefacts) : aucune ne peut contourner la règle « endpoint
-    # public déclaré, sinon proxy par l'API ».
+    # deux appels dans `/open` — sans empreinte, et avec empreinte prouvée par
+    # le catalogue — et la route artefacts) : aucune ne peut contourner la règle
+    # « endpoint public déclaré, sinon proxy par l'API ».
     assert source.count("_url_presignee_navigateur(") == 4, (
         "les routes /open et /imports/{id}/artifacts/{artifact} doivent toutes deux "
         "passer par _url_presignee_navigateur"
