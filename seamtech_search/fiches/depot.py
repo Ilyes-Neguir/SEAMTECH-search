@@ -113,7 +113,13 @@ _SQL_DOCUMENT_UPSERT = (
     "ON CONFLICT (path_key) DO UPDATE SET role = EXCLUDED.role, content_hash = EXCLUDED.content_hash, "
     "size = EXCLUDED.size, modified_at = EXCLUDED.modified_at, content = EXCLUDED.content, "
     "source_sha256 = NULL "
-    "WHERE documents.content_hash = EXCLUDED.content_hash OR ("
+    # Même règle que pour le PDF de fiche, et pour la même raison : une pièce
+    # déjà passée par le flux d'import porte un `content_hash` différent
+    # (l'empreinte du TEXTE qui en a été extrait) alors que ses octets n'ont
+    # pas changé. Sans la comparaison sur l'IDENTITÉ DES OCTETS, le dépôt Lot C
+    # était refusé à tort (« Une pièce existante au même chemin a changé ») —
+    # vu en CI sur `recette-corpus-reel`, REF-001..REF-007.
+    "WHERE documents.content_hash = EXCLUDED.content_hash OR documents.source_sha256 = %s OR ("
     "documents.role IS NULL AND documents.id_fiche IS NULL AND documents.object_key IS NULL "
     "AND NOT EXISTS (SELECT 1 FROM fiche_piece_jointe p WHERE p.id_document = documents.id) "
     "AND NOT EXISTS (SELECT 1 FROM approval_requests a WHERE a.id_piece = documents.id) "
@@ -1438,6 +1444,11 @@ def deposer_dossier(
                         nom_fichier_source=pdf_fiche.name,
                     )
 
+                # Identité des octets des pièces jointes : rétablie EN DERNIER
+                # (voir plus bas), comme pour le PDF de fiche — l'upsert et le
+                # rafraîchissement du vecteur passent par des colonnes
+                # surveillées par le déclencheur d'invalidation.
+                identites_pieces: list[tuple[int, str]] = []
                 for piece in plan.pieces:
                     chemin_piece = Path(piece.chemin)
                     # Une pièce stagée garde la même identité d'une session à
@@ -1490,12 +1501,16 @@ def deposer_dossier(
                             contenu,
                             piece.empreinte_sha256,
                             piece.role,
+                            # Identité des octets : deuxième marqueur, celui de
+                            # la condition de reprise (ordre des %s).
+                            piece.empreinte_sha256,
                         ),
                     )
                     ligne_document = cursor.fetchone()
                     if ligne_document is None:
                         raise DepotImpossible("Une pièce existante au même chemin a changé ; revue nécessaire.")
                     id_document = ligne_document[0]
+                    identites_pieces.append((int(id_document), piece.empreinte_sha256))
                     _lier_objet_promu(cursor, int(id_document), chemin_piece, piece.empreinte_sha256, objets_promus)
                     cursor.execute(
                         _SQL_DOCUMENT_VECTOR,
@@ -1527,6 +1542,12 @@ def deposer_dossier(
                                 piece.taille_octets,
                             ),
                         )
+                # Rien après cet endroit ne touche les colonnes surveillées des
+                # pièces : leur identité est donc rétablie ici, EN DERNIER —
+                # sinon elle serait perdue dès ce dépôt et le suivant ne
+                # pourrait plus prouver que les pièces n'ont pas changé.
+                for id_piece_document, empreinte_piece in identites_pieces:
+                    _etablir_identite_octets(cursor, id_piece_document, empreinte_piece)
                 # Le claim Redis est contrôlé au plus près du commit sans
                 # ouvrir une seconde transaction PostgreSQL sur le verrou tenu.
                 if verifier_claim_externe is not None and not verifier_claim_externe():
