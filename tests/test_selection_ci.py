@@ -108,7 +108,7 @@ INVENTAIRE_S3RVER = {
     "tests/test_snapshot_import_network.py::test_correction_reseau_echec_preflight_permet_reprise_rapports",
     "tests/test_snapshot_import_network.py::test_acces_reseau_refuse_objet_corrompu_et_sert_copie_conforme",
     "tests/test_snapshot_import_network.py::test_reimport_reseau_conserve_piece_catalogue_et_expose_conflit",
-    "tests/test_sauvegarde_objet_checksum.py::test_s3rver_sans_checksum_complet_refuse_copie_plutot_que_faux_succes",
+    "tests/test_sauvegarde_objet_checksum.py::test_s3rver_sans_checksum_complet_nomme_la_preuve_de_la_copie",
     "tests/test_restauration_bundle_s3rver.py::test_bundle_objet_fige_puis_transfere_par_reseau",
     "tests/test_restauration_bundle_s3rver.py::test_precondition_atomique_de_creation_supportee_par_emulateur",
     "tests/test_restauration_bundle_s3rver.py::test_references_objet_dupliquees_sur_reseau_isole",
