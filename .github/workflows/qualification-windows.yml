@@ -1,0 +1,123 @@
+# Qualification Windows (P1) — le poste de l'atelier, pas le banc Linux.
+#
+# Pourquoi ce job existe : le plan demande de qualifier Windows / Docker
+# Desktop / PostgreSQL 16 / Redis 7 / Chrome / Edge. Un banc Linux ne peut pas
+# le faire, et le poste de l'utilisatrice ne doit pas servir de banc de
+# découverte. GitHub fournit des runners Windows : c'est le seul endroit où
+# « ça tourne sur Windows » peut être prouvé sans toucher au poste réel.
+#
+# Ce que ce job prouve réellement :
+#   * la suite SQLite-complete passe sur Windows (chemins, backslashes,
+#     verrous, encodage, sauvegarde/restauration sur système de fichiers NTFS) ;
+#   * PostgreSQL 16 et Redis 7 démarrés sur Windows portent la suite
+#     d'intégration correspondante ;
+#   * l'application se lance en ligne de commande sur Windows.
+#
+# Ce qu'il ne prouve PAS, et qui reste une limite dite franchement dans le
+# rapport : Docker Desktop (pas de conteneurs Linux sur un runner Windows
+# standard), Chrome et Edge en exécution d'interface (Playwright est exécuté
+# sur Linux dans le job e2e), et « plusieurs jours » d'endurance.
+#
+# Les fichiers POSIX-only sont écartés EXPLICITEMENT, jamais silencieusement :
+# SIGKILL et fork() n'existent pas sur Windows, et un test qui ne peut pas
+# s'exécuter doit être nommé, pas « oublié ».
+name: Qualification Windows
+
+on:
+  pull_request:
+  push:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      # Pas de ``SEAMTECH_TEST_DATABASE_URL`` au départ : la suite SQLite doit
+      # d'abord passer SANS service. Elle est posée après l'installation de
+      # PostgreSQL, uniquement si le service répond.
+      PYTHONIOENCODING: utf-8
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Dépendances Python
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+      - name: Identité du banc Windows
+        run: |
+          $info = Get-ComputerInfo
+          Write-Host "::notice title=windows-identite::os=$($info.OsName) version=$($info.OsVersion) python=$(python -V)"
+          python -c "import platform,sys; print(platform.platform()); print(sys.getfilesystemencoding())"
+      - name: PostgreSQL 16 et Redis 7 (Windows)
+        # Les services de conteneurs de GitHub ne fonctionnent pas sur les
+        # runners Windows : PostgreSQL et Redis sont installés sur l'hôte.
+        run: |
+          choco install postgresql16 --params '/Password:seamtech_test_password' --no-progress -y
+          choco install redis-64 --no-progress -y
+      - name: Démarrer PostgreSQL 16 et créer la base
+        run: |
+          $pg = Get-Service -Name "postgresql*" | Select-Object -First 1
+          if (-not $pg) { Write-Error "service PostgreSQL introuvable" ; exit 1 }
+          Start-Service $pg.Name
+          $env:PGPASSWORD = "seamtech_test_password"
+          $psql = "C:\Program Files\PostgreSQL\16\bin\psql.exe"
+          for ($i = 0; $i -lt 30; $i++) {
+            try { & $psql -U postgres -c "SELECT version();" | Out-Null; break } catch { Start-Sleep -Seconds 2 }
+          }
+          & $psql -U postgres -c "CREATE ROLE seamtech LOGIN PASSWORD 'seamtech_test_password' SUPERUSER;"
+          & $psql -U postgres -c "CREATE DATABASE seamtech_search_test OWNER seamtech;"
+          & $psql -U postgres -c "SELECT version();"
+          & "C:\Program Files\PostgreSQL\16\bin\pg_dump.exe" --version
+      - name: Démarrer Redis 7
+        run: |
+          $redis = Get-ChildItem "C:\ProgramData\chocolatey\lib\redis-64" -Recurse -Filter "redis-server.exe" |
+                   Select-Object -First 1
+          if (-not $redis) { Write-Error "redis-server introuvable" ; exit 1 }
+          Start-Process -FilePath $redis.FullName -ArgumentList "--port","6379" -WindowStyle Hidden
+          Start-Sleep -Seconds 3
+          $cli = Get-ChildItem "C:\ProgramData\chocolatey\lib\redis-64" -Recurse -Filter "redis-cli.exe" |
+                 Select-Object -First 1
+          & $cli.FullName -p 6379 ping
+      - name: Suite SQLite sur Windows (aucun service requis)
+        # POSIX-only : SIGKILL et fork() n'existent pas sur Windows. Ces
+        # fichiers sont NOMMÉS ici, pas simplement absents : un test écarté
+        # doit rester visible dans la configuration.
+        run: |
+          python -m pytest -q -rf `
+            -m "not postgres and not s3 and not perf and not redis_queue and not ocr_suite" `
+            --ignore=tests/test_chaos.py `
+            --ignore=tests/test_worker_process.py `
+            --ignore=tests/test_worker_process_postgres.py `
+            --ignore=tests/test_worker_crash_terminal.py `
+            --ignore=tests/test_securite_banc_suivi.py
+      - name: Suite PostgreSQL + Redis sur Windows
+        env:
+          SEAMTECH_TEST_DATABASE_URL: postgresql://seamtech:seamtech_test_password@127.0.0.1:5432/seamtech_search_test
+          SEAMTECH_TEST_REDIS_URL: redis://127.0.0.1:6379/1
+        run: |
+          python -m pytest -q -rf `
+            -m "postgres and not s3 and not perf and not ocr_suite" `
+            --ignore=tests/test_migration_rollback.py `
+            --ignore=tests/test_partage_web_worker.py
+      - name: Ligne de commande et chemins Windows
+        run: |
+          # Le CLI doit fonctionner sur un chemin à accents et espaces — c'est
+          # le cas réel d'un dossier d'atelier, et la source historique des
+          # pannes d'encodage sur Windows.
+          $dossier = Join-Path $env:TEMP "Dépôt d'atelier 2024"
+          New-Item -ItemType Directory -Force -Path $dossier | Out-Null
+          python -m seamtech_search.cli --help | Out-Null
+          if ($LASTEXITCODE -ne 0) { Write-Error "CLI en échec sur Windows" ; exit 1 }
+          python -c "from pathlib import Path; p=Path(r'''$dossier''')/'échéancier.pdf'; p.write_bytes(b'%%PDF-1.4 test'); print(p.exists(), p.stat().st_size)"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: preuves-qualification-windows
+          path: |
+            *.log
+          if-no-files-found: warn
