@@ -60,8 +60,20 @@ class S3EnMemoire:
         self.envois.append({"key": Key, "octets": len(donnees), "extra": ExtraArgs or {}})
 
     def put_object(self, **kwargs: Any) -> dict[str, Any]:
+        from botocore.exceptions import ClientError
+
+        # Écriture conditionnelle du service (If-None-Match: *) : le double doit
+        # refuser une clé occupée EXACTEMENT comme S3 le fait (412), sinon la
+        # restauration croirait créer sans écraser alors qu'elle écrase.
+        if kwargs.get("IfNoneMatch") == "*" and kwargs.get("Key") in self.objets:
+            raise ClientError(
+                {"Error": {"Code": "PreconditionFailed", "Message": "At least one of the pre-conditions you specified did not hold"}},
+                "PutObject",
+            )
         corps = kwargs.get("Body") or b""
-        donnees = bytes(corps)
+        # boto3 accepte des octets, un flux ouvert ou un itérable : le double
+        # doit en faire autant (une restauration envoie un flux de fichier).
+        donnees = corps.read() if hasattr(corps, "read") else bytes(corps)
         self._ecrire(kwargs["Key"], donnees, kwargs)
         self.envois.append({"key": kwargs["Key"], "octets": len(donnees), "extra": kwargs})
         return {"ETag": self.objets[kwargs["Key"]]["entete"]["ETag"]}

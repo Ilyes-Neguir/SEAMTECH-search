@@ -1456,7 +1456,12 @@ class SearchIndex:
                     except Exception as exc:
                         logger.error("Migration %s failed: %s", version, exc)
                         raise
-            if not self._schema_identite_octets_valide(connection):
+            # Le contrôle porte sur une migration QUI DEVAIT être appliquée :
+            # une reconstitution volontairement arrêtée à une version
+            # antérieure (``jusqu_a``, montée de version ou retour arrière sur
+            # copie) n'a pas encore ce schéma, et l'exiger empêcherait toute
+            # reproduction d'installation ancienne.
+            if any(version == "032_identite_octets_documents" for version, _ in migrations) and not self._schema_identite_octets_valide(connection):
                 raise RuntimeError("Schéma d'identité des octets incomplet : colonne ou déclencheur absent ou désactivé.")
 
     def _schema_identite_octets_valide(self, connection: Any) -> bool:

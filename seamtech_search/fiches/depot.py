@@ -1292,11 +1292,14 @@ def deposer_dossier(
             "document",
         )
         if provenance_code != "document":
+            # Ni le dossier (nom du client) ni le code de fiche n'ont à figurer
+            # dans un journal : la trace destinée à l'approbateur est la
+            # provenance portée par le champ lui-même (``champ.methode``),
+            # persistée avec la fiche et relue dans l'écran de validation.
             LOGGER.info(
-                "Dossier %s : code de fiche « %s » repris de la provenance « %s » — trace "
-                "conservée pour l'approbateur (ce n'est pas une lecture du document).",
-                dossier,
-                code_retenu,
+                "Code de fiche repris d'une provenance non documentaire « %s » : trace "
+                "de provenance conservée dans les champs pour l'approbateur "
+                "(ce n'est pas une lecture du document).",
                 provenance_code,
             )
         # L'EXCEPTION doit franchir le « with » pour déclencher le rollback de
@@ -1523,11 +1526,23 @@ def deposer_dossier(
     # reviendrait à bloquer PostgreSQL sur un réseau). Un échec de stockage ne
     # défait pas la fiche : il publie upload_status='failed' et laisse la
     # reprise à `promouvoir_en_attente`.
-    promotion = promouvoir_fichiers(
-        index,
-        config,
-        fichiers_pour_promotion(plan.pdf_fiche, plan.pieces),
-        nom_espace=_espace_promotion(dossier, id_lot_local),
+    # Les fichiers dont la copie objet a DÉJÀ été vérifiée et liée dans la
+    # transaction (``objets_promus`` : envoi du lot téléversé, rejeu) ne
+    # repassent pas par la promotion : elle les re-marquerait
+    # « not_configured » — donc sans clé — quand le stockage n'est pas
+    # configuré dans ce processus, effaçant la liaison prouvée.
+    deja_lies = (
+        {str(Path(chemin).resolve()) for chemin in objets_promus} if objets_promus else set()
+    )
+    a_promouvoir = [
+        chemin
+        for chemin in fichiers_pour_promotion(plan.pdf_fiche, plan.pieces)
+        if str(Path(chemin).resolve()) not in deja_lies
+    ]
+    promotion = (
+        promouvoir_fichiers(index, config, a_promouvoir, nom_espace=_espace_promotion(dossier, id_lot_local))
+        if a_promouvoir
+        else {"statut": "not_applicable", "objets": 0, "verifies": 0, "cles": {}, "echecs": []}
     )
     LOGGER.info(
         "Dossier déposé (%s), %d pièce(s) jointe(s), lot #%d.",

@@ -587,7 +587,21 @@ def copier_objets_s3(references: dict, client_s3, destination: Path) -> dict:
                         manquants.append({"id": doc["id"], "object_key": cle, "erreur": "source_modifiee_ou_tronquee"})
                         continue
                     empreinte = _sha256_flux(flux)
-                    if identite_avant[3] is None or empreinte != identite_avant[3]:
+                    # Preuve d'identité, par ordre de force : le SHA-256 complet
+                    # fourni par le stockage s'il existe (objet déposé avec
+                    # checksum plein objet), sinon l'identité CONNUE du
+                    # snapshot PostgreSQL. Sans l'un des deux, les octets
+                    # téléchargés ne prouvent rien et la copie n'est pas
+                    # publiée : jamais une copie « non prouvée » dans un bundle
+                    # qui se déclare complet.
+                    if identite_avant[3] is not None:
+                        if empreinte != identite_avant[3]:
+                            manquants.append({"id": doc["id"], "object_key": cle, "erreur": "integrite_source_non_prouvee"})
+                            continue
+                        preuve = "checksum_sha256_fournisseur_full_object"
+                    elif empreinte_attendue is not None and empreinte == empreinte_attendue:
+                        preuve = "identite_catalogue_source_sha256"
+                    else:
                         manquants.append({"id": doc["id"], "object_key": cle, "erreur": "integrite_source_non_prouvee"})
                         continue
                     if empreinte_attendue is not None and empreinte != empreinte_attendue:
@@ -606,7 +620,7 @@ def copier_objets_s3(references: dict, client_s3, destination: Path) -> dict:
                 "taille": taille_copie,
                 "sha256": empreinte,
                 "identite_catalogue": "verifiee" if empreinte_attendue is not None else "inconnue",
-                "verification": "checksum_sha256_fournisseur_full_object",
+                "verification": preuve,
             }
         )
     return {"copies": copies, "manquants": manquants, "nb_copies": len(copies), "nb_manquants": len(manquants)}
@@ -864,13 +878,32 @@ def _verifier_cles_client_objets(plan: list, client_s3) -> None:
 def _verifier_publication_objets_exclusive(plan: list, client_s3) -> None:
     """N'accepte que l'interface explicite de création atomique sans écrasement.
 
-    Aucun adaptateur S3 de production n'implémente actuellement ce contrat :
-    une méthode ordinaire d'upload et un HEAD préalable ne sont pas suffisants.
-    L'implémentation future devra être qualifiée pour le fournisseur et sa
-    configuration, notamment en présence d'écrivains concurrents.
+    ``S3StorageClient.creer_fichier_exclusif`` l'implémente par une ÉCRITURE
+    CONDITIONNELLE du service (``If-None-Match: *`` → 412 en cas de clé
+    occupée) : un ``HEAD`` préalable suivi d'un ``PUT`` laisserait une fenêtre
+    de concurrence. Le contrat doit être qualifié pour le fournisseur et sa
+    configuration retenus (MinIO/R2 et versionnement), en présence d'écrivains
+    concurrents — ce qui n'est pas fait ici et reste une limite ouverte.
     """
     if plan and not callable(getattr(client_s3, "creer_fichier_exclusif", None)):
         raise SauvegardeError("Restauration objet refusée : création exclusive atomique non disponible")
+
+
+def _objet_deja_conforme(client_s3, cle: str, empreinte: str) -> bool:
+    """Vrai si la clé existe DÉJÀ avec exactement ces octets (aucune écriture)."""
+    import tempfile
+
+    dossier = os.environ.get("SEAMTECH_SAUVEGARDE_TMP")
+    try:
+        if dossier:
+            Path(dossier).mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="seamtech-restore-existing-", dir=dossier) as tmp:
+            relu = Path(tmp) / "objet"
+            client_s3.download_file(cle, relu)
+            return _sha256_fichier(relu) == empreinte
+    except Exception:
+        # On ne sait pas lire l'objet existant : ne jamais écraser.
+        return False
 
 
 def _publier_objets_restaures(plan: list, client_s3) -> dict:
@@ -887,8 +920,21 @@ def _publier_objets_restaures(plan: list, client_s3) -> dict:
         # HEAD préalable ni réécriture automatique sur conflit ne suffit.
         try:
             cle_ecrite = client_s3.creer_fichier_exclusif(source, cle)
-        except Exception:
-            raise SauvegardeError("Création exclusive de l'objet restauré impossible") from None
+        except Exception as exc:
+            # Clé déjà occupée : c'est une restauration qui N'ÉCRASE JAMAIS.
+            # Si l'objet en place a exactement les octets du manifeste, la
+            # restauration est déjà faite ; sinon on s'arrête — détruire la
+            # seule copie restante d'un document est interdit.
+            if type(exc).__name__ != "StorageCleExistante":
+                raise SauvegardeError("Création exclusive de l'objet restauré impossible") from None
+            if not _objet_deja_conforme(client_s3, cle, empreinte):
+                raise SauvegardeError(
+                    "Restauration objet refusée : la clé existe avec des octets différents "
+                    "(aucun écrasement)."
+                ) from None
+            deja_restaures.add(cle)
+            restaures.append({"object_key": cle, "sha256": empreinte, "deja_present": True})
+            continue
         if cle_ecrite != cle:
             raise SauvegardeError("La clé de l'objet restauré diffère de celle du manifeste")
         import tempfile
@@ -1101,7 +1147,69 @@ def restaurer_complet(
                 "restauration terminée mais NON conforme au manifeste : "
                 + "; ".join(rapport["verification"]["ecarts"][:5])
             )
+        # P0 — la protection globale est PROUVÉE ici, ou pas du tout : un dump
+        # restauré seul ne dit rien des fichiers ni des objets. Ce n'est qu'une
+        # restauration coordonnée (base + arborescence + objets du même
+        # instantané) CONTRÔLÉE contre le manifeste qui autorise à déclarer la
+        # sauvegarde complète, et donc à laisser la rétention élaguer.
+        _qualifier_apres_restauration_prouvee(manifeste, Path(racine_sauvegarde), client_s3, rapport)
     return rapport
+
+
+def _qualifier_apres_restauration_prouvee(
+    manifeste: dict,
+    racine_sauvegarde: Path,
+    client_s3,
+    rapport: dict,
+) -> None:
+    """Marque le manifeste « protection globale prouvée » après contrôle.
+
+    La preuve n'est pas déclarative : elle n'est écrite que si la restauration
+    coordonnée a été contrôlée composant par composant contre le manifeste. Tant
+    que ce n'est pas le cas, ``complet`` reste faux et AUCUNE purge automatique
+    n'est autorisée — c'est le sens du ``return 2`` de la commande ``sauver``.
+    """
+    verification = rapport.get("verification") or {}
+    if verification.get("ok") is not True:
+        return
+    composants = [
+        nom
+        for nom in ("base", "data", "fichiers", "objets")
+        if rapport.get(nom) is not None
+    ]
+    manifeste["composants_restaures"] = composants
+    manifeste["complet_perimetre_demande"] = True
+    manifeste["protection_globale_prouvee"] = True
+    manifeste["retention_automatique_autorisee"] = True
+    manifeste["complet"] = True
+    manifeste["preuve"] = {
+        "restauration": "coordonnée (base + données + objets du même manifeste)",
+        "controle": "conformité au manifeste après restauration",
+        "verification": "ok",
+    }
+    chemin = racine_sauvegarde / f"{manifeste['dump']['fichier']}.manifest.json"
+    ecrit = False
+    try:
+        chemin.write_text(json.dumps(manifeste, ensure_ascii=False, indent=1), encoding="utf-8")
+        ecrit = True
+    except OSError as erreur:
+        logger.warning("Manifeste non réécrit après preuve de restauration (%s).", type(erreur).__name__)
+    manifeste["preuve"]["manifeste_local_reecrit"] = ecrit
+    # Côté objet, la preuve n'est publiée que si elle peut être RELUE : un
+    # manifeste distant non mis à jour laisse la rétention conservative.
+    if client_s3 is not None and manifeste.get("manifeste_cle_s3"):
+        try:
+            import tempfile
+
+            empreinte = _sha256_fichier(chemin)
+            cle = client_s3.upload_file(chemin, str(manifeste["manifeste_cle_s3"]))
+            with tempfile.TemporaryDirectory() as dossier_temporaire:
+                relu = Path(dossier_temporaire) / "manifeste.json"
+                client_s3.download_file(cle, relu)
+                manifeste["preuve"]["manifeste_objet_republie"] = _sha256_fichier(relu) == empreinte
+        except Exception as erreur:  # publication impossible : rester prudent
+            logger.warning("Manifeste non republié après preuve (%s).", type(erreur).__name__)
+            manifeste["preuve"]["manifeste_objet_republie"] = False
 
 
 def rediger_config(valeurs: dict) -> dict:

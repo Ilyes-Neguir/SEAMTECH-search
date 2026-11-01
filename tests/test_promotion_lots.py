@@ -326,7 +326,18 @@ def test_rejeu_supprime_les_copies_stagees_du_rejeu(
 def test_rejeu_ne_supprime_jamais_une_copie_differente(
     base_lot: dict[str, Any], dossier_stage: Path, tmp_path: Path
 ) -> None:
-    """Un fichier modifié entre-temps n'est PAS une copie : il est conservé."""
+    """Un fichier modifié entre-temps n'est PAS une copie : il est conservé.
+
+    Contrat arbitré par la mesure, PAS par une intuition : un réenvoi dont une
+    pièce jointe diffère est une MISE À JOUR, pas un doublon — la fiche est
+    redéposée (``traite``) et le nouveau fichier devient la source d'un nouveau
+    document, sans écraser l'ancien (``test_pdf_identique_annexe_modifiee_est_
+    deposee_sans_ecraser_document``). Rien n'est donc supprimé ici : les copies
+    stagées du réenvoi sont désormais les sources cataloguées. La propriété
+    gardée par ce test est celle de son nom — un fichier dont les octets
+    diffèrent n'est JAMAIS effacé, quelle que soit la voie (rejeu, remplacement
+    ou nettoyage des copies identiques).
+    """
     index = base_lot["index"]
     config = _config(tmp_path)
     with _Magasin():
@@ -335,10 +346,10 @@ def test_rejeu_ne_supprime_jamais_une_copie_differente(
         (rejeu / "croquis.md").write_text("notes atelier MODIFIÉES", encoding="utf-8")
         second = depot.deposer_dossier(index, rejeu, config=config)
 
-    assert second["statut"] == "deja_traite", second
-    assert not (rejeu / "fiche.pdf").exists(), "la copie identique du PDF de fiche est nettoyée"
+    assert second["statut"] == "traite", second
+    assert (rejeu / "fiche.pdf").exists(), "le PDF du réenvoi est la source de la fiche redéposée"
     assert (rejeu / "croquis.md").exists(), "un fichier différent ne doit jamais être supprimé"
-    assert second["copies_rejeu_supprimees"] == 1, second
+    assert second.get("copies_rejeu_supprimees", 0) == 0, second
 
 
 def test_archive_par_chemin_jamais_supprimee(

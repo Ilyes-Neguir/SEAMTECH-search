@@ -54,6 +54,21 @@ class StoragePreflightError(StorageError):
     """Aucune écriture d'objet n'a été tentée par ce client."""
 
 
+class StorageCleExistante(StorageError):
+    """La clé existe déjà : une création EXCLUSIVE n'a donc pas eu lieu.
+
+    Levée uniquement par une écriture conditionnelle refusée par le service
+    (``If-None-Match: *`` → 412), jamais par un sondage préalable — un HEAD
+    suivi d'un PUT laisserait une fenêtre de concurrence. L'appelant décide :
+    comparer les octets et considérer la restauration comme déjà faite, ou
+    refuser sans jamais écraser.
+    """
+
+
+class StockageExclusiviteIndisponible(StorageError):
+    """Le client ou le fournisseur ne sait pas créer une clé exclusivement."""
+
+
 class StorageWriteUncertain(StorageError):
     """Une écriture a été tentée ; sa réponse peut avoir été perdue."""
 
@@ -620,6 +635,56 @@ class S3StorageClient:
         except Exception as exc:
             logger.error("Failed to upload S3 object (%s)", type(exc).__name__)
             raise StorageWriteUncertain(key) from None
+
+    def creer_fichier_exclusif(self, local_path: Path, remote_key: str) -> str:
+        """Crée la clé SANS JAMAIS écraser : écriture conditionnelle du service.
+
+        Contrat exigé par la restauration (P0) : une restauration qui
+        réécrirait une clé vivante détruirait la seule copie restante d'un
+        document. Le refus est donc obtenu du SERVICE lui-même
+        (``If-None-Match: *`` → 412 PreconditionFailed), pas d'un ``HEAD``
+        préalable qui laisserait une fenêtre de concurrence.
+
+        * clé libre → objet créé, clé renvoyée ;
+        * clé occupée → ``StorageCleExistante`` (aucune écriture) ;
+        * écriture conditionnelle non disponible (client ou fournisseur) →
+          ``StockageExclusiviteIndisponible`` : aucun repli silencieux sur un
+          PUT inconditionnel.
+        """
+        local = Path(local_path)
+        if not local.is_file():
+            raise StoragePreflightError("Local file does not exist or is not a regular file")
+        s3 = self._get_client()
+        self.ensure_bucket_exists()
+        key = self._apply_prefix(remote_key)
+        mime = mimetypes.guess_type(local.name)[0] or "application/octet-stream"
+        taille = local.stat().st_size
+        empreinte = empreinte_sha256(local)
+        metadonnees = {METADATA_SHA256: empreinte, METADATA_TAILLE: str(taille)}
+        try:
+            with local.open("rb") as flux:
+                s3.put_object(
+                    Bucket=self.bucket_name,
+                    Key=key,
+                    Body=flux,
+                    ContentType=mime,
+                    Metadata=metadonnees,
+                    ChecksumAlgorithm="SHA256",
+                    IfNoneMatch="*",
+                )
+        except Exception as exc:
+            code = str(getattr(getattr(exc, "response", None), "get", lambda _k, _d=None: {})("Error", {}).get("Code", "") or "")
+            nom = type(exc).__name__
+            if code in ("PreconditionFailed", "ConditionalRequestConflict") or "PreconditionFailed" in str(exc):
+                logger.info("Création exclusive refusée : la clé existe déjà (aucune écriture).")
+                raise StorageCleExistante(key) from None
+            if nom in ("ParamValidationError", "UnknownParameter", "NotImplemented") or code in ("NotImplemented", "InvalidArgument", "UnknownParameter"):
+                logger.error("Création exclusive indisponible sur ce fournisseur (%s / %s)", nom, code or "-")
+                raise StockageExclusiviteIndisponible("Écriture conditionnelle non disponible") from None
+            logger.error("Création exclusive impossible (%s / %s)", nom, code or "-")
+            raise StorageWriteUncertain(key) from None
+        logger.info("Création exclusive réussie (clé protégée contre l'écrasement).")
+        return key
 
     def upload_bytes(
         self,
