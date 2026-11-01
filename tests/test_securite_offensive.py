@@ -106,9 +106,9 @@ def test_role_usurpe_par_entete_ne_donne_pas_l_approbation(tmp_path: Path) -> No
     """
     if not URL_PG:
         pytest.skip("Set SEAMTECH_TEST_DATABASE_URL to run PostgreSQL integration tests")
-    from tests.conftest import _creer_base_jetable, _supprimer_base_jetable
     from seamtech_search.comptes.comptes import creer_utilisateur, ouvrir_session, verifier_identifiants
     from seamtech_search.indexer import SearchIndex
+    from tests.conftest import _creer_base_jetable, _supprimer_base_jetable
 
     racine = tmp_path / "racine"
     racine.mkdir()

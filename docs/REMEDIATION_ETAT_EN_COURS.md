@@ -1459,3 +1459,196 @@ run n'a encore été lu sur `d68b905`/`3900a06`.
 par un (chacun avec un test rouge→vert), puis P0 sauvegarde hors-site, P1
 rotations PDF, P2 matrice/charge/pannes. Ne RIEN résumer dans le chat avant le
 rapport final PRÊT/NON PRÊT.
+
+---
+
+### 10. Historique git local resynchronisé (incident de banc, pas de produit)
+
+Au début de ce tour, `git status` montrait ~150 fichiers modifiés et ~150 non
+suivis : le dépôt local avait été **remonté à `f1733c8`** (base de la branche)
+alors que l'arbre de travail, lui, contenait tout le travail des tours
+précédents. Les 38 commits poussés (`e079aae` et ses ancêtres) étaient absents
+du dépôt local — ils existaient sur `origin`.
+
+Diagnostic : divergence locale/distant de **38 / 1** (`git rev-list
+--left-right --count origin/...HEAD`), parent de HEAD = `f1733c8`.
+
+Correction appliquée, sans toucher à l'arbre de travail :
+
+```
+git fetch origin arena/b936b3c0-seamtech-search
+git reset --mixed origin/arena/b936b3c0-seamtech-search
+```
+
+`--mixed` (jamais `--hard`) : HEAD revient à `e079aae`, l'index est refait,
+**l'arbre de travail n'est pas touché**. Après l'opération, `git status` ne
+montrait plus que 5 fichiers : les 2 du travail en cours et 3 fixtures PDF
+régénérées à l'identique (vérifié : même `/Rotate`, même texte extrait — seules
+les métadonnées reportlab diffèrent) → `git checkout --` sur les 3 fixtures.
+
+Le piège, noté pour la suite : un `git stash push -- <fichier>` sur un dépôt
+dont l'historique a été remonté **rejoue l'ancien contenu** (celui de
+`f1733c8`), ce qui casse tout (`ImportError: cannot import name 'copier_data'`).
+Comparer « avant/après » un correctif se fait donc en rééditant le fichier, en
+mesurant, puis en restaurant la copie — pas avec `stash`.
+
+### 11. Bancs reconstruits (perdus avec la réinitialisation)
+
+Le `.venv` et les bancs de `/tmp` avaient disparu. Reconstruits, avec les
+commandes exactes :
+
+```bash
+# Environnement Python
+python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
+
+# PostgreSQL 16.2 (pgserver ne fournit QUE des sockets unix : on l'initialise
+# à la main pour obtenir le TCP qu'attendent les fixtures)
+PGBIN=.venv/lib/python3.11/site-packages/pgserver/pginstall/bin
+$PGBIN/initdb -D /tmp/pg-tcp -U postgres --auth=trust -E UTF8 --locale=C
+$PGBIN/pg_ctl -D /tmp/pg-tcp -o "-p 55498 -h 127.0.0.1 -k /tmp" -l /tmp/pg-tcp.log start
+
+# Redis 7.4.7 compilé depuis les sources archivées
+cd /tmp/redis-banc && curl -sSL -o redis.tar.gz \
+  https://codeload.github.com/redis/redis/tar.gz/refs/tags/7.4.7 && tar xzf redis.tar.gz \
+  && cd redis-7.4.7 && make -j4
+/tmp/redis-banc/redis-7.4.7/src/redis-server --port 6390 --save '' --appendonly no --dir /tmp
+
+# S3rver (npm) — écoute sur 0.0.0.0, sinon IPv6 seul et 127.0.0.1 échoue
+cd /tmp/s3rver-banc && npm install s3rver@3.7.1
+./node_modules/.bin/s3rver -d /tmp/s3rver-data -p 14569 -a 0.0.0.0
+```
+
+Variables de banc pour toute commande pytest :
+
+```
+SEAMTECH_TEST_DATABASE_URL=postgresql://postgres@127.0.0.1:55498/postgres
+SEAMTECH_TEST_REDIS_URL=redis://127.0.0.1:6390/1
+SEAMTECH_TEST_REDIS_SERVER=/tmp/redis-banc/redis-7.4.7/src/redis-server
+SEAMTECH_TEST_S3RVER_URL=http://127.0.0.1:14569
+```
+
+Deux pièges coûteux, à ne pas revivre :
+
+* **`initdb` sans `-E UTF8`** : le cluster démarre en `SQL_ASCII` et toute la
+  suite échoue en `UnicodeEncodeError` (14 failed, 23 erreurs) — ce n'est pas
+  le produit, c'est le banc ;
+* **`SEAMTECH_TEST_REDIS_SERVER` omis** : les tests Redis ne sautent pas, ils
+  **échouent** (`redis-server introuvable`, 12 erreurs).
+
+**Limite du banc local, dite franchement** : l'image `pgserver` n'embarque pas
+les modules `contrib` — ni `unaccent` ni `pg_trgm`. Deux tests échouent donc
+localement et **uniquement** localement :
+`test_sauvegarde_references.py::test_aller_retour_fichiers_vers_cible_distincte`
+et les 4 de `tests/test_migration_rollback.py`
+(`text search configuration "seamtech_unaccent" does not exist`). La CI utilise
+`pgvector/pgvector:pg16`, qui les fournit. Vérifié par comparaison avant/après
+correctif, pas supposé.
+
+### 12. Sauvegarde — les octets locaux dérivaient pendant le dump (`a13017b`)
+
+Avant : `pg_dump` d'abord, copies des fichiers référencés **ensuite**. Un
+fichier modifié pendant la fenêtre du dump entrait dans le bundle avec ses
+NOUVEAUX octets alors que la base portait l'ancienne empreinte.
+
+Après : les copies sont faites **AVANT** le dump, dans la **même transaction de
+snapshot** (`pg_export_snapshot`, REPEATABLE READ). Puis chaque source est
+revérifiée APRÈS le dump (taille + `st_mtime_ns` relevés à la copie) : toute
+dérive est consignée dans `manifeste["derive_octets_locaux"]`
+(`detectee`, `nb_fichiers`, `fichiers`, `methode`) et remet `complet` /
+`complet_perimetre_demande` à faux.
+
+Le correctif ne prétend pas **figer** les octets — sans gel applicatif du
+système de fichiers c'est impossible. Il prétend les **détecter et les dire**,
+jamais les corriger en silence. Écrit dans le code, dans le manifeste et dans
+les tests.
+
+Tests : xfail strict retiré sur
+`test_mutation_locale_apres_snapshot_ne_donne_pas_copie_incoherente_complete`
+(rouge → vert mesuré : la copie contenait `b"apres"`, elle contient `b"avant"`) ;
+nouveau `test_copie_fidele_au_snapshot_malgre_mutation_pendant_le_dump` ;
+`test_sauvegarde_ne_copie_pas_source_divergente_de_capture_pg` rendu
+**déterministe** (la divergence est produite avant la sauvegarde : depuis le
+changement d'ordre, la mutation « pendant le dump » ne testait plus ce qu'elle
+croyait).
+
+Mesure : **307 passed, 2 skipped, 5 xfailed** sur les 16 fichiers
+sauvegarde/restauration, trois bancs branchés.
+
+### 13. Purge de la copie locale — le serveur se remplissait (`4b046c4`, `1b092de`)
+
+Deux pannes successives, et il faut garder les deux en tête :
+
+1. **la panne « souvenir »** — supprimer la copie locale parce qu'un envoi a
+   réussi hier. Une preuve d'envoi ne couvre ni un fichier ajouté après
+   l'inventaire, ni un fichier modifié depuis, ni la disparition de l'objet.
+   C'est pour elle que toute purge avait été suspendue ;
+2. **la panne « suspension »** — ne jamais rien supprimer. `decider_purge`
+   renvoyait `False` partout, `prune_staged_uploads` renvoyait `0` : le serveur
+   se remplissait sans qu'aucun indicateur ne le dise. L'intégration compose
+   l'a rattrapée (« le brouillon n'a pas été purgé après un envoi vérifié »).
+
+Protocole retenu (`seamtech_search/purge_locale.py`) : la décision passe du
+souvenir à l'**instant**. `decider_purge` n'accorde qu'un droit d'examen ; chaque
+suppression est conditionnée, **fichier par fichier**, à (1) l'appartenance au
+staging, (2) une **relecture des octets distants** au moment même
+(`verifier_integrite`), (3) l'empreinte locale revérifiée juste avant
+l'effacement, (4) l'inventaire du dossier (rien qui n'ait de preuve n'est
+supprimé), (5) le refus de suivre un lien symbolique. Une purge **partielle**
+est un état normal et DIT dans `job.result.cleanup`.
+
+**Le premier correctif ne purgeait toujours rien en CI.** Cause trouvée dans
+`import_folder` : `all_verified=False` y est **hard-codé** (« la vérification
+d'un lot d'objets ne prouve pas le snapshot de l'inventaire »). Or
+`decider_purge` exigeait `integrite_prouvee`, qui exige `all_verified` : la
+condition d'accès était une porte que le produit s'est interdit d'ouvrir. Ce
+n'est pas `all_verified` qui a tort, c'est la purge qui demandait la mauvaise
+preuve — globale et passée au lieu de locale et contemporaine.
+
+Confidentialité : les motifs de refus recopiaient les **chemins** des artefacts
+dans le payload et le journal du worker (donc, en production, des noms de
+commanditaires). On compte désormais, on ne cite pas.
+
+Bug trouvé par un test : `S3StorageClient(config)` passait la configuration en
+**positionnel** (`endpoint_url` est le premier paramètre) — un client qui se
+déclarait configuré sans l'être.
+
+Mesures : 21 nouveaux tests ; **277 passed, 2 xfailed** sur
+worker/import/reprise/rétention/lots ; `integration` compose **succès**.
+
+### 14. Endurance et sécurité offensive — deux points P2 sans preuve (`cb097bc`, `6f0fe0c`)
+
+**Endurance** (`tests/test_endurance.py`, workflow `Endurance`) : N cycles
+(25 en garde-fou, 300 dans le job dédié), annulation injectée tous les 7
+(resp. 13) cycles **au pire moment** (juste avant la purge). Invariants par
+comptages : aucun dossier résiduel hors cycles annulés, aucun job en vol,
+aucun objet dupliqué, aucune dérive des descripteurs. Garde vérifiée :
+`sous_staging=False` ⇒ échec « fuite de staging : 25 dossier(s) au lieu de 3 ».
+**Trois jours d'horloge ne sont pas exécutés** — c'est écrit dans le fichier.
+
+**Sécurité offensive** (`tests/test_securite_offensive.py`) : traversée de
+chemin au téléversement (neutralisée, rien n'est écrit hors staging),
+injection d'en-tête par un nom portant CR/LF, escalade de rôle par en-tête sur
+session valide, création de compte par en-tête seul, lien symbolique déposé,
+traversée sur les routes artefacts et `/preview`.
+
+Deux constats honnêtes, écrits dans les tests au lieu d'être maquillés : la
+gestion des comptes **ne lit aucun en-tête de rôle** (l'usurpation y est
+structurellement impossible) — le test d'escalade vise donc
+`/approvals/{id}/decide`, qui le lit ; `/health` expose le chemin de la base
+**uniquement** sans jeton de service configuré.
+
+Garde ROUGE→VERT prouvée : en sabordant `securite_requetes.py` (rôle pris dans
+l'en-tête + garde d'incompatibilité retirée), la requête franchit
+l'autorisation — « escalade de rôle réussie : HTTP 422 ». Code réel : 8 passed.
+
+### 15. Envoi interrompu : le brouillon était abandonné (`119a51f`)
+
+Test écrit d'abord (ROUGE), correctif ensuite (VERT). `ClientDisconnect` ne
+faisait partie d'aucune des quatre issues cataloguées par `/imports/upload` :
+le dossier de staging restait, avec son fichier à moitié écrit — et plus rien
+ne repassait derrière (`prune_staged_uploads` suspendu). Filet ajouté :
+`except BaseException: shutil.rmtree(staged, ignore_errors=True); raise` — on
+nettoie, on ne propage pas un faux succès (couvre aussi `CancelledError`).
+Confidentialité : le journal ne cite plus le chemin de staging.
+
+Mesures : 3 nouveaux tests ; **187 passed** sur upload/API/import/idempotence.
