@@ -1065,30 +1065,36 @@ def decider_purge(
     (``purge_locale.purger_copie_prouvee``). Ce qui n'est pas prouvé à cet
     instant est conservé et nommé.
     """
-    if not preservation.integrite_prouvee:
-        if not preservation.destination_configuree:
-            return False, (
-                "aucune destination durable configurée : conservation obligatoire "
-                "(une copie locale est la SEULE copie)"
-            )
-        if preservation.artefacts_sans_cle:
-            return False, (
-                "artefacts sans clé d'objet : "
-                + ", ".join(preservation.artefacts_sans_cle[:5])
-            )
-        if preservation.artefacts_non_verifies:
-            return False, (
-                "artefacts non vérifiés : "
-                + ", ".join(preservation.artefacts_non_verifies[:5])
-            )
-        return False, f"intégrité non prouvée (upload_status={preservation.upload_status})"
+    # Trois refus, sur des FAITS d'inventaire — jamais sur la revendication
+    # globale ``all_verified`` : ``import_folder`` la laisse volontairement à
+    # faux (« la vérification d'un lot d'objets ne prouve pas le snapshot »),
+    # donc en faire la condition de la purge revenait à ne jamais rien libérer.
+    # La preuve exigée n'est pas globale : elle est rétablie FICHIER PAR
+    # FICHIER, à l'instant de la suppression.
+    #
+    # Les noms de fichiers ne sont JAMAIS recopiés dans le motif : ils portent
+    # le nom du commanditaire. On compte, on ne cite pas.
+    if not preservation.destination_configuree:
+        return False, (
+            "aucune destination durable configurée : conservation obligatoire "
+            "(une copie locale est la SEULE copie)"
+        )
+    if preservation.artefacts_sans_cle:
+        return False, f"artefacts sans clé d'objet : {len(preservation.artefacts_sans_cle)} fichier(s)"
+    if preservation.artefacts_non_verifies:
+        return False, f"artefacts non vérifiés : {len(preservation.artefacts_non_verifies)} fichier(s)"
+    if not preservation.artefacts_total:
+        return False, f"inventaire vide (upload_status={preservation.upload_status}) : rien à examiner"
     try:
         sous_staging = est_sous_staging(Path(source_path), config)
     except Exception:  # pragma: no cover - chemin exotique
         sous_staging = False
     if not sous_staging:
         return False, "source hors staging : l'application n'a aucun mandat pour la supprimer"
-    return True, "intégrité prouvée sur le staging : examen fichier par fichier"
+    return True, (
+        "examen accordé sur le staging : chaque suppression reste subordonnée à une "
+        "relecture des octets distants et à l'identité locale revérifiée"
+    )
 
 
 def _charge_depuis_job(job: dict[str, Any]) -> dict[str, Any] | None:

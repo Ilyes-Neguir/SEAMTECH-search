@@ -76,7 +76,7 @@ class _Installation:
         create_job(self.index, self.job_id, str(self.source), durability="durable")
         assert marquer_job_claim(self.index, self.job_id, "worker-A")
 
-    def resultat(self, *, sans_cle: bool = False) -> Any:
+    def resultat(self, *, sans_cle: bool = False, revendication_globale: bool = True) -> Any:
         """Un ImportResult « intégrité prouvée », tel que la chaîne le produit."""
         from seamtech_search.import_pipeline import ImportFile, ImportResult
 
@@ -108,7 +108,7 @@ class _Installation:
                     catalogue_lie=True,
                 )
             ],
-            all_verified=True,
+            all_verified=revendication_globale,
             transport_verifie=True,
         )
 
@@ -247,3 +247,33 @@ def test_payload_declare_uploaded_sans_moyen_de_verifier_rien_ne_part(
     assert nettoyage["verification_indisponible"] is True
     assert nettoyage["nb_supprimes"] == 0
     assert installation.piece.read_bytes() == CONTENU
+
+
+def test_revendication_globale_absente_n_empeche_pas_l_examen_par_fichier(
+    installation: _Installation, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``all_verified`` est VOLONTAIREMENT faux dans ``import_folder``.
+
+    La chaîne d'import refuse de revendiquer une intégrité globale (« la
+    vérification d'un lot d'objets ne prouve pas le snapshot de l'inventaire »).
+    En faire la condition d'accès à la purge revenait donc à ne JAMAIS rien
+    libérer — c'est exactement la panne observée en intégration compose.
+
+    La preuve exigée n'est pas globale : elle est rétablie FICHIER PAR FICHIER
+    (objet relu + empreinte locale revérifiée). Le refus global n'interdit donc
+    pas l'examen ; seuls des FAITS d'inventaire l'interdisent (pas de
+    destination, artefacts sans clé, artefacts non vérifiés).
+    """
+    _, patchs = _magasin_patch()
+    for p in patchs:
+        p.start()
+    try:
+        reponse = installation.executer(monkeypatch, installation.resultat(revendication_globale=False))
+    finally:
+        for p in patchs:
+            p.stop()
+
+    nettoyage = reponse["cleanup"]
+    assert nettoyage["purge"] is True, nettoyage
+    assert nettoyage["nb_supprimes"] == 1
+    assert not installation.piece.exists()
