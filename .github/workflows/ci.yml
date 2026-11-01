@@ -1332,6 +1332,65 @@ jobs:
               "réponse tardive sans écrasement de la fiche affichée)."
           )
           PY
+      - name: Audit d'accessibilité axe-core (tous écrans × rôles × états)
+        # P2 — « axe-core étendu ». La spec existait (`e2e/accessibilite.spec.ts`)
+        # et n'était exécutée NULLE PART : ce job énumère ses specs à la main et
+        # elle n'y figurait pas. Un audit qu'on n'exécute pas n'est pas un vert,
+        # c'est un trou de preuve — exactement ce que le rapport du 28/10
+        # reprochait à l'audit initial limité à deux écrans.
+        #
+        # La spec échoue déjà sur toute violation critique ou sérieuse
+        # (WCAG 2.1 A/AA). Le garde-fou ci-dessous couvre l'autre panne, plus
+        # sournoise : un run qui ne scanne RIEN publierait « 0 violation ».
+        working-directory: frontend
+        env:
+          SEAMTECH_E2E_DATABASE_URL: postgresql://seamtech:seamtech_test_password@localhost:5432/seamtech_search_test
+          PLAYWRIGHT_JSON_OUTPUT_NAME: report-accessibilite.json
+        run: |
+          set -uo pipefail
+          set +e
+          pnpm exec playwright test e2e/accessibilite.spec.ts --reporter=list,json 2>&1 | tee /tmp/e2e_accessibilite.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            echo "::error title=accessibilite-details::$(grep -E '✘|failed|Error|violation|impact' /tmp/e2e_accessibilite.log | tail -20 | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 3000)"
+            exit "$rc"
+          fi
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+
+          rapport = "accessibilite/rapport-axe.json"
+          if not os.path.exists(rapport):
+              print(f"::error title=accessibilite-garde-fou::{rapport} absent — rien n'a été mesuré")
+              sys.exit(1)
+          with open(rapport, encoding="utf-8") as fichier:
+              donnees = json.load(fichier)
+          ecrans = int(donnees.get("ecrans_scannes", 0))
+          avec_violation = int(donnees.get("ecrans_avec_violation", 0))
+          # Le plancher compte : une campagne qui ne scanne qu'un écran n'est
+          # pas une campagne « tous écrans × rôles × états ».
+          plancher = 8
+          if ecrans < plancher:
+              print(f"::error title=accessibilite-garde-fou::{ecrans} écran(s) scanné(s), plancher {plancher}")
+              sys.exit(1)
+          if avec_violation:
+              print(f"::error title=accessibilite-garde-fou::{avec_violation} écran(s) avec violation")
+              sys.exit(1)
+          print(f"::notice title=accessibilite::{ecrans} écrans scannés, 0 violation WCAG 2.1 A/AA")
+          PY
+      - name: Upload du rapport d'accessibilité
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rapport-accessibilite-axe
+          path: |
+            frontend/accessibilite/rapport-axe.json
+            frontend/report-accessibilite.json
+            /tmp/e2e_accessibilite.log
+          if-no-files-found: warn
+          retention-days: 14
       - name: Run live E2E validation (PostgreSQL + vraie fiche)
         working-directory: frontend
         env:
