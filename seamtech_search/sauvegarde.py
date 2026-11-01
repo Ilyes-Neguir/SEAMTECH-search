@@ -552,9 +552,45 @@ def copier_fichiers_locaux(references: dict, destination: Path) -> dict:
                 "taille": taille_copie,
                 "sha256": empreinte,
                 "identite_catalogue": "verifiee" if empreinte_attendue is not None else "inconnue",
+                # Relevés à l'instant de la copie : c'est ce qui permet, après
+                # le dump, de prouver qu'une source a bougé PENDANT la fenêtre
+                # (taille + horodatage, sans relire tous les octets).
+                "taille_source": int(initial.st_size),
+                "mtime_ns_source": int(initial.st_mtime_ns),
             }
         )
     return {"copies": copies, "manquants": manquants, "nb_copies": len(copies), "nb_manquants": len(manquants)}
+
+
+def _verifier_derive_locale(copies: list[dict]) -> list[dict]:
+    """Les sources copiées ont-elles bougé PENDANT la fenêtre du dump ?
+
+    Les copies sont faites AVANT le dump (donc sur les octets vus au moment du
+    snapshot), puis chaque source est revérifiée APRÈS : taille et horodatage
+    doivent être identiques. Un écart ne « corrige » rien — il est DIT, et le
+    manifeste le porte. C'est la seule posture honnête : sans gel applicatif du
+    système de fichiers, une sauvegarde ne peut pas promettre des octets figés,
+    elle peut seulement prouver qu'elle a détecté la dérive.
+    """
+    derive: list[dict] = []
+    for copie in copies:
+        chemin = copie.get("path_source")
+        if not chemin:
+            continue
+        try:
+            actuel = os.stat(chemin)
+        except OSError:
+            derive.append({"path": str(chemin), "motif": "source disparue après la copie"})
+            continue
+        if (int(actuel.st_size) != int(copie.get("taille_source", -1))
+                or int(actuel.st_mtime_ns) != int(copie.get("mtime_ns_source", -1))):
+            derive.append({
+                "path": str(chemin),
+                "motif": "source modifiée pendant la fenêtre du dump",
+                "taille_avant": copie.get("taille_source"),
+                "taille_apres": int(actuel.st_size),
+            })
+    return derive
 
 
 def _identite_objet_s3(client_s3, cle: str) -> tuple[int, str, str | None, str | None]:
@@ -1473,6 +1509,16 @@ def _sauver_corps(
                 )
         if not etat.get("schema_identite_octets_valide", False):
             raise SauvegardeError("Schéma d'identité des octets incomplet : colonne ou déclencheur absent ou désactivé")
+        refs = inventorier_references_documents(base_url, connexion=connexion) if inclure_references_base else None
+        # Les octets locaux sont copiés AVANT le dump, dans la MÊME transaction
+        # de snapshot : la copie porte sur l'état vu au moment du snapshot, et
+        # non sur un état postérieur que la base ne connaîtrait pas encore.
+        # Copier après le dump donnait l'inverse : un fichier modifié entre les
+        # deux entrait dans le bundle sans que rien ne le signale.
+        lot_local: dict | None = None
+        if inclure_references_base:
+            assert refs is not None
+            lot_local = copier_fichiers_locaux(refs, dossier_local / "bundles" / nom_dump)
         dsn_public, environnement = _parametres_pg_process(base_url)
         resultat = subprocess.run(
             [pg_dump, "--format=custom", f"--file={chemin_dump}", f"--snapshot={snapshot}", dsn_public],
@@ -1481,7 +1527,8 @@ def _sauver_corps(
         if resultat.returncode != 0:
             # stderr peut contenir une URI ou d'autres secrets de configuration.
             raise SauvegardeError(f"pg_dump a échoué (rc={resultat.returncode})")
-        refs = inventorier_references_documents(base_url, connexion=connexion) if inclure_references_base else None
+        if lot_local is not None:
+            lot_local["derive"] = _verifier_derive_locale(lot_local["copies"])
     finally:
         connexion.close()
 
@@ -1497,7 +1544,11 @@ def _sauver_corps(
         "documents": etat["documents"],
         "archive": inventaire,
         "rpo_rto": RPO_RTO_A_DECIDER,
-        "coherence": "dump et références dans un snapshot MVCC partagé ; copies et inventaire indépendants, sans gel applicatif",
+        "coherence": (
+            "dump, références et copies locales dans un snapshot MVCC partagé ; "
+            "les copies précédent le dump et sont revérifiées après (dérive détectée "
+            "et nommée, jamais corrigée) ; inventaire archive indépendant, sans gel applicatif"
+        ),
         "coherence_references_snapshot": inclure_references_base,
         "references_incluses": inclure_references_base,
         "protection_globale_prouvee": False,
@@ -1533,7 +1584,8 @@ def _sauver_corps(
             "nb_avec_objet": refs["nb_avec_objet"],
         }
         dossier_bundle = dossier_local / "bundles" / nom_dump
-        fichiers = copier_fichiers_locaux(refs, dossier_bundle)
+        fichiers = lot_local
+        assert fichiers is not None
         for copie in fichiers["copies"]:
             copie["path_relatif"] = str(Path("bundles") / nom_dump / copie["path_relatif"])
         manifeste["fichiers_locaux"] = {
@@ -1543,6 +1595,20 @@ def _sauver_corps(
             "manquants": fichiers["manquants"],
         }
         if fichiers["nb_manquants"]:
+            manifeste["complet_perimetre_demande"] = False
+        # Les copies précèdent le dump et sont revérifiées après : une source
+        # modifiée pendant la fenêtre est NOMMÉE, jamais absorbée en silence.
+        manifeste["derive_octets_locaux"] = {
+            "detectee": bool(fichiers.get("derive")),
+            "nb_fichiers": len(fichiers.get("derive") or []),
+            "fichiers": (fichiers.get("derive") or [])[:50],
+            "methode": (
+                "copies prises dans la transaction du snapshot, taille et horodatage "
+                "de chaque source revérifiés après le dump"
+            ),
+        }
+        if fichiers.get("derive"):
+            manifeste["complet"] = False
             manifeste["complet_perimetre_demande"] = False
         if client_documents_s3 is not None:
             objets = copier_objets_s3(refs, client_documents_s3, dossier_bundle)

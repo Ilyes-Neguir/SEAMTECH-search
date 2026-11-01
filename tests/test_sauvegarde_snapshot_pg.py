@@ -121,7 +121,6 @@ def test_echec_dump_libere_snapshot_sans_manifeste(tmp_path: Path, monkeypatch):
         _supprimer_base_jetable(nom)
 
 
-@pytest.mark.xfail(strict=True, reason="Octets locaux non figés au snapshot PostgreSQL")
 def test_mutation_locale_apres_snapshot_ne_donne_pas_copie_incoherente_complete(tmp_path: Path, monkeypatch):
     if not os.environ.get("SEAMTECH_TEST_DATABASE_URL"):
         pytest.skip("SEAMTECH_TEST_DATABASE_URL absent")
@@ -261,8 +260,53 @@ def test_sauvegarde_refuse_declencheur_identite_desactive(base_recherche, tmp_pa
     assert not list(dossier.glob('*.dump')) and not list(dossier.glob('*.manifest.json'))
 
 
-def test_sauvegarde_ne_copie_pas_source_divergente_de_capture_pg(tmp_path: Path, monkeypatch):
-    """Une identité d'octets dans le dump doit borner la copie locale."""
+def test_sauvegarde_ne_copie_pas_source_divergente_de_capture_pg(tmp_path: Path):
+    """Une identité d'octets dans le dump doit borner la copie locale.
+
+    Cas DÉTERMINISTE : la source diverge déjà AU MOMENT de la copie (ses
+    octets ne sont plus l'empreinte que porte le catalogue). Elle ne doit pas
+    entrer dans le bundle comme si elle était le document connu.
+    """
+    import hashlib
+
+    if not os.environ.get("SEAMTECH_TEST_DATABASE_URL"):
+        pytest.skip("serveur PG de test dédié absent")
+    nom, url = _creer_base_jetable()
+    index = SearchIndex(tmp_path / "index.db", url)
+    index.initialize()
+    index.run_migrations()
+    fichier = tmp_path / "piece.txt"
+    fichier.write_bytes(b"avant")
+    sha_initial = hashlib.sha256(fichier.read_bytes()).hexdigest()
+    with index.connect() as connexion, connexion.cursor() as curseur:
+        curseur.execute(
+            "INSERT INTO documents(path_key,path,name,parent_path,extension,size,modified_at,is_dir,source_sha256) "
+            "VALUES (%s,%s,%s,%s,%s,5,1,false,%s)",
+            ("piece", str(fichier), fichier.name, str(tmp_path), ".txt", sha_initial),
+        )
+    fichier.write_bytes(b"apres")  # même taille, autres octets
+    try:
+        dossier = tmp_path / "bundle"
+        manifeste = sauvegarde.sauver(url, [], dossier, inclure_references_base=True)
+        assert not manifeste['complet'] and not manifeste['complet_perimetre_demande']
+        assert manifeste['fichiers_locaux']['nb_copies'] == 0
+        assert manifeste['fichiers_locaux']['nb_manquants'] == 1
+        assert manifeste['fichiers_locaux']['manquants'][0]['erreur'] == 'identite_catalogue_differente'
+        assert fichier.read_bytes() == b"apres"
+        assert not list((dossier / 'bundles').rglob('piece.txt'))
+    finally:
+        index.close()
+        _supprimer_base_jetable(nom)
+
+
+def test_copie_fidele_au_snapshot_malgre_mutation_pendant_le_dump(tmp_path: Path, monkeypatch):
+    """Mutation PENDANT la fenêtre : la copie reste celle du snapshot, et c'est DIT.
+
+    Les copies sont prises dans la transaction du snapshot, donc AVANT le
+    dump : le bundle porte les octets que le catalogue connaît (b"avant"),
+    et la source modifiée ensuite est signalée (``derive_octets_locaux``)
+    au lieu d'entrer silencieusement dans une sauvegarde incohérente.
+    """
     import hashlib
 
     if not os.environ.get("SEAMTECH_TEST_DATABASE_URL"):
@@ -292,12 +336,15 @@ def test_sauvegarde_ne_copie_pas_source_divergente_de_capture_pg(tmp_path: Path,
     try:
         dossier = tmp_path / "bundle"
         manifeste = sauvegarde.sauver(url, [], dossier, inclure_references_base=True)
-        assert not manifeste['complet'] and not manifeste['complet_perimetre_demande']
-        assert manifeste['fichiers_locaux']['nb_copies'] == 0
-        assert manifeste['fichiers_locaux']['nb_manquants'] == 1
-        assert manifeste['fichiers_locaux']['manquants'][0]['erreur'] == 'identite_catalogue_differente'
-        assert fichier.read_bytes() == b"apres"
-        assert not list((dossier / 'bundles').rglob('piece.txt'))
+        copie = dossier / manifeste["fichiers_locaux"]["copies"][0]["path_relatif"]
+        # Les octets du bundle sont ceux du snapshot, pas ceux d'après.
+        assert copie.read_bytes() == b"avant"
+        assert manifeste["fichiers_locaux"]["copies"][0]["sha256"] == sha_initial
+        # …et la dérive est NOMMÉE : jamais absorbée en silence.
+        assert manifeste["derive_octets_locaux"]["detectee"] is True
+        assert manifeste["derive_octets_locaux"]["nb_fichiers"] == 1
+        assert manifeste["derive_octets_locaux"]["fichiers"][0]["path"] == str(fichier)
+        assert not manifeste["complet"] and not manifeste["complet_perimetre_demande"]
     finally:
         index.close()
         _supprimer_base_jetable(nom)
