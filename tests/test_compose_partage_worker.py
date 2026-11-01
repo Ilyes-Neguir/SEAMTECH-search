@@ -188,22 +188,36 @@ def _liste_conteneur(service: str, chemin: str) -> tuple[bool, list[dict] | None
     Le faire dans le conteneur est la seule lecture fiable : les dossiers de
     rapports sont en 0700, donc illisibles par un hôte d'un autre UID.
     """
+    # Un script multiligne, pas un one-liner : `try:` ne peut PAS suivre un
+    # point-virgule (SyntaxError). La méprise coûte un run CI entier : la
+    # sonde échouait, stdout restait vide, et le diagnostic concluait
+    # « le web ne voit rien » alors qu'il ne s'était rien passé du tout.
     code = (
-        "import json,os,sys;"
-        "p=sys.argv[1];"
-        "try:"
-        " mode=os.stat(p).st_mode & 0o777;"
-        " entrees=[{'nom': n, 'taille': os.path.getsize(os.path.join(p, n))} for n in sorted(os.listdir(p))];"
-        " print(json.dumps({'existe': True, 'contenu': entrees, 'mode': mode}));"
-        "except FileNotFoundError:"
-        " print(json.dumps({'existe': False, 'contenu': None, 'mode': None}));"
-        "except PermissionError:"
-        " print(json.dumps({'existe': None, 'contenu': None, 'mode': None, 'erreur': 'PermissionError'}))"
+        "import json, os, sys\n"
+        "p = sys.argv[1]\n"
+        "try:\n"
+        "    mode = os.stat(p).st_mode & 0o777\n"
+        "    entrees = [{'nom': n, 'taille': os.path.getsize(os.path.join(p, n))}\n"
+        "               for n in sorted(os.listdir(p))]\n"
+        "    print(json.dumps({'existe': True, 'contenu': entrees, 'mode': mode}))\n"
+        "except FileNotFoundError:\n"
+        "    print(json.dumps({'existe': False, 'contenu': None, 'mode': None}))\n"
+        "except PermissionError:\n"
+        "    print(json.dumps({'existe': None, 'contenu': None, 'mode': None, 'erreur': 'PermissionError'}))\n"
     )
     resultat = _exec(service, "python", "-c", code, chemin)
     try:
         donnees = json.loads(resultat.stdout.strip().splitlines()[-1])
     except (ValueError, IndexError):
+        # Une sonde illisible n'est pas un « rien » : c'est un défaut de
+        # MESURE, et il doit être visible — sinon le diagnostic conclut à tort
+        # que le conteneur ne voit pas les fichiers.
+        _annonce(
+            "warning",
+            "compose-sonde-illisible",
+            f"sonde {service} sur {chemin} : rc={resultat.returncode} "
+            f"stdout={resultat.stdout[:400]!r} stderr={resultat.stderr[:400]!r}",
+        )
         return False, None, None
     return bool(donnees.get("existe")), donnees.get("contenu"), donnees.get("mode")
 
