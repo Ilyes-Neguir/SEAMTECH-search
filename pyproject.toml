@@ -74,6 +74,7 @@ markers = [
     "ci_guard_attribution: garde ROUGE/VERT ciblant l'attribution de validation",
     "ci_guard_ocr: garde ROUGE/VERT ciblant le contrat OCR par page",
     "redis_queue: file durable testée contre un VRAI Redis (SEAMTECH_TEST_REDIS_URL) — reprise après mort du worker, redélivrance, lettre morte",
+    "endurance: soak test à N cycles avec panne injectée — comptages de fuites (staging, jobs, descripteurs), job CI dédié",
 ]
 
 [tool.ruff]
