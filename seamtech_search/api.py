@@ -1380,9 +1380,9 @@ def create_app(config: AppConfig) -> FastAPI:
                 details={"collisions": collisions[:20], "nb_fichiers": len(plan)},
             )
             logger.warning(
-                "Envoi refusé : %d conflit(s) de destination — aucun fichier écrit (%s).",
+                "Envoi refusé : %d conflit(s) de destination — aucun fichier écrit (%d fichier(s) proposé(s)).",
                 len(collisions),
-                staged,
+                len(plan),
             )
             raise HTTPException(
                 status_code=409,
@@ -1433,6 +1433,18 @@ def create_app(config: AppConfig) -> FastAPI:
         except OSError as exc:
             shutil.rmtree(staged, ignore_errors=True)
             raise HTTPException(status_code=409, detail="Le dossier ne peut pas être analysé en sécurité.") from exc
+        except BaseException:
+            # Filet de dernier ressort : une coupure client (``ClientDisconnect``),
+            # une annulation asyncio ou toute panne non cataloguée ne doit PAS
+            # laisser un brouillon à moitié écrit. Sans ce filet, chaque envoi
+            # interrompu abandonne un dossier — et plus rien ne le nettoie
+            # ensuite : la rétention n'élague pas le staging (``prune_staged_uploads``
+            # est suspendu tant qu'un protocole sûr n'existe pas). Un opérateur
+            # qui dépose 20 Gio et perd le réseau remplirait le disque d'envois
+            # morts. La panne est propagée telle quelle : on nettoie, on
+            # n'invente pas un succès.
+            shutil.rmtree(staged, ignore_errors=True)
+            raise
         return {"staged_path": str(staged), **result}
 
     @app.get("/imports/{import_id}")
