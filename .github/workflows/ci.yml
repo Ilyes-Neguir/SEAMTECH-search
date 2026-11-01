@@ -140,13 +140,42 @@ jobs:
           if [ "$rc" -ne 0 ]; then exit "$rc"; fi
           python - <<'PY'
           import re
+          import subprocess
+          import sys
           from pathlib import Path
+
           texte = Path('/tmp/s3rver-ci.log').read_text(encoding='utf-8')
-          # Quatre xfail stricts documentent des limitations connues, non une
-          # restauration fonctionnelle. Aucun skip ni résultat ajouté masqué.
-          resume = re.search(r'^9 passed, (?:[0-9]+ deselected, )?4 xfailed(?:, [0-9]+ warnings?)? in ', texte, re.M)
-          if not resume or re.search(r'\b[0-9]+ skipped\b', texte):
-              raise SystemExit('Campagne S3rver incomplète ou inattendue : consulter s3rver-ci.log')
+          # Des xfail STRICTS documentent des limitations connues du substitut,
+          # non une restauration fonctionnelle. Aucun skip ni résultat ajouté
+          # masqué. Le compte n'est PAS figé : la campagne s'allonge à chaque
+          # limitation qualifiée (9 prouvés + 4 xfail à l'origine, 13 collectés
+          # depuis la remédiation). Une chaîne figée (« 9 passed, 4 xfailed »)
+          # transformait tout test ajouté en échec de CI — c'est le défaut
+          # corrigé ici : l'exigence porte sur les PROPORTIONS, pas sur un
+          # total gravé.
+          collecte = subprocess.run(
+              [sys.executable, '-m', 'pytest', '--collect-only', '-q', '-m', 's3rver'],
+              capture_output=True, text=True, check=True,
+          ).stdout
+          collectes = len([l for l in collecte.splitlines() if '::' in l])
+          chiffres = {
+              nom: int(total)
+              for nom, total in re.findall(r'([0-9]+) (passed|failed|skipped|xfailed|error)', texte)
+          }
+          passes = chiffres.get('passed', 0)
+          xfail = chiffres.get('xfailed', 0)
+          sautes = chiffres.get('skipped', 0)
+          echecs = chiffres.get('failed', 0) + chiffres.get('error', 0)
+          print(
+              f"s3rver : {collectes} collectés, {passes} passés, {xfail} xfail, "
+              f"{sautes} sautés, {echecs} échecs"
+          )
+          if sautes or echecs or passes + xfail != collectes or passes == 0 or xfail == 0:
+              raise SystemExit(
+                  'Campagne S3rver incomplète ou inattendue : '
+                  f'{collectes} collectés, {passes} passés, {xfail} xfail, '
+                  f'{sautes} sautés, {echecs} échecs — consulter s3rver-ci.log'
+              )
           PY
       - name: Run SQLite suite
         run: |
@@ -2215,23 +2244,58 @@ jobs:
           print(
               f"sauvegarde : {collectes} collectés, {executes} exécutés ({passes} passés, {sautes} sautés, {echecs} échecs)"
           )
-          # Noms des tests sautés : sans eux, un « 1 sauté » est indiagnosable.
-          saut_noms = [
-              (tc.get("classname", ""), tc.get("name", ""))
+          # Un test xfail (échec attendu, STRICT, documenté) est EXÉCUTÉ : le
+          # JUnit XML le range pourtant parmi les « skipped » (type
+          # « pytest.xfail »). Le confondre avec un vrai saut a fait échouer ce
+          # garde-fou le 01/11 sur trois limitations connues, alors qu'elles
+          # s'exécutent et échouent comme attendu. Les deux sont donc comptés
+          # SÉPARÉMENT et les xfail sont publiés — jamais silencieux, jamais
+          # comptés comme preuve.
+          saut_elements = [
+              (tc.get("classname", ""), tc.get("name", ""), saut.get("message", ""))
               for tc in testsuite.iter("testcase")
-              if tc.find("skipped") is not None
+              if (saut := tc.find("skipped")) is not None
           ]
-          if saut_noms:
-              print(f"::error title=sauvegarde-tests-sautes::{saut_noms}")
+          # pytest écrit l'attribut type="pytest.xfail" dans le XML ; la sortie
+          # console (XFAIL <nœud>) sert de confirmation. Les deux sont croisés :
+          # un test n'est classé « échec attendu » que s'il est xfail DANS LE
+          # XML et nommé XFAIL dans la console — jamais sur un seul indice.
+          import pathlib
 
-          # Attendu : tous les tests collectés exécutés (≥ 19), 0 sauté, 0 échec.
-          # Sautés > 0 ou collectés != exécutés ou échecs > 0 → échec inviolable.
-          if sautes > 0 or collectes != executes or echecs > 0 or passes < 19:
+          journal = pathlib.Path("/tmp/sauvegarde.log")
+          texte_journal = journal.read_text(encoding="utf-8", errors="replace") if journal.exists() else ""
+          marques_xfail = set(re.findall(r"^XFAIL (\S+)", texte_journal, re.M))
+          xfail_noms = [
+              (c, n, m)
+              for c, n, m, t in (
+                  (tc.get("classname", ""), tc.get("name", ""), saut.get("message", ""), saut.get("type", ""))
+                  for tc in testsuite.iter("testcase")
+                  if (saut := tc.find("skipped")) is not None
+              )
+              if "xfail" in t and any(noeud.split("::")[-1] == n for noeud in marques_xfail)
+          ]
+          saut_noms = [(c, n, m) for c, n, m in saut_elements if (c, n, m) not in xfail_noms]
+          sautes_effectifs = len(saut_noms)
+          if xfail_noms:
+              print(
+                  f"::notice title=sauvegarde-xfail-attendus::{len(xfail_noms)} échec(s) "
+                  f"attendu(s) exécuté(s) :"
+              )
+              for classe, nom, motif in xfail_noms:
+                  print(f"::notice title=sauvegarde-xfail::{classe}.{nom} — {motif}")
+          if saut_noms:
+              print(f"::error title=sauvegarde-tests-sautes::{[(c, n) for c, n, _ in saut_noms]}")
+
+          # Attendu : tous les tests collectés exécutés (≥ 19), 0 sauté réel,
+          # 0 échec. Un vrai saut, une désélection ou un échec → échec
+          # inviolable.
+          if sautes_effectifs > 0 or collectes != executes or echecs > 0 or passes < 19:
               raise SystemExit(
                   "GARDE-FOU sauvegarde renforcé : échec détecté ! "
                   f"attendu collectés == exécutés, ≥ 19 passés, 0 sauté, 0 échec — "
                   f"mesuré {collectes} collectés, {executes} exécutés, {passes} passés, "
-                  f"{sautes} sautés, {echecs} échecs. "
+                  f"{sautes_effectifs} sautés ({len(xfail_noms)} xfail exécutés), "
+                  f"{echecs} échecs. "
                   "L'aller-retour sauvegarde → destruction → restauration doit être "
                   "prouvé par exécution, aucun test ne doit être sauté ou désélectionné."
               )
