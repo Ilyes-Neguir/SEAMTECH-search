@@ -196,7 +196,13 @@ def test_import_with_s3_storage_uploads_all_files(tmp_path: Path) -> None:
         result = import_folder(source_folder, config, index)
         mock_upload = magasin
         assert result.status == "needs_review"
-        assert result.upload_status == "partial"
+        # Transport intégralement prouvé (5 objets, relus et comparés) ⇒
+        # « uploaded ». « partial » n'annonce pas un échec : il dit que la
+        # préservation n'est PAS prouvée, ce qui était faux ici (et rendait
+        # impossible toute qualification d'envoi réussi — voir la recette sur
+        # services réels). Le succès GLOBAL, lui, reste suspendu : voir
+        # `all_verified` ci-dessous.
+        assert result.upload_status == "uploaded"
         assert result.transport_verifie and not result.all_verified
         assert all(a["verified"] for a in result.artifacts)
         # 3 source files (pdf, dwg, txt) + 2 reports (pdf, docx) = 5 uploaded files

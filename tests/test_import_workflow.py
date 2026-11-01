@@ -1242,7 +1242,10 @@ def test_envoi_integralement_prouve_reste_uploaded(tmp_path: Path, monkeypatch) 
     monkeypatch.setattr(import_pipeline, "upload_artifacts_to_storage", upload)
     result = import_folder(source, config, index, import_id="test-upload-prouve")
     assert result.upload_status == "uploaded", result.upload_status
-    assert result.status == "completed", (result.status, result.warnings)
+    # Le succès GLOBAL reste suspendu dès qu'une destination objet existe
+    # (pas de snapshot durable garanti) : l'import reste « à revoir », ce qui
+    # n'enlève rien à l'envoi, prouvé et complet.
+    assert result.status == "needs_review", (result.status, result.warnings)
     index.close()
 
 

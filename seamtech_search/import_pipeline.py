@@ -1702,12 +1702,31 @@ def _traiter_import_capture(
     # interdisait de qualifier la moindre réussite et faisait échouer la
     # recette sur un envoi parfaitement préservé (CI : recette-corpus-reel,
     # recette-locale). La règle tient donc aux preuves, pas à la destination.
+    # « uploaded » ne s'annonce que sur PREUVE : chaque artefact porte une clé
+    # et une empreinte vérifiée (relecture SHA-256 ou checksum serveur). Une
+    # version antérieure rabaissait tout envoi dès qu'une destination était
+    # configurée (« partial » sur un transport intégralement prouvé) : la
+    # recette sur services réels ne pouvait donc jamais qualifier un envoi
+    # réussi (« recette-corpus-reel » REF-001..007, « recette-locale »
+    # « confirm HTTP 200 upload=partial »). La règle tient aux preuves, pas à
+    # la destination.
     preservation_prouvee = not publication_pending and all(
         _preuve_identifiable(a.to_dict()) for a in upload_batch.artifacts if a.key
     )
     if upload_status == "uploaded" and not preservation_prouvee:
         upload_status = "partial"
-    if status == "completed" and (publication_pending or upload_status == "partial"):
+    # Le SUCCÈS GLOBAL reste suspendu : ni l'observation ponctuelle ni les
+    # preuves d'objets ne garantissent un snapshot durable ni une liaison
+    # transactionnelle au catalogue. Un import reste donc « à revoir » dès
+    # qu'une destination objet est configurée — « completed » ne s'annonce
+    # que sur un dossier sans destination durable.
+    if status == "completed" and upload_status not in ("not_configured", "not_applicable"):
+        status = "needs_review"
+    # Une publication INCERTAINE n'est jamais un échec clos : « failed »
+    # laisserait croire que rien n'a été écrit, alors qu'un objet existe
+    # peut-être. Tant que l'intention de publication n'est pas levée, le
+    # dossier reste À REVOIR — c'est le seul état qui oblige à regarder.
+    if publication_pending and status == "failed":
         status = "needs_review"
     result = ImportResult(
         import_id=actual_import_id,

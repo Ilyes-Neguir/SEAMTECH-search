@@ -585,7 +585,12 @@ def test_import_initial_sans_snapshot_ne_declare_pas_succes_global(tmp_path: Pat
     resultat = import_folder(source, cfg, index, import_id='initial-sans-snapshot')
     assert not resultat.all_verified
     assert resultat.transport_verifie
-    assert resultat.upload_status == 'partial'
+    # « uploaded » = transport prouvé (tous les artefacts relus et comparés).
+    # Le succès GLOBAL n'est toujours pas déclaré : `all_verified` reste faux
+    # (pas de snapshot durable ni de liaison de catalogue garanties), ce qui
+    # est précisément l'objet de ce test — le libellé d'envoi a changé, pas
+    # l'exigence.
+    assert resultat.upload_status == 'uploaded'
     assert all(art['verified'] for art in resultat.artifacts)
     index.close()
 
