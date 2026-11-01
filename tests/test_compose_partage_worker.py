@@ -182,6 +182,64 @@ def _diagnostic(motif: str) -> str:
     return "\n".join(morceaux)
 
 
+def _diagnostic_rapports_vides(job_id: str, job: dict, donnees_hote: Path, rapports_hote: Path) -> str:
+    """Pourquoi le dossier de rapports du worker est-il vide côté hôte ?
+
+    Trois causes possibles, indistinguables sans preuve : le worker n'écrit pas
+    là où on le croit, le volume n'est pas partagé pour CE chemin, ou les
+    fichiers n'ont pas encore été publiés. On interroge donc le conteneur (que
+    voit-il, où écrit-il ?) et l'on pose un témoin traversant le montage.
+    """
+    sonde = _exec(
+        "worker",
+        "python",
+        "-c",
+        (
+            "import json,pathlib,sys;"
+            "from seamtech_search.config import AppConfig;"
+            "from seamtech_search.import_pipeline import _report_dir_for;"
+            "c=AppConfig.load('/app/config/config.json');"
+            "d=_report_dir_for({}, c, sys.argv[1]);"
+            "marqueur = d / '.sonde-partage-rapports';"
+            "marqueur.write_text('ok', encoding='utf-8');"
+            "print(json.dumps({'database_path': str(c.database_path), 'report_dir': str(d),"
+            " 'existe': d.exists(), 'contenu': sorted(p.name for p in d.iterdir()) if d.exists() else None}))"
+        ),
+        job_id,
+    )
+    temoin = rapports_hote / ".sonde-partage-rapports"
+    resultat_job = job.get("result") or {}
+    return json.dumps(
+        {
+            "hote": str(rapports_hote),
+            "contenu_rapports_hote": sorted(p.name for p in (donnees_hote / "reports").iterdir())
+            if (donnees_hote / "reports").exists()
+            else None,
+            "sonde_worker": f"{sonde.stdout.strip()} {sonde.stderr.strip()}"[:2000],
+            # Un témoin écrit PAR LE WORKER et invisible côté hôte prouverait un
+            # montage non partagé pour ce chemin — pas un simple retard.
+            "temoin_visible_cote_hote": temoin.exists(),
+            "statut_job": job.get("status"),
+            "statut_import": resultat_job.get("status"),
+            "erreur": resultat_job.get("error"),
+            "upload_status": resultat_job.get("upload_status"),
+            "publication_pending": resultat_job.get("publication_pending"),
+            "artefacts": [
+                {
+                    "role": a.get("role"),
+                    "status": a.get("status"),
+                    "verified": a.get("verified"),
+                    "key": a.get("key"),
+                    "erreur": a.get("error"),
+                }
+                for a in (resultat_job.get("artifacts") or [])
+            ],
+        },
+        ensure_ascii=False,
+        default=str,
+    )[:3000]
+
+
 def _attendre(condition, delai: float, message: str):  # noqa: ANN001, ANN201
     limite = time.time() + delai
     derniere = None
@@ -453,54 +511,22 @@ def _scenario_partage(tmp_path: Path) -> None:
     rapports_conteneur = donnees_conteneur / "reports" / job_id
     assert rapports_conteneur.name == job_id and str(rapports_conteneur).startswith("/app/data/")
     assert rapports_hote.exists(), f"aucun rapport pour {job_id} sous {rapports_hote}"
-    fichiers_rapport = [f for f in sorted(rapports_hote.rglob("*")) if f.is_file()]
-    if not fichiers_rapport:
-        # Un dossier créé mais vide n'est pas une explication : il faut dire où
-        # le worker écrit VRAIMENT ses rapports et ce qu'il a produit.
-        sonde = _exec(
-            "worker",
-            "python",
-            "-c",
-            (
-                "import json,pathlib;"
-                "from seamtech_search.config import AppConfig;"
-                "from seamtech_search.import_pipeline import _report_dir_for;"
-                "c=AppConfig.load('/app/config/config.json');"
-                "d=_report_dir_for({}, c, __import__('sys').argv[1]);"
-                "print(json.dumps({'database_path': str(c.database_path), 'report_dir': str(d),"
-                " 'existe': d.exists(), 'contenu': sorted(p.name for p in d.iterdir()) if d.exists() else None}))"
-            ),
-            job_id,
-        )
-        resultat_job = job.get("result") or {}
-        raise AssertionError(
-            "dossier de rapports vide : "
-            + json.dumps(
-                {
-                    "hote": str(rapports_hote),
-                    "contenu_rapports_hote": sorted(p.name for p in (donnees_hote / "reports").iterdir())
-                    if (donnees_hote / "reports").exists()
-                    else None,
-                    "sonde_worker": f"{sonde.stdout.strip()} {sonde.stderr.strip()}"[:2000],
-                    "statut_job": job.get("status"),
-                    "statut_import": resultat_job.get("status"),
-                    "erreur": resultat_job.get("error"),
-                    "upload_status": resultat_job.get("upload_status"),
-                    "publication_pending": resultat_job.get("publication_pending"),
-                    "artefacts": [
-                        {
-                            "role": a.get("role"),
-                            "status": a.get("status"),
-                            "verified": a.get("verified"),
-                            "key": a.get("key"),
-                            "erreur": a.get("error"),
-                        }
-                        for a in (resultat_job.get("artifacts") or [])
-                    ],
-                },
-                ensure_ascii=False,
-                default=str,
-            )[:3000]
+
+    def _rapports_publies() -> list[Path] | None:
+        if not rapports_hote.exists():
+            return None
+        trouves = [f for f in sorted(rapports_hote.rglob("*")) if f.is_file()]
+        return trouves or None
+
+    fichiers_rapport = _rapports_publies()
+    if fichiers_rapport is None:
+        # Le DOSSIER peut exister avant que les fichiers n'y soient publiés : la
+        # publication se fait par renommage depuis un dossier temporaire interne.
+        # On laisse une fenêtre BORNÉE (jamais un « sleep » silencieux) et l'on
+        # diagnostique si rien n'apparaît — le partage de volume reste exigé.
+        fichiers_rapport = _attendre(
+            _rapports_publies, 30,
+            "dossier de rapports vide : " + _diagnostic_rapports_vides(job_id, job, donnees_hote, rapports_hote),
         )
     assert all(f.stat().st_size > 0 for f in fichiers_rapport), "rapport vide"
     # …et le processus WEB les voit au même endroit.
