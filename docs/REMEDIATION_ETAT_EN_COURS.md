@@ -1206,3 +1206,42 @@ Limites ouvertes à ce stade
 Ces quatre modules ont grossi pendant la remédiation (worker 642 instructions, redis_store et storage réécrits) sans que leur couverture suive : la mesure est faite SANS s3rver ni MinIO (les tests qui les exigent sont ignorés), elle doit donc être refaite sur un banc complet avant de conclure — mais l'écart (jusqu'à −21,5 pts sur `redis_store`) est trop grand pour n'être qu'un effet de banc.
 
 **Prochaine action précise :** (1) relire le CI de `b16882f` ; (2) combler la couverture de `redis_store.py`, `worker.py`, `jobs.py` et `storage.py` par des tests qui EXÉCUTENT les chemins ajoutés (aucun ajustement de plancher — les planchers sont une exigence produit) ; (3) traiter `integration` (dossier de rapports vide) à partir des annotations du job `compose-part-web-worker` ; (4) réexaminer `e2e`. Mettre à jour ce fichier avant tout arrêt.
+
+### Couverture — seconde mesure, AVEC le banc Redis branché
+
+La première mesure (ci-dessus) ne branchait pas `SEAMTECH_TEST_REDIS_URL` : les
+140 tests de file durable étaient donc ignorés et les modules mesurés comme s'ils
+n'étaient presque jamais exécutés (exactement le défaut déjà documenté dans le
+workflow, lignes 626-634). Seconde mesure, commande exacte :
+
+`SEAMTECH_TEST_REDIS_URL="redis://127.0.0.1:6390/1" SEAMTECH_TEST_REDIS_SERVER=… SEAMTECH_TEST_DATABASE_URL=… pytest -q -p no:randomly -m redis_queue --cov=<module>`
+→ **140 réussis / 1 xfail / 0 échec en 270 s**, et :
+
+| Module | Avec Redis (campagne `redis_queue` seule) | Plancher |
+|---|---|---|
+| `redis_store.py` | 86 % (566 instr., 79 manquantes) | 92 % |
+| `worker.py` | 78 % (642 instr., 142 manquantes) | 92 % |
+| `jobs.py` | 79 % (348 instr., 72 manquantes) | 94 % |
+| `storage.py` | 49 % (520 instr., 267 manquantes — la campagne `redis_queue` n'exerce presque pas le stockage objet) | 97 % |
+
+En CI la mesure est l'UNION de toutes les campagnes : `storage` et `worker`
+remontent (95,6 % et 82,9 % mesurés sans Redis), `jobs` et `redis_store` aussi,
+mais aucun des quatre n'atteint son plancher au vu des écarts mesurés
+(jusqu'à −21,5 pts pour `redis_store` sur le banc complet, −6 pts pour `worker`).
+
+Lecture honnête : la remédiation a ajouté beaucoup de code exécutable
+(worker 642 instructions, redis_store et storage réécrits, jobs étendu) sans
+ajouter les tests qui l'exercent. **Le plancher n'est pas une formalité : c'est
+l'exigence produit.** Aucun plancher ne sera abaissé — le travail à faire est
+d'écrire les tests.
+
+**Prochaine action précise (dans cet ordre) :**
+1. relire le CI de `2426f92` et noter job par job ;
+2. combler la couverture de `redis_store.py` (92 %), `worker.py` (92 %),
+   `jobs.py` (94 %) et `storage.py` (97 %) : lire les lignes manquantes
+   (`coverage.json` → `files[<module>]["missing_lines"]`) et écrire les tests
+   qui les exécutent réellement, jamais un test qui ne fait que passer ;
+3. traiter `integration` (dossier de rapports vide : annotations du job
+   `compose-partage-web-worker`) et réexaminer `e2e` ;
+4. rejouer la suite complète et la campagne PG après chaque lot ;
+5. ne RIEN résumer dans le chat avant le rapport final PRÊT/NON PRÊT.
