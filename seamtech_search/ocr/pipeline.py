@@ -35,6 +35,7 @@ import sys
 import tempfile
 import time
 import uuid
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -470,8 +471,21 @@ def _ocr_page_pdf(
     from seamtech_search.ocr.moteur import MoteurTesseract
 
     moteur = moteur or MoteurTesseract(tesseract_command)
-    version = moteur.version
     nom_moteur = moteur.nom
+
+    # La version du moteur n'est PAS lue ici, contrairement à l'usage : un
+    # moteur paresseux (RapidOCR) ne connaît la sienne qu'APRÈS le démarrage
+    # de son esclave, c'est-à-dire à la première reconnaissance. Lue trop tôt
+    # elle valait None, et le compte rendu se rabattait alors sur la version de
+    # Tesseract : le rapport attribuait à Tesseract un travail fait par
+    # RapidOCR (vu en CI, annotation ocr-qualite : « moteur=rapidocr
+    # version=tesseract 5.3.4 »). La provenance est une preuve, pas un détail
+    # d'affichage.
+    def _version_reelle(*resultats: dict[str, Any]) -> str | None:
+        for resultat in resultats:
+            if resultat.get("version_moteur"):
+                return resultat["version_moteur"]
+        return moteur.version
 
     def reconnaitre(image: Path) -> dict[str, Any]:
         debut = time.perf_counter()
@@ -486,7 +500,7 @@ def _ocr_page_pdf(
         return {
             "texte": "", "confiance": None, "duree_s": 0.0, "succes": False,
             "motif": "OCR impossible : vue PDF recadrée, composée ou indéterminée",
-            "moteur": nom_moteur, "version_moteur": version,
+            "moteur": nom_moteur, "version_moteur": moteur.version,
         }
 
     # 1. Images extraites
@@ -498,8 +512,10 @@ def _ocr_page_pdf(
         echec_any = False
         timeout_any = False
 
+        reconnus: list[dict[str, Any]] = []
         for img_path in images:
             res = reconnaitre(img_path)
+            reconnus.append(res)
             duree_tot += res["duree_s"]
             if res["succes"]:
                 if res["texte"].strip():
@@ -518,7 +534,7 @@ def _ocr_page_pdf(
                 "succes": True,
                 "motif": "",
                 "moteur": nom_moteur,
-                "version_moteur": version,
+                "version_moteur": _version_reelle(*reconnus),
             }
         else:
             # Images trouvées mais OCR a échoué
@@ -532,13 +548,13 @@ def _ocr_page_pdf(
                     if timeout_any else f"échec du moteur {nom_moteur} sur une ou plusieurs images de la page"
                 ),
                 "moteur": nom_moteur,
-                "version_moteur": version,
+                "version_moteur": _version_reelle(*reconnus),
             }
 
     return {
         "texte": "", "confiance": None, "duree_s": 0.0, "succes": False,
         "motif": "OCR impossible : extraction bornée de l'image avant reconnaissance en échec",
-        "moteur": nom_moteur, "version_moteur": version,
+        "moteur": nom_moteur, "version_moteur": moteur.version,
     }
 
 
@@ -826,11 +842,16 @@ def ocriser_fichier(
     nb_echecs = sum(1 for p in pages_res if not p["page_ocerisee"] and p["motif"] not in ("texte natif présent", "page non demandée", ""))
     taille_texte = sum(len(p["texte_ocr"]) for p in pages_res)
 
-    # Moteur le plus fréquent
+    # Moteur le plus fréquent (et non le premier : un fichier peut changer de
+    # moteur en cours de route si le premier tombe en panne).
     moteurs = [p["moteur"] for p in pages_res if p["moteur"]]
-    moteur_principal = moteurs[0] if moteurs else ""
+    moteur_principal = Counter(moteurs).most_common(1)[0][0] if moteurs else ""
     versions = [p["version_moteur"] for p in pages_res if p["version_moteur"]]
-    version_principale = versions[0] if versions else _tesseract_version(tesseract_command)
+    # Pas de repli sur la version de Tesseract : quand aucun moteur n'a donné la
+    # sienne, la réponse honnête est « inconnue » — pas celle d'un moteur qui
+    # n'a pas tourné. C'est ce repli qui faisait dire « moteur=rapidocr
+    # version=tesseract 5.3.4 » dans le compte rendu CI.
+    version_principale = versions[0] if versions else ""
 
     return {
         "fichier": str(chemin_p),
