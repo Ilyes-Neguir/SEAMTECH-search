@@ -41,6 +41,7 @@ from .import_pipeline import (
     get_import,
     import_folder,
     quarantine_root,
+    resoudre_chemin_confine,
     retry_upload,
     scan_folder,
     staging_root,
@@ -355,7 +356,9 @@ def create_app(config: AppConfig) -> FastAPI:
         cache depuis S3.
         """
         try:
-            cible = chemin.expanduser().resolve()
+            # Python ≥ 3.13 ne signale plus une boucle de liens symboliques :
+            # la vérification explicite garde le refus (ValueError attrapée plus bas).
+            cible = resoudre_chemin_confine(chemin)
             racines = [Path(root).expanduser().resolve() for root in config.root_paths]
             racines.append(staging_root(config).expanduser().resolve())
             racines.append(quarantine_root(config).expanduser().resolve())

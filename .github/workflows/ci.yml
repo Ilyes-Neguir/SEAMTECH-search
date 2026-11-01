@@ -2201,9 +2201,15 @@ jobs:
           SEAMTECH_SAUVEGARDE_JSON: sauvegarde-mesures.jsonl
         run: |
           set +e
-          python -m pytest -m sauvegarde -v --junitxml=sauvegarde-junit.xml 2>&1 | tee /tmp/sauvegarde.log
+          python -m pytest -m sauvegarde -v -rs --junitxml=sauvegarde-junit.xml 2>&1 | tee /tmp/sauvegarde.log
           rc=${PIPESTATUS[0]}
           set -e
+          # Motifs de saut publiés sans condition : un saut doit être VISIBLE,
+          # pas seulement compté. C'est ainsi qu'on repère un test qui passe
+          # son tour au lieu de prouver l'aller-retour.
+          if grep -qE "^SKIPPED" /tmp/sauvegarde.log; then
+            echo "::notice title=sauvegarde-sauts::$(grep -E '^SKIPPED' /tmp/sauvegarde.log | tr -d '\\000-\\010\\013\\014\\016-\\037' | tr '\\n' ';' | head -c 1800)"
+          fi
           if [ "$rc" -ne 0 ]; then
             echo "::error title=sauvegarde-failed::$(grep -E '^(FAILED|ERROR)' /tmp/sauvegarde.log | head -25 | tr -d '\\000-\\010\\013\\014\\016-\\037' | tr '\\n' ';' | head -c 1500)"
             echo "::error title=sauvegarde-tail::$(tail -40 /tmp/sauvegarde.log | tr -d '\\000-\\010\\013\\014\\016-\\037' | tr '\\n' ';' | head -c 1800)"
@@ -2242,6 +2248,15 @@ jobs:
           print(
               f"sauvegarde : {collectes} collectés, {executes} exécutés ({passes} passés, {sautes} sautés, {echecs} échecs)"
           )
+          # Noms des tests sautés : sans eux, un « 1 sauté » est indiagnosable.
+          saut_noms = [
+              (tc.get("classname", ""), tc.get("name", ""))
+              for tc in testsuite.iter("testcase")
+              if tc.find("skipped") is not None
+          ]
+          if saut_noms:
+              print(f"::error title=sauvegarde-tests-sautes::{saut_noms}")
+
           # Attendu : tous les tests collectés exécutés (≥ 19), 0 sauté, 0 échec.
           # Sautés > 0 ou collectés != exécutés ou échecs > 0 → échec inviolable.
           if sautes > 0 or collectes != executes or echecs > 0 or passes < 19:

@@ -1,4 +1,5 @@
 """Tests synthétiques du confinement du renvoi d'artefacts."""
+import os
 from pathlib import Path
 from unittest.mock import patch
 
@@ -219,6 +220,64 @@ def test_reprise_boucle_lien_rapport_refuse_sans_fuite_api(tmp_path: Path):
     piece.write_bytes(b'original')
     dossier = tmp_path / 'reports'
     dossier.symlink_to(dossier, target_is_directory=True)
+    config = AppConfig(root_paths=[source], database_path=tmp_path / 'db.sqlite', min_free_bytes=0)
+    client = TestClient(api.create_app(config))
+    with patch.object(p, 'get_import', return_value=_payload(source, piece)), patch.object(p, 'update_import'):
+        reponse = client.post('/imports/id-test/retry-upload')
+    assert reponse.status_code == 409
+
+
+def test_resolution_refuse_boucle_de_liens_symboliques(tmp_path: Path):
+    """Python ≤ 3.12 lève RuntimeError sur une boucle : le confinement le refuse."""
+    boucle = tmp_path / 'boucle'
+    boucle.symlink_to(boucle, target_is_directory=True)
+    with pytest.raises(ValueError):
+        p.resoudre_chemin_confine(boucle)
+
+
+def test_resolution_refuse_boucle_meme_si_resolve_reste_muet(tmp_path: Path, monkeypatch):
+    """Simule Python ≥ 3.13 : resolve() ne lève plus, la vérification doit refuser.
+
+    Depuis Python 3.13, ``Path.resolve()`` s'appuie sur ``os.path.realpath`` en
+    mode non strict : une boucle de liens symboliques est rendue telle quelle
+    au lieu de lever. Sans vérification explicite, le confinement croirait le
+    chemin résolu et laisserait passer une reprise.
+    """
+    aller = tmp_path / 'aller'
+    retour = tmp_path / 'retour'
+    aller.symlink_to(retour, target_is_directory=True)
+    retour.symlink_to(aller, target_is_directory=True)
+
+    def resolve_muet(self, strict=False):
+        return Path(os.path.realpath(str(self)))
+
+    monkeypatch.setattr(Path, 'resolve', resolve_muet)
+    with pytest.raises(ValueError):
+        p.resoudre_chemin_confine(aller)
+
+
+def test_resolution_accepte_chemins_absents_et_reels(tmp_path: Path):
+    reel = tmp_path / 'reel'
+    reel.mkdir()
+    assert p.resoudre_chemin_confine(reel) == reel.resolve()
+    absent = tmp_path / 'absent' / 'sous-dossier'
+    assert p.resoudre_chemin_confine(absent) == absent.resolve()
+
+
+def test_reprise_boucle_croisee_liens_rapports_refuse_sans_fuite_api(tmp_path: Path):
+    """Deux liens qui se renvoient l'un l'autre : refus 409 sans fuite d'artefact."""
+    from fastapi.testclient import TestClient
+
+    from seamtech_search import api
+
+    source = tmp_path / 'source'
+    source.mkdir()
+    piece = source / 'piece.txt'
+    piece.write_bytes(b'original')
+    aller = tmp_path / 'reports'
+    retour = tmp_path / 'reports-cible'
+    aller.symlink_to(retour, target_is_directory=True)
+    retour.symlink_to(aller, target_is_directory=True)
     config = AppConfig(root_paths=[source], database_path=tmp_path / 'db.sqlite', min_free_bytes=0)
     client = TestClient(api.create_app(config))
     with patch.object(p, 'get_import', return_value=_payload(source, piece)), patch.object(p, 'update_import'):

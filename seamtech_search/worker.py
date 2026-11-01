@@ -32,6 +32,7 @@ from .import_pipeline import (
     get_import,
     import_folder,
     quarantine_root,
+    resoudre_chemin_confine,
     retry_upload,
     staging_root,
 )
@@ -976,7 +977,9 @@ def mettre_en_quarantaine(
     physique ; l'état du travail indique l'échec et la rétention est suspendue.
     """
     try:
-        resolved_source = Path(source_path).expanduser().resolve()
+        # Python ≥ 3.13 rend la résolution muette sur une boucle de liens :
+        # le garde-fou explicite conserve le refus, quelle que soit la version.
+        resolved_source = resoudre_chemin_confine(Path(source_path))
     except (OSError, RuntimeError, ValueError):
         return DecisionQuarantaine(False, None, "chemin source illisible", [], "chemin source illisible")
     if not est_sous_staging(resolved_source, config):

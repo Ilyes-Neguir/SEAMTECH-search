@@ -11,6 +11,7 @@ Features:
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import logging
@@ -1018,6 +1019,41 @@ def _racine_scan_confinee(source: Path):
         yield fd
     finally:
         os.close(fd)
+
+
+#: Erreurs tolérées quand on vérifie qu'un chemin résolu est atteignable :
+#: le fichier n'existe pas encore (ENOENT), les droits manquent (EACCES,
+#: EPERM) ou un composant intermédiaire n'est pas un dossier (ENOTDIR).
+#: ELOOP, ENAMETOOLONG, EIO… traduisent un chemin qui ne désigne rien de
+#: stable et doivent faire refuser le confinement.
+_ERREURS_RESOLUTION_TOLEREES = frozenset(
+    valeur for valeur in (getattr(errno, nom, None) for nom in ("ENOENT", "EACCES", "EPERM", "ENOTDIR")) if valeur is not None
+)
+
+
+def resoudre_chemin_confine(chemin: Path) -> Path:
+    """Résout ``chemin`` et refuse les arborescences qui ne se résolvent pas.
+
+    ``Path.resolve()`` a changé de comportement : jusqu'à Python 3.12 il lève
+    RuntimeError sur une boucle de liens symboliques, depuis Python 3.13 il
+    s'appuie sur ``os.path.realpath(strict=False)`` qui rend le chemin
+    pratiquement inchangé sans rien signaler. Un confinement fondé sur la
+    résolution doit donc refuser explicitement un chemin non résoluble,
+    quelle que soit la version de l'interpréteur.
+    """
+    try:
+        # Python ≤ 3.12 lève RuntimeError sur une boucle détectée par pathlib.
+        resolu = Path(chemin).expanduser().resolve()
+    except (OSError, RuntimeError) as erreur:
+        raise ValueError(f"Chemin non résoluble : {erreur}") from None
+    try:
+        # stat (et non lstat) : une boucle n'est visible qu'en suivant les liens,
+        # qu'elle porte sur le dernier composant ou sur un parent.
+        os.stat(resolu)
+    except OSError as erreur:
+        if erreur.errno not in _ERREURS_RESOLUTION_TOLEREES:
+            raise ValueError(f"Chemin non résoluble : {erreur.strerror or erreur.errno}") from None
+    return resolu
 
 
 def _inventaire_scan_confine(racine_fd: int, source: Path) -> list[Path]:
@@ -2478,8 +2514,10 @@ def retry_upload(
         raise PermissionError("Source hors racines autorisées pour la reprise")
     report_dir = _report_dir_for(payload, config, import_id)
     try:
-        rapport_resolu = report_dir.resolve()
-    except (OSError, RuntimeError):
+        # Python ≥ 3.13 ne lève plus sur une boucle de liens symboliques :
+        # la vérification explicite garde le même refus sur toutes les versions.
+        rapport_resolu = resoudre_chemin_confine(report_dir)
+    except (OSError, RuntimeError, ValueError):
         raise ValueError("Répertoire de rapports invalide pour la reprise") from None
     if report_dir.is_relative_to(source) or rapport_resolu.is_relative_to(source):
         raise ValueError("Le répertoire des rapports ne peut pas être dans l'arbre source")

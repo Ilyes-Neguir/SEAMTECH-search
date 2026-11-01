@@ -81,7 +81,7 @@ from seamtech_search.fichiers_securises import (
     _ReponseFichierEpingle,
     _ReponseFluxFerme,
 )
-from seamtech_search.import_pipeline import staging_root
+from seamtech_search.import_pipeline import resoudre_chemin_confine, staging_root
 from seamtech_search.jobs import create_job, register_job_cancel
 from seamtech_search.redis_store import RedisStore
 from seamtech_search.securite_requetes import (
@@ -1210,7 +1210,9 @@ def _content_disposition(nom: str, *, inline: bool) -> str:
 
 def _path_autorise(path: str | Path, config: Any) -> bool:
     try:
-        cible = Path(path).expanduser().resolve()
+        # Python ≥ 3.13 ne signale plus une boucle de liens symboliques : la
+        # vérification explicite garde le refus, quelle que soit la version.
+        cible = resoudre_chemin_confine(Path(path))
         racines = [Path(root).expanduser().resolve() for root in getattr(config, "root_paths", [])]
         racines.append(staging_root(config).expanduser().resolve())
         return any(cible == racine or racine in cible.parents for racine in racines)
