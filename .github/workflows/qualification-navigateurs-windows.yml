@@ -65,7 +65,37 @@ jobs:
           pip install -r requirements-dev.txt
 
       - name: Dépendances de l'interface
-        run: pnpm install --frozen-lockfile
+        # ``--ignore-scripts`` : aucun paquet de cette interface ne compile du
+        # natif à l'installation (Next et Tailwind 4 fournissent leurs binaires
+        # précompilés), et les scripts de post-installation de Playwright
+        # téléchargeraient des navigateurs dont on ne veut PAS ici — la
+        # qualification porte sur ceux de la machine.
+        # La sortie est conservée : ce workflow tourne sur un runner qu'on ne
+        # peut pas ouvrir, donc un échec doit se lire dans une annotation.
+        id: dependances
+        continue-on-error: true
+        run: |
+          $ErrorActionPreference = 'Continue'
+          pnpm install --frozen-lockfile --ignore-scripts 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\pnpm-install.log"
+          exit $LASTEXITCODE
+
+      - name: Journal d'installation des dépendances
+        if: always()
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $journal = "$env:RUNNER_TEMP\pnpm-install.log"
+          if (-not (Test-Path $journal)) {
+            Write-Host "::notice title=pnpm-install::aucun journal produit"
+            exit 0
+          }
+          $queue = ((Get-Content $journal -Tail 25) -join ' ; ')
+          if ($queue.Length -gt 2500) { $queue = $queue.Substring($queue.Length - 2500) }
+          if ($steps.dependances.outcome -eq 'failure') {
+            Write-Host "::error title=pnpm-install::$queue"
+          } else {
+            Write-Host "::notice title=pnpm-install::$queue"
+          }
+          exit 0
 
       - name: Navigateurs présents sur le runner
         # Sans cette étape, un échec de lancement ne dirait pas si le binaire
@@ -101,9 +131,28 @@ jobs:
           # Le navigateur est celui de la machine : aucun téléchargement de
           # binaire Playwright (``playwright install``) n'est nécessaire ici,
           # et le faire masquerait le navigateur de l'atelier.
-          pnpm exec playwright test --config playwright.navigateurs.config.ts e2e/navigateurs-windows.spec.ts
+          pnpm exec playwright test --config playwright.navigateurs.config.ts e2e/navigateurs-windows.spec.ts 2>&1 |
+            Tee-Object -FilePath "$env:RUNNER_TEMP\playwright.log"
           $rc = $LASTEXITCODE
           Write-Host "::notice title=rc-qualification-navigateurs::rc=$rc"
+          exit 0
+
+      - name: Journal de la qualification (échecs et symptômes)
+        if: always()
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $journal = "$env:RUNNER_TEMP\playwright.log"
+          if (-not (Test-Path $journal)) {
+            Write-Host "::error title=playwright-journal::aucun journal produit : la qualification n'a pas démarré"
+            exit 0
+          }
+          $lignes = Get-Content $journal |
+                    Where-Object { $_ -match '✘|failed|Error|expect|Timeout|expected|browserType|Executable|channel' } |
+                    Select-Object -Last 12
+          if (-not $lignes) { $lignes = Get-Content $journal -Tail 12 }
+          $texte = ($lignes -join ' ; ')
+          if ($texte.Length -gt 2800) { $texte = $texte.Substring($texte.Length - 2800) }
+          Write-Host "::error title=playwright-details::$texte"
           exit 0
 
       - name: Agents-utilisateurs réellement qualifiés
