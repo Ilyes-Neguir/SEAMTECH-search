@@ -146,6 +146,26 @@ if (Test-Path $Journal) {
     }
 }
 
+# Le message de la ligne FAILED ne suffit PAS : 314 échecs de la suite sans
+# service portent le même libellé creux — « AssertionError: Regex pattern did
+# not match. » — alors que la VRAIE cause est dans les lignes « E » de la
+# trace (« Actual message: 'Lecture confinée du bundle indisponible sur cette
+# plateforme' »). D'où ``--tb=short`` sur les suites, et la lecture ci-dessous :
+# on rattache à chaque test les lignes « E » de SA trace, repérée par l'en-tête
+# de traceback « _____ nom_du_test _____ ».
+$details = @{}
+if (Test-Path $Journal) {
+    $courant = ''
+    foreach ($ligne in [System.IO.File]::ReadLines((Resolve-Path $Journal))) {
+        if ($ligne -match '^_{3,} (.+?) _{3,}$') {
+            $courant = $Matches[1].Trim()
+        } elseif ($courant -and $ligne -match '^E\s+(.*)$') {
+            if (-not $details.ContainsKey($courant)) { $details[$courant] = @() }
+            $details[$courant] += $Matches[1]
+        }
+    }
+}
+
 $inattendus = @()
 foreach ($echec in $echecs) {
     $connu = $false
@@ -153,7 +173,10 @@ foreach ($echec in $echecs) {
         if ($echec -like "$motif*") { $connu = $true; break }
     }
     if (-not $connu) {
-        $message = if ($messages.ContainsKey($echec)) { $messages[$echec] } else { '' }
+        $morceaux = @()
+        if ($messages.ContainsKey($echec)) { $morceaux += $messages[$echec] }
+        if ($details.ContainsKey($echec)) { $morceaux += $details[$echec] }
+        $message = $morceaux -join ' `n '
         foreach ($cause in $causes_nommees) {
             if ($cause -and $message -and $message.Contains($cause)) { $connu = $true; break }
         }
