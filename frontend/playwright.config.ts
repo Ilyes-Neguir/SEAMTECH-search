@@ -48,6 +48,11 @@ if (process.env.SEAMTECH_E2E_DATABASE_URL) {
 
 export default defineConfig({
   testDir: "./e2e",
+  // « navigateurs-windows.spec.ts » ne s'exécute QUE sous Chrome et Edge
+  // réels, par ``playwright.navigateurs.config.ts``. Le faire tourner ici,
+  // sous le Chromium de Playwright, le ferait échouer à bon droit (il
+  // vérifie l'agent-utilisateur) pour une raison qui n'apprendrait rien.
+  testIgnore: ["**/navigateurs-windows.spec.ts"],
   globalSetup: "./e2e/global-setup.ts",
   fullyParallel: false,
   forbidOnly: !!process.env.CI,

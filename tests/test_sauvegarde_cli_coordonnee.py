@@ -58,12 +58,19 @@ pytestmark = pytest.mark.postgres
 
 
 def _bindir_pg() -> str:
-    """Dossier des binaires ``pg_dump``/``pg_restore`` fournis par ``pgserver``."""
-    import pgserver
+    """Dossier des binaires ``pg_dump``/``pg_restore`` : CELUI QUE LE PRODUIT TROUVE.
 
-    candidat = Path(pgserver.__file__).resolve().parent / "pginstall" / "bin"
-    assert (candidat / "pg_dump").is_file(), f"pg_dump introuvable dans {candidat}"
-    return str(candidat)
+    ``sauvegarde._trouver_binaire`` cherche dans le PATH, puis
+    ``SEAMTECH_PG_BINDIR``, puis les installations système, puis ``pgserver``.
+    S'en servir ici évite de supposer un banc : en CI le binaire vient du
+    système, en développement du banc local, sur Windows de la variable.
+    Supposer ``pgserver`` faisait échouer ce test en CI (``ModuleNotFoundError``,
+    run 41462763753) pour une raison qui n'avait rien à voir avec la
+    restauration coordonnée.
+    """
+    from seamtech_search.sauvegarde import _trouver_binaire
+
+    return str(Path(_trouver_binaire("pg_dump")).parent)
 
 
 def _creer_base(nom: str) -> str:

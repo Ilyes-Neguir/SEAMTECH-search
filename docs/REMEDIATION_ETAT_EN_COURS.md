@@ -2673,3 +2673,70 @@ l'absence d'erreur de console. `pnpm exec tsc --noEmit` passe.
 Reste non qualifié **et dit** : l'import d'un dossier depuis Windows, que le
 produit refuse faute de primitives POSIX ; la cible de déploiement Windows
 reste un conteneur Linux.
+
+## 50. Causes 1 et 2 élucidées, et pourquoi le verdict se trompait
+
+### 50.1 Un test paramétré ne se reconnaît JAMAIS dans les écarts
+
+Run `41454897907` : 232 écarts écrits, et pourtant **127 échecs** annoncés
+« hors périmètre connu ». La comparaison du verdict était :
+
+```powershell
+if ($echec -like "$motif*") { $connu = $true }
+```
+
+`-like` interprète `[` et `]` comme une **classe de caractères**. Un test
+paramétré — `test_plages_invalides_refusees_en_416[bytes=-0]` — ne pouvait donc
+jamais correspondre à son propre écart, alors qu'il y était écrit noir sur
+blanc. Correction : comparaison **exacte** d'abord (`-eq`), et le motif
+générique n'est plus accepté que lorsqu'il ne contient aucun métacaractère
+(sinon il pourrait couvrir un autre test).
+
+Contrôle fait ici, sur les 120 identifiants Windows connus : avec la bonne
+sémantique, **73 couverts, 47 non couverts** — les 47 restants sont les vraies
+questions, pas un artefact de comparaison.
+
+### 50.2 La vraie cause n'est pas dans le journal : elle est dans le rapport JUnit
+
+Deuxième leçon du même run : la lecture du journal ne peut pas fonctionner.
+Avec `-v`, pytest marque les échecs en **fin** de ligne de progression
+(`tests/x.py::test FAILED`), et les lignes `E` de la trace ne sont pas
+attenantes au résumé court. Résultat publié : « 314 échecs ; CAUSE: (aucune
+ligne E) ».
+
+`ci/resumer_echecs.py` lit donc le **`--junitxml`** de pytest : la cause est la
+dernière ligne `E` **utile** (les lignes « `+ where 409 = …` » que pytest ajoute
+pour décortiquer une assertion sont écartées — elles expliquent, elles ne sont
+pas la cause). Vérifié en local :
+
+```
+5|assert 409 == 200|tests/test_url_presignee_302.py::test_open_…
+4|OSError: Capacité de plateforme absente : verrou_flock — …|tests/test_api_extra_coverage.py::…
+2|ValueError: objet … : bloc invalide (MagicMock au lieu d'octets)|tests/test_url_presignee_302.py::…
+```
+
+Le script écrit aussi un fichier de **détail** (`identifiant|cause`) : le
+rattachement par en-tête de traceback ne vaut pas pour un test en classe, dont
+l'en-tête ne porte pas le chemin du fichier.
+
+### 50.3 Causes 1 et 2 : la clé d'index du test n'était pas celle du produit
+
+Les cibles `diag-cible-1` et `diag-cible-2` du run `41454455187` ont livré les
+deux mystères ouverts depuis plusieurs runs :
+
+* cause 1 — `TypeError: 'NoneType' object is not subscriptable` :
+  `path_key` est stocké en `os.path.normcase(str(path.resolve()))`, donc **tout
+  en minuscules** sur Windows ; les tests cherchaient `WHERE path_key = str(piece)`
+  avec le chemin brut → aucune ligne → `_document()` rend `None`.
+* cause 2 — `document introuvable : dossier-client/fiche-A.txt` : même origine,
+  comparaison de suffixe sensible à la casse alors que la base porte
+  `dossier-client\fiche-a.txt`.
+
+Correction : les aides de test utilisent la clé du **produit**
+(`normcase` + `normpath` + `resolve`). Ce n'est pas une tolérance ajoutée — sur
+un système insensible à la casse les deux écritures désignent le même fichier —
+et sur POSIX `normcase` est l'identité (19 + 14 tests passent, inchangés).
+
+Reste la cause 3, « Lecture confinée du bundle indisponible sur cette
+plateforme » : ce n'est pas un défaut, c'est la limite de plateforme nommée par
+`seamtech_search/plateforme.py`.
