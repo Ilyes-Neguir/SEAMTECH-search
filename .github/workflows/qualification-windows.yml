@@ -106,7 +106,7 @@ jobs:
             --ignore=tests/test_partage_web_worker.py > logs\windows-sans-service.log 2>&1
           $rc = $LASTEXITCODE
           Publier "windows-sans-service-apres-pytest" "rc=$rc journal=$((Get-Item logs\windows-sans-service.log -ErrorAction SilentlyContinue).Length) octets"
-          Get-Content logs\windows-sans-service.log -Tail 60 | ForEach-Object { Write-Host $_ }
+          Get-Content logs\windows-sans-service.log -Tail 25 | ForEach-Object { Write-Host "journal: $_" }
           $resume = (Select-String -Path logs\windows-sans-service.log -Pattern '^(FAILED|ERROR)|passed|failed' |
                      Select-Object -Last 10 | ForEach-Object { $_.Line }) -join ' | '
           Publier "windows-sans-service" "rc=$rc ; $resume"
@@ -221,6 +221,11 @@ jobs:
         env:
           SEAMTECH_TEST_DATABASE_URL: postgresql://seamtech:seamtech_test_password@127.0.0.1:5432/seamtech_search_test
           SEAMTECH_TEST_REDIS_URL: redis://127.0.0.1:6379/1
+          # Deux tests (« perte de claim Redis ») exigent un VRAI binaire
+          # redis-server et non seulement un serveur joignable : sans cette
+          # variable ils partent en RuntimeError, ce qui n'est ni un succès ni
+          # un saut, mais une preuve manquante déguisée en échec.
+          SEAMTECH_TEST_REDIS_SERVER: C:\redis7\Redis-7.4.11-Windows-x64-msys2\redis-server.exe
         run: |
           $ErrorActionPreference = 'Continue'
           function Publier([string]$titre, [string]$texte) {
@@ -242,7 +247,7 @@ jobs:
             --ignore=tests/test_partage_web_worker.py > logs\windows-postgres-redis.log 2>&1
           $rc = $LASTEXITCODE
           Publier "windows-postgres-redis-apres-pytest" "rc=$rc journal=$((Get-Item logs\windows-postgres-redis.log -ErrorAction SilentlyContinue).Length) octets"
-          Get-Content logs\windows-postgres-redis.log -Tail 60 | ForEach-Object { Write-Host $_ }
+          Get-Content logs\windows-postgres-redis.log -Tail 25 | ForEach-Object { Write-Host "journal: $_" }
           $resume = (Select-String -Path logs\windows-postgres-redis.log -Pattern '^(FAILED|ERROR)|passed|failed' |
                      Select-Object -Last 10 | ForEach-Object { $_.Line }) -join ' | '
           Publier "windows-postgres-redis" "rc=$rc ; $resume"
@@ -281,10 +286,9 @@ jobs:
               "tests/test_lot10_televersement_lot.py",
               "tests/test_extraction_logs_securite.py")) {
             $nom = [IO.Path]::GetFileNameWithoutExtension($fichier)
-            Publier "diag-$nom" "debut"
             python -m pytest -q -rf $fichier > "logs\diag-$nom.log" 2>&1
             $rc = $LASTEXITCODE
-            Get-Content "logs\diag-$nom.log" -Tail 15 | ForEach-Object { Write-Host $_ }
+            Get-Content "logs\diag-$nom.log" -Tail 15 | ForEach-Object { Write-Host "journal: $_" }
             Publier "diag-$nom" "rc=$rc"
           }
           Publier "diag-fin" "tous les fichiers a processus ont ete executes"
