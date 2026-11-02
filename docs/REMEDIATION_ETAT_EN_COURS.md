@@ -3039,3 +3039,38 @@ campagne ciblée qui publie, pour chacun, la PREMIÈRE ligne de trace complète
 diagnostic ciblé (étape « le fichier qui interrompt la suite ») a montré qu'un
 fichier seul se rejoue en une minute : la même mécanique sert pour un fichier
 qu'on veut comprendre.
+
+## 56. Run 41530741118 (`065d113`) : 391 échecs, **66** hors périmètre connu
+
+```
+rc=1 ; 391 failed, 1922 passed, 66 skipped, 859 deselected, 2 xfailed,
+20 warnings, 16 errors in 559.80s
+```
+
+Le compte d'échecs a baissé de 393 à 391 (les deux tests `test_scan_safety.py`
+corrigés en `f541dad`) et, surtout, **les échecs sans raison démontrée sont
+passés de 94 à 66** grâce aux deux familles nommées en `065d113` (préflight :
+21 ; URL présignée : 5).
+
+| fichier | restants |
+|---|---|
+| `test_sauvegarde_unites.py` | 24 |
+| `test_restauration_confinement.py` | 20 |
+| `test_sauvegarde_manifeste_distant.py` | 5 |
+| `test_sauvegarde_references.py` | 4 |
+| `test_ocr_page_integralite.py` | 3 |
+| `test_lot10_televersement_lot.py` | 2 |
+| `test_detection_fiches.py`, `test_inventaire_archive.py`, `test_liaison_catalogue_capture.py`, `test_passe_finale_ingestion_dossiers.py`, `test_rebuild_index.py`, `test_securite_banc_pg.py`, `test_televersement_creation_idempotente.py`, `test_url_presignee_302.py` | 1 chacun |
+
+**325 échecs sur 391 (83 %) sont désormais nommés.**
+
+Contre-vérification locale, faite après le changement `pid_vivant` (qui touche
+le verrou de scan utilisé partout) : la sélection exacte de la suite « sans
+service » tourne à **2 346 passés, 47 sautés, 3 xfail, 0 échec** en 3 min 42 —
+aucune régression.
+
+L'étape de diagnostic ciblé (commit `5178f1c`) rejoue SEULS, avec `--tb=long`,
+les cinq fichiers qui concentrent les échecs inexpliqués et publie les lignes
+« E » dédoublées : c'est la prochaine lecture, et c'est elle qui dira si ces 66
+échecs relèvent d'une limite de plateforme (à nommer) ou d'un défaut (à
+corriger).
