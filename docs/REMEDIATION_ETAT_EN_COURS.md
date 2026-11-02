@@ -2876,3 +2876,31 @@ le nom du test où la suite s'arrête ; le corriger ou l'écarter nominativement
 ; relancer pour retrouver une suite COMPLÈTE et des comptes comparables.
 Tant que la suite est interrompue, aucun décompte d'écarts Windows n'a de
 valeur.
+
+### 53 bis. Run 41508594754 — l'arrêt est déterministe, pas dû au temps
+
+`rc=2`, **313 échecs, 1622 passés, 697 s**. Deux runs consécutifs
+(41501814193 : 442 s ; 41508594754 : 697 s) donnent les **mêmes comptes** avec
+des durées très différentes : l'arrêt est donc DÉTERMINISTE, il ne vient pas
+d'un délai dépassé. La référence complète (run 41467111570, `48e8be2`) comptait
+392 échecs et 1913 passés : **environ 380 tests ne tournent pas**.
+
+La branche « suite INTERROMPUE » a rempli son office (rc=2 publié, sortie en
+échec), mais la fin de journal publiée ne disait rien : les dernières lignes du
+journal sont des lignes vides. Le verdict cherche désormais la dernière ligne
+de **progression** (`tests/x.py::test_y PASSED|FAILED|ERROR`) : c'est elle qui
+nomme l'arrêt (commit `f10622b`).
+
+Hypothèse à vérifier au prochain run, et non une conclusion : le point d'arrêt
+se situerait autour de `tests/test_scan_safety.py` — premier fichier, dans
+l'ordre alphabétique, dont aucun échec n'est publié — fichier qui contient
+justement `test_interruption_clavier_scan_annule_et_indique_echec`. Rien n'a
+été trouvé qui appelle `pytest.exit` ou pose `shouldstop` (ni dans les tests,
+ni dans `tests/conftest.py`, ni dans la configuration) ; aucun `--maxfail`
+n'est passé. La preuve viendra du journal.
+
+**Prochaine action, précise** : lire l'annotation « suite INTERROMPUE (rc=2) »
+du prochain run de qualification Windows, y relever « DERNIER TEST : … », et
+traiter ce test (le corriger s'il laisse échapper un `KeyboardInterrupt`, ou
+l'écarter nominativement). Ensuite seulement relancer pour retrouver une suite
+complète et des comptes comparables.
