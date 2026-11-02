@@ -2274,3 +2274,91 @@ Ce qui interdit de s'en contenter, et qui est en place :
 
 Limite dite franchement : ce banc ne peut pas prouver la parité des accents ni
 la tolérance aux fautes. La preuve est portée par la CI, pas par lui.
+
+### 37. Un VRAI défaut produit trouvé par Windows : le rejeu n'y était pas reconnu
+
+Le runner Windows (run `41420706781`) a publié, pour la première fois, la trace
+complète des échecs qu'on lui demandait. Deux tests de rejeu téléversé
+attendaient `deja_traite` et obtenaient :
+
+```
+AssertionError: {'statut': 'traite', 'fiche': '7792-SO', 'raison': 'remplacee', …}
+WARNING seamtech_search.fiches.persistance — Fiche id 1 REMPLACÉE sur place en
+        révision 2 : tout écran resté sur la révision 1 sera refusé (409)
+```
+
+Ce n'était ni une panne de banc ni une limite de plateforme : **c'était un
+défaut produit, invisible sur Linux**.
+
+La clé d'idempotence stocke `os.path.normcase(chemin) + "|" + empreinte`. Sur
+Windows, `normcase` met en minuscules ; sur POSIX, il ne fait rien. La
+reconnaissance du rejeu comparait ensuite ce chemin stocké, plié, avec le
+chemin logique du fichier qu'on vient de recevoir, resté dans sa casse
+d'origine : `ANNEE/AFFAIRE/fiche.pdf` contre `annee/affaire/fiche.pdf`. Égaux
+sur Linux, différents sur Windows — donc le rejeu n'y était PAS reconnu, et le
+second envoi du même dossier REMPLAÇAIT la fiche (révision 2) au lieu d'être
+sans effet, alors que l'écran promet « rejouer un dossier ne crée rien ».
+
+**Correctif** (`1b6e4a9`) : normalisation dans `_chemin_logique_televersement`,
+point unique d'où sortent tous les chemins logiques comparés (rejeu, pièces
+jointes, liens objets). Les deux côtés de chaque comparaison y passent ; POSIX
+ne change pas d'un caractère.
+
+**Preuve** : un test force `os.path.normcase` à se comporter comme sur Windows
+(minuscules, séparateur inversé) puis rejoue un envoi en deux sessions. **ROUGE
+avant** (révision 2, même symptôme que le runner), **VERT après**. Forcer une
+primitive ne prouve pas Windows : cela prouve que la comparaison ne dépend plus
+de la casse — et le runner l'avait constaté en échec, ce qui vaut mieux qu'une
+intuition.
+
+Conséquence pour l'atelier, dite telle quelle : sans ce correctif, chaque
+renvoi d'un dossier déjà déposé créait une révision de trop sur le poste
+Windows, et les écrans restés sur la révision précédente étaient refusés en 409.
+
+### 38. Les écarts Windows sont désormais PROUVÉS, plus seulement écrits
+
+Méthode, reproductible : exécuter la suite POSIX avec les primitives déclarées
+absentes — c'est-à-dire exactement ce que Windows est pour ce produit. Les
+tests qui échouent alors avec l'`OSError` nommé de
+`seamtech_search/plateforme.py` sont ceux qu'aucune adaptation de banc ne peut
+faire passer ; les autres relèvent d'une autre cause et **ne sont pas nommés**.
+
+Sur les 71 échecs du run `41420706781`, **19** sont expliqués ainsi et figurent
+dans `ci/ecarts-windows.txt` avec leur raison. Les 52 autres restent NON NOMMÉS
+: aucune cause n'a été établie, et nommer une ignorance en ferait un périmètre.
+Le verdict publie maintenant leurs causes regroupées par famille ; elles
+seront, une fois lues, corrigées ou nommées.
+
+Le fichier d'écarts est gardé par `tests/test_ecarts_windows.py` : chaque motif
+doit nommer un fichier et un test qui EXISTENT, chaque raison doit être une
+phrase opposable (≥ 40 caractères), aucun doublon. Il a rejeté deux lignes «
+idem » du fichier qu'il garde — son office, rempli dès le premier run.
+
+Aussi corrigé au passage : `test_corrections_pg_concurrentes_refusees_avant_
+mutation` propage désormais l'exception du thread au lieu d'un `assert False`
+sans cause, et `PYTHONFAULTHANDLER=1` est posé pour qu'une mort native du
+processus laisse une pile lisible plutôt qu'un silence (la suite sans service
+meurt encore sans code de sortie, pendant `tests/test_sauvegarde_unites.py`).
+
+### 39. Mesures du tour
+
+| Campagne | Résultat |
+|---|---|
+| Suite complète locale (banc sans `contrib`) | 3 024 passés, 37 échecs tous attribués (39/39 relancés seuls : `unaccent` / `pg_trgm`) |
+| Sauvegarde (marqueur) | 94 passés, 3 écarts nommés, 1 xfail |
+| Restauration, bundle, confinement, purge | 107 passés, 4 xfail |
+| Migration / rollback | 4 passés (4 erreurs avant le correctif du banc) |
+| Multipart en flux (P2) | 8 passés |
+| Verrou de plateforme + Redis | 26 passés |
+| Dépôt transactionnel + après-import | 71 passés, 2 sauts |
+| CI `f59dfc2` | tous les jobs verts sauf `e2e` (un test flaky, corrigé) |
+
+### 40. Prochaine action, sans ambiguïté
+
+1. Lire les causes publiées par le run Windows en cours (familles + exemples) :
+   corriger ce qui est un défaut produit, nommer ce qui est une limite, avec
+   raison écrite. Rien ne doit être nommé sans cause lue.
+2. Élucider la mort de la suite sans service (le journal dit maintenant où ;
+   `PYTHONFAULTHANDLER` dira pourquoi).
+3. Une fois le workflow Windows vert : rédiger le rapport final PRÊT / NON
+   PRÊT point par point, avec commandes, résultats, SHA et limites.
