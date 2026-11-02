@@ -53,8 +53,12 @@ export default defineConfig({
       timeout: 120000,
     },
     {
+      // PAS de ``cwd`` : Playwright lance le serveur depuis le dossier de la
+      // configuration, c'est-à-dire ``frontend/``, seul endroit où se trouve
+      // le package.json de l'interface. Le préciser (racine du dépôt) faisait
+      // échouer le démarrage en ENOENT sur Windows (run 41465342706) — la
+      // configuration principale ne le précise d'ailleurs pas.
       command: "npm run dev -- --port 3123",
-      cwd: path.resolve(__dirname, ".."),
       port: 3123,
       reuseExistingServer: true,
       timeout: 240000,
