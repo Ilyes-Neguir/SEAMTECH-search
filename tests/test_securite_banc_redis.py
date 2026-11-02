@@ -116,8 +116,11 @@ def test_binaire_redislite_est_utilise_si_redis_server_absent(tmp_path, monkeypa
 def test_qualification_redis7_refuse_serveur_ancienne_version(monkeypatch):
     from tests import helpers_redis_isole as helper
 
-    if not helper.binaire_redis() or os.name == "nt":
-        pytest.skip("redis-server Unix requis")
+    # Plus de « os.name == "nt" » ici : depuis que l'isolement Windows passe par
+    # un port TCP dédié, cette preuve est exécutable là aussi. L'écarter aurait
+    # privé Windows d'une vérification qui n'a rien de spécifique à POSIX.
+    if not helper.binaire_redis():
+        pytest.skip("binaire redis-server requis (SEAMTECH_TEST_REDIS_SERVER)")
     monkeypatch.setattr(redis.Redis, "info", lambda *_args, **_kwargs: {"redis_version": "6.2.0"})
     with pytest.raises(RuntimeError, match="Redis 7"):
         with helper.serveur_redis_isole(version_minimale=7):

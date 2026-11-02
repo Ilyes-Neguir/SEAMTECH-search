@@ -103,7 +103,7 @@ jobs:
           # PowerShell, la sortie d'erreur d'un exécutable natif devient des
           # ErrorRecords, et le moindre avertissement de pytest tuait l'étape
           # avant le diagnostic (runs 41361547004 et 41362919313).
-          python -m pytest -q -rf `
+          python -m pytest -v --tb=line -rf `
             -m "not postgres and not s3 and not perf and not redis_queue and not ocr_suite" `
             --ignore=tests/test_chaos.py `
             --ignore=tests/test_worker_process.py `
@@ -121,29 +121,19 @@ jobs:
           exit 0
       - name: Suite sans service sur Windows — verdict
         if: always()
+        # Le verdict est prononcé par ``ci/verdict-windows.ps1`` : inventaire
+        # COMPLET des échecs publié par paquets (GitHub n'affiche que dix
+        # annotations par étape — 73 échecs ne se lisaient qu'aux dix
+        # premiers), puis comparaison avec ``ci/ecarts-windows.txt``. Un écart
+        # non nommé fait échouer le job : un test écarté doit être écrit
+        # quelque part avec sa raison, jamais oublié.
         run: |
           $ErrorActionPreference = 'Continue'
-          function Publier([string]$titre, [string]$texte) {
-            if ($null -eq $texte) { $texte = '' }
-            $propre = $texte -replace '%', '%25' -replace "`r", '%0D' -replace "`n", '%0A'
-            if ($propre.Length -gt 3000) { $propre = $propre.Substring(0, 3000) }
-            Write-Host "::notice title=$titre::$propre"
-          }
-          $fichier_rc = "logs\rc-sans-service.txt"
-          if (-not (Test-Path $fichier_rc)) {
-            Write-Host "::error title=windows-sans-service::l'execution n'a pas meme laisse de code de sortie — elle a ete interrompue avant la fin"
-            exit 1
-          }
-          $rc = [int](Get-Content $fichier_rc -Raw).Trim()
-          $resume = (Select-String -Path logs\windows-sans-service.log -Pattern '^(FAILED|ERROR)|passed|failed' |
-                     Select-Object -Last 8 | ForEach-Object { $_.Line }) -join ' | '
-          Publier "windows-sans-service" "rc=$rc ; $resume"
-          if ($rc -ne 0) {
-            $echecs = (Select-String -Path logs\windows-sans-service.log -Pattern '^(FAILED|ERROR)' |
-                       Select-Object -First 10 | ForEach-Object { $_.Line }) -join ' | '
-            Publier "windows-sans-service-echec" "$echecs"
-            exit $rc
-          }
+          pwsh -File ci\verdict-windows.ps1 `
+            -Journal logs\windows-sans-service.log `
+            -CodeSortie logs\rc-sans-service.txt `
+            -Titre windows-sans-service
+          exit $LASTEXITCODE
       - name: Installer PostgreSQL 16 (hôte)
         if: always()
         # Les services de conteneurs de GitHub ne fonctionnent pas sur les
@@ -264,7 +254,7 @@ jobs:
           }
           Publier "windows-postgres-redis-debut" "lancement de la suite"
           New-Item -ItemType Directory -Force -Path logs | Out-Null
-          python -m pytest -q -rf `
+          python -m pytest -v --tb=line -rf `
             -m "postgres and not s3 and not perf and not ocr_suite and not redis_queue" `
             --ignore=tests/test_chaos.py `
             --ignore=tests/test_worker_process.py `
@@ -284,27 +274,11 @@ jobs:
         if: always()
         run: |
           $ErrorActionPreference = 'Continue'
-          function Publier([string]$titre, [string]$texte) {
-            if ($null -eq $texte) { $texte = '' }
-            $propre = $texte -replace '%', '%25' -replace "`r", '%0D' -replace "`n", '%0A'
-            if ($propre.Length -gt 3000) { $propre = $propre.Substring(0, 3000) }
-            Write-Host "::notice title=$titre::$propre"
-          }
-          $fichier_rc = "logs\rc-postgres-redis.txt"
-          if (-not (Test-Path $fichier_rc)) {
-            Write-Host "::error title=windows-postgres-redis::l'execution n'a pas laisse de code de sortie"
-            exit 1
-          }
-          $rc = [int](Get-Content $fichier_rc -Raw).Trim()
-          $resume = (Select-String -Path logs\windows-postgres-redis.log -Pattern '^(FAILED|ERROR)|passed|failed' |
-                     Select-Object -Last 8 | ForEach-Object { $_.Line }) -join ' | '
-          Publier "windows-postgres-redis" "rc=$rc ; $resume"
-          if ($rc -ne 0) {
-            $echecs = (Select-String -Path logs\windows-postgres-redis.log -Pattern '^(FAILED|ERROR)' |
-                       Select-Object -First 10 | ForEach-Object { $_.Line }) -join ' | '
-            Publier "windows-postgres-redis-echec" "$echecs"
-            exit $rc
-          }
+          pwsh -File ci\verdict-windows.ps1 `
+            -Journal logs\windows-postgres-redis.log `
+            -CodeSortie logs\rc-postgres-redis.txt `
+            -Titre windows-postgres-redis
+          exit $LASTEXITCODE
       - name: Diagnostic — fichiers à processus POSIX, exécutés un par un
         if: always()
         # La suite sans service meurt PENDANT pytest : le témoin de début
@@ -340,6 +314,52 @@ jobs:
             Publier "diag-$nom" "rc=$rc"
           }
           Publier "diag-fin" "tous les fichiers a processus ont ete executes"
+      - name: Diagnostic ciblé — les échecs encore non élucidés
+        if: always()
+        # Trois échecs ne sont attribuables à aucune limite de plateforme
+        # connue : deux rejeux téléversés (TestRejeuSansDoublon) et une
+        # concurrence de corrections PostgreSQL. Ils passent sur Linux — donc
+        # soit ils révèlent un VRAI défaut produit propre à Windows (le plus
+        # intéressant à trouver), soit une différence de banc.
+        #
+        # Une annotation ne dit pas tout : on publie la FIN de la section
+        # FAILURES (là où se trouvent l'assertion et les valeurs), tronquée à
+        # la taille que GitHub accepte. Sans cela, ces trois échecs
+        # resteraient des lignes rouges sans cause lisible.
+        env:
+          SEAMTECH_TEST_DATABASE_URL: postgresql://seamtech:seamtech_test_password@127.0.0.1:5432/seamtech_search_test
+          SEAMTECH_TEST_REDIS_URL: redis://127.0.0.1:6379/1
+          SEAMTECH_TEST_REDIS_SERVER: C:\redis7\Redis-7.4.11-Windows-x64-msys2\redis-server.exe
+        run: |
+          $ErrorActionPreference = 'Continue'
+          function Publier([string]$titre, [string]$texte) {
+            if ($null -eq $texte) { $texte = '' }
+            $propre = $texte -replace '%', '%25' -replace "`r", '%0D' -replace "`n", '%0A'
+            if ($propre.Length -gt 3000) { $propre = $propre.Substring(0, 3000) }
+            Write-Host "::notice title=$titre::$propre"
+          }
+          New-Item -ItemType Directory -Force -Path logs | Out-Null
+          $cibles = @(
+            "tests/test_depot_transactionnel.py::TestRejeuSansDoublon::test_rejeu_televerse_dans_une_nouvelle_session_ne_duplique_rien",
+            "tests/test_depot_transactionnel.py::TestRejeuSansDoublon::test_rejeu_televerse_reconnait_une_ancienne_cle_absolue",
+            "tests/test_verrou_mutation_import.py::test_corrections_pg_concurrentes_refusees_avant_mutation"
+          )
+          $n = 0
+          foreach ($cible in $cibles) {
+            $n++
+            python -m pytest -vv --tb=long -p no:randomly $cible > "logs\diag-cible-$n.log" 2>&1
+            $rc = $LASTEXITCODE
+            $tout = Get-Content "logs\diag-cible-$n.log" -Raw
+            $debut = $tout.IndexOf("= FAILURES =")
+            if ($debut -lt 0) { $debut = 0 }
+            $fin = $tout.IndexOf("short test summary info")
+            if ($fin -le $debut) { $fin = $tout.Length }
+            $extrait = $tout.Substring($debut, [Math]::Min($fin - $debut, $tout.Length - $debut))
+            # La fin porte l'assertion et les valeurs ; le début n'est que du cadre.
+            if ($extrait.Length -gt 2900) { $extrait = "…" + $extrait.Substring($extrait.Length - 2900) }
+            Publier "diag-cible-$n" "rc=$rc cible=$cible`n$extrait"
+          }
+          Publier "diag-cible-fin" "diagnostics cibles executes"
       - name: Ligne de commande et chemins Windows
         if: always()
         run: |

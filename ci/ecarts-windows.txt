@@ -1,0 +1,27 @@
+# Écarts Windows NOMMÉS — lisible par ci/verdict-windows.ps1.
+#
+# Format : <motif d'identifiant de test>|<raison, une ligne>
+# Le motif est comparé au DÉBUT de l'identifiant (FAILED tests/x.py::test_y).
+# Un échec qui ne correspond à aucune ligne fait échouer le job : c'est la
+# garantie qu'un écart ajouté ici est un écart assumé, jamais un oubli.
+#
+# Règle d'or : une ligne ajoutée doit porter la raison EXACTE pour laquelle le
+# test ne peut pas passer sur Windows, et la contrepartie (ce qui prouve la
+# même chose ailleurs). Une ligne sans contrepartie est une preuve perdue.
+
+# --- Limite de SYSTÈME : confinement des fichiers par descripteur ----------
+# Le produit épingle un dossier par descripteur (os.open(dir_fd=…),
+# O_NOFOLLOW) et l'inventorie sans jamais traverser de lien. Windows n'a ni
+# dir_fd ni O_NOFOLLOW : il n'existe pas d'équivalent, et un remplacement
+# « à peu près » serait un confinement de façade. La contrepartie est double :
+#   * le refus est NOMMÉ (seamtech_search/plateforme.py), pas une panne ;
+#   * le déploiement Windows se fait dans Docker avec des conteneurs LINUX
+#     (décision de déploiement, pas un pis-aller de CI) ;
+#   * la suite POSIX complète tourne sur Linux à chaque commit et couvre ces
+#     mêmes tests.
+tests/test_depot_apres_import.py::test_depot_apres_import_du_meme_dossier_est_accepte|scan ancre par descripteur (dir_fd+O_NOFOLLOW) inexistant sur Windows ; couvert par CI Linux ; déploiement Windows = Docker Linux
+tests/test_depot_apres_import.py::test_depot_rejoue_garde_l_identite_des_octets_des_pieces|conséquence du même refus de scan : le premier dépôt échoue, le rejeu n'a rien à comparer
+tests/test_snapshot_import_pg.py::test_capture_et_liaison_initiale_pg|scan ancre par descripteur : l'import d'arborescence refuse avant toute écriture
+tests/test_snapshot_import_pg.py::test_correction_interrompue_enregistre_intention_et_donnees_pg|idem : capture impossible sans primitives POSIX
+tests/test_snapshot_import_pg.py::test_panne_publication_pg_garde_intention_sans_document|idem
+tests/test_verification_integrite.py::test_reprise_identite_source_postgres_vrai|idem : reprise d'identité source depuis un dossier scanné

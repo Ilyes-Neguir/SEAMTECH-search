@@ -49,6 +49,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import errno
 import glob
 import hashlib
 import json
@@ -73,6 +74,15 @@ try:
 except ImportError:  # Windows : le verrou doit refuser plutôt que fonctionner sans exclusion.
     fcntl = None
 
+try:
+    # Windows : ``msvcrt.locking`` est un verrou de plage d'octets, non bloquant
+    # en mode LK_NBLCK. Il ne s'applique qu'à des FICHIERS — un répertoire ne
+    # se verrouille pas. Le parent est donc verrouillé par un fichier posé À
+    # CÔTÉ du dossier de sauvegarde (voir ``VerrouSauvegarde``).
+    import msvcrt
+except ImportError:
+    msvcrt = None
+
 import psycopg2
 from psycopg2 import sql
 
@@ -88,6 +98,24 @@ TAILLE_BLOC_SHA256 = 1024 * 1024
 
 #: Nom du fichier verrou (un seul sauver à la fois par dossier).
 NOM_VERROU = "sauvegarde.lock"
+
+#: Verrou du PARENT, pour les plateformes sans ``flock`` sur répertoire :
+#: verrouiller le dossier lui-même est impossible, on verrouille donc un
+#: fichier posé à côté. Le scénaire couvert est le même que sur POSIX : un
+#: renommage du dossier de sauvegarde ne doit pas ouvrir la porte à un second
+#: détenteur (voir ``VerrouSauvegarde``).
+NOM_VERROU_PARENT = ".sauvegarde-parent.lock"
+
+#: Errnos signifiant « la plage est déjà verrouillée » : ``flock`` non bloquant
+#: (EWOULDBLOCK, via BlockingIOError) et ``msvcrt.locking`` (EACCES / EDEADLK).
+#: Regroupés ici parce que les deux plateformes doivent produire le même
+#: message, et qu'un opérateur qui lit « impossible d'acquérir » ne sait pas
+#: s'il doit attendre, tuer un processus ou changer de dossier.
+_ERRNOS_VERROU_PRIS = frozenset({errno.EACCES, errno.EAGAIN, errno.EWOULDBLOCK, errno.EDEADLK})
+
+#: Nombre d'octets verrouillés par ``msvcrt.locking`` (une plage d'un octet
+#: suffit : c'est l'exclusion mutuelle qui compte, pas la taille).
+PLAGE_VERROU_WINDOWS = 1
 
 #: Clés de configuration dont la valeur est masquée dans l'instantané.
 _RE_SECRET = re.compile(r"(password|secret|token|access_key|secret_key|passwd)", re.I)
@@ -306,6 +334,29 @@ def inventorier_archive(racines: list[Path]) -> dict:
     return {"racines": [str(Path(r).resolve()) for r in racines], "nb_fichiers": len(fichiers), "octets_total": octets_total, "fichiers": fichiers}
 
 
+def _verrouiller_plage(fd: int) -> None:
+    """Verrou exclusif non bloquant d'une plage d'un octet (``msvcrt``).
+
+    Lève ``OSError`` si la plage est déjà verrouillée par un autre
+    titulaire : l'appelant le traduit en « une sauvegarde est déjà en cours ».
+    """
+    if msvcrt is None:  # pragma: no cover - n'arrive que si la plateforme ment
+        raise SauvegardeError("Verrouillage sûr indisponible sur cette plateforme")
+    os.lseek(fd, 0, os.SEEK_SET)
+    msvcrt.locking(fd, msvcrt.LK_NBLCK, PLAGE_VERROU_WINDOWS)
+
+
+def _deverrouiller_plage(fd: int) -> None:
+    """Libère la plage verrouillée — meilleur effort, jamais bloquant."""
+    if msvcrt is None:  # pragma: no cover
+        return
+    try:
+        os.lseek(fd, 0, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_UNLCK, PLAGE_VERROU_WINDOWS)
+    except OSError:  # pragma: no cover - le descripteur peut être déjà fermé
+        pass
+
+
 class VerrouSauvegarde:
     """Un seul ``sauver`` à la fois sur un dossier de destination.
 
@@ -329,6 +380,9 @@ class VerrouSauvegarde:
         self._flux = None
         self._fd_dossier = None
         self._fd_parent = None
+        # Windows : descripteurs verrouillés par ``msvcrt.locking``, dans l'ordre
+        # d'acquisition (parent, puis dossier) — libérés en ordre inverse.
+        self._fds_verrouilles: list[int] = []
         self._garde_instance = threading.Lock()
 
     def __enter__(self) -> "VerrouSauvegarde":
@@ -340,10 +394,68 @@ class VerrouSauvegarde:
             self._garde_instance.release()
             raise
 
+    @staticmethod
+    def _confinement_posix() -> bool:
+        """Les primitives d'ancrage par descripteur sont-elles disponibles ?"""
+        return (
+            fcntl is not None
+            and hasattr(os, "O_NOFOLLOW")
+            and hasattr(os, "O_DIRECTORY")
+            and os.open in os.supports_dir_fd
+        )
+
     def _acquerir(self) -> "VerrouSauvegarde":
-        if (fcntl is None or not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_DIRECTORY")
-                or os.open not in os.supports_dir_fd):
-            raise SauvegardeError("Verrouillage sûr indisponible sur cette plateforme")
+        if self._confinement_posix():
+            return self._acquerir_posix()
+        if msvcrt is not None:
+            return self._acquerir_windows()
+        raise SauvegardeError("Verrouillage sûr indisponible sur cette plateforme")
+
+    def _acquerir_windows(self) -> "VerrouSauvegarde":
+        """Verrou exclusif par plage d'octets : le parent, puis le dossier.
+
+        Sur Windows, un répertoire ne se verrouille pas et ``flock`` n'existe
+        pas. L'équivalent retenu verrouille deux FICHIERS : l'un dans le parent
+        (qui ne bouge pas quand le dossier de sauvegarde est renommé — la
+        propriété que le verrou du parent apportait sur POSIX), l'autre dans le
+        dossier lui-même. La coordination avec les anciennes versions reste
+        assurée : le second fichier est ``sauvegarde.lock``, le même nom.
+
+        Ce qu'on perd, dit franchement : un verrou de plage d'octets est
+        libéré à la fermeture du descripteur, y compris si le processus meurt
+        — c'est le bon comportement — mais il ne survit pas à une coupure de
+        courant pendant l'attente, ce qu'aucun verrou ne fait.
+        """
+        fds: list[int] = []
+        try:
+            for chemin in (self.dossier.parent / NOM_VERROU_PARENT, self.chemin):
+                fd = os.open(chemin, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOINHERIT", 0), 0o600)
+                fds.append(fd)
+                _verrouiller_plage(fd)
+        except BaseException as erreur:
+            for fd in reversed(fds):
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            return self._refuser_verrou(erreur)
+        self._fds_verrouilles = fds
+        return self
+
+    def _refuser_verrou(self, erreur: BaseException) -> "VerrouSauvegarde":
+        # ``flock`` non bloquant lève BlockingIOError ; ``msvcrt.locking`` lève
+        # OSError(EACCES/EDEADLK) — errno normalisé par Python. Les deux veulent
+        # dire la même chose, et l'opératrice doit lire la même phrase.
+        pris = isinstance(erreur, BlockingIOError) or (
+            isinstance(erreur, OSError) and erreur.errno in _ERRNOS_VERROU_PRIS
+        )
+        if pris:
+            raise SauvegardeError("une sauvegarde est déjà en cours — chevauchement refusé") from None
+        if isinstance(erreur, OSError):
+            raise SauvegardeError("Impossible d'acquérir le verrou de sauvegarde") from None
+        raise erreur
+
+    def _acquerir_posix(self) -> "VerrouSauvegarde":
         fd = None
         try:
             # Le parent d'abord : un renommage du dossier de sauvegarde ne doit
@@ -390,6 +502,17 @@ class VerrouSauvegarde:
         return self
 
     def __exit__(self, *exc: object) -> None:
+        if self._fds_verrouilles:
+            try:
+                for fd in reversed(self._fds_verrouilles):
+                    try:
+                        _deverrouiller_plage(fd)
+                    finally:
+                        os.close(fd)
+            finally:
+                self._fds_verrouilles = []
+                self._garde_instance.release()
+            return
         try:
             if self._flux is not None:
                 try:
