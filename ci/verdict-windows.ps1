@@ -74,15 +74,6 @@ if (Test-Path $Journal) {
 }
 Publier $Titre "rc=$rc ; echecs=$($echecs.Count) ; $resume"
 
-if ($echecs.Count -gt 0) {
-    $paquet = 0
-    for ($i = 0; $i -lt $echecs.Count; $i += 25) {
-        $paquet++
-        $morceau = ($echecs[$i..([Math]::Min($i + 24, $echecs.Count - 1))]) -join ' '
-        Publier "$Titre-inventaire-$paquet" $morceau
-    }
-}
-
 # --- 2 bis. Les CAUSES, pas seulement les noms ------------------------------
 # 71 identifiants ne disent pas POURQUOI. Le message qui suit « - » sur chaque
 # ligne FAILED est regroupé ici en quelques familles : « 42 échecs : Capacité
@@ -106,8 +97,23 @@ if (Test-Path $Journal) {
 $numero = 0
 foreach ($cle in ($causes.Keys | Sort-Object { -$causes[$_].Count })) {
     $numero++
-    if ($numero -gt 5) { break }  # cinq familles : au-delà, l'inventaire suffit
+    if ($numero -gt 6) { break }  # six familles : au-delà, l'inventaire suffit
     Publier "$Titre-cause-$numero" "EXEMPLES[$($causes[$cle] -join ' ')] CAUSE: $cle"
+}
+
+
+# Plafond : dix annotations par étape. Avec 314 échecs, l'inventaire complet
+# (9 paquets) laissait les CAUSES de côté — or ce sont elles qui décident. On
+# publie donc les causes d'abord, et l'inventaire sur un échantillon borné :
+# identifier 60 tests suffit à instruire, classer 314 échecs est le vrai besoin.
+if ($echecs.Count -gt 0) {
+    $paquet = 0
+    $limite = [Math]::Min($echecs.Count, 60)
+    for ($i = 0; $i -lt $limite; $i += 30) {
+        $paquet++
+        $morceau = ($echecs[$i..([Math]::Min($i + 29, $limite - 1))]) -join ' '
+        Publier "$Titre-inventaire-$paquet" ("$($echecs.Count) echecs ; extrait : " + $morceau)
+    }
 }
 
 if ($rc -eq 0) { exit 0 }
