@@ -56,9 +56,17 @@ def id_document(index: Any, suffixe: str) -> int:
     le rebuild n'y était pour rien (run 41427629667, cause 2). Sur POSIX,
     ``normpath`` est l'identité pour ce genre de chemin : rien ne change.
     """
-    attendu = os.path.normpath(suffixe)
+    # ``normcase`` en plus de ``normpath`` : sur Windows, la clé stockée est
+    # entièrement en minuscules (« …\dossier-client\fiche-a.txt ») alors que
+    # le test écrit « dossier-client/fiche-A.txt ». Les deux désignent le MÊME
+    # fichier sur un système insensible à la casse ; comparer sans normaliser
+    # faisait échouer des tests de rebuild sur Windows seuls, avec un message
+    # qui accusait le rebuild (run 41454455187, cible diag-cible-2). Sur POSIX,
+    # ``normcase`` est l'identité : rien ne change, aucune tolérance ajoutée.
+    attendu = os.path.normcase(os.path.normpath(suffixe))
     for cle, identifiant in identifiants_documents(index).items():
-        if cle.endswith(attendu) or os.path.normpath(cle).endswith(attendu):
+        cle_normee = os.path.normcase(os.path.normpath(cle))
+        if cle_normee.endswith(attendu):
             return identifiant
     raise AssertionError(f"document introuvable : {suffixe} parmi {sorted(identifiants_documents(index))}")
 

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Barrier
@@ -20,6 +21,23 @@ def _document(chemin: Path, contenu: bytes, *, objet: str | None = None) -> Docu
         source_sha256=hashlib.sha256(contenu).hexdigest(), lexical_path_key=True,
         object_key=objet, object_bucket='bucket-synthetique' if objet else None,
     )
+
+
+def _cle(chemin: Path) -> str:
+    """Clé d'index d'un chemin : CELLE QUE L'INDEXEUR ÉCRIT.
+
+    ``path_key`` est stocké en ``os.path.normcase`` du chemin absolu. Sur
+    POSIX, ``normcase`` ne change rien et la confusion est sans effet ; sur
+    Windows, il met TOUT en minuscules, si bien qu'une recherche par le chemin
+    brut ne trouvait jamais la ligne — et le test échouait en
+    ``TypeError: 'NoneType' object is not subscriptable``, un message qui ne
+    dit rien de la vraie cause (vue au run 41454455187, cible diag-cible-1).
+
+    Le produit n'est pas en cause : c'est la clé du TEST qui doit être celle du
+    produit. Une comparaison de chemins qui ignore la casse de la plateforme
+    serait, elle, un test plus faible.
+    """
+    return os.path.normcase(str(chemin.resolve()))
 
 
 def _course(index_a: SearchIndex, index_b: SearchIndex, chemin: Path, cas: str) -> None:
@@ -58,11 +76,11 @@ def _course(index_a: SearchIndex, index_b: SearchIndex, chemin: Path, cas: str) 
     with index_a.connect() as connexion:
         if index_a.is_postgres:
             with connexion.cursor() as curseur:
-                curseur.execute('SELECT source_sha256, object_key FROM documents WHERE path_key = %s', (str(chemin),))
+                curseur.execute('SELECT source_sha256, object_key FROM documents WHERE path_key = %s', (_cle(chemin),))
                 ligne = curseur.fetchone()
         else:
             ligne = connexion.execute('SELECT source_sha256, object_key FROM documents WHERE path_key = ?',
-                                     (str(chemin),)).fetchone()
+                                     (_cle(chemin),)).fetchone()
     assert ligne[0] == attendu
     if gagnant is not None:
         assert ligne[1] == gagnant.object_key

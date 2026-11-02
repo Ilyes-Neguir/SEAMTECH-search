@@ -1,4 +1,5 @@
 """Liaison conditionnelle et rollback sur PostgreSQL jetable réel."""
+import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Barrier
@@ -33,8 +34,25 @@ def _imports_sans_objet(base_recherche, tmp_path, monkeypatch, identifiants=('li
 def _document(index, piece):
     with index.connect() as connexion, connexion.cursor() as curseur:
         curseur.execute('SELECT id, content_hash, source_sha256, object_key, object_bucket '
-                        'FROM documents WHERE path_key = %s', (str(piece),))
+                        'FROM documents WHERE path_key = %s', (_cle(piece),))
         return curseur.fetchone()
+
+def _cle(chemin: Path) -> str:
+    """Clé d'index d'un chemin : CELLE QUE L'INDEXEUR ÉCRIT.
+
+    ``path_key`` est stocké en ``os.path.normcase`` du chemin absolu. Sur
+    POSIX, ``normcase`` ne change rien et la confusion est sans effet ; sur
+    Windows, il met TOUT en minuscules, si bien qu'une recherche par le chemin
+    brut ne trouvait jamais la ligne — et le test échouait en
+    ``TypeError: 'NoneType' object is not subscriptable``, un message qui ne
+    dit rien de la vraie cause (vue au run 41454455187, cible diag-cible-1).
+
+    Le produit n'est pas en cause : c'est la clé du TEST qui doit être celle du
+    produit. Une comparaison de chemins qui ignore la casse de la plateforme
+    serait, elle, un test plus faible.
+    """
+    return os.path.normcase(str(chemin.resolve()))
+
 
 
 def test_reprise_pg_lie_preuve_identique_et_preserve_reference(base_recherche, tmp_path: Path, monkeypatch):
@@ -63,7 +81,7 @@ def test_reprise_pg_refuse_document_reindexe(base_recherche, tmp_path: Path, mon
     # Reproduction d'un ancien écrivain SQL qui contourne la garde applicative.
     with index.connect() as connexion, connexion.cursor() as curseur:
         curseur.execute('UPDATE documents SET size = %s, content = %s WHERE path_key = %s',
-                        (remplacement.size, remplacement.searchable_text, str(piece)))
+                        (remplacement.size, remplacement.searchable_text, _cle(piece)))
     assert _document(index, piece)[2] is None
     repris = pipeline.retry_upload(index, cfg, imports[0].import_id)
     assert _document(index, piece)[3] is None
@@ -166,7 +184,7 @@ def test_mutation_par_code_ancien_pg_invalide_identite_avant_reprise(base_recher
     _source, piece, cfg, index, _magasin, imports = _imports_sans_objet(base_recherche, tmp_path, monkeypatch)
     with index.connect() as connexion, connexion.cursor() as curseur:
         curseur.execute('UPDATE documents SET size = %s, content_hash = %s WHERE path_key = %s',
-                        (999, 'texte-remplace', str(piece)))
+                        (999, 'texte-remplace', _cle(piece)))
     assert _document(index, piece)[2] is None
     repris = pipeline.retry_upload(index, cfg, imports[0].import_id)
     assert repris['files'][0]['catalogue_lie'] is False and _document(index, piece)[3] is None
@@ -203,14 +221,14 @@ def test_declencheur_invalide_meme_les_reecritures_identiques_pg(base_recherche,
                 'extraction_detail', 'category')
     for colonne in colonnes:
         with index.connect() as connexion, connexion.cursor() as curseur:
-            curseur.execute('UPDATE documents SET source_sha256 = %s WHERE path_key = %s', ('a' * 64, str(piece)))
-            curseur.execute(f'UPDATE documents SET {colonne} = {colonne} WHERE path_key = %s', (str(piece),))
+            curseur.execute('UPDATE documents SET source_sha256 = %s WHERE path_key = %s', ('a' * 64, _cle(piece)))
+            curseur.execute(f'UPDATE documents SET {colonne} = {colonne} WHERE path_key = %s', (_cle(piece),))
         assert _document(index, piece)[2] is None, colonne
     index.upsert_document(document)
     index.upsert_document(document)
     assert _document(index, piece)[2] == 'a' * 64
     with index.connect() as connexion, connexion.cursor() as curseur:
-        curseur.execute('UPDATE documents SET object_key = %s WHERE path_key = %s', ('cle', str(piece)))
+        curseur.execute('UPDATE documents SET object_key = %s WHERE path_key = %s', ('cle', _cle(piece)))
     assert _document(index, piece)[2] == 'a' * 64
 
 
