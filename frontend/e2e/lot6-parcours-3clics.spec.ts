@@ -276,6 +276,22 @@ test.describe("Lot 6 — parcours 3 clics et cohérence globale", () => {
   })
 
   test("liens croisés voiles : extraction → Confiance… → fiche source → fiche métier", async ({ browser }) => {
+    // Budget du TEST, pas des assertions : ce scénario enchaîne huit
+    // navigations (recherche → liste → extraction → Confiance → évaluation →
+    // population → fiche source → fiche métier) dont une, « Évaluer la
+    // confiance », déclenche un calcul serveur. Les 30 s par défaut de
+    // Playwright sont un budget par test : sous charge CI (2 vCPU, front de
+    // production + backend + PostgreSQL), ce scénario les a dépassés une fois
+    // puis réussi au réessai — compté « flaky », donc ROUGE par la porte qui
+    // interdit l'instabilité.
+    //
+    // Relever CE budget n'affaiblit aucune assertion : chaque attente garde
+    // sa propre borne (30 s explicites, 15 s par défaut dans la config), donc
+    // un comportement absent échoue toujours, et une vérification négative
+    // réussit toujours immédiatement. Ce qui change, c'est le droit d'être
+    // lent sans être déclaré absent — la même convention que
+    // accessibilite.spec.ts, concurrence.spec.ts et televersement-lot.spec.ts.
+    test.setTimeout(120_000)
     const contextes: BrowserContext[] = []
     try {
       const page = await ouvrirPoste(browser, contextes, APPROBATEUR_2)
