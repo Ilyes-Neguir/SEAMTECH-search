@@ -52,6 +52,13 @@ jobs:
       # seule étape qui en a besoin.
       PYTHONIOENCODING: utf-8
       PYTHONUTF8: "1"
+      # La suite sans service MEURT par moments sans laisser de code de sortie
+      # (runs 41365859490, 41375766036, 41420706781) : le processus Python
+      # disparaît. Sans faulthandler, une mort native ne laisse aucune trace
+      # exploitable — seulement l'absence de résumé. Avec lui, la pile Python
+      # est écrite sur la sortie d'erreur, donc dans le journal, donc lisible
+      # dans la queue que publie le verdict.
+      PYTHONFAULTHANDLER: "1"
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7

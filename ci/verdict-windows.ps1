@@ -46,9 +46,14 @@ if (-not (Test-Path $CodeSortie)) {
     # démarré. C'est le seul canal qui survit à une mort de l'étape.
     $queue = ''
     if (Test-Path $Journal) {
-        $queue = ((Get-Content $Journal -Tail 20) -join ' `n ')
+        $queue = ((Get-Content $Journal -Tail 25) -join ' `n ')
     }
-    PublierErreur $Titre ("interrompue avant la fin — derniere ligne atteinte : $queue")
+    # C'est la FIN du journal qui dit où ça meurt, et ``Publier`` tronque au
+    # DÉBUT : on coupe donc la queue nous-mêmes avant de la lui confier. Run
+    # 41420706781 : le message commençait par le premier test de la queue et
+    # s'arrêtait avant la ligne utile.
+    if ($queue.Length -gt 2800) { $queue = '…' + $queue.Substring($queue.Length - 2800) }
+    PublierErreur $Titre ("interrompue avant la fin — fin du journal : $queue")
     exit 1
 }
 $rc = [int]((Get-Content $CodeSortie -Raw).Trim())
@@ -76,6 +81,33 @@ if ($echecs.Count -gt 0) {
         $morceau = ($echecs[$i..([Math]::Min($i + 24, $echecs.Count - 1))]) -join ' '
         Publier "$Titre-inventaire-$paquet" $morceau
     }
+}
+
+# --- 2 bis. Les CAUSES, pas seulement les noms ------------------------------
+# 71 identifiants ne disent pas POURQUOI. Le message qui suit « - » sur chaque
+# ligne FAILED est regroupé ici en quelques familles : « 42 échecs : Capacité
+# de plateforme absente : scan_ancre_descripteur ». C'est ce qui permet de
+# décider, pour chaque famille, entre adapter le produit et nommer l'écart —
+# au lieu de classer 71 lignes à la main.
+$causes = @{}
+if (Test-Path $Journal) {
+    Select-String -Path $Journal -Pattern '^(FAILED|ERROR) ' | ForEach-Object {
+        $ligne = $_.Line
+        $separateur = $ligne.IndexOf(' - ')
+        if ($separateur -gt 0) {
+            $identifiant = ($ligne.Substring(0, $separateur) -split '\s+')[1]
+            $message = $ligne.Substring($separateur + 3)
+            if ($message.Length -gt 90) { $message = $message.Substring(0, 90) }
+            if (-not $causes.ContainsKey($message)) { $causes[$message] = @() }
+            if ($causes[$message].Count -lt 3) { $causes[$message] += $identifiant }
+        }
+    }
+}
+$numero = 0
+foreach ($cle in ($causes.Keys | Sort-Object { -$causes[$_].Count })) {
+    $numero++
+    if ($numero -gt 5) { break }  # cinq familles : au-delà, l'inventaire suffit
+    Publier "$Titre-cause-$numero" "EXEMPLES[$($causes[$cle] -join ' ')] CAUSE: $cle"
 }
 
 if ($rc -eq 0) { exit 0 }
