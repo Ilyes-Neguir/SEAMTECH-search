@@ -18,7 +18,8 @@
 param(
     [Parameter(Mandatory = $true)][string]$Journal,
     [Parameter(Mandatory = $true)][string]$CodeSortie,
-    [Parameter(Mandatory = $true)][string]$Titre
+    [Parameter(Mandatory = $true)][string]$Titre,
+    [int]$Tranche = 1
 )
 
 $ErrorActionPreference = 'Continue'
@@ -74,39 +75,65 @@ if (Test-Path $Journal) {
 }
 Publier $Titre "rc=$rc ; echecs=$($echecs.Count) ; $resume"
 
-# --- 2 bis. Les CAUSES, pas seulement les noms ------------------------------
-# 71 identifiants ne disent pas POURQUOI. Le message qui suit « - » sur chaque
-# ligne FAILED est regroupé ici en quelques familles : « 42 échecs : Capacité
-# de plateforme absente : scan_ancre_descripteur ». C'est ce qui permet de
-# décider, pour chaque famille, entre adapter le produit et nommer l'écart —
-# au lieu de classer 71 lignes à la main.
-$causes = @{}
+# --- 2 bis. Les CAUSES, et non seulement les noms ---------------------------
+# 314 échecs ne s'instruisent pas un par un : ils se regroupent par CAUSE.
+# Or la cause n'est presque JAMAIS dans la ligne « FAILED » — « Regex pattern
+# did not match. » ne dit rien de ce qui manque — elle est dans la DERNIÈRE
+# ligne « E » de la trace, que ``--tb=short`` attache à chaque test. On
+# publie donc une annotation par famille : combien d'échecs, quelle cause,
+# trois exemples. C'est ce qui permet de décider, famille par famille, entre
+# adapter le produit et nommer l'écart.
+#
+# Plafond : DIX annotations par ÉTAPE. Une seule étape ne publie donc que dix
+# familles ; le workflow rappelle ce script avec ``-Tranche 2``, ``3``… pour
+# couvrir les suivantes. Sans ce découpage, l'inventaire prenait toute la
+# place et les causes disparaissaient (run 41439011809).
+$familles = @{}
+$courant_id = $null
+$courant_cause = ''
 if (Test-Path $Journal) {
-    Select-String -Path $Journal -Pattern '^(FAILED|ERROR) ' | ForEach-Object {
-        $ligne = $_.Line
-        $separateur = $ligne.IndexOf(' - ')
-        if ($separateur -gt 0) {
-            $identifiant = ($ligne.Substring(0, $separateur) -split '\s+')[1]
-            $message = $ligne.Substring($separateur + 3)
-            if ($message.Length -gt 90) { $message = $message.Substring(0, 90) }
-            if (-not $causes.ContainsKey($message)) { $causes[$message] = @() }
-            if ($causes[$message].Count -lt 3) { $causes[$message] += $identifiant }
+    foreach ($correspondance in (Select-String -Path $Journal -Pattern '^(FAILED|ERROR) |^E\s+')) {
+        $texte = $correspondance.Line
+        if ($texte -match '^(FAILED|ERROR) ') {
+            if ($courant_id) {
+                $cle = if ($courant_cause) { $courant_cause } else { '(aucune ligne E : cause hors trace)' }
+                if (-not $familles.ContainsKey($cle)) { $familles[$cle] = New-Object System.Collections.ArrayList }
+                [void]$familles[$cle].Add($courant_id)
+            }
+            $courant_id = ($texte -split '\s+')[1]
+            $courant_cause = ''
+        } elseif ($texte -match '^E\s+(.*)$') {
+            # La DERNIÈRE ligne E d'un test est la plus précise : elle écrase
+            # les précédentes, qui ne sont que le chemin d'appel.
+            $courant_cause = $Matches[1].Trim()
         }
     }
+    if ($courant_id) {
+        $cle = if ($courant_cause) { $courant_cause } else { '(aucune ligne E : cause hors trace)' }
+        if (-not $familles.ContainsKey($cle)) { $familles[$cle] = New-Object System.Collections.ArrayList }
+        [void]$familles[$cle].Add($courant_id)
+    }
 }
-$numero = 0
-foreach ($cle in ($causes.Keys | Sort-Object { -$causes[$_].Count })) {
+$cles_triees = @($familles.Keys | Sort-Object { -$familles[$_].Count })
+# Dix annotations par étape au total, compte rendu du code de sortie compris :
+# la tranche 1 publie sept familles et garde deux places pour l'inventaire ;
+# les tranches suivantes, appelées par d'autres étapes, en publient huit.
+if ($Tranche -le 1) { $debut = 0; $combien = 7 } else { $debut = 7 + ($Tranche - 2) * 8; $combien = 8 }
+$numero = $debut
+foreach ($cle in ($cles_triees | Select-Object -Skip $debut -First $combien)) {
     $numero++
-    if ($numero -gt 6) { break }  # six familles : au-delà, l'inventaire suffit
-    Publier "$Titre-cause-$numero" "EXEMPLES[$($causes[$cle] -join ' ')] CAUSE: $cle"
+    $exemples = ($familles[$cle] | Select-Object -First 3) -join ' '
+    $cause_courte = $cle
+    if ($cause_courte.Length -gt 240) { $cause_courte = $cause_courte.Substring(0, 240) + '…' }
+    Publier "$Titre-cause-$numero" "$($familles[$cle].Count) echecs ; CAUSE: $cause_courte ; EXEMPLES: $exemples"
 }
-
 
 # Plafond : dix annotations par étape. Avec 314 échecs, l'inventaire complet
 # (9 paquets) laissait les CAUSES de côté — or ce sont elles qui décident. On
 # publie donc les causes d'abord, et l'inventaire sur un échantillon borné :
 # identifier 60 tests suffit à instruire, classer 314 échecs est le vrai besoin.
-if ($echecs.Count -gt 0) {
+# Réservé à la première tranche : les suivantes n'ont que huit places.
+if ($Tranche -le 1 -and $echecs.Count -gt 0) {
     $paquet = 0
     $limite = [Math]::Min($echecs.Count, 60)
     for ($i = 0; $i -lt $limite; $i += 30) {

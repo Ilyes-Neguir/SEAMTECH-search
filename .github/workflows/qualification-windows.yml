@@ -127,12 +127,12 @@ jobs:
           exit 0
       - name: Suite sans service sur Windows — verdict
         if: always()
-        # Le verdict est prononcé par ``ci/verdict-windows.ps1`` : inventaire
-        # COMPLET des échecs publié par paquets (GitHub n'affiche que dix
-        # annotations par étape — 73 échecs ne se lisaient qu'aux dix
-        # premiers), puis comparaison avec ``ci/ecarts-windows.txt``. Un écart
-        # non nommé fait échouer le job : un test écarté doit être écrit
-        # quelque part avec sa raison, jamais oublié.
+        # Le verdict est prononcé par ``ci/verdict-windows.ps1`` : causes
+        # regroupées par famille, inventaire par paquets (GitHub n'affiche que
+        # dix annotations par ÉTAPE — d'où les étapes de tranche ci-dessous),
+        # puis comparaison avec ``ci/ecarts-windows.txt``. Un écart non nommé
+        # fait échouer le job : un test écarté doit être écrit quelque part
+        # avec sa raison, jamais oublié.
         run: |
           $ErrorActionPreference = 'Continue'
           pwsh -File ci\verdict-windows.ps1 `
@@ -140,6 +140,34 @@ jobs:
             -CodeSortie logs\rc-sans-service.txt `
             -Titre windows-sans-service
           exit $LASTEXITCODE
+      # Une seule étape ne peut publier que dix familles de causes. Les
+      # étapes suivantes ne prononcent PAS de verdict (``exit 0``) : elles ne
+      # font que publier les tranches 2 à 5 du même diagnostic, pour que les
+      # causes restent lisibles même quand l'inventaire est long.
+      - name: Suite sans service — causes, tranche 2
+        if: always()
+        continue-on-error: true
+        run: |
+          pwsh -File ci\verdict-windows.ps1 -Journal logs\windows-sans-service.log -CodeSortie logs\rc-sans-service.txt -Titre windows-sans-service -Tranche 2
+          exit 0
+      - name: Suite sans service — causes, tranche 3
+        if: always()
+        continue-on-error: true
+        run: |
+          pwsh -File ci\verdict-windows.ps1 -Journal logs\windows-sans-service.log -CodeSortie logs\rc-sans-service.txt -Titre windows-sans-service -Tranche 3
+          exit 0
+      - name: Suite sans service — causes, tranche 4
+        if: always()
+        continue-on-error: true
+        run: |
+          pwsh -File ci\verdict-windows.ps1 -Journal logs\windows-sans-service.log -CodeSortie logs\rc-sans-service.txt -Titre windows-sans-service -Tranche 4
+          exit 0
+      - name: Suite sans service — causes, tranche 5
+        if: always()
+        continue-on-error: true
+        run: |
+          pwsh -File ci\verdict-windows.ps1 -Journal logs\windows-sans-service.log -CodeSortie logs\rc-sans-service.txt -Titre windows-sans-service -Tranche 5
+          exit 0
       - name: Installer PostgreSQL 16 (hôte)
         if: always()
         # Les services de conteneurs de GitHub ne fonctionnent pas sur les
@@ -298,6 +326,18 @@ jobs:
             -CodeSortie logs\rc-postgres-redis.txt `
             -Titre windows-postgres-redis
           exit $LASTEXITCODE
+      - name: Suite PostgreSQL + Redis — causes, tranche 2
+        if: always()
+        continue-on-error: true
+        run: |
+          pwsh -File ci\verdict-windows.ps1 -Journal logs\windows-postgres-redis.log -CodeSortie logs\rc-postgres-redis.txt -Titre windows-postgres-redis -Tranche 2
+          exit 0
+      - name: Suite PostgreSQL + Redis — causes, tranche 3
+        if: always()
+        continue-on-error: true
+        run: |
+          pwsh -File ci\verdict-windows.ps1 -Journal logs\windows-postgres-redis.log -CodeSortie logs\rc-postgres-redis.txt -Titre windows-postgres-redis -Tranche 3
+          exit 0
       - name: Diagnostic — fichiers à processus POSIX, exécutés un par un
         if: always()
         # La suite sans service meurt PENDANT pytest : le témoin de début
