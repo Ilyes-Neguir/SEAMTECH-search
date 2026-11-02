@@ -3074,3 +3074,90 @@ les cinq fichiers qui concentrent les échecs inexpliqués et publie les lignes
 « E » dédoublées : c'est la prochaine lecture, et c'est elle qui dira si ces 66
 échecs relèvent d'une limite de plateforme (à nommer) ou d'un défaut (à
 corriger).
+
+## 57. Diagnostic Windows : un vrai défaut PRODUIT trouvé, et un outil de verdict qui ne savait plus relire
+
+### 57.1 Le diagnostic devient un job à part (commit `d52c7dd`)
+
+L'étape de diagnostic réussissait mais ne publiait rien de lisible (runs
+`41523086709`, `41536354571`) : une exécution de vérification plafonne à
+**50 annotations**, et dans le job principal les tranches de causes saturent
+ce plafond. Le diagnostic est donc devenu un **job séparé**
+(`.github/workflows/qualification-windows.yml`, job `diagnostic-causes`), avec
+son propre budget d'annotations et son propre artefact. Il rejoue SEULS, avec
+`--tb=long`, les quatre fichiers qui concentrent les échecs inexpliqués, puis
+publie, par fichier : les familles de causes (`fam-<fichier>`), le détail
+« identifiant|cause » par test (`det-<fichier>`), et les lignes « E »
+dédoublées (`diag-<fichier>`).
+
+### 57.2 UN DÉFAUT PRODUIT, trouvé par ce diagnostic (commit `74f03e8`)
+
+`seamtech_search/sauvegarde.py` écrivait les chemins relatifs des manifestes
+avec le **séparateur de l'OS qui les produit** :
+`str(chemin.relative_to(racine))` → `CLIENT-A\fiche.pdf` sur Windows.
+Restauré ailleurs (Linux), l'antislash n'est pas un séparateur :
+`Path("data") / "CLIENT-A\fiche.pdf"` crée un fichier **dont le nom contient un
+antislash**. Une sauvegarde illisible hors de la machine qui l'a produite est
+l'inverse d'une sauvegarde hors site — précisément ce que le P0 demande.
+
+Les quatre points d'écriture passent en `as_posix()` ; `pathlib` accepte « / »
+sur les deux plateformes, la restauration est inchangée. Preuve :
+`tests/test_sauvegarde_unites.py::test_inventaire_archive_chemins_portables`,
+qui échoue sur Windows avant la correction. **Le fichier
+`test_sauvegarde_unites.py` passe de 31 à 30 échecs sur Windows** (run
+`41543899126`, job `diagnostic-causes`) : la correction est vérifiée sur la
+plateforme, pas seulement en Linux.
+
+Vérification locale complète : **2 347 passés, 47 sautés, 3 xfail, 0 échec**
+(sélection exacte de la suite « sans service », 2 min 59).
+
+### 57.3 Ce que le diagnostic dit des 66 restants
+
+Les causes lues sur le runner, par fichier :
+
+| cause | nombre | déjà écrite dans `ci/ecarts-windows.txt` ? |
+|---|---|---|
+| `Lecture confinée du bundle indisponible sur cette plateforme` (y compris sous la forme `Actual message: '…'`) | ~45 | **OUI** (cause n° 63) |
+| `Restauration locale sûre indisponible sur cette plateforme` | 3 | **OUI** (cause n° 339) |
+| `ModuleNotFoundError: No module named 'fcntl'` | 2 | **OUI** (cause n° 337) |
+| `Failed: lien de verrou suivi` / `lien dur non autorisé` / `lien de dossier suivi` | ~3 | **OUI** (causes 345/347/349) |
+| `une sauvegarde est déjà en cours — chevauchement refusé` | 6 | non |
+| `PermissionError: [WinError 5] Access is denied` (renommer un dossier ouvert) | ~2 | non |
+| `OSError: [WinError 10038] not a socket` | 1 | non |
+| `ValueError: the environment variable is longer than 32767 characters` | ~1 | non |
+| `FileNotFoundError`, `IndexError`, `assert False`, « Full diff: » | ~5 | non |
+
+**La majorité des 66 échecs « sans cause » a donc une cause DÉJÀ ÉCRITE.**
+
+### 57.4 Le vrai problème : le verdict ne savait plus RELIRE (commit `07f546b`)
+
+Relu ligne à ligne, l'inventaire des 66 échecs non nommés du run
+`41530741118` porte, pour **chacun**, la mention
+« (aucune cause dans le rapport) » — alors que les familles publiées par la
+même étape proviennent bien du rapport JUnit (`156 echecs ; CAUSE:
+OSError: Capacité de plateforme absente : verrou_flock`, `38 echecs ; CAUSE:
+SauvegardeError: Lecture confinée du bundle…`).
+
+Le rapport est donc lu, les causes nommées sont dans le fichier d'écarts, et
+pourtant **aucun identifiant d'échec ne se retrouve dans le fichier de
+détail** : l'appariement est cassé entre les deux. Vérifié par ailleurs en
+Linux : les chaînes s'apparient parfaitement en Python (`'Lecture confinée du
+bundle indisponible sur cette plateforme'` est bien contenue dans
+`"Actual message: 'Lecture confinée du bundle…'"`), ce n'est donc pas un
+problème de texte ni d'accents.
+
+Conséquence, dite franchement : **le chiffre « 66 échecs sans cause » ne
+signifie pas « 66 échecs inexpliqués »**. Il signifie « 66 échecs que le
+verdict n'a pas su relire ». Tant que ceci n'est pas tranché, aucun écart
+supplémentaire ne doit être écrit sur la foi de ce compte.
+
+Le verdict gagne un mode `-DebugAppariement` (commit `07f546b`) qui publie les
+comptes — échecs du journal, entrées du détail, causes nommées, écarts
+attendus —, trois exemples de clés du détail, et pour trois échecs du journal
+si la clé est présente et avec quel texte. Une étape dédiée l'appelle sans
+jamais prononcer de verdict.
+
+**Prochaine action** : lire les annotations `windows-sans-service-debug-*` du
+run de `07f546b`, réparer l'appariement, puis recompter. Le nombre d'échecs
+réellement inexpliqués se situe, d'après le diagnostic, entre 10 et 15 — pas
+66.
