@@ -2104,3 +2104,173 @@ rien cassé d'autre, il révèle.
 4. Puis seulement : reprendre le point P0 « sauvegarde / restauration / hors
    site / rétention » avec les chiffres de ce tour (campagne ciblée : 357
    passés) et rédiger le rapport final PRÊT / NON PRÊT.
+
+## 2026-11-02 — Windows : deux limites levées, écarts opposables, banc sans `contrib`
+
+### 30. Le verrou de sauvegarde ne refusait pas « par sécurité », il refusait tout
+
+`VerrouSauvegarde` verrouillait trois descripteurs avec `flock` : le parent, le
+dossier, puis `sauvegarde.lock`. Windows n'a ni `flock` ni verrou de répertoire.
+La conséquence n'était pas une dégradation : c'était
+
+```
+SauvegardeError: Verrouillage sûr indisponible sur cette plateforme
+```
+
+sur **toute** sauvegarde. Le point P0 « sauvegarde / restauration » était donc
+inexécutable sur le poste de l'atelier, et une sauvegarde qui refuse n'est pas
+une sauvegarde. Deux tests Windows (`test_sha_snapshot_propage_aux_copies_
+locale_et_objet_pg[False]` et `[True]`) en étaient la trace visible.
+
+**Correctif (`f59dfc2`)** : sur les plateformes sans `flock`, le verrou porte
+sur deux **fichiers** verrouillés par plage d'octets (`msvcrt.locking`), dans le
+même ordre que sur POSIX :
+
+1. `.sauvegarde-parent.lock`, posé **à côté** du dossier de sauvegarde — c'est
+   le parent, verrouillé le premier, qui empêche le scénario du dossier
+   REMPLACÉ : un renommage ne doit pas ouvrir la porte à un second détenteur ;
+2. `sauvegarde.lock`, dans le dossier — le même nom qu'avant, donc la
+   coordination avec les anciennes versions est conservée.
+
+Libération en ordre inverse, puis fermeture des descripteurs. Les errnos
+EACCES / EDEADLK / EWOULDBLOCK sont traduits en « une sauvegarde est déjà en
+cours — chevauchement refusé », la même phrase des deux côtés : une opératrice
+qui lit « impossible d'acquérir » ne sait pas si elle doit attendre, tuer un
+processus ou changer de dossier.
+
+**Ce que POSIX ne voit pas** : le chemin POSIX est inchangé, et un test le
+prouve — `tests/test_verrou_sauvegarde_plateforme.py::test_sur_posix_le_fichier_
+de_verrou_du_parent_n_est_jamais_cree` vérifie que le fichier du parent
+n'apparaît jamais sur Linux.
+
+**Ce qui est prouvé, et comment** : la logique du chemin Windows est exécutée
+sur un banc POSIX avec un `msvcrt` double (ordre des verrous, ordre inverse de
+libération, refus nommé au chevauchement, refus nommé sur erreur inattendue,
+fermeture de tous les descripteurs) — 5 tests. Forcer un double n'est pas
+Windows : c'est la seule façon honnête d'exécuter cette branche avant d'avoir
+un poste Windows. La preuve plateau viendra du workflow « Qualification
+Windows ».
+
+### 31. Redis de test : un refus qui privait Windows de deux preuves
+
+`serveur_redis_isole` levait `RuntimeError: Isolation Redis par socket Unix non
+qualifiée sous Windows`, ce qui mettait deux tests en échec — perte de claim
+Redis pendant la promotion, et pendant une transaction. Le message ressemblait
+à une panne de produit ; c'était une limite de banc.
+
+**Correctif** : là où le socket Unix n'existe pas, l'instance dédiée est lancée
+sur un port TCP inoccupé, lié à `127.0.0.1`, dans un processus qu'on détruit
+nous-mêmes. POSIX garde le socket Unix. Un port TCP n'isole pas aussi bien
+qu'un objet du système de fichiers : c'est écrit dans le test, pas sous-entendu.
+
+La branche Windows est **exécutée pour de vrai** sur le banc Linux via
+`serveur_redis_isole(nom_os="nt")` : le serveur démarre, répond, et le port est
+rendu à la sortie (`test_le_chemin_windows_demarre_vraiment_un_serveur_prive`,
+7 tests au total). Le saut conditionnel de `test_qualification_redis7_refuse_
+serveur_ancienne_version` a été retiré : cette preuve n'a rien de spécifique à
+POSIX.
+
+### 32. Les échecs Windows sont désormais OPPOSABLES, plus seulement visibles
+
+Deux mécaniques, dans `ci/verdict-windows.ps1` et `ci/ecarts-windows.txt` :
+
+* **l'inventaire COMPLET** : GitHub n'affiche que dix annotations par étape. Une
+  suite à 73 échecs ne se lisait donc qu'aux dix premiers — le reste était
+  invisible depuis le banc. Les identifiants sont publiés par paquets de 25.
+* **l'opposabilité** : chaque échec est comparé à `ci/ecarts-windows.txt`
+  (format `motif|raison`). Un échec **non nommé fait échouer le job**. Un test
+  écarté doit être écrit quelque part avec sa raison ; sans cela, un périmètre
+  et une dissimulation se ressemblent.
+* **la mort localisée** : quand l'étape est interrompue (aucun code de sortie
+  écrit — vu au run `41375766036`), la fin du journal est publiée. Les deux
+  suites passent en `-v --tb=line` : la dernière ligne nomme le dernier test
+  démarré. « Ça meurt » sans « où ça meurt » ne se répare pas.
+
+Six écarts sont nommés à ce stade, tous de la même famille — le confinement
+d'un dossier ancré par descripteur (`dir_fd` + `O_NOFOLLOW`), inexistant sous
+Windows (§26b) — avec la contrepartie : refus NOMMÉ par
+`seamtech_search/plateforme.py`, déploiement Windows dans Docker avec des
+conteneurs Linux, et couverture intégrale de ces mêmes tests par la CI Linux.
+
+Trois échecs restent **non élucidés** et sont instruits par une étape de
+diagnostic ciblée qui publie leur trace : deux rejeux téléversés
+(`TestRejeuSansDoublon`) et `test_corrections_pg_concurrentes_refusees_avant_
+mutation`. Ils passent sur Linux : soit ils révèlent un vrai défaut produit
+propre à Windows, soit une différence de banc. Ils ne seront pas nommés avant
+d'avoir été lus.
+
+### 33. Deux tests plus exigeants que le produit (`8cd77e6`)
+
+Le banc local utilise le paquet `pgserver`, qui ne fournit pas
+`postgresql-contrib` : ni `unaccent`, ni `pg_trgm`. L'application **dégrade
+proprement** dans ce cas (`indexer._ensure_unaccent_config`, repli documenté
+vers la configuration `simple`), mais deux tests, eux, n'admettaient aucun
+repli :
+
+* `tests/test_migration_rollback.py` écrivait `to_tsvector('seamtech_unaccent')`
+  en dur → `UndefinedObject` sur tout PostgreSQL sans contrib, pour une raison
+  étrangère à la migration qu'il doit vérifier. Il emploie désormais la
+  configuration que la base a réellement résolu
+  (`index.config_recherche_texte`). **4 passés** (4 erreurs avant).
+* `tests/test_sauvegarde_references.py` cherchait « GENOIS » et attendait
+  « Génois ». L'écart est maintenant **nommé** (`parite_accents_active` +
+  skipif explicite) au lieu d'un échec qu'on attribuait de mémoire à la limite
+  du banc. La contrepartie qui interdit de s'en contenter :
+  `tests/test_indexer_accent_parity.py`, rouge si une CI complète empruntait le
+  chemin dégradé.
+
+**Mesures du banc local, PostgreSQL sans contrib** : sauvegarde 94 passés / 3
+nommés / 1 xfail ; restauration et purge 107 passés / 4 xfail ;
+migration/rollback 4 passés ; multipart en flux 8 passés ; verrou de plateforme
+et Redis 26 passés. Zéro rouge.
+
+### 34. P2 « multipart en flux » — huit tests enfin exécutés
+
+Le fichier `tests/test_multipart_flux.py` avait été écrit sans interpréteur
+disponible (`.venv` perdu avec la réinitialisation du banc) : il n'avait
+**jamais tourné**. Exécuté et vert — **8 passés en 6,68 s** — coupure client au
+milieu du flux (aucun brouillon résiduel), refus 413/413 sans brouillon,
+concurrence à deux envois, envoi normal borné, profondeur d'arborescence 1/8/32.
+
+### 35. Prochaine action, sans ambiguïté
+
+1. Lire le verdict du workflow Windows sur `f59dfc2` : inventaire complet des
+   échecs, écarts nommés ou non, et la trace des trois échecs non élucidés.
+2. Adapter ou nommer chaque échec restant ; un échec non nommé doit rester
+   rouge jusqu'à décision écrite.
+3. Relancer la suite complète locale et publier le bilan chiffré.
+
+### 36. Suite complète locale : 3 024 passés, 37 échecs, attribution prouvée un par un
+
+Commande (banc PostgreSQL sans `contrib`, Redis 7.4.7, S3rver) :
+
+```
+SEAMTECH_TEST_DATABASE_URL=postgresql://postgres@127.0.0.1:55498/postgres \
+SEAMTECH_TEST_REDIS_URL=redis://127.0.0.1:6390/1 \
+SEAMTECH_TEST_REDIS_SERVER=/tmp/redis-banc/redis-7.4.7/src/redis-server \
+SEAMTECH_TEST_S3RVER_URL=http://127.0.0.1:14569 \
+.venv/bin/python -m pytest -q -rf -p no:randomly \
+  -m "not perf and not endurance and not recette_corpus and not ocr_suite \
+      and not integration_docker and not minio_historique"
+```
+
+Résultat : **37 échecs, 3 024 passés, 23 sauts, 8 xfail, 12 min 49 s**.
+
+Ces 37 échecs ne sont PAS restés une impression : chaque test a été relancé
+seul, en demandant si sa sortie mentionnait `unaccent` ou `pg_trgm`. Verdict :
+**39 sur 39** (les 37 du lot, plus deux que l'exécution fichier par fichier fait
+apparaître). Tous viennent de ce que le paquet `pgserver` ne fournit pas
+`postgresql-contrib` : l'application dégrade alors proprement (repli vers la
+configuration `simple`, trigrammes indisponibles), et les tests de parité des
+accents et de tolérance aux fautes — qui exigent justement ces extensions —
+échouent. Aucun n'est lié aux modifications de ce tour.
+
+Ce qui interdit de s'en contenter, et qui est en place :
+
+* `tests/test_indexer_accent_parity.py` reste **bruyant** sur une CI complète :
+  il échoue si une base qui PEUT installer `unaccent` ne l'a pas fait ;
+* la CI `backend (3.11/3.12/3.13)` installe PostgreSQL avec `contrib` et était
+  verte au commit `00f7c2b` (§28), ces tests compris.
+
+Limite dite franchement : ce banc ne peut pas prouver la parité des accents ni
+la tolérance aux fautes. La preuve est portée par la CI, pas par lui.
