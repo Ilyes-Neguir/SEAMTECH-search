@@ -29,7 +29,10 @@ import pytest
 RACINE = Path(__file__).resolve().parent.parent
 FICHIER_ECARTS = RACINE / "ci" / "ecarts-windows.txt"
 
-_MOTIF_LIGNE = re.compile(r"^(tests/[A-Za-z0-9_/\.]+\.py)(?:::([A-Za-z0-9_\[\]\-\.,]*))?\|(.+)$")
+# Le nom de test accepte tout sauf le séparateur « | » : un test paramétré
+# s'écrit ``test_plages[bytes=-0]``, et le signe « = » de ses paramètres doit
+# pouvoir figurer dans un écart sans casser la lecture du fichier.
+_MOTIF_LIGNE = re.compile(r"^(tests/[A-Za-z0-9_/\.]+\.py)(?:::([^|]*))?\|(.+)$")
 _MOTIF_CAUSE = re.compile(r"^CAUSE\|(.+)\|(.+)$")
 
 
