@@ -119,7 +119,7 @@ console dont des `503` anonymes. La spec publie désormais le couple
 | Multipart en flux : charge, interruption, concurrence | PRÊT | `tests/test_multipart_flux.py` — 8 passés : coupure réelle du corps à 40 %, refus 413, deux envois concurrents, profondeur 1/8/32 |
 | Injections de pannes | PRÊT | `tests/test_chaos.py`, `test_worker_crash_terminal.py`, endurance avec panne tous les 7 cycles |
 | Sécurité offensive | PRÊT | `tests/test_securite_offensive.py` — 8 passés ; traversée neutralisée prouvée par sonde hors test |
-| Accessibilité axe-core étendue | PRÊT | 77 écrans scannés (Linux) + 5 écrans × 2 navigateurs (Windows), **0 violation** WCAG 2.1 A/AA ; garde-fou de palette `frontend/lib/contraste.test.ts` |
+| Accessibilité axe-core étendue | PRÊT | **82 écrans scannés, 0 violation** WCAG 2.1 A/AA (job `e2e`, run 41499874961, `/fiches` désormais inclus) + 5 écrans × 2 navigateurs réels (Windows) ; garde-fou de palette `frontend/lib/contraste.test.ts` |
 | Endurance « plusieurs jours » | **PARTIEL** | `tests/test_endurance.py` : invariants tenus à 25 et 300 cycles avec panne injectée ; **aucune exécution de plusieurs jours d'horloge** |
 
 ### 4.1 Un défaut grave trouvé et corrigé pendant cette campagne
