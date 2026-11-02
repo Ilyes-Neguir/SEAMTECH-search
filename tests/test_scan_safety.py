@@ -10,6 +10,19 @@ from seamtech_search.indexer import ScanAlreadyRunningError, SearchIndex
 from seamtech_search.models import Document
 
 
+def cle(chemin: Path) -> str:
+    """Clé de chemin TELLE QUE LE PRODUIT la stocke (pas le chemin brut).
+
+    `Document.path_key` vaut `normcase(normpath(resolve(chemin)))`. Sur Windows,
+    `normcase` met en minuscules : interroger la base avec `str(chemin.resolve())`
+    ne trouve donc rien, et l'assertion qui suit échoue en
+    `TypeError: 'NoneType' object is not subscriptable` — un message qui ne dit
+    rien de la vraie cause (run 41523086709). Sur POSIX, `normcase` est
+    l'identité : le comportement est inchangé.
+    """
+    return Document(chemin, chemin.name, chemin.parent, "", 0, 0, False, "").path_key
+
+
 def test_incomplete_scan_preserves_existing_index(tmp_path: Path) -> None:
     database = tmp_path / "search.db"
     index = SearchIndex(database)
@@ -304,8 +317,15 @@ with index.scan_transaction():
 """
     proces = subprocess.run([sys.executable, '-c', code, str(database), str(chemin)], timeout=20, check=False)
     assert proces.returncode == 23
+    # La clé stockée est CELLE DU PRODUIT (`normcase` + `normpath` + `resolve`),
+    # pas le chemin brut : sur Windows, `normcase` met en minuscules, donc une
+    # requête par `str(chemin.resolve())` ne trouve rien et l'assertion
+    # suivante échoue en `TypeError: 'NoneType' object is not subscriptable`
+    # (vu au run 41523086709). Interroger par la clé du produit n'ajoute aucune
+    # tolérance : sur un système insensible à la casse, les deux écritures
+    # désignent le même fichier, et sur POSIX `normcase` est l'identité.
     with index.connect() as c:
-        assert c.execute('SELECT size FROM documents WHERE path_key=?', (str(chemin.resolve()),)).fetchone()[0] == 1
+        assert c.execute('SELECT size FROM documents WHERE path_key=?', (cle(chemin),)).fetchone()[0] == 1
 
 
 def test_interruption_clavier_scan_annule_et_indique_echec(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -328,7 +348,7 @@ def test_interruption_clavier_scan_annule_et_indique_echec(tmp_path: Path, monke
     with pytest.raises(KeyboardInterrupt):
         run_index(str(config))
     with index.connect() as c:
-        assert c.execute('SELECT size FROM documents WHERE path_key=?', (str(chemin.resolve()),)).fetchone()[0] == 1
+        assert c.execute('SELECT size FROM documents WHERE path_key=?', (cle(chemin),)).fetchone()[0] == 1
     assert index.latest_scan()['status'] == 'failed'
 
 
