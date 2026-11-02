@@ -326,3 +326,24 @@ tests/test_liaison_catalogue_capture_pg.py::test_reprise_pg_refuse_document_rein
 tests/test_liaison_catalogue_capture_pg.py::test_scan_et_suppression_pg_preservent_document_capture_sans_objet|exige la primitive POSIX « scan_ancre_descripteur », inexistante sur Windows : le produit refuse l'opération avec une erreur nommée au lieu de la réussir (démontré par ci/plugin_simulation_sans_primitives.py)
 tests/test_reimport_document_protege_pg.py::test_reimport_conflit_publie_sans_remplacer_la_piece_protegee|exige la primitive POSIX « scan_ancre_descripteur », inexistante sur Windows : le produit refuse l'opération avec une erreur nommée au lieu de la réussir (démontré par ci/plugin_simulation_sans_primitives.py)
 tests/test_reimport_document_protege_pg.py::test_reimport_identique_preserve_references_et_metadonnees|exige la primitive POSIX « scan_ancre_descripteur », inexistante sur Windows : le produit refuse l'opération avec une erreur nommée au lieu de la réussir (démontré par ci/plugin_simulation_sans_primitives.py)
+
+# --- Écarts par CAUSE ajoutés après lecture du rapport JUnit (run 41462763809)
+#
+# Même forme, même exigence : le message est celui que le produit a RÉELLEMENT
+# écrit, jamais une catégorie inventée. Chaque ligne indique le nombre d'échecs
+# qu'elle couvrait au run cité.
+#
+# 16 échecs
+CAUSE|ModuleNotFoundError: No module named 'fcntl'|fcntl est le module POSIX des verrous et des descripteurs : il n'existe pas sur Windows, et les tests qui l'importent directement n'ont aucun équivalent
+# 3 échecs
+CAUSE|Restauration locale sûre indisponible sur cette plateforme|la restauration écrit sous des répertoires ouverts sans suivre de lien (O_NOFOLLOW, linkat) : sans ces primitives, elle refuse plutôt que d'écrire à un emplacement incertain
+# 1 échec
+CAUSE|module 'os' has no attribute 'geteuid'|os.geteuid (identité d'exécution POSIX) n'existe pas sur Windows : le test qui distingue « root » d'un utilisateur ordinaire n'a pas de sens sur cette plateforme
+# 1 échec
+CAUSE|module 'os' has no attribute 'killpg'|os.killpg (signal à un groupe de processus) est POSIX : les tests d'arrêt d'un groupe d'enfants n'ont pas d'équivalent Windows
+# 3 échecs
+CAUSE|Failed: lien de verrou suivi|créer un lien symbolique demande des droits d'administrateur sur Windows : le test du refus de suivre un lien ne peut pas s'exécuter
+# 1 échec
+CAUSE|Failed: lien dur non autorisé|les liens durs sont restreints sur Windows (droits élevés) : le test du refus de lier le fichier de verrou ne peut pas s'exécuter
+# 1 échec
+CAUSE|Failed: lien de dossier suivi|même cause : les liens de répertoires (jonctions) exigent des droits élevés et ne sont pas créés par les tests
