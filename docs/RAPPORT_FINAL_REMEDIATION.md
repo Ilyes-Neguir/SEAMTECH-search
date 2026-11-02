@@ -18,7 +18,7 @@ prouvé n'est pas déclaré prêt. Les limites sont dites, pas contournées.
 | **P0** — sauvegarde, restauration, hors-site, rétention, migration | **PRÊT** | toutes les exigences sont prouvées, y compris la restauration coordonnée **par la commande** (dernier point ouvert, fermé ce jour) |
 | **P1** — OCR, rotations, PostgreSQL 16/pgvector/Redis 7 | **PRÊT** | jobs verts, `xfail` retirés, campagnes rejouées |
 | **P1** — Chrome / Edge | **PRÊT** | run 41499874660 : `attendus=2 passes=4 echecs=0`, Chrome 156.0.8078.80 et Edge 156.0.4314.56 réels, 5 écrans chacun, **0 violation** WCAG 2.1 A/AA |
-| **P1** — Windows natif | **NON PRÊT** | refus **nommé** du produit ; 392 échecs, **275 expliqués et nommés**, 117 encore sans cause publiée — voir §5 |
+| **P1** — Windows natif | **NON PRÊT** | refus **nommé** du produit ; suite mesurée ENTIÈREMENT (run 41523086709) : 393 échecs, **299 nommés (76 %)**, 94 en cours d'élucidation — voir §5 |
 | **P1** — Docker Desktop | **NON QUALIFIABLE ICI** | un runner GitHub ne fournit pas de conteneurs Linux ; la preuve devra être faite sur le poste réel, jamais en premier |
 | **P1** — volume annuel | **MESURÉ, PARTIEL** | banc synthétique 10 000 fiches, p95 ≤ 211,68 ms pour une cible indicative de 250 ms ; ni PDF réels, ni réseau, ni stockage objet |
 | **P2** — matrice, multipart, pannes, sécurité, accessibilité | **PRÊT** | énumération automatique des routes, coupure réelle du corps, panne injectée, traversée neutralisée, 77 écrans scannés |
@@ -78,6 +78,36 @@ supposer `pgserver`).
 | Docker Desktop | **NON QUALIFIABLE ICI** | voir §6 |
 | Volume annuel | MESURÉ, PARTIEL | `python scripts/scale_bench.py` — 10 000 fiches, p95 max **211,68 ms** pour une cible indicative de **250 ms** (`/tmp/scale-bench-local.json`) |
 | Windows natif | **NON PRÊT** | voir §5 |
+
+### 3.0 Un défaut réel trouvé en cherchant ailleurs : sonder un PID ne doit pas le tuer
+
+En cherchant pourquoi la suite de qualification Windows s'arrêtait en route
+(quatre runs consécutifs à `rc=2`, ~380 tests sur 2 369 qui ne tournaient pas),
+la fouille a mis au jour un défaut indépendant, et grave :
+
+`os.kill(pid, 0)` est l'idiome POSIX pour demander « ce PID vit-il encore ? » —
+le signal 0 n'est pas délivré. **Sur Windows, `os.kill` ne connaît pas le signal
+0 : il appelle `TerminateProcess` avec la valeur reçue comme code de sortie.**
+Un test de vie y devient une mise à mort, et comme les PID sont recyclés, le
+processus tué n'est pas forcément celui dont on a lu l'identifiant dans le
+fichier de verrou. L'idiome était employé dans le verrou de scan SQLite
+(`indexer.scan_lock`) et dans le verrou de la nuit OCR (`ocr.etat`) : « reprendre
+un scan après un crash » pouvait tuer un processus vivant.
+
+Correction (commit `1abd6b2`) : `plateforme.pid_vivant` interroge sans jamais
+tuer — idiome POSIX conservé là où il est exact, `OpenProcess` +
+`GetExitCodeProcess` par `ctypes` sur Windows, réponse « vivant » sur une
+plateforme inconnue (un verrou périmé reste un verrou ; supprimer le verrou d'un
+processus vivant ne l'est pas). `tests/test_pid_vivant.py` verrouille le
+contrat : sur la branche non POSIX, **`os.kill` n'est jamais appelé** —
+réintroduire l'idiome fait échouer le test au lieu de tuer un processus.
+
+Effet mesuré, et il n'était pas cherché : **la suite Windows s'est remise à
+aller au bout** (`rc=1`, 393 échecs, 1 920 passés) dès l'exécution suivante,
+après quatre interruptions consécutives. Le mécanisme exact de l'interruption
+n'est pas démontré ; le lien de causalité, lui, est établi par la répétition —
+quatre runs interrompus avec l'idiome, un run complet sans lui, sans autre
+changement de produit.
 
 ### 3.1 Chrome et Edge : qualifiés, après une violation trouvée et corrigée
 
@@ -145,13 +175,13 @@ fichier qui ne rendait jamais la main s'exécute en **4,94 s** (commit
 
 ## 5. Windows natif : ce qui est mesuré, nommé, et ce qui reste
 
-Run `41467111570` (commit `48e8be2`), suite « sans service » :
-**392 échecs, 1913 passés, 64 sautés** sur 3 230 tests collectés
-(9 min 21 s). Les 314 échecs annoncés lors des runs précédents étaient un
-résultat **tronqué** (suite interrompue avant la fin) : le chiffre réel est
-392.
+Run `41523086709` (commit `a0f5efd`), suite « sans service » :
+**393 échecs, 1 920 passés, 66 sautés**, 859 désélectionnés, en 13 min 35 s
+(`rc=1`). Les 314 échecs annoncés lors des runs antérieurs étaient un résultat
+**tronqué** (suite interrompue) : le chiffre réel, mesuré sur une suite qui va
+au bout, est de 393.
 
-**277 de ces 392 échecs sont expliqués et nommés**, par trois méthodes :
+**299 de ces 393 échecs sont expliqués et nommés**, par trois méthodes :
 
 1. **246 tests** dont la dépendance aux primitives POSIX est **démontrée** :
    la suite est rejouée avec toutes les primitives déclarées absentes
@@ -171,7 +201,10 @@ résultat **tronqué** (suite interrompue avant la fin) : le chiffre réel est
    `<module 'os' (frozen)> has no attribute 'killpg'` alors que l'écart
    cherchait `module 'os' has no attribute …`.
 
-**115 échecs restent non expliqués.** Leurs familles sont publiées à chaque run
+**94 échecs restent non expliqués** — dont 74 ont déjà une famille publiée
+(`assert 409 == 200` ×6, `TypeError: 'NoneType' object is not subscriptable`
+×2, `ValueError: … MagicMock au lieu d'octets` ×2, `assert 6 == 0` ×20…), et
+20 portent « aucune cause dans le rapport ». Leurs familles sont publiées à chaque run
 et ne sont **pas** maquillées en écarts : faute de raison démontrée, les nommer
 serait une dissimulation. Jusqu'ici le canal lui-même était tronqué — 34
 identifiants publiés sur 128 — et le verdict remplit désormais des seaux
