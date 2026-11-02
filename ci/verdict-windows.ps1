@@ -208,28 +208,6 @@ if ($Tranche -le 1 -and $echecs.Count -gt 0) {
     }
 }
 
-if ($DebugAppariement) {
-    # Pourquoi ce bloc : 66 echecs non nommes portaient TOUS la mention
-    # « (aucune cause dans le rapport) » (run 41530741118), alors que les
-    # familles publiees, elles, venaient bien du rapport JUnit. Autrement dit :
-    # le fichier de detail est lu, mais AUCUN identifiant d'echec ne s'y
-    # retrouve. Plutot que de supposer, on publie les comptes et trois cles.
-    $cles = @()
-    if ($details.Count -gt 0) { $cles = @($details.Keys | Select-Object -First 3) }
-    Publier "$Titre-debug-appariement" ("echecs(journal)=" + $echecs.Count +
-        " ; details=" + $details.Count + " ; causes_nommees=" + $causes_nommees.Count +
-        " ; attendus=" + $attendus.Count +
-        " ; exemples_de_cles_details: " + ($cles -join ' , '))
-    foreach ($e in ($echecs | Select-Object -First 3)) {
-        $present = $details.ContainsKey($e)
-        $msg = ''
-        if ($present) { $msg = (($details[$e] -join ' | ') -replace "`r|`n", ' ') }
-        if ($msg.Length -gt 200) { $msg = $msg.Substring(0, 200) }
-        Publier "$Titre-debug-cle" "$e :: present_dans_details=$present :: $msg"
-    }
-    exit 0
-}
-
 if ($rc -eq 0) { exit 0 }
 
 # --- 3. Les échecs sont-ils NOMMÉS ? ---------------------------------------
@@ -305,6 +283,42 @@ if (Test-Path $Journal) {
 }
 
 $inattendus = @()
+if ($DebugAppariement) {
+    # Pourquoi ce bloc : 66 echecs non nommes portaient TOUS la mention
+    # « (aucune cause dans le rapport) » (run 41530741118), alors que les
+    # familles publiees, elles, venaient bien du rapport JUnit. Le rapport est
+    # donc lu, mais AUCUN identifiant d'echec ne se retrouve dans le fichier de
+    # detail. Plutot que de supposer ou se trouve la rupture, on publie les
+    # comptes, l'existence du fichier, ses premieres lignes BRUTES, et pour
+    # trois echecs du journal si la cle est presente et avec quel texte.
+    $existe = Test-Path $Details
+    $nb_lignes = 0
+    $brutes = @()
+    if ($existe) { $brutes = @(Get-Content $Details); $nb_lignes = $brutes.Count }
+    $cles = @()
+    if ($details.Count -gt 0) { $cles = @($details.Keys | Select-Object -First 3) }
+    Publier "$Titre-debug-appariement" ("fichier_detail=" + $Details +
+        " ; existe=" + $existe + " ; lignes=" + $nb_lignes +
+        " ; cles_chargees=" + $details.Count +
+        " ; echecs_journal=" + $echecs.Count +
+        " ; causes_nommees=" + $causes_nommees.Count +
+        " ; attendus=" + $attendus.Count)
+    for ($i = 0; $i -lt [Math]::Min(2, $brutes.Count); $i++) {
+        $l = $brutes[$i]
+        if ($l.Length -gt 240) { $l = $l.Substring(0, 240) }
+        Publier "$Titre-debug-ligne" ("LIGNE BRUTE " + ($i + 1) + " : " + $l)
+    }
+    Publier "$Titre-debug-cles" ("exemples_de_cles : " + ($cles -join ' , '))
+    foreach ($e in ($echecs | Select-Object -First 3)) {
+        $present = $details.ContainsKey($e)
+        $msg = ''
+        if ($present) { $msg = (($details[$e] -join ' | ') -replace "`r|`n", ' ') }
+        if ($msg.Length -gt 200) { $msg = $msg.Substring(0, 200) }
+        Publier "$Titre-debug-cle" "$e :: present_dans_details=$present :: $msg"
+    }
+    exit 0
+}
+
 foreach ($echec in $echecs) {
     $connu = $false
     foreach ($motif in $attendus) {

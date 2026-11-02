@@ -130,6 +130,22 @@ jobs:
             Write-Host "::notice title=det-$nom::$texte2"
           }
           exit 0
+      - name: Mise au point de l'appariement (sur les fichiers de ce diagnostic)
+        if: always()
+        # Le même script de verdict, le même runner, les mêmes formats : si les
+        # identifiants du journal se retrouvent (ou non) dans le fichier de
+        # détail, ce job le dira — avec ses propres annotations, et non pas
+        # noyé dans les cinquante du job principal.
+        run: |
+          $ErrorActionPreference = 'Continue'
+          New-Item -ItemType Directory -Force -Path logs | Out-Null
+          Remove-Item -Force -ErrorAction SilentlyContinue logs\diag-concat.log, logs\fam-concat.txt, logs\det-concat.txt
+          Get-ChildItem logs\diag-*.log | ForEach-Object { Get-Content $_.FullName | Add-Content logs\diag-concat.log }
+          Get-ChildItem logs\fam-diag-*.txt | ForEach-Object { Get-Content $_.FullName | Add-Content logs\fam-concat.txt }
+          Get-ChildItem logs\det-diag-*.txt | ForEach-Object { Get-Content $_.FullName | Add-Content logs\det-concat.txt }
+          Set-Content -NoNewline logs\rc-diag-concat.txt '1'
+          pwsh -File ci\verdict-windows.ps1 -Journal logs\diag-concat.log -CodeSortie logs\rc-diag-concat.txt -Titre diag -Causes logs\fam-concat.txt -Details logs\det-concat.txt -DebugAppariement
+          exit 0
       - name: Conserver les journaux de diagnostic
         if: always()
         uses: actions/upload-artifact@v4
