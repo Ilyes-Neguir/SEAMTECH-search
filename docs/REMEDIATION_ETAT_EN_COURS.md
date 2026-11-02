@@ -2951,3 +2951,57 @@ tuer un processus. Deux tests d'intégration rejouent le scénario réel du
 verrou de scan : verrou tenu par un processus vivant (refus propre, processus
 épargné) et verrou périmé (repris, pas supprimé d'autorité). 110 tests locaux
 passent (scan_safety, plateforme, verrou, indexer, OCR).
+
+## 55. La suite Windows tourne de nouveau ENTIÈREMENT — et c'est le correctif `pid_vivant` qui l'a rendue
+
+**Run 41523086709** (commit `a0f5efd`) :
+
+```
+rc=1 ; 393 failed, 1920 passed, 66 skipped, 859 deselected, 2 xfailed,
+20 warnings, 16 errors in 814.80s
+```
+
+Plus d'interruption. La suite va au bout, et ses chiffres rejoignent ceux de la
+dernière exécution complète (run 41467111570 : 392 échecs, 1913 passés).
+
+**Le seul changement de produit entre la dernière suite interrompue
+(41515990228, `22c1846`) et celle-ci est `1abd6b2`** — le remplacement de
+`os.kill(pid, 0)` par `plateforme.pid_vivant`. Quatre exécutions consécutives
+interrompues avant (41499874854, 41501814193, 41508594754, 41515990228), une
+exécution complète juste après, sans autre modification de code : le lien est
+établi par la répétition, même si le mécanisme exact reste à démontrer — sur
+Windows, `os.kill(pid, 0)` appelle `TerminateProcess(handle, 0)`, et le
+processus ainsi tué n'était pas forcément celui dont on avait lu le PID dans le
+fichier de verrou (recyclage). Ce qui est certain, c'est qu'un test de vie ne
+doit pas tuer, et qu'il ne tue plus.
+
+**Ce que la suite complète dit maintenant** : 393 échecs, **94 hors périmètre
+connu** (299 nommés, soit 76 %). Ventilation des 94 :
+
+| fichier | identifiants |
+|---|---|
+| `test_sauvegarde_unites.py` | 24 |
+| `test_preflight_archive.py` | 21 |
+| `test_restauration_confinement.py` | 20 |
+| `test_url_presignee_302.py` | 6 |
+| `test_sauvegarde_manifeste_distant.py` | 5 |
+| `test_sauvegarde_references.py` | 4 |
+| `test_ocr_page_integralite.py` | 3 |
+| `test_lot10_televersement_lot.py` | 2 |
+| `test_scan_safety.py` | 2 |
+| `test_detection_fiches.py`, `test_inventaire_archive.py`, `test_liaison_catalogue_capture.py` | 1 chacun |
+
+74 des 94 ont désormais une famille publiée (`resumer_echecs.py`), par exemple
+`assert 409 == 200` (6), `TypeError: 'NoneType' object is not subscriptable`
+(2), `ValueError: … MagicMock au lieu d'octets` (2), `assert 6 == 0` (banc
+shell). Les 20 restants portent « aucune cause dans le rapport ».
+
+**Deux échecs de plus sont expliqués et corrigés** (commit `f541dad`) :
+`test_crash_processus_annule_transaction_scan_sqlite` et
+`test_interruption_clavier_scan_annule_et_indique_echec` interrogeaient l'index
+avec `str(chemin.resolve())` alors que la base stocke la clé du produit
+(`normcase(normpath(resolve()))`). Sur Windows la casse diffère, `fetchone()`
+rend `None`, et l'échec devient un `TypeError` anonyme.
+
+Reste : 94 échecs à nommer un par un, dont la moitié déjà regroupés par famille.
+Aucun n'est maquillé en écart sans raison démontrée.
