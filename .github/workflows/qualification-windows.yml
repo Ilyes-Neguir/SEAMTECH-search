@@ -41,6 +41,75 @@ on:
   push:
 
 jobs:
+  # ---------------------------------------------------------------------------
+  # Job de DIAGNOSTIC : un job séparé, parce qu'une exécution de vérification
+  # (« check run ») plafonne à 50 annotations. Dans le job principal, les
+  # tranches de causes saturent ce plafond et les lignes de diagnostic
+  # disparaissaient (runs 41523086709, 41536354571 : l'étape réussissait,
+  # aucune annotation n'était visible).
+  #
+  # Ce job ne remplace rien : la suite complète reste exécutée telle quelle. Il
+  # rejoue SEULS, avec ``--tb=long``, les fichiers qui concentrent les échecs
+  # non élucidés, et publie les lignes « E » dédoublées — l'assertion exacte et
+  # la valeur fautive. Une minute par fichier, et la cause devient lisible.
+  # ---------------------------------------------------------------------------
+  diagnostic-causes:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Installer les dépendances
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+      - name: Rejouer seuls les fichiers inexpliqués et publier les assertions fautives
+        run: |
+          $ErrorActionPreference = 'Continue'
+          New-Item -ItemType Directory -Force -Path logs | Out-Null
+          $fichiers = @(
+            'tests/test_sauvegarde_unites.py',
+            'tests/test_restauration_confinement.py',
+            'tests/test_sauvegarde_manifeste_distant.py',
+            'tests/test_sauvegarde_references.py'
+          )
+          foreach ($fichier in $fichiers) {
+            $nom = ($fichier -replace 'tests/', '') -replace '\.py$', ''
+            $log = "logs\diag-$nom.log"
+            $rcf = "logs\rc-diag-$nom.txt"
+            $ligne = "python -m pytest $fichier -q --tb=long -rf -p no:randomly > $log 2>&1 & echo !errorlevel!> $rcf"
+            cmd /V /C $ligne
+            $rc = -1
+            if (Test-Path $rcf) { $rc = [int]((Get-Content $rcf -Raw).Trim()) }
+            $resume = ''
+            if (Test-Path $log) {
+              $dernier = Select-String -Path $log -Pattern 'passed|failed|error' | Select-Object -Last 1
+              if ($dernier) { $resume = $dernier.Line.Trim() }
+            }
+            $causes = @()
+            if (Test-Path $log) {
+              $causes = Select-String -Path $log -Pattern '^E   ' |
+                        ForEach-Object { $_.Line.Trim() } | Select-Object -Unique
+            }
+            $texte = ($causes | Select-Object -First 20) -join ' | '
+            if ($texte.Length -gt 2400) { $texte = $texte.Substring(0, 2400) }
+            if ($rc -eq 0) {
+              Write-Host "::notice title=diag-$nom::rc=0 — le fichier PASSE seul : $resume"
+            } else {
+              Write-Host "::notice title=diag-$nom::rc=$rc ; $resume ; assertions fautives : $texte"
+            }
+          }
+          exit 0
+      - name: Conserver les journaux de diagnostic
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diagnostic-causes-windows
+          path: logs/diag-*.log
+          if-no-files-found: warn
+
   windows:
     runs-on: windows-latest
     defaults:
@@ -180,62 +249,6 @@ jobs:
         continue-on-error: true
         run: |
           pwsh -File ci\verdict-windows.ps1 -Journal logs\windows-sans-service.log -CodeSortie logs\rc-sans-service.txt -Titre windows-sans-service -Causes logs\causes-sans-service.txt -Details logs\details-sans-service.txt -Tranche 5
-          exit 0
-      - name: Diagnostic ciblé — les fichiers encore inexpliqués
-        if: always()
-        continue-on-error: true
-        # Pourquoi cette étape existe.
-        #
-        # La suite complète nomme les échecs par FAMILLE (ci/resumer_echecs.py),
-        # mais une famille ne dit pas la CAUSE : « une sauvegarde est déjà en
-        # cours » ou « Lecture confinée du bundle indisponible » décrivent un
-        # SYMPTÔME. Rejouer SEULS les fichiers qui concentrent les échecs non
-        # élucidés, avec ``--tb=long``, donne les lignes « E » de chaque échec —
-        # c'est-à-dire l'assertion exacte et la valeur fautive — pour un coût
-        # d'une minute par fichier.
-        #
-        # Ce n'est pas un contournement : la suite complète reste exécutée telle
-        # quelle, et rien n'est inscrit dans ci/ecarts-windows.txt sur la foi de
-        # cette étape. C'est l'instrument qui permet de nommer au lieu de
-        # supposer.
-        run: |
-          $ErrorActionPreference = 'Continue'
-          New-Item -ItemType Directory -Force -Path logs | Out-Null
-          $fichiers = @(
-            'tests/test_sauvegarde_unites.py',
-            'tests/test_restauration_confinement.py',
-            'tests/test_sauvegarde_manifeste_distant.py',
-            'tests/test_sauvegarde_references.py',
-            'tests/test_scan_safety.py'
-          )
-          foreach ($fichier in $fichiers) {
-            $nom = ($fichier -replace 'tests/', '') -replace '\.py$', ''
-            $log = "logs\diag-$nom.log"
-            $rcf = "logs\rc-diag-$nom.txt"
-            $ligne = "python -m pytest $fichier -q --tb=long -rf -p no:randomly > $log 2>&1 & echo !errorlevel!> $rcf"
-            cmd /V /C $ligne
-            $rc = -1
-            if (Test-Path $rcf) { $rc = [int]((Get-Content $rcf -Raw).Trim()) }
-            $resume = ''
-            if (Test-Path $log) {
-              $resume = ((Select-String -Path $log -Pattern 'passed|failed|error' |
-                          Select-Object -Last 1).Line).Trim()
-            }
-            # Les lignes « E » nomment l'assertion fautive ; on les DEDOUBLE
-            # pour ne pas publier cent fois la même.
-            $causes = @()
-            if (Test-Path $log) {
-              $causes = Select-String -Path $log -Pattern '^E   ' |
-                        ForEach-Object { $_.Line.Trim() } | Select-Object -Unique
-            }
-            $texte = ($causes | Select-Object -First 18) -join ' | '
-            if ($texte.Length -gt 2400) { $texte = $texte.Substring(0, 2400) }
-            if ($rc -eq 0) {
-              Write-Host "::notice title=diag-$nom::rc=0 — le fichier PASSE seul : $resume"
-            } else {
-              Write-Host "::notice title=diag-$nom::rc=$rc ; $resume ; causes : $texte"
-            }
-          }
           exit 0
       - name: Installer PostgreSQL 16 (hôte)
         if: always()
