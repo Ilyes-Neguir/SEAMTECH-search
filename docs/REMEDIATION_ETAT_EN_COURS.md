@@ -2399,3 +2399,34 @@ par rapport à une installation complète. Le même banc, exécuté en CI sur le
 commit `0ab735c`, donnait p95 de 134 à 199 ms selon les scénarios : les deux
 mesures ne sont pas comparables terme à terme (index et charge différents), et
 c'est pourquoi elles sont publiées toutes les deux.
+
+### 42. Ce que le run `41427629667` a appris — cinq familles de causes
+
+Le verdict publie désormais les causes regroupées. Sur 71 échecs, 49 restaient
+hors périmètre ; les voici par famille, avec ce qu'on en fait :
+
+| # | Cause (telle que lue) | Décision |
+|---|---|---|
+| 5 | `OSError: Capacité de plateforme absente : scan_ancre_descripteur` | **nommée** (§32, §38) : confinement POSIX par descripteur, prouvé par simulation |
+| 4 | `SauvegardeError: binaire « pg_dump » introuvable (PATH, SEAMTECH_PG_BINDIR)` | **banc, pas produit** : Chocolatey ne met pas `pg_dump` dans le PATH. Le workflow pose `SEAMTECH_PG_BINDIR` et l'ajoute au PATH, et échoue fort si `pg_dump.exe` est absent — une installation muette ne doit pas se transformer en 7 échecs de restauration |
+| 2 | `AssertionError: document introuvable : dossier-client/fiche-A.txt parmi ['c:\users\runner…']` | **test, pas produit** : la base stocke le séparateur de la plateforme. `tests/reconstruire_aide.id_document` normalise désormais avec `os.path.normpath` (identité sur POSIX), ainsi que l'assertion de `test_rebuild_index.py` |
+| 3 | `AssertionError: Regex pattern did not match` (3 tests de restauration) | **à instruire** : un `SauvegardeError` est bien levé, mais pas celui attendu. Cibles ajoutées au diagnostic |
+| 1 | `TypeError: 'NoneType' object is not subscriptable` (liaison capture, courses) | **à instruire** : cibles ajoutées au diagnostic |
+
+Le diagnostic ciblé ne porte plus sur les trois échecs dont la cause est
+connue et corrigée (rejeu ×2, verrou de mutation), mais sur six tests choisis
+parmi les familles 1 et 3, dont on lira la trace complète au prochain run.
+
+Mesure locale de contrôle après les correctifs de ce tour : suite complète
+**3 031 passés, 37 échecs** — les 37 étant, comme au §36, tous attribués un par
+un à l'absence de `unaccent` / `pg_trgm` sur ce banc (ni plus, ni moins).
+
+### 43. Prochaine action, sans ambiguïté
+
+1. Lire les traces des six cibles du diagnostic ciblé (run en cours) : corriger
+   ce qui est un défaut produit, nommer ce qui est une limite, jamais plus.
+2. Élucider la mort de la suite sans service : le journal dit maintenant OÙ
+   (`fin du journal`), `PYTHONFAULTHANDLER` dira POURQUOI. Si la cause est une
+   limite de ressources du runner, découper la suite en paquets plutôt que
+   perdre une exécution entière.
+3. Puis : rapport final PRÊT / NON PRÊT point par point.

@@ -36,6 +36,8 @@ DDL_LIEN = (
 
 
 def test_rebuild_sqlite_conserve_les_documents_references(tmp_path: Path) -> None:
+    import os
+
     from seamtech_search.config import AppConfig
     from seamtech_search.indexer import SearchIndex
 
@@ -52,7 +54,7 @@ def test_rebuild_sqlite_conserve_les_documents_references(tmp_path: Path) -> Non
             connexion.execute(DDL_LIEN)
             connexion.execute(
                 "INSERT INTO fiche_piece_jointe (id_fiche, chemin, id_document) VALUES (?, ?, ?)",
-                (1, "dossier-client/fiche-A.txt", id_reference),
+                (1, os.path.normpath("dossier-client/fiche-A.txt"), id_reference),
             )
 
         index.initialize(rebuild=True)
@@ -64,7 +66,7 @@ def test_rebuild_sqlite_conserve_les_documents_references(tmp_path: Path) -> Non
             lignes = connexion.execute(
                 "SELECT d.path_key FROM fiche_piece_jointe p JOIN documents d ON d.id = p.id_document"
             ).fetchall()
-        assert len(lignes) == 1 and str(lignes[0][0]).endswith("dossier-client/fiche-A.txt"), lignes
+        assert len(lignes) == 1 and str(lignes[0][0]).endswith(os.path.normpath("dossier-client/fiche-A.txt")), lignes
     finally:
         index.close()
 

@@ -161,6 +161,20 @@ jobs:
           & $psql -U postgres -c "CREATE ROLE seamtech LOGIN PASSWORD 'seamtech_test_password' SUPERUSER;"
           & $psql -U postgres -c "CREATE DATABASE seamtech_search_test OWNER seamtech;"
           & $psql -U postgres -c "SELECT version();"
+          # pg_dump / pg_restore NE SONT PAS dans le PATH après l'installation
+          # Chocolatey. Sans eux, la moitié de la suite sauvegarde échoue en
+          # « binaire « pg_dump » introuvable (PATH, SEAMTECH_PG_BINDIR) » —
+          # cause n° 4 des échecs Windows au run 41427629667, et la plus
+          # facile à lever : c'est le banc qui manquait, pas le produit.
+          # GITHUB_ENV les rend disponibles pour toutes les étapes suivantes.
+          $bindir = "C:\\Program Files\\PostgreSQL\\16\\bin"
+          if (-not (Test-Path (Join-Path $bindir "pg_dump.exe"))) {
+            Write-Host "::error title=pg-outils::pg_dump.exe introuvable dans $bindir"
+            exit 1
+          }
+          Add-Content -Path $env:GITHUB_ENV -Value "SEAMTECH_PG_BINDIR=$bindir"
+          Add-Content -Path $env:GITHUB_ENV -Value "PATH=$bindir;$env:PATH"
+          & (Join-Path $bindir "pg_dump.exe") --version
       - name: Installer pgvector (port Windows, version épinglée)
         if: always()
         # Sans pgvector, la migration 006 échoue (« extension "vector" is not
@@ -346,10 +360,19 @@ jobs:
             Write-Host "::notice title=$titre::$propre"
           }
           New-Item -ItemType Directory -Force -Path logs | Out-Null
+          # Cibles du run 41427629667, choisies parce que leurs causes n'ont PAS
+          # pu être attribuées : « NoneType n'est pas subscriptable » et
+          # « Regex pattern did not match » ne disent pas si le produit est en
+          # cause ou si le test suppose POSIX. Les trois cibles précédentes
+          # (rejeu ×2, verrou de mutation) sont sorties de la liste : leur cause
+          # est connue et corrigée.
           $cibles = @(
-            "tests/test_depot_transactionnel.py::TestRejeuSansDoublon::test_rejeu_televerse_dans_une_nouvelle_session_ne_duplique_rien",
-            "tests/test_depot_transactionnel.py::TestRejeuSansDoublon::test_rejeu_televerse_reconnait_une_ancienne_cle_absolue",
-            "tests/test_verrou_mutation_import.py::test_corrections_pg_concurrentes_refusees_avant_mutation"
+            "tests/test_liaison_catalogue_capture_pg.py::test_declencheur_invalide_meme_les_reecritures_identiques_pg",
+            "tests/test_rebuild_index_postgres.py::test_cli_rebuild_aboutit_sur_une_base_postgres_peuplee",
+            "tests/test_sauvegarde_restauration.py::test_cli_sans_s3_aller_retour",
+            "tests/test_restauration_dump_stable_pg.py::test_absence_pg_restore_nouvre_pas_de_base_pg_reelle",
+            "tests/test_sauvegarde_snapshot_pg.py::test_sha_snapshot_propage_aux_copies_locale_et_objet_pg",
+            "tests/test_race_captures_catalogue.py::test_course_deux_captures_postgres"
           )
           $n = 0
           foreach ($cible in $cibles) {
