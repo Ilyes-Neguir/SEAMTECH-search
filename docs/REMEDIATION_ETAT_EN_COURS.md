@@ -1952,3 +1952,104 @@ Résultat mesuré (run `41359948630`, job `e2e`, commit `9ae3d3d`) :
 ```
 accessibilite : 77 écrans scannés, 0 violation WCAG 2.1 A/AA
 ```
+
+### 25. Windows, run `41368359949` : ce que le runner a dit, enfin
+
+Après l'ajout des témoins, le job parle. Convervation des chiffres :
+
+```
+windows-identite     : os=Microsoft Windows Server 2025 Datacenter version=10.0.26100
+pgvector-install     : version=0.8.7 (port Windows, pg16 x64)
+redis-install        : version=7.4.11 binaire=C:\redis7\Redis-7.4.11-Windows-x64-msys2\redis-server.exe
+redis-demarrage      : PONG obtenu, version=Redis server v=7.4.11 …
+windows-postgres-redis : rc=1 ; 110 failed, 320 passed, 3 skipped, 1 xfailed,
+                         122 errors in 980 s
+Ligne de commande et chemins Windows : success
+```
+
+Les services Windows tiennent donc : PostgreSQL 16 + pgvector 0.8.7 + Redis
+7.4.11 installés sur l'hôte, base créée, PONG obtenu, CLI fonctionnel sur un
+chemin accentué (`Dépôt d'atelier 2024`).
+
+**Diagnostic de l'étape « sans service », qui mourait sans rien dire** : les
+cinq seuls fichiers de la sélection à manipuler des processus ont été exécutés
+un par un — quatre rendent la main (`rc=1`, échecs de tests), un passe
+(`test_relais_file_base`, `rc=0`). Aucun ne tue l'étape. Reste une piste, non
+élucidée : GitHub plafonne les annotations par étape (dix publiées, la onzième
+perdue, constaté sur « diag-fin »), et une ligne de journal commençant par
+`::` consomme ce quota. Correction appliquée : témoins réduits, lignes
+préfixées.
+
+### 26. Trois défauts de PRODUIT révélés par Windows (pas des défauts de CI)
+
+**a) `import fcntl` en tête de module rendait l'application non importable.**
+`seamtech_search/ml/routes.py` importait `fcntl` au niveau du module. Quatre
+fichiers de tests échouaient sur `ModuleNotFoundError: No module named
+'fcntl'` — mais le défaut n'était pas dans les tests : sur Windows, l'import
+du module échoue, donc l'application entière meurt à l'import au lieu de
+refuser une seule route. Corrigé (`404f180`) comme le faisaient déjà
+`sauvegarde.py` et `fiches/televersement_lot.py` : import gardé, `fcntl=None`
+si absent, usage refusé explicitement (503 pour l'entraînement ML, qui ne peut
+pas être protégé contre un lancement concurrent).
+
+Trois tests le prouvent, ROUGE→VERT vérifié en réintroduisant le défaut :
+
+* un interpréteur séparé où `import fcntl` est rendu impossible importe le
+  module sans erreur ;
+* aucun module du produit n'importe `fcntl`/`pwd`/`grp`/`termios` hors garde
+  (filet statique, il couvre aussi les modules qu'aucune sonde n'importe) ;
+* sans verrou, la route refuse en 503 ; avec, elle passe.
+
+**b) Le confinement des fichiers est POSIX par construction.** `scan_folder`,
+le cœur de l'import d'un dossier, s'appuie sur l'ancrage d'un répertoire par
+descripteur (`dir_fd`), `O_NOFOLLOW`, `/proc/self/fd` et `fcntl.flock`. Ces
+primitives n'ont aucun équivalent Windows : il n'existe pas de « même chose en
+plus lent », il n'existe rien. Conséquence, mesurée : `OSError: Secure folder
+scanning is not supported on this platform` sur `test_verification_integrite`,
+`test_snapshot_import_pg`, `test_depot_apres_import` ; et `SauvegardeError:
+Verrouillage sûr indisponible sur cette plateforme` sur
+`test_sauvegarde_snapshot_pg`.
+
+Ce n'est pas un contournement qu'on repousse : c'est une propriété du design.
+Le produit refuse plutôt que de traverser des liens à l'aveugle, et il a
+raison. **La conséquence pour le déploiement est tranchée : sur poste Windows,
+l'application doit tourner dans Docker avec des conteneurs Linux** — ce que le
+dépôt sait déjà faire (`docker-compose`). Le parcours prioritaire (glisser un
+gros dossier) y est intact : les chemins sont ceux du conteneur, POSIX.
+
+**c) Le refus était anonyme.** `seamtech_search/plateforme.py` (commit
+`3a8d922`) rend la limite énumérable (`capacites()`), opposable (`exiger()`
+nomme la capacité, sa conséquence, la plateforme, et dit qu'aucun réglage ne
+la contourne) et testable (la branche « primitives absentes » est prouvée en
+forçant `os.name`). Cinq sites de refus disséminés y sont désormais rattachés.
+
+Suite complète locale après ces deux changements :
+
+```
+3149 passed, 48 skipped, 8 xfailed, 7 warnings in 920.06s (0:15:20)
+```
+
+aucun échec, aucune erreur.
+
+### 27. État du point P1 « Windows » — ce qui reste
+
+Reste ouvert, et dit comme tel :
+
+1. **Suite sans service** : échec non encore attribué (l'étape rend la main
+   sans diagnostic ; le plafond d'annotations est la piste en cours).
+2. **Suite PostgreSQL + Redis** : 110 échecs et 122 erreurs, dont une part
+   devrait disparaître avec le correctif `fcntl` (`404f180`) et le
+   `redis-server` réel ; le reste est attendu sur les primitives POSIX
+   (§26b) et devra être soit adapté, soit écarté NOMMÉMENT avec sa raison —
+   jamais sauté en silence.
+3. **Chrome et Edge** : non qualifiés. Playwright tourne sur Linux dans le job
+   `e2e` ; le runner Windows n'a pas été configuré pour l'interface, faute
+   d'avoir terminé les suites d'abord.
+4. **Docker Desktop** : non qualifiable sur un runner GitHub Windows, qui ne
+   fournit pas de conteneurs Linux. C'est pourtant LA cible de déploiement
+   Windows (§26b) : la preuve devra être faite autrement, ou être dite comme
+   limite de moyens.
+
+Ce qui est déjà prouvé sur Windows, noir sur blanc : PostgreSQL 16 + pgvector
++ Redis 7 démarrent et répondent, la base est créée, le CLI accepte un chemin
+accentué avec espaces, et 320 tests PostgreSQL passent.
