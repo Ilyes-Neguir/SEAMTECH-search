@@ -2053,3 +2053,54 @@ Reste ouvert, et dit comme tel :
 Ce qui est déjà prouvé sur Windows, noir sur blanc : PostgreSQL 16 + pgvector
 + Redis 7 démarrent et répondent, la base est créée, le CLI accepte un chemin
 accentué avec espaces, et 320 tests PostgreSQL passent.
+
+### 28. CI 100 % verte au commit `00f7c2b` — état mesuré, job par job
+
+Run `41372172470`, workflow `CI`, HEAD `00f7c2b` : **tous les jobs au vert**.
+
+```
+success  backend (3.11)   success  backend (3.12)   success  backend (3.13)
+success  e2e              success  frontend         success  sauvegarde
+success  integration      success  ocr              success  docker
+success  hors-ligne-reel  success  recette-locale   success  recette-corpus-reel
+success  securite-dependances
+```
+
+Cette CI porte, ensemble : les modules `contrib` reconstruits côté banc (§19),
+le garde-fou des blocs `run:` désormais shell-aware (§20), la provenance OCR
+(§23), l'audit axe-core ajouté au job `e2e` (§24), la plateforme énumérable
+(§26c) et le correctif `fcntl` (§26a).
+
+Mesures publiées par le job `backend (3.12)` :
+
+```
+coverage         : overall=88.15% floor=85.0%
+coverage-details : inventaire=92.6% etat=77.2% pipeline=75.7% cli=81.1%
+                   api=91.8% indexer=95.7%
+accessibilite    : 77 écrans scannés, 0 violation WCAG 2.1 A/AA
+ocr-qualite      : taux mots retrouvés propre=1.000 degrade=1.000
+```
+
+Les autres workflows du commit `00f7c2b` sont verts également : Endurance,
+Qualification native, Qualification reserves. Perf comparaison était encore en
+cours au moment d'écrire ces lignes.
+
+**Seul le workflow « Qualification Windows » reste rouge** (§27), et il est le
+seul endroit où le rouge est encore instructif plutôt que bloquant : il n'a
+rien cassé d'autre, il révèle.
+
+### 29. Prochaine action, sans ambiguïté
+
+1. Lire le verdict du workflow Windows sur `6e63407` : l'exécution et le
+   verdict sont désormais deux étapes, donc même une exécution interrompue
+   laisse un diagnostic. Il dira enfin pourquoi la suite sans service meurt.
+2. Reporter les 110 échecs / 122 erreurs de la suite PostgreSQL + Redis sur
+   Windows après `404f180` (correctif `fcntl`) et `d3f1437` (`redis-server`
+   réel) : une part doit avoir disparu, le reste est attendu sur les
+   primitives POSIX (§26b).
+3. Pour chaque test resté rouge : soit l'adapter à Windows (équivalent
+   explicite), soit l'écarter NOMMÉMENT dans le workflow avec sa raison.
+   Jamais un saut silencieux.
+4. Puis seulement : reprendre le point P0 « sauvegarde / restauration / hors
+   site / rétention » avec les chiffres de ce tour (campagne ciblée : 357
+   passés) et rédiger le rapport final PRÊT / NON PRÊT.
