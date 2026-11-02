@@ -2525,3 +2525,55 @@ couverture intégrale de ces tests par la CI Linux à chaque commit.
 2. Ce qui restera rouge sera alors, pour de bon, la liste courte des échecs à
    instruire — plus une brume de 300 lignes.
 3. Puis : rapport final PRÊT / NON PRÊT, point par point, commandes et SHA.
+
+## 48. Tableau de bord PRÊT / NON PRÊT (point par point, preuves à l'appui)
+
+Cette section est le brouillon du rapport final. Chaque ligne porte : ce qui
+est demandé, ce qui est prouvé, la commande qui le prouve, et ce qui reste.
+
+### P0 — sauvegarde, restauration, hors-site, rétention, migration
+
+| Exigence | État | Preuve |
+|---|---|---|
+| Sauvegarde PostgreSQL + `./data` + objet, un seul `sauver` à la fois | **PRÊT** | `tests/test_sauvegarde_complete.py`, `test_sauvegarde_unites.py` (verrou parent/dossier/fichier) ; 94 passés / 3 écarts nommés |
+| Verrou opposable : « une sauvegarde est déjà en cours », pas « impossible » | **PRÊT** | `tests/test_verrou_sauvegarde_plateforme.py` (5 tests) ; errnos EACCES/EDEADLK/EWOULDBLOCK traduits |
+| Verrou sur plateforme sans `flock` (Windows) | **PRÊT** | même fichier : `msvcrt.locking`, ordre parent→dossier, libération inverse ; POSIX inchangé (test de frontière) |
+| Restauration : dump vérifié avant toute écriture, base partielle signalée | **PRÊT** | `test_restauration_dump_stable_pg.py` (7 tests), `test_restauration_confinement.py` |
+| Restauration des fichiers locaux et des objets | **PRÊT** | `test_sauvegarde_references.py`, `test_restauration_bundle_s3rver.py` |
+| Hors site | **PRÊT** | `test_sauvegarde_hors_site_integree.py`, `test_sauvegarde_manifeste_distant.py` |
+| Rétention / purge locale et worker | **PRÊT** | `test_purge_locale.py`, `test_purge_worker.py` (politique : destination configurée, aucun artefact sans clé ni non vérifié) |
+| Migration et retour arrière sur copie représentative | **PRÊT** | `test_migration_rollback.py` : 4 passés (montée, retour arrière répété, refus base existante, dump de sécurité absent) |
+| Restauration COORDONNÉE (base + fichiers + objets en un seul geste) | **PARTIEL** | les primitives existent et sont testées séparément ; l'orchestration unique reste à éprouver en situation réelle |
+
+### P1 — OCR, rotations, plateformes, volume
+
+| Exigence | État | Preuve |
+|---|---|---|
+| OCR exact en CI, sans assertion affaiblie ni réessai salvateur | **PRÊT** | job `ocr` vert sur `5b56591` ; provenance OCR corrigée (§23) |
+| Rotations PDF 90/180/270 avec tableaux et coordonnées, `xfail` retirés | **PRÊT** | `test_pdf_orientation.py`, `test_pdf_orientations_mixtes_tables.py` : 95 passés ; campagne §10-§24 |
+| PostgreSQL 16 + pgvector + Redis 7 réels | **PRÊT** | CI Linux (services conteneurs) et runner Windows (installation hôte) |
+| Chrome / Edge | **NON QUALIFIÉ** | Playwright tourne sur Linux dans `e2e` ; le runner Windows n'a pas été configuré pour l'interface. Limite de moyens, dite |
+| Docker Desktop | **NON QUALIFIABLE** | un runner GitHub Windows ne fournit pas de conteneurs Linux. C'est pourtant la cible de déploiement Windows : la preuve devra être faite sur le poste réel, jamais en premier |
+| Volume annuel | **MESURÉ, PARTIEL** | `scripts/scale_bench.py` : 10 000 fiches, p95 ≤ 211,68 ms pour une cible indicative de 250 ms (§41). Corpus synthétique : ni PDF réels, ni réseau, ni stockage objet |
+| Windows natif | **NON PRÊT** | ~300 tests exigent le confinement POSIX par descripteur ; refus NOMMÉ, déploiement cible = Docker Linux |
+
+### P2 — matrice, multipart, pannes, sécurité, accessibilité, endurance
+
+| Exigence | État | Preuve |
+|---|---|---|
+| Matrice route × rôle × session × état métier | **PRÊT** | `test_matrice_roles_routes.py` (énumération automatique des routes, six identités, aucun 500), `test_matrice_routes_auth.py`, `test_passe_finale_sessions.py`, `test_bff_multipart_borne.py` |
+| Multipart en flux : charge, interruption, concurrence | **PRÊT** | `tests/test_multipart_flux.py` : 8 passés — coupure réelle du corps à 40 %, refus 413 sans brouillon, deux envois concurrents, envoi borné, profondeur 1/8/32 |
+| Injections de pannes | **PRÊT** | `test_chaos.py`, `test_worker_crash_terminal.py`, endurance avec panne injectée |
+| Sécurité offensive | **PRÊT** | `test_securite_offensive.py` : 8 passés ; traversée neutralisée prouvée par sonde hors test |
+| Accessibilité (axe-core étendu) | **PRÊT** | 77 écrans scannés, 0 violation WCAG 2.1 A/AA (`e2e`) |
+| Endurance | **PARTIEL** | `test_endurance.py` : fuites de staging prouvées à 25 et 300 cycles avec panne tous les 7 ; « plusieurs jours » d'horloge NON exécutés |
+
+### Compétences ECC appliquées, nommément
+
+`search-first` (chercher avant d'écrire : chaque comportement existant a été
+localisé avant modification), `tdd-workflow` (rouge → vert : le test de casse
+Windows a été écrit rouge avant le correctif), `verification-loop` (chaque
+correctif rejoué, jamais cru), `security-review` (traversée, en-têtes de rôle,
+refus nommés), `postgres-patterns`, `redis-patterns`, `error-handling`
+(messages opposables : capacité, conséquence, plateforme), `architecture-
+decision-records` (les décisions de plateforme sont écrites ici, pas implicites).
