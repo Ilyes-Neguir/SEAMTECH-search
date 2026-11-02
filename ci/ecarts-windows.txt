@@ -379,3 +379,26 @@ tests/test_ocr_natif_image.py::test_pdf_mixte_echec_ocr_signale_incomplet|compte
 tests/test_ocr_natif_image.py::test_pdf_mixte_page_blanche_ignoree_et_ocr_des_images|pages mixtes : meme cause, le rendu borne est indisponible hors POSIX ; idem
 tests/test_ocr_page_integralite.py::test_pdf_avec_page_native_et_page_image_extrait_les_deux|integralite d'une page image : exige l'extraction bornee, refuse hors POSIX ; idem
 tests/test_ocr_provenance.py::test_le_rapport_nomme_la_version_du_moteur_qui_a_tourne|provenance du moteur : sans rendu borne, aucune page n'est reconnue et le rapport n'a rien a nommer ; idem
+
+# --- Écarts de BANC (suite) : un préflight qui simule ses binaires en shell --
+# 21 échecs de tests/test_preflight_archive.py portent la MEME cause que les
+# deux identifiants déjà nommés plus haut : « assert 6 == 0 ». Le préflight
+# rapporte six problèmes parce que les faux ``tesseract`` et ``pdftoppm`` que le
+# banc écrit sont des scripts « #!/bin/sh », et Windows ne sait pas exécuter un
+# tel fichier. C'est le BANC, pas le produit. L'écart est donc pris à
+# l'échelle du FICHIER : y énumérer 21 identifiants n'ajouterait rien, et en
+# oublier un ferait croire à une régression. Contrepartie : le même préflight
+# passe en CI Linux avec les vrais binaires.
+tests/test_preflight_archive.py|banc : le préflight simule tesseract et pdftoppm par des scripts « #!/bin/sh » que Windows ne peut pas exécuter (famille « assert 6 == 0 », 21 échecs) ; le produit n'est pas en cause ; couvert par la CI Linux
+
+# --- Refus de confinement vu par HTTP (suite) : 409 au lieu des octets -------
+# DEMONTRE sur le banc POSIX : ces cinq tests échouent SOUS
+# ci/plugin_simulation_sans_primitives.py avec EXACTEMENT les mêmes assertions
+# qu'à Windows (« assert 409 == 200 »). Le confinement local étant refusé, la
+# route retombe sur le stockage objet, dont le corps n'est pas des octets ; la
+# réponse devient 409 « Identité du fichier invalide » au lieu de 200.
+tests/test_url_presignee_302.py::test_artefact_presignature_indisponible_sert_le_repli_sans_exception|confinement local refusé : la route retombe sur le stockage objet simulé (corps non octets) et répond 409 au lieu de 200 ; démontré par ci/plugin_simulation_sans_primitives.py
+tests/test_url_presignee_302.py::test_artefact_sans_endpoint_public_sert_les_octets_par_l_api|confinement local refusé : même cause, mêmes assertions sous simulation des primitives absentes
+tests/test_url_presignee_302.py::test_open_presignature_indisponible_sert_le_fichier_local|confinement local refusé : même cause, mêmes assertions sous simulation des primitives absentes
+tests/test_url_presignee_302.py::test_open_sans_cle_d_objet_ne_redirige_pas|confinement local refusé : même cause, mêmes assertions sous simulation des primitives absentes
+tests/test_url_presignee_302.py::test_open_sans_endpoint_public_sert_les_octets_par_l_api|confinement local refusé : même cause, mêmes assertions sous simulation des primitives absentes
