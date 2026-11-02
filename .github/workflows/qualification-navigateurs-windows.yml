@@ -65,6 +65,7 @@ jobs:
           pip install -r requirements-dev.txt
 
       - name: Dépendances de l'interface
+        working-directory: frontend
         # ``--ignore-scripts`` : aucun paquet de cette interface ne compile du
         # natif à l'installation (Next et Tailwind 4 fournissent leurs binaires
         # précompilés), et les scripts de post-installation de Playwright
