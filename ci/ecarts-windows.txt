@@ -338,9 +338,9 @@ CAUSE|ModuleNotFoundError: No module named 'fcntl'|fcntl est le module POSIX des
 # 3 échecs
 CAUSE|Restauration locale sûre indisponible sur cette plateforme|la restauration écrit sous des répertoires ouverts sans suivre de lien (O_NOFOLLOW, linkat) : sans ces primitives, elle refuse plutôt que d'écrire à un emplacement incertain
 # 1 échec
-CAUSE|module 'os' has no attribute 'geteuid'|os.geteuid (identité d'exécution POSIX) n'existe pas sur Windows : le test qui distingue « root » d'un utilisateur ordinaire n'a pas de sens sur cette plateforme
+CAUSE|has no attribute 'geteuid'|os.geteuid (identité d'exécution POSIX) n'existe pas sur Windows : le test qui distingue « root » d'un utilisateur ordinaire n'a pas de sens sur cette plateforme
 # 1 échec
-CAUSE|module 'os' has no attribute 'killpg'|os.killpg (signal à un groupe de processus) est POSIX : les tests d'arrêt d'un groupe d'enfants n'ont pas d'équivalent Windows
+CAUSE|has no attribute 'killpg'|os.killpg (signal à un groupe de processus) est POSIX : les tests d'arrêt d'un groupe d'enfants n'ont pas d'équivalent Windows
 # 3 échecs
 CAUSE|Failed: lien de verrou suivi|créer un lien symbolique demande des droits d'administrateur sur Windows : le test du refus de suivre un lien ne peut pas s'exécuter
 # 1 échec
@@ -358,3 +358,24 @@ CAUSE|Failed: lien de dossier suivi|même cause : les liens de répertoires (jon
 # préférable, et n'a pas été fait faute de pouvoir l'éprouver ici.
 tests/test_garde_fous_preparation.py::test_chemins_relatifs_et_absolus_equivalents|le banc simule tesseract et pdftoppm par des scripts « #!/bin/sh » que Windows ne peut pas exécuter : le préflight rapporte six problèmes qui viennent du banc, pas du produit
 tests/test_garde_fous_preparation.py::test_rg13_bout_en_bout_source_intacte|même banc : mêmes faux binaires shell, même cause — limite du banc de test sur Windows, pas un défaut du préflight
+
+# --- Refus VOLONTAIRE du produit hors POSIX : rendu et images OCR ----------
+# Etabli le 02/11 (run 41467111570) : dix-huit echecs sans message, donc sans
+# cause. La cause est dans le produit et elle est voulue : _rendre_page_pdf_borne
+# et _extraire_images_pdf_borne rendent None / [] des que os.name != "posix",
+# parce que le confinement du rendu (sous-processus borne, /proc) n'existe que
+# sur POSIX. Contrat verrouille par tests/test_ocr_refus_non_posix.py, qui
+# passe sur les deux plateformes et exige que le refus NOMME la plateforme ;
+# contrepartie : le job CI « ocr » et la suite ocr_suite sur Linux.
+tests/test_ocr_rendu_pdf.py::test_rendu_ocr_montre_seulement_la_vue_visible|rendu PDF borne : refuse hors POSIX (os.name != "posix") — le confinement du rendu n'existe que sur POSIX ; verrouille par tests/test_ocr_refus_non_posix.py
+tests/test_ocr_rendu_pdf.py::test_ocr_page_composite_utilise_le_rendu_visible_pas_image_brute|rendu PDF borne : refuse hors POSIX, donc la vue composite n'est pas reconnaissable ; idem
+tests/test_ocr_rendu_pdf.py::test_rendu_ocr_recadre_image_est_redresse_selon_matrice|redressement selon la matrice : s'appuie sur le rendu borne, refuse hors POSIX ; idem
+tests/test_ocr_rendu_pdf.py::test_extraction_image_simple_isolee_et_identique|extraction d'image bornee : rend [] hors POSIX, donc aucune image isolee ; idem
+tests/test_ocr_rendu_pdf.py::test_image_brute_est_revalidee_si_pdf_change_apres_precontrole|precontrole d'image : s'appuie sur l'extraction bornee, indisponible hors POSIX ; idem
+tests/test_ocr_rendu_pdf.py::test_precontrole_isole_timeout_ou_erreur_refuse_sans_fuite|isolement du precontrole : sous-processus borne, refuse hors POSIX ; idem
+tests/test_ocr_rendu_pdf.py::test_precontrole_page_ne_parse_pas_dans_processus_parent|isolement par sous-processus (fork) : primitif POSIX, absent de Windows ; idem
+tests/test_ocr_natif_image.py::test_pdf_mixte_preserve_ordre_natif_et_ocr|pages mixtes : l'OCR des pages image exige le rendu borne, refuse hors POSIX ; idem
+tests/test_ocr_natif_image.py::test_pdf_mixte_echec_ocr_signale_incomplet|compte rendu d'incompletude : sans rendu borne, l'echec d'OCR n'a pas lieu d'etre signale ; idem
+tests/test_ocr_natif_image.py::test_pdf_mixte_page_blanche_ignoree_et_ocr_des_images|pages mixtes : meme cause, le rendu borne est indisponible hors POSIX ; idem
+tests/test_ocr_page_integralite.py::test_pdf_avec_page_native_et_page_image_extrait_les_deux|integralite d'une page image : exige l'extraction bornee, refuse hors POSIX ; idem
+tests/test_ocr_provenance.py::test_le_rapport_nomme_la_version_du_moteur_qui_a_tourne|provenance du moteur : sans rendu borne, aucune page n'est reconnue et le rapport n'a rien a nommer ; idem

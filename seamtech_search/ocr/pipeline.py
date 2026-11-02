@@ -495,6 +495,23 @@ def _ocr_page_pdf(
         resultat["duree_s"] = time.perf_counter() - debut
         return resultat
 
+    # Hors POSIX, le rendu et l'extraction d'image bornés sont INDISPONIBLES
+    # par construction (``os.name != "posix"`` dans les deux aides ci-dessous) :
+    # le refus est donc certain, et il doit NOMMER la plateforme — sinon
+    # l'atelier lit « OCR impossible » sans savoir si c'est réparable. La
+    # qualification Windows du 02/11 a montré le contraire : dix-huit tests
+    # échouaient sur un ``None`` anonyme.
+    if os.name != "posix":
+        return {
+            "texte": "", "confiance": None, "duree_s": 0.0, "succes": False,
+            "motif": (
+                "OCR impossible : le rendu et l'extraction d'image bornés exigent un système POSIX "
+                f"(plateforme : {sys.platform}, os.name={os.name}). Cette limite vient du système, "
+                "pas de la configuration : elle ne se contourne pas par un réglage."
+            ),
+            "moteur": nom_moteur, "version_moteur": moteur.version,
+        }
+
     if not _page_pdf_vue_integrale_bornee(pdf_path, numero_page, timeout_s):
         rendu = _rendre_page_pdf_borne(pdf_path, numero_page, dossier_temp, dpi, timeout_s)
         if rendu is not None:

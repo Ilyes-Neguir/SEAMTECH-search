@@ -40,6 +40,26 @@ function PublierErreur([string]$titre, [string]$texte) {
     Write-Host "::error title=$titre::$propre"
 }
 
+function PublierErreursParPaquets([string]$titre, [string[]]$lignes, [int]$max = 2800) {
+    # Une annotation tient dans 3000 caracteres et GitHub en plafonne dix par
+    # ETAPE. Plutot que de tronquer (run 41467111570 : 34 identifiants publies
+    # sur 128), on remplit des seaux : rien n'est perdu, tout est lisible.
+    $seau = @()
+    $longueur = 0
+    $numero = 1
+    foreach ($ligne in $lignes) {
+        if ($longueur + $ligne.Length + 2 -gt $max -and $seau.Count -gt 0) {
+            PublierErreur "$titre-$numero" ($seau -join " `n ")
+            $numero += 1
+            $seau = @()
+            $longueur = 0
+        }
+        $seau += $ligne
+        $longueur += $ligne.Length + 2
+    }
+    if ($seau.Count -gt 0) { PublierErreur "$titre-$numero" ($seau -join " `n ") }
+}
+
 # --- 1. Le code de sortie : sans lui, l'étape a été INTERROMPUE -------------
 if (-not (Test-Path $CodeSortie)) {
     # L'étape a été INTERROMPUE (vue au run 41375766036 : aucun code de sortie
@@ -249,9 +269,22 @@ foreach ($echec in $echecs) {
 }
 
 if ($inattendus.Count -gt 0) {
-    PublierErreur "$Titre-echec-non-nomme" (
-        "$($inattendus.Count) echec(s) hors perimetre connu : " + ($inattendus -join ' ')
-    )
+    # Un echec sans cause ne se repare pas : on publie, pour CHACUN, la cause
+    # que pytest a ecrite dans son rapport JUnit (voie ``$details``). Remplies
+    # par seaux : ``PublierErreur`` tronque a 3000 caracteres et 128
+    # identifiants n'y tiennent pas (run 41467111570 : 34 publies, 94 perdus).
+    $lignes = @()
+    foreach ($echec in $inattendus) {
+        $cause = '(aucune cause dans le rapport)'
+        if ($details.ContainsKey($echec)) {
+            $brute = (($details[$echec] -join ' | ') -replace "`r|`n", ' ')
+            if ($brute.Length -gt 260) { $brute = $brute.Substring(0, 260) }
+            $cause = $brute
+        }
+        $lignes += "$echec :: $cause"
+    }
+    $lignes += "TOTAL $($inattendus.Count) echec(s) hors perimetre connu"
+    PublierErreursParPaquets "$Titre-non-nomme" $lignes
     exit 1
 }
 
