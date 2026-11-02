@@ -133,7 +133,7 @@ jobs:
         # porte — d'où ce script, plutôt qu'un grep du journal.
         run: |
           $ErrorActionPreference = 'Continue'
-          python ci\resumer_echecs.py logs\junit-sans-service.xml logs\causes-sans-service.txt
+          python ci\resumer_echecs.py logs\junit-sans-service.xml logs\causes-sans-service.txt --details logs\details-sans-service.txt
           if ($LASTEXITCODE -ne 0) {
             Write-Host "::error title=causes-sans-service::analyse du rapport JUnit impossible (rc=$LASTEXITCODE)"
           }
@@ -151,7 +151,7 @@ jobs:
           pwsh -File ci\verdict-windows.ps1 `
             -Journal logs\windows-sans-service.log `
             -CodeSortie logs\rc-sans-service.txt `
-            -Titre windows-sans-service -Causes logs\causes-sans-service.txt
+            -Titre windows-sans-service -Causes logs\causes-sans-service.txt -Details logs\details-sans-service.txt
           exit $LASTEXITCODE
       # Une seule étape ne peut publier que dix familles de causes. Les
       # étapes suivantes ne prononcent PAS de verdict (``exit 0``) : elles ne
@@ -161,25 +161,25 @@ jobs:
         if: always()
         continue-on-error: true
         run: |
-          pwsh -File ci\verdict-windows.ps1 -Journal logs\windows-sans-service.log -CodeSortie logs\rc-sans-service.txt -Titre windows-sans-service -Causes logs\causes-sans-service.txt -Tranche 2
+          pwsh -File ci\verdict-windows.ps1 -Journal logs\windows-sans-service.log -CodeSortie logs\rc-sans-service.txt -Titre windows-sans-service -Causes logs\causes-sans-service.txt -Details logs\details-sans-service.txt -Tranche 2
           exit 0
       - name: Suite sans service — causes, tranche 3
         if: always()
         continue-on-error: true
         run: |
-          pwsh -File ci\verdict-windows.ps1 -Journal logs\windows-sans-service.log -CodeSortie logs\rc-sans-service.txt -Titre windows-sans-service -Causes logs\causes-sans-service.txt -Tranche 3
+          pwsh -File ci\verdict-windows.ps1 -Journal logs\windows-sans-service.log -CodeSortie logs\rc-sans-service.txt -Titre windows-sans-service -Causes logs\causes-sans-service.txt -Details logs\details-sans-service.txt -Tranche 3
           exit 0
       - name: Suite sans service — causes, tranche 4
         if: always()
         continue-on-error: true
         run: |
-          pwsh -File ci\verdict-windows.ps1 -Journal logs\windows-sans-service.log -CodeSortie logs\rc-sans-service.txt -Titre windows-sans-service -Causes logs\causes-sans-service.txt -Tranche 4
+          pwsh -File ci\verdict-windows.ps1 -Journal logs\windows-sans-service.log -CodeSortie logs\rc-sans-service.txt -Titre windows-sans-service -Causes logs\causes-sans-service.txt -Details logs\details-sans-service.txt -Tranche 4
           exit 0
       - name: Suite sans service — causes, tranche 5
         if: always()
         continue-on-error: true
         run: |
-          pwsh -File ci\verdict-windows.ps1 -Journal logs\windows-sans-service.log -CodeSortie logs\rc-sans-service.txt -Titre windows-sans-service -Causes logs\causes-sans-service.txt -Tranche 5
+          pwsh -File ci\verdict-windows.ps1 -Journal logs\windows-sans-service.log -CodeSortie logs\rc-sans-service.txt -Titre windows-sans-service -Causes logs\causes-sans-service.txt -Details logs\details-sans-service.txt -Tranche 5
           exit 0
       - name: Installer PostgreSQL 16 (hôte)
         if: always()
@@ -334,7 +334,7 @@ jobs:
         if: always()
         run: |
           $ErrorActionPreference = 'Continue'
-          python ci\resumer_echecs.py logs\junit-postgres-redis.xml logs\causes-postgres-redis.txt
+          python ci\resumer_echecs.py logs\junit-postgres-redis.xml logs\causes-postgres-redis.txt --details logs\details-postgres-redis.txt
           if ($LASTEXITCODE -ne 0) {
             Write-Host "::error title=causes-postgres-redis::analyse du rapport JUnit impossible (rc=$LASTEXITCODE)"
           }
@@ -346,19 +346,19 @@ jobs:
           pwsh -File ci\verdict-windows.ps1 `
             -Journal logs\windows-postgres-redis.log `
             -CodeSortie logs\rc-postgres-redis.txt `
-            -Titre windows-postgres-redis -Causes logs\causes-postgres-redis.txt
+            -Titre windows-postgres-redis -Causes logs\causes-postgres-redis.txt -Details logs\details-postgres-redis.txt
           exit $LASTEXITCODE
       - name: Suite PostgreSQL + Redis — causes, tranche 2
         if: always()
         continue-on-error: true
         run: |
-          pwsh -File ci\verdict-windows.ps1 -Journal logs\windows-postgres-redis.log -CodeSortie logs\rc-postgres-redis.txt -Titre windows-postgres-redis -Causes logs\causes-postgres-redis.txt -Tranche 2
+          pwsh -File ci\verdict-windows.ps1 -Journal logs\windows-postgres-redis.log -CodeSortie logs\rc-postgres-redis.txt -Titre windows-postgres-redis -Causes logs\causes-postgres-redis.txt -Details logs\details-postgres-redis.txt -Tranche 2
           exit 0
       - name: Suite PostgreSQL + Redis — causes, tranche 3
         if: always()
         continue-on-error: true
         run: |
-          pwsh -File ci\verdict-windows.ps1 -Journal logs\windows-postgres-redis.log -CodeSortie logs\rc-postgres-redis.txt -Titre windows-postgres-redis -Causes logs\causes-postgres-redis.txt -Tranche 3
+          pwsh -File ci\verdict-windows.ps1 -Journal logs\windows-postgres-redis.log -CodeSortie logs\rc-postgres-redis.txt -Titre windows-postgres-redis -Causes logs\causes-postgres-redis.txt -Details logs\details-postgres-redis.txt -Tranche 3
           exit 0
       - name: Diagnostic — fichiers à processus POSIX, exécutés un par un
         if: always()
