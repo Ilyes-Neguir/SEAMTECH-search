@@ -18,7 +18,7 @@ from seamtech_search.sauvegarde import (
     restaurer_fichiers_locaux,
     sauver,
 )
-from tests.helpers_postgres_isole import url_base_jetable
+from tests.helpers_postgres_isole import parite_accents_active, url_base_jetable
 
 
 def _pointer_pg_dump(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -301,6 +301,17 @@ def test_aller_retour_fichiers_vers_cible_distincte(
         resultat = verifier(url_cible, manifeste, [archive])
         assert resultat["ok"], resultat.get("ecarts")
 
+        # « GENOIS » doit retrouver « Génois » : la parité des accents exige
+        # l'extension unaccent (postgresql-contrib). Un banc sans contrib
+        # dégrade vers « simple » — ce n'est pas une régression produit, et
+        # l'écart est NOMMÉ ici plutôt que silencieux. La contrepartie qui
+        # interdit de s'en contenter : tests/test_indexer_accent_parity.py,
+        # rouge si une CI complète empruntait le chemin dégradé.
+        if not parite_accents_active(url_cible):
+            pytest.skip(
+                "parité des accents indisponible : l'extension unaccent "
+                "(postgresql-contrib) est absente de ce banc"
+            )
         index_cible = SearchIndex(tmp_path / "unused-cible.db", url_cible)
         try:
             reponse = rechercher_fiches(index_cible, requete="GENOIS")

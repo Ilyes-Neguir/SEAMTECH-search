@@ -107,9 +107,22 @@ def installation_ancienne(tmp_path: Path) -> Iterator[dict[str, Any]]:
                 )
             # L'index plein texte est normalement alimenté par ``upsert_documents`` ;
             # ici les lignes sont semées en SQL direct, on le remplit donc de la
-            # même façon que la production (tsvector « unaccent »).
+            # même façon que la production — c'est-à-dire avec la configuration
+            # que CETTE base a réellement résolu, pas avec ``seamtech_unaccent``
+            # écrit en dur.
+            #
+            # Pourquoi : l'écrire en dur faisait échouer ce test sur tout
+            # PostgreSQL sans ``postgresql-contrib`` (UndefinedObject), alors
+            # que l'application, elle, DÉGRADE proprement vers ``simple``
+            # (``indexer._ensure_unaccent_config``). Le test était donc plus
+            # exigeant que le produit, et rouge pour une raison qui n'avait
+            # rien à voir avec la migration qu'il doit vérifier. La parité des
+            # accents est prouvée ailleurs, et bruyamment :
+            # ``tests/test_indexer_accent_parity.py``.
+            configuration = index.config_recherche_texte(connexion)
             cursor.execute(
-                "UPDATE documents SET search_vector = to_tsvector('seamtech_unaccent', coalesce(content, ''))"
+                "UPDATE documents SET search_vector = to_tsvector(%s, coalesce(content, ''))",
+                (configuration,),
             )
     try:
         yield {"nom": nom, "url": url, "index": index, "tmp": tmp_path}
