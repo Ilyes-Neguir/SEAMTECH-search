@@ -19,7 +19,8 @@ param(
     [Parameter(Mandatory = $true)][string]$Journal,
     [Parameter(Mandatory = $true)][string]$CodeSortie,
     [Parameter(Mandatory = $true)][string]$Titre,
-    [int]$Tranche = 1
+    [int]$Tranche = 1,
+    [string]$Causes = ''
 )
 
 $ErrorActionPreference = 'Continue'
@@ -77,55 +78,64 @@ Publier $Titre "rc=$rc ; echecs=$($echecs.Count) ; $resume"
 
 # --- 2 bis. Les CAUSES, et non seulement les noms ---------------------------
 # 314 échecs ne s'instruisent pas un par un : ils se regroupent par CAUSE.
-# Or la cause n'est presque JAMAIS dans la ligne « FAILED » — « Regex pattern
-# did not match. » ne dit rien de ce qui manque — elle est dans la DERNIÈRE
-# ligne « E » de la trace, que ``--tb=short`` attache à chaque test. On
-# publie donc une annotation par famille : combien d'échecs, quelle cause,
-# trois exemples. C'est ce qui permet de décider, famille par famille, entre
-# adapter le produit et nommer l'écart.
+# Deux voies, dans cet ordre :
 #
-# Plafond : DIX annotations par ÉTAPE. Une seule étape ne publie donc que dix
-# familles ; le workflow rappelle ce script avec ``-Tranche 2``, ``3``… pour
-# couvrir les suivantes. Sans ce découpage, l'inventaire prenait toute la
-# place et les causes disparaissaient (run 41439011809).
-$familles = @{}
-$courant_id = $null
-$courant_cause = ''
-if (Test-Path $Journal) {
-    foreach ($correspondance in (Select-String -Path $Journal -Pattern '^(FAILED|ERROR) |^E\s+')) {
-        $texte = $correspondance.Line
-        if ($texte -match '^(FAILED|ERROR) ') {
-            if ($courant_id) {
-                $cle = if ($courant_cause) { $courant_cause } else { '(aucune ligne E : cause hors trace)' }
-                if (-not $familles.ContainsKey($cle)) { $familles[$cle] = New-Object System.Collections.ArrayList }
-                [void]$familles[$cle].Add($courant_id)
-            }
-            $courant_id = ($texte -split '\s+')[1]
-            $courant_cause = ''
-        } elseif ($texte -match '^E\s+(.*)$') {
-            # La DERNIÈRE ligne E d'un test est la plus précise : elle écrase
-            # les précédentes, qui ne sont que le chemin d'appel.
-            $courant_cause = $Matches[1].Trim()
+#   1. le rapport JUnit, analysé par ``ci/resumer_echecs.py`` (voie sûre) :
+#      une ligne « nombre|cause|exemples » par famille. La cause est la
+#      DERNIÈRE ligne « E » UTILE de la trace — « assert 409 == 200 », ou
+#      l'OSError qui NOMME la capacité manquante. La ligne de résumé court,
+#      elle, ne dit rien d'exploitable : « Regex pattern did not match. »
+#   2. à défaut, le regroupement depuis le journal. Il est GROSSIER et il le
+#      dit : avec ``-v``, pytest marque les échecs en fin de ligne de
+#      progression, et les lignes « E » de la trace ne sont pas attenantes au
+#      résumé — on ne peut donc y regrouper que sur le message du résumé.
+$familles = @()
+if ($Causes -and (Test-Path $Causes)) {
+    foreach ($entree in (Get-Content $Causes)) {
+        if (-not $entree.Trim()) { continue }
+        $morceaux = $entree -split '\|', 3
+        if ($morceaux.Count -lt 3) { continue }
+        $familles += [pscustomobject]@{
+            Nombre   = $morceaux[0]
+            Cause    = $morceaux[1]
+            Exemples = $morceaux[2]
         }
     }
-    if ($courant_id) {
-        $cle = if ($courant_cause) { $courant_cause } else { '(aucune ligne E : cause hors trace)' }
-        if (-not $familles.ContainsKey($cle)) { $familles[$cle] = New-Object System.Collections.ArrayList }
-        [void]$familles[$cle].Add($courant_id)
+}
+if ($familles.Count -eq 0) {
+    $groupes = @{}
+    if (Test-Path $Journal) {
+        Select-String -Path $Journal -Pattern '^(FAILED|ERROR) ' | ForEach-Object {
+            $texte = $_.Line
+            $separateur = $texte.IndexOf(' - ')
+            if ($separateur -gt 0) {
+                $identifiant = ($texte.Substring(0, $separateur) -split '\s+')[1]
+                $message = $texte.Substring($separateur + 3)
+            } else {
+                $identifiant = ($texte -split '\s+')[1]
+                $message = '(sans message)'
+            }
+            if ($message.Length -gt 160) { $message = $message.Substring(0, 160) }
+            if (-not $groupes.ContainsKey($message)) { $groupes[$message] = New-Object System.Collections.ArrayList }
+            [void]$groupes[$message].Add($identifiant)
+        }
+    }
+    foreach ($cle in ($groupes.Keys | Sort-Object { -$groupes[$_].Count })) {
+        $familles += [pscustomobject]@{
+            Nombre   = $groupes[$cle].Count
+            Cause    = "(journal, sans rapport JUnit) $cle"
+            Exemples = (($groupes[$cle] | Select-Object -First 3) -join ' ')
+        }
     }
 }
-$cles_triees = @($familles.Keys | Sort-Object { -$familles[$_].Count })
 # Dix annotations par étape au total, compte rendu du code de sortie compris :
 # la tranche 1 publie sept familles et garde deux places pour l'inventaire ;
 # les tranches suivantes, appelées par d'autres étapes, en publient huit.
 if ($Tranche -le 1) { $debut = 0; $combien = 7 } else { $debut = 7 + ($Tranche - 2) * 8; $combien = 8 }
-$numero = $debut
-foreach ($cle in ($cles_triees | Select-Object -Skip $debut -First $combien)) {
+$numero = 0
+foreach ($famille in ($familles | Select-Object -Skip $debut -First $combien)) {
     $numero++
-    $exemples = ($familles[$cle] | Select-Object -First 3) -join ' '
-    $cause_courte = $cle
-    if ($cause_courte.Length -gt 240) { $cause_courte = $cause_courte.Substring(0, 240) + '…' }
-    Publier "$Titre-cause-$numero" "$($familles[$cle].Count) echecs ; CAUSE: $cause_courte ; EXEMPLES: $exemples"
+    Publier "$Titre-cause-$numero" "$($famille.Nombre) echecs ; CAUSE: $($famille.Cause) ; EXEMPLES: $($famille.Exemples)"
 }
 
 # Plafond : dix annotations par étape. Avec 314 échecs, l'inventaire complet

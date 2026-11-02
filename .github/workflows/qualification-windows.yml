@@ -117,13 +117,26 @@ jobs:
           # à plus de 50 sans terminer (run 41420706781). ``cmd /c`` écrit les octets
           # tels quels. La verbosité EST utile : sans elle, une exécution interrompue
           # ne dit pas où elle s'est arrêtée (§32).
-          $ligne = 'python -m pytest -v --tb=short -rf -m "not postgres and not s3 and not perf and not redis_queue and not ocr_suite" --ignore=tests/test_chaos.py --ignore=tests/test_worker_process.py --ignore=tests/test_worker_process_postgres.py --ignore=tests/test_worker_crash_terminal.py --ignore=tests/test_securite_banc_suivi.py --ignore=tests/test_migration_rollback.py --ignore=tests/test_partage_web_worker.py > logs\\windows-sans-service.log 2>&1 & echo !errorlevel!> logs\\rc-sans-service.txt'
+          $ligne = 'python -m pytest -v --tb=short -rf -m "not postgres and not s3 and not perf and not redis_queue and not ocr_suite" --ignore=tests/test_chaos.py --ignore=tests/test_worker_process.py --ignore=tests/test_worker_process_postgres.py --ignore=tests/test_worker_crash_terminal.py --ignore=tests/test_securite_banc_suivi.py --ignore=tests/test_migration_rollback.py --ignore=tests/test_partage_web_worker.py --junitxml=logs\\junit-sans-service.xml > logs\\windows-sans-service.log 2>&1 & echo !errorlevel!> logs\\rc-sans-service.txt'
           cmd /V /C $ligne
           $rc = $LASTEXITCODE
           Publier "windows-sans-service-apres-pytest" "rc=$rc journal=$((Get-Item logs\windows-sans-service.log -ErrorAction SilentlyContinue).Length) octets"
           Get-Content logs\windows-sans-service.log -Tail 25 | ForEach-Object { Write-Host "journal: $_" }
           $resume = (Select-String -Path logs\windows-sans-service.log -Pattern '^(FAILED|ERROR)|passed|failed' |
                      Select-Object -Last 10 | ForEach-Object { $_.Line }) -join ' | '
+          exit 0
+      - name: Suite sans service — causes par famille (rapport JUnit)
+        if: always()
+        # La cause d'un échec n'est presque jamais dans la ligne « FAILED » :
+        # « Regex pattern did not match. » ne dit rien de ce qui manque. Elle
+        # est dans la DERNIÈRE ligne « E » de la trace, que le rapport JUnit
+        # porte — d'où ce script, plutôt qu'un grep du journal.
+        run: |
+          $ErrorActionPreference = 'Continue'
+          python ci\resumer_echecs.py logs\junit-sans-service.xml logs\causes-sans-service.txt
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "::error title=causes-sans-service::analyse du rapport JUnit impossible (rc=$LASTEXITCODE)"
+          }
           exit 0
       - name: Suite sans service sur Windows — verdict
         if: always()
@@ -138,7 +151,7 @@ jobs:
           pwsh -File ci\verdict-windows.ps1 `
             -Journal logs\windows-sans-service.log `
             -CodeSortie logs\rc-sans-service.txt `
-            -Titre windows-sans-service
+            -Titre windows-sans-service -Causes logs\causes-sans-service.txt
           exit $LASTEXITCODE
       # Une seule étape ne peut publier que dix familles de causes. Les
       # étapes suivantes ne prononcent PAS de verdict (``exit 0``) : elles ne
@@ -148,25 +161,25 @@ jobs:
         if: always()
         continue-on-error: true
         run: |
-          pwsh -File ci\verdict-windows.ps1 -Journal logs\windows-sans-service.log -CodeSortie logs\rc-sans-service.txt -Titre windows-sans-service -Tranche 2
+          pwsh -File ci\verdict-windows.ps1 -Journal logs\windows-sans-service.log -CodeSortie logs\rc-sans-service.txt -Titre windows-sans-service -Causes logs\causes-sans-service.txt -Tranche 2
           exit 0
       - name: Suite sans service — causes, tranche 3
         if: always()
         continue-on-error: true
         run: |
-          pwsh -File ci\verdict-windows.ps1 -Journal logs\windows-sans-service.log -CodeSortie logs\rc-sans-service.txt -Titre windows-sans-service -Tranche 3
+          pwsh -File ci\verdict-windows.ps1 -Journal logs\windows-sans-service.log -CodeSortie logs\rc-sans-service.txt -Titre windows-sans-service -Causes logs\causes-sans-service.txt -Tranche 3
           exit 0
       - name: Suite sans service — causes, tranche 4
         if: always()
         continue-on-error: true
         run: |
-          pwsh -File ci\verdict-windows.ps1 -Journal logs\windows-sans-service.log -CodeSortie logs\rc-sans-service.txt -Titre windows-sans-service -Tranche 4
+          pwsh -File ci\verdict-windows.ps1 -Journal logs\windows-sans-service.log -CodeSortie logs\rc-sans-service.txt -Titre windows-sans-service -Causes logs\causes-sans-service.txt -Tranche 4
           exit 0
       - name: Suite sans service — causes, tranche 5
         if: always()
         continue-on-error: true
         run: |
-          pwsh -File ci\verdict-windows.ps1 -Journal logs\windows-sans-service.log -CodeSortie logs\rc-sans-service.txt -Titre windows-sans-service -Tranche 5
+          pwsh -File ci\verdict-windows.ps1 -Journal logs\windows-sans-service.log -CodeSortie logs\rc-sans-service.txt -Titre windows-sans-service -Causes logs\causes-sans-service.txt -Tranche 5
           exit 0
       - name: Installer PostgreSQL 16 (hôte)
         if: always()
@@ -309,13 +322,22 @@ jobs:
           # à plus de 50 sans terminer (run 41420706781). ``cmd /c`` écrit les octets
           # tels quels. La verbosité EST utile : sans elle, une exécution interrompue
           # ne dit pas où elle s'est arrêtée (§32).
-          $ligne = 'python -m pytest -v --tb=short -rf -m "postgres and not s3 and not perf and not ocr_suite and not redis_queue" --ignore=tests/test_chaos.py --ignore=tests/test_worker_process.py --ignore=tests/test_worker_process_postgres.py --ignore=tests/test_worker_crash_terminal.py --ignore=tests/test_securite_banc_suivi.py --ignore=tests/test_migration_rollback.py --ignore=tests/test_partage_web_worker.py > logs\\windows-postgres-redis.log 2>&1 & echo !errorlevel!> logs\\rc-postgres-redis.txt'
+          $ligne = 'python -m pytest -v --tb=short -rf -m "postgres and not s3 and not perf and not ocr_suite and not redis_queue" --ignore=tests/test_chaos.py --ignore=tests/test_worker_process.py --ignore=tests/test_worker_process_postgres.py --ignore=tests/test_worker_crash_terminal.py --ignore=tests/test_securite_banc_suivi.py --ignore=tests/test_migration_rollback.py --ignore=tests/test_partage_web_worker.py --junitxml=logs\\junit-postgres-redis.xml > logs\\windows-postgres-redis.log 2>&1 & echo !errorlevel!> logs\\rc-postgres-redis.txt'
           cmd /V /C $ligne
           $rc = $LASTEXITCODE
           Publier "windows-postgres-redis-apres-pytest" "rc=$rc journal=$((Get-Item logs\windows-postgres-redis.log -ErrorAction SilentlyContinue).Length) octets"
           Get-Content logs\windows-postgres-redis.log -Tail 25 | ForEach-Object { Write-Host "journal: $_" }
           $resume = (Select-String -Path logs\windows-postgres-redis.log -Pattern '^(FAILED|ERROR)|passed|failed' |
                      Select-Object -Last 10 | ForEach-Object { $_.Line }) -join ' | '
+          exit 0
+      - name: Suite PostgreSQL + Redis — causes par famille (rapport JUnit)
+        if: always()
+        run: |
+          $ErrorActionPreference = 'Continue'
+          python ci\resumer_echecs.py logs\junit-postgres-redis.xml logs\causes-postgres-redis.txt
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "::error title=causes-postgres-redis::analyse du rapport JUnit impossible (rc=$LASTEXITCODE)"
+          }
           exit 0
       - name: Suite PostgreSQL + Redis sur Windows — verdict
         if: always()
@@ -324,19 +346,19 @@ jobs:
           pwsh -File ci\verdict-windows.ps1 `
             -Journal logs\windows-postgres-redis.log `
             -CodeSortie logs\rc-postgres-redis.txt `
-            -Titre windows-postgres-redis
+            -Titre windows-postgres-redis -Causes logs\causes-postgres-redis.txt
           exit $LASTEXITCODE
       - name: Suite PostgreSQL + Redis — causes, tranche 2
         if: always()
         continue-on-error: true
         run: |
-          pwsh -File ci\verdict-windows.ps1 -Journal logs\windows-postgres-redis.log -CodeSortie logs\rc-postgres-redis.txt -Titre windows-postgres-redis -Tranche 2
+          pwsh -File ci\verdict-windows.ps1 -Journal logs\windows-postgres-redis.log -CodeSortie logs\rc-postgres-redis.txt -Titre windows-postgres-redis -Causes logs\causes-postgres-redis.txt -Tranche 2
           exit 0
       - name: Suite PostgreSQL + Redis — causes, tranche 3
         if: always()
         continue-on-error: true
         run: |
-          pwsh -File ci\verdict-windows.ps1 -Journal logs\windows-postgres-redis.log -CodeSortie logs\rc-postgres-redis.txt -Titre windows-postgres-redis -Tranche 3
+          pwsh -File ci\verdict-windows.ps1 -Journal logs\windows-postgres-redis.log -CodeSortie logs\rc-postgres-redis.txt -Titre windows-postgres-redis -Causes logs\causes-postgres-redis.txt -Tranche 3
           exit 0
       - name: Diagnostic — fichiers à processus POSIX, exécutés un par un
         if: always()
