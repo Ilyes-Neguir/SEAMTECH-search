@@ -103,15 +103,15 @@ jobs:
           # PowerShell, la sortie d'erreur d'un exécutable natif devient des
           # ErrorRecords, et le moindre avertissement de pytest tuait l'étape
           # avant le diagnostic (runs 41361547004 et 41362919313).
-          python -m pytest -v --tb=line -rf `
-            -m "not postgres and not s3 and not perf and not redis_queue and not ocr_suite" `
-            --ignore=tests/test_chaos.py `
-            --ignore=tests/test_worker_process.py `
-            --ignore=tests/test_worker_process_postgres.py `
-            --ignore=tests/test_worker_crash_terminal.py `
-            --ignore=tests/test_securite_banc_suivi.py `
-            --ignore=tests/test_migration_rollback.py `
-            --ignore=tests/test_partage_web_worker.py > logs\windows-sans-service.log 2>&1
+          # Redirection par cmd, PAS par PowerShell. Mesuré sur ce workflow :
+          # avec ``-v``, pytest produit des dizaines de milliers de lignes et la
+          # redirection PowerShell (``>``) redevient le facteur limitant — elle
+          # reconvertit chaque ligne ; la suite PostgreSQL est passée de 17 minutes
+          # à plus de 50 sans terminer (run 41420706781). ``cmd /c`` écrit les octets
+          # tels quels. La verbosité EST utile : sans elle, une exécution interrompue
+          # ne dit pas où elle s'est arrêtée (§32).
+          $ligne = 'python -m pytest -v --tb=line -rf -m "not postgres and not s3 and not perf and not redis_queue and not ocr_suite" --ignore=tests/test_chaos.py --ignore=tests/test_worker_process.py --ignore=tests/test_worker_process_postgres.py --ignore=tests/test_worker_crash_terminal.py --ignore=tests/test_securite_banc_suivi.py --ignore=tests/test_migration_rollback.py --ignore=tests/test_partage_web_worker.py > logs\\windows-sans-service.log 2>&1'
+          cmd /c $ligne
           $rc = $LASTEXITCODE
           Publier "windows-sans-service-apres-pytest" "rc=$rc journal=$((Get-Item logs\windows-sans-service.log -ErrorAction SilentlyContinue).Length) octets"
           Get-Content logs\windows-sans-service.log -Tail 25 | ForEach-Object { Write-Host "journal: $_" }
@@ -254,15 +254,15 @@ jobs:
           }
           Publier "windows-postgres-redis-debut" "lancement de la suite"
           New-Item -ItemType Directory -Force -Path logs | Out-Null
-          python -m pytest -v --tb=line -rf `
-            -m "postgres and not s3 and not perf and not ocr_suite and not redis_queue" `
-            --ignore=tests/test_chaos.py `
-            --ignore=tests/test_worker_process.py `
-            --ignore=tests/test_worker_process_postgres.py `
-            --ignore=tests/test_worker_crash_terminal.py `
-            --ignore=tests/test_securite_banc_suivi.py `
-            --ignore=tests/test_migration_rollback.py `
-            --ignore=tests/test_partage_web_worker.py > logs\windows-postgres-redis.log 2>&1
+          # Redirection par cmd, PAS par PowerShell. Mesuré sur ce workflow :
+          # avec ``-v``, pytest produit des dizaines de milliers de lignes et la
+          # redirection PowerShell (``>``) redevient le facteur limitant — elle
+          # reconvertit chaque ligne ; la suite PostgreSQL est passée de 17 minutes
+          # à plus de 50 sans terminer (run 41420706781). ``cmd /c`` écrit les octets
+          # tels quels. La verbosité EST utile : sans elle, une exécution interrompue
+          # ne dit pas où elle s'est arrêtée (§32).
+          $ligne = 'python -m pytest -v --tb=line -rf -m "postgres and not s3 and not perf and not ocr_suite and not redis_queue" --ignore=tests/test_chaos.py --ignore=tests/test_worker_process.py --ignore=tests/test_worker_process_postgres.py --ignore=tests/test_worker_crash_terminal.py --ignore=tests/test_securite_banc_suivi.py --ignore=tests/test_migration_rollback.py --ignore=tests/test_partage_web_worker.py > logs\\windows-postgres-redis.log 2>&1'
+          cmd /c $ligne
           $rc = $LASTEXITCODE
           Publier "windows-postgres-redis-apres-pytest" "rc=$rc journal=$((Get-Item logs\windows-postgres-redis.log -ErrorAction SilentlyContinue).Length) octets"
           Get-Content logs\windows-postgres-redis.log -Tail 25 | ForEach-Object { Write-Host "journal: $_" }
