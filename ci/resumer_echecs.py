@@ -79,6 +79,10 @@ def main(argv: list[str] | None = None) -> int:
     analyseur.add_argument("rapport", type=Path, help="rapport JUnit produit par pytest")
     analyseur.add_argument("sortie", type=Path, help="fichier des familles, une par ligne")
     analyseur.add_argument(
+        "--exemples", type=int, default=3,
+        help="nombre d'identifiants publiés par famille (défaut 3 ; 25 pour tout lister)",
+    )
+    analyseur.add_argument(
         "--details", type=Path, default=None,
         help="fichier de détail : une ligne « identifiant|cause » par test échoué",
     )
@@ -100,7 +104,8 @@ def main(argv: list[str] | None = None) -> int:
         )
     ordonnees = sorted(familles.items(), key=lambda couple: (-len(couple[1]), couple[0]))
     lignes = [
-        f"{len(identifiants)}|{cause}|{' '.join(identifiants[:3])}" for cause, identifiants in ordonnees
+        f"{len(identifiants)}|{cause}|{' '.join(identifiants[: arguments.exemples])}"
+        for cause, identifiants in ordonnees
     ]
     arguments.sortie.parent.mkdir(parents=True, exist_ok=True)
     arguments.sortie.write_text("\n".join(lignes) + ("\n" if lignes else ""), encoding="utf-8")

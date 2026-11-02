@@ -347,3 +347,14 @@ CAUSE|Failed: lien de verrou suivi|créer un lien symbolique demande des droits 
 CAUSE|Failed: lien dur non autorisé|les liens durs sont restreints sur Windows (droits élevés) : le test du refus de lier le fichier de verrou ne peut pas s'exécuter
 # 1 échec
 CAUSE|Failed: lien de dossier suivi|même cause : les liens de répertoires (jonctions) exigent des droits élevés et ne sont pas créés par les tests
+
+# --- Écarts de BANC : le test simule un binaire POSIX par un script shell ---
+# Cause lue : « assert 6 == 0 » (20 échecs, run 41467111570) ; les deux
+# identifiants ci-dessous sont ceux que l'annotation a listés. Le préflight
+# rapporte six problèmes parce que les faux ``tesseract`` et ``pdftoppm``
+# écrits par le test sont des scripts « #!/bin/sh » : Windows ne sait pas
+# exécuter un tel fichier. C'est le BANC qui ne suit pas, pas le produit —
+# rendre ces doublures exécutables sur Windows (fichiers .cmd) serait
+# préférable, et n'a pas été fait faute de pouvoir l'éprouver ici.
+tests/test_garde_fous_preparation.py::test_chemins_relatifs_et_absolus_equivalents|le banc simule tesseract et pdftoppm par des scripts « #!/bin/sh » que Windows ne peut pas exécuter : le préflight rapporte six problèmes qui viennent du banc, pas du produit
+tests/test_garde_fous_preparation.py::test_rg13_bout_en_bout_source_intacte|même banc : mêmes faux binaires shell, même cause — limite du banc de test sur Windows, pas un défaut du préflight

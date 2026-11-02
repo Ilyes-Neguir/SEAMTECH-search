@@ -133,7 +133,7 @@ jobs:
         # porte — d'où ce script, plutôt qu'un grep du journal.
         run: |
           $ErrorActionPreference = 'Continue'
-          python ci\resumer_echecs.py logs\junit-sans-service.xml logs\causes-sans-service.txt --details logs\details-sans-service.txt
+          python ci\resumer_echecs.py logs\junit-sans-service.xml logs\causes-sans-service.txt --details logs\details-sans-service.txt --exemples 25
           if ($LASTEXITCODE -ne 0) {
             Write-Host "::error title=causes-sans-service::analyse du rapport JUnit impossible (rc=$LASTEXITCODE)"
           }
@@ -334,7 +334,7 @@ jobs:
         if: always()
         run: |
           $ErrorActionPreference = 'Continue'
-          python ci\resumer_echecs.py logs\junit-postgres-redis.xml logs\causes-postgres-redis.txt --details logs\details-postgres-redis.txt
+          python ci\resumer_echecs.py logs\junit-postgres-redis.xml logs\causes-postgres-redis.txt --details logs\details-postgres-redis.txt --exemples 25
           if ($LASTEXITCODE -ne 0) {
             Write-Host "::error title=causes-postgres-redis::analyse du rapport JUnit impossible (rc=$LASTEXITCODE)"
           }
