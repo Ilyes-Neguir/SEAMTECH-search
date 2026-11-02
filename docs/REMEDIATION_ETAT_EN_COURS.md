@@ -2577,3 +2577,99 @@ correctif rejoué, jamais cru), `security-review` (traversée, en-têtes de rôl
 refus nommés), `postgres-patterns`, `redis-patterns`, `error-handling`
 (messages opposables : capacité, conséquence, plateforme), `architecture-
 decision-records` (les décisions de plateforme sont écrites ici, pas implicites).
+
+## 49. Un flux qui ne s'arrête pas, 232 écarts démontrés, P0 bouclé, Chrome/Edge
+
+### 49.1 Le défaut le plus grave du tour : une boucle infinie, pas un échec
+
+En rejouant la suite Windows **sans les primitives POSIX**
+(`ci/plugin_simulation_sans_primitives.py`), un test ne rendait plus la main :
+
+    tests/test_url_presignee_302.py::test_artefact_presignature_indisponible_sert_le_repli_sans_exception
+
+Le diagnostic (thread de vidage mémoire armé à 20 s, jamais déclenché : le GIL
+était retenu) a mené à `seamtech_search/api.py`, fonction `_reponse_objet_s3` :
+
+```python
+def _blocs() -> Iterator[bytes]:
+    yield from iter(lambda: corps.read(1024 * 1024), b"")
+```
+
+`iter(appelable, sentinelle)` s'arrête quand l'appelable rend **exactement**
+`b""`. Un corps distant qui rend `None`, une chaîne, un objet — ou des octets
+sans jamais s'épuiser — fait tourner la boucle **sans fin**, en allouant
+jusqu'à l'épuisement de la mémoire. Mesuré : l'hôte de test tué (rc=137), sans
+message, sans échec de test, sans fin. Ce n'était ni Windows ni POSIX : c'était
+la confiance accordée à `read()`.
+
+**Correctif** — nouveau module `seamtech_search/flux_bornes.py` :
+`lire_par_blocs(flux, taille, limite_octets=…, nom=…)` refuse un bloc qui
+n'est pas des octets, applique une borne, et refuse une taille de bloc nulle ou
+négative (elle réintroduirait la boucle). Les **dix** idiomes
+`iter(lambda…)` du produit passent par lui ; la route API impose une borne
+(taille annoncée par le stockage, sinon la taille maximale de pièce).
+
+**Preuve** — `tests/test_flux_bornes.py`, 11 tests. Le corps aberrant
+n'attend pas : il lève `AssertionError` au bout de quatre lectures, donc le
+test **échoue** au lieu de bloquer la suite. Sur le commit `a338f21`, le
+fichier qui ne rendait jamais la main s'exécute en **4,94 s** (5 échecs
+attribuables, 15 passés) au lieu de ne jamais finir.
+
+### 49.2 Les écarts Windows ne sont plus une opinion : 232 démontrés un par un
+
+Méthode, reproductible par n'importe qui :
+
+1. exécuter la suite POSIX avec **toutes** les primitives déclarées absentes
+   (`PYTHONPATH=.:ci python -m pytest -p plugin_simulation_sans_primitives …`) ;
+2. retirer les tests qui échouent **aussi** sans la simulation (4 d'entre eux :
+   `pg_trgm` absent du banc local, pas une limite Windows) ;
+3. les 232 restants échouent **parce que** les primitives manquent.
+
+Chaque ligne de `ci/ecarts-windows.txt` porte le constat mesuré : le message
+nomme la capacité (`scan_ancre_descripteur`, `verrou_flock`, `procfs_fd`) ou
+montre le refus de l'opération (`assert 409 == 200`). Le garde-fou
+(`tests/test_ecarts_windows.py`, 6 tests) accepte désormais les tests
+paramétrés.
+
+**Limite dite, non contournée** : la simulation dit ce que le test **exige**,
+pas le détail de l'échec observé sur Windows. C'est pour le lever que le verdict
+publie les causes par familles (§49.4).
+
+### 49.3 P0 — la restauration coordonnée passe par la COMMANDE
+
+`tests/test_sauvegarde_cli_coordonnee.py`, 2 tests :
+
+* **deux processus réels** : `sauver --sans-s3 --data`, destruction de
+  l'arborescence, puis `restaurer --coordonnee --data-cible`. Le manifeste est
+  écrit par le premier processus et **relu sur le disque** par le second —
+  plus rien n'est partagé en mémoire ;
+* **le périmètre complet** : `--avec-references` puis
+  `restaurer --coordonnee --restaurer-objets` (base + données + fichiers
+  référencés + objets). Le manifeste ne devient « protection globale prouvée »
+  qu'après le contrôle final.
+
+La ligne « restauration coordonnée » du tableau de bord passe donc de
+**PARTIEL** à **PRÊT** : la fonction était testée, la commande ne l'était pas.
+
+### 49.4 Le verdict Windows publie les causes par tranches (plafond de dix)
+
+GitHub limite à **dix annotations par étape**. Au run `41439011809`,
+l'inventaire prenait toute la place et les causes disparaissaient.
+`ci/verdict-windows.ps1` gagne un paramètre `-Tranche` : la tranche 1 publie
+sept familles + deux paquets d'inventaire, les tranches suivantes huit familles
+chacune ; le workflow ajoute cinq étapes (sans service) et trois (PG + Redis).
+La cause publiée est la **dernière ligne `E`** de la trace (`--tb=short`), pas
+le message de la ligne `FAILED` : « Regex pattern did not match. » ne dit rien
+de ce qui manque.
+
+### 49.5 Chrome et Edge, enfin exécutés
+
+Nouveau workflow `qualification-navigateurs-windows.yml` : runner
+`windows-latest`, **Chrome et Edge réels** (`channel: "chrome"`,
+`channel: "msedge"`). `frontend/e2e/navigateurs-windows.spec.ts` vérifie
+l'agent-utilisateur (sinon un vert ne voudrait rien dire), la connexion par
+session, l'accessibilité axe-core WCAG 2.1 A/AA des écrans de lecture, et
+l'absence d'erreur de console. `pnpm exec tsc --noEmit` passe.
+Reste non qualifié **et dit** : l'import d'un dossier depuis Windows, que le
+produit refuse faute de primitives POSIX ; la cible de déploiement Windows
+reste un conteneur Linux.
