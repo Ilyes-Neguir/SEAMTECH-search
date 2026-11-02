@@ -36,7 +36,7 @@ import AxeBuilder from "@axe-core/playwright"
 import { writeFileSync } from "node:fs"
 import path from "node:path"
 
-import { UI_PASSWORD, signIn } from "./helpers"
+import { FIGER_ANIMATIONS, UI_PASSWORD, signIn } from "./helpers"
 
 const TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]
 const GRAVITES_BLOQUANTES = new Set(["critical", "serious"])
@@ -102,24 +102,50 @@ test("connexion, écrans de lecture et accessibilité WCAG 2.1 A/AA", async ({ p
     await page.goto(ecran.route)
     // L'écran doit réellement se rendre : un écran vide n'est pas un écran.
     await expect(page.locator("body")).toBeVisible()
+    // Animations FIGÉES avant l'analyse, comme dans l'audit Linux (et comme
+    // axe le recommande) : le contenu est révélé par une opacité 0 → 1, et une
+    // mesure prise pendant la révélation lit des couleurs MÉLANGÉES au fond —
+    // elle fabrique de faux échecs de contraste, différents à chaque
+    // exécution. C'est ainsi que `/fiches` a d'abord été signalé sur des
+    // libellés de navigation parfaitement conformes.
+    await page.waitForLoadState("load")
+    await page.addStyleTag({ content: FIGER_ANIMATIONS })
+    await page.waitForTimeout(120)
     const analyse = await new AxeBuilder({ page }).withTags(TAGS).analyze()
     const violations = analyse.violations
       .filter((violation) => GRAVITES_BLOQUANTES.has(violation.impact ?? ""))
       .map((violation) => ({
         id: violation.id,
         impact: violation.impact ?? null,
-        cibles: violation.nodes.slice(0, 3).map((noeud) => noeud.target.join(" ")),
+        cibles: violation.nodes.slice(0, 5).map((noeud) => noeud.target.join(" ")),
       }))
     constats.push({ navigateur: projet, ecran: ecran.nom, violations })
     // Le détail est dans le MESSAGE d'échec, pas seulement dans le rapport :
     // le rapport est un artefact qu'on ne peut pas lire d'ici (les journaux de
     // job non plus). Une violation qu'on ne peut pas nommer ne se répare pas.
-    const detail = violations
-      .map((violation) => `${violation.id}[${violation.impact}] ${violation.cibles.join(" / ")}`)
+    // Pour `color-contrast`, nommer ne suffit pas : on publie les COULEURS et
+    // le RAPPORT mesurés, sans quoi le correctif se fait à l'aveugle.
+    const detail = analyse.violations
+      .filter((violation) => GRAVITES_BLOQUANTES.has(violation.impact ?? ""))
+      .map((violation) => {
+        const mesures = violation.nodes
+          .slice(0, 5)
+          .map((noeud) => {
+            const donnees = noeud.any.find((item) => item.id === "color-contrast")?.data as
+              | { fgColor?: string; bgColor?: string; contrastRatio?: number; expectedContrastRatio?: string }
+              | undefined
+            return donnees?.contrastRatio
+              ? `${noeud.target.join(" ")} ${donnees.contrastRatio}:1 ` +
+                 `(texte ${donnees.fgColor} sur ${donnees.bgColor}, attendu ${donnees.expectedContrastRatio})`
+              : noeud.target.join(" ")
+          })
+          .join(" / ")
+        return `${violation.id}[${violation.impact}] ${mesures}`
+      })
       .join(" ;; ")
     expect(
       violations,
-      `${projet} — ${ecran.nom} (${ecran.route}) : violations WCAG A/AA ${detail}`,
+      `${projet} — ${ecran.nom} (${ecran.route}) : violations WCAG A/AA ${detail || "aucune"}`,
     ).toEqual([])
   }
 

@@ -3,7 +3,15 @@ import AxeBuilder from "@axe-core/playwright"
 import { writeFileSync, mkdirSync } from "node:fs"
 import path from "node:path"
 
-import { ADMIN, APPROBATEUR, LECTURE, UTILISATEUR, signIn, signInWith } from "./helpers"
+import {
+  ADMIN,
+  APPROBATEUR,
+  FIGER_ANIMATIONS,
+  LECTURE,
+  UTILISATEUR,
+  signIn,
+  signInWith,
+} from "./helpers"
 
 /**
  * Audit d'accessibilité axe-core sur TOUS les écrans, dans plusieurs états.
@@ -53,23 +61,6 @@ async function codesFiches(page: Page): Promise<string[]> {
   )
   return codes.slice(0, 3)
 }
-
-/**
- * Fige les animations avant l'analyse.
- *
- * Le contenu est révélé par une animation d'opacité (0 → 1 sur 0,55 s, utilitaire
- * `hisser`). Une analyse lancée pendant la révélation mesure des couleurs
- * MÉLANGÉES au fond et fabrique de faux échecs de contraste (2,1:1 au lieu de
- * 7:1), différents à chaque exécution. Axe recommande explicitement de figer
- * les animations avant `analyze()` : on le fait, une fois par page.
- */
-const FIGER_ANIMATIONS = `*, *::before, *::after {
-  animation-duration: 0s !important;
-  animation-delay: 0s !important;
-  animation-iteration-count: 1 !important;
-  transition-duration: 0s !important;
-  transition-delay: 0s !important;
-}`
 
 async function scanner(page: Page, ecran: string, role: string): Promise<void> {
   // `networkidle` n'aboutit jamais sur les écrans qui sondent en continu
@@ -123,6 +114,7 @@ const ECRANS = [
   "/",
   "/recherche",
   "/fichiers",
+  "/fiches",
   "/dossiers",
   "/nouveau",
   "/extractions",
@@ -141,7 +133,7 @@ test.describe("Accessibilité axe-core — tous les écrans", () => {
   // que chaque écran est scanné même quand la CI tourne sans PostgreSQL
   // nominatif. Les rôles canoniques n'existent qu'en mode « e2e live ».
   test("tous les écrans — compte de secours", async ({ page }) => {
-    test.setTimeout(240_000) // 14 écrans × (chargement + 2 analyses axe)
+    test.setTimeout(300_000) // 15 écrans × (chargement + 2 analyses axe)
     await signIn(page)
     for (const ecran of ECRANS) {
       const reponse = await page.goto(ecran)

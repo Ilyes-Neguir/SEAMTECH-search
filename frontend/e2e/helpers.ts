@@ -106,3 +106,24 @@ export async function signOut(page: Page): Promise<void> {
   await page.getByRole("button", { name: /Se déconnecter/i }).click()
   await page.waitForURL(/\/login/, { timeout: 20000 })
 }
+
+/**
+ * Fige les animations avant une analyse axe-core.
+ *
+ * Le contenu est révélé par une animation d'opacité (0 → 1, utilitaire
+ * `hisser`). Une analyse lancée PENDANT la révélation mesure des couleurs
+ * MÉLANGÉES au fond et fabrique de faux échecs de contraste, différents à
+ * chaque exécution : sur l'écran `/fiches`, la qualification Chrome/Edge a
+ * d'abord rapporté `color-contrast` sur des libellés parfaitement conformes.
+ * Axe recommande explicitement de figer les animations avant `analyze()`.
+ *
+ * Partagé par les deux audits (Linux, navigateurs Windows) : ils doivent
+ * mesurer la même chose, sinon leurs résultats ne sont pas comparables.
+ */
+export const FIGER_ANIMATIONS = `*, *::before, *::after {
+  animation-duration: 0s !important;
+  animation-delay: 0s !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0s !important;
+  transition-delay: 0s !important;
+}`
