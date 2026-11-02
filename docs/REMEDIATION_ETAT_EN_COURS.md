@@ -2904,3 +2904,50 @@ du prochain run de qualification Windows, y relever « DERNIER TEST : … », et
 traiter ce test (le corriger s'il laisse échapper un `KeyboardInterrupt`, ou
 l'écarter nominativement). Ensuite seulement relancer pour retrouver une suite
 complète et des comptes comparables.
+
+## 54. Le point d'arrêt est nommé, et la fouille a trouvé un vrai défaut
+
+**Le point d'arrêt est nommé.** Run `41515990228` : la branche
+« suite INTERROMPUE » du verdict publie
+
+```
+DERNIER TEST : tests/test_scan_safety.py::test_scan_snapshot_restores_documents_after_failure PASSED [ 84%]
+```
+
+L'arrêt a donc lieu dans le test **suivant** du même fichier, et les fichiers
+suivants ne tournent pas : **379 tests** s'y trouvent (comptés), ce qui
+correspond exactement aux ~378 manquants. Le mécanisme reste inconnu — aucune
+piste (`pytest.exit`, `shouldstop`, `--maxfail`) n'a rien donné, et le produit
+ne lève rien de visible. Le workflow rejoue désormais **ce fichier seul**
+(commit `a0f5efd`) : une minute, et la bannière d'interruption de pytest
+apparaît avec sa trace — ou, si le fichier passe seul, la preuve que l'arrêt
+vient d'un cumul d'état.
+
+**La fouille a trouvé un vrai défaut, indépendant de l'arrêt** (commit
+`1abd6b2`) :
+
+`os.kill(pid, 0)` est l'idiome POSIX pour demander « ce PID vit-il encore ? » —
+le signal 0 n'est pas délivré, l'appel ne sert qu'à sonder. **Sur Windows,
+`os.kill` ne connaît pas le signal 0 : il appelle `TerminateProcess` avec la
+valeur reçue comme code de sortie.** Un test de vie y devient une mise à mort,
+et comme les PID sont recyclés, le processus tué n'est pas forcément celui
+dont on a lu l'identifiant dans le fichier de verrou.
+
+L'idiome était employé à deux endroits : `indexer.scan_lock` (verrou de scan
+SQLite — « reprendre un scan après un crash » pouvait tuer un processus vivant)
+et `ocr.etat.VerrouOCR._pid_vivant` (verrou de la nuit OCR).
+
+Correction : `plateforme.pid_vivant` interroge sans jamais tuer. POSIX garde
+l'idiome (sémantique inchangée, `PermissionError` = vivant) ; Windows passe par
+`ctypes` (`OpenProcess` + `GetExitCodeProcess`, distinction accès refusé /
+paramètre invalide) ; plateforme inconnue → « vivant », car un verrou périmé
+reste un verrou (faux positif bénin) alors que supprimer le verrou d'un
+processus vivant ne l'est pas.
+
+`tests/test_pid_vivant.py` (6 tests) verrouille le contrat, et d'abord
+l'essentiel : sur la branche non POSIX, **`os.kill` n'est jamais appelé**
+(l'espion lève). Réintroduire l'idiome fait donc échouer le test au lieu de
+tuer un processus. Deux tests d'intégration rejouent le scénario réel du
+verrou de scan : verrou tenu par un processus vivant (refus propre, processus
+épargné) et verrou périmé (repris, pas supprimé d'autorité). 110 tests locaux
+passent (scan_safety, plateforme, verrou, indexer, OCR).
