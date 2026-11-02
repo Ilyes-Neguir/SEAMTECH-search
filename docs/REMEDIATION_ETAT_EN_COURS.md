@@ -2827,3 +2827,52 @@ compté comme inexpliqué. Raccourci au suffixe stable (`has no attribute
 `PublierErreursParPaquets` remplit désormais des seaux de 2800 caractères —
 chaque échec inattendu est publié **avec la cause lue dans le rapport JUnit**.
 La prochaine exécution nommera les 128 au lieu d'en échantillonner 34.
+
+## 53. La suite Windows s'arrête en route : `rc=2`, et pourquoi ça change les comptes
+
+**Run 41501814193** (commit `4257bea`) : `rc=2`, **313 échecs, 1622 passés,
+442 s** — contre `rc=1`, 392 échecs, 1913 passés, 561 s au run `41467111570`
+(`48e8be2`). La suite ne va pas au bout : ~380 tests sur 2 369 ne tournent pas.
+Idem au run `41499874854` (`6f2355d`) : `rc=2`, 311 échecs, 1621 passés.
+
+Conséquence, et elle compte : **les compteurs ne sont plus comparables**.
+Dire « on est passés de 392 à 313 échecs » serait faux — on a surtout arrêté
+de compter à mi-parcours. D'où, dans `ci/verdict-windows.ps1` : un `rc=2`
+publie « **suite INTERROMPUE (rc=2)** » avec la FIN du journal (c'est elle qui
+dit où ça s'arrête) et sort en échec, au lieu d'additionner des chiffres qui
+ne se comparent pas.
+
+`rc=2` = session interrompue : typiquement un `KeyboardInterrupt` échappé d'un
+test qui simule un Ctrl+C. Le candidat le plus probable se déduit de
+l'inventaire : aucun échec n'est publié pour un fichier situé APRÈS
+`tests/test_sauvegarde_unites.py` dans l'ordre alphabétique — donc l'arrêt a
+lieu autour de `tests/test_scan_safety.py`, qui contient justement
+`test_interruption_clavier_scan_annule_et_indique_echec`. C'est une déduction
+sur l'inventaire, **pas une preuve** : la preuve viendra de la fin de journal
+que publie désormais le verdict. À vérifier au prochain run.
+
+**Les 84 échecs hors périmètre sont publiés EN ENTIER** (avant : 34 sur 128,
+plafond d'annotation). Répartition par fichier :
+
+| fichier | identifiants |
+|---|---|
+| `test_sauvegarde_unites.py` | ~24 |
+| `test_preflight_archive.py` | ~16 |
+| `test_restauration_confinement.py` | ~15 |
+| `test_sauvegarde_manifeste_distant.py` | ~4 |
+| `test_sauvegarde_references.py` | ~3 |
+| `test_ocr_page_integralite.py`, `test_lot10_televersement_lot.py`, `test_rebuild_index.py`, `test_detection_fiches.py`, `test_inventaire_archive.py`, `test_liaison_catalogue_capture.py`, `test_passe_finale_ingestion_dossiers.py` | 1 à 3 chacun |
+
+**Ils portent TOUS la mention « aucune cause dans le rapport »** : le rapport
+JUnit ne dit pas tout (et il est sans doute tronqué par l'interruption). Le
+rattachement par les lignes « E » du journal n'était qu'un REPLI utilisé faute
+de fichier de détails ; il devient un **complément**, appliqué aux seuls tests
+qui n'ont encore aucune cause. Limite écrite dans le code : l'en-tête de
+traceback ne porte pas le chemin du fichier pour un test en classe, donc ce
+rattachement reste partiel.
+
+Prochaine action, précise : lire, au premier run qui publie la fin de journal,
+le nom du test où la suite s'arrête ; le corriger ou l'écarter nominativement
+; relancer pour retrouver une suite COMPLÈTE et des comptes comparables.
+Tant que la suite est interrompue, aucun décompte d'écarts Windows n'a de
+valeur.
