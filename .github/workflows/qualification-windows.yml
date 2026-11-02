@@ -67,10 +67,18 @@ jobs:
           python -V
           python -c "import platform,sys; print(platform.platform()); print(sys.getfilesystemencoding())"
           Write-Host "::notice title=windows-identite::os=$($info.OsName) version=$($info.OsVersion)"
-      - name: Suite sans service sur Windows
+      - name: Suite sans service sur Windows — exécution
         # POSIX-only : SIGKILL et fork() n'existent pas sur Windows. Ces
         # fichiers sont NOMMÉS ici, pas simplement absents : un test écarté
         # doit rester visible dans la configuration.
+        #
+        # L'EXÉCUTION est séparée du VERDICT (étape suivante) depuis le run
+        # 41372109716 : quand l'étape meurt pendant pytest — cause non élucidée
+        # — aucune annotation n'est publiée, et une étape rouge sans preuve ne
+        # se répare pas. L'étape de verdict est en « if: always() » : elle lit
+        # le journal et le code de sortie laissés sur le disque, même si
+        # l'exécution a été interrompue. C'est elle qui prononce l'échec, donc
+        # le rouge arrive toujours avec sa preuve.
         run: |
           $ErrorActionPreference = 'Continue'
           # Publier un diagnostic : les journaux complets sont stockés sur un
@@ -109,10 +117,30 @@ jobs:
           Get-Content logs\windows-sans-service.log -Tail 25 | ForEach-Object { Write-Host "journal: $_" }
           $resume = (Select-String -Path logs\windows-sans-service.log -Pattern '^(FAILED|ERROR)|passed|failed' |
                      Select-Object -Last 10 | ForEach-Object { $_.Line }) -join ' | '
+          Set-Content -Path logs\rc-sans-service.txt -Value "$rc"
+          exit 0
+      - name: Suite sans service sur Windows — verdict
+        if: always()
+        run: |
+          $ErrorActionPreference = 'Continue'
+          function Publier([string]$titre, [string]$texte) {
+            if ($null -eq $texte) { $texte = '' }
+            $propre = $texte -replace '%', '%25' -replace "`r", '%0D' -replace "`n", '%0A'
+            if ($propre.Length -gt 3000) { $propre = $propre.Substring(0, 3000) }
+            Write-Host "::notice title=$titre::$propre"
+          }
+          $fichier_rc = "logs\rc-sans-service.txt"
+          if (-not (Test-Path $fichier_rc)) {
+            Write-Host "::error title=windows-sans-service::l'execution n'a pas meme laisse de code de sortie — elle a ete interrompue avant la fin"
+            exit 1
+          }
+          $rc = [int](Get-Content $fichier_rc -Raw).Trim()
+          $resume = (Select-String -Path logs\windows-sans-service.log -Pattern '^(FAILED|ERROR)|passed|failed' |
+                     Select-Object -Last 8 | ForEach-Object { $_.Line }) -join ' | '
           Publier "windows-sans-service" "rc=$rc ; $resume"
           if ($rc -ne 0) {
             $echecs = (Select-String -Path logs\windows-sans-service.log -Pattern '^(FAILED|ERROR)' |
-                       Select-Object -First 15 | ForEach-Object { $_.Line }) -join ' | '
+                       Select-Object -First 10 | ForEach-Object { $_.Line }) -join ' | '
             Publier "windows-sans-service-echec" "$echecs"
             exit $rc
           }
@@ -216,7 +244,7 @@ jobs:
           }
           Write-Host "::error title=redis-demarrage::Redis installé mais muet sur le port 6379 apres 40s (binaire=$serveur)"
           exit 1
-      - name: Suite PostgreSQL + Redis sur Windows
+      - name: Suite PostgreSQL + Redis sur Windows — exécution
         if: always()
         env:
           SEAMTECH_TEST_DATABASE_URL: postgresql://seamtech:seamtech_test_password@127.0.0.1:5432/seamtech_search_test
@@ -250,10 +278,30 @@ jobs:
           Get-Content logs\windows-postgres-redis.log -Tail 25 | ForEach-Object { Write-Host "journal: $_" }
           $resume = (Select-String -Path logs\windows-postgres-redis.log -Pattern '^(FAILED|ERROR)|passed|failed' |
                      Select-Object -Last 10 | ForEach-Object { $_.Line }) -join ' | '
+          Set-Content -Path logs\rc-postgres-redis.txt -Value "$rc"
+          exit 0
+      - name: Suite PostgreSQL + Redis sur Windows — verdict
+        if: always()
+        run: |
+          $ErrorActionPreference = 'Continue'
+          function Publier([string]$titre, [string]$texte) {
+            if ($null -eq $texte) { $texte = '' }
+            $propre = $texte -replace '%', '%25' -replace "`r", '%0D' -replace "`n", '%0A'
+            if ($propre.Length -gt 3000) { $propre = $propre.Substring(0, 3000) }
+            Write-Host "::notice title=$titre::$propre"
+          }
+          $fichier_rc = "logs\rc-postgres-redis.txt"
+          if (-not (Test-Path $fichier_rc)) {
+            Write-Host "::error title=windows-postgres-redis::l'execution n'a pas laisse de code de sortie"
+            exit 1
+          }
+          $rc = [int](Get-Content $fichier_rc -Raw).Trim()
+          $resume = (Select-String -Path logs\windows-postgres-redis.log -Pattern '^(FAILED|ERROR)|passed|failed' |
+                     Select-Object -Last 8 | ForEach-Object { $_.Line }) -join ' | '
           Publier "windows-postgres-redis" "rc=$rc ; $resume"
           if ($rc -ne 0) {
             $echecs = (Select-String -Path logs\windows-postgres-redis.log -Pattern '^(FAILED|ERROR)' |
-                       Select-Object -First 15 | ForEach-Object { $_.Line }) -join ' | '
+                       Select-Object -First 10 | ForEach-Object { $_.Line }) -join ' | '
             Publier "windows-postgres-redis-echec" "$echecs"
             exit $rc
           }
