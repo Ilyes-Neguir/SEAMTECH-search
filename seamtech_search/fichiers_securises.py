@@ -13,6 +13,7 @@ from typing import Any
 from starlette.responses import FileResponse, StreamingResponse
 
 from .import_pipeline import _racine_scan_confinee
+from .plateforme import exiger
 
 
 def _ouvrir_artefact_confine(chemin: Path, racines: list[Path]) -> int:
@@ -22,8 +23,8 @@ def _ouvrir_artefact_confine(chemin: Path, racines: list[Path]) -> int:
     L'inode ouvert reste épinglé pendant la réponse ; elle ne fige toutefois pas
     les écritures concurrentes dans le même fichier.
     """
-    if os.name != "posix" or not os.path.isdir("/proc/self/fd") or not hasattr(os, "O_NOFOLLOW"):
-        raise OSError("Lecture locale confinée indisponible sur cette plateforme")
+    exiger("procfs_fd")
+    exiger("scan_ancre_descripteur")
     cible = Path(os.path.abspath(chemin.expanduser()))
     racines_absolues = [Path(os.path.abspath(r.expanduser())) for r in racines]
     candidates = sorted((r for r in racines_absolues if r in cible.parents), key=lambda r: len(r.parts), reverse=True)
@@ -61,8 +62,7 @@ def _copie_flux_verifiee(flux: Any, empreinte: str, limite: int) -> int:
     observation du fichier source suivie d'une seconde ouverture. Le coût en
     disque et en temps est proportionnel à la taille du fichier.
     """
-    if os.name != "posix" or not os.path.isdir("/proc/self/fd"):
-        raise OSError("Copie de téléchargement vérifiée indisponible")
+    exiger("procfs_fd")
     if limite < 0 or not isinstance(empreinte, str) or re.fullmatch(r"[0-9a-f]{64}", empreinte) is None:
         raise ValueError("Empreinte ou limite de téléchargement invalide")
     with tempfile.TemporaryFile(prefix="seamtech-download-") as copie:

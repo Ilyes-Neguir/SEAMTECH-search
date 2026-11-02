@@ -36,6 +36,7 @@ from .extractors import extract_file
 from .indexer import SearchIndex
 from .jobs import ImportCancelledError
 from .models import Document
+from .plateforme import exiger
 from .retention import ensure_free_space
 from .storage import S3StorageClient, UploadBatch, artifact_object_key, empreinte_sha256, upload_artifacts_to_storage
 
@@ -1006,9 +1007,11 @@ def _walk_files(source: Path) -> list[Path]:
 @contextmanager
 def _racine_scan_confinee(source: Path):
     """Ancre le scan à une arborescence ouverte sans suivre de liens POSIX."""
-    if (os.name != "posix" or not all(hasattr(os, nom) for nom in ("O_NOFOLLOW", "O_DIRECTORY"))
-            or os.open not in os.supports_dir_fd or os.scandir not in os.supports_fd):
-        raise OSError("Secure folder scanning is not supported on this platform")
+    # Le refus est centralisé dans ``plateforme`` : le message nomme la capacité
+    # manquante et dit qu'elle ne se contourne pas par un réglage, au lieu d'un
+    # ``OSError`` anonyme au milieu d'un import (vu pendant la qualification
+    # Windows : rien n'indiquait s'il fallait changer de poste ou de produit).
+    exiger("scan_ancre_descripteur")
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
     fd = os.open(source.anchor, flags)
     try:
@@ -1928,8 +1931,7 @@ def _generer_rapports_confines(
     suivre les liens de destination. L'état persistant reste en régénération
     tant que l'ensemble n'a pas été envoyé et enregistré.
     """
-    if os.name != "posix" or not os.path.isdir("/proc/self/fd"):
-        raise OSError("Génération confinée indisponible sur cette plateforme")
+    exiger("procfs_fd")
     base = Path(os.path.abspath(config.database_path.parent.expanduser()))
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
     with _racine_scan_confinee(base) as base_fd:
@@ -2040,8 +2042,7 @@ def _verrou_mutation_import(index: SearchIndex | None, config: AppConfig, import
                 connexion.close()
         return
 
-    if os.name != "posix":
-        raise OSError("Verrouillage des imports indisponible sur cette plateforme")
+    exiger("verrou_flock")
     import fcntl
 
     base = Path(os.path.abspath(config.database_path.parent.expanduser()))
