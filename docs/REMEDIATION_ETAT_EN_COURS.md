@@ -3005,3 +3005,37 @@ rend `None`, et l'échec devient un `TypeError` anonyme.
 
 Reste : 94 échecs à nommer un par un, dont la moitié déjà regroupés par famille.
 Aucun n'est maquillé en écart sans raison démontrée.
+
+### 55 bis. 26 échecs de plus nommés, avec raison démontrée (commit `065d113`)
+
+1. **`tests/test_preflight_archive.py`, 21 échecs** : ils portent la MÊME cause
+   que les deux identifiants déjà nommés — « assert 6 == 0 » — parce que le
+   préflight simule `tesseract` et `pdftoppm` par des scripts « `#!/bin/sh` »
+   que Windows ne sait pas exécuter. C'est le BANC, pas le produit. Écart pris à
+   l'échelle du **fichier** : énumérer 21 identifiants n'ajouterait rien, et en
+   oublier un ferait croire à une régression.
+
+2. **`tests/test_url_presignee_302.py`, 5 échecs** : démontrés sur le banc POSIX.
+   Sous `ci/plugin_simulation_sans_primitives.py`, ces tests échouent avec
+   **exactement** les mêmes assertions qu'à Windows (`assert 409 == 200`) : le
+   confinement local étant refusé, la route retombe sur le stockage objet, dont
+   le corps n'est pas des octets, et répond 409 au lieu de 200.
+
+3. **`tests/test_scan_safety.py`, 2 échecs** (commit `f541dad`) : requête par le
+   chemin brut au lieu de la clé du produit (`normcase`), d'où un `TypeError`
+   anonyme.
+
+**Restent 66 échecs sans raison démontrée**, surtout
+`test_sauvegarde_unites.py` (~24) et `test_restauration_confinement.py` (~20) :
+ces tests **passent** sous la simulation des primitives absentes, donc leur
+échec Windows vient d'ailleurs. Leurs familles sont publiées
+(« une sauvegarde est déjà en cours » ×6, « Lecture confinée du bundle
+indisponible » ×7, `PermissionError` ×1, `assert False` ×1) mais la cause
+première n'est pas établie : les nommer serait une dissimulation.
+
+**Prochaine action, précise** : pour ces deux fichiers, exécuter sur Windows une
+campagne ciblée qui publie, pour chacun, la PREMIÈRE ligne de trace complète
+(`--tb=long`) et non seulement la dernière — c'est la piste qui reste. Le
+diagnostic ciblé (étape « le fichier qui interrompt la suite ») a montré qu'un
+fichier seul se rejoue en une minute : la même mécanique sert pour un fichier
+qu'on veut comprendre.
