@@ -86,6 +86,7 @@ except ImportError:
 import psycopg2
 from psycopg2 import sql
 
+from .flux_bornes import lire_par_blocs
 from .schema_metier import VERSION_SCHEMA_APPLICATION, VERSION_SCHEMA_METIER, schema_identite_octets_valide_pg
 
 logger = logging.getLogger("seamtech_search.sauvegarde")
@@ -899,7 +900,7 @@ def _verifier_copies_bundle(copies: list[dict], racine_sauvegarde: Path) -> list
         source = racine / chemin_relatif
         hacheur = hashlib.sha256()
         with _ouvrir_source_bundle(racine, chemin_relatif) as flux:
-            for bloc in iter(lambda: flux.read(1024 * 1024), b""):
+            for bloc in lire_par_blocs(flux, 1024 * 1024, nom=f"bundle {chemin_relatif}"):
                 hacheur.update(bloc)
         empreinte = hacheur.hexdigest()
         if empreinte != copie.get("sha256"):
@@ -1031,7 +1032,7 @@ def _ecrire_copie_confinee(source: Path | BinaryIO, cible: Path, empreinte_atten
             sortie.flush()
             sortie.seek(0)
             hacheur = hashlib.sha256()
-            for bloc in iter(lambda: sortie.read(1024 * 1024), b""):
+            for bloc in lire_par_blocs(sortie, 1024 * 1024, nom=f"restauration {cible.name}"):
                 hacheur.update(bloc)
             if hacheur.hexdigest() != empreinte_attendue:
                 raise SauvegardeError("empreinte du fichier restauré différente du manifeste")

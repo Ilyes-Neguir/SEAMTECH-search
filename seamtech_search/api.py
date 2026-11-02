@@ -31,6 +31,7 @@ from .fichiers_securises import (
     _ReponseFichierEpingle,
     _ReponseFluxFerme,
 )
+from .flux_bornes import lire_par_blocs
 from .import_pipeline import (
     ImportMutationEnCours,
     ImportMutationIncertitude,
@@ -935,6 +936,7 @@ def create_app(config: AppConfig) -> FastAPI:
                 "application/pdf" if target.suffix.lower() == ".pdf" else "application/octet-stream",
                 storage_client,
                 inline=True,
+                limite_defaut=config.max_file_size_bytes,
             )
 
         # For directories, return listing instead of trying OS open
@@ -1857,7 +1859,10 @@ def create_app(config: AppConfig) -> FastAPI:
                     _audit_artefact("200", {"servi_par": "objet_verifie"})
                     fd_pour_reponse, fd_objet = fd_objet, None  # le constructeur ferme en cas d'erreur
                     return _ReponseFichierEpingle(fd_pour_reponse, filename=filename, media_type=media_type)
-                reponse = _reponse_objet_s3(object_key, filename, media_type, storage_client)
+                reponse = _reponse_objet_s3(
+                    object_key, filename, media_type, storage_client,
+                    limite_defaut=config.max_file_size_bytes,
+                )
                 try:
                     _audit_artefact("200", {"servi_par": "proxy_api"})
                 except BaseException:
@@ -2150,6 +2155,7 @@ def _reponse_objet_s3(
     storage_client: S3StorageClient | None,
     *,
     inline: bool = False,
+    limite_defaut: int = 512 * 1024 * 1024,
 ) -> _ReponseFluxFerme:
     """Sert un objet S3 **à travers l'API** (proxy authentifié).
 
@@ -2174,8 +2180,16 @@ def _reponse_objet_s3(
         entetes["Content-Length"] = str(longueur)
     corps = storage_client.get_object(object_key)["Body"]
 
+    # Borne OBLIGATOIRE : le corps vient du stockage, l'API ne le maîtrise pas.
+    # Sans elle, un corps qui n'épuise jamais son ``read()`` — ou qui rend
+    # n'importe quoi d'autre que des octets — faisait boucler la réponse sans
+    # fin (mesuré le 2026-11-02 : l'hôte de test tué par épuisement mémoire).
+    # Taille annoncée par le stockage quand elle existe, sinon la taille
+    # maximale de pièce admise par l'application.
+    limite_flux = longueur if longueur is not None else limite_defaut
+
     def _blocs() -> Iterator[bytes]:
-        yield from iter(lambda: corps.read(1024 * 1024), b"")
+        yield from lire_par_blocs(corps, 1024 * 1024, limite_octets=limite_flux, nom=f"objet {object_key}")
 
     return _ReponseFluxFerme(corps, _blocs(), media_type=media_type, headers=entetes)
 

@@ -46,6 +46,8 @@ from seamtech_search.fiches.persistance import ecrire_fiche_resultat
 from seamtech_search.fiches.promotion import fichiers_pour_promotion, promouvoir_fichiers
 from seamtech_search.fiches.reprise import construire_fiche_de_reprise
 
+from ..flux_bornes import lire_par_blocs
+
 LOGGER = logging.getLogger("seamtech_search.fiches.depot")
 
 SEPARATEUR_CLE = "|"
@@ -346,7 +348,7 @@ def empreinte_fichier(chemin: Path) -> str:
     """SHA-256 d'un fichier (lecture seule — preuve RG13, clé d'idempotence)."""
     empreinte = hashlib.sha256()
     with chemin.open("rb") as fichier:
-        for bloc in iter(lambda: fichier.read(65536), b""):
+        for bloc in lire_par_blocs(fichier, 65536, nom=f"empreinte {chemin.name}"):
             empreinte.update(bloc)
     return empreinte.hexdigest()
 

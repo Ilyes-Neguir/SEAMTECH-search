@@ -27,6 +27,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from ..flux_bornes import lire_par_blocs
+
 
 def get_travail_dir(travail_dir: str | Path | None = None) -> Path:
     """Retourne le répertoire de travail OCR.
@@ -68,7 +70,7 @@ def empreinte_sha256(chemin: Path) -> str:
     """Calcule l'empreinte SHA-256 d'un fichier (lecture seule, RG13)."""
     h = hashlib.sha256()
     with open(chemin, "rb") as f:
-        for bloc in iter(lambda: f.read(1024 * 1024), b""):
+        for bloc in lire_par_blocs(f, 1024 * 1024, nom=f"empreinte {chemin.name}"):
             h.update(bloc)
     return h.hexdigest()
 

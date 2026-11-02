@@ -30,6 +30,8 @@ from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
+from ..flux_bornes import lire_par_blocs
+
 LOGGER = logging.getLogger("seamtech_search.fiches.gabarit_brouillon")
 
 # Champs cibles connus (issus du gabarit portant)
@@ -76,7 +78,7 @@ ANCRES_PAR_CHAMP: dict[str, list[str]] = {
 def _sha256_fichier(chemin: Path) -> str:
     h = hashlib.sha256()
     with open(chemin, "rb") as f:
-        for chunk in iter(lambda: f.read(8192), b""):
+        for chunk in lire_par_blocs(f, 8192, nom=f"empreinte {Path(chemin).name}"):
             h.update(chunk)
     return h.hexdigest()
 

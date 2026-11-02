@@ -43,6 +43,8 @@ except ImportError:  # Windows : repli interprocessus SQLite
 
 from seamtech_search.import_pipeline import staging_root
 
+from ..flux_bornes import lire_par_blocs
+
 LOGGER = logging.getLogger("seamtech_search.fiches.televersement_lot")
 
 DOSSIER_LOTS_TELEVERSES = "lots-televerses"
@@ -458,7 +460,7 @@ def _chemin_relatif_sur(brut: Any) -> tuple[str, Path]:
 def _empreinte_fichier(chemin: Path) -> str:
     empreinte = hashlib.sha256()
     with chemin.open("rb") as flux:
-        for bloc in iter(lambda: flux.read(TAILLE_BLOC_LECTURE), b""):
+        for bloc in lire_par_blocs(flux, TAILLE_BLOC_LECTURE, nom=f"empreinte {chemin.name}"):
             empreinte.update(bloc)
     return empreinte.hexdigest()
 

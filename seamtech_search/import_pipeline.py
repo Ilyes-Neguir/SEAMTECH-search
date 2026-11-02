@@ -33,6 +33,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from .anchors import TECHNICAL_ANCHORS, classify_pdf_text, matched_anchors
 from .config import AppConfig
 from .extractors import extract_file
+from .flux_bornes import lire_par_blocs
 from .indexer import SearchIndex
 from .jobs import ImportCancelledError
 from .models import Document
@@ -2493,7 +2494,7 @@ def _identite_locale_reprise(
                 with _copie_scan_confinee(racines[racine], racine, Path(entree["path"]), limite) as (copie, _):
                     digest = hashlib.sha256()
                     with copie.open("rb") as flux:
-                        for bloc in iter(lambda: flux.read(1024 * 1024), b""):
+                        for bloc in lire_par_blocs(flux, 1024 * 1024, nom="vérification de manifeste"):
                             digest.update(bloc)
                     if digest.hexdigest() != sha:
                         return False

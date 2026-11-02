@@ -39,6 +39,8 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from ..flux_bornes import lire_par_blocs
+
 # Seuil par défaut : en dessous de 20 caractères, la page est considérée
 # sans texte exploitable. Justification :
 # - La vraie fiche 7792-SO (texte natif) : chaque page > 200 caractères
@@ -820,7 +822,7 @@ def ocriser_fichier(
     try:
         h = hashlib.sha256()
         with open(chemin_p, "rb") as f:
-            for bloc in iter(lambda: f.read(1024 * 1024), b""):
+            for bloc in lire_par_blocs(f, 1024 * 1024, nom=f"empreinte {chemin_p.name}"):
                 h.update(bloc)
         empreinte = h.hexdigest()
     except Exception:

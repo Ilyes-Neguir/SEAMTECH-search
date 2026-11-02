@@ -33,6 +33,8 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
+from .flux_bornes import lire_par_blocs
+
 if TYPE_CHECKING:
     from .config import AppConfig
 
@@ -227,7 +229,7 @@ def empreinte_sha256(chemin: Path) -> str:
     """SHA-256 d'un fichier, lu par blocs (jamais tout en mémoire)."""
     digest = hashlib.sha256()
     with Path(chemin).open("rb") as flux:
-        for bloc in iter(lambda: flux.read(1024 * 1024), b""):
+        for bloc in lire_par_blocs(flux, 1024 * 1024, nom=f"empreinte {Path(chemin).name}"):
             digest.update(bloc)
     return digest.hexdigest()
 
