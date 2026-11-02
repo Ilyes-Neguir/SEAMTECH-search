@@ -136,6 +136,36 @@ jobs:
           & $psql -U postgres -c "CREATE ROLE seamtech LOGIN PASSWORD 'seamtech_test_password' SUPERUSER;"
           & $psql -U postgres -c "CREATE DATABASE seamtech_search_test OWNER seamtech;"
           & $psql -U postgres -c "SELECT version();"
+      - name: Installer pgvector (port Windows, version épinglée)
+        if: always()
+        # Sans pgvector, la migration 006 échoue (« extension "vector" is not
+        # available ») et 479 tests partent en erreur — vu au run 41365859490.
+        # pgvector n'a PAS de binaire Windows officiel : on utilise donc un
+        # port reconstruit, épinglé en version, comme pour Redis 7. Le
+        # déploiement réel devra faire pareil — c'est une exigence
+        # d'installation, pas un détail de CI.
+        run: |
+          $version = "0.8.7"
+          $assets = "https://github.com/czkwg8/pgvector-windows-binary/releases/download/v$version/pgvector-v$version-pg16-windows-x64.zip"
+          $zip = Join-Path $env:TEMP "pgvector-$version.zip"
+          $extrait = "C:\pgvector16"
+          $pg = "C:\Program Files\PostgreSQL\16"
+          New-Item -ItemType Directory -Force -Path $extrait | Out-Null
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+          Invoke-WebRequest -Uri $assets -OutFile $zip -UseBasicParsing -ErrorAction Stop
+          Expand-Archive -Path $zip -DestinationPath $extrait -Force
+          foreach ($motif in @("vector.dll", "vector.control", "vector--*.sql")) {
+            $cible = if ($motif -eq "vector.dll") { Join-Path $pg "lib" } else { Join-Path $pg "share\extension" }
+            $trouves = Get-ChildItem $extrait -Recurse -Filter $motif -ErrorAction SilentlyContinue
+            if (-not $trouves) { Write-Host "::error title=pgvector-install::$motif introuvable dans l'archive" ; exit 1 }
+            foreach ($fichier in $trouves) { Copy-Item $fichier.FullName -Destination $cible -Force }
+          }
+          $env:PGPASSWORD = "seamtech_test_password"
+          $psql = Join-Path $pg "bin\psql.exe"
+          & $psql -U postgres -d seamtech_search_test -c "CREATE EXTENSION IF NOT EXISTS vector;"
+          $version_posee = & $psql -U postgres -d seamtech_search_test -tAc "SELECT extversion FROM pg_extension WHERE extname='vector';"
+          if (-not $version_posee) { Write-Host "::error title=pgvector-install::extension vector absente apres installation" ; exit 1 }
+          Write-Host "::notice title=pgvector-install::version=$version_posee (port Windows, pg16 x64)"
       - name: Installer Redis 7 (port Windows, version épinglée)
         if: always()
         run: |
@@ -222,6 +252,42 @@ jobs:
             Publier "windows-postgres-redis-echec" "$echecs"
             exit $rc
           }
+      - name: Diagnostic — fichiers à processus POSIX, exécutés un par un
+        if: always()
+        # La suite sans service meurt PENDANT pytest : le témoin de début
+        # paraît, jamais celui d'après (run 41365859490). Ces cinq fichiers
+        # sont les seuls de la sélection à manipuler des processus (fork,
+        # SIGKILL, killpg, multiprocessing) — des notions qui n'existent pas
+        # sur Windows. En les exécutant UN PAR UN, chacun avec son témoin, le
+        # coupable se lit à l'absence de son témoin : un seul run suffit, au
+        # lieu de cinq.
+        #
+        # Étape de diagnostic, pas d'aveuglement : dès que la cause est connue,
+        # chaque fichier est soit adapté à Windows (équivalent TerminateProcess
+        # d'un SIGKILL), soit écarté NOMMÉMENT avec sa raison.
+        run: |
+          $ErrorActionPreference = 'Continue'
+          function Publier([string]$titre, [string]$texte) {
+            if ($null -eq $texte) { $texte = '' }
+            $propre = $texte -replace '%', '%25' -replace "`r", '%0D' -replace "`n", '%0A'
+            if ($propre.Length -gt 1500) { $propre = $propre.Substring(0, 1500) }
+            Write-Host "::notice title=$titre::$propre"
+          }
+          New-Item -ItemType Directory -Force -Path logs | Out-Null
+          foreach ($fichier in @(
+              "tests/test_restauration_confinement.py",
+              "tests/test_televersement_creation_idempotente.py",
+              "tests/test_relais_file_base.py",
+              "tests/test_lot10_televersement_lot.py",
+              "tests/test_extraction_logs_securite.py")) {
+            $nom = [IO.Path]::GetFileNameWithoutExtension($fichier)
+            Publier "diag-$nom" "debut"
+            python -m pytest -q -rf $fichier > "logs\diag-$nom.log" 2>&1
+            $rc = $LASTEXITCODE
+            Get-Content "logs\diag-$nom.log" -Tail 15 | ForEach-Object { Write-Host $_ }
+            Publier "diag-$nom" "rc=$rc"
+          }
+          Publier "diag-fin" "tous les fichiers a processus ont ete executes"
       - name: Ligne de commande et chemins Windows
         if: always()
         run: |
