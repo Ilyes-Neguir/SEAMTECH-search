@@ -2430,3 +2430,52 @@ un à l'absence de `unaccent` / `pg_trgm` sur ce banc (ni plus, ni moins).
    limite de ressources du runner, découper la suite en paquets plutôt que
    perdre une exécution entière.
 3. Puis : rapport final PRÊT / NON PRÊT point par point.
+
+### 44. CI `5b56591` — tous les jobs verts, `e2e` compris
+
+Run `41433224924`, HEAD `5b56591` :
+
+```
+success backend (3.11)   success backend (3.13)   success ocr
+success e2e              success frontend         success sauvegarde
+success integration      success docker           success recette-locale
+success recette-corpus-reel   success hors-ligne-reel   success securite-dependances
+(backend 3.12 encore en cours au moment d'écrire ces lignes)
+```
+
+`e2e` est revenu au vert : le budget du test « liens croisés voiles » (§33 du
+tour précédent) n'était pas une indulgence, c'était la correction d'un budget
+par test inadapté à huit navigations sous charge CI. Aucune assertion n'a été
+affaiblie — chaque attente garde sa borne.
+
+Mesures publiées par `backend (3.11)` :
+
+```
+coverage         : overall=88.15%  floor=85.0%
+coverage-details : inventaire=92.6% etat=77.2% pipeline=75.7% cli=81.1%
+                   api=91.5% indexer=95.7%
+suite-postgres   : 530 passés, 0 saut
+```
+
+Seul le workflow « Qualification Windows » reste rouge, et le rouge y est
+aujourd'hui instructif : il attribue une cause à chaque famille d'échecs (§42),
+ce qui a déjà fait corriger un défaut produit (§37), deux défauts de banc
+(pg_dump, séparateur de chemin) et un défaut de test.
+
+### 45. État courant, dit sans détour
+
+**PRÊT** : tout ce que la CI Linux peut prouver, à ce commit, est vert —
+backend 3.11/3.13, e2e, frontend, ocr, sauvegarde, integration, docker,
+recette-corpus-reel, recette-locale, hors-ligne-reel, securite-dependances ;
+plus Endurance, Qualification native, Qualification reserves, Perf comparaison.
+
+**NON PRÊT** : la qualification Windows. Deux familles d'échecs y restent sans
+cause (§42, familles 1 et 3) et la suite sans service y meurt encore sans code
+de sortie. Tant que ces trois points ne sont pas clos, le déploiement sur le
+poste Windows de l'atelier ne peut pas être déclaré prêt — et comme le
+confinement des fichiers est POSIX par construction, la cible de déploiement
+Windows reste Docker avec des conteneurs Linux.
+
+**Prochaine action** : lire les six traces du diagnostic ciblé et la fin du
+journal de la suite sans service sur le run en cours, corriger ou nommer, puis
+rédiger le rapport final.
