@@ -58,11 +58,22 @@ const constats: {
   violations: { id: string; impact: string | null; cibles: string[] }[]
 }[] = []
 
+/** Réponses HTTP en échec : le message de console ne dit pas QUELLE ressource. */
+const reseau: string[] = []
+
 function surveillerConsole(page: Page, erreurs: string[]): void {
   page.on("console", (message: ConsoleMessage) => {
     if (message.type() === "error") erreurs.push(message.text())
   })
   page.on("pageerror", (erreur: Error) => erreurs.push(`pageerror: ${erreur.message}`))
+  // Un « Failed to load resource: 503 » sans URL ne se diagnostique pas : on
+  // publie le COUPLE statut + chemin, filtré du bruit d'outillage.
+  page.on("response", (reponse) => {
+    if (reponse.status() < 400) return
+    const url = new URL(reponse.url())
+    if (/\/(_next|favicon|__nextjs)/.test(url.pathname)) return
+    reseau.push(`${reponse.status()} ${url.pathname}`)
+  })
 }
 
 test.afterAll(() => {
@@ -157,4 +168,10 @@ test("connexion, écrans de lecture et accessibilité WCAG 2.1 A/AA", async ({ p
   const bruit = /favicon|Download the React DevTools|Fast Refresh|sourcemap|Warning:/i
   const produits = erreurs.filter((texte) => !bruit.test(texte))
   process.stdout.write(`CONSOLE ${projet} :: ${produits.length} erreur(s) :: ${produits.slice(0, 5).join(" | ")}\n`)
+  // Les ressources en échec sont PUBLIÉES elles aussi, avec leur chemin : un
+  // 503 anonyme (« Failed to load resource ») ne dit pas quelle route le sert.
+  const comptes = new Map<string, number>()
+  for (const entree of reseau) comptes.set(entree, (comptes.get(entree) ?? 0) + 1)
+  const listing = [...comptes.entries()].map(([entree, fois]) => `${entree} x${fois}`)
+  process.stdout.write(`RESEAU ${projet} :: ${listing.length || "aucun"} :: ${listing.slice(0, 10).join(" | ")}\n`)
 })

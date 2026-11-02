@@ -2740,3 +2740,90 @@ et sur POSIX `normcase` est l'identité (19 + 14 tests passent, inchangés).
 Reste la cause 3, « Lecture confinée du bundle indisponible sur cette
 plateforme » : ce n'est pas un défaut, c'est la limite de plateforme nommée par
 `seamtech_search/plateforme.py`.
+
+## 51. 02/11 (suite) — Chrome et Edge verts : la violation de `/fiches` nommée, mesurée, corrigée
+
+**Run 41497594641** (commit `d037bcf`) a enfin nommé ce que le run précédent
+cachait : `/fiches`, règle `color-contrast`, gravité « serious », cibles
+`span[data-testid="nav-groupe-explorer|atelier|pilotage"]`, dans **les deux**
+navigateurs. Le message d'échec porte désormais la règle, la gravité et les
+cibles (commit `d037bcf`) : une violation qu'on ne peut pas nommer ne se
+répare pas.
+
+**Mesure hors navigateur** (composition alpha sRGB + formule WCAG, fait à la
+main, vérifiable) :
+
+| classe | thème jour | thème nuit | token plein (jour / nuit) |
+|---|---|---|---|
+| `text-muted-foreground/80` (`components/nav.tsx`) | **3,52:1** | 5,79:1 | 5,30 / 8,49 |
+| `text-primary/80` (`components/index-status.tsx`) | **3,46:1** | 6,37:1 | 5,04 / 9,51 |
+
+Deux défauts réels sous le seuil AA de 4,5:1. Le second n'était signalé par
+personne : son élément n'apparaît que si le backend sert un jeu d'exemple.
+Correctif : l'opacité est retirée — le token plein passe dans les deux thèmes.
+La hiérarchie visuelle est portée par la casse, le graisse et l'interlettrage,
+pas par une division du contraste.
+
+**Trois trous fermés** (commit `6f2355d`) :
+
+1. `frontend/lib/contraste.test.ts` — 15 tests verts avec le relais multipart,
+   déjà câblés en CI (le job `frontend` exécute
+   `node --experimental-strip-types --test lib/*.test.ts`). Il mesure la
+   SOURCE : couples canoniques de la palette (jour et nuit) et **chaque**
+   classe `text-<token>/<opacité>` écrite dans `app/` et `components/`. Là où
+   axe ne voit qu'un écran dans un état, ce test voit toutes les couleurs. Il
+   reproduit exactement les deux défauts ci-dessus avant correction. Les
+   exemptions (décoratifs `aria-hidden` du panneau de connexion) sont écrites
+   avec leur motif et vérifiées vivantes ; les fonds locaux (plage ambre à 10 %
+   du bandeau de doublon) sont déclarés et composés.
+2. `/fiches` ajouté à la liste d'écrans de l'audit Linux : c'était un écran NON
+   SCANNÉ, donc « non vérifié », pas « conforme ». 15 écrans désormais.
+3. Animations **figées** avant l'analyse dans la qualification navigateurs,
+   comme l'audit Linux le fait déjà et comme axe le recommande : une mesure
+   prise pendant la révélation (opacité 0 → 1) lit des couleurs mélangées au
+   fond et fabrique de faux échecs. Le message d'échec publie les couleurs et
+   le rapport MESURÉS par axe.
+
+**Run 41499874660** (commit `6f2355d`) : `verdict-navigateurs attendus=2
+passes=4 echecs=0`, `rc=0`. Chrome **156.0.8078.80** et Edge
+**156.0.4314.56** (agent-utilisateur `Edg/153.0.8010.12`), cinq écrans chacun,
+**0 violation** WCAG 2.1 A/AA. Chrome et Edge sont donc qualifiés.
+
+Restent publiés sans être assertés : 5 erreurs de console, dont des
+`Failed to load resource: 503`. Un 503 sans URL ne se diagnostique pas : la
+spec publie désormais le couple **statut + chemin** (`RESEAU <navigateur> :: …`),
+filtré du bruit `_next`/favicon. La prochaine exécution dira quelle route les
+sert — ce sera vérifié, pas supposé.
+
+## 52. Le refus d'OCR hors POSIX est un contrat, plus un mystère
+
+Dix-huit échecs Windows sans message (`assert None is not None`,
+`assert 0 == 1`). La cause est dans le produit et elle est **voulue** :
+`_rendre_page_pdf_borne` et `_extraire_images_pdf_borne` rendent `None` / `[]`
+dès que `os.name != "posix"`, parce que le confinement du rendu
+(sous-processus borné, `/proc`) n'existe que sur POSIX.
+
+`tests/test_ocr_refus_non_posix.py` (4 tests) en fait un contrat : hors POSIX
+le produit refuse, ne lance **aucun** sous-processus (un espion qui lèverait),
+ne laisse **aucun** fichier, et **nomme** la plateforme (`os.name=nt`,
+« ne se contourne pas par un réglage »). Un garde-fou vérifie que la garde ne
+mord pas sur POSIX — sinon un refus silencieux désactiverait l'OCR en
+production Linux. Le motif du refus nomme la plateforme dans
+`seamtech_search/ocr/pipeline.py`. Douze identifiants entrent dans
+`ci/ecarts-windows.txt` avec cette raison ; 281 tests OCR locaux passent.
+
+Piège rencontré : patcher `os.name` **globalement** fait instancier
+`WindowsPath` à `pathlib` et effondre pytest en plein rendu d'échec
+(`NotImplementedError`). La bascule est donc locale au module testé
+(module `os` factice délégant tout sauf `name`).
+
+**Causes qui ne se reconnaissaient pas** : Windows écrit
+`<module 'os' (frozen)> has no attribute 'killpg'`, alors que l'écart cherchait
+`module 'os' has no attribute 'killpg'` — le test correspondant était donc
+compté comme inexpliqué. Raccourci au suffixe stable (`has no attribute
+'killpg'`, idem pour `geteuid`).
+
+**Annotations tronquées** : 34 identifiants publiés sur 128.
+`PublierErreursParPaquets` remplit désormais des seaux de 2800 caractères —
+chaque échec inattendu est publié **avec la cause lue dans le rapport JUnit**.
+La prochaine exécution nommera les 128 au lieu d'en échantillonner 34.
