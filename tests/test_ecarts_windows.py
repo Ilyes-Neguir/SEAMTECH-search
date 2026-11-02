@@ -30,6 +30,7 @@ RACINE = Path(__file__).resolve().parent.parent
 FICHIER_ECARTS = RACINE / "ci" / "ecarts-windows.txt"
 
 _MOTIF_LIGNE = re.compile(r"^(tests/[A-Za-z0-9_/\.]+\.py)(?:::([A-Za-z0-9_\[\]\-\.,]*))?\|(.+)$")
+_MOTIF_CAUSE = re.compile(r"^CAUSE\|(.+)\|(.+)$")
 
 
 def _lignes_ecarts() -> list[tuple[int, str]]:
@@ -45,6 +46,12 @@ def _lignes_ecarts() -> list[tuple[int, str]]:
 
 def test_chaque_ligne_a_un_motif_un_fichier_et_une_raison() -> None:
     for numero, ligne in _lignes_ecarts():
+        if ligne.startswith("CAUSE|"):
+            assert _MOTIF_CAUSE.match(ligne), (
+                f"ci/ecarts-windows.txt:{numero} — forme attendue "
+                f"« CAUSE|<message du produit>|<raison> », lu : {ligne!r}"
+            )
+            continue
         assert _MOTIF_LIGNE.match(ligne), (
             f"ci/ecarts-windows.txt:{numero} — forme attendue "
             f"« tests/fichier.py::[test]|raison lisible », lu : {ligne!r}"
@@ -54,10 +61,23 @@ def test_chaque_ligne_a_un_motif_un_fichier_et_une_raison() -> None:
 def test_chaque_raison_est_une_phrase_pas_un_mot_cle() -> None:
     """Une raison d'une dizaine de caractères ne dit rien à qui la relit."""
     for numero, ligne in _lignes_ecarts():
-        concordance = _MOTIF_LIGNE.match(ligne)
-        if not concordance:
-            continue  # déjà signalé par le test de forme
-        raison = concordance.group(3).strip()
+        if ligne.startswith("CAUSE|"):
+            concordance_cause = _MOTIF_CAUSE.match(ligne)
+            if not concordance_cause:
+                continue
+            raison, message = concordance_cause.group(2).strip(), concordance_cause.group(1).strip()
+            # Un écart par cause trop court engloutirait n'importe quel échec :
+            # « erreur » ferait passer tout le rouge. Le message doit nommer une
+            # capacité, pas un incident.
+            assert len(message) >= 25, (
+                f"ci/ecarts-windows.txt:{numero} — cause trop générique pour être "
+                f"opposable ({len(message)} caractères) : {message!r}"
+            )
+        else:
+            concordance = _MOTIF_LIGNE.match(ligne)
+            if not concordance:
+                continue  # déjà signalé par le test de forme
+            raison = concordance.group(3).strip()
         assert len(raison) >= 40, (
             f"ci/ecarts-windows.txt:{numero} — raison trop courte pour être "
             f"opposable ({len(raison)} caractères) : {raison!r}"
@@ -93,9 +113,12 @@ def test_chaque_test_nomme_existe_dans_son_fichier() -> None:
 
 
 def test_aucun_motif_en_double() -> None:
-    motifs = [ligne.split("|", 1)[0] for _, ligne in _lignes_ecarts()]
-    doublons = {motif for motif in motifs if motifs.count(motif) > 1}
-    assert not doublons, f"motifs répétés dans ci/ecarts-windows.txt : {sorted(doublons)}"
+    """Un motif répété est un écart qu'on a oublié d'avoir déjà écrit."""
+    par_test = [ligne.split("|", 1)[0] for _, ligne in _lignes_ecarts() if not ligne.startswith("CAUSE|")]
+    par_cause = [ligne.split("|")[1] for _, ligne in _lignes_ecarts() if ligne.startswith("CAUSE|")]
+    for nom, liste in (("motifs de test", par_test), ("causes", par_cause)):
+        doublons = {valeur for valeur in liste if liste.count(valeur) > 1}
+        assert not doublons, f"{nom} répétés dans ci/ecarts-windows.txt : {sorted(doublons)}"
 
 
 def test_le_fichier_rappelle_comment_les_ecarts_ont_ete_etablis() -> None:

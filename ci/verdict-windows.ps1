@@ -121,11 +121,42 @@ if (Test-Path $fichier_ecarts) {
                 ForEach-Object { ($_ -split '\|')[0].Trim() }
 }
 
+# Les écarts par CAUSE : « 314 échecs, une seule cause » ne se traite pas en
+# listant 314 identifiants. Une ligne ``CAUSE|<message>|<raison>`` accepte tout
+# échec dont le message contient ce texte. Le message est ce que le produit a
+# réellement dit, pas une catégorie qu'on invente : c'est la condition pour
+# qu'un écart par cause reste opposable.
+$causes_nommees = @()
+if (Test-Path $fichier_ecarts) {
+    $causes_nommees = Get-Content $fichier_ecarts |
+                      Where-Object { $_.Trim() -and -not $_.Trim().StartsWith('#') } |
+                      Where-Object { $_.Trim().StartsWith('CAUSE|') } |
+                      ForEach-Object { (($_ -split '\|')[1]).Trim() }
+}
+
+$messages = @{}
+if (Test-Path $Journal) {
+    Select-String -Path $Journal -Pattern '^(FAILED|ERROR) ' | ForEach-Object {
+        $ligne = $_.Line
+        $separateur = $ligne.IndexOf(' - ')
+        if ($separateur -gt 0) {
+            $identifiant = ($ligne.Substring(0, $separateur) -split '\s+')[1]
+            if ($identifiant -like 'tests/*') { $messages[$identifiant] = $ligne.Substring($separateur + 3) }
+        }
+    }
+}
+
 $inattendus = @()
 foreach ($echec in $echecs) {
     $connu = $false
     foreach ($motif in $attendus) {
         if ($echec -like "$motif*") { $connu = $true; break }
+    }
+    if (-not $connu) {
+        $message = if ($messages.ContainsKey($echec)) { $messages[$echec] } else { '' }
+        foreach ($cause in $causes_nommees) {
+            if ($cause -and $message -and $message.Contains($cause)) { $connu = $true; break }
+        }
     }
     if (-not $connu) { $inattendus += $echec }
 }

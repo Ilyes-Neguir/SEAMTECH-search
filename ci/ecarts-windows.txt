@@ -45,3 +45,22 @@ tests/test_verification_integrite.py::test_reprise_identite_source_postgres_vrai
 # nommer serait transformer une ignorance en périmètre. Le verdict publie
 # désormais leurs causes regroupées par famille ; elles seront, une fois lues,
 # soit corrigées (défaut produit), soit nommées ici avec leur raison.
+
+# --- Écarts par CAUSE -----------------------------------------------------
+# Forme : CAUSE|<message exactement prononcé par le produit>|<raison>
+#
+# Pourquoi : au run 41433225057, la suite sans service compte 314 échecs pour
+# UNE SEULE cause — « Lecture confinée du bundle indisponible sur cette
+# plateforme ». Les énumérer un par un n'apprendrait rien et vieillirait mal ;
+# un écart par cause accepte tout échec dont le message est CELUI-LÀ. La
+# contrepartie est la même que pour les motifs par test : refus nommé par
+# seamtech_search/plateforme.py, déploiement Windows dans des conteneurs Linux,
+# et couverture intégrale de ces tests par la CI Linux à chaque commit.
+#
+# Ce qui n'entre PAS dans un écart par cause : un message vague. Si le produit
+# disait « erreur », l'écart engloutirait tout. Les trois messages ci-dessous
+# nomment chacun une capacité absente, ce qui les rend opposables.
+CAUSE|Lecture confinée du bundle indisponible sur cette plateforme|lecture confinée du bundle (procfs_fd + descripteur ancré) : primitive POSIX inexistante sur Windows ; refus nommé par plateforme.py ; couvert par CI Linux ; déploiement Windows = Docker Linux
+CAUSE|Capacité de plateforme absente : scan_ancre_descripteur|scan d'un dossier ancré par descripteur (dir_fd + O_NOFOLLOW) : sans lui, l'import refuse au lieu de traverser des liens ; idem
+CAUSE|Capacité de plateforme absente : procfs_fd|résolution d'un chemin par /proc/self/fd : équivalent de confinement POSIX absent de Windows ; idem
+CAUSE|Capacité de plateforme absente : verrou_flock|verrou coopératif flock : Windows verrouille par plage d'octets, pas par descripteur de répertoire ; idem

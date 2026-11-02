@@ -2479,3 +2479,49 @@ Windows reste Docker avec des conteneurs Linux.
 **Prochaine action** : lire les six traces du diagnostic ciblé et la fin du
 journal de la suite sans service sur le run en cours, corriger ou nommer, puis
 rédiger le rapport final.
+
+### 46. Le mystère de la suite sans service est levé, et il change tout
+
+Le run `41433225057` a enfin publié la FIN du journal. La suite sans service ne
+mourait pas : **elle allait au bout**, puis un `KeyboardInterrupt` survenait
+pendant la finalisation — après le résumé :
+
+```
+FAILED … - AssertionError: Regex pattern did not match.
+  Expected regex: 'taille'
+  Actual message: 'Lecture confinée du bundle indisponible sur cette plateforme'
+!!!!! KeyboardInterrupt !!!!!
+C:\hostedtoolcache\windows\Python\3.12.10\x64\Lib\threading.py:355: KeyboardInterrupt
+= 314 failed, 1607 passed, 56 skipped, 857 deselected, 1 xfailed, 16 errors in 380.53s =
+```
+
+Deux conséquences, toutes deux utiles :
+
+1. **Le code de sortie n'était pas écrit** parce que l'interruption tuait
+   l'hôte PowerShell avant `Set-Content`. Désormais c'est `cmd /V /C` qui
+   l'écrit lui-même (`& echo !errorlevel!> logs\rc-….txt`) : même si la console
+   reçoit l'interruption, le verdict a son code de sortie et son inventaire.
+2. **Les 314 échecs ont une seule cause** : « Lecture confinée du bundle
+   indisponible sur cette plateforme » — c'est-à-dire la même famille que
+   `scan_ancre_descripteur` mais prononcée à l'endroit de la lecture du bundle
+   de sauvegarde (`procfs_fd` + descripteur ancré). Ce n'était pas 314
+   mystères : c'était une cause, 314 fois.
+
+D'où un troisième mécanisme, faute duquel la liste des écarts serait devenue un
+annuaire : **l'écart par CAUSE**. Une ligne `CAUSE|<message prononcé par le
+produit>|<raison>` accepte tout échec dont le message est celui-là. Le message
+doit nommer une capacité absente, et le garde-fou l'exige (≥ 25 caractères) :
+un écart par cause rédigé « erreur » engloutirait tout le rouge, il est refusé.
+
+Quatre causes sont nommées : lecture confinée du bundle, scan ancré par
+descripteur, `procfs_fd`, `verrou_flock`. Contrepartie inchangée : refus NOMMÉ
+par `plateforme.py`, déploiement Windows dans des conteneurs Linux, et
+couverture intégrale de ces tests par la CI Linux à chaque commit.
+
+### 47. Prochaine action, sans ambiguïté
+
+1. Relire le verdict Windows sur le run en cours : avec les écarts par cause,
+   les familles nommées doivent disparaître du décompte « hors périmètre ».
+2. Ce qui restera rouge sera alors, pour de bon, la liste courte des échecs à
+   instruire — plus une brume de 300 lignes.
+3. Puis : rapport final PRÊT / NON PRÊT, point par point, commandes et SHA.
