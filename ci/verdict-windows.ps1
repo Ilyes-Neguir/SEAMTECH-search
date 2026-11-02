@@ -97,6 +97,26 @@ if (Test-Path $Journal) {
 }
 Publier $Titre "rc=$rc ; echecs=$($echecs.Count) ; $resume"
 
+# --- 2 ter. Une suite INTERROMPUE ne se compte pas --------------------------
+# rc=2 : pytest a ete INTERROMPU (un KeyboardInterrupt qui echappe, typiquement
+# un test qui simule un Ctrl+C). Vu aux runs 41499874854 et 41501814193 : la
+# suite s'arrete a mi-parcours (1622 passes au lieu de 1913) et les compteurs
+# ne sont PLUS COMPARABLES d'un run a l'autre — les comparer ferait croire a
+# une Regression ou a une amelioration qui n'existe pas. On publie donc la FIN
+# du journal : c'est elle qui dit OU ca s'arrete.
+if ($rc -eq 2) {
+    $fin = ''
+    if (Test-Path $Journal) { $fin = ((Get-Content $Journal -Tail 12) -join " `n ") }
+    # ``Publier`` tronque au DEBUT : on coupe la queue nous-memes, comme plus
+    # haut, sinon la ligne utile passe a la trappe.
+    if ($fin.Length -gt 2800) { $fin = '…' + $fin.Substring($fin.Length - 2800) }
+    PublierErreur "$Titre-interrompue" (
+        "suite INTERROMPUE (rc=2) : $($echecs.Count) echecs et $resume ne sont " +
+        "pas comparables aux runs completes. Fin du journal : $fin"
+    )
+    exit 1
+}
+
 # --- 2 bis. Les CAUSES, et non seulement les noms ---------------------------
 # 314 échecs ne s'instruisent pas un par un : ils se regroupent par CAUSE.
 # Deux voies, dans cet ordre :
@@ -227,17 +247,23 @@ if ($Details -and (Test-Path $Details)) {
         if ($morceaux.Count -lt 2) { continue }
         $details[$morceaux[0].Trim()] = @($morceaux[1])
     }
-} elseif (Test-Path $Journal) {
-    # Repli : l'en-tête de traceback ne porte PAS le chemin du fichier pour un
-    # test en classe (« TestChose.test_methode »), donc ce rattachement est
-    # partiel — il ne vaut que pour les tests de module.
+}
+
+if (Test-Path $Journal) {
+    # COMPLÉMENT (et non plus simple repli) : 84 échecs sur 84 ne portaient
+    # aucune cause dans le rapport JUnit (run 41501814193) — le rapport ne dit
+    # pas tout, et un échec sans cause ne se répare pas. On rattache donc aussi
+    # les lignes « E » du journal, pour les seuls tests qui n'ont encore rien.
+    # Limite dite : l'en-tête de traceback ne porte PAS le chemin du fichier
+    # pour un test en classe (« TestChose.test_methode »), donc ce
+    # rattachement est partiel — il ne vaut que pour les tests de module.
     $courant = ''
     foreach ($ligne in [System.IO.File]::ReadLines((Resolve-Path $Journal))) {
         if ($ligne -match '^_{3,} (.+?) _{3,}$') {
             $courant = $Matches[1].Trim()
         } elseif ($courant -and $ligne -match '^E\s+(.*)$') {
             if (-not $details.ContainsKey($courant)) { $details[$courant] = @() }
-            $details[$courant] += $Matches[1]
+            if ($details[$courant].Count -lt 3) { $details[$courant] += $Matches[1] }
         }
     }
 }
