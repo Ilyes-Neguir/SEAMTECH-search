@@ -216,7 +216,18 @@ def test_corrections_pg_concurrentes_refusees_avant_mutation(tmp_path: Path, mon
         with ThreadPoolExecutor(max_workers=1) as executor:
             resultat = executor.submit(pipeline.correct_import, index, config, 'id-pg', {'quantity': 12})
             try:
-                assert debut.wait(10)
+                # Un « assert False » sur ``debut.wait(10)`` ne disait pas
+                # POURQUOI le traitement n'avait pas démarré : l'exception du
+                # thread restait enfermée dans le Future. Sur Windows (run
+                # 41420706781), l'échec est donc resté une ligne rouge sans
+                # cause. Elle est désormais propagée : si le thread a échoué,
+                # c'est SA panne qu'on lit, pas le constat d'attente déçue.
+                if not debut.wait(10):
+                    if resultat.done():
+                        resultat.result()  # propage la vraie panne du thread
+                    raise AssertionError(
+                        "le traitement n'a pas atteint generate_report en 10 s et tourne encore"
+                    )
                 with pytest.raises(pipeline.ImportMutationEnCours):
                     pipeline.correct_import(index, config, 'id-pg', {'reference': 'NOUVELLE'})
                 with pytest.raises(pipeline.ImportMutationEnCours):

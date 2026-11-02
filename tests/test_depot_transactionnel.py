@@ -272,6 +272,56 @@ class TestRejeuSansDoublon:
         pieces = pieces_de_fiche(index, "7792-SO")["pieces"]
         assert any(p["is_primary_pdf"] for p in pieces), pieces
 
+    def test_rejeu_reconnu_quand_la_cle_stockee_est_pliee_en_casse(
+        self, base_depot: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Windows plie la CASSE des clés : le rejeu doit rester reconnu.
+
+        ``cle_idempotence`` stocke ``os.path.normcase(chemin)`` + empreinte. Sur
+        Windows, ``normcase`` MET EN MINUSCULES (et convertit « / » en « \\ ») ;
+        sur Linux, il ne fait rien. La reconnaissance d'un rejeu téléversé
+        comparait ensuite ce chemin stocké, plié, avec le chemin logique du
+        fichier qu'on vient de recevoir, resté dans sa casse d'origine :
+        « ANNEE-DEMO/AFFAIRE-STAGEE/… » contre « annee-demo/affaire-stagee/… ».
+
+        Égaux sur Linux, différents sur Windows — donc le rejeu n'y était PAS
+        reconnu, et le second envoi du même dossier REMPLAÇAIT la fiche
+        (révision 2) au lieu d'être sans effet. L'idempotence, promesse
+        affichée à l'écran (« rejouer un dossier ne crée rien »), était fausse
+        sur le poste de l'atelier.
+
+        Ce test force ``os.path.normcase`` à se comporter comme sur Windows.
+        Forcer une primitive ne prouve pas Windows — cela prouve que la
+        comparaison ne dépend plus de la casse, ce que le runner Windows a
+        constaté en échec (run 41420706781, ``raison: remplacee`` au lieu de
+        ``deja_traite``).
+        """
+        monkeypatch.setattr(os.path, "normcase", lambda p: str(p).replace("/", "\\").lower())
+        index = base_depot["index"]
+
+        def dossier_stage(jeton: str) -> Path:
+            dossier = (
+                tmp_path
+                / "uploads"
+                / "lots-televerses"
+                / jeton
+                / "fichiers"
+                / "ANNEE-CASSE"
+                / "AFFAIRE-STAGEE"
+            )
+            dossier.mkdir(parents=True)
+            shutil.copy(ARCHIVE_7792 / "fiche-7792-SO_ffab.pdf", dossier / "fiche-7792-SO_ffab.pdf")
+            (dossier / "croquis-atelier.txt").write_text("repère des renforts", encoding="utf-8")
+            return dossier
+
+        premier = depot.deposer_dossier(index, dossier_stage("jeton-casse-A"))
+        assert premier["statut"] == "traite"
+        avant = _comptes(index)
+        second = depot.deposer_dossier(index, dossier_stage("jeton-casse-B"))
+        apres = _comptes(index)
+        assert second["statut"] == "deja_traite", second
+        assert apres["pieces"] == avant["pieces"] and apres["champs"] == avant["champs"]
+
     def test_pdf_televerse_modifie_meme_chemin_ne_duplique_pas_les_annexes(
         self, base_depot: dict, tmp_path: Path
     ) -> None:

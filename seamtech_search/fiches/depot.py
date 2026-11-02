@@ -366,7 +366,22 @@ def _chemin_logique_televersement(chemin: Path | str) -> str | None:
         if indice + 2 >= len(segments) or segments[indice + 2] != _SEGMENT_FICHIERS_STAGING:
             return None
         relatif = segments[indice + 3 :]
-        return "/".join(relatif) if relatif else None
+        if not relatif:
+            return None
+        # ``os.path.normcase`` plie la CASSE sur Windows (et y convertit « / » en
+        # « \\ ») ; sur POSIX, il ne fait rien. La clé d'idempotence stockée est
+        # donc normalisée, alors que le chemin du fichier qu'on vient de recevoir
+        # ne l'est pas : comparés tels quels, « ANNEE/AFFAIRE/fiche.pdf » et
+        # « annee/affaire/fiche.pdf » diffèrent — et le rejeu d'un dossier
+        # téléversé n'était PLUS reconnu sur Windows. La fiche était alors
+        # remplacée (révision 2) au lieu d'être laissée telle quelle, alors que
+        # l'écran promet « rejouer un dossier ne crée rien ».
+        #
+        # La normalisation est appliquée ICI, au point unique d'où sortent tous
+        # les chemins logiques comparés (rejeu, pièces, liens objets) : les deux
+        # côtés de chaque comparaison passent par cette fonction, donc elles
+        # deviennent toutes insensibles à la casse, et POSIX ne change pas.
+        return os.path.normcase("/".join(relatif))
     return None
 
 
