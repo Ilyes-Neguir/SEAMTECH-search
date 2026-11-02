@@ -21,8 +21,15 @@
 # Sur Redis 7, dit franchement : Redis n'a PLUS de binaire Windows officiel
 # depuis la version 5 (port MicrosoftArchive abandonné). On utilise donc le
 # port redis-windows/redis-windows, reconstruit depuis les sources officielles
-# de Redis 7.4.11. Ce n'est pas un binaire Redis Labs signé : c'est la ligne
+# de Redis 7.4.11. Ce n'est pas un binaire signé par Redis : c'est la ligne
 # Redis 7, sur Windows, et la source est épinglée (version + URL ci-dessous).
+#
+# ORDRE DES ÉTAPES : la suite sans service passe AVANT les installations.
+# Elle n'a besoin de rien, alors que `choco install postgresql16` coûte à lui
+# seul huit minutes : diagnostiquer une régression prenait donc treize minutes
+# par essai au lieu de cinq. Les étapes suivantes sont en `if: always()` parce
+# que les deux suites sont INDÉPENDANTES — une panne de la première ne doit
+# pas priver la seconde de preuve.
 #
 # Les fichiers POSIX-only sont écartés EXPLICITEMENT, jamais silencieusement :
 # SIGKILL et fork() n'existent pas sur Windows, et un test qui ne peut pas
@@ -40,9 +47,9 @@ jobs:
       run:
         shell: pwsh
     env:
-      # Pas de ``SEAMTECH_TEST_DATABASE_URL`` au départ : la suite sans service
-      # doit d'abord passer SANS PostgreSQL. Elle est posée après
-      # l'installation de PostgreSQL, uniquement si le service répond.
+      # Pas de ``SEAMTECH_TEST_DATABASE_URL`` au niveau du job : la suite sans
+      # service doit d'abord passer SANS PostgreSQL. Elle est posée sur la
+      # seule étape qui en a besoin.
       PYTHONIOENCODING: utf-8
       PYTHONUTF8: "1"
     steps:
@@ -60,12 +67,63 @@ jobs:
           python -V
           python -c "import platform,sys; print(platform.platform()); print(sys.getfilesystemencoding())"
           Write-Host "::notice title=windows-identite::os=$($info.OsName) version=$($info.OsVersion)"
+      - name: Suite sans service sur Windows
+        # POSIX-only : SIGKILL et fork() n'existent pas sur Windows. Ces
+        # fichiers sont NOMMÉS ici, pas simplement absents : un test écarté
+        # doit rester visible dans la configuration.
+        run: |
+          $ErrorActionPreference = 'Continue'
+          # Publier un diagnostic : les journaux complets sont stockés sur un
+          # hôte de blobs injoignable depuis le banc d'analyse, et les
+          # ARTEFACTS aussi. L'annotation est le seul canal lisible — d'où
+          # l'échappement exigé par GitHub (%, retours chariot) et le
+          # tronçonnage : un message non conforme est SILENCIEUSEMENT ignoré,
+          # ce qui donne une étape rouge sans rien à lire.
+          function Publier([string]$titre, [string]$texte) {
+            if ($null -eq $texte) { $texte = '' }
+            $propre = $texte -replace '%', '%25' -replace "`r", '%0D' -replace "`n", '%0A'
+            if ($propre.Length -gt 3000) { $propre = $propre.Substring(0, 3000) }
+            Write-Host "::notice title=$titre::$propre"
+          }
+          # Trois témoins, un par étape. Ils ne servent pas à « rassurer » :
+          # ils servent à savoir OÙ l'étape meurt. Run 41364338587 : le témoin
+          # de début paraissait, celui d'après pytest jamais — sans eux, on
+          # aurait continué à chercher la cause dans pytest.
+          Publier "windows-sans-service-debut" "lancement de la suite"
+          New-Item -ItemType Directory -Force -Path logs | Out-Null
+          # Redirection de fichier, PAS de pipeline : dans un pipeline
+          # PowerShell, la sortie d'erreur d'un exécutable natif devient des
+          # ErrorRecords, et le moindre avertissement de pytest tuait l'étape
+          # avant le diagnostic (runs 41361547004 et 41362919313).
+          python -m pytest -q -rf `
+            -m "not postgres and not s3 and not perf and not redis_queue and not ocr_suite" `
+            --ignore=tests/test_chaos.py `
+            --ignore=tests/test_worker_process.py `
+            --ignore=tests/test_worker_process_postgres.py `
+            --ignore=tests/test_worker_crash_terminal.py `
+            --ignore=tests/test_securite_banc_suivi.py `
+            --ignore=tests/test_migration_rollback.py `
+            --ignore=tests/test_partage_web_worker.py > logs\windows-sans-service.log 2>&1
+          $rc = $LASTEXITCODE
+          Publier "windows-sans-service-apres-pytest" "rc=$rc journal=$((Get-Item logs\windows-sans-service.log -ErrorAction SilentlyContinue).Length) octets"
+          Get-Content logs\windows-sans-service.log -Tail 60 | ForEach-Object { Write-Host $_ }
+          $resume = (Select-String -Path logs\windows-sans-service.log -Pattern '^(FAILED|ERROR)|passed|failed' |
+                     Select-Object -Last 10 | ForEach-Object { $_.Line }) -join ' | '
+          Publier "windows-sans-service" "rc=$rc ; $resume"
+          if ($rc -ne 0) {
+            $echecs = (Select-String -Path logs\windows-sans-service.log -Pattern '^(FAILED|ERROR)' |
+                       Select-Object -First 15 | ForEach-Object { $_.Line }) -join ' | '
+            Publier "windows-sans-service-echec" "$echecs"
+            exit $rc
+          }
       - name: Installer PostgreSQL 16 (hôte)
+        if: always()
         # Les services de conteneurs de GitHub ne fonctionnent pas sur les
         # runners Windows : PostgreSQL est installé sur l'hôte.
         run: |
           choco install postgresql16 --params '/Password:seamtech_test_password' --no-progress -y
       - name: Démarrer PostgreSQL 16 et créer la base
+        if: always()
         run: |
           $pg = Get-Service -Name "postgresql*" | Select-Object -First 1
           if (-not $pg) { Write-Error "service PostgreSQL introuvable" ; exit 1 }
@@ -79,6 +137,7 @@ jobs:
           & $psql -U postgres -c "CREATE DATABASE seamtech_search_test OWNER seamtech;"
           & $psql -U postgres -c "SELECT version();"
       - name: Installer Redis 7 (port Windows, version épinglée)
+        if: always()
         run: |
           $version = "7.4.11"
           $assets = "https://github.com/redis-windows/redis-windows/releases/download/$version/Redis-$version-Windows-x64-msys2.zip"
@@ -97,6 +156,7 @@ jobs:
           }
           Write-Host "::notice title=redis-install::version=$version binaire=$serveur"
       - name: Démarrer Redis 7
+        if: always()
         # Historique : deux échecs avant d'arriver ici.
         #   1. `choco install redis-64` : le binaire n'était pas là où on le
         #      cherchait (run 41358977874), puis introuvable malgré une
@@ -126,60 +186,13 @@ jobs:
           }
           Write-Host "::error title=redis-demarrage::Redis installé mais muet sur le port 6379 apres 40s (binaire=$serveur)"
           exit 1
-      - name: Suite sans service sur Windows
-        # POSIX-only : SIGKILL et fork() n'existent pas sur Windows. Ces
-        # fichiers sont NOMMÉS ici, pas simplement absents : un test écarté
-        # doit rester visible dans la configuration.
-        run: |
-          $ErrorActionPreference = 'Continue'
-          # Publier un diagnostic : les journaux complets sont stockés sur un
-          # hôte de blobs injoignable depuis le banc d'analyse, et les
-          # ARTEFACTS aussi. L'annotation est le seul canal lisible — d'où
-          # l'échappement exigé par GitHub (%, retours chariot) et le
-          # tronçonnage : un message non conforme est SILENCIEUSEMENT ignoré,
-          # ce qui donne une étape rouge sans rien à lire. Le message de début
-          # sert de témoin : s'il manque, l'étape est morte avant d'agir.
-          function Publier([string]$titre, [string]$texte) {
-            if ($null -eq $texte) { $texte = '' }
-            $propre = $texte -replace '%', '%25' -replace "`r", '%0D' -replace "`n", '%0A'
-            if ($propre.Length -gt 3000) { $propre = $propre.Substring(0, 3000) }
-            Write-Host "::notice title=$titre::$propre"
-          }
-          Publier "windows-sans-service-debut" "lancement de la suite"
-          New-Item -ItemType Directory -Force -Path logs | Out-Null
-          python -m pytest -q -rf `
-            -m "not postgres and not s3 and not perf and not redis_queue and not ocr_suite" `
-            --ignore=tests/test_chaos.py `
-            --ignore=tests/test_worker_process.py `
-            --ignore=tests/test_worker_process_postgres.py `
-            --ignore=tests/test_worker_crash_terminal.py `
-            --ignore=tests/test_securite_banc_suivi.py `
-            --ignore=tests/test_migration_rollback.py `
-            --ignore=tests/test_partage_web_worker.py > logs\windows-sans-service.log 2>&1
-          $rc = $LASTEXITCODE
-          Get-Content logs\windows-sans-service.log -Tail 60 | ForEach-Object { Write-Host $_ }
-          $resume = (Select-String -Path logs\windows-sans-service.log -Pattern '^(FAILED|ERROR)|passed|failed' |
-                     Select-Object -Last 10 | ForEach-Object { $_.Line }) -join ' ; '
-          Publier "windows-sans-service" "rc=$rc ; $resume"
-          if ($rc -ne 0) {
-            $echecs = (Select-String -Path logs\windows-sans-service.log -Pattern '^(FAILED|ERROR)' |
-                       Select-Object -First 15 | ForEach-Object { $_.Line }) -join ' ; '
-            Publier "windows-sans-service-echec" "$echecs"
-            exit $rc
-          }
       - name: Suite PostgreSQL + Redis sur Windows
+        if: always()
         env:
           SEAMTECH_TEST_DATABASE_URL: postgresql://seamtech:seamtech_test_password@127.0.0.1:5432/seamtech_search_test
           SEAMTECH_TEST_REDIS_URL: redis://127.0.0.1:6379/1
         run: |
           $ErrorActionPreference = 'Continue'
-          # Publier un diagnostic : les journaux complets sont stockés sur un
-          # hôte de blobs injoignable depuis le banc d'analyse, et les
-          # ARTEFACTS aussi. L'annotation est le seul canal lisible — d'où
-          # l'échappement exigé par GitHub (%, retours chariot) et le
-          # tronçonnage : un message non conforme est SILENCIEUSEMENT ignoré,
-          # ce qui donne une étape rouge sans rien à lire. Le message de début
-          # sert de témoin : s'il manque, l'étape est morte avant d'agir.
           function Publier([string]$titre, [string]$texte) {
             if ($null -eq $texte) { $texte = '' }
             $propre = $texte -replace '%', '%25' -replace "`r", '%0D' -replace "`n", '%0A'
@@ -198,17 +211,19 @@ jobs:
             --ignore=tests/test_migration_rollback.py `
             --ignore=tests/test_partage_web_worker.py > logs\windows-postgres-redis.log 2>&1
           $rc = $LASTEXITCODE
+          Publier "windows-postgres-redis-apres-pytest" "rc=$rc journal=$((Get-Item logs\windows-postgres-redis.log -ErrorAction SilentlyContinue).Length) octets"
           Get-Content logs\windows-postgres-redis.log -Tail 60 | ForEach-Object { Write-Host $_ }
           $resume = (Select-String -Path logs\windows-postgres-redis.log -Pattern '^(FAILED|ERROR)|passed|failed' |
-                     Select-Object -Last 10 | ForEach-Object { $_.Line }) -join ' ; '
+                     Select-Object -Last 10 | ForEach-Object { $_.Line }) -join ' | '
           Publier "windows-postgres-redis" "rc=$rc ; $resume"
           if ($rc -ne 0) {
             $echecs = (Select-String -Path logs\windows-postgres-redis.log -Pattern '^(FAILED|ERROR)' |
-                       Select-Object -First 15 | ForEach-Object { $_.Line }) -join ' ; '
+                       Select-Object -First 15 | ForEach-Object { $_.Line }) -join ' | '
             Publier "windows-postgres-redis-echec" "$echecs"
             exit $rc
           }
       - name: Ligne de commande et chemins Windows
+        if: always()
         run: |
           # Même raison que pour les suites : une sortie d'erreur de python ne
           # doit pas tuer l'étape avant la vérification du code de sortie.

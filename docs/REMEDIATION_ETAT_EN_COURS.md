@@ -1729,3 +1729,226 @@ sont écartés **et nommés** dans la commande.
 5. **MinIO/R2 réels** : les tests d'historique MinIO (`-m minio_historique`,
    7 tests) sautent sans l'instance isolée ; le transport réel est exercé
    ailleurs (intégration compose, qualification réserves).
+
+### 19. `contrib` PostgreSQL reconstruit : la suite locale rejoint enfin la CI
+
+Les 43 échecs + 4 erreurs de la suite complète locale (§16) n'étaient pas du
+produit : l'image `pgserver` embarquée n'installe pas les modules `contrib`.
+`unaccent` et `pg_trgm` étaient donc indisponibles, le produit basculait sur
+ses replis documentés, et une cinquantaine de tests qui exigent le SQL réel
+(tsvector accentué, similarité trigramme, index d'expression) échouaient.
+
+Démontré, pas supposé : `psycopg2.errors.UndefinedObject: text search
+configuration "seamtech_unaccent" does not exist`.
+
+Correctif de BANC (rien dans le produit, rien dans Git) : les deux modules ont
+été reconstruits depuis les sources officielles `REL_16_2` contre le
+`pg_config` de `pgserver`, puis installés dans son arbre.
+
+```bash
+curl -sSL -o pg.tar.gz https://codeload.github.com/postgres/postgres/tar.gz/refs/tags/REL_16_2
+tar xzf pg.tar.gz
+PG=/home/user/SEAMTECH-search/.venv/lib/python3.11/site-packages/pgserver/pginstall/bin/pg_config
+make -C postgres-REL_16_2/contrib/unaccent USE_PGXS=1 PG_CONFIG=$PG && make -C postgres-REL_16_2/contrib/unaccent USE_PGXS=1 PG_CONFIG=$PG install
+make -C postgres-REL_16_2/contrib/pg_trgm  USE_PGXS=1 PG_CONFIG=$PG && make -C postgres-REL_16_2/contrib/pg_trgm  USE_PGXS=1 PG_CONFIG=$PG install
+```
+
+Preuve que les modules servent :
+
+```
+CREATE EXTENSION IF NOT EXISTS unaccent; CREATE EXTENSION IF NOT EXISTS pg_trgm;
+SELECT unaccent('éàç'), similarity('voiles','voile');
+-->  eac | 0.625
+```
+
+Suite complète relancée, à commande identique (`pytest -q -p no:randomly
+--ignore=tests/test_recette_corpus_reel.py`, 4 variables de banc) :
+
+| mesure | avant | après |
+|---|---|---|
+| passés | 3090 | **3140** |
+| échecs | 43 | **1** |
+| erreurs | 4 | **0** |
+| sautés | 52 | 48 |
+| xfail | 8 | 8 |
+| durée | 872,55 s | 1003,12 s (16 min 43) |
+
+L'unique échec restant était `tests/test_ci_executable.py` — c'est-à-dire le
+garde-fou des workflows, rendu rouge par le workflow Windows ajouté la veille.
+Il est corrigé et prouvé au §20. **La suite locale est désormais le même
+arbitre que la CI** (`pgvector/pgvector:pg16`, contrib complet) : plus aucun
+écart d'environnement ne peut être invoqué pour expliquer un échec.
+
+Conséquence directe : `tests/test_migration_rollback.py`, qui produisait 4
+erreurs, passe (campagne ciblée ci-dessous), et le point P0 « migration et
+rollback sur une copie représentative » est prouvé sur PostgreSQL réel.
+
+Campagne ciblée P0/P1 (sauvegardes, restauration, hors-site, rétention,
+migrations/rollback, rotations PDF 90/180/270, provenance OCR), bancs levés :
+
+```
+357 passed, 6 skipped, 1 xfailed in 48.47 s
+```
+
+Aucun `xfail` sur les rotations : `tests/test_pdf_orientation.py` le dit
+lui-même (« aucun test n'est marqué xfail : une régression casse la CI »), ce
+qui valide le point P1 « retirer les xfail des rotations ».
+
+### 20. Le garde-fou des blocs `run:` analysait du PowerShell avec `bash -n` (`5c4bd1a`)
+
+Run `41360147937` : job `backend (3.12)` rouge sur l'étape « Run SQLite
+suite ». Le coupable :
+
+```
+FAILED tests/test_ci_executable.py::test_chaque_bloc_run_est_un_script_analyse
+  qualification-windows.yml · windows / Démarrer Redis 7 :
+  /tmp/…sh: line 1: syntax error near unexpected token `('
+  /tmp/…sh: line 1: `$candidats = @()'
+```
+
+Le garde-fou soumettait chaque bloc `run:` à `bash -n`, y compris les huit
+blocs PowerShell du nouveau workflow. `$candidats = @()` est une erreur pour le
+shell bourne et ne dit rien de la validité du PowerShell : **le contrôle se
+trompait d'outil et produisait des verdicts faux**. C'est exactement le défaut
+que ce fichier combat — retourné contre lui, et rendu visible par le
+garde-fou d'un autre fichier.
+
+Correctif : le shell de chaque étape est résolu comme GitHub le fait (`shell:`
+de l'étape, sinon `defaults.run.shell` du job, sinon du workflow, sinon `pwsh`
+sur Windows et `bash` ailleurs), puis analysé par `bash -n` ou par le parseur
+PowerShell réel (`[System.Management.Automation.Language.Parser]::ParseFile`).
+
+Trois précautions, parce qu'un vérificateur défaillant est pire qu'absent :
+
+* des marqueurs de sortie (`SEAMTECH_PWSH_ANALYSE_OK` /
+  `SEAMTECH_PWSH_ERREUR_SYNTAXE`) distinguent « le script a des erreurs » de
+  « le contrôle n'a pas tourné ». Une faute de frappe dans la commande de
+  vérification ne fait donc pas échouer la CI sur un workflow sain ;
+* quand l'interpréteur est absent du poste — pas de `pwsh` dans le banc — le
+  bloc n'est PAS compté comme bon : il est signalé par un avertissement
+  visible à chaque exécution, et le test échoue si plus aucun bloc n'est
+  analysable (plancher : 20) ;
+* `tests/test_ci_executable.py` prouve ces trois comportements avec des
+  analyseurs factices, sans dépendre d'un binaire absent du banc : un bloc
+  cassé échoue, un bloc illisible est signalé, zéro bloc analysable échoue.
+
+Où les blocs PowerShell sont-ils réellement vérifiés ? Le runner `ubuntu-24.04`
+embarque PowerShell 7.6.9 (image `actions/runner-images`,
+`images/ubuntu/Ubuntu2404-Readme.md`, section « PowerShell Tools »). La CI
+les parse donc pour de vrai ; le banc local les signale comme non vérifiés
+plutôt que de prétendre les avoir lus.
+
+### 21. Qualification Windows : PostgreSQL 16 et Redis 7.4.11 tiennent
+
+Trois runs pour y arriver, et chacun a appris quelque chose de précis :
+
+1. `41358977874` — `choco install redis-64` : `redis-server.exe` introuvable
+   sous `C:\ProgramData\chocolatey\lib\redis-64`.
+2. `41360147830` — recherche élargie (shim PATH, `lib\redis-64`,
+   `C:\Program Files\Redis`) : toujours introuvable. **Le paquet ne livre pas
+   de serveur exploitable sur ce runner.** Fin de cette piste.
+3. `41362919313` — Redis 7 installé depuis `redis-windows/redis-windows`,
+   version épinglée **7.4.11**, reconstruite depuis les sources officielles.
+
+Preuves publiées en annotation (seul canal lisible quand l'hôte des journaux
+est injoignable) :
+
+```
+windows-identite  : os=Microsoft Windows Server 2025 Datacenter version=10.0.26100
+redis-install     : version=7.4.11 binaire=C:\redis7\Redis-7.4.11-Windows-x64-msys2\redis-server.exe
+redis-demarrage   : PONG obtenu, version=Redis server v=7.4.11 sha=00000000:0 malloc=libc bits=64
+```
+
+PostgreSQL 16 (choco, hôte) démarre et la base est créée — les services
+conteneurs de GitHub ne fonctionnent pas sur Windows, d'où l'installation sur
+l'hôte.
+
+**Dit franchement sur Redis 7** : il n'existe plus de binaire Windows OFFICIEL
+depuis Redis 5 (port `MicrosoftArchive` abandonné). La ligne Redis 7 est
+obtenue par un port tiers reconstruit depuis les sources de Redis, épinglé en
+version et en URL dans le workflow. Ce n'est pas un binaire signé par Redis
+Labs ; c'est la version exigée par le plan, sur Windows, avec la source dite.
+
+État au moment d'écrire ces lignes : la suite sans service échoue encore sur
+Windows (§22).
+
+### 22. Windows, suite sans service : rouge, et la lisibilité du rouge
+
+L'étape 10 tourne 3 min 41 s (elle exécute donc bien la suite) puis échoue,
+sans la moindre annotation. Deux runs dans cet état. Le diagnostic a été
+repris à trois endroits (commits `41766a0`, `1f20083`) :
+
+* `2>&1 | Tee-Object` → `> fichier 2>&1`. Dans un pipeline PowerShell, la
+  sortie d'erreur d'un exécutable natif devient des `ErrorRecords`, et
+  l'avertissement le plus anodin de pytest suffisait à tuer l'étape AVANT les
+  lignes qui publient le diagnostic. La redirection évite le pipeline.
+* les 60 dernières lignes du journal sont réaffichées, donc présentes dans la
+  sortie de l'étape ;
+* une fonction `Publier()` échappe `%`, CR et LF et tronçonne à 3 000
+  caractères — une annotation non conforme est ignorée SILENCIEUSEMENT par
+  GitHub, ce qui donne une étape rouge sans rien à lire ;
+* un message est publié au DÉBUT de chaque suite : témoin de bon déroulement.
+  S'il manque, l'étape est morte avant d'agir.
+
+Ce point reste OUVERT : les échecs de la suite sur Windows ne sont pas encore
+connus. Ils seront corrigés, fichier par fichier, dès que le canal de
+diagnostic les rendra lisibles — et les tests qui ne peuvent pas exister sur
+Windows (SIGKILL, `fork()`) sont déjà écartés NOMMÉMENT dans le workflow :
+`test_chaos.py`, `test_worker_process.py`, `test_worker_process_postgres.py`,
+`test_worker_crash_terminal.py`, `test_securite_banc_suivi.py`,
+`test_migration_rollback.py`, `test_partage_web_worker.py`.
+
+### 23. Provenance OCR : le compte rendu attribuait à Tesseract le travail de RapidOCR (`297aa97`)
+
+L'annotation CI du job `ocr` affichait :
+
+```
+taux mots retrouvés propre=1.000 … moteur=rapidocr version=tesseract 5.3.4
+```
+
+RapidOCR avait fait la reconnaissance ; le rapport nommait la version de
+Tesseract. Cause : `ocriser_page` lisait `moteur.version` AVANT la première
+reconnaissance. RapidOCR est paresseux — son esclave ne démarre qu'au premier
+appel — donc sa version valait `None` à cet instant ; l'agrégat se rabattait
+alors sur `_tesseract_version()`, et le compte rendu mélangeait deux moteurs.
+
+Corrigé : la version est celle que le moteur déclare EN RÉPONSE (lue après
+coup), l'agrégat ne se rabat plus sur celle d'un moteur qui n'a pas tourné, et
+le « moteur principal » est réellement le plus fréquent au lieu du premier.
+
+Pourquoi ce n'est pas cosmétique : la provenance d'un texte extrait est une
+preuve. Après une cote reconnue de travers, la question est « quel moteur,
+quelle version ».
+
+`tests/test_ocr_provenance.py` (2 tests) prouve le défaut ROUGE→VERT avec un
+moteur factice paresseux et une version Tesseract concurrente :
+
+```
+sans correctif : AssertionError: le compte rendu attribue la version d'un
+                 moteur qui n'a pas tourné : 'tesseract 5.3.4-faux'
+                 (attendu 'rapidocr 9.9.9-faux')
+avec correctif : 2 passed
+```
+
+Qualité OCR mesurée en CI (job `ocr`, moteur élu RapidOCR, modèles groupés
+dans la roue — aucun téléchargement de modèle) :
+
+```
+ocr-moteur          : demande=auto rapidocr_installable=True elu=MoteurRapidOCR
+ocr-qualite         : taux mots retrouvés propre=1.000 pages=1 océrisées=1 duree_s=1.85
+ocr-qualite-degrade : taux mots retrouvés degrade=1.000 pages=1 océrisées=1 duree_s=1.72
+ocr-debit           : debit mesure 33.79 pages/min
+```
+
+### 24. Accessibilité : 77 écrans scannés, 0 violation (`9ae3d3d`)
+
+`frontend/e2e/accessibilite.spec.ts` existait et **n'était exécutée nulle
+part** : le job `e2e` énumère ses specs à la main, et celle-ci n'y figurait
+pas. Ajoutée au job `e2e`, avec garde-fou (plancher de 8 écrans scannés, zéro
+écran en violation) et artefact `rapport-accessibilite-axe`.
+
+Résultat mesuré (run `41359948630`, job `e2e`, commit `9ae3d3d`) :
+
+```
+accessibilite : 77 écrans scannés, 0 violation WCAG 2.1 A/AA
+```
