@@ -31,9 +31,12 @@ ci-dessous.
 """
 from __future__ import annotations
 
+import logging
 import os
 import sys
 from typing import Any
+
+LOGGER = logging.getLogger(__name__)
 
 #: Capacités reconnues, avec la conséquence de leur absence. Le texte est
 #: repris tel quel dans le message d'erreur : c'est lui qu'un exploitant lit.
@@ -112,6 +115,82 @@ def resume() -> str:
     """Une ligne par capacité, pour un journal ou un rapport d'installation."""
     etat = capacites()
     return " ; ".join(f"{nom}={'oui' if etat[nom] else 'non'}" for nom in CAPACITES)
+
+
+def pid_vivant(pid: int) -> bool:
+    """Vrai si le processus ``pid`` existe — et SANS JAMAIS le terminer.
+
+    Pourquoi cette fonction existe, et pourquoi elle n'est pas un détail.
+
+    ``os.kill(pid, 0)`` est l'idiome POSIX pour « ce PID vit-il encore ? » : le
+    signal 0 n'est pas délivré, il sert uniquement à tester l'existence. Sur
+    WINDOWS, ``os.kill`` ne connaît pas le signal 0 : il termine le processus
+    avec le code de sortie reçu (``TerminateProcess(handle, sig)``). Autrement
+    dit, un TEST DE VIE y devient une MISE À MORT — et comme les PID sont
+    recyclés, le processus tué n'est même pas forcément celui dont on a lu
+    l'identifiant dans un fichier de verrou.
+
+    L'idiome était employé à deux endroits du produit (verrou de scan SQLite,
+    verrou de la nuit OCR). Sur un poste Windows, reprendre un scan après un
+    crash pouvait donc tuer un processus vivant.
+
+    Garantie : cette fonction ne tue rien. Sur POSIX elle garde l'idiome
+    (signal 0). Sur Windows elle interroge le noyau par ``ctypes``
+    (``OpenProcess`` + ``GetExitCodeProcess``). Sur une plateforme inconnue,
+    elle répond « vivant » : un verrou périmé reste un verrou, c'est un faux
+    positif bénin ; supprimer le verrou d'un processus vivant ne l'est pas.
+    """
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+    if os.name == "posix":
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            # Le processus existe mais ne nous appartient pas : il vit.
+            return True
+        except OSError:
+            return False
+        return True
+    if os.name == "nt":
+        return _pid_vivant_windows(pid)
+    LOGGER.warning(
+        "plateforme %s : impossible de tester la vie du PID %s sans risque ; "
+        "le verrou est conservé par prudence",
+        sys.platform, pid,
+    )
+    return True
+
+
+def _pid_vivant_windows(pid: int) -> bool:
+    """Interroge le noyau Windows ; ne tue rien, même en cas d'échec."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+    except Exception:  # pragma: no cover - ctypes fait partie de l'interpréteur
+        return True
+    try:
+        noyau = ctypes.WinDLL("kernel32", use_last_error=True)
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        STILL_ACTIVE = 259
+        ERROR_ACCESS_DENIED = 5
+        handle = noyau.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            erreur = ctypes.get_last_error()
+            # Accès refusé : le processus existe (protégé ou d'un autre
+            # utilisateur). Paramètre invalide : il n'existe pas.
+            return erreur == ERROR_ACCESS_DENIED
+        try:
+            code = wintypes.DWORD()
+            if not noyau.GetExitCodeProcess(handle, ctypes.byref(code)):
+                return False
+            return int(code.value) == STILL_ACTIVE
+        finally:
+            noyau.CloseHandle(handle)
+    except Exception:
+        # On ne sait pas : on ne supprime rien.
+        return True
 
 
 def plateforme_windows() -> bool:

@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from ..flux_bornes import lire_par_blocs
+from ..plateforme import pid_vivant
 
 
 def get_travail_dir(travail_dir: str | Path | None = None) -> Path:
@@ -94,23 +95,14 @@ class VerrouOCR:
         self._acquis = False
 
     def _pid_vivant(self, pid: int) -> bool:
-        """Vérifie si un PID est vivant (Unix : os.kill(pid, 0))."""
-        try:
-            os.kill(pid, 0)
-            return True
-        except OSError:
-            return False
-        except Exception:
-            # Sur Windows ou autre, considère vivant si fichier lock récent (<5min)
-            # Pour simplifier, on tente de lire le timestamp
-            try:
-                if self.lock_path.exists():
-                    # Si lock a moins de 10 minutes, on le considère vivant
-                    age = time.time() - self.lock_path.stat().st_mtime
-                    return age < 600
-            except OSError:
-                pass
-            return False
+        """Vérifie si un PID est vivant — SANS jamais le terminer.
+
+        L'implémentation est celle de ``plateforme.pid_vivant`` : sur Windows,
+        ``os.kill(pid, 0)`` ne sonde pas, il TUE (``TerminateProcess``). Un
+        verrou périmé doit être repris, pas réglé par la mort d'un processus
+        qui a pu hériter du PID par recyclage.
+        """
+        return pid_vivant(pid)
 
     def acquire(self) -> bool:
         """Tente d'acquérir le verrou. Retourne True si acquis, False si déjà pris."""

@@ -12,6 +12,7 @@ from typing import Any, Iterator
 
 from . import schema_metier
 from .models import Document
+from .plateforme import pid_vivant
 
 logger = logging.getLogger("seamtech_search.indexer")
 
@@ -1827,12 +1828,17 @@ class SearchIndex:
             except FileExistsError as exc:
                 try:
                     lock_pid = int(lock_path.read_text(encoding="ascii"))
-                    os.kill(lock_pid, 0)
-                except (FileNotFoundError, ProcessLookupError, ValueError):
+                except (FileNotFoundError, ValueError):
                     lock_path.unlink(missing_ok=True)
                     continue
-                except PermissionError:
-                    pass
+                # ``os.kill(pid, 0)`` était l'idiome POSIX pour tester la vie
+                # d'un PID ; sur Windows il TERMINE le processus au lieu de le
+                # sonder (TerminateProcess), et le PID peut avoir été recyclé.
+                # ``pid_vivant`` interroge sans jamais tuer : c'est la seule
+                # façon correcte de reprendre un verrou périmé.
+                if not pid_vivant(lock_pid):
+                    lock_path.unlink(missing_ok=True)
+                    continue
                 raise ScanAlreadyRunningError("Another indexing scan is already running") from exc
         try:
             os.write(lock_handle, str(os.getpid()).encode("ascii"))
