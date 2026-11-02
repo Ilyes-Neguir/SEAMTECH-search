@@ -105,8 +105,20 @@ Publier $Titre "rc=$rc ; echecs=$($echecs.Count) ; $resume"
 # une Regression ou a une amelioration qui n'existe pas. On publie donc la FIN
 # du journal : c'est elle qui dit OU ca s'arrete.
 if ($rc -eq 2) {
+    # La FIN BRUTE du journal ne sert a rien : les dernieres lignes sont des
+    # lignes VIDES (run 41508594754 : seul « Expected regex: 'pg_restore' »
+    # survivait). Ce qui nomme l'arret, avec ``-v``, c'est la derniere ligne
+    # de progression « tests/x.py::test_y PASSED|FAILED|ERROR » — on la cherche
+    # donc EXPRESSEMENT, et on garde aussi les lignes vides écartées.
     $fin = ''
-    if (Test-Path $Journal) { $fin = ((Get-Content $Journal -Tail 12) -join " `n ") }
+    if (Test-Path $Journal) {
+        $lignes = Get-Content $Journal | Where-Object { $_.Trim() }
+        $progression = $lignes | Where-Object { $_ -match '^tests/.*(PASSED|FAILED|ERROR|SKIPPED)' }
+        $marquantes = @()
+        if ($progression) { $marquantes += ("DERNIER TEST : " + ($progression | Select-Object -Last 1)) }
+        $marquantes += ($lignes | Select-Object -Last 8)
+        $fin = ($marquantes -join " `n ")
+    }
     # ``Publier`` tronque au DEBUT : on coupe la queue nous-memes, comme plus
     # haut, sinon la ligne utile passe a la trappe.
     if ($fin.Length -gt 2800) { $fin = '…' + $fin.Substring($fin.Length - 2800) }
