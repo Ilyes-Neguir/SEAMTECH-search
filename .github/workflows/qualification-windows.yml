@@ -181,6 +181,39 @@ jobs:
         run: |
           pwsh -File ci\verdict-windows.ps1 -Journal logs\windows-sans-service.log -CodeSortie logs\rc-sans-service.txt -Titre windows-sans-service -Causes logs\causes-sans-service.txt -Details logs\details-sans-service.txt -Tranche 5
           exit 0
+      - name: Diagnostic ciblé — le fichier qui interrompt la suite
+        if: always()
+        continue-on-error: true
+        # Pourquoi cette étape existe.
+        #
+        # Depuis le run 41499874854, la suite « sans service » rend rc=2 : elle
+        # s'ARRÊTE en route (1622 passés au lieu de 1913) et ses compteurs ne
+        # sont plus comparables. Le verdict nomme désormais le dernier test
+        # exécuté : tests/test_scan_safety.py::test_scan_snapshot_restores_
+        # documents_after_failure PASSED [ 84%] — donc l'arrêt a lieu dans le
+        # test suivant du même fichier. Rejouer CE FICHIER SEUL coûte une
+        # minute et montre ce que la suite entière cache : la bannière
+        # d'interruption de pytest, sa trace, et le code de sortie.
+        #
+        # Ce n'est pas un contournement : la suite complète reste exécutée
+        # telle quelle. C'est l'instrument qui dit OÙ elle meurt.
+        run: |
+          $ErrorActionPreference = 'Continue'
+          New-Item -ItemType Directory -Force -Path logs | Out-Null
+          $ligne = 'python -m pytest tests/test_scan_safety.py -v --tb=long -rf -p no:randomly > logs\diag-scan-safety.log 2>&1 & echo !errorlevel!> logs\rc-diag-scan-safety.txt'
+          cmd /V /C $ligne
+          $rc = [int]((Get-Content logs\rc-diag-scan-safety.txt -Raw).Trim())
+          $queue = (Select-String -Path logs\diag-scan-safety.log -Pattern '.+' |
+                    Select-Object -Last 12 | ForEach-Object { $_.Line.Trim() }) -join ' | '
+          if ($queue.Length -gt 2600) { $queue = $queue.Substring($queue.Length - 2600) }
+          if ($rc -eq 2) {
+            Write-Host "::error title=diag-scan-safety-interrompu::le fichier SEUL interrompt aussi la session (rc=2) — fin : $queue"
+          } elseif ($rc -eq 0) {
+            Write-Host "::notice title=diag-scan-safety::le fichier seul PASSE (rc=0) : l'arret vient d'un CUMUL, pas de ce fichier"
+          } else {
+            Write-Host "::notice title=diag-scan-safety::rc=$rc — $queue"
+          }
+          exit 0
       - name: Installer PostgreSQL 16 (hôte)
         if: always()
         # Les services de conteneurs de GitHub ne fonctionnent pas sur les
