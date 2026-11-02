@@ -76,3 +76,91 @@ def test_le_resume_reste_lisible_quand_tout_manque(monkeypatch) -> None:
     resume = plateforme.resume()
     for capacite in plateforme.CAPACITES:
         assert f"{capacite}=non" in resume, resume
+
+
+_SONDE_IMPORT_SANS_FCNTL = '''
+import sys
+
+
+class _BloqueFcntl:
+    """Rend ``import fcntl`` impossible, comme sur Windows."""
+
+    def find_spec(self, name, path=None, target=None):
+        if name == "fcntl":
+            raise ImportError("No module named 'fcntl'")
+        return None
+
+
+sys.meta_path.insert(0, _BloqueFcntl())
+import seamtech_search.ml.routes as routes
+
+assert routes.fcntl is None, "fcntl devrait valoir None quand le module est absent"
+print("OK")
+'''
+
+
+def test_le_module_ml_s_importe_sans_fcntl() -> None:
+    """Un ``import fcntl`` au niveau du module rend l'application NON IMPORTABLE hors POSIX.
+
+    C'est exactement ce qui est arrivé : quatre fichiers de tests échouaient
+    sur ``ModuleNotFoundError: No module named 'fcntl'`` pendant la
+    qualification Windows (run 41368359949) — ``seamtech_search/ml/routes.py``
+    l'importait au niveau du module, donc l'application entière mourait à
+    l'import au lieu de refuser une seule route.
+
+    La sonde tourne dans un interpréteur SÉPARÉ : bloquer ``fcntl`` dans celui
+    du banc casserait les autres tests.
+    """
+    import subprocess
+    import sys as _sys
+
+    resultat = subprocess.run(
+        [_sys.executable, "-c", _SONDE_IMPORT_SANS_FCNTL],
+        capture_output=True,
+        text=True,
+        cwd=str(Path(__file__).resolve().parent.parent),
+    )
+    assert resultat.returncode == 0, (
+        f"import impossible sans fcntl : {resultat.stdout}{resultat.stderr}"
+    )
+    assert "OK" in resultat.stdout, resultat.stdout
+
+
+def test_aucun_import_posix_non_garde_au_niveau_du_module() -> None:
+    """Aucun module du produit n'importe ``fcntl`` ou ``pwd`` hors garde.
+
+    Filet statique complémentaire du test précédent : il couvre les modules
+    qu'aucune sonde n'importe explicitement, et il échoue dès qu'un
+    ``import fcntl`` réapparaît en tête de fichier.
+    """
+    import re
+
+    racine = Path(__file__).resolve().parent.parent / "seamtech_search"
+    motifs = re.compile(r"^(?:import (?:fcntl|pwd|grp|termios)|from (?:fcntl|pwd|grp|termios) import)\b", re.M)
+    coupables: list[str] = []
+    for fichier in sorted(racine.rglob("*.py")):
+        texte = fichier.read_text(encoding="utf-8")
+        for numero, ligne in enumerate(texte.splitlines(), start=1):
+            if motifs.match(ligne):
+                coupables.append(f"{fichier.relative_to(racine)}:{numero} {ligne.strip()}")
+    assert not coupables, (
+        "import POSIX non gardé au niveau du module (l'application devient "
+        "non importable hors POSIX) :\n  - " + "\n  - ".join(coupables)
+    )
+
+
+def test_entrainement_refuse_sans_verrou_exclusif(monkeypatch) -> None:
+    """Sans ``fcntl``, l'entraînement est REFUSÉ (503), pas lancé à l'aveugle."""
+    from fastapi import HTTPException
+
+    from seamtech_search.ml import routes
+
+    monkeypatch.setattr(routes, "fcntl", None)
+    with pytest.raises(HTTPException) as erreur:
+        routes._exiger_verrou_exclusif()
+    assert erreur.value.status_code == 503
+    assert "Verrou exclusif indisponible" in erreur.value.detail
+
+    # Et dès que le verrou existe, la fonction ne refuse plus rien.
+    monkeypatch.setattr(routes, "fcntl", object())
+    assert routes._exiger_verrou_exclusif() is None

@@ -14,10 +14,22 @@ d'exemples) — pas de file de travaux supplémentaire.
 
 from __future__ import annotations
 
-import fcntl
 import logging
 from pathlib import Path
 from typing import Any, Callable
+
+# ``fcntl`` n'existe pas sur Windows. Importé au niveau du module, il rendait
+# TOUT le module — donc l'application qui l'inclut — impossible à importer hors
+# POSIX : « ModuleNotFoundError: No module named 'fcntl' », vu sur quatre
+# fichiers de tests pendant la qualification Windows (run 41368359949). On
+# l'importe comme les autres modules du produit (sauvegarde.py,
+# televersement_lot.py) : absent, il vaut None, et l'usage est REFUSÉ
+# explicitement plutôt que contourné.
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - exercé seulement hors POSIX
+    fcntl = None  # type: ignore[assignment]
+
 
 from fastapi import Body, Header, HTTPException
 from pydantic import BaseModel, Field
@@ -112,6 +124,25 @@ def _choisir_encodeur(modeles_dir: Path, demande: str) -> tuple[Any, str | None]
             ),
         )
     return encodeur, None
+
+
+def _exiger_verrou_exclusif() -> None:
+    """Refuse l'entraînement là où aucun verrou exclusif n'existe.
+
+    Deux entraînements concurrents écriraient le même dossier de modèles. Sans
+    ``fcntl`` (Windows), on ne peut pas les refuser — on ne peut donc pas
+    entraîner : un 503 qui dit pourquoi vaut mieux qu'une course perdue. La
+    fonction est isolée pour être TESTABLE sans authentification ni PostgreSQL.
+    """
+    if fcntl is None:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Verrou exclusif indisponible sur cette plateforme : "
+                "l'entraînement ne peut pas être protégé contre un lancement "
+                "concurrent."
+            ),
+        )
 
 
 def enregistrer_routes_ml(
@@ -214,6 +245,7 @@ def enregistrer_routes_ml(
                 ),
             ) from exc
         with handle_verrou as verrou:
+            _exiger_verrou_exclusif()
             try:
                 fcntl.flock(verrou.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             except OSError as exc:
