@@ -78,8 +78,9 @@ jobs:
           foreach ($fichier in $fichiers) {
             $nom = ($fichier -replace 'tests/', '') -replace '\.py$', ''
             $log = "logs\diag-$nom.log"
+            $xml = "logs\junit-diag-$nom.xml"
             $rcf = "logs\rc-diag-$nom.txt"
-            $ligne = "python -m pytest $fichier -q --tb=long -rf -p no:randomly > $log 2>&1 & echo !errorlevel!> $rcf"
+            $ligne = "python -m pytest $fichier -q --tb=long -rf -p no:randomly --junitxml=$xml > $log 2>&1 & echo !errorlevel!> $rcf"
             cmd /V /C $ligne
             $rc = -1
             if (Test-Path $rcf) { $rc = [int]((Get-Content $rcf -Raw).Trim()) }
@@ -100,6 +101,33 @@ jobs:
             } else {
               Write-Host "::notice title=diag-$nom::rc=$rc ; $resume ; assertions fautives : $texte"
             }
+          }
+          exit 0
+      - name: Publier, par fichier, les familles de causes et le détail par test
+        if: always()
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $fichiers = @(
+            'tests/test_sauvegarde_unites.py',
+            'tests/test_restauration_confinement.py',
+            'tests/test_sauvegarde_manifeste_distant.py',
+            'tests/test_sauvegarde_references.py'
+          )
+          foreach ($fichier in $fichiers) {
+            $nom = ($fichier -replace 'tests/', '') -replace '\.py$', ''
+            $xml = "logs\junit-diag-$nom.xml"
+            if (-not (Test-Path $xml)) { continue }
+            python ci\resumer_echecs.py $xml "logs\fam-diag-$nom.txt" --details "logs\det-diag-$nom.txt" --exemples 40 | Out-Null
+            $fam = @()
+            if (Test-Path "logs\fam-diag-$nom.txt") { $fam = Get-Content "logs\fam-diag-$nom.txt" }
+            $texte = ($fam | Select-Object -First 12) -join ' || '
+            if ($texte.Length -gt 2400) { $texte = $texte.Substring(0, 2400) }
+            Write-Host "::notice title=fam-$nom::$texte"
+            $det = @()
+            if (Test-Path "logs\det-diag-$nom.txt") { $det = Get-Content "logs\det-diag-$nom.txt" }
+            $texte2 = ($det | Select-Object -First 30) -join ' || '
+            if ($texte2.Length -gt 2400) { $texte2 = $texte2.Substring(0, 2400) }
+            Write-Host "::notice title=det-$nom::$texte2"
           }
           exit 0
       - name: Conserver les journaux de diagnostic

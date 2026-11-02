@@ -326,7 +326,13 @@ def inventorier_archive(racines: list[Path]) -> dict:
             octets_total += taille
             fichiers.append(
                 {
-                    "chemin": str(chemin.relative_to(racine)),
+                    # Chemin relatif en écriture POSIX (``/``), pas en séparateur
+                    # de l'OS : un manifeste produit sur Windows doit rester
+                    # lisible et restaurable sur Linux, et inversement — avec le
+                    # séparateur natif, une restauration croisée créerait des
+                    # fichiers nommés « CLIENT-A\fiche.pdf ». pathlib accepte « / »
+                    # sur les deux plateformes.
+                    "chemin": chemin.relative_to(racine).as_posix(),
                     "racine": str(racine),
                     "taille": taille,
                     "sha256": _sha256_fichier(chemin),
@@ -1266,7 +1272,7 @@ def inventorier_data(racines_data: list[Path], exclure: list[Path] | None = None
                 try:
                     chemin.resolve().relative_to(racine.resolve())
                 except ValueError:
-                    liens_sortants.append({"racine": str(racine), "chemin": str(chemin.relative_to(racine))})
+                    liens_sortants.append({"racine": str(racine), "chemin": chemin.relative_to(racine).as_posix()})
                     continue
             if not chemin.is_file():
                 continue
@@ -1277,14 +1283,14 @@ def inventorier_data(racines_data: list[Path], exclure: list[Path] | None = None
                 taille = chemin.stat().st_size
                 empreinte = _sha256_fichier(chemin)
             except OSError as exc:
-                files_illisible = {"racine": str(racine), "chemin": str(chemin.relative_to(racine)), "erreur": type(exc).__name__}
+                files_illisible = {"racine": str(racine), "chemin": chemin.relative_to(racine).as_posix(), "erreur": type(exc).__name__}
                 fichiers.append({**files_illisible, "taille": 0, "sha256": ""})
                 continue
             fichiers.append(
                 {
                     "racine_index": numero,
                     "racine": str(racine),
-                    "chemin": str(chemin.relative_to(racine)),
+                    "chemin": chemin.relative_to(racine).as_posix(),
                     "taille": taille,
                     "sha256": empreinte,
                 }

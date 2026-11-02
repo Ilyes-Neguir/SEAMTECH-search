@@ -118,6 +118,36 @@ def test_inventaire_archive_complet_et_lecture_seule(tmp_path: Path) -> None:
     assert sorted(p.name for p in racine.iterdir()) == ["CLIENT-A", "CLIENT-B"]
 
 
+def test_inventaire_archive_chemins_portables(tmp_path: Path) -> None:
+    """Les chemins du manifeste sont PORTABLES, pas « natifs à l'OS qui les a
+    produits ».
+
+    Pourquoi ce test existe : le manifeste était écrit avec le séparateur de
+    l'OS (``str(chemin.relative_to(racine))``). Sur Windows, une archive
+    inventoriée donnait ``CLIENT-A\\fiche.pdf`` ; restaurée sur Linux, ce
+    séparateur n'en est pas un — ``Path("data") / "CLIENT-A\\fiche.pdf"`` crée
+    un fichier DONT LE NOM CONTIENT UN ANTISLASH. La sauvegarde aurait été
+    illisible hors de la machine qui l'a produite, ce qui est exactement
+    l'inverse du but d'une sauvegarde hors site.
+
+    La réparation est dans le produit (écriture POSIX) et la preuve ici :
+    aucun antislash, et un chemin du manifeste est reconstructible par pathlib
+    sur n'importe quelle plateforme.
+    """
+    racine = tmp_path / "archive"
+    (racine / "CLIENT-A" / "sous-dossier").mkdir(parents=True)
+    (racine / "CLIENT-A" / "sous-dossier" / "fiche.pdf").write_bytes(b"%PDF-1.4 portable")
+
+    inventaire = inventorier_archive([racine])
+
+    chemins = [f["chemin"] for f in inventaire["fichiers"]]
+    assert chemins, "l'inventaire doit lister la fiche posée par le test"
+    assert all("\\" not in chemin for chemin in chemins), f"antislash dans le manifeste : {chemins}"
+    # Le chemin du manifeste est reconstructible tel quel, donc restaurable ailleurs.
+    for chemin in chemins:
+        assert (racine / chemin).is_file(), f"chemin du manifeste non rejouable : {chemin}"
+
+
 def test_inventaire_archive_racine_absente(tmp_path: Path) -> None:
     with pytest.raises(SauvegardeError, match="racine d'archive introuvable"):
         inventorier_archive([tmp_path / "inexistante"])
