@@ -2362,3 +2362,40 @@ meurt encore sans code de sortie, pendant `tests/test_sauvegarde_unites.py`).
    `PYTHONFAULTHANDLER` dira pourquoi).
 3. Une fois le workflow Windows vert : rédiger le rapport final PRÊT / NON
    PRÊT point par point, avec commandes, résultats, SHA et limites.
+
+### 41. P1 « volume » — mesure réelle à 10 000 fiches, sur le commit courant
+
+Le point « volume annuel » restait au stade des bornes (`MAX_FICHIERS_PAR_
+SESSION` = 100 000, 20 Gio par session) sans mesure d'ensemble. Le dépôt
+possède l'instrument : `scripts/scale_bench.py`, 10 000 fiches SYNTHÉTIQUES,
+50 mesures par scénario, PostgreSQL jetable — jamais de données réelles.
+
+Exécuté sur le banc local, arbre au commit `328afa4` :
+
+```
+SCALE_BENCH_FICHES=10000 SCALE_BENCH_SAMPLES=50 \
+SEAMTECH_SCALE_DATABASE_URL=postgresql://postgres@127.0.0.1:55498/seamtech_scale \
+PYTHONPATH=. .venv/bin/python scripts/scale_bench.py
+```
+
+| Scénario | p50 (ms) | p95 (ms) | p99 (ms) | max (ms) |
+|---|---:|---:|---:|---:|
+| mot_simple | 93,93 | 106,13 | 116,39 | 116,39 |
+| multi_mots | 132,64 | 151,91 | 163,35 | 163,35 |
+| code | 20,52 | 22,56 | 24,47 | 24,47 |
+| facette_dimension | 132,17 | 150,72 | 151,81 | 151,81 |
+| filtres | 176,81 | **211,68** | 224,80 | 224,80 |
+| suggestions | 105,58 | 161,52 | 187,84 | 187,84 |
+
+La cible que porte ce banc lui-même (`target_p95_ms_indicatif`) est **250 ms** :
+elle est respectée partout. La cible produit de 100 ms appartient au job `perf`,
+sur son propre corpus, et n'est PAS revendiquée à cette échelle — à 10 000
+fiches, plusieurs scénarios la dépassent, ici comme sur le runner CI.
+
+Ce que cette mesure ne prouve pas, dit d'avance : corpus synthétique (aucun
+PDF réel, aucun réseau, aucun MinIO/R2, aucun navigateur), et banc local SANS
+`postgresql-contrib` — donc sans index `pg_trgm`, c'est-à-dire un **pire cas**
+par rapport à une installation complète. Le même banc, exécuté en CI sur le
+commit `0ab735c`, donnait p95 de 134 à 199 ms selon les scénarios : les deux
+mesures ne sont pas comparables terme à terme (index et charge différents), et
+c'est pourquoi elles sont publiées toutes les deux.
