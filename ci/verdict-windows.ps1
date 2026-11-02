@@ -20,7 +20,8 @@ param(
     [Parameter(Mandatory = $true)][string]$CodeSortie,
     [Parameter(Mandatory = $true)][string]$Titre,
     [int]$Tranche = 1,
-    [string]$Causes = ''
+    [string]$Causes = '',
+    [string]$Details = ''
 )
 
 $ErrorActionPreference = 'Continue'
@@ -197,7 +198,19 @@ if (Test-Path $Journal) {
 # on rattache à chaque test les lignes « E » de SA trace, repérée par l'en-tête
 # de traceback « _____ nom_du_test _____ ».
 $details = @{}
-if (Test-Path $Journal) {
+if ($Details -and (Test-Path $Details)) {
+    # Voie sûre : « identifiant|cause » produit par ci/resumer_echecs.py depuis
+    # le rapport JUnit — la cause est rattachée au test par pytest lui-même.
+    foreach ($entree in (Get-Content $Details)) {
+        if (-not $entree.Trim()) { continue }
+        $morceaux = $entree -split '\|', 2
+        if ($morceaux.Count -lt 2) { continue }
+        $details[$morceaux[0].Trim()] = @($morceaux[1])
+    }
+} elseif (Test-Path $Journal) {
+    # Repli : l'en-tête de traceback ne porte PAS le chemin du fichier pour un
+    # test en classe (« TestChose.test_methode »), donc ce rattachement est
+    # partiel — il ne vaut que pour les tests de module.
     $courant = ''
     foreach ($ligne in [System.IO.File]::ReadLines((Resolve-Path $Journal))) {
         if ($ligne -match '^_{3,} (.+?) _{3,}$') {
@@ -213,7 +226,15 @@ $inattendus = @()
 foreach ($echec in $echecs) {
     $connu = $false
     foreach ($motif in $attendus) {
-        if ($echec -like "$motif*") { $connu = $true; break }
+        # Comparaison EXACTE d'abord : ``-like`` interprète « [ » et « ] » comme
+        # une classe de caractères, donc un test paramétré
+        # (``test_plages_invalides_refusees_en_416[bytes=-0]``) ne se serait
+        # JAMAIS reconnu — vu au run 41454897907 : 127 échecs annoncés hors
+        # périmètre alors que l'écart était écrit. Le motif générique (fichier
+        # entier) reste accepté, mais seulement s'il ne contient aucun
+        # métacaractère : sinon il pourrait couvrir un autre test.
+        if ($echec -eq $motif) { $connu = $true; break }
+        if ($motif -notmatch '[\[\]?*]' -and $echec -like "$motif*") { $connu = $true; break }
     }
     if (-not $connu) {
         $morceaux = @()

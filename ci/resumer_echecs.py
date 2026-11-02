@@ -78,12 +78,26 @@ def main(argv: list[str] | None = None) -> int:
     analyseur = argparse.ArgumentParser(description=__doc__)
     analyseur.add_argument("rapport", type=Path, help="rapport JUnit produit par pytest")
     analyseur.add_argument("sortie", type=Path, help="fichier des familles, une par ligne")
+    analyseur.add_argument(
+        "--details", type=Path, default=None,
+        help="fichier de détail : une ligne « identifiant|cause » par test échoué",
+    )
     arguments = analyseur.parse_args(argv)
 
     if not arguments.rapport.is_file():
         print(f"rapport absent : {arguments.rapport}", file=sys.stderr)
         return 1
     familles = _familles(arguments.rapport)
+    if arguments.details is not None:
+        arguments.details.parent.mkdir(parents=True, exist_ok=True)
+        lignes_details = sorted(
+            f"{identifiant}|{cause}"
+            for cause, identifiants in familles.items()
+            for identifiant in identifiants
+        )
+        arguments.details.write_text(
+            "\n".join(lignes_details) + ("\n" if lignes_details else ""), encoding="utf-8"
+        )
     ordonnees = sorted(familles.items(), key=lambda couple: (-len(couple[1]), couple[0]))
     lignes = [
         f"{len(identifiants)}|{cause}|{' '.join(identifiants[:3])}" for cause, identifiants in ordonnees
