@@ -111,9 +111,15 @@ test("connexion, écrans de lecture et accessibilité WCAG 2.1 A/AA", async ({ p
         cibles: violation.nodes.slice(0, 3).map((noeud) => noeud.target.join(" ")),
       }))
     constats.push({ navigateur: projet, ecran: ecran.nom, violations })
+    // Le détail est dans le MESSAGE d'échec, pas seulement dans le rapport :
+    // le rapport est un artefact qu'on ne peut pas lire d'ici (les journaux de
+    // job non plus). Une violation qu'on ne peut pas nommer ne se répare pas.
+    const detail = violations
+      .map((violation) => `${violation.id}[${violation.impact}] ${violation.cibles.join(" / ")}`)
+      .join(" ;; ")
     expect(
       violations,
-      `${projet} — ${ecran.nom} (${ecran.route}) : violations WCAG A/AA`,
+      `${projet} — ${ecran.nom} (${ecran.route}) : violations WCAG A/AA ${detail}`,
     ).toEqual([])
   }
 
