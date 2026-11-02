@@ -21,7 +21,8 @@ param(
     [Parameter(Mandatory = $true)][string]$Titre,
     [int]$Tranche = 1,
     [string]$Causes = '',
-    [string]$Details = ''
+    [string]$Details = '',
+    [switch]$DebugAppariement
 )
 
 $ErrorActionPreference = 'Continue'
@@ -205,6 +206,28 @@ if ($Tranche -le 1 -and $echecs.Count -gt 0) {
         $morceau = ($echecs[$i..([Math]::Min($i + 29, $limite - 1))]) -join ' '
         Publier "$Titre-inventaire-$paquet" ("$($echecs.Count) echecs ; extrait : " + $morceau)
     }
+}
+
+if ($DebugAppariement) {
+    # Pourquoi ce bloc : 66 echecs non nommes portaient TOUS la mention
+    # « (aucune cause dans le rapport) » (run 41530741118), alors que les
+    # familles publiees, elles, venaient bien du rapport JUnit. Autrement dit :
+    # le fichier de detail est lu, mais AUCUN identifiant d'echec ne s'y
+    # retrouve. Plutot que de supposer, on publie les comptes et trois cles.
+    $cles = @()
+    if ($details.Count -gt 0) { $cles = @($details.Keys | Select-Object -First 3) }
+    Publier "$Titre-debug-appariement" ("echecs(journal)=" + $echecs.Count +
+        " ; details=" + $details.Count + " ; causes_nommees=" + $causes_nommees.Count +
+        " ; attendus=" + $attendus.Count +
+        " ; exemples_de_cles_details: " + ($cles -join ' , '))
+    foreach ($e in ($echecs | Select-Object -First 3)) {
+        $present = $details.ContainsKey($e)
+        $msg = ''
+        if ($present) { $msg = (($details[$e] -join ' | ') -replace "`r|`n", ' ') }
+        if ($msg.Length -gt 200) { $msg = $msg.Substring(0, 200) }
+        Publier "$Titre-debug-cle" "$e :: present_dans_details=$present :: $msg"
+    }
+    exit 0
 }
 
 if ($rc -eq 0) { exit 0 }

@@ -254,6 +254,12 @@ jobs:
       # étapes suivantes ne prononcent PAS de verdict (``exit 0``) : elles ne
       # font que publier les tranches 2 à 5 du même diagnostic, pour que les
       # causes restent lisibles même quand l'inventaire est long.
+      - name: Suite sans service — mise au point de l'appariement (ne prononce pas de verdict)
+        if: always()
+        continue-on-error: true
+        run: |
+          pwsh -File ci\verdict-windows.ps1 -Journal logs\windows-sans-service.log -CodeSortie logs\rc-sans-service.txt -Titre windows-sans-service -Causes logs\causes-sans-service.txt -Details logs\details-sans-service.txt -DebugAppariement
+          exit 0
       - name: Suite sans service — causes, tranche 2
         if: always()
         continue-on-error: true
