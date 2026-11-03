@@ -9,6 +9,7 @@ archive en LECTURE SEULE, rétention, chargement de manifeste.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -23,6 +24,23 @@ from seamtech_search.sauvegarde import (
     appliquer_retention,
     charger_manifeste,
     inventorier_archive,
+)
+
+_POSIX = os.name == "posix"
+
+#: Ces tests SIMULENT une primitive POSIX — ``fcntl.flock``, ouverture par
+#: ``dir_fd``, ``supports_dir_fd`` — en la remplaçant par une panne, et
+#: vérifient que le produit la rattrape. Sur Windows, la primitive n'existe
+#: pas : la substitution n'a aucun effet, l'exception attendue ne vient donc
+#: jamais, et le verrou est laissé PRIS. Le verrou parent étant posé dans le
+#: répertoire temporaire commun du banc, les tests suivants du même fichier
+#: échouent alors avec « une sauvegarde est déjà en cours » — une panne qui
+#: n'a rien à voir avec ce qu'ils mesurent (runs 41562095550, 41564776168).
+#: Simuler là où la primitive n'existe pas ne mesure rien et pollue le banc :
+#: d'où le saut, qui dit pourquoi.
+_POSIX_UNIQUEMENT = pytest.mark.skipif(
+    not _POSIX,
+    reason="simule une primitive POSIX (flock, dir_fd) absente de cette plateforme",
 )
 
 pytestmark = pytest.mark.sauvegarde
@@ -551,6 +569,7 @@ def test_verrou_ne_modifie_pas_fichier_regulier_existant(tmp_path):
     assert temoin.read_bytes() == b"precieux-synthetique"
 
 
+@_POSIX_UNIQUEMENT
 def test_verrou_ferme_flux_si_flock_echoue(tmp_path, monkeypatch):
     import errno
     from types import SimpleNamespace
@@ -591,6 +610,7 @@ def test_verrou_refuse_fifo_sans_blocage(tmp_path):
             pytest.fail("FIFO non autorisée")
 
 
+@_POSIX_UNIQUEMENT
 def test_verrou_absence_fcntl_echoue_sans_creer_fichier(tmp_path, monkeypatch):
     monkeypatch.setattr(sauvegarde, "fcntl", None)
     with pytest.raises(SauvegardeError, match="indisponible"):
@@ -711,6 +731,7 @@ def test_suppression_verrou_ne_permet_pas_deuxieme_processus(tmp_path):
     assert resultat.returncode == 0, resultat.stderr.decode(errors="replace")
 
 
+@_POSIX_UNIQUEMENT
 def test_verrou_reste_compatible_avec_processus_ancien(tmp_path):
     import fcntl
 
@@ -725,6 +746,7 @@ def test_verrou_reste_compatible_avec_processus_ancien(tmp_path):
         assert chemin.read_bytes() == b"temoin"
 
 
+@_POSIX_UNIQUEMENT
 def test_erreur_ouverture_fichier_lache_verrou_dossier(tmp_path, monkeypatch):
     import errno
     import os
@@ -820,6 +842,7 @@ def test_remplacement_dossier_sauvegarde_refuse_chevauchement(tmp_path):
                 pass
 
 
+@_POSIX_UNIQUEMENT
 def test_interruption_acquisition_verrou_ferme_descripteurs(tmp_path, monkeypatch):
     from types import SimpleNamespace
 
@@ -835,6 +858,7 @@ def test_interruption_acquisition_verrou_ferme_descripteurs(tmp_path, monkeypatc
         pass
 
 
+@_POSIX_UNIQUEMENT
 def test_interruption_verrou_fichier_relache_aussi_dossier(tmp_path, monkeypatch):
     import fcntl
     from types import SimpleNamespace
