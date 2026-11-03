@@ -51,6 +51,22 @@ def _publier(titre: str, texte: str, *, queue: bool = False) -> None:
     print(f"::notice title={titre}::{propre}")
 
 
+def _utile(texte: str) -> str:
+    """Les seules lignes qui instruisent : les cadres du PRODUIT et du test.
+
+    Une trace FastAPI est faite à 90 % de cadres Starlette : « le milieu »
+    tombait au milieu de ``starlette/_exception_handler.py`` et n'apprenait
+    rien (run 41562854684). Ce qu'on veut, c'est le chemin d'appels dans
+    ``seamtech_search``, plus les lignes « E ».
+    """
+    gardees = [
+        ligne
+        for ligne in texte.splitlines()
+        if "seamtech_search" in ligne or "tests\\" in ligne or "tests/" in ligne or ligne.strip().startswith("E ")
+    ]
+    return "\n".join(gardees[:80])
+
+
 def _trace(identifiant: str) -> str:
     try:
         execution = subprocess.run(
@@ -85,10 +101,7 @@ def main() -> int:
         # Le MILIEU : quand la queue montre l'erreur sans montrer l'aiguillage
         # qui y mène. Deux annotations par test, au plus trois tests : six,
         # sous le plafond de dix.
-        milieu = " ".join(texte.split())
-        if len(milieu) > 2 * LIMITE:
-            debut = len(milieu) // 2 - LIMITE // 2
-            _publier(f"diag-milieu-{nom}", "…" + milieu[debut : debut + LIMITE] + "…")
+        _publier(f"diag-utile-{nom}", _utile(texte), queue=True)
     return 0
 
 
