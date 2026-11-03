@@ -3282,3 +3282,67 @@ indisponible sur cette plateforme'
 
 Le fichier est lu, les clés sont présentes, les causes sont là. Le verdict va
 donc classer par cause, et non plus seulement par identifiant.
+
+## 59. Run 41551125074 : 390 échecs, **37** sans cause écrite (au lieu de 66)
+
+```
+rc=1 ; echecs=390 ; 390 failed, 1924 passed, 66 skipped, 859 deselected,
+2 xfailed, 20 warnings, 16 errors in 529.45s
+```
+
+La réparation de l'appariement (commit `af56523`) fait tomber les échecs sans
+cause écrite de **66 à 37**, et le total de 391 à 390. Les 29 écarts
+nouvellement reconnus n'étaient pas inexpliqués : leur cause figurait déjà
+dans `ci/ecarts-windows.txt` et dans le rapport JUnit.
+
+Six familles de codes Windows — donc des causes qui ne peuvent pas arriver
+ailleurs — sont écrites (commit `c7a2805`, 17 causes au total) :
+`[WinError 5]` (renommer un répertoire ouvert), `[WinError 32]` (fichier
+utilisé par un autre processus), `[WinError 10038]` (verrou msvcrt, pas
+flock), la variable d'environnement plafonnée à 32 767 caractères,
+`[WinError 2]` et `[WinError 3]` (publication locale atomique absente).
+
+Le même commit apprend à `ci/resumer_echecs.py` à écarter le décor d'un diff
+(« Full diff: », « ] », « } ») : cinq échecs ne portaient que cela comme cause,
+alors que l'assertion fautive était deux lignes plus haut.
+
+### Ce qui reste, et qui n'est PAS encore démontré
+
+Une vingtaine d'échecs, un par un, dont on connaît maintenant le texte exact :
+`TypeError: 'NoneType' object is not subscriptable`
+(test_declencheur_invalide…), `assert 0 == 2`
+(test_pdf_multi_images_echec_ocr), `assert (1 == 1 and False)`
+(test_rebuild_sqlite_conserve_les_documents_references), `IndexError`
+(test_restore_cache_le_mot_de_passe), `subprocess.CalledProcessError`
+(test_etape_configuration_hors_ligne), `[XPASS(strict)]`
+(test_erreur_seconde_publication), `PermissionError: [Errno 13]`
+(test_verrou_ne_modifie_pas_fichier_regulier_existant,
+test_cli_base_depuis_environnement, test_cli_annonce_limites_sauvegarde),
+« une sauvegarde est déjà en cours » sur cinq tests de verrou,
+`Failed: DID NOT RAISE` (test_verrou_ferme_flux_si_flock_echoue),
+`assert False` (test_verrou_meme_objet_concurrence_avant_ouverture),
+`UnicodeDecodeError` (test_fichier_non_utf8_dans_un_dossier), et deux tests
+sans cause dans le rapport.
+
+**Ces vingt-là ne sont pas encore écrits comme écarts, volontairement** : la
+règle est qu'un écart s'écrit avec une cause démontrée, et pour chacun d'eux
+il faut dire s'il s'agit d'une limite de plateforme (à écrire) ou d'un défaut
+réel du produit sur Windows (à corriger). Écrire « [Errno 13] Permission
+denied » tel quel masquerait un vrai défaut de droits, s'il existe.
+
+**Prochaine action, très exactement** : reprendre ces vingt identifiants un
+par un — le diagnostic du job `diagnostic-causes` donne déjà, pour quatre
+fichiers, la ligne « E » exacte de chacun —, démontrer pour chacun la limite
+de plateforme ou le défaut, puis écrire les écarts démontrés et corriger les
+défauts. Le nombre d'échecs Windows réellement inexpliqués est aujourd'hui de
+37 sur 390, et non plus de 66 sur 391.
+
+### Limites d'outillage à dire dans le rapport final
+
+* cinquante annotations par exécution de vérification : ce qui dépasse est
+  perdu, même si l'étape réussit ;
+* dix annotations par étape : idem ;
+* un journal composé de plusieurs suites ressemble à une suite interrompue ;
+* les artefacts et journaux bruts de GitHub ne sont pas téléchargeables
+  depuis ce banc (erreur SSL vers le blob Azure) : seules les annotations sont
+  lisibles.
