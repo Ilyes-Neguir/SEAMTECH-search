@@ -3535,3 +3535,59 @@ l'aiguillage.
 **Prochaine action** : lire `diag-milieu-*` du run suivant ; écrire ces deux
 écarts ou corriger le défaut ; puis relancer la suite complète pour le
 comptage final.
+
+## 64. Les deux derniers échecs non élucidés : ce qu'on sait, et ce qu'il faut faire
+
+Les tests `test_artefact_sans_endpoint_public_sert_les_octets_par_l_api` et
+`test_artefact_presignature_indisponible_sert_le_repli_sans_exception`
+(`tests/test_url_presignee_302.py`) échouent par
+`ValueError: objet IMP-1/abc/technical-report.pdf : bloc invalide (MagicMock au
+lieu d'octets)`.
+
+**Ce qui est établi** (cadres du produit, run 41563387359) :
+
+```
+ERROR   seamtech_search.storage:storage.py:769 Failed to generate presigned S3 URL (ClientError)
+WARNING seamtech_search.api:api.py:2147 Signature publique impossible pour
+        IMP-1/abc/technical-report.pdf : Presigned URL generation failed
+```
+
+Autrement dit : le produit tente une signature publique alors que le test
+demande `endpoint_public=None`, la signature échoue, et le repli sert l'OBJET
+(dont le double de test renvoie un `MagicMock`) au lieu du FICHIER LOCAL
+attendu. Sur Linux, le fichier local est servi et le test passe.
+
+**Ce qui n'est PAS établi** : pourquoi `config.s3_public_endpoint_url` est
+vraie alors que le test passe `endpoint_public=None`, et pourquoi le repli
+préfère l'objet au fichier local. Les deux questions sont dans
+`_url_presignee_navigateur` (api.py:2140) et dans l'ordre de repli de la route
+`/imports/{import_id}/artifacts/{artifact}` (api.py:1648).
+
+**Prochaine action, très exactement** : instrumenter la décision — publier,
+pour ces deux tests, la valeur de `config.s3_public_endpoint_url`, de
+`file_path`, de `file_path.exists()`, de `object_key` et la branche prise. Le
+moyen le plus court est un `monkeypatch` d'impression ajouté dans un banc
+temporaire (pas dans le produit), exécuté une seule fois sur le runner
+Windows. Ensuite : soit écrire l'écart (limite de plateforme), soit corriger
+le défaut (le repli doit servir le fichier local quand il existe).
+
+Aucun écart ne sera écrit pour ces deux tests tant que l'aiguillage n'est pas
+démontré : c'est la règle, et deux échecs avoués valent mieux qu'une cause
+inventée.
+
+### État global à la fin de ce tour
+
+| point | état |
+|---|---|
+| P0 (sauvegarde/restauration, hors site, migration/rollback) | PRÊT (campagnes vertes, preuves consignées) |
+| P1 Chrome / Edge | PRÊT (run 41499874660) |
+| P1 OCR navigateur CI | PRÊT (cause nommée + tests) |
+| P1 rotations PDF | PRÊT (xfail retirés) |
+| P1 Windows natif | **NON PRÊT** (primitives POSIX absentes, refus nommé du produit) — décision produit assumée |
+| P1 Docker Desktop | non qualifiable depuis ce banc (limite dite) |
+| P1 PostgreSQL 16 / Redis 7 sur Windows | qualifiés dans le job Windows (étapes dédiées) |
+| P2 (matrice, multipart, chaos, sécurité offensive, axe, endurance) | campagnes vertes ; endurance = partielle (quelques jours non tenus sur un runner) |
+| Suite Windows | 390 échecs, **2 sans cause démontrée** |
+| Suite Linux (sélection exacte) | 2 348 passés, 47 sautés, 3 xfail, 0 échec |
+
+HEAD : `7e4a8b6`.
