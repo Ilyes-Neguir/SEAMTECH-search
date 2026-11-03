@@ -3161,3 +3161,48 @@ jamais prononcer de verdict.
 run de `07f546b`, réparer l'appariement, puis recompter. Le nombre d'échecs
 réellement inexpliqués se situe, d'après le diagnostic, entre 10 et 15 — pas
 66.
+
+### 57.5 Deux obstacles de mise au point, et où en est la lecture
+
+La mise au point de l'appariement (commit `7acfeb7`) s'est heurtée à deux
+obstacles, l'un après l'autre, tous deux visibles dans les runs :
+
+1. **run `41544601483`** : l'étape de mise au point, placée dans le job
+   principal, a réussi et n'a rien publié — les cinquante annotations du job
+   sont saturées par les tranches de causes. D'où son déplacement dans le job
+   de diagnostic, qui a son propre budget (commit `7acfeb7`).
+2. **run `41549514516`** : le script de verdict s'arrêtait avant d'atteindre le
+   bloc de mise au point, parce que la garde « suite INTERROMPUE » se
+   déclenchait — le journal du diagnostic est la concaténation de quatre
+   journaux, ce qui ressemble à une suite interrompue. Corrigé : en mode
+   `-DebugAppariement`, les gardes d'interruption publient mais ne coupent pas
+   la parole (commit `5a46e4a`).
+3. **run `41549920537`** : le verdict a publié `rc= ; echecs=85` — le code de
+   sortie est vide, donc la lecture a échoué et le script s'est arrêté juste
+   après les familles. Le fichier de code de sortie n'était pas retrouvé tel
+   qu'écrit. Correctif en cours de vérification (commit à venir) : en mode
+   mise au point, un fichier de code de sortie absent vaut 1 au lieu
+   d'arrêter le script — partout ailleurs, il reste une anomalie bruyante.
+
+**Ce qui est déjà établi, sans attendre** : les quatre-vingt-cinq échecs des
+quatre fichiers rejoués se répartissent en causes DÉJÀ ÉCRITES pour
+l'essentiel — « Lecture confinée du bundle indisponible sur cette plateforme »
+(apparaissant aussi sous la forme `Actual message: '…'` quand le test attend
+une expression régulière), « Restauration locale sûre indisponible sur cette
+plateforme », `ModuleNotFoundError: No module named 'fcntl'`, et les trois
+refus de liens (lien de verrou suivi, lien dur non autorisé, lien de dossier
+suivi). Le reste tient en six familles non encore écrites : « une sauvegarde
+est déjà en cours — chevauchement refusé » (6), `PermissionError: [WinError 5]`
+sur un renommage de dossier ouvert (2), `OSError: [WinError 10038]` (1),
+`ValueError: the environment variable is longer than 32767 characters` (1),
+`FileNotFoundError` (1), `IndexError` + `assert False` + « Full diff: » (3).
+
+**Prochaine action, très exactement** : lire les annotations
+`diag-debug-appariement`, `diag-debug-ligne`, `diag-debug-cles` et
+`diag-debug-cle` du premier run de qualification Windows postérieur au
+correctif du code de sortie. Elles disent si les identifiants du journal se
+retrouvent comme clés du fichier de détail. Si oui, réparer l'appariement et
+recompter ; si non, écrire les six familles manquantes dans
+`ci/ecarts-windows.txt` avec leur cause démontrée et recompter. Dans les deux
+cas, le nombre d'échecs réellement inexpliqués est de l'ordre d'une dizaine,
+pas de soixante-six.

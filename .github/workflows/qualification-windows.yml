@@ -143,8 +143,10 @@ jobs:
           Get-ChildItem logs\diag-*.log | ForEach-Object { Get-Content $_.FullName | Add-Content logs\diag-concat.log }
           Get-ChildItem logs\fam-diag-*.txt | ForEach-Object { Get-Content $_.FullName | Add-Content logs\fam-concat.txt }
           Get-ChildItem logs\det-diag-*.txt | ForEach-Object { Get-Content $_.FullName | Add-Content logs\det-concat.txt }
-          Set-Content -NoNewline logs\rc-diag-concat.txt '1'
-          pwsh -File ci\verdict-windows.ps1 -Journal logs\diag-concat.log -CodeSortie logs\rc-diag-concat.txt -Titre diag -Causes logs\fam-concat.txt -Details logs\det-concat.txt -DebugAppariement
+          Set-Content -Path logs/rc-diag-concat.txt -Value '1' -NoNewline
+          if (-not (Test-Path logs/rc-diag-concat.txt)) { Set-Content -Path logs/rc-diag-concat.txt -Value '1' }
+          Write-Host 'contenu de rc-diag-concat :' (Get-Content logs/rc-diag-concat.txt -Raw)
+          pwsh -File ci\verdict-windows.ps1 -Journal logs/diag-concat.log -CodeSortie logs/rc-diag-concat.txt -Titre diag -Causes logs/fam-concat.txt -Details logs/det-concat.txt -DebugAppariement
           exit 0
       - name: Conserver les journaux de diagnostic
         if: always()

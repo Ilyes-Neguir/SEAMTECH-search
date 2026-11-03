@@ -82,7 +82,14 @@ if (-not (Test-Path $CodeSortie)) {
         exit 1
     }
 }
-$rc = [int]((Get-Content $CodeSortie -Raw).Trim())
+if ($DebugAppariement -and -not (Test-Path $CodeSortie)) {
+    # En mise au point, l'absence du fichier de code de sortie ne doit pas
+    # arrêter le script : ce sont les CHIFFRES qu'on vient chercher, pas un
+    # verdict. Partout ailleurs, un fichier manquant reste une anomalie bruyante.
+    $rc = 1
+} else {
+    $rc = [int]((Get-Content $CodeSortie -Raw).Trim())
+}
 
 # --- 2. L'inventaire COMPLET des échecs ------------------------------------
 $echecs = @()
