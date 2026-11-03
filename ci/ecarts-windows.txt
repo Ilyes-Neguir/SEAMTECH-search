@@ -423,3 +423,5 @@ tests/test_sauvegarde_references.py::test_source_contenant_parent_et_lien_ne_cha
 tests/test_sauvegarde_unites.py::test_verrou_ne_modifie_pas_fichier_regulier_existant|sur Windows, le verrou est une plage d'octets msvcrt, et une plage verrouillée est EXCLUSIVE y compris pour les autres descripteurs du même processus (flock, lui, est coopératif par descripteur). Relire le fichier pendant que le verrou est tenu y est donc refusé — PermissionError [Errno 13] (trace du run 41559581223).
 
 tests/test_restauration_confinement.py::test_fichier_cree_apres_precontrole_n_est_pas_ecrase|la publication confinée est refusée (primitive POSIX absente) : le témoin concurrent n'est donc jamais écrit, et le test lit FileNotFoundError là où il attend le contenu du fichier créé entre le précontrôle et l'écriture (trace du run 41560558673).
+
+tests/test_restauration_confinement.py::test_publication_locale_concurrente_ne_remplace_pas_la_cible|même cause que test_fichier_cree_apres_precontrole : la publication confinée est refusée (primitive POSIX absente), donc la cible attendue n'existe pas — FileNotFoundError (trace du run 41561075673).

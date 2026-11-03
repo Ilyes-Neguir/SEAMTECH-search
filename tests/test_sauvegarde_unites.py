@@ -15,6 +15,8 @@ import pytest
 
 from seamtech_search import sauvegarde
 from seamtech_search.sauvegarde import (
+    NOM_VERROU,
+    NOM_VERROU_PARENT,
     SauvegardeError,
     _sha256_fichier,
     _trouver_binaire,
@@ -146,6 +148,33 @@ def test_inventaire_archive_chemins_portables(tmp_path: Path) -> None:
     # Le chemin du manifeste est reconstructible tel quel, donc restaurable ailleurs.
     for chemin in chemins:
         assert (racine / chemin).is_file(), f"chemin du manifeste non rejouable : {chemin}"
+
+
+def test_inventaire_archive_ignore_les_verrous(tmp_path: Path) -> None:
+    """Les verrous de sauvegarde ne sont pas un contenu d'archive.
+
+    Pourquoi ce test : l'inventaire parcourait et hachait TOUT, y compris le
+    verrou que la sauvegarde venait de poser. Sur POSIX, ``flock`` est
+    consultatif : lire le fichier verrouillé passait, et le défaut était
+    invisible. Sur Windows, une plage d'octets verrouillée est EXCLUSIVE, même
+    pour un autre descripteur du même processus : l'inventaire se prenait
+    ``PermissionError`` et la sauvegarde échouait (runs 41560558673 et
+    41561075673, ``test_cli_annonce_limites_sauvegarde``).
+
+    Au-delà de la panne : un verrou n'a rien à faire dans un inventaire
+    d'archive, sur aucune plateforme.
+    """
+    racine = tmp_path / "archive"
+    (racine / "CLIENT-A").mkdir(parents=True)
+    (racine / "CLIENT-A" / "fiche.pdf").write_bytes(b"%PDF-1.4")
+    (racine / NOM_VERROU).write_bytes(b"")
+    (racine / NOM_VERROU_PARENT).write_bytes(b"")
+
+    inventaire = inventorier_archive([racine])
+
+    chemins = {f["chemin"] for f in inventaire["fichiers"]}
+    assert chemins == {"CLIENT-A/fiche.pdf"}, chemins
+    assert inventaire["nb_fichiers"] == 1
 
 
 def test_inventaire_archive_racine_absente(tmp_path: Path) -> None:

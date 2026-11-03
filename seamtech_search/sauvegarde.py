@@ -322,6 +322,17 @@ def inventorier_archive(racines: list[Path]) -> dict:
         for chemin in sorted(racine.rglob("*")):
             if not chemin.is_file():
                 continue
+            # Un verrou n'est pas un contenu d'archive : il est créé PAR la
+            # sauvegarde, lui appartient, et n'a aucune raison d'être
+            # inventorié ni haché. Sur Windows, un verrou de plage d'octets
+            # est EXCLUSIF, y compris pour les autres descripteurs du même
+            # processus : l'inventaire qui tentait de lire son propre verrou
+            # se prenait PermissionError et la sauvegarde échouait (runs
+            # 41560558673 et 41561075673, test_cli_annonce_limites_sauvegarde).
+            # Sur POSIX, flock est consultatif, la lecture passait, et le
+            # défaut était invisible.
+            if chemin.name in (NOM_VERROU, NOM_VERROU_PARENT):
+                continue
             taille = chemin.stat().st_size
             octets_total += taille
             fichiers.append(
