@@ -21,7 +21,7 @@ param(
     [Parameter(Mandatory = $true)][string]$Titre,
     [int]$Tranche = 1,
     [string]$Causes = '',
-    [string]$Details = '',
+    [string]$FichierDetails = '',
     [switch]$DebugAppariement
 )
 
@@ -264,11 +264,17 @@ if (Test-Path $Journal) {
 # plateforme' »). D'où ``--tb=short`` sur les suites, et la lecture ci-dessous :
 # on rattache à chaque test les lignes « E » de SA trace, repérée par l'en-tête
 # de traceback « _____ nom_du_test _____ ».
+# ATTENTION, piège déjà rencontré (run 41550712445) : PowerShell ne distingue
+# PAS la casse des noms de variables. Le paramètre du chemin s'appelle donc
+# ``$FichierDetails`` et non ``$Details`` : écrire ``$details = @{}`` avec un
+# paramètre nommé ``$Details`` écrasait le chemin, ``Test-Path`` portait alors
+# sur la table de hachage, et le fichier de détail n'était JAMAIS lu — d'où
+# 66 échecs annoncés « sans cause » alors que la cause était écrite partout.
 $details = @{}
-if ($Details -and (Test-Path $Details)) {
+if ($FichierDetails -and (Test-Path $FichierDetails)) {
     # Voie sûre : « identifiant|cause » produit par ci/resumer_echecs.py depuis
     # le rapport JUnit — la cause est rattachée au test par pytest lui-même.
-    foreach ($entree in (Get-Content $Details)) {
+    foreach ($entree in (Get-Content $FichierDetails)) {
         if (-not $entree.Trim()) { continue }
         $morceaux = $entree -split '\|', 2
         if ($morceaux.Count -lt 2) { continue }
@@ -304,13 +310,13 @@ if ($DebugAppariement) {
     # detail. Plutot que de supposer ou se trouve la rupture, on publie les
     # comptes, l'existence du fichier, ses premieres lignes BRUTES, et pour
     # trois echecs du journal si la cle est presente et avec quel texte.
-    $existe = Test-Path $Details
+    $existe = Test-Path $FichierDetails
     $nb_lignes = 0
     $brutes = @()
-    if ($existe) { $brutes = @(Get-Content $Details); $nb_lignes = $brutes.Count }
+    if ($existe) { $brutes = @(Get-Content $FichierDetails); $nb_lignes = $brutes.Count }
     $cles = @()
     if ($details.Count -gt 0) { $cles = @($details.Keys | Select-Object -First 3) }
-    Publier "$Titre-debug-appariement" ("fichier_detail=" + $Details +
+    Publier "$Titre-debug-appariement" ("fichier_detail=" + $FichierDetails +
         " ; existe=" + $existe + " ; lignes=" + $nb_lignes +
         " ; cles_chargees=" + $details.Count +
         " ; echecs_journal=" + $echecs.Count +
