@@ -3401,3 +3401,61 @@ rapport.
 
 **Prochaine action** : lire les `diag-trace-*` du run suivant, trancher le
 verrou (défaut ou limite), puis écrire les écarts démontrés.
+
+## 61. Les traces tranchent, une par une (runs 41558517147 → 41560558673)
+
+Le diagnostic publie désormais la TRACE complète de six tests par run
+(`ci/publier_traces.py`, liste dans `ci/tests-trace.txt`). Ce qu'on y lit :
+
+### Défauts PRODUIT corrigés : quatre fois le même chemin non portable
+
+| endroit | ce qui était écrit | conséquence |
+|---|---|---|
+| `sauvegarde.py` (manifeste de sauvegarde) | séparateur de l'OS | restauration croisée impossible |
+| `inventaire_archive.py` (lexique) | séparateur de l'OS | « chemin stable entre machines » faux |
+| `inventaire_archive.py` (lignes) | séparateur de l'OS | comparaison d'inventaires fausse |
+| `inventaire_archive.py` (localisations) | `os.sep` | `archive\2024\CLIENT-A` au lieu de `archive/2024/CLIENT-A` |
+
+**Un même défaut, quatre endroits, trouvé parce que le banc Windows lisait les
+diffs** : c'est exactement ce que la qualification devait produire, et ce
+qu'un banc Linux seul n'aurait jamais vu (sur POSIX, `str(chemin)` et
+`as_posix()` sont identiques).
+
+### Attentes de test corrigées (valables en POSIX, fausses ailleurs)
+
+* `test_rebuild_index.py` : clé stockée en minuscules sur Windows
+  (`os.path.normcase`) — comparaison sans normalisation.
+* `test_url_presignee_302.py` : chemin relatif comparé à un littéral POSIX
+  (annonçait « un nouvel appelant de get_presigned_url » qui n'existe pas).
+* `test_passe_finale_ingestion_dossiers.py` : nom de fichier non UTF-8
+  (impossible sur Windows, où les noms sont en UTF-16) — saut justifié.
+* `test_securite_banc_pg.py` : étape de déploiement Linux (bash, sudo, 0600) —
+  saut justifié.
+
+### Écarts démontrés par trace (cause prouvée, pas supposée)
+
+| test | cause lue dans la trace |
+|---|---|
+| `test_verrou_ferme_flux_si_flock_echoue` | remplace `sauvegarde.fcntl`, qui est `None` sur Windows → la panne simulée n'a pas lieu |
+| `test_erreur_ouverture_fichier_lache_verrou_dossier` | panne injectée sur `os.open(NOM_VERROU)`, ouverture par nom relatif + `dir_fd` : du POSIX pur |
+| `test_interruption_acquisition_verrou_ferme_descripteurs` | idem, via `fcntl` |
+| `test_verrou_processus_concurrent_refuse_puis_reussi` | PASSE rejoué seul ; en suite, le verrou PARENT est un fichier dans le répertoire temporaire COMMUN |
+| `test_suppression_verrou…` / `test_verrou_remplace…` | Windows interdit de supprimer un fichier ouvert (`[WinError 32]`) |
+| `test_verrou_ne_modifie_pas_fichier_regulier_existant` | une plage d'octets msvcrt exclut même les autres descripteurs du même processus |
+| `test_source_contenant_parent_et_lien…` | remontée « .. » à travers un lien : sémantique POSIX |
+| `test_fichier_cree_apres_precontrole_…` | publication confinée refusée → le témoin concurrent n'est jamais écrit |
+| trois tests d'OCR de page | refus POSIX nommé de l'OCR |
+
+### Restent, sans preuve encore
+
+`test_cli_annonce_limites_sauvegarde` et
+`test_cli_base_depuis_environnement_sans_argument_secret`
+(`PermissionError: [Errno 13]`), deux tests de publication locale concurrente,
+`test_artefact_*` (`MagicMock au lieu d'octets`) et deux tests sans cause dans
+le rapport. La liste `ci/tests-trace.txt` les porte pour le run suivant.
+
+**Prochaine action** : lire les `diag-trace-*` du run suivant (l'instrument
+publie désormais la FIN des traces), écrire les derniers écarts démontrés,
+puis relancer la suite complète pour recompter : l'objectif est un verdict
+Windows où CHAQUE échec porte une cause écrite, y compris ceux qui relèvent
+d'une limite de plateforme.
