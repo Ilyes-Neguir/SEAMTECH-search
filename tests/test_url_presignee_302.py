@@ -369,10 +369,15 @@ def test_tous_les_appels_de_get_presigned_url_utilisent_le_mot_cle_reel() -> Non
     for fichier in sorted((RACINE / "seamtech_search").rglob("*.py")):
         source = fichier.read_text(encoding="utf-8")
         for appel in re.findall(r"(?<!def )get_presigned_url\(([^)]*)\)", source):
-            sites.append(str(fichier.relative_to(RACINE)))
+            # ``as_posix()`` et non ``str()`` : le chemin relatif est comparé à
+            # un littéral POSIX plus bas. Sur Windows, ``str()`` écrit
+            # « seamtech_search\\api.py » et le test échoue sur le séparateur
+            # seul — panne lue comme « un nouvel appelant », alors qu'il n'y en
+            # a pas (run 41559581223).
+            sites.append(fichier.relative_to(RACINE).as_posix())
             for mot_cle in re.findall(r"(\w+)\s*=", appel):
                 if mot_cle not in valides:
-                    fautifs.append(f"{fichier.relative_to(RACINE)} : get_presigned_url(..., {mot_cle}=...)")
+                    fautifs.append(f"{fichier.relative_to(RACINE).as_posix()} : get_presigned_url(..., {mot_cle}=...)")
     assert sites == ["seamtech_search/api.py"], (
         "depuis le correctif téléchargement, les deux routes passent par UN SEUL "
         "site d'appel (le helper `_url_presignee_navigateur`) ; "

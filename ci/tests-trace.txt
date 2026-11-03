@@ -1,8 +1,8 @@
 # Tests dont la cause lue ne suffit pas : on veut la TRACE, pas la dernière
 # ligne « E ». Un par un, six au plus (plafond d'annotations par étape).
 tests/test_url_presignee_302.py::test_artefact_sans_endpoint_public_sert_les_octets_par_l_api
-tests/test_url_presignee_302.py::test_tous_les_appels_de_get_presigned_url_utilisent_le_mot_cle_reel
-tests/test_api.py::test_api_import_with_excel_support
 tests/test_sauvegarde_manifeste_distant.py::test_cli_annonce_limites_sauvegarde
-tests/test_sauvegarde_unites.py::test_verrou_ne_modifie_pas_fichier_regulier_existant
-tests/test_sauvegarde_references.py::test_source_contenant_parent_et_lien_ne_change_pas_silencieusement_de_cible
+tests/test_sauvegarde_manifeste_distant.py::test_cli_base_depuis_environnement_sans_argument_secret
+tests/test_sauvegarde_references.py::test_deux_restaurations_concurrentes_necrasent_pas
+tests/test_restauration_confinement.py::test_fichier_cree_apres_precontrole_n_est_pas_ecrase
+tests/test_inventaire_archive.py::test_localisation_des_fiches
