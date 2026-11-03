@@ -148,12 +148,12 @@ def test_scan_refuse_un_dossier_hors_racine(tmp_path: Path) -> None:
 
 
 def test_lien_symbolique_vers_l_exterieur_est_signale(tmp_path: Path) -> None:
-    """Constat mesuré : ``_walk_files`` suit un lien symbolique de FICHIER.
+    """Défaut constaté puis CORRIGÉ : un lien de FICHIER hors périmètre est refusé.
 
-    Un lien déposé dans l'archive et pointant hors des racines configurées est
-    donc listé (et pourrait être importé) : c'est une évasion de périmètre par
-    lien symbolique. Ce test FIGE le constat pour qu'il soit traité ou assumé
-    explicitement — il n'est pas présenté comme conforme par omission.
+    Constat initial : ``_walk_files`` listait le lien (et donc le contenu hors
+    racine atteint par son contenu) — évasion de périmètre par lien symbolique.
+    Le parcours refuse désormais tout lien, avant la moindre lecture : le
+    contenu hors périmètre n'est ni listé ni téléversé.
     """
     racine = tmp_path / "racine"
     racine.mkdir()
@@ -164,15 +164,15 @@ def test_lien_symbolique_vers_l_exterieur_est_signale(tmp_path: Path) -> None:
         lien.symlink_to(secret)
     except (OSError, NotImplementedError):  # pragma: no cover - FS sans liens
         pytest.skip("système de fichiers sans lien symbolique")
-    fichiers = {str(p) for p in _walk_files(racine)}
-    assert str(lien) in fichiers
-    # Le fichier hors périmètre est atteint par le contenu du lien, sans que le
-    # chemin affiché le montre : la parade attendue est de refuser/avertir.
+    with pytest.raises(ValueError, match="Symbolic link"):
+        _walk_files(racine)
+    # Le refus précède toute lecture : le contenu visé n'est jamais atteint.
+    assert secret.read_text() == "hors périmètre"
     assert lien.resolve() == secret.resolve()
 
 
 def test_lien_symbolique_de_dossier_n_est_pas_suivi(tmp_path: Path) -> None:
-    """Mesuré : un lien de DOSSIER n'est pas parcouru (pas de boucle infinie)."""
+    """Un lien de DOSSIER n'est pas parcouru : refus net, sans boucle infinie."""
     racine = tmp_path / "racine"
     racine.mkdir()
     cible = tmp_path / "cible"
@@ -183,10 +183,10 @@ def test_lien_symbolique_de_dossier_n_est_pas_suivi(tmp_path: Path) -> None:
         (racine / "boucle").symlink_to(racine)
     except (OSError, NotImplementedError):  # pragma: no cover
         pytest.skip("système de fichiers sans lien symbolique")
-    fichiers = [str(p) for p in _walk_files(racine)]
-    assert not any("interieur.txt" in chemin for chemin in fichiers)
-    # La boucle ne fait pas exploser le parcours.
-    assert len(fichiers) <= 2
+    # Le parcours s'arrête au premier lien rencontré : ni « interieur.txt »
+    # (atteignable par le lien de dossier) ni explosion de la boucle.
+    with pytest.raises(ValueError, match="Symbolic link"):
+        _walk_files(racine)
 
 
 # ---------------------------------------------------------------------------
@@ -262,6 +262,13 @@ def test_dossier_de_plus_de_100k_fichiers_refuse_sans_ecrire(tmp_path: Path) -> 
 
 def test_fichier_non_utf8_dans_un_dossier_ne_casse_pas_le_parcours(tmp_path: Path) -> None:
     """Nom de fichier en octets non UTF-8 (archive ancienne, partage Windows)."""
+    if os.name != "posix":
+        # Windows stocke les noms en UTF-16 : un nom créé avec des octets
+        # arbitraires n'y a pas le sens qu'il a en POSIX, où un nom EST une
+        # suite d'octets. Le scénario « archive ancienne dont le nom n'est pas
+        # de l'UTF-8 » ne peut donc pas s'y produire, et y forcer le test
+        # mesurerait l'encodeur de Python, pas le parcours.
+        pytest.skip("un nom de fichier non UTF-8 n'existe pas sur Windows (UTF-16 natif)")
     racine = tmp_path / "racine"
     racine.mkdir()
     brut = os.fsencode(str(racine)) + b"/" + b"facture_\xe9\xe8.pdf"

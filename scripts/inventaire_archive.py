@@ -460,7 +460,7 @@ def construire_section_detection(
     chemin = Path(chemin_lexique)
     racine_depot = Path(__file__).resolve().parent.parent
     try:
-        affichage = str(chemin.resolve().relative_to(racine_depot))
+        affichage = chemin.resolve().relative_to(racine_depot).as_posix()
     except ValueError:
         affichage = chemin.name
     empreinte_lexique = hashlib.sha256(chemin.read_bytes()).hexdigest()
@@ -540,8 +540,13 @@ def scanner_archive(
                 annee_stats["nb"] += 1
                 annee_stats["octets"] += stat.st_size
 
+                # Chemin relatif ou absolu rendu en écriture POSIX (« / »), pas
+                # avec le séparateur de l'OS : un inventaire produit sur Windows
+                # doit rester comparable et relisible sur Linux, et inversement.
+                # Le commentaire de la fonction « chemin stable entre machines »
+                # n'était pas tenu sur Windows : on y écrivait « config\lexique… ».
                 ligne = LigneFichier(
-                    chemin=str(chemin),
+                    chemin=chemin.as_posix(),
                     taille=stat.st_size,
                     annee=annee,
                     extension=extension,
@@ -625,7 +630,14 @@ def localiser_fiches(lignes: list[LigneFichier], racines: list[Path]) -> list[di
             racine_str = str(racine)
             if dossier.startswith(racine_str):
                 relatif = os.path.relpath(dossier, racine_str)
-                dossier = f"{racine.name}{os.sep}{relatif}" if relatif != "." else f"{racine.name}{os.sep}"
+                # Écriture POSIX, pas ``os.sep`` : cette clé entre dans un
+                # rapport JSON censé se comparer d'une machine à l'autre. Avec
+                # le séparateur de l'OS, « archive/2024/CLIENT-A » devenait
+                # « archive\2024\CLIENT-A » sur Windows et deux inventaires
+                # de la même archive ne se ressemblaient plus (run
+                # 41560558673, test_localisation_des_fiches).
+                relatif = relatif.replace(os.sep, "/")
+                dossier = f"{racine.name}/{relatif}" if relatif != "." else f"{racine.name}/"
                 break
         compteur[dossier] += 1
     return [

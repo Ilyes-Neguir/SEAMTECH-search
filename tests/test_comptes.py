@@ -61,6 +61,7 @@ from seamtech_search.comptes.securite import (
 )
 from seamtech_search.indexer import SearchIndex
 from seamtech_search.qualite import tableau
+from tests.helpers_postgres_isole import url_base_jetable
 
 URL_PG = os.environ.get("SEAMTECH_TEST_DATABASE_URL", "")
 RACINE = Path(__file__).resolve().parent.parent
@@ -94,7 +95,7 @@ def base_comptes() -> Iterator[dict[str, Any]]:
             cursor.execute(f'CREATE DATABASE "{nom_base}"')
     finally:
         admin.close()
-    url_base = URL_PG.rsplit("/", 1)[0] + f"/{nom_base}"
+    url_base = url_base_jetable(URL_PG, nom_base)
     index = SearchIndex(Path(f"/tmp/unused-comptes-{nom_base}.db"), url_base)
     index.initialize()
     index.run_migrations()

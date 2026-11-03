@@ -1,9 +1,13 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { backendBase, backendHeaders, requireRolesServer } from "@/lib/backend"
-import { ROLE_ADMIN, ROLE_APPROBATEUR, ROLE_UTILISATEUR } from "@/lib/roles"
 import { relayerMultipart } from "@/lib/relais-multipart"
+import { ROLE_ADMIN, ROLE_APPROBATEUR, ROLE_UTILISATEUR } from "@/lib/roles"
 
 export const dynamic = "force-dynamic"
+
+// Le backend borne l'agrégat à dix fois sa taille de fichier par défaut
+// (512 Mio) ; marge ajoutée pour l'encadrement multipart.
+const MAX_ENVOI_MULTIPART = (10 * 512 + 16) * 1024 * 1024
 
 /**
  * Relais d'un fichier unique vers le backend, EN FLUX.
@@ -21,6 +25,7 @@ export async function POST(req: NextRequest) {
 
   const entetes = await backendHeaders()
   const resultat = await relayerMultipart(req, `${base}/imports/upload`, entetes, {
+    limiteOctets: MAX_ENVOI_MULTIPART,
     cleConcurrence: `upload:${entetes["X-SEAMTECH-UTILISATEUR"] ?? "inconnu"}`,
   })
   if (resultat.type === "abandon") return new Response(null, { status: 499 })

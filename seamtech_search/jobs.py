@@ -68,19 +68,25 @@ def is_job_cancelled(job_id: str, redis_store: Any | None = None) -> bool:
         return job_id in _cancelled_job_ids
 
 
-def clear_job_cancel(job_id: str, redis_store: Any | None = None) -> None:
-    """Clean up cancellation flag once job finishes or exits."""
+def clear_job_cancel(job_id: str, redis_store: Any | None = None, *, expected_worker: str | None = None) -> None:
+    """Clean up cancellation flag; a worker must still own its Redis claim."""
     if redis_store is not None:
         try:
             from .redis_store import RedisStore
 
             if isinstance(redis_store, RedisStore) and redis_store.is_configured():
-                redis_store.clear_cancel_flag(job_id)
-                redis_store.set_heartbeat(job_id, ttl_seconds=1)  # clear heartbeat by short TTL
+                if expected_worker is not None:
+                    if not redis_store.clear_cancel_flag_if_claimed(job_id, expected_worker):
+                        return
+                else:
+                    redis_store.clear_cancel_flag(job_id)
+                    redis_store.set_heartbeat(job_id, ttl_seconds=1)
         except Exception as exc:
-            # Housekeeping: a leftover flag expires via Redis TTL and job ids
-            # are unique, so a failure here is non-fatal — but visible.
-            logger.debug("Could not clear Redis cancel flag for job %s: %s", job_id, exc)
+            # Fail closed for workers: a cancellation for a successor must
+            # survive errors. Local-only callers retain their old cleanup.
+            logger.warning("Could not clear Redis cancel flag for job %s: %s", job_id, exc)
+            if expected_worker is not None:
+                return
     with _cancellation_lock:
         _cancelled_job_ids.discard(job_id)
 
@@ -272,7 +278,8 @@ def update_job(
 
             set_clauses = [f"{f} = %s" for f in fields]
             set_clauses.append("updated_at = now()")
-            extra_where = "" if status == "cancelled" else " AND status != 'cancelled'"
+            extra_where = (" AND status IN ('pending', 'running', 'cancelled')" if status == "cancelled"
+                           else " AND status != 'cancelled'")
             if expected_worker is not None:
                 extra_where += " AND claimed_by = %s"
             sql = f"UPDATE import_jobs SET {', '.join(set_clauses)} WHERE id = %s{extra_where}"
@@ -293,7 +300,8 @@ def update_job(
         else:
             set_clauses = [f"{f} = ?" for f in fields]
             set_clauses.append("updated_at = ?")
-            extra_where = "" if status == "cancelled" else " AND status != 'cancelled'"
+            extra_where = (" AND status IN ('pending', 'running', 'cancelled')" if status == "cancelled"
+                           else " AND status != 'cancelled'")
             if expected_worker is not None:
                 extra_where += " AND claimed_by = ?"
             sql = f"UPDATE import_jobs SET {', '.join(set_clauses)} WHERE id = ?{extra_where}"
@@ -382,15 +390,28 @@ def get_job(index: SearchIndex, job_id: str) -> dict[str, Any] | None:
 
 
 def cancel_job(index: SearchIndex, job_id: str) -> dict[str, Any] | None:
-    """Request cooperative cancellation of a job."""
-    register_job_cancel(job_id)
-    return update_job(
-        index,
-        job_id,
-        status="cancelled",
-        stage="cancelled",
-        error="Job was cancelled by user",
-    )
+    """Atomically cancel an active job; leave terminal and missing jobs untouched.
+
+    The SQL row is the shared cancellation registry for all import workers.
+    A late or nonexistent request must not set a process-local flag.
+    """
+    now_iso = datetime.now(timezone.utc).isoformat()
+    with index.connect() as conn:
+        if index.is_postgres:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    "UPDATE import_jobs SET status = 'cancelled', stage = 'cancelled', "
+                    "error = %s, updated_at = now() "
+                    "WHERE id = %s AND status IN ('pending', 'running')",
+                    ("Job was cancelled by user", job_id),
+                )
+        else:
+            conn.execute(
+                "UPDATE import_jobs SET status = 'cancelled', stage = 'cancelled', "
+                "error = ?, updated_at = ? WHERE id = ? AND status IN ('pending', 'running')",
+                ("Job was cancelled by user", now_iso, job_id),
+            )
+    return get_job(index, job_id)
 
 
 def recover_stale_jobs(
@@ -582,7 +603,7 @@ def marquer_job_claim(index: SearchIndex, job_id: str, worker_id: str) -> bool:
                     UPDATE import_jobs
                     SET status = 'running', claimed_by = %s, heartbeat_at = now(),
                         attempts = attempts + 1, stage = 'starting', updated_at = now()
-                    WHERE id = %s
+                    WHERE id = %s AND status IN ('pending', 'running')
                     """,
                     (worker_id, job_id),
                 )
@@ -592,7 +613,7 @@ def marquer_job_claim(index: SearchIndex, job_id: str, worker_id: str) -> bool:
             UPDATE import_jobs
             SET status = 'running', claimed_by = ?, heartbeat_at = ?, attempts = attempts + 1,
                 stage = 'starting', updated_at = ?
-            WHERE id = ?
+            WHERE id = ? AND status IN ('pending', 'running')
             """,
             (worker_id, now_iso, now_iso, job_id),
         )
@@ -623,6 +644,7 @@ def remettre_en_file(
     *,
     raison: str,
     tentative_durable: bool = True,
+    expected_attempts: int | None = None,
 ) -> bool:
     """Remet un job en attente (état RÉCUPÉRABLE) après la mort de son worker.
 
@@ -631,6 +653,9 @@ def remettre_en_file(
     « il ne sera plus jamais repris », jamais une disparition silencieuse.
     """
     now_iso = datetime.now(timezone.utc).isoformat()
+    condition_pg = " AND attempts = %s" if expected_attempts is not None else ""
+    condition_sqlite = " AND attempts = ?" if expected_attempts is not None else ""
+    suffixe = [expected_attempts] if expected_attempts is not None else []
     with index.connect() as conn:
         if index.is_postgres:
             with conn.cursor() as cursor:
@@ -641,8 +666,8 @@ def remettre_en_file(
                         SET status = 'pending', stage = 'requeued', claimed_by = NULL,
                             heartbeat_at = NULL, error = %s, failure_reason = %s, updated_at = now()
                         WHERE id = %s AND status IN ('pending', 'running')
-                        """,
-                        (raison, raison, job_id),
+                        """ + condition_pg,
+                        [raison, raison, job_id] + suffixe,
                     )
                 else:
                     cursor.execute(
@@ -651,8 +676,8 @@ def remettre_en_file(
                         SET status = 'failed', stage = 'dead_letter', claimed_by = NULL,
                             heartbeat_at = NULL, error = %s, failure_reason = %s, updated_at = now()
                         WHERE id = %s AND status IN ('pending', 'running')
-                        """,
-                        (raison, raison, job_id),
+                        """ + condition_pg,
+                        [raison, raison, job_id] + suffixe,
                     )
                 return cursor.rowcount > 0
         if tentative_durable:
@@ -662,8 +687,8 @@ def remettre_en_file(
                 SET status = 'pending', stage = 'requeued', claimed_by = NULL,
                     heartbeat_at = NULL, error = ?, failure_reason = ?, updated_at = ?
                 WHERE id = ? AND status IN ('pending', 'running')
-                """,
-                (raison, raison, now_iso, job_id),
+                """ + condition_sqlite,
+                [raison, raison, now_iso, job_id] + suffixe,
             )
         else:
             cursor = conn.execute(
@@ -672,8 +697,8 @@ def remettre_en_file(
                 SET status = 'failed', stage = 'dead_letter', claimed_by = NULL,
                     heartbeat_at = NULL, error = ?, failure_reason = ?, updated_at = ?
                 WHERE id = ? AND status IN ('pending', 'running')
-                """,
-                (raison, raison, now_iso, job_id),
+                """ + condition_sqlite,
+                [raison, raison, now_iso, job_id] + suffixe,
             )
         return cursor.rowcount > 0
 
@@ -685,53 +710,50 @@ def terminer_job(
     status: str,
     failure_reason: str | None = None,
     expected_worker: str | None = None,
+    stage: str | None = None,
+    progress: int | None = None,
+    result: dict[str, Any] | None = None,
+    error: str | None = None,
 ) -> bool:
-    """Ferme un job : libère le worker propriétaire et trace la raison (avec contrôle optionnel de fencing)."""
+    """Publie le résultat et libère le claim dans une même écriture conditionnelle."""
     now_iso = datetime.now(timezone.utc).isoformat()
     with index.connect() as conn:
         if index.is_postgres:
+            from psycopg2.extras import Json
+
+            resultat = Json(result) if result is not None else None
             with conn.cursor() as cursor:
-                if expected_worker is not None:
-                    cursor.execute(
-                        """
-                        UPDATE import_jobs
-                        SET status = %s, claimed_by = NULL, heartbeat_at = NULL,
-                            failure_reason = %s, updated_at = now()
-                        WHERE id = %s AND claimed_by = %s
-                        """,
-                        (status, failure_reason, job_id, expected_worker),
-                    )
+                condition = " AND claimed_by = %s" if expected_worker is not None else ""
+                if status == "cancelled":
+                    condition += " AND status IN ('pending', 'running', 'cancelled')"
                 else:
-                    cursor.execute(
-                        """
-                        UPDATE import_jobs
-                        SET status = %s, claimed_by = NULL, heartbeat_at = NULL,
-                            failure_reason = %s, updated_at = now()
-                        WHERE id = %s
-                        """,
-                        (status, failure_reason, job_id),
-                    )
+                    condition += " AND status != 'cancelled'"
+                params: list[Any] = [status, failure_reason, stage, progress, resultat, error, job_id]
+                if expected_worker is not None:
+                    params.append(expected_worker)
+                cursor.execute(
+                    "UPDATE import_jobs SET status = %s, claimed_by = NULL, heartbeat_at = NULL, "
+                    "failure_reason = %s, stage = COALESCE(%s, stage), progress = COALESCE(%s, progress), "
+                    "result = COALESCE(%s, result), error = COALESCE(%s, error), updated_at = now() "
+                    "WHERE id = %s" + condition,
+                    params,
+                )
                 return cursor.rowcount > 0
-        if expected_worker is not None:
-            cursor = conn.execute(
-                """
-                UPDATE import_jobs
-                SET status = ?, claimed_by = NULL, heartbeat_at = NULL,
-                    failure_reason = ?, updated_at = ?
-                WHERE id = ? AND claimed_by = ?
-                """,
-                (status, failure_reason, now_iso, job_id, expected_worker),
-            )
+        condition = " AND claimed_by = ?" if expected_worker is not None else ""
+        if status == "cancelled":
+            condition += " AND status IN ('pending', 'running', 'cancelled')"
         else:
-            cursor = conn.execute(
-                """
-                UPDATE import_jobs
-                SET status = ?, claimed_by = NULL, heartbeat_at = NULL,
-                    failure_reason = ?, updated_at = ?
-                WHERE id = ?
-                """,
-                (status, failure_reason, now_iso, job_id),
-            )
+            condition += " AND status != 'cancelled'"
+        params = [status, failure_reason, stage, progress, json.dumps(result) if result is not None else None,
+                  error, now_iso, job_id]
+        if expected_worker is not None:
+            params.append(expected_worker)
+        cursor = conn.execute(
+            "UPDATE import_jobs SET status = ?, claimed_by = NULL, heartbeat_at = NULL, "
+            "failure_reason = ?, stage = COALESCE(?, stage), progress = COALESCE(?, progress), "
+            "result = COALESCE(?, result), error = COALESCE(?, error), updated_at = ? WHERE id = ?" + condition,
+            params,
+        )
         return cursor.rowcount > 0
 
 

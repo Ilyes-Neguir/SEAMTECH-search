@@ -27,6 +27,7 @@ d'un ``pg_dump`` (c'est le rôle des tests de chaos du module).
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -154,15 +155,27 @@ def installation(tmp_path: Path) -> Iterator[dict[str, Any]]:
     with _Magasin(magasin) as branche:
         client = branche.client()
         cle = client.upload_file(reference, remote_key="imports/plan.pdf", avoid_overwrite=False)
+    # ``source_sha256`` : l'identité de capture que la sauvegarde utilise pour
+    # prouver les octets quand le stockage n'expose pas de checksum plein
+    # objet. Une valeur factice ferait refuser la copie.
+    empreinte_reference = hashlib.sha256(reference.read_bytes()).hexdigest()
     with index.connect() as connexion:
-        with connexion.cursor() as cursor:
-            cursor.execute(
+        with connexion.cursor() as curseur_document:
+            curseur_document.execute(
                 "INSERT INTO documents (path_key, path, name, parent_path, extension, size, modified_at, "
-                "is_dir, content, content_hash, extraction_status, category, role, object_key, object_bucket, "
-                "uploaded_at, upload_status) "
-                "VALUES (%s, %s, 'plan.pdf', %s, '.pdf', %s, 0, FALSE, 'plan', 'h', 'extracted', "
+                "is_dir, content, content_hash, source_sha256, extraction_status, category, role, "
+                "object_key, object_bucket, uploaded_at, upload_status) "
+                "VALUES (%s, %s, 'plan.pdf', %s, '.pdf', %s, 0, FALSE, 'plan', %s, %s, 'extracted', "
                 "'analyzed', 'fiche_pdf', %s, 'seamtech-documents', 0, 'uploaded')",
-                (os.path.normcase(str(reference.resolve())), str(reference), str(reference.parent), reference.stat().st_size, cle),
+                (
+                    os.path.normcase(str(reference.resolve())),
+                    str(reference),
+                    str(reference.parent),
+                    reference.stat().st_size,
+                    empreinte_reference,
+                    empreinte_reference,
+                    cle,
+                ),
             )
     try:
         yield {
@@ -208,7 +221,12 @@ def test_aller_retour_complet_base_donnees_et_objets(installation: dict[str, Any
             racines_data=[installation["data"]],
         )
 
-    assert manifeste["complet"] is True, manifeste.get("data")
+    # `complet` n'est PAS encore vrai : il ne l'est qu'APRÈS une restauration
+    # coordonnée prouvée (base + données + objets contrôlés contre ce
+    # manifeste). C'est la politique assumée du module — un dump seul ne prouve
+    # rien des fichiers — et c'est ce que le reste du test vérifie.
+    assert manifeste["complet"] is False
+    assert manifeste["complet_perimetre_demande"] is True, manifeste
     assert manifeste["data"]["nb_copies"] == 4, manifeste["data"]["nb_copies"]  # 2 lots + quarantaine + rapport
     assert manifeste["data"]["ignores_volatiles"] == 1
     assert manifeste["objets_s3"]["nb_copies"] == 1
@@ -243,6 +261,13 @@ def test_aller_retour_complet_base_donnees_et_objets(installation: dict[str, Any
         assert rapport["base"]["base"] == nom_cible
         assert rapport["data"]["nb"] == 4
         assert rapport["verification"]["ok"] is True, rapport["verification"]["ecarts"]
+
+        # La preuve n'est pas déclarative : le manifeste ne devient « complet »
+        # qu'ici, contrôle à l'appui, et la rétention n'est autorisée qu'ensuite.
+        assert manifeste["complet"] is True, manifeste
+        assert manifeste["protection_globale_prouvee"] is True, manifeste
+        assert manifeste["retention_automatique_autorisee"] is True, manifeste
+        assert json.loads(chemin_manifeste.read_text(encoding="utf-8"))["complet"] is True
 
         # L'arborescence de données est revenue À SA PLACE, octet pour octet.
         fiche = data_cible / "uploads/lots-televerses/jeton-A/fichiers/2026/AFFAIRE-1/fiche.pdf"

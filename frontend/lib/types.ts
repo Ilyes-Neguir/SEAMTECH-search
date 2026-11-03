@@ -55,16 +55,16 @@ export interface ImportCandidate {
 }
 
 export interface ExcelSheetSummary {
-  name: string
-  max_row: number
-  max_column: number
+  sheet_name: string
+  row_count: number
+  column_count: number
   headers: string[]
-  sample_rows: Record<string, string>[]
+  sample_rows: string[][]
 }
 
 export interface ExcelSummary {
   path: string
-  name: string
+  filename: string
   sheet_names: string[]
   total_sheets: number
   sheets: ExcelSheetSummary[]
@@ -116,6 +116,10 @@ export interface ImportResultPayload {
   report_path?: string | null
   report_docx_path?: string | null
   upload_status: string
+  publication_pending?: boolean
+  report_generation_pending?: boolean
+  quarantine?: { deplace: boolean; destination?: string | null; raison?: string; erreur?: string | null } | null
+  cleanup?: { purge: boolean; raison?: string } | null
   warnings: string[]
   files: ImportFileInfo[]
   candidates: ImportCandidate[]
@@ -148,7 +152,7 @@ export interface ImportJobPayload {
   id?: string
   job_id?: string
   import_id?: string
-  status: "pending" | "running" | "completed" | "failed" | "cancelled" | "needs_review" | "needs_confirmation"
+  status: "pending" | "running" | "completed" | "failed" | "cancelled" | "upload_incomplete" | "needs_review" | "needs_confirmation"
   progress: number
   stage: string
   source_path?: string
@@ -164,6 +168,8 @@ export interface ImportJobPayload {
   report_path?: string | null
   report_docx_path?: string | null
   upload_status?: string
+  publication_pending?: boolean
+  report_generation_pending?: boolean
   warnings?: string[]
   files?: ImportFileInfo[]
   candidates?: ImportCandidate[]

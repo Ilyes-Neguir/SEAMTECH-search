@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -17,6 +18,7 @@ from seamtech_search.sauvegarde import (
     restaurer_fichiers_locaux,
     sauver,
 )
+from tests.helpers_postgres_isole import parite_accents_active, url_base_jetable
 
 
 def _pointer_pg_dump(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -198,6 +200,7 @@ def test_sauvegarde_references_fichier_manquant_n_est_pas_complete(
             verrouiller=True,
         )
         assert manifeste["complet"] is False
+        assert manifeste["complet_perimetre_demande"] is False
         assert manifeste["fichiers_locaux"]["nb_manquants"] == 1
         assert manifeste["fichiers_locaux"]["nb_copies"] == 1
     finally:
@@ -227,7 +230,7 @@ def test_aller_retour_fichiers_vers_cible_distincte(
 
     nom, url = _creer_base_jetable()
     nom_cible = f"{nom}_restauree"
-    url_cible = url.replace(f"/{nom}?", f"/{nom_cible}?") if "?" in url else url.rsplit("/", 1)[0] + f"/{nom_cible}"
+    url_cible = url_base_jetable(url, nom_cible)
     index = SearchIndex(tmp_path / "unused.db", url)
     index.initialize()
     index.run_migrations()
@@ -276,7 +279,8 @@ def test_aller_retour_fichiers_vers_cible_distincte(
             inclure_references_base=True,
             verrouiller=True,
         )
-        assert manifeste["complet"] is True
+        assert manifeste["complet"] is False
+        assert manifeste["complet_perimetre_demande"] is True
         assert manifeste["fichiers_locaux"]["nb_copies"] == 1
         assert manifeste["fichiers_locaux"]["copies"][0]["sha256"] == empreinte_origine
 
@@ -297,6 +301,17 @@ def test_aller_retour_fichiers_vers_cible_distincte(
         resultat = verifier(url_cible, manifeste, [archive])
         assert resultat["ok"], resultat.get("ecarts")
 
+        # « GENOIS » doit retrouver « Génois » : la parité des accents exige
+        # l'extension unaccent (postgresql-contrib). Un banc sans contrib
+        # dégrade vers « simple » — ce n'est pas une régression produit, et
+        # l'écart est NOMMÉ ici plutôt que silencieux. La contrepartie qui
+        # interdit de s'en contenter : tests/test_indexer_accent_parity.py,
+        # rouge si une CI complète empruntait le chemin dégradé.
+        if not parite_accents_active(url_cible):
+            pytest.skip(
+                "parité des accents indisponible : l'extension unaccent "
+                "(postgresql-contrib) est absente de ce banc"
+            )
         index_cible = SearchIndex(tmp_path / "unused-cible.db", url_cible)
         try:
             reponse = rechercher_fiches(index_cible, requete="GENOIS")
@@ -358,7 +373,7 @@ def test_aller_retour_objets_minio_sources_indisponibles(
 
     nom, url = _creer_base_jetable()
     nom_cible = f"{nom}_obj"
-    url_cible = url.replace(f"/{nom}?", f"/{nom_cible}?") if "?" in url else url.rsplit("/", 1)[0] + f"/{nom_cible}"
+    url_cible = url_base_jetable(url, nom_cible)
     index = SearchIndex(tmp_path / "unused.db", url)
     index.initialize()
     index.run_migrations()
@@ -421,7 +436,8 @@ def test_aller_retour_objets_minio_sources_indisponibles(
         assert manifeste["fichiers_locaux"]["nb_manquants"] == 0
         assert manifeste["objets_s3"]["nb_copies"] >= 1
         assert manifeste["objets_s3"]["nb_manquants"] == 0
-        assert manifeste["complet"] is True
+        assert manifeste["complet"] is False
+        assert manifeste["complet_perimetre_demande"] is True
 
         local.unlink()
         assert client.delete_file(cle)
@@ -452,3 +468,513 @@ def test_aller_retour_objets_minio_sources_indisponibles(
         index.close()
         _supprimer_base_jetable(nom)
         _supprimer_base_jetable(nom_cible)
+
+
+def test_objet_d_un_autre_bucket_ne_peut_pas_etre_sauvegarde_comme_le_bon(tmp_path: Path) -> None:
+    from seamtech_search.sauvegarde import copier_objets_s3
+
+    class Client:
+        bucket_name = 'bucket-cible'
+        appels = 0
+
+        def download_file(self, cle: str, cible: Path) -> None:
+            self.appels += 1
+            cible.write_bytes(b'objet mais mauvais bucket')
+
+    client = Client()
+    refs = {'documents': [{'id': 1, 'object_key': 'cle-commune', 'object_bucket': 'autre-bucket'}]}
+    resultat = copier_objets_s3(refs, client, tmp_path)
+    assert client.appels == 0
+    assert resultat['nb_copies'] == 0
+    assert resultat['nb_manquants'] == 1
+
+
+def test_copie_objet_refuse_lien_sortant_du_bundle(tmp_path: Path) -> None:
+    from seamtech_search.sauvegarde import copier_objets_s3
+
+    class Client:
+        def download_file(self, cle: str, cible: Path) -> None:
+            cible.write_bytes(b'synthetique')
+
+    bundle = tmp_path / 'bundle'
+    (bundle / 'objets').mkdir(parents=True)
+    externe = tmp_path / 'externe'
+    externe.mkdir()
+    (bundle / 'objets' / '1').symlink_to(externe, target_is_directory=True)
+    refs = {'documents': [{'id': 1, 'object_key': 'cle'}]}
+    with pytest.raises(SauvegardeError):
+        copier_objets_s3(refs, Client(), bundle)
+    assert not list(externe.iterdir())
+
+
+def test_references_sans_source_signalees_mais_repertoire_ignore(tmp_path: Path) -> None:
+    refs = {'documents': [
+        {'id': 1, 'path': '', 'object_key': '', 'is_dir': False},
+        {'id': 2, 'path': 's3://bucket/sans-cle', 'object_key': '', 'is_dir': False},
+        {'id': 3, 'path': str(tmp_path), 'object_key': '', 'is_dir': True},
+    ]}
+    resultat = copier_fichiers_locaux(refs, tmp_path / 'bundle')
+    assert resultat['nb_copies'] == 0
+    assert {m['id'] for m in resultat['manquants']} == {1, 2}
+
+
+def test_copie_de_sauvegarde_tronquee_ne_peut_pas_etre_dite_valide(tmp_path, monkeypatch):
+    from seamtech_search import sauvegarde
+
+    source = tmp_path / "source"
+    source.write_bytes(b"contenu-synthetique-complet")
+    bundle = tmp_path / "bundle"
+    refs = {"documents": [{"id": 1, "path": str(source), "name": "source"}]}
+    def copier2_tronque(_source, cible, **_kwargs):
+        Path(cible).write_bytes(b"contenu")
+        return cible
+    def copier_flux_tronque(entree, sortie, **_kwargs):
+        sortie.write(entree.read(7))
+    monkeypatch.setattr(sauvegarde.shutil, "copy2", copier2_tronque)
+    monkeypatch.setattr(sauvegarde.shutil, "copyfileobj", copier_flux_tronque)
+    with pytest.raises(SauvegardeError, match="empreinte"):
+        copier_fichiers_locaux(refs, bundle)
+    assert not (bundle / "fichiers" / "1" / "source").exists()
+
+
+def test_copie_de_sauvegarde_ne_remplace_pas_un_fichier_existant(tmp_path):
+    source = tmp_path / "source"
+    source.write_bytes(b"nouvelle-copie")
+    bundle = tmp_path / "bundle"
+    cible = bundle / "fichiers" / "1" / "source"
+    cible.parent.mkdir(parents=True)
+    cible.write_bytes(b"temoin-preexistant")
+    refs = {"documents": [{"id": 1, "path": str(source), "name": "source"}]}
+    with pytest.raises(SauvegardeError):
+        copier_fichiers_locaux(refs, bundle)
+    assert cible.read_bytes() == b"temoin-preexistant"
+
+
+def test_copie_de_sauvegarde_refuse_source_modifiee_apres_copie(tmp_path, monkeypatch):
+    from seamtech_search import sauvegarde
+
+    source = tmp_path / "source"
+    source.write_bytes(b"contenu-original")
+    bundle = tmp_path / "bundle"
+    refs = {"documents": [{"id": 1, "path": str(source), "name": "source"}]}
+    copier = sauvegarde.shutil.copyfileobj
+    def copier_et_muter(entree, sortie, **kwargs):
+        copier(entree, sortie, **kwargs)
+        source.write_bytes(b"contenu-modifie!")
+    monkeypatch.setattr(sauvegarde.shutil, "copyfileobj", copier_et_muter)
+    with pytest.raises(SauvegardeError, match="source modifiée"):
+        copier_fichiers_locaux(refs, bundle)
+    assert source.read_bytes() == b"contenu-modifie!"
+
+
+@pytest.mark.parametrize("lien_parent", [False, True])
+def test_sauvegarde_refuse_source_via_lien_symbolique(tmp_path, lien_parent):
+    externe = tmp_path / "externe"
+    externe.mkdir()
+    (externe / "piece").write_bytes(b"exterieur-synthetique")
+    if lien_parent:
+        lien = tmp_path / "lien"
+        lien.symlink_to(externe, target_is_directory=True)
+        source = lien / "piece"
+    else:
+        source = tmp_path / "lien"
+        source.symlink_to(externe / "piece")
+    refs = {"documents": [{"id": 1, "path": str(source), "name": "piece"}]}
+    bundle = tmp_path / "bundle"
+    with pytest.raises(SauvegardeError):
+        copier_fichiers_locaux(refs, bundle)
+    assert not (bundle / "fichiers" / "1" / "piece").exists()
+    assert (externe / "piece").read_bytes() == b"exterieur-synthetique"
+
+
+@pytest.mark.parametrize("substitution", ["lien", "fichier"])
+def test_sauvegarde_detecte_source_substituee_apres_ouverture(tmp_path, monkeypatch, substitution):
+    from seamtech_search import sauvegarde
+
+    source = tmp_path / "source"
+    source.write_bytes(b"octets-communs")
+    externe = tmp_path / "externe"
+    externe.write_bytes(b"octets-communs")
+    refs = {"documents": [{"id": 1, "path": str(source), "name": "source"}]}
+    bundle = tmp_path / "bundle"
+    ecrire = sauvegarde._ecrire_copie_confinee
+    def remplacer(flux, cible, empreinte):
+        source.rename(tmp_path / "ancien")
+        if substitution == "lien":
+            source.symlink_to(externe)
+        else:
+            source.write_bytes(b"octets-communs")
+        return ecrire(flux, cible, empreinte)
+    monkeypatch.setattr(sauvegarde, "_ecrire_copie_confinee", remplacer)
+    with pytest.raises(SauvegardeError):
+        copier_fichiers_locaux(refs, bundle)
+    assert externe.read_bytes() == b"octets-communs"
+    copie = bundle / "fichiers" / "1" / "source"
+    if copie.exists():
+        assert copie.read_bytes() == b"octets-communs"
+
+
+def test_source_contenant_parent_et_lien_ne_change_pas_silencieusement_de_cible(tmp_path):
+    base = tmp_path / "base"
+    base.mkdir()
+    externe = tmp_path / "externe"
+    (externe / "dossier").mkdir(parents=True)
+    (base / "piece").write_bytes(b"mauvaise-cible")
+    (externe / "piece").write_bytes(b"source-attendue")
+    (base / "lien").symlink_to(externe / "dossier", target_is_directory=True)
+    source = base / "lien" / ".." / "piece"
+    assert source.read_bytes() == b"source-attendue"
+    refs = {"documents": [{"id": 1, "path": str(source), "name": "piece"}]}
+    with pytest.raises(SauvegardeError):
+        copier_fichiers_locaux(refs, tmp_path / "bundle")
+    assert not (tmp_path / "bundle" / "fichiers" / "1" / "piece").exists()
+
+
+def test_telechargement_objet_ne_remplace_pas_copie_existante(tmp_path):
+    from seamtech_search.sauvegarde import copier_objets_s3
+
+    cible = tmp_path / "bundle" / "objets" / "1" / "piece"
+    cible.parent.mkdir(parents=True)
+    cible.write_bytes(b"temoin")
+    class Client:
+        def head_object(self, _cle):
+            from tests.test_sauvegarde_objet_checksum import entete
+            return entete(b"autre")
+        def download_file(self, _cle, destination):
+            destination.write_bytes(b"autre")
+    with pytest.raises(SauvegardeError):
+        copier_objets_s3({"documents": [{"id": 1, "object_key": "piece"}]}, Client(), tmp_path / "bundle")
+    assert cible.read_bytes() == b"temoin"
+
+
+def test_telechargement_objet_refuse_parent_substitue(tmp_path):
+    from seamtech_search.sauvegarde import copier_objets_s3
+
+    bundle = tmp_path / "bundle"
+    externe = tmp_path / "externe"
+    externe.mkdir()
+    temoin = externe / "piece"
+    temoin.write_bytes(b"temoin")
+    dossier_cible = bundle / "objets" / "1"
+    class Client:
+        def head_object(self, _cle):
+            from tests.test_sauvegarde_objet_checksum import entete
+            return entete(b"substitution")
+        def download_file(self, _cle, destination):
+            if dossier_cible.exists():
+                dossier_cible.rename(bundle / "objets" / "ancien")
+            dossier_cible.parent.mkdir(parents=True, exist_ok=True)
+            dossier_cible.symlink_to(externe, target_is_directory=True)
+            destination.write_bytes(b"substitution")
+    with pytest.raises(SauvegardeError):
+        copier_objets_s3({"documents": [{"id": 1, "object_key": "piece"}]}, Client(), bundle)
+    assert temoin.read_bytes() == b"temoin"
+
+
+def test_telechargement_objet_echec_ne_laisse_pas_de_copie_partielle(tmp_path):
+    from seamtech_search.sauvegarde import copier_objets_s3
+
+    class Client:
+        def head_object(self, _cle):
+            return {"ContentLength": 7, "ETag": '"identite"'}
+        def download_file(self, _cle, destination):
+            destination.write_bytes(b"partiel")
+            raise OSError("erreur synthetique")
+    bundle = tmp_path / "bundle"
+    resultat = copier_objets_s3({"documents": [{"id": 1, "object_key": "piece"}]}, Client(), bundle)
+    assert resultat["nb_manquants"] == 1 and resultat["nb_copies"] == 0
+    assert not (bundle / "objets" / "1" / "piece").exists()
+
+
+def test_telechargement_objet_chec_temporaire_ne_divulgue_pas_le_chemin(tmp_path, monkeypatch):
+    from seamtech_search.sauvegarde import copier_objets_s3
+
+    dossier = tmp_path / "chemin-confidentiel"
+    dossier.write_bytes(b"pas-un-dossier")
+    monkeypatch.setenv("SEAMTECH_SAUVEGARDE_TMP", str(dossier))
+    class Client:
+        def head_object(self, _cle):
+            return {"ContentLength": 1, "ETag": '"identite"'}
+        def download_file(self, _cle, _destination):
+            pytest.fail("aucun appel sans temporaire disponible")
+    with pytest.raises(SauvegardeError) as erreur:
+        copier_objets_s3({"documents": [{"id": 1, "object_key": "piece"}]}, Client(), tmp_path / "bundle")
+    assert "chemin-confidentiel" not in str(erreur.value)
+
+
+def test_telechargement_objet_interruption_nettoie_staging(tmp_path, monkeypatch):
+    from seamtech_search.sauvegarde import copier_objets_s3
+
+    travail = tmp_path / "travail"
+    travail.mkdir()
+    monkeypatch.setenv("SEAMTECH_SAUVEGARDE_TMP", str(travail))
+    class Client:
+        def head_object(self, _cle):
+            return {"ContentLength": 7, "ETag": '"identite"'}
+        def download_file(self, _cle, destination):
+            destination.write_bytes(b"partiel")
+            raise KeyboardInterrupt
+    with pytest.raises(KeyboardInterrupt):
+        copier_objets_s3({"documents": [{"id": 1, "object_key": "piece"}]}, Client(), tmp_path / "bundle")
+    assert not list(travail.iterdir())
+    assert not (tmp_path / "bundle" / "objets" / "1" / "piece").exists()
+
+
+def test_copie_objet_refuse_telechargement_tronque_silencieux(tmp_path):
+    from seamtech_search.sauvegarde import copier_objets_s3
+
+    class Client:
+        def head_object(self, _cle):
+            return {"ContentLength": 12, "ETag": '"identite"'}
+        def download_file(self, _cle, destination):
+            destination.write_bytes(b"court")
+    bundle = tmp_path / "bundle"
+    resultat = copier_objets_s3({"documents": [{"id": 1, "object_key": "piece"}]}, Client(), bundle)
+    assert resultat["nb_manquants"] == 1 and resultat["nb_copies"] == 0
+    assert not (bundle / "objets" / "1" / "piece").exists()
+
+
+def test_copie_objet_refuse_changement_identite_pendant_transfert(tmp_path):
+    from seamtech_search.sauvegarde import copier_objets_s3
+
+    class Client:
+        appels = 0
+        def head_object(self, _cle):
+            self.appels += 1
+            return {"ContentLength": 5, "ETag": f'"version-{self.appels}"'}
+        def download_file(self, _cle, destination):
+            destination.write_bytes(b"objet")
+    client = Client()
+    bundle = tmp_path / "bundle"
+    resultat = copier_objets_s3({"documents": [{"id": 1, "object_key": "piece"}]}, client, bundle)
+    assert client.appels == 2
+    assert resultat["nb_manquants"] == 1 and resultat["nb_copies"] == 0
+    assert not (bundle / "objets" / "1" / "piece").exists()
+
+
+def test_copie_objet_refuse_source_sans_metadonnees_verifiables(tmp_path):
+    from seamtech_search.sauvegarde import copier_objets_s3
+
+    class Client:
+        def download_file(self, _cle, _destination):
+            pytest.fail("pas de téléchargement sans métadonnées de source")
+    resultat = copier_objets_s3({"documents": [{"id": 1, "object_key": "piece"}]}, Client(), tmp_path / "bundle")
+    assert resultat["nb_manquants"] == 1 and resultat["nb_copies"] == 0
+
+
+def test_copie_objet_refuse_version_changee_meme_etag(tmp_path):
+    from seamtech_search.sauvegarde import copier_objets_s3
+
+    class Client:
+        appels = 0
+        def head_object(self, _cle):
+            self.appels += 1
+            return {"ContentLength": 5, "ETag": '"identique"', "VersionId": f"v{self.appels}"}
+        def download_file(self, _cle, destination, *, version_id):
+            assert version_id == "v1"
+            destination.write_bytes(b"objet")
+    bundle = tmp_path / "bundle"
+    client = Client()
+    resultat = copier_objets_s3({"documents": [{"id": 1, "object_key": "piece"}]}, client, bundle)
+    assert client.appels == 2
+    assert resultat["nb_manquants"] == 1 and resultat["nb_copies"] == 0
+    assert not (bundle / "objets" / "1" / "piece").exists()
+
+
+def test_copie_objet_refuse_corruption_meme_taille_et_etag(tmp_path):
+    from seamtech_search.sauvegarde import copier_objets_s3
+
+    class Client:
+        def head_object(self, _cle):
+            return {"ContentLength": 5, "ETag": '"identique"'}
+        def download_file(self, _cle, destination):
+            destination.write_bytes(b"autre")  # source distante synthétique : b'vraie'
+    resultat = copier_objets_s3({"documents": [{"id": 1, "object_key": "piece"}]}, Client(), tmp_path / "bundle")
+    assert resultat["nb_manquants"] == 1 and resultat["nb_copies"] == 0
+
+
+@pytest.mark.parametrize("entete", [
+    {}, {"ContentLength": True, "ETag": "e"}, {"ContentLength": -1, "ETag": "e"},
+    {"ContentLength": 0, "ETag": ""}, {"ContentLength": 0, "ETag": "e", "VersionId": 5},
+])
+def test_copie_objet_refuse_entete_inexploitable(tmp_path, entete):
+    from seamtech_search.sauvegarde import copier_objets_s3
+
+    class Client:
+        def head_object(self, _cle):
+            return entete
+        def download_file(self, _cle, _destination):
+            pytest.fail("téléchargement interdit avec métadonnées invalides")
+    resultat = copier_objets_s3({"documents": [{"id": 1, "object_key": "piece"}]}, Client(), tmp_path / "bundle")
+    assert resultat["nb_manquants"] == 1 and resultat["nb_copies"] == 0
+
+
+def test_copie_objet_refuse_echec_de_seconde_verification(tmp_path):
+    from seamtech_search.sauvegarde import copier_objets_s3
+
+    class Client:
+        appels = 0
+        def head_object(self, _cle):
+            self.appels += 1
+            if self.appels == 2:
+                raise OSError("secret-synthetique")
+            return {"ContentLength": 5, "ETag": "identite"}
+        def download_file(self, _cle, destination):
+            destination.write_bytes(b"objet")
+    bundle = tmp_path / "bundle"
+    resultat = copier_objets_s3({"documents": [{"id": 1, "object_key": "piece"}]}, Client(), bundle)
+    assert resultat["nb_manquants"] == 1 and resultat["nb_copies"] == 0
+    assert "secret-synthetique" not in str(resultat)
+    assert not (bundle / "objets" / "1" / "piece").exists()
+
+
+def test_copie_objet_epingle_version_durant_aba(tmp_path):
+    from seamtech_search.sauvegarde import copier_objets_s3
+
+    class Client:
+        def head_object(self, _cle):
+            from tests.test_sauvegarde_objet_checksum import entete
+            return {**entete(b"original"), "VersionId": "version-originale"}
+        def download_file(self, _cle, destination, *, version_id=None):
+            # La version courante a changé pendant le GET avant un retour ABA.
+            destination.write_bytes(b"original" if version_id == "version-originale" else b"intrus!!")
+    resultat = copier_objets_s3({"documents": [{"id": 1, "object_key": "piece"}]}, Client(), tmp_path)
+    assert resultat["nb_copies"] == 1
+    assert (tmp_path / resultat["copies"][0]["path_relatif"]).read_bytes() == b"original"
+
+
+def test_copie_objet_refuse_repli_si_client_sans_version(tmp_path):
+    from seamtech_search.sauvegarde import copier_objets_s3
+
+    class Client:
+        def head_object(self, _cle):
+            return {"ContentLength": 8, "ETag": '"stable"', "VersionId": "version-originale"}
+        def download_file(self, _cle, destination):
+            destination.write_bytes(b"intrus!!")
+    resultat = copier_objets_s3({"documents": [{"id": 1, "object_key": "piece"}]}, Client(), tmp_path)
+    assert resultat["nb_copies"] == 0 and resultat["nb_manquants"] == 1
+    assert not (tmp_path / "objets" / "1" / "piece").exists()
+
+
+def test_copie_objet_version_null_n_est_pas_epinglee(tmp_path):
+    from seamtech_search.sauvegarde import copier_objets_s3
+
+    class Client:
+        def head_object(self, _cle):
+            from tests.test_sauvegarde_objet_checksum import entete
+            return {**entete(b"original"), "VersionId": "null"}
+        def download_file(self, _cle, destination):
+            destination.write_bytes(b"original")
+    resultat = copier_objets_s3({"documents": [{"id": 1, "object_key": "piece"}]}, Client(), tmp_path)
+    assert resultat["nb_copies"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Preuve d'identité des objets copiés : hiérarchie explicite, jamais implicite
+# ---------------------------------------------------------------------------
+
+
+def _fournisseur_objet(octets: bytes, *, etag: str | None = None, checksum_sha256: bytes | None = None,
+                       type_checksum: str | None = None):
+    """Fournisseur minimal : en-têtes tels que les renvoie un bucket réel.
+
+    - ``etag`` None → ETag « contenu » (MD5, dépôt en une seule partie) ;
+    - ``checksum_sha256`` → SHA-256 plein objet, si le fournisseur le calcule.
+    """
+    import base64 as _b64
+    import hashlib as _hl
+
+    entete = {"ContentLength": len(octets)}
+    entete["ETag"] = etag if etag is not None else f'"{_hl.md5(octets).hexdigest()}"'
+    if checksum_sha256 is not None:
+        entete["ChecksumSHA256"] = _b64.b64encode(checksum_sha256).decode()
+        entete["ChecksumType"] = type_checksum or "FULL_OBJECT"
+
+    class Client:
+        def head_object(self, _cle):
+            return dict(entete)
+
+        def download_file(self, _cle, destination):
+            destination.write_bytes(octets)
+
+    return Client()
+
+
+def _copier_objet(tmp_path: Path, octets: bytes, document: dict, **fournisseur) -> dict:
+    from seamtech_search.sauvegarde import copier_objets_s3
+
+    return copier_objets_s3(
+        {"documents": [{"id": 1, "object_key": "piece", **document}]},
+        _fournisseur_objet(octets, **fournisseur),
+        tmp_path / "bundle",
+    )
+
+
+def test_preuve_identite_etag_md5_suffit_sans_checksum_fournisseur(tmp_path: Path) -> None:
+    """ETag « contenu » : condensé calculé par le fournisseur au dépôt."""
+    octets = b"octets de la piece a sauvegarder"
+    resultat = _copier_objet(tmp_path, octets, {})
+    assert resultat["nb_copies"] == 1 and resultat["nb_manquants"] == 0
+    assert resultat["copies"][0]["verification"] == "etag_md5_fournisseur"
+    assert resultat["copies"][0]["sha256"] == hashlib.sha256(octets).hexdigest()
+
+
+def test_preuve_identite_etag_multipart_ne_prouve_rien(tmp_path: Path) -> None:
+    """Un ETag multipart ne prouve pas les octets : refus, pas de copie."""
+    import hashlib as _hl
+
+    octets = b"objet depose en plusieurs parties"
+    etag = f'"{_hl.md5(octets).hexdigest()}-2"'
+    resultat = _copier_objet(tmp_path, octets, {}, etag=etag)
+    assert resultat["nb_copies"] == 0 and resultat["nb_manquants"] == 1
+    assert resultat["manquants"][0]["erreur"] == "integrite_source_non_prouvee"
+
+
+def test_preuve_identite_etag_en_desaccord_avec_les_octets_est_refusee(tmp_path: Path) -> None:
+    """ETag d'un autre contenu : la copie ne peut pas être déclarée fidèle."""
+    import hashlib as _hl
+
+    resultat = _copier_objet(tmp_path, b"vrais octets", {}, etag=f'"{_hl.md5(b"autres").hexdigest()}"')
+    assert resultat["nb_copies"] == 0
+    assert resultat["manquants"][0]["erreur"] == "integrite_source_non_prouvee"
+
+
+def test_preuve_identite_catalogue_acceptee_si_etag_multipart(tmp_path: Path) -> None:
+    """À défaut d'ETag contenu, l'identité connue du snapshot PostgreSQL."""
+    import hashlib as _hl
+
+    octets = b"objet connu du catalogue"
+    resultat = _copier_objet(
+        tmp_path,
+        octets,
+        {"source_sha256": _hl.sha256(octets).hexdigest()},
+        etag=f'"{_hl.md5(octets).hexdigest()}-3"',
+    )
+    assert resultat["nb_copies"] == 1
+    assert resultat["copies"][0]["verification"] == "identite_catalogue_source_sha256"
+
+
+def test_preuve_identite_checksum_fournisseur_prime_sur_etag(tmp_path: Path) -> None:
+    """Le SHA-256 plein objet du fournisseur reste la preuve la plus forte."""
+    import hashlib as _hl
+
+    octets = b"objet avec checksum plein objet"
+    resultat = _copier_objet(
+        tmp_path,
+        octets,
+        {},
+        etag='"' + _hl.md5(b"etag errone").hexdigest() + '"',
+        checksum_sha256=_hl.sha256(octets).digest(),
+    )
+    assert resultat["nb_copies"] == 1
+    assert resultat["copies"][0]["verification"] == "checksum_sha256_fournisseur_full_object"
+
+
+def test_preuve_identite_checksum_fournisseur_en_desaccord_est_refusee(tmp_path: Path) -> None:
+    """Un checksum fournisseur contraire l'emporte sur un ETag concordant."""
+    import hashlib as _hl
+
+    octets = b"objet dont le checksum serveur est faux"
+    resultat = _copier_objet(tmp_path, octets, {}, checksum_sha256=_hl.sha256(b"autre chose").digest())
+    assert resultat["nb_copies"] == 0
+    assert resultat["manquants"][0]["erreur"] == "integrite_source_non_prouvee"

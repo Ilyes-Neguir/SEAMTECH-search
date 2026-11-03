@@ -165,7 +165,9 @@ def _annonce(niveau: str, titre: str, message: str) -> None:
     lisibles. Un échec de ce test doit donc dire POURQUOI dans une annotation,
     plutôt que de renvoyer le lecteur vers un log inaccessible.
     """
-    propre = " ".join(str(message).split())[:1500]
+    # 1500 caractères tronquaient les journaux au point de masquer la cause ;
+    # la limite d'une annotation GitHub est de 64 Kio, 8000 reste très en deçà.
+    propre = " ".join(str(message).split())[:8000]
     print(f"::{niveau} title={titre}::{propre}")
 
 
@@ -178,6 +180,134 @@ def _diagnostic(motif: str) -> str:
         journaux = _compose("logs", "--no-color", "--tail", "40", service, timeout=120)
         morceaux.append(f"--- logs {service} ---\n{journaux.stdout}{journaux.stderr}")
     return "\n".join(morceaux)
+
+
+def _liste_conteneur(service: str, chemin: str) -> tuple[bool, list[dict] | None, int | None]:
+    """Liste un dossier DEPUIS un conteneur : (existe, entrées, mode).
+
+    Le faire dans le conteneur est la seule lecture fiable : les dossiers de
+    rapports sont en 0700, donc illisibles par un hôte d'un autre UID.
+    """
+    # Un script multiligne, pas un one-liner : `try:` ne peut PAS suivre un
+    # point-virgule (SyntaxError). La méprise coûte un run CI entier : la
+    # sonde échouait, stdout restait vide, et le diagnostic concluait
+    # « le web ne voit rien » alors qu'il ne s'était rien passé du tout.
+    code = (
+        "import json, os, sys\n"
+        "p = sys.argv[1]\n"
+        "try:\n"
+        "    mode = os.stat(p).st_mode & 0o777\n"
+        "    entrees = [{'nom': n, 'taille': os.path.getsize(os.path.join(p, n))}\n"
+        "               for n in sorted(os.listdir(p))]\n"
+        "    print(json.dumps({'existe': True, 'contenu': entrees, 'mode': mode}))\n"
+        "except FileNotFoundError:\n"
+        "    print(json.dumps({'existe': False, 'contenu': None, 'mode': None}))\n"
+        "except PermissionError:\n"
+        "    print(json.dumps({'existe': None, 'contenu': None, 'mode': None, 'erreur': 'PermissionError'}))\n"
+    )
+    resultat = _exec(service, "python", "-c", code, chemin)
+    try:
+        donnees = json.loads(resultat.stdout.strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        # Une sonde illisible n'est pas un « rien » : c'est un défaut de
+        # MESURE, et il doit être visible — sinon le diagnostic conclut à tort
+        # que le conteneur ne voit pas les fichiers.
+        _annonce(
+            "warning",
+            "compose-sonde-illisible",
+            f"sonde {service} sur {chemin} : rc={resultat.returncode} "
+            f"stdout={resultat.stdout[:400]!r} stderr={resultat.stderr[:400]!r}",
+        )
+        return False, None, None
+    return bool(donnees.get("existe")), donnees.get("contenu"), donnees.get("mode")
+
+
+def _observation_hote(chemin: Path) -> dict:
+    """Ce que l'HÔTE voit, DIT — jamais avalé par un glob silencieux.
+
+    ``Path.rglob`` ignore les refus d'accès : un dossier en 0700 apparaît alors
+    comme VIDE. C'est exactement ce qui a fait diagnostiquer à tort un volume
+    non partagé. On relève donc explicitement la permission, et on la nomme.
+    """
+    try:
+        mode = chemin.stat().st_mode & 0o777
+    except FileNotFoundError:
+        return {"chemin": str(chemin), "existe": False}
+    except PermissionError:
+        return {"chemin": str(chemin), "existe": None, "erreur": "stat_refuse"}
+    try:
+        contenu = sorted(entree.name for entree in chemin.iterdir())
+        erreur = None
+    except PermissionError:
+        contenu = None
+        erreur = "parcours_refuse"
+    return {
+        "chemin": str(chemin),
+        "existe": True,
+        "mode": oct(mode),
+        "contenu": contenu,
+        "erreur": erreur,
+        # Un refus n'est pas une anomalie : les rapports sont confinés à
+        # l'application (0700). L'hôte les atteint par HTTP, pas par le disque.
+        "refus_attendu": erreur is not None and (mode & 0o077) == 0,
+    }
+
+
+def _diagnostic_rapports_vides(
+    job_id: str, job: dict, donnees_hote: Path, rapports_hote: Path, rapports_conteneur: Path
+) -> str:
+    """Pourquoi les rapports du worker ne sont-ils pas publiés ?
+
+    Causes possibles, départagées par preuve : le worker écrit ailleurs que
+    prévu, le volume n'est pas partagé pour CE chemin, la publication n'a pas
+    abouti, ou le dossier est confiné (0700) et illisible depuis l'hôte — ce
+    qui n'est PAS un défaut mais doit être dit. On interroge les DEUX
+    conteneurs et l'hôte séparément.
+    """
+    sonde = _exec(
+        "worker",
+        "python",
+        "-c",
+        (
+            "import json,os,sys;"
+            "from seamtech_search.config import AppConfig;"
+            "from seamtech_search.import_pipeline import _report_dir_for;"
+            "c=AppConfig.load('/app/config/config.json');"
+            "d=_report_dir_for({}, c, sys.argv[1]);"
+            "print(json.dumps({'database_path': str(c.database_path), 'report_dir': str(d),"
+            " 'existe': os.path.isdir(str(d)),"
+            " 'contenu': sorted(os.listdir(str(d))) if os.path.isdir(str(d)) else None}))"
+        ),
+        job_id,
+    )
+    resultat_job = job.get("result") or {}
+    return json.dumps(
+        {
+            "hote": str(rapports_hote),
+            "observation_hote": _observation_hote(rapports_hote),
+            "observation_hote_racine": _observation_hote(donnees_hote / "reports"),
+            "vu_par_web": _liste_conteneur("web", str(rapports_conteneur))[1],
+            "vu_par_worker": _liste_conteneur("worker", str(rapports_conteneur))[1],
+            "sonde_worker": f"{sonde.stdout.strip()} {sonde.stderr.strip()}"[:2000],
+            "statut_job": job.get("status"),
+            "statut_import": resultat_job.get("status"),
+            "erreur": resultat_job.get("error"),
+            "upload_status": resultat_job.get("upload_status"),
+            "publication_pending": resultat_job.get("publication_pending"),
+            "artefacts": [
+                {
+                    "role": a.get("role"),
+                    "status": a.get("status"),
+                    "verified": a.get("verified"),
+                    "key": a.get("key"),
+                    "erreur": a.get("error"),
+                }
+                for a in (resultat_job.get("artifacts") or [])
+            ],
+        },
+        ensure_ascii=False,
+        default=str,
+    )[:3000]
 
 
 def _attendre(condition, delai: float, message: str):  # noqa: ANN001, ANN201
@@ -450,20 +580,56 @@ def _scenario_partage(tmp_path: Path) -> None:
     rapports_hote = donnees_hote / "reports" / job_id  # ./data est monté sur /app/data
     rapports_conteneur = donnees_conteneur / "reports" / job_id
     assert rapports_conteneur.name == job_id and str(rapports_conteneur).startswith("/app/data/")
-    assert rapports_hote.exists(), f"aucun rapport pour {job_id} sous {rapports_hote}"
-    fichiers_rapport = [f for f in sorted(rapports_hote.rglob("*")) if f.is_file()]
-    assert fichiers_rapport, f"dossier de rapports vide : {rapports_hote}"
-    assert all(f.stat().st_size > 0 for f in fichiers_rapport), "rapport vide"
-    # …et le processus WEB les voit au même endroit.
-    vu_par_web = _exec(
-        "web",
-        "python",
-        "-c",
-        "import pathlib,sys; p=pathlib.Path(sys.argv[1]); print(pathlib.Path(sys.argv[1]).exists(), sorted(x.name for x in p.iterdir()))",
-        f"/app/data/reports/{job_id}",
+
+    # Le dossier de rapports d'un import est créé en 0700 (confinement : les
+    # rapports portent des données extraites). L'hôte, qui n'est PAS le
+    # propriétaire, ne peut donc pas le parcourir — et `Path.rglob` AVALAIT ce
+    # refus en silence, ce qui faisait croire à un « dossier vide » (des heures
+    # de diagnostic pour une PermissionError invisible). La preuve de partage
+    # se fait donc DANS les conteneurs, par le processus WEB : c'est exactement
+    # la propriété revendiquée (le web voit les fichiers du worker).
+    def _rapports_publies() -> list[dict] | None:
+        vu, contenu, _ = _liste_conteneur("web", str(rapports_conteneur))
+        if not vu or not contenu:
+            return None
+        return [entree for entree in contenu if entree["nom"].endswith((".pdf", ".docx"))] or None
+
+    # Le DOSSIER peut exister avant que les fichiers n'y soient publiés : la
+    # publication se fait par renommage depuis un dossier temporaire interne.
+    # Fenêtre BORNÉE (jamais un « sleep » silencieux) + diagnostic si rien
+    # n'apparaît : le partage de volume reste exigé.
+    fichiers_rapport = _rapports_publies() or _attendre(
+        _rapports_publies, 30,
+        "aucun rapport publié dans le volume partagé : "
+        + _diagnostic_rapports_vides(job_id, job, donnees_hote, rapports_hote, rapports_conteneur),
     )
-    assert vu_par_web.returncode == 0 and vu_par_web.stdout.startswith("True"), (
-        f"le web ne voit pas les rapports du worker :\n{vu_par_web.stdout}\n{vu_par_web.stderr}"
+    noms_rapports = {entree["nom"] for entree in fichiers_rapport}
+    assert {"technical-report.pdf", "technical-report.docx"} <= noms_rapports, (
+        f"rapports attendus absents du volume partagé : {sorted(noms_rapports)}"
+    )
+    assert all(entree["taille"] > 0 for entree in fichiers_rapport), (
+        f"rapport vide : {fichiers_rapport}"
+    )
+    # Confinement : les rapports ne sont lisibles que par l'application.
+    vu_web, _, mode_web = _liste_conteneur("web", str(rapports_conteneur))
+    assert vu_web and mode_web is not None, "impossible de relever les droits du dossier de rapports"
+    assert mode_web & 0o077 == 0, (
+        f"le dossier des rapports est accessible aux autres (mode {oct(mode_web)}) : "
+        "les données extraites ne doivent pas être lisibles par tout le monde"
+    )
+    # Le WORKER voit ses propres rapports au même endroit (même montage).
+    vu_worker, contenu_worker, _ = _liste_conteneur("worker", str(rapports_conteneur))
+    assert vu_worker and {"technical-report.pdf", "technical-report.docx"} <= {
+        entree["nom"] for entree in contenu_worker or []
+    }, f"le worker ne voit pas ses propres rapports : {contenu_worker}"
+    # Observation côté HÔTE, jamais silencieuse : un refus de permission est
+    # ATTENDU (confinement) et doit être dit, pas avalé par un glob.
+    observation_hote = _observation_hote(rapports_hote)
+    _annonce(
+        "notice",
+        "compose-partage-rapports-hote",
+        "rapports vus par le web : " + ", ".join(sorted(noms_rapports))
+        + f" | hôte : {json.dumps(observation_hote, ensure_ascii=False)}",
     )
 
     # b) Le rapport est téléchargeable par HTTP (donc depuis un autre poste

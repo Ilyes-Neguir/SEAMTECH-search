@@ -38,6 +38,8 @@ export interface FicheFileEntry {
   paliers: Paliers // comptes ORDINAUX — jamais une « confiance moyenne »
   confiance_min: number | null
   a_anomalies: boolean
+  orientations_pdf_mixtes?: boolean
+  orientations_pdf_non_verifiees?: boolean
   // Révision AFFICHÉE de la fiche dans la file : la validation en lot la
   // renvoie pour que chaque décision porte sur l'état réellement sélectionné.
   // Absente sur un backend antérieur — l'écran la traite alors comme « pas de

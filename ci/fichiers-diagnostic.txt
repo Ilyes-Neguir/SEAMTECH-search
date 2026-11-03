@@ -1,0 +1,23 @@
+# Fichiers rejoués SEULS par le job de diagnostic Windows.
+#
+# Pourquoi une liste à part : ce sont les fichiers qui concentrent les échecs
+# non élucidés de la suite « sans service ». Les rejouer seuls, avec
+# --tb=long, donne l'assertion fautive de chaque test — une minute par
+# fichier, au lieu de supposer. La liste est dans un fichier pour être
+# modifiée sans retoucher le workflow.
+tests/test_sauvegarde_unites.py
+tests/test_restauration_confinement.py
+tests/test_sauvegarde_manifeste_distant.py
+tests/test_sauvegarde_references.py
+tests/test_detection_fiches.py
+tests/test_inventaire_archive.py
+tests/test_liaison_catalogue_capture.py
+tests/test_rebuild_index.py
+tests/test_lot10_televersement_lot.py
+tests/test_ocr_page_integralite.py
+tests/test_import_workflow.py
+tests/test_url_presignee_302.py
+tests/test_api.py
+tests/test_securite_banc_pg.py
+tests/test_passe_finale_ingestion_dossiers.py
+tests/test_televersement_creation_idempotente.py

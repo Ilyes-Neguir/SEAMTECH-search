@@ -193,7 +193,7 @@ export function VisionneusePiece({ piece, zone = null, donneesPrechargees = null
         </div>
       </header>
 
-      <div className="relative min-h-0 flex-1 overflow-auto bg-black/20 p-3">
+      <div className="relative min-h-0 flex-1 overflow-auto bg-black/20 p-3" tabIndex={0} role="region" aria-label="Aperçu du document">
         {chargement && <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/70 text-sm text-muted-foreground">Chargement de l’aperçu…</div>}
         {erreur && (
           <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-background/90 p-6 text-center">

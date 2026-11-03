@@ -5,16 +5,10 @@ import re
 import shutil
 import subprocess
 import tempfile
+from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from zipfile import BadZipFile, ZipFile
-
-from .pdf_orientation import (
-    caracteres_minoritaires,
-    lignes_minoritaires,
-    page_a_orienter,
-    texte_page,
-)
 
 logger = logging.getLogger("seamtech_search.extractors")
 
@@ -30,12 +24,15 @@ logger = logging.getLogger("seamtech_search.extractors")
 # pipeline when ocrmypdf is absent — previously they stayed « unavailable »
 # even with tesseract installed.
 # v6: OCR tesseract fra+eng when both language packs are present.
-# v7: rotation-aware PDF text (90/180/270 degrees rebuilt along the real
-# glyph direction, tables kept in reading order) and minority-orientation
-# glyphs (vertical stamps, margin notes) excluded from the page body before
-# extraction — a fix that MUST re-extract already-indexed PDFs, otherwise the
-# old reversed words ("NOPMAT") stay in the index forever.
-CURRENT_EXTRACTOR_VERSION = 7
+# v7: normalize verified, uniformly rotated PDF text for indexing.
+# v8: inspect mixed native/image PDFs and reject unsafe or incomplete OCR.
+# v9: preserve partial native text and extraction status across worker IPC.
+# v10: read verified orthogonal mixed orientations separately for indexing.
+# v11: retain partial text without certifying unsupported PDF orientations.
+# v12: do not publish uninspected fallback text; clip to the actual page view.
+# v13: read minority-orientation glyphs (vertical stamps, margin notes) apart
+# from the page body instead of letting pdfplumber reverse them ("NOPMAT").
+CURRENT_EXTRACTOR_VERSION = 13
 
 EXTRACTION_STATUSES = {"extracted", "unavailable", "skipped", "error", "timeout", "not_applicable"}
 
@@ -68,6 +65,15 @@ class ExtractionResult:
             "timeout": "extraction timed out",
         }.get(self.status, "extraction unavailable")
         return f"[{prefix}: {self.detail}]" if self.detail else f"[{prefix}]"
+
+
+def _resultat_ocr_borne(texte: str, max_chars: int) -> ExtractionResult:
+    """Conserve un éventuel préfixe OCR sans qualifier de complet un texte tronqué."""
+    if len(texte) > max_chars:
+        return ExtractionResult(texte[:max_chars], "unavailable", "OCR tronqué : limite de texte atteinte")
+    if not texte.strip():
+        return ExtractionResult("", "unavailable", "OCR n'a produit aucun texte")
+    return ExtractionResult(texte, "extracted")
 
 
 TEXT_EXTENSIONS = {
@@ -131,27 +137,34 @@ def extract_file(
             return ExtractionResult("", "skipped", f"file exceeds {max_file_size_bytes} bytes")
         suffix = path.suffix.lower()
         if suffix == ".pdf":
-            result = _from_legacy(_extract_pdf(path, max_chars))
-            if result.status != "unavailable" or not enable_ocr:
+            resultat_pdf = _extract_pdf(path, max_chars)
+            if isinstance(resultat_pdf, ExtractionResult):
+                # Un texte natif partiel ne doit pas être remplacé par un OCR
+                # qui pourrait paraître complet sans vérifier l'orientation.
+                return resultat_pdf
+            result = _from_legacy(resultat_pdf)
+            if not enable_ocr:
                 return result
+            if result.status != "unavailable":
+                return _completer_pdf_natif_images(
+                    path, result, max_chars, tesseract_command, external_extraction_timeout_seconds
+                )
             if _has_command(ocrmypdf_command):
                 try:
-                    return ExtractionResult(
-                        _extract_with_ocrmypdf(
-                            path, max_chars, ocrmypdf_command, external_extraction_timeout_seconds
-                        ),
-                        "extracted",
+                    texte_ocr = _extract_with_ocrmypdf(
+                        path, max_chars, ocrmypdf_command, external_extraction_timeout_seconds
                     )
+                    return _resultat_ocr_borne(texte_ocr, max_chars)
                 except Exception as exc:
-                    logger.warning("ocrmypdf a échoué sur %s (%s) — repli tesseract si présent", path.name, exc)
-            if _has_command(tesseract_command):
+                    logger.warning("ocrmypdf a échoué (%s) — repli tesseract si présent", type(exc).__name__)
+            if _moteur_ocr_disponible(tesseract_command):
                 texte, motif = _extract_pdf_via_pipeline_ocr(
                     path, max_chars, tesseract_command, external_extraction_timeout_seconds
                 )
-                if texte.strip():
-                    return ExtractionResult(texte, "extracted")
-                return ExtractionResult("", "unavailable", motif or "OCR n'a produit aucun texte")
-            return ExtractionResult("", "unavailable", "OCR activé mais ocrmypdf et tesseract absents")
+                if motif:
+                    return ExtractionResult(texte, "unavailable", motif)
+                return _resultat_ocr_borne(texte, max_chars)
+            return ExtractionResult("", "unavailable", "OCR activé mais ocrmypdf et aucun moteur OCR disponibles")
         if suffix == ".docx":
             return _from_legacy(_extract_docx(path, max_chars))
         if suffix in OFFICE_XML_EXTENSIONS:
@@ -170,12 +183,10 @@ def extract_file(
         if suffix in OCR_IMAGE_EXTENSIONS:
             if not enable_ocr:
                 return ExtractionResult("", "unavailable", "OCR is disabled")
-            if not _has_command(tesseract_command):
-                return ExtractionResult("", "unavailable", "Tesseract is not installed")
-            return ExtractionResult(
-                _extract_with_tesseract(path, max_chars, tesseract_command, external_extraction_timeout_seconds),
-                "extracted",
-            )
+            if not _moteur_ocr_disponible(tesseract_command):
+                return ExtractionResult("", "unavailable", "OCR engine is not installed")
+            texte_ocr = _extract_with_tesseract(path, max_chars, tesseract_command, external_extraction_timeout_seconds)
+            return _resultat_ocr_borne(texte_ocr, max_chars)
         if external_extractors and suffix in external_extractors:
             command = external_extractors[suffix]
             if not command or not _has_command(command[0]):
@@ -249,7 +260,8 @@ def _extract_with_tesseract(path: Path, max_chars: int, command: str, timeout: i
     )
     if completed.returncode != 0:
         raise RuntimeError("Tesseract could not read the image")
-    return completed.stdout[:max_chars]
+    # Garder un caractère supplémentaire pour détecter la troncature.
+    return completed.stdout[:max_chars + 1]
 
 
 def _extract_with_ocrmypdf(path: Path, max_chars: int, command: str, timeout: int) -> str:
@@ -272,11 +284,29 @@ def _extract_with_ocrmypdf(path: Path, max_chars: int, command: str, timeout: in
         )
         if completed.returncode != 0 or not output_path.exists():
             raise RuntimeError("OCRmyPDF could not extract text from the PDF")
-        return output_path.read_text(encoding="utf-8", errors="ignore")[:max_chars]
+        with output_path.open(encoding="utf-8", errors="ignore") as sidecar:
+            return sidecar.read(max_chars + 1)
+
+
+def _moteur_ocr_disponible(tesseract_command: str) -> bool:
+    """Un moteur OCR local est-il exploitable ? (RapidOCR ou Tesseract)."""
+    from seamtech_search.ocr.moteur import moteur_disponible
+
+    return bool(moteur_disponible(tesseract_command, sonde=_has_command))
 
 
 def _langue_ocr_disponible(tesseract_command: str) -> str:
-    """fra+eng si les deux paquets sont installés, sinon fra, sinon eng."""
+    """fra+eng si les deux paquets sont installés, sinon fra, sinon eng.
+
+    RapidOCR (PP-OCRv6) reconnaît le français et l'anglais avec un seul jeu de
+    modèles multilingues : la question des paquets de langue ne se pose pas, la
+    langue déclarée reste ``fra`` par cohérence avec le reste du produit.
+    """
+    from seamtech_search.ocr.moteur import MOTEUR_TESSERACT, choisir_moteur
+
+    moteur = choisir_moteur(tesseract_command)
+    if moteur is not None and moteur.nom != MOTEUR_TESSERACT:
+        return "fra"
     try:
         completed = subprocess.run(
             [tesseract_command, "--list-langs"],
@@ -315,26 +345,78 @@ def _extract_pdf_via_pipeline_ocr(
     except Exception as exc:
         return "", f"échec OCR : {type(exc).__name__}"
     pages = rapport.get("pages") or []
+    if rapport.get("nb_echecs", 0):
+        return "", "OCR incomplet : une ou plusieurs pages n'ont pas pu être traitées"
     textes = [str(p.get("texte_final") or "") for p in pages]
     texte = "\n".join(morceau for morceau in textes if morceau.strip()).strip()
     if texte:
-        return texte[:max_chars], ""
+        if len(texte) > max_chars:
+            return texte[:max_chars], "OCR tronqué : limite de texte atteinte"
+        return texte, ""
     motifs = [str(p.get("motif") or "") for p in pages if p.get("motif")]
     return "", "; ".join(m for m in motifs if m) or "OCR n'a produit aucun texte"
 
 
-def _extract_pdf(path: Path, max_chars: int) -> str:
-    """Extract PDF text with pdfplumber first, pypdf as a fallback.
+#: Longueur d'en-tête inspectée : la spécification tolère un préfixe quelconque
+#: avant la signature ``%PDF-``.
+_SIGNATURE_PDF = b"%PDF-"
+_TAILLE_ENTETE_PDF = 1024
 
-    pdfplumber is layout-aware (word coordinates) and also yields tables,
-    which is what the fixed-template technical sheets need. Any pdfplumber
-    failure (missing dependency, malformed file) falls back to pypdf so a
-    parser regression can never make a previously readable PDF unreadable.
+
+def _verdict_pdf_illisible(path: Path) -> ExtractionResult | None:
+    """Classe un PDF inexploitable, ou ``None`` s'il faut laisser tenter pypdf.
+
+    MESURÉ (passe finale du 29/10/2026) : sans ce tri, un PDF chiffré et un
+    fichier ``.pdf`` qui n'en est pas un rendent ``unavailable`` — exactement le
+    statut d'une page image à relire. L'opérateur ne peut alors pas distinguer
+    un fichier à réparer d'un PDF simplement non exploitable.
+
+    Seuls deux cas non ambigus sont classés ``error`` : signature PDF absente,
+    et chiffrement non ouvrable sans mot de passe. Un PDF que pypdf n'arrive pas
+    à analyser reste confié au statut « relecture » : des PDF imparfaits (xref
+    abîmée, page tronquée) restent parfois lisibles et ne doivent pas être
+    déclarés en erreur sur le seul avis de pypdf.
+    """
+    try:
+        with path.open("rb") as flux:
+            entete = flux.read(_TAILLE_ENTETE_PDF)
+    except OSError:
+        return None
+    if _SIGNATURE_PDF not in entete:
+        return ExtractionResult("", "error", "Signature %PDF- absente : ce fichier n'est pas un PDF")
+    try:
+        from pypdf import PdfReader
+
+        lecteur = PdfReader(str(path))
+        if not lecteur.is_encrypted:
+            return None
+        try:
+            ouvert = lecteur.decrypt("")
+        except Exception:
+            ouvert = 0
+    except Exception:
+        # pypdf n'analyse pas le fichier : pdfplumber reste juge.
+        return None
+    if not ouvert:
+        return ExtractionResult("", "error", "PDF chiffré : mot de passe requis")
+    return None
+
+
+def _extract_pdf(path: Path, max_chars: int) -> str | ExtractionResult:
+    """Extract PDF text and tables only when the page inspection is available.
+
+    A text-only fallback cannot check clipping or orientation. Publishing it
+    would index content outside the displayed page even with ``unavailable``
+    status, so fail closed and leave the source PDF untouched instead.
     """
     plumber_text = _extract_pdf_with_plumber(path, max_chars)
     if plumber_text is not None:
         return plumber_text
-    return _extract_pdf_with_pypdf(path, max_chars)
+    # L'inspection a échoué : dire si le fichier est inexploitable (erreur
+    # explicite) ou si son texte n'a pas pu être lu (relecture nécessaire).
+    return _verdict_pdf_illisible(path) or ExtractionResult(
+        "", "unavailable", "Inspection PDF indisponible : relecture nécessaire"
+    )
 
 
 def _table_row_already_in_text(cells: list[str], normalized_text: str) -> bool:
@@ -354,107 +436,234 @@ def _table_row_already_in_text(cells: list[str], normalized_text: str) -> bool:
     return all(" ".join(cell.split()) in normalized_text for cell in cells)
 
 
-class _TableauxNonDetectes(RuntimeError):
-    """Sur une page pivotée, la détection de tableaux n'est pas fiable (voir pdf_orientation)."""
+def _texte_page_plumber(page: object, *, filtrer_orientations_minoritaires: bool = True) -> str:
+    """Même lecture native et tableaux pour l'extraction classique et mixte.
+
+    Sur une page non pivotée, les caractères d'orientation minoritaire (tampon
+    vertical, mention en marge) sont retirés du corps avant ``extract_text`` :
+    pdfplumber les regroupe par ordonnée d'affichage et les rend donc INVERSÉS
+    (« NOPMAT » pour « TAMPON »), ce qui remplit l'index de faux mots. Ils sont
+    relus à part, dans leur ordre réel, et ajoutés une seule fois à la suite.
+
+    Sur une vue déjà pivotée (``filtrer_orientations_minoritaires=False``), ce
+    tri ne s'applique PAS : les caractères y sont projetés dans le repère
+    d'affichage alors que leur matrice reste celle du flux de contenu, tous
+    seraient donc vus comme minoritaires. Les groupes d'orientation y sont déjà
+    séparés par ``lectures_mixtes_verifiees``.
+    """
+    page_travail = page
+    try:
+        if filtrer_orientations_minoritaires:
+            from seamtech_search.pdf_orientation import caracteres_minoritaires
+
+            ids_minoritaires = {id(c) for c in caracteres_minoritaires(page.chars)}
+            if ids_minoritaires:
+                page_travail = page.filter(lambda objet: id(objet) not in ids_minoritaires)
+    except Exception as exc:
+        logger.debug("Tri des orientations minoritaires indisponible (%s)", type(exc).__name__)
+    text = page_travail.extract_text(x_tolerance=2, y_tolerance=2) or ""
+    try:
+        normalized = " ".join(text.split())
+        for table in page_travail.extract_tables() or []:
+            fresh_rows = [
+                " | ".join(cell.strip() if cell else "" for cell in cells)
+                for cells in table
+                if not _table_row_already_in_text(cells, normalized)
+            ]
+            fresh_rows = [row for row in fresh_rows if row.strip(" |")]
+            if fresh_rows:
+                text += "\n" + "\n".join(fresh_rows)
+    except Exception as exc:
+        logger.debug("Table extraction failed (%s)", type(exc).__name__)
+    if filtrer_orientations_minoritaires:
+        # Le texte minoritaire est ajouté UNE fois, jamais dupliqué : sans lui
+        # un tampon vertical disparaîtrait purement et simplement de l'index.
+        try:
+            from seamtech_search.pdf_orientation import lignes_minoritaires
+
+            corps = " ".join(text.split())
+            marginales = [
+                ligne
+                for ligne in lignes_minoritaires(page.chars, float(page.height))
+                if " ".join(ligne.split()) not in corps
+            ]
+            if marginales:
+                text += "\n" + "\n".join(marginales)
+        except Exception as exc:
+            logger.debug("Texte d'orientation minoritaire non extrait (%s)", type(exc).__name__)
+    return text
 
 
-def _extract_pdf_with_plumber(path: Path, max_chars: int) -> str | None:
-    """Return extracted text, an unavailable marker, or None to fall back."""
+def _texte_glyphes(caracteres: list, hauteur: float) -> str:
+    """Lignes reconstruites le long de la direction réelle des glyphes.
+
+    Les orientations minoritaires (tampon vertical) sont ajoutées à la suite :
+    ``texte_page`` ne couvre que l'orientation dominante.
+    """
+    from seamtech_search.pdf_orientation import lignes_minoritaires, texte_page
+
+    texte = texte_page(caracteres, hauteur) or ""
+    corps = " ".join(texte.split())
+    try:
+        marginales = [
+            ligne
+            for ligne in lignes_minoritaires(caracteres, hauteur)
+            if " ".join(ligne.split()) not in corps
+        ]
+    except Exception:
+        marginales = []
+    if marginales:
+        texte += "\n" + "\n".join(marginales)
+    return texte
+
+
+def _texte_page_orientee(originale: object, *, inspecter_images: bool = False) -> tuple[str, bool, bool]:
+    """Lit une page et signale une éventuelle lecture incertaine.
+
+    Deux mécanismes complémentaires, selon ce que porte réellement la page :
+
+    * les GLYPHES sont tournés dans le repère d'affichage (contenu couché,
+      ``/Rotate`` absent ou qui ne compense pas) : les lignes sont reconstruites
+      le long de la direction réelle des caractères. Les regrouper par ordonnée
+      d'affichage — ce que fait pdfplumber — rendrait un mot par ligne (90°/270°)
+      ou le texte à l'envers (180°) ;
+    * sinon, la lecture se fait dans le repère du lecteur : groupes d'orientation
+      vérifiés lus séparément (``lectures_mixtes_verifiees``), caractères
+      d'orientation minoritaire extraits à part, tableaux compris.
+
+    Cas mesuré (matrice contenu × ``/Rotate``) : une page déclarée pivotée de 90°
+    ou 270° voit ses axes échangés ; la vue normalisée peut alors ne plus porter
+    les glyphes. On ne publie jamais une page vide pour autant : si la lecture
+    dans le repère du lecteur ne rend rien alors que la page porte des caractères
+    démontrés, la reconstruction par direction des glyphes est utilisée.
+
+    La garde de vue s'applique aux deux mécanismes : un glyphe masqué par un clip
+    n'est jamais publié. Une transformation non orthogonale (oblique, miroir,
+    cisaillement) ne se rattache à aucune orientation : elle reste signalée
+    « incertaine » et le texte disponible est conservé sans être certifié.
+    """
+    from seamtech_search.pdf_orientation import (
+        caracteres_demontres,
+        fermer_page_lecture,
+        lectures_mixtes_verifiees,
+        orientation_dominante,
+        orientation_non_verifiee,
+        orientations_visibles,
+        page_de_lecture,
+    )
+
+    mixte, compatible, _ = orientations_visibles(originale)
+    page, rotation = page_de_lecture(originale)
+    try:
+        with lectures_mixtes_verifiees(originale) if mixte or not compatible else nullcontext(None) as lectures:
+            incertaine = orientation_non_verifiee(originale, rotation, lectures)
+            if orientation_dominante(originale.chars) != 0:
+                gardes, hauteur = caracteres_demontres(originale)
+                texte = _texte_glyphes(gardes, hauteur) if gardes else ""
+            else:
+                if lectures is None:
+                    texte = _texte_page_plumber(page)
+                else:
+                    # Vues déjà pivotées : pas de tri minoritaire (leurs
+                    # caractères sont projetés mais leur matrice reste celle du
+                    # flux de contenu).
+                    texte = "\n".join(
+                        _texte_page_plumber(vue, filtrer_orientations_minoritaires=False) for vue, _ in lectures
+                    ).strip()
+                if not texte.strip():
+                    gardes, hauteur = caracteres_demontres(originale)
+                    if gardes:
+                        texte = _texte_glyphes(gardes, hauteur)
+        return texte, bool(page.images) if inspecter_images else False, incertaine
+    finally:
+        fermer_page_lecture(originale, page)
+
+
+def _completer_pdf_natif_images(
+    path: Path, native: ExtractionResult, max_chars: int, command: str, timeout: int
+) -> ExtractionResult:
+    """Complète les pages image sans modifier les pages à texte natif.
+
+    Refuse le succès si une des pages image identifiées ne peut être traitée.
+    Les PDF purement natifs conservent strictement l'extraction antérieure.
+    """
+    try:
+        import pdfplumber
+
+        textes: list[str] = []
+        pages_images: list[int] = []
+        with pdfplumber.open(str(path)) as pdf:
+            for numero, originale in enumerate(pdf.pages):
+                texte, a_images, incertaine = _texte_page_orientee(originale, inspecter_images=True)
+                if incertaine:
+                    return ExtractionResult(native.text, "unavailable", "Orientation PDF non vérifiée : relecture nécessaire")
+                # Une page avec texte natif n'est jamais océrisée : son logo
+                # ou ses figures ne justifient pas de remplacer ce texte.
+                if not texte.strip() and a_images:
+                    pages_images.append(numero)
+                textes.append(texte)
+    except Exception:
+        # Ne pas déclarer complète une extraction quand les pages image
+        # n'ont pas pu être inspectées ; conserver le texte natif disponible.
+        return ExtractionResult(native.text, "unavailable", "Inspection des pages image indisponible")
+
+    if not pages_images:
+        return native
+    if not _has_command(command):
+        return ExtractionResult(native.text, "unavailable", "OCR incomplet : Tesseract indisponible")
+    try:
+        from seamtech_search.ocr.pipeline import ocriser_fichier
+
+        rapport = ocriser_fichier(
+            path, pages=pages_images, tesseract_command=command,
+            timeout_par_page_s=max(5, min(int(timeout), 60)),
+            langue=_langue_ocr_disponible(command),
+        )
+        par_page = {page["page"]: page for page in rapport.get("pages", [])}
+        for numero in pages_images:
+            page = par_page.get(numero)
+            if not page or not page.get("page_ocerisee") or not str(page.get("texte_ocr") or "").strip():
+                return ExtractionResult(native.text, "unavailable", "OCR incomplet : page image non reconnue")
+            textes[numero] = str(page["texte_ocr"])
+        return _resultat_ocr_borne("\n".join(t for t in textes if t.strip()).strip(), max_chars)
+    except Exception as exc:
+        return ExtractionResult(native.text, "unavailable", f"OCR incomplet : {type(exc).__name__}")
+
+
+def _extract_pdf_with_plumber(path: Path, max_chars: int) -> str | ExtractionResult | None:
+    """Return text, an explicitly partial result, or None for the pypdf fallback."""
     try:
         import pdfplumber
     except ImportError:
+        logger.warning("Inspection PDF indisponible : pdfplumber absent")
         return None
     try:
         chunks: list[str] = []
         total = 0
+        incertaine = False
+        tronquee = False
         with pdfplumber.open(str(path)) as pdf:
-            for page in pdf.pages:
-                # Le test d'orientation est fait UNE fois : il parcourt les
-                # caractères de la page.
-                pivote = page_a_orienter(page)
-                if pivote:
-                    # Page pivotée : `extract_text` regroupe les glyphes par
-                    # ordonnée et rend un mot par ligne (90°/270°) ou le texte
-                    # à l'envers (180°). On reconstruit les lignes le long de
-                    # la direction réelle des glyphes (voir pdf_orientation).
-                    # Les tableaux ne sont pas redétectés ici : leurs cellules
-                    # restent extraites, dans l'ordre de lecture, via les
-                    # caractères (limite documentée, testée).
-                    text = texte_page(page.chars, float(page.height)) or ""
-                else:
-                    # Texte d'orientation minoritaire (tampon vertical, mention
-                    # en marge) : extrait à part et retiré de la page avant
-                    # `extract_text`, sinon pdfplumber le rend inversé
-                    # (« NOPMAT ») et l'index se remplit de faux mots.
-                    ids_minoritaires = {id(c) for c in caracteres_minoritaires(page.chars)}
-                    page_travail = (
-                        page.filter(lambda objet: id(objet) not in ids_minoritaires)
-                        if ids_minoritaires
-                        else page
-                    )
-                    text = page_travail.extract_text(x_tolerance=2, y_tolerance=2) or ""
-                try:
-                    if pivote:
-                        raise _TableauxNonDetectes("page pivotée")
-                    # extract_text() already yields the words inside table
-                    # cells, so a table row whose cells all appear in the page
-                    # text would only duplicate content: every document stored
-                    # twice over, index inflated, field regexes double-matching.
-                    # Keep only the rows that add new information (e.g. pages
-                    # where the plain-text layer garbles the table layout).
-                    normalized = " ".join(text.split())
-                    for table in page_travail.extract_tables() or []:
-                        fresh_rows = [
-                            " | ".join(cell.strip() if cell else "" for cell in cells)
-                            for cells in table
-                            if not _table_row_already_in_text(cells, normalized)
-                        ]
-                        fresh_rows = [row for row in fresh_rows if row.strip(" |")]
-                        if fresh_rows:
-                            text += "\n" + "\n".join(fresh_rows)
-                except Exception as exc:
-                    # Tables are a bonus; plain text is still usable.
-                    logger.debug("Table extraction failed for %s: %s", path.name, exc)
-                # Texte d'orientation minoritaire (tampon vertical, mention en
-                # marge) : pdfplumber ne le rend pas dans extract_text, il
-                # disparaîtrait donc de l'index. Ajouté une seule fois, jamais
-                # dupliqué avec le corps de page.
-                try:
-                    corps = " ".join(text.split())
-                    marginales = [
-                        ligne
-                        for ligne in lignes_minoritaires(page.chars, float(page.height))
-                        if " ".join(ligne.split()) not in corps
-                    ]
-                    if marginales:
-                        text += "\n" + "\n".join(marginales)
-                except Exception as exc:
-                    logger.debug("Texte marginal non extrait pour %s: %s", path.name, exc)
+            for numero, originale in enumerate(pdf.pages):
+                text, _a_images, page_incertaine = _texte_page_orientee(originale)
+                incertaine |= page_incertaine
                 if text.strip():
+                    total += len(text) + (1 if chunks else 0)
                     chunks.append(text)
-                    total += len(text)
                 if total >= max_chars:
+                    tronquee = total > max_chars or numero + 1 < len(pdf.pages)
                     break
-    except Exception:
-        return None  # Let the pypdf fallback try instead.
+    except Exception as erreur:
+        logger.warning("Inspection PDF indisponible (%s) : aucun texte non vérifié publié", type(erreur).__name__)
+        return None
     text = "\n".join(chunks)[:max_chars].strip()
+    if incertaine or tronquee:
+        motifs = []
+        if incertaine:
+            motifs.append("Orientation PDF non vérifiée")
+        if tronquee:
+            motifs.append("Limite de texte atteinte : extraction tronquée ou pages non inspectées")
+        return ExtractionResult(text, "unavailable", "; ".join(motifs) + " : relecture nécessaire")
     return text or "[extraction unavailable: PDF contains no embedded text]"
-
-
-def _extract_pdf_with_pypdf(path: Path, max_chars: int) -> str:
-    from pypdf import PdfReader
-
-    reader = PdfReader(str(path), strict=False)
-    chunks: list[str] = []
-    total = 0
-    for page in reader.pages:
-        text = page.extract_text() or ""
-        if text:
-            chunks.append(text)
-            total += len(text)
-        if total >= max_chars:
-            break
-    return "\n".join(chunks)[:max_chars] or "[extraction unavailable: PDF contains no embedded text]"
 
 
 def _extract_docx(path: Path, max_chars: int) -> str:

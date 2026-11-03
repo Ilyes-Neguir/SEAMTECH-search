@@ -1,0 +1,559 @@
+# Qualification Windows (P1) — le poste de l'atelier, pas le banc Linux.
+#
+# Pourquoi ce job existe : le plan demande de qualifier Windows / Docker
+# Desktop / PostgreSQL 16 / Redis 7 / Chrome / Edge. Un banc Linux ne peut pas
+# le faire, et le poste de l'utilisatrice ne doit pas servir de banc de
+# découverte. GitHub fournit des runners Windows : c'est le seul endroit où
+# « ça tourne sur Windows » peut être prouvé sans toucher au poste réel.
+#
+# Ce que ce job prouve réellement :
+#   * la suite sans service passe sur Windows (chemins, backslashes, verrous,
+#     encodage, sauvegarde/restauration sur système de fichiers NTFS) ;
+#   * PostgreSQL 16 et Redis 7 démarrés sur Windows portent la suite
+#     d'intégration correspondante ;
+#   * l'application se lance en ligne de commande sur un chemin accentué.
+#
+# Ce qu'il ne prouve PAS, et qui reste une limite dite franchement dans le
+# rapport : Docker Desktop (pas de conteneurs Linux sur un runner Windows
+# standard), Chrome et Edge en exécution d'interface (Playwright est exécuté
+# sur Linux dans le job e2e), et « plusieurs jours » d'endurance.
+#
+# Sur Redis 7, dit franchement : Redis n'a PLUS de binaire Windows officiel
+# depuis la version 5 (port MicrosoftArchive abandonné). On utilise donc le
+# port redis-windows/redis-windows, reconstruit depuis les sources officielles
+# de Redis 7.4.11. Ce n'est pas un binaire signé par Redis : c'est la ligne
+# Redis 7, sur Windows, et la source est épinglée (version + URL ci-dessous).
+#
+# ORDRE DES ÉTAPES : la suite sans service passe AVANT les installations.
+# Elle n'a besoin de rien, alors que `choco install postgresql16` coûte à lui
+# seul huit minutes : diagnostiquer une régression prenait donc treize minutes
+# par essai au lieu de cinq. Les étapes suivantes sont en `if: always()` parce
+# que les deux suites sont INDÉPENDANTES — une panne de la première ne doit
+# pas priver la seconde de preuve.
+#
+# Les fichiers POSIX-only sont écartés EXPLICITEMENT, jamais silencieusement :
+# SIGKILL et fork() n'existent pas sur Windows, et un test qui ne peut pas
+# s'exécuter doit être nommé, pas « oublié ».
+name: Qualification Windows
+
+on:
+  pull_request:
+  push:
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Job de DIAGNOSTIC : un job séparé, parce qu'une exécution de vérification
+  # (« check run ») plafonne à 50 annotations. Dans le job principal, les
+  # tranches de causes saturent ce plafond et les lignes de diagnostic
+  # disparaissaient (runs 41523086709, 41536354571 : l'étape réussissait,
+  # aucune annotation n'était visible).
+  #
+  # Ce job ne remplace rien : la suite complète reste exécutée telle quelle. Il
+  # rejoue SEULS, avec ``--tb=long``, les fichiers qui concentrent les échecs
+  # non élucidés, et publie les lignes « E » dédoublées — l'assertion exacte et
+  # la valeur fautive. Une minute par fichier, et la cause devient lisible.
+  # ---------------------------------------------------------------------------
+  diagnostic-causes:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Installer les dépendances
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+      - name: Rejouer seuls les fichiers inexpliqués
+        run: |
+          $ErrorActionPreference = 'Continue'
+          New-Item -ItemType Directory -Force -Path logs | Out-Null
+          $fichiers = Get-Content ci/fichiers-diagnostic.txt | Where-Object { $_.Trim() -and -not $_.Trim().StartsWith('#') }
+          $comptes = @()
+          foreach ($fichier in $fichiers) {
+            $nom = ($fichier -replace 'tests/', '') -replace '\.py$', ''
+            $log = "logs\diag-$nom.log"
+            $xml = "logs\junit-diag-$nom.xml"
+            $rcf = "logs\rc-diag-$nom.txt"
+            $ligne = "python -m pytest $fichier -q --tb=long -rf -p no:randomly --junitxml=$xml > $log 2>&1 & echo !errorlevel!> $rcf"
+            cmd /V /C $ligne
+            $rc = -1
+            if (Test-Path $rcf) { $rc = [int]((Get-Content $rcf -Raw).Trim()) }
+            $resume = ''
+            if (Test-Path $log) {
+              $dernier = Select-String -Path $log -Pattern 'passed|failed|error' | Select-Object -Last 1
+              if ($dernier) { $resume = $dernier.Line.Trim() }
+            }
+            $comptes += "$nom : rc=$rc ; $resume"
+          }
+          # DIX annotations par étape, et un résumé par fichier : un seul
+          # paquet pour tous les fichiers, sinon les suivants sont perdus.
+          $texte = ($comptes -join ' || ')
+          if ($texte.Length -gt 2800) { $texte = $texte.Substring(0, 2800) }
+          Write-Host "::notice title=diag-resume::$texte"
+          exit 0
+      - name: Causes par test, paquet 1
+        if: always()
+        run: |
+          python ci\publier_details_diag.py 0 7
+          exit 0
+      - name: Causes par test, paquet 2
+        if: always()
+        run: |
+          python ci\publier_details_diag.py 7 7
+          exit 0
+      - name: Causes par test, paquet 3
+        if: always()
+        run: |
+          python ci\publier_details_diag.py 14 7
+          exit 0
+      - name: Traces complètes des tests dont la cause lue ne suffit pas
+        if: always()
+        run: |
+          python ci\publier_traces.py
+          exit 0
+      - name: Conserver les journaux de diagnostic
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diagnostic-causes-windows
+          path: logs/diag-*.log
+          if-no-files-found: warn
+
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      # Pas de ``SEAMTECH_TEST_DATABASE_URL`` au niveau du job : la suite sans
+      # service doit d'abord passer SANS PostgreSQL. Elle est posée sur la
+      # seule étape qui en a besoin.
+      PYTHONIOENCODING: utf-8
+      PYTHONUTF8: "1"
+      # La suite sans service MEURT par moments sans laisser de code de sortie
+      # (runs 41365859490, 41375766036, 41420706781) : le processus Python
+      # disparaît. Sans faulthandler, une mort native ne laisse aucune trace
+      # exploitable — seulement l'absence de résumé. Avec lui, la pile Python
+      # est écrite sur la sortie d'erreur, donc dans le journal, donc lisible
+      # dans la queue que publie le verdict.
+      PYTHONFAULTHANDLER: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Dépendances Python
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+      - name: Identité du banc Windows
+        run: |
+          $info = Get-ComputerInfo
+          python -V
+          python -c "import platform,sys; print(platform.platform()); print(sys.getfilesystemencoding())"
+          Write-Host "::notice title=windows-identite::os=$($info.OsName) version=$($info.OsVersion)"
+      - name: Suite sans service sur Windows — exécution
+        # POSIX-only : SIGKILL et fork() n'existent pas sur Windows. Ces
+        # fichiers sont NOMMÉS ici, pas simplement absents : un test écarté
+        # doit rester visible dans la configuration.
+        #
+        # L'EXÉCUTION est séparée du VERDICT (étape suivante) depuis le run
+        # 41372109716 : quand l'étape meurt pendant pytest — cause non élucidée
+        # — aucune annotation n'est publiée, et une étape rouge sans preuve ne
+        # se répare pas. L'étape de verdict est en « if: always() » : elle lit
+        # le journal et le code de sortie laissés sur le disque, même si
+        # l'exécution a été interrompue. C'est elle qui prononce l'échec, donc
+        # le rouge arrive toujours avec sa preuve.
+        run: |
+          $ErrorActionPreference = 'Continue'
+          # Publier un diagnostic : les journaux complets sont stockés sur un
+          # hôte de blobs injoignable depuis le banc d'analyse, et les
+          # ARTEFACTS aussi. L'annotation est le seul canal lisible — d'où
+          # l'échappement exigé par GitHub (%, retours chariot) et le
+          # tronçonnage : un message non conforme est SILENCIEUSEMENT ignoré,
+          # ce qui donne une étape rouge sans rien à lire.
+          function Publier([string]$titre, [string]$texte) {
+            if ($null -eq $texte) { $texte = '' }
+            $propre = $texte -replace '%', '%25' -replace "`r", '%0D' -replace "`n", '%0A'
+            if ($propre.Length -gt 3000) { $propre = $propre.Substring(0, 3000) }
+            Write-Host "::notice title=$titre::$propre"
+          }
+          # Trois témoins, un par étape. Ils ne servent pas à « rassurer » :
+          # ils servent à savoir OÙ l'étape meurt. Run 41364338587 : le témoin
+          # de début paraissait, celui d'après pytest jamais — sans eux, on
+          # aurait continué à chercher la cause dans pytest.
+          Publier "windows-sans-service-debut" "lancement de la suite"
+          New-Item -ItemType Directory -Force -Path logs | Out-Null
+          # Redirection de fichier, PAS de pipeline : dans un pipeline
+          # PowerShell, la sortie d'erreur d'un exécutable natif devient des
+          # ErrorRecords, et le moindre avertissement de pytest tuait l'étape
+          # avant le diagnostic (runs 41361547004 et 41362919313).
+          # Redirection par cmd, PAS par PowerShell. Mesuré sur ce workflow :
+          # avec ``-v``, pytest produit des dizaines de milliers de lignes et la
+          # redirection PowerShell (``>``) redevient le facteur limitant — elle
+          # reconvertit chaque ligne ; la suite PostgreSQL est passée de 17 minutes
+          # à plus de 50 sans terminer (run 41420706781). ``cmd /c`` écrit les octets
+          # tels quels. La verbosité EST utile : sans elle, une exécution interrompue
+          # ne dit pas où elle s'est arrêtée (§32).
+          $ligne = 'python -m pytest -v --tb=short -rf -m "not postgres and not s3 and not perf and not redis_queue and not ocr_suite" --ignore=tests/test_chaos.py --ignore=tests/test_worker_process.py --ignore=tests/test_worker_process_postgres.py --ignore=tests/test_worker_crash_terminal.py --ignore=tests/test_securite_banc_suivi.py --ignore=tests/test_migration_rollback.py --ignore=tests/test_partage_web_worker.py --junitxml=logs\\junit-sans-service.xml > logs\\windows-sans-service.log 2>&1 & echo !errorlevel!> logs\\rc-sans-service.txt'
+          cmd /V /C $ligne
+          $rc = $LASTEXITCODE
+          Publier "windows-sans-service-apres-pytest" "rc=$rc journal=$((Get-Item logs\windows-sans-service.log -ErrorAction SilentlyContinue).Length) octets"
+          Get-Content logs\windows-sans-service.log -Tail 25 | ForEach-Object { Write-Host "journal: $_" }
+          $resume = (Select-String -Path logs\windows-sans-service.log -Pattern '^(FAILED|ERROR)|passed|failed' |
+                     Select-Object -Last 10 | ForEach-Object { $_.Line }) -join ' | '
+          exit 0
+      - name: Suite sans service — causes par famille (rapport JUnit)
+        if: always()
+        # La cause d'un échec n'est presque jamais dans la ligne « FAILED » :
+        # « Regex pattern did not match. » ne dit rien de ce qui manque. Elle
+        # est dans la DERNIÈRE ligne « E » de la trace, que le rapport JUnit
+        # porte — d'où ce script, plutôt qu'un grep du journal.
+        run: |
+          $ErrorActionPreference = 'Continue'
+          python ci\resumer_echecs.py logs\junit-sans-service.xml logs\causes-sans-service.txt --details logs\details-sans-service.txt --exemples 25
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "::error title=causes-sans-service::analyse du rapport JUnit impossible (rc=$LASTEXITCODE)"
+          }
+          exit 0
+      - name: Suite sans service sur Windows — verdict
+        if: always()
+        # Le verdict est prononcé par ``ci/verdict-windows.ps1`` : causes
+        # regroupées par famille, inventaire par paquets (GitHub n'affiche que
+        # dix annotations par ÉTAPE — d'où les étapes de tranche ci-dessous),
+        # puis comparaison avec ``ci/ecarts-windows.txt``. Un écart non nommé
+        # fait échouer le job : un test écarté doit être écrit quelque part
+        # avec sa raison, jamais oublié.
+        run: |
+          $ErrorActionPreference = 'Continue'
+          pwsh -File ci\verdict-windows.ps1 `
+            -Journal logs\windows-sans-service.log `
+            -CodeSortie logs\rc-sans-service.txt `
+            -Titre windows-sans-service -Causes logs\causes-sans-service.txt -FichierDetails logs\details-sans-service.txt
+          exit $LASTEXITCODE
+      # Une seule étape ne peut publier que dix familles de causes. Les
+      # étapes suivantes ne prononcent PAS de verdict (``exit 0``) : elles ne
+      # font que publier les tranches 2 à 5 du même diagnostic, pour que les
+      # causes restent lisibles même quand l'inventaire est long.
+      - name: Suite sans service — mise au point de l'appariement (ne prononce pas de verdict)
+        if: always()
+        continue-on-error: true
+        run: |
+          pwsh -File ci\verdict-windows.ps1 -Journal logs\windows-sans-service.log -CodeSortie logs\rc-sans-service.txt -Titre windows-sans-service -Causes logs\causes-sans-service.txt -FichierDetails logs\details-sans-service.txt -DebugAppariement
+          exit 0
+      - name: Suite sans service — causes, tranche 2
+        if: always()
+        continue-on-error: true
+        run: |
+          pwsh -File ci\verdict-windows.ps1 -Journal logs\windows-sans-service.log -CodeSortie logs\rc-sans-service.txt -Titre windows-sans-service -Causes logs\causes-sans-service.txt -FichierDetails logs\details-sans-service.txt -Tranche 2
+          exit 0
+      - name: Suite sans service — causes, tranche 3
+        if: always()
+        continue-on-error: true
+        run: |
+          pwsh -File ci\verdict-windows.ps1 -Journal logs\windows-sans-service.log -CodeSortie logs\rc-sans-service.txt -Titre windows-sans-service -Causes logs\causes-sans-service.txt -FichierDetails logs\details-sans-service.txt -Tranche 3
+          exit 0
+      - name: Suite sans service — causes, tranche 4
+        if: always()
+        continue-on-error: true
+        run: |
+          pwsh -File ci\verdict-windows.ps1 -Journal logs\windows-sans-service.log -CodeSortie logs\rc-sans-service.txt -Titre windows-sans-service -Causes logs\causes-sans-service.txt -FichierDetails logs\details-sans-service.txt -Tranche 4
+          exit 0
+      - name: Suite sans service — causes, tranche 5
+        if: always()
+        continue-on-error: true
+        run: |
+          pwsh -File ci\verdict-windows.ps1 -Journal logs\windows-sans-service.log -CodeSortie logs\rc-sans-service.txt -Titre windows-sans-service -Causes logs\causes-sans-service.txt -FichierDetails logs\details-sans-service.txt -Tranche 5
+          exit 0
+      - name: Installer PostgreSQL 16 (hôte)
+        if: always()
+        # Les services de conteneurs de GitHub ne fonctionnent pas sur les
+        # runners Windows : PostgreSQL est installé sur l'hôte.
+        run: |
+          choco install postgresql16 --params '/Password:seamtech_test_password' --no-progress -y
+      - name: Démarrer PostgreSQL 16 et créer la base
+        if: always()
+        run: |
+          $pg = Get-Service -Name "postgresql*" | Select-Object -First 1
+          if (-not $pg) { Write-Error "service PostgreSQL introuvable" ; exit 1 }
+          Start-Service $pg.Name
+          $env:PGPASSWORD = "seamtech_test_password"
+          $psql = "C:\Program Files\PostgreSQL\16\bin\psql.exe"
+          for ($i = 0; $i -lt 30; $i++) {
+            try { & $psql -U postgres -c "SELECT version();" | Out-Null; break } catch { Start-Sleep -Seconds 2 }
+          }
+          & $psql -U postgres -c "CREATE ROLE seamtech LOGIN PASSWORD 'seamtech_test_password' SUPERUSER;"
+          & $psql -U postgres -c "CREATE DATABASE seamtech_search_test OWNER seamtech;"
+          & $psql -U postgres -c "SELECT version();"
+          # pg_dump / pg_restore NE SONT PAS dans le PATH après l'installation
+          # Chocolatey. Sans eux, la moitié de la suite sauvegarde échoue en
+          # « binaire « pg_dump » introuvable (PATH, SEAMTECH_PG_BINDIR) » —
+          # cause n° 4 des échecs Windows au run 41427629667, et la plus
+          # facile à lever : c'est le banc qui manquait, pas le produit.
+          # GITHUB_ENV les rend disponibles pour toutes les étapes suivantes.
+          $bindir = "C:\\Program Files\\PostgreSQL\\16\\bin"
+          if (-not (Test-Path (Join-Path $bindir "pg_dump.exe"))) {
+            Write-Host "::error title=pg-outils::pg_dump.exe introuvable dans $bindir"
+            exit 1
+          }
+          Add-Content -Path $env:GITHUB_ENV -Value "SEAMTECH_PG_BINDIR=$bindir"
+          Add-Content -Path $env:GITHUB_ENV -Value "PATH=$bindir;$env:PATH"
+          & (Join-Path $bindir "pg_dump.exe") --version
+      - name: Installer pgvector (port Windows, version épinglée)
+        if: always()
+        # Sans pgvector, la migration 006 échoue (« extension "vector" is not
+        # available ») et 479 tests partent en erreur — vu au run 41365859490.
+        # pgvector n'a PAS de binaire Windows officiel : on utilise donc un
+        # port reconstruit, épinglé en version, comme pour Redis 7. Le
+        # déploiement réel devra faire pareil — c'est une exigence
+        # d'installation, pas un détail de CI.
+        run: |
+          $version = "0.8.7"
+          $assets = "https://github.com/czkwg8/pgvector-windows-binary/releases/download/v$version/pgvector-v$version-pg16-windows-x64.zip"
+          $zip = Join-Path $env:TEMP "pgvector-$version.zip"
+          $extrait = "C:\pgvector16"
+          $pg = "C:\Program Files\PostgreSQL\16"
+          New-Item -ItemType Directory -Force -Path $extrait | Out-Null
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+          Invoke-WebRequest -Uri $assets -OutFile $zip -UseBasicParsing -ErrorAction Stop
+          Expand-Archive -Path $zip -DestinationPath $extrait -Force
+          foreach ($motif in @("vector.dll", "vector.control", "vector--*.sql")) {
+            $cible = if ($motif -eq "vector.dll") { Join-Path $pg "lib" } else { Join-Path $pg "share\extension" }
+            $trouves = Get-ChildItem $extrait -Recurse -Filter $motif -ErrorAction SilentlyContinue
+            if (-not $trouves) { Write-Host "::error title=pgvector-install::$motif introuvable dans l'archive" ; exit 1 }
+            foreach ($fichier in $trouves) { Copy-Item $fichier.FullName -Destination $cible -Force }
+          }
+          $env:PGPASSWORD = "seamtech_test_password"
+          $psql = Join-Path $pg "bin\psql.exe"
+          & $psql -U postgres -d seamtech_search_test -c "CREATE EXTENSION IF NOT EXISTS vector;"
+          $version_posee = & $psql -U postgres -d seamtech_search_test -tAc "SELECT extversion FROM pg_extension WHERE extname='vector';"
+          if (-not $version_posee) { Write-Host "::error title=pgvector-install::extension vector absente apres installation" ; exit 1 }
+          Write-Host "::notice title=pgvector-install::version=$version_posee (port Windows, pg16 x64)"
+      - name: Installer Redis 7 (port Windows, version épinglée)
+        if: always()
+        run: |
+          $version = "7.4.11"
+          $assets = "https://github.com/redis-windows/redis-windows/releases/download/$version/Redis-$version-Windows-x64-msys2.zip"
+          $zip = Join-Path $env:TEMP "redis-$version.zip"
+          $dir = "C:\redis7"
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+          Invoke-WebRequest -Uri $assets -OutFile $zip -UseBasicParsing -ErrorAction Stop
+          Expand-Archive -Path $zip -DestinationPath $dir -Force
+          $serveur = Get-ChildItem $dir -Recurse -Filter "redis-server.exe" -ErrorAction SilentlyContinue |
+                     Select-Object -First 1 -ExpandProperty FullName
+          if (-not $serveur) {
+            Write-Host "::error title=redis-install::archive téléchargée mais redis-server.exe absent de $dir"
+            Get-ChildItem $dir -Recurse | Select-Object -First 30 -ExpandProperty FullName
+            exit 1
+          }
+          Write-Host "::notice title=redis-install::version=$version binaire=$serveur"
+      - name: Démarrer Redis 7
+        if: always()
+        # Historique : deux échecs avant d'arriver ici.
+        #   1. `choco install redis-64` : le binaire n'était pas là où on le
+        #      cherchait (run 41358977874), puis introuvable malgré une
+        #      recherche élargie (run 41360147830) — le paquet ne livre pas de
+        #      redis-server.exe utilisable sur ce runner.
+        #   2. Le silence n'est pas une preuve : on attend le PONG, et on
+        #      publie le chemin et la version en annotation (les journaux
+        #      complets sont stockés sur un hôte de blobs injoignable depuis
+        #      le banc ; une annotation se lit par l'API).
+        run: |
+          $dir = "C:\redis7"
+          $serveur = Get-ChildItem $dir -Recurse -Filter "redis-server.exe" -ErrorAction SilentlyContinue |
+                     Select-Object -First 1 -ExpandProperty FullName
+          if (-not $serveur) { Write-Error "redis-server introuvable sous $dir" ; exit 1 }
+          & $serveur --version
+          Start-Process -FilePath $serveur -ArgumentList "--port","6379" -WindowStyle Hidden
+          $cli = Get-ChildItem $dir -Recurse -Filter "redis-cli.exe" -ErrorAction SilentlyContinue |
+                 Select-Object -First 1 -ExpandProperty FullName
+          if (-not $cli) { Write-Error "redis-cli introuvable sous $dir" ; exit 1 }
+          for ($i = 0; $i -lt 20; $i++) {
+            Start-Sleep -Seconds 2
+            $pong = & $cli -p 6379 ping 2>$null
+            if ($LASTEXITCODE -eq 0 -and $pong -match "PONG") {
+              Write-Host "::notice title=redis-demarrage::PONG obtenu, version=$(& $serveur --version)"
+              exit 0
+            }
+          }
+          Write-Host "::error title=redis-demarrage::Redis installé mais muet sur le port 6379 apres 40s (binaire=$serveur)"
+          exit 1
+      - name: Suite PostgreSQL + Redis sur Windows — exécution
+        if: always()
+        env:
+          SEAMTECH_TEST_DATABASE_URL: postgresql://seamtech:seamtech_test_password@127.0.0.1:5432/seamtech_search_test
+          SEAMTECH_TEST_REDIS_URL: redis://127.0.0.1:6379/1
+          # Deux tests (« perte de claim Redis ») exigent un VRAI binaire
+          # redis-server et non seulement un serveur joignable : sans cette
+          # variable ils partent en RuntimeError, ce qui n'est ni un succès ni
+          # un saut, mais une preuve manquante déguisée en échec.
+          SEAMTECH_TEST_REDIS_SERVER: C:\redis7\Redis-7.4.11-Windows-x64-msys2\redis-server.exe
+        run: |
+          $ErrorActionPreference = 'Continue'
+          function Publier([string]$titre, [string]$texte) {
+            if ($null -eq $texte) { $texte = '' }
+            $propre = $texte -replace '%', '%25' -replace "`r", '%0D' -replace "`n", '%0A'
+            if ($propre.Length -gt 3000) { $propre = $propre.Substring(0, 3000) }
+            Write-Host "::notice title=$titre::$propre"
+          }
+          Publier "windows-postgres-redis-debut" "lancement de la suite"
+          New-Item -ItemType Directory -Force -Path logs | Out-Null
+          # Redirection par cmd, PAS par PowerShell. Mesuré sur ce workflow :
+          # avec ``-v``, pytest produit des dizaines de milliers de lignes et la
+          # redirection PowerShell (``>``) redevient le facteur limitant — elle
+          # reconvertit chaque ligne ; la suite PostgreSQL est passée de 17 minutes
+          # à plus de 50 sans terminer (run 41420706781). ``cmd /c`` écrit les octets
+          # tels quels. La verbosité EST utile : sans elle, une exécution interrompue
+          # ne dit pas où elle s'est arrêtée (§32).
+          $ligne = 'python -m pytest -v --tb=short -rf -m "postgres and not s3 and not perf and not ocr_suite and not redis_queue" --ignore=tests/test_chaos.py --ignore=tests/test_worker_process.py --ignore=tests/test_worker_process_postgres.py --ignore=tests/test_worker_crash_terminal.py --ignore=tests/test_securite_banc_suivi.py --ignore=tests/test_migration_rollback.py --ignore=tests/test_partage_web_worker.py --junitxml=logs\\junit-postgres-redis.xml > logs\\windows-postgres-redis.log 2>&1 & echo !errorlevel!> logs\\rc-postgres-redis.txt'
+          cmd /V /C $ligne
+          $rc = $LASTEXITCODE
+          Publier "windows-postgres-redis-apres-pytest" "rc=$rc journal=$((Get-Item logs\windows-postgres-redis.log -ErrorAction SilentlyContinue).Length) octets"
+          Get-Content logs\windows-postgres-redis.log -Tail 25 | ForEach-Object { Write-Host "journal: $_" }
+          $resume = (Select-String -Path logs\windows-postgres-redis.log -Pattern '^(FAILED|ERROR)|passed|failed' |
+                     Select-Object -Last 10 | ForEach-Object { $_.Line }) -join ' | '
+          exit 0
+      - name: Suite PostgreSQL + Redis — causes par famille (rapport JUnit)
+        if: always()
+        run: |
+          $ErrorActionPreference = 'Continue'
+          python ci\resumer_echecs.py logs\junit-postgres-redis.xml logs\causes-postgres-redis.txt --details logs\details-postgres-redis.txt --exemples 25
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "::error title=causes-postgres-redis::analyse du rapport JUnit impossible (rc=$LASTEXITCODE)"
+          }
+          exit 0
+      - name: Suite PostgreSQL + Redis sur Windows — verdict
+        if: always()
+        run: |
+          $ErrorActionPreference = 'Continue'
+          pwsh -File ci\verdict-windows.ps1 `
+            -Journal logs\windows-postgres-redis.log `
+            -CodeSortie logs\rc-postgres-redis.txt `
+            -Titre windows-postgres-redis -Causes logs\causes-postgres-redis.txt -FichierDetails logs\details-postgres-redis.txt
+          exit $LASTEXITCODE
+      - name: Suite PostgreSQL + Redis — causes, tranche 2
+        if: always()
+        continue-on-error: true
+        run: |
+          pwsh -File ci\verdict-windows.ps1 -Journal logs\windows-postgres-redis.log -CodeSortie logs\rc-postgres-redis.txt -Titre windows-postgres-redis -Causes logs\causes-postgres-redis.txt -FichierDetails logs\details-postgres-redis.txt -Tranche 2
+          exit 0
+      - name: Suite PostgreSQL + Redis — causes, tranche 3
+        if: always()
+        continue-on-error: true
+        run: |
+          pwsh -File ci\verdict-windows.ps1 -Journal logs\windows-postgres-redis.log -CodeSortie logs\rc-postgres-redis.txt -Titre windows-postgres-redis -Causes logs\causes-postgres-redis.txt -FichierDetails logs\details-postgres-redis.txt -Tranche 3
+          exit 0
+      - name: Diagnostic — fichiers à processus POSIX, exécutés un par un
+        if: always()
+        # La suite sans service meurt PENDANT pytest : le témoin de début
+        # paraît, jamais celui d'après (run 41365859490). Ces cinq fichiers
+        # sont les seuls de la sélection à manipuler des processus (fork,
+        # SIGKILL, killpg, multiprocessing) — des notions qui n'existent pas
+        # sur Windows. En les exécutant UN PAR UN, chacun avec son témoin, le
+        # coupable se lit à l'absence de son témoin : un seul run suffit, au
+        # lieu de cinq.
+        #
+        # Étape de diagnostic, pas d'aveuglement : dès que la cause est connue,
+        # chaque fichier est soit adapté à Windows (équivalent TerminateProcess
+        # d'un SIGKILL), soit écarté NOMMÉMENT avec sa raison.
+        run: |
+          $ErrorActionPreference = 'Continue'
+          function Publier([string]$titre, [string]$texte) {
+            if ($null -eq $texte) { $texte = '' }
+            $propre = $texte -replace '%', '%25' -replace "`r", '%0D' -replace "`n", '%0A'
+            if ($propre.Length -gt 1500) { $propre = $propre.Substring(0, 1500) }
+            Write-Host "::notice title=$titre::$propre"
+          }
+          New-Item -ItemType Directory -Force -Path logs | Out-Null
+          foreach ($fichier in @(
+              "tests/test_restauration_confinement.py",
+              "tests/test_televersement_creation_idempotente.py",
+              "tests/test_relais_file_base.py",
+              "tests/test_lot10_televersement_lot.py",
+              "tests/test_extraction_logs_securite.py")) {
+            $nom = [IO.Path]::GetFileNameWithoutExtension($fichier)
+            python -m pytest -q -rf $fichier > "logs\diag-$nom.log" 2>&1
+            $rc = $LASTEXITCODE
+            Get-Content "logs\diag-$nom.log" -Tail 15 | ForEach-Object { Write-Host "journal: $_" }
+            Publier "diag-$nom" "rc=$rc"
+          }
+          Publier "diag-fin" "tous les fichiers a processus ont ete executes"
+      - name: Diagnostic ciblé — les échecs encore non élucidés
+        if: always()
+        # Trois échecs ne sont attribuables à aucune limite de plateforme
+        # connue : deux rejeux téléversés (TestRejeuSansDoublon) et une
+        # concurrence de corrections PostgreSQL. Ils passent sur Linux — donc
+        # soit ils révèlent un VRAI défaut produit propre à Windows (le plus
+        # intéressant à trouver), soit une différence de banc.
+        #
+        # Une annotation ne dit pas tout : on publie la FIN de la section
+        # FAILURES (là où se trouvent l'assertion et les valeurs), tronquée à
+        # la taille que GitHub accepte. Sans cela, ces trois échecs
+        # resteraient des lignes rouges sans cause lisible.
+        env:
+          SEAMTECH_TEST_DATABASE_URL: postgresql://seamtech:seamtech_test_password@127.0.0.1:5432/seamtech_search_test
+          SEAMTECH_TEST_REDIS_URL: redis://127.0.0.1:6379/1
+          SEAMTECH_TEST_REDIS_SERVER: C:\redis7\Redis-7.4.11-Windows-x64-msys2\redis-server.exe
+        run: |
+          $ErrorActionPreference = 'Continue'
+          function Publier([string]$titre, [string]$texte) {
+            if ($null -eq $texte) { $texte = '' }
+            $propre = $texte -replace '%', '%25' -replace "`r", '%0D' -replace "`n", '%0A'
+            if ($propre.Length -gt 3000) { $propre = $propre.Substring(0, 3000) }
+            Write-Host "::notice title=$titre::$propre"
+          }
+          New-Item -ItemType Directory -Force -Path logs | Out-Null
+          # Cibles du run 41427629667, choisies parce que leurs causes n'ont PAS
+          # pu être attribuées : « NoneType n'est pas subscriptable » et
+          # « Regex pattern did not match » ne disent pas si le produit est en
+          # cause ou si le test suppose POSIX. Les trois cibles précédentes
+          # (rejeu ×2, verrou de mutation) sont sorties de la liste : leur cause
+          # est connue et corrigée.
+          $cibles = @(
+            "tests/test_liaison_catalogue_capture_pg.py::test_declencheur_invalide_meme_les_reecritures_identiques_pg",
+            "tests/test_rebuild_index_postgres.py::test_cli_rebuild_aboutit_sur_une_base_postgres_peuplee",
+            "tests/test_sauvegarde_restauration.py::test_cli_sans_s3_aller_retour",
+            "tests/test_restauration_dump_stable_pg.py::test_absence_pg_restore_nouvre_pas_de_base_pg_reelle",
+            "tests/test_sauvegarde_snapshot_pg.py::test_sha_snapshot_propage_aux_copies_locale_et_objet_pg",
+            "tests/test_race_captures_catalogue.py::test_course_deux_captures_postgres"
+          )
+          $n = 0
+          foreach ($cible in $cibles) {
+            $n++
+            python -m pytest -vv --tb=long -p no:randomly $cible > "logs\diag-cible-$n.log" 2>&1
+            $rc = $LASTEXITCODE
+            $tout = Get-Content "logs\diag-cible-$n.log" -Raw
+            $debut = $tout.IndexOf("= FAILURES =")
+            if ($debut -lt 0) { $debut = 0 }
+            $fin = $tout.IndexOf("short test summary info")
+            if ($fin -le $debut) { $fin = $tout.Length }
+            $extrait = $tout.Substring($debut, [Math]::Min($fin - $debut, $tout.Length - $debut))
+            # La fin porte l'assertion et les valeurs ; le début n'est que du cadre.
+            if ($extrait.Length -gt 2900) { $extrait = "…" + $extrait.Substring($extrait.Length - 2900) }
+            Publier "diag-cible-$n" "rc=$rc cible=$cible`n$extrait"
+          }
+          Publier "diag-cible-fin" "diagnostics cibles executes"
+      - name: Ligne de commande et chemins Windows
+        if: always()
+        run: |
+          # Même raison que pour les suites : une sortie d'erreur de python ne
+          # doit pas tuer l'étape avant la vérification du code de sortie.
+          $ErrorActionPreference = 'Continue'
+          # Le CLI doit fonctionner sur un chemin à accents et espaces — c'est
+          # le cas réel d'un dossier d'atelier, et la source historique des
+          # pannes d'encodage sur Windows.
+          $dossier = Join-Path $env:TEMP "Dépôt d'atelier 2024"
+          New-Item -ItemType Directory -Force -Path $dossier | Out-Null
+          python -m seamtech_search.cli --help | Out-Null
+          if ($LASTEXITCODE -ne 0) { Write-Error "CLI en échec sur Windows" ; exit 1 }
+          python -c "from pathlib import Path; p = Path(r'''$dossier''') / 'échéancier.pdf'; p.write_bytes(b'%PDF-1.4 test'); print(p.exists(), p.stat().st_size)"
+          if ($LASTEXITCODE -ne 0) { Write-Error "écriture sur chemin accentué en échec" ; exit 1 }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: preuves-qualification-windows
+          path: logs/*.log
+          if-no-files-found: warn

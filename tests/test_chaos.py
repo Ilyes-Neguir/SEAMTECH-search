@@ -16,7 +16,7 @@ from seamtech_search.config import AppConfig
 from seamtech_search.indexer import SearchIndex
 from seamtech_search.jobs import create_job, get_job
 from seamtech_search.redis_store import RedisStore
-from seamtech_search.storage import S3StorageClient
+from seamtech_search.storage import S3StorageClient, StoragePreflightError
 
 
 def make_cfg(tmp_path: Path, **extra):
@@ -66,8 +66,10 @@ def test_chaos_s3_down_mid_import(tmp_path: Path):
     (src / "file.pdf").write_bytes(pdf_bytes)
     (src / "notes.txt").write_text("do not lose me")
 
-    # S3 is configured, but the endpoint is down: every upload attempt raises.
-    with patch.object(S3StorageClient, "upload_file", side_effect=Exception("S3 down")):
+    # Une panne prouvée AVANT écriture est reprenable sans réconciliation.
+    # Une exception générique après début potentiel du PUT est ambiguë et ne
+    # permet plus cette conclusion : elle est couverte séparément ci-dessous.
+    with patch.object(S3StorageClient, "upload_file", side_effect=StoragePreflightError("S3 down")):
         result = process_import_task({"job_id": job_id, "source_path": str(src)}, cfg, idx)
 
     # 1. Job state: upload_incomplete — the precise status, not a union of all.
@@ -328,3 +330,31 @@ def test_chaos_redis_rate_limit_fallback(tmp_path: Path):
     with patch.object(store, "_get_client", return_value=mock_client):
         limited, retry = store.check_rate_limit("key", 10)
         assert limited is False
+
+
+def test_chaos_reponse_s3_perdue_exige_reconciliation(tmp_path: Path):
+    """Une exception après un PUT potentiel n'est pas la preuve d'une absence d'écriture."""
+    from seamtech_search.import_pipeline import PublicationIncertaine, get_import, retry_upload
+    from seamtech_search.worker import process_import_task
+
+    cfg = make_cfg(tmp_path, s3_endpoint_url='http://localhost:9000', s3_bucket='b',
+                   s3_access_key='a', s3_secret_key='s')
+    idx = SearchIndex(cfg.database_path)
+    idx.initialize(rebuild=True)
+    src = tmp_path / 'archive'
+    src.mkdir()
+    original = b'original-synthetique'
+    (src / 'piece.txt').write_bytes(original)
+    create_job(idx, 'chaos-ambigu', str(src), status='running', stage='extracting')
+    with patch.object(S3StorageClient, 'upload_file', side_effect=Exception('reponse perdue')) as envoi:
+        result = process_import_task({'job_id': 'chaos-ambigu', 'source_path': str(src)}, cfg, idx)
+        assert result['status'] == 'needs_review' and result['publication_pending'] is True
+        assert get_job(idx, 'chaos-ambigu')['status'] == 'needs_review'
+        payload = get_import(idx, 'chaos-ambigu')
+        assert payload and payload['publication_pending'] and not payload['all_verified']
+        assert payload['artifacts'][0]['key'] and not payload['artifacts'][0]['verified']
+        with pytest.raises(PublicationIncertaine):
+            retry_upload(idx, cfg, 'chaos-ambigu')
+        assert envoi.call_count == 1
+    assert (src / 'piece.txt').read_bytes() == original
+    idx.close()

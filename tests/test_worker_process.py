@@ -40,7 +40,7 @@ RACINE_DEPOT = Path(__file__).resolve().parents[1]
 pytestmark = pytest.mark.redis_queue
 
 @pytest.fixture(autouse=True)
-def _redis_requis() -> None:
+def _redis_requis(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
     """Même règle que ``test_file_durable`` : saut par TEST, jamais par MODULE.
 
     Un saut au niveau du module est compté comme « sauté » dans le JUnit même
@@ -49,6 +49,9 @@ def _redis_requis() -> None:
     """
     if not REDIS_URL:  # pragma: no cover - sélection explicite
         pytest.skip("Set SEAMTECH_TEST_REDIS_URL to run the killed-worker scenario")
+    monkeypatch.setitem(globals(), "REDIS_URL", request.getfixturevalue("redis_isole"))
+    monkeypatch.delenv("SEAMTECH_REDIS_URL", raising=False)
+    monkeypatch.delenv("SEAMTECH_DATABASE_URL", raising=False)
 
 
 def _rediger_config(tmp_path: Path, racine_donnees: Path, claim_ttl: int) -> Path:
@@ -225,6 +228,9 @@ def test_worker_service_verifier_rend_un_diagnostic_exploitable(tmp_path: Path) 
     assert rapport["redis_joinable"] is True
     assert rapport["durable_ready"] is True
     assert "jobs_par_statut" in rapport and "workers_vivants" in rapport
+    index = SearchIndex(tmp_path / "index.db")
+    assert index.health_details()["schema_application_a_jour"] is True
+    index.close()
 
 
 def test_worker_service_refuse_de_demarrer_sans_redis(tmp_path: Path) -> None:

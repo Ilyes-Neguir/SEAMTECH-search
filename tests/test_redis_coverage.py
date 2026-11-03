@@ -92,7 +92,8 @@ def test_dequeue_blmove_blpop():
     mock2.blpop.return_value = ("seamtech:queue:imports", json.dumps({"job_id": "job-2"}))
     with patch.object(store, "_get_client", return_value=mock2):
         task2 = store.dequeue_task("imports", timeout=1)
-        assert task2["job_id"] == "job-2"
+        assert task2 is None
+        mock2.blpop.assert_not_called()
 
     mock3 = MagicMock()
     mock3.blmove.return_value = None

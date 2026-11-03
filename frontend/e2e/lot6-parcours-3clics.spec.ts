@@ -276,6 +276,22 @@ test.describe("Lot 6 — parcours 3 clics et cohérence globale", () => {
   })
 
   test("liens croisés voiles : extraction → Confiance… → fiche source → fiche métier", async ({ browser }) => {
+    // Budget du TEST, pas des assertions : ce scénario enchaîne huit
+    // navigations (recherche → liste → extraction → Confiance → évaluation →
+    // population → fiche source → fiche métier) dont une, « Évaluer la
+    // confiance », déclenche un calcul serveur. Les 30 s par défaut de
+    // Playwright sont un budget par test : sous charge CI (2 vCPU, front de
+    // production + backend + PostgreSQL), ce scénario les a dépassés une fois
+    // puis réussi au réessai — compté « flaky », donc ROUGE par la porte qui
+    // interdit l'instabilité.
+    //
+    // Relever CE budget n'affaiblit aucune assertion : chaque attente garde
+    // sa propre borne (30 s explicites, 15 s par défaut dans la config), donc
+    // un comportement absent échoue toujours, et une vérification négative
+    // réussit toujours immédiatement. Ce qui change, c'est le droit d'être
+    // lent sans être déclaré absent — la même convention que
+    // accessibilite.spec.ts, concurrence.spec.ts et televersement-lot.spec.ts.
+    test.setTimeout(120_000)
     const contextes: BrowserContext[] = []
     try {
       const page = await ouvrirPoste(browser, contextes, APPROBATEUR_2)
@@ -283,16 +299,15 @@ test.describe("Lot 6 — parcours 3 clics et cohérence globale", () => {
       const corps = (await reponse.json()) as {
         extractions: { id_extraction: number; code_fiche: string | null }[]
       }
-      // Candidate LOT5-POP-2 : sa population (5) contient la vraie fiche
-      // 7792-SO, seule source rattachée à une fiche métier — donc la seule
-      // rendue comme lien (jamais de lien mort).
-      const candidate = corps.extractions.find((e) => (e.code_fiche ?? "") === "LOT5-POP-2")
-      expect(candidate, "extraction LOT5-POP-2 dans la base live").toBeTruthy()
+      // Jeu dédié : sa population contient la fiche BIS-7792 ; elle reste
+      // liée même si le scénario de correction Lot 3b modifie 7792-SO.
+      const candidate = corps.extractions.find((e) => (e.code_fiche ?? "") === "LOT5-ISO-2")
+      expect(candidate, "extraction LOT5-ISO-2 dans la base live").toBeTruthy()
 
       await page.goto(`/extractions`)
-      await page.getByTestId("recherche-extractions").fill("LOT5-POP-2")
+      await page.getByTestId("recherche-extractions").fill("LOT5-ISO-2")
       const ligne = page.getByTestId("file-extractions").getByTestId("extraction-item").first()
-      await expect(ligne).toContainText("LOT5-POP-2", { timeout: 30000 })
+      await expect(ligne).toContainText("LOT5-ISO-2", { timeout: 30000 })
       await ligne.click()
       const lienConfiance = page.getByTestId("lien-confiance")
       await expect(lienConfiance).toBeVisible({ timeout: 30000 })
@@ -304,8 +319,8 @@ test.describe("Lot 6 — parcours 3 clics et cohérence globale", () => {
       await expect(resultat).toBeVisible({ timeout: 30000 })
       // Une fiche source de la population ouvre la fiche métier.
       await resultat.getByText(/Fiches sources de la population/).click()
-      await resultat.getByRole("link", { name: new RegExp(CODE_REFERENCE) }).first().click()
-      await expect(page.getByTestId("fiche-code")).toHaveText(CODE_REFERENCE, { timeout: 30000 })
+      await resultat.getByRole("link", { name: /BIS-7792/ }).first().click()
+      await expect(page.getByTestId("fiche-code")).toHaveText("BIS-7792", { timeout: 30000 })
     } finally {
       for (const contexte of contextes) await contexte.close()
     }

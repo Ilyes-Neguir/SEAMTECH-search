@@ -54,7 +54,7 @@ export async function backendHeaders(extra?: Record<string, string>): Promise<Re
  * A backend we cannot reach is treated as "not alive": failing open here would
  * mean serving a revoked session for as long as the backend is down.
  */
-export async function sessionServeurVivante(): Promise<boolean> {
+export async function sessionServeurVivante(signal?: AbortSignal): Promise<boolean> {
   const session = await currentSession()
   if (!session) return false
   if (session.mode !== MODE_NOMINATIF) return true
@@ -69,9 +69,19 @@ export async function sessionServeurVivante(): Promise<boolean> {
         "X-SEAMTECH-SESSION-JETON": session.jeton,
       },
       cache: "no-store",
+      signal,
     })
+    // Pour un appelant qui sait traiter une indisponibilité, seul un refus
+    // d'authentification signifie que la session ne peut plus être utilisée.
+    if (signal && !res.ok && res.status !== 401 && res.status !== 403) {
+      throw new Error("Vérification de session indisponible")
+    }
     return res.ok
-  } catch {
+  } catch (erreur) {
+    // Une panne, annulation ou expiration n'est pas une preuve de révocation.
+    // L'appelant muni d'un signal peut la présenter distinctement sans ouvrir
+    // l'accès ; les autres gardent leur contrat historique fail-closed.
+    if (signal) throw erreur
     console.error("[auth] Backend injoignable : session non confirmée, requête refusée.")
     return false
   }
@@ -85,7 +95,7 @@ export async function sessionServeurVivante(): Promise<boolean> {
  * effective everywhere: reusing a copied cookie after signing out now gets 401
  * from EVERY route, not just from /api/auth/session.
  */
-export async function requireAuthValide(): Promise<NextResponse | null> {
+export async function requireAuthValide(signal?: AbortSignal): Promise<NextResponse | null> {
   const store = await cookies()
   if (!isTokenValid(store.get(SESSION_COOKIE)?.value)) {
     return NextResponse.json(
@@ -93,7 +103,7 @@ export async function requireAuthValide(): Promise<NextResponse | null> {
       { status: 401, headers: { "Cache-Control": "no-store" } },
     )
   }
-  if (await sessionServeurVivante()) return null
+  if (await sessionServeurVivante(signal)) return null
   return NextResponse.json(
     { detail: "Session expirée ou révoquée. Reconnectez-vous." },
     { status: 401, headers: { "Cache-Control": "no-store" } },

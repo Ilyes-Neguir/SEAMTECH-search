@@ -102,8 +102,14 @@ export function Nav() {
       {groupesVisibles.map((groupe, indice) => (
         <span key={groupe.code} className="contents">
           {indice > 0 && <span className="couture-verticale mx-1.5 hidden shrink-0 sm:block" aria-hidden />}
+          {/* Contraste : `muted-foreground` à 80 % d'opacité donnait 3,52:1 en
+              thème jour (sous le seuil AA de 4,5:1) — trouvé par la
+              qualification Chrome/Edge du 02/11, écran /fiches. Le token
+              PLEIN donne 5,30:1 (8,49:1 la nuit) ; la hiérarchie reste lue
+              par la casse, le graisse et l'interlettrage, pas par l'opacité.
+              Garde-fou : `lib/contraste.test.ts`. */}
           <span
-            className="ml-1 mr-0.5 hidden shrink-0 text-[8.5px] font-semibold uppercase tracking-[0.2em] text-muted-foreground/80 lg:block"
+            className="ml-1 mr-0.5 hidden shrink-0 text-[8.5px] font-semibold uppercase tracking-[0.2em] text-muted-foreground lg:block"
             data-testid={`nav-groupe-${groupe.code}`}
           >
             {groupe.libelle}

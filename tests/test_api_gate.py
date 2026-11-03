@@ -226,11 +226,13 @@ def test_api_endpoints_extra(tmp_path: Path):
 
     # /imports/{id} cancel
     r_cancel = client.post(f"/imports/{job_id}/cancel")
-    assert r_cancel.status_code in (200, 404)
+    assert r_cancel.status_code in (200, 409)
+    if r_cancel.status_code == 200:
+        assert r_cancel.json()["status"] == "cancelled"
 
     # /imports/{id} cancel not found
     r_cancel_nf = client.post("/imports/notfound/cancel")
-    assert r_cancel_nf.status_code in (200, 404)
+    assert r_cancel_nf.status_code == 404
 
     # /imports/{id} patch
     r_patch = client.patch(f"/imports/{job_id}", json={"reference": "ref"})

@@ -1,15 +1,22 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { backendBase, backendHeaders, requireRolesServer } from "@/lib/backend"
-import { ROLE_ADMIN } from "@/lib/roles"
 import { relayerMultipart } from "@/lib/relais-multipart"
+import { ROLE_ADMIN } from "@/lib/roles"
 
 export const dynamic = "force-dynamic"
 
-/** Un PDF de gabarit est petit : borne serrée pour ne pas relayer un envoi
- *  démesuré sur cette route d'administration (le backend refuserait aussi,
- *  mais autant couper côté BFF). */
-const LIMITE_GABARIT_OCTETS = 64 * 1024 * 1024
+// 20 Mio de PDF côté backend (TAILLE_PDF_MAX) + marge pour l'encadrement
+// multipart. La borne est volontairement plus serrée que la limite
+// d'administration (64 Mio) : un envoi démesuré est refusé au BFF (413) au
+// lieu d'être relayé pour rien vers le backend.
+const LIMITE_GABARIT_OCTETS = 21 * 1024 * 1024
 
+/**
+ * Relais EN FLUX du PDF de gabarit : corps transmis tel quel, borné (413),
+ * annulé si le navigateur abandonne (499), statut du backend recopié. La
+ * concurrence est bornée par identité : deux onglets du même compte ne
+ * saturent pas la mémoire du BFF.
+ */
 export async function POST(req: NextRequest) {
   const denied = await requireRolesServer(ROLE_ADMIN)
   if (denied) return denied

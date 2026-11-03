@@ -75,17 +75,28 @@ def _garde_job_dedie() -> None:
     if not ACTIF:
         pytest.skip(GARDE)
 
-#: Les journaux applicatifs recopieraient des chemins de dossiers et des
-#: codes de fiche : on se limite à WARNING pendant la recette — les échecs
-#: restent visibles, les valeurs ne défilent plus dans les journaux publics.
-logging.getLogger("seamtech_search").setLevel(logging.WARNING)
+@pytest.fixture(scope="session", autouse=True)
+def _masquer_journaux_recette():
+    # Couvrir aussi les fixtures de session manipulant le corpus, sans effet
+    # pendant la collecte ou quand la recette n'est pas activée.
+    if not ACTIF:
+        yield
+        return
+    logger = logging.getLogger("seamtech_search")
+    precedent = logger.level
+    logger.setLevel(logging.WARNING)
+    try:
+        yield
+    finally:
+        logger.setLevel(precedent)
 
 RACINE_CORPUS = Path(os.environ.get("SEAMTECH_RECETTE_CORPUS_RACINE", ""))
 URL_BASE = os.environ.get("SEAMTECH_TEST_DATABASE_URL", "")
-URL_BASE_RESTAUREE = os.environ.get(
-    "SEAMTECH_RECETTE_DATABASE_RESTAURATION",
-    (URL_BASE.rsplit("/", 1)[0] + "/seamtech_search_recette_restauree") if URL_BASE else "",
-)
+from tests.helpers_postgres_isole import url_base_jetable  # noqa: E402
+
+URL_BASE_RESTAUREE = os.environ.get("SEAMTECH_RECETTE_DATABASE_RESTAURATION")
+if URL_BASE_RESTAUREE is None:
+    URL_BASE_RESTAUREE = url_base_jetable(URL_BASE, "seamtech_search_recette_restauree") if URL_BASE else ""
 REDIS_URL = os.environ.get("SEAMTECH_REDIS_URL", "")
 S3_ENDPOINT = os.environ.get("SEAMTECH_S3_ENDPOINT_URL", "http://127.0.0.1:9000")
 S3_BUCKET = os.environ.get("SEAMTECH_S3_BUCKET", "seamtech-documents")

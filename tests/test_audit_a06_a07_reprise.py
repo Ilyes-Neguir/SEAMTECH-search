@@ -87,7 +87,7 @@ def test_a06_job_pending_orphelin_est_reconcilie_et_relance(tmp_path: Path) -> N
         def job_est_dans_file(self, *args: object, **kwargs: object) -> bool:
             return False
 
-        def enqueue_task(self, queue: str, charge: dict[str, Any]) -> bool:
+        def enqueue_task_si_absent(self, queue: str, charge: dict[str, Any]) -> bool:
             self.enfilees.append(charge)
             return True
 
@@ -161,7 +161,7 @@ def test_a06_plus_de_la_premiere_page_de_jobs_est_examinee(tmp_path: Path) -> No
         def job_est_dans_file(self, job_id: str, *args: object, **kwargs: object) -> bool:
             return job_id not in {"job-tres-ancien"}
 
-        def enqueue_task(self, queue: str, charge: dict[str, Any]) -> bool:
+        def enqueue_task_si_absent(self, queue: str, charge: dict[str, Any]) -> bool:
             self.demandes.append(str(charge.get("job_id")))
             return True
 
@@ -203,7 +203,7 @@ def test_a06_selection_manquante_refuse_la_relance_au_lieu_de_substituer(tmp_pat
         def job_est_dans_file(self, *args: object, **kwargs: object) -> bool:
             return False
 
-        def enqueue_task(self, queue: str, charge: dict[str, Any]) -> bool:  # pragma: no cover
+        def enqueue_task_si_absent(self, queue: str, charge: dict[str, Any]) -> bool:  # pragma: no cover
             raise AssertionError("aucun ré-enfilage ne doit avoir lieu avec une sélection perdue")
 
     resume = reconcilier_file(index, _FileVide())  # type: ignore[arg-type]
@@ -247,7 +247,7 @@ def test_a06_selection_conservee_est_relancee_telle_quelle(tmp_path: Path) -> No
         def job_est_dans_file(self, *args: object, **kwargs: object) -> bool:
             return False
 
-        def enqueue_task(self, queue: str, charge: dict[str, Any]) -> bool:
+        def enqueue_task_si_absent(self, queue: str, charge: dict[str, Any]) -> bool:
             self.enfilees.append(charge)
             return True
 
@@ -358,7 +358,9 @@ def test_a07_renvoi_apres_perte_d_un_original_n_est_pas_un_succes_total(tmp_path
     payload = get_import(index, "IMP-A07")
     assert payload is not None
     assert len(payload["files"]) >= 2, "le dossier de test doit porter au moins deux fichiers"
-    assert payload["all_verified"] is True, "le préalable : l'import initial a tout envoyé et vérifié"
+    assert payload["all_verified"] is False
+    assert payload["transport_verifie"] is True, "le lot initial a été relu et vérifié"
+    assert all(a["verified"] for a in payload["artifacts"])
 
     # Les rapports sont DÉCLARÉS dans le payload exactement comme le produit le
     # fait (``report_path`` / ``report_docx_path``). Le PDF de test étant
@@ -366,10 +368,9 @@ def test_a07_renvoi_apres_perte_d_un_original_n_est_pas_un_succes_total(tmp_path
     # déclare — le scénario A07 éprouve l'INVENTAIRE de reprise (rapports +
     # originaux), pas la génération du rapport (couverte par
     # tests/test_import_workflow.py).
-    rapports = [
-        Path(payload["source_path"]) / "rapport-pdf.pdf",
-        Path(payload["source_path"]) / "rapport.docx",
-    ]
+    rapport_dir = config.database_path.parent / "reports" / "IMP-A07"
+    rapport_dir.mkdir(parents=True, exist_ok=True)
+    rapports = [rapport_dir / "technical-report.pdf", rapport_dir / "technical-report.docx"]
     rapports[0].write_bytes(b"%PDF-1.4 rapport")
     rapports[1].write_bytes(b"docx rapport")
     payload["report_path"] = str(rapports[0])
@@ -416,6 +417,9 @@ def test_a07_renvoi_apres_perte_d_un_original_n_est_pas_un_succes_total(tmp_path
     # …et l'entrée de fichier publiée au client dit la même chose.
     fichier_publie = next(e for e in apres["files"] if e["path"] == str(piece))
     assert fichier_publie["upload_status"] == "failed", fichier_publie
+    assert fichier_publie["object_key"] is None
+    assert fichier_publie["object_bucket"] is None
+    assert fichier_publie["uploaded_at"] is None
 
     # 3. L'inventaire couvre l'ENSEMBLE (fichiers du dossier + rapports déclarés).
     assert apres["inventaire"]["total"] == len(payload["files"]) + len(rapports), apres["inventaire"]
@@ -463,7 +467,7 @@ def test_a07_inventaire_vide_ou_sans_destination(tmp_path: Path) -> None:
 
     assert agreger_preservation([], destination_configuree=True) == ("not_applicable", False)
     manifeste = [
-        {"path": "/a", "status": "uploaded", "verified": True, "key": "k"},
+        {"path": "/a", "status": "uploaded", "verified": True, "key": "k", "bucket": "bucket-synthetique"},
     ]
     assert agreger_preservation(manifeste, destination_configuree=False) == ("not_configured", False)
     assert agreger_preservation(manifeste, destination_configuree=True) == ("uploaded", True)
@@ -471,8 +475,8 @@ def test_a07_inventaire_vide_ou_sans_destination(tmp_path: Path) -> None:
     assert agreger_preservation(incomplet, destination_configuree=True) == ("partial", False)
 
 
-def test_a07_renvoi_complet_autorise_la_purge_seulement_avec_accord(tmp_path: Path) -> None:
-    """Inventaire entier vérifié : purge possible — mais seulement avec l'accord explicite."""
+def test_a07_renvoi_complet_ne_purge_pas_meme_avec_accord(tmp_path: Path) -> None:
+    """La preuve passée ne suffit pas à autoriser la purge du dossier actuel."""
     from seamtech_search.import_pipeline import retry_upload
     from seamtech_search.storage import S3StorageClient
     from tests.s3_en_memoire import S3EnMemoire
@@ -497,11 +501,12 @@ def test_a07_renvoi_complet_autorise_la_purge_seulement_avec_accord(tmp_path: Pa
             patch.object(S3StorageClient, "ensure_bucket_exists", lambda _i: True),
         ):
             apres = retry_upload(index, config, "IMP-A07")
-        assert apres["all_verified"] is True, apres["preservation"]
+        assert apres["all_verified"] is False, apres["preservation"]
+        assert apres["preservation"]["transport_verifie"] is True
+        assert apres["preservation"]["identite_locale_observee"] is True
         assert apres["inventaire"]["verifies"] == apres["inventaire"]["total"]
-        assert apres["cleanup"]["purge"] is accord, apres["cleanup"]
-        if not accord:
-            assert "SEAMTECH_DELETE_LOCAL_AFTER_UPLOAD" in apres["cleanup"]["raison"]
+        assert apres["cleanup"]["purge"] is False, apres["cleanup"]
+        assert "suspendue" in apres["cleanup"]["raison"]
         index.close()
 
 
@@ -577,22 +582,12 @@ def test_a07_preuves_anterieures_ne_sont_jamais_reecrites(tmp_path: Path) -> Non
     assert neuf["status"] == "pending" and neuf["verified"] is False
 
 
-def test_r3_quarantaine_reprise_propage_nouveaux_chemins_et_selections(tmp_path: Path) -> None:
-    """R3 : Après mise en quarantaine, la charge de retry et les sélections sont cohérentes et réessayables."""
+def test_r3_reprise_conserve_chemins_et_selections(tmp_path: Path, redis_isole: str) -> None:
+    """R3 : après échec, les sources et sélections restent sur place et réessayables."""
     import json
-    import os
     from unittest.mock import patch
 
-    import pytest
-
-    redis_url = os.environ.get("SEAMTECH_TEST_REDIS_URL")
-    if not redis_url:
-        try:
-            import redislite
-            r_inst = redislite.Redis(str(tmp_path / "r3_test.rdb"))
-            redis_url = f"unix://{r_inst.socket_file}"
-        except ImportError:
-            pytest.skip("Neither SEAMTECH_TEST_REDIS_URL nor redislite available for R3 test")
+    redis_url = redis_isole
 
     from seamtech_search import worker
     from seamtech_search.config import AppConfig
@@ -604,7 +599,7 @@ def test_r3_quarantaine_reprise_propage_nouveaux_chemins_et_selections(tmp_path:
 
     store = RedisStore(redis_url=redis_url)
     client = store._get_client()
-    client.flushdb()
+    assert store.ping()
 
     root = tmp_path / "env"
     root.mkdir()
@@ -622,7 +617,7 @@ def test_r3_quarantaine_reprise_propage_nouveaux_chemins_et_selections(tmp_path:
     create_job(idx, "job-r3", str(source), selected_pdf=str(pdf))
     store.enqueue_task("imports", {"job_id": "job-r3", "source_path": str(source), "selected_pdf": str(pdf)})
 
-    # Tentative 1 avec panne S3 -> quarantaine
+    # Tentative 1 avec panne S3 : conservation sur place
     with patch.object(S3StorageClient, "_get_client", side_effect=StorageError("panne S3 injectée")):
         worker.worker_loop(cfg, idx, store, worker_id="worker-A", run_once=True)
 
@@ -633,13 +628,13 @@ def test_r3_quarantaine_reprise_propage_nouveaux_chemins_et_selections(tmp_path:
     retry_payload = json.loads(pending[0])
 
     # Invariants R3 :
-    # 1. Le chemin source en base existe et est en quarantaine
+    # 1. Le chemin source en base existe toujours
     assert Path(job["source_path"]).exists()
-    assert "quarantine" in job["source_path"]
-    # 2. La charge de retry Redis porte le NOUVEAU chemin en quarantaine, pas l'ancien périmé
+    assert job["source_path"] == str(source)
+    # 2. La charge de retry Redis porte le chemin inchangé
     assert Path(retry_payload["source_path"]).exists()
     assert retry_payload["source_path"] == job["source_path"]
-    # 3. La sélection PDF en base et dans le payload pointe vers le fichier relocalisé
+    # 3. La sélection PDF reste inchangée et disponible
     assert Path(job["selected_pdf"]).exists()
     assert Path(retry_payload["selected_pdf"]).exists()
 
@@ -649,10 +644,12 @@ def test_r3_quarantaine_reprise_propage_nouveaux_chemins_et_selections(tmp_path:
     assert Path(reconstruction["source_path"]).exists()
     assert Path(reconstruction["selected_pdf"]).exists()
 
-    # 5. Seconde tentative effective réussie
-    def fake_upload(folder_name, files_to_upload, config, import_id=None, source_root=None):
+    # 5. Seconde tentative de transport réussie, mais préservation globale en revue.
+    def fake_upload(folder_name, files_to_upload, config, import_id=None, source_root=None, logical_paths=None):
+        import hashlib
         arts = [
-            UploadedArtifact(path=str(f), name=Path(f).name, key=f"key_{Path(f).name}", bucket="b", status="uploaded", verified=True)
+            UploadedArtifact(path=str(f), name=Path(f).name, key=f"key_{Path(f).name}", bucket="b", status="uploaded", verified=True,
+                             verification="relecture_sha256", sha256=hashlib.sha256(Path(f).read_bytes()).hexdigest())
             for f in files_to_upload if f is not None
         ]
         return UploadBatch(status="uploaded", artifacts=arts)
@@ -664,5 +661,8 @@ def test_r3_quarantaine_reprise_propage_nouveaux_chemins_et_selections(tmp_path:
 
     job_final = get_job(idx, "job-r3")
     assert job_final is not None
-    assert job_final["status"] == "completed"
+    assert job_final["status"] == "needs_review"
+    assert job_final["result"]["preservation"]["transport_verifie"] is True
+    assert job_final["result"]["all_verified"] is False
+    assert pdf.exists() and not client.zrange("seamtech:retry:imports", 0, -1)
     idx.close()

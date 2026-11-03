@@ -224,8 +224,8 @@ def test_extractors_branches(tmp_path: Path):
 def test_crawler_branches(tmp_path: Path):
     from seamtech_search.crawler import ScanIncompleteError, _is_excluded, crawl
 
-    cfg = make_cfg(tmp_path)
     src = tmp_path / "src"
+    cfg = make_cfg(tmp_path, root_paths=[src])
     src.mkdir()
     (src / "a.txt").write_text("hello")
     (src / "~$temp.docx").write_text("temp")  # should be excluded

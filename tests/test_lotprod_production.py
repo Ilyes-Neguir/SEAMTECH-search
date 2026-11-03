@@ -185,7 +185,12 @@ class TestSauvegardePlanifiee:
 
         config = self._config_sauvegarde(tmp_path, monkeypatch)
         appels: list[bool] = []
-        assert executer_si_du(config, intervalle_heures=24, fonction_sauver=lambda: appels.append(True)) is True
+
+        def sauvegarde_qualifiee_simulee() -> dict:
+            appels.append(True)
+            return {"complet": True, "protection_globale_prouvee": True}
+
+        assert executer_si_du(config, intervalle_heures=24, fonction_sauver=sauvegarde_qualifiee_simulee) is True
         assert appels == [True]
 
     def test_executer_si_non_du_ne_fait_rien(self, tmp_path: Path, monkeypatch) -> None:

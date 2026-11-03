@@ -36,7 +36,10 @@ export function IndexStatus() {
           aria-hidden
         />
         {data ? (online ? "Index en ligne" : "Index hors ligne") : "Vérification…"}
-        {data?.sample && <span className="text-primary/80">(données d’exemple)</span>}
+        {/* Contraste : `primary` à 80 % donnait 3,46:1 en thème jour (sous le
+            seuil AA). Le token plein donne 5,04:1 le jour, 9,51:1 la nuit.
+            Garde-fou : `lib/contraste.test.ts`. */}
+        {data?.sample && <span className="text-primary">(données d’exemple)</span>}
       </span>
 
       {counts && (

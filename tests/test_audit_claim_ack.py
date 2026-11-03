@@ -63,13 +63,12 @@ def _vider(magasin: RedisStore) -> None:
 
 
 @pytest.fixture()
-def store() -> Any:
+def store(redis_isole: str) -> Any:
     import os
 
-    url = os.environ.get("SEAMTECH_TEST_REDIS_URL", "")
-    if not url:
+    if not os.environ.get("SEAMTECH_TEST_REDIS_URL", ""):
         pytest.skip("Set SEAMTECH_TEST_REDIS_URL to run Redis integration tests")
-    magasin = RedisStore(redis_url=url)
+    magasin = RedisStore(redis_url=redis_isole)
     assert magasin.ping(), "Redis injoignable : SEAMTECH_TEST_REDIS_URL est-il correct ?"
     _vider(magasin)
     yield magasin
@@ -406,7 +405,8 @@ def test_r2_ack_retry_deadletter_refuses_sans_claim_redis(store: RedisStore) -> 
 
     # 1. ACK sans claim
     store.enqueue_task("imports", tache)
-    store.dequeue_task("imports", timeout=1)
+    tache = store.dequeue_task("imports", timeout=1)
+    assert tache is not None
     client.delete(f"seamtech:claim:imports:{tache['job_id']}")
     assert store.ack_task("imports", tache, worker_id="worker-A") is False
     assert client.llen("seamtech:processing:imports") == 1
@@ -534,10 +534,10 @@ def test_r1_matrice_transitions_propriete_et_fencing(tmp_path: Path) -> None:
     assert job["result"] == {"extracted": 42}
     assert job["failure_reason"] is None
 
-    # 9. Opération superviseur / synchrone (expected_worker is None)
+    # 9. Un superviseur ne peut pas annuler un job déjà clos.
     job_canc = cancel_job(index, job_id)
     assert job_canc is not None
-    assert job_canc["status"] == "cancelled"
+    assert job_canc["status"] == "completed"
 
     index.close()
 
@@ -641,10 +641,10 @@ def test_r1_matrice_transitions_propriete_et_fencing_postgres(tmp_path: Path) ->
         assert job["result"] == {"extracted": 42}
         assert job["failure_reason"] is None
 
-        # 9. Opération superviseur / synchrone (expected_worker is None)
+        # 9. Un superviseur ne peut pas annuler un job déjà clos.
         job_canc = cancel_job(index, job_id)
         assert job_canc is not None
-        assert job_canc["status"] == "cancelled"
+        assert job_canc["status"] == "completed"
     finally:
         index.close()
         _supprimer_base_jetable(nom_base)
@@ -791,3 +791,153 @@ def test_r1_lot_task_toctou_race_a_reads_null_b_claims_a_fails(tmp_path: Path) -
     index.close()
 
 
+
+
+def test_import_simple_refuse_si_claim_pg_libere_meme_si_redis_valide(
+    store: RedisStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Un claim Redis seul ne donne pas le droit de traiter ou purger."""
+    from seamtech_search import worker
+
+    config = _config(tmp_path)
+    index = _index(config)
+    source = _dossier(tmp_path, 'import-claim-libere')
+    create_job(index, 'job-sans-claim-pg', str(source), durability='durable')
+    assert store.revendiquer_tache('imports', 'job-sans-claim-pg', 'worker-A', ttl_seconds=60)
+    appels = []
+    monkeypatch.setattr(worker, 'import_folder', lambda **_kwargs: appels.append(True))
+    resultat = worker.process_import_task({'job_id': 'job-sans-claim-pg', 'source_path': str(source)},
+                                         config, index, store, worker_id='worker-A')
+    assert resultat['status'] == 'stale_worker'
+    assert not appels and source.exists()
+    assert get_job(index, 'job-sans-claim-pg')['status'] == 'pending'
+
+
+def test_import_simple_dechu_nefface_pas_annulation_du_repreneur(
+    store: RedisStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from seamtech_search import worker
+    from tests.test_worker_coverage import fake_result
+
+    config = _config(tmp_path)
+    index = _index(config)
+    source = _dossier(tmp_path, 'import-perte-claim')
+    job_id = 'job-annulation-repreneur'
+    create_job(index, job_id, str(source), durability='durable')
+    assert marquer_job_claim(index, job_id, 'worker-A')
+    assert store.revendiquer_tache('imports', job_id, 'worker-A', ttl_seconds=60)
+    resultat = fake_result(tmp_path, 'not_configured', False, False, source)
+    def import_puis_perte(**_kwargs):
+        with index.connect() as connexion:
+            connexion.execute('UPDATE import_jobs SET claimed_by=NULL WHERE id=?', (job_id,))
+        assert store.set_cancel_flag(job_id)
+        return resultat
+    monkeypatch.setattr(worker, 'import_folder', import_puis_perte)
+    retour = worker.process_import_task({'job_id': job_id, 'source_path': str(source)},
+                                        config, index, store, worker_id='worker-A')
+    assert retour['status'] == 'stale_worker'
+    assert store.is_cancelled(job_id)
+    assert source.exists()
+
+
+def test_annulation_sur_erreur_restable_pour_la_nouvelle_tentative(
+    store: RedisStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from seamtech_search import worker
+    config = _config(tmp_path)
+    index = _index(config)
+    source = _dossier(tmp_path, 'annulation-pendant-erreur')
+    job_id = 'job-annulation-sur-erreur'
+    create_job(index, job_id, str(source), durability='durable')
+    assert marquer_job_claim(index, job_id, 'worker-A')
+    assert store.revendiquer_tache('imports', job_id, 'worker-A', ttl_seconds=60)
+    def erreur_et_annulation(**_kwargs):
+        assert store.set_cancel_flag(job_id)
+        raise RuntimeError('panne synthetique')
+    monkeypatch.setattr(worker, 'import_folder', erreur_et_annulation)
+    resultat = worker.process_import_task({'job_id': job_id, 'source_path': str(source)},
+                                         config, index, store, worker_id='worker-A')
+    assert resultat['status'] == 'failed'
+    assert store.is_cancelled(job_id), 'une demande reçue avant retry ne doit pas disparaître'
+    index.close()
+
+
+def test_annulation_sur_transfert_claim_pendant_nettoyage_reste_presente(
+    store: RedisStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from seamtech_search import worker
+    from tests.test_worker_coverage import fake_result
+    config = _config(tmp_path)
+    index = _index(config)
+    source = _dossier(tmp_path, 'annulation-course-nettoyage')
+    job_id = 'job-course-nettoyage'
+    create_job(index, job_id, str(source), durability='durable')
+    assert marquer_job_claim(index, job_id, 'worker-A')
+    assert store.revendiquer_tache('imports', job_id, 'worker-A', ttl_seconds=60)
+    resultat = fake_result(tmp_path, 'not_configured', False, False, source)
+    monkeypatch.setattr(worker, 'import_folder', lambda **_kwargs: resultat)
+    original = worker.clear_job_cancel
+    def transfert_avant_effacement(*args, **kwargs):
+        assert store.revendiquer_tache('imports', job_id, 'worker-B', ttl_seconds=60, reprendre=True)
+        assert store.set_cancel_flag(job_id)
+        return original(*args, **kwargs)
+    monkeypatch.setattr(worker, 'clear_job_cancel', transfert_avant_effacement)
+    worker.process_import_task({'job_id': job_id, 'source_path': str(source)},
+                               config, index, store, worker_id='worker-A')
+    assert store.is_cancelled(job_id), 'un worker déchu ne doit pas effacer le drapeau du repreneur'
+    index.close()
+
+
+def test_import_simple_interrompt_avant_indexation_si_bail_redis_perdu(
+    store: RedisStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from seamtech_search import worker
+    config = _config(tmp_path)
+    index = _index(config)
+    source = _dossier(tmp_path, 'import-bail-perdu-index')
+    job_id = 'job-bail-perdu-index'
+    create_job(index, job_id, str(source), durability='durable')
+    assert marquer_job_claim(index, job_id, 'worker-A')
+    assert store.revendiquer_tache('imports', job_id, 'worker-A', ttl_seconds=60)
+    publications = []
+    def extraction_perdant_bail(**kwargs):
+        assert store.revendiquer_tache('imports', job_id, 'worker-B', ttl_seconds=60, reprendre=True)
+        kwargs['progress_callback']('indexing', 90)
+        publications.append('indexation')
+        raise AssertionError('le worker déchu ne devrait pas indexer')
+    monkeypatch.setattr(worker, 'import_folder', extraction_perdant_bail)
+    result = worker.process_import_task({'job_id': job_id, 'source_path': str(source)},
+                                        config, index, store, worker_id='worker-A')
+    assert result['status'] == 'stale_worker'
+    assert publications == []
+    index.close()
+
+
+def test_perte_claim_durant_publication_sqlite_annule_documents_et_import(
+    store: RedisStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from seamtech_search import worker
+    config = _config(tmp_path)
+    index = _index(config)
+    source = tmp_path / 'archive-publication-sqlite'
+    source.mkdir()
+    fiche = Path(__file__).resolve().parents[1] / 'sample_data/CLIENT-123/fiche-technique.pdf'
+    (source / 'fiche.pdf').write_bytes(fiche.read_bytes())
+    job_id = 'job-claim-publication-sqlite'
+    create_job(index, job_id, str(source), durability='durable')
+    assert marquer_job_claim(index, job_id, 'worker-A')
+    assert store.revendiquer_tache('imports', job_id, 'worker-A', ttl_seconds=60)
+    upsert = index.upsert_documents
+    def publier_puis_perdre(documents, **kwargs):
+        resultat = upsert(documents, **kwargs)
+        assert store.revendiquer_tache('imports', job_id, 'worker-B', ttl_seconds=60, reprendre=True)
+        return resultat
+    monkeypatch.setattr(index, 'upsert_documents', publier_puis_perdre)
+    result = worker.process_import_task({'job_id': job_id, 'source_path': str(source)},
+                                        config, index, store, worker_id='worker-A')
+    assert result['status'] == 'stale_worker'
+    with index.connect() as connexion:
+        assert connexion.execute('SELECT count(*) FROM documents').fetchone()[0] == 0
+        assert connexion.execute('SELECT count(*) FROM imports WHERE id = ?', (job_id,)).fetchone()[0] == 0
+    assert source.exists()
+    index.close()

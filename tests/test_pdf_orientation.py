@@ -134,15 +134,24 @@ def test_pages_multiples_non_melangees() -> None:
 
 
 def _construire_pdf(chemin: Path, rotation_contenu: int, rotation_page: int) -> Path:
-    """PDF de test : contenu dessiné puis éventuellement déclaré pivoté."""
+    """PDF de test : contenu dessiné puis éventuellement déclaré pivoté.
+
+    La page est dimensionnée pour CONTAIN le contenu tourné (paysage pour 90°
+    et 270°, portrait sinon) : avec une page portrait, un contenu portrait
+    tourné de 90° déborde de 123,5 pt de chaque côté et ses premières lignes
+    tombent hors de la page — donc invisibles à l'écran et, à juste titre,
+    écartées de l'index. L'échantillon ne représenterait plus ce qu'un atelier
+    produit, et la matrice mesurerait un artefact de construction.
+    """
     from pypdf import PdfReader, PdfWriter
     from reportlab.lib.pagesizes import A4
     from reportlab.pdfgen import canvas
 
     largeur, hauteur = A4
-    c = canvas.Canvas(str(chemin), pagesize=A4)
+    page = (hauteur, largeur) if rotation_contenu % 180 else (largeur, hauteur)
+    c = canvas.Canvas(str(chemin), pagesize=page)
     c.saveState()
-    c.translate(largeur / 2, hauteur / 2)
+    c.translate(page[0] / 2, page[1] / 2)
     c.rotate(rotation_contenu)
     c.translate(-largeur / 2, -hauteur / 2)
     c.setFont("Helvetica", 12)
@@ -269,11 +278,18 @@ def test_recherche_retrouve_terme_dans_pdf_pivote() -> None:
     from seamtech_search.indexer import SearchIndex
 
     with tempfile.TemporaryDirectory() as dossier:
-        dossier_racine = Path(dossier)
+        # La base et son dossier de staging (« uploads ») sont tenus HORS de la
+        # racine scannée : le crawler refuse une racine qui recouvre le staging
+        # des téléversements (sinon des fichiers en cours d'envoi seraient
+        # indexés). Le test porte sur la rotation, pas sur cette garde.
+        dossier_racine = Path(dossier) / "corpus"
+        dossier_racine.mkdir()
+        base = Path(dossier) / "indexation"
+        base.mkdir()
         copie = dossier_racine / "page_270.pdf"
         copie.write_bytes((FIXTURES / "page_270.pdf").read_bytes())
-        config = AppConfig(root_paths=[dossier_racine], database_path=dossier_racine / "search.db")
-        index = SearchIndex(dossier_racine / "search.db", None)
+        config = AppConfig(root_paths=[dossier_racine], database_path=base / "search.db")
+        index = SearchIndex(base / "search.db", None)
         index.initialize(rebuild=True)
         try:
             documents = list(crawl(config))

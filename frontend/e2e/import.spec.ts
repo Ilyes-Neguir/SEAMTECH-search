@@ -31,7 +31,8 @@ test.describe("Import Workflow", () => {
 
     // Expect progress bar or completed result to appear
     await expect(page.getByText(/État :/i)).toBeVisible({ timeout: 15000 })
-    await expect(page.getByText(/REF-2026-CLIENT123/i)).toBeVisible()
+    await expect(page.getByRole("row", { name: /Référence REF-2026-CLIENT123/i }).getByRole("cell")).toHaveText("REF-2026-CLIENT123")
+    await expect(page.getByRole("row", { name: /Référence Commande REF-2026-CLIENT123/i }).getByRole("cell").last()).toHaveText("REF-2026-CLIENT123")
   })
 
   test("should execute quick import with async job progress", async ({ page }) => {
@@ -49,7 +50,8 @@ test.describe("Import Workflow", () => {
 
     // Wait for import result table to show extracted details
     await expect(page.getByText(/État :/i)).toBeVisible({ timeout: 15000 })
-    await expect(page.getByText(/REF-2026-CLIENT123/i)).toBeVisible()
-    await expect(page.getByText(/Grand voile/i)).toBeVisible()
+    await expect(page.getByRole("row", { name: /Référence REF-2026-CLIENT123/i }).getByRole("cell")).toHaveText("REF-2026-CLIENT123")
+    await expect(page.getByRole("row", { name: /Référence Commande REF-2026-CLIENT123/i }).getByRole("cell").last()).toHaveText("REF-2026-CLIENT123")
+    await expect(page.getByRole("row", { name: /Description.*Grand voile/i }).getByRole("cell")).toContainText("Grand voile")
   })
 })

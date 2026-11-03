@@ -210,7 +210,7 @@ def test_redis_store_full():
         assert store2.get_deadletters("q") == []
 
     mock18 = MagicMock()
-    mock18.lpop.side_effect = Exception("fail")
+    mock18.lmove.side_effect = Exception("fail")
     with patch.object(store2, "_get_client", return_value=mock18):
         assert store2.replay_deadletters("q") == 0
 

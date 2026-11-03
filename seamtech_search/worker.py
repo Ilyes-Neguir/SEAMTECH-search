@@ -20,14 +20,22 @@ from __future__ import annotations
 import logging
 import os
 import platform
-import shutil
 import threading
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
-from .import_pipeline import ImportCancelledError, import_folder, quarantine_root, staging_root
+from .import_pipeline import (
+    ImportCancelledError,
+    get_import,
+    import_folder,
+    quarantine_root,
+    resoudre_chemin_confine,
+    retry_upload,
+    staging_root,
+)
 from .jobs import (
     acquerir_claim_job,
     clear_job_cancel,
@@ -40,6 +48,7 @@ from .jobs import (
     terminer_job,
     update_job,
 )
+from .purge_locale import BilanPurge, purger_copie_prouvee
 from .redis_store import RedisStore
 
 if TYPE_CHECKING:
@@ -96,6 +105,18 @@ def process_import_task(
             job_id,
         )
         return {"job_id": job_id, "status": "completed", "duplicate_delivery": True}
+    if existant is not None and existant.get("status") == "needs_review":
+        resultat_existant = existant.get("result")
+        if isinstance(resultat_existant, dict) and resultat_existant.get("publication_pending") is True:
+            return {"job_id": job_id, "status": "needs_review", "duplicate_delivery": True,
+                    "publication_pending": True}
+        if (isinstance(resultat_existant, dict)
+                and isinstance(resultat_existant.get("preservation"), dict)
+                and resultat_existant["preservation"].get("transport_verifie") is True
+                and resultat_existant.get("all_verified") is False):
+            # Le transport est déjà réalisé ; la revue ne peut pas être
+            # résolue par une nouvelle livraison du même message.
+            return {"job_id": job_id, "status": "needs_review", "duplicate_delivery": True}
 
     if payload.get("kind") == "lot":
         return _process_lot_task(payload, config, index, redis_store, worker_id=worker_id, heartbeat=heartbeat)
@@ -112,13 +133,29 @@ def process_import_task(
             if not redis_store.revendication_appartient_a("imports", str(job_id), worker_id):
                 return False
         j = get_job(index, str(job_id))
-        if j and j.get("claimed_by") and j.get("claimed_by") != worker_id:
-            return False
-        return True
+        return bool(j and j.get("claimed_by") == worker_id)
 
-    cancel_check = make_cancel_checker(job_id, redis_store)
+    # Le claim du registre ET celui de Redis doivent être présents avant
+    # l'extraction, l'envoi ou l'indexation ; une simple absence de propriétaire
+    # n'autorise pas un ancien worker à continuer.
+    if not est_proprietaire_actif():
+        return {"job_id": job_id, "status": "stale_worker", "lost_claim": True}
+
+    cancel_check_local = make_cancel_checker(job_id, redis_store)
+
+    def cancel_check() -> bool:
+        # L'API et le worker peuvent être des processus distincts. L'API écrit
+        # l'état d'annulation en base ; son drapeau mémoire n'est pas partagé.
+        if cancel_check_local():
+            return True
+        job = get_job(index, job_id)
+        return bool(job and job.get("status") == "cancelled")
 
     def progress_cb(stage: str, percent: int) -> None:
+        if cancel_check():
+            raise ImportCancelledError("Job was cancelled by user")
+        if not est_proprietaire_actif():
+            raise RuntimeError("Claim perdu pendant l'import : traitement interrompu")
         update_job(index, job_id, status="running", progress=percent, stage=stage, expected_worker=worker_id)
         heartbeat_job(index, job_id, expected_worker=worker_id)
         if heartbeat is not None:
@@ -128,40 +165,107 @@ def process_import_task(
                 redis_store.set_heartbeat(job_id)
                 redis_store.update_job(job_id, {"status": "running", "progress": percent, "stage": stage})
 
+    @contextmanager
+    def publication_protegee():
+        # Le verrou PG empêche le transfert du claim de base pendant la
+        # publication. SQLite réserve le verrou d'écriture dès BEGIN IMMEDIATE.
+        with index.scan_transaction():
+            with index.connect() as connexion:
+                if index.is_postgres:
+                    with connexion.cursor() as cursor:
+                        cursor.execute("SELECT claimed_by, status FROM import_jobs WHERE id = %s FOR UPDATE", (job_id,))
+                        ligne = cursor.fetchone()
+                else:
+                    ligne = connexion.execute("SELECT claimed_by, status FROM import_jobs WHERE id = ?", (job_id,)).fetchone()
+                if not ligne or ligne[0] != worker_id or ligne[1] != "running":
+                    raise RuntimeError("Claim de base perdu avant publication")
+            if redis_store and redis_store.is_configured():
+                if not redis_store.revendication_appartient_a("imports", str(job_id), str(worker_id)):
+                    raise RuntimeError("Claim Redis perdu avant publication")
+            if cancel_check():
+                raise ImportCancelledError("Job was cancelled by user")
+            yield
+            if redis_store and redis_store.is_configured():
+                if not redis_store.revendication_appartient_a("imports", str(job_id), str(worker_id)):
+                    raise RuntimeError("Claim Redis perdu pendant publication")
+            if cancel_check():
+                raise ImportCancelledError("Job was cancelled by user")
+
+    nettoyage_terminal = False
     try:
         update_job(index, job_id, status="running", progress=5, stage="starting", expected_worker=worker_id)
         if redis_store and redis_store.is_configured():
             redis_store.update_job(job_id, {"status": "running", "progress": 5, "stage": "starting"})
 
-        result = import_folder(
-            source=source_path,
-            config=config,
-            index=index,
-            selected_pdf=selected_pdf,
-            import_id=job_id,
-            progress_callback=progress_cb,
-            cancel_check=cancel_check,
-            selected_excel=selected_excel,
+        import_existant = get_import(index, job_id)
+        preuves_existantes = bool(
+            import_existant and not import_existant.get("publication_pending")
+            and any(isinstance(a, dict) and a.get("status") == "uploaded" and a.get("verified")
+                    and a.get("key") and a.get("bucket") for a in (import_existant.get("artifacts") or []))
         )
+        if preuves_existantes:
+            # Ne jamais recommencer l'import complet lorsqu'une partie des
+            # originaux est déjà préservée : seule la reprise du manifeste peut
+            # conserver ces objets et envoyer les pièces restantes.
+            if os.path.abspath(str(import_existant.get("source_path") or "")) != os.path.abspath(source_path):
+                raise RuntimeError("Source du job différente de l'import enregistré")
+            progress_cb("uploading", 75)
+            result = retry_upload(
+                index, config, job_id,
+                **({"publication_context": publication_protegee} if worker_id is not None else {}),
+            )
+        else:
+            result = import_folder(
+                source=source_path,
+                config=config,
+                index=index,
+                selected_pdf=selected_pdf,
+                import_id=job_id,
+                progress_callback=progress_cb,
+                cancel_check=cancel_check,
+                selected_excel=selected_excel,
+                **({"publication_context": publication_protegee} if worker_id is not None else {}),
+            )
 
         if cancel_check():
             raise ImportCancelledError("Job was cancelled by user")
 
         from dataclasses import asdict
 
-        final_payload = asdict(result)
+        final_payload = result if isinstance(result, dict) else asdict(result)
 
         # 1. PRÉSERVATION — la preuve, pas l'absence d'exception (A03/A07).
         preservation = evaluer_preservation(result)
-        final_payload["preservation"] = preservation.to_dict()
+        deja_preservation = final_payload.get("preservation")
+        final_payload["preservation"] = {
+            **(deja_preservation if isinstance(deja_preservation, dict) else {}), **preservation.to_dict(),
+        }
+        statut_resultat = str(final_payload.get("status") or "needs_review")
 
-        if preservation.integrite_prouvee:
-            final_status = "completed" if result.status == "completed" else result.status
+        if final_payload.get("publication_pending", False):
+            final_status = "needs_review"
+            final_payload["status"] = "needs_review"
+            final_payload["preservation"]["raison_integrite"] = (
+                "objet non prouvé ou réponse perdue : réconciliation requise avant nouvel envoi"
+            )
+        elif preservation.integrite_prouvee:
+            final_status = statut_resultat
+        elif (final_payload.get("transport_verifie", False) and preservation.artefacts_total
+              and not preservation.artefacts_non_verifies and not preservation.artefacts_sans_cle):
+            # Un renvoi automatique ne peut pas fabriquer un snapshot ni une
+            # liaison catalogue. Conserver les objets et placer en revue sans
+            # prétendre à une intégrité globale ni réexpédier en boucle.
+            final_status = "needs_review"
+            final_payload["status"] = "needs_review"
+            final_payload["preservation"]["transport_verifie"] = True
+            final_payload["preservation"]["raison_integrite"] = (
+                "succès global suspendu : snapshot et liaison catalogue non prouvés"
+            )
         elif not preservation.destination_configuree:
             # Le stockage n'est pas configuré : l'import reste exploitable en
             # revue, mais AUCUNE copie durable n'existe — on le dit, et rien
             # n'autorise plus la suppression du seul exemplaire.
-            final_status = "completed" if result.status == "completed" else result.status
+            final_status = statut_resultat
             final_payload["preservation"]["raison_sans_destination"] = (
                 "stockage objet non configuré : la copie locale est la seule copie"
             )
@@ -203,15 +307,20 @@ def process_import_task(
             logger.warning("Job %s : worker %s déchu après quarantaine — écriture du résultat annulée.", job_id, worker_id)
             return {"job_id": job_id, "status": "stale_worker", "lost_claim": True}
 
-        update_job(
+        job_apres_resultat = update_job(
             index,
             job_id,
-            status=final_status,
+            status="running" if worker_id is not None and final_status in {"failed", "upload_incomplete"} else final_status,
             progress=100,
             stage="done" if final_status != "upload_incomplete" else "upload_incomplete",
             result=final_payload,
             expected_worker=worker_id,
         )
+        if worker_id is not None:
+            if job_apres_resultat and job_apres_resultat.get("status") == "cancelled":
+                raise ImportCancelledError("Job was cancelled by user")
+            if not job_apres_resultat or job_apres_resultat.get("claimed_by") != worker_id:
+                return {"job_id": job_id, "status": "stale_worker", "lost_claim": True}
         if redis_store and redis_store.is_configured():
             redis_store.update_job(
                 job_id,
@@ -223,62 +332,97 @@ def process_import_task(
                 },
             )
 
-        # 3. PURGE — preuve de copie durable ET accord explicite (A03). Ni
-        # « c'est dans le staging », ni « le stockage n'est pas configuré » ne
-        # suppléent l'une ou l'autre de ces deux conditions.
-        # Le chemin peut avoir été relocalisé (quarantaine) : la décision porte
-        # sur la copie RÉELLE, pas sur l'ancien emplacement.
-        purge, raison_purge = decider_purge(
-            preservation, config, Path(final_payload.get("source_path") or source_path)
-        )
-        final_payload["cleanup"] = {"purge": purge, "raison": raison_purge}
-        if final_status == "upload_incomplete":
-            final_payload["cleanup"] = {
-                "purge": False,
-                "raison": "import en échec : la copie locale reste la source de la reprise",
-            }
-        elif purge and est_proprietaire_actif():
-            try:
-                resolved_source = Path(source_path).expanduser().resolve()
-                if resolved_source.exists():
-                    logger.warning(
-                        "PURGE de %s : copie durable vérifiée (%d artefact(s)) et "
-                        "SEAMTECH_DELETE_LOCAL_AFTER_UPLOAD activé.",
-                        resolved_source, preservation.artefacts_verifies,
-                    )
-                    shutil.rmtree(resolved_source, ignore_errors=True)
-                    final_payload["cleanup"]["effectuee"] = True
-                else:
-                    final_payload["cleanup"]["effectuee"] = False
-                    final_payload["cleanup"]["raison"] = "source locale déjà absente"
-            except Exception as cleanup_err:
-                final_payload["cleanup"]["effectuee"] = False
-                final_payload["cleanup"]["erreur"] = str(cleanup_err)
-                logger.warning("PURGE de %s impossible : %s", source_path, cleanup_err)
-        else:
+        # 3. PURGE — fichier par fichier, preuve relue À L'INSTANT DE LA
+        #    SUPPRESSION. Une preuve d'envoi est un souvenir : elle ne couvre
+        #    ni les fichiers ajoutés ni les modifications survenues après
+        #    l'inventaire, et elle ne dit rien de l'état présent de l'objet.
+        #    Aucune suppression récursive n'est sûre ; seule l'est la
+        #    suppression de ce qui vient d'être prouvé (``purge_locale``).
+        chemin_purge = Path(final_payload.get("source_path") or source_path)
+        accord_purge, raison_purge = decider_purge(preservation, config, chemin_purge)
+        # Ordre volontaire : annulation ET propriété sont revérifiées juste
+        # avant toute suppression. Un worker déchu n'efface rien.
+        if cancel_check():
+            raise ImportCancelledError("Job was cancelled by user")
+        if accord_purge and not est_proprietaire_actif():
             logger.warning(
-                "Copie locale de %s CONSERVÉE : %s", source_path, raison_purge,
+                "Job %s : worker %s déchu avant purge — aucune suppression.", job_id, worker_id
             )
+            return {"job_id": job_id, "status": "stale_worker", "lost_claim": True}
+        if accord_purge:
+            bilan_purge = purger_copie_prouvee(
+                racine=chemin_purge,
+                entrees=list(final_payload.get("files") or []),
+                sous_staging=True,  # décidé par decider_purge, qui détient config
+                verifier_objet=_verificateur_objet_purge(config),
+            )
+        else:
+            bilan_purge = BilanPurge(False, raison_purge)
+        final_payload["cleanup"] = bilan_purge.to_dict()
+        if bilan_purge.purge:
+            logger.info(
+                "Import %s : %d fichier(s) de la copie locale purgé(s) (%d octets) — %s",
+                job_id, len(bilan_purge.supprimes), bilan_purge.octets_liberes, bilan_purge.raison,
+            )
+        else:
+            logger.info("Import %s : copie locale conservée — %s", job_id, bilan_purge.raison)
         if est_proprietaire_actif():
             update_job(index, job_id, result=final_payload, expected_worker=worker_id)
 
+        nettoyage_terminal = final_status not in {"failed", "upload_incomplete"}
         return final_payload
 
     except ImportCancelledError:
-        if est_proprietaire_actif():
-            update_job(index, job_id, status="cancelled", stage="cancelled", error="Job was cancelled by user", expected_worker=worker_id)
-            if redis_store and redis_store.is_configured():
-                redis_store.update_job(job_id, {"status": "cancelled", "stage": "cancelled", "error": "Job was cancelled by user"})
-        return {"job_id": job_id, "status": "cancelled"}
+        if not est_proprietaire_actif():
+            return {"job_id": job_id, "status": "stale_worker", "lost_claim": True}
+        intention = get_import(index, job_id)
+        resultat_annule: dict[str, Any] = {"job_id": job_id, "status": "cancelled"}
+        message_annulation = "Job was cancelled by user"
+        if intention and intention.get("publication_pending"):
+            resultat_annule = {**intention, **resultat_annule, "publication_pending": True,
+                               "error": "Import annulé ; publication incertaine à réconcilier."}
+            message_annulation = resultat_annule["error"]
+        update_job(index, job_id, status="cancelled", stage="cancelled", error=message_annulation,
+                   result=resultat_annule if intention and intention.get("publication_pending") else None,
+                   expected_worker=worker_id)
+        if redis_store and redis_store.is_configured():
+            redis_store.update_job(job_id, {"status": "cancelled", "stage": "cancelled", "error": message_annulation,
+                                            "result": resultat_annule})
+        nettoyage_terminal = True
+        return resultat_annule
     except Exception as exc:
-        logger.exception("Import job %s failed: %s", job_id, exc)
-        if est_proprietaire_actif():
-            update_job(index, job_id, status="failed", stage="failed", error=str(exc), expected_worker=worker_id)
+        message = f"Import impossible ({type(exc).__name__})."
+        logger.error("Import job %s failed (%s)", job_id, type(exc).__name__)
+        if not est_proprietaire_actif():
+            return {"job_id": job_id, "status": "stale_worker", "lost_claim": True}
+        intention = get_import(index, job_id)
+        if intention and intention.get("publication_pending"):
+            # Une panne après la première écriture peut avoir laissé des objets.
+            # Ne pas programmer une nouvelle livraison qui les dupliquerait.
+            resultat = {**intention, "job_id": job_id, "status": "needs_review",
+                        "publication_pending": True, "error": "Publication incertaine : réconciliation requise."}
+            etat = update_job(index, job_id, status="needs_review", stage="reconciliation",
+                              result=resultat, error=resultat["error"], expected_worker=worker_id)
+            if not etat or etat.get("status") != "needs_review":
+                if etat and etat.get("status") == "cancelled":
+                    return {"job_id": job_id, "status": "cancelled"}
+                return {"job_id": job_id, "status": "stale_worker", "lost_claim": True}
             if redis_store and redis_store.is_configured():
-                redis_store.update_job(job_id, {"status": "failed", "stage": "failed", "error": str(exc)})
-        return {"job_id": job_id, "status": "failed", "error": str(exc)}
+                redis_store.update_job(job_id, {"status": "needs_review", "stage": "reconciliation", "result": resultat})
+            nettoyage_terminal = True
+            return resultat
+        update_job(index, job_id, status="running" if worker_id is not None else "failed", stage="failed", error=message, expected_worker=worker_id)
+        if redis_store and redis_store.is_configured():
+            redis_store.update_job(job_id, {"status": "failed", "stage": "failed", "error": message})
+        return {"job_id": job_id, "status": "failed", "error": message}
     finally:
-        clear_job_cancel(job_id, redis_store)
+        try:
+            if (nettoyage_terminal or worker_id is None) and est_proprietaire_actif():
+                clear_job_cancel(job_id, redis_store, expected_worker=worker_id)
+        except Exception:
+            # Une panne du registre ne doit pas effacer une annulation destinée
+            # au repreneur ni masquer l'erreur ou le résultat du traitement.
+            logger.warning("Impossible de vérifier le claim avant nettoyage du job %s", job_id, exc_info=True)
 
 
 def _process_lot_task(
@@ -296,7 +440,7 @@ def _process_lot_task(
     traite que les lignes ``en_attente`` de ``lot_dossier``. Un worker tué en
     plein lot laisse donc un lot « relance », pas une progression perdue.
     """
-    from .fiches.depot import DepotImpossible, annuler_lot, executer_lot
+    from .fiches.depot import DepotAnnule, DepotClaimPerdu, DepotImpossible, annuler_lot, executer_lot
 
     job_id = payload["job_id"]
     id_lot = int(payload["id_lot"])
@@ -325,18 +469,37 @@ def _process_lot_task(
                     job_id,
                 )
                 return {"job_id": job_id, "status": "stale_worker", "id_lot": id_lot}
-    doit_continuer = None
-    if redis_store is not None:
-        from .jobs import is_job_cancelled
+    class ClaimLotPerdu(RuntimeError):
+        pass
 
-        def doit_continuer() -> bool:  # type: ignore[misc]
-            # SENS du prédicat : « continuer ? » — True tant qu'aucune
-            # annulation n'est demandée. Le renvoyer à l'envers (ce que faisait
-            # la première version) annulait TOUT lot durable au premier
-            # dossier : le drapeau Redis disait « pas annulé » = False =
-            # « ne pas continuer ». Défaut réel corrigé le 2026-10-06, mis en
-            # évidence par tests/test_file_durable_postgres.py.
-            return not is_job_cancelled(job_id, redis_store)
+    # Même sans Redis, l'API peut annuler le job dans un autre processus ;
+    # le registre SQL doit donc être consulté aussi pour le repli local.
+    from .jobs import is_job_cancelled
+
+    dernier_battement = time.monotonic()
+
+    def doit_continuer() -> bool:  # type: ignore[misc]
+        nonlocal dernier_battement
+        job_courant = get_job(index, str(job_id))
+        if not job_courant or (worker_id is not None and job_courant.get("claimed_by") != worker_id):
+            raise ClaimLotPerdu()
+        if worker_id is not None and redis_store is not None and redis_store.is_configured():
+            if not redis_store.revendication_appartient_a("imports", str(job_id), worker_id):
+                raise ClaimLotPerdu()
+        if job_courant.get("status") == "cancelled":
+            return False
+        maintenant = time.monotonic()
+        if maintenant - dernier_battement >= _HEARTBEAT_INTERVAL_SECONDS:
+            if not heartbeat_job(index, job_id, expected_worker=worker_id):
+                raise ClaimLotPerdu()
+            if heartbeat is not None:
+                heartbeat()
+            dernier_battement = maintenant
+        return not is_job_cancelled(job_id, redis_store)
+    def verifier_claim_externe() -> bool:
+        if worker_id is None or redis_store is None or not redis_store.is_configured():
+            return True
+        return redis_store.revendication_appartient_a("imports", str(job_id), worker_id)
 
     def progress_cb(dossiers_traites: int, total: int) -> None:
         pourcentage = int(100 * dossiers_traites / total) if total else 0
@@ -345,8 +508,17 @@ def _process_lot_task(
         if heartbeat is not None:
             heartbeat()
         if redis_store and redis_store.is_configured():
-            if worker_id is None or redis_store.revendication_appartient_a("lots", str(job_id), worker_id):
+            if worker_id is None or redis_store.revendication_appartient_a("imports", str(job_id), worker_id):
                 redis_store.update_job(job_id, {"status": "running", "progress": pourcentage, "stage": "lot"})
+
+    def signaler_echec(message: str) -> bool:
+        if worker_id is None:
+            return terminer_job(index, job_id, status="failed", failure_reason=message, stage="failed", error=message)
+        # La boucle doit encore transférer la livraison vers retry/deadletter.
+        # Garder le claim et l'état actif jusqu'à cette transition, afin qu'un
+        # crash intermédiaire laisse un job récupérable par la réconciliation.
+        job = update_job(index, job_id, status="running", stage="failed", error=message, expected_worker=worker_id)
+        return bool(job and job.get("claimed_by") == worker_id and job.get("status") == "running")
 
     try:
         etat = executer_lot(
@@ -355,47 +527,70 @@ def _process_lot_task(
             doit_continuer=doit_continuer,
             progress_cb=progress_cb,
             worker_id=worker_id,
+            claim_job_id=str(job_id) if worker_id is not None else None,
+            verifier_claim_externe=verifier_claim_externe,
             # P0.2 : le worker est le seul acteur des lots en production — il
             # doit donc promouvoir les fichiers vers le stockage objet.
             config=config,
         )
+        if doit_continuer is not None and not doit_continuer():
+            etat["annule"] = True
+    except (ClaimLotPerdu, DepotClaimPerdu):
+        return {"job_id": job_id, "status": "stale_worker", "id_lot": id_lot}
+    except DepotAnnule:
+        try:
+            if doit_continuer is not None:
+                doit_continuer()
+        except ClaimLotPerdu:
+            return {"job_id": job_id, "status": "stale_worker", "id_lot": id_lot}
+        etat = {"annule": True}
     except DepotImpossible as erreur:
+        try:
+            if doit_continuer is not None:
+                doit_continuer()
+        except ClaimLotPerdu:
+            return {"job_id": job_id, "status": "stale_worker", "id_lot": id_lot}
         message = f"Lot #{id_lot} impossible : {erreur}"
-        update_job(index, job_id, status="failed", stage="failed", error=message, expected_worker=worker_id)
-        terminer_job(index, job_id, status="failed", failure_reason=message, expected_worker=worker_id)
+        if not signaler_echec(message):
+            return {"job_id": job_id, "status": "stale_worker", "id_lot": id_lot}
         return {"job_id": job_id, "status": "failed", "error": message, "id_lot": id_lot}
 
     if etat.get("annule"):
         message = f"Lot #{id_lot} annulé à la demande de l'opérateur."
         try:
-            annuler_lot(index, id_lot)
-        except Exception as exc:  # pragma: no cover - défensif
+            annuler_lot(index, id_lot, claim=(str(job_id), worker_id) if worker_id is not None else None)
+        except DepotClaimPerdu:
+            return {"job_id": job_id, "status": "stale_worker", "id_lot": id_lot}
+        except Exception as exc:
             logger.warning("Lot #%s : impossible de marquer l'annulation : %s", id_lot, exc)
-        update_job(index, job_id, status="cancelled", stage="cancelled", error=message, result=etat, expected_worker=worker_id)
-        terminer_job(index, job_id, status="cancelled", failure_reason=message, expected_worker=worker_id)
+            try:
+                if doit_continuer is not None:
+                    doit_continuer()
+            except ClaimLotPerdu:
+                return {"job_id": job_id, "status": "stale_worker", "id_lot": id_lot}
+            raison = f"Lot #{id_lot} : enregistrement de l'annulation impossible."
+            if not signaler_echec(raison):
+                return {"job_id": job_id, "status": "stale_worker", "id_lot": id_lot}
+            return {"job_id": job_id, "status": "failed", "error": raison, "id_lot": id_lot}
+        if not terminer_job(index, job_id, status="cancelled", failure_reason=message, expected_worker=worker_id, stage="cancelled", error=message, result=etat):
+            return {"job_id": job_id, "status": "stale_worker", "id_lot": id_lot}
         return {"job_id": job_id, "status": "cancelled", "id_lot": id_lot}
 
     statut = "completed" if int(etat.get("nb_echecs", 0)) == 0 else "needs_review"
     raison_echec = None if statut == "completed" else f"{etat.get('nb_echecs')} dossier(s) en échec"
-    update_job(
-        index,
-        job_id,
-        status=statut,
-        progress=100,
-        stage="done",
-        result=etat,
-        failure_reason=raison_echec,
-        expected_worker=worker_id,
-    )
-    terminer_job(
+    ferme = terminer_job(
         index,
         job_id,
         status=statut,
         failure_reason=raison_echec,
         expected_worker=worker_id,
+        stage="done", progress=100, result=etat,
     )
+    if not ferme:
+        return {"job_id": job_id, "status": "stale_worker", "id_lot": id_lot}
     if redis_store and redis_store.is_configured():
-        redis_store.update_job(job_id, {"status": statut, "progress": 100, "stage": "done", "result": etat})
+        if worker_id is None or redis_store.revendication_appartient_a("imports", str(job_id), worker_id):
+            redis_store.update_job(job_id, {"status": statut, "progress": 100, "stage": "done", "result": etat})
     return {"job_id": job_id, "status": statut, "id_lot": id_lot, "etat": etat}
 
 
@@ -492,26 +687,35 @@ def reconcilier_file(
         "redis_indisponible": [],
     }
 
+    # Le compteur de prises est une version : un worker qui prend la
+    # livraison après son transfert Redis l'incrémente avant de traiter. Un
+    # balayeur en retard ne doit pas effacer ce nouveau claim dans la base.
+    versions = {str(job['id']): int(job.get('attempts') or 0) for job in _jobs_actifs_pagines(index, par_page=200)}
     for decision in _decisions_reprise(redis_store, queue_name, max_tentatives):
         job_id = decision.get("job_id")
-        if not job_id:
+        if not job_id or str(job_id) not in versions:
             continue
+        version = versions[str(job_id)]
         if decision.get("action") == "requeued":
-            remettre_en_file(
+            actualise = remettre_en_file(
                 index,
                 str(job_id),
                 raison=f"reprise après worker interrompu (tentative {decision.get('attempt')})",
                 tentative_durable=True,
+                expected_attempts=version,
             )
-            resume["requeued"].append(job_id)
+            if actualise:
+                resume["requeued"].append(job_id)
         else:
-            remettre_en_file(
+            actualise = remettre_en_file(
                 index,
                 str(job_id),
                 raison=str(decision.get("raison") or "tentatives épuisées"),
                 tentative_durable=False,
+                expected_attempts=version,
             )
-            resume["dead_lettered"].append(job_id)
+            if actualise:
+                resume["dead_lettered"].append(job_id)
 
     # Cas 2 : jobs ACCEPTÉS en base qui ne sont plus dans la file.
     #
@@ -548,8 +752,8 @@ def reconcilier_file(
             raison = (
                 f"job {statut_job} introuvable dans la file après {attempts} tentative(s) — lettre morte"
             )
-            remettre_en_file(index, job_id, raison=raison, tentative_durable=False)
-            resume["failed_from_db"].append(job_id)
+            if remettre_en_file(index, job_id, raison=raison, tentative_durable=False, expected_attempts=attempts):
+                resume["failed_from_db"].append(job_id)
             continue
         charge = _charge_depuis_job(job)
         if charge is None:
@@ -557,13 +761,14 @@ def reconcilier_file(
                 f"job {statut_job} orphelin non ré-enfilable (charge absente ou sélection "
                 "manuelle introuvable) — échec explicite, jamais une relance approximative"
             )
-            remettre_en_file(index, job_id, raison=raison, tentative_durable=False)
-            resume["failed_from_db"].append(job_id)
+            if remettre_en_file(index, job_id, raison=raison, tentative_durable=False, expected_attempts=attempts):
+                resume["failed_from_db"].append(job_id)
             continue
         charge["reprise"] = f"job {statut_job} orphelin ré-enfilé"
-        if redis_store.enqueue_task(queue_name, charge):
+        if redis_store.enqueue_task_si_absent(queue_name, charge):
             remettre_en_file(
-                index, job_id, raison=f"job {statut_job} orphelin ré-enfilé", tentative_durable=True
+                index, job_id, raison=f"job {statut_job} orphelin ré-enfilé", tentative_durable=True,
+                expected_attempts=attempts
             )
             resume["relanced_from_db"].append(job_id)
             # Le balayage n'est pas muet : une reprise doit être constatable
@@ -574,7 +779,7 @@ def reconcilier_file(
                 job_id, statut_job, attempts,
             )
         else:
-            logger.warning("Job %s orphelin : la remise en file a échoué (Redis indisponible).", job_id)
+            logger.warning("Job %s : remise en file non effectuée (déjà présent, claim actif ou erreur Redis).", job_id)
     return resume
 
 
@@ -651,15 +856,18 @@ def evaluer_preservation(result: Any) -> Preservation:
     sous-ensemble qui vient d'être envoyé : c'est précisément la confusion qui
     faisait rapporter ``all_verified=true`` après un renvoi de rapports seuls.
     """
-    fichiers = list(getattr(result, "files", []) or [])
+    def valeur(objet: Any, nom: str, defaut: Any = None) -> Any:
+        return objet.get(nom, defaut) if isinstance(objet, dict) else getattr(objet, nom, defaut)
+
+    fichiers = list(valeur(result, "files", []) or [])
     non_verifies: list[str] = []
     sans_cle: list[str] = []
     verifies = 0
     for fichier in fichiers:
-        statut = str(getattr(fichier, "upload_status", "") or "")
-        cle = getattr(fichier, "object_key", None)
+        statut = str(valeur(fichier, "upload_status", "") or "")
+        cle = valeur(fichier, "object_key")
         if not cle:
-            sans_cle.append(str(getattr(fichier, "path", "") or getattr(fichier, "name", "?")))
+            sans_cle.append(str(valeur(fichier, "path", "") or valeur(fichier, "name", "?")))
             continue
         if statut == "uploaded" and statut:
             # « uploaded » ici vient de la vérification d'octets du lot
@@ -667,12 +875,12 @@ def evaluer_preservation(result: Any) -> Preservation:
             verifies += 1
         else:
             non_verifies.append(
-                f"{getattr(fichier, 'path', '') or getattr(fichier, 'name', '?')} ({statut or 'statut inconnu'})"
+                f"{valeur(fichier, 'path', '') or valeur(fichier, 'name', '?')} ({statut or 'statut inconnu'})"
             )
 
-    upload_status = str(getattr(result, "upload_status", "not_configured") or "not_configured")
+    upload_status = str(valeur(result, "upload_status", "not_configured") or "not_configured")
     integrite = (
-        bool(getattr(result, "all_verified", False))
+        bool(valeur(result, "all_verified", False))
         and upload_status == "uploaded"
         and bool(fichiers)
         and not non_verifies
@@ -789,160 +997,104 @@ def mettre_en_quarantaine(
     config: AppConfig,
     payload: dict[str, Any],
 ) -> DecisionQuarantaine:
-    """Déplace la copie locale d'un import en échec — SI elle nous appartient.
+    """Conserver la source à son chemin de reprise lors d'un envoi incomplet.
 
-    * staging applicatif → quarantaine, et TOUTES les références persistées
-      suivent (payload + ``import_jobs.source_path``) : la reprise retrouve ses
-      fichiers après relocalisation ET après redémarrage ;
-    * archive externe → JAMAIS déplacée (le dossier du commanditaire n'est pas
-      un brouillon) ; on le dit et on laisse la reprise possible sur place ;
-    * échec de relocalisation → signalé explicitement, copie laissée en place
-      (on ne perd jamais le fichier pour « ranger »).
+    Le déplacement et la mise à jour du registre ne sont pas atomiques : une
+    interruption entre les deux rend la source introuvable pour la reprise.
+    Tant qu'un protocole durable n'est pas qualifié, il n'y a pas de déplacement
+    physique ; l'état du travail indique l'échec et la rétention est suspendue.
     """
     try:
-        resolved_source = Path(source_path).expanduser().resolve()
-    except Exception as erreur:  # pragma: no cover - chemin invalide
-        return DecisionQuarantaine(
-            deplace=False, destination=None, raison="chemin source illisible",
-            references_mises_a_jour=[], erreur=str(erreur),
-        )
-
+        # Python ≥ 3.13 rend la résolution muette sur une boucle de liens :
+        # le garde-fou explicite conserve le refus, quelle que soit la version.
+        resolved_source = resoudre_chemin_confine(Path(source_path))
+    except (OSError, RuntimeError, ValueError):
+        return DecisionQuarantaine(False, None, "chemin source illisible", [], "chemin source illisible")
     if not est_sous_staging(resolved_source, config):
-        logger.warning(
-            "Import %s en échec : la source %s n'appartient PAS au staging applicatif — "
-            "aucun déplacement (archive externe préservée, reprise possible sur place).",
-            job_id, resolved_source,
-        )
-        return DecisionQuarantaine(
-            deplace=False,
-            destination=None,
-            raison="source externe (hors staging applicatif) — jamais déplacée",
-            references_mises_a_jour=[],
-        )
-
+        logger.warning("Import %s en échec : source externe conservée sur place.", job_id)
+        return DecisionQuarantaine(False, None, "source externe — jamais déplacée", [])
     if not resolved_source.exists():
-        return DecisionQuarantaine(
-            deplace=False, destination=None, raison="source absente (déjà déplacée ou purgée)",
-            references_mises_a_jour=[],
-        )
+        return DecisionQuarantaine(False, None, "source absente", [], "source absente")
+    logger.warning("Import %s en échec : source stagée conservée sur place pour reprise.", job_id)
+    return DecisionQuarantaine(False, None, "déplacement suspendu : source conservée pour reprise", [])
 
+
+def _verificateur_objet_purge(config: AppConfig) -> Callable[[str, Path], Any] | None:
+    """Relit l'objet distant au moment de la purge ; ``None`` si impossible.
+
+    « Je n'ai pas pu vérifier » n'autorise aucune suppression : sans
+    vérificateur, la copie locale est conservée et la raison est dite.
+    """
     try:
-        q_root = quarantine_root(config)
-        q_root.mkdir(parents=True, exist_ok=True)
-        dest = q_root / f"{job_id}_{resolved_source.name}"
-        counter = 1
-        original_dest = dest
-        while dest.exists():
-            counter += 1
-            dest = original_dest.parent / f"{original_dest.name}-{counter}"
-        shutil.move(str(resolved_source), str(dest))
-    except Exception as erreur:
-        # Déplacement impossible (droits, volume plein, chemin croisé…) : la
-        # copie locale est LAISSÉE EN PLACE et l'échec est visible.
-        logger.error(
-            "Import %s : mise en quarantaine IMPOSSIBLE (%s) — la copie locale %s est conservée "
-            "en place pour la reprise.",
-            job_id, erreur, resolved_source,
-        )
-        return DecisionQuarantaine(
-            deplace=False, destination=None,
-            raison="relocalisation impossible — copie locale conservée",
-            references_mises_a_jour=[], erreur=str(erreur),
-        )
+        from .storage import S3StorageClient
 
-    references = relocaliser_references(payload, resolved_source, dest)
-    payload["quarantine_path"] = str(dest)
-    # La BASE porte le chemin de reprise (registry de vérité) : sans cette mise
-    # à jour, `retry_upload` chercherait l'ancien emplacement.
-    # Fait suivre également selected_pdf et selected_excel dans la base (R3).
+        # ``config=`` est impératif : le premier paramètre positional est
+        # ``endpoint_url``. Passer la configuration à sa place fabriquerait un
+        # client qui se déclare configuré sans l'être.
+        client = S3StorageClient(config=config)
+    except Exception as exc:  # pragma: no cover - dépend de la configuration
+        logger.warning("Purge : client de stockage indisponible (%s) — aucune suppression.", type(exc).__name__)
+        return None
     try:
-        from .jobs import get_job, update_job_source_path
+        if not client.is_configured():
+            return None
+    except Exception:  # pragma: no cover
+        return None
 
-        job_actuel = get_job(index, job_id) or {}
-        new_sel_pdf = None
-        new_sel_excel = None
-        if job_actuel.get("selected_pdf"):
-            try:
-                reste = Path(job_actuel["selected_pdf"]).expanduser().resolve().relative_to(resolved_source)
-                new_sel_pdf = str(dest / reste)
-            except Exception:
-                new_sel_pdf = job_actuel.get("selected_pdf")
-        if job_actuel.get("selected_excel"):
-            try:
-                reste = Path(job_actuel["selected_excel"]).expanduser().resolve().relative_to(resolved_source)
-                new_sel_excel = str(dest / reste)
-            except Exception:
-                new_sel_excel = job_actuel.get("selected_excel")
+    def verifier(cle: str, chemin: Path) -> Any:
+        return client.verifier_integrite(cle, chemin, relire=True)
 
-        update_job_source_path(
-            index,
-            job_id,
-            str(dest),
-            selected_pdf=new_sel_pdf,
-            selected_excel=new_sel_excel,
-        )
-    except Exception as erreur:  # pragma: no cover - défensif
-        logger.warning("Import %s : chemin de job non mis à jour après quarantaine : %s", job_id, erreur)
-    logger.warning(
-        "Import %s mis en quarantaine : %s → %s (%d référence(s) persistée(s) mise(s) à jour).",
-        job_id, resolved_source, dest, len(references),
-    )
-    return DecisionQuarantaine(
-        deplace=True, destination=str(dest),
-        raison="staging applicatif déplacé en quarantaine",
-        references_mises_a_jour=references,
-    )
+    return verifier
 
 
 def decider_purge(
     preservation: Preservation, config: AppConfig, source_path: Path
 ) -> tuple[bool, str]:
-    """La copie locale peut-elle être supprimée ? (réponse + raison, toujours)
+    """ACCORDER la purge — la suppression, elle, reste prouvée fichier par fichier.
 
-    Règle : **preuve d'une copie durable d'abord, et rien d'autre ne la
-    remplace.** Un statut d'envoi, un stockage « non configuré » ou
-    l'appartenance au staging ne sont PAS des preuves (défaut A03 : des
-    originaux stagés étaient supprimés avec ``upload_status=not_configured`` et
-    ``all_verified=false``).
+    Longtemps la réponse a été « jamais » et c'était juste au vu de ce qui
+    existait : une preuve d'envoi ne couvre ni les ajouts ni les modifications
+    postérieurs à l'inventaire, et rien ne garantissait l'état présent de
+    l'objet. La conséquence était une autre panne, silencieuse celle-là : le
+    serveur se remplissait sans jamais rien libérer.
 
-    Une fois la preuve faite, il reste la question du DROIT de supprimer :
-
-    * le **staging applicatif** est notre brouillon (la copie navigateur, déjà
-      dans le bucket après vérification) — le cycle de vie documenté le purge
-      (« local scratch staging is purged immediately after S3 upload »,
-      ``docs/REPORT.md``), sans quoi il faudrait le purger par l'âge plus tard ;
-    * une **archive externe** (dossier du commanditaire, partage réseau) n'est
-      jamais notre fichier : sa suppression exige l'accord explicite
-      ``SEAMTECH_DELETE_LOCAL_AFTER_UPLOAD`` (RG13).
+    La décision est donc déplacée du souvenir vers l'instant : cette fonction
+    n'accorde qu'un DROIT D'EXAMEN (intégrité prouvée, dossier de staging
+    appartenant à l'application) ; chaque suppression est ensuite conditionnée
+    à une relecture des octets distants et à une empreinte locale revérifiée
+    (``purge_locale.purger_copie_prouvee``). Ce qui n'est pas prouvé à cet
+    instant est conservé et nommé.
     """
-    if not preservation.integrite_prouvee:
-        if not preservation.destination_configuree:
-            return False, (
-                "aucune destination durable configurée : conservation obligatoire "
-                "(une copie locale est la SEULE copie)"
-            )
-        if preservation.artefacts_sans_cle:
-            return False, (
-                "artefacts sans clé d'objet : "
-                + ", ".join(preservation.artefacts_sans_cle[:5])
-            )
-        if preservation.artefacts_non_verifies:
-            return False, (
-                "artefacts non vérifiés : "
-                + ", ".join(preservation.artefacts_non_verifies[:5])
-            )
-        return False, f"intégrité non prouvée (upload_status={preservation.upload_status})"
-    if est_sous_staging(Path(source_path), config):
-        return True, (
-            "copie durable vérifiée (tous les artefacts sont dans le stockage objet) : "
-            "purge du staging applicatif (brouillon, pas une archive)"
-        )
-    if not getattr(config, "delete_local_after_upload", False):
+    # Trois refus, sur des FAITS d'inventaire — jamais sur la revendication
+    # globale ``all_verified`` : ``import_folder`` la laisse volontairement à
+    # faux (« la vérification d'un lot d'objets ne prouve pas le snapshot »),
+    # donc en faire la condition de la purge revenait à ne jamais rien libérer.
+    # La preuve exigée n'est pas globale : elle est rétablie FICHIER PAR
+    # FICHIER, à l'instant de la suppression.
+    #
+    # Les noms de fichiers ne sont JAMAIS recopiés dans le motif : ils portent
+    # le nom du commanditaire. On compte, on ne cite pas.
+    if not preservation.destination_configuree:
         return False, (
-            "copie durable vérifiée, mais la source est une archive EXTERNE : "
-            "SEAMTECH_DELETE_LOCAL_AFTER_UPLOAD désactivé, la copie locale est conservée"
+            "aucune destination durable configurée : conservation obligatoire "
+            "(une copie locale est la SEULE copie)"
         )
-    return True, "copie durable vérifiée et purge locale autorisée par l'exploitant"
+    if preservation.artefacts_sans_cle:
+        return False, f"artefacts sans clé d'objet : {len(preservation.artefacts_sans_cle)} fichier(s)"
+    if preservation.artefacts_non_verifies:
+        return False, f"artefacts non vérifiés : {len(preservation.artefacts_non_verifies)} fichier(s)"
+    if not preservation.artefacts_total:
+        return False, f"inventaire vide (upload_status={preservation.upload_status}) : rien à examiner"
+    try:
+        sous_staging = est_sous_staging(Path(source_path), config)
+    except Exception:  # pragma: no cover - chemin exotique
+        sous_staging = False
+    if not sous_staging:
+        return False, "source hors staging : l'application n'a aucun mandat pour la supprimer"
+    return True, (
+        "examen accordé sur le staging : chaque suppression reste subordonnée à une "
+        "relecture des octets distants et à l'identité locale revérifiée"
+    )
 
 
 def _charge_depuis_job(job: dict[str, Any]) -> dict[str, Any] | None:
@@ -1065,7 +1217,7 @@ def worker_loop(
                 # écrasées »). La tâche reste dans la liste de traitement, le
                 # propriétaire légitime l'acquittera.
                 revendique = redis_store.revendiquer_tache(
-                    "imports", job_id, identifiant, ttl_seconds=claim_ttl, attempt=attempt
+                    "imports", job_id, identifiant, ttl_seconds=claim_ttl, attempt=attempt, livraison=task
                 )
                 if not revendique:
                     logger.warning(
@@ -1074,7 +1226,16 @@ def worker_loop(
                         job_id,
                     )
                     continue
-                marquer_job_claim(index, job_id, identifiant)
+                if not marquer_job_claim(index, job_id, identifiant):
+                    try:
+                        existant = get_job(index, job_id)
+                        if existant and existant.get("status") in {"completed", "cancelled", "needs_review"}:
+                            redis_store.ack_task("imports", task, worker_id=identifiant)
+                        else:
+                            logger.warning("Job %s impossible à revendiquer dans le registre ; livraison conservée.", job_id)
+                    finally:
+                        redis_store.liberer_revendication("imports", job_id, identifiant)
+                    continue
                 battement.suivre(job_id)
                 try:
                     result = process_import_task(
@@ -1099,7 +1260,6 @@ def worker_loop(
                             job_id,
                         )
                         continue
-                    redis_store.ack_task("imports", task, worker_id=identifiant)
                     statut = str(result.get("status", "unknown"))
                     # `max_task_attempts` compte le nombre TOTAL de tentatives :
                     # avec 3, un job est essayé 3 fois (attempt 0, 1, 2) puis va
@@ -1128,7 +1288,11 @@ def worker_loop(
                             job_actuel = get_job(index, job_id)
                             task_retry = (_charge_depuis_job(job_actuel) if job_actuel else None) or dict(task)
                             task_retry["attempt"] = attempt
-                            redis_store.retry_task("imports", task_retry, delay_seconds=delay, worker_id=identifiant)
+                            if not redis_store.retry_task(
+                                "imports", task_retry, delay_seconds=delay, worker_id=identifiant, original_payload=task
+                            ):
+                                logger.warning("Job %s : reprogrammation non confirmée ; traitement conservé si possible.", job_id)
+                                continue
                             # Le registre (base) suit l'état RÉEL : la tâche est
                             # reprogrammée, donc le job est RÉCUPÉRABLE — pas
                             # « échoué ». L'échec définitif n'est écrit qu'à
@@ -1152,24 +1316,28 @@ def worker_loop(
                                 f"{result.get('error') or statut}"
                             )
                             logger.warning("Job %s : %s", job_id, raison)
-                            redis_store.deadletter_task("imports", task, worker_id=identifiant)
-                            terminer_job(index, job_id, status="failed", failure_reason=raison, expected_worker=identifiant)
-                    elif statut == "completed":
-                        terminer_job(index, job_id, status="completed", expected_worker=identifiant)
-                    elif statut == "cancelled":
-                        terminer_job(index, job_id, status="cancelled", failure_reason="annulé par l'opérateur", expected_worker=identifiant)
+                            if redis_store.deadletter_task("imports", task, worker_id=identifiant):
+                                terminer_job(index, job_id, status="failed", failure_reason=raison, expected_worker=identifiant)
                     elif statut == "stale_worker":
                         logger.warning("Job %s : worker %s déchu, aucune clôture de tâche.", job_id, identifiant)
-                    else:
-                        terminer_job(index, job_id, status=statut, expected_worker=identifiant)
+                    elif redis_store.ack_task("imports", task, worker_id=identifiant):
+                        if statut == "cancelled":
+                            terminer_job(index, job_id, status=statut, failure_reason="annulé par l'opérateur", expected_worker=identifiant)
+                        else:
+                            terminer_job(index, job_id, status=statut, expected_worker=identifiant)
                 except Exception as task_exc:
-                    logger.exception("Task %s failed with exception: %s", job_id, task_exc)
+                    erreur_tache = f"traitement impossible ({type(task_exc).__name__})"
+                    logger.error("Task %s failed (%s)", job_id, type(task_exc).__name__)
                     if attempt + 1 < max_attempts:
                         delay = 2**attempt
                         job_actuel = get_job(index, job_id)
                         task_retry = (_charge_depuis_job(job_actuel) if job_actuel else None) or dict(task)
                         task_retry["attempt"] = attempt
-                        redis_store.retry_task("imports", task_retry, delay_seconds=delay, worker_id=identifiant)
+                        if not redis_store.retry_task(
+                            "imports", task_retry, delay_seconds=delay, worker_id=identifiant, original_payload=task
+                        ):
+                            logger.warning("Job %s : reprogrammation après exception non confirmée.", job_id)
+                            continue
                         # Même règle que ci-dessus : une tâche reprogrammée est un
                         # job RÉCUPÉRABLE, jamais un « échec » déjà écrit.
                         update_job(
@@ -1179,14 +1347,14 @@ def worker_loop(
                             stage="requeued",
                             error=(
                                 f"nouvelle tentative programmée dans {delay}s "
-                                f"(tentative {attempt + 2}/{max_attempts}) : {task_exc}"
+                                f"(tentative {attempt + 2}/{max_attempts}) : {erreur_tache}"
                             ),
                             expected_worker=identifiant,
                         )
                     else:
-                        raison = f"lettre morte après exception ({attempt + 1} tentative(s)) : {task_exc}"
-                        redis_store.deadletter_task("imports", task, worker_id=identifiant)
-                        terminer_job(index, job_id, status="failed", failure_reason=raison, expected_worker=identifiant)
+                        raison = f"lettre morte après exception ({attempt + 1} tentative(s)) : {erreur_tache}"
+                        if redis_store.deadletter_task("imports", task, worker_id=identifiant):
+                            terminer_job(index, job_id, status="failed", failure_reason=raison, expected_worker=identifiant)
                 finally:
                     battement.oublier(job_id)
                     # Libération conditionnelle : ne supprime que SI le verrou est
@@ -1199,7 +1367,7 @@ def worker_loop(
                             job_id,
                         )
             except Exception as exc:
-                logger.error("Error in Redis worker loop: %s", exc)
+                logger.error("Error in Redis worker loop (%s)", type(exc).__name__)
                 time.sleep(1.0)
                 if run_once:
                     break

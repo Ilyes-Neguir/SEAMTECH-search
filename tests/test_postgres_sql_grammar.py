@@ -81,6 +81,8 @@ class _GrammarCursor:
     def fetchone(self) -> Any:
         if "pg_ts_config" in self._last_sql:
             return (1,) if self._config_created else None
+        if "SELECT EXISTS (SELECT 1 FROM documents d WHERE d.path_key" in self._last_sql:
+            return (False,)
         return (1,)
 
     def fetchall(self) -> list[Any]:
@@ -127,7 +129,8 @@ def _collect_statements(tmp_path: Path) -> list[str]:
     def _fake_execute_values(cur: Any, sql: str, argslist: Any, template: str | None = None, **kwargs: Any):
         captured["sql"] = sql
         captured["template"] = template
-        return 1
+        assert kwargs.get("fetch") is True
+        return [(row[0],) for row in argslist]
 
     with patch("psycopg2.extras.execute_values", side_effect=_fake_execute_values):
         index.upsert_documents([document])

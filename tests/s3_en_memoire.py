@@ -29,6 +29,10 @@ class CorpsEnMemoire(BytesIO):
     def read(self, taille: int = -1) -> bytes:  # noqa: D102
         return super().read(taille)
 
+    def iter_chunks(self, chunk_size: int = 1024):
+        while bloc := self.read(chunk_size):
+            yield bloc
+
 
 class S3EnMemoire:
     """S3-compatible en mémoire pour ``upload_file``/``head_object``/``get_object``.
@@ -56,8 +60,20 @@ class S3EnMemoire:
         self.envois.append({"key": Key, "octets": len(donnees), "extra": ExtraArgs or {}})
 
     def put_object(self, **kwargs: Any) -> dict[str, Any]:
+        from botocore.exceptions import ClientError
+
+        # Écriture conditionnelle du service (If-None-Match: *) : le double doit
+        # refuser une clé occupée EXACTEMENT comme S3 le fait (412), sinon la
+        # restauration croirait créer sans écraser alors qu'elle écrase.
+        if kwargs.get("IfNoneMatch") == "*" and kwargs.get("Key") in self.objets:
+            raise ClientError(
+                {"Error": {"Code": "PreconditionFailed", "Message": "At least one of the pre-conditions you specified did not hold"}},
+                "PutObject",
+            )
         corps = kwargs.get("Body") or b""
-        donnees = bytes(corps)
+        # boto3 accepte des octets, un flux ouvert ou un itérable : le double
+        # doit en faire autant (une restauration envoie un flux de fichier).
+        donnees = corps.read() if hasattr(corps, "read") else bytes(corps)
         self._ecrire(kwargs["Key"], donnees, kwargs)
         self.envois.append({"key": kwargs["Key"], "octets": len(donnees), "extra": kwargs})
         return {"ETag": self.objets[kwargs["Key"]]["entete"]["ETag"]}
@@ -73,19 +89,32 @@ class S3EnMemoire:
         }
         self.objets[cle] = {"donnees": donnees, "entete": entete}
 
-    def head_object(self, Bucket: str, Key: str) -> dict[str, Any]:  # noqa: N803
+    def head_object(self, Bucket: str, Key: str, ChecksumMode: str | None = None) -> dict[str, Any]:  # noqa: N803
         from botocore.exceptions import ClientError
 
         if Key not in self.objets:
             raise ClientError({"Error": {"Code": "404", "Message": "Not Found"}}, "HeadObject")
         return dict(self.objets[Key]["entete"])
 
-    def get_object(self, Bucket: str, Key: str, **_: Any) -> dict[str, Any]:  # noqa: N803
+    def get_object(self, Bucket: str, Key: str, **kwargs: Any) -> dict[str, Any]:  # noqa: N803
         from botocore.exceptions import ClientError
 
         if Key not in self.objets:
             raise ClientError({"Error": {"Code": "NoSuchKey", "Message": "Not Found"}}, "GetObject")
-        return {"Body": CorpsEnMemoire(self.objets[Key]["donnees"]), **self.objets[Key]["entete"]}
+        donnees = self.objets[Key]["donnees"]
+        entete = dict(self.objets[Key]["entete"])
+        plage = kwargs.get("Range")
+        if plage:
+            import re
+
+            match = re.fullmatch(r"bytes=(\d+)-(\d+)", plage)
+            if match is None or int(match.group(1)) >= len(donnees):
+                raise ClientError({"Error": {"Code": "InvalidRange", "Message": "Invalid Range"}}, "GetObject")
+            debut, fin = int(match.group(1)), min(int(match.group(2)), len(donnees) - 1)
+            entete["ContentRange"] = f"bytes {debut}-{fin}/{len(donnees)}"
+            donnees = donnees[debut:fin + 1]
+            entete["ContentLength"] = len(donnees)
+        return {"Body": CorpsEnMemoire(donnees), **entete}
 
     def download_file(self, Bucket: str, Key: str, Filename: str) -> None:  # noqa: N803
         """Téléchargement vers un fichier local (chemin « cache froid » de l'API)."""

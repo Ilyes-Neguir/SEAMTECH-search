@@ -4,6 +4,7 @@ import asyncio
 import logging
 import os
 import re
+import secrets
 import shutil
 import time
 import uuid
@@ -12,9 +13,10 @@ from contextlib import asynccontextmanager
 from dataclasses import asdict
 from pathlib import Path
 from typing import Annotated, Any, Iterator
+from urllib.parse import quote
 
 from fastapi import FastAPI, File, Form, Header, HTTPException, Query, Request, Response, UploadFile
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
 from . import __version__
@@ -23,11 +25,24 @@ from .comptes.comptes import ROLE_ADMIN, ROLE_APPROBATEUR, ROLE_UTILISATEUR
 from .config import AppConfig
 from .etat_exploitation import etat_sauvegarde, s3_credential_kind
 from .extractors import extract_file
+from .fichiers_securises import (
+    _copie_flux_verifiee,
+    _ouvrir_artefact_confine,
+    _ReponseFichierEpingle,
+    _ReponseFluxFerme,
+)
+from .flux_bornes import lire_par_blocs
 from .import_pipeline import (
+    ImportMutationEnCours,
+    ImportMutationIncertitude,
     ImportResult,
+    PublicationIncertaine,
+    RapportsEnRegeneration,
     correct_import,
     get_import,
     import_folder,
+    quarantine_root,
+    resoudre_chemin_confine,
     retry_upload,
     scan_folder,
     staging_root,
@@ -130,6 +145,7 @@ def _initialize_schema(index: SearchIndex, stage: str) -> None:
 def fonctionnalites_optionnelles_actives() -> bool:
     """Assistant et routes ML visibles par défaut; désactivables au déploiement."""
     return os.environ.get("SEAMTECH_OPTIONAL_FEATURES_ENABLED", "true").strip().lower() not in {"0", "false", "no", "off"}
+
 
 
 def create_app(config: AppConfig) -> FastAPI:
@@ -341,9 +357,12 @@ def create_app(config: AppConfig) -> FastAPI:
         cache depuis S3.
         """
         try:
-            cible = chemin.expanduser().resolve()
+            # Python ≥ 3.13 ne signale plus une boucle de liens symboliques :
+            # la vérification explicite garde le refus (ValueError attrapée plus bas).
+            cible = resoudre_chemin_confine(chemin)
             racines = [Path(root).expanduser().resolve() for root in config.root_paths]
             racines.append(staging_root(config).expanduser().resolve())
+            racines.append(quarantine_root(config).expanduser().resolve())
             racines.append((Path(config.database_path).expanduser().resolve().parent / "reports"))
             return any(cible == racine or racine in cible.parents for racine in racines)
         except (OSError, RuntimeError, TypeError, ValueError):
@@ -442,6 +461,36 @@ def create_app(config: AppConfig) -> FastAPI:
                     },
                 )
 
+        # La porte de service est vérifiée avant le routage/validation : un
+        # jeton absent ou faux ne doit révéler ni le schéma d'entrée, ni
+        # déclencher le parsing d'un corps (multipart compris). Les gardes
+        # par route restent en place en défense en profondeur.
+        if config.auth_token and path not in {"/live", "/ready"}:
+            jeton_fourni = request.headers.get("X-SEAMTECH-TOKEN")
+            if jeton_fourni is None or not secrets.compare_digest(
+                jeton_fourni.encode("utf-8"), config.auth_token.encode("utf-8")
+            ):
+                reponse_refus = JSONResponse(
+                    status_code=401,
+                    content={"detail": "Authentication required."},
+                    headers={
+                        "X-Request-ID": request_id,
+                        "Cache-Control": "no-store, no-cache, must-revalidate, private",
+                    },
+                )
+                if _requete_a_auditer(request.method, path, reponse_refus.status_code):
+                    await asyncio.to_thread(
+                        _enregistrer_audit_http,
+                        methode=request.method,
+                        chemin=path,
+                        code_statut=reponse_refus.status_code,
+                        request_id=request_id,
+                        entetes=dict(request.headers),
+                        client_host=request.client.host if request.client else None,
+                        user_agent=request.headers.get("User-Agent"),
+                    )
+                return reponse_refus
+
         response: Response = await call_next(request)
         response.headers["X-Request-ID"] = request_id
         if path not in exempt_paths:
@@ -481,6 +530,11 @@ def create_app(config: AppConfig) -> FastAPI:
                         cursor.execute("SELECT 1")
                 else:
                     conn.execute("SELECT 1")
+                from .schema_metier import VERSION_SCHEMA_APPLICATION
+
+                if (VERSION_SCHEMA_APPLICATION not in index._get_applied_migrations(conn)
+                        or not index._schema_identite_octets_valide(conn)):
+                    raise RuntimeError("Schéma d'identité des octets indisponible")
             return {"status": "ready"}
         except Exception as exc:
             logger.error("Readiness check failed: %s", exc)
@@ -735,37 +789,42 @@ def create_app(config: AppConfig) -> FastAPI:
             index, config, request.headers, request.client.host if request.client else None
         )
         actor = acteur.libelle_audit
-        target = _validated_path(path, config, exiger_existence=False)
+        # Conserver l'identité logique demandée : résoudre un lien AVANT la
+        # consultation du catalogue peut remplacer un document capturé par un
+        # autre fichier de la même racine, sans SHA associé.
+        target = _validated_path_lexical(path, config)
 
-        # Try to find object storage key for this path
+        # Le SHA d'octets, lorsqu'il existe, impose une vérification avant
+        # toute réponse ou redirection ; il n'est pas le hash de texte.
         object_key = None
+        object_bucket = None
+        empreinte_capture = None
         document_trouve = False
-        cle_chemin = os.path.normcase(str(target.resolve()))
+        cle_chemin = os.path.normcase(str(target))
         try:
             with index.connect() as conn:
                 if index.is_postgres:
                     with conn.cursor() as cursor:
                         cursor.execute(
-                            "SELECT object_key FROM documents WHERE path_key = %s",
+                            "SELECT object_key, object_bucket, source_sha256 FROM documents WHERE path_key = %s",
                             (cle_chemin,),
                         )
                         row = cursor.fetchone()
                         document_trouve = row is not None
-                        if row and row[0]:
-                            object_key = row[0]
+                        if row:
+                            object_key, object_bucket, empreinte_capture = row
                 else:
                     row = conn.execute(
-                        "SELECT object_key FROM documents WHERE path_key = ?", (cle_chemin,)
+                        "SELECT object_key, object_bucket, source_sha256 FROM documents WHERE path_key = ?", (cle_chemin,)
                     ).fetchone()
                     document_trouve = row is not None
-                    if row and row["object_key"]:
-                        object_key = row["object_key"]
+                    if row:
+                        object_key, object_bucket, empreinte_capture = row
         except Exception as exc:
-            # Falling back to the local file is fine in SQLite tooling, but a DB
-            # error here is a signal of a broken schema/index and must not
-            # vanish silently. In PostgreSQL, the catalogue check below fails
-            # closed (404) rather than serving an unverified path.
-            logger.warning("Could not look up object_key for %s: %s", target, exc)
+            # Une erreur de catalogue ne permet pas de conclure qu'aucune
+            # identité capturée n'existe ; ne pas servir une autre version.
+            logger.warning("Consultation du catalogue impossible (%s)", type(exc).__name__)
+            raise HTTPException(status_code=503, detail="Catalogue temporairement indisponible.") from None
 
         if index.is_postgres and not document_trouve:
             record_audit_event(
@@ -782,6 +841,63 @@ def create_app(config: AppConfig) -> FastAPI:
             )
             raise HTTPException(status_code=404, detail="Document non catalogué.")
 
+        if empreinte_capture is not None:
+            if not isinstance(empreinte_capture, str) or re.fullmatch(r"[0-9a-f]{64}", empreinte_capture) is None:
+                raise HTTPException(status_code=409, detail="Identité du fichier invalide.")
+            # Endpoint PUBLIC déclaré + objet prouvé : la redirection est permise.
+            #
+            # Le catalogue ne porte `object_key` que si l'objet a été lié SOUS
+            # l'identité d'octets de la ligne (``lier_objets_capture`` : UPDATE
+            # … WHERE source_sha256 = l'empreinte de l'envoi vérifié). L'objet
+            # est donc CES octets, preuve à l'appui : une redirection le sert
+            # sans revérification, exactement comme pour un document sans
+            # empreinte. Sans cette preuve (objet d'un autre compartiment,
+            # envoi non vérifié, ligne non liée), on garde le repli : l'API lit
+            # et vérifie les octets contre le SHA de capture.
+            # Honnêteté : cette preuve est datée (elle ne couvre pas une
+            # réécriture ultérieure de l'objet) ; le repli, lui, revérifie.
+            if (object_key and (object_bucket is None or object_bucket == (
+                    storage_client.bucket_name if storage_client is not None else None))):
+                url_capture = _url_presignee_navigateur(object_key, storage_client, config)
+                if url_capture:
+                    record_audit_event(
+                        index,
+                        action="open",
+                        actor=actor,
+                        resource=str(target),
+                        status="302",
+                        details={"object_key": object_key, "servi_par": "redirection_publique_capture"},
+                    )
+                    return RedirectResponse(url=url_capture, status_code=302)
+            fd_verifie: int | None = None
+            try:
+                fd_source = _ouvrir_artefact_confine(target, [Path(root) for root in config.root_paths])
+                with os.fdopen(fd_source, "rb") as flux:
+                    fd_verifie = _copie_flux_verifiee(flux, empreinte_capture, config.max_file_size_bytes)
+            except (OSError, ValueError):
+                pass
+            if (fd_verifie is None and storage_client is not None and object_key
+                    and object_bucket == storage_client.bucket_name):
+                try:
+                    corps = storage_client.get_object(object_key)["Body"]
+                    try:
+                        fd_verifie = _copie_flux_verifiee(corps, empreinte_capture, config.max_file_size_bytes)
+                    finally:
+                        corps.close()
+                except Exception as exc:
+                    if fd_verifie is not None:
+                        os.close(fd_verifie)
+                        fd_verifie = None
+                    logger.warning("Objet de catalogue non vérifiable (%s)", type(exc).__name__)
+            if fd_verifie is None:
+                raise HTTPException(status_code=404, detail="Fichier conforme non disponible.")
+            try:
+                record_audit_event(index, action="open", actor=actor, resource=str(target), status="200")
+            except BaseException:
+                os.close(fd_verifie)
+                raise
+            return _ReponseFichierEpingle(fd_verifie, filename=target.name)
+
         url_publique = _url_presignee_navigateur(object_key, storage_client, config)
         if url_publique:
             record_audit_event(
@@ -789,10 +905,19 @@ def create_app(config: AppConfig) -> FastAPI:
             )
             return RedirectResponse(url=url_publique, status_code=302)
 
-        # Fallback: serve file directly if it exists locally
+        # La lecture suit le descripteur confiné, pas le chemin revérifié
+        # puis rouvert plus tard par FileResponse.
         if target.exists() and target.is_file():
-            record_audit_event(index, action="open", actor=actor, resource=str(target), status="200")
-            return FileResponse(path=target, filename=target.name)
+            try:
+                fd = _ouvrir_artefact_confine(target, [Path(root) for root in config.root_paths])
+            except (OSError, ValueError):
+                raise HTTPException(status_code=409, detail="Lecture locale non sécurisée.") from None
+            try:
+                record_audit_event(index, action="open", actor=actor, resource=str(target), status="200")
+            except BaseException:
+                os.close(fd)
+                raise
+            return _ReponseFichierEpingle(fd, filename=target.name)
 
         # Ni redirection publique ni copie locale : l'objet existe pourtant
         # dans le stockage (cas d'une restauration) — on le sert par l'API.
@@ -811,6 +936,7 @@ def create_app(config: AppConfig) -> FastAPI:
                 "application/pdf" if target.suffix.lower() == ".pdf" else "application/octet-stream",
                 storage_client,
                 inline=True,
+                limite_defaut=config.max_file_size_bytes,
             )
 
         # For directories, return listing instead of trying OS open
@@ -838,7 +964,13 @@ def create_app(config: AppConfig) -> FastAPI:
         def progress_cb(stage: str, percent: int) -> None:
             update_job(index, job_id, status="running", progress=percent, stage=stage)
 
-        cancel_check = make_cancel_checker(job_id)
+        cancel_check_local = make_cancel_checker(job_id)
+
+        def cancel_check() -> bool:
+            if cancel_check_local():
+                return True
+            job = get_job(index, job_id)
+            return job is None or job.get("status") == "cancelled"
 
         try:
             update_job(index, job_id, status="running", progress=5, stage="starting")
@@ -865,14 +997,43 @@ def create_app(config: AppConfig) -> FastAPI:
                 result=final_payload,
             )
         except ImportCancelledError:
-            update_job(index, job_id, status="cancelled", stage="cancelled", error="Job was cancelled by user")
-        except InsufficientStorageError as exc:
-            update_job(index, job_id, status="failed", stage="failed", error=str(exc))
+            intention = get_import(index, job_id)
+            if intention and intention.get("publication_pending"):
+                resultat_annule = {**intention, "job_id": job_id, "status": "cancelled",
+                                   "error": "Import annulé ; publication incertaine à réconcilier."}
+                update_job(index, job_id, status="cancelled", stage="cancelled",
+                           error=resultat_annule["error"], result=resultat_annule)
+            else:
+                update_job(index, job_id, status="cancelled", stage="cancelled", error="Job was cancelled by user")
         except Exception as exc:
-            logger.exception("Import job %s failed: %s", job_id, exc)
-            update_job(index, job_id, status="failed", stage="failed", error=str(exc))
+            logger.error("Import job %s failed (%s)", job_id, type(exc).__name__)
+            intention = get_import(index, job_id)
+            if intention and intention.get("publication_pending"):
+                resultat_incertain = {**intention, "job_id": job_id, "status": "needs_review",
+                                      "error": "Publication incertaine : réconciliation requise."}
+                update_job(index, job_id, status="needs_review", stage="reconciliation",
+                           error=resultat_incertain["error"], result=resultat_incertain)
+            else:
+                update_job(index, job_id, status="failed", stage="failed",
+                           error=f"Import impossible ({type(exc).__name__}).")
         finally:
             clear_job_cancel(job_id)
+
+    def _reponse_intention_incertaine(job_id: str, actor: str, action: str, exc: Exception) -> JSONResponse | None:
+        try:
+            intention = get_import(index, job_id)
+        except Exception as lecture_exc:
+            logger.warning("État de l'import inaccessible (%s)", type(lecture_exc).__name__)
+            return None
+        if not intention or not intention.get("publication_pending"):
+            return None
+        logger.error("Import synchrone interrompu (%s)", type(exc).__name__)
+        record_audit_event(index, action=action, actor=actor, resource=job_id,
+                           status="needs_review", details={"sync": True})
+        return JSONResponse(status_code=200, content={
+            **intention, "job_id": job_id, "status": "needs_review",
+            "error": "Publication incertaine : réconciliation requise.",
+        })
 
     @app.post("/imports")
     async def create_import(
@@ -919,15 +1080,22 @@ def create_app(config: AppConfig) -> FastAPI:
                     details={"sync": True},
                 )
                 return JSONResponse(status_code=200, content=payload)
-            except InsufficientStorageError as exc:
-                record_audit_event(index, action="import_create", actor=actor, resource=job_id, status="507")
-                raise HTTPException(status_code=507, detail=str(exc)) from exc
-            except PermissionError as exc:
-                record_audit_event(index, action="import_create", actor=actor, resource=job_id, status="403")
-                raise HTTPException(status_code=403, detail=str(exc)) from exc
-            except ValueError as exc:
-                record_audit_event(index, action="import_create", actor=actor, resource=job_id, status="400")
-                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            except Exception as exc:
+                # Fournir l'identifiant de toute intention persistée plutôt
+                # qu'inciter à recréer un import après une écriture ambiguë.
+                incertain = _reponse_intention_incertaine(job_id, actor, "import_create", exc)
+                if incertain is not None:
+                    return incertain
+                if isinstance(exc, InsufficientStorageError):
+                    record_audit_event(index, action="import_create", actor=actor, resource=job_id, status="507")
+                    raise HTTPException(status_code=507, detail=str(exc)) from exc
+                if isinstance(exc, PermissionError):
+                    record_audit_event(index, action="import_create", actor=actor, resource=job_id, status="403")
+                    raise HTTPException(status_code=403, detail=str(exc)) from exc
+                if isinstance(exc, ValueError):
+                    record_audit_event(index, action="import_create", actor=actor, resource=job_id, status="400")
+                    raise HTTPException(status_code=400, detail=str(exc)) from exc
+                raise
 
         try:
             resolved = Path(request_body.source_path).expanduser().resolve()
@@ -1036,12 +1204,17 @@ def create_app(config: AppConfig) -> FastAPI:
             record_audit_event(
                 index, action="import_scan", actor=actor, resource=request_body.source_path, status="403"
             )
-            raise HTTPException(status_code=403, detail=str(exc)) from exc
+            raise HTTPException(status_code=403, detail="Accès au dossier interdit.") from exc
         except ValueError as exc:
             record_audit_event(
                 index, action="import_scan", actor=actor, resource=request_body.source_path, status="400"
             )
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except OSError as exc:
+            record_audit_event(
+                index, action="import_scan", actor=actor, resource=request_body.source_path, status="409"
+            )
+            raise HTTPException(status_code=409, detail="Le dossier ne peut pas être analysé en sécurité.") from exc
 
     @app.post("/imports/confirm")
     async def confirm_import(
@@ -1075,10 +1248,17 @@ def create_app(config: AppConfig) -> FastAPI:
                 payload = _import_payload(result)
                 record_audit_event(index, action="import_confirm", actor=actor, resource=job_id, status="success")
                 return JSONResponse(status_code=200, content=payload)
-            except PermissionError as exc:
-                raise HTTPException(status_code=403, detail=str(exc)) from exc
-            except ValueError as exc:
-                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            except Exception as exc:
+                incertain = _reponse_intention_incertaine(job_id, actor, "import_confirm", exc)
+                if incertain is not None:
+                    return incertain
+                if isinstance(exc, InsufficientStorageError):
+                    raise HTTPException(status_code=507, detail=str(exc)) from exc
+                if isinstance(exc, PermissionError):
+                    raise HTTPException(status_code=403, detail=str(exc)) from exc
+                if isinstance(exc, ValueError):
+                    raise HTTPException(status_code=400, detail=str(exc)) from exc
+                raise
 
         task_payload = {
             "job_id": job_id,
@@ -1202,9 +1382,9 @@ def create_app(config: AppConfig) -> FastAPI:
                 details={"collisions": collisions[:20], "nb_fichiers": len(plan)},
             )
             logger.warning(
-                "Envoi refusé : %d conflit(s) de destination — aucun fichier écrit (%s).",
+                "Envoi refusé : %d conflit(s) de destination — aucun fichier écrit (%d fichier(s) proposé(s)).",
                 len(collisions),
-                staged,
+                len(plan),
             )
             raise HTTPException(
                 status_code=409,
@@ -1246,9 +1426,27 @@ def create_app(config: AppConfig) -> FastAPI:
         except HTTPException:
             shutil.rmtree(staged, ignore_errors=True)
             raise
-        except (PermissionError, ValueError) as exc:
+        except PermissionError as exc:
+            shutil.rmtree(staged, ignore_errors=True)
+            raise HTTPException(status_code=400, detail="Accès au dossier interdit.") from exc
+        except ValueError as exc:
             shutil.rmtree(staged, ignore_errors=True)
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except OSError as exc:
+            shutil.rmtree(staged, ignore_errors=True)
+            raise HTTPException(status_code=409, detail="Le dossier ne peut pas être analysé en sécurité.") from exc
+        except BaseException:
+            # Filet de dernier ressort : une coupure client (``ClientDisconnect``),
+            # une annulation asyncio ou toute panne non cataloguée ne doit PAS
+            # laisser un brouillon à moitié écrit. Sans ce filet, chaque envoi
+            # interrompu abandonne un dossier — et plus rien ne le nettoie
+            # ensuite : la rétention n'élague pas le staging (``prune_staged_uploads``
+            # est suspendu tant qu'un protocole sûr n'existe pas). Un opérateur
+            # qui dépose 20 Gio et perd le réseau remplirait le disque d'envois
+            # morts. La panne est propagée telle quelle : on nettoie, on
+            # n'invente pas un succès.
+            shutil.rmtree(staged, ignore_errors=True)
+            raise
         return {"staged_path": str(staged), **result}
 
     @app.get("/imports/{import_id}")
@@ -1260,11 +1458,29 @@ def create_app(config: AppConfig) -> FastAPI:
         # Check DB first for completed/corrected records to avoid stale Redis cache shadowing (4.10)
         record = get_import(index, import_id)
         job = get_job(index, import_id)
+        # Une régénération ou publication interrompue peut avoir laissé des
+        # effets externes ; leur état persistant prime aussi sur le cache.
+        if record and (record.get("report_generation_pending") or record.get("publication_pending")):
+            # Une intention persistée contredit nécessairement un éventuel
+            # ancien « completed », y compris à l'intérieur de result.
+            import_en_revue = {**record, "status": "needs_review"} if record.get("status") == "completed" else record
+            reponse = {**(job or {}), **import_en_revue, "job_id": (job or {}).get("id", import_id),
+                       "result": import_en_revue}
+            if job:
+                reponse["job_status"] = job.get("status")
+                # C'est l'état effectivement stocké, distinct de l'état
+                # opérationnel corrigé quand une intention est incertaine.
+                reponse["import_status"] = record.get("status")
+                if job.get("status") != "completed":
+                    reponse["status"] = job["status"]
+                    if job.get("error"):
+                        reponse["error"] = job["error"]
+            return reponse
 
-        if redis_store.is_configured():
+        if redis_store.is_configured() and job is None and record is None:
             cached = redis_store.get_job(import_id)
             if cached:
-                # For running/pending, prefer Redis fast-path
+                # Le cache n'est qu'un repli si aucun état durable n'existe.
                 if cached.get("status") in ("running", "pending"):
                     res_data = cached.get("result") or {}
                     return {**cached, **res_data, "job_id": cached.get("id", import_id)}
@@ -1277,7 +1493,17 @@ def create_app(config: AppConfig) -> FastAPI:
             if job["status"] == "cancelled":
                 return job
             if record is not None:
-                return {**job, **record, "job_id": job["id"], "status": record.get("status", job["status"])}
+                # Un résultat d'import plus récent peut corriger un job réussi,
+                # mais il ne peut pas transformer un job actif, échoué ou en
+                # revue en succès. Exposer les deux états évite l'ambiguïté.
+                etat_job = job["status"]
+                etat_import = record.get("status")
+                etat = (etat_import or etat_job) if etat_job == "completed" else etat_job
+                reponse = {**job, **record, "job_id": job["id"], "status": etat,
+                           "job_status": etat_job, "import_status": etat_import}
+                if etat_job != "completed" and job.get("error"):
+                    reponse["error"] = job["error"]
+                return reponse
             result_data = job.get("result") or {}
             combined = {**job, **result_data}
             combined["job_id"] = job["id"]
@@ -1304,18 +1530,18 @@ def create_app(config: AppConfig) -> FastAPI:
         )
         actor = actor_fingerprint(token, request.client.host if request.client else None)
         updated = cancel_job(index, import_id)
-        record_audit_event(
-            index,
-            action="import_cancel",
-            actor=actor,
-            resource=import_id,
-            status="success" if updated else "404",
-        )
         if updated is None:
             rec = get_import(index, import_id)
-            if rec is None:
-                raise HTTPException(status_code=404, detail="Import not found.")
-            return {"job_id": import_id, "status": "cancelled"}
+            audit_status = "409" if rec is not None else "404"
+        else:
+            audit_status = "success" if updated.get("status") == "cancelled" else "409"
+        record_audit_event(
+            index, action="import_cancel", actor=actor, resource=import_id, status=audit_status,
+        )
+        if audit_status == "404":
+            raise HTTPException(status_code=404, detail="Import not found.")
+        if audit_status == "409":
+            raise HTTPException(status_code=409, detail="Import already finished or not cancellable.")
         return updated
 
     @app.patch("/imports/{import_id}")
@@ -1339,15 +1565,35 @@ def create_app(config: AppConfig) -> FastAPI:
                     # DB record is already corrected; a failed cache refresh
                     # leaves a stale cached copy visible until it expires, so
                     # make the failure visible rather than swallowing it.
-                    logger.warning("Could not refresh Redis cache for import %s after correction: %s", import_id, exc)
+                    logger.warning("Redis cache refresh after import correction failed (%s)", type(exc).__name__)
             record_audit_event(index, action="import_correct", actor=actor, resource=import_id, status="success")
             return res
         except KeyError as exc:
+            incertain = _reponse_intention_incertaine(import_id, actor, "import_correct", exc)
+            if incertain is not None:
+                return incertain
             record_audit_event(index, action="import_correct", actor=actor, resource=import_id, status="404")
             raise HTTPException(status_code=404, detail="Import not found.") from exc
-        except ValueError as exc:
-            record_audit_event(index, action="import_correct", actor=actor, resource=import_id, status="400")
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except PublicationIncertaine as exc:
+            record_audit_event(index, action="import_correct", actor=actor, resource=import_id, status="409")
+            raise HTTPException(status_code=409, detail="Publication incertaine : réconciliation requise avant correction.") from exc
+        except ImportMutationIncertitude as exc:
+            record_audit_event(index, action="import_correct", actor=actor, resource=import_id, status="503")
+            raise HTTPException(status_code=503, detail="Résultat incertain : le verrou de l'import a été perdu.") from exc
+        except ImportMutationEnCours as exc:
+            record_audit_event(index, action="import_correct", actor=actor, resource=import_id, status="409")
+            raise HTTPException(status_code=409, detail="Une opération est déjà en cours sur cet import.") from exc
+        except Exception as exc:
+            # La génération ou l'envoi peut avoir échoué après un effet S3.
+            # Une intention durable prime sur le type de l'exception : ne pas
+            # livrer une erreur générique qui invite à recommencer à l'aveugle.
+            incertain = _reponse_intention_incertaine(import_id, actor, "import_correct", exc)
+            if incertain is not None:
+                return incertain
+            if isinstance(exc, ValueError):
+                record_audit_event(index, action="import_correct", actor=actor, resource=import_id, status="400")
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            raise
 
     @app.post("/imports/{import_id}/retry-upload")
     async def retry_import_upload(
@@ -1369,12 +1615,35 @@ def create_app(config: AppConfig) -> FastAPI:
                     # Same stale-cache trade-off as import_correct: the DB
                     # record is already updated, but a failed refresh means the
                     # old cached copy can shadow it until it expires.
-                    logger.warning("Could not refresh Redis cache for import %s after retry-upload: %s", import_id, exc)
+                    logger.warning("Redis cache refresh after upload retry failed (%s)", type(exc).__name__)
             record_audit_event(index, action="import_retry_upload", actor=actor, resource=import_id, status="success")
             return res
         except KeyError as exc:
+            incertain = _reponse_intention_incertaine(import_id, actor, "import_retry_upload", exc)
+            if incertain is not None:
+                return incertain
             record_audit_event(index, action="import_retry_upload", actor=actor, resource=import_id, status="404")
             raise HTTPException(status_code=404, detail="Import not found.") from exc
+        except PublicationIncertaine as exc:
+            record_audit_event(index, action="import_retry_upload", actor=actor, resource=import_id, status="409")
+            raise HTTPException(status_code=409, detail="Publication incertaine : réconciliation requise avant reprise.") from exc
+        except ImportMutationIncertitude as exc:
+            record_audit_event(index, action="import_retry_upload", actor=actor, resource=import_id, status="503")
+            raise HTTPException(status_code=503, detail="Résultat incertain : le verrou de l'import a été perdu.") from exc
+        except ImportMutationEnCours as exc:
+            record_audit_event(index, action="import_retry_upload", actor=actor, resource=import_id, status="409")
+            raise HTTPException(status_code=409, detail="Une opération est déjà en cours sur cet import.") from exc
+        except RapportsEnRegeneration as exc:
+            record_audit_event(index, action="import_retry_upload", actor=actor, resource=import_id, status="409")
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except Exception as exc:
+            incertain = _reponse_intention_incertaine(import_id, actor, "import_retry_upload", exc)
+            if incertain is not None:
+                return incertain
+            if isinstance(exc, (ValueError, OSError)):
+                record_audit_event(index, action="import_retry_upload", actor=actor, resource=import_id, status="409")
+                raise HTTPException(status_code=409, detail="Reprise refusée : source ou rapport indisponible ou non sûr.") from exc
+            raise
 
     @app.get("/imports/{import_id}/artifacts/{artifact}")
     def get_import_artifact(
@@ -1439,6 +1708,9 @@ def create_app(config: AppConfig) -> FastAPI:
         if payload is None:
             _audit_artefact("404")
             raise HTTPException(status_code=404, detail="Import not found.")
+        if artifact in {"report_pdf", "report_docx"} and payload.get("report_generation_pending"):
+            _audit_artefact("409", {"reason": "report_generation_incomplete"})
+            raise HTTPException(status_code=409, detail="Régénération des rapports inachevée.")
 
         # Resolve file path and object key from payload
         file_path: Path | None = None
@@ -1450,35 +1722,73 @@ def create_app(config: AppConfig) -> FastAPI:
             file_path = Path(payload["report_path"]) if payload.get("report_path") else None
             filename = "technical-report.pdf"
             media_type = "application/pdf"
-            # Try to find object_key from artifacts list
-            for art in payload.get("artifacts", []):
-                if art.get("name") == "technical-report.pdf" and art.get("key"):
-                    object_key = art["key"]
-                    break
         elif artifact == "report_docx":
             file_path = Path(payload["report_docx_path"]) if payload.get("report_docx_path") else None
             filename = "technical-report.docx"
             media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            for art in payload.get("artifacts", []):
-                if art.get("name") == "technical-report.docx" and art.get("key"):
-                    object_key = art["key"]
-                    break
         elif artifact == "source_pdf":
             file_path = Path(payload["technical_pdf"]) if payload.get("technical_pdf") else None
             filename = Path(file_path).name if file_path else "source.pdf"
             media_type = "application/pdf"
-            # Find in files list
-            for f in payload.get("files", []):
-                if f.get("path") == payload.get("technical_pdf") and f.get("object_key"):
-                    object_key = f["object_key"]
-                    break
         elif artifact == "source_excel":
             file_path = Path(payload["excel_file"]) if payload.get("excel_file") else None
             filename = Path(file_path).name if file_path else "source.xlsx"
             media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            for f in payload.get("files", []):
-                if f.get("path") == payload.get("excel_file") and f.get("object_key"):
-                    object_key = f["object_key"]
+
+        empreinte_capture: str | None = None
+        limite_copie = config.max_file_size_bytes
+        if artifact in {"report_pdf", "report_docx"} and payload.get("report_generation_pending"):
+            _audit_artefact("409", {"reason": "report_generation_pending"})
+            raise HTTPException(status_code=409, detail="Rapport en cours de régénération.")
+
+        if file_path is not None and artifact in {"source_pdf", "source_excel"}:
+            fichiers_correspondants = [
+                f for f in payload.get("files", [])
+                if isinstance(f, dict) and f.get("path") == str(file_path)
+            ]
+            empreintes = [f.get("source_sha256") for f in fichiers_correspondants
+                          if f.get("source_sha256") is not None]
+            if empreintes:
+                if (len(fichiers_correspondants) != 1 or len(empreintes) != 1
+                        or not isinstance(empreintes[0], str)
+                        or re.fullmatch(r"[0-9a-f]{64}", empreintes[0]) is None):
+                    _audit_artefact("409", {"reason": "invalid_capture_identity"})
+                    raise HTTPException(status_code=409, detail="Identité de la source invalide.")
+                empreinte_capture = empreintes[0]
+
+        if file_path is not None:
+            # Les rapports récents portent eux aussi un SHA de génération ou de
+            # publication. Les anciens rapports sans identité restent hérités.
+            from .import_pipeline import _preuve_artefact_valide, _preuve_identifiable, construire_manifeste
+
+            manifeste = construire_manifeste(payload)
+            if artifact in {"report_pdf", "report_docx"}:
+                limite_copie = max(config.max_file_size_bytes, 64 * 1024 * 1024)
+                rapports = [a for a in payload.get("artifacts", [])
+                            if isinstance(a, dict) and a.get("path") == str(file_path)]
+                if len(rapports) > 1:
+                    _audit_artefact("409", {"reason": "ambiguous_report_identity"})
+                    raise HTTPException(status_code=409, detail="Identité du rapport ambiguë.")
+                entree_rapport = next((e for e in manifeste if e.get("path") == str(file_path)), None)
+                if entree_rapport is not None:
+                    empreinte = entree_rapport.get("expected_sha256")
+                    if empreinte is None and _preuve_identifiable(entree_rapport):
+                        empreinte = entree_rapport.get("sha256")
+                    if empreinte is not None:
+                        if not isinstance(empreinte, str) or re.fullmatch(r"[0-9a-f]{64}", empreinte) is None:
+                            _audit_artefact("409", {"reason": "invalid_report_identity"})
+                            raise HTTPException(status_code=409, detail="Identité du rapport invalide.")
+                        empreinte_capture = empreinte
+
+            # Une clé seule peut correspondre à un envoi échoué ou ambigu.
+            for entree in manifeste if storage_client is not None else []:
+                if (entree.get("path") == str(file_path)
+                        and entree.get("bucket") == storage_client.bucket_name
+                        and _preuve_artefact_valide(entree)
+                        and (empreinte_capture is None or (
+                            _preuve_identifiable(entree) and entree.get("sha256") == empreinte_capture
+                        ))):
+                    object_key = entree["key"]
                     break
 
         if file_path is not None and not _chemin_artefact_autorise(file_path):
@@ -1497,7 +1807,16 @@ def create_app(config: AppConfig) -> FastAPI:
         # endpoint interne (nom d'hôte « minio » du réseau des conteneurs, port
         # 9000) n'est résolvable depuis AUCUN poste de l'atelier. Par défaut on
         # sert donc les octets par l'API.
-        url_publique = _url_presignee_navigateur(object_key, storage_client, config)
+        #
+        # ICI, une source capturée n'est JAMAIS servie par redirection, même
+        # avec un endpoint public déclaré : c'est la route « téléchargement
+        # VÉRIFIÉ », et la vérification est faite au moment de la lecture
+        # (l'objet peut avoir été réécrit, la copie locale aussi —
+        # `test_telechargement_verifie_ne_redirige_pas_vers_s3` le verrouille).
+        # `/open` est une autre route, historique, avec un autre contrat
+        # (E-28 : redirection dès qu'un endpoint PUBLIC est déclaré).
+        url_publique = (_url_presignee_navigateur(object_key, storage_client, config)
+                        if empreinte_capture is None else None)
         if url_publique:
             _audit_artefact(
                 "302",
@@ -1505,24 +1824,56 @@ def create_app(config: AppConfig) -> FastAPI:
             )
             return RedirectResponse(url=url_publique, status_code=302)
 
-        # Fallback: serve from local disk (cache) or download from S3 to cache
-        if file_path and file_path.exists():
-            _audit_artefact("200", {"path": str(file_path), "filename": filename})
-            return FileResponse(path=file_path, filename=filename, media_type=media_type)
-
-        # If local cache cold but we have object_key, try to download from S3 to cache dir
-        if storage_client is not None and object_key and file_path:
+        # Ouvrir par descripteur confiné. Pour une source capturée, copier et
+        # vérifier les OCTETS qui seront servis : le descripteur seul n'empêche
+        # pas une écriture concurrente dans l'inode ouvert.
+        if file_path is not None:
             try:
-                file_path.parent.mkdir(parents=True, exist_ok=True)
-                storage_client.download_file(object_key, file_path)
-                if file_path.exists():
-                    _audit_artefact(
-                        "200",
-                        {"object_key": object_key, "filename": filename, "cache": "miss_downloaded"},
-                    )
-                    return FileResponse(path=file_path, filename=filename, media_type=media_type)
+                racines_locales = [Path(root) for root in config.root_paths]
+                racines_locales.extend([staging_root(config), quarantine_root(config), Path(config.database_path).parent / "reports"])
+                fd = _ouvrir_artefact_confine(file_path, racines_locales)
+                if empreinte_capture is not None:
+                    with os.fdopen(fd, "rb") as flux:
+                        fd = _copie_flux_verifiee(flux, empreinte_capture, limite_copie)
+            except (OSError, ValueError):
+                pass  # Aucun repli par chemin : essayer l'objet distant seulement.
+            else:
+                try:
+                    _audit_artefact("200", {"servi_par": "fichier_local_epingle"})
+                except BaseException:
+                    os.close(fd)
+                    raise
+                return _ReponseFichierEpingle(fd, filename=filename, media_type=media_type)
+
+        # Ne jamais écrire un cache S3 dans un chemin source ou de rapport :
+        # son parent peut avoir été substitué et l'écriture écraser un original.
+        if storage_client is not None and object_key:
+            fd_objet: int | None = None
+            try:
+                if empreinte_capture is not None:
+                    corps = storage_client.get_object(object_key)["Body"]
+                    try:
+                        fd_objet = _copie_flux_verifiee(corps, empreinte_capture, limite_copie)
+                    finally:
+                        corps.close()
+                    _audit_artefact("200", {"servi_par": "objet_verifie"})
+                    fd_pour_reponse, fd_objet = fd_objet, None  # le constructeur ferme en cas d'erreur
+                    return _ReponseFichierEpingle(fd_pour_reponse, filename=filename, media_type=media_type)
+                reponse = _reponse_objet_s3(
+                    object_key, filename, media_type, storage_client,
+                    limite_defaut=config.max_file_size_bytes,
+                )
+                try:
+                    _audit_artefact("200", {"servi_par": "proxy_api"})
+                except BaseException:
+                    reponse.fermer()
+                    raise
+                return reponse
             except Exception as exc:
-                logger.warning("Failed to download %s from storage: %s", object_key, exc)
+                logger.warning("Téléchargement d'artefact objet impossible (%s)", type(exc).__name__)
+            finally:
+                if fd_objet is not None:
+                    os.close(fd_objet)
 
         _audit_artefact("404")
         raise HTTPException(status_code=404, detail="Artifact not found. It may not have been generated or uploaded yet.")
@@ -1804,7 +2155,8 @@ def _reponse_objet_s3(
     storage_client: S3StorageClient | None,
     *,
     inline: bool = False,
-) -> Response:
+    limite_defaut: int = 512 * 1024 * 1024,
+) -> _ReponseFluxFerme:
     """Sert un objet S3 **à travers l'API** (proxy authentifié).
 
     C'est le mode par défaut des téléchargements : l'URL vue par le navigateur
@@ -1813,25 +2165,33 @@ def _reponse_objet_s3(
     """
     if storage_client is None:
         raise HTTPException(status_code=503, detail="Stockage objet non configuré.")
+    nom_sans_controle = "".join(c for c in filename if ord(c) >= 32 and ord(c) != 127 and c not in "/\\") or "document"
+    # L'en-tête doit rester ASCII et ne jamais contenir de retour à la ligne ;
+    # filename* permet aux navigateurs de retrouver le nom Unicode.
+    nom_encode = quote(nom_sans_controle, safe="", errors="replace")
+    disposition = "inline" if inline else "attachment"
+    entetes = {"Content-Disposition": f"{disposition}; filename=\"document\"; filename*=UTF-8''{nom_encode}"}
     entete = storage_client.head_object(object_key)
     longueur = entete.get("ContentLength")
+    if longueur is not None:
+        longueur = int(longueur)
+        if longueur < 0:
+            raise ValueError("Taille d'objet invalide")
+        entetes["Content-Length"] = str(longueur)
     corps = storage_client.get_object(object_key)["Body"]
 
-    def _blocs() -> Iterator[bytes]:
-        try:
-            for bloc in iter(lambda: corps.read(1024 * 1024), b""):
-                yield bloc
-        finally:
-            try:
-                corps.close()
-            except Exception:  # pragma: no cover - fermeture best-effort
-                pass
+    # Borne OBLIGATOIRE : le corps vient du stockage, l'API ne le maîtrise pas.
+    # Sans elle, un corps qui n'épuise jamais son ``read()`` — ou qui rend
+    # n'importe quoi d'autre que des octets — faisait boucler la réponse sans
+    # fin (mesuré le 2026-11-02 : l'hôte de test tué par épuisement mémoire).
+    # Taille annoncée par le stockage quand elle existe, sinon la taille
+    # maximale de pièce admise par l'application.
+    limite_flux = longueur if longueur is not None else limite_defaut
 
-    disposition = "inline" if inline else "attachment"
-    entetes = {"Content-Disposition": f'{disposition}; filename="{filename}"'}
-    if longueur is not None:
-        entetes["Content-Length"] = str(int(longueur))
-    return StreamingResponse(_blocs(), media_type=media_type, headers=entetes)
+    def _blocs() -> Iterator[bytes]:
+        yield from lire_par_blocs(corps, 1024 * 1024, limite_octets=limite_flux, nom=f"objet {object_key}")
+
+    return _ReponseFluxFerme(corps, _blocs(), media_type=media_type, headers=entetes)
 
 
 def _dossier_modeles_ml(config: AppConfig) -> Path:
@@ -1941,13 +2301,21 @@ def _require_auth(config: AppConfig, token: str | None) -> None:
         raise HTTPException(status_code=401, detail="Authentication required.")
 
 
+def _validated_path_lexical(path: str, config: AppConfig) -> Path:
+    """Autorisation lexicale pour /open ; l'ouverture physique refuse les liens."""
+    target = Path(os.path.abspath(Path(path).expanduser()))
+    allowed_roots = [Path(os.path.abspath(root.expanduser())) for root in config.root_paths]
+    if not any(target == root or root in target.parents for root in allowed_roots):
+        raise HTTPException(status_code=403, detail="Path is outside configured search roots.")
+    return target
+
+
 def _validated_path(path: str, config: AppConfig, *, exiger_existence: bool = True) -> Path:
     """Résout un chemin et vérifie qu'il reste DANS les racines autorisées.
 
-    ``exiger_existence=False`` sert à ``/open`` : après une restauration, le
-    fichier local peut manquer alors que l'objet est bien dans le stockage. La
-    vérification de confinement (403) reste, elle, inconditionnelle — c'est
-    elle qui protège, pas l'existence du fichier.
+    ``/open`` utilise au contraire une validation lexicale séparée, car
+    l'identité du catalogue ne doit pas être résolue à travers un lien. La
+    vérification de confinement (403) reste ici inconditionnelle.
     """
     target = Path(path).expanduser().resolve()
     allowed_roots = [root.resolve() for root in config.root_paths]

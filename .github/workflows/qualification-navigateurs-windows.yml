@@ -1,0 +1,210 @@
+name: Qualification navigateurs Windows
+
+# Chrome et Edge, sur un runner Windows, devant l'interface réelle.
+#
+# Pourquoi un workflow à part : la qualification porte sur les navigateurs de
+# l'ATELIER, qui n'existent que sur un poste Windows (``channel: "chrome"`` et
+# ``channel: "msedge"`` utilisent les binaires installés, pas ceux de
+# Playwright). La faire sur Linux serait un contresens ; l'ajouter au workflow
+# de qualification Windows alourdirait un job déjà long de trente minutes et
+# rendrait ses diagnostics illisibles.
+#
+# Ce qui est qualifié : le rendu, la connexion par session et l'accessibilité
+# WCAG 2.1 A/AA des écrans de lecture, dans les DEUX navigateurs, avec
+# vérification de l'agent-utilisateur (sinon un vert ne voudrait rien dire).
+#
+# Ce qui n'est PAS qualifié ici : l'import d'un dossier depuis Windows. Le
+# produit le refuse faute de primitives POSIX de confinement ; la cible de
+# déploiement Windows reste un conteneur Linux (Docker Desktop), couvert par la
+# CI Linux.
+
+on:
+  push:
+    branches:
+      - "arena/**"
+    paths:
+      - ".github/workflows/qualification-navigateurs-windows.yml"
+      - "frontend/**"
+      - "seamtech_search/**"
+  workflow_dispatch:
+  schedule:
+    # Une qualification de navigateurs n'a pas besoin d'être hebdomadaire :
+    # elle tourne à chaque modification du front et une fois par semaine.
+    - cron: "17 5 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qualification-navigateurs-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  navigateurs:
+    name: Chrome et Edge sur Windows
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9
+
+      - name: Dépendances Python
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Dépendances de l'interface
+        working-directory: frontend
+        # ``--ignore-scripts`` : aucun paquet de cette interface ne compile du
+        # natif à l'installation (Next et Tailwind 4 fournissent leurs binaires
+        # précompilés), et les scripts de post-installation de Playwright
+        # téléchargeraient des navigateurs dont on ne veut PAS ici — la
+        # qualification porte sur ceux de la machine.
+        # La sortie est conservée : ce workflow tourne sur un runner qu'on ne
+        # peut pas ouvrir, donc un échec doit se lire dans une annotation.
+        id: dependances
+        continue-on-error: true
+        run: |
+          $ErrorActionPreference = 'Continue'
+          pnpm install --frozen-lockfile --ignore-scripts 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\pnpm-install.log"
+          exit $LASTEXITCODE
+
+      - name: Journal d'installation des dépendances
+        if: always()
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $journal = "$env:RUNNER_TEMP\pnpm-install.log"
+          if (-not (Test-Path $journal)) {
+            Write-Host "::notice title=pnpm-install::aucun journal produit"
+            exit 0
+          }
+          $queue = ((Get-Content $journal -Tail 25) -join ' ; ')
+          if ($queue.Length -gt 2500) { $queue = $queue.Substring($queue.Length - 2500) }
+          if ($steps.dependances.outcome -eq 'failure') {
+            Write-Host "::error title=pnpm-install::$queue"
+          } else {
+            Write-Host "::notice title=pnpm-install::$queue"
+          }
+          exit 0
+
+      - name: Navigateurs présents sur le runner
+        # Sans cette étape, un échec de lancement ne dirait pas si le binaire
+        # existait, ni dans quelle version.
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $chemins = @(
+            "C:\Program Files\Google\Chrome\Application\chrome.exe",
+            "C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+            "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+            "C:\Program Files\Microsoft\Edge\Application\msedge.exe"
+          )
+          foreach ($chemin in $chemins) {
+            if (Test-Path $chemin) {
+              $version = (Get-Item $chemin).VersionInfo.ProductVersion
+              Write-Host "::notice title=navigateur-present::$chemin version=$version"
+            } else {
+              Write-Host "::notice title=navigateur-absent::$chemin"
+            }
+          }
+
+      - name: Qualification Chrome et Edge
+        id: qualification
+        shell: pwsh
+        working-directory: frontend
+        env:
+          SEAMTECH_UI_PASSWORD: "e2e-shared-password"
+          SEAMTECH_SESSION_SECRET: "e2e-session-secret-not-for-production-use"
+          SEAMTECH_AUTH_TOKEN: "e2e-service-token"
+        run: |
+          $ErrorActionPreference = 'Continue'
+          # Le navigateur est celui de la machine : aucun téléchargement de
+          # binaire Playwright (``playwright install``) n'est nécessaire ici,
+          # et le faire masquerait le navigateur de l'atelier.
+          pnpm exec playwright test --config playwright.navigateurs.config.ts e2e/navigateurs-windows.spec.ts 2>&1 |
+            Tee-Object -FilePath "$env:RUNNER_TEMP\playwright.log"
+          $rc = $LASTEXITCODE
+          Write-Host "::notice title=rc-qualification-navigateurs::rc=$rc"
+          exit 0
+
+      - name: Journal de la qualification (échecs et symptômes)
+        if: always()
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $journal = "$env:RUNNER_TEMP\playwright.log"
+          if (-not (Test-Path $journal)) {
+            Write-Host "::error title=playwright-journal::aucun journal produit : la qualification n'a pas démarré"
+            exit 0
+          }
+          $lignes = Get-Content $journal |
+                    Where-Object { $_ -match '✘|failed|Error|expect|Timeout|expected|browserType|Executable|channel' } |
+                    Select-Object -Last 12
+          if (-not $lignes) { $lignes = Get-Content $journal -Tail 12 }
+          $texte = ($lignes -join ' ; ')
+          if ($texte.Length -gt 2800) { $texte = $texte.Substring($texte.Length - 2800) }
+          Write-Host "::error title=playwright-details::$texte"
+          exit 0
+
+      - name: Agents-utilisateurs réellement qualifiés
+        if: always()
+        shell: pwsh
+        working-directory: frontend
+        run: |
+          $ErrorActionPreference = 'Continue'
+          if (Test-Path navigateurs-rapport.json) {
+            $rapport = Get-Content navigateurs-rapport.json -Raw | ConvertFrom-Json
+            $numero = 0
+            foreach ($agent in $rapport.agents) {
+              $numero++
+              if ($numero -gt 9) { break }  # dix annotations par étape
+              Write-Host "::notice title=agent-$($agent.navigateur)::$($agent.agent)"
+            }
+          } else {
+            Write-Host "::error title=agents-manquants::aucun rapport de navigateurs produit"
+          }
+
+      - name: Preuves
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: preuves-navigateurs-windows
+          path: |
+            frontend/navigateurs-rapport.json
+            frontend/navigateurs-resultats.json
+          if-no-files-found: warn
+
+      - name: Verdict
+        if: always()
+        shell: pwsh
+        working-directory: frontend
+        run: |
+          $ErrorActionPreference = 'Continue'
+          if (-not (Test-Path navigateurs-resultats.json)) {
+            Write-Host "::error title=verdict-navigateurs::aucun résultat Playwright : la qualification n'a pas tourné"
+            exit 1
+          }
+          $resultats = Get-Content navigateurs-resultats.json -Raw | ConvertFrom-Json
+          $stats = $resultats.stats
+          $attendus = 2  # un test d'agent-utilisateur + un test d'écrans, par navigateur
+          $message = "attendus=$attendus passes=$($stats.expected) echecs=$($stats.unexpected) total=$($stats.total)"
+          if ($stats.unexpected -gt 0) {
+            Write-Host "::error title=verdict-navigateurs::$message"
+            exit 1
+          }
+          if ($stats.expected -lt $attendus * 2) {
+            Write-Host "::error title=verdict-navigateurs::trop peu de tests exécutés — $message"
+            exit 1
+          }
+          Write-Host "::notice title=verdict-navigateurs::$message"
+          exit 0

@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test"
-import { APPROBATEUR, signIn, signInWith } from "./helpers"
+import { APPROBATEUR, deposerCheminParCDP, signIn, signInWith } from "./helpers"
 import path from "path"
 import fs from "fs"
 import crypto from "crypto"
@@ -64,60 +64,6 @@ async function seConnecterCasErreur(page: any): Promise<void> {
   } else {
     await signIn(page)
   }
-}
-
-/**
- * Simulation dragenter/dragover/drop avec DataTransfer natif dans un vrai navigateur.
- * Exerce les gestionnaires onDragOver/onDrop du composant ImportPanel.
- * Ce n'est pas un geste manuel depuis l'explorateur système.
- */
-async function dragDropFileViaEvents(page: any, filePath: string) {
-  const fileName = path.basename(filePath)
-  const buffer = fs.readFileSync(filePath)
-  const base64 = buffer.toString("base64")
-
-  await page.evaluate(
-    async ({ fileName, base64 }: { fileName: string; base64: string }) => {
-      const byTestId = document.querySelector('[data-testid="drop-zone"]') as HTMLElement | null
-      const candidates = Array.from(document.querySelectorAll("div"))
-      const dropZone =
-        byTestId ||
-        (candidates.find((el) =>
-          (el.textContent || "").includes("déposez ici un dossier de référence"),
-        ) as HTMLElement | null)
-      if (!dropZone) throw new Error("dropZone not found")
-
-      const byteChars = atob(base64)
-      const byteNumbers = new Array(byteChars.length)
-      for (let i = 0; i < byteChars.length; i++) {
-        byteNumbers[i] = byteChars.charCodeAt(i)
-      }
-      const byteArray = new Uint8Array(byteNumbers)
-      const file = new File([byteArray], fileName, { type: "application/pdf" })
-
-      const dt = new DataTransfer()
-      dt.items.add(file)
-      // @ts-ignore
-      dt.dropEffect = "copy"
-      // @ts-ignore
-      dt.effectAllowed = "all"
-
-      const mk = (type: string) =>
-        new DragEvent(type, {
-          bubbles: true,
-          cancelable: true,
-          dataTransfer: dt,
-        })
-
-      dropZone.dispatchEvent(mk("dragenter"))
-      dropZone.dispatchEvent(mk("dragover"))
-      await new Promise((r) => setTimeout(r, 80))
-      dropZone.dispatchEvent(mk("drop"))
-    },
-    { fileName, base64 },
-  )
-
-  await page.waitForTimeout(1500)
 }
 
 test.describe("Scan navigateur → OCR → Recherche → Téléchargement", () => {
@@ -297,7 +243,7 @@ test.describe("Scan navigateur → OCR → Recherche → Téléchargement", () =
           fileName,
           importId,
           uniqueTerm: uniq,
-          methode: "setInputFiles + simulation dragenter/dragover/drop avec DataTransfer natif dans un vrai navigateur (sélection fichier ici)",
+          methode: "sélection de fichier par Playwright setInputFiles",
           recherche: uniq,
           etat: etatText,
           rawTextLen: rawText.length,
@@ -314,7 +260,7 @@ test.describe("Scan navigateur → OCR → Recherche → Téléchargement", () =
     fs.rmSync(tmpDir, { recursive: true, force: true })
   })
 
-  test("dépôt PDF image par véritable glisser-déposer (simulation dragenter/dragover/drop avec DataTransfer natif dans vrai navigateur), OCR, recherche, SHA obligatoire", async ({
+  test("dépôt PDF image par glisser-déposer CDP, OCR, recherche, SHA obligatoire", async ({
     page,
   }, testInfo) => {
     if (!MODE_LIVE) {
@@ -357,7 +303,7 @@ test.describe("Scan navigateur → OCR → Recherche → Téléchargement", () =
       } catch {}
     })
 
-    await dragDropFileViaEvents(page, pdfPath)
+    await deposerCheminParCDP(page, pdfPath, "drop-zone")
 
     await expect(page.getByText(/fichier.*prêt.*envoyer/i).first()).toBeVisible({ timeout: 8000 })
     await expect(page.getByText(fileName).first()).toBeVisible({ timeout: 5000 })
@@ -479,7 +425,7 @@ test.describe("Scan navigateur → OCR → Recherche → Téléchargement", () =
           fileName,
           importId,
           uniqueTerm: uniq,
-          methode: "simulation dragenter/dragover/drop avec DataTransfer natif dans un vrai navigateur",
+          methode: "glisser-déposer simulé par Chrome DevTools Protocol ; pas un geste OS manuel",
           recherche: uniq,
           etat: etatText,
           rawTextLen: rawText.length,

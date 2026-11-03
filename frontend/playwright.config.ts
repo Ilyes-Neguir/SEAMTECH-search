@@ -21,7 +21,7 @@ import { randomUUID } from "crypto"
 // gabarits, trois dossiers d'exemple) et le backend spawné ci-dessous démarre
 // dessus — le parcours validation est alors éprouvé de bout en bout en
 // conditions réelles (couche métier PostgreSQL, §17.1), et répétable (base
-// jetable recréée à chaque exécution, les anciennes e2e_% sont purgées).
+// jetable recréée à chaque exécution, sans purge des bases préexistantes).
 // Sans cette variable, la suite tourne sur le SQLite de backend.config.json.
 //
 // SEAMTECH_E2E_RUN_ID identifie LE RUN : le processus principal l'instancie
@@ -39,11 +39,20 @@ if (process.env.SEAMTECH_E2E_DATABASE_URL) {
     stdio: ["pipe", "pipe", "inherit"], // stderr visible : décisions du seed traçées
     env: process.env,
   })
-  baseLive = (JSON.parse(sortie.trim().split("\n").pop()!) as { url: string }).url
+  const { nom } = JSON.parse(sortie.trim().split("\n").pop()!) as { nom: string }
+  if (!/^e2e_[0-9a-f]{32}$/.test(nom)) throw new Error("Nom de base e2e invalide")
+  const url = new URL(process.env.SEAMTECH_E2E_DATABASE_URL!)
+  url.pathname = `/${nom}`
+  baseLive = url.toString()
 }
 
 export default defineConfig({
   testDir: "./e2e",
+  // « navigateurs-windows.spec.ts » ne s'exécute QUE sous Chrome et Edge
+  // réels, par ``playwright.navigateurs.config.ts``. Le faire tourner ici,
+  // sous le Chromium de Playwright, le ferait échouer à bon droit (il
+  // vérifie l'agent-utilisateur) pour une raison qui n'apprendrait rien.
+  testIgnore: ["**/navigateurs-windows.spec.ts"],
   globalSetup: "./e2e/global-setup.ts",
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
@@ -69,16 +78,23 @@ export default defineConfig({
       name: "chromium",
       use: {
         ...devices["Desktop Chrome"],
-        // Chromium SYSTEME : sur une machine sans navigateur Playwright
-        // installable (bac à sable d'audit, image Debian sans libnss), la
-        // campagne doit pouvoir pointer un binaire fourni par
-        // l'environnement. Sans la variable, comportement Playwright standard.
-        launchOptions: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE
+        // Chromium SYSTÈME : sur une machine sans navigateur Playwright
+        // installable (bac à sable d'audit, image sans libnss), la campagne
+        // doit pouvoir pointer un binaire fourni par l'environnement. Les deux
+        // noms de variable sont acceptés : `SEAMTECH_E2E_*` par les workflows
+        // historiques, `PLAYWRIGHT_*` par les piles de qualification. Aucune
+        // variable : comportement Playwright standard.
+        launchOptions: process.env.SEAMTECH_E2E_CHROMIUM_EXECUTABLE
           ? {
-              executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE,
+              executablePath: process.env.SEAMTECH_E2E_CHROMIUM_EXECUTABLE,
               args: ["--no-sandbox", "--disable-dev-shm-usage"],
             }
-          : {},
+          : process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE
+            ? {
+                executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE,
+                args: ["--no-sandbox", "--disable-dev-shm-usage"],
+              }
+            : {},
       },
     },
   ],

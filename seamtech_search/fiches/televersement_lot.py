@@ -28,19 +28,22 @@ import os
 import re
 import secrets
 import shutil
+import sqlite3
 import unicodedata
 import uuid
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, BinaryIO, Callable, Iterator, Sequence
 
 try:
     import fcntl
-except ImportError:  # pragma: no cover - le service de production tourne sous Linux
+except ImportError:  # Windows : repli interprocessus SQLite
     fcntl = None  # type: ignore[assignment]
 
 from seamtech_search.import_pipeline import staging_root
+
+from ..flux_bornes import lire_par_blocs
 
 LOGGER = logging.getLogger("seamtech_search.fiches.televersement_lot")
 
@@ -51,6 +54,10 @@ DOSSIER_FICHIERS = "fichiers"
 DOSSIER_TEMPORAIRE = ".tmp"
 MAX_PROFONDEUR_CHEMIN = 32
 
+# Pas de purge automatique des clés : une ancienne clé ne doit jamais
+# ressusciter une session annulée. Le plafond borne le registre et refuse
+# explicitement les nouvelles créations lorsqu'il est atteint.
+MAX_RESERVATIONS_CREATION = 1_000_000
 MAX_FICHIERS_PAR_SESSION = 100_000
 MAX_TAILLE_TOTALE_OCTETS = 20 * 1024 * 1024 * 1024
 MAX_FICHIERS_PAR_ENVOI = 200
@@ -70,6 +77,10 @@ _NOMS_RESERVES_WINDOWS = {
 
 class TeleversementLotErreur(ValueError):
     """Demande de téléversement invalide (chemin, bornes, manifeste…)."""
+
+
+class TeleversementLotInterrompu(TeleversementLotErreur):
+    """Promotion interrompue par le contrôle de continuation."""
 
 
 class TeleversementLotIntrouvable(TeleversementLotErreur):
@@ -127,19 +138,35 @@ def _verrou_session(config: Any, token: str) -> Iterator[None]:
     dossier = _dossier_session(config, token)
     if not (dossier / FICHIER_MANIFESTE).is_file():
         raise TeleversementLotIntrouvable("Session de téléversement inconnue.")
-    if fcntl is None:
-        yield
-        return
+    # Tous les processus utilisent le même verrou SQLite, y compris ceux qui
+    # disposent de fcntl. Sinon deux modes différents ne se verraient pas.
+    # Les garanties effectives dépendent du système de fichiers sous-jacent.
+    connexion = None
     try:
-        flux_verrou = (dossier / FICHIER_VERROU).open("a+b")
-    except OSError as erreur:
-        raise TeleversementLotIntrouvable("Session de téléversement inconnue.") from erreur
-    with flux_verrou:
-        fcntl.flock(flux_verrou.fileno(), fcntl.LOCK_EX)
-        try:
+        connexion = sqlite3.connect(str(dossier / "session.lock.sqlite"), timeout=30, isolation_level=None)
+        connexion.execute("BEGIN IMMEDIATE")
+    except sqlite3.Error as erreur:
+        if connexion is not None:
+            connexion.close()
+        raise TeleversementLotConflit("Verrou de session indisponible ; réessayez.") from erreur
+    try:
+        if fcntl is None:
             yield
-        finally:
-            fcntl.flock(flux_verrou.fileno(), fcntl.LOCK_UN)
+        else:
+            # Conserve aussi le verrou historique pour les processus anciens
+            # encore présents lors d'un arrêt/restart coordonné.
+            try:
+                flux_verrou = (dossier / FICHIER_VERROU).open("a+b")
+            except OSError as erreur:
+                raise TeleversementLotIntrouvable("Session de téléversement inconnue.") from erreur
+            with flux_verrou:
+                fcntl.flock(flux_verrou.fileno(), fcntl.LOCK_EX)
+                try:
+                    yield
+                finally:
+                    fcntl.flock(flux_verrou.fileno(), fcntl.LOCK_UN)
+    finally:
+        connexion.close()  # annule la transaction et libère le verrou, même en cas d'erreur
 
 
 def _sauver_manifeste(dossier: Path, manifeste: dict[str, Any]) -> None:
@@ -240,6 +267,7 @@ def creer_session_televersement_lot(
     nom_racine: Any,
     nombre_fichiers: Any,
     taille_totale_octets: Any,
+    cle_idempotence: Any = None,
 ) -> dict[str, Any]:
     """Crée une session vide et retourne son jeton opaque et ses bornes."""
     if isinstance(nombre_fichiers, bool) or isinstance(taille_totale_octets, bool):
@@ -257,6 +285,8 @@ def creer_session_televersement_lot(
             f"et {MAX_TAILLE_TOTALE_OCTETS} octets. Scindez par année ou catégorie."
         )
     nom_racine_valide = _nom_racine_sur(nom_racine)
+    if cle_idempotence is not None:
+        return _creer_session_idempotente(config, nom_racine_valide, nombre, taille, cle_idempotence)
     _verifier_espace(config, taille)
 
     racine = _racine_lots(config)
@@ -284,6 +314,121 @@ def creer_session_televersement_lot(
     _sauver_manifeste(dossier, manifeste)
     LOGGER.info("Session de téléversement créée : %d fichier(s), %d octet(s) annoncés.", nombre, taille)
     return _etat_public(config, manifeste)
+
+
+def _creer_session_idempotente(
+    config: Any, nom: str, nombre: int, taille: int, cle: Any,
+) -> dict[str, Any]:
+    """Réserve durablement un jeton avant de créer les fichiers de session.
+
+    La clé est un secret à 256 bits produit par le client. Le registre ne
+    conserve que son empreinte, pas la clé. Un verrou SQLite sérialise les
+    processus sur un système de fichiers local compatible SQLite.
+    """
+    if not isinstance(cle, str) or not re.fullmatch(r"[0-9a-f]{64}", cle):
+        raise TeleversementLotErreur("Clé d'idempotence invalide.")
+    racine = _racine_lots(config)
+    racine.mkdir(parents=True, exist_ok=True)
+    if racine.is_symlink():
+        raise TeleversementLotConflit("Racine de téléversement symbolique interdite.")
+    base = racine / ".creations.sqlite"
+    if base.is_symlink():
+        raise TeleversementLotConflit("Registre de création symbolique interdit.")
+    # Créer avec des permissions privées avant que SQLite ne l'ouvre.
+    try:
+        fd = os.open(base, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except FileExistsError:
+        pass
+    else:
+        os.close(fd)
+    if os.name != "nt" and base.stat().st_mode & 0o077:
+        raise TeleversementLotConflit("Permissions du registre de création trop ouvertes.")
+    empreinte_cle = hashlib.sha256(cle.encode("ascii")).hexdigest()
+    empreinte_demande = hashlib.sha256(
+        json.dumps([nom, nombre, taille], ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    try:
+        with closing(sqlite3.connect(str(base), timeout=30, isolation_level=None)) as connexion:
+            connexion.execute("PRAGMA synchronous=FULL")
+            connexion.execute(
+                "CREATE TABLE IF NOT EXISTS creations (cle TEXT PRIMARY KEY, demande TEXT NOT NULL, "
+                "token TEXT NOT NULL UNIQUE, cree INTEGER NOT NULL DEFAULT 0)"
+            )
+            connexion.execute("BEGIN IMMEDIATE")
+            ligne = connexion.execute("SELECT demande, token FROM creations WHERE cle = ?", (empreinte_cle,)).fetchone()
+            if ligne is None:
+                nombre_reservations = connexion.execute("SELECT COUNT(*) FROM creations").fetchone()[0]
+                if nombre_reservations >= MAX_RESERVATIONS_CREATION:
+                    raise TeleversementLotEspaceInsuffisant(
+                        "Registre de création saturé ; aucune nouvelle session ne peut être réservée."
+                    )
+                token = secrets.token_urlsafe(24)
+                while (racine / token).exists() or connexion.execute(
+                    "SELECT 1 FROM creations WHERE token = ?", (token,),
+                ).fetchone():
+                    token = secrets.token_urlsafe(24)
+                connexion.execute(
+                    "INSERT INTO creations (cle, demande, token) VALUES (?, ?, ?)",
+                    (empreinte_cle, empreinte_demande, token),
+                )
+            elif ligne[0] != empreinte_demande:
+                raise TeleversementLotConflit("Clé d'idempotence déjà utilisée pour une autre demande.")
+            connexion.execute("COMMIT")  # réservation durable avant toute création de dossier
+            try:
+                descripteur = os.open(racine, os.O_RDONLY)
+                try:
+                    os.fsync(descripteur)
+                finally:
+                    os.close(descripteur)
+            except OSError:
+                pass  # certaines plateformes ne permettent pas fsync sur un répertoire
+            connexion.execute("BEGIN IMMEDIATE")
+            _demande, token, cree = connexion.execute(
+                "SELECT demande, token, cree FROM creations WHERE cle = ?", (empreinte_cle,),
+            ).fetchone()
+            dossier = racine / token
+            if dossier.is_symlink():
+                raise TeleversementLotConflit("Dossier de session symbolique interdit.")
+            if (dossier / FICHIER_MANIFESTE).is_file():
+                with _verrou_session(config, token):
+                    _, manifeste = _charger_manifeste(config, token)
+                    if (manifeste.get("nom_racine"), manifeste.get("nombre_fichiers_attendus"),
+                        manifeste.get("taille_totale_attendue_octets")) != (nom, nombre, taille):
+                        raise TeleversementLotConflit("Session réservée incohérente.")
+                    resultat = _etat_public(config, manifeste)
+            else:
+                if cree:
+                    raise TeleversementLotConflit("Cette session réservée a été supprimée et ne peut pas être recréée.")
+                _verifier_espace(config, taille)
+                dossier.mkdir(exist_ok=True)
+                # Après une interruption pendant le premier manifeste, ne
+                # récupérer que la structure initiale vide attendue.
+                autorises = {DOSSIER_FICHIERS, DOSSIER_TEMPORAIRE}
+                for entree in dossier.iterdir():
+                    if entree.is_symlink():
+                        raise TeleversementLotConflit("Création interrompue : entrée symbolique interdite.")
+                    if entree.name in autorises and entree.is_dir() and not any(entree.iterdir()):
+                        continue
+                    if entree.name.startswith(f".{FICHIER_MANIFESTE}.tmp-") and entree.is_file():
+                        entree.unlink()
+                        continue
+                    raise TeleversementLotConflit("Création interrompue : contenu inattendu, reprise refusée.")
+                (dossier / DOSSIER_FICHIERS).mkdir(exist_ok=True)
+                (dossier / DOSSIER_TEMPORAIRE).mkdir(exist_ok=True)
+                maintenant = _maintenant_iso()
+                manifeste = {
+                    "version": 1, "token": token, "nom_racine": nom, "statut": "en_cours",
+                    "nombre_fichiers_attendus": nombre, "taille_totale_attendue_octets": taille,
+                    "fichiers": {}, "id_lot": None, "cree_le": maintenant, "mis_a_jour_le": maintenant,
+                }
+                _sauver_manifeste(dossier, manifeste)
+                resultat = _etat_public(config, manifeste)
+                LOGGER.info("Session de téléversement créée : %d fichier(s), %d octet(s) annoncés.", nombre, taille)
+            connexion.execute("UPDATE creations SET cree = 1 WHERE cle = ?", (empreinte_cle,))
+            connexion.execute("COMMIT")
+            return {**resultat, "idempotence_creation": 1}
+    except sqlite3.Error as erreur:
+        raise TeleversementLotConflit("Registre de création indisponible ; réessayez.") from erreur
 
 
 def _chemin_relatif_sur(brut: Any) -> tuple[str, Path]:
@@ -315,7 +460,7 @@ def _chemin_relatif_sur(brut: Any) -> tuple[str, Path]:
 def _empreinte_fichier(chemin: Path) -> str:
     empreinte = hashlib.sha256()
     with chemin.open("rb") as flux:
-        for bloc in iter(lambda: flux.read(TAILLE_BLOC_LECTURE), b""):
+        for bloc in lire_par_blocs(flux, TAILLE_BLOC_LECTURE, nom=f"empreinte {chemin.name}"):
             empreinte.update(bloc)
     return empreinte.hexdigest()
 
@@ -361,16 +506,22 @@ def _recevoir_fichiers_televersement_lot_interne(
     fichiers_recus: dict[str, Any] = manifeste.get("fichiers") or {}
     existants_insensibles = {str(cle).casefold(): str(cle) for cle in fichiers_recus}
     racine_fichiers = dossier / DOSSIER_FICHIERS
+    if racine_fichiers.is_symlink():
+        raise TeleversementLotConflit("Racine de fichiers symbolique interdite.")
     for cle, relatif in plan:
         autre = existants_insensibles.get(cle.casefold())
         if autre is not None and autre != cle:
             raise TeleversementLotConflit(f"Collision de casse avec un fichier déjà reçu : {autre} et {cle}.")
         destination = racine_fichiers / relatif
+        if destination.is_symlink() or not destination.resolve().is_relative_to(racine_fichiers.resolve()):
+            raise TeleversementLotConflit("Destination symbolique ou hors de la session interdite.")
         if destination.is_dir():
             raise TeleversementLotConflit(f"La destination est un dossier : {cle}.")
         parent = racine_fichiers
         for composant in relatif.parts[:-1]:
             parent = parent / composant
+            if parent.is_symlink():
+                raise TeleversementLotConflit("Parent symbolique interdit pour un téléversement.")
             if parent.exists() and not parent.is_dir():
                 raise TeleversementLotConflit(f"Un parent de {cle} est déjà un fichier.")
 
@@ -447,12 +598,12 @@ def _recevoir_fichiers_televersement_lot_interne(
             + ([temporaire_courant] if temporaire_courant is not None else [])
         )
         raise
-    except OSError as erreur:
+    except OSError:
         _supprimer_temporaires(
             [item["temporaire"] for item in temporaires]
             + ([temporaire_courant] if temporaire_courant is not None else [])
         )
-        raise TeleversementLotErreur(f"Écriture du téléversement impossible : {erreur}") from erreur
+        raise TeleversementLotErreur("Écriture du téléversement impossible.") from None
 
     apres = dict(fichiers_recus)
     nouveaux: list[dict[str, Any]] = []
@@ -506,12 +657,12 @@ def _recevoir_fichiers_televersement_lot_interne(
             destination = racine_fichiers / Path(item["relatif"])
             destination.parent.mkdir(parents=True, exist_ok=True)
             os.replace(item["temporaire"], destination)
-    except OSError as erreur:
+    except OSError:
         _supprimer_temporaires([item["temporaire"] for item in temporaires])
         raise TeleversementLotErreur(
             "Promotion d'un fichier interrompue ; renvoyez l'envoi — les fichiers déjà "
-            f"présents seront réconciliés par empreinte. ({erreur})"
-        ) from erreur
+            "présents seront réconciliés par empreinte."
+        ) from None
     _supprimer_temporaires([item["temporaire"] for item in temporaires])
 
     manifeste["fichiers"] = apres
@@ -529,21 +680,32 @@ def _reconcilier_manifeste(dossier: Path, manifeste: dict[str, Any]) -> bool:
     racine_fichiers = dossier / DOSSIER_FICHIERS
     fichiers: dict[str, Any] = dict(manifeste.get("fichiers") or {})
     presents: dict[str, Path] = {}
+    if racine_fichiers.is_symlink():
+        raise TeleversementLotConflit("Racine de fichiers symbolique interdite.")
     if racine_fichiers.is_dir():
         for chemin in racine_fichiers.rglob("*"):
+            if chemin.is_symlink():
+                raise TeleversementLotConflit("Lien symbolique interdit dans une session de téléversement.")
             if chemin.is_file():
                 presents[chemin.relative_to(racine_fichiers).as_posix()] = chemin
     change = False
     for cle in list(fichiers):
         if cle not in presents:
+            if manifeste.get("id_lot") is not None:
+                raise TeleversementLotConflit("Un fichier associé au lot est manquant ; intégrité non vérifiée.")
             del fichiers[cle]
             change = True
     for cle, chemin in presents.items():
         taille = chemin.stat().st_size
         recu = fichiers.get(cle)
-        if recu is None or int(recu.get("taille_octets") or 0) != taille:
+        if recu is None:
             fichiers[cle] = {"taille_octets": taille, "empreinte_sha256": _empreinte_fichier(chemin)}
             change = True
+        elif (int(recu.get("taille_octets") or 0) != taille
+              or recu.get("empreinte_sha256") != _empreinte_fichier(chemin)):
+            # Ne jamais réécrire l'empreinte de référence avec celle d'un
+            # fichier connu qui a été altéré, même de taille inchangée.
+            raise TeleversementLotConflit("L'intégrité d'un fichier reçu ne correspond plus au manifeste.")
     if change:
         manifeste["fichiers"] = fichiers
         attendus = int(manifeste.get("nombre_fichiers_attendus") or 0)
@@ -574,10 +736,10 @@ def etat_session_televersement_lot(
 def _terminer_session_televersement_lot_interne(config: Any, token: str) -> dict[str, Any]:
     """Finalise si compte et taille correspondent exactement à l'annonce."""
     dossier, manifeste = _charger_manifeste(config, token)
-    if manifeste.get("statut") == "pret":
-        return _etat_public(config, manifeste)
     if _reconcilier_manifeste(dossier, manifeste):
         _sauver_manifeste(dossier, manifeste)
+    if manifeste.get("statut") == "pret":
+        return _etat_public(config, manifeste)
     fichiers: dict[str, Any] = manifeste.get("fichiers") or {}
     attendus = int(manifeste.get("nombre_fichiers_attendus") or 0)
     taille_attendue = int(manifeste.get("taille_totale_attendue_octets") or 0)
@@ -688,6 +850,7 @@ def _creer_lot_session_televersement_interne(
     racine = dossier / DOSSIER_FICHIERS
     existant = manifeste.get("id_lot")
     if existant is not None:
+        racine = _racine_session_televersement_lot_interne(config, token)
         return {
             "session": _etat_public(config, manifeste),
             "racine": racine,
@@ -725,3 +888,127 @@ def creer_lot_session_televersement(
     """
     with _verrou_session(config, token):
         return _creer_lot_session_televersement_interne(config, token, creer_lot=creer_lot)
+
+
+def _reprendre_journal_promotion(chemin: Path, fichiers: dict[str, Any], bucket: str) -> dict[str, str]:
+    """Recharge les écritures complètes d'un journal interrompu sans faire confiance aux octets S3."""
+    if chemin.is_symlink():
+        raise TeleversementLotConflit("Journal de promotion symbolique interdit.")
+    if not chemin.exists():
+        return {}
+    candidats: dict[str, str] = {}
+    try:
+        contenu = chemin.read_bytes()
+        # Une coupure peut laisser une dernière ligne incomplète. Elle n'est
+        # pas une preuve d'envoi et sera rejouée à partir de la source locale.
+        limite = contenu.rfind(b"\n") + 1
+        if limite != len(contenu):
+            with chemin.open("r+b") as flux:
+                flux.truncate(limite)
+                flux.flush()
+                os.fsync(flux.fileno())
+        for ligne in contenu[:limite].splitlines():
+            entree = json.loads(ligne)
+            nom = entree["nom"]
+            infos = fichiers[nom]
+            cle = entree["object_key"]
+            if (not isinstance(cle, str) or not cle or entree["object_bucket"] != bucket
+                    or entree["sha256"] != infos.get("empreinte_sha256")
+                    or (infos.get("object_key") and infos["object_key"] != cle)
+                    or (nom in candidats and candidats[nom] != cle)):
+                raise ValueError("entrée incohérente")
+            candidats[nom] = cle
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as erreur:
+        raise TeleversementLotErreur("Journal de promotion illisible ou incohérent.") from erreur
+    return candidats
+
+
+def promouvoir_session_televersement_objets(
+    config: Any, token: str, client_s3: Any, *, doit_continuer: Callable[[], bool] | None = None,
+) -> dict[str, Any]:
+    """Copie les fichiers d'une session vers S3 puis relit chaque objet.
+
+    Un journal append-only borné par la taille de la session évite de réécrire
+    le manifeste complet après chaque fichier. Les sources restent locales ;
+    les clés journalisées sont revérifiées au redémarrage. Ne modifie pas le
+    catalogue PostgreSQL : l'intégration au dépôt reste nécessaire.
+    """
+    if client_s3 is None or not client_s3.is_configured() or not getattr(client_s3, "bucket_name", None):
+        raise TeleversementLotErreur("Stockage objet non configuré : copies locales conservées.")
+    with _verrou_session(config, token):
+        racine = _racine_session_televersement_lot_interne(config, token).resolve()
+        dossier, manifeste = _charger_manifeste(config, token)
+        journal = dossier / "promotion-objets.jsonl"
+        candidats = _reprendre_journal_promotion(journal, manifeste["fichiers"], client_s3.bucket_name)
+        recuperees = 0
+        verifies = 0
+        nouvelles = 0
+        objets_promus: dict[str, dict[str, str]] = {}
+        identite_session = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        try:
+            with journal.open("ab") as flux:
+                try:
+                    for nom, infos in sorted(manifeste["fichiers"].items()):
+                        if doit_continuer is not None and not doit_continuer():
+                            raise TeleversementLotInterrompu("Promotion interrompue ; fichiers locaux conservés.")
+                        _cle, relatif = _chemin_relatif_sur(nom)
+                        chemin = (racine / relatif).resolve()
+                        if not chemin.is_relative_to(racine) or not chemin.is_file():
+                            raise TeleversementLotConflit("Fichier de session absent ou hors de la racine autorisée.")
+                        empreinte = infos.get("empreinte_sha256")
+                        if _empreinte_fichier(chemin) != empreinte:
+                            raise TeleversementLotConflit("L'intégrité d'un fichier reçu ne correspond plus au manifeste.")
+                        cle_existante = infos.get("object_key")
+                        cle_journal = candidats.get(nom)
+                        cle = cle_existante or cle_journal
+                        bucket = infos.get("object_bucket") if cle_existante else client_s3.bucket_name
+                        if cle and bucket != client_s3.bucket_name:
+                            raise TeleversementLotConflit("La copie existante appartient à un autre bucket.")
+                        try:
+                            if cle:
+                                verification = client_s3.verifier_integrite(cle, chemin, relire=True)
+                                if not verification.integrite_prouvee:
+                                    raise TeleversementLotErreur("L'intégrité de la copie objet existante n'est pas prouvée.")
+                            else:
+                                identite_chemin = hashlib.sha256(nom.encode("utf-8")).hexdigest()
+                                cle_proposee = f"lots-televerses/{identite_session}/{identite_chemin}/{empreinte}"
+                                cle = client_s3.upload_file(chemin, cle_proposee, avoid_overwrite=True)
+                                if not isinstance(cle, str) or not cle:
+                                    raise TeleversementLotErreur("Le stockage objet n'a pas retourné de clé valide.")
+                                verification = client_s3.verifier_integrite(cle, chemin, relire=True)
+                                if not verification.integrite_prouvee:
+                                    raise TeleversementLotErreur("L'intégrité de la copie objet n'est pas prouvée.")
+                            if _empreinte_fichier(chemin) != empreinte:
+                                raise TeleversementLotConflit("L'intégrité d'un fichier a changé pendant la promotion.")
+                        except TeleversementLotErreur:
+                            raise
+                        except Exception:
+                            # Les exceptions du fournisseur peuvent contenir des
+                            # secrets, des URL signées ou des chemins clients.
+                            raise TeleversementLotErreur("Échec de la promotion objet ; copie locale conservée.") from None
+                        if not cle_existante:
+                            if cle_journal:
+                                recuperees += 1
+                            else:
+                                entree = {"nom": nom, "object_key": cle, "object_bucket": client_s3.bucket_name, "sha256": empreinte}
+                                flux.write((json.dumps(entree, ensure_ascii=False) + "\n").encode("utf-8"))
+                                nouvelles += 1
+                                if nouvelles % 64 == 0:
+                                    flux.flush()
+                                    os.fsync(flux.fileno())
+                            infos["object_key"] = cle
+                            infos["object_bucket"] = client_s3.bucket_name
+                        objets_promus[str(chemin)] = {
+                            "object_key": cle, "object_bucket": client_s3.bucket_name, "sha256": empreinte,
+                        }
+                        verifies += 1
+                finally:
+                    flux.flush()
+                    os.fsync(flux.fileno())
+        finally:
+            # Même après une panne ordinaire, les clés déjà vérifiées sont
+            # conservées. Après SIGKILL, le journal sert à les reconstruire.
+            if nouvelles or recuperees:
+                _sauver_manifeste(dossier, manifeste)
+        journal.unlink(missing_ok=True)
+        return {"nb_verifies": verifies, "objets_promus": objets_promus}

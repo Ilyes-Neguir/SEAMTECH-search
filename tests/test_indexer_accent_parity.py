@@ -185,7 +185,8 @@ def test_upsert_template_uses_the_accent_folding_configuration(tmp_path: Path, m
     def _fake_execute_values(cur, sql, argslist, template=None, **kwargs):
         captured["sql"] = sql
         captured["template"] = template
-        return 2
+        assert kwargs.get("fetch") is True
+        return [(row[0],) for row in argslist]
 
     with patch("psycopg2.extras.execute_values", side_effect=_fake_execute_values):
         index.upsert_documents(_make_documents(tmp_path))

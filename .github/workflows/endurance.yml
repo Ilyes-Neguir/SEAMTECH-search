@@ -1,0 +1,101 @@
+# Endurance (P2) : un soak à N cycles avec panne injectée, vérifié par des
+# COMPTAGES de fuites — pas par l'absence d'exception.
+#
+# Ce job ne prétend PAS exécuter « plusieurs jours ». Il exécute ce qui, en
+# exploitation, casse au bout de plusieurs jours et pas avant : un dossier de
+# staging oublié par cycle, un job laissé en vol, un objet dupliqué, un
+# descripteur non rendu. À 300 cycles, une fuite d'un seul objet par cycle est
+# visible ; à 10 cycles elle ne l'est pas.
+#
+# La durée d'horloge reste une limite dite franchement dans le rapport : ce
+# job prouve que les invariants tiennent sur N cycles, pas que le service
+# tient trois jours.
+name: Endurance
+
+on:
+  pull_request:
+  push:
+
+jobs:
+  soak:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Dépendances Python
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+      - name: Identité du banc
+        run: |
+          python - <<'PY'
+          import platform, subprocess
+          try:
+              head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          except Exception:
+              head = ""
+          print(f"::notice title=endurance-identite::git_head={head} python={platform.python_version()} "
+                f"plateforme={platform.platform()}")
+          PY
+      - name: Soak court (garde-fou rapide — 25 cycles)
+        env:
+          SEAMTECH_ENDURANCE_CYCLES: "25"
+          SEAMTECH_ENDURANCE_PANNE_TOUS: "7"
+        run: |
+          set -uo pipefail
+          set +e
+          pytest -v -m endurance --tb=short 2>&1 | tee endurance-court.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            echo "::error title=endurance-court::soak court en échec (rc=$rc)"
+            exit "$rc"
+          fi
+      - name: Soak long (300 cycles, panne 1 sur 13)
+        env:
+          SEAMTECH_ENDURANCE_CYCLES: "300"
+          SEAMTECH_ENDURANCE_PANNE_TOUS: "13"
+        run: |
+          set -uo pipefail
+          # La mesure est faite en Python : ``/usr/bin/time -v`` n'est pas
+          # garanti sur l'image du runner, et une étape de mesure ne doit pas
+          # pouvoir faire échouer le job à elle seule.
+          python - <<'PY' | tee endurance-long.log
+          import resource, subprocess, sys, time
+
+          debut = time.monotonic()
+          rc = subprocess.call([sys.executable, "-m", "pytest", "-v", "-m", "endurance", "--tb=short"])
+          duree = time.monotonic() - debut
+          pic = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
+          print(f"duree={duree:.1f}s pic_memoire_fils={pic / 1024:.1f} Mio rc={rc}")
+          sys.exit(rc)
+          PY
+          rc=${PIPESTATUS[0]}
+          if [ "$rc" -ne 0 ]; then
+            echo "::error title=endurance-long::soak long en échec (rc=$rc) — fuite détectée par les comptages"
+            exit "$rc"
+          fi
+      - name: Preuve publiée
+        if: always()
+        run: |
+          python - <<'PY'
+          import re
+          from pathlib import Path
+          for nom in ("endurance-court.log", "endurance-long.log"):
+              p = Path(nom)
+              if not p.is_file():
+                  continue
+              texte = p.read_text(encoding="utf-8", errors="replace")
+              ligne = [l for l in texte.splitlines() if " passed" in l or " failed" in l]
+              print(f"::notice title=endurance::{nom} :: {ligne[-1].strip() if ligne else '(aucun résumé)'}")
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: preuves-endurance
+          path: |
+            endurance-court.log
+            endurance-long.log
+          if-no-files-found: warn

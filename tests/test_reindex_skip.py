@@ -166,3 +166,28 @@ def test_real_extraction_worker_can_be_terminated(tmp_path: Path) -> None:
 
     assert result.status == "timeout"
     assert time.perf_counter() - started < 4
+
+
+def test_version_ocr_natif_image_invalide_ancien_index(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from seamtech_search import extractors
+
+    assert extractors.CURRENT_EXTRACTOR_VERSION >= 8
+    root = tmp_path / 'root'
+    root.mkdir()
+    target = root / 'document.pdf'
+    target.write_bytes(b'pdf synthetique')
+    statut = target.stat()
+    ancien = {os.path.normcase(str(target.resolve())): (statut.st_size, statut.st_mtime, 7)}
+    appels = []
+
+    def extraction(path, *args, **kwargs):
+        appels.append(path)
+        return 'texte synthétique indexé'
+
+    monkeypatch.setattr(crawler_module, 'extract_text', extraction)
+    config = AppConfig(root_paths=[root], database_path=tmp_path / 'index.db')
+    documents = list(crawl(config, ancien))
+    document = next(item for item in documents if not item.is_dir)
+    assert appels == [target]
+    assert document.text == 'texte synthétique indexé'
+    assert document.extractor_version >= 8

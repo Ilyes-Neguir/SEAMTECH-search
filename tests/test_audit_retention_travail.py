@@ -147,7 +147,7 @@ def test_retention_conserve_le_rapport_d_un_import_non_preserve(tmp_path: Path) 
 
 
 def test_retention_elague_ce_qui_n_est_plus_reference(tmp_path: Path) -> None:
-    """La protection n'empêche pas le rangement : l'inutile part, et c'est dit."""
+    """Les rapports et dépôts non référencés sont conservés par précaution."""
     config = _config(tmp_path)
     index = _index(config, tmp_path)
     orphelin = _dossier_stage(config, "uuid_abandonne")
@@ -158,10 +158,10 @@ def test_retention_elague_ce_qui_n_est_plus_reference(tmp_path: Path) -> None:
     _vieillir(vieux_rapport.parent)
 
     resume = run_retention_cleanup(config, index)
-    assert not orphelin.exists(), "un dossier non référencé et hors délai doit être élagué"
-    assert not vieux_rapport.exists()
-    assert resume["pruned_staged_uploads"] == 1, resume
-    assert resume["pruned_reports"] == 1, resume
+    assert orphelin.exists(), "un dépôt non référencé peut être une copie unique"
+    assert vieux_rapport.exists()
+    assert resume["pruned_staged_uploads"] == 0, resume
+    assert resume["pruned_reports"] == 0, resume
     index.close()
 
 
@@ -229,20 +229,15 @@ def test_chemins_proteges_couvre_les_chemins_persistes(tmp_path: Path) -> None:
     index.close()
 
 
-def test_prune_staged_uploads_sans_liste_est_le_comportement_historique(tmp_path: Path) -> None:
-    """Sans registre de jobs, l'élagage par âge reste possible (appel explicite).
-
-    Cette fonction est publique et les appelants sans base (scripts, outils)
-    gardent le comportement d'origine — mais tout appelant qui CONNAÎT les jobs
-    doit fournir ``proteges`` (c'est ce que fait ``run_retention_cleanup``).
-    """
+def test_prune_staged_uploads_sans_liste_conserve_les_depots(tmp_path: Path) -> None:
+    """Sans preuve de contenu, même un dépôt non référencé reste conservé."""
     config = _config(tmp_path)
     dossier = _dossier_stage(config, "uuid_sans_registre")
     _vieillir(dossier)
     from seamtech_search.import_pipeline import staging_root
 
-    assert prune_staged_uploads(staging_root(config), 1) == 1
-    assert not dossier.exists()
+    assert prune_staged_uploads(staging_root(config), 1) == 0
+    assert dossier.exists()
 
 
 def test_prune_staged_uploads_ne_supprime_pas_un_parent_d_un_chemin_protege(tmp_path: Path) -> None:
@@ -256,3 +251,16 @@ def test_prune_staged_uploads_ne_supprime_pas_un_parent_d_un_chemin_protege(tmp_
     assert prune_staged_uploads(staging_root(config), 1, proteges={fichier}) == 0
     assert fichier.exists()
     assert prune_reports(config.database_path.parent, 1, proteges={fichier}) == 0
+
+
+def test_retention_ne_suit_pas_un_lien_racine_rapport_vers_des_originaux(tmp_path: Path) -> None:
+    base = tmp_path / 'data'
+    base.mkdir()
+    originaux = tmp_path / 'originaux'
+    originaux.mkdir()
+    fichier = originaux / 'piece-synthetique.pdf'
+    fichier.write_bytes(b'original-synthetique')
+    _vieillir(originaux)
+    (base / 'reports').symlink_to(originaux, target_is_directory=True)
+    assert prune_reports(base, 1) == 0
+    assert fichier.read_bytes() == b'original-synthetique'

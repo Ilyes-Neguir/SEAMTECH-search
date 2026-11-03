@@ -58,6 +58,7 @@ import yaml
 from seamtech_search.indexer import SearchIndex
 from seamtech_search.jobs import create_job, get_job
 from seamtech_search.redis_store import RedisStore
+from tests.helpers_postgres_isole import url_base_jetable
 
 RACINE = Path(__file__).resolve().parents[1]
 COMPOSE = RACINE / "docker-compose.yml"
@@ -144,7 +145,7 @@ def _creer_base_jetable() -> tuple[str, str]:
             cursor.execute(f'CREATE DATABASE "{nom}"')
     finally:
         admin.close()
-    return nom, URL_PG.rsplit("/", 1)[0] + f"/{nom}"
+    return nom, url_base_jetable(URL_PG, nom)
 
 
 def _supprimer_base(nom: str) -> None:
@@ -180,10 +181,13 @@ _PORT_WEB = _port_libre()
 
 
 @pytest.fixture()
-def deploiement(tmp_path: Path) -> Iterator[dict[str, Any]]:
+def deploiement(tmp_path: Path, redis_isole: str, monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, Any]]:
     """Reproduit la disposition des conteneurs : archive :ro, data partagé."""
     if not URL_PG or not URL_REDIS:
         pytest.skip("SEAMTECH_TEST_DATABASE_URL et SEAMTECH_TEST_REDIS_URL sont requis")
+    monkeypatch.setitem(globals(), "URL_REDIS", redis_isole)
+    monkeypatch.delenv("SEAMTECH_REDIS_URL", raising=False)
+    monkeypatch.delenv("SEAMTECH_DATABASE_URL", raising=False)
 
     nom_base, url_base = _creer_base_jetable()
     racine = tmp_path / "deploiement"
@@ -226,8 +230,6 @@ def deploiement(tmp_path: Path) -> Iterator[dict[str, Any]]:
 
     magasin = RedisStore(redis_url=URL_REDIS)
     assert magasin.ping()
-    for cle in magasin._get_client().scan_iter(match="seamtech:*", count=500):
-        magasin._get_client().delete(cle)
 
     index = SearchIndex(donnees / "search.db", url_base)
     index.initialize()
@@ -245,8 +247,6 @@ def deploiement(tmp_path: Path) -> Iterator[dict[str, Any]]:
         }
     finally:
         index.close()
-        for cle in magasin._get_client().scan_iter(match="seamtech:*", count=500):
-            magasin._get_client().delete(cle)
         _supprimer_base(nom_base)
         for chemin in sorted(archive.rglob("*"), reverse=True):
             try:
@@ -512,7 +512,7 @@ def test_web_et_worker_partagent_fichiers_scratch_rapports_et_modeles(deploiemen
             web.kill()
 
 
-def test_worker_tourne_sans_le_volume_du_web_est_refuse() -> None:
+def test_worker_tourne_sans_le_volume_du_web_est_refuse(redis_isole: str, monkeypatch: pytest.MonkeyPatch) -> None:
     """Garde-fou négatif : un worker sans le volume des données ne peut pas marcher.
 
     Le test fige la CONSÉQUENCE du contrat : si le worker n'a pas accès aux
@@ -523,13 +523,15 @@ def test_worker_tourne_sans_le_volume_du_web_est_refuse() -> None:
     """
     if not URL_REDIS:
         pytest.skip("SEAMTECH_TEST_REDIS_URL requis")
-    magasin = RedisStore(redis_url=URL_REDIS)
+    monkeypatch.setitem(globals(), "URL_REDIS", redis_isole)
+    magasin = RedisStore(redis_url=redis_isole)
     assert magasin.enqueue_task("imports", {"job_id": "job-injoignable", "source_path": "/chemin/inexistant"})
     tache = magasin.dequeue_task("imports", timeout=2)
     assert tache is not None
     import tempfile
 
     from seamtech_search.config import AppConfig
+    from seamtech_search.jobs import create_job, marquer_job_claim
     from seamtech_search.worker import process_import_task
 
     with tempfile.TemporaryDirectory() as brut:
@@ -539,11 +541,11 @@ def test_worker_tourne_sans_le_volume_du_web_est_refuse() -> None:
         index.run_migrations()
         try:
             config = AppConfig(root_paths=[racine], min_free_bytes=0, redis_url=URL_REDIS)
-            try:
-                resultat = process_import_task(tache, config, index, magasin, worker_id="worker-sans-volume")
-            except Exception:
-                resultat = {"status": "failed"}
-            assert resultat.get("status") in {"failed", "upload_incomplete", None}, (
+            create_job(index, "job-injoignable", "/chemin/inexistant", durability="durable")
+            assert marquer_job_claim(index, "job-injoignable", "worker-sans-volume")
+            assert magasin.revendiquer_tache("imports", "job-injoignable", "worker-sans-volume", ttl_seconds=60)
+            resultat = process_import_task(tache, config, index, magasin, worker_id="worker-sans-volume")
+            assert resultat.get("status") in {"failed", "upload_incomplete"}, (
                 f"un worker sans accès au fichier partagé ne peut pas réussir : {resultat}"
             )
         finally:

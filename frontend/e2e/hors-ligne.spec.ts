@@ -90,7 +90,12 @@ test.describe("hors ligne — pile réelle, sortie réseau bloquée", () => {
     await champDossier.fill(dossier)
     await page.getByRole("button", { name: /Importation rapide/i }).click()
     await expect(page.getByText(/État :/i)).toBeVisible({ timeout: 60000 })
-    await expect(page.getByText(new RegExp(REFERENCE, "i"))).toBeVisible({ timeout: 60000 })
+      // La référence est affichée DEUX FOIS après un import : dans le
+      // tableau des valeurs extraites et, lorsqu'un classeur est analysé,
+      // dans l'aperçu de ses lignes. Playwright est en mode strict : un
+      // sélecteur ambigu échoue. C'est le MÊME résultat métier qui est
+      // exigé (la référence est visible), sur l'occurrence affichée.
+    await expect(page.getByText(new RegExp(REFERENCE, "i")).first()).toBeVisible({ timeout: 60000 })
     // L'identifiant d'import est lu DANS L'ÉCRAN : c'est le lien du rapport
     // généré, tel qu'un opérateur le voit et le suit. Aucune attente d'URL
     // devinée : l'import part en file avec un identifiant **UUID** (hexadécimal,

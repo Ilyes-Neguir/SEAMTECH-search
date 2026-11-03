@@ -212,7 +212,7 @@ def test_storage_backend_local_ne_desactive_pas_le_client_objet(tmp_path: Path) 
 
 
 def test_envoi_reussi_ne_journalise_aucun_secret(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
-    """Un envoi réussi journalise nom/bucket/clé — jamais les identifiants."""
+    """Un envoi réussi reste identifiable sans exposer nom, clé ou secrets."""
     fichier = tmp_path / "plan.pdf"
     fichier.write_bytes(b"%PDF-1.4 plan")
     client = _client_fictif()
@@ -226,7 +226,8 @@ def test_envoi_reussi_ne_journalise_aucun_secret(tmp_path: Path, caplog: pytest.
 
     journal = _messages(caplog)
     assert cle == "IMP-1/abc/plan.pdf"
-    assert "plan.pdf" in journal, "le journal doit rester exploitable (nom + clé)"
+    assert "Uploaded S3 object" in journal
+    assert "plan.pdf" not in journal and "IMP-1/abc" not in journal
     assert CLE_ACCES_FICTIVE not in journal
     assert SECRET_FICTIF not in journal
 
@@ -270,8 +271,10 @@ def test_erreurs_stockage_objet_ne_fuient_pas_les_identifiants(tmp_path: Path, c
     for texte in [journal, *messages_erreur]:
         assert CLE_ACCES_FICTIVE not in texte
         assert SECRET_FICTIF not in texte
-    # Le diagnostic reste utile : le code d'erreur S3 est conservé.
-    assert any("AccessDenied" in message for message in messages_erreur)
+    # Les détails libres fournis par le serveur ne sont pas exposés ;
+    # chaque chemin conserve un diagnostic générique de l'opération.
+    assert len(messages_erreur) == 4
+    assert all(messages_erreur)
 
 
 def test_url_presignee_n_est_jamais_journalisee(caplog: pytest.LogCaptureFixture) -> None:
@@ -732,7 +735,7 @@ def test_migrations_sequentielles_001_a_017_sur_base_vide(tmp_path: Path) -> Non
     donc il protège aussi la suite « non-PostgreSQL ». (Identifiant historique
     conservé ; les assertions vérifient la séquence complète 001..027.)
     """
-    from seamtech_search.schema_metier import MIGRATIONS_METIER, VERSION_SCHEMA_METIER
+    from seamtech_search.schema_metier import MIGRATIONS_METIER, VERSION_SCHEMA_APPLICATION, VERSION_SCHEMA_METIER
 
     index = SearchIndex(tmp_path / "search.db")
     index.initialize()
@@ -742,8 +745,9 @@ def test_migrations_sequentielles_001_a_017_sur_base_vide(tmp_path: Path) -> Non
             versions = [ligne[0] for ligne in connexion.execute("SELECT version FROM schema_migrations")]
         numeros = [int(version.split("_", 1)[0]) for version in sorted(versions)]
 
-        assert numeros == list(range(1, 32)), f"séquence attendue 001..031, mesurée {numeros}"
-        assert sorted(versions)[-1] == VERSION_SCHEMA_METIER == "031_accessoires"
+        assert numeros == list(range(1, 33)), f"séquence attendue 001..032, mesurée {numeros}"
+        assert VERSION_SCHEMA_METIER == "031_accessoires" and VERSION_SCHEMA_METIER in versions
+        assert sorted(versions)[-1] == VERSION_SCHEMA_APPLICATION == "032_identite_octets_documents"
         # Toute migration métier déclarée DOIT être enregistrée à l'exécution.
         manquantes = {version for version, _sql in MIGRATIONS_METIER} - set(versions)
         assert manquantes == set(), f"migrations métier déclarées mais jamais appliquées : {manquantes}"

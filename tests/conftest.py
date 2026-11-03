@@ -23,6 +23,23 @@ import pytest
 
 DATABASE_URL = os.environ.get("SEAMTECH_TEST_DATABASE_URL", "")
 
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Refuse une URL de test qui détournerait le nom de la base jetable.
+
+    Ce contrôle ne certifie pas que le serveur lui-même est privé :
+    SEAMTECH_TEST_DATABASE_URL doit désigner un serveur dédié aux tests.
+    """
+    if not DATABASE_URL:
+        return
+    from tests.helpers_postgres_isole import url_base_jetable
+
+    try:
+        url_base_jetable(DATABASE_URL, f"sonde_isolation_{uuid.uuid4().hex}")
+    except ValueError:
+        raise pytest.UsageError("URL PostgreSQL de test invalide ou avec options non isolables") from None
+
+
 # Corpus déterministe (pas de tirage aléatoire : les attendus des tests sont
 # écrits en clair à partir de ces constantes).
 TYPES_VOILE = (
@@ -76,7 +93,10 @@ def _creer_base_jetable() -> tuple[str, str]:
     from psycopg2 import sql
     from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 
+    from tests.helpers_postgres_isole import url_base_jetable
+
     nom_base = f"recherche_test_{uuid.uuid4().hex[:10]}"
+    url = url_base_jetable(DATABASE_URL, nom_base)
     administrateur = psycopg2.connect(DATABASE_URL)
     administrateur.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
     try:
@@ -84,12 +104,7 @@ def _creer_base_jetable() -> tuple[str, str]:
             cursor.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(nom_base)))
     finally:
         administrateur.close()
-    # La requête éventuelle de l'URL (?host=/chemin/socket pour une connexion
-    # par socket UNIX — mesure RG14 sans réseau) est préservée telle quelle :
-    # le découpage ne doit porter que sur la partie avant « ? ».
-    url_principale, separateur, requete = DATABASE_URL.partition("?")
-    partie = url_principale.rsplit("/", 1)
-    return nom_base, f"{partie[0]}/{nom_base}" + (f"?{requete}" if separateur else "")
+    return nom_base, url
 
 
 def _supprimer_base_jetable(nom_base: str) -> None:
@@ -342,3 +357,15 @@ def base_assistant() -> Iterator[dict[str, Any]]:
     finally:
         index.close()
         _supprimer_base_jetable(nom_base)
+
+
+@pytest.fixture()
+def redis_isole(request: pytest.FixtureRequest):
+    """Serveur Redis privé : aucune opération sur le service de l'utilisateur."""
+    from tests.helpers_redis_isole import binaire_redis, serveur_redis_isole
+
+    if not binaire_redis() and not os.environ.get("SEAMTECH_TEST_REDIS_URL"):
+        pytest.skip("redis-server de test indisponible")
+    minimum = 7 if request.node.get_closest_marker("redis_queue") else None
+    with serveur_redis_isole(version_minimale=minimum) as url:
+        yield url

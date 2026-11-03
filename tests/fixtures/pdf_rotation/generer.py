@@ -117,20 +117,40 @@ def page_avec_rotation(chemin: Path, angle: int) -> Path:
     return chemin
 
 
+def _page_du_contenu_tourne(angle: int) -> tuple[float, float]:
+    """Boîte de page qui contient exactement un contenu portrait tourné.
+
+    Un contenu dessiné en 595 × 842 (portrait) puis tourné de 90° ou 270°
+    occupe 842 × 595 : garder une page portrait le ferait déborder de 123,5 pt
+    de chaque côté, et une partie des lignes se retrouverait HORS de la page —
+    donc invisible à l'écran et, à juste titre, écartée de l'index. Les
+    échantillons doivent représenter ce qu'un atelier produit vraiment : on
+    prend donc une page paysage pour ces deux angles.
+    """
+    largeur, hauteur = A4
+    return (hauteur, largeur) if angle % 180 else (largeur, hauteur)
+
+
+def _poser_contenu_tourne(c: canvas.Canvas, angle: int, page: tuple[float, float]) -> None:
+    """Tourne le repère autour du CENTRE DE LA PAGE : le contenu reste cadré."""
+    largeur, hauteur = A4
+    c.saveState()
+    c.translate(page[0] / 2, page[1] / 2)
+    c.rotate(angle)
+    c.translate(-largeur / 2, -hauteur / 2)
+
+
 def scan_paysage(chemin: Path, angle_contenu: int = 90) -> Path:
     """Contenu dessiné couché puis ``/Rotate`` qui le redresse à l'affichage.
 
     Résultat : le document est DÉJÀ lisible pour un humain (texte droit à
     l'écran) ; l'extraction doit donc être identique au cas non pivoté.
     """
-    c = canvas.Canvas(str(chemin), pagesize=A4)
-    largeur, hauteur = A4
-    c.saveState()
-    c.translate(largeur / 2, hauteur / 2)
-    c.rotate(angle_contenu)
-    c.translate(-largeur / 2, -hauteur / 2)
+    page = _page_du_contenu_tourne(angle_contenu)
+    c = canvas.Canvas(str(chemin), pagesize=page)
+    _poser_contenu_tourne(c, angle_contenu, page)
     c.setFont("Helvetica", 12)
-    ordonnee = hauteur - 30 * mm
+    ordonnee = A4[1] - 30 * mm
     for ligne in LIGNES:
         c.drawString(40 * mm, ordonnee, ligne)
         ordonnee -= 18
@@ -145,14 +165,12 @@ def scan_paysage(chemin: Path, angle_contenu: int = 90) -> Path:
 
 def couche_sans_rotate(chemin: Path, angle: int) -> Path:
     """Contenu dessiné couché, aucun ``/Rotate`` : le document s'affiche couché."""
-    c = canvas.Canvas(str(chemin), pagesize=A4)
-    largeur, hauteur = A4
-    c.saveState()
-    c.translate(largeur / 2, hauteur / 2)
-    c.rotate(angle)
-    c.translate(-largeur / 2, -hauteur / 2)
-    _texte(c, 40 * mm, hauteur - 30 * mm)
-    _tableau(c, 40 * mm, hauteur - 120 * mm)
+    hauteur_portrait = A4[1]
+    page = _page_du_contenu_tourne(angle)
+    c = canvas.Canvas(str(chemin), pagesize=page)
+    _poser_contenu_tourne(c, angle, page)
+    _texte(c, 40 * mm, hauteur_portrait - 30 * mm)
+    _tableau(c, 40 * mm, hauteur_portrait - 120 * mm)
     c.restoreState()
     c.showPage()
     c.save()

@@ -195,8 +195,16 @@ def test_import_with_s3_storage_uploads_all_files(tmp_path: Path) -> None:
     with _S3Branche() as magasin:
         result = import_folder(source_folder, config, index)
         mock_upload = magasin
-        assert result.status == "completed"
+        assert result.status == "needs_review"
+        # Transport intégralement prouvé (5 objets, relus et comparés) ⇒
+        # « uploaded ». « partial » n'annonce pas un échec : il dit que la
+        # préservation n'est PAS prouvée, ce qui était faux ici (et rendait
+        # impossible toute qualification d'envoi réussi — voir la recette sur
+        # services réels). Le succès GLOBAL, lui, reste suspendu : voir
+        # `all_verified` ci-dessous.
         assert result.upload_status == "uploaded"
+        assert result.transport_verifie and not result.all_verified
+        assert all(a["verified"] for a in result.artifacts)
         # 3 source files (pdf, dwg, txt) + 2 reports (pdf, docx) = 5 uploaded files
         assert len(mock_upload.envois) == 5
         # The keys are namespaced by this import: the same folder imported again
@@ -255,17 +263,24 @@ def test_live_minio_s3_integration(tmp_path: Path) -> None:
     test_doc = tmp_path / "live_spec.pdf"
     test_doc.write_bytes(b"%PDF-1.4 Live MinIO Integration Test Document")
 
-    key = client.upload_file(test_doc, remote_key="integration/live_spec.pdf")
-    assert key == "integration/live_spec.pdf"
+    # Une clé unique évite qu'une exécution précédente fasse échouer ce test
+    # par la protection anti-écrasement ; on vérifie toujours la clé exacte.
+    from uuid import uuid4
 
-    download_target = tmp_path / "downloaded.pdf"
-    client.download_file(key, download_target)
-    assert download_target.exists()
-    assert download_target.read_bytes() == test_doc.read_bytes()
+    requested_key = f"integration/live_spec-{uuid4().hex}.pdf"
+    key = client.upload_file(test_doc, remote_key=requested_key)
+    try:
+        assert key == requested_key
+        download_target = tmp_path / "downloaded.pdf"
+        client.download_file(key, download_target)
+        assert download_target.exists()
+        assert download_target.read_bytes() == test_doc.read_bytes()
 
-    presigned = client.get_presigned_url(key)
-    assert "seamtech-integration-test" in presigned
-    assert "X-Amz-Signature" in presigned or "Signature" in presigned
+        presigned = client.get_presigned_url(key)
+        assert "seamtech-integration-test" in presigned
+        assert "X-Amz-Signature" in presigned or "Signature" in presigned
+    finally:
+        assert client.delete_file(key), "nettoyage de l'objet de test impossible"
 
 
 def _client_minimal() -> S3StorageClient:
@@ -357,3 +372,409 @@ def test_le_chemin_relatif_d_origine_voyage_avec_l_objet(tmp_path: Path) -> None
     assert metadonnees[METADATA_CHEMIN] == "AFFAIRE%2012/plan%20%C3%A9t%C3%A9/Plan%20n%C2%B02.pdf"
     # …et les séparateurs de dossier restent lisibles.
     assert "/" in metadonnees[METADATA_CHEMIN]
+
+
+@pytest.mark.parametrize("operation", ["head_object", "download_file"])
+def test_lecture_s3_erreur_ne_divulgue_ni_cle_ni_secret(tmp_path, caplog, operation):
+    from seamtech_search.storage import S3StorageClient, StorageError
+
+    class S3:
+        def head_object(self, **_kwargs):
+            raise OSError("secret-synthetique")
+        def download_file(self, **_kwargs):
+            raise OSError("secret-synthetique")
+    client = S3StorageClient(bucket_name="test-synthetique")
+    client._s3 = S3()
+    cle = "nom-sensible-synthetique"
+    with pytest.raises(StorageError) as erreur:
+        if operation == "head_object":
+            client.head_object(cle)
+        else:
+            client.download_file(cle, tmp_path / "fichier")
+    assert "secret-synthetique" not in str(erreur.value)
+    assert "secret-synthetique" not in caplog.text
+    assert cle not in caplog.text
+    assert erreur.value.__cause__ is None
+
+
+def test_telechargement_version_est_transmis_au_transport(tmp_path: Path) -> None:
+    client = _client_minimal()
+    transport = MagicMock()
+    with patch.object(client, "_get_client", return_value=transport):
+        destination = tmp_path / "piece"
+        client.download_file("cle", destination, version_id="version-synthetique")
+        transport.download_file.assert_called_once_with(
+            Bucket=client.bucket_name, Key="cle", Filename=str(destination),
+            ExtraArgs={"VersionId": "version-synthetique"},
+        )
+
+
+@pytest.mark.parametrize("mode", ["fichier", "octets"])
+def test_envoi_ambigu_ne_rejoue_pas_et_ne_divulgue_pas(tmp_path: Path, caplog, mode: str) -> None:
+    """Une réponse perdue ne prouve pas que l'écriture a échoué côté S3."""
+    from unittest.mock import patch
+
+    fichier = tmp_path / "nom-synthetique-confidentiel.pdf"
+    fichier.write_bytes(b"donnees")
+    client = _client_minimal()
+    s3 = MagicMock()
+    appels = []
+    def envoyer(**kwargs):
+        appels.append(kwargs)
+        if len(appels) == 1:
+            raise TimeoutError("secret-synthetique")
+        pytest.fail("un second PUT applicatif pourrait écraser un objet concurrent")
+    if mode == "fichier":
+        s3.upload_file.side_effect = envoyer
+    else:
+        s3.put_object.side_effect = envoyer
+    with patch.object(client, "_get_client", return_value=s3), patch.object(client, "ensure_bucket_exists"):
+        with pytest.raises(StorageError) as erreur:
+            if mode == "fichier":
+                client.upload_file(fichier, "cle-synthetique-confidentielle", avoid_overwrite=False)
+            else:
+                client.upload_bytes(b"donnees", "cle-synthetique-confidentielle", avoid_overwrite=False)
+    assert len(appels) == 1
+    assert "secret-synthetique" not in str(erreur.value) + caplog.text
+    assert "cle-synthetique-confidentielle" not in str(erreur.value) + caplog.text
+    assert "nom-synthetique-confidentiel" not in str(erreur.value) + caplog.text
+
+
+@pytest.mark.parametrize("operation", ["signature", "lecture", "liste", "suppression", "relecture"])
+def test_erreurs_operations_s3_expurgees(tmp_path: Path, caplog, operation: str) -> None:
+    """Ni clé, nom ni message tiers (potentiellement URL/secret) ne sortent."""
+    client = _client_minimal()
+    transport = MagicMock()
+    panne = OSError("secret-synthetique")
+    transport.generate_presigned_url.side_effect = panne
+    transport.get_object.side_effect = panne
+    transport.get_paginator.side_effect = panne
+    transport.delete_object.side_effect = panne
+    fichier = tmp_path / "piece"
+    fichier.write_bytes(b"contenu")
+    cle = "cle-synthetique-confidentielle"
+    with patch.object(client, "_get_client", return_value=transport):
+        if operation == "suppression":
+            assert client.delete_file(cle) is False
+            retour = ""
+        elif operation == "relecture":
+            transport.head_object.return_value = {"ContentLength": len(b"contenu")}
+            transport.get_object.side_effect = None
+            corps = MagicMock()
+            corps.read.side_effect = panne
+            transport.get_object.return_value = {"Body": corps}
+            result = client.verifier_integrite(cle, fichier)
+            assert result.integrite_prouvee is False
+            retour = result.detail
+        else:
+            with pytest.raises(StorageError) as erreur:
+                if operation == "signature":
+                    client.get_presigned_url(cle)
+                elif operation == "lecture":
+                    client.get_object(cle)
+                else:
+                    client.list_keys(cle)
+            retour = str(erreur.value)
+    assert "secret-synthetique" not in retour + caplog.text
+    assert cle not in retour + caplog.text
+
+
+@pytest.mark.parametrize("operation", ["creation_client", "client_sonde", "verification_bucket", "versioning",
+                                       "cle_occupee", "objet_existe", "cle_epuisee", "statut_non_reconnu"])
+def test_diagnostics_s3_de_configuration_et_sonde_sont_expurges(caplog, operation: str) -> None:
+    client = _client_minimal()
+    transport = MagicMock()
+    panne = OSError("secret-synthetique")
+    cle = "cle-synthetique-confidentielle"
+    retour = ""
+    with patch.object(client, "_get_client", return_value=transport):
+        if operation == "verification_bucket":
+            transport.head_bucket.side_effect = panne
+            with patch.object(client, "_enable_versioning_once"):
+                client.ensure_bucket_exists()
+        elif operation == "versioning":
+            with patch.object(client, "_get_probe_client", side_effect=panne):
+                retour = str(client.versioning_status(refresh=True))
+        elif operation == "cle_occupee":
+            transport.head_object.side_effect = panne
+            with pytest.raises(StorageError) as erreur:
+                client.object_key_taken(cle)
+            retour = str(erreur.value)
+        elif operation == "objet_existe":
+            transport.head_object.side_effect = panne
+            assert client.object_exists(cle) is False
+        elif operation == "cle_epuisee":
+            with patch.object(client, "object_key_taken", return_value=True):
+                with pytest.raises(StorageError) as erreur:
+                    client.first_free_key(cle, max_candidates=1)
+            retour = str(erreur.value)
+        elif operation == "statut_non_reconnu":
+            sonde = MagicMock()
+            sonde.get_bucket_versioning.return_value = {"Status": "secret-synthetique"}
+            with patch.object(client, "_get_probe_client", return_value=sonde):
+                etat = client.versioning_status(refresh=True)
+            assert etat["versioning_available"] is None
+            retour = str(etat)
+        else:
+            with patch.object(client, "_make_client", side_effect=panne):
+                with pytest.raises(StorageError) as erreur:
+                    if operation == "creation_client":
+                        # La méthode est patchée au niveau de l'instance plus haut.
+                        type(client)._get_client(client)
+                    else:
+                        client._get_probe_client()
+                retour = str(erreur.value)
+    assert "secret-synthetique" not in retour + caplog.text
+    assert cle not in retour + caplog.text
+
+
+def test_import_sync_s3_ne_declare_pas_termine_sans_snapshot(tmp_path: Path, monkeypatch) -> None:
+    from fastapi.testclient import TestClient
+
+    from seamtech_search.api import create_app
+    from tests.test_import_workflow import make_source
+
+    source = make_source(tmp_path)
+    cfg = AppConfig(root_paths=[tmp_path / 'roots'], database_path=tmp_path / 'data' / 'search.db',
+                    min_free_bytes=0, s3_endpoint_url='https://s3.invalide', s3_bucket='bucket-test',
+                    s3_access_key='cle-synthetique', s3_secret_key='secret-synthetique')
+    magasin = S3EnMemoire()
+    monkeypatch.setattr(S3StorageClient, '_get_client', lambda self, **kwargs: magasin)
+    monkeypatch.setattr(S3StorageClient, 'ensure_bucket_exists', lambda self: True)
+    client = TestClient(create_app(cfg))
+    reponse = client.post('/imports?wait=true', json={'source_path': str(source)})
+    assert reponse.status_code == 200
+    data = reponse.json()
+    assert data['transport_verifie'] and not data['all_verified']
+    assert data['status'] == 'needs_review'
+    assert client.get('/imports/' + data['import_id']).json()['status'] == 'needs_review'
+
+
+# ---------------------------------------------------------------------------
+# Création exclusive et preuves de relecture : chemins d'erreur réellement
+# exécutés (aucun n'est un « beau temps » — chacun est un refus exigé).
+# ---------------------------------------------------------------------------
+
+
+def _client_double(monkeypatch, magasin, tmp_path: Path) -> S3StorageClient:
+    cfg = AppConfig(
+        root_paths=[tmp_path],
+        database_path=tmp_path / "data" / "search.db",
+        min_free_bytes=0,
+        s3_endpoint_url="https://s3.invalide",
+        s3_bucket="bucket-test",
+        s3_access_key="cle-synthetique",
+        s3_secret_key="secret-synthetique",
+    )
+    monkeypatch.setattr(S3StorageClient, "_get_client", lambda self, **kwargs: magasin)
+    monkeypatch.setattr(S3StorageClient, "ensure_bucket_exists", lambda self: True)
+    return S3StorageClient(config=cfg)
+
+
+def test_creation_exclusive_refuse_cle_occupee_sans_rien_ecraser(tmp_path: Path, monkeypatch) -> None:
+    """La clé existe déjà : refus net et AUCUNE écriture (la copie vivante survit)."""
+    from seamtech_search.storage import StorageCleExistante
+
+    magasin = S3EnMemoire()
+    client = _client_double(monkeypatch, magasin, tmp_path)
+    source = tmp_path / "piece.pdf"
+    source.write_bytes(b"contenu-deja-en-place")
+    assert client.creer_fichier_exclusif(source, "imports/piece.pdf") == "imports/piece.pdf"
+
+    autre = tmp_path / "autre.pdf"
+    autre.write_bytes(b"contenu-different-et-plus-long")
+    with pytest.raises(StorageCleExistante):
+        client.creer_fichier_exclusif(autre, "imports/piece.pdf")
+    assert magasin.objets["imports/piece.pdf"]["donnees"] == b"contenu-deja-en-place"
+
+
+def test_creation_exclusive_sans_condition_ne_bascule_pas_en_ecriture(tmp_path: Path, monkeypatch) -> None:
+    """Fournisseur sans écriture conditionnelle : refus, jamais de PUT inconditionnel."""
+    from botocore.exceptions import ParamValidationError
+
+    from seamtech_search.storage import StockageExclusiviteIndisponible
+
+    class SansCondition:
+        def put_object(self, **_kwargs):
+            raise ParamValidationError(report="IfNoneMatch")
+
+    client = _client_double(monkeypatch, SansCondition(), tmp_path)
+    source = tmp_path / "piece.pdf"
+    source.write_bytes(b"contenu")
+    with pytest.raises(StockageExclusiviteIndisponible):
+        client.creer_fichier_exclusif(source, "imports/piece.pdf")
+
+
+def test_creation_exclusive_incertaine_est_signalee(tmp_path: Path, monkeypatch) -> None:
+    """Une panne inconnue laisse l'état distant incertain : jamais un succès déclaré."""
+    from seamtech_search.storage import StorageWriteUncertain
+
+    class Panne:
+        def put_object(self, **_kwargs):
+            raise RuntimeError("reseau coupe en cours d'ecriture")
+
+    client = _client_double(monkeypatch, Panne(), tmp_path)
+    source = tmp_path / "piece.pdf"
+    source.write_bytes(b"contenu")
+    with pytest.raises(StorageWriteUncertain):
+        client.creer_fichier_exclusif(source, "imports/piece.pdf")
+
+
+def test_creation_exclusive_fichier_local_absent(tmp_path: Path, monkeypatch) -> None:
+    """Sans fichier local, aucune tentative d'écriture."""
+    from seamtech_search.storage import StoragePreflightError
+
+    client = _client_double(monkeypatch, S3EnMemoire(), tmp_path)
+    with pytest.raises(StoragePreflightError):
+        client.creer_fichier_exclusif(tmp_path / "introuvable.pdf", "imports/piece.pdf")
+
+
+def test_versioning_deja_actif_n_est_pas_redemande(tmp_path: Path, monkeypatch) -> None:
+    """Un bucket déjà versionné n'entraîne aucune demande de configuration."""
+    cfg = AppConfig(
+        root_paths=[tmp_path],
+        database_path=tmp_path / "data" / "search.db",
+        min_free_bytes=0,
+        s3_endpoint_url="https://s3.invalide",
+        s3_bucket="bucket-test",
+        s3_access_key="cle-synthetique",
+        s3_secret_key="secret-synthetique",
+    )
+    monkeypatch.setattr(
+        S3StorageClient,
+        "_read_versioning",
+        lambda self: {"versioning_available": True, "versioning_detail": "bucket versioning is enabled"},
+    )
+    client = S3StorageClient(config=cfg)
+    client._enable_versioning_once()
+    etat = client.versioning_status()
+    assert etat["versioning_available"] is True
+
+
+def test_head_object_avec_checksum_illisitable(tmp_path: Path, monkeypatch) -> None:
+    """Unhead illisible remonte en erreur explicite, sans divulguer la clé."""
+
+    class Illisible:
+        def head_object(self, **_kwargs):
+            raise RuntimeError("panne de lecture")
+
+    client = _client_double(monkeypatch, Illisible(), tmp_path)
+    with pytest.raises(StorageError):
+        client.head_object_avec_checksum("imports/piece.pdf")
+
+
+def _magasin_trompeur(taille_annoncee: int, corps: bytes):
+    """Tête conforme, corps réellement different : le pire cas d'un envoi."""
+    from io import BytesIO
+
+    class Magasin:
+        def head_object(self, Bucket, Key, ChecksumMode=None, **_kwargs):  # noqa: N803, ANN201
+            return {"ContentLength": taille_annoncee, "ETag": '"etag-quelconque"'}
+
+        def get_object(self, Bucket, Key, **_kwargs):  # noqa: N803, ANN201
+            return {"Body": BytesIO(corps)}
+
+    return Magasin()
+
+
+def test_relecture_corps_plus_long_que_la_source_est_un_echec(tmp_path: Path, monkeypatch) -> None:
+    """Le service renvoie plus d'octets que la source : échec, pas une troncature acceptée."""
+    local = tmp_path / "piece.bin"
+    local.write_bytes(b"0123456789")
+    client = _client_double(monkeypatch, _magasin_trompeur(10, b"0123456789-EN-TROP"), tmp_path)
+    resultat = client.verifier_integrite("imports/piece.bin", local)
+    assert resultat.integrite_prouvee is False and resultat.methode == "echec"
+    assert "supérieure" in (resultat.detail or "")
+
+
+def test_relecture_corps_plus_court_que_la_source_est_un_echec(tmp_path: Path, monkeypatch) -> None:
+    """Objet tronqué : la taille annoncée ne suffit pas, les octets comptent."""
+    local = tmp_path / "piece.bin"
+    local.write_bytes(b"0123456789")
+    client = _client_double(monkeypatch, _magasin_trompeur(10, b"0123"), tmp_path)
+    resultat = client.verifier_integrite("imports/piece.bin", local)
+    assert resultat.integrite_prouvee is False and resultat.methode == "echec"
+    assert "inférieure" in (resultat.detail or "")
+
+
+def test_checksum_serveur_different_est_un_echec(tmp_path: Path, monkeypatch) -> None:
+    """Le fournisseur annonce un checksum qui n'est pas celui du fichier : échec."""
+    import base64
+    import hashlib
+
+    class Magasin:
+        def head_object(self, Bucket, Key, ChecksumMode=None, **_kwargs):  # noqa: N803, ANN201
+            return {
+                "ContentLength": 10,
+                "ETag": '"etag-quelconque"',
+                "ChecksumSHA256": base64.b64encode(hashlib.sha256(b"autre-chose").digest()).decode("ascii"),
+                "ChecksumType": "FULL_OBJECT",
+            }
+
+    local = tmp_path / "piece.bin"
+    local.write_bytes(b"0123456789")
+    client = _client_double(monkeypatch, Magasin(), tmp_path)
+    resultat = client.verifier_integrite("imports/piece.bin", local, relire=False)
+    assert resultat.integrite_prouvee is False and resultat.methode == "echec"
+    assert "checksum serveur" in (resultat.detail or "")
+
+
+def test_envoi_sans_fichier_n_est_pas_un_envoi(tmp_path: Path) -> None:
+    """Aucun fichier à envoyer : « not_applicable », pas « uploaded » vide de sens."""
+    cfg = AppConfig(
+        root_paths=[tmp_path],
+        database_path=tmp_path / "data" / "search.db",
+        min_free_bytes=0,
+        s3_endpoint_url="https://s3.invalide",
+        s3_bucket="bucket-test",
+        s3_access_key="cle-synthetique",
+        s3_secret_key="secret-synthetique",
+    )
+    lot = upload_artifacts_to_storage(folder_name="vide", files_to_upload=[None], config=cfg)
+    assert lot.status == "not_applicable"
+
+
+def test_panne_d_initialisation_deja_typee_n_est_pas_requalifiee(tmp_path: Path, monkeypatch) -> None:
+    """Un ``StorageError`` explicite traverse le client tel quel : pas de message générique par-dessus."""
+    from seamtech_search.storage import StorageError
+
+    cfg = AppConfig(
+        root_paths=[tmp_path],
+        database_path=tmp_path / "data" / "search.db",
+        min_free_bytes=0,
+        s3_endpoint_url="https://s3.invalide",
+        s3_bucket="bucket-test",
+        s3_access_key="cle-synthetique",
+        s3_secret_key="secret-synthetique",
+    )
+
+    def _echouer(self) -> None:
+        raise StorageError("identifiants refusés par le fournisseur")
+
+    monkeypatch.setattr(S3StorageClient, "_make_client", _echouer)
+    client = S3StorageClient(config=cfg)
+    with pytest.raises(StorageError, match="identifiants refusés"):
+        client._get_client()
+
+
+def test_metadonnee_divergente_est_un_echec(tmp_path: Path, monkeypatch) -> None:
+    """Métadonnée présente mais différente : divergence prouvée, jamais une présomption."""
+    import hashlib
+
+    from seamtech_search.storage import METADATA_SHA256
+
+    class Magasin:
+        def head_object(self, Bucket, Key, ChecksumMode=None, **_kwargs):  # noqa: N803, ANN201
+            return {
+                "ContentLength": 10,
+                "ETag": '"etag-quelconque"',
+                "Metadata": {METADATA_SHA256: hashlib.sha256(b"un-autre-contenu").hexdigest()},
+            }
+
+    local = tmp_path / "piece.bin"
+    local.write_bytes(b"0123456789")
+    client = _client_double(monkeypatch, Magasin(), tmp_path)
+    resultat = client.verifier_integrite("imports/piece.bin", local, relire=False)
+    assert resultat.integrite_prouvee is False
+    assert resultat.methode == "echec"
+    assert "divergente" in (resultat.detail or "")

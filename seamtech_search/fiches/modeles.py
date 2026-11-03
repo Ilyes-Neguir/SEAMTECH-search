@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field, field_validator
 
 
 class Zone(BaseModel):
-    """Rectangle d'origine d'une valeur dans le PDF (points pdfplumber)."""
+    """Rectangle dans la vue PDF à l'échelle 1 (rotation, CropBox et UserUnit inclus)."""
 
     x0: float
     y0: float

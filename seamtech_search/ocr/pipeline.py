@@ -26,12 +26,20 @@ répertoire de travail déclaré (SEAMTECH_OCR_TRAVAIL_DIR).
 from __future__ import annotations
 
 import hashlib
+import json
+import math
+import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
+import uuid
+from collections import Counter
 from pathlib import Path
 from typing import Any
+
+from ..flux_bornes import lire_par_blocs
 
 # Seuil par défaut : en dessous de 20 caractères, la page est considérée
 # sans texte exploitable. Justification :
@@ -94,41 +102,26 @@ def _tesseract_version(tesseract_command: str = "tesseract") -> str | None:
 
 
 def _texte_natif_par_page_pdf(chemin: Path) -> list[str]:
-    """Extrait le texte natif par page (pdfplumber puis pypdf)."""
+    """Lit les pages vérifiées, sans repli textuel ignorant la vue PDF."""
+    if not chemin.is_file():
+        raise RuntimeError("Fichier PDF indisponible pour inspection")
     try:
-        import pdfplumber  # type: ignore
+        import pdfplumber
 
-        texts: list[str] = []
+        from seamtech_search.extractors import _texte_page_orientee
+
+        textes: list[str] = []
         with pdfplumber.open(str(chemin)) as pdf:
             for page in pdf.pages:
-                try:
-                    t = page.extract_text(x_tolerance=2, y_tolerance=2) or ""
-                except Exception as exc:
-                    _ = exc
-                    t = ""
-                texts.append(t)
-        if texts:
-            return texts
-    except Exception as exc:
-        # pdfplumber indisponible ou PDF illisible — fallback pypdf
-        _ = exc
-
-    try:
-        from pypdf import PdfReader  # type: ignore
-
-        reader = PdfReader(str(chemin), strict=False)
-        texts = []
-        for page in reader.pages:
-            try:
-                t = page.extract_text() or ""
-            except Exception as exc:
-                _ = exc
-                t = ""
-            texts.append(t)
-        return texts
-    except Exception as exc:
-        _ = exc
-        return []
+                texte, _images, incertaine = _texte_page_orientee(page)
+                if incertaine:
+                    raise RuntimeError("Orientation PDF non vérifiée")
+                textes.append(texte)
+        return textes
+    except Exception:
+        # Aucun texte non vérifié ne doit être communiqué, ni déclencher un
+        # OCR sur une vue dont on n'a pas pu inspecter les limites.
+        raise RuntimeError("Inspection PDF indisponible ou vue non vérifiée") from None
 
 
 def _ocr_image_via_tesseract(
@@ -169,7 +162,7 @@ def _ocr_image_via_tesseract(
                 "confiance": None,
                 "duree_s": time.perf_counter() - debut,
                 "succes": False,
-                "motif": f"tesseract erreur rc={result.returncode}: {result.stderr[:200]}",
+                "motif": f"tesseract erreur rc={result.returncode}",
                 "moteur": "tesseract",
                 "version_moteur": version,
             }
@@ -186,16 +179,19 @@ def _ocr_image_via_tesseract(
             )
             if result_tsv.returncode == 0:
                 lignes = result_tsv.stdout.splitlines()
-                confs: list[int] = []
-                for ligne in lignes[1:]:  # skip header
-                    parts = ligne.split("\t")
-                    if len(parts) >= 11:
-                        try:
-                            c = int(parts[10])
-                            if c >= 0:
-                                confs.append(c)
-                        except ValueError:
-                            continue
+                confs: list[float] = []
+                for ligne in lignes[1:]:  # Tesseract TSV : niveau 5 = mot
+                    parts = ligne.split("\t", 11)
+                    if len(parts) != 12 or parts[0] != "5" or not parts[11].strip():
+                        continue
+                    try:
+                        c = float(parts[10])
+                        # Refuse aussi NaN et les infinis ; -1 est un marqueur
+                        # de niveau structurel sans mesure, pas une confiance.
+                        if 0 <= c <= 100:
+                            confs.append(c)
+                    except ValueError:
+                        continue
                 if confs:
                     confiance = sum(confs) / len(confs)
         except Exception:
@@ -227,85 +223,10 @@ def _ocr_image_via_tesseract(
             "confiance": None,
             "duree_s": time.perf_counter() - debut,
             "succes": False,
-            "motif": f"erreur tesseract: {type(exc).__name__}: {exc}",
+            "motif": f"erreur tesseract ({type(exc).__name__})",
             "moteur": "tesseract",
             "version_moteur": version,
         }
-
-
-def _extraire_images_pypdf(
-    pdf_path: Path, numero_page: int, dossier_temp: Path
-) -> list[Path]:
-    """Extrait les images d'une page PDF via pypdf, les sauve en temp.
-
-    Retourne liste de chemins d'images extraites.
-    """
-    images_extraites: list[Path] = []
-    try:
-        from pypdf import PdfReader  # type: ignore
-
-        reader = PdfReader(str(pdf_path), strict=False)
-        if numero_page >= len(reader.pages):
-            return []
-        page = reader.pages[numero_page]
-
-        # pypdf >= 3.0 : page.images
-        try:
-            for idx, img in enumerate(page.images):
-                try:
-                    # img.name peut contenir extension
-                    nom = getattr(img, "name", f"image_{numero_page}_{idx}")
-                    # Assure une extension
-                    if "." not in nom:
-                        nom = f"{nom}.png"
-                    chemin_img = dossier_temp / f"page{numero_page}_{idx}_{nom}"
-                    # img.image est PIL Image si disponible
-                    pil_img = getattr(img, "image", None)
-                    if pil_img is not None:
-                        pil_img.save(str(chemin_img))
-                        images_extraites.append(chemin_img)
-                    else:
-                        # Fallback : data brut
-                        data = getattr(img, "data", None)
-                        if data:
-                            chemin_img.write_bytes(data)
-                            images_extraites.append(chemin_img)
-                except (OSError, ValueError, RuntimeError):
-                    continue
-        except (AttributeError, KeyError, OSError, ValueError) as exc:
-            # Ancienne API ou pas d'images — on ignore et tente XObject
-            _ = exc
-
-        # Si rien via page.images, tente extraction manuelle via XObject
-        if not images_extraites:
-            try:
-                xobjects = page["/Resources"]["/XObject"].get_object()  # type: ignore
-                for nom_obj, obj in xobjects.items():
-                    try:
-                        obj_resolved = obj.get_object()
-                        if obj_resolved.get("/Subtype") == "/Image":
-                            # Sauve brut si possible
-                            data = obj_resolved.get_data()
-                            if data:
-                                # Détermine extension via filtre
-                                filtre = obj_resolved.get("/Filter")
-                                ext = ".png"
-                                if filtre == "/DCTDecode":
-                                    ext = ".jpg"
-                                chemin_img = dossier_temp / f"page{numero_page}_{nom_obj}{ext}"
-                                chemin_img.write_bytes(data)
-                                images_extraites.append(chemin_img)
-                    except (OSError, ValueError, RuntimeError, KeyError):
-                        continue
-            except (AttributeError, KeyError, OSError, ValueError) as exc:
-                # XObject absent ou non lisible
-                _ = exc
-
-    except (ImportError, OSError, ValueError, RuntimeError) as exc:
-        # pypdf indisponible ou PDF illisible
-        _ = exc
-
-    return images_extraites
 
 
 def _rendre_page_pdf_via_pdftoppm(
@@ -360,6 +281,174 @@ def _rendre_page_pdf_via_pdftoppm(
         return None
 
 
+def _rendre_page_pdf_borne(
+    pdf_path: Path, numero_page: int, dossier_temp: Path, dpi: int = 300, timeout_s: int = 30
+) -> Path | None:
+    """Rend dans un sous-processus limité ; tout échec laisse l'OCR indisponible."""
+    if os.name != "posix" or not 36 <= dpi <= 400 or not 1 <= timeout_s <= 120:
+        return None
+    sortie = dossier_temp / f"rendu-ocr-{uuid.uuid4().hex}.png"
+    requete = json.dumps({
+        "source": str(pdf_path), "page": numero_page, "sortie": str(sortie),
+        "dpi": dpi, "timeout": timeout_s,
+    })
+    try:
+        resultat = subprocess.run(
+            [sys.executable, "-m", "seamtech_search.ocr.rendu_pdf"],
+            input=requete, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            text=True, timeout=timeout_s, check=False,
+        )
+        if resultat.returncode == 0 and sortie.is_file():
+            return sortie
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    try:
+        sortie.unlink(missing_ok=True)
+    except OSError:
+        pass
+    return None
+
+
+def _extraire_images_pdf_borne(pdf_path: Path, numero_page: int, dossier_temp: Path, timeout_s: int) -> list[Path]:
+    """Décode une image unique dans un processus aux ressources bornées."""
+    if os.name != "posix" or not 1 <= timeout_s <= 120:
+        return []
+    sortie = dossier_temp / f"image-ocr-{uuid.uuid4().hex}.png"
+    requete = json.dumps({
+        "operation": "extraire_image", "source": str(pdf_path), "page": numero_page,
+        "sortie": str(sortie), "timeout": timeout_s,
+    })
+    try:
+        resultat = subprocess.run(
+            [sys.executable, "-m", "seamtech_search.ocr.rendu_pdf"],
+            input=requete, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            text=True, timeout=timeout_s, check=False,
+        )
+        if resultat.returncode == 0 and sortie.is_file():
+            return [sortie]
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    try:
+        sortie.unlink(missing_ok=True)
+    except OSError:
+        pass
+    return []
+
+
+def _page_pdf_vue_integrale_bornee(pdf_path: Path, numero_page: int, timeout_s: int) -> bool:
+    """Précontrôle exécuté hors du parent, sous limites de temps et mémoire."""
+    if os.name != "posix" or not 1 <= timeout_s <= 120:
+        return False
+    requete = json.dumps({"operation": "verifier_image", "source": str(pdf_path),
+                          "page": numero_page, "timeout": timeout_s})
+    try:
+        resultat = subprocess.run(
+            [sys.executable, "-m", "seamtech_search.ocr.rendu_pdf"],
+            input=requete, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            text=True, timeout=timeout_s, check=False,
+        )
+        return resultat.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def _page_pdf_vue_integrale(pdf_path: Path, numero_page: int) -> bool:
+    """Vérifie une image unique sans masque ni composition hors page.
+
+    OCR d'images brutes ne respecte ni clipping ni éléments qui les masquent.
+    La grammaire acceptée est volontairement restrictive ; un rendu PDF
+    complet est nécessaire pour prendre en charge les autres cas sans fuite.
+    """
+    try:
+        from pypdf import PdfReader
+        from pypdf.generic import ContentStream
+
+        source = pdf_path if hasattr(pdf_path, "read") else str(pdf_path)
+        lecteur = PdfReader(source, strict=False)
+        catalogue = lecteur.trailer["/Root"]
+        if any(catalogue.get(cle) is not None for cle in ("/OCProperties", "/AcroForm")):
+            return False
+        page = lecteur.pages[numero_page]
+        if any(page.get(cle) is not None for cle in ("/Annots", "/Group", "/AA")):
+            return False
+        media = tuple(float(v) for v in page.mediabox)
+        crop = tuple(float(v) for v in page.cropbox)
+        if not all(math.isfinite(v) for v in (*media, *crop)) or media != crop:
+            return False
+        contenu = page.get_contents()
+        if contenu is None:
+            return False
+        operations = ContentStream(contenu, page.pdf).operations
+        ressources = page["/Resources"].get_object()
+        objets = ressources["/XObject"].get_object()
+        # page.images énumère les ressources, y compris celles qui ne sont
+        # jamais dessinées : une seule ressource doit être présente.
+        if len(objets) != 1:
+            return False
+        matrice = (1., 0., 0., 1., 0., 0.)
+        pile: list[tuple[float, ...]] = []
+        images = 0
+        for arguments, op in operations:
+            if op == b"q":
+                pile.append(matrice)
+            elif op == b"Q":
+                if not pile:
+                    return False
+                matrice = pile.pop()
+            elif op == b"cm":
+                a, b, c, d, e, f = (float(v) for v in arguments)
+                A, B, C, D, E, F = matrice
+                matrice = (A*a+C*b, B*a+D*b, A*c+C*d, B*c+D*d, A*e+C*f+E, B*e+D*f+F)
+            elif op == b"Do":
+                objet = objets[arguments[0]].get_object()
+                if objet.get("/Subtype") != "/Image" or any(
+                    objet.get(cle) is not None for cle in ("/SMask", "/Mask", "/ImageMask", "/Decode", "/OC", "/SMaskInData")
+                ):
+                    return False
+                largeur, hauteur = int(objet["/Width"]), int(objet["/Height"])
+                if min(largeur, hauteur) < 1 or max(largeur, hauteur) > 8192 or largeur * hauteur > 25_000_000:
+                    return False
+                images += 1
+                a, b, c, d, e, f = matrice
+                if not all(math.isfinite(v) for v in matrice):
+                    return False
+                # Pas de rotation, inversion ou cisaillement : l'image brute
+                # doit être présentée telle quelle, entièrement dans la page.
+                if b != 0 or c != 0 or a <= 0 or d <= 0:
+                    return False
+                if e < media[0] or f < media[1] or e+a > media[2] or f+d > media[3]:
+                    return False
+            elif op not in (b"BT", b"ET", b"Tf", b"TL"):
+                # Texte, formes, image inline, transparence et clipping
+                # pourraient masquer/modifier l'image ; ne pas les contourner.
+                return False
+        return images == 1 and not pile
+    except Exception:
+        return False
+
+
+def _nom_moteur_absent(tesseract_command: str) -> str:
+    """Nom déclaré quand aucun moteur n'est exploitable."""
+    from seamtech_search.ocr.moteur import MOTEUR_TESSERACT, moteur_demande
+
+    demande = moteur_demande()
+    if demande == MOTEUR_TESSERACT or tesseract_command != "tesseract":
+        return MOTEUR_TESSERACT
+    return MOTEUR_TESSERACT if demande != "rapidocr" else "rapidocr"
+
+
+def _motif_moteur_absent(tesseract_command: str) -> str:
+    """Motif lisible quand l'OCR ne peut pas être exécuté (jamais de repli)."""
+    from seamtech_search.ocr.moteur import MOTEUR_TESSERACT, moteur_demande
+
+    demande = moteur_demande()
+    if demande == MOTEUR_TESSERACT or tesseract_command != "tesseract":
+        return "tesseract absent (OCR désactivé, statut unavailable)"
+    if demande == "rapidocr":
+        return "RapidOCR absent (OCR désactivé, statut unavailable)"
+    return "moteur OCR absent : ni RapidOCR ni tesseract (OCR désactivé, statut unavailable)"
+
+
 def _ocr_page_pdf(
     pdf_path: Path,
     numero_page: int,
@@ -368,47 +457,103 @@ def _ocr_page_pdf(
     tesseract_command: str,
     dpi: int,
     dossier_temp: Path,
+    moteur: Any = None,
 ) -> dict[str, Any]:
     """OCR d'une page PDF (scannée).
 
     Stratégie :
-    1. Extraire images via pypdf, OCR chaque image, concaténer.
-    2. Sinon, rendre la page en PNG via pdftoppm, OCR l'image rendue.
-    3. Sinon, tenter tesseract directement sur PDF mono-page (certains builds).
-    4. Sinon, échec avec motif lisible.
+    1. Pour une image unique vérifiée, la décoder dans un sous-processus borné.
+    2. Sinon, rendre la vue PDF dans un sous-processus borné.
+    3. En cas d'échec, refuser sans repli vers une lecture brute non confinée.
+
+    ``moteur`` est l'interface commune (``ocr/moteur.py``) : RapidOCR par
+    défaut, Tesseract en repli. Sans moteur fourni, Tesseract est utilisé
+    avec ``tesseract_command`` — comportement historique.
     """
-    version = _tesseract_version(tesseract_command)
+    from seamtech_search.ocr.moteur import MoteurTesseract
+
+    moteur = moteur or MoteurTesseract(tesseract_command)
+    nom_moteur = moteur.nom
+
+    # La version du moteur n'est PAS lue ici, contrairement à l'usage : un
+    # moteur paresseux (RapidOCR) ne connaît la sienne qu'APRÈS le démarrage
+    # de son esclave, c'est-à-dire à la première reconnaissance. Lue trop tôt
+    # elle valait None, et le compte rendu se rabattait alors sur la version de
+    # Tesseract : le rapport attribuait à Tesseract un travail fait par
+    # RapidOCR (vu en CI, annotation ocr-qualite : « moteur=rapidocr
+    # version=tesseract 5.3.4 »). La provenance est une preuve, pas un détail
+    # d'affichage.
+    def _version_reelle(*resultats: dict[str, Any]) -> str | None:
+        for resultat in resultats:
+            if resultat.get("version_moteur"):
+                return resultat["version_moteur"]
+        return moteur.version
+
+    def reconnaitre(image: Path) -> dict[str, Any]:
+        debut = time.perf_counter()
+        resultat = moteur.reconnaitre(image, timeout_s, langue)._asdict()
+        resultat["duree_s"] = time.perf_counter() - debut
+        return resultat
+
+    # Hors POSIX, le rendu et l'extraction d'image bornés sont INDISPONIBLES
+    # par construction (``os.name != "posix"`` dans les deux aides ci-dessous) :
+    # le refus est donc certain, et il doit NOMMER la plateforme — sinon
+    # l'atelier lit « OCR impossible » sans savoir si c'est réparable. La
+    # qualification Windows du 02/11 a montré le contraire : dix-huit tests
+    # échouaient sur un ``None`` anonyme.
+    if os.name != "posix":
+        return {
+            "texte": "", "confiance": None, "duree_s": 0.0, "succes": False,
+            "motif": (
+                "OCR impossible : le rendu et l'extraction d'image bornés exigent un système POSIX "
+                f"(plateforme : {sys.platform}, os.name={os.name}). Cette limite vient du système, "
+                "pas de la configuration : elle ne se contourne pas par un réglage."
+            ),
+            "moteur": nom_moteur, "version_moteur": moteur.version,
+        }
+
+    if not _page_pdf_vue_integrale_bornee(pdf_path, numero_page, timeout_s):
+        rendu = _rendre_page_pdf_borne(pdf_path, numero_page, dossier_temp, dpi, timeout_s)
+        if rendu is not None:
+            return reconnaitre(rendu)
+        return {
+            "texte": "", "confiance": None, "duree_s": 0.0, "succes": False,
+            "motif": "OCR impossible : vue PDF recadrée, composée ou indéterminée",
+            "moteur": nom_moteur, "version_moteur": moteur.version,
+        }
 
     # 1. Images extraites
-    images = _extraire_images_pypdf(pdf_path, numero_page, dossier_temp)
+    images = _extraire_images_pdf_borne(pdf_path, numero_page, dossier_temp, timeout_s)
     if images:
         textes: list[str] = []
         confs: list[float] = []
         duree_tot = 0.0
-        succes_any = False
-        motifs: list[str] = []
+        echec_any = False
+        timeout_any = False
 
+        reconnus: list[dict[str, Any]] = []
         for img_path in images:
-            res = _ocr_image_via_tesseract(img_path, langue, timeout_s, tesseract_command)
+            res = reconnaitre(img_path)
+            reconnus.append(res)
             duree_tot += res["duree_s"]
             if res["succes"]:
-                succes_any = True
                 if res["texte"].strip():
                     textes.append(res["texte"])
                 if res["confiance"] is not None:
                     confs.append(res["confiance"])
             else:
-                motifs.append(res["motif"])
+                echec_any = True
+                timeout_any = timeout_any or "timeout" in res["motif"].lower()
 
-        if succes_any:
+        if not echec_any:
             return {
                 "texte": "\n".join(textes),
                 "confiance": sum(confs) / len(confs) if confs else None,
                 "duree_s": duree_tot,
                 "succes": True,
                 "motif": "",
-                "moteur": "tesseract",
-                "version_moteur": version,
+                "moteur": nom_moteur,
+                "version_moteur": _version_reelle(*reconnus),
             }
         else:
             # Images trouvées mais OCR a échoué
@@ -417,83 +562,18 @@ def _ocr_page_pdf(
                 "confiance": None,
                 "duree_s": duree_tot,
                 "succes": False,
-                "motif": "; ".join(motifs) or "échec OCR sur images extraites",
-                "moteur": "tesseract",
-                "version_moteur": version,
+                "motif": (
+                    f"timeout du moteur {nom_moteur} sur une ou plusieurs images de la page"
+                    if timeout_any else f"échec du moteur {nom_moteur} sur une ou plusieurs images de la page"
+                ),
+                "moteur": nom_moteur,
+                "version_moteur": _version_reelle(*reconnus),
             }
 
-    # 2. Rendu via pdftoppm
-    rendu = _rendre_page_pdf_via_pdftoppm(pdf_path, numero_page, dossier_temp, dpi)
-    if rendu is not None and rendu.exists():
-        return _ocr_image_via_tesseract(rendu, langue, timeout_s, tesseract_command)
-
-    # 3. Tesseract direct sur PDF mono-page (fallback)
-    try:
-        from pypdf import PdfReader, PdfWriter  # type: ignore
-
-        reader = PdfReader(str(pdf_path), strict=False)
-        if numero_page < len(reader.pages):
-            writer = PdfWriter()
-            writer.add_page(reader.pages[numero_page])
-            mono_pdf = dossier_temp / f"mono_page_{numero_page}.pdf"
-            with open(mono_pdf, "wb") as f:
-                writer.write(f)
-
-            # Tente tesseract sur ce PDF mono-page
-            # Certaines compilations de tesseract acceptent le PDF via leptonica
-            debut = time.perf_counter()
-            if not _has_command(tesseract_command):
-                return {
-                    "texte": "",
-                    "confiance": None,
-                    "duree_s": time.perf_counter() - debut,
-                    "succes": False,
-                    "motif": "tesseract absent",
-                    "moteur": "tesseract",
-                    "version_moteur": version,
-                }
-
-            result = subprocess.run(
-                [tesseract_command, str(mono_pdf), "stdout", "-l", langue],
-                capture_output=True,
-                text=True,
-                timeout=timeout_s,
-            )
-            duree = time.perf_counter() - debut
-            if result.returncode == 0 and result.stdout.strip():
-                return {
-                    "texte": result.stdout,
-                    "confiance": None,
-                    "duree_s": duree,
-                    "succes": True,
-                    "motif": "",
-                    "moteur": "tesseract",
-                    "version_moteur": version,
-                }
-            else:
-                # Échec mais on a tenté
-                return {
-                    "texte": "",
-                    "confiance": None,
-                    "duree_s": duree,
-                    "succes": False,
-                    "motif": f"tesseract sur PDF mono-page sans résultat (rc={result.returncode})",
-                    "moteur": "tesseract",
-                    "version_moteur": version,
-                }
-    except Exception:
-        # Ignore, passe au motif final
-        pass
-
-    # 4. Échec final
     return {
-        "texte": "",
-        "confiance": None,
-        "duree_s": 0.0,
-        "succes": False,
-        "motif": "aucune image extraite et pdftoppm absent ou échec rendu",
-        "moteur": "tesseract",
-        "version_moteur": version,
+        "texte": "", "confiance": None, "duree_s": 0.0, "succes": False,
+        "motif": "OCR impossible : extraction bornée de l'image avant reconnaissance en échec",
+        "moteur": nom_moteur, "version_moteur": moteur.version,
     }
 
 
@@ -505,6 +585,37 @@ def ocriser_pages(
     timeout_par_page_s: int = 30,
     tesseract_command: str = "tesseract",
     resolution_dpi: int = 300,
+) -> list[dict[str, Any]]:
+    """OCR par pages — cœur testable (choix du moteur inclus)."""
+    from seamtech_search.ocr.moteur import choisir_moteur
+
+    moteur = choisir_moteur(tesseract_command)
+    try:
+        return _ocriser_pages_avec_moteur(
+            chemin,
+            pages=pages,
+            seuil=seuil,
+            langue=langue,
+            timeout_par_page_s=timeout_par_page_s,
+            tesseract_command=tesseract_command,
+            resolution_dpi=resolution_dpi,
+            moteur=moteur,
+        )
+    finally:
+        # L'esclave RapidOCR (s'il a été démarré) ne survit pas au fichier.
+        if moteur is not None:
+            moteur.fermer()
+
+
+def _ocriser_pages_avec_moteur(
+    chemin: Path,
+    pages: list[int] | None = None,
+    seuil: int = SEUIL_DEFAUT,
+    langue: str = "fra",
+    timeout_par_page_s: int = 30,
+    tesseract_command: str = "tesseract",
+    resolution_dpi: int = 300,
+    moteur: Any = None,
 ) -> list[dict[str, Any]]:
     """OCR par pages — cœur testable.
 
@@ -536,8 +647,9 @@ def ocriser_pages(
     chemin = Path(chemin)
     ext = chemin.suffix.lower()
 
-    # Vérifie existence tesseract pour message lisible
-    tesseract_present = _has_command(tesseract_command)
+    moteur_present = moteur is not None
+    nom_absent = _nom_moteur_absent(tesseract_command)
+    motif_absent = _motif_moteur_absent(tesseract_command)
 
     resultats: list[dict[str, Any]] = []
 
@@ -547,12 +659,18 @@ def ocriser_pages(
         with tempfile.TemporaryDirectory(prefix="seamtech-ocr-img-") as tmpdir:
             tmp_path = Path(tmpdir)
             # Pour uniformité, on copie ou utilise directement
-            ocr_res = _ocr_image_via_tesseract(
-                chemin, langue, timeout_par_page_s, tesseract_command
-            )
+            if moteur is None:
+                ocr_res = {
+                    "texte": "", "confiance": None, "succes": False, "motif": motif_absent,
+                    "moteur": nom_absent, "version_moteur": None, "duree_s": 0.0,
+                }
+            else:
+                debut = time.perf_counter()
+                ocr_res = moteur.reconnaitre(chemin, timeout_par_page_s, langue)._asdict()
+                ocr_res["duree_s"] = time.perf_counter() - debut
             texte_natif = ""
-            page_ocerisee = ocr_res["succes"]
-            motif = "" if page_ocerisee else ocr_res["motif"]
+            page_ocerisee = ocr_res["succes"] and bool(ocr_res["texte"].strip())
+            motif = "" if page_ocerisee else ocr_res["motif"] or "aucun texte détecté"
 
             resultats.append(
                 {
@@ -607,7 +725,7 @@ def ocriser_pages(
                     continue
 
                 # Doit océriser
-                if not tesseract_present:
+                if not moteur_present:
                     resultats.append(
                         {
                             "page": num_page,
@@ -615,11 +733,11 @@ def ocriser_pages(
                             "texte_ocr": "",
                             "texte_final": texte_natif,
                             "confiance": None,
-                            "moteur": "tesseract",
+                            "moteur": nom_absent,
                             "version_moteur": None,
                             "duree_s": 0.0,
                             "page_ocerisee": False,
-                            "motif": "tesseract absent (OCR désactivé, statut unavailable)",
+                            "motif": motif_absent,
                             "fichier": str(chemin),
                         }
                     )
@@ -633,10 +751,11 @@ def ocriser_pages(
                     tesseract_command,
                     resolution_dpi,
                     tmp_path,
+                    moteur=moteur,
                 )
 
                 page_ocerisee = ocr_res["succes"] and bool(ocr_res["texte"].strip())
-                motif = "" if page_ocerisee else ocr_res["motif"]
+                motif = "" if page_ocerisee else ocr_res["motif"] or "aucun texte détecté"
 
                 resultats.append(
                     {
@@ -720,7 +839,7 @@ def ocriser_fichier(
     try:
         h = hashlib.sha256()
         with open(chemin_p, "rb") as f:
-            for bloc in iter(lambda: f.read(1024 * 1024), b""):
+            for bloc in lire_par_blocs(f, 1024 * 1024, nom=f"empreinte {chemin_p.name}"):
                 h.update(bloc)
         empreinte = h.hexdigest()
     except Exception:
@@ -742,11 +861,16 @@ def ocriser_fichier(
     nb_echecs = sum(1 for p in pages_res if not p["page_ocerisee"] and p["motif"] not in ("texte natif présent", "page non demandée", ""))
     taille_texte = sum(len(p["texte_ocr"]) for p in pages_res)
 
-    # Moteur le plus fréquent
+    # Moteur le plus fréquent (et non le premier : un fichier peut changer de
+    # moteur en cours de route si le premier tombe en panne).
     moteurs = [p["moteur"] for p in pages_res if p["moteur"]]
-    moteur_principal = moteurs[0] if moteurs else ""
+    moteur_principal = Counter(moteurs).most_common(1)[0][0] if moteurs else ""
     versions = [p["version_moteur"] for p in pages_res if p["version_moteur"]]
-    version_principale = versions[0] if versions else _tesseract_version(tesseract_command)
+    # Pas de repli sur la version de Tesseract : quand aucun moteur n'a donné la
+    # sienne, la réponse honnête est « inconnue » — pas celle d'un moteur qui
+    # n'a pas tourné. C'est ce repli qui faisait dire « moteur=rapidocr
+    # version=tesseract 5.3.4 » dans le compte rendu CI.
+    version_principale = versions[0] if versions else ""
 
     return {
         "fichier": str(chemin_p),

@@ -11,12 +11,12 @@ import { APPROBATEUR, LECTURE, signIn, signInWith } from "./helpers"
  * identité nominative, est refusé.
  */
 
-async function idExtractionParCode(page: Page, codePartiel: string): Promise<number> {
+async function idExtractionParCode(page: Page, code: string): Promise<number> {
   const reponse = await page.request.get("/api/extractions-voile?limite=100")
   expect(reponse.ok(), "la liste des extractions doit répondre").toBeTruthy()
   const corps = (await reponse.json()) as { extractions: { id_extraction: number; code_fiche: string | null }[] }
-  const trouvee = corps.extractions.find((e) => (e.code_fiche ?? "").includes(codePartiel))
-  expect(trouvee, `extraction contenant « ${codePartiel} » dans la base live`).toBeTruthy()
+  const trouvee = corps.extractions.find((e) => e.code_fiche === code)
+  expect(trouvee, `extraction « ${code} » dans la base live`).toBeTruthy()
   return trouvee!.id_extraction
 }
 
@@ -32,8 +32,9 @@ test.describe("Lot 4b — comparaison de voiles", () => {
     await page.waitForURL(/\/comparaison$/, { timeout: 20000 })
 
     await page.getByTestId("recherche-a").fill("7792")
-    const choixA = page.getByTestId("liste-a").getByTestId("extraction-choix").first()
-    await expect(choixA).toContainText("7792", { timeout: 30000 })
+    const choixA = page.getByTestId("liste-a").getByTestId("extraction-choix")
+      .filter({ has: page.getByText("7792-SO", { exact: true }) })
+    await expect(choixA).toHaveCount(1, { timeout: 30000 })
     await choixA.click()
 
     const choixB = page
@@ -56,8 +57,8 @@ test.describe("Lot 4b — comparaison de voiles", () => {
 
   test("lecture : comparaison en lecture seule via lien profond ?a=&b=", async ({ page }) => {
     await signInWith(page, LECTURE)
-    const idA = await idExtractionParCode(page, "7792")
-    const idB = await idExtractionParCode(page, "0901")
+    const idA = await idExtractionParCode(page, "7792-SO")
+    const idB = await idExtractionParCode(page, "0901-MM")
     await page.goto(`/comparaison?a=${idA}&b=${idB}`)
     await expect(page.getByTestId("resultat-comparaison")).toBeVisible({ timeout: 30000 })
     await expect(page.getByTestId("delta-pct-slu_m")).toContainText("%")

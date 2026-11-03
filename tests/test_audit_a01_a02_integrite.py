@@ -44,6 +44,8 @@ from typing import Any, Iterator
 
 import pytest
 
+from tests.helpers_postgres_isole import url_base_jetable
+
 RACINE = Path(__file__).resolve().parent.parent
 URL_PG = os.environ.get("SEAMTECH_TEST_DATABASE_URL", "")
 
@@ -78,7 +80,7 @@ def _creer_base(prefixe: str) -> dict[str, Any]:
             cursor.execute(f'CREATE DATABASE "{nom_base}"')
     finally:
         admin.close()
-    url_base = URL_PG.rsplit("/", 1)[0] + f"/{nom_base}"
+    url_base = url_base_jetable(URL_PG, nom_base)
 
     index = SearchIndex(Path(f"/tmp/unused-{nom_base}.db"), url_base)
     index.initialize()

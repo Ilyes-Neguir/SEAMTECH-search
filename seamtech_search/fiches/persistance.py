@@ -277,6 +277,10 @@ def routage(fiche: FicheExtraite, seuils: dict[str, float] | None = None) -> dic
     seuils = seuils or charger_seuils()
     if fiche.gabarit_code is None:
         return {"voie": "reprise_complete", "motif": "gabarit inconnu", "champs_sous_seuil": []}
+    if any(anomalie.code == "orientations_pdf_mixtes" for anomalie in fiche.anomalies):
+        return {"voie": "reprise_complete", "motif": "orientations PDF mixtes", "champs_sous_seuil": []}
+    if any(anomalie.code == "orientation_pdf_non_verifiee" for anomalie in fiche.anomalies):
+        return {"voie": "reprise_complete", "motif": "orientation PDF non vérifiée", "champs_sous_seuil": []}
     sous_seuil = [
         {"champ": champ.champ, "confiance": champ.confiance, "seuil": seuils.get(famille_du_champ(champ.champ), 0.9)}
         for champ in fiche.tous_les_champs()
@@ -504,8 +508,7 @@ def _ecrire_fiche_dans(
                 revision_avant = int(existante[2] if len(existante) > 2 and existante[2] is not None else 1)
                 if statut == "valide":
                     LOGGER.warning(
-                        "Fiche %s déjà VALIDÉE (id %d) : ré-extraction ignorée — aucune donnée validée n'est écrasée (RG11).",
-                        fiche.code,
+                        "Fiche id %d déjà VALIDÉE : ré-extraction ignorée — aucune donnée validée n'est écrasée (RG11).",
                         id_existante,
                     )
                     return ResultatEcriture(
@@ -524,10 +527,10 @@ def _ecrire_fiche_dans(
                 nb_corriges = int(cursor.fetchone()[0])
                 if nb_corriges > 0:
                     LOGGER.warning(
-                        "Fiche %s (id %d) porte %d champ(s) corrigé(s) par un humain : ré-extraction REFUSÉE (RG11) — "
+                        "Fiche id %d porte %d champ(s) corrigé(s) par un humain : ré-extraction REFUSÉE (RG11) — "
                         "conséquence : le dépôt de ce dossier échoue, la fiche reste intacte ; "
                         "rouvrir avec effacer_corrections pour lever le verrou explicitement.",
-                        fiche.code, id_existante, nb_corriges,
+                        id_existante, nb_corriges,
                     )
                     raise ErreurVerrouRG11(
                         f"RG11 : la fiche {fiche.code} porte {nb_corriges} champ(s) corrigé(s) par un humain — "
@@ -541,7 +544,7 @@ def _ecrire_fiche_dans(
                 for table in _TABLES_FILLES_RAFRAICHIES:
                     cursor.execute(f"DELETE FROM {table} WHERE id_fiche = %s", (id_fiche,))
                 action = "remplacee"
-                LOGGER.info("Fiche %s (a_valider) remplacée sur place par la nouvelle extraction (RG11, id conservé).", fiche.code)
+                LOGGER.info("Fiche id %d (a_valider) remplacée sur place par la nouvelle extraction (RG11, id conservé).", id_fiche)
 
             id_type_voile = _id_type_voile(cursor, fiche)
             id_client = None
@@ -609,10 +612,10 @@ def _ecrire_fiche_dans(
                 cursor.execute(_SQL_FICHE_UPD, parametres_fiche + (id_fiche,))
                 revision_apres = int(cursor.fetchone()[0])
                 LOGGER.warning(
-                    "Fiche %s (id %d) REMPLACÉE sur place en révision %d : tout écran resté "
+                    "Fiche id %d REMPLACÉE sur place en révision %d : tout écran resté "
                     "sur la révision %s sera refusé (409) au lieu de valider un contenu qu'il "
                     "n'a jamais affiché.",
-                    fiche.code, id_fiche, revision_apres, revision_avant,
+                    id_fiche, revision_apres, revision_avant,
                 )
 
             for cotes in fiche.cotes:
@@ -714,8 +717,8 @@ def _ecrire_fiche_dans(
     with connexion.cursor() as cursor:
         cursor.execute("SELECT rafraichir_texte_recherche_fiche(%s)", (id_fiche,))
     LOGGER.info(
-        "Fiche %s écrite (%s, id %d, statut a_valider, révision %d).",
-        fiche.code, action, id_fiche, revision_apres,
+        "Fiche écrite (%s, id %d, statut a_valider, révision %d).",
+        action, id_fiche, revision_apres,
     )
     return ResultatEcriture(
         id_fiche=id_fiche,

@@ -40,8 +40,13 @@ jobs:
       # réel s'exécute alors (sinon il échoue LOUDLY si la variable est mise
       # mais les poids absents — jamais de skip silencieux).
       SEAMTECH_ML_E5_DIR: /home/runner/.cache/seamtech-e5
+      # Émulateur HTTP isolé de test : ne qualifie ni MinIO ni R2.
+      SEAMTECH_TEST_S3RVER_URL: http://127.0.0.1:14569
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
       - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
@@ -74,6 +79,107 @@ jobs:
         run: ruff check .
       - name: Compile Python
         run: python -m compileall -q seamtech_search
+      - name: Installer redis-server pour le test de redémarrage réel
+        # Le job fournit Redis par un CONTENEUR DE SERVICE : le binaire
+        # `redis-server` n'est donc pas sur le PATH de la machine, et le test
+        # « un redémarrage de Redis conserve la tâche acceptée » — qui démarre
+        # SA PROPRE instance avec AOF, la tue au SIGKILL puis la relance — se
+        # sautait. Le garde-fou « skipped == 0 » de l'étape suivante échouait
+        # alors à juste titre, mais le défaut était dans la CI, pas dans le test :
+        # on installe le binaire au lieu de tolérer le saut.
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq redis-server
+          # L'instance système démarrée par le paquet ne doit PAS prendre le
+          # port 6379 : celui-ci appartient au conteneur de service du job.
+          sudo systemctl stop redis-server 2>/dev/null || sudo service redis-server stop 2>/dev/null || true
+          redis-server --version
+          python - <<'PYREDIS'
+          import redis
+          assert redis.from_url("redis://127.0.0.1:6379/1").ping()
+          print("Redis du conteneur de service toujours joignable sur 6379")
+          PYREDIS
+
+      - name: Démarrer S3rver de test isolé
+        run: |
+          set -euo pipefail
+          npm ci --prefix tests/fixtures/s3rver --ignore-scripts --no-audit --no-fund
+          npm audit --prefix tests/fixtures/s3rver --omit=dev
+          mkdir -p "$RUNNER_TEMP/seamtech-s3rver-data"
+          nohup node tests/fixtures/s3rver/node_modules/.bin/s3rver \
+            --directory "$RUNNER_TEMP/seamtech-s3rver-data" --hostname 127.0.0.1 --port 14569 --silent \
+            > "$RUNNER_TEMP/seamtech-s3rver.log" 2>&1 < /dev/null &
+          echo "$!" > "$RUNNER_TEMP/seamtech-s3rver.pid"
+          python - <<'PY'
+          import os
+          import time
+          import boto3
+          from botocore.config import Config
+
+          client = boto3.client("s3", endpoint_url=os.environ["SEAMTECH_TEST_S3RVER_URL"],
+                                aws_access_key_id="S3RVER", aws_secret_access_key="S3RVER",
+                                region_name="us-east-1", config=Config(proxies={}, connect_timeout=1, read_timeout=1,
+                                                                     retries={"max_attempts": 0},
+                                                                     s3={"addressing_style": "path"}))
+          for _ in range(40):
+              try:
+                  client.list_buckets()
+                  break
+              except Exception:
+                  time.sleep(0.25)
+          else:
+              raise SystemExit("S3rver de test indisponible")
+          PY
+          kill -0 "$(cat "$RUNNER_TEMP/seamtech-s3rver.pid")"
+      - name: Qualification réseau S3rver isolé (limites explicites)
+        run: |
+          set -uo pipefail
+          pytest -m "s3rver" -q -rxf 2>&1 | tee /tmp/s3rver-ci.log
+          rc=${PIPESTATUS[0]}
+          if [ "$rc" -ne 0 ]; then exit "$rc"; fi
+          python - <<'PY'
+          import re
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          texte = Path('/tmp/s3rver-ci.log').read_text(encoding='utf-8')
+          # Des xfail STRICTS documentent des limitations connues du substitut,
+          # non une restauration fonctionnelle. Aucun skip ni résultat ajouté
+          # masqué. Le compte n'est PAS figé : la campagne s'allonge à chaque
+          # limitation qualifiée (9 prouvés + 4 xfail à l'origine, 13 collectés
+          # depuis la remédiation). Une chaîne figée (« 9 passed, 4 xfailed »)
+          # transformait tout test ajouté en échec de CI — c'est le défaut
+          # corrigé ici : l'exigence porte sur les PROPORTIONS, pas sur un
+          # total gravé.
+          collecte = subprocess.run(
+              [sys.executable, '-m', 'pytest', '--collect-only', '-q', '-m', 's3rver'],
+              capture_output=True, text=True, check=True,
+          ).stdout
+          collectes = len([l for l in collecte.splitlines() if '::' in l])
+          # ``findall`` renvoie (nombre, nom) : l'ordre des variables compte —
+          # l'inverser faisait échouer l'étape sur une conversion impossible
+          # (vu en CI au premier passage de ce garde-fou).
+          chiffres = {
+              nom: int(nombre)
+              for nombre, nom in re.findall(r'([0-9]+) (passed|failed|skipped|xfailed|error)', texte)
+          }
+          passes = chiffres.get('passed', 0)
+          xfail = chiffres.get('xfailed', 0)
+          sautes = chiffres.get('skipped', 0)
+          echecs = chiffres.get('failed', 0) + chiffres.get('error', 0)
+          print(
+              f"s3rver : {collectes} collectés, {passes} passés, {xfail} xfail, "
+              f"{sautes} sautés, {echecs} échecs"
+          )
+          if sautes or echecs or passes + xfail != collectes or passes == 0 or xfail == 0:
+              raise SystemExit(
+                  'Campagne S3rver incomplète ou inattendue : '
+                  f'{collectes} collectés, {passes} passés, {xfail} xfail, '
+                  f'{sautes} sautés, {echecs} échecs — consulter s3rver-ci.log'
+              )
+          PY
       - name: Run SQLite suite
         run: |
           set -uo pipefail
@@ -169,28 +275,6 @@ jobs:
             exit 1
           fi
           echo "::notice title=suite-postgres::pytest -m \"postgres and not perf and not sauvegarde\" : passed=$passed skipped=$skipped"
-      - name: Installer redis-server pour le test de redémarrage réel
-        # Le job fournit Redis par un CONTENEUR DE SERVICE : le binaire
-        # `redis-server` n'est donc pas sur le PATH de la machine, et le test
-        # « un redémarrage de Redis conserve la tâche acceptée » — qui démarre
-        # SA PROPRE instance avec AOF, la tue au SIGKILL puis la relance — se
-        # sautait. Le garde-fou « skipped == 0 » de l'étape suivante échouait
-        # alors à juste titre, mais le défaut était dans la CI, pas dans le test :
-        # on installe le binaire au lieu de tolérer le saut.
-        run: |
-          set -euo pipefail
-          sudo apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq redis-server
-          # L'instance système démarrée par le paquet ne doit PAS prendre le
-          # port 6379 : celui-ci appartient au conteneur de service du job.
-          sudo systemctl stop redis-server 2>/dev/null || sudo service redis-server stop 2>/dev/null || true
-          redis-server --version
-          python - <<'PYREDIS'
-          import redis
-          assert redis.from_url("redis://127.0.0.1:6379/1").ping()
-          print("Redis du conteneur de service toujours joignable sur 6379")
-          PYREDIS
-
       - name: Run durable queue suite (real Redis + real PostgreSQL, must actually run)
         # Lot « file durable » : ces tests-là ne se contentent pas de mocks.
         # Ils tuent un VRAI processus worker (SIGKILL), redémarrent un serveur
@@ -605,6 +689,38 @@ jobs:
         # fixture réelle, pas d'except aveugle, calibration, fichiers §17.11).
         # Jamais comme substitut aux tests : exécuté après les suites pytest.
         run: python3 scripts/audit_projet.py --rapide
+      - name: Arrêter S3rver de test
+        if: always()
+        run: |
+          python - <<'PY'
+          import os
+          import signal
+          from pathlib import Path
+
+          pid_file = Path(os.environ["RUNNER_TEMP"]) / "seamtech-s3rver.pid"
+          if pid_file.exists():
+              pid = int(pid_file.read_text().strip())
+              try:
+                  pidfd = os.pidfd_open(pid)
+              except ProcessLookupError:
+                  pidfd = None
+              if pidfd is not None:
+                  try:
+                      try:
+                          arguments = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
+                      except FileNotFoundError:
+                          arguments = []
+                      if arguments and (b"tests/fixtures/s3rver/node_modules/.bin/s3rver" not in arguments
+                                        or b"14569" not in arguments):
+                          raise SystemExit("PID S3rver réutilisé : arrêt refusé")
+                      if arguments:
+                          try:
+                              signal.pidfd_send_signal(pidfd, signal.SIGTERM)
+                          except ProcessLookupError:
+                              pass
+                  finally:
+                      os.close(pidfd)
+          PY
       - name: Upload pytest logs
         # The job-log blob host (productionresultssa*.blob.core.windows.net) is
         # unreachable from some networks, which is how a failing step ended up
@@ -1021,9 +1137,12 @@ jobs:
       - name: Install OCR binaries (tesseract fra+eng + poppler) for scan-browser-ocr
         run: |
           sudo apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq tesseract-ocr tesseract-ocr-fra tesseract-ocr-eng poppler-utils
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq tesseract-ocr tesseract-ocr-fra tesseract-ocr-eng poppler-utils redis-server
           tesseract --version
           tesseract --list-langs
+          # Le banc ci-dessous démarre sa propre instance sur socket privé.
+          sudo systemctl stop redis-server 2>/dev/null || sudo service redis-server stop 2>/dev/null || true
+          redis-server --version
       - name: Install backend dependencies
         run: |
           python -m pip install --upgrade pip
@@ -1049,6 +1168,39 @@ jobs:
             echo "::error title=e2e-tail::$(tail -60 /tmp/e2e.log | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 2000)"
             exit "$rc"
           fi
+      - name: Run E2E interface import sans retry (SQLite et états simulés)
+        working-directory: frontend
+        env:
+          PLAYWRIGHT_JSON_OUTPUT_NAME: report-interface-import.json
+        run: |
+          set -euo pipefail
+          pnpm exec playwright test e2e/import-reprise.spec.ts e2e/import-resultats.spec.ts e2e/import.spec.ts --retries=0 --reporter=list,json 2>&1 | tee /tmp/e2e_interface_import.log
+          python - <<'PY'
+          import json
+          with open("report-interface-import.json", encoding="utf-8") as fichier:
+              stats = json.load(fichier)["stats"]
+          attendu = (stats.get("expected"), stats.get("unexpected"), stats.get("skipped"), stats.get("flaky"))
+          if attendu != (38, 0, 0, 0):
+              raise SystemExit(f"Banc interface import incomplet : {attendu!r}, attendu (38, 0, 0, 0)")
+          print("38 tests interface import passés, aucun skip ni retry salvateur")
+          PY
+      - name: Run E2E suivi d'import (PostgreSQL, Redis et worker séparé)
+        working-directory: frontend
+        env:
+          SEAMTECH_E2E_SUIVI_DATABASE_URL: postgresql://seamtech:seamtech_test_password@localhost:5432/seamtech_search_test
+          PLAYWRIGHT_JSON_OUTPUT_NAME: report-suivi-import.json
+        run: |
+          set -euo pipefail
+          pnpm exec playwright test --config playwright.suivi.config.ts --retries=0 --reporter=list,json 2>&1 | tee /tmp/e2e_suivi_import.log
+          python - <<'PY'
+          import json
+          with open("report-suivi-import.json", encoding="utf-8") as fichier:
+              stats = json.load(fichier)["stats"]
+          attendu = (stats.get("expected"), stats.get("unexpected"), stats.get("skipped"), stats.get("flaky"))
+          if attendu != (6, 0, 0, 0):
+              raise SystemExit(f"Banc suivi incomplet : {attendu!r}, attendu (6, 0, 0, 0)")
+          print("6 tests du suivi passés, aucun skip ni retry salvateur")
+          PY
       - name: Upload Playwright report on failure
         if: failure()
         uses: actions/upload-artifact@v7
@@ -1057,7 +1209,11 @@ jobs:
           path: |
             frontend/playwright-report/
             frontend/test-results/
+            frontend/report-interface-import.json
+            frontend/report-suivi-import.json
             /tmp/e2e.log
+            /tmp/e2e_interface_import.log
+            /tmp/e2e_suivi_import.log
           if-no-files-found: ignore
           retention-days: 5
       # Clôture Phase 1 (Tâche 2 du 21/09) : le parcours de validation est
@@ -1176,6 +1332,65 @@ jobs:
               "réponse tardive sans écrasement de la fiche affichée)."
           )
           PY
+      - name: Audit d'accessibilité axe-core (tous écrans × rôles × états)
+        # P2 — « axe-core étendu ». La spec existait (`e2e/accessibilite.spec.ts`)
+        # et n'était exécutée NULLE PART : ce job énumère ses specs à la main et
+        # elle n'y figurait pas. Un audit qu'on n'exécute pas n'est pas un vert,
+        # c'est un trou de preuve — exactement ce que le rapport du 28/10
+        # reprochait à l'audit initial limité à deux écrans.
+        #
+        # La spec échoue déjà sur toute violation critique ou sérieuse
+        # (WCAG 2.1 A/AA). Le garde-fou ci-dessous couvre l'autre panne, plus
+        # sournoise : un run qui ne scanne RIEN publierait « 0 violation ».
+        working-directory: frontend
+        env:
+          SEAMTECH_E2E_DATABASE_URL: postgresql://seamtech:seamtech_test_password@localhost:5432/seamtech_search_test
+          PLAYWRIGHT_JSON_OUTPUT_NAME: report-accessibilite.json
+        run: |
+          set -uo pipefail
+          set +e
+          pnpm exec playwright test e2e/accessibilite.spec.ts --reporter=list,json 2>&1 | tee /tmp/e2e_accessibilite.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            echo "::error title=accessibilite-details::$(grep -E '✘|failed|Error|violation|impact' /tmp/e2e_accessibilite.log | tail -20 | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 3000)"
+            exit "$rc"
+          fi
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+
+          rapport = "accessibilite/rapport-axe.json"
+          if not os.path.exists(rapport):
+              print(f"::error title=accessibilite-garde-fou::{rapport} absent — rien n'a été mesuré")
+              sys.exit(1)
+          with open(rapport, encoding="utf-8") as fichier:
+              donnees = json.load(fichier)
+          ecrans = int(donnees.get("ecrans_scannes", 0))
+          avec_violation = int(donnees.get("ecrans_avec_violation", 0))
+          # Le plancher compte : une campagne qui ne scanne qu'un écran n'est
+          # pas une campagne « tous écrans × rôles × états ».
+          plancher = 8
+          if ecrans < plancher:
+              print(f"::error title=accessibilite-garde-fou::{ecrans} écran(s) scanné(s), plancher {plancher}")
+              sys.exit(1)
+          if avec_violation:
+              print(f"::error title=accessibilite-garde-fou::{avec_violation} écran(s) avec violation")
+              sys.exit(1)
+          print(f"::notice title=accessibilite::{ecrans} écrans scannés, 0 violation WCAG 2.1 A/AA")
+          PY
+      - name: Upload du rapport d'accessibilité
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rapport-accessibilite-axe
+          path: |
+            frontend/accessibilite/rapport-axe.json
+            frontend/report-accessibilite.json
+            /tmp/e2e_accessibilite.log
+          if-no-files-found: warn
+          retention-days: 14
       - name: Run live E2E validation (PostgreSQL + vraie fiche)
         working-directory: frontend
         env:
@@ -1192,15 +1407,14 @@ jobs:
           # du parcours machine complet (annotation mesure-phase1) est donc
           # extrait du rapport JSON et publié en ::notice — c'est le seul
           # mécanisme qui le rende lisible dans les journaux CI. Garde-fous de
-          # porte de sortie : 14 passés au premier essai (3 du parcours validation,
-          # 3 badge « Non vérifiée » — invariant badge/API, fermeture des
-          # suggestions (MAN-03) et aller-retour validation → réouverture —,
-          # 4 tests Phase 2.2, 2 recherche par dimension Phase 1, 2 extraits
-          # documentaires Lot 4a), 0 flaky (un échec rattrapé par retry fait
+          # porte de sortie : 19 tests exécutés au premier essai (6 fichiers :
+          # validation, orientations mixtes, révision clavier, badge « Non
+          # vérifiée » + fermeture des suggestions, recherche par dimension,
+          # extrait documentaire), 0 flaky (un échec rattrapé par retry fait
           # échouer la porte), 0 saut, et le chrono doit avoir été produit.
           set -uo pipefail
           set +e
-          pnpm exec playwright test e2e/validation.spec.ts e2e/recherche-badge.spec.ts e2e/recherche-dimension.spec.ts e2e/recherche-extrait.spec.ts --reporter=list,json 2>&1 | tee /tmp/e2e_validation.log
+          pnpm exec playwright test e2e/validation.spec.ts e2e/orientation-mixte.spec.ts e2e/validation-raccourcis-regression.spec.ts e2e/recherche-badge.spec.ts e2e/recherche-dimension.spec.ts e2e/recherche-extrait.spec.ts --reporter=list,json 2>&1 | tee /tmp/e2e_validation.log
           rc=${PIPESTATUS[0]}
           set -e
           if [ "$rc" -ne 0 ]; then
@@ -1233,7 +1447,7 @@ jobs:
           # échoue puis passe au retry (compté « flaky » par Playwright avec
           # retries: 2) n'est PAS un test réellement assaini — il doit faire
           # échouer la porte, pas compter comme « réellement exécuté ».
-          if sautes or flaky or passes != 14:
+          if sautes or flaky or passes != 19:
               # NOMMER ce qui a bougé : « 1 flaky » sans nom n'est pas
               # diagnosticable depuis un poste qui n'atteint pas les journaux
               # d'Actions (leçon du 2026-10-07 : un flake a rendu un run rouge
@@ -1248,7 +1462,7 @@ jobs:
                               coupables.append(f"{etat}: {spec.get('title', '?')} [{titres[:120]}]")
               detail = "; ".join(coupables[:5]) or "aucun test nommé dans le rapport"
               raise SystemExit(
-                  f"GARDE-FOU live e2e : attendu 14 tests passés au premier essai, "
+                  f"GARDE-FOU live e2e : attendu 19 tests passés au premier essai, "
                   f"0 flaky, 0 sautés — mesuré {passes} passés, {flaky} flaky, "
                   f"{sautes} sautés. Les tests live ne doivent jamais s'ignorer "
                   "silencieusement ni masquer une instabilité par retry. "
@@ -1902,7 +2116,7 @@ jobs:
         run: |
           set -uo pipefail
           set +e
-          pnpm exec playwright test e2e/scan-browser-ocr.spec.ts --reporter=list,json 2>&1 | tee /tmp/e2e_scan_ocr_live.log
+          pnpm exec playwright test e2e/scan-browser-ocr.spec.ts --retries=0 --reporter=list,json 2>&1 | tee /tmp/e2e_scan_ocr_live.log
           rc=${PIPESTATUS[0]}
           set -e
           if [ "$rc" -ne 0 ]; then
@@ -2085,12 +2299,20 @@ jobs:
           SEAMTECH_SAUVEGARDE_JSON: sauvegarde-mesures.jsonl
         run: |
           set +e
-          python -m pytest -m sauvegarde -v --junitxml=sauvegarde-junit.xml 2>&1 | tee /tmp/sauvegarde.log
+          python -m pytest -m sauvegarde -v -rs --junitxml=sauvegarde-junit.xml 2>&1 | tee /tmp/sauvegarde.log
           rc=${PIPESTATUS[0]}
           set -e
+          # Motifs de saut publiés sans condition : un saut doit être VISIBLE,
+          # pas seulement compté. C'est ainsi qu'on repère un test qui passe
+          # son tour au lieu de prouver l'aller-retour.
+          if grep -qE "^SKIPPED" /tmp/sauvegarde.log; then
+            echo "::notice title=sauvegarde-sauts::$(grep -E '^SKIPPED' /tmp/sauvegarde.log | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 1800)"
+          fi
           if [ "$rc" -ne 0 ]; then
-            echo "::error title=sauvegarde-failed::$(grep -E '^(FAILED|ERROR)' /tmp/sauvegarde.log | head -25 | tr -d '\\000-\\010\\013\\014\\016-\\037' | tr '\\n' ';' | head -c 1500)"
-            echo "::error title=sauvegarde-tail::$(tail -40 /tmp/sauvegarde.log | tr -d '\\000-\\010\\013\\014\\016-\\037' | tr '\\n' ';' | head -c 1800)"
+            echo "::error title=sauvegarde-failed::$(grep -E '^(FAILED|ERROR)' /tmp/sauvegarde.log | head -25 | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 1500)"
+            # Le détail de l'assertion : sans lui, « - assert » ne dit rien.
+            echo "::error title=sauvegarde-assertions::$(grep -aE '^(E   |_____)' /tmp/sauvegarde.log | head -40 | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 1800)"
+            echo "::error title=sauvegarde-tail::$(tail -40 /tmp/sauvegarde.log | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 1800)"
             exit "$rc"
           fi
       - name: GARDE-FOU — every round-trip test ran, none skipped
@@ -2126,14 +2348,76 @@ jobs:
           print(
               f"sauvegarde : {collectes} collectés, {executes} exécutés ({passes} passés, {sautes} sautés, {echecs} échecs)"
           )
-          # Attendu : tous les tests collectés exécutés (≥ 19), 0 sauté, 0 échec.
-          # Sautés > 0 ou collectés != exécutés ou échecs > 0 → échec inviolable.
-          if sautes > 0 or collectes != executes or echecs > 0 or passes < 19:
+          # Un test xfail (échec attendu, STRICT, documenté) est EXÉCUTÉ : le
+          # JUnit XML le range pourtant parmi les « skipped » (type
+          # « pytest.xfail »). Le confondre avec un vrai saut a fait échouer ce
+          # garde-fou le 01/11 sur trois limitations connues, alors qu'elles
+          # s'exécutent et échouent comme attendu. Les deux sont donc comptés
+          # SÉPARÉMENT et les xfail sont publiés — jamais silencieux, jamais
+          # comptés comme preuve.
+          saut_elements = [
+              (tc.get("classname", ""), tc.get("name", ""), saut.get("message", ""))
+              for tc in testsuite.iter("testcase")
+              if (saut := tc.find("skipped")) is not None
+          ]
+          # pytest écrit l'attribut type="pytest.xfail" dans le XML ; la sortie
+          # console (XFAIL <nœud>) sert de confirmation. Les deux sont croisés :
+          # un test n'est classé « échec attendu » que s'il est xfail DANS LE
+          # XML et nommé XFAIL dans la console — jamais sur un seul indice.
+          import pathlib
+
+          journal = pathlib.Path("/tmp/sauvegarde.log")
+          texte_journal = journal.read_text(encoding="utf-8", errors="replace") if journal.exists() else ""
+          # Avec « -v » la ligne est « noeud::test XFAIL [ 12%] » : la marque
+          # n'est PAS en début de ligne. Un « ^XFAIL » ne trouvait donc rien :
+          # les échecs attendus repassaient pour des sauts et le garde-fou
+          # échouait (vu en CI au premier passage). Le XML reste la source
+          # primaire ; la console ne sert que de recoupement quand elle parle.
+          # En mode « -v » la ligne est « noeud::test XFAIL [ 40%] » :
+          # l'identifiant du test PRÉCÈDE la marque, il ne la suit pas.
+          marques_xfail = set(re.findall(r"(\S+)\s+XFAIL\b", texte_journal))
+          def _est_xfail(nom: str, type_xml: str) -> bool:
+              if "xfail" not in type_xml:
+                  return False
+              if not marques_xfail:
+                  return True
+              return any(noeud.split("::")[-1] == nom for noeud in marques_xfail)
+
+          # Les éléments sont d'abord collectés dans une simple boucle : une
+          # expression de type « := » n'est pas autorisée dans l'itérable d'une
+          # compréhension imbriquée (SyntaxError, vu au premier passage CI) —
+          # un garde-fou qui ne se compile pas ne garde rien.
+          elements_xml = []
+          for tc in testsuite.iter("testcase"):
+              saut = tc.find("skipped")
+              if saut is None:
+                  continue
+              elements_xml.append(
+                  (tc.get("classname", ""), tc.get("name", ""), saut.get("message", ""), saut.get("type", "") or "")
+              )
+          xfail_noms = [(c, n, m) for c, n, m, t in elements_xml if _est_xfail(n, t)]
+          saut_noms = [(c, n, m) for c, n, m in saut_elements if (c, n, m) not in xfail_noms]
+          sautes_effectifs = len(saut_noms)
+          if xfail_noms:
+              print(
+                  f"::notice title=sauvegarde-xfail-attendus::{len(xfail_noms)} échec(s) "
+                  f"attendu(s) exécuté(s) :"
+              )
+              for classe, nom, motif in xfail_noms:
+                  print(f"::notice title=sauvegarde-xfail::{classe}.{nom} — {motif}")
+          if saut_noms:
+              print(f"::error title=sauvegarde-tests-sautes::{[(c, n) for c, n, _ in saut_noms]}")
+
+          # Attendu : tous les tests collectés exécutés (≥ 19), 0 sauté réel,
+          # 0 échec. Un vrai saut, une désélection ou un échec → échec
+          # inviolable.
+          if sautes_effectifs > 0 or collectes != executes or echecs > 0 or passes < 19:
               raise SystemExit(
                   "GARDE-FOU sauvegarde renforcé : échec détecté ! "
                   f"attendu collectés == exécutés, ≥ 19 passés, 0 sauté, 0 échec — "
                   f"mesuré {collectes} collectés, {executes} exécutés, {passes} passés, "
-                  f"{sautes} sautés, {echecs} échecs. "
+                  f"{sautes_effectifs} sautés ({len(xfail_noms)} xfail exécutés), "
+                  f"{echecs} échecs. "
                   "L'aller-retour sauvegarde → destruction → restauration doit être "
                   "prouvé par exécution, aucun test ne doit être sauté ou désélectionné."
               )
@@ -2342,19 +2626,27 @@ jobs:
           python3 - <<'PY'
           import json
           import os
+          import re
           from pathlib import Path
+          from tests.helpers_postgres_isole import url_base_jetable
 
-          url = json.loads(Path("/tmp/seed.json").read_text(encoding="utf-8").strip().splitlines()[-1])["url"]
+          nom = json.loads(Path("/tmp/seed.json").read_text(encoding="utf-8").strip().splitlines()[-1])["nom"]
+          if not re.fullmatch(r"e2e_[0-9a-f]{32}", nom):
+              raise SystemExit("Nom de base d'essai invalide")
+          url = url_base_jetable(os.environ["SEAMTECH_E2E_DATABASE_URL"], nom)
           with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as fichier:
               fichier.write(f"SEAMTECH_DATABASE_URL_ESSAI={url}\n")
-          print("base d'essai :", url)
+          print("Base d'essai créée ; identifiants non affichés.")
           PY
       - name: Configuration de la pile (compte applicatif, stockage restreint)
         run: |
           python3 - <<'PY'
           import json
           import os
+          import shlex
           from pathlib import Path
+
+          from scripts.fichier_prive import ecrire_fichier_prive
 
           racine = Path(os.environ["GITHUB_WORKSPACE"])
           url = os.environ["SEAMTECH_DATABASE_URL_ESSAI"]
@@ -2373,15 +2665,36 @@ jobs:
               "storage_verify_reread": True,
               "web_worker_enabled": False,
           }
-          Path("/tmp/config-hors-ligne.json").write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
+          ecrire_fichier_prive(Path("/tmp/config-hors-ligne.json"), json.dumps(config, ensure_ascii=False, indent=2))
+          variables = {
+              "SEAMTECH_DATABASE_URL": url,
+              "SEAMTECH_REDIS_URL": "redis://127.0.0.1:6379/0",
+              "SEAMTECH_AUTH_TOKEN": os.environ["AUTH_TOKEN_APP"],
+              "SEAMTECH_S3_ACCESS_KEY": os.environ["SEAMTECH_S3_ACCESS_KEY"],
+              "SEAMTECH_S3_SECRET_KEY": os.environ["SEAMTECH_S3_SECRET_KEY"],
+              "SEAMTECH_ROOT_PATHS": str(racine / "sample_data"),
+              "SEAMTECH_API_URL": "http://127.0.0.1:8123",
+              "SEAMTECH_UI_PASSWORD": os.environ["SEAMTECH_UI_PASSWORD"],
+              "SEAMTECH_SESSION_SECRET": os.environ["SEAMTECH_SESSION_SECRET"],
+              "NEXT_TELEMETRY_DISABLED": "1",
+          }
+          ecrire_fichier_prive(Path("/tmp/env-hors-ligne.sh"), "".join(
+              f"export {cle}={shlex.quote(valeur)}\n" for cle, valeur in variables.items()
+          ))
+          jeton = os.environ["AUTH_TOKEN_APP"]
+          if "\n" in jeton or "\r" in jeton:
+              raise SystemExit("Jeton de test invalide")
+          ecrire_fichier_prive(Path("/tmp/header-hors-ligne"), f"X-SEAMTECH-TOKEN: {jeton}\n")
           with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as fichier:
               fichier.write("SEAMTECH_CONFIG_HORS_LIGNE=/tmp/config-hors-ligne.json\n")
               fichier.write(f"SEAMTECH_DATABASE_URL={url}\n")
               fichier.write("SEAMTECH_REDIS_URL=redis://127.0.0.1:6379/0\n")
           print("configuration écrite")
           PY
-          sudo cp /tmp/config-hors-ligne.json /srv/seamtech/config.json
-          sudo chown seamtech-app:seamtech-app /srv/seamtech/config.json
+          sudo install -m 0600 -o seamtech-app -g seamtech-app /tmp/config-hors-ligne.json /srv/seamtech/config.json
+          sudo install -m 0600 -o seamtech-app -g seamtech-app /tmp/env-hors-ligne.sh /srv/seamtech/env-hors-ligne.sh
+          sudo install -m 0600 -o seamtech-app -g seamtech-app /tmp/header-hors-ligne /srv/seamtech/header-hors-ligne
+          rm /tmp/config-hors-ligne.json /tmp/env-hors-ligne.sh /tmp/header-hors-ligne
       - name: Construire le front de production
         working-directory: frontend
         env:
@@ -2434,37 +2747,16 @@ jobs:
           # applicatif : sinon c'est le shell de l'ordonnanceur (un autre
           # utilisateur) qui ouvrirait /srv/seamtech/logs/… et échouerait.
           sudo -u seamtech-app env PATH="$PATH_OUTILS:$PATH" \
-            SEAMTECH_DATABASE_URL="$SEAMTECH_DATABASE_URL" \
-            SEAMTECH_REDIS_URL="redis://127.0.0.1:6379/0" \
-            SEAMTECH_AUTH_TOKEN="$AUTH_TOKEN_APP" \
-            SEAMTECH_S3_ACCESS_KEY="$SEAMTECH_S3_ACCESS_KEY" \
-            SEAMTECH_S3_SECRET_KEY="$SEAMTECH_S3_SECRET_KEY" \
-            SEAMTECH_ROOT_PATHS="$GITHUB_WORKSPACE/sample_data" \
-            bash -c "cd \"$GITHUB_WORKSPACE\" && nohup \"$PYTHON_BIN\" -m seamtech_search serve --config /srv/seamtech/config.json \
-              > /srv/seamtech/logs/web.log 2>&1 &"
+            bash -c 'set -a; . /srv/seamtech/env-hors-ligne.sh; set +a; cd "$1"; nohup "$2" -m seamtech_search serve --config /srv/seamtech/config.json > /srv/seamtech/logs/web.log 2>&1 &' bash "$GITHUB_WORKSPACE" "$PYTHON_BIN"
           sudo -u seamtech-app env PATH="$PATH_OUTILS:$PATH" \
-            SEAMTECH_DATABASE_URL="$SEAMTECH_DATABASE_URL" \
-            SEAMTECH_REDIS_URL="redis://127.0.0.1:6379/0" \
-            SEAMTECH_AUTH_TOKEN="$AUTH_TOKEN_APP" \
-            SEAMTECH_S3_ACCESS_KEY="$SEAMTECH_S3_ACCESS_KEY" \
-            SEAMTECH_S3_SECRET_KEY="$SEAMTECH_S3_SECRET_KEY" \
-            SEAMTECH_ROOT_PATHS="$GITHUB_WORKSPACE/sample_data" \
-            bash -c "cd \"$GITHUB_WORKSPACE\" && nohup \"$PYTHON_BIN\" -m seamtech_search.worker_service --config /srv/seamtech/config.json \
-              > /srv/seamtech/logs/worker.log 2>&1 &"
-          cd "$GITHUB_WORKSPACE/frontend"
+            bash -c 'set -a; . /srv/seamtech/env-hors-ligne.sh; set +a; cd "$1"; nohup "$2" -m seamtech_search.worker_service --config /srv/seamtech/config.json > /srv/seamtech/logs/worker.log 2>&1 &' bash "$GITHUB_WORKSPACE" "$PYTHON_BIN"
           sudo -u seamtech-app env PATH="$PATH_OUTILS:$PATH" \
-            SEAMTECH_API_URL="http://127.0.0.1:8123" \
-            SEAMTECH_AUTH_TOKEN="$AUTH_TOKEN_APP" \
-            SEAMTECH_UI_PASSWORD="$SEAMTECH_UI_PASSWORD" \
-            SEAMTECH_SESSION_SECRET="$SEAMTECH_SESSION_SECRET" \
-            NEXT_TELEMETRY_DISABLED=1 \
-            bash -c "cd \"$GITHUB_WORKSPACE/frontend\" && nohup \"$NODE_BIN\" \"$GITHUB_WORKSPACE/frontend/node_modules/next/dist/bin/next\" start --port 3123 \
-              > /srv/seamtech/logs/front.log 2>&1 &"
+            bash -c 'set -a; . /srv/seamtech/env-hors-ligne.sh; set +a; cd "$1/frontend"; nohup "$2" "$1/frontend/node_modules/next/dist/bin/next" start --port 3123 > /srv/seamtech/logs/front.log 2>&1 &' bash "$GITHUB_WORKSPACE" "$NODE_BIN"
           cd "$GITHUB_WORKSPACE"
           web_ok=0
           front_ok=0
           for _ in $(seq 1 60); do
-            curl -sf --max-time 5 -H "X-SEAMTECH-TOKEN: $AUTH_TOKEN_APP" http://127.0.0.1:8123/health >/dev/null && web_ok=1 || web_ok=0
+            sudo -u seamtech-app curl -sf --max-time 5 -H @/srv/seamtech/header-hors-ligne http://127.0.0.1:8123/health >/dev/null && web_ok=1 || web_ok=0
             curl -sf --max-time 5 http://127.0.0.1:3123/login >/dev/null && front_ok=1 || front_ok=0
             if [ "$web_ok" = 1 ] && [ "$front_ok" = 1 ]; then break; fi
             sleep 2
@@ -2578,7 +2870,7 @@ jobs:
           fi
           echo "contrôle négatif IPv4 OK : $((apres - avant)) paquet(s) REJETÉ(S) PAR LA RÈGLE vers $adresse ($(head -c 120 /tmp/controle-negatif.err))"
           # CONTRÔLE POSITIF : la pile locale répond toujours.
-          sudo -u seamtech-app curl -sS --max-time 10 -H "X-SEAMTECH-TOKEN: $AUTH_TOKEN_APP" \
+          sudo -u seamtech-app curl -sS --max-time 10 -H @/srv/seamtech/header-hors-ligne \
             http://127.0.0.1:8123/health -o /dev/null
           echo "contrôle positif OK : /health répond en local"
           # Les contrôles ci-dessus ont VOLONTAIREMENT provoqué des rejets : on
@@ -2596,8 +2888,8 @@ jobs:
           PLAYWRIGHT_JSON_OUTPUT_NAME: report-hors-ligne.json
           # VIDE À DESSEIN : la pile bloquée tourne déjà sur la base semée plus
           # haut. Si `playwright.config.ts` voyait cette variable, il relancerait
-          # `seed-live-pg.py`, qui TERMINE les connexions et SUPPRIME les bases
-          # e2e_% — donc celle de la pile en cours d'épreuve. Playwright réutilise
+          # `seed-live-pg.py` et créerait une autre base, alors que la pile
+          # d'épreuve utilise déjà celle semée ci-dessus. Playwright réutilise
           # les serveurs déjà en écoute (`reuseExistingServer`).
           SEAMTECH_E2E_DATABASE_URL: ""
         run: |
@@ -2854,6 +3146,57 @@ jobs:
               raise SystemExit(f"::error title=extraction::attendu 7 dossiers, trouvé {len(dossiers)}")
           print(f"corpus extrait : {extraits} fichiers, 7 dossiers (répertoire temporaire du runner)")
           PY
+      - name: Diagnostic garde PDF sur le corpus réel (agrégats, sans contenu)
+        # La garde de vue (clips, formes, MediaBox) peut refuser une page. Sur un
+        # corpus réel, un refus massif rendrait le produit inutilisable : cette
+        # étape publie des AGRÉGATS (nombre de pages, nombre de refus, motifs
+        # génériques issus du code) — jamais un extrait, un nom de fichier ou un
+        # contenu de document. C'est le seul canal lisible via l'API quand
+        # l'hôte des journaux est injoignable.
+        env:
+          SEAMTECH_RECETTE_CORPUS_RACINE: ${{ runner.temp }}/corpus-recette
+        run: |
+          python - <<'PY'
+          import collections
+          import os
+          import traceback
+          from pathlib import Path
+
+          racine = Path(os.environ["SEAMTECH_RECETTE_CORPUS_RACINE"])
+          motifs = collections.Counter()
+          pages = 0
+          refuses = 0
+          fichiers = 0
+          try:
+              import pdfplumber
+
+              from seamtech_search.pdf_vue_graphique import verifier_vue_graphique
+
+              for pdf in sorted(racine.rglob("*.pdf")):
+                  fichiers += 1
+                  try:
+                      with pdfplumber.open(pdf) as doc:
+                          for page in doc.pages:
+                              pages += 1
+                              try:
+                                  verifier_vue_graphique(page)
+                              except Exception as erreur:
+                                  refuses += 1
+                                  motifs[str(erreur).split(" (")[0][:80]] += 1
+                  except Exception:
+                      motifs["ouverture_illisible"] += 1
+          except Exception:
+              traceback.print_exc()
+          resume = "; ".join(f"{k}={v}" for k, v in motifs.most_common(8)) or "aucun"
+          message = (
+              f"fichiers={fichiers} pages={pages} refus={refuses} motifs[{resume}]"
+          )
+          # Les annotations sont le seul canal lisible via l'API : notice ET
+          # erreur (la première survit aux étapes réussies).
+          print(f"::notice title=garde-pdf-corpus::{message}")
+          print(f"::error title=garde-pdf-corpus::{message}")
+          print(f"garde-pdf-corpus {message}")
+          PY
       - name: Run full recette suite (fails explicitly on any step)
         env:
           SEAMTECH_RECETTE_CORPUS_RACINE: ${{ runner.temp }}/corpus-recette
@@ -3027,7 +3370,37 @@ jobs:
     # Lot M — 9e job (les 8 existants restent SANS OCR) : pipeline OCR par étages
     # sur échantillons commités, avec tesseract local, publication compte rendu
     # et qualité en annotations, plus garde ROUGE→VERT sabotage forcer True.
+    #
+    # PostgreSQL + Redis sont déclarés ici depuis la remédiation du 01/11 :
+    # sans eux, les deux tests du parcours navigateur (dépôt → OCR → recherche
+    # → téléchargement) sautaient dans CE job, donc le parcours prioritaire
+    # n'était exécuté nulle part en CI. Un saut n'est pas un test.
     runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: seamtech
+          POSTGRES_PASSWORD: seamtech_test_password
+          POSTGRES_DB: seamtech_search_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      SEAMTECH_TEST_DATABASE_URL: postgresql://seamtech:seamtech_test_password@localhost:5432/seamtech_search_test
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -3044,13 +3417,69 @@ jobs:
           tesseract --version
           tesseract --list-langs
           pdftoppm -v 2>&1 | head -5 || true
+      - name: Moteur OCR résolu (diagnostic)
+        # Le produit utilise RapidOCR (modèles groupés dans la roue) quand il
+        # est installé, sinon Tesseract. Afficher le moteur élu et la preuve
+        # qu'aucun modèle n'est distant : sinon un « vert » pourrait venir d'un
+        # moteur qu'on croit absent.
+        run: |
+          python - << 'PY'
+          from seamtech_search.ocr import moteur
+          choix = moteur.choisir_moteur("tesseract")
+          print(f"::notice title=ocr-moteur::demande={moteur.moteur_demande()} "
+                f"rapidocr_installable={moteur._rapidocr_installable()} "
+                f"elu={type(choix).__name__ if choix else 'aucun'}")
+          if choix is None:
+              raise SystemExit("aucun moteur OCR installé dans le job ocr — "
+                               "RapidOCR (requirements.txt) ou tesseract-ocr sont requis")
+          if hasattr(choix, "version"):
+              print(f"version={choix.version}")
+          PY
       - name: Run OCR suite on committed samples
+        env:
+          # Un test de reconnaissance ne doit jamais SAUTER faute de moteur :
+          # en CI les deux moteurs sont installés.
+          SEAMTECH_OCR_OBLIGATOIRE: "1"
         run: |
           set -uo pipefail
           set +e
-          pytest -m ocr_suite -v 2>&1 | tee /tmp/ocr.log
+          pytest -m ocr_suite -v -rs 2>&1 | tee /tmp/ocr.log
           rc=${PIPESTATUS[0]}
           set -e
+          # GARDE-FOU : aucun test ne doit être sauté parce qu'un moteur OCR
+          # est absent — ce serait un vert par absence de preuve.
+          #
+          # Le motif seul est examiné, jamais le nom du fichier : la ligne
+          # « tests/test_scan_browser_upload_ocr.py:51: SEAMTECH_TEST_DATABASE_URL
+          # manquant » contient « ocr » par le NOM DU FICHIER alors que le saut
+          # vient de l'absence de PostgreSQL. Une grep naïve sur toute la ligne
+          # faisait donc échouer ce job pour un saut qui n'a rien à voir avec
+          # un moteur (et masquait le vrai sujet : le parcours navigateur
+          # n'était pas exécuté). Le motif est isolé en retirant le préfixe
+          # « SKIPPED [n] fichier:ligne: ».
+          motifs_sauts=$(grep -E "^SKIPPED" /tmp/ocr.log \
+            | sed -E 's/^SKIPPED \[[0-9]+\] //; s/^[^ ]+:[0-9]+: //' || true)
+          if echo "$motifs_sauts" | grep -qiE "tesseract|moteur (ocr )?(absent|indisponible)|faute de moteur"; then
+            echo "::error title=ocr-moteur-absent::des tests OCR ont été sautés faute de moteur :"
+            echo "$motifs_sauts" | grep -iE "tesseract|moteur (ocr )?(absent|indisponible)|faute de moteur" | head -20
+            exit 1
+          fi
+          # Garde-fou d'obsolescence : un saut motivé par un outil de RENDU
+          # (pdftoppm/poppler) n'a plus lieu d'être — le rendu est interne au
+          # produit. Un tel saut ferait du parcours navigateur un test fantôme.
+          if echo "$motifs_sauts" | grep -qiE "pdftoppm|poppler|rendu"; then
+            echo "::error title=ocr-rendu-absent::parcours OCR sauté faute d'outil de rendu — le rendu est interne, la condition de saut est obsolète"
+            echo "$motifs_sauts" | grep -iE "pdftoppm|poppler|rendu" | head -10
+            exit 1
+          fi
+          # Second garde-fou, distinct et explicite : le parcours navigateur
+          # (dépôt → OCR → recherche → téléchargement) exige PostgreSQL. S'il
+          # saute faute de base, le job échoue AU LIEU de publier un vert.
+          if grep -E "^SKIPPED" /tmp/ocr.log | grep -q "SEAMTECH_TEST_DATABASE_URL manquant"; then
+            echo "::error title=ocr-pg-absent::parcours navigateur OCR sauté faute de PostgreSQL — service du job ocr absent ou non démarré"
+            grep -E "^SKIPPED" /tmp/ocr.log | grep "SEAMTECH_TEST_DATABASE_URL manquant" | head -10
+            exit 1
+          fi
           # Publie qualité et compte rendu même en cas d'échec partiel
           python - << 'PY'
           import json
@@ -3140,8 +3569,8 @@ jobs:
               print(f"::warning title=ocr-compte-rendu-erreur::compte rendu a échoué: {exc}")
           PY
           if [ "$rc" -ne 0 ]; then
-            echo "::error title=ocr-suite-failed::$(grep -E '^(FAILED|ERROR)' /tmp/ocr.log | head -20 | tr -d '\000-\010\013\014\016-\\037' | tr '\n' ';' | head -c 1800)"
-            echo "::error title=ocr-suite-tail::$(tail -40 /tmp/ocr.log | tr -d '\000-\010\013\014\016-\\037' | tr '\n' ';' | head -c 1800)"
+            echo "::error title=ocr-suite-failed::$(grep -E '^(FAILED|ERROR)' /tmp/ocr.log | head -20 | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 1800)"
+            echo "::error title=ocr-suite-tail::$(tail -40 /tmp/ocr.log | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 1800)"
             exit "$rc"
           fi
       - name: Garde-fou OCR étage 3 — ROUGE puis VERT
@@ -3181,9 +3610,9 @@ jobs:
           rc_vert=${PIPESTATUS[0]}
           set -e
           echo "rc_vert=$rc_vert"
-          echo "::error title=garde-fou-ocr-rouge::$(grep -E 'FAILED|AssertionError|assert|ne doit PAS' /tmp/ocr_rouge.log | head -20 | tr -d '\000-\010\013\014\016-\\037' | tr '\n' ';' | head -c 1800)"
-          echo "::notice title=garde-fou-ocr-vert::$(tail -20 /tmp/ocr_vert.log | tr -d '\000-\010\013\014\016-\\037' | tr '\n' ';' | head -c 1800)"
-          echo "::notice title=garde-fou-ocr-rouge-tail::$(tail -40 /tmp/ocr_rouge.log | tr -d '\000-\010\013\014\016-\\037' | tr '\n' ';' | head -c 1800)"
+          echo "::error title=garde-fou-ocr-rouge::$(grep -E 'FAILED|AssertionError|assert|ne doit PAS' /tmp/ocr_rouge.log | head -20 | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 1800)"
+          echo "::notice title=garde-fou-ocr-vert::$(tail -20 /tmp/ocr_vert.log | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 1800)"
+          echo "::notice title=garde-fou-ocr-rouge-tail::$(tail -40 /tmp/ocr_rouge.log | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 1800)"
           if [ "$rc_rouge" -eq 0 ]; then
             echo "::error title=garde-fou-ocr-echec::Le test aurait dû ROUGIR avec doit_oceriser_page forcé à True (OCR partout), mais il est resté VERT"
             exit 1

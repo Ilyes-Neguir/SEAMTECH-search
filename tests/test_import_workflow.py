@@ -7,9 +7,11 @@ all exercised against actual files — not mocks.
 
 from __future__ import annotations
 
+import hashlib
 import io
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from seamtech_search import anchors as shared_anchors
@@ -386,3 +388,955 @@ def test_api_upload_rejects_path_escape(tmp_path: Path) -> None:
 
     assert ".." not in str(_safe_relative_path("../../etc/passwd"))
     assert str(_safe_relative_path("a//b.pdf")) == str(Path("a/b.pdf"))
+
+
+@pytest.mark.parametrize('forme', ['absolute', 'relative', 'symlink'])
+def test_import_refuse_excel_choisi_hors_dossier_avant_lecture(tmp_path: Path, monkeypatch, forme):
+    import seamtech_search.import_pipeline as pipeline
+
+    root = tmp_path / 'roots'
+    source = root / 'source'
+    source.mkdir(parents=True)
+    hors = tmp_path / 'externe.xlsx'
+    hors.write_bytes(b'donnees synthetiques')
+    config = make_config(tmp_path, root)
+    index = SearchIndex(config.database_path)
+    index.initialize(rebuild=True)
+    lectures = []
+    monkeypatch.setattr(pipeline, 'extract_excel_summary', lambda path: lectures.append(path))
+    if forme == 'absolute':
+        choisi = hors
+    elif forme == 'relative':
+        choisi = Path('../../externe.xlsx')
+    else:
+        choisi = source / 'lien.xlsx'
+        choisi.symlink_to(hors)
+    with pytest.raises(ValueError, match='outside the scanned folder'):
+        pipeline.import_folder(source, config, index, selected_excel=choisi)
+    assert lectures == []
+
+
+@pytest.mark.parametrize('mode', ['scan', 'import'])
+@pytest.mark.parametrize('extension', ['.pdf', '.xlsx', '.txt'])
+def test_import_refuse_fichier_lie_vers_exterieur_avant_lecture(tmp_path: Path, monkeypatch, mode, extension):
+    import seamtech_search.import_pipeline as pipeline
+
+    root = tmp_path / 'roots'
+    source = root / 'source'
+    source.mkdir(parents=True)
+    hors = tmp_path / ('externe' + extension)
+    hors.write_bytes(b'donnees synthetiques')
+    (source / ('lien' + extension)).symlink_to(hors)
+    config = make_config(tmp_path, root)
+    index = SearchIndex(config.database_path)
+    index.initialize(rebuild=True)
+    lectures = []
+    monkeypatch.setattr(pipeline, 'extract_structured_pdf', lambda path, cfg: lectures.append(path))
+    monkeypatch.setattr(pipeline, 'extract_excel_summary', lambda path: lectures.append(path))
+    with pytest.raises(ValueError, match='outside the scanned folder'):
+        if mode == 'scan':
+            pipeline.scan_folder(source, config)
+        else:
+            pipeline.import_folder(source, config, index)
+    assert lectures == []
+
+
+@pytest.mark.parametrize('cible', ['interne', 'repertoire', 'absente'])
+def test_scan_refuse_liens_symboliques_meme_non_externes(tmp_path: Path, cible):
+    root = tmp_path / 'roots'
+    source = root / 'source'
+    source.mkdir(parents=True)
+    cible_path = source / 'cible'
+    if cible == 'interne':
+        cible_path.write_text('texte synthetique')
+    elif cible == 'repertoire':
+        cible_path.mkdir()
+    (source / 'lien').symlink_to(cible_path, target_is_directory=cible == 'repertoire')
+    config = make_config(tmp_path, root)
+    with pytest.raises(ValueError, match='Symbolic link'):
+        scan_folder(source, config)
+
+
+def test_import_refuse_excel_choisi_absent(tmp_path: Path):
+    root = tmp_path / 'roots'
+    source = root / 'source'
+    source.mkdir(parents=True)
+    config = make_config(tmp_path, root)
+    index = SearchIndex(config.database_path)
+    index.initialize(rebuild=True)
+    with pytest.raises(ValueError, match='Selected Excel file does not exist'):
+        import_folder(source, config, index, selected_excel='absent.xlsx')
+
+
+def test_scan_ne_lit_jamais_lien_substitue_apres_inventaire(tmp_path: Path, monkeypatch):
+    import seamtech_search.import_pipeline as pipeline
+
+    root = tmp_path / 'roots'
+    source = root / 'source'
+    source.mkdir(parents=True)
+    entree = source / 'entree.pdf'
+    entree.write_bytes(b'original synthetique')
+    hors = tmp_path / 'externe.pdf'
+    hors.write_bytes(b'externe synthetique')
+    config = make_config(tmp_path, root)
+    lecture = []
+    inventaire = pipeline._inventaire_scan_confine
+
+    def substituer(fd, repertoire):
+        fichiers = inventaire(fd, repertoire)
+        entree.unlink()
+        entree.symlink_to(hors)
+        return fichiers
+
+    def extraire(chemin, _config):
+        lecture.append(chemin.read_bytes())
+        return pipeline.ExtractedData(raw_text='', extraction_status='failed')
+
+    monkeypatch.setattr(pipeline, '_inventaire_scan_confine', substituer)
+    monkeypatch.setattr(pipeline, 'extract_structured_pdf', extraire)
+    try:
+        scan_folder(source, config)
+    except (ValueError, OSError):
+        pass
+    assert b'externe synthetique' not in lecture
+
+
+def test_api_refuse_excel_externe_sans_le_lire(tmp_path: Path, monkeypatch):
+    root = tmp_path / 'roots'
+    source = root / 'source'
+    source.mkdir(parents=True)
+    externe = tmp_path / 'externe.xlsx'
+    externe.write_bytes(b'donnees synthetiques')
+    client = _client(tmp_path, root)
+    lectures = []
+    monkeypatch.setattr(import_pipeline, 'extract_excel_summary', lambda path: lectures.append(path))
+    reponse = client.post('/imports?wait=true', json={'source_path': str(source), 'excel_file': str(externe)})
+    assert reponse.status_code == 400
+    assert lectures == []
+
+
+def test_api_scan_refuse_lien_externe_sans_le_lire(tmp_path: Path, monkeypatch):
+    root = tmp_path / 'roots'
+    source = root / 'source'
+    source.mkdir(parents=True)
+    externe = tmp_path / 'externe.pdf'
+    externe.write_bytes(b'donnees synthetiques')
+    (source / 'lien.pdf').symlink_to(externe)
+    client = _client(tmp_path, root)
+    lectures = []
+    monkeypatch.setattr(import_pipeline, 'extract_structured_pdf', lambda *args: lectures.append(args))
+    reponse = client.post('/imports/scan', json={'source_path': str(source)})
+    assert reponse.status_code == 400
+    assert lectures == []
+
+
+@pytest.mark.parametrize('extension', ['.pdf', '.xlsx'])
+@pytest.mark.parametrize('cible', ['fichier', 'repertoire'])
+def test_scan_refuse_substitution_concurrente_sans_lire_exterieur(tmp_path, monkeypatch, extension, cible):
+    import seamtech_search.import_pipeline as pipeline
+
+    root = tmp_path / 'roots'
+    source = root / 'source'
+    repertoire = source / 'sous'
+    repertoire.mkdir(parents=True)
+    entree = repertoire / ('document' + extension)
+    entree.write_bytes(b'original synthetique')
+    hors = tmp_path / 'exterieur'
+    hors.mkdir()
+    (hors / entree.name).write_bytes(b'exterieur synthetique')
+    inventaire = pipeline._inventaire_scan_confine
+    lectures = []
+
+    def substituer(fd, repertoire_source):
+        fichiers = inventaire(fd, repertoire_source)
+        if cible == 'fichier':
+            entree.unlink()
+            entree.symlink_to(hors / entree.name)
+        else:
+            repertoire.rename(source / 'ancien')
+            repertoire.symlink_to(hors, target_is_directory=True)
+        return fichiers
+
+    def extraire_pdf(chemin, _config):
+        lectures.append(chemin.read_bytes())
+        return pipeline.ExtractedData(raw_text='', extraction_status='failed')
+
+    def extraire_excel(chemin):
+        lectures.append(chemin.read_bytes())
+        return pipeline.ExcelSummary(filename=chemin.name, path=str(chemin))
+
+    monkeypatch.setattr(pipeline, '_inventaire_scan_confine', substituer)
+    monkeypatch.setattr(pipeline, 'extract_structured_pdf', extraire_pdf)
+    monkeypatch.setattr(pipeline, 'extract_excel_summary', extraire_excel)
+    try:
+        pipeline.scan_folder(source, make_config(tmp_path, root))
+    except (ValueError, OSError):
+        pass
+    assert b'exterieur synthetique' not in lectures
+
+
+@pytest.mark.parametrize('extension', ['.pdf', '.xlsx'])
+def test_scan_refuse_copie_au_dela_de_la_limite(tmp_path, monkeypatch, extension):
+    root = tmp_path / 'roots'
+    root.mkdir()
+    (root / ('document' + extension)).write_bytes(b'x' * 11)
+    config = make_config(tmp_path, root).model_copy(update={'max_file_size_bytes': 10})
+    lectures = []
+    monkeypatch.setattr(import_pipeline, 'extract_structured_pdf', lambda *args: lectures.append('pdf'))
+    monkeypatch.setattr(import_pipeline, 'extract_excel_summary', lambda *args: lectures.append('excel'))
+    with pytest.raises(ValueError, match='size limit'):
+        scan_folder(root, config)
+    assert not lectures
+
+
+def test_import_ne_lit_jamais_lien_substitue_apres_inventaire(tmp_path, monkeypatch):
+    root = tmp_path / 'roots'
+    source = root / 'source'
+    source.mkdir(parents=True)
+    entree = source / 'entree.pdf'
+    entree.write_bytes(b'original synthetique')
+    hors = tmp_path / 'externe.pdf'
+    hors.write_bytes(b'externe synthetique')
+    config = make_config(tmp_path, root)
+    index = SearchIndex(config.database_path)
+    index.initialize(rebuild=True)
+    inventaire = import_pipeline._inventaire_scan_confine
+    lectures = []
+    substitutions = []
+
+    def substituer(fd, repertoire):
+        fichiers = inventaire(fd, repertoire)
+        entree.unlink()
+        entree.symlink_to(hors)
+        substitutions.append(True)
+        return fichiers
+
+    def extraire(chemin, _config):
+        lectures.append(chemin.read_bytes())
+        return import_pipeline.ExtractedData(raw_text='', extraction_status='failed')
+
+    monkeypatch.setattr(import_pipeline, '_inventaire_scan_confine', substituer)
+    monkeypatch.setattr(import_pipeline, 'extract_structured_pdf', extraire)
+    try:
+        import_folder(source, config, index)
+    except (ValueError, OSError):
+        pass
+    assert substitutions and b'externe synthetique' not in lectures
+
+
+@pytest.mark.parametrize('mode', ['scan', 'upload'])
+def test_api_scan_erreur_os_expurgee_et_nettoie_le_depot(tmp_path, monkeypatch, mode):
+    import seamtech_search.api as api
+
+    root = tmp_path / 'roots'
+    root.mkdir()
+    client = _client(tmp_path, root)
+    secret = 'CHEMIN-SYNTHETIQUE-SECRET'
+
+    def echec(*args):
+        raise OSError(secret)
+
+    monkeypatch.setattr(api, 'scan_folder', echec)
+    if mode == 'scan':
+        reponse = client.post('/imports/scan', json={'source_path': str(root)})
+    else:
+        reponse = client.post('/imports/upload', files=[('files', ('doc.pdf', b'fake', 'application/pdf'))])
+    assert reponse.status_code == 409
+    assert secret not in reponse.text
+    if mode == 'upload':
+        assert not list(import_pipeline.staging_root(make_config(tmp_path, root)).glob('*'))
+
+
+@pytest.mark.parametrize('mode', ['scan', 'upload'])
+def test_api_scan_permission_os_n_expose_pas_chemin(tmp_path, monkeypatch, mode):
+    import seamtech_search.api as api
+
+    root = tmp_path / 'roots'
+    root.mkdir()
+    client = _client(tmp_path, root)
+    secret = 'CHEMIN-SYNTHETIQUE-SECRET'
+
+    def echec(*args):
+        raise PermissionError(secret)
+
+    monkeypatch.setattr(api, 'scan_folder', echec)
+    if mode == 'scan':
+        reponse = client.post('/imports/scan', json={'source_path': str(root)})
+        assert reponse.status_code == 403
+    else:
+        reponse = client.post('/imports/upload', files=[('files', ('doc.pdf', b'fake', 'application/pdf'))])
+        assert reponse.status_code == 400
+        assert not list(import_pipeline.staging_root(make_config(tmp_path, root)).glob('*'))
+    assert secret not in reponse.text
+
+
+def test_scan_refuse_modification_pendant_copie_et_supprime_temporaire(tmp_path, monkeypatch):
+    import os
+    from types import SimpleNamespace
+
+    root = tmp_path / 'roots'
+    root.mkdir()
+    (root / 'document.pdf').write_bytes(b'donnees synthetiques')
+    temporaire = tmp_path / 'temp'
+    temporaire.mkdir()
+    monkeypatch.setattr(import_pipeline.tempfile, 'tempdir', str(temporaire))
+    vrai_fstat = os.fstat
+    comptage = 0
+
+    def fstat_modifie(fd):
+        nonlocal comptage
+        resultat = vrai_fstat(fd)
+        comptage += 1
+        if comptage == 2:
+            return SimpleNamespace(st_size=resultat.st_size, st_mtime_ns=resultat.st_mtime_ns + 1, st_ctime_ns=resultat.st_ctime_ns, st_nlink=resultat.st_nlink)
+        return resultat
+
+    monkeypatch.setattr(import_pipeline.os, 'fstat', fstat_modifie)
+    with pytest.raises(ValueError, match='changed during scanning'):
+        scan_folder(root, make_config(tmp_path, root))
+    assert not list(temporaire.iterdir())
+
+
+def test_scan_refuse_lien_physique_vers_exterieur(tmp_path, monkeypatch):
+    import os
+
+    root = tmp_path / 'roots'
+    root.mkdir()
+    externe = tmp_path / 'externe.pdf'
+    externe.write_bytes(b'EXTERIEUR SYNTHETIQUE')
+    os.link(externe, root / 'document.pdf')
+    lectures = []
+    monkeypatch.setattr(import_pipeline, 'extract_structured_pdf', lambda path, config: lectures.append(path.read_bytes()))
+    with pytest.raises(ValueError, match='hard link'):
+        scan_folder(root, make_config(tmp_path, root))
+    assert not lectures
+
+
+def test_scan_inventorie_sans_parcourir_chemins_non_epingles(tmp_path, monkeypatch):
+    root = tmp_path / 'roots'
+    repertoire = root / 'source'
+    repertoire.mkdir(parents=True)
+    (repertoire / 'notes.txt').write_text('synthetique')
+
+    def inventaire_par_chemin_interdit(*args):
+        raise AssertionError('inventaire par chemin non épinglé')
+
+    monkeypatch.setattr(import_pipeline, '_walk_files', inventaire_par_chemin_interdit)
+    resultat = scan_folder(repertoire, make_config(tmp_path, root))
+    assert resultat['files_detected'] == 1
+
+
+def test_scan_ne_parcourt_pas_repertoire_substitue_pendant_inventaire(tmp_path, monkeypatch):
+    import os
+
+    root = tmp_path / 'roots'
+    source = root / 'source'
+    interieur = source / 'sous'
+    interieur.mkdir(parents=True)
+    (interieur / 'document.pdf').write_bytes(b'interieur synthetique')
+    exterieur = tmp_path / 'exterieur'
+    exterieur.mkdir()
+    (exterieur / 'document.pdf').write_bytes(b'exterieur synthetique')
+    ouverture = os.open
+    effectue = []
+
+    def substituer_avant_open(path, flags, *args, **kwargs):
+        if path == 'sous' and not effectue:
+            effectue.append(True)
+            interieur.rename(source / 'ancien')
+            interieur.symlink_to(exterieur, target_is_directory=True)
+        return ouverture(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(import_pipeline.os, 'open', substituer_avant_open)
+    # La vérification de capacité ne doit pas être faussée par le remplacement
+    # du callable os.open pour injecter la course.
+    monkeypatch.setattr(import_pipeline.os, 'supports_dir_fd', os.supports_dir_fd | {substituer_avant_open})
+    lectures = []
+    monkeypatch.setattr(import_pipeline, 'extract_structured_pdf', lambda p, c: lectures.append(p.read_bytes()))
+    with pytest.raises(OSError):
+        scan_folder(source, make_config(tmp_path, root))
+    assert effectue and not lectures
+
+
+def test_import_ne_televerse_pas_source_substituee_apres_extraction(tmp_path, monkeypatch):
+    root = tmp_path / 'roots'
+    source = root / 'source'
+    source.mkdir(parents=True)
+    document = source / 'document.pdf'
+    document.write_bytes(b'original synthetique')
+    externe = tmp_path / 'externe.pdf'
+    externe.write_bytes(b'exterieur synthetique')
+    config = make_config(tmp_path, root)
+    index = SearchIndex(config.database_path)
+    index.initialize(rebuild=True)
+    monkeypatch.setattr(import_pipeline, 'extract_structured_pdf', lambda p, c: import_pipeline.ExtractedData(
+        raw_text='FICHE DE FABRICATION\nReference: SYNTHESE\nMaterial: TEST\nQuantity: 1', extraction_status='partial'
+    ))
+    envois = []
+
+    def televerser(**kwargs):
+        envois.extend(Path(p).read_bytes() for p in kwargs['files_to_upload'] if p)
+        return import_pipeline.UploadBatch(status='not_configured')
+
+    def progres(phase, _pourcentage):
+        if phase == 'uploading':
+            document.unlink()
+            document.symlink_to(externe)
+
+    monkeypatch.setattr(import_pipeline, 'upload_artifacts_to_storage', televerser)
+    try:
+        import_folder(source, config, index, progress_callback=progres)
+    except (OSError, ValueError):
+        pass
+    assert b'original synthetique' in envois
+    assert b'exterieur synthetique' not in envois
+
+
+def test_scan_racine_deplacee_reste_ancree_sans_lire_exterieur(tmp_path, monkeypatch):
+    root = tmp_path / 'roots'
+    source = root / 'source'
+    source.mkdir(parents=True)
+    (source / 'document.pdf').write_bytes(b'interieur synthetique')
+    exterieur = tmp_path / 'exterieur'
+    exterieur.mkdir()
+    (exterieur / 'document.pdf').write_bytes(b'exterieur synthetique')
+    inventaire = import_pipeline._inventaire_scan_confine
+    lectures = []
+
+    def remplacer_racine(fd, chemin):
+        source.rename(root / 'ancien')
+        source.symlink_to(exterieur, target_is_directory=True)
+        return inventaire(fd, chemin)
+
+    def extraire(chemin, config):
+        lectures.append(chemin.read_bytes())
+        return import_pipeline.ExtractedData(raw_text='', extraction_status='failed')
+
+    monkeypatch.setattr(import_pipeline, '_inventaire_scan_confine', remplacer_racine)
+    monkeypatch.setattr(import_pipeline, 'extract_structured_pdf', extraire)
+    scan_folder(source, make_config(tmp_path, root))
+    assert lectures == [b'interieur synthetique']
+
+
+def test_api_reprise_refuse_generation_interrompue_et_correction_recupere(tmp_path: Path, monkeypatch) -> None:
+    root = tmp_path / 'roots'
+    source = make_source(tmp_path)
+    client = _client(tmp_path, root)
+    created = client.post('/imports?wait=true', json={'source_path': str(source)}).json()
+    identifiant = created['import_id']
+    original = import_pipeline.generate_report
+
+    def generation_interrompue(_data, chemin, **_kwargs):
+        chemin.write_bytes(b'rapport-tronque')
+        raise OSError('panne synthetique')
+
+    monkeypatch.setattr(import_pipeline, 'generate_report', generation_interrompue)
+    with pytest.raises(OSError):
+        client.patch(f'/imports/{identifiant}', json={'reference': 'CORRECTION-SYNTHETIQUE'})
+    from unittest.mock import patch
+
+    from seamtech_search.redis_store import RedisStore
+
+    with patch.object(RedisStore, 'is_configured', return_value=True), \
+         patch.object(RedisStore, 'get_job', return_value={
+             'id': identifiant, 'status': 'running', 'result': {'all_verified': True}
+         }):
+        etat = client.get(f'/imports/{identifiant}').json()
+    assert etat['all_verified'] is False and etat['report_generation_pending'] is True
+    assert etat['result']['all_verified'] is False
+    response = client.post(f'/imports/{identifiant}/retry-upload')
+    assert response.status_code == 409
+    assert 'inachevée' in response.json()['detail']
+    assert client.get(f'/imports/{identifiant}/artifacts/report_pdf').status_code == 409
+    assert client.get(f'/imports/{identifiant}/artifacts/report_docx').status_code == 409
+    monkeypatch.setattr(import_pipeline, 'generate_report', original)
+    corrige = client.patch(f'/imports/{identifiant}', json={'reference': 'CORRECTION-SYNTHETIQUE'})
+    assert corrige.status_code == 200
+    assert corrige.json()['report_generation_pending'] is False
+    assert client.post(f'/imports/{identifiant}/retry-upload').status_code == 200
+
+
+def test_artifact_refuse_substitution_du_fichier_entre_controle_et_ouverture(tmp_path: Path, monkeypatch) -> None:
+    from seamtech_search import api
+
+    root = tmp_path / 'roots'
+    source = make_source(tmp_path)
+    client = _client(tmp_path, root)
+    created = client.post('/imports?wait=true', json={'source_path': str(source)}).json()
+    original = Path(created['technical_pdf'])
+    secret = tmp_path / 'hors-racine' / 'confidentiel'
+    secret.parent.mkdir()
+    secret.write_bytes(b'SECRET-SYNTHETIQUE-HORS-RACINE')
+    octets_initiaux = original.read_bytes()
+    ouverture_originale = api._ouvrir_artefact_confine
+    def substituer(*args, **kwargs):
+        fd = ouverture_originale(*args, **kwargs)
+        original.unlink()
+        original.symlink_to(secret)
+        return fd
+    monkeypatch.setattr(api, '_ouvrir_artefact_confine', substituer)
+    response = client.get(f"/imports/{created['import_id']}/artifacts/source_pdf")
+    assert response.status_code == 200
+    assert response.content == octets_initiaux
+    assert b'SECRET-SYNTHETIQUE-HORS-RACINE' not in response.content
+
+
+def test_artifact_local_conserve_plages_et_ferme_descripteur(tmp_path: Path, monkeypatch) -> None:
+    import os
+
+    from seamtech_search import api
+
+    root = tmp_path / 'roots'
+    source = make_source(tmp_path)
+    client = _client(tmp_path, root)
+    created = client.post('/imports?wait=true', json={'source_path': str(source)}).json()
+    original = Path(created['technical_pdf']).read_bytes()
+    ouvrir = api._ouvrir_artefact_confine
+    descripteurs = []
+    def noter(*args, **kwargs):
+        fd = ouvrir(*args, **kwargs)
+        descripteurs.append(fd)
+        return fd
+    monkeypatch.setattr(api, '_ouvrir_artefact_confine', noter)
+    response = client.get(f"/imports/{created['import_id']}/artifacts/source_pdf", headers={'Range': 'bytes=0-9'})
+    assert response.status_code == 206 and response.content == original[:10]
+    assert response.headers['content-range'] == f'bytes 0-9/{len(original)}'
+    assert len(descripteurs) == 1
+    with pytest.raises(OSError):
+        os.fstat(descripteurs[0])
+
+
+@pytest.mark.parametrize('type_lien', ['symbolique', 'physique'])
+def test_artifact_refuse_lien_local_vers_fichier_hors_racine(tmp_path: Path, type_lien: str) -> None:
+    import os
+
+    root = tmp_path / 'roots'
+    source = make_source(tmp_path)
+    client = _client(tmp_path, root)
+    created = client.post('/imports?wait=true', json={'source_path': str(source)}).json()
+    original = Path(created['technical_pdf'])
+    secret = tmp_path / 'hors-racine' / 'confidentiel'
+    secret.parent.mkdir()
+    secret.write_bytes(b'SECRET-SYNTHETIQUE-HORS-RACINE')
+    original.unlink()
+    if type_lien == 'symbolique':
+        original.symlink_to(secret)
+    else:
+        os.link(secret, original)
+    response = client.get(f"/imports/{created['import_id']}/artifacts/source_pdf")
+    assert response.status_code == 404
+    assert b'SECRET-SYNTHETIQUE-HORS-RACINE' not in response.content
+
+
+def test_open_local_refuse_substitution_apres_controle(tmp_path: Path, monkeypatch) -> None:
+    from seamtech_search import api
+
+    root = tmp_path / 'roots'
+    source = make_source(tmp_path)
+    fichier = source / 'notes.txt'
+    originaux = fichier.read_bytes()
+    secret = tmp_path / 'hors-racine' / 'confidentiel'
+    secret.parent.mkdir()
+    secret.write_bytes(b'SECRET-SYNTHETIQUE-HORS-RACINE')
+    client = _client(tmp_path, root)
+    ouvrir = api._ouvrir_artefact_confine
+    appels = []
+    def substituer(*args, **kwargs):
+        fd = ouvrir(*args, **kwargs)
+        appels.append(fd)
+        fichier.unlink()
+        fichier.symlink_to(secret)
+        return fd
+    monkeypatch.setattr(api, '_ouvrir_artefact_confine', substituer)
+    reponse = client.post('/open', params={'path': str(fichier)})
+    assert appels and reponse.status_code == 200 and reponse.content == originaux
+
+
+def test_source_en_quarantaine_reste_telechargeable(tmp_path: Path) -> None:
+    import shutil
+
+    from seamtech_search.import_pipeline import get_import, quarantine_root, update_import
+    from seamtech_search.worker import relocaliser_references
+
+    root = tmp_path / 'roots'
+    source = make_source(tmp_path)
+    client = _client(tmp_path, root)
+    created = client.post('/imports?wait=true', json={'source_path': str(source)}).json()
+    identifiant = created['import_id']
+    config = make_config(tmp_path, root)
+    index = SearchIndex(config.database_path)
+    payload = get_import(index, identifiant)
+    original = Path(payload['technical_pdf']).read_bytes()
+    destination = quarantine_root(config) / 'depot-synthetique'
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(source), str(destination))
+    relocaliser_references(payload, source, destination)
+    update_import(index, identifiant, payload['status'], payload)
+    index.close()
+    reponse = client.get(f'/imports/{identifiant}/artifacts/source_pdf')
+    assert reponse.status_code == 200 and reponse.content == original
+
+
+def test_import_echoue_ne_publie_pas_cle_objet_non_verifiee(tmp_path: Path, monkeypatch) -> None:
+    from seamtech_search.storage import UploadBatch, UploadedArtifact
+
+    root = tmp_path / 'roots'
+    source = make_source(tmp_path)
+    config = make_config(tmp_path, root)
+    index = SearchIndex(config.database_path)
+    index.initialize(rebuild=True)
+    def echec(**kwargs):
+        return UploadBatch('failed', [UploadedArtifact(str(f), Path(f).name,
+                           key='cle-ambigue', bucket='bucket-synthetique', status='failed', verified=False)
+                           for f in kwargs['files_to_upload'] if f])
+    monkeypatch.setattr(import_pipeline, 'upload_artifacts_to_storage', echec)
+    result = import_folder(source, config, index, import_id='test-echec')
+    assert all(f.object_key is None and f.object_bucket is None for f in result.files)
+    with index.connect() as connexion:
+        lignes = connexion.execute('SELECT object_key, object_bucket FROM documents WHERE is_dir = 0').fetchall()
+    assert lignes and all(row['object_key'] is None and row['object_bucket'] is None for row in lignes)
+    index.close()
+
+
+def test_reprise_apres_envoi_partiel_conserve_les_preuves_deja_acquises(tmp_path: Path, monkeypatch) -> None:
+    """Un envoi PARTIEL se complète par ``retry_upload``, jamais par un re-import aveugle.
+
+    Scénaria de l'atelier : un gros dossier part, le réseau coupe — une partie
+    des objets est déjà en stockage et VÉRIFIÉE. La reprise doit :
+
+    1. ne RIEN régénérer (le rapport reste celui de la première passe) ;
+    2. n'envoyer que ce qui manque, sans remplacer les preuves acquises ;
+    3. conserver les documents déjà liés au catalogue (jamais de lien cassé) ;
+    4. aboutir à un transport prouvé — sans pour autant proclamer un succès
+       global, que ni le snapshot ni la liaison ne permettent de revendiquer.
+
+    ``import_folder`` sur un import déjà partiellement préservé reste REFUSÉ :
+    c'est la garde ``test_reimport_partiel_refuse_avant_regeneration_et_nouvel_envoi``.
+    La reprise passe par ``retry_upload`` (le même chemin que le bouton
+    « renvoyer » de l'interface).
+    """
+    from seamtech_search.import_pipeline import retry_upload
+    from seamtech_search.storage import UploadBatch, UploadedArtifact
+
+    root = tmp_path / 'roots'
+    source = make_source(tmp_path)
+    config = make_config(tmp_path, root)
+    index = SearchIndex(config.database_path)
+    index.initialize(rebuild=True)
+    compteur = 0
+    def envoyer(**kwargs):
+        nonlocal compteur
+        compteur += 1
+        arts = []
+        for nombre, f in enumerate(p for p in kwargs['files_to_upload'] if p):
+            # Première passe : seul le premier fichier aboutit (envoi partiel).
+            ok = compteur > 1 or nombre == 0
+            arts.append(UploadedArtifact(str(f), Path(f).name, key=('cle-' + str(nombre)) if ok else None,
+                                         bucket='bucket-synthetique', status='uploaded' if ok else 'failed',
+                                         verified=ok, verification='relecture_sha256' if ok else 'non_verifie',
+                                         sha256=hashlib.sha256(Path(f).read_bytes()).hexdigest() if ok else None))
+        return UploadBatch('partial' if compteur == 1 else 'uploaded', arts)
+    monkeypatch.setattr(import_pipeline, 'upload_artifacts_to_storage', envoyer)
+    premier = import_folder(source, config, index, import_id='test-reprise')
+    assert not premier.all_verified
+    prouvees_avant = {a['path']: a['key'] for a in premier.artifacts if a.get('verified') and a.get('key')}
+    assert prouvees_avant, "le scénario exige au moins un objet déjà prouvé"
+    with index.connect() as connexion:
+        liees_avant = {
+            ligne['path']: ligne['object_key']
+            for ligne in connexion.execute(
+                'SELECT path, object_key FROM documents WHERE is_dir = 0 AND object_key IS NOT NULL'
+            ).fetchall()
+        }
+    rapport = Path(premier.report_path)
+    contenu_rapport = rapport.read_bytes()
+
+    # Une reprise qui régénérerait le rapport casserait la preuve acquise.
+    monkeypatch.setattr(import_pipeline, 'generate_report', lambda *_a, **_k: pytest.fail('rapport régénéré'))
+
+    payload = retry_upload(index, config, 'test-reprise')
+
+    manifeste = {a['path']: a for a in payload['artifacts']}
+    for chemin, cle in prouvees_avant.items():
+        assert manifeste[chemin]['key'] == cle, (
+            f"la preuve acquise de {chemin} a été remplacée : {cle} → {manifeste[chemin].get('key')}"
+        )
+    assert all(a.get('verified') for a in payload['artifacts']), (
+        "la reprise n'a pas complété les envois manquants : "
+        f"{[a['path'] for a in payload['artifacts'] if not a.get('verified')]}"
+    )
+    assert payload['transport_verifie'], "transport non prouvé après une reprise complète"
+    # Le succès GLOBAL reste suspendu : ni snapshot ni liaison transactionnelle.
+    assert not payload['all_verified']
+    assert rapport.read_bytes() == contenu_rapport, "le rapport a été régénéré par la reprise"
+    with index.connect() as connexion:
+        liees_apres = {
+            ligne['path']: ligne['object_key']
+            for ligne in connexion.execute(
+                'SELECT path, object_key FROM documents WHERE is_dir = 0 AND object_key IS NOT NULL'
+            ).fetchall()
+        }
+    for chemin, cle in liees_avant.items():
+        assert liees_apres.get(chemin) == cle, f"lien catalogue perdu ou remplacé pour {chemin}"
+    index.close()
+
+
+def test_reimport_partiel_refuse_avant_regeneration_et_nouvel_envoi(tmp_path: Path, monkeypatch) -> None:
+    from seamtech_search.storage import UploadBatch, UploadedArtifact
+
+    source = make_source(tmp_path)
+    config = make_config(tmp_path, tmp_path / 'roots')
+    index = SearchIndex(config.database_path)
+    index.initialize(rebuild=True)
+    appels = []
+    def envoyer(**kwargs):
+        appels.append(True)
+        arts = []
+        for n, f in enumerate(p for p in kwargs['files_to_upload'] if p):
+            ok = n == 0
+            arts.append(UploadedArtifact(str(f), Path(f).name, key=f'cle-{n}' if ok else None,
+                                         bucket='bucket-synthetique', status='uploaded' if ok else 'failed',
+                                         verified=ok, verification='relecture_sha256' if ok else 'non_verifie',
+                                         sha256=hashlib.sha256(Path(f).read_bytes()).hexdigest() if ok else None))
+        return UploadBatch('partial', arts)
+    monkeypatch.setattr(import_pipeline, 'upload_artifacts_to_storage', envoyer)
+    premier = import_folder(source, config, index, import_id='test-reprise-garde')
+    assert not premier.all_verified
+    assert any(a['verified'] and a.get('sha256') for a in premier.artifacts)
+    assert len(appels) == 1
+    rapport = Path(premier.report_path)
+    avant = rapport.read_bytes()
+    monkeypatch.setattr(import_pipeline, 'generate_report', lambda *_args, **_kw: pytest.fail('rapport écrasé'))
+    with pytest.raises(RuntimeError, match='reprise'):
+        import_folder(source, config, index, import_id='test-reprise-garde')
+    assert len(appels) == 1
+    assert rapport.read_bytes() == avant
+    index.close()
+
+
+@pytest.mark.parametrize('identifiant', ['', '../sortie', '/tmp/ailleurs', '.', 'id/../../sortie', 'x\\y', 'x' * 129])
+def test_import_identifiant_invalide_refuse_avant_generation(tmp_path: Path, identifiant: str, monkeypatch) -> None:
+    source = make_source(tmp_path)
+    config = make_config(tmp_path, tmp_path / 'roots')
+    index = SearchIndex(config.database_path)
+    index.initialize(rebuild=True)
+    monkeypatch.setattr(import_pipeline, 'generate_report', lambda *_args, **_kw: pytest.fail('génération prématurée'))
+    with pytest.raises(ValueError, match="Identifiant d'import invalide"):
+        import_folder(source, config, index, import_id=identifiant)
+    index.close()
+
+
+def test_import_initial_ne_suit_pas_lien_rapport_vers_source(tmp_path: Path) -> None:
+    source = make_source(tmp_path)
+    config = make_config(tmp_path, tmp_path / 'roots')
+    index = SearchIndex(config.database_path)
+    index.initialize(rebuild=True)
+    cible = source / 'piece.txt'
+    cible.write_bytes(b'original-synthetique')
+    dossier = config.database_path.parent / 'reports' / 'test-lien'
+    dossier.mkdir(parents=True)
+    (dossier / 'technical-report.pdf').symlink_to(cible)
+    import_folder(source, config, index, import_id='test-lien')
+    assert cible.read_bytes() == b'original-synthetique'
+    assert not (dossier / 'technical-report.pdf').is_symlink()
+    index.close()
+
+
+def test_import_initial_refuse_racine_rapport_symbolique(tmp_path: Path) -> None:
+    source = make_source(tmp_path)
+    config = make_config(tmp_path, tmp_path / 'roots')
+    index = SearchIndex(config.database_path)
+    index.initialize(rebuild=True)
+    dossier_rapports = config.database_path.parent / 'reports'
+    dossier_rapports.symlink_to(source, target_is_directory=True)
+    with pytest.raises((ValueError, OSError)):
+        import_folder(source, config, index, import_id='test-lien-racine')
+    assert not (source / 'test-lien-racine').exists()
+    index.close()
+
+
+def test_import_refuse_rapport_dans_arbre_source(tmp_path: Path) -> None:
+    source = make_source(tmp_path)
+    config = AppConfig(root_paths=[source], database_path=source / 'db.sqlite')
+    index = SearchIndex(config.database_path)
+    index.initialize(rebuild=True)
+    rapport_source = source / 'reports' / 'id-conflict' / 'technical-report.pdf'
+    rapport_source.parent.mkdir(parents=True)
+    rapport_source.write_bytes(b'original-synthetique')
+    with pytest.raises(ValueError, match='source'):
+        import_folder(source, config, index, import_id='id-conflict')
+    assert rapport_source.read_bytes() == b'original-synthetique'
+    index.close()
+
+
+def test_import_envoie_copie_privee_des_rapports_malgre_substitution_publique(tmp_path: Path, monkeypatch) -> None:
+    from seamtech_search.storage import UploadBatch, UploadedArtifact
+
+    source = make_source(tmp_path)
+    config = make_config(tmp_path, tmp_path / 'roots')
+    index = SearchIndex(config.database_path)
+    index.initialize(rebuild=True)
+    rapports_vus = []
+    def upload(**kwargs):
+        arts = []
+        for fichier in kwargs['files_to_upload']:
+            fichier = Path(fichier)
+            if fichier.name in ('technical-report.pdf', 'technical-report.docx'):
+                contenu_initial = fichier.read_bytes()
+                public = config.database_path.parent / 'reports' / 'test-copie' / fichier.name
+                assert public != fichier
+                public.write_bytes(b'substitution-synthetique')
+                assert fichier.read_bytes() == contenu_initial
+                rapports_vus.append(fichier.name)
+            arts.append(UploadedArtifact(str(fichier), fichier.name, key='cle-' + fichier.name,
+                                         bucket='bucket-synthetique', status='uploaded', verified=True))
+        return UploadBatch('uploaded', arts)
+    monkeypatch.setattr(import_pipeline, 'upload_artifacts_to_storage', upload)
+    result = import_folder(source, config, index, import_id='test-copie')
+    assert sorted(rapports_vus) == ['technical-report.docx', 'technical-report.pdf']
+    assert {a['path'] for a in result.artifacts}.issuperset({result.report_path, result.report_docx_path})
+    assert not any('.correction-' in a['path'] for a in result.artifacts)
+    index.close()
+
+
+def test_reprise_envoi_relie_les_objets_verifies_au_catalogue(tmp_path: Path, monkeypatch) -> None:
+    from seamtech_search.import_pipeline import retry_upload
+    from seamtech_search.storage import UploadBatch, UploadedArtifact
+
+    source = make_source(tmp_path)
+    config = make_config(tmp_path, tmp_path / 'roots')
+    index = SearchIndex(config.database_path)
+    index.initialize(rebuild=True)
+    tentative = 0
+    def upload(**kwargs):
+        nonlocal tentative
+        tentative += 1
+        reussi = tentative > 1
+        return UploadBatch('uploaded' if reussi else 'failed', [
+            UploadedArtifact(str(f), Path(f).name, key=('cle-' + str(i)) if reussi else None, bucket='bucket-synthetique',
+                             status='uploaded' if reussi else 'failed', verified=reussi,
+                             verification='relecture_sha256' if reussi else 'non_verifie', sha256=hashlib.sha256(Path(f).read_bytes()).hexdigest() if reussi else None)
+            for i, f in enumerate(kwargs['files_to_upload']) if f
+        ])
+    monkeypatch.setattr(import_pipeline, 'upload_artifacts_to_storage', upload)
+    initial = import_folder(source, config, index, import_id='test-reprise-liaison')
+    assert not initial.all_verified
+    repris = retry_upload(index, config, 'test-reprise-liaison')
+    assert not repris['all_verified']
+    assert repris['preservation']['transport_verifie']
+    assert repris['preservation']['identite_locale_observee']
+    with index.connect() as connexion:
+        lignes = connexion.execute('SELECT path, object_key, object_bucket FROM documents WHERE is_dir = 0').fetchall()
+    attendus = {f['path']: (f['object_key'], f['object_bucket']) for f in repris['files']}
+    assert lignes and all((ligne['object_key'], ligne['object_bucket']) == attendus[ligne['path']] for ligne in lignes)
+    assert all(f['catalogue_lie'] for f in repris['files'])
+    assert repris['liaison_catalogue']['conflits'] == 0
+    index.close()
+
+
+def test_reprise_ne_valide_pas_une_source_modifiee_apres_preuve(tmp_path: Path, monkeypatch) -> None:
+    from seamtech_search.import_pipeline import retry_upload
+    from seamtech_search.storage import UploadBatch, UploadedArtifact
+
+    source = make_source(tmp_path)
+    config = make_config(tmp_path, tmp_path / 'roots')
+    index = SearchIndex(config.database_path)
+    index.initialize(rebuild=True)
+    n_appels = 0
+    def upload(**kwargs):
+        nonlocal n_appels
+        n_appels += 1
+        arts = []
+        for i, path in enumerate(kwargs['files_to_upload']):
+            ok = n_appels > 1 or i == 0
+            arts.append(UploadedArtifact(str(path), Path(path).name, key=('cle-' + str(i)) if ok else None,
+                                         bucket='bucket-synthetique', status='uploaded' if ok else 'failed', verified=ok,
+                                         verification='relecture_sha256' if ok else 'non_verifie',
+                                         sha256=hashlib.sha256(Path(path).read_bytes()).hexdigest() if ok else None))
+        return UploadBatch('partial' if n_appels == 1 else 'uploaded', arts)
+    monkeypatch.setattr(import_pipeline, 'upload_artifacts_to_storage', upload)
+    initial = import_folder(source, config, index, import_id='test-source-modifiee')
+    deja_preserve = next(Path(a['path']) for a in initial.artifacts if a['verified'])
+    deja_preserve.write_bytes(b'octets nouveaux et differents')
+    reprise = retry_upload(index, config, 'test-source-modifiee')
+    assert not reprise['all_verified']
+    index.close()
+
+
+def test_envoi_integralement_prouve_reste_uploaded(tmp_path: Path, monkeypatch) -> None:
+    """Un envoi dont CHAQUE artefact est prouvé reste « uploaded ».
+
+    Régression verrouillée (CI « recette-corpus-reel » / « recette-locale ») :
+    une version rabaissait systématiquement « uploaded » en « partial » dès
+    qu'une destination était configurée, interdisant de qualifier la moindre
+    réussite. Le rabaissement doit dépendre des PREUVES, pas de la destination.
+    """
+    from seamtech_search.storage import UploadBatch, UploadedArtifact
+
+    source = make_source(tmp_path)
+    config = make_config(tmp_path, tmp_path / "roots")
+    index = SearchIndex(config.database_path)
+    index.initialize(rebuild=True)
+
+    def upload(**kwargs):
+        arts = []
+        for i, fichier in enumerate(kwargs["files_to_upload"]):
+            if not fichier:
+                continue
+            chemin = Path(fichier)
+            arts.append(
+                UploadedArtifact(
+                    str(chemin), chemin.name, key=f"cle-{i}", bucket="bucket-synthetique",
+                    status="uploaded", verified=True, verification="relecture_sha256",
+                    sha256=hashlib.sha256(chemin.read_bytes()).hexdigest(),
+                )
+            )
+        return UploadBatch("uploaded", arts)
+
+    monkeypatch.setattr(import_pipeline, "upload_artifacts_to_storage", upload)
+    result = import_folder(source, config, index, import_id="test-upload-prouve")
+    assert result.upload_status == "uploaded", result.upload_status
+    # Le succès GLOBAL reste suspendu dès qu'une destination objet existe
+    # (pas de snapshot durable garanti) : l'import reste « à revoir », ce qui
+    # n'enlève rien à l'envoi, prouvé et complet.
+    assert result.status == "needs_review", (result.status, result.warnings)
+    index.close()
+
+
+def test_envoi_avec_cle_non_prouvee_est_partial_et_a_revoir(tmp_path: Path, monkeypatch) -> None:
+    """Une clé NON PROUVÉE au milieu d'un envoi réussi → « partial » + à revoir.
+
+    Inverse du test précédent : « uploaded » n'est annoncé que sur preuve. Une
+    métadonnée déclarative (fournie par l'application) ne prouve pas les octets
+    réellement stockés ; l'artefact est reclassé en échec et l'import reste à
+    revoir au lieu d'annoncer un succès de préservation.
+    """
+    from seamtech_search.storage import UploadBatch, UploadedArtifact
+
+    source = make_source(tmp_path)
+    config = make_config(tmp_path, tmp_path / "roots")
+    index = SearchIndex(config.database_path)
+    index.initialize(rebuild=True)
+
+    def upload(**kwargs):
+        arts = []
+        for i, fichier in enumerate(kwargs["files_to_upload"]):
+            if not fichier:
+                continue
+            chemin = Path(fichier)
+            prouve = i != 1  # le second artefact déclare une clé sans preuve
+            arts.append(
+                UploadedArtifact(
+                    str(chemin), chemin.name, key=f"cle-{i}", bucket="bucket-synthetique",
+                    status="uploaded", verified=True,
+                    verification="relecture_sha256" if prouve else "metadata_seule",
+                    sha256=hashlib.sha256(chemin.read_bytes()).hexdigest(),
+                )
+            )
+        return UploadBatch("uploaded", arts)
+
+    monkeypatch.setattr(import_pipeline, "upload_artifacts_to_storage", upload)
+    result = import_folder(source, config, index, import_id="test-upload-non-prouve")
+    assert result.upload_status == "partial", result.upload_status
+    assert result.status == "needs_review", result.status
+    index.close()

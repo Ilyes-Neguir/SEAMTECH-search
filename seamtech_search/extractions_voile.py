@@ -44,6 +44,7 @@ from seamtech_search.fiches.modeles import (
     FicheExtraite,
     Zone,
 )
+from seamtech_search.flux_bornes import lire_par_blocs
 
 LOGGER = logging.getLogger("seamtech_search.extractions_voile")
 
@@ -269,7 +270,7 @@ def _empreinte_fichier(chemin: Path) -> str | None:
     try:
         empreinte = hashlib.sha256()
         with chemin.open("rb") as flux:
-            for bloc in iter(lambda: flux.read(1024 * 1024), b""):
+            for bloc in lire_par_blocs(flux, 1024 * 1024, nom=f"empreinte {chemin.name}"):
                 empreinte.update(bloc)
         return empreinte.hexdigest()
     except OSError:

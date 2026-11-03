@@ -43,6 +43,7 @@ import pytest
 from seamtech_search.indexer import SearchIndex
 from seamtech_search.jobs import compter_jobs_par_statut, create_job, get_job
 from seamtech_search.redis_store import RedisStore
+from tests.helpers_postgres_isole import url_base_jetable
 
 RACINE = Path(__file__).resolve().parents[1]
 URL_PG = os.environ.get("SEAMTECH_TEST_DATABASE_URL", "")
@@ -69,7 +70,7 @@ def _creer_base_jetable() -> tuple[str, str]:
             cursor.execute(f'CREATE DATABASE "{nom}"')
     finally:
         admin.close()
-    return nom, URL_PG.rsplit("/", 1)[0] + f"/{nom}"
+    return nom, url_base_jetable(URL_PG, nom)
 
 
 def _supprimer_base(nom: str) -> None:
@@ -85,36 +86,32 @@ def _supprimer_base(nom: str) -> None:
         admin.close()
 
 
-def _vider_redis(magasin: RedisStore) -> None:
-    client = magasin._get_client()
-    for cle in client.scan_iter(match="seamtech:*", count=500):
-        client.delete(cle)
-
-
 @pytest.fixture()
-def base_relais(tmp_path: Path) -> Iterator[dict[str, Any]]:
+def base_relais(tmp_path: Path, redis_isole: str, monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, Any]]:
     if not URL_PG or not URL_REDIS:
         pytest.skip("SEAMTECH_TEST_DATABASE_URL et SEAMTECH_TEST_REDIS_URL sont requis")
+    monkeypatch.setitem(globals(), "URL_REDIS", redis_isole)
+    monkeypatch.delenv("SEAMTECH_REDIS_URL", raising=False)
+    monkeypatch.delenv("SEAMTECH_DATABASE_URL", raising=False)
     nom, url = _creer_base_jetable()
     index = SearchIndex(tmp_path / "index.db", url)
     index.initialize()
     index.run_migrations()
     magasin = RedisStore(redis_url=URL_REDIS)
-    assert magasin.ping(), "Redis injoignable"
-    _vider_redis(magasin)
+    assert magasin.ping(), "Redis dédié injoignable"
     try:
         yield {"index": index, "url": url, "nom": nom, "redis": magasin, "tmp": tmp_path}
     finally:
         index.close()
-        _vider_redis(magasin)
         _supprimer_base(nom)
 
 
 def _config_worker(tmp_path: Path, *, claim_ttl: int = 15, max_attempts: int = 2) -> Path:
     config = {
         "root_paths": [str(tmp_path)],
+        # L'URL de la base jetable est transmise uniquement au sous-processus
+        # par _demarrer_worker ; jamais celle du serveur d'administration.
         "database_path": str(tmp_path / "index.db"),
-        "database_url": URL_PG,
         "host": "127.0.0.1",
         "min_free_bytes": 0,
         "storage_backend": "local",

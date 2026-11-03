@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -44,9 +45,28 @@ def identifiants_documents(index: Any) -> dict[str, int]:
 
 
 def id_document(index: Any, suffixe: str) -> int:
-    """Identifiant du document dont le chemin se termine par ``suffixe``."""
+    """Identifiant du document dont le chemin se termine par ``suffixe``.
+
+    ``os.path.normpath`` est appliqué au suffixe AVANT la comparaison, et c'est
+    ce qui rend cet aide utilisable sur Windows : la base y stocke
+    ``dossier-client\\fiche-A.txt`` (séparateur de la plateforme), alors que les
+    tests écrivent le chemin à la façon POSIX, ``dossier-client/fiche-A.txt``.
+    Sans cette normalisation, la recherche échoue uniquement sur Windows avec
+    « document introuvable » — panne lue comme un défaut du rebuild, alors que
+    le rebuild n'y était pour rien (run 41427629667, cause 2). Sur POSIX,
+    ``normpath`` est l'identité pour ce genre de chemin : rien ne change.
+    """
+    # ``normcase`` en plus de ``normpath`` : sur Windows, la clé stockée est
+    # entièrement en minuscules (« …\dossier-client\fiche-a.txt ») alors que
+    # le test écrit « dossier-client/fiche-A.txt ». Les deux désignent le MÊME
+    # fichier sur un système insensible à la casse ; comparer sans normaliser
+    # faisait échouer des tests de rebuild sur Windows seuls, avec un message
+    # qui accusait le rebuild (run 41454455187, cible diag-cible-2). Sur POSIX,
+    # ``normcase`` est l'identité : rien ne change, aucune tolérance ajoutée.
+    attendu = os.path.normcase(os.path.normpath(suffixe))
     for cle, identifiant in identifiants_documents(index).items():
-        if cle.endswith(suffixe):
+        cle_normee = os.path.normcase(os.path.normpath(cle))
+        if cle_normee.endswith(attendu):
             return identifiant
     raise AssertionError(f"document introuvable : {suffixe} parmi {sorted(identifiants_documents(index))}")
 

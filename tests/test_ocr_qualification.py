@@ -26,6 +26,26 @@ PDF_TEXTE = RACINE / "sample_data" / "CLIENT-7792-SO" / "fiche-7792-SO_ffab.pdf"
 pytestmark = pytest.mark.ocr_suite
 
 
+def exiger_moteur_ocr() -> None:
+    """Exige un moteur OCR RÉEL : RapidOCR (moteur du produit) ou Tesseract.
+
+    Le produit n'impose plus Tesseract : RapidOCR est le moteur par défaut dès
+    que la roue est installée. Un test de reconnaissance doit donc exiger « un
+    moteur », pas « tesseract » — sinon il sauterait alors que la pile OCR est
+    parfaitement fonctionnelle.
+    """
+    from seamtech_search.ocr.moteur import moteur_disponible
+
+    if moteur_disponible("tesseract"):
+        return
+    if os.environ.get("SEAMTECH_OCR_OBLIGATOIRE") == "1":
+        pytest.fail(
+            "moteur OCR obligatoire (SEAMTECH_OCR_OBLIGATOIRE=1) mais absent — "
+            "installer rapidocr (roue pip) ou le paquet tesseract-ocr-fra"
+        )
+    pytest.skip("aucun moteur OCR installé (RapidOCR ou Tesseract)")
+
+
 def _exiger_tesseract() -> str:
     candidats = [
         os.environ.get("SEAMTECH_TESSERACT"),

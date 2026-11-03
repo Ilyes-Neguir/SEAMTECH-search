@@ -40,6 +40,13 @@ REF_PROPRE = FIXTURES_OCR / "reference_propre.txt"
 REF_DEGRADE = FIXTURES_OCR / "reference_degrade.txt"
 
 
+def _moteur_ocr_disponible() -> bool:
+    """Un moteur OCR local (RapidOCR ou Tesseract) est-il réellement utilisable ?"""
+    from seamtech_search.ocr.moteur import moteur_disponible
+
+    return bool(moteur_disponible("tesseract"))
+
+
 def _has_tesseract() -> bool:
     return bool(shutil.which("tesseract"))
 
@@ -173,16 +180,17 @@ def test_image_isolee_traitee_comme_scan() -> None:
 
     # Une image = 1 page, doit être considérée comme scan
     assert res["nb_pages"] == 1
-    # Si tesseract présent, doit être océrisée
-    if _has_tesseract():
+    # Si un moteur OCR est disponible, doit être océrisée
+    if _moteur_ocr_disponible():
         # Au moins tentative d'OCR
         assert res["pages"][0]["texte_natif"] == ""
         # Soit océrisée, soit échec avec motif lisible, mais jamais "texte natif présent"
         assert res["pages"][0]["motif"] != "texte natif présent"
     else:
-        # Si tesseract absent, statut unavailable avec motif lisible, pas de crash
+        # Si aucun moteur OCR n'est disponible, statut unavailable avec motif
+        # lisible, pas de crash : le motif nomme la famille de moteur absente.
         assert res["pages"][0]["page_ocerisee"] is False
-        assert "tesseract absent" in res["pages"][0]["motif"]
+        assert "absent" in res["pages"][0]["motif"]
 
 
 def test_idempotence_meme_empreinte_jamais_retraite() -> None:
@@ -377,7 +385,13 @@ def test_rg13_aucune_ecriture_dossier_source(tmp_path: Path) -> None:
         # C'est une vérification simple : pas de open(chemin_source, "w") direct
         # On vérifie qu'on n'importe pas de module qui écrirait dans source
         # Le vrai garde-fou est le snapshot ci-dessus, celui-ci est complémentaire
-        assert "SEAMTECH_OCR_TRAVAIL_DIR" in contenu or "travail_dir" in contenu or "tempfile" in contenu or fichier_py.name in ("__init__.py", "pipeline.py", "inventaire.py", "etat.py", "cli.py"), f"{fichier_py.name} doit utiliser travail_dir ou tempfile pour ses écritures"
+        if fichier_py.name == "rendu_pdf.py":
+            # Le parent crée le TemporaryDirectory, le sous-processus ne peut
+            # publier que par création exclusive dans le chemin transmis.
+            assert 'open(sortie, "xb")' in contenu
+            assert 'TemporaryDirectory(prefix="seamtech-ocr-pdf-")' in (dossier_ocr / "pipeline.py").read_text(encoding="utf-8")
+        else:
+            assert "SEAMTECH_OCR_TRAVAIL_DIR" in contenu or "travail_dir" in contenu or "tempfile" in contenu or fichier_py.name in ("__init__.py", "pipeline.py", "inventaire.py", "etat.py", "cli.py"), f"{fichier_py.name} doit utiliser travail_dir ou tempfile pour ses écritures"
 
 
 def test_rg14_aucun_appel_reseau_dans_ocr() -> None:
@@ -538,6 +552,10 @@ def test_inventaire_obligatoire_etage1_et_etage3(tmp_path: Path) -> None:
     assert ".pdf" in etage1["extensions"]
     assert ".png" in etage1["extensions"]
 
+    # Le PDF corrompu ne doit pas disparaître silencieusement du bilan.
+    with pytest.raises(RuntimeError, match="Inspection PDF"):
+        inv_mod.inventaire_etage3(None, src, seuil_caracteres_par_page=20)
+    (src / "doc1.pdf").unlink()
     etage3 = inv_mod.inventaire_etage3(None, src, seuil_caracteres_par_page=20)
     # Doit détecter au moins l'image comme scannée
     assert etage3["fichiers_scannes"] >= 1

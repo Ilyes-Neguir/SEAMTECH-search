@@ -18,6 +18,7 @@ export interface PreparationTeleversement {
 
 export interface EtatTeleversement {
   token?: string
+  idempotence_creation?: number
   statut: string
   nom_racine: string
   nombre_fichiers_attendus: number
@@ -62,6 +63,8 @@ export interface ProgressionTeleversement {
 
 type EntreeSysteme = FileSystemEntry
 
+export class ErreurProtocoleCreation extends Error {}
+
 class ErreurHttp extends Error {
   constructor(
     message: string,
@@ -97,7 +100,9 @@ async function lireEntree(entry: EntreeSysteme, base: string, sortie: FichierATe
     sortie.push({ file: fichier, rel: normaliserRelatif(base + fichier.name, fichier.name) })
     return
   }
-  if (!entry.isDirectory) return
+  if (!entry.isDirectory) {
+    throw new Error("Dépôt refusé : entrée de dossier non reconnue. Choisissez le dossier avec le bouton dédié.")
+  }
   const lecteur = (entry as FileSystemDirectoryEntry).createReader()
   for (;;) {
     const entrees = await new Promise<EntreeSysteme[]>((resolve, reject) =>
@@ -114,15 +119,23 @@ async function lireEntree(entry: EntreeSysteme, base: string, sortie: FichierATe
 export async function fichiersDepuisDepot(dt: DataTransfer): Promise<FichierATeleverser[]> {
   // webkitGetAsEntry doit être appelé pendant l'évènement de dépôt : on
   // capture donc les entrées avant le premier await.
-  const entrees = Array.from(dt.items ?? [])
-    .map((item) => item.webkitGetAsEntry?.() ?? null)
-    .filter((entry): entry is EntreeSysteme => entry !== null)
+  const itemsFichier = Array.from(dt.items ?? []).filter((item) => item.kind !== "string")
+  const entrees = itemsFichier.map((item) => item.webkitGetAsEntry?.() ?? null)
+  if (entrees.some((entry) => entry === null)) {
+    throw new Error("Dépôt refusé : impossible de lire toutes les entrées. Choisissez le dossier avec le bouton dédié.")
+  }
   if (entrees.length > 0) {
     const sortie: FichierATeleverser[] = []
-    for (const entry of entrees) await lireEntree(entry, "", sortie)
-    if (sortie.length > 0) return sortie
+    for (const entry of entrees) if (entry) await lireEntree(entry, "", sortie)
+    return sortie
   }
-  return fichiersDepuisListe(Array.from(dt.files ?? []))
+  const fichiers = Array.from(dt.files ?? [])
+  if (fichiers.some((fichier) => !fichier.webkitRelativePath)) {
+    // Sans entrées ni chemins relatifs, un navigateur peut avoir aplati un
+    // dossier. Ne pas présenter cette liste comme un dossier complet.
+    throw new Error("Dépôt refusé : impossible de lire toutes les entrées. Choisissez le dossier avec le bouton dédié.")
+  }
+  return fichiersDepuisListe(fichiers)
 }
 
 export function fichiersDepuisListe(fichiers: File[]): FichierATeleverser[] {
@@ -306,20 +319,64 @@ export async function creerLotDepuisTeleversement(
   return lireJson<ReponseCreationLot>(response)
 }
 
+export function nouvelleCleCreation(): string {
+  const octets = new Uint8Array(32)
+  crypto.getRandomValues(octets)
+  return Array.from(octets, (octet) => octet.toString(16).padStart(2, "0")).join("")
+}
+
+export async function creerOuRetrouverSession(
+  preparation: PreparationTeleversement, cleCreation: string, signal?: AbortSignal,
+  onCreationEmise?: () => void,
+): Promise<EtatTeleversement> {
+  const capacites = await lireJson<{ creation_idempotente?: number }>(
+    await authedFetch("/api/imports/dossier/televersements/capacites", { signal }),
+  )
+  if (capacites.creation_idempotente !== 1) {
+    throw new Error("Le serveur ne garantit pas la reprise de création de session.")
+  }
+  onCreationEmise?.()
+  const session = await lireJson<EtatTeleversement>(await authedFetch("/api/imports/dossier/televersements", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      nom_racine: preparation.nomRacine,
+      nombre_fichiers: preparation.fichiers.length,
+      taille_totale_octets: preparation.tailleTotale,
+      cle_idempotence: cleCreation,
+    }),
+    signal,
+  }))
+  if (session.idempotence_creation !== 1 || !session.token || !session.limites) {
+    throw new ErreurProtocoleCreation("Réponse de création non idempotente ou incomplète : état de session inconnu.")
+  }
+  if (session.nom_racine !== preparation.nomRacine.trim() ||
+      session.nombre_fichiers_attendus !== preparation.fichiers.length ||
+      session.taille_totale_attendue_octets !== preparation.tailleTotale ||
+      !["en_cours", "pret"].includes(session.statut)) {
+    throw new Error("La session ne correspond plus au dossier sélectionné ; reprise refusée.")
+  }
+  return session
+}
+
 /**
  * Téléverse un dossier complet en envois bornés, puis crée UN lot récursif.
- * Aucun envoi ne contient tout le dossier : un incident réseau ne rejoue que
- * l'envoi courant, et le backend reconnaît les octets déjà reçus au SHA-256.
+ * Aucun envoi ne contient tout le dossier. Les essais automatiques rejouent
+ * l'envoi courant ; une reprise manuelle rejoue tous les envois si la session
+ * est ouverte, et le backend reconnaît les octets déjà reçus au SHA-256.
  */
 export async function televerserEtCreerLot(
   preparation: PreparationTeleversement,
   options: {
     signal?: AbortSignal
+    jetonExistant?: string
+    cleCreation: string
+    onCreationEmise?: () => void
     onSession?: (jeton: string) => void
     onProgression?: (progression: ProgressionTeleversement) => void
-  } = {},
+  },
 ): Promise<{ jeton: string; lot: ReponseCreationLot; session: EtatTeleversement }> {
-  const { signal, onSession, onProgression } = options
+  const { signal, jetonExistant, cleCreation, onCreationEmise, onSession, onProgression } = options
   const annoncer = (progression: ProgressionTeleversement) => onProgression?.(progression)
   const base = {
     fichiersRecus: 0,
@@ -331,26 +388,30 @@ export async function televerserEtCreerLot(
     tentative: 1,
   }
   annoncer({ ...base, phase: "creation_session" })
-  const creation = await authedFetch("/api/imports/dossier/televersements", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      nom_racine: preparation.nomRacine,
-      nombre_fichiers: preparation.fichiers.length,
-      taille_totale_octets: preparation.tailleTotale,
-    }),
-    signal,
-  })
-  const sessionInitiale = await lireJson<EtatTeleversement>(creation)
+  const sessionInitiale = jetonExistant
+    ? await lireJson<EtatTeleversement>(await authedFetch(`/api/imports/dossier/televersements/${encodeURIComponent(jetonExistant)}`, { signal }))
+    : await creerOuRetrouverSession(preparation, cleCreation, signal, onCreationEmise)
   if (!sessionInitiale.token || !sessionInitiale.limites) {
-    throw new Error("Réponse de création de session de téléversement incomplète.")
+    throw new Error("Réponse de session de téléversement incomplète.")
+  }
+  if (jetonExistant && (
+    sessionInitiale.token !== jetonExistant ||
+    sessionInitiale.nom_racine !== preparation.nomRacine.trim() ||
+    sessionInitiale.nombre_fichiers_attendus !== preparation.fichiers.length ||
+    sessionInitiale.taille_totale_attendue_octets !== preparation.tailleTotale ||
+    !["en_cours", "pret"].includes(sessionInitiale.statut)
+  )) {
+    throw new Error("La session ne correspond plus au dossier sélectionné ; reprise refusée.")
   }
   const jeton = sessionInitiale.token
   onSession?.(jeton)
 
   const envois = decouperEnEnvois(preparation.fichiers, sessionInitiale.limites)
   let session = sessionInitiale
-  for (const [index, envoi] of envois.entries()) {
+  // En reprise d'une session ouverte, rejouer tous les envois par sécurité :
+  // le serveur confronte les octets déjà reçus à leur empreinte. Une session
+  // déjà finalisée ne peut plus recevoir de fichiers et passe à la création.
+  for (const [index, envoi] of (sessionInitiale.statut === "pret" ? [] : envois).entries()) {
     if (signal?.aborted) throw new DOMException("Opération annulée.", "AbortError")
     session = await envoyerEnvoiAvecEssais(jeton, envoi, signal, (tentative) => {
       annoncer({

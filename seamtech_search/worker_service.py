@@ -101,6 +101,9 @@ def main(argv: list[str] | None = None) -> int:
     config, index, redis_store = _construire(options.config, options.verbose)
     try:
         index.initialize()
+        # Un worker séparé ne doit pas écrire sur un schéma non qualifié,
+        # même lorsqu'il est démarré avant le serveur web.
+        index.run_migrations()
         if options.verifier:
             print(json.dumps(verifier(config, index, redis_store), ensure_ascii=False, indent=2))
             return 0 if (redis_store.is_configured() and redis_store.ping()) else 2

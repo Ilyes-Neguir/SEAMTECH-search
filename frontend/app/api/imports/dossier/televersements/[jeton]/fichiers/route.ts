@@ -1,11 +1,14 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { backendBase, backendHeaders, requireRolesServer } from "@/lib/backend"
-import { ROLE_ADMIN, ROLE_APPROBATEUR, ROLE_UTILISATEUR } from "@/lib/roles"
 import { relayerMultipart } from "@/lib/relais-multipart"
+import { ROLE_ADMIN, ROLE_APPROBATEUR, ROLE_UTILISATEUR } from "@/lib/roles"
 
 export const dynamic = "force-dynamic"
 
 const token_VALIDE = /^[A-Za-z0-9_-]{16,64}$/
+// 512 Mio de fichiers au maximum côté backend + marge pour les frontières
+// multipart et le JSON des chemins.
+const MAX_ENVOI_MULTIPART = 520 * 1024 * 1024
 
 /**
  * Relais d'un envoi de dossier vers le backend, EN FLUX.
@@ -30,7 +33,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ jet
     req,
     `${base}/imports/dossier/televersements/${encodeURIComponent(jeton)}/fichiers`,
     await backendHeaders(),
-    { cleConcurrence: jeton },
+    { limiteOctets: MAX_ENVOI_MULTIPART, cleConcurrence: jeton },
   )
   if (resultat.type === "abandon") return new Response(null, { status: 499 })
   if (resultat.type === "refus") {
