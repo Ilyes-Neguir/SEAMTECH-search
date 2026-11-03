@@ -3269,3 +3269,16 @@ restent, avec leur cause démontrée :
 **Le point P1 « Windows natif » reste NON PRÊT** — ce n'est pas ce mesurage
 qui le change : il repose sur l'absence des primitives POSIX, lue dans
 `plateforme.py` et refusée explicitement par le produit.
+
+### 58.1 Confirmation sur le runner (run 41551125074)
+
+```
+fichier_detail=logs/det-concat.txt ; existe=True ; lignes=86 ;
+cles_chargees=167 ; echecs_journal=85 ; causes_nommees=11 ; attendus=284
+...::test_adaptateur_exclusif_simule_refuse_une_cle_deja_presente ::
+present_dans_details=True :: Actual message: 'Lecture confinée du bundle
+indisponible sur cette plateforme'
+```
+
+Le fichier est lu, les clés sont présentes, les causes sont là. Le verdict va
+donc classer par cause, et non plus seulement par identifiant.
