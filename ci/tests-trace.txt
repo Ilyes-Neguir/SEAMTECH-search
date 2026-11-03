@@ -1,8 +1,7 @@
-# Tests dont la cause lue ne suffit pas : on veut la TRACE, pas la dernière
-# ligne « E ». Un par un, six au plus (plafond d'annotations par étape).
+# Tests dont la cause lue ne suffit pas : on veut la FIN de la TRACE.
 tests/test_url_presignee_302.py::test_artefact_sans_endpoint_public_sert_les_octets_par_l_api
 tests/test_sauvegarde_manifeste_distant.py::test_cli_annonce_limites_sauvegarde
 tests/test_sauvegarde_manifeste_distant.py::test_cli_base_depuis_environnement_sans_argument_secret
+tests/test_restauration_confinement.py::test_publication_locale_concurrente_ne_remplace_pas_la_cible
+tests/test_restauration_confinement.py::test_publication_locale_lien_dur_refuse_sans_fichier_cible
 tests/test_sauvegarde_references.py::test_deux_restaurations_concurrentes_necrasent_pas
-tests/test_restauration_confinement.py::test_fichier_cree_apres_precontrole_n_est_pas_ecrase
-tests/test_inventaire_archive.py::test_localisation_des_fiches

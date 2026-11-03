@@ -630,7 +630,14 @@ def localiser_fiches(lignes: list[LigneFichier], racines: list[Path]) -> list[di
             racine_str = str(racine)
             if dossier.startswith(racine_str):
                 relatif = os.path.relpath(dossier, racine_str)
-                dossier = f"{racine.name}{os.sep}{relatif}" if relatif != "." else f"{racine.name}{os.sep}"
+                # Écriture POSIX, pas ``os.sep`` : cette clé entre dans un
+                # rapport JSON censé se comparer d'une machine à l'autre. Avec
+                # le séparateur de l'OS, « archive/2024/CLIENT-A » devenait
+                # « archive\2024\CLIENT-A » sur Windows et deux inventaires
+                # de la même archive ne se ressemblaient plus (run
+                # 41560558673, test_localisation_des_fiches).
+                relatif = relatif.replace(os.sep, "/")
+                dossier = f"{racine.name}/{relatif}" if relatif != "." else f"{racine.name}/"
                 break
         compteur[dossier] += 1
     return [

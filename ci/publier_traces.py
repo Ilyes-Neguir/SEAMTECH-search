@@ -41,10 +41,13 @@ def _identifiants() -> list[str]:
     ]
 
 
-def _publier(titre: str, texte: str) -> None:
+def _publier(titre: str, texte: str, *, queue: bool = False) -> None:
     propre = " ".join((texte or "").split()).replace("|", "/").replace("%", " ")
     if len(propre) > LIMITE:
-        propre = propre[:LIMITE] + "…"
+        # Une trace se lit par la FIN : c'est là qu'est l'erreur. Couper le
+        # début a fait publier six traces sans jamais montrer la ligne fautive
+        # (run 41560558673).
+        propre = ("…" + propre[-LIMITE:]) if queue else (propre[:LIMITE] + "…")
     print(f"::notice title={titre}::{propre}")
 
 
@@ -74,7 +77,7 @@ def main() -> int:
     for identifiant in _identifiants()[:6]:
         titre = "diag-trace-" + identifiant.split("::")[-1][:40]
         try:
-            _publier(titre, _trace(identifiant))
+            _publier(titre, _trace(identifiant), queue=True)
         except Exception as erreur:  # noqa: BLE001 - l'instrument ne doit pas taire les autres
             _publier(titre, f"INSTRUMENT EN PANNE : {type(erreur).__name__} : {erreur}")
     return 0
