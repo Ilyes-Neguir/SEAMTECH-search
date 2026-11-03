@@ -1,8 +1,10 @@
-# Quatre échecs qui restent sans cause démontrée au run 41564776168 (commit
-# c172f87), les cinq « une sauvegarde est déjà en cours » étant expliqués par
-# le verrou parent laissé pris par un test qui simule flock sur une plateforme
-# sans flock (saut ajouté, commit suivant). On veut les cadres PRODUIT.
-tests/test_restauration_confinement.py::test_copie_dump_refuse_parent_substitue_au_moment_de_l_ouverture
-tests/test_restauration_confinement.py::test_erreur_seconde_publication_ne_laisse_pas_premiere
-tests/test_sauvegarde_manifeste_distant.py::test_restore_cache_le_mot_de_passe_et_ne_fuite_pas_stderr
-tests/test_liaison_catalogue_capture.py::test_declencheur_invalide_meme_les_reecritures_identiques_sqlite
+# Aucun test en attente de trace au 3 novembre 2026 : les 9 échecs « hors
+# périmètre connu » du run 41564776168 ont tous reçu une cause démontrée —
+# cinq par le verrou parent laissé pris (saut ajouté), trois par le refus de
+# lecture confinée du bundle quand « os.open » n'est pas dans
+# « os.supports_dir_fd » (démontré sans Windows par
+# tests/test_plateforme_sans_dir_fd.py), un par une clé de chemin calculée
+# autrement par le test et par le produit (« normcase », corrigé).
+#
+# Pour armer à nouveau : une ligne par identifiant, sans commentaire.
+#   tests/test_x.py::test_y

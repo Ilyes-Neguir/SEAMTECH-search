@@ -1,5 +1,6 @@
 """Le manifeste distant doit permettre de retrouver le dump effectivement envoyé."""
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -273,6 +274,11 @@ def test_erreur_pg_dump_ne_fuite_pas_le_mot_de_passe(tmp_path, sauver_sans_postg
 
 
 def test_restore_cache_le_mot_de_passe_et_ne_fuite_pas_stderr(tmp_path, monkeypatch):
+    if os.open not in os.supports_dir_fd:
+        pytest.skip("lecture confinée du bundle refusée sur cette plateforme : "
+                    "le produit n'ouvre rien avant de refuser, donc ce scénario "
+                    "n'a pas lieu d'être mesuré — démontré, sans Windows, par "
+                    "tests/test_plateforme_sans_dir_fd.py")
     import hashlib
 
     dump = tmp_path / 'dump.dump'

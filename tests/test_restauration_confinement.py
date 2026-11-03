@@ -384,6 +384,12 @@ def test_erreur_copie_supprime_fichier_partiel_sans_effacer_tiers(tmp_path, monk
 
 @pytest.mark.xfail(strict=True, reason="La publication multi-fichiers n'est pas transactionnelle")
 def test_erreur_seconde_publication_ne_laisse_pas_premiere(tmp_path, monkeypatch):
+    import os
+    if os.open not in os.supports_dir_fd:
+        pytest.skip("lecture confinée du bundle refusée sur cette plateforme : "
+                    "le produit n'ouvre rien avant de refuser, donc ce scénario "
+                    "n'a pas lieu d'être mesuré — démontré, sans Windows, par "
+                    "tests/test_plateforme_sans_dir_fd.py")
     from seamtech_search import sauvegarde
 
     bundle = tmp_path / "bundle"
@@ -732,6 +738,11 @@ def test_copie_dump_refuse_parent_lien_symbolique(tmp_path, monkeypatch):
 
 def test_copie_dump_refuse_parent_substitue_au_moment_de_l_ouverture(tmp_path, monkeypatch):
     import os
+    if os.open not in os.supports_dir_fd:
+        pytest.skip("lecture confinée du bundle refusée sur cette plateforme : "
+                    "le produit n'ouvre rien avant de refuser, donc ce scénario "
+                    "n'a pas lieu d'être mesuré — démontré, sans Windows, par "
+                    "tests/test_plateforme_sans_dir_fd.py")
 
     from seamtech_search import sauvegarde
 

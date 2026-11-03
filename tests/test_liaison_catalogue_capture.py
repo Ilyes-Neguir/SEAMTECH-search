@@ -1,4 +1,5 @@
 """Liaison atomique d'une reprise au document de mêmes octets (SQLite isolé)."""
+import os
 from pathlib import Path
 
 import pytest
@@ -28,11 +29,23 @@ def _import_avant_envoi(tmp_path: Path, monkeypatch):
     return source, piece, cfg, index, magasin, initial
 
 
+def _cle(chemin: Path) -> str:
+    """La clé telle que le PRODUIT la calcule (``models.Document.path_key``).
+
+    Le produit range ``path_key = normcase(resolve(path))`` — donc en
+    MINUSCULES sur les systèmes qui ignorent la casse. Un test qui interroge la
+    base par ``str(chemin)`` brut ne retrouve rien sous Windows (les segments
+    ``Users``, ``Temp``… y sont en majuscules) : c'est le test qui était faux,
+    pas le produit.
+    """
+    return os.path.normcase(str(Path(chemin).resolve()))
+
+
 def _document(index, piece):
     with index.connect() as connexion:
         return dict(connexion.execute(
             'SELECT id, path_key, content_hash, source_sha256, object_key, object_bucket, upload_status '
-            'FROM documents WHERE path_key = ?', (str(piece),)).fetchone())
+            'FROM documents WHERE path_key = ?', (_cle(piece),)).fetchone())
 
 
 def test_reprise_lie_uniquement_les_octets_captures(tmp_path: Path, monkeypatch):
@@ -60,7 +73,7 @@ def test_reprise_ne_lie_pas_un_document_remplace_entre_temps(tmp_path: Path, mon
     index.run_migrations()
     with index.connect() as connexion:
         connexion.execute('UPDATE documents SET size = ?, content_hash = ? WHERE path_key = ?',
-                          (document.size, document.content_hash, str(piece)))
+                          (document.size, document.content_hash, _cle(piece)))
     assert _document(index, piece)['source_sha256'] is None
     repris = pipeline.retry_upload(index, cfg, initial.import_id)
     apres = _document(index, piece)
@@ -155,7 +168,7 @@ def test_mutation_par_code_ancien_invalide_identite_avant_reprise(tmp_path: Path
     # le document dans la même base. Son ancienne preuve ne doit pas survivre.
     with index.connect() as connexion:
         connexion.execute('UPDATE documents SET size = ?, content_hash = ? WHERE path_key = ?',
-                          (999, 'texte-remplace', str(piece)))
+                          (999, 'texte-remplace', _cle(piece)))
     assert _document(index, piece)['source_sha256'] is None
     repris = pipeline.retry_upload(index, cfg, initial.import_id)
     assert repris['files'][0]['catalogue_lie'] is False and _document(index, piece)['object_key'] is None
@@ -214,14 +227,14 @@ def test_declencheur_invalide_meme_les_reecritures_identiques_sqlite(tmp_path: P
                 'extractor_version', 'content_hash', 'extraction_status', 'extraction_detail', 'category')
     for colonne in colonnes:
         with index.connect() as connexion:
-            connexion.execute('UPDATE documents SET source_sha256 = ? WHERE path_key = ?', ('a' * 64, str(piece)))
-            connexion.execute(f'UPDATE documents SET {colonne} = {colonne} WHERE path_key = ?', (str(piece),))
+            connexion.execute('UPDATE documents SET source_sha256 = ? WHERE path_key = ?', ('a' * 64, _cle(piece)))
+            connexion.execute(f'UPDATE documents SET {colonne} = {colonne} WHERE path_key = ?', (_cle(piece),))
         assert _document(index, piece)['source_sha256'] is None, colonne
     index.upsert_document(document)
     index.upsert_document(document)
     assert _document(index, piece)['source_sha256'] == 'a' * 64
     with index.connect() as connexion:
-        connexion.execute('UPDATE documents SET object_key = ? WHERE path_key = ?', ('cle', str(piece)))
+        connexion.execute('UPDATE documents SET object_key = ? WHERE path_key = ?', ('cle', _cle(piece)))
     assert _document(index, piece)['source_sha256'] == 'a' * 64
     index.close()
 
