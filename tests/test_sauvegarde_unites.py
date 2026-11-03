@@ -676,6 +676,7 @@ def test_verrou_ne_perd_pas_exclusion_sur_reentree_meme_objet(tmp_path):
                 pytest.fail("exclusion perdue")
 
 
+@_POSIX_UNIQUEMENT
 def test_verrou_meme_objet_concurrence_avant_ouverture(tmp_path, monkeypatch):
     import os
     import threading
