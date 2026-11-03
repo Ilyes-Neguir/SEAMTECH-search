@@ -3503,3 +3503,35 @@ relancer la suite complète pour un verdict où CHAQUE échec porte une cause
 écrite. Le point P1 « Windows natif » reste NON PRÊT : ce n'est pas le
 comptage qui le change, c'est l'absence des primitives POSIX, lue dans
 `plateforme.py` et refusée explicitement par le produit.
+
+## 63. Run 41562095550 : les corrections sont vérifiées SUR WINDOWS
+
+Trois vérifications directes, par le diagnostic :
+
+* `test_inventaire_rapporte_deux_vues_et_les_desaccords` **PASSE** rejoué seul
+  → l'écriture POSIX du chemin du lexique était bien le défaut ;
+* `test_securite_banc_pg` passe en entier (12 passés) → le saut justifié de
+  l'étape de déploiement Linux fait son office ;
+* `test_passe_finale_ingestion_dossiers` tombe de 3 échecs à 2 → le scénario
+  « nom non UTF-8 » ne s'applique pas, et les deux restants portent la cause
+  déjà écrite « scan_ancre_descripteur ».
+
+Trois écarts de confinement démontrés (même famille : la protection par
+descripteur ancré n'existe pas sur Windows, donc le refus n'est pas sélectif
+et la lecture atteint la mauvaise cible) :
+`test_deux_restaurations_concurrentes_necrasent_pas`,
+`test_deux_restaurations_objet_concurrentes_avec_adaptateur_atomique_simule`,
+`test_dump_avec_parent_et_lien_ne_lit_pas_autre_fichier`.
+
+**IL RESTE EXACTEMENT DEUX TESTS SANS CAUSE DÉMONTRÉE** : les deux artefacts
+présignés (`test_artefact_sans_endpoint_public_sert_les_octets_par_l_api`,
+`test_artefact_presignature_indisponible_sert_le_repli_sans_exception`), qui
+échouent par `ValueError: objet IMP-1/abc/technical-report.pdf : bloc invalide
+(MagicMock au lieu d'octets)` — le produit emprunte la voie objet au lieu de
+servir le fichier local, et on ne sait pas encore quel aiguillage l'y mène.
+`ci/publier_traces.py` publie désormais aussi le MILIEU de la trace, là où est
+l'aiguillage.
+
+**Prochaine action** : lire `diag-milieu-*` du run suivant ; écrire ces deux
+écarts ou corriger le défaut ; puis relancer la suite complète pour le
+comptage final.

@@ -74,12 +74,21 @@ def _trace(identifiant: str) -> str:
 
 
 def main() -> int:
-    for identifiant in _identifiants()[:6]:
-        titre = "diag-trace-" + identifiant.split("::")[-1][:40]
+    for identifiant in _identifiants()[:3]:
+        nom = identifiant.split("::")[-1][:40]
         try:
-            _publier(titre, _trace(identifiant), queue=True)
+            texte = _trace(identifiant)
         except Exception as erreur:  # noqa: BLE001 - l'instrument ne doit pas taire les autres
-            _publier(titre, f"INSTRUMENT EN PANNE : {type(erreur).__name__} : {erreur}")
+            _publier(f"diag-trace-{nom}", f"INSTRUMENT EN PANNE : {type(erreur).__name__} : {erreur}")
+            continue
+        _publier(f"diag-trace-{nom}", texte, queue=True)
+        # Le MILIEU : quand la queue montre l'erreur sans montrer l'aiguillage
+        # qui y mène. Deux annotations par test, au plus trois tests : six,
+        # sous le plafond de dix.
+        milieu = " ".join(texte.split())
+        if len(milieu) > 2 * LIMITE:
+            debut = len(milieu) // 2 - LIMITE // 2
+            _publier(f"diag-milieu-{nom}", "…" + milieu[debut : debut + LIMITE] + "…")
     return 0
 
 
