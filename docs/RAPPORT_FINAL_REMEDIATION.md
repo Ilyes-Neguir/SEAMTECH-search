@@ -16,7 +16,7 @@ prouvé n'est pas déclaré prêt. Les limites sont dites, pas contournées.
 | Axe | État | Motif |
 |---|---|---|
 | **P0** — sauvegarde, restauration, hors-site, rétention, migration | **PRÊT** | toutes les exigences sont prouvées, y compris la restauration coordonnée **par la commande** (dernier point ouvert, fermé ce jour) |
-| **P1** — OCR, rotations, PostgreSQL 16/pgvector/Redis 7 | **PRÊT** | jobs verts, `xfail` retirés, campagnes rejouées |
+| **P1** — OCR, rotations, PostgreSQL 16/pgvector/Redis 7 | **PRÊT** | moteur **RapidOCR** (défaut) : 5/5 identifiants reconnus, rejoué ; repli Tesseract désormais **bruyant** (1/5, mesuré) ; rotations sans `xfail` ; PG 16/pgvector/Redis 7 réels |
 | **P1** — Chrome / Edge | **PRÊT** | run 41499874660 : `attendus=2 passes=4 echecs=0`, Chrome 156.0.8078.80 et Edge 156.0.4314.56 réels, 5 écrans chacun, **0 violation** WCAG 2.1 A/AA |
 | **P1** — Windows natif | **NON PRÊT (décision produit, assumée)** | suite mesurée ENTIÈREMENT (run 41578726322, `e109bb0`) : **369 échecs, TOUS nommés**, plus aucun échec sans cause démontrée — voir §5 |
 | **P1** — Docker Desktop | **NON QUALIFIABLE ICI** | un runner GitHub ne fournit pas de conteneurs Linux ; la preuve devra être faite sur le poste réel, jamais en premier |
@@ -86,7 +86,8 @@ supposer `pgserver`).
 
 | Exigence | État | Preuve |
 |---|---|---|
-| OCR exact en CI, **sans assertion affaiblie ni réessai salvateur** | PRÊT | job `ocr` vert sur `48e8be2` ; provenance OCR corrigée (§23 du journal de bord) |
+| OCR exact en CI, **sans assertion affaiblie ni réessai salvateur** | **PRÊT** | job `ocr` vert, moteur **RapidOCR 3.10.0** élu (`ocr-moteur: elu=MoteurRapidOCR`) ; les **5 identifiants** synthétiques sont reconnus **exactement** — rejoué ici : `SEAMTECH_OCR_OBLIGATOIRE=1 pytest -m ocr_suite tests/test_ocr_identifiants_exacts.py` → **5 passed** en 14,6 s |
+| Le repli Tesseract **dit** qu'il est dégradé (1/5 sur les identifiants) | **PRÊT** (ajout du 3/11) | `WARNING` opposables + 3 tests dans `tests/test_ocr_moteur.py` — il ne peut plus se faire en silence |
 | Rotations PDF 90/180/270 avec tableaux et coordonnées, `xfail` retirés | PRÊT | `pytest tests/test_pdf_orientation.py tests/test_pdf_orientations_mixtes_tables.py` — 95 passés |
 | PostgreSQL 16 + pgvector + Redis 7 réels | PRÊT | CI Linux (services conteneurs) **et** runner Windows (installation hôte, PG 16 + pgvector + Redis 7 épinglés) |
 | Chrome / Edge | **PARTIEL** | voir §3.1 |

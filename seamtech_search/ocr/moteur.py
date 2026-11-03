@@ -29,6 +29,7 @@ Sélection
 from __future__ import annotations
 
 import json
+import logging
 import os
 import queue
 import subprocess
@@ -44,6 +45,8 @@ MOTEUR_AUTO = "auto"
 _COMMANDE_PAR_DEFAUT = "tesseract"
 _ENV_MOTEUR = "SEAMTECH_OCR_MOTEUR"
 _MODULE_ESCLAVE = "seamtech_search.ocr.reconnaissance"
+
+LOGGER = logging.getLogger("seamtech_search.ocr.moteur")
 
 # Chargement des modèles ONNX au démarrage du sous-processus esclave.
 _DELAI_AMORCAGE_S = 180
@@ -286,14 +289,44 @@ def choisir_moteur(tesseract_command: str = _COMMANDE_PAR_DEFAUT) -> MoteurOcr |
     """Choisit le moteur à utiliser, ou None si aucun n'est exploitable."""
     demande = moteur_demande()
     if demande == MOTEUR_TESSERACT:
-        return MoteurTesseract(tesseract_command) if _tesseract_disponible(tesseract_command) else None
+        moteur = MoteurTesseract(tesseract_command) if _tesseract_disponible(tesseract_command) else None
+        if moteur is not None:
+            _avertir_repli_tesseract("choix explicite (SEAMTECH_OCR_MOTEUR=tesseract)")
+        return moteur
     if demande == MOTEUR_RAPIDOCR:
         return MoteurRapidOCR() if _rapidocr_installable() else None
     # auto
     if tesseract_command != _COMMANDE_PAR_DEFAUT:
         # Un binaire Tesseract explicitement désigné : l'opérateur (ou un test)
         # a choisi Tesseract, on ne lui substitue pas un autre moteur.
-        return MoteurTesseract(tesseract_command) if _tesseract_disponible(tesseract_command) else None
+        moteur = MoteurTesseract(tesseract_command) if _tesseract_disponible(tesseract_command) else None
+        if moteur is not None:
+            _avertir_repli_tesseract("binaire Tesseract désigné nommément")
+        return moteur
     if _rapidocr_installable():
         return MoteurRapidOCR()
-    return MoteurTesseract(tesseract_command) if _tesseract_disponible(tesseract_command) else None
+    moteur = MoteurTesseract(tesseract_command) if _tesseract_disponible(tesseract_command) else None
+    if moteur is not None:
+        _avertir_repli_tesseract("roue rapidocr absente — repli automatique")
+    return moteur
+
+
+def _avertir_repli_tesseract(origine: str) -> None:
+    """Dit ce que coûte le repli, au lieu de le laisser croire équivalent.
+
+    Mesuré (``docs/OCR_MOTEURS.md``, §3) : RapidOCR reconnaît **5/5** les
+    identifiants alphanumériques d'une fiche, Tesseract **1/5** — confusions
+    ``0``/``O`` et ``1``/``I``. Le repli n'est donc pas une variante du
+    moteur par défaut : c'est une qualité moindre sur **exactement ce que
+    l'on recherche**. Le texte courant, lui, reste correct. Le taire
+    laisserait croire à une reconnaissance égale.
+    """
+    LOGGER.warning(
+        "OCR : moteur Tesseract retenu (%s). La reconnaissance des "
+        "IDENTIFIANTS alphanumériques y est DÉGRADÉE : 1/5 mesuré contre 5/5 "
+        "avec RapidOCR, le moteur par défaut (docs/OCR_MOTEURS.md §3). Le "
+        "texte courant reste correct. Installer « pip install "
+        "rapidocr==3.10.0 » (déjà dans requirements.txt) pour retrouver la "
+        "qualité de référence.",
+        origine,
+    )

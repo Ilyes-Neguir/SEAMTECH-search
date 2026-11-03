@@ -80,6 +80,17 @@ ce que l'on recherche.
 ## 5. Exploitation
 
 * Installation : `pip install -r requirements.txt` (rapidocr y figure).
+* **Le repli se dit, il ne se tait pas** : si le moteur retenu est Tesseract
+  (roue absente, ou choix explicite), le produit journalise un
+  `WARNING` qui nomme l'écart mesuré — « reconnaissance des IDENTIFIANTS
+  alphanumériques DÉGRADÉE : 1/5 mesuré contre 5/5 avec RapidOCR » — et rappelle
+  l'installation qui rétablit la qualité de référence. Le texte courant reste
+  correct ; ce sont les références de fiche qui ne le sont pas. Un repli
+  silencieux aurait laissé croire à deux moteurs équivalents.
+  Preuve : `tests/test_ocr_moteur.py` —
+  `test_repli_tesseract_avertit_que_les_identifiants_seront_degrades`,
+  `test_tesseract_impose_avertit_aussi`,
+  `test_moteur_par_defaut_ne_provoque_aucun_avertissement_de_repli`.
 * Forcer Tesseract : `SEAMTECH_OCR_MOTEUR=tesseract`.
 * Désigner un binaire : `SEAMTECH_TESSERACT_COMMAND=/chemin/vers/tesseract`.
 * Confiance : moyenne des scores de ligne ramenée sur 0–100, comme Tesseract

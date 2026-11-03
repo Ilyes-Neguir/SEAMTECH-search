@@ -13,6 +13,7 @@ absente ; en CI, ``SEAMTECH_OCR_OBLIGATOIRE=1`` transforme ce saut en échec
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 
@@ -74,6 +75,47 @@ def test_auto_replie_sur_tesseract_sans_roue(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr(mod_moteur, "_rapidocr_installable", lambda: False)
     monkeypatch.setattr(mod_moteur, "_tesseract_disponible", lambda _cmd: True)
     assert isinstance(choisir_moteur("tesseract"), MoteurTesseract)
+
+
+def test_repli_tesseract_avertit_que_les_identifiants_seront_degrades(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Le repli n'est PAS équivalent au moteur par défaut : il doit le dire.
+
+    Mesuré (docs/OCR_MOTEURS.md §3) : 5/5 identifiants avec RapidOCR, 1/5 avec
+    Tesseract. Un repli silencieux laisserait croire à une reconnaissance
+    égale sur les références de fiche — c'est-à-dire sur ce que l'on cherche.
+    """
+    monkeypatch.delenv("SEAMTECH_OCR_MOTEUR", raising=False)
+    monkeypatch.setattr(mod_moteur, "_rapidocr_installable", lambda: False)
+    monkeypatch.setattr(mod_moteur, "_tesseract_disponible", lambda _cmd: True)
+    with caplog.at_level(logging.WARNING, logger="seamtech_search.ocr.moteur"):
+        assert isinstance(choisir_moteur("tesseract"), MoteurTesseract)
+    messages = [e.getMessage() for e in caplog.records]
+    assert any("IDENTIFIANTS" in m and "1/5" in m and "5/5" in m for m in messages), messages
+
+
+def test_tesseract_impose_avertit_aussi(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    """Forcer Tesseract par variable d'environnement n'efface pas l'avertissement."""
+    monkeypatch.setenv("SEAMTECH_OCR_MOTEUR", "tesseract")
+    monkeypatch.setattr(mod_moteur, "_rapidocr_installable", lambda: True)
+    monkeypatch.setattr(mod_moteur, "_tesseract_disponible", lambda _cmd: True)
+    with caplog.at_level(logging.WARNING, logger="seamtech_search.ocr.moteur"):
+        assert isinstance(choisir_moteur("tesseract"), MoteurTesseract)
+    messages = [e.getMessage() for e in caplog.records]
+    assert any("choix explicite" in m for m in messages), messages
+
+
+def test_moteur_par_defaut_ne_provoque_aucun_avertissement_de_repli(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Avec RapidOCR installé, aucun message : c'est la qualité de référence."""
+    monkeypatch.delenv("SEAMTECH_OCR_MOTEUR", raising=False)
+    monkeypatch.setattr(mod_moteur, "_rapidocr_installable", lambda: True)
+    monkeypatch.setattr(mod_moteur, "_tesseract_disponible", lambda _cmd: True)
+    with caplog.at_level(logging.WARNING, logger="seamtech_search.ocr.moteur"):
+        assert isinstance(choisir_moteur("tesseract"), MoteurRapidOCR)
+    assert [e.getMessage() for e in caplog.records] == []
 
 
 def test_aucun_moteur_disponible_donne_none(monkeypatch: pytest.MonkeyPatch) -> None:
