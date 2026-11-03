@@ -3591,3 +3591,66 @@ inventée.
 | Suite Linux (sélection exacte) | 2 348 passés, 47 sautés, 3 xfail, 0 échec |
 
 HEAD : `7e4a8b6`.
+
+## 65. Run 41564776168 (c172f87) : 390 → 382 échecs, et 37 → 9 sans cause
+
+Deux mesures, sur la même suite « sans service » :
+
+* run `41551125074` : `390 failed, 1924 passed, 66 skipped, 859 deselected` ;
+* run `41564776168` : `382 failed, 1932 passed, 69 skipped, 859 deselected`
+  (`rc=1`, 571 s) ;
+* verdict du job : `TOTAL 9 echec(s) hors perimètre connu` — contre 37 au run
+  précédent. Les correctifs des §63 et §64 tiennent donc **sur Windows**, pas
+  seulement sur le banc Linux.
+
+### Les 9 restants, et ce qu'on en sait
+
+Cinq sont une seule et même mécanique, établie ici :
+
+```
+tests/test_sauvegarde_unites.py::test_suppression_verrou_ne_permet_pas_deuxieme_processus
+tests/test_sauvegarde_unites.py::test_verrou_absence_fcntl_echoue_sans_creer_fichier
+tests/test_sauvegarde_unites.py::test_verrou_meme_objet_concurrence_avant_ouverture
+tests/test_sauvegarde_unites.py::test_verrou_ne_perd_pas_exclusion_sur_reentree_meme_objet
+tests/test_sauvegarde_unites.py::test_verrou_remplace_pendant_execution_ne_permet_pas_chevauchement
+→ « une sauvegarde est déjà en cours — chevauchement refusé »
+```
+
+Mécanique : six tests de ce fichier **simulent une primitive POSIX**
+(`fcntl.flock`, ouverture par `dir_fd`) en la remplaçant par une panne, et
+vérifient que le produit la rattrape. Sous Windows la primitive n'existe pas :
+la substitution n'a aucun effet, l'exception attendue ne vient jamais, et le
+verrou est **laissé pris**. Comme le verrou PARENT est posé dans le
+répertoire temporaire commun du banc, tous les tests suivants du même fichier
+échouent à l'acquisition — avec une panne qui n'a rien à voir avec ce qu'ils
+mesurent. La preuve que c'est le banc et non le produit : ces tests, rejoués
+SEULS, échouent d'une **autre** manière (traces des runs précédents).
+
+Décision (commit `869db9c`) : les tests qui simulent une primitive POSIX
+**sautent**, raison écrite, là où cette primitive n'existe pas. La couverture
+reste entière sur Linux (67 tests du fichier y passent, dont les 6 marqués) et
+dans le conteneur Linux qui est la cible de déploiement.
+
+Les quatre derniers n'ont pas encore de cause démontrée ; leurs identifiants
+sont portés par `ci/tests-trace.txt` :
+
+```
+tests/test_restauration_confinement.py::test_copie_dump_refuse_parent_substitue_au_moment_de_l_ouverture :: assert False
+tests/test_restauration_confinement.py::test_erreur_seconde_publication_ne_laisse_pas_premiere :: [XPASS(strict)]
+tests/test_sauvegarde_manifeste_distant.py::test_restore_cache_le_mot_de_passe_et_ne_fuite_pas_stderr :: IndexError
+tests/test_liaison_catalogue_capture.py::test_declencheur_invalide_meme_les_reecritures_identiques_sqlite :: TypeError
+```
+
+### Autres workflows au même commit `c172f87`
+
+`CI` ✅ · `Qualification native` (Red Hat 10) ✅ · `Qualification reserves`
+(PostgreSQL 16 + Redis 7) ✅ · `Endurance` ✅ · `Perf comparaison` ✅ ·
+`Qualification Windows` ❌ — rouge **par construction** : c'est un instrument
+de mesure, ses deux suites contiennent les tests dépendants des primitives
+POSIX.
+
+### Frontend, vérifié localement ce tour
+
+`pnpm install --frozen-lockfile` (pnpm 9.15.9, 9,7 s) · `pnpm exec tsc
+--noEmit` **sans aucune erreur** · `node --test lib/*.test.ts` :
+**15 tests, 15 passés**.
