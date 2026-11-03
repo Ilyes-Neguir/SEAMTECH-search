@@ -77,8 +77,10 @@ if (-not (Test-Path $CodeSortie)) {
     # 41420706781 : le message commençait par le premier test de la queue et
     # s'arrêtait avant la ligne utile.
     if ($queue.Length -gt 2800) { $queue = '…' + $queue.Substring($queue.Length - 2800) }
-    PublierErreur $Titre ("interrompue avant la fin — fin du journal : $queue")
-    exit 1
+    if (-not $DebugAppariement) {
+        PublierErreur $Titre ("interrompue avant la fin — fin du journal : $queue")
+        exit 1
+    }
 }
 $rc = [int]((Get-Content $CodeSortie -Raw).Trim())
 
@@ -124,11 +126,13 @@ if ($rc -eq 2) {
     # ``Publier`` tronque au DEBUT : on coupe la queue nous-memes, comme plus
     # haut, sinon la ligne utile passe a la trappe.
     if ($fin.Length -gt 2800) { $fin = '…' + $fin.Substring($fin.Length - 2800) }
-    PublierErreur "$Titre-interrompue" (
-        "suite INTERROMPUE (rc=2) : $($echecs.Count) echecs et $resume ne sont " +
-        "pas comparables aux runs completes. Fin du journal : $fin"
-    )
-    exit 1
+    if (-not $DebugAppariement) {
+        PublierErreur "$Titre-interrompue" (
+            "suite INTERROMPUE (rc=2) : $($echecs.Count) echecs et $resume ne sont " +
+            "pas comparables aux runs completes. Fin du journal : $fin"
+        )
+        exit 1
+    }
 }
 
 # --- 2 bis. Les CAUSES, et non seulement les noms ---------------------------
