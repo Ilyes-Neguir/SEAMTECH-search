@@ -19,6 +19,16 @@ from pathlib import Path
 RACINE = Path(__file__).resolve().parent.parent
 LIMITE = 2400
 
+# La console Windows du runner encode en cp1252 : une trace contenant un
+# caractère non latin (U+FFFD, accents d'un chemin) faisait échouer
+# ``print`` lui-même (run 41559119322 : UnicodeEncodeError à l'impression, et
+# plus aucune trace publiée). On force donc une sortie UTF-8 tolérante.
+for _flux in (sys.stdout, sys.stderr):
+    try:
+        _flux.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, OSError):  # noqa: PERF203 - vieux Python, flux sans reconfigure
+        pass
+
 
 def _identifiants() -> list[str]:
     liste = RACINE / "ci" / "tests-trace.txt"
