@@ -35,11 +35,23 @@ from pathlib import Path
 #: « + where 409 = … » là où « assert 409 == 200 » est la cause.
 _MARQUEURS_PYTEST = ("+", "-", "?", ">", "~", "^")
 
+#: Lignes que pytest ajoute pour ENCADRER un diff (« Full diff: », le crochet
+#: fermant du diff, une accolade seule) : elles ne sont pas la cause, elles la
+#: cachent. Vu au run 41551125074 : cinq échecs ne portaient comme cause que
+#: « Full diff: » ou « ] », alors que l'assertion fautive était deux lignes
+#: plus haut (« assert b'mauvaise-cible' == b'source-attendue' »). Les garder
+#: ferait publier du décor à la place de la cause.
+_LIGNES_DECOR: tuple[str, ...] = ("]", "}", ")", ",", ":", "")
+
+
+def _est_decor(ligne: str) -> bool:
+    return ligne in _LIGNES_DECOR or ligne.startswith("Full diff:")
+
 
 def _cause(texte: str | None, message: str | None, *, longueur_max: int = 240) -> str:
     """La cause d'un échec : la DERNIÈRE ligne « E » utile de la trace, à défaut le message."""
     lignes = [ligne[2:].strip() for ligne in (texte or "").splitlines() if ligne.startswith("E ")]
-    utiles = [ligne for ligne in lignes if ligne[:1] not in _MARQUEURS_PYTEST]
+    utiles = [ligne for ligne in lignes if ligne[:1] not in _MARQUEURS_PYTEST and not _est_decor(ligne)]
     brut = ""
     if utiles:
         brut = utiles[-1]
