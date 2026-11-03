@@ -39,15 +39,20 @@ def _publier(titre: str, texte: str) -> None:
 
 
 def _trace(identifiant: str) -> str:
-    execution = subprocess.run(
-        [sys.executable, "-m", "pytest", identifiant, "-x", "--tb=long", "-p", "no:randomly", "-q"],
-        cwd=RACINE,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=900,
-    )
+    try:
+        execution = subprocess.run(
+            [sys.executable, "-m", "pytest", identifiant, "-x", "--tb=long", "-p", "no:randomly", "-q"],
+            cwd=RACINE,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=180,
+        )
+    except subprocess.TimeoutExpired:
+        # Un test qui ne rend pas la main est un résultat, pas une panne de
+        # l'instrument : il doit être dit, et les suivants doivent être publiés.
+        return "TEMPS DEPASSE (180 s) — le test ne rend pas la main rejoué seul"
     sortie = (execution.stdout or "") + (execution.stderr or "")
     if "=== FAILURES ===" not in sortie and "=== ERRORS ===" not in sortie:
         return "AUCUNE TRACE — le test PASSE rejoué seul : " + " ".join(sortie.split())[-300:]
@@ -58,7 +63,10 @@ def _trace(identifiant: str) -> str:
 def main() -> int:
     for identifiant in _identifiants()[:6]:
         titre = "diag-trace-" + identifiant.split("::")[-1][:40]
-        _publier(titre, _trace(identifiant))
+        try:
+            _publier(titre, _trace(identifiant))
+        except Exception as erreur:  # noqa: BLE001 - l'instrument ne doit pas taire les autres
+            _publier(titre, f"INSTRUMENT EN PANNE : {type(erreur).__name__} : {erreur}")
     return 0
 
 

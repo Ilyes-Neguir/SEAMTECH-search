@@ -412,3 +412,5 @@ CAUSE|[WinError 3] The system cannot find the path specified|même cause que le 
 
 tests/test_ocr_page_integralite.py::test_page_multi_images_refuse_succes_partiel|OCR d'une page : exige l'extraction bornee, refusee hors POSIX (plateforme.py) ; le test simule l'OCR image par image et n'a donc rien a mesurer sur Windows
 tests/test_ocr_page_integralite.py::test_pdf_multi_images_echec_ocr_ne_devient_pas_document_extrait|idem : sans OCR, aucune page n'est extraite, l'assertion « 0 == 2 » est la consequence du refus nomme, pas une regression
+
+tests/test_sauvegarde_unites.py::test_verrou_ferme_flux_si_flock_echoue|le test remplace ``sauvegarde.fcntl`` par un objet qui fait échouer ``flock`` : sur Windows, le verrou passe par ``msvcrt`` (verrou de plage d'octets), ``fcntl`` est None et la panne simulée n'a pas lieu — « DID NOT RAISE ». Scénario POSIX, démontré par la trace du run 41558517147.

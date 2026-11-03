@@ -3346,3 +3346,58 @@ défauts. Le nombre d'échecs Windows réellement inexpliqués est aujourd'hui d
 * les artefacts et journaux bruts de GitHub ne sont pas téléchargeables
   depuis ce banc (erreur SSL vers le blob Azure) : seules les annotations sont
   lisibles.
+
+## 60. Le diagnostic couvre seize fichiers et publie des TRACES (commit `5435218`, `76e82d9`)
+
+Le diagnostic ne couvrait que quatre fichiers ; il en couvre seize, listés
+dans `ci/fichiers-diagnostic.txt`, et publie par paquet (dix annotations par
+étape au plus) les familles et la cause de chaque test échoué. Un
+`ci/publier_traces.py` publie en plus la TRACE COMPLÈTE de six tests choisis
+dans `ci/tests-trace.txt` : « une sauvegarde est déjà en cours » dit QUOI, pas
+OÙ, et la trace seule permet de trancher entre une limite de plateforme et un
+défaut du produit.
+
+### Trois défauts corrigés (commit `76e82d9`)
+
+1. **`scripts/inventaire_archive.py`** : le lexique était annoncé « chemin
+   stable entre machines » mais écrit avec le séparateur de l'OS
+   (`config\lexique_fiches.json` sur Windows) — exactement le défaut déjà
+   corrigé dans la sauvegarde. Passé en `as_posix()`, ainsi que le chemin de
+   chaque ligne d'inventaire.
+2. **`tests/test_rebuild_index.py`** : la clé stockée est MINUSCULE sur Windows
+   (`os.path.normcase`) ; la comparaison sans normalisation échouait sur la
+   casse seule et faisait lire un défaut du rebuild là où le rebuild est juste.
+3. **`tests/test_passe_finale_ingestion_dossiers.py`** et
+   **`tests/test_securite_banc_pg.py`** : deux scénarios qui n'existent pas sur
+   Windows — un nom de fichier non UTF-8 (les noms y sont en UTF-16) et une
+   étape de déploiement Linux (bash, sudo, 0600). Désormais sautés, avec leur
+   raison écrite dans le test.
+
+### Un écart démontré par la trace (run 41558517147)
+
+`test_verrou_ferme_flux_si_flock_echoue` remplace `sauvegarde.fcntl` par un
+objet qui fait échouer `flock`. Sur Windows le verrou passe par `msvcrt`,
+`fcntl` y est `None`, la panne simulée n'a pas lieu : `Failed: DID NOT RAISE`.
+Scénario POSIX — écart écrit avec la trace comme preuve.
+
+Même famille, même diagnostic : trois tests d'OCR de page dont la cause est le
+refus POSIX nommé de l'OCR.
+
+### Ce qui reste en attente de preuve
+
+Six tests du verrou de sauvegarde, dont **un au moins ne simule aucune
+primitive POSIX** : `test_verrou_processus_concurrent_refuse_puis_reussi`
+acquiert le verrou, lance un sous-processus qui doit échouer (code 9), le
+relâche, puis lance le même sous-processus qui doit réussir. Le second reçoit
+« une sauvegarde est déjà en cours » : **soit le verrou n'est pas relâché sur
+Windows, soit il est relâché trop tard**. C'est un DÉFAUT PRODUIT possible, et
+il est aujourd'hui en tête de `ci/tests-trace.txt`.
+
+S'y ajoutent : `assert 409 == 200` (trois tests d'URL présignée et un de
+l'API), `ValueError: objet … : bloc invalide (MagicMock au lieu d'octets)`
+(deux tests), `PermissionError: [Errno 13]` (trois tests, dont un de
+permissions de verrou et deux de CLI), et deux tests sans cause dans le
+rapport.
+
+**Prochaine action** : lire les `diag-trace-*` du run suivant, trancher le
+verrou (défaut ou limite), puis écrire les écarts démontrés.

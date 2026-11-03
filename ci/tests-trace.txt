@@ -1,8 +1,11 @@
 # Tests dont la cause lue ne suffit pas : on veut la TRACE, pas la dernière
 # ligne « E ». Un par un, six au plus (plafond d'annotations par étape).
-tests/test_sauvegarde_unites.py::test_verrou_ne_perd_pas_exclusion_sur_reentree_meme_objet
-tests/test_sauvegarde_unites.py::test_verrou_ferme_flux_si_flock_echoue
-tests/test_sauvegarde_unites.py::test_verrou_meme_objet_concurrence_avant_ouverture
-tests/test_sauvegarde_unites.py::test_verrou_absence_fcntl_echoue_sans_creer_fichier
+#
+# Priorité à ceux qui NE simulent aucune primitive POSIX : s'ils échouent,
+# c'est le produit qui se trompe, pas le banc qui simule mal.
+tests/test_sauvegarde_unites.py::test_verrou_processus_concurrent_refuse_puis_reussi
+tests/test_sauvegarde_unites.py::test_erreur_ouverture_fichier_lache_verrou_dossier
+tests/test_sauvegarde_unites.py::test_interruption_acquisition_verrou_ferme_descripteurs
+tests/test_sauvegarde_unites.py::test_suppression_verrou_ne_permet_pas_deuxieme_processus
+tests/test_sauvegarde_unites.py::test_verrou_remplace_pendant_execution_ne_permet_pas_chevauchement
 tests/test_url_presignee_302.py::test_artefact_sans_endpoint_public_sert_les_octets_par_l_api
-tests/test_inventaire_archive.py::test_localisation_des_fiches
