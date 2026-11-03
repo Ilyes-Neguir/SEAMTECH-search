@@ -199,9 +199,11 @@ if ($familles.Count -eq 0) {
 # les tranches suivantes, appelées par d'autres étapes, en publient huit.
 if ($Tranche -le 1) { $debut = 0; $combien = 7 } else { $debut = 7 + ($Tranche - 2) * 8; $combien = 8 }
 $numero = 0
-foreach ($famille in ($familles | Select-Object -Skip $debut -First $combien)) {
-    $numero++
-    Publier "$Titre-cause-$numero" "$($famille.Nombre) echecs ; CAUSE: $($famille.Cause) ; EXEMPLES: $($famille.Exemples)"
+if (-not $DebugAppariement) {
+    foreach ($famille in ($familles | Select-Object -Skip $debut -First $combien)) {
+        $numero++
+        Publier "$Titre-cause-$numero" "$($famille.Nombre) echecs ; CAUSE: $($famille.Cause) ; EXEMPLES: $($famille.Exemples)"
+    }
 }
 
 # Plafond : dix annotations par étape. Avec 314 échecs, l'inventaire complet
@@ -209,7 +211,7 @@ foreach ($famille in ($familles | Select-Object -Skip $debut -First $combien)) {
 # publie donc les causes d'abord, et l'inventaire sur un échantillon borné :
 # identifier 60 tests suffit à instruire, classer 314 échecs est le vrai besoin.
 # Réservé à la première tranche : les suivantes n'ont que huit places.
-if ($Tranche -le 1 -and $echecs.Count -gt 0) {
+if ($Tranche -le 1 -and $echecs.Count -gt 0 -and -not $DebugAppariement) {
     $paquet = 0
     $limite = [Math]::Min($echecs.Count, 60)
     for ($i = 0; $i -lt $limite; $i += 30) {
