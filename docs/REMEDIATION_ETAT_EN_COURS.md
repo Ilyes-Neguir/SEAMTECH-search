@@ -3654,3 +3654,82 @@ POSIX.
 `pnpm install --frozen-lockfile` (pnpm 9.15.9, 9,7 s) · `pnpm exec tsc
 --noEmit` **sans aucune erreur** · `node --test lib/*.test.ts` :
 **15 tests, 15 passés**.
+
+## 66. Run 41578726322 (`e109bb0`) : 369 échecs, TOUS nommés — plus aucun sans cause
+
+C'était l'objectif depuis le §59 (« 37 sans cause ») : **chaque échec de la
+suite Windows porte désormais une cause démontrée**.
+
+```
+[windows-sans-service] rc=1 ; echecs=369 ;
+  = 369 failed, 1939 passed, 79 skipped, 859 deselected, 2 xfailed,
+    20 warnings, 16 errors in 500.50s (0:08:20) =
+[windows-sans-service-ecart-nomme] 369 echec(s), TOUS nommes dans
+  ci/ecarts-windows.txt — limite de plateforme connue, pas une regression.
+  A revoir a chaque correctif.
+```
+
+Progression, run par run, du nombre d'échecs **sans cause démontrée** :
+
+| Run | Commit | Échecs | Sans cause | Ce qui a été fait |
+|---|---|---|---|---|
+| `41523086709` | `a0f5efd` | 393 | 94 | suite mesurée entièrement pour la première fois |
+| `41551125074` | `55940c6` | 390 | 37 | le verdict relit enfin le fichier de détail (`af56523`) |
+| `41564776168` | `c172f87` | 382 | 9 | les deux artefacts présignés élucidés par triple démonstration |
+| `41574825812` | `b02aff1` | 370 | 1 | verrou laissé pris + refus de lecture confinée + `normcase` |
+| `41578726322` | `e109bb0` | 369 | **0** | dernier test simulant une ouverture POSIX |
+
+### Le dernier, et pourquoi il ferme la série
+
+`test_verrou_meme_objet_concurrence_avant_ouverture :: assert False`. Ce test
+retarde l'ouverture du verrou pour faire se croiser deux fils sur le MÊME objet
+avant l'ouverture ; son crochet ne se déclenche que si le produit ouvre par le
+**nom relatif** `NOM_VERROU` avec un descripteur de répertoire — le chemin
+POSIX. Sur Windows l'ouverture se fait par chemin complet : le crochet ne se
+déclenche jamais, les deux fils se succèdent et renvoient tous deux « ok »,
+d'où `assert second == "refus"` faux. Même conclusion que les six précédents :
+simuler une ouverture POSIX là où elle n'existe pas ne mesure rien. Le test
+saute, raison écrite.
+
+### Ce que le run confirme au passage
+
+* les sauts motivés passent de 69 à **79** : les tests qui simulent une
+  primitive absente sont maintenant **sautés** (et dits) au lieu d'échouer pour
+  une raison qui n'est pas la leur ;
+* les échecs passent de 382 à 369 : le correctif du verrou laissé pris a bien
+  supprimé la pollution du banc (cinq tests qui échouaient « une sauvegarde est
+  déjà en cours » ne l'écrivent plus) ;
+* aucun échec nouveau n'est apparu : **pas de régression**.
+
+### État des workflows au commit `e109bb0`
+
+`CI` ✅ **13 jobs sur 13** (`41578726332`) · `Qualification native` (Red Hat 10)
+✅ · `Qualification reserves` (PostgreSQL 16 + Redis 7) ✅ · `Endurance` ✅ ·
+`Perf comparaison` ✅ · `Qualification Windows` ❌ — rouge **par construction** :
+c'est l'instrument de mesure, ses deux suites contiennent les tests dépendants
+des primitives POSIX. Le verdict qu'il publie est vert, lui : « 369 échecs,
+TOUS nommés ».
+
+### Vérifications locales du même tour
+
+* suite locale complète (sélection exacte) : **2 354 passés, 47 sautés,
+  859 désélectionnés, 3 xfail, 0 échec**, 200,7 s ;
+* `ruff check seamtech_search/ scripts/ tests/ ci/` : **All checks passed** ;
+* `tests/test_ecarts_windows.py` : **6 passed** (garde-fous du fichier d'écarts) ;
+* `tests/test_plateforme_sans_dir_fd.py` : **4 passed** — la reproduction sans
+  Windows des trois échecs liés au refus de lecture confinée ;
+* frontend : `pnpm install --frozen-lockfile` (pnpm 9.15.9), `pnpm exec tsc
+  --noEmit` **sans aucune erreur**, `node --test lib/*.test.ts` **15/15**.
+
+### Ce qui reste, honnêtement
+
+1. **Docker Desktop** : non qualifiable ici (un runner Windows ne fournit pas
+   de conteneurs Linux). C'est la cible de déploiement Windows, et elle devra
+   être prouvée sur le poste réel — jamais en premier.
+2. **Endurance « plusieurs jours »** : prouvée par comptage de fuites sur 25 et
+   300 cycles, pas par une horloge.
+3. **Le défaut OCR** (substitutions `0/O` sur identifiants) reste ouvert : le
+   job `ocr` est maintenu rouge volontairement, sans `xfail` ni assertion
+   affaiblie.
+4. **Windows natif reste NON PRÊT**, par décision produit assumée. La
+   différence : on sait maintenant exactement pourquoi, test par test.

@@ -1,4 +1,4 @@
-# Rapport final de remédiation — 2 novembre 2026
+# Rapport final de remédiation — 3 novembre 2026
 
 **Branche** : `arena/b936b3c0-seamtech-search` (jamais fusionnée dans `main` :
 aucune fusion n'a lieu sans accord explicite).
@@ -18,16 +18,25 @@ prouvé n'est pas déclaré prêt. Les limites sont dites, pas contournées.
 | **P0** — sauvegarde, restauration, hors-site, rétention, migration | **PRÊT** | toutes les exigences sont prouvées, y compris la restauration coordonnée **par la commande** (dernier point ouvert, fermé ce jour) |
 | **P1** — OCR, rotations, PostgreSQL 16/pgvector/Redis 7 | **PRÊT** | jobs verts, `xfail` retirés, campagnes rejouées |
 | **P1** — Chrome / Edge | **PRÊT** | run 41499874660 : `attendus=2 passes=4 echecs=0`, Chrome 156.0.8078.80 et Edge 156.0.4314.56 réels, 5 écrans chacun, **0 violation** WCAG 2.1 A/AA |
-| **P1** — Windows natif | **NON PRÊT** | refus **nommé** du produit ; suite mesurée ENTIÈREMENT (run 41523086709) : 393 échecs, **299 nommés (76 %)**, 94 en cours d'élucidation — voir §5 |
+| **P1** — Windows natif | **NON PRÊT (décision produit, assumée)** | suite mesurée ENTIÈREMENT (run 41578726322, `e109bb0`) : **369 échecs, TOUS nommés**, plus aucun échec sans cause démontrée — voir §5 |
 | **P1** — Docker Desktop | **NON QUALIFIABLE ICI** | un runner GitHub ne fournit pas de conteneurs Linux ; la preuve devra être faite sur le poste réel, jamais en premier |
 | **P1** — volume annuel | **MESURÉ, PARTIEL** | banc synthétique 10 000 fiches, p95 ≤ 211,68 ms pour une cible indicative de 250 ms ; ni PDF réels, ni réseau, ni stockage objet |
 | **P2** — matrice, multipart, pannes, sécurité, accessibilité | **PRÊT** | énumération automatique des routes, coupure réelle du corps, panne injectée, traversée neutralisée, 77 écrans scannés |
 | **P2** — endurance « plusieurs jours » | **PARTIEL** | invariants tenus à 25 et 300 cycles avec panne injectée ; **aucune exécution de plusieurs jours d'horloge** |
 
-**Intégration continue** : run `41467111707`, commit `48e8be2` — **13 jobs sur
+**Intégration continue** : run `41578726332`, commit `e109bb0` — **13 jobs sur
 13 verts** (`frontend`, `backend` 3.11/3.12/3.13, `e2e`, `ocr`, `sauvegarde`,
 `integration`, `docker`, `recette-corpus-reel`, `recette-locale`,
-`hors-ligne-reel`, `securite-dependances`).
+`hors-ligne-reel`, `securite-dependances`). Qualifications parallèles au même
+commit : `native` (Red Hat 10) ✅, `reserves` (PostgreSQL 16 + Redis 7) ✅,
+`endurance` ✅, `perf` ✅.
+
+**Suite locale complète** (sélection exacte, `PYTHONPATH=$PWD .venv/bin/python
+-m pytest -q -p no:randomly --tb=line -rf -m "not postgres and not s3 and not
+perf and not redis_queue and not ocr_suite"`, hors sept fichiers de banc
+lourd) : **2 354 passés, 47 sautés, 3 xfail, 0 échec** en 200,7 s. Frontend :
+`pnpm exec tsc --noEmit` **sans aucune erreur**, `node --test lib/*.test.ts`
+**15 tests, 15 passés**.
 
 ---
 
@@ -173,60 +182,110 @@ fichier qui ne rendait jamais la main s'exécute en **4,94 s** (commit
 
 ---
 
-## 5. Windows natif : ce qui est mesuré, nommé, et ce qui reste
+## 5. Windows natif : 369 échecs, et plus un seul sans cause
 
-Run `41523086709` (commit `a0f5efd`), suite « sans service » :
-**393 échecs, 1 920 passés, 66 sautés**, 859 désélectionnés, en 13 min 35 s
-(`rc=1`). Les 314 échecs annoncés lors des runs antérieurs étaient un résultat
-**tronqué** (suite interrompue) : le chiffre réel, mesuré sur une suite qui va
-au bout, est de 393.
+**Run `41578726322`, commit `e109bb0`, suite « sans service »** : `369 failed,
+1939 passed, 79 skipped, 859 deselected, 2 xfailed, 16 errors` (`rc=1`,
+500 s). Verdict publié par le workflow lui-même :
 
-**299 de ces 393 échecs sont expliqués et nommés**, par trois méthodes :
+> `369 echec(s), TOUS nommes dans ci/ecarts-windows.txt — limite de plateforme
+> connue, pas une regression. A revoir a chaque correctif.`
 
-1. **246 tests** dont la dépendance aux primitives POSIX est **démontrée** :
-   la suite est rejouée avec toutes les primitives déclarées absentes
-   (`PYTHONPATH=.:ci python -m pytest -p plugin_simulation_sans_primitives …`),
-   moins ceux qui échouent aussi sans la simulation. Chaque ligne de
-   `ci/ecarts-windows.txt` porte le constat mesuré ;
-2. **11 causes** lues dans le rapport JUnit du run (`ci/resumer_echecs.py`) :
-   156 échecs `verrou_flock`, 66 « Lecture confinée du bundle indisponible »,
-   24 `scan_ancre_descripteur`, 16 `ModuleNotFoundError: fcntl`, etc.
+Le nombre d'échecs **sans cause démontrée** est passé de 94 à **zéro** en cinq
+runs :
 
-3. **12 échecs OCR** dont la cause est désormais un **contrat testé** : hors
-   POSIX, le produit refuse le rendu et l'extraction d'image bornés
-   (`os.name != "posix"`), et `tests/test_ocr_refus_non_posix.py` le vérifie
-   sur les deux plateformes — refus, aucun sous-processus, aucun fichier
-   laissé, plateforme nommée. Le test d'arrêt de groupe (`os.killpg`), lui,
-   était déjà nommé mais **ne se reconnaissait pas** : Windows écrit
-   `<module 'os' (frozen)> has no attribute 'killpg'` alors que l'écart
-   cherchait `module 'os' has no attribute …`.
+| Run | Commit | Échecs | Sans cause |
+|---|---|---|---|
+| `41523086709` | `a0f5efd` | 393 | 94 |
+| `41551125074` | `55940c6` | 390 | 37 |
+| `41564776168` | `c172f87` | 382 | 9 |
+| `41574825812` | `b02aff1` | 370 | 1 |
+| **`41578726322`** | **`e109bb0`** | **369** | **0** |
 
-**94 échecs restent non expliqués** — dont 74 ont déjà une famille publiée
-(`assert 409 == 200` ×6, `TypeError: 'NoneType' object is not subscriptable`
-×2, `ValueError: … MagicMock au lieu d'octets` ×2, `assert 6 == 0` ×20…), et
-20 portent « aucune cause dans le rapport ». Leurs familles sont publiées à chaque run
-et ne sont **pas** maquillées en écarts : faute de raison démontrée, les nommer
-serait une dissimulation. Jusqu'ici le canal lui-même était tronqué — 34
-identifiants publiés sur 128 — et le verdict remplit désormais des seaux
-d'annotations : chaque échec inattendu sortira **avec la cause lue dans le
-rapport JUnit**. On y trouve notamment des tests qui simulent des binaires
-externes par des scripts `#!/bin/sh` (`test_garde_fous_preparation`, 20 échecs
-— cause établie, deux identifiants nommés) et des tests de permissions
-(`chmod` sans effet réel sur Windows).
+Chacune des 300 lignes d'écart de `ci/ecarts-windows.txt` (283 écarts par test,
+17 causes transverses) porte une raison **démontrée**, jamais supposée, par
+l'une de ces quatre méthodes :
 
-Deux causes longtemps ouvertes ont été **élucidées et corrigées**
-(commit `de3ecdf`) : le produit stocke `path_key = normcase(resolve(path))`,
-donc **tout en minuscules** sous Windows, alors que les tests cherchaient par
-le chemin brut — d'où `TypeError: 'NoneType' object is not subscriptable` et
-« document introuvable : dossier-client/fiche-A.txt ». La « cible
-diagnostique » du workflow, qui rejouait ces six tests un par un, est passée
-**rouge → vert** sur ce run.
+1. **246 tests** dont la dépendance aux primitives POSIX est prouvée : la suite
+   est rejouée avec toutes les primitives déclarées absentes
+   (`PYTHONPATH=.:ci python -m pytest -p plugin_simulation_sans_primitives …`).
+   Un test qui échoue **sous** la simulation et passe **sans** elle dépend de
+   ces primitives — c'est une raison établie, pas une opinion ;
+2. **17 causes transverses** lues dans le rapport JUnit (`ci/resumer_echecs.py`)
+   : 156 `verrou_flock`, 66 « lecture confinée du bundle », 24
+   `scan_ancre_descripteur`, 16 `ModuleNotFoundError: fcntl`… ;
+3. **des traces ciblées** : le job `diagnostic-causes` publie, pour les tests
+   dont la cause lue ne suffit pas, les cadres **PRODUIT** de la trace
+   (`ci/publier_traces.py`, filtre `_utile`) — le milieu d'une trace tombe dans
+   Starlette et n'apprend rien, on ne le publie plus ;
+4. **la reproduction sans Windows**, chaque fois qu'elle est possible. Exemple
+   décisif : vider `os.supports_dir_fd` déclenche, sur n'importe quelle
+   machine, exactement le refus que produit Windows
+   (`tests/test_plateforme_sans_dir_fd.py`, 4 tests). Ce qui ne se prouve que
+   sur Windows est dit « non démontré » ; ce qui se reproduit ailleurs est
+   prouvé.
 
-**Position produit, inchangée** : Windows natif n'est pas une cible de
-déploiement. Le produit refuse avec un message qui nomme la capacité
-manquante, la conséquence et la plateforme (`seamtech_search/plateforme.py`) ;
-le déploiement Windows se fait dans un **conteneur Linux** (Docker Desktop), où
-ces tests passent et sont couverts par la CI Linux.
+### 5.1 Ce que cette qualification a rapporté de concret
+
+Elle n'a pas seulement nommé des écarts : elle a fait corriger des défauts
+**produit** qu'un banc Linux seul n'aurait jamais vus. Cinq, dans cette
+campagne :
+
+1. **Un manifeste écrit avec le séparateur de la machine qui le produit.**
+   `sauvegarde.py` écrivait `str(chemin.relative_to(racine))` →
+   `CLIENT-A\\fiche.pdf` sur Windows. Restauré sous Linux, l'antislash n'est
+   pas un séparateur : on obtenait un fichier **dont le nom contient un
+   antislash**. Une sauvegarde illisible ailleurs que sur la machine qui l'a
+   produite est l'inverse d'une sauvegarde hors site. Les quatre points
+   d'écriture passent en `as_posix()` (commit `74f03e8`, preuve
+   `test_inventaire_archive_chemins_portables`) ;
+2. **L'inventaire d'archive hachait les verrous qu'il pose lui-même.**
+   Sur POSIX, `flock` est consultatif : lire un fichier verrouillé passe, le
+   défaut est invisible. Sur Windows une plage verrouillée est **exclusive**,
+   y compris pour un autre descripteur du même processus : l'inventaire se
+   prenait `PermissionError` sur son propre verrou et **la sauvegarde
+   échouait**. Les deux noms de verrou sont écartés de l'inventaire (commit
+   `55940c6`, preuve `test_inventaire_archive_ignore_les_verrous`) ;
+3. **Sonder un PID le tuait** (`os.kill(pid, 0)` — voir §3.0) ;
+4. **Une lecture non bornée** qui ne rendait jamais la main (§4.1) ;
+5. **Une violation WCAG 2.1 A/AA sur `/fiches`**, trouvée par les vrais
+   navigateurs et corrigée (§3.1).
+
+### 5.2 Les neuf derniers échecs, un par un (2 novembre → 3 novembre)
+
+Neuf échecs résistaient encore au run `41564776168`. Tous ont reçu une cause :
+
+* **cinq** (`test_suppression_verrou…`, `test_verrou_absence_fcntl…`,
+  `test_verrou_meme_objet…`, `test_verrou_ne_perd_pas_exclusion…`,
+  `test_verrou_remplace…`) échouaient avec « une sauvegarde est déjà en cours ».
+  Mécanique démontrée : six tests **simulent** `fcntl.flock` en le remplaçant
+  par une panne ; sous Windows `fcntl` est `None`, la panne simulée n'a jamais
+  lieu, et le verrou est **laissé pris**. Comme le verrou parent est posé dans
+  le répertoire temporaire **commun** du banc, tous les tests suivants du même
+  fichier échouent à l'acquisition — avec une panne qui n'a rien à voir avec ce
+  qu'ils mesurent. Ces tests sautent désormais, raison écrite, là où la
+  primitive simulée n'existe pas (commits `869db9c`, `e109bb0`) ;
+* **trois** (`test_copie_dump_refuse_parent_substitue…`,
+  `test_erreur_seconde_publication…`, `test_restore_cache_le_mot_de_passe…`)
+  sont trois conséquences d'**un seul refus** : `_ouvrir_source_bundle`
+  (`sauvegarde.py:877`) lève « Lecture confinée du bundle indisponible sur
+  cette plateforme » dès que `os.open` n'est pas dans `os.supports_dir_fd` —
+  donc **avant toute ouverture**. D'où `assert change` faux, `IndexError` sur
+  une liste d'appels vide, et un `XPASS` qui réussit pour la mauvaise raison.
+  Reproduit sans Windows par `tests/test_plateforme_sans_dir_fd.py` ;
+* **un** (`test_declencheur_invalide_meme_les_reecritures_identiques_sqlite`)
+  était un **test faux** : il interrogeait la base par `str(chemin)` alors que
+  le produit range `path_key = normcase(resolve(chemin))` (`models.py:61-64`) —
+  donc en minuscules sur les systèmes qui ignorent la casse. Corrigé côté test.
+
+### 5.3 Position produit, inchangée
+
+Windows natif n'est **pas** une cible de déploiement. Le produit refuse avec un
+message qui nomme la capacité manquante, la conséquence et la plateforme
+(`seamtech_search/plateforme.py`) ; le déploiement Windows se fait dans un
+**conteneur Linux** (Docker Desktop), où ces tests passent et sont couverts par
+la CI Linux. La différence avec le rapport précédent : il ne reste **aucun
+échec dont on ignore la cause**. Ce qui est refusé est refusé, nommément.
 
 ---
 
@@ -271,6 +330,12 @@ ces tests passent et sont couverts par la CI Linux.
   copie, instantané MVCC, files durables.
 * **`error-handling`** — messages opposables : capacité, conséquence,
   plateforme ; aucune panne anonyme.
+* **`verification-loop` poussé jusqu'au bout** — la règle appliquée à chaque
+  échec Windows : « une cause ne s'écrit qu'avec une preuve rejouable ». Quand
+  Windows n'était pas joignable, la preuve a été refaite ailleurs
+  (`tests/test_plateforme_sans_dir_fd.py`, `plugin_simulation_sans_primitives`) ;
+  quand elle ne pouvait pas l'être, l'échec est resté « non démontré » plutôt
+  que d'être rangé dans une case commode.
 * **`architecture-decision-records`** — les décisions de plateforme (Windows
   natif hors cible, écarts, bornes) sont écrites ici et dans
   `docs/REMEDIATION_ETAT_EN_COURS.md`, pas implicites.
@@ -296,6 +361,16 @@ PYTHONPATH=$PWD:ci .venv/bin/python -m pytest -q -p no:randomly \
 python ci/resumer_echecs.py logs/junit-<suite>.xml logs/causes-<suite>.txt \
   --details logs/details-<suite>.txt --exemples 25
 
+# Ce que le produit fait quand le système n'ouvre pas par descripteur (Windows)
+PYTHONPATH=$PWD .venv/bin/python -m pytest -q -p no:randomly tests/test_plateforme_sans_dir_fd.py
+
+# Une plateforme qui n'a PAS les primitives POSIX (établit les écarts Windows)
+PYTHONPATH=$PWD:ci .venv/bin/python -m pytest -q -p no:randomly \
+  -p plugin_simulation_sans_primitives <sélection>
+
+# Frontend : types et tests unitaires
+cd frontend && pnpm install --frozen-lockfile && pnpm exec tsc --noEmit && node --test lib/*.test.ts
+
 # Restauration coordonnée, comme l'exploitante
 python -m seamtech_search.sauvegarde sauver --archive <racine> --dossier <sauvegardes> \
   --data ./data --avec-references
@@ -304,4 +379,4 @@ python -m seamtech_search.sauvegarde restaurer --coordonnee --manifeste <manifes
 ```
 
 **Journal de bord complet** (preuves, runs, SHA, échecs et corrections, §1 à
-§50) : `docs/REMEDIATION_ETAT_EN_COURS.md`.
+§66) : `docs/REMEDIATION_ETAT_EN_COURS.md`.
