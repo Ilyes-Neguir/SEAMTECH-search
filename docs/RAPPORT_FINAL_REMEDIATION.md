@@ -27,9 +27,15 @@ prouvé n'est pas déclaré prêt. Les limites sont dites, pas contournées.
 **Intégration continue** : run `41578726332`, commit `e109bb0` — **13 jobs sur
 13 verts** (`frontend`, `backend` 3.11/3.12/3.13, `e2e`, `ocr`, `sauvegarde`,
 `integration`, `docker`, `recette-corpus-reel`, `recette-locale`,
-`hors-ligne-reel`, `securite-dependances`). Qualifications parallèles au même
-commit : `native` (Red Hat 10) ✅, `reserves` (PostgreSQL 16 + Redis 7) ✅,
+`hors-ligne-reel`, `securite-dependances`), et **run `41582475951`, commit
+`4f8ed46` — 13 jobs sur 13 verts** également. Qualifications parallèles, mêmes
+commits : `native` (Red Hat 10) ✅, `reserves` (PostgreSQL 16 + Redis 7) ✅,
 `endurance` ✅, `perf` ✅.
+
+`e109bb0` est le **dernier commit qui touche du code** ; `4f8ed46` et les
+suivants ne touchent que `docs/`. La suite Windows citée au §5 a été mesurée
+deux fois sur ce même code (runs `41578726322` et, à `4f8ed46`, `565,96 s`,
+mêmes chiffres) : la mesure est donc celle du code livré.
 
 **Suite locale complète** (sélection exacte, `PYTHONPATH=$PWD .venv/bin/python
 -m pytest -q -p no:randomly --tb=line -rf -m "not postgres and not s3 and not
