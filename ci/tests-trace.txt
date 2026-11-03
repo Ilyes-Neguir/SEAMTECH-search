@@ -1,7 +1,6 @@
-# Tests dont la cause lue ne suffit pas : on veut la FIN de la TRACE.
+# Reste deux tests d'artefact présigné dont on ne sait pas encore POURQUOI le
+# produit emprunte la voie objet au lieu de servir le fichier local
+# (« MagicMock au lieu d'octets »). On veut le MILIEU de la trace : c'est là
+# qu'est l'aiguillage.
 tests/test_url_presignee_302.py::test_artefact_sans_endpoint_public_sert_les_octets_par_l_api
 tests/test_url_presignee_302.py::test_artefact_presignature_indisponible_sert_le_repli_sans_exception
-tests/test_restauration_confinement.py::test_deux_restaurations_concurrentes_necrasent_pas
-tests/test_restauration_confinement.py::test_deux_restaurations_objet_concurrentes_avec_adaptateur_atomique_simule
-tests/test_restauration_confinement.py::test_dump_avec_parent_et_lien_ne_lit_pas_autre_fichier
-tests/test_detection_fiches.py::test_inventaire_rapporte_deux_vues_et_les_desaccords
