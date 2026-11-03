@@ -41,7 +41,7 @@ _MARQUEURS_PYTEST = ("+", "-", "?", ">", "~", "^")
 #: « Full diff: » ou « ] », alors que l'assertion fautive était deux lignes
 #: plus haut (« assert b'mauvaise-cible' == b'source-attendue' »). Les garder
 #: ferait publier du décor à la place de la cause.
-_LIGNES_DECOR: tuple[str, ...] = ("]", "}", ")", ",", ":", "")
+_LIGNES_DECOR: tuple[str, ...] = ("]", "}", ")", "{", ",", ":", "")
 
 
 def _est_decor(ligne: str) -> bool:

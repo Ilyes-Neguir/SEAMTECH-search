@@ -262,6 +262,13 @@ def test_dossier_de_plus_de_100k_fichiers_refuse_sans_ecrire(tmp_path: Path) -> 
 
 def test_fichier_non_utf8_dans_un_dossier_ne_casse_pas_le_parcours(tmp_path: Path) -> None:
     """Nom de fichier en octets non UTF-8 (archive ancienne, partage Windows)."""
+    if os.name != "posix":
+        # Windows stocke les noms en UTF-16 : un nom créé avec des octets
+        # arbitraires n'y a pas le sens qu'il a en POSIX, où un nom EST une
+        # suite d'octets. Le scénario « archive ancienne dont le nom n'est pas
+        # de l'UTF-8 » ne peut donc pas s'y produire, et y forcer le test
+        # mesurerait l'encodeur de Python, pas le parcours.
+        pytest.skip("un nom de fichier non UTF-8 n'existe pas sur Windows (UTF-16 natif)")
     racine = tmp_path / "racine"
     racine.mkdir()
     brut = os.fsencode(str(racine)) + b"/" + b"facture_\xe9\xe8.pdf"

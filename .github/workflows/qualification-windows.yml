@@ -108,6 +108,11 @@ jobs:
         run: |
           python ci\publier_details_diag.py 14 7
           exit 0
+      - name: Traces complètes des tests dont la cause lue ne suffit pas
+        if: always()
+        run: |
+          python ci\publier_traces.py
+          exit 0
       - name: Conserver les journaux de diagnostic
         if: always()
         uses: actions/upload-artifact@v4

@@ -1,0 +1,8 @@
+# Tests dont la cause lue ne suffit pas : on veut la TRACE, pas la dernière
+# ligne « E ». Un par un, six au plus (plafond d'annotations par étape).
+tests/test_sauvegarde_unites.py::test_verrou_ne_perd_pas_exclusion_sur_reentree_meme_objet
+tests/test_sauvegarde_unites.py::test_verrou_ferme_flux_si_flock_echoue
+tests/test_sauvegarde_unites.py::test_verrou_meme_objet_concurrence_avant_ouverture
+tests/test_sauvegarde_unites.py::test_verrou_absence_fcntl_echoue_sans_creer_fichier
+tests/test_url_presignee_302.py::test_artefact_sans_endpoint_public_sert_les_octets_par_l_api
+tests/test_inventaire_archive.py::test_localisation_des_fiches

@@ -460,7 +460,7 @@ def construire_section_detection(
     chemin = Path(chemin_lexique)
     racine_depot = Path(__file__).resolve().parent.parent
     try:
-        affichage = str(chemin.resolve().relative_to(racine_depot))
+        affichage = chemin.resolve().relative_to(racine_depot).as_posix()
     except ValueError:
         affichage = chemin.name
     empreinte_lexique = hashlib.sha256(chemin.read_bytes()).hexdigest()
@@ -540,8 +540,13 @@ def scanner_archive(
                 annee_stats["nb"] += 1
                 annee_stats["octets"] += stat.st_size
 
+                # Chemin relatif ou absolu rendu en écriture POSIX (« / »), pas
+                # avec le séparateur de l'OS : un inventaire produit sur Windows
+                # doit rester comparable et relisible sur Linux, et inversement.
+                # Le commentaire de la fonction « chemin stable entre machines »
+                # n'était pas tenu sur Windows : on y écrivait « config\lexique… ».
                 ligne = LigneFichier(
-                    chemin=str(chemin),
+                    chemin=chemin.as_posix(),
                     taille=stat.st_size,
                     annee=annee,
                     extension=extension,

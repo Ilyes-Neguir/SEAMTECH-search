@@ -45,6 +45,14 @@ def test_fichier_prive_ne_suit_pas_de_lien_et_n_ecrase_pas(tmp_path):
 
 def test_etape_configuration_hors_ligne_protege_les_secrets(tmp_path):
     import os
+    if os.name == "nt":
+        # L'étape qualifiée EST un script de déploiement Linux : elle écrit un
+        # fichier d'environnement pour ``bash``, pose des droits 0600 avec
+        # ``sudo install -o seamtech-app``, et le test la rejoue en la sourçant
+        # depuis ``bash``. Rien de tout cela n'existe sur Windows. La propriété
+        # de sécurité (aucun secret dans les journaux) reste vérifiée, en CI,
+        # sur la plateforme de déploiement.
+        pytest.skip("étape de déploiement Linux (bash, sudo, modes 0600) : sans objet sur Windows")
     import stat
     import subprocess
     import sys
