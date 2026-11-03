@@ -3459,3 +3459,47 @@ publie désormais la FIN des traces), écrire les derniers écarts démontrés,
 puis relancer la suite complète pour recompter : l'objectif est un verdict
 Windows où CHAQUE échec porte une cause écrite, y compris ceux qui relèvent
 d'une limite de plateforme.
+
+## 62. Deux défauts de plus, trouvés par trace (commit `55940c6`)
+
+**L'inventaire d'archive hachait les verrous qu'il pose lui-même.**
+`inventorier_archive` parcourait tout, y compris `sauvegarde.lock` et
+`.sauvegarde-parent.lock`. Sur POSIX, `flock` est consultatif : lire un
+fichier verrouillé passe, défaut invisible. Sur Windows, une plage d'octets
+verrouillée est EXCLUSIVE, y compris pour un autre descripteur du même
+processus : l'inventaire se prenait `PermissionError` en hachant son propre
+verrou, et **la sauvegarde échouait**
+(`test_cli_annonce_limites_sauvegarde`,
+`test_cli_base_depuis_environnement_sans_argument_secret`, traces des runs
+41560558673 et 41561075673). Les deux noms de verrou sont désormais écartés
+de l'inventaire, et `test_inventaire_archive_ignore_les_verrous` le prouve.
+
+**Un écart de plus** : `test_publication_locale_concurrente_ne_remplace_pas_la_cible`
+(publication confinée refusée → la cible n'existe pas).
+
+### Bilan courant de la qualification Windows (commit `55940c6`)
+
+* 390 échecs au dernier comptage complet (run 41551125074), dont
+  **37 sans cause écrite** ;
+* causes écrites depuis : trois de verrou, trois d'OCR, un de traversée de
+  lien, un de restauration confinée, un de publication locale, six familles de
+  codes Windows (`[WinError 5]`, `[WinError 32]`, `[WinError 10038]`,
+  `[WinError 2]`, `[WinError 3]`, variable d'environnement > 32 767) ;
+* défauts PRODUIT corrigés grâce au banc Windows : quatre chemins non
+  portables (sauvegarde, lexique, lignes d'inventaire, localisations) et
+  l'inventaire qui hachait ses propres verrous ;
+* attentes de test corrigées : casse de `normcase`, chemin comparé à un
+  littéral POSIX, et deux scénarios qui n'existent pas sur Windows (nom non
+  UTF-8, déploiement Linux) désormais sautés avec leur raison.
+
+### Reste à trancher (liste portée par `ci/tests-trace.txt`)
+
+Deux tests d'artefact présigné (`MagicMock au lieu d'octets`), deux de
+restaurations concurrentes, un de dump avec parent et lien, et deux sans cause
+dans le rapport. Le run suivant en publiera la FIN de trace.
+
+**Prochaine action** : lire ces traces, écrire les derniers écarts, puis
+relancer la suite complète pour un verdict où CHAQUE échec porte une cause
+écrite. Le point P1 « Windows natif » reste NON PRÊT : ce n'est pas le
+comptage qui le change, c'est l'absence des primitives POSIX, lue dans
+`plateforme.py` et refusée explicitement par le produit.
