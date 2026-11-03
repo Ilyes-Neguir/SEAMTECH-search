@@ -65,16 +65,12 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
-      - name: Rejouer seuls les fichiers inexpliqués et publier les assertions fautives
+      - name: Rejouer seuls les fichiers inexpliqués
         run: |
           $ErrorActionPreference = 'Continue'
           New-Item -ItemType Directory -Force -Path logs | Out-Null
-          $fichiers = @(
-            'tests/test_sauvegarde_unites.py',
-            'tests/test_restauration_confinement.py',
-            'tests/test_sauvegarde_manifeste_distant.py',
-            'tests/test_sauvegarde_references.py'
-          )
+          $fichiers = Get-Content ci/fichiers-diagnostic.txt | Where-Object { $_.Trim() -and -not $_.Trim().StartsWith('#') }
+          $comptes = @()
           foreach ($fichier in $fichiers) {
             $nom = ($fichier -replace 'tests/', '') -replace '\.py$', ''
             $log = "logs\diag-$nom.log"
@@ -89,64 +85,28 @@ jobs:
               $dernier = Select-String -Path $log -Pattern 'passed|failed|error' | Select-Object -Last 1
               if ($dernier) { $resume = $dernier.Line.Trim() }
             }
-            $causes = @()
-            if (Test-Path $log) {
-              $causes = Select-String -Path $log -Pattern '^E   ' |
-                        ForEach-Object { $_.Line.Trim() } | Select-Object -Unique
-            }
-            $texte = ($causes | Select-Object -First 20) -join ' | '
-            if ($texte.Length -gt 2400) { $texte = $texte.Substring(0, 2400) }
-            if ($rc -eq 0) {
-              Write-Host "::notice title=diag-$nom::rc=0 — le fichier PASSE seul : $resume"
-            } else {
-              Write-Host "::notice title=diag-$nom::rc=$rc ; $resume ; assertions fautives : $texte"
-            }
+            $comptes += "$nom : rc=$rc ; $resume"
           }
+          # DIX annotations par étape, et un résumé par fichier : un seul
+          # paquet pour tous les fichiers, sinon les suivants sont perdus.
+          $texte = ($comptes -join ' || ')
+          if ($texte.Length -gt 2800) { $texte = $texte.Substring(0, 2800) }
+          Write-Host "::notice title=diag-resume::$texte"
           exit 0
-      - name: Publier, par fichier, les familles de causes et le détail par test
+      - name: Causes par test, paquet 1
         if: always()
         run: |
-          $ErrorActionPreference = 'Continue'
-          $fichiers = @(
-            'tests/test_sauvegarde_unites.py',
-            'tests/test_restauration_confinement.py',
-            'tests/test_sauvegarde_manifeste_distant.py',
-            'tests/test_sauvegarde_references.py'
-          )
-          foreach ($fichier in $fichiers) {
-            $nom = ($fichier -replace 'tests/', '') -replace '\.py$', ''
-            $xml = "logs\junit-diag-$nom.xml"
-            if (-not (Test-Path $xml)) { continue }
-            python ci\resumer_echecs.py $xml "logs\fam-diag-$nom.txt" --details "logs\det-diag-$nom.txt" --exemples 40 | Out-Null
-            $fam = @()
-            if (Test-Path "logs\fam-diag-$nom.txt") { $fam = Get-Content "logs\fam-diag-$nom.txt" }
-            $texte = ($fam | Select-Object -First 12) -join ' || '
-            if ($texte.Length -gt 2400) { $texte = $texte.Substring(0, 2400) }
-            Write-Host "::notice title=fam-$nom::$texte"
-            $det = @()
-            if (Test-Path "logs\det-diag-$nom.txt") { $det = Get-Content "logs\det-diag-$nom.txt" }
-            $texte2 = ($det | Select-Object -First 30) -join ' || '
-            if ($texte2.Length -gt 2400) { $texte2 = $texte2.Substring(0, 2400) }
-            Write-Host "::notice title=det-$nom::$texte2"
-          }
+          python ci\publier_details_diag.py 0 7
           exit 0
-      - name: Mise au point de l'appariement (sur les fichiers de ce diagnostic)
+      - name: Causes par test, paquet 2
         if: always()
-        # Le même script de verdict, le même runner, les mêmes formats : si les
-        # identifiants du journal se retrouvent (ou non) dans le fichier de
-        # détail, ce job le dira — avec ses propres annotations, et non pas
-        # noyé dans les cinquante du job principal.
         run: |
-          $ErrorActionPreference = 'Continue'
-          New-Item -ItemType Directory -Force -Path logs | Out-Null
-          Remove-Item -Force -ErrorAction SilentlyContinue logs\diag-concat.log, logs\fam-concat.txt, logs\det-concat.txt
-          Get-ChildItem logs\diag-*.log | ForEach-Object { Get-Content $_.FullName | Add-Content logs\diag-concat.log }
-          Get-ChildItem logs\fam-diag-*.txt | ForEach-Object { Get-Content $_.FullName | Add-Content logs\fam-concat.txt }
-          Get-ChildItem logs\det-diag-*.txt | ForEach-Object { Get-Content $_.FullName | Add-Content logs\det-concat.txt }
-          Set-Content -Path logs/rc-diag-concat.txt -Value '1' -NoNewline
-          if (-not (Test-Path logs/rc-diag-concat.txt)) { Set-Content -Path logs/rc-diag-concat.txt -Value '1' }
-          Write-Host 'contenu de rc-diag-concat :' (Get-Content logs/rc-diag-concat.txt -Raw)
-          pwsh -File ci\verdict-windows.ps1 -Journal logs/diag-concat.log -CodeSortie logs/rc-diag-concat.txt -Titre diag -Causes logs/fam-concat.txt -FichierDetails logs/det-concat.txt -DebugAppariement
+          python ci\publier_details_diag.py 7 7
+          exit 0
+      - name: Causes par test, paquet 3
+        if: always()
+        run: |
+          python ci\publier_details_diag.py 14 7
           exit 0
       - name: Conserver les journaux de diagnostic
         if: always()
