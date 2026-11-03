@@ -3206,3 +3206,66 @@ recompter ; si non, écrire les six familles manquantes dans
 `ci/ecarts-windows.txt` avec leur cause démontrée et recompter. Dans les deux
 cas, le nombre d'échecs réellement inexpliqués est de l'ordre d'une dizaine,
 pas de soixante-six.
+
+## 58. LA CAUSE DES 66 ÉCHECS : le verdict n'a jamais relu le fichier de détail (commit `af56523`)
+
+Trois obstacles d'outillage ont d'abord masqué la lecture — chacun d'eux est
+une limite à dire dans le rapport final, parce qu'une étape « success » peut
+n'avoir strictement rien dit :
+
+1. **cinquante annotations par exécution de vérification** : une étape qui
+   publie après d'autres perd ses annotations (runs 41523086709, 41536354571,
+   41544601483) ;
+2. **dix annotations par étape** : l'étape de mise au point appelait le
+   verdict, qui publiait résumé + sept familles + deux inventaires — dix — et
+   les annotations de mise au point passaient à la trappe (run 41550362469) ;
+3. **les gardes du verdict** : suite jugée interrompue (`41549514516`), puis
+   code de sortie illisible (`41549920537`) coupaient la parole avant le bloc
+   de mise au point.
+
+Ces trois obstacles levés, l'annotation `diag-debug-appariement` du run
+**41550712445** a donné ceci :
+
+```
+fichier_detail=System.Collections.Hashtable ; existe=False ; lignes=0 ;
+cles_chargees=1 ; echecs_journal=85 ; causes_nommees=11 ; attendus=284
+```
+
+**PowerShell ne distingue pas la casse des noms de variables.** Le script
+déclarait `[string]$Details` (le CHEMIN du fichier de détail) et, plus loin,
+`$details = @{}` (la table de bord « cause par test »). C'était la même
+variable : l'affectation écrasait le chemin, `Test-Path` portait alors sur une
+table de hachage, et le fichier `identifiant|cause` produit par
+`ci/resumer_echecs.py` n'était **jamais lu**.
+
+Conséquence, depuis l'introduction de l'option `-Details` : **chaque échec
+n'était classé que par identifiant, jamais par cause**. Les 66 échecs annoncés
+« sans cause » avaient leur cause écrite dans le rapport JUnit, dans
+`ci/ecarts-windows.txt`, et publiée en clair dans les familles — mais le
+verdict ne la relisait pas. Ce n'est pas « 66 échecs inexpliqués », c'est
+« 66 échecs qu'un outil ne savait pas lire ».
+
+Le paramètre s'appelle désormais `-FichierDetails` ; les dix appels du
+workflow suivent ; un commentaire de garde-fou est écrit à l'endroit du
+piège.
+
+**Prochaine action** : relire le verdict du premier run de qualification
+Windows postérieur à `af56523`. Le nombre d'échecs réellement non nommés doit
+tomber de 66 à une quinzaine : les causes « Lecture confinée du bundle
+indisponible sur cette plateforme », « Restauration locale sûre indisponible
+sur cette plateforme », `ModuleNotFoundError: No module named 'fcntl'` et les
+trois refus de liens sont déjà écrites. Puis écrire les six familles qui
+restent, avec leur cause démontrée :
+
+| famille | nombre | cause à établir |
+|---|---|---|
+| `une sauvegarde est déjà en cours — chevauchement refusé` | 6 | verrou : Windows ne permet pas de remplacer un fichier ouvert |
+| `PermissionError: [WinError 5]` sur `backup -> backup-original` | 2 | renommage d'un dossier ouvert, refusé sur Windows |
+| `OSError: [WinError 10038]` (« not a socket ») | 1 | à démontrer |
+| `ValueError: environment variable longer than 32767 characters` | 1 | plafond Windows sur la longueur d'une variable d'environnement |
+| `FileNotFoundError` (`…\out\1\piece`) | 1 | à démontrer |
+| `IndexError`, `assert False`, « Full diff: » | 3 | à démontrer |
+
+**Le point P1 « Windows natif » reste NON PRÊT** — ce n'est pas ce mesurage
+qui le change : il repose sur l'absence des primitives POSIX, lue dans
+`plateforme.py` et refusée explicitement par le produit.
