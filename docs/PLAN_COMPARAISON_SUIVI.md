@@ -30,7 +30,8 @@ ce qui reste ouvert.
 | Lot | Commit | Ce que le lot apporte |
 |---|---|---|
 | **0** | `30d6c39` | Cartographie du corpus — mesurer la qualité réelle avant d'écrire une règle (`seamtech_search/qualite/cartographie.py`, 5 épreuves) |
-| **1** | `9588ce3`, `be346f1`, `4895cf4` | Comparaison d'un GROUPE de fiches : attributs à gauche, une colonne par fiche, bascule de vue, normalisation des axes (nettoyer ≠ fusionner) |
+| **1** ⚠️ | — | **NON LIVRÉ.** Le Lot 1 « socle » du plan — re-extraction du corpus, contrôles géométriques obligatoires, anomalies `vraisemblance` (1.2) et `reference_discordante` (1.3) — n'existe pas dans cette branche. Voir « Le Lot 1 manquant » ci-dessous. |
+| (*comparaison groupe*) | `9588ce3`, `be346f1`, `4895cf4` | Écran de comparaison d'un GROUPE de fiches : attributs à gauche, une colonne par fiche, bascule de vue, normalisation des axes (nettoyer ≠ fusionner). **Ces commits figuraient sous l'étiquette « Lot 1 » dans la première version de ce document : c'était un mauvais étiquetage.** Dans la numérotation du plan, ils relèvent du Lot 6. |
 | **2** | `f8f893a` | Accessoires : double vérification des cotes, construite sur les documents réels |
 | **3** | `0b7ec0b` | Calibration des seuils : la preuve avant la décision (jamais un seuil sans confiance observée) |
 | **4** | `cb70b52` | Mode nuit : les filtres déroulants redeviennent lisibles |
@@ -41,6 +42,57 @@ ce qui reste ouvert.
 
 Le lot 2 a été mené en parallèle, comme prévu au plan, parce qu'il exigeait
 l'ouverture de documents réels et ne pouvait pas attendre la fin de la chaîne.
+
+## Le Lot 1 manquant — dit noir sur blanc
+
+Le **Lot 1 « socle » n'a pas été livré.** Ce n'est pas une nuance de
+présentation : c'est l'absence d'un lot entier, et la première version de ce
+document l'a masquée en étiquetant « Lot 1 » l'écran de comparaison groupe, qui
+appartient au Lot 6. Le renommage est corrigé ci-dessus ; l'absence, elle,
+demeure.
+
+Ce que le Lot 1 devait apporter, et qui est **absent** :
+
+| Attendu | État mesuré dans la branche |
+|---|---|
+| Anomalies du corpus (`anomalies.py`) | **jamais modifié** — `git diff af31922..HEAD` vide |
+| Gabarits (`gabarits.py`) | **jamais modifié** |
+| Re-extraction du corpus | **aucune** |
+| Contrôles géométriques rendus obligatoires | **aucun** |
+| Anomalie `vraisemblance` (1.2) — bateau absent du référentiel signalé plutôt qu'enregistré | **0 occurrence** dans tout le dépôt |
+| Anomalie `reference_discordante` (1.3) — référence dossier / fichier / document qui se contredisent | **0 occurrence** dans tout le dépôt |
+| Table de correspondance validée | **aucune** |
+
+Les seules lignes touchées dans `depot.py` et `extraction.py` (18 au total)
+sont le passage des pages analysées vers la double vérification du Lot 2. Elles
+ne constituent en rien une re-extraction ni un contrôle.
+
+### Pourquoi c'est grave, et pas seulement une case non cochée
+
+Le Lot 0 avait identifié **deux pièges réels** : un PDF appartenant à une autre
+commande rangé dans un dossier, et un nom de fichier qui contredit la référence
+du dossier. Le Lot 1.3 devait les attraper. Il n'existe pas — donc ces deux
+pièges restent **non protégés pour toutes les voiles**.
+
+La conséquence est directe : la comparaison multi-fiches et le mode cible
+(Lots 5 et 6, validés par ailleurs) s'exécutent sur des données dont la
+fiabilité de référence n'a pas été renforcée. Le principe n°2 du plan —
+*« l'extraction avant la comparaison, sinon on reconstruit sur du faux »* —
+n'est donc **pas respecté**. Le socle a été déclaré fait alors qu'il manque, et
+c'est exactement le type d'erreur silencieuse que l'application est censée
+interdire.
+
+Une précision, pour ne pas entretenir la confusion que le document a créée : le
+module `verification.py` du Lot 2 est une **double lecture des cotes
+d'accessoires** (séquentielle puis géométrique). Ce n'est pas la vérification de
+référence dossier/fichier/document du Lot 1.3, qui devait couvrir **tout le
+corpus**. Écrire que son extension aux voiles « n'a été ni demandée ni prouvée »
+était vrai du mécanisme de relecture des cotes, mais faux et trompeur dans le
+contexte du Lot 1 : la vérification de référence, elle, était bel et bien
+demandée.
+
+**Ce lot reste à faire.** Il n'est pas remplacé, ni compensé, par quoi que ce
+soit de livré ici.
 
 ## Lot 2 — ce que les documents réels ont appris
 
@@ -210,6 +262,11 @@ Ce document clôt le plan « comparaison et réutilisation ». Il ne prétend pa
 * brancher l'OCR sur le dépôt des fiches : les documents numérisés restent
   déclarés « sans couche texte » et vont en revue manuelle ;
 * traiter le chantier `git filter-repo`, volontairement différé ;
-* étendre la double vérification aux fiches de **voiles** : elle est aujourd'hui
-  câblée sur la famille accessoire. Le mécanisme est générique et réutilisable,
-  mais son application aux voiles n'a pas été demandée ni prouvée.
+* étendre la **double lecture des cotes** (`verification.py`) aux fiches de
+  **voiles** : elle est aujourd'hui câblée sur la famille accessoire. Le
+  mécanisme est générique, son application aux voiles n'a pas été prouvée.
+  Cela ne préjuge en rien du Lot 1.3, qui est d'une autre nature (concordance
+  des références dossier / fichier / document) et qui **reste entièrement à
+  faire** ;
+* prétendre que le Lot 1 est livré — il ne l'est pas, cf. la section qui porte
+  son nom.

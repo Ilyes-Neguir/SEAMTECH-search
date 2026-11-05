@@ -2,13 +2,25 @@
 
 ## 2026-11-05 — comparaison, réutilisation, et une cote relue deux fois
 
-Exécution complète du plan « comparaison et réutilisation » (lots 0 → 8), avec
-le lot 2 accessoires mené sur les documents réels de l'atelier. Suivi détaillé,
-preuves et état honnête : `docs/PLAN_COMPARAISON_SUIVI.md`.
+Exécution du plan « comparaison et réutilisation » (lots 0 → 8), avec le lot 2
+accessoires mené sur les documents réels de l'atelier. Suivi détaillé, preuves
+et état honnête : `docs/PLAN_COMPARAISON_SUIVI.md`.
+
+⚠️ **Le Lot 1 « socle » n'est PAS livré.** Une revue du code à `dcc702c` l'a
+établi point par point : `anomalies.py` et `gabarits.py` jamais modifiés, aucune
+re-extraction du corpus, aucun contrôle géométrique obligatoire, et **zéro
+occurrence** de `vraisemblance` (1.2) comme de `reference_discordante` (1.3)
+dans tout le dépôt. Les deux pièges réels relevés au Lot 0 restent donc non
+protégés pour les voiles, et la comparaison multi-fiches tourne sur des données
+dont la fiabilité de référence n'a pas été renforcée — le principe « l'extraction
+avant la comparaison » n'est pas respecté. Ce lot reste à faire. La première
+version du rapport l'avait masqué en étiquetant « Lot 1 » l'écran de comparaison
+groupe (qui relève du Lot 6) : l'étiquetage est corrigé, l'absence demeure.
 
 - **Comparaison d'un groupe de fiches** (`9588ce3`, `be346f1`, `4895cf4`) :
   attributs à gauche, une colonne par fiche, bascule de vue, et une règle qui
   compte — normaliser un axe, ce n'est pas fusionner des axes distincts.
+  *(Ces commits relèvent du Lot 6, pas du Lot 1.)*
 - **Lot 2 — double vérification des cotes d'accessoires** (`f8f893a`). Mesuré
   sur les documents réels avant d'écrire une ligne : les dossiers d'accessoires
   mélangent trois natures (formulaire imprimé, plan à cotes nues, document
