@@ -35,6 +35,7 @@ from typing import Any, Callable
 from seamtech_search.extractions_voile import lier_extraction_voile_document_curseur
 from seamtech_search.fiches.extraction import (
     DetectionMixteIndeterminee,
+    PageAnalysee,
     analyser_candidat_fiche,
     analyser_pdf,
     extraire_fiche,
@@ -338,6 +339,9 @@ class PlanDossier:
     #: jointes et listés ici pour l'opérateur.
     autres_fiches: list[Path] = field(default_factory=list)
     fiche_extraite: FicheExtraite | None = field(default=None, repr=False)
+    #: Lot 2 — pages du PDF retenu, analysées une seule fois par le scanner
+    #: et transmises à l'écriture pour la double vérification des cotes.
+    pages_analysees: tuple[PageAnalysee, ...] | None = field(default=None, repr=False)
 
     @property
     def accepte(self) -> bool:
@@ -982,6 +986,7 @@ def scanner_dossier(dossier: Path, gabarits: list[GabaritDef]) -> PlanDossier:
     plan.gabarit_code = candidat_choisi.gabarit.code
     plan.score = candidat_choisi.score_detection
     plan.fiche_extraite = candidat_choisi.fiche
+    plan.pages_analysees = candidat_choisi.pages
     # les autres PDF (non reconnus ou seconds) restent des pièces jointes
     plan.pieces.extend(
         FichierDossier(chemin=pdf, role="piece_jointe", taille_octets=pdf.stat().st_size)
@@ -1387,7 +1392,11 @@ def deposer_dossier(
                 # est publiée au lot (A02) — un dépôt qui REMPLACE une fiche
                 # fait avancer sa révision, et le dépôt le DIT.
                 ecriture = ecrire_fiche_resultat(
-                    index, fiche, connexion=connexion, categorie=categorie_proposee
+                    index,
+                    fiche,
+                    connexion=connexion,
+                    categorie=categorie_proposee,
+                    pages=list(plan.pages_analysees) if plan.pages_analysees else None,
                 )
                 id_fiche, action = ecriture.id_fiche, ecriture.action
                 revision_fiche = ecriture.revision

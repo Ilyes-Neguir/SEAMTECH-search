@@ -394,19 +394,24 @@ def ecrire_fiche_resultat(
     connexion: Any = None,
     *,
     categorie: tuple[str, str] | None = None,
+    pages: list[Any] | None = None,
 ) -> ResultatEcriture:
     """Comme :func:`ecrire_fiche`, mais rend aussi la révision résultante.
 
     ``categorie`` (Lot 7) : ``(categorie, source)`` proposée au dépôt —
     ``None`` retombe sur la famille du gabarit (source ``document``). Une
     catégorie déjà décidée par un humain n'est jamais écrasée ici.
+
+    ``pages`` (Lot 2) : pages déjà analysées du PDF. Transmises à la
+    projection accessoire, elles déclenchent la double vérification des cotes ;
+    omises, la projection est celle d'avant le Lot 2.
     """
     if not fiche.code:
         raise ValueError("Fiche sans code : écriture refusée (reprise complète requise avant stockage).")
     if connexion is not None:
-        return _ecrire_fiche_dans(index, fiche, connexion, categorie=categorie)
+        return _ecrire_fiche_dans(index, fiche, connexion, categorie=categorie, pages=pages)
     with index.connect() as connexion_ext:
-        return _ecrire_fiche_dans(index, fiche, connexion_ext, categorie=categorie)
+        return _ecrire_fiche_dans(index, fiche, connexion_ext, categorie=categorie, pages=pages)
 
 
 def ecrire_fiche(index: Any, fiche: FicheExtraite, connexion: Any = None) -> tuple[int, str]:
@@ -495,7 +500,12 @@ def _ecrire_fiche_dans(
     connexion: Any,
     *,
     categorie: tuple[str, str] | None = None,
+    pages: list[Any] | None = None,
 ) -> ResultatEcriture:
+    """Corps historique de l'écriture, dans la transaction de l'appelant.
+
+    ``pages`` (Lot 2) : voir :func:`ecrire_fiche_resultat`.
+    """
     action = "creee"
     id_fiche: int | None = None  # positionné tôt si remplacement sur place
     revision_avant: int | None = None
@@ -700,7 +710,7 @@ def _ecrire_fiche_dans(
                 )
 
                 extraction_accessoire = construire_extraction_accessoire(
-                    fiche, id_fiche=id_fiche
+                    fiche, id_fiche=id_fiche, pages=pages
                 )
                 enregistrer_extraction_accessoire_curseur(cursor, extraction_accessoire)
             else:
