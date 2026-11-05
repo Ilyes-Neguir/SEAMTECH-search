@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from collections.abc import Mapping
 from datetime import date
 
 MOIS_FR = {
@@ -41,6 +42,67 @@ _LIGATURES_RECHERCHE: tuple[tuple[str, str], ...] = (
     ("æ", "ae"),
     ("Æ", "ae"),
 )
+
+
+def forme_canonique(valeur: str | None) -> str | None:
+    """Forme nettoyée d'un libellé d'axe (gamme, type, désignation).
+
+    Ce que ça retire : les marges, les espaces en double, la ponctuation
+    pendante. Ce sont des bruits d'extraction — « medium  Ocean » et
+    « medium Ocean » sont la même chose, personne n'en disconviendra.
+
+    Ce que ça ne touche PAS : la casse et le sens. « Medium Ocean » et
+    « medium Ocean » restent deux écritures distinctes, parce que décider
+    qu'elles se valent n'est pas un nettoyage, c'est un jugement. Le
+    regroupement se fait avec ``cle_variante``, l'affichage avec
+    ``forme_majoritaire``, et chacun à sa place.
+
+    ``None`` plutôt que ``""`` : une valeur absente reste absente.
+    """
+    if valeur is None:
+        return None
+    texte = unicodedata.normalize("NFC", str(valeur)).strip()
+    texte = re.sub(r"\s+", " ", texte)
+    # Ponctuation en début et en FIN seulement : un tiret ou un point au
+    # milieu d'un nom en fait partie (« Lazy-bag 2P », « K.903 »).
+    texte = re.sub(r"^[\s,;:./]+|[\s,;:./]+$", "", texte)
+    return texte or None
+
+
+def cle_variante(valeur: str | None) -> str:
+    """Clé de REGROUPEMENT : insensible à la casse, aux accents, à la ponctuation.
+
+    Deux libellés qui ne diffèrent que par l'écriture partagent cette clé ;
+    deux libellés différents ne la partagent jamais. « Ocean » et
+    « medium Ocean » ont beau se ressembler, ils restent deux clés : partager
+    un mot n'est pas être la même chose, et c'est à l'exploitante d'en décider
+    — pas à une fonction de normalisation.
+
+    Cette clé ne s'affiche pas : elle sert à compter et à regrouper.
+    """
+    if not valeur:
+        return ""
+    texte = unicodedata.normalize("NFKD", str(valeur))
+    texte = "".join(caractere for caractere in texte if not unicodedata.combining(caractere))
+    for ligature, remplacement in _LIGATURES_RECHERCHE:
+        texte = texte.replace(ligature, remplacement)
+    texte = re.sub(r"[^0-9A-Za-z]+", " ", texte.casefold())
+    return " ".join(texte.split())
+
+
+def forme_majoritaire(formes: Mapping[str, int]) -> str | None:
+    """Graphie la plus fréquente d'un groupe de variantes.
+
+    On ÉLIT une graphie existante, on n'en écrit jamais une nouvelle : c'est la
+    règle la plus importante de cette fonction. Le départage est stable et
+    écrit — le plus grand effectif, puis la plus courte, puis l'ordre
+    alphabétique — de sorte que deux exécutions donnent toujours le même
+    résultat. Un choix arbitraire qui change d'une fois sur l'autre n'est pas
+    un choix, c'est une loterie.
+    """
+    if not formes:
+        return None
+    return min(formes.items(), key=lambda item: (-int(item[1]), len(item[0]), item[0]))[0]
 
 
 def _plier_diacritiques(texte: str, *, casefold: bool) -> str:
