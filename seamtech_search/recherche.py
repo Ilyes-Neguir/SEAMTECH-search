@@ -257,6 +257,51 @@ def analyser_requete_dimension(texte: str) -> RequeteDimension:
     return RequeteDimension(texte=texte)
 
 
+#: Forme d'une référence d'atelier : des lettres COLLÉES à des chiffres
+#: (« ST101 », « ST-101 », « K903 »), ou l'inverse (« 7792-SO »). La forme, et
+#: non un annuaire de préfixes : quand l'atelier ouvre une nouvelle série de
+#: numéros, il n'y a rien à réécrire ici.
+_RE_REFERENCE = re.compile(r"(?:[A-Za-z]{2,4}\d{2,6}|\d{2,6}[A-Za-z]{1,4})")
+
+#: Champs porteurs d'une référence : la commande lue sur la fiche, et le code
+#: interne. La référence de commande n'existe NULLE PART ailleurs — c'est
+#: précisément pourquoi la rechercher ne trouvait rien (voir le module).
+_CHAMPS_REFERENCE = ("fiche.commande", "fiche.code")
+
+
+def cle_reference(valeur: str | None) -> str:
+    """Clé de comparaison d'une référence : majuscules, ni séparateurs ni espaces.
+
+    « ST-101 », « st 101 » et « ST101 » sont une seule et même commande :
+    c'est cette clé qui les réunit, pas une correspondance approximative.
+    """
+    return re.sub(r"[^A-Z0-9]", "", (valeur or "").upper())
+
+
+def extraire_reference(requete: str | None) -> str | None:
+    """Première référence d'atelier contenue dans la requête, sinon ``None``.
+
+    On essaie d'abord chaque mot (le plus sûr : « ST545 » dans « lazy bag
+    ST545 »), puis la requête entière une fois compactée, ce qui rattrape
+    « ST 101 » tapé avec un espace.
+
+    Rester large est sans danger : un faux positif (« Sun 2000 » a la forme
+    d'une référence) déclenche une requête de plus qui ne renvoie rien, et ne
+    déplace AUCUN résultat. Seule une correspondance exacte promeut une fiche.
+    """
+    texte = (requete or "").strip()
+    if not texte:
+        return None
+    for morceau in re.split(r"[\s,;/]+", texte):
+        compact = re.sub(r"[^A-Za-z0-9]", "", morceau)
+        if _RE_REFERENCE.fullmatch(compact):
+            return compact.upper()
+    compact_total = re.sub(r"[^A-Za-z0-9]", "", texte)
+    if _RE_REFERENCE.fullmatch(compact_total):
+        return compact_total.upper()
+    return None
+
+
 def _cle_cote(cote: str) -> str:
     """Premier alias textuel d'une cote (celui que le parser consomme)."""
     for alias, cible in COTE_ALIASES.items():
@@ -1045,6 +1090,53 @@ def _source_trigrammes(
         cursor.execute("SET LOCAL enable_seqscan = on")
 
 
+def _source_reference(
+    cursor: Any,  # noqa: ANN401 - curseur psycopg2 réel
+    reference: str,
+    fragment: str,
+    params: Sequence[Any],
+    limite: int,
+) -> list[int]:
+    """Source RRF des correspondances EXACTES sur une référence d'atelier.
+
+    Pourquoi cette source existe : la référence de commande n'est PAS dans le
+    texte cherché. Le tsvector agrège le code, le titre, la gamme, le client,
+    le bateau, les matériaux… jamais ``fiche.commande``, qui est pourtant
+    l'endroit où la référence « ST… » est réellement lue. Chercher une
+    référence revenait donc à chercher un mot absent du document : zéro
+    résultat, et aucune raison apparente.
+
+    On consulte donc directement les traces d'extraction, en comparant les CLÉS
+    normalisées : « ST-101 » et « st101 » sont une seule commande.
+
+    Coût, écrit noir sur blanc : la clé est calculée à la volée, la jointure
+    balaie donc ``fiche_champ_extrait``. À l'échelle actuelle de l'atelier
+    (338 fiches) c'est négligeable ; au-delà de quelques milliers de fiches il
+    faudra un index sur l'expression. Cette source ne s'exécute de toute façon
+    que si la requête a la FORME d'une référence, pas à chaque recherche.
+    """
+    substituants = ", ".join(["%s"] * len(_CHAMPS_REFERENCE))
+    cle = cle_reference(reference)
+    cursor.execute(
+        f"""
+        SELECT DISTINCT f.id_fiche
+        FROM fiche f
+        JOIN v_fiche_recherche v ON v.id_fiche = f.id_fiche
+        LEFT JOIN fiche_champ_extrait e
+          ON e.id_fiche = f.id_fiche AND e.champ IN ({substituants})
+        WHERE (
+                regexp_replace(upper(coalesce(f.code, '')), '[^A-Z0-9]', '', 'g') = %s
+             OR regexp_replace(upper(coalesce(e.valeur_normalisee, e.valeur_brute, '')), '[^A-Z0-9]', '', 'g') = %s
+             )
+          AND {fragment}
+        ORDER BY f.id_fiche
+        LIMIT %s
+        """,
+        (*_CHAMPS_REFERENCE, cle, cle, *params, limite),
+    )
+    return [int(ligne[0]) for ligne in cursor.fetchall()]
+
+
 def _source_texte_pdf(
     cursor: Any, ts_config: str, texte: str, filtres_sql: str, params: Sequence[Any], limite: int,
 ) -> list[int]:
@@ -1708,7 +1800,29 @@ def rechercher_fiches(
                         classements["vecteurs"] = _source_vecteurs(
                             cursor, embedding, fragment, params, PROFONDEUR_SOURCES
                         )
+                # Lot 7 — la référence. Voir _source_reference : sans elle,
+                # taper « ST545 » ne trouvait rien, la référence étant absente
+                # du texte indexé. On la cherche dans les deux graphies
+                # possibles (texte après synonymes, et texte tapé).
+                reference = extraire_reference(texte) or (
+                    extraire_reference(texte_original_sources) if texte_original_sources else None
+                )
+                ids_reference: list[int] = []
+                if reference:
+                    ids_reference = _source_reference(
+                        cursor, reference, fragment, params, PROFONDEUR_SOURCES
+                    )
+                    if ids_reference:
+                        classements["reference"] = ids_reference
                 fusion = fusionner_rrf(classements)
+                if ids_reference:
+                    # Une correspondance exacte sur une référence est un FAIT,
+                    # pas un rang de pertinence : elle passe devant les
+                    # ressemblances. Qui tape une référence veut LA fiche.
+                    exacts = set(ids_reference)
+                    fusion = [ligne for ligne in fusion if ligne["id_fiche"] in exacts] + [
+                        ligne for ligne in fusion if ligne["id_fiche"] not in exacts
+                    ]
             elif dimension is not None:
                 # Recherche par dimension PURE : la valeur passe par le chemin
                 # numérique (filtre de cote), jamais par le tsvector.
