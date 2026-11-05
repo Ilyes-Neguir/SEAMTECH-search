@@ -1,5 +1,47 @@
 # Changelog
 
+## 2026-11-05 — comparaison, réutilisation, et une cote relue deux fois
+
+Exécution complète du plan « comparaison et réutilisation » (lots 0 → 8), avec
+le lot 2 accessoires mené sur les documents réels de l'atelier. Suivi détaillé,
+preuves et état honnête : `docs/PLAN_COMPARAISON_SUIVI.md`.
+
+- **Comparaison d'un groupe de fiches** (`9588ce3`, `be346f1`, `4895cf4`) :
+  attributs à gauche, une colonne par fiche, bascule de vue, et une règle qui
+  compte — normaliser un axe, ce n'est pas fusionner des axes distincts.
+- **Lot 2 — double vérification des cotes d'accessoires** (`f8f893a`). Mesuré
+  sur les documents réels avant d'écrire une ligne : les dossiers d'accessoires
+  mélangent trois natures (formulaire imprimé, plan à cotes nues, document
+  numérisé sans couche texte), et deux pièges — une même ligne peut porter deux
+  cotes, et le nom du dossier n'est pas une identité fiable. Une cote n'est
+  désormais promue « vérifiée » que si deux lectures indépendantes concordent
+  (par libellé, puis par proximité géométrique). Sans seconde lecture possible,
+  rien n'est promu ; un désaccord devient une anomalie forte renvoyée à
+  l'approbateur, jamais résolue en silence. Chaque cote est projetée sous son
+  propre libellé (`mesure.hauteur_capot`) au lieu d'être perdue ou rangée de
+  travers. Ni migration, ni régression : sans pages transmises, la projection
+  est exactement celle d'avant.
+- **Calibration des seuils** (`0b7ec0b`) : on ne calibre pas une confiance avec
+  des confiances. Le seuil est une confiance réellement observée face au sort
+  réel du champ ; faute de preuves, aucun seuil n'est publié.
+- **Réutilisation** (`46d13aa`) : une cible explicite, et une réponse même avec
+  trois fiches — « données insuffisantes » plutôt qu'un score inventé.
+- **Lisibilité** (`cb70b52`, `7c18bdf`) : filtres déroulants lisibles en mode
+  nuit, et un seul bouton pour tout effacer.
+- **Recherche par référence** (`3e5d59e`) : la cause corrigée, pas le symptôme.
+- **Lot 0** (`30d6c39`) : cartographie du corpus, mesurer avant d'écrire.
+
+Mesures : suite locale 2500 passed / 0 échec ; frontend `tsc` propre, 33
+épreuves unitaires, build OK ; CI au lot 2 verte sur 13 jobs avec
+**535 tests PostgreSQL** et 88,15 % de couverture.
+
+**État honnête :** le workflow `Qualification Windows` est rouge — mais il
+l'était **déjà sur `main` avant le premier commit de ce plan**. Son étape
+fautive est le verdict de la suite PostgreSQL + Redis ; les journaux ne sont
+pas lisibles depuis ce banc, et la cause exacte reste à établir sur le runner
+(hypothèse documentée : `postgresql-contrib` absent). Aucune ligne d'écart n'a
+été ajoutée pour le faire taire.
+
 ## 2026-10-29 (suite 7) — la fiche dit pourquoi elle est incomplète
 
 - **`GET /fiches/{code}` renvoie `anomalies`** (code, gravité, message, statut)
