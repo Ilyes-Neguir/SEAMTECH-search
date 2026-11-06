@@ -35,7 +35,8 @@ from seamtech_search.extractions_voile import (
     enregistrer_extraction_voile_curseur,
 )
 from seamtech_search.fiches import normalisation as norm
-from seamtech_search.fiches.anomalies import CODES_BLOQUANTS
+from seamtech_search.fiches.anomalies import CODES_BLOQUANTS, ReferencesConstatees, appliquer_controles_rg16
+from seamtech_search.fiches.gabarits import GabaritDef
 from seamtech_search.fiches.modeles import FicheExtraite
 from seamtech_search.fiches.verite_7792 import VERITE_7792, VERITE_7792_COMPLETE
 from seamtech_search.referentiel_bateaux import lier_bateau_au_modele
@@ -407,6 +408,9 @@ def ecrire_fiche_resultat(
     *,
     categorie: tuple[str, str] | None = None,
     pages: list[Any] | None = None,
+    gabarit: GabaritDef | None = None,
+    references: ReferencesConstatees | None = None,
+    referentiel_bateaux: set[str] | None = None,
 ) -> ResultatEcriture:
     """Comme :func:`ecrire_fiche`, mais rend aussi la révision résultante.
 
@@ -417,9 +421,25 @@ def ecrire_fiche_resultat(
     ``pages`` (Lot 2) : pages déjà analysées du PDF. Transmises à la
     projection accessoire, elles déclenchent la double vérification des cotes ;
     omises, la projection est celle d'avant le Lot 2.
+
+    ``gabarit``, ``references``, ``referentiel_bateaux`` (Lots 1.2 à 1.4) : le
+    contexte des contrôles RG16, qui sont OBLIGATOIRES sur toute fiche
+    (Lot 1.5) et donc rejoués ici, à l'écriture. Une voie qui n'a pas ce
+    contexte applique quand même les contrôles — avec ce qu'elle sait.
     """
     if not fiche.code:
         raise ValueError("Fiche sans code : écriture refusée (reprise complète requise avant stockage).")
+    # Lot 1.5 : les contrôles RG16 sont OBLIGATOIRES sur TOUTE fiche, « pas
+    # seulement sur certaines voies ». Le verrou est posé À L'ÉCRITURE : c'est
+    # le seul endroit par où passe nécessairement une fiche, quelle que soit la
+    # voie qui l'a produite (gabarit, reprise, import…). Une fiche qui n'est
+    # jamais passée par l'extracteur ne peut donc pas y échapper.
+    appliquer_controles_rg16(
+        fiche,
+        referentiel_bateaux=referentiel_bateaux,
+        references=references,
+        gabarit=gabarit,
+    )
     if connexion is not None:
         return _ecrire_fiche_dans(index, fiche, connexion, categorie=categorie, pages=pages)
     with index.connect() as connexion_ext:

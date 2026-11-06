@@ -33,6 +33,22 @@ LOGGER = logging.getLogger("seamtech_search.fiches.anomalies")
 # part en « a_valider ». Ce sont deux mécaniques distinctes, volontairement.
 CODES_BLOQUANTS: frozenset[str] = frozenset({"champ_obligatoire_manquant"})
 
+# Lot 1.5 — codes émis par les contrôles RG16 de ce module.
+#
+# Ils servent à REJOUER les contrôles sans écraser une anomalie d'une autre
+# provenance (reprise, orientation PDF…) : c'est ce qui rend l'application
+# obligatoire IDEMPOTENTE. À tenir à jour avec les ``code=`` de ce module.
+CODES_RG16: frozenset[str] = frozenset({
+    "bateau_hors_referentiel",
+    "champ_manquant",
+    "champ_obligatoire_manquant",
+    "client_invraisemblable",
+    "cote_hors_plage",
+    "cotes_incoherentes",
+    "reference_discordante",
+    "surface_incoherente",
+})
+
 # Plages physiques plausibles (mètres, m², cm, kg) — points de départ du
 # §10.3, à caler sur les fiches réelles ; une cote hors plage est suspecte,
 # pas forcément fausse (gravite « moyenne », à confirmer par l'opérateur).
@@ -326,6 +342,37 @@ def evaluer_anomalies(
     anomalies.extend(_controle_surface(fiche, finie))
     LOGGER.debug("Contrôles RG16 : %d anomalie(s).", len(anomalies))
     return anomalies
+
+
+def appliquer_controles_rg16(
+    fiche: FicheExtraite,
+    *,
+    referentiel_bateaux: set[str] | None = None,
+    references: ReferencesConstatees | None = None,
+    gabarit: GabaritDef | None = None,
+) -> list[Anomalie]:
+    """Lot 1.5 : les contrôles RG16 sur TOUTE fiche, quelle que soit la voie.
+
+    Ils deviennent OBLIGATOIRES, « pas seulement sur certaines voies » : c'est
+    la fonction appelée à l'ÉCRITURE, donc aucune fiche n'y échappe — venue du
+    gabarit, de la reprise, d'un import ou d'ailleurs. Un contrôle qui ne
+    s'exécute que si quelqu'un pense à l'appeler n'est pas un contrôle.
+
+    Rejouable sans effet de bord : les anomalies RG16 déjà posées sont
+    REMPLACÉES, jamais cumulées ; celles d'une autre provenance — reprise,
+    orientation PDF — sont conservées telles quelles, ce module ne les connaît
+    pas et n'a pas à les juger.
+    """
+    etrangeres = [anomalie for anomalie in fiche.anomalies if anomalie.code not in CODES_RG16]
+    evaluees = evaluer_anomalies(
+        fiche,
+        referentiel_bateaux=referentiel_bateaux,
+        references=references,
+        gabarit=gabarit,
+    )
+    fiche.anomalies = etrangeres + evaluees
+    LOGGER.debug("Contrôles RG16 appliqués à l'écriture : %d anomalie(s).", len(evaluees))
+    return fiche.anomalies
 
 
 def _controles_plages(cotes: Cotes) -> list[Anomalie]:

@@ -33,7 +33,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from seamtech_search.extractions_voile import lier_extraction_voile_document_curseur
-from seamtech_search.fiches.anomalies import ReferencesConstatees, evaluer_anomalies
+from seamtech_search.fiches.anomalies import ReferencesConstatees
 from seamtech_search.fiches.extraction import (
     DetectionMixteIndeterminee,
     PageAnalysee,
@@ -1402,19 +1402,27 @@ def deposer_dossier(
                 # base, l'anomalie est visible pour l'approbateur et la fiche
                 # part en « a_valider » (RG3). Aucune source n'est corrigée en
                 # douce : les trois valeurs sont montrées côte à côte.
-                # Lot 1.4 : les champs attendus sont ceux que le GABARIT déclare
+                # Lots 1.3 et 1.4 : le contexte des contrôles RG16 est réuni ICI,
+                # à l'endroit même où la catégorie est proposée — le dépôt est le
+                # seul endroit qui connaît à la fois le document, le nom du
+                # fichier, le nom du dossier ET le gabarit retenu.
+                #
+                # 1.3 : les trois références sont comparées ; l'écart est NON
+                # BLOQUANT, le dossier entre en base et la fiche part en
+                # « a_valider » (RG3). Aucune source n'est corrigée en douce :
+                # les trois valeurs sont montrées côte à côte.
+                # 1.4 : les champs attendus sont ceux que le GABARIT déclare
                 # obligatoires — un attendu déclaré, jamais une liste devinée ici.
+                #
+                # Les contrôles sont APPLIQUÉS à l'écriture (Lot 1.5), pas ici :
+                # c'est ce qui les rend obligatoires sur TOUTE voie.
                 gabarit_retenu = next(
                     (g for g in (gabarits or []) if g.code == fiche.gabarit_code), None
                 )
-                fiche.anomalies = evaluer_anomalies(
-                    fiche,
-                    references=ReferencesConstatees(
-                        document=code_lu_document,
-                        fichier=code_depuis_nom_fichier(Path(plan.pdf_fiche).name),
-                        dossier=code_depuis_nom_dossier(Path(dossier).name),
-                    ),
-                    gabarit=gabarit_retenu,
+                references_constatees = ReferencesConstatees(
+                    document=code_lu_document,
+                    fichier=code_depuis_nom_fichier(Path(plan.pdf_fiche).name),
+                    dossier=code_depuis_nom_dossier(Path(dossier).name),
                 )
                 # ResultatEcriture : la révision qui accompagne le contenu écrit
                 # est publiée au lot (A02) — un dépôt qui REMPLACE une fiche
@@ -1425,6 +1433,8 @@ def deposer_dossier(
                     connexion=connexion,
                     categorie=categorie_proposee,
                     pages=list(plan.pages_analysees) if plan.pages_analysees else None,
+                    gabarit=gabarit_retenu,
+                    references=references_constatees,
                 )
                 id_fiche, action = ecriture.id_fiche, ecriture.action
                 revision_fiche = ecriture.revision
