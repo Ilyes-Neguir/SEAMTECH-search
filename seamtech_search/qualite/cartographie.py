@@ -35,9 +35,12 @@ et des clés normalisées génériques.
 
 from __future__ import annotations
 
+import logging
 import re
 import unicodedata
 from typing import Any, Iterable, Sequence
+
+LOGGER = logging.getLogger("seamtech_search.qualite.cartographie")
 
 #: Seuil à partir duquel un groupe peut porter un score statistique.
 #: Volontairement égal à ``confiance_reutilisation.CONFIANCE_MIN_ECHANTILLONS`` :
@@ -367,17 +370,21 @@ def groupes_comparables(cursor: Any) -> dict[str, Any]:  # noqa: ANN401 — curs
     return rapport
 
 
-def variantes_valeurs(cursor: Any, colonne: str) -> dict[str, Any]:  # noqa: ANN401 — curseur psycopg2 réel
-    """Variantes d'une colonne de ``sail_extractions``.
+def lignes_valeurs(cursor: Any, colonne: str) -> list[tuple[object, int]]:  # noqa: ANN401 — curseur psycopg2 réel
+    """Les ``(valeur brute, nb d'occurrences)`` d'une colonne de ``sail_extractions``.
+
+    Lot 1.1 : rendu public pour que la table de correspondance se construise
+    sur la MÊME lecture que la cartographie — un seul comptage, deux usages.
 
     La colonne doit appartenir à une liste fermée : une colonne arbitraire est
-    refusée, ce qui interdit toute construction SQL depuis l'extérieur.
+    refusée, ce qui interdit toute construction SQL depuis l'extérieur. Une
+    table absente rend une liste vide plutôt qu'une erreur : la mesure d'un axe
+    ne doit jamais faire échouer celle des autres.
     """
     if colonne not in _COLONNES_AUTORISEES:
         raise ValueError(
             f"Colonne non autorisée : {colonne!r}. Autorisées : {sorted(_COLONNES_AUTORISEES)}."
         )
-
     try:
         cursor.execute(
             f"""
@@ -388,9 +395,61 @@ def variantes_valeurs(cursor: Any, colonne: str) -> dict[str, Any]:  # noqa: ANN
             ORDER BY nb DESC, valeur
             """
         )
-        lignes = [(ligne[0], int(ligne[1])) for ligne in cursor.fetchall()]
+        return [(ligne[0], int(ligne[1])) for ligne in cursor.fetchall()]
     except Exception:
-        lignes = []
+        LOGGER.warning("Colonne « %s » illisible : axe mesuré à zéro (table ou colonne absente).", colonne)
+        return []
+
+
+def lignes_matiere(cursor: Any) -> list[tuple[object, int]]:  # noqa: ANN401 — curseur psycopg2 réel
+    """Les ``(désignation de matière, nb)`` du JSONB ``materiaux``.
+
+    Lot 1.1 : même lecture que :func:`variantes_matiere`, rendue réutilisable.
+    """
+    try:
+        cursor.execute(
+            """
+            SELECT m->>'designation' AS valeur, COUNT(*) AS nb
+            FROM sail_extractions s, jsonb_array_elements(s.materiaux) m
+            WHERE jsonb_typeof(s.materiaux) = 'array'
+              AND COALESCE(btrim(m->>'designation'), '') <> ''
+            GROUP BY 1
+            ORDER BY nb DESC, valeur
+            """
+        )
+        return [(ligne[0], int(ligne[1])) for ligne in cursor.fetchall()]
+    except Exception:
+        LOGGER.warning("Matières illisibles : axe mesuré à zéro (colonne JSONB absente).")
+        return []
+
+
+def lignes_categorie(cursor: Any) -> list[tuple[object, int]]:  # noqa: ANN401 — curseur psycopg2 réel
+    """Les ``(catégorie, nb)`` de la table ``fiche``.
+
+    Lot 1.1 : quatrième axe. La colonne est fermée par une contrainte CHECK
+    (``voile`` / ``accessoire``), donc aucune variante d'écriture n'y est
+    attendue — mais c'est une MESURE, pas une supposition : si le contrôle
+    saute un jour, cette fonction le verra.
+    """
+    try:
+        cursor.execute(
+            """
+            SELECT categorie AS valeur, COUNT(*) AS nb
+            FROM fiche
+            WHERE categorie IS NOT NULL AND btrim(categorie) <> ''
+            GROUP BY 1
+            ORDER BY nb DESC, valeur
+            """
+        )
+        return [(ligne[0], int(ligne[1])) for ligne in cursor.fetchall()]
+    except Exception:
+        LOGGER.warning("Catégories illisibles : axe mesuré à zéro (table ou colonne absente).")
+        return []
+
+
+def variantes_valeurs(cursor: Any, colonne: str) -> dict[str, Any]:  # noqa: ANN401 — curseur psycopg2 réel
+    """Variantes d'une colonne de ``sail_extractions``."""
+    lignes = lignes_valeurs(cursor, colonne)
 
     return {
         "definition": (
@@ -434,6 +493,42 @@ def variantes_matiere(cursor: Any) -> dict[str, Any]:  # noqa: ANN401 — curseu
         "nb_valeurs_distinctes": len({cle_normalisation(valeur) for valeur, _ in lignes}),
         "certaines": regrouper_variantes(lignes),
         "probables": variantes_probables(lignes),
+    }
+
+
+def variantes_categorie(cursor: Any) -> dict[str, Any]:  # noqa: ANN401 — curseur psycopg2 réel
+    """Variantes de la CATÉGORIE, et poids de chaque source (Lot 1.1).
+
+    Particularité MESURÉE, pas supposée : ``fiche.categorie`` est fermée par une
+    contrainte CHECK (``voile`` / ``accessoire``). C'est donc la seule des
+    quatre dimensions du Lot 1.1 à être déjà à écriture unique — la mesure le
+    confirme, ou l'infirme si la contrainte saute un jour.
+
+    Ce qui mérite la table de correspondance, c'est la SOURCE : une catégorie
+    héritée du nom de dossier n'a pas la même valeur probante qu'une catégorie
+    lue dans le document ou décidée par un humain. On la mesure donc aussi.
+    """
+    lignes = lignes_categorie(cursor)
+    try:
+        cursor.execute("SELECT categorie_source, COUNT(*) FROM fiche GROUP BY 1 ORDER BY 2 DESC, 1")
+        sources = [{"source": str(ligne[0]), "nb": int(ligne[1])} for ligne in cursor.fetchall()]
+    except Exception:
+        LOGGER.warning("Sources de catégorie illisibles.")
+        sources = []
+
+    return {
+        "definition": (
+            "Variantes de la catégorie (fiche.categorie) et répartition de sa source. "
+            "Colonne fermée par une contrainte CHECK : aucune variante d'écriture n'y est "
+            "attendue — la mesure le vérifie, elle ne le suppose pas."
+        ),
+        "unite": "valeur + compte",
+        "periode": "instantané",
+        "colonne": "fiche.categorie",
+        "nb_valeurs_distinctes": len({cle_normalisation(valeur) for valeur, _ in lignes}),
+        "certaines": regrouper_variantes(lignes),
+        "probables": variantes_probables(lignes),
+        "sources": sources,
     }
 
 
@@ -543,6 +638,7 @@ def cartographie(index: Any) -> dict[str, Any]:  # noqa: ANN401 — index réel
                 "variantes_gamme": variantes_valeurs(cursor, "gamme"),
                 "variantes_type_voile": variantes_valeurs(cursor, "type_voile"),
                 "variantes_matiere": variantes_matiere(cursor),
+                "variantes_categorie": variantes_categorie(cursor),
                 "variantes_modele_bateau": variantes_valeurs(cursor, "modele_bateau_brut"),
                 "distribution_scores": distribution_scores_qualite(cursor),
                 "completude_dimensions": completude_dimensions(cursor),
