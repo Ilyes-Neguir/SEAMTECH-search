@@ -12,8 +12,12 @@ voie « passage direct » (routage §10.3).
 from __future__ import annotations
 
 import logging
+import re
+from functools import lru_cache
 
 from seamtech_search.fiches.modeles import Anomalie, Cotes, FicheExtraite
+from seamtech_search.lexique import charger_lexique
+from seamtech_search.qualite.cartographie import cle_normalisation
 
 LOGGER = logging.getLogger("seamtech_search.fiches.anomalies")
 
@@ -45,10 +49,146 @@ FACTEUR_SURFACE_MAX = 1.30
 # pour tous, c'est le contrôle minimal commun.
 FAMILIES_PORTANT = {"spi", "spinnaker"}
 
+# ---------------------------------------------------------------------------
+# Lot 1.2 — vraisemblance des champs
+#
+# Deux règles, et une seule exigence pour les deux : chaque refus est NOMMÉ.
+# Un contrôle qui écarte une valeur sans dire laquelle, ni pourquoi, est pire
+# qu'une absence de contrôle — l'opérateur ne peut pas le contester.
+# ---------------------------------------------------------------------------
 
-def evaluer_anomalies(fiche: FicheExtraite) -> list[Anomalie]:
-    """RG16 : contrôles de cohérence, exécutés à TOUTE confiance."""
+#: Unités connues, de la plus longue à la plus courte : « mm » AVANT « m »,
+#: sinon « 12 mm » serait lu comme un nombre suivi de l'unité « m ».
+_UNITES_MESURE: tuple[str, ...] = ("mm", "cm", "m2", "kg", "m", "g")
+#: Un nombre nu, après normalisation — la ponctuation y est devenue une espace
+#: (« 12.50 » → « 12 50 »).
+_RE_NOMBRE_NORMALISE = re.compile(r"^\d+(?:\s\d+)*$")
+
+
+def _est_valeur_mesuree(cle_normalisee: str) -> bool:
+    """Une MESURE (« 12.50 m », « 380 g ») n'est pas un nom de client.
+
+    La clé d'entrée est déjà normalisée : ponctuation et exposants y sont des
+    espaces (« 12,50 m² » → « 12 50 m 2 »). On compacte donc avant de
+    reconnaître l'unité, sinon la virgule décimale masquerait la mesure.
+    """
+    compact = cle_normalisee.replace(" ", "")
+    if not compact:
+        return False
+    return any(
+        len(compact) > len(unite)
+        and compact.endswith(unite)
+        and compact[: -len(unite)].isdigit()
+        for unite in _UNITES_MESURE
+    )
+
+
+@lru_cache(maxsize=1)
+def _vocabulaire_technique() -> frozenset[str]:
+    """Termes techniques du domaine — un nom de client ne peut pas en être un.
+
+    Le lexique engagé (`config/lexique_fiches.json`) est la source : il
+    contient déjà les types de voile, les cotes, les matériaux et les
+    libellés d'atelier. On ne le redéveloppe pas, on le lit.
+
+    Si le lexique est absent ou invalide, le vocabulaire est vide et le
+    contrôle (a) ne s'applique pas : c'est un avertissement journalisé, pas un
+    silence — le contrôle ne prétend jamais couvrir ce qu'il n'a pas lu.
+    """
+    try:
+        return frozenset(charger_lexique().vocabulaire_normalise)
+    except Exception as erreur:  # lexique absent ou illisible : dit, jamais tu
+        LOGGER.warning(
+            "Lot 1.2 : lexique technique indisponible (%s) — le contrôle "
+            "« valeur technique comme client » ne s'applique pas.",
+            type(erreur).__name__,
+        )
+        return frozenset()
+
+
+def _terme_technique(cle_normalisee: str) -> str | None:
+    """Le terme technique reconnu, ou ``None`` si la valeur est plausible.
+
+    Seul un nom qui EST un terme technique est refusé — pas un nom qui en
+    CONTIENT un : « Voilerie du Guindant » est un client, « Guindant » n'en
+    est pas un. Un élargissement aux sous-chaînes produirait des refus en
+    série sur des noms parfaitement réels.
+    """
+    if not cle_normalisee:
+        return None
+    if cle_normalisee in _vocabulaire_technique():
+        return cle_normalisee
+    if _est_valeur_mesuree(cle_normalisee) or _RE_NOMBRE_NORMALISE.match(cle_normalisee):
+        return cle_normalisee
+    return None
+
+
+def _controle_vraisemblance(
+    fiche: FicheExtraite,
+    referentiel_bateaux: set[str] | None,
+) -> list[Anomalie]:
+    """Lot 1.2 : une valeur technique n'est pas un client ; un bateau hors
+    référentiel est signalé, pas enregistré."""
     anomalies: list[Anomalie] = []
+
+    # (a) Une valeur technique ne peut pas devenir un nom de client.
+    client = (fiche.client_nom or "").strip()
+    if client:
+        terme = _terme_technique(cle_normalisation(client))
+        if terme is not None:
+            anomalies.append(
+                Anomalie(
+                    code="client_invraisemblable",
+                    gravite="forte",
+                    message=(
+                        f"Nom de client « {client} » refusé : c'est la valeur technique "
+                        f"« {terme} », pas un nom. Le champ est laissé tel quel et "
+                        f"signalé — jamais enregistré comme client."
+                    ),
+                )
+            )
+
+    # (b) Un bateau absent du référentiel est signalé, pas enregistré.
+    #
+    # « Pas enregistré » : le référentiel n'est pas complété en silence. La
+    # fiche entre, l'anomalie est portée à l'approbateur ; c'est un humain qui
+    # décide d'ajouter le modèle. Sans référentiel transmis, le contrôle ne
+    # s'applique pas — il ne devine pas ce qu'il n'a pas.
+    bateau = (fiche.bateau_nom or "").strip()
+    if bateau and referentiel_bateaux is not None:
+        cle_bateau = cle_normalisation(bateau)
+        if cle_bateau and cle_bateau not in referentiel_bateaux:
+            anomalies.append(
+                Anomalie(
+                    code="bateau_hors_referentiel",
+                    gravite="moyenne",
+                    message=(
+                        f"Bateau « {bateau} » absent du référentiel : signalé, pas "
+                        f"enregistré. Le référentiel n'est pas complété en silence — "
+                        f"un humain tranche."
+                    ),
+                )
+            )
+    return anomalies
+
+
+def evaluer_anomalies(
+    fiche: FicheExtraite,
+    *,
+    referentiel_bateaux: set[str] | None = None,
+) -> list[Anomalie]:
+    """RG16 : contrôles de cohérence, exécutés à TOUTE confiance.
+
+    ``referentiel_bateaux`` (Lot 1.2) : clés normalisées des modèles connus
+    (:func:`~seamtech_search.qualite.cartographie.cle_normalisation`). Sans lui,
+    le contrôle « bateau hors référentiel » ne s'applique pas — il ne devine
+    pas ce qu'il n'a pas reçu.
+
+    La vraisemblance passe AVANT le retour anticipé sur les cotes : elle porte
+    sur des champs d'identité, et une fiche sans cotes ne doit pas y échapper.
+    """
+    anomalies: list[Anomalie] = []
+    anomalies.extend(_controle_vraisemblance(fiche, referentiel_bateaux))
     finie = next((c for c in fiche.cotes if c.jeu == "finie"), None)
     if finie is None:
         anomalies.append(
