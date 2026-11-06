@@ -16,11 +16,22 @@ import re
 from functools import lru_cache
 from typing import NamedTuple
 
+from seamtech_search.fiches.gabarits import GabaritDef
 from seamtech_search.fiches.modeles import Anomalie, Cotes, FicheExtraite
 from seamtech_search.lexique import charger_lexique
 from seamtech_search.qualite.cartographie import cle_normalisation
 
 LOGGER = logging.getLogger("seamtech_search.fiches.anomalies")
+
+# Lot 1.4 — codes d'anomalies BLOQUANTES.
+#
+# Une anomalie bloquante envoie la fiche en REVUE (voie « reprise_complete » du
+# §10.3) : elle n'est pas simplement relue, elle retourne à l'atelier.
+#
+# À ne PAS confondre avec « reference_discordante » (Lot 1.3), qui est NON
+# bloquante : le dossier entre en base, l'anomalie l'accompagne et la fiche
+# part en « a_valider ». Ce sont deux mécaniques distinctes, volontairement.
+CODES_BLOQUANTS: frozenset[str] = frozenset({"champ_obligatoire_manquant"})
 
 # Plages physiques plausibles (mètres, m², cm, kg) — points de départ du
 # §10.3, à caler sur les fiches réelles ; une cote hors plage est suspecte,
@@ -243,11 +254,41 @@ def _controle_reference_triple(references: ReferencesConstatees) -> list[Anomali
     ]
 
 
+def _controle_completude(fiche: FicheExtraite, gabarit: GabaritDef) -> list[Anomalie]:
+    """Lot 1.4 : un champ déclaré obligatoire par le gabarit et non lu est BLOQUANT.
+
+    Les champs attendus sont DÉCLARÉS PAR LE GABARIT (``RegleChamp.obligatoire``),
+    pas devinés ici : ce module ne fait que lire la déclaration. Un champ
+    manquant part en revue et n'est JAMAIS complété à deviner — une valeur
+    inventée serait pire qu'une valeur absente, parce qu'elle serait invisible ;
+    une valeur absente est au moins signalée.
+    """
+    lus = {champ.champ for champ in fiche.tous_les_champs()}
+    anomalies: list[Anomalie] = []
+    for regle in gabarit.champs:
+        if not regle.obligatoire or regle.cible in lus:
+            continue
+        anomalies.append(
+            Anomalie(
+                code="champ_obligatoire_manquant",
+                gravite="forte",
+                message=(
+                    f"Champ obligatoire « {regle.cible} » non lu — déclaré obligatoire par le "
+                    f"gabarit « {gabarit.code} » v{gabarit.version}. La fiche part en revue : "
+                    "le champ n'est PAS complété à deviner. Une valeur inventée serait "
+                    "invisible ; une valeur absente est au moins signalée."
+                ),
+            )
+        )
+    return anomalies
+
+
 def evaluer_anomalies(
     fiche: FicheExtraite,
     *,
     referentiel_bateaux: set[str] | None = None,
     references: ReferencesConstatees | None = None,
+    gabarit: GabaritDef | None = None,
 ) -> list[Anomalie]:
     """RG16 : contrôles de cohérence, exécutés à TOUTE confiance.
 
@@ -260,14 +301,19 @@ def evaluer_anomalies(
     (dossier, nom de fichier, document). Sans elles, la comparaison à trois ne
     s'applique pas.
 
-    La vraisemblance et la discordance de référence passent AVANT le retour
-    anticipé sur les cotes : elles portent sur l'identité, et une fiche sans
-    cotes ne doit pas y échapper.
+    ``gabarit`` (Lot 1.4) : les champs attendus y sont DÉCLARÉS
+    (``RegleChamp.obligatoire``). Sans gabarit, la complétude ne s'applique pas.
+
+    La vraisemblance, la discordance de référence et la complétude passent
+    AVANT le retour anticipé sur les cotes : elles portent sur l'identité et
+    sur les champs attendus, et une fiche sans cotes ne doit pas y échapper.
     """
     anomalies: list[Anomalie] = []
     anomalies.extend(_controle_vraisemblance(fiche, referentiel_bateaux))
     if references is not None:
         anomalies.extend(_controle_reference_triple(references))
+    if gabarit is not None:
+        anomalies.extend(_controle_completude(fiche, gabarit))
     finie = next((c for c in fiche.cotes if c.jeu == "finie"), None)
     if finie is None:
         anomalies.append(

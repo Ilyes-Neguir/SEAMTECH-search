@@ -3627,7 +3627,9 @@ def _extraire_pages(
     _poser_titre_depuis_entete(fiche, pages)
     _lire_grille_sailonet(fiche, pages)
     _aligner_titre_sur_type(fiche)
-    fiche.anomalies = evaluer_anomalies(fiche)
+    # Lot 1.4 : la complétude est évaluée contre les champs que le GABARIT
+    # déclare obligatoires — l'attendu est déclaré, jamais deviné ici.
+    fiche.anomalies = evaluer_anomalies(fiche, gabarit=gabarit)
     _signaler_orientations_mixtes(fiche, pages)
     return fiche
 

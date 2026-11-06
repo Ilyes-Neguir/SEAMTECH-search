@@ -1402,6 +1402,11 @@ def deposer_dossier(
                 # base, l'anomalie est visible pour l'approbateur et la fiche
                 # part en « a_valider » (RG3). Aucune source n'est corrigée en
                 # douce : les trois valeurs sont montrées côte à côte.
+                # Lot 1.4 : les champs attendus sont ceux que le GABARIT déclare
+                # obligatoires — un attendu déclaré, jamais une liste devinée ici.
+                gabarit_retenu = next(
+                    (g for g in (gabarits or []) if g.code == fiche.gabarit_code), None
+                )
                 fiche.anomalies = evaluer_anomalies(
                     fiche,
                     references=ReferencesConstatees(
@@ -1409,6 +1414,7 @@ def deposer_dossier(
                         fichier=code_depuis_nom_fichier(Path(plan.pdf_fiche).name),
                         dossier=code_depuis_nom_dossier(Path(dossier).name),
                     ),
+                    gabarit=gabarit_retenu,
                 )
                 # ResultatEcriture : la révision qui accompagne le contenu écrit
                 # est publiée au lot (A02) — un dépôt qui REMPLACE une fiche

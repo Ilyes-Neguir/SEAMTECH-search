@@ -35,6 +35,7 @@ from seamtech_search.extractions_voile import (
     enregistrer_extraction_voile_curseur,
 )
 from seamtech_search.fiches import normalisation as norm
+from seamtech_search.fiches.anomalies import CODES_BLOQUANTS
 from seamtech_search.fiches.modeles import FicheExtraite
 from seamtech_search.fiches.verite_7792 import VERITE_7792, VERITE_7792_COMPLETE
 from seamtech_search.referentiel_bateaux import lier_bateau_au_modele
@@ -281,6 +282,17 @@ def routage(fiche: FicheExtraite, seuils: dict[str, float] | None = None) -> dic
         return {"voie": "reprise_complete", "motif": "orientations PDF mixtes", "champs_sous_seuil": []}
     if any(anomalie.code == "orientation_pdf_non_verifiee" for anomalie in fiche.anomalies):
         return {"voie": "reprise_complete", "motif": "orientation PDF non vérifiée", "champs_sous_seuil": []}
+    # Lot 1.4 : une anomalie BLOQUANTE envoie en revue, elle n'est pas
+    # simplement relue. C'est la différence avec « reference_discordante »
+    # (Lot 1.3), non bloquante : le dossier entre en base et l'anomalie
+    # l'accompagne. Ce qui bloque est défini une seule fois, dans
+    # `anomalies.CODES_BLOQUANTS` — pas recopié ici.
+    if CODES_BLOQUANTS.intersection(anomalie.code for anomalie in fiche.anomalies):
+        return {
+            "voie": "reprise_complete",
+            "motif": "champ obligatoire manquant : revue",
+            "champs_sous_seuil": [],
+        }
     sous_seuil = [
         {"champ": champ.champ, "confiance": champ.confiance, "seuil": seuils.get(famille_du_champ(champ.champ), 0.9)}
         for champ in fiche.tous_les_champs()
