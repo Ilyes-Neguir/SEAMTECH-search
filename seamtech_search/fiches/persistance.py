@@ -430,20 +430,21 @@ def ecrire_fiche_resultat(
     if not fiche.code:
         raise ValueError("Fiche sans code : écriture refusée (reprise complète requise avant stockage).")
     # Lot 1.5 : les contrôles RG16 sont OBLIGATOIRES sur TOUTE fiche, « pas
-    # seulement sur certaines voies ». Le verrou est posé À L'ÉCRITURE : c'est
-    # le seul endroit par où passe nécessairement une fiche, quelle que soit la
-    # voie qui l'a produite (gabarit, reprise, import…). Une fiche qui n'est
-    # jamais passée par l'extracteur ne peut donc pas y échapper.
-    appliquer_controles_rg16(
-        fiche,
-        referentiel_bateaux=referentiel_bateaux,
-        references=references,
-        gabarit=gabarit,
-    )
+    # seulement sur certaines voies ». Le verrou est posé À L'ÉCRITURE, seul
+    # endroit par où passe nécessairement une fiche, quelle que soit la voie
+    # qui l'a produite (gabarit, reprise, import…) : une fiche qui n'est jamais
+    # passée par l'extracteur ne peut donc pas y échapper. Il est appliqué dans
+    # `_ecrire_fiche_dans`, APRÈS les projections (voir là-bas pourquoi).
     if connexion is not None:
-        return _ecrire_fiche_dans(index, fiche, connexion, categorie=categorie, pages=pages)
+        return _ecrire_fiche_dans(
+            index, fiche, connexion, categorie=categorie, pages=pages,
+            gabarit=gabarit, references=references, referentiel_bateaux=referentiel_bateaux,
+        )
     with index.connect() as connexion_ext:
-        return _ecrire_fiche_dans(index, fiche, connexion_ext, categorie=categorie, pages=pages)
+        return _ecrire_fiche_dans(
+            index, fiche, connexion_ext, categorie=categorie, pages=pages,
+            gabarit=gabarit, references=references, referentiel_bateaux=referentiel_bateaux,
+        )
 
 
 def ecrire_fiche(index: Any, fiche: FicheExtraite, connexion: Any = None) -> tuple[int, str]:
@@ -533,10 +534,18 @@ def _ecrire_fiche_dans(
     *,
     categorie: tuple[str, str] | None = None,
     pages: list[Any] | None = None,
+    gabarit: GabaritDef | None = None,
+    references: ReferencesConstatees | None = None,
+    referentiel_bateaux: set[str] | None = None,
 ) -> ResultatEcriture:
     """Corps historique de l'écriture, dans la transaction de l'appelant.
 
     ``pages`` (Lot 2) : voir :func:`ecrire_fiche_resultat`.
+
+    ``gabarit``, ``references``, ``referentiel_bateaux`` (Lots 1.2 à 1.5) : le
+    contexte des contrôles RG16. Ils sont appliqués APRÈS les projections —
+    voir le commentaire de l'insertion des anomalies pourquoi cet ordre n'est
+    pas négociable.
     """
     action = "creee"
     id_fiche: int | None = None  # positionné tôt si remplacement sur place
@@ -725,8 +734,6 @@ def _ecrire_fiche_dans(
                         fiche.gabarit_version,
                     ),
                 )
-            for anomalie in fiche.anomalies:
-                cursor.execute(_SQL_ANOMALIE_INS, (id_fiche, anomalie.code, anomalie.gravite, anomalie.message))
             # Lots 3a/7 : projection normalisée de la FAMILLE de la fiche,
             # dans LA MÊME transaction que la fiche et ses tables filles. La
             # catégorie (voile|accessoire + sa source) est tranchée ici,
@@ -748,6 +755,25 @@ def _ecrire_fiche_dans(
             else:
                 extraction_voile = construire_extraction_voile(fiche, id_fiche=id_fiche)
                 enregistrer_extraction_voile_curseur(cursor, extraction_voile)
+            # Lot 1.5 — verrou RG16, APRÈS les projections, et cet ordre n'est
+            # pas négociable. La projection Lot 3a CANONISE (un guindant lu
+            # « 6600 mm » y devient 6,6 m) et juge la plausibilité sur ces
+            # valeurs canonisées. Évaluer les contrôles AVANT elle ferait
+            # porter un verdict géométrique sur des valeurs que la projection
+            # va corriger : une fiche saine serait déclarée « implausible »
+            # sur la foi d'une unité non encore convertie. Appliqués après,
+            # les contrôles alimentent la fiche sans jamais fausser le verdict
+            # de la projection. Mesuré : sur les PDF d'exemple, l'ordre ne
+            # change rien (l'extracteur canonise déjà) ; il ne diffère que sur
+            # une fiche dont les valeurs typées ne le sont pas encore.
+            appliquer_controles_rg16(
+                fiche,
+                referentiel_bateaux=referentiel_bateaux,
+                references=references,
+                gabarit=gabarit,
+            )
+            for anomalie in fiche.anomalies:
+                cursor.execute(_SQL_ANOMALIE_INS, (id_fiche, anomalie.code, anomalie.gravite, anomalie.message))
     # Phase 2.1 (production-readiness, décision commanditaire du 2026-09-29) :
     # le texte de recherche pondéré est rempli DÈS L'ÉCRITURE (statut
     # a_valider) — une fiche déposée est cherchable immédiatement, badgée
