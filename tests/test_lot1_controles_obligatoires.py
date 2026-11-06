@@ -10,6 +10,8 @@ Une règle = un cas qui passe et un cas qui échoue.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 import pytest
 
 from seamtech_search.fiches import persistance
@@ -128,55 +130,102 @@ def test_tout_code_emis_est_declaré_dans_codes_rg16() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Le verrou est À L'ÉCRITURE — et il précède tout accès à la base
+# Le verrou est À L'ÉCRITURE — prouvé par une écriture réelle
 # ---------------------------------------------------------------------------
 
 
-class _ArretAvantBase(RuntimeError):
-    """Levée par la doublure : arrête `ecrire_fiche_resultat` avant la base."""
+@pytest.fixture()
+def base_ecriture() -> Iterator[dict[str, object]]:
+    """Base PostgreSQL jetable et migrée, pour une écriture RÉELLE.
 
+    Pourquoi une vraie base, et non plus un objet nu.
 
-def test_le_verrou_est_pose_a_l_ecriture(monkeypatch: pytest.MonkeyPatch) -> None:
-    """La preuve qui compte : l'écriture applique les RG16, avant toute base.
+    Le verrou RG16 est appliqué dans ``_ecrire_fiche_dans``, APRÈS les
+    projections Lot 3a — ordre non négociable depuis la correction du
+    06/11 : la projection CANONISE (un guindant lu « 6600 mm » y devient
+    6,6 m) et juge la plausibilité sur ces valeurs canonisées ; évaluer les
+    contrôles avant elle déclarait « implausible » une fiche saine (mesuré :
+    ``test_lot3a_extraction_voile``). Les projections touchant la base, la
+    preuve a besoin d'une base.
 
-    `index` est un objet nu, sans `connect()` : si les contrôles étaient
-    appelés après l'ouverture de la connexion, ce test échouerait sur
-    l'attribut manquant au lieu d'observer l'arrêt de la doublure.
+    Elle n'en est pas plus faible, elle est plus forte : l'ancienne preuve
+    constatait qu'une DOUBLURE était appelée ; celle-ci constate que
+    l'anomalie est réellement ÉCRITE et relue.
     """
-    appel: dict[str, object] = {}
+    from pathlib import Path
 
-    def doublure(fiche: FicheExtraite, **kwargs: object) -> list[Anomalie]:
-        appel["fiche"] = fiche
-        appel["kwargs"] = kwargs
-        raise _ArretAvantBase
+    from tests.conftest import (
+        DATABASE_URL,
+        _creer_base_jetable,
+        _supprimer_base_jetable,
+    )
 
-    monkeypatch.setattr(persistance, "appliquer_controles_rg16", doublure)
-    fiche = _fiche()
-    with pytest.raises(_ArretAvantBase):
-        persistance.ecrire_fiche_resultat(object(), fiche)
-    assert appel["fiche"] is fiche
+    if not DATABASE_URL:
+        pytest.skip("Set SEAMTECH_TEST_DATABASE_URL to run PostgreSQL integration tests")
+
+    from seamtech_search.indexer import SearchIndex
+
+    nom_base, url_base = _creer_base_jetable()
+    index = SearchIndex(Path(f"/tmp/unused-lot15-{nom_base}.db"), url_base)
+    index.initialize()
+    index.run_migrations()
+    try:
+        yield {"index": index, "url": url_base}
+    finally:
+        index.close()
+        _supprimer_base_jetable(nom_base)
 
 
-def test_le_contexte_est_transmis_a_l_ecriture(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Gabarit, références et référentiel voyagent jusqu'aux contrôles."""
-    appel: dict[str, object] = {}
+def _anomalies_en_base(index: object, code_fiche: str) -> set[str]:
+    """Les codes d'anomalie réellement persistés pour une fiche."""
+    with index.connect() as connexion:  # type: ignore[attr-defined]
+        with connexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT a.code FROM fiche_anomalie a JOIN fiche f ON f.id_fiche = a.id_fiche"
+                " WHERE f.code = %s",
+                (code_fiche,),
+            )
+            return {ligne[0] for ligne in cursor.fetchall()}
 
-    def doublure(fiche: FicheExtraite, **kwargs: object) -> list[Anomalie]:
-        appel["kwargs"] = kwargs
-        raise _ArretAvantBase
 
-    monkeypatch.setattr(persistance, "appliquer_controles_rg16", doublure)
-    fiche = _fiche()
-    with pytest.raises(_ArretAvantBase):
-        persistance.ecrire_fiche_resultat(
-            object(),
-            fiche,
-            gabarit=GABARIT,
-            referentiel_bateaux={"voilier fictif 42"},
-        )
-    kwargs = appel["kwargs"]
-    assert kwargs["gabarit"] is GABARIT
-    assert kwargs["referentiel_bateaux"] == {"voilier fictif 42"}
+@pytest.mark.postgres
+def test_le_verrou_est_pose_a_l_ecriture(base_ecriture: dict[str, object]) -> None:
+    """La preuve qui compte : l'écriture applique les RG16 et les PERSISTE.
+
+    La fiche n'est passée par aucun extracteur : elle est construite à la
+    main, techniquement incohérente (SLU plus courte que la bordure). Si le
+    verrou n'était posé qu'à l'extraction, aucune anomalie n'apparaîtrait.
+    """
+    index = base_ecriture["index"]
+    fiche = _fiche_boiteuse()
+
+    persistance.ecrire_fiche_resultat(index, fiche)
+
+    assert "cotes_incoherentes" in _anomalies_en_base(index, fiche.code)
+
+
+@pytest.mark.postgres
+def test_le_contexte_est_transmis_a_l_ecriture(base_ecriture: dict[str, object]) -> None:
+    """Gabarit, références et référentiel voyagent jusqu'aux contrôles.
+
+    Deux écritures de la même fiche, seul le référentiel diffère : le
+    bateau est hors référentiel quand le référentiel le dit, et ne l'est
+    pas quand il le contient. Le contexte est donc bien transmis, et son
+    effet est mesurable en base — pas seulement dans un appel espionné.
+    """
+    index = base_ecriture["index"]
+
+    hors_referentiel = _fiche(code="LOT1-CTX-HORS")
+    persistance.ecrire_fiche_resultat(
+        index, hors_referentiel, referentiel_bateaux={"un autre modele"}
+    )
+    assert "bateau_hors_referentiel" in _anomalies_en_base(index, "LOT1-CTX-HORS")
+
+    dans_referentiel = _fiche(code="LOT1-CTX-DANS")
+    persistance.ecrire_fiche_resultat(
+        index, dans_referentiel, referentiel_bateaux={"voilier fictif 42"}
+    )
+    assert "bateau_hors_referentiel" not in _anomalies_en_base(index, "LOT1-CTX-DANS")
 
 
 def test_l_ecriture_refuse_toujours_une_fiche_sans_code() -> None:
