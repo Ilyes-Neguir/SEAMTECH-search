@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import re
 from functools import lru_cache
+from typing import NamedTuple
 
 from seamtech_search.fiches.modeles import Anomalie, Cotes, FicheExtraite
 from seamtech_search.lexique import charger_lexique
@@ -172,10 +173,81 @@ def _controle_vraisemblance(
     return anomalies
 
 
+# ---------------------------------------------------------------------------
+# Lot 1.3 — la référence, comparée à trois
+# ---------------------------------------------------------------------------
+
+
+class ReferencesConstatees(NamedTuple):
+    """Les trois références d'un même dossier, telles qu'elles ont été LUES.
+
+    Un dossier d'atelier porte sa référence à trois endroits : le NOM DU
+    DOSSIER, le NOM DU FICHIER, et le DOCUMENT lui-même. Elles doivent dire la
+    même chose. Quand elles ne le disent pas, l'écart est MONTRÉ — les trois
+    valeurs, côte à côte — et non résolu en douce par un repli silencieux sur
+    la source la plus commode.
+
+    ``None`` signifie « cette source ne porte pas de référence » : une source
+    muette n'est pas un désaccord.
+    """
+
+    document: str | None = None
+    fichier: str | None = None
+    dossier: str | None = None
+
+    def connues(self) -> dict[str, str]:
+        """Les références lues, par provenance, dans l'ordre du plan."""
+        return {
+            provenance: valeur
+            for provenance, valeur in (
+                ("dossier", self.dossier),
+                ("nom de fichier", self.fichier),
+                ("document", self.document),
+            )
+            if valeur and valeur.strip()
+        }
+
+
+def _cle_reference(valeur: str) -> str:
+    """Deux écritures d'une même référence, rapprochées : casse et espaces."""
+    return re.sub(r"\s+", " ", valeur.strip().upper())
+
+
+def _controle_reference_triple(references: ReferencesConstatees) -> list[Anomalie]:
+    """Lot 1.3 : trois écritures de la même référence, montrées côte à côte.
+
+    NON BLOQUANT — et c'est volontaire : ce n'est PAS la mécanique du champ
+    manquant (1.4), qui envoie en revue. Ici le dossier ENTRE en base : la
+    référence retenue reste celle lue dans le document, l'écart est porté à la
+    connaissance de l'approbateur, et la fiche arrive en « a_valider » (RG3).
+    Une discordance n'empêche donc jamais le dépôt ; elle l'accompagne.
+
+    Avec une seule source lue, il n'y a rien à comparer : aucune anomalie.
+    """
+    connues = references.connues()
+    if len(connues) < 2:
+        return []
+    if len({_cle_reference(valeur) for valeur in connues.values()}) <= 1:
+        return []
+    detail = ", ".join(f"{provenance} « {valeur} »" for provenance, valeur in connues.items())
+    return [
+        Anomalie(
+            code="reference_discordante",
+            gravite="moyenne",
+            message=(
+                f"Référence discordante : {detail}. Ces sources ne disent pas "
+                "la même chose — à examiner avant validation. Le dossier est "
+                "enregistré : l'écart est signalé, il ne bloque pas le dépôt."
+            ),
+        )
+    ]
+
+
 def evaluer_anomalies(
     fiche: FicheExtraite,
     *,
     referentiel_bateaux: set[str] | None = None,
+    references: ReferencesConstatees | None = None,
 ) -> list[Anomalie]:
     """RG16 : contrôles de cohérence, exécutés à TOUTE confiance.
 
@@ -184,11 +256,18 @@ def evaluer_anomalies(
     le contrôle « bateau hors référentiel » ne s'applique pas — il ne devine
     pas ce qu'il n'a pas reçu.
 
-    La vraisemblance passe AVANT le retour anticipé sur les cotes : elle porte
-    sur des champs d'identité, et une fiche sans cotes ne doit pas y échapper.
+    ``references`` (Lot 1.3) : les trois références constatées du dossier
+    (dossier, nom de fichier, document). Sans elles, la comparaison à trois ne
+    s'applique pas.
+
+    La vraisemblance et la discordance de référence passent AVANT le retour
+    anticipé sur les cotes : elles portent sur l'identité, et une fiche sans
+    cotes ne doit pas y échapper.
     """
     anomalies: list[Anomalie] = []
     anomalies.extend(_controle_vraisemblance(fiche, referentiel_bateaux))
+    if references is not None:
+        anomalies.extend(_controle_reference_triple(references))
     finie = next((c for c in fiche.cotes if c.jeu == "finie"), None)
     if finie is None:
         anomalies.append(

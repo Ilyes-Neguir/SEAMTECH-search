@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from seamtech_search.extractions_voile import lier_extraction_voile_document_curseur
+from seamtech_search.fiches.anomalies import ReferencesConstatees, evaluer_anomalies
 from seamtech_search.fiches.extraction import (
     DetectionMixteIndeterminee,
     PageAnalysee,
@@ -1333,6 +1334,11 @@ def deposer_dossier(
         # fichier était bien promu. Mesuré sur `ST63`, `ST101`, `ST96`.
         if not fiche_preparee.fichier_source:
             fiche_preparee.fichier_source = Path(plan.pdf_fiche).name
+        # Lot 1.3 : la référence LUE DANS LE DOCUMENT est capturée AVANT le
+        # repli de `reprendre_code_depuis_nom` — sinon le repli écraserait la
+        # valeur du document et les trois sources finiraient toujours d'accord,
+        # ce qui viderait la comparaison de son sens.
+        code_lu_document = (fiche_preparee.code or "").strip() or None
         code_retenu = reprendre_code_depuis_nom(
             fiche_preparee, Path(plan.pdf_fiche), Path(dossier)
         )
@@ -1387,6 +1393,22 @@ def deposer_dossier(
 
                 categorie_proposee = proposer_categorie(
                     Path(dossier).name, plan.gabarit_code
+                )
+                # Lot 1.3 : les TROIS références du dossier sont comparées ici,
+                # à l'endroit même où la catégorie est proposée — le dépôt est
+                # le seul endroit qui connaît à la fois le document, le nom du
+                # fichier et le nom du dossier.
+                # L'écart est NON BLOQUANT, à dessein : le dossier entre en
+                # base, l'anomalie est visible pour l'approbateur et la fiche
+                # part en « a_valider » (RG3). Aucune source n'est corrigée en
+                # douce : les trois valeurs sont montrées côte à côte.
+                fiche.anomalies = evaluer_anomalies(
+                    fiche,
+                    references=ReferencesConstatees(
+                        document=code_lu_document,
+                        fichier=code_depuis_nom_fichier(Path(plan.pdf_fiche).name),
+                        dossier=code_depuis_nom_dossier(Path(dossier).name),
+                    ),
                 )
                 # ResultatEcriture : la révision qui accompagne le contenu écrit
                 # est publiée au lot (A02) — un dépôt qui REMPLACE une fiche
