@@ -6,16 +6,27 @@ Exécution du plan « comparaison et réutilisation » (lots 0 → 8), avec le l
 accessoires mené sur les documents réels de l'atelier. Suivi détaillé, preuves
 et état honnête : `docs/PLAN_COMPARAISON_SUIVI.md`.
 
-⚠️ **Le Lot 1 « socle » n'est PAS livré.** Une revue du code à `dcc702c` l'a
-établi point par point : `anomalies.py` et `gabarits.py` jamais modifiés, aucune
-re-extraction du corpus, aucun contrôle géométrique obligatoire, et **zéro
-occurrence** de `vraisemblance` (1.2) comme de `reference_discordante` (1.3)
-dans tout le dépôt. Les deux pièges réels relevés au Lot 0 restent donc non
-protégés pour les voiles, et la comparaison multi-fiches tourne sur des données
-dont la fiabilité de référence n'a pas été renforcée — le principe « l'extraction
-avant la comparaison » n'est pas respecté. Ce lot reste à faire. La première
-version du rapport l'avait masqué en étiquetant « Lot 1 » l'écran de comparaison
-groupe (qui relève du Lot 6) : l'étiquetage est corrigé, l'absence demeure.
+⚠️ **État du Lot 1 « socle », mis à jour le 06/11.** Ce paragraphe affirmait
+plus haut que le Lot 1 n'était pas livré ; une revue du code à `dcc702c`
+l'établissait alors point par point. **Cette affirmation est depuis devenue
+fausse et elle est remplacée, pas nuancée.** Sont livrés, commités et éprouvés :
+**1.2** vraisemblance des champs (`62d2377`), **1.3** référence comparée à trois,
+non bloquante (`f232cf9`), **1.4** complétude par gabarit, bloquante
+(`d5409fe`), **1.5** contrôles RG16 obligatoires à l'écriture (`090eec7`), puis
+les correctifs `95f445e`, `601f448` et `96dea44`.
+
+**Reste NON livré : le Lot 1.1, la table de correspondance.** Ce qui est livré
+à `6a485b4` est l'**instrument** qui la produirait
+(`scripts/mesurer_correspondances.py`) ; il n'a **jamais été exécuté sur les 338
+fiches**, parce que ce dépôt ne contient pas ce corpus. La table n'est donc pas
+écrite, la migration de reprise correspondante non plus, et le tableau
+avant/après sur corpus réel (1.6) n'est pas mesuré : ces trois points exigent le
+corpus, ils ne sont pas « reportés ».
+
+La première version du rapport avait masqué un lot manquant en étiquetant
+« Lot 1 » l'écran de comparaison groupe, qui relève du Lot 6. Cet étiquetage
+reste corrigé ci-dessous, et la présente mise à jour s'applique la même règle :
+aucune affirmation qui ne soit opposable par une commande.
 
 - **Comparaison d'un groupe de fiches** (`9588ce3`, `be346f1`, `4895cf4`) :
   attributs à gauche, une colonne par fiche, bascule de vue, et une règle qui

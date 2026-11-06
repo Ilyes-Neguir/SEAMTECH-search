@@ -30,7 +30,12 @@ ce qui reste ouvert.
 | Lot | Commit | Ce que le lot apporte |
 |---|---|---|
 | **0** | `30d6c39` | Cartographie du corpus — mesurer la qualité réelle avant d'écrire une règle (`seamtech_search/qualite/cartographie.py`, 5 épreuves) |
-| **1** ⚠️ | — | **NON LIVRÉ.** Le Lot 1 « socle » du plan — re-extraction du corpus, contrôles géométriques obligatoires, anomalies `vraisemblance` (1.2) et `reference_discordante` (1.3) — n'existe pas dans cette branche. Voir « Le Lot 1 manquant » ci-dessous. |
+| **1.2** | `62d2377` | Vraisemblance des champs avant écriture : `client_invraisemblable`, `bateau_hors_referentiel` (4 occurrences de `vraisemblance` mesurées dans `seamtech_search/`) |
+| **1.3** | `f232cf9` | La référence comparée à trois (dossier / nom de fichier / document) — anomalie `reference_discordante`, **NON BLOQUANTE** et volontairement distincte de 1.4 |
+| **1.4** | `d5409fe` | Complétude par gabarit : les champs que le GABARIT déclare obligatoires, jamais une liste devinée — anomalie `champ_obligatoire_manquant`, **BLOQUANTE** |
+| **1.5** | `090eec7` | Les contrôles RG16 deviennent OBLIGATOIRES sur toute fiche : le verrou est posé à l'ÉCRITURE, seule voie par où passe nécessairement une fiche |
+| **1.1** ⚠️ | `6a485b4` | **Instrument livré, table NON produite.** `scripts/mesurer_correspondances.py` mesure les fusions CERTAINES et PROBABLES ; il n'a **jamais été exécuté sur les 338 fiches**, faute de corpus dans ce dépôt. Voir « Le Lot 1.1 » ci-dessous. |
+| (*correctifs*) | `95f445e`, `601f448`, `96dea44` | Deux régressions Lot 1 détectées sur base PostgreSQL réelle ; épreuves d'intégration inter-lots ; correction de la CI rouge |
 | (*comparaison groupe*) | `9588ce3`, `be346f1`, `4895cf4` | Écran de comparaison d'un GROUPE de fiches : attributs à gauche, une colonne par fiche, bascule de vue, normalisation des axes (nettoyer ≠ fusionner). **Ces commits figuraient sous l'étiquette « Lot 1 » dans la première version de ce document : c'était un mauvais étiquetage.** Dans la numérotation du plan, ils relèvent du Lot 6. |
 | **2** | `f8f893a` | Accessoires : double vérification des cotes, construite sur les documents réels |
 | **3** | `0b7ec0b` | Calibration des seuils : la preuve avant la décision (jamais un seuil sans confiance observée) |
@@ -43,56 +48,59 @@ ce qui reste ouvert.
 Le lot 2 a été mené en parallèle, comme prévu au plan, parce qu'il exigeait
 l'ouverture de documents réels et ne pouvait pas attendre la fin de la chaîne.
 
-## Le Lot 1 manquant — dit noir sur blanc
+## Le Lot 1 — ce qui est livré, et ce qui ne l'est pas
 
-Le **Lot 1 « socle » n'a pas été livré.** Ce n'est pas une nuance de
-présentation : c'est l'absence d'un lot entier, et la première version de ce
-document l'a masquée en étiquetant « Lot 1 » l'écran de comparaison groupe, qui
-appartient au Lot 6. Le renommage est corrigé ci-dessus ; l'absence, elle,
-demeure.
+Ce document a d'abord déclaré le Lot 1 « non livré ». **Cette affirmation est
+devenue fausse** : les sous-points 1.2 à 1.5 sont livrés, commités et éprouvés.
+Elle est remplacée ci-dessous par l'état mesuré. Le principe ne change pas :
+jamais une étiquette, toujours une preuve opposable.
 
-Ce que le Lot 1 devait apporter, et qui est **absent** :
+### Livré — vérifiable par commande
 
-| Attendu | État mesuré dans la branche |
-|---|---|
-| Anomalies du corpus (`anomalies.py`) | **jamais modifié** — `git diff af31922..HEAD` vide |
-| Gabarits (`gabarits.py`) | **jamais modifié** |
-| Re-extraction du corpus | **aucune** |
-| Contrôles géométriques rendus obligatoires | **aucun** |
-| Anomalie `vraisemblance` (1.2) — bateau absent du référentiel signalé plutôt qu'enregistré | **0 occurrence** dans tout le dépôt |
-| Anomalie `reference_discordante` (1.3) — référence dossier / fichier / document qui se contredisent | **0 occurrence** dans tout le dépôt |
-| Table de correspondance validée | **aucune** |
+| Attendu | État mesuré | Commande qui l'établit |
+|---|---|---|
+| Anomalies du corpus (`anomalies.py`) | **modifié** par les Lots 1.2 à 1.5 | `git log --oneline 62d2377~1..090eec7 -- seamtech_search/fiches/anomalies.py` → 4 commits (`62d2377`, `f232cf9`, `d5409fe`, `090eec7`) |
+| Anomalie 1.2 — client invraisemblable, bateau hors référentiel | **4 occurrences** de `vraisemblance` | `grep -rn vraisemblance --include=*.py seamtech_search/` |
+| Anomalie `reference_discordante` (1.3) | **4 occurrences** ; les TROIS valeurs sont montrées côte à côte | `grep -rn reference_discordante --include=*.py seamtech_search/` |
+| Anomalie `champ_obligatoire_manquant` (1.4) | **3 occurrences** ; les attendus viennent du GABARIT | `grep -rn champ_obligatoire_manquant --include=*.py seamtech_search/` |
+| Contrôles géométriques rendus obligatoires (1.5) | verrou posé **à l'écriture**, dans `_ecrire_fiche_dans` | `grep -n appliquer_controles_rg16 seamtech_search/fiches/persistance.py` |
 
-Les seules lignes touchées dans `depot.py` et `extraction.py` (18 au total)
-sont le passage des pages analysées vers la double vérification du Lot 2. Elles
-ne constituent en rien une re-extraction ni un contrôle.
+Les deux mécaniques sont **distinctes et non confondues**, conformément à la
+décision du commanditaire : 1.3 est **NON BLOQUANT** (le dossier entre en base,
+la fiche part en `a_valider`, l'écart est montré) ; 1.4 est **BLOQUANT** (revue).
 
-### Pourquoi c'est grave, et pas seulement une case non cochée
+### NON livré — le Lot 1.1, et pourquoi
+
+La **table de correspondance** (1.1) n'existe pas. Ce qui est livré à `6a485b4`
+est l'**instrument** qui la produirait — `scripts/mesurer_correspondances.py`,
+qui sépare les fusions CERTAINES (même clé normalisée, graphie la plus fréquente
+retenue) des fusions PROBABLES (`confirmee_par=None`, laissées à la décision de
+l'exploitante), en réutilisant `qualite/cartographie.py:cle_normalisation`.
+
+L'instrument **n'a jamais été exécuté sur les 338 fiches** : ce dépôt ne
+contient pas ce corpus (il contient 6 fichiers d'exemple sous `sample_data/`).
+Produire la table supposerait d'inventer ses lignes. Ce n'est pas une nuance :
+une table inventée serait précisément l'erreur que ce document a déjà commise
+une fois avec une étiquette.
+
+**Conséquence assumée, et non masquée :** la migration de reprise des 338
+fiches et le garde-fou anti-réintroduction des variantes fusionnées (A.2) ne
+sont pas écrits ; le tableau avant/après par famille d'anomalie sur le corpus
+réel (A.3 = 1.6) n'est pas mesuré. Ces deux points sont **impossibles ici**, et
+non « reportés » : ils exigent le corpus.
+
+### Ce que le Lot 1 change, concrètement
 
 Le Lot 0 avait identifié **deux pièges réels** : un PDF appartenant à une autre
 commande rangé dans un dossier, et un nom de fichier qui contredit la référence
-du dossier. Le Lot 1.3 devait les attraper. Il n'existe pas — donc ces deux
-pièges restent **non protégés pour toutes les voiles**.
+du dossier. Le Lot 1.3 les attrape désormais — les trois écritures de la
+référence sont comparées et l'écart est montré au lieu d'être résolu en douce
+par un repli sur la source la plus commode.
 
-La conséquence est directe : la comparaison multi-fiches et le mode cible
-(Lots 5 et 6, validés par ailleurs) s'exécutent sur des données dont la
-fiabilité de référence n'a pas été renforcée. Le principe n°2 du plan —
-*« l'extraction avant la comparaison, sinon on reconstruit sur du faux »* —
-n'est donc **pas respecté**. Le socle a été déclaré fait alors qu'il manque, et
-c'est exactement le type d'erreur silencieuse que l'application est censée
-interdire.
-
-Une précision, pour ne pas entretenir la confusion que le document a créée : le
-module `verification.py` du Lot 2 est une **double lecture des cotes
-d'accessoires** (séquentielle puis géométrique). Ce n'est pas la vérification de
-référence dossier/fichier/document du Lot 1.3, qui devait couvrir **tout le
-corpus**. Écrire que son extension aux voiles « n'a été ni demandée ni prouvée »
-était vrai du mécanisme de relecture des cotes, mais faux et trompeur dans le
-contexte du Lot 1 : la vérification de référence, elle, était bel et bien
-demandée.
-
-**Ce lot reste à faire.** Il n'est pas remplacé, ni compensé, par quoi que ce
-soit de livré ici.
+Une précision, pour ne pas entretenir la confusion que la première version du
+document a créée : le module `verification.py` du Lot 2 est une **double lecture
+des cotes d'accessoires** (séquentielle puis géométrique). Ce n'est pas la
+vérification de référence dossier/fichier/document du Lot 1.3.
 
 ## Lot 2 — ce que les documents réels ont appris
 
@@ -266,7 +274,8 @@ Ce document clôt le plan « comparaison et réutilisation ». Il ne prétend pa
   **voiles** : elle est aujourd'hui câblée sur la famille accessoire. Le
   mécanisme est générique, son application aux voiles n'a pas été prouvée.
   Cela ne préjuge en rien du Lot 1.3, qui est d'une autre nature (concordance
-  des références dossier / fichier / document) et qui **reste entièrement à
-  faire** ;
-* prétendre que le Lot 1 est livré — il ne l'est pas, cf. la section qui porte
+  des références dossier / fichier / document) et qui **est livré** par
+  `f232cf9` ;
+* prétendre que la table de correspondance du Lot 1.1 est produite — elle ne
+  l'est pas : seul l'instrument de mesure est livré, cf. la section qui porte
   son nom.
