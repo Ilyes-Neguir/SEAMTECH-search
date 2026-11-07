@@ -164,6 +164,12 @@ class ChampAccessoire(BaseModel):
     page: int | None = None
     zone: Zone | None = None
     methode: str | None = None
+    #: Lot 2 — double vérification. ``True`` : deux lectures indépendantes
+    #: concordent. ``False`` : elles divergent. ``None`` : aucune seconde
+    #: lecture n'a été possible — ni promu, ni discrédité.
+    verifie: bool | None = None
+    #: Trace de la relecture : ce qui a été lu, par où, et pourquoi.
+    preuve_verification: str | None = None
 
 
 class AnomalieAccessoire(BaseModel):
@@ -223,6 +229,16 @@ class ExtractionAccessoire(BaseModel):
 # ---------------------------------------------------------------------------
 
 _RE_DIMENSION = re.compile(r"(\d+(?:[.,]\d+)?)\s*(mm|cm|m)\b", re.IGNORECASE)
+
+#: Lot 2 — ce que vaut ``ChampAccessoire.verifie`` selon l'issue de la
+#: relecture. « non_verifiable » est ABSENT de cette table volontairement :
+#: sans seconde lecture, le champ reste ``None`` — il n'est ni promu ni
+#: discrédité. L'absence de preuve n'est pas une preuve d'exactitude.
+_VERIFIE_PAR_STATUT: dict[str, bool] = {
+    "accord": True,
+    "divergence": False,
+    "unite_inattendue": False,
+}
 
 
 def _nom_fichier(chemin: str | None) -> str | None:
@@ -297,11 +313,20 @@ def construire_extraction_accessoire(
     empreinte_sha256: str | None = None,
     id_fiche: int | None = None,
     id_document: int | None = None,
+    pages: list[Any] | None = None,
 ) -> ExtractionAccessoire:
-    """Projette une FicheExtraite d'accessoire en extraction canonique."""
+    """Projette une FicheExtraite d'accessoire en extraction canonique.
+
+    ``pages`` (Lot 2) : les pages déjà analysées du PDF. Fournies, elles
+    déclenchent la DOUBLE VÉRIFICATION — chaque cote nommée est relue par un
+    second chemin (proximité géométrique) et n'est promue « vérifiée » que si
+    les deux lectures concordent. Omises, le comportement est exactement
+    celui d'avant le Lot 2 : aucune régression sur les appelants existants.
+    """
     traces = list(fiche.tous_les_champs())
     champs: list[ChampAccessoire] = []
     anomalies: list[AnomalieAccessoire] = []
+    rapport = None
 
     def texte(nom_trace: str, nom_champ: str) -> tuple[str | None, ChampExtrait | None]:
         trace = _trace_preferee(traces, nom_trace)
@@ -395,6 +420,89 @@ def construire_extraction_accessoire(
                 _champ_depuis_trace("modele_bateau_brut", None, valeur_texte=modele_brut)
             )
 
+    # ------------------------------------------------------------------
+    # Lot 2 — double vérification.
+    #
+    # Sans les pages, rien ne change (appelants historiques). Avec elles,
+    # chaque cote nommée du formulaire est projetée SOUS SON PROPRE LIBELLÉ
+    # (« mesure.hauteur_capot ») au lieu d'être perdue ou rangée de travers :
+    # le contrat longueur/largeur/hauteur reste exactement celui d'avant,
+    # seules les cotes supplémentaires apparaissent.
+    # ------------------------------------------------------------------
+    if pages is not None:
+        from seamtech_search.fiches.verification import verifier_document
+
+        rapport = verifier_document(pages)  # type: ignore[arg-type]
+        if rapport.nature == "illisible":
+            anomalies.append(
+                AnomalieAccessoire(
+                    code="document_sans_texte",
+                    gravite="forte",
+                    message=(
+                        "Document sans couche texte : aucune lecture n'est possible "
+                        "sans OCR. Le dossier relève d'une reprise manuelle ; rien "
+                        "n'est enregistré à partir d'une page vide."
+                    ),
+                )
+            )
+        elif rapport.nature == "plan":
+            anomalies.append(
+                AnomalieAccessoire(
+                    code="document_plan_sans_libelle",
+                    gravite="moyenne",
+                    message=(
+                        "Plan ou planche de coupe : des cotes nues, sans unité ni "
+                        "libellé. Aucune cote n'est déduite — deviner l'unité "
+                        "fabriquerait une mesure."
+                    ),
+                )
+            )
+        for verification in rapport.verifications:
+            mesure = verification.mesure
+            champs.append(
+                ChampAccessoire(
+                    nom=f"mesure.{mesure.libelle_canonique}",
+                    etat="lu",
+                    valeur_brute=f"{mesure.libelle_brut} {mesure.valeur_lue}",
+                    valeur_texte=mesure.valeur_lue,
+                    valeur_canonique=mesure.valeur_m,
+                    unite_brute=mesure.unite_lue,
+                    unite_canonique="m",
+                    page=mesure.page or None,
+                    methode="double_verification",
+                    verifie=_VERIFIE_PAR_STATUT.get(verification.statut),
+                    preuve_verification=verification.motif or None,
+                )
+            )
+        if rapport.divergentes:
+            anomalies.append(
+                AnomalieAccessoire(
+                    code="divergence_relecture",
+                    gravite="forte",
+                    message=(
+                        "Deux lectures indépendantes donnent des cotes différentes : "
+                        + "; ".join(v.motif for v in rapport.divergentes)
+                        + ". La cote n'est pas promue — décision de l'approbateur."
+                    ),
+                    champs=[f"mesure.{v.mesure.libelle_canonique}" for v in rapport.divergentes],
+                )
+            )
+        if rapport.unites_inattendues:
+            anomalies.append(
+                AnomalieAccessoire(
+                    code="unite_inattendue",
+                    gravite="forte",
+                    message=(
+                        "Unité lue différente de celle annoncée par le formulaire : "
+                        + "; ".join(v.motif for v in rapport.unites_inattendues)
+                        + ". Vérification humaine requise."
+                    ),
+                    champs=[
+                        f"mesure.{v.mesure.libelle_canonique}" for v in rapport.unites_inattendues
+                    ],
+                )
+            )
+
     a_quelque_chose = any(
         valeur is not None
         for valeur in (type_accessoire, matiere, dimensions_texte, modele_brut)
@@ -407,6 +515,11 @@ def construire_extraction_accessoire(
         statut_plausibilite = "plausible" if not anomalies else "a_verifier"
     else:
         statut_extraction = "partielle"
+        statut_plausibilite = "a_verifier"
+
+    # Un désaccord de relecture est BLOQUANT : même une extraction par ailleurs
+    # complète repart à vérifier — jamais de validation sur une cote discutée.
+    if rapport is not None and rapport.bloquant:
         statut_plausibilite = "a_verifier"
 
     attendus = (

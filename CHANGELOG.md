@@ -1,5 +1,70 @@
 # Changelog
 
+## 2026-11-05 — comparaison, réutilisation, et une cote relue deux fois
+
+Exécution du plan « comparaison et réutilisation » (lots 0 → 8), avec le lot 2
+accessoires mené sur les documents réels de l'atelier. Suivi détaillé, preuves
+et état honnête : `docs/PLAN_COMPARAISON_SUIVI.md`.
+
+⚠️ **État du Lot 1 « socle », mis à jour le 06/11.** Ce paragraphe affirmait
+plus haut que le Lot 1 n'était pas livré ; une revue du code à `dcc702c`
+l'établissait alors point par point. **Cette affirmation est depuis devenue
+fausse et elle est remplacée, pas nuancée.** Sont livrés, commités et éprouvés :
+**1.2** vraisemblance des champs (`62d2377`), **1.3** référence comparée à trois,
+non bloquante (`f232cf9`), **1.4** complétude par gabarit, bloquante
+(`d5409fe`), **1.5** contrôles RG16 obligatoires à l'écriture (`090eec7`), puis
+les correctifs `95f445e`, `601f448` et `96dea44`.
+
+**Reste NON livré : le Lot 1.1, la table de correspondance.** Ce qui est livré
+à `6a485b4` est l'**instrument** qui la produirait
+(`scripts/mesurer_correspondances.py`) ; il n'a **jamais été exécuté sur les 338
+fiches**, parce que ce dépôt ne contient pas ce corpus. La table n'est donc pas
+écrite, la migration de reprise correspondante non plus, et le tableau
+avant/après sur corpus réel (1.6) n'est pas mesuré : ces trois points exigent le
+corpus, ils ne sont pas « reportés ».
+
+La première version du rapport avait masqué un lot manquant en étiquetant
+« Lot 1 » l'écran de comparaison groupe, qui relève du Lot 6. Cet étiquetage
+reste corrigé ci-dessous, et la présente mise à jour s'applique la même règle :
+aucune affirmation qui ne soit opposable par une commande.
+
+- **Comparaison d'un groupe de fiches** (`9588ce3`, `be346f1`, `4895cf4`) :
+  attributs à gauche, une colonne par fiche, bascule de vue, et une règle qui
+  compte — normaliser un axe, ce n'est pas fusionner des axes distincts.
+  *(Ces commits relèvent du Lot 6, pas du Lot 1.)*
+- **Lot 2 — double vérification des cotes d'accessoires** (`f8f893a`). Mesuré
+  sur les documents réels avant d'écrire une ligne : les dossiers d'accessoires
+  mélangent trois natures (formulaire imprimé, plan à cotes nues, document
+  numérisé sans couche texte), et deux pièges — une même ligne peut porter deux
+  cotes, et le nom du dossier n'est pas une identité fiable. Une cote n'est
+  désormais promue « vérifiée » que si deux lectures indépendantes concordent
+  (par libellé, puis par proximité géométrique). Sans seconde lecture possible,
+  rien n'est promu ; un désaccord devient une anomalie forte renvoyée à
+  l'approbateur, jamais résolue en silence. Chaque cote est projetée sous son
+  propre libellé (`mesure.hauteur_capot`) au lieu d'être perdue ou rangée de
+  travers. Ni migration, ni régression : sans pages transmises, la projection
+  est exactement celle d'avant.
+- **Calibration des seuils** (`0b7ec0b`) : on ne calibre pas une confiance avec
+  des confiances. Le seuil est une confiance réellement observée face au sort
+  réel du champ ; faute de preuves, aucun seuil n'est publié.
+- **Réutilisation** (`46d13aa`) : une cible explicite, et une réponse même avec
+  trois fiches — « données insuffisantes » plutôt qu'un score inventé.
+- **Lisibilité** (`cb70b52`, `7c18bdf`) : filtres déroulants lisibles en mode
+  nuit, et un seul bouton pour tout effacer.
+- **Recherche par référence** (`3e5d59e`) : la cause corrigée, pas le symptôme.
+- **Lot 0** (`30d6c39`) : cartographie du corpus, mesurer avant d'écrire.
+
+Mesures : suite locale 2500 passed / 0 échec ; frontend `tsc` propre, 33
+épreuves unitaires, build OK ; CI au lot 2 verte sur 13 jobs avec
+**535 tests PostgreSQL** et 88,15 % de couverture.
+
+**État honnête :** le workflow `Qualification Windows` est rouge — mais il
+l'était **déjà sur `main` avant le premier commit de ce plan**. Son étape
+fautive est le verdict de la suite PostgreSQL + Redis ; les journaux ne sont
+pas lisibles depuis ce banc, et la cause exacte reste à établir sur le runner
+(hypothèse documentée : `postgresql-contrib` absent). Aucune ligne d'écart n'a
+été ajoutée pour le faire taire.
+
 ## 2026-10-29 (suite 7) — la fiche dit pourquoi elle est incomplète
 
 - **`GET /fiches/{code}` renvoie `anomalies`** (code, gravité, message, statut)

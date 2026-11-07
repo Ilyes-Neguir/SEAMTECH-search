@@ -33,8 +33,10 @@ from pathlib import Path
 from typing import Any, Callable
 
 from seamtech_search.extractions_voile import lier_extraction_voile_document_curseur
+from seamtech_search.fiches.anomalies import ReferencesConstatees
 from seamtech_search.fiches.extraction import (
     DetectionMixteIndeterminee,
+    PageAnalysee,
     analyser_candidat_fiche,
     analyser_pdf,
     extraire_fiche,
@@ -338,6 +340,9 @@ class PlanDossier:
     #: jointes et listés ici pour l'opérateur.
     autres_fiches: list[Path] = field(default_factory=list)
     fiche_extraite: FicheExtraite | None = field(default=None, repr=False)
+    #: Lot 2 — pages du PDF retenu, analysées une seule fois par le scanner
+    #: et transmises à l'écriture pour la double vérification des cotes.
+    pages_analysees: tuple[PageAnalysee, ...] | None = field(default=None, repr=False)
 
     @property
     def accepte(self) -> bool:
@@ -982,6 +987,7 @@ def scanner_dossier(dossier: Path, gabarits: list[GabaritDef]) -> PlanDossier:
     plan.gabarit_code = candidat_choisi.gabarit.code
     plan.score = candidat_choisi.score_detection
     plan.fiche_extraite = candidat_choisi.fiche
+    plan.pages_analysees = candidat_choisi.pages
     # les autres PDF (non reconnus ou seconds) restent des pièces jointes
     plan.pieces.extend(
         FichierDossier(chemin=pdf, role="piece_jointe", taille_octets=pdf.stat().st_size)
@@ -1328,6 +1334,11 @@ def deposer_dossier(
         # fichier était bien promu. Mesuré sur `ST63`, `ST101`, `ST96`.
         if not fiche_preparee.fichier_source:
             fiche_preparee.fichier_source = Path(plan.pdf_fiche).name
+        # Lot 1.3 : la référence LUE DANS LE DOCUMENT est capturée AVANT le
+        # repli de `reprendre_code_depuis_nom` — sinon le repli écraserait la
+        # valeur du document et les trois sources finiraient toujours d'accord,
+        # ce qui viderait la comparaison de son sens.
+        code_lu_document = (fiche_preparee.code or "").strip() or None
         code_retenu = reprendre_code_depuis_nom(
             fiche_preparee, Path(plan.pdf_fiche), Path(dossier)
         )
@@ -1383,11 +1394,47 @@ def deposer_dossier(
                 categorie_proposee = proposer_categorie(
                     Path(dossier).name, plan.gabarit_code
                 )
+                # Lot 1.3 : les TROIS références du dossier sont comparées ici,
+                # à l'endroit même où la catégorie est proposée — le dépôt est
+                # le seul endroit qui connaît à la fois le document, le nom du
+                # fichier et le nom du dossier.
+                # L'écart est NON BLOQUANT, à dessein : le dossier entre en
+                # base, l'anomalie est visible pour l'approbateur et la fiche
+                # part en « a_valider » (RG3). Aucune source n'est corrigée en
+                # douce : les trois valeurs sont montrées côte à côte.
+                # Lots 1.3 et 1.4 : le contexte des contrôles RG16 est réuni ICI,
+                # à l'endroit même où la catégorie est proposée — le dépôt est le
+                # seul endroit qui connaît à la fois le document, le nom du
+                # fichier, le nom du dossier ET le gabarit retenu.
+                #
+                # 1.3 : les trois références sont comparées ; l'écart est NON
+                # BLOQUANT, le dossier entre en base et la fiche part en
+                # « a_valider » (RG3). Aucune source n'est corrigée en douce :
+                # les trois valeurs sont montrées côte à côte.
+                # 1.4 : les champs attendus sont ceux que le GABARIT déclare
+                # obligatoires — un attendu déclaré, jamais une liste devinée ici.
+                #
+                # Les contrôles sont APPLIQUÉS à l'écriture (Lot 1.5), pas ici :
+                # c'est ce qui les rend obligatoires sur TOUTE voie.
+                gabarit_retenu = next(
+                    (g for g in (gabarits or []) if g.code == fiche.gabarit_code), None
+                )
+                references_constatees = ReferencesConstatees(
+                    document=code_lu_document,
+                    fichier=code_depuis_nom_fichier(Path(plan.pdf_fiche).name),
+                    dossier=code_depuis_nom_dossier(Path(dossier).name),
+                )
                 # ResultatEcriture : la révision qui accompagne le contenu écrit
                 # est publiée au lot (A02) — un dépôt qui REMPLACE une fiche
                 # fait avancer sa révision, et le dépôt le DIT.
                 ecriture = ecrire_fiche_resultat(
-                    index, fiche, connexion=connexion, categorie=categorie_proposee
+                    index,
+                    fiche,
+                    connexion=connexion,
+                    categorie=categorie_proposee,
+                    pages=list(plan.pages_analysees) if plan.pages_analysees else None,
+                    gabarit=gabarit_retenu,
+                    references=references_constatees,
                 )
                 id_fiche, action = ecriture.id_fiche, ecriture.action
                 revision_fiche = ecriture.revision

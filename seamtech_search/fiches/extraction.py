@@ -163,6 +163,9 @@ class CandidatFiche:
     gabarit: GabaritDef
     score_detection: int
     fiche: FicheExtraite
+    #: Lot 2 — pages analysées UNE SEULE FOIS, réutilisées ensuite par la
+    #: double vérification (aucune seconde ouverture du PDF).
+    pages: tuple[PageAnalysee, ...] | None = None
 
 
 def analyser_pdf(chemin: Path) -> list[PageAnalysee]:
@@ -3624,7 +3627,9 @@ def _extraire_pages(
     _poser_titre_depuis_entete(fiche, pages)
     _lire_grille_sailonet(fiche, pages)
     _aligner_titre_sur_type(fiche)
-    fiche.anomalies = evaluer_anomalies(fiche)
+    # Lot 1.4 : la complétude est évaluée contre les champs que le GABARIT
+    # déclare obligatoires — l'attendu est déclaré, jamais deviné ici.
+    fiche.anomalies = evaluer_anomalies(fiche, gabarit=gabarit)
     _signaler_orientations_mixtes(fiche, pages)
     return fiche
 
@@ -3689,7 +3694,9 @@ def analyser_candidat_fiche(
             raise DetectionMixteIndeterminee("Orientation PDF incertaine : détection non concluante.")
         return None
     fiche = _extraire_pages(pages, chemin, gabarit, gabarits, vocabulaire_libres)
-    return CandidatFiche(gabarit=gabarit, score_detection=score, fiche=fiche)
+    return CandidatFiche(
+        gabarit=gabarit, score_detection=score, fiche=fiche, pages=tuple(pages)
+    )
 
 
 def extraire_avec_filet(chemin: Path, gabarits: list[GabaritDef], vocabulaire_libres: set[str] | None = None) -> FicheExtraite:

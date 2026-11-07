@@ -415,6 +415,12 @@ class TestListeEtPieces:
         que sous forme de badge sur l'écran de validation.
         """
         index = base_workflow["index"]
+        # Contrat : une fiche sans anomalie renvoie une LISTE VIDE, jamais
+        # l'absence de clé. Vérifié AVANT toute insertion manuelle, sur la
+        # fiche génois : son dossier « CLIENT-GENOA » ne porte aucune
+        # référence exploitable (le Lot 1.3 n'a donc rien à comparer) et ses
+        # cotes canonisées ne lèvent aucun contrôle RG16.
+        assert client.get("/fiches/0901-MM").json()["anomalies"] == []
         with index.connect() as connexion:
             with connexion.cursor() as cursor:
                 cursor.execute("SELECT id_fiche FROM fiche WHERE code = %s", ("0901-MM",))
@@ -429,8 +435,19 @@ class TestListeEtPieces:
         assert [a["code"] for a in corps["anomalies"]] == ["champ_manquant"]
         assert corps["anomalies"][0]["message"].startswith("Cotes absentes")
         assert corps["anomalies"][0]["statut"] == "a_traiter"
-        # Une fiche sans anomalie renvoie une liste vide, jamais l'absence de clé.
-        assert client.get("/fiches/7792-SO").json()["anomalies"] == []
+        # Lot 1.3 : la fiche 7792-SO a été RÉ-DÉPOSÉE plus haut depuis le
+        # dossier « AFFAIRE-RG11-2 », dont la référence « RG11 » ne concorde
+        # pas avec le document « 7792-SO ». L'anomalie est donc LÉGITIME — et
+        # elle prouve au passage que l'écran de détail expose bien les
+        # anomalies produites par le Lot 1, pas seulement celles saisies à la
+        # main. Non bloquante : la fiche est bien là, en « a_traiter ».
+        anomalies_portant = client.get("/fiches/7792-SO").json()["anomalies"]
+        codes_portant = [a["code"] for a in anomalies_portant]
+        assert "reference_discordante" in codes_portant
+        discordance = next(a for a in anomalies_portant if a["code"] == "reference_discordante")
+        assert "RG11" in discordance["message"] and "7792-SO" in discordance["message"]
+        assert discordance["statut"] == "a_traiter"
+        assert isinstance(anomalies_portant, list)
 
     def test_pieces_jointes_avec_description_documents(self, base_workflow: dict, client: TestClient) -> None:
         """RG12 : la pièce déposée apparaît ici avec sa référence catalogue."""

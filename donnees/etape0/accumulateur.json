@@ -1,0 +1,83 @@
+{
+  "fiches": [
+    {
+      "annee": 2025,
+      "categorie": "voile",
+      "famille": "voiles",
+      "gamme": "C3",
+      "id": "14e910eb6f62d4a6",
+      "matiere": "Maxilite 150 Bleu Foncé",
+      "racine": "VOILES 2025",
+      "source": "archive",
+      "type_voile": "Gennaker"
+    },
+    {
+      "annee": 2025,
+      "categorie": "voile",
+      "famille": "voiles",
+      "gamme": null,
+      "id": "3282c4193bf03542",
+      "matiere": null,
+      "racine": "VOILES 2025",
+      "source": "archive",
+      "type_voile": "GSE"
+    },
+    {
+      "annee": 2025,
+      "categorie": "voile",
+      "famille": "voiles",
+      "gamme": "Fullbatten",
+      "id": "4174fcce549c5519",
+      "matiere": "PRO RADIAL",
+      "racine": "VOILES 2025",
+      "source": "archive",
+      "type_voile": "Grand-voile"
+    },
+    {
+      "annee": 2025,
+      "categorie": "voile",
+      "famille": "voiles",
+      "gamme": null,
+      "id": "534225128a308cfa",
+      "matiere": null,
+      "racine": "VOILES 2025",
+      "source": "archive",
+      "type_voile": "Génois"
+    },
+    {
+      "annee": 2025,
+      "categorie": "voile",
+      "famille": "voiles",
+      "gamme": "C0",
+      "id": "d38cc85f4fbab325",
+      "matiere": "STORMLITE 210 ROUGE",
+      "racine": "VOILES 2025",
+      "source": "archive",
+      "type_voile": "Gennaker"
+    },
+    {
+      "annee": 2025,
+      "categorie": "voile",
+      "famille": "voiles",
+      "gamme": null,
+      "id": "d9319cf2dd46ffac",
+      "matiere": null,
+      "racine": "VOILES 2025",
+      "source": "archive",
+      "type_voile": "GSE"
+    },
+    {
+      "annee": 2025,
+      "categorie": "voile",
+      "famille": "voiles",
+      "gamme": null,
+      "id": "e856a0868ba4abbf",
+      "matiere": null,
+      "racine": "VOILES 2025",
+      "source": "archive",
+      "type_voile": "GSE"
+    }
+  ],
+  "sel": "9205a3a0107276e24c5838ed085b95df",
+  "version": 1
+}

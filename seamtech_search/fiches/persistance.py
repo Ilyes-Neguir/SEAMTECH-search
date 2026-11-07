@@ -35,6 +35,8 @@ from seamtech_search.extractions_voile import (
     enregistrer_extraction_voile_curseur,
 )
 from seamtech_search.fiches import normalisation as norm
+from seamtech_search.fiches.anomalies import CODES_BLOQUANTS, ReferencesConstatees, appliquer_controles_rg16
+from seamtech_search.fiches.gabarits import GabaritDef
 from seamtech_search.fiches.modeles import FicheExtraite
 from seamtech_search.fiches.verite_7792 import VERITE_7792, VERITE_7792_COMPLETE
 from seamtech_search.referentiel_bateaux import lier_bateau_au_modele
@@ -281,6 +283,17 @@ def routage(fiche: FicheExtraite, seuils: dict[str, float] | None = None) -> dic
         return {"voie": "reprise_complete", "motif": "orientations PDF mixtes", "champs_sous_seuil": []}
     if any(anomalie.code == "orientation_pdf_non_verifiee" for anomalie in fiche.anomalies):
         return {"voie": "reprise_complete", "motif": "orientation PDF non vérifiée", "champs_sous_seuil": []}
+    # Lot 1.4 : une anomalie BLOQUANTE envoie en revue, elle n'est pas
+    # simplement relue. C'est la différence avec « reference_discordante »
+    # (Lot 1.3), non bloquante : le dossier entre en base et l'anomalie
+    # l'accompagne. Ce qui bloque est défini une seule fois, dans
+    # `anomalies.CODES_BLOQUANTS` — pas recopié ici.
+    if CODES_BLOQUANTS.intersection(anomalie.code for anomalie in fiche.anomalies):
+        return {
+            "voie": "reprise_complete",
+            "motif": "champ obligatoire manquant : revue",
+            "champs_sous_seuil": [],
+        }
     sous_seuil = [
         {"champ": champ.champ, "confiance": champ.confiance, "seuil": seuils.get(famille_du_champ(champ.champ), 0.9)}
         for champ in fiche.tous_les_champs()
@@ -394,19 +407,44 @@ def ecrire_fiche_resultat(
     connexion: Any = None,
     *,
     categorie: tuple[str, str] | None = None,
+    pages: list[Any] | None = None,
+    gabarit: GabaritDef | None = None,
+    references: ReferencesConstatees | None = None,
+    referentiel_bateaux: set[str] | None = None,
 ) -> ResultatEcriture:
     """Comme :func:`ecrire_fiche`, mais rend aussi la révision résultante.
 
     ``categorie`` (Lot 7) : ``(categorie, source)`` proposée au dépôt —
     ``None`` retombe sur la famille du gabarit (source ``document``). Une
     catégorie déjà décidée par un humain n'est jamais écrasée ici.
+
+    ``pages`` (Lot 2) : pages déjà analysées du PDF. Transmises à la
+    projection accessoire, elles déclenchent la double vérification des cotes ;
+    omises, la projection est celle d'avant le Lot 2.
+
+    ``gabarit``, ``references``, ``referentiel_bateaux`` (Lots 1.2 à 1.4) : le
+    contexte des contrôles RG16, qui sont OBLIGATOIRES sur toute fiche
+    (Lot 1.5) et donc rejoués ici, à l'écriture. Une voie qui n'a pas ce
+    contexte applique quand même les contrôles — avec ce qu'elle sait.
     """
     if not fiche.code:
         raise ValueError("Fiche sans code : écriture refusée (reprise complète requise avant stockage).")
+    # Lot 1.5 : les contrôles RG16 sont OBLIGATOIRES sur TOUTE fiche, « pas
+    # seulement sur certaines voies ». Le verrou est posé À L'ÉCRITURE, seul
+    # endroit par où passe nécessairement une fiche, quelle que soit la voie
+    # qui l'a produite (gabarit, reprise, import…) : une fiche qui n'est jamais
+    # passée par l'extracteur ne peut donc pas y échapper. Il est appliqué dans
+    # `_ecrire_fiche_dans`, APRÈS les projections (voir là-bas pourquoi).
     if connexion is not None:
-        return _ecrire_fiche_dans(index, fiche, connexion, categorie=categorie)
+        return _ecrire_fiche_dans(
+            index, fiche, connexion, categorie=categorie, pages=pages,
+            gabarit=gabarit, references=references, referentiel_bateaux=referentiel_bateaux,
+        )
     with index.connect() as connexion_ext:
-        return _ecrire_fiche_dans(index, fiche, connexion_ext, categorie=categorie)
+        return _ecrire_fiche_dans(
+            index, fiche, connexion_ext, categorie=categorie, pages=pages,
+            gabarit=gabarit, references=references, referentiel_bateaux=referentiel_bateaux,
+        )
 
 
 def ecrire_fiche(index: Any, fiche: FicheExtraite, connexion: Any = None) -> tuple[int, str]:
@@ -495,7 +533,20 @@ def _ecrire_fiche_dans(
     connexion: Any,
     *,
     categorie: tuple[str, str] | None = None,
+    pages: list[Any] | None = None,
+    gabarit: GabaritDef | None = None,
+    references: ReferencesConstatees | None = None,
+    referentiel_bateaux: set[str] | None = None,
 ) -> ResultatEcriture:
+    """Corps historique de l'écriture, dans la transaction de l'appelant.
+
+    ``pages`` (Lot 2) : voir :func:`ecrire_fiche_resultat`.
+
+    ``gabarit``, ``references``, ``referentiel_bateaux`` (Lots 1.2 à 1.5) : le
+    contexte des contrôles RG16. Ils sont appliqués APRÈS les projections —
+    voir le commentaire de l'insertion des anomalies pourquoi cet ordre n'est
+    pas négociable.
+    """
     action = "creee"
     id_fiche: int | None = None  # positionné tôt si remplacement sur place
     revision_avant: int | None = None
@@ -683,8 +734,6 @@ def _ecrire_fiche_dans(
                         fiche.gabarit_version,
                     ),
                 )
-            for anomalie in fiche.anomalies:
-                cursor.execute(_SQL_ANOMALIE_INS, (id_fiche, anomalie.code, anomalie.gravite, anomalie.message))
             # Lots 3a/7 : projection normalisée de la FAMILLE de la fiche,
             # dans LA MÊME transaction que la fiche et ses tables filles. La
             # catégorie (voile|accessoire + sa source) est tranchée ici,
@@ -700,12 +749,31 @@ def _ecrire_fiche_dans(
                 )
 
                 extraction_accessoire = construire_extraction_accessoire(
-                    fiche, id_fiche=id_fiche
+                    fiche, id_fiche=id_fiche, pages=pages
                 )
                 enregistrer_extraction_accessoire_curseur(cursor, extraction_accessoire)
             else:
                 extraction_voile = construire_extraction_voile(fiche, id_fiche=id_fiche)
                 enregistrer_extraction_voile_curseur(cursor, extraction_voile)
+            # Lot 1.5 — verrou RG16, APRÈS les projections, et cet ordre n'est
+            # pas négociable. La projection Lot 3a CANONISE (un guindant lu
+            # « 6600 mm » y devient 6,6 m) et juge la plausibilité sur ces
+            # valeurs canonisées. Évaluer les contrôles AVANT elle ferait
+            # porter un verdict géométrique sur des valeurs que la projection
+            # va corriger : une fiche saine serait déclarée « implausible »
+            # sur la foi d'une unité non encore convertie. Appliqués après,
+            # les contrôles alimentent la fiche sans jamais fausser le verdict
+            # de la projection. Mesuré : sur les PDF d'exemple, l'ordre ne
+            # change rien (l'extracteur canonise déjà) ; il ne diffère que sur
+            # une fiche dont les valeurs typées ne le sont pas encore.
+            appliquer_controles_rg16(
+                fiche,
+                referentiel_bateaux=referentiel_bateaux,
+                references=references,
+                gabarit=gabarit,
+            )
+            for anomalie in fiche.anomalies:
+                cursor.execute(_SQL_ANOMALIE_INS, (id_fiche, anomalie.code, anomalie.gravite, anomalie.message))
     # Phase 2.1 (production-readiness, décision commanditaire du 2026-09-29) :
     # le texte de recherche pondéré est rempli DÈS L'ÉCRITURE (statut
     # a_valider) — une fiche déposée est cherchable immédiatement, badgée

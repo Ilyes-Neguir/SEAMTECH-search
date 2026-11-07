@@ -378,3 +378,94 @@ test("les exemptions pointent du code qui existe encore, et disent pourquoi", ()
   }
   assert.ok(EXEMPTIONS.length <= 3, "toute nouvelle exemption doit être justifiée, pas empilée")
 })
+
+/** Bloc de déclarations d'une règle CSS ordinaire, trouvée par son sélecteur. */
+function blocRegle(css: string, selecteur: RegExp): Map<string, string> {
+  const trouve = selecteur.exec(css)
+  assert.ok(trouve, `règle « ${selecteur.source} » introuvable dans app/globals.css`)
+  const depart = css.indexOf("{", trouve.index)
+  let profondeur = 0
+  let fin = depart
+  for (let indice = depart; indice < css.length; indice += 1) {
+    if (css[indice] === "{") profondeur += 1
+    if (css[indice] === "}") {
+      profondeur -= 1
+      if (profondeur === 0) {
+        fin = indice
+        break
+      }
+    }
+  }
+  const declarations = new Map<string, string>()
+  for (const [, nom, valeur] of css.slice(depart, fin).matchAll(/([a-z-]+)\s*:\s*([^;]+);/gi)) {
+    declarations.set(nom.trim(), valeur.trim())
+  }
+  return declarations
+}
+
+/** Jeton de palette visé par une valeur « var(--x) », ou ``undefined``. */
+function jetonDePalette(valeur: string | undefined): string | undefined {
+  const reference = valeur ? /^var\(--([a-z0-9-]+)\)$/.exec(valeur) : null
+  return reference ? reference[1] : undefined
+}
+
+/**
+ * L'angle mort que ce fichier ne couvrait pas.
+ *
+ * Tout ce qui précède mesure des couleurs que le NAVIGATEUR peint à partir de
+ * la palette. Un volet déroulant ouvert, lui, est peint par le SYSTÈME
+ * (Windows), qui ignore ``.dark`` : il suit le thème du système. Tant que
+ * l'utilisatrice est en thème clair côté Windows et en thème nuit côté
+ * application, le volet reste blanc et les options, qui héritent de
+ * l'``--foreground`` clair de la nuit, s'écrivent en blanc dessus. La palette
+ * est irréprochable et l'écran est illisible : c'est précisément le défaut
+ * que mesure ce test — non pas un couple de jetons, mais le fait que les deux
+ * couleurs soient ÉCRITES sur le contrôle natif, seules à pouvoir l'atteindre.
+ */
+test("les contrôles natifs reçoivent des couleurs explicites : le système ne lit pas la palette", () => {
+  const options = blocRegle(css, /select\s+option/)
+  const fond = jetonDePalette(options.get("background-color"))
+  const texte = jetonDePalette(options.get("color"))
+  assert.ok(
+    fond && texte,
+    `« select option » doit peindre un fond et une encre issus de la palette — trouvé : ` +
+      `${options.get("background-color") ?? "rien"} / ${options.get("color") ?? "rien"}`,
+  )
+  for (const [theme, jeu] of [
+    ["jour", jour],
+    ["nuit", nuit],
+  ] as [string, Map<string, Rgb>][]) {
+    const couleurFond = jeu.get(fond)
+    const couleurTexte = jeu.get(texte)
+    assert.ok(
+      couleurFond && couleurTexte,
+      `thème ${theme} : jetons « ${fond} » / « ${texte} » non résolubles en hexadécimal`,
+    )
+    const rapport = contraste(couleurTexte, couleurFond)
+    assert.ok(
+      rapport >= SEUIL_TEXTE,
+      `thème ${theme} : le volet déroulant natif tombe à ${rapport}:1 — ` +
+        `écrire les deux couleurs sur « option », c'est le seul moyen de l'atteindre`,
+    )
+  }
+
+  // Cases à cocher et boutons radio natifs : peints par le système eux aussi.
+  // « accent-color » est un composant d'interface, pas du texte courant : le
+  // critère 1.4.11 « Contraste des éléments non textuels » demande 3:1.
+  const cases = blocRegle(css, /input\[type="checkbox"\]/)
+  const accent = jetonDePalette(cases.get("accent-color"))
+  assert.ok(accent, "les cases natives doivent annoncer un « accent-color » issu de la palette")
+  for (const [theme, jeu] of [
+    ["jour", jour],
+    ["nuit", nuit],
+  ] as [string, Map<string, Rgb>][]) {
+    const couleur = jeu.get(accent)
+    const page = jeu.get("background")
+    assert.ok(couleur && page, `thème ${theme} : « ${accent} » ou le fond de page n'est pas mesurable`)
+    const rapport = contraste(couleur, page)
+    assert.ok(
+      rapport >= 3,
+      `thème ${theme} : « accent-color » à ${rapport}:1, sous les 3:1 d'un composant d'interface`,
+    )
+  }
+})
