@@ -361,7 +361,7 @@ def main(argv: list[str] | None = None) -> int:
             print(
                 "SEAMTECH_DATABASE_URL n'est pas définie : je ne peux pas charger.\n"
                 "Variable attendue, par exemple :\n"
-                "  postgresql://postgres:@/atelier_reel?host=/home/user/.pgdata",
+                "  postgresql://postgres:@/atelier_reel?host=<dossier du cluster>",
                 file=sys.stderr,
             )
             return 2
