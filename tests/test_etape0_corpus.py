@@ -409,8 +409,12 @@ def test_assainissement_masque_le_nom_capture_par_debordement():
     par un marqueur neutre : la preuve du défaut d'extraction subsiste, le
     nom disparaît.
     """
-    assert e0.assainir_valeur_axe("gamme", "enrouleur Jouet 10.80") == "enrouleur <nom propre> <nom propre>"
-    assert e0.assainir_valeur_axe("gamme", "enrouleur Kelt 9 mètres") == "enrouleur <nom propre> <nom propre> <nom propre>"
+    # Un SEUL marqueur pour tout le débordement, quel que soit le nombre de
+    # mots : c'est ce qui rend la forme stable et idempotente.
+    attendu = "enrouleur <nom propre>"
+    assert e0.assainir_valeur_axe("gamme", "enrouleur Jouet 10.80") == attendu
+    assert e0.assainir_valeur_axe("gamme", "enrouleur Jouet 10 80") == attendu
+    assert e0.assainir_valeur_axe("gamme", "enrouleur Kelt 9 mètres") == attendu
     # une vraie gamme en un ou deux mots est respectée
     assert e0.assainir_valeur_axe("gamme", "Fullbatten") == "Fullbatten"
     assert e0.assainir_valeur_axe("gamme", "Semi-lattée") == "Semi-lattée"
@@ -433,3 +437,42 @@ def test_l_assainissement_est_applique_a_la_consignation(tmp_path):
     brut = fichier.read_text(encoding="utf-8")
     assert "Jouet" not in brut
     assert e0.MARQUEUR_NOM_PROPRE in brut
+
+
+def test_le_refus_porte_sur_la_meme_forme_assainie_que_les_propositions():
+    """Sinon assainir rend le garde-fou inopérant.
+
+    Constaté : après assainissement, la valeur mesurée est devenue
+    « enrouleur <nom propre> <nom propre> » alors que le refus avait été
+    enregistré sur « enrouleur jouet 10.80 ». Le garde-fou ne reconnaissait
+    plus la fusion qu'il devait écarter, et elle est redevenue applicable.
+    Le refus doit donc être assaini avec la même règle que la mesure.
+    """
+    dec = e0.charger_decisions(pathlib.Path("/tmp/inexistant-etape0.json"))
+    # on saisit le refus sur la forme BRUTE, comme le ferait l'exploitante
+    dec = e0.refuser_fusion(dec, axe="gamme", valeur_a="enrouleur",
+                            valeur_b="enrouleur Jouet 10.80", motif="deux gammes distinctes")
+    # il doit pourtant retenir la forme ASSAINIE que produira la mesure
+    # (calculée ici plutôt qu'écrite en dur, pour ne pas dépendre du nombre
+    # exact de marqueurs)
+    mesuree = e0.assainir_valeur_axe("gamme", "enrouleur Jouet 10.80")
+    assert e0.est_fusion_refusee(dec, "gamme", "enrouleur", mesuree)
+    propositions = [{"ecriture_retenue": "enrouleur", "ecritures_a_remplacer": [mesuree]}]
+    applicables, ecartees = e0.filtrer_propositions(dec, "gamme", propositions)
+    assert applicables == [], "la fusion refusée ne doit pas redevenir applicable"
+    assert len(ecartees) == 1
+
+
+def test_assainissement_est_idempotent():
+    """Assainir deux fois doit donner la même chose qu'assainir une fois.
+
+    Sans cela, une valeur déjà masquée voit son marqueur redécoupé en
+    plusieurs mots et donc plusieurs marqueurs : deux formes d'une même
+    valeur cessent de se correspondre, et le garde-fou se dérègle.
+    """
+    v = "enrouleur Jouet 10.80"
+    une_fois = e0.assainir_valeur_axe("gamme", v)
+    deux_fois = e0.assainir_valeur_axe("gamme", une_fois)
+    assert une_fois == deux_fois
+    # et une valeur déjà masquée fournie telle quelle est respectée
+    assert e0.assainir_valeur_axe("gamme", deux_fois) == deux_fois

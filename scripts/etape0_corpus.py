@@ -149,12 +149,28 @@ def assainir_valeur_axe(axe: str, valeur: str | None) -> str | None:
         return None
     if axe != "gamme":
         return texte
-    mots = texte.split(" ")
+    # Idempotence : une valeur déjà masquée ne doit pas être masquée à
+    # nouveau, sinon « <nom propre> » redevient plusieurs marqueurs et deux
+    # formes d'une même valeur cessent de se correspondre.
+    if MARQUEUR_NOM_PROPRE in texte:
+        return texte
+    # Le découpage ignore la ponctuation : « jouet 10.80 » et « jouet 10 80 »
+    # doivent donner le MÊME masque, sinon deux écritures d'une même valeur
+    # produiraient deux formes assainies différentes et le garde-fou ne les
+    # reconnaîtrait pas l'une dans l'autre.
+    mots = [m for m in re.split(r"[^0-9A-Za-zÀ-ÿ]+", texte) if m]
     if len(mots) <= NB_MOTS_GAMME_ATTENDU:
         return texte
     # Le premier mot est la gamme ; ce qui suit est ce que l'extraction a
     # avalé autour, et c'est là que se cache le nom du bateau.
-    return " ".join([mots[0]] + [MARQUEUR_NOM_PROPRE] * (len(mots) - 1))
+    #
+    # UN SEUL marqueur pour TOUT le débordement, et non un par mot : c'est ce
+    # qui rend la forme stable. Avec un marqueur par mot, « jouet 10.80 » et
+    # « Kelt 9 mètres » donnaient des masques différents, et remasquer une
+    # valeur déjà masquée en changeait la longueur — le garde-fou ne
+    # reconnaissance plus ce qu'il devait écarter (constaté : la fusion
+    # refusée redevenait « à trancher »).
+    return " ".join([mots[0], MARQUEUR_NOM_PROPRE])
 
 
 def identifiant(sel: str, chemin: str) -> str:
@@ -414,10 +430,15 @@ def refuser_fusion(
         raise ValueError(f"Axe inattendu : {axe!r}. Attendus : {list(AXES_ADMIS)}.")
     if not motif.strip():
         raise ValueError("Un refus sans motif n'est pas opposable : expliquez pourquoi.")
+    # Les valeurs sont assainies AVANT d'être consignées, sinon le refus
+    # porterait sur la forme brute alors que les propositions à venir auront
+    # la forme assainie : le garde-fou ne reconnaîtrait plus ce qu'il doit
+    # écarter. Constaté après assainissement — la fusion refusée a cessé
+    # d'être écartée, précisément pour cette raison.
     entree = {
         "axe": axe,
-        "valeur_a": valeur_a.strip(),
-        "valeur_b": valeur_b.strip(),
+        "valeur_a": assainir_valeur_axe(axe, valeur_a.strip()),
+        "valeur_b": assainir_valeur_axe(axe, valeur_b.strip()),
         "decision": "ne_pas_fusionner",
         "motif": motif.strip(),
         "decideur": decideur,
@@ -445,6 +466,12 @@ def est_fusion_refusee(dec: dict[str, Any], axe: str, valeur_a: str, valeur_b: s
     C'est le garde-fou. Une reprise qui l'ignore réintroduirait une fusion que
     l'exploitante a écartée.
     """
+    # Les deux côtés sont assainis : l'appelant peut fournir la forme brute
+    # (telle qu'une exploitante la saisit) ou la forme assainie (telle que la
+    # mesure la produit). Sans cela, le garde-fou ne fonctionnait que pour
+    # l'une des deux — et trois épreuves l'ont montré en échouant.
+    valeur_a = assainir_valeur_axe(axe, valeur_a)
+    valeur_b = assainir_valeur_axe(axe, valeur_b)
     paire = {_cle_de_valeur(valeur_a), _cle_de_valeur(valeur_b)}
     return any(
         f["axe"] == axe
