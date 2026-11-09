@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import pathlib
 import sys
 import uuid
 
@@ -297,3 +298,103 @@ def test_deposer_ne_fface_pas_une_extraction_reelle(base_jetable):
                 (f"fiche:{id_fiche}:lot3a-v1",),
             )
             assert cur.fetchone()[0] == 1, "une extraction réelle ne doit pas être effacée"
+
+
+# ---------------------------------------------------------------------------
+# Arbitrage : le refus de fusion doit être opposable et définitif
+# ---------------------------------------------------------------------------
+
+
+def test_cles_de_valeur_ignorent_casse_et_espaces():
+    """Sinon un refus serait contournable en changeant une majuscule."""
+    assert e0._cle_de_valeur("Palma Tec") == e0._cle_de_valeur("  PALMA   TEC  ")
+    assert e0._cle_de_valeur("Palma Tec") != e0._cle_de_valeur("PALMA TEC 18/13")
+
+
+def test_refus_de_fusion_est_symetrique():
+    """Refuser (A, B) doit refuser (B, A), sinon le garde-fou se contourne."""
+    dec = e0.charger_decisions(pathlib.Path("/tmp/inexistant-etape0.json"))
+    dec = e0.refuser_fusion(dec, axe="gamme", valeur_a="enrouleur",
+                            valeur_b="enrouleur jouet 10.80", motif="deux gammes distinctes")
+    assert e0.est_fusion_refusee(dec, "gamme", "enrouleur", "enrouleur jouet 10.80")
+    assert e0.est_fusion_refusee(dec, "gamme", "enrouleur jouet 10.80", "enrouleur")
+    # et insensible à la casse
+    assert e0.est_fusion_refusee(dec, "gamme", "ENROULEUR", "Enrouleur Jouet 10.80")
+
+
+def test_un_refus_sans_motif_n_est_pas_opposable():
+    dec = e0.charger_decisions(pathlib.Path("/tmp/inexistant-etape0.json"))
+    with pytest.raises(ValueError, match="sans motif"):
+        e0.refuser_fusion(dec, axe="gamme", valeur_a="a", valeur_b="b", motif="   ")
+
+
+def test_axe_inconnu_refuse():
+    dec = e0.charger_decisions(pathlib.Path("/tmp/inexistant-etape0.json"))
+    with pytest.raises(ValueError, match="Axe inattendu"):
+        e0.refuser_fusion(dec, axe="catamaran", valeur_a="a", valeur_b="b", motif="x")
+
+
+def test_filtrer_ecarte_la_fusion_refusee():
+    """Le garde-fou : une fusion refusée ne doit plus jamais être appliquée."""
+    dec = e0.charger_decisions(pathlib.Path("/tmp/inexistant-etape0.json"))
+    dec = e0.refuser_fusion(dec, axe="gamme", valeur_a="enrouleur",
+                            valeur_b="enrouleur jouet 10.80", motif="deux gammes distinctes")
+    propositions = [
+        {"ecriture_retenue": "enrouleur", "ecritures_a_remplacer": ["enrouleur jouet 10.80"]},
+        {"ecriture_retenue": "PALMA TEC 18/13", "ecritures_a_remplacer": ["Palma Tec 18/13"]},
+    ]
+    applicables, ecartees = e0.filtrer_propositions(dec, "gamme", propositions)
+    assert len(applicables) == 1, "la fusion matière reste applicable"
+    assert applicables[0]["ecriture_retenue"] == "PALMA TEC 18/13"
+    assert len(ecartees) == 1, "la fusion refusée doit être écartée"
+    assert ecartees[0]["ecriture_retenue"] == "enrouleur"
+
+
+def test_filtrer_laisse_passer_une_fusion_jamais_refusee():
+    dec = e0.charger_decisions(pathlib.Path("/tmp/inexistant-etape0.json"))
+    propositions = [{"ecriture_retenue": "PALMA TEC 18/13",
+                     "ecritures_a_remplacer": ["Palma Tec 18/13"]}]
+    applicables, ecartees = e0.filtrer_propositions(dec, "matiere", propositions)
+    assert len(applicables) == 1 and ecartees == []
+
+
+def test_le_refus_survit_a_la_sauvegarde(tmp_path):
+    fichier = tmp_path / "decisions.json"
+    dec = e0.charger_decisions(fichier)
+    dec = e0.refuser_fusion(dec, axe="matiere", valeur_a="CZ 30", valeur_b="CZ30",
+                            motif="références produit distinctes")
+    e0.sauvegarder_decisions(dec, fichier)
+    relu = e0.charger_decisions(fichier)
+    assert e0.est_fusion_refusee(relu, "matiere", "CZ 30", "CZ30")
+
+
+def test_axes_admis_ne_divergent_pas_de_l_instrument_1_1():
+    """Une divergence rendrait le garde-fou muet sur un axe entier."""
+    import mesurer_correspondances as mc
+
+    assert tuple(e0.AXES_ADMIS) == tuple(mc.AXES), (
+        "les axes de l'arbitrage ont divergé de ceux de l'instrument 1.1"
+    )
+
+
+def test_le_refus_resiste_a_la_ponctuation_et_a_l_accent():
+    """Régression réelle : la clé du garde-fou doit être CELLE de l'instrument.
+
+    Un refus enregistré sur « enrouleur jouet 10.80 » (point) ne retenait pas
+    la valeur « enrouleur jouet 10 80 » (espace) que produit l'instrument
+    après normalisation : le refus passait au travers et la fusion refusée
+    restait applicable. Le garde-fou était muet. Cette épreuve l'interdit.
+    """
+    from seamtech_search.qualite.cartographie import cle_normalisation
+
+    dec = e0.charger_decisions(pathlib.Path("/tmp/inexistant-etape0.json"))
+    dec = e0.refuser_fusion(dec, axe="gamme", valeur_a="enrouleur",
+                            valeur_b="enrouleur jouet 10.80", motif="deux gammes distinctes")
+    assert e0.est_fusion_refusee(dec, "gamme", "enrouleur", "enrouleur jouet 10 80")
+    # la clé employée est bien celle de l'instrument 1.1, pas une approximation
+    assert e0._cle_de_valeur("enrouleur jouet 10.80") == cle_normalisation("enrouleur jouet 10.80")
+    # et les accents sont repliés
+    dec2 = e0.refuser_fusion(e0.charger_decisions(pathlib.Path("/tmp/inexistant-etape0.json")),
+                             axe="matiere", valeur_a="semi-latté", valeur_b="semi latte",
+                             motif="même notion")
+    assert e0.est_fusion_refusee(dec2, "matiere", "SEMI LATTE", "semi latté")

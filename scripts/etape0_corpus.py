@@ -69,6 +69,12 @@ CATEGORIES_ADMISES = ("voile", "accessoire")
 #: Provenances admises.
 SOURCES_ADMISES = ("dropbox", "archive")
 
+#: Les quatre axes mesurés par l'instrument 1.1. Cette liste est la MÊME que
+#: ``scripts.mesurer_correspondances.AXES`` ; on ne l'importe pas pour que ce
+#: module reste utilisable sans la base, mais une épreuve vérifie qu'elles ne
+#: divergent pas.
+AXES_ADMIS = ("gamme", "matiere", "type_voile", "categorie")
+
 
 # ---------------------------------------------------------------------------
 # Accumulateur : lecture, écriture, identifiants
@@ -290,6 +296,149 @@ def deposer(acc: dict[str, Any], index: Any) -> dict[str, int]:  # noqa: ANN401 
 
 
 # ---------------------------------------------------------------------------
+# Décisions d'arbitrage
+# ---------------------------------------------------------------------------
+#
+# L'instrument 1.1 PROPOSE des fusions ; il n'en décide aucune. Une fusion
+# PROPOSÉE n'est pas une fusion VOULUE : c'est l'exploitante qui tranche, et
+# sa décision doit survivre à la réinitialisation de l'environnement comme au
+# changement d'interlocuteur. D'où ce fichier.
+#
+# Une fusion refusée est un REFUS DÉFINITIF : le garde-fou interdit qu'une
+# reprise ultérieure la réintroduise sous prétexte qu'un nouvel échantillon
+# la proposerait à nouveau. C'est la seule façon d'empêcher qu'une même
+# question soit reposée indéfiniment.
+
+#: Fichier versionné des arbitrages rendus sur les fusions proposées.
+FICHIER_DECISIONS = RACINE_DEPOT / "donnees" / "etape0" / "decisions.json"
+
+#: Décisions admises. ``ne_pas_fusionner`` est la seule qui engage : elle
+#: interdit la fusion ; ``a_valider`` ne l'autorise pas encore.
+DECISIONS_ADMISES = ("ne_pas_fusionner", "a_valider")
+
+
+def _cle_de_valeur(valeur: str) -> str:
+    """Forme comparable d'une valeur — **la même clé que l'instrument 1.1**.
+
+    Ce point n'est pas un détail d'élégance, il décide de l'utilité du
+    garde-fou. Une clé approximative rend le refus inopérant : éprouvé en
+    conditions réelles, un refus enregistré sur « enrouleur jouet 10.80 »
+    (avec un point) ne retenait pas la valeur « enrouleur jouet 10 80 »
+    (avec une espace) que l'instrument produit après normalisation — le refus
+    passait au travers. Le refus n'a de force qu'à employer exactement la
+    normalisation de l'instrument, donc :func:`cle_normalisation`.
+
+    Les accents sont repliés et la ponctuation devient une espace, parce que
+    les documents réels écrivent la même notion des deux façons.
+    """
+    from seamtech_search.qualite.cartographie import cle_normalisation
+
+    return cle_normalisation(valeur)
+
+
+def charger_decisions(chemin: Path = FICHIER_DECISIONS) -> dict[str, Any]:
+    """Les arbitrages rendus ; un jeu vide s'il n'en existe aucun."""
+    if not chemin.exists():
+        return {"version": VERSION_ACCUMULATEUR, "fusions": []}
+    with chemin.open(encoding="utf-8") as flux:
+        dec = json.load(flux)
+    dec.setdefault("fusions", [])
+    return dec
+
+
+def sauvegarder_decisions(dec: dict[str, Any], chemin: Path = FICHIER_DECISIONS) -> None:
+    """Écrire les arbitrages de façon stable."""
+    chemin.parent.mkdir(parents=True, exist_ok=True)
+    dec = dict(dec)
+    dec["fusions"] = sorted(
+        dec["fusions"], key=lambda f: (f["axe"], f["valeur_a"], f["valeur_b"])
+    )
+    with chemin.open("w", encoding="utf-8") as flux:
+        json.dump(dec, flux, ensure_ascii=False, indent=2, sort_keys=True)
+        flux.write("\n")
+
+
+def refuser_fusion(
+    dec: dict[str, Any],
+    *,
+    axe: str,
+    valeur_a: str,
+    valeur_b: str,
+    motif: str,
+    decideur: str = "exploitante",
+) -> dict[str, Any]:
+    """Consigner un refus de fusion. Rend les décisions mises à jour.
+
+    L'ordre des deux valeurs n'importe pas : refuser (A, B) refuserait
+    également (B, A), sinon le garde-fou serait contournable en permutant.
+    """
+    if axe not in AXES_ADMIS:
+        raise ValueError(f"Axe inattendu : {axe!r}. Attendus : {list(AXES_ADMIS)}.")
+    if not motif.strip():
+        raise ValueError("Un refus sans motif n'est pas opposable : expliquez pourquoi.")
+    entree = {
+        "axe": axe,
+        "valeur_a": valeur_a.strip(),
+        "valeur_b": valeur_b.strip(),
+        "decision": "ne_pas_fusionner",
+        "motif": motif.strip(),
+        "decideur": decideur,
+    }
+    for rang, existante in enumerate(dec["fusions"]):
+        if (
+            existante["axe"] == axe
+            and {_cle_de_valeur(existante["valeur_a"]), _cle_de_valeur(existante["valeur_b"])}
+            == {_cle_de_valeur(valeur_a), _cle_de_valeur(valeur_b)}
+        ):
+            dec["fusions"][rang] = entree
+            return dec
+    dec["fusions"].append(entree)
+    return dec
+
+
+def fusions_refusees(dec: dict[str, Any], axe: str) -> list[dict[str, str]]:
+    """Les refus rendus sur un axe."""
+    return [f for f in dec["fusions"] if f["axe"] == axe and f["decision"] == "ne_pas_fusionner"]
+
+
+def est_fusion_refusee(dec: dict[str, Any], axe: str, valeur_a: str, valeur_b: str) -> bool:
+    """Cette paire de valeurs a-t-elle été REFUSÉE ? Ordre et casse indifférents.
+
+    C'est le garde-fou. Une reprise qui l'ignore réintroduirait une fusion que
+    l'exploitante a écartée.
+    """
+    paire = {_cle_de_valeur(valeur_a), _cle_de_valeur(valeur_b)}
+    return any(
+        f["axe"] == axe
+        and f["decision"] == "ne_pas_fusionner"
+        and {_cle_de_valeur(f["valeur_a"]), _cle_de_valeur(f["valeur_b"])} == paire
+        for f in dec["fusions"]
+    )
+
+
+def filtrer_propositions(
+    dec: dict[str, Any], axe: str, propositions: list[dict[str, Any]]
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Séparer les fusions proposées en « applicables » et « refusées ».
+
+    Rend ``(applicables, ecartees)``. Rien n'est écrit : la fonction ne fait
+    que trier, et c'est l'appelant qui décide.
+    """
+    applicables: list[dict[str, Any]] = []
+    ecartees: list[dict[str, Any]] = []
+    for proposition in propositions:
+        remplacees = proposition.get("ecritures_a_remplacer") or []
+        retenue = proposition.get("ecriture_retenue")
+        if retenue is not None and any(
+            est_fusion_refusee(dec, axe, retenue, autre) for autre in remplacees
+        ):
+            ecartees.append(proposition)
+        else:
+            applicables.append(proposition)
+    return applicables, ecartees
+
+
+# ---------------------------------------------------------------------------
 # Ligne de commande
 # ---------------------------------------------------------------------------
 
@@ -326,6 +475,15 @@ def main(argv: list[str] | None = None) -> int:
 
     sous.add_parser("charger", help="Reconstruire la base depuis l'accumulateur.")
     sous.add_parser("mesurer", help="Lancer l'instrument 1.1 sur la base chargée.")
+
+    sous.add_parser("decisions", help="Arbitrages rendus sur les fusions proposées.")
+
+    p_decider = sous.add_parser("decider", help="Refuser une fusion proposée.")
+    p_decider.add_argument("--axe", required=True, choices=list(AXES_ADMIS))
+    p_decider.add_argument("--a", required=True, dest="valeur_a", help="Première valeur.")
+    p_decider.add_argument("--b", required=True, dest="valeur_b", help="Seconde valeur.")
+    p_decider.add_argument("--motif", required=True, help="Pourquoi ce refus (opposable).")
+    p_decider.add_argument("--decideur", default="exploitante")
 
     options = parser.parse_args(argv)
 
@@ -371,6 +529,37 @@ def main(argv: list[str] | None = None) -> int:
         finally:
             index.close()
         print(json.dumps(comptes, ensure_ascii=False, indent=2))
+        return 0
+
+    if options.commande == "decisions":
+        dec = charger_decisions()
+        if not dec["fusions"]:
+            print("Aucun arbitrage consigné.")
+            return 0
+        for f in dec["fusions"]:
+            print(
+                "[%s] %s\n   retenue proposée : %r\n   à remplacer      : %r\n"
+                "   décision : %s — %s"
+                % (f["axe"], "REFUSÉE" if f["decision"] == "ne_pas_fusionner" else f["decision"],
+                   f["valeur_a"], f["valeur_b"], f["decision"], f["motif"])
+            )
+        return 0
+
+    if options.commande == "decider":
+        dec = charger_decisions()
+        dec = refuser_fusion(
+            dec,
+            axe=options.axe,
+            valeur_a=options.valeur_a,
+            valeur_b=options.valeur_b,
+            motif=options.motif,
+            decideur=options.decideur,
+        )
+        sauvegarder_decisions(dec)
+        print(
+            "refus consigné : [%s] %r / %r — %d arbitrage(s) en vigueur"
+            % (options.axe, options.valeur_a, options.valeur_b, len(dec["fusions"]))
+        )
         return 0
 
     if options.commande == "mesurer":
