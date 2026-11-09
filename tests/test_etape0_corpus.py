@@ -398,3 +398,38 @@ def test_le_refus_resiste_a_la_ponctuation_et_a_l_accent():
                              axe="matiere", valeur_a="semi-latté", valeur_b="semi latte",
                              motif="même notion")
     assert e0.est_fusion_refusee(dec2, "matiere", "SEMI LATTE", "semi latté")
+
+
+def test_assainissement_masque_le_nom_capture_par_debordement():
+    """Un débordement d'extraction ne doit jamais faire entrer un nom dans Git.
+
+    Constaté en conditions réelles : la gamme lue valait « enrouleur <marque>
+    9 mètres », la marque du bateau s'était glissée dans le champ. Le fichier
+    versionné la portait. L'assainisseur remplace ce qui suit le premier mot
+    par un marqueur neutre : la preuve du défaut d'extraction subsiste, le
+    nom disparaît.
+    """
+    assert e0.assainir_valeur_axe("gamme", "enrouleur Jouet 10.80") == "enrouleur <nom propre> <nom propre>"
+    assert e0.assainir_valeur_axe("gamme", "enrouleur Kelt 9 mètres") == "enrouleur <nom propre> <nom propre> <nom propre>"
+    # une vraie gamme en un ou deux mots est respectée
+    assert e0.assainir_valeur_axe("gamme", "Fullbatten") == "Fullbatten"
+    assert e0.assainir_valeur_axe("gamme", "Semi-lattée") == "Semi-lattée"
+
+
+def test_assainissement_ne_touche_pas_les_autres_axes():
+    """La matière porte des désignations longues et légitimes ; on n'y touche pas."""
+    v = "STORMLITE 210 ROUGE"
+    assert e0.assainir_valeur_axe("matiere", v) == v
+    assert e0.assainir_valeur_axe("type_voile", "Grand-voile") == "Grand-voile"
+
+
+def test_l_assainissement_est_applique_a_la_consignation(tmp_path):
+    """Sinon il existe mais ne sert à rien : c'est le branchement qu'on éprouve."""
+    fichier = tmp_path / "acc.json"
+    acc = e0.nouvel_accumulateur()
+    e0.ajouter_fiche(acc, chemin="/VOILES 2025/UN", racine="VOILES 2025",
+                     source="dropbox", gamme="enrouleur Jouet 10.80")
+    e0.sauvegarder_accumulateur(acc, fichier)
+    brut = fichier.read_text(encoding="utf-8")
+    assert "Jouet" not in brut
+    assert e0.MARQUEUR_NOM_PROPRE in brut

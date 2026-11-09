@@ -119,6 +119,44 @@ def sauvegarder_accumulateur(acc: dict[str, Any], chemin: Path = FICHIER_ACCUMUL
         flux.write("\n")
 
 
+#: Vocabulaire attendu sur l'axe « gamme ». Une valeur de gamme est un mot ou
+#: deux — « Fullbatten », « Enrouleur », « Semi-lattée » — certainement pas une
+#: phrase. Quand l'extraction déborde et avale le nom du bateau voisin
+#: (« enrouleur <marque> 9 mètres »), la marque se retrouve dans un fichier
+#: versionné : c'est arrivé, deux fois, et un contrôle l'a vu. Trois mots ou
+#: plus sur cet axe sont donc traités comme un débordement et la marque est
+#: remplacée par un marqueur neutre, ce qui conserve la preuve du défaut sans
+#: écrire le nom.
+NB_MOTS_GAMME_ATTENDU = 2
+
+#: Marqueur substitué à un nom propre capturé par erreur.
+MARQUEUR_NOM_PROPRE = "<nom propre>"
+
+
+def assainir_valeur_axe(axe: str, valeur: str | None) -> str | None:
+    """Retire d'une valeur d'axe ce qui ne doit jamais être versionné.
+
+    Seul l'axe « gamme » est concerné à ce jour : c'est là que le débordement
+    d'extraction a été constaté. La règle est volontairement grossière —
+    trois mots ou plus sur une gamme n'existent pas dans le vocabulaire de
+    l'atelier — et chaque mot qui n'est pas le premier terme connu devient un
+    marqueur neutre. On préfère masquer trop que laisser fuir un nom.
+    """
+    if valeur is None:
+        return None
+    texte = " ".join(str(valeur).split())
+    if not texte:
+        return None
+    if axe != "gamme":
+        return texte
+    mots = texte.split(" ")
+    if len(mots) <= NB_MOTS_GAMME_ATTENDU:
+        return texte
+    # Le premier mot est la gamme ; ce qui suit est ce que l'extraction a
+    # avalé autour, et c'est là que se cache le nom du bateau.
+    return " ".join([mots[0]] + [MARQUEUR_NOM_PROPRE] * (len(mots) - 1))
+
+
 def identifiant(sel: str, chemin: str) -> str:
     """L'identifiant d'un dossier : une empreinte, jamais le chemin lui-même."""
     return hashlib.sha256(f"{sel}|{chemin}".encode("utf-8")).hexdigest()[:16]
@@ -188,9 +226,9 @@ def ajouter_fiche(
         "famille": famille,
         "annee": annee,
         "source": source,
-        "gamme": _propre(gamme),
-        "type_voile": _propre(type_voile),
-        "matiere": _propre(matiere),
+        "gamme": assainir_valeur_axe("gamme", _propre(gamme)),
+        "type_voile": assainir_valeur_axe("type_voile", _propre(type_voile)),
+        "matiere": assainir_valeur_axe("matiere", _propre(matiere)),
         "categorie": categorie_retenue,
     }
 
