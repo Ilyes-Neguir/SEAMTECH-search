@@ -292,16 +292,43 @@ def deposer(acc: dict[str, Any], index: Any) -> dict[str, int]:  # noqa: ANN401 
             nb_extractions = 0
             for fiche in sorted(acc["fiches"], key=lambda f: f["id"]):
                 code = f'{MARQUEUR_CLE.replace(":", "-")}{fiche["id"]}'
+                # Les axes sont écrits sur la FICHE, pas seulement dans
+                # l'extraction. Sans cela `fiche.gamme` restait NULL et les
+                # filtres de l'application ne trouvaient rien : les 28 fiches
+                # étaient en base et invisibles aux facettes. L'extraction
+                # reste le lieu du brut ; la fiche porte la valeur retenue.
                 cur.execute(
                     """
-                    INSERT INTO fiche (code, titre, categorie, categorie_source, statut)
-                    VALUES (%s, %s, %s, %s, %s)
+                    INSERT INTO fiche (code, titre, categorie, categorie_source, statut,
+                                       gamme, segment)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
                     RETURNING id_fiche
                     """,
-                    (code, fiche["racine"], fiche["categorie"], "dossier", "importe"),
+                    (
+                        code,
+                        fiche["racine"],
+                        fiche["categorie"],
+                        "dossier",
+                        # RG3 : le statut d'arrivée est TOUJOURS a_valider.
+                        # « importe » n'est pas dans le vocabulaire du produit
+                        # et, surtout, la recherche ne rend que les fiches
+                        # valide/a_valider — déposer en « importe » rendait
+                        # donc le corpus invisible, y compris vecteur rempli.
+                        "a_valider",
+                        fiche.get("gamme"),
+                        fiche.get("type_voile"),
+                    ),
                 )
                 id_fiche = cur.fetchone()[0]
                 nb_fiches += 1
+                # Décision commanditaire du 2026-09-29, inscrite dans
+                # persistance.py : une fiche DÉPOSÉE est cherchable
+                # immédiatement. Ce rafraîchissement n'a lieu ni par trigger
+                # ni automatiquement — c'est le code qui l'appelle. L'omettre
+                # rendait les 28 fiches invisibles à /recherche alors qu'elles
+                # étaient bien en base : déposer sans rafraîchir, c'est
+                # écrire dans le noir.
+                cur.execute("SELECT rafraichir_texte_recherche_fiche(%s)", (id_fiche,))
 
                 materiaux = []
                 if fiche.get("matiere"):

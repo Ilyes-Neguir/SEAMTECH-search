@@ -176,37 +176,44 @@ def test_le_corpus_est_bien_dans_la_base_que_l_application_sert(application):
 # ---------------------------------------------------------------------------
 
 
-def test_le_corpus_depose_brut_n_est_pas_encore_retrouvable(application):
-    """CONSTAT MESURÉ, verrouillé pour qu'il ne devienne pas silencieux.
+def test_le_corpus_depose_est_retrouvable(application):
+    """Une fiche déposée est cherchable immédiatement — décision produit.
 
-    Les 28 fiches sont dans `fiche`, la vue `v_fiche_recherche` les compte
-    bien, et pourtant `/recherche` n'en rend aucune. Deux causes mesurées :
+    Ce test a d'abord énoncé le CONTRAIRE, et c'est lui qui a révélé le
+    défaut : les 28 fiches étaient dans `fiche`, la vue les comptait, et
+    `/recherche` n'en rendait aucune. Deux causes, toutes deux dans mon
+    outil de dépôt, aucune dans le pipeline :
 
-      - `fiche.search_vector` est NULL pour les 28 fiches, donc la source
-        lexicale et celle par trigrammes n'ont rien à interroger ;
-      - `fiche.gamme`, `fiche.type_voile` et `fiche.matiere` sont NULL,
-        alors que l'accumulateur porte 9 gammes, 7 types et 13 matières.
+      1. `search_vector` restait NULL. Ce rafraîchissement n'a lieu ni par
+         trigger ni automatiquement : c'est le code qui l'appelle. L'omettre
+         rendait le corpus invisible bien qu'écrit.
+      2. le statut de dépôt était `importe`, qui n'est pas dans le
+         vocabulaire du produit (RG3 : l'arrivée est toujours `a_valider`).
+         La recherche ne rend que `valide` et `a_valider` — le statut
+         « importe » excluait donc tout, même vecteur rempli.
 
-    La raison n'est pas un défaut mais le PIPELINE : l'Étape 0 dépose des
-    extractions brutes dans `sail_extractions`, et la fiche n'est enrichie
-    qu'au moment où une extraction est résolue. Déposer ne rend donc pas
-    retrouvable — c'est la résolution qui le fait.
-
-    Ce test énonce l'état RÉEL pour qu'il soit visible. Le jour où la
-    résolution est branchée sur le dépôt, ce test ÉCHOUERA, et ce sera une
-    bonne nouvelle : il faudra alors le retourner.
+    Le constat est maintenant retourné : le corpus déposé est retrouvable,
+    et ce test le verrouille pour qu'il ne redevienne pas invisible.
     """
     client, depot = application
     corps = client.get("/recherche", params={"limit": 100}).json()
-    # On prouve d'abord que la route répond et rend une structure complète...
     assert "nb_resultats" in corps and "facettes" in corps
-    # ...puis on constate que le corpus brut n'y paraît pas encore.
-    assert corps["nb_resultats"] == 0, (
-        "Le corpus déposé brut est apparu dans la recherche : la résolution "
-        "des extractions est donc branchée sur le dépôt. Ce constat est "
-        "périmé — retourner ce test."
+    assert corps["nb_resultats"] == depot["fiche_total"], (
+        f"sur {depot['fiche_total']} fiches déposées, la recherche n'en rend "
+        f"que {corps['nb_resultats']} : une fiche déposée doit être retrouvable"
     )
-    assert depot["fiche_total"] >= 1, "le corpus doit être déposé pour que le constat tienne"
+
+
+def test_la_recherche_plein_texte_trouve_le_corpus(application):
+    """Au-delà du comptage : une vraie requête rend de vraies fiches."""
+    client, depot = application
+    corps = client.get("/recherche", params={"q": "enrouleur", "limit": 100}).json()
+    assert corps["nb_resultats"] > 0, (
+        "« enrouleur » est une gamme portée par plusieurs fiches du corpus : "
+        "une recherche qui n'en rend aucune ne lit pas la base"
+    )
+    for resultat in corps["resultats"]:
+        assert resultat.get("code"), f"résultat sans code exploitable : {resultat}"
 
 
 def test_les_routes_de_resolution_exigent_un_compte_nominatif(application):
