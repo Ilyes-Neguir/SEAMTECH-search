@@ -242,3 +242,72 @@ def test_la_frontiere_est_la_plausibilite_et_rien_d_autre() -> None:
     forte.gabarit_code = GABARIT.code
     forte.anomalies = [Anomalie(code="reference_discordante", gravite="forte", message="écart")]
     assert construire_extraction_voile(forte).statut_plausibilite == "implausible"
+
+
+# ---------------------------------------------------------------------------
+# Lot 1.2 — le référentiel doit être TRANSMIS, sinon le contrôle est mort
+#
+# Trouvé en mesurant l'apport des instruments (A.3) : la famille
+# « bateau_hors_referentiel » comptait zéro sur les deux colonnes, avant
+# comme après. L'instrument était livré et raccordé à la fonction, mais le
+# dépôt ne lui passait jamais le référentiel — et la branche est conditionnée
+# à ``referentiel_bateaux is not None``. Un contrôle qui ne reçoit pas sa
+# matière première ne se plaint pas : il ne fait rien.
+# ---------------------------------------------------------------------------
+
+
+def test_un_bateau_inconnu_leve_une_anomalie_quand_le_referentiel_est_passe() -> None:
+    """Le contrôle fonctionne — c'est son câblage qui manquait, pas sa logique."""
+    fiche = FicheExtraite(code="LOT12-1", type_voile_libelle="Génois", bateau_nom="Modele Inconnu XY")
+    fiche.cotes = [Cotes(jeu="finie", slu_m=12.0, sle_m=4.0, sf_m=3.5, spa_m2=28.0)]
+    sans = evaluer_anomalies(fiche)
+    assert not any(a.code == "bateau_hors_referentiel" for a in sans), (
+        "sans référentiel, le contrôle ne s'applique pas (comportement voulu)"
+    )
+    avec = evaluer_anomalies(fiche, referentiel_bateaux={"first 40 7", "sun shine 38"})
+    assert any(a.code == "bateau_hors_referentiel" for a in avec), (
+        "un bateau absent du référentiel doit lever l'anomalie du Lot 1.2"
+    )
+
+
+def test_un_bateau_connu_ne_leve_rien() -> None:
+    """Le pendant : un modèle du référentiel passe. Sinon tout serait signalé."""
+    fiche = FicheExtraite(code="LOT12-2", type_voile_libelle="Génois", bateau_nom="First 40.7")
+    fiche.cotes = [Cotes(jeu="finie", slu_m=12.0, sle_m=4.0, sf_m=3.5, spa_m2=28.0)]
+    anomalies = evaluer_anomalies(fiche, referentiel_bateaux={"first 40 7"})
+    assert not any(a.code == "bateau_hors_referentiel" for a in anomalies)
+
+
+def test_le_depot_transmet_le_referentiel_a_l_ecriture() -> None:
+    """C'est LE test du défaut : sans lui, le Lot 1.2 ne s'exécute jamais.
+
+    On instrumente l'écriture et on regarde ce qu'elle reçoit, plutôt que de
+    faire confiance à la lecture du code.
+    """
+    import inspect
+
+    from seamtech_search.fiches import depot
+
+    source = inspect.getsource(depot)
+    # l'appel doit nommer le paramètre : le seul moyen de ne pas l'oublier
+    # silencieusement est que son absence se voie.
+    assert "referentiel_bateaux=referentiel" in source, (
+        "le dépôt doit transmettre le référentiel des modèles à l'écriture, "
+        "sinon le contrôle du Lot 1.2 ne s'exécute sur aucune fiche"
+    )
+    assert "_cles_referentiel_bateaux" in source
+
+
+def test_un_referentiel_vide_ne_declare_pas_tout_hors_referentiel() -> None:
+    """Un référentiel vide doit désactiver le contrôle, pas tout condamner.
+
+    Une liste vide dirait « aucun modèle connu », donc tout bateau serait
+    hors référentiel : des centaines de fausses anomalies. On rend None.
+    """
+    from seamtech_search.fiches.depot import _cles_referentiel_bateaux
+
+    class _Connexion:
+        def cursor(self):
+            raise RuntimeError("référentiel indisponible")
+
+    assert _cles_referentiel_bateaux(_Connexion()) is None

@@ -1180,6 +1180,26 @@ def _lier_rejeu_objets(index: Any, id_ligne_precedente: int, id_ligne_courante: 
             cursor.execute(_SQL_LIGNE_MAJ, ("traite", f"deja_traite (lot #{id_lot_precedent})", None, None, len(plan.pieces), id_ligne_courante))
 
 
+def _cles_referentiel_bateaux(connexion: Any) -> set[str] | None:  # noqa: ANN401
+    """Clés normalisées des modèles de bateaux connus (Lot 1.2).
+
+    Rend ``None`` si le référentiel est vide ou illisible : dans ce cas le
+    contrôle ne s'applique pas, ce qui est le comportement voulu et documenté
+    — « il ne devine pas ce qu'il n'a pas reçu ». Un référentiel vide ne doit
+    pas devenir une liste vide qui déclarerait TOUT bateau hors référentiel.
+    """
+    try:
+        from seamtech_search.referentiel_bateaux import charger_cles_modeles
+
+        with connexion.cursor() as curseur:
+            cles = charger_cles_modeles(curseur)
+    except Exception:  # noqa: BLE001 - un référentiel absent n'est pas une panne
+        LOGGER.debug("Référentiel bateaux indisponible : contrôle Lot 1.2 non appliqué.")
+        return None
+    retenues = {str(c["cle"]) for c in cles if c.get("cle")}
+    return retenues or None
+
+
 def deposer_dossier(
     index: Any,
     dossier: Path,
@@ -1427,6 +1447,18 @@ def deposer_dossier(
                 # ResultatEcriture : la révision qui accompagne le contenu écrit
                 # est publiée au lot (A02) — un dépôt qui REMPLACE une fiche
                 # fait avancer sa révision, et le dépôt le DIT.
+                # Lot 1.2 : le référentiel des modèles connus est TRANSMIS.
+                #
+                # Il ne l'était pas, et le contrôle « bateau hors
+                # référentiel » ne s'exécutait donc jamais : dans
+                # ``_controle_vraisemblance``, la branche est conditionnée à
+                # ``referentiel_bateaux is not None``. L'instrument du Lot 1.2
+                # était livré, raccordé à la fonction, et mort dans le chemin
+                # de dépôt — la voie par laquelle passent toutes les fiches.
+                # Trouvé en mesurant l'apport des instruments (A.3) : le
+                # compteur de cette famille restait à zéro sur les deux
+                # colonnes, avant comme après.
+                referentiel = _cles_referentiel_bateaux(connexion)
                 ecriture = ecrire_fiche_resultat(
                     index,
                     fiche,
@@ -1435,6 +1467,7 @@ def deposer_dossier(
                     pages=list(plan.pages_analysees) if plan.pages_analysees else None,
                     gabarit=gabarit_retenu,
                     references=references_constatees,
+                    referentiel_bateaux=referentiel,
                 )
                 id_fiche, action = ecriture.id_fiche, ecriture.action
                 revision_fiche = ecriture.revision
