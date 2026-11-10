@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import os
 import pathlib
+import re
 import sys
 import uuid
 
@@ -476,3 +477,104 @@ def test_assainissement_est_idempotent():
     assert une_fois == deux_fois
     # et une valeur déjà masquée fournie telle quelle est respectée
     assert e0.assainir_valeur_axe("gamme", deux_fois) == deux_fois
+
+
+def test_autoriser_fusion_impose_la_graphie_retenue():
+    """Une fusion autorisée dit QUELLE écriture gagne, sinon elle n'est pas applicable."""
+    dec = e0.charger_decisions(pathlib.Path("/tmp/inexistant-etape0.json"))
+    dec = e0.autoriser_fusion(dec, axe="gamme", valeur_a="enrouleur",
+                              valeur_b="enrouleur surface", graphie_retenue="enrouleur surface",
+                              motif="variante d'écriture d'une même gamme")
+    assert e0.graphie_imposee(dec, "gamme", "enrouleur") == "enrouleur surface"
+    assert e0.graphie_imposee(dec, "gamme", "enrouleur surface") == "enrouleur surface"
+    # une valeur hors arbitrage reste libre
+    assert e0.graphie_imposee(dec, "gamme", "Fullbatten") is None
+    # et une fusion autorisée n'est pas un refus
+    assert not e0.est_fusion_refusee(dec, "gamme", "enrouleur", "enrouleur surface")
+
+
+def test_autoriser_fusion_refuse_une_graphie_etrangere():
+    """La graphie retenue doit être l'une des deux valeurs ; sinon erreur.
+
+    Une graphie tierce passerait inaperçue et la reprise écrirait quelque
+    chose qui n'existe sur aucune fiche.
+    """
+    dec = e0.charger_decisions(pathlib.Path("/tmp/inexistant-etape0.json"))
+    with pytest.raises(ValueError, match="l'une des deux valeurs"):
+        e0.autoriser_fusion(dec, axe="gamme", valeur_a="enrouleur",
+                            valeur_b="enrouleur surface", graphie_retenue="Fullbatten",
+                            motif="graphie qui n'est ni l'une ni l'autre")
+
+
+def test_autoriser_fusion_ramene_la_graphie_a_la_forme_observee():
+    """Une casse tierce est acceptée mais consignée dans la forme des fiches.
+
+    L'exploitante peut écrire « Enrouleur SURFACE » ; ce qui doit être
+    consigné est « enrouleur surface », la forme réellement présente.
+    Écrire la variante saisie reviendrait à introduire une valeur qui
+    n'existe nulle part.
+    """
+    dec = e0.charger_decisions(pathlib.Path("/tmp/inexistant-etape0.json"))
+    dec = e0.autoriser_fusion(dec, axe="gamme", valeur_a="enrouleur",
+                              valeur_b="enrouleur surface", graphie_retenue="Enrouleur SURFACE",
+                              motif="variante d'écriture")
+    assert e0.graphie_imposee(dec, "gamme", "enrouleur") == "enrouleur surface"
+
+
+def test_autoriser_fusion_exige_un_motif():
+    """Un arbitrage sans motif n'est pas opposable."""
+    dec = e0.charger_decisions(pathlib.Path("/tmp/inexistant-etape0.json"))
+    with pytest.raises(ValueError, match="motif"):
+        e0.autoriser_fusion(dec, axe="gamme", valeur_a="enrouleur",
+                            valeur_b="enrouleur surface", graphie_retenue="enrouleur surface",
+                            motif="   ")
+
+
+def test_le_filtrage_applique_la_graphie_imposee():
+    """Sinon l'arbitrage est consultable mais inopérant — le défaut classique."""
+    dec = e0.charger_decisions(pathlib.Path("/tmp/inexistant-etape0.json"))
+    dec = e0.autoriser_fusion(dec, axe="gamme", valeur_a="enrouleur",
+                              valeur_b="enrouleur surface", graphie_retenue="enrouleur surface",
+                              motif="variante d'écriture")
+    propositions = [{"ecriture_retenue": "enrouleur",
+                     "ecritures_a_remplacer": ["enrouleur surface"]}]
+    applicables, ecartees = e0.filtrer_propositions(dec, "gamme", propositions)
+    assert ecartees == [], "une fusion autorisée ne doit pas être écartée"
+    assert len(applicables) == 1
+    # la graphie retenue par l'instrument est remplacée par celle de l'arbitrage
+    assert applicables[0]["ecriture_retenue"] == "enrouleur surface"
+    assert applicables[0]["graphie_imposee_par_arbitrage"] is True
+    # et la valeur promue ne figure plus parmi celles à remplacer
+    assert applicables[0]["ecritures_a_remplacer"] == []
+
+
+# Vocabulaire de marques et de noms qui ne doit jamais franchir la porte du
+# dépôt. La liste est volontairement courte : elle ne retient que ce qui a
+# réellement failli être publié, plutôt qu'un annuaire qui vieillirait mal.
+TERMES_NOMINATIFS = (
+    "KELT", "JOUET", "SUNSHINE", "SUN SHINE", "BERIN", "MAICA", "BALTIC",
+    "DUFOUR", "FEELING", "SOUTHERLY", "TOFINOU", "CYCLADES", "FIRST", "COSSET",
+)
+
+
+def test_aucun_fichier_consigne_ne_nomme_un_bateau():
+    """Le motif d'un arbitrage est du texte libre : c'est là que ça fuit.
+
+    Constaté deux fois. La première, la valeur de gamme elle-même portait la
+    marque (colmaté par l'assainisseur). La seconde, c'est le MOTIF rédigé
+    pour justifier le refus qui la nommait — l'assainisseur ne couvre pas le
+    texte libre, seul un contrôle explicite le peut. D'où cette épreuve, qui
+    relit les fichiers réellement versionnés.
+    """
+    for relatif in ("donnees/etape0/accumulateur.json", "donnees/etape0/decisions.json"):
+        chemin = pathlib.Path(__file__).resolve().parents[1] / relatif
+        contenu = chemin.read_text(encoding="utf-8").upper()
+        for terme in TERMES_NOMINATIFS:
+            assert terme not in contenu, (
+                f"{relatif} nomme {terme!r} : les fichiers consignés ne doivent "
+                "porter ni nom de bateau, ni marque, ni nom de client."
+            )
+        assert not re.search(r"\bST\d{2,4}[A-Z]?\b", contenu), (
+            f"{relatif} contient un code de fiche : les identifiants sont déjà "
+            "hachés, un code en clair serait une donnée nominative."
+        )

@@ -368,7 +368,10 @@ FICHIER_DECISIONS = RACINE_DEPOT / "donnees" / "etape0" / "decisions.json"
 
 #: Décisions admises. ``ne_pas_fusionner`` est la seule qui engage : elle
 #: interdit la fusion ; ``a_valider`` ne l'autorise pas encore.
-DECISIONS_ADMISES = ("ne_pas_fusionner", "a_valider")
+#: Les trois issues possibles d'un arbitrage. « fusionner » emporte une
+#: GRAPHIE RETENUE : dire qu'on fusionne ne suffit pas, il faut dire laquelle
+#: des deux écritures devient la référence, sinon la reprise reste ambiguë.
+DECISIONS_ADMISES = ("ne_pas_fusionner", "fusionner", "a_valider")
 
 
 def _cle_de_valeur(valeur: str) -> str:
@@ -455,6 +458,89 @@ def refuser_fusion(
     return dec
 
 
+def autoriser_fusion(
+    dec: dict[str, Any],
+    *,
+    axe: str,
+    valeur_a: str,
+    valeur_b: str,
+    graphie_retenue: str,
+    motif: str,
+    decideur: str = "exploitante",
+) -> dict[str, Any]:
+    """Consigner une fusion AUTORISÉE et la graphie qui devient la référence.
+
+    Une autorisation qui ne dit pas quelle écriture gagne n'est pas
+    applicable : la reprise ne saurait pas quoi écrire. ``graphie_retenue``
+    doit donc être l'une des deux valeurs, et c'est vérifié ici — une
+    graphie inventée serait une source d'erreur silencieuse.
+    """
+    if axe not in AXES_ADMIS:
+        raise ValueError(f"axe inconnu : {axe!r} — admis : {sorted(AXES_ADMIS)}")
+    if not motif.strip():
+        raise ValueError("un arbitrage sans motif n'est pas opposable")
+    a = assainir_valeur_axe(axe, valeur_a.strip())
+    b = assainir_valeur_axe(axe, valeur_b.strip())
+    proposee = assainir_valeur_axe(axe, graphie_retenue.strip())
+    cle_proposee = _cle_de_valeur(proposee)
+    # La graphie retenue est ramenée à la forme RÉELLEMENT OBSERVÉE sur les
+    # fiches. On accepte donc « Enrouleur SURFACE » mais on consigne
+    # « enrouleur surface » : écrire une troisième casse qui n'existe sur
+    # aucune fiche reviendrait à inventer une valeur. Une graphie qui ne
+    # correspond à aucune des deux, elle, est refusée.
+    retenue = None
+    for candidate in (a, b):
+        if _cle_de_valeur(candidate) == cle_proposee:
+            retenue = candidate
+            break
+    if retenue is None:
+        raise ValueError(
+            "la graphie retenue doit être l'une des deux valeurs : "
+            f"{proposee!r} n'est ni {a!r} ni {b!r}"
+        )
+    dec = dict(dec)
+    fusions = [
+        f
+        for f in dec.get("fusions", [])
+        if not (
+            f["axe"] == axe
+            and {_cle_de_valeur(f["valeur_a"]), _cle_de_valeur(f["valeur_b"])}
+            == {_cle_de_valeur(a), _cle_de_valeur(b)}
+        )
+    ]
+    fusions.append(
+        {
+            "axe": axe,
+            "valeur_a": a,
+            "valeur_b": b,
+            "decision": "fusionner",
+            "graphie_retenue": retenue,
+            "motif": motif.strip(),
+            "decideur": decideur,
+        }
+    )
+    dec["fusions"] = fusions
+    return dec
+
+
+def graphie_imposee(dec: dict[str, Any], axe: str, valeur: str) -> str | None:
+    """L'écriture que l'arbitrage impose pour cette valeur, s'il y en a une.
+
+    Rend ``None`` quand aucun arbitrage ne couvre la valeur, et la reprise
+    applique alors sa propre règle (la graphie la plus longue, par défaut).
+    """
+    cle = _cle_de_valeur(assainir_valeur_axe(axe, valeur))
+    for f in dec.get("fusions", []):
+        if f["axe"] != axe or f.get("decision") != "fusionner":
+            continue
+        if cle in {
+            _cle_de_valeur(f["valeur_a"]),
+            _cle_de_valeur(f["valeur_b"]),
+        }:
+            return f["graphie_retenue"]
+    return None
+
+
 def fusions_refusees(dec: dict[str, Any], axe: str) -> list[dict[str, str]]:
     """Les refus rendus sur un axe."""
     return [f for f in dec["fusions"] if f["axe"] == axe and f["decision"] == "ne_pas_fusionner"]
@@ -498,8 +584,20 @@ def filtrer_propositions(
             est_fusion_refusee(dec, axe, retenue, autre) for autre in remplacees
         ):
             ecartees.append(proposition)
-        else:
-            applicables.append(proposition)
+            continue
+        # Quand un arbitrage impose la graphie, c'est elle qui gagne — même si
+        # la règle par défaut de la reprise en aurait choisi une autre. La
+        # proposition est réécrite, pas seulement acceptée.
+        if retenue is not None:
+            imposee = graphie_imposee(dec, axe, retenue)
+            if imposee is not None and _cle_de_valeur(imposee) != _cle_de_valeur(retenue):
+                proposition = dict(proposition)
+                proposition["ecriture_retenue"] = imposee
+                proposition["graphie_imposee_par_arbitrage"] = True
+                proposition["ecritures_a_remplacer"] = [
+                    a for a in remplacees if _cle_de_valeur(a) != _cle_de_valeur(imposee)
+                ]
+        applicables.append(proposition)
     return applicables, ecartees
 
 
