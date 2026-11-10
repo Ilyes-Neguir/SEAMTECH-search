@@ -26,10 +26,14 @@ module le dit au lieu de le masquer.
 from __future__ import annotations
 
 import json
+import os
+import tempfile
+import uuid
 from pathlib import Path
 
 import pytest
 
+from seamtech_search.fiches import calibration
 from seamtech_search.fiches.calibration import (
     EFFECTIF_MIN_PALIER,
     MIN_FICHES_CALIBRATION,
@@ -245,3 +249,156 @@ def test_ecrire_n_applique_pas_une_famille_refusee(tmp_path: Path) -> None:
     donnees = json.loads(chemin.read_text(encoding="utf-8"))
     assert donnees["familles"]["cotes"]["seuil_passage_direct"] == 0.95
     assert "preuve" not in donnees["familles"]["cotes"]
+
+
+# ---------------------------------------------------------------------------
+# Les requêtes SQL, sur PostgreSQL réel
+#
+# Le calcul est éprouvé plus haut, mais le calcul n'est pas la requête. Deux
+# régressions de ce projet n'ont été visibles QUE sur PostgreSQL réel et
+# jamais sur les doublures : c'est donc la lecture en base qu'il faut éprouver,
+# et une doublure ne peut pas le faire à sa place.
+# ---------------------------------------------------------------------------
+
+URL_PG = os.environ.get("SEAMTECH_TEST_DATABASE_URL", "")
+
+
+def _creer_base_jetable(nom: str) -> str:
+    """Crée une base neuve et migrée ; rend son URL."""
+    import psycopg2
+    from psycopg2 import sql
+    from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
+
+    admin_url = os.environ["SEAMTECH_TEST_DATABASE_URL"]
+    admin = psycopg2.connect(admin_url)
+    admin.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
+    with admin.cursor() as cur:
+        cur.execute(sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(nom)))
+        cur.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(nom)))
+    admin.close()
+    from urllib.parse import urlsplit
+
+    parties = urlsplit(admin_url)
+    return f"{parties.scheme}://{parties.netloc}/{nom}?{parties.query}"
+
+
+@pytest.fixture(scope="function")
+def base_arbitrage():
+    """Une base PostgreSQL réelle, migrée, où l'on sème des arbitrages.
+
+    Portée FONCTION, pas module : chaque épreuve repart d'une base vide.
+    Avec une base partagée, les fiches semées par une épreuve faussaient le
+    compte de la suivante — vu en conditions réelles, un « assert 1 » est
+    devenu 2 sans que rien d'autre n'ait changé.
+    """
+    if not URL_PG:
+        pytest.skip("Set SEAMTECH_TEST_DATABASE_URL to run PostgreSQL integration tests")
+    nom = f"calibration_{uuid.uuid4().hex[:12]}"
+    url = _creer_base_jetable(nom)
+    from seamtech_search.indexer import SearchIndex
+
+    ix = SearchIndex(Path(tempfile.gettempdir()) / f"{nom}.db", url)
+    ix.initialize()
+    ix.run_migrations()
+    yield ix
+    ix.close()
+    import psycopg2
+    from psycopg2 import sql
+    from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
+
+    admin = psycopg2.connect(os.environ["SEAMTECH_TEST_DATABASE_URL"])
+    admin.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
+    with admin.cursor() as cur:
+        cur.execute(sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(nom)))
+    admin.close()
+
+
+def _semer(base, *, statut, champs):
+    """Dépose une fiche et ses champs arbitrés. ``champs`` : (nom, confiance, corrige)."""
+    with base.connect() as cx:
+        with cx.cursor() as cur:
+            cur.execute(
+                """INSERT INTO fiche (code, fichier_source, statut)
+                   VALUES (%s, %s, %s) RETURNING id_fiche""",
+                (f"CODE-{uuid.uuid4().hex[:12]}", f"/corpus/{uuid.uuid4().hex}", statut),
+            )
+            id_fiche = cur.fetchone()[0]
+            for rang, (champ, confiance, corrige) in enumerate(champs):
+                cur.execute(
+                    """INSERT INTO fiche_champ_extrait
+                       (id_fiche, champ, rang, methode, confiance, valeur_brute, corrige)
+                       VALUES (%s, %s, %s, 'gabarit', %s, 'x', %s)""",
+                    (id_fiche, champ, rang, confiance, corrige),
+                )
+        cx.commit()
+    return id_fiche
+
+
+def test_sur_postgres_reel_une_base_vide_ne_donne_aucune_verite_terrain(base_arbitrage):
+    """C'est le compte exact, et il est de zéro : rien n'a encore été arbitré.
+
+    Le corpus Étape 0 est déposé mais jamais passé devant un approbateur ; le
+    calibrage mesure l'accord entre la confiance annoncée et le verdict d'un
+    humain, et il n'existe aucun verdict. Le chiffre que ce test verrouille
+    est donc le vrai : 0 fiche arbitrée, pas une estimation.
+    """
+    assert calibration.nombre_fiches_arbitrees(base_arbitrage) == 0
+    assert calibration.observations_depuis_base(base_arbitrage) == {}
+
+
+def test_sur_postgres_reel_les_fiches_a_valider_ne_comptent_pas(base_arbitrage):
+    """On ne tire aucune leçon d'un champ que personne n'a regardé.
+
+    Une fiche « à valider » porte une confiance mais aucun verdict : la
+    compter fabriquerait une preuve qui n'existe pas.
+    """
+    _semer(base_arbitrage, statut="a_valider",
+           champs=[("code_fiche", 0.99, False), ("bateau", 0.97, False)])
+    # Les DEUX lectures sont vérifiées, et c'est volontaire : le comptage et
+    # les observations ont chacun leur requête SQL. Une épreuve qui n'en
+    # exerçait qu'une s'est révélée MUETTE — la requête non couverte pouvait
+    # compter les fiches « à valider » sans que rien n'échoue.
+    assert calibration.nombre_fiches_arbitrees(base_arbitrage) == 0
+    assert calibration.observations_depuis_base(base_arbitrage) == {}
+
+
+def test_sur_postgres_reel_une_fiche_validee_est_comptee(base_arbitrage):
+    """Dès qu'un humain s'est prononcé, la fiche entre dans l'assiette."""
+    _semer(base_arbitrage, statut="valide", champs=[("code_fiche", 0.99, False)])
+    assert calibration.nombre_fiches_arbitrees(base_arbitrage) == 1
+    observations = calibration.observations_depuis_base(base_arbitrage)
+    assert "structurels" in observations
+    assert len(observations["structurels"]) == 1
+
+
+def test_sur_postgres_reel_un_champ_corrige_est_un_champ_faux(base_arbitrage):
+    """C'est toute la définition de la vérité terrain : ce qu'il a fallu reprendre."""
+    _semer(base_arbitrage, statut="valide",
+           champs=[("bateau", 0.99, True), ("bateau", 0.90, False)])
+    observations = calibration.observations_depuis_base(base_arbitrage)["structurels"]
+    par_confiance = {round(o.confiance, 2): o.correct for o in observations}
+    assert par_confiance[0.99] is False, "un champ corrigé était faux"
+    assert par_confiance[0.90] is True
+
+
+def test_sur_postgres_reel_la_confiance_nulle_est_ecartee(base_arbitrage):
+    """Une confiance absente n'est pas une confiance basse : on ne l'invente pas."""
+    with base_arbitrage.connect() as cx:
+        with cx.cursor() as cur:
+            cur.execute(
+                """INSERT INTO fiche (code, fichier_source, statut)
+                   VALUES (%s, %s, 'valide') RETURNING id_fiche""",
+                (f"CODE-{uuid.uuid4().hex[:12]}", f"/corpus/{uuid.uuid4().hex}"),
+            )
+            id_fiche = cur.fetchone()[0]
+            cur.execute(
+                """INSERT INTO fiche_champ_extrait (id_fiche, champ, rang, methode, valeur_brute)
+                   VALUES (%s, 'code_fiche', 0, 'gabarit', 'x')""",
+                (id_fiche,),
+            )
+        cx.commit()
+    # Une fiche validée dont le seul champ n'a pas de confiance n'apporte
+    # aucune observation : elle ne compte donc pas dans l'assiette. La
+    # confiance nulle n'est pas une confiance basse, on ne l'invente pas.
+    assert calibration.nombre_fiches_arbitrees(base_arbitrage) == 0
+    assert calibration.observations_depuis_base(base_arbitrage) == {}
