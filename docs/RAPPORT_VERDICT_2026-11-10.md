@@ -329,3 +329,55 @@ qu'on lui a donné à traiter, il refuse de calibrer faute de preuves plutôt qu
 d'inventer des seuils, et sa suite d'épreuves est redevenue honnête. Ce qui
 manque n'est pas du code : ce sont des fiches, et des verdicts humains sur ces
 fiches.
+
+---
+
+## 5. Un défaut trouvé par la navigation, porté à décision
+
+En éprouvant les filtres sur le corpus réel, un fait mesuré est apparu sur
+l'axe `gamme`. Il n'est pas corrigeable par une correction technique seule :
+il demande un arbitrage.
+
+La colonne `fiche.gamme` reçoit le **texte libre du client**, nettoyé mais non
+rattaché à un vocabulaire — `norm.forme_canonique` retire les espaces en
+double et la ponctuation pendante, il ne classe pas. Or le filtre
+`?gamme=…` est une **égalité stricte** (`v.gamme = %s`, `recherche.py:908`).
+
+Mesuré sur le corpus :
+
+| mesure | valeur |
+|---|---|
+| fiches portant une gamme | 7 |
+| valeurs DISTINCTES de gamme | **7** |
+| gamme commençant par le mot canonique | 7 |
+| gamme ÉGALE au mot canonique | **1** |
+
+Sept fiches d'une même gamme donnent sept valeurs distinctes. Le filtre n'en
+rend donc qu'une, et la facette `gamme` affichera autant d'entrées que de
+fiches — sur ~338 fiches, ce ne sera pas une facette, ce sera une liste.
+
+**Pourquoi ce n'est pas à moi d'en décider.** Deux éléments se contredisent
+et seul le métier peut les départager :
+
+- l'arbitrage du 2026-11-09 a jugé que la forme longue était « une gamme
+  précisée par son support », donc une gamme réellement distincte — le texte
+  après le mot fait partie de la gamme ;
+- une partie de ce texte est le nom du bateau, et la règle de confidentialité
+  est permanente : ces valeurs entrent dans une colonne indexée, facettée et
+  affichée.
+
+Changer l'extraction reviendrait à modifier un lot livré (1.1) et à refaire
+les arbitrages déjà rendus. Je le signale donc avec ses chiffres et je
+n'y touche pas.
+
+Trois voies sont possibles, et je les exécuterai sur décision :
+
+1. **Vocabulaire contrôlé** — la gamme est ramenée à une valeur canonique ;
+   le filtre et la facette fonctionnent, et le texte libre part ailleurs.
+2. **Filtre tolérant** — on garde le texte libre et le filtre cesse d'être
+   une égalité stricte (préfixe ou trigramme, l'index `idx_fiche_gamme_trgm`
+   existe déjà).
+3. **On ne fait rien** — la gamme reste indicative, et on retire la facette
+   plutôt que d'afficher une liste inutilisable.
+
+Mesuré le 2026-11-10 sur 23 fiches déposées.
