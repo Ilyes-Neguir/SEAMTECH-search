@@ -305,8 +305,23 @@ test.describe("Lot 6 — parcours 3 clics et cohérence globale", () => {
       expect(candidate, "extraction LOT5-ISO-2 dans la base live").toBeTruthy()
 
       await page.goto(`/extractions`)
+      const items = page.getByTestId("file-extractions").getByTestId("extraction-item")
+      // On laisse d'abord la file NON FILTRÉE se charger et on relève son
+      // effectif : c'est le point de départ de la comparaison.
+      await expect(items.first()).toBeVisible({ timeout: 30000 })
       await page.getByTestId("recherche-extractions").fill("LOT5-ISO-2")
-      const ligne = page.getByTestId("file-extractions").getByTestId("extraction-item").first()
+      // La saisie déclenche un ALLER-RETOUR SERVEUR : juste après `fill()`,
+      // l'ancienne liste est encore à l'écran et son premier élément est une
+      // AUTRE fiche (LOT5-ISO-5). Lire `.first()` à cet instant-là lisait une
+      // liste périmée — le scénario cliquait la mauvaise extraction, et
+      // passait ou échouait selon le temps pris par la requête : un flaky.
+      //
+      // On attend donc que la file ait CONVERGÉ vers le résultat du filtre
+      // (une seule ligne restante) au lieu de lire ce qui se trouve là. La
+      // boîte de recherche reste ainsi éprouvée : l'effectif doit avoir
+      // changé et la ligne restante doit être la bonne.
+      await expect(items).toHaveCount(1, { timeout: 30000 })
+      const ligne = items.first()
       await expect(ligne).toContainText("LOT5-ISO-2", { timeout: 30000 })
       await ligne.click()
       const lienConfiance = page.getByTestId("lien-confiance")
