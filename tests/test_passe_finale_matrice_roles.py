@@ -18,10 +18,9 @@ ajoutée demain est couverte sans qu'on y pense.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
-
-import os
 
 import pytest
 from fastapi.testclient import TestClient

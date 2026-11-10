@@ -139,9 +139,8 @@ def test_l_etat_de_sante_prouve_que_c_est_bien_postgresql(application):
     # On ne se contente pas de « la chaîne contient PostgreSQL » : une version
     # fabriquée passerait. On exige que l'application rapporte EXACTEMENT ce
     # que le serveur déclare, lu ici-même par une connexion indépendante.
-    import psycopg2
 
-    from urllib.parse import urlsplit
+    import psycopg2
 
     url = _url_base_servie()
     with psycopg2.connect(url) as cx:

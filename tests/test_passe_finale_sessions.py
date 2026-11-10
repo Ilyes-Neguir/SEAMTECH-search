@@ -14,11 +14,10 @@ service (PostgreSQL réel, pas de mock) :
 
 from __future__ import annotations
 
+import os
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
-
-import os
 
 import pytest
 

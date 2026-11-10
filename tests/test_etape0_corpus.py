@@ -27,7 +27,6 @@ sys.path.insert(0, os.path.join(RACINE, "scripts"))
 
 import etape0_corpus as e0  # noqa: E402
 
-
 # ---------------------------------------------------------------------------
 # Logique de l'accumulateur
 # ---------------------------------------------------------------------------
@@ -146,8 +145,8 @@ URL_PG = os.environ.get("SEAMTECH_TEST_DATABASE_URL", "")
 def _creer_base_jetable(nom: str) -> str:
     """Crée une base neuve et migrée ; rend son URL."""
     import psycopg2
-    from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
     from psycopg2 import sql
+    from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 
     admin_url = os.environ["SEAMTECH_TEST_DATABASE_URL"]
     admin = psycopg2.connect(admin_url)
@@ -194,8 +193,8 @@ def base_jetable():
     base = _creer_base_jetable(nom)
     yield base
     import psycopg2
-    from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
     from psycopg2 import sql
+    from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 
     admin = psycopg2.connect(os.environ["SEAMTECH_TEST_DATABASE_URL"])
     admin.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
