@@ -26,7 +26,7 @@
       "annee": 2026,
       "categorie": "voile",
       "famille": "voiles",
-      "gamme": null,
+      "gamme": "enrouleur <nom propre>",
       "id": "15a102e3fb1e4a42",
       "matiere": null,
       "racine": "VOILES 2026",
@@ -177,6 +177,28 @@
       "type_voile": null
     },
     {
+      "annee": 2026,
+      "categorie": "voile",
+      "famille": "voiles",
+      "gamme": null,
+      "id": "68301ae45cdb8a77",
+      "matiere": null,
+      "racine": "VOILES 2026",
+      "source": "dropbox",
+      "type_voile": null
+    },
+    {
+      "annee": 2026,
+      "categorie": "voile",
+      "famille": "voiles",
+      "gamme": "enrouleur",
+      "id": "727e87ab520743a5",
+      "matiere": "Palma 13000 dpi",
+      "racine": "VOILES 2026",
+      "source": "dropbox",
+      "type_voile": null
+    },
+    {
       "annee": 2025,
       "categorie": "voile",
       "famille": "voiles",
@@ -184,6 +206,17 @@
       "id": "761998f2550ee6ca",
       "matiere": null,
       "racine": "VOILES 2025",
+      "source": "dropbox",
+      "type_voile": null
+    },
+    {
+      "annee": 2026,
+      "categorie": "voile",
+      "famille": "voiles",
+      "gamme": null,
+      "id": "7925a977e1f5c86c",
+      "matiere": null,
+      "racine": "VOILES 2026",
       "source": "dropbox",
       "type_voile": null
     },
@@ -216,6 +249,28 @@
       "gamme": "Enrouleur",
       "id": "83980292ec0b6ebf",
       "matiere": "PALMA TEC 18/13",
+      "racine": "VOILES 2026",
+      "source": "dropbox",
+      "type_voile": null
+    },
+    {
+      "annee": 2026,
+      "categorie": "voile",
+      "famille": "voiles",
+      "gamme": null,
+      "id": "9120b4dad77a6572",
+      "matiere": null,
+      "racine": "VOILES 2026",
+      "source": "dropbox",
+      "type_voile": null
+    },
+    {
+      "annee": 2026,
+      "categorie": "voile",
+      "famille": "voiles",
+      "gamme": "enrouleur surface",
+      "id": "935b312252b1857f",
+      "matiere": "Newport 7.45",
       "racine": "VOILES 2026",
       "source": "dropbox",
       "type_voile": null
