@@ -25,6 +25,42 @@ URL_PG = os.environ.get("SEAMTECH_TEST_DATABASE_URL", "")
 pytestmark = pytest.mark.postgres  # couche métier PostgreSQL uniquement (§17.1)
 
 
+def _declarer_bateaux_au_referentiel(
+    index: Any,  # noqa: ANN401
+    *,
+    effacer_anomalies: bool = False,
+) -> None:
+    """Déclare au référentiel les bateaux déjà déposés, sans les nommer ici.
+
+    Le contrôle du Lot 1.2 ne s'exécute que si le référentiel est renseigné
+    (côté production, un référentiel illisible rend ``None`` et non un ensemble
+    vide : une liste vide déclarerait TOUT hors référentiel). Une épreuve qui
+    veut une fiche sans anomalie doit donc fournir un référentiel qui la
+    connaît. Les noms sont relevés dans les fiches déposées, jamais recopiés.
+    """
+    from seamtech_search.fiches.normalisation import forme_canonique
+
+    with index.connect() as connexion:
+        with connexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT DISTINCT b.nom FROM fiche f JOIN bateau b "
+                "ON b.id_bateau = f.id_bateau WHERE b.nom IS NOT NULL"
+            )
+            noms = [ligne[0] for ligne in cursor.fetchall()]
+            for nom in noms:
+                cle = forme_canonique(nom)
+                if not cle:
+                    continue
+                cursor.execute(
+                    "INSERT INTO boat_models (nom_canonique, cle_normalisee, source) "
+                    "VALUES (%s, %s, 'test') ON CONFLICT (cle_normalisee) DO NOTHING",
+                    (nom, cle),
+                )
+            if effacer_anomalies:
+                cursor.execute("DELETE FROM fiche_anomalie")
+        connexion.commit()
+
+
 @pytest.fixture(scope="module")
 def base_workflow() -> Iterator[dict[str, Any]]:
     """Base jetable (migrations + gabarits) puis dépôt de DEUX fiches réelles
@@ -63,6 +99,20 @@ def base_workflow() -> Iterator[dict[str, Any]]:
         dossier.mkdir(parents=True)
         (dossier / "fiche.pdf").write_bytes(source.read_bytes())
         depot.deposer_dossier(index, dossier)
+    # Lot 1.2, branché en A.3 : le dépôt transmet désormais le référentiel des
+    # bateaux. Conséquence voulue — et piège pour ces épreuves — le référentiel
+    # se REMPLIT au fil du dépôt : le premier dossier inscrit son bateau, et le
+    # suivant est donc évalué contre un référentiel qui ne le connaît pas encore.
+    # Un dépôt unique par dossier ne suffit plus à obtenir des fiches saines.
+    #
+    # On dépose donc deux fois : une première pour connaître les bateaux, puis on
+    # les déclare, on efface les anomalies du premier passage (aucune écriture ne
+    # les supprime : fiche_anomalie s'ajoute, elle ne se remplace pas) et on
+    # rejoue les contrôles sur un référentiel complet. Les noms sont relevés en
+    # base, jamais recopiés ici.
+    _declarer_bateaux_au_referentiel(index, effacer_anomalies=True)
+    for nom in ("CLIENT-7792-SO", "CLIENT-GENOA"):
+        depot.deposer_dossier(index, racine_essai / nom)
     try:
         yield {"index": index, "url": url_base, "racine_essai": racine_essai}
     finally:

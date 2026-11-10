@@ -298,12 +298,41 @@ def test_le_depot_transmet_le_referentiel_a_l_ecriture() -> None:
     assert "_cles_referentiel_bateaux" in source
 
 
-def test_un_referentiel_vide_ne_declare_pas_tout_hors_referentiel() -> None:
-    """Un référentiel vide doit désactiver le contrôle, pas tout condamner.
+def _connexion_referentiel(lignes: list) -> object:
+    """Fausse connexion dont ``boat_models`` rend exactement ``lignes``.
 
-    Une liste vide dirait « aucun modèle connu », donc tout bateau serait
-    hors référentiel : des centaines de fausses anomalies. On rend None.
+    ``charger_cles_modeles`` interroge deux fois : les modèles (6 colonnes)
+    puis leurs alias (3 colonnes). Le curseur doit donc distinguer les deux,
+    sinon il répond la même chose à la seconde et lève.
     """
+
+    class _Curseur:
+        def __init__(self) -> None:
+            self._sql = ""
+
+        def __enter__(self) -> "_Curseur":
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def execute(self, requete: str, *args: object, **kwargs: object) -> None:
+            self._sql = requete or ""
+
+        def fetchall(self) -> list:
+            if "alias" in self._sql.lower():
+                return []
+            return list(lignes)
+
+    class _Connexion:
+        def cursor(self) -> _Curseur:
+            return _Curseur()
+
+    return _Connexion()
+
+
+def test_un_referentiel_illisible_desactive_le_controle() -> None:
+    """Un référentiel en panne n'est pas une panne du dépôt : None, pas d'échec."""
     from seamtech_search.fiches.depot import _cles_referentiel_bateaux
 
     class _Connexion:
@@ -311,3 +340,38 @@ def test_un_referentiel_vide_ne_declare_pas_tout_hors_referentiel() -> None:
             raise RuntimeError("référentiel indisponible")
 
     assert _cles_referentiel_bateaux(_Connexion()) is None
+
+
+def test_un_referentiel_vide_ne_declare_pas_tout_hors_referentiel() -> None:
+    """Un référentiel vide doit désactiver le contrôle, pas tout condamner.
+
+    Une liste vide dirait « aucun modèle connu », donc tout bateau serait
+    hors référentiel : des centaines de fausses anomalies. On rend None.
+
+    Le cas n'est PAS le même que le référentiel en panne : ici la requête
+    aboutit et ne rend aucune ligne. C'est le cas le plus dangereux des deux,
+    parce qu'il est silencieux — rien ne signale quoi que ce soit.
+    """
+    from seamtech_search.fiches.depot import _cles_referentiel_bateaux
+
+    connexion = _connexion_referentiel([])
+    resultat = _cles_referentiel_bateaux(connexion)
+    assert resultat is None, (
+        "un référentiel lisible mais vide doit rendre None : rendre un ensemble "
+        "vide déclarerait chaque bateau hors référentiel"
+    )
+
+
+def test_un_referentiel_renseigne_rend_ses_cles() -> None:
+    """Contre-épreuve : un référentiel peuplé rend bien ses clés.
+
+    Sans elle, « rendre None quand c'est vide » serait indistinguishable de
+    « rendre toujours None » — et le Lot 1.2 serait mort sans que rien ne
+    le voie, ce qui est exactement le défaut qu'A.3 a trouvé.
+    """
+    from seamtech_search.fiches.depot import _cles_referentiel_bateaux
+
+    ligne = (1, "Modèle de référence", "modele de reference", "manuel", True, None)
+    resultat = _cles_referentiel_bateaux(_connexion_referentiel([ligne]))
+    assert resultat is not None, "un référentiel peuplé doit rendre ses clés"
+    assert "modele de reference" in resultat
