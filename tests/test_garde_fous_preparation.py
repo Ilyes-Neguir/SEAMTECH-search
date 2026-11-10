@@ -210,6 +210,13 @@ EXCEPTIONS_RG14: dict[str, str] = {
         "défaut), déclenché uniquement par la commande opérateur "
         "« deposer-arborescence » ; aucun appel sortant au runtime de l'application"
     ),
+    "scripts/verification_manuelle.py": (
+        "outil de VÉRIFICATION MANUELLE : client HTTP volontaire contre une "
+        "instance que l'opérateur a lui-même lancée (127.0.0.1 par défaut, "
+        "surchargeable par --base). C'est tout l'objet du script — il n'est "
+        "exécuté que sur commande explicite et n'est importé par aucun module "
+        "de l'application"
+    ),
     "seamtech_search/cli.py": (
         "même commande opérateur « deposer-arborescence » : valeur PAR DÉFAUT de "
         "--url-api pointant sur l'API locale (http://127.0.0.1:8000), surchargeable ; "
@@ -257,6 +264,7 @@ DOCS_MARQUEURS_EXCEPTIONS = {
     "scripts/sync_ecc_skills.py": "RG14_EXCEPTION",
     "seamtech_search/fiches/arborescence.py": "RG14_EXCEPTION",
     "seamtech_search/cli.py": "RG14_EXCEPTION",
+    "scripts/verification_manuelle.py": "RG14_EXCEPTION",
 }
 
 

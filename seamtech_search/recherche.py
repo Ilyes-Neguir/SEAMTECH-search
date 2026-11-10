@@ -871,6 +871,16 @@ def _normaliser_separateurs(texte: str) -> str:
     return re.sub(r"[-_/]+", " ", texte).strip()
 
 
+def _echapper_like(valeur: str) -> str:
+    """Neutralise les jokers d'un LIKE dans une valeur fournie par l'utilisateur.
+
+    Sans cela, un « % » ou un « _ » saisi dans un filtre deviendrait un joker
+    SQL : chercher la gamme « 50% » ramènerait toutes les fiches. Le caractère
+    d'échappement est ``\\``, déclaré par ``ESCAPE '\\'`` côté SQL.
+    """
+    return valeur.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 # ---------------------------------------------------------------------------
 # Filtres : fragment SQL sur liste blanche (alias imposés : v = vue, f = fiche)
 # ---------------------------------------------------------------------------
@@ -901,7 +911,40 @@ def _fragment_filtres(
     else:
         morceaux.append("v.statut = 'valide'")
     # Lot 7 : « categorie » est un axe comme les autres (filtre + facette).
-    for cle in ("type_voile", "client", "bateau", "gamme", "categorie"):
+    #
+    # Les axes de TEXTE LIBRE tolèrent une valeur partielle ; « categorie »,
+    # qui est une énumération, reste une égalité stricte.
+    #
+    # Pourquoi : mesuré sur le corpus réel le 2026-11-10, sept fiches d'une même
+    # gamme donnaient sept valeurs DISTINCTES — la colonne reçoit le texte du
+    # client (« enrouleur Kelt 9 mètres »), pas une valeur d'un vocabulaire. Une
+    # égalité stricte rendait donc le filtre inutilisable : il fallait retaper la
+    # gamme entière, accent comprise, pour retrouver quoi que ce soit.
+    #
+    # La comparaison passe par seamtech_texte_recherche (casse pliée, accents
+    # retirés, ligatures, espaces comprimés) : « regate » retrouve « Régate ».
+    #
+    # Périmètre VOLONTAIREMENT borné à « gamme ». Les trois autres axes restent
+    # une égalité stricte, et ce n'est pas un oubli : une épreuve existe qui
+    # l'impose nommément (« le filtre exact n'est PAS élargi par la
+    # normalisation des accents » — chercher « Genois » ne doit pas trouver
+    # « Génois »). Seule la gamme a été mesurée défaillante, seule la gamme est
+    # corrigée. Élargir les autres serait changer un contrat sans mesure.
+    for cle in ("gamme",):
+        valeur = filtres.get(cle)
+        if valeur not in (None, "") and cle not in exclure:
+            morceaux.append(
+                f"seamtech_texte_recherche(v.{cle}) LIKE '%%' || seamtech_texte_recherche(%s) || '%%' "
+                f"ESCAPE '\\'"
+            )
+            # Un « % » ou un « _ » tapé par l'utilisateur est un caractère
+            # ordinaire, pas un joker : sans cet échappement, chercher « 50% »
+            # ramènerait toute la base.
+            params.append(_echapper_like(str(valeur)))
+    # Égalité stricte pour les axes à vocabulaire maîtrisé — et pour
+    # « categorie », qui est une énumération. Contrat existant, protégé par une
+    # épreuve nommée : chercher « Genois » ne doit PAS trouver « Génois ».
+    for cle in ("type_voile", "client", "bateau", "categorie"):
         valeur = filtres.get(cle)
         if valeur not in (None, "") and cle not in exclure:
             morceaux.append(f"v.{cle} = %s")
