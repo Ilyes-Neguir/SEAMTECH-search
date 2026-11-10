@@ -211,8 +211,13 @@ function ExtractionsAppInterne() {
   const [occupe, setOccupe] = useState(false)
   const [piecePdf, setPiecePdf] = useState<{ idExtraction: number; piece: PieceJointe | null } | null>(null)
   const generation = useRef(0)
+  // Compteur DÉDIÉ à la file d'attente. Il ne faut pas réutiliser
+  // `generation` (réservé au détail) : sinon charger un détail annulerait le
+  // chargement de la file en cours, et réciproquement.
+  const generationFile = useRef(0)
 
   const chargerFile = useCallback(async () => {
+    const jeton = ++generationFile.current
     const parametres = new URLSearchParams({ limite: "100" })
     if (filtreStatut) parametres.set("statut_liaison", filtreStatut)
     if (recherche.trim()) parametres.set("recherche", recherche.trim())
@@ -220,8 +225,16 @@ function ExtractionsAppInterne() {
       const corps = await jsonFetch<{ extractions: Extraction[]; total: number }>(
         `/api/extractions-voile?${parametres.toString()}`,
       )
+      // Deux requêtes peuvent se croiser : la file chargée à l'ouverture peut
+      // retomber APRES celle déclenchée par une recherche. Sans cette garde,
+      // la réponse périmée écrasait la fraîche et la file REVENAIT NON
+      // FILTRÉE sous les yeux de l'utilisateur — défaut visible en
+      // production, et non un simple artefact de test. On n'applique donc que
+      // la réponse de la DERNIÈRE requête lancée.
+      if (jeton !== generationFile.current) return
       setFile(corps.extractions)
     } catch (e) {
+      if (jeton !== generationFile.current) return
       setErreur(e instanceof Error ? e.message : "File des extractions illisible.")
     }
   }, [filtreStatut, recherche])
