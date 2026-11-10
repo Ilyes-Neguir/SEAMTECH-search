@@ -89,10 +89,22 @@ def application():
 
     from seamtech_search.config import AppConfig
 
-    config = AppConfig.load()
-    config.database_url = url
-    config.database_path = base_sqlite
-    config.auth_token = ""
+    # AppConfig est CONSTRUIT, pas chargé. `AppConfig.load()` lit
+    # config/config.json, fichier que .gitignore exclut du dépôt : en
+    # intégration continue il n'existe pas, et SEAMTECH_ROOT_PATHS n'y est pas
+    # défini — l'appel levait donc FileNotFoundError et faisait échouer toute
+    # la session. C'est exactement ce qui est arrivé à l'étape « coverage ».
+    config = AppConfig(
+        root_paths=[pathlib.Path(tempfile.gettempdir())],
+        database_path=base_sqlite,
+        database_url=url,
+        auth_token="",
+        min_free_bytes=0,
+        s3_endpoint_url="https://s3.invalide",
+        s3_bucket="bucket-synthetique",
+        s3_access_key="cle-synthetique",
+        s3_secret_key="secret-synthetique",
+    )
 
     from seamtech_search.api import create_app
 
