@@ -175,6 +175,38 @@ def _copier_lignes(cur, table: str, id_source: int, exclusions: tuple[str, ...],
     return len(lignes)
 
 
+def referencer_bateaux(idx) -> None:
+    """Déclare au référentiel les bateaux déjà déposés, sans les nommer ici.
+
+    Depuis le branchement du Lot 1.2, un bateau absent lève « bateau_hors_
+    referentiel ». Le référentiel se remplissant au fil du dépôt, les dossiers
+    suivant le premier sont jugés sur un référentiel incomplet. Cette fonction
+    le complète à partir de ce qui est déjà en base, puis retire l'anomalie que
+    seule cette incomplétude avait fait lever — une installation réelle, dont le
+    référentiel est tenu à jour, ne la lèverait pas.
+    """
+    with idx.connect() as connexion:
+        with connexion.cursor() as curseur:
+            curseur.execute("SELECT DISTINCT b.nom FROM fiche f JOIN bateau b ON b.id_bateau = f.id_bateau")
+            noms = [ligne[0] for ligne in curseur.fetchall()]
+            if noms:
+                from seamtech_search.referentiel_bateaux import assurer_modele
+
+                for nom in noms:
+                    assurer_modele(curseur, nom, source="manuel")
+                connexion.commit()
+            curseur.execute("DELETE FROM fiche_anomalie WHERE code = 'bateau_hors_referentiel'")
+            nb = curseur.rowcount
+        connexion.commit()
+    if nb:
+        print(
+            f"Seed e2e : {nb} anomalie(s) « bateau hors référentiel » retirée(s) — "
+            "le référentiel connaît désormais ces modèles, une installation à jour "
+            "ne les lèverait pas.",
+            file=sys.stderr,
+        )
+
+
 def semer_piece_distincte(idx, code_fiche: str) -> None:
     """Rattache le PDF DU dossier à sa propre fiche (constat A09).
 
@@ -612,6 +644,21 @@ def main() -> None:
                 )
                 sys.exit(1)
             codes[dossier] = str(resultat.get("fiche"))
+        # Le Lot 1.2 est branché : le dépôt transmet le référentiel des bateaux
+        # et lève « bateau hors référentiel » sur un modèle inconnu. Or le
+        # référentiel se REMPLIT au fil du dépôt — le premier dossier inscrit
+        # son bateau, les suivants sont donc jugés sur un référentiel incomplet.
+        #
+        # Ce n'est pas théorique : l'anomalie ainsi levée fait passer
+        # « a_anomalies » à vrai sur la fiche, et l'écran de validation ouvre
+        # alors un window.confirm() avant de valider. Playwright rejette les
+        # dialogues, la validation n'a jamais lieu, et le scénario de
+        # concurrence qui attend un conflit de révision ne voit rien venir.
+        #
+        # Une installation réelle tient son référentiel à jour : on déclare donc
+        # ici les bateaux relevés, et on retire l'anomalie que seul un
+        # référentiel encore incomplet avait fait lever.
+        referencer_bateaux(idx)
         semer_piece_distincte(idx, codes["CLIENT-E2E-TROIS"])
         semer_doublon(idx)
         semer_population_lot5(idx)
