@@ -215,15 +215,23 @@ function ExtractionsAppInterne() {
   // `generation` (réservé au détail) : sinon charger un détail annulerait le
   // chargement de la file en cours, et réciproquement.
   const generationFile = useRef(0)
+  // Contrôleur de la requête de file en cours. Sans lui, une requête devenue
+  // inutile (l'utilisateur a continué à taper) allait jusqu'au bout et
+  // occupait une connexion pour un résultat jeté.
+  const abandonFile = useRef<AbortController | null>(null)
 
   const chargerFile = useCallback(async () => {
     const jeton = ++generationFile.current
+    abandonFile.current?.abort()
+    const controleur = new AbortController()
+    abandonFile.current = controleur
     const parametres = new URLSearchParams({ limite: "100" })
     if (filtreStatut) parametres.set("statut_liaison", filtreStatut)
     if (recherche.trim()) parametres.set("recherche", recherche.trim())
     try {
       const corps = await jsonFetch<{ extractions: Extraction[]; total: number }>(
         `/api/extractions-voile?${parametres.toString()}`,
+        { signal: controleur.signal },
       )
       // Deux requêtes peuvent se croiser : la file chargée à l'ouverture peut
       // retomber APRES celle déclenchée par une recherche. Sans cette garde,
@@ -274,6 +282,10 @@ function ExtractionsAppInterne() {
   useEffect(() => {
     void chargerFile()
   }, [chargerFile])
+
+  // Au démontage, on coupe la dernière requête de file si elle court encore :
+  // elle n'a plus personne à qui répondre.
+  useEffect(() => () => abandonFile.current?.abort(), [])
 
   useEffect(() => {
     if (idActif !== null) void chargerDetail(idActif)
