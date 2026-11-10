@@ -18,6 +18,8 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
+import os
+
 import pytest
 
 from seamtech_search.comptes.comptes import (
@@ -34,6 +36,8 @@ pytestmark = pytest.mark.postgres
 
 @pytest.fixture()
 def base(tmp_path: Path) -> Any:  # noqa: ANN401
+    if not os.environ.get("SEAMTECH_TEST_DATABASE_URL"):
+        pytest.skip("Set SEAMTECH_TEST_DATABASE_URL to run PostgreSQL integration tests")
     nom, url = _creer_base_jetable()
     index = SearchIndex(tmp_path / "unused-sessions.db", url)
     index.initialize()

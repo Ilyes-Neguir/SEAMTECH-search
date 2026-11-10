@@ -21,6 +21,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import os
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -90,6 +92,8 @@ def _cible(chemin: str) -> str:
 
 @pytest.fixture(scope="module")
 def monde() -> Any:  # noqa: ANN401 - monde de test hétérogène
+    if not os.environ.get("SEAMTECH_TEST_DATABASE_URL"):
+        pytest.skip("Set SEAMTECH_TEST_DATABASE_URL to run PostgreSQL integration tests")
     nom, url = _creer_base_jetable()
     index = SearchIndex(Path("/tmp/matrice-finale-unused.db"), url)
     index.initialize()

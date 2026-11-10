@@ -24,6 +24,8 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
+import os
+
 import pytest
 
 from seamtech_search.fiches import depot
@@ -36,6 +38,8 @@ pytestmark = pytest.mark.postgres
 @pytest.fixture()
 def base_sans_unaccent() -> Any:  # noqa: ANN401
     """Base neuve migrée dans les conditions d'un `unaccent` indisponible."""
+    if not os.environ.get("SEAMTECH_TEST_DATABASE_URL"):
+        pytest.skip("Set SEAMTECH_TEST_DATABASE_URL to run PostgreSQL integration tests")
     nom, url = _creer_base_jetable()
     with mock.patch.object(
         SearchIndex,
