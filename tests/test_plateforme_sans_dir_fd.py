@@ -52,46 +52,53 @@ def test_lecture_confinee_refusee_sans_dir_fd(tmp_path, sans_dir_fd):
             pytest.fail("aucune ouverture confinée sans dir_fd")
 
 
-def test_instantane_dump_prive_n_ouvre_rien(tmp_path, sans_dir_fd, monkeypatch):
-    """Cause de « assert change » : aucune ouverture n'a seulement lieu."""
+def test_instantane_dump_prive_copie_fidelement_sans_dir_fd(tmp_path, sans_dir_fd):
+    """Sans lecture confinée, la copie privée est faite, et elle est FIDÈLE.
+
+    Ce test remplace « _instantane_dump_prive_n_ouvre_rien », qui constatait le
+    refus. Le refus n'était pas une sécurité : il rendait ``restaurer
+    --coordonnee`` entièrement indisponible sur Windows. Le repli est sûr parce
+    que la propriété de sécurité ne repose PAS sur ``O_NOFOLLOW`` mais sur
+    l'empreinte, vérifiée juste après — ce que le test suivant démontre.
+    """
     dump = tmp_path / "dump"
-    dump.write_bytes(b"contenu-synthetique")
-    ouverts: list[object] = []
-    original = os.open
-
-    def espion(chemin, *args, **kwargs):
-        ouverts.append(os.fspath(chemin) if not isinstance(chemin, int) else chemin)
-        return original(chemin, *args, **kwargs)
-
-    monkeypatch.setattr(os, "open", espion)
-    with pytest.raises(SauvegardeError):
-        with sauvegarde._instantane_dump_prive(dump):
-            pytest.fail("aucune copie privée sans lecture confinée")
-    # Le répertoire temporaire de la copie peut être ouvert ; la SOURCE, jamais.
-    assert not [c for c in ouverts if isinstance(c, str) and Path(c) == dump], (
-        f"la source a été ouverte ({ouverts}) alors que la lecture confinée est refusée"
-    )
+    contenu = b"contenu-synthetique" * 5000
+    dump.write_bytes(contenu)
+    with sauvegarde._instantane_dump_prive(dump) as copie:
+        assert Path(copie).read_bytes() == contenu, "la copie privée doit être fidèle"
+        assert Path(copie) != dump, "pg_restore ne doit jamais relire le chemin d'origine"
 
 
-def test_restaurer_refuse_avant_toute_commande(tmp_path, sans_dir_fd, monkeypatch):
-    """Cause de « IndexError: list index out of range » : rien n'est exécuté."""
+def test_restaurer_refuse_un_dump_substitue_meme_sans_dir_fd(tmp_path, sans_dir_fd, monkeypatch):
+    """Sans lecture confinée, un dump falsifié est TOUJOURS refusé avant pg_restore.
+
+    C'est la preuve qui autorise le repli. ``O_NOFOLLOW`` empêchait qu'un lien
+    redirige la lecture ; sans lui, une substitution est possible — mais elle
+    produit une copie dont l'empreinte diffère du manifeste, et
+    ``_restaurer_dump_verifie`` la refuse AVANT toute commande. La sécurité
+    devient donc : « seuls les octets dont l'empreinte figure au manifeste sont
+    restaurés », ce qui tient sans ``O_NOFOLLOW``.
+
+    Le scénario est une substitution RÉELLE : le fichier est remplacé entre la
+    lecture du manifeste et la copie, pas seulement annoncé faux.
+    """
     import hashlib
 
     dump = tmp_path / "dump.dump"
-    contenu = b"dump synthetique"
-    dump.write_bytes(contenu)
-    manifeste = {"dump": {"sha256": hashlib.sha256(contenu).hexdigest(), "octets": len(contenu)}}
+    dump.write_bytes(b"dump attendu")
+    # Empreinte d'un AUTRE contenu : le manifeste décrit ce qui doit être là.
+    manifeste = {"dump": {"sha256": hashlib.sha256(b"dump substitue").hexdigest(), "octets": 12}}
     commandes: list[list[str]] = []
 
     def run(args, **_kwargs):
         commandes.append(list(args))
-        raise AssertionError("aucune commande ne doit être lancée après un refus")
+        raise AssertionError("pg_restore ne doit pas être lancé sur un dump dont l'empreinte diffère")
 
     monkeypatch.setattr(sauvegarde.subprocess, "run", run)
     monkeypatch.setattr(sauvegarde, "_trouver_binaire", lambda nom: nom)
-    with pytest.raises(SauvegardeError):
+    with pytest.raises(SauvegardeError, match="empreinte du dump"):
         sauvegarde.restaurer("postgresql://synthetique/cible", manifeste, dump)
-    assert commandes == []
+    assert commandes == [], "pg_restore a été lancé malgré une empreinte non conforme"
 
 
 def test_publication_multi_fichiers_ne_publie_rien(tmp_path, sans_dir_fd, monkeypatch):
@@ -117,3 +124,63 @@ def test_publication_multi_fichiers_ne_publie_rien(tmp_path, sans_dir_fd, monkey
     assert not sortie.exists() or not any(sortie.iterdir()), (
         "la publication a écrit quelque chose malgré le refus de lecture confinée"
     )
+
+
+def test_restaurer_via_le_repli_quand_l_empreinte_est_conforme(tmp_path, sans_dir_fd, monkeypatch):
+    """Sans lecture confinée, une restauration CONFORME est menée à son terme.
+
+    Contrepartie du test précédent, et la raison d'être du repli : sur Windows,
+    ``restaurer --coordonnee`` échouait AVANT d'avoir rien tenté, en
+    « Lecture confinée du bundle indisponible sur cette plateforme » — alors
+    que le dump était parfaitement conforme. Le repli lui rend la restauration
+    sans lever l'exigence d'empreinte, comme le test précédent le prouve.
+    """
+    import hashlib
+
+    contenu = b"dump synthetique conforme"
+    dump = tmp_path / "dump.dump"
+    dump.write_bytes(contenu)
+    manifeste = {"dump": {"sha256": hashlib.sha256(contenu).hexdigest(), "octets": len(contenu)}}
+    commandes: list[list[str]] = []
+
+    class _Resultat:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def run(args, **_kwargs):
+        commandes.append(list(args))
+        return _Resultat()
+
+    monkeypatch.setattr(sauvegarde.subprocess, "run", run)
+    monkeypatch.setattr(sauvegarde, "_trouver_binaire", lambda nom: nom)
+    monkeypatch.setattr(sauvegarde, "_etat_base", lambda url: {
+        "versions_schema": [], "fiches_par_statut": {}, "schema_identite_octets_valide": True,
+    })
+    monkeypatch.setattr(sauvegarde, "_connecter", lambda *a, **k: _ConnexionFactice())
+
+    rapport = sauvegarde.restaurer("postgresql://synthetique/cible", manifeste, dump)
+    assert rapport["base"] == "cible"
+    assert len(commandes) == 2, f"vérification puis restauration attendues : {commandes}"
+
+
+class _ConnexionFactice:
+    """Connexion administrative minimale : la base cible n'existe pas encore."""
+
+    def cursor(self):
+        return self
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def execute(self, *args, **kwargs):
+        return None
+
+    def fetchone(self):
+        return None
+
+    def close(self):
+        return None

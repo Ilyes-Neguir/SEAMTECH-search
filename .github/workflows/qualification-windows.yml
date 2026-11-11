@@ -456,6 +456,26 @@ jobs:
             Write-Host "::error title=causes-postgres-redis::analyse du rapport JUnit impossible (rc=$LASTEXITCODE)"
           }
           exit 0
+      # Lot 16 : la cause publiée « assert 1 == 0 » ne dit rien, alors que
+      # l'information est dans le MESSAGE de l'assertion, donc dans la trace.
+      # « ci/resumer_echecs.py » ne publie qu'une ligne par échec ; ce script
+      # publie la trace entière, lignes « E » comprises, pour les tests armés
+      # dans « ci/tests-trace.txt ». Sans lui, le stderr du sous-processus
+      # « restaurer --coordonnee » restait invisible et le diagnostic aveugle.
+      - name: Traces completes des echecs PostgreSQL armes
+        if: always()
+        env:
+          SEAMTECH_TEST_DATABASE_URL: postgresql://seamtech:seamtech_test_password@127.0.0.1:5432/seamtech_search_test
+          SEAMTECH_TEST_REDIS_URL: redis://127.0.0.1:6379/1
+          SEAMTECH_TEST_REDIS_SERVER: C:\redis7\Redis-7.4.11-Windows-x64-msys2\redis-server.exe
+        run: |
+          $ErrorActionPreference = 'Continue'
+          python ci\publier_traces.py
+          exit 0
+      # PLACÉE ICI, pas à la fin : GitHub plafonne à 50 annotations par job.
+      # Publiée après les tranches de causes, elle était évincée — run
+      # 43099608349 : 50 annotations atteintes, plus aucune trace. Juste
+      # avant le verdict, elle passe dans les premières.
       - name: Suite PostgreSQL + Redis sur Windows — verdict
         id: verdict_postgres_redis
         if: always()
@@ -583,22 +603,6 @@ jobs:
           if ($LASTEXITCODE -ne 0) { Write-Error "CLI en échec sur Windows" ; exit 1 }
           python -c "from pathlib import Path; p = Path(r'''$dossier''') / 'échéancier.pdf'; p.write_bytes(b'%PDF-1.4 test'); print(p.exists(), p.stat().st_size)"
           if ($LASTEXITCODE -ne 0) { Write-Error "écriture sur chemin accentué en échec" ; exit 1 }
-      # Lot 16 : la cause publiée « assert 1 == 0 » ne dit rien, alors que
-      # l'information est dans le MESSAGE de l'assertion, donc dans la trace.
-      # « ci/resumer_echecs.py » ne publie qu'une ligne par échec ; ce script
-      # publie la trace entière, lignes « E » comprises, pour les tests armés
-      # dans « ci/tests-trace.txt ». Sans lui, le stderr du sous-processus
-      # « restaurer --coordonnee » restait invisible et le diagnostic aveugle.
-      - name: Traces completes des echecs PostgreSQL armes
-        if: always()
-        env:
-          SEAMTECH_TEST_DATABASE_URL: postgresql://seamtech:seamtech_test_password@127.0.0.1:5432/seamtech_search_test
-          SEAMTECH_TEST_REDIS_URL: redis://127.0.0.1:6379/1
-          SEAMTECH_TEST_REDIS_SERVER: C:\redis7\Redis-7.4.11-Windows-x64-msys2\redis-server.exe
-        run: |
-          $ErrorActionPreference = 'Continue'
-          python ci\publier_traces.py
-          exit 0
       - uses: actions/upload-artifact@v4
         if: always()
         with:
