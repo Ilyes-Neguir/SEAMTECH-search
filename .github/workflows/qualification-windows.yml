@@ -298,6 +298,50 @@ jobs:
         run: |
           pwsh -File ci\verdict-windows.ps1 -Journal logs\windows-sans-service.log -CodeSortie logs\rc-sans-service.txt -Titre windows-sans-service -Causes logs\causes-sans-service.txt -FichierDetails logs\details-sans-service.txt -Tranche 5
           exit 0
+  # Lot 17 — le job Windows est SÉPARÉ EN DEUX.
+  #
+  # GitHub plafonne à 50 annotations par job. Le job unique les épuisait
+  # avec la seule suite « sans service » : au run 43115725235, aucune
+  # annotation de la suite PostgreSQL n'a paru, alors qu'elle avait tourné.
+  # On ne pouvait donc ni lire ses échecs, ni les nommer, ni les corriger —
+  # et pire : leur absence ressemblait à un succès.
+  #
+  # Deux jobs, deux budgets. Le job « windows » garde la suite sans service ;
+  # celui-ci porte PostgreSQL et Redis.
+  windows-postgres:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      # Pas de ``SEAMTECH_TEST_DATABASE_URL`` au niveau du job : la suite sans
+      # service doit d'abord passer SANS PostgreSQL. Elle est posée sur la
+      # seule étape qui en a besoin.
+      PYTHONIOENCODING: utf-8
+      PYTHONUTF8: "1"
+      # La suite sans service MEURT par moments sans laisser de code de sortie
+      # (runs 41365859490, 41375766036, 41420706781) : le processus Python
+      # disparaît. Sans faulthandler, une mort native ne laisse aucune trace
+      # exploitable — seulement l'absence de résumé. Avec lui, la pile Python
+      # est écrite sur la sortie d'erreur, donc dans le journal, donc lisible
+      # dans la queue que publie le verdict.
+      PYTHONFAULTHANDLER: "1"
+    steps:
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Dépendances Python
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+      - name: Identité du banc Windows
+        run: |
+          $info = Get-ComputerInfo
+          python -V
+          python -c "import platform,sys; print(platform.platform()); print(sys.getfilesystemencoding())"
+          Write-Host "::notice title=windows-identite::os=$($info.OsName) version=$($info.OsVersion)"
       - name: Installer PostgreSQL 16 (hôte)
         if: always()
         # Les services de conteneurs de GitHub ne fonctionnent pas sur les
@@ -603,6 +647,7 @@ jobs:
   #
   # Un job séparé dispose de ses propres 50 annotations. Six traces au plus y
   # sont publiées : la place ne peut pas manquer.
+
   trace-coordonnee:
     runs-on: windows-latest
     defaults:
@@ -689,3 +734,4 @@ jobs:
           $ErrorActionPreference = 'Continue'
           python ci\publier_traces.py
           exit 0
+
