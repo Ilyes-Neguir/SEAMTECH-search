@@ -34,6 +34,22 @@ function Publier([string]$titre, [string]$texte) {
     Write-Host "::notice title=$titre::$propre"
 }
 
+function PublierResume([string]$titre, [string]$contenu) {
+    # Pourquoi ce canal en plus des annotations : une annotation est plafonnee
+    # a DIX par ETAPE, et GitHub l'ignore SILENCIEUSEMENT des que sa forme
+    # n'est pas conforme (caracteres echappes, longueur). Un verdict rouge
+    # dont la preuve a ete avalee ne se repare pas : on ne sait pas QUELS
+    # tests nommer.
+    #
+    # Vu a l'etape 21 du run 42929904161 : suite PostgreSQL + Redis en echec,
+    # et aucune annotation publiee — le diagnostic etait perdu. Le resume
+    # d'etape n'a ni plafond de dix ni rejet silencieux : tout y est ecrit tel
+    # quel, et il reste lisible meme quand les annotations sont perdues.
+    $chemin = $env:GITHUB_STEP_SUMMARY
+    if (-not $chemin) { return }
+    Add-Content -Path $chemin -Value "`n## $titre`n`n$contenu`n" -Encoding utf8
+}
+
 function PublierErreur([string]$titre, [string]$texte) {
     if ($null -eq $texte) { $texte = '' }
     $propre = $texte -replace '%', '%25' -replace "`r", '%0D' -replace "`n", '%0A'
@@ -380,11 +396,34 @@ if ($inattendus.Count -gt 0) {
     }
     $lignes += "TOTAL $($inattendus.Count) echec(s) hors perimetre connu"
     PublierErreursParPaquets "$Titre-non-nomme" $lignes
+
+    # Le resume d'etape porte la liste COMPLETE — pas une tranche de dix.
+    # Chaque ligne dit pourquoi le test echoue, parce que nommer un ecart sans
+    # sa raison exacte et sa contrepartie, c'est le masquer, pas l'assumer.
+    $resume = "**$($inattendus.Count) echec(s) hors perimetre connu** sur $($echecs.Count) au total."
+    $resume += "`n`nAjouter chacun dans ``ci/ecarts-windows.txt`` au format"
+    $resume += " ``<motif>|<raison exacte ; contrepartie>``."
+    $resume += "`n`n| Test | Cause lue dans le rapport JUnit |"
+    $resume += "`n|---|---|"
+    foreach ($echec in $inattendus) {
+        $cause = '(aucune cause dans le rapport)'
+        if ($details.ContainsKey($echec)) {
+            $brute = (($details[$echec] -join ' | ') -replace "`r|`n", ' ')
+            if ($brute.Length -gt 400) { $brute = $brute.Substring(0, 400) }
+            $cause = ($brute -replace '\|', '\|')
+        }
+        $resume += "`n| ``$echec`` | $cause |"
+    }
+    PublierResume "$Titre — echecs non nommes" $resume
     exit 1
 }
 
 Publier "$Titre-ecart-nomme" (
     "$($echecs.Count) echec(s), TOUS nommes dans ci/ecarts-windows.txt — " +
     "limite de plateforme connue, pas une regression. A revoir a chaque correctif."
+)
+PublierResume "$Titre — ecarts nommes" (
+    "$($echecs.Count) echec(s), tous nommes dans ``ci/ecarts-windows.txt``. " +
+    "Limite de plateforme connue, pas une regression."
 )
 exit 0
