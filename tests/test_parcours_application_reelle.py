@@ -204,6 +204,63 @@ def test_le_corpus_depose_est_retrouvable(application):
     )
 
 
+def test_le_total_et_la_pagination_franchissent_le_plafond_de_tirage(application):
+    """Au-delà de 100 fiches, le total annoncé doit rester le VRAI total.
+
+    Défaut trouvé au Lot 15, et il n'était visible qu'au-dessus de 100 fiches :
+    ``PROFONDEUR_SOURCES = 100`` bornait ce que chaque source remontait avant
+    fusion, et ``nb_resultats`` valait ``len(fusion)`` — le nombre de candidats
+    TIRÉS, pas le nombre de correspondances. Un corpus de 123 fiches annonçait
+    donc 100 résultats, la pagination s'arrêtait avant la fin, et les facettes
+    étaient calculées sur un échantillon tronqué. Silencieusement.
+
+    La correction fait venir le total d'un ``COUNT(*)`` et porte la profondeur
+    de tirage jusqu'à ``offset + limit``.
+
+    **Vérifié par mutation** : revenir à ``total = len(fusion)`` fait échouer
+    ce test sur « assert 100 == 123 » — très exactement le message de la CI.
+    Un test qui ne peut pas échouer ne prouve rien.
+    """
+    client, depot = application
+    attendu = depot["fiche_total"]
+
+    # Garde-fou d'à-propos : sous 100 fiches, PROFONDEUR_SOURCES ne borne plus
+    # rien et ce test perd sa raison d'être. Il doit alors le DIRE, et non
+    # passer en silence.
+    assert attendu > 100, (
+        f"ce test ne prouve plus rien sous 100 fiches (corpus : {attendu}) ; "
+        "le plafond de tirage n'est alors jamais atteint"
+    )
+
+    # 1. Le total annoncé est le vrai total, pas un échantillon.
+    corps = client.get("/recherche", params={"limit": 100}).json()
+    assert corps["nb_resultats"] == attendu, (
+        f"la recherche annonce {corps['nb_resultats']} résultats sur {attendu} fiches : "
+        "le total est un échantillon tronqué, pas un décompte"
+    )
+    assert corps["total_exact"] is True, "le total annoncé n'est pas présenté comme exact"
+
+    # 2. La pagination FRANCHIT le plafond : la page d'après n'est pas vide.
+    page = client.get("/recherche", params={"limit": 20, "offset": 100}).json()
+    assert page["resultats"], (
+        "la page au-delà de la 100ᵉ fiche est vide : les fiches au-delà du "
+        "plafond de tirage sont inatteignables"
+    )
+    assert page["nb_resultats"] == attendu, "le total varie selon la page demandée"
+
+    # 3. Au-delà de la fin : page vide, total toujours exact.
+    apres = client.get("/recherche", params={"limit": 20, "offset": attendu}).json()
+    assert apres["resultats"] == []
+    assert apres["nb_resultats"] == attendu
+
+    # 4. Les facettes ne dépendent PAS de la taille de page : elles portent sur
+    #    l'ensemble des correspondances, jamais sur la page affichée. C'est
+    #    l'invariant qui trahissait le plus silencieusement le défaut.
+    petit = client.get("/recherche", params={"limit": 10}).json()["facettes"]
+    grand = client.get("/recherche", params={"limit": 100}).json()["facettes"]
+    assert petit == grand, "les facettes sont calculées sur la page, pas sur le corpus"
+
+
 def test_la_recherche_plein_texte_trouve_le_corpus(application):
     """Au-delà du comptage : une vraie requête rend de vraies fiches."""
     client, depot = application
