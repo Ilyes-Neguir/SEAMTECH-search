@@ -77,6 +77,25 @@ function PublierErreursParPaquets([string]$titre, [string[]]$lignes, [int]$max =
     if ($seau.Count -gt 0) { PublierErreur "$titre-$numero" ($seau -join " `n ") }
 }
 
+# --- 0. Un verdict muet ne se répare pas -------------------------------------
+# Pourquoi ce piège : l'étape 21 (verdict PostgreSQL + Redis) échouait en
+# publiant ZÉRO annotation — ni « non-nomme », ni « interrompue ». Un rouge
+# sans preuve est inexploitable : on ne sait pas si des échecs ne sont pas
+# nommés, ou si le script lui-même est mort avant d'avoir rien écrit.
+#
+# Les journaux ne sont pas lisibles depuis le banc d'analyse (l'hôte
+# results-receiver.actions.githubusercontent.com refuse la connexion), donc
+# l'annotation est le SEUL canal exploitable. Ce trap garantit qu'une
+# exception non gérée devient une annotation au lieu d'un silence.
+trap {
+    $explication = $_.Exception.Message
+    if ($_.InvocationInfo) { $explication += " (ligne $($_.InvocationInfo.ScriptLineNumber))" }
+    PublierErreur "$Titre-exception" (
+        "EXCEPTION NON GÉRÉE [" + $_.Exception.GetType().FullName + "] : " + $explication
+    )
+    exit 1
+}
+
 # --- 1. Le code de sortie : sans lui, l'étape a été INTERROMPUE -------------
 if (-not (Test-Path $CodeSortie)) {
     # L'étape a été INTERROMPUE (vue au run 41375766036 : aucun code de sortie
@@ -395,6 +414,15 @@ if ($inattendus.Count -gt 0) {
         $lignes += "$echec :: $cause"
     }
     $lignes += "TOTAL $($inattendus.Count) echec(s) hors perimetre connu"
+    # Une annotation COURTE d'abord, volontairement : GitHub plafonne les
+    # annotations par étape, et l'étape 21 s'exécute APRÈS cinq tranches de
+    # diagnostic. Si le plafond est atteint avant elle, c'est cette synthèse
+    # qui doit survivre — une ligne, mais elle dit le nombre et nomme les
+    # premiers tests, ce qui suffit à instruire le lot.
+    PublierErreur "$Titre-non-nomme-synthese" (
+        "$($inattendus.Count) echec(s) hors perimetre sur $($echecs.Count) : " +
+        (($inattendus | Select-Object -First 8) -join ' | ')
+    )
     PublierErreursParPaquets "$Titre-non-nomme" $lignes
 
     # Le resume d'etape porte la liste COMPLETE — pas une tranche de dix.
