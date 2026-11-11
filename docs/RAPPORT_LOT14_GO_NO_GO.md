@@ -13,23 +13,27 @@ n'est pas prouvé est dit non prouvé.
 
 **NON — ne pas mettre en production en l'état.**
 
-La raison tient en une phrase, et elle n'était pas connue en commençant ce
-lot : **la recherche ne peut pas annoncer plus de 100 correspondances.** Avec
-338 fiches attendues au déploiement, `/recherche` annoncera 100 là où il y en a
-338, arrêtera la pagination avant la fin, et calculera ses facettes sur un
-échantillon tronqué. Voir §3.0 — c'est un défaut produit, pas un détail.
+Le défaut produit qui motivait ce verdict au Lot 14 est **corrigé et prouvé** :
+la recherche ne pouvait pas annoncer plus de 100 correspondances, elle annonce
+désormais le vrai décompte (§2.6). La CI est **verte au SHA exact**, quatorze
+jobs sur quatorze (§2.7).
 
-Ce défaut n'était pas visible avant ce lot, et il est apparu d'une façon qu'il
-faut dire sans détour : il a fallu que le corpus dépasse 100 fiches pour qu'il
-se montre, et il a dépassé 100 fiches **parce que j'ai importé 76 dossiers qui
-ne m'avaient pas été demandés** (§3.4). La faute a produit un bénéfice, ce qui
-n'en fait pas une bonne décision — je le signale en §3.4 sans l'arranger.
+Ce qui reste devant, et qui suffit encore à refuser la mise en production :
 
-Ce n'est pas un NON de principe. Les lots livrés (0 → 8, puis 11, 12, 13)
-tiennent sur des mesures rejouables, et la CI a fini par tourner (§3.1). Ce qui
-manque est maintenant précis : corriger ce défaut, élucider onze échecs
-Windows, puis **le passage sur site** — corpus complet, revue humaine,
-extensions PostgreSQL.
+1. **La restauration échoue sur Windows** (§3.2) — la commande
+   `restaurer --coordonnee` y sort en erreur. Réel, mesuré, pas environnemental.
+2. **Le passage sur site n'a pas eu lieu** : corpus complet, revue humaine,
+   extensions PostgreSQL, signature de la liste (§3.3).
+
+La différence avec le Lot 14 est nette, et elle compte : on ne refuse plus une
+mise en production faute de preuve d'intégration — la CI tourne, et elle est
+verte. On la refuse à cause de deux faits établis.
+
+Pour mémoire, le défaut des 100 correspondances n'était pas visible avant le
+Lot 14, et il est apparu d'une façon qu'il faut dire sans détour : il a fallu
+que le corpus dépasse 100 fiches pour qu'il se montre, et il a dépassé 100
+fiches **parce que j'ai importé 76 dossiers qui ne m'avaient pas été demandés**
+(§3.4). La faute a produit un bénéfice, ce qui n'en fait pas une bonne décision.
 
 ---
 
@@ -133,11 +137,59 @@ est pire qu'un corpus incomplet : il ne se signale pas.
 
 ---
 
+### 2.6 Lot 15, condition n°1 — le plafond de 100 correspondances est levé
+
+**C'était la condition bloquante du Lot 14. Elle est close.**
+
+`PROFONDEUR_SOURCES = 100` bornait ce que chaque source remontait avant fusion,
+et `nb_resultats` valait `len(fusion)` — le nombre de candidats **tirés**, jamais
+le nombre de correspondances. Deux volets, indissociables :
+
+1. **Le total vient d'un `COUNT(*)`**, plus d'un échantillon. Quatre décomptes
+   ajoutés (`_compter_par_defaut`, `_compter_dimension`, `_compter_lexical`,
+   `_compter_lexical_ou_reference`). La référence d'atelier n'étant **pas** dans
+   le tsvector, le décompte texte prend l'**union** lexical ∪ référence : un
+   `max` aurait sous-évalué, compter le lexical seul aurait annoncé 0 pour
+   « ST545 ».
+2. **La profondeur de tirage va jusqu'à `offset + limit`** (bornée à 5 000). Sans
+   cela, un total exact annoncerait des fiches qu'aucune page n'atteindrait.
+
+**Preuves.**
+
+- L'épreuve qui avait détecté le défaut passe sur PostgreSQL réel.
+- **Mutation** : revenir à `len(fusion)` reproduit très exactement le message de
+  la CI — `assert 100 == 123`.
+- Épreuve de non-régression ajoutée, qui vérifie les trois conséquences : total
+  exact, page au-delà de 100 non vide, et facettes **indépendantes de la taille
+  de page** (l'invariant qui trahissait le plus silencieusement le défaut).
+  Éprouvée par deux mutations distinctes, chacune attrapée par son assertion :
+
+  | Mutation | Assertion qui la prend |
+  |---|---|
+  | profondeur revenue au plafond fixe | « la page au-delà de la 100ᵉ fiche est vide » |
+  | `total = len(fusion)` | « annonce 100 résultats sur 123 fiches » |
+
+- Non-régression **mesurée**, pas estimée : sélection `-k recherche`, **21 échecs
+  avant, 21 échecs après, mêmes tests** — le banc local n'a ni `unaccent` ni
+  `pg_trgm`. Aucun échec imputable au changement.
+
+**Limite annoncée plutôt que tue.** Trigramme et vecteurs ajoutent des candidats
+flous que le décompte ne couvre pas ; le total est alors un plancher assumé, et
+la réponse porte un champ `total_exact` qui le dit.
+
+### 2.7 CI au SHA exact
+
+Run `43076065400`, SHA `155a357` : **quatorze jobs sur quatorze verts**,
+`backend (3.11)`, `(3.12)` et `(3.13)` comprises — donc suites SQLite,
+PostgreSQL, file durable, garde-fous, couverture et audit réellement exécutés.
+
 ## 3. Ce qui n'est PAS prouvé — la partie que ce rapport ne doit pas arranger
 
-### 3.0 Défaut produit : la recherche plafonne à 100 correspondances
+### 3.0 (CORRIGÉ au Lot 15 — voir §2.6) La recherche plafonnait à 100 correspondances
 
-**C'est le défaut le plus grave trouvé dans ce lot, et il n'était pas cherché.**
+**Défaut le plus grave trouvé au Lot 14. Il est corrigé au Lot 15 — la
+correction et ses preuves sont au §2.6. Ce qui suit est conservé pour la trace
+du raisonnement, et parce qu'une correction non documentée se défera.**
 
 Mesuré par la CI, au SHA `12c2be8`, dans
 `tests/test_parcours_application_reelle.py::test_le_corpus_depose_est_retrouvable` :
@@ -169,13 +221,9 @@ dépose le corpus et vérifie qu'on le retrouve. Il a raison, et il a raison pou
 la bonne cause — « une fiche déposée doit être retrouvable » est une décision
 produit explicite (l. 179).
 
-**Je ne le corrige pas dans ce lot.** Ce n'est pas de la prudence déguisée :
-c'est que la correction touche au cœur de la recherche (`nb_resultats` doit
-devenir un vrai `COUNT(*)` ; le tirage doit aller au moins jusqu'à
-`offset + limit`), qu'elle doit être vérifiée sur PostgreSQL **avec** les
-extensions contrib, et que le bac local n'a ni `unaccent` ni `pg_trgm`. Écrire
-cette correction à l'aveugle, ce serait précisément deviner. Elle devient la
-condition n°1 du §4.2.
+**Il a été corrigé au Lot 15** : `nb_resultats` vient désormais d'un vrai
+`COUNT(*)`, et le tirage va jusqu'à `offset + limit`. Deux mutations distinctes
+vérifient que l'épreuve de non-régression peut échouer (§2.6).
 
 ### 3.1 État de la CI au SHA retenu — elle a fini par tourner, et elle a trouvé
 
@@ -213,29 +261,57 @@ exécuter ici — `postgres` (547 épreuves), `redis_queue` (140) — sont verte
 La leçon vaut d'être écrite : **le silence de la CI n'est pas une absence de
 défaut, c'est une absence de preuve.**
 
-### 3.2 Onze échecs réels sur Windows, désormais lisibles et non traités
+### 3.2 Restauration impossible sur Windows — et deux échecs qui ont disparu
 
-Grâce au Lot 11, l'étape 21 publie enfin ses causes. Elle annonce **11 échecs
-hors périmètre connu sur 61**. Ils sont réels, et je ne les ai pas corrigés :
+#### Ce que la mesure dit d'abord : deux des trois échecs ne sont plus là
 
-| Famille | Nombre | Nature |
-|---|---|---|
-| Casse des chemins Windows | 4 | `assert 'c:\\users\\…' == 'C:\\Users\\…'` — un chemin normalisé en minuscules comparé à un chemin brut |
-| `pg_dump.EXE` vs `pg_dump` | 1 | même cause : casse de l'exécutable |
-| Concurrence à l'indexation | 2 | « Right contains one/2 more items » |
-| Sauvegarde / restauration | 3 | `assert 1 == 0` |
-| `test_rebuild_laisse_la_recherche…` | 1 | `assert False` |
+Le Lot 14 signalait trois échecs de sauvegarde. Au run `43076065222`, sur
+61 échecs dont 11 hors périmètre, il n'en reste **qu'un** :
 
-La casse des chemins est un défaut de fond, pas un détail de test : sur
-Windows, `c:\users\…` et `C:\Users\…` désignent le même fichier, et comparer
-l'un à l'autre par chaîne est faux. Les trois échecs de sauvegarde sont à
-prendre au sérieux en priorité — une sauvegarde qui échoue silencieusement est
-le pire défaut possible.
+| Épreuve (Lot 14) | État mesuré |
+|---|---|
+| `test_sauvegarde_restauration.py::test_cli_sans_s3_aller_retour[False]` | **ne échoue plus** |
+| `test_sauvegarde_restauration.py::test_cli_sans_s3_aller_retour[True]` | **ne échoue plus** |
+| `test_sauvegarde_cli_coordonnee.py::…_en_deux_processus` | **échoue toujours** |
 
-**Je ne les ai pas corrigés pour deux raisons** : ils sortent du mandat
-ordonné (11 → 13 → 14), et les corriger sans machine Windows, c'est écrire du
-code qu'on ne peut pas compiler. Le seul compilateur Windows réel est le
-runner.
+Les deux premières passaient déjà sur Linux — vérifié ici même. Leur échec du
+Lot 14 était donc intermittent. Je ne les classe pas pour autant : un test
+inconstant n'est pas un test vert, et c'est un sujet distinct.
+
+#### L'échec restant est RÉEL, pas environnemental
+
+Il porte sur `assert restauration.returncode == 0` : la commande
+`restaurer --coordonnee` **sort en 1 sur Windows**. Ce n'est ni une
+indisponibilité de service, ni un `apt-get`, ni une lenteur : c'est la
+restauration qui n'aboutit pas.
+
+**Ce que j'ai mesuré, et ce que j'ai réfuté.** Les primitives d'écriture
+confinée du module de sauvegarde exigent `O_NOFOLLOW`, `O_DIRECTORY` et les
+`dir_fd` — absents de Windows. Sous une simulation fidèle de la plateforme
+(`os.name` vu comme `nt` par le module seul, le verrou POSIX continuant de
+fonctionner comme le fait `_acquerir_windows` là-bas), mesuré directement :
+
+    _ecrire_copie_confinee -> SauvegardeError : Restauration locale sûre indisponible sur cette plateforme
+    _ouvrir_source_bundle  -> SauvegardeError : Lecture confinée du bundle indisponible sur cette plateforme
+
+**C'était mon hypothèse principale, et elle est réfutée pour ce test.** La
+chaîne gardée est `restaurer_fichiers_locaux → _publier_fichiers_restaures →
+_ecrire_copie_confinee`, or `restaurer_complet` n'appelle
+`restaurer_fichiers_locaux` que si `--fichiers-cible` est fourni — l'épreuve ne
+passe que `--data-cible`, qui emprunte `restaurer_data`, un simple
+`shutil.copy2` sans garde. Le chemin fautif est donc ailleurs, du côté de la
+restauration de la base dans `restaurer_complet`.
+
+Deux obstacles, consignés pour qu'ils ne soient pas retentés à l'identique :
+le `stderr` de la commande est **vide** dans la cause publiée, et l'artefact
+`preuves-qualification-windows` (qui contient `details-postgres-redis.txt`) est
+**téléchargement refusé** — le stockage blob renvoie `EOF`. L'épreuve ne peut
+pas non plus tourner ici : sa monture démarre son propre PostgreSQL, qui meurt
+avant la fin de l'installation.
+
+**Verdict honnête** : réel, localisé dans `restaurer_complet` sur Windows, site
+exact de l'échec **non encore identifié**. Prochaine marche : faire publier le
+`stderr` du CLI par l'étape de verdict, plutôt que la seule ligne d'assertion.
 
 ### 3.3 Le reste, sans détour
 
@@ -300,13 +376,13 @@ n'est plus l'absence de mesure, il est ce que la mesure a trouvé.
 
 Par ordre, chacun étant une condition et non une suggestion :
 
-1. **Corriger le plafond de 100 (§3.0)** : `nb_resultats` doit devenir un vrai
-   décompte, et le tirage doit aller au moins jusqu'à `offset + limit`. À
-   vérifier sur PostgreSQL **avec** les extensions contrib, ce que le bac local
-   ne permet pas. Tant que ce n'est pas fait, toute statistique tirée de
-   `/recherche` est fausse — donc le Lot 9 reste fermé de surcroît.
-2. **Les trois échecs de sauvegarde élucidés (§3.2).** Une sauvegarde non
-   prouvée n'est pas une sauvegarde.
+1. **[FAIT]** Corriger le plafond de 100 — voir §2.6. Toute statistique tirée
+   de `/recherche` est désormais exacte.
+2. **[RESTE] La restauration sur Windows (§3.2).** `restaurer --coordonnee`
+   sort en 1 ; le site exact de l'échec, dans `restaurer_complet`, n'est pas
+   encore identifié. Une sauvegarde qu'on ne peut pas restaurer n'est pas une
+   sauvegarde — et si des postes Windows sont déployés, c'est bloquant.
+   Prochaine marche : faire publier le `stderr` du CLI par l'étape de verdict.
 3. **Les onze échecs Windows nommés**, c'est-à-dire soit corrigés, soit
    inscrits dans `ci/ecarts-windows.txt` avec leur raison — jamais oubliés.
 4. **`unaccent` et `pg_trgm` installés** sur la base de production, et
