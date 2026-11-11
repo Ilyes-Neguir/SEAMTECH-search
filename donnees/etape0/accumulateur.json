@@ -482,7 +482,7 @@
       "matiere": null,
       "racine": "VOILES 2024",
       "source": "dropbox",
-      "type_voile": null
+      "type_voile": "génois"
     },
     {
       "annee": 2024,
@@ -1219,7 +1219,7 @@
       "matiere": null,
       "racine": "VOILES 2024",
       "source": "dropbox",
-      "type_voile": null
+      "type_voile": "voile d'avant"
     },
     {
       "annee": 2025,
