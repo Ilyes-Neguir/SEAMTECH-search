@@ -327,7 +327,6 @@ jobs:
       # dans la queue que publie le verdict.
       PYTHONFAULTHANDLER: "1"
     steps:
-    steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
