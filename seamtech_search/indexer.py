@@ -1291,6 +1291,32 @@ class SearchIndex:
             "et tables d'extractions d'accessoires créées."
         )
 
+    def _migration_033_verdicts_revue(self, connection: Any) -> None:
+        """Verdicts humains explicites (Lot 10) : l'assiette du calibrage.
+
+        PostgreSQL : crée `verdict_revue`, table des verdicts
+        certain|probable|rejet prononcés par un humain sur un champ de fiche.
+        SQLite : no-op enregistré, comme le reste de la couche métier.
+
+        Enregistrée comme les autres : une migration NON ENREGISTRÉE ici ferait
+        échouer le job `sauvegarde` (même motif que 016 et 017 avant elle), et
+        `VERSION_SCHEMA_METIER` la désigne comme version attendue.
+        """
+        if not self.is_postgres:
+            logger.warning(
+                "Migration 033_verdicts_revue ignorée : la couche métier est "
+                "PostgreSQL uniquement — conséquence : aucun verdict explicite "
+                "ne peut être consigné, le calibrage reste non calibrable."
+            )
+            return
+        with connection.cursor() as cursor:
+            cursor.execute(schema_metier.SQL_033_VERDICTS_REVUE)
+        logger.info(
+            "Migration 033_verdicts_revue : table des verdicts humains "
+            "explicites créée — le calibrage peut enfin reposer sur des "
+            "jugements prononcés, et non sur des absences de correction."
+        )
+
     def _migration_032_identite_octets_documents(self, connection: Any) -> None:
         """Ajout nullable et invalidation même pour un ancien écrivain SQL.
 
@@ -1433,6 +1459,10 @@ class SearchIndex:
                 ("031_accessoires", self._migration_031_accessoires),
                 # 032 — identité des octets, distincte du hash de texte.
                 ("032_identite_octets_documents", self._migration_032_identite_octets_documents),
+                # Lot 10 — verdicts humains explicites : enregistrée comme les
+                # autres, VERSION_SCHEMA_METIER vaut désormais 033. Une
+                # migration oubliée ici ferait échouer sauvegarde/restauration.
+                ("033_verdicts_revue", self._migration_033_verdicts_revue),
             ]
 
             if jusqu_a is not None:

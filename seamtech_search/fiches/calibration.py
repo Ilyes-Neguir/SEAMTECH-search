@@ -227,6 +227,104 @@ def observations_depuis_base(index: Any) -> dict[str, list[Observation]]:  # noq
     return observations
 
 
+#: Ce que vaut un verdict PRONONCÉ, côté preuve.
+#:
+#: « probable » est délibérément ABSENT de cette table. Ce n'est pas un oubli
+#: et ce n'est pas prudent par excès : un doute n'est une preuve dans aucun
+#: sens. Le compter parmi les justes gonflerait l'exactitude mesurée ; le
+#: compter parmi les faux la plomberait. Le verdict est donc consigné, il est
+#: traçable, il apparaît dans le bilan — et il ne nourrit PAS le calcul du
+#: seuil. C'est le prix de l'honnêteté, il est assumé et il est écrit ici pour
+#: que personne n'ait à le deviner.
+VERDICT_PREUVE: dict[str, bool] = {"certain": True, "rejet": False}
+
+#: Lecture du DERNIER verdict par (fiche, champ) : revenir sur un jugement est
+#: un droit, l'historique des revirements est une donnée et non un déchet.
+_SQL_VERDICTS_COURANTS = """
+SELECT DISTINCT ON (v.id_fiche, v.champ)
+       v.champ, v.verdict, v.confiance_moteur
+FROM verdict_revue v
+WHERE v.confiance_moteur IS NOT NULL
+ORDER BY v.id_fiche, v.champ, v.decide_le DESC, v.id_verdict DESC
+"""
+
+
+def observations_depuis_verdicts(index: Any) -> dict[str, list[Observation]]:  # noqa: ANN401
+    """Observations par famille, lues sur les verdicts humains EXPLICITES.
+
+    Différence de nature avec :func:`observations_depuis_base` : celle-ci lit
+    un SIGNE INDIRECT (« l'approbateur a-t-il corrigé ? »), où un champ non
+    corrigé est compté juste alors qu'il est seulement accepté. Ici le verdict
+    est celui qu'un humain a PRONONCÉ, avec son auteur et sa date.
+
+    Un verdict « probable » est lu, puis écarté du calcul — voir
+    :data:`VERDICT_PREUVE`. Il reste visible dans le bilan.
+    """
+    _exiger_postgres(index)
+    with index.connect() as connexion:
+        with connexion.cursor() as curseur:
+            curseur.execute(_SQL_VERDICTS_COURANTS)
+            lignes = curseur.fetchall()
+    observations: dict[str, list[Observation]] = {}
+    for champ, verdict, confiance in lignes:
+        correct = VERDICT_PREUVE.get(str(verdict))
+        if correct is None:
+            continue
+        famille = famille_du_champ(str(champ))
+        observations.setdefault(famille, []).append(
+            Observation(confiance=float(confiance), correct=correct)
+        )
+    return observations
+
+
+def nombre_fiches_verdictees(index: Any) -> int:  # noqa: ANN401
+    """Fiches distinctes portant au moins un verdict EXPLOITABLE.
+
+    Une fiche dont les seuls verdicts sont « probable » ne compte pas : elle
+    n'apporte aucune preuve, seulement des doutes consignés.
+    """
+    _exiger_postgres(index)
+    with index.connect() as connexion:
+        with connexion.cursor() as curseur:
+            curseur.execute(
+                """
+                SELECT COUNT(DISTINCT id_fiche)
+                FROM (
+                    SELECT DISTINCT ON (id_fiche, champ) id_fiche, verdict
+                    FROM verdict_revue
+                    ORDER BY id_fiche, champ, decide_le DESC, id_verdict DESC
+                ) courants
+                WHERE verdict IN ('certain', 'rejet')
+                """
+            )
+            ligne = curseur.fetchone()
+    return int(ligne[0]) if ligne else 0
+
+
+def bilan_verdicts(index: Any) -> dict[str, int]:  # noqa: ANN401
+    """Répartition des verdicts COURANTS, doutes compris.
+
+    Le bilan montre les « probable » que le calcul du seuil écarte : les
+    cacher reviendrait à faire croire que le doute n'a pas été exprimé.
+    """
+    _exiger_postgres(index)
+    with index.connect() as connexion:
+        with connexion.cursor() as curseur:
+            curseur.execute(
+                """
+                SELECT verdict, COUNT(*)
+                FROM (
+                    SELECT DISTINCT ON (id_fiche, champ) id_fiche, verdict
+                    FROM verdict_revue
+                    ORDER BY id_fiche, champ, decide_le DESC, id_verdict DESC
+                ) courants
+                GROUP BY verdict
+                """
+            )
+            lignes = curseur.fetchall()
+    return {str(verdict): int(nombre) for verdict, nombre in lignes}
+
+
 def nombre_fiches_arbitrees(index: Any) -> int:  # noqa: ANN401
     """Fiches validées portant au moins un champ arbitré : l'assiette de la preuve."""
     _exiger_postgres(index)

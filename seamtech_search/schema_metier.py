@@ -26,7 +26,7 @@ from __future__ import annotations
 from typing import Any
 
 # Version du schéma métier — incrémentée à chaque nouvelle migration.
-VERSION_SCHEMA_METIER = "031_accessoires"
+VERSION_SCHEMA_METIER = "033_verdicts_revue"
 # Dernière migration de l'index commun ; distincte du schéma strictement métier.
 VERSION_SCHEMA_APPLICATION = "032_identite_octets_documents"
 
@@ -2245,6 +2245,50 @@ COMMENT ON COLUMN fiche.categorie_source IS
     'dossier (nom du dossier déposé) | document (gabarit gagnant) | humain (décision approbateur) — la catégorie n''est jamais muette sur son origine.';
 """
 
+SQL_033_VERDICTS_REVUE = """
+-- Lot 10 : la vérité terrain devient EXPLICITE.
+--
+-- Avant cette table, le calibrage déduisait le sort d'un champ d'un signe
+-- indirect : « l'approbateur a-t-il corrigé ? ». Un champ non corrigé sur une
+-- fiche validée était compté comme juste, alors qu'il est seulement ACCEPTÉ —
+-- la nuance est écrite dans le rapport de l'époque, mais le chiffre, lui,
+-- n'en portait pas la trace. On ne peut pas calibrer une confiance sur une
+-- absence de geste.
+--
+-- Cette table porte donc le verdict tel qu'un humain l'a PRONONCÉ : certain,
+-- probable ou rejeté. « Probable » existe pour qu'un doute puisse être
+-- consigné sans être compté : le ranger parmi les justes gonflerait
+-- l'exactitude, le ranger parmi les faux la plomberait. Il est enregistré, il
+-- est traçable, et il NE FEDE PAS le calcul du seuil — c'est le prix de
+-- l'honnêteté, et il est assumé.
+--
+-- Un verdict n'écrase jamais le précédent : on en ajoute un. Revenir sur un
+-- jugement est un droit, et l'historique des revirements est une donnée, pas
+-- un déchet. La lecture prend donc le DERNIER verdict par (fiche, champ).
+CREATE TABLE IF NOT EXISTS verdict_revue (
+    id_verdict        BIGSERIAL PRIMARY KEY,
+    id_fiche          BIGINT NOT NULL REFERENCES fiche(id_fiche) ON DELETE CASCADE,
+    champ             TEXT NOT NULL,
+    verdict           TEXT NOT NULL CHECK (verdict IN ('certain', 'probable', 'rejet')),
+    confiance_moteur  NUMERIC(4,3),
+    acteur            TEXT NOT NULL,
+    decide_le         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    motif             TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_verdict_revue_couple
+    ON verdict_revue (id_fiche, champ, decide_le DESC);
+
+COMMENT ON TABLE verdict_revue IS
+    'Lot 10 : verdicts humains EXPLICITES (certain|probable|rejet) par champ de fiche. Assiette du calibrage des seuils de confiance.';
+COMMENT ON COLUMN verdict_revue.verdict IS
+    'certain | probable | rejet — le verdict PRONONCÉ. « probable » est consigné mais exclu du calcul du seuil : un doute n''est une preuve dans aucun sens.';
+COMMENT ON COLUMN verdict_revue.confiance_moteur IS
+    'Confiance que le moteur s''accordait AU MOMENT du verdict, figée ici : sans elle, un recalcul ultérieur réécrirait l''histoire de la mesure.';
+COMMENT ON COLUMN verdict_revue.acteur IS
+    'Qui a tranché. Un seuil calibré sans auteur identifiable n''est pas opposable.';
+"""
+
 MIGRATIONS_METIER: tuple[tuple[str, str], ...] = (
     ("006_fiche_technique", SQL_006_FICHE_TECHNIQUE),
     ("007_recherche_index", SQL_007_RECHERCHE_INDEX),
@@ -2272,6 +2316,7 @@ MIGRATIONS_METIER: tuple[tuple[str, str], ...] = (
     ("029_extraction_liaison_corrections", SQL_029_EXTRACTION_LIAISON_CORRECTIONS),
     ("030_evaluations_confiance", SQL_030_EVALUATIONS_CONFIANCE),
     ("031_accessoires", SQL_031_ACCESSOIRES),
+    ("033_verdicts_revue", SQL_033_VERDICTS_REVUE),
 )
 
 

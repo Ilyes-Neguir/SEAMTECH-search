@@ -994,7 +994,7 @@ def test_migration_019_existe() -> None:
 def test_version_schema_et_tables() -> None:
     from seamtech_search.schema_metier import TABLES_METIER, VERSION_SCHEMA_METIER
 
-    assert VERSION_SCHEMA_METIER == "031_accessoires"
+    assert VERSION_SCHEMA_METIER == "033_verdicts_revue"
     # 019-024 n'ajoutent aucune table ; la 025 ajoute audit_logs (34), puis
     # la 026 ajoute les quatre tables du référentiel Lot 2, la 027 les
     # demandes/notifications du Lot 1, la 028 sail_extractions du Lot 3a,

@@ -745,9 +745,17 @@ def test_migrations_sequentielles_001_a_017_sur_base_vide(tmp_path: Path) -> Non
             versions = [ligne[0] for ligne in connexion.execute("SELECT version FROM schema_migrations")]
         numeros = [int(version.split("_", 1)[0]) for version in sorted(versions)]
 
-        assert numeros == list(range(1, 33)), f"séquence attendue 001..032, mesurée {numeros}"
-        assert VERSION_SCHEMA_METIER == "031_accessoires" and VERSION_SCHEMA_METIER in versions
-        assert sorted(versions)[-1] == VERSION_SCHEMA_APPLICATION == "032_identite_octets_documents"
+        assert numeros == list(range(1, 34)), f"séquence attendue 001..033, mesurée {numeros}"
+        assert VERSION_SCHEMA_METIER == "033_verdicts_revue" and VERSION_SCHEMA_METIER in versions
+        assert VERSION_SCHEMA_APPLICATION == "032_identite_octets_documents"
+        assert VERSION_SCHEMA_APPLICATION in versions
+        # Les deux versions coexistent et sont suivies SÉPARÉMENT : 032
+        # appartient à la couche documents (application), 033 au schéma métier.
+        # L'assertion d'origine liait « dernière appliquée » et « version
+        # application », ce qui n'était vrai que parce que 032 se trouvait être
+        # la dernière ; depuis 033, la dernière appliquée est la dernière
+        # MÉTIER. On vérifie donc la présence de chacune, et l'ordre à part.
+        assert sorted(versions)[-1] == VERSION_SCHEMA_METIER
         # Toute migration métier déclarée DOIT être enregistrée à l'exécution.
         manquantes = {version for version, _sql in MIGRATIONS_METIER} - set(versions)
         assert manquantes == set(), f"migrations métier déclarées mais jamais appliquées : {manquantes}"

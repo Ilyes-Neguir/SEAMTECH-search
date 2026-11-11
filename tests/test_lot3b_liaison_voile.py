@@ -69,10 +69,10 @@ CHAMP_COTE = "cotes.finie.slu_m"
 
 def test_migration_029_version_tables_et_garde_fous() -> None:
     # Depuis le Lot 7, la version courante est 031 ; la 029 reste figée.
-    assert VERSION_SCHEMA_METIER == "031_accessoires"
-    assert MIGRATIONS_METIER[-1][0] == "031_accessoires"
-    assert MIGRATIONS_METIER[-2][0] == "030_evaluations_confiance"
-    assert MIGRATIONS_METIER[-3][0] == "029_extraction_liaison_corrections"
+    assert VERSION_SCHEMA_METIER == "033_verdicts_revue"
+    assert MIGRATIONS_METIER[-1][0] == "033_verdicts_revue"
+    assert MIGRATIONS_METIER[-2][0] == "031_accessoires"
+    assert MIGRATIONS_METIER[-3][0] == "030_evaluations_confiance"
     sql = SQL_029_EXTRACTION_LIAISON_CORRECTIONS
     for fragment in (
         "ADD COLUMN IF NOT EXISTS boat_model_id BIGINT REFERENCES boat_models(id_modele)",

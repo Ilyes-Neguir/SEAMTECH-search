@@ -155,9 +155,9 @@ def test_construire_extraction_accessoire_unites_jamais_devinees() -> None:
 
 
 def test_migration_031_contrats_schema() -> None:
-    assert VERSION_SCHEMA_METIER == "031_accessoires"
-    assert MIGRATIONS_METIER[-1][0] == "031_accessoires"
-    assert MIGRATIONS_METIER[-2][0] == "030_evaluations_confiance"
+    assert VERSION_SCHEMA_METIER == "033_verdicts_revue"
+    assert MIGRATIONS_METIER[-1][0] == "033_verdicts_revue"
+    assert MIGRATIONS_METIER[-2][0] == "031_accessoires"
     sql = SQL_031_ACCESSOIRES
     for fragment in (
         "CREATE TABLE IF NOT EXISTS accessory_extractions",
