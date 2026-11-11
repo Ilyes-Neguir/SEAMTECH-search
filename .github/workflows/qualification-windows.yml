@@ -456,26 +456,6 @@ jobs:
             Write-Host "::error title=causes-postgres-redis::analyse du rapport JUnit impossible (rc=$LASTEXITCODE)"
           }
           exit 0
-      # Lot 16 : la cause publiée « assert 1 == 0 » ne dit rien, alors que
-      # l'information est dans le MESSAGE de l'assertion, donc dans la trace.
-      # « ci/resumer_echecs.py » ne publie qu'une ligne par échec ; ce script
-      # publie la trace entière, lignes « E » comprises, pour les tests armés
-      # dans « ci/tests-trace.txt ». Sans lui, le stderr du sous-processus
-      # « restaurer --coordonnee » restait invisible et le diagnostic aveugle.
-      - name: Traces completes des echecs PostgreSQL armes
-        if: always()
-        env:
-          SEAMTECH_TEST_DATABASE_URL: postgresql://seamtech:seamtech_test_password@127.0.0.1:5432/seamtech_search_test
-          SEAMTECH_TEST_REDIS_URL: redis://127.0.0.1:6379/1
-          SEAMTECH_TEST_REDIS_SERVER: C:\redis7\Redis-7.4.11-Windows-x64-msys2\redis-server.exe
-        run: |
-          $ErrorActionPreference = 'Continue'
-          python ci\publier_traces.py
-          exit 0
-      # PLACÉE ICI, pas à la fin : GitHub plafonne à 50 annotations par job.
-      # Publiée après les tranches de causes, elle était évincée — run
-      # 43099608349 : 50 annotations atteintes, plus aucune trace. Juste
-      # avant le verdict, elle passe dans les premières.
       - name: Suite PostgreSQL + Redis sur Windows — verdict
         id: verdict_postgres_redis
         if: always()
@@ -609,3 +589,103 @@ jobs:
           name: preuves-qualification-windows
           path: logs/*.log
           if-no-files-found: warn
+
+
+  # Lot 16 : un job DÉDIÉ, donc un budget d'annotations DÉDIÉ.
+  #
+  # GitHub plafonne à 50 annotations par job. Le job « windows » les épuise
+  # avant même d'atteindre la suite PostgreSQL : au run 43109101484, les 50
+  # créneaux étaient consommés par la suite « sans service », et plus AUCUNE
+  # annotation de la suite PostgreSQL n'a paru. Conséquence grave : l'absence
+  # d'un test dans les causes publiées ne prouve pas qu'il passe — elle peut
+  # seulement dire qu'il n'a pas eu de créneau. Un diagnostic qui se lit par
+  # silence n'est pas un diagnostic.
+  #
+  # Un job séparé dispose de ses propres 50 annotations. Six traces au plus y
+  # sont publiées : la place ne peut pas manquer.
+  trace-coordonnee:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      SEAMTECH_TEST_DATABASE_URL: postgresql://seamtech:seamtech_test_password@127.0.0.1:5432/seamtech_search_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Installer les dépendances
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+      - name: Installer PostgreSQL 16 (hôte)
+        if: always()
+        # Les services de conteneurs de GitHub ne fonctionnent pas sur les
+        # runners Windows : PostgreSQL est installé sur l'hôte.
+        run: |
+          choco install postgresql16 --params '/Password:seamtech_test_password' --no-progress -y
+      - name: Démarrer PostgreSQL 16 et créer la base
+        if: always()
+        run: |
+          $pg = Get-Service -Name "postgresql*" | Select-Object -First 1
+          if (-not $pg) { Write-Error "service PostgreSQL introuvable" ; exit 1 }
+          Start-Service $pg.Name
+          $env:PGPASSWORD = "seamtech_test_password"
+          $psql = "C:\Program Files\PostgreSQL\16\bin\psql.exe"
+          for ($i = 0; $i -lt 30; $i++) {
+            try { & $psql -U postgres -c "SELECT version();" | Out-Null; break } catch { Start-Sleep -Seconds 2 }
+          }
+          & $psql -U postgres -c "CREATE ROLE seamtech LOGIN PASSWORD 'seamtech_test_password' SUPERUSER;"
+          & $psql -U postgres -c "CREATE DATABASE seamtech_search_test OWNER seamtech;"
+          & $psql -U postgres -c "SELECT version();"
+          # pg_dump / pg_restore NE SONT PAS dans le PATH après l'installation
+          # Chocolatey. Sans eux, la moitié de la suite sauvegarde échoue en
+          # « binaire « pg_dump » introuvable (PATH, SEAMTECH_PG_BINDIR) » —
+          # cause n° 4 des échecs Windows au run 41427629667, et la plus
+          # facile à lever : c'est le banc qui manquait, pas le produit.
+          # GITHUB_ENV les rend disponibles pour toutes les étapes suivantes.
+          $bindir = "C:\\Program Files\\PostgreSQL\\16\\bin"
+          if (-not (Test-Path (Join-Path $bindir "pg_dump.exe"))) {
+            Write-Host "::error title=pg-outils::pg_dump.exe introuvable dans $bindir"
+            exit 1
+          }
+          Add-Content -Path $env:GITHUB_ENV -Value "SEAMTECH_PG_BINDIR=$bindir"
+          Add-Content -Path $env:GITHUB_ENV -Value "PATH=$bindir;$env:PATH"
+          & (Join-Path $bindir "pg_dump.exe") --version
+      - name: Installer pgvector (port Windows, version épinglée)
+        if: always()
+        # Sans pgvector, la migration 006 échoue (« extension "vector" is not
+        # available ») et 479 tests partent en erreur — vu au run 41365859490.
+        # pgvector n'a PAS de binaire Windows officiel : on utilise donc un
+        # port reconstruit, épinglé en version, comme pour Redis 7. Le
+        # déploiement réel devra faire pareil — c'est une exigence
+        # d'installation, pas un détail de CI.
+        run: |
+          $version = "0.8.7"
+          $assets = "https://github.com/czkwg8/pgvector-windows-binary/releases/download/v$version/pgvector-v$version-pg16-windows-x64.zip"
+          $zip = Join-Path $env:TEMP "pgvector-$version.zip"
+          $extrait = "C:\pgvector16"
+          $pg = "C:\Program Files\PostgreSQL\16"
+          New-Item -ItemType Directory -Force -Path $extrait | Out-Null
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+          Invoke-WebRequest -Uri $assets -OutFile $zip -UseBasicParsing -ErrorAction Stop
+          Expand-Archive -Path $zip -DestinationPath $extrait -Force
+          foreach ($motif in @("vector.dll", "vector.control", "vector--*.sql")) {
+            $cible = if ($motif -eq "vector.dll") { Join-Path $pg "lib" } else { Join-Path $pg "share\extension" }
+            $trouves = Get-ChildItem $extrait -Recurse -Filter $motif -ErrorAction SilentlyContinue
+            if (-not $trouves) { Write-Host "::error title=pgvector-install::$motif introuvable dans l'archive" ; exit 1 }
+            foreach ($fichier in $trouves) { Copy-Item $fichier.FullName -Destination $cible -Force }
+          }
+          $env:PGPASSWORD = "seamtech_test_password"
+          $psql = Join-Path $pg "bin\psql.exe"
+          & $psql -U postgres -d seamtech_search_test -c "CREATE EXTENSION IF NOT EXISTS vector;"
+          $version_posee = & $psql -U postgres -d seamtech_search_test -tAc "SELECT extversion FROM pg_extension WHERE extname='vector';"
+          if (-not $version_posee) { Write-Host "::error title=pgvector-install::extension vector absente apres installation" ; exit 1 }
+          Write-Host "::notice title=pgvector-install::version=$version_posee (port Windows, pg16 x64)"
+      - name: Traces complètes des échecs armés
+        if: always()
+        run: |
+          $ErrorActionPreference = 'Continue'
+          python ci\publier_traces.py
+          exit 0
