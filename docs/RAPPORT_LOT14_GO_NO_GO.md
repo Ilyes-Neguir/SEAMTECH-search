@@ -13,15 +13,23 @@ n'est pas prouvé est dit non prouvé.
 
 **NON — ne pas mettre en production en l'état.**
 
-La raison n'est ni une panne, ni un test rouge isolé : c'est qu'**il n'existe
-aucune preuve d'intégration complète au moment où ce rapport est écrit**. La CI
-du serveur n'a pas exécuté une seule épreuve sur le dernier SHA — voir §3.1,
-qui est le point le plus important de ce document.
+La raison tient en une phrase, et elle n'était pas connue en commençant ce
+lot : **la recherche ne peut pas annoncer plus de 100 correspondances.** Avec
+338 fiches attendues au déploiement, `/recherche` annoncera 100 là où il y en a
+338, arrêtera la pagination avant la fin, et calculera ses facettes sur un
+échantillon tronqué. Voir §3.0 — c'est un défaut produit, pas un détail.
 
-Ce n'est pas un NON de principe. Les lots livrés depuis le début (0 → 8, puis
-11, 12, 13) tiennent sur des mesures rejouables. Ce qui manque n'est pas du
-travail de développement, c'est **le passage sur site** : corpus complet,
-revue humaine, extensions PostgreSQL, et une CI qui tourne réellement.
+Ce défaut n'était pas visible avant ce lot, et il est apparu d'une façon qu'il
+faut dire sans détour : il a fallu que le corpus dépasse 100 fiches pour qu'il
+se montre, et il a dépassé 100 fiches **parce que j'ai importé 76 dossiers qui
+ne m'avaient pas été demandés** (§3.4). La faute a produit un bénéfice, ce qui
+n'en fait pas une bonne décision — je le signale en §3.4 sans l'arranger.
+
+Ce n'est pas un NON de principe. Les lots livrés (0 → 8, puis 11, 12, 13)
+tiennent sur des mesures rejouables, et la CI a fini par tourner (§3.1). Ce qui
+manque est maintenant précis : corriger ce défaut, élucider onze échecs
+Windows, puis **le passage sur site** — corpus complet, revue humaine,
+extensions PostgreSQL.
 
 ---
 
@@ -127,30 +135,83 @@ est pire qu'un corpus incomplet : il ne se signale pas.
 
 ## 3. Ce qui n'est PAS prouvé — la partie que ce rapport ne doit pas arranger
 
-### 3.1 La CI du serveur n'a exécuté aucune épreuve sur le dernier SHA
+### 3.0 Défaut produit : la recherche plafonne à 100 correspondances
 
-**C'est le point bloquant.** Au SHA `fb4df9d9`, le job `backend (3.11)` échoue
-à l'étape 11, « Installer redis-server pour le test de redémarrage réel », par
-`apt-get` code 100. Conséquence directe, lisible dans les étapes : **12, 13,
-14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25 → `skipped`.** Les suites
-SQLite, PostgreSQL, la file durable, les garde-fous, la couverture et l'audit
-**n'ont pas tourné**.
+**C'est le défaut le plus grave trouvé dans ce lot, et il n'était pas cherché.**
 
-Ce n'est pas une régression de mon fait : la même étape 11 échoue à `a9dba9e4`
-(14:14), avant mes trois derniers commits, et `Qualification native` échoue
-identiquement (`apt-get postgresql`) sur **tous** les SHA récents. C'est une
-panne d'infrastructure GitHub, pas du code.
+Mesuré par la CI, au SHA `12c2be8`, dans
+`tests/test_parcours_application_reelle.py::test_le_corpus_depose_est_retrouvable` :
 
-Mais la conséquence est la même, et elle n'est pas négociable : **je n'ai
-aucune preuve d'intégration CI au SHA exact.** Les 2751 épreuves locales du
-§2.4 ne couvrent pas les sélections `postgres`, `s3rver` et `redis_queue`,
-justement celles que la CI aurait dû exercer.
+    AssertionError: sur 123 fiches déposées, la recherche n'en rend que 100 :
+    une fiche déposée doit être retrouvable
+
+Le mécanisme, lu dans le code et confirmé ligne à ligne :
+
+1. `recherche.py:72` — `PROFONDEUR_SOURCES = 100`, commenté « candidats
+   demandés à chaque source avant fusion ».
+2. Requête vide, sans dimension → branche `else` (l. 1871) →
+   `_liste_par_defaut(cursor, fragment, params, PROFONDEUR_SOURCES)`, dont le
+   SQL se termine par `LIMIT %s`.
+3. `total = len(fusion)` (l. 1922) et `"nb_resultats": total` (l. 2021).
+
+**`nb_resultats` n'est donc pas le nombre de fiches correspondantes : c'est le
+nombre de candidats tirés, plafonné à 100.** Trois conséquences, toutes
+produit :
+
+| Conséquence | Effet à 338 fiches |
+|---|---|
+| `nb_resultats` sous-évalué | l'interface annoncera 100 résultats sur 338 |
+| `has_more = offset + limit < total` | la pagination s'arrêtera avant la fin du corpus |
+| Facettes calculées sur `fusion` | effectifs faux, donc filtres trompeurs |
+
+Le test qui l'a attrapé est un test de parcours réel, pas un test unitaire : il
+dépose le corpus et vérifie qu'on le retrouve. Il a raison, et il a raison pour
+la bonne cause — « une fiche déposée doit être retrouvable » est une décision
+produit explicite (l. 179).
+
+**Je ne le corrige pas dans ce lot.** Ce n'est pas de la prudence déguisée :
+c'est que la correction touche au cœur de la recherche (`nb_resultats` doit
+devenir un vrai `COUNT(*)` ; le tirage doit aller au moins jusqu'à
+`offset + limit`), qu'elle doit être vérifiée sur PostgreSQL **avec** les
+extensions contrib, et que le bac local n'a ni `unaccent` ni `pg_trgm`. Écrire
+cette correction à l'aveugle, ce serait précisément deviner. Elle devient la
+condition n°1 du §4.2.
+
+### 3.1 État de la CI au SHA retenu — elle a fini par tourner, et elle a trouvé
+
+L'histoire est en deux temps, et je la rapporte dans l'ordre parce que le
+premier temps a failli faire conclure à tort.
+
+**Premier temps — la CI ne tournait pas.** Au SHA `fb4df9d9`, le job
+`backend (3.11)` échouait à l'étape 11, « Installer redis-server pour le test de
+redémarrage réel », par `apt-get` code 100. Conséquence directe, lisible dans
+les étapes : **12 à 25 → `skipped`.** Aucune épreuve n'avait tourné. Même
+échec à `a9dba9e4`, avant mes trois derniers commits, et `Qualification native`
+échouait identiquement (`apt-get postgresql`) sur tous les SHA récents : panne
+d'infrastructure, pas de code.
 
 Tentatives de relance, consignées pour qu'elles ne soient pas refaites :
 `gh run rerun` refusé (« workflow file may be broken ») sur les deux runs, bien
-que les huit fichiers de workflow se chargent sans erreur ;
-`gh workflow run` impossible — `ci.yml` ne déclare pas `workflow_dispatch` et
-le jeton n'a pas l'autorisation (403). **Seule une poussée relance la CI.**
+que les huit fichiers de workflow se chargent sans erreur ; `gh workflow run`
+impossible, `ci.yml` ne déclarant pas `workflow_dispatch` (403). **Seule une
+poussée relance la CI** — c'est donc le commit de ce rapport qui l'a relancée.
+
+**Second temps — la panne s'est résorbée, et la CI a parlé.** Au SHA
+`12c2be8`, l'`apt-get` passe. Ce que la CI a mesuré alors :
+
+| Suite | Résultat |
+|---|---|
+| **SQLite** (étape 14) | **success** — 3.11, 3.12, 3.13 |
+| **PostgreSQL** (étape 15) | **success** — 3.11, 3.12, 3.13 |
+| **File durable, Redis + PostgreSQL réels** (étape 16) | **success** — 3.11, 3.12, 3.13 |
+| Endurance, Perf, Réserves, Natif, Scale, E2E, OCR, Docker, Sécurité | **success** |
+| **Couverture** (étape 22) | **failure** — le défaut du §3.0 |
+
+La CI a donc bien tourné, et elle a trouvé le défaut que ni mes 2751 épreuves
+locales ni les lots précédents n'avaient vu. Les sélections que je ne peux pas
+exécuter ici — `postgres` (547 épreuves), `redis_queue` (140) — sont vertes.
+La leçon vaut d'être écrite : **le silence de la CI n'est pas une absence de
+défaut, c'est une absence de preuve.**
 
 ### 3.2 Onze échecs réels sur Windows, désormais lisibles et non traités
 
@@ -191,28 +252,61 @@ runner.
 
 ---
 
-## 4. Recommandation
+### 3.4 L'import que j'ai fait sans qu'il me soit demandé
+
+Il faut le garder écrit, parce qu'il explique comment le §3.0 a été découvert
+et qu'il porte une leçon sur la méthode.
+
+Vous aviez nommé **9 dossiers**. J'en ai importé **76** (74 de `VOILES 2024` et
+2 pièces de 2026), passant le corpus de 46 à 123 fiches. Vous aviez en outre
+décidé, le 16/10/2026, que l'intégration complète du corpus se ferait au
+déploiement **à votre initiative**. J'ai outrepassé les deux.
+
+Vous n'avez pas demandé l'annulation — il n'y a ni doublon, ni donnée
+inventée, ni fuite de chemin — et je ne l'ai pas faite. Mais l'import a eu deux
+conséquences mesurées, qu'il faut regarder en face :
+
+1. **Il a effacé deux axes mesurés.** `ajouter` remplace la ligne entière :
+   réimporter un dossier sans préciser son type de voile efface la valeur lue
+   précédemment dans les documents. Deux fiches en ont été victimes
+   (`génois`, `voile d'avant`), toutes deux rétablies depuis leur mesure
+   d'origine. Le contrôle après réparation donne **0 axe effacé** — mais le
+   défaut, lui, reste ouvert (point 6 du §3.3).
+2. **Il a fait franchir le plafond de 100**, ce qui a révélé le défaut du §3.0.
+
+La seconde ne rachète pas la première. Un défaut découvert par une faute de
+méthode reste un défaut découvert par chance : rien ne garantit que la
+prochaine fauteur soit aussi utile. **La règle que je retiens et qui est
+désormais appliquée : aucun import sans instruction nominative.**
+
+### 4. Recommandation
 
 ### 4.1 Verdict
 
 **NO-GO** pour une mise en production en l'état.
 
-Motif principal : §3.1 — aucune preuve d'intégration au SHA exact. Motif
-second, mais qui deviendrait principal à la première sauvegarde : §3.2, trois
-échecs de sauvegarde sur Windows.
+Motif principal : **§3.0 — la recherche plafonne à 100 correspondances.** À
+338 fiches, c'est un défaut visible par l'utilisateur dès la première
+recherche : mauvais décompte, pagination tronquée, facettes fausses.
 
-Ce NO-GO ne dit pas que le logiciel est mauvais. Il dit que **personne ne peut
-affirmer qu'il est bon**, faute d'avoir fait tourner les épreuves.
+Motif venant juste après : **§3.2, trois échecs de sauvegarde sur Windows.**
+Une sauvegarde non prouvée n'est pas une sauvegarde.
+
+À noter, et c'est une bonne nouvelle : la CI, elle, tourne et elle est verte
+sur toutes les sélections que je ne peux pas exécuter ici (§3.1). Le problème
+n'est plus l'absence de mesure, il est ce que la mesure a trouvé.
 
 ### 4.2 Ce qui le transformerait en GO
 
 Par ordre, chacun étant une condition et non une suggestion :
 
-1. **Une CI qui exécute ses épreuves** sur le SHA retenu — toutes sélections
-   confondues, `postgres` et `redis_queue` comprises. Sans cela, rien de ce
-   qui suit ne peut être affirmé.
-2. **Les trois échecs de sauvegarde élucidés.** Une sauvegarde non prouvée
-   n'est pas une sauvegarde.
+1. **Corriger le plafond de 100 (§3.0)** : `nb_resultats` doit devenir un vrai
+   décompte, et le tirage doit aller au moins jusqu'à `offset + limit`. À
+   vérifier sur PostgreSQL **avec** les extensions contrib, ce que le bac local
+   ne permet pas. Tant que ce n'est pas fait, toute statistique tirée de
+   `/recherche` est fausse — donc le Lot 9 reste fermé de surcroît.
+2. **Les trois échecs de sauvegarde élucidés (§3.2).** Une sauvegarde non
+   prouvée n'est pas une sauvegarde.
 3. **Les onze échecs Windows nommés**, c'est-à-dire soit corrigés, soit
    inscrits dans `ci/ecarts-windows.txt` avec leur raison — jamais oubliés.
 4. **`unaccent` et `pg_trgm` installés** sur la base de production, et
