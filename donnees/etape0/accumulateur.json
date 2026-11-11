@@ -50,10 +50,21 @@
       "famille": "voiles",
       "gamme": null,
       "id": "19fbc2f01f22bdff",
-      "matiere": "fibercom hybrid cool grey",
+      "matiere": null,
       "racine": "VOILES 2026",
       "source": "dropbox",
-      "type_voile": null
+      "type_voile": "grand-voile"
+    },
+    {
+      "annee": 2026,
+      "categorie": "voile",
+      "famille": "voiles",
+      "gamme": null,
+      "id": "252d489e10c77816",
+      "matiere": null,
+      "racine": "VOILES 2026",
+      "source": "dropbox",
+      "type_voile": "génois"
     },
     {
       "annee": 2025,
@@ -153,6 +164,17 @@
       "racine": "VOILES 2025",
       "source": "dropbox",
       "type_voile": null
+    },
+    {
+      "annee": 2024,
+      "categorie": "voile",
+      "famille": "voiles",
+      "gamme": null,
+      "id": "533f16499eb83346",
+      "matiere": null,
+      "racine": "VOILES 2024",
+      "source": "dropbox",
+      "type_voile": "génois"
     },
     {
       "annee": 2025,
@@ -419,6 +441,17 @@
       "type_voile": null
     },
     {
+      "annee": 2026,
+      "categorie": "voile",
+      "famille": "voiles",
+      "gamme": null,
+      "id": "cc5c9d071255f1c0",
+      "matiere": null,
+      "racine": "VOILES 2026",
+      "source": "dropbox",
+      "type_voile": "génois"
+    },
+    {
       "annee": 2025,
       "categorie": "voile",
       "famille": "voiles",
@@ -450,6 +483,28 @@
       "racine": "VOILES 2025",
       "source": "dropbox",
       "type_voile": null
+    },
+    {
+      "annee": 2026,
+      "categorie": "voile",
+      "famille": "voiles",
+      "gamme": null,
+      "id": "e7dce9ef4ef1a3c1",
+      "matiere": null,
+      "racine": "VOILES 2026",
+      "source": "dropbox",
+      "type_voile": "voile d'avant"
+    },
+    {
+      "annee": 2024,
+      "categorie": "voile",
+      "famille": "voiles",
+      "gamme": null,
+      "id": "ea6471a9e41cf16b",
+      "matiere": null,
+      "racine": "VOILES 2024",
+      "source": "dropbox",
+      "type_voile": "voile d'avant"
     },
     {
       "annee": 2025,
@@ -505,6 +560,17 @@
       "racine": "VOILES 2026",
       "source": "dropbox",
       "type_voile": null
+    },
+    {
+      "annee": 2026,
+      "categorie": "voile",
+      "famille": "voiles",
+      "gamme": null,
+      "id": "f5bc7c84251984da",
+      "matiere": null,
+      "racine": "VOILES 2026",
+      "source": "dropbox",
+      "type_voile": "génois"
     }
   ],
   "sel": "c15963bfa2113e2fb8991041b8109b73",
