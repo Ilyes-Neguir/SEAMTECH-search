@@ -8,3 +8,12 @@
 #
 # Pour armer à nouveau : une ligne par identifiant, sans commentaire.
 #   tests/test_x.py::test_y
+
+# RÉARMÉ le 11 novembre 2026 (Lot 16). L'échec
+# « test_commande_sauver_puis_restaurer_coordonnee_en_deux_processus »
+# est publié sous la cause « assert 1 == 0 », qui ne dit rien. La cause
+# RÉELLE est dans le message de l'assertion — donc dans la trace — et non
+# dans l'assertion : c'est le stderr du sous-processus « restaurer
+# --coordonnee ». Tant que cette ligne est armée, la trace complète est
+# publiée par l'étape « Traces complètes » du job windows.
+tests/test_sauvegarde_cli_coordonnee.py::test_commande_sauver_puis_restaurer_coordonnee_en_deux_processus
