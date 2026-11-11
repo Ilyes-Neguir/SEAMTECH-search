@@ -114,3 +114,93 @@ d'abord connaître son chemin ». Or la recherche Dropbox ne se comporte pas
 comme un filtre par sous-chaîne et tronque son rendu au-delà d'environ 40
 entrées — le dénombrement exact des dossiers, et donc des fiches, reste non
 établi. 22 n'est pas 338, et l'écart vient de là.
+
+## 6. État exact du corpus consigné (mesuré le 2026-11-12)
+
+Chiffres obtenus par comptage direct sur `donnees/etape0/accumulateur.json`,
+jamais par déduction :
+
+| Mesure | Valeur |
+|---|---|
+| Fiches consignées | **123** |
+| `VOILES 2024` | 74 |
+| `VOILES 2025` | 30 |
+| `VOILES 2026` | 19 |
+| Catégorie | `voile` : 123 (aucune `accessoire`) |
+| Source `dropbox` | 116 |
+| Source `archive` | 7 |
+
+Les axes, qui sont la raison d'être du corpus :
+
+| Axe | Renseigné | Manquant |
+|---|---|---|
+| `gamme` | 14 / 123 | **109** |
+| `type_voile` | 14 / 123 | **109** |
+| `matiere` | 17 / 123 | **106** |
+
+**109 fiches n'ont donc pas de type de voile.** Ce n'est pas une perte : ces
+fiches ont été consignées depuis l'arborescence, et l'arborescence ne dit pas
+le type de voile. Le type ne s'obtient qu'en lisant le document, ce que
+personne n'a fait pour ces 109-là.
+
+En conséquence, et sur instruction :
+
+- aucun axe n'est **estimé** — une valeur devinée entrerait dans le
+  dénominateur du taux d'appariement et le fausserait durablement ;
+- ces fiches ne sont **pas retirées** du corpus : elles sont déclarées *« axe
+  manquant, à qualifier »*, et c'est dans cet état qu'elles sont comptées.
+
+### 6.1 Le corpus n'est pas complet, et il ne sera pas complété ici
+
+L'échelle attendue est de 338. Il en manque donc environ 215, principalement
+dans `VOILES 2025` (30 consignées sur un effectif inconnu), `VOILES 2026` (19,
+relevé tronqué) et les trois racines `ACCESSOIRES` (aucune consignée).
+
+**Le complément est arrêté.** Deux raisons, une de méthode et une de décision :
+
+1. **Méthode** — le listage de Dropbox tronque (`VOILES 2026`, requête `ST`).
+   Le compléter exigerait de paginer, et une pagination silencieusement
+   tronquée produirait un corpus *qu'on croirait complet*. Un corpus faux est
+   pire qu'un corpus incomplet : il ne se signale pas.
+2. **Décision** — arrêté sur instruction, l'intégration complète du corpus
+   relevant du déploiement, à l'initiative de l'exploitant. Une importation
+   non demandée a déjà eu lieu (74 dossiers de `VOILES 2024` et 2 pièces de
+   2026) et a causé le dommage décrit en 6.2 ; elle n'est pas annulée — aucun
+   doublon, aucune donnée inventée, aucune fuite de chemin — mais elle ne
+   sera pas répétée.
+
+### 6.2 Défaut de conception : un réimport sans axe EFFACE l'axe mesuré
+
+**Gravité : perte de données silencieuse.** À traiter avant l'import complet
+du déploiement.
+
+`etape0_corpus.py ajouter` est idempotent **par chemin**, mais il **remplace la
+ligne entière**. Relancer la commande sur un dossier déjà consigné, sans
+préciser `--type-voile`, remet donc l'axe à vide.
+
+Le dommage a été réel et mesuré : en réimportant les 74 dossiers de 2024 sans
+axe, deux fiches dont l'axe avait été lu dans les documents l'ont perdu —
+
+    id=533f16499eb83346   type_voile='génois'          (VOILES 2024)
+    id=ea6471a9e41cf16b   type_voile="voile d'avant"   (VOILES 2024)
+
+Ce qui a trahi le défaut, c'est le comptage : `type_voile` valait 14 sur 52
+fiches, et 12 sur 123. **Un axe ne diminue pas quand on ajoute des fiches.**
+Les deux valeurs ont été rétablies depuis leur mesure d'origine, et le
+contrôle refait donne : **0 axe effacé**.
+
+Deux leçons, qui valent pour la reprise au déploiement :
+
+- **Le pré-contrôle (`scripts/etape0_preparer_chemins.py`) ne voit pas ce
+  défaut.** Il détecte les doublons et les divergences de racine — et il a
+  prouvé son utilité en signalant `DÉJÀ CONNU` sur l'un des 7 chemins, ce qui
+  a évité une fiche en double. Mais il ne compare pas les axes. Il lui
+  manque un verdict « APPAUVRI ».
+- **Ne jamais juger une sortie sur sa dernière ligne.** La synthèse du
+  pré-contrôle disait « Aucune collision » — ce qui était vrai, et ne disait
+  rien des 74 lignes `DÉJÀ CONNU` du milieu.
+
+La question de fond reste ouverte et vous revient : **que doit faire un
+réimport sans axe ?** Écraser (comportement actuel), refuser, ou fusionner en
+conservant la valeur mesurée ? Je ne tranche pas seul un choix qui détruit ou
+préserve de la donnée.
