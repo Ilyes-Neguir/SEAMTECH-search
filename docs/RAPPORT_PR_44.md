@@ -231,6 +231,51 @@ fuite que l'épreuve a pour fonction d'empêcher. Deux mutations ont vérifié
 que ces épreuves ne sont pas muettes : faire lire le disque au lieu de git
 (2 échecs), relâcher les comptes figés (2 échecs).
 
+### 3.9 Correction : la sauvegarde quotidienne n'était PAS absente
+
+Un rapport antérieur disait « sauvegarde quotidienne non fonctionnelle — aucun
+workflow planifié ». **C'était faux, et il faut le dire explicitement** : je
+cherchais un workflow GitHub là où il n'en fallait pas.
+
+Mesuré : un service compose (``sauvegarde``) lance ``sauvegarde_planifiee``,
+qui vérifie toutes les heures et sauvegarde dès que l'intervalle est dépassé
+(24 h par défaut, rétention 5). Aucun ``profiles:`` dans ``docker-compose.yml``
+: le service démarre donc par défaut. Et ``/health`` publie ``etat_sauvegarde``
+avec un statut actionnable — ``ok``, ``ancienne``, ``jamais``, ``illisible``,
+``age_inconnu``, ``non_qualifiee``. La fonctionnalité existait.
+
+Le défaut réel est plus sournois, et c'est lui qui est corrigé (Lot 13.2) :
+
+1. **Personne ne lisait le statut.** Aucune alerte, aucune supervision, rien ne
+   consommait ``backup.statut``. ``/health`` pouvait répondre ``"ancienne"``
+   indéfiniment. Une sauvegarde qui échoue en silence pendant un an est
+   indiscernable d'une sauvegarde qui marche — jusqu'au jour où l'on en a
+   besoin.
+2. **``"ok"`` était renvoyé même pour une copie purement locale.** Dans
+   ``etat_sauvegarde``, l'avertissement « locale uniquement » est posé APRÈS le
+   calcul du statut : une copie sur le même disque que les données était donc
+   déclarée ``ok``. C'est pourtant le scénario qui compte le plus — si le
+   serveur meurt, la sauvegarde meurt avec lui.
+
+``scripts/verifier_sauvegarde_quotidienne.py`` ferme la boucle : il lit la
+MÊME source que ``/health`` et rend un code de sortie consommable. Il est
+**strict par défaut** — une copie locale seule est un échec. Démontré :
+
+    statut      : ok          <- ce que /health répond
+    hors-site   : AUCUN
+    PROTECTION NON PROUVÉE    -> code de retour 1
+
+14 épreuves, dont une d'intégration qui passe par le vrai ``etat_sauvegarde``
+avec un manifeste réellement écrit sur le disque — pour prouver que le
+vérificateur lit la même source que ``/health`` et non une variante parallèle
+qui pourrait dériver. Trois mutations les ont confirmées non muettes : accepter
+une copie locale (2 échecs), faire absoudre un statut dégradé par
+``--autoriser-locale`` (1 échec), rétablir un message d'en-tête contradictoire
+(1 échec).
+
+Le guide de déploiement porte désormais la ligne de cron : un outil de
+vérification que personne n'exécute ne prouve rien.
+
 ### 3.7 La PR n'est pas fusionnée
 
 Elle est ouverte depuis le 2026-11-05 et en état `UNSTABLE` (cause : 3.4).
@@ -260,6 +305,8 @@ Elle est ouverte depuis le 2026-11-05 et en état `UNSTABLE` (cause : 3.4).
 | Calibrage des seuils | **BLOQUÉ** | exige des verdicts humains |
 | `unaccent` / `pg_trgm` | **À INSTALLER** | prérequis d'exploitation |
 | Lot 10 (outil de revue) | **LIVRÉ** | verdicts explicites ; la revue reste à faire |
+| Lot 13.2 sauvegarde quotidienne | **CORRIGÉ** | elle existait ; il manquait qui la vérifie |
+| Lot 12 extensions PostgreSQL | **LIVRÉ** | outil idempotent, échec bruyant |
 | Données clients dans git | **RISQUE ACCEPTÉ** | 7 archives + 3 PDF ; garde-fou posé (Lot 13.1) |
 | Fusion de la PR | **EN ATTENTE** | état `UNSTABLE` (Windows) |
 
