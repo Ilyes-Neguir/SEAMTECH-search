@@ -101,8 +101,8 @@ L'ordre compte : chaque étape suppose la précédente FAITE et VÉRIFIÉE.
    secrets (URL-safe) hors dépôt, volumes et permissions, **archive montée en
    lecture seule**, identités applicative et de sauvegarde **restreintes à leur
    bucket**, exposition réseau limitée (loopback + TLS pour les postes), puis
-   vérifier les **six services** et les **migrations** attendues de la release
-   (constante `VERSION_SCHEMA_METIER`, liste finissant à `021_revision_fiche`).
+   vérifier les **sept services** et les **migrations** attendues de la release
+   (constante `VERSION_SCHEMA_METIER`, liste finissant à `033_verdicts_revue`).
 4. **Pilote réduit représentatif** (dossier réel + cas difficiles : scans anciens,
    doublons, chemins accentués, gros PDF) : chaque fichier comptabilisé, résultats
    de recherche attendus, téléchargement des originaux et des rapports depuis un
