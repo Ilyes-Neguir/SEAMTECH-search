@@ -183,6 +183,40 @@ Run `43076065400`, SHA `155a357` : **quatorze jobs sur quatorze verts**,
 `backend (3.11)`, `(3.12)` et `(3.13)` comprises — donc suites SQLite,
 PostgreSQL, file durable, garde-fous, couverture et audit réellement exécutés.
 
+Lot 16, SHA `23f5564` : **CI, Endurance, Perf comparaison, Qualification native
+et Qualification reserves — tous au vert.** S'y ajoute, sur le même SHA, le job
+`trace-coordonnee` de la Qualification Windows, **vert**, qui est la preuve du
+§3.2. Reste en échec : le job `windows` de la Qualification Windows, dont les
+échecs restants sont l'objet du Lot 17.
+
+### 2.8 Lot 16 — la restauration coordonnée fonctionne désormais sur Windows
+
+Trois livrables, dans cet ordre, chacun prouvé avant le suivant.
+
+1. **Le canal ne jetait plus la cause.** `ci/resumer_echecs.py::_cause()`
+   prenait la dernière ligne « E » d'une trace — c'est-à-dire l'assertion nue
+   quand l'assertion porte un message, donc systématiquement la moins disante.
+   La cause réelle était dans le rapport et n'était jamais publiée. Mesuré sur
+   un vrai rapport JUnit : **9 causes non disantes → 2**. Quatre épreuves
+   verrouillent les quatre formes de rendu, dont deux qui **doivent rester
+   inchangées** (une assertion nue EST parfois la cause). Mutation : avec
+   l'ancien comportement, deux épreuves échouent en rendant `assert 1 == 0` et
+   `assert 100 == 123` — exactement les causes inutiles publiées par la CI.
+
+2. **La cause lue, la ligne trouvée, le défaut corrigé.** `_instantane_dump_prive`
+   (sauvegarde.py:1957) refusait tout service sur Windows, rendant
+   `restaurer --coordonnee` indisponible. Repli justifié : l'empreinte, et non
+   `O_NOFOLLOW`, est le contrôle porteur — voir §3.2.3. Mutation : l'épreuve
+   échoue sans le repli, passe avec.
+
+3. **Le canal de preuve rendu non saturable.** Un job dédié,
+   `trace-coordonnee`, avec son propre budget d'annotations (§3.2.5).
+
+Contrepartie à connaître : `ci/tests-trace.txt` est **armé** sur l'épreuve
+coordonnée. Chaque run Windows rejoue donc ce test et publie sa trace
+complète — c'est un instrument de diagnostic, à désarmer quand le Lot 17
+sera clos.
+
 ## 3. Ce qui n'est PAS prouvé — la partie que ce rapport ne doit pas arranger
 
 ### 3.0 (CORRIGÉ au Lot 15 — voir §2.6) La recherche plafonnait à 100 correspondances
@@ -261,57 +295,89 @@ exécuter ici — `postgres` (547 épreuves), `redis_queue` (140) — sont verte
 La leçon vaut d'être écrite : **le silence de la CI n'est pas une absence de
 défaut, c'est une absence de preuve.**
 
-### 3.2 Restauration impossible sur Windows — et deux échecs qui ont disparu
+### 3.2 (CORRIGÉ au Lot 16) Restauration impossible sur Windows
 
-#### Ce que la mesure dit d'abord : deux des trois échecs ne sont plus là
+Ce point était le plus grave du Lot 15, et le Lot 15 l'avait **mal diagnostiqué**.
+Il est fermé. Voici ce qui s'est passé, y compris mes erreurs, parce qu'elles
+sont la raison pour laquelle le Lot 16 existe.
 
-Le Lot 14 signalait trois échecs de sauvegarde. Au run `43076065222`, sur
-61 échecs dont 11 hors périmètre, il n'en reste **qu'un** :
+#### 3.2.1 Le canal jetait la cause
 
-| Épreuve (Lot 14) | État mesuré |
-|---|---|
-| `test_sauvegarde_restauration.py::test_cli_sans_s3_aller_retour[False]` | **ne échoue plus** |
-| `test_sauvegarde_restauration.py::test_cli_sans_s3_aller_retour[True]` | **ne échoue plus** |
-| `test_sauvegarde_cli_coordonnee.py::…_en_deux_processus` | **échoue toujours** |
+Le verdict Windows publiait :
 
-Les deux premières passaient déjà sur Linux — vérifié ici même. Leur échec du
-Lot 14 était donc intermittent. Je ne les classe pas pour autant : un test
-inconstant n'est pas un test vert, et c'est un sujet distinct.
+    …::test_commande_sauver_puis_restaurer_coordonnee_en_deux_processus :: assert 1 == 0
 
-#### L'échec restant est RÉEL, pas environnemental
+Le Lot 15 en avait conclu que le `stderr` de la commande était **vide**. C'était
+faux. Quand une assertion porte un message (`assert x == 0, err`), pytest écrit
+le message **d'abord** et l'assertion nue **ensuite**, en dernière ligne — et
+`ci/resumer_echecs.py::_cause()` prenait la dernière ligne. Il jetait donc
+systématiquement le message, c'est-à-dire la cause.
 
-Il porte sur `assert restauration.returncode == 0` : la commande
-`restaurer --coordonnee` **sort en 1 sur Windows**. Ce n'est ni une
-indisponibilité de service, ni un `apt-get`, ni une lenteur : c'est la
-restauration qui n'aboutit pas.
+Corrigé, et mesuré sur un vrai rapport JUnit : **9 causes non disantes → 2**.
+Vérifié en CI : les causes publiées sont passées de `assert 1 == 0` à
+`SauvegardeError: Lecture confinée du bundle indisponible sur cette plateforme`,
+`OSError: Capacité de plateforme absente : verrou_flock`, etc. Le diagnostic
+Windows était aveugle par défaut d'instrument, non par absence d'information.
 
-**Ce que j'ai mesuré, et ce que j'ai réfuté.** Les primitives d'écriture
-confinée du module de sauvegarde exigent `O_NOFOLLOW`, `O_DIRECTORY` et les
-`dir_fd` — absents de Windows. Sous une simulation fidèle de la plateforme
-(`os.name` vu comme `nt` par le module seul, le verrou POSIX continuant de
-fonctionner comme le fait `_acquerir_windows` là-bas), mesuré directement :
+#### 3.2.2 La ligne exacte, et l'erreur de raisonnement du Lot 15
 
-    _ecrire_copie_confinee -> SauvegardeError : Restauration locale sûre indisponible sur cette plateforme
-    _ouvrir_source_bundle  -> SauvegardeError : Lecture confinée du bundle indisponible sur cette plateforme
+    sauvegarde.py:1957  _instantane_dump_prive   ← la ligne fautive
+        appelée par  sauvegarde.py:2000  restaurer
+        appelé par   sauvegarde.py:1413  restaurer_complet
+        invoqué par  restaurer --coordonnee
 
-**C'était mon hypothèse principale, et elle est réfutée pour ce test.** La
-chaîne gardée est `restaurer_fichiers_locaux → _publier_fichiers_restaures →
-_ecrire_copie_confinee`, or `restaurer_complet` n'appelle
-`restaurer_fichiers_locaux` que si `--fichiers-cible` est fourni — l'épreuve ne
-passe que `--data-cible`, qui emprunte `restaurer_data`, un simple
-`shutil.copy2` sans garde. Le chemin fautif est donc ailleurs, du côté de la
-restauration de la base dans `restaurer_complet`.
+Le Lot 15 avait exclu ce chemin après avoir tracé `restaurer_data` et
+`restaurer_fichiers_locaux`, et conclu que le chemin `--data-cible` ne touchait
+pas la lecture confinée. La lecture confinée est en fait dans l'instantané
+privé du **dump**, en **amont** des deux. J'avais tracé les branches, pas la
+racine.
 
-Deux obstacles, consignés pour qu'ils ne soient pas retentés à l'identique :
-le `stderr` de la commande est **vide** dans la cause publiée, et l'artefact
-`preuves-qualification-windows` (qui contient `details-postgres-redis.txt`) est
-**téléchargement refusé** — le stockage blob renvoie `EOF`. L'épreuve ne peut
-pas non plus tourner ici : sa monture démarre son propre PostgreSQL, qui meurt
-avant la fin de l'installation.
+#### 3.2.3 Pourquoi le repli est sûr — et pas une sécurité qu'on abaisse
 
-**Verdict honnête** : réel, localisé dans `restaurer_complet` sur Windows, site
-exact de l'échec **non encore identifié**. Prochaine marche : faire publier le
-`stderr` du CLI par l'étape de verdict, plutôt que la seule ligne d'assertion.
+`_ouvrir_source_bundle` exige `dir_fd` + `O_NOFOLLOW` + `O_DIRECTORY` : POSIX
+seul. Mais **la propriété de sécurité ne repose pas sur `O_NOFOLLOW`** : elle
+repose sur l'empreinte. `_restaurer_dump_verifie` hache la copie privée et la
+compare au manifeste **avant** de lancer `pg_restore`. Une substitution que
+`O_NOFOLLOW` aurait empêchée produit une copie dont l'empreinte diffère : la
+restauration est **refusée**, elle ne restaure pas des octets non vérifiés.
+`O_NOFOLLOW` est une défense en profondeur ; l'empreinte est le contrôle
+porteur, et il reste entier. POSIX ne change pas d'un chemin.
+
+#### 3.2.4 Preuves
+
+Reproduction de la condition Windows (`os.supports_dir_fd` vidé + voie `msvcrt`
+du verrou) appliquée par un fichier `.pth`, donc **tenue dans les
+sous-processus** — c'était le point aveugle : le test redéfinit `PYTHONPATH`.
+
+* l'épreuve fautive **échoue** sans le repli, **passe** avec ;
+* une épreuve unitaire rend, sans le repli, exactement le message publié par
+  Windows ;
+* l'invariant de sécurité est **démontré**, pas promis : un dump substitué est
+  toujours refusé avant `pg_restore`, sans `dir_fd`.
+
+**Preuve sur Windows réel**, run `43115734154`, job `trace-coordonnee` :
+
+    AUCUNE TRACE — le test PASSE rejoué seul : 1 passed in 11.48s
+
+#### 3.2.5 Le piège du silence, évité
+
+Au run `43109101484`, le test coordonné avait **disparu** des causes publiées.
+La tentation était de conclure qu'il passait. C'eût été faux : les 50 créneaux
+d'annotations du job `windows` avaient été consommés par la suite « sans
+service », qui court avant la suite PostgreSQL. Aucune annotation
+PostgreSQL n'avait paru. L'absence ne prouvait rien.
+
+D'où la correction **structurelle** : un job dédié, `trace-coordonnee`, avec
+son propre budget d'annotations. Un diagnostic qui se lit par silence n'est pas
+un diagnostic.
+
+#### 3.2.6 Ce qui reste, pour le Lot 17
+
+La même cause (« Lecture confinée du bundle ») frappe **12 autres épreuves**
+par quatre autres points d'appel : `copier_fichiers_locaux`, `copier_objets_s3`,
+`_verifier_copies_bundle`, `_instantane_bundle_prive`. Je n'ai **pas** généralisé
+le repli : il est démontré pour un cas, et chacun demande sa propre
+justification.
 
 ### 3.3 Le reste, sans détour
 
