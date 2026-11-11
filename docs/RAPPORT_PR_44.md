@@ -204,6 +204,33 @@ Sur ce bac à sable, 42 épreuves échouent parce que le PostgreSQL fourni par
 Ils sont verts en CI, où les modules sont présents. À ne pas lire comme un
 défaut du livrable.
 
+### 3.8 Données clients réelles consignées dans git — risque accepté, garde-fou posé
+
+Mesuré : **7 archives ZIP (4,7 Mo) dont le nom porte un nom de bateau**, plus
+3 PDF dans `sample_data/`, sont suivies par git — sur `main` comme sur cette
+branche, depuis `af31922` (2026-11-03).
+
+**Décision de l'exploitante : garder.** Purger réécrirait l'historique de
+`main` (opération destructive et irréversible). Risque accepté, et assumé
+comme tel.
+
+Mais le garde-fou existant ne les voyait pas, et c'était le plus grave :
+`test_aucun_fichier_consigne_ne_nomme_un_bateau` lit le **contenu** de deux
+fichiers JSON. **Rien n'inspectait le nom des fichiers suivis par git.** Sept
+archives pouvaient donc être consignées depuis des mois, et même absentes du
+disque tout en restant prêtes à reparaître au prochain `checkout`.
+
+L'angle mort est bouché par `tests/test_confidentialite_fichiers_suivis.py` :
+la règle lit `git ls-files` (l'index, pas le système de fichiers), interdit
+toute archive hors exemption, et **fige les comptes** — 7 archives, 3 PDF
+d'exemple. Un huitième dépôt fait échouer l'épreuve.
+
+Les exemptions sont désignées par **motif d'emplacement, jamais par nom** :
+transcrire « BAVARIA 32… » dans un fichier d'épreuve serait précisément la
+fuite que l'épreuve a pour fonction d'empêcher. Deux mutations ont vérifié
+que ces épreuves ne sont pas muettes : faire lire le disque au lieu de git
+(2 échecs), relâcher les comptes figés (2 échecs).
+
 ### 3.7 La PR n'est pas fusionnée
 
 Elle est ouverte depuis le 2026-11-05 et en état `UNSTABLE` (cause : 3.4).
@@ -232,6 +259,8 @@ Elle est ouverte depuis le 2026-11-05 et en état `UNSTABLE` (cause : 3.4).
 | Lot 1.1 (la table) | **NON ÉCRITE** | exige le corpus |
 | Calibrage des seuils | **BLOQUÉ** | exige des verdicts humains |
 | `unaccent` / `pg_trgm` | **À INSTALLER** | prérequis d'exploitation |
+| Lot 10 (outil de revue) | **LIVRÉ** | verdicts explicites ; la revue reste à faire |
+| Données clients dans git | **RISQUE ACCEPTÉ** | 7 archives + 3 PDF ; garde-fou posé (Lot 13.1) |
 | Fusion de la PR | **EN ATTENTE** | état `UNSTABLE` (Windows) |
 
 ---
