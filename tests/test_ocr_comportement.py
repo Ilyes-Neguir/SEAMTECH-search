@@ -1000,7 +1000,7 @@ def test_version_schema_et_tables() -> None:
     # demandes/notifications du Lot 1, la 028 sail_extractions du Lot 3a,
     # la 029 les corrections et motifs du Lot 3b, la 030 les évaluations
     # de confiance du Lot 5, puis la 031 les accessoires du Lot 7 : 46.
-    assert len(TABLES_METIER) == 46
+    assert len(TABLES_METIER) == 47  # 033 : verdict_revue (verdicts humains, Lot 10)
     assert "ocr_etage3" in TABLES_METIER
     assert "audit_logs" in TABLES_METIER
     assert {"boat_models", "boat_model_aliases", "boat_model_merge_history", "search_synonyms", "approval_requests", "in_app_notifications", "sail_extractions", "extraction_corrections", "extraction_motifs_appris", "evaluations_confiance", "accessory_extractions", "accessory_corrections"} <= set(TABLES_METIER)

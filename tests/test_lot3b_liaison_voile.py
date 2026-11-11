@@ -95,13 +95,15 @@ def test_migration_029_version_tables_et_garde_fous() -> None:
     assert "boat_model_id" not in SQL_028_SAIL_EXTRACTIONS
     # La 030 (Lot 5) puis la 031 (Lot 7) ont suivi les deux tables du
     # Lot 3b — l'ordre historique du schéma reste prouvé.
-    assert len(TABLES_METIER) == 46
+    assert len(TABLES_METIER) == 47  # 033 : verdict_revue (verdicts humains, Lot 10)
+    # La 033 (Lot 10) a ajouté verdict_revue en queue : la fenêtre glisse d'un
+    # cran et la nouvelle table y est ancrée explicitement.
     assert TABLES_METIER[-5:] == (
-        "extraction_corrections",
         "extraction_motifs_appris",
         "evaluations_confiance",
         "accessory_extractions",
         "accessory_corrections",
+        "verdict_revue",
     )
 
 

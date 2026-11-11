@@ -215,7 +215,7 @@ def test_migration_028_sail_extractions_sans_resolution_bateau() -> None:
     assert VERSION_SCHEMA_METIER == "033_verdicts_revue"
     assert dict(MIGRATIONS_METIER)["028_sail_extractions"] == SQL_028_SAIL_EXTRACTIONS
     assert "sail_extractions" in TABLES_METIER
-    assert len(TABLES_METIER) == 46
+    assert len(TABLES_METIER) == 47  # 033 : verdict_revue (verdicts humains, Lot 10)
 
     sql = SQL_028_SAIL_EXTRACTIONS
     assert "CREATE TABLE IF NOT EXISTS sail_extractions" in sql

@@ -109,9 +109,10 @@ def test_constantes_verdicts_et_migration_030() -> None:
         "score IS NULL",
     ):
         assert fragment in sql, fragment
-    # La 031 (Lot 7) a suivi : 46 tables, evaluations_confiance reste à sa place.
-    assert len(TABLES_METIER) == 46
-    assert TABLES_METIER[-3] == "evaluations_confiance"
+    # La 031 (Lot 7) a suivi, puis la 033 (Lot 10) : 47 tables. La table des
+    # évaluations ne bouge pas, seul son rang depuis la fin recule d'un cran.
+    assert len(TABLES_METIER) == 47  # 033 : verdict_revue (verdicts humains, Lot 10)
+    assert TABLES_METIER[-4] == "evaluations_confiance"
 
 
 def test_statistiques_robustes_mediane_mad_iqr() -> None:

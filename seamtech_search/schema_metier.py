@@ -121,6 +121,9 @@ TABLES_METIER: tuple[str, ...] = (
     # source tracée (nom de dossier, gabarit du document, ou humain).
     "accessory_extractions",
     "accessory_corrections",
+    # Verdicts humains de revue (Lot 10) : la seule donnée irremplaçable du
+    # système — un verdict perdu ne se recalcule pas.
+    "verdict_revue",
 )
 
 SQL_006_FICHE_TECHNIQUE = """

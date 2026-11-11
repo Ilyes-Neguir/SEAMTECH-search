@@ -781,12 +781,13 @@ def test_version_schema_metier_est_la_derniere_migration_declaree() -> None:
     declarees = [version for version, _sql in MIGRATIONS_METIER]
     assert declarees == sorted(declarees), "les migrations métier doivent être déclarées dans l'ordre"
     assert declarees[-1] == VERSION_SCHEMA_METIER
-    assert len(TABLES_METIER) == 46, (
-        "46 tables métier (018-024 n'ajoutent aucune table ; la 025 ajoute audit_logs, "
+    assert len(TABLES_METIER) == 47, (
+        "47 tables métier (018-024 n'ajoutent aucune table ; la 025 ajoute audit_logs, "
         "la 026 les quatre tables du Lot 2, la 027 les demandes/notifications du Lot 1, "
         "la 028 sail_extractions du Lot 3a, la 029 les corrections et motifs "
         "appris du Lot 3b, la 030 les évaluations de confiance du Lot 5, "
-        "puis la 031 les extractions et corrections d'accessoires du Lot 7)"
+        "puis la 031 les extractions et corrections d'accessoires du Lot 7, "
+        "puis la 033 les verdicts humains de revue du Lot 10)"
     )
 
 
