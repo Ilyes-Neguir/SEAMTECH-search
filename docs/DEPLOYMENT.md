@@ -745,6 +745,22 @@ préférence :
    `CREATE EXTENSION pg_trgm;` — recommandé (tolérance aux fautes) ;
    `CREATE EXTENSION unaccent;` — recommandé (recherche insensible aux accents, migration 005).
 
+   **Constater et provisionner en une commande** (Lot 12) :
+
+   ```bash
+   export SEAMTECH_DATABASE_URL=postgresql://role-privilegie@hote:5432/base
+   python scripts/provisionner_extensions.py             # constat seul
+   python scripts/provisionner_extensions.py --appliquer # crée ce qui manque
+   ```
+
+   Le script est idempotent et **rend le code 1** si une extension recommandée
+   manque : un déploiement doit s'arrêter sur un prérequis absent, pas démarrer
+   avec une recherche amoindrie. Enchaînez-le avant la mise en service, avec un
+   rôle qui a le droit de créer les extensions — c'est tout l'intérêt : au
+   démarrage, l'application tente la même opération, et si son rôle n'est pas
+   privilégié elle *dégrade* au lieu d'échouer. Ce script déplace la question
+   au moment où l'on peut encore agir.
+
 Comportements constatés et testés (`tests/test_migrations_metier.py`) :
 
 - **`vector` non disponible** (extension non « trusted » : refusée à un rôle non superutilisateur) :
