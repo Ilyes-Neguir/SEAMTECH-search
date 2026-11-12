@@ -387,6 +387,10 @@ l'isolement sous Windows, pas au produit — et il reste à élucider. Je le
 note comme dette ouverte plutôt que de le ranger trop vite dans les
 « artefacts d'environnement ».
 
+**DETTE RÉSORBÉE au Lot 19 — voir §2.11.4.** La cause est attribuée et
+prouvée. Le mot « isolement » était d'ailleurs inexact : ce n'était ni un
+état partagé, ni un ordre, ni une fixture.
+
 ---
 
 ### 2.10.7 Le déploiement réel, et le commit parti trop vite
@@ -444,6 +448,240 @@ accompagné de sa preuve par un autre chemin, jamais poussé sur une intuition.
 
 ---
 
+
+## 2.11 Lot 19 — les quatre priorités, dans l'ordre imposé
+
+Ordre respecté : P1 → P2 → P3 → P4. Aucune priorité n'a été sautée.
+
+### 2.11.1 P1 — j'avais corrigé le mauvais endroit, et je l'ai déclaré fermé
+
+**C'est l'aveu de ce lot.** Au commit `99b6dde` j'ai corrigé
+`fiches/persistance.py`, la couche base, avec reproduction par test, garde-fou,
+et CI verte. J'ai écrit « P1 clos ». Le défaut ne l'était pas.
+
+Le §6.2 de `ETAPE0_ACCES_CORPUS.md` nommait pourtant le vrai site, noir sur
+blanc : « `etape0_corpus.py ajouter` est idempotent **par chemin**, mais il
+**remplace la ligne entière** ». Et il donnait les deux victimes —
+`type_voile='génois'` et `type_voile="voile d'avant"`, perdues en rejouant les
+74 dossiers de `VOILES 2024` sans axe. Ce sont bien des fiches de l'accumulateur
+qui ont été endommagées, pas des lignes de base. J'ai corrigé le bon symptôme
+au mauvais endroit, et je ne l'ai vu qu'en ouvrant le fichier cité — je
+m'étais arrêté au titre du §3.4.
+
+Le défaut, dans `ajouter_fiche` :
+
+    for rang, existante in enumerate(acc["fiches"]):
+        if existante["id"] == fiche["id"]:
+            acc["fiches"][rang] = fiche      # ← la ligne entière
+            return acc, False
+
+La fiche est reconstruite depuis les paramètres de l'appel : un axe non précisé
+repart à `None`.
+
+**Correctif** (`a5dfa6f`) : `_fusionner_axes()`. Décision **FUSIONNER** — chaque
+axe est indépendant ; un axe absent du nouvel appel conserve la valeur mesurée,
+un axe fourni la remplace. Ce n'est pas un gel : l'épreuve
+`test_une_valeur_relue_remplace_lancienne` le garantit.
+
+Reproduction **avant** correctif, message exact :
+
+    RÉGRESSION : le second relevé a effacé l'axe « génois » mesuré dans les
+    documents. C'est la perte de données silencieuse du §6.2.
+    assert None == 'C0'   (renseigner la matière ne doit pas vider la gamme)
+
+**Le verdict qui manquait au pré-contrôle.** Le §6.2 notait qu'il « ne voit pas
+ce défaut » et qu'« il lui manque un verdict APPAUVRI ».
+`etape0_preparer_chemins.py` émet désormais `AXES PRÉSENTS` sur un chemin déjà
+connu qui porte des axes mesurés. Vérifié sur un accumulateur fabriqué :
+
+    1. AXES PRÉSENTS id=8e7e9db55a9f4d1f  axes mesurés : gamme, type_voile,
+       matiere — conservés par la fusion (Lot 19) ; les réécrire suppose de les
+       fournir.
+    2. DÉJÀ CONNU    id=61ed57adc87688b5  racine=VOILES 2024
+
+C'est une **information**, pas un blocage : depuis la fusion, rejouer sans axe
+ne détruit plus rien, et bloquer interdirait des reprises légitimes.
+
+### 2.11.2 P2 — l'outil est livré, les verdicts n'existent pas
+
+Livré au commit `16c41b7`, avec 8 épreuves et une preuve manuelle bout en bout.
+État à ce jour, inchangé : **0 verdict humain recueilli**, `CONFIANCE_SEUIL_
+ALERTE` toujours **75**, `git diff config/` vide. L'outil refuse de proposer un
+seuil sous 30 verdicts dont 10 dans chaque classe tranchante.
+
+Deux points que le patron doit garder en tête :
+
+- **Comportement confirmé inchangé** : en dessous de 75 %, pas de verdict
+  automatique. Rien n'a bougé.
+- **La trouvaille non corrigée** : le score global est la **médiane des scores
+  par dimension**, donc **une seule dimension aberrante est totalement
+  absorbée**. Mesuré : un génois de 16 m face à une population à 12 m — +33 %,
+  énorme en voilerie — donne **100 %, `compatible`**. Deux dimensions fausses :
+  50 %. Quatre : 0 %. C'est un choix de robustesse assumé par le plan directeur
+  v2, pas un défaut ; le modifier changerait tous les verdicts déjà rendus. Il
+  est figé par `test_une_seule_dimension_aberrante_est_absorbee_par_la_mediane`,
+  dont le commentaire renvoie au recueil aveugle comme seul moyen de trancher.
+
+### 2.11.3 P3 — les 109 fiches, et un arbitrage qu'on redemandait
+
+**Le compte, par comptage direct** : 123 fiches. `gamme` 14/123,
+`type_voile` 14/123, `matiere` 17/123. **30 fiches portent au moins un axe,
+93 n'en portent aucun, 109 n'ont pas de type de voile.**
+
+**Le diagnostic, et il n'est pas celui qu'on attendait.** Je cherchais un échec
+d'extraction — gabarit introuvable, champ manquant, erreur silencieuse. Il n'y
+en a aucun : `etape0_corpus.py ajouter` **n'ouvre jamais aucun PDF**. `--gamme`,
+`--type-voile` et `--matiere` sont des paramètres optionnels **saisis par un
+humain**. Les 109 fiches n'ont pas d'axe parce que **personne n'a ouvert le
+document**, non parce qu'une machine a échoué. Ce n'est pas un bug : c'est du
+travail non fait. Aucun correctif automatique n'existe — l'arborescence ne dit
+pas le type de voile.
+
+**Ce que j'ai changé** (`8df3a32`) : sous-commande `a-qualifier`, qui les rend
+VISIBLES au lieu de les noyer dans un total. Sortie réelle :
+
+    Fiches consignées : 123        Axes incomplets : 120
+      VOILES 2024 : 74   VOILES 2025 : 27   VOILES 2026 : 19
+      93  gamme, type_voile, matiere     9  type_voile
+      11  gamme, matiere                 5  gamme, type_voile
+      2   type_voile, matiere
+
+(93 + 9 + 5 + 2 = **109 sans type de voile** — le compte recoupe exactement
+celui du P1.) Rien n'est estimé : une valeur devinée entrerait dans le
+dénominateur du taux d'appariement et le fausserait durablement.
+
+**La relance du traitement** (`d0e1b77`) a fait apparaître un défaut que
+personne n'avait vu. `mesurer` proposait deux fusions « à trancher » sur
+l'axe GAMME — alors que `decisions.json` porte **les deux arbitrages depuis
+novembre** :
+
+    gamme | ne_pas_fusionner | enrouleur VS enrouleur <nom propre>
+    gamme | fusionner        | enrouleur VS enrouleur surface
+
+**Fausse piste écartée** : j'ai d'abord soupçonné une divergence de graphie
+entre `<nom propre>` (dans la décision) et `nom propre` (dans la mesure). Je
+l'ai vérifié plutôt que supposé : les clés de normalisation coïncident
+**exactement**. La vraie cause est plus sèche — `charger_decisions()` n'était
+appelé que par les sous-commandes `decisions` et `decider`. Le pipeline de
+mesure n'ouvrait jamais le fichier. Le mécanisme d'arbitrage existait, était
+testé, était documenté, et **n'était branché sur rien**. À chaque exécution, on
+redemandait à l'exploitante de trancher une question qu'elle avait tranchée,
+avec motif daté et signé.
+
+**Avant / après, sur le corpus réel** (base jetable, 123 fiches chargées,
+123 extractions) :
+
+    AVANT   GAMME — 2 fusions PROBABLES à trancher par l'exploitante
+    APRÈS   GAMME — 0 PROBABLE, 1 ÉCARTÉE (refus déjà rendu, non redemandé),
+                    « enrouleur surface » appliqué comme graphie retenue
+
+L'écriture imposée par l'humain l'emporte sur la plus fréquente choisie par la
+machine — c'est le sens d'un arbitrage. Sans arbitrage, rien ne change
+(`test_sans_arbitrage_rien_ne_change`).
+
+**Le complément du corpus n'est PAS fait, volontairement.** Le §6.1 arrêtait le
+relevé pour deux raisons. La raison de méthode tombe, et je l'ai mesuré : ce
+n'est pas le **listage** qui tronque, c'est la **recherche** (`list_folder`
+paginé rend `has_more: false` et descend tout ; c'est la requête `ST` qui
+tronquait). L'outil pour finir existe donc et il est fiable. **Je ne m'en suis
+pas servi** : la seconde raison du §6.1 tient — arrêté sur instruction,
+l'intégration complète relevant du déploiement à l'initiative de l'exploitant,
+et une importation non demandée a déjà causé un dommage. Le compte reste
+**123/338**.
+
+### 2.11.4 P4 — la cause réelle, prouvée sans Windows
+
+P4 interdit de classer un échec « artefact d'environnement » sans preuve. La
+cause se lit dans la CI, pas dans une supposition : le pas `diag-cible-5` du run
+43248762352 donne
+
+    seamtech_search/sauvegarde.py:669
+    SauvegardeError: Lecture confinée du bundle indisponible sur cette plateforme
+
+`copier_fichiers_locaux` lit chaque pièce jointe par `_ouvrir_source_bundle`,
+qui exige `dir_fd` + `O_NOFOLLOW` + `O_DIRECTORY`. **Windows natif n'en a aucun
+des trois**, et ce chemin n'a pas de repli — à la différence du dump privé, qui
+en a un. Le produit refuse explicitement plutôt que de lire sans confinement.
+
+**Une fausse piste que j'ai dû écarter en cours de route.** Ma première
+reproduction vidait `os.supports_dir_fd` sur Linux : elle échouait **plus tôt**,
+sur « Verrouillage sûr indisponible » (ligne 430). La raison est instructive —
+sur Windows `msvcrt` existe, donc le verrou passe par `_acquerir_windows` et ne
+bronche pas ; ma reproduction n'avait ni l'un ni l'autre. L'échec réel est plus
+loin, en 669. Reproduire fidèlement demandait de raisonner sur la **séquence**,
+pas seulement sur la capacité.
+
+**Les preuves** (`0bdb90c`), deux épreuves dans `test_plateforme_sans_dir_fd.py`
+: `…_refusee_sans_dir_fd` reproduit l'échec du runner **sur n'importe quelle
+machine**, et son **contrôle** exécute rigoureusement le même code sans la panne
+et constate qu'il réussit (`identite_catalogue == "verifiee"`, octets à
+l'identique). C'est ce qui distingue « la plateforme ne sait pas » d'« une
+isolation défaillante » : si l'échec venait d'une fixture ou d'un état partagé,
+le contrôle échouerait aussi. Or il passe.
+
+**Le saut porte sur la capacité, jamais sur `sys.platform == "win32"`**, et se
+vérifie donc ici : sous la condition Windows simulée le test SAUTE avec un motif
+nommé, et il REPASSE dès que la capacité est présente. Le commentaire le dit
+explicitement — **sauter n'est pas couvrir**.
+
+**Vérifié sur le runner Windows réel** (run 43262813400) : `diag-cible-5` est
+passé de **rc=1** à **rc=0**, avec « 2 skipped » et un motif nommé. Contrôle
+honnête des six cibles, car `rc=0` peut dire « passé » comme « sauté » :
+
+    cible-1  1 passed      cible-4  1 passed
+    cible-2  1 passed      cible-5  2 skipped   ← celle-ci
+    cible-3  2 passed      cible-6  3 passed
+
+Une seule saute ; les cinq autres passent réellement. La cible a été gardée
+**un cycle** comme annoncé, puis retirée (`9a3c9e6`).
+
+**Ce que je n'ai pas fait**, et qui vous revient : je n'ai pas écrit de repli
+Windows pour la copie confinée. Comment ouvrir sans suivre les liens quand le
+noyau ne l'offre pas est une décision de sécurité ; elle ne s'improvise pas.
+**Corollaire, écrit dans le workflow pour qu'il ne se perde pas : la sauvegarde
+des pièces jointes LOCALES est indisponible sur Windows. Ce n'est pas un test
+qui échoue, c'est une fonctionnalité absente.**
+
+### 2.11.5 Preuves
+
+| SHA | Contenu | CI | Job `windows` (verdict) |
+|---|---|---|---|
+| `99b6dde` | P1 (couche base) | success | success |
+| `16c41b7` | P2 outil de verdicts | success | success |
+| `a5dfa6f` | **P1 bis — le vrai site** | success | success |
+| `8df3a32` | P3 `a-qualifier` | **aucun run** (voir 2.11.6) | — |
+| `d0e1b77` | P3 arbitrages appliqués | **FAILURE** (voir 2.11.6) | — |
+| `0bdb90c` | P4 cause prouvée | success | success |
+| `9a3c9e6` | P4 cible retirée | success | success |
+
+Suite complète en local : **3366 passed / 42 failed / 231 skipped**. Référence
+avant le lot : 3343/42. **Les 42 échecs sont les mêmes**, tous dans des modules
+dépendant de `unaccent`/`pg_trgm`, que le banc `pgserver` ne fournit pas — et
+que la CI provisionne, elle, de façon bloquante (Lot 18).
+
+### 2.11.6 Un incident que j'ai causé, et la leçon
+
+`d0e1b77` a mis la CI **rouge**. Ce n'était pas un test : c'était **Ruff**,
+étape 9 (`I001`, bloc d'imports non trié). J'avais ajouté `from pathlib import
+Path` dans `tests/test_mesure_correspondances.py` par script, puis vérifié
+`ruff check` **sur le seul fichier de script que j'avais modifié** — jamais sur
+le fichier de test. Corrigé en `0bdb90c`.
+
+Conséquence à ne pas minimiser : **les étapes de test de `d0e1b77` ont toutes
+été sautées**, la lint ayant échoué avant. Le code de P3 n'a donc été réellement
+exécuté en CI qu'à partir de `0bdb90c`, où tout est vert.
+
+Par ailleurs `8df3a32` **n'a jamais eu de run à son nom** : je l'ai committé
+sans le pousser, il est parti dans le même lot que `d0e1b77`, et GitHub ne
+déclenche que sur la tête de la poussée. Le contenu de P3 1/2 est couvert par
+les runs suivants, mais **je n'ai pas respecté la règle « CI au SHA exact » sur
+ce commit**, et je le dis.
+
+Leçon, pour les prochains lots : linter **tout** ce qui est poussé, pas
+seulement le fichier sur lequel on vient de travailler ; et pousser chaque
+étape séparément quand l'étape doit être prouvée.
+
+---
 
 ## 3. Ce qui n'est PAS prouvé — la partie que ce rapport ne doit pas arranger
 
@@ -690,17 +928,32 @@ Par ordre, chacun étant une condition et non une suggestion :
    l'image `pgvector/pgvector:pg16`, celle-là même qui sert en production ;
    le provisionnement est désormais une étape du déploiement, plus une
    instruction dans une note (§2.10).
-5. **Le corpus complété au déploiement**, à l'initiative de l'exploitant —
-   et **après** correction du défaut du point 6 du §3.3, sous peine d'effacer
-   des axes déjà mesurés.
+5. **Le corpus complété au déploiement**, à l'initiative de l'exploitant.
+   Le défaut d'effacement n'est plus un obstacle : il est corrigé aux deux
+   endroits (§2.11.1) et la fusion conserve désormais tout axe mesuré. La
+   raison de *méthode* qui bloquait le relevé est levée — ce n'était pas le
+   listage qui tronquait, c'était la recherche (§2.11.3) — mais la raison de
+   *décision* demeure : je n'ai pas complété le relevé de ma propre initiative.
+   Compte actuel : **123/338**.
 6. **Une revue humaine** (Lot 10) produisant les premiers verdicts : sans eux,
    aucun seuil n'est calibré, et les seuils actuels ne sont pas défendables.
-7. **Les points 13.4 et 13.5 levés sur site** et la liste signée.
+   **L'outil existe depuis le Lot 19** (`scripts/recueillir_verdicts_
+   reutilisation.py`, §2.11.2) : il présente les comparaisons **sans le score**,
+   et refuse de proposer un seuil sous 30 verdicts dont 10 dans chaque classe
+   tranchante. **État : 0 verdict recueilli.** C'est la seule pièce qui manque,
+   et elle est humaine.
+7. **Décider du repli Windows pour la copie confinée** (§2.11.4). Sans lui, la
+   sauvegarde des pièces jointes locales reste **indisponible** sur Windows —
+   non pas en panne, mais absente.
+8. **Les points 13.4 et 13.5 levés sur site** et la liste signée.
 
 ### 4.3 Ce que le Lot 9 attend
 
 Il reste fermé, et il le restera tant que le corpus ne sera pas complet **et**
-que les 109 fiches sans axe n'auront pas été qualifiées. Lancer la table de
+que les 109 fiches sans axe n'auront pas été qualifiées. Le Lot 19 a mesuré
+précisément l'état et rendu ces fiches visibles (`a-qualifier`, §2.11.3) — mais
+il n'en a qualifié **aucune**, parce que la qualification suppose d'ouvrir les
+documents : aucune machine ne peut la faire à votre place. Lancer la table de
 correspondance sur 123 fiches dont 109 n'ont pas de type de voile produirait un
 taux d'appariement qui ne veut rien dire — et un chiffre faux, une fois publié,
 est très difficile à démentir.
