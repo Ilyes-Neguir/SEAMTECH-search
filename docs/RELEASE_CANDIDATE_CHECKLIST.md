@@ -130,15 +130,21 @@ docker compose up -d --build
 docker compose ps
 ```
 
-- [ ] **4.1** **7 services** : `postgres`, `minio`, `redis`, `web` (API), **`worker`**
-      (exécute les imports — service SÉPARÉ, cf. 4.5/7b), `frontend` et
+- [ ] **4.1** **8 services** : `postgres`, `minio`, `redis`, `web` (API), **`worker`**
+      (exécute les imports — service SÉPARÉ, cf. 4.5/7b), `frontend`,
       **`sauvegarde`** (ajouté en `af31922` — les anciennes révisions de cette
-      liste annonçaient six services, ce qui n'est plus exact).
-- [ ] **4.2** Tous en `running (healthy)` (les healthchecks font foi ; `web` attend
-      `service_healthy` sur les trois autres).
+      liste annonçaient six services, ce qui n'est plus exact) et
+      **`provisionner-extensions`** (Lot 18 : service ONE-SHOT, il crée
+      `unaccent`/`pg_trgm` puis sort en 0. Il n'est donc pas « healthy », il
+      est « exited » — c'est son code de sortie qui fait foi.)
+- [ ] **4.2** Les **7** services pérennes en `running (healthy)` (les healthchecks font
+      foi ; `web` attend `service_healthy` sur les trois autres). Le huitième,
+      `provisionner-extensions`, est one-shot : il doit être `exited (0)`.
 - [ ] **4.3** Ports publiés **en loopback uniquement** : `docker compose ps --format '{{.Name}} {{.Ports}}'`
       ne montre que des `127.0.0.1:…` (garde-fou : `tests/test_compose_hardening.py`).
-- [ ] **4.4** Redémarrage automatique : `restart: unless-stopped` sur les **7** services.
+- [ ] **4.4** Redémarrage automatique : `restart: unless-stopped` sur les **7** services
+      pérennes. `provisionner-extensions` fait exception, et c'est voulu :
+      `restart: "no"`, un service one-shot ne se relance pas.
 
 | 4.5 | **Service `worker` démarré** (exécute les imports) | `docker compose ps worker` | `running` / `healthy` (le healthcheck lance `--verifier`) | |
 | 4.6 | `web` n'exécute PAS d'import | `docker compose exec -T web printenv SEAMTECH_WEB_WORKER_ENABLED` | `false` | |
@@ -330,7 +336,9 @@ docker compose exec web python -m seamtech_search.sauvegarde verifier \
 
 ## 13. Arrêt / redémarrage
 
-- [ ] **13.1** `docker compose stop` puis `docker compose up -d` → **7** services `healthy`.
+- [ ] **13.1** `docker compose stop` puis `docker compose up -d` → **7** services
+      `healthy`, et `provisionner-extensions` en `exited (0)` : il se relance à
+      chaque `up`, sans effet puisqu'il est idempotent.
 - [ ] **13.2** Après redémarrage : `/health` conserve le nombre de documents, les
       `object_key` restent exploitables (garde-fou
       `test_references_objets_survivent_au_redemarrage`), la recherche renvoie les mêmes
@@ -362,9 +370,11 @@ interdit.
 - Les trois volumes nommés sont bien déclarés et montés là où les données
   vivent : `postgres-data:/var/lib/postgresql/data`, `minio-data:/data`,
   `redis-data:/data`. Vérifié en chargeant `docker-compose.yml`.
-- Les **7** services (et non 6) portent tous un `healthcheck` et un
+- Les **7** services pérennes (et non 6) portent tous un `healthcheck` et un
   `restart: unless-stopped` : si le contrôle de 13.4 échoue, ce ne sera pas
-  faute de santé déclarée.
+  faute de santé déclarée. Le huitième, `provisionner-extensions`, est
+  one-shot : on le constate à son code de sortie, pas à sa santé (garde-fou :
+  `test_un_service_one_shot_est_attendu_et_jamais_surveille`).
 - La **durabilité des données** face à une coupure est prouvée au niveau
   applicatif, sans conteneur : un travail tué par `SIGKILL` est retrouvé et
   mis en quarantaine au démarrage (`test_chaos.py`), et les fichiers déjà
