@@ -114,10 +114,14 @@ def test_publication_multi_fichiers_ne_publie_rien(tmp_path, sans_dir_fd, monkey
     bundle.mkdir()
     (bundle / "a").write_bytes(b"a")
     (bundle / "b").write_bytes(b"b")
-    manifeste = {"fichiers_locaux": {"copies": [
-        {"id": 1, "path_relatif": "a", "sha256": "0" * 64},
-        {"id": 2, "path_relatif": "b", "sha256": "1" * 64},
-    ]}}
+    manifeste = {
+        "fichiers_locaux": {
+            "copies": [
+                {"id": 1, "path_relatif": "a", "sha256": "0" * 64},
+                {"id": 2, "path_relatif": "b", "sha256": "1" * 64},
+            ]
+        }
+    }
     sortie = tmp_path / "out"
     with pytest.raises(SauvegardeError):
         sauvegarde.restaurer_fichiers_locaux(manifeste, bundle, sortie)
@@ -154,9 +158,15 @@ def test_restaurer_via_le_repli_quand_l_empreinte_est_conforme(tmp_path, sans_di
 
     monkeypatch.setattr(sauvegarde.subprocess, "run", run)
     monkeypatch.setattr(sauvegarde, "_trouver_binaire", lambda nom: nom)
-    monkeypatch.setattr(sauvegarde, "_etat_base", lambda url: {
-        "versions_schema": [], "fiches_par_statut": {}, "schema_identite_octets_valide": True,
-    })
+    monkeypatch.setattr(
+        sauvegarde,
+        "_etat_base",
+        lambda url: {
+            "versions_schema": [],
+            "fiches_par_statut": {},
+            "schema_identite_octets_valide": True,
+        },
+    )
     monkeypatch.setattr(sauvegarde, "_connecter", lambda *a, **k: _ConnexionFactice())
 
     rapport = sauvegarde.restaurer("postgresql://synthetique/cible", manifeste, dump)
@@ -184,3 +194,85 @@ class _ConnexionFactice:
 
     def close(self):
         return None
+
+
+def test_copie_des_fichiers_locaux_refusee_sans_dir_fd(tmp_path, sans_dir_fd):
+    """Cause du diagnostic Windows « diag-cible-5 », prouvée sans Windows.
+
+    Le runner Windows faisait échouer
+    ``test_sha_snapshot_propage_aux_copies_locale_et_objet_pg`` sur ::
+
+        seamtech_search/sauvegarde.py:669  SauvegardeError
+        « Lecture confinée du bundle indisponible sur cette plateforme »
+
+    Ce n'est ni un état partagé, ni un ordre d'exécution, ni une fixture :
+    c'est une **capacité du noyau**. ``copier_fichiers_locaux`` lit chaque
+    source par ``_ouvrir_source_bundle``, qui exige ``O_NOFOLLOW`` +
+    ``O_DIRECTORY`` + ``dir_fd``. Windows natif n'en a aucun des trois, et
+    cette fonction n'a **pas** de repli — à la différence du dump privé, qui en
+    a un (voir l'épreuve voisine).
+
+    On le démontre ici, sur n'importe quelle machine, en vidant
+    ``os.supports_dir_fd`` : l'échec du runner est donc reproductible et sa
+    cause attribuée. Conséquence assumée : **la sauvegarde des pièces jointes
+    locales est indisponible sur Windows**, elle n'y est pas « cassée » — le
+    produit refuse explicitement plutôt que de lire sans confinement.
+    """
+    import hashlib
+
+    source = tmp_path / "piece.txt"
+    contenu = b"contenu-local"
+    source.write_bytes(contenu)
+    destination = tmp_path / "bundle"
+
+    with pytest.raises(SauvegardeError, match="Lecture confinée du bundle indisponible"):
+        sauvegarde.copier_fichiers_locaux(
+            {
+                "documents": [
+                    {
+                        "id": 1,
+                        "path": str(source),
+                        "name": source.name,
+                        "is_dir": False,
+                        "source_sha256": hashlib.sha256(contenu).hexdigest(),
+                    }
+                ]
+            },
+            destination,
+        )
+
+
+def test_la_cause_est_la_capacite_et_non_lenvironnement(tmp_path):
+    """Contrôle : SANS la panne, la même copie RÉUSSIT.
+
+    C'est ce qui distingue « la plateforme ne sait pas » d'« une isolation de
+    test défaillante ». Si l'échec de Windows venait d'un état partagé, d'un
+    ordre d'exécution ou d'une fixture, ce contrôle échouerait aussi — or il
+    passe, avec rigoureusement le même code et la même arborescence. La cause
+    est donc bien la capacité du noyau, attribuée et non supposée.
+    """
+    import hashlib
+
+    source = tmp_path / "piece.txt"
+    contenu = b"contenu-local"
+    source.write_bytes(contenu)
+    destination = tmp_path / "bundle"
+
+    rapport = sauvegarde.copier_fichiers_locaux(
+        {
+            "documents": [
+                {
+                    "id": 1,
+                    "path": str(source),
+                    "name": source.name,
+                    "is_dir": False,
+                    "source_sha256": hashlib.sha256(contenu).hexdigest(),
+                }
+            ]
+        },
+        destination,
+    )
+    copies = rapport["copies"]
+    assert len(copies) == 1, f"la copie doit aboutir quand dir_fd existe : {rapport}"
+    assert copies[0]["identite_catalogue"] == "verifiee"
+    assert (destination / copies[0]["path_relatif"]).read_bytes() == contenu

@@ -587,6 +587,17 @@ jobs:
           # cause ou si le test suppose POSIX. Les trois cibles précédentes
           # (rejeu ×2, verrou de mutation) sont sorties de la liste : leur cause
           # est connue et corrigée.
+          #
+          # « test_sha_snapshot_propage_aux_copies_locale_et_objet_pg »
+          # (cible 5) : cause ATTRIBUÉE au Lot 19 — « Lecture confinée du bundle
+          # indisponible sur cette plateforme ». `copier_fichiers_locaux` lit
+          # par dir_fd + O_NOFOLLOW + O_DIRECTORY, absents de Windows natif, et
+          # ce chemin n'a pas de repli. Démontré sans Windows par
+          # `tests/test_plateforme_sans_dir_fd.py`
+          # ::test_copie_des_fichiers_locaux_refusee_sans_dir_fd (+ son
+          # contrôle). Le test SAUTE désormais sur la CAPACITÉ, jamais sur
+          # `sys.platform`. Il reste UNE FOIS dans cette liste : vérifier sur le
+          # vrai runner que l'attribution tient, avant de le retirer.
           $cibles = @(
             "tests/test_liaison_catalogue_capture_pg.py::test_declencheur_invalide_meme_les_reecritures_identiques_pg",
             "tests/test_rebuild_index_postgres.py::test_cli_rebuild_aboutit_sur_une_base_postgres_peuplee",

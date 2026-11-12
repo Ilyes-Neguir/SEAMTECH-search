@@ -377,6 +377,28 @@ def test_sha_snapshot_propage_aux_copies_locale_et_objet_pg(tmp_path: Path, obje
 
     if not os.environ.get("SEAMTECH_TEST_DATABASE_URL"):
         pytest.skip("serveur PG de test dédié absent")
+    # Cause attribuée au Lot 19 (P4), pas « classée artefact ». Ce test copie
+    # des pièces jointes LOCALES ; `copier_fichiers_locaux` les lit par
+    # `_ouvrir_source_bundle`, qui exige dir_fd + O_NOFOLLOW + O_DIRECTORY.
+    # Windows natif n'en a aucun des trois, et ce chemin n'a PAS de repli — à
+    # la différence du dump privé. Le produit refuse donc explicitement.
+    #
+    # Le saut porte sur la CAPACITÉ, jamais sur `sys.platform == "win32"` : il
+    # est donc reproductible et vérifiable ici même, sans Windows, par
+    # `tests/test_plateforme_sans_dir_fd.py`
+    # ::test_copie_des_fichiers_locaux_refusee_sans_dir_fd — qui prouve le
+    # refus, et son contrôle, qui prouve que tout réussit dès que la capacité
+    # est présente.
+    #
+    # ATTENTION : sauter n'est pas couvrir. Sur Windows, la sauvegarde des
+    # pièces jointes locales reste NON VÉRIFIÉE, et indisponible par choix de
+    # sécurité — elle n'y est pas « cassée ».
+    if not sauvegarde._confinement_lecture_disponible():
+        pytest.skip(
+            "lecture confinée par dir_fd absente : la sauvegarde des pièces "
+            "locales refuse explicitement sur cette plateforme (cause : "
+            "tests/test_plateforme_sans_dir_fd.py)"
+        )
     nom, url = _creer_base_jetable()
     index = SearchIndex(tmp_path / "index.db", url)
     index.initialize()
