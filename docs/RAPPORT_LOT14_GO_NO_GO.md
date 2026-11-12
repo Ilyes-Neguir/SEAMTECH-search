@@ -672,13 +672,20 @@ Par ordre, chacun étant une condition et non une suggestion :
 
 1. **[FAIT]** Corriger le plafond de 100 — voir §2.6. Toute statistique tirée
    de `/recherche` est désormais exacte.
-2. **[RESTE] La restauration sur Windows (§3.2).** `restaurer --coordonnee`
-   sort en 1 ; le site exact de l'échec, dans `restaurer_complet`, n'est pas
-   encore identifié. Une sauvegarde qu'on ne peut pas restaurer n'est pas une
-   sauvegarde — et si des postes Windows sont déployés, c'est bloquant.
-   Prochaine marche : faire publier le `stderr` du CLI par l'étape de verdict.
-3. **Les onze échecs Windows nommés**, c'est-à-dire soit corrigés, soit
-   inscrits dans `ci/ecarts-windows.txt` avec leur raison — jamais oubliés.
+2. **[FAIT] La restauration sur Windows (§3.2, Lot 16).** La chaîne de la
+   panne a été identifiée — `restaurer_complet` → `restaurer()` →
+   `_instantane_dump_prive`, ligne 1957, où la lecture confinée du bundle
+   échoue quand `os.open` n'est pas dans `os.supports_dir_fd` — et corrigée
+   par un repli éprouvé. Le canal `trace-coordonnee` est vert, et le job
+   `windows` passe au vert depuis le SHA `aa06108`.
+3. **[FAIT] Les échecs Windows nommés (§2.9, Lot 17).** Les neuf ont reçu une
+   cause démontrée. Huit sur neuf venaient d'épreuves, jamais du produit — une
+   clé de chemin calculée autrement par le test et par le produit, une
+   comparaison de chemins sensible à la casse, un comparateur qui prenait
+   `pg_dump.bak` pour `pg_dump`. **Aucune ligne** n'a été ajoutée à
+   `ci/ecarts-windows.txt` : ce n'étaient pas des écarts de plateforme
+   assumés, mais des erreurs de mesure. Aucune ligne de `seamtech_search/`
+   n'a changé.
 4. **[FAIT]** `unaccent` et `pg_trgm` installés — prouvé en CI sur
    l'image `pgvector/pgvector:pg16`, celle-là même qui sert en production ;
    le provisionnement est désormais une étape du déploiement, plus une
