@@ -12,10 +12,102 @@ from __future__ import annotations
 
 from typing import Any
 
+from pathlib import Path
+
 import pytest
 
+from scripts.etape0_corpus import charger_decisions
 from scripts.mesurer_correspondances import AXES, formater, lire_axe, proposer_table
 from seamtech_search.qualite.cartographie import variantes_categorie
+
+
+def _decisions(*fusions: dict[str, Any]) -> dict[str, Any]:
+    """Un jeu d'arbitrages prêt à l'emploi, sans toucher au fichier du dépôt."""
+    # Un chemin inexistant rend un jeu vide — comportement déjà établi et
+    # testé de `charger_decisions`, donc pas de doublon de construction.
+    return charger_decisions(Path("/tmp/inexistant-lot19/decisions.json")) | {"fusions": list(fusions)}
+
+
+# ---------------------------------------------------------------------------
+# Les arbitrages DÉJÀ RENDUS ne se redemandent pas
+# ---------------------------------------------------------------------------
+
+
+def test_un_refus_deja_rendu_nest_plus_repropose() -> None:
+    """RÉGRESSION : l'exploitante était invitée à re-trancher ce qu'elle a tranché.
+
+    `decisions.json` porte `ne_pas_fusionner` sur « enrouleur » /
+    « enrouleur <nom propre> » depuis le 2026-11-09. Malgré cela, `mesurer`
+    continuait de proposer la paire comme « à trancher par l'exploitante » :
+    le pipeline appelle `proposer_table` sans jamais consulter les décisions
+    (`charger_decisions` n'était appelé que par `decisions` et `decider`).
+
+    « Que rien n'attende deux fois » vaut aussi pour une décision humaine.
+    """
+    dec = _decisions(
+        {
+            "axe": "gamme",
+            "valeur_a": "enrouleur",
+            "valeur_b": "enrouleur <nom propre>",
+            "decision": "ne_pas_fusionner",
+            "motif": "Deux gammes distinctes : la valeur courte est une gamme, "
+            "la longue une gamme précisée par son support.",
+            "decideur": "exploitante",
+            "graphie_retenue": None,
+        }
+    )
+    lignes = [("enrouleur", 3), ("enrouleur <nom propre>", 5)]
+
+    sans = proposer_table(lignes, axe="gamme")
+    assert len(sans["probables"]) == 1, "sans décision, la paire est bien proposée"
+
+    avec = proposer_table(lignes, axe="gamme", decisions=dec)
+    assert avec["probables"] == [], (
+        "RÉGRESSION : une fusion REFUSÉE par l'exploitante est encore proposée. "
+        "On lui redemande un arbitrage qu'elle a déjà rendu."
+    )
+    # Et le refus reste TRACÉ : il ne disparaît pas en silence.
+    assert any(e["valeur_courte"] == "enrouleur" for e in avec["ecartees"])
+
+
+def test_un_arbitrage_fusionner_est_applique_et_non_repropose() -> None:
+    """Une décision « fusionner » s'APPLIQUE : elle ne se redemande pas non plus.
+
+    `decisions.json` porte `fusionner` sur « enrouleur » / « enrouleur surface »
+    avec graphie retenue « enrouleur surface ». La paire doit donc sortir de la
+    zone « à trancher » et devenir une fusion certaine, avec l'écriture imposée
+    par l'humain — et non l'écriture la plus fréquente choisie par la machine.
+    """
+    dec = _decisions(
+        {
+            "axe": "gamme",
+            "valeur_a": "enrouleur",
+            "valeur_b": "enrouleur surface",
+            "decision": "fusionner",
+            "motif": "Variante d'écriture d'une même gamme.",
+            "decideur": "exploitante",
+            "graphie_retenue": "enrouleur surface",
+        }
+    )
+    # « enrouleur » est le PLUS FRÉQUENT : la machine choisirait donc « enrouleur ».
+    lignes = [("enrouleur", 30), ("enrouleur surface", 2)]
+
+    table = proposer_table(lignes, axe="gamme", decisions=dec)
+    assert table["probables"] == [], "un arbitrage rendu ne se redemande pas"
+    imposees = [c for c in table["certaines"] if c.get("source") == "arbitrage"]
+    assert len(imposees) == 1
+    # L'écriture imposée par l'humain l'emporte sur la plus fréquente.
+    assert imposees[0]["ecriture_retenue"] == "enrouleur surface"
+    assert imposees[0]["ecritures_a_remplacer"] == ["enrouleur"]
+
+
+def test_sans_arbitrage_rien_ne_change() -> None:
+    """Le défaut de comportement doit rester identique là où rien n'a été tranché."""
+    lignes = [("enrouleur", 3), ("enrouleur <nom propre>", 5)]
+    vide = proposer_table(lignes, axe="gamme")
+    assert len(vide["probables"]) == 1
+    assert vide["ecartees"] == []
+
 
 # ---------------------------------------------------------------------------
 # Fusions CERTAINES — une même valeur écrite de plusieurs façons
@@ -108,6 +200,9 @@ def test_corpus_vide_ne_fabrique_rien() -> None:
         "nb_fiches_mesurees": 0,
         "certaines": [],
         "probables": [],
+        # Une paire déjà tranchée n'est plus reproposée : la clé fait partie
+        # du contrat depuis le Lot 19.
+        "ecartees": [],
     }
 
 

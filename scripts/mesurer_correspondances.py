@@ -44,6 +44,16 @@ from typing import Any, Sequence
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+try:  # importé comme module (tests) ou comme script (scripts/ dans sys.path)
+    from scripts.etape0_corpus import (
+        charger_decisions,
+        est_fusion_refusee,
+    )
+except ImportError:  # pragma: no cover - dépend du point d'entrée
+    from etape0_corpus import (  # type: ignore[no-redef]
+        charger_decisions,
+        est_fusion_refusee,
+    )
 from seamtech_search.qualite.cartographie import (  # noqa: E402
     cle_normalisation,
     lignes_categorie,
@@ -67,12 +77,30 @@ def ecriture_retenue(formes: Sequence[dict[str, Any]]) -> str:
     return str(formes[0]["valeur"])
 
 
-def proposer_table(lignes: Sequence[tuple[object, int]]) -> dict[str, Any]:
+def proposer_table(
+    lignes: Sequence[tuple[object, int]],
+    *,
+    axe: str | None = None,
+    decisions: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Construit la table de correspondance PROPOSÉE d'un axe.
 
     Entrée : ``(valeur brute, nombre d'occurrences)``, telle que la rendent les
     lecteurs de :mod:`~seamtech_search.qualite.cartographie`. Sortie : des
     comptes et des propositions. Aucune écriture.
+
+    ``decisions`` porte les arbitrages DÉJÀ RENDUS par l'exploitante. Deux
+    effets, et c'est tout l'objet du paramètre :
+
+    * une paire **refusée** (``ne_pas_fusionner``) sort des propositions et
+      rejoint ``ecartees`` — elle n'est plus redemandée ;
+    * une paire **arbitrée** (``fusionner``) devient une fusion certaine, avec
+      la graphie imposée par l'humain et non la plus fréquente choisie par la
+      machine.
+
+    Sans ``axe`` ni ``decisions``, rien ne change : la fonction se comporte
+    exactement comme avant. C'est ce que garantit l'épreuve
+    ``test_sans_arbitrage_rien_ne_change``.
     """
     valeurs = [(valeur, int(nb or 0)) for valeur, nb in lignes if str(valeur or "").strip()]
     certaines = [
@@ -98,12 +126,47 @@ def proposer_table(lignes: Sequence[tuple[object, int]]) -> dict[str, Any]:
         }
         for candidat in variantes_probables(valeurs)
     ]
+    ecartees: list[dict[str, Any]] = []
+
+    if decisions and axe:
+        retenues: list[dict[str, Any]] = []
+        for candidat in probables:
+            courte, longue = candidat["valeur_courte"], candidat["valeur_longue"]
+            if est_fusion_refusee(decisions, axe, courte, longue):
+                # Déjà tranché : on ne redemande pas. Le refus reste tracé.
+                ecartees.append(candidat)
+                continue
+            retenues.append(candidat)
+        probables = retenues
+
+        for fusion in decisions.get("fusions", []):
+            if fusion.get("axe") != axe or fusion.get("decision") != "fusionner":
+                continue
+            a, b = fusion["valeur_a"], fusion["valeur_b"]
+            graphie = fusion.get("graphie_retenue") or b
+            # La paire arbitrée ne doit plus apparaître « à trancher ».
+            probables = [c for c in probables if not ({c["valeur_courte"], c["valeur_longue"]} == {a, b})]
+            presente = {str(valeur) for valeur, _ in valeurs}
+            if a in presente or b in presente:
+                certaines.append(
+                    {
+                        "cle": cle_normalisation(graphie),
+                        "ecriture_retenue": graphie,
+                        "ecritures_a_remplacer": [v for v in (a, b) if v != graphie and v in presente],
+                        "nb_formes": len([v for v in (a, b) if v in presente]),
+                        "nb_fiches": sum(nb for valeur, nb in valeurs if str(valeur) in (a, b)),
+                        "decision": "fusionner",
+                        "source": "arbitrage",
+                    }
+                )
+
     return {
         "nb_valeurs_distinctes": len({cle_normalisation(valeur) for valeur, _ in valeurs}),
         "nb_ecritures_distinctes": len({str(valeur) for valeur, _ in valeurs}),
         "nb_fiches_mesurees": sum(nb for _, nb in valeurs),
         "certaines": certaines,
         "probables": probables,
+        "ecartees": ecartees,
     }
 
 
@@ -120,11 +183,15 @@ def lire_axe(cursor: Any, axe: str) -> list[tuple[object, int]]:  # noqa: ANN401
     raise ValueError(f"Axe inconnu : {axe!r}. Attendus : {list(AXES)}.")
 
 
-def mesurer(index: Any, axes: Sequence[str] = AXES) -> dict[str, Any]:  # noqa: ANN401 — index réel
+def mesurer(  # noqa: ANN401 — index réel
+    index: Any,
+    axes: Sequence[str] = AXES,
+    decisions: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Mesure les axes demandés. Lecture seule, une seule connexion."""
     with index.connect() as connexion:
         with connexion.cursor() as cursor:
-            return {axe: proposer_table(lire_axe(cursor, axe)) for axe in axes}
+            return {axe: proposer_table(lire_axe(cursor, axe), axe=axe, decisions=decisions) for axe in axes}
 
 
 # ---------------------------------------------------------------------------
@@ -163,7 +230,14 @@ def formater(rapport: dict[str, Any]) -> str:
                 f"« {candidat['valeur_longue']} » ({candidat['nb_long']}) — "
                 "même notion ou deux notions ?"
             )
-        if not certaines and not probables:
+        ecartees = table.get("ecartees") or []
+        if ecartees:
+            lignes.append(f"  ÉCARTÉES (déjà tranché par l'exploitante, non redemandé) : {len(ecartees)}")
+            for candidat in ecartees:
+                lignes.append(
+                    f"    · « {candidat['valeur_courte']} » / « {candidat['valeur_longue']} » — refus déjà rendu"
+                )
+        if not certaines and not probables and not ecartees:
             lignes.append("    (aucune fusion proposée : l'axe est déjà à écriture unique)")
     lignes.append("")
     lignes.append("Aucune écriture en base n'a eu lieu : cette sortie est une PROPOSITION.")
@@ -192,9 +266,14 @@ def main(argv: list[str] | None = None) -> int:
 
     from seamtech_search.indexer import SearchIndex
 
+    # Les arbitrages DÉJÀ RENDUS par l'exploitante. Sans cette lecture, une
+    # paire refusée le 2026-11-09 était reproposée à chaque exécution : on
+    # redemandait un arbitrage déjà rendu. C'est le défaut corrigé au Lot 19.
+    decisions = charger_decisions()
+
     index = SearchIndex(Path("./data/search.db"), url)
     try:
-        rapport = mesurer(index, tuple(options.axe) if options.axe else AXES)
+        rapport = mesurer(index, tuple(options.axe) if options.axe else AXES, decisions=decisions)
     finally:
         index.close()
 
