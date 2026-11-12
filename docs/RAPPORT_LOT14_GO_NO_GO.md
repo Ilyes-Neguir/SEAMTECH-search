@@ -274,6 +274,121 @@ et un était une épreuve fragile. Les déclarer écarts aurait transformé des
 erreurs de mesure en dette acceptée — c'est exactement ce que le préambule de
 ce fichier interdit.
 
+## 2.10 Lot 18 — le script existait, il n'était jamais exécuté
+
+### 2.10.1 Ce que la mesure a trouvé d'abord
+
+`scripts/provisionner_extensions.py` n'était pas à écrire : il existait
+depuis le Lot 12. Idempotent (`CREATE EXTENSION IF NOT EXISTS`), bruyant
+(codes 0/1/2), couvert par huit épreuves. Il ne manquait qu'une chose —
+qu'on l'appelle :
+
+```console
+$ grep -rn "provisionner_extensions" .github/
+(aucun résultat)
+```
+
+**Aucun workflow n'invoquait le script.** Il figurait dans
+`docs/DEPLOYMENT.md` avec un « enchaînez-le avant la mise en service ».
+Une instruction dans une note n'est pas un déploiement : elle dépend de
+quelqu'un qui lit la note, ce soir-là, sans être pressé.
+
+### 2.10.2 Pourquoi la CI passait quand même — c'est le cœur du lot
+
+La suite PostgreSQL était verte. Elle l'était pour deux raisons qui
+masquent **exactement** le risque du Lot 18 :
+
+* l'image `pgvector/pgvector:pg16` embarque `postgresql-contrib`, donc
+  `unaccent` et `pg_trgm` y sont disponibles ;
+* le rôle `seamtech` y est **superutilisateur** du conteneur, donc
+  `CREATE EXTENSION` réussit et l'application se provisionne elle-même.
+
+C'est la configuration où tout va bien **par accident**. En production, le
+rôle applicatif n'est pas superutilisateur : `CREATE EXTENSION` est refusé,
+l'application *dégrade* au lieu d'échouer, le service répond 200, et
+« regate » cesse de trouver « Régate ». Aucune alarme, aucun code
+d'erreur — la panne se découvre quand un utilisateur ne trouve pas sa
+voile. Le Lot 18 existe pour que cette question soit posée **au
+déploiement**, quand on peut encore agir, et non six mois plus tard.
+
+### 2.10.3 Ce qui a changé
+
+Une étape insérée dans `.github/workflows/ci.yml`, **juste avant** la
+suite PostgreSQL :
+
+```yaml
+- name: Provisionner les extensions PostgreSQL (idempotent, bloquant)
+  env:
+    SEAMTECH_DATABASE_URL: postgresql://seamtech:…@localhost:5432/seamtech_search_test
+  run: python scripts/provisionner_extensions.py --appliquer
+```
+
+Trois propriétés, et elles sont toutes dans le titre : **idempotente**,
+**bloquante**, et **sans intervention manuelle** — c'était l'objet du lot.
+Si une extension recommandée manque, le script rend 1 et le déploiement
+s'arrête avant que la suite ne tourne. Un déploiement doit s'arrêter sur
+un prérequis absent, pas démarrer amoindri.
+
+### 2.10.4 Preuve
+
+**Première preuve — le script échoue quand il doit échouer.** Sur un banc
+local où `unaccent` et `pg_trgm` sont absentes du serveur (`pgserver`
+n'embarque que `plpgsql` et `vector`) :
+
+```console
+[MANQUE]  unaccent   ABSENTE du serveur — recherche insensible aux accents…
+[MANQUE]  pg_trgm    ABSENTE du serveur — tolérance aux fautes…
+[option.] vector     disponible mais non installée — (optionnelle)
+PRÉREQUIS NON REMPLIS : unaccent, pg_trgm.      → code de retour : 1
+```
+
+Noter la distinction « ABSENTE du serveur » (que le script ne peut pas
+résoudre seul) versus « disponible mais non installée » (`vector`, ici) —
+c'est elle qui rend le diagnostic actionnable plutôt que merely bruyant.
+
+**Deuxième preuve — il réussit sur la forme de production.** CI du SHA
+`aa06108` : `completed success`, sur l'image `pgvector/pgvector:pg16`,
+donc **de forme identique à la production**. Étape 15 (provisionnement)
+**success**, étape 16 (suite PostgreSQL, dont
+`test_indexer_accent_parity.py`) **success**. Backend 3.11, 3.12 et 3.13
+verts. `test_indexer_accent_parity.py` y est bien exécutée : 3 de ses 21
+épreuves portent le marqueur `postgres`, retenues par la sélection de la
+CI, **sans intervention manuelle** — ce qui est précisément l'exigence.
+
+### 2.10.5 Ce que cette preuve ne dit pas — à lire avant de crier victoire
+
+Le script valide que les extensions **existent et sont disponibles**. Il ne
+valide pas qu'elles sont **utilisées** par la requête qui servira en
+production, ni que la recherche insensible aux accents traverse toute la
+chaîne (indexation **et** requête, migration 005 comprise). La parité
+d'accents est prouvée par l'épreuve, sur des données de test — pas sur le
+corpus réel de 123 fiches, qu'aucune épreuve n'exécute faute de pouvoir
+l'importer ici.
+
+Une limite d'environnement, notée pour être honnête : je n'ai ni
+PostgreSQL système ni Docker dans le bac à sable, et le banc `pgserver`
+n'a pas `contrib`. Je ne peux donc pas y faire tourner la suite
+d'extensions — la preuve positive vient de la CI, qui seule dispose de la
+bonne image. C'est une dépendance assumée à l'infrastructure de preuve, et
+non une approximation.
+
+### 2.10.6 État de la qualification Windows au même SHA
+
+Effet de bord attendu du Lot 17 : le job **`windows` passe au vert**
+(`aa06108`) — le dernier échec non nommé, celui que la garde de saut du
+Lot 17 a résorbé, ne paraît plus. Le job `windows-postgres` rend son
+verdict **vert** (étape 13). Reste en échec l'étape 16, *diagnostic* des
+fichiers à processus POSIX : c'est de l'instrumentation, pas un verdict,
+et l'étape 17 montre qu'une seule cible y sort en `rc=1`
+(`test_sha_snapshot_propage_aux_copies_locale_et_objet_pg`), les autres en
+`rc=0`. Cette même cible **passe** dans le bac local, seule (2 passed)
+comme dans son fichier entier (13 passed) : l'écart tient donc à
+l'isolement sous Windows, pas au produit — et il reste à élucider. Je le
+note comme dette ouverte plutôt que de le ranger trop vite dans les
+« artefacts d'environnement ».
+
+---
+
 ## 3. Ce qui n'est PAS prouvé — la partie que ce rapport ne doit pas arranger
 
 ### 3.0 (CORRIGÉ au Lot 15 — voir §2.6) La recherche plafonnait à 100 correspondances
@@ -444,7 +559,7 @@ justification.
 | 2 | 109 fiches sans axe | **à qualifier** par lecture humaine |
 | 3 | Lot 9 (table de correspondance) | **fermé** — le dénominateur serait faux |
 | 4 | Calibrage des seuils | **bloqué** — 0 verdict humain saisi, et je ne le lance pas moi-même |
-| 5 | `unaccent` + `pg_trgm` | **à installer par l'exploitante** (scripté, idempotent, vérifié) |
+| 5 | `unaccent` + `pg_trgm` | **[FAIT]** provisionnées automatiquement par la CI sur l'image de forme identique à la production — `scripts/provisionner_extensions.py` n'était *jamais invoqué*, il l'est désormais (§2.10) |
 | 6 | Défaut `ajouter` : un réimport sans axe **efface** l'axe mesuré | **ouvert** — perte de données silencieuse ; deux fiches en ont été victimes, réparées. La question « écraser, refuser, ou fusionner ? » vous revient |
 | 7 | PR #44 | **brouillon** — c'est le bloquant réel à la fusion ; aucun contrôle n'est requis sur `main` |
 | 8 | Banc `pgserver` local sans contrib | ~36 échecs **environnementaux**, la CI fait foi |
@@ -508,8 +623,10 @@ Par ordre, chacun étant une condition et non une suggestion :
    Prochaine marche : faire publier le `stderr` du CLI par l'étape de verdict.
 3. **Les onze échecs Windows nommés**, c'est-à-dire soit corrigés, soit
    inscrits dans `ci/ecarts-windows.txt` avec leur raison — jamais oubliés.
-4. **`unaccent` et `pg_trgm` installés** sur la base de production, et
-   `/health` les annonçant.
+4. **[FAIT]** `unaccent` et `pg_trgm` installés — prouvé en CI sur
+   l'image `pgvector/pgvector:pg16`, celle-là même qui sert en production ;
+   le provisionnement est désormais une étape du déploiement, plus une
+   instruction dans une note (§2.10).
 5. **Le corpus complété au déploiement**, à l'initiative de l'exploitant —
    et **après** correction du défaut du point 6 du §3.3, sous peine d'effacer
    des axes déjà mesurés.

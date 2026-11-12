@@ -9,11 +9,13 @@
 # Pour armer à nouveau : une ligne par identifiant, sans commentaire.
 #   tests/test_x.py::test_y
 
-# RÉARMÉ le 11 novembre 2026 (Lot 16). L'échec
-# « test_commande_sauver_puis_restaurer_coordonnee_en_deux_processus »
-# est publié sous la cause « assert 1 == 0 », qui ne dit rien. La cause
-# RÉELLE est dans le message de l'assertion — donc dans la trace — et non
-# dans l'assertion : c'est le stderr du sous-processus « restaurer
-# --coordonnee ». Tant que cette ligne est armée, la trace complète est
-# publiée par l'étape « Traces complètes » du job windows.
-tests/test_sauvegarde_cli_coordonnee.py::test_commande_sauver_puis_restaurer_coordonnee_en_deux_processus
+# DÉSARMÉ le 12 novembre 2026 (clôture du Lot 17). L'instrumentation
+# armée au Lot 16 a rempli son office : elle a fait remonter le stderr
+# du sous-processus « restaurer --coordonnee », ce qui a révélé la chaîne
+# de la panne (ligne 1957, `_instantane_dump_prive`) et permis le
+# correctif du Lot 16. Le job « windows » est vert au SHA aa06108 : il
+# n'y a plus rien à tracer.
+#
+# On la désarme au lieu de la garder « au cas où » : une trace complète
+# publiée en permanence noie les anomalies suivantes sous un volume
+# d'annotations qui n'apprend plus rien.
