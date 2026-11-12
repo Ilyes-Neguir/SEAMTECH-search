@@ -63,6 +63,7 @@ import hashlib
 import json
 import os
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -72,6 +73,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 VERDICTS_HUMAINS = ("reutilisable", "non_reutilisable", "incertain")
 #: Verdicts qui servent réellement à placer le seuil.
 VERDICTS_TRANCHANTS = ("reutilisable", "non_reutilisable")
+
+#: Registre des verdicts. Sans lui, rien ne s'accumule : chaque import
+#: repartait de zéro et « combien de verdicts ? » restait sans réponse — le
+#: compte était affiché en dur à 0. C'est le défaut corrigé au Lot 20.
+FICHIER_VERDICTS = Path(__file__).resolve().parent.parent / "donnees" / "etape0" / "verdicts_reutilisation.json"
 
 MIN_VERDICTS_TOTAL = 30
 MIN_VERDICTS_PAR_CLASSE = 10
@@ -124,10 +130,7 @@ def purger(objet: Any) -> Any:
         return {
             cle: purger(valeur)
             for cle, valeur in objet.items()
-            if not any(
-                marqueur in cle.lower()
-                for marqueur in ("score", "z_robuste", "seuil", "verdict", "heterogene")
-            )
+            if not any(marqueur in cle.lower() for marqueur in ("score", "z_robuste", "seuil", "verdict", "heterogene"))
         }
     if isinstance(objet, list):
         return [purger(element) for element in objet]
@@ -147,9 +150,7 @@ def _formater_mesures(dimensions: list[dict[str, Any]], candidat: bool) -> str:
             continue
         mediane = dimension.get("mediane")
         q1, q3 = dimension.get("q1"), dimension.get("q3")
-        morceaux.append(
-            f"{champ}: médiane {mediane} (Q1 {q1} – Q3 {q3}, n={dimension.get('n')})"
-        )
+        morceaux.append(f"{champ}: médiane {mediane} (Q1 {q1} – Q3 {q3}, n={dimension.get('n')})")
     return " ; ".join(morceaux)
 
 
@@ -214,14 +215,10 @@ def construire_echantillon(index: Any, *, limite: int = 40) -> tuple[list[dict[s
                         "n_population": resultat.get("n_echantillons", 0),
                         "mesures_candidat": _formater_mesures(dimensions, candidat=True),
                         "mesures_population": _formater_mesures(dimensions, candidat=False),
-                        "materiaux_candidat": json.dumps(
-                            materiaux.get("candidat"), ensure_ascii=False
-                        )
+                        "materiaux_candidat": json.dumps(materiaux.get("candidat"), ensure_ascii=False)
                         if isinstance(materiaux, dict)
                         else "",
-                        "materiaux_population": json.dumps(
-                            materiaux.get("population"), ensure_ascii=False
-                        )
+                        "materiaux_population": json.dumps(materiaux.get("population"), ensure_ascii=False)
                         if isinstance(materiaux, dict)
                         else "",
                         "verdict_humain": "",
@@ -264,6 +261,8 @@ def depouiller(lignes: list[dict[str, Any]], cle: dict[str, Any]) -> dict[str, A
             continue
         couples.append(
             {
+                "id_aveugle": ligne.get("id_aveugle"),
+                "id_extraction": entree.get("id_extraction"),
                 "score": float(entree["score"]),
                 "verdict_humain": verdict,
                 "verdict_machine": entree.get("verdict_machine"),
@@ -311,9 +310,7 @@ def _meilleur_seuil(tranchants: list[dict[str, Any]]) -> tuple[float, int]:
     meilleur: tuple[float, int] | None = None
     for seuil in scores:
         erreurs = sum(
-            1
-            for couple in tranchants
-            if (couple["verdict_humain"] == "reutilisable") != (couple["score"] >= seuil)
+            1 for couple in tranchants if (couple["verdict_humain"] == "reutilisable") != (couple["score"] >= seuil)
         )
         if meilleur is None or erreurs < meilleur[1]:
             meilleur = (seuil, erreurs)
@@ -328,6 +325,83 @@ def _seuil_actuel() -> int:
 
 
 # ---------------------------------------------------------------------------
+# Le registre : ce qui s'accumule
+# ---------------------------------------------------------------------------
+
+
+def charger_verdicts(chemin: Path = FICHIER_VERDICTS) -> list[dict[str, Any]]:
+    """Les verdicts déjà recueillis ; liste vide s'il n'y en a aucun."""
+    if not chemin.exists():
+        return []
+    contenu = json.loads(chemin.read_text(encoding="utf-8"))
+    return list(contenu.get("verdicts") or [])
+
+
+def enregistrer_verdicts(
+    couples: list[dict[str, Any]],
+    *,
+    chemin: Path = FICHIER_VERDICTS,
+    operateur: str = "non précisé",
+) -> tuple[int, int]:
+    """Ajoute les verdicts au registre. Rend ``(nouveaux, mis_a_jour)``.
+
+    Une même extraction peut être soumise deux fois à l'appréciation — d'où
+    l'identifiant aveugle changeant à chaque export, le sel étant différent. La
+    clé stable est donc ``id_extraction``. L'ancien verdict n'est pas écrasé
+    dans le journal : il reste, et le décompte retient le PLUS RÉCENT. On peut
+    ainsi recompter sans perdre l'historique.
+    """
+    existants = charger_verdicts(chemin)
+    connus = {v.get("id_extraction"): v for v in existants}
+    maintenant = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+    nouveaux = 0
+    maj = 0
+    for couple in couples:
+        cle = couple.get("id_extraction")
+        if cle is None:
+            continue
+        entree = {
+            "id_aveugle": couple.get("id_aveugle"),
+            "id_extraction": cle,
+            "score": couple.get("score"),
+            "verdict_humain": couple.get("verdict_humain"),
+            "verdict_machine": couple.get("verdict_machine"),
+            "operateur": operateur,
+            "recueilli_le": maintenant,
+        }
+        if cle in connus:
+            maj += 1
+        else:
+            nouveaux += 1
+        existants.append(entree)
+
+    chemin.parent.mkdir(parents=True, exist_ok=True)
+    chemin.write_text(
+        json.dumps({"version": 1, "verdicts": existants}, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return nouveaux, maj
+
+
+def compter_verdicts(verdicts: list[dict[str, Any]]) -> dict[str, int]:
+    """Décompte par classe, en retenant le verdict le PLUS RÉCENT par extraction."""
+    dernier: dict[Any, dict[str, Any]] = {}
+    for v in verdicts:
+        cle = v.get("id_extraction")
+        if cle is None:
+            continue
+        if cle not in dernier or str(v.get("recueilli_le", "")) >= str(dernier[cle].get("recueilli_le", "")):
+            dernier[cle] = v
+    compte = {verdict: 0 for verdict in VERDICTS_HUMAINS}
+    for v in dernier.values():
+        verdict = v.get("verdict_humain")
+        if verdict in compte:
+            compte[verdict] += 1
+    return compte
+
+
+# ---------------------------------------------------------------------------
 # Ligne de commande
 # ---------------------------------------------------------------------------
 
@@ -336,26 +410,45 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sous = parser.add_subparsers(dest="commande", required=True)
 
-    sous.add_parser("etat", help="combien de verdicts recueillis à ce jour")
+    p_etat = sous.add_parser("etat", help="combien de verdicts recueillis à ce jour")
+    p_etat.add_argument("--registre", type=Path, default=FICHIER_VERDICTS)
     p_export = sous.add_parser("exporter", help="produit un échantillon aveugle")
     p_export.add_argument("--sortie", default="verdicts_reutilisation.csv")
     p_export.add_argument("-n", "--limite", type=int, default=40)
     p_import = sous.add_parser("importer", help="dépouille un échantillon rempli")
     p_import.add_argument("fichier")
+    p_import.add_argument("--registre", type=Path, default=FICHIER_VERDICTS)
+    p_import.add_argument("--operateur", default="non précisé")
 
     arguments = parser.parse_args(argv)
 
     if arguments.commande == "etat":
-        print("Verdicts humains recueillis à ce jour : 0")
+        chemin = Path(getattr(arguments, "registre", FICHIER_VERDICTS))
+        verdicts = charger_verdicts(chemin)
+        compte = compter_verdicts(verdicts)
+        tranchants = {v: compte[v] for v in VERDICTS_TRANCHANTS}
+        total = sum(compte.values())
+        manque_total = max(0, MIN_VERDICTS_TOTAL - total)
+        manque_classes = {v: max(0, MIN_VERDICTS_PAR_CLASSE - n) for v, n in tranchants.items()}
+        print(f"Verdicts humains recueillis à ce jour : {total}")
+        for verdict in VERDICTS_HUMAINS:
+            print(f"    {verdict:<18} {compte[verdict]}")
         print(f"Seuil en vigueur (inchangé)         : {_seuil_actuel()} %")
         print(
             f"Nécessaire pour proposer un seuil   : {MIN_VERDICTS_TOTAL} verdicts, "
             f"dont {MIN_VERDICTS_PAR_CLASSE} dans chacune des classes "
             "« reutilisable » et « non_reutilisable »"
         )
+        if manque_total or any(manque_classes.values()):
+            detail = ", ".join(f"{v} : encore {n}" for v, n in manque_classes.items() if n)
+            print(
+                f"Il manque                           : {manque_total} verdict(s)" + (f" ; {detail}" if detail else "")
+            )
+        else:
+            print("Le minimum est atteint : un seuil peut être proposé.")
         print()
         print("Aucun seuil ne sera modifié sans ces verdicts. C'est voulu.")
-        return 1
+        return 0 if not manque_total and not any(manque_classes.values()) else 1
 
     url = os.environ.get("SEAMTECH_DATABASE_URL", "")
     if not url:
@@ -389,11 +482,20 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     rapport = depouiller(lignes, cle)
+    if rapport["detail"]:
+        nouveaux, maj = enregistrer_verdicts(
+            rapport["detail"], chemin=arguments.registre, operateur=arguments.operateur
+        )
+        rapport["registre"] = {
+            "chemin": str(arguments.registre),
+            "nouveaux": nouveaux,
+            "mis_a_jour": maj,
+            "cumul": compter_verdicts(charger_verdicts(arguments.registre)),
+        }
     print(json.dumps({k: v for k, v in rapport.items() if k != "detail"}, ensure_ascii=False, indent=2))
     if not rapport["pret"]:
         print(
-            "\n Pas assez de preuves pour proposer un seuil — les seuils actuels restent "
-            "strictement inchangés.",
+            "\n Pas assez de preuves pour proposer un seuil — les seuils actuels restent strictement inchangés.",
             file=sys.stderr,
         )
         return 1

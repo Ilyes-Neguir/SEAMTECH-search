@@ -84,10 +84,16 @@ def test_le_texte_presente_ne_contient_pas_de_score() -> None:
     """La chaîne montrée à l'humain ne doit porter aucune note."""
     module = _charger_module()
     dimensions = [
-        {"champ": "slu_m", "n": 6, "mediane": 12.1, "q1": 11.9, "q3": 12.6,
-         "valeur_candidate": 12.4, "score_dim": 91.0},
-        {"champ": "sf_m", "n": 6, "mediane": 3.7, "q1": 3.6, "q3": 3.9,
-         "valeur_candidate": 3.71, "score_dim": 95.0},
+        {
+            "champ": "slu_m",
+            "n": 6,
+            "mediane": 12.1,
+            "q1": 11.9,
+            "q3": 12.6,
+            "valeur_candidate": 12.4,
+            "score_dim": 91.0,
+        },
+        {"champ": "sf_m", "n": 6, "mediane": 3.7, "q1": 3.6, "q3": 3.9, "valeur_candidate": 3.71, "score_dim": 95.0},
     ]
     candidat = module._formater_mesures(dimensions, candidat=True)
     population = module._formater_mesures(dimensions, candidat=False)
@@ -120,8 +126,13 @@ def test_le_depouillement_propose_un_seuil_qui_separe() -> None:
     couples = _couples(score_bas=40.0, score_haut=90.0, par_classe=15)
     rapport = module.depouiller(
         [{"id_aveugle": str(i), "verdict_humain": c["verdict_humain"]} for i, c in enumerate(couples)],
-        {"sel": "x", "entrees": {str(i): {"id_extraction": i, "score": c["score"],
-         "verdict_machine": c["verdict_machine"]} for i, c in enumerate(couples)}},
+        {
+            "sel": "x",
+            "entrees": {
+                str(i): {"id_extraction": i, "score": c["score"], "verdict_machine": c["verdict_machine"]}
+                for i, c in enumerate(couples)
+            },
+        },
     )
 
     assert rapport["verdicts_recueillis"] == 30
@@ -136,8 +147,13 @@ def test_sous_le_minimum_aucun_seuil_nest_propose() -> None:
     couples = _couples(score_bas=40.0, score_haut=90.0, par_classe=3)
     rapport = module.depouiller(
         [{"id_aveugle": str(i), "verdict_humain": c["verdict_humain"]} for i, c in enumerate(couples)],
-        {"sel": "x", "entrees": {str(i): {"id_extraction": i, "score": c["score"],
-         "verdict_machine": c["verdict_machine"]} for i, c in enumerate(couples)}},
+        {
+            "sel": "x",
+            "entrees": {
+                str(i): {"id_extraction": i, "score": c["score"], "verdict_machine": c["verdict_machine"]}
+                for i, c in enumerate(couples)
+            },
+        },
     )
 
     assert rapport["verdicts_recueillis"] == 6
@@ -150,8 +166,12 @@ def test_les_verdicts_incertains_ne_comptent_pas_pour_le_seuil() -> None:
     """« incertain » dit que le cas est ambigu, pas de quel côté il tombe."""
     module = _charger_module()
     lignes = [{"id_aveugle": str(i), "verdict_humain": "incertain"} for i in range(40)]
-    cle = {"sel": "x", "entrees": {str(i): {"id_extraction": i, "score": 50.0 + i,
-           "verdict_machine": "a_examiner"} for i in range(40)}}
+    cle = {
+        "sel": "x",
+        "entrees": {
+            str(i): {"id_extraction": i, "score": 50.0 + i, "verdict_machine": "a_examiner"} for i in range(40)
+        },
+    }
     rapport = module.depouiller(lignes, cle)
 
     assert rapport["verdicts_recueillis"] == 40
@@ -188,16 +208,12 @@ def test_une_seule_dimension_aberrante_est_absorbee_par_la_mediane() -> None:
     from seamtech_search.confiance_reutilisation import evaluer_population
 
     population = [
-        ExtractionVoile(
-            id_extraction=i, type_voile="Génois", slu_m=12.0, sf_m=3.7, shw_m=2.1, spa_m2=40.0
-        )
+        ExtractionVoile(id_extraction=i, type_voile="Génois", slu_m=12.0, sf_m=3.7, shw_m=2.1, spa_m2=40.0)
         for i in range(1, 7)
     ]
 
     def score_de(**kwargs: float) -> float | None:
-        return evaluer_population(
-            ExtractionVoile(id_extraction=99, type_voile="Génois", **kwargs), population
-        )["score"]
+        return evaluer_population(ExtractionVoile(id_extraction=99, type_voile="Génois", **kwargs), population)["score"]
 
     # Une seule dimension aberrante : absorbée.
     assert score_de(slu_m=16.0, sf_m=3.7, shw_m=2.1, spa_m2=40.0) == 100.0
@@ -220,9 +236,7 @@ def test_sous_le_seuil_le_verdict_est_a_examiner() -> None:
 
     # Population de référence : six voiles identiques.
     population = [
-        ExtractionVoile(
-            id_extraction=i, type_voile="Génois", slu_m=12.0, sf_m=3.7, shw_m=2.1, spa_m2=40.0
-        )
+        ExtractionVoile(id_extraction=i, type_voile="Génois", slu_m=12.0, sf_m=3.7, shw_m=2.1, spa_m2=40.0)
         for i in range(1, 7)
     ]
     # Candidate conforme : au-dessus du seuil ⇒ verdict positif.
@@ -329,9 +343,7 @@ def test_lechantillon_exporte_ne_divulgue_aucun_score(base_echantillon: tuple[Se
     lignes, cle = module.construire_echantillon(index, limite=10)
     assert lignes, "le jeu d'essai doit produire au moins une comparaison"
 
-    scores_connus = {
-        entree["score"] for entree in cle["entrees"].values() if entree["score"] is not None
-    }
+    scores_connus = {entree["score"] for entree in cle["entrees"].values() if entree["score"] is not None}
     assert scores_connus, "le jeu d'essai doit produire au moins un score"
 
     for ligne in lignes:
@@ -349,3 +361,163 @@ def test_lechantillon_exporte_ne_divulgue_aucun_score(base_echantillon: tuple[Se
             assert "score" not in texte.lower()
             assert "seuil" not in texte.lower()
             assert "verdict" not in texte.lower()
+
+
+# ---------------------------------------------------------------------------
+# Le registre — ce qui s'accumule dans le temps
+# ---------------------------------------------------------------------------
+
+
+def test_le_registre_accumule_les_verdicts(tmp_path: Path) -> None:
+    """RÉGRESSION : le compte était affiché en dur à 0.
+
+    Au Lot 19, `etat` écrivait « Verdicts humains recueillis à ce jour : 0 »
+    littéralement. Aucun verdict n'était conservé : `importer` calculait un
+    rapport en mémoire puis l'oubliait. L'outil ne pouvait donc pas faire ce
+    pour quoi il existe — accumuler 30 verdicts au fil des semaines.
+    """
+    module = _charger_module()
+    registre = tmp_path / "verdicts.json"
+    assert module.charger_verdicts(registre) == []
+
+    couples = [
+        {
+            "id_aveugle": "a1",
+            "id_extraction": 1,
+            "score": 92.0,
+            "verdict_humain": "reutilisable",
+            "verdict_machine": "compatible",
+        },
+        {
+            "id_aveugle": "a2",
+            "id_extraction": 2,
+            "score": 41.0,
+            "verdict_humain": "non_reutilisable",
+            "verdict_machine": "a_examiner",
+        },
+    ]
+    nouveaux, maj = module.enregistrer_verdicts(couples, chemin=registre, operateur="patron")
+    assert (nouveaux, maj) == (2, 0)
+
+    compte = module.compter_verdicts(module.charger_verdicts(registre))
+    assert compte["reutilisable"] == 1
+    assert compte["non_reutilisable"] == 1
+    # La trace dit QUI et QUAND.
+    assert all(v["operateur"] == "patron" for v in module.charger_verdicts(registre))
+    assert all(v["recueilli_le"] for v in module.charger_verdicts(registre))
+
+
+def test_un_reimport_ne_compte_pas_deux_fois(tmp_path: Path) -> None:
+    """La même extraction se représente : l'identifiant aveugle change (sel
+    différent), l'extraction reste la même. C'est la clé de dédoublonnage."""
+    module = _charger_module()
+    registre = tmp_path / "verdicts.json"
+
+    def _couple(id_aveugle: str) -> dict[str, Any]:
+        return {
+            "id_aveugle": id_aveugle,
+            "id_extraction": 1,
+            "score": 92.0,
+            "verdict_humain": "reutilisable",
+            "verdict_machine": "compatible",
+        }
+
+    module.enregistrer_verdicts([_couple("premier-sel")], chemin=registre)
+    nouveaux, maj = module.enregistrer_verdicts([_couple("second-sel")], chemin=registre)
+
+    assert (nouveaux, maj) == (0, 1), "un re-import met à jour, il n'ajoute pas"
+    assert module.compter_verdicts(module.charger_verdicts(registre))["reutilisable"] == 1
+
+
+def test_le_decompte_retient_le_verdict_le_plus_recent(tmp_path: Path) -> None:
+    """L'historique est conservé, mais le compte retient le dernier avis."""
+    module = _charger_module()
+    registre = tmp_path / "verdicts.json"
+    for verdict in ("reutilisable", "non_reutilisable"):
+        module.enregistrer_verdicts(
+            [
+                {
+                    "id_aveugle": verdict,
+                    "id_extraction": 7,
+                    "score": 60.0,
+                    "verdict_humain": verdict,
+                    "verdict_machine": "a_examiner",
+                }
+            ],
+            chemin=registre,
+        )
+
+    assert len(module.charger_verdicts(registre)) == 2, "rien n'est écrasé dans le journal"
+    compte = module.compter_verdicts(module.charger_verdicts(registre))
+    assert compte["reutilisable"] == 0
+    assert compte["non_reutilisable"] == 1, "le dernier avis l'emporte"
+
+
+def test_etat_annonce_ce_qui_manque(tmp_path: Path, capsys) -> None:
+    """Le compte seul ne suffit pas : il faut dire ce qu'il reste à recueillir."""
+    module = _charger_module()
+    registre = tmp_path / "verdicts.json"
+    module.enregistrer_verdicts(
+        [
+            {
+                "id_aveugle": f"a{i}",
+                "id_extraction": i,
+                "score": 90.0,
+                "verdict_humain": "reutilisable",
+                "verdict_machine": "compatible",
+            }
+            for i in range(8)
+        ],
+        chemin=registre,
+    )
+    code = module.main(["etat", "--registre", str(registre)])
+    affiche = capsys.readouterr().out
+
+    assert code == 1, "le minimum n'est pas atteint"
+    assert "Verdicts humains recueillis à ce jour : 8" in affiche
+    assert "encore 2" in affiche, "il manque 2 réutilisables pour atteindre 10"
+    assert "encore 10" in affiche, "il manque 10 non-réutilisables"
+
+
+def test_etat_rend_zero_quand_le_minimum_est_atteint(tmp_path: Path, capsys) -> None:
+    """30 verdicts dont 10 par classe : l'outil cesse de réclamer."""
+    module = _charger_module()
+    registre = tmp_path / "verdicts.json"
+    couples = (
+        [
+            {
+                "id_aveugle": f"r{i}",
+                "id_extraction": i,
+                "score": 95.0,
+                "verdict_humain": "reutilisable",
+                "verdict_machine": "compatible",
+            }
+            for i in range(10)
+        ]
+        + [
+            {
+                "id_aveugle": f"n{i}",
+                "id_extraction": 1000 + i,
+                "score": 20.0,
+                "verdict_humain": "non_reutilisable",
+                "verdict_machine": "a_examiner",
+            }
+            for i in range(10)
+        ]
+        + [
+            {
+                "id_aveugle": f"i{i}",
+                "id_extraction": 2000 + i,
+                "score": 55.0,
+                "verdict_humain": "incertain",
+                "verdict_machine": "a_examiner",
+            }
+            for i in range(10)
+        ]
+    )
+    module.enregistrer_verdicts(couples, chemin=registre)
+
+    code = module.main(["etat", "--registre", str(registre)])
+    affiche = capsys.readouterr().out
+    assert code == 0
+    assert "Le minimum est atteint" in affiche
