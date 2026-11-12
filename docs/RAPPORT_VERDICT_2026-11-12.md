@@ -15,7 +15,9 @@ Chaque chiffre est assorti de la commande qui le reproduit.
 hors-site et restaurable à l'identique, la limite Windows est écrite dans le
 guide ; mais un constat fait au passage remet en cause la mise en service :
 les pièces jointes des clients ne sont dans aucune sauvegarde automatique, et
-le guide affirmait le contraire.**
+le guide affirmait le contraire.** Le workflow de qualification Windows, lui,
+reste rouge sur une étape de diagnostic — antérieurement à ce lot, et en
+s'améliorant par ailleurs (section 6.1).
 
 Verdict en section 8.
 
@@ -272,16 +274,63 @@ Relevée après achèvement (`status == completed`), jamais annoncée à l'avanc
 | `0bd099a` | P0 suite — inventaire de sélection | 🟢 **verte** |
 | `2b750c6` | P1 — corpus 123 → 820 | 🟢 **verte** |
 | `019ec6f` | P2 — limite Windows et guide honnête | 🟢 **verte** |
+| `5199062` | P3 — rapport de clôture | 🟢 **verte** |
 
-Les deux runs déclenchés par SHA sont verts dans les quatre cas (deux
-workflows portent le nom « CI ») ; relevés `completed/success`, aucun job en
-échec.
+Les deux runs déclenchés par SHA sont verts dans les cinq cas (deux workflows
+portent le nom « CI ») ; relevés `completed/success`, aucun job en échec.
 
 Reproduire :
 
 ```
 gh api repos/Ilyes-Neguir/SEAMTECH-search/actions/runs?head_sha=<sha complet> \
   --jq '.workflow_runs[]|select(.name=="CI")|"\(.id) \(.status) \(.conclusion)"'
+```
+
+### 6.1 Le workflow « Qualification Windows » est rouge — **et il l'était déjà**
+
+Je ne l'avais pas dit plus haut, le voici. Un second workflow porte sur
+Windows, et il est rouge au SHA `5199062`. Ce n'est pas une régression de ce
+lot ; c'est un état antérieur, et il a plutôt empiré en sens inverse. Ce que
+les étapes disent :
+
+| Étape | `af31922f` (base `main`, 03/11) | `5199062` (ce lot) |
+|---|---|---|
+| Suite PostgreSQL + Redis — **verdict** | 🔴 échec | 🟢 **succès** |
+| Diagnostic — fichiers à processus POSIX | 🔴 échec | 🔴 échec |
+
+Autrement dit : sur la base `main` dont ce lot est parti, il y avait **deux**
+étapes rouges ; il en reste **une**. Le verdict — l'étape qui décide si les 37
+échecs Windows sont *nommés* dans `ci/ecarts-windows.txt` ou s'ils révèlent
+une régression — passe au vert : les 37 échecs sont tous rattachés à une cause
+écrite (`scan_ancre_descripteur`, `Lecture confinée du bundle indisponible sur
+cette plateforme`, `procfs_fd`, `No module named 'fcntl'`).
+
+Ce qui reste rouge est l'étape de **diagnostic** (16 étapes sur 19) : elle
+exécute un par un cinq fichiers d'épreuves qui manipulent des processus POSIX
+(`fork`, `SIGKILL`, `killpg`, `multiprocessing`) — des notions que Windows n'a
+pas. Quatre des cinq rendent `rc=1` :
+
+```
+diag-test_restauration_confinement              → rc=1
+diag-test_televersement_creation_idempotente    → rc=1
+diag-test_relais_file_base                      → rc=0
+diag-test_lot10_televersement_lot               → rc=1
+diag-test_extraction_logs_securite              → rc=1
+```
+
+Le commentaire du workflow le dit lui-même : cette étape instruit, elle ne
+prononce pas de verdict — « dès que la cause est connue, chaque fichier est
+soit adapté à Windows, soit écarté NOMMÉMENT avec sa raison. » Ce travail
+n'est pas fait. Je ne l'ai pas fait ici : il n'est dans aucune des quatre
+priorités du lot 21, et le faire correctement demande d'adapter cinq fichiers
+d'épreuves à la sémantique `TerminateProcess`, ce qui est un lot en soi.
+
+**Un fichier d'échec Windows est bien touché par la branche** — mais pas par
+ce lot : `tests/test_sauvegarde_snapshot_pg.py` a été modifié pour la dernière
+fois au lot 19 (`0bdb90c`) et au lot 17 (`8ac7752`). Vérifié :
+
+```
+git log --oneline af31922f..HEAD -- tests/test_sauvegarde_snapshot_pg.py
 ```
 
 ---
@@ -301,6 +350,9 @@ gh api repos/Ilyes-Neguir/SEAMTECH-search/actions/runs?head_sha=<sha complet> \
    des données réelles ; toujours non prouvée sur le fournisseur de
    production.
 5. **Banc Redis.** Épreuves ignorées localement, donc non prouvées ici.
+6. **L'étape de diagnostic POSIX du workflow Windows.** Cinq fichiers
+   d'épreuves à adapter (`fork`, `SIGKILL`, `killpg`, `multiprocessing`) ou à
+   écarter nommément. Antérieur au lot 21 ; voir section 6.1.
 
 ---
 
@@ -322,7 +374,10 @@ gh api repos/Ilyes-Neguir/SEAMTECH-search/actions/runs?head_sha=<sha complet> \
   de vérité terrain ;
 - la limite Windows est écrite là où l'exploitante la lira ;
 - la suite SQLite est intégralement verte (2876 épreuves, 0 échec) et la CI
-  est verte aux SHA livrés.
+  est verte aux cinq SHA livrés ;
+- le workflow Windows n'a **pas régressé** : son verdict passe du rouge au vert
+  par rapport à la base `main`, et ce qui reste rouge est une étape de
+  diagnostic qui l'était déjà (section 6.1).
 
 **Ce qui n'est pas prêt, et pourquoi ce n'est pas un GO :**
 
