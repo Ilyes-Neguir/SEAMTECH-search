@@ -150,11 +150,49 @@ def _ecrire_manifeste(dossier: Path, age_heures: float) -> None:
     )
 
 
+class _ClientCorpusFactice:
+    """Stockage objet en mémoire, juste assez pour le planificateur.
+
+    Reproduit le piège réel de ``S3StorageClient`` : l'envoi préfixe et rend la
+    clé réelle, le téléchargement n'applique aucun préfixe.
+    """
+
+    def __init__(self, *, prefixe: str = "") -> None:
+        self.prefixe = prefixe
+        self.objets: dict[str, bytes] = {}
+        self.envois = 0
+
+    def _cle(self, cle: str) -> str:
+        return f"{self.prefixe}/{cle.lstrip('/')}" if self.prefixe else cle
+
+    def upload_bytes(self, data: bytes, remote_key: str, **_):
+        self.envois += 1
+        cle = self._cle(remote_key)
+        self.objets[cle] = data
+        return cle
+
+    def download_file(self, remote_key: str, destination_path: Path, **_):
+        from pathlib import Path as _Chemin
+
+        destination = _Chemin(destination_path)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(self.objets[remote_key])
+        return destination
+
+    def list_keys(self, prefix: str) -> list[str]:
+        return sorted(cle for cle in self.objets if cle.startswith(self._cle(prefix)))
+
+
 class TestSauvegardePlanifiee:
     def _config_sauvegarde(self, tmp_path: Path, monkeypatch) -> AppConfig:
         dossier = tmp_path / "backups"
         dossier.mkdir()
         monkeypatch.setenv("SEAMTECH_BACKUP_DIR", str(dossier))
+        # Lot 21 : le corpus du test est un dossier jetable, jamais le vrai.
+        corpus = tmp_path / "corpus"
+        corpus.mkdir()
+        (corpus / "accumulateur.json").write_text('{"fiches": []}', encoding="utf-8")
+        monkeypatch.setenv("SEAMTECH_CORPUS_DIR", str(corpus))
         return _config(
             tmp_path,
             database_url="postgresql://seamtech:mot-de-passe-long@postgres:5432/seamtech_search",
@@ -190,8 +228,73 @@ class TestSauvegardePlanifiee:
             appels.append(True)
             return {"complet": True, "protection_globale_prouvee": True}
 
-        assert executer_si_du(config, intervalle_heures=24, fonction_sauver=sauvegarde_qualifiee_simulee) is True
+        # Lot 21 : le passage couvre aussi le corpus. Sans stockage distant, le
+        # corps du test reste le même mais le passage rend Faux — voir
+        # test_corpus_non_protege_fait_echouer_le_passage ci-dessous.
+        assert (
+            executer_si_du(
+                config,
+                intervalle_heures=24,
+                fonction_sauver=sauvegarde_qualifiee_simulee,
+                client_corpus=_ClientCorpusFactice(),
+            )
+            is True
+        )
         assert appels == [True]
+
+    def test_corpus_sauvegarde_dans_le_meme_passage(self, tmp_path: Path, monkeypatch) -> None:
+        """Lot 21 : une sauvegarde due emporte le corpus, sur le même passage."""
+        from seamtech_search import sauvegarde_corpus
+        from seamtech_search.sauvegarde_planifiee import executer_si_du
+
+        config = self._config_sauvegarde(tmp_path, monkeypatch)
+        client = _ClientCorpusFactice()
+
+        assert executer_si_du(
+            config,
+            intervalle_heures=24,
+            fonction_sauver=lambda: {"complet": True, "protection_globale_prouvee": True},
+            client_corpus=client,
+        ) is True
+
+        # La preuve est sur le STOCKAGE, pas dans un compteur local.
+        instant = sauvegarde_corpus.dernier_instant(client)
+        assert instant, "aucune sauvegarde du corpus sur le stockage distant"
+        recu = tmp_path / "recu"
+        rapport = sauvegarde_corpus.restaurer(client, recu)
+        assert rapport["integrite"] == "verifiee"
+        assert (recu / "accumulateur.json").read_text(encoding="utf-8") == '{"fiches": []}'
+
+    def test_corpus_non_protege_fait_echouer_le_passage(self, tmp_path: Path, monkeypatch) -> None:
+        """Sans stockage distant, le passage ne doit PAS se dire réussi."""
+        from seamtech_search.sauvegarde_planifiee import executer_si_du
+
+        config = self._config_sauvegarde(tmp_path, monkeypatch)
+        assert (
+            executer_si_du(
+                config,
+                intervalle_heures=24,
+                fonction_sauver=lambda: {"complet": True, "protection_globale_prouvee": True},
+                client_corpus=None,
+            )
+            is False
+        )
+
+    def test_corpus_deja_frais_n_est_pas_reenvoye(self, tmp_path: Path, monkeypatch) -> None:
+        """Une sauvegarde fraîche du corpus n'est pas réécrite à chaque passage."""
+        from seamtech_search.sauvegarde_planifiee import executer_si_du
+
+        config = self._config_sauvegarde(tmp_path, monkeypatch)
+        client = _ClientCorpusFactice()
+        for _ in range(2):
+            executer_si_du(
+                config,
+                intervalle_heures=24,
+                fonction_sauver=lambda: {"complet": True, "protection_globale_prouvee": True},
+                client_corpus=client,
+            )
+        # 1 manifeste + 1 fichier au premier passage, rien au second.
+        assert client.envois == 2
 
     def test_executer_si_non_du_ne_fait_rien(self, tmp_path: Path, monkeypatch) -> None:
         from seamtech_search.sauvegarde_planifiee import executer_si_du
@@ -244,6 +347,19 @@ class TestComposeSauvegarde:
             "le dossier des sauvegardes doit être un volume persistant"
         )
 
+        # Lot 21 — le corpus mesuré doit partir hors-site avec la base, sinon
+        # il reste en un seul exemplaire sur un seul disque. Sans la variable,
+        # le planificateur journalise « corpus absent » et se croit quitte.
+        assert "SEAMTECH_CORPUS_DIR" in env, (
+            "le service sauvegarde doit désigner le corpus (SEAMTECH_CORPUS_DIR)"
+        )
+        corpus = env["SEAMTECH_CORPUS_DIR"]
+        monte = [v for v in volumes if corpus in v]
+        assert monte, f"le corpus {corpus} doit être monté dans le service sauvegarde"
+        assert any(v.rstrip("/").endswith(":ro") for v in monte), (
+            "le corpus est monté en LECTURE SEULE : la sauvegarde ne l'écrit jamais"
+        )
+
     def test_healthcheck_sauvegarde_ne_sonde_pas_un_serveur_http_absent(self, services: dict) -> None:
         """OBS-03 : l'image porte un HEALTHCHECK HTTP (/live:8000) pour `web`.
         Le planificateur ne sert pas HTTP : sans surcharge, Docker le déclare
@@ -270,6 +386,41 @@ def test_health_expose_la_version(tmp_path: Path) -> None:
     reponse = client.get("/health", headers={"X-SEAMTECH-TOKEN": config.auth_token})
     assert reponse.status_code == 200
     assert reponse.json()["version"] == seamtech_search.__version__
+
+
+def test_health_expose_l_etat_du_corpus(tmp_path: Path, monkeypatch) -> None:
+    """Lot 21 : sans stockage distant, /health doit DIRE que le corpus n'est pas protégé.
+
+    L'angle mort fermé ici est celui d'un état qu'on ne lit pas : le corpus
+    peut ne pas être sauvegardé sans que rien ne le montre à l'exploitant.
+    """
+    config = _config(tmp_path)
+    monkeypatch.setattr(
+        "seamtech_search.sauvegarde._client_s3_depuis_env", lambda: None
+    )
+    client = TestClient(create_app(config))
+    reponse = client.get("/health", headers={"X-SEAMTECH-TOKEN": config.auth_token})
+    assert reponse.status_code == 200
+    corps = reponse.json()
+    assert "corpus" in corps, "/health doit exposer l'état du corpus mesuré"
+    assert corps["corpus"]["protege"] is False
+    assert corps["corpus"]["motif"]
+
+
+def test_health_corpus_annonce_un_stockage_injoignable(tmp_path: Path, monkeypatch) -> None:
+    """Une lecture impossible rend « inconnu » (None) — jamais « protégé »."""
+    config = _config(tmp_path)
+
+    def en_panne():
+        raise RuntimeError("endpoint injoignable")
+
+    monkeypatch.setattr(
+        "seamtech_search.sauvegarde._client_s3_depuis_env", en_panne
+    )
+    client = TestClient(create_app(config))
+    reponse = client.get("/health", headers={"X-SEAMTECH-TOKEN": config.auth_token})
+    assert reponse.status_code == 200
+    assert reponse.json()["corpus"]["protege"] is None
 
 
 # ---------------------------------------------------------------------------

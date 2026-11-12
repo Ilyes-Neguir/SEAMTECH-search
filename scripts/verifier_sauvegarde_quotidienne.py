@@ -36,6 +36,13 @@ L'échappatoire ``--autoriser-locale`` existe pour le déploiement qui assume
 sortie d'erreur. Elle reste lisible dans la ligne de cron de l'opérateur :
 c'est la trace de la décision, pas une façon de la cacher.
 
+Lot 21 : le champ d'application s'élargit au CORPUS mesuré
+(``donnees/etape0``). La base et l'archive ne le couvrent pas : il est le seul
+exemplaire de mesures faites à la main, il vit sur un seul disque, et git
+n'est pas une sauvegarde (un ``reset`` efface l'arbre de travail). Il est donc
+vérifié ici, par la MÊME commande, avec la même sévérité. Un déploiement sans
+corpus le voit écrit « sans objet » au lieu d'être pénalisé.
+
 Codes de retour : 0 = protection prouvée, 1 = protection NON prouvée,
 2 = état indéterminable (configuration illisible, pas de base configurée).
 """
@@ -51,6 +58,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from seamtech_search.config import AppConfig, default_config_path  # noqa: E402
 from seamtech_search.etat_exploitation import SEUIL_SAUVEGARDE_HEURES, etat_sauvegarde  # noqa: E402
+from seamtech_search.sauvegarde_corpus import dossier_corpus  # noqa: E402
+from seamtech_search.sauvegarde_corpus import verifier as verifier_corpus  # noqa: E402
 
 #: Statut acceptable. Un seul.
 STATUT_SAIN = "ok"
@@ -127,6 +136,43 @@ def evaluer(etat: dict, *, autoriser_locale: bool) -> tuple[bool, list[str]]:
     return sain, raisons
 
 
+def evaluer_corpus(
+    *, seuil_heures: float, client: object | None
+) -> tuple[bool | None, dict, list[str]]:
+    """Protection du corpus : (applicable?, état, raisons).
+
+    Rend ``None`` pour « sans objet » (déploiement qui n'embarque pas de
+    corpus) — un déploiement sans corpus ne doit pas être pénalisé, mais un
+    déploiement AVEC corpus non sauvegardé doit échouer.
+
+    L'état est lu SUR LE STOCKAGE DISTANT. Un âge calculé depuis le disque
+    local ne prouverait pas qu'une copie existe ailleurs : c'est exactement
+    l'angle mort que ce contrôle ferme.
+    """
+    dossier = dossier_corpus()
+    if not dossier.is_dir():
+        return None, {"applicable": False, "dossier": str(dossier)}, []
+    try:
+        etat = verifier_corpus(client, fraicheur_heures=seuil_heures)
+    except Exception as exc:  # noqa: BLE001 - le type suffit au rapport
+        # Jamais « protégé » sur une lecture impossible : inconnu, donc échec.
+        return (
+            False,
+            {"applicable": True, "protege": None, "motif": f"lecture impossible ({type(exc).__name__})"},
+            [f"corpus : état du stockage illisible ({type(exc).__name__}) — la protection n'est pas prouvée."],
+        )
+    if etat.get("protege") is True:
+        return True, {"applicable": True, **etat}, []
+    raisons = [
+        f"corpus non protégé : {etat.get('motif') or 'raison inconnue'}. "
+        "Le corpus mesuré n'est couvert ni par la sauvegarde de la base, ni par "
+        "l'archive indexée, ni par git (un reset efface l'arbre de travail). "
+        "Lancer `python scripts/sauvegarder_corpus.py sauvegarder` après avoir "
+        "configuré le hors-site (SEAMTECH_BACKUP_*)."
+    ]
+    return False, {"applicable": True, **etat}, raisons
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="verifier_sauvegarde_quotidienne",
@@ -164,10 +210,31 @@ def main(argv: list[str] | None = None) -> int:
     etat = etat_sauvegarde(config, seuil_heures=options.seuil_heures)
     sain, raisons = evaluer(etat, autoriser_locale=options.autoriser_locale)
 
+    # Lot 21 — le corpus, vérifié par la même commande.
+    try:
+        from seamtech_search.sauvegarde import _client_s3_depuis_env
+
+        client_corpus = _client_s3_depuis_env()
+    except Exception:  # noqa: BLE001 - sans client, le verdict est « non prouvé »
+        client_corpus = None
+    applicable, etat_corpus, raisons_corpus = evaluer_corpus(
+        seuil_heures=options.seuil_heures, client=client_corpus
+    )
+    if applicable is False:
+        pass  # déploiement sans corpus : ni pénalisé, ni dispensé d'être informé
+    else:
+        raisons = raisons + raisons_corpus
+        sain = sain and applicable is True
+
     if options.json:
         print(
             json.dumps(
-                {"sain": sain, "etat": etat, "raisons": raisons},
+                {
+                    "sain": sain,
+                    "etat": etat,
+                    "corpus": etat_corpus,
+                    "raisons": raisons,
+                },
                 ensure_ascii=False,
                 indent=2,
                 default=str,
@@ -181,6 +248,14 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  statut      : {etat.get('statut')}")
     print(f"  hors-site   : {etat.get('copie_distante') or 'AUCUN'}")
     print(f"  manifeste   : {etat.get('manifeste') or 'aucun'}")
+
+    # Le corpus, sur une ligne lisible — « sans objet » n'est pas « protégé ».
+    if applicable is None:
+        print(f"  corpus      : sans objet ({etat_corpus.get('dossier')} absent)")
+    elif applicable:
+        print(f"  corpus      : protégé (dernier {etat_corpus.get('dernier')})")
+    else:
+        print(f"  corpus      : NON PROTÉGÉ — {etat_corpus.get('motif')}")
     print()
 
     if sain:

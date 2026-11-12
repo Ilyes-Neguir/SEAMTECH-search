@@ -89,15 +89,11 @@ def test_autoriser_locale_assume_le_risque_mais_ne_soigne_pas_le_statut() -> Non
 
     # Une copie locale ET ancienne reste un échec : le risque accepté porte sur
     # la localité, il ne guérit pas une sauvegarde qui ne tourne plus.
-    sain, _ = v.evaluer(
-        _etat(copie_distante=None, statut="ancienne"), autoriser_locale=True
-    )
+    sain, _ = v.evaluer(_etat(copie_distante=None, statut="ancienne"), autoriser_locale=True)
     assert sain is False, "--autoriser-locale a masqué une sauvegarde trop ancienne"
 
 
-def test_le_rapport_ne_se_contredit_pas_sur_la_localisation(
-    tmp_path: Path, monkeypatch, capsys
-) -> None:
+def test_le_rapport_ne_se_contredit_pas_sur_la_localisation(tmp_path: Path, monkeypatch, capsys) -> None:
     """Un outil opposable ne dit pas « hors-site » et « locale » dans le même rapport.
 
     Défaut réellement rencontré en écrivant : l'en-tête affichait
@@ -127,9 +123,7 @@ def test_le_rapport_ne_se_contredit_pas_sur_la_localisation(
     # Le champ « hors-site : AUCUN » du constat est légitime et doit rester.
     # Ce qui ne doit pas apparaître, c'est le VERDICT qui affirme une
     # protection complète : c'est lui qu'on croit en lisant vite.
-    assert "PROTECTION PROUVÉE" not in sortie, (
-        "le verdict affirme une protection prouvée alors que la copie est locale"
-    )
+    assert "PROTECTION PROUVÉE" not in sortie, "le verdict affirme une protection prouvée alors que la copie est locale"
     assert "PROTECTION PARTIELLE" in sortie
     assert "LOCALE" in sortie, "le risque accepté doit rester écrit"
 
@@ -164,14 +158,10 @@ def test_integration_copie_recente_mais_locale_est_un_echec(tmp_path: Path, monk
     _ecrire_manifeste(tmp_path)  # ni « dump » ni clé S3 : copie locale
 
     etat = etat_sauvegarde(config)
-    assert etat["statut"] == "ok", (
-        "hypothèse de départ vérifiée : /health dit « ok » pour une copie locale"
-    )
+    assert etat["statut"] == "ok", "hypothèse de départ vérifiée : /health dit « ok » pour une copie locale"
 
     sain, raisons = v.evaluer(etat, autoriser_locale=False)
-    assert sain is False, (
-        "le vérificateur a suivi /health dans son angle mort au lieu de le corriger"
-    )
+    assert sain is False, "le vérificateur a suivi /health dans son angle mort au lieu de le corriger"
     assert any("hors-site" in r for r in raisons)
 
 
@@ -203,3 +193,77 @@ def test_integration_aucune_sauvegarde_jamais_produite(tmp_path: Path, monkeypat
     sain, raisons = v.evaluer(etat, autoriser_locale=False)
     assert sain is False
     assert any("service compose" in r for r in raisons), "le remède doit nommer le service"
+
+
+# --------------------------------------------------------------------------
+# Lot 21 — le corpus, vérifié par la même commande
+# --------------------------------------------------------------------------
+
+
+def test_corpus_absent_est_sans_objet(tmp_path: Path, monkeypatch):
+    """Un déploiement sans corpus n'est ni pénalisé ni dispensé d'être informé."""
+    monkeypatch.setenv("SEAMTECH_CORPUS_DIR", str(tmp_path / "inexistant"))
+    applicable, etat, raisons = v.evaluer_corpus(seuil_heures=24, client=None)
+    assert applicable is None
+    assert etat["applicable"] is False
+    assert raisons == []
+
+
+def test_corpus_present_sans_stockage_n_est_pas_protege(tmp_path: Path, monkeypatch):
+    """Le cas réel du Lot 21 : un corpus sur un disque et nulle part ailleurs."""
+    corpus = tmp_path / "etape0"
+    corpus.mkdir()
+    (corpus / "accumulateur.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("SEAMTECH_CORPUS_DIR", str(corpus))
+
+    applicable, etat, raisons = v.evaluer_corpus(seuil_heures=24, client=None)
+    assert applicable is False
+    assert etat["protege"] is False
+    assert len(raisons) == 1
+    assert "corpus non protégé" in raisons[0]
+
+
+def test_corpus_protege_est_prouve(tmp_path: Path, monkeypatch):
+    from seamtech_search.sauvegarde_corpus import sauvegarder
+
+    corpus = tmp_path / "etape0"
+    corpus.mkdir()
+    (corpus / "accumulateur.json").write_text('{"fiches": []}', encoding="utf-8")
+    monkeypatch.setenv("SEAMTECH_CORPUS_DIR", str(corpus))
+
+    class ClientFactice:
+        def __init__(self):
+            self.objets: dict[str, bytes] = {}
+
+        def upload_bytes(self, data: bytes, remote_key: str, **_):
+            self.objets[remote_key] = data
+            return remote_key
+
+        def list_keys(self, prefix: str) -> list[str]:
+            return sorted(cle for cle in self.objets if cle.startswith(prefix))
+
+    client = ClientFactice()
+    sauvegarder(client, dossier=corpus)
+
+    applicable, etat, raisons = v.evaluer_corpus(seuil_heures=24, client=client)
+    assert applicable is True
+    assert etat["protege"] is True
+    assert raisons == []
+
+
+def test_corpus_illisible_n_est_jamais_protege(tmp_path: Path, monkeypatch):
+    """Une lecture impossible rend « inconnu », donc échec — jamais « protégé »."""
+    corpus = tmp_path / "etape0"
+    corpus.mkdir()
+    monkeypatch.setenv("SEAMTECH_CORPUS_DIR", str(corpus))
+
+    class ClientEnPanne:
+        def list_keys(self, prefix: str) -> list[str]:
+            raise RuntimeError("endpoint injoignable")
+
+    applicable, etat, raisons = v.evaluer_corpus(seuil_heures=24, client=ClientEnPanne())
+    # Une lecture impossible n'est JAMAIS « protégé » : l'état est soit faux
+    # (non prouvé), soit nul (inconnu) — dans les deux cas, échec.
+    assert applicable is False
+    assert etat["protege"] is not True
+    assert "corpus" in raisons[0]

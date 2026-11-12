@@ -18,6 +18,14 @@ qui manquait, et rien de plus :
   pire qu'une sauvegarde manquée, et `/health` (``statut: "ancienne"``)
   rend l'échec visible au lieu de le cacher.
 
+CORPUS (Lot 21, priorité 0) : le même passage sauvegarde aussi le corpus
+mesuré (`seamtech_search.sauvegarde_corpus`), au même rythme et avec la même
+identité hors-site. Il n'est couvert par AUCUNE des deux protections
+précédentes — il n'est ni dans la base (c'est un dépôt de fichiers) ni dans
+l'archive indexée (`root_paths`) — et il n'existe qu'en un seul exemplaire.
+Sa fraîcheur est lue sur le stockage distant lui-même, pas sur le disque :
+c'est la seule lecture qui prouve quelque chose.
+
 Mode SQLite (pas de ``database_url``) : rien à planifier — ``pg_dump`` n'a
 pas d'objet et la sauvegarde du fichier reste le geste documenté du poste.
 Le processus sort alors proprement (code 0) au lieu de boucler en erreur.
@@ -32,9 +40,12 @@ import os
 import threading
 import time
 from collections.abc import Callable
+from typing import Any
 
+from . import sauvegarde_corpus
 from .config import AppConfig, default_config_path, exiger_secrets_production
 from .etat_exploitation import dossier_sauvegardes, etat_sauvegarde
+from .sauvegarde import _client_s3_depuis_env
 
 logger = logging.getLogger(__name__)
 
@@ -76,16 +87,69 @@ def _sauver_reel(config: AppConfig) -> dict:
     )
 
 
+def sauvegarde_corpus_due(client: Any | None, intervalle_heures: float) -> bool:
+    """Vrai si le corpus n'a pas de sauvegarde hors-site plus récente que l'intervalle.
+
+    La fraîcheur est lue SUR LE STOCKAGE DISTANT (`sauvegarde_corpus.verifier`),
+    jamais sur le disque local : un âge calculé depuis le disque ne prouverait
+    pas qu'une copie existe ailleurs — c'est précisément l'angle mort que le
+    Lot 21 corrige.
+
+    Sans client configuré, c'est dû : il n'y a rien à attendre, et l'échec
+    doit remonter à chaque passage plutôt que d'être avalé une fois.
+    """
+    if not math.isfinite(intervalle_heures) or intervalle_heures <= 0:
+        return True
+    etat = sauvegarde_corpus.verifier(client, fraicheur_heures=intervalle_heures)
+    return not etat.get("protege", False)
+
+
+def _sauver_corpus(client: Any | None) -> bool:
+    """Une tentative de sauvegarde du corpus. Faux en cas d'échec, sans jamais lever.
+
+    Un corpus absent (déploiement qui ne l'embarque pas) est signalé une fois
+    au niveau INFO, sans échec : ce n'est pas une panne, mais l'opérateur doit
+    pouvoir le lire dans les journaux au lieu de croire la protection acquise.
+    """
+    dossier = sauvegarde_corpus.dossier_corpus()
+    if not dossier.is_dir():
+        logger.info("Corpus absent (%s) : rien à sauvegarder hors-site.", dossier.name)
+        return True
+    if client is None:
+        logger.error(
+            "Corpus NON sauvegardé : aucun stockage distant configuré. "
+            "Provisionner l'identité de sauvegarde (scripts/provisionner_stockage.sh)."
+        )
+        return False
+    try:
+        manifeste = sauvegarde_corpus.sauvegarder(client, dossier=dossier)
+    except Exception as exc:
+        # Type seul au journal : la trace peut contenir une clé ou un endpoint.
+        logger.error("Sauvegarde du corpus en échec (%s) ; nouvel essai au prochain passage.", type(exc).__name__)
+        return False
+    logger.info(
+        "Corpus sauvegardé hors-site : %s fichier(s), instant %s.",
+        manifeste.get("nb_fichiers"),
+        manifeste.get("horodatage"),
+    )
+    return True
+
+
 def executer_si_du(
     config: AppConfig,
     *,
     intervalle_heures: float,
     fonction_sauver: Callable[[], object] | None = None,
+    client_corpus: Any | None = None,
 ) -> bool:
     """Un passage du planificateur. Retourne Faux pour une copie non qualifiée.
 
     Ne lève jamais : un échec de sauvegarde est journalisé et retourne Faux —
     la boucle doit survivre pour retenter au passage suivant.
+
+    Le corpus est sauvegardé APRÈS la base : une panne ne doit pas laisser
+    croire que tout est protégé, et l'échec du corpus est compté dans le
+    résultat du passage (Faux) au lieu d'être avalé.
     """
     if not config.database_url:
         logger.info("Pas de base PostgreSQL configurée : sauvegarde planifiée sans objet.")
@@ -105,7 +169,11 @@ def executer_si_du(
         logger.error("Sauvegarde planifiée non qualifiée comme protection globale ; rétention suspendue.")
         return False
     logger.info("Sauvegarde planifiée terminée.")
-    return True
+
+    # Lot 21 : le corpus, sur le même passage — donc au même rythme (24 h).
+    if not sauvegarde_corpus_due(client_corpus, intervalle_heures):
+        return True
+    return _sauver_corpus(client_corpus)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -145,8 +213,9 @@ def main(argv: list[str] | None = None) -> int:
         verification,
         dossier_sauvegardes(config),
     )
+    logger.info("Corpus pris en charge : %s", sauvegarde_corpus.dossier_corpus())
     while True:
-        executer_si_du(config, intervalle_heures=intervalle)
+        executer_si_du(config, intervalle_heures=intervalle, client_corpus=_client_s3_depuis_env())
         time.sleep(verification * 60)
 
 

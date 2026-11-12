@@ -588,6 +588,23 @@ def create_app(config: AppConfig) -> FastAPI:
 
         sauvegarde = etat_sauvegarde(config)
 
+        # Lot 21 — le corpus mesuré n'est couvert par AUCUNE des protections
+        # précédentes : il n'est ni dans la base (c'est un dépôt de fichiers)
+        # ni dans l'archive indexée. Son état est donc lu SUR LE STOCKAGE
+        # DISTANT, pas sur le disque : un âge calculé depuis le disque ne
+        # prouverait pas qu'une copie existe ailleurs. Une lecture impossible
+        # rend ``protege`` nul (« inconnu »), jamais vrai.
+        try:
+            from .sauvegarde import _client_s3_depuis_env
+            from .sauvegarde_corpus import dossier_corpus
+            from .sauvegarde_corpus import verifier as verifier_corpus
+
+            corpus: dict[str, object] = dict(verifier_corpus(_client_s3_depuis_env()))
+            corpus["dossier"] = str(dossier_corpus())
+        except Exception as exc:
+            # Type seul : le motif peut contenir un endpoint ou une clé.
+            corpus = {"protege": None, "motif": f"évaluation impossible ({type(exc).__name__})"}
+
         return {
             "status": "ok",
             **health_details,
@@ -615,6 +632,8 @@ def create_app(config: AppConfig) -> FastAPI:
                 "recoverables": jobs_par_statut.get("pending", 0),
             },
             "backup": sauvegarde,
+            # Lot 21 : le corpus, seul exemplaire des mesures faites à la main.
+            "corpus": corpus,
             # Read-only probe (never puts versioning): False means the endpoint
             # cannot version (Cloudflare R2), None means "could not find out".
             **versioning,
