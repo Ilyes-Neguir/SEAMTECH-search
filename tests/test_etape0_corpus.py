@@ -73,6 +73,80 @@ def test_ajouter_cree_puis_met_a_jour_sans_doublon():
     assert acc["fiches"][0]["gamme"] == "C3", "la valeur la plus récente doit gagner"
 
 
+def test_relever_sans_axe_nefface_pas_laxe_mesure():
+    """RÉGRESSION, §6.2 de ETAPE0_ACCES_CORPUS : un relevé sans axe EFFAÇAIT l'axe.
+
+    Le dommage a été réel et il est documenté : en rejouant les 74 dossiers de
+    ``VOILES 2024`` sans axe, deux fiches dont l'axe avait été lu dans les
+    documents l'ont perdu — ``type_voile='génois'`` et ``type_voile="voile
+    d'avant"``. La cause est à la ligne ``acc["fiches"][rang] = fiche`` : la
+    ligne entière est remplacée, donc un axe non précisé repart à vide.
+
+    Décision : FUSIONNER. Un relevé qui n'apporte rien complète, il n'efface
+    pas.
+    """
+    acc = e0.nouvel_accumulateur()
+    chemin = "/VOILES 2024/DOSSIER MESURE"
+
+    acc, _ = e0.ajouter_fiche(
+        acc,
+        chemin=chemin,
+        racine="VOILES 2024",
+        source="dropbox",
+        gamme="C0",
+        type_voile="génois",
+        matiere="Dacron",
+    )
+    assert acc["fiches"][0]["type_voile"] == "génois"
+
+    # Second relevé du même dossier, sans préciser les axes — c'est le cas réel
+    # d'une reprise de relevé interrompu.
+    acc, _ = e0.ajouter_fiche(acc, chemin=chemin, racine="VOILES 2024", source="dropbox")
+
+    fiche = acc["fiches"][0]
+    assert fiche["type_voile"] == "génois", (
+        "RÉGRESSION : le second relevé a effacé l'axe « génois » mesuré dans les "
+        "documents. C'est la perte de données silencieuse du §6.2."
+    )
+    assert fiche["gamme"] == "C0"
+    assert fiche["matiere"] == "Dacron"
+
+
+def test_une_valeur_relue_remplace_lancienne():
+    """La fusion n'est pas un GEL : un axe relu doit remplacer l'ancienne valeur."""
+    acc = e0.nouvel_accumulateur()
+    chemin = "/VOILES 2024/DOSSIER RELU"
+
+    acc, _ = e0.ajouter_fiche(
+        acc, chemin=chemin, racine="VOILES 2024", source="dropbox", type_voile="génois"
+    )
+    assert acc["fiches"][0]["type_voile"] == "génois"
+
+    acc, _ = e0.ajouter_fiche(
+        acc, chemin=chemin, racine="VOILES 2024", source="dropbox", type_voile="trinquette"
+    )
+    assert acc["fiches"][0]["type_voile"] == "trinquette"
+
+
+def test_les_axes_sont_fusionnes_independamment():
+    """Chaque axe est indépendant : renseigner l'un n'efface pas les autres."""
+    acc = e0.nouvel_accumulateur()
+    chemin = "/VOILES 2024/DOSSIER PARTIEL"
+
+    acc, _ = e0.ajouter_fiche(
+        acc, chemin=chemin, racine="VOILES 2024", source="dropbox",
+        gamme="C0", type_voile="génois", matiere="Dacron",
+    )
+    # On ne relit que la matière : elle seule change.
+    acc, _ = e0.ajouter_fiche(
+        acc, chemin=chemin, racine="VOILES 2024", source="dropbox", matiere="Mylar"
+    )
+    fiche = acc["fiches"][0]
+    assert fiche["matiere"] == "Mylar"
+    assert fiche["gamme"] == "C0", "renseigner la matière ne doit pas vider la gamme"
+    assert fiche["type_voile"] == "génois"
+
+
 def test_ajouter_refuse_une_source_inventee():
     acc = e0.nouvel_accumulateur()
     with pytest.raises(ValueError, match="Source inattendue"):

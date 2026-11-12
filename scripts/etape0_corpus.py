@@ -203,6 +203,34 @@ def categorie_de_racine(famille: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+#: Axes lus DANS les documents. Ce sont les seules valeurs qu'un second relevé
+#: ne doit jamais pouvoir remettre à vide : l'arborescence ne les dit pas, il
+#: faut ouvrir la fiche pour les connaître — les perdre, c'est perdre un
+#: travail déjà fait.
+AXES_MESURES = ("gamme", "type_voile", "matiere")
+
+
+def _fusionner_axes(existante: dict[str, Any], nouvelle: dict[str, Any]) -> dict[str, Any]:
+    """Complète au lieu d'écraser : un axe non relu conserve sa valeur mesurée.
+
+    Défaut corrigé au Lot 19 (§6.2 de ``ETAPE0_ACCES_CORPUS.md``). La ligne
+    entière était remplacée, si bien que rejouer un dossier sans préciser son
+    type de voile effaçait la valeur lue précédemment dans les documents. Deux
+    fiches en ont été victimes : ``type_voile='génois'`` et
+    ``type_voile="voile d'avant"``.
+
+    Décision : FUSIONNER. Un axe effectivement RELU remplace l'ancienne valeur
+    — la fusion n'est pas un gel. Un axe ABSENT du nouvel appel conserve
+    l'ancienne valeur. Chaque axe est indépendant : renseigner la matière ne
+    vide pas la gamme.
+    """
+    fusionnee = dict(nouvelle)
+    for axe in AXES_MESURES:
+        if fusionnee.get(axe) is None and existante.get(axe) is not None:
+            fusionnee[axe] = existante[axe]
+    return fusionnee
+
+
 def ajouter_fiche(
     acc: dict[str, Any],
     *,
@@ -219,6 +247,10 @@ def ajouter_fiche(
     L'appel est idempotent : rejouer le même chemin met à jour la ligne
     existante au lieu d'en créer une seconde. C'est ce qui permet de reprendre
     un relevé interrompu sans jamais double-compter.
+
+    La mise à jour FUSIONNE les axes (``gamme``, ``type_voile``, ``matiere``) :
+    un axe absent du nouvel appel conserve la valeur déjà mesurée, un axe
+    fourni la remplace. Voir :func:`_fusionner_axes`.
     """
     if source not in SOURCES_ADMISES:
         raise ValueError(f"Source inattendue : {source!r}. Attendues : {list(SOURCES_ADMISES)}.")
@@ -250,7 +282,7 @@ def ajouter_fiche(
 
     for rang, existante in enumerate(acc["fiches"]):
         if existante["id"] == fiche["id"]:
-            acc["fiches"][rang] = fiche
+            acc["fiches"][rang] = _fusionner_axes(existante, fiche)
             return acc, False
 
     acc["fiches"].append(fiche)

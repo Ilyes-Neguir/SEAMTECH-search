@@ -24,6 +24,13 @@ Ce script calcule les identifiants AVANT l'écriture. Il ne modifie rien.
 Il indique pour chacun s'il serait NOUVEAU (une fiche de plus) ou DÉJÀ CONNU
 (mise à jour de la ligne existante — aucune double comptabilisation).
 
+Un chemin DÉJÀ CONNU qui porte des axes mesurés est signalé « AXES PRÉSENTS »
+: c'est le verdict qui manquait et qui a coûté deux fiches (§6.2 de
+``ETAPE0_ACCES_CORPUS.md``). Depuis le Lot 19, la fusion conserve ces axes —
+le verdict est donc une INFORMATION et non un blocage : il rappelle que ces
+valeurs ont été lues dans les documents, et qu'un import qui prétendrait les
+réécrire doit les fournir.
+
 Codes de retour : 0 = prêt à importer, 1 = collision détectée à examiner.
 """
 
@@ -36,6 +43,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from scripts.etape0_corpus import (  # noqa: E402
+    AXES_MESURES,
     FICHIER_ACCUMULATEUR,
     charger_accumulateur,
     identifiant,
@@ -100,13 +108,24 @@ def main(argv: list[str] | None = None) -> int:
             etat = "NOUVEAU"
         else:
             etat = "DÉJÀ CONNU"
+            axes = [axe for axe in AXES_MESURES if existante.get(axe)]
+            if axes:
+                # Verdict ajouté au Lot 19 : sans lui, rien ne signalait qu'une
+                # reprise allait toucher des valeurs lues dans les documents.
+                etat = "AXES PRÉSENTS"
+                print(
+                    f"  {rang:>3}. {etat:<13} id={ident}  axes mesurés : "
+                    f"{', '.join(axes)} — conservés par la fusion (Lot 19) ; "
+                    f"les réécrire suppose de les fournir."
+                )
             if racine and existante.get("racine") != racine:
                 print(
                     f"  {rang:>3}. DIVERGENCE : ce chemin est déjà connu sous la "
                     f"racine « {existante.get('racine')} », pas « {racine} »"
                 )
                 problemes += 1
-        print(f"  {rang:>3}. {etat:<12} id={ident}  racine={racine or '(non précisée)'}")
+        if etat != "AXES PRÉSENTS":  # déjà annoncé en détail au-dessus
+            print(f"  {rang:>3}. {etat:<13} id={ident}  racine={racine or '(non précisée)'}")
 
     print()
     if problemes:
