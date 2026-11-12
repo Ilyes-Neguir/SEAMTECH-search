@@ -966,6 +966,15 @@ jobs:
                   sys.exit(1)
               time.sleep(5)
           PY
+      # Lot 18 — le job backend le prouve déjà contre le service `postgres` ; ici
+      # c'est le VRAI conteneur `pgvector/pgvector:pg16` démarré par compose, donc
+      # la forme exacte de la production. Et aucune intervention manuelle.
+      - name: Provisionner les extensions PostgreSQL sur le conteneur réel
+        env:
+          SEAMTECH_DATABASE_URL: postgresql://seamtech:test_password@127.0.0.1:5433/seamtech_search
+        run: |
+          set -uo pipefail
+          python scripts/provisionner_extensions.py --appliquer
       - name: Provisionner les identités restreintes (buckets + versioning + politiques)
         # Étape SÉPARÉE du démarrage applicatif : c'est le provisionnement — et
         # non l'application — qui crée les buckets, active le versioning et crée

@@ -29,6 +29,30 @@ services:
       timeout: 5s
       retries: 5
 
+
+  # Lot 18 — le provisionnement fait partie du déploiement ; ce n'est plus une
+  # note qu'il faut avoir lue le soir de la mise en service.
+  #
+  # Service « one-shot » : il s'exécute une fois, rend 0, s'arrête. Les trois
+  # services applicatifs l'attendent avec `service_completed_successfully` —
+  # donc si une extension recommandée manque, le script rend 1 et
+  # `docker compose up` REFUSE de démarrer l'application. C'est voulu : sans
+  # `unaccent`, « regate » ne trouve pas « Régate », le service répond 200, et
+  # personne ne le remarque avant des mois. Un déploiement s'arrête sur un
+  # prérequis absent, il ne démarre pas amoindri.
+  #
+  # IDEMPOTENT (`CREATE EXTENSION IF NOT EXISTS`) : le relancer est sans effet,
+  # et c'est aussi la procédure de constat après un changement d'image.
+  provisionner-extensions:
+    build: .
+    restart: "no"
+    logging: *default-logging
+    command: ["python", "scripts/provisionner_extensions.py", "--appliquer"]
+    environment:
+      SEAMTECH_DATABASE_URL: postgresql://seamtech:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the environment}@postgres:5432/seamtech_search
+    depends_on:
+      postgres:
+        condition: service_healthy
   minio:
     # MinIO removed minio/minio from Docker Hub on 2026-09-11 (anonymous
     # pulls now 404/401); quay.io/minio is their current official
@@ -192,6 +216,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      provisionner-extensions:
+        condition: service_completed_successfully
       minio:
         condition: service_healthy
       redis:
@@ -273,6 +299,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      provisionner-extensions:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
       minio:
@@ -341,6 +369,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      provisionner-extensions:
+        condition: service_completed_successfully
       minio:
         condition: service_healthy
     volumes:
