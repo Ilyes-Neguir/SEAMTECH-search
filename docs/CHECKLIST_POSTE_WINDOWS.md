@@ -160,6 +160,10 @@ et y déposer `fra.traineddata` fourni avec Tesseract.
 4. Copie hors-site chiffrée : `docs/verite_terrain/RUNBOOK_RESTAURATION.md`.
 5. Jamais de sauvegarde dans la source d'archive (RG13) — les sauvegardes
    vivent dans `data\backups\`, hors archive.
+6. ⛔ **Périmètre** : la sauvegarde automatique couvre la base et le corpus,
+   **pas les pièces jointes des clients**. Le détail et la décision à prendre
+   sont dans `docs/GUIDE_MISE_EN_SERVICE_POSTE.md`, étape 7, « Ce que la
+   sauvegarde AUTOMATIQUE ne couvre PAS ».
 
 ---
 
