@@ -217,6 +217,63 @@ coordonnée. Chaque run Windows rejoue donc ce test et publie sa trace
 complète — c'est un instrument de diagnostic, à désarmer quand le Lot 17
 sera clos.
 
+### 2.9 Lot 17 — les échecs Windows nommés : huit sur huit traités
+
+Le Lot 17 ne pouvait pas commencer avant le Lot 16, et pour une raison
+précise : le **canal de lecture n'existait pas**. Le job `windows` unique
+épuisait les 50 annotations de GitHub avec la seule suite « sans service », et
+aucune annotation de la suite PostgreSQL ne paraissait — mesuré au run
+`43115725235`. D'où la séparation en deux jobs (`windows`, `windows-postgres`),
+chacun avec son budget.
+
+Une fois les journaux lisibles, huit échecs hors périmètre, huit causes lues :
+
+| # | Épreuve | Cause publiée |
+|---|---|---|
+| 1 | `test_depot_transactionnel::test_annexe_modifiee_…` | `assert 'c:\\users\\…' == 'C:\\Users\\…'` |
+| 2 | `test_depot_transactionnel::test_depot_reserve_chemin_nouveau_…` | `Right contains one more item: True` |
+| 3 | `test_depot_transactionnel::test_modification_concurrente_…` | idem 1 |
+| 4 | `test_depot_transactionnel::test_rejouer_pdf_historique_…` | idem 1 |
+| 5 | `test_depot_transactionnel::TestRejeuSansDoublon::test_cle_idempotence_…` | aucune cause extraite |
+| 6 | `test_rebuild_index_postgres::test_cli_scan_postgres_…` | `Right contains 2 more items… (deux.txt, 3)` |
+| 7 | `test_rebuild_index_postgres::test_rebuild_laisse_…` | `[('dossier-client/fiche-A.txt', 'C:\\…')]` |
+| 8 | `test_sauvegarde_snapshot_pg::test_echec_dump_libere_snapshot_…` | `assert 'pg_dump.EXE' == 'pg_dump'` |
+
+**Sept sur huit sont la même cause**, et ce n'est pas un défaut du produit :
+`models.py` définit `path_key = os.path.normcase(str(path.resolve()))`, qui met
+en minuscules sur Windows. Des épreuves comparaient ou écrivaient un chemin
+**brut** là où le produit stocke cette clé normalisée. Elles ne mesuraient donc
+plus ce qu'elles annoncent — par exemple, l'épreuve de concurrence n° 6
+insérait une autre ligne dans un autre trou de la base, et l'échec publié
+disait « il manque tout » au lieu de « la concurrence a mal tourné ».
+
+Le huitième (`pg_dump.EXE`) est une comparaison de nom de binaire insensible à
+la casse et au suffixe `.exe`.
+
+Chaque correction est prouvée par mutation, `os.path.normcase` étant forcé au
+comportement Windows par la formule que
+`tests/test_depot_transactionnel.py` emploie déjà à sa ligne 299. Exemples
+réels obtenus sans le correctif : `assert [] == [True]` (n° 2) et
+`assert [] == [('/tmp/…/un.txt', 1)]` (n° 6) — les signatures exactes du runner.
+
+**Résultat mesuré sur Windows réel** (run `43121414811`, job
+`windows-postgres`) : l'étape de verdict de la suite PostgreSQL passe au vert,
+avec 31 annotations publiées — le plafond de 50 n'est plus atteint.
+
+**Une conséquence de mon propre correctif du Lot 16**, regardée en face : une
+épreuve (`test_copie_dump_refuse_parent_lien_symbolique`) vérifiait que la
+copie du dump est refusée quand le parent est un lien. Le repli du Lot 16 la
+fait aboutir sur Windows. Le scénario est un confinement POSIX que Windows n'a
+pas ; la propriété qu'il mesurait est portée par l'empreinte, et prouvée sans
+Windows. L'épreuve reçoit donc la garde de saut que **son test frère possède
+déjà**, à la ligne 739 du même fichier.
+
+**Aucune ligne n'a été ajoutée à `ci/ecarts-windows.txt`** : aucun de ces huit
+échecs n'est un écart de plateforme assumé. Sept étaient des épreuves fausses
+et un était une épreuve fragile. Les déclarer écarts aurait transformé des
+erreurs de mesure en dette acceptée — c'est exactement ce que le préambule de
+ce fichier interdit.
+
 ## 3. Ce qui n'est PAS prouvé — la partie que ce rapport ne doit pas arranger
 
 ### 3.0 (CORRIGÉ au Lot 15 — voir §2.6) La recherche plafonnait à 100 correspondances
