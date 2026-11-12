@@ -218,6 +218,25 @@ jobs:
             echo "::error title=sqlite-suite-tail::$(tail -40 /tmp/sqlite.log | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 1800)"
             exit "$rc"
           fi
+      # Lot 18 — le provisionnement devient une ÉTAPE, plus une instruction.
+      #
+      # Ce workflow ne l'invoquait JAMAIS. La suite PostgreSQL passait quand
+      # même, pour deux raisons qui masquent précisément le risque : l'image
+      # pgvector/pgvector:pg16 embarque postgresql-contrib, et le rôle « seamtech »
+      # y est superutilisateur — l'application crée donc les extensions elle-même.
+      # En production le rôle applicatif NE l'est pas : l'application dégrade alors
+      # en silence, le service répond 200, et « regate » cesse de trouver « Régate »
+      # sans qu'aucune alarme ne sonne. C'est la panne qu'on découvre six mois après.
+      #
+      # L'étape est IDÉMPOTENTE (CREATE EXTENSION IF NOT EXISTS) et BLOQUANTE : le
+      # script rend 1 si une extension recommandée manque. Un déploiement doit
+      # s'arrêter sur un prérequis absent, pas démarrer amoindri.
+      - name: Provisionner les extensions PostgreSQL (idempotent, bloquant)
+        env:
+          SEAMTECH_DATABASE_URL: postgresql://seamtech:seamtech_test_password@localhost:5432/seamtech_search_test
+        run: |
+          set -uo pipefail
+          python scripts/provisionner_extensions.py --appliquer
       - name: Run PostgreSQL integration suite (must actually run, not self-skip)
         # Audit issue #5b: these tests `pytest.skip()` when
         # SEAMTECH_TEST_DATABASE_URL is unset, so a typo in the service name, a
