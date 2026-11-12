@@ -389,6 +389,62 @@ note comme dette ouverte plutôt que de le ranger trop vite dans les
 
 ---
 
+### 2.10.7 Le déploiement réel, et le commit parti trop vite
+
+La CI n'est pas le déploiement : le script restait une note dans
+`docs/DEPLOYMENT.md`, à exécuter à la main. Il est désormais un service
+« one-shot » de `docker-compose.yml`, attendu par `web`, `worker` et
+`sauvegarde` avec `condition: service_completed_successfully`. Si une
+extension recommandée manque, `docker compose up` **refuse** de démarrer
+l'application.
+
+**L'incident.** Mon premier câblage a fait rougir deux jobs qui étaient verts
+(`integration`, `recette-locale`). La cause est publiée, sans supposition :
+
+```console
+Container seamtech-search-provisionner-extensions-1  Started
+…
+service "provisionner-extensions" didn't complete successfully: exit 2
+```
+
+`exit 2` n'est pas un code du script : c'est celui de `python` quand il ne
+trouve pas le fichier. Et de fait le `Dockerfile` ne copiait dans l'image que
+`seamtech_search/` et `config/` — `scripts/` n'y était pas. Corrigé par un
+`COPY scripts/provisionner_extensions.py ./scripts/` et un chemin absolu dans
+la commande, pour qu'une erreur de répertoire se voie au lieu de se déguiser.
+
+**Le garde-fou.** Une fois l'image corrigée, `backend (3.13)` a échoué à son
+tour sur `tests/test_compose_hardening.py` : « provisionner-extensions : pas
+de healthcheck », et « la liste annonce 7, le compose en déclare 8 ». Deux
+tests écrits au Lot 13, qui ont fait exactement leur travail.
+
+Je ne les ai pas assouplis. Je leur ai appris la distinction qui leur
+manquait — un service **pérenne** se *surveille* (`unless-stopped` +
+healthcheck), un service **one-shot** se *constate* (son code de sortie) — et
+j'ai ajouté une exigence que l'ancien test ne portait pas : un one-shot doit
+être attendu par au moins un service avec `service_completed_successfully`
+(sinon il tourne dans le vide et son échec ne bloque rien : la panne même que
+ce lot veut rendre impossible), et jamais avec `service_healthy`. Trois
+mutations contrôlent que ces assertions mordent réellement.
+
+**Preuve.** CI du SHA `a3c17b2` : `completed success` sur les trois
+interpréteurs, `integration` **success** et `recette-locale` **success**. Le
+job `integration` valide `docker compose config` **puis démarre la pile
+documentée** — le service one-shot s'y exécute donc vraiment, et `web` attend
+son code de sortie. Côté Windows, verdict vert (étape 13), 31 annotations,
+zéro échec non nommé.
+
+**Ce que je retiens, et il faut le garder écrit.** Je n'ai ni Docker ni
+PostgreSQL système dans le bac à sable : je ne peux exécuter aucun changement
+compose avant de le pousser. Le pousser quand même était une erreur de
+méthode, pas une fatalité. Ce qui a rattrapé la chose, c'est une annotation
+lisible et deux tests écrits avant moi — pas ma rigueur. La règle que
+j'en tire pour la suite : un fichier que je ne peux pas exécuter ici doit être
+accompagné de sa preuve par un autre chemin, jamais poussé sur une intuition.
+
+---
+
+
 ## 3. Ce qui n'est PAS prouvé — la partie que ce rapport ne doit pas arranger
 
 ### 3.0 (CORRIGÉ au Lot 15 — voir §2.6) La recherche plafonnait à 100 correspondances
@@ -559,7 +615,7 @@ justification.
 | 2 | 109 fiches sans axe | **à qualifier** par lecture humaine |
 | 3 | Lot 9 (table de correspondance) | **fermé** — le dénominateur serait faux |
 | 4 | Calibrage des seuils | **bloqué** — 0 verdict humain saisi, et je ne le lance pas moi-même |
-| 5 | `unaccent` + `pg_trgm` | **[FAIT]** provisionnées automatiquement par la CI sur l'image de forme identique à la production — `scripts/provisionner_extensions.py` n'était *jamais invoqué*, il l'est désormais (§2.10) |
+| 5 | `unaccent` + `pg_trgm` | **[FAIT]** provisionnées automatiquement, en CI **et dans le déploiement** (`docker-compose.yml`) : `scripts/provisionner_extensions.py` n'était *jamais invoqué*, il l'est désormais, et son échec arrête la mise en service (§2.10) |
 | 6 | Défaut `ajouter` : un réimport sans axe **efface** l'axe mesuré | **ouvert** — perte de données silencieuse ; deux fiches en ont été victimes, réparées. La question « écraser, refuser, ou fusionner ? » vous revient |
 | 7 | PR #44 | **brouillon** — c'est le bloquant réel à la fusion ; aucun contrôle n'est requis sur `main` |
 | 8 | Banc `pgserver` local sans contrib | ~36 échecs **environnementaux**, la CI fait foi |
