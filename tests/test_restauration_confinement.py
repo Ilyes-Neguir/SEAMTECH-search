@@ -724,6 +724,14 @@ def test_cli_refuse_nom_dump_non_local_avant_restauration(tmp_path, monkeypatch,
 
 
 def test_copie_dump_refuse_parent_lien_symbolique(tmp_path, monkeypatch):
+    import os
+    if os.open not in os.supports_dir_fd:
+        pytest.skip("scénario de confinement POSIX, sans objet sur cette plateforme : "
+                    "sans dir_fd ni O_NOFOLLOW, la copie privée est faite autrement et "
+                    "c'est l'EMPREINTE qui refuse une substitution — démontré, sans "
+                    "Windows, par tests/test_plateforme_sans_dir_fd.py "
+                    "(test_restaurer_refuse_un_dump_substitue_meme_sans_dir_fd)")
+
     from seamtech_search import sauvegarde
 
     externe = tmp_path / "externe"
