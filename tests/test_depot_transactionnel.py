@@ -1665,8 +1665,15 @@ def test_depot_reserve_chemin_nouveau_contre_indexation_concurrente(base_depot: 
                 with autre.cursor() as c:
                     c.execute("SET LOCAL lock_timeout = '100ms'")
                     try:
+                        # MÊME clé que celle que le verrou tient :
+                        # depot._verrouiller_document_existant verrouille
+                        # os.path.normcase(str(resolve())). Insérer la clé brute
+                        # ne rencontrait donc AUCUN conflit sur Windows, où
+                        # normcase met en minuscules : le verrou n'était pas
+                        # pris, « bloque » restait vide, et le test échouait en
+                        # « Right contains one more item: True » (run 43121414811).
                         c.execute("INSERT INTO documents (path_key, path, name, parent_path, extension, size, modified_at, is_dir) VALUES (%s, %s, %s, %s, '.pdf', 1, 1, FALSE)",
-                                  (str(pdf.resolve()), str(pdf), pdf.name, str(pdf.parent)))
+                                  (os.path.normcase(str(pdf.resolve())), str(pdf), pdf.name, str(pdf.parent)))
                     except psycopg2.errors.LockNotAvailable:
                         bloque.append(True)
                     else:
