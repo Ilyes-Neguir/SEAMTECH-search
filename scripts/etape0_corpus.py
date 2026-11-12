@@ -289,6 +289,36 @@ def ajouter_fiche(
     return acc, True
 
 
+def fiches_a_qualifier(acc: dict[str, Any]) -> list[dict[str, Any]]:
+    """Fiches dont au moins un axe n'a jamais été mesuré, avec ce qui manque.
+
+    Ces fiches existent, comptent dans le total, et sont INVISIBLES dans les
+    agrégats : « 123 fiches » dit tout et ne dit rien. Celles-ci n'ont pas
+    d'axe non pas parce qu'une extraction a échoué — ``ajouter`` n'ouvre aucun
+    PDF — mais parce que **personne n'a ouvert le document**. L'arborescence
+    ne dit pas le type de voile ; il faut lire la fiche.
+
+    Rien n'est estimé ici. Une valeur devinée entrerait dans le dénominateur
+    du taux d'appariement et le fausserait durablement (instruction du
+    2026-11-11). On liste, on ne comble pas.
+    """
+    resultat: list[dict[str, Any]] = []
+    for fiche in acc["fiches"]:
+        manquants = [axe for axe in AXES_MESURES if not fiche.get(axe)]
+        if manquants:
+            resultat.append(
+                {
+                    "id": fiche["id"],
+                    "racine": fiche.get("racine"),
+                    "annee": fiche.get("annee"),
+                    "source": fiche.get("source"),
+                    "axes_manquants": manquants,
+                    "axes_mesures": [axe for axe in AXES_MESURES if fiche.get(axe)],
+                }
+            )
+    return resultat
+
+
 def statistiques(acc: dict[str, Any]) -> dict[str, Any]:
     """Le relevé, agrégé : total, par racine, par provenance, par axe renseigné."""
     fiches = acc["fiches"]
@@ -695,6 +725,11 @@ def main(argv: list[str] | None = None) -> int:
     p_ajouter.add_argument("--matiere", default=None)
     p_ajouter.add_argument("--categorie", default=None, choices=list(CATEGORIES_ADMISES))
 
+    sous.add_parser(
+        "a-qualifier",
+        help="Fiches dont un axe n'a jamais été mesuré (ni estimé, ni comblé).",
+    )
+
     sous.add_parser("charger", help="Reconstruire la base depuis l'accumulateur.")
     sous.add_parser("mesurer", help="Lancer l'instrument 1.1 sur la base chargée.")
 
@@ -733,6 +768,40 @@ def main(argv: list[str] | None = None) -> int:
             f"{identifiant(acc['sel'], options.chemin)} — total {stats['total']} fiche(s)"
         )
         return 0
+
+    if options.commande == "a-qualifier":
+        acc = charger_accumulateur(options.fichier)
+        fiches = fiches_a_qualifier(acc)
+        total = len(acc["fiches"])
+        print(f"Fiches consignées        : {total}")
+        print(f"Axes incomplets          : {len(fiches)}")
+        print()
+        if not fiches:
+            print("Aucune fiche à qualifier : tous les axes sont mesurés.")
+            return 0
+        par_racine: dict[str, int] = {}
+        par_manque: dict[str, int] = {}
+        for fiche in fiches:
+            par_racine[str(fiche["racine"])] = par_racine.get(str(fiche["racine"]), 0) + 1
+            cle = ", ".join(fiche["axes_manquants"])
+            par_manque[cle] = par_manque.get(cle, 0) + 1
+        print("Par racine :")
+        for racine, nombre in sorted(par_racine.items()):
+            print(f"  {racine:<16} {nombre}")
+        print("Ce qui manque :")
+        for manque, nombre in sorted(par_manque.items(), key=lambda kv: -kv[1]):
+            print(f"  {nombre:>4}  {manque}")
+        print()
+        print("Ces identifiants sont des empreintes : le chemin n'est pas stocké, par")
+        print("choix de confidentialité. Pour qualifier, il faut donc repartir des")
+        print("chemins — et c'est exactement ce que fait le pré-contrôle :")
+        print()
+        print("    python scripts/etape0_preparer_chemins.py chemins.txt")
+        print("    python scripts/etape0_corpus.py ajouter --chemin ... --type-voile ...")
+        print()
+        print("Il signalera « AXES PRÉSENTS » sur celles qui portent déjà une mesure :")
+        print("la fusion du Lot 19 la conserve, un import ne peut plus l'effacer.")
+        return 1
 
     if options.commande == "charger":
         acc = charger_accumulateur(options.fichier)

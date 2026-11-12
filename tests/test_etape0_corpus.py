@@ -147,6 +147,56 @@ def test_les_axes_sont_fusionnes_independamment():
     assert fiche["type_voile"] == "génois"
 
 
+def test_fiches_a_qualifier_liste_sans_jamais_rien_inventer():
+    """Les fiches sans axe doivent être VISIBLES — jamais comblées.
+
+    « 123 fiches » dit tout et ne dit rien : une fiche sans type de voile
+    compte comme les autres alors qu'elle ne sert à aucune comparaison. Cette
+    épreuve garantit qu'on les liste avec ce qui manque, et qu'aucune valeur
+    n'est estimée au passage — une valeur devinée fausserait durablement le
+    dénominateur du taux d'appariement.
+    """
+    acc = e0.nouvel_accumulateur()
+    acc, _ = e0.ajouter_fiche(
+        acc, chemin="/VOILES 2024/COMPLETE", racine="VOILES 2024", source="dropbox",
+        gamme="C0", type_voile="génois", matiere="Dacron",
+    )
+    acc, _ = e0.ajouter_fiche(
+        acc, chemin="/VOILES 2024/PARTIELLE", racine="VOILES 2024", source="dropbox",
+        type_voile="trinquette",
+    )
+    acc, _ = e0.ajouter_fiche(
+        acc, chemin="/VOILES 2025/VIDE", racine="VOILES 2025", source="dropbox"
+    )
+
+    a_qualifier = e0.fiches_a_qualifier(acc)
+    par_racine = {f["racine"]: f for f in a_qualifier}
+
+    # La fiche complète n'est pas à qualifier.
+    assert len(a_qualifier) == 2
+    # La partielle : il lui manque gamme et matiere, pas le type de voile.
+    partielle = par_racine["VOILES 2024"]
+    assert partielle["axes_manquants"] == ["gamme", "matiere"]
+    assert partielle["axes_mesures"] == ["type_voile"]
+    # La vide : tout est à mesurer.
+    assert par_racine["VOILES 2025"]["axes_manquants"] == ["gamme", "type_voile", "matiere"]
+    assert par_racine["VOILES 2025"]["axes_mesures"] == []
+
+    # Et surtout : RIEN n'a été inventé dans l'accumulateur.
+    vide = [f for f in acc["fiches"] if f["racine"] == "VOILES 2025"][0]
+    assert vide["gamme"] is None and vide["type_voile"] is None and vide["matiere"] is None
+
+
+def test_aucune_fiche_a_qualifier_quand_tout_est_mesure():
+    """Le vrai négatif doit être explicite, pas un silence."""
+    acc = e0.nouvel_accumulateur()
+    acc, _ = e0.ajouter_fiche(
+        acc, chemin="/VOILES 2024/A", racine="VOILES 2024", source="dropbox",
+        gamme="C0", type_voile="génois", matiere="Dacron",
+    )
+    assert e0.fiches_a_qualifier(acc) == []
+
+
 def test_ajouter_refuse_une_source_inventee():
     acc = e0.nouvel_accumulateur()
     with pytest.raises(ValueError, match="Source inattendue"):
