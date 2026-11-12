@@ -118,30 +118,42 @@ entrées — le dénombrement exact des dossiers, et donc des fiches, reste non
 ## 6. État exact du corpus consigné (mesuré le 2026-11-12)
 
 Chiffres obtenus par comptage direct sur `donnees/etape0/accumulateur.json`,
-jamais par déduction :
+jamais par déduction.
+
+**Le corpus a été complété le 2026-11-12 (lot 21, sur instruction).** Il est
+passé de **123** à **820** fiches. Les deux tableaux qui suivent donnent l'état
+*après* complément ; l'état d'avant et les raisons de l'arrêt sont conservés en
+6.1 pour l'historique.
 
 | Mesure | Valeur |
 |---|---|
-| Fiches consignées | **123** |
+| Fiches consignées | **820** |
 | `VOILES 2024` | 74 |
-| `VOILES 2025` | 30 |
-| `VOILES 2026` | 19 |
-| Catégorie | `voile` : 123 (aucune `accessoire`) |
-| Source `dropbox` | 116 |
+| `VOILES 2025` | 316 |
+| `VOILES 2026` | 268 |
+| `ACCESSOIRES 2024` | 22 |
+| `ACCESSOIRES 2025` | 76 |
+| `ACCESSOIRES 2026` | 64 |
+| Catégorie | `voile` : 658 — `accessoire` : 162 |
+| Source `dropbox` | 813 |
 | Source `archive` | 7 |
+| Identifiants | 820, **tous distincts** (aucun doublon) |
 
 Les axes, qui sont la raison d'être du corpus :
 
 | Axe | Renseigné | Manquant |
 |---|---|---|
-| `gamme` | 14 / 123 | **109** |
-| `type_voile` | 14 / 123 | **109** |
-| `matiere` | 17 / 123 | **106** |
+| `gamme` | 14 / 820 | **806** |
+| `type_voile` | 14 / 820 | **806** |
+| `matiere` | 18 / 820 | **802** |
 
-**109 fiches n'ont donc pas de type de voile.** Ce n'est pas une perte : ces
+Répartition fine : **790** fiches n'ont aucun axe, **27** en ont un ou deux,
+**3** ont les trois.
+
+**806 fiches n'ont donc pas de type de voile.** Ce n'est pas une perte : ces
 fiches ont été consignées depuis l'arborescence, et l'arborescence ne dit pas
 le type de voile. Le type ne s'obtient qu'en lisant le document, ce que
-personne n'a fait pour ces 109-là.
+personne n'a fait pour ces 806-là.
 
 En conséquence, et sur instruction :
 
@@ -150,24 +162,61 @@ En conséquence, et sur instruction :
 - ces fiches ne sont **pas retirées** du corpus : elles sont déclarées *« axe
   manquant, à qualifier »*, et c'est dans cet état qu'elles sont comptées.
 
-### 6.1 Le corpus n'est pas complet, et il ne sera pas complété ici
+**Contrôle de non-régression du complément** : sur les 123 fiches
+préexistantes, **0 axe perdu et 0 axe modifié** (comparaison identifiant par
+identifiant entre l'accumulateur d'avant et celui d'après). Voir 6.2.
 
-L'échelle attendue est de 338. Il en manque donc environ 215, principalement
-dans `VOILES 2025` (30 consignées sur un effectif inconnu), `VOILES 2026` (19,
-relevé tronqué) et les trois racines `ACCESSOIRES` (aucune consignée).
+### 6.1 Le complément du corpus (123 → 820), et l'écart de 338
 
-**Le complément est arrêté.** Deux raisons, une de méthode et une de décision :
+**L'échelle annoncée de 338 fiches était fausse.** Le relevé exhaustif des six
+racines, fait dossier par dossier par pagination jusqu'à `has_more: false`,
+donne **813 dossiers** ; avec les 7 fiches d'archive, **820 fiches**.
 
-1. **Méthode** — le listage de Dropbox tronque (`VOILES 2026`, requête `ST`).
-   Le compléter exigerait de paginer, et une pagination silencieusement
-   tronquée produirait un corpus *qu'on croirait complet*. Un corpus faux est
-   pire qu'un corpus incomplet : il ne se signale pas.
+| Racine | Avant | Relevé | Après |
+|---|---|---|---|
+| `VOILES 2024` | 74 | 74 | 74 |
+| `VOILES 2025` | 30 | 309 | 316 |
+| `VOILES 2026` | 19 | 268 | 268 |
+| `ACCESSOIRES 2024` | 0 | 22 | 22 |
+| `ACCESSOIRES 2025` | 0 | 76 | 76 |
+| `ACCESSOIRES 2026` | 0 | 64 | 64 |
+
+Avant le complément, le corpus était arrêté à 123 pour deux raisons, l'une de
+méthode et l'une de décision :
+
+1. **Méthode** — le listage de Dropbox tronquait (`VOILES 2026`, requête
+   `ST`, et surtout un `limit` trop grand : au-delà de 50 la réponse est
+   coupée *sans* signaler `has_more`). Le compléter exigeait de paginer, et
+   une pagination silencieusement tronquée aurait produit un corpus *qu'on
+   aurait cru complet*. Un corpus faux est pire qu'un corpus incomplet : il
+   ne se signale pas. **Cette objection est levée** : la pagination a été
+   menée par pages de 50 avec `list_folder_continue`, et chacune des six
+   racines s'est terminée sur `has_more: false`. Le relevé est donc
+   exhaustif et démontrable, pas estimé.
 2. **Décision** — arrêté sur instruction, l'intégration complète du corpus
    relevant du déploiement, à l'initiative de l'exploitant. Une importation
-   non demandée a déjà eu lieu (74 dossiers de `VOILES 2024` et 2 pièces de
-   2026) et a causé le dommage décrit en 6.2 ; elle n'est pas annulée — aucun
-   doublon, aucune donnée inventée, aucune fuite de chemin — mais elle ne
-   sera pas répétée.
+   non demandée avait déjà eu lieu (74 dossiers de `VOILES 2024` et 2 pièces
+   de 2026) et avait causé le dommage décrit en 6.2 ; elle n'avait pas été
+   annulée — aucun doublon, aucune donnée inventée, aucune fuite de chemin —
+   mais ne devait pas se répéter.
+
+**Sur instruction du 2026-11-12, la décision a été levée** et le complément
+réalisé, aux conditions posées : aucun axe estimé, aucune fiche retirée,
+compte avant/après exact, et **aucun correctif automatique** sur les fiches
+sans axe — elles rejoignent la file de qualification manuelle.
+
+**Deux points restent hors du corpus et vous reviennent :**
+
+- **Trois dossiers à la racine ne sont dans aucune des six racines.** Ils ne
+  portent pas de millésime et contiennent les pièces brutes d'un chantier
+  (patrons `.dxf`, `.mi2`, plans de coupe), non des fiches. Le format
+  `VOILES|ACCESSOIRES <année>` étant une contrainte stricte du consignateur,
+  ils ne peuvent pas y entrer sans décision de votre part sur leur racine de
+  rattachement.
+- **Aucune pièce jointe n'a été téléchargée.** Le complément a porté sur
+  l'arborescence seule : 820 fiches connues par leur chemin, dont 790 sans
+  axe. Les axes viendront de la lecture des documents, qui n'a pas eu lieu
+  ici.
 
 ### 6.2 Défaut de conception : un réimport sans axe EFFACE l'axe mesuré
 
@@ -204,3 +253,45 @@ La question de fond reste ouverte et vous revient : **que doit faire un
 réimport sans axe ?** Écraser (comportement actuel), refuser, ou fusionner en
 conservant la valeur mesurée ? Je ne tranche pas seul un choix qui détruit ou
 préserve de la donnée.
+
+**État au 2026-11-12 — la question a été tranchée, et c'est la FUSION.**
+`_fusionner_axes()` complète au lieu d'écraser : un axe réellement relu
+remplace l'ancienne valeur (la fusion n'est pas un gel), un axe absent du
+nouvel appel conserve la valeur déjà mesurée, et chaque axe est indépendant.
+Le comportement est couvert par des tests (dont « la fusion n'est pas un gel »
+et « les axes sont fusionnés indépendamment »).
+
+**La preuve à l'échelle est faite.** Le complément du corpus a rejoué les 123
+fiches déjà consignées, sans fournir aucun axe, puis les 697 nouvelles.
+Résultat mesuré identifiant par identifiant : **0 axe perdu, 0 axe modifié**,
+et les compteurs d'axes inchangés (gamme 14, type_voile 14, matiere 18).
+Sans cette correction, l'opération aurait effacé les 14 types de voile
+réellement lus dans les documents.
+
+### 6.3 Graphies relevées : six couples à arbitrer, aucune corrigée
+
+Le relevé exhaustif fait apparaître des libellés voisins à une lettre près
+à l'intérieur d'une même racine. **Aucun n'a été corrigé** : une graphie est
+une donnée de l'atelier, la normaliser de ma propre autorité reviendrait à
+décider seul d'un arbitrage qui appartient à l'exploitant. Ils sont listés
+ici avec leur effectif pour que la décision soit prise en connaissance de
+cause.
+
+| Racine | Graphie A | Graphie B | Question posée |
+|---|---|---|---|
+| `VOILES 2025` | `GIB SEA` (3) | `GIBSEA` (1) | une seule marque, deux écritures ? |
+| `VOILES 2025` | `HALLBERG RASSY` (2) | `HLLBERG RASSY` (1) | faute de frappe probable |
+| `VOILES 2026` | `DUFOUR` (22) | `DUFUR` (2) | faute de frappe probable |
+| `VOILES 2026` | `HELIA` (2) | `HELLIA` (2) | faute de frappe probable |
+| `VOILES 2026` | `HUNTER` (2) | `HNTER` (1) | faute de frappe probable |
+| `ACCESSOIRES 2024` | `FISCHER` (1) | `FISHER` (1) | deux clients distincts ? |
+
+Le dépôt possède déjà le mécanisme pour trancher proprement —
+`refuser_fusion()` / `est_fusion_refusee()` — qui rend un arbitrage
+**opposable et définitif** : une fois une fusion refusée pour un couple de
+valeurs, elle n'est plus jamais appliquée (tests dédiés dans
+`tests/test_etape0_corpus.py`). L'arbitrage lui-même vous revient.
+
+**Contrôle d'unicité** : après normalisation (casse, accents, ponctuation et
+espaces supprimés), **aucun nom n'apparaît deux fois dans une même racine**.
+Le complément n'a donc introduit aucun doublon de graphie.

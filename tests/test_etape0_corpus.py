@@ -701,3 +701,49 @@ def test_aucun_fichier_consigne_ne_nomme_un_bateau():
             f"{relatif} contient un code de fiche : les identifiants sont déjà "
             "hachés, un code en clair serait une donnée nominative."
         )
+
+
+def test_le_corpus_consigne_n_a_aucun_identifiant_en_double():
+    """Le complément du corpus (123 → 820 fiches) s'est fait par relevé
+    d'arborescence, dossier par dossier. Le risque n'était pas d'oublier des
+    fiches — il était d'en compter deux fois la même sous deux graphies
+    voisines, ce qu'un comptage global ne voit pas : 820 resterait 820.
+
+    L'identifiant étant `sha256(sel|chemin)`, deux fiches distinctes ont deux
+    identifiants distincts ; la réciproque est le garde-fou testé ici.
+
+    L'épreuve ne fige pas le compte : un corpus qui grossit doit passer. Elle
+    fige l'unicité, qui ne doit jamais cesser d'être vraie.
+    """
+    chemin = pathlib.Path(__file__).resolve().parents[1] / "donnees/etape0" / "accumulateur.json"
+    fiches = json.loads(chemin.read_text(encoding="utf-8"))["fiches"]
+    assert fiches, "le corpus consigné est vide : l'épreuve ne prouverait rien"
+
+    identifiants = [fiche["id"] for fiche in fiches]
+    doubles = sorted({i for i in identifiants if identifiants.count(i) > 1})
+    assert doubles == [], (
+        f"{len(doubles)} identifiant(s) en double : {doubles[:5]}. Le compte "
+        "affiché serait juste alors que le corpus contiendrait des fiches "
+        "comptées deux fois."
+    )
+
+
+def test_chaque_fiche_consigne_a_une_racine_connue_et_trois_axes():
+    """Compléter le corpus ne doit pas introduire de fiche bancale.
+
+    Une fiche sans racine reconnue casserait `decouper_racine` au dépôt ; une
+    fiche à qui il manque une CLÉ d'axe (et non une valeur — l'axe vide est
+    l'état normal de 806 fiches) casserait les statistiques par une KeyError
+    silencieusement avalée ailleurs.
+    """
+    chemin = pathlib.Path(__file__).resolve().parents[1] / "donnees/etape0" / "accumulateur.json"
+    fiches = json.loads(chemin.read_text(encoding="utf-8"))["fiches"]
+
+    for fiche in fiches:
+        try:
+            e0.decouper_racine(fiche["racine"])
+        except ValueError as exc:
+            pytest.fail(f"fiche {fiche['id']} : {exc}")
+        for axe in e0.AXES_MESURES:
+            assert axe in fiche, f"clé d'axe absente : {axe!r} sur {fiche['id']}"
+        assert fiche["source"] in e0.SOURCES_ADMISES, f"source inattendue : {fiche['source']!r}"
