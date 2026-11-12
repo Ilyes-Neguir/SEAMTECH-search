@@ -58,6 +58,13 @@ COPY pyproject.toml README.md ./
 COPY seamtech_search ./seamtech_search
 COPY config ./config
 
+# Lot 18 — le provisionnement des extensions voyage AVEC l'image : le service
+# one-shot `provisionner-extensions` de docker-compose.yml l'exécute au
+# démarrage de la pile. Sans ce fichier dans l'image, ce service rendait
+# « exit 2 » (`python` ne trouvait pas le script) et `docker compose up`
+# refusait de démarrer l'application — ce qui est déjà arrivé, d'où la ligne.
+COPY scripts/provisionner_extensions.py ./scripts/
+
 # The server refuses to start without config/config.json (by design, to avoid
 # silent misconfiguration on the desktop app). Container deployments configure
 # the app through SEAMTECH_* environment variables, which override the values

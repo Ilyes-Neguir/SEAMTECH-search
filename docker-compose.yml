@@ -47,7 +47,7 @@ services:
     build: .
     restart: "no"
     logging: *default-logging
-    command: ["python", "scripts/provisionner_extensions.py", "--appliquer"]
+    command: ["python", "/app/scripts/provisionner_extensions.py", "--appliquer"]
     environment:
       SEAMTECH_DATABASE_URL: postgresql://seamtech:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the environment}@postgres:5432/seamtech_search
     depends_on:
