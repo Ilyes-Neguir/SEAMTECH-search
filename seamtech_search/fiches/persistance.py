@@ -54,7 +54,11 @@ SEUIL_GABARIT_TEST = 0.90
 # le remplacement la supprimait, ou bien une validation passait sur un contenu
 # qui venait de changer. Une correction concurrente attend désormais la fin du
 # remplacement, puis échoue sur le contrôle de révision (409).
-_SQL_EXISTE_FICHE = "SELECT id_fiche, statut, revision FROM fiche WHERE code = %s FOR UPDATE"
+# Lot 19 : la quatrième colonne (`id_type_voile`) est lue pour pouvoir le CONSERVER
+# quand la ré-extraction n'en apporte aucun — voir la fusion plus bas.
+_SQL_EXISTE_FICHE = (
+    "SELECT id_fiche, statut, revision, id_type_voile FROM fiche WHERE code = %s FOR UPDATE"
+)
 _SQL_LIRE_STATUT = "SELECT statut FROM fiche WHERE id_fiche = %s"
 _SQL_SUPPRIMER_FICHE = "DELETE FROM fiche WHERE id_fiche = %s"
 # Remplacement SUR PLACE (décision revue 21/09 — « deux dossiers, la même fiche ») :
@@ -380,6 +384,18 @@ class ErreurVerrouRG11(ValueError):
     écrasée par une ré-extraction — le dépôt liste le dossier en échec."""
 
 
+class ErreurEffacementAxe(ValueError):
+    """Lot 19 : une réécriture ne peut pas faire passer un axe MESURÉ à NULL.
+
+    Ce n'est normalement pas atteignable — la fusion conserve la valeur — et
+    c'est tout l'intérêt : si un refactorissement réintroduit l'effacement,
+    l'import échoue ici, bruyamment, au lieu de corrompre la base en silence
+    comme l'a fait le défaut du §3.4. Un ``assert`` aurait été désactivable
+    avec ``python -O`` ; une exception ne dépend pas de la façon dont on lance
+    l'interpréteur.
+    """
+
+
 @dataclass(frozen=True)
 class ResultatEcriture:
     """Ce qu'une écriture de fiche a RÉELLEMENT fait, révision incluse.
@@ -550,6 +566,7 @@ def _ecrire_fiche_dans(
     action = "creee"
     id_fiche: int | None = None  # positionné tôt si remplacement sur place
     revision_avant: int | None = None
+    id_type_voile_avant: int | None = None  # Lot 19 : axe déjà mesuré, à ne pas effacer
     if True:  # bloc conservé pour indentation stable du corps historique
         with connexion.cursor() as cursor:
             cursor.execute(_SQL_EXISTE_FICHE, (fiche.code,))
@@ -557,6 +574,8 @@ def _ecrire_fiche_dans(
             if existante is not None:
                 id_existante, statut = int(existante[0]), existante[1]
                 revision_avant = int(existante[2] if len(existante) > 2 and existante[2] is not None else 1)
+                if len(existante) > 3 and existante[3] is not None:
+                    id_type_voile_avant = int(existante[3])
                 if statut == "valide":
                     LOGGER.warning(
                         "Fiche id %d déjà VALIDÉE : ré-extraction ignorée — aucune donnée validée n'est écrasée (RG11).",
@@ -598,6 +617,31 @@ def _ecrire_fiche_dans(
                 LOGGER.info("Fiche id %d (a_valider) remplacée sur place par la nouvelle extraction (RG11, id conservé).", id_fiche)
 
             id_type_voile = _id_type_voile(cursor, fiche)
+            # Lot 19 — FUSION. Le remplacement sur place réécrit la ligne ENTIÈRE ;
+            # sans cette garde, une ré-extraction dont le gabarit ne retrouve pas le
+            # type de voile écrivait NULL par-dessus une valeur déjà mesurée. C'est la
+            # perte de données silencieuse du §3.4 du rapport, déjà deux victimes
+            # (« génois », « voile d'avant »). Décision explicite : compléter, jamais
+            # effacer. Une valeur effectivement RELUE remplace l'ancienne — la fusion
+            # n'est pas un gel.
+            if id_type_voile is None and id_type_voile_avant is not None:
+                LOGGER.warning(
+                    "Fiche %s : la ré-extraction ne lit aucun type de voile — l'axe mesuré "
+                    "(id_type_voile=%d) est CONSERVÉ au lieu d'être effacé (fusion, Lot 19).",
+                    fiche.code,
+                    id_type_voile_avant,
+                )
+                id_type_voile = id_type_voile_avant
+            # Garde-fou permanent (Lot 19) : l'invariant est désormais « une
+            # réécriture ne peut pas faire passer un axe mesuré à NULL ». La
+            # fusion ci-dessus l'établit ; ce contrôle le VÉRIFIE, pour qu'un
+            # refactorissement futur qui casserait la fusion échoue ici
+            # bruyamment au lieu de corrompre la base en silence.
+            if id_type_voile_avant is not None and id_type_voile is None:
+                raise ErreurEffacementAxe(
+                    f"Lot 19 : la réécriture de la fiche {fiche.code} effacerait "
+                    f"l'axe mesuré (id_type_voile={id_type_voile_avant}) — refus."
+                )
             id_client = None
             if fiche.client_nom:
                 id_client = _resoudre(cursor, _SQL_CLIENT, _SQL_CLIENT_INS, (fiche.client_nom, fiche.client_chantier))
