@@ -683,6 +683,197 @@ seulement le fichier sur lequel on vient de travailler ; et pousser chaque
 
 ---
 
+## 2.12 Lot 20 — réparer les données, mesurer les verdicts, outiller les 109
+
+Ordre respecté : P1 → P2 → P3. Les deux points en attente de décision
+(repli Windows, complétion du corpus) n'ont **pas** été implémentés.
+
+### 2.12.0 D'abord, un incident et une erreur de ma part
+
+En ouvrant le lot, le bac à sable avait été **réinitialisé** : `.venv` effacé,
+dépôt **re-cloné**, HEAD revenu au commit de base `af31922`. Mes huit commits du
+Lot 19 n'étaient plus dans le clone.
+
+J'ai alors mesuré `git log -- donnees/etape0/accumulateur.json` → **0**, et
+`git ls-files donnees/` → **0**, et j'ai annoncé que le corpus n'était pas
+versionné et qu'**aucune trace n'existait** pour réparer les données.
+
+**C'était faux.** Le fichier n'existait pas dans ce clone *parce que HEAD était
+au mauvais commit*. J'ai pris une absence pour une absence d'historique —
+exactement le genre de conclusion qu'on tire quand on lit un instrument sans
+vérifier qu'il est branché.
+
+Récupération, dans l'ordre : `git fetch origin <branche>` (mes huit commits
+étaient intacts sur GitHub), puis **vérification que l'arbre restauré était
+identique à l'octet** à mon SHA `1b23256` (`git diff --cached` → 0 fichier),
+puis seulement restauration du pointeur de branche. Rien n'a été perdu, et
+l'audit a pu se faire sur **treize états réels**.
+
+Leçon, et elle est sèche : **vérifier le SHA avant de conclure quoi que ce soit
+sur l'état d'un dépôt.**
+
+### 2.12.1 P1 — l'audit : trois victimes, pas deux
+
+La trace cherchée existait donc, et c'est git : `accumulateur.json` est
+versionné depuis le 2026-11-07.
+
+| sha | fiches | gamme | type_voile | matiere |
+|---|---|---|---|---|
+| `609ae90` | 7 | 3 | 7 | 3 |
+| `0fb7622` | 22 | 7 | 7 | 11 |
+| `dc7906d` | 46 | 14 | 7 | **18** |
+| `c52e722` | 52 | 14 | 14 | **17** ← une matière disparaît |
+| `4088774` | 123 | 14 | **12** | 17 ← deux types disparaissent |
+| `f54cf93` | 123 | 14 | **14** | 17 ← les deux types sont rétablis |
+
+**Trois effacements**, datés et cités :
+
+    c52e722   id=19fbc2f01f22bdff  matiere='fibercom hybrid cool grey' → vide
+    4088774   id=533f16499eb83346  type_voile='génois' → vide
+    4088774   id=ea6471a9e41cf16b  type_voile="voile d'avant" → vide
+
+Les deux du §6.2 avaient été réparées au commit `f54cf93` (« Réparer deux axes
+mesurés que mon import massif avait effacés ») — **vérifié** : les valeurs sont
+bien présentes aujourd'hui. La troisième ne l'a jamais été et **n'était
+documentée nulle part**. Elle a été perdue au `c52e722`, « 46 → 52 fiches,
+depuis les chemins Dropbox réels » : la fiche a été réimportée avec
+`type_voile='grand-voile'` **mais sans matière**, la ligne entière a été
+remplacée, et la matière a disparu. Elle manquait depuis le 2026-11-11.
+
+**Le piège de cet audit.** L'identifiant est `sha256(sel|chemin)`. Le sel a
+changé deux fois (`92352b7`, `0fb7622`) : 26 fiches ont alors changé
+d'identifiant. Suivre les identifiants naïvement les ferait passer pour
+disparues, et l'audit annoncerait un désastre imaginaire. L'outil les
+distingue — **rebasements, pas pertes** — et borne en conséquence la fenêtre où
+le suivi par fiche est fiable : à partir de `0fb7622`.
+
+**La réparation** : une seule ligne, attestée. La valeur est **relue** dans
+l'état `dc7906d` qui la portait, jamais devinée ; le commit source est cité
+dans `donnees/etape0/reparations_axes.json` avec opérateur, motif et
+horodatage. `reparer` refuse de restaurer depuis un état qui ne porte pas la
+valeur, refuse d'écraser un axe renseigné, refuse un axe inconnu.
+
+**État final : 3 effacements détectés, 3 réparés, 0 en souffrance**, code 0.
+
+**Un défaut trouvé en le relançant** : l'audit ne lisait d'abord que les
+commits, si bien qu'une réparation appliquée mais non encore versionnée
+restait signalée « en souffrance » — faux, et décourageant. L'arbre de travail
+est désormais le dernier état. Épreuve dédiée, avec un dépôt git jetable.
+
+**Ce que l'audit ne prétend pas faire** : les 109 fiches sans axe ne sont PAS
+des corruptions. Personne n'a ouvert leurs documents, aucune trace n'existe,
+elles ne sont donc pas réparables — et l'outil ne feint pas de l'être.
+
+### 2.12.2 P2 — le compte de verdicts était écrit en dur à zéro
+
+Le reprobe était que P2 n'avait jamais été traité. **Elle l'avait été** :
+l'outil existe depuis le Lot 19 (`16c41b7`), avec huit épreuves et une preuve
+manuelle, et le rapport en parlait au §2.11.2 et au §4.2. Je l'ai vérifié avant
+d'y toucher plutôt que de le refaire — ce qui n'empêchait pas qu'il soit
+défectueux.
+
+Il l'était, et le défaut vide l'outil de sa raison d'être. Ligne 351,
+littéralement :
+
+    print("Verdicts humains recueillis à ce jour : 0")
+
+Le compte était **affiché en dur**. Aucun verdict n'était conservé nulle part :
+`importer` dépouillait un CSV, calculait un rapport, l'imprimait, l'oubliait.
+L'outil pouvait démontrer un lot de 8 verdicts — ce qu'il a fait au Lot 19 —
+mais pas faire ce pour quoi il existe : **accumuler 30 verdicts au fil des
+semaines**. Après cent saisies, `etat` aurait encore répondu 0.
+
+**Corrigé** par un registre persistant, `donnees/etape0/verdicts_reutilisation.json`.
+Deux décisions qui comptent : la clé de dédoublonnage est l'**extraction**, pas
+l'identifiant aveugle (le sel changeant à chaque export, dédupliquer sur
+l'aveugle compterait tout deux fois) ; et le **journal n'écrase rien**, le
+décompte retenant l'avis le plus récent.
+
+`etat` dit maintenant ce qu'il reste à recueillir, pas seulement le compte :
+
+    Verdicts humains recueillis à ce jour : 10
+        reutilisable       8
+        non_reutilisable   2
+    Il manque : 20 verdict(s) ; reutilisable : encore 2, non_reutilisable : encore 8
+
+**Preuve bout en bout** (base jetable, 10 génois) : 10 comparaisons aveugles
+exportées → le CSV ne porte que des mesures, aucun score → saisie de 8
+« reutilisable » et 2 « non_reutilisable » → import : **10 nouveaux**, puis
+re-import du même fichier : **0 nouveau, 10 mis à jour**, le compte reste à 10.
+
+**Seuils intacts** : `CONFIANCE_SEUIL_ALERTE` toujours 75, `git diff` vide.
+**État à la clôture : 0 verdict humain.** C'est le chiffre attendu — ce lot
+livre l'outil, pas les verdicts. Mais ce 0 est désormais **mesuré** au lieu
+d'être **écrit**.
+
+### 2.12.3 P3 — la file de qualification
+
+`scripts/file_qualification.py` : `montrer`, `saisir`, `journal`. Mesuré sur le
+corpus réel, **120 fiches** avec au moins un axe manquant, dont **109 sans type
+de voile**, 109 sans gamme, 105 sans matière, 93 sans aucun axe — le compte
+recoupe celui du Lot 19.
+
+Chaque saisie écrit `donnees/etape0/qualifications.json` avec la valeur
+**d'avant** : qui, quand, quoi, pourquoi. Même exigence que pour les
+auto-validations. Rien n'est déduit.
+
+**Une limite que je dis plutôt que de la masquer.** Le cahier des charges
+demandait « un accès direct au PDF source ». **Il est impossible**, et ce n'est
+pas un manque : le chemin n'est jamais stocké, par choix de confidentialité —
+l'identifiant est `sha256(sel|chemin)`, et un chemin nomme un client et un
+bateau. La file donne de quoi RETROUVER le dossier (racine, millésime,
+provenance), pas de quoi l'ouvrir d'un clic. Une épreuve vérifie qu'aucun
+chemin ne fuite. C'est le prix de la confidentialité, et il vaut mieux que
+l'alternative.
+
+**Deux défauts trouvés en l'utilisant** : `--corpus` n'était accepté qu'avant
+la sous-commande (`unrecognized arguments` pour l'ordre que tout opérateur
+écrit), repris en options communes avec `SUPPRESS` ; et une saisie anonyme ou
+vide passait — une trace sans auteur n'est pas une trace.
+
+**Preuve**, sur une **copie** du corpus (qualifier les vraies données
+reviendrait à inventer une valeur) :
+
+    consigné : id=043fc743685ab1ee  type de voile : None → 'Génois'
+      par lea — 2026-11-12T19:27:35+00:00
+    Refusé : La fiche porte déjà type_voile='Génois' : saisie sans effet
+    Refusé : Le nom de l'opérateur est requis
+
+`git diff` sur le corpus réel : **vide**.
+
+### 2.12.4 Preuves
+
+CI vérifiée au SHA exact, **à chaque étape** — l'incident Ruff du Lot 19 venait
+d'avoir sauté cette vérification une fois. Aucun raccourci cette fois.
+
+| SHA | Contenu | CI (12 jobs) | Job `windows` (verdict) |
+|---|---|---|---|
+| `8a1738b` | P1 — audit et réparation | **success** | success |
+| `5fb8141` | P2 — registre des verdicts | **success** | success |
+| `0609dc1` | P3 — file de qualification | **success** | success |
+
+`ruff check` et `ruff format` passés sur **tout** ce qui a été poussé, fichiers
+de test compris — c'est précisément le fichier de test que j'avais omis de
+linter au Lot 19.
+
+Suite complète en local : **3398 passed / 42 failed / 231 skipped**. Les 42
+échecs sont les mêmes que depuis le Lot 19, tous dans des modules dépendant de
+`unaccent`/`pg_trgm`, que le banc `pgserver` ne fournit pas et que la CI
+provisionne de façon bloquante.
+
+### 2.12.5 Ce qui reste ouvert
+
+1. **Repli Windows pour la copie confinée** — non implémenté, par consigne.
+   La sauvegarde des pièces jointes locales reste **indisponible** sur Windows.
+2. **Complétion du corpus** — non lancée, par consigne. Compte **123/338**. La
+   raison technique est levée depuis le Lot 19 ; seule subsiste une décision.
+3. **0 verdict humain.** L'outil est prêt ; les verdicts ne viennent pas de moi.
+4. **Le corpus n'a pas de sauvegarde hors git.** Il est versionné, ce qui a
+   sauvé cet audit — mais une seule copie locale existe, et rien ne la
+   réplique. Une réinitialisation malencontreuse perdrait 123 fiches de mesure.
+
+---
+
 ## 3. Ce qui n'est PAS prouvé — la partie que ce rapport ne doit pas arranger
 
 ### 3.0 (CORRIGÉ au Lot 15 — voir §2.6) La recherche plafonnait à 100 correspondances
