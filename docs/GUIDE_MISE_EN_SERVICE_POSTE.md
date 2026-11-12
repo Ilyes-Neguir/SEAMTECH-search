@@ -22,6 +22,57 @@ guide) : `docs/CHECKLIST_POSTE_WINDOWS.md` (prérequis matériels),
 
 ---
 
+## Lire ceci avant l'étape 0 — une limite qui vient de Windows, pas de nous
+
+⛔ **L'application ne fonctionne pas sous Python Windows.** Elle fonctionne
+sur ce poste **uniquement par Docker**, parce que Docker fait tourner des
+conteneurs Linux où les primitives nécessaires existent.
+
+Le produit confine ses accès aux fichiers avec trois primitives que Windows ne
+possède pas. Il ne s'agit pas d'un réglage, ni d'une lenteur : **il n'existe
+aucun équivalent Windows**, pas même dégradé.
+
+| Primitive | À quoi elle sert | Sous Windows |
+|---|---|---|
+| `dir_fd` + `O_NOFOLLOW` | parcourir un dossier sans jamais suivre un lien symbolique — c'est ce qui empêche un dépôt de sortir de l'arborescence autorisée | **inexistant** |
+| `/proc/self/fd` | épingler le fichier servi le temps de la réponse, pour que ce qui est téléchargé soit exactement ce qui a été vérifié | **inexistant** |
+| `fcntl.flock` | refuser deux imports concurrents du même dossier | **inexistant** |
+
+**Ce que fait le produit quand la primitive manque : il refuse.** Il n'y a
+volontairement **aucun mode dégradé** : un parcours de dossier « à peu près
+sûr » laisserait croire qu'un dépôt est confiné alors qu'il ne l'est pas. Le
+refus est explicite et nomme la capacité manquante — par exemple :
+
+    Capacité de plateforme absente : scan_ancre_descripteur — scan d'un
+    dossier ancré par descripteur (dir_fd + O_NOFOLLOW) : sans lui, l'import
+    d'un dossier refuse au lieu de traverser des liens (plateforme : win32,
+    os.name=nt).
+
+Si vous voyez ce message, **la cause est que l'application tourne sous Python
+Windows** et non dans Docker. Ce n'est ni un mot de passe, ni un chemin, ni
+une panne : changer de configuration n'y fera rien.
+
+**Vérification en une ligne**, à l'intérieur du conteneur (résultat attendu :
+les quatre capacités à `oui`) :
+
+```powershell
+docker compose run --rm --no-deps web python -c "from seamtech_search.plateforme import resume; print(resume())"
+```
+
+attendu →
+
+    scan_ancre_descripteur=oui ; procfs_fd=oui ; verrou_flock=oui ; processus_posix=oui
+
+(`--no-deps` : on ne veut que la sonde, pas la pile entière. Si un `non`
+apparaît, c'est que la commande n'a pas tourné dans le conteneur Linux —
+revenir au paragraphe précédent.)
+
+**Conséquence pratique** : tout passe par `docker compose`. N'installez pas
+l'application en Python local sur le poste et ne lancez pas
+`python -m seamtech_search...` hors conteneur.
+
+---
+
 ## Étape 0 — Vérifier que le poste est prêt (lecture seule, sans risque)
 
 **Où** : PowerShell, en tant qu'utilisateur normal.
@@ -246,9 +297,45 @@ sauvegarde qui omet `--data` n'est pas complète, et le manifeste le dit.
 **Ce qu'on doit voir** : un manifeste écrit sous `data\backups`, et
 `verifier` qui confirme la concordance (base + données + objets).
 
-Le service `sauvegarde` fait déjà ce travail automatiquement toutes les
-`SEAMTECH_BACKUP_INTERVAL_HEURES` (24 h par défaut) : cette étape sert à
-constater que **ça marche**, pas à remplacer l'automatisme.
+### ⛔ Ce que la sauvegarde AUTOMATIQUE ne couvre PAS — à lire avant tout
+
+Le service `sauvegarde` tourne seul, toutes les
+`SEAMTECH_BACKUP_INTERVAL_HEURES` (24 h par défaut). **Il ne fait pas la même
+chose que la commande ci-dessus.** Son périmètre réel est :
+
+    sauvegarde-auto: base corpus
+
+C'est-à-dire :
+
+| Ce qui est couvert automatiquement | Ce qui ne l'est PAS |
+|---|---|
+| la **base** PostgreSQL (dump + manifeste) | les **pièces jointes** des clients (objets du stockage MinIO/S3) |
+| le **corpus mesuré** (`donnees/etape0`) | les **données déposées** depuis le navigateur (`./data`) |
+
+**Les pièces jointes — c'est-à-dire les documents des clients — ne sont donc
+pas dans la sauvegarde automatique.** Elles vivent dans le volume Docker de
+MinIO, sur le disque de CE poste. Si ce disque meurt, les documents
+disparaissent ; la base, elle, serait restaurée avec des références vers des
+objets absents.
+
+Cette ligne n'est pas une appréciation : elle est relue et vérifiée par un
+test (`tests/test_sauvegarde_etat_reel.py`), qui échoue si ce guide promet
+une couverture que le planificateur ne fait pas.
+
+⛔ **Point d'arrêt 7 bis** — décision à prendre AVANT l'étape 8, avec moi :
+faut-il que la sauvegarde automatique couvre aussi les pièces jointes ? Trois
+options, et je ne tranche pas seul :
+
+1. **Ajouter `--avec-references` et `--data` à l'automatisme** — protection
+   complète, mais le volume à transférer chaque nuit devient celui des
+   documents (temps, bande passante, coût du stockage hors-site) ;
+2. **Garder l'automatisme tel quel, et rendre la sauvegarde complète
+   obligatoire à fréquence définie** (hebdomadaire, par exemple) — compromis
+   à décider avec l'atelier ;
+3. **Ne rien changer** — assumer que les documents originaux restent dans
+   l'archive de l'atelier, qui est alors la seule vraie sauvegarde. C'est
+   défendable **si et seulement si** l'archive est elle-même sauvegardée
+   ailleurs.
 
 ⛔ **Point d'arrêt 7** — transmettre la sortie de `verifier`. **Ne pas tenter
 la restauration complète maintenant** : elle détruit la base courante avant

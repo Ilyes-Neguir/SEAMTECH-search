@@ -18,6 +18,15 @@ Tests de non-destruction du script : `tests/test_preflight_windows.py`
 (contrôle statique du contenu — commandes destructives, réseau, secrets,
 installation forcée).
 
+> ⛔ **Limite à connaître avant toute installation.** L'application ne
+> fonctionne **pas** sous Python Windows : `dir_fd`, `/proc/self/fd` et
+> `fcntl.flock` n'existent pas sur ce système, et le produit **refuse** plutôt
+> que de fonctionner en mode dégradé. Elle tourne sur ce poste **uniquement
+> par Docker** (conteneurs Linux). L'explication complète, le message de refus
+> et la commande de vérification sont dans
+> `docs/GUIDE_MISE_EN_SERVICE_POSTE.md`, section « Lire ceci avant l'étape 0
+> — une limite qui vient de Windows, pas de nous ».
+
 ---
 
 ## 1. Prérequis minimaux
