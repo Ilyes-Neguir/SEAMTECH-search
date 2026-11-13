@@ -37,6 +37,8 @@ class Monde:
         self.appels: list[list[str]] = []
         self.reponses: dict[str, tuple[int, str, str]] = {}
         self.objet_present = True
+        self.object_key_en_base = CLE
+        self.base_scratch_existe = False
 
     # -- scriptage ---------------------------------------------------------
 
@@ -56,6 +58,14 @@ class Monde:
             self.objet_present = True
         if "ps --status running --services" in jointe:
             return 0, "\n".join(self.services), ""
+        # object_key lu EN BASE, jamais par l'API (confidentialité).
+        if "SELECT object_key FROM documents" in jointe:
+            return 0, self.object_key_en_base + "\n", ""
+        if "SELECT 1 FROM pg_database" in jointe:
+            return 0, ("1\n" if self.base_scratch_existe else ""), ""
+        if "dropdb" in jointe:
+            self.base_scratch_existe = False
+            return 0, "", ""
         if "curl" in jointe and jointe.endswith("/pieces"):
             # Listing : l'API n'expose jamais object_key, seulement un id.
             return 0, json.dumps({"pieces": [{"id": 42, "kind": "pdf"}]}), ""
@@ -88,9 +98,9 @@ def _preuve(monde: Monde, **kwargs: Any) -> PreuveObjetPerdu:
     params: dict[str, Any] = dict(
         executeur=monde.executeur,
         fiche=FICHE,
-        cle_objet=CLE,
         jeton=JETON,
         base_cible="postgresql://seamtech@postgres:5432/scratch",
+        base_source="postgresql://seamtech@postgres:5432/seamtech_search",
         base_api="http://127.0.0.1:8000",
         docker_disponible=True,
     )
@@ -127,10 +137,12 @@ def test_la_chaine_complete_est_prouvee() -> None:
     assert noms == [
         "services",
         "objet servi avant",
+        "appariement pièce ↔ objet",
         "objet supprimé",
         "objet disparu",
         "sauvegarde complète",
         "bundle vérifié",
+        "base cible",
         "restauration",
         "octets restaurés",
         "réinjection",
@@ -157,7 +169,7 @@ def test_la_preuve_supprime_vraiment_l_objet() -> None:
     ("manque", "attendu"),
     [
         ({"fiche": ""}, "--fiche"),
-        ({"cle_objet": ""}, "--cle-objet"),
+        ({"base_source": ""}, "--base-source"),
         ({"jeton": ""}, "--jeton"),
         ({"base_cible": ""}, "--base-cible"),
         ({"base_api": ""}, "--base-api"),
@@ -171,11 +183,16 @@ def test_un_prerequis_manquant_est_nomme(manque: dict[str, Any], attendu: str) -
     assert any(attendu in m for m in rapport["manques"]), rapport["manques"]
 
 
-def test_les_cinq_prerequis_sont_tous_nommes() -> None:
-    """Un échec obscur vaudrait un mensonge : la liste doit être complète."""
+def test_les_prerequis_sont_tous_nommes() -> None:
+    """Un échec obscur vaudrait un mensonge : la liste doit être complète.
+
+    Cinq ici, Docker étant déclaré disponible : fiche, jeton, adresse de
+    l'API, base cible et base source. La clé de l'objet n'en fait plus partie
+    depuis qu'elle est lue en base.
+    """
     monde = _monde_sain()
     rapport = _preuve(
-        monde, fiche="", cle_objet="", jeton="", base_cible="", base_api=""
+        monde, fiche="", jeton="", base_cible="", base_api="", base_source=""
     ).courir()
 
     assert len(rapport["manques"]) == 5
@@ -214,7 +231,8 @@ def test_piece_toujours_servie_apres_suppression() -> None:
 
     rapport = PreuveObjetPerdu(
         executeur=executeur, fiche=FICHE, cle_objet=CLE, jeton=JETON,
-        base_cible="postgresql://scratch", base_api="http://127.0.0.1:8000",
+        base_cible="postgresql://hote/scratch", base_api="http://127.0.0.1:8000",
+        base_source="postgresql://hote/seamtech_search",
         docker_disponible=True,
     ).courir()
 
@@ -269,7 +287,8 @@ def test_objet_non_resservi_apres_reinjection() -> None:
 
     rapport = PreuveObjetPerdu(
         executeur=executeur, fiche=FICHE, cle_objet=CLE, jeton=JETON,
-        base_cible="postgresql://scratch", base_api="http://127.0.0.1:8000",
+        base_cible="postgresql://hote/scratch", base_api="http://127.0.0.1:8000",
+        base_source="postgresql://hote/seamtech_search",
         docker_disponible=True,
     ).courir()
 
@@ -295,3 +314,63 @@ def test_les_etapes_portent_un_detail() -> None:
 
     echec = [e for e in rapport["etapes"] if not e["reussie"]]
     assert echec and echec[0]["detail"].strip(), echec
+
+
+# --- les deux trous de la mission, épinglés ---------------------------------
+
+
+def test_la_cle_objet_est_lue_en_base_et_jamais_par_l_api() -> None:
+    """L'appariement lit ``documents.object_key``, l'API ne l'expose jamais."""
+    monde = _monde_sain()
+    monde.object_key_en_base = "pieces/ST-101/plan.pdf"
+    rapport = _preuve(monde).courir()
+
+    assert rapport["verdict"] == "PROUVÉ", rapport
+    requete = [c for c in monde.appels if "SELECT object_key FROM documents" in " ".join(c)]
+    assert requete, "la clé doit être lue en base"
+    # Et elle sert à supprimer LE BON objet : celui de la pièce mesurée.
+    suppression = next(" ".join(c) for c in monde.appels if "mc" in " ".join(c) and "rm" in " ".join(c))
+    assert "pieces/ST-101/plan.pdf" in suppression, suppression
+    # Aucun appel à l'API ne doit contenir la clé : elle est expurgée.
+    assert not [c for c in monde.appels if "curl" in " ".join(c) and "pieces/ST-101/plan.pdf" in " ".join(c)]
+
+
+def test_piece_sans_cle_objet_en_base() -> None:
+    """Sans clé, la pièce n'est pas servie depuis le stockage : rien à prouver."""
+    monde = _monde_sain()
+    monde.object_key_en_base = ""
+    rapport = _preuve(monde).courir()
+
+    assert rapport["verdict"] == "NON PROUVÉ"
+    assert "appariement pièce ↔ objet" in rapport["raison"]
+
+
+def test_base_cible_identique_a_la_source_est_refusee() -> None:
+    """Restaurer par-dessus la source détruirait ce que la preuve protège."""
+    monde = _monde_sain()
+    rapport = _preuve(
+        monde,
+        base_cible="postgresql://hote/meme_base",
+        base_source="postgresql://hote/meme_base",
+    ).courir()
+
+    assert rapport["verdict"] == "NON PROUVÉ"
+    assert "base cible" in rapport["raison"]
+    assert "IDENTIQUE" in rapport["raison"]
+
+
+def test_la_base_cible_est_liberee_et_jamais_precree() -> None:
+    """Contre-intuitif, et c'est le piège : ``restaurer`` crée la base LUI-MÊME
+    et refuse de poursuivre si elle existe déjà. Pré-créer ferait donc échouer
+    la restauration qu'on cherche précisément à prouver."""
+    monde = _monde_sain()
+    monde.base_scratch_existe = True
+    rapport = _preuve(monde).courir()
+
+    assert rapport["verdict"] == "PROUVÉ", rapport
+    assert not [c for c in monde.appels if "createdb" in " ".join(c)], (
+        "pré-créer la base ferait échouer la restauration"
+    )
+    assert [c for c in monde.appels if "dropdb" in " ".join(c)], (
+        "une base cible déjà présente doit être libérée"
+    )

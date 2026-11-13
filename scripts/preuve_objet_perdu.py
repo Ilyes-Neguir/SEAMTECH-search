@@ -62,7 +62,7 @@ import sys
 import tempfile
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 Executeur = Callable[[list[str]], tuple[int, str, str]]
 
@@ -112,11 +112,16 @@ class PreuveObjetPerdu:
         *,
         executeur: Executeur,
         fiche: str,
-        cle_objet: str,
+        cle_objet: str = "",
         jeton: str,
         compose: tuple[str, ...] = ("docker", "compose"),
         service_web: str = "web",
         service_minio: str = "minio",
+        service_postgres: str = "postgres",
+        utilisateur_bd: str = "seamtech",
+        nom_base: str = "seamtech_search",
+        base_source: str = "",
+        preparer_base_cible: bool = True,
         bucket: str = "seamtech-documents",
         base_api: str = "",
         dossier_bundle: str = "/app/data/backups/preuve-objet",
@@ -131,6 +136,12 @@ class PreuveObjetPerdu:
         self.compose = list(compose)
         self.web = service_web
         self.minio = service_minio
+        self.postgres = service_postgres
+        self.utilisateur_bd = utilisateur_bd
+        self.nom_base = nom_base
+        self.base_source = base_source
+        self.cle = cle_objet
+        self.preparer_base_cible = preparer_base_cible
         self.bucket = bucket
         self.api = base_api
         self.bundle = dossier_bundle
@@ -167,8 +178,12 @@ class PreuveObjetPerdu:
             manques.append("docker — introuvable dans le PATH")
         if not self.fiche:
             manques.append("--fiche <code> — le code de la fiche à éprouver")
-        if not self.cle:
-            manques.append("--cle-objet <cle> — la clé de l'objet dans le stockage")
+        if not self.base_source:
+            manques.append(
+                "--base-source <url> — l'adresse de la base SOURCE. Elle sert à "
+                "REFUSER une cible identique : restaurer par-dessus la source "
+                "transformerait la preuve en destructeur."
+            )
         if not self.jeton:
             manques.append("--jeton <token> — le jeton d'API (X-SEAMTECH-TOKEN)")
         if not self.api:
@@ -220,6 +235,20 @@ class PreuveObjetPerdu:
             return self._rendre()
         sha_avant = _sha256(avant)
         self._etape("objet servi avant").reussir(f"{len(avant)} octets, sha256={sha_avant[:16]}…")
+
+        # 3 bis. APPARIEMENT PIÈCE ↔ OBJET — lu en BASE, jamais par l'API.
+        #
+        # L'identifiant renvoyé par /fiches/{code}/pieces EST documents.id :
+        # c'est ce que construit pieces_de_fiche (jointure fiche_piece_jointe
+        # → documents). La clé de l'objet, elle, est délibérément ABSENTE des
+        # réponses de l'API — choix de confidentialité, à ne pas contourner.
+        # On la lit donc directement en base, ce qui est exactement le but :
+        # sans cet appariement, supprimer « un objet au hasard » rendrait le
+        # verdict PROUVÉ invalide, puisqu'on ne prouverait rien sur LA pièce
+        # qu'on vient de mesurer.
+        if not self._apparier_objet():
+            return self._rendre()
+
 
         # 2. et 3. suppression, puis preuve de disparition
         code, _, err = self._compose_exec(self.minio, "mc", "rm", f"local/{self.bucket}/{self.cle}")
@@ -338,6 +367,62 @@ class PreuveObjetPerdu:
         finally:
             Path(chemin).unlink(missing_ok=True)
 
+    def _apparier_objet(self) -> bool:
+        """Lit ``documents.object_key`` pour LA pièce mesurée, en base."""
+        if self.cle:
+            self._etape("appariement pièce ↔ objet").reussir(
+                f"clé fournie à l'appel : {self.cle}"
+            )
+            return True
+        if self._piece_id is None:
+            self._etape("appariement pièce ↔ objet").echouer(
+                "aucun identifiant de pièce : l'appariement est impossible"
+            )
+            return False
+        code, out, err = self._compose_exec(
+            self.postgres, "psql", "-U", self.utilisateur_bd, "-d", self.nom_base,
+            "-tA", "-c", f"SELECT object_key FROM documents WHERE id = {int(self._piece_id)}",
+        )
+        if code != 0:
+            self._etape("appariement pièce ↔ objet").echouer(
+                f"lecture en base impossible (code={code}) : {(err or out).strip()[:200]}"
+            )
+            return False
+        cle = out.strip()
+        if not cle or cle.upper() == "NULL":
+            self._etape("appariement pièce ↔ objet").echouer(
+                f"la pièce {self._piece_id} n'a aucune clé d'objet en base "
+                "(documents.object_key vide) : elle n'est pas servie depuis le "
+                "stockage objet, la preuve n'aurait rien prouvé"
+            )
+            return False
+        self.cle = cle
+        self._etape("appariement pièce ↔ objet").reussir(
+            f"pièce {self._piece_id} → objet {cle} (lu en base, pas par l'API)"
+        )
+        return True
+
+    def _nom_base_cible(self, url: str | None = None) -> str | None:
+        """Le nom de base porté par une URL, sans la casser en morceaux."""
+        cible = self.base_cible if url is None else url
+        if not cible:
+            return None
+        nom = urlparse(cible).path.lstrip("/")
+        return nom or None
+
+    def _base_existe(self, nom: str) -> bool | None:
+        """``True``/``False``, ou ``None`` si la lecture a échoué."""
+        code, out, err = self._compose_exec(
+            self.postgres, "psql", "-U", self.utilisateur_bd, "-d", "postgres",
+            "-tA", "-c", f"SELECT 1 FROM pg_database WHERE datname = '{nom}'",
+        )
+        if code != 0:
+            self._etape("base cible").echouer(
+                f"lecture de pg_database impossible (code={code}) : {(err or out).strip()[:200]}"
+            )
+            return None
+        return out.strip() == "1"
+
     def _services_actifs(self) -> list[str]:
         code, out, _ = self._executer([*self.compose, "ps", "--status", "running", "--services"])
         if code != 0:
@@ -386,6 +471,55 @@ class PreuveObjetPerdu:
         return True
 
     def _restaurer(self, manifeste: str) -> str | None:
+        cible = self._nom_base_cible()
+        if cible is None:
+            self._etape("base cible").echouer(
+                f"--base-cible ne nomme aucune base : {self.base_cible!r}. "
+                "Une URL sans nom de base ne désigne rien."
+            )
+            return None
+        source = self._nom_base_cible(self.base_source)
+        if source is None:
+            self._etape("base cible").echouer(
+                f"--base-source ne nomme aucune base : {self.base_source!r}. "
+                "Sans la source, impossible de garantir que la cible est distincte."
+            )
+            return None
+        if source == cible:
+            self._etape("base cible").echouer(
+                f"la base cible ({cible}) est IDENTIQUE à la base source : "
+                "restaurer par-dessus la source détruirait les données que la "
+                "preuve est censée protéger. Fournir une base DISTINCTE."
+            )
+            return None
+
+        # SENS DE LA PRÉPARATION — et il est contre-intuitif.
+        # ``sauvegarde.restaurer`` crée LUI-MÊME la base cible et REFUSE de
+        # poursuivre si elle existe déjà (« la base cible « X » existe déjà —
+        # restauration refusée »). Pré-créer la base ferait donc échouer la
+        # restauration qu'on cherche à prouver. Le bon geste est l'inverse :
+        # s'assurer qu'elle n'existe PAS, pour que la restauration la crée.
+        if self.preparer_base_cible:
+            existe = self._base_existe(cible)
+            if existe is None:
+                return None
+            if existe:
+                code, out, err = self._compose_exec(
+                    self.postgres, "dropdb", "-U", self.utilisateur_bd, cible,
+                )
+                if code != 0:
+                    self._etape("base cible").echouer(
+                        f"dropdb impossible (code={code}) : {(err or out).strip()[:200]}"
+                    )
+                    return None
+                self._etape("base cible").reussir(
+                    f"{cible} libérée d'une exécution précédente ; distincte de {source}"
+                )
+            else:
+                self._etape("base cible").reussir(
+                    f"{cible} absente : la restauration la créera ; distincte de {source}"
+                )
+
         code, out, err = self._compose_exec(
             self.web, "python", "-m", "seamtech_search.sauvegarde_complete",
             "restaurer", "--manifeste", manifeste,
@@ -451,9 +585,20 @@ def main(argv: list[str] | None = None) -> int:
         description="Prouve qu'un objet perdu du stockage revient depuis la sauvegarde complète.",
     )
     parser.add_argument("--fiche", default="", help="code de la fiche à éprouver")
-    parser.add_argument("--cle-objet", default="", help="clé de l'objet dans le stockage")
+    parser.add_argument(
+        "--cle-objet", default="",
+        help="clé de l'objet dans le stockage ; par défaut LUE EN BASE depuis "
+             "l'identifiant de la pièce, l'API ne l'exposant jamais",
+    )
     parser.add_argument("--jeton", default="", help="jeton d'API (X-SEAMTECH-TOKEN)")
     parser.add_argument("--base-cible", default="", help="base DISTINCTE pour la restauration")
+    parser.add_argument(
+        "--base-source", default="",
+        help="URL de la base SOURCE — sert à REFUSER une cible identique",
+    )
+    parser.add_argument("--service-postgres", default="postgres")
+    parser.add_argument("--utilisateur-bd", default="seamtech")
+    parser.add_argument("--nom-base", default="seamtech_search")
     parser.add_argument("--service-web", default="web")
     parser.add_argument("--service-minio", default="minio")
     parser.add_argument("--bucket", default="seamtech-documents")
@@ -476,6 +621,10 @@ def main(argv: list[str] | None = None) -> int:
         bucket=args.bucket,
         base_api=args.base_api,
         base_cible=args.base_cible,
+        base_source=args.base_source,
+        service_postgres=args.service_postgres,
+        utilisateur_bd=args.utilisateur_bd,
+        nom_base=args.nom_base,
     )
     rapport = preuve.courir()
 
