@@ -285,9 +285,15 @@ Relevée après achèvement (`status == completed`), jamais annoncée à l'avanc
 | `2b750c6` | P1 — corpus 123 → 820 | 🟢 **verte** |
 | `019ec6f` | P2 — limite Windows et guide honnête | 🟢 **verte** |
 | `5199062` | P3 — rapport de clôture | 🟢 **verte** |
+| `18bb0e9` | P3 — le workflow Windows, dit | 🟢 **verte** |
+| `dba1e07` | P3 — 316 n'est pas une approximation de 309 | 🟢 **verte** |
 
-Les deux runs déclenchés par SHA sont verts dans les cinq cas (deux workflows
+Les deux runs déclenchés par SHA sont verts dans les sept cas (deux workflows
 portent le nom « CI ») ; relevés `completed/success`, aucun job en échec.
+
+**Aucun SHA de ce lot n'a été poussé sans que sa CI soit relevée jusqu'à
+`completed`.** Sept commits, sept relevés ; le seul rouge est `db70fdf`, dont
+les deux causes sont écrites au §1.1.
 
 Reproduire :
 
