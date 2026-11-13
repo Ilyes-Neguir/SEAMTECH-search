@@ -82,6 +82,16 @@ d'archive, **820 fiches**.
 | `ACCESSOIRES 2026` | 0 | 64 | **64** |
 | **Total** | **123** | **813** | **820** |
 
+**Lire la colonne « Relevé » :** 813 est ce que Dropbox a rendu. La colonne
+« Après » y ajoute **7 fiches d'archive**, toutes en `VOILES 2025` — d'où 309
+relevées mais 316 comptées sur cette racine, et 820 au total. Ce n'est pas une
+approximation : le décompte par source se lit d'une commande.
+
+```
+820 fiches — VOILES 2024 74 · VOILES 2025 316 (dont 7 d'archive) · VOILES 2026 268
+           · ACCESSOIRES 2024 22 · 2025 76 · 2026 64
+```
+
 Reproduire : `.venv/bin/python scripts/etape0_corpus.py stats`.
 
 ### 2.1 Méthode — pourquoi cette fois c'est démontrable
