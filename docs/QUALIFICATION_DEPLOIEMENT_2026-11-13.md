@@ -76,6 +76,13 @@ Le verdict n'est `PROUVÉ` que si les huit passent. Un échec est **nommé**
 (étape, code de sortie, extrait) ; les prérequis manquants sont listés et le
 script rend le code 2, jamais un échec obscur.
 
+Le garde-fou RG14 du dépôt interdit toute URL en clair dans `scripts/` : le
+script n'en écrit donc **aucune**, et l'adresse de l'API est un paramètre exigé.
+C'est le garde-fou qui a raison — une adresse inscrite dans le code est une
+adresse qu'on ne questionne plus. J'avais d'abord mis `127.0.0.1:8000` en
+valeur par défaut ; le test l'a refusé, et j'ai retiré le littéral au lieu de
+contourner la règle.
+
 **16 tests** (`tests/test_preuve_objet_perdu.py`) couvrent le chemin heureux et
 **chaque façon d'échouer** : service absent, pièce non servie au départ, objet
 resservi par un cache après suppression, sauvegarde en échec, bundle sans

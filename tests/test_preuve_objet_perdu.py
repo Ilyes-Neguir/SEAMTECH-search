@@ -83,6 +83,7 @@ def _preuve(monde: Monde, **kwargs: Any) -> PreuveObjetPerdu:
         cle_objet=CLE,
         jeton=JETON,
         base_cible="postgresql://seamtech@postgres:5432/scratch",
+        base_api="http://127.0.0.1:8000",
         docker_disponible=True,
     )
     params.update(kwargs)
@@ -151,6 +152,7 @@ def test_la_preuve_supprime_vraiment_l_objet() -> None:
         ({"cle_objet": ""}, "--cle-objet"),
         ({"jeton": ""}, "--jeton"),
         ({"base_cible": ""}, "--base-cible"),
+        ({"base_api": ""}, "--base-api"),
     ],
 )
 def test_un_prerequis_manquant_est_nomme(manque: dict[str, Any], attendu: str) -> None:
@@ -161,12 +163,14 @@ def test_un_prerequis_manquant_est_nomme(manque: dict[str, Any], attendu: str) -
     assert any(attendu in m for m in rapport["manques"]), rapport["manques"]
 
 
-def test_les_quatre_prerequis_sont_tous_nommes() -> None:
+def test_les_cinq_prerequis_sont_tous_nommes() -> None:
     """Un échec obscur vaudrait un mensonge : la liste doit être complète."""
     monde = _monde_sain()
-    rapport = _preuve(monde, fiche="", cle_objet="", jeton="", base_cible="").courir()
+    rapport = _preuve(
+        monde, fiche="", cle_objet="", jeton="", base_cible="", base_api=""
+    ).courir()
 
-    assert len(rapport["manques"]) == 4
+    assert len(rapport["manques"]) == 5
     assert rapport["etapes"] == [], "sans prérequis, aucune étape ne doit être lancée"
 
 
@@ -202,7 +206,8 @@ def test_piece_toujours_servie_apres_suppression() -> None:
 
     rapport = PreuveObjetPerdu(
         executeur=executeur, fiche=FICHE, cle_objet=CLE, jeton=JETON,
-        base_cible="postgresql://scratch", docker_disponible=True,
+        base_cible="postgresql://scratch", base_api="http://127.0.0.1:8000",
+        docker_disponible=True,
     ).courir()
 
     assert rapport["verdict"] == "NON PROUVÉ"
@@ -256,7 +261,8 @@ def test_objet_non_resservi_apres_reinjection() -> None:
 
     rapport = PreuveObjetPerdu(
         executeur=executeur, fiche=FICHE, cle_objet=CLE, jeton=JETON,
-        base_cible="postgresql://scratch", docker_disponible=True,
+        base_cible="postgresql://scratch", base_api="http://127.0.0.1:8000",
+        docker_disponible=True,
     ).courir()
 
     assert rapport["verdict"] == "NON PROUVÉ"

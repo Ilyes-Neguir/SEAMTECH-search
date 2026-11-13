@@ -42,7 +42,11 @@ les exécute pour de vrai.
 Usage :
 
     python scripts/preuve_objet_perdu.py \\
-        --fiche <code> --cle-objet <cle> --jeton <token>
+        --fiche <code> --cle-objet <cle> --jeton <token> \\
+        --base-api <adresse de l'API> --base-cible <base DISTINCTE>
+
+Aucune adresse n'est inscrite dans le code : une URL écrite est une URL qu'on
+ne questionne plus (RG14). L'adresse de l'API est donc exigée à l'appel.
 
 Code de sortie : 0 = PROUVÉ, 1 = NON PROUVÉ (étape nommée), 2 = prérequis
 manquant (liste nommée).
@@ -114,7 +118,7 @@ class PreuveObjetPerdu:
         service_web: str = "web",
         service_minio: str = "minio",
         bucket: str = "seamtech-documents",
-        base_api: str = "http://127.0.0.1:8000",
+        base_api: str = "",
         dossier_bundle: str = "/app/data/backups/preuve-objet",
         dossier_cible: str = "/app/data/restauration-preuve-objet",
         base_cible: str = "",
@@ -167,6 +171,12 @@ class PreuveObjetPerdu:
             manques.append("--cle-objet <cle> — la clé de l'objet dans le stockage")
         if not self.jeton:
             manques.append("--jeton <token> — le jeton d'API (X-SEAMTECH-TOKEN)")
+        if not self.api:
+            manques.append(
+                "--base-api <url> — l'adresse de l'API à éprouver. Aucune adresse "
+                "n'est inscrite dans le code : une URL écrite est une URL qu'on ne "
+                "questionne plus (RG14)."
+            )
         if not self.base_cible:
             manques.append(
                 "--base-cible <url> — une base DISTINCTE pour la restauration "
@@ -447,7 +457,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--service-web", default="web")
     parser.add_argument("--service-minio", default="minio")
     parser.add_argument("--bucket", default="seamtech-documents")
-    parser.add_argument("--base-api", default="http://127.0.0.1:8000")
+    parser.add_argument(
+        "--base-api", default="",
+        help="adresse de l'API, schéma compris (ex. 127.0.0.1:8000 en précédant "
+             "du schéma voulu) — exigée ; aucune adresse n'est inscrite dans "
+             "le code (RG14)",
+    )
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args(argv)
 
