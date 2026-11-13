@@ -72,7 +72,15 @@ class Amorcage:
         service_postgres: str = "postgres",
         base_source: str,
         racine_servie: str = "/app/sample_data",
-        dossier: str = "/app/sample_data/CLIENT-123",
+        # CE dossier, et pas un autre : son PDF est le seul du jeu d'essai à
+        # être reconnu par un gabarit (FICHE_PORTANT_V1 v2, code 7792-SO,
+        # confiance 0,99 — mesuré par `fiches.cli extraire`). « CLIENT-123 »
+        # paraît plus riche (trois fichiers) MAIS son PDF n'appartient à
+        # aucun gabarit : le dépôt le REFUSE (« gabarit inconnu ») et l'on
+        # perd une demi-journée à chercher une panne d'infrastructure là où
+        # c'est un jeu d'essai inadapté. Voir
+        # tests/test_amorcer_preuve_objet.py::test_le_dossier_par_defaut_est_reconnu.
+        dossier: str = "/app/sample_data/CLIENT-7792-SO",
         utilisateur_bd: str = "seamtech",
         nom_base: str = "seamtech_search",
         compte: str = "",
@@ -169,8 +177,10 @@ class Amorcage:
         if code != 0:
             return self._conclure(
                 etape, False,
-                f"code={code} : {(err or out).strip()[:300]} — le dossier est-il "
-                f"sous une racine servie ({self.racine_servie}) ?",
+                f"code={code} : {(err or out).strip()[:300]} — deux causes "
+                f"usuelles : le dossier est hors racine servie ({self.racine_servie}), "
+                "ou son PDF n'est reconnu par aucun gabarit ; le vérifier avec "
+                "« fiches.cli extraire <pdf> »",
             )
         return self._conclure(etape, True, f"{self.dossier} déposé (fiche + pièces jointes)")
 
@@ -309,7 +319,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--base-source", required=True, help="URL de la base, telle que vue depuis le conteneur web")
     parser.add_argument("--racine-servie", default="/app/sample_data", help="racine déclarée à SEAMTECH_ROOT_PATHS")
-    parser.add_argument("--dossier", default="/app/sample_data/CLIENT-123", help="dossier à déposer")
+    parser.add_argument(
+        "--dossier", default="/app/sample_data/CLIENT-7792-SO",
+        help="dossier à déposer : son PDF DOIT être reconnu par un gabarit, "
+             "sinon le dépôt le refuse (vérifiable par « fiches.cli extraire »)",
+    )
     parser.add_argument("--compte", default="", help="compte nominatif à créer (Lot 0b)")
     parser.add_argument("--mot-de-passe", default="", help="mot de passe du compte nominatif")
     parser.add_argument("--service-web", default="web")

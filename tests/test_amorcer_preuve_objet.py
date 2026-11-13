@@ -192,3 +192,38 @@ def test_le_rapport_est_serialisable() -> None:
     rapport = monde.amorcer().courir()
 
     assert json.loads(json.dumps(rapport)) == rapport
+
+
+def test_le_dossier_par_defaut_est_reconnu_par_un_gabarit() -> None:
+    """Le jeu d'essai, pas l'infrastructure : c'est lui qui a fait perdre cinq cycles CI.
+
+    Le dépôt REFUSE un dossier dont le PDF n'est reconnu par aucun gabarit
+    (« gabarit inconnu »). `sample_data/CLIENT-123` paraît le meilleur
+    candidat — trois fichiers, donc des pièces jointes — mais son
+    `fiche-technique.pdf` n'appartient à aucun gabarit : le dépôt le refuse,
+    et l'échec ressemble à une panne de montage ou de racine servie.
+
+    Ce test lit le PDF du dossier par défaut et exige qu'un gabarit le
+    reconnaisse. Il s'exécute SANS Docker ni base : `extraire` n'écrit rien.
+    """
+    import re
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    amorcage = _monde_sain().amorcer()
+    # Le dossier visé est dans le conteneur ; on le transpose dans le dépôt.
+    relatif = Path(amorcage.dossier).relative_to("/app")
+    pdf = next(iter(sorted(Path(relatif).glob("*.pdf"))), None)
+    assert pdf is not None, f"aucun PDF dans {relatif}"
+
+    termine = subprocess.run(
+        [sys.executable, "-m", "seamtech_search.fiches.cli", "extraire", str(pdf)],
+        capture_output=True, text=True, timeout=300, check=False,
+    )
+    sortie = termine.stdout + termine.stderr
+    assert "Gabarit inconnu" not in sortie, (
+        f"{pdf} n'est reconnu par aucun gabarit : le dépôt le refuserait. "
+        "Choisir un dossier dont le PDF est reconnu (ex. CLIENT-7792-SO)."
+    )
+    assert re.search(r"gabarit \S+ v\d", sortie), f"aucun gabarit détecté pour {pdf} : {sortie[:300]}"
