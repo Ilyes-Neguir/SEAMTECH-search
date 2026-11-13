@@ -27,6 +27,8 @@ SHA = hashlib.sha256(OCTETS).hexdigest()
 FICHE = "ST-101"
 CLE = "pieces/ST-101/plan.pdf"
 JETON = "jeton-de-test"
+UTILISATEUR = "approbateur-de-test"
+MOT_DE_PASSE = "mot-de-passe-de-test"
 
 
 class Monde:
@@ -39,6 +41,7 @@ class Monde:
         self.objet_present = True
         self.object_key_en_base = CLE
         self.base_scratch_existe = False
+        self.connexion_autorisee = True
 
     # -- scriptage ---------------------------------------------------------
 
@@ -66,6 +69,16 @@ class Monde:
         if "dropdb" in jointe:
             self.base_scratch_existe = False
             return 0, "", ""
+        if "curl" in jointe and "/auth/connexion" in jointe:
+            # Lot 0b : le téléchargement des pièces exige une session humaine.
+            if not self.connexion_autorisee:
+                return 0, json.dumps({"detail": "identifiants refusés"}), ""
+            return 0, json.dumps({
+                "id_session": "session-de-test",
+                "jeton_session": "jeton-de-session",
+                "identifiant": UTILISATEUR,
+                "role": "approbateur",
+            }), ""
         if "curl" in jointe and jointe.endswith("/pieces"):
             # Listing : l'API n'expose jamais object_key, seulement un id.
             return 0, json.dumps({"pieces": [{"id": 42, "kind": "pdf"}]}), ""
@@ -99,6 +112,8 @@ def _preuve(monde: Monde, **kwargs: Any) -> PreuveObjetPerdu:
         executeur=monde.executeur,
         fiche=FICHE,
         jeton=JETON,
+        utilisateur_session=UTILISATEUR,
+        mot_de_passe_session=MOT_DE_PASSE,
         base_cible="postgresql://seamtech@postgres:5432/scratch",
         base_source="postgresql://seamtech@postgres:5432/seamtech_search",
         base_api="http://127.0.0.1:8000",
@@ -132,16 +147,17 @@ def test_la_chaine_complete_est_prouvee() -> None:
 
     assert rapport["verdict"] == "PROUVÉ", rapport
     noms = [e["etape"] for e in rapport["etapes"]]
-    # Les huit jalons, dans l'ordre : servi, supprimé, disparu, sauvegardé,
-    # vérifié, restauré, réinjecté, resservi.
+    # Les jalons, dans l'ordre. La sauvegarde PRÉCÈDE la suppression : voir
+    # test_la_sauvegarde_precede_la_suppression pour la raison.
     assert noms == [
         "services",
+        "session nominative",
         "objet servi avant",
         "appariement pièce ↔ objet",
-        "objet supprimé",
-        "objet disparu",
         "sauvegarde complète",
         "bundle vérifié",
+        "objet supprimé",
+        "objet disparu",
         "base cible",
         "restauration",
         "octets restaurés",
@@ -231,6 +247,7 @@ def test_piece_toujours_servie_apres_suppression() -> None:
 
     rapport = PreuveObjetPerdu(
         executeur=executeur, fiche=FICHE, cle_objet=CLE, jeton=JETON,
+        utilisateur_session=UTILISATEUR, mot_de_passe_session=MOT_DE_PASSE,
         base_cible="postgresql://hote/scratch", base_api="http://127.0.0.1:8000",
         base_source="postgresql://hote/seamtech_search",
         docker_disponible=True,
@@ -287,6 +304,7 @@ def test_objet_non_resservi_apres_reinjection() -> None:
 
     rapport = PreuveObjetPerdu(
         executeur=executeur, fiche=FICHE, cle_objet=CLE, jeton=JETON,
+        utilisateur_session=UTILISATEUR, mot_de_passe_session=MOT_DE_PASSE,
         base_cible="postgresql://hote/scratch", base_api="http://127.0.0.1:8000",
         base_source="postgresql://hote/seamtech_search",
         docker_disponible=True,
@@ -374,3 +392,89 @@ def test_la_base_cible_est_liberee_et_jamais_precree() -> None:
     assert [c for c in monde.appels if "dropdb" in " ".join(c)], (
         "une base cible déjà présente doit être libérée"
     )
+
+
+def test_la_sauvegarde_precede_la_suppression() -> None:
+    """CONTRAINTE, pas préférence — et le faux monde ne peut pas la voir.
+
+    La sauvegarde complète copie les objets du bucket documents. Si l'objet
+    est déjà supprimé, ``head_object`` répond 404, ``copier_objets_s3`` le
+    range dans ``manquants`` et ``_exiger_complet`` LÈVE (sauvegarde.py:744,
+    sauvegarde_complete.py:113). Un bundle pris après la perte ne peut donc
+    PAS contenir l'objet perdu : la preuve échouerait en nommant
+    « sauvegarde complète », et n'atteindrait jamais PROUVÉ.
+
+    Or le faux monde « restaure » toujours les bons octets quoi qu'il
+    arrive : il masque ce défaut d'ordre. L'ordre doit donc être épinglé
+    ici, là où aucune simulation ne peut le dissimuler.
+    """
+    monde = _monde_sain()
+    rapport = _preuve(monde).courir()
+
+    assert rapport["verdict"] == "PROUVÉ", rapport
+
+    def rang(fragment: str) -> int:
+        for indice, appel in enumerate(monde.appels):
+            jointe = " ".join(appel)
+            if "sauvegarde_complete" in jointe and "sauvegarder" in jointe and fragment == "sauvegarde":
+                return indice
+            if fragment == "suppression" and "mc" in jointe and "rm" in jointe:
+                return indice
+        raise AssertionError(f"appel « {fragment} » introuvable")
+
+    assert rang("sauvegarde") < rang("suppression"), (
+        "la sauvegarde doit précéder la suppression : un bundle pris après la "
+        "perte ne peut pas contenir l'objet perdu"
+    )
+
+
+# --- le quatrième trou : la session nominative (Lot 0b) --------------------
+
+
+def test_sans_compte_nominatif_la_preuve_ne_demarre_pas() -> None:
+    """Données d'entrée, pas jalon : l'absence de compte est un prérequis (code 2).
+
+    La confondre avec un échec de la chaîne ferait rapporter « la preuve a
+    échoué » là où il faut dire « vous ne m'avez pas donné de compte ».
+    """
+    monde = _monde_sain()
+    rapport = _preuve(monde, utilisateur_session="", mot_de_passe_session="").courir()
+
+    assert rapport["verdict"] == "NON PROUVÉ"
+    assert len(rapport["manques"]) == 2
+    assert any("--utilisateur" in m for m in rapport["manques"])
+    assert any("--mot-de-passe" in m for m in rapport["manques"])
+
+
+def test_connexion_refusee_est_nommee() -> None:
+    """Un identifiant refusé n'est pas une pièce disparue."""
+    monde = _monde_sain()
+    monde.connexion_autorisee = False
+    rapport = _preuve(monde).courir()
+
+    assert rapport["verdict"] == "NON PROUVÉ"
+    assert "session nominative" in rapport["raison"]
+
+
+def test_le_telechargement_porte_toute_la_session() -> None:
+    """Les quatre en-têtes, sinon le serveur répond 401 et on croit à une perte."""
+    monde = _monde_sain()
+    rapport = _preuve(monde).courir()
+
+    assert rapport["verdict"] == "PROUVÉ", rapport
+    telechargement = [
+        " ".join(appel) for appel in monde.appels if "/telecharger" in " ".join(appel)
+    ]
+    assert telechargement, "la pièce doit être téléchargée par la route de l'application"
+    for entete in (
+        "X-SEAMTECH-UTILISATEUR",
+        "X-SEAMTECH-ROLE",
+        "X-SEAMTECH-SESSION",
+        "X-SEAMTECH-SESSION-JETON",
+    ):
+        assert any(entete in appel for appel in telechargement), f"{entete} manquant"
+    # Et le mot de passe ne doit figurer dans AUCUN autre appel.
+    assert not [
+        " ".join(a) for a in monde.appels
+        if MOT_DE_PASSE in " ".join(a) and "/auth/connexion" not in " ".join(a)
+    ]

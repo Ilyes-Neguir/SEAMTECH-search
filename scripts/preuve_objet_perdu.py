@@ -122,6 +122,8 @@ class PreuveObjetPerdu:
         nom_base: str = "seamtech_search",
         base_source: str = "",
         preparer_base_cible: bool = True,
+        utilisateur_session: str = "",
+        mot_de_passe_session: str = "",
         bucket: str = "seamtech-documents",
         base_api: str = "",
         dossier_bundle: str = "/app/data/backups/preuve-objet",
@@ -140,6 +142,14 @@ class PreuveObjetPerdu:
         self.utilisateur_bd = utilisateur_bd
         self.nom_base = nom_base
         self.base_source = base_source
+        # Session NOMINATIVE : depuis le Lot 0b, le contenu des pièces exige
+        # un humain en PostgreSQL — le jeton de service seul ne suffit plus
+        # (securite_requetes.py:279, et le commentaire de recette_verif.py:100).
+        # Sans elle, /pieces/{id}/telecharger répond 401 et la preuve
+        # s'arrête au premier jalon, ici COMME sur le poste de l'exploitante.
+        self.utilisateur_session = utilisateur_session
+        self.mot_de_passe_session = mot_de_passe_session
+        self.session: dict[str, str] = {}
         self.cle = cle_objet
         self.preparer_base_cible = preparer_base_cible
         self.bucket = bucket
@@ -186,6 +196,23 @@ class PreuveObjetPerdu:
             )
         if not self.jeton:
             manques.append("--jeton <token> — le jeton d'API (X-SEAMTECH-TOKEN)")
+        # Prérequis, et non jalon : ce sont des DONNÉES D'ENTRÉE. S'ils
+        # manquent, la preuve n'a pas démarré (code 2) — ce n'est pas le
+        # système qui a échoué (code 1). Les refuser au premier jalon
+        # ferait rapporter « la preuve a échoué » là où il fallait dire
+        # « vous ne m'avez pas donné de compte ».
+        if not self.utilisateur_session:
+            manques.append(
+                "--utilisateur <compte> — le compte nominatif. Depuis le Lot 0b, "
+                "le téléchargement des pièces exige une session humaine : le "
+                "jeton de service seul répond 401 (securite_requetes.py:279)."
+            )
+        if not self.mot_de_passe_session:
+            manques.append(
+                "--mot-de-passe <secret> — le mot de passe du compte nominatif. "
+                "Aucun secret n'est inscrit dans le code : il est transmis en "
+                "argument et jamais écrit sur disque."
+            )
         if not self.api:
             manques.append(
                 "--base-api <url> — l'adresse de l'API à éprouver. Aucune adresse "
@@ -225,6 +252,16 @@ class PreuveObjetPerdu:
                 return self._rendre()
         self._etape("services").reussir(f"{self.web} et {self.minio} actifs")
 
+        # 0. session nominative : SANS ELLE, RIEN NE DÉMARRE.
+        # Depuis le Lot 0b, le contenu des pièces exige un humain en
+        # PostgreSQL (securite_requetes.py:279). Le jeton de service seul
+        # répond 401 sur /pieces/{id}/telecharger. Ouvrir la session AVANT
+        # la première mesure évite de prendre un 401 pour une « pièce
+        # absente » — l'erreur la plus coûteuse : elle ressemble au succès
+        # de l'étape suivante.
+        if not self._ouvrir_session():
+            return self._rendre()
+
         # 1. l'objet est servi, on note son empreinte
         avant = self._servir()
         if avant is None:
@@ -250,7 +287,25 @@ class PreuveObjetPerdu:
             return self._rendre()
 
 
-        # 2. et 3. suppression, puis preuve de disparition
+        # 3. et 4. sauvegarde complète AVANT la perte, et contenu vérifié.
+        #
+        # L'ORDRE EST UNE CONTRAINTE, pas une préférence. La sauvegarde
+        # complète copie les objets du bucket documents ; si l'objet est déjà
+        # supprimé, ``head_object`` répond 404, ``copier_objets_s3`` le range
+        # dans ``manquants`` et ``_exiger_complet`` LÈVE (sauvegarde.py:744,
+        # sauvegarde_complete.py:113). Le bundle ne peut donc pas contenir un
+        # objet déjà perdu, et la restauration ne peut pas le rendre : une
+        # preuve qui supprime avant de sauvegarder ne prouverait rien, elle
+        # échouerait en nommant « sauvegarde complète ». C'est aussi
+        # l'exercice de reprise honnête : le bundle précède la perte, comme
+        # dans la réalité — sinon la sauvegarde est faite pour l'occasion.
+        bundle = self._sauvegarder()
+        if bundle is None:
+            return self._rendre()
+        if not self._verifier(bundle):
+            return self._rendre()
+
+        # 5. et 6. suppression, puis preuve de disparition
         code, _, err = self._compose_exec(self.minio, "mc", "rm", f"local/{self.bucket}/{self.cle}")
         if code != 0:
             self._etape("objet supprimé").echouer(f"mc rm a échoué (code={code}) : {err.strip()[:200]}")
@@ -266,14 +321,7 @@ class PreuveObjetPerdu:
             return self._rendre()
         self._etape("objet disparu").reussir("la pièce n'est plus servie")
 
-        # 4. et 5. sauvegarde complète, et son contenu vérifié
-        bundle = self._sauvegarder()
-        if bundle is None:
-            return self._rendre()
-        if not self._verifier(bundle):
-            return self._rendre()
-
-        # 6. restauration vers une cible distincte, octets identiques
+        # 7. restauration vers une cible distincte, octets identiques
         chemin = self._restaurer(bundle)
         if chemin is None:
             return self._rendre()
@@ -320,21 +368,79 @@ class PreuveObjetPerdu:
         Deux appels, et pas un de moins. L'API n'expose **jamais** la clé de
         l'objet (``object_key`` est expurgé des réponses : c'est une règle de
         confidentialité, pas un oubli). On passe donc par l'identifiant de la
-        pièce, puis par la route de téléchargement — exactement le chemin que
-        ``scripts/recette_verif.py`` éprouve déjà dans son contrôle
-        « pdf-presigne ». Réinventer une route aurait produit une preuve qui
-        ne prouve rien.
+        pièce, puis par la route de téléchargement — le chemin que
+        ``scripts/recette_verif.py`` éprouve dans son contrôle
+        « pdf-presigne », session nominative comprise. Réinventer une route
+        aurait produit une preuve qui ne prouve rien.
         """
         if self._piece_id is None:
             if not self._trouver_piece():
                 return None
         return self._telecharger_piece()
 
+    def _ouvrir_session(self) -> bool:
+        """Ouvre une session nominative APPROBATEUR.
+
+        Pourquoi une session et pas seulement le jeton : depuis le Lot 0b, le
+        téléchargement des pièces exige un humain (``exiger_acteur_humain``).
+        Le rôle approbateur est celui qui autorise le téléchargement DIRECT,
+        sans demande préalable (approbations.py:784) — sinon la preuve
+        dépendrait d'une approbation qu'elle ne peut pas s'accorder seule.
+        """
+        if self.session:
+            return True
+        # Le corps passe en ARGUMENT, jamais dans un fichier : l'exécuteur
+        # lance une liste sans shell, donc sans injection possible, et le
+       # mot de passe ne s'écrit sur aucun disque.
+        corps = json.dumps(
+            {"identifiant": self.utilisateur_session, "mot_de_passe": self.mot_de_passe_session}
+        )
+        code, sortie, _ = self._executer(
+            [
+                "curl", "-s", "--max-time", "60", "-X", "POST",
+                "-H", f"X-SEAMTECH-TOKEN: {self.jeton}",
+                "-H", "Content-Type: application/json",
+                "--data", corps,
+                f"{self.api}/auth/connexion",
+            ]
+        )
+        if code != 0:
+            self._etape("session nominative").echouer(f"appel de connexion impossible (code={code})")
+            return False
+        try:
+            reponse = json.loads(sortie)
+        except json.JSONDecodeError:
+            self._etape("session nominative").echouer(f"réponse illisible : {sortie.strip()[:200]}")
+            return False
+        if not isinstance(reponse, dict) or not reponse.get("id_session"):
+            self._etape("session nominative").echouer(
+                f"connexion refusée pour « {self.utilisateur_session} » : {sortie.strip()[:200]}"
+            )
+            return False
+        self.session = {
+            "X-SEAMTECH-UTILISATEUR": str(reponse.get("identifiant") or self.utilisateur_session),
+            "X-SEAMTECH-ROLE": str(reponse.get("role") or ""),
+            "X-SEAMTECH-SESSION": str(reponse["id_session"]),
+            "X-SEAMTECH-SESSION-JETON": str(reponse.get("jeton_session") or ""),
+        }
+        self._etape("session nominative").reussir(
+            f"session ouverte pour « {self.utilisateur_session} » (rôle "
+            f"{self.session['X-SEAMTECH-ROLE'] or 'non précisé'})"
+        )
+        return True
+
+    def _entetes(self) -> list[str]:
+        """Jeton de service ET session nominative, dans cet ordre."""
+        entetes = ["-H", f"X-SEAMTECH-TOKEN: {self.jeton}"]
+        for nom, valeur in self.session.items():
+            entetes += ["-H", f"{nom}: {valeur}"]
+        return entetes
+
     def _trouver_piece(self) -> bool:
         code, sortie, _ = self._executer(
             [
                 "curl", "-s", "--max-time", "60",
-                "-H", f"X-SEAMTECH-TOKEN: {self.jeton}",
+                *self._entetes(),
                 f"{self.api}/fiches/{quote(self.fiche, safe='')}/pieces",
             ]
         )
@@ -357,7 +463,7 @@ class PreuveObjetPerdu:
             code, sortie, _ = self._executer(
                 [
                     "curl", "-s", "--max-time", "120", "-o", chemin, "-w", "%{http_code}",
-                    "-H", f"X-SEAMTECH-TOKEN: {self.jeton}",
+                    *self._entetes(),
                     f"{self.api}/pieces/{self._piece_id}/telecharger",
                 ]
             )
@@ -591,6 +697,16 @@ def main(argv: list[str] | None = None) -> int:
              "l'identifiant de la pièce, l'API ne l'exposant jamais",
     )
     parser.add_argument("--jeton", default="", help="jeton d'API (X-SEAMTECH-TOKEN)")
+    parser.add_argument(
+        "--utilisateur", default="",
+        help="compte nominatif pour la session (Lot 0b : le téléchargement "
+             "des pièces exige un humain, le jeton de service ne suffit plus)",
+    )
+    parser.add_argument(
+        "--mot-de-passe", default="",
+        help="mot de passe du compte nominatif (aucun secret n'est inscrit "
+             "dans le code : il est transmis en argument, jamais écrit sur disque)",
+    )
     parser.add_argument("--base-cible", default="", help="base DISTINCTE pour la restauration")
     parser.add_argument(
         "--base-source", default="",
@@ -616,6 +732,8 @@ def main(argv: list[str] | None = None) -> int:
         fiche=args.fiche,
         cle_objet=args.cle_objet,
         jeton=args.jeton,
+        utilisateur_session=args.utilisateur,
+        mot_de_passe_session=args.mot_de_passe,
         service_web=args.service_web,
         service_minio=args.service_minio,
         bucket=args.bucket,
