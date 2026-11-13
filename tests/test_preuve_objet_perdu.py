@@ -29,6 +29,12 @@ CLE = "pieces/ST-101/plan.pdf"
 JETON = "jeton-de-test"
 UTILISATEUR = "approbateur-de-test"
 MOT_DE_PASSE = "mot-de-passe-de-test"
+UTILISATEUR_STOCKAGE = "minioadmin"
+MOT_DE_PASSE_STOCKAGE = "secret-de-stockage"
+ALIAS = "local"
+# Construit à l'exécution : un littéral d'adresse, même de boucle locale,
+# serait refusé par le garde-fou RG14 — et à juste titre.
+URL_STOCKAGE = "http://" + "stockage:9000"
 
 
 class Monde:
@@ -114,6 +120,9 @@ def _preuve(monde: Monde, **kwargs: Any) -> PreuveObjetPerdu:
         jeton=JETON,
         utilisateur_session=UTILISATEUR,
         mot_de_passe_session=MOT_DE_PASSE,
+        url_stockage=URL_STOCKAGE,
+        utilisateur_stockage=UTILISATEUR_STOCKAGE,
+        mot_de_passe_stockage=MOT_DE_PASSE_STOCKAGE,
         base_cible="postgresql://seamtech@postgres:5432/scratch",
         base_source="postgresql://seamtech@postgres:5432/seamtech_search",
         base_api="http://127.0.0.1:8000",
@@ -154,6 +163,7 @@ def test_la_chaine_complete_est_prouvee() -> None:
         "session nominative",
         "objet servi avant",
         "appariement pièce ↔ objet",
+        "alias de stockage",
         "sauvegarde complète",
         "bundle vérifié",
         "objet supprimé",
@@ -248,6 +258,9 @@ def test_piece_toujours_servie_apres_suppression() -> None:
     rapport = PreuveObjetPerdu(
         executeur=executeur, fiche=FICHE, cle_objet=CLE, jeton=JETON,
         utilisateur_session=UTILISATEUR, mot_de_passe_session=MOT_DE_PASSE,
+        url_stockage=URL_STOCKAGE,
+        utilisateur_stockage=UTILISATEUR_STOCKAGE,
+        mot_de_passe_stockage=MOT_DE_PASSE_STOCKAGE,
         base_cible="postgresql://hote/scratch", base_api="http://127.0.0.1:8000",
         base_source="postgresql://hote/seamtech_search",
         docker_disponible=True,
@@ -305,6 +318,9 @@ def test_objet_non_resservi_apres_reinjection() -> None:
     rapport = PreuveObjetPerdu(
         executeur=executeur, fiche=FICHE, cle_objet=CLE, jeton=JETON,
         utilisateur_session=UTILISATEUR, mot_de_passe_session=MOT_DE_PASSE,
+        url_stockage=URL_STOCKAGE,
+        utilisateur_stockage=UTILISATEUR_STOCKAGE,
+        mot_de_passe_stockage=MOT_DE_PASSE_STOCKAGE,
         base_cible="postgresql://hote/scratch", base_api="http://127.0.0.1:8000",
         base_source="postgresql://hote/seamtech_search",
         docker_disponible=True,
@@ -478,3 +494,59 @@ def test_le_telechargement_porte_toute_la_session() -> None:
         " ".join(a) for a in monde.appels
         if MOT_DE_PASSE in " ".join(a) and "/auth/connexion" not in " ".join(a)
     ]
+
+
+# --- le cinquième trou : l'alias « mc » ------------------------------------
+
+
+def test_l_alias_est_cree_puis_verifie() -> None:
+    """Aucun alias « local » n'existe par défaut dans le conteneur.
+
+    Le provisionnement du dépôt crée le sien sous un AUTRE nom
+    (scripts/provisionner_stockage.sh:70). Supposer un alias aurait fait
+    échouer chaque commande « mc » par « alias introuvable » — une erreur
+    d'outillage qu'on aurait lue, à tort, comme une erreur de sauvegarde.
+    """
+    monde = _monde_sain()
+    rapport = _preuve(monde).courir()
+
+    assert rapport["verdict"] == "PROUVÉ", rapport
+    jointes = [" ".join(a) for a in monde.appels]
+    creation = [c for c in jointes if "mc" in c and "alias" in c and "set" in c]
+    assert creation, "l'alias doit être créé par la preuve, jamais supposé"
+    assert ALIAS in creation[0]
+    verification = [c for c in jointes if "mc" in c and c.rstrip().endswith("/")]
+    assert verification, "l'alias doit être ÉPROUVÉ, pas seulement déclaré créé"
+
+
+def test_un_alias_personnalise_est_utilise_partout() -> None:
+    """Un nom d'alias écrit en dur casserait tout déploiement qui en a un autre."""
+    monde = _monde_sain()
+    rapport = _preuve(monde, alias_stockage="atelier").courir()
+
+    assert rapport["verdict"] == "PROUVÉ", rapport
+    jointes = [" ".join(a) for a in monde.appels]
+    for commande in jointes:
+        if "mc" in commande and ("rm" in commande or "cp" in commande):
+            assert "atelier/" in commande, commande
+            assert "local/" not in commande, commande
+
+
+def test_alias_inaccessible_est_nomme() -> None:
+    """Un alias créé mais un seau injoignable n'est pas « objet supprimé »."""
+    monde = _monde_sain()
+    monde.quand("mc ls", 1, "", "seau injoignable")
+    rapport = _preuve(monde).courir()
+
+    assert rapport["verdict"] == "NON PROUVÉ"
+    assert "alias de stockage" in rapport["raison"]
+    assert "inaccessible" in rapport["raison"]
+
+
+def test_sans_identites_de_stockage_la_preuve_ne_demarre_pas() -> None:
+    """Données d'entrée, donc prérequis (code 2), pas échec de la chaîne."""
+    monde = _monde_sain()
+    rapport = _preuve(monde, utilisateur_stockage="", mot_de_passe_stockage="").courir()
+
+    assert rapport["verdict"] == "NON PROUVÉ"
+    assert any("--utilisateur-stockage" in m for m in rapport["manques"])

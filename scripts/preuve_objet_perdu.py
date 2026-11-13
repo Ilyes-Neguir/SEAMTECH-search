@@ -125,6 +125,10 @@ class PreuveObjetPerdu:
         utilisateur_session: str = "",
         mot_de_passe_session: str = "",
         bucket: str = "seamtech-documents",
+        alias_stockage: str = "local",
+        url_stockage: str = "",
+        utilisateur_stockage: str = "",
+        mot_de_passe_stockage: str = "",
         base_api: str = "",
         dossier_bundle: str = "/app/data/backups/preuve-objet",
         dossier_cible: str = "/app/data/restauration-preuve-objet",
@@ -153,6 +157,15 @@ class PreuveObjetPerdu:
         self.cle = cle_objet
         self.preparer_base_cible = preparer_base_cible
         self.bucket = bucket
+        # L'alias « local » n'existe pas par défaut dans le conteneur : le
+        # provisionnement du dépôt crée « provisionnement »
+        # (scripts/provisionner_stockage.sh:70). Supposer « local » aurait
+        # fait échouer CHAQUE commande mc par « alias introuvable » — une
+        # erreur d'outillage lue, à tort, comme une erreur de sauvegarde.
+        self.alias = alias_stockage
+        self.url_stockage = url_stockage
+        self.utilisateur_stockage = utilisateur_stockage
+        self.mot_de_passe_stockage = mot_de_passe_stockage
         self.api = base_api
         self.bundle = dossier_bundle
         self.cible = dossier_cible
@@ -218,6 +231,19 @@ class PreuveObjetPerdu:
                 "--base-api <url> — l'adresse de l'API à éprouver. Aucune adresse "
                 "n'est inscrite dans le code : une URL écrite est une URL qu'on ne "
                 "questionne plus (RG14)."
+            )
+        if not self.url_stockage:
+            manques.append(
+                "--url-stockage <adresse> — l'adresse du stockage objet vue "
+                "depuis le conteneur. Aucune adresse n'est inscrite dans le "
+                "code, pas même une adresse de boucle locale (RG14)."
+            )
+        if not self.utilisateur_stockage or not self.mot_de_passe_stockage:
+            manques.append(
+                "--utilisateur-stockage / --mot-de-passe-stockage — les identités "
+                "du stockage objet, pour créer l'alias « mc » depuis lequel "
+                "l'objet sera supprimé puis réinjecté. Aucun secret n'est "
+                "inscrit dans le code."
             )
         if not self.base_cible:
             manques.append(
@@ -287,6 +313,14 @@ class PreuveObjetPerdu:
             return self._rendre()
 
 
+        # 2 bis. l'alias « mc » : sans lui, CHAQUE commande de stockage
+        # échoue par « alias introuvable ». Le créer ici rend la preuve
+        # auto-suffisante au lieu de dépendre d'un alias qu'aucun
+        # provisionnement du dépôt ne garantit (le leur s'appelle
+        # « provisionnement »). « mc alias set » est idempotent.
+        if not self._preparer_alias():
+            return self._rendre()
+
         # 3. et 4. sauvegarde complète AVANT la perte, et contenu vérifié.
         #
         # L'ORDRE EST UNE CONTRAINTE, pas une préférence. La sauvegarde
@@ -306,11 +340,11 @@ class PreuveObjetPerdu:
             return self._rendre()
 
         # 5. et 6. suppression, puis preuve de disparition
-        code, _, err = self._compose_exec(self.minio, "mc", "rm", f"local/{self.bucket}/{self.cle}")
+        code, _, err = self._compose_exec(self.minio, "mc", "rm", f"{self.alias}/{self.bucket}/{self.cle}")
         if code != 0:
             self._etape("objet supprimé").echouer(f"mc rm a échoué (code={code}) : {err.strip()[:200]}")
             return self._rendre()
-        self._etape("objet supprimé").reussir(f"local/{self.bucket}/{self.cle}")
+        self._etape("objet supprimé").reussir(f"{self.alias}/{self.bucket}/{self.cle}")
 
         if self._servir() is not None:
             self._etape("objet disparu").echouer(
@@ -472,6 +506,39 @@ class PreuveObjetPerdu:
             return Path(chemin).read_bytes()
         finally:
             Path(chemin).unlink(missing_ok=True)
+
+    def _preparer_alias(self) -> bool:
+        """Crée l'alias « mc » dans le conteneur de stockage.
+
+        Sans alias, ``mc`` n'a aucune cible : il n'y a pas d'alias « local »
+        par défaut dans le conteneur MinIO, et le provisionnement du dépôt
+        crée le sien sous un AUTRE nom (provisionnement). Supposer un alias
+        aurait transformé une erreur d'outillage en faux diagnostic de
+        sauvegarde.
+        """
+        code, out, err = self._compose_exec(
+            self.minio, "mc", "alias", "set", self.alias, self.url_stockage,
+            self.utilisateur_stockage, self.mot_de_passe_stockage,
+        )
+        if code != 0:
+            self._etape("alias de stockage").echouer(
+                f"création de l'alias « {self.alias} » impossible (code={code}) : "
+                f"{(err or out).strip()[:200]}"
+            )
+            return False
+        code, out, err = self._compose_exec(
+            self.minio, "mc", "ls", f"{self.alias}/{self.bucket}/",
+        )
+        if code != 0:
+            self._etape("alias de stockage").echouer(
+                f"alias « {self.alias} » créé mais le seau « {self.bucket} » est "
+                f"inaccessible (code={code}) : {(err or out).strip()[:200]}"
+            )
+            return False
+        self._etape("alias de stockage").reussir(
+            f"{self.alias} → {self.url_stockage}, seau « {self.bucket} » joignable"
+        )
+        return True
 
     def _apparier_objet(self) -> bool:
         """Lit ``documents.object_key`` pour LA pièce mesurée, en base."""
@@ -660,7 +727,7 @@ class PreuveObjetPerdu:
         if code != 0:
             self._etape("réinjection").echouer(f"copie vers le stockage impossible : {err.strip()[:200]}")
             return False
-        cible = f"local/{self.bucket}/{self.cle}"
+        cible = f"{self.alias}/{self.bucket}/{self.cle}"
         code, _, err = self._compose_exec(self.minio, "mc", "cp", temporaire, cible)
         if code != 0:
             self._etape("réinjection").echouer(f"mc cp a échoué (code={code}) : {err.strip()[:200]}")
@@ -718,6 +785,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--service-web", default="web")
     parser.add_argument("--service-minio", default="minio")
     parser.add_argument("--bucket", default="seamtech-documents")
+    parser.add_argument("--alias-stockage", default="local", help="alias « mc » à créer dans le conteneur")
+    parser.add_argument(
+        "--url-stockage", default="",
+        help="adresse du stockage objet TELLE QUE VUE DEPUIS LE CONTENEUR "
+             "(ex. le nom du service suivi de son port). Aucune adresse n'est "
+             "inscrite dans le code : une adresse écrite est une adresse qu'on "
+             "ne questionne plus (RG14).",
+    )
+    parser.add_argument("--utilisateur-stockage", default="", help="identité du stockage objet")
+    parser.add_argument("--mot-de-passe-stockage", default="", help="secret du stockage objet")
     parser.add_argument(
         "--base-api", default="",
         help="adresse de l'API, schéma compris (ex. 127.0.0.1:8000 en précédant "
@@ -737,6 +814,10 @@ def main(argv: list[str] | None = None) -> int:
         service_web=args.service_web,
         service_minio=args.service_minio,
         bucket=args.bucket,
+        alias_stockage=args.alias_stockage,
+        url_stockage=args.url_stockage,
+        utilisateur_stockage=args.utilisateur_stockage,
+        mot_de_passe_stockage=args.mot_de_passe_stockage,
         base_api=args.base_api,
         base_cible=args.base_cible,
         base_source=args.base_source,
