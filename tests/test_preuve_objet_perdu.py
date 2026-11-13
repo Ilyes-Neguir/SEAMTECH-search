@@ -63,9 +63,17 @@ class Monde:
             # L'application sert la pièce seulement si l'objet existe.
             if not self.objet_present:
                 return 0, "404", ""
-            sortie = next((a for a in commande if a.startswith("/tmp/")), None)
-            if sortie:
-                Path(sortie).write_bytes(OCTETS)
+            # La cible est l'argument qui suit « -o », pas un chemin commençant
+            # par « /tmp/ » : sous Windows, tempfile crée le fichier ailleurs,
+            # et un préfixe écrit en dur rendait le fichier vide — donc
+            # l'empreinte du vide, et un échec incompréhensible. Mesuré au run
+            # 43455974024 : « attendu e3b0c442… » est le SHA-256 de RIEN.
+            cible: str | None = None
+            for indice, arg in enumerate(commande):
+                if arg == "-o" and indice + 1 < len(commande):
+                    cible = commande[indice + 1]
+            if cible:
+                Path(cible).write_bytes(OCTETS)
             return 0, "200", ""
         for fragment, reponse in self.reponses.items():
             if fragment in jointe:
