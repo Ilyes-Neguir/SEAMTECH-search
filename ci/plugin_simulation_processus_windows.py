@@ -18,6 +18,24 @@ Ce qu'on en tire : un test qui échoue SOUS ce plugin et passe SANS lui dépend
 de la sémantique processus POSIX. C'est une raison ÉTABLIE — pas supposée —
 de l'adapter à Windows ou de l'écarter nommément dans ``ci/ecarts-windows.txt``.
 
+⚠️ MESURÉ LE 2026-11-13 — CE PLUGIN PRODUIT DES FAUX POSITIFS. NE PAS
+L'UTILISER POUR DÉCIDER.
+
+Run ``43400923966``, banc Windows réel : **393 échecs** (355 + 38), dont la
+cause dominante est ``verrou_flock`` (156), puis la lecture confinée du bundle
+(53) et ``scan_ancre_descripteur`` (39) — **des capacités de FICHIERS, pas de
+processus**. Ce plugin en avait prédit 4.
+
+Et les 4 sont des faux positifs, démontrés : **aucun n'est nommé dans
+``ci/ecarts-windows.txt``**, or le verdict Windows (qui est passé) exige que
+tout échec réel y figure. Ces 4 tests passent donc sur Windows.
+
+La leçon, qui vaut plus que le plugin : il retire des primitives que le produit
+n'appelle pas dans ces chemins-là. Un test peut employer ``SIGKILL`` dans une
+branche POSIX jamais exécutée sous Windows — le simulateur le casse quand même.
+**L'autorité est le runner Windows, pas une simulation.** Ce plugin peut
+suggérer des pistes ; il ne conclut rien.
+
 Limite dite : ce plugin simule l'ABSENCE des primitives, pas leur SÉMANTIQUE
 différente. Un test qui passerait sous Windows pour une autre raison (chemins,
 encodage, verrous de fichiers) ne sera pas repéré ici. Il complète l'autre
