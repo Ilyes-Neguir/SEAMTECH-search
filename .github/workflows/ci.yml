@@ -1109,13 +1109,14 @@ jobs:
         # prouverait un scénario qui n'existe pas, et la preuve porterait sur
         # du vent.
         #
-        # INSTRUMENTATION, parce que les journaux bruts de ce dépôt sont servis
-        # par un hôte inaccessible depuis l'environnement de travail : les
-        # annotations sont le SEUL canal de retour. Les trois cycles précédents
-        # sont morts en deux secondes sans laisser une ligne, l'appel du script
-        # semblant emporter le shell avec lui. La sortie est donc redirigée
-        # vers un FICHIER (jamais capturée par substitution) et chaque jalon
-        # est annoncé avant ET après l'appel.
+        # `--annonces` : le script publie ses jalons LUI-MÊME, avant et après
+        # chaque commande, en flux non tamponné (`python -u`). Pourquoi : les
+        # journaux bruts de ce dépôt sont servis par un hôte inaccessible
+        # depuis l'environnement de travail, et une étape qui meurt emporte
+        # tout ce qu'elle n'a pas encore écrit — quatre cycles sont morts en
+        # deux secondes sans laisser une ligne. Des annotations émises au fil
+        # de l'eau survivent à l'effondrement et nomment la dernière commande
+        # tentée.
         env:
           POSTGRES_PASSWORD: test_password
           MINIO_ROOT_USER: minioadmin
@@ -1134,17 +1135,11 @@ jobs:
           SEAMTECH_PREUVE_UTILISATEUR: approbateur-preuve
           SEAMTECH_PREUVE_MOT_DE_PASSE: motdepasse-preuve-ci
         run: |
-          echo "::notice title=amorcage-a1::lancement, répertoire $(pwd)"
-          python scripts/amorcer_preuve_objet.py \
+          python -u scripts/amorcer_preuve_objet.py --annonces \
             --base-source "postgresql://seamtech:${POSTGRES_PASSWORD}@postgres:5432/seamtech_search" \
             --compte "$SEAMTECH_PREUVE_UTILISATEUR" \
-            --mot-de-passe "$SEAMTECH_PREUVE_MOT_DE_PASSE" > amorcage.log 2>&1
-          code=$?
-          echo "::notice title=amorcage-a2::shell vivant après l'appel, code=$code"
-          echo "::notice title=amorcage-a3::lignes=$(wc -l < amorcage.log)"
-          head -c 600 amorcage.log | tr '\n' ' ' | tr -s ' ' > resume.txt
-          echo "::notice title=amorcage-a4-sortie::$(cat resume.txt)"
-          cat amorcage.log
+            --mot-de-passe "$SEAMTECH_PREUVE_MOT_DE_PASSE" 2>&1 | tee amorcage.log
+          code=${PIPESTATUS[0]}
           if [ "$code" -ne 0 ]; then
             exit 1
           fi

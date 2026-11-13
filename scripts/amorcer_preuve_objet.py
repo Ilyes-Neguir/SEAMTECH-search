@@ -77,7 +77,16 @@ class Amorcage:
         nom_base: str = "seamtech_search",
         compte: str = "",
         mot_de_passe: str = "",
+        annonces: bool = False,
     ) -> None:
+        # ``annonces`` : le script publie lui-même ses jalons au fil de
+        # l'eau. Pourquoi : en CI, les journaux bruts de ce dépôt sont
+        # servis par un hôte inaccessible depuis l'environnement de travail,
+        # et une étape qui meurt emporte avec elle tout ce qu'elle n'a pas
+        # encore écrit. Des annotations émises AVANT chaque commande, en flux
+        # non tamponné, survivent à l'effondrement — c'est le seul moyen de
+        # savoir laquelle a tué l'étape.
+        self.annonces = annonces
         self.executeur = executeur
         self.compose = list(compose)
         self.web = service_web
@@ -99,8 +108,26 @@ class Amorcage:
         self.etapes.append(etape)
         return etape
 
+    def _conclure(self, etape: Etape, reussie: bool, detail: str) -> bool:
+        if reussie:
+            etape.reussir(detail)
+        else:
+            etape.echouer(detail)
+        self._annoncer(
+            f"amorcage-{'OK' if reussie else 'ECHEC'}-{etape.nom.replace(' ', '-')}", detail,
+        )
+        return reussie
+
+    def _annoncer(self, titre: str, message: str) -> None:
+        if self.annonces:
+            print(f"::notice title={titre}::{_aplatir(message, 250)}", flush=True)
+
     def _executer(self, commande: Sequence[str]) -> tuple[int, str, str]:
-        return self.executeur(commande)
+        jointe = " ".join(str(c) for c in commande)
+        self._annoncer("amorcage-lance", jointe[:220])
+        code, out, err = self.executeur(commande)
+        self._annoncer("amorcage-rendu", f"code={code} — {err or out}")
+        return code, out, err
 
     def _web(self, *args: str, racine: str | None = None) -> tuple[int, str, str]:
         """Une commande dans le conteneur applicatif.
@@ -130,41 +157,40 @@ class Amorcage:
     # -- la chaîne ----------------------------------------------------------
 
     def _init(self) -> bool:
+        etape = self._etape("init")
         code, out, err = self._cli("init")
         if code != 0:
-            self._etape("init").echouer(f"code={code} : {(err or out).strip()[:300]}")
-            return False
-        self._etape("init").reussir("migrations et gabarits prêts")
-        return True
+            return self._conclure(etape, False, f"code={code} : {(err or out).strip()[:300]}")
+        return self._conclure(etape, True, "migrations et gabarits prêts")
 
     def _deposer(self) -> bool:
+        etape = self._etape("dépôt")
         code, out, err = self._cli("deposer", self.dossier, racine=self.racine_servie)
         if code != 0:
-            self._etape("dépôt").echouer(
+            return self._conclure(
+                etape, False,
                 f"code={code} : {(err or out).strip()[:300]} — le dossier est-il "
-                f"sous une racine servie ({self.racine_servie}) ?"
+                f"sous une racine servie ({self.racine_servie}) ?",
             )
-            return False
-        self._etape("dépôt").reussir(f"{self.dossier} déposé (fiche + pièces jointes)")
-        return True
+        return self._conclure(etape, True, f"{self.dossier} déposé (fiche + pièces jointes)")
 
     def _promouvoir(self) -> bool:
         """La promotion pose ``documents.object_key`` : SANS ELLE, RIEN À PERDRE."""
+        etape = self._etape("promotion")
         code, out, err = self._cli("promouvoir")
         if code != 0:
-            self._etape("promotion").echouer(f"code={code} : {(err or out).strip()[:300]}")
-            return False
-        self._etape("promotion").reussir(f"fichiers envoyés au stockage objet — {out.strip()[:200]}")
-        return True
+            return self._conclure(etape, False, f"code={code} : {(err or out).strip()[:300]}")
+        return self._conclure(etape, True, f"fichiers envoyés au stockage objet — {out.strip()[:200]}")
 
     def _compte(self) -> bool:
         """Le compte nominatif : depuis le Lot 0b, servir une pièce exige un humain."""
+        etape = self._etape("compte nominatif")
         if not self.compte or not self.mot_de_passe:
-            self._etape("compte nominatif").echouer(
+            return self._conclure(
+                etape, False,
                 "aucun compte fourni (--compte / --mot-de-passe) : depuis le Lot 0b, "
-                "le téléchargement des pièces exige une session humaine"
+                "le téléchargement des pièces exige une session humaine",
             )
-            return False
         # ``doit_changer_mot_de_passe=False`` : un changement obligatoire ferait
         # échouer la première connexion, donc la preuve, pour une raison sans
         # rapport avec ce qu'elle mesure.
@@ -184,45 +210,41 @@ class Amorcage:
         )
         code, out, err = self._web("python", "-c", programme)
         if code != 0:
-            self._etape("compte nominatif").echouer(f"code={code} : {(err or out).strip()[:300]}")
-            return False
-        self._etape("compte nominatif").reussir(f"« {self.compte} » prêt (rôle approbateur)")
-        return True
+            return self._conclure(etape, False, f"code={code} : {(err or out).strip()[:300]}")
+        return self._conclure(etape, True, f"« {self.compte} » prêt (rôle approbateur)")
 
     def _lire_code_fiche(self) -> bool:
+        etape = self._etape("code de fiche")
         code, out, err = self._sql("SELECT code FROM fiche ORDER BY id_fiche LIMIT 1")
         if code != 0:
-            self._etape("code de fiche").echouer(f"lecture impossible (code={code}) : {(err or out).strip()[:200]}")
-            return False
+            return self._conclure(etape, False, f"lecture impossible (code={code}) : {(err or out).strip()[:200]}")
         self.code_fiche = out.strip()
         if not self.code_fiche:
-            self._etape("code de fiche").echouer(
-                "aucune fiche en base après le dépôt : la preuve n'aurait aucune pièce à perdre"
+            return self._conclure(
+                etape, False,
+                "aucune fiche en base après le dépôt : la preuve n'aurait aucune pièce à perdre",
             )
-            return False
-        self._etape("code de fiche").reussir(self.code_fiche)
-        return True
+        return self._conclure(etape, True, self.code_fiche)
 
     def _exiger_objets(self) -> bool:
         """GARDE-FOU : sans clé objet, la preuve de perte ne porterait sur rien."""
+        etape = self._etape("clés objet")
         code, out, err = self._sql("SELECT count(*) FROM documents WHERE coalesce(object_key,'') <> ''")
         if code != 0:
-            self._etape("clés objet").echouer(f"lecture impossible (code={code}) : {(err or out).strip()[:200]}")
-            return False
+            return self._conclure(etape, False, f"lecture impossible (code={code}) : {(err or out).strip()[:200]}")
         try:
             nb = int(out.strip() or "0")
         except ValueError:
             nb = 0
         if nb < 1:
-            self._etape("clés objet").echouer(
+            return self._conclure(
+                etape, False,
                 "aucune clé objet après la promotion : aucune pièce n'est servie depuis "
-                "le stockage, la preuve n'aurait rien à perdre"
+                "le stockage, la preuve n'aurait rien à perdre",
             )
-            return False
         code, out, err = self._sql("SELECT count(*) FROM fiche_piece_jointe")
         pieces = out.strip() if code == 0 else "?"
-        self._etape("clés objet").reussir(f"{nb} document(s) porteur(s) d'une clé, {pieces} pièce(s) rattachée(s)")
-        return True
+        return self._conclure(etape, True, f"{nb} document(s) porteur(s) d'une clé, {pieces} pièce(s) rattachée(s)")
 
     def courir(self) -> dict[str, Any]:
         """Monte le décor. Rend un rapport ; ne lève pas."""
@@ -274,7 +296,7 @@ def _executeur_reel(commande: Sequence[str]) -> tuple[int, str, str]:
     return termine.returncode, termine.stdout or "", termine.stderr or ""
 
 
-def _principal_une_ligne(texte: str, limite: int = 300) -> str:
+def _aplatir(texte: str, limite: int = 300) -> str:
     """Aplatit une sortie : une annotation CI ne garde que la première ligne."""
     propre = " ".join(str(texte).split())
     return propre[:limite]
@@ -294,6 +316,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--service-postgres", default="postgres")
     parser.add_argument("--utilisateur-bd", default="seamtech")
     parser.add_argument("--nom-base", default="seamtech_search")
+    parser.add_argument(
+        "--annonces", action="store_true",
+        help="publie chaque jalon en annotation CI, au fil de l'eau et en flux "
+             "non tamponné (utiliser avec -u) : c'est le seul canal lisible "
+             "quand les journaux bruts ne le sont pas",
+    )
     args = parser.parse_args(argv)
 
     amorcage = Amorcage(
@@ -307,16 +335,17 @@ def main(argv: list[str] | None = None) -> int:
         nom_base=args.nom_base,
         compte=args.compte,
         mot_de_passe=args.mot_de_passe,
+        annonces=args.annonces,
     )
     rapport = amorcage.courir()
 
     for etape in rapport["etapes"]:
-        print(f"  [{'OK ' if etape['reussie'] else 'ÉCHEC'}] {etape['etape']} : {_principal_une_ligne(etape['detail'])}")
+        print(f"  [{'OK ' if etape['reussie'] else 'ÉCHEC'}] {etape['etape']} : {_aplatir(etape['detail'])}")
     if rapport["ok"]:
         print(f"CODE_FICHE={rapport['code_fiche']}")
         print(f"AMORCAGE=OK — {rapport['code_fiche']}")
         return 0
-    print(f"AMORCAGE=ECHEC — {_principal_une_ligne(rapport['raison'])}")
+    print(f"AMORCAGE=ECHEC — {_aplatir(rapport['raison'])}")
     return 1
 
 
