@@ -554,6 +554,28 @@ jobs:
             $rc = $LASTEXITCODE
             Get-Content "logs\diag-$nom.log" -Tail 15 | ForEach-Object { Write-Host "journal: $_" }
             Publier "diag-$nom" "rc=$rc"
+
+            # Un « rc=1 » sans le nom du test ne se répare pas : on sait QUEL
+            # fichier échoue, pas QUELLE épreuve, ni POURQUOI. C'est le défaut
+            # que ce workflow a déjà corrigé ailleurs (run 41365859490 : un
+            # diagnostic évincé, donc une preuve perdue). On publie donc
+            # l'inventaire des échecs de CHAQUE fichier, par paquets.
+            if ($rc -ne 0) {
+              $echecs = Select-String -Path "logs\diag-$nom.log" -Pattern '^(FAILED|ERROR) ' |
+                        ForEach-Object { $_.Line.Trim() }
+              if (-not $echecs) { $echecs = @("(aucune ligne FAILED/ERROR : voir le journal)") }
+              $n = 0
+              $seau = ''
+              foreach ($l in $echecs) {
+                if (($seau.Length + $l.Length) -gt 1300 -and $seau.Length -gt 0) {
+                  $n++
+                  Publier "diag-$nom-echecs-$n" $seau
+                  $seau = ''
+                }
+                $seau = "$seau `n $l"
+              }
+              if ($seau.Length -gt 0) { $n++; Publier "diag-$nom-echecs-$n" $seau }
+            }
           }
           Publier "diag-fin" "tous les fichiers a processus ont ete executes"
       - name: Diagnostic ciblé — les échecs encore non élucidés
