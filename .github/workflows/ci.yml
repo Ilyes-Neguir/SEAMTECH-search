@@ -1109,13 +1109,13 @@ jobs:
         # prouverait un scénario qui n'existe pas, et la preuve porterait sur
         # du vent.
         #
-        # INSTRUMENTATION : les journaux bruts de ce dépôt sont servis par un
-        # hôte que l'environnement de travail n'autorise pas. Les annotations
-        # sont donc le SEUL canal de retour, et elles sont émises AVANT toute
-        # commande — une étape qui meurt en une seconde sans laisser de trace
-        # coûte un cycle CI entier à deviner (deux essais l'ont démontré).
-        # Aucun `set -u` : une variable non définie tuereait le shell sans
-        # même atteindre l'annotation.
+        # INSTRUMENTATION, parce que les journaux bruts de ce dépôt sont servis
+        # par un hôte inaccessible depuis l'environnement de travail : les
+        # annotations sont le SEUL canal de retour. Les trois cycles précédents
+        # sont morts en deux secondes sans laisser une ligne, l'appel du script
+        # semblant emporter le shell avec lui. La sortie est donc redirigée
+        # vers un FICHIER (jamais capturée par substitution) et chaque jalon
+        # est annoncé avant ET après l'appel.
         env:
           POSTGRES_PASSWORD: test_password
           MINIO_ROOT_USER: minioadmin
@@ -1134,23 +1134,21 @@ jobs:
           SEAMTECH_PREUVE_UTILISATEUR: approbateur-preuve
           SEAMTECH_PREUVE_MOT_DE_PASSE: motdepasse-preuve-ci
         run: |
-          echo "::notice title=amorcage-sonde-1::étape démarrée, répertoire $(pwd)"
-          command -v python >/dev/null && echo "::notice title=amorcage-sonde-2::python présent" \
-            || echo "::notice title=amorcage-sonde-2::python ABSENT du PATH"
-          echo "::notice title=amorcage-sonde-3::script présent=$([ -f scripts/amorcer_preuve_objet.py ] && echo oui || echo non)"
-          sortie=$(python scripts/amorcer_preuve_objet.py \
+          echo "::notice title=amorcage-a1::lancement, répertoire $(pwd)"
+          python scripts/amorcer_preuve_objet.py \
             --base-source "postgresql://seamtech:${POSTGRES_PASSWORD}@postgres:5432/seamtech_search" \
             --compte "$SEAMTECH_PREUVE_UTILISATEUR" \
-            --mot-de-passe "$SEAMTECH_PREUVE_MOT_DE_PASSE" 2>&1)
+            --mot-de-passe "$SEAMTECH_PREUVE_MOT_DE_PASSE" > amorcage.log 2>&1
           code=$?
-          echo "::notice title=amorcage-sonde-4::code=$code"
-          aplatir=$(printf '%s' "$sortie" | tr '\n' ' ' | tr -s ' ' | cut -c1-600)
-          echo "::notice title=amorcage-sortie::$aplatir"
-          printf '%s\n' "$sortie"
+          echo "::notice title=amorcage-a2::shell vivant après l'appel, code=$code"
+          echo "::notice title=amorcage-a3::lignes=$(wc -l < amorcage.log)"
+          head -c 600 amorcage.log | tr '\n' ' ' | tr -s ' ' > resume.txt
+          echo "::notice title=amorcage-a4-sortie::$(cat resume.txt)"
+          cat amorcage.log
           if [ "$code" -ne 0 ]; then
             exit 1
           fi
-          CODE=$(printf '%s\n' "$sortie" | grep -m1 '^CODE_FICHE=' | cut -d= -f2-)
+          CODE=$(grep -m1 '^CODE_FICHE=' amorcage.log | cut -d= -f2-)
           if [ -z "$CODE" ]; then
             echo "::notice title=amorcage-sans-code::l'amorçage annonce OK sans code de fiche"
             exit 1
