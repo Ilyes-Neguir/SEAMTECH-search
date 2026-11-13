@@ -1101,6 +1101,111 @@ jobs:
           print('écriture conteneur OK dans /app/data et /app/logs')
           "
 
+      - name: Amorcer une fiche RÉELLE (dépôt produit, puis promotion objet)
+        # La preuve exige une pièce servie DEPUIS LE STOCKAGE OBJET, donc une
+        # ligne `documents.object_key` renseignée. On l'obtient par les
+        # PROPRES commandes du produit — init, deposer, promouvoir — et non
+        # par des lignes SQL fabriquées : semer à la main prouverait un
+        # scénario qui n'existe pas, et une preuve porterait sur du vent.
+        env:
+          POSTGRES_PASSWORD: test_password
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: minioadmin123
+          REDIS_PASSWORD: redis_test_password
+          SEAMTECH_AUTH_TOKEN: test-token-123
+          # Required by docker-compose.yml since the UI sign-in gate (audit
+          # issue #5, Option B): ${VAR:?...} makes `docker compose config` fail
+          # without them, even when only the infra services are started.
+          SEAMTECH_UI_PASSWORD: ci-ui-password
+          SEAMTECH_SESSION_SECRET: ci-session-secret-not-for-production
+          SEAMTECH_S3_BUCKET: seamtech-documents
+          # Compte nominatif de la preuve : identités de TEST, jamais de
+          # production. Lot 0b — le téléchargement des pièces exige une
+          # session humaine, le jeton de service ne suffit plus.
+          SEAMTECH_PREUVE_UTILISATEUR: approbateur-preuve
+          SEAMTECH_PREUVE_MOT_DE_PASSE: motdepasse-preuve-ci
+        run: |
+          set -euo pipefail
+          URL_BASE="postgresql://seamtech:${POSTGRES_PASSWORD}@postgres:5432/seamtech_search"
+          # Les racines servies : le dépôt REFUSE un dossier hors racine, et
+          # `sample_data` n'est dans les racines que si on le déclare.
+          docker compose exec -T -e SEAMTECH_ROOT_PATHS=/app/sample_data web \
+            python -m seamtech_search.fiches.cli init --database-url "$URL_BASE"
+          docker compose exec -T -e SEAMTECH_ROOT_PATHS=/app/sample_data web \
+            python -m seamtech_search.fiches.cli deposer /app/sample_data/CLIENT-123 \
+            --database-url "$URL_BASE"
+          # La promotion : c'est ELLE qui pose `documents.object_key`, en
+          # envoyant les fichiers au stockage objet. Sans elle, aucune pièce
+          # n'est servie depuis le stockage et la preuve n'aurait rien à perdre.
+          docker compose exec -T web \
+            python -m seamtech_search.fiches.cli promouvoir --database-url "$URL_BASE"
+          # Compte nominatif : la preuve ouvre une session avec lui.
+          docker compose exec -T web python -c "
+          from seamtech_search.comptes.comptes import ROLE_APPROBATEUR, creer_utilisateur
+          from seamtech_search.config import AppConfig
+          from seamtech_search.indexer import SearchIndex
+          config = AppConfig.load('config/config.json')
+          index = SearchIndex(config.database_path, config.database_url,
+                              pool_min=config.pool_min, pool_max=config.pool_max,
+                              pool_timeout=config.pool_timeout,
+                              statement_timeout_ms=config.statement_timeout_ms)
+          creer_utilisateur(index, '${SEAMTECH_PREUVE_UTILISATEUR}', 'Compte de preuve CI',
+                            '${SEAMTECH_PREUVE_MOT_DE_PASSE}', role=ROLE_APPROBATEUR,
+                            doit_changer_mot_de_passe=False)
+          print('compte nominatif de preuve prêt')
+          "
+          # Le code de fiche : la preuve en a besoin, on le lit en base.
+          CODE=$(docker compose exec -T postgres psql -U seamtech -d seamtech_search -tA -c \
+            "SELECT code FROM fiche ORDER BY id_fiche LIMIT 1")
+          if [ -z "$CODE" ]; then
+            echo "::error title=amorcage-sans-fiche::aucune fiche en base après le dépôt"
+            exit 1
+          fi
+          # GARDE-FOU : une pièce sans object_key rend la preuve impossible.
+          NB=$(docker compose exec -T postgres psql -U seamtech -d seamtech_search -tA -c \
+            "SELECT count(*) FROM documents WHERE object_key IS NOT NULL AND object_key <> ''")
+          echo "documents porteurs d'une clé objet : $NB"
+          if [ "$NB" -lt 1 ]; then
+            echo "::error title=amorcage-sans-objet::aucune clé objet après la promotion"
+            exit 1
+          fi
+          echo "CODE_FICHE_PREUVE=$CODE" >> "$GITHUB_ENV"
+
+      - name: Preuve RÉELLE — objet perdu puis restauré
+        # EXÉCUTION RÉELLE, pas une simulation : vrais conteneurs, vrai
+        # stockage objet, vraie base, vraie suppression de l'objet. Le script
+        # rend 0 (PROUVÉ), 1 (NON PROUVÉ, raison nommée) ou 2 (prérequis
+        # manquant, raison nommée) — jamais un succès implicite.
+        env:
+          POSTGRES_PASSWORD: test_password
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: minioadmin123
+          REDIS_PASSWORD: redis_test_password
+          SEAMTECH_AUTH_TOKEN: test-token-123
+          SEAMTECH_UI_PASSWORD: ci-ui-password
+          SEAMTECH_SESSION_SECRET: ci-session-secret-not-for-production
+          SEAMTECH_S3_BUCKET: seamtech-documents
+          SEAMTECH_PREUVE_UTILISATEUR: approbateur-preuve
+          SEAMTECH_PREUVE_MOT_DE_PASSE: motdepasse-preuve-ci
+        run: |
+          set -euo pipefail
+          # L'objet supprimé puis réinjecté est IDENTIQUE (mêmes octets) :
+          # l'étape d'intégration qui suit retrouve donc une pile intacte.
+          python scripts/preuve_objet_perdu.py \
+            --fiche "$CODE_FICHE_PREUVE" \
+            --jeton "$SEAMTECH_AUTH_TOKEN" \
+            --base-api "http://127.0.0.1:8000" \
+            --base-source "postgresql://seamtech:${POSTGRES_PASSWORD}@postgres:5432/seamtech_search" \
+            --base-cible "postgresql://seamtech:${POSTGRES_PASSWORD}@postgres:5432/preuve_scratch" \
+            --utilisateur "$SEAMTECH_PREUVE_UTILISATEUR" \
+            --mot-de-passe "$SEAMTECH_PREUVE_MOT_DE_PASSE" \
+            --url-stockage "http://127.0.0.1:9000" \
+            --utilisateur-stockage "$MINIO_ROOT_USER" \
+            --mot-de-passe-stockage "$MINIO_ROOT_PASSWORD" \
+            --nom-base seamtech_search \
+            --utilisateur-bd seamtech \
+            --verbose
+
       - name: Run docker compose integration test
         env:
           POSTGRES_PASSWORD: test_password
