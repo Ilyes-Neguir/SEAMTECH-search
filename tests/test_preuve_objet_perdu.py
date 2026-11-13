@@ -37,6 +37,16 @@ ALIAS = "local"
 URL_STOCKAGE = "http://" + "stockage:9000"
 # Le fichier d'origine de la pièce, tel qu'il est enregistré en base.
 CHEMIN_LOCAL = "/corpus-preuve/dossier-client/notice.pdf"
+# Ce que la commande « sauvegarder » rend : le nom du manifeste est FABRIQUÉ
+# par elle, il ne se devine pas.
+MANIFESTE = "/app/data/backups/preuve-objet/backup-2026.manifest.json"
+BILAN_SAUVEGARDE = {
+    "nature": "complete",
+    "manifeste": MANIFESTE,
+    "complet": True,
+    "documents_locaux": 1,
+    "documents_objets": 1,
+}
 
 
 class Monde:
@@ -159,7 +169,7 @@ def _monde_sain() -> Monde:
     return (
         Monde()
         .quand("mc rm", 0)
-        .quand("sauvegarder", 0, "ok")
+        .quand("sauvegarder", 0, json.dumps(BILAN_SAUVEGARDE))
         .quand("verifier", 0, json.dumps({"nb_documents_verifies": 3, "nb_documents_alteres": 0,
                                          "nb_documents_absents": 0}))
         .quand("restaurer", 0, "ok")
@@ -346,6 +356,47 @@ def test_sauvegarde_en_echec() -> None:
     assert "pg_dump" in rapport["raison"]
 
 
+def test_le_manifeste_vient_du_bilan_de_la_commande() -> None:
+    """Le nom du manifeste est FABRIQUÉ par la commande, il ne se devine pas.
+
+    Le deviner (« manifeste.json ») donnait un fichier inexistant : la
+    vérification suivante mourait d'une ``FileNotFoundError`` dont
+    l'annotation ne montrait que la première ligne, totalement muette.
+    """
+    monde = _monde_sain()
+    rapport = _preuve(monde).courir()
+
+    assert rapport["verdict"] == "PROUVÉ", rapport
+    jointes = [" ".join(c) for c in monde.appels]
+    verifications = [j for j in jointes if "verifier" in j]
+    assert verifications
+    assert MANIFESTE in verifications[0], verifications[0]
+
+
+def test_un_bilan_illisible_est_nomme() -> None:
+    """Une commande qui ne rend pas de bilan doit le dire, pas continuer."""
+    monde = _monde_sain().quand("sauvegarder", 0, "sauvegarde terminée")
+    rapport = _preuve(monde).courir()
+
+    assert rapport["verdict"] == "NON PROUVÉ"
+    assert "sauvegarde complète" in rapport["raison"]
+
+
+def test_un_bundle_sans_objet_est_nomme() -> None:
+    """Zéro objet dans le bundle : la perte de l'objet ne se réparerait pas.
+
+    La chaîne s'arrêterait trois jalons plus loin, pour une cause née ici.
+    """
+    monde = _monde_sain().quand(
+        "sauvegarder", 0, json.dumps({**BILAN_SAUVEGARDE, "documents_objets": 0})
+    )
+    rapport = _preuve(monde).courir()
+
+    assert rapport["verdict"] == "NON PROUVÉ"
+    assert "sauvegarde complète" in rapport["raison"]
+    assert "objet" in rapport["raison"]
+
+
 def test_bundle_sans_document() -> None:
     """Zéro document vérifié n'est pas une preuve : c'est une preuve vide."""
     monde = _monde_sain().quand(
@@ -394,6 +445,23 @@ def test_objet_non_resservi_apres_reinjection() -> None:
 
     assert rapport["verdict"] == "NON PROUVÉ"
     assert "objet resservi" in rapport["raison"]
+
+
+def test_une_annotation_trop_longue_garde_la_fin() -> None:
+    """Une trace Python finit par l'exception : c'est la queue qui compte.
+
+    Tronquer à la tête ne laissait lire que « Traceback (most recent call
+    last) » — cinq cycles CI perdus à deviner une cause déjà écrite, mais
+    coupée juste avant la seule ligne utile.
+    """
+    from scripts.preuve_objet_perdu import _aplatir
+
+    trace = "Traceback (most recent call last): " + ("bruit " * 200) + "FileNotFoundError: nope"
+    plat = _aplatir(trace, 300)
+
+    assert len(plat) <= 300
+    assert plat.startswith("Traceback")
+    assert "FileNotFoundError: nope" in plat
 
 
 # --- le contrat de sortie ---------------------------------------------------

@@ -104,6 +104,23 @@ def _sha256(octets: bytes) -> str:
     return hashlib.sha256(octets).hexdigest()
 
 
+def _extraire_json(sortie: str) -> dict | None:
+    """Le premier objet JSON d'une sortie, ou ``None``.
+
+    La commande journalise sur la sortie d'erreur mais rien ne garantit
+    qu'un avertissement ne se mêle à la sortie standard : on prend donc le
+    JSON où il commence, au lieu d'exiger que la sortie en soit un.
+    """
+    debut = sortie.find("{")
+    if debut < 0:
+        return None
+    try:
+        objet = json.loads(sortie[debut:])
+    except json.JSONDecodeError:
+        return None
+    return objet if isinstance(objet, dict) else None
+
+
 class PreuveObjetPerdu:
     """La chaîne de preuve, étape par étape, sans jamais masquer un échec."""
 
@@ -712,8 +729,40 @@ class PreuveObjetPerdu:
         if code != 0:
             self._etape("sauvegarde complète").echouer(f"code={code} : {(err or out).strip()[:300]}")
             return None
-        manifeste = f"{self.bundle}/manifeste.json"
-        self._etape("sauvegarde complète").reussir(f"bundle produit : {manifeste}")
+        # Le nom du manifeste est FABRIQUÉ par la commande
+        # (« <dump>.manifest.json », sauvegarde_complete.py:390) : le deviner
+        # (« manifeste.json ») donnait un fichier inexistant, et la
+        # vérification suivante mourait d'une FileNotFoundError au lieu de
+        # dire quoi que ce soit d'utile.
+        bilan = _extraire_json(out)
+        if bilan is None:
+            self._etape("sauvegarde complète").echouer(
+                f"la commande n'a rendu aucun bilan exploitable : {out.strip()[:300]}"
+            )
+            return None
+        manifeste = str(bilan.get("manifeste") or "")
+        if not manifeste:
+            self._etape("sauvegarde complète").echouer(
+                f"le bilan ne nomme aucun manifeste : {out.strip()[:300]}"
+            )
+            return None
+        if bilan.get("complet") is not True:
+            self._etape("sauvegarde complète").echouer(
+                f"le bundle ne se déclare pas complet : {out.strip()[:300]}"
+            )
+            return None
+        # Sans objet dans le bundle, la restauration ne peut pas rendre
+        # l'objet : la chaîne s'arrêterait plus loin, pour une cause née ici.
+        if not bilan.get("documents_objets"):
+            self._etape("sauvegarde complète").echouer(
+                "aucun objet du stockage dans le bundle : la perte de l'objet ne "
+                "pourrait pas être réparée, la preuve n'aboutirait pas"
+            )
+            return None
+        self._etape("sauvegarde complète").reussir(
+            f"bundle produit : {manifeste} — {bilan.get('documents_objets')} objet(s), "
+            f"{bilan.get('documents_locaux')} fichier(s) local(aux)"
+        )
         return manifeste
 
     def _verifier(self, manifeste: str) -> bool:
@@ -855,8 +904,18 @@ class PreuveObjetPerdu:
 
 
 def _aplatir(texte: str, limite: int = 300) -> str:
-    """Aplatit un texte : une annotation CI ne garde que la première ligne."""
-    return " ".join(str(texte).split())[:limite]
+    """Aplatit un texte et, s'il est trop long, garde la tête ET la queue.
+
+    Pourquoi la queue : une trace Python finit par l'exception, qui est la
+    seule ligne qui apprend quelque chose. Une annotation tronquée à la
+    tête ne montrait que « Traceback (most recent call last) » et laissait
+    deviner la cause — le contraire du but.
+    """
+    propre = " ".join(str(texte).split())
+    if len(propre) <= limite:
+        return propre
+    tete = max(limite // 3, 1)
+    return propre[:tete] + " … " + propre[len(propre) - (limite - tete - 3):]
 
 
 def main(argv: list[str] | None = None) -> int:
