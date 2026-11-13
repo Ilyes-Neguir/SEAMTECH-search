@@ -798,7 +798,16 @@ jobs:
             while ($propre.Length -gt 0) {
               $i++
               $morceau = $propre.Substring(0, [Math]::Min(1400, $propre.Length))
-              Write-Host "::notice title=$titre-$i::$morceau"
+              # Le titre est assemblé AVANT l'appel, jamais composé à
+              # l'intérieur de la chaîne : c'est la seule forme du workflow
+              # qui casse le parseur PowerShell, et elle a mis la CI au rouge
+              # (runs 43406891186 / 43406883886). « :: » est l'opérateur d'accès
+              # statique ; le précéder de « $var-$var » le rend ambigu pour
+              # [Parser]::ParseFile. Toutes les autres étapes du dépôt
+              # écrivent « title=$titre::$propre » — une variable nue, un
+              # point-virgule double, rien entre les deux. On s'y tient.
+              $complet = $titre + "-" + $i
+              Write-Host "::notice title=$complet::$morceau"
               if ($propre.Length -le 1400) { break }
               $propre = $propre.Substring(1400)
             }
