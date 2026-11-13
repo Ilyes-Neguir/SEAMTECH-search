@@ -94,6 +94,13 @@ logger = logging.getLogger("seamtech_search.sauvegarde")
 #: Préfixe des objets de sauvegarde dans le bucket (dump + manifeste).
 PREFIXE_SAUVEGARDES = "backups/seamtech-search-"
 
+#: Clé du manifeste qui distingue une sauvegarde COMPLÈTE d'une quotidienne.
+#: Sans elle, les deux vivent côte à côte dans le même dossier et la même
+#: rétention, et l'opérateur ne peut pas savoir laquelle emporte les pièces
+#: jointes. C'est une MARQUE, pas un drapeau de confiance : le périmètre
+#: réel se lit toujours dans les compteurs du manifeste.
+NATURE_MANIFESTE = "nature"
+
 #: Taille des blocs de lecture pour les empreintes (fichiers volumineux).
 TAILLE_BLOC_SHA256 = 1024 * 1024
 
@@ -1591,6 +1598,7 @@ def sauver(
     client_documents_s3=None,
     verrouiller: bool = True,
     racines_data: list[Path] | None = None,
+    nature: str | None = None,
 ) -> dict:
     """Sauvegarde : dump + inventaire archive + (optionnel) copies des pièces
     référencées + manifeste, puis envoi hors-site si ``client_s3`` est fourni.
@@ -1621,6 +1629,7 @@ def sauver(
             client_documents_s3=client_documents_s3,
             debut=debut,
             racines_data=racines_data,
+            nature=nature,
         )
     finally:
         if verrou is not None:
@@ -1638,6 +1647,7 @@ def _sauver_corps(
     client_documents_s3=None,
     debut: float = 0.0,
     racines_data: list[Path] | None = None,
+    nature: str | None = None,
 ) -> dict:
     horodatage = f"{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S-%f')}-{uuid.uuid4().hex}"
     nom_dump = f"seamtech-search-{horodatage}.dump"
@@ -1688,6 +1698,7 @@ def _sauver_corps(
     inventaire = inventorier_archive(racines_archive)
     manifeste: dict = {
         "date_iso": datetime.now(timezone.utc).isoformat(),
+        NATURE_MANIFESTE: nature,
         "commit": _commit_courant(),
         "version_schema_metier": VERSION_SCHEMA_METIER,
         "version_schema_application": VERSION_SCHEMA_APPLICATION,

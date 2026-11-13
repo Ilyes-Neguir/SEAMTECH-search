@@ -322,20 +322,80 @@ Cette ligne n'est pas une appréciation : elle est relue et vérifiée par un
 test (`tests/test_sauvegarde_etat_reel.py`), qui échoue si ce guide promet
 une couverture que le planificateur ne fait pas.
 
-⛔ **Point d'arrêt 7 bis** — décision à prendre AVANT l'étape 8, avec moi :
-faut-il que la sauvegarde automatique couvre aussi les pièces jointes ? Trois
-options, et je ne tranche pas seul :
+### ✅ Décision (13/11/2026) — une sauvegarde COMPLÈTE, hebdomadaire, à part
 
-1. **Ajouter `--avec-references` et `--data` à l'automatisme** — protection
-   complète, mais le volume à transférer chaque nuit devient celui des
-   documents (temps, bande passante, coût du stockage hors-site) ;
-2. **Garder l'automatisme tel quel, et rendre la sauvegarde complète
-   obligatoire à fréquence définie** (hebdomadaire, par exemple) — compromis
-   à décider avec l'atelier ;
-3. **Ne rien changer** — assumer que les documents originaux restent dans
-   l'archive de l'atelier, qui est alors la seule vraie sauvegarde. C'est
-   défendable **si et seulement si** l'archive est elle-même sauvegardée
-   ailleurs.
+La question du point d'arrêt 7 bis a été tranchée : l'automatisme quotidien
+**n'est pas élargi**. Les pièces jointes sont couvertes par une sauvegarde
+complète, **distincte**, lancée une fois par semaine.
+
+    sauvegarde-complete: base corpus references donnees
+
+Ce que ça donne, mis côte à côte :
+
+| Rythme | Qui lance | Ce qui part |
+|---|---|---|
+| toutes les 24 h | le service `sauvegarde`, tout seul | base + corpus |
+| **une fois par semaine** | **vous** (ou une tâche planifiée) | **base + corpus + données + pièces jointes** |
+
+Pourquoi deux dispositifs plutôt qu'un seul : copier les documents chaque nuit
+fait transiter tout le volume de l'archive. Le faire chaque semaine borne ce
+coût, et ramène la perte maximale de pièces jointes à **sept jours**. Ces deux
+lignes sont, comme la précédente, relues et vérifiées par un test.
+
+#### La commande, exactement
+
+```powershell
+docker compose run --rm sauvegarde python -m seamtech_search.sauvegarde_complete sauvegarder
+```
+
+Rien d'autre à taper. **Le périmètre est fixé dans le code** : il n'y a aucun
+drapeau à retenir, donc aucun drapeau à oublier. Si une pièce jointe n'a pas
+pu être copiée, la commande **échoue** et nomme ce qui manque — elle ne rend
+jamais un résultat qu'on croirait complet.
+
+Ensuite, la preuve que les documents sont bien dedans :
+
+```powershell
+# retrouver le dernier manifeste
+Get-ChildItem data\backups -Filter *.manifest.json | Sort-Object Name | Select-Object -Last 1 -ExpandProperty Name
+
+# vérifier que chaque pièce jointe est relisible et conforme
+docker compose run --rm sauvegarde python -m seamtech_search.sauvegarde_complete verifier ^
+  --manifeste /app/data/backups/<le-nom-releve-au-dessus>
+```
+
+La sortie donne le nombre de documents relus et reconnus par empreinte.
+`"ok": false` signifie que la complète **n'est pas une protection** — la
+refaire, et me transmettre la sortie.
+
+#### La planifier une fois par semaine sur le poste Windows
+
+Une sauvegarde hebdomadaire qu'on doit se rappeler est une sauvegarde
+hebdomadaire qu'on oublie. Sur Windows, le Planificateur de tâches la lance
+seul ; **adapter le chemin `C:\SEAMTECH` à l'emplacement réel de la pile** :
+
+```powershell
+schtasks /Create ^
+  /TN "SEAMTECH sauvegarde complete hebdomadaire" ^
+  /TR "docker compose -f C:\SEAMTECH\docker-compose.yml run --rm sauvegarde python -m seamtech_search.sauvegarde_complete sauvegarder" ^
+  /SC WEEKLY /D SUN /ST 02:00
+```
+
+Vérifier qu'elle est bien enregistrée : `schtasks /Query /TN "SEAMTECH
+sauvegarde complete hebdomadaire"`.
+
+**Si le poste n'autorise pas de tâche planifiée** : lancer la commande à la
+main chaque semaine, et noter la date sur un papier près du poste. Une tâche
+planifiée qui n'existe pas est préférable à une tâche planifiée qu'on croit
+exister.
+
+#### Ce que la complète exige pour être une vraie protection
+
+* **un stockage hors-site configuré** (`SEAMTECH_BACKUP_*`) — sinon la
+  complète reste sur le disque de ce poste, et un disque mort emporte tout.
+  Le journal le dit par une ligne `ERROR` explicite ;
+* **une vérification après coup** (`verifier`) — au moins à chaque première
+  exécution, puis régulièrement.
 
 ⛔ **Point d'arrêt 7** — transmettre la sortie de `verifier`. **Ne pas tenter
 la restauration complète maintenant** : elle détruit la base courante avant
