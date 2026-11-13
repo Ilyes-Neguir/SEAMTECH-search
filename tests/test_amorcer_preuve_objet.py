@@ -176,6 +176,29 @@ def test_sans_base_source_rien_ne_demarre() -> None:
 # --- confidentialité --------------------------------------------------------
 
 
+def test_le_resultat_est_publie_en_une_seule_annotation() -> None:
+    """Dix annotations par étape au maximum : au-delà, tout est perdu.
+
+    Trois cycles CI ont été perdus à chercher une panne imaginaire parce que
+    les annotations de l'étape suivante étaient simplement ÉVINCÉES par le
+    plafond. Le résultat doit donc tenir en UNE annotation, publiée même
+    quand la chaîne échoue.
+    """
+    import subprocess
+    import sys
+
+    termine = subprocess.run(
+        [sys.executable, "-m", "scripts.amorcer_preuve_objet",
+         "--base-source", BASE, "--compte", COMPTE, "--mot-de-passe", MOT_DE_PASSE,
+         "--annonces"],
+        capture_output=True, text=True, timeout=300, check=False,
+    )
+    # Docker est absent ici : la chaîne échoue dès « init ». L'annotation de
+    # résultat doit néanmoins paraître, et une seule fois.
+    assert "amorcage-ECHEC" in termine.stdout, termine.stdout
+    assert termine.stdout.count("::notice title=amorcage-") == 1
+
+
 def test_le_mot_de_passe_n_apparait_dans_aucune_etape() -> None:
     """Un rapport d'amorçage finit en annotation CI : il ne doit rien divulguer."""
     monde = _monde_sain()

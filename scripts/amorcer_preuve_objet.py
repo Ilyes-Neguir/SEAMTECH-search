@@ -87,15 +87,19 @@ class Amorcage:
         compte: str = "",
         mot_de_passe: str = "",
         annonces: bool = False,
+        trace: bool = False,
     ) -> None:
-        # ``annonces`` : le script publie lui-même ses jalons au fil de
-        # l'eau. Pourquoi : en CI, les journaux bruts de ce dépôt sont
-        # servis par un hôte inaccessible depuis l'environnement de travail,
-        # et une étape qui meurt emporte avec elle tout ce qu'elle n'a pas
-        # encore écrit. Des annotations émises AVANT chaque commande, en flux
-        # non tamponné, survivent à l'effondrement — c'est le seul moyen de
-        # savoir laquelle a tué l'étape.
+        # Deux niveaux, parce que GitHub PLAFONNE les annotations à dix par
+        # étape : au-delà, les suivantes sont simplement perdues — et l'on
+        # croit l'étape morte alors qu'elle a réussi. C'est exactement ce qui
+        # a fait chercher une panne imaginaire pendant trois cycles.
+        #   · ``annonces`` : UNE seule annotation, le résultat. À utiliser
+        #     en CI : c'est le seul canal lisible quand les journaux bruts
+        #     sont servis par un hôte inaccessible.
+        #   · ``trace`` : une annotation avant et après CHAQUE commande, pour
+        #     déboguer une chaîne qui s'effondre. À réserver au dépannage.
         self.annonces = annonces
+        self.trace = trace
         self.executeur = executeur
         self.compose = list(compose)
         self.web = service_web
@@ -128,7 +132,7 @@ class Amorcage:
         return reussie
 
     def _annoncer(self, titre: str, message: str) -> None:
-        if self.annonces:
+        if self.trace:
             print(f"::notice title={titre}::{_aplatir(message, 250)}", flush=True)
 
     def _executer(self, commande: Sequence[str]) -> tuple[int, str, str]:
@@ -356,9 +360,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--nom-base", default="seamtech_search")
     parser.add_argument(
         "--annonces", action="store_true",
-        help="publie chaque jalon en annotation CI, au fil de l'eau et en flux "
-             "non tamponné (utiliser avec -u) : c'est le seul canal lisible "
-             "quand les journaux bruts ne le sont pas",
+        help="publie le RÉSULTAT en une seule annotation CI (le plafond est de "
+             "dix par étape : au-delà, tout est perdu). Un flux non tamponné "
+             "est recommandé (python -u)",
+    )
+    parser.add_argument(
+        "--trace", action="store_true",
+        help="publie une annotation avant et après CHAQUE commande : à réserver "
+             "au dépannage d'une chaîne qui s'effondre, car cela dépasse vite "
+             "le plafond de dix",
     )
     args = parser.parse_args(argv)
 
@@ -374,8 +384,17 @@ def main(argv: list[str] | None = None) -> int:
         compte=args.compte,
         mot_de_passe=args.mot_de_passe,
         annonces=args.annonces,
+        trace=args.trace,
     )
     rapport = amorcage.courir()
+
+    if args.annonces:
+        # UNE annotation, complète : c'est tout ce qui survivra au plafond.
+        print(
+            f"::notice title=amorcage-{'OK' if rapport['ok'] else 'ECHEC'}::"
+            f"code_fiche={rapport['code_fiche'] or 'aucun'} — {_aplatir(rapport['raison'], 250)}",
+            flush=True,
+        )
 
     for etape in rapport["etapes"]:
         print(f"  [{'OK ' if etape['reussie'] else 'ÉCHEC'}] {etape['etape']} : {_aplatir(etape['detail'])}")

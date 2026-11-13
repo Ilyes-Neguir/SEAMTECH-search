@@ -1169,9 +1169,11 @@ jobs:
           SEAMTECH_PREUVE_UTILISATEUR: approbateur-preuve
           SEAMTECH_PREUVE_MOT_DE_PASSE: motdepasse-preuve-ci
         run: |
-          set -uo pipefail
           # L'objet supprimé puis réinjecté est IDENTIQUE (mêmes octets) :
           # l'étape d'intégration qui suit retrouve donc une pile intacte.
+          # Aucun `set -u` : une variable non définie tuerait le shell sans
+          # même atteindre l'annotation, et UNE SEULE annotation est publiée
+          # (plafond de dix par étape : au-delà, tout est perdu).
           sortie=$(python scripts/preuve_objet_perdu.py \
             --fiche "$CODE_FICHE_PREUVE" \
             --jeton "$SEAMTECH_AUTH_TOKEN" \
@@ -1188,11 +1190,11 @@ jobs:
           code=$?
           printf '%s\n' "$sortie"
           if [ "$code" -ne 0 ]; then
-            propre=$(printf '%s' "$sortie" | tr '\n' ' ' | tr -s ' ' | cut -c1-400)
-            echo "::error title=preuve-objet-perdu::code=$code — $propre"
+            propre=$(printf '%s' "$sortie" | tr '\n' ' ' | tr -s ' ' | cut -c1-600)
+            echo "::notice title=preuve-ECHEC::code=$code — $propre"
             exit 1
           fi
-          echo "::notice title=preuve-objet-perdu::PROUVÉ"
+          echo "::notice title=preuve-OK::PROUVÉ en conteneurs réels"
 
       - name: Run docker compose integration test
         env:
