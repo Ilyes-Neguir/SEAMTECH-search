@@ -390,7 +390,7 @@ class PreuveObjetPerdu:
         # 5. et 6. suppression, puis preuve de disparition
         code, _, err = self._compose_exec(self.minio, "mc", "rm", f"{self.alias}/{self.bucket}/{self.cle}")
         if code != 0:
-            self._etape("objet supprimé").echouer(f"mc rm a échoué (code={code}) : {err.strip()[:200]}")
+            self._etape("objet supprimé").echouer(f"mc rm a échoué (code={code}) : {_aplatir(err, 200)}")
             return self._rendre()
         self._etape("objet supprimé").reussir(f"{self.alias}/{self.bucket}/{self.cle}")
 
@@ -409,7 +409,7 @@ class PreuveObjetPerdu:
             return self._rendre()
         code, out, err = self._compose_exec(self.web, "sha256sum", chemin)
         if code != 0:
-            self._etape("octets restaurés").echouer(f"sha256sum impossible (code={code}) : {err.strip()[:200]}")
+            self._etape("octets restaurés").echouer(f"sha256sum impossible (code={code}) : {_aplatir(err, 200)}")
             return self._rendre()
         sha_cible = (out.split() or [""])[0]
         if sha_cible != sha_avant:
@@ -502,11 +502,11 @@ class PreuveObjetPerdu:
         try:
             reponse = json.loads(sortie)
         except json.JSONDecodeError:
-            self._etape("session nominative").echouer(f"réponse illisible : {sortie.strip()[:200]}")
+            self._etape("session nominative").echouer(f"réponse illisible : {_aplatir(sortie, 200)}")
             return False
         if not isinstance(reponse, dict) or not reponse.get("id_session"):
             self._etape("session nominative").echouer(
-                f"connexion refusée pour « {self.utilisateur_session} » : {sortie.strip()[:200]}"
+                f"connexion refusée pour « {self.utilisateur_session} » : {_aplatir(sortie, 200)}"
             )
             return False
         self.session = {
@@ -542,14 +542,14 @@ class PreuveObjetPerdu:
         try:
             corps = json.loads(sortie)
         except json.JSONDecodeError:
-            self._service_raison = f"réponse illisible : {sortie.strip()[:200]}"
+            self._service_raison = f"réponse illisible : {_aplatir(sortie, 200)}"
             return False
         for piece in corps.get("pieces") or []:
             if isinstance(piece, dict) and piece.get("kind") == "pdf" and isinstance(piece.get("id"), int):
                 self._piece_id = int(piece["id"])
                 return True
         self._service_raison = (
-            f"aucune pièce de type pdf dans /fiches/{self.fiche}/pieces : {sortie.strip()[:200]}"
+            f"aucune pièce de type pdf dans /fiches/{self.fiche}/pieces : {_aplatir(sortie, 200)}"
         )
         return False
 
@@ -600,7 +600,7 @@ class PreuveObjetPerdu:
         if code != 0:
             self._etape("alias de stockage").echouer(
                 f"création de l'alias « {self.alias} » impossible (code={code}) : "
-                f"{(err or out).strip()[:200]}"
+                f"{_aplatir(err or out, 200)}"
             )
             return False
         code, out, err = self._compose_exec(
@@ -609,7 +609,7 @@ class PreuveObjetPerdu:
         if code != 0:
             self._etape("alias de stockage").echouer(
                 f"alias « {self.alias} » créé mais le seau « {self.bucket} » est "
-                f"inaccessible (code={code}) : {(err or out).strip()[:200]}"
+                f"inaccessible (code={code}) : {_aplatir(err or out, 200)}"
             )
             return False
         self._etape("alias de stockage").reussir(
@@ -638,7 +638,7 @@ class PreuveObjetPerdu:
         )
         if code != 0:
             self._etape("appariement pièce ↔ objet").echouer(
-                f"lecture en base impossible (code={code}) : {(err or out).strip()[:200]}"
+                f"lecture en base impossible (code={code}) : {_aplatir(err or out, 200)}"
             )
             return False
         champs = out.strip().split("|")
@@ -671,7 +671,7 @@ class PreuveObjetPerdu:
         code, out, err = self._compose_exec(self.web, "cat", "--", manifeste)
         if code != 0:
             self._etape("protection globale").echouer(
-                f"manifeste illisible ({manifeste}, code={code}) : {(err or out).strip()[:200]}"
+                f"manifeste illisible ({manifeste}, code={code}) : {_aplatir(err or out, 200)}"
             )
             return False
         relu = _extraire_json(out)
@@ -710,7 +710,7 @@ class PreuveObjetPerdu:
         code, _, err = self._compose_exec(self.web, "rm", "-f", "--", self.source_locale)
         if code != 0:
             self._etape("seconde copie retirée").echouer(
-                f"retrait de {self.source_locale} impossible (code={code}) : {err.strip()[:200]}"
+                f"retrait de {self.source_locale} impossible (code={code}) : {_aplatir(err, 200)}"
             )
             return False
         code, out, _ = self._compose_exec(self.web, "test", "-e", "--", self.source_locale)
@@ -755,7 +755,7 @@ class PreuveObjetPerdu:
         )
         if code != 0:
             self._etape("base cible").echouer(
-                f"lecture de pg_database impossible (code={code}) : {(err or out).strip()[:200]}"
+                f"lecture de pg_database impossible (code={code}) : {_aplatir(err or out, 200)}"
             )
             return None
         return out.strip() == "1"
@@ -772,7 +772,7 @@ class PreuveObjetPerdu:
             "sauvegarder", "--dossier", self.bundle, "--sans-s3",
         )
         if code != 0:
-            self._etape("sauvegarde complète").echouer(f"code={code} : {(err or out).strip()[:300]}")
+            self._etape("sauvegarde complète").echouer(f"code={code} : {_aplatir(err or out)}")
             return None
         # Le nom du manifeste est FABRIQUÉ par la commande
         # (« <dump>.manifest.json », sauvegarde_complete.py:390) : le deviner
@@ -782,13 +782,13 @@ class PreuveObjetPerdu:
         bilan = _extraire_json(out)
         if bilan is None:
             self._etape("sauvegarde complète").echouer(
-                f"la commande n'a rendu aucun bilan exploitable : {out.strip()[:300]}"
+                f"la commande n'a rendu aucun bilan exploitable : {_aplatir(out)}"
             )
             return None
         manifeste = str(bilan.get("manifeste") or "")
         if not manifeste:
             self._etape("sauvegarde complète").echouer(
-                f"le bilan ne nomme aucun manifeste : {out.strip()[:300]}"
+                f"le bilan ne nomme aucun manifeste : {_aplatir(out)}"
             )
             return None
         # ATTENTION À NE PAS EXIGER ``complet`` ICI. Il est FAUX par
@@ -817,12 +817,12 @@ class PreuveObjetPerdu:
             "verifier", "--manifeste", manifeste,
         )
         if code != 0:
-            self._etape("bundle vérifié").echouer(f"code={code} : {(err or out).strip()[:300]}")
+            self._etape("bundle vérifié").echouer(f"code={code} : {_aplatir(err or out)}")
             return False
         try:
             rapport = json.loads(out)
         except json.JSONDecodeError:
-            self._etape("bundle vérifié").echouer(f"sortie illisible : {out.strip()[:200]}")
+            self._etape("bundle vérifié").echouer(f"sortie illisible : {_aplatir(out, 200)}")
             return False
         if not rapport.get("nb_documents_verifies"):
             self._etape("bundle vérifié").echouer(
@@ -879,7 +879,7 @@ class PreuveObjetPerdu:
                 )
                 if code != 0:
                     self._etape("base cible").echouer(
-                        f"dropdb impossible (code={code}) : {(err or out).strip()[:200]}"
+                        f"dropdb impossible (code={code}) : {_aplatir(err or out, 200)}"
                     )
                     return None
                 self._etape("base cible").reussir(
@@ -892,11 +892,14 @@ class PreuveObjetPerdu:
 
         code, out, err = self._compose_exec(
             self.web, "python", "-m", "seamtech_search.sauvegarde_complete",
-            "restaurer", "--manifeste", manifeste,
+            # ``--verbose`` : sur un échec, le journal de l'application dit
+            # où la restauration a buté. Il part sur la sortie d'erreur, donc
+            # sans polluer la sortie standard quand elle porte un JSON.
+            "restaurer", "--manifeste", manifeste, "--verbose",
             "--base-cible", self.base_cible, "--fichiers-cible", self.cible,
         )
         if code != 0:
-            self._etape("restauration").echouer(f"code={code} : {(err or out).strip()[:300]}")
+            self._etape("restauration").echouer(f"code={code} : {_aplatir(err or out)}")
             return None
         # Le chemin du document dans la cible : ce que la restauration a écrit.
         code, out, err = self._compose_exec(
@@ -904,7 +907,7 @@ class PreuveObjetPerdu:
         )
         if code != 0 or not out.strip():
             self._etape("restauration").echouer(
-                f"document introuvable dans {self.cible} après restauration : {err.strip()[:200]}"
+                f"document introuvable dans {self.cible} après restauration : {_aplatir(err, 200)}"
             )
             return None
         chemin = out.strip().splitlines()[0]
@@ -916,18 +919,18 @@ class PreuveObjetPerdu:
         temporaire = f"/tmp/preuve-reinjection-{nom}"
         code, _, err = self._executer([*self.compose, "cp", f"{self.web}:{chemin_source}", temporaire])
         if code != 0:
-            self._etape("réinjection").echouer(f"copie hors du conteneur impossible : {err.strip()[:200]}")
+            self._etape("réinjection").echouer(f"copie hors du conteneur impossible : {_aplatir(err, 200)}")
             return False
         code, _, err = self._executer(
             [*self.compose, "cp", temporaire, f"{self.minio}:{temporaire}"]
         )
         if code != 0:
-            self._etape("réinjection").echouer(f"copie vers le stockage impossible : {err.strip()[:200]}")
+            self._etape("réinjection").echouer(f"copie vers le stockage impossible : {_aplatir(err, 200)}")
             return False
         cible = f"{self.alias}/{self.bucket}/{self.cle}"
         code, _, err = self._compose_exec(self.minio, "mc", "cp", temporaire, cible)
         if code != 0:
-            self._etape("réinjection").echouer(f"mc cp a échoué (code={code}) : {err.strip()[:200]}")
+            self._etape("réinjection").echouer(f"mc cp a échoué (code={code}) : {_aplatir(err, 200)}")
             return False
         self._etape("réinjection").reussir(f"objet réinjecté : {cible}")
         return True
