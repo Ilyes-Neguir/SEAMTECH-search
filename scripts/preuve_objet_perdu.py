@@ -104,6 +104,18 @@ def _sha256(octets: bytes) -> str:
     return hashlib.sha256(octets).hexdigest()
 
 
+def _expurger(texte: str, url: str) -> str:
+    """Retire d'un texte tout ce qui identifierait la base.
+
+    L'hôte, le port, l'utilisateur et le mot de passe : une URL de base est
+    un secret d'exploitation, et rien de ce qu'on publie ne doit le porter.
+    """
+    netloc = urlparse(url).netloc
+    propre = texte.replace(netloc, "***") if netloc else texte
+    utilisateur = urlparse(url).username
+    return propre.replace(utilisateur, "***") if utilisateur else propre
+
+
 def _extraire_json(sortie: str) -> dict | None:
     """Le premier objet JSON d'une sortie, ou ``None``.
 
@@ -899,7 +911,10 @@ class PreuveObjetPerdu:
             "--base-cible", self.base_cible, "--fichiers-cible", self.cible,
         )
         if code != 0:
-            self._etape("restauration").echouer(f"code={code} : {_aplatir(err or out)}")
+            self._etape("restauration").echouer(
+                f"code={code} : {_aplatir(err or out)} — "
+                f"DIAGNOSTIC : {_aplatir(self._diagnostiquer_restauration(), 400)}"
+            )
             return None
         # Le chemin du document dans la cible : ce que la restauration a écrit.
         code, out, err = self._compose_exec(
@@ -913,6 +928,59 @@ class PreuveObjetPerdu:
         chemin = out.strip().splitlines()[0]
         self._etape("restauration").reussir(f"document rendu dans la cible distincte : {chemin}")
         return chemin
+
+    def _diagnostiquer_restauration(self) -> str:
+        """Nomme la cause d'un échec de restauration, sans exposer de secret.
+
+        Le produit masque À DESSEIN le détail de ``pg_restore`` : sa sortie
+        d'erreur peut porter une URI (REMEDIATION:432). Mais « rc=1 » sans
+        cause n'est pas un diagnostic, et c'est ce mur qui a fait chercher
+        à l'aveugle. On rejoue donc la commande — sur une base JETABLE, pour
+        ne pas mesurer les restes d'une restauration interrompue — puis on
+        EXPURGE l'hôte et les identifiants avant de publier quoi que ce soit.
+
+        Le premier réflexe, récupérer le vrai ``stderr`` du produit, affaiblirait
+        une protection explicite. Celui-ci la respecte.
+        """
+        bouts: list[str] = []
+        for commande in (("pg_dump", "--version"), ("pg_restore", "--version")):
+            _, out, err = self._compose_exec(self.web, *commande)
+            texte = (out or err).strip()
+            bouts.append(texte.splitlines()[0] if texte else f"{commande[0]} : version inconnue")
+        _, serveur, _ = self._compose_exec(
+            self.postgres, "psql", "-U", self.utilisateur_bd, "-d", self.nom_base,
+            "-tA", "-c", "SHOW server_version",
+        )
+        bouts.append(f"serveur PostgreSQL {serveur.strip() or 'inconnu'}")
+        _, out, _ = self._compose_exec(
+            self.web, "find", self.bundle, "-maxdepth", "1", "-name", "*.dump",
+        )
+        dumps = [ligne.strip() for ligne in out.splitlines() if ligne.strip()]
+        if not dumps:
+            return " ; ".join(bouts) + " — aucun dump dans le bundle : impossible d'aller plus loin"
+        # Une base JETABLE, jamais la cible : une restauration interrompue par
+        # « --exit-on-error » y a déjà laissé des objets, dont les doublons
+        # masqueraient la vraie première erreur.
+        jetable = "preuve_diag"
+        url_jetable = f"{self.base_cible.rsplit('/', 1)[0]}/{jetable}"
+        administratif = [
+            "psql", "-U", self.utilisateur_bd, "-d", "postgres", "-tA", "-c",
+        ]
+        self._compose_exec(self.postgres, *administratif, f"DROP DATABASE IF EXISTS {jetable}")
+        self._compose_exec(self.postgres, *administratif, f"CREATE DATABASE {jetable}")
+        _, _, err = self._compose_exec(
+            self.web, "pg_restore", "--no-owner", f"--dbname={url_jetable}", dumps[0],
+        )
+        self._compose_exec(self.postgres, *administratif, f"DROP DATABASE IF EXISTS {jetable}")
+        # Seules les lignes de panne sont gardées, jamais le rappel de la
+        # commande : c'est elle qui porte l'URL complète.
+        pannes = [
+            ligne.strip() for ligne in err.splitlines()
+            if ligne.strip().startswith(("pg_restore:", "ERROR:", "FATAL:"))
+        ]
+        if not pannes:
+            return " ; ".join(bouts) + " — pg_restore rend une sortie d'erreur vide"
+        return " ; ".join(bouts) + " — " + _expurger(" | ".join(pannes[:3]), url_jetable)
 
     def _reinjecter(self, chemin_source: str) -> bool:
         nom = self.cle.rsplit("/", 1)[-1]

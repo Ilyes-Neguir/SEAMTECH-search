@@ -40,6 +40,7 @@ CHEMIN_LOCAL = "/corpus-preuve/dossier-client/notice.pdf"
 # Ce que la commande « sauvegarder » rend : le nom du manifeste est FABRIQUÉ
 # par elle, il ne se devine pas.
 MANIFESTE = "/app/data/backups/preuve-objet/backup-2026.manifest.json"
+DUMP = "/app/data/backups/preuve-objet/backup-2026.dump"
 BILAN_SAUVEGARDE = {
     "nature": "complete",
     "manifeste": MANIFESTE,
@@ -67,6 +68,11 @@ class Monde:
         # D'où l'application tire-t-elle les octets ? D'une pièce promue en
         # stockage objet (défaut), ou du seul fichier local (jamais promue).
         self.sert_depuis_objet = True
+        # Diagnostic de restauration : versions en présence et panne réelle.
+        self.version_client = "pg_restore (PostgreSQL) 16.4"
+        self.version_serveur = "16.4"
+        self.dumps_trouves = DUMP
+        self.erreur_pg_restore = ""
         # Ce que porte le manifeste une fois la restauration contrôlée.
         self.manifeste_relu = {
             **BILAN_SAUVEGARDE,
@@ -98,6 +104,16 @@ class Monde:
         # object_key ET chemin local, lus EN BASE, jamais par l'API
         # (confidentialité). Deux colonnes : la clé sert à supprimer l'objet,
         # le chemin à retirer la seconde copie.
+        if "SHOW server_version" in jointe:
+            return 0, self.version_serveur + "\n", ""
+        if "pg_restore" in jointe and "--version" in jointe:
+            return 0, self.version_client, ""
+        if "pg_dump" in jointe and "--version" in jointe:
+            return 0, self.version_client, ""
+        if " find " in jointe:
+            return 0, (self.dumps_trouves or ""), ""
+        if "pg_restore" in jointe and "--dbname" in jointe:
+            return 1, "", self.erreur_pg_restore
         if " cat " in jointe and MANIFESTE in jointe:
             # Le manifeste RELU après restauration : c'est le produit qui
             # déclare la protection prouvée, pas notre seule mesure.
@@ -237,6 +253,48 @@ def test_la_preuve_supprime_vraiment_l_objet() -> None:
     assert rapport["verdict"] == "PROUVÉ"
     rm = [c for c in monde.appels if "mc" in c and "rm" in c]
     assert rm, "la preuve doit réellement supprimer l'objet du stockage"
+
+
+# --- nommer la cause sans exposer le secret -----------------------------------
+
+
+def test_un_echec_de_restauration_nomme_sa_cause() -> None:
+    """« pg_restore a échoué (rc=1) » sans cause n'est pas un diagnostic.
+
+    Le produit masque à dessein le détail de `pg_restore` (sa sortie peut
+    porter une URI). On rejoue donc la commande sur une base JETABLE —
+    jamais sur la cible, où une restauration interrompue a laissé des
+    objets dont les doublons masqueraient la première erreur.
+    """
+    monde = _monde_sain().quand("restaurer", 1, "", "SauvegardeError: pg_restore a échoué (rc=1)")
+    monde.erreur_pg_restore = (
+        'pg_restore: error: ERROR: unrecognized configuration parameter "transaction_timeout"'
+    )
+    rapport = _preuve(monde).courir()
+
+    assert rapport["verdict"] == "NON PROUVÉ"
+    assert "restauration" in rapport["raison"]
+    assert "transaction_timeout" in rapport["raison"], rapport["raison"]
+    # Les versions en présence : un écart client/serveur se lit d'un coup d'œil.
+    assert "16.4" in rapport["raison"]
+
+
+def test_le_diagnostic_n_expose_jamais_les_identifiants() -> None:
+    """Une URL de base est un secret d'exploitation : elle ne se publie pas."""
+    from scripts.preuve_objet_perdu import _expurger
+
+    url = "postgresql://seamtech:secret-a-ne-pas-dire@postgres:5432/preuve_scratch"
+    sale = (
+        "pg_restore: error: connection to server at "
+        '"postgres" (172.18.0.3), port 5432 failed: '
+        "password authentication failed for user \"seamtech\""
+    )
+    propre = _expurger(sale, url)
+
+    assert "secret-a-ne-pas-dire" not in propre
+    assert "postgres:5432" not in propre
+    assert "seamtech" not in propre
+    assert "pg_restore: error" in propre
 
 
 # --- le sceau du produit ------------------------------------------------------
