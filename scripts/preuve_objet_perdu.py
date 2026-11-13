@@ -752,6 +752,11 @@ class PreuveObjetPerdu:
         }
 
 
+def _aplatir(texte: str, limite: int = 300) -> str:
+    """Aplatit un texte : une annotation CI ne garde que la première ligne."""
+    return " ".join(str(texte).split())[:limite]
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python scripts/preuve_objet_perdu.py",
@@ -802,6 +807,15 @@ def main(argv: list[str] | None = None) -> int:
              "le code (RG14)",
     )
     parser.add_argument("--verbose", action="store_true")
+    parser.add_argument(
+        "--annonces", action="store_true",
+        help="publie le VERDICT en une seule annotation CI. Pourquoi : les "
+             "journaux bruts de ce dépôt sont servis par un hôte inaccessible "
+             "depuis l'environnement de travail, GitHub plafonne les "
+             "annotations à dix par étape, et une étape bash qui capture la "
+             "sortie perd la raison si elle meurt. Le script est le seul "
+             "endroit qui connaît le verdict au moment où il le rend.",
+    )
     args = parser.parse_args(argv)
 
     preuve = PreuveObjetPerdu(
@@ -826,6 +840,17 @@ def main(argv: list[str] | None = None) -> int:
         nom_base=args.nom_base,
     )
     rapport = preuve.courir()
+
+    if args.annonces:
+        # UNE annotation, émise AVANT tout le reste : c'est le seul canal
+        # lisible d'ici, et le plafond est de dix par étape.
+        manques = rapport.get("manques") or []
+        detail = " ; ".join(manques) if manques else str(rapport.get("raison", ""))
+        print(
+            f"::notice title=preuve-{rapport['verdict'].replace(' ', '-')}::"
+            f"{_aplatir(detail, 300)}",
+            flush=True,
+        )
 
     print("=" * 72)
     print(f"PREUVE — objet perdu puis restauré — {rapport['verdict']}")

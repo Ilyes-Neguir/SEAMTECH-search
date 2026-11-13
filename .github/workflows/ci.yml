@@ -1154,9 +1154,12 @@ jobs:
         # EXÉCUTION RÉELLE, pas une simulation : vrais conteneurs, vrai
         # stockage objet, vraie base, vraie suppression de l'objet. Le script
         # rend 0 (PROUVÉ), 1 (NON PROUVÉ, raison nommée) ou 2 (prérequis
-        # manquant, raison nommée) — jamais un succès implicite.
-        # La sortie est publiée en annotation : voir le commentaire de l'étape
-        # d'amorçage sur la lisibilité des journaux.
+        # manquant, raison nommée) : jamais de succès implicite.
+        #
+        # Le verdict est publié par le SCRIPT lui-même (--annonces), pas par
+        # l'étape bash : les journaux bruts sont servis par un hôte
+        # inaccessible depuis l'environnement de travail, et capturer la
+        # sortie dans une variable perdait la raison quand l'étape mourait.
         env:
           POSTGRES_PASSWORD: test_password
           MINIO_ROOT_USER: minioadmin
@@ -1171,10 +1174,7 @@ jobs:
         run: |
           # L'objet supprimé puis réinjecté est IDENTIQUE (mêmes octets) :
           # l'étape d'intégration qui suit retrouve donc une pile intacte.
-          # Aucun `set -u` : une variable non définie tuerait le shell sans
-          # même atteindre l'annotation, et UNE SEULE annotation est publiée
-          # (plafond de dix par étape : au-delà, tout est perdu).
-          sortie=$(python scripts/preuve_objet_perdu.py \
+          python -u scripts/preuve_objet_perdu.py \
             --fiche "$CODE_FICHE_PREUVE" \
             --jeton "$SEAMTECH_AUTH_TOKEN" \
             --base-api "http://127.0.0.1:8000" \
@@ -1186,15 +1186,8 @@ jobs:
             --utilisateur-stockage "$MINIO_ROOT_USER" \
             --mot-de-passe-stockage "$MINIO_ROOT_PASSWORD" \
             --nom-base seamtech_search \
-            --utilisateur-bd seamtech 2>&1)
-          code=$?
-          printf '%s\n' "$sortie"
-          if [ "$code" -ne 0 ]; then
-            propre=$(printf '%s' "$sortie" | tr '\n' ' ' | tr -s ' ' | cut -c1-600)
-            echo "::notice title=preuve-ECHEC::code=$code — $propre"
-            exit 1
-          fi
-          echo "::notice title=preuve-OK::PROUVÉ en conteneurs réels"
+            --utilisateur-bd seamtech \
+            --annonces
 
       - name: Run docker compose integration test
         env:
