@@ -1109,10 +1109,13 @@ jobs:
         # prouverait un scénario qui n'existe pas, et la preuve porterait sur
         # du vent.
         #
-        # Le résultat est publié en ANNOTATION (::notice) : les journaux bruts
-        # de ce dépôt sont téléchargeables depuis un hôte que l'environnement
-        # de travail n'autorise pas, et un échec sans message coûterait un
-        # cycle CI entier à deviner — deux essais l'ont déjà démontré.
+        # INSTRUMENTATION : les journaux bruts de ce dépôt sont servis par un
+        # hôte que l'environnement de travail n'autorise pas. Les annotations
+        # sont donc le SEUL canal de retour, et elles sont émises AVANT toute
+        # commande — une étape qui meurt en une seconde sans laisser de trace
+        # coûte un cycle CI entier à deviner (deux essais l'ont démontré).
+        # Aucun `set -u` : une variable non définie tuereait le shell sans
+        # même atteindre l'annotation.
         env:
           POSTGRES_PASSWORD: test_password
           MINIO_ROOT_USER: minioadmin
@@ -1131,23 +1134,25 @@ jobs:
           SEAMTECH_PREUVE_UTILISATEUR: approbateur-preuve
           SEAMTECH_PREUVE_MOT_DE_PASSE: motdepasse-preuve-ci
         run: |
-          set -uo pipefail
-          URL_BASE="postgresql://seamtech:${POSTGRES_PASSWORD}@postgres:5432/seamtech_search"
+          echo "::notice title=amorcage-sonde-1::étape démarrée, répertoire $(pwd)"
+          command -v python >/dev/null && echo "::notice title=amorcage-sonde-2::python présent" \
+            || echo "::notice title=amorcage-sonde-2::python ABSENT du PATH"
+          echo "::notice title=amorcage-sonde-3::script présent=$([ -f scripts/amorcer_preuve_objet.py ] && echo oui || echo non)"
           sortie=$(python scripts/amorcer_preuve_objet.py \
-            --base-source "$URL_BASE" \
+            --base-source "postgresql://seamtech:${POSTGRES_PASSWORD}@postgres:5432/seamtech_search" \
             --compte "$SEAMTECH_PREUVE_UTILISATEUR" \
             --mot-de-passe "$SEAMTECH_PREUVE_MOT_DE_PASSE" 2>&1)
           code=$?
-          printf '%s\n' "$sortie"
+          echo "::notice title=amorcage-sonde-4::code=$code"
           aplatir=$(printf '%s' "$sortie" | tr '\n' ' ' | tr -s ' ' | cut -c1-600)
+          echo "::notice title=amorcage-sortie::$aplatir"
+          printf '%s\n' "$sortie"
           if [ "$code" -ne 0 ]; then
-            echo "::notice title=amorcage-ECHEC::code=$code — $aplatir"
             exit 1
           fi
-          echo "::notice title=amorcage-OK::$aplatir"
           CODE=$(printf '%s\n' "$sortie" | grep -m1 '^CODE_FICHE=' | cut -d= -f2-)
           if [ -z "$CODE" ]; then
-            echo "::notice title=amorcage-sans-code::l'amorcage annonce OK sans code de fiche"
+            echo "::notice title=amorcage-sans-code::l'amorçage annonce OK sans code de fiche"
             exit 1
           fi
           echo "CODE_FICHE_PREUVE=$CODE" >> "$GITHUB_ENV"
