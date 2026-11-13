@@ -1103,14 +1103,16 @@ jobs:
 
       - name: Amorcer une fiche RÉELLE (dépôt produit, puis promotion objet)
         # La preuve exige une pièce servie DEPUIS LE STOCKAGE OBJET, donc une
-        # ligne `documents.object_key` renseignée. On l'obtient par les
-        # PROPRES commandes du produit — init, deposer, promouvoir — et non
-        # par des lignes SQL fabriquées : semer à la main prouverait un
-        # scénario qui n'existe pas, et la preuve porterait sur du vent.
+        # ligne `documents.object_key` renseignée. `scripts/amorcer_preuve_objet.py`
+        # l'obtient par les PROPRES commandes du produit — init, deposer,
+        # promouvoir — jamais par des lignes SQL fabriquées : semer à la main
+        # prouverait un scénario qui n'existe pas, et la preuve porterait sur
+        # du vent.
         #
-        # Chaque sous-commande publie sa sortie en ANNOTATION : les journaux
-        # bruts de ce dépôt ne sont pas lisibles hors de GitHub, et un échec
-        # sans message coûterait un cycle CI entier à deviner.
+        # Le résultat est publié en ANNOTATION (::notice) : les journaux bruts
+        # de ce dépôt sont téléchargeables depuis un hôte que l'environnement
+        # de travail n'autorise pas, et un échec sans message coûterait un
+        # cycle CI entier à deviner — deux essais l'ont déjà démontré.
         env:
           POSTGRES_PASSWORD: test_password
           MINIO_ROOT_USER: minioadmin
@@ -1131,69 +1133,21 @@ jobs:
         run: |
           set -uo pipefail
           URL_BASE="postgresql://seamtech:${POSTGRES_PASSWORD}@postgres:5432/seamtech_search"
-
-          rapporter() {
-            titre="$1"; code="$2"; sortie="$3"
-            propre=$(printf '%s' "$sortie" | tr '\n' ' ' | tr -s ' ' | cut -c1-400)
-            if [ "$code" -ne 0 ]; then
-              echo "::error title=$titre::code=$code — $propre"
-              exit 1
-            fi
-            echo "::notice title=$titre::code=0 — $propre"
-          }
-
-          # 1. Migrations + gabarits.
-          sortie=$(docker compose exec -T -e SEAMTECH_ROOT_PATHS=/app/sample_data web \
-            python -m seamtech_search.fiches.cli init --database-url "$URL_BASE" 2>&1)
-          rapporter "amorcage-1-init" "$?" "$sortie"
-
-          # 2. Le dépôt : une fiche + ses pièces jointes.
-          sortie=$(docker compose exec -T -e SEAMTECH_ROOT_PATHS=/app/sample_data web \
-            python -m seamtech_search.fiches.cli deposer /app/sample_data/CLIENT-123 \
-            --database-url "$URL_BASE" 2>&1)
-          rapporter "amorcage-2-deposer" "$?" "$sortie"
-
-          # 3. La promotion : c'est ELLE qui pose `documents.object_key`, en
-          #    envoyant les fichiers au stockage objet. Sans elle, aucune
-          #    pièce n'est servie depuis le stockage et il n'y a rien à perdre.
-          sortie=$(docker compose exec -T web \
-            python -m seamtech_search.fiches.cli promouvoir --database-url "$URL_BASE" 2>&1)
-          rapporter "amorcage-3-promouvoir" "$?" "$sortie"
-
-          # 4. Le compte nominatif (Lot 0b) : la preuve ouvre une session avec.
-          #    `doit_changer_mot_de_passe=False` : un changement obligatoire
-          #    ferait échouer la première connexion, donc la preuve, pour une
-          #    raison sans rapport avec ce qu'elle mesure.
-          sortie=$(docker compose exec -T web python -c "
-          from seamtech_search.comptes.comptes import ROLE_APPROBATEUR, creer_utilisateur
-          from seamtech_search.config import AppConfig
-          from seamtech_search.indexer import SearchIndex
-          config = AppConfig.load('config/config.json')
-          index = SearchIndex(config.database_path, config.database_url,
-                              pool_min=config.pool_min, pool_max=config.pool_max,
-                              pool_timeout=config.pool_timeout,
-                              statement_timeout_ms=config.statement_timeout_ms)
-          creer_utilisateur(index, '${SEAMTECH_PREUVE_UTILISATEUR}', 'Compte de preuve CI',
-                            '${SEAMTECH_PREUVE_MOT_DE_PASSE}', role=ROLE_APPROBATEUR,
-                            doit_changer_mot_de_passe=False)
-          print('compte nominatif de preuve prêt')
-          " 2>&1)
-          rapporter "amorcage-4-compte" "$?" "$sortie"
-
-          # 5. GARDE-FOU : sans fiche ni clé objet, la preuve n'a rien à perdre.
-          CODE=$(docker compose exec -T postgres psql -U seamtech -d seamtech_search -tA -c \
-            "SELECT code FROM fiche ORDER BY id_fiche LIMIT 1" 2>&1)
-          sortie=$(docker compose exec -T postgres psql -U seamtech -d seamtech_search -tA -c \
-            "SELECT count(*) FROM documents WHERE coalesce(object_key,'') <> ''" 2>&1)
-          sortie_pieces=$(docker compose exec -T postgres psql -U seamtech -d seamtech_search -tA -c \
-            "SELECT count(*) FROM fiche_piece_jointe" 2>&1)
-          echo "::notice title=amorcage-5-bilan::fiche=''$CODE'' objets=$sortie pieces=$sortie_pieces"
-          if [ -z "$CODE" ]; then
-            echo "::error title=amorcage-sans-fiche::aucune fiche en base après le dépôt"
+          sortie=$(python scripts/amorcer_preuve_objet.py \
+            --base-source "$URL_BASE" \
+            --compte "$SEAMTECH_PREUVE_UTILISATEUR" \
+            --mot-de-passe "$SEAMTECH_PREUVE_MOT_DE_PASSE" 2>&1)
+          code=$?
+          printf '%s\n' "$sortie"
+          aplatir=$(printf '%s' "$sortie" | tr '\n' ' ' | tr -s ' ' | cut -c1-600)
+          if [ "$code" -ne 0 ]; then
+            echo "::notice title=amorcage-ECHEC::code=$code — $aplatir"
             exit 1
           fi
-          if [ "$sortie" -lt 1 ]; then
-            echo "::error title=amorcage-sans-objet::aucune clé objet après la promotion"
+          echo "::notice title=amorcage-OK::$aplatir"
+          CODE=$(printf '%s\n' "$sortie" | grep -m1 '^CODE_FICHE=' | cut -d= -f2-)
+          if [ -z "$CODE" ]; then
+            echo "::notice title=amorcage-sans-code::l'amorcage annonce OK sans code de fiche"
             exit 1
           fi
           echo "CODE_FICHE_PREUVE=$CODE" >> "$GITHUB_ENV"
