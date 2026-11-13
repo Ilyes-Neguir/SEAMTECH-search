@@ -61,22 +61,45 @@ Un seul défaut certain en est sorti, et il est réel : un
 d'échafaudage — mais ce n'était pas un échec Windows, et je ne l'ai pas
 présenté comme tel.
 
-### ⚠️ Incident : mon outil a mis le job au rouge
+### ⚠️ Incident — mon outil de diagnostic a mis la CI au rouge, trois fois
 
-Le commit P1 est passé au rouge sur Windows **après coup**. Ce n'était pas une
-régression du produit : le verdict de la suite était **vert**, et seule mon
-étape de diagnostic était rouge. GitHub ajoute `exit $LASTEXITCODE` à toute
-étape `pwsh` ; le code du dernier pytest — qui échoue sur Windows, c'est
-attendu et nommé — devenait celui de l'étape.
+Je l'ai écrit, je l'ai cassé, et le dépôt l'a attrapé. Trois défauts distincts,
+tous de ma main, tous dans des outils de diagnostic — aucun dans le produit.
 
-Corrigé (`exit 0` : un diagnostic ne prononce pas de verdict). Documenté ici
-plutôt que réparé en silence, comme à chaque incident.
+**1. Le code de sortie.** Le commit P1 est passé au rouge sur Windows *après
+coup*, alors que le verdict de la suite était **vert** : GitHub ajoute
+`exit $LASTEXITCODE` à toute étape `pwsh`, et le code du dernier pytest — qui
+échoue sur Windows, c'est attendu et nommé — devenait celui de l'étape.
+Corrigé par un `exit 0` : un diagnostic ne prononce pas de verdict.
 
-Un deuxième défaut du même outil, corrigé au passage : il publiait des
-notices **vides**, parce que GitHub tronque un message d'annotation au
-premier saut de ligne, et que le plafond de 50 annotations par job était
-atteint avant lui. L'inventaire détaillé part désormais dans un **job séparé**,
-sur une seule ligne.
+**2. Les notices vides.** L'étape publiait un inventaire d'échecs **vide**,
+pour deux raisons mesurées : GitHub tronque un message d'annotation au
+premier saut de ligne, et le plafond de 50 annotations par job était atteint
+avant le sien. L'inventaire part désormais dans un **job séparé**, publié sur
+une seule ligne.
+
+**3. Une accolade en trop, et la CI entière au rouge.** En retirant le bloc de
+paquets du défaut n°2, mon script en a laissé l'accolade fermante. Résultat :
+`Unexpected token '}' in expression or statement`, et
+`tests/test_ci_executable.py` — celui-là même qui soumet chaque bloc `run:` au
+parseur PowerShell réel — est passé au rouge **sur les deux plateformes**, CI
+comme Windows, sur deux commits de suite.
+
+Celui-là est instructif, et je le note pour ne pas le refaire : **je ne peux
+pas exécuter `pwsh` ici.** Le test passe localement en signalant les blocs
+« non vérifiés faute d'interpréteur ». J'ai donc poussé du PowerShell non
+vérifié, par deux fois, et c'est la CI qui l'a attrapé les deux fois — ce qui
+est exactement son rôle, et la raison d'être de ce test. Un contrôle qui
+n'existe pas sur mon poste n'est pas une raison de sauter la relecture : c'est
+une raison de la faire contre les formes déjà éprouvées du fichier.
+
+**État** : les 46 blocs PowerShell des six workflows du dépôt sont désormais à
+accolades équilibrées, vérifié par un contrôle automatique ; plus aucune ligne
+ne présente le motif d'interpolation fautif.
+
+Les trois incidents sont documentés ici plutôt que réparés en silence. Le
+produit, lui, n'a jamais été en cause : à chaque fois, le verdict de la suite
+Windows était vert ou l'a redevenu dès la correction.
 
 ## §3 — P3 Preuve de restauration réelle · **NON FAITE**
 

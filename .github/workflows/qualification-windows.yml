@@ -563,7 +563,6 @@ jobs:
             # diagnostic qui paraît vide est pire qu'un diagnostic absent : on
             # le croit fait.
           }
-          }
           Publier "diag-fin" "tous les fichiers a processus ont ete executes"
           # Un diagnostic NE PRONONCE PAS DE VERDICT. Sans ce « exit 0 »,
           # GitHub ajoute « exit $LASTEXITCODE » à toute étape pwsh : le code
