@@ -420,6 +420,15 @@ class PreuveObjetPerdu:
             return self._rendre()
         self._etape("octets restaurés").reussir(f"sha256 identique : {sha_cible[:16]}…")
 
+        # Le manifeste, RELU : la protection globale n'est pas prouvée par
+        # notre seule mesure, mais par le produit lui-même. ``sauvegarde``
+        # ne pose ``complet: True`` qu'après une restauration coordonnée
+        # contrôlée composant par composant (sauvegarde.py:1479) : c'est le
+        # sceau de la chaîne, et il n'existe qu'ICI — au tour précédent, la
+        # preuve l'exigeait avant la restauration et se condamnait elle-même.
+        if not self._protection_globale(bundle):
+            return self._rendre()
+
         # 7. réinjection dans le stockage
         if not self._reinjecter(chemin):
             return self._rendre()
@@ -649,6 +658,42 @@ class PreuveObjetPerdu:
         )
         return True
 
+    def _protection_globale(self, manifeste: str) -> bool:
+        """Relit le manifeste : le produit déclare-t-il la protection prouvée ?
+
+        C'est le seul jalon qui ne vient pas de notre mesure mais de
+        l'application elle-même. Un manifeste qui porte encore
+        ``complet: false`` après la restauration signifie que le contrôle
+        composant par composant n'a pas abouti — la restauration a rendu des
+        octets, mais la protection globale n'est PAS prouvée, et c'est
+        exactement la confusion du Lot 21 qu'il ne faut pas refaire.
+        """
+        code, out, err = self._compose_exec(self.web, "cat", "--", manifeste)
+        if code != 0:
+            self._etape("protection globale").echouer(
+                f"manifeste illisible ({manifeste}, code={code}) : {(err or out).strip()[:200]}"
+            )
+            return False
+        relu = _extraire_json(out)
+        if relu is None:
+            self._etape("protection globale").echouer(
+                f"le manifeste {manifeste} n'est pas un JSON exploitable"
+            )
+            return False
+        if relu.get("complet") is not True:
+            self._etape("protection globale").echouer(
+                "le manifeste ne porte pas « complet » après la restauration : la "
+                "protection globale n'est pas prouvée par le produit — des octets "
+                "rendus ne suffisent pas, c'est le défaut même du Lot 21"
+            )
+            return False
+        composants = relu.get("composants_restaures") or []
+        self._etape("protection globale").reussir(
+            f"le produit déclare la protection prouvée — composants : "
+            f"{', '.join(str(c) for c in composants) or 'non précisés'}"
+        )
+        return True
+
     def _retirer_source_locale(self, sha_attendu: str) -> bool:
         """Retire la copie locale, puis vérifie que l'OBJET suffit à servir.
 
@@ -746,11 +791,12 @@ class PreuveObjetPerdu:
                 f"le bilan ne nomme aucun manifeste : {out.strip()[:300]}"
             )
             return None
-        if bilan.get("complet") is not True:
-            self._etape("sauvegarde complète").echouer(
-                f"le bundle ne se déclare pas complet : {out.strip()[:300]}"
-            )
-            return None
+        # ATTENTION À NE PAS EXIGER ``complet`` ICI. Il est FAUX par
+        # construction sur un bundle frais : « complet » n'est posé qu'APRÈS
+        # une restauration coordonnée contrôlée composant par composant
+        # (sauvegarde.py:41 et 1479). En faire un préalable ferait échouer
+        # la preuve pour avoir exigé son propre résultat avant de l'obtenir.
+        # Il devient un JALON FINAL : voir ``_protection_globale``.
         # Sans objet dans le bundle, la restauration ne peut pas rendre
         # l'objet : la chaîne s'arrêterait plus loin, pour une cause née ici.
         if not bilan.get("documents_objets"):

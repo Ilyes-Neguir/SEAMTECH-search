@@ -67,6 +67,13 @@ class Monde:
         # D'où l'application tire-t-elle les octets ? D'une pièce promue en
         # stockage objet (défaut), ou du seul fichier local (jamais promue).
         self.sert_depuis_objet = True
+        # Ce que porte le manifeste une fois la restauration contrôlée.
+        self.manifeste_relu = {
+            **BILAN_SAUVEGARDE,
+            "complet": True,
+            "composants_restaures": ["base", "data", "fichiers", "objets"],
+            "protection_globale_prouvee": True,
+        }
         self.base_scratch_existe = False
         self.connexion_autorisee = True
 
@@ -91,6 +98,10 @@ class Monde:
         # object_key ET chemin local, lus EN BASE, jamais par l'API
         # (confidentialité). Deux colonnes : la clé sert à supprimer l'objet,
         # le chemin à retirer la seconde copie.
+        if " cat " in jointe and MANIFESTE in jointe:
+            # Le manifeste RELU après restauration : c'est le produit qui
+            # déclare la protection prouvée, pas notre seule mesure.
+            return 0, json.dumps(self.manifeste_relu), ""
         if "SELECT object_key, path FROM documents" in jointe:
             return 0, f"{self.object_key_en_base}|{self.chemin_local_en_base}\n", ""
         # Le retrait de la copie locale, puis son contrôle d'absence.
@@ -208,6 +219,9 @@ def test_la_chaine_complete_est_prouvee() -> None:
         "base cible",
         "restauration",
         "octets restaurés",
+        # Le produit déclare la protection prouvée : il ne le fait qu'APRÈS
+        # une restauration contrôlée, jamais avant.
+        "protection globale",
         "réinjection",
         "objet resservi",
     ]
@@ -223,6 +237,35 @@ def test_la_preuve_supprime_vraiment_l_objet() -> None:
     assert rapport["verdict"] == "PROUVÉ"
     rm = [c for c in monde.appels if "mc" in c and "rm" in c]
     assert rm, "la preuve doit réellement supprimer l'objet du stockage"
+
+
+# --- le sceau du produit ------------------------------------------------------
+
+
+def test_la_protection_globale_est_declaree_par_le_produit() -> None:
+    """Le jalon vient de l'APPLICATION, pas de notre seule mesure.
+
+    ``complet`` n'est posé qu'après une restauration coordonnée contrôlée
+    composant par composant (sauvegarde.py:1479). En faire un PRÉALABLE —
+    comme au tour précédent — condamnait la preuve à exiger son propre
+    résultat avant de l'obtenir.
+    """
+    monde = _monde_sain()
+    rapport = _preuve(monde).courir()
+
+    assert rapport["verdict"] == "PROUVÉ", rapport
+    jointes = [" ".join(c) for c in monde.appels]
+    assert any(" cat " in j and MANIFESTE in j for j in jointes), jointes
+
+
+def test_une_protection_non_declaree_n_est_pas_prouvee() -> None:
+    """Des octets rendus ne suffisent pas : c'est le défaut même du Lot 21."""
+    monde = _monde_sain()
+    monde.manifeste_relu = {**BILAN_SAUVEGARDE, "complet": False}
+    rapport = _preuve(monde).courir()
+
+    assert rapport["verdict"] == "NON PROUVÉ"
+    assert "protection globale" in rapport["raison"]
 
 
 # --- la seconde copie --------------------------------------------------------
