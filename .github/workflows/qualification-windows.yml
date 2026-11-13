@@ -555,27 +555,14 @@ jobs:
             Get-Content "logs\diag-$nom.log" -Tail 15 | ForEach-Object { Write-Host "journal: $_" }
             Publier "diag-$nom" "rc=$rc"
 
-            # Un « rc=1 » sans le nom du test ne se répare pas : on sait QUEL
-            # fichier échoue, pas QUELLE épreuve, ni POURQUOI. C'est le défaut
-            # que ce workflow a déjà corrigé ailleurs (run 41365859490 : un
-            # diagnostic évincé, donc une preuve perdue). On publie donc
-            # l'inventaire des échecs de CHAQUE fichier, par paquets.
-            if ($rc -ne 0) {
-              $echecs = Select-String -Path "logs\diag-$nom.log" -Pattern '^(FAILED|ERROR) ' |
-                        ForEach-Object { $_.Line.Trim() }
-              if (-not $echecs) { $echecs = @("(aucune ligne FAILED/ERROR : voir le journal)") }
-              $n = 0
-              $seau = ''
-              foreach ($l in $echecs) {
-                if (($seau.Length + $l.Length) -gt 1300 -and $seau.Length -gt 0) {
-                  $n++
-                  Publier "diag-$nom-echecs-$n" $seau
-                  $seau = ''
-                }
-                $seau = "$seau `n $l"
-              }
-              if ($seau.Length -gt 0) { $n++; Publier "diag-$nom-echecs-$n" $seau }
-            }
+            # L'inventaire détaillé des échecs de chaque fichier est publié par
+            # le job ``diagnostic-processus``, qui dispose de son PROPRE budget
+            # d'annotations. Ici il serait évincé : mesuré au run 43400923966,
+            # les notices « diag-*-echecs-N » sont revenues VIDES, le plafond
+            # de 50 annotations par JOB ayant été atteint avant elles. Un
+            # diagnostic qui paraît vide est pire qu'un diagnostic absent : on
+            # le croit fait.
+          }
           }
           Publier "diag-fin" "tous les fichiers a processus ont ete executes"
       - name: Diagnostic ciblé — les échecs encore non élucidés
@@ -769,3 +756,70 @@ jobs:
           python ci\publier_traces.py
           exit 0
 
+  # ---------------------------------------------------------------------------
+  # Un job à part, et pour une raison précise : GitHub plafonne les annotations
+  # à 50 par JOB. Le diagnostic ci-dessus, publié depuis ``windows-postgres``,
+  # arrivait après les tranches de ce job et repartait VIDE (run 43400923966).
+  # Un job séparé a son propre budget : vingt notices au plus y tiennent.
+  #
+  # Deuxième correction, au passage : GitHub tronque un message d'annotation au
+  # premier saut de ligne. D'où les « -echecs-N » vides. L'inventaire est donc
+  # publié sur UNE SEULE ligne, les entrées séparées par « ; ».
+  # ---------------------------------------------------------------------------
+  diagnostic-processus:
+    name: Diagnostic processus Windows
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Installer les dépendances
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+      - name: Fichiers à processus POSIX, un par un — inventaire nommé
+        run: |
+          $ErrorActionPreference = 'Continue'
+          function Publier([string]$titre, [string]$texte) {
+            if ($null -eq $texte) { $texte = '' }
+            $propre = $texte -replace '%', '%25' -replace "`r", '' -replace "`n", ' ; '
+            $i = 0
+            while ($propre.Length -gt 0) {
+              $i++
+              $morceau = $propre.Substring(0, [Math]::Min(1400, $propre.Length))
+              Write-Host "::notice title=$titre-$i::$morceau"
+              if ($propre.Length -le 1400) { break }
+              $propre = $propre.Substring(1400)
+            }
+          }
+          New-Item -ItemType Directory -Force -Path logs | Out-Null
+          foreach ($fichier in @(
+              "tests/test_restauration_confinement.py",
+              "tests/test_televersement_creation_idempotente.py",
+              "tests/test_relais_file_base.py",
+              "tests/test_lot10_televersement_lot.py",
+              "tests/test_extraction_logs_securite.py")) {
+            $nom = [IO.Path]::GetFileNameWithoutExtension($fichier)
+            python -m pytest -q -rf $fichier > "logs\proc-$nom.log" 2>&1
+            $rc = $LASTEXITCODE
+            $echecs = @(Select-String -Path "logs\proc-$nom.log" -Pattern '^(FAILED|ERROR) ' |
+                        ForEach-Object { ($_.Line.Trim() -replace '\s+', ' ') })
+            if ($echecs.Count -eq 0) {
+              if ($rc -eq 0) {
+                Publier "proc-$nom" "rc=0 ; VERT sur Windows : aucune epreuve en echec"
+              } else {
+                Publier "proc-$nom" "rc=$rc ; rouge mais aucune ligne FAILED/ERROR (erreur de collection ?) ; voir l'artefact"
+              }
+            } else {
+              Publier "proc-$nom" ("rc=$rc ; $($echecs.Count) echec(s) : " + ($echecs -join ' ; '))
+            }
+          }
+      - name: Conserver les journaux du diagnostic processus
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diagnostic-processus-windows
+          path: logs/proc-*.log
+          if-no-files-found: warn
