@@ -1106,7 +1106,11 @@ jobs:
         # ligne `documents.object_key` renseignée. On l'obtient par les
         # PROPRES commandes du produit — init, deposer, promouvoir — et non
         # par des lignes SQL fabriquées : semer à la main prouverait un
-        # scénario qui n'existe pas, et une preuve porterait sur du vent.
+        # scénario qui n'existe pas, et la preuve porterait sur du vent.
+        #
+        # Chaque sous-commande publie sa sortie en ANNOTATION : les journaux
+        # bruts de ce dépôt ne sont pas lisibles hors de GitHub, et un échec
+        # sans message coûterait un cycle CI entier à deviner.
         env:
           POSTGRES_PASSWORD: test_password
           MINIO_ROOT_USER: minioadmin
@@ -1125,22 +1129,42 @@ jobs:
           SEAMTECH_PREUVE_UTILISATEUR: approbateur-preuve
           SEAMTECH_PREUVE_MOT_DE_PASSE: motdepasse-preuve-ci
         run: |
-          set -euo pipefail
+          set -uo pipefail
           URL_BASE="postgresql://seamtech:${POSTGRES_PASSWORD}@postgres:5432/seamtech_search"
-          # Les racines servies : le dépôt REFUSE un dossier hors racine, et
-          # `sample_data` n'est dans les racines que si on le déclare.
-          docker compose exec -T -e SEAMTECH_ROOT_PATHS=/app/sample_data web \
-            python -m seamtech_search.fiches.cli init --database-url "$URL_BASE"
-          docker compose exec -T -e SEAMTECH_ROOT_PATHS=/app/sample_data web \
+
+          rapporter() {
+            titre="$1"; code="$2"; sortie="$3"
+            propre=$(printf '%s' "$sortie" | tr '\n' ' ' | tr -s ' ' | cut -c1-400)
+            if [ "$code" -ne 0 ]; then
+              echo "::error title=$titre::code=$code — $propre"
+              exit 1
+            fi
+            echo "::notice title=$titre::code=0 — $propre"
+          }
+
+          # 1. Migrations + gabarits.
+          sortie=$(docker compose exec -T -e SEAMTECH_ROOT_PATHS=/app/sample_data web \
+            python -m seamtech_search.fiches.cli init --database-url "$URL_BASE" 2>&1)
+          rapporter "amorcage-1-init" "$?" "$sortie"
+
+          # 2. Le dépôt : une fiche + ses pièces jointes.
+          sortie=$(docker compose exec -T -e SEAMTECH_ROOT_PATHS=/app/sample_data web \
             python -m seamtech_search.fiches.cli deposer /app/sample_data/CLIENT-123 \
-            --database-url "$URL_BASE"
-          # La promotion : c'est ELLE qui pose `documents.object_key`, en
-          # envoyant les fichiers au stockage objet. Sans elle, aucune pièce
-          # n'est servie depuis le stockage et la preuve n'aurait rien à perdre.
-          docker compose exec -T web \
-            python -m seamtech_search.fiches.cli promouvoir --database-url "$URL_BASE"
-          # Compte nominatif : la preuve ouvre une session avec lui.
-          docker compose exec -T web python -c "
+            --database-url "$URL_BASE" 2>&1)
+          rapporter "amorcage-2-deposer" "$?" "$sortie"
+
+          # 3. La promotion : c'est ELLE qui pose `documents.object_key`, en
+          #    envoyant les fichiers au stockage objet. Sans elle, aucune
+          #    pièce n'est servie depuis le stockage et il n'y a rien à perdre.
+          sortie=$(docker compose exec -T web \
+            python -m seamtech_search.fiches.cli promouvoir --database-url "$URL_BASE" 2>&1)
+          rapporter "amorcage-3-promouvoir" "$?" "$sortie"
+
+          # 4. Le compte nominatif (Lot 0b) : la preuve ouvre une session avec.
+          #    `doit_changer_mot_de_passe=False` : un changement obligatoire
+          #    ferait échouer la première connexion, donc la preuve, pour une
+          #    raison sans rapport avec ce qu'elle mesure.
+          sortie=$(docker compose exec -T web python -c "
           from seamtech_search.comptes.comptes import ROLE_APPROBATEUR, creer_utilisateur
           from seamtech_search.config import AppConfig
           from seamtech_search.indexer import SearchIndex
@@ -1153,19 +1177,22 @@ jobs:
                             '${SEAMTECH_PREUVE_MOT_DE_PASSE}', role=ROLE_APPROBATEUR,
                             doit_changer_mot_de_passe=False)
           print('compte nominatif de preuve prêt')
-          "
-          # Le code de fiche : la preuve en a besoin, on le lit en base.
+          " 2>&1)
+          rapporter "amorcage-4-compte" "$?" "$sortie"
+
+          # 5. GARDE-FOU : sans fiche ni clé objet, la preuve n'a rien à perdre.
           CODE=$(docker compose exec -T postgres psql -U seamtech -d seamtech_search -tA -c \
-            "SELECT code FROM fiche ORDER BY id_fiche LIMIT 1")
+            "SELECT code FROM fiche ORDER BY id_fiche LIMIT 1" 2>&1)
+          sortie=$(docker compose exec -T postgres psql -U seamtech -d seamtech_search -tA -c \
+            "SELECT count(*) FROM documents WHERE coalesce(object_key,'') <> ''" 2>&1)
+          sortie_pieces=$(docker compose exec -T postgres psql -U seamtech -d seamtech_search -tA -c \
+            "SELECT count(*) FROM fiche_piece_jointe" 2>&1)
+          echo "::notice title=amorcage-5-bilan::fiche=''$CODE'' objets=$sortie pieces=$sortie_pieces"
           if [ -z "$CODE" ]; then
             echo "::error title=amorcage-sans-fiche::aucune fiche en base après le dépôt"
             exit 1
           fi
-          # GARDE-FOU : une pièce sans object_key rend la preuve impossible.
-          NB=$(docker compose exec -T postgres psql -U seamtech -d seamtech_search -tA -c \
-            "SELECT count(*) FROM documents WHERE object_key IS NOT NULL AND object_key <> ''")
-          echo "documents porteurs d'une clé objet : $NB"
-          if [ "$NB" -lt 1 ]; then
+          if [ "$sortie" -lt 1 ]; then
             echo "::error title=amorcage-sans-objet::aucune clé objet après la promotion"
             exit 1
           fi
@@ -1176,6 +1203,8 @@ jobs:
         # stockage objet, vraie base, vraie suppression de l'objet. Le script
         # rend 0 (PROUVÉ), 1 (NON PROUVÉ, raison nommée) ou 2 (prérequis
         # manquant, raison nommée) — jamais un succès implicite.
+        # La sortie est publiée en annotation : voir le commentaire de l'étape
+        # d'amorçage sur la lisibilité des journaux.
         env:
           POSTGRES_PASSWORD: test_password
           MINIO_ROOT_USER: minioadmin
@@ -1188,10 +1217,10 @@ jobs:
           SEAMTECH_PREUVE_UTILISATEUR: approbateur-preuve
           SEAMTECH_PREUVE_MOT_DE_PASSE: motdepasse-preuve-ci
         run: |
-          set -euo pipefail
+          set -uo pipefail
           # L'objet supprimé puis réinjecté est IDENTIQUE (mêmes octets) :
           # l'étape d'intégration qui suit retrouve donc une pile intacte.
-          python scripts/preuve_objet_perdu.py \
+          sortie=$(python scripts/preuve_objet_perdu.py \
             --fiche "$CODE_FICHE_PREUVE" \
             --jeton "$SEAMTECH_AUTH_TOKEN" \
             --base-api "http://127.0.0.1:8000" \
@@ -1203,8 +1232,15 @@ jobs:
             --utilisateur-stockage "$MINIO_ROOT_USER" \
             --mot-de-passe-stockage "$MINIO_ROOT_PASSWORD" \
             --nom-base seamtech_search \
-            --utilisateur-bd seamtech \
-            --verbose
+            --utilisateur-bd seamtech 2>&1)
+          code=$?
+          printf '%s\n' "$sortie"
+          if [ "$code" -ne 0 ]; then
+            propre=$(printf '%s' "$sortie" | tr '\n' ' ' | tr -s ' ' | cut -c1-400)
+            echo "::error title=preuve-objet-perdu::code=$code — $propre"
+            exit 1
+          fi
+          echo "::notice title=preuve-objet-perdu::PROUVÉ"
 
       - name: Run docker compose integration test
         env:
