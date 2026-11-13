@@ -287,13 +287,16 @@ Relevée après achèvement (`status == completed`), jamais annoncée à l'avanc
 | `5199062` | P3 — rapport de clôture | 🟢 **verte** |
 | `18bb0e9` | P3 — le workflow Windows, dit | 🟢 **verte** |
 | `dba1e07` | P3 — 316 n'est pas une approximation de 309 | 🟢 **verte** |
+| `c882629` | P3 — fermer la table de CI | 🟢 **verte** |
 
-Les deux runs déclenchés par SHA sont verts dans les sept cas (deux workflows
+Les deux runs déclenchés par SHA sont verts dans les huit cas (deux workflows
 portent le nom « CI ») ; relevés `completed/success`, aucun job en échec.
 
 **Aucun SHA de ce lot n'a été poussé sans que sa CI soit relevée jusqu'à
-`completed`.** Sept commits, sept relevés ; le seul rouge est `db70fdf`, dont
-les deux causes sont écrites au §1.1.
+`completed`.** Huit commits, huit relevés ; le seul rouge est `db70fdf`, dont
+les deux causes sont écrites au §1.1. Le tableau s'arrête au dernier commit du
+lot : tout commit postérieur appartient au lot suivant et portera sa propre
+ligne.
 
 Reproduire :
 
@@ -390,7 +393,7 @@ git log --oneline af31922f..HEAD -- tests/test_sauvegarde_snapshot_pg.py
   de vérité terrain ;
 - la limite Windows est écrite là où l'exploitante la lira ;
 - la suite SQLite est intégralement verte (2876 épreuves, 0 échec) et la CI
-  est verte aux cinq SHA livrés ;
+  est verte aux huit SHA livrés ;
 - le workflow Windows n'a **pas régressé** : son verdict passe du rouge au vert
   par rapport à la base `main`, et ce qui reste rouge est une étape de
   diagnostic qui l'était déjà (section 6.1).
