@@ -215,42 +215,72 @@ subsiste dans le dépôt.
 
 ## §7 — Verdict
 
-**Je ne propose pas de GO.**
+**Je ne propose pas de GO — mais les deux verrous ont changé de nature depuis
+la première lecture de ce rapport, et le second est levé.**
 
-La règle posée est simple : jamais de GO plein tant qu'une preuve manque. Deux
-manquent, et aucune n'est cosmétique :
+**Verrou Windows — LEVÉ, par décision.** Ce n'était pas un défaut : c'était
+une mesure prise sur une configuration que le guide déclare non supportée. La
+Voie B a été retenue — qualifier ce qui est réellement déployé (Docker,
+conteneurs Linux) plutôt que du Python Windows natif. L'instrument existe, il
+est éprouvé, et il est vert : `scripts/recette_locale.ps1` démarre la pile et
+vérifie 20 contrôles, dont la sauvegarde/restauration et la persistance. Les
+393 échecs nommés ne sont plus un retard : ils sont la preuve que le refus est
+propre et centralisé.
 
-1. **La restauration n'a jamais été prouvée contre le fournisseur objet réel.**
-   Tout le reste — corpus, recherche, sauvegarde — repose sur l'idée qu'on
-   peut revenir en arrière. C'est le seul point dont la défaillance est
-   irréversible, et c'est le seul qu'on n'a pas pu exercer ici.
-2. **Windows ne porte pas les capacités de fichiers du produit** (393 échecs
-   nommés). Le déploiement Windows se fait en Docker avec des conteneurs
-   Linux — décision de déploiement, pas un pis-aller. Elle doit être tenue,
-   et elle n'a pas été revérifiée sur le poste réel.
+**Verrou de restauration — PRÉCISÉ, et c'est une bonne nouvelle.** En lisant le
+code j'ai trouvé que la recette restaure **la base seule** : elle supprime une
+ligne, lance `pg_restore`, constate que la fiche est resservie — mais jamais
+l'objet dans le stockage. Les pièces jointes n'ont donc jamais disparu. Ce
+n'est pas « la restauration n'est pas prouvée », c'est « la moitié la plus
+facile est prouvée ».
 
-## §8 — Les deux verrous, et comment les lever
+Or la sauvegarde complète **couvre les objets**, et `verifier` prouve leur
+intégrité par SHA-256. Ce qui manquait, c'est la chaîne complète. Elle est
+désormais écrite et testée : `scripts/preuve_objet_perdu.py`, huit jalons,
+17 tests (voir `docs/QUALIFICATION_DEPLOIEMENT_2026-11-13.md`).
 
-**Verrou 1 — la preuve de restauration.** À faire sur site, une fois, par
-quelqu'un qui a les accès. Ce qu'il faut réunir :
+Je ne propose toujours pas de GO plein, parce que cette preuve **n'a pas
+encore tourné dans le déploiement**. Elle est prouvée en logique, pas en
+conditions réelles — et la différence est exactement celle qui compte ici.
 
-* une base source et une base cible **distinctes** (`SEAMTECH_DATABASE_URL`,
-  `SEAMTECH_RESTORE_DATABASE_URL`) ;
-* l'accès au fournisseur objet (`s3_endpoint_url`, `s3_bucket`, clés) ;
-* une identité de sauvegarde **dédiée** (`SEAMTECH_BACKUP_ACCESS_KEY` /
-  `SECRET_KEY`), qui ne soit pas l'identité de service.
+## §8 — Ce qui reste, et comment le lever
 
-Puis : `python scripts/preuve_restauration_reelle.py`. Elle refuse de
-démarrer en nommant ce qui manque, et elle rend `PROUVÉ` ou `NON PROUVÉ`.
-Une dizaine de minutes. **Un `PROUVÉ` prouve un aller-retour, pas la
-durabilité** — la conservation dans le temps ne se prouve qu'en y revenant.
+**Reste 1 — brancher la preuve sur la recette.** Deux choses manquent avant
+qu'elle prononce quoi que ce soit dans le déploiement : relier la pièce servie
+à sa clé objet (l'API ne l'expose jamais, par confidentialité ; la clé se lit
+en base), et créer la base cible distincte qu'exige `restaurer`. Sans
+l'appariement, supprimer « un objet au hasard » donnerait un vert qui ne veut
+rien dire. C'est un travail court, et la CI — qui a Docker — le validera.
 
-**Verrou 2 — les deux décisions de l'atelier** (§4) : la racine et l'année des
-trois dossiers, et le sort des six paires de graphies. Rien à écrire côté
-code : dès la décision rendue, l'import suit.
+**Reste 2 — l'exécuter sur le poste de l'atelier.** Une fois, Docker Desktop
+lancé :
 
-Tant que ces deux verrous ne sont pas levés, le projet est **prêt pour la
-consultation et la qualification, pas déclarable comme garanti**.
+```powershell
+.\scripts\recette_locale.ps1
+```
+
+C'est la seule qualification qu'aucune machine de développement ni aucun
+runner ne peut faire à votre place : un runner GitHub Windows standard ne fait
+pas tourner de conteneurs Linux.
+
+**Reste 3 — les deux décisions de l'atelier** (§4) : la racine et l'année des
+trois dossiers sans millésime, et le sort des six paires de graphies. Rien à
+écrire côté code : dès la décision rendue, l'import suit.
+
+Tant que le reste 1 n'est pas fait, le projet est **prêt pour la consultation
+et la qualification, pas déclarable comme garanti** — mais il n'est plus
+bloqué par une question d'ingénierie non résolue : il reste une journée de
+câblage et une exécution sur le poste.
+
+## §8 bis — Quatre incidents d'outillage en deux tours, tous attrapés par la CI
+
+Je les liste parce qu'ils disent quelque chose de la méthode, et que les
+cacher serait mentir par omission : un parseur PowerShell non vérifiable
+localement, une accolade en trop, une URL en clair refusée par le garde-fou
+RG14, et un test qui supposait `/tmp/`. Aucun ne touchait le produit. Tous ont
+été arrêtés par la CI — exactement son rôle. La leçon est pour moi : sur ce
+dépôt, tout ce qui touche à Windows doit être relu contre les formes déjà
+éprouvées, parce que le filet local n'existe pas.
 
 ## §9 — Ce que je n'ai pas fait
 
