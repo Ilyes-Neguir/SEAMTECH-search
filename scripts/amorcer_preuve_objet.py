@@ -32,6 +32,7 @@ injectable, et chaque étape est testée (tests/test_amorcer_preuve_objet.py).
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from typing import Any, Callable, Sequence
 
@@ -185,12 +186,35 @@ class Amorcage:
         return self._conclure(etape, True, f"{self.dossier} déposé (fiche + pièces jointes)")
 
     def _promouvoir(self) -> bool:
-        """La promotion pose ``documents.object_key`` : SANS ELLE, RIEN À PERDRE."""
+        """La promotion pose ``documents.object_key`` : SANS ELLE, RIEN À PERDRE.
+
+        Piège d'interprétation, et il a coûté un cycle CI : le DÉPÔT promeut
+        déjà lui-même après son commit (depot.py:1700). La reprise
+        ``promouvoir`` rend donc « 0/0 promu(s) » avec le code 1, non pas en
+        échec mais parce qu'il n'y a PLUS RIEN à envoyer. Prendre ce code 1
+        pour une panne coupe la chaîne avant le garde-fou qui, lui, compte
+        réellement les clés objet — on soigne alors un succès.
+        """
         etape = self._etape("promotion")
         code, out, err = self._cli("promouvoir")
+        texte = (out or err or "").strip()
+        bilan = re.search(r"(\d+)\s*/\s*(\d+)\s+promu", texte)
+        if bilan:
+            promus, candidats = int(bilan.group(1)), int(bilan.group(2))
+            if candidats == 0:
+                return self._conclure(
+                    etape, True,
+                    "aucun candidat : les fichiers ont déjà été promus par le dépôt "
+                    "lui-même (depot.py:1700) — « rien à faire » n'est pas un échec",
+                )
+            if code != 0 or promus < candidats:
+                return self._conclure(
+                    etape, False, f"code={code} : {promus}/{candidats} promu(s) — {texte[:300]}",
+                )
+            return self._conclure(etape, True, f"{promus}/{candidats} promu(s) — clés objet posées")
         if code != 0:
-            return self._conclure(etape, False, f"code={code} : {(err or out).strip()[:300]}")
-        return self._conclure(etape, True, f"fichiers envoyés au stockage objet — {out.strip()[:200]}")
+            return self._conclure(etape, False, f"code={code} : {texte[:300]}")
+        return self._conclure(etape, True, texte[:200] or "promotion sans candidat")
 
     def _compte(self) -> bool:
         """Le compte nominatif : depuis le Lot 0b, servir une pièce exige un humain."""

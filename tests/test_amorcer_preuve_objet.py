@@ -27,6 +27,7 @@ class Monde:
         self.init_code = 0
         self.depot_code = 0
         self.promotion_code = 0
+        self.promotion_sortie = "Promotion : uploaded — 1/1 promu(s)"
         self.compte_code = 0
         self.code_fiche = "ST-101"
         self.nb_objets = "1"
@@ -40,7 +41,7 @@ class Monde:
         if "fiches.cli" in jointe and "deposer" in jointe:
             return self.depot_code, "lot terminé", ""
         if "fiches.cli" in jointe and "promouvoir" in jointe:
-            return self.promotion_code, "promotion : 1/1", ""
+            return self.promotion_code, self.promotion_sortie, ""
         if "SELECT code FROM fiche" in jointe:
             return 0, self.code_fiche + "\n", ""
         if "count(*) FROM documents" in jointe:
@@ -227,3 +228,34 @@ def test_le_dossier_par_defaut_est_reconnu_par_un_gabarit() -> None:
         "Choisir un dossier dont le PDF est reconnu (ex. CLIENT-7792-SO)."
     )
     assert re.search(r"gabarit \S+ v\d", sortie), f"aucun gabarit détecté pour {pdf} : {sortie[:300]}"
+
+
+def test_promotion_sans_candidat_n_est_pas_un_echec() -> None:
+    """« 0/0 promu(s) » veut dire « rien à faire », pas « en panne ».
+
+    Le dépôt promeut déjà les fichiers après son commit (depot.py:1700) : la
+    reprise `promouvoir` n'a donc plus rien à envoyer, rend le code 1, et le
+    prendre pour une panne coupe la chaîne avant le garde-fou qui compte les
+    clés objet — un cycle CI perdu à soigner un succès.
+    """
+    monde = _monde_sain()
+    monde.promotion_sortie = "Promotion : failed — 0/0 promu(s)"
+    monde.promotion_code = 1
+    rapport = monde.amorcer().courir()
+
+    assert rapport["ok"] is True, rapport
+    promotion = next(e for e in rapport["etapes"] if e["etape"] == "promotion")
+    assert promotion["reussie"] is True
+    assert "déjà été promus" in promotion["detail"]
+
+
+def test_promotion_partielle_est_un_echec_nomme() -> None:
+    """En revanche, un fichier sur deux promu est une vraie panne."""
+    monde = _monde_sain()
+    monde.promotion_sortie = "Promotion : partial — 1/2 promu(s)"
+    monde.promotion_code = 1
+    rapport = monde.amorcer().courir()
+
+    assert rapport["ok"] is False
+    assert "promotion" in rapport["raison"]
+    assert "1/2" in rapport["raison"]
