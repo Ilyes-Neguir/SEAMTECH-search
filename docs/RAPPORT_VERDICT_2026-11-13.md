@@ -48,13 +48,31 @@ J'avais construit un simulateur de l'absence des primitives *processus*
 (`fork`, `SIGKILL`, `killpg`), partant de l'idée que c'était la cause. Il a
 prédit 4 échecs. Le runner en a 393, pour des raisons de fichiers.
 
-Et les 4 étaient des **faux positifs**, démontrés : aucun n'est nommé dans
-`ci/ecarts-windows.txt`, or le verdict exige que tout échec réel y figure.
-Ces 4 tests passent donc sur Windows. Le simulateur retirait des primitives
-que le produit n'appelle pas dans ces chemins-là.
+Les 4 étaient des **faux positifs**, et c'est démontré deux fois :
 
-**Le simulateur est annoté comme tel.** Il suggère des pistes, il ne conclut
-rien : l'autorité est le runner Windows.
+1. aucun n'est nommé dans `ci/ecarts-windows.txt`, or le verdict exige que
+   tout échec réel y figure ;
+2. l'inventaire **par fichier**, enfin lisible, ne les mentionne nulle part —
+   alors que les 29 échecs réels des cinq fichiers y sont nommés un par un.
+
+Le simulateur retirait des primitives que le produit n'appelle pas dans ces
+chemins-là. **Il est annoté comme tel** : il suggère des pistes, il ne conclut
+rien. L'autorité est le runner Windows.
+
+### L'inventaire par fichier (job `diagnostic-processus`)
+
+| Fichier | Windows | Ce qui échoue réellement |
+|---|---|---|
+| `test_extraction_logs_securite` | **vert** | — |
+| `test_relais_file_base` | **vert** | — |
+| `test_televersement_creation_idempotente` | 1 | `PermissionError` WinError 32 sur un verrou de session |
+| `test_lot10_televersement_lot` | 2 | idem |
+| `test_restauration_confinement` | 26 | lecture confinée du bundle indisponible, chemins, expressions |
+
+Deux fichiers sur cinq sont **verts** — et c'est une bonne nouvelle qu'on ne
+lisait nulle part : la file d'attente et la journalisation ne dépendent pas
+des primitives POSIX qu'on croyait. Trois échouent pour des causes de
+fichiers, jamais pour les processus que j'avais soupçonnés.
 
 Un seul défaut certain en est sorti, et il est réel : un
 `monkeypatch.setattr` sans `raising=False`, corrigé. Un défaut
