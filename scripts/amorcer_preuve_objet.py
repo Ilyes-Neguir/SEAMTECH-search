@@ -72,7 +72,15 @@ class Amorcage:
         service_web: str = "web",
         service_postgres: str = "postgres",
         base_source: str,
-        racine_servie: str = "/app/sample_data",
+        # Le corpus de la preuve doit être ACCESSIBLE EN ÉCRITURE, et c'est
+        # toute la raison de ce montage : « sample_data » est monté en
+        # lecture seule, or la preuve doit pouvoir RETIRER le fichier local
+        # pour prouver que l'objet, seul, suffit à servir la pièce — et pour
+        # que la perte de l'objet soit visible (l'application retombe sinon
+        # sur la copie locale, silencieusement). D'où une copie de travail
+        # sous /tmp, déclarée comme racine servie du service web.
+        racine_servie: str = "/tmp/corpus-preuve",
+        corpus_source: str = "/app/sample_data/CLIENT-7792-SO",
         # CE dossier, et pas un autre : son PDF est le seul du jeu d'essai à
         # être reconnu par un gabarit (FICHE_PORTANT_V1 v2, code 7792-SO,
         # confiance 0,99 — mesuré par `fiches.cli extraire`). « CLIENT-123 »
@@ -81,7 +89,7 @@ class Amorcage:
         # perd une demi-journée à chercher une panne d'infrastructure là où
         # c'est un jeu d'essai inadapté. Voir
         # tests/test_amorcer_preuve_objet.py::test_le_dossier_par_defaut_est_reconnu.
-        dossier: str = "/app/sample_data/CLIENT-7792-SO",
+        dossier: str = "/tmp/corpus-preuve/CLIENT-7792-SO",
         utilisateur_bd: str = "seamtech",
         nom_base: str = "seamtech_search",
         compte: str = "",
@@ -106,6 +114,7 @@ class Amorcage:
         self.postgres = service_postgres
         self.base_source = base_source
         self.racine_servie = racine_servie
+        self.corpus_source = corpus_source
         self.dossier = dossier
         self.utilisateur_bd = utilisateur_bd
         self.nom_base = nom_base
@@ -168,6 +177,33 @@ class Amorcage:
         ])
 
     # -- la chaîne ----------------------------------------------------------
+
+    def _preparer_corpus(self) -> bool:
+        """Copie le jeu d'essai vers la racine servie, en écriture.
+
+        Le montage ``sample_data`` est en lecture seule : on ne peut ni y
+        déposer une copie de travail, ni en retirer un fichier. La preuve
+        exige les deux (voir la note de ``racine_servie``). La copie se fait
+        dans le conteneur, par les commandes du système — jamais par un
+        montage supplémentaire qui modifierait l'artefact déployé.
+        """
+        etape = self._etape("corpus")
+        if self.corpus_source == self.dossier:
+            return self._conclure(etape, True, f"{self.dossier} utilisé tel quel")
+        code, out, err = self._web("mkdir", "-p", "--", self.racine_servie)
+        if code != 0:
+            return self._conclure(
+                etape, False,
+                f"création de {self.racine_servie} impossible (code={code}) : {(err or out).strip()[:300]}",
+            )
+        code, out, err = self._web("cp", "-r", "--", self.corpus_source, self.racine_servie + "/")
+        if code != 0:
+            return self._conclure(
+                etape, False,
+                f"copie de {self.corpus_source} vers {self.racine_servie} impossible "
+                f"(code={code}) : {(err or out).strip()[:300]}",
+            )
+        return self._conclure(etape, True, f"{self.corpus_source} → {self.dossier} (copie de travail)")
 
     def _init(self) -> bool:
         etape = self._etape("init")
@@ -293,6 +329,8 @@ class Amorcage:
                 "raison": "--base-source <url> est exigé : sans la base, aucune commande du produit ne peut rien écrire",
                 "etapes": [],
             }
+        if not self._preparer_corpus():
+            return self._rendre()
         if not self._init():
             return self._rendre()
         if not self._deposer():
@@ -346,9 +384,17 @@ def main(argv: list[str] | None = None) -> int:
         description="Monte une fiche réelle (dépôt + promotion) pour la preuve « objet perdu ».",
     )
     parser.add_argument("--base-source", required=True, help="URL de la base, telle que vue depuis le conteneur web")
-    parser.add_argument("--racine-servie", default="/app/sample_data", help="racine déclarée à SEAMTECH_ROOT_PATHS")
     parser.add_argument(
-        "--dossier", default="/app/sample_data/CLIENT-7792-SO",
+        "--racine-servie", default="/tmp/corpus-preuve",
+        help="racine déclarée à SEAMTECH_ROOT_PATHS : elle doit être accessible en "
+             "ÉCRITURE, la preuve devant pouvoir retirer la copie locale",
+    )
+    parser.add_argument(
+        "--corpus-source", default="/app/sample_data/CLIENT-7792-SO",
+        help="jeu d'essai d'origine (monté en lecture seule), copié sous la racine servie",
+    )
+    parser.add_argument(
+        "--dossier", default="/tmp/corpus-preuve/CLIENT-7792-SO",
         help="dossier à déposer : son PDF DOIT être reconnu par un gabarit, "
              "sinon le dépôt le refuse (vérifiable par « fiches.cli extraire »)",
     )
@@ -379,6 +425,7 @@ def main(argv: list[str] | None = None) -> int:
         base_source=args.base_source,
         racine_servie=args.racine_servie,
         dossier=args.dossier,
+        corpus_source=args.corpus_source,
         utilisateur_bd=args.utilisateur_bd,
         nom_base=args.nom_base,
         compte=args.compte,

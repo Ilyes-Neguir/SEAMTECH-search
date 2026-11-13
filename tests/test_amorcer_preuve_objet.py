@@ -29,6 +29,8 @@ class Monde:
         self.promotion_code = 0
         self.promotion_sortie = "Promotion : uploaded — 1/1 promu(s)"
         self.compte_code = 0
+        self.copie_code = 0
+        self.copie_erreur = ""
         self.code_fiche = "ST-101"
         self.nb_objets = "1"
         self.nb_pieces = "2"
@@ -36,6 +38,8 @@ class Monde:
     def executeur(self, commande: Any) -> tuple[int, str, str]:
         self.appels.append(list(commande))
         jointe = " ".join(commande)
+        if " cp " in jointe:
+            return self.copie_code, "", self.copie_erreur
         if "fiches.cli" in jointe and "init" in jointe:
             return self.init_code, "gabarits enregistrés", ""
         if "fiches.cli" in jointe and "deposer" in jointe:
@@ -75,7 +79,7 @@ def test_le_decor_est_prete_et_rend_le_code_de_fiche() -> None:
     assert rapport["ok"] is True, rapport
     assert rapport["code_fiche"] == "ST-101"
     assert [e["etape"] for e in rapport["etapes"]] == [
-        "init", "dépôt", "promotion", "compte nominatif", "code de fiche", "clés objet",
+        "corpus", "init", "dépôt", "promotion", "compte nominatif", "code de fiche", "clés objet",
     ]
     assert all(e["reussie"] for e in rapport["etapes"])
 
@@ -100,6 +104,38 @@ def test_le_depot_declare_la_racine_servie() -> None:
 
     depot = next(" ".join(a) for a in monde.appels if "deposer" in " ".join(a))
     assert "SEAMTECH_ROOT_PATHS=/app/autre_racine" in depot, depot
+
+
+# --- le corpus de travail -----------------------------------------------------
+
+
+def test_le_corpus_est_copie_avant_le_depot() -> None:
+    """La copie de travail se fait AVANT le dépôt, et dans le conteneur.
+
+    ``sample_data`` est monté en lecture seule : sans cette copie, la preuve
+    ne pourrait ni déposer depuis une racine accessible en écriture, ni
+    retirer le fichier local au moment de prouver la perte de l'objet.
+    """
+    monde = _monde_sain()
+    rapport = monde.amorcer().courir()
+
+    assert rapport["ok"] is True, rapport
+    jointes = [" ".join(c) for c in monde.appels]
+    copie = [i for i, j in enumerate(jointes) if " cp " in j]
+    depot = [i for i, j in enumerate(jointes) if "deposer" in j]
+    assert copie and depot
+    assert copie[0] < depot[0], "la copie doit précéder le dépôt"
+
+
+def test_une_copie_impossible_est_nommee() -> None:
+    """Une copie qui échoue doit se dire, pas se muer en « dépôt refusé »."""
+    monde = _monde_sain()
+    monde.copie_code = 1
+    monde.copie_erreur = "Read-only file system"
+    rapport = monde.amorcer().courir()
+
+    assert rapport["ok"] is False
+    assert "corpus" in rapport["raison"]
 
 
 # --- chaque étape nomme son échec -------------------------------------------
@@ -237,7 +273,9 @@ def test_le_dossier_par_defaut_est_reconnu_par_un_gabarit() -> None:
 
     amorcage = _monde_sain().amorcer()
     # Le dossier visé est dans le conteneur ; on le transpose dans le dépôt.
-    relatif = Path(amorcage.dossier).relative_to("/app")
+    # Le jeu d'essai d'ORIGINE, pas la copie de travail : c'est le PDF
+    # livré par le dépôt qu'on éprouve, et lui seul est transposable ici.
+    relatif = Path(amorcage.corpus_source).relative_to("/app")
     pdf = next(iter(sorted(Path(relatif).glob("*.pdf"))), None)
     assert pdf is not None, f"aucun PDF dans {relatif}"
 

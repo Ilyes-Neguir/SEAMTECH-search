@@ -35,6 +35,8 @@ ALIAS = "local"
 # Construit à l'exécution : un littéral d'adresse, même de boucle locale,
 # serait refusé par le garde-fou RG14 — et à juste titre.
 URL_STOCKAGE = "http://" + "stockage:9000"
+# Le fichier d'origine de la pièce, tel qu'il est enregistré en base.
+CHEMIN_LOCAL = "/corpus-preuve/dossier-client/notice.pdf"
 
 
 class Monde:
@@ -46,6 +48,15 @@ class Monde:
         self.reponses: dict[str, tuple[int, str, str]] = {}
         self.objet_present = True
         self.object_key_en_base = CLE
+        # La SECONDE copie : le fichier local d'origine. Tant qu'il existe,
+        # l'application le sert quand l'objet a disparu, et la perte passe
+        # inaperçue. Le faux doit donc savoir le retirer pour de vrai, sinon
+        # la preuve se féliciterait d'une perte qu'elle n'a pas produite.
+        self.chemin_local_en_base = CHEMIN_LOCAL
+        self.copie_locale_presente = True
+        # D'où l'application tire-t-elle les octets ? D'une pièce promue en
+        # stockage objet (défaut), ou du seul fichier local (jamais promue).
+        self.sert_depuis_objet = True
         self.base_scratch_existe = False
         self.connexion_autorisee = True
 
@@ -67,9 +78,17 @@ class Monde:
             self.objet_present = True
         if "ps --status running --services" in jointe:
             return 0, "\n".join(self.services), ""
-        # object_key lu EN BASE, jamais par l'API (confidentialité).
-        if "SELECT object_key FROM documents" in jointe:
-            return 0, self.object_key_en_base + "\n", ""
+        # object_key ET chemin local, lus EN BASE, jamais par l'API
+        # (confidentialité). Deux colonnes : la clé sert à supprimer l'objet,
+        # le chemin à retirer la seconde copie.
+        if "SELECT object_key, path FROM documents" in jointe:
+            return 0, f"{self.object_key_en_base}|{self.chemin_local_en_base}\n", ""
+        # Le retrait de la copie locale, puis son contrôle d'absence.
+        if "rm" in jointe and CHEMIN_LOCAL in jointe:
+            self.copie_locale_presente = False
+            return 0, "", ""
+        if "test" in jointe and CHEMIN_LOCAL in jointe:
+            return (0, "", "") if self.copie_locale_presente else (1, "", "")
         if "SELECT 1 FROM pg_database" in jointe:
             return 0, ("1\n" if self.base_scratch_existe else ""), ""
         if "dropdb" in jointe:
@@ -89,8 +108,11 @@ class Monde:
             # Listing : l'API n'expose jamais object_key, seulement un id.
             return 0, json.dumps({"pieces": [{"id": 42, "kind": "pdf"}]}), ""
         if "curl" in jointe and "/telecharger" in jointe:
-            # L'application sert la pièce seulement si l'objet existe.
-            if not self.objet_present:
+            # L'application sert la pièce si sa source existe : l'objet pour
+            # une pièce promue, le fichier local pour une pièce qui ne l'est
+            # pas. Deux sources, deux défaillances distinctes — les confondre
+            # ferait croire à une perte qu'on n'a pas produite.
+            if not (self.objet_present if self.sert_depuis_objet else self.copie_locale_presente):
                 return 0, "404", ""
             # La cible est l'argument qui suit « -o », pas un chemin commençant
             # par « /tmp/ » : sous Windows, tempfile crée le fichier ailleurs,
@@ -166,6 +188,11 @@ def test_la_chaine_complete_est_prouvee() -> None:
         "alias de stockage",
         "sauvegarde complète",
         "bundle vérifié",
+        # La seconde copie est retirée APRÈS la sauvegarde (une complète
+        # emporte aussi les fichiers locaux : la retirer avant ferait refuser
+        # le bundle) et AVANT la perte de l'objet, sans quoi le repli local
+        # masquerait cette perte.
+        "seconde copie retirée",
         "objet supprimé",
         "objet disparu",
         "base cible",
@@ -186,6 +213,45 @@ def test_la_preuve_supprime_vraiment_l_objet() -> None:
     assert rapport["verdict"] == "PROUVÉ"
     rm = [c for c in monde.appels if "mc" in c and "rm" in c]
     assert rm, "la preuve doit réellement supprimer l'objet du stockage"
+
+
+# --- la seconde copie --------------------------------------------------------
+
+
+def test_la_copie_locale_est_retiree_avant_la_perte() -> None:
+    """Sans ce retrait, la perte de l'objet est INVISIBLE.
+
+    L'application retombe sur le fichier d'origine quand l'objet manque
+    (routes.py:1819), avec un simple avertissement au journal. Une preuve
+    qui supprime l'objet sans retirer la copie locale verrait l'application
+    servir la pièce comme si de rien n'était.
+    """
+    monde = _monde_sain()
+    rapport = _preuve(monde).courir()
+
+    assert rapport["verdict"] == "PROUVÉ", rapport
+    jointes = [" ".join(c) for c in monde.appels]
+    retrait = [i for i, j in enumerate(jointes) if "rm" in j and CHEMIN_LOCAL in j]
+    perte = [i for i, j in enumerate(jointes) if "mc" in j and "rm" in j and CLE in j]
+    sauvegarde = [i for i, j in enumerate(jointes) if "sauvegarder" in j]
+    assert retrait and perte and sauvegarde
+    # Le bundle précède le sinistre ; la copie locale précède l'objet.
+    assert sauvegarde[0] < retrait[0] < perte[0], jointes
+
+
+def test_objet_insuffisant_sans_copie_locale_n_est_pas_prouve() -> None:
+    """Si l'objet seul ne suffit pas à servir, la restauration ne prouve rien.
+
+    Cas d'école : une pièce jamais promue en stockage objet. L'application
+    la sert tant que le fichier local existe ; une fois retiré, plus rien.
+    C'est l'exact opposé d'un succès, et le jalon doit le dire.
+    """
+    monde = _monde_sain()
+    monde.sert_depuis_objet = False  # jamais promue : seul le fichier local sert
+    rapport = _preuve(monde).courir()
+
+    assert rapport["verdict"] == "NON PROUVÉ"
+    assert "seconde copie retirée" in rapport["raison"]
 
 
 # --- les prérequis ----------------------------------------------------------
@@ -360,7 +426,7 @@ def test_la_cle_objet_est_lue_en_base_et_jamais_par_l_api() -> None:
     rapport = _preuve(monde).courir()
 
     assert rapport["verdict"] == "PROUVÉ", rapport
-    requete = [c for c in monde.appels if "SELECT object_key FROM documents" in " ".join(c)]
+    requete = [c for c in monde.appels if "SELECT object_key, path FROM documents" in " ".join(c)]
     assert requete, "la clé doit être lue en base"
     # Et elle sert à supprimer LE BON objet : celui de la pièce mesurée.
     suppression = next(" ".join(c) for c in monde.appels if "mc" in " ".join(c) and "rm" in " ".join(c))

@@ -178,6 +178,14 @@ class PreuveObjetPerdu:
         )
         self.etapes: list[Etape] = []
         self._piece_id: int | None = None
+        # Pourquoi le service a rendu « pas d'octets », nommément. Sans cela
+        # le jalon « objet servi avant » confondait trois causes distinctes —
+        # pièce absente du catalogue, 403 de confinement, 404 de stockage —
+        # sous un même message, et la chaîne s'arrêtait sans rien dire.
+        self._service_raison = ""
+        # Le fichier local d'origine de la pièce, lu en base : c'est la copie
+        # qui masque la perte de l'objet si on ne la retire pas.
+        self.source_locale = ""
 
     # -- primitives --------------------------------------------------------
 
@@ -292,8 +300,8 @@ class PreuveObjetPerdu:
         avant = self._servir()
         if avant is None:
             self._etape("objet servi avant").echouer(
-                f"l'application ne sert pas la pièce {self.cle} AVANT la suppression : "
-                "la preuve n'aurait rien prouvé"
+                f"l'application ne sert pas la pièce AVANT la suppression : "
+                f"{self._service_raison or 'sans plus de détail'} — la preuve n'aurait rien prouvé"
             )
             return self._rendre()
         sha_avant = _sha256(avant)
@@ -339,6 +347,29 @@ class PreuveObjetPerdu:
         if not self._verifier(bundle):
             return self._rendre()
 
+        # 4 bis. LA SECONDE COPIE. Tant que le fichier d'origine est
+        # accessible, l'application le sert quand l'objet a disparu
+        # (routes.py:1819 : repli local silencieux, un simple avertissement
+        # au journal). La perte de l'objet serait donc INVISIBLE, et le jalon
+        # « objet disparu » n'aurait rien prouvé — il aurait constaté une
+        # application qui continue de servir, sans dire pourquoi.
+        #
+        #
+        # Le retrait vient APRÈS la sauvegarde, et l'ordre est une contrainte :
+        # une sauvegarde complète copie AUSSI les fichiers locaux
+        # (sauvegarde_complete.py:129), si bien qu'un bundle fabriqué après
+        # le retrait porterait « 1 fichier local non copié » et
+        # ``_exiger_complet`` le refuserait. Le sinistre est donc raconté
+        # dans l'ordre réel : on sauvegarde, le partage tombe, l'objet reste,
+        # puis l'objet tombe à son tour.
+        #
+        # Retirer la copie locale produit au passage une preuve plus forte :
+        # l'objet suffit à lui seul à servir la pièce. C'est exactement la
+        # promesse du stockage objet (P0.2 : les octets montent APRÈS le
+        # commit) et le scénario de sinistre réel — le partage source tombe.
+        if not self._retirer_source_locale(sha_avant):
+            return self._rendre()
+
         # 5. et 6. suppression, puis preuve de disparition
         code, _, err = self._compose_exec(self.minio, "mc", "rm", f"{self.alias}/{self.bucket}/{self.cle}")
         if code != 0:
@@ -349,8 +380,8 @@ class PreuveObjetPerdu:
         if self._servir() is not None:
             self._etape("objet disparu").echouer(
                 "l'application sert encore la pièce APRÈS la suppression : "
-                "soit la suppression n'a rien fait, soit l'objet est servi depuis "
-                "un cache — la preuve de perte est alors fausse"
+                "soit la suppression n'a rien fait, soit une copie subsiste "
+                "(repli local ou cache) — la preuve de perte est alors fausse"
             )
             return self._rendre()
         self._etape("objet disparu").reussir("la pièce n'est plus servie")
@@ -407,6 +438,7 @@ class PreuveObjetPerdu:
         « pdf-presigne », session nominative comprise. Réinventer une route
         aurait produit une preuve qui ne prouve rien.
         """
+        self._service_raison = ""
         if self._piece_id is None:
             if not self._trouver_piece():
                 return None
@@ -479,18 +511,30 @@ class PreuveObjetPerdu:
             ]
         )
         if code != 0:
+            self._service_raison = f"appel de /fiches/.../pieces impossible (code={code})"
             return False
         try:
             corps = json.loads(sortie)
         except json.JSONDecodeError:
+            self._service_raison = f"réponse illisible : {sortie.strip()[:200]}"
             return False
         for piece in corps.get("pieces") or []:
             if isinstance(piece, dict) and piece.get("kind") == "pdf" and isinstance(piece.get("id"), int):
                 self._piece_id = int(piece["id"])
                 return True
+        self._service_raison = (
+            f"aucune pièce de type pdf dans /fiches/{self.fiche}/pieces : {sortie.strip()[:200]}"
+        )
         return False
 
     def _telecharger_piece(self) -> bytes | None:
+        """Les octets servis, ou ``None`` en nommant le statut HTTP et le corps.
+
+        Un ``None`` nu a coûté quatre cycles CI : il mélangeait « pièce
+        inconnue », « 403 — chemin hors des racines déclarées » et « 404 —
+        objet absent » dans le même silence. Le corps de la réponse est
+        gardé, tronqué : c'est lui qui porte le détail applicatif.
+        """
         with tempfile.NamedTemporaryFile(delete=False) as temporaire:
             chemin = temporaire.name
         try:
@@ -501,9 +545,16 @@ class PreuveObjetPerdu:
                     f"{self.api}/pieces/{self._piece_id}/telecharger",
                 ]
             )
-            if code != 0 or sortie.strip() != "200":
+            if code != 0:
+                self._service_raison = f"curl a échoué (code={code})"
                 return None
-            return Path(chemin).read_bytes()
+            statut = sortie.strip()
+            contenu = Path(chemin).read_bytes()
+            if statut != "200":
+                extrait = contenu[:200].decode("utf-8", "replace").replace("\n", " ")
+                self._service_raison = f"HTTP {statut} sur /pieces/{self._piece_id}/telecharger : {extrait}"
+                return None
+            return contenu
         finally:
             Path(chemin).unlink(missing_ok=True)
 
@@ -542,7 +593,7 @@ class PreuveObjetPerdu:
 
     def _apparier_objet(self) -> bool:
         """Lit ``documents.object_key`` pour LA pièce mesurée, en base."""
-        if self.cle:
+        if self.cle and self.source_locale:
             self._etape("appariement pièce ↔ objet").reussir(
                 f"clé fournie à l'appel : {self.cle}"
             )
@@ -552,16 +603,22 @@ class PreuveObjetPerdu:
                 "aucun identifiant de pièce : l'appariement est impossible"
             )
             return False
+        # Une seule requête : la clé de l'objet ET le chemin local. Le chemin
+        # local est la SECONDE copie de la pièce — celle qui masque la perte
+        # de l'objet si on ne la retire pas (routes.py:1819, repli local).
         code, out, err = self._compose_exec(
             self.postgres, "psql", "-U", self.utilisateur_bd, "-d", self.nom_base,
-            "-tA", "-c", f"SELECT object_key FROM documents WHERE id = {int(self._piece_id)}",
+            "-tA", "-c", f"SELECT object_key, path FROM documents WHERE id = {int(self._piece_id)}",
         )
         if code != 0:
             self._etape("appariement pièce ↔ objet").echouer(
                 f"lecture en base impossible (code={code}) : {(err or out).strip()[:200]}"
             )
             return False
-        cle = out.strip()
+        champs = out.strip().split("|")
+        cle = champs[0].strip() if champs else ""
+        if not self.source_locale and len(champs) > 1:
+            self.source_locale = champs[1].strip()
         if not cle or cle.upper() == "NULL":
             self._etape("appariement pièce ↔ objet").echouer(
                 f"la pièce {self._piece_id} n'a aucune clé d'objet en base "
@@ -572,6 +629,51 @@ class PreuveObjetPerdu:
         self.cle = cle
         self._etape("appariement pièce ↔ objet").reussir(
             f"pièce {self._piece_id} → objet {cle} (lu en base, pas par l'API)"
+        )
+        return True
+
+    def _retirer_source_locale(self, sha_attendu: str) -> bool:
+        """Retire la copie locale, puis vérifie que l'OBJET suffit à servir.
+
+        Si l'application ne sert plus rien une fois le fichier d'origine
+        retiré, la promotion en stockage objet n'a jamais eu lieu : l'objet
+        n'est pas une copie, et toute la suite de la preuve serait vaine.
+        """
+        if not self.source_locale:
+            self._etape("seconde copie retirée").echouer(
+                "le chemin local de la pièce est inconnu en base (documents.path vide) : "
+                "impossible de retirer la seconde copie, la perte de l'objet resterait invisible"
+            )
+            return False
+        code, _, err = self._compose_exec(self.web, "rm", "-f", "--", self.source_locale)
+        if code != 0:
+            self._etape("seconde copie retirée").echouer(
+                f"retrait de {self.source_locale} impossible (code={code}) : {err.strip()[:200]}"
+            )
+            return False
+        code, out, _ = self._compose_exec(self.web, "test", "-e", "--", self.source_locale)
+        if code == 0:
+            self._etape("seconde copie retirée").echouer(
+                f"{self.source_locale} est encore présent après « rm » : la perte ne serait pas simulée"
+            )
+            return False
+        apres = self._servir()
+        if apres is None:
+            self._etape("seconde copie retirée").echouer(
+                f"l'application ne sert plus la pièce une fois {self.source_locale} retiré : "
+                f"{self._service_raison or 'sans plus de détail'} — l'objet n'est donc pas une "
+                "copie suffisante, la restauration ne prouverait rien"
+            )
+            return False
+        if _sha256(apres) != sha_attendu:
+            self._etape("seconde copie retirée").echouer(
+                "les octets servis depuis l'objet diffèrent de ceux servis avant : "
+                "l'objet n'est pas la même pièce"
+            )
+            return False
+        self._etape("seconde copie retirée").reussir(
+            f"copie locale retirée ({self.source_locale}) ; l'objet seul sert la pièce, "
+            f"sha256 inchangé : {sha_attendu[:16]}…"
         )
         return True
 

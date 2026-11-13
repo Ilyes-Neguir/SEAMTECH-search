@@ -859,6 +859,16 @@ jobs:
       SEAMTECH_S3_SECRET_KEY: ci-app-secret-not-for-production
       SEAMTECH_BACKUP_ACCESS_KEY: seamtech-sauvegarde-ci
       SEAMTECH_BACKUP_SECRET_KEY: ci-backup-secret-not-for-production
+      # Racine servie du corpus de la preuve. Elle doit être ACCESSIBLE EN
+      # ÉCRITURE, et c'est toute la raison de ce choix : `sample_data` est
+      # monté en lecture seule, or la preuve doit pouvoir RETIRER le fichier
+      # local — sans quoi l'application retombe dessus quand l'objet
+      # disparaît (routes.py:1819) et la perte passe inaperçue. La racine
+      # doit de plus être DÉCLARÉE : hors des racines, l'application refuse
+      # de servir la moindre pièce (403, `_chemin_lexical_autorise`), objet
+      # présent ou non. C'est la déclaration que fait un exploitant dans son
+      # `.env` (docs/DEPLOYMENT.md), rien de plus.
+      SEAMTECH_ROOT_PATHS: /tmp/corpus-preuve
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
