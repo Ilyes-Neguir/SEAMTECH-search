@@ -565,6 +565,15 @@ jobs:
           }
           }
           Publier "diag-fin" "tous les fichiers a processus ont ete executes"
+          # Un diagnostic NE PRONONCE PAS DE VERDICT. Sans ce « exit 0 »,
+          # GitHub ajoute « exit $LASTEXITCODE » à toute étape pwsh : le code
+          # du DERNIER pytest (rc=1 — ces fichiers échouent sur Windows, c'est
+          # attendu et NOMMÉ dans ci/ecarts-windows.txt) devenait celui de
+          # l'étape, et l'étape passait au rouge. Mesuré au run 43400181143 :
+          # le verdict de la suite était VERT, cette étape seule était rouge.
+          # Un outil de diagnostic qui colore le verdict est pire qu'inutile :
+          # il fait croire à une régression qui n'existe pas.
+          exit 0
       - name: Diagnostic ciblé — les échecs encore non élucidés
         if: always()
         # Trois échecs ne sont attribuables à aucune limite de plateforme
@@ -816,6 +825,8 @@ jobs:
               Publier "proc-$nom" ("rc=$rc ; $($echecs.Count) echec(s) : " + ($echecs -join ' ; '))
             }
           }
+          # Même motif : étape de diagnostic, elle ne prononce aucun verdict.
+          exit 0
       - name: Conserver les journaux du diagnostic processus
         if: always()
         uses: actions/upload-artifact@v4
