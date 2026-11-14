@@ -70,7 +70,7 @@ def _ligne(item: dict, releves: dict) -> str:
 def _statut_final(item: dict, releves: dict | None = None) -> str:
     """Le verdict qui compte : celui de la machine qui avait les services.
 
-    Le harnais local tourne sans PostgreSQL, sans Redis et sans Tesseract ; un
+    Le harnais local tourne sans PostgreSQL, sans Redis et sans moteur OCR ; un
     tiers de la matrice y est sauté, et un saut n'est pas un échec — c'est une
     mesure qui n'a pas eu lieu. Le statut final est donc celui relevé en CI
     quand il existe, et seulement à défaut celui du run local.
@@ -144,9 +144,10 @@ def main(argv: list[str] | None = None) -> int:
         f"2. **{fermes} sont prouvés**, {comptes[A_TRANCHER]} restent à trancher par le commanditaire.",
         f"3. **{comptes[ECHEC]} échec**, {trous} trou(x) : {comptes[PARTIEL]} partiel(s), "
         f"{comptes[NON_PROUVE]} non prouvé(s).",
-        "4. **Quatre défauts trouvés et corrigés** : couleurs des listes déroulantes, "
+        "4. **Cinq défauts trouvés et corrigés** : couleurs des listes déroulantes, "
         "deux écrans jamais audités, `/metrics` jamais vérifié, un test qui tombait "
-        "sur le hasard d'un nom de fichier.",
+        "sur le hasard d'un nom de fichier, et la création du schéma interrompue par "
+        "le délai d'exécution des requêtes.",
         f"5. **Verdict : {verdit}.**",
         "",
         "## Comment lire ce document",
@@ -157,7 +158,8 @@ def main(argv: list[str] | None = None) -> int:
         "- **Manuel / navigateur** — l'exécution dans l'application réelle : harnais de "
         "routes contre la pile déployée, ou spécification Playwright.",
         "- **CI** — le verdict relevé sur un run nommé, quand l'item exige PostgreSQL, "
-        "Redis, Tesseract ou le corpus réel.",
+        "Redis, un moteur OCR ou le corpus réel. Le moteur élu est RapidOCR, pas "
+        "Tesseract — Tesseract n'est qu'un repli.",
         "",
         "## Ce qui a été trouvé",
         "",
@@ -201,9 +203,11 @@ def main(argv: list[str] | None = None) -> int:
         "anneau de focus) : cohérente en elle-même, mais différente du reste. | "
         "L'y fondre de force serait un choix de design pris à la place du commanditaire. "
         "L'exception est DÉCLARÉE dans le test, pas masquée. **Décision du commanditaire.** |",
-        "| D1/D2 restent partiels hors du job `ocr`, K1 hors du corpus réel. | "
-        "Ce n'est pas un défaut : ces items exigent Tesseract ou le corpus réel, et la preuve "
-        "existe dans les jobs qui les ont. |",
+        "| Six items — D1, D2, D3, D5, F4, K1 — ne sont pas mesurés par le job "
+        "`backend`. | Ce n'est pas un défaut : ils exigent un moteur OCR ou le corpus "
+        "réel, deux services que ce job n'a pas. Ils sont prouvés par le job `ocr` "
+        "(section D : 5 items, 4 prouvés, **0 partiel**) et par `recette-corpus-reel`. "
+        "Au bilan, `backend` ne signale plus **0 partiel et 0 non prouvé**. |",
         "",
     ]
 
