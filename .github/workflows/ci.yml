@@ -1199,6 +1199,73 @@ jobs:
             --utilisateur-bd seamtech \
             --annonces
 
+      - name: Recette de TOUTES les routes, contre la pile réelle
+        # Le balayage local (SQLite) ne peut pas exercer la couche métier :
+        # la moitié des routes y répondent « PostgreSQL uniquement ». Ici la
+        # pile est celle du déploiement — PostgreSQL, Redis, MinIO — donc les
+        # routes sont réellement exécutées, pas refusées faute de dépendance.
+        #
+        # Étape placée AVANT « Run docker compose integration test », parce que
+        # celle-ci termine par « docker compose down -v » : jouée après, la
+        # recette trouvait une pile démontée — 472 sondes, 472 erreurs de
+        # connexion, et un bilan qui n'aurait rien dit.
+        #
+        # Elle vient APRÈS la preuve : la pile y est montée, provisionnée, et
+        # porte la fiche réelle déposée par l'amorçage.
+        #
+        # `--annonces` : le bilan passe en annotations, seul canal lisible
+        # depuis ici (l'hôte des journaux bruts est inaccessible).
+        env:
+          POSTGRES_PASSWORD: test_password
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: minioadmin123
+          REDIS_PASSWORD: redis_test_password
+          SEAMTECH_AUTH_TOKEN: test-token-123
+          SEAMTECH_UI_PASSWORD: ci-ui-password
+          SEAMTECH_SESSION_SECRET: ci-session-secret-not-for-production
+          SEAMTECH_S3_BUCKET: seamtech-documents
+        run: |
+          python -u scripts/recette_routes.py \
+            --base-url "http://127.0.0.1:8000" \
+            --jeton "$SEAMTECH_AUTH_TOKEN" \
+            --sortie docs/recette --annonces
+          # Le bilan est publié par le script ; on ne classera l'étape en échec
+          # que sur un plantage ou une route ouverte, jamais sur un 503 de
+          # dépendance : ce serait un échec qui ne veut rien dire.
+          python - <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          bilan = json.loads(pathlib.Path("docs/recette/observations-routes.json").read_text(encoding="utf-8"))
+          observations = bilan["observations"]
+          plantages = [o for o in observations if o["statut"] == 500]
+          # 599 = la pile n'a pas répondu du tout. Un tel bilan ne prouve rien :
+          # il ne dit pas « aucune route ne plante », il dit « je n'ai rien vu ».
+          # Le laisser passer serait un faux vert, exactement ce qu'on refuse.
+          injoignable = [o for o in observations if o["statut"] == 599]
+          if plantages:
+              for o in plantages[:5]:
+                  print(f"::error title=recette-PLANTAGE::{o['methode']} {o['chemin']} [{o['sonde']}] -> {o['statut']}")
+              sys.exit(1)
+          if injoignable:
+              print(f"::error title=recette-NON-PROBANTE::{len(injoignable)} sonde(s) sans réponse de la pile — bilan sans valeur")
+              sys.exit(1)
+          print(f"recette des routes : {bilan['routes']} routes sondées, 0 plantage, 0 sonde sans réponse")
+          PY
+
+      - name: Publier les observations de la recette
+        # Dix annotations par étape au maximum : les 472 observations ne
+        # tiennent pas dans ce canal. L'artefact est le seul moyen de les lire
+        # toutes — sans lui, un échec montre cinq lignes sur quatre cent
+        # soixante-douze et le reste reste aveugle.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recette-routes-observations
+          path: docs/recette/observations-routes.json
+          if-no-files-found: warn
+
       - name: Run docker compose integration test
         env:
           POSTGRES_PASSWORD: test_password
@@ -1229,49 +1296,6 @@ jobs:
           # Always tear the infra down, success or failure.
           docker compose down -v
           exit "$rc"
-
-      - name: Recette de TOUTES les routes, contre la pile réelle
-        # Le balayage local (SQLite) ne peut pas exercer la couche métier :
-        # la moitié des routes y répondent « PostgreSQL uniquement ». Ici la
-        # pile est celle du déploiement — PostgreSQL, Redis, MinIO — donc les
-        # routes sont réellement exécutées, pas refusées faute de dépendance.
-        #
-        # Étape PLACÉE EN DERNIER : le balayage envoie des requêtes plausibles
-        # sur chaque route, y compris des écritures. Rien ne doit être mesuré
-        # après lui.
-        #
-        # `--annonces` : le bilan passe en annotations, seul canal lisible
-        # depuis ici (l'hôte des journaux bruts est inaccessible).
-        env:
-          POSTGRES_PASSWORD: test_password
-          MINIO_ROOT_USER: minioadmin
-          MINIO_ROOT_PASSWORD: minioadmin123
-          REDIS_PASSWORD: redis_test_password
-          SEAMTECH_AUTH_TOKEN: test-token-123
-          SEAMTECH_UI_PASSWORD: ci-ui-password
-          SEAMTECH_SESSION_SECRET: ci-session-secret-not-for-production
-          SEAMTECH_S3_BUCKET: seamtech-documents
-        run: |
-          python -u scripts/recette_routes.py \
-            --base-url "http://127.0.0.1:8000" \
-            --jeton "$SEAMTECH_AUTH_TOKEN" \
-            --sortie docs/recette --annonces
-          # Le bilan est publié par le script ; on ne classera l'étape en échec
-          # que sur un plantage ou une route ouverte, jamais sur un 503 de
-          # dépendance : ce serait un échec qui ne veut rien dire.
-          python - <<'PY'
-          import json
-          import pathlib
-          import sys
-
-          bilan = json.loads(pathlib.Path("docs/recette/observations-routes.json").read_text(encoding="utf-8"))
-          plantages = [o for o in bilan["observations"] if o["statut"] == 500]
-          if plantages:
-              for o in plantages[:5]:
-                  print(f"::error title=recette-PLANTAGE::{o['methode']} {o['chemin']} [{o['sonde']}] -> {o['statut']}")
-              sys.exit(1)
-          print(f"recette des routes : {bilan['routes']} routes sondées, 0 plantage")
-          PY
 
   e2e:
     runs-on: ubuntu-24.04
