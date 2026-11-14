@@ -1,9 +1,9 @@
 # Matrice de recette fonctionnelle A→K
 
 - items : 57
-- prouvés : 18
-- partiels : 22
-- non prouvés : 17
+- prouvés : 20
+- partiels : 21
+- non prouvés : 16
 - échecs : 0
 - introuvables : 0
 
@@ -53,9 +53,9 @@
 | G · Accessoires | G2 Lien entre un accessoire et son bateau | `tests/test_lot3b_liaison_voile.py`, `tests/test_double_verification_accessoires.py` — 32✓ 0✗ 11⤼ 0! | — | **PARTIEL** |
 | G · Accessoires | G3 Extraction depuis un PDF d'accessoire | `test_extraction_accessoire_dimensions_et_provenance`, `test_extraction_accessoire_sans_unite_ne_devine_rien`, `test_extraction_libelles_reels` — 3✓ 0✗ 0⤼ 0! | — | **PROUVÉ** |
 | H · API — toutes les routes, quatre cas chacune | H1 Chaque route extraite du code : nominal, non autorisé, paramètre invalide, ressource absente | `tests/test_recette_routes.py` — 7✓ 0✗ 0⤼ 0! | Le balayage des 116 routes contre la pile réelle est joué par l'étape « Recette de TOUTES les routes » du job integration. | **PROUVÉ** |
-| H · API — toutes les routes, quatre cas chacune | H2 `/health` et `/metrics` — avec et sans jeton | `test_aucune_route_ouverte_sans_jeton` — 0✓ 0✗ 0⤼ 0! | — | **NON PROUVÉ** |
+| H · API — toutes les routes, quatre cas chacune | H2 `/health` et `/metrics` — avec et sans jeton | `tests/test_sondes_et_metriques.py`, `test_aucune_route_n_est_ouverte_sans_jeton` — 5✓ 0✗ 0⤼ 0! | `/health` était vérifié, `/metrics` ne l'était nulle part : le test qui couvrait les quatre sondes le faisait SANS jeton configuré, donc tout répondait 200. `/metrics` est protégé par TROIS couches (middleware, `_require_auth`, résolution d'acteur) — vérifié rouge seulement une fois les trois neutralisées, et vert sinon. | **PROUVÉ** |
 | H · API — toutes les routes, quatre cas chacune | H3 Confinement de `/search`, `/preview` et `/open` | `tests/test_open_capture_endpoint_public.py`, `tests/test_artefact_confinement_absent.py` — 7✓ 0✗ 0⤼ 0! | — | **PROUVÉ** |
-| H · API — toutes les routes, quatre cas chacune | H4 Limitation de débit — seuil, 429, et routes de sonde exemptées | `tests/test_securite_offensive.py` — 6✓ 0✗ 2⤼ 0! | — | **PARTIEL** |
+| H · API — toutes les routes, quatre cas chacune | H4 Limitation de débit — seuil, 429, et routes de sonde exemptées | `test_rate_limiting_and_retry_after`, `test_les_sondes_ne_sont_pas_soumises_a_la_limitation_de_debit` — 2✓ 0✗ 0⤼ 0! | Seuil : `rate_limit_per_minute`, 600 par défaut. Le quota épuisé, `/live` et `/ready` doivent répondre quand même — une supervision bloquée par son propre outil de limitation cesse de répondre au moment précis où le service est le plus chargé. | **PROUVÉ** |
 | I · Notifications et audit | I1 Chaque événement produit sa notification | `test_notifications_exigent_un_compte_nominatif`, `test_notifications_tout_lire`, `test_auto_approbation_annulation_refus_et_notifications_anti_idor` — 0✓ 0✗ 3⤼ 0! | frontend/e2e/lot1-approbations.spec.ts | **NON PROUVÉ** |
 | I · Notifications et audit | I2 Traçabilité — chaque action est rattachée à un utilisateur nommé | `test_validation_attribuee_au_compte_connecte`, `test_lot0b_postgres_audit_append_only_et_gardes`, `test_acteur_audit_ne_croit_jamais_des_entetes_non_verifies` — 1✓ 0✗ 2⤼ 0! | — | **PARTIEL** |
 | I · Notifications et audit | I3 Journal d'audit — expurgé, et aucune fuite de secret | `test_audit_expurgation_des_secrets_sqlite`, `test_creation_compte_ne_journalise_pas_identifiant`, `test_brouillon_erreur_ne_journalise_pas_secret` — 1✓ 0✗ 3⤼ 0! | — | **PARTIEL** |

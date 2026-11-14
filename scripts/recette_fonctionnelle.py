@@ -513,8 +513,16 @@ SECTIONS: list[Section] = [
                 "H2",
                 "`/health` et `/metrics` — avec et sans jeton",
                 [
-                    "tests/test_recette_routes.py::test_aucune_route_ouverte_sans_jeton",
+                    "tests/test_sondes_et_metriques.py",
+                    "tests/test_recette_routes.py::test_aucune_route_n_est_ouverte_sans_jeton",
                 ],
+                manuel=(
+                    "`/health` était vérifié, `/metrics` ne l'était nulle part : le test qui "
+                    "couvrait les quatre sondes le faisait SANS jeton configuré, donc tout "
+                    "répondait 200. `/metrics` est protégé par TROIS couches (middleware, "
+                    "`_require_auth`, résolution d'acteur) — vérifié rouge seulement une fois "
+                    "les trois neutralisées, et vert sinon."
+                ),
             ),
             Item(
                 "H3",
@@ -528,8 +536,15 @@ SECTIONS: list[Section] = [
                 "H4",
                 "Limitation de débit — seuil, 429, et routes de sonde exemptées",
                 [
-                    "tests/test_securite_offensive.py",
+                    "tests/test_jobs_api.py::test_rate_limiting_and_retry_after",
+                    "tests/test_sondes_et_metriques.py::test_les_sondes_ne_sont_pas_soumises_a_la_limitation_de_debit",
                 ],
+                manuel=(
+                    "Seuil : `rate_limit_per_minute`, 600 par défaut. Le quota épuisé, "
+                    "`/live` et `/ready` doivent répondre quand même — une supervision "
+                    "bloquée par son propre outil de limitation cesse de répondre au moment "
+                    "précis où le service est le plus chargé."
+                ),
             ),
         ],
     ),
@@ -656,7 +671,16 @@ def _collecte_disponible() -> set[str]:
         text=True,
         check=False,
     )
-    return {ligne.split("::")[0] for ligne in proc.stdout.splitlines() if ligne.startswith("tests/") and "::" in ligne}
+    collectes = {ligne.strip() for ligne in proc.stdout.splitlines() if ligne.startswith("tests/") and "::" in ligne}
+    # Trois granularités, parce que pytest les accepte toutes les trois et que
+    # la matrice en emploie trois :
+    #   · le test paramétré     — tests/x.py::test_y[cas]
+    #   · le test NU            — tests/x.py::test_y        (sélectionne tous
+    #     les cas du test ; sans cette entrée, six items de la matrice
+    #     passaient pour introuvables alors qu'ils tournent très bien)
+    #   · le module entier      — tests/x.py
+    nus = {ligne.split("[")[0] for ligne in collectes if "[" in ligne}
+    return collectes | nus | {ligne.split("::")[0] for ligne in collectes}
 
 
 def jouer(selecteurs: list[str], rapport_xml: Path) -> dict[str, int]:
@@ -684,13 +708,23 @@ def jouer(selecteurs: list[str], rapport_xml: Path) -> dict[str, int]:
         compte["error"] = len(selecteurs)
         return compte
     racine = ET.parse(rapport_xml).getroot()
+    vus = 0
     for cas in racine.iter("testcase"):
+        vus += 1
         for enfant in cas:
             if enfant.tag in compte:
                 compte[enfant.tag] += 1
                 break
         else:
             compte["passed"] += 1
+    # Un sélecteur qui ne correspond à rien fait rendre à pytest le code 4 et
+    # un rapport VIDE — et il emporte les autres sélecteurs de l'item avec
+    # lui. Mesuré : l'item H2 est resté « NON PROUVÉ, 0 test » à cause d'un nom
+    # de test erroné, alors que quatre tests valides l'accompagnaient. Un item
+    # dont aucun test n'a tourné est un défaut de la RECTTE, pas un « non
+    # prouvé » : il doit se voir.
+    if vus == 0:
+        compte["error"] = len(selecteurs)
     return compte
 
 
@@ -743,7 +777,7 @@ def main(argv: list[str] | None = None) -> int:
 
     for section in sections:
         for item in section.items:
-            introuvables = [s for s in item.tests if s.split("::")[0] not in dispo]
+            introuvables = [s for s in item.tests if s not in dispo]
             compte = jouer(item.tests, xml)
             lignes.append(
                 {

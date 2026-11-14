@@ -13,9 +13,9 @@
     "K"
   ],
   "items": 57,
-  "prouves": 18,
-  "partiels": 22,
-  "non_prouves": 17,
+  "prouves": 20,
+  "partiels": 21,
+  "non_prouves": 16,
   "echecs": 0,
   "introuvables": 0,
   "lignes": [
@@ -911,18 +911,19 @@
       "item": "H2",
       "libelle": "`/health` et `/metrics` — avec et sans jeton",
       "tests": [
-        "tests/test_recette_routes.py::test_aucune_route_ouverte_sans_jeton"
+        "tests/test_sondes_et_metriques.py",
+        "tests/test_recette_routes.py::test_aucune_route_n_est_ouverte_sans_jeton"
       ],
       "navigateur": null,
-      "manuel": null,
+      "manuel": "`/health` était vérifié, `/metrics` ne l'était nulle part : le test qui couvrait les quatre sondes le faisait SANS jeton configuré, donc tout répondait 200. `/metrics` est protégé par TROIS couches (middleware, `_require_auth`, résolution d'acteur) — vérifié rouge seulement une fois les trois neutralisées, et vert sinon.",
       "resultats": {
-        "passed": 0,
+        "passed": 5,
         "failed": 0,
         "skipped": 0,
         "error": 0
       },
       "introuvables": [],
-      "statut": "NON PROUVÉ"
+      "statut": "PROUVÉ"
     },
     {
       "section": "H",
@@ -950,18 +951,19 @@
       "item": "H4",
       "libelle": "Limitation de débit — seuil, 429, et routes de sonde exemptées",
       "tests": [
-        "tests/test_securite_offensive.py"
+        "tests/test_jobs_api.py::test_rate_limiting_and_retry_after",
+        "tests/test_sondes_et_metriques.py::test_les_sondes_ne_sont_pas_soumises_a_la_limitation_de_debit"
       ],
       "navigateur": null,
-      "manuel": null,
+      "manuel": "Seuil : `rate_limit_per_minute`, 600 par défaut. Le quota épuisé, `/live` et `/ready` doivent répondre quand même — une supervision bloquée par son propre outil de limitation cesse de répondre au moment précis où le service est le plus chargé.",
       "resultats": {
-        "passed": 6,
+        "passed": 2,
         "failed": 0,
-        "skipped": 2,
+        "skipped": 0,
         "error": 0
       },
       "introuvables": [],
-      "statut": "PARTIEL"
+      "statut": "PROUVÉ"
     },
     {
       "section": "I",
