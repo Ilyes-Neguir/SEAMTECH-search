@@ -14,8 +14,9 @@
   ],
   "items": 57,
   "prouves": 20,
+  "prouves_ci": 1,
   "partiels": 21,
-  "non_prouves": 16,
+  "non_prouves": 15,
   "echecs": 0,
   "introuvables": 0,
   "lignes": [
@@ -31,6 +32,7 @@
       ],
       "navigateur": null,
       "manuel": null,
+      "preuve_ci": null,
       "resultats": {
         "passed": 1,
         "failed": 0,
@@ -52,6 +54,7 @@
       ],
       "navigateur": null,
       "manuel": null,
+      "preuve_ci": null,
       "resultats": {
         "passed": 0,
         "failed": 0,
@@ -73,6 +76,7 @@
       ],
       "navigateur": null,
       "manuel": null,
+      "preuve_ci": null,
       "resultats": {
         "passed": 0,
         "failed": 0,
@@ -94,6 +98,7 @@
       ],
       "navigateur": null,
       "manuel": null,
+      "preuve_ci": null,
       "resultats": {
         "passed": 0,
         "failed": 0,
@@ -114,6 +119,7 @@
       ],
       "navigateur": "frontend/e2e/auth.spec.ts — « logout clears the session »",
       "manuel": null,
+      "preuve_ci": null,
       "resultats": {
         "passed": 0,
         "failed": 0,
@@ -135,6 +141,7 @@
       ],
       "navigateur": null,
       "manuel": null,
+      "preuve_ci": null,
       "resultats": {
         "passed": 0,
         "failed": 0,
@@ -155,6 +162,7 @@
       ],
       "navigateur": null,
       "manuel": null,
+      "preuve_ci": null,
       "resultats": {
         "passed": 0,
         "failed": 0,
@@ -175,6 +183,7 @@
       ],
       "navigateur": null,
       "manuel": null,
+      "preuve_ci": null,
       "resultats": {
         "passed": 0,
         "failed": 0,
@@ -194,6 +203,7 @@
       ],
       "navigateur": "frontend/e2e/auth.spec.ts — en-têtes CSRF sur chaque appel",
       "manuel": null,
+      "preuve_ci": null,
       "resultats": {
         "passed": 1,
         "failed": 0,
@@ -214,6 +224,7 @@
       ],
       "navigateur": null,
       "manuel": null,
+      "preuve_ci": null,
       "resultats": {
         "passed": 0,
         "failed": 0,
@@ -234,6 +245,7 @@
       ],
       "navigateur": null,
       "manuel": null,
+      "preuve_ci": null,
       "resultats": {
         "passed": 0,
         "failed": 0,
@@ -255,6 +267,7 @@
       ],
       "navigateur": null,
       "manuel": null,
+      "preuve_ci": null,
       "resultats": {
         "passed": 0,
         "failed": 0,
@@ -275,6 +288,7 @@
       ],
       "navigateur": null,
       "manuel": null,
+      "preuve_ci": null,
       "resultats": {
         "passed": 0,
         "failed": 0,
@@ -296,6 +310,7 @@
       ],
       "navigateur": null,
       "manuel": null,
+      "preuve_ci": null,
       "resultats": {
         "passed": 0,
         "failed": 0,
@@ -316,6 +331,7 @@
       ],
       "navigateur": null,
       "manuel": null,
+      "preuve_ci": null,
       "resultats": {
         "passed": 1,
         "failed": 0,
@@ -336,6 +352,7 @@
       ],
       "navigateur": null,
       "manuel": null,
+      "preuve_ci": null,
       "resultats": {
         "passed": 0,
         "failed": 0,
@@ -356,6 +373,7 @@
       ],
       "navigateur": "frontend/e2e/import.spec.ts",
       "manuel": null,
+      "preuve_ci": null,
       "resultats": {
         "passed": 76,
         "failed": 0,
@@ -376,6 +394,7 @@
       ],
       "navigateur": null,
       "manuel": null,
+      "preuve_ci": null,
       "resultats": {
         "passed": 1,
         "failed": 0,
@@ -397,6 +416,7 @@
       ],
       "navigateur": null,
       "manuel": null,
+      "preuve_ci": null,
       "resultats": {
         "passed": 3,
         "failed": 0,
@@ -417,6 +437,7 @@
       ],
       "navigateur": "frontend/e2e/lot7-accessoires.spec.ts",
       "manuel": null,
+      "preuve_ci": null,
       "resultats": {
         "passed": 5,
         "failed": 0,
@@ -438,6 +459,7 @@
       ],
       "navigateur": null,
       "manuel": null,
+      "preuve_ci": null,
       "resultats": {
         "passed": 1,
         "failed": 0,
@@ -457,6 +479,7 @@
       ],
       "navigateur": "frontend/e2e/doublons.spec.ts",
       "manuel": null,
+      "preuve_ci": null,
       "resultats": {
         "passed": 2,
         "failed": 0,
@@ -478,6 +501,7 @@
       ],
       "navigateur": "frontend/e2e/televersement-lot.spec.ts",
       "manuel": null,
+      "preuve_ci": null,
       "resultats": {
         "passed": 21,
         "failed": 0,
@@ -498,6 +522,7 @@
       ],
       "navigateur": null,
       "manuel": null,
+      "preuve_ci": null,
       "resultats": {
         "passed": 9,
         "failed": 0,
@@ -519,6 +544,7 @@
       ],
       "navigateur": null,
       "manuel": null,
+      "preuve_ci": null,
       "resultats": {
         "passed": 5,
         "failed": 0,
@@ -539,6 +565,7 @@
       ],
       "navigateur": "frontend/e2e/validation.spec.ts",
       "manuel": null,
+      "preuve_ci": null,
       "resultats": {
         "passed": 1,
         "failed": 0,
@@ -558,6 +585,7 @@
       ],
       "navigateur": null,
       "manuel": null,
+      "preuve_ci": null,
       "resultats": {
         "passed": 0,
         "failed": 0,
@@ -577,6 +605,7 @@
       ],
       "navigateur": "frontend/e2e/lot3b-extractions.spec.ts",
       "manuel": null,
+      "preuve_ci": null,
       "resultats": {
         "passed": 20,
         "failed": 0,
@@ -598,6 +627,7 @@
       ],
       "navigateur": null,
       "manuel": null,
+      "preuve_ci": null,
       "resultats": {
         "passed": 23,
         "failed": 0,
@@ -618,6 +648,7 @@
       ],
       "navigateur": null,
       "manuel": null,
+      "preuve_ci": null,
       "resultats": {
         "passed": 34,
         "failed": 0,
@@ -638,6 +669,7 @@
       ],
       "navigateur": null,
       "manuel": null,
+      "preuve_ci": null,
       "resultats": {
         "passed": 1,
         "failed": 0,
@@ -659,6 +691,7 @@
       ],
       "navigateur": null,
       "manuel": null,
+      "preuve_ci": null,
       "resultats": {
         "passed": 1,
         "failed": 0,
@@ -678,6 +711,7 @@
       ],
       "navigateur": "frontend/e2e/search.spec.ts — le rendu reste à capturer",
       "manuel": "Défaut CONFIRMÉ et corrigé : les écrans de recherche et de comparaison peignaient leurs champs en `bg-background` (fond opaque de page) alors que tous les autres écrans utilisent `bg-input` (translucide). Le test lit les sources et refuse l'écart ; vérifié rouge sur le défaut réintroduit à la main. Reste à ouvrir la recherche et constater visuellement l'alignement.",
+      "preuve_ci": null,
       "resultats": {
         "passed": 4,
         "failed": 0,
@@ -697,6 +731,7 @@
       ],
       "navigateur": "frontend/e2e/search.spec.ts",
       "manuel": null,
+      "preuve_ci": null,
       "resultats": {
         "passed": 1,
         "failed": 0,
@@ -717,6 +752,7 @@
       ],
       "navigateur": "frontend/e2e/recherche-extrait.spec.ts",
       "manuel": null,
+      "preuve_ci": null,
       "resultats": {
         "passed": 25,
         "failed": 0,
@@ -737,6 +773,7 @@
       ],
       "navigateur": null,
       "manuel": null,
+      "preuve_ci": null,
       "resultats": {
         "passed": 2,
         "failed": 0,
@@ -757,6 +794,7 @@
       ],
       "navigateur": "frontend/e2e/lot4b-comparaison.spec.ts",
       "manuel": null,
+      "preuve_ci": null,
       "resultats": {
         "passed": 6,
         "failed": 0,
@@ -778,6 +816,7 @@
       ],
       "navigateur": null,
       "manuel": null,
+      "preuve_ci": null,
       "resultats": {
         "passed": 3,
         "failed": 0,
@@ -798,6 +837,7 @@
       ],
       "navigateur": "frontend/e2e/lot5-confiance.spec.ts",
       "manuel": null,
+      "preuve_ci": null,
       "resultats": {
         "passed": 14,
         "failed": 0,
@@ -812,19 +852,18 @@
       "titre_section": "Comparaison",
       "item": "F4",
       "libelle": "Cas d'étalonnage — la fiche réelle du fonds",
-      "tests": [
-        "tests/test_recette_corpus_reel.py"
-      ],
+      "tests": [],
       "navigateur": null,
-      "manuel": null,
+      "manuel": "Le harnais NE REJOUE PAS cette suite : elle consomme la base qu'elle mesure, et la rejouer après elle-même la fait échouer — vérifié, l'étape ajoutée puis retirée a rendu un F4 rouge alors que la suite, elle, était verte. Casser une preuve qui marche pour en ajouter une qui casse n'est pas une amélioration.",
+      "preuve_ci": "job « recette-corpus-reel », étape « Run full recette suite » : pytest -m recette_corpus sur le corpus réel, jouée à chaque run.",
       "resultats": {
         "passed": 0,
         "failed": 0,
-        "skipped": 24,
+        "skipped": 0,
         "error": 0
       },
       "introuvables": [],
-      "statut": "NON PROUVÉ"
+      "statut": "PROUVÉ (CI)"
     },
     {
       "section": "G",
@@ -836,6 +875,7 @@
       ],
       "navigateur": "frontend/e2e/lot7-accessoires.spec.ts",
       "manuel": null,
+      "preuve_ci": null,
       "resultats": {
         "passed": 5,
         "failed": 0,
@@ -856,6 +896,7 @@
       ],
       "navigateur": null,
       "manuel": null,
+      "preuve_ci": null,
       "resultats": {
         "passed": 32,
         "failed": 0,
@@ -877,6 +918,7 @@
       ],
       "navigateur": null,
       "manuel": null,
+      "preuve_ci": null,
       "resultats": {
         "passed": 3,
         "failed": 0,
@@ -896,6 +938,7 @@
       ],
       "navigateur": null,
       "manuel": "Le balayage des 116 routes contre la pile réelle est joué par l'étape « Recette de TOUTES les routes » du job integration.",
+      "preuve_ci": "job « integration », étape « Recette de TOUTES les routes, contre la pile réelle » — 116 routes, 472 sondes, publiée en annotations.",
       "resultats": {
         "passed": 7,
         "failed": 0,
@@ -916,6 +959,7 @@
       ],
       "navigateur": null,
       "manuel": "`/health` était vérifié, `/metrics` ne l'était nulle part : le test qui couvrait les quatre sondes le faisait SANS jeton configuré, donc tout répondait 200. `/metrics` est protégé par TROIS couches (middleware, `_require_auth`, résolution d'acteur) — vérifié rouge seulement une fois les trois neutralisées, et vert sinon.",
+      "preuve_ci": null,
       "resultats": {
         "passed": 5,
         "failed": 0,
@@ -936,6 +980,7 @@
       ],
       "navigateur": null,
       "manuel": null,
+      "preuve_ci": null,
       "resultats": {
         "passed": 7,
         "failed": 0,
@@ -956,6 +1001,7 @@
       ],
       "navigateur": null,
       "manuel": "Seuil : `rate_limit_per_minute`, 600 par défaut. Le quota épuisé, `/live` et `/ready` doivent répondre quand même — une supervision bloquée par son propre outil de limitation cesse de répondre au moment précis où le service est le plus chargé.",
+      "preuve_ci": null,
       "resultats": {
         "passed": 2,
         "failed": 0,
@@ -977,6 +1023,7 @@
       ],
       "navigateur": "frontend/e2e/lot1-approbations.spec.ts",
       "manuel": null,
+      "preuve_ci": null,
       "resultats": {
         "passed": 0,
         "failed": 0,
@@ -998,6 +1045,7 @@
       ],
       "navigateur": null,
       "manuel": null,
+      "preuve_ci": null,
       "resultats": {
         "passed": 1,
         "failed": 0,
@@ -1019,6 +1067,7 @@
       ],
       "navigateur": null,
       "manuel": null,
+      "preuve_ci": null,
       "resultats": {
         "passed": 1,
         "failed": 0,
@@ -1039,6 +1088,7 @@
       ],
       "navigateur": "frontend/e2e/accessibilite.spec.ts — tous écrans × rôles × états",
       "manuel": "TROU TROUVÉ ET COMBLÉ : l'audit annonçait « 82 écrans scannés » mais les deux écrans à paramètre (/fiches/[code], /dossier/[code]) n'apparaissaient dans aucun constat — leur test lisait les codes sur la FILE DE VALIDATION, vide sur base fraîche. Le test d'inventaire exige désormais les 17 écrans un par un, et le spec lit la recherche.",
+      "preuve_ci": null,
       "resultats": {
         "passed": 2,
         "failed": 0,
@@ -1058,6 +1108,7 @@
       ],
       "navigateur": "frontend/e2e/accessibilite.spec.ts — règle axe « landmark-one-main »",
       "manuel": null,
+      "preuve_ci": null,
       "resultats": {
         "passed": 1,
         "failed": 0,
@@ -1078,6 +1129,7 @@
       ],
       "navigateur": null,
       "manuel": null,
+      "preuve_ci": null,
       "resultats": {
         "passed": 9,
         "failed": 0,
@@ -1099,6 +1151,7 @@
       ],
       "navigateur": null,
       "manuel": null,
+      "preuve_ci": null,
       "resultats": {
         "passed": 14,
         "failed": 0,
@@ -1118,6 +1171,7 @@
       ],
       "navigateur": null,
       "manuel": null,
+      "preuve_ci": null,
       "resultats": {
         "passed": 1,
         "failed": 0,
@@ -1137,6 +1191,7 @@
       ],
       "navigateur": null,
       "manuel": "scripts/recette_locale.ps1, à rejouer dans un venv disponible.",
+      "preuve_ci": null,
       "resultats": {
         "passed": 21,
         "failed": 0,
@@ -1158,6 +1213,7 @@
       ],
       "navigateur": null,
       "manuel": null,
+      "preuve_ci": null,
       "resultats": {
         "passed": 3,
         "failed": 0,

@@ -3,7 +3,7 @@
 - items : 57
 - prouvés : 20
 - partiels : 21
-- non prouvés : 16
+- non prouvés : 15
 - échecs : 0
 - introuvables : 0
 
@@ -48,7 +48,7 @@
 | F · Comparaison | F1 Comparaison de deux fiches | `tests/test_lot4b_comparaison_voile.py`, `test_l_identite_est_fausse_quand_une_seule_fiche_differ_e` — 6✓ 0✗ 3⤼ 0! | frontend/e2e/lot4b-comparaison.spec.ts | **PARTIEL** |
 | F · Comparaison | F2 Comparaison de N fiches après filtres | `test_au_dela_de_douze_colonnes_est_refuse`, `test_chaque_ligne_porte_autant_de_valeurs_que_de_fiches`, `test_l_etendue_et_les_bornes_sont_calculees_sur_le_groupe` — 3✓ 0✗ 0⤼ 0! | — | **PROUVÉ** |
 | F · Comparaison | F3 Pourcentage de confiance — seuil, sinon « données insuffisantes » | `tests/test_passe_finale_confiance_seuils.py`, `test_le_seuil_est_toujours_une_confiance_reellement_observee` — 14✓ 0✗ 0⤼ 0! | frontend/e2e/lot5-confiance.spec.ts | **PROUVÉ** |
-| F · Comparaison | F4 Cas d'étalonnage — la fiche réelle du fonds | `tests/test_recette_corpus_reel.py` — 0✓ 0✗ 24⤼ 0! | — | **NON PROUVÉ** |
+| F · Comparaison | F4 Cas d'étalonnage — la fiche réelle du fonds | — — 0✓ 0✗ 0⤼ 0! | Le harnais NE REJOUE PAS cette suite : elle consomme la base qu'elle mesure, et la rejouer après elle-même la fait échouer — vérifié, l'étape ajoutée puis retirée a rendu un F4 rouge alors que la suite, elle, était verte. Casser une preuve qui marche pour en ajouter une qui casse n'est pas une amélioration. | **PROUVÉ (CI)** |
 | G · Accessoires | G1 La section accessoires s'ouvre et liste | `tests/test_lot7_accessoires.py` — 5✓ 0✗ 5⤼ 0! | frontend/e2e/lot7-accessoires.spec.ts | **PARTIEL** |
 | G · Accessoires | G2 Lien entre un accessoire et son bateau | `tests/test_lot3b_liaison_voile.py`, `tests/test_double_verification_accessoires.py` — 32✓ 0✗ 11⤼ 0! | — | **PARTIEL** |
 | G · Accessoires | G3 Extraction depuis un PDF d'accessoire | `test_extraction_accessoire_dimensions_et_provenance`, `test_extraction_accessoire_sans_unite_ne_devine_rien`, `test_extraction_libelles_reels` — 3✓ 0✗ 0⤼ 0! | — | **PROUVÉ** |

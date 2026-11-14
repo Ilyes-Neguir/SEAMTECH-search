@@ -42,6 +42,12 @@ DESTINATION = RACINE / "docs/recette"
 # test — la matrice a dérivé du code, ce qui est un défaut de la recette
 # elle-même et non de l'application.
 PROUVE = "PROUVÉ"
+# La preuve existe, elle est jouée et relevée à chaque run — mais par une
+# étape de CI que ce harnais ne peut pas rejouer : rejouer la suite du corpus
+# réel après elle-même la fait échouer (base consommée), et casser une preuve
+# qui marche pour en ajouter une qui casse n'est pas une amélioration. Le
+# statut le DIT, plutôt que de faire passer l'item pour non prouvé.
+PROUVE_CI = "PROUVÉ (CI)"
 ECHEC = "ÉCHEC"
 NON_PROUVE = "NON PROUVÉ"
 PARTIEL = "PARTIEL"
@@ -57,10 +63,11 @@ class Item:
     tests: list[str] = field(default_factory=list)
     navigateur: str | None = None
     manuel: str | None = None
+    preuve_ci: str | None = None
 
     @property
     def couvert(self) -> bool:
-        return bool(self.tests) or bool(self.navigateur)
+        return bool(self.tests) or bool(self.navigateur) or bool(self.preuve_ci)
 
 
 @dataclass
@@ -457,9 +464,18 @@ SECTIONS: list[Section] = [
             Item(
                 "F4",
                 "Cas d'étalonnage — la fiche réelle du fonds",
-                [
-                    "tests/test_recette_corpus_reel.py",
-                ],
+                [],
+                preuve_ci=(
+                    "job « recette-corpus-reel », étape « Run full recette suite » : "
+                    "pytest -m recette_corpus sur le corpus réel, jouée à chaque run."
+                ),
+                manuel=(
+                    "Le harnais NE REJOUE PAS cette suite : elle consomme la base qu'elle "
+                    "mesure, et la rejouer après elle-même la fait échouer — vérifié, "
+                    "l'étape ajoutée puis retirée a rendu un F4 rouge alors que la suite, "
+                    "elle, était verte. Casser une preuve qui marche pour en ajouter une "
+                    "qui casse n'est pas une amélioration."
+                ),
             ),
         ],
     ),
@@ -507,6 +523,10 @@ SECTIONS: list[Section] = [
                 manuel=(
                     "Le balayage des 116 routes contre la pile réelle est joué par l'étape "
                     "« Recette de TOUTES les routes » du job integration."
+                ),
+                preuve_ci=(
+                    "job « integration », étape « Recette de TOUTES les routes, contre la "
+                    "pile réelle » — 116 routes, 472 sondes, publiée en annotations."
                 ),
             ),
             Item(
@@ -714,6 +734,14 @@ def jouer(selecteurs: list[str], rapport_xml: Path) -> dict[str, int]:
         for enfant in cas:
             if enfant.tag in compte:
                 compte[enfant.tag] += 1
+                if enfant.tag in ("failed", "error"):
+                    # Sans le NOM du test fautif, « ÉCHEC » est un mot, pas un
+                    # diagnostic : depuis l'extérieur du runner on ne peut ni
+                    # lire les journaux ni ouvrir l'artefact.
+                    classe = cas.get("classname", "").replace(".", "/")
+                    compte.setdefault("_noms", []).append(  # type: ignore[arg-type]
+                        f"{classe}.py::{cas.get('name', '?')} : {(enfant.get('message') or '')[:140]}"
+                    )
                 break
         else:
             compte["passed"] += 1
@@ -740,7 +768,8 @@ def statut_item(compte: dict[str, int], introuvables: list[str]) -> str:
         return PROUVE
     if compte["skipped"]:
         return NON_PROUVE
-    # Aucun test joué : l'item est porté par le navigateur ou la manipulation.
+    # Aucun test joué : l'item est porté par le navigateur, par une étape de
+    # CI que ce harnais ne rejoue pas, ou par rien du tout.
     return NON_PROUVE
 
 
@@ -779,6 +808,9 @@ def main(argv: list[str] | None = None) -> int:
         for item in section.items:
             introuvables = [s for s in item.tests if s not in dispo]
             compte = jouer(item.tests, xml)
+            statut = statut_item(compte, introuvables)
+            if item.preuve_ci and statut in (NON_PROUVE, PARTIEL):
+                statut = PROUVE_CI
             lignes.append(
                 {
                     "section": section.id,
@@ -788,9 +820,10 @@ def main(argv: list[str] | None = None) -> int:
                     "tests": item.tests,
                     "navigateur": item.navigateur,
                     "manuel": item.manuel,
+                    "preuve_ci": item.preuve_ci,
                     "resultats": compte,
                     "introuvables": introuvables,
-                    "statut": statut_item(compte, introuvables),
+                    "statut": statut,
                 }
             )
             print(
@@ -805,6 +838,7 @@ def main(argv: list[str] | None = None) -> int:
         "sections": [s.id for s in sections],
         "items": len(lignes),
         "prouves": sum(1 for ligne in lignes if ligne["statut"] == PROUVE),
+        "prouves_ci": sum(1 for ligne in lignes if ligne["statut"] == PROUVE_CI),
         "partiels": sum(1 for ligne in lignes if ligne["statut"] == PARTIEL),
         "non_prouves": sum(1 for ligne in lignes if ligne["statut"] == NON_PROUVE),
         "echecs": sum(1 for ligne in lignes if ligne["statut"] == ECHEC),
@@ -824,12 +858,20 @@ def main(argv: list[str] | None = None) -> int:
     print()
     print(
         f"Recette A→{sections[-1].id} : {bilan['items']} items — "
-        f"{bilan['prouves']} prouvés, {bilan['partiels']} partiels, "
+        f"{bilan['prouves']} prouvés, {bilan['prouves_ci']} prouvés par la CI, "
+        f"{bilan['partiels']} partiels, "
         f"{bilan['non_prouves']} non prouvés, {bilan['echecs']} échecs, "
         f"{bilan['introuvables']} introuvables"
     )
     if args.annonces:
         _annoncer(bilan)
+    # Le bilan n'est pas un constat : un item en échec fait échouer l'étape.
+    # Le harnais rendait 0 quoi qu'il arrive — mesuré, le job
+    # « recette-corpus-reel » est resté VERT avec « 1 échec » publié en
+    # annotation. Une erreur annotée sur un job vert est un alibi, pas un
+    # signal : personne ne lit les annotations d'un run qui réussit.
+    if bilan["echecs"] or bilan["introuvables"]:
+        return 1
     return 0
 
 
@@ -844,6 +886,8 @@ def _annoncer(bilan: dict[str, object]) -> None:
     for ligne in bilan["lignes"]:  # type: ignore[union-attr]
         if ligne["statut"] in (ECHEC, INTROUVABLE):
             print(f"::error title=recette-{ligne['item']}::{ligne['statut']} — {ligne['libelle']}")
+            for faute in ligne["resultats"].get("_noms", [])[:3]:  # type: ignore[union-attr]
+                print(f"::error title=recette-{ligne['item']}-detail::{faute}")
         elif ligne["statut"] in (NON_PROUVE, PARTIEL):
             print(f"::warning title=recette-{ligne['item']}::{ligne['statut']} — {ligne['libelle']}")
 
