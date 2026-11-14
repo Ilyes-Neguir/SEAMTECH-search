@@ -179,6 +179,14 @@ def main(argv: list[str] | None = None) -> int:
         "| 4 | Un test tombait en CI sans qu'on puisse le reproduire : il identifiait les appels "
         "à MinIO par sous-chaîne, et un chemin temporaire tiré au hasard (`/tmp/tmpp488emcp`) "
         "contient « mc » et « cp ». | — | oui — détection mot à mot, hasard fixé par un test |",
+        "| 5 | La CRÉATION DU SCHÉMA était soumise au délai d'exécution des requêtes "
+        "(`statement_timeout`, 5 s). Sur un serveur chargé, la migration 006 dépasse 5 s, "
+        "PostgreSQL annule l'ordre AU MILIEU, et l'installation neuve reste à moitié migrée. "
+        "Le job `e2e` est tombé là-dessus — avec tous les parcours fonctionnels verts, ce qui "
+        "montre bien qu'un bilan peut être rouge sans que rien ne soit cassé, et vert sans que "
+        "tout soit prouvé. | K1 | oui — les migrations reçoivent leur propre délai "
+        "(`migration_timeout_ms`, 300 s), celui des requêtes est RÉTABLI à la sortie, y compris "
+        "si une migration échoue |",
         "",
         "### Ce qui n'a PAS été corrigé, et pourquoi",
         "",

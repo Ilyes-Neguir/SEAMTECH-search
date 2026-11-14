@@ -182,6 +182,12 @@ class AppConfig(BaseModel):
     pool_max: int = Field(default=10, ge=1)
     pool_timeout: float = Field(default=30.0, ge=0.1)
     statement_timeout_ms: int = Field(default=5000, ge=100)
+    # Une requête qui traîne est un incident ; une création de schéma qui
+    # dure n'en est pas un. Le DDL de migration (index partiels, vues
+    # matérialisées, textes pondérés) dépasse couramment 5 s sur un serveur
+    # déjà chargé — ce n'est pas une requête emballée, et l'interrompre
+    # laisse une installation neuve à moitié migrée. Voir indexer.py.
+    migration_timeout_ms: int = Field(default=300000, ge=1000)
 
     @field_validator("root_paths")
     @classmethod
@@ -381,6 +387,8 @@ class AppConfig(BaseModel):
             data["pool_timeout"] = float(os.environ["SEAMTECH_POOL_TIMEOUT"])
         if os.environ.get("SEAMTECH_STATEMENT_TIMEOUT_MS"):
             data["statement_timeout_ms"] = int(os.environ["SEAMTECH_STATEMENT_TIMEOUT_MS"])
+        if os.environ.get("SEAMTECH_MIGRATION_TIMEOUT_MS"):
+            data["migration_timeout_ms"] = int(os.environ["SEAMTECH_MIGRATION_TIMEOUT_MS"])
 
         config = cls.model_validate(data)
 

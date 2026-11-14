@@ -240,6 +240,62 @@ class ScanAlreadyRunningError(RuntimeError):
     """Raised when another indexing process already owns the scan lock."""
 
 
+def _set_statement_timeout(valeur_ms: int) -> str:
+    """``SET`` n'accepte PAS de paramètre lié en PostgreSQL.
+
+    ``SET statement_timeout = %s`` n'est pas du SQL valide : psycopg2
+    l'interpolait côté client, ce qui cachait une forme que le serveur
+    refuserait. La valeur est donc écrite en littéral — et coercée en
+    ``int``, ce qui ferme toute porte à une injection : un réglage venu de
+    la configuration ou de l'environnement ne peut pas produire autre chose
+    qu'un entier.
+    """
+    return f"SET statement_timeout = {int(valeur_ms)}"
+
+
+@contextmanager
+def _ddl_sans_chrono(
+    connection: Any,
+    migration_timeout_ms: int,
+    statement_timeout_ms: int,
+    postgres: bool = True,
+) -> Iterator[None]:
+    """Donne aux migrations un temps de DDL, et le rend après.
+
+    Le ``statement_timeout`` du pool borne les REQUÊTES : c'est la garantie
+    qu'une recherchemal formée ne bloque pas une connexion. Une migration
+    n'est pas une requête — c'est de la création de schéma (index partiels,
+    textes pondérés, déclencheurs), exécutée une fois, au démarrage, sur une
+    base que personne d'autre ne sert encore.
+
+    Confondre les deux a un coût concret : sur un serveur déjà chargé, la
+    migration 006 dépasse 5 s, PostgreSQL annule l'ordre au milieu, et
+    l'installation neuve reste à moitié migrée — avec un message qui parle
+    d'un délai dépassé et non du vrai problème.
+
+    Le timeout d'origine est RÉTABLI à la sortie, y compris en cas
+    d'échec : ce gestionnaire élargit une fenêtre, il ne supprime aucune
+    protection sur le chemin des requêtes.
+    """
+    if not postgres:
+        # SQLite (indexation de fichiers héritée) : pas de statement_timeout
+        # à ajuster, et un curseur qui ne gère pas le `with`. Ordonner `SET`
+        # ici planterait. Se fier à `hasattr(connection, "cursor")` ne suffit
+        # pas : sqlite3.Connection a bien cette méthode.
+        yield
+        return
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(_set_statement_timeout(migration_timeout_ms))
+        yield
+    finally:
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute(_set_statement_timeout(statement_timeout_ms))
+        except Exception as exc:  # pragma: no cover - connexion déjà perdue
+            logger.warning("Impossible de rétablir le statement_timeout : %s", exc)
+
+
 class SearchIndex:
     def __init__(
         self,
@@ -249,6 +305,7 @@ class SearchIndex:
         pool_max: int = 10,
         pool_timeout: float = 30.0,
         statement_timeout_ms: int = 5000,
+        migration_timeout_ms: int = 300000,
     ) -> None:
         self.database_path = Path(database_path)
         self.database_url = database_url
@@ -256,11 +313,16 @@ class SearchIndex:
         self.pool_max = pool_max
         self.pool_timeout = pool_timeout
         self.statement_timeout_ms = statement_timeout_ms
+        self.migration_timeout_ms = migration_timeout_ms
         # Renseigné par initialize(rebuild=True) : « recreation » (table
         # recréée — le cas sûr) ou « en_place » (identifiants conservés parce
         # que des pièces jointes de fiches référencent documents — E-40).
         self.rebuild_mode: str | None = None
         self._pool: Any = None
+        # Point d'injection de test : une connexion fournie ici est servie
+        # telle quelle par connect(), sans pool ni PostgreSQL. Réservé aux
+        # tests — rien dans le produit ne le renseigne.
+        self._connexion_injectee: Any = None
         self._scan_connection: ContextVar[Any | None] = ContextVar(f"scan_connection_{id(self)}", default=None)
         # Resolved Postgres text-search configuration name, cached per index
         # instance. See `_postgres_ts_config`.
@@ -306,6 +368,9 @@ class SearchIndex:
 
     @contextmanager
     def connect(self) -> Iterator[Any]:
+        if self._connexion_injectee is not None:
+            yield self._connexion_injectee
+            return
         connexion_scan = self._scan_connection.get()
         if connexion_scan is not None:
             # La transaction appartient à scan_transaction ; les appels imbriqués
@@ -441,9 +506,7 @@ class SearchIndex:
                     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS upload_status TEXT NOT NULL DEFAULT 'pending'"
                 )
                 # For backward compat, keep not_configured default if already exists, but ensure column exists
-                cursor.execute(
-                    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS content TEXT NOT NULL DEFAULT ''"
-                )
+                cursor.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS content TEXT NOT NULL DEFAULT ''")
                 cursor.execute(
                     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS search_vector TSVECTOR NOT NULL DEFAULT ''::tsvector"
                 )
@@ -511,7 +574,7 @@ class SearchIndex:
                     """
                 )
                 row = cursor.fetchone()
-                payload_type = (row[0] if row else "jsonb")
+                payload_type = row[0] if row else "jsonb"
                 if payload_type == "text":
                     cursor.execute("ALTER TABLE imports ALTER COLUMN payload TYPE JSONB USING payload::jsonb")
         else:
@@ -596,17 +659,13 @@ class SearchIndex:
                     # there is no `FOR ... TO ...` form, and `ALTER MAPPING`
                     # (not `ADD MAPPING`) is required because COPY = simple
                     # already installed mappings for these token types.
-                    cursor.execute(
-                        f"CREATE TEXT SEARCH CONFIGURATION {PG_UNACCENT_CONFIG} (COPY = simple)"
-                    )
+                    cursor.execute(f"CREATE TEXT SEARCH CONFIGURATION {PG_UNACCENT_CONFIG} (COPY = simple)")
                     cursor.execute(
                         f"ALTER TEXT SEARCH CONFIGURATION {PG_UNACCENT_CONFIG} "
                         "ALTER MAPPING FOR hword, hword_part, word "
                         "WITH unaccent, simple"
                     )
-                    logger.info(
-                        "Created text-search configuration %s (unaccent + simple)", PG_UNACCENT_CONFIG
-                    )
+                    logger.info("Created text-search configuration %s (unaccent + simple)", PG_UNACCENT_CONFIG)
                 cursor.execute("RELEASE SAVEPOINT seamtech_unaccent")
             except Exception as exc:
                 cursor.execute("ROLLBACK TO SAVEPOINT seamtech_unaccent")
@@ -716,9 +775,7 @@ class SearchIndex:
             # que 'seamtech_unaccent' existe.
             self._ensure_unaccent_config(connection)
             config = self._postgres_ts_config(connection)
-            script = schema_metier.SQL_006_FICHE_TECHNIQUE.replace(
-                schema_metier.MARQUEUR_TS_CONFIG, config
-            )
+            script = schema_metier.SQL_006_FICHE_TECHNIQUE.replace(schema_metier.MARQUEUR_TS_CONFIG, config)
             try:
                 cursor.execute(script)
             except Exception as exc:
@@ -756,9 +813,7 @@ class SearchIndex:
             config = self._postgres_ts_config(connection)
             # D'abord le cœur : les index trigrammes ciblent fiche.champs_texte,
             # qui n'existe pas avant lui.
-            cursor.execute(
-                schema_metier.SQL_007_RECHERCHE_INDEX.replace(schema_metier.MARQUEUR_TS_CONFIG, config)
-            )
+            cursor.execute(schema_metier.SQL_007_RECHERCHE_INDEX.replace(schema_metier.MARQUEUR_TS_CONFIG, config))
             cursor.execute("SAVEPOINT seamtech_pg_trgm")
             try:
                 cursor.execute(schema_metier.SQL_007_TRGM)
@@ -828,9 +883,7 @@ class SearchIndex:
             # référentiels (suggestions tolérantes aux fautes) sont omis si
             # pg_trgm ne peut pas s'installer, avec avertissement journalisé.
             config = self._postgres_ts_config(connection)
-            cursor.execute(
-                schema_metier.SQL_012_RECHERCHE_HYBRIDE.replace(schema_metier.MARQUEUR_TS_CONFIG, config)
-            )
+            cursor.execute(schema_metier.SQL_012_RECHERCHE_HYBRIDE.replace(schema_metier.MARQUEUR_TS_CONFIG, config))
             cursor.execute("SAVEPOINT seamtech_012_trgm")
             try:
                 cursor.execute(schema_metier.SQL_012_TRGM)
@@ -850,23 +903,17 @@ class SearchIndex:
         client (« cruette ») et l'année d'édition (« spi sailonet 2026 »).
         Les deux sont ajoutées au texte pondéré (poids B)."""
         if not self.is_postgres:
-            logger.info(
-                "Migration 013 (recherche fonds réel) ignorée en mode SQLite — PostgreSQL uniquement (§17.1)."
-            )
+            logger.info("Migration 013 (recherche fonds réel) ignorée en mode SQLite — PostgreSQL uniquement (§17.1).")
             return
         with connection.cursor() as cursor:
             config = self._postgres_ts_config(connection)
-            cursor.execute(
-                schema_metier.SQL_013_RECHERCHE_FONDS_REEL.replace(schema_metier.MARQUEUR_TS_CONFIG, config)
-            )
+            cursor.execute(schema_metier.SQL_013_RECHERCHE_FONDS_REEL.replace(schema_metier.MARQUEUR_TS_CONFIG, config))
 
     def _migration_014_facette_dimension(self, connection: Any) -> None:
         """Lot J : facette dimension — vue v_fiche_recherche complète avec
         tetiere_cm + index sur les 7 cotes pour le filtre par plage."""
         if not self.is_postgres:
-            logger.info(
-                "Migration 014 (facette dimension) ignorée en mode SQLite — PostgreSQL uniquement (§17.1)."
-            )
+            logger.info("Migration 014 (facette dimension) ignorée en mode SQLite — PostgreSQL uniquement (§17.1).")
             return
         with connection.cursor() as cursor:
             cursor.execute(schema_metier.SQL_014_FACETTE_DIMENSION)
@@ -874,9 +921,7 @@ class SearchIndex:
     def _migration_015_qualite_gabarit_brouillon(self, connection: Any) -> None:
         """Lot K : index qualité + table gabarit_brouillon (brouillons non actifs)."""
         if not self.is_postgres:
-            logger.info(
-                "Migration 015 (qualité + brouillon) ignorée en mode SQLite — PostgreSQL uniquement (§17.1)."
-            )
+            logger.info("Migration 015 (qualité + brouillon) ignorée en mode SQLite — PostgreSQL uniquement (§17.1).")
             return
         with connection.cursor() as cursor:
             cursor.execute(schema_metier.SQL_015_QUALITE_GABARIT_BROUILLON)
@@ -967,9 +1012,7 @@ class SearchIndex:
             return
         with connection.cursor() as cursor:
             config = self._postgres_ts_config(connection)
-            cursor.execute(
-                schema_metier.SQL_019_RECHERCHE_DIMENSION.replace(schema_metier.MARQUEUR_TS_CONFIG, config)
-            )
+            cursor.execute(schema_metier.SQL_019_RECHERCHE_DIMENSION.replace(schema_metier.MARQUEUR_TS_CONFIG, config))
 
     def _migration_020_file_durable(self, connection: Any) -> None:
         """Imports durables (2026-10-06) : traçabilité des jobs et des lots.
@@ -998,15 +1041,11 @@ class SearchIndex:
             "failure_reason": "TEXT",
             "durability": "TEXT NOT NULL DEFAULT 'durable'",
         }
-        existantes = {
-            str(ligne[1]) for ligne in connection.execute("PRAGMA table_info(import_jobs)").fetchall()
-        }
+        existantes = {str(ligne[1]) for ligne in connection.execute("PRAGMA table_info(import_jobs)").fetchall()}
         for nom, definition in colonnes.items():
             if nom not in existantes:
                 connection.execute(f"ALTER TABLE import_jobs ADD COLUMN {nom} {definition}")
-        connection.execute(
-            "CREATE INDEX IF NOT EXISTS idx_import_jobs_actifs ON import_jobs (status, heartbeat_at)"
-        )
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_import_jobs_actifs ON import_jobs (status, heartbeat_at)")
         logger.info(
             "Migration 020_file_durable : colonnes de supervision ajoutées à import_jobs (SQLite). "
             "Conséquence : les états de reprise sont lisibles, la couche métier reste PostgreSQL-only."
@@ -1052,9 +1091,7 @@ class SearchIndex:
                 cursor.execute(schema_metier.SQL_022_SELECTIONS_DURABLES)
             return
 
-        existantes = {
-            str(ligne[1]) for ligne in connection.execute("PRAGMA table_info(import_jobs)").fetchall()
-        }
+        existantes = {str(ligne[1]) for ligne in connection.execute("PRAGMA table_info(import_jobs)").fetchall()}
         for nom in ("selected_pdf", "selected_excel"):
             if nom not in existantes:
                 connection.execute(f"ALTER TABLE import_jobs ADD COLUMN {nom} TEXT")
@@ -1368,144 +1405,153 @@ class SearchIndex:
         migrations, qui divergerait de la première.
         """
         with self.connect() as connection:
-            self._ensure_migrations_table(connection)
-            applied = self._get_applied_migrations(connection)
+            with _ddl_sans_chrono(
+                connection,
+                self.migration_timeout_ms,
+                self.statement_timeout_ms,
+                postgres=self.is_postgres,
+            ):
+                self._migrer(connection, jusqu_a)
 
-            migrations = [
-                ("001_initial", self._migration_001_initial),
-                ("002_object_storage_columns", self._migration_002_object_storage_columns),
-                ("003_category_backfill_guard", self._migration_003_category_backfill_guard),
-                ("004_uploaded_at_epoch", self._migration_004_uploaded_at_epoch),
-                ("005_unaccent_search_vector", self._migration_005_unaccent_search_vector),
-                # Couche métier « fiches » — PostgreSQL uniquement (§17.1).
-                ("006_fiche_technique", self._migration_006_fiche_technique),
-                ("007_recherche_index", self._migration_007_recherche_index),
-                ("008_ml_corpus", self._migration_008_ml_corpus),
-                ("009_qualite_et_gabarits", self._migration_009_qualite_et_gabarits),
-                ("010_lots_ingestion", self._migration_010_lots_ingestion),
-                ("011_pieces_catalogue_documents", self._migration_011_pieces_catalogue_documents),
-                ("012_recherche_hybride", self._migration_012_recherche_hybride),
-                ("013_recherche_fonds_reel", self._migration_013_recherche_fonds_reel),
-                ("014_facette_dimension", self._migration_014_facette_dimension),
-                ("015_qualite_gabarit_brouillon", self._migration_015_qualite_gabarit_brouillon),
-                # Lot L — une migration NON ENREGISTRÉE ici ferait échouer le job
-                # `sauvegarde` (l'échec du Lot K) : 016 est la version attendue
-                # par VERSION_SCHEMA_METIER, elle doit être APPLIQUÉE.
-                ("016_dedup_comptes_nominatifs", self._migration_016_dedup_comptes_nominatifs),
-                # Lot M — staging OCR étage 3, table ocr_etage3, jamais chunk/document
-                # (oubli qui avait cassé sauvegarde au Lot K, puis au Lot M — même motif).
-                ("017_ocr_etage3", self._migration_017_ocr_etage3),
-                ("018_recherche_a_valider", self._migration_018_recherche_a_valider),
-                # Phase 1 — recherche par dimension : cotes dans le texte pondéré
-                # (deux formes « 6.60 »/« 6,60 »), même motif d'enregistrement
-                # que 017/018 : une migration oubliée ici ferait échouer sauvegarde.
-                ("019_recherche_dimension", self._migration_019_recherche_dimension),
-                # 2026-10-06 — file durable : colonnes de supervision des jobs
-                # (tentatives, worker propriétaire, battement de cœur, raison
-                # d'échec, durabilité de l'acceptation) et états de lot
-                # « annule »/« relance ». Enregistrée ici comme les autres :
-                # une migration oubliée fait échouer sauvegarde/restauration.
-                ("020_file_durable", self._migration_020_file_durable),
-                # 2026-10-07 — verrou optimiste : `fiche.revision`. Enregistrée
-                # ici comme les autres : une migration oubliée ferait échouer
-                # sauvegarde/restauration (VERSION_SCHEMA_METIER absente).
-                ("021_revision_fiche", self._migration_021_revision_fiche),
-                # 2026-10-08 — sélections manuelles persistées (audit A06) :
-                # une reprise ne doit pas substituer « le premier PDF trouvé »
-                # au document que l'opérateur avait désigné. Enregistrée ici
-                # comme les autres : une migration oubliée fait échouer
-                # sauvegarde/restauration (VERSION_SCHEMA_METIER absente).
-                ("022_selections_durables", self._migration_022_selections_durables),
-                # 023 — clé de recherche normalisée (casse + diacritiques +
-                # ligatures) pour trigrammes et suggestions. Même motif
-                # d'enregistrement : une migration oubliée ici ferait échouer
-                # sauvegarde/restauration (VERSION_SCHEMA_METIER absente).
-                ("023_recherche_normalisee", self._migration_023_recherche_normalisee),
-                # Lot 0a/0b — 024 est le marqueur sans DDL des sessions Redis ;
-                # 025 crée le journal d'audit canonique. Les deux sont
-                # enregistrées : VERSION_SCHEMA_METIER vaut désormais 025 et
-                # une migration oubliée ferait échouer sauvegarde/restauration.
-                ("024_sessions_redis", self._migration_024_sessions_redis),
-                ("025_audit_logs", self._migration_025_audit_logs),
-                # Lot 2 — référentiel canonique des modèles de bateaux,
-                # alias/fusions réversibles et synonymes de recherche.
-                # Enregistrée comme les autres : VERSION_SCHEMA_METIER vaut
-                # 026 et une migration oubliée ferait échouer sauvegarde.
-                ("026_boat_models_aliases", self._migration_026_boat_models_aliases),
-                # Lot 1 — quatre rôles canoniques, demandes d'approbation et
-                # notifications applicatives. Enregistrée comme les autres :
-                # VERSION_SCHEMA_METIER vaut 027 et une migration oubliée
-                # ferait échouer sauvegarde/restauration.
-                ("027_roles_approbations", self._migration_027_roles_approbations),
-                # Lot 3a — extraction PDF structurée des voiles. Enregistrée
-                # comme les autres : VERSION_SCHEMA_METIER vaut 028 et une
-                # migration oubliée ferait échouer sauvegarde/restauration.
-                ("028_sail_extractions", self._migration_028_sail_extractions),
-                # Lot 3b — résolution du modèle de bateau des extractions,
-                # corrections approbateur et motifs appris. Enregistrée comme
-                # les autres : VERSION_SCHEMA_METIER vaut 029 et une migration
-                # oubliée ferait échouer sauvegarde/restauration.
-                (
-                    "029_extraction_liaison_corrections",
-                    self._migration_029_extraction_liaison_corrections,
-                ),
-                # Lot 5 — Fonction B : évaluations de confiance de
-                # réutilisation persistées. Enregistrée comme les autres :
-                # VERSION_SCHEMA_METIER vaut 030 et une migration oubliée
-                # ferait échouer sauvegarde/restauration.
-                ("030_evaluations_confiance", self._migration_030_evaluations_confiance),
-                # Lot 7 — Accessoires : enregistrée comme les autres,
-                # VERSION_SCHEMA_METIER vaut 031.
-                ("031_accessoires", self._migration_031_accessoires),
-                # 032 — identité des octets, distincte du hash de texte.
-                ("032_identite_octets_documents", self._migration_032_identite_octets_documents),
-                # Lot 10 — verdicts humains explicites : enregistrée comme les
-                # autres, VERSION_SCHEMA_METIER vaut désormais 033. Une
-                # migration oubliée ici ferait échouer sauvegarde/restauration.
-                ("033_verdicts_revue", self._migration_033_verdicts_revue),
-            ]
+    def _migrer(self, connection: Any, jusqu_a: str | None = None) -> None:
+        """Corps de :meth:`run_migrations`, sous le régime de timeout DDL."""
+        self._ensure_migrations_table(connection)
+        applied = self._get_applied_migrations(connection)
+        migrations = [
+            ("001_initial", self._migration_001_initial),
+            ("002_object_storage_columns", self._migration_002_object_storage_columns),
+            ("003_category_backfill_guard", self._migration_003_category_backfill_guard),
+            ("004_uploaded_at_epoch", self._migration_004_uploaded_at_epoch),
+            ("005_unaccent_search_vector", self._migration_005_unaccent_search_vector),
+            # Couche métier « fiches » — PostgreSQL uniquement (§17.1).
+            ("006_fiche_technique", self._migration_006_fiche_technique),
+            ("007_recherche_index", self._migration_007_recherche_index),
+            ("008_ml_corpus", self._migration_008_ml_corpus),
+            ("009_qualite_et_gabarits", self._migration_009_qualite_et_gabarits),
+            ("010_lots_ingestion", self._migration_010_lots_ingestion),
+            ("011_pieces_catalogue_documents", self._migration_011_pieces_catalogue_documents),
+            ("012_recherche_hybride", self._migration_012_recherche_hybride),
+            ("013_recherche_fonds_reel", self._migration_013_recherche_fonds_reel),
+            ("014_facette_dimension", self._migration_014_facette_dimension),
+            ("015_qualite_gabarit_brouillon", self._migration_015_qualite_gabarit_brouillon),
+            # Lot L — une migration NON ENREGISTRÉE ici ferait échouer le job
+            # `sauvegarde` (l'échec du Lot K) : 016 est la version attendue
+            # par VERSION_SCHEMA_METIER, elle doit être APPLIQUÉE.
+            ("016_dedup_comptes_nominatifs", self._migration_016_dedup_comptes_nominatifs),
+            # Lot M — staging OCR étage 3, table ocr_etage3, jamais chunk/document
+            # (oubli qui avait cassé sauvegarde au Lot K, puis au Lot M — même motif).
+            ("017_ocr_etage3", self._migration_017_ocr_etage3),
+            ("018_recherche_a_valider", self._migration_018_recherche_a_valider),
+            # Phase 1 — recherche par dimension : cotes dans le texte pondéré
+            # (deux formes « 6.60 »/« 6,60 »), même motif d'enregistrement
+            # que 017/018 : une migration oubliée ici ferait échouer sauvegarde.
+            ("019_recherche_dimension", self._migration_019_recherche_dimension),
+            # 2026-10-06 — file durable : colonnes de supervision des jobs
+            # (tentatives, worker propriétaire, battement de cœur, raison
+            # d'échec, durabilité de l'acceptation) et états de lot
+            # « annule »/« relance ». Enregistrée ici comme les autres :
+            # une migration oubliée fait échouer sauvegarde/restauration.
+            ("020_file_durable", self._migration_020_file_durable),
+            # 2026-10-07 — verrou optimiste : `fiche.revision`. Enregistrée
+            # ici comme les autres : une migration oubliée ferait échouer
+            # sauvegarde/restauration (VERSION_SCHEMA_METIER absente).
+            ("021_revision_fiche", self._migration_021_revision_fiche),
+            # 2026-10-08 — sélections manuelles persistées (audit A06) :
+            # une reprise ne doit pas substituer « le premier PDF trouvé »
+            # au document que l'opérateur avait désigné. Enregistrée ici
+            # comme les autres : une migration oubliée fait échouer
+            # sauvegarde/restauration (VERSION_SCHEMA_METIER absente).
+            ("022_selections_durables", self._migration_022_selections_durables),
+            # 023 — clé de recherche normalisée (casse + diacritiques +
+            # ligatures) pour trigrammes et suggestions. Même motif
+            # d'enregistrement : une migration oubliée ici ferait échouer
+            # sauvegarde/restauration (VERSION_SCHEMA_METIER absente).
+            ("023_recherche_normalisee", self._migration_023_recherche_normalisee),
+            # Lot 0a/0b — 024 est le marqueur sans DDL des sessions Redis ;
+            # 025 crée le journal d'audit canonique. Les deux sont
+            # enregistrées : VERSION_SCHEMA_METIER vaut désormais 025 et
+            # une migration oubliée ferait échouer sauvegarde/restauration.
+            ("024_sessions_redis", self._migration_024_sessions_redis),
+            ("025_audit_logs", self._migration_025_audit_logs),
+            # Lot 2 — référentiel canonique des modèles de bateaux,
+            # alias/fusions réversibles et synonymes de recherche.
+            # Enregistrée comme les autres : VERSION_SCHEMA_METIER vaut
+            # 026 et une migration oubliée ferait échouer sauvegarde.
+            ("026_boat_models_aliases", self._migration_026_boat_models_aliases),
+            # Lot 1 — quatre rôles canoniques, demandes d'approbation et
+            # notifications applicatives. Enregistrée comme les autres :
+            # VERSION_SCHEMA_METIER vaut 027 et une migration oubliée
+            # ferait échouer sauvegarde/restauration.
+            ("027_roles_approbations", self._migration_027_roles_approbations),
+            # Lot 3a — extraction PDF structurée des voiles. Enregistrée
+            # comme les autres : VERSION_SCHEMA_METIER vaut 028 et une
+            # migration oubliée ferait échouer sauvegarde/restauration.
+            ("028_sail_extractions", self._migration_028_sail_extractions),
+            # Lot 3b — résolution du modèle de bateau des extractions,
+            # corrections approbateur et motifs appris. Enregistrée comme
+            # les autres : VERSION_SCHEMA_METIER vaut 029 et une migration
+            # oubliée ferait échouer sauvegarde/restauration.
+            (
+                "029_extraction_liaison_corrections",
+                self._migration_029_extraction_liaison_corrections,
+            ),
+            # Lot 5 — Fonction B : évaluations de confiance de
+            # réutilisation persistées. Enregistrée comme les autres :
+            # VERSION_SCHEMA_METIER vaut 030 et une migration oubliée
+            # ferait échouer sauvegarde/restauration.
+            ("030_evaluations_confiance", self._migration_030_evaluations_confiance),
+            # Lot 7 — Accessoires : enregistrée comme les autres,
+            # VERSION_SCHEMA_METIER vaut 031.
+            ("031_accessoires", self._migration_031_accessoires),
+            # 032 — identité des octets, distincte du hash de texte.
+            ("032_identite_octets_documents", self._migration_032_identite_octets_documents),
+            # Lot 10 — verdicts humains explicites : enregistrée comme les
+            # autres, VERSION_SCHEMA_METIER vaut désormais 033. Une
+            # migration oubliée ici ferait échouer sauvegarde/restauration.
+            ("033_verdicts_revue", self._migration_033_verdicts_revue),
+        ]
 
-            if jusqu_a is not None:
-                # Reconstitution d'une installation ANTÉRIEURE (montée de
-                # version / retour arrière sur une copie) : on tronque le
-                # registre à la version demandée au lieu d'entretenir une
-                # seconde liste de migrations qui divergerait de la première.
-                versions_connues = [version for version, _ in migrations]
-                if jusqu_a not in versions_connues:
-                    raise ValueError(
-                        f"migration inconnue : {jusqu_a!r} (connues : {', '.join(versions_connues)})"
-                    )
-                migrations = migrations[: versions_connues.index(jusqu_a) + 1]
+        if jusqu_a is not None:
+            # Reconstitution d'une installation ANTÉRIEURE (montée de
+            # version / retour arrière sur une copie) : on tronque le
+            # registre à la version demandée au lieu d'entretenir une
+            # seconde liste de migrations qui divergerait de la première.
+            versions_connues = [version for version, _ in migrations]
+            if jusqu_a not in versions_connues:
+                raise ValueError(f"migration inconnue : {jusqu_a!r} (connues : {', '.join(versions_connues)})")
+            migrations = migrations[: versions_connues.index(jusqu_a) + 1]
 
-            for version, func in migrations:
-                if version not in applied:
-                    logger.info("Applying schema migration %s", version)
-                    try:
-                        func(connection)
-                        self._record_migration(connection, version)
-                        logger.info("Migration %s applied", version)
-                    except Exception as exc:
-                        logger.error("Migration %s failed: %s", version, exc)
-                        raise
-            # Le contrôle porte sur une migration QUI DEVAIT être appliquée :
-            # une reconstitution volontairement arrêtée à une version
-            # antérieure (``jusqu_a``, montée de version ou retour arrière sur
-            # copie) n'a pas encore ce schéma, et l'exiger empêcherait toute
-            # reproduction d'installation ancienne.
-            if any(version == "032_identite_octets_documents" for version, _ in migrations) and not self._schema_identite_octets_valide(connection):
-                raise RuntimeError("Schéma d'identité des octets incomplet : colonne ou déclencheur absent ou désactivé.")
+        for version, func in migrations:
+            if version not in applied:
+                logger.info("Applying schema migration %s", version)
+                try:
+                    func(connection)
+                    self._record_migration(connection, version)
+                    logger.info("Migration %s applied", version)
+                except Exception as exc:
+                    logger.error("Migration %s failed: %s", version, exc)
+                    raise
+        # Le contrôle porte sur une migration QUI DEVAIT être appliquée :
+        # une reconstitution volontairement arrêtée à une version
+        # antérieure (``jusqu_a``, montée de version ou retour arrière sur
+        # copie) n'a pas encore ce schéma, et l'exiger empêcherait toute
+        # reproduction d'installation ancienne.
+        if any(
+            version == "032_identite_octets_documents" for version, _ in migrations
+        ) and not self._schema_identite_octets_valide(connection):
+            raise RuntimeError("Schéma d'identité des octets incomplet : colonne ou déclencheur absent ou désactivé.")
 
     def _schema_identite_octets_valide(self, connection: Any) -> bool:
         """Contrôle minimal de la migration : un marqueur seul n'est pas une preuve."""
         if self.is_postgres:
             with connection.cursor() as cursor:
                 return schema_metier.schema_identite_octets_valide_pg(cursor)
-        colonnes = {ligne['name'] for ligne in connection.execute('PRAGMA table_info(documents)').fetchall()}
+        colonnes = {ligne["name"] for ligne in connection.execute("PRAGMA table_info(documents)").fetchall()}
         declencheur = connection.execute(
             "SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'documents' AND name = ?",
-            ('documents_invalider_source_sha256',),
+            ("documents_invalider_source_sha256",),
         ).fetchone()
-        return 'source_sha256' in colonnes and declencheur is not None
+        return "source_sha256" in colonnes and declencheur is not None
 
     def _ensure_documents_columns_postgres(self, cursor: Any) -> None:
         """Legacy helper kept for backward compat, now delegates to migration."""
@@ -1515,23 +1561,17 @@ class SearchIndex:
         cursor.execute(
             "ALTER TABLE documents ADD COLUMN IF NOT EXISTS search_vector TSVECTOR NOT NULL DEFAULT ''::tsvector"
         )
-        cursor.execute(
-            "ALTER TABLE documents ADD COLUMN IF NOT EXISTS extractor_version INTEGER NOT NULL DEFAULT 0"
-        )
+        cursor.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS extractor_version INTEGER NOT NULL DEFAULT 0")
         cursor.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS content_hash TEXT NOT NULL DEFAULT ''")
         cursor.execute(
             "ALTER TABLE documents ADD COLUMN IF NOT EXISTS extraction_status TEXT NOT NULL DEFAULT 'extracted'"
         )
         cursor.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS extraction_detail TEXT NOT NULL DEFAULT ''")
-        cursor.execute(
-            "ALTER TABLE documents ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'storage_direct'"
-        )
+        cursor.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'storage_direct'")
         cursor.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS object_key TEXT")
         cursor.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS object_bucket TEXT")
         cursor.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS uploaded_at DOUBLE PRECISION")
-        cursor.execute(
-            "ALTER TABLE documents ADD COLUMN IF NOT EXISTS upload_status TEXT NOT NULL DEFAULT 'pending'"
-        )
+        cursor.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS upload_status TEXT NOT NULL DEFAULT 'pending'")
 
     # ------------------------------------------------------------------
     # Rebuild sûr (défaut E-40) : jamais de DROP qui emporte des liens
@@ -1591,9 +1631,9 @@ class SearchIndex:
         )
         colonnes = {ligne[0] for ligne in cursor.fetchall()}
         objets = False
-        protections = [nom for nom in ('object_key', 'source_sha256') if nom in colonnes]
+        protections = [nom for nom in ("object_key", "source_sha256") if nom in colonnes]
         if protections:
-            clause = ' OR '.join(f'{nom} IS NOT NULL' for nom in protections)
+            clause = " OR ".join(f"{nom} IS NOT NULL" for nom in protections)
             cursor.execute(f"SELECT EXISTS (SELECT 1 FROM documents WHERE {clause})")
             ligne_objets = cursor.fetchone()
             objets = bool(ligne_objets and ligne_objets[0])
@@ -1634,9 +1674,7 @@ class SearchIndex:
         for table in tables:
             if table in {"documents", "documents_fts"}:
                 continue
-            for cle in connection.execute(
-                f"PRAGMA foreign_key_list({self._ident_sqlite(str(table))})"
-            ).fetchall():
+            for cle in connection.execute(f"PRAGMA foreign_key_list({self._ident_sqlite(str(table))})").fetchall():
                 # colonnes : id, seq, table, from, to, on_update, on_delete, match
                 if str(cle[2]) == "documents":
                     references.append((str(table), str(cle[3])))
@@ -1672,21 +1710,22 @@ class SearchIndex:
         if not existe:
             return "recreation"
         colonnes = {str(ligne[1]) for ligne in connection.execute("PRAGMA table_info(documents)")}
-        protections = [nom for nom in ('object_key', 'source_sha256') if nom in colonnes]
+        protections = [nom for nom in ("object_key", "source_sha256") if nom in colonnes]
         if protections:
-            clause = ' OR '.join(f'{nom} IS NOT NULL' for nom in protections)
+            clause = " OR ".join(f"{nom} IS NOT NULL" for nom in protections)
             objets = connection.execute(f"SELECT EXISTS (SELECT 1 FROM documents WHERE {clause})").fetchone()
             if objets and int(objets[0]):
                 logger.warning("Rebuild EN PLACE : des copies objet ou captures sont associées au catalogue.")
                 return "en_place"
         references = self._references_sqlite(connection)
         if not references:
-            self._executer_script_sqlite(connection,
+            self._executer_script_sqlite(
+                connection,
                 """
                 DROP TABLE IF EXISTS documents_fts;
                 DROP TABLE IF EXISTS documents;
                 DROP TABLE IF EXISTS schema_migrations;
-                """
+                """,
             )
             return "recreation"
         for table, colonne in references:
@@ -1705,12 +1744,13 @@ class SearchIndex:
                 return "en_place"
         # Des clés étrangères existent mais AUCUNE ligne ne référence un
         # document : l'ancien comportement reste sans danger.
-        self._executer_script_sqlite(connection,
+        self._executer_script_sqlite(
+            connection,
             """
             DROP TABLE IF EXISTS documents_fts;
             DROP TABLE IF EXISTS documents;
             DROP TABLE IF EXISTS schema_migrations;
-            """
+            """,
         )
         return "recreation"
 
@@ -1729,6 +1769,7 @@ class SearchIndex:
         appelante, stabilise les deux tables pendant le contrôle. Une collision
         avec un écrivain échoue avant toute modification.
         """
+
         def ident(nom: str) -> str:
             return '"' + str(nom).replace('"', '""') + '"'
 
@@ -1743,8 +1784,10 @@ class SearchIndex:
                 "FROM information_schema.columns WHERE table_schema = 'public' AND table_name = %s",
                 (table,),
             )
-            return {str(nom): (str(type_sql), str(udt_schema), str(udt))
-                    for nom, type_sql, udt_schema, udt in cursor.fetchall()}
+            return {
+                str(nom): (str(type_sql), str(udt_schema), str(udt))
+                for nom, type_sql, udt_schema, udt in cursor.fetchall()
+            }
 
         colonnes = schema("documents")
         colonnes_copie = schema(backup_table)
@@ -1766,6 +1809,7 @@ class SearchIndex:
         """Supprime les documents absents du disque, SAUF ceux qu'une fiche
         référence (E-40) : un lien de pièce jointe ne doit jamais devenir
         orphelin parce qu'un fichier a bougé."""
+
         def ident(nom: str) -> str:
             return '"' + str(nom).replace('"', '""') + '"'
 
@@ -1934,7 +1978,10 @@ class SearchIndex:
             except FileExistsError as erreur:
                 raise RuntimeError("Un instantané SQLite précédent est à récupérer avant un nouveau scan.") from erreur
             os.close(descripteur)
-            with closing(sqlite3.connect(self.database_path)) as source, closing(sqlite3.connect(backup_path)) as target:
+            with (
+                closing(sqlite3.connect(self.database_path)) as source,
+                closing(sqlite3.connect(backup_path)) as target,
+            ):
                 source.backup(target)
 
         conserver = False
@@ -1946,7 +1993,9 @@ class SearchIndex:
             erreur_scan = erreur
             conserver = bool(getattr(erreur, "_seamtech_rollback_failed", False))
             if conserver and hasattr(erreur, "add_note"):
-                erreur.add_note("Retour arrière incertain : instantané conservé pour investigation, sans rejeu automatique.")
+                erreur.add_note(
+                    "Retour arrière incertain : instantané conservé pour investigation, sans rejeu automatique."
+                )
             raise
         finally:
             if cree and not conserver:
@@ -2075,7 +2124,8 @@ class SearchIndex:
             "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'documents_fts'"
         ).fetchone()
         if schema and "content" not in schema[0]:
-            self._executer_script_sqlite(connection,
+            self._executer_script_sqlite(
+                connection,
                 """
                 DROP TABLE documents_fts;
                 CREATE VIRTUAL TABLE documents_fts USING fts5(
@@ -2086,7 +2136,7 @@ class SearchIndex:
                 );
                 INSERT INTO documents_fts(rowid, name, path, extension, content)
                 SELECT id, name, path, extension, '' FROM documents;
-                """
+                """,
             )
 
     def etat_captures_catalogue(self, cles: list[str]) -> dict[str, tuple[str | None, str | None, str | None]]:
@@ -2095,7 +2145,7 @@ class SearchIndex:
         uniques = list(dict.fromkeys(cles))
         with self.connect() as connection:
             for debut in range(0, len(uniques), 500):
-                lot = uniques[debut:debut + 500]
+                lot = uniques[debut : debut + 500]
                 if self.is_postgres:
                     with connection.cursor() as curseur:
                         curseur.execute(
@@ -2104,7 +2154,7 @@ class SearchIndex:
                         )
                         lignes = curseur.fetchall()
                 else:
-                    marques = ','.join('?' for _ in lot)
+                    marques = ",".join("?" for _ in lot)
                     lignes = connection.execute(
                         f"SELECT path_key, source_sha256, object_key, object_bucket FROM documents WHERE path_key IN ({marques})",
                         lot,
@@ -2114,7 +2164,8 @@ class SearchIndex:
         return resultat
 
     def lier_objets_capture(
-        self, correspondances: list[tuple[str, str, str, str, float]],
+        self,
+        correspondances: list[tuple[str, str, str, str, float]],
     ) -> set[str]:
         """Lie des objets prouvés aux seuls documents de même identité d'octets.
 
@@ -2141,7 +2192,7 @@ class SearchIndex:
                     # Un ordre de verrous commun évite que deux imports se
                     # croisent dans un ordre arbitraire entre les lots SQL.
                     for debut in range(0, len(correspondances), 500):
-                        lot = correspondances[debut:debut + 500]
+                        lot = correspondances[debut : debut + 500]
                         cursor.execute(
                             'SELECT path_key FROM documents WHERE path_key = ANY(%s) ORDER BY path_key COLLATE "C" FOR UPDATE',
                             ([c[0] for c in lot],),
@@ -2180,7 +2231,11 @@ class SearchIndex:
         return self.upsert_documents([document]) > 0
 
     def upsert_documents(
-        self, documents: list[Document], *, strict: bool = False, proteges: set[str] | None = None,
+        self,
+        documents: list[Document],
+        *,
+        strict: bool = False,
+        proteges: set[str] | None = None,
     ) -> int:
         """Retourne le nombre modifié ; ``proteges`` recueille les clés refusées."""
         if not documents:
@@ -2190,7 +2245,11 @@ class SearchIndex:
         return self._upsert_documents_sqlite(documents, strict=strict, proteges=proteges)
 
     def _upsert_documents_sqlite(
-        self, documents: list[Document], *, strict: bool = False, proteges: set[str] | None = None,
+        self,
+        documents: list[Document],
+        *,
+        strict: bool = False,
+        proteges: set[str] | None = None,
     ) -> int:
         changed = 0
         with self.connect() as connection:
@@ -2205,16 +2264,22 @@ class SearchIndex:
                     "FROM documents WHERE path_key = ?",
                     (document.path_key,),
                 ).fetchone()
-                protege = bool(existing and (
-                    existing["object_key"] is not None
-                    or (existing["source_sha256"] is not None
-                        and existing["source_sha256"] != document.source_sha256)
-                ))
+                protege = bool(
+                    existing
+                    and (
+                        existing["object_key"] is not None
+                        or (
+                            existing["source_sha256"] is not None
+                            and existing["source_sha256"] != document.source_sha256
+                        )
+                    )
+                )
                 if existing and not protege:
                     for table, colonne in references:
                         ligne = connection.execute(
                             f"SELECT EXISTS (SELECT 1 FROM {self._ident_sqlite(table)} r "
-                            f"WHERE r.{self._ident_sqlite(colonne)} = ?)", (existing["id"],)
+                            f"WHERE r.{self._ident_sqlite(colonne)} = ?)",
+                            (existing["id"],),
                         ).fetchone()
                         if ligne and int(ligne[0]):
                             protege = True
@@ -2223,7 +2288,9 @@ class SearchIndex:
                     if proteges is not None:
                         proteges.add(document.path_key)
                     if strict:
-                        raise RuntimeError("Indexation refusée : un document avec objet, capture ou référence exige une voie protégée.")
+                        raise RuntimeError(
+                            "Indexation refusée : un document avec objet, capture ou référence exige une voie protégée."
+                        )
                     logger.warning("Document avec objet, capture ou référence conservé sans réindexation.")
                     continue
                 if (
@@ -2253,8 +2320,9 @@ class SearchIndex:
                     # compris celui d'un ancien binaire ignorant la colonne.
                     # Seule la capture courante autorise à la rétablir.
                     if document.source_sha256 is not None:
-                        connection.execute("UPDATE documents SET source_sha256 = ? WHERE id = ?",
-                                           (document.source_sha256, row_id))
+                        connection.execute(
+                            "UPDATE documents SET source_sha256 = ? WHERE id = ?", (document.source_sha256, row_id)
+                        )
                     connection.execute("DELETE FROM documents_fts WHERE rowid = ?", (row_id,))
                 else:
                     cursor = connection.execute(
@@ -2287,7 +2355,11 @@ class SearchIndex:
         return changed
 
     def _upsert_documents_postgres(
-        self, documents: list[Document], *, strict: bool = False, proteges: set[str] | None = None,
+        self,
+        documents: list[Document],
+        *,
+        strict: bool = False,
+        proteges: set[str] | None = None,
     ) -> int:
         values = [
             (
@@ -2328,7 +2400,8 @@ class SearchIndex:
                 )
                 ligne_schema = cursor.fetchone()
                 metier_present = bool(ligne_schema and ligne_schema[0])
-                garde_metier = """
+                garde_metier = (
+                    """
                     WHERE documents.role IS NULL AND documents.id_fiche IS NULL
                         AND documents.object_key IS NULL
                         AND (documents.source_sha256 IS NULL OR documents.source_sha256 = EXCLUDED.source_sha256)
@@ -2338,9 +2411,12 @@ class SearchIndex:
                         AND NOT EXISTS (SELECT 1 FROM accessory_extractions a WHERE a.id_document = documents.id)
                         AND NOT EXISTS (SELECT 1 FROM lot_dossier l WHERE l.statut = 'traite'
                                         AND split_part(l.cle_idempotence, '|', 1) = documents.path)
-                """ if metier_present else (
-                    "WHERE documents.object_key IS NULL "
-                    "AND (documents.source_sha256 IS NULL OR documents.source_sha256 = EXCLUDED.source_sha256)"
+                """
+                    if metier_present
+                    else (
+                        "WHERE documents.object_key IS NULL "
+                        "AND (documents.source_sha256 IS NULL OR documents.source_sha256 = EXCLUDED.source_sha256)"
+                    )
                 )
 
                 modifiees = psycopg2.extras.execute_values(
@@ -2409,8 +2485,11 @@ class SearchIndex:
                 # uniquement les SHA apportés par une capture de cet appel,
                 # sur les lignes effectivement modifiées et encore verrouillées.
                 cles_modifiees = {ligne[0] for ligne in modifiees}
-                captures = [(d.path_key, d.source_sha256) for d in documents
-                            if d.source_sha256 is not None and d.path_key in cles_modifiees]
+                captures = [
+                    (d.path_key, d.source_sha256)
+                    for d in documents
+                    if d.source_sha256 is not None and d.path_key in cles_modifiees
+                ]
                 if captures:
                     psycopg2.extras.execute_values(
                         cursor,
@@ -2430,8 +2509,8 @@ class SearchIndex:
                             "Indexation refusée : un document de fiche ou objet nécessite une voie de mise à jour protégée."
                         )
                     logger.warning(
-                        "%d document(s) de fiche conservé(s) sans réindexation : "
-                        "empreintes et objets protégés.", len(values) - len(modifiees)
+                        "%d document(s) de fiche conservé(s) sans réindexation : empreintes et objets protégés.",
+                        len(values) - len(modifiees),
                     )
                 return len(modifiees)
 
@@ -2474,7 +2553,8 @@ class SearchIndex:
                 with connection.cursor() as cursor:
                     cursor.execute("SELECT path_key FROM documents")
                     missing = [
-                        row[0] for row in cursor.fetchall()
+                        row[0]
+                        for row in cursor.fetchall()
                         if row[0] not in seen_path_keys and not self._est_protege(row[0], proteges)
                     ]
                     if not missing:
@@ -2493,9 +2573,11 @@ class SearchIndex:
                     return len(supprimes)
         with self.connect() as connection:
             rows = connection.execute("SELECT id, path_key, object_key, source_sha256 FROM documents").fetchall()
-            missing = [(row["id"], row["path_key"], row["object_key"], row["source_sha256"])
-                       for row in rows if row["path_key"] not in seen_path_keys
-                       and not self._est_protege(row["path_key"], proteges)]
+            missing = [
+                (row["id"], row["path_key"], row["object_key"], row["source_sha256"])
+                for row in rows
+                if row["path_key"] not in seen_path_keys and not self._est_protege(row["path_key"], proteges)
+            ]
             references = self._references_sqlite(connection)
             supprimes = 0
             conserves = 0
@@ -2599,12 +2681,11 @@ class SearchIndex:
         # Build prefix-matching OR query for Postgres to match SQLite semantics (4.1)
         # e.g. "voile bleue" -> "voile:* | bleue:*" with rank boost for all terms
         terms = [
-            t
-            for t in re.findall(r"[\w]+", requete_pliem, flags=re.UNICODE)
-            if t.upper() not in {"AND", "OR", "NOT"}
+            t for t in re.findall(r"[\w]+", requete_pliem, flags=re.UNICODE) if t.upper() not in {"AND", "OR", "NOT"}
         ]
         if not terms:
             return []
+
         # OR with prefix — avoid backslash in f-string expression
         def _clean_term(t: str) -> str:
             return re.sub(r"[^\w]", "", t)
@@ -2751,9 +2832,7 @@ class SearchIndex:
                         indexes = cursor.fetchall()
                         integrity = "ok" if doc_count >= 0 and len(indexes) >= 1 else "degraded"
                         # Check for invalid indexes
-                        cursor.execute(
-                            "SELECT COUNT(*) AS invalid FROM pg_index WHERE NOT indisvalid"
-                        )
+                        cursor.execute("SELECT COUNT(*) AS invalid FROM pg_index WHERE NOT indisvalid")
                         invalid = cursor.fetchone()["invalid"]
                         if invalid > 0:
                             integrity = f"invalid_indexes:{invalid}"
@@ -2770,10 +2849,9 @@ class SearchIndex:
                 with self.connect() as connection:
                     with connection.cursor() as cursor:
                         metier = schema_metier.diagnostic_metier(cursor)
-                    application_a_jour = (
-                        schema_metier.VERSION_SCHEMA_APPLICATION in metier['schema_migrations']
-                        and self._schema_identite_octets_valide(connection)
-                    )
+                    application_a_jour = schema_metier.VERSION_SCHEMA_APPLICATION in metier[
+                        "schema_migrations"
+                    ] and self._schema_identite_octets_valide(connection)
             except Exception as exc:
                 # Conséquence : /health reste répondant, mais signale que le
                 # diagnostic métier est indisponible (base non migrée ?).
@@ -2796,9 +2874,12 @@ class SearchIndex:
 
         with self.connect() as connection:
             integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
-            versions = [row["version"] for row in connection.execute("SELECT version FROM schema_migrations").fetchall()]
-            application_a_jour = (schema_metier.VERSION_SCHEMA_APPLICATION in versions
-                                   and self._schema_identite_octets_valide(connection))
+            versions = [
+                row["version"] for row in connection.execute("SELECT version FROM schema_migrations").fetchall()
+            ]
+            application_a_jour = (
+                schema_metier.VERSION_SCHEMA_APPLICATION in versions and self._schema_identite_octets_valide(connection)
+            )
         return {
             "backend": "sqlite",
             "database_path": str(self.database_path),
@@ -2815,7 +2896,9 @@ class SearchIndex:
 
 def _document_values(
     document: Document,
-) -> tuple[str, str, str, str, int, float, int, int, str, str | None, str, str, str, str | None, str | None, float | None, str]:
+) -> tuple[
+    str, str, str, str, int, float, int, int, str, str | None, str, str, str, str | None, str | None, float | None, str
+]:
     return (
         str(document.path),
         document.name,
