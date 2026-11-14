@@ -752,7 +752,17 @@ def jouer(selecteurs: list[str], rapport_xml: Path) -> dict[str, int]:
         for enfant in cas:
             if enfant.tag in compte:
                 compte[enfant.tag] += 1
-                if enfant.tag in ("failed", "error"):
+                if enfant.tag == "skipped":
+                    # Un saut sans raison est une preuve qu'on ne peut pas
+                    # interpréter : est-ce Tesseract absent, PostgreSQL absent,
+                    # ou un test qu'on a oublié d'activer ? Mesuré en CI, trois
+                    # items sont restés PARTIELS sans qu'on sache pourquoi.
+                    compte.setdefault("_skips", []).append(  # type: ignore[arg-type]
+                        f"{cas.get('classname', '').replace('.', '/')}.py::"
+                        f"{cas.get('name', '?')} — "
+                        f"{(enfant.get('message') or 'sans raison')[:120]}"
+                    )
+                elif enfant.tag in ("failed", "error"):
                     # Sans le NOM du test fautif, « ÉCHEC » est un mot, pas un
                     # diagnostic : depuis l'extérieur du runner on ne peut ni
                     # lire les journaux ni ouvrir l'artefact.
@@ -916,6 +926,8 @@ def _annoncer(bilan: dict[str, object]) -> None:
                 print(f"::error title=recette-{ligne['item']}-detail::{faute}")
         elif ligne["statut"] in (NON_PROUVE, PARTIEL):
             print(f"::warning title=recette-{ligne['item']}::{ligne['statut']} — {ligne['libelle']}")
+            for raison in ligne["resultats"].get("_skips", [])[:2]:  # type: ignore[union-attr]
+                print(f"::warning title=recette-{ligne['item']}-pourquoi::{raison}")
 
 
 def _markdown(bilan: dict[str, object], sections: list[Section]) -> str:

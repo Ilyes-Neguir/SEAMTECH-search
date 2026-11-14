@@ -10,11 +10,12 @@ Chaque test fait donc échouer UNE étape précise et vérifie que le verdict
 devient « NON PROUVÉ » en la NOMMANT. Un script de preuve qui passerait au
 vert sur un monde cassé serait une fausse assurance.
 """
+
 from __future__ import annotations
 
 import hashlib
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 import pytest
@@ -135,12 +136,18 @@ class Monde:
             # Lot 0b : le téléchargement des pièces exige une session humaine.
             if not self.connexion_autorisee:
                 return 0, json.dumps({"detail": "identifiants refusés"}), ""
-            return 0, json.dumps({
-                "id_session": "session-de-test",
-                "jeton_session": "jeton-de-session",
-                "identifiant": UTILISATEUR,
-                "role": "approbateur",
-            }), ""
+            return (
+                0,
+                json.dumps(
+                    {
+                        "id_session": "session-de-test",
+                        "jeton_session": "jeton-de-session",
+                        "identifiant": UTILISATEUR,
+                        "role": "approbateur",
+                    }
+                ),
+                "",
+            )
         if "curl" in jointe and jointe.endswith("/pieces"):
             # Listing : l'API n'expose jamais object_key, seulement un id.
             return 0, json.dumps({"pieces": [{"id": 42, "kind": "pdf"}]}), ""
@@ -191,14 +198,37 @@ def _preuve(monde: Monde, **kwargs: Any) -> PreuveObjetPerdu:
     return PreuveObjetPerdu(**params)
 
 
+def _outil(appel: list[str], nom: str) -> bool:
+    """L'appel invoque-t-il ``nom`` ? Comparaison MOT À MOT dans les arguments.
+
+    Chercher « mc » par SOUS-CHAÎNE dans la ligne de commande est faux : un
+    chemin temporaire tiré au hasard, ``/tmp/tmpp488emcp``, contient à la fois
+    « mc » et « cp ». L'assertion se déclenche alors sur une commande ``curl``
+    qui n'a jamais parlé à MinIO, et le test tombe — une fois tous les quelques
+    centaines d'exécutions, donc en apparence sans raison. Mesuré en CI :
+    « test_un_alias_personnalise_est_utilise_partout » est passé rouge sur ce
+    seul hasard de nommage.
+
+    Comparer au seul premier mot serait trop strict dans l'autre sens : ici les
+    outils sont invoqués à travers Docker
+    (``docker compose exec -T minio mc …``), donc l'exécutable est « docker ».
+    On cherche donc le nom exact PARMI les arguments — un mot, jamais un
+    fragment de mot.
+    """
+    return any(arg == nom or PurePosixPath(arg).name == nom for arg in appel)
+
+
 def _monde_sain() -> Monde:
     """Un déploiement où tout se passe bien — la preuve doit aboutir."""
     return (
         Monde()
         .quand("mc rm", 0)
         .quand("sauvegarder", 0, json.dumps(BILAN_SAUVEGARDE))
-        .quand("verifier", 0, json.dumps({"nb_documents_verifies": 3, "nb_documents_alteres": 0,
-                                         "nb_documents_absents": 0}))
+        .quand(
+            "verifier",
+            0,
+            json.dumps({"nb_documents_verifies": 3, "nb_documents_alteres": 0, "nb_documents_absents": 0}),
+        )
         .quand("restaurer", 0, "ok")
         .quand("find", 0, "/app/data/restauration-preuve-objet/plan.pdf\n")
         .quand("sha256sum", 0, f"{SHA}  /app/data/restauration-preuve-objet/plan.pdf\n")
@@ -267,9 +297,7 @@ def test_un_echec_de_restauration_nomme_sa_cause() -> None:
     objets dont les doublons masqueraient la première erreur.
     """
     monde = _monde_sain().quand("restaurer", 1, "", "SauvegardeError: pg_restore a échoué (rc=1)")
-    monde.erreur_pg_restore = (
-        'pg_restore: error: ERROR: unrecognized configuration parameter "transaction_timeout"'
-    )
+    monde.erreur_pg_restore = 'pg_restore: error: ERROR: unrecognized configuration parameter "transaction_timeout"'
     rapport = _preuve(monde).courir()
 
     assert rapport["verdict"] == "NON PROUVÉ"
@@ -287,7 +315,7 @@ def test_le_diagnostic_n_expose_jamais_les_identifiants() -> None:
     sale = (
         "pg_restore: error: connection to server at "
         '"postgres" (172.18.0.3), port 5432 failed: '
-        "password authentication failed for user \"seamtech\""
+        'password authentication failed for user "seamtech"'
     )
     propre = _expurger(sale, url)
 
@@ -394,9 +422,7 @@ def test_les_prerequis_sont_tous_nommes() -> None:
     depuis qu'elle est lue en base.
     """
     monde = _monde_sain()
-    rapport = _preuve(
-        monde, fiche="", jeton="", base_cible="", base_api="", base_source=""
-    ).courir()
+    rapport = _preuve(monde, fiche="", jeton="", base_cible="", base_api="", base_source="").courir()
 
     assert len(rapport["manques"]) == 5
     assert rapport["etapes"] == [], "sans prérequis, aucune étape ne doit être lancée"
@@ -433,12 +459,17 @@ def test_piece_toujours_servie_apres_suppression() -> None:
         return monde.executeur(commande)
 
     rapport = PreuveObjetPerdu(
-        executeur=executeur, fiche=FICHE, cle_objet=CLE, jeton=JETON,
-        utilisateur_session=UTILISATEUR, mot_de_passe_session=MOT_DE_PASSE,
+        executeur=executeur,
+        fiche=FICHE,
+        cle_objet=CLE,
+        jeton=JETON,
+        utilisateur_session=UTILISATEUR,
+        mot_de_passe_session=MOT_DE_PASSE,
         url_stockage=URL_STOCKAGE,
         utilisateur_stockage=UTILISATEUR_STOCKAGE,
         mot_de_passe_stockage=MOT_DE_PASSE_STOCKAGE,
-        base_cible="postgresql://hote/scratch", base_api="http://127.0.0.1:8000",
+        base_cible="postgresql://hote/scratch",
+        base_api="http://127.0.0.1:8000",
         base_source="postgresql://hote/seamtech_search",
         docker_disponible=True,
     ).courir()
@@ -488,9 +519,7 @@ def test_un_bundle_sans_objet_est_nomme() -> None:
 
     La chaîne s'arrêterait trois jalons plus loin, pour une cause née ici.
     """
-    monde = _monde_sain().quand(
-        "sauvegarder", 0, json.dumps({**BILAN_SAUVEGARDE, "documents_objets": 0})
-    )
+    monde = _monde_sain().quand("sauvegarder", 0, json.dumps({**BILAN_SAUVEGARDE, "documents_objets": 0}))
     rapport = _preuve(monde).courir()
 
     assert rapport["verdict"] == "NON PROUVÉ"
@@ -501,8 +530,7 @@ def test_un_bundle_sans_objet_est_nomme() -> None:
 def test_bundle_sans_document() -> None:
     """Zéro document vérifié n'est pas une preuve : c'est une preuve vide."""
     monde = _monde_sain().quand(
-        "verifier", 0, json.dumps({"nb_documents_verifies": 0, "nb_documents_alteres": 0,
-                                   "nb_documents_absents": 0})
+        "verifier", 0, json.dumps({"nb_documents_verifies": 0, "nb_documents_alteres": 0, "nb_documents_absents": 0})
     )
     rapport = _preuve(monde).courir()
 
@@ -528,18 +556,23 @@ def test_objet_non_resservi_apres_reinjection() -> None:
 
     def executeur(commande: list[str]) -> tuple[int, str, str]:
         jointe = " ".join(commande)
-        reinjecte = any("mc" in " ".join(a) and "cp" in " ".join(a) for a in monde.appels)
-        if "curl" in jointe and "/telecharger" in jointe and reinjecte:
+        reinjecte = any(_outil(a, "mc") and "cp" in a for a in monde.appels)
+        if _outil(commande, "curl") and "/telecharger" in jointe and reinjecte:
             return 0, "404", ""
         return monde.executeur(commande)
 
     rapport = PreuveObjetPerdu(
-        executeur=executeur, fiche=FICHE, cle_objet=CLE, jeton=JETON,
-        utilisateur_session=UTILISATEUR, mot_de_passe_session=MOT_DE_PASSE,
+        executeur=executeur,
+        fiche=FICHE,
+        cle_objet=CLE,
+        jeton=JETON,
+        utilisateur_session=UTILISATEUR,
+        mot_de_passe_session=MOT_DE_PASSE,
         url_stockage=URL_STOCKAGE,
         utilisateur_stockage=UTILISATEUR_STOCKAGE,
         mot_de_passe_stockage=MOT_DE_PASSE_STOCKAGE,
-        base_cible="postgresql://hote/scratch", base_api="http://127.0.0.1:8000",
+        base_cible="postgresql://hote/scratch",
+        base_api="http://127.0.0.1:8000",
         base_source="postgresql://hote/seamtech_search",
         docker_disponible=True,
     ).courir()
@@ -598,10 +631,10 @@ def test_la_cle_objet_est_lue_en_base_et_jamais_par_l_api() -> None:
     requete = [c for c in monde.appels if "SELECT object_key, path FROM documents" in " ".join(c)]
     assert requete, "la clé doit être lue en base"
     # Et elle sert à supprimer LE BON objet : celui de la pièce mesurée.
-    suppression = next(" ".join(c) for c in monde.appels if "mc" in " ".join(c) and "rm" in " ".join(c))
+    suppression = next(" ".join(c) for c in monde.appels if _outil(c, "mc") and "rm" in c)
     assert "pieces/ST-101/plan.pdf" in suppression, suppression
     # Aucun appel à l'API ne doit contenir la clé : elle est expurgée.
-    assert not [c for c in monde.appels if "curl" in " ".join(c) and "pieces/ST-101/plan.pdf" in " ".join(c)]
+    assert not [c for c in monde.appels if _outil(c, "curl") and "pieces/ST-101/plan.pdf" in " ".join(c)]
 
 
 def test_piece_sans_cle_objet_en_base() -> None:
@@ -637,12 +670,8 @@ def test_la_base_cible_est_liberee_et_jamais_precree() -> None:
     rapport = _preuve(monde).courir()
 
     assert rapport["verdict"] == "PROUVÉ", rapport
-    assert not [c for c in monde.appels if "createdb" in " ".join(c)], (
-        "pré-créer la base ferait échouer la restauration"
-    )
-    assert [c for c in monde.appels if "dropdb" in " ".join(c)], (
-        "une base cible déjà présente doit être libérée"
-    )
+    assert not [c for c in monde.appels if _outil(c, "createdb")], "pré-créer la base ferait échouer la restauration"
+    assert [c for c in monde.appels if _outil(c, "dropdb")], "une base cible déjà présente doit être libérée"
 
 
 def test_la_sauvegarde_precede_la_suppression() -> None:
@@ -674,8 +703,7 @@ def test_la_sauvegarde_precede_la_suppression() -> None:
         raise AssertionError(f"appel « {fragment} » introuvable")
 
     assert rang("sauvegarde") < rang("suppression"), (
-        "la sauvegarde doit précéder la suppression : un bundle pris après la "
-        "perte ne peut pas contenir l'objet perdu"
+        "la sauvegarde doit précéder la suppression : un bundle pris après la perte ne peut pas contenir l'objet perdu"
     )
 
 
@@ -713,9 +741,7 @@ def test_le_telechargement_porte_toute_la_session() -> None:
     rapport = _preuve(monde).courir()
 
     assert rapport["verdict"] == "PROUVÉ", rapport
-    telechargement = [
-        " ".join(appel) for appel in monde.appels if "/telecharger" in " ".join(appel)
-    ]
+    telechargement = [" ".join(appel) for appel in monde.appels if "/telecharger" in " ".join(appel)]
     assert telechargement, "la pièce doit être téléchargée par la route de l'application"
     for entete in (
         "X-SEAMTECH-UTILISATEUR",
@@ -726,8 +752,7 @@ def test_le_telechargement_porte_toute_la_session() -> None:
         assert any(entete in appel for appel in telechargement), f"{entete} manquant"
     # Et le mot de passe ne doit figurer dans AUCUN autre appel.
     assert not [
-        " ".join(a) for a in monde.appels
-        if MOT_DE_PASSE in " ".join(a) and "/auth/connexion" not in " ".join(a)
+        " ".join(a) for a in monde.appels if MOT_DE_PASSE in " ".join(a) and "/auth/connexion" not in " ".join(a)
     ]
 
 
@@ -760,11 +785,14 @@ def test_un_alias_personnalise_est_utilise_partout() -> None:
     rapport = _preuve(monde, alias_stockage="atelier").courir()
 
     assert rapport["verdict"] == "PROUVÉ", rapport
-    jointes = [" ".join(a) for a in monde.appels]
-    for commande in jointes:
-        if "mc" in commande and ("rm" in commande or "cp" in commande):
-            assert "atelier/" in commande, commande
-            assert "local/" not in commande, commande
+    for appel in monde.appels:
+        if not _outil(appel, "mc"):
+            continue
+        if not {"rm", "cp"} & set(appel[1:]):
+            continue
+        commande = " ".join(appel)
+        assert "atelier/" in commande, commande
+        assert "local/" not in commande, commande
 
 
 def test_alias_inaccessible_est_nomme() -> None:
@@ -804,7 +832,10 @@ def test_le_verdict_est_publie_avant_le_rapport() -> None:
 
     termine = subprocess.run(
         [sys.executable, "scripts/preuve_objet_perdu.py", "--annonces"],
-        capture_output=True, text=True, timeout=120, check=False,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
     )
     assert "::notice title=preuve-NON-PROUVÉ::" in termine.stdout, termine.stdout
     # Le verdict, puis la liste des jalons : deux annotations, pas plus.
@@ -812,3 +843,25 @@ def test_le_verdict_est_publie_avant_le_rapport() -> None:
     assert "::notice title=preuve-JALONS::" in termine.stdout
     # L'annotation passe AVANT le rapport : si le pas suivant meurt, elle vit.
     assert termine.stdout.index("::notice") < termine.stdout.index("PREUVE —")
+
+
+def test_un_chemin_temporaire_n_est_pas_un_outil() -> None:
+    """Le hasard de nommage qui a fait tomber ce fichier en CI, rejoué.
+
+    En cherchant les outils par sous-chaîne, une commande
+    ``curl -o /tmp/tmpp488emcp`` passait pour un appel à ``mc`` avec l'option
+    ``cp`` : le chemin temporaire contient les deux. L'assertion d'alias se
+    déclenchait alors sur une commande qui n'a jamais parlé à MinIO, et le
+    test tombait une fois toutes les quelques centaines d'exécutions — donc
+    sans qu'on puisse le reproduire à la demande.
+
+    Ce test fixe le hasard : le nom fautif est écrit en dur, et il doit
+    désormais être ignoré, tandis que le vrai appel, lui, doit être reconnu
+    malgré son passage par ``docker compose exec``.
+    """
+    assert not _outil(["curl", "-s", "-o", "/tmp/tmpp488emcp", "-w", "%{http_code}"], "mc")
+    assert not _outil(["curl", "-s", "-o", "/tmp/tmprm9mc", "http://127.0.0.1:8000"], "mc")
+    assert _outil(["docker", "compose", "exec", "-T", "minio", "mc", "rm", "local/x"], "mc")
+    assert _outil(["docker", "compose", "exec", "-T", "postgres", "dropdb", "-U", "s"], "dropdb")
+    # Et l'inverse : un outil cité comme argument d'un autre n'est pas invoqué.
+    assert not _outil(["mc", "alias", "set"], "dropdb")
