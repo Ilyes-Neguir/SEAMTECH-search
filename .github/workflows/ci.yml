@@ -3835,12 +3835,18 @@ jobs:
             echo "::error title=ocr-suite-tail::$(tail -40 /tmp/ocr.log | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 1800)"
             exit "$rc"
           fi
-      - name: Recette fonctionnelle — section D, avec Tesseract réel
+      - name: Recette fonctionnelle — section D, avec un moteur OCR réel
         # L'extraction sur PDF scanné ne se prouve qu'avec un moteur OCR :
-        # sans Tesseract, le test saute et l'item reste PARTIEL sans qu'on
-        # sache ce qui manquait. Ce job est le seul à installer les binaires
-        # (tesseract fra+eng et poppler) — la section D est donc mesurée ici,
-        # pas dans `backend`.
+        # sans lui, le test saute et l'item reste PARTIEL sans qu'on sache ce
+        # qui manquait. Ce job est le seul à installer les binaires
+        # (RapidOCR via requirements.txt, tesseract et poppler en secours) —
+        # la section D est donc mesurée ici, pas dans `backend`.
+        #
+        # NE PAS écrire « avec Tesseract » : le moteur effectivement élu est
+        # RapidOCR (annotation `ocr-moteur :: elu=MoteurRapidOCR`,
+        # `version=rapidocr 3.10.0`). Tesseract n'est qu'un repli. Nommer
+        # Tesseract ici laisserait croire qu'on a prouvé l'extraction avec
+        # un moteur qu'on n'utilise pas.
         run: |
           python -u scripts/recette_fonctionnelle.py --section D --sortie docs/recette --annonces
 

@@ -319,6 +319,11 @@ SECTIONS: list[Section] = [
                     "tests/test_passe_finale_extraction_pdf.py",
                     "tests/test_extraction_fiche_reference.py::TestTracabilite::test_confiances_dans_les_limites",
                 ],
+                # Ce module contient aussi `test_pdf_scanne_avec_ocr`, qui
+                # exige un moteur : hors du job `ocr` il saute, et D1 restait
+                # PARTIEL sans qu'on sache ce qui manquait. On ne retire rien
+                # du périmètre — on dit OÙ la preuve se trouve.
+                preuve_ci=("job « ocr », étape « Recette fonctionnelle — section D, avec un moteur OCR réel »."),
             ),
             Item(
                 "D2",
@@ -327,8 +332,8 @@ SECTIONS: list[Section] = [
                     "tests/test_passe_finale_extraction_pdf.py::test_pdf_scanne_sans_ocr_n_invente_rien",
                     "tests/test_passe_finale_extraction_pdf.py::test_entree_degradee_rend_un_statut_explicite_sans_lever",
                     # L'OCR proprement dit est prouvé par la suite « ocr_suite »,
-                    # qui exige Tesseract : un test OCR sans le binaire est un
-                    # test qui passe à côté. `test_pdf_scanne_avec_ocr` saute
+                    # qui exige un moteur installé : un test OCR sans moteur est
+                    # un test qui passe à côté. `test_pdf_scanne_avec_ocr` saute
                     # hors du job `ocr`, et le laisser seul ici donnait un item
                     # PARTIEL sans qu'on sache ce qui manquait.
                     "tests/test_ocr_comportement.py",
@@ -338,7 +343,9 @@ SECTIONS: list[Section] = [
                 ],
                 preuve_ci=(
                     "job « ocr », étape « Run OCR suite on committed samples » : "
-                    "pytest -m ocr_suite avec Tesseract et Poppler installés."
+                    "pytest -m ocr_suite avec un moteur OCR installé — RapidOCR "
+                    "est élu (annotation `ocr-moteur :: elu=MoteurRapidOCR`), "
+                    "Tesseract sert de repli."
                 ),
             ),
             Item(
