@@ -218,6 +218,25 @@ jobs:
             echo "::error title=sqlite-suite-tail::$(tail -40 /tmp/sqlite.log | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 1800)"
             exit "$rc"
           fi
+      # Lot 18 — le provisionnement devient une ÉTAPE, plus une instruction.
+      #
+      # Ce workflow ne l'invoquait JAMAIS. La suite PostgreSQL passait quand
+      # même, pour deux raisons qui masquent précisément le risque : l'image
+      # pgvector/pgvector:pg16 embarque postgresql-contrib, et le rôle « seamtech »
+      # y est superutilisateur — l'application crée donc les extensions elle-même.
+      # En production le rôle applicatif NE l'est pas : l'application dégrade alors
+      # en silence, le service répond 200, et « regate » cesse de trouver « Régate »
+      # sans qu'aucune alarme ne sonne. C'est la panne qu'on découvre six mois après.
+      #
+      # L'étape est IDÉMPOTENTE (CREATE EXTENSION IF NOT EXISTS) et BLOQUANTE : le
+      # script rend 1 si une extension recommandée manque. Un déploiement doit
+      # s'arrêter sur un prérequis absent, pas démarrer amoindri.
+      - name: Provisionner les extensions PostgreSQL (idempotent, bloquant)
+        env:
+          SEAMTECH_DATABASE_URL: postgresql://seamtech:seamtech_test_password@localhost:5432/seamtech_search_test
+        run: |
+          set -uo pipefail
+          python scripts/provisionner_extensions.py --appliquer
       - name: Run PostgreSQL integration suite (must actually run, not self-skip)
         # Audit issue #5b: these tests `pytest.skip()` when
         # SEAMTECH_TEST_DATABASE_URL is unset, so a typo in the service name, a
@@ -515,6 +534,35 @@ jobs:
             exit 1
           fi
           echo "Garde-fou attribution : ROUGE puis VERT prouvé"
+      - name: Recette fonctionnelle A→K (PostgreSQL et Redis réels)
+        # Les deux tiers de la matrice sont portés par des tests qui exigent
+        # PostgreSQL ou Redis. Hors CI ils sont SAUTÉS, et un test sauté ne
+        # prouve rien du tout : mesuré en local, le harnais rend « 22 partiels,
+        # 20 non prouvés ». Cette étape est le seul endroit où la colonne
+        # « test écrit » de la recette vaut quelque chose pour les sections
+        # A, B, D, E, F, G, I.
+        #
+        # Placée AVANT les critères de latence : la recette lance une
+        # quarantaine de pytest, on ne mesure pas la performance derrière.
+        env:
+          SEAMTECH_TEST_DATABASE_URL: postgresql://seamtech:seamtech_test_password@localhost:5432/seamtech_search_test
+          SEAMTECH_TEST_REDIS_URL: redis://127.0.0.1:6379/1
+        run: |
+          python -u scripts/recette_fonctionnelle.py --sortie docs/recette --annonces
+
+      - name: Publier la matrice de recette A→K
+        # L'hôte des artefacts est inaccessible depuis l'extérieur du runner ;
+        # le bilan passe donc par les annotations. Le Markdown reste publié
+        # pour le commanditaire, qui télécharge depuis une machine à lui.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: matrice-recette-A-K
+          path: |
+            docs/recette/matrice-recette.md
+            docs/recette/matrice-recette.json
+          if-no-files-found: warn
+
       - name: Run latency criteria (perf — sans instrumentation, p50/p95/max publiés)
         # Une seule version de la matrice (audit du 22/09) : la latence ne
         # dépend pas de la version de Python ; exécuter l'étape 3 fois
@@ -840,6 +888,16 @@ jobs:
       SEAMTECH_S3_SECRET_KEY: ci-app-secret-not-for-production
       SEAMTECH_BACKUP_ACCESS_KEY: seamtech-sauvegarde-ci
       SEAMTECH_BACKUP_SECRET_KEY: ci-backup-secret-not-for-production
+      # Racine servie du corpus de la preuve. Elle doit être ACCESSIBLE EN
+      # ÉCRITURE, et c'est toute la raison de ce choix : `sample_data` est
+      # monté en lecture seule, or la preuve doit pouvoir RETIRER le fichier
+      # local — sans quoi l'application retombe dessus quand l'objet
+      # disparaît (routes.py:1819) et la perte passe inaperçue. La racine
+      # doit de plus être DÉCLARÉE : hors des racines, l'application refuse
+      # de servir la moindre pièce (403, `_chemin_lexical_autorise`), objet
+      # présent ou non. C'est la déclaration que fait un exploitant dans son
+      # `.env` (docs/DEPLOYMENT.md), rien de plus.
+      SEAMTECH_ROOT_PATHS: /tmp/corpus-preuve
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -947,6 +1005,15 @@ jobs:
                   sys.exit(1)
               time.sleep(5)
           PY
+      # Lot 18 — le job backend le prouve déjà contre le service `postgres` ; ici
+      # c'est le VRAI conteneur `pgvector/pgvector:pg16` démarré par compose, donc
+      # la forme exacte de la production. Et aucune intervention manuelle.
+      - name: Provisionner les extensions PostgreSQL sur le conteneur réel
+        env:
+          SEAMTECH_DATABASE_URL: postgresql://seamtech:test_password@127.0.0.1:5433/seamtech_search
+        run: |
+          set -uo pipefail
+          python scripts/provisionner_extensions.py --appliquer
       - name: Provisionner les identités restreintes (buckets + versioning + politiques)
         # Étape SÉPARÉE du démarrage applicatif : c'est le provisionnement — et
         # non l'application — qui crée les buckets, active le versioning et crée
@@ -1072,6 +1139,161 @@ jobs:
               temoin.unlink()
           print('écriture conteneur OK dans /app/data et /app/logs')
           "
+
+      - name: Amorcer une fiche RÉELLE (dépôt produit, puis promotion objet)
+        # La preuve exige une pièce servie DEPUIS LE STOCKAGE OBJET, donc une
+        # ligne `documents.object_key` renseignée. `scripts/amorcer_preuve_objet.py`
+        # l'obtient par les PROPRES commandes du produit — init, deposer,
+        # promouvoir — jamais par des lignes SQL fabriquées : semer à la main
+        # prouverait un scénario qui n'existe pas, et la preuve porterait sur
+        # du vent.
+        #
+        # `--annonces` : le script publie ses jalons LUI-MÊME, avant et après
+        # chaque commande, en flux non tamponné (`python -u`). Pourquoi : les
+        # journaux bruts de ce dépôt sont servis par un hôte inaccessible
+        # depuis l'environnement de travail, et une étape qui meurt emporte
+        # tout ce qu'elle n'a pas encore écrit — quatre cycles sont morts en
+        # deux secondes sans laisser une ligne. Des annotations émises au fil
+        # de l'eau survivent à l'effondrement et nomment la dernière commande
+        # tentée.
+        env:
+          POSTGRES_PASSWORD: test_password
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: minioadmin123
+          REDIS_PASSWORD: redis_test_password
+          SEAMTECH_AUTH_TOKEN: test-token-123
+          # Required by docker-compose.yml since the UI sign-in gate (audit
+          # issue #5, Option B): ${VAR:?...} makes `docker compose config` fail
+          # without them, even when only the infra services are started.
+          SEAMTECH_UI_PASSWORD: ci-ui-password
+          SEAMTECH_SESSION_SECRET: ci-session-secret-not-for-production
+          SEAMTECH_S3_BUCKET: seamtech-documents
+          # Compte nominatif de la preuve : identités de TEST, jamais de
+          # production. Lot 0b — le téléchargement des pièces exige une
+          # session humaine, le jeton de service ne suffit plus.
+          SEAMTECH_PREUVE_UTILISATEUR: approbateur-preuve
+          SEAMTECH_PREUVE_MOT_DE_PASSE: motdepasse-preuve-ci
+        run: |
+          python -u scripts/amorcer_preuve_objet.py --annonces \
+            --base-source "postgresql://seamtech:${POSTGRES_PASSWORD}@postgres:5432/seamtech_search" \
+            --compte "$SEAMTECH_PREUVE_UTILISATEUR" \
+            --mot-de-passe "$SEAMTECH_PREUVE_MOT_DE_PASSE" 2>&1 | tee amorcage.log
+          code=${PIPESTATUS[0]}
+          if [ "$code" -ne 0 ]; then
+            exit 1
+          fi
+          CODE=$(grep -m1 '^CODE_FICHE=' amorcage.log | cut -d= -f2-)
+          if [ -z "$CODE" ]; then
+            echo "::notice title=amorcage-sans-code::l'amorçage annonce OK sans code de fiche"
+            exit 1
+          fi
+          echo "CODE_FICHE_PREUVE=$CODE" >> "$GITHUB_ENV"
+
+      - name: Preuve RÉELLE — objet perdu puis restauré
+        # EXÉCUTION RÉELLE, pas une simulation : vrais conteneurs, vrai
+        # stockage objet, vraie base, vraie suppression de l'objet. Le script
+        # rend 0 (PROUVÉ), 1 (NON PROUVÉ, raison nommée) ou 2 (prérequis
+        # manquant, raison nommée) : jamais de succès implicite.
+        #
+        # Le verdict est publié par le SCRIPT lui-même (--annonces), pas par
+        # l'étape bash : les journaux bruts sont servis par un hôte
+        # inaccessible depuis l'environnement de travail, et capturer la
+        # sortie dans une variable perdait la raison quand l'étape mourait.
+        env:
+          POSTGRES_PASSWORD: test_password
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: minioadmin123
+          REDIS_PASSWORD: redis_test_password
+          SEAMTECH_AUTH_TOKEN: test-token-123
+          SEAMTECH_UI_PASSWORD: ci-ui-password
+          SEAMTECH_SESSION_SECRET: ci-session-secret-not-for-production
+          SEAMTECH_S3_BUCKET: seamtech-documents
+          SEAMTECH_PREUVE_UTILISATEUR: approbateur-preuve
+          SEAMTECH_PREUVE_MOT_DE_PASSE: motdepasse-preuve-ci
+        run: |
+          # L'objet supprimé puis réinjecté est IDENTIQUE (mêmes octets) :
+          # l'étape d'intégration qui suit retrouve donc une pile intacte.
+          python -u scripts/preuve_objet_perdu.py \
+            --fiche "$CODE_FICHE_PREUVE" \
+            --jeton "$SEAMTECH_AUTH_TOKEN" \
+            --base-api "http://127.0.0.1:8000" \
+            --base-source "postgresql://seamtech:${POSTGRES_PASSWORD}@postgres:5432/seamtech_search" \
+            --base-cible "postgresql://seamtech:${POSTGRES_PASSWORD}@postgres:5432/preuve_scratch" \
+            --utilisateur "$SEAMTECH_PREUVE_UTILISATEUR" \
+            --mot-de-passe "$SEAMTECH_PREUVE_MOT_DE_PASSE" \
+            --url-stockage "http://127.0.0.1:9000" \
+            --utilisateur-stockage "$MINIO_ROOT_USER" \
+            --mot-de-passe-stockage "$MINIO_ROOT_PASSWORD" \
+            --nom-base seamtech_search \
+            --utilisateur-bd seamtech \
+            --annonces
+
+      - name: Recette de TOUTES les routes, contre la pile réelle
+        # Le balayage local (SQLite) ne peut pas exercer la couche métier :
+        # la moitié des routes y répondent « PostgreSQL uniquement ». Ici la
+        # pile est celle du déploiement — PostgreSQL, Redis, MinIO — donc les
+        # routes sont réellement exécutées, pas refusées faute de dépendance.
+        #
+        # Étape placée AVANT « Run docker compose integration test », parce que
+        # celle-ci termine par « docker compose down -v » : jouée après, la
+        # recette trouvait une pile démontée — 472 sondes, 472 erreurs de
+        # connexion, et un bilan qui n'aurait rien dit.
+        #
+        # Elle vient APRÈS la preuve : la pile y est montée, provisionnée, et
+        # porte la fiche réelle déposée par l'amorçage.
+        #
+        # `--annonces` : le bilan passe en annotations, seul canal lisible
+        # depuis ici (l'hôte des journaux bruts est inaccessible).
+        env:
+          POSTGRES_PASSWORD: test_password
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: minioadmin123
+          REDIS_PASSWORD: redis_test_password
+          SEAMTECH_AUTH_TOKEN: test-token-123
+          SEAMTECH_UI_PASSWORD: ci-ui-password
+          SEAMTECH_SESSION_SECRET: ci-session-secret-not-for-production
+          SEAMTECH_S3_BUCKET: seamtech-documents
+        run: |
+          python -u scripts/recette_routes.py \
+            --base-url "http://127.0.0.1:8000" \
+            --jeton "$SEAMTECH_AUTH_TOKEN" \
+            --sortie docs/recette --annonces
+          # Le bilan est publié par le script ; on ne classera l'étape en échec
+          # que sur un plantage ou une route ouverte, jamais sur un 503 de
+          # dépendance : ce serait un échec qui ne veut rien dire.
+          python - <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          bilan = json.loads(pathlib.Path("docs/recette/observations-routes.json").read_text(encoding="utf-8"))
+          observations = bilan["observations"]
+          plantages = [o for o in observations if o["statut"] == 500]
+          # 599 = la pile n'a pas répondu du tout. Un tel bilan ne prouve rien :
+          # il ne dit pas « aucune route ne plante », il dit « je n'ai rien vu ».
+          # Le laisser passer serait un faux vert, exactement ce qu'on refuse.
+          injoignable = [o for o in observations if o["statut"] == 599]
+          if plantages:
+              for o in plantages[:5]:
+                  print(f"::error title=recette-PLANTAGE::{o['methode']} {o['chemin']} [{o['sonde']}] -> {o['statut']}")
+              sys.exit(1)
+          if injoignable:
+              print(f"::error title=recette-NON-PROBANTE::{len(injoignable)} sonde(s) sans réponse de la pile — bilan sans valeur")
+              sys.exit(1)
+          print(f"recette des routes : {bilan['routes']} routes sondées, 0 plantage, 0 sonde sans réponse")
+          PY
+
+      - name: Publier les observations de la recette
+        # Dix annotations par étape au maximum : les 472 observations ne
+        # tiennent pas dans ce canal. L'artefact est le seul moyen de les lire
+        # toutes — sans lui, un échec montre cinq lignes sur quatre cent
+        # soixante-douze et le reste reste aveugle.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recette-routes-observations
+          path: docs/recette/observations-routes.json
+          if-no-files-found: warn
 
       - name: Run docker compose integration test
         env:
@@ -1377,6 +1599,46 @@ jobs:
               sys.exit(1)
           if avec_violation:
               print(f"::error title=accessibilite-garde-fou::{avec_violation} écran(s) avec violation")
+              sys.exit(1)
+
+          # Le plancher ne suffisait pas : 82 constats peuvent venir de quatorze
+          # écrans rejoués six fois. On exige donc l'inventaire, UN PAR UN — les
+          # écrans Next.js réellement présents dans « frontend/app ». Les deux
+          # écrans à paramètre (/fiches/[code], /dossier/[code]) sont les seuls
+          # que la liste plate omettait : leur audit est conditionnel à une fiche
+          # servie, donc silencieusement absent quand le jeu est vide. C'est
+          # exactement le défaut qu'un décompte global ne peut pas voir.
+          ECRANS_ATTENDUS = [
+              "/", "/approvals", "/comparaison", "/comptes", "/confiance",
+              "/dossier/", "/dossiers", "/extractions", "/fiches/", "/fichiers",
+              "/gabarits", "/login", "/notifications", "/nouveau", "/qualite",
+              "/recherche", "/validation",
+          ]
+
+
+          def couvert(attendu):
+              for constat in donnees.get("constats", []):
+                  for champ in (constat.get("ecran", ""), constat.get("url", "")):
+                      if not champ:
+                          continue
+                      if attendu.endswith("/") and attendu != "/":
+                          if champ.startswith(attendu):
+                              return True
+                      elif (
+                          champ == attendu
+                          or champ.startswith(attendu + "/")
+                          or champ.startswith(attendu + "?")
+                      ):
+                          return True
+              return False
+
+
+          manquants = [e for e in ECRANS_ATTENDUS if not couvert(e)]
+          if manquants:
+              print(
+                  f"::error title=accessibilite-ecrans-non-audites::"
+                  f"{len(manquants)} ecran(s) jamais scannes : {', '.join(manquants)}"
+              )
               sys.exit(1)
           print(f"::notice title=accessibilite::{ecrans} écrans scannés, 0 violation WCAG 2.1 A/AA")
           PY
@@ -3573,6 +3835,15 @@ jobs:
             echo "::error title=ocr-suite-tail::$(tail -40 /tmp/ocr.log | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 1800)"
             exit "$rc"
           fi
+      - name: Recette fonctionnelle — section D, avec Tesseract réel
+        # L'extraction sur PDF scanné ne se prouve qu'avec un moteur OCR :
+        # sans Tesseract, le test saute et l'item reste PARTIEL sans qu'on
+        # sache ce qui manquait. Ce job est le seul à installer les binaires
+        # (tesseract fra+eng et poppler) — la section D est donc mesurée ici,
+        # pas dans `backend`.
+        run: |
+          python -u scripts/recette_fonctionnelle.py --section D --sortie docs/recette --annonces
+
       - name: Garde-fou OCR étage 3 — ROUGE puis VERT
         run: |
           set -uo pipefail

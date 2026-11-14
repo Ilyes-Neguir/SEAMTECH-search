@@ -35,7 +35,11 @@ import json
 import math
 from typing import Any
 
-from seamtech_search.comparaison_voile import DIMENSIONS_COMPAREES, normaliser_type_voile
+from seamtech_search.comparaison_voile import (
+    DIMENSIONS_COMPAREES,
+    comparer_plusieurs,
+    normaliser_type_voile,
+)
 from seamtech_search.extractions_voile import (
     _COLONNES_EXTRACTION_VOILE,
     ExtractionVoile,
@@ -313,6 +317,111 @@ def evaluer_population(
         ),
         "justification": justification,
     }
+
+
+def evaluer_cible(
+    cible: ExtractionVoile,
+    population: list[ExtractionVoile],
+) -> dict[str, Any]:
+    """Évalue une CIBLE contre une population — et répond même avec trois fiches.
+
+    Le module sait déjà noter une candidate contre une population, mais il
+    exige ``CONFIANCE_MIN_ECHANTILLONS`` fiches : en deçà il ne renvoyait qu'un
+    constat d'échec. Or le corpus réel de l'atelier n'a pas un seul groupe de
+    cinq — le plus grand en compte trois. La question n'était donc jamais
+    traitée, alors qu'elle a une réponse.
+
+    La réponse tient en deux volets qu'il ne faut pas confondre :
+
+    * **les écarts mesurés** — une soustraction par rapport à la cible. Dès une
+      seule fiche de référence, sans aucune condition : c'est de l'arithmétique
+      ;
+    * **le score statistique** — une estimation de cohérence, qui reste soumise
+      aux cinq échantillons. Quand il manque des fiches, on écrit COMBIEN il en
+      manque : « il en manque 2 » se vérifie, « données insuffisantes » ne se
+      vérifie pas.
+
+    Une LECTURE en clair accompagne toujours le résultat, parce qu'un verdict
+    sans la phrase qui le porte est un verdict qu'on interprète de travers.
+    """
+    nombre = len(population)
+    confiance = evaluer_population(cible, population)
+    manquant = max(0, CONFIANCE_MIN_ECHANTILLONS - nombre)
+    # La cible mène : tous les écarts sont calculés par rapport à elle. Un
+    # pourcentage sans cible ne veut rien dire.
+    ecarts = comparer_plusieurs([cible, *population]) if population else None
+
+    if nombre == 0:
+        lecture = (
+            "Aucune fiche comparable dans l'archive : aucun écart mesuré, et aucun score "
+            f"statistique (il faut {CONFIANCE_MIN_ECHANTILLONS} fiches)."
+        )
+    elif manquant:
+        lecture = (
+            f"{nombre} fiche(s) comparable(s) : les écarts mesurés sont affichés. Le score "
+            f"statistique demande {CONFIANCE_MIN_ECHANTILLONS} fiches — il en manque {manquant}."
+        )
+    elif confiance["score"] is None:
+        lecture = (
+            f"{nombre} fiches comparables, mais le score n'a pas pu être calculé "
+            f"({confiance['libelle_verdict']}) : les écarts mesurés restent affichés."
+        )
+    else:
+        lecture = (
+            f"{nombre} fiches comparables : score de cohérence {confiance['score']} % "
+            f"({confiance['libelle_verdict']}). Les écarts mesurés restent affichés : un score "
+            "résume, il ne remplace pas les chiffres."
+        )
+
+    return {
+        "cible": {
+            "type_voile": cible.type_voile,
+            "gamme": cible.gamme,
+            "boat_model_id": cible.boat_model_id,
+            "modele_bateau_brut": cible.modele_bateau_brut,
+            **cible.dimensions,
+        },
+        "n_population": nombre,
+        "manquant_pour_score": manquant,
+        "ecarts": ecarts,
+        "confiance": confiance,
+        "lecture": lecture,
+    }
+
+
+def evaluer_cible_population(
+    index: Any,  # noqa: ANN401
+    cible: ExtractionVoile,
+    *,
+    gamme: str | None = None,
+) -> dict[str, Any]:
+    """Évalue une cible contre la population lue en base, filtrée comme l'écran.
+
+    La population est celle des filtres de l'atelier : même modèle canonique,
+    même type de voile, et — si elle est demandée — même gamme. Rien de plus
+    large : une population élargie donnerait un score plus flatteur et plus
+    faux.
+    """
+    _exiger_postgres(index)
+    if cible.boat_model_id is None:
+        raise ConfianceRefusee(
+            "Le modèle de bateau de la cible n'est pas résolu : aucune population de "
+            "référence n'existe. Rattachez la cible à un modèle canonique."
+        )
+    with index.connect() as connexion:
+        with connexion.cursor() as curseur:
+            population = _charger_population(
+                curseur,
+                cible.boat_model_id,
+                cible.type_voile,
+                exclure_id=None,
+            )
+    if gamme:
+        # Même normalisation que pour le type : casse et accents ne font pas
+        # deux gammes différentes.
+        cle = normaliser_type_voile(gamme)
+        population = [fiche for fiche in population if normaliser_type_voile(fiche.gamme) == cle]
+    return evaluer_cible(cible, population)
 
 
 # ---------------------------------------------------------------------------

@@ -224,3 +224,124 @@ def test_compose_file_parses_and_declares_expected_services(compose: dict) -> No
                 continue
             source = text.split(":", 1)[0]
             assert source in declared, f"{name} mounts undeclared volume {source!r}"
+
+
+def _actifs(services: dict) -> dict:
+    """Services démarrés par défaut, c'est-à-dire sans `profiles`."""
+    return {n: s for n, s in services.items() if not s.get("profiles")}
+
+
+def _one_shot(services: dict) -> dict:
+    """Services « one-shot » : ils s'exécutent, rendent un code, s'arrêtent.
+
+    La distinction qui compte : un service PÉRENNE se *surveille*
+    (`restart: unless-stopped` + healthcheck, donc « healthy » dans
+    `docker compose ps`), alors qu'un service ONE-SHOT se *constate* — c'est
+    son code de sortie qui fait foi.
+
+    Exiger un healthcheck d'un service qui sort volontairement n'aurait aucun
+    sens : il s'afficherait « exited », jamais « healthy », et ce serait
+    correct ainsi. Le ranger parmi les pérennes ferait échouer la liste de
+    contrôle pour une raison qui n'est pas une panne.
+    """
+    return {n: s for n, s in _actifs(services).items() if s.get("restart") == "no"}
+
+
+def _perennes(services: dict) -> dict:
+    """Services actifs par défaut qui tournent en continu."""
+    one_shot = _one_shot(services)
+    return {n: s for n, s in _actifs(services).items() if n not in one_shot}
+
+
+def _dependances(spec: dict) -> dict:
+    """`depends_on` normalisé : la forme liste vaut `service_started`."""
+    brut = spec.get("depends_on") or {}
+    if isinstance(brut, list):
+        return {nom: {"condition": "service_started"} for nom in brut}
+    return brut
+
+
+def test_tous_les_services_perennes_sont_surveillables(services: dict) -> None:
+    """Tout service PÉRENNE doit pouvoir être DIT sain.
+
+    Sans healthcheck, ``docker compose ps`` n'affiche jamais « healthy » : il
+    affiche « running ». La liste de contrôle de mise en service demandant
+    des services « healthy », un service sans healthcheck rendrait ce contrôle
+    impossible à honorer — et l'écart passerait pour une panne au lieu d'une
+    sonde manquante.
+
+    Les services one-shot sortent de ce périmètre : ils sortent par dessein,
+    et leur « santé » n'a pas de sens (voir ``_one_shot``). Ils ont leurs
+    propres exigences, juste en dessous.
+    """
+    perennes = _perennes(services)
+    assert perennes, "aucun service pérenne actif par défaut"
+
+    for nom, spec in sorted(perennes.items()):
+        assert spec.get("healthcheck"), (
+            f"{nom} : pas de healthcheck — « docker compose ps » n'affichera jamais « healthy »"
+        )
+        assert spec.get("restart") == "unless-stopped", (
+            f"{nom} : restart={spec.get('restart')!r}, attendu 'unless-stopped'"
+        )
+
+
+def test_un_service_one_shot_est_attendu_et_jamais_surveille(services: dict) -> None:
+    """Un service one-shot s'attend par son CODE DE SORTIE, jamais par sa santé.
+
+    Deux exigences, et elles protègent de deux erreurs opposées :
+
+    * il doit être attendu par AU MOINS un service avec
+      ``service_completed_successfully`` — sinon il s'exécute dans le vide et
+      son échec ne bloque rien. C'est précisément la panne que le Lot 18 veut
+      rendre impossible : un provisionnement qui échoue doit ARRÊTER la mise
+      en service, pas la laisser démarrer amoindrie ;
+    * personne ne doit l'attendre avec ``service_healthy`` — il ne sera jamais
+      « healthy », donc une telle attente bloquerait le démarrage indéfiniment.
+    """
+    one_shot = _one_shot(services)
+    if not one_shot:
+        pytest.skip("aucun service one-shot déclaré dans ce compose")
+
+    for nom in sorted(one_shot):
+        conditions = {
+            (dep.get(nom) or {}).get("condition")
+            for dep in (_dependances(spec) for spec in services.values())
+            if nom in dep
+        }
+        assert "service_completed_successfully" in conditions, (
+            f"{nom} : service one-shot que personne n'attend avec "
+            f"« service_completed_successfully » — il s'exécuterait dans le vide et "
+            f"son échec ne bloquerait rien (conditions trouvées : {sorted(conditions)})"
+        )
+        assert "service_healthy" not in conditions, (
+            f"{nom} : un service one-shot ne sera jamais « healthy » — "
+            f"l'attendre avec « service_healthy » bloquerait le démarrage"
+        )
+
+
+def test_la_liste_de_controle_annonce_le_vrai_nombre_de_services(compose: dict) -> None:
+    """Le compte annoncé à l'exploitant doit suivre le compose.
+
+    Défaut réel trouvé au Lot 13 : la liste annonçait **six** services alors
+    que le compose en déclare **sept** depuis l'ajout de ``sauvegarde`` en
+    ``af31922``. Rien ne le signalait — ni test, ni relecture. L'exploitant
+    serait arrivé à la mise en service avec un chiffre faux et aucun moyen de
+    savoir s'il comptait mal ou si la pile était incomplète.
+
+    Ce garde-fou lit le chiffre DANS le document : corriger le compose sans
+    corriger la liste, ou l'inverse, échoue ici.
+    """
+    attendu = sum(1 for s in compose["services"].values() if not s.get("profiles"))
+    chemin = Path(__file__).resolve().parent.parent / "docs" / "RELEASE_CANDIDATE_CHECKLIST.md"
+    assert chemin.is_file(), f"liste de contrôle introuvable : {chemin}"
+    texte = chemin.read_text(encoding="utf-8")
+
+    import re
+
+    annonces = {int(m) for m in re.findall(r"\*\*(\d+) services?\*\*", texte)}
+    assert annonces, "aucun compte de services trouvé dans la liste de contrôle"
+    assert annonces == {attendu}, (
+        f"la liste annonce {sorted(annonces)} service(s), le compose en déclare {attendu} "
+        f"({sorted(n for n, s in compose['services'].items() if not s.get('profiles'))})"
+    )

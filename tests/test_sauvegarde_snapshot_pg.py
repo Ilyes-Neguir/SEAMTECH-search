@@ -11,6 +11,25 @@ from seamtech_search import sauvegarde
 from seamtech_search.indexer import SearchIndex
 from tests.conftest import _creer_base_jetable, _supprimer_base_jetable
 
+
+def _est_pg_dump(chemin: str) -> bool:
+    """Reconnaît le binaire ``pg_dump`` sur n'importe quel système.
+
+    Sur Windows, ``shutil.which`` rend « pg_dump.EXE » : comparer le nom exact
+    faisait échouer ces tests pour une raison étrangère à ce qu'ils éprouvent —
+    mesuré au run 43121414811, « assert 'pg_dump.EXE' == 'pg_dump' ». Le nom
+    varie en casse et en suffixe ; ``stem`` retire le suffixe, ``lower``
+    normalise la casse. L'exigence reste entière : le binaire doit s'appeler
+    pg_dump, et seulement pg_dump.
+    """
+    nom = Path(chemin).name
+    # Pas ``.stem`` : il retire N'IMPORTE QUELLE extension, et « pg_dump.bak »
+    # serait reconnu comme pg_dump. Seul le suffixe exécutable de Windows est
+    # retiré, et encore, explicitement.
+    if nom.lower().endswith(".exe"):
+        nom = nom[: -len(".exe")]
+    return nom.lower() == "pg_dump"
+
 pytestmark = [pytest.mark.postgres, pytest.mark.sauvegarde]
 
 
@@ -57,7 +76,7 @@ def test_reference_inseree_apres_snapshot_absente_du_bundle(tmp_path: Path, monk
     def dump_et_ecriture(args, **kwargs):
         nonlocal ajoute
         resultat = original(args, **kwargs)
-        if phase == "apres_dump" and Path(args[0]).name == "pg_dump" and resultat.returncode == 0:
+        if phase == "apres_dump" and _est_pg_dump(str(args[0])) and resultat.returncode == 0:
             ajouter("apres.txt")
             ajoute = True
         return resultat
@@ -103,7 +122,7 @@ def test_echec_dump_libere_snapshot_sans_manifeste(tmp_path: Path, monkeypatch):
         return connexion
 
     def echec_dump(args, **kwargs):
-        assert Path(args[0]).name == "pg_dump"
+        assert _est_pg_dump(str(args[0]))
         assert any(arg.startswith("--snapshot=") for arg in args)
         assert connexions[-1].closed == 0
         return SimpleNamespace(returncode=1, stderr="panne synthétique")
@@ -141,7 +160,7 @@ def test_mutation_locale_apres_snapshot_ne_donne_pas_copie_incoherente_complete(
 
     def dump_et_mutation(args, **kwargs):
         resultat = original(args, **kwargs)
-        if Path(args[0]).name == "pg_dump" and resultat.returncode == 0:
+        if _est_pg_dump(str(args[0])) and resultat.returncode == 0:
             fichier.write_bytes(b"apres")  # même taille, contenu distinct
         return resultat
 
@@ -328,7 +347,7 @@ def test_copie_fidele_au_snapshot_malgre_mutation_pendant_le_dump(tmp_path: Path
 
     def dump_et_mutation(args, **kwargs):
         resultat = original(args, **kwargs)
-        if Path(args[0]).name == "pg_dump" and resultat.returncode == 0:
+        if _est_pg_dump(str(args[0])) and resultat.returncode == 0:
             fichier.write_bytes(b"apres")  # même taille, autres octets
         return resultat
 
@@ -358,6 +377,28 @@ def test_sha_snapshot_propage_aux_copies_locale_et_objet_pg(tmp_path: Path, obje
 
     if not os.environ.get("SEAMTECH_TEST_DATABASE_URL"):
         pytest.skip("serveur PG de test dédié absent")
+    # Cause attribuée au Lot 19 (P4), pas « classée artefact ». Ce test copie
+    # des pièces jointes LOCALES ; `copier_fichiers_locaux` les lit par
+    # `_ouvrir_source_bundle`, qui exige dir_fd + O_NOFOLLOW + O_DIRECTORY.
+    # Windows natif n'en a aucun des trois, et ce chemin n'a PAS de repli — à
+    # la différence du dump privé. Le produit refuse donc explicitement.
+    #
+    # Le saut porte sur la CAPACITÉ, jamais sur `sys.platform == "win32"` : il
+    # est donc reproductible et vérifiable ici même, sans Windows, par
+    # `tests/test_plateforme_sans_dir_fd.py`
+    # ::test_copie_des_fichiers_locaux_refusee_sans_dir_fd — qui prouve le
+    # refus, et son contrôle, qui prouve que tout réussit dès que la capacité
+    # est présente.
+    #
+    # ATTENTION : sauter n'est pas couvrir. Sur Windows, la sauvegarde des
+    # pièces jointes locales reste NON VÉRIFIÉE, et indisponible par choix de
+    # sécurité — elle n'y est pas « cassée ».
+    if not sauvegarde._confinement_lecture_disponible():
+        pytest.skip(
+            "lecture confinée par dir_fd absente : la sauvegarde des pièces "
+            "locales refuse explicitement sur cette plateforme (cause : "
+            "tests/test_plateforme_sans_dir_fd.py)"
+        )
     nom, url = _creer_base_jetable()
     index = SearchIndex(tmp_path / "index.db", url)
     index.initialize()
@@ -411,3 +452,23 @@ def test_sha_snapshot_propage_aux_copies_locale_et_objet_pg(tmp_path: Path, obje
     finally:
         index.close()
         _supprimer_base_jetable(nom)
+
+
+def test_est_pg_dump_reconnait_le_binaire_de_chaque_plateforme():
+    """Le comparateur tient sur Windows, où le binaire s'appelle « pg_dump.EXE ».
+
+    Sans lui, quatre épreuves de ce fichier échouaient sur Windows pour une
+    raison étrangère à ce qu'elles éprouvent (run 43121414811 : « assert
+    'pg_dump.EXE' == 'pg_dump' »). Il ne s'agit pas d'assouplir l'exigence :
+    un autre binaire doit toujours être écarté.
+    """
+    from tests.test_sauvegarde_snapshot_pg import _est_pg_dump
+
+    # Pas de chemin Windows absolu dans cette liste : sur POSIX la barre
+    # oblique inverse n'est PAS un séparateur, et le cas serait faux ici tout
+    # en étant juste là-bas. Les variantes qui comptent sont la casse et le
+    # suffixe — c'est exactement ce qui cassait.
+    for nom in ("pg_dump", "pg_dump.EXE", "pg_dump.exe", "/usr/lib/postgresql/16/bin/pg_dump", "bin/pg_dump.EXE"):
+        assert _est_pg_dump(nom), f"{nom} doit être reconnu comme pg_dump"
+    for nom in ("pg_restore", "pg_dumpall", "pg_restore.EXE", "mon_pg_dump", "", "pg_dump.bak"):
+        assert not _est_pg_dump(nom), f"{nom} ne doit PAS être reconnu comme pg_dump"

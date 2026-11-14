@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { AlertTriangle, CheckCircle2, Scale } from "lucide-react"
 import { AccesRefuse } from "@/components/acces-refuse"
+import { ComparaisonGroupe } from "@/components/comparaison-groupe"
 import { authedFetch } from "@/lib/authed-fetch"
 import { useSession } from "@/lib/use-session"
 import { cn } from "@/lib/utils"
@@ -210,6 +211,7 @@ function ComparaisonAppInterne() {
   const [raisonSansCandidat, setRaisonSansCandidat] = useState<string | null>(null)
   const [comparaison, setComparaison] = useState<Comparaison | null>(null)
   const [erreur, setErreur] = useState<string | null>(null)
+  const [mode, setMode] = useState<"deux" | "groupe">("deux")
   const generation = useRef(0)
 
   const chargerListe = useCallback(async () => {
@@ -294,12 +296,43 @@ function ComparaisonAppInterne() {
         </div>
       </header>
 
-      {erreur && (
+      {/* Bascule « deux voiles » / « groupe » : l'atelier compare rarement deux
+          voiles seules, il compare un groupe du même bateau et du même type. */}
+      <div className="mb-3 flex gap-1" role="group" aria-label="Mode de comparaison" data-testid="bascule-mode">
+        <button
+          type="button"
+          onClick={() => setMode("deux")}
+          className={cn(
+            "rounded border border-border px-3 py-1 text-xs",
+            mode === "deux" ? "bg-accent font-semibold text-accent-foreground" : "hover:bg-accent/40",
+          )}
+          data-testid="mode-deux"
+          aria-pressed={mode === "deux"}
+        >
+          Deux voiles
+        </button>
+        <button
+          type="button"
+          onClick={() => setMode("groupe")}
+          className={cn(
+            "rounded border border-border px-3 py-1 text-xs",
+            mode === "groupe" ? "bg-accent font-semibold text-accent-foreground" : "hover:bg-accent/40",
+          )}
+          data-testid="mode-groupe"
+          aria-pressed={mode === "groupe"}
+        >
+          Groupe (attributs à gauche)
+        </button>
+      </div>
+
+      {mode === "deux" && erreur && (
         <div className="mb-3 rounded border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive" role="alert" data-testid="erreur-comparaison">
           {erreur}
         </div>
       )}
 
+      {mode === "deux" && (
+        <>
       <section className="grid gap-4 rounded border border-border p-3 md:grid-cols-2" data-testid="selecteurs">
         <div>
           <input
@@ -432,7 +465,7 @@ function ComparaisonAppInterne() {
                     <span className="text-right">
                       {ligne.a ?? "—"} <span className="text-muted-foreground">/</span> {ligne.b ?? "—"}
                       {ligne.identique !== null && (
-                        <span className={cn("ml-1 font-semibold", ligne.identique ? "text-success" : "texte-attention")}>
+                        <span className={cn("ml-1 font-semibold", ligne.identique ? "text-success" : "text-warning")}>
                           {ligne.identique ? "=" : "≠"}
                         </span>
                       )}
@@ -475,6 +508,10 @@ function ComparaisonAppInterne() {
           </div>
         </section>
       )}
+        </>
+      )}
+
+      {mode === "groupe" && <ComparaisonGroupe extractions={extractions} />}
     </div>
   )
 }

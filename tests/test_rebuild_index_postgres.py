@@ -200,7 +200,12 @@ def test_rebuild_laisse_la_recherche_et_le_telechargement_fonctionnels(
     liens = lien_piece_resolu(index, id_fiche)
     assert len(liens) == 1, liens
     chemin_piece, chemin_document = liens[0]
-    assert chemin_document.endswith(chemin_piece), liens
+    # Comparer les COMPOSANTS, pas la chaîne : sur Windows le chemin stocké
+    # porte des « \ » alors que le chemin logique de la pièce porte des « / ».
+    # Un « endswith » y échouait pour rien — mesuré au run 43121414811, cause
+    # « [('dossier-client/fiche-A.txt', 'C:\...\documents\dossier-client\fiche-A.txt')] ».
+    fin = Path(chemin_document).parts[-len(Path(chemin_piece).parts):]
+    assert fin == Path(chemin_piece).parts, liens
     assert (racine / chemin_piece).exists(), "le fichier à télécharger n'existe plus"
     assert (racine / chemin_piece).read_text(encoding="utf-8").startswith("Fiche A")
 
@@ -392,7 +397,12 @@ def test_cli_scan_postgres_ne_retablit_pas_les_ecritures_concurrentes(base_rebui
         try:
             with autre.cursor() as curseur:
                 curseur.execute("SET LOCAL lock_timeout = '2s'")
-                curseur.execute('UPDATE documents SET size=3 WHERE path_key=%s', (str(chemins[1].resolve()),))
+                # Même clé que celle que le produit a écrite : Document.path_key vaut
+                # os.path.normcase(str(resolve())) — models.py. Passer le chemin brut ne
+                # touchait AUCUNE ligne sur Windows, où normcase met en minuscules et
+                # convertit « / » en « \ » : la concurrence n'avait donc pas lieu, et
+                # le test échouait sur un tout autre motif (run 43121414811).
+                curseur.execute('UPDATE documents SET size=3 WHERE path_key=%s', (Document(chemins[1], chemins[1].name, racine, '.txt', 1, 1, False, 'avant').path_key,))
             autre.commit()
         finally:
             autre.close()
@@ -403,9 +413,17 @@ def test_cli_scan_postgres_ne_retablit_pas_les_ecritures_concurrentes(base_rebui
         cli.run_index(str(config))
     with index.connect() as connexion:
         with connexion.cursor() as curseur:
+            cles = [
+                Document(p, p.name, racine, '.txt', 1, 1, False, 'avant').path_key
+                for p in (chemins[1], chemins[0])
+            ]
             curseur.execute('SELECT path_key,size FROM documents WHERE path_key IN (%s,%s) ORDER BY path_key',
-                            tuple(str(p.resolve()) for p in chemins))
-            assert curseur.fetchall() == [(str(chemins[1].resolve()), 3), (str(chemins[0].resolve()), 1)]
+                            tuple(cles))
+            # Attendu dans le MÊME ordre que la clé de tri « ORDER BY path_key » :
+            # sur Windows les deux clés sont en minuscules, l'ordre alphabétique
+            # n'y est donc pas celui des chemins d'origine.
+            attendu = sorted([(cles[0], 3), (cles[1], 1)], key=lambda couple: couple[0])
+            assert curseur.fetchall() == attendu
     assert index.latest_scan()['status'] == 'failed'
 
 

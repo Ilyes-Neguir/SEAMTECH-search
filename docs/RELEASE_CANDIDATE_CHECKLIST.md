@@ -130,13 +130,21 @@ docker compose up -d --build
 docker compose ps
 ```
 
-- [ ] **4.1** **6 services** : `postgres`, `minio`, `redis`, `web` (API), **`worker`**
-      (exécute les imports — service SÉPARÉ, cf. 4.5/7b) et `frontend`.
-- [ ] **4.2** Tous en `running (healthy)` (les healthchecks font foi ; `web` attend
-      `service_healthy` sur les trois autres).
+- [ ] **4.1** **8 services** : `postgres`, `minio`, `redis`, `web` (API), **`worker`**
+      (exécute les imports — service SÉPARÉ, cf. 4.5/7b), `frontend`,
+      **`sauvegarde`** (ajouté en `af31922` — les anciennes révisions de cette
+      liste annonçaient six services, ce qui n'est plus exact) et
+      **`provisionner-extensions`** (Lot 18 : service ONE-SHOT, il crée
+      `unaccent`/`pg_trgm` puis sort en 0. Il n'est donc pas « healthy », il
+      est « exited » — c'est son code de sortie qui fait foi.)
+- [ ] **4.2** Les **7** services pérennes en `running (healthy)` (les healthchecks font
+      foi ; `web` attend `service_healthy` sur les trois autres). Le huitième,
+      `provisionner-extensions`, est one-shot : il doit être `exited (0)`.
 - [ ] **4.3** Ports publiés **en loopback uniquement** : `docker compose ps --format '{{.Name}} {{.Ports}}'`
       ne montre que des `127.0.0.1:…` (garde-fou : `tests/test_compose_hardening.py`).
-- [ ] **4.4** Redémarrage automatique : `restart: unless-stopped` sur les **6** services.
+- [ ] **4.4** Redémarrage automatique : `restart: unless-stopped` sur les **7** services
+      pérennes. `provisionner-extensions` fait exception, et c'est voulu :
+      `restart: "no"`, un service one-shot ne se relance pas.
 
 | 4.5 | **Service `worker` démarré** (exécute les imports) | `docker compose ps worker` | `running` / `healthy` (le healthcheck lance `--verifier`) | |
 | 4.6 | `web` n'exécute PAS d'import | `docker compose exec -T web printenv SEAMTECH_WEB_WORKER_ENABLED` | `false` | |
@@ -152,16 +160,19 @@ il n'y a pas d'étape manuelle, mais il y a une **vérification obligatoire**.
   docker compose exec -T postgres psql -U seamtech -d seamtech_search \
     -c "SELECT version FROM schema_migrations ORDER BY version;"
   ```
-  Attendu : **21 lignes**, de `001_initial` à `021_revision_fiche`.
+  Attendu : **33 lignes**, de `001_initial` à `033_verdicts_revue`. *Mesuré, et
+  non déduit : rejoué sur une base PostgreSQL neuve ; l'union des registres
+  (`indexer.py` : 32 identifiants dont `032`, `schema_metier.py` : 27 dont
+  `029`) donne le même total.*
 - [ ] **5.2** Version métier alignée :
   ```bash
   docker compose exec -T web python -c "from seamtech_search.schema_metier import VERSION_SCHEMA_METIER, TABLES_METIER; print(VERSION_SCHEMA_METIER, len(TABLES_METIER))"
   ```
-  Attendu : `021_revision_fiche 33` (la 021 n'ajoute que la colonne `revision` à
-  `fiche` — verrou optimiste —, aucune table).
+  Attendu : `033_verdicts_revue 47` (47 tables métier, dont `verdict_revue`
+  ajoutée en 033). *Mesuré en exécutant la commande ci-dessus.*
 - [ ] **5.3** Extensions réellement présentes : `/health` renvoie `vector`, `pg_trgm`, `unaccent`.
 - [ ] **5.4** Rejeu sans effet : redémarrer `web` ne rejoue ni ne duplique aucune migration
-      (garde-fou : `test_migrations_sequentielles_001_a_017_sur_base_vide` (identifiant historique conservé ; assertions vérifient `001..021`)).
+      (garde-fou : `test_migrations_sequentielles_001_a_017_sur_base_vide` (identifiant historique conservé ; assertions vérifient `001..033`)).
 
 > Une migration écrite mais **non enregistrée** est l'incident des Lots K puis M : elle
 > fait échouer la sauvegarde (qui exige `VERSION_SCHEMA_METIER` dans `schema_migrations`).
@@ -325,7 +336,9 @@ docker compose exec web python -m seamtech_search.sauvegarde verifier \
 
 ## 13. Arrêt / redémarrage
 
-- [ ] **13.1** `docker compose stop` puis `docker compose up -d` → **6** services `healthy`.
+- [ ] **13.1** `docker compose stop` puis `docker compose up -d` → **7** services
+      `healthy`, et `provisionner-extensions` en `exited (0)` : il se relance à
+      chaque `up`, sans effet puisqu'il est idempotent.
 - [ ] **13.2** Après redémarrage : `/health` conserve le nombre de documents, les
       `object_key` restent exploitables (garde-fou
       `test_references_objets_survivent_au_redemarrage`), la recherche renvoie les mêmes
@@ -335,6 +348,45 @@ docker compose exec web python -m seamtech_search.sauvegarde verifier \
 - [ ] **13.4** Redémarrage machine complet (coupure de courant simulée) : même contrôle.
 - [ ] **13.5** Volumes nommés (`postgres-data`, `minio-data`, `redis-data`) intacts :
       `docker volume ls`.
+
+#### 13.4 et 13.5 — non exécutables hors déploiement : risque accepté, et par qui
+
+**Ces deux points ne peuvent pas être levés ici, et il ne faut pas faire
+semblant.** Mesuré dans l'environnement de développement :
+
+| Sonde | Résultat |
+|---|---|
+| `docker`, `podman`, `nerdctl`, `containerd` | **tous absents** |
+| `/var/run/docker.sock` | `No such file or directory` |
+| Démon `127.0.0.1` : 2375 / 2376 | `ConnectionRefusedError` |
+
+Il n'y a donc aucun moteur de conteneurs, aucun démon, et *a fortiori* aucune
+machine à redémarrer. Un point 13.4 coché dans cet environnement serait une
+case cochée sans mesure — c'est-à-dire exactement ce que cette démarche
+interdit.
+
+**Ce qui est établi malgré tout, et qui réduit le risque sans l'annuler** :
+
+- Les trois volumes nommés sont bien déclarés et montés là où les données
+  vivent : `postgres-data:/var/lib/postgresql/data`, `minio-data:/data`,
+  `redis-data:/data`. Vérifié en chargeant `docker-compose.yml`.
+- Les **7** services pérennes (et non 6) portent tous un `healthcheck` et un
+  `restart: unless-stopped` : si le contrôle de 13.4 échoue, ce ne sera pas
+  faute de santé déclarée. Le huitième, `provisionner-extensions`, est
+  one-shot : on le constate à son code de sortie, pas à sa santé (garde-fou :
+  `test_un_service_one_shot_est_attendu_et_jamais_surveille`).
+- La **durabilité des données** face à une coupure est prouvée au niveau
+  applicatif, sans conteneur : un travail tué par `SIGKILL` est retrouvé et
+  mis en quarantaine au démarrage (`test_chaos.py`), et les fichiers déjà
+  importés sont retrouvés **octet pour octet**. Ce qui reste non prouvé est le
+  redémarrage de la *pile*, pas la tenue des données.
+
+**Risque accepté par : l'exploitant qui signe cette liste au moment de la mise
+en service.** Ces deux points relèvent de la recette sur site (§« Mise en
+service »), pas du développement. Ils doivent y être levés **avant** la
+première mise en production, et la signature de la liste vaut acceptation du
+risque pour la période antérieure. Personne d'autre ne peut les lever : ils
+portent sur une machine qui n'existe pas encore dans cet environnement.
 
 ## 14. Contrôle des logs
 
@@ -532,7 +584,7 @@ la mise en service qui est recadrée.
 | 22.1 | **MinIO est le fournisseur retenu** pour cette release (R2/S3 restent optionnels) — la question n'est pas rouverte | ce document §1.6, `docs/DEPLOYMENT.md` (en-tête) |
 | 22.2 | Les **identités S3 dédiées** ne sont plus une décision mais du **provisionnement + vérification sur le serveur cible** | §2.4, `scripts/provisionner_stockage.sh`, `docs/DEPLOYMENT.md` |
 | 22.3 | **Six services** : `frontend`, `web` (API), `worker`, `postgres`, `redis`, `minio` | §4.1, §4.4, §13.1, `docs/verite_terrain/MISE_EN_SERVICE.md` |
-| 22.4 | Migrations vérifiées contre la **constante de schéma de la release** (`VERSION_SCHEMA_METIER`, liste finissant à `021_revision_fiche`) | §5.1–5.2 |
+| 22.4 | Migrations vérifiées contre la **constante de schéma de la release** (`VERSION_SCHEMA_METIER`, liste finissant à `033_verdicts_revue`) | §5.1–5.2 |
 | 22.5 | **50 Go / 8 Go / 2 cœurs = provisoires** ; le stockage doit couvrir originaux, copies stockées, traitement, quarantaine, base, sauvegardes et croissance | §1.2–1.3, `docs/ARRIVEE_ARCHIVE.md`, `docs/verite_terrain/DECISION_MATERIEL.md` |
 | 22.6 | **Sécurité AVANT les données réelles et les workers** : secrets, archive en lecture seule, exposition réseau, TLS | §2, §3, §16, `docs/DEPLOYMENT.md` (section TLS/accès) |
 | 22.7 | **Import progressif** : échantillon représentatif + cas difficiles avant l'archive entière | §8.7, `docs/ARRIVEE_ARCHIVE.md` |

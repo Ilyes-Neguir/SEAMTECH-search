@@ -22,6 +22,57 @@ guide) : `docs/CHECKLIST_POSTE_WINDOWS.md` (prérequis matériels),
 
 ---
 
+## Lire ceci avant l'étape 0 — une limite qui vient de Windows, pas de nous
+
+⛔ **L'application ne fonctionne pas sous Python Windows.** Elle fonctionne
+sur ce poste **uniquement par Docker**, parce que Docker fait tourner des
+conteneurs Linux où les primitives nécessaires existent.
+
+Le produit confine ses accès aux fichiers avec trois primitives que Windows ne
+possède pas. Il ne s'agit pas d'un réglage, ni d'une lenteur : **il n'existe
+aucun équivalent Windows**, pas même dégradé.
+
+| Primitive | À quoi elle sert | Sous Windows |
+|---|---|---|
+| `dir_fd` + `O_NOFOLLOW` | parcourir un dossier sans jamais suivre un lien symbolique — c'est ce qui empêche un dépôt de sortir de l'arborescence autorisée | **inexistant** |
+| `/proc/self/fd` | épingler le fichier servi le temps de la réponse, pour que ce qui est téléchargé soit exactement ce qui a été vérifié | **inexistant** |
+| `fcntl.flock` | refuser deux imports concurrents du même dossier | **inexistant** |
+
+**Ce que fait le produit quand la primitive manque : il refuse.** Il n'y a
+volontairement **aucun mode dégradé** : un parcours de dossier « à peu près
+sûr » laisserait croire qu'un dépôt est confiné alors qu'il ne l'est pas. Le
+refus est explicite et nomme la capacité manquante — par exemple :
+
+    Capacité de plateforme absente : scan_ancre_descripteur — scan d'un
+    dossier ancré par descripteur (dir_fd + O_NOFOLLOW) : sans lui, l'import
+    d'un dossier refuse au lieu de traverser des liens (plateforme : win32,
+    os.name=nt).
+
+Si vous voyez ce message, **la cause est que l'application tourne sous Python
+Windows** et non dans Docker. Ce n'est ni un mot de passe, ni un chemin, ni
+une panne : changer de configuration n'y fera rien.
+
+**Vérification en une ligne**, à l'intérieur du conteneur (résultat attendu :
+les quatre capacités à `oui`) :
+
+```powershell
+docker compose run --rm --no-deps web python -c "from seamtech_search.plateforme import resume; print(resume())"
+```
+
+attendu →
+
+    scan_ancre_descripteur=oui ; procfs_fd=oui ; verrou_flock=oui ; processus_posix=oui
+
+(`--no-deps` : on ne veut que la sonde, pas la pile entière. Si un `non`
+apparaît, c'est que la commande n'a pas tourné dans le conteneur Linux —
+revenir au paragraphe précédent.)
+
+**Conséquence pratique** : tout passe par `docker compose`. N'installez pas
+l'application en Python local sur le poste et ne lancez pas
+`python -m seamtech_search...` hors conteneur.
+
+---
+
 ## Étape 0 — Vérifier que le poste est prêt (lecture seule, sans risque)
 
 **Où** : PowerShell, en tant qu'utilisateur normal.
@@ -246,9 +297,105 @@ sauvegarde qui omet `--data` n'est pas complète, et le manifeste le dit.
 **Ce qu'on doit voir** : un manifeste écrit sous `data\backups`, et
 `verifier` qui confirme la concordance (base + données + objets).
 
-Le service `sauvegarde` fait déjà ce travail automatiquement toutes les
-`SEAMTECH_BACKUP_INTERVAL_HEURES` (24 h par défaut) : cette étape sert à
-constater que **ça marche**, pas à remplacer l'automatisme.
+### ⛔ Ce que la sauvegarde AUTOMATIQUE ne couvre PAS — à lire avant tout
+
+Le service `sauvegarde` tourne seul, toutes les
+`SEAMTECH_BACKUP_INTERVAL_HEURES` (24 h par défaut). **Il ne fait pas la même
+chose que la commande ci-dessus.** Son périmètre réel est :
+
+    sauvegarde-auto: base corpus
+
+C'est-à-dire :
+
+| Ce qui est couvert automatiquement | Ce qui ne l'est PAS |
+|---|---|
+| la **base** PostgreSQL (dump + manifeste) | les **pièces jointes** des clients (objets du stockage MinIO/S3) |
+| le **corpus mesuré** (`donnees/etape0`) | les **données déposées** depuis le navigateur (`./data`) |
+
+**Les pièces jointes — c'est-à-dire les documents des clients — ne sont donc
+pas dans la sauvegarde automatique.** Elles vivent dans le volume Docker de
+MinIO, sur le disque de CE poste. Si ce disque meurt, les documents
+disparaissent ; la base, elle, serait restaurée avec des références vers des
+objets absents.
+
+Cette ligne n'est pas une appréciation : elle est relue et vérifiée par un
+test (`tests/test_sauvegarde_etat_reel.py`), qui échoue si ce guide promet
+une couverture que le planificateur ne fait pas.
+
+### ✅ Décision (13/11/2026) — une sauvegarde COMPLÈTE, hebdomadaire, à part
+
+La question du point d'arrêt 7 bis a été tranchée : l'automatisme quotidien
+**n'est pas élargi**. Les pièces jointes sont couvertes par une sauvegarde
+complète, **distincte**, lancée une fois par semaine.
+
+    sauvegarde-complete: base corpus references donnees
+
+Ce que ça donne, mis côte à côte :
+
+| Rythme | Qui lance | Ce qui part |
+|---|---|---|
+| toutes les 24 h | le service `sauvegarde`, tout seul | base + corpus |
+| **une fois par semaine** | **vous** (ou une tâche planifiée) | **base + corpus + données + pièces jointes** |
+
+Pourquoi deux dispositifs plutôt qu'un seul : copier les documents chaque nuit
+fait transiter tout le volume de l'archive. Le faire chaque semaine borne ce
+coût, et ramène la perte maximale de pièces jointes à **sept jours**. Ces deux
+lignes sont, comme la précédente, relues et vérifiées par un test.
+
+#### La commande, exactement
+
+```powershell
+docker compose run --rm sauvegarde python -m seamtech_search.sauvegarde_complete sauvegarder
+```
+
+Rien d'autre à taper. **Le périmètre est fixé dans le code** : il n'y a aucun
+drapeau à retenir, donc aucun drapeau à oublier. Si une pièce jointe n'a pas
+pu être copiée, la commande **échoue** et nomme ce qui manque — elle ne rend
+jamais un résultat qu'on croirait complet.
+
+Ensuite, la preuve que les documents sont bien dedans :
+
+```powershell
+# retrouver le dernier manifeste
+Get-ChildItem data\backups -Filter *.manifest.json | Sort-Object Name | Select-Object -Last 1 -ExpandProperty Name
+
+# vérifier que chaque pièce jointe est relisible et conforme
+docker compose run --rm sauvegarde python -m seamtech_search.sauvegarde_complete verifier ^
+  --manifeste /app/data/backups/<le-nom-releve-au-dessus>
+```
+
+La sortie donne le nombre de documents relus et reconnus par empreinte.
+`"ok": false` signifie que la complète **n'est pas une protection** — la
+refaire, et me transmettre la sortie.
+
+#### La planifier une fois par semaine sur le poste Windows
+
+Une sauvegarde hebdomadaire qu'on doit se rappeler est une sauvegarde
+hebdomadaire qu'on oublie. Sur Windows, le Planificateur de tâches la lance
+seul ; **adapter le chemin `C:\SEAMTECH` à l'emplacement réel de la pile** :
+
+```powershell
+schtasks /Create ^
+  /TN "SEAMTECH sauvegarde complete hebdomadaire" ^
+  /TR "docker compose -f C:\SEAMTECH\docker-compose.yml run --rm sauvegarde python -m seamtech_search.sauvegarde_complete sauvegarder" ^
+  /SC WEEKLY /D SUN /ST 02:00
+```
+
+Vérifier qu'elle est bien enregistrée : `schtasks /Query /TN "SEAMTECH
+sauvegarde complete hebdomadaire"`.
+
+**Si le poste n'autorise pas de tâche planifiée** : lancer la commande à la
+main chaque semaine, et noter la date sur un papier près du poste. Une tâche
+planifiée qui n'existe pas est préférable à une tâche planifiée qu'on croit
+exister.
+
+#### Ce que la complète exige pour être une vraie protection
+
+* **un stockage hors-site configuré** (`SEAMTECH_BACKUP_*`) — sinon la
+  complète reste sur le disque de ce poste, et un disque mort emporte tout.
+  Le journal le dit par une ligne `ERROR` explicite ;
+* **une vérification après coup** (`verifier`) — au moins à chaque première
+  exécution, puis régulièrement.
 
 ⛔ **Point d'arrêt 7** — transmettre la sortie de `verifier`. **Ne pas tenter
 la restauration complète maintenant** : elle détruit la base courante avant

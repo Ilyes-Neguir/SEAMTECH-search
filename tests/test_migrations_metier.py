@@ -96,9 +96,12 @@ def test_migrations_sur_base_vide(base_metier: dict[str, Any]) -> None:
     # (028 : sail_extractions — Lot 3a) = 41, puis +2 (029 :
     # extraction_corrections, extraction_motifs_appris — Lot 3b) = 43,
     # puis +1 (030 : evaluations_confiance — Lot 5) = 44, puis +2 (031 :
-    # accessory_extractions, accessory_corrections — Lot 7) = 46.
+    # accessory_extractions, accessory_corrections — Lot 7) = 46, puis +1
+    # (033 : verdict_revue — verdicts humains de revue, Lot 10) = 47.
     # La 024 est un marqueur sans DDL pour les sessions Redis du Lot 0a.
-    assert len(schema_metier.TABLES_METIER) == 46
+    # La 032 est une migration de la couche documents, pas du schéma métier :
+    # elle n'ajoute rien ici.
+    assert len(schema_metier.TABLES_METIER) == 47
     print(f"\n[mesure] migrations 006-009 sur base vide : {base_metier['duree_migrations_s']:.2f} s")
 
 
@@ -123,8 +126,15 @@ def test_idempotence_rejeu_sans_erreur(base_metier: dict[str, Any]) -> None:
             nb_tables = int(cursor.fetchone()[0])
     assert apres == avant
     # pg_tables ne compte pas les vues (v_fiche_recherche, v_qualite).
-    # 46 métier (44 après 030 + extractions/corrections accessoires en 031) + 6 héritées = 52
-    assert nb_tables == len(schema_metier.TABLES_METIER) + len(TABLES_HERITEES) == 52
+    # 47 métier (44 après 030 + extractions/corrections accessoires en 031
+    # + verdict_revue en 033) + 6 héritées = 53.
+    #
+    # Ce compte est un GARDE-FOU, pas une formalité : quand la migration 033 a
+    # été ajoutée sans inscrire sa table dans ``TABLES_METIER``, c'est CETTE
+    # ligne qui a rompu (backend 3.13 rouge). Elle dit « toute table créée par
+    # une migration doit être déclarée dans le registre » — ce qui permet de
+    # vérifier ensuite qu'aucune ne manque après migration.
+    assert nb_tables == len(schema_metier.TABLES_METIER) + len(TABLES_HERITEES) == 53
 
 
 @pytest.mark.postgres

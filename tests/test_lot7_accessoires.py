@@ -155,9 +155,9 @@ def test_construire_extraction_accessoire_unites_jamais_devinees() -> None:
 
 
 def test_migration_031_contrats_schema() -> None:
-    assert VERSION_SCHEMA_METIER == "031_accessoires"
-    assert MIGRATIONS_METIER[-1][0] == "031_accessoires"
-    assert MIGRATIONS_METIER[-2][0] == "030_evaluations_confiance"
+    assert VERSION_SCHEMA_METIER == "033_verdicts_revue"
+    assert MIGRATIONS_METIER[-1][0] == "033_verdicts_revue"
+    assert MIGRATIONS_METIER[-2][0] == "031_accessoires"
     sql = SQL_031_ACCESSOIRES
     for fragment in (
         "CREATE TABLE IF NOT EXISTS accessory_extractions",
@@ -169,8 +169,12 @@ def test_migration_031_contrats_schema() -> None:
         "v_fiche_recherche",
     ):
         assert fragment in sql, fragment
-    assert len(TABLES_METIER) == 46
-    assert TABLES_METIER[-2:] == ("accessory_extractions", "accessory_corrections")
+    assert len(TABLES_METIER) == 47  # 033 : verdict_revue (verdicts humains, Lot 10)
+    # La 033 (Lot 10) a ajouté verdict_revue en queue : les deux tables de la
+    # 031 ne la terminent plus, on les situe donc explicitement plutôt que
+    # par position absolue depuis la fin.
+    assert TABLES_METIER[-3:-1] == ("accessory_extractions", "accessory_corrections")
+    assert TABLES_METIER[-1] == "verdict_revue"
 
 
 # ---------------------------------------------------------------------------

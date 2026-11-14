@@ -745,9 +745,17 @@ def test_migrations_sequentielles_001_a_017_sur_base_vide(tmp_path: Path) -> Non
             versions = [ligne[0] for ligne in connexion.execute("SELECT version FROM schema_migrations")]
         numeros = [int(version.split("_", 1)[0]) for version in sorted(versions)]
 
-        assert numeros == list(range(1, 33)), f"séquence attendue 001..032, mesurée {numeros}"
-        assert VERSION_SCHEMA_METIER == "031_accessoires" and VERSION_SCHEMA_METIER in versions
-        assert sorted(versions)[-1] == VERSION_SCHEMA_APPLICATION == "032_identite_octets_documents"
+        assert numeros == list(range(1, 34)), f"séquence attendue 001..033, mesurée {numeros}"
+        assert VERSION_SCHEMA_METIER == "033_verdicts_revue" and VERSION_SCHEMA_METIER in versions
+        assert VERSION_SCHEMA_APPLICATION == "032_identite_octets_documents"
+        assert VERSION_SCHEMA_APPLICATION in versions
+        # Les deux versions coexistent et sont suivies SÉPARÉMENT : 032
+        # appartient à la couche documents (application), 033 au schéma métier.
+        # L'assertion d'origine liait « dernière appliquée » et « version
+        # application », ce qui n'était vrai que parce que 032 se trouvait être
+        # la dernière ; depuis 033, la dernière appliquée est la dernière
+        # MÉTIER. On vérifie donc la présence de chacune, et l'ordre à part.
+        assert sorted(versions)[-1] == VERSION_SCHEMA_METIER
         # Toute migration métier déclarée DOIT être enregistrée à l'exécution.
         manquantes = {version for version, _sql in MIGRATIONS_METIER} - set(versions)
         assert manquantes == set(), f"migrations métier déclarées mais jamais appliquées : {manquantes}"
@@ -773,12 +781,13 @@ def test_version_schema_metier_est_la_derniere_migration_declaree() -> None:
     declarees = [version for version, _sql in MIGRATIONS_METIER]
     assert declarees == sorted(declarees), "les migrations métier doivent être déclarées dans l'ordre"
     assert declarees[-1] == VERSION_SCHEMA_METIER
-    assert len(TABLES_METIER) == 46, (
-        "46 tables métier (018-024 n'ajoutent aucune table ; la 025 ajoute audit_logs, "
+    assert len(TABLES_METIER) == 47, (
+        "47 tables métier (018-024 n'ajoutent aucune table ; la 025 ajoute audit_logs, "
         "la 026 les quatre tables du Lot 2, la 027 les demandes/notifications du Lot 1, "
         "la 028 sail_extractions du Lot 3a, la 029 les corrections et motifs "
         "appris du Lot 3b, la 030 les évaluations de confiance du Lot 5, "
-        "puis la 031 les extractions et corrections d'accessoires du Lot 7)"
+        "puis la 031 les extractions et corrections d'accessoires du Lot 7, "
+        "puis la 033 les verdicts humains de revue du Lot 10)"
     )
 
 

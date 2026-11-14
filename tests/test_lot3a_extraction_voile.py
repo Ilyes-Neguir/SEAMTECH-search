@@ -212,10 +212,10 @@ def test_migration_028_sail_extractions_sans_resolution_bateau() -> None:
     # la résolution vit dans les migrations suivantes (SQL_029+), pas dans
     # la 028 — le contrat 3a « aucune résolution bateau » reste prouvé sur
     # le SQL de la 028 lui-même.
-    assert VERSION_SCHEMA_METIER == "031_accessoires"
+    assert VERSION_SCHEMA_METIER == "033_verdicts_revue"
     assert dict(MIGRATIONS_METIER)["028_sail_extractions"] == SQL_028_SAIL_EXTRACTIONS
     assert "sail_extractions" in TABLES_METIER
-    assert len(TABLES_METIER) == 46
+    assert len(TABLES_METIER) == 47  # 033 : verdict_revue (verdicts humains, Lot 10)
 
     sql = SQL_028_SAIL_EXTRACTIONS
     assert "CREATE TABLE IF NOT EXISTS sail_extractions" in sql

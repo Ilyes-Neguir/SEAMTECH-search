@@ -448,7 +448,11 @@ class TestRejeuSansDoublon:
         # (des lecteurs retrouvent le PDF par cette clé) — la reconnaissance
         # inter-sessions est prouvée par les tests de rejeu ci-dessus.
         stage = Path("/data/uploads/lots-televerses/jeton-A/fichiers/ANNEE/AFFAIRE/fiche.pdf")
-        assert depot._chemin_logique_televersement(stage) == "ANNEE/AFFAIRE/fiche.pdf"
+        # Le produit rend ``os.path.normcase("/".join(relatif))`` : sur Windows
+        # la casse est pliée et « / » devient « \ ». Comparer au littéral non
+        # normalisé faisait échouer ce test là-bas pour rien (run 43121414811).
+        # On applique la MÊME normalisation au attendu, pas une astuce d'égalité.
+        assert depot._chemin_logique_televersement(stage) == os.path.normcase("ANNEE/AFFAIRE/fiche.pdf")
         assert depot._chemin_logique_televersement(dossier_ok / "fiche-7792-SO_ffab.pdf") is None
 
     def test_pieces_jointes_stables_au_rejeu(self, base_depot: dict, dossier_ok: Path) -> None:
@@ -1192,7 +1196,7 @@ def test_rejouer_pdf_historique_ne_declare_pas_la_fiche_courante_identique(base_
     with index.connect() as connexion:
         with connexion.cursor() as curseur:
             curseur.execute("SELECT cle_idempotence FROM lot_dossier WHERE id_fiche=(SELECT id_fiche FROM fiche WHERE code=%s) AND statut='traite' AND cle_idempotence IS NOT NULL ORDER BY traite_le DESC, id_lot_dossier DESC LIMIT 1", ('7792-SO',))
-            assert curseur.fetchone()[0].rsplit('|', 1)[0] == str(courant / 'fiche.pdf')
+            assert curseur.fetchone()[0].rsplit('|', 1)[0] == os.path.normcase(str((courant / 'fiche.pdf').resolve()))
 
 
 def test_rejeu_meme_chemin_pdf_identique_annexe_modifiee(base_depot: dict, tmp_path: Path) -> None:
@@ -1252,7 +1256,7 @@ def test_modification_concurrente_apres_verification_rejeu_ne_signale_pas_deja_t
     with index.connect() as connexion:
         with connexion.cursor() as curseur:
             curseur.execute("SELECT cle_idempotence FROM lot_dossier WHERE id_fiche=(SELECT id_fiche FROM fiche WHERE code=%s) AND statut='traite' AND cle_idempotence IS NOT NULL ORDER BY traite_le DESC, id_lot_dossier DESC LIMIT 1", ('7792-SO',))
-            assert curseur.fetchone()[0].rsplit('|', 1)[0] == str(concurrent / 'fiche.pdf')
+            assert curseur.fetchone()[0].rsplit('|', 1)[0] == os.path.normcase(str((concurrent / 'fiche.pdf').resolve()))
 
 
 def test_rejeu_verrouille_fiche_pendant_reverification(base_depot: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1313,7 +1317,7 @@ def test_annexe_modifiee_ne_restaure_pas_pdf_historique_apres_concurrence(base_d
     with index.connect() as connexion:
         with connexion.cursor() as curseur:
             curseur.execute("SELECT cle_idempotence FROM lot_dossier WHERE id_fiche=(SELECT id_fiche FROM fiche WHERE code=%s) AND statut='traite' AND cle_idempotence IS NOT NULL ORDER BY traite_le DESC, id_lot_dossier DESC LIMIT 1", ('7792-SO',))
-            assert curseur.fetchone()[0].rsplit('|', 1)[0] == str(concurrent / 'fiche.pdf')
+            assert curseur.fetchone()[0].rsplit('|', 1)[0] == os.path.normcase(str((concurrent / 'fiche.pdf').resolve()))
 
 
 def test_annexe_modifiee_necrase_pas_annexe_concurrente(base_depot: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1661,8 +1665,15 @@ def test_depot_reserve_chemin_nouveau_contre_indexation_concurrente(base_depot: 
                 with autre.cursor() as c:
                     c.execute("SET LOCAL lock_timeout = '100ms'")
                     try:
+                        # MÊME clé que celle que le verrou tient :
+                        # depot._verrouiller_document_existant verrouille
+                        # os.path.normcase(str(resolve())). Insérer la clé brute
+                        # ne rencontrait donc AUCUN conflit sur Windows, où
+                        # normcase met en minuscules : le verrou n'était pas
+                        # pris, « bloque » restait vide, et le test échouait en
+                        # « Right contains one more item: True » (run 43121414811).
                         c.execute("INSERT INTO documents (path_key, path, name, parent_path, extension, size, modified_at, is_dir) VALUES (%s, %s, %s, %s, '.pdf', 1, 1, FALSE)",
-                                  (str(pdf.resolve()), str(pdf), pdf.name, str(pdf.parent)))
+                                  (os.path.normcase(str(pdf.resolve())), str(pdf), pdf.name, str(pdf.parent)))
                     except psycopg2.errors.LockNotAvailable:
                         bloque.append(True)
                     else:

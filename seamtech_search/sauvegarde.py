@@ -94,6 +94,13 @@ logger = logging.getLogger("seamtech_search.sauvegarde")
 #: Préfixe des objets de sauvegarde dans le bucket (dump + manifeste).
 PREFIXE_SAUVEGARDES = "backups/seamtech-search-"
 
+#: Clé du manifeste qui distingue une sauvegarde COMPLÈTE d'une quotidienne.
+#: Sans elle, les deux vivent côte à côte dans le même dossier et la même
+#: rétention, et l'opérateur ne peut pas savoir laquelle emporte les pièces
+#: jointes. C'est une MARQUE, pas un drapeau de confiance : le périmètre
+#: réel se lit toujours dans les compteurs du manifeste.
+NATURE_MANIFESTE = "nature"
+
 #: Taille des blocs de lecture pour les empreintes (fichiers volumineux).
 TAILLE_BLOC_SHA256 = 1024 * 1024
 
@@ -871,11 +878,23 @@ def copier_objets_s3(references: dict, client_s3, destination: Path) -> dict:
     return {"copies": copies, "manquants": manquants, "nb_copies": len(copies), "nb_manquants": len(manquants)}
 
 
+def _confinement_lecture_disponible() -> bool:
+    """Le noyau permet-il d'ouvrir un chemin sans suivre les liens ?
+
+    POSIX seul : ``dir_fd`` + ``O_NOFOLLOW`` + ``O_DIRECTORY``. Windows natif
+    n'en a aucun des trois. Cette condition est la même que celle que
+    ``_ouvrir_source_bundle`` teste pour refuser — elle est donc le seul
+    endroit où la décider, afin qu'un appelant qui dispose d'un repli sûr
+    puisse le savoir SANS avoir à provoquer l'exception.
+    """
+    return (os.name == "posix" and hasattr(os, "O_NOFOLLOW") and hasattr(os, "O_DIRECTORY")
+            and os.open in os.supports_dir_fd)
+
+
 @contextmanager
 def _ouvrir_source_bundle(racine: Path, relatif: Path):
     """Ouvre les composants sans liens, depuis une racine fixée par descripteur."""
-    if (os.name != "posix" or not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_DIRECTORY")
-            or os.open not in os.supports_dir_fd):
+    if not _confinement_lecture_disponible():
         raise SauvegardeError("Lecture confinée du bundle indisponible sur cette plateforme")
     fd = None
     fichier = None
@@ -1579,6 +1598,7 @@ def sauver(
     client_documents_s3=None,
     verrouiller: bool = True,
     racines_data: list[Path] | None = None,
+    nature: str | None = None,
 ) -> dict:
     """Sauvegarde : dump + inventaire archive + (optionnel) copies des pièces
     référencées + manifeste, puis envoi hors-site si ``client_s3`` est fourni.
@@ -1609,6 +1629,7 @@ def sauver(
             client_documents_s3=client_documents_s3,
             debut=debut,
             racines_data=racines_data,
+            nature=nature,
         )
     finally:
         if verrou is not None:
@@ -1626,6 +1647,7 @@ def _sauver_corps(
     client_documents_s3=None,
     debut: float = 0.0,
     racines_data: list[Path] | None = None,
+    nature: str | None = None,
 ) -> dict:
     horodatage = f"{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S-%f')}-{uuid.uuid4().hex}"
     nom_dump = f"seamtech-search-{horodatage}.dump"
@@ -1676,6 +1698,7 @@ def _sauver_corps(
     inventaire = inventorier_archive(racines_archive)
     manifeste: dict = {
         "date_iso": datetime.now(timezone.utc).isoformat(),
+        NATURE_MANIFESTE: nature,
         "commit": _commit_courant(),
         "version_schema_metier": VERSION_SCHEMA_METIER,
         "version_schema_application": VERSION_SCHEMA_APPLICATION,
@@ -1954,10 +1977,32 @@ def _instantane_dump_prive(chemin: Path):
         copie = Path(repertoire) / "dump"
         try:
             chemin_absolu = _chemin_absolu_sans_traversee(chemin)
-            with _ouvrir_source_bundle(chemin_absolu.parent, Path(chemin_absolu.name)) as source:
-                fd_copie = os.open(copie, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-                with os.fdopen(fd_copie, "wb") as destination:
-                    shutil.copyfileobj(source, destination, length=1024 * 1024)
+            if _confinement_lecture_disponible():
+                with _ouvrir_source_bundle(chemin_absolu.parent, Path(chemin_absolu.name)) as source:
+                    fd_copie = os.open(copie, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                    with os.fdopen(fd_copie, "wb") as destination:
+                        shutil.copyfileobj(source, destination, length=1024 * 1024)
+            else:
+                # Windows natif : ni ``dir_fd``, ni ``O_NOFOLLOW``. La lecture
+                # confinée y est impossible, et la refuser rendait la
+                # restauration ENTIÈRE indisponible — y compris
+                # ``restaurer --coordonnee``, qui échouait avant d'avoir rien
+                # tenté.
+                #
+                # Le repli est sûr PARCE QUE la propriété de sécurité ne
+                # repose pas sur ``O_NOFOLLOW`` : elle repose sur l'empreinte.
+                # ``_restaurer_dump_verifie`` hache cette copie et la compare
+                # au manifeste AVANT de lancer ``pg_restore``. Une substitution
+                # du dump entre la lecture et l'ouverture — ce que
+                # ``O_NOFOLLOW`` empêche — produit alors une copie dont
+                # l'empreinte diffère : la restauration est REFUSÉE, elle ne
+                # restaure pas des octets non vérifiés. ``O_NOFOLLOW`` est une
+                # défense en profondeur ; l'empreinte est le contrôle porteur,
+                # et il reste entier.
+                with open(chemin_absolu, "rb") as source:
+                    fd_copie = os.open(copie, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                    with os.fdopen(fd_copie, "wb") as destination:
+                        shutil.copyfileobj(source, destination, length=1024 * 1024)
         except OSError:
             raise SauvegardeError("Impossible de copier de manière sûre le dump de restauration") from None
         yield copie

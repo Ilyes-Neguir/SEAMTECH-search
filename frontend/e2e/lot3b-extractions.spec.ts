@@ -76,8 +76,14 @@ test.describe("Lot 3b — extractions de voiles", () => {
     await expect(page.getByTestId("message-extraction")).toContainText("Résolution en lot", { timeout: 30000 })
 
     // La fiche de référence 7792-SO a une extraction réelle avec son PDF.
+    const items = file.getByTestId("extraction-item")
     await page.getByTestId("recherche-extractions").fill(CODE_REFERENCE)
-    const ligne = file.getByTestId("extraction-item").first()
+    // Même piège que dans lot6-parcours-3clics : la saisie déclenche un
+    // aller-retour serveur, donc lire `.first()` sans attendre relisait la
+    // file encore non filtrée. On attend que la file ait convergé vers le
+    // résultat du filtre (une seule ligne) avant de cliquer.
+    await expect(items).toHaveCount(1, { timeout: 30000 })
+    const ligne = items.first()
     await expect(ligne).toContainText(CODE_REFERENCE, { timeout: 30000 })
     await ligne.click()
 

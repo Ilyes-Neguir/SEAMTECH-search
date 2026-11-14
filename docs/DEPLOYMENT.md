@@ -673,6 +673,48 @@ the dedicated `SEAMTECH_BACKUP_*` identity when provisioned; without it the
 service logs loudly that backups are local-only. A failed run never kills the
 scheduler: it logs and retries at the next check.
 
+### Verifying that backups actually happen (Lot 13.2)
+
+The service above is scheduled, but **nothing consumed its status**. `/health`
+can answer `backup.statut: "ancienne"` indefinitely and no one is told: a
+backup that fails silently every day for a year is indistinguishable from one
+that works — until the day you need it.
+
+Two traps make this worse than it looks:
+
+1. **`"ok"` is returned even for a purely local copy.** In `etat_sauvegarde`,
+   the « local only » warning is set *after* the status is computed, so a copy
+   sitting on the same disk as the data is reported as `"ok"`. That is exactly
+   the scenario that matters most: if the server dies, the backup dies with it.
+   **A copy on the same machine is not a backup.**
+2. **A partial copy is worse than no copy** — it reassures. Status
+   `"non_qualifiee"` exists for that case and must not be read as success.
+
+The verifier closes the loop. It reads the *same* state as `/health` — not a
+parallel variant — and returns an exit code a supervisor can consume:
+
+```bash
+python scripts/verifier_sauvegarde_quotidienne.py            # verdict, exit 0/1
+python scripts/verifier_sauvegarde_quotidienne.py --json     # for monitoring
+```
+
+It is **strict by default**: a local-only copy is a *failure*. Schedule it —
+the command is only useful once something runs it every day:
+
+```cron
+17 7 * * *  cd /srv/seamtech && python scripts/verifier_sauvegarde_quotidienne.py --json \
+              | logger -t seamtech-sauvegarde
+```
+
+Any non-zero exit means the protection is not proven. Wire the exit code to
+whatever alerts you; the script deliberately does not send notifications
+itself, so the alerting stays in the operator's hands.
+
+`--autoriser-locale` accepts a local-only copy (e.g. dumps written to a network
+mount). It prints a loud warning and stays visible in your crontab — that line
+*is* the record of the accepted risk. It never forgives an old or partial
+backup: only the location question is covered.
+
 Back up PostgreSQL and MinIO together so the index and document objects remain
 consistent. The repository includes PowerShell helpers for PostgreSQL backups;
 run them from an elevated or appropriately permissioned PowerShell session and
@@ -744,6 +786,22 @@ préférence :
    ne peuvent pas se dégrader) ;
    `CREATE EXTENSION pg_trgm;` — recommandé (tolérance aux fautes) ;
    `CREATE EXTENSION unaccent;` — recommandé (recherche insensible aux accents, migration 005).
+
+   **Constater et provisionner en une commande** (Lot 12) :
+
+   ```bash
+   export SEAMTECH_DATABASE_URL=postgresql://role-privilegie@hote:5432/base
+   python scripts/provisionner_extensions.py             # constat seul
+   python scripts/provisionner_extensions.py --appliquer # crée ce qui manque
+   ```
+
+   Le script est idempotent et **rend le code 1** si une extension recommandée
+   manque : un déploiement doit s'arrêter sur un prérequis absent, pas démarrer
+   avec une recherche amoindrie. Enchaînez-le avant la mise en service, avec un
+   rôle qui a le droit de créer les extensions — c'est tout l'intérêt : au
+   démarrage, l'application tente la même opération, et si son rôle n'est pas
+   privilégié elle *dégrade* au lieu d'échouer. Ce script déplace la question
+   au moment où l'on peut encore agir.
 
 Comportements constatés et testés (`tests/test_migrations_metier.py`) :
 

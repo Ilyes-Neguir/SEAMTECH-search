@@ -1,6 +1,7 @@
 """Cover remaining api.py branches to reach 85%."""
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -305,3 +306,53 @@ def test_api_endpoints_extra(tmp_path: Path):
             # With completed but no DB record, should return cached
             r_cached2 = client_r.get(f"/imports/{job_id}")
             assert r_cached2.status_code in (200, 404)
+
+
+def test_demarrage_met_en_quarantaine_un_import_interrompu(tmp_path: Path):
+    """13.3 — au démarrage, un import interrompu par un arrêt est repris.
+
+    Pourquoi cette épreuve existe, alors que ``test_lifespan_and_retention``
+    est juste au-dessus : celui-là REMPLACE ``recover_stale_jobs`` par un
+    simulacre qui renvoie 1, et n'assert rien de plus. Il passerait tout aussi
+    vert si l'appel était purement et simplement retiré d'``api.py``. Il ne
+    prouve donc pas le câblage au démarrage — il prouve que le module se
+    compile. C'est exactement le genre de preuve qui manquait au Lot 13.
+
+    Celle-ci ne simule pas la fonction qu'elle vérifie. Elle dépose un travail
+    « en cours » dont le battement de cœur est périmé, DÉMARRE RÉELLEMENT
+    l'application par sa durée de vie, puis constate le verdict porté en base.
+
+    Seuls les à-côtés sont neutralisés (le travailleur d'arrière-plan, la
+    boucle de rétention) : ils ne sont pas l'objet de la mesure.
+    """
+    base = tmp_path / "demarrage.db"
+    cfg = make_cfg(tmp_path, database_path=base)
+
+    idx = SearchIndex(base)
+    idx.initialize(rebuild=True)
+    create_job(idx, "import-interrompu", str(tmp_path), status="running", stage="extracting")
+    # Un arrêt de machine laisse le travail « en cours » avec un battement
+    # ancien : c'est ce décalage, et non l'état seul, qui le signale.
+    perime = (datetime.now(timezone.utc) - timedelta(seconds=600)).isoformat()
+    with idx.connect() as conn:
+        conn.execute("UPDATE import_jobs SET updated_at = ? WHERE id = ?", (perime, "import-interrompu"))
+    idx.close()
+
+    with (
+        patch("seamtech_search.api.start_background_worker"),
+        patch("seamtech_search.api.stop_background_worker"),
+        patch("seamtech_search.api.asyncio.sleep", side_effect=asyncio.CancelledError),
+    ):
+        app = create_app(cfg)
+        with TestClient(app) as client:
+            assert client.get("/live").status_code == 200
+
+    # Sans simulacre : ce verdict a été porté par l'application elle-même.
+    idx2 = SearchIndex(base)
+    try:
+        job = get_job(idx2, "import-interrompu")
+    finally:
+        idx2.close()
+
+    assert job["status"] == "failed", f"travaux laissés en l'état : {job['status']}"
+    assert "Server restarted" in (job["error"] or ""), f"motif absent : {job['error']!r}"

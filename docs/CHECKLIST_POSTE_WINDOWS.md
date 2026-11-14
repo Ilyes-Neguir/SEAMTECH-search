@@ -18,6 +18,15 @@ Tests de non-destruction du script : `tests/test_preflight_windows.py`
 (contrôle statique du contenu — commandes destructives, réseau, secrets,
 installation forcée).
 
+> ⛔ **Limite à connaître avant toute installation.** L'application ne
+> fonctionne **pas** sous Python Windows : `dir_fd`, `/proc/self/fd` et
+> `fcntl.flock` n'existent pas sur ce système, et le produit **refuse** plutôt
+> que de fonctionner en mode dégradé. Elle tourne sur ce poste **uniquement
+> par Docker** (conteneurs Linux). L'explication complète, le message de refus
+> et la commande de vérification sont dans
+> `docs/GUIDE_MISE_EN_SERVICE_POSTE.md`, section « Lire ceci avant l'étape 0
+> — une limite qui vient de Windows, pas de nous ».
+
 ---
 
 ## 1. Prérequis minimaux
@@ -151,6 +160,10 @@ et y déposer `fra.traineddata` fourni avec Tesseract.
 4. Copie hors-site chiffrée : `docs/verite_terrain/RUNBOOK_RESTAURATION.md`.
 5. Jamais de sauvegarde dans la source d'archive (RG13) — les sauvegardes
    vivent dans `data\backups\`, hors archive.
+6. ⛔ **Périmètre** : la sauvegarde automatique couvre la base et le corpus,
+   **pas les pièces jointes des clients**. Le détail et la décision à prendre
+   sont dans `docs/GUIDE_MISE_EN_SERVICE_POSTE.md`, étape 7, « Ce que la
+   sauvegarde AUTOMATIQUE ne couvre PAS ».
 
 ---
 

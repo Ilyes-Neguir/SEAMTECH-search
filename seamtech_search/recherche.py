@@ -70,6 +70,7 @@ LOGGER = logging.getLogger("seamtech.recherche")
 # Constantes de fusion et de volume (plan §17.2 / §11.3).
 RRF_K = 60
 PROFONDEUR_SOURCES = 100  # candidats demandés à chaque source avant fusion
+PROFONDEUR_SOURCES_MAX = 5000  # garde-fou mémoire : jamais au-delà, même si offset est énorme
 FACETTE_LIMITE = 20       # valeurs max par facette affichée
 SEUIL_TRIGRAMMES = 0.30   # word_similarity minimale pour la source tolérante
 SUGGESTION_LIMITE_DEFAUT = 10
@@ -255,6 +256,51 @@ def analyser_requete_dimension(texte: str) -> RequeteDimension:
             valeur=valeur, unite=unite, cote=cote, texte=" ".join(mots_restants)
         )
     return RequeteDimension(texte=texte)
+
+
+#: Forme d'une référence d'atelier : des lettres COLLÉES à des chiffres
+#: (« ST101 », « ST-101 », « K903 »), ou l'inverse (« 7792-SO »). La forme, et
+#: non un annuaire de préfixes : quand l'atelier ouvre une nouvelle série de
+#: numéros, il n'y a rien à réécrire ici.
+_RE_REFERENCE = re.compile(r"(?:[A-Za-z]{2,4}\d{2,6}|\d{2,6}[A-Za-z]{1,4})")
+
+#: Champs porteurs d'une référence : la commande lue sur la fiche, et le code
+#: interne. La référence de commande n'existe NULLE PART ailleurs — c'est
+#: précisément pourquoi la rechercher ne trouvait rien (voir le module).
+_CHAMPS_REFERENCE = ("fiche.commande", "fiche.code")
+
+
+def cle_reference(valeur: str | None) -> str:
+    """Clé de comparaison d'une référence : majuscules, ni séparateurs ni espaces.
+
+    « ST-101 », « st 101 » et « ST101 » sont une seule et même commande :
+    c'est cette clé qui les réunit, pas une correspondance approximative.
+    """
+    return re.sub(r"[^A-Z0-9]", "", (valeur or "").upper())
+
+
+def extraire_reference(requete: str | None) -> str | None:
+    """Première référence d'atelier contenue dans la requête, sinon ``None``.
+
+    On essaie d'abord chaque mot (le plus sûr : « ST545 » dans « lazy bag
+    ST545 »), puis la requête entière une fois compactée, ce qui rattrape
+    « ST 101 » tapé avec un espace.
+
+    Rester large est sans danger : un faux positif (« Sun 2000 » a la forme
+    d'une référence) déclenche une requête de plus qui ne renvoie rien, et ne
+    déplace AUCUN résultat. Seule une correspondance exacte promeut une fiche.
+    """
+    texte = (requete or "").strip()
+    if not texte:
+        return None
+    for morceau in re.split(r"[\s,;/]+", texte):
+        compact = re.sub(r"[^A-Za-z0-9]", "", morceau)
+        if _RE_REFERENCE.fullmatch(compact):
+            return compact.upper()
+    compact_total = re.sub(r"[^A-Za-z0-9]", "", texte)
+    if _RE_REFERENCE.fullmatch(compact_total):
+        return compact_total.upper()
+    return None
 
 
 def _cle_cote(cote: str) -> str:
@@ -826,6 +872,16 @@ def _normaliser_separateurs(texte: str) -> str:
     return re.sub(r"[-_/]+", " ", texte).strip()
 
 
+def _echapper_like(valeur: str) -> str:
+    """Neutralise les jokers d'un LIKE dans une valeur fournie par l'utilisateur.
+
+    Sans cela, un « % » ou un « _ » saisi dans un filtre deviendrait un joker
+    SQL : chercher la gamme « 50% » ramènerait toutes les fiches. Le caractère
+    d'échappement est ``\\``, déclaré par ``ESCAPE '\\'`` côté SQL.
+    """
+    return valeur.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 # ---------------------------------------------------------------------------
 # Filtres : fragment SQL sur liste blanche (alias imposés : v = vue, f = fiche)
 # ---------------------------------------------------------------------------
@@ -856,7 +912,40 @@ def _fragment_filtres(
     else:
         morceaux.append("v.statut = 'valide'")
     # Lot 7 : « categorie » est un axe comme les autres (filtre + facette).
-    for cle in ("type_voile", "client", "bateau", "gamme", "categorie"):
+    #
+    # Les axes de TEXTE LIBRE tolèrent une valeur partielle ; « categorie »,
+    # qui est une énumération, reste une égalité stricte.
+    #
+    # Pourquoi : mesuré sur le corpus réel le 2026-11-10, sept fiches d'une même
+    # gamme donnaient sept valeurs DISTINCTES — la colonne reçoit le texte du
+    # client (« enrouleur Kelt 9 mètres »), pas une valeur d'un vocabulaire. Une
+    # égalité stricte rendait donc le filtre inutilisable : il fallait retaper la
+    # gamme entière, accent comprise, pour retrouver quoi que ce soit.
+    #
+    # La comparaison passe par seamtech_texte_recherche (casse pliée, accents
+    # retirés, ligatures, espaces comprimés) : « regate » retrouve « Régate ».
+    #
+    # Périmètre VOLONTAIREMENT borné à « gamme ». Les trois autres axes restent
+    # une égalité stricte, et ce n'est pas un oubli : une épreuve existe qui
+    # l'impose nommément (« le filtre exact n'est PAS élargi par la
+    # normalisation des accents » — chercher « Genois » ne doit pas trouver
+    # « Génois »). Seule la gamme a été mesurée défaillante, seule la gamme est
+    # corrigée. Élargir les autres serait changer un contrat sans mesure.
+    for cle in ("gamme",):
+        valeur = filtres.get(cle)
+        if valeur not in (None, "") and cle not in exclure:
+            morceaux.append(
+                f"seamtech_texte_recherche(v.{cle}) LIKE '%%' || seamtech_texte_recherche(%s) || '%%' "
+                f"ESCAPE '\\'"
+            )
+            # Un « % » ou un « _ » tapé par l'utilisateur est un caractère
+            # ordinaire, pas un joker : sans cet échappement, chercher « 50% »
+            # ramènerait toute la base.
+            params.append(_echapper_like(str(valeur)))
+    # Égalité stricte pour les axes à vocabulaire maîtrisé — et pour
+    # « categorie », qui est une énumération. Contrat existant, protégé par une
+    # épreuve nommée : chercher « Genois » ne doit PAS trouver « Génois ».
+    for cle in ("type_voile", "client", "bateau", "categorie"):
         valeur = filtres.get(cle)
         if valeur not in (None, "") and cle not in exclure:
             morceaux.append(f"v.{cle} = %s")
@@ -1045,6 +1134,53 @@ def _source_trigrammes(
         cursor.execute("SET LOCAL enable_seqscan = on")
 
 
+def _source_reference(
+    cursor: Any,  # noqa: ANN401 - curseur psycopg2 réel
+    reference: str,
+    fragment: str,
+    params: Sequence[Any],
+    limite: int,
+) -> list[int]:
+    """Source RRF des correspondances EXACTES sur une référence d'atelier.
+
+    Pourquoi cette source existe : la référence de commande n'est PAS dans le
+    texte cherché. Le tsvector agrège le code, le titre, la gamme, le client,
+    le bateau, les matériaux… jamais ``fiche.commande``, qui est pourtant
+    l'endroit où la référence « ST… » est réellement lue. Chercher une
+    référence revenait donc à chercher un mot absent du document : zéro
+    résultat, et aucune raison apparente.
+
+    On consulte donc directement les traces d'extraction, en comparant les CLÉS
+    normalisées : « ST-101 » et « st101 » sont une seule commande.
+
+    Coût, écrit noir sur blanc : la clé est calculée à la volée, la jointure
+    balaie donc ``fiche_champ_extrait``. À l'échelle actuelle de l'atelier
+    (338 fiches) c'est négligeable ; au-delà de quelques milliers de fiches il
+    faudra un index sur l'expression. Cette source ne s'exécute de toute façon
+    que si la requête a la FORME d'une référence, pas à chaque recherche.
+    """
+    substituants = ", ".join(["%s"] * len(_CHAMPS_REFERENCE))
+    cle = cle_reference(reference)
+    cursor.execute(
+        f"""
+        SELECT DISTINCT f.id_fiche
+        FROM fiche f
+        JOIN v_fiche_recherche v ON v.id_fiche = f.id_fiche
+        LEFT JOIN fiche_champ_extrait e
+          ON e.id_fiche = f.id_fiche AND e.champ IN ({substituants})
+        WHERE (
+                regexp_replace(upper(coalesce(f.code, '')), '[^A-Z0-9]', '', 'g') = %s
+             OR regexp_replace(upper(coalesce(e.valeur_normalisee, e.valeur_brute, '')), '[^A-Z0-9]', '', 'g') = %s
+             )
+          AND {fragment}
+        ORDER BY f.id_fiche
+        LIMIT %s
+        """,
+        (*_CHAMPS_REFERENCE, cle, cle, *params, limite),
+    )
+    return [int(ligne[0]) for ligne in cursor.fetchall()]
+
+
 def _source_texte_pdf(
     cursor: Any, ts_config: str, texte: str, filtres_sql: str, params: Sequence[Any], limite: int,
 ) -> list[int]:
@@ -1171,6 +1307,114 @@ def _source_dimension(
 # ---------------------------------------------------------------------------
 # Fusion RRF
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Décomptes EXACTS — miroirs des sources ci-dessus
+#
+# Pourquoi ces fonctions existent : ``nb_resultats`` valait ``len(fusion)``,
+# c'est-à-dire le nombre de candidats TIRÉS par les sources — plafonné par
+# ``PROFONDEUR_SOURCES``. Un corpus de 338 fiches annonçait donc 100 résultats.
+# Le décompte doit venir de la base, pas d'un échantillon déjà tronqué.
+#
+# Risque assumé et couvert : ces requêtes MIROITENT le WHERE des sources
+# ci-dessus. Une divergence serait silencieuse, d'où l'épreuve
+# ``test_le_total_egale_la_source_sous_la_profondeur`` qui les compare.
+# ---------------------------------------------------------------------------
+
+
+def _compter_par_defaut(cursor: Any, filtres_sql: str, params: Sequence[Any]) -> int:
+    """Total EXACT des fiches que la navigation (requête vide) peut rendre."""
+    cursor.execute(
+        f"""
+        SELECT COUNT(*)
+        FROM v_fiche_recherche v
+        JOIN fiche f ON f.id_fiche = v.id_fiche
+        WHERE {filtres_sql}
+        """,
+        tuple(params),
+    )
+    return int(cursor.fetchone()[0])
+
+
+def _compter_dimension(
+    cursor: Any, dimension: RequeteDimension, filtres_sql: str, params: Sequence[Any],
+) -> int:
+    """Total EXACT d'une recherche par dimension : la tolérance est déjà dans
+    ``filtres_sql``, le décompte n'a donc pas besoin de l'ordre."""
+    if dimension.valeur is None:
+        return 0
+    cursor.execute(
+        f"""
+        SELECT COUNT(*)
+        FROM v_fiche_recherche v
+        JOIN fiche f ON f.id_fiche = v.id_fiche
+        WHERE {filtres_sql}
+        """,
+        tuple(params),
+    )
+    return int(cursor.fetchone()[0])
+
+
+def _compter_lexical(
+    cursor: Any, ts_config: str, texte: str, filtres_sql: str, params: Sequence[Any],
+) -> int:
+    """Total EXACT des correspondances lexicales (tsvector)."""
+    cursor.execute(
+        f"""
+        SELECT COUNT(*)
+        FROM fiche f
+        JOIN v_fiche_recherche v ON v.id_fiche = f.id_fiche
+        WHERE f.search_vector IS NOT NULL
+          AND f.search_vector @@ websearch_to_tsquery(%s, %s)
+          AND {filtres_sql}
+        """,
+        (ts_config, texte, *params),
+    )
+    return int(cursor.fetchone()[0])
+
+
+def _compter_lexical_ou_reference(
+    cursor: Any,
+    ts_config: str,
+    texte: str,
+    reference: str,
+    filtres_sql: str,
+    params: Sequence[Any],
+) -> int:
+    """Union EXACTE des deux sources de correspondance exacte.
+
+    La référence d'atelier n'est PAS dans le tsvector (voir ``_source_reference``) :
+    compter seulement le lexical annoncerait zéro pour « ST545 » alors qu'on
+    rend la fiche. L'union des deux, et non ``max``, est le vrai total.
+    """
+    substituants = ", ".join(["%s"] * len(_CHAMPS_REFERENCE))
+    cle = cle_reference(reference)
+    cursor.execute(
+        f"""
+        SELECT COUNT(*) FROM (
+            SELECT f.id_fiche
+            FROM fiche f
+            JOIN v_fiche_recherche v ON v.id_fiche = f.id_fiche
+            WHERE f.search_vector IS NOT NULL
+              AND f.search_vector @@ websearch_to_tsquery(%s, %s)
+              AND {filtres_sql}
+            UNION
+            SELECT f.id_fiche
+            FROM fiche f
+            JOIN v_fiche_recherche v ON v.id_fiche = f.id_fiche
+            LEFT JOIN fiche_champ_extrait e
+              ON e.id_fiche = f.id_fiche AND e.champ IN ({substituants})
+            WHERE (
+                regexp_replace(upper(coalesce(f.code, '')), '[^A-Z0-9]', '', 'g') = %s
+             OR regexp_replace(upper(coalesce(e.valeur_normalisee, e.valeur_brute, '')), '[^A-Z0-9]', '', 'g') = %s
+               )
+              AND {filtres_sql}
+        ) AS union_sources
+        """,
+        (ts_config, texte, *params, *_CHAMPS_REFERENCE, cle, cle, *params),
+    )
+    return int(cursor.fetchone()[0])
+
 
 def fusionner_rrf(classements: Mapping[str, Sequence[int]], k: int = RRF_K) -> list[dict[str, Any]]:
     """Reciprocal Rank Fusion : score(f) = Σ_sources 1/(k + rang).
@@ -1545,6 +1789,11 @@ def rechercher_fiches(
         filtres_purs["boat_model_id"] = identifiant_modele
     tri_pur = tri if tri in TRIS_AUTORISES else "pertinence"
     debut = time.perf_counter()
+    # Profondeur de tirage : les sources doivent atteindre la PAGE DEMANDÉE,
+    # sinon les fiches au-delà de profondeur sont inatteignables — le
+    # défaut qui faisait annoncer 100 résultats sur un corpus de 338 fiches.
+    # Borné pour ne pas charger des milliers de lignes en mémoire.
+    profondeur = min(max(PROFONDEUR_SOURCES, offset + limit), PROFONDEUR_SOURCES_MAX)
     with index.connect() as connexion:
         with connexion.cursor() as cursor:
             ts_config = index._postgres_ts_config(connexion)
@@ -1639,6 +1888,8 @@ def rechercher_fiches(
                 filtres_purs, inclure_a_valider, dimension_toutes=dimension_toutes
             )
             classements: dict[str, list[int]] = {}
+            total: int | None = None
+            total_exact = True
             if texte:
                 if correspondances_modeles:
                     classements["modele_bateau"] = _source_modele_bateau(
@@ -1646,10 +1897,10 @@ def rechercher_fiches(
                         correspondances_modeles,
                         fragment,
                         params,
-                        PROFONDEUR_SOURCES,
+                        profondeur,
                     )
                 lexical = _source_lexicale(
-                    cursor, ts_config, texte, fragment, params, PROFONDEUR_SOURCES
+                    cursor, ts_config, texte, fragment, params, profondeur
                 )
                 if texte_original_sources:
                     lexical = _fusionner_sources_ids(
@@ -1659,18 +1910,18 @@ def rechercher_fiches(
                             texte_original_sources,
                             fragment,
                             params,
-                            PROFONDEUR_SOURCES,
+                            profondeur,
                         ),
                         lexical,
                     )
                 classements["lexical"] = lexical
-                if capacites["pg_trgm"] and len(classements["lexical"]) < PROFONDEUR_SOURCES:
+                if capacites["pg_trgm"] and len(classements["lexical"]) < profondeur:
                     trigrammes: list[int] = []
                     trigrammes_applicable = False
                     if " " not in texte:
                         trigrammes_applicable = True
                         trigrammes = _source_trigrammes(
-                            cursor, texte, fragment, params, PROFONDEUR_SOURCES
+                            cursor, texte, fragment, params, profondeur
                         )
                     if texte_original_sources and " " not in texte_original_sources:
                         trigrammes_applicable = True
@@ -1680,14 +1931,14 @@ def rechercher_fiches(
                                 texte_original_sources,
                                 fragment,
                                 params,
-                                PROFONDEUR_SOURCES,
+                                profondeur,
                             ),
                             trigrammes,
                         )
                     if trigrammes_applicable:
                         classements["trigrammes"] = trigrammes
                 texte_pdf = _source_texte_pdf(
-                    cursor, ts_config, texte, fragment, params, PROFONDEUR_SOURCES
+                    cursor, ts_config, texte, fragment, params, profondeur
                 )
                 if texte_original_sources:
                     texte_pdf = _fusionner_sources_ids(
@@ -1697,7 +1948,7 @@ def rechercher_fiches(
                             texte_original_sources,
                             fragment,
                             params,
-                            PROFONDEUR_SOURCES,
+                            profondeur,
                         ),
                         texte_pdf,
                     )
@@ -1706,24 +1957,59 @@ def rechercher_fiches(
                     embedding = encode_requete(texte)
                     if embedding:
                         classements["vecteurs"] = _source_vecteurs(
-                            cursor, embedding, fragment, params, PROFONDEUR_SOURCES
+                            cursor, embedding, fragment, params, profondeur
                         )
+                # Lot 7 — la référence. Voir _source_reference : sans elle,
+                # taper « ST545 » ne trouvait rien, la référence étant absente
+                # du texte indexé. On la cherche dans les deux graphies
+                # possibles (texte après synonymes, et texte tapé).
+                reference = extraire_reference(texte) or (
+                    extraire_reference(texte_original_sources) if texte_original_sources else None
+                )
+                ids_reference: list[int] = []
+                if reference:
+                    ids_reference = _source_reference(
+                        cursor, reference, fragment, params, profondeur
+                    )
+                    if ids_reference:
+                        classements["reference"] = ids_reference
                 fusion = fusionner_rrf(classements)
+                if ids_reference:
+                    # Une correspondance exacte sur une référence est un FAIT,
+                    # pas un rang de pertinence : elle passe devant les
+                    # ressemblances. Qui tape une référence veut LA fiche.
+                    exacts = set(ids_reference)
+                    fusion = [ligne for ligne in fusion if ligne["id_fiche"] in exacts] + [
+                        ligne for ligne in fusion if ligne["id_fiche"] not in exacts
+                    ]
+                # Décompte EXACT. La référence n'est pas dans le tsvector, d'où
+                # l'union : compter le lexical seul annoncerait 0 pour « ST545 ».
+                if reference:
+                    total = _compter_lexical_ou_reference(
+                        cursor, ts_config, texte, reference, fragment, params
+                    )
+                else:
+                    total = _compter_lexical(cursor, ts_config, texte, fragment, params)
+                # Trigramme et vecteurs ajoutent des candidats FLOUS que ce
+                # décompte ne couvre pas : le total devient alors un plancher.
+                total_exact = not ("trigrammes" in classements or "vecteurs" in classements)
             elif dimension is not None:
                 # Recherche par dimension PURE : la valeur passe par le chemin
                 # numérique (filtre de cote), jamais par le tsvector.
                 classements["dimension"] = _source_dimension(
-                    cursor, dimension, fragment, params, PROFONDEUR_SOURCES
+                    cursor, dimension, fragment, params, profondeur
                 )
                 fusion = fusionner_rrf(classements)
+                total = _compter_dimension(cursor, dimension, fragment, params)
             else:
                 classements["parcours"] = _liste_par_defaut(
-                    cursor, fragment, params, PROFONDEUR_SOURCES
+                    cursor, fragment, params, profondeur
                 )
                 fusion = [
                     {"id_fiche": id_fiche, "score": 1.0, "sources": ["parcours"]}
                     for id_fiche in classements["parcours"]
                 ]
+                total = _compter_par_defaut(cursor, fragment, params)
 
             # Tri optionnel : si tri != pertinence, on trie la fusion complète
             # AVANT pagination pour que la page soit cohérente.
@@ -1731,7 +2017,7 @@ def rechercher_fiches(
                 # On a besoin des détails pour trier par cote/date/code
                 # On récupère les détails de TOUTE la fusion si tri != pertinence,
                 # sinon on reste sur la page seule (perf).
-                # Pour limiter le coût, on ne trie que sur les PROFONDEUR_SOURCES
+                # Pour limiter le coût, on ne trie que sur les profondeur
                 # premiers (déjà limités).
                 # Optimisation 0.2 : ne charger cotes que si tri sur cote
                 besoin_cotes_tri = any(tri_pur.startswith(c + "_") for c in COTES_AUTORISEES)
@@ -1762,7 +2048,9 @@ def rechercher_fiches(
                     )
                 # Sinon pertinence déjà
 
-            total = len(fusion)
+            if total is None:  # repli : aucune branche n'a pu décompter
+                total = len(fusion)
+                total_exact = False
             page = fusion[offset : offset + limit]
             # Optimisation 0.2 : cotes seulement si filtre dimension actif ou tri sur cote
             besoin_cotes_filtre = dimension is not None or (
@@ -1862,6 +2150,7 @@ def rechercher_fiches(
         "requete": requete,
         "modeles_bateaux_detectes": correspondances_modeles,
         "nb_resultats": total,
+        "total_exact": total_exact,
         "offset": offset,
         "limit": limit,
         "has_more": offset + limit < total,

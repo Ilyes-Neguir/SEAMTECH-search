@@ -25,6 +25,42 @@ URL_PG = os.environ.get("SEAMTECH_TEST_DATABASE_URL", "")
 pytestmark = pytest.mark.postgres  # couche métier PostgreSQL uniquement (§17.1)
 
 
+def _declarer_bateaux_au_referentiel(
+    index: Any,  # noqa: ANN401
+    *,
+    effacer_anomalies: bool = False,
+) -> None:
+    """Déclare au référentiel les bateaux déjà déposés, sans les nommer ici.
+
+    Le contrôle du Lot 1.2 ne s'exécute que si le référentiel est renseigné
+    (côté production, un référentiel illisible rend ``None`` et non un ensemble
+    vide : une liste vide déclarerait TOUT hors référentiel). Une épreuve qui
+    veut une fiche sans anomalie doit donc fournir un référentiel qui la
+    connaît. Les noms sont relevés dans les fiches déposées, jamais recopiés.
+    """
+    from seamtech_search.fiches.normalisation import forme_canonique
+
+    with index.connect() as connexion:
+        with connexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT DISTINCT b.nom FROM fiche f JOIN bateau b "
+                "ON b.id_bateau = f.id_bateau WHERE b.nom IS NOT NULL"
+            )
+            noms = [ligne[0] for ligne in cursor.fetchall()]
+            for nom in noms:
+                cle = forme_canonique(nom)
+                if not cle:
+                    continue
+                cursor.execute(
+                    "INSERT INTO boat_models (nom_canonique, cle_normalisee, source) "
+                    "VALUES (%s, %s, 'test') ON CONFLICT (cle_normalisee) DO NOTHING",
+                    (nom, cle),
+                )
+            if effacer_anomalies:
+                cursor.execute("DELETE FROM fiche_anomalie")
+        connexion.commit()
+
+
 @pytest.fixture(scope="module")
 def base_workflow() -> Iterator[dict[str, Any]]:
     """Base jetable (migrations + gabarits) puis dépôt de DEUX fiches réelles
@@ -63,6 +99,20 @@ def base_workflow() -> Iterator[dict[str, Any]]:
         dossier.mkdir(parents=True)
         (dossier / "fiche.pdf").write_bytes(source.read_bytes())
         depot.deposer_dossier(index, dossier)
+    # Lot 1.2, branché en A.3 : le dépôt transmet désormais le référentiel des
+    # bateaux. Conséquence voulue — et piège pour ces épreuves — le référentiel
+    # se REMPLIT au fil du dépôt : le premier dossier inscrit son bateau, et le
+    # suivant est donc évalué contre un référentiel qui ne le connaît pas encore.
+    # Un dépôt unique par dossier ne suffit plus à obtenir des fiches saines.
+    #
+    # On dépose donc deux fois : une première pour connaître les bateaux, puis on
+    # les déclare, on efface les anomalies du premier passage (aucune écriture ne
+    # les supprime : fiche_anomalie s'ajoute, elle ne se remplace pas) et on
+    # rejoue les contrôles sur un référentiel complet. Les noms sont relevés en
+    # base, jamais recopiés ici.
+    _declarer_bateaux_au_referentiel(index, effacer_anomalies=True)
+    for nom in ("CLIENT-7792-SO", "CLIENT-GENOA"):
+        depot.deposer_dossier(index, racine_essai / nom)
     try:
         yield {"index": index, "url": url_base, "racine_essai": racine_essai}
     finally:
@@ -415,6 +465,12 @@ class TestListeEtPieces:
         que sous forme de badge sur l'écran de validation.
         """
         index = base_workflow["index"]
+        # Contrat : une fiche sans anomalie renvoie une LISTE VIDE, jamais
+        # l'absence de clé. Vérifié AVANT toute insertion manuelle, sur la
+        # fiche génois : son dossier « CLIENT-GENOA » ne porte aucune
+        # référence exploitable (le Lot 1.3 n'a donc rien à comparer) et ses
+        # cotes canonisées ne lèvent aucun contrôle RG16.
+        assert client.get("/fiches/0901-MM").json()["anomalies"] == []
         with index.connect() as connexion:
             with connexion.cursor() as cursor:
                 cursor.execute("SELECT id_fiche FROM fiche WHERE code = %s", ("0901-MM",))
@@ -429,8 +485,19 @@ class TestListeEtPieces:
         assert [a["code"] for a in corps["anomalies"]] == ["champ_manquant"]
         assert corps["anomalies"][0]["message"].startswith("Cotes absentes")
         assert corps["anomalies"][0]["statut"] == "a_traiter"
-        # Une fiche sans anomalie renvoie une liste vide, jamais l'absence de clé.
-        assert client.get("/fiches/7792-SO").json()["anomalies"] == []
+        # Lot 1.3 : la fiche 7792-SO a été RÉ-DÉPOSÉE plus haut depuis le
+        # dossier « AFFAIRE-RG11-2 », dont la référence « RG11 » ne concorde
+        # pas avec le document « 7792-SO ». L'anomalie est donc LÉGITIME — et
+        # elle prouve au passage que l'écran de détail expose bien les
+        # anomalies produites par le Lot 1, pas seulement celles saisies à la
+        # main. Non bloquante : la fiche est bien là, en « a_traiter ».
+        anomalies_portant = client.get("/fiches/7792-SO").json()["anomalies"]
+        codes_portant = [a["code"] for a in anomalies_portant]
+        assert "reference_discordante" in codes_portant
+        discordance = next(a for a in anomalies_portant if a["code"] == "reference_discordante")
+        assert "RG11" in discordance["message"] and "7792-SO" in discordance["message"]
+        assert discordance["statut"] == "a_traiter"
+        assert isinstance(anomalies_portant, list)
 
     def test_pieces_jointes_avec_description_documents(self, base_workflow: dict, client: TestClient) -> None:
         """RG12 : la pièce déposée apparaît ici avec sa référence catalogue."""
