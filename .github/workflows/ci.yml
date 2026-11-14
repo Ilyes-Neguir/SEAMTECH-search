@@ -3494,6 +3494,17 @@ jobs:
           fi
           exit "$rc"
 
+      - name: Recette fonctionnelle — section F, sur le corpus réel
+        # La section F (« comparaison ») tient son étalonnage d'une fiche du
+        # FONDS RÉEL, servie par ce job et par nul autre : « recette corpus
+        # réel : job CI « recette-corpus-reel » uniquement ». Jouée ailleurs,
+        # elle est sautée — et un saut n'aurait rien prouvé du seuil de
+        # confiance qu'on prétend calibrer.
+        env:
+          SEAMTECH_RECETTE_CORPUS: "1"
+        run: |
+          python -u scripts/recette_fonctionnelle.py --section F --sortie docs/recette --annonces
+
       - name: Publish diagnostic summary (always)
         # Toujours exécuté (échec compris) : le résumé d'étape est le canal
         # de lecture HUMAINE (UI GitHub) — assaini comme les annotations.

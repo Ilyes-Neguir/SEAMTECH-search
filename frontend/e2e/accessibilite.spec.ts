@@ -64,6 +64,16 @@ async function codesFiches(page: Page): Promise<string[]> {
   const lire = async (route: string): Promise<string[]> => {
     await page.goto(route)
     await page.waitForLoadState("load")
+    // Les résultats arrivent APRÈS l'hydratation : la page est « chargée »
+    // bien avant d'être remplie. Sans cette attente, on lit une liste vide et
+    // on conclut à tort qu'aucune fiche n'est servie — ce qui, mesuré en CI,
+    // a laissé les deux écrans de détail hors de l'audit sans que rien ne le
+    // signale. Mieux vaut attendre les lignes que croire la page.
+    try {
+      await page.waitForSelector("li[data-code]", { timeout: 15_000 })
+    } catch {
+      return []
+    }
     return page.locator("li[data-code]").evaluateAll((elements) =>
       elements.map((element) => element.getAttribute("data-code") ?? "").filter(Boolean),
     )
@@ -196,7 +206,17 @@ test.describe("Accessibilité axe-core — tous les écrans", () => {
       "rôles canoniques : requiert SEAMTECH_E2E_DATABASE_URL (PostgreSQL nominatif)",
     )
     await signInWith(page, ADMIN)
-    for (const code of await codesFiches(page)) {
+    const codes = await codesFiches(page)
+    // Une liste vide n'est pas un succès : c'est un audit qui ne scanne rien
+    // et qui se déclare vert. Si l'installation ne sert aucune fiche, les
+    // écrans de détail restent non audités et IL FAUT le voir — c'est
+    // précisément ainsi que /fiches/[code] et /dossier/[code] ont disparu du
+    // bilan sans que le décompte global ne bronche.
+    expect(
+      codes,
+      "aucune fiche servie : les écrans /fiches/[code] et /dossier/[code] ne peuvent pas être audités",
+    ).not.toHaveLength(0)
+    for (const code of codes) {
       const reponse = await page.goto(`/fiches/${encodeURIComponent(code)}`)
       if (reponse && (reponse.status() === 404 || reponse.status() === 403)) continue
       await scanner(page, `/fiches/${code}`, "admin")
