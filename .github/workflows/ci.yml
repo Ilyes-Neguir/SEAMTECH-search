@@ -1230,6 +1230,49 @@ jobs:
           docker compose down -v
           exit "$rc"
 
+      - name: Recette de TOUTES les routes, contre la pile réelle
+        # Le balayage local (SQLite) ne peut pas exercer la couche métier :
+        # la moitié des routes y répondent « PostgreSQL uniquement ». Ici la
+        # pile est celle du déploiement — PostgreSQL, Redis, MinIO — donc les
+        # routes sont réellement exécutées, pas refusées faute de dépendance.
+        #
+        # Étape PLACÉE EN DERNIER : le balayage envoie des requêtes plausibles
+        # sur chaque route, y compris des écritures. Rien ne doit être mesuré
+        # après lui.
+        #
+        # `--annonces` : le bilan passe en annotations, seul canal lisible
+        # depuis ici (l'hôte des journaux bruts est inaccessible).
+        env:
+          POSTGRES_PASSWORD: test_password
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: minioadmin123
+          REDIS_PASSWORD: redis_test_password
+          SEAMTECH_AUTH_TOKEN: test-token-123
+          SEAMTECH_UI_PASSWORD: ci-ui-password
+          SEAMTECH_SESSION_SECRET: ci-session-secret-not-for-production
+          SEAMTECH_S3_BUCKET: seamtech-documents
+        run: |
+          python -u scripts/recette_routes.py \
+            --base-url "http://127.0.0.1:8000" \
+            --jeton "$SEAMTECH_AUTH_TOKEN" \
+            --sortie docs/recette --annonces
+          # Le bilan est publié par le script ; on ne classera l'étape en échec
+          # que sur un plantage ou une route ouverte, jamais sur un 503 de
+          # dépendance : ce serait un échec qui ne veut rien dire.
+          python - <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          bilan = json.loads(pathlib.Path("docs/recette/observations-routes.json").read_text(encoding="utf-8"))
+          plantages = [o for o in bilan["observations"] if o["statut"] == 500]
+          if plantages:
+              for o in plantages[:5]:
+                  print(f"::error title=recette-PLANTAGE::{o['methode']} {o['chemin']} [{o['sonde']}] -> {o['statut']}")
+              sys.exit(1)
+          print(f"recette des routes : {bilan['routes']} routes sondées, 0 plantage")
+          PY
+
   e2e:
     runs-on: ubuntu-24.04
     # Service PostgreSQL pour l'e2e « live » (validation sur la vraie fiche) :
