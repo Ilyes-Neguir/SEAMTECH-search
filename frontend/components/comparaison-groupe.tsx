@@ -159,7 +159,7 @@ export function ComparaisonGroupe({ extractions }: { extractions: ResumeExtracti
           value={recherche}
           onChange={(e) => setRecherche(e.target.value)}
           placeholder="Filtrer (code, type, bateau, gamme)…"
-          className="mb-2 w-full rounded border border-border bg-background px-2 py-1 text-xs"
+          className="mb-2 w-full rounded border border-border bg-input px-2 py-1 text-xs text-foreground"
           data-testid="recherche-groupe"
           aria-label="Filtrer les fiches à comparer"
         />
@@ -192,7 +192,7 @@ export function ComparaisonGroupe({ extractions }: { extractions: ResumeExtracti
               id="reference-groupe"
               value={referenceEffective ?? ""}
               onChange={(e) => setReference(Number(e.target.value))}
-              className="rounded border border-border bg-background px-2 py-1 text-xs"
+              className="rounded border border-border bg-input px-2 py-1 text-xs text-foreground"
               data-testid="select-reference"
             >
               {idsActifs.map((id) => {

@@ -534,6 +534,35 @@ jobs:
             exit 1
           fi
           echo "Garde-fou attribution : ROUGE puis VERT prouvé"
+      - name: Recette fonctionnelle A→K (PostgreSQL et Redis réels)
+        # Les deux tiers de la matrice sont portés par des tests qui exigent
+        # PostgreSQL ou Redis. Hors CI ils sont SAUTÉS, et un test sauté ne
+        # prouve rien du tout : mesuré en local, le harnais rend « 22 partiels,
+        # 20 non prouvés ». Cette étape est le seul endroit où la colonne
+        # « test écrit » de la recette vaut quelque chose pour les sections
+        # A, B, D, E, F, G, I.
+        #
+        # Placée AVANT les critères de latence : la recette lance une
+        # quarantaine de pytest, on ne mesure pas la performance derrière.
+        env:
+          SEAMTECH_TEST_DATABASE_URL: postgresql://seamtech:seamtech_test_password@localhost:5432/seamtech_search_test
+          SEAMTECH_TEST_REDIS_URL: redis://127.0.0.1:6379/1
+        run: |
+          python -u scripts/recette_fonctionnelle.py --sortie docs/recette --annonces
+
+      - name: Publier la matrice de recette A→K
+        # L'hôte des artefacts est inaccessible depuis l'extérieur du runner ;
+        # le bilan passe donc par les annotations. Le Markdown reste publié
+        # pour le commanditaire, qui télécharge depuis une machine à lui.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: matrice-recette-A-K
+          path: |
+            docs/recette/matrice-recette.md
+            docs/recette/matrice-recette.json
+          if-no-files-found: warn
+
       - name: Run latency criteria (perf — sans instrumentation, p50/p95/max publiés)
         # Une seule version de la matrice (audit du 22/09) : la latence ne
         # dépend pas de la version de Python ; exécuter l'étape 3 fois
@@ -1570,6 +1599,46 @@ jobs:
               sys.exit(1)
           if avec_violation:
               print(f"::error title=accessibilite-garde-fou::{avec_violation} écran(s) avec violation")
+              sys.exit(1)
+
+          # Le plancher ne suffisait pas : 82 constats peuvent venir de quatorze
+          # écrans rejoués six fois. On exige donc l'inventaire, UN PAR UN — les
+          # écrans Next.js réellement présents dans « frontend/app ». Les deux
+          # écrans à paramètre (/fiches/[code], /dossier/[code]) sont les seuls
+          # que la liste plate omettait : leur audit est conditionnel à une fiche
+          # servie, donc silencieusement absent quand le jeu est vide. C'est
+          # exactement le défaut qu'un décompte global ne peut pas voir.
+          ECRANS_ATTENDUS = [
+              "/", "/approvals", "/comparaison", "/comptes", "/confiance",
+              "/dossier/", "/dossiers", "/extractions", "/fiches/", "/fichiers",
+              "/gabarits", "/login", "/notifications", "/nouveau", "/qualite",
+              "/recherche", "/validation",
+          ]
+
+
+          def couvert(attendu):
+              for constat in donnees.get("constats", []):
+                  for champ in (constat.get("ecran", ""), constat.get("url", "")):
+                      if not champ:
+                          continue
+                      if attendu.endswith("/") and attendu != "/":
+                          if champ.startswith(attendu):
+                              return True
+                      elif (
+                          champ == attendu
+                          or champ.startswith(attendu + "/")
+                          or champ.startswith(attendu + "?")
+                      ):
+                          return True
+              return False
+
+
+          manquants = [e for e in ECRANS_ATTENDUS if not couvert(e)]
+          if manquants:
+              print(
+                  f"::error title=accessibilite-ecrans-non-audites::"
+                  f"{len(manquants)} ecran(s) jamais scannes : {', '.join(manquants)}"
+              )
               sys.exit(1)
           print(f"::notice title=accessibilite::{ecrans} écrans scannés, 0 violation WCAG 2.1 A/AA")
           PY

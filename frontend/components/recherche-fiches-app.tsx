@@ -632,7 +632,7 @@ export function RechercheFichesApp({ assistantActif = true }: { assistantActif?:
           <select
             value={tri}
             onChange={(e) => changerTri(e.target.value)}
-            className="rounded border border-border bg-background px-2 py-2 text-xs"
+            className="rounded border border-border bg-input px-2 py-2 text-xs text-foreground"
             data-testid="recherche-tri"
             aria-label="Trier les résultats"
           >
@@ -806,7 +806,7 @@ export function RechercheFichesApp({ assistantActif = true }: { assistantActif?:
             <select
               value={dimCote}
               onChange={(e) => changerCoteExploration(e.target.value)}
-              className="mb-2 w-full rounded border border-border bg-background px-2 py-1.5 text-xs"
+              className="mb-2 w-full rounded border border-border bg-input px-2 py-1.5 text-xs text-foreground"
               data-testid="dimension-cote"
               aria-label="Dimension à explorer"
             >
@@ -831,7 +831,7 @@ export function RechercheFichesApp({ assistantActif = true }: { assistantActif?:
                 placeholder="min"
                 value={dimMin}
                 onChange={(e) => setDimMin(e.target.value)}
-                className="w-1/2 rounded border border-border bg-background px-2 py-1 text-xs"
+                className="w-1/2 rounded border border-border bg-input px-2 py-1 text-xs text-foreground"
                 data-testid="dimension-min"
               />
               <input
@@ -840,7 +840,7 @@ export function RechercheFichesApp({ assistantActif = true }: { assistantActif?:
                 placeholder="max"
                 value={dimMax}
                 onChange={(e) => setDimMax(e.target.value)}
-                className="w-1/2 rounded border border-border bg-background px-2 py-1 text-xs"
+                className="w-1/2 rounded border border-border bg-input px-2 py-1 text-xs text-foreground"
                 data-testid="dimension-max"
               />
             </div>

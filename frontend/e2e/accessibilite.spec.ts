@@ -49,17 +49,29 @@ type Constat = {
 const constats: Constat[] = []
 
 /**
- * Codes de fiches réellement servis par CE backend, lus sur l'écran de
- * validation (attribut `data-code`). Aucune fixture figée : l'audit porte sur
- * les fiches que l'installation sert vraiment, pas sur des codes inventés.
+ * Codes de fiches réellement servis par CE backend (attribut `data-code`).
+ * Aucune fixture figée : l'audit porte sur les fiches que l'installation sert
+ * vraiment, pas sur des codes inventés.
+ *
+ * La lecture se fait sur la RECHERCHE, plus sur la file de validation. C'est
+ * une correction, pas une préférence : la file de validation ne contient que
+ * les fiches EN ATTENTE, et elle est vide sur une base fraîche — les écrans
+ * `/fiches/[code]` et `/dossier/[code]` n'étaient alors jamais scannés, en
+ * silence, sans qu'aucun décompte global puisse le voir. La recherche, elle,
+ * liste ce que l'installation sert. La file reste en repli.
  */
 async function codesFiches(page: Page): Promise<string[]> {
-  await page.goto("/validation")
-  await page.waitForLoadState("networkidle")
-  const codes = await page.locator("li[data-code]").evaluateAll((elements) =>
-    elements.map((element) => element.getAttribute("data-code") ?? "").filter(Boolean),
-  )
-  return codes.slice(0, 3)
+  const lire = async (route: string): Promise<string[]> => {
+    await page.goto(route)
+    await page.waitForLoadState("load")
+    return page.locator("li[data-code]").evaluateAll((elements) =>
+      elements.map((element) => element.getAttribute("data-code") ?? "").filter(Boolean),
+    )
+  }
+
+  const codes = await lire("/recherche")
+  if (codes.length > 0) return codes.slice(0, 3)
+  return (await lire("/validation")).slice(0, 3)
 }
 
 async function scanner(page: Page, ecran: string, role: string): Promise<void> {

@@ -44,6 +44,7 @@ import json
 import re
 import sys
 import time
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
@@ -371,6 +372,23 @@ def main(argv: list[str] | None = None) -> int:
             f"{len(rapport.pannes)} plantage(s), {len(rapport.indisponibles)} "
             f"indisponible(s) ici, {len(rapport.refus_absents)} accès non contrôlé(s)"
         ))
+        # Les annotations sont le SEUL canal lisible depuis l'extérieur du
+        # runner : l'hôte des artefacts est hors de portée. Dix annotations par
+        # étape, donc on n'y publie pas 472 lignes — on y publie de quoi juger
+        # le bilan sans l'ouvrir. La répartition par code dit si les routes ont
+        # réellement répondu ; celle par sonde dit si les quatre cas ont été
+        # exercés. Un bilan « 0 plantage » où tout serait en 599 ne passerait
+        # plus inaperçu.
+        par_code = Counter(o.statut for o in rapport.observations)
+        _annoncer(
+            "recette-statuts",
+            " ; ".join(f"{code}×{n}" for code, n in sorted(par_code.items())),
+        )
+        par_sonde = Counter(o.sonde for o in rapport.observations)
+        _annoncer(
+            "recette-sondes",
+            " ; ".join(f"{sonde}×{n}" for sonde, n in sorted(par_sonde.items())),
+        )
         for o in rapport.pannes[:5]:
             _annoncer("recette-PLANTAGE", f"{o.methode} {o.chemin} [{o.sonde}] → {o.statut} : {o.extrait}")
         for o in rapport.refus_absents[:5]:
