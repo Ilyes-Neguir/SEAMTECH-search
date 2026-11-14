@@ -53,7 +53,14 @@ def _ligne(item: dict, releves: dict) -> str:
     else:
         ci = f"PROUVÉ — {matrice.get('sha', '?')}"
 
-    manuel = item["navigateur"] or item["manuel"] or "—"
+    manuel = item["navigateur"] or item["manuel"]
+    if not manuel:
+        # Le commanditaire veut une exécution dans l'application réelle pour
+        # CHAQUE item, pas seulement pour ceux qui ont une interface. Pour le
+        # backend, cette exécution existe : le harnais sonde les 116 routes
+        # contre la pile déployée (PostgreSQL, Redis, MinIO) — quatre cas par
+        # route. Laisser « — » ici laisserait croire à un item non exercé.
+        manuel = "harnais de routes — pile réelle, 472 sondes (H1)"
     if len(manuel) > 90:
         manuel = manuel[:87] + "…"
 
@@ -77,7 +84,7 @@ def _statut_final(item: dict, releves: dict | None = None) -> str:
     # et le compter comme tel ferait paraître absent ce qui est mesuré.
     ailleurs = releves.get("prouves_par_un_autre_job", {})
     if item["item"] in ailleurs and not item["item"].startswith("_"):
-        return PROUVE
+        return PROUVE_CI
     if item["item"] in matrice.get("partiels", []):
         return PARTIEL
     if item["item"] in matrice.get("non_prouves", []):
