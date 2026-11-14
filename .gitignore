@@ -23,3 +23,7 @@ tests/fixtures/s3rver/node_modules/
 coverage.json
 perf-mesures.json
 coverage-bancs*.json
+
+# Bilan de la recette fonctionnelle : les rapports JUnit intermédiaires sont
+# des produits dérivés, seul le bilan (matrice-recette.*) est conservé.
+docs/recette/junit-*.xml
