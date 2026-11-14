@@ -193,7 +193,8 @@ def _lier_par_code_si_fiche_existante(index: Any, extraction: Any) -> Any:  # no
     """Lie une extraction autonome à une fiche existante de même code.
 
     Aucune fiche n'est créée : le rapport d'or mesure/enregistre une
-    extraction, il ne contourne ni RG3 ni RG11.
+    extraction, il ne contourne ni la règle de statut d'arrivée
+    (auto-validation, ex-RG3) ni RG11.
     """
     if not extraction.code_fiche or extraction.id_fiche is not None:
         return extraction

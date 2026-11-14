@@ -359,21 +359,26 @@ SECTIONS: list[Section] = [
             ),
             Item(
                 "D4",
-                "Score haut — auto-validation",
+                "Score haut — auto-validation (seuil 80 %, décision du 2026-11-14)",
                 [
-                    "tests/test_fiches_sql_grammaire.py::test_le_statut_arrivee_est_a_valider_dans_le_code",
-                    "tests/test_fiches_persistance.py",
+                    # La règle, fonction pure : quatre cas, prouvés sans base.
+                    "tests/test_auto_validation_seuil.py",
+                    # Le statut COMMITTÉ, et la trace d'audit sans acteur humain.
+                    "tests/test_auto_validation_persistance.py",
+                    # Le statut vient de la règle, jamais d'un littéral.
+                    "tests/test_fiches_sql_grammaire.py::test_le_statut_arrivee_vient_de_la_regle_et_non_d_un_litteral",
+                    # La fiche réelle du corpus est bien auto-validée.
+                    "tests/test_depot_transactionnel.py::TestEcritureEntiereOuPasDuTout::test_la_fiche_du_corpus_est_auto_validee",
                 ],
-                absent=(
-                    "Aucune auto-validation par score : le statut d'arrivée est "
-                    "TOUJOURS a_valider, et c'est une règle nommée — RG3, « le dépôt "
-                    "ne valide jamais ». L'attente « score haut ⇒ auto-validation » "
-                    "est donc CONTRAIRE à RG3, non oubliée."
+                navigateur=(
+                    "frontend/e2e/validation.spec.ts — la file de validation ne "
+                    "retient plus les fiches auto-validées"
                 ),
-                manuel=(
-                    "À TRANCHER par le commanditaire : soit RG3 est maintenue (l'item est "
-                    "caduc), soit une auto-validation au-dessus d'un seuil est réellement "
-                    "voulue et il faut changer la règle — pas la contourner."
+                # Les tests de dépôt en base exigent PostgreSQL : ils sont
+                # joués par le job `backend`, seul à en avoir un.
+                preuve_ci=(
+                    "job « backend » (3.11/3.12/3.13) : la matrice complète y "
+                    "tourne avec PostgreSQL et Redis réels."
                 ),
             ),
             Item(

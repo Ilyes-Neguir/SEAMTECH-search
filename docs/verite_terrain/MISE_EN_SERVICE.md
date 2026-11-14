@@ -75,10 +75,13 @@ curl -s -H "X-SEAMTECH-TOKEN: <SEAMTECH_AUTH_TOKEN>" http://127.0.0.1:8000/healt
 #    (CLI équivalent : voir docs/API.md — `cli depot`.)
 ```
 
-Sortie attendue : la fiche entre en statut `a_valider` (RG3 : jamais validée
-automatiquement), ses champs extraits sont affichés, son PDF est rendu à
-droite. C'est exactement ce que le job CI `integration` rejoue avec la vraie
-fiche 7792-SO.
+Sortie attendue : la fiche est écrite, ses champs extraits sont affichés, son
+PDF est rendu à droite. Depuis la décision du commanditaire du 2026-11-14, son
+statut dépend de son score : strictement supérieur à 80 % et aucune anomalie
+bloquante ⇒ `valide` d'emblée (auto-validation, qui remplace RG3) ; sinon
+`a_valider`, en attente d'un humain. La fiche 7792-SO score 0,929 : elle est
+auto-validée, et n'entre donc PAS dans la file de validation. C'est ce que le
+job CI `integration` rejoue avec la vraie fiche.
 
 ## 2 bis. Ordre recommandé de mise en service (revue du 2026-10-07)
 

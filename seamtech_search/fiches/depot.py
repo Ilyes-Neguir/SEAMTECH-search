@@ -19,7 +19,12 @@ Contraintes appliquées, toutes testées :
   sont écrites ensemble, ou rien (test_depot_transactionnel).
 - **Un dossier refusé est un RÉSULTAT** : raison explicite (« gabarit inconnu »,
   « aucun PDF », « PDF illisible »), jamais une exception qui tuerait le lot.
-- Statut d'arrivée : ``a_valider`` — jamais valide (RG3, délégué à ecrire_fiche).
+- Statut d'arrivée : décidé par ``ecrire_fiche`` — l'ancienne règle RG3
+  (« jamais valide ») est remplacée par l'auto-validation au seuil de 80 %
+  (décision du commanditaire du 2026-11-14) : score strictement supérieur à
+  0,80 et aucune anomalie bloquante ⇒ la fiche arrive ``valide``. Une fiche
+  ainsi validée est protégée par RG11 : un second dépôt du même dossier est
+  refusé (« dépôt différent refusé sans modification des pièces »).
 """
 
 from __future__ import annotations

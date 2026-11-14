@@ -1,11 +1,15 @@
-"""Écriture en base d'une fiche extraite (Lot B — plan v3.0 §10, §13, RG3/RG11).
+"""Écriture en base d'une fiche extraite (Lot B — plan v3.0 §10, §13, RG11).
 
 Règles appliquées ici, toutes testées :
 - **Transaction unique** : fiche, cotes, matériaux, galons, jonctions,
   finitions, options, renforts, champs extraits, mesures libres et anomalies
   sont écrits dans UNE transaction — tout ou rien.
-- **RG3** : le statut d'arrivée est TOUJOURS ``a_valider`` ; aucun chemin de
-  ce module ne peut écrire ``valide`` (c'est l'affaire de l'opérateur).
+- **Statut d'arrivée** : décidé par ``auto_validation.decider_statut_arrivee``.
+  L'ancienne règle **RG3** (« le dépôt ne valide jamais ») est REMPLACÉE
+  depuis la décision du commanditaire du 2026-11-14 : un score strictement
+  supérieur à 80 % sans anomalie bloquante ⇒ la fiche arrive ``valide``.
+  La décision est prise APRÈS les contrôles RG16, seule règle qui a toutes
+  ses données — voir le commentaire à l'endroit de son application.
 - **RG11 (idempotence)** : rejouer une extraction sur un PDF déjà importé ne
   duplique rien — la fiche ``a_valider`` est remplacée à l'identique près ;
   et n'écrase JAMAIS une fiche déjà validée par un humain.
@@ -36,6 +40,11 @@ from seamtech_search.extractions_voile import (
 )
 from seamtech_search.fiches import normalisation as norm
 from seamtech_search.fiches.anomalies import CODES_BLOQUANTS, ReferencesConstatees, appliquer_controles_rg16
+from seamtech_search.fiches.auto_validation import (
+    STATUT_ATTENTE_HUMAINE,
+    STATUT_AUTO_VALIDE,
+    decider_statut_arrivee,
+)
 from seamtech_search.fiches.gabarits import GabaritDef
 from seamtech_search.fiches.modeles import FicheExtraite
 from seamtech_search.fiches.verite_7792 import VERITE_7792, VERITE_7792_COMPLETE
@@ -170,6 +179,23 @@ _SQL_CHAMP_INS = (
     "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
 )
 _SQL_ANOMALIE_INS = "INSERT INTO fiche_anomalie (id_fiche, code, gravite, message) VALUES (%s, %s, %s, %s)"
+
+# Promotion à « valide » et trace d'audit correspondante. Le statut
+# d'arrivée est décidé UNE SEULE FOIS, par `decider_statut_arrivee`
+# (module `auto_validation`), et appliqué plus bas — voir pourquoi à
+# l'endroit de l'application de la règle.
+_SQL_PROMOUVOIR_AUTO = "UPDATE fiche SET statut = %s WHERE id_fiche = %s AND statut = %s"
+# `id_utilisateur` est VOLONTAIREMENT NULL : une auto-validation n'a pas
+# d'acteur humain. Lui inventer un compte ferait croire à une décision
+# attribuable — c'est ce que la traçabilité (§10.1, item I2) interdit.
+# L'absence d'acteur est DITE dans le commentaire, pas masquée. La
+# colonne accepte NULL (REFERENCES utilisateur(id_utilisateur) ON DELETE SET NULL).
+_SQL_JOURNAL_AUTO_VALIDATION = (
+    "INSERT INTO fiche_validation "
+    "(id_fiche, id_utilisateur, action, etat_avant, etat_apres, commentaire) "
+    "VALUES (%s, NULL, %s, %s, %s, %s)"
+)
+_ACTION_JOURNAL_AUTO_VALIDATION = "auto_valider"
 _SQL_GABARIT_TEST_INS = (
     "INSERT INTO gabarit_test (code_gabarit, version_gabarit, nom_fichier, empreinte_pdf, attendu, notes) "
     "VALUES (%s, %s, %s, %s, %s, %s) "
@@ -692,7 +718,19 @@ def _ecrire_fiche_dans(
                     fiche.date_edition,
                     fiche.fichier_source,
                     id_gabarit,
-                    "a_valider",  # RG3 : jamais « valide » à l'arrivée
+                    # Statut d'arrivée PROVISOIRE (l'ancien RG3). Ce n'est plus
+                    # la règle depuis la décision du commanditaire du
+                    # 2026-11-14 : une fiche dont le score dépasse le seuil et
+                    # qui ne porte aucune anomalie bloquante est promue
+                    # « valide » PLUS BAS, dans cette même fonction et cette
+                    # même transaction, par `decider_statut_arrivee`. On ne
+                    # peut pas trancher ici : les anomalies RG16 — qui
+                    # l'emportent sur le score — ne sont connues qu'après les
+                    # projections. La règle est appliquée UNE SEULE FOIS, au
+                    # seul endroit qui a toutes ses données. Ne pas promouvoir
+                    # ailleurs : un second chemin de validation automatique
+                    # serait une règle concurrente.
+                    STATUT_ATTENTE_HUMAINE,
                     fiche.score_qualite(),
             )
             revision_apres: int
@@ -818,19 +856,73 @@ def _ecrire_fiche_dans(
             )
             for anomalie in fiche.anomalies:
                 cursor.execute(_SQL_ANOMALIE_INS, (id_fiche, anomalie.code, anomalie.gravite, anomalie.message))
+
+            # ------------------------------------------------------------------
+            # LA RÈGLE DE STATUT D'ARRIVÉE, APPLIQUÉE ICI ET NULLE PART AILLEURS.
+            #
+            # Remplace RG3 (« le dépôt ne valide jamais »). Décision du
+            # commanditaire du 2026-11-14 : score strictement supérieur à 80 %
+            # et aucune anomalie bloquante ⇒ la fiche arrive « valide ».
+            #
+            # Pourquoi ICI et pas dans `parametres_fiche` : parce que les
+            # anomalies RG16 viennent d'être calculées juste au-dessus, et
+            # qu'elles PRIMENT sur le score. Trancher plus tôt reviendrait à
+            # auto-valider une fiche au score élevé mais à la géométrie
+            # incohérente. Le statut est donc écrit « a_valider », puis promu
+            # dans la même transaction, par une instruction qui vérifie qu'il
+            # est encore « a_valider ».
+            # ------------------------------------------------------------------
+            decision = decider_statut_arrivee(fiche.score_qualite(), fiche.anomalies)
+            if decision.auto_validee:
+                cursor.execute(
+                    _SQL_PROMOUVOIR_AUTO,
+                    (STATUT_AUTO_VALIDE, id_fiche, STATUT_ATTENTE_HUMAINE),
+                )
+                if cursor.rowcount != 1:
+                    # Ne doit pas arriver : la ligne est écrite quelques
+                    # instructions plus haut. Si cela arrive, c'est qu'un
+                    # second chemin a changé le statut — c'est un bug, pas une
+                    # situation à absorber en silence.
+                    raise RuntimeError(
+                        f"Auto-validation refusée : la fiche id {id_fiche} n'est plus "
+                        "en attente humaine au moment de la promotion."
+                    )
+                # Tracabilité : l'action est distincte (« auto_valider », pas
+                # « valider ») et l'acteur est ABSENT, volontairement.
+                cursor.execute(
+                    _SQL_JOURNAL_AUTO_VALIDATION,
+                    (
+                        id_fiche,
+                        _ACTION_JOURNAL_AUTO_VALIDATION,
+                        STATUT_ATTENTE_HUMAINE,
+                        STATUT_AUTO_VALIDE,
+                        decision.raison,
+                    ),
+                )
+                LOGGER.info(
+                    "Fiche id %d AUTO-VALIDÉE à l'arrivée (%s). Aucun approbateur humain.",
+                    id_fiche,
+                    decision.raison,
+                )
+            else:
+                LOGGER.info(
+                    "Fiche id %d laissée en attente humaine (%s).", id_fiche, decision.raison,
+                )
     # Phase 2.1 (production-readiness, décision commanditaire du 2026-09-29) :
     # le texte de recherche pondéré est rempli DÈS L'ÉCRITURE (statut
     # a_valider) — une fiche déposée est cherchable immédiatement, badgée
-    # « non vérifiée » par l'interface. RG3 INCHANGÉ : rien ne passe à
-    # « valide » sans décision humaine ; la validation rafraîchit à nouveau
-    # le texte (mêmes poids A/B/C) au moment où la fiche rejoint l'archive
-    # de confiance. Sans ce remplissage précoce, des milliers de fiches
-    # déposées mais non validées seraient invisibles à la recherche.
+    # « non vérifiée » par l'interface. La règle de statut d'arrivée a
+    # changé depuis (auto-validation au seuil de 80 %) ; ce remplissage,
+    # lui, ne change pas : la validation — humaine ou automatique —
+    # rafraîchit à nouveau le texte (mêmes poids A/B/C) au moment où la
+    # fiche rejoint l'archive de confiance. Sans ce remplissage précoce,
+    # des milliers de fiches déposées mais non validées seraient
+    # invisibles à la recherche.
     with connexion.cursor() as cursor:
         cursor.execute("SELECT rafraichir_texte_recherche_fiche(%s)", (id_fiche,))
     LOGGER.info(
-        "Fiche écrite (%s, id %d, statut a_valider, révision %d).",
-        action, id_fiche, revision_apres,
+        "Fiche écrite (%s, id %d, statut %s, révision %d).",
+        action, id_fiche, decision.statut, revision_apres,
     )
     return ResultatEcriture(
         id_fiche=id_fiche,

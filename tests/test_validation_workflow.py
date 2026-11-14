@@ -17,6 +17,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from seamtech_search.config import AppConfig
+from seamtech_search.fiches import auto_validation
 from tests.helpers_postgres_isole import url_base_jetable
 
 RACINE = Path(__file__).resolve().parent.parent
@@ -61,10 +62,48 @@ def _declarer_bateaux_au_referentiel(
         connexion.commit()
 
 
+@pytest.fixture(scope="module", autouse=True)
+def seuil_auto_validation_hors_atteinte() -> Iterator[None]:
+    """Porte le seuil d'auto-validation hors d'atteinte pour TOUT ce module.
+
+    POURQUOI CE MODULE ENTIER : il décrit le workflow de validation
+    HUMAINE — fiches en attente, file de validation, transitions
+    a_valider → valide → rejete, corrections. Toutes ces mécaniques
+    partent d'une fiche « a_valider ».
+
+    Depuis l'auto-validation au seuil de 80 % (décision du commanditaire
+    du 2026-11-14), les deux fiches réelles déposées ici — 7792-SO
+    (0,929) et 0901-MM — arrivent « valide » : la file se vide, la
+    validation renvoie 409, la correction est refusée par RG11. Le module
+    mesurerait l'auto-validation au lieu du workflow humain.
+
+    Le seuil est porté à 1,0 — inatteignable, la comparaison étant
+    STRICTE — et non contourné par un patch de la fonction : la règle
+    reste celle du produit, seul son réglage change.
+
+    Ce que ce module ne couvre donc plus est prouvé ailleurs, et
+    explicitement, dans ``tests/test_auto_validation_persistance.py`` :
+    qu'une fiche auto-validée quitte la file de validation.
+    """
+    # Portée MODULE, et déclarée avant `base_workflow` : le dépôt des
+    # fiches a lieu dans cette autre fixture module. Un patch de portée
+    # fonction s'appliquerait APRÈS le dépôt — trop tard, les fiches
+    # seraient déjà auto-validées.
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(auto_validation, "SEUIL_AUTO_VALIDATION", 1.0)
+        yield
+
+
 @pytest.fixture(scope="module")
 def base_workflow() -> Iterator[dict[str, Any]]:
     """Base jetable (migrations + gabarits) puis dépôt de DEUX fiches réelles
-    ``a_valider`` (7792-SO, 0901-MM) par le moteur du Lot C (RG3)."""
+    ``a_valider`` (7792-SO, 0901-MM) par le moteur du Lot C.
+
+    Elles sont maintenues en « a_valider » par la fixture
+    ``seuil_auto_validation_hors_atteinte`` : sans elle, l'auto-validation
+    les validerait à l'arrivée et le workflow humain n'aurait plus rien à
+    valider.
+    """
     import shutil
     import uuid
 

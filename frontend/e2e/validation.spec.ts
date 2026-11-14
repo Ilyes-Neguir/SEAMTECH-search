@@ -41,9 +41,11 @@ test.describe("validation de bout en bout", () => {
   // Les trois tests s'enchaînent sur la même base e2e (ordre séquentiel garanti
   // au sein d'un describe) : chaque fiche n'est consommée qu'une fois.
   // Le seed (e2e/seed-live-pg.py) dépose trois dossiers via le PIPELINE RÉEL
-  // (depot → extraction gabarit v2 → a_valider, RG3) :
+  // (depot → extraction gabarit v2 → statut décidé par la règle d'arrivée) :
   //   7792-SO — la VRAIE fiche client (SHA-256 43afc51e…, 842×595 paysage) ;
   //   0901-MM, 0902-MM — fiches synthétiques (CLIENT-GENOA, CLIENT-E2E-TROIS).
+  // Depuis le 2026-11-14, une fiche au score > 80 % sans anomalie bloquante
+  // est auto-validée : la file de validation ne retient QUE les autres.
 
   test("la file respecte le tri croissant confiance puis code", async ({ page }) => {
     const file = await ouvrirFile(page)

@@ -150,6 +150,13 @@ def main(argv: list[str] | None = None) -> int:
         "le délai d'exécution des requêtes.",
         f"5. **Verdict : {verdit}.**",
         "",
+        "**Depuis ce rapport : l'auto-validation par seuil (D4) est implémentée.** "
+        "Score strictement supérieur à 80 % et aucune anomalie bloquante ⇒ la fiche "
+        "arrive `valide` ; RG3 est remplacée. Les effets que la décision ne "
+        "mentionnait pas — redépôt refusé, file de validation vidée, absence de "
+        "notification, stock non réévalué — sont **mesurés et posés**, pas décidés : "
+        "lire « Ce que la nouvelle règle change — à confirmer ».",
+        "",
         "## Comment lire ce document",
         "",
         "- **Test écrit** — le test ajouté au dépôt (ou existant) et REJOUÉ. Le décompte "
@@ -194,11 +201,11 @@ def main(argv: list[str] | None = None) -> int:
         "",
         "| Défaut | Pourquoi on ne le corrige pas |",
         "|---|---|",
-        "| D4 — « score haut ⇒ auto-validation » n'existe pas. Une règle nommée l'exclut : "
-        "RG3, « le dépôt ne valide jamais » (statut d'arrivée toujours `a_valider`). | "
-        "Changer ce comportement, c'est changer une règle. Soit RG3 est maintenue et l'item "
-        "est caduc, soit une auto-validation au-dessus d'un seuil est voulue — et il faut "
-        "alors modifier la règle, pas la contourner. **Décision du commanditaire.** |",
+        "| **D4 — TRANCHÉ le 2026-11-14.** L'auto-validation existe : score strictement "
+        "supérieur à 80 % et aucune anomalie bloquante ⇒ la fiche arrive `valide`. RG3 est "
+        "remplacée. Seuil nommé (`SEUIL_AUTO_VALIDATION`), décision appliquée APRÈS les "
+        "contrôles RG16 (seul endroit qui a toutes les anomalies), trace d'audit distincte "
+        "et sans acteur humain. Voir « Ce que la nouvelle règle change », plus bas. |",
         "| `import-panel.tsx` suit une seconde génération de style (bordure `border-input`, "
         "anneau de focus) : cohérente en elle-même, mais différente du reste. | "
         "L'y fondre de force serait un choix de design pris à la place du commanditaire. "
@@ -217,7 +224,84 @@ def main(argv: list[str] | None = None) -> int:
         sections.setdefault(item["section"], []).append(item)
         titres[item["section"]] = item["titre_section"]
 
-    out += ["## Les sections, item par item", ""]
+    out += [
+        "## Ce que la nouvelle règle change — à confirmer",
+        "",
+        "L'auto-validation a été implémentée telle qu'elle a été décidée. Elle a",
+        "aussi des effets que la décision ne mentionnait pas. Aucun n'a été tranché",
+        "à sa place : ils sont mesurés, et posés ici.",
+        "",
+        "### 1. Une fiche auto-validée ne peut plus être redéposée",
+        "",
+        "Une fiche auto-validée est une fiche `valide` : RG11 la protège. Redéposer",
+        "le même dossier — par exemple parce que l'annexe a changé — est donc",
+        "**refusé** : « RG11 : fiche validée ; dépôt différent refusé sans",
+        "modification des pièces ». Avant la règle, la fiche était `a_valider` et le",
+        "second dépôt la remplaçait sur place. Il faut désormais la rouvrir",
+        "(`POST /fiches/{code}/rouvrir`) pour la reprendre.",
+        "",
+        "C'est exactement le traitement déjà réservé à une fiche validée par un",
+        "humain — donc cohérent. Mais c'est un changement de geste quotidien, et il",
+        "n'a pas été demandé explicitement. **À confirmer.**",
+        "",
+        "Prouvé par `test_rejouer_une_fiche_auto_validee_est_refuse`",
+        "(`tests/test_depot_transactionnel.py`).",
+        "",
+        "### 2. La file de validation se vide",
+        "",
+        "La file ne retient que les `a_valider`. Les deux fiches réelles du corpus",
+        "scorent 0,929 (7792-SO) et 0,980 (génois) : **les deux sont",
+        "auto-validées**. Ce n'est pas un cas-limite, c'est le cas courant. La file",
+        "de l'approbateur ne retient donc plus que les fiches sous le seuil ou",
+        "porteuses d'une anomalie — ce qui est bien le but, mais met fin au contrôle",
+        "humain systématique. **À confirmer.**",
+        "",
+        "Prouvé par `TestFileDeValidation`",
+        "(`tests/test_auto_validation_persistance.py`).",
+        "",
+        "### 3. Aucune notification n'est émise",
+        "",
+        "Une fiche validée par un humain peut être notifiée. Une auto-validation",
+        "n'a **pas de destinataire évident** : le système de notification exige un",
+        "`id_destinataire` nommé, et en choisir un serait inventer un destinataire.",
+        "Rien n'a donc été câblé. **Question ouverte : une auto-validation doit-elle",
+        "notifier quelqu'un — et qui ?**",
+        "",
+        "### 4. Les fiches déjà en `a_valider` ne sont PAS réévaluées",
+        "",
+        "Une fiche déposée avant la règle, qui aurait dépassé 80 %, reste",
+        "`a_valider`. Aucune reprise rétroactive n'a été faite : ce serait",
+        "rejouer une décision sur des données que personne n'a relues depuis.",
+        "**Question ouverte : faut-il réévaluer le stock, et si oui selon quelle",
+        "règle de révision ?**",
+        "",
+        "### 5. Deux incohérences trouvées, signalées, non corrigées",
+        "",
+        "- `fiche_de_fabrication_absente` (reprise.py) est émise avec la gravité",
+        "  « **haute** », un mot que le modèle d'anomalie ne documente pas",
+        "  (`faible | moyenne | forte`). C'est un échec d'extraction majeur : elle",
+        "  est comptée comme bloquante, sinon des fiches sans fiche de fabrication",
+        "  seraient auto-validées. **À unifier à la source** — deux mots pour la",
+        "  même gravité est un piège.",
+        "- `champ_manquant` (« aucun jeu de cotes finies lu ») est de gravité",
+        "  « moyenne » et n'est PAS dans `CODES_BLOQUANTS` : une telle fiche peut",
+        "  donc s'auto-valider si son score dépasse 80 %. C'est le choix de ne rien",
+        "  inventer — la définition retenue est celle qui existait déjà. **À",
+        "  confirmer.**",
+        "",
+        "### Ce qui est bloquant, précisément",
+        "",
+        "`code in CODES_BLOQUANTS` **ou** gravité « forte » (ou « haute », voir",
+        "ci-dessus). Les deux notions existaient déjà dans le produit et servent",
+        "déjà de signal bloquant ailleurs (`extractions_voile.py`,",
+        "`liaison_voile.py`) : rien n'a été inventé. Restent non bloquantes — donc",
+        "auto-validables au-dessus du seuil — `bateau_hors_referentiel`,",
+        "`reference_discordante`, `champ_manquant`, `cote_hors_plage`,",
+        "`cotes_incoherentes` (en moyenne), `type_voile_non_traduit`.",
+        "",
+        "## Les sections, item par item",
+        "",
+    ]
     for cle in sorted(sections):
         items = sections[cle]
         out += [

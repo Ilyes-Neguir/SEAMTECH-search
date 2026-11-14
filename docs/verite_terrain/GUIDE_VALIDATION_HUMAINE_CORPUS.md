@@ -2,9 +2,12 @@
 
 Statut au 2026-09-28 : le Lot 1 (gabarits + classification automatique) et le
 Lot 2 (job CI `recette-corpus-reel`) sont livrés sur la branche de travail.
-**Aucune fiche n'est validée** : les 7 fiches extraites du corpus réel sont
-`a_valider` (RG3) et le resteront jusqu'à décision humaine. Ce guide prépare
-cette décision — il ne la remplace jamais.
+**Aucune fiche n'est validée par un humain** : les 7 fiches extraites du corpus
+réel attendent une décision. Depuis la décision du commanditaire du 2026-11-14,
+celles dont le score dépasse strictement 80 % sans anomalie bloquante sont
+**auto-validées à l'arrivée** (règle qui remplace RG3) — elles n'attendent plus
+personne ; les autres restent `a_valider`. Ce guide prépare la décision sur
+celles qui restent — il ne la remplace jamais.
 
 > **Cadre de confidentialité.** Les ZIP du corpus sont commités à la racine du
 > dépôt par le commanditaire ; ce guide n'y ajoute AUCUNE valeur métier. Les
@@ -133,8 +136,10 @@ de lecture suggéré** (basse confiance d'abord), jamais une décision.
 - **Confiance 0,70 sur `fiche.designation`** : le libellé du type de voile
   est le champ d'en-tête le moins certain (accents, abréviations atelier) —
   c'est le PREMIER champ à relire.
-- **Rien n'est validé automatiquement** : le statut `a_valider` de chaque
-  fiche est le comportement attendu (RG3), pas un retard.
+- **L'auto-validation existe depuis le 2026-11-14** : une fiche dont le score
+  dépasse strictement 80 % et qui ne porte aucune anomalie bloquante arrive
+  `valide`. Une fiche encore `a_valider` est donc soit sous le seuil, soit
+  porteuse d'une anomalie — ce n'est pas un retard, c'est un signal.
 
 ## 4. Saisir une correction (attribution nominative + contrôle secondaire)
 

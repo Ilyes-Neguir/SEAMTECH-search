@@ -371,11 +371,12 @@ def deposer(acc: dict[str, Any], index: Any) -> dict[str, int]:  # noqa: ANN401 
                         fiche["racine"],
                         fiche["categorie"],
                         "dossier",
-                        # RG3 : le statut d'arrivée est TOUJOURS a_valider.
-                        # « importe » n'est pas dans le vocabulaire du produit
-                        # et, surtout, la recherche ne rend que les fiches
-                        # valide/a_valider — déposer en « importe » rendait
-                        # donc le corpus invisible, y compris vecteur rempli.
+                        # Statut d'arrivée : laissé à la règle (et non
+                        # forcé). « importe » n'est pas dans le vocabulaire
+                        # du produit et, surtout, la recherche ne rend que
+                        # les fiches valide/a_valider — déposer en
+                        # « importe » rendait donc le corpus invisible,
+                        # y compris vecteur rempli.
                         "a_valider",
                         fiche.get("gamme"),
                         fiche.get("type_voile"),

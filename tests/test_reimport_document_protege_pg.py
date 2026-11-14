@@ -10,7 +10,7 @@ import pytest
 from seamtech_search.config import AppConfig
 from seamtech_search.fiches import depot
 from seamtech_search.import_pipeline import import_folder
-from tests.test_depot_transactionnel import ARCHIVE_7792, base_depot  # noqa: F401
+from tests.test_depot_transactionnel import ARCHIVE_7792, base_depot, sans_auto_validation  # noqa: F401
 
 pytestmark = pytest.mark.postgres
 
@@ -42,7 +42,7 @@ def test_reimport_identique_preserve_references_et_metadonnees(base_depot, tmp_p
             assert curseur.fetchone() == avant
 
 
-def test_reimport_conflit_publie_sans_remplacer_la_piece_protegee(base_depot, tmp_path: Path, monkeypatch):  # noqa: F811
+def test_reimport_conflit_publie_sans_remplacer_la_piece_protegee(base_depot, tmp_path: Path, monkeypatch, sans_auto_validation: None):  # noqa: F811
     from seamtech_search.storage import S3StorageClient
     from tests.s3_en_memoire import S3EnMemoire
 

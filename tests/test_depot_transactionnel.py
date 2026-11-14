@@ -14,9 +14,11 @@ from typing import Any, Iterator
 
 import pytest
 
-from seamtech_search.fiches import depot
+from seamtech_search.fiches import auto_validation, depot
+from seamtech_search.fiches.auto_validation import decider_statut_arrivee
 from seamtech_search.fiches.depot import DepotImpossible, empreintes_arbre, scanner_dossier
 from seamtech_search.fiches.gabarits import GABARITS_EMBARQUES
+from seamtech_search.fiches.modeles import Anomalie
 from tests.helpers_postgres_isole import url_base_jetable
 
 RACINE = Path(__file__).resolve().parent.parent
@@ -86,7 +88,7 @@ class TestScannerUnitaire:
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture()
 def base_depot() -> Iterator[dict[str, Any]]:
     """Base jetable migrée (001→010) + gabarits embarqués."""
     import uuid
@@ -124,6 +126,29 @@ def base_depot() -> Iterator[dict[str, Any]]:
                 cursor.execute(f'DROP DATABASE IF EXISTS "{nom_base}"')
         finally:
             admin.close()
+
+
+@pytest.fixture()
+def sans_auto_validation(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Porte le seuil hors d'atteinte pour ce test.
+
+    POURQUOI : depuis l'auto-validation au seuil de 80 %, une fiche qui
+    arrive « valide » est PROTÉGÉE par RG11 — un second dépôt du même
+    dossier est refusé (« fiche validée ; dépôt différent refusé »). Les
+    tests de rejeu déposent DEUX FOIS le même dossier : ils exerceraient
+    donc le refus RG11 au lieu de la mécanique de rejeu qu'ils ont pour
+    objet de prouver.
+
+    Le seuil est porté à 1,0 — valeur que la comparaison STRICTE rend
+    inatteignable (un score vaut au plus 1,0) — et non contourné par un
+    patch de la fonction : la règle reste celle du produit, seul son seuil
+    change, et c'est le seul réglage prévu à cet effet.
+
+    Ce que ces tests ne couvrent donc PLUS est couvert ailleurs, et
+    explicitement : ``test_rejouer_une_fiche_auto_validee_est_refuse``
+    prouve le refus au lieu de le laisser découvrir en production.
+    """
+    monkeypatch.setattr(auto_validation, "SEUIL_AUTO_VALIDATION", 1.0)
 
 
 @pytest.fixture()
@@ -165,13 +190,74 @@ class TestEcritureEntiereOuPasDuTout:
         ligne = etat["dossiers"][0]
         assert ligne["statut"] == "traite" and ligne["id_fiche"] is not None
 
-    def test_fiche_en_a_valider_jamais_valide(self, base_depot: dict, dossier_ok: Path) -> None:
+    def test_le_statut_d_arrivee_est_celui_que_la_regle_decide(
+        self, base_depot: dict, dossier_ok: Path
+    ) -> None:
+        """Anciennement « fiche en a_valider, jamais valide » (RG3).
+
+        RG3 est REMPLACÉE par l'auto-validation au seuil de 80 %. Affirmer
+        « toujours a_valider » serait désormais faux — et le serait
+        silencieusement, puisque la fiche 7792 du corpus score 0,929.
+
+        On ne fige donc pas un statut : on relit ce qui est en base et on
+        vérifie que c'est ce que la règle décide. Ce test échouera si le
+        code et la règle divergent, quel que soit le statut obtenu.
+        """
         index = base_depot["index"]
         depot.deposer_dossier(index, dossier_ok)
         with index.connect() as connexion:
             with connexion.cursor() as cursor:
-                cursor.execute("SELECT statut FROM fiche")
-                assert cursor.fetchone()[0] == "a_valider"  # RG3
+                cursor.execute("SELECT statut, score_qualite FROM fiche")
+                statut, score = cursor.fetchone()
+                cursor.execute("SELECT code, gravite FROM fiche_anomalie")
+                anomalies = [
+                    Anomalie(code=code, gravite=gravite) for code, gravite in cursor.fetchall()
+                ]
+        attendu = decider_statut_arrivee(float(score) if score is not None else None, anomalies)
+        assert statut == attendu.statut, (
+            f"base : {statut} ; règle : {attendu.statut} ({attendu.raison})"
+        )
+
+    def test_la_fiche_du_corpus_est_auto_validee(self, base_depot: dict, dossier_ok: Path) -> None:
+        """La fiche 7792 du corpus score 0,929 : elle est auto-validée.
+
+        Ce n'est pas un cas-limite, c'est le cas courant. Le dire ici,
+        c'est rendre visible l'effet réel de la décision : la plupart des
+        fiches bien extraites n'attendent plus personne.
+        """
+        index = base_depot["index"]
+        depot.deposer_dossier(index, dossier_ok)
+        with index.connect() as connexion:
+            with connexion.cursor() as cursor:
+                cursor.execute("SELECT statut, score_qualite FROM fiche")
+                statut, score = cursor.fetchone()
+        assert float(score) > 0.80, "la fiche du corpus doit rester au-dessus du seuil"
+        assert statut == "valide"
+
+    def test_rejouer_une_fiche_auto_validee_est_refuse(
+        self, base_depot: dict, dossier_ok: Path
+    ) -> None:
+        """CONSÉQUENCE DIRECTE, À CONFIRMER PAR LE COMMANDITAIRE.
+
+        Une fiche auto-validée est une fiche validée : RG11 la protège, et
+        un second dépôt du même dossier est REFUSÉ — alors qu'avant la
+        règle il remplaçait la fiche sur place.
+
+        C'est cohérent avec le traitement d'une fiche validée par un
+        humain, mais ce n'est pas anodin : réimporter un dossier dont
+        l'annexe a changé exige désormais de rouvrir la fiche
+        (POST /fiches/{code}/rouvrir). On le prouve au lieu de le taire.
+        """
+        index = base_depot["index"]
+        assert depot.deposer_dossier(index, dossier_ok)["statut"] == "traite"
+
+        # Même dossier, annexe modifiée : le rejeu classique.
+        (dossier_ok / "croquis-atelier.txt").write_text("repère mis à jour", encoding="utf-8")
+        second = depot.deposer_dossier(index, dossier_ok)
+
+        assert second["statut"] == "echec"
+        assert second["fiche"] is None
+        assert "RG11" in second["raison"]
 
     def test_crash_apres_ecriture_fiche_rien_ne_persiste(self, base_depot: dict, dossier_ok: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """« Écriture entière ou pas du tout » : un crash APRÈS l'écriture de la
@@ -323,7 +409,7 @@ class TestRejeuSansDoublon:
         assert apres["pieces"] == avant["pieces"] and apres["champs"] == avant["champs"]
 
     def test_pdf_televerse_modifie_meme_chemin_ne_duplique_pas_les_annexes(
-        self, base_depot: dict, tmp_path: Path
+        self, base_depot: dict, tmp_path: Path, sans_auto_validation: None
     ) -> None:
         """Le même dossier envoyé dans une autre session avec un PDF modifié
         remplace la fiche, mais une annexe inchangée reste une seule pièce.
@@ -592,7 +678,7 @@ def test_worker_lot_televerse_promeut_avant_le_depot(base_depot: dict, tmp_path:
     assert all(client.objets[cle] == Path(chemin).read_bytes() for chemin, cle in lignes)
 
 
-def test_rejeu_televerse_promeut_documents_anciens(base_depot: dict, tmp_path: Path) -> None:
+def test_rejeu_televerse_promeut_documents_anciens(base_depot: dict, tmp_path: Path, sans_auto_validation: None) -> None:
     from io import BytesIO
     from types import SimpleNamespace
 
@@ -1123,7 +1209,7 @@ def test_fiche_validee_refuse_pdf_et_annexe_modifies_sans_mutation(base_depot: d
                 curseur.execute("UPDATE fiche SET statut='a_valider' WHERE code=%s", ('7792-SO',))
 
 
-def test_pdf_identique_annexe_modifiee_est_deposee_sans_ecraser_document(base_depot: dict, tmp_path: Path) -> None:
+def test_pdf_identique_annexe_modifiee_est_deposee_sans_ecraser_document(base_depot: dict, tmp_path: Path, sans_auto_validation: None) -> None:
     index = base_depot['index']
     source = (ARCHIVE_7792 / 'fiche-7792-SO_ffab.pdf').read_bytes()
     def session(token: str, annexe: bytes) -> Path:
@@ -1178,7 +1264,7 @@ def test_rejeu_avec_annexe_absente_exige_revue_sans_suppression(base_depot: dict
     assert (premier / 'annexe.txt').read_bytes() == b'original a conserver'
 
 
-def test_rejouer_pdf_historique_ne_declare_pas_la_fiche_courante_identique(base_depot: dict, tmp_path: Path) -> None:
+def test_rejouer_pdf_historique_ne_declare_pas_la_fiche_courante_identique(base_depot: dict, tmp_path: Path, sans_auto_validation: None) -> None:
     index = base_depot['index']
     source = (ARCHIVE_7792 / 'fiche-7792-SO_ffab.pdf').read_bytes()
     def session(token: str, pdf: bytes) -> Path:
@@ -1233,7 +1319,7 @@ def test_pdf_modifie_meme_chemin_necrase_pas_le_document(base_depot: dict, tmp_p
             assert curseur.fetchone()[0] == ancienne_empreinte
 
 
-def test_modification_concurrente_apres_verification_rejeu_ne_signale_pas_deja_traite(base_depot: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_modification_concurrente_apres_verification_rejeu_ne_signale_pas_deja_traite(base_depot: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sans_auto_validation: None) -> None:
     index = base_depot['index']
     source = (ARCHIVE_7792 / 'fiche-7792-SO_ffab.pdf').read_bytes()
     def session(token: str, pdf: bytes) -> Path:
@@ -1294,7 +1380,7 @@ def test_rejeu_verrouille_fiche_pendant_reverification(base_depot: dict, tmp_pat
     assert blocages == [True]
 
 
-def test_annexe_modifiee_ne_restaure_pas_pdf_historique_apres_concurrence(base_depot: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_annexe_modifiee_ne_restaure_pas_pdf_historique_apres_concurrence(base_depot: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sans_auto_validation: None) -> None:
     index = base_depot['index']
     source = (ARCHIVE_7792 / 'fiche-7792-SO_ffab.pdf').read_bytes()
     def session(token: str, pdf: bytes, annexe: bytes) -> Path:
@@ -1320,7 +1406,7 @@ def test_annexe_modifiee_ne_restaure_pas_pdf_historique_apres_concurrence(base_d
             assert curseur.fetchone()[0].rsplit('|', 1)[0] == os.path.normcase(str((concurrent / 'fiche.pdf').resolve()))
 
 
-def test_annexe_modifiee_necrase_pas_annexe_concurrente(base_depot: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_annexe_modifiee_necrase_pas_annexe_concurrente(base_depot: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sans_auto_validation: None) -> None:
     index = base_depot['index']
     source = (ARCHIVE_7792 / 'fiche-7792-SO_ffab.pdf').read_bytes()
     def session(token: str, annexe: bytes) -> Path:

@@ -2,8 +2,10 @@
 
 // Écran VALIDATION (lot D, le cœur métier) — file triée par confiance
 // croissante, champs avec valeur brute ET normalisée côte à côte, correction
-// inline, surlignage dans le PDF, validation en lot SANS jamais écrire
-// « valide » sans décision explicite (RG3). Le verrou de calibration (409)
+// inline, surlignage dans le PDF, validation en lot. Depuis le 2026-11-14,
+// une fiche au score > 80 % sans anomalie bloquante est auto-validée à
+// l'arrivée : elle n'apparaît plus dans cette file, qui ne retient que les
+// fiches en attente. Le verrou de calibration (409)
 // s'affiche avec sa sortie et la case d'acquittement explicite.
 
 import { useCallback, useEffect, useRef, useState } from "react"

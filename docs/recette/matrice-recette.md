@@ -2,7 +2,7 @@
 
 - items : 57
 - prouvés : 20
-- partiels : 19
+- partiels : 18
 - non prouvés : 14
 - échecs : 0
 - introuvables : 0
@@ -32,10 +32,10 @@
 | C · Import et glisser-déposer | C5 Fichier malformé, vide ou corrompu — refus nommé, jamais de 500 | `test_brouillon_depuis_pdf_illisible_repond_422_sans_fuite`, `test_detection_pdf_illisible_n_expose_pas_exception_ou_chemin`, `test_telechargement_fichiers_corrompus_refuse_rapport` — 1✓ 0✗ 2⤼ 0! | — | **PARTIEL** |
 | C · Import et glisser-déposer | C6 Doublon — détecté et signalé avant validation | `tests/test_dedup.py` — 2✓ 0✗ 12⤼ 0! | frontend/e2e/doublons.spec.ts | **PARTIEL** |
 | C · Import et glisser-déposer | C7 Gros volume — bornes de flux et dépôt par lot | `tests/test_flux_bornes.py`, `tests/test_multipart_flux.py`, `tests/test_bff_multipart_borne.py` — 21✓ 0✗ 0⤼ 0! | frontend/e2e/televersement-lot.spec.ts | **PROUVÉ** |
-| D · Extraction depuis un PDF | D1 PDF bien formé — valeurs extraites et sourcées | `tests/test_passe_finale_extraction_pdf.py`, `test_confiances_dans_les_limites` — 9✓ 0✗ 1⤼ 0! | — | **PARTIEL** |
+| D · Extraction depuis un PDF | D1 PDF bien formé — valeurs extraites et sourcées | `tests/test_passe_finale_extraction_pdf.py`, `test_confiances_dans_les_limites` — 9✓ 0✗ 1⤼ 0! | — | **PROUVÉ (CI)** |
 | D · Extraction depuis un PDF | D2 PDF dégradé ou scanné — OCR, et refus d'inventer sans OCR | `test_pdf_scanne_sans_ocr_n_invente_rien`, `test_entree_degradee_rend_un_statut_explicite_sans_lever`, `tests/test_ocr_comportement.py`, `tests/test_ocr_qualification.py`, `tests/test_ocr_etages.py`, `tests/test_ocr_moteur.py` — 76✓ 0✗ 7⤼ 0! | — | **PROUVÉ (CI)** |
 | D · Extraction depuis un PDF | D3 Score bas — la fiche part en file de validation | `test_taux_extraction_auto_definition`, `tests/test_validation_workflow.py` — 1✓ 0✗ 20⤼ 0! | frontend/e2e/validation.spec.ts | **PARTIEL** |
-| D · Extraction depuis un PDF | D4 Score haut — auto-validation | `test_le_statut_arrivee_est_a_valider_dans_le_code`, `tests/test_fiches_persistance.py` — 2✓ 0✗ 14⤼ 0! | À TRANCHER par le commanditaire : soit RG3 est maintenue (l'item est caduc), soit une auto-validation au-dessus d'un seuil est réellement voulue et il faut changer la règle — pas la contourner. | **À TRANCHER** |
+| D · Extraction depuis un PDF | D4 Score haut — auto-validation (seuil 80 %, décision du 2026-11-14) | `tests/test_auto_validation_seuil.py`, `tests/test_auto_validation_persistance.py`, `test_le_statut_arrivee_vient_de_la_regle_et_non_d_un_litteral`, `test_la_fiche_du_corpus_est_auto_validee` — 32✓ 0✗ 24⤼ 0! | frontend/e2e/validation.spec.ts — la file de validation ne retient plus les fiches auto-validées | **PROUVÉ (CI)** |
 | D · Extraction depuis un PDF | D5 Correction par l'approbateur — la source n'est pas écrasée | `tests/test_correction_preservation.py` — 20✓ 0✗ 0⤼ 0! | frontend/e2e/lot3b-extractions.spec.ts | **PROUVÉ** |
 | E · Recherche | E1 Recherche par bateau, type, matière, dimension et mot-clé | `test_filtre_par_bateau_et_matiere`, `test_analyse_dimension_variantes`, `tests/test_recherche_dimension.py` — 23✓ 0✗ 24⤼ 0! | — | **PARTIEL** |
 | E · Recherche | E2 Normalisation — casse, accents, tirets, abréviations | `tests/test_normalisation_cle_recherche.py`, `tests/test_indexer_accent_parity.py` — 34✓ 0✗ 3⤼ 0! | — | **PARTIEL** |

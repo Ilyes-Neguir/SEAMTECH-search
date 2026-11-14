@@ -1,5 +1,43 @@
 # Changelog
 
+## 2026-11-14 — auto-validation par seuil : RG3 est remplacée
+
+**Décision du commanditaire, actée : l'auto-validation existe et le seuil est
+80 %.** La règle **RG3** (« le dépôt ne valide jamais ») est remplacée :
+
+- score d'extraction **strictement supérieur à 80 %** ET aucune anomalie
+  bloquante ⇒ la fiche arrive `valide`, sans approbateur ;
+- sinon (score ≤ 80 %, ou anomalie bloquante) ⇒ `a_valider`, comme avant.
+
+Seuil nommé et unique : `SEUIL_AUTO_VALIDATION` dans
+`seamtech_search/fiches/auto_validation.py`. « Anomalie bloquante » n'invente
+rien : c'est `CODES_BLOQUANTS` (déjà nommé) **ou** la gravité « forte » (déjà
+le signal bloquant d'`extractions_voile.py` et `liaison_voile.py`).
+
+La décision est appliquée **après les contrôles RG16**, seul endroit de
+l'écriture qui connaît toutes les anomalies : trancher plus tôt auto-
+validerait une fiche au score élevé mais à la géométrie incohérente.
+
+Traçabilité : action distincte `auto_valider`, `id_utilisateur` **NULL** — une
+auto-validation n'a pas d'acteur humain, et le commentaire le dit. Elle n'est
+donc pas comptable comme une validation humaine dans l'audit.
+
+**Effets que la décision ne mentionnait pas, mesurés et non tranchés** (détail
+dans `docs/RECETTE_EXHAUSTIVE_2026-11-14.md`, section « Ce que la nouvelle
+règle change — à confirmer ») :
+
+1. une fiche auto-validée est protégée par RG11 : **redéposer le même dossier
+   est refusé** (il faut la rouvrir) ;
+2. **la file de validation se vide** — les deux fiches réelles du corpus
+   scorent 0,929 et 0,980 ;
+3. **aucune notification** n'est émise (pas de destinataire évident) ;
+4. les fiches déjà `a_valider` ne sont **pas** réévaluées rétroactivement.
+
+**Incohérence signalée, non corrigée** (hors périmètre) : `reprise.py` émet la
+gravité « haute », hors de la nomenclature documentée
+(`faible | moyenne | forte`). Elle est traitée comme bloquante.
+
+
 ## 2026-11-05 — comparaison, réutilisation, et une cote relue deux fois
 
 Exécution du plan « comparaison et réutilisation » (lots 0 → 8), avec le lot 2

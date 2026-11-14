@@ -15,9 +15,11 @@ from typing import Any, Iterator
 
 import pytest
 
+from seamtech_search.fiches import auto_validation
+from seamtech_search.fiches.auto_validation import decider_statut_arrivee
 from seamtech_search.fiches.extraction import extraire_fiche
 from seamtech_search.fiches.gabarits import GABARITS_EMBARQUES, charger_gabarits, initialiser_gabarits
-from seamtech_search.fiches.modeles import FicheExtraite
+from seamtech_search.fiches.modeles import Anomalie, FicheExtraite
 from seamtech_search.fiches.persistance import (
     ecrire_fiche,
     evaluer_verite,
@@ -80,6 +82,23 @@ def fiche_7792() -> Any:
     return extraire_fiche(PDF_7792, gabarits=list(GABARITS_EMBARQUES))
 
 
+@pytest.fixture()
+def sans_auto_validation(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Porte le seuil d'auto-validation hors d'atteinte pour ce test.
+
+    Plusieurs tests d'écriture déposent DEUX FOIS la même fiche, ou
+    partent du principe qu'elle attend une décision humaine. Depuis
+    l'auto-validation au seuil de 80 %, une fiche au score élevé arrive
+    « valide » et RG11 la protège : ces tests mesureraient le refus RG11
+    au lieu de la mécanique qu'ils ont pour objet.
+
+    Le seuil est porté à 1,0 — inatteignable, la comparaison étant
+    STRICTE — et non contourné par un patch de la fonction : la règle
+    reste celle du produit, seul son réglage change.
+    """
+    monkeypatch.setattr(auto_validation, "SEUIL_AUTO_VALIDATION", 1.0)
+
+
 def _comptes(index: SearchIndex, code: str) -> dict[str, int]:
     """Nombre de lignes par table enfant pour la fiche code (non-régression RG11)."""
     requetes = {
@@ -104,7 +123,15 @@ def _comptes(index: SearchIndex, code: str) -> dict[str, int]:
 
 
 class TestEcritureTransactionnelle:
-    def test_fiche_ecrite_en_statut_a_valider(self, base_fiches, fiche_7792) -> None:
+    def test_le_statut_ecrit_est_celui_que_la_regle_decide(self, base_fiches, fiche_7792) -> None:
+        """Anciennement « RG3 : toujours a_valider, jamais valide ».
+
+        RG3 est remplacée par l'auto-validation au seuil de 80 %. La fiche
+        7792 score 0,929 : affirmer « a_valider » serait faux. On vérifie
+        la COHÉRENCE entre la base et la règle, pas un statut figé — ce
+        test échouera si le code et la règle divergent, quel que soit le
+        sens de l'écart.
+        """
         fiche = fiche_7792.model_copy(update={"code": "7792-SO-ETAT"})
         id_fiche, action = ecrire_fiche(base_fiches["index"], fiche)
         assert action == "creee" and id_fiche > 0
@@ -113,8 +140,10 @@ class TestEcritureTransactionnelle:
             with connexion.cursor() as cursor:
                 cursor.execute("SELECT statut, score_qualite, id_gabarit FROM fiche WHERE id_fiche = %s", (id_fiche,))
                 statut, score, id_gabarit = cursor.fetchone()
-        # RG3 : le statut d'arrivée est TOUJOURS a_valider — jamais valide.
-        assert statut == "a_valider"
+                cursor.execute("SELECT code, gravite FROM fiche_anomalie WHERE id_fiche = %s", (id_fiche,))
+                anomalies = [Anomalie(code=c, gravite=g) for c, g in cursor.fetchall()]
+        attendu = decider_statut_arrivee(float(score) if score is not None else None, anomalies)
+        assert statut == attendu.statut, f"base {statut} ≠ règle {attendu.statut} ({attendu.raison})"
         assert score is not None and 0.0 <= float(score) <= 1.0
         assert id_gabarit is not None
 
@@ -222,7 +251,15 @@ class TestEcritureTransactionnelle:
 
 
 class TestIdempotenceRG11:
-    def test_rejouer_ne_duplique_rien(self, base_fiches, fiche_7792) -> None:
+    def test_rejouer_ne_duplique_rien(self, base_fiches, fiche_7792, sans_auto_validation: None) -> None:
+        """Le rejeu remplace sur place, sans dupliquer.
+
+        Le seuil est porté hors d'atteinte : une fiche auto-validée est
+        PROTÉGÉE par RG11 et sa seconde écriture est refusée
+        (« conservee_validee ») au lieu d'être remplacée — ce que ce test
+        ne cherche pas à mesurer, et qui est prouvé à part par
+        ``test_une_fiche_auto_validee_n_est_plus_reextraite``.
+        """
         index = base_fiches["index"]
         fiche = fiche_7792.model_copy(update={"code": "7792-SO-REJEU"})
         _, premiere = ecrire_fiche(index, fiche)

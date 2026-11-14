@@ -30,6 +30,7 @@ from tests.test_depot_transactionnel import (  # noqa: F401 - montures partagée
     ARCHIVE_7792,
     base_depot,
     dossier_ok,
+    sans_auto_validation,
 )
 
 RACINE = Path(__file__).resolve().parent.parent
@@ -168,7 +169,7 @@ class TestDepotAvecReferencesDiscordantes:
                 codes = {ligne[0] for ligne in cursor.fetchall()}
         assert "reference_discordante" not in codes
 
-    def test_dossier_discordant_entre_et_est_signale(self, base_depot: dict, tmp_path: Path) -> None:  # noqa: F811
+    def test_dossier_discordant_entre_et_est_signale(self, base_depot: dict, tmp_path: Path, sans_auto_validation: None) -> None:  # noqa: F811
         """Cas qui ÉCHOUE au dépôt : trois références qui diffèrent.
 
         Dossier « ST 430 », fichier « ZZ 075a_ffab.pdf », document « 7792-SO » :

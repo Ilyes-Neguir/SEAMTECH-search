@@ -42,7 +42,10 @@ import pytest
 
 from seamtech_search.config import AppConfig
 from seamtech_search.fiches import depot
-from tests.test_depot_transactionnel import base_depot  # noqa: F401 - fixture partagée
+from tests.test_depot_transactionnel import (  # noqa: F401 - fixtures partagées
+    base_depot,
+    sans_auto_validation,
+)
 
 pytestmark = pytest.mark.postgres
 
@@ -129,7 +132,7 @@ def test_depot_apres_import_du_meme_dossier_est_accepte(base_depot, tmp_path: Pa
     assert int(resultat["pieces"]) >= 1, "le dossier d'exemples porte au moins une pièce jointe"
 
 
-def test_depot_rejoue_garde_l_identite_des_octets_des_pieces(base_depot, tmp_path: Path):  # noqa: F811
+def test_depot_rejoue_garde_l_identite_des_octets_des_pieces(base_depot, tmp_path: Path, sans_auto_validation: None):  # noqa: F811
     """Deux dépôts du même dossier : l'identité des pièces survit au premier."""
     index = base_depot["index"]
     racine = tmp_path / "archive"
