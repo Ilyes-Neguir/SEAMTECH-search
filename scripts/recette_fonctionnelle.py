@@ -324,10 +324,22 @@ SECTIONS: list[Section] = [
                 "D2",
                 "PDF dégradé ou scanné — OCR, et refus d'inventer sans OCR",
                 [
-                    "tests/test_passe_finale_extraction_pdf.py::test_pdf_scanne_avec_ocr",
                     "tests/test_passe_finale_extraction_pdf.py::test_pdf_scanne_sans_ocr_n_invente_rien",
                     "tests/test_passe_finale_extraction_pdf.py::test_entree_degradee_rend_un_statut_explicite_sans_lever",
+                    # L'OCR proprement dit est prouvé par la suite « ocr_suite »,
+                    # qui exige Tesseract : un test OCR sans le binaire est un
+                    # test qui passe à côté. `test_pdf_scanne_avec_ocr` saute
+                    # hors du job `ocr`, et le laisser seul ici donnait un item
+                    # PARTIEL sans qu'on sache ce qui manquait.
+                    "tests/test_ocr_comportement.py",
+                    "tests/test_ocr_qualification.py",
+                    "tests/test_ocr_etages.py",
+                    "tests/test_ocr_moteur.py",
                 ],
+                preuve_ci=(
+                    "job « ocr », étape « Run OCR suite on committed samples » : "
+                    "pytest -m ocr_suite avec Tesseract et Poppler installés."
+                ),
             ),
             Item(
                 "D3",
@@ -658,9 +670,13 @@ SECTIONS: list[Section] = [
                 "K1",
                 "Sauvegarde puis restauration sur base neuve — identité octet à octet",
                 [
-                    "tests/test_recette_corpus_reel.py::test_10_sauvegarde_restauration_base_neuve",
                     "tests/test_sauvegarde_identite_octets.py",
+                    "tests/test_recette_corpus_reel.py::test_10_sauvegarde_restauration_base_neuve",
                 ],
+                preuve_ci=(
+                    "job « recette-corpus-reel » : la restauration sur base neuve y est "
+                    "jouée sur le corpus réel, étape « Run full recette suite »."
+                ),
             ),
             Item(
                 "K2",

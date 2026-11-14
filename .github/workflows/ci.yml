@@ -3835,6 +3835,15 @@ jobs:
             echo "::error title=ocr-suite-tail::$(tail -40 /tmp/ocr.log | tr -d '\000-\010\013\014\016-\037' | tr '\n' ';' | head -c 1800)"
             exit "$rc"
           fi
+      - name: Recette fonctionnelle — section D, avec Tesseract réel
+        # L'extraction sur PDF scanné ne se prouve qu'avec un moteur OCR :
+        # sans Tesseract, le test saute et l'item reste PARTIEL sans qu'on
+        # sache ce qui manquait. Ce job est le seul à installer les binaires
+        # (tesseract fra+eng et poppler) — la section D est donc mesurée ici,
+        # pas dans `backend`.
+        run: |
+          python -u scripts/recette_fonctionnelle.py --section D --sortie docs/recette --annonces
+
       - name: Garde-fou OCR étage 3 — ROUGE puis VERT
         run: |
           set -uo pipefail
