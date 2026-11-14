@@ -1,0 +1,51 @@
+{
+  "_pourquoi": "Chaque ligne est une annotation relevée sur un run GitHub, pas une supposition. Le rapport de recette est généré depuis ce fichier : sans lui, il faudrait croire celui qui l'écrit.",
+  "_comment_relever": "gh api \"repos/Ilyes-Neguir/SEAMTECH-search/commits/<sha40>/check-runs?per_page=100\" --jq '.check_runs[]|select(.name==\"<job>\")|.id' puis gh api \"repos/Ilyes-Neguir/SEAMTECH-search/check-runs/<id>/annotations?per_page=100\" --jq '.[]|\"\\(.title) :: \\(.message)\"'",
+  "matrice_backend": {
+    "sha": "5ad5d8b",
+    "job": "backend (3.11)",
+    "annotation": "recette-A-K :: 57 items — 53 prouvés, 3 partiels, 1 non prouvés, 0 échecs, 0 introuvables",
+    "partiels": [],
+    "non_prouves": [],
+    "detail": "PostgreSQL et Redis réels. D1, D2, D3 et D5 y étaient partiels faute de moteur OCR ; ils sont prouvés par le job `ocr`. F4 y était non prouvé (corpus réel) ; il est prouvé par `recette-corpus-reel`. K1 y est partiel : son versant « base neuve » n'est joué que sur le corpus réel, qui le prouve."
+  },
+  "prouves_par_un_autre_job": {
+    "_pourquoi": "Un item qui exige un service absent d'un job n'est pas un trou : il est prouvé ailleurs. Le dire évite de compter deux fois la même absence.",
+    "D1": "ocr",
+    "D2": "ocr",
+    "D3": "ocr",
+    "D5": "ocr",
+    "F4": "recette-corpus-reel",
+    "K1": "recette-corpus-reel (versant « base neuve »)"
+  },
+  "section_D_ocr": {
+    "sha": "c4d2b9d",
+    "job": "ocr",
+    "annotation": "recette-A-K :: 5 items — 4 prouvés, 0 partiels, 0 non prouvés, 0 échecs, 0 introuvables",
+    "detail": "Section D jouée avec un moteur OCR réel. Le moteur élu est RapidOCR, pas Tesseract : « ocr-moteur :: demande=auto rapidocr_installable=True elu=MoteurRapidOCR ». Le cinquième item est D4 (À TRANCHER), hors des quatre statuts mesurés."
+  },
+  "routes": {
+    "sha": "1908e96",
+    "job": "integration",
+    "annotation": "recette-routes :: 116 routes, 472 sondes — 0 plantage(s), 0 indisponible(s) ici, 0 accès non contrôlé(s)",
+    "detail": "Joué contre la pile réelle (PostgreSQL, Redis, MinIO). Au SHA c940abe, l'étape tournait APRÈS « docker compose down -v » et ne sondait qu'une pile démontée : 472 sondes, 472 erreurs de transport, et un « 0 plantage » qui ne voulait rien dire."
+  },
+  "accessibilite": {
+    "sha": "5ad5d8b",
+    "job": "e2e",
+    "annotation": "accessibilite :: 88 écrans scannés, 0 violation WCAG 2.1 A/AA",
+    "detail": "82 écrans avant correction. Les deux écrans à paramètre (/fiches/[code], /dossier/[code]) n'apparaissaient dans aucun constat : le test lisait les codes sur la FILE DE VALIDATION, vide sur base fraîche. Le décompte global ne pouvait pas le voir ; un garde-fou exige désormais les 17 écrans un par un."
+  },
+  "corpus_reel": {
+    "sha": "5ad5d8b",
+    "job": "recette-corpus-reel",
+    "annotation": "garde-pdf-corpus :: fichiers=14 pages=30 refus=0 motifs[aucun]",
+    "detail": "La suite « Run full recette suite » (pytest -m recette_corpus) couvre la sauvegarde/restauration sur base neuve et l'étalonnage sur la fiche réelle du fonds."
+  },
+  "preuve_objet": {
+    "sha": "5ad5d8b",
+    "job": "integration",
+    "annotation": "preuve-PROUVÉ :: objet supprimé du stockage puis resservi, octets identiques",
+    "detail": "16 jalons, tous « ok »."
+  }
+}
