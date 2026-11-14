@@ -48,6 +48,11 @@ PROUVE = "PROUVÉ"
 # qui marche pour en ajouter une qui casse n'est pas une amélioration. Le
 # statut le DIT, plutôt que de faire passer l'item pour non prouvé.
 PROUVE_CI = "PROUVÉ (CI)"
+# L'item décrit un comportement que l'application N'implémente pas, et ce
+# n'est pas un oubli : une règle nommée l'exclut. Ce n'est ni un échec ni une
+# absence de preuve — c'est une question adressée au commanditaire, et elle
+# doit figurer comme telle plutôt que se fondre dans les « non prouvés ».
+A_TRANCHER = "À TRANCHER"
 ECHEC = "ÉCHEC"
 NON_PROUVE = "NON PROUVÉ"
 PARTIEL = "PARTIEL"
@@ -64,6 +69,7 @@ class Item:
     navigateur: str | None = None
     manuel: str | None = None
     preuve_ci: str | None = None
+    absent: str | None = None
 
     @property
     def couvert(self) -> bool:
@@ -336,8 +342,20 @@ SECTIONS: list[Section] = [
                 "D4",
                 "Score haut — auto-validation",
                 [
-                    "tests/test_qualite_tableau.py::test_taux_extraction_auto_definition",
+                    "tests/test_fiches_sql_grammaire.py::test_le_statut_arrivee_est_a_valider_dans_le_code",
+                    "tests/test_fiches_persistance.py",
                 ],
+                absent=(
+                    "Aucune auto-validation par score : le statut d'arrivée est "
+                    "TOUJOURS a_valider, et c'est une règle nommée — RG3, « le dépôt "
+                    "ne valide jamais ». L'attente « score haut ⇒ auto-validation » "
+                    "est donc CONTRAIRE à RG3, non oubliée."
+                ),
+                manuel=(
+                    "À TRANCHER par le commanditaire : soit RG3 est maintenue (l'item est "
+                    "caduc), soit une auto-validation au-dessus d'un seuil est réellement "
+                    "voulue et il faut changer la règle — pas la contourner."
+                ),
             ),
             Item(
                 "D5",
@@ -811,6 +829,11 @@ def main(argv: list[str] | None = None) -> int:
             statut = statut_item(compte, introuvables)
             if item.preuve_ci and statut in (NON_PROUVE, PARTIEL):
                 statut = PROUVE_CI
+            if item.absent:
+                # Un item délibérément exclu par une règle n'est pas « non
+                # prouvé » : il est tranché dans le code, et la question est
+                # renvoyée au commanditaire.
+                statut = A_TRANCHER
             lignes.append(
                 {
                     "section": section.id,
@@ -821,6 +844,7 @@ def main(argv: list[str] | None = None) -> int:
                     "navigateur": item.navigateur,
                     "manuel": item.manuel,
                     "preuve_ci": item.preuve_ci,
+                    "absent": item.absent,
                     "resultats": compte,
                     "introuvables": introuvables,
                     "statut": statut,
@@ -839,6 +863,7 @@ def main(argv: list[str] | None = None) -> int:
         "items": len(lignes),
         "prouves": sum(1 for ligne in lignes if ligne["statut"] == PROUVE),
         "prouves_ci": sum(1 for ligne in lignes if ligne["statut"] == PROUVE_CI),
+        "a_trancher": sum(1 for ligne in lignes if ligne["statut"] == A_TRANCHER),
         "partiels": sum(1 for ligne in lignes if ligne["statut"] == PARTIEL),
         "non_prouves": sum(1 for ligne in lignes if ligne["statut"] == NON_PROUVE),
         "echecs": sum(1 for ligne in lignes if ligne["statut"] == ECHEC),
@@ -859,6 +884,7 @@ def main(argv: list[str] | None = None) -> int:
     print(
         f"Recette A→{sections[-1].id} : {bilan['items']} items — "
         f"{bilan['prouves']} prouvés, {bilan['prouves_ci']} prouvés par la CI, "
+        f"{bilan['a_trancher']} à trancher, "
         f"{bilan['partiels']} partiels, "
         f"{bilan['non_prouves']} non prouvés, {bilan['echecs']} échecs, "
         f"{bilan['introuvables']} introuvables"

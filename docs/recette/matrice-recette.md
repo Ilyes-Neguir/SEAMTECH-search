@@ -3,7 +3,7 @@
 - items : 57
 - prouvés : 20
 - partiels : 21
-- non prouvés : 15
+- non prouvés : 14
 - échecs : 0
 - introuvables : 0
 
@@ -35,7 +35,7 @@
 | D · Extraction depuis un PDF | D1 PDF bien formé — valeurs extraites et sourcées | `tests/test_passe_finale_extraction_pdf.py`, `test_confiances_dans_les_limites` — 9✓ 0✗ 1⤼ 0! | — | **PARTIEL** |
 | D · Extraction depuis un PDF | D2 PDF dégradé ou scanné — OCR, et refus d'inventer sans OCR | `test_pdf_scanne_avec_ocr`, `test_pdf_scanne_sans_ocr_n_invente_rien`, `test_entree_degradee_rend_un_statut_explicite_sans_lever` — 5✓ 0✗ 1⤼ 0! | — | **PARTIEL** |
 | D · Extraction depuis un PDF | D3 Score bas — la fiche part en file de validation | `test_taux_extraction_auto_definition`, `tests/test_validation_workflow.py` — 1✓ 0✗ 20⤼ 0! | frontend/e2e/validation.spec.ts | **PARTIEL** |
-| D · Extraction depuis un PDF | D4 Score haut — auto-validation | `test_taux_extraction_auto_definition` — 0✓ 0✗ 1⤼ 0! | — | **NON PROUVÉ** |
+| D · Extraction depuis un PDF | D4 Score haut — auto-validation | `test_le_statut_arrivee_est_a_valider_dans_le_code`, `tests/test_fiches_persistance.py` — 2✓ 0✗ 14⤼ 0! | À TRANCHER par le commanditaire : soit RG3 est maintenue (l'item est caduc), soit une auto-validation au-dessus d'un seuil est réellement voulue et il faut changer la règle — pas la contourner. | **À TRANCHER** |
 | D · Extraction depuis un PDF | D5 Correction par l'approbateur — la source n'est pas écrasée | `tests/test_correction_preservation.py` — 20✓ 0✗ 0⤼ 0! | frontend/e2e/lot3b-extractions.spec.ts | **PROUVÉ** |
 | E · Recherche | E1 Recherche par bateau, type, matière, dimension et mot-clé | `test_filtre_par_bateau_et_matiere`, `test_analyse_dimension_variantes`, `tests/test_recherche_dimension.py` — 23✓ 0✗ 24⤼ 0! | — | **PARTIEL** |
 | E · Recherche | E2 Normalisation — casse, accents, tirets, abréviations | `tests/test_normalisation_cle_recherche.py`, `tests/test_indexer_accent_parity.py` — 34✓ 0✗ 3⤼ 0! | — | **PARTIEL** |
