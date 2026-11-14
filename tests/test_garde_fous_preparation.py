@@ -240,6 +240,12 @@ EXCEPTIONS_RG14: dict[str, str] = {
         "de dépendance externe, jamais d'en créer une. Jamais importé par le service ; "
         "cible loopback. Documenté dans docs/DEPLOYMENT.md"
     ),
+    "scripts/recette_routes.py": (
+        "outil de RECETTE : il sonde une application DÉJÀ démarrée, par HTTP, "
+        "pour observer ce qu'elle répond réellement — c'est son objet. Aucun "
+        "appel sortant vers un tiers : la cible est un paramètre (--base-url), "
+        "jamais une adresse inscrite dans le code"
+    ),
     "scripts/qualification_native_controles.py": (
         "client HTTP d'ESSAI d'installation native (outillage, jamais importé par "
         "le service) : les CONTROLE PASS/FAIL prouvent le parcours réel via l'API "
@@ -260,6 +266,7 @@ DOCS_MARQUEURS_EXCEPTIONS = {
     "scripts/audit_dependency_policy.py": "RG14_EXCEPTION",
     "scripts/recette_verif.py": "RG14_EXCEPTION",
     "scripts/verifier_hors_ligne.py": "RG14_EXCEPTION",
+    "scripts/recette_routes.py": "RG14_EXCEPTION",
     "scripts/qualification_native_controles.py": "RG14_EXCEPTION",
     "scripts/sync_ecc_skills.py": "RG14_EXCEPTION",
     "seamtech_search/fiches/arborescence.py": "RG14_EXCEPTION",

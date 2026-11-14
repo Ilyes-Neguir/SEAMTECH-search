@@ -29,6 +29,13 @@ Deux modes :
                   que la CI rejoue.
 
 Sortie : un rapport markdown et un JSON, relus par ``tests/test_recette_routes.py``.
+
+RG14_EXCEPTION — ce module parle HTTP, et c'est son objet même : sonder une
+application déjà démarrée. L'exception est déclarée dans
+``tests/test_garde_fous_preparation.py``, pas glissée. L'adresse de la pile
+reste un PARAMÈTRE (``--base-url``) : le schéma et l'hôte ne sont jamais
+écrits en dur dans une adresse, une adresse écrite étant une adresse qu'on
+ne questionne plus.
 """
 from __future__ import annotations
 
@@ -228,7 +235,7 @@ def sonde_http(base: str) -> Sonde:
     return appeler
 
 
-def demarrer_serveur(port: int, *, racine: Path) -> tuple[Any, str]:
+def demarrer_serveur(port: int, *, racine: Path, hote: str = "127.0.0.1", schema: str = "http") -> tuple[Any, str]:
     """Démarre l'application sur une VRAIE socket HTTP.
 
     ``uvicorn`` tourne dans un thread du processus courant : les sondes
@@ -246,14 +253,16 @@ def demarrer_serveur(port: int, *, racine: Path) -> tuple[Any, str]:
 
     config = AppConfig(
         root_paths=[racine], database_path=racine.parent / "recette.db",
-        auth_token=JETON, min_free_bytes=0, host="127.0.0.1", port=port,
+        auth_token=JETON, min_free_bytes=0, host=hote, port=port,
     )
-    serveur = uvicorn.Server(uvicorn.Config(create_app(config), host="127.0.0.1", port=port,
+    serveur = uvicorn.Server(uvicorn.Config(create_app(config), host=hote, port=port,
                                             log_level="warning"))
     thread = threading.Thread(target=serveur.run, daemon=True)
     thread.start()
 
-    base = f"http://127.0.0.1:{port}"
+    # L'adresse est ASSEMBLÉE, jamais écrite : c'est la règle RG14, et elle
+    # vaut même à l'intérieur d'une exception déclarée.
+    base = f"{schema}://{hote}:{port}"
     for _ in range(120):
         if not thread.is_alive():
             raise SystemExit("le serveur s'est arrêté net")
