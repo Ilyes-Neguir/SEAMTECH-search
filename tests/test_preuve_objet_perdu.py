@@ -787,7 +787,7 @@ def test_sans_identites_de_stockage_la_preuve_ne_demarre_pas() -> None:
     assert any("--utilisateur-stockage" in m for m in rapport["manques"])
 
 
-def test_le_verdict_est_publie_en_une_seule_annotation() -> None:
+def test_le_verdict_est_publie_avant_le_rapport() -> None:
     """Le script annonce son verdict LUI-MÊME, avant tout le reste.
 
     Pourquoi : les journaux bruts de ce dépôt sont servis par un hôte
@@ -796,7 +796,8 @@ def test_le_verdict_est_publie_en_une_seule_annotation() -> None:
     dans une variable perd la raison si elle meurt. Quatre cycles CI ont été
     dépensés à deviner un verdict que le script connaissait déjà.
 
-    Une annotation, et une seule, émise d'abord.
+    Le verdict d'abord, puis la liste des jalons : deux annotations au
+    total, émises avant le rapport.
     """
     import subprocess
     import sys
@@ -806,6 +807,8 @@ def test_le_verdict_est_publie_en_une_seule_annotation() -> None:
         capture_output=True, text=True, timeout=120, check=False,
     )
     assert "::notice title=preuve-NON-PROUVÉ::" in termine.stdout, termine.stdout
-    assert termine.stdout.count("::notice title=preuve-") == 1
+    # Le verdict, puis la liste des jalons : deux annotations, pas plus.
+    assert termine.stdout.count("::notice title=preuve-") == 2
+    assert "::notice title=preuve-JALONS::" in termine.stdout
     # L'annotation passe AVANT le rapport : si le pas suivant meurt, elle vit.
     assert termine.stdout.index("::notice") < termine.stdout.index("PREUVE —")

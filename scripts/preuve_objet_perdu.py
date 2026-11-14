@@ -1129,6 +1129,14 @@ def main(argv: list[str] | None = None) -> int:
             f"{_aplatir(detail, 300)}",
             flush=True,
         )
+        # La liste des jalons, juste derrière. Un verdict seul oblige à CROIRE
+        # que la chaîne a couru : quinze jalons publiés un par un la montrent.
+        # Trois annotations au total — le plafond est de dix par étape.
+        jalons = " ; ".join(
+            f"{etape['etape']}={'ok' if etape['reussie'] else 'ÉCHEC'}"
+            for etape in rapport["etapes"]
+        )
+        print(f"::notice title=preuve-JALONS::{_aplatir(jalons, 600)}", flush=True)
 
     print("=" * 72)
     print(f"PREUVE — objet perdu puis restauré — {rapport['verdict']}")
