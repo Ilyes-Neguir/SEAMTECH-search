@@ -2,12 +2,25 @@
 
 ## 2026-11-14 — auto-validation par seuil : RG3 est remplacée
 
-**Décision du commanditaire, actée : l'auto-validation existe et le seuil est
-80 %.** La règle **RG3** (« le dépôt ne valide jamais ») est remplacée :
+**Décision du commanditaire, actée : l'auto-validation existe.** La règle
+**RG3** (« le dépôt ne valide jamais ») est remplacée.
 
-- score d'extraction **strictement supérieur à 80 %** ET aucune anomalie
+**Le seuil est 90 %, et ce chiffre est mesuré, pas choisi.** Il a d'abord été
+fixé à 80 % le 2026-11-14, puis remonté à 90 % le 2026-11-16 après mesure des
+7 fiches du corpus réel : à 80 %, elles s'auto-validaient TOUTES (scores
+0,836 → 0,920, aucune anomalie) et la file de validation se vidait
+entièrement — six jobs de CI tombaient, l'application n'avait plus rien à
+faire valider. À 90 %, 3 fiches sur 7 s'auto-valident et 4 restent en file.
+Les scores sont dans `docs/RECETTE_EXHAUSTIVE_2026-11-16.md`.
+
+Attention, ce palier est un compromis, pas une frontière : les 7 fiches
+tiennent dans 8 points d'écart sans aucun trou. Le score ne sépare donc pas
+« les bonnes » des « mauvaises » sur ce corpus — il sépare 0,914 de 0,900,
+soit 1,4 %. Le seuil reste un seul chiffre à modifier :
+
+- score d'extraction **strictement supérieur à 90 %** ET aucune anomalie
   bloquante ⇒ la fiche arrive `valide`, sans approbateur ;
-- sinon (score ≤ 80 %, ou anomalie bloquante) ⇒ `a_valider`, comme avant.
+- sinon (score ≤ 90 %, ou anomalie bloquante) ⇒ `a_valider`, comme avant.
 
 Seuil nommé et unique : `SEUIL_AUTO_VALIDATION` dans
 `seamtech_search/fiches/auto_validation.py`. « Anomalie bloquante » n'invente
@@ -23,13 +36,12 @@ auto-validation n'a pas d'acteur humain, et le commentaire le dit. Elle n'est
 donc pas comptable comme une validation humaine dans l'audit.
 
 **Effets que la décision ne mentionnait pas, mesurés et non tranchés** (détail
-dans `docs/RECETTE_EXHAUSTIVE_2026-11-14.md`, section « Ce que la nouvelle
+dans `docs/RECETTE_EXHAUSTIVE_2026-11-16.md`, section « Ce que la nouvelle
 règle change — à confirmer ») :
 
 1. une fiche auto-validée est protégée par RG11 : **redéposer le même dossier
    est refusé** (il faut la rouvrir) ;
-2. **la file de validation se vide** — les deux fiches réelles du corpus
-   scorent 0,929 et 0,980 ;
+2. **la file de validation ne retient plus que 4 fiches sur 7** ;
 3. **aucune notification** n'est émise (pas de destinataire évident) ;
 4. les fiches déjà `a_valider` ne sont **pas** réévaluées rétroactivement.
 

@@ -20,7 +20,7 @@ Contraintes appliquées, toutes testées :
 - **Un dossier refusé est un RÉSULTAT** : raison explicite (« gabarit inconnu »,
   « aucun PDF », « PDF illisible »), jamais une exception qui tuerait le lot.
 - Statut d'arrivée : décidé par ``ecrire_fiche`` — l'ancienne règle RG3
-  (« jamais valide ») est remplacée par l'auto-validation au seuil de 80 %
+  (« jamais valide ») est remplacée par l'auto-validation au seuil de 90 %
   (décision du commanditaire du 2026-11-14) : score strictement supérieur à
   0,80 et aucune anomalie bloquante ⇒ la fiche arrive ``valide``. Une fiche
   ainsi validée est protégée par RG11 : un second dépôt du même dossier est

@@ -70,9 +70,9 @@ curl -s -H "X-SEAMTECH-TOKEN: <token>" "http://127.0.0.1:8000/api/search?q=7792-
 ## 5. Une fiche est bloquée à `a_valider`
 
 - État NORMAL le long du parcours : une fiche reste `a_valider` quand son score
-  d'extraction est ≤ 80 % ou qu'elle porte une anomalie bloquante ; elle attend
+  d'extraction est ≤ 90 % ou qu'elle porte une anomalie bloquante ; elle attend
   alors un humain (interface → file de validation). Depuis le 2026-11-14, une
-  fiche au score > 80 % sans anomalie est auto-validée et n'apparaît plus dans
+  fiche au score > 90 % sans anomalie est auto-validée et n'apparaît plus dans
   la file.
 - Si la validation échoue en interface : noter le message EXACT + la console
   du navigateur, vérifier `/api/health`, réessayer ; si l'échec persiste,

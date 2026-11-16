@@ -487,17 +487,73 @@ def test_04c_depot_fiche_lot_c(app_client, dossiers: dict[str, Path], ref: str) 
 # ---------------------------------------------------------------------------
 
 
+def _statuts_attendus_par_la_regle() -> dict[str, str]:
+    """Code fiche → statut que la RÈGLE décide, relu depuis la base.
+
+    Depuis l'auto-validation au seuil (décision du commanditaire du
+    2026-11-14), le corpus n'arrive PLUS intégralement en ``a_valider`` :
+    une part des fiches s'auto-valide. Coder « 7 fiches a_valider » en dur
+    figerait l'ancienne règle RG3 et contredirait la nouvelle.
+
+    On relit donc ce qui est COMMITTÉ — score et anomalies — et on
+    recalcule la décision. Le contrôle porte sur la COHÉRENCE entre la
+    base et la règle : il reste juste si le seuil change, et il ne peut
+    pas se périmer en silence.
+    """
+    from seamtech_search.fiches.auto_validation import decider_statut_arrivee
+    from seamtech_search.fiches.modeles import Anomalie
+    from seamtech_search.indexer import SearchIndex
+
+    index = SearchIndex(Path("/tmp/recette-statuts.db"), URL_BASE)
+    try:
+        with index.connect() as connexion:
+            with connexion.cursor() as cursor:
+                cursor.execute("SELECT code, score_qualite FROM fiche ORDER BY code")
+                fiches = cursor.fetchall()
+                anomalies: dict[str, list[Anomalie]] = {code: [] for code, _ in fiches}
+                cursor.execute(
+                    "SELECT f.code, a.code, a.gravite "
+                    "FROM fiche_anomalie a JOIN fiche f ON f.id_fiche = a.id_fiche"
+                )
+                for code, code_anomalie, gravite in cursor.fetchall():
+                    if code in anomalies:
+                        anomalies[code].append(Anomalie(code=code_anomalie, gravite=gravite))
+    finally:
+        index.close()
+    assert fiches, "aucune fiche en base : la recette n'a rien importé"
+
+    return {
+        code: decider_statut_arrivee(score, anomalies[code]).statut for code, score in fiches
+    }
+
+
 def test_05_fiches_proposees_a_valider(app_client) -> None:
-    """7 fiches proposées, gabarits atelier, champs nombreux, JAMAIS validées."""
-    reponse = app_client.get("/fiches", params={"statut": "a_valider", "taille": 50})
+    """7 fiches du corpus : gabarits atelier, champs nombreux, statut CONFORME.
+
+    Historique : cette étape affirmait « 7 fiches a_valider, jamais
+    validées » — c'était la règle RG3. Depuis l'auto-validation au seuil
+    (décision du commanditaire du 2026-11-14), une part du corpus arrive
+    « valide » : à 90 %, 3 fiches sur 7 s'auto-valident et 4 restent en
+    file. Le contrôle porte donc sur les deux choses qui comptent : la
+    qualité d'extraction de CHAQUE fiche, et la conformité du statut à la
+    règle — pas à une constante recopiée.
+    """
+    reponse = app_client.get("/fiches", params={"taille": 50})
     assert reponse.status_code == 200
     corps = reponse.json()
-    assert corps["total"] == NB_ZIP, f"attendu {NB_ZIP} fiches a_valider, mesuré {corps['total']}"
-    assert set(corps["facettes"]) == {"a_valider"}, "des fiches ont un statut autre que a_valider"
+    assert corps["total"] == NB_ZIP, f"attendu {NB_ZIP} fiches, mesuré {corps['total']}"
+
+    attendus = _statuts_attendus_par_la_regle()
+    assert len(attendus) == NB_ZIP, f"{len(attendus)} statuts relus, attendu {NB_ZIP}"
 
     gabarits = set()
     for fiche in corps["fiches"]:
         code = fiche["code"]
+        # Le statut exposé doit être exactement celui que la RÈGLE décide.
+        assert fiche["statut"] == attendus[code], (
+            f"{code} : l'API expose « {fiche['statut']} », la règle décide "
+            f"« {attendus[code]} »"
+        )
         gabarit = fiche["gabarit"]
         assert gabarit in {"FICHE_JADE_V1", "FICHE_GV_FULLBATTEN_V1"}, (
             f"gabarit inattendu pour une fiche du corpus (gabarits vus : {gabarit})"
@@ -739,25 +795,38 @@ def test_07_recherches_par_mots_cles(app_client) -> None:
     assert reponse.status_code == 200, f"recherche fiches (défaut) : HTTP {reponse.status_code}"
     corps = reponse.json()
     resultats = corps.get("resultats") or corps.get("fiches") or []
+    # Le badge « non vérifiée » ne s'observe que sur une fiche réellement
+    # en attente : depuis l'auto-validation, une part du corpus arrive
+    # « valide ». La référence est donc prise parmi les fiches que la
+    # RÈGLE laisse en `a_valider` — et s'il n'y en a aucune, le test le
+    # DIT au lieu de passer en silence.
+    attendus = _statuts_attendus_par_la_regle()
+    en_attente = sorted(code for code, statut in attendus.items() if statut == "a_valider")
+    assert en_attente, (
+        "aucune fiche du corpus en « a_valider » : le seuil d'auto-validation "
+        "les a validées toutes, le badge « non vérifiée » n'est plus "
+        "observable sur ce corpus"
+    )
+    reference = termes["reference"] if termes["reference"] in en_attente else en_attente[0]
     fiches_trouvees = {r.get("code"): r.get("statut") for r in resultats if r.get("code")}
-    assert termes["reference"] in fiches_trouvees, (
+    assert reference in fiches_trouvees, (
         "contrat 018 rompu : la fiche a_valider déposée doit être retrouvée par défaut"
     )
-    assert fiches_trouvees[termes["reference"]] == "a_valider", (
+    assert fiches_trouvees[reference] == "a_valider", (
         "le statut doit être exposé (badge « non vérifiée »), jamais masqué"
     )
     reponse = app_client.get(
         "/recherche",
-        params={"q": termes["reference"], "inclure_a_valider": "false", "limit": 20},
+        params={"q": reference, "inclure_a_valider": "false", "limit": 20},
     )
     assert reponse.status_code == 200, f"recherche fiches (confiance) : HTTP {reponse.status_code}"
     corps_confiance = reponse.json()
     resultats_confiance = corps_confiance.get("resultats") or corps_confiance.get("fiches") or []
     codes_confiance = [r.get("code") for r in resultats_confiance]
-    assert termes["reference"] not in codes_confiance, (
+    assert reference not in codes_confiance, (
         "inclure_a_valider=false : une fiche a_valider est ressortie de l'archive de confiance"
     )
-    RECETTE["fiche_attendue"] = termes["reference"]
+    RECETTE["fiche_attendue"] = reference
 
 
 # ---------------------------------------------------------------------------
@@ -848,8 +917,19 @@ def test_10_sauvegarde_restauration_base_neuve(
     assert manifeste["dump"]["octets"] > 0, "dump vide"
     assert manifeste["dump"]["sha256"], "dump sans empreinte"
     assert manifeste["dump"]["cle_s3"], "dump non envoyé hors-site"
-    assert manifeste["fiches_par_statut"].get("a_valider") == NB_ZIP, (
-        f"manifeste : {manifeste['fiches_par_statut']} (attendu {NB_ZIP} a_valider)"
+    # L'auto-validation répartit le corpus entre `valide` et `a_valider` :
+    # figer « 7 a_valider » affirmerait l'ancienne règle. On vérifie que le
+    # manifeste compte TOUTES les fiches, et que sa répartition est celle
+    # que la RÈGLE décide.
+    par_statut = {k: v for k, v in manifeste["fiches_par_statut"].items() if v}
+    assert sum(par_statut.values()) == NB_ZIP, (
+        f"manifeste : {manifeste['fiches_par_statut']} (attendu {NB_ZIP} fiches au total)"
+    )
+    compte_attendu: dict[str, int] = {}
+    for statut in _statuts_attendus_par_la_regle().values():
+        compte_attendu[statut] = compte_attendu.get(statut, 0) + 1
+    assert par_statut == compte_attendu, (
+        f"manifeste : {par_statut}, la règle décide {compte_attendu}"
     )
 
     # 10.2 RESTAURATION dans une base NEUVE (l'originale reste en place).

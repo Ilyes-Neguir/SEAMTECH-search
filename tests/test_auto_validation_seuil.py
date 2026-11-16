@@ -1,7 +1,7 @@
 """Auto-validation par seuil — la règle qui remplace RG3.
 
 Décision du commanditaire du 2026-11-14 : **l'auto-validation existe, et le
-seuil est 80 %.** Score strictement supérieur à 0,80 et aucune anomalie
+seuil est 90 %.** Score strictement supérieur à 0,90 et aucune anomalie
 bloquante ⇒ la fiche arrive « valide ». Sinon « a_valider », comme avant.
 
 Ces tests portent sur la DÉCISION, qui est une fonction pure : ils tournent
@@ -35,11 +35,11 @@ from seamtech_search.fiches.modeles import Anomalie
 def test_le_seuil_est_exactement_quatre_vingts_pour_cent() -> None:
     """La valeur est nommée et unique : changer de seuil doit être UN chiffre
     à modifier, pas une chasse dans le code."""
-    assert SEUIL_AUTO_VALIDATION == 0.80
+    assert SEUIL_AUTO_VALIDATION == 0.90
 
 
 def test_score_au_dessus_du_seuil_sans_anomalie_est_auto_valide() -> None:
-    """Cas 1 — score > 80 %, aucune anomalie ⇒ validée automatiquement."""
+    """Cas 1 — score > 90 %, aucune anomalie ⇒ validée automatiquement."""
     decision = decider_statut_arrivee(0.913)
     assert decision.statut == STATUT_AUTO_VALIDE
     assert decision.auto_validee is True
@@ -50,26 +50,26 @@ def test_score_au_dessus_du_seuil_sans_anomalie_est_auto_valide() -> None:
 
 
 def test_score_exactement_au_seuil_ne_s_auto_valide_pas() -> None:
-    """Cas 2 — 80 % EXACTEMENT ne déclenche PAS l'auto-validation.
+    """Cas 2 — 90 % EXACTEMENT ne déclenche PAS l'auto-validation.
 
-    La règle dit « strictement supérieur ». À 0,800 la fiche reste en attente
+    La règle dit « strictement supérieur ». À 0,900 la fiche reste en attente
     humaine. Ce test fixe la frontière : un `>=` écrit par distraction
-    publierait dans l'archive de confiance toutes les fiches à 80 % pile.
+    publierait dans l'archive de confiance toutes les fiches à 90 % pile.
     """
-    decision = decider_statut_arrivee(0.80)
+    decision = decider_statut_arrivee(0.90)
     assert decision.statut == STATUT_ATTENTE_HUMAINE
     assert decision.auto_validee is False
     assert "≤" in decision.raison
 
     # Un cheveu au-dessus suffit — la frontière est réelle, pas décorative.
-    assert decider_statut_arrivee(0.801).statut == STATUT_AUTO_VALIDE
+    assert decider_statut_arrivee(0.901).statut == STATUT_AUTO_VALIDE
 
 
 def test_juste_en_dessous_et_juste_au_dessus() -> None:
     """La frontière doit être nette des deux côtés."""
-    assert decider_statut_arrivee(0.799).statut == STATUT_ATTENTE_HUMAINE
-    assert decider_statut_arrivee(0.800).statut == STATUT_ATTENTE_HUMAINE
-    assert decider_statut_arrivee(0.801).statut == STATUT_AUTO_VALIDE
+    assert decider_statut_arrivee(0.899).statut == STATUT_ATTENTE_HUMAINE
+    assert decider_statut_arrivee(0.900).statut == STATUT_ATTENTE_HUMAINE
+    assert decider_statut_arrivee(0.901).statut == STATUT_AUTO_VALIDE
     assert decider_statut_arrivee(1.0).statut == STATUT_AUTO_VALIDE
 
 
@@ -89,8 +89,8 @@ def test_score_eleve_mais_anomalie_bloquante_reste_en_attente() -> None:
 
 
 def test_score_faible_reste_en_attente_comme_avant() -> None:
-    """Cas 4 — score ≤ 80 % : comportement IDENTIQUE à celui d'avant RG3."""
-    for score in (0.0, 0.12, 0.5, 0.799, 0.80):
+    """Cas 4 — score ≤ 90 % : comportement IDENTIQUE à celui d'avant RG3."""
+    for score in (0.0, 0.12, 0.5, 0.899, 0.90):
         decision = decider_statut_arrivee(score)
         assert decision.statut == STATUT_ATTENTE_HUMAINE, score
         assert decision.auto_validee is False, score
@@ -159,7 +159,7 @@ def test_les_anomalies_fortes_du_pipeline_sont_bloquantes(code: str, gravite: st
 def test_les_anomalies_non_bloquantes_ne_bloquent_pas(code: str, gravite: str) -> None:
     """Une anomalie « moyenne » n'empêche pas l'auto-validation.
 
-    C'est le pendant du test précédent : si tout bloquait, le seuil de 80 %
+    C'est le pendant du test précédent : si tout bloquait, le seuil de 90 %
     ne servirait plus à rien.
     """
     assert not est_anomalie_bloquante(Anomalie(code=code, gravite=gravite))

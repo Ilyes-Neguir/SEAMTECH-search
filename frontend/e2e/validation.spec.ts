@@ -44,7 +44,7 @@ test.describe("validation de bout en bout", () => {
   // (depot → extraction gabarit v2 → statut décidé par la règle d'arrivée) :
   //   7792-SO — la VRAIE fiche client (SHA-256 43afc51e…, 842×595 paysage) ;
   //   0901-MM, 0902-MM — fiches synthétiques (CLIENT-GENOA, CLIENT-E2E-TROIS).
-  // Depuis le 2026-11-14, une fiche au score > 80 % sans anomalie bloquante
+  // Depuis le 2026-11-14, une fiche au score > 90 % sans anomalie bloquante
   // est auto-validée : la file de validation ne retient QUE les autres.
 
   test("la file respecte le tri croissant confiance puis code", async ({ page }) => {

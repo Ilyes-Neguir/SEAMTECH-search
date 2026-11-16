@@ -61,7 +61,7 @@ def seuil_auto_validation_hors_atteinte() -> Iterator[None]:
     Ce module éprouve le verrou de révision optimiste sur la CORRECTION et
     la validation humaines : il lui faut une fiche en attente. Or la fiche
     réelle déposée par la fixture ci-dessous score 0,929 : depuis
-    l'auto-validation au seuil de 80 %, elle arrive « valide », et RG11
+    l'auto-validation au seuil de 90 %, elle arrive « valide », et RG11
     refuse alors toute correction (« rouvrez-la d'abord »).
 
     Le seuil est porté à 1,0 — inatteignable, la comparaison étant

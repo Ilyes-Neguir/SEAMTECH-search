@@ -132,18 +132,18 @@ def _traces_auto(journal: list[tuple[Any, ...]]) -> list[tuple[Any, ...]]:
 
 class TestLesQuatreCas:
     def test_score_au_dessus_du_seuil_est_auto_valide(self, base: SearchIndex) -> None:
-        """Score > 80 %, aucune anomalie ⇒ la fiche est COMMITTÉE en « valide »."""
+        """Score > 90 %, aucune anomalie ⇒ la fiche est COMMITTÉE en « valide »."""
         id_fiche, _ = ecrire_fiche(base, _fiche("AUTO-DESSUS", 0.913))
         lu = _lire(base, id_fiche)
         assert lu["statut"] == STATUT_AUTO_VALIDE
         assert _traces_auto(lu["journal"]), "une auto-validation doit laisser une trace"
 
     def test_score_exactement_au_seuil_reste_en_attente(self, base: SearchIndex) -> None:
-        """80 % EXACTEMENT ne déclenche pas l'auto-validation, même en base.
+        """90 % EXACTEMENT ne déclenche pas l'auto-validation, même en base.
 
         C'est la frontière que le commanditaire a demandé de confirmer.
         """
-        id_fiche, _ = ecrire_fiche(base, _fiche("AUTO-SEUIL-PILE", 0.80))
+        id_fiche, _ = ecrire_fiche(base, _fiche("AUTO-SEUIL-PILE", 0.90))
         lu = _lire(base, id_fiche)
         assert lu["statut"] == STATUT_ATTENTE_HUMAINE
         assert _traces_auto(lu["journal"]) == []
@@ -197,7 +197,7 @@ class TestLesQuatreCas:
         assert _traces_auto(lu["journal"]) == []
 
     def test_score_sous_le_seuil_reste_en_attente(self, base: SearchIndex) -> None:
-        """Score ≤ 80 % ⇒ comportement identique à avant RG3."""
+        """Score ≤ 90 % ⇒ comportement identique à avant RG3."""
         id_fiche, _ = ecrire_fiche(base, _fiche("AUTO-DESSOUS", 0.42))
         lu = _lire(base, id_fiche)
         assert lu["statut"] == STATUT_ATTENTE_HUMAINE
@@ -267,8 +267,8 @@ class TestCoherence:
         [
             ("COH-01", 0.10, None),
             ("COH-02", 0.79, None),
-            ("COH-03", 0.80, None),
-            ("COH-04", 0.801, None),
+            ("COH-03", 0.90, None),
+            ("COH-04", 0.901, None),
             ("COH-05", 1.0, None),
             ("COH-06", 1.0, [Anomalie(code="gabarit_inconnu", gravite="forte")]),
             ("COH-07", 0.99, [Anomalie(code="reference_discordante", gravite="moyenne")]),

@@ -2,20 +2,31 @@
 
 Cette règle REMPLACE **RG3** (« le dépôt ne valide jamais »), qui posait le
 statut d'arrivée à ``a_valider`` sans condition. Décision du commanditaire
-du 2026-11-14 : **l'auto-validation existe, et le seuil est 80 %.**
+du 2026-11-14 : **l'auto-validation existe, et le seuil est 90 %.**
+
+Le seuil a été porté de 80 % à 90 % le 2026-11-16, après mesure du corpus
+réel : à 80 %, les 7 fiches du corpus (scores 0,836 → 0,920, aucune
+anomalie) s'auto-validaient toutes et la file de validation se vidait
+entièrement — six jobs de CI tombaient. À 90 %, 3 fiches sur 7
+s'auto-valident et 4 restent en file. Les scores sont dans
+``docs/RECETTE_EXHAUSTIVE_2026-11-16.md``.
 
 Nouvelle règle
 --------------
 
-* Le score de confiance de l'extraction est **strictement supérieur à 80 %**
+* Le score de confiance de l'extraction est **strictement supérieur à 90 %**
   ET aucune anomalie bloquante n'est détectée → la fiche arrive en
   ``valide``, sans intervention de l'approbateur.
-* Sinon (score ≤ 80 %, ou anomalie bloquante) → la fiche reste
+* Sinon (score ≤ 90 %, ou anomalie bloquante) → la fiche reste
   ``a_valider`` : comportement identique à celui d'avant.
 
-Le seuil est STRICTEMENT supérieur : un score de **exactement** 0,800 ne
+Le seuil est STRICTEMENT supérieur : un score de **exactement** 0,900 ne
 déclenche PAS l'auto-validation. C'est le libellé de la décision
-(« strictement supérieur à 80 % »), appliqué littéralement.
+(« strictement supérieur à 90 % »), appliqué littéralement.
+
+Le seuil est une MOYENNE, pas un plancher champ par champ : une fiche peut
+l'atteindre avec des champs de confiance inégale. Il ne remplace pas la
+relecture d'une géométrie, il en dispense.
 
 Pourquoi un module séparé
 -------------------------
@@ -40,9 +51,9 @@ from seamtech_search.fiches.modeles import Anomalie
 # Exprimé sur l'échelle de ``ChampExtrait.confiance`` (0,0 → 1,0), celle de
 # ``FicheExtraite.score_qualite()`` (moyenne des confiances, arrondie à 3
 # décimales) et de la colonne ``fiche.score_qualite`` (NUMERIC(4,3)).
-# Ne pas le confondre avec un pourcentage entier : 80 % s'écrit 0,80 ici.
+# Ne pas le confondre avec un pourcentage entier : 90 % s'écrit 0,90 ici.
 # ---------------------------------------------------------------------------
-SEUIL_AUTO_VALIDATION: float = 0.80
+SEUIL_AUTO_VALIDATION: float = 0.90
 
 STATUT_AUTO_VALIDE = "valide"
 STATUT_ATTENTE_HUMAINE = "a_valider"

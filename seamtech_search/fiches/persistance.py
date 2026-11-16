@@ -7,7 +7,7 @@ Règles appliquées ici, toutes testées :
 - **Statut d'arrivée** : décidé par ``auto_validation.decider_statut_arrivee``.
   L'ancienne règle **RG3** (« le dépôt ne valide jamais ») est REMPLACÉE
   depuis la décision du commanditaire du 2026-11-14 : un score strictement
-  supérieur à 80 % sans anomalie bloquante ⇒ la fiche arrive ``valide``.
+  supérieur à 90 % sans anomalie bloquante ⇒ la fiche arrive ``valide``.
   La décision est prise APRÈS les contrôles RG16, seule règle qui a toutes
   ses données — voir le commentaire à l'endroit de son application.
 - **RG11 (idempotence)** : rejouer une extraction sur un PDF déjà importé ne
@@ -861,7 +861,7 @@ def _ecrire_fiche_dans(
             # LA RÈGLE DE STATUT D'ARRIVÉE, APPLIQUÉE ICI ET NULLE PART AILLEURS.
             #
             # Remplace RG3 (« le dépôt ne valide jamais »). Décision du
-            # commanditaire du 2026-11-14 : score strictement supérieur à 80 %
+            # commanditaire du 2026-11-14 : score strictement supérieur à 90 %
             # et aucune anomalie bloquante ⇒ la fiche arrive « valide ».
             #
             # Pourquoi ICI et pas dans `parametres_fiche` : parce que les
@@ -912,7 +912,7 @@ def _ecrire_fiche_dans(
     # le texte de recherche pondéré est rempli DÈS L'ÉCRITURE (statut
     # a_valider) — une fiche déposée est cherchable immédiatement, badgée
     # « non vérifiée » par l'interface. La règle de statut d'arrivée a
-    # changé depuis (auto-validation au seuil de 80 %) ; ce remplissage,
+    # changé depuis (auto-validation au seuil de 90 %) ; ce remplissage,
     # lui, ne change pas : la validation — humaine ou automatique —
     # rafraîchit à nouveau le texte (mêmes poids A/B/C) au moment où la
     # fiche rejoint l'archive de confiance. Sans ce remplissage précoce,

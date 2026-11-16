@@ -40,7 +40,7 @@ def seuil_auto_validation_hors_atteinte() -> Iterator[None]:
 
     POURQUOI : ce module éprouve un parcours qui part d'une fiche EN
     ATTENTE humaine (correction, promotion, rejeu, pièces jointes). Depuis
-    l'auto-validation au seuil de 80 % — décision du commanditaire du
+    l'auto-validation au seuil de 90 % — décision du commanditaire du
     2026-11-14 — la fiche réelle du corpus score 0,929 et arrive « valide »
     : RG11 refuse alors correction et re-dépôt, et le module mesurerait ce
     refus au lieu du parcours qu'il a pour objet.

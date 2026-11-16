@@ -132,7 +132,7 @@ def base_depot() -> Iterator[dict[str, Any]]:
 def sans_auto_validation(monkeypatch: pytest.MonkeyPatch) -> None:
     """Porte le seuil hors d'atteinte pour ce test.
 
-    POURQUOI : depuis l'auto-validation au seuil de 80 %, une fiche qui
+    POURQUOI : depuis l'auto-validation au seuil de 90 %, une fiche qui
     arrive « valide » est PROTÉGÉE par RG11 — un second dépôt du même
     dossier est refusé (« fiche validée ; dépôt différent refusé »). Les
     tests de rejeu déposent DEUX FOIS le même dossier : ils exerceraient
@@ -195,7 +195,7 @@ class TestEcritureEntiereOuPasDuTout:
     ) -> None:
         """Anciennement « fiche en a_valider, jamais valide » (RG3).
 
-        RG3 est REMPLACÉE par l'auto-validation au seuil de 80 %. Affirmer
+        RG3 est REMPLACÉE par l'auto-validation au seuil de 90 %. Affirmer
         « toujours a_valider » serait désormais faux — et le serait
         silencieusement, puisque la fiche 7792 du corpus score 0,929.
 
@@ -231,7 +231,7 @@ class TestEcritureEntiereOuPasDuTout:
             with connexion.cursor() as cursor:
                 cursor.execute("SELECT statut, score_qualite FROM fiche")
                 statut, score = cursor.fetchone()
-        assert float(score) > 0.80, "la fiche du corpus doit rester au-dessus du seuil"
+        assert float(score) > 0.90, "la fiche du corpus doit rester au-dessus du seuil"
         assert statut == "valide"
 
     def test_rejouer_une_fiche_auto_validee_est_refuse(

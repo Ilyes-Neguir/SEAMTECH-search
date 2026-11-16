@@ -359,7 +359,7 @@ SECTIONS: list[Section] = [
             ),
             Item(
                 "D4",
-                "Score haut — auto-validation (seuil 80 %, décision du 2026-11-14)",
+                "Score haut — auto-validation (seuil 90 %, décision du 2026-11-14)",
                 [
                     # La règle, fonction pure : quatre cas, prouvés sans base.
                     "tests/test_auto_validation_seuil.py",

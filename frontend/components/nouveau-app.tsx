@@ -403,7 +403,7 @@ function NouveauAppInterne() {
         <p className="mt-1 text-xs text-muted-foreground">
           Le dossier de fabrication (fiche PDF + croquis, plans, photos). La fiche est reconnue et extraite ; les autres
           fichiers sont rattachés comme pièces jointes (non analysés, RG12). Depuis le 2026-11-14, une fiche dont le score
-          dépasse 80 % sans anomalie bloquante est <em>validée</em> à l'arrivée ; les autres arrivent en <em>a_valider</em>.
+          dépasse 90 % sans anomalie bloquante est <em>validée</em> à l'arrivée ; les autres arrivent en <em>a_valider</em>.
           Idempotent : rejouer un dossier ne crée rien.
         </p>
       </div>

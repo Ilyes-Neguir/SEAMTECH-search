@@ -230,7 +230,7 @@ modifie pas, et le jour J passe par `scripts/preflight_archive.py`).
 
 - [ ] **8.1** Interface → écran **Dépôt** → dossier contenant au moins un PDF de fiche
       (ex. copie de `sample_data/CLIENT-7792-SO/`).
-- [ ] **8.2** La fiche arrive en `valide` si son score > 80 % sans anomalie bloquante, en **`a_valider`** sinon (auto-validation — remplace RG3 depuis le 2026-11-14). Vérifier les DEUX cas.
+- [ ] **8.2** La fiche arrive en `valide` si son score > 90 % sans anomalie bloquante, en **`a_valider`** sinon (auto-validation — remplace RG3 depuis le 2026-11-14). Vérifier les DEUX cas.
 - [ ] **8.3** Les artefacts sont **dans le bucket** :
   ```bash
   curl -fsS -H "X-SEAMTECH-TOKEN: $SEAMTECH_AUTH_TOKEN" http://127.0.0.1:8000/imports/<id> \

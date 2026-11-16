@@ -71,7 +71,7 @@ def seuil_auto_validation_hors_atteinte() -> Iterator[None]:
     a_valider → valide → rejete, corrections. Toutes ces mécaniques
     partent d'une fiche « a_valider ».
 
-    Depuis l'auto-validation au seuil de 80 % (décision du commanditaire
+    Depuis l'auto-validation au seuil de 90 % (décision du commanditaire
     du 2026-11-14), les deux fiches réelles déposées ici — 7792-SO
     (0,929) et 0901-MM — arrivent « valide » : la file se vide, la
     validation renvoie 409, la correction est refusée par RG11. Le module

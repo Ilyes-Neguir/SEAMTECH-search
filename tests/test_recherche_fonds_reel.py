@@ -6,8 +6,16 @@ semées en fixture. Ce fichier fait autre chose : il rejoue le JEU DE REQUÊTES
 RÉEL (``docs/verite_terrain/JEU_REQUETES_REELLES.md``) contre un index nourri
 par le pipeline complet réglé sur la vraie fiche 7792-SO :
 
-    extraction (gabarit v2 du registre) → écriture (RG3 : a_valider)
-    → validation humaine (qui rafraîchit le search_vector, migration 013).
+    extraction (gabarit v2 du registre) → écriture → validation humaine
+    (qui rafraîchit le search_vector, migration 013).
+
+L'écriture applique la règle d'arrivée en vigueur (auto-validation au-dessus
+du seuil, décision du commanditaire du 2026-11-14). La fiche 7792-SO score
+0,929 : elle serait donc auto-validée, et la validation humaine qui suit
+renverrait 409. Ce module mesure la RECHERCHE sur un fonds validé par la
+procédure complète — pas l'auto-validation : le seuil est porté hors
+d'atteinte pour tout le module (fixture ci-dessous), ce qui rend à nouveau
+la validation humaine possible et laisse le scénaire inchangé.
 
 Le fonds réel ne compte qu'UNE fiche à ce jour : chaque requête qui la trouve
 la classe au rang 1 par construction. Le critère est donc binaire — présente
@@ -27,6 +35,7 @@ from typing import Any, Iterator
 
 import pytest
 
+from seamtech_search.fiches import auto_validation
 from tests.conftest import (
     DATABASE_URL,
     _creer_base_jetable,
@@ -67,6 +76,30 @@ FACETTES_7792: dict[str, str] = {
     "annee": "2026",
     "matiere": "Monofilm K903",
 }
+
+
+@pytest.fixture(scope="module", autouse=True)
+def seuil_auto_validation_hors_atteinte() -> Iterator[None]:
+    """Porte le seuil d'auto-validation hors d'atteinte pour TOUT ce module.
+
+    Ce module mesure la recherche sur un fonds passé par la procédure
+    COMPLÈTE, dont la validation HUMAINE fait partie — c'est elle qui
+    rafraîchit le search_vector (migration 013). La fiche 7792-SO score
+    0,929 : depuis l'auto-validation, elle arrive « valide » et
+    ``valider_fiche`` renvoie 409, ce qui fait échouer la fixture en
+    amont des quatre mesures.
+
+    Le seuil est porté à 1,0 — inatteignable, la comparaison étant
+    STRICTE — et non contourné par un patch de la fonction : la règle
+    reste celle du produit, seul son réglage change.
+
+    Portée MODULE et déclarée AVANT ``fonds_reel`` : le dépôt a lieu dans
+    cette autre fixture module. Un patch de portée fonction s'appliquerait
+    APRÈS le dépôt — trop tard, la fiche serait déjà auto-validée.
+    """
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(auto_validation, "SEUIL_AUTO_VALIDATION", 1.0)
+        yield
 
 
 @pytest.fixture(scope="module")

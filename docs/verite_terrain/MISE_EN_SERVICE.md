@@ -77,7 +77,7 @@ curl -s -H "X-SEAMTECH-TOKEN: <SEAMTECH_AUTH_TOKEN>" http://127.0.0.1:8000/healt
 
 Sortie attendue : la fiche est écrite, ses champs extraits sont affichés, son
 PDF est rendu à droite. Depuis la décision du commanditaire du 2026-11-14, son
-statut dépend de son score : strictement supérieur à 80 % et aucune anomalie
+statut dépend de son score : strictement supérieur à 90 % et aucune anomalie
 bloquante ⇒ `valide` d'emblée (auto-validation, qui remplace RG3) ; sinon
 `a_valider`, en attente d'un humain. La fiche 7792-SO score 0,929 : elle est
 auto-validée, et n'entre donc PAS dans la file de validation. C'est ce que le

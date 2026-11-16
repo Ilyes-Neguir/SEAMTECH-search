@@ -1,4 +1,4 @@
-# Recette exhaustive — 2026-11-14
+# Recette exhaustive — 2026-11-16
 
 Chaque fonctionnalité et chaque route, deux fois : un test écrit ajouté au
 dépôt et rejoué, puis une exécution dans l'application qui tourne.
@@ -11,7 +11,7 @@ dépôt et rejoué, puis une exécution dans l'application qui tourne.
 4. **Cinq défauts trouvés et corrigés** : couleurs des listes déroulantes, deux écrans jamais audités, `/metrics` jamais vérifié, un test qui tombait sur le hasard d'un nom de fichier, et la création du schéma interrompue par le délai d'exécution des requêtes.
 5. **Verdict : prêt pour la recette manuelle du commanditaire.**
 
-**Depuis ce rapport : l'auto-validation par seuil (D4) est implémentée.** Score strictement supérieur à 80 % et aucune anomalie bloquante ⇒ la fiche arrive `valide` ; RG3 est remplacée. Les effets que la décision ne mentionnait pas — redépôt refusé, file de validation vidée, absence de notification, stock non réévalué — sont **mesurés et posés**, pas décidés : lire « Ce que la nouvelle règle change — à confirmer ».
+**Depuis ce rapport : l'auto-validation par seuil (D4) est implémentée.** Score strictement supérieur à 90 % et aucune anomalie bloquante ⇒ la fiche arrive `valide` ; RG3 est remplacée. Les effets que la décision ne mentionnait pas — redépôt refusé, file de validation vidée, absence de notification, stock non réévalué — sont **mesurés et posés**, pas décidés : lire « Ce que la nouvelle règle change — à confirmer ».
 
 ## Comment lire ce document
 
@@ -33,7 +33,7 @@ dépôt et rejoué, puis une exécution dans l'application qui tourne.
 
 | Défaut | Pourquoi on ne le corrige pas |
 |---|---|
-| **D4 — TRANCHÉ le 2026-11-14.** L'auto-validation existe : score strictement supérieur à 80 % et aucune anomalie bloquante ⇒ la fiche arrive `valide`. RG3 est remplacée. Seuil nommé (`SEUIL_AUTO_VALIDATION`), décision appliquée APRÈS les contrôles RG16 (seul endroit qui a toutes les anomalies), trace d'audit distincte et sans acteur humain. Voir « Ce que la nouvelle règle change », plus bas. |
+| **D4 — TRANCHÉ le 2026-11-14.** L'auto-validation existe : score strictement supérieur à 90 % et aucune anomalie bloquante ⇒ la fiche arrive `valide`. RG3 est remplacée. Seuil nommé (`SEUIL_AUTO_VALIDATION`), décision appliquée APRÈS les contrôles RG16 (seul endroit qui a toutes les anomalies), trace d'audit distincte et sans acteur humain. Voir « Ce que la nouvelle règle change », plus bas. |
 | `import-panel.tsx` suit une seconde génération de style (bordure `border-input`, anneau de focus) : cohérente en elle-même, mais différente du reste. | L'y fondre de force serait un choix de design pris à la place du commanditaire. L'exception est DÉCLARÉE dans le test, pas masquée. **Décision du commanditaire.** |
 | Six items — D1, D2, D3, D5, F4, K1 — ne sont pas mesurés par le job `backend`. | Ce n'est pas un défaut : ils exigent un moteur OCR ou le corpus réel, deux services que ce job n'a pas. Ils sont prouvés par le job `ocr` (section D : 5 items, 4 prouvés, **0 partiel**) et par `recette-corpus-reel`. Au bilan, `backend` ne signale plus **0 partiel et 0 non prouvé**. |
 
@@ -59,17 +59,30 @@ n'a pas été demandé explicitement. **À confirmer.**
 Prouvé par `test_rejouer_une_fiche_auto_validee_est_refuse`
 (`tests/test_depot_transactionnel.py`).
 
-### 2. La file de validation se vide
+### 2. La file de validation est passée de 7 fiches à 4
 
-La file ne retient que les `a_valider`. Les deux fiches réelles du corpus
-scorent 0,929 (7792-SO) et 0,980 (génois) : **les deux sont
-auto-validées**. Ce n'est pas un cas-limite, c'est le cas courant. La file
-de l'approbateur ne retient donc plus que les fiches sous le seuil ou
-porteuses d'une anomalie — ce qui est bien le but, mais met fin au contrôle
-humain systématique. **À confirmer.**
+Mesuré sur les 7 fiches du corpus réel : **3 s'auto-valident, 4 restent en
+file**. Aucune des 7 ne porte d'anomalie — le score est donc le seul
+discriminant, et il est serré :
+
+| Score | 0,836 | 0,900 | 0,900 | 0,900 | 0,914 | 0,917 | 0,920 |
+|-------|-------|-------|-------|-------|-------|-------|-------|
+| Statut | file | file | file | file | validée | validée | validée |
+
+Le seuil a d'ABORD été fixé à 80 %. À ce niveau, les 7 fiches
+s'auto-validaient et la file se vidait entièrement : six jobs de CI
+tombaient, l'application n'avait plus rien à faire valider. Le seuil a été
+porté à 90 % le même jour, sur cette mesure.
+
+**Le palier reste un compromis, pas une frontière.** Les 7 fiches tiennent
+dans 8 points d'écart, sans aucun trou : le score ne sépare pas « les
+bonnes » des « mauvaises » sur ce corpus, il sépare 0,914 de 0,900 — 1,4 %.
+Un corpus plus contrasté se comporterait tout autrement. **À confirmer.**
 
 Prouvé par `TestFileDeValidation`
-(`tests/test_auto_validation_persistance.py`).
+(`tests/test_auto_validation_persistance.py`) et par l'étape 5 de la
+recette corpus réel, qui relit la règle depuis la base au lieu de figer un
+comptage.
 
 ### 3. Aucune notification n'est émise
 
@@ -81,7 +94,7 @@ notifier quelqu'un — et qui ?**
 
 ### 4. Les fiches déjà en `a_valider` ne sont PAS réévaluées
 
-Une fiche déposée avant la règle, qui aurait dépassé 80 %, reste
+Une fiche déposée avant la règle, qui aurait dépassé 90 %, reste
 `a_valider`. Aucune reprise rétroactive n'a été faite : ce serait
 rejouer une décision sur des données que personne n'a relues depuis.
 **Question ouverte : faut-il réévaluer le stock, et si oui selon quelle
@@ -97,7 +110,7 @@ règle de révision ?**
   même gravité est un piège.
 - `champ_manquant` (« aucun jeu de cotes finies lu ») est de gravité
   « moyenne » et n'est PAS dans `CODES_BLOQUANTS` : une telle fiche peut
-  donc s'auto-valider si son score dépasse 80 %. C'est le choix de ne rien
+  donc s'auto-valider si son score dépasse 90 %. C'est le choix de ne rien
   inventer — la définition retenue est celle qui existait déjà. **À
   confirmer.**
 
@@ -158,7 +171,7 @@ auto-validables au-dessus du seuil — `bateau_hors_referentiel`,
 | **D1** PDF bien formé — valeurs extraites et sourcées | `tests/test_passe_finale_extraction_pdf`, `test_confiances_dans_les_limites`<br>9✓ 0✗ 1⤼ | harnais de routes — pile réelle, 472 sondes (H1) | PROUVÉ — job `ocr` | **PROUVÉ (CI)** |
 | **D2** PDF dégradé ou scanné — OCR, et refus d'inventer sans OCR | `test_pdf_scanne_sans_ocr_n_invente_rien`, `test_entree_degradee_rend_un_statut_explicite_sans_lever`, `tests/test_ocr_comportement`, `tests/test_ocr_qualification`, `tests/test_ocr_etages`, `tests/test_ocr_moteur`<br>76✓ 0✗ 7⤼ | harnais de routes — pile réelle, 472 sondes (H1) | PROUVÉ — job `ocr` | **PROUVÉ (CI)** |
 | **D3** Score bas — la fiche part en file de validation | `test_taux_extraction_auto_definition`, `tests/test_validation_workflow`<br>1✓ 0✗ 20⤼ | frontend/e2e/validation.spec.ts | PROUVÉ — job `ocr` | **PROUVÉ (CI)** |
-| **D4** Score haut — auto-validation (seuil 80 %, décision du 2026-11-14) | `tests/test_auto_validation_seuil`, `tests/test_auto_validation_persistance`, `test_le_statut_arrivee_vient_de_la_regle_et_non_d_un_litteral`, `test_la_fiche_du_corpus_est_auto_validee`<br>32✓ 0✗ 24⤼ | frontend/e2e/validation.spec.ts — la file de validation ne retient plus les fiches auto… | PROUVÉ — a33e312 | **PROUVÉ** |
+| **D4** Score haut — auto-validation (seuil 90 %, décision du 2026-11-14) | `tests/test_auto_validation_seuil`, `tests/test_auto_validation_persistance`, `test_le_statut_arrivee_vient_de_la_regle_et_non_d_un_litteral`, `test_la_fiche_du_corpus_est_auto_validee`<br>32✓ 0✗ 24⤼ | frontend/e2e/validation.spec.ts — la file de validation ne retient plus les fiches auto… | PROUVÉ — a33e312 | **PROUVÉ** |
 | **D5** Correction par l'approbateur — la source n'est pas écrasée | `tests/test_correction_preservation`<br>20✓ 0✗ 0⤼ | frontend/e2e/lot3b-extractions.spec.ts | PROUVÉ — job `ocr` | **PROUVÉ (CI)** |
 
 ### E — Recherche

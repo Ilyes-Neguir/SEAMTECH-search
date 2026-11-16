@@ -151,7 +151,7 @@ def main(argv: list[str] | None = None) -> int:
         f"5. **Verdict : {verdit}.**",
         "",
         "**Depuis ce rapport : l'auto-validation par seuil (D4) est implémentée.** "
-        "Score strictement supérieur à 80 % et aucune anomalie bloquante ⇒ la fiche "
+        "Score strictement supérieur à 90 % et aucune anomalie bloquante ⇒ la fiche "
         "arrive `valide` ; RG3 est remplacée. Les effets que la décision ne "
         "mentionnait pas — redépôt refusé, file de validation vidée, absence de "
         "notification, stock non réévalué — sont **mesurés et posés**, pas décidés : "
@@ -202,7 +202,7 @@ def main(argv: list[str] | None = None) -> int:
         "| Défaut | Pourquoi on ne le corrige pas |",
         "|---|---|",
         "| **D4 — TRANCHÉ le 2026-11-14.** L'auto-validation existe : score strictement "
-        "supérieur à 80 % et aucune anomalie bloquante ⇒ la fiche arrive `valide`. RG3 est "
+        "supérieur à 90 % et aucune anomalie bloquante ⇒ la fiche arrive `valide`. RG3 est "
         "remplacée. Seuil nommé (`SEUIL_AUTO_VALIDATION`), décision appliquée APRÈS les "
         "contrôles RG16 (seul endroit qui a toutes les anomalies), trace d'audit distincte "
         "et sans acteur humain. Voir « Ce que la nouvelle règle change », plus bas. |",
@@ -247,17 +247,30 @@ def main(argv: list[str] | None = None) -> int:
         "Prouvé par `test_rejouer_une_fiche_auto_validee_est_refuse`",
         "(`tests/test_depot_transactionnel.py`).",
         "",
-        "### 2. La file de validation se vide",
+        "### 2. La file de validation est passée de 7 fiches à 4",
         "",
-        "La file ne retient que les `a_valider`. Les deux fiches réelles du corpus",
-        "scorent 0,929 (7792-SO) et 0,980 (génois) : **les deux sont",
-        "auto-validées**. Ce n'est pas un cas-limite, c'est le cas courant. La file",
-        "de l'approbateur ne retient donc plus que les fiches sous le seuil ou",
-        "porteuses d'une anomalie — ce qui est bien le but, mais met fin au contrôle",
-        "humain systématique. **À confirmer.**",
+        "Mesuré sur les 7 fiches du corpus réel : **3 s'auto-valident, 4 restent en",
+        "file**. Aucune des 7 ne porte d'anomalie — le score est donc le seul",
+        "discriminant, et il est serré :",
+        "",
+        "| Score | 0,836 | 0,900 | 0,900 | 0,900 | 0,914 | 0,917 | 0,920 |",
+        "|-------|-------|-------|-------|-------|-------|-------|-------|",
+        "| Statut | file | file | file | file | validée | validée | validée |",
+        "",
+        "Le seuil a d'ABORD été fixé à 80 %. À ce niveau, les 7 fiches",
+        "s'auto-validaient et la file se vidait entièrement : six jobs de CI",
+        "tombaient, l'application n'avait plus rien à faire valider. Le seuil a été",
+        "porté à 90 % le même jour, sur cette mesure.",
+        "",
+        "**Le palier reste un compromis, pas une frontière.** Les 7 fiches tiennent",
+        "dans 8 points d'écart, sans aucun trou : le score ne sépare pas « les",
+        "bonnes » des « mauvaises » sur ce corpus, il sépare 0,914 de 0,900 — 1,4 %.",
+        "Un corpus plus contrasté se comporterait tout autrement. **À confirmer.**",
         "",
         "Prouvé par `TestFileDeValidation`",
-        "(`tests/test_auto_validation_persistance.py`).",
+        "(`tests/test_auto_validation_persistance.py`) et par l'étape 5 de la",
+        "recette corpus réel, qui relit la règle depuis la base au lieu de figer un",
+        "comptage.",
         "",
         "### 3. Aucune notification n'est émise",
         "",
@@ -269,7 +282,7 @@ def main(argv: list[str] | None = None) -> int:
         "",
         "### 4. Les fiches déjà en `a_valider` ne sont PAS réévaluées",
         "",
-        "Une fiche déposée avant la règle, qui aurait dépassé 80 %, reste",
+        "Une fiche déposée avant la règle, qui aurait dépassé 90 %, reste",
         "`a_valider`. Aucune reprise rétroactive n'a été faite : ce serait",
         "rejouer une décision sur des données que personne n'a relues depuis.",
         "**Question ouverte : faut-il réévaluer le stock, et si oui selon quelle",
@@ -285,7 +298,7 @@ def main(argv: list[str] | None = None) -> int:
         "  même gravité est un piège.",
         "- `champ_manquant` (« aucun jeu de cotes finies lu ») est de gravité",
         "  « moyenne » et n'est PAS dans `CODES_BLOQUANTS` : une telle fiche peut",
-        "  donc s'auto-valider si son score dépasse 80 %. C'est le choix de ne rien",
+        "  donc s'auto-valider si son score dépasse 90 %. C'est le choix de ne rien",
         "  inventer — la définition retenue est celle qui existait déjà. **À",
         "  confirmer.**",
         "",

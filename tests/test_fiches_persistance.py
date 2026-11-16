@@ -88,7 +88,7 @@ def sans_auto_validation(monkeypatch: pytest.MonkeyPatch) -> None:
 
     Plusieurs tests d'écriture déposent DEUX FOIS la même fiche, ou
     partent du principe qu'elle attend une décision humaine. Depuis
-    l'auto-validation au seuil de 80 %, une fiche au score élevé arrive
+    l'auto-validation au seuil de 90 %, une fiche au score élevé arrive
     « valide » et RG11 la protège : ces tests mesureraient le refus RG11
     au lieu de la mécanique qu'ils ont pour objet.
 
@@ -126,7 +126,7 @@ class TestEcritureTransactionnelle:
     def test_le_statut_ecrit_est_celui_que_la_regle_decide(self, base_fiches, fiche_7792) -> None:
         """Anciennement « RG3 : toujours a_valider, jamais valide ».
 
-        RG3 est remplacée par l'auto-validation au seuil de 80 %. La fiche
+        RG3 est remplacée par l'auto-validation au seuil de 90 %. La fiche
         7792 score 0,929 : affirmer « a_valider » serait faux. On vérifie
         la COHÉRENCE entre la base et la règle, pas un statut figé — ce
         test échouera si le code et la règle divergent, quel que soit le

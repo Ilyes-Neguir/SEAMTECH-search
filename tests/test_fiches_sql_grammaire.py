@@ -53,7 +53,7 @@ def test_le_statut_arrivee_vient_de_la_regle_et_non_d_un_litteral() -> None:
 
     Anciennement RG3 : le littéral « a_valider » était posé dans le tuple
     d'insertion, et le test vérifiait sa présence. Depuis l'auto-validation
-    au seuil de 80 % (décision du commanditaire du 2026-11-14), le statut
+    au seuil de 90 % (décision du commanditaire du 2026-11-14), le statut
     dépend du score et des anomalies : vérifier un littéral n'aurait plus
     de sens — et en laisser un revenir serait réintroduire une règle
     concurrente, silencieuse.
