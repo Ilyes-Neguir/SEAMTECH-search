@@ -332,6 +332,23 @@ def test_lot_interrompu_reprend_sans_refaire_les_dossiers_traites(
     Mesuré : (1) le lot n'est pas « terminé » après l'interruption, il est
     « interrompu » avec des dossiers restants ; (2) la reprise traite les
     dossiers restants ; (3) aucune fiche n'est créée deux fois.
+
+    CONSÉQUENCE DIRECTE DE L'AUTO-VALIDATION, assumée ici et non masquée :
+    l'archive contient volontairement DEUX dossiers pour la même affaire
+    (cas réel d'un remplacement). Le premier dépose la fiche, qui est
+    auto-validée (score 0,98). Le second, de même code, trouve donc une
+    fiche « valide » et RG11 refuse de l'écraser — il part en échec avec
+    une raison EXPLICITE au lieu de passer inaperçu.
+
+    Avant la règle, la fiche attendait en « a_valider » et le second
+    dossier la remplaçait sur place : le remplacement silencieux
+    fonctionnait. Il exige désormais une réouverture (`rouvrir`), ce qui
+    est exactement le sort déjà réservé à une fiche validée par un humain.
+
+    Ce que le test exige donc, ce n'est pas « 3 dossiers traités », mais
+    que rien ne se perde en silence : le lot se termine, aucun dossier ne
+    reste en attente, aucune fiche n'est dupliquée, et le refus porte la
+    raison RG11 qui dit quoi faire.
     """
     from seamtech_search.fiches import depot
 
@@ -368,7 +385,20 @@ def test_lot_interrompu_reprend_sans_refaire_les_dossiers_traites(
     etat_final = depot.etat_lot(index, id_lot)
     assert etat_final["statut"] == "termine"
     assert not etat_final["restants"], "tous les dossiers doivent être traités après reprise"
-    assert _dossiers_traites(index, id_lot) == 3, "les 3 dossiers doivent être marqués traités"
+    # 2 dossiers traités + 1 refusé par RG11 (voir le docstring) : ce qui
+    # compte est que le refus soit NOMMÉ, pas qu'il n'existe pas.
+    assert _dossiers_traites(index, id_lot) == 2, "2 dossiers traités + 1 refusé par RG11"
+    with index.connect() as connexion:
+        with connexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT raison FROM lot_dossier WHERE id_lot = %s AND statut = 'echec'", (id_lot,)
+            )
+            raisons = [str(ligne[0]) for ligne in cursor.fetchall()]
+    assert len(raisons) == 1, f"un seul dossier doit échouer, raisons : {raisons}"
+    assert "RG11" in raisons[0], f"le refus doit nommer sa cause (RG11), lu : {raisons[0]!r}"
+    assert "rouvrir" in raisons[0].lower() or "validée" in raisons[0].lower(), (
+        f"le refus doit dire quoi faire, lu : {raisons[0]!r}"
+    )
     fiches_finales = _compter_fiches(index)
     # 3 dossiers, 2 contenus distincts ⇒ 2 fiches : la reprise a déposé les
     # dossiers 2 et 3 (contenu identique au dossier 2 ⇒ même fiche, pas de
