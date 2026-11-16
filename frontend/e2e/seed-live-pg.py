@@ -507,14 +507,14 @@ def semer_file_validation(idx, codes: dict[str, str]) -> None:
 
     Deux issues auraient masqué le problème sans le résoudre — inventor une
     fiche médiocre pour qu'elle reste en file, ou baisser le score d'une
-    vraie fiche. On fait un geste qui EXISTE à l'atelier : ROUVRIR deux
+    vraie fiche. On fait un geste qui EXISTE à l'atelier : ROUVRIR les trois
     fiches (« valide » → « a_valider », `POST /fiches/{code}/rouvrir`),
     c'est-à-dire un opérateur qui reprend une fiche que la machine avait
     validée. Le parcours humain reste éprouvé, et sur un cas réel.
     """
     from seamtech_search.fiches.routes import rouvrir_fiche
 
-    for dossier in ("CLIENT-7792-SO", "CLIENT-GENOA"):
+    for dossier in ("CLIENT-7792-SO", "CLIENT-GENOA", "CLIENT-E2E-TROIS"):
         code = codes.get(dossier)
         if not code:
             continue

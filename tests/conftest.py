@@ -319,7 +319,15 @@ def enrichir_corpus_assistant(index: Any) -> dict[str, float]:
 def semer_base_assistant(index: Any) -> dict[str, Any]:  # noqa: ANN401 - SearchIndex réel
     """Semis complet de l'assistant : corpus Lot E + cotes synthétiques + la
     VRAIE fiche 7792-SO par le pipeline réglé (extraction gabarit → écriture
-    RG3 → validation humaine qui rend cherchable)."""
+    → statut « valide », ce qui la rend cherchable dans l'archive de
+    confiance).
+
+    L'écriture applique la règle d'arrivée en vigueur (auto-validation
+    au-dessus du seuil, décision du commanditaire du 2026-11-14) : 7792-SO
+    score 0,929 et peut donc arriver déjà « valide ». Le semis veut une
+    fiche VALIDE, pas une validation HUMAINE : on ne valide que ce qui
+    attend encore, sinon `valider_fiche` renvoie 409 et les 21 tests de
+    l'assistant échouent en amont sans rien mesurer."""
     from seamtech_search.fiches.extraction import extraire_fiche
     from seamtech_search.fiches.gabarits import charger_gabarits, initialiser_gabarits
     from seamtech_search.fiches.persistance import ecrire_fiche
@@ -334,7 +342,12 @@ def semer_base_assistant(index: Any) -> dict[str, Any]:  # noqa: ANN401 - Search
         raise RuntimeError(f"la vraie fiche devait être créée, action = {action}")
     # Mise en place de fixture : aucune concurrence possible ici — l'absence
     # de révision est DEMANDÉE explicitement (jamais un repli silencieux).
-    valider_fiche(index, fiche.code, "assistant", exiger_revision=False)
+    with index.connect() as connexion:
+        with connexion.cursor() as cursor:
+            cursor.execute("SELECT statut FROM fiche WHERE code = %s", (fiche.code,))
+            ligne = cursor.fetchone()
+    if ligne and ligne[0] == "a_valider":
+        valider_fiche(index, fiche.code, "assistant", exiger_revision=False)
     ids[fiche.code] = id_fiche
     return {"ids": ids, "fiche": fiche}
 
