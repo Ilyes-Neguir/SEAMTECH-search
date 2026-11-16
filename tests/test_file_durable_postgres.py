@@ -380,6 +380,18 @@ def test_lot_interrompu_reprend_sans_refaire_les_dossiers_traites(
     resultat = process_import_task(
         charge, config, index, magasin, worker_id="worker-reprise", heartbeat=lambda: None
     )
+    if resultat.get("status") == "stale_worker":
+        # Un échec doit NOMMER sa cause (philosophie du dépôt). Sans ces
+        # lignes, « stale_worker » ne dit pas si le claim perdu est celui de
+        # Redis ou celui du registre de jobs — on devinerait, ce qui est
+        # interdit. Le diagnostic est donc versé dans l'échec lui-même.
+        from seamtech_search.jobs import get_job
+
+        job = get_job(index, f"lot-{id_lot}")
+        dire_redis = magasin.revendication_appartient_a("imports", f"lot-{id_lot}", "worker-reprise")
+        raise AssertionError(
+            f"claim perdu avant traitement : job={job} ; revendication_redis={dire_redis}"
+        )
     assert resultat["status"] in {"completed", "needs_review"}, resultat
 
     etat_final = depot.etat_lot(index, id_lot)
