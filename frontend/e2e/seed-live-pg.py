@@ -495,6 +495,45 @@ def semer_accessoires_lot7(idx) -> None:
                 sys.exit(1)
 
 
+def semer_file_validation(idx, codes: dict[str, str]) -> None:
+    """Rend une file de validation NON VIDE à l'e2e — sans tricher sur le score.
+
+    Depuis l'auto-validation au seuil (décision du commanditaire du
+    2026-11-14), les trois fiches déposées ici arrivent « valide » :
+    7792-SO score 0,929, GENOA 0,98, E2E-TROIS 0,98 — toutes au-dessus du
+    seuil de 90 %, aucune anomalie. La file de validation est donc VIDE, et
+    le parcours de validation humaine n'a plus rien à valider : les e2e qui
+    l'exercent échouent faute de fiche à ouvrir.
+
+    Deux issues auraient masqué le problème sans le résoudre — inventor une
+    fiche médiocre pour qu'elle reste en file, ou baisser le score d'une
+    vraie fiche. On fait un geste qui EXISTE à l'atelier : ROUVRIR deux
+    fiches (« valide » → « a_valider », `POST /fiches/{code}/rouvrir`),
+    c'est-à-dire un opérateur qui reprend une fiche que la machine avait
+    validée. Le parcours humain reste éprouvé, et sur un cas réel.
+    """
+    from seamtech_search.fiches.routes import rouvrir_fiche
+
+    for dossier in ("CLIENT-7792-SO", "CLIENT-GENOA"):
+        code = codes.get(dossier)
+        if not code:
+            continue
+        with idx.connect() as connexion:
+            with connexion.cursor() as cur:
+                cur.execute("SELECT statut FROM fiche WHERE code = %s", (code,))
+                ligne = cur.fetchone()
+        if ligne is None:
+            print(
+                f"Seed e2e : fiche {code} absente — la file de validation ne peut pas être semée.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if ligne[0] == "a_valider":
+            # Le seuil a changé : cette fiche attend déjà. Ne rien forcer.
+            continue
+        rouvrir_fiche(idx, code, "seed-e2e", "réouverture pour éprouver la file", exiger_revision=False)
+
+
 def semer_comptes(idx) -> None:
     """Crée/normalise les comptes nominatifs canoniques de l'e2e (Lot 1).
 
@@ -663,6 +702,7 @@ def main() -> None:
         semer_doublon(idx)
         semer_population_lot5(idx)
         semer_accessoires_lot7(idx)
+        semer_file_validation(idx, codes)
         semer_comptes(idx)
         idx.close()
 

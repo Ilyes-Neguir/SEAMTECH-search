@@ -158,7 +158,17 @@ def base_ml() -> Iterator[dict[str, Any]]:
     initialiser_gabarits(index)
     resultat = depot.deposer_dossier(index, RACINE / "sample_data/CLIENT-7792-SO")
     assert resultat.get("statut") == "traite"
-    valider_fiche(index, "7792-SO", "test-modele-maison", exiger_revision=False)
+    # Ces tests veulent une fiche « valide », pas une validation HUMAINE :
+    # depuis l'auto-validation (décision du 2026-11-14), 7792-SO score
+    # 0,929 et arrive déjà « valide » au-dessus du seuil. Appeler
+    # `valider_fiche` sans vérifier renvoie alors 409 et fait échouer les
+    # DEUX tests en amont. On ne valide donc que ce qui attend encore.
+    with index.connect() as connexion:
+        with connexion.cursor() as cursor:
+            cursor.execute("SELECT statut FROM fiche WHERE code = %s", ("7792-SO",))
+            ligne = cursor.fetchone()
+    if ligne and ligne[0] == "a_valider":
+        valider_fiche(index, "7792-SO", "test-modele-maison", exiger_revision=False)
     try:
         yield {"index": index, "url": url_base, "nom": nom_base}
     finally:

@@ -41,7 +41,7 @@
 
 import { expect, test } from "@playwright/test"
 import path from "node:path"
-import { APPROBATEUR, signInWith } from "./helpers"
+import { APPROBATEUR, csrfHeadersForPage, signInWith } from "./helpers"
 
 test.describe("hors ligne — pile réelle, sortie réseau bloquée", () => {
   test.skip(
@@ -168,6 +168,34 @@ test.describe("hors ligne — pile réelle, sortie réseau bloquée", () => {
 
     // 6. VALIDATION sur l'écran de validation : la révision est lue (instantané)
     //    puis la décision porte sur CETTE révision — sans réseau externe.
+    //
+    //    Depuis l'auto-validation au seuil (décision du commanditaire du
+    //    2026-11-14), 7792-SO score 0,929 : l'import la valide SANS attendre
+    //    et elle n'entre donc PAS dans la file. On le constate d'abord — c'est
+    //    la règle, éprouvée ici sur un import réel et pas seulement en test
+    //    unitaire — puis on la ROUVRE (« valide » → « a_valider »), geste
+    //    d'atelier qui existe, pour éprouver la décision humaine qui suit.
+    const etat = await page.request.get(`/api/fiches/${CODE_FICHE}/etat`)
+    expect(etat.status(), await etat.text()).toBe(200)
+    const corpsEtat = (await etat.json()) as { statut: string; revision: number }
+    expect(
+      corpsEtat.statut,
+      "7792-SO score 0,929 > 90 % : l'import doit l'auto-valider",
+    ).toBe("valide")
+
+    // Même geste que `garantirAValider` (concurrence.spec.ts) : en-tête CSRF
+    // et révision RELUE — on ne suppose jamais un numéro de révision.
+    const rouverte = await page.request.post(`/api/fiches/${CODE_FICHE}/rouvrir`, {
+      headers: await csrfHeadersForPage(page),
+      data: {
+        revision: corpsEtat.revision,
+        effacer_corrections: false,
+        utilisateur: "e2e-hors-ligne",
+        commentaire: "réouverture pour éprouver la décision",
+      },
+    })
+    expect(rouverte.status(), await rouverte.text()).toBe(200)
+
     await page.goto("/validation")
     const ligne = page.locator(`li[data-code="${CODE_FICHE}"]`)
     await expect(ligne).toBeVisible({ timeout: 20000 })
