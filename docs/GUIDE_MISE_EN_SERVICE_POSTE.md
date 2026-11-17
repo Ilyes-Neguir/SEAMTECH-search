@@ -157,7 +157,8 @@ Générer chaque secret **depuis PowerShell** (une ligne = un secret) :
 `MINIO_ROOT_PASSWORD`, `REDIS_PASSWORD`, `SEAMTECH_AUTH_TOKEN`,
 `SEAMTECH_UI_PASSWORD` (c'est le mot de passe tapé à la connexion),
 `SEAMTECH_SESSION_SECRET`, `SEAMTECH_S3_SECRET_KEY`,
-`SEAMTECH_BACKUP_SECRET_KEY`.
+`SEAMTECH_BACKUP_SECRET_KEY`, et **`SEAMTECH_ROOT_PATHS`** (voir l'étape 5 :
+sans lui, l'application n'a aucune racine d'archive et le dépôt est refusé).
 
 Trois précautions qui ont une raison :
 
@@ -204,7 +205,12 @@ utilisateurs créés, et confirme qu'aucun bucket n'est public.
 ```powershell
 docker compose up -d --build
 docker compose ps
-Invoke-WebRequest http://127.0.0.1:3000/api/health | Select-Object -Expand Content
+
+# /api/health SANS session ne répond qu'une sonde de vie — jamais les
+# compteurs ni `s3_credentials`. On interroge donc l'API en s'authentifiant.
+$token = (Get-Content .env | Select-String '^SEAMTECH_AUTH_TOKEN=') -replace '^SEAMTECH_AUTH_TOKEN=',''
+Invoke-WebRequest http://127.0.0.1:8000/health -Headers @{ 'X-SEAMTECH-TOKEN' = $token } |
+  Select-Object -Expand Content
 ```
 
 **Pourquoi** : `up -d` ne veut pas dire « prêt ». Le `web` attend que
@@ -213,10 +219,19 @@ réellement les imports) attend les trois ; le `frontend` attend le `web`. On
 regarde donc l'état réel.
 
 **Ce qu'on doit voir** : dans `docker compose ps`, chaque service `healthy` ;
-la commande `Invoke-WebRequest` renvoie un HTTP 200 ; et
-`s3_credentials` vaut `dedie` dans la réponse (si elle affichait
-`root_like`, les identifiants administrateur auraient été réutilisés — on
-s'arrête et on me le dit).
+la commande renvoie un HTTP 200 ; et `s3_credentials` vaut `dedie` dans la
+réponse (si elle affichait `root_like`, les identifiants administrateur
+auraient été réutilisés — on s'arrête et on me le dit).
+
+⚠️ **Pourquoi le jeton est nécessaire** — et pourquoi l'ancienne commande ne
+pouvait pas marcher : `/api/health` sert de sonde de vie au conteneur, donc
+elle répond `200` **même sans session**, mais avec un corps réduit à
+`{"status":"ok","authenticated":false,"detail":...}`. Les compteurs et
+`s3_credentials` ne sortent qu'authentifiés. L'ancienne feuille de route
+faisait lire `s3_credentials` dans cette réponse anonyme : la vérification
+la plus importante de l'étape — « l'application ne tourne pas en
+administrateur du stockage » — ne pouvait donc jamais aboutir, tout en
+affichant `ok` comme si tout allait bien.
 
 Puis ouvrir **http://127.0.0.1:3000** dans Edge ou Chrome, et se connecter
 avec `SEAMTECH_UI_PASSWORD`.
@@ -235,6 +250,19 @@ New-Item -ItemType Directory -Force data\DesignFiles | Out-Null
 Copy-Item sample_data\CLIENT-123 data\DesignFiles\ -Recurse
 Copy-Item sample_data\CLIENT-456 data\DesignFiles\ -Recurse
 ```
+
+Puis, **dans `.env`**, déclarer cette racine — c'est le chemin VU PAR LE
+CONTENEUR, pas par Windows :
+
+    SEAMTECH_ROOT_PATHS=/app/data/DesignFiles
+
+⚠️ Sans cette ligne, deux échecs possibles selon la valeur laissée par
+`.env.example` : si elle est vide, `root_paths` exige au moins une racine et
+la pile refuse de démarrer ; si elle vaut `/data/SEAMTECH/DesignFiles`
+(chemin d'exemple Linux), elle existe dans le fichier mais **pas dans le
+conteneur**, où `./data` est monté sur `/app/data` — le dépôt est alors
+refusé pour « chemin hors racine ». Redémarrer la pile après modification :
+`docker compose up -d`.
 
 **Pourquoi** : `sample_data` contient quatre dossiers et six fichiers
 **synthétiques** (aucune donnée réelle). C'est l'épreuve générale : elle doit
@@ -274,7 +302,9 @@ le message exact sinon.
 sauvegarde. On fait l'exercice maintenant, sur le jeu d'essai.
 
 ```powershell
-# 1. la sauvegarde complète : base + références + données téléversées
+# 1. une sauvegarde large : base + références + données téléversées
+#    (ce n'est PAS « la sauvegarde complète » : ce nom désigne la commande
+#     `sauvegarde_complete sauvegarder`, décrite plus bas)
 docker compose run --rm sauvegarde python -m seamtech_search.sauvegarde sauver ^
   --archive /app/data/DesignFiles ^
   --data /app/data ^
@@ -296,6 +326,31 @@ sauvegarde qui omet `--data` n'est pas complète, et le manifeste le dit.
 
 **Ce qu'on doit voir** : un manifeste écrit sous `data\backups`, et
 `verifier` qui confirme la concordance (base + données + objets).
+
+⚠️ **Ne pas se fier au code de sortie de cette commande : il vaut `2` même
+quand tout s'est bien passé.** `sauver` rend `2` dès que la « protection
+globale » n'est pas prouvée — et cette preuve ne s'obtient qu'au terme d'une
+restauration contrôlée contre le manifeste. Aucun passage de `sauver`, réussi
+ou non, ne peut l'établir. Ce `2` n'est donc pas un échec ; mais il faut le
+savoir avant de le voir, sinon on le prend pour une panne — ou, pire, on
+apprend à l'ignorer et le vrai `2`, le jour où il arrivera, ne sera plus
+regardé.
+
+Le résultat à lire est le **JSON imprimé**, et dans ce JSON :
+
+* `complet_perimetre_demande` — `true` : tout ce qui a été demandé a été
+  copié. `false` : une pièce jointe ou un fichier manque à l'appel ;
+* `references_incluses` — `true` : les pièces jointes sont bien du voyage.
+
+Ces deux lignes sont la seule lecture fiable de l'étape. **Le code `2` ne dit
+rien de la qualité de la copie** : une sauvegarde parfaite et une sauvegarde
+trouée sortent toutes deux en `2`.
+
+Autre conséquence du même mécanisme, à connaître avant de compter dessus :
+**`--retention 5` n'élague rien ici.** La rétention n'est appliquée qu'à une
+sauvegarde qualifiée complète — ce qu'aucun `sauver` seul n'obtient jamais.
+Les dumps et les manifestes s'accumulent donc dans `data\backups` sans
+plafond : à surveiller, et à ne pas confondre avec une rotation en marche.
 
 ### ⛔ Ce que la sauvegarde AUTOMATIQUE ne couvre PAS — à lire avant tout
 

@@ -38,6 +38,19 @@
 # Usage : bash scripts/provisionner_stockage.sh
 set -euo pipefail
 
+# Git Bash / MSYS2 : sans cette variable, l'environnement réécrit tout argument
+# qui ressemble à un chemin POSIX en chemin Windows AVANT de le passer à
+# docker.exe. Deux appels de ce script en pâtissent :
+#   * `docker cp "$tmpdir/politique-app.json" <conteneur>:/tmp/...` reçoit
+#     « C:/Program Files/Git/tmp/... » — la copie échoue ;
+#   * `docker exec <conteneur> mc admin policy create ... /tmp/seamtech-...`
+#     reçoit le même chemin réécrit, et `mc`, DANS le conteneur, ne trouve plus
+#     le fichier qu'on vient d'y copier (d'où le classique
+#     « Unable to get policy: ... no such file or directory »).
+# Exporter ici couvre les deux, et n'affecte rien d'autre : tout argument de
+# docker dans ce script est un chemin à prendre littéralement.
+export MSYS_NO_PATHCONV=1
+
 BUCKET="${SEAMTECH_S3_BUCKET:-seamtech-documents}"
 BUCKET_SAUVEGARDE="${SEAMTECH_BACKUP_BUCKET:-seamtech-backups}"
 URL_INTERNE="${SEAMTECH_MINIO_URL:-http://localhost:9000}"
