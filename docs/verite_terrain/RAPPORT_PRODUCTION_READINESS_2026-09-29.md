@@ -19,11 +19,11 @@ atelier, 200 dossiers, 10 000 fiches) sont **NON MESURÉES** faute d'accès.
 
 | Étape | État | Détail |
 |---|---|---|
-| 0.1 Inventaire des données réelles | **RÉEL** | PDF client réel `7792-SO_ffab.pdf` (166 990 o, SHA-256 `43afc51e…`, désigné « DOCUMENT CLIENT RÉEL » par `docs/verite_terrain/EMPREINTES.md`) présent en double (racine + `sample_data/CLIENT-7792-SO/`) ; 7 ZIP réels du corpus 2026-09-28 à la racine ; fixtures synthétiques identifiées (CLIENT-123, CLIENT-GENOA, CLIENT-E2E-TROIS, ocr_propre/ocr_degrade) |
+| 0.1 Inventaire des données réelles | **RÉEL** | PDF client réel `1042-EX_ffab.pdf` (166 990 o, SHA-256 `43afc51e…`, désigné « DOCUMENT CLIENT RÉEL » par `docs/verite_terrain/EMPREINTES.md`) présent en double (racine + `sample_data/CLIENT-1042-EX/`) ; 7 ZIP réels du corpus 2026-09-28 à la racine ; fixtures synthétiques identifiées (CLIENT-123, CLIENT-GENOA, CLIENT-E2E-TROIS, ocr_propre/ocr_degrade) |
 | 0.2 Passer le dépôt en privé | **BLOQUÉ — droits propriétaire requis** | `gh api -X PATCH repos/… -f private=true` → `403 Resource not accessible by integration` : le token de l'agent n'a pas les droits admin. **Action commanditaire (30 s)** : GitHub → Settings → General → Danger Zone → Change visibility → Private. Tant que le dépôt est public, les documents clients y restent téléchargeables. |
-| 0.3 Remplacer les fixtures réelles par des équivalents anonymisés | **À décider** | La fiche 7792-SO est la vérité terrain du gabarit `FICHE_PORTANT_V1` v2 (74/74) ; les 7 ZIP alimentent le job CI `recette-corpus-reel`. Les remplacer = reconstruire ces preuves. Décision appartenant au commanditaire (voir §Décisions ouvertes). |
+| 0.3 Remplacer les fixtures réelles par des équivalents anonymisés | **À décider** | La fiche 1042-EX est la vérité terrain du gabarit `FICHE_PORTANT_V1` v2 (74/74) ; les 7 ZIP alimentent le job CI `recette-corpus-reel`. Les remplacer = reconstruire ces preuves. Décision appartenant au commanditaire (voir §Décisions ouvertes). |
 | 0.4 Purge de l'historique | **À décider (destructif)** | `git filter-repo` + force-push + rotation des secrets. Règle du prompt : demander d'abord. Purger les ZIP casserait le job `recette-corpus-reel` (ils sont lus au checkout) — à arbitrer avec 0.3. |
-| 0.5 Garde-fou CI anti-document | **FAIT (ce lot)** | `tests/test_confidentialite_depots.py` : 17 tests (suite sans service). Tout PDF/ZIP/`.plx`/`.xin`/`.dxf`/`.db` suivi par Git doit être épinglé (chemin + SHA-256 + taille) ; tout ajout/modification non épinglé rend la CI rouge ; formats machine interdits en vrac ; doublon racine 7792 == copie canonique. |
+| 0.5 Garde-fou CI anti-document | **FAIT (ce lot)** | `tests/test_confidentialite_depots.py` : 17 tests (suite sans service). Tout PDF/ZIP/`.plx`/`.xin`/`.dxf`/`.db` suivi par Git doit être épinglé (chemin + SHA-256 + taille) ; tout ajout/modification non épinglé rend la CI rouge ; formats machine interdits en vrac ; doublon racine 1042 == copie canonique. |
 
 ## Phase 2 — Recherche utile avant validation
 
@@ -81,13 +81,13 @@ cd frontend && ./node_modules/.bin/tsc --noEmit && pnpm build   # → verts
 
 **CI complète : run [36569073423](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36569073423), 10/10 jobs VERTS** sur `c10449e` (PR #32) : backend 3.11/3.12/3.13 (suite PostgreSQL avec le contrat 018 : fiche nouvelle écrite → vecteur rempli → retrouvée badgée par défaut, absente de l'archive de confiance ; comptages 14/12), frontend, docker, integration, sauvegarde, ocr, e2e (suite défaut SQLite : le spec badge skippe proprement ; **suite live PostgreSQL : badge « Non vérifiée » + filtre « Validées uniquement » prouvés au premier essai, garde de porte 4/4**), recette-corpus-reel (**contrat 018 éprouvé sur le corpus réel : fiche a_valider retrouvée par défaut avec statut exposé, absente avec `inclure_a_valider=false`, y compris sur base restaurée**).
 
-Premier run (`36567702950`) : 4 échecs PostgreSQL (fiche 7792-SO déjà validée dans le banc → `conservee_validee` ; deux comptages 12 restés à l'ancien contrat) et 1 échec e2e (spec badge exécuté dans la suite SQLite où la recherche de fiches répond 503 et où `BIS-7792` n'existe pas) — tous corrigés par le commit `c10449e` : fiche NOUVELLE à code unique pour les tests d'écriture, comptages 14/12, garde de saut `SEAMTECH_E2E_DATABASE_URL` + spec ajouté à la commande live (garde de porte 3→4, documenté dans `ci.yml`).
+Premier run (`36567702950`) : 4 échecs PostgreSQL (fiche 1042-EX déjà validée dans le banc → `conservee_validee` ; deux comptages 12 restés à l'ancien contrat) et 1 échec e2e (spec badge exécuté dans la suite SQLite où la recherche de fiches répond 503 et où `BIS-1042-EX` n'existe pas) — tous corrigés par le commit `c10449e` : fiche NOUVELLE à code unique pour les tests d'écriture, comptages 14/12, garde de saut `SEAMTECH_E2E_DATABASE_URL` + spec ajouté à la commande live (garde de porte 3→4, documenté dans `ci.yml`).
 
 ## Décisions ouvertes pour le commanditaire
 
 1. **Passer le dépôt en privé** (recommandé immédiatement — action
    propriétaire, 30 secondes).
-2. Faut-il retirer/purger les documents réels du dépôt (fiche 7792-SO, 7 ZIP)
+2. Faut-il retirer/purger les documents réels du dépôt (fiche 1042-EX, 7 ZIP)
    au prix de la reconstruction des preuves qui s'y appuient, ou les conserver
    dans un dépôt privé ?
 3. Où héberger le corpus réel hors Git (partage chiffré / bucket privé) pour

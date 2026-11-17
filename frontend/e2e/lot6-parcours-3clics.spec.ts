@@ -25,7 +25,7 @@ import { signInWith } from "./helpers"
  * → confiance → fiche métier).
  */
 
-const CODE_REFERENCE = "7792-SO"
+const CODE_REFERENCE = "1042-EX"
 
 /**
  * Compte `utilisateur` DÉDIÉ à ce parcours, créé par un administrateur.
@@ -155,14 +155,14 @@ test.describe("Lot 6 — parcours 3 clics et cohérence globale", () => {
     try {
       const identifiants = await creerUtilisateurDedie(browser, contextes)
       const utilisateur = await ouvrirPoste(browser, contextes, identifiants)
-      const { code: codeSujet, piece } = await sujetSansAutorisation(utilisateur, "7792")
+      const { code: codeSujet, piece } = await sujetSansAutorisation(utilisateur, "1042")
       await nettoyerDemandesTelechargement(utilisateur, piece.id)
       // Une autorisation encore valide fausserait le parcours de demande.
       const avantDemande = await utilisateur.request.get(`/api/pieces/${piece.id}/telecharger`)
       expect(avantDemande.status(), "pas d'autorisation de téléchargement préexistante").toBe(403)
 
       // --- Utilisateur : 3 clics depuis les résultats de recherche.
-      await utilisateur.goto(`/recherche?q=${encodeURIComponent("7792")}`)
+      await utilisateur.goto(`/recherche?q=${encodeURIComponent("1042")}`)
       let clicsUtilisateur = 0
       await utilisateur.getByRole("link", { name: `Ouvrir la fiche ${codeSujet}` }).click()
       clicsUtilisateur += 1
@@ -299,8 +299,8 @@ test.describe("Lot 6 — parcours 3 clics et cohérence globale", () => {
       const corps = (await reponse.json()) as {
         extractions: { id_extraction: number; code_fiche: string | null }[]
       }
-      // Jeu dédié : sa population contient la fiche BIS-7792 ; elle reste
-      // liée même si le scénario de correction Lot 3b modifie 7792-SO.
+      // Jeu dédié : sa population contient la fiche BIS-1042-EX ; elle reste
+      // liée même si le scénario de correction Lot 3b modifie 1042-EX.
       const candidate = corps.extractions.find((e) => (e.code_fiche ?? "") === "LOT5-ISO-2")
       expect(candidate, "extraction LOT5-ISO-2 dans la base live").toBeTruthy()
 
@@ -334,8 +334,8 @@ test.describe("Lot 6 — parcours 3 clics et cohérence globale", () => {
       await expect(resultat).toBeVisible({ timeout: 30000 })
       // Une fiche source de la population ouvre la fiche métier.
       await resultat.getByText(/Fiches sources de la population/).click()
-      await resultat.getByRole("link", { name: /BIS-7792/ }).first().click()
-      await expect(page.getByTestId("fiche-code")).toHaveText("BIS-7792", { timeout: 30000 })
+      await resultat.getByRole("link", { name: /BIS-1042-EX/ }).first().click()
+      await expect(page.getByTestId("fiche-code")).toHaveText("BIS-1042-EX", { timeout: 30000 })
     } finally {
       for (const contexte of contextes) await contexte.close()
     }

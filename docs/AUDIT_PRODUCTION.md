@@ -29,7 +29,7 @@ Chaque ligne ci-dessous est une commande reproductible, pas une appréciation.
 |---|---|
 | CI verte au HEAD, 13 jobs sur 13 | `gh api …/actions/runs/42922261618/jobs` → `13 success`, `e2e` compris |
 | E2E sans flaky | annotations du job `e2e` : « 3 parcours Lot 6 verts **au premier essai** » (c'était « 2 passés, 1 flaky » avant correction) |
-| Parcours critique mesuré | « mesure-phase1 : parcours machine complet de la vraie fiche 7792-SO … 993 ms » (critère < 120 000 ms) |
+| Parcours critique mesuré | « mesure-phase1 : parcours machine complet de la vraie fiche 1042-EX … 993 ms » (critère < 120 000 ms) |
 | Accessibilité | « accessibilite : 82 écrans scannés, 0 violation WCAG 2.1 A/AA » |
 | Vérification manuelle | `python scripts/verification_manuelle.py` → **24 épreuves, 24 OK, 0 ÉCHEC** contre un serveur vivant |
 | Contrôle de santé | `GET /health` → 200, état des dépendances réellement interrogées |

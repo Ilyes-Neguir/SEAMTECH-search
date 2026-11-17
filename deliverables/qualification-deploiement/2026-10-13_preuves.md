@@ -165,7 +165,7 @@ pytest -m sauvegarde -v --junitxml=sauvegarde-junit.xml
 
 ### 2.12 Qualification native — Workflow `38538168740` success
 
-- `bash scripts/qualification_native.sh` sur Debian/Ubuntu vierge : apt PostgreSQL+pgvector, Redis, MinIO officiel compilé tag épinglé, API+worker+frontend processus hôtes, compte nominatif, lot worker 7792-SO, OCR tesseract hôte fra+eng, /recherche, /open, sauvegarde/restore, kill+relance API
+- `bash scripts/qualification_native.sh` sur Debian/Ubuntu vierge : apt PostgreSQL+pgvector, Redis, MinIO officiel compilé tag épinglé, API+worker+frontend processus hôtes, compte nominatif, lot worker 1042-EX, OCR tesseract hôte fra+eng, /recherche, /open, sauvegarde/restore, kill+relance API
 - Notice `native-summary` tous CONTROLE PASS
 
 ### 2.13 Perf comparaison — Workflow `38538168577` success

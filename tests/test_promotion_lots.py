@@ -5,7 +5,7 @@ restaient sous ``uploads/lots-televerses``, sur le disque local ; leur
 promotion vers MinIO/R2 n'était pas démontrée. Un sauvegarde de PostgreSQL
 seul, ou de MinIO seul, ne restituait donc pas les pièces.
 
-Ces tests déposent un dossier RÉEL (fiche 7792-SO du corpus de recette), avec
+Ces tests déposent un dossier RÉEL (fiche 1042-EX du corpus de recette), avec
 un stockage objet branché sur un magasin en mémoire qui conserve les octets —
 donc la vérification post-envoi est réelle, elle relit ce qui a été stocké.
 
@@ -41,7 +41,7 @@ from seamtech_search.storage import S3StorageClient
 from tests.s3_en_memoire import S3EnMemoire
 
 RACINE = Path(__file__).resolve().parent.parent
-ARCHIVE_7792 = RACINE / "sample_data/CLIENT-7792-SO"
+ARCHIVE_REFERENCE = RACINE / "sample_data/CLIENT-1042-EX"
 URL_PG = os.environ.get("SEAMTECH_TEST_DATABASE_URL", "")
 
 pytestmark = pytest.mark.postgres
@@ -123,7 +123,7 @@ def dossier_stage(tmp_path: Path, request: pytest.FixtureRequest) -> Path:
     affaire = "".join(c if c.isalnum() else "-" for c in request.node.name)[:40]
     dossier = tmp_path / "uploads" / "lots-televerses" / "jeton-test" / "fichiers" / "2026" / affaire
     dossier.mkdir(parents=True)
-    shutil.copy(ARCHIVE_7792 / "fiche-7792-SO_ffab.pdf", dossier / "fiche.pdf")
+    shutil.copy(ARCHIVE_REFERENCE / "fiche-1042-EX_ffab.pdf", dossier / "fiche.pdf")
     (dossier / "croquis.md").write_text("notes atelier, pièce jointe", encoding="utf-8")
     return dossier
 

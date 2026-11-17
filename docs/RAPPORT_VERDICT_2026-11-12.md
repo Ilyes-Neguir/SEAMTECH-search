@@ -224,11 +224,11 @@ expose les trois options et renvoie la décision par un point d'arrêt
 | Unicité des identifiants après complément | 820 / 820 distincts |
 | Axes des 123 fiches préexistantes | **0 perdu, 0 modifié** |
 
-### 4.2 Le dossier réel du patron, 7792-SO, en test final
+### 4.2 Le dossier réel du patron, 1042-EX, en test final
 
 `tests/test_extraction_fiche_reference.py` : **17 épreuves passées**, contre
 la vérité terrain de 74 valeurs vérifiées littéralement sur le PDF réel
-(`sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf`, 166 990 o).
+(`sample_data/CLIENT-1042-EX/fiche-1042-EX_ffab.pdf`, 166 990 o).
 
 ### 4.3 Contrôle d'accès par rôle, sur PostgreSQL réel
 
@@ -389,7 +389,7 @@ git log --oneline af31922f..HEAD -- tests/test_sauvegarde_snapshot_pg.py
   inchangés ;
 - le contrôle d'accès par rôle, l'absence d'auto-approbation et la séparation
   demandeur / approbateur sont **prouvés par exécution sur PostgreSQL réel** ;
-- le dossier réel du patron, 7792-SO, passe ses 17 épreuves contre 74 valeurs
+- le dossier réel du patron, 1042-EX, passe ses 17 épreuves contre 74 valeurs
   de vérité terrain ;
 - la limite Windows est écrite là où l'exploitante la lira ;
 - la suite SQLite est intégralement verte (2876 épreuves, 0 échec) et la CI

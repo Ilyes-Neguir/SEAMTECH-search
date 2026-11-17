@@ -899,8 +899,8 @@ class SearchIndex:
 
     def _migration_013_recherche_fonds_reel(self, connection: Any) -> None:
         """Tâche 3 : le rejeu du jeu de requêtes RÉEL sur la vraie fiche
-        7792-SO a mesuré deux angles morts du vecteur — la raison sociale du
-        client (« cruette ») et l'année d'édition (« spi sailonet 2026 »).
+        1042-EX a mesuré deux angles morts du vecteur — la raison sociale du
+        client (« demo ») et l'année d'édition (« spi exemplia 2026 »).
         Les deux sont ajoutées au texte pondéré (poids B)."""
         if not self.is_postgres:
             logger.info("Migration 013 (recherche fonds réel) ignorée en mode SQLite — PostgreSQL uniquement (§17.1).")

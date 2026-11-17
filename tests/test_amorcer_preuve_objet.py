@@ -286,7 +286,7 @@ def test_le_dossier_par_defaut_est_reconnu_par_un_gabarit() -> None:
     sortie = termine.stdout + termine.stderr
     assert "Gabarit inconnu" not in sortie, (
         f"{pdf} n'est reconnu par aucun gabarit : le dépôt le refuserait. "
-        "Choisir un dossier dont le PDF est reconnu (ex. CLIENT-7792-SO)."
+        "Choisir un dossier dont le PDF est reconnu (ex. CLIENT-1042-EX)."
     )
     assert re.search(r"gabarit \S+ v\d", sortie), f"aucun gabarit détecté pour {pdf} : {sortie[:300]}"
 

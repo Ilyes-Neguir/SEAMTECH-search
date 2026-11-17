@@ -704,7 +704,7 @@ function ValidationAppInterne() {
               // Sans lui, une ligne se repérait par son texte — or le bandeau de
               // doublon cite l'AUTRE code, donc la ligne du doublon contient aussi
               // le code de la fiche d'origine (mesuré en CI : deux lignes
-              // répondaient à la même recherche « 7792-SO »).
+              // répondaient à la même recherche « 1042-EX »).
               <li key={entree.code} data-code={entree.code}>
                 <div
                   className={cn(

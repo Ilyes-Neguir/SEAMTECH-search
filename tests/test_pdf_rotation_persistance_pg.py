@@ -8,7 +8,7 @@ import pytest
 from seamtech_search.fiches.extraction import extraire_fiche
 from seamtech_search.fiches.gabarits import GABARITS_EMBARQUES
 from seamtech_search.fiches.persistance import ecrire_fiche
-from tests.test_fiches_persistance import PDF_7792, base_fiches  # noqa: F401
+from tests.test_fiches_persistance import PDF_REFERENCE, base_fiches  # noqa: F401
 from tests.test_pdf_variantes import _transformer
 
 pytestmark = pytest.mark.postgres
@@ -16,7 +16,7 @@ pytestmark = pytest.mark.postgres
 
 @pytest.mark.parametrize("angle", [90, 180, 270])
 def test_traces_rotations_persistantes_identiques_aux_zones_calculees(base_fiches, tmp_path: Path, angle: int):  # noqa: F811
-    pivot = _transformer(PDF_7792, tmp_path / "pivot.pdf", lambda w: [p.rotate(angle) for p in w.pages])
+    pivot = _transformer(PDF_REFERENCE, tmp_path / "pivot.pdf", lambda w: [p.rotate(angle) for p in w.pages])
     fiche = extraire_fiche(pivot, gabarits=list(GABARITS_EMBARQUES))
     fiche.code = f"SYNTH-ROT-{angle}"
     identifiant, action = ecrire_fiche(base_fiches["index"], fiche)

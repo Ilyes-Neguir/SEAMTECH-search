@@ -19,6 +19,12 @@ chemins des dossiers.
 Étapes prouvées, dans l'ordre (une étape rouge = job rouge) :
 
 1. ZIP d'origine intacts avant recette (empreintes SHA-256, RG13).
+
+CORPUS HORS GIT : les 7 archives ont été purgées du dépôt (décision de
+l'exploitante). Cette recette ne les y trouve donc plus ; elle se rejoue sur
+un corpus déposé HORS Git, désigné par ``SEAMTECH_RECETTE_CORPUS_RACINE``.
+C'est la règle de confidentialité du projet, enfin appliquée jusqu'au bout :
+un document réel n'est jamais consigné, il est référencé.
 2. Corpus extrait complet : 7 dossiers, 14 PDF uniques, 30 pages natives.
 3. Services vivants + migrations 001..018 appliquées sur une base neuve.
 4. Import des 7 dossiers par le FLUX RÉEL : upload (REF-001), scan,
@@ -191,8 +197,20 @@ def _client_s3(bucket: str | None = None):
 
 @pytest.fixture(scope="session")
 def empreintes_zip_avant() -> dict[str, str]:
+    # Le corpus a été PURGÉ du dépôt : il vit désormais HORS Git, sur un
+    # chemin que l'opérateur fournit (SEAMTECH_RECETTE_CORPUS_RACINE). Cette
+    # fixture ne peut donc plus rien trouver par elle-même, et elle ne doit
+    # surtout pas se mettre à échouer pour absence — l'absence est désormais
+    # l'état normal et voulu du dépôt, pas une régression.
+    if not ACTIF:
+        pytest.skip(GARDE)
     zips = sorted(RACINE_DEPOT.glob("*.zip"))
-    assert len(zips) == NB_ZIP, f"attendu {NB_ZIP} ZIP à la racine du dépôt, trouvé {len(zips)}"
+    if len(zips) != NB_ZIP:
+        pytest.skip(
+            f"{len(zips)} ZIP à la racine du dépôt, {NB_ZIP} attendus : le corpus "
+            "réel n'est plus consigné dans Git (purge) — fournir "
+            "SEAMTECH_RECETTE_CORPUS_RACINE pour rejouer cette recette."
+        )
     return {z.name: _empreinte(z) for z in zips}
 
 

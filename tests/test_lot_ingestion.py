@@ -23,7 +23,7 @@ from seamtech_search.indexer import SearchIndex
 from tests.helpers_postgres_isole import url_base_jetable
 
 RACINE = Path(__file__).resolve().parent.parent
-ARCHIVE_7792 = RACINE / "sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf"
+ARCHIVE_REFERENCE = RACINE / "sample_data/CLIENT-1042-EX/fiche-1042-EX_ffab.pdf"
 ARCHIVE_GENOIS = RACINE / "sample_data/CLIENT-GENOA/fiche-genois.pdf"
 URL_PG = os.environ.get("SEAMTECH_TEST_DATABASE_URL", "")
 
@@ -31,7 +31,7 @@ pytestmark = pytest.mark.postgres  # le dépôt exige PostgreSQL réel (tables f
 
 NB_DOSSIERS = 100
 NB_A_FICHE = 40  # 20 portants + 20 génois ; 60 dossiers sans fiche identifiable
-NB_FICHES = 2  # RG11 : les 20 portants partagent le code « 7792-SO » (remplacements), idem génois
+NB_FICHES = 2  # RG11 : les 20 portants partagent le code « 1042-EX » (remplacements), idem génois
 
 
 def _construire_archive(racine: Path) -> None:
@@ -42,7 +42,7 @@ def _construire_archive(racine: Path) -> None:
         dossier = racine / f"AFFAIRE-{index:04d}"
         dossier.mkdir()
         if index <= 20:
-            shutil.copy(ARCHIVE_7792, dossier / "fiche.pdf")
+            shutil.copy(ARCHIVE_REFERENCE, dossier / "fiche.pdf")
         elif index <= 40:
             shutil.copy(ARCHIVE_GENOIS, dossier / "fiche.pdf")
         elif index <= 70:
@@ -163,7 +163,7 @@ class TestLot100InterrompuPuisRepris:
         assert etat["nb_echecs"] == NB_DOSSIERS - NB_A_FICHE
 
         # --- les fiches sont au rendez-vous — UNE fois chacune (RG11 : les
-        # 20 portants écrivent la même fiche « 7792-SO », remplacée à chaque fois) ---
+        # 20 portants écrivent la même fiche « 1042-EX », remplacée à chaque fois) ---
         comptes = _comptes_globaux(index)
         assert comptes["fiche"] == NB_FICHES
         # pièces : 1 pièce « pièce jointe » (l'autre PDF éventuel) + fichiers annexes ;
@@ -200,7 +200,7 @@ class TestLot100InterrompuPuisRepris:
         mini = tmp_path / "REJEU"
         (mini / "UN").mkdir(parents=True)
         (mini / "DEUX").mkdir()
-        shutil.copy(ARCHIVE_7792, mini / "UN" / "fiche.pdf")
+        shutil.copy(ARCHIVE_REFERENCE, mini / "UN" / "fiche.pdf")
         (mini / "DEUX" / "vide.txt").write_text("x", encoding="utf-8")
 
         premier_lot = depot.creer_lot(index, mini, recursif=False)
@@ -237,7 +237,7 @@ class TestLotRecursifEtTeleversement:
         affaire_corrompue = racine / "2031" / "AFFAIRE-CORROMPUE"
         for dossier in (affaire_un, affaire_deux, affaire_corrompue):
             dossier.mkdir(parents=True)
-        shutil.copy(ARCHIVE_7792, affaire_un / "fiche_ffab.pdf")
+        shutil.copy(ARCHIVE_REFERENCE, affaire_un / "fiche_ffab.pdf")
         (affaire_un / "photo.jpg").write_bytes(b"photo-synthetique")
         shutil.copy(ARCHIVE_GENOIS, affaire_deux / "fiche.pdf")
         (affaire_corrompue / "corrompu.pdf").write_bytes(b"%PDF-ceci-n-est-pas-un-pdf")
@@ -292,7 +292,7 @@ class TestLotRecursifEtTeleversement:
             min_free_bytes=0,
         )
         fichiers = {
-            "VOILES-DEMO/2031/AFFAIRE-TELEVERSEE/fiche_ffab.pdf": ARCHIVE_7792.read_bytes(),
+            "VOILES-DEMO/2031/AFFAIRE-TELEVERSEE/fiche_ffab.pdf": ARCHIVE_REFERENCE.read_bytes(),
             "VOILES-DEMO/2031/AFFAIRE-TELEVERSEE/notes.txt": b"piece synthetique",
         }
         with TestClient(create_app(config)) as client:
@@ -413,9 +413,9 @@ class TestPontImportPipeline:
         index = base_lot["index"]
         mini = tmp_path / "PONT"
         mini.mkdir()
-        shutil.copy(ARCHIVE_7792, mini / "fiche.pdf")
+        shutil.copy(ARCHIVE_REFERENCE, mini / "fiche.pdf")
         resultat = import_pipeline.importer_dossier_complet(index, mini)
-        assert resultat["statut"] == "traite" and resultat["fiche"] == "7792-SO"
+        assert resultat["statut"] == "traite" and resultat["fiche"] == "1042-EX"
         avec_lot = import_pipeline.importer_lot_dossiers(index, mini.parent, notes="pont")
         assert avec_lot["id_lot"] > 0 and avec_lot["etat"]["statut"] == "termine"
 
@@ -430,7 +430,7 @@ class TestTachesDeFond:
         mini = tmp_path / "MINI"
         mini.mkdir()
         (mini / "UN").mkdir()
-        shutil.copy(ARCHIVE_7792, mini / "UN" / "fiche.pdf")
+        shutil.copy(ARCHIVE_REFERENCE, mini / "UN" / "fiche.pdf")
         (mini / "DEUX").mkdir()
         (mini / "DEUX" / "vide.txt").write_text("x", encoding="utf-8")
         id_lot = depot.creer_lot(index, mini, recursif=False)

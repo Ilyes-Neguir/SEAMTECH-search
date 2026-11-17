@@ -270,7 +270,7 @@ def booleen_fr(texte: str | None) -> bool | None:
 
 
 def separer_nom_et_detail(texte: str | None, motif_detail: str = r"\(([^)]*)\)") -> tuple[str | None, str | None]:
-    """« 29er (15') » → (« 29er », « 15' ») ; « Sailonet (Cruette) » → idem."""
+    """« 29er (15') » → (« 29er », « 15' ») ; « Exemplia (Demo) » → idem."""
     if not texte:
         return None, None
     trouve = re.search(motif_detail, texte)

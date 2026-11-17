@@ -620,7 +620,7 @@ jobs:
           attendus = {
               "50 requêtes synthétique",
               "1 500 fiches (mi-échelle)",
-              "fonds réel 7792-SO (13 requêtes)",
+              "fonds réel 1042-EX (13 requêtes)",
               "assistant_jeu_8_corpus_mixte",
           }
           publies = {m.get("nom") for m in mesures}
@@ -1440,7 +1440,7 @@ jobs:
           retention-days: 5
       # Clôture Phase 1 (Tâche 2 du 21/09) : le parcours de validation est
       # rejoué EN CONDITIONS RÉELLES — base PostgreSQL jetable, trois dossiers
-      # déposés par le pipeline (dont la vraie fiche 7792-SO), front de
+      # déposés par le pipeline (dont la vraie fiche 1042-EX), front de
       # production (next start). Sans SEAMTECH_E2E_DATABASE_URL la spec
       # validation s'ignorait : la porte Playwright ne prouvait rien sur le
       # document réel. Le chrono « ouverture → validation < 2 min » (§17.14)
@@ -1756,7 +1756,7 @@ jobs:
           fi
 
       # Lot L.1 (correctif C.2 de l'audit) — le BANDEAU DE DOUBLON est enfin
-      # vérifié à l'écran. Le seed live ajoute la fiche 7792-SO-BIS (deuxième
+      # vérifié à l'écran. Le seed live ajoute la fiche 1042-EX-BIS (deuxième
       # fiche rattachée au MÊME PDF, même empreinte SHA-256) et lance le scan
       # propositif : le bandeau a donc une donnée réelle à afficher.
       - name: Run live E2E doublons (bandeau avant validation)
@@ -2081,7 +2081,7 @@ jobs:
           fi
 
       # Lot 5 (Fonction B) — confiance de réutilisation : la vraie fiche
-      # 7792-SO évaluée contre les cinq voiles de référence semées du même
+      # 1042-EX évaluée contre les cinq voiles de référence semées du même
       # modèle/type (score robuste justifié et persisté), lecture sans
       # bouton d'évaluation, secours refusé.
       - name: Run live E2E Lot 5 (confiance de réutilisation)
@@ -3248,6 +3248,16 @@ jobs:
     # que des comptes, codes REF-00x, statuts HTTP, empreintes et mesures
     # agrégées (le module de recette compare les valeurs dynamiquement et
     # réduit les journaux applicatifs à WARNING).
+    #
+    # CORPUS HORS GIT : les 7 archives ont été PURGÉES du dépôt (décision de
+    # l'exploitante). Ce job ne peut donc plus les y trouver. Il reste
+    # disponible, mais il ne se lance que si l'exploitante signale que le
+    # corpus est fourni par ailleurs : variable de dépôt
+    # RECETTE_CORPUS_DISPONIBLE = 1, le corpus étant alors désigné par
+    # l'environnement (SEAMTECH_RECETTE_CORPUS_RACINE). Sans cette variable,
+    # le job est SKIPPÉ et non rouge : une absence voulue n'est pas une
+    # régression, et la faire sonner apprendrait à ignorer l'alarme.
+    if: ${{ vars.RECETTE_CORPUS_DISPONIBLE == '1' }}
     runs-on: ubuntu-24.04
     services:
       postgres:

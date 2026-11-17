@@ -67,7 +67,7 @@ def _code_plausible(valeur: str | None) -> bool:
     « pour » dans une ligne du formulaire de prise de cotes (« Ris auto. pour :
     1 1 et 2 … ») et l'écrivait comme CODE de fiche — une fiche « pour » est
     apparue en base. Aucun code réel de l'archive n'est fait uniquement de
-    lettres (« ST64 », « ST 074b », « 170124CS », « 250821JA », « ST 508V2 »
+    lettres (« ST64 », « ST 074b », « 170124CS », « 250106AB », « ST 508V2 »
     portent tous des chiffres) : exiger au moins un chiffre ne retire donc
     aucune référence réelle, et ferme la porte aux mots du formulaire.
     """
@@ -279,7 +279,7 @@ def _analyser_page(
         analysee.lignes.append(courante)
     # Les mots d'une ligne se lisent de gauche à droite : les fontes de la
     # page donnent des « top » légèrement différents sur une même ligne
-    # visuelle (le code 7792-SO en gras, les exposants…), donc l'ordre brut
+    # visuelle (le code 1042-EX en gras, les exposants…), donc l'ordre brut
     # (top, x0) de pdfplumber n'est pas l'ordre de lecture — on re-trie.
     for ligne in analysee.lignes:
         ligne.mots.sort(key=lambda mot: mot.x0)
@@ -752,11 +752,11 @@ def _traiter_commande(fiche: FicheExtraite, brut: str, base: ChampExtrait) -> No
 
 
 def _traiter_dessinateur(fiche: FicheExtraite, brut: str, base: ChampExtrait) -> None:
-    """« Yann · 6 mars 2026 » → dessinateur + date ISO.
+    """« Demo · 6 mars 2026 » → dessinateur + date ISO.
 
     Deux formes réelles : la reconstruction sépare par un tiret ; le document
-    client écrit « dessiné par Yann le 6 mars 2026 » (ancre « dessiné par »,
-    valeur « Yann le 6 mars 2026 »)."""
+    client écrit « dessiné par Demo le 6 mars 2026 » (ancre « dessiné par »,
+    valeur « Demo le 6 mars 2026 »)."""
     en_le = re.match(r"^\s*(?P<nom>[A-Za-zÀ-ÿ-]+)\s+le\s+(?P<date>.+)$", brut.strip())
     if en_le:
         fiche.dessinateur = en_le.group("nom").strip()
@@ -782,7 +782,7 @@ def _traiter_dessinateur(fiche: FicheExtraite, brut: str, base: ChampExtrait) ->
 
 
 def _traiter_fichier_source(fiche: FicheExtraite, brut: str, base: ChampExtrait) -> None:
-    """« 7792-SO.xlsm édité le 06/03/2026 » → fichier + date d'édition."""
+    """« 1042-EX.xlsm édité le 06/03/2026 » → fichier + date d'édition."""
     trouve = re.match(r"\s*(\S+\.(?:xlsm|xlsx|pdf|dwg|dxf))", brut, re.I)
     if not trouve:
         return
@@ -1022,8 +1022,8 @@ def _traiter_tissu_principal(fiche: FicheExtraite, brut: str, base: ChampExtrait
     """« Tissu : Dacron 260 » → fiche_materiau (rôle tissu_principal) + fiche.tissu_texte.
 
     Réservé aux gabarits dont l'ancre désigne VRAIMENT le tissu principal
-    (génois) ; la fiche 7792 garde « Tissu(s) » en texte libre — son contenu
-    (« Voir avec JFC suivant stock ») n'est pas un matériau.
+    (génois) ; la fiche 1042 garde « Tissu(s) » en texte libre — son contenu
+    (« Voir avec ABC suivant stock ») n'est pas un matériau.
     """
     valeur = brut.strip()
     # Forme FFab : « Tissu(s) (précision imprimée) : matière… » — la
@@ -1074,7 +1074,7 @@ def _traiter_notes(fiche: FicheExtraite, brut: str, base: ChampExtrait) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Traitements « document réel » (Tâche 2 — vraie fiche 7792-SO, 842×595,
+# Traitements « document réel » (Tâche 2 — vraie fiche 1042-EX, 842×595,
 # grille tracée). Ces traitements lisent la PAGE (contexte["pages"]) :
 # ligne de titre unique, grille de cotes à colonnes alignées, blocs
 # épaisseurs / galons / finitions en zones. Rien n'est complété ni deviné :
@@ -1107,7 +1107,7 @@ def _traiter_ligne_titre_portant(fiche: FicheExtraite, brut: str, base: ChampExt
     """Ligne de titre RÉELLE d'une fiche portant — quatre champs structurels
     sur une seule ligne, plus le code à droite :
 
-        Spi Asymétrique Medium Régate pour 29er (15') de Sailonet (Cruette) 7792-SO
+        Spi Asymétrique Medium Régate pour 29er (15') de Exemplia (Demo) 1042-EX
 
     → désignation (type + gamme), bateau, client, code. L'ancre de la règle
     fait partie de la désignation ; chaque sous-valeur reçoit sa propre trace
@@ -1817,7 +1817,7 @@ def _traiter_renforts_note(fiche: FicheExtraite, brut: str, base: ChampExtrait, 
     for page in pages:
         for ligne in page.lignes:
             # La note forme un bloc ; un mot très décalé à droite (« Logo
-            # SailOnet ») est sur la même ligne pdfplumber mais n'en fait pas
+            # Exemplia ») est sur la même ligne pdfplumber mais n'en fait pas
             # partie : on coupe à la rupture de section.
             bloc: list[Mot] = []
             for mot in ligne.mots:
@@ -1876,7 +1876,7 @@ def _traiter_renforts_note(fiche: FicheExtraite, brut: str, base: ChampExtrait, 
 
 
 def _traiter_fichier_edite(fiche: FicheExtraite, brut: str, base: ChampExtrait, contexte: dict) -> None:
-    """Ligne « Fichier 7792-SO.xlsm édité le 06/03/2026 » du document réel :
+    """Ligne « Fichier 1042-EX.xlsm édité le 06/03/2026 » du document réel :
     le nom de fichier porte son extension (sinon ce n'est pas une lecture)."""
     base.champ = "fiche.fichier_source"
     if fiche.fichier_source:
@@ -3429,7 +3429,7 @@ def _lire_cote(pages: list[PageAnalysee], ancres: list[str]) -> tuple[str | None
 
 def _ranger_cote(fiche: FicheExtraite, cible: str, valeur: object, champ: ChampExtrait) -> None:
     """Range une cote nommée ; le JEU vient de la cible (« cotes.dessin.* » ou
-    « cotes.finie.* ») — le gabarit 7792 ne lit que « finies », la fiche
+    « cotes.finie.* ») — le gabarit 1042 ne lit que « finies », la fiche
     n'imprimant que le jeu « Cotes — Mesures Finies »."""
     _, jeu, colonne = cible.split(".")
     cotes = next((c for c in fiche.cotes if c.jeu == jeu), None)
@@ -3562,7 +3562,7 @@ _SAILONET_COLONNES = {
 }
 
 
-def _lire_grille_sailonet(fiche: FicheExtraite, pages: list[PageAnalysee]) -> bool:
+def _lire_grille_exemplia(fiche: FicheExtraite, pages: list[PageAnalysee]) -> bool:
     """Lit la grille de cotes SAILONET quand aucun gabarit ne l'a fait.
 
     Cette famille (fiches « FICHE FABRICATION / GENOIS », « …/ FOCS ») n'a
@@ -3625,7 +3625,7 @@ def _extraire_pages(
             LOGGER.error("Échec de règle (%s) — champ ignoré, à relire (conséquence : champ absent).", type(erreur).__name__)
     _collecter_libres(fiche, pages, consommees, vocabulaire_libres or {ancre for g in (gabarits or [gabarit]) for ancre in g.ancres_detection} | {ancre for r in gabarit.champs for ancre in r.ancres})
     _poser_titre_depuis_entete(fiche, pages)
-    _lire_grille_sailonet(fiche, pages)
+    _lire_grille_exemplia(fiche, pages)
     _aligner_titre_sur_type(fiche)
     # Lot 1.4 : la complétude est évaluée contre les champs que le GABARIT
     # déclare obligatoires — l'attendu est déclaré, jamais deviné ici.

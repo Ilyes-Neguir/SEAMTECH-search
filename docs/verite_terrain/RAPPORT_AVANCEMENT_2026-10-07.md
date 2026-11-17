@@ -467,7 +467,7 @@ revue, ni dans le premier handoff) :
   « REF-2026-CLIENT123 » — **référence EXTRAITE du PDF**, donc pas un code de
   fiche — dans la recherche MÉTIER ; l'épreuve interroge désormais la recherche
   documentaire (le fichier importé, écran « Fichiers ») ET la recherche métier
-  (la fiche réelle 7792-SO du jeu de données).
+  (la fiche réelle 1042-EX du jeu de données).
 * **E-47** — étape CI « Run live E2E validation », deux défauts corrigés :
   (a) le helper `ouvrirFiche` de `validation.spec.ts` n'attendait pas la
   **révision** : depuis le verrou optimiste, une décision cliquée pendant le

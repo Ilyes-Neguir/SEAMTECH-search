@@ -13,7 +13,7 @@ test.describe("Search Workflow", () => {
     const searchInput = page.getByPlaceholder(/Rechercher des fichiers/i)
     await expect(searchInput).toBeVisible()
 
-    const reponseRecherche = await page.request.get(`/api/search?q=${encodeURIComponent("fiche-7792-SO_ffab.pdf")}`)
+    const reponseRecherche = await page.request.get(`/api/search?q=${encodeURIComponent("fiche-1042-EX_ffab.pdf")}`)
     expect(reponseRecherche.ok()).toBeTruthy()
     const chargeRecherche = await reponseRecherche.json()
     expect(chargeRecherche.results[0]).toHaveProperty("id")
@@ -23,7 +23,7 @@ test.describe("Search Workflow", () => {
       expect(ligne).not.toHaveProperty("object_key")
     }
 
-    await searchInput.fill("fiche-7792-SO_ffab.pdf")
+    await searchInput.fill("fiche-1042-EX_ffab.pdf")
     await searchInput.press("Enter")
 
     // Expect results to be displayed
@@ -31,7 +31,7 @@ test.describe("Search Workflow", () => {
     await expect(resultsContainer).toBeVisible()
 
     // Wait for at least one result item
-    const firstResult = page.locator('[role="button"][tabindex="0"]').filter({ hasText: /fiche-7792-SO_ffab\.pdf/i }).first()
+    const firstResult = page.locator('[role="button"][tabindex="0"]').filter({ hasText: /fiche-1042-EX_ffab\.pdf/i }).first()
     await expect(firstResult).toBeVisible({ timeout: 10000 })
 
     // L’aperçu passe par l’identifiant du catalogue. Le compte de secours

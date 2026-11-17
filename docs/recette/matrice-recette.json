@@ -794,7 +794,7 @@
           "tests/test_auto_validation_persistance/TestCoherence.py::test_le_statut_committe_est_celui_que_la_regle_decide[COH-08-0.0-anomalies7] — Set SEAMTECH_TEST_DATABASE_URL to run PostgreSQL integration tests",
           "tests/test_auto_validation_persistance/TestCoherence.py::test_une_fiche_auto_validee_n_est_plus_reextraite — Set SEAMTECH_TEST_DATABASE_URL to run PostgreSQL integration tests",
           "tests/test_auto_validation_persistance/TestCoherence.py::test_une_fiche_en_attente_reste_reextractible — Set SEAMTECH_TEST_DATABASE_URL to run PostgreSQL integration tests",
-          "tests/test_auto_validation_persistance.py::test_la_vraie_fiche_7792_suit_la_regle — Set SEAMTECH_TEST_DATABASE_URL to run PostgreSQL integration tests",
+          "tests/test_auto_validation_persistance.py::test_la_vraie_fiche_reference_suit_la_regle — Set SEAMTECH_TEST_DATABASE_URL to run PostgreSQL integration tests",
           "tests/test_auto_validation_persistance/TestFileDeValidation.py::test_une_fiche_auto_validee_quitte_la_file_de_validation — Set SEAMTECH_TEST_DATABASE_URL to run PostgreSQL integration tests",
           "tests/test_auto_validation_persistance/TestFileDeValidation.py::test_une_fiche_sous_le_seuil_reste_dans_la_file — Set SEAMTECH_TEST_DATABASE_URL to run PostgreSQL integration tests",
           "tests/test_auto_validation_persistance/TestFileDeValidation.py::test_une_fiche_bloquee_par_anomalie_reste_dans_la_file — Set SEAMTECH_TEST_DATABASE_URL to run PostgreSQL integration tests",

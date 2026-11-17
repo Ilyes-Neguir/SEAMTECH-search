@@ -61,9 +61,9 @@ Composants clés :
 - **Perf** (`-m perf`) — latence p50/p95/max sans --cov, chauffe jetée, publication JSON
 - **S3** (`-m s3`) — MinIO réel : docker compose infra, identités restreintes
 - **E2E Playwright** (`frontend/e2e/`) :
-  - `validation.spec.ts` — parcours validation vraie fiche 7792-SO, chrono <2min, badge Non vérifiée
+  - `validation.spec.ts` — parcours validation vraie fiche 1042-EX, chrono <2min, badge Non vérifiée
   - `concurrence.spec.ts` — 7 scénarios multi-sessions (conflit révision 409, reprise, import pendant recherche/téléchargement, session expirée, refus admin backend, décision liée révision revue, révision non lue bloquée, réponse tardive sans écrasement)
-  - `doublons.spec.ts` — bandeau doublon (fiche 7792-SO-BIS même empreinte)
+  - `doublons.spec.ts` — bandeau doublon (fiche 1042-EX-BIS même empreinte)
   - `auth.spec.ts` — 26 tests comptes nominatifs, rôles, révocation cookie
   - `hors-ligne.spec.ts` — pile réelle hors ligne, iptables --uid-owner, contrôle négatif DNS + compteur REJECT, 0 paquet externe
   - `scan-browser-ocr.spec.ts` — **prioritaire** : dépôt PDF image via setInputFiles (glisser-déposer réel), termes uniques ZEPHYRINE_ÉLÉGANCE_42 hors métadonnées, fichiers détectés, confirmation, état, OCR, recherche UI, téléchargement SHA-256, cas erreur invalide/blank

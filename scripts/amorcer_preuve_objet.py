@@ -80,16 +80,16 @@ class Amorcage:
         # sur la copie locale, silencieusement). D'où une copie de travail
         # sous /tmp, déclarée comme racine servie du service web.
         racine_servie: str = "/tmp/corpus-preuve",
-        corpus_source: str = "/app/sample_data/CLIENT-7792-SO",
+        corpus_source: str = "/app/sample_data/CLIENT-1042-EX",
         # CE dossier, et pas un autre : son PDF est le seul du jeu d'essai à
-        # être reconnu par un gabarit (FICHE_PORTANT_V1 v2, code 7792-SO,
+        # être reconnu par un gabarit (FICHE_PORTANT_V1 v2, code 1042-EX,
         # confiance 0,99 — mesuré par `fiches.cli extraire`). « CLIENT-123 »
         # paraît plus riche (trois fichiers) MAIS son PDF n'appartient à
         # aucun gabarit : le dépôt le REFUSE (« gabarit inconnu ») et l'on
         # perd une demi-journée à chercher une panne d'infrastructure là où
         # c'est un jeu d'essai inadapté. Voir
         # tests/test_amorcer_preuve_objet.py::test_le_dossier_par_defaut_est_reconnu.
-        dossier: str = "/tmp/corpus-preuve/CLIENT-7792-SO",
+        dossier: str = "/tmp/corpus-preuve/CLIENT-1042-EX",
         utilisateur_bd: str = "seamtech",
         nom_base: str = "seamtech_search",
         compte: str = "",
@@ -390,11 +390,11 @@ def main(argv: list[str] | None = None) -> int:
              "ÉCRITURE, la preuve devant pouvoir retirer la copie locale",
     )
     parser.add_argument(
-        "--corpus-source", default="/app/sample_data/CLIENT-7792-SO",
+        "--corpus-source", default="/app/sample_data/CLIENT-1042-EX",
         help="jeu d'essai d'origine (monté en lecture seule), copié sous la racine servie",
     )
     parser.add_argument(
-        "--dossier", default="/tmp/corpus-preuve/CLIENT-7792-SO",
+        "--dossier", default="/tmp/corpus-preuve/CLIENT-1042-EX",
         help="dossier à déposer : son PDF DOIT être reconnu par un gabarit, "
              "sinon le dépôt le refuse (vérifiable par « fiches.cli extraire »)",
     )

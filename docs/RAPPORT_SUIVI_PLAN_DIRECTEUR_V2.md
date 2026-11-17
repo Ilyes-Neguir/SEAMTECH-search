@@ -132,7 +132,7 @@ rapport de lot dans `docs/`, addendum dans `docs/VERIFICATION.md`.
   durable **89/0**, couverture globale **≈ 86 %** (plancher 85 %).
 - **Parcours navigateur (premier essai) :** Lot 6 3/3, Lot 5 3/3, Lot 4b
   3/3, Lot 3b 3/3, Lot 1 7/7, parcours canonisés 8/8, OCR 4/4 ;
-  parcours machine complet fiche 7792-SO : **578 ms**.
+  parcours machine complet fiche 1042-EX : **578 ms**.
 - **4 workflows verts** au SHA final : CI `40255784871`, Qualification
   native `40255784784`, Qualification réservés `40255784841`, Perf
   comparaison `40255784825`.

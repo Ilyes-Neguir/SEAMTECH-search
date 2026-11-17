@@ -21,7 +21,7 @@ FIXTURES = RACINE / "tests" / "fixtures" / "ocr"
 PDF_PROPRE = FIXTURES / "ocr_propre.pdf"
 PDF_DEGRADE = FIXTURES / "ocr_degrade.pdf"
 REF_PROPRE = FIXTURES / "reference_propre.txt"
-PDF_TEXTE = RACINE / "sample_data" / "CLIENT-7792-SO" / "fiche-7792-SO_ffab.pdf"
+PDF_TEXTE = RACINE / "sample_data" / "CLIENT-1042-EX" / "fiche-1042-EX_ffab.pdf"
 
 pytestmark = pytest.mark.ocr_suite
 

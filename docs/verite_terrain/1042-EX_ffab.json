@@ -1,0 +1,21 @@
+{
+  "_documentation": {
+    "fiche": "Fiche de référence n°2 — 1042-EX (spi asymétrique). Valeurs issues du §13 du plan v3.0, relues champ par champ sur la fiche SYNTHÉTIQUE.",
+    "fixture": "sample_data/CLIENT-1042-EX/fiche-1042-EX_ffab.pdf est une fiche SYNTHÉTIQUE (1 page, 842×595 paysage) produite par scripts/generer_fiche_reference_synthetique.py ; elle tient lieu de l'ancienne fiche client réelle, purgée du dépôt.",
+    "mesure": "Mesuré sur cette fiche : 74/74 = 100 % (moteur gabarit, validate_extraction.py). Aucun taux publié sur reconstruction."
+  },
+  "fiche-1042-EX_ffab.pdf": {
+    "gabarit": "spi_asymetrique_ref",
+    "attendu": {
+      "reference": "1042-EX",
+      "material": "Monofilm K903",
+      "quantity": 1,
+      "description": "Spi Asymétrique Medium Régate",
+      "dimensions": {
+        "length": 6.6,
+        "width": 3.08,
+        "unit": "m"
+      }
+    }
+  }
+}

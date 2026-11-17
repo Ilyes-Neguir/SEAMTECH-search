@@ -7,7 +7,7 @@ publié est celui du document réel — jamais celui d'une reconstruction ou d'u
 fixture synthétique.**
 
 L'audit indépendant du 21/09 l'a mesuré sur pièce : le gabarit `FICHE_PORTANT_V1`
-lisait 100 % des champs de la RECONSTRUCTION de la fiche 7792-SO (fixture du
+lisait 100 % des champs de la RECONSTRUCTION de la fiche 1042-EX (fixture du
 dépôt, 2 483 o) mais seulement **1/6 (16,7 %)** du document client réel
 (166 990 o, paysage, grille tracée de 89 formes) — la reconstruction n'avait ni
 la géométrie, ni la grille, ni la mise en page du vrai document. **Appliqué le
@@ -71,7 +71,7 @@ l'inventaire avec une erreur claire — jamais d'analyse à côté.
 
 Le vocabulaire de départ provient des seules fiches réellement disponibles : la fixture
 `sample_data/CLIENT-123`, la reconstruction de la fiche de référence
-`sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf` (valeurs du §13 du plan v3.0, mise en page
+`sample_data/CLIENT-1042-EX/fiche-1042-EX_ffab.pdf` (valeurs du §13 du plan v3.0, mise en page
 approximée — documentée comme reconstruction ; à remplacer par le PDF réel dès réception) et la fiche
 génois `sample_data/CLIENT-GENOA/fiche-genois.pdf` (reproduction du point mort). Les vraies fiches
 apporteront du vocabulaire inconnu : enrichir le JSON, pas le code.

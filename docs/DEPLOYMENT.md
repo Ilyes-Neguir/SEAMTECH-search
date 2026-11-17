@@ -409,7 +409,7 @@ python scripts/rapport_extraction_or.py --format json \
 ```
 
 The versioned bench must report 102/102 at the default 100% threshold
-(7792-SO Lot 3a 17/17 + historical fiche truth 74/74 + synthetic genoa
+(1042-EX Lot 3a 17/17 + historical fiche truth 74/74 + synthetic genoa
 11/11). Then deposit or rewrite one unvalidated test fiche and check that
 exactly one current `sail_extractions` row is linked to it; after a folder
 deposit it must also carry the source document id and SHA-256. Existing

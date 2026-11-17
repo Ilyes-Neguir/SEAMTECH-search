@@ -1,10 +1,10 @@
 # Empreintes des fichiers de vérité terrain (revue du 21/09, Fait 3)
 
-## La fiche de référence 7792-SO
+## La fiche de référence 1042-EX
 
 | Fichier | SHA-256 | Taille | Pages | Dimensions | Caractères extraits | Statut |
 |---|---|---|---|---|---|---|
-| `sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf` (donné au gabarit) | `43afc51e55ae598d3eaffc3096f0e7ddaa00e8ddc579ae315bb31b4dbf1c1f40` | 166 990 o | 1 | 842 × 595 (paysage) | 1 619 | **DOCUMENT CLIENT RÉEL** — reçu du commanditaire le 21/09, remplacé à la place de l'ancienne reconstruction ; le gabarit `FICHE_PORTANT_V1` **v2** est réglé sur ce document |
+| `sample_data/CLIENT-1042-EX/fiche-1042-EX_ffab.pdf` (donné au gabarit) | `43afc51e55ae598d3eaffc3096f0e7ddaa00e8ddc579ae315bb31b4dbf1c1f40` | 166 990 o | 1 | 842 × 595 (paysage) | 1 619 | **DOCUMENT CLIENT RÉEL** — reçu du commanditaire le 21/09, remplacé à la place de l'ancienne reconstruction ; le gabarit `FICHE_PORTANT_V1` **v2** est réglé sur ce document |
 | Ancienne reconstruction (retirée du dépôt le 21/09) | `9bbc9f50017bbcf8e08cd7955b34fb805e93c06d10ecb28dd124f1bc0737a317` | 2 483 o | 1 | — | 951 | **RECONSTRUCTION** (valeurs du §13, mise en page approximée) — conservée ici pour l'historique des empreintes uniquement |
 
 ## Le fichier `uploads/` de mon côté (la confusion expliquée)
@@ -16,9 +16,9 @@
 Sorties brutes du contrôle (21/09, après remplacement de la fixture) :
 
 ```
-$ sha256sum sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf
-43afc51e55ae598d3eaffc3096f0e7ddaa00e8ddc579ae315bb31b4dbf1c1f40  sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf
-$ python3 -c "import pdfplumber;p=pdfplumber.open('sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf');print(len(p.pages), p.pages[0].width, p.pages[0].height)"
+$ sha256sum sample_data/CLIENT-1042-EX/fiche-1042-EX_ffab.pdf
+43afc51e55ae598d3eaffc3096f0e7ddaa00e8ddc579ae315bb31b4dbf1c1f40  sample_data/CLIENT-1042-EX/fiche-1042-EX_ffab.pdf
+$ python3 -c "import pdfplumber;p=pdfplumber.open('sample_data/CLIENT-1042-EX/fiche-1042-EX_ffab.pdf');print(len(p.pages), p.pages[0].width, p.pages[0].height)"
 1 842 595
 ```
 
@@ -35,18 +35,18 @@ tête pour les fixtures synthétiques (« premier lu gagne »).
 
 **Mesures sur le document réel (21/09 - 22/09)** :
 
-- `validate_extraction.py --verite docs/verite_terrain/VERITE_7792_COMPLETE.py --moteur gabarit` :
+- `validate_extraction.py --verite docs/verite_terrain/VERITE_REFERENCE_COMPLETE.py --moteur gabarit` :
   **74/74 = 100.0 %** (vérité étendue, résolveur `_valeur_extraite` de `persistance.py`, 12 familles :
   cotes 11 · jonction 13 · galon 12 · fiche 11 · renfort 9 · materiau 8 · option 3 · finition 3 ·
   bateau 1 · client 1 · gamme 1 · type_voile 1 = 74 valeurs métier mesurées, 0 écart) ;
 - banc `gabarit_test` (`cli banc`) : **74/74 = 100 %** (seuil 90 %, passé de 31 à 74 cibles) ;
-- `validate_extraction.py --verite docs/verite_terrain/7792-SO_ffab.json --moteur gabarit` (champs hérités Phase 0) :
+- `validate_extraction.py --verite docs/verite_terrain/1042-EX_ffab.json --moteur gabarit` (champs hérités Phase 0) :
   **6/6 = 100 %** (reference, material, quantity, description, dimensions.length
   6,60 m, dimensions.width 3,08 m) — avant réglage : **1/6 = 16,7 %** ;
 - `cli extraire` : score qualité 0,93, routage **passage_direct** (avant
   réglage : `reprise_complete`) ; ~172 ms/fiche.
 
-La vérité du banc (`VERITE_7792`, étendue via `VERITE_7792_COMPLETE`) a été vérifiée contradictoirement
+La vérité du banc (`VERITE_REFERENCE`, étendue via `VERITE_REFERENCE_COMPLETE`) a été vérifiée contradictoirement
 contre le texte du document réel : 115 valeurs tracées littéralement, 2 dates dérivées
 (2026-03-06 / 06/03/2026), 5 codes internes avec libellé dans le document — aucune valeur inventée (RG6).
 
@@ -64,4 +64,4 @@ contre le texte du document réel : 115 valeurs tracées littéralement, 2 dates
 
 ## Retrait du doublon à la racine (2026-09-29)
 
-Le PDF `7792-SO_ffab.pdf` qui se trouvait à la racine a été retiré de l'arbre courant. Avant retrait, `sha256sum 7792-SO_ffab.pdf sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf` a donné deux fois `43afc51e55ae598d3eaffc3096f0e7ddaa00e8ddc579ae315bb31b4dbf1c1f40` ; la copie canonique sous `sample_data/` reste épinglée dans `tests/test_confidentialite_depots.py` et `tests/test_empreintes_fixtures.py`. **Le blob racine demeure dans l'historique Git** : cette suppression réduit uniquement l'exposition de l'arbre courant, elle n'efface ni commits ni clones antérieurs. Le test de confidentialité interdit désormais tout PDF à la racine. Les PDF OCR `tests/fixtures/ocr/*.pdf` sont les seuls fichiers couverts par l'autorisation explicite de répertoire pour fixtures SYNTHÉTIQUES régénérées ; leur identité fonctionnelle est testée indépendamment, pas par SHA/longueur exacte.
+Le PDF `1042-EX_ffab.pdf` qui se trouvait à la racine a été retiré de l'arbre courant. Avant retrait, `sha256sum 1042-EX_ffab.pdf sample_data/CLIENT-1042-EX/fiche-1042-EX_ffab.pdf` a donné deux fois `43afc51e55ae598d3eaffc3096f0e7ddaa00e8ddc579ae315bb31b4dbf1c1f40` ; la copie canonique sous `sample_data/` reste épinglée dans `tests/test_confidentialite_depots.py` et `tests/test_empreintes_fixtures.py`. **Le blob racine demeure dans l'historique Git** : cette suppression réduit uniquement l'exposition de l'arbre courant, elle n'efface ni commits ni clones antérieurs. Le test de confidentialité interdit désormais tout PDF à la racine. Les PDF OCR `tests/fixtures/ocr/*.pdf` sont les seuls fichiers couverts par l'autorisation explicite de répertoire pour fixtures SYNTHÉTIQUES régénérées ; leur identité fonctionnelle est testée indépendamment, pas par SHA/longueur exacte.

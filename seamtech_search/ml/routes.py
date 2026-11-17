@@ -48,7 +48,7 @@ from seamtech_search.securite_requetes import exiger_administrateur_requete
 LOGGER = logging.getLogger(__name__)
 
 FICHIER_VERROU = ".entrainement.lock"
-VERITE_7792_RELATIF = Path("docs/verite_terrain/7792-SO_ffab.json")
+VERITE_REFERENCE_RELATIF = Path("docs/verite_terrain/1042-EX_ffab.json")
 
 
 class CorpsModele(BaseModel):
@@ -282,7 +282,7 @@ def _entrainer(index: Any, modeles_dir: Path, racine_verite: Path, corps: CorpsE
     synthetiques = generer_corpus_synthetique(par_classe=corps.par_classe, graine=corps.graine)
     entrainement, evaluation = partager(synthetiques, graine=corps.graine)
     # Les pièges et le noyau RÉEL vont à l'évaluation — jamais à l'entraînement.
-    evaluation = evaluation + cas_pieges() + noyau_reel(racine_verite / VERITE_7792_RELATIF)
+    evaluation = evaluation + cas_pieges() + noyau_reel(racine_verite / VERITE_REFERENCE_RELATIF)
     classifieur = ClassifieurCentroïdes.entrainer(encodeur, entrainement)
     mesures = mesurer(encodeur, classifieur, evaluation)
     mesures["encodeur"] = encodeur.nom

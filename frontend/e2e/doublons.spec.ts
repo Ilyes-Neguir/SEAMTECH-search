@@ -8,7 +8,7 @@ import { APPROBATEUR, signInWith } from "./helpers"
  * l'observait. Ce fichier comble le trou, en conditions réelles :
  *
  *   * la base live (e2e/seed-live-pg.py) dépose les trois dossiers habituels
- *     PUIS ajoute la fiche 7792-SO-BIS, deuxième fiche rattachée au MÊME PDF
+ *     PUIS ajoute la fiche 1042-EX-BIS, deuxième fiche rattachée au MÊME PDF
  *     (même chemin, même empreinte SHA-256), et lance le scan propositif —
  *     le lien exact existe donc vraiment en base ;
  *   * le bandeau doit être VISIBLE avant toute action de l'approbateur : c'est
@@ -21,8 +21,8 @@ import { APPROBATEUR, signInWith } from "./helpers"
  * serait signalé par le garde-fou de comptage de l'étape.
  */
 
-const CODE_DOUBLON = "BIS-7792"
-const CODE_ORIGINAL = "7792-SO"
+const CODE_DOUBLON = "BIS-1042-EX"
+const CODE_ORIGINAL = "1042-EX"
 
 test.describe("bandeau de doublon avant validation", () => {
   test.skip(!process.env.SEAMTECH_E2E_DATABASE_URL, "e2e live : requiert SEAMTECH_E2E_DATABASE_URL (PostgreSQL)")

@@ -36,7 +36,7 @@ Vérité terrain écrite à la main d'après la fiche (fixture de référence du
 
 > **Portée de ce chiffre (correction du 21/09) :** il est mesuré sur la fixture
 > SYNTHÉTIQUE du dépôt (`sample_data/CLIENT-123`), pas sur un document client réel.
-> Sur la vraie fiche 7792-SO, l'audit indépendant mesure 1/6 (16,7 %) avant réglage
+> Sur la vraie fiche 1042-EX, l'audit indépendant mesure 1/6 (16,7 %) avant réglage
 > du gabarit. Un taux sur fixture synthétique est un test d'ingénierie, jamais une
 > validation — voir `docs/DETECTION_FICHES.md`, règle du document réel.
 
@@ -48,7 +48,7 @@ gabarits de fiches, un plan, un scan sans couche texte, un doublon (copie de fic
 | Mesure | Valeur |
 | --- | --- |
 | Fichiers / dossiers / volume | 10 / 7 / 11,0 ko |
-| Fiches techniques localisées | 3 (top : `2023/Sailonet-29er`, 2 fiches) |
+| Fiches techniques localisées | 3 (top : `2023/Exemplia-29er`, 2 fiches) |
 | Scans probables détectés | 1/7 PDF (14,3 %) |
 | Doublons probables | 1 groupe, 1 fichier redondant (1,7 ko) |
 | Familles de gabarits | 3 (spi ×3 dont la copie ; génois n°1 ; génois n°2) |

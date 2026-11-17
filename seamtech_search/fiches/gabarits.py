@@ -136,13 +136,13 @@ def enregistrer_gabarit(index: Any, gabarit: GabaritDef) -> None:
 # ---------------------------------------------------------------------------
 # Gabarits embarqués (Lot B) — enregistrés en base par initialiser_gabarits().
 # Les ancres/règles proviennent du vocabulaire RÉEL des fiches disponibles :
-# la reconstruction 7792-SO (§13) et la fiche génois de démonstration.
+# la reconstruction 1042-EX (§13) et la fiche génois de démonstration.
 # ---------------------------------------------------------------------------
 
 GABARIT_PORTANT = GabaritDef(
     code=CODE_GABARIT_PORTANT,
     version=VERSION_COURANTE,
-    description="Fiche de fabrication « Voile de portant » (réf. 7792-SO, plan v3.0 §13).",
+    description="Fiche de fabrication « Voile de portant » (réf. 1042-EX, plan v3.0 §13).",
     ancres_detection=["voile de portant", "spi asymétrique", "spinnaker"],
     champs=[
         RegleChamp(cible="fiche.titre", ancres=["fiche de fabrication"], type="texte", traitement="titre"),
@@ -181,7 +181,7 @@ GABARIT_PORTANT = GabaritDef(
 
 # ---------------------------------------------------------------------------
 # Version 2 du gabarit portant — réglée sur la géométrie du DOCUMENT CLIENT
-# RÉEL 7792-SO (166 990 o, 842×595 paysage, grille tracée de 89 formes),
+# RÉEL 1042-EX (166 990 o, 842×595 paysage, grille tracée de 89 formes),
 # reçu le 21/09 (SHA-256 43afc51e…). Les règles v1 (lignes « label : valeur »
 # de la reconstruction) sont conservées en tête : elles continuent de lire
 # les fixtures synthétiques ; les règles v2 ne déclenchent que sur la
@@ -201,7 +201,7 @@ GABARIT_PORTANT_V2 = GabaritDef(
     version=2,
     description=(
         "Fiche « Voile de portant » v2 — géométrie du document client réel "
-        "7792-SO (ligne de titre unique, grille de cotes à colonnes, blocs "
+        "1042-EX (ligne de titre unique, grille de cotes à colonnes, blocs "
         "épaisseurs/galons/finitions) ; englobe et prolonge les règles v1."
     ),
     ancres_detection=list(GABARIT_PORTANT.ancres_detection),
@@ -209,7 +209,7 @@ GABARIT_PORTANT_V2 = GabaritDef(
         [regle for regle in GABARIT_PORTANT.champs if regle.cible in _REGLES_TETE_V1]
         + [
             # Ligne de titre réelle : « Spi Asymétrique … pour 29er (15') de
-            # Sailonet (Cruette) 7792-SO » → désignation, bateau, client, code.
+            # Exemplia (Demo) 1042-EX » → désignation, bateau, client, code.
             RegleChamp(cible="traitement:ligne_titre_portant", ancres=["spi asymétrique"], type="texte"),
             # Tête du document réel.
             RegleChamp(cible="fiche.atelier", ancres=["découpe et fabrication"], type="texte", stop=["fichier"]),

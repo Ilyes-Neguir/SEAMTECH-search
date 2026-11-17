@@ -27,7 +27,7 @@ from seamtech_search.fiches.anomalies import (
 from seamtech_search.fiches.depot import deposer_dossier
 from seamtech_search.fiches.modeles import Cotes, FicheExtraite
 from tests.test_depot_transactionnel import (  # noqa: F401 - montures partagées
-    ARCHIVE_7792,
+    ARCHIVE_REFERENCE,
     base_depot,
     dossier_ok,
     sans_auto_validation,
@@ -66,25 +66,25 @@ def test_trois_references_identiques_ne_levent_rien() -> None:
 
 def test_trois_references_differentes_sont_signalees() -> None:
     """Cas qui ÉCHOUE : trois écritures qui ne disent pas la même chose."""
-    refs = ReferencesConstatees(document="7792-SO", fichier="ZZ 075A", dossier="ST 430")
+    refs = ReferencesConstatees(document="1042-EX", fichier="ZZ 075A", dossier="ST 430")
     assert "reference_discordante" in _codes(refs)
 
 
 def test_deux_references_egales_ne_levent_rien() -> None:
     """Cas qui PASSE avec deux sources seulement."""
-    refs = ReferencesConstatees(document="7792-SO", fichier="7792-SO", dossier=None)
+    refs = ReferencesConstatees(document="1042-EX", fichier="1042-EX", dossier=None)
     assert "reference_discordante" not in _codes(refs)
 
 
 def test_deux_references_differentes_sont_signalees() -> None:
     """Cas qui ÉCHOUE avec deux sources seulement."""
-    refs = ReferencesConstatees(document="7792-SO", fichier="ZZ 075A", dossier=None)
+    refs = ReferencesConstatees(document="1042-EX", fichier="ZZ 075A", dossier=None)
     assert "reference_discordante" in _codes(refs)
 
 
 def test_une_seule_reference_connue_ne_leve_rien() -> None:
     """Une seule source lue : il n'y a rien à comparer."""
-    refs = ReferencesConstatees(document="7792-SO", fichier=None, dossier=None)
+    refs = ReferencesConstatees(document="1042-EX", fichier=None, dossier=None)
     assert "reference_discordante" not in _codes(refs)
 
 
@@ -94,7 +94,7 @@ def test_aucune_reference_ne_leve_rien() -> None:
 
 def test_source_muette_nest_pas_un_desaccord() -> None:
     """Une source sans référence ne contredit pas les deux autres."""
-    refs = ReferencesConstatees(document="7792-SO", fichier="7792-SO", dossier=None)
+    refs = ReferencesConstatees(document="1042-EX", fichier="1042-EX", dossier=None)
     assert _codes(refs) == set()
 
 
@@ -116,16 +116,16 @@ def test_sans_references_transmises_le_controle_ne_sapplique_pas() -> None:
 
 def test_les_trois_valeurs_sont_dans_le_message() -> None:
     """Exigence du plan : l'anomalie MONTRE les trois valeurs."""
-    refs = ReferencesConstatees(document="7792-SO", fichier="ZZ 075A", dossier="ST 430")
+    refs = ReferencesConstatees(document="1042-EX", fichier="ZZ 075A", dossier="ST 430")
     refus = [a for a in evaluer_anomalies(_fiche(), references=refs) if a.code == "reference_discordante"]
     assert len(refus) == 1
-    for valeur in ("7792-SO", "ZZ 075A", "ST 430"):
+    for valeur in ("1042-EX", "ZZ 075A", "ST 430"):
         assert valeur in refus[0].message
 
 
 def test_les_provenances_sont_nommees_dans_l_ordre() -> None:
     """« dossier », « nom de fichier » puis « document » — lisibles pour l'approbateur."""
-    refs = ReferencesConstatees(document="7792-SO", fichier="ZZ 075A", dossier="ST 430")
+    refs = ReferencesConstatees(document="1042-EX", fichier="ZZ 075A", dossier="ST 430")
     refus = [a for a in evaluer_anomalies(_fiche(), references=refs) if a.code == "reference_discordante"]
     message = refus[0].message
     assert message.index("dossier") < message.index("nom de fichier") < message.index("document")
@@ -133,7 +133,7 @@ def test_les_provenances_sont_nommees_dans_l_ordre() -> None:
 
 def test_lanomalie_dit_que_le_depot_nest_pas_bloque() -> None:
     """1.3 est NON BLOQUANT : le message le dit, l'approbateur ne peut s'y tromper."""
-    refs = ReferencesConstatees(document="7792-SO", fichier="ZZ 075A", dossier="ST 430")
+    refs = ReferencesConstatees(document="1042-EX", fichier="ZZ 075A", dossier="ST 430")
     refus = [a for a in evaluer_anomalies(_fiche(), references=refs) if a.code == "reference_discordante"]
     assert "enregistré" in refus[0].message
     assert "ne bloque pas" in refus[0].message
@@ -143,7 +143,7 @@ def test_lanomalie_dit_que_le_depot_nest_pas_bloque() -> None:
 def test_la_discordance_est_vue_meme_sans_cotes() -> None:
     """Elle porte sur l'identité : une fiche sans cotes n'y échappe pas."""
     fiche = _fiche(cotes=[])
-    refs = ReferencesConstatees(document="7792-SO", fichier="ZZ 075A", dossier="ST 430")
+    refs = ReferencesConstatees(document="1042-EX", fichier="ZZ 075A", dossier="ST 430")
     codes = {a.code for a in evaluer_anomalies(fiche, references=refs)}
     assert "reference_discordante" in codes
     assert "champ_manquant" in codes  # le contrôle historique reste posé
@@ -172,21 +172,21 @@ class TestDepotAvecReferencesDiscordantes:
     def test_dossier_discordant_entre_et_est_signale(self, base_depot: dict, tmp_path: Path, sans_auto_validation: None) -> None:  # noqa: F811
         """Cas qui ÉCHOUE au dépôt : trois références qui diffèrent.
 
-        Dossier « ST 430 », fichier « ZZ 075a_ffab.pdf », document « 7792-SO » :
+        Dossier « ST 430 », fichier « ZZ 075a_ffab.pdf », document « 1042-EX » :
         les trois sources ne disent pas la même chose. Le dossier doit quand
         même être traité — c'est toute la différence avec le champ manquant.
         """
         index = base_depot["index"]
         dossier = tmp_path / "ST 430"
         dossier.mkdir()
-        shutil.copy(ARCHIVE_7792 / "fiche-7792-SO_ffab.pdf", dossier / "ZZ 075a_ffab.pdf")
+        shutil.copy(ARCHIVE_REFERENCE / "fiche-1042-EX_ffab.pdf", dossier / "ZZ 075a_ffab.pdf")
 
         resultat = deposer_dossier(index, dossier)
 
         # NON BLOQUANT : le dossier est traité, la référence retenue reste
         # celle lue dans le document.
         assert resultat["statut"] == "traite"
-        assert resultat["fiche"] == "7792-SO"
+        assert resultat["fiche"] == "1042-EX"
 
         with index.connect() as connexion:
             with connexion.cursor() as cursor:
@@ -199,7 +199,7 @@ class TestDepotAvecReferencesDiscordantes:
         assert "reference_discordante" in codes
         # Les trois valeurs sont montrées, pas seulement l'écart.
         message = next(m for c, m in lignes if c == "reference_discordante")
-        for valeur in ("ST 430", "ZZ 075A", "7792-SO"):
+        for valeur in ("ST 430", "ZZ 075A", "1042-EX"):
             assert valeur in message
         # Et la fiche n'est pas validée pour autant (RG3).
         assert statut == "a_valider"

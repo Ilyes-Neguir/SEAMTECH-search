@@ -108,10 +108,10 @@ def review_notes(data: Any, text: str) -> list[str]:
 #
 # Fichier de vérité (JSON) attendu :
 # {
-#   "fiche-7792-SO.pdf": {
+#   "fiche-1042-EX.pdf": {
 #     "gabarit": "spi_asymetrique_ref",
 #     "attendu": {
-#       "reference": "7792-SO",
+#       "reference": "1042-EX",
 #       "material": "Monofilm K903",
 #       "quantity": 1,
 #       "description": "Spi asymétrique Medium Régate",
@@ -182,11 +182,11 @@ def charger_verite(chemin: Path) -> dict[str, dict[str, Any]]:
             raise ValueError(f"Impossible de charger le fichier Python de vérité : {chemin}")
         mod = importlib.util.module_from_spec(spec_mod)
         spec_mod.loader.exec_module(mod)
-        dict_verite = getattr(mod, "VERITE_7792_COMPLETE", None) or getattr(mod, "VERITE_7792", None)
+        dict_verite = getattr(mod, "VERITE_REFERENCE_COMPLETE", None) or getattr(mod, "VERITE_REFERENCE", None)
         if dict_verite is None:
-            raise ValueError(f"Le fichier {chemin} ne contient ni VERITE_7792_COMPLETE ni VERITE_7792.")
+            raise ValueError(f"Le fichier {chemin} ne contient ni VERITE_REFERENCE_COMPLETE ni VERITE_REFERENCE.")
         donnees = {
-            "fiche-7792-SO_ffab.pdf": {
+            "fiche-1042-EX_ffab.pdf": {
                 "gabarit": "FICHE_PORTANT_V1",
                 "attendu": dict_verite,
             }

@@ -75,17 +75,21 @@ CONTROLES = (
     "fichiers-catalogue",
 )
 
-# PDF source principaux des sept archives de recette (nom et SHA-256 épinglés
-# depuis les ZIP versionnés). Toute altération à l'extraction, au service ou au
-# téléchargement est donc détectée, notamment pour GIB SEA 284 / 250328 AJA.
+# PDF source principaux des sept archives de recette. Les NOMS sont neutres :
+# les archives ont été purgées du dépôt, et leur nom portait le bateau et le
+# code de chantier du client — les recopier ici aurait été la fuite que la
+# purge supprime. Les EMPREINTES, elles, demeurent : c'est le mode de
+# référence prévu pour un document réel — il reste hors Git, on ne le cite
+# que par son SHA-256. Toute altération à l'extraction, au service ou au
+# téléchargement reste donc détectée.
 PDFS_SEPT_FICHES = {
-    "Fiche GSE AQUILA 250216 AJA.pdf": "6029d7606a8ab5b5659601acdef2b3f84e50d9d9e8f11f9f23f692e65c81ffbb",
-    "Fiche GENOIS ATTALIA 250121 JA.pdf": "bd48ddb777d6507c9d4a3bf727d7203f6ce55ff8581f805580995f5630971258",
-    "Fiche BAVARIA32 CODE 0 STORMLITE 250604 JA.pdf": "930c6c977a70117134a6e1e9fbeac0089bdd3a40295dd2a3b37a741d3d14f968",
-    "Fiche BAVARIA 34 GENOIS 250323 JA.pdf": "e8071167ed4f1285a9f3cf3f6c550cc5a83b73b04984b9c07ecf5bd5e1f946a9",
-    "fiche Gennaker DAMIEN 250821 JA.pdf": "f46a72108a8e679149bd8536393c7e51c728a37b80c86bbc4d384b408efc20f2",
-    "fiche GV Full DEHLER 39 250329 AJA.pdf": "66e89412d73f825b0db0ecdd1079d2a70e97796cb3cf572e9233a38f563e97b5",
-    "Fiche GENOIS GIBSEA 284 250328 AJA.pdf": "72b59b80d494fa85548e18ea1f6ca43b8f80ea45024592cf047a100529b7b85d",
+    "CORPUS-01.pdf": "6029d7606a8ab5b5659601acdef2b3f84e50d9d9e8f11f9f23f692e65c81ffbb",
+    "CORPUS-02.pdf": "bd48ddb777d6507c9d4a3bf727d7203f6ce55ff8581f805580995f5630971258",
+    "CORPUS-03.pdf": "930c6c977a70117134a6e1e9fbeac0089bdd3a40295dd2a3b37a741d3d14f968",
+    "CORPUS-04.pdf": "e8071167ed4f1285a9f3cf3f6c550cc5a83b73b04984b9c07ecf5bd5e1f946a9",
+    "CORPUS-05.pdf": "f46a72108a8e679149bd8536393c7e51c728a37b80c86bbc4d384b408efc20f2",
+    "CORPUS-06.pdf": "66e89412d73f825b0db0ecdd1079d2a70e97796cb3cf572e9233a38f563e97b5",
+    "CORPUS-07.pdf": "72b59b80d494fa85548e18ea1f6ca43b8f80ea45024592cf047a100529b7b85d",
 }
 
 BASE = os.environ.get("RECETTE_BASE", "http://127.0.0.1:8000").rstrip("/")
@@ -690,7 +694,7 @@ def _pdf_7_fiches_integrite(codes: list[str]) -> None:
         "pdf-7-fiches-integrite",
         ok,
         f"{len(controles)}/7 PDF téléchargés par id et comparés à leur SHA-256 source; "
-        f"GIB SEA 250328 AJA inclus={any('GIBSEA 284 250328 AJA' in x for x in controles)}; "
+        f"CORPUS-07 250108 AB inclus={any('CORPUS-07 250108 AB' in x for x in controles)}; "
         f"écarts={echec[:4]}",
     )
 

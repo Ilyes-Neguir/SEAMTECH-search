@@ -1,7 +1,7 @@
 # Mesure « validation < 2 minutes » — critère de sortie Phase 1 (§17.14)
 
 Statut au 22/09/2026 : **mesure scriptée VERTE en CI, chrono publié sur la
-FENÊTRE CORRIGÉE** — parcours machine complet de la vraie fiche 7792-SO
+FENÊTRE CORRIGÉE** — parcours machine complet de la vraie fiche 1042-EX
 (navigation → fiche ouverte, champs et PDF rendus → correction RG11 →
 validation) : **665 ms** (run 35715024408, commit d7a0026) et **656 ms**
 (run 35715783739) sur deux runs verts consécutifs — variance ~1 %, ordre de
@@ -18,7 +18,7 @@ Historique des corrections d'honnêteté (audit indépendant du 22/09) :
    `::notice mesure-phase1`, avec garde-fous (3 passés au premier essai,
    0 flaky, 0 saut, annotation exigée).
 2. **La fenêtre de mesure ne couvrait pas ce que le libellé annonçait** —
-   7792-SO est auto-sélectionnée à l'arrivée sur la page (première de la
+   1042-EX est auto-sélectionnée à l'arrivée sur la page (première de la
    file triée par confiance croissante), le chrono démarrait après : les
    valeurs mesurées sous cette fenêtre — 351 ms (run 35666837231) et
    449 ms (run 35667273452), variance ~30 % entre deux runs verts, ordre de
@@ -42,11 +42,11 @@ document.
 
 ## 1. Mesure scriptée (Playwright) — ce que la CI publie
 
-Test : `frontend/e2e/validation.spec.ts`, « la vraie fiche 7792-SO : parcours
+Test : `frontend/e2e/validation.spec.ts`, « la vraie fiche 1042-EX : parcours
 machine complet (< 2 min) ».
 
 - Début du chrono : AVANT `page.goto("/validation")` (signIn est le harnais,
-  hors chrono). La fiche 7792-SO étant auto-sélectionnée à l'arrivée
+  hors chrono). La fiche 1042-EX étant auto-sélectionnée à l'arrivée
   (première de la file), démarrer après l'ouverture mesurerait un plancher —
   c'est ce que faisait la première version, corrigée le 22/09.
 - Fin du chrono : apparition du message de confirmation de validation.
@@ -61,7 +61,7 @@ machine complet (< 2 min) ».
 
 C'est le temps de RENDU + TRAITEMENT, pas le temps de lecture humain — il
 borne la part machine du parcours. Il est rejoué à chaque CI sur la base
-jetable semée par `frontend/e2e/seed-live-pg.py` (la vraie fiche 7792-SO y
+jetable semée par `frontend/e2e/seed-live-pg.py` (la vraie fiche 1042-EX y
 entre par le pipeline complet).
 
 ## 2. Mesure humaine — procédure (3 fiches, chrono à la main)
@@ -86,7 +86,7 @@ poste équipé (navigateur + dépôt PostgreSQL) par un opérateur qui n'a pas
 | 3 | | non mesuré | | | |
 
 Règle de publication : tant qu'une case est vide, écrire « non mesuré ». Le
-critère est rempli quand les 3 durées sont < 120 s. La fiche 7792-SO (48
+critère est rempli quand les 3 durées sont < 120 s. La fiche 1042-EX (48
 champs, tous à ≥ 0,85 de confiance, un seul palier « décomposé ») est la
 candidate n°1 du premier rang.
 

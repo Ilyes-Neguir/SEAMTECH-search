@@ -20,15 +20,15 @@ from seamtech_search.fiches.gabarits import (
 from seamtech_search.fiches.modeles import FicheExtraite
 
 RACINE = Path(__file__).resolve().parent.parent
-PDF_7792 = RACINE / "sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf"
+PDF_REFERENCE = RACINE / "sample_data/CLIENT-1042-EX/fiche-1042-EX_ffab.pdf"
 PDF_GENOIS = RACINE / "sample_data/CLIENT-GENOA/fiche-genois.pdf"
 
 
 @pytest.fixture(scope="module")
-def fiche_7792():
+def fiche_reference():
     from seamtech_search.fiches.extraction import extraire_fiche
 
-    return extraire_fiche(PDF_7792, gabarits=list(GABARITS_EMBARQUES))
+    return extraire_fiche(PDF_REFERENCE, gabarits=list(GABARITS_EMBARQUES))
 
 
 @pytest.fixture(scope="module")
@@ -39,11 +39,11 @@ def fiche_genois():
 
 
 class TestDetectionGabarit:
-    def test_7792_reconnu_comme_portant(self, fiche_7792: FicheExtraite) -> None:
-        assert fiche_7792.gabarit_code == "FICHE_PORTANT_V1"
+    def test_reference_reconnu_comme_portant(self, fiche_reference: FicheExtraite) -> None:
+        assert fiche_reference.gabarit_code == "FICHE_PORTANT_V1"
         # Version 2 : gabarit réglé sur la géométrie du document client réel
-        # 7792-SO (ligne de titre unique, grille de cotes, blocs en zones).
-        assert fiche_7792.gabarit_version == 2
+        # 1042-EX (ligne de titre unique, grille de cotes, blocs en zones).
+        assert fiche_reference.gabarit_version == 2
 
     def test_genois_reconnu_comme_genois(self, fiche_genois: FicheExtraite) -> None:
         # « fiche de fabrication » est commune aux deux variantes : les ancres

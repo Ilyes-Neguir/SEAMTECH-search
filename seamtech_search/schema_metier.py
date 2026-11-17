@@ -803,11 +803,11 @@ CREATE INDEX IF NOT EXISTS idx_fiche_gamme_trgm       ON fiche      USING GIN (g
 
 # ---------------------------------------------------------------------------
 # 013 — Recherche sur le FONDS RÉEL (Tâche 3)
-# Le rejeu du jeu de requêtes réel sur la vraie fiche 7792-SO (21/09) a
+# Le rejeu du jeu de requêtes réel sur la vraie fiche 1042-EX (21/09) a
 # mesuré deux angles morts du vecteur de recherche :
-#   * « cruette » (raison sociale du client Sailonet) — le chantier du client
+#   * « demo » (raison sociale du client Exemplia) — le chantier du client
 #     n'était pas agrégé au texte ;
-#   * « spi sailonet 2026 » (combinaison opérateur type + client + année) —
+#   * « spi exemplia 2026 » (combinaison opérateur type + client + année) —
 #     l'année d'édition n'était pas tokenisée dans le vecteur.
 # Les DEUX valeurs sont pourtant lues par l'extraction et présentes en base ;
 # elles sont ajoutées au texte pondéré (poids B, comme les autres champs

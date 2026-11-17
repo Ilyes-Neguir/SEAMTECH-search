@@ -161,7 +161,7 @@ def inventaire_etage3(
         Seuil en dessous duquel une page est considérée sans texte exploitable.
         Valeur par défaut 20 justifiée : en dessous de 20 caractères, le texte
         extrait est généralement du bruit (numéro de page isolé, artefacts)
-        et non du contenu métier. Mesuré sur la vraie fiche 7792-SO : chaque
+        et non du contenu métier. Mesuré sur la vraie fiche 1042-EX : chaque
         page contient > 200 caractères natifs ; les scans d'archive (échantillons
         de test) contiennent 0 caractère natif.
 

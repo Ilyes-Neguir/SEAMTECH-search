@@ -54,7 +54,7 @@ test.describe("hors ligne — pile réelle, sortie réseau bloquée", () => {
   // mais ce n'est PAS un code de fiche) et code de la fiche RÉELLE du jeu de
   // données, seule fiche que la recherche métier peut rendre.
   const REFERENCE = "REF-2026-CLIENT123"
-  const CODE_FICHE = "7792-SO"
+  const CODE_FICHE = "1042-EX"
 
   test("import, recherche, aperçu, téléchargements et validation sans réseau externe", async ({ page }) => {
     // Budget EXPLICITE (180 s) : ce parcours enchaîne un IMPORT réel (pipeline
@@ -143,7 +143,7 @@ test.describe("hors ligne — pile réelle, sortie réseau bloquée", () => {
     //    distante) et ORIGINAL relu EN OCTETS par la session du navigateur —
     //    c'est le chemin exact d'un poste d'atelier (l'API sert le fichier,
     //    personne ne lit le disque du serveur).
-    await page.goto(`/recherche?q=${encodeURIComponent("7792")}`)
+    await page.goto(`/recherche?q=${encodeURIComponent("1042")}`)
     const ouverture = page.getByRole("link", { name: `Ouvrir la fiche ${CODE_FICHE}` })
     await expect(ouverture).toBeVisible({ timeout: 20000 })
     await ouverture.click()
@@ -170,13 +170,13 @@ test.describe("hors ligne — pile réelle, sortie réseau bloquée", () => {
     //    puis la décision porte sur CETTE révision — sans réseau externe.
     //
     //    Depuis l'auto-validation au seuil (décision du commanditaire du
-    //    2026-11-14), 7792-SO score 0,929 arrive « valide » et n'entre donc
+    //    2026-11-14), 1042-EX score 0,929 arrive « valide » et n'entre donc
     //    PAS dans la file : le seed l'a ROUVERTE (« valide » → « a_valider »),
     //    geste d'atelier réel — un opérateur reprend ce que la machine a
     //    validé. On garantit ici cet état au lieu de le supposer.
     // Même motif que `garantirAValider` (concurrence.spec.ts) : état RELU,
     // réouverture seulement si la fiche n'attend pas déjà, en-tête CSRF et
-    // révision jamais supposée. Le seed a déjà rouvert 7792-SO ; on ne
+    // révision jamais supposée. Le seed a déjà rouvert 1042-EX ; on ne
     // présume donc pas de son statut, on le constate.
     const etat = await page.request.get(`/api/fiches/${CODE_FICHE}/etat`)
     expect(etat.status(), await etat.text()).toBe(200)

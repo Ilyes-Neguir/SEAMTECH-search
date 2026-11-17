@@ -114,7 +114,7 @@ def monde_lot1(base_recherche: dict[str, Any], tmp_path: Path) -> dict[str, Any]
     # PDF « source seule » : ni documents.id_fiche ni pièce jointe moderne —
     # uniquement fiche.fichier_source + une ancienne pièce jointe reliée par
     # son chemin (id_document NULL). C'est la forme réelle mesurée par l'e2e
-    # sur 7792-SO (PDF visible dans la fiche, demande refusée 422).
+    # sur 1042-EX (PDF visible dans la fiche, demande refusée 422).
     chemin_pdf_source = archive / "source-seule-lot1.pdf"
     contenu_pdf_source = b"%PDF-1.4\n% SEAMTECH Lot 1 source-only fixture\n" + (b"1" * 1024)
     chemin_pdf_source.write_bytes(contenu_pdf_source)
@@ -483,7 +483,7 @@ def test_telechargement_approuve_range_et_refus_des_autres_roles(
 def test_pdf_source_seule_affiche_une_fois_et_reste_demandable(
     monde_lot1: dict[str, Any],
 ) -> None:
-    """Régression mesurée par l'e2e navigateur sur la vraie fiche 7792-SO.
+    """Régression mesurée par l'e2e navigateur sur la vraie fiche 1042-EX.
 
     Le PDF source d'un dépôt n'a ni ``documents.id_fiche`` ni pièce jointe
     moderne : il est relié par le chemin (ancienne pièce jointe), par

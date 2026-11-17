@@ -9,6 +9,14 @@ que git suit. Sept archives de 4,7 Mo, dont le nom porte un nom de bateau,
 Ces épreuves bouchent l'angle mort **sans jamais transcrire un nom**. Les
 exemptions sont désignées par un MOTIF d'export, pas par une liste de noms :
 écrire ici « BAVARIA 32… » serait précisément la fuite que l'épreuve interdit.
+
+ Les sept archives ont depuis été PURGÉES du dépôt (décision de l'exploitante,
+ cf. ``docs/PURGE_DONNEES_CLIENTS_2026-11-17.md``). L'exemption qui les
+ tolérait est donc retirée — la laisser en place aurait laissé ouverte
+ l'autoroute même qu'elle prétendait borner. La règle devient ce qu'elle
+ n'aurait jamais dû cesser d'être : **aucune archive suivie, sans exception**.
+ Le motif de l'export purgé demeure, mais il sert désormais à interdire leur
+ RÉINTRODUCTION, non à les autoriser.
 """
 
 from __future__ import annotations
@@ -29,11 +37,12 @@ EXTENSIONS_SENSIBLES = frozenset({".zip", ".7z", ".rar", ".tar", ".gz", ".tgz", 
 #: Hors de ces dossiers, un PDF suivi est un document métier.
 DOSSIERS_PIECES_ADMISES = ("tests/fixtures/", "frontend/e2e/live-fixtures/")
 
-#: ``sample_data/`` tient des fiches d'exemple — dont au moins une réelle
-#: (celle que le plan de mise en production nomme). Conserver ce dossier est
-#: une décision de l'exploitante, au même titre que les sept archives : la
-#: purger casserait les parcours de démonstration, et les fiches qu'il porte
-#: ne sont pas des pièces d'épreuve au sens strict.
+#: ``sample_data/`` tient des fiches d'exemple — désormais TOUTES
+#: synthétiques : la fiche de référence y est régénérée par
+#: ``scripts/generer_fiche_reference_synthetique.py``. Conserver ce dossier
+#: est une décision de l'exploitante : le purger casserait les parcours de
+#: démonstration, et les fiches qu'il porte ne sont pas des pièces d'épreuve
+#: au sens strict.
 #:
 #: L'exemption porte sur l'EMPLACEMENT, jamais sur les noms, pour la même
 #: raison que les archives : transcrire ici le nom d'un bateau serait la fuite
@@ -41,26 +50,13 @@ DOSSIERS_PIECES_ADMISES = ("tests/fixtures/", "frontend/e2e/live-fixtures/")
 #: un quatrième PDF dans ce dossier fait échouer l'épreuve.
 NOMBRE_PDF_SAMPLE_DATA_ACCEPTES = 3
 
-#: Archives réelles acceptées comme risque — décision de l'exploitante.
-#:
-#: Désignées par le motif de l'export qui les a produites (horodatage
-#: Dropbox du 2026-09-28), jamais par leur nom : une exemption nominative
-#: transcrirait dans ce dépôt les noms de bateaux que l'épreuve a pour
-#: fonction d'en tenir dehors. Le motif couvre exactement les sept et rien
-#: d'autre — l'épreuve :func:`test_l_exemption_ne_couvre_que_les_sept_connues`
-#: le vérifie.
-#:
-#: RISQUE ACCEPTÉ : ces archives contiennent des documents clients réels. Les
-#: purger réécrirait l'historique de ``main`` (opération destructive et
-#: irréversible). L'exploitante a choisi de les conserver. La contrepartie est
-#: ce garde-fou : il n'en interdit pas l'existence, il interdit leur
-#: RÉINTRODUCTION ailleurs, et toute huitième archive.
-MOTIF_ARCHIVES_ACCEPTEES = re.compile(r"-20260928T1823\d{2}Z-1-001\.zip$", re.IGNORECASE)
-
-#: Combien d'archives l'exemption doit couvrir. Figé : si quelqu'un élargit le
-#: motif ``MOTIF_ARCHIVES_ACCEPTEES`` pour y faire entrer une nouvelle archive,
-#: ce compte ne ment pas et l'épreuve échoue.
-NOMBRE_ARCHIVES_ACCEPTEES = 7
+#: Motif de l'export qui avait produit les sept archives (horodatage
+#: Dropbox du 2026-09-28). Elles ont été purgées : ce motif ne désigne plus
+#: une exemption, il sert à empêcher leur RÉINTRODUCTION — une archive qui y
+#: correspondrait est refusée nommément, et non traitée comme une venue
+#: d'ailleurs. Désigné par le motif et jamais par les noms : transcrire ici
+#: un nom de bateau serait la fuite que l'on prétend colmater.
+MOTIF_EXPORT_PURGE = re.compile(r"-20260928T1823\d{2}Z-1-001\.zip$", re.IGNORECASE)
 
 
 def _fichiers_suivis() -> list[str]:
@@ -85,36 +81,37 @@ def fichiers_suivis() -> list[str]:
     return _fichiers_suivis()
 
 
-def test_aucune_archive_n_est_consignee_hors_exemption(fichiers_suivis: list[str]) -> None:
-    """Toute archive suivie par git, hors les sept acceptées, est une fuite."""
+def test_aucune_archive_n_est_consignee(fichiers_suivis: list[str]) -> None:
+    """Toute archive suivie par git est une fuite — il n'y a plus d'exemption.
+
+    Les sept archives tolérées jusqu'ici ont été purgées. La tolérance les
+    accompagnait : elle disparaît avec elles. Une archive contient des
+    documents clients ; aucune n'a rien à faire dans l'index.
+    """
     fautives = [
         chemin
         for chemin in fichiers_suivis
         if Path(chemin).suffix.lower() in EXTENSIONS_SENSIBLES
-        and not MOTIF_ARCHIVES_ACCEPTEES.search(chemin)
     ]
     assert fautives == [], (
-        "archives suivies par git hors exemption : "
-        f"{fautives}. Une archive contient des documents clients ; elle n'a rien "
-        "à faire dans l'index. Voir le module pour la décision de risque accepté."
+        f"archives suivies par git : {fautives}. Le dépôt n'en tolère PLUS "
+        "aucune depuis la purge. Voir le module pour la décision."
     )
 
 
-def test_l_exemption_ne_couvre_que_les_sept_connues(fichiers_suivis: list[str]) -> None:
-    """Le motif d'exemption ne doit pas servir d'autoroute.
+def test_aucune_archive_de_l_export_purge_ne_revient(fichiers_suivis: list[str]) -> None:
+    """L'export purgé ne doit pas se réintroduire par une autre voie.
 
-    Sept archives sont acceptées, pas une de plus. Si une huitième se présente,
-    soit elle correspond au motif — et ce test casse, volontairement — soit
-    elle n'y correspond pas, et le précédent test casse. Aucune issue.
+    Le motif de l'export du 2026-09-28 désignait les sept archives retirées.
+    Il ne les autorise plus : il les RECONNAÎT, pour qu'une réintroduction —
+    même rapportée sous un autre chemin — soit nommée pour ce qu'elle est,
+    au lieu de passer pour une archive ordinaire.
     """
-    couvertes = [
-        chemin for chemin in fichiers_suivis if MOTIF_ARCHIVES_ACCEPTEES.search(chemin)
-    ]
-    assert len(couvertes) == NOMBRE_ARCHIVES_ACCEPTEES, (
-        f"{len(couvertes)} archive(s) couverte(s) par l'exemption, "
-        f"{NOMBRE_ARCHIVES_ACCEPTEES} attendue(s) : {couvertes}. "
-        "Élargir une exemption n'est pas la resserrer ; toute archive "
-        "supplémentaire exige une décision, pas un motif plus large."
+    revenues = [c for c in fichiers_suivis if MOTIF_EXPORT_PURGE.search(c)]
+    assert revenues == [], (
+        f"archives de l'export purgé de nouveau suivies : {revenues}. Elles ont "
+        "été retirées du dépôt sur décision de l'exploitante ; les remettre "
+        "n'est pas un oubli, c'est une décision à reprendre explicitement."
     )
 
 
@@ -136,8 +133,10 @@ def test_aucun_pdf_metier_n_est_consigne(fichiers_suivis: list[str]) -> None:
 def test_le_jeu_d_exemples_ne_gonfle_pas(fichiers_suivis: list[str]) -> None:
     """``sample_data/`` est une exemption ACCEPTÉE, pas une autorisation d'y verser.
 
-    Trois PDF, pas un de plus. Ajouter une fiche réelle dans ce dossier est
-    exactement le geste que la décision de risque accepté n'a pas couvert.
+    Trois PDF, pas un de plus. Ajouter une fiche — RÉELLE surtout — dans ce
+    dossier est exactement le geste que la décision de risque accepté n'a
+    jamais couvert ; la fiche de référence qui s'y trouve est synthétique et
+    régénérée par un générateur versionné.
     """
     comptes = [
         chemin for chemin in fichiers_suivis if chemin.startswith("sample_data/") and chemin.endswith(".pdf")
@@ -177,9 +176,10 @@ def test_la_regle_lit_git_et_non_le_disque(tmp_path: Path) -> None:
         if temoin.exists():
             os.remove(temoin)
 
-    # Et les archives acceptées, elles, sont bien vues par la règle.
-    assert any(MOTIF_ARCHIVES_ACCEPTEES.search(c) for c in suivis), (
-        "les sept archives acceptées ne sont plus suivies : l'exemption est "
-        "devenue sans objet, il faut alors la retirer plutôt que la laisser "
-        "couvrir une autoroute."
+    # Et la règle ne tolère plus aucune archive, exemption comprise : le motif
+    # de l'export purgé ne doit plus rien couvrir du tout.
+    assert not any(MOTIF_EXPORT_PURGE.search(c) for c in suivis), (
+        "une archive de l'export purgé est de nouveau suivie : l'exemption a "
+        "été retirée avec les archives qu'elle couvrait, la faire reparaître "
+        "rouvrirait l'autoroute."
     )

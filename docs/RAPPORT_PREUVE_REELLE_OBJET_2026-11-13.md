@@ -32,7 +32,7 @@ et le verdict, publié par le script lui-même :
 
 ```
 preuve-PROUVÉ :: objet supprimé du stockage puis resservi, octets identiques
-amorcage-OK   :: code_fiche=7792-SO — décor prêt
+amorcage-OK   :: code_fiche=1042-EX — décor prêt
 ```
 
 Le scénario, dans l'ordre du sinistre : on sauvegarde, le partage source

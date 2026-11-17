@@ -41,7 +41,7 @@ from tests.helpers_postgres_isole import url_base_jetable
 RACINE = Path(__file__).resolve().parents[1]
 URL_PG = os.environ.get("SEAMTECH_TEST_DATABASE_URL", "")
 URL_REDIS = os.environ.get("SEAMTECH_TEST_REDIS_URL", "")
-FICHE_7792 = RACINE / "sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf"
+FICHE_REFERENCE = RACINE / "sample_data/CLIENT-1042-EX/fiche-1042-EX_ffab.pdf"
 FICHE_GENOIS = RACINE / "sample_data/CLIENT-GENOA/fiche-genois.pdf"
 
 pytestmark = [pytest.mark.redis_queue, pytest.mark.postgres]
@@ -126,7 +126,7 @@ def _archive_lot(tmp_path: Path) -> Path:
     """
     racine = tmp_path / "archive_lot"
     racine.mkdir(parents=True, exist_ok=True)
-    contenus = {1: FICHE_7792, 2: FICHE_GENOIS, 3: FICHE_GENOIS}
+    contenus = {1: FICHE_REFERENCE, 2: FICHE_GENOIS, 3: FICHE_GENOIS}
     for numero, source in contenus.items():
         dossier = racine / f"AFFAIRE-{numero:04d}"
         dossier.mkdir()

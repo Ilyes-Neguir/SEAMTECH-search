@@ -909,7 +909,7 @@ def evaluer_extraction_or(
     Les clés Lot 3a lisent la projection normalisée. Si la fiche source est
     fournie, les clés historiques du banc (``cotes.*``, ``materiau.*``…)
     sont déléguées à l'évaluateur existant, afin que le rapport d'or mesure
-    aussi les 74 cibles 7792 sans dupliquer leur sémantique.
+    aussi les 74 cibles 1042 sans dupliquer leur sémantique.
     """
     details: list[dict[str, Any]] = []
     corrects = 0

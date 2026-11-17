@@ -7,7 +7,7 @@ en colonnes, cotes par bord, BDF, points d'ancrage, planning atelier), mais
 des valeurs intégralement FICTICES. AUCUNE donnée client (nom, référence,
 bateau, cote réelle) n'apparaît ici — le dépôt est public.
 
-Non-régression incluse : les gabarits historiques (portant 7792, génois)
+Non-régression incluse : les gabarits historiques (portant 1042, génois)
 continuent de gagner la détection sur leurs propres documents, et le filet
 RG6 conserve les libellés connus quand aucun gabarit ne reconnaît le PDF.
 """
@@ -287,7 +287,7 @@ class TestDetection:
         assert _extraire(fiche_gv).gabarit_code == "FICHE_GV_FULLBATTEN_V1"
 
     def test_ancres_discriminantes(self) -> None:
-        # Le texte du 7792 (portant) et du génois de démonstration ne doivent
+        # Le texte du 1042 (portant) et du génois de démonstration ne doivent
         # PAS être capturés par les gabarits atelier : « fiche de fabrication »
         # n'est PAS une ancre JADE (libellé générique à toutes les fiches —
         # une seule occurrence capturerait un document hors gabarit).
@@ -307,8 +307,8 @@ class TestDetection:
 
     def test_gabarits_historiques_non_regresses(self) -> None:
         racine = Path(__file__).resolve().parent.parent
-        f7792 = _extraire(racine / "sample_data" / "CLIENT-7792-SO" / "fiche-7792-SO_ffab.pdf")
-        assert f7792.gabarit_code == "FICHE_PORTANT_V1" and f7792.gabarit_version == 2
+        fref = _extraire(racine / "sample_data" / "CLIENT-1042-EX" / "fiche-1042-EX_ffab.pdf")
+        assert fref.gabarit_code == "FICHE_PORTANT_V1" and fref.gabarit_version == 2
         fgenois = _extraire(racine / "sample_data" / "CLIENT-GENOA" / "fiche-genois.pdf")
         assert fgenois.gabarit_code == "FICHE_GENOIS_V1"
         assert fgenois.code == "0901-MM" and fgenois.client_nom == "Moreau"

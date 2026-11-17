@@ -101,11 +101,11 @@ test.describe("concurrence entre postes (sessions indépendantes)", () => {
     const corps = (await reponse.json()) as { fiches?: Array<{ code?: string }> }
     const codes = (corps.fiches ?? [])
       .map((fiche) => String(fiche.code ?? ""))
-      .filter((code) => code && !code.includes("7792") && !code.toUpperCase().startsWith("REF-"))
+      .filter((code) => code && !code.includes("1042") && !code.toUpperCase().startsWith("REF-"))
       .sort()
     expect(
       codes.length,
-      `corpus e2e insuffisant (${codes.length} fiche(s) hors 7792 et hors import) : ${codes.join(", ")}`,
+      `corpus e2e insuffisant (${codes.length} fiche(s) hors 1042 et hors import) : ${codes.join(", ")}`,
     ).toBeGreaterThanOrEqual(combien)
     const choisis = codes.slice(0, combien)
     for (const code of choisis) await garantirAValider(poste, code)
@@ -210,8 +210,8 @@ test.describe("concurrence entre postes (sessions indépendantes)", () => {
   test("deux postes, même fiche : A enregistre, B est arrêté et se reprend", async ({ browser }) => {
     const { ctxA, ctxB, posteA, posteB } = await deuxPostes(browser)
     try {
-      // Une fiche SYNTHÉTIQUE hors 7792-SO (d'autres épreuves vivent dessus) et
-      // hors BIS-7792 (sa copie) : le scénario constitue son jeu par l'API.
+      // Une fiche SYNTHÉTIQUE hors 1042-EX (d'autres épreuves vivent dessus) et
+      // hors BIS-1042-EX (sa copie) : le scénario constitue son jeu par l'API.
       const [code] = await fichesDeTravail(posteA, 1)
 
       // LES DEUX POSTES OUVRENT LA MÊME FICHE, À LA MÊME RÉVISION.
@@ -296,12 +296,12 @@ test.describe("concurrence entre postes (sessions indépendantes)", () => {
       await posteA.getByRole("button", { name: /Importation rapide/i }).click()
 
       // POSTE B — PENDANT CE TEMPS : recherche par dimension + téléchargement
-      // RÉEL du PDF de la fiche 7792-SO (contenu vérifié, pas un lien).
+      // RÉEL du PDF de la fiche 1042-EX (contenu vérifié, pas un lien).
       await posteB.goto(`/recherche?q=${encodeURIComponent("6,60")}`)
-      const ouvrir = posteB.getByRole("link", { name: /Ouvrir la fiche 7792-SO/ })
+      const ouvrir = posteB.getByRole("link", { name: /Ouvrir la fiche 1042-EX/ })
       await expect(ouvrir).toBeVisible({ timeout: 30000 })
       await ouvrir.click()
-      await expect(posteB.getByTestId("fiche-code")).toHaveText("7792-SO", { timeout: 30000 })
+      await expect(posteB.getByTestId("fiche-code")).toHaveText("1042-EX", { timeout: 30000 })
 
       const lien = posteB.getByRole("link", { name: /Télécharger .*\.pdf/i }).first()
       await expect(lien).toBeVisible({ timeout: 30000 })
@@ -324,7 +324,7 @@ await expect(posteA.getByText(/REF-2026-CLIENT123/i).first()).toBeVisible({ time
 
       // Et B, toujours connecté, obtient une réponse complète (sa session et sa
       // recherche n'ont pas été cassées par l'import concurrent).
-      const reprise = await posteB.request.get(`/api/fiches/7792-SO/champs`)
+      const reprise = await posteB.request.get(`/api/fiches/1042-EX/champs`)
       expect(reprise.status(), await reprise.text()).toBe(200)
     } finally {
       await ctxA.close()

@@ -64,7 +64,7 @@ PLAGES_AUTRES = {"spa_m2": (0.5, 300.0), "tetiere_cm": (0.5, 60.0), "poids_kg": 
 # [0,55 ; 1,30], soit [−45 % ; +30 %] autour du triangle quelconque.
 # Justification : le tableur d'origine calcule la surface en triangle
 # ÉQUILATÉRAL — SPA = (√3/4)·SLU·SLE = 0,433·SLU·SLE, facteur 0,866 — et la
-# fiche de référence 7792-SO imprime SPA = 15,71 pour SLU 6,60 / SLE 5,50
+# fiche de référence 1042-EX imprime SPA = 15,71 pour SLU 6,60 / SLE 5,50
 # (facteur réel 0,8655, écart −13,4 %). La bande couvre donc LES DEUX formules
 # (équilatéral 0,866 et quelconque 1,0) avec marge pour les ronds de chute.
 # Une tolérance ±5/10 % signalerait à tort la fiche de référence — test figé

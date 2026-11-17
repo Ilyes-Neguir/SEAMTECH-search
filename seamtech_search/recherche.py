@@ -144,8 +144,8 @@ _UNITE_ALIASES: dict[str, str] = {
 # Un nombre de dimension : décimale (« 6,60 » / « 6.60 ») et/ou unité
 # (« 660 cm »). Le lookbehind et le lookahead refusent les fragments
 # alphanumériques : « 29er », « k903 », « 0701-GV-001 » ne sont jamais des
-# dimensions ; les ENTIERS NUS (« 2026 », « 7792 ») non plus — années, codes
-# et quantités doivent rester des mots, sinon « spi sailonet 2026 » tomberait
+# dimensions ; les ENTIERS NUS (« 2026 », « 1042 ») non plus — années, codes
+# et quantités doivent rester des mots, sinon « spi exemplia 2026 » tomberait
 # à zéro résultat.
 _RE_DIMENSION = re.compile(
     r"(?<![\w.,])(?P<nombre>\d{1,3}(?:[\u00a0\u202f ]\d{3})+|\d+)(?:[.,](?P<decimales>\d+))?"
@@ -216,7 +216,7 @@ def analyser_requete_dimension(texte: str) -> RequeteDimension:
 
     Une dimension est un nombre DÉCIMAL (« 6,60 »), muni d'une unité
     (« 660 cm »), ou suivi d'une COTE NOMMÉE (« tetiere 15 » — l'alias
-    désambiguïse l'entier). Un entier nu SANS cote nommée (« 2026 », « 7792 »)
+    désambiguïse l'entier). Un entier nu SANS cote nommée (« 2026 », « 1042 »)
     n'en est jamais une — la frontière documentée protège les requêtes d'année
     et de code. Les entiers nus sont sautés (« grand voile 2024 6,60 » détecte
     bien 6,60) ; la première dimension retenue gagne."""
@@ -237,7 +237,7 @@ def analyser_requete_dimension(texte: str) -> RequeteDimension:
         unite_raw = (correspondance.group("unite") or "").strip().lower()
         unite = _UNITE_ALIASES.get(unite_raw) if unite_raw else None
         if decimales is None and unite is None and cote is None:
-            # Entier nu sans cote nommée (« 2026 », « 7792 ») : jamais de
+            # Entier nu sans cote nommée (« 2026 », « 1042 ») : jamais de
             # filtre dimension implicite — années, codes et quantités.
             continue
         if decimales is not None:
@@ -259,7 +259,7 @@ def analyser_requete_dimension(texte: str) -> RequeteDimension:
 
 
 #: Forme d'une référence d'atelier : des lettres COLLÉES à des chiffres
-#: (« ST101 », « ST-101 », « K903 »), ou l'inverse (« 7792-SO »). La forme, et
+#: (« ST101 », « ST-101 », « K903 »), ou l'inverse (« 1042-EX »). La forme, et
 #: non un annuaire de préfixes : quand l'atelier ouvre une nouvelle série de
 #: numéros, il n'y a rien à réécrire ici.
 _RE_REFERENCE = re.compile(r"(?:[A-Za-z]{2,4}\d{2,6}|\d{2,6}[A-Za-z]{1,4})")
@@ -1832,7 +1832,7 @@ def rechercher_fiches(
             # « 6,60 » seul → chemin numérique (toutes les cotes ±0,5 %), AUCUN
             # tsvector ; « spi 6,60 » → mots + filtre numérique ; « SLU 6,60 » →
             # cote nommée (filtre de cote existant). Les entiers nus ne sont
-            # jamais des dimensions (« spi sailonet 2026 » reste textuel).
+            # jamais des dimensions (« spi exemplia 2026 » reste textuel).
             analyse = (
                 RequeteDimension(texte=texte)
                 if modele_decimal_exact

@@ -108,7 +108,7 @@ seuil_ci = float(os.environ.get("SEAMTECH_PERF_P95_CI_MS", "250"))
 attendus = {
     "50 requêtes synthétique",
     "1 500 fiches (mi-échelle)",
-    "fonds réel 7792-SO (13 requêtes)",
+    "fonds réel 1042-EX (13 requêtes)",
     "recherche par dimension (Phase 1)",
 }
 

@@ -27,7 +27,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT_PATH = REPO_ROOT / "scripts" / "inventaire_archive.py"
 
 FIXTURE_CLIENT123 = REPO_ROOT / "sample_data" / "CLIENT-123" / "fiche-technique.pdf"
-FIXTURE_7792 = REPO_ROOT / "sample_data" / "CLIENT-7792-SO" / "fiche-7792-SO_ffab.pdf"
+FIXTURE_REFERENCE = REPO_ROOT / "sample_data" / "CLIENT-1042-EX" / "fiche-1042-EX_ffab.pdf"
 FIXTURE_GENOA = REPO_ROOT / "sample_data" / "CLIENT-GENOA" / "fiche-genois.pdf"
 
 
@@ -63,7 +63,7 @@ def detection_sur(chemin: Path, lexique: Any) -> Any:
 
 
 def test_les_trois_fiches_connues_sont_candidates(lexique_defaut: Any) -> None:
-    for fixture in (FIXTURE_CLIENT123, FIXTURE_7792, FIXTURE_GENOA):
+    for fixture in (FIXTURE_CLIENT123, FIXTURE_REFERENCE, FIXTURE_GENOA):
         assert fixture.is_file(), f"fixture manquante : {fixture}"
         resultat = detection_sur(fixture, lexique_defaut)
         assert resultat.est_candidat, f"{fixture.name} : {resultat.motif_exclusion}"
@@ -89,9 +89,9 @@ def test_le_point_mort_genois_est_reproduce_et_corrige(lexique_defaut: Any) -> N
     assert {"guindant", "bordure", "tissu", "surface"} <= set(resultat.vocabulaire_trouve)
 
 
-def test_7792_est_detectee_avec_sa_grille(lexique_defaut: Any) -> None:
+def test_reference_est_detectee_avec_sa_grille(lexique_defaut: Any) -> None:
     """La reconstruction de la fiche de référence porte une vraie grille réglée."""
-    resultat = detection_sur(FIXTURE_7792, lexique_defaut)
+    resultat = detection_sur(FIXTURE_REFERENCE, lexique_defaut)
     assert resultat.est_candidat
     assert resultat.grille_tracee, "le tableau réglé doit être vu par pdfplumber"
     assert "guindant" in resultat.vocabulaire_trouve
@@ -471,10 +471,10 @@ def test_grand_voile_avec_et_sans_trait_d_union(lexique_defaut: Any) -> None:
     assert "grand-voile" in resultat.vocabulaire_trouve, "l'entrée d'origine (avec trait d'union) doit continuer à matcher"
 
 
-def test_mesure_appariement_7792_avant_apres(lexique_defaut: Any) -> None:
+def test_mesure_appariement_reference_avant_apres(lexique_defaut: Any) -> None:
     """Mesure rejouée sur la fiche de référence (constat 3).
 
-    Mesure sur le DOCUMENT CLIENT RÉEL 7792-SO (reçu le 21/09, SHA-256
+    Mesure sur le DOCUMENT CLIENT RÉEL 1042-EX (reçu le 21/09, SHA-256
     43afc51e…) : 27 termes du lexique y étaient trouvés avec le lexique v2
     (chiffre mesuré le 21/09/2026, qui remplaçait l'ancien 31 obtenu sur la
     reconstruction : la mise en page réelle n'imprime pas tous les libellés
@@ -485,9 +485,9 @@ def test_mesure_appariement_7792_avant_apres(lexique_defaut: Any) -> None:
     vérifiée : « Jonction verticale » (libellé réel) est couvert par le
     terme singulier du lexique.
     """
-    page = inventory.analyser_page_pdf(FIXTURE_7792)
+    page = inventory.analyser_page_pdf(FIXTURE_REFERENCE)
     from seamtech_search.detection_fiches import detecter_fiche
 
     resultat = detecter_fiche(page.mots, page.largeur, page.hauteur, page.grille_tracee, lexique_defaut)
-    assert len(resultat.vocabulaire_trouve) == 37, "mesuré sur le document réel 7792-SO le 28/09/2026 (lexique v3)"
+    assert len(resultat.vocabulaire_trouve) == 37, "mesuré sur le document réel 1042-EX le 28/09/2026 (lexique v3)"
     assert "jonction" in resultat.vocabulaire_trouve

@@ -6,7 +6,7 @@ Chaque contrôle ci-dessous correspond à un incident réel du projet (21/09/202
   1. `.github/workflows/ci.yml` présent          → le fichier avait été déplacé à la
      racine `workflows/ci.yml` : GitHub Actions ne tournait plus, et la fusion
      aurait retiré la CI de `main`.
-  2. Fixture 7792 = DOCUMENT RÉEL (SHA-256)      → le gabarit était réglé sur une
+  2. Fixture 1042 = DOCUMENT RÉEL (SHA-256)      → le gabarit était réglé sur une
      reconstruction ; 16,7 % de champs lus au lieu de 100 %.
   3. Aucun `except: pass`                        → une faute de frappe avalée
      silencieusement a fait recréer des bases pendant toute une session.
@@ -73,9 +73,9 @@ def controle_ci() -> None:
 
 def controle_fixture() -> None:
     print("\n2. Fixture = document client réel (et non une reconstruction)")
-    fixture = RACINE / "sample_data" / "CLIENT-7792-SO" / "fiche-7792-SO_ffab.pdf"
+    fixture = RACINE / "sample_data" / "CLIENT-1042-EX" / "fiche-1042-EX_ffab.pdf"
     if not fixture.is_file():
-        controler("fixture 7792 présente", False, str(fixture))
+        controler("fixture 1042 présente", False, str(fixture))
         return
     empreinte = hashlib.sha256(fixture.read_bytes()).hexdigest()
     controler("SHA-256 = document réel", empreinte == SHA_FICHE_REELLE,
@@ -122,25 +122,25 @@ def controle_fichiers_de_test() -> None:
 
 def controle_verite() -> None:
     print("\n6. Source unique de vérité terrain (74 cibles)")
-    chemin_paquet = RACINE / "seamtech_search" / "fiches" / "verite_7792.py"
-    controler("seamtech_search/fiches/verite_7792.py présent", chemin_paquet.is_file())
+    chemin_paquet = RACINE / "seamtech_search" / "fiches" / "verite_reference.py"
+    controler("seamtech_search/fiches/verite_reference.py présent", chemin_paquet.is_file())
     if chemin_paquet.is_file():
         try:
-            from docs.verite_terrain.VERITE_7792_COMPLETE import VERITE_7792 as V_DOCS
-            from seamtech_search.fiches.verite_7792 import VERITE_7792
+            from docs.verite_terrain.VERITE_REFERENCE_COMPLETE import VERITE_REFERENCE as V_DOCS
+            from seamtech_search.fiches.verite_reference import VERITE_REFERENCE
 
-            controler("source unique contient 74 cibles", len(VERITE_7792) == 74, f"{len(VERITE_7792)} cibles")
-            controler("docs/ ré-exporte sans dérive", VERITE_7792 == V_DOCS, "égalité stricte")
+            controler("source unique contient 74 cibles", len(VERITE_REFERENCE) == 74, f"{len(VERITE_REFERENCE)} cibles")
+            controler("docs/ ré-exporte sans dérive", VERITE_REFERENCE == V_DOCS, "égalité stricte")
 
-            chemin_json = RACINE / "docs" / "verite_terrain" / "7792-SO_ffab_complete.json"
-            controler("docs/verite_terrain/7792-SO_ffab_complete.json présent", chemin_json.is_file())
+            chemin_json = RACINE / "docs" / "verite_terrain" / "1042-EX_ffab_complete.json"
+            controler("docs/verite_terrain/1042-EX_ffab_complete.json présent", chemin_json.is_file())
             if chemin_json.is_file():
                 donnees_json = json.loads(chemin_json.read_text(encoding="utf-8"))
-                attendu_json = donnees_json.get("fiche-7792-SO_ffab.pdf", {}).get("attendu")
+                attendu_json = donnees_json.get("fiche-1042-EX_ffab.pdf", {}).get("attendu")
                 controler(
-                    "JSON attendu == VERITE_7792 (égalité stricte 74 cibles)",
-                    attendu_json == VERITE_7792,
-                    "74 cibles conformes" if attendu_json == VERITE_7792 else "dérive détectée",
+                    "JSON attendu == VERITE_REFERENCE (égalité stricte 74 cibles)",
+                    attendu_json == VERITE_REFERENCE,
+                    "74 cibles conformes" if attendu_json == VERITE_REFERENCE else "dérive détectée",
                 )
         except (ImportError, AttributeError, json.JSONDecodeError, OSError) as exc:
             controler("contrôle vérité terrain valide", False, str(exc))

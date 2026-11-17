@@ -47,7 +47,7 @@ from seamtech_search.fiches.auto_validation import (
 )
 from seamtech_search.fiches.gabarits import GabaritDef
 from seamtech_search.fiches.modeles import FicheExtraite
-from seamtech_search.fiches.verite_7792 import VERITE_7792, VERITE_7792_COMPLETE
+from seamtech_search.fiches.verite_reference import VERITE_REFERENCE, VERITE_REFERENCE_COMPLETE
 from seamtech_search.referentiel_bateaux import lier_bateau_au_modele
 
 LOGGER = logging.getLogger("seamtech_search.fiches.persistance")
@@ -934,11 +934,11 @@ def _ecrire_fiche_dans(
 
 
 # ---------------------------------------------------------------------------
-# Vérité terrain du gabarit de référence (7792-SO) — non-régression (§13)
-# Source unique dans le paquet : seamtech_search.fiches.verite_7792 (74 cibles)
+# Vérité terrain du gabarit de référence (1042-EX) — non-régression (§13)
+# Source unique dans le paquet : seamtech_search.fiches.verite_reference (74 cibles)
 # ---------------------------------------------------------------------------
 
-_ = VERITE_7792_COMPLETE  # Ré-export explicite pour compatibilité et non-régression
+_ = VERITE_REFERENCE_COMPLETE  # Ré-export explicite pour compatibilité et non-régression
 
 
 def _valeur_extraite(fiche: FicheExtraite, cible: str) -> object:
@@ -1013,8 +1013,8 @@ def evaluer_verite(fiche: FicheExtraite, attendu: dict[str, object]) -> tuple[fl
     return round(corrects / len(attendu), 4) if attendu else 0.0, ecarts
 
 
-def initialiser_verite_7792(index: Any, chemin_pdf: Path | None = None) -> None:
-    """Enregistre la vérité 7792 dans ``gabarit_test`` (non-régression du gabarit).
+def initialiser_verite_reference(index: Any, chemin_pdf: Path | None = None) -> None:
+    """Enregistre la vérité 1042 dans ``gabarit_test`` (non-régression du gabarit).
 
     Vérité mesurée sur le DOCUMENT CLIENT RÉEL (reçu le 21/09, SHA-256
     43afc51e…) — plus sur la reconstruction. La version enregistrée suit la
@@ -1028,23 +1028,23 @@ def initialiser_verite_7792(index: Any, chemin_pdf: Path | None = None) -> None:
         with connexion.cursor() as cursor:
             cursor.execute(
                 "DELETE FROM gabarit_test WHERE code_gabarit = %s AND nom_fichier = %s",
-                ("FICHE_PORTANT_V1", "fiche-7792-SO_ffab.pdf"),
+                ("FICHE_PORTANT_V1", "fiche-1042-EX_ffab.pdf"),
             )
             cursor.execute(
                 _SQL_GABARIT_TEST_INS,
                 (
                     "FICHE_PORTANT_V1",
                     2,
-                    "fiche-7792-SO_ffab.pdf",
+                    "fiche-1042-EX_ffab.pdf",
                     empreinte,
-                    json.dumps(VERITE_7792, ensure_ascii=False),
-                    "Vérité mesurée sur le document client réel 7792-SO (21/09), "
+                    json.dumps(VERITE_REFERENCE, ensure_ascii=False),
+                    "Vérité mesurée sur le document client réel 1042-EX (21/09), "
                     "réglage gabarit v2 — jamais de valeur inventée (RG6).",
                 ),
             )
 
 
-def verifier_non_regression(index: Any, fiche: FicheExtraite, nom_fichier: str = "fiche-7792-SO_ffab.pdf") -> dict[str, Any]:
+def verifier_non_regression(index: Any, fiche: FicheExtraite, nom_fichier: str = "fiche-1042-EX_ffab.pdf") -> dict[str, Any]:
     """Compare une fiche extraite à la vérité enregistrée (banc gabarit_test)."""
     with index.connect() as connexion:
         with connexion.cursor() as cursor:

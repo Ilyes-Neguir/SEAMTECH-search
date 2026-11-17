@@ -121,7 +121,7 @@ variables `:?` manque — c'est voulu.
       `tests/test_garde_fous_preparation.py` §D).
 - [ ] **3.6** Sauvegarde des secrets **hors machine** (coffre / enveloppe scellée) : sans eux,
       une restauration ne redonne pas l'accès.
-- [ ] **3.7** **Décision du commanditaire 2026-09-29 : le dépôt reste public** ; aucune demande de changement de visibilité n'est lancée. Le PDF racine doublon a été retiré, mais la copie canonique client 7792-SO et l'historique Git demeurent publics. **NON MESURÉ** ici : état de révocation de tout ancien jeton GitHub côté propriétaire. Mesure opérateur requise : vérifier les jetons dans les paramètres du compte, sans les copier dans Git ni le chat.
+- [ ] **3.7** **Décision du commanditaire 2026-09-29 : le dépôt reste public** ; aucune demande de changement de visibilité n'est lancée. Le PDF racine doublon a été retiré, mais la copie canonique client 1042-EX et l'historique Git demeurent publics. **NON MESURÉ** ici : état de révocation de tout ancien jeton GitHub côté propriétaire. Mesure opérateur requise : vérifier les jetons dans les paramètres du compte, sans les copier dans Git ni le chat.
 
 ## 4. Lancement Docker
 
@@ -229,7 +229,7 @@ Utiliser **un dossier de recette**, jamais l'archive réelle (RG13 : l'archive n
 modifie pas, et le jour J passe par `scripts/preflight_archive.py`).
 
 - [ ] **8.1** Interface → écran **Dépôt** → dossier contenant au moins un PDF de fiche
-      (ex. copie de `sample_data/CLIENT-7792-SO/`).
+      (ex. copie de `sample_data/CLIENT-1042-EX/`).
 - [ ] **8.2** La fiche arrive en `valide` si son score > 90 % sans anomalie bloquante, en **`a_valider`** sinon (auto-validation — remplace RG3 depuis le 2026-11-14). Vérifier les DEUX cas.
 - [ ] **8.3** Les artefacts sont **dans le bucket** :
   ```bash
@@ -443,7 +443,7 @@ portent sur une machine qui n'existe pas encore dans cet environnement.
       → aucun fichier `MODIFIÉ`/`PERDU`.
 - [ ] **17.3** Répertoire de travail OCR **hors archive** : `SEAMTECH_OCR_TRAVAIL_DIR`
       (défaut `data/ocr_travail`).
-- [ ] **17.4** État connu : la copie canonique de la fiche réelle 7792-SO et les 7 ZIP du corpus sont déjà suivis/historiques dans le dépôt public ; le doublon `7792-SO_ffab.pdf` à la racine est retiré du tree courant. Le fichier subsiste dans l'historique Git. Aucune donnée client réelle nouvelle n'est ajoutée par cette mission. Décision du commanditaire : visibilité du dépôt reste publique ; maintenir les garde-fous de confidentialité.
+- [ ] **17.4** État connu : la copie canonique de la fiche réelle 1042-EX et les 7 ZIP du corpus sont déjà suivis/historiques dans le dépôt public ; le doublon `1042-EX_ffab.pdf` à la racine est retiré du tree courant. Le fichier subsiste dans l'historique Git. Aucune donnée client réelle nouvelle n'est ajoutée par cette mission. Décision du commanditaire : visibilité du dépôt reste publique ; maintenir les garde-fous de confidentialité.
 - [ ] **17.5** Les sauvegardes n'écrivent **jamais** dans l'archive (inventaire seul).
 
 **RG14 — aucun appel réseau dans le code de traitement** :
@@ -502,7 +502,7 @@ l'inventaire seul ne prouve rien, c'est l'exécution qui compte :
 
 | Contrôle | Statut / preuve |
 |---|---|
-| ZIP corpus : empreintes courantes | ✅ Recalculées le 29/09; aucune modification locale. Sorties brutes (SHA-256) :<br>`AQUILA 250216AJA-20260928T182324Z-1-001.zip` — `fd1fca0930494328687ecf5d6905af139c24f93a8b9e2e51b2f6075772446be6`<br>`ATTALIA 250121JA-20260928T182325Z-1-001.zip` — `a71ec77d6d5abf3c55f5ca8aa5c79d3347d3b3765b91f54950065b9c2161d699`<br>`BAVARIA 32 - 250604JA-20260928T182326Z-1-001.zip` — `a9ca298cae78ccbacfaab69260cede299062ef0d20e0a7fba62c3539ac3a538f`<br>`BAVARIA 34 - 250323JA-20260928T182327Z-1-001.zip` — `483f89716b953734315b7bbb4ba81050dc24b33a162e2a2623604eee268b8f6f`<br>`DAMIEN 4 - 250821JA-20260928T182330Z-1-001.zip` — `2f1ecb0205b817c3dbdb324bf444aad9fb5ddce1d3f415859698fbb21fb428bf`<br>`DEHLER 39 - 250329AJA-20260928T182330Z-1-001.zip` — `b3171d070f6b332366263626a665e7f7985bb8406062c2957895401850df6a06`<br>`GIB SEA 284 - 250328AJA-20260928T182331Z-1-001.zip` — `103359b561ef32f5a8ce04b373864c26a0b496156efc1f728e75f0c0911b4aa3` |
+| ZIP corpus : empreintes courantes | ✅ Recalculées le 29/09; aucune modification locale. Sorties brutes (SHA-256) :<br>`CORPUS-01-20260928T182324Z-1-001.zip` — `fd1fca0930494328687ecf5d6905af139c24f93a8b9e2e51b2f6075772446be6`<br>`CORPUS-02-20260928T182325Z-1-001.zip` — `a71ec77d6d5abf3c55f5ca8aa5c79d3347d3b3765b91f54950065b9c2161d699`<br>`CORPUS-03-20260928T182326Z-1-001.zip` — `a9ca298cae78ccbacfaab69260cede299062ef0d20e0a7fba62c3539ac3a538f`<br>`CORPUS-04-20260928T182327Z-1-001.zip` — `483f89716b953734315b7bbb4ba81050dc24b33a162e2a2623604eee268b8f6f`<br>`CORPUS-05-20260928T182330Z-1-001.zip` — `2f1ecb0205b817c3dbdb324bf444aad9fb5ddce1d3f415859698fbb21fb428bf`<br>`CORPUS-06-20260928T182330Z-1-001.zip` — `b3171d070f6b332366263626a665e7f7985bb8406062c2957895401850df6a06`<br>`CORPUS-07-20260928T182331Z-1-001.zip` — `103359b561ef32f5a8ce04b373864c26a0b496156efc1f728e75f0c0911b4aa3` |
 | PDF racine / copie canonique | ✅ SHA-256 identique à l'empreinte de la copie canonique : `43afc51e55ae598d3eaffc3096f0e7ddaa00e8ddc579ae315bb31b4dbf1c1f40`. Le doublon racine est retiré du tree; il subsiste dans l'historique Git. |
 | Suite locale sélectionnée | ✅ `766 passed, 3 skipped, 234 deselected`; sélection par marqueurs `-m`. Vérifications précédemment réussies : Ruff, TypeScript, build frontend, compilation Python, YAML et `git diff --check`. |
 | Benchmark PostgreSQL jetable, 10 000 fiches | ✅ **SYNTHÉTIQUE** — run initial [36594937291](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36594937291) (1 min 5 s) et rerun final [36598278884](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36598278884) (1 min 11 s), 50 échantillons/scénario. Percentiles et trois plans EXPLAIN complets des deux runs sont archivés : `docs/benchmarks/scale-bench-synthetique-36594937291.{json,md}` et `docs/benchmarks/scale-bench-synthetique-36598278884.{json,md}`. |

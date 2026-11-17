@@ -260,11 +260,11 @@ ANNOTATIONS
 - pytest -m "postgres and not perf and not sauvegarde" : passed=140 skipped=0 (3.11, 3.12, 3.13)
 - 1 500 fiches (mi-échelle) : p50 = 22.2 ms, p95 = 54.0 ms, max = 63.0 ms (n=60)
 - 50 requêtes synthétique : p50 = 14.7 ms, p95 = 16.7 ms, max = 20.3 ms (n=50)
-- fonds réel 7792-SO (13 requêtes) : p50 = 14.6 ms, p95 = 15.5 ms, max = 19.8 ms (n=65)
+- fonds réel 1042-EX (13 requêtes) : p50 = 14.6 ms, p95 = 15.5 ms, max = 19.8 ms (n=65)
 - assistant_jeu_8_corpus_mixte : p50 = 1.8 ms, p95 = 2.1 ms, max = 2.2 ms (n=80)
 - recherche_test_0d7eef7339 restaurée en 0.35 s (15 fiches)
 - restauration de 50000 fiches en 0.99 s (dump 562525 octets) — chiffre publié dans RUNBOOK_RESTAURATION.md
-- parcours machine complet de la vraie fiche 7792-SO : 670 ms ; lecture humaine hors chrono (critère < 120 000 ms)
+- parcours machine complet de la vraie fiche 1042-EX : 670 ms ; lecture humaine hors chrono (critère < 120 000 ms)
 ```
 
 **Preuve e2e** : avant fix nouvel onglet, erreur `locator.fill: Test timeout of 30000ms exceeded; waiting for getByLabel('Password')` à `recherche-url.spec.ts:51:40` (nouvel onglet partage cookies, /login redirige). Fix : `waitFor` avec try/catch, si déjà authentifié on continue. Après fix, e2e vert 1m58s.
@@ -397,7 +397,7 @@ Le chiffre 487 correspond à `-k "not postgres and not perf and not sauvegarde a
 ## 4) Non prouvé / bloqué (liste honnête)
 
 1. **CI sur la branche** → **PROUVÉ 8/8 verte** runs `35776638128` (push) et `35776643429` (PR) — preuves §2.15. Backend 140 passed, e2e vert, sauvegarde verte, docker/frontend/integration verts, mesure-phase1 670 ms.
-2. **Échelle réelle** : fonds toujours 1 fiche réelle (7792-SO). Mesures dimension/tri sur corpus synthétique + cotes semées ; latence grand volume à re-mesurer quand 20-30 fiches réelles.
+2. **Échelle réelle** : fonds toujours 1 fiche réelle (1042-EX). Mesures dimension/tri sur corpus synthétique + cotes semées ; latence grand volume à re-mesurer quand 20-30 fiches réelles.
 3. **Latence HTTP de bout en bout** via uvicorn + proxy Next.js : mesurée via TestClient in-process ; poste cible à prendre sur installation réelle.
 4. **Chrono humain validation** : 0/3 fiches mesurées — hors périmètre Lot J.
 5. **E2E local** : Chromium non téléchargeable en sandbox sans réseau (RG14) — test non exécutable localement, passé en CI où browsers préinstallés (e2e 1m58s vert).
@@ -450,10 +450,10 @@ Mesures publiées (run 35776638128 annotations) :
 pytest -m "postgres and not perf and not sauvegarde" : passed=140 skipped=0 (3 versions)
 1 500 fiches (mi-échelle) : p50 = 22.2 ms, p95 = 54.0 ms, max = 63.0 ms (n=60, seuil env CI 250 ms, produit 100 ms)
 50 requêtes synthétique : p50 = 14.7 ms, p95 = 16.7 ms, max = 20.3 ms (n=50)
-fonds réel 7792-SO (13 requêtes) : p50 = 14.6 ms, p95 = 15.5 ms, max = 19.8 ms (n=65)
+fonds réel 1042-EX (13 requêtes) : p50 = 14.6 ms, p95 = 15.5 ms, max = 19.8 ms (n=65)
 assistant_jeu_8_corpus_mixte : p50 = 1.8 ms, p95 = 2.1 ms, max = 2.2 ms (n=80)
 sauvegarde 50k : 0.99 s (50000 fiches, dump 562525 octets)
-parcours machine complet vraie fiche 7792-SO : 670 ms (critère < 120 000 ms)
+parcours machine complet vraie fiche 1042-EX : 670 ms (critère < 120 000 ms)
 ```
 
 ---

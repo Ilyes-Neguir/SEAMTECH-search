@@ -42,7 +42,7 @@ def _planche_complete(chemin: Path) -> Path:
         chemin,
         [
             "Date: 25/10/2031 Sail: Gvsl",
-            "Designer: Yann Boat: Bateau Demo 44",
+            "Designer: Demo Boat: Bateau Demo 44",
             "Company: Chantier Demo",
             "Customer: Atelier Demo / Commande #88 DEMOAAAA",
             "Filename: ZZ 001.pak",

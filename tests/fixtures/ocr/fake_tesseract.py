@@ -50,7 +50,7 @@ def main() -> int:
 
     # Texte de référence — toujours lire reference_propre.txt si dispo pour garantir taux 1.0
     # (sinon le test qualité échoue). Le script est dans tests/fixtures/ocr/, à côté des refs.
-    text = "MOTEUR DIESEL 7792 SO\nPuissance 150 CV\nCarburant diesel\n"
+    text = "MOTEUR DIESEL 1042 EX\nPuissance 150 CV\nCarburant diesel\n"
     # Cherche reference_propre.txt dans le dossier du script ou du parent
     script_dir = Path(__file__).parent
     ref_candidates = [

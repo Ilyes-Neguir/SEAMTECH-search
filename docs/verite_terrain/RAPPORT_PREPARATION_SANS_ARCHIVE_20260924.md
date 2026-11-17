@@ -96,10 +96,10 @@ All checks passed!
 $ python scripts/audit_projet.py --rapide
 ...
 6. Source unique de vérité terrain (74 cibles)
-  [OK  ] seamtech_search/fiches/verite_7792.py présent
+  [OK  ] seamtech_search/fiches/verite_reference.py présent
   [OK  ] source unique contient 74 cibles — 74 cibles
   [OK  ] docs/ ré-exporte sans dérive — égalité stricte
-  [OK  ] JSON attendu == VERITE_7792 (égalité stricte 74 cibles) — 74 cibles conformes
+  [OK  ] JSON attendu == VERITE_REFERENCE (égalité stricte 74 cibles) — 74 cibles conformes
 ==========================================================================
 BILAN : 12/12 contrôles verts
 ==========================================================================
@@ -254,7 +254,7 @@ Non exécutés ici : navigateurs Playwright absents + pile Docker requise
 | Script Windows non destructif | tests de contenu | `tests/test_preflight_windows.py` (14 tests) |
 | RG13/RG14/logs/config | corpus synthétique + analyse AST | `tests/test_garde_fous_preparation.py` (20 tests) |
 | OCR étages / reprise / verrou / budget | `fake_tesseract`, PDF `ocr_propre/ocr_degrade` (seed 42) | `tests/test_ocr_*.py` |
-| Extraction réglée 6/6 | fiche 7792-SO **déjà versionnée** (document client de développement, RG13 : l'archive reste la source de vérité) | `tests/test_extraction_fiche_reference.py`, audit 12/12 |
+| Extraction réglée 6/6 | fiche 1042-EX **déjà versionnée** (document client de développement, RG13 : l'archive reste la source de vérité) | `tests/test_extraction_fiche_reference.py`, audit 12/12 |
 | Build frontend | code du dépôt | §1.9 |
 
 ## 3. B. Preuves encore absentes (BLOQUÉ sur données réelles)
@@ -264,7 +264,7 @@ Non exécutés ici : navigateurs Playwright absents + pile Docker requise
 | **Lot G validé** | archive réelle et PDF de production **absents** | à leur arrivée |
 | Volume réel (50+ Go attendu) | jamais vu | idem |
 | OCR réel sur le fonds | `fake_tesseract` ≠ tesseract 5.x sur vrais scans ; débits réels = mesures CI sur 2 échantillons commités uniquement | idem |
-| Taux d'extraction réel | 1 seule fiche client réelle à ce jour (7792-SO) ; gabarits du fonds inconnus | idem |
+| Taux d'extraction réel | 1 seule fiche client réelle à ce jour (1042-EX) ; gabarits du fonds inconnus | idem |
 | Validation humaine réelle (chrono 2 min/fiche) | 0/3 fiches mesurées (dernier verrou Phase 1) | idem |
 | Épreuve de restauration réelle (R2/S3) | non exécutée | avant mise en service |
 | Couverture ≥ 85 % AVEC PostgreSQL | ce bac n'a pas PostgreSQL ; CI = référence | prochain run CI |

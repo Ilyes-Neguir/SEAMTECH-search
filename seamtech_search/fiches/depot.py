@@ -661,7 +661,7 @@ def _groupes_preuve_fiche(fiche: FicheExtraite) -> set[str]:
 
 #: Référence de fiche dans un NOM DE FICHIER. Deux formes observées dans les
 #: archives de l'atelier : la référence en tête (« ZZ 075a_ffab.pdf ») et la
-#: référence de commande en fin de nom (« fiche GV 250329 AJA.pdf »). Motif
+#: référence de commande en fin de nom (« fiche GV 250107 AB.pdf »). Motif
 #: volontairement étroit : quelques lettres puis 2 à 5 chiffres, avec une
 #: lettre finale facultative. Aucune valeur n'est inventée : sans motif, il
 #: n'y a pas de repli.
@@ -695,7 +695,7 @@ def code_depuis_nom_fichier(nom: str) -> str | None:
 
 #: Référence dans un NOM DE DOSSIER d'affaire. Les archives de l'atelier
 #: nomment le dossier d'une affaire « BATEAU TAILLE RÉFÉRENCE » (« … ST103 »,
-#: « … ST67A ») ou « BATEAU - jjmmaannée initiales » (« … 250821JA »). Ces
+#: « … ST67A ») ou « BATEAU - jjmmaannée initiales » (« … 250106AB »). Ces
 #: dossiers contiennent souvent une fiche dont NI le PDF ni le nom de fichier
 #: ne portent la référence : sans cette source, l'écriture était refusée et le
 #: dossier « ne rentrait pas » alors que sa référence était sous les yeux.
@@ -712,7 +712,7 @@ def code_depuis_nom_dossier(nom: str) -> str | None:
 
     Dernière source de la chaîne (document → fichier → dossier). Motif étroit :
     des lettres puis 2 à 5 chiffres (« ST103 », « ST67A ») ou une date de
-    commande suivie d'initiales (« 250821JA »). Le dernier motif du nom gagne,
+    commande suivie d'initiales (« 250106AB »). Le dernier motif du nom gagne,
     c'est celui qui porte la référence dans la convention de l'atelier.
     """
     candidats = [m.group("code") for m in _RE_CODE_NOM_DOSSIER.finditer(nom)]

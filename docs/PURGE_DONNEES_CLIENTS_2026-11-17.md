@@ -17,9 +17,9 @@ commandes ci-dessous opèrent par motif de chemin, jamais par contenu nommé).
 | Nature | Chemin / motif | Volume | Gravité |
 |---|---|---|---|
 | Archives clients réelles | `*.zip` à la racine — 7 fichiers | 4 880 366 o (4 739 084 o empaquetés) | **Haute** |
-| Document client réel | `sample_data/CLIENT-7792-SO/` | 166 990 o | **Haute** |
-| Vérité terrain **en code de production** | `seamtech_search/fiches/verite_7792.py` | 74 valeurs + nom du client + prénom du dessinateur + n° de commande | **Haute** |
-| Copies JSON de cette vérité | `docs/verite_terrain/7792-SO_ffab.json`, `…-complete.json` | ~4,9 ko | Moyenne |
+| Document client réel | `sample_data/CLIENT-1042-EX/` | 166 990 o | **Haute** |
+| Vérité terrain **en code de production** | `seamtech_search/fiches/verite_reference.py` | 74 valeurs + nom du client + prénom du dessinateur + n° de commande | **Haute** |
+| Copies JSON de cette vérité | `docs/verite_terrain/1042-EX_ffab.json`, `…-complete.json` | ~4,9 ko | Moyenne |
 | Empreinte du PDF réel | `seamtech_search/dedup/detection.py` (l. 24, sha256) | 1 ligne | Faible |
 | Code de commande diffusé | ~152 fichiers (tests, `docs/verite_terrain`, e2e, scripts, `deliverables/`, composants) | — | Moyenne |
 | Nom du client diffusé | 31 fichiers | — | **Haute** |
@@ -65,7 +65,7 @@ avant d'avoir préparé les substituts laisserait le dépôt non fonctionnel** :
 
 1. générer une fiche synthétique de référence (même structure, mêmes familles de
    champs, valeurs anonymisées) ;
-2. substituer `seamtech_search/fiches/verite_7792.py` par ce jeu synthétique ;
+2. substituer `seamtech_search/fiches/verite_reference.py` par ce jeu synthétique ;
 3. régénérer les deux JSON de `docs/verite_terrain/` ;
 4. revalider la suite **sur le substitut** avant toute réécriture.
 
@@ -102,9 +102,9 @@ cd purge.git
 # ── 3. Purge ──────────────────────────────────────────────────────────────
 git filter-repo \
   --path-glob '*.zip' \
-  --path 'sample_data/CLIENT-7792-SO/' \
-  --path 'docs/verite_terrain/7792-SO_ffab.json' \
-  --path 'docs/verite_terrain/7792-SO_ffab_complete.json' \
+  --path 'sample_data/CLIENT-1042-EX/' \
+  --path 'docs/verite_terrain/1042-EX_ffab.json' \
+  --path 'docs/verite_terrain/1042-EX_ffab_complete.json' \
   --invert-paths \
   --replace-text /chemin/HORS/depot/substitutions.txt \
   --force
@@ -120,7 +120,7 @@ git push --force --mirror
 ```
 
 Le PDF réel étant présent sous deux cheminements, `--path
-'sample_data/CLIENT-7792-SO/'` ne suffit pas : ajouter l'ancien chemin racine
+'sample_data/CLIENT-1042-EX/'` ne suffit pas : ajouter l'ancien chemin racine
 dans la liste des `--path` si le contrôle de l'étape 4 le retrouve.
 
 ---
@@ -153,7 +153,7 @@ dans la liste des `--path` si le contrôle de l'étape 4 le retrouve.
 Le contrôle exigé est un **`grep` sur l'historique complet**, pas sur `HEAD` :
 
 ```bash
-git rev-list --objects --all | grep -iE "\.zip$|CLIENT-7792|verite_7792"  # vide attendu
+git rev-list --objects --all | grep -iE "\.zip$|CLIENT-7792|verite_reference"  # vide attendu
 git log --all --oneline -- '*.zip'                                        # vide attendu
 git grep -iE "<nom_du_client>" $(git rev-list --all)                      # vide attendu
 ```

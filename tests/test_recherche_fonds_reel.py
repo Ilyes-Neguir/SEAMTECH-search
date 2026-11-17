@@ -4,13 +4,13 @@ Le Lot E a livré l'architecture (pondération A/B/C, fusion RRF k=60, facettes,
 trigrammes, texte du PDF) et l'a mesurée sur un corpus SYNTHÉTIQUE de 12 fiches
 semées en fixture. Ce fichier fait autre chose : il rejoue le JEU DE REQUÊTES
 RÉEL (``docs/verite_terrain/JEU_REQUETES_REELLES.md``) contre un index nourri
-par le pipeline complet réglé sur la vraie fiche 7792-SO :
+par le pipeline complet réglé sur la vraie fiche 1042-EX :
 
     extraction (gabarit v2 du registre) → écriture → validation humaine
     (qui rafraîchit le search_vector, migration 013).
 
 L'écriture applique la règle d'arrivée en vigueur (auto-validation au-dessus
-du seuil, décision du commanditaire du 2026-11-14). La fiche 7792-SO score
+du seuil, décision du commanditaire du 2026-11-14). La fiche 1042-EX score
 0,929 : elle serait donc auto-validée, et la validation humaine qui suit
 renverrait 409. Ce module mesure la RECHERCHE sur un fonds validé par la
 procédure complète — pas l'auto-validation : le seuil est porté hors
@@ -45,32 +45,32 @@ from tests.conftest import (
 )
 
 RACINE = Path(__file__).resolve().parents[1]
-PDF_7792 = RACINE / "sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf"
+PDF_REFERENCE = RACINE / "sample_data/CLIENT-1042-EX/fiche-1042-EX_ffab.pdf"
 
 pytestmark = pytest.mark.postgres
 
-# Jeu de requêtes RÉEL — chaque terme provient du document 7792-SO (audit du
+# Jeu de requêtes RÉEL — chaque terme provient du document 1042-EX (audit du
 # 21/09, vérité terrain §13) ; aucune requête inventée.
 JEU_REQUETES_REELLES: tuple[tuple[str, str], ...] = (
-    ("7792-SO", "code exact (séparateurs)"),
-    ("7792", "code partiel"),
-    ("sailonet", "client"),
-    ("cruette", "client — raison sociale (migration 013)"),
+    ("1042-EX", "code exact (séparateurs)"),
+    ("1042", "code partiel"),
+    ("exemplia", "client"),
+    ("demo", "client — raison sociale (migration 013)"),
     ("29er", "bateau"),
     ("spi", "type de voile"),
     ("spi asymétrique", "type complet"),
     ("monofilm", "matière"),
     ("monofilm k903", "matière précise"),
-    ("spi sailonet 2026", "combinaison opérateur, année incluse (migration 013)"),
+    ("spi exemplia 2026", "combinaison opérateur, année incluse (migration 013)"),
     ("spi 29er", "type + bateau"),
     ("monofime", "FAUTE sur matière (filet trigrammes)"),
     ("voile de portant", "titre"),
 )
 
-# Facettes attendues à vide : exactement les valeurs de la fiche 7792-SO.
-FACETTES_7792: dict[str, str] = {
+# Facettes attendues à vide : exactement les valeurs de la fiche 1042-EX.
+FACETTES_REFERENCE: dict[str, str] = {
     "type_voile": "Spi Asymétrique",
-    "client": "Sailonet",
+    "client": "Exemplia",
     "bateau": "29er 15'",
     "gamme": "Medium Régate",
     "annee": "2026",
@@ -84,7 +84,7 @@ def seuil_auto_validation_hors_atteinte() -> Iterator[None]:
 
     Ce module mesure la recherche sur un fonds passé par la procédure
     COMPLÈTE, dont la validation HUMAINE fait partie — c'est elle qui
-    rafraîchit le search_vector (migration 013). La fiche 7792-SO score
+    rafraîchit le search_vector (migration 013). La fiche 1042-EX score
     0,929 : depuis l'auto-validation, elle arrive « valide » et
     ``valider_fiche`` renvoie 409, ce qui fait échouer la fixture en
     amont des quatre mesures.
@@ -104,7 +104,7 @@ def seuil_auto_validation_hors_atteinte() -> Iterator[None]:
 
 @pytest.fixture(scope="module")
 def fonds_reel() -> Iterator[dict[str, Any]]:
-    """Base jetable migrée, puis la vraie fiche 7792-SO entrée par le pipeline
+    """Base jetable migrée, puis la vraie fiche 1042-EX entrée par le pipeline
     complet réglé : registre → extraction → écriture → validation. Aucun seed
     synthétique : le fonds réel EST la fixture."""
     if not DATABASE_URL:
@@ -121,7 +121,7 @@ def fonds_reel() -> Iterator[dict[str, Any]]:
     index.initialize()
     index.run_migrations()
     initialiser_gabarits(index)
-    fiche = extraire_fiche(PDF_7792, gabarits=charger_gabarits(index))
+    fiche = extraire_fiche(PDF_REFERENCE, gabarits=charger_gabarits(index))
     id_fiche, action = ecrire_fiche(index, fiche)
     assert action == "creee", "le fonds réel ne doit contenir qu'une seule fiche"
     valider_fiche(index, fiche.code, "test-fonds-reel", exiger_revision=False)
@@ -138,14 +138,14 @@ def _retrouver(index: Any, requete: str) -> tuple[int | None, list[str]]:
 
     reponse = rechercher_fiches(index, requete=requete, limit=20)
     codes = [r["code"] for r in reponse["resultats"]]
-    return (codes.index("7792-SO") + 1 if "7792-SO" in codes else None), codes
+    return (codes.index("1042-EX") + 1 if "1042-EX" in codes else None), codes
 
 
 @pytest.mark.postgres
 def test_extraction_reelle_nourrit_l_index(fonds_reel: dict[str, Any]) -> None:
     """Le pipeline réglé produit une fiche valide, cherchable, dont le vecteur
     contient le chantier et l'année d'édition (régression migration 013)."""
-    assert fonds_reel["fiche"].code == "7792-SO"
+    assert fonds_reel["fiche"].code == "1042-EX"
     with fonds_reel["index"].connect() as connexion:
         with connexion.cursor() as cursor:
             cursor.execute(
@@ -154,11 +154,11 @@ def test_extraction_reelle_nourrit_l_index(fonds_reel: dict[str, Any]) -> None:
             )
             statut, champs_texte, vecteur = cursor.fetchone()
     assert statut == "valide", "la validation est ce qui rend la fiche cherchable (RG3)"
-    assert champs_texte and "Sailonet" in champs_texte
+    assert champs_texte and "Exemplia" in champs_texte
     # Migration 013 : la raison sociale du client ET l'année sont tokenisées.
-    assert "cruette" in champs_texte.lower(), "le chantier du client doit être agrégé"
+    assert "demo" in champs_texte.lower(), "le chantier du client doit être agrégé"
     assert "2026" in champs_texte, "l'année d'édition doit être tokenisée"
-    assert "cruette" in vecteur.lower() and "2026" in vecteur
+    assert "demo" in vecteur.lower() and "2026" in vecteur
 
 
 @pytest.mark.postgres
@@ -170,7 +170,7 @@ def test_jeu_requetes_reelles_13_sur_13(fonds_reel: dict[str, Any]) -> None:
     ``test_perf_p95_fonds_reel`` (marqueur ``perf``, étape CI dédiée sans
     --cov ; audit du 22/09) ; la latence affichée ici reste indicative."""
     index = fonds_reel["index"]
-    _retrouver(index, "7792-SO")  # échauffement : plans, caches de connexions
+    _retrouver(index, "1042-EX")  # échauffement : plans, caches de connexions
     manquants: list[str] = []
     durees_ms: list[float] = []
     for requete, nature in JEU_REQUETES_REELLES:
@@ -185,7 +185,7 @@ def test_jeu_requetes_reelles_13_sur_13(fonds_reel: dict[str, Any]) -> None:
     p95 = sorted(durees_ms)[int(len(durees_ms) * 0.95) - 1]
     print(
         f"\n[mesure Tâche 3 — fonds réel] {len(JEU_REQUETES_REELLES) - len(manquants)}/13 "
-        f"requêtes retrouvent 7792-SO au rang 1 ; latence indicative sous ce contexte : "
+        f"requêtes retrouvent 1042-EX au rang 1 ; latence indicative sous ce contexte : "
         f"p50 = {p50:.1f} ms, p95 = {p95:.1f} ms"
     )
     assert not manquants, "requêtes réelles sans la fiche : " + " ; ".join(manquants)
@@ -195,7 +195,7 @@ def test_jeu_requetes_reelles_13_sur_13(fonds_reel: dict[str, Any]) -> None:
 @pytest.mark.postgres
 def test_perf_p95_fonds_reel(fonds_reel: dict[str, Any]) -> None:
     """CRITÈRE DE SORTIE LOT E (p95 < 100 ms) sur le fonds réel (vraie fiche
-    7792-SO, 13 requêtes réelles), mesuré HORS INSTRUMENTATION — même
+    1042-EX, 13 requêtes réelles), mesuré HORS INSTRUMENTATION — même
     justification que ``test_perf_p95_jeu_50_reference`` (audit du 22/09 : le
     critère sous --cov a flaké à 108,8 ms). Chauffe complète du jeu avant le
     passage mesuré ; publication p50/p95/max via SEAMTECH_PERF_JSON."""
@@ -221,7 +221,7 @@ def test_perf_p95_fonds_reel(fonds_reel: dict[str, Any]) -> None:
         f"\n[perf Tâche 3 — fonds réel] p50 = {p50:.1f} ms, p95 = {p95:.1f} ms, "
         f"max = {max(durees_ms):.1f} ms (seuil p95 applicable : {seuil:.0f} ms)"
     )
-    publier_mesure_perf("fonds réel 7792-SO (13 requêtes)", p50, p95, max(durees_ms), len(durees_ms))
+    publier_mesure_perf("fonds réel 1042-EX (13 requêtes)", p50, p95, max(durees_ms), len(durees_ms))
     assert p50 < 100.0, f"critère d'architecture violé : p50 = {p50:.1f} ms ≥ 100 ms"
     assert p95 < seuil, (
         f"le critère de sortie du Lot E doit tenir sur le fonds réel : p95 = {p95:.1f} ms ≥ {seuil:.0f} ms"
@@ -232,12 +232,12 @@ def test_perf_p95_fonds_reel(fonds_reel: dict[str, Any]) -> None:
 @pytest.mark.postgres
 def test_facettes_a_vide_valeurs_de_la_fiche(fonds_reel: dict[str, Any]) -> None:
     """Requête vide sur le fonds réel : chaque axe de facette montre exactement
-    les valeurs de la fiche 7792-SO (aucune valeur inventée par le seed)."""
+    les valeurs de la fiche 1042-EX (aucune valeur inventée par le seed)."""
     from seamtech_search.recherche import rechercher_fiches
 
     reponse = rechercher_fiches(fonds_reel["index"], requete="")
     facettes = reponse["facettes"]
-    for axe, valeur_attendue in FACETTES_7792.items():
+    for axe, valeur_attendue in FACETTES_REFERENCE.items():
         assert axe in facettes, f"l'axe de facette {axe!r} manque"
         valeurs = [(v["valeur"], v["effectif"]) for v in facettes[axe]]
         assert valeurs == [(valeur_attendue, 1)], (

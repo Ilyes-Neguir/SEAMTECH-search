@@ -336,8 +336,8 @@ def test_normalisation_valeur_sans_accents_et_espaces() -> None:
 # ---------------------------------------------------------------------------
 
 CHEMIN_MODELE = Path(harness.REPO_ROOT) / "docs" / "verite_terrain" / "modele_verite_terrain.json"
-CHEMIN_VERITE_7792 = Path(harness.REPO_ROOT) / "docs" / "verite_terrain" / "7792-SO_ffab.json"
-FIXTURE_7792 = Path(harness.REPO_ROOT) / "sample_data" / "CLIENT-7792-SO" / "fiche-7792-SO_ffab.pdf"
+CHEMIN_VERITE_REFERENCE = Path(harness.REPO_ROOT) / "docs" / "verite_terrain" / "1042-EX_ffab.json"
+FIXTURE_REFERENCE = Path(harness.REPO_ROOT) / "sample_data" / "CLIENT-1042-EX" / "fiche-1042-EX_ffab.pdf"
 
 
 def test_le_modele_vide_est_refuse() -> None:
@@ -374,13 +374,13 @@ def test_null_sur_un_champ_seul_est_accepte(tmp_path: Path) -> None:
 
 def test_cles_de_documentation_ignorees() -> None:
     """Les clés « _documentation » ne sont pas des fiches à mesurer."""
-    verite = harness.charger_verite(CHEMIN_VERITE_7792)
+    verite = harness.charger_verite(CHEMIN_VERITE_REFERENCE)
     assert "_documentation" in verite  # présente mais ignorée
     fiches = [cle for cle in verite if not cle.startswith("_")]
-    assert fiches == ["fiche-7792-SO_ffab.pdf"]
+    assert fiches == ["fiche-1042-EX_ffab.pdf"]
 
 
-def test_verite_7792_sert_de_reference_mesurable(tmp_path: Path) -> None:
+def test_verite_reference_sert_de_reference_mesurable(tmp_path: Path) -> None:
     """La fiche de référence n°2 est mesurable de bout en bout par le banc.
 
     On épingle la MÉCANIQUE (une fiche mesurée, agrégée par gabarit), pas les
@@ -390,15 +390,15 @@ def test_verite_7792_sert_de_reference_mesurable(tmp_path: Path) -> None:
     code = harness.main(
         [
             "validate_extraction.py",
-            str(FIXTURE_7792),
+            str(FIXTURE_REFERENCE),
             "--verite",
-            str(CHEMIN_VERITE_7792),
+            str(CHEMIN_VERITE_REFERENCE),
             "--sortie-json",
-            str(tmp_path / "mesure-7792.json"),
+            str(tmp_path / "mesure-reference.json"),
         ]
     )
     assert code == 0
-    mesure = json.loads((tmp_path / "mesure-7792.json").read_text(encoding="utf-8"))
+    mesure = json.loads((tmp_path / "mesure-reference.json").read_text(encoding="utf-8"))
     assert mesure["meta"]["nb_fiches"] == 1
     assert "spi_asymetrique_ref" in mesure["par_gabarit"]
     assert set(mesure["par_champ"]) == {"description", "dimensions.length", "dimensions.width", "material", "quantity", "reference"}
@@ -409,17 +409,17 @@ def test_verite_7792_sert_de_reference_mesurable(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_moteur_gabarit_lecture_integrale_7792(tmp_path: Path, capsys) -> None:
-    """Le moteur gabarit lit 6/6 champs hérités sur la fixture 7792 (§13).
+def test_moteur_gabarit_lecture_integrale_reference(tmp_path: Path, capsys) -> None:
+    """Le moteur gabarit lit 6/6 champs hérités sur la fixture 1042 (§13).
 
     Baseline « avant » (moteur heuristique, préparation lot B) : 16,7 % (1/6).
     """
     racine = Path(__file__).resolve().parent.parent
-    verite = racine / "docs/verite_terrain/7792-SO_ffab.json"
+    verite = racine / "docs/verite_terrain/1042-EX_ffab.json"
     code = harness.main(
         [
             "validate_extraction.py",
-            str(racine / "sample_data/CLIENT-7792-SO"),
+            str(racine / "sample_data/CLIENT-1042-EX"),
             "--verite",
             str(verite),
             "--moteur",
@@ -464,14 +464,14 @@ def test_moteur_gabarit_inconnu_conserve_valeurs_et_avertit(tmp_path: Path) -> N
 def test_moteur_gabarit_verite_etendue_74_cibles(tmp_path: Path, capsys) -> None:
     """Banc étendu sur document réel : 74/74 cibles = 100.0 % (script .py et json)."""
     racine = Path(__file__).resolve().parent.parent
-    verite_py = racine / "docs/verite_terrain/VERITE_7792_COMPLETE.py"
-    verite_json = racine / "docs/verite_terrain/7792-SO_ffab_complete.json"
+    verite_py = racine / "docs/verite_terrain/VERITE_REFERENCE_COMPLETE.py"
+    verite_json = racine / "docs/verite_terrain/1042-EX_ffab_complete.json"
 
     # 1. Via le fichier Python
     code_py = harness.main(
         [
             "validate_extraction.py",
-            str(racine / "sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf"),
+            str(racine / "sample_data/CLIENT-1042-EX/fiche-1042-EX_ffab.pdf"),
             "--verite",
             str(verite_py),
             "--moteur",
@@ -490,7 +490,7 @@ def test_moteur_gabarit_verite_etendue_74_cibles(tmp_path: Path, capsys) -> None
     code_json = harness.main(
         [
             "validate_extraction.py",
-            str(racine / "sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf"),
+            str(racine / "sample_data/CLIENT-1042-EX/fiche-1042-EX_ffab.pdf"),
             "--verite",
             str(verite_json),
             "--moteur",

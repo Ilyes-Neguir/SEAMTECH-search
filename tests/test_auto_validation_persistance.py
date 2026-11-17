@@ -34,7 +34,7 @@ from seamtech_search.indexer import SearchIndex
 from tests.helpers_postgres_isole import url_base_jetable
 
 RACINE = Path(__file__).resolve().parent.parent
-PDF_7792 = RACINE / "sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf"
+PDF_REFERENCE = RACINE / "sample_data/CLIENT-1042-EX/fiche-1042-EX_ffab.pdf"
 DATABASE_URL = os.environ.get("SEAMTECH_TEST_DATABASE_URL", "")
 
 pytestmark = pytest.mark.postgres
@@ -326,7 +326,7 @@ class TestCoherence:
 # --- La vraie fiche du fonds --------------------------------------------------
 
 
-def test_la_vraie_fiche_7792_suit_la_regle(base: SearchIndex) -> None:
+def test_la_vraie_fiche_reference_suit_la_regle(base: SearchIndex) -> None:
     """Sur la fiche réelle du fonds, pas sur une synthèse.
 
     Son score d'extraction est de 0,929 : elle est donc attendue
@@ -334,13 +334,13 @@ def test_la_vraie_fiche_7792_suit_la_regle(base: SearchIndex) -> None:
     intemporelle — il vérifie la COHÉRENCE entre ce que la base a écrit et
     ce que la règle décide, sur une fiche qui n'a rien de commode.
     """
-    if not PDF_7792.is_file():
+    if not PDF_REFERENCE.is_file():
         pytest.skip("Corpus d'exemple absent")
     from seamtech_search.fiches.extraction import extraire_fiche
     from seamtech_search.fiches.gabarits import GABARITS_EMBARQUES
 
-    fiche = extraire_fiche(PDF_7792, gabarits=list(GABARITS_EMBARQUES))
-    fiche.code = "7792-SO-AUTOVAL"
+    fiche = extraire_fiche(PDF_REFERENCE, gabarits=list(GABARITS_EMBARQUES))
+    fiche.code = "1042-EX-AUTOVAL"
     id_fiche, _ = ecrire_fiche(base, fiche)
     lu = _lire(base, id_fiche)
 

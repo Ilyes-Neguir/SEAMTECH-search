@@ -3,7 +3,7 @@ import { APPROBATEUR, LECTURE, signIn, signInWith } from "./helpers"
 
 /**
  * Lot 4b (Fonction A) — comparaison de voiles bloc par bloc dans le
- * navigateur, contre PostgreSQL réel (base live semée : 7792-SO spi 29er,
+ * navigateur, contre PostgreSQL réel (base live semée : 1042-EX spi 29er,
  * génois Sun 2000…). Le parcours prouve : sélection A/B, écarts réels en cm
  * (SLU 6,60 m contre 8,20 m ⇒ +160 cm), et l'honnêteté de l'écran — modèles
  * différents ⇒ badge « indicative » + avertissement, jamais « même modèle ».
@@ -31,9 +31,9 @@ test.describe("Lot 4b — comparaison de voiles", () => {
     await page.getByRole("link", { name: "Comparaison" }).click()
     await page.waitForURL(/\/comparaison$/, { timeout: 20000 })
 
-    await page.getByTestId("recherche-a").fill("7792")
+    await page.getByTestId("recherche-a").fill("1042")
     const choixA = page.getByTestId("liste-a").getByTestId("extraction-choix")
-      .filter({ has: page.getByText("7792-SO", { exact: true }) })
+      .filter({ has: page.getByText("1042-EX", { exact: true }) })
     await expect(choixA).toHaveCount(1, { timeout: 30000 })
     await choixA.click()
 
@@ -46,7 +46,7 @@ test.describe("Lot 4b — comparaison de voiles", () => {
     await choixB.click()
 
     await expect(page.getByTestId("tableau-dimensions")).toBeVisible({ timeout: 30000 })
-    // SLU : 8,20 m (génois Sun 2000) − 6,60 m (7792-SO) = +160 cm, valeurs réelles du seed.
+    // SLU : 8,20 m (génois Sun 2000) − 6,60 m (1042-EX) = +160 cm, valeurs réelles du seed.
     await expect(page.getByTestId("delta-cm-slu_m")).toContainText("160")
     await expect(page.getByTestId("badge-comparable")).toHaveAttribute("data-comparable", "non")
     await expect(page.getByTestId("avertissements-comparaison")).toContainText("DIFFÉRENTS")
@@ -57,7 +57,7 @@ test.describe("Lot 4b — comparaison de voiles", () => {
 
   test("lecture : comparaison en lecture seule via lien profond ?a=&b=", async ({ page }) => {
     await signInWith(page, LECTURE)
-    const idA = await idExtractionParCode(page, "7792-SO")
+    const idA = await idExtractionParCode(page, "1042-EX")
     const idB = await idExtractionParCode(page, "0901-MM")
     await page.goto(`/comparaison?a=${idA}&b=${idB}`)
     await expect(page.getByTestId("resultat-comparaison")).toBeVisible({ timeout: 30000 })

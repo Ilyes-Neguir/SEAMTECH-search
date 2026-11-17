@@ -86,7 +86,7 @@ e2e-lot7   4 parcours verts au premier essai
 e2e-auth-nominatif       34 tests verts au premier essai
 e2e-scan-ocr-live         4 scénarios verts au premier essai en PostgreSQL
 accessibilite            82 écrans scannés, 0 violation WCAG 2.1 A/AA
-mesure-phase1     parcours complet de la fiche 7792-SO : 993 ms (critère < 120 s)
+mesure-phase1     parcours complet de la fiche 1042-EX : 993 ms (critère < 120 s)
 ```
 
 « Au premier essai » est la mention qui compte : le run précédent annonçait

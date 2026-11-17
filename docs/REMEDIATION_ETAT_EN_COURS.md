@@ -2282,7 +2282,7 @@ complète des échecs qu'on lui demandait. Deux tests de rejeu téléversé
 attendaient `deja_traite` et obtenaient :
 
 ```
-AssertionError: {'statut': 'traite', 'fiche': '7792-SO', 'raison': 'remplacee', …}
+AssertionError: {'statut': 'traite', 'fiche': '1042-EX', 'raison': 'remplacee', …}
 WARNING seamtech_search.fiches.persistance — Fiche id 1 REMPLACÉE sur place en
         révision 2 : tout écran resté sur la révision 1 sera refusé (409)
 ```

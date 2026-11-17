@@ -51,8 +51,8 @@ docker system df            # la part Docker (images, volumes orphelins)
 ## 4. La recherche renvoie vide
 
 ```bash
-# une requête connue doit répondre (la vraie fiche 7792-SO si importée) :
-curl -s -H "X-SEAMTECH-TOKEN: <token>" "http://127.0.0.1:8000/api/search?q=7792-SO"
+# une requête connue doit répondre (la vraie fiche 1042-EX si importée) :
+curl -s -H "X-SEAMTECH-TOKEN: <token>" "http://127.0.0.1:8000/api/search?q=1042-EX"
 ```
 
 - Aucune fiche en base dans les résultats : depuis le contrat du 2026-09-29

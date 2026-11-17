@@ -23,23 +23,23 @@ def _extract_with_text(monkeypatch, text: str) -> None:
 
 
 def test_description_extracts_value_on_same_line(monkeypatch, tmp_path: Path) -> None:
-    _extract_with_text(monkeypatch, "Fiche de fabrication 7792-SO - Porte coulissante")
+    _extract_with_text(monkeypatch, "Fiche de fabrication 1042-EX - Porte coulissante")
 
     result = extract_structured_pdf(tmp_path / "drawing.pdf", AppConfig(root_paths=[tmp_path]))
 
-    assert result.description == "7792-SO - Porte coulissante"
+    assert result.description == "1042-EX - Porte coulissante"
 
 
 def test_description_header_does_not_capture_following_line(monkeypatch, tmp_path: Path) -> None:
     _extract_with_text(
         monkeypatch,
-        "FICHE DE FABRICATION\nCommande 7792-SO\nReference: 7792-SO-GV",
+        "FICHE DE FABRICATION\nCommande 1042-EX\nReference: 1042-EX-GV",
     )
 
     result = extract_structured_pdf(tmp_path / "drawing.pdf", AppConfig(root_paths=[tmp_path]))
 
     assert result.description is None
-    assert result.reference == "7792-SO-GV"
+    assert result.reference == "1042-EX-GV"
 
 
 def test_field_capture_stops_at_next_column_not_end_of_line(monkeypatch, tmp_path: Path) -> None:

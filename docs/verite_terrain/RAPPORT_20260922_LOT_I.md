@@ -100,7 +100,7 @@ Fast-forward
 
 Corpus étiqueté : 12 fiches SYNTHÉTIQUES du Lot E (+2 a_valider, +1 rejetée),
 cotes SLU SYNTHÉTIQUES ajoutées (méthode `synthetique` en trace), et la **VRAIE
-fiche 7792-SO** entrée par le pipeline réglé (extraction gabarit v2 → écriture
+fiche 1042-EX** entrée par le pipeline réglé (extraction gabarit v2 → écriture
 RG3 → validation). Commande de reproduction :
 
 ```
@@ -113,16 +113,16 @@ Sortie brute (extrait intégral du jeu, sandbox 22/09, exit=0) :
 ```
 === JEU D'ESSAI — 8 questions (réponses obtenues) ===
 
-Q : quelle est la SLU de la fiche 7792-SO ?   [cote par fiche — fonds réel (6,60 m, vérité terrain)]
+Q : quelle est la SLU de la fiche 1042-EX ?   [cote par fiche — fonds réel (6,60 m, vérité terrain)]
    état = ok · citations = 2 · interprétations = 0
-   réponse : SLU de la fiche 7792-SO : 6,60 m (identiques en mesures dessin et finies).
-   → 7792-SO · cotes.finie.slu_m · 6,60 m · zone PDF ✓
-   → 7792-SO · cotes.dessin.slu_m · 6,60 m · zone PDF ✓
+   réponse : SLU de la fiche 1042-EX : 6,60 m (identiques en mesures dessin et finies).
+   → 1042-EX · cotes.finie.slu_m · 6,60 m · zone PDF ✓
+   → 1042-EX · cotes.dessin.slu_m · 6,60 m · zone PDF ✓
 
 Q : quelles voiles pour le bateau 29er ?   [voiles par bateau — fonds réel (Spi Asymétrique)]
    état = ok · citations = 1 · interprétations = 0
-   réponse : Voiles enregistrées pour le bateau 29er 15' : Spi Asymétrique (7792-SO).
-   → 7792-SO · fiche.type_voile · Spi Asymétrique · sans zone (source = base, pas le PDF)
+   réponse : Voiles enregistrées pour le bateau 29er 15' : Spi Asymétrique (1042-EX).
+   → 1042-EX · fiche.type_voile · Spi Asymétrique · sans zone (source = base, pas le PDF)
 
 Q : combien de fiches de type portant en 2024 ?   [comptage — corpus synthétique (1 fiche : 0812-SPI-001)]
    état = ok · citations = 1 · interprétations = 0
@@ -131,28 +131,28 @@ Q : combien de fiches de type portant en 2024 ?   [comptage — corpus synthéti
 
 Q : quelles fiches ont une SLU entre 6,5 et 6,7 m ?   [intervalle — synthétique + réel (3 fiches)]
    état = ok · citations = 3 · interprétations = 0
-   réponse : 3 fiche(s) avec SLU (mesures finies — jeu par défaut, précisez « en mesures dessin » pour l'autre jeu) entre 6,50 m et 6,70 m : 0701-GV-001 (6,62 m), 0702-GV-003 (6,55 m), 7792-SO (6,60 m).
+   réponse : 3 fiche(s) avec SLU (mesures finies — jeu par défaut, précisez « en mesures dessin » pour l'autre jeu) entre 6,50 m et 6,70 m : 0701-GV-001 (6,62 m), 0702-GV-003 (6,55 m), 1042-EX (6,60 m).
    → 0701-GV-001 · cotes.finie.slu_m · 6,62 m · sans zone (source = base, pas le PDF)
    → 0702-GV-003 · cotes.finie.slu_m · 6,55 m · sans zone (source = base, pas le PDF)
-   → 7792-SO · cotes.finie.slu_m · 6,60 m · zone PDF ✓
+   → 1042-EX · cotes.finie.slu_m · 6,60 m · zone PDF ✓
 
 Q : quelle matière pour le galon de bordure ?   [attribut galon — fonds réel (Nylon)]
    état = ok · citations = 1 · interprétations = 0
-   réponse : Matière du galon de bordure (seule fiche concernée, 7792-SO) : Nylon.
-   → 7792-SO · galon.bordure · Nylon · zone PDF ✓
+   réponse : Matière du galon de bordure (seule fiche concernée, 1042-EX) : Nylon.
+   → 1042-EX · galon.bordure · Nylon · zone PDF ✓
 
-Q : quelle est la longueur du mât de la fiche 7792-SO ?   [SANS SOURCE → refus explicite]
+Q : quelle est la longueur du mât de la fiche 1042-EX ?   [SANS SOURCE → refus explicite]
    état = sans_source · citations = 0 · interprétations = 0
    réponse : Je ne trouve pas cette information dans les fiches : la base ne contient pas ce champ, je n'invente aucune valeur.
 
-Q : quelle est la matière de la fiche 7792-SO ?   [AMBIGU → interprétations sourcées]
+Q : quelle est la matière de la fiche 1042-EX ?   [AMBIGU → interprétations sourcées]
    état = ambigu · citations = 0 · interprétations = 3
-   réponse : « Matière » est ambigu pour la fiche 7792-SO : précisez tissu, galon ou renfort — voici les valeurs consignées pour chaque lecture.
+   réponse : « Matière » est ambigu pour la fiche 1042-EX : précisez tissu, galon ou renfort — voici les valeurs consignées pour chaque lecture.
 
-Q : quel est le surplus de jonction de la fiche 7792-SO ?   [non applicable RG5 (consigné « ~ »)]
+Q : quel est le surplus de jonction de la fiche 1042-EX ?   [non applicable RG5 (consigné « ~ »)]
    état = ok · citations = 1 · interprétations = 0
-   réponse : Surplus de jonction de la fiche 7792-SO : consigné « ~ » dans la fiche — sans objet (non applicable), aucune valeur chiffrée.
-   → 7792-SO · jonction.surplus · « ~ » (sans objet — RG5) · zone PDF ✓
+   réponse : Surplus de jonction de la fiche 1042-EX : consigné « ~ » dans la fiche — sans objet (non applicable), aucune valeur chiffrée.
+   → 1042-EX · jonction.surplus · « ~ » (sans objet — RG5) · zone PDF ✓
 ```
 
 Les interprétations de Q7 (affichées par le panneau, chacune sourcée) :
@@ -200,7 +200,7 @@ commanditaire interdit :
 ```
 $ .venv/bin/pytest tests/test_assistant.py::test_refus_base_vide_n_invente_rien -v
 tests/test_assistant.py::test_refus_base_vide_n_invente_rien FAILED [100%]
-E           AssertionError: 'quelle est la longueur du mât de la fiche 7792-SO ?' → "D'après la fiche la plus proche du corpus, la valeur cherchée est 6,55 m."
+E           AssertionError: 'quelle est la longueur du mât de la fiche 1042-EX ?' → "D'après la fiche la plus proche du corpus, la valeur cherchée est 6,55 m."
 tests/test_assistant.py:122: AssertionError
 FAILED tests/test_assistant.py::test_refus_base_vide_n_invente_rien - Asserti...
 ```
@@ -291,7 +291,7 @@ mesure en ajoute 80.)
 ### 3.1 Temps de réponse sur les 8 questions — p50/p95, n exact, étiqueté
 
 Étiquette du corpus : **synthétique (Lot E, 12 fiches + cotes ajoutées) +
-fonds réel (1 fiche 7792-SO)** ; protocole : 1 passage d'échauffement puis
+fonds réel (1 fiche 1042-EX)** ; protocole : 1 passage d'échauffement puis
 **10 passages mesurés par question** ; sandbox Debian 12, PostgreSQL 16.2,
 postes locaux. Deux modes mesurés (n exact chacun) :
 
@@ -303,14 +303,14 @@ postes locaux. Deux modes mesurés (n exact chacun) :
 Détail par question (direct || HTTP, n = 10 chacune) :
 
 ```
-  direct p50    1.89 ms | p95    2.11 ms | max    2.21 ms || HTTP p50    7.31 ms | p95    8.23 ms | quelle est la SLU de la fiche 7792-SO ?
+  direct p50    1.89 ms | p95    2.11 ms | max    2.21 ms || HTTP p50    7.31 ms | p95    8.23 ms | quelle est la SLU de la fiche 1042-EX ?
   direct p50    2.19 ms | p95    2.87 ms | max    3.11 ms || HTTP p50    7.52 ms | p95    8.58 ms | quelles voiles pour le bateau 29er ?
   direct p50    2.43 ms | p95    4.05 ms | max    5.72 ms || HTTP p50    7.66 ms | p95   10.98 ms | combien de fiches de type portant en 2024 ?
   direct p50    1.88 ms | p95    1.97 ms | max    2.28 ms || HTTP p50    6.47 ms | p95    7.41 ms | quelles fiches ont une SLU entre 6,5 et 6,7 m ?
   direct p50    1.93 ms | p95    2.10 ms | max    2.35 ms || HTTP p50    7.04 ms | p95    7.33 ms | quelle matière pour le galon de bordure ?
-  direct p50    1.47 ms | p95    1.86 ms | max    1.93 ms || HTTP p50    6.34 ms | p95    7.12 ms | quelle est la longueur du mât de la fiche 7792-SO ?
-  direct p50    1.85 ms | p95    2.13 ms | max    2.35 ms || HTTP p50    6.47 ms | p95    7.00 ms | quelle est la matière de la fiche 7792-SO ?
-  direct p50    1.65 ms | p95    1.79 ms | max    1.88 ms || HTTP p50    6.05 ms | p95    6.78 ms | quel est le surplus de jonction de la fiche 7792-SO ?
+  direct p50    1.47 ms | p95    1.86 ms | max    1.93 ms || HTTP p50    6.34 ms | p95    7.12 ms | quelle est la longueur du mât de la fiche 1042-EX ?
+  direct p50    1.85 ms | p95    2.13 ms | max    2.35 ms || HTTP p50    6.47 ms | p95    7.00 ms | quelle est la matière de la fiche 1042-EX ?
+  direct p50    1.65 ms | p95    1.79 ms | max    1.88 ms || HTTP p50    6.05 ms | p95    6.78 ms | quel est le surplus de jonction de la fiche 1042-EX ?
 ```
 
 La même mesure tourne en CI (étape `perf` dédiée, **sans instrumentation**,
@@ -347,7 +347,7 @@ asserté par `test_invariant_reponses_sourcees_100_pourcent`.
    le garde de comptage de l'étape `perf` (3 mesures attendues, 4 publiées) —
    corrigé par `5a1510c`, incident documenté au §5.
 2. **Échelle réelle** : le fonds ne compte toujours qu'UNE fiche réelle
-   (7792-SO). Les mesures portent sur le corpus étiqueté synthétique + réel ;
+   (1042-EX). Les mesures portent sur le corpus étiqueté synthétique + réel ;
    la latence et la pertinence « grand volume » restent à re-mesurer quand les
    20-30 fiches réelles attendues seront importées.
 3. **Latence HTTP de bout en bout via serveur réseau** (uvicorn + proxy
@@ -404,7 +404,7 @@ assistant_jeu_8_corpus_mixte : p50 = 1.7 ms, p95 = 2.0 ms, max = 4.3 ms
    — seuil d'environnement CI 250 ms (critère produit 100 ms, étiqueté))
 50 requêtes synthétique : p50 = 8.2 ms, p95 = 9.7 ms, max = 10.4 ms (n = 50 …)
 1 500 fiches (mi-échelle) : p50 = 14.9 ms, p95 = 46.2 ms, max = 47.8 ms (n = 60 …)
-fonds réel 7792-SO (13 requêtes) : p50 = 8.8 ms, p95 = 9.2 ms, max = 9.7 ms (n = 65 …)
+fonds réel 1042-EX (13 requêtes) : p50 = 8.8 ms, p95 = 9.2 ms, max = 9.7 ms (n = 65 …)
 pytest -m "postgres and not perf and not sauvegarde" : passed=134 skipped=0
 ```
 

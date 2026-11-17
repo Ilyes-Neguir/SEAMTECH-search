@@ -24,8 +24,8 @@ La chaîne de livraison du dépôt `SEAMTECH-search` a été reprise, consolidé
    - Statut PR #21 vérifié via l'API GitHub : `mergeable: true` / `MERGEABLE`.
    - PR laissée ouverte et non fusionnée.
 4. **Garde anti-dérive de la vérité terrain** :
-   - Source unique établie dans le paquet applicatif : `seamtech_search/fiches/verite_7792.py` contenant les 74 cibles réparties en 12 familles.
-   - Ré-exporté par `docs/verite_terrain/VERITE_7792_COMPLETE.py` pour rétrocompatibilité et documentation.
+   - Source unique établie dans le paquet applicatif : `seamtech_search/fiches/verite_reference.py` contenant les 74 cibles réparties en 12 familles.
+   - Ré-exporté par `docs/verite_terrain/VERITE_REFERENCE_COMPLETE.py` pour rétrocompatibilité et documentation.
    - `seamtech_search/fiches/persistance.py` importe directement depuis la source unique sans aucun bloc de repli silencieux (`try ... except ImportError`).
    - Embarquement conteneur vérifié dans `Dockerfile` (`COPY seamtech_search ./seamtech_search`).
    - Preuve d'efficacité du test : altération démontrée ROUGE (`AssertionError: faux_bateau_pour_test_rouge ≠ 29er`, taux 98.7% != 100%) puis rétablie VERT (100.0%).
@@ -162,15 +162,15 @@ La PR est `MERGEABLE`, `mergeStateStatus: CLEAN`, 100 % des checks CI sont verts
 ## 5. Phase 4 — Garde anti-dérive de la vérité terrain
 
 ### 5.1. Source unique dans le paquet applicatif
-- Fichier créé : `seamtech_search/fiches/verite_7792.py` (74 cibles réparties en 12 familles : cotes 11, jonction 13, galon 12, fiche 11, renfort 9, materiau 8, option 3, finition 3, bateau 1, client 1, gamme 1, type_voile 1).
-- Ré-exportation par `docs/verite_terrain/VERITE_7792_COMPLETE.py` :
+- Fichier créé : `seamtech_search/fiches/verite_reference.py` (74 cibles réparties en 12 familles : cotes 11, jonction 13, galon 12, fiche 11, renfort 9, materiau 8, option 3, finition 3, bateau 1, client 1, gamme 1, type_voile 1).
+- Ré-exportation par `docs/verite_terrain/VERITE_REFERENCE_COMPLETE.py` :
   ```python
-  from seamtech_search.fiches.verite_7792 import VERITE_7792, VERITE_7792_COMPLETE
-  __all__ = ["VERITE_7792", "VERITE_7792_COMPLETE"]
+  from seamtech_search.fiches.verite_reference import VERITE_REFERENCE, VERITE_REFERENCE_COMPLETE
+  __all__ = ["VERITE_REFERENCE", "VERITE_REFERENCE_COMPLETE"]
   ```
 - Import direct dans `seamtech_search/fiches/persistance.py` :
   ```python
-  from seamtech_search.fiches.verite_7792 import VERITE_7792, VERITE_7792_COMPLETE
+  from seamtech_search.fiches.verite_reference import VERITE_REFERENCE, VERITE_REFERENCE_COMPLETE
   ```
   Sans aucun bloc `try ... except ImportError` de repli.
 - Embarquement Docker vérifié : `Dockerfile` comporte `COPY seamtech_search ./seamtech_search`.
@@ -178,7 +178,7 @@ La PR est `MERGEABLE`, `mergeStateStatus: CLEAN`, 100 % des checks CI sont verts
 ### 5.2. Preuve que le garde-fou mord (ROUGE puis VERT)
 
 #### Test altéré sur le code Python (ROUGE)
-Modification volontaire dans `seamtech_search/fiches/verite_7792.py` : `'bateau': 'faux_bateau_pour_test_rouge'`
+Modification volontaire dans `seamtech_search/fiches/verite_reference.py` : `'bateau': 'faux_bateau_pour_test_rouge'`
 Commande :
 ```bash
 python -m pytest tests/test_extraction_fiche_reference.py -k "test_banc_etendu_74_cibles_100_pourcent"
@@ -186,14 +186,14 @@ python -m pytest tests/test_extraction_fiche_reference.py -k "test_banc_etendu_7
 Sortie brute :
 ```text
 =================================== FAILURES ===================================
-_________ TestFiche7792Verite.test_banc_etendu_74_cibles_100_pourcent __________
+_________ TestFicheReferenceVerite.test_banc_etendu_74_cibles_100_pourcent __________
 
-self = <test_extraction_fiche_reference.TestFiche7792Verite object at 0x7fc2a3d51090>
-fiche_7792 = FicheExtraite(...)
+self = <test_extraction_fiche_reference.TestFicheReferenceVerite object at 0x7fc2a3d51090>
+fiche_reference = FicheExtraite(...)
 
-    def test_banc_etendu_74_cibles_100_pourcent(self, fiche_7792: FicheExtraite) -> None:
-        taux, ecarts = evaluer_verite(fiche_7792, VERITE_7792)
-        assert len(VERITE_7792) == 74, f"attendu 74 cibles, obtenu {len(VERITE_7792)}"
+    def test_banc_etendu_74_cibles_100_pourcent(self, fiche_reference: FicheExtraite) -> None:
+        taux, ecarts = evaluer_verite(fiche_reference, VERITE_REFERENCE)
+        assert len(VERITE_REFERENCE) == 74, f"attendu 74 cibles, obtenu {len(VERITE_REFERENCE)}"
 >       assert taux == 1.0, f"taux {taux:.1%} != 100 % : {ecarts}"
 E       AssertionError: taux 98.7% != 100 % : [{'champ': 'bateau', 'attendu': 'faux_bateau_pour_test_rouge', 'lu': '29er'}]
 E       assert 0.9865 == 1.0
@@ -203,7 +203,7 @@ tests/test_extraction_fiche_reference.py:44: AssertionError
 ```
 
 #### Test altéré sur le fichier JSON de vérité (ROUGE)
-Altération volontaire dans `docs/verite_terrain/7792-SO_ffab_complete.json` :
+Altération volontaire dans `docs/verite_terrain/1042-EX_ffab_complete.json` :
 `"bateau": "bateau_piege_anti_derive"`
 
 Exécution de `scripts/audit_projet.py --rapide` :
@@ -213,26 +213,26 @@ GARDE-FOU SEAMTECH-search — invariants déjà cassés par le passé
 ==========================================================================
 ...
 6. Source unique de vérité terrain (74 cibles)
-  [OK  ] seamtech_search/fiches/verite_7792.py présent
+  [OK  ] seamtech_search/fiches/verite_reference.py présent
   [OK  ] source unique contient 74 cibles — 74 cibles
   [OK  ] docs/ ré-exporte sans dérive — égalité stricte
-  [OK  ] docs/verite_terrain/7792-SO_ffab_complete.json présent
-  [ÉCHEC] JSON attendu == VERITE_7792 (égalité stricte 74 cibles) — dérive détectée
+  [OK  ] docs/verite_terrain/1042-EX_ffab_complete.json présent
+  [ÉCHEC] JSON attendu == VERITE_REFERENCE (égalité stricte 74 cibles) — dérive détectée
 
 ==========================================================================
 BILAN : 11/12 contrôles verts
 À CORRIGER :
-   - JSON attendu == VERITE_7792 (égalité stricte 74 cibles) (dérive détectée)
+   - JSON attendu == VERITE_REFERENCE (égalité stricte 74 cibles) (dérive détectée)
 ==========================================================================
 ```
 
-Exécution du test unitaire `test_garde_derive_json_7792_complete` :
+Exécution du test unitaire `test_garde_derive_json_reference_complete` :
 ```text
 =================================== FAILURES ===================================
-__________ TestAntiDeriveVerite.test_garde_derive_json_7792_complete ___________
+__________ TestAntiDeriveVerite.test_garde_derive_json_reference_complete ___________
 ...
->       assert attendu == VERITE_7792, "Dérive détectée entre 7792-SO_ffab_complete.json et la source unique verite_7792.py"
-E       AssertionError: Dérive détectée entre 7792-SO_ffab_complete.json et la source unique verite_7792.py
+>       assert attendu == VERITE_REFERENCE, "Dérive détectée entre 1042-EX_ffab_complete.json et la source unique verite_reference.py"
+E       AssertionError: Dérive détectée entre 1042-EX_ffab_complete.json et la source unique verite_reference.py
 E       Differing items:
 E       {'bateau': 'bateau_piege_anti_derive'} != {'bateau': '29er'}
 ======================= 1 failed, 16 deselected in 0.26s =======================
@@ -246,17 +246,17 @@ Rétablissement de la valeur réelle : `'bateau': '29er'` dans le code et dans l
 ### 5.3. Rejeu contradictoire des bancs
 - **CLI Banc** :
   ```bash
-  python -m seamtech_search.fiches.cli banc sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf
+  python -m seamtech_search.fiches.cli banc sample_data/CLIENT-1042-EX/fiche-1042-EX_ffab.pdf
   ```
   Sortie brute :
   ```text
-  Banc gabarit FICHE_PORTANT_V1 / fiche-7792-SO_ffab.pdf
+  Banc gabarit FICHE_PORTANT_V1 / fiche-1042-EX_ffab.pdf
     champs corrects : 74/74 (100.0%, seuil 90%)
     verdict : CONFORME
   ```
 - **Harnais `validate_extraction.py`** :
   ```bash
-  python scripts/validate_extraction.py --verite docs/verite_terrain/VERITE_7792_COMPLETE.py --moteur gabarit sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf
+  python scripts/validate_extraction.py --verite docs/verite_terrain/VERITE_REFERENCE_COMPLETE.py --moteur gabarit sample_data/CLIENT-1042-EX/fiche-1042-EX_ffab.pdf
   ```
   Sortie brute :
   ```text
@@ -317,9 +317,9 @@ Statut global : **SUCCESS (8/8 jobs verts)**
 
 ## 7. Fichiers et artefacts mis à jour
 
-- `seamtech_search/fiches/verite_7792.py` : Nouvelle source unique de la vérité terrain (74 cibles).
-- `docs/verite_terrain/VERITE_7792_COMPLETE.py` : Re-exportation sans duplication.
-- `docs/verite_terrain/7792-SO_ffab_complete.json` : Fichier de référence JSON couvert par le garde anti-dérive en égalité stricte (74 cibles).
+- `seamtech_search/fiches/verite_reference.py` : Nouvelle source unique de la vérité terrain (74 cibles).
+- `docs/verite_terrain/VERITE_REFERENCE_COMPLETE.py` : Re-exportation sans duplication.
+- `docs/verite_terrain/1042-EX_ffab_complete.json` : Fichier de référence JSON couvert par le garde anti-dérive en égalité stricte (74 cibles).
 - `seamtech_search/fiches/persistance.py` : Importation stricte sans fallback silencieux.
 - `seamtech_search/sauvegarde.py` : Purge locale symétrique et rétention respectant le dernier dump.
 - `tests/test_sauvegarde_unites.py` : Marqueur `sauvegarde` et 4 tests de rétention locale/symétrique.

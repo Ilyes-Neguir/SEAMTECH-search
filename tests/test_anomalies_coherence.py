@@ -26,15 +26,15 @@ from seamtech_search.fiches.persistance import (
 )
 
 RACINE = Path(__file__).resolve().parent.parent
-PDF_7792 = RACINE / "sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf"
+PDF_REFERENCE = RACINE / "sample_data/CLIENT-1042-EX/fiche-1042-EX_ffab.pdf"
 PDF_GENOIS = RACINE / "sample_data/CLIENT-GENOA/fiche-genois.pdf"
 SEUILS_REELS = RACINE / "config/seuils_confiance.json"
 
 
 @pytest.fixture(scope="module")
-def fiche_7792():
+def fiche_reference():
 
-    return extraire_fiche(PDF_7792, gabarits=list(GABARITS_EMBARQUES))
+    return extraire_fiche(PDF_REFERENCE, gabarits=list(GABARITS_EMBARQUES))
 
 
 class TestRG16Incoherences:
@@ -66,8 +66,8 @@ class TestRG16Incoherences:
         codes = {a.code for a in evaluer_anomalies(fiche)}
         assert "cotes_incoherentes" in codes
 
-    def test_fiche_coherente_passe(self, fiche_7792: FicheExtraite) -> None:
-        assert evaluer_anomalies(fiche_7792) == []
+    def test_fiche_coherente_passe(self, fiche_reference: FicheExtraite) -> None:
+        assert evaluer_anomalies(fiche_reference) == []
 
     def test_cotes_absentes_sont_signalees(self) -> None:
         fiche = FicheExtraite(code="TEST-VIDE")
@@ -90,14 +90,14 @@ class TestRoutageSeuils:
         assert seuils["structurels"] == 0.98
         assert seuils["cotes"] == 0.95
 
-    def test_anomalie_bloque_le_passage_direct(self, fiche_7792: FicheExtraite) -> None:
-        fiche = fiche_7792.model_copy(deep=True)
+    def test_anomalie_bloque_le_passage_direct(self, fiche_reference: FicheExtraite) -> None:
+        fiche = fiche_reference.model_copy(deep=True)
         fiche.anomalies.append(Anomalie(code="cote_hors_plage", gravite="moyenne", message="test"))
         decision = routage(fiche, {"structurels": 0.0, "cotes": 0.0, "materiaux": 0.0, "finitions_options": 0.0, "notes_libres": 0.0})
         assert decision["voie"] == "relecture_ciblee"
 
-    def test_tout_au_dessus_des_seuils_et_sans_anomalie(self, fiche_7792: FicheExtraite) -> None:
-        decision = routage(fiche_7792, {"structurels": 0.0, "cotes": 0.0, "materiaux": 0.0, "finitions_options": 0.0, "notes_libres": 0.0})
+    def test_tout_au_dessus_des_seuils_et_sans_anomalie(self, fiche_reference: FicheExtraite) -> None:
+        decision = routage(fiche_reference, {"structurels": 0.0, "cotes": 0.0, "materiaux": 0.0, "finitions_options": 0.0, "notes_libres": 0.0})
         assert decision["voie"] == "passage_direct"
 
     def test_gabarit_inconnu_reprise_complete(self) -> None:
@@ -122,7 +122,7 @@ class TestToleranceSurfaceFigee:
         return fiche
 
     def test_valeurs_reelles_de_la_fiche_reference_sans_anomalie(self) -> None:
-        # SLU 6,60 / SLE 5,50 / SPA 15,71 — les valeurs imprimées du 7792-SO
+        # SLU 6,60 / SLE 5,50 / SPA 15,71 — les valeurs imprimées du 1042-EX
         assert evaluer_anomalies(self._fiche_portant(15.71)) == []
 
     def test_formule_equilaterale_du_tableur_sans_anomalie(self) -> None:
@@ -144,13 +144,13 @@ class TestPlafondDeConfiance:
     """Constat B (revue) : le palier haut de l'échelle doit dépasser le seuil
     le plus strict — sinon « passage direct » est mort par construction."""
 
-    def test_champ_parfaitement_ancre_atteint_le_seuil_le_plus_strict(self, fiche_7792) -> None:
-        confiances = {c.champ: c.confiance for c in fiche_7792.champs}
+    def test_champ_parfaitement_ancre_atteint_le_seuil_le_plus_strict(self, fiche_reference) -> None:
+        confiances = {c.champ: c.confiance for c in fiche_reference.champs}
         for champ in ("fiche.code", "fiche.client", "fiche.designation", "fiche.quantite"):
             assert confiances[champ] >= 0.98, f"{champ} = {confiances[champ]} < 0,98"
 
-    def test_cotes_parfaitement_ancrees_atteignent_leur_seuil(self, fiche_7792) -> None:
-        finie = next(c for c in fiche_7792.cotes if c.jeu == "finie")
+    def test_cotes_parfaitement_ancrees_atteignent_leur_seuil(self, fiche_reference) -> None:
+        finie = next(c for c in fiche_reference.cotes if c.jeu == "finie")
         for champ in finie.champs:
             assert champ.confiance >= 0.95, f"{champ.champ} = {champ.confiance} < 0,95"
 
@@ -175,11 +175,11 @@ class TestPlafondDeConfiance:
         _construire_et_ranger(fiche_bornee, regle, "2", 0, mots, borne_naturelle=True)
         assert fiche_bornee.champs[0].confiance == 0.99
 
-    def test_routage_passage_direct_aux_seuils_reels(self, fiche_7792) -> None:
+    def test_routage_passage_direct_aux_seuils_reels(self, fiche_reference) -> None:
         """Bout-en-bout : avec l'échelle 0,99 et les seuils non calibrés du
-        dépôt, la reconstruction 7792 atteint la voie « passage direct » —
+        dépôt, la reconstruction 1042 atteint la voie « passage direct » —
         la calibration réelle reste l'affaire de la Tâche 3."""
-        decision = routage(fiche_7792, charger_seuils(SEUILS_REELS))
+        decision = routage(fiche_reference, charger_seuils(SEUILS_REELS))
         assert decision["voie"] == "passage_direct", decision
 
 
@@ -224,12 +224,12 @@ class TestVerrouCalibration:
 class TestComptesParPalier:
     """Tâche 1b : l'échelle est ordinale — le tableau de bord comptera par palier."""
 
-    def test_comptes_par_palier_pas_de_moyenne(self, fiche_7792) -> None:
+    def test_comptes_par_palier_pas_de_moyenne(self, fiche_reference) -> None:
         from seamtech_search.fiches.extraction import compter_par_palier
 
-        comptes = compter_par_palier(fiche_7792)
+        comptes = compter_par_palier(fiche_reference)
         assert set(comptes) == {"certain", "lu", "decompose", "partiel"}
-        assert sum(comptes.values()) == len([c for c in fiche_7792.tous_les_champs() if c.valeur_normalisee is not None])
+        assert sum(comptes.values()) == len([c for c in fiche_reference.tous_les_champs() if c.valeur_normalisee is not None])
         assert comptes["certain"] > 0  # les lectures déterministes de la reconstruction
 
     def test_paliers_ordinnaux_separes(self) -> None:

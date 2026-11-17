@@ -94,13 +94,13 @@ résultats et les rejoue à chaque CI sur serveur réel.
 | Normalisation requête : « 6,6 », « 6.60 », « 6,60 m », « 660 cm », « 6600 mm » → même valeur | `analyser_requete_dimension` + `RequeteDimension.valeur_convergente()` (réutilise `vers_metres` du module d'extraction). Un seul essai unitaire prouve la convergence des cinq formes. |
 | Requête numérique seule → valeur dans TOUTES les cotes ±0,5 % par le chemin numérique existant, pas via tsvector | `sources_actives == ["dimension"]` — bornes sur les 7 colonnes de `v_fiche_recherche` (même mécanique que `cote=&min=&max=`), `BETWEEN` ORé, tolérance `TOLERANCE_DIMENSION = 0.005`. Ordonné par écart à la valeur. |
 | « spi 6,60 » / « SLU 6,60 » → orientation cote nommée | Alias de cotes (`slu`, `sle`, `sf`, `shw`, `spa`, `tetiere`/`têtière`, `poids`, `guindant`) → filtre sur la cote seule, valeur convertie dans son unité métier (« tetiere 150 mm » → 15 cm). « spi » n'est pas un alias (type de voile) : les mots restent textuels, la valeur filtre sur toutes les cotes. |
-| Frontière années/codes | Un **entier nu** sans unité ni cote nommée n'est jamais une dimension : « spi sailonet 2026 », « 7792-SO », « 0701-GV-001 », « 29er » restent purement textuels (garde de non-régression dédié). « tetiere 15 » fait exception car l'alias désambiguïse. |
+| Frontière années/codes | Un **entier nu** sans unité ni cote nommée n'est jamais une dimension : « spi exemplia 2026 », « 1042-EX », « 0701-GV-001 », « 29er » restent purement textuels (garde de non-régression dédié). « tetiere 15 » fait exception car l'alias désambiguïse. |
 
 ## 3. Mesures — RÉEL / SYNTHÉTIQUE / NON MESURÉ
 
 | Catégorie | Mesure (commande + sortie brute) |
 |---|---|
-| **RÉEL** | Suite PostgreSQL complète sur serveur 16.2 réel : `pytest -m postgres -q` → **228 passed, 2 skipped**. Dont rappel **50/50** (`[mesure Lot E] 50 requêtes : rappel@10 = 50/50`) et **13/13** (`[mesure Tâche 3 — fonds réel] 13/13 requêtes retrouvent 7792-SO au rang 1`) — aucune régression. Suite sans service : `pytest -m "not postgres and not s3 and not perf" -q` → **787 passed, 3 skipped, 257 deselected** (baseline pré-Phase 1 : 771 passed — 771 conservés, 16 ajoutés, 0 perdu). |
+| **RÉEL** | Suite PostgreSQL complète sur serveur 16.2 réel : `pytest -m postgres -q` → **228 passed, 2 skipped**. Dont rappel **50/50** (`[mesure Lot E] 50 requêtes : rappel@10 = 50/50`) et **13/13** (`[mesure Tâche 3 — fonds réel] 13/13 requêtes retrouvent 1042-EX au rang 1`) — aucune régression. Suite sans service : `pytest -m "not postgres and not s3 and not perf" -q` → **787 passed, 3 skipped, 257 deselected** (baseline pré-Phase 1 : 771 passed — 771 conservés, 16 ajoutés, 0 perdu). |
 | **RÉEL (latence locale sandbox)** | `pytest -m perf` → p95 = 15,7 ms (50 requêtes synthétiques), 46,8 ms (1 500 fiches), 13,8 ms (fonds réel), **15,2 ms** (recherche par dimension, 6 formes × 10) — toutes < 100 ms. Contexte : sandbox, base jetable — pas le VPS01 ni le poste atelier. |
 | **SYNTHÉTIQUE** | Scale-bench 10 000 fiches : rerun du workflow après 019 à déclencher sur la PR (le workflow se déclenche sur `schema_metier.py`/`recherche.py`), avant/après archivés dans `docs/benchmarks/`. |
 | **NON MESURÉ** | Poste Windows du commanditaire ; parcours live complet (la CI e2e live le prouve sur son service, pas sur sa machine) ; chronos humains REF-001..007. |
@@ -116,7 +116,7 @@ résultats et les rejoue à chaque CI sur serveur réel.
 - `docs/RELEASE_CANDIDATE_CHECKLIST.md` §5 : 19 lignes, `019_recherche_dimension 33`.
 - `docs/API.md` : contrat « Recherche par dimension (Phase 1) » + `dimension_active`.
 - **Garde E2E live : 8 → 10 tests** (`frontend/e2e/recherche-dimension.spec.ts`,
-  2 tests : « 6,60 »/« 6.60 »/« 660 cm » convergent sur la vraie 7792-SO, et
+  2 tests : « 6,60 »/« 6.60 »/« 660 cm » convergent sur la vraie 1042-EX, et
   « SLU 6,60 » oriente la cote nommée). La porte CI exige **10 passés au
   premier essai, 0 flaky, 0 saut** (composantes : 3 validation + 1 badge +
   4 Phase 2.2 + **2 recherche par dimension**).

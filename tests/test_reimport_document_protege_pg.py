@@ -10,7 +10,7 @@ import pytest
 from seamtech_search.config import AppConfig
 from seamtech_search.fiches import depot
 from seamtech_search.import_pipeline import import_folder
-from tests.test_depot_transactionnel import ARCHIVE_7792, base_depot, sans_auto_validation  # noqa: F401
+from tests.test_depot_transactionnel import ARCHIVE_REFERENCE, base_depot, sans_auto_validation  # noqa: F401
 
 pytestmark = pytest.mark.postgres
 
@@ -20,7 +20,7 @@ def test_reimport_identique_preserve_references_et_metadonnees(base_depot, tmp_p
     source = tmp_path / 'archive'
     source.mkdir()
     pdf = source / 'fiche.pdf'
-    shutil.copy(ARCHIVE_7792 / 'fiche-7792-SO_ffab.pdf', pdf)
+    shutil.copy(ARCHIVE_REFERENCE / 'fiche-1042-EX_ffab.pdf', pdf)
     resultat = depot.deposer_dossier(index, source)
     assert resultat['statut'] == 'traite'
     with index.connect() as connexion:
@@ -50,7 +50,7 @@ def test_reimport_conflit_publie_sans_remplacer_la_piece_protegee(base_depot, tm
     source = tmp_path / 'archive'
     source.mkdir()
     pdf = source / 'fiche.pdf'
-    shutil.copy(ARCHIVE_7792 / 'fiche-7792-SO_ffab.pdf', pdf)
+    shutil.copy(ARCHIVE_REFERENCE / 'fiche-1042-EX_ffab.pdf', pdf)
     assert depot.deposer_dossier(index, source)['statut'] == 'traite'
     with index.connect() as connexion, connexion.cursor() as curseur:
         curseur.execute('SELECT id, content_hash, source_sha256, object_key, role, id_fiche FROM documents WHERE path = %s',

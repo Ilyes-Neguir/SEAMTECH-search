@@ -64,7 +64,7 @@ RACINE = Path(__file__).resolve().parents[1]
 COMPOSE = RACINE / "docker-compose.yml"
 URL_PG = os.environ.get("SEAMTECH_TEST_DATABASE_URL", "")
 URL_REDIS = os.environ.get("SEAMTECH_TEST_REDIS_URL", "")
-FICHE = RACINE / "sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf"
+FICHE = RACINE / "sample_data/CLIENT-1042-EX/fiche-1042-EX_ffab.pdf"
 TOKEN = "jeton-de-test-partage-web-worker"
 
 pytestmark = [pytest.mark.redis_queue, pytest.mark.postgres]

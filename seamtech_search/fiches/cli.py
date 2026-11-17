@@ -9,7 +9,7 @@ Usage :
 ``extraire`` ne touche À AUCUNE base : il lit le PDF et imprime le rapport
 champ par champ (valeur, confiance, page, zone). ``ecrire`` ajoute
 l'écriture transactionnelle en base (statut ``a_valider``). ``init``
-applique les migrations, enregistre les gabarits et la vérité 7792 dans
+applique les migrations, enregistre les gabarits et la vérité 1042 dans
 ``gabarit_test``. ``banc`` rejoue la non-régression du gabarit de référence.
 
 La route HTTP et l'interface opérateur sont du ressort des lots C et D —
@@ -35,11 +35,11 @@ from seamtech_search.fiches.gabarits import (
 from seamtech_search.fiches.modeles import FicheExtraite
 from seamtech_search.fiches.persistance import (
     SEUIL_GABARIT_TEST,
-    VERITE_7792,
+    VERITE_REFERENCE,
     charger_seuils,
     ecrire_fiche,
     evaluer_verite,
-    initialiser_verite_7792,
+    initialiser_verite_reference,
     routage,
     verifier_non_regression,
 )
@@ -149,9 +149,9 @@ def _cmd_init(arguments: argparse.Namespace) -> int:
     index.run_migrations()
     initialiser_gabarits(index)
     enregistrer_gabarit(index, GABARIT_REPRISE)
-    initialiser_verite_7792(index, Path(arguments.pdf) if arguments.pdf else None)
+    initialiser_verite_reference(index, Path(arguments.pdf) if arguments.pdf else None)
     print(f"Gabarits enregistrés : {', '.join(g.code for g in charger_gabarits(index))}")
-    print("Vérité 7792 enregistrée dans gabarit_test (seuil 0,90).")
+    print("Vérité 1042 enregistrée dans gabarit_test (seuil 0,90).")
     return 0
 
 
@@ -162,14 +162,14 @@ def _cmd_banc(arguments: argparse.Namespace) -> int:
         index = _index(arguments.database_url)
         resultat = verifier_non_regression(index, fiche, nom_fichier=arguments.nom)
     else:
-        taux, ecarts = evaluer_verite(fiche, VERITE_7792)
+        taux, ecarts = evaluer_verite(fiche, VERITE_REFERENCE)
         seuil = SEUIL_GABARIT_TEST
         resultat = {
             "taux": taux,
             "seuil": seuil,
             "conforme": taux >= seuil,
             "ecarts": ecarts,
-            "total": len(VERITE_7792),
+            "total": len(VERITE_REFERENCE),
         }
     print(f"Banc gabarit {fiche.gabarit_code} / {arguments.nom}")
     print(
@@ -246,9 +246,9 @@ def principal(argv: list[str] | None = None) -> int:
     ecrire.add_argument("--database-url", required=True)
     ecrire.add_argument("--seuils", default=None)
 
-    init = sous.add_parser("init", help="migrations + gabarits embarqués + vérité 7792 (idempotent)")
+    init = sous.add_parser("init", help="migrations + gabarits embarqués + vérité 1042 (idempotent)")
     init.add_argument("--database-url", required=True)
-    init.add_argument("--pdf", default=None, help="chemin du PDF 7792 (empreinte SHA-256 enregistrée)")
+    init.add_argument("--pdf", default=None, help="chemin du PDF 1042 (empreinte SHA-256 enregistrée)")
 
     deposer = sous.add_parser("deposer", help="Lot C : dépose UN dossier (fiche + pièces jointes, lot suivi)")
     deposer.add_argument("dossier")
@@ -278,7 +278,7 @@ def principal(argv: list[str] | None = None) -> int:
     banc.add_argument("chemin")
     banc.add_argument("--database-url", default=None, help="base PostgreSQL (si omis : banc autonome)")
     banc.add_argument("--code", default="FICHE_PORTANT_V1")
-    banc.add_argument("--nom", default="fiche-7792-SO_ffab.pdf")
+    banc.add_argument("--nom", default="fiche-1042-EX_ffab.pdf")
 
     arguments = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s : %(message)s")

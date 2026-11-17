@@ -6,14 +6,14 @@ import { signIn } from "./helpers"
 // est rendu en nœuds React : les correspondances sont de vrais éléments
 // <mark>, jamais une chaîne HTML interprétée.
 
-const CODE_REEL = "7792-SO"
+const CODE_REEL = "1042-EX"
 
 test.describe("Recherche — extrait du document (Lot 4a)", () => {
   test.skip(!process.env.SEAMTECH_E2E_DATABASE_URL, "e2e live : requiert SEAMTECH_E2E_DATABASE_URL (PostgreSQL)")
 
   test("une recherche texte affiche l'extrait pertinent avec le terme surligné", async ({ page }) => {
     await signIn(page)
-    await page.goto("/recherche?q=" + encodeURIComponent("Sailonet"))
+    await page.goto("/recherche?q=" + encodeURIComponent("Exemplia"))
 
     const ligne = page.locator(`li[data-code="${CODE_REEL}"]`)
     await expect(ligne).toBeVisible({ timeout: 15000 })
@@ -21,7 +21,7 @@ test.describe("Recherche — extrait du document (Lot 4a)", () => {
     const extrait = ligne.getByTestId("fiche-extrait")
     await expect(extrait).toBeVisible()
     await expect(extrait).toContainText(/Extrait du document|Aperçu des champs de la fiche/)
-    await expect(extrait.getByTestId("extrait-correspondance").filter({ hasText: /sailonet/i }).first()).toBeVisible()
+    await expect(extrait.getByTestId("extrait-correspondance").filter({ hasText: /exemplia/i }).first()).toBeVisible()
 
     const texte = (await extrait.locator("p").textContent()) ?? ""
     expect(texte.length).toBeGreaterThan(0)
@@ -32,7 +32,7 @@ test.describe("Recherche — extrait du document (Lot 4a)", () => {
 
   test("le parcours sans mot-clé garde un aperçu borné pour comparer les fiches", async ({ page }) => {
     await signIn(page)
-    await page.goto("/recherche?q=7792")
+    await page.goto("/recherche?q=1042")
 
     const ligne = page.locator(`li[data-code="${CODE_REEL}"]`)
     await expect(ligne).toBeVisible({ timeout: 15000 })

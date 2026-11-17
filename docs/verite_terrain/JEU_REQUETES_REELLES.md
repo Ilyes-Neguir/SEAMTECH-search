@@ -2,7 +2,7 @@
 
 Statut : **REJOUÉ ET MESURÉ le 21/09/2026** (voir « Compte rendu de rejeu » en
 bas de page). Les requêtes ci-dessous sont écrites comme un opérateur les
-taperait, à partir du contenu CONNU de la vraie fiche 7792-SO (texte relevé par
+taperait, à partir du contenu CONNU de la vraie fiche 1042-EX (texte relevé par
 l'audit indépendant du 21/09 et vérité terrain §13) — pas d'invention : chaque
 terme provient du document.
 
@@ -23,27 +23,27 @@ l'architecture, pas le fonds réel.
 3. Portée de recherche : `valide` par défaut ; pendant la pré-validation,
    `inclure_a_valider=true`.
 
-## Les requêtes (ce qui doit remonter : la fiche 7792-SO)
+## Les requêtes (ce qui doit remonter : la fiche 1042-EX)
 
 | # | Requête | Nature | Attendu |
 |---|---|---|---|
-| 1 | `7792-SO` | code exact (séparateurs) | 7792-SO en tête |
-| 2 | `7792` | code partiel | 7792-SO présente |
-| 3 | `sailonet` | client | 7792-SO présente |
-| 4 | `cruette` | client (raison sociale) | 7792-SO présente |
-| 5 | `29er` | bateau | 7792-SO présente |
-| 6 | `spi` | type de voile | 7792-SO présente |
-| 7 | `spi asymétrique` | type complet | 7792-SO présente |
-| 8 | `monofilm` | matière | 7792-SO présente |
-| 9 | `monofilm k903` | matière précise | 7792-SO présente |
-| 10 | `spi sailonet 2026` | combinaison opérateur | 7792-SO présente |
-| 11 | `spi 29er` | type + bateau | 7792-SO présente |
-| 12 | `monofime` | FAUTE sur matière | 7792-SO présente (filet trigrammes) |
-| 13 | `voile de portant` | titre | 7792-SO présente |
+| 1 | `1042-EX` | code exact (séparateurs) | 1042-EX en tête |
+| 2 | `1042` | code partiel | 1042-EX présente |
+| 3 | `exemplia` | client | 1042-EX présente |
+| 4 | `demo` | client (raison sociale) | 1042-EX présente |
+| 5 | `29er` | bateau | 1042-EX présente |
+| 6 | `spi` | type de voile | 1042-EX présente |
+| 7 | `spi asymétrique` | type complet | 1042-EX présente |
+| 8 | `monofilm` | matière | 1042-EX présente |
+| 9 | `monofilm k903` | matière précise | 1042-EX présente |
+| 10 | `spi exemplia 2026` | combinaison opérateur | 1042-EX présente |
+| 11 | `spi 29er` | type + bateau | 1042-EX présente |
+| 12 | `monofime` | FAUTE sur matière | 1042-EX présente (filet trigrammes) |
+| 13 | `voile de portant` | titre | 1042-EX présente |
 
 ## Compte rendu de rejeu — MESURÉ le 21/09/2026
 
-Fonds réel : **1 fiche** (7792-SO), entrée par le pipeline complet réglé
+Fonds réel : **1 fiche** (1042-EX), entrée par le pipeline complet réglé
 (extraction gabarit v2 du registre → écriture → validation, qui rafraîchit le
 `search_vector`). Mesures : `tests/test_recherche_fonds_reel.py`.
 
@@ -52,7 +52,7 @@ Fonds réel : **1 fiche** (7792-SO), entrée par le pipeline complet réglé
 | Étape | Rappel | Détail |
 |---|---|---|
 | Index nourri par le gabarit **synthétique** (état Lot E) | non re-mesuré : l'index du Lot E était semé en SQL direct, pas par extraction | — |
-| Index nourri par l'extraction réglée, vecteur Lot E d'origine | **11/13** (mesuré) | absentes : « cruette » (chantier client hors agrégat) et « spi sailonet 2026 » (année hors agrégat, AND lexical) |
+| Index nourri par l'extraction réglée, vecteur Lot E d'origine | **11/13** (mesuré) | absentes : « demo » (chantier client hors agrégat) et « spi exemplia 2026 » (année hors agrégat, AND lexical) |
 | Index nourri par l'extraction réglée + **migration 013** (chantier + année dans le texte pondéré B) | **13/13**, toutes au rang 1 | les 11 autres requêtes non dégradées |
 
 Les deux absences n'étaient pas des défauts d'extraction : le chantier du
@@ -66,16 +66,16 @@ inchangée.
 
 | # | Requête | Résultat | Rang |
 |---|---|---|---|
-| 1 | `7792-SO` | présente | 1 |
-| 2 | `7792` | présente | 1 |
-| 3 | `sailonet` | présente | 1 |
-| 4 | `cruette` | présente | 1 |
+| 1 | `1042-EX` | présente | 1 |
+| 2 | `1042` | présente | 1 |
+| 3 | `exemplia` | présente | 1 |
+| 4 | `demo` | présente | 1 |
 | 5 | `29er` | présente | 1 |
 | 6 | `spi` | présente | 1 |
 | 7 | `spi asymétrique` | présente | 1 |
 | 8 | `monofilm` | présente | 1 |
 | 9 | `monofilm k903` | présente | 1 |
-| 10 | `spi sailonet 2026` | présente | 1 |
+| 10 | `spi exemplia 2026` | présente | 1 |
 | 11 | `spi 29er` | présente | 1 |
 | 12 | `monofime` | présente | 1 |
 | 13 | `voile de portant` | présente | 1 |
@@ -89,7 +89,7 @@ les deux.
 | Axe | Valeur mesurée | Effectif |
 |---|---|---|
 | type_voile | Spi Asymétrique | 1 |
-| client | Sailonet | 1 |
+| client | Exemplia | 1 |
 | bateau | 29er 15' | 1 |
 | gamme | Medium Régate | 1 |
 | annee | 2026 | 1 |

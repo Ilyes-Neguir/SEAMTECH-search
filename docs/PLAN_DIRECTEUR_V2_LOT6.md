@@ -65,7 +65,7 @@ liste « à décider ») ; la saisie libre (motif) n'est pas un clic.
   liens visibles/masqués conformes, puis **chaque lien promis est ouvert**
   et ne doit pas déboucher sur un refus d'accès.
 - **Chaîne liens croisés** : Extractions → « Confiance… » → évaluation → une
-  fiche source rattachée (7792-SO) ouvre sa fiche métier.
+  fiche source rattachée (1042-EX) ouvre sa fiche métier.
 
 ## Commits du lot
 
@@ -83,8 +83,8 @@ liste « à décider ») ; la saisie libre (motif) n'est pas un clic.
   couverture 86,08 % (plancher 85 %).
 - Parcours navigateur au premier essai : **Lot 6 3/3** (3 clics par acteur
   comptés, PDF téléchargé relu en octets, navigation sans impasse sur 4
-  rôles, chaîne de liens croisés 7792-SO) ; Lot 5 3/3, Lot 4b 3/3, Lot 3b
-  3/3, Lot 1 7/7 ; parcours complet 7792-SO : **578 ms**.
+  rôles, chaîne de liens croisés 1042-EX) ; Lot 5 3/3, Lot 4b 3/3, Lot 3b
+  3/3, Lot 1 7/7 ; parcours complet 1042-EX : **578 ms**.
 - Qualification native `40253683608`, Qualification réservés `40253683576`,
   Perf comparaison `40253683693` : succès au même SHA.
 

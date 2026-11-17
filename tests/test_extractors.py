@@ -73,12 +73,12 @@ def test_pdf_texte_et_xlsx_sans_regression_ocr(tmp_path: Path) -> None:
     pdf = tmp_path / "texte.pdf"
     tampon = io.BytesIO()
     c = canvas.Canvas(tampon, pagesize=A4)
-    c.drawString(72, 720, "Grand voile 7792-SO")
+    c.drawString(72, 720, "Grand voile 1042-EX")
     c.save()
     pdf.write_bytes(tampon.getvalue())
     resultat = extract_file(pdf, max_chars=2_000, enable_ocr=True)
     assert resultat.status == "extracted"
-    assert "7792-SO" in resultat.text
+    assert "1042-EX" in resultat.text
 
     xlsx = tmp_path / "nomenclature.xlsx"
     with ZipFile(xlsx, "w") as archive:

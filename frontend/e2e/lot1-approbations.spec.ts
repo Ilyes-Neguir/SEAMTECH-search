@@ -36,7 +36,7 @@ import {
  * sessions existantes.
  */
 
-const CODE_REFERENCE = "7792-SO"
+const CODE_REFERENCE = "1042-EX"
 const CODE_SUPPRESSION = "0902-MM"
 const CHAMP_DESIGNATION = "fiche.designation"
 

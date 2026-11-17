@@ -602,7 +602,7 @@ function NouveauAppInterne() {
         <input
           value={dossier}
           onChange={(e) => setDossier(e.target.value)}
-          placeholder="/archive/CLIENT-7792-SO"
+          placeholder="/archive/CLIENT-1042-EX"
           className="flex-1 rounded border border-border bg-input px-3 py-2 font-mono text-sm"
           data-testid="champ-dossier"
         />

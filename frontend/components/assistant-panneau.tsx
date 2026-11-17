@@ -139,7 +139,7 @@ export function AssistantPanneau() {
         <input
           value={saisie}
           onChange={(e) => setSaisie(e.target.value)}
-          placeholder="Posez une question sur les fiches — ex. « quelle est la SLU de la fiche 7792-SO ? »"
+          placeholder="Posez une question sur les fiches — ex. « quelle est la SLU de la fiche 1042-EX ? »"
           className="w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground"
           data-testid="assistant-question"
           maxLength={500}

@@ -32,8 +32,8 @@ from pathlib import Path
 REFERENCE_PROPRE = """SEAMTECH Search
 Test OCR propre
 Voile grand voile 123
-Client Sailonet chantier Cruette
-Reference 7792-SO
+Client Exemplia chantier Demo
+Reference 1042-EX
 Bonjour le monde
 SEAMTECH voile technique
 12345"""

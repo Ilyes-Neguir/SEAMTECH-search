@@ -133,7 +133,7 @@ def test_refus_question_inconnue_nomme_le_refus() -> None:
     """La formule canonique du refus est présente (exigence commanditaire :
     « je ne trouve pas dans les fiches »), et les pistes ne sont pas des
     réponses — ce sont des façons de reformuler."""
-    reponse = poser(_IndexVide(), "quelle est la couleur du chou de la fiche 7792-SO ?")
+    reponse = poser(_IndexVide(), "quelle est la couleur du chou de la fiche 1042-EX ?")
     assert reponse["etat"] == ETAT_SANS_SOURCE
     assert "ne trouve pas" in reponse["reponse"]
     assert reponse["citations"] == []
@@ -187,7 +187,7 @@ def test_route_occupe_200_json() -> None:
     assert _VERROU_ANALYSE.acquire(blocking=False)
     try:
         with TestClient(_app_assistant(SimpleNamespace(is_postgres=True))) as client:
-            reponse = client.post("/assistant", json={"question": "quelle est la SLU de la fiche 7792-SO ?"})
+            reponse = client.post("/assistant", json={"question": "quelle est la SLU de la fiche 1042-EX ?"})
         assert reponse.status_code == 200
         corps = reponse.json()
         assert corps["etat"] == ETAT_OCCUPE
@@ -204,7 +204,7 @@ def test_route_503_indisponible_sans_postgres(tmp_path: Any) -> None:
 
     config = AppConfig(root_paths=[tmp_path], database_url=None, min_free_bytes=0)
     with TestClient(create_app(config)) as client:
-        reponse = client.post("/assistant", json={"question": "quelle est la SLU de la fiche 7792-SO ?"})
+        reponse = client.post("/assistant", json={"question": "quelle est la SLU de la fiche 1042-EX ?"})
         assert reponse.status_code == 503
         detail = reponse.json()["detail"]
         assert detail["etat"] == "indisponible"
@@ -232,15 +232,15 @@ def test_route_valide_la_question(tmp_path: Any) -> None:
 @pytest.mark.parametrize(
     ("question", "attendu"),
     [
-        ("quelle est la SLU de la fiche 7792-SO ?", {"code": "7792-SO", "cote": "slu"}),
-        ("quelle est la SLU en mesures dessin de 7792-SO ?", {"code": "7792-SO", "cote": "slu", "jeu": "dessin"}),
+        ("quelle est la SLU de la fiche 1042-EX ?", {"code": "1042-EX", "cote": "slu"}),
+        ("quelle est la SLU en mesures dessin de 1042-EX ?", {"code": "1042-EX", "cote": "slu", "jeu": "dessin"}),
         ("quelles voiles pour le bateau 29er ?", {"bateau_terme": "29er", "veut_voiles": True}),
         ("combien de fiches de type portant en 2024 ?", {"combien": True, "terme_type": "portant", "annee": 2024}),
         ("quelles fiches ont une SLU entre 6,5 et 6,7 m ?", {"cote": "slu", "entre": True, "borne_min": 6.5, "borne_max": 6.7}),
         ("quelle matière pour le galon de bordure ?", {"bande_galon": "bordure", "attribut_galon": "matiere"}),
-        ("quelle est la matière du galon de bordure de la fiche 7792-SO ?", {"code": "7792-SO", "bande_galon": "bordure"}),
-        ("quel est le surplus de jonction de la fiche 7792-SO ?", {"code": "7792-SO", "demande_surplus": True}),
-        ("quelle est la longueur du mât de la fiche 7792-SO ?", {"code": "7792-SO", "cote": None}),
+        ("quelle est la matière du galon de bordure de la fiche 1042-EX ?", {"code": "1042-EX", "bande_galon": "bordure"}),
+        ("quel est le surplus de jonction de la fiche 1042-EX ?", {"code": "1042-EX", "demande_surplus": True}),
+        ("quelle est la longueur du mât de la fiche 1042-EX ?", {"code": "1042-EX", "cote": None}),
         ("fiche 0701-GV-001 : quel est le poids ?", {"code": "0701-GV-001", "cote": "poids"}),
     ],
 )

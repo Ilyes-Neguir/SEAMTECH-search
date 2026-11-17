@@ -33,7 +33,7 @@ from seamtech_search.ocr.pipeline import (
 
 RACINE = Path(__file__).resolve().parent.parent
 FIXTURES_OCR = RACINE / "tests" / "fixtures" / "ocr"
-PDF_NATIF_REEL = RACINE / "sample_data" / "CLIENT-7792-SO" / "fiche-7792-SO_ffab.pdf"  # copie canonique
+PDF_NATIF_REEL = RACINE / "sample_data" / "CLIENT-1042-EX" / "fiche-1042-EX_ffab.pdf"  # copie canonique
 PDF_PROPRE = FIXTURES_OCR / "ocr_propre.pdf"
 PDF_DEGRADE = FIXTURES_OCR / "ocr_degrade.pdf"
 REF_PROPRE = FIXTURES_OCR / "reference_propre.txt"
@@ -99,24 +99,24 @@ def test_doit_oceriser_page_fonction_pure() -> None:
 
 def test_seuil_defaut_justifie() -> None:
     """M.3 : le seuil par défaut est documenté et justifié (20)."""
-    # Justification dans docstring : 7792-SO a >200 chars/page, scans 0 char
+    # Justification dans docstring : 1042-EX a >200 chars/page, scans 0 char
     assert SEUIL_DEFAUT == 20
     # Vérifie que la doc mentionne la justification
     src = Path("seamtech_search/ocr/pipeline.py").read_text(encoding="utf-8")
-    assert "7792-SO" in src or "200" in src
+    assert "1042-EX" in src or "200" in src
     assert "20" in src
 
 
 @pytest.mark.ci_guard_ocr
 def test_pdf_texte_natif_zero_page_ocerisee() -> None:
-    """M.3/M.7 : un PDF à texte natif (7792-SO) : ZÉRO page océrisée.
+    """M.3/M.7 : un PDF à texte natif (1042-EX) : ZÉRO page océrisée.
 
     C'est LE test qui porte le garde-fou OCR étage 3 — ROUGE puis VERT :
     si on force la décision d'étage à True (OCR partout), ce test doit ROUGIR
     sur son assertion (pas sur une erreur SQL ou syntaxe).
     """
     if not PDF_NATIF_REEL.exists():
-        pytest.skip("PDF réel 7792-SO absent")
+        pytest.skip("PDF réel 1042-EX absent")
 
     # Inventaire doit dire que ce PDF a du texte natif (lecture seule)
     _inv = inv_mod.inventaire_etage3(None, PDF_NATIF_REEL.parent, seuil_caracteres_par_page=SEUIL_DEFAUT)

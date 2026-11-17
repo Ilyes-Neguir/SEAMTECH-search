@@ -18,13 +18,13 @@ restent anonymisés ; aucune valeur tirée des PDF n'est reproduite ici.
 
 | Code | ZIP représenté | Gabarit du parseur SEAMTECH | Champs de fiche produits | Anomalies générées | État de validation |
 |---|---|---|---:|---:|---|
-| REF-001 | AQUILA | non reconnu ; filet de reprise | 0 | 1 | A_VALIDER |
-| REF-002 | ATTALIA | non reconnu ; filet de reprise | 1 | 1 | A_VALIDER |
-| REF-003 | BAVARIA 32 | non reconnu ; filet de reprise | 0 | 1 | A_VALIDER |
-| REF-004 | BAVARIA 34 | `FICHE_GENOIS_V1` | 5 | 0 | A_VALIDER |
-| REF-005 | DAMIEN 4 | non reconnu ; filet de reprise | 0 | 1 | A_VALIDER |
-| REF-006 | DEHLER 39 | non reconnu ; filet de reprise | 1 | 1 | A_VALIDER |
-| REF-007 | GIB SEA 284 | non reconnu ; filet de reprise | 1 | 1 | A_VALIDER |
+| REF-001 | CORPUS-01 | non reconnu ; filet de reprise | 0 | 1 | A_VALIDER |
+| REF-002 | CORPUS-02 | non reconnu ; filet de reprise | 1 | 1 | A_VALIDER |
+| REF-003 | CORPUS-03 | non reconnu ; filet de reprise | 0 | 1 | A_VALIDER |
+| REF-004 | CORPUS-04 | `FICHE_GENOIS_V1` | 5 | 0 | A_VALIDER |
+| REF-005 | CORPUS-05 | non reconnu ; filet de reprise | 0 | 1 | A_VALIDER |
+| REF-006 | CORPUS-06 | non reconnu ; filet de reprise | 1 | 1 | A_VALIDER |
+| REF-007 | CORPUS-07 | non reconnu ; filet de reprise | 1 | 1 | A_VALIDER |
 | **Total** | **7 ZIP** | **1 gabarit reconnu / 6 reprises** | **8** | **6** | **0 fiche validée** |
 
 Les 8 clés de champ émises par le parseur étaient : `fiche.bateau`,

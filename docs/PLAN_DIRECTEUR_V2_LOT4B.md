@@ -25,7 +25,7 @@ dépôt est public sur sa décision) :
   fullbatten, jade) mais n'en extraient qu'une partie des cotes (génois :
   la SLU seule sur ces exemplaires ; GV/jade : extractions « à reprendre » ;
   modèle de bateau non parsé) ;
-- le spi 7792-SO de référence, lui, reste extrait à 100 % sur son gabarit.
+- le spi 1042-EX de référence, lui, reste extrait à 100 % sur son gabarit.
 
 Conséquences assumées pour ce lot : la comparaison est conçue honnête avec
 des données partielles (manquants affichés, chevauchement averti), et
@@ -89,10 +89,10 @@ refusé (pas d'identité nominative).
   comparée, Δ SLU +30,0 cm — rôles API 401/200/422/404). Redis 89/0.
   Couverture globale 86,05 % (plancher 85 %).
 - Parcours navigateur (premier essai) : Lot 4b 3/3 — écart SLU réel du seed
-  relu (+160 cm entre 7792-SO et le génois Sun 2000), badge « indicative »
+  relu (+160 cm entre 1042-EX et le génois Sun 2000), badge « indicative »
   et avertissement « modèles DIFFÉRENTS », lecture seule par lien profond
   pour le rôle lecture, secours refusé ; Lot 3b 3/3, Lot 1 7/7, parcours
-  8/8, OCR 4/4 ; parcours complet 7792-SO : 727 ms.
+  8/8, OCR 4/4 ; parcours complet 1042-EX : 727 ms.
 - Qualification native `40241173918`, Qualification réservés `40241173903`,
   Perf comparaison `40241173932` : succès au même SHA.
 - Les contrats purs (Δ cm/%, matériaux, avertissements, refus

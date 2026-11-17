@@ -62,13 +62,13 @@ internes ont été examinés comme archives, pas ignorés comme simples fichiers
 
 | ZIP (chemin dépôt) | SHA-256 | Taille (octets) | Entrées | PDF directs | Décompressé annoncé (octets) | Décision |
 |---|---|---:|---:|---:|---:|---|
-| `AQUILA 250216AJA-20260928T182324Z-1-001.zip` | `fd1fca0930494328687ecf5d6905af139c24f93a8b9e2e51b2f6075772446be6` | 573860 | 46 | 2 | 1004984 | Sûr, extrait hors dépôt |
-| `ATTALIA 250121JA-20260928T182325Z-1-001.zip` | `a71ec77d6d5abf3c55f5ca8aa5c79d3347d3b3765b91f54950065b9c2161d699` | 594852 | 48 | 2 | 1040815 | Sûr, extrait hors dépôt |
-| `BAVARIA 32 - 250604JA-20260928T182326Z-1-001.zip` | `a9ca298cae78ccbacfaab69260cede299062ef0d20e0a7fba62c3539ac3a538f` | 745910 | 69 | 2 | 1329304 | Sûr, extrait hors dépôt |
-| `BAVARIA 34 - 250323JA-20260928T182327Z-1-001.zip` | `483f89716b953734315b7bbb4ba81050dc24b33a162e2a2623604eee268b8f6f` | 618247 | 51 | 2 | 1076735 | Sûr, extrait hors dépôt |
-| `DAMIEN 4 - 250821JA-20260928T182330Z-1-001.zip` | `2f1ecb0205b817c3dbdb324bf444aad9fb5ddce1d3f415859698fbb21fb428bf` | 846621 | 81 | 2 | 1450289 | Sûr, extrait hors dépôt |
-| `DEHLER 39 - 250329AJA-20260928T182330Z-1-001.zip` | `b3171d070f6b332366263626a665e7f7985bb8406062c2957895401850df6a06` | 919707 | 88 | 2 | 1740225 | Sûr, extrait hors dépôt |
-| `GIB SEA 284 - 250328AJA-20260928T182331Z-1-001.zip` | `103359b561ef32f5a8ce04b373864c26a0b496156efc1f728e75f0c0911b4aa3` | 581169 | 46 | 2 | 997561 | Sûr, extrait hors dépôt |
+| `CORPUS-01-20260928T182324Z-1-001.zip` | `fd1fca0930494328687ecf5d6905af139c24f93a8b9e2e51b2f6075772446be6` | 573860 | 46 | 2 | 1004984 | Sûr, extrait hors dépôt |
+| `CORPUS-02-20260928T182325Z-1-001.zip` | `a71ec77d6d5abf3c55f5ca8aa5c79d3347d3b3765b91f54950065b9c2161d699` | 594852 | 48 | 2 | 1040815 | Sûr, extrait hors dépôt |
+| `CORPUS-03-20260928T182326Z-1-001.zip` | `a9ca298cae78ccbacfaab69260cede299062ef0d20e0a7fba62c3539ac3a538f` | 745910 | 69 | 2 | 1329304 | Sûr, extrait hors dépôt |
+| `CORPUS-04-20260928T182327Z-1-001.zip` | `483f89716b953734315b7bbb4ba81050dc24b33a162e2a2623604eee268b8f6f` | 618247 | 51 | 2 | 1076735 | Sûr, extrait hors dépôt |
+| `CORPUS-05-20260928T182330Z-1-001.zip` | `2f1ecb0205b817c3dbdb324bf444aad9fb5ddce1d3f415859698fbb21fb428bf` | 846621 | 81 | 2 | 1450289 | Sûr, extrait hors dépôt |
+| `CORPUS-06-20260928T182330Z-1-001.zip` | `b3171d070f6b332366263626a665e7f7985bb8406062c2957895401850df6a06` | 919707 | 88 | 2 | 1740225 | Sûr, extrait hors dépôt |
+| `CORPUS-07-20260928T182331Z-1-001.zip` | `103359b561ef32f5a8ce04b373864c26a0b496156efc1f728e75f0c0911b4aa3` | 581169 | 46 | 2 | 997561 | Sûr, extrait hors dépôt |
 | **Total ZIP externes** | — | **4880366** | **429** | **14** | **8639913** | **7/7 sûrs** |
 
 Les sept ZIP externes contiennent chacun un ZIP interne. Les ZIP internes

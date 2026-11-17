@@ -99,8 +99,8 @@ La recherche « comme Google » des fiches validées. La route Phase 0 `GET /sea
   nombre **décimal** (« 6,60 » / « 6.60 ») ou muni d'une **unité** (« 660 cm »,
   « 6600 mm », « 6,60 m »), éventuellement suivi d'une **cote nommée**
   (`slu`, `sle`, `sf`, `shw`, `spa`, `tetiere`/`têtière`, `poids`, `guindant`).
-  Frontière documentée : un **entier nu** (« 2026 », « 7792 ») n'est JAMAIS une
-  dimension — années et codes restent des mots (« spi sailonet 2026 », « 7792-SO »
+  Frontière documentée : un **entier nu** (« 2026 », « 1042 ») n'est JAMAIS une
+  dimension — années et codes restent des mots (« spi exemplia 2026 », « 1042-EX »
   ne basculent pas dans le filtre numérique), sauf si une cote est nommée
   (« tetiere 15 »).
   - **Normalisation** : « 6,6 », « 6.60 », « 6,60 m », « 660 cm », « 6600 mm »
@@ -555,7 +555,7 @@ empreintes SHA-256 de l'arbre avant/après testées égales (`TestArchiveIntacte
 
 
 ```bash
-curl -H "X-SEAMTECH-TOKEN: $TOKEN" http://localhost:8000/fiches/7792-SO/champs
+curl -H "X-SEAMTECH-TOKEN: $TOKEN" http://localhost:8000/fiches/1042-EX/champs
 curl -H "X-SEAMTECH-TOKEN: $TOKEN" http://localhost:8000/gabarits
 curl -H "X-SEAMTECH-TOKEN: $TOKEN" -H "X-SEAMTECH-TOKEN: $TOKEN" \
      -F "fichier=@fiche.pdf" http://localhost:8000/gabarits/detecter

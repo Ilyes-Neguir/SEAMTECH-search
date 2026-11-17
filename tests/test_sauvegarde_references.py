@@ -255,7 +255,7 @@ def test_aller_retour_fichiers_vers_cible_distincte(
             id_bateau = int(cursor.fetchone()[0])
             cursor.execute(
                 "INSERT INTO fiche (code, titre, id_type_voile, id_client, id_bateau, statut) "
-                "VALUES ('7792-SO', 'Génois lourd First 30', 1, %s, %s, 'valide') RETURNING id_fiche",
+                "VALUES ('1042-EX', 'Génois lourd First 30', 1, %s, %s, 'valide') RETURNING id_fiche",
                 (id_client, id_bateau),
             )
             id_fiche = int(cursor.fetchone()[0])
@@ -316,7 +316,7 @@ def test_aller_retour_fichiers_vers_cible_distincte(
         try:
             reponse = rechercher_fiches(index_cible, requete="GENOIS")
             codes = [r.get("code") for r in reponse.get("resultats") or []]
-            assert "7792-SO" in codes
+            assert "1042-EX" in codes
         finally:
             index_cible.close()
     finally:

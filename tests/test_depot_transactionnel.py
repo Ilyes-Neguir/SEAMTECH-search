@@ -22,7 +22,7 @@ from seamtech_search.fiches.modeles import Anomalie
 from tests.helpers_postgres_isole import url_base_jetable
 
 RACINE = Path(__file__).resolve().parent.parent
-ARCHIVE_7792 = RACINE / "sample_data/CLIENT-7792-SO"
+ARCHIVE_REFERENCE = RACINE / "sample_data/CLIENT-1042-EX"
 ARCHIVE_GENOIS = RACINE / "sample_data/CLIENT-GENOA"
 URL_PG = os.environ.get("SEAMTECH_TEST_DATABASE_URL", "")
 
@@ -38,7 +38,7 @@ class TestScannerUnitaire:
     def test_plan_complet_d_un_dossier_reel(self, tmp_path: Path) -> None:
         dossier = tmp_path / "D0001"
         dossier.mkdir()
-        shutil.copy(ARCHIVE_7792 / "fiche-7792-SO_ffab.pdf", dossier / "fiche.pdf")
+        shutil.copy(ARCHIVE_REFERENCE / "fiche-1042-EX_ffab.pdf", dossier / "fiche.pdf")
         (dossier / "croquis.md").write_text("notes atelier", encoding="utf-8")
         plan = scanner_dossier(dossier, list(GABARITS_EMBARQUES))
         assert plan.accepte and plan.gabarit_code == "FICHE_PORTANT_V1"
@@ -71,7 +71,7 @@ class TestScannerUnitaire:
         """Registre vide = refus documenté (jamais un ValueError de max())."""
         dossier = tmp_path / "D0005"
         dossier.mkdir()
-        shutil.copy(ARCHIVE_7792 / "fiche-7792-SO_ffab.pdf", dossier / "fiche.pdf")
+        shutil.copy(ARCHIVE_REFERENCE / "fiche-1042-EX_ffab.pdf", dossier / "fiche.pdf")
         with pytest.raises(DepotImpossible, match="aucun gabarit actif"):
             scanner_dossier(dossier, [])
 
@@ -155,7 +155,7 @@ def sans_auto_validation(monkeypatch: pytest.MonkeyPatch) -> None:
 def dossier_ok(tmp_path: Path, base_depot: dict) -> Path:
     dossier = tmp_path / "AFFAIRE-0001"
     dossier.mkdir()
-    shutil.copy(ARCHIVE_7792 / "fiche-7792-SO_ffab.pdf", dossier / "fiche-7792-SO_ffab.pdf")
+    shutil.copy(ARCHIVE_REFERENCE / "fiche-1042-EX_ffab.pdf", dossier / "fiche-1042-EX_ffab.pdf")
     (dossier / "croquis-atelier.txt").write_text("repère des renforts", encoding="utf-8")
     return dossier
 
@@ -181,7 +181,7 @@ class TestEcritureEntiereOuPasDuTout:
     def test_depot_complet_fiche_pieces_lot(self, base_depot: dict, dossier_ok: Path) -> None:
         index = base_depot["index"]
         resultat = depot.deposer_dossier(index, dossier_ok)
-        assert resultat["statut"] == "traite" and resultat["fiche"] == "7792-SO"
+        assert resultat["statut"] == "traite" and resultat["fiche"] == "1042-EX"
         assert resultat["pieces"] == 1 and resultat["id_lot"] > 0
         comptes = _comptes(index)
         assert comptes["fiche"] == 1 and comptes["pieces"] == 1 and comptes["lignes"] == 1
@@ -197,7 +197,7 @@ class TestEcritureEntiereOuPasDuTout:
 
         RG3 est REMPLACÉE par l'auto-validation au seuil de 90 %. Affirmer
         « toujours a_valider » serait désormais faux — et le serait
-        silencieusement, puisque la fiche 7792 du corpus score 0,929.
+        silencieusement, puisque la fiche 1042 du corpus score 0,929.
 
         On ne fige donc pas un statut : on relit ce qui est en base et on
         vérifie que c'est ce que la règle décide. Ce test échouera si le
@@ -219,7 +219,7 @@ class TestEcritureEntiereOuPasDuTout:
         )
 
     def test_la_fiche_du_corpus_est_auto_validee(self, base_depot: dict, dossier_ok: Path) -> None:
-        """La fiche 7792 du corpus score 0,929 : elle est auto-validée.
+        """La fiche 1042 du corpus score 0,929 : elle est auto-validée.
 
         Ce n'est pas un cas-limite, c'est le cas courant. Le dire ici,
         c'est rendre visible l'effet réel de la décision : la plupart des
@@ -339,7 +339,7 @@ class TestRejeuSansDoublon:
                 / "AFFAIRE-STAGEE"
             )
             dossier.mkdir(parents=True)
-            shutil.copy(ARCHIVE_7792 / "fiche-7792-SO_ffab.pdf", dossier / "fiche-7792-SO_ffab.pdf")
+            shutil.copy(ARCHIVE_REFERENCE / "fiche-1042-EX_ffab.pdf", dossier / "fiche-1042-EX_ffab.pdf")
             (dossier / "croquis-atelier.txt").write_text("repère des renforts", encoding="utf-8")
             return dossier
 
@@ -355,7 +355,7 @@ class TestRejeuSansDoublon:
         # garde son format chemin absolu, lu par pieces_de_fiche/approbations.
         from seamtech_search.fiches.routes import pieces_de_fiche
 
-        pieces = pieces_de_fiche(index, "7792-SO")["pieces"]
+        pieces = pieces_de_fiche(index, "1042-EX")["pieces"]
         assert any(p["is_primary_pdf"] for p in pieces), pieces
 
     def test_rejeu_reconnu_quand_la_cle_stockee_est_pliee_en_casse(
@@ -396,7 +396,7 @@ class TestRejeuSansDoublon:
                 / "AFFAIRE-STAGEE"
             )
             dossier.mkdir(parents=True)
-            shutil.copy(ARCHIVE_7792 / "fiche-7792-SO_ffab.pdf", dossier / "fiche-7792-SO_ffab.pdf")
+            shutil.copy(ARCHIVE_REFERENCE / "fiche-1042-EX_ffab.pdf", dossier / "fiche-1042-EX_ffab.pdf")
             (dossier / "croquis-atelier.txt").write_text("repère des renforts", encoding="utf-8")
             return dossier
 
@@ -419,7 +419,7 @@ class TestRejeuSansDoublon:
         afficherait deux fois le même fichier.
         """
         index = base_depot["index"]
-        source_pdf = (ARCHIVE_7792 / "fiche-7792-SO_ffab.pdf").read_bytes()
+        source_pdf = (ARCHIVE_REFERENCE / "fiche-1042-EX_ffab.pdf").read_bytes()
 
         def dossier_stage(jeton: str, pdf_octets: bytes, annexe: str) -> Path:
             dossier = (
@@ -432,7 +432,7 @@ class TestRejeuSansDoublon:
                 / "AFFAIRE-STAGEE"
             )
             dossier.mkdir(parents=True)
-            (dossier / "fiche-7792-SO_ffab.pdf").write_bytes(pdf_octets)
+            (dossier / "fiche-1042-EX_ffab.pdf").write_bytes(pdf_octets)
             (dossier / "annexe-suivi-modifications.txt").write_text(annexe, encoding="utf-8")
             return dossier
 
@@ -455,7 +455,7 @@ class TestRejeuSansDoublon:
 
         from seamtech_search.fiches.routes import pieces_de_fiche
 
-        pieces = pieces_de_fiche(index, "7792-SO")["pieces"]
+        pieces = pieces_de_fiche(index, "1042-EX")["pieces"]
         noms = [piece["name"] for piece in pieces]
         assert noms.count("annexe-suivi-modifications.txt") == 1, noms
         principal = next(piece for piece in pieces if piece["is_primary_pdf"])
@@ -473,7 +473,7 @@ class TestRejeuSansDoublon:
         assert _comptes(index)["pieces"] == avant["pieces"], (
             "une annexe modifiée au même chemin logique doit remplacer son lien"
         )
-        pieces = pieces_de_fiche(index, "7792-SO")["pieces"]
+        pieces = pieces_de_fiche(index, "1042-EX")["pieces"]
         annexes = [piece for piece in pieces if piece["name"] == "annexe-suivi-modifications.txt"]
         assert len(annexes) == 1, pieces
         assert annexes[0]["size"] == len("repère des renforts, version 2".encode("utf-8"))
@@ -497,7 +497,7 @@ class TestRejeuSansDoublon:
                 / "AFFAIRE-STAGEE"
             )
             dossier.mkdir(parents=True)
-            shutil.copy(ARCHIVE_7792 / "fiche-7792-SO_ffab.pdf", dossier / "fiche-7792-SO_ffab.pdf")
+            shutil.copy(ARCHIVE_REFERENCE / "fiche-1042-EX_ffab.pdf", dossier / "fiche-1042-EX_ffab.pdf")
             (dossier / "croquis-atelier.txt").write_text("repère des renforts", encoding="utf-8")
             return dossier
 
@@ -505,7 +505,7 @@ class TestRejeuSansDoublon:
         premier = depot.deposer_dossier(index, dossier_a)
         assert premier["statut"] == "traite"
         # Réécrire la clé sous son ANCIENNE forme absolue (pré-correctif).
-        pdf_a = dossier_a / "fiche-7792-SO_ffab.pdf"
+        pdf_a = dossier_a / "fiche-1042-EX_ffab.pdf"
         ancienne_cle = (
             os.path.normcase(str(pdf_a.resolve())) + "|" + depot.empreinte_fichier(pdf_a)
         )
@@ -523,12 +523,12 @@ class TestRejeuSansDoublon:
         assert apres["pieces"] == avant["pieces"] and apres["champs"] == avant["champs"]
 
     def test_cle_idempotence_normcase_plus_empreinte(self, dossier_ok: Path) -> None:
-        empreinte = depot.empreinte_fichier(dossier_ok / "fiche-7792-SO_ffab.pdf")
-        cle = depot.cle_idempotence(dossier_ok / "fiche-7792-SO_ffab.pdf", empreinte)
+        empreinte = depot.empreinte_fichier(dossier_ok / "fiche-1042-EX_ffab.pdf")
+        cle = depot.cle_idempotence(dossier_ok / "fiche-1042-EX_ffab.pdf", empreinte)
         # même normalisation que le crawler (os.path.normcase) + SHA-256
-        assert cle == os.path.normcase(str((dossier_ok / "fiche-7792-SO_ffab.pdf").resolve())) + "|" + empreinte
+        assert cle == os.path.normcase(str((dossier_ok / "fiche-1042-EX_ffab.pdf").resolve())) + "|" + empreinte
         # une empreinte différente (fiche corrigée) donne une clé différente
-        autre = depot.cle_idempotence(dossier_ok / "fiche-7792-SO_ffab.pdf", "0" * 64)
+        autre = depot.cle_idempotence(dossier_ok / "fiche-1042-EX_ffab.pdf", "0" * 64)
         assert autre != cle
         # Chemins stagés (Lot 10) : le format STOCKÉ reste le chemin absolu
         # (des lecteurs retrouvent le PDF par cette clé) — la reconnaissance
@@ -539,7 +539,7 @@ class TestRejeuSansDoublon:
         # normalisé faisait échouer ce test là-bas pour rien (run 43121414811).
         # On applique la MÊME normalisation au attendu, pas une astuce d'égalité.
         assert depot._chemin_logique_televersement(stage) == os.path.normcase("ANNEE/AFFAIRE/fiche.pdf")
-        assert depot._chemin_logique_televersement(dossier_ok / "fiche-7792-SO_ffab.pdf") is None
+        assert depot._chemin_logique_televersement(dossier_ok / "fiche-1042-EX_ffab.pdf") is None
 
     def test_pieces_jointes_stables_au_rejeu(self, base_depot: dict, dossier_ok: Path) -> None:
         index = base_depot["index"]
@@ -617,7 +617,7 @@ def test_lot_televerse_promeut_et_rattache_les_documents(base_depot: dict, tmp_p
 
     config = SimpleNamespace(database_path=tmp_path / 'data' / 'search.db', max_file_size_bytes=1024 * 1024,
                              min_free_bytes=0, storage_backend='s3')
-    fichiers = {f'{tmp_path.name}/fiche.pdf': (ARCHIVE_7792 / 'fiche-7792-SO_ffab.pdf').read_bytes(),
+    fichiers = {f'{tmp_path.name}/fiche.pdf': (ARCHIVE_REFERENCE / 'fiche-1042-EX_ffab.pdf').read_bytes(),
                 f'{tmp_path.name}/annexe.txt': b'piece synthetique'}
     token = t.creer_session_televersement_lot(config, nom_racine='SYNTHETIQUE', nombre_fichiers=len(fichiers),
                                                taille_totale_octets=sum(map(len, fichiers.values())))['token']
@@ -653,7 +653,7 @@ def test_worker_lot_televerse_promeut_avant_le_depot(base_depot: dict, tmp_path:
 
     config = SimpleNamespace(database_path=tmp_path / 'data' / 'search.db', max_file_size_bytes=1024 * 1024,
                              min_free_bytes=0, storage_backend='s3')
-    fichiers = {f'{tmp_path.name}/fiche.pdf': (ARCHIVE_7792 / 'fiche-7792-SO_ffab.pdf').read_bytes(),
+    fichiers = {f'{tmp_path.name}/fiche.pdf': (ARCHIVE_REFERENCE / 'fiche-1042-EX_ffab.pdf').read_bytes(),
                 f'{tmp_path.name}/annexe.txt': b'piece synthetique'}
     token = t.creer_session_televersement_lot(config, nom_racine='SYNTHETIQUE', nombre_fichiers=len(fichiers),
                                                taille_totale_octets=sum(map(len, fichiers.values())))['token']
@@ -687,7 +687,7 @@ def test_rejeu_televerse_promeut_documents_anciens(base_depot: dict, tmp_path: P
 
     config = SimpleNamespace(database_path=tmp_path / 'data' / 'search.db', max_file_size_bytes=1024 * 1024,
                              min_free_bytes=0, storage_backend='s3')
-    fichiers = {f'{tmp_path.name}/fiche.pdf': (ARCHIVE_7792 / 'fiche-7792-SO_ffab.pdf').read_bytes(),
+    fichiers = {f'{tmp_path.name}/fiche.pdf': (ARCHIVE_REFERENCE / 'fiche-1042-EX_ffab.pdf').read_bytes(),
                 f'{tmp_path.name}/annexe.txt': b'piece synthetique'}
     index = base_depot['index']
     def creer():
@@ -731,7 +731,7 @@ def test_racine_session_remplacee_par_lien_externe_refusee(base_depot: dict, tmp
 
     config = SimpleNamespace(database_path=tmp_path / 'data' / 'search.db', max_file_size_bytes=1024 * 1024,
                              min_free_bytes=0, storage_backend='s3')
-    pdf = (ARCHIVE_7792 / 'fiche-7792-SO_ffab.pdf').read_bytes()
+    pdf = (ARCHIVE_REFERENCE / 'fiche-1042-EX_ffab.pdf').read_bytes()
     token = t.creer_session_televersement_lot(config, nom_racine='TEST', nombre_fichiers=1,
                                                taille_totale_octets=len(pdf))['token']
     t.recevoir_fichiers_televersement_lot(config, token, chemins_relatives=['dossier/fiche.pdf'], flux=[BytesIO(pdf)])
@@ -760,7 +760,7 @@ def test_annulation_pendant_promotion_est_annulee_et_reprenable(base_depot: dict
 
     config = SimpleNamespace(database_path=tmp_path / 'data' / 'search.db', max_file_size_bytes=1024 * 1024,
                              min_free_bytes=0, storage_backend='s3')
-    fichiers = {'annulation/fiche.pdf': (ARCHIVE_7792 / 'fiche-7792-SO_ffab.pdf').read_bytes(),
+    fichiers = {'annulation/fiche.pdf': (ARCHIVE_REFERENCE / 'fiche-1042-EX_ffab.pdf').read_bytes(),
                 'annulation/annexe.txt': b'annexe synthetique'}
     token = t.creer_session_televersement_lot(config, nom_racine='TEST', nombre_fichiers=2,
                                                taille_totale_octets=sum(map(len, fichiers.values())))['token']
@@ -804,7 +804,7 @@ def test_worker_perd_claim_pendant_promotion_sans_marquer_lot_annule(base_depot:
 
     config = SimpleNamespace(database_path=tmp_path / 'data' / 'search.db', max_file_size_bytes=1024 * 1024,
                              min_free_bytes=0, storage_backend='s3')
-    fichiers = {'claim/fiche.pdf': (ARCHIVE_7792 / 'fiche-7792-SO_ffab.pdf').read_bytes(),
+    fichiers = {'claim/fiche.pdf': (ARCHIVE_REFERENCE / 'fiche-1042-EX_ffab.pdf').read_bytes(),
                 'claim/annexe.txt': b'annexe synthetique'}
     token = t.creer_session_televersement_lot(config, nom_racine='TEST', nombre_fichiers=2,
                                                taille_totale_octets=sum(map(len, fichiers.values())))['token']
@@ -848,7 +848,7 @@ def test_perte_claim_redis_pendant_promotion_stoppe_worker(base_depot: dict, tmp
     magasin = RedisStore(redis_url=request.getfixturevalue('redis_isole'))
     config = SimpleNamespace(database_path=tmp_path / 'data' / 'search.db', max_file_size_bytes=1024 * 1024,
                              min_free_bytes=0, storage_backend='s3')
-    fichiers = {'redis-claim/fiche.pdf': (ARCHIVE_7792 / 'fiche-7792-SO_ffab.pdf').read_bytes(),
+    fichiers = {'redis-claim/fiche.pdf': (ARCHIVE_REFERENCE / 'fiche-1042-EX_ffab.pdf').read_bytes(),
                 'redis-claim/annexe.txt': b'annexe synthetique'}
     token = t.creer_session_televersement_lot(config, nom_racine='TEST', nombre_fichiers=2,
                                                taille_totale_octets=sum(map(len, fichiers.values())))['token']
@@ -910,7 +910,7 @@ def test_perte_claim_pendant_scan_ne_persiste_ni_fiche_ni_echec(base_depot: dict
     racine = tmp_path / 'archive'
     dossier = racine / 'synthese'
     dossier.mkdir(parents=True)
-    shutil.copy(ARCHIVE_7792 / 'fiche-7792-SO_ffab.pdf', dossier / 'fiche.pdf')
+    shutil.copy(ARCHIVE_REFERENCE / 'fiche-1042-EX_ffab.pdf', dossier / 'fiche.pdf')
     id_lot = depot.creer_lot(index, racine)
     job_id = f'lot-{id_lot}-transfert-scan'
     jobs.create_job(index, job_id, str(racine), durability='durable')
@@ -944,7 +944,7 @@ def test_transaction_depot_verrouille_claim_pendant_ecriture(base_depot: dict, t
     racine = tmp_path / 'archive'
     dossier = racine / 'synthese'
     dossier.mkdir(parents=True)
-    shutil.copy(ARCHIVE_7792 / 'fiche-7792-SO_ffab.pdf', dossier / 'fiche.pdf')
+    shutil.copy(ARCHIVE_REFERENCE / 'fiche-1042-EX_ffab.pdf', dossier / 'fiche.pdf')
     id_lot = depot.creer_lot(index, racine)
     job_id = f'lot-{id_lot}-verrou-ecriture'
     jobs.create_job(index, job_id, str(racine), durability='durable')
@@ -979,7 +979,7 @@ def test_annulation_lot_par_worker_dechu_est_refusee(base_depot: dict, tmp_path:
     racine = tmp_path / 'archive'
     dossier = racine / 'synthese'
     dossier.mkdir(parents=True)
-    shutil.copy(ARCHIVE_7792 / 'fiche-7792-SO_ffab.pdf', dossier / 'fiche.pdf')
+    shutil.copy(ARCHIVE_REFERENCE / 'fiche-1042-EX_ffab.pdf', dossier / 'fiche.pdf')
     id_lot = depot.creer_lot(index, racine)
     job_id = f'lot-{id_lot}-annulation-fencing'
     jobs.create_job(index, job_id, str(racine), durability='durable')
@@ -1000,7 +1000,7 @@ def test_worker_dechu_avant_annulation_ne_modifie_pas_le_lot(base_depot: dict, t
     racine = tmp_path / 'archive'
     dossier = racine / 'synthese'
     dossier.mkdir(parents=True)
-    shutil.copy(ARCHIVE_7792 / 'fiche-7792-SO_ffab.pdf', dossier / 'fiche.pdf')
+    shutil.copy(ARCHIVE_REFERENCE / 'fiche-1042-EX_ffab.pdf', dossier / 'fiche.pdf')
     id_lot = depot.creer_lot(index, racine)
     job_id = f'lot-{id_lot}-transfert-annulation'
     jobs.create_job(index, job_id, str(racine), durability='durable')
@@ -1026,7 +1026,7 @@ def test_panne_mise_a_jour_ligne_annule_aussi_fiche(base_depot: dict, tmp_path: 
     racine = tmp_path / 'archive'
     dossier = racine / 'synthese'
     dossier.mkdir(parents=True)
-    shutil.copy(ARCHIVE_7792 / 'fiche-7792-SO_ffab.pdf', dossier / 'fiche.pdf')
+    shutil.copy(ARCHIVE_REFERENCE / 'fiche-1042-EX_ffab.pdf', dossier / 'fiche.pdf')
     id_lot = depot.creer_lot(index, racine)
     avant = _comptes(index)
     monkeypatch.setattr(depot, '_SQL_LIGNE_MAJ', 'SELECT colonne_inexistante FROM table_inexistante WHERE %s = %s AND %s = %s AND %s = %s')
@@ -1117,7 +1117,7 @@ def test_perte_claim_redis_pendant_transaction_annule_fiche(base_depot: dict, tm
     racine = tmp_path / 'archive'
     dossier = racine / 'synthese'
     dossier.mkdir(parents=True)
-    shutil.copy(ARCHIVE_7792 / 'fiche-7792-SO_ffab.pdf', dossier / 'fiche.pdf')
+    shutil.copy(ARCHIVE_REFERENCE / 'fiche-1042-EX_ffab.pdf', dossier / 'fiche.pdf')
     id_lot = depot.creer_lot(index, racine)
     job_id = f'lot-{id_lot}-claim-redis-transaction'
     jobs.create_job(index, job_id, str(racine), durability='durable')
@@ -1152,7 +1152,7 @@ def test_panne_suivi_rejeu_rollback_liaisons_objet(base_depot: dict, tmp_path: P
 
     config = SimpleNamespace(database_path=tmp_path / 'data' / 'search.db', max_file_size_bytes=1024 * 1024,
                              min_free_bytes=0, storage_backend='s3')
-    pdf = (ARCHIVE_7792 / 'fiche-7792-SO_ffab.pdf').read_bytes()
+    pdf = (ARCHIVE_REFERENCE / 'fiche-1042-EX_ffab.pdf').read_bytes()
     index = base_depot['index']
     def creer():
         token = t.creer_session_televersement_lot(config, nom_racine='TEST', nombre_fichiers=1,
@@ -1175,7 +1175,7 @@ def test_panne_suivi_rejeu_rollback_liaisons_objet(base_depot: dict, tmp_path: P
 
 def test_fiche_validee_refuse_pdf_et_annexe_modifies_sans_mutation(base_depot: dict, tmp_path: Path) -> None:
     index = base_depot['index']
-    source = (ARCHIVE_7792 / 'fiche-7792-SO_ffab.pdf').read_bytes()
+    source = (ARCHIVE_REFERENCE / 'fiche-1042-EX_ffab.pdf').read_bytes()
     def dossier_session(jeton: str, pdf: bytes, annexe: bytes) -> Path:
         dossier = tmp_path / 'uploads' / 'lots-televerses' / jeton / 'fichiers' / 'rg11'
         dossier.mkdir(parents=True)
@@ -1186,10 +1186,10 @@ def test_fiche_validee_refuse_pdf_et_annexe_modifies_sans_mutation(base_depot: d
     assert depot.deposer_dossier(index, premier)['statut'] == 'traite'
     with index.connect() as connexion:
         with connexion.cursor() as curseur:
-            curseur.execute("UPDATE fiche SET statut='valide' WHERE code=%s", ('7792-SO',))
-            curseur.execute('SELECT fichier_source, revision FROM fiche WHERE code=%s', ('7792-SO',))
+            curseur.execute("UPDATE fiche SET statut='valide' WHERE code=%s", ('1042-EX',))
+            curseur.execute('SELECT fichier_source, revision FROM fiche WHERE code=%s', ('1042-EX',))
             fiche_avant = curseur.fetchone()
-            curseur.execute('SELECT p.id_document, p.chemin, p.empreinte_sha256 FROM fiche_piece_jointe p JOIN fiche f ON f.id_fiche=p.id_fiche WHERE f.code=%s ORDER BY p.id_piece', ('7792-SO',))
+            curseur.execute('SELECT p.id_document, p.chemin, p.empreinte_sha256 FROM fiche_piece_jointe p JOIN fiche f ON f.id_fiche=p.id_fiche WHERE f.code=%s ORDER BY p.id_piece', ('1042-EX',))
             pieces_avant = curseur.fetchall()
     nouveau = dossier_session('nouveau', source + b'\n% variante synthetique\n', b'modification')
     try:
@@ -1197,21 +1197,21 @@ def test_fiche_validee_refuse_pdf_et_annexe_modifies_sans_mutation(base_depot: d
         assert resultat['statut'] == 'echec'
         with index.connect() as connexion:
             with connexion.cursor() as curseur:
-                curseur.execute('SELECT fichier_source, revision FROM fiche WHERE code=%s', ('7792-SO',))
+                curseur.execute('SELECT fichier_source, revision FROM fiche WHERE code=%s', ('1042-EX',))
                 assert curseur.fetchone() == fiche_avant
-                curseur.execute('SELECT p.id_document, p.chemin, p.empreinte_sha256 FROM fiche_piece_jointe p JOIN fiche f ON f.id_fiche=p.id_fiche WHERE f.code=%s ORDER BY p.id_piece', ('7792-SO',))
+                curseur.execute('SELECT p.id_document, p.chemin, p.empreinte_sha256 FROM fiche_piece_jointe p JOIN fiche f ON f.id_fiche=p.id_fiche WHERE f.code=%s ORDER BY p.id_piece', ('1042-EX',))
                 assert curseur.fetchall() == pieces_avant
                 curseur.execute('SELECT COUNT(*) FROM documents WHERE path LIKE %s', (str(nouveau) + '/%',))
                 assert curseur.fetchone()[0] == 0
     finally:
         with index.connect() as connexion:
             with connexion.cursor() as curseur:
-                curseur.execute("UPDATE fiche SET statut='a_valider' WHERE code=%s", ('7792-SO',))
+                curseur.execute("UPDATE fiche SET statut='a_valider' WHERE code=%s", ('1042-EX',))
 
 
 def test_pdf_identique_annexe_modifiee_est_deposee_sans_ecraser_document(base_depot: dict, tmp_path: Path, sans_auto_validation: None) -> None:
     index = base_depot['index']
-    source = (ARCHIVE_7792 / 'fiche-7792-SO_ffab.pdf').read_bytes()
+    source = (ARCHIVE_REFERENCE / 'fiche-1042-EX_ffab.pdf').read_bytes()
     def session(token: str, annexe: bytes) -> Path:
         dossier = tmp_path / 'uploads' / 'lots-televerses' / token / 'fichiers' / 'mise-a-jour'
         dossier.mkdir(parents=True)
@@ -1240,7 +1240,7 @@ def test_pdf_identique_annexe_modifiee_est_deposee_sans_ecraser_document(base_de
 
 def test_rejeu_avec_annexe_absente_exige_revue_sans_suppression(base_depot: dict, tmp_path: Path) -> None:
     index = base_depot['index']
-    source = (ARCHIVE_7792 / 'fiche-7792-SO_ffab.pdf').read_bytes()
+    source = (ARCHIVE_REFERENCE / 'fiche-1042-EX_ffab.pdf').read_bytes()
     def session(token: str, avec_annexe: bool) -> Path:
         dossier = tmp_path / 'uploads' / 'lots-televerses' / token / 'fichiers' / 'annexe-absente'
         dossier.mkdir(parents=True)
@@ -1266,7 +1266,7 @@ def test_rejeu_avec_annexe_absente_exige_revue_sans_suppression(base_depot: dict
 
 def test_rejouer_pdf_historique_ne_declare_pas_la_fiche_courante_identique(base_depot: dict, tmp_path: Path, sans_auto_validation: None) -> None:
     index = base_depot['index']
-    source = (ARCHIVE_7792 / 'fiche-7792-SO_ffab.pdf').read_bytes()
+    source = (ARCHIVE_REFERENCE / 'fiche-1042-EX_ffab.pdf').read_bytes()
     def session(token: str, pdf: bytes) -> Path:
         dossier = tmp_path / 'uploads' / 'lots-televerses' / token / 'fichiers' / 'historique'
         dossier.mkdir(parents=True)
@@ -1281,7 +1281,7 @@ def test_rejouer_pdf_historique_ne_declare_pas_la_fiche_courante_identique(base_
     assert resultat['statut'] == 'echec'
     with index.connect() as connexion:
         with connexion.cursor() as curseur:
-            curseur.execute("SELECT cle_idempotence FROM lot_dossier WHERE id_fiche=(SELECT id_fiche FROM fiche WHERE code=%s) AND statut='traite' AND cle_idempotence IS NOT NULL ORDER BY traite_le DESC, id_lot_dossier DESC LIMIT 1", ('7792-SO',))
+            curseur.execute("SELECT cle_idempotence FROM lot_dossier WHERE id_fiche=(SELECT id_fiche FROM fiche WHERE code=%s) AND statut='traite' AND cle_idempotence IS NOT NULL ORDER BY traite_le DESC, id_lot_dossier DESC LIMIT 1", ('1042-EX',))
             assert curseur.fetchone()[0].rsplit('|', 1)[0] == os.path.normcase(str((courant / 'fiche.pdf').resolve()))
 
 
@@ -1289,7 +1289,7 @@ def test_rejeu_meme_chemin_pdf_identique_annexe_modifiee(base_depot: dict, tmp_p
     index = base_depot['index']
     dossier = tmp_path / 'archive-identique'
     dossier.mkdir()
-    shutil.copy(ARCHIVE_7792 / 'fiche-7792-SO_ffab.pdf', dossier / 'fiche.pdf')
+    shutil.copy(ARCHIVE_REFERENCE / 'fiche-1042-EX_ffab.pdf', dossier / 'fiche.pdf')
     annexe = dossier / 'annexe.txt'
     annexe.write_bytes(b'v1')
     ancienne_empreinte = depot.empreinte_fichier(annexe)
@@ -1308,7 +1308,7 @@ def test_pdf_modifie_meme_chemin_necrase_pas_le_document(base_depot: dict, tmp_p
     dossier = tmp_path / 'archive-pdf-modifie'
     dossier.mkdir()
     pdf = dossier / 'fiche.pdf'
-    shutil.copy(ARCHIVE_7792 / 'fiche-7792-SO_ffab.pdf', pdf)
+    shutil.copy(ARCHIVE_REFERENCE / 'fiche-1042-EX_ffab.pdf', pdf)
     ancienne_empreinte = depot.empreinte_fichier(pdf)
     assert depot.deposer_dossier(index, dossier)['statut'] == 'traite'
     pdf.write_bytes(pdf.read_bytes() + b'\n% nouvelle revision synthetique\n')
@@ -1321,7 +1321,7 @@ def test_pdf_modifie_meme_chemin_necrase_pas_le_document(base_depot: dict, tmp_p
 
 def test_modification_concurrente_apres_verification_rejeu_ne_signale_pas_deja_traite(base_depot: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sans_auto_validation: None) -> None:
     index = base_depot['index']
-    source = (ARCHIVE_7792 / 'fiche-7792-SO_ffab.pdf').read_bytes()
+    source = (ARCHIVE_REFERENCE / 'fiche-1042-EX_ffab.pdf').read_bytes()
     def session(token: str, pdf: bytes) -> Path:
         dossier = tmp_path / 'uploads' / 'lots-televerses' / token / 'fichiers' / 'concurrence'
         dossier.mkdir(parents=True)
@@ -1341,7 +1341,7 @@ def test_modification_concurrente_apres_verification_rejeu_ne_signale_pas_deja_t
     assert resultat['statut'] == 'echec'
     with index.connect() as connexion:
         with connexion.cursor() as curseur:
-            curseur.execute("SELECT cle_idempotence FROM lot_dossier WHERE id_fiche=(SELECT id_fiche FROM fiche WHERE code=%s) AND statut='traite' AND cle_idempotence IS NOT NULL ORDER BY traite_le DESC, id_lot_dossier DESC LIMIT 1", ('7792-SO',))
+            curseur.execute("SELECT cle_idempotence FROM lot_dossier WHERE id_fiche=(SELECT id_fiche FROM fiche WHERE code=%s) AND statut='traite' AND cle_idempotence IS NOT NULL ORDER BY traite_le DESC, id_lot_dossier DESC LIMIT 1", ('1042-EX',))
             assert curseur.fetchone()[0].rsplit('|', 1)[0] == os.path.normcase(str((concurrent / 'fiche.pdf').resolve()))
 
 
@@ -1349,7 +1349,7 @@ def test_rejeu_verrouille_fiche_pendant_reverification(base_depot: dict, tmp_pat
     import psycopg2
 
     index = base_depot['index']
-    source = (ARCHIVE_7792 / 'fiche-7792-SO_ffab.pdf').read_bytes()
+    source = (ARCHIVE_REFERENCE / 'fiche-1042-EX_ffab.pdf').read_bytes()
     def session(token: str) -> Path:
         dossier = tmp_path / 'uploads' / 'lots-televerses' / token / 'fichiers' / 'verrou-rejeu'
         dossier.mkdir(parents=True)
@@ -1367,7 +1367,7 @@ def test_rejeu_verrouille_fiche_pendant_reverification(base_depot: dict, tmp_pat
                 with autre.cursor() as cursor:
                     cursor.execute("SET LOCAL lock_timeout = '100ms'")
                     try:
-                        cursor.execute('UPDATE fiche SET titre=%s WHERE code=%s', ('concurrent', '7792-SO'))
+                        cursor.execute('UPDATE fiche SET titre=%s WHERE code=%s', ('concurrent', '1042-EX'))
                     except psycopg2.errors.LockNotAvailable:
                         blocages.append(True)
                     else:
@@ -1382,7 +1382,7 @@ def test_rejeu_verrouille_fiche_pendant_reverification(base_depot: dict, tmp_pat
 
 def test_annexe_modifiee_ne_restaure_pas_pdf_historique_apres_concurrence(base_depot: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sans_auto_validation: None) -> None:
     index = base_depot['index']
-    source = (ARCHIVE_7792 / 'fiche-7792-SO_ffab.pdf').read_bytes()
+    source = (ARCHIVE_REFERENCE / 'fiche-1042-EX_ffab.pdf').read_bytes()
     def session(token: str, pdf: bytes, annexe: bytes) -> Path:
         dossier = tmp_path / 'uploads' / 'lots-televerses' / token / 'fichiers' / 'concurrence-annexe'
         dossier.mkdir(parents=True)
@@ -1402,13 +1402,13 @@ def test_annexe_modifiee_ne_restaure_pas_pdf_historique_apres_concurrence(base_d
     assert resultat['statut'] == 'echec'
     with index.connect() as connexion:
         with connexion.cursor() as curseur:
-            curseur.execute("SELECT cle_idempotence FROM lot_dossier WHERE id_fiche=(SELECT id_fiche FROM fiche WHERE code=%s) AND statut='traite' AND cle_idempotence IS NOT NULL ORDER BY traite_le DESC, id_lot_dossier DESC LIMIT 1", ('7792-SO',))
+            curseur.execute("SELECT cle_idempotence FROM lot_dossier WHERE id_fiche=(SELECT id_fiche FROM fiche WHERE code=%s) AND statut='traite' AND cle_idempotence IS NOT NULL ORDER BY traite_le DESC, id_lot_dossier DESC LIMIT 1", ('1042-EX',))
             assert curseur.fetchone()[0].rsplit('|', 1)[0] == os.path.normcase(str((concurrent / 'fiche.pdf').resolve()))
 
 
 def test_annexe_modifiee_necrase_pas_annexe_concurrente(base_depot: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sans_auto_validation: None) -> None:
     index = base_depot['index']
-    source = (ARCHIVE_7792 / 'fiche-7792-SO_ffab.pdf').read_bytes()
+    source = (ARCHIVE_REFERENCE / 'fiche-1042-EX_ffab.pdf').read_bytes()
     def session(token: str, annexe: bytes) -> Path:
         dossier = tmp_path / 'uploads' / 'lots-televerses' / token / 'fichiers' / 'annexe-concurrente'
         dossier.mkdir(parents=True)
@@ -1463,7 +1463,7 @@ def test_s3_emule_http_lot_promeut_et_vues_lisent_sans_source(base_depot: dict, 
     client_stockage = S3StorageClient(config=config)
     s3 = client_stockage._get_client()
     s3.create_bucket(Bucket=config.s3_bucket)
-    fichiers = {'reseau/fiche.pdf': (ARCHIVE_7792 / 'fiche-7792-SO_ffab.pdf').read_bytes(),
+    fichiers = {'reseau/fiche.pdf': (ARCHIVE_REFERENCE / 'fiche-1042-EX_ffab.pdf').read_bytes(),
                 'reseau/annexe.txt': b'annexe synthetique test reseau'}
     try:
         token = t.creer_session_televersement_lot(config, nom_racine='TEST', nombre_fichiers=len(fichiers),
@@ -1547,7 +1547,7 @@ def test_s3_emule_http_de_bout_en_bout_sans_source_locale(base_depot: dict, tmp_
     headers = {'X-SEAMTECH-TOKEN': 'test-service-token', 'X-SEAMTECH-UTILISATEUR': identifiant,
                'X-SEAMTECH-ROLE': 'approbateur', 'X-SEAMTECH-SESSION': str(session['id_session']),
                'X-SEAMTECH-SESSION-JETON': session['jeton']}
-    fichiers = {'http/fiche.pdf': (ARCHIVE_7792 / 'fiche-7792-SO_ffab.pdf').read_bytes(),
+    fichiers = {'http/fiche.pdf': (ARCHIVE_REFERENCE / 'fiche-1042-EX_ffab.pdf').read_bytes(),
                 'http/test-http-annexe-unique.txt': b'annexe synthetique test http'}
     client = TestClient(create_app(config))
     try:
@@ -1567,7 +1567,7 @@ def test_s3_emule_http_de_bout_en_bout_sans_source_locale(base_depot: dict, tmp_
                               json={'token_televersement': token})
         assert reponse.status_code == 202, reponse.text
         assert reponse.json()['etat']['nb_echecs'] == 0
-        reponse = client.get('/fiches/7792-SO/pieces', headers=headers)
+        reponse = client.get('/fiches/1042-EX/pieces', headers=headers)
         assert reponse.status_code == 200, reponse.text
         pieces = {p['name']: p['id'] for p in reponse.json()['pieces']
                   if p.get('is_primary_pdf') or p['name'] == 'test-http-annexe-unique.txt'}
@@ -1603,7 +1603,7 @@ def test_indexation_ne_modifie_pas_document_de_fiche_ni_empreinte_objet(base_dep
     dossier.mkdir()
     pdf = dossier / 'fiche.pdf'
     annexe = dossier / 'annexe.txt'
-    shutil.copy(ARCHIVE_7792 / 'fiche-7792-SO_ffab.pdf', pdf)
+    shutil.copy(ARCHIVE_REFERENCE / 'fiche-1042-EX_ffab.pdf', pdf)
     annexe.write_bytes(b'original synthetique')
     objets = {str(p): {'object_key': 'objet-' + p.name, 'object_bucket': 'bucket-test',
                        'sha256': depot.empreinte_fichier(p)} for p in (pdf, annexe)}
@@ -1633,7 +1633,7 @@ def test_depot_accepte_document_precedemment_indexe_sans_objet(base_depot: dict,
     dossier = tmp_path / 'indexe-avant-depot'
     dossier.mkdir()
     pdf = dossier / 'fiche.pdf'
-    shutil.copy(ARCHIVE_7792 / 'fiche-7792-SO_ffab.pdf', pdf)
+    shutil.copy(ARCHIVE_REFERENCE / 'fiche-1042-EX_ffab.pdf', pdf)
     document = Document(path=pdf, name=pdf.name, parent_path=pdf.parent, extension='.pdf',
                         size=pdf.stat().st_size, modified_at=pdf.stat().st_mtime, is_dir=False,
                         content_hash='hash-texte-du-crawler')
@@ -1654,7 +1654,7 @@ def test_depot_refuse_document_indexe_avec_objet_non_verifie(base_depot: dict, t
     dossier = tmp_path / 'indexe-avec-objet'
     dossier.mkdir()
     pdf = dossier / 'fiche.pdf'
-    shutil.copy(ARCHIVE_7792 / 'fiche-7792-SO_ffab.pdf', pdf)
+    shutil.copy(ARCHIVE_REFERENCE / 'fiche-1042-EX_ffab.pdf', pdf)
     document = Document(path=pdf, name=pdf.name, parent_path=pdf.parent, extension='.pdf',
                         size=pdf.stat().st_size, modified_at=pdf.stat().st_mtime, is_dir=False,
                         content_hash='hash-texte', object_key='objet-preexistant',
@@ -1675,7 +1675,7 @@ def test_indexation_stricte_annule_aussi_les_documents_non_proteges(base_depot: 
     dossier = tmp_path / 'index-strict'
     dossier.mkdir()
     pdf = dossier / 'fiche.pdf'
-    shutil.copy(ARCHIVE_7792 / 'fiche-7792-SO_ffab.pdf', pdf)
+    shutil.copy(ARCHIVE_REFERENCE / 'fiche-1042-EX_ffab.pdf', pdf)
     assert depot.deposer_dossier(index, dossier)['statut'] == 'traite'
     nouveau = dossier / 'nouveau.txt'
     documents = [Document(path=p, name=p.name, parent_path=p.parent, extension=p.suffix,
@@ -1699,7 +1699,7 @@ def test_depot_verrouille_document_indexe_contre_approbation_concurrente(base_de
     dossier = tmp_path / 'indexe-approbation'
     dossier.mkdir()
     pdf = dossier / 'fiche.pdf'
-    shutil.copy(ARCHIVE_7792 / 'fiche-7792-SO_ffab.pdf', pdf)
+    shutil.copy(ARCHIVE_REFERENCE / 'fiche-1042-EX_ffab.pdf', pdf)
     document = Document(path=pdf, name=pdf.name, parent_path=pdf.parent, extension='.pdf',
                         size=pdf.stat().st_size, modified_at=pdf.stat().st_mtime, is_dir=False,
                         content_hash='empreinte-texte')
@@ -1740,7 +1740,7 @@ def test_depot_reserve_chemin_nouveau_contre_indexation_concurrente(base_depot: 
     dossier = tmp_path / 'nouveau-chemin-verrouille'
     dossier.mkdir()
     pdf = dossier / 'fiche.pdf'
-    shutil.copy(ARCHIVE_7792 / 'fiche-7792-SO_ffab.pdf', pdf)
+    shutil.copy(ARCHIVE_REFERENCE / 'fiche-1042-EX_ffab.pdf', pdf)
     verrouiller = depot._verrouiller_document_existant
     bloque = []
     def verrouiller_puis_tester(curseur, chemin):
@@ -1874,7 +1874,7 @@ def test_scan_ne_supprime_pas_pdf_promu_quand_source_absente(base_depot: dict, t
     dossier = tmp_path / 'source-manquante'
     dossier.mkdir()
     pdf = dossier / 'fiche.pdf'
-    shutil.copy(ARCHIVE_7792 / 'fiche-7792-SO_ffab.pdf', pdf)
+    shutil.copy(ARCHIVE_REFERENCE / 'fiche-1042-EX_ffab.pdf', pdf)
     objet = {str(pdf): {'object_key': 'copie-distante', 'object_bucket': 'bucket-test',
                         'sha256': depot.empreinte_fichier(pdf)}}
     assert depot.deposer_dossier(index, dossier, objets_promus=objet)['statut'] == 'traite'
@@ -1932,7 +1932,7 @@ def test_echec_scan_ne_supprime_pas_depot_concurrent(base_depot: dict, tmp_path:
     dossier = tmp_path / 'depot-concurrent-scan'
     dossier.mkdir()
     pdf = dossier / 'fiche.pdf'
-    shutil.copy(ARCHIVE_7792 / 'fiche-7792-SO_ffab.pdf', pdf)
+    shutil.copy(ARCHIVE_REFERENCE / 'fiche-1042-EX_ffab.pdf', pdf)
     objets = {str(pdf): {'object_key': 'copie-concurrente', 'object_bucket': 'bucket-test',
                          'sha256': depot.empreinte_fichier(pdf)}}
     from seamtech_search.indexer import SearchIndex
@@ -1958,7 +1958,7 @@ def test_echec_scan_ne_retablit_pas_ancienne_version_document_adopte(base_depot:
     dossier = tmp_path / 'document-adopte-pendant-scan'
     dossier.mkdir()
     pdf = dossier / 'fiche.pdf'
-    shutil.copy(ARCHIVE_7792 / 'fiche-7792-SO_ffab.pdf', pdf)
+    shutil.copy(ARCHIVE_REFERENCE / 'fiche-1042-EX_ffab.pdf', pdf)
     doc = Document(path=pdf, name=pdf.name, parent_path=pdf.parent, extension='.pdf',
                    size=pdf.stat().st_size, modified_at=pdf.stat().st_mtime, is_dir=False, content_hash='ancien-texte')
     index.upsert_documents([doc])
@@ -1988,7 +1988,7 @@ def test_depot_refuse_document_indexe_portant_approbation(base_depot: dict, tmp_
     dossier = tmp_path / 'approbation-avant-depot'
     dossier.mkdir()
     pdf = dossier / 'fiche.pdf'
-    shutil.copy(ARCHIVE_7792 / 'fiche-7792-SO_ffab.pdf', pdf)
+    shutil.copy(ARCHIVE_REFERENCE / 'fiche-1042-EX_ffab.pdf', pdf)
     doc = Document(path=pdf, name=pdf.name, parent_path=pdf.parent, extension='.pdf', size=pdf.stat().st_size,
                    modified_at=pdf.stat().st_mtime, is_dir=False, content_hash='empreinte-texte')
     index.upsert_documents([doc])
@@ -2014,7 +2014,7 @@ def test_erreur_ecriture_depot_ne_divulgue_pas_exception_ou_chemin(base_depot, t
     secret = "SECRET-SYNTHETIQUE-TEST"
     dossier = tmp_path / secret
     dossier.mkdir()
-    shutil.copy(ARCHIVE_7792 / "fiche-7792-SO_ffab.pdf", dossier / "fiche.pdf")
+    shutil.copy(ARCHIVE_REFERENCE / "fiche-1042-EX_ffab.pdf", dossier / "fiche.pdf")
     def panne(*_args, **_kwargs):
         raise erreur(secret)
     monkeypatch.setattr(depot, "ecrire_fiche_resultat", panne)
@@ -2035,7 +2035,7 @@ def test_logs_depot_reussi_ne_divulguent_pas_dossier_ou_code(base_depot, tmp_pat
     secret = "SECRET-SYNTHETIQUE-TEST"
     dossier = tmp_path / secret
     dossier.mkdir()
-    shutil.copy(ARCHIVE_7792 / "fiche-7792-SO_ffab.pdf", dossier / "fiche.pdf")
+    shutil.copy(ARCHIVE_REFERENCE / "fiche-1042-EX_ffab.pdf", dossier / "fiche.pdf")
     code = depot.scanner_dossier(dossier, list(GABARITS_EMBARQUES)).fiche_extraite.code
     assert code
     with caplog.at_level("INFO", logger=depot.LOGGER.name):
@@ -2095,7 +2095,7 @@ def test_meme_pdf_deja_passe_par_un_autre_flux_est_repris(base_depot: dict, tmp_
     dossier = tmp_path / 'deja-importe'
     dossier.mkdir()
     pdf = dossier / 'fiche.pdf'
-    shutil.copy(ARCHIVE_7792 / 'fiche-7792-SO_ffab.pdf', pdf)
+    shutil.copy(ARCHIVE_REFERENCE / 'fiche-1042-EX_ffab.pdf', pdf)
     empreinte = depot.empreinte_fichier(pdf)
 
     with index.connect() as connexion:

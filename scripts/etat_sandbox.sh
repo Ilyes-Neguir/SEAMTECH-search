@@ -49,7 +49,7 @@ fi
 
 echo "Empreintes des fixtures (doivent correspondre à tests/test_empreintes_fixtures.py) :"
 sha256sum \
-    sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf \
+    sample_data/CLIENT-1042-EX/fiche-1042-EX_ffab.pdf \
     sample_data/CLIENT-GENOA/fiche-genois.pdf \
     sample_data/CLIENT-123/fiche-technique.pdf \
     frontend/e2e/live-fixtures/CLIENT-E2E-TROIS/fiche-trois.pdf \

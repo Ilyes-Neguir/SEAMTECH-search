@@ -93,17 +93,17 @@ def installation_ancienne(tmp_path: Path) -> Iterator[dict[str, Any]]:
             cursor.execute(
                 "INSERT INTO documents (path_key, path, name, parent_path, extension, size, modified_at, "
                 "is_dir, content, content_hash, extraction_status, category, role) "
-                "VALUES ('/archives/7792/fiche.pdf', '/archives/7792/fiche.pdf', 'fiche.pdf', "
-                "'/archives/7792', '.pdf', 1234, 0, FALSE, 'reference 7792-SO genois', 'h1', "
+                "VALUES ('/archives/1042-EX/fiche.pdf', '/archives/1042-EX/fiche.pdf', 'fiche.pdf', "
+                "'/archives/1042', '.pdf', 1234, 0, FALSE, 'reference 1042-EX genois', 'h1', "
                 "'extracted', 'analyzed', 'fiche_pdf')"
             )
             for i in range(3):
                 cursor.execute(
                     "INSERT INTO documents (path_key, path, name, parent_path, extension, size, modified_at, "
                     "is_dir, content, content_hash, extraction_status, category, role) "
-                    "VALUES (%s, %s, %s, '/archives/7792', '.pdf', 10, 0, FALSE, 'piece', 'h', "
+                    "VALUES (%s, %s, %s, '/archives/1042', '.pdf', 10, 0, FALSE, 'piece', 'h', "
                     "'extracted', 'analyzed', 'piece_jointe')",
-                    (f"/archives/7792/piece{i}.pdf", f"/archives/7792/piece{i}.pdf", f"piece{i}.pdf"),
+                    (f"/archives/1042/piece{i}.pdf", f"/archives/1042/piece{i}.pdf", f"piece{i}.pdf"),
                 )
             # L'index plein texte est normalement alimenté par ``upsert_documents`` ;
             # ici les lignes sont semées en SQL direct, on le remplit donc de la
@@ -152,7 +152,7 @@ def test_montée_de_version_conserve_les_donnees(installation_ancienne: dict[str
 
     # L'application fonctionne après migration : l'index de recherche répond.
     index = installation_ancienne["index"]
-    resultats = index.search("7792-SO")
+    resultats = index.search("1042-EX")
     assert resultats, "recherche vide après migration"
 
     # La photographie d'avant est persistée à côté du dump (traçabilité).
@@ -183,7 +183,7 @@ def test_retour_arriere_repeté_restaure_l_etat_exact(installation_ancienne: dic
             index_restaure = SearchIndex(Path(f"/tmp/unused-{nom_cible}.db"), url_cible)
             try:
                 index_restaure.initialize()
-                assert index_restaure.search("7792-SO")
+                assert index_restaure.search("1042-EX")
             finally:
                 index_restaure.close()
         finally:

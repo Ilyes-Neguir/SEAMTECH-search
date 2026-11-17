@@ -26,7 +26,7 @@ remplacer :
 - `fiche_champ_extrait`, les tables filles typées et l'écriture
   transactionnelle existaient, avec les protections RG3/RG11 ;
 - les conversions mm/cm → m, les contrôles RG16 et la vérité terrain
-  7792-SO à 74 cibles existaient ;
+  1042-EX à 74 cibles existaient ;
 - en revanche, il n'existait ni table `sail_extractions`, ni modèle de voile
   normalisé indépendant des tables filles, ni rapport d'or mesurant cette
   projection normalisée.
@@ -145,8 +145,8 @@ versionné est 100 %.
 
 Mesure du banc par défaut :
 
-- 7792-SO, champs Lot 3a : **17/17** ;
-- 7792-SO, vérité historique de fiche : **74/74** ;
+- 1042-EX, champs Lot 3a : **17/17** ;
+- 1042-EX, vérité historique de fiche : **74/74** ;
 - génois synthétique, champs Lot 3a : **11/11** ;
 - total publié : **102/102, soit 100 %**.
 
@@ -184,7 +184,7 @@ Mesures publiées par la CI :
 - couverture backend : **85,90 %**, plancher inchangé à 85 % ;
 - navigateur : Lot 1 **7/7 au premier essai**, parcours canonisés **8/8**,
   authentification **34/34**, doublons **2/2**, scan OCR **4/4** ;
-- parcours machine de la vraie fiche 7792-SO : 858 ms (temps machine
+- parcours machine de la vraie fiche 1042-EX : 858 ms (temps machine
   uniquement, pas un chronométrage humain) ;
 - latences publiées sans instrumentation : plus grand p95 des annotations
   backend à **51,2 ms** (1 500 fiches), sous le critère produit de 100 ms ;
@@ -245,7 +245,7 @@ La migration 028 est additive et ne convertit aucune donnée :
   dans les PDF (bateau, désignation, matériaux). Un rapport produit sur des
   documents d'entreprise doit rester local et ne doit pas être commité.
 - Aucun nouveau document client ni extrait nominatif n'a été ajouté au
-  dépôt : les épreuves réutilisent le 7792-SO déjà versionné et des données
+  dépôt : les épreuves réutilisent le 1042-EX déjà versionné et des données
   synthétiques.
 
 Réserve inchangée : le dépôt GitHub reste public sur décision explicite du

@@ -163,7 +163,7 @@ def test_insertion_fiche_vue_recherche_et_rafraichissement(base_metier: dict[str
 
     with index.connect() as connection:
         with connection.cursor() as cursor:
-            cursor.execute("INSERT INTO client (nom, chantier) VALUES ('Sailonet', 'Cruette') RETURNING id_client")
+            cursor.execute("INSERT INTO client (nom, chantier) VALUES ('Exemplia', 'Demo') RETURNING id_client")
             id_client = cursor.fetchone()[0]
             cursor.execute("INSERT INTO bateau (nom, taille) VALUES ('29er', '15''') RETURNING id_bateau")
             id_bateau = cursor.fetchone()[0]
@@ -186,12 +186,12 @@ def test_insertion_fiche_vue_recherche_et_rafraichissement(base_metier: dict[str
 
             cursor.execute("SELECT champs_texte, search_vector FROM fiche WHERE id_fiche = %s", (id_fiche,))
             champs_texte, vecteur = cursor.fetchone()
-            assert "Sailonet" in champs_texte and "29er" in champs_texte
+            assert "Exemplia" in champs_texte and "29er" in champs_texte
             assert vecteur is not None and str(vecteur) != ""
 
             cursor.execute("SELECT code, client, bateau, slu_m FROM v_fiche_recherche WHERE id_fiche = %s", (id_fiche,))
             ligne = cursor.fetchone()
-            assert ligne[0] == code and ligne[1] == "Sailonet" and "29er" in ligne[2]
+            assert ligne[0] == code and ligne[1] == "Exemplia" and "29er" in ligne[2]
             assert float(ligne[3]) == 6.60
 
             cursor.execute("SELECT passage_direct, nb_champs_corriges FROM v_qualite WHERE id_fiche = %s", (id_fiche,))

@@ -7,8 +7,8 @@ Ce fichier couvre trois niveaux :
 
 1. ``TestAnalyseRequeteDimension`` (sans serveur) — normalisation côté requête :
    « 6,6 », « 6.60 », « 6,60 m », « 660 cm », « 6600 mm » convergent vers la
-   même valeur ; les entiers nus (années, codes « 7792 », « 0701 ») ne sont
-   JAMAIS des dimensions — sinon « spi sailonet 2026 » et « 7792-SO »
+   même valeur ; les entiers nus (années, codes « 1042 », « 0701 ») ne sont
+   JAMAIS des dimensions — sinon « spi exemplia 2026 » et « 1042-EX »
    basculeraient dans le filtre numérique et tomberaient à zéro résultat.
 
 2. ``TestTokenisationReelle`` (postgres) — garde du test de tokenisation RÉEL
@@ -107,7 +107,7 @@ class TestAnalyseRequeteDimension:
 
     def test_entiers_nus_ne_sont_jamais_des_dimensions(self) -> None:
         # Années, codes, quantités : jamais de filtre numérique implicite.
-        for texte in ("2026", "7792", "spi sailonet 2026", "7792-SO", "0701-GV-001", "29er"):
+        for texte in ("2026", "1042", "spi exemplia 2026", "1042-EX", "0701-GV-001", "29er"):
             analyse = analyser_requete_dimension(texte)
             assert analyse.valeur is None, f"{texte!r} ne doit PAS basculer dans le filtre dimension"
             assert analyse.cote is None
@@ -355,7 +355,7 @@ class TestRechercheDimensionPostgres:
         assert "1001-GV-006" not in codes(reponse)
 
     def test_aucune_conquete_des_requetes_annee_et_code(self, base_dimension: dict[str, Any]) -> None:
-        # « spi sailonet 2026 »-like : une année ne doit JAMAIS devenir un
+        # « spi exemplia 2026 »-like : une année ne doit JAMAIS devenir un
         # filtre dimension ; un code avec séparateurs reste un code.
         reponse = rechercher_fiches(base_dimension["index"], requete="0701-GV-001")
         assert "0701-GV-001" in codes(reponse)

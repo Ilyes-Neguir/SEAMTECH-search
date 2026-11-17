@@ -21,7 +21,7 @@ Deux natures de doublon
 jointe de même empreinte SHA-256. ``fiche_piece_jointe.empreinte_sha256`` est
 remplie à l'import par :func:`seamtech_search.fiches.depot.empreinte_fichier` :
 aucune ambiguïté possible, c'est le même fichier octet pour octet. Cas réel du
-fonds : ``fiche-7792-SO_ffab.pdf``, sha256 ``43afc51e…``.
+fonds : ``fiche-1042-EX_ffab.pdf``, sha256 ``43afc51e…``.
 
 **Probable** (:func:`doublons_probables`) — titres normalisés proches, avec
 ``similarity()`` de ``pg_trgm``. ``pg_trgm`` est **DÉGRADABLE** dans ce dépôt

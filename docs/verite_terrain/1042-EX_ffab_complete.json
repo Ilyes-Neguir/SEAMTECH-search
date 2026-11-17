@@ -1,15 +1,15 @@
 {
   "_documentation": {
-    "fiche": "Vérité terrain étendue — fiche 7792-SO (document client réel, 166 990 o, 74 cibles, 12 familles).",
-    "fixture": "sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf (SHA-256 43afc51e55ae598d3eaffc3096f0e7ddaa00e8ddc579ae315bb31b4dbf1c1f40).",
-    "mesure": "Mesuré au banc étendu : 74/74 = 100 % (moteur gabarit, persistance._valeur_extraite).",
-    "provenance": "122 valeurs métier du moteur -> 115 tracées littéralement, 2 dates dérivées, 5 codes internes."
+    "fiche": "Vérité terrain étendue — fiche de référence 1042-EX (SYNTHÉTIQUE, 74 cibles, 12 familles).",
+    "fixture": "sample_data/CLIENT-1042-EX/fiche-1042-EX_ffab.pdf est une fiche SYNTHÉTIQUE régénérée par scripts/generer_fiche_reference_synthetique.py. Elle remplace le document client réel purgé : même mise en page, mêmes 67 valeurs techniques, identifiants remplacés. Empreinte non épinglable (métadonnées ReportLab variables).",
+    "mesure": "Mesuré au banc étendu : 74/74 = 100 % (moteur gabarit).",
+    "source_unique": "seamtech_search/fiches/verite_reference.py — ce fichier en est la copie documentaire."
   },
-  "fiche-7792-SO_ffab.pdf": {
+  "fiche-1042-EX_ffab.pdf": {
     "gabarit": "FICHE_PORTANT_V1",
     "attendu": {
       "bateau": "29er",
-      "client": "Sailonet",
+      "client": "Exemplia",
       "cotes.dessin.poids_kg": 0.7,
       "cotes.dessin.sf_m": 3.08,
       "cotes.dessin.shw_m": 3.14,
@@ -21,13 +21,13 @@
       "cotes.finie.sle_m": 5.5,
       "cotes.finie.slu_m": 6.6,
       "cotes.finie.spa_m2": 15.71,
-      "fiche.atelier": "SO",
-      "fiche.code": "7792-SO",
-      "fiche.commande_numero": "7792-SO",
+      "fiche.atelier": "EX",
+      "fiche.code": "1042-EX",
+      "fiche.commande_numero": "1042-EX",
       "fiche.date_dessin": "2026-03-06",
       "fiche.date_edition": "2026-03-06",
-      "fiche.dessinateur": "Yann",
-      "fiche.fichier_source": "7792-SO.xlsm",
+      "fiche.dessinateur": "Demo",
+      "fiche.fichier_source": "1042-EX.xlsm",
       "fiche.montage_fil": "V46",
       "fiche.montage_type": "Collé/Cousu",
       "fiche.quantite": 1,

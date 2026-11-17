@@ -175,12 +175,21 @@ def test_recette_etend_les_20_controles_existants_a_27_sans_regression() -> None
     assert len(CONTROLES_VERIF) + len(CONTROLES_WRAPPER) == 27
 
 
-def test_recette_epingle_les_sept_pdf_sources_et_gib_sea() -> None:
-    """Les 7 PDF principaux sont comparés par SHA-256; GIB SEA est requis."""
+def test_recette_epingle_les_sept_pdf_sources() -> None:
+    """Les 7 PDF principaux sont comparés par SHA-256, et les 7 sont requis.
+
+    Les noms sont désormais neutres (CORPUS-01..07) : les archives ont été
+    purgées, et leur nom portait le bateau et le code de chantier du client.
+    On exige donc la présence des SEPT références, et non plus celle d'un
+    dossier nommé — c'est la même exigence, sans la fuite.
+    """
     import scripts.recette_verif as recette
 
     assert len(recette.PDFS_SEPT_FICHES) == 7
-    assert any("GIBSEA 284 250328 AJA.pdf" in nom for nom in recette.PDFS_SEPT_FICHES)
+    for rang in range(1, 8):
+        assert f"CORPUS-{rang:02d}.pdf" in recette.PDFS_SEPT_FICHES, (
+            f"référence CORPUS-{rang:02d}.pdf absente de PDFS_SEPT_FICHES"
+        )
     assert all(len(empreinte) == 64 and all(c in "0123456789abcdef" for c in empreinte) for empreinte in recette.PDFS_SEPT_FICHES.values())
 
 

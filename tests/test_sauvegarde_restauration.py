@@ -78,7 +78,7 @@ def _creer_archive_fixture(tmp_path: Path) -> Path:
     épinglées dans tests/test_empreintes_fixtures.py)."""
     archive = tmp_path / "archive"
     destinations = [
-        ("CLIENT-7792-SO", "fiche-7792-SO_ffab.pdf", "sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf"),
+        ("CLIENT-1042-EX", "fiche-1042-EX_ffab.pdf", "sample_data/CLIENT-1042-EX/fiche-1042-EX_ffab.pdf"),
         ("CLIENT-GENOA", "fiche-genois.pdf", "sample_data/CLIENT-GENOA/fiche-genois.pdf"),
     ]
     for dossier, nom, source in destinations:

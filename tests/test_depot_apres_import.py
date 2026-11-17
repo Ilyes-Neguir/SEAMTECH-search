@@ -50,7 +50,7 @@ from tests.test_depot_transactionnel import (  # noqa: F401 - fixtures partagée
 pytestmark = pytest.mark.postgres
 
 FICHE_EXEMPLE = (
-    Path(__file__).resolve().parent.parent / "sample_data" / "CLIENT-7792-SO" / "fiche-7792-SO_ffab.pdf"
+    Path(__file__).resolve().parent.parent / "sample_data" / "CLIENT-1042-EX" / "fiche-1042-EX_ffab.pdf"
 )
 NOMENCLATURE_EXEMPLE = (
     Path(__file__).resolve().parent.parent / "sample_data" / "CLIENT-123" / "nomenclature-voile.xlsx"
@@ -66,10 +66,10 @@ def _dossier_exemple(racine: Path) -> Path:
     l'import en extrait un résumé, donc une empreinte de contenu différente de
     celle de ses octets — exactement le cas qui faisait refuser le dépôt.
     """
-    dossier = racine / "CLIENT-7792-SO"
+    dossier = racine / "CLIENT-1042-EX"
     (dossier / "PLC").mkdir(parents=True)
     (dossier / "ACCESSOIRES").mkdir(parents=True)
-    shutil.copy(FICHE_EXEMPLE, dossier / "fiche-7792-SO_ffab.pdf")
+    shutil.copy(FICHE_EXEMPLE, dossier / "fiche-1042-EX_ffab.pdf")
     shutil.copy(NOMENCLATURE_EXEMPLE, dossier / "PLC" / "nomenclature-voile.xlsx")
     (dossier / "ACCESSOIRES" / "toile.txt").write_bytes(b"toile ST792 synthetique\n")
     return dossier

@@ -1,13 +1,13 @@
 """Corpus d'entraînement du classifieur de type de voile (Lot F, §10.4).
 
-État des lieux honnête : le fonds réel compte UNE fiche (7792-SO, spi). Le
+État des lieux honnête : le fonds réel compte UNE fiche (1042-EX, spi). Le
 plan anticipe « synthétique seul ≈ 70 %, +100 exemples réels ≈ 87 % » — ces
 ordres de grandeur viennent du benchmark du commanditaire et restent à
 re-mesurer ici. Ce module génère donc :
 
 - un corpus SYNTHÉTIQUE étiqueté (4 types : spi, genois, foc, grand_voile),
   avec des variantes lexicales et des CAS PIÈGES sans mot-clé évident ;
-- un noyau RÉEL : la seule vraie fiche du dépôt (7792-SO → spi), conservé
+- un noyau RÉEL : la seule vraie fiche du dépôt (1042-EX → spi), conservé
   dans le jeu d'évaluation — jamais dans l'entraînement.
 
 Les règles de comparaison (:func:`regles_type_voile`) sont le socle actuel du
@@ -126,7 +126,7 @@ def cas_pieges() -> list[dict[str, Any]]:
 
 
 def noyau_reel(chemin_verite: Path) -> list[dict[str, Any]]:
-    """La vraie fiche 7792-SO : le seul exemple RÉEL disponible (spi).
+    """La vraie fiche 1042-EX : le seul exemple RÉEL disponible (spi).
 
     Le texte est celui de la vérité terrain — aucune valeur inventée (RG6).
     À calibrer sur 20-30 fiches réelles quand le commanditaire les fournira.
@@ -142,7 +142,7 @@ def noyau_reel(chemin_verite: Path) -> list[dict[str, Any]]:
     morceaux = _aplatir(attendu)
     if not morceaux:
         return []
-    etiquette = "spi"  # 7792-SO est un Spi Asymétrique (document réel)
+    etiquette = "spi"  # 1042-EX est un Spi Asymétrique (document réel)
     return [{"texte": " | ".join(morceaux), "etiquette": etiquette, "origine": "reel"}]
 
 

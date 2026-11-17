@@ -66,13 +66,13 @@ noter l'écart dans le suivi — ne pas forcer.
 
 | Code | Dossier (nom public du ZIP, ordre alphabétique) | Famille de format | Points d'attention propres |
 |---|---|---|---|
-| REF-001 | `AQUILA 250216AJA-20260928T182324Z-1-001.zip` | JADE | tissu absent de la fiche (champ honnêtement vide) |
-| REF-002 | `ATTALIA 250121JA-20260928T182325Z-1-001.zip` | JADE | génois : vérifier le type de voile et son accent |
-| REF-003 | `BAVARIA 32 - 250604JA-20260928T182326Z-1-001.zip` | JADE | **tissu présent** (colonne centrale, sous la ligne DATE) |
-| REF-004 | `BAVARIA 34 - 250323JA-20260928T182327Z-1-001.zip` | JADE | génois ; bande de visu |
-| REF-005 | `DAMIEN 4 - 250821JA-20260928T182330Z-1-001.zip` | JADE | **tissu + remarques (DIVERS) + renforts** présents |
-| REF-006 | `DEHLER 39 - 250329AJA-20260928T182330Z-1-001.zip` | **GV FULLBATTEN** | fiche la plus riche (40 propositions) : ris 1-3, goussets L1-L7, lattes, bôme, numéro de voile, montage zigzag + fil |
-| REF-007 | `GIB SEA 284 - 250328AJA-20260928T182331Z-1-001.zip` | JADE | génois ; 3e fiche GSE de la même mise en page |
+| REF-001 | `CORPUS-01-20260928T182324Z-1-001.zip` | JADE | tissu absent de la fiche (champ honnêtement vide) |
+| REF-002 | `CORPUS-02-20260928T182325Z-1-001.zip` | JADE | génois : vérifier le type de voile et son accent |
+| REF-003 | `CORPUS-03-20260928T182326Z-1-001.zip` | JADE | **tissu présent** (colonne centrale, sous la ligne DATE) |
+| REF-004 | `CORPUS-04-20260928T182327Z-1-001.zip` | JADE | génois ; bande de visu |
+| REF-005 | `CORPUS-05-20260928T182330Z-1-001.zip` | JADE | **tissu + remarques (DIVERS) + renforts** présents |
+| REF-006 | `CORPUS-06-20260928T182330Z-1-001.zip` | **GV FULLBATTEN** | fiche la plus riche (40 propositions) : ris 1-3, goussets L1-L7, lattes, bôme, numéro de voile, montage zigzag + fil |
+| REF-007 | `CORPUS-07-20260928T182331Z-1-001.zip` | JADE | génois ; 3e fiche GSE de la même mise en page |
 
 Dans chaque dossier : **ouvrir le PDF proposé comme candidat technique**
 (l'unique « fiche de fabrication » du dossier — les autres PDF sont des plans,

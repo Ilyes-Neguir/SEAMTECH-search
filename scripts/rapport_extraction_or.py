@@ -3,7 +3,7 @@
 
 Par défaut, le banc mesure deux échantillons déjà versionnés :
 
-* le PDF client réel 7792-SO, à la fois sur les 74 cibles historiques de la
+* le PDF client réel 1042-EX, à la fois sur les 74 cibles historiques de la
   fiche et sur les champs normalisés du Lot 3a ;
 * le PDF génois synthétique sur les champs normalisés du Lot 3a.
 
@@ -43,10 +43,10 @@ from seamtech_search.extractions_voile import (  # noqa: E402
     evaluer_extraction_or,
     extraire_voile_avec_fiche,
 )
-from seamtech_search.fiches.verite_7792 import VERITE_7792  # noqa: E402
+from seamtech_search.fiches.verite_reference import VERITE_REFERENCE  # noqa: E402
 
-ATTENDU_7792_LOT3A: dict[str, object] = {
-    "code_fiche": "7792-SO",
+ATTENDU_REFERENCE_LOT3A: dict[str, object] = {
+    "code_fiche": "1042-EX",
     "type_voile": "Spi Asymétrique",
     "gamme": "Medium Régate",
     "modele_bateau_brut": "29er (15')",
@@ -125,10 +125,10 @@ def _construire_parseur() -> argparse.ArgumentParser:
 def _echantillons_par_defaut() -> list[EchantillonOr]:
     return [
         EchantillonOr(
-            nom="7792-SO",
-            chemin=RACINE / "sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf",
-            attendu_lot3a=dict(ATTENDU_7792_LOT3A),
-            attendu_fiche=dict(VERITE_7792),
+            nom="1042-EX",
+            chemin=RACINE / "sample_data/CLIENT-1042-EX/fiche-1042-EX_ffab.pdf",
+            attendu_lot3a=dict(ATTENDU_REFERENCE_LOT3A),
+            attendu_fiche=dict(VERITE_REFERENCE),
         ),
         EchantillonOr(
             nom="GENOIS-SYNTHETIQUE",

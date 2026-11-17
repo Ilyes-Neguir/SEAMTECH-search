@@ -110,10 +110,10 @@ def connexion() -> None:
 
 
 def _preparer_sources() -> None:
-    sample = Path(__file__).resolve().parent.parent / "sample_data" / "CLIENT-7792-SO"
+    sample = Path(__file__).resolve().parent.parent / "sample_data" / "CLIENT-1042-EX"
     RACINE_IMPORT.mkdir(parents=True, exist_ok=True)
     if sample.is_dir():
-        cible = RACINE_IMPORT / "CLIENT-7792-SO"
+        cible = RACINE_IMPORT / "CLIENT-1042-EX"
         if not cible.exists():
             shutil.copytree(sample, cible)
     RACINE_OCR.mkdir(parents=True, exist_ok=True)
@@ -156,7 +156,7 @@ def import_et_worker() -> int | None:
     code, corps, _ = _appel(
         "POST",
         "/imports/dossier/lot",
-        {"racine": str(RACINE_IMPORT), "notes": "essai natif 7792-SO"},
+        {"racine": str(RACINE_IMPORT), "notes": "essai natif 1042-EX"},
         entetes={"X-SEAMTECH-BACKGROUND": "true"},
     )
     id_lot = corps.get("id_lot") if isinstance(corps, dict) else None
@@ -202,13 +202,13 @@ def import_et_worker() -> int | None:
 
 def recherche_et_ocr() -> str | None:
     path_ouvert: str | None = None
-    code, corps, _ = _appel("GET", "/recherche?q=" + urllib.parse.quote("7792"))
+    code, corps, _ = _appel("GET", "/recherche?q=" + urllib.parse.quote("1042"))
     hits: list[Any] = []
     if code == 200 and isinstance(corps, dict):
         hits = corps.get("resultats") or corps.get("results") or []
-    _ligne("recherche-metier-7792", code == 200 and bool(hits), f"GET /recherche q=7792 HTTP {code} n={len(hits)} {str(corps)[:180]}")
+    _ligne("recherche-metier-1042", code == 200 and bool(hits), f"GET /recherche q=1042 HTTP {code} n={len(hits)} {str(corps)[:180]}")
 
-    for requete, etiquette in (("SEAMTECH", "ocr-fra"), ("Sailonet", "fonds-sample")):
+    for requete, etiquette in (("SEAMTECH", "ocr-fra"), ("Exemplia", "fonds-sample")):
         c2, corps2, _ = _appel("GET", "/search?q=" + urllib.parse.quote(requete))
         hits2: list[Any] = []
         if c2 == 200 and isinstance(corps2, dict):

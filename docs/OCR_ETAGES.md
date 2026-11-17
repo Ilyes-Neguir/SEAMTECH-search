@@ -25,7 +25,7 @@ Le texte des fiches récentes est extrait tel quel via `pdfplumber` puis `pypdf`
 Aucun OCR n'est appliqué si la page contient >= seuil caractères (défaut 20).
 
 Justification du seuil 20 :
-- Vraie fiche 7792-SO : chaque page > 200 caractères natifs
+- Vraie fiche 1042-EX : chaque page > 200 caractères natifs
 - Scans d'archive (échantillons tests/fixtures/ocr/) : 0 caractère natif
 - Bruit (numéro de page isolé) : < 10 caractères
 Donc 20 est une marge sûre entre bruit et contenu réel.

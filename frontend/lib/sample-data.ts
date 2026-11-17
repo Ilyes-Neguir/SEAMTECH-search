@@ -76,13 +76,13 @@ export const SAMPLE_FILES: SampleFile[] = [
       "Asymmetric spinnaker design notes. Mid-girth 90% of foot. Nylon 0.75 oz. Radial head construction. Sheet load estimate 380 kg. Client Voile-Sud reference VS-1988.",
   },
   {
-    name: "Sailonet Production Standards.docx",
-    path: `${R}\\Documentation\\Sailonet Production Standards.docx`,
+    name: "Exemplia Production Standards.docx",
+    path: `${R}\\Documentation\\Exemplia Production Standards.docx`,
     is_dir: false,
     size: 210_880,
     modified: "2026-05-02T09:30:00Z",
     content:
-      "Sailonet production standards. Seam overlap minimum 22mm. Double-sided tape then triple-step zigzag stitch. Corner rings hydraulically pressed. QA checklist before delivery. Tolerances on finished dimensions +/- 0.3%.",
+      "Exemplia production standards. Seam overlap minimum 22mm. Double-sided tape then triple-step zigzag stitch. Corner rings hydraulically pressed. QA checklist before delivery. Tolerances on finished dimensions +/- 0.3%.",
   },
   {
     name: "Regate-Marine",

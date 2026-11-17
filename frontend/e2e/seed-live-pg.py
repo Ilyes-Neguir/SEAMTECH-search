@@ -30,12 +30,12 @@ REPO = Path(__file__).resolve().parents[2]
 FICHIER_RUN = Path(__file__).resolve().parent / ".live-pg-run.json"
 VERROU = Path(__file__).resolve().parent / ".live-pg-seed.lock"
 NOMBRE_FICHES_ATTENDU = 3
-# Lot L.1 — la fiche supplémentaire qui partage le PDF de 7792-SO. Sans elle,
+# Lot L.1 — la fiche supplémentaire qui partage le PDF de 1042-EX. Sans elle,
 # l'e2e du bandeau de doublon n'aurait rien à afficher (voir e2e/doublons.spec.ts).
-# « BIS-7792 » et non « 7792-SO-BIS » : le bandeau de la ligne cite l'autre
+# « BIS-1042-EX » et non « 1042-EX-BIS » : le bandeau de la ligne cite l'autre
 # code, donc un code qui CONTIENT le code d'origine rendrait les deux lignes
 # indiscernables par leur texte (mesuré en CI avant data-code).
-CODE_DOUBLON = "BIS-7792"
+CODE_DOUBLON = "BIS-1042-EX"
 
 
 @contextmanager
@@ -255,14 +255,14 @@ def semer_piece_distincte(idx, code_fiche: str) -> None:
 
 
 def semer_doublon(idx) -> None:
-    """Ajoute une DEUXIÈME fiche partageant le PDF de 7792-SO, puis lance le scan.
+    """Ajoute une DEUXIÈME fiche partageant le PDF de 1042-EX, puis lance le scan.
 
     Pourquoi ce n'est pas fait par le pipeline de dépôt : le code de fiche est
     EXTRAIT du PDF (gabarit v2), donc deux fichiers identiques produisent le
     même code, et `fiche.code` est UNIQUE — le pipeline ne peut structurellement
     pas créer deux fiches pour un même PDF. Le cas réel que L.1 couvre est celui
     d'un même fichier rattaché à deux fiches, ce que l'on reproduit ici : la
-    fiche bis est une COPIE de la 7792-SO (mêmes colonnes, mêmes champs
+    fiche bis est une COPIE de la 1042-EX (mêmes colonnes, mêmes champs
     extraits) plus une pièce jointe de MÊME empreinte SHA-256.
 
     C'est une donnée de TEST (base jetable e2e_*), jamais une donnée de
@@ -273,11 +273,11 @@ def semer_doublon(idx) -> None:
 
     with idx.connect() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT id_fiche FROM fiche WHERE code = %s", ("7792-SO",))
+            cur.execute("SELECT id_fiche FROM fiche WHERE code = %s", ("1042-EX",))
             ligne = cur.fetchone()
             if ligne is None:
                 print(
-                    "Seed e2e : fiche 7792-SO absente — le doublon exact ne peut pas être semé.",
+                    "Seed e2e : fiche 1042-EX absente — le doublon exact ne peut pas être semé.",
                     file=sys.stderr,
                 )
                 sys.exit(1)
@@ -291,12 +291,12 @@ def semer_doublon(idx) -> None:
             # même empreinte SHA-256). Le dépôt de dossier n'écrit pas de pièce
             # jointe pour le PDF de la fiche (il n'enregistre que les fichiers
             # SECONDAIRES du dossier, role='piece_jointe' — mesuré : « pieces: 0 »
-            # pour CLIENT-7792-SO) ; c'est donc le seed qui rattache explicitement
+            # pour CLIENT-1042-EX) ; c'est donc le seed qui rattache explicitement
             # le PDF réel, exactement comme le fait le crawler pour un document
             # retrouvé dans deux dossiers.
             from seamtech_search.fiches.depot import empreinte_fichier
 
-            pdf = REPO / "sample_data" / "CLIENT-7792-SO" / "fiche-7792-SO_ffab.pdf"
+            pdf = REPO / "sample_data" / "CLIENT-1042-EX" / "fiche-1042-EX_ffab.pdf"
             sha256 = empreinte_fichier(pdf)
             taille = pdf.stat().st_size
             for id_cible in (id_source, id_doublon):
@@ -316,7 +316,7 @@ def semer_doublon(idx) -> None:
         )
         sys.exit(1)
     print(
-            f"Seed e2e : fiche {CODE_DOUBLON} (id {id_doublon}) partage le PDF de 7792-SO — "
+            f"Seed e2e : fiche {CODE_DOUBLON} (id {id_doublon}) partage le PDF de 1042-EX — "
             f"scan propositif : {resultat['liens_crees']} lien(s) créé(s), "
             f"{resultat['liens_deja_presents']} déjà présent(s), "
             f"{resultat['fiches_concernees']} fiche(s) concernée(s).",
@@ -325,9 +325,9 @@ def semer_doublon(idx) -> None:
 
 
 def semer_population_lot5(idx) -> None:
-    """Population de référence pour la Fonction B (Lot 5) autour de 7792-SO.
+    """Population de référence pour la Fonction B (Lot 5) autour de 1042-EX.
 
-    La vraie fiche 7792-SO (spi) devient la candidate : cinq extractions
+    La vraie fiche 1042-EX (spi) devient la candidate : cinq extractions
     synthétiques du MÊME modèle canonique et du MÊME type, valeurs serrées
     autour des siennes (facteurs 0,99 → 1,01, surface en facteur² pour
     garder la géométrie plausible), forment sa population (N=5 = le seuil
@@ -349,12 +349,12 @@ def semer_population_lot5(idx) -> None:
             curseur.execute(
                 "SELECT id_extraction, type_voile, boat_model_id FROM sail_extractions "
                 "WHERE code_fiche LIKE %s ORDER BY id_extraction ASC LIMIT 1",
-                ("%7792%",),
+                ("%1042%",),
             )
             ligne = curseur.fetchone()
     if ligne is None or ligne[2] is None:
         print(
-            "Seed e2e Lot 5 : extraction 7792 absente ou non liée — la population "
+            "Seed e2e Lot 5 : extraction 1042 absente ou non liée — la population "
             "de confiance ne peut pas être semée.",
             file=sys.stderr,
         )
@@ -429,7 +429,7 @@ def semer_population_lot5(idx) -> None:
         )
     print(
         f"Seed e2e Lot 5 : 5 voiles de référence semées pour « {nom_modele} » "
-        f"({type_voile}) autour de 7792-SO.",
+        f"({type_voile}) autour de 1042-EX.",
         file=sys.stderr,
     )
 
@@ -500,7 +500,7 @@ def semer_file_validation(idx, codes: dict[str, str]) -> None:
 
     Depuis l'auto-validation au seuil (décision du commanditaire du
     2026-11-14), les trois fiches déposées ici arrivent « valide » :
-    7792-SO score 0,929, GENOA 0,98, E2E-TROIS 0,98 — toutes au-dessus du
+    1042-EX score 0,929, GENOA 0,98, E2E-TROIS 0,98 — toutes au-dessus du
     seuil de 90 %, aucune anomalie. La file de validation est donc VIDE, et
     le parcours de validation humaine n'a plus rien à valider : les e2e qui
     l'exercent échouent faute de fiche à ouvrir.
@@ -514,7 +514,7 @@ def semer_file_validation(idx, codes: dict[str, str]) -> None:
     """
     from seamtech_search.fiches.routes import rouvrir_fiche
 
-    for dossier in ("CLIENT-7792-SO", "CLIENT-GENOA", "CLIENT-E2E-TROIS"):
+    for dossier in ("CLIENT-1042-EX", "CLIENT-GENOA", "CLIENT-E2E-TROIS"):
         code = codes.get(dossier)
         if not code:
             continue
@@ -670,7 +670,7 @@ def main() -> None:
         idx.run_migrations()
         initialiser_gabarits(idx)
         codes: dict[str, str] = {}
-        for dossier in ("CLIENT-7792-SO", "CLIENT-GENOA", "CLIENT-E2E-TROIS"):
+        for dossier in ("CLIENT-1042-EX", "CLIENT-GENOA", "CLIENT-E2E-TROIS"):
             chemin = REPO / "sample_data" / dossier
             if not chemin.exists():
                 chemin = Path(__file__).resolve().parent / "live-fixtures" / dossier

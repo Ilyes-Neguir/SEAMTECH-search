@@ -49,7 +49,7 @@ def test_la_reference_dans_une_requete_composee_est_retrouvee() -> None:
 
 
 def test_une_reference_chiffres_lettres_est_reconnue() -> None:
-    assert extraire_reference("7792-SO") == "7792SO"
+    assert extraire_reference("1042-EX") == "1042EX"
 
 
 def test_un_texte_sans_chiffre_n_est_pas_une_reference() -> None:

@@ -1,17 +1,26 @@
-"""Source unique dans le paquet : vérité terrain étendue de référence (7792-SO).
+"""Source unique dans le paquet : vérité terrain étendue de référence.
 
-Document client réel (166 990 octets, sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf).
-74 cibles réparties en 12 familles, vérifiées contradictoirement contre le document client.
-Aucune valeur devinée ou extrapolée (RG6).
+Fiche SYNTHÉTIQUE régénérable : ``sample_data/CLIENT-1042-EX/fiche-1042-EX_ffab.pdf``,
+produite par ``scripts/generer_fiche_reference_synthetique.py``. Elle reprend la mise en
+page de la fiche d'origine pour que les règles du gabarit FICHE_PORTANT_V1 s'appliquent
+à l'identique, et n'en conserve que les valeurs techniques.
+
+74 cibles réparties en 12 familles. Les 67 valeurs techniques (cotes, matières,
+accastillage) sont celles de la fiche d'origine : elles n'identifient aucun client. Les
+7 valeurs identifiantes — client, raison sociale, atelier, code de commande, dessinateur,
+fichier source — y sont remplacées par des valeurs fictives.
+
+Aucune valeur devinée ou extrapolée (RG6) : chaque cible est relue sur le document par
+``evaluer_verite``, qui rend 74/74 sur cette fiche.
 """
 
 from __future__ import annotations
 
-VERITE_7792: dict[str, object] = {
+VERITE_REFERENCE: dict[str, object] = {
     # --- bateau ---
     'bateau': '29er',
     # --- client ---
-    'client': 'Sailonet',
+    'client': 'Exemplia',
     # --- cotes ---
     'cotes.dessin.poids_kg': 0.7,
     'cotes.dessin.sf_m': 3.08,
@@ -25,13 +34,13 @@ VERITE_7792: dict[str, object] = {
     'cotes.finie.slu_m': 6.6,
     'cotes.finie.spa_m2': 15.71,
     # --- fiche ---
-    'fiche.atelier': 'SO',
-    'fiche.code': '7792-SO',
-    'fiche.commande_numero': '7792-SO',
+    'fiche.atelier': 'EX',
+    'fiche.code': '1042-EX',
+    'fiche.commande_numero': '1042-EX',
     'fiche.date_dessin': '2026-03-06',
     'fiche.date_edition': '2026-03-06',
-    'fiche.dessinateur': 'Yann',
-    'fiche.fichier_source': '7792-SO.xlsm',
+    'fiche.dessinateur': 'Demo',
+    'fiche.fichier_source': '1042-EX.xlsm',
     'fiche.montage_fil': 'V46',
     'fiche.montage_type': 'Collé/Cousu',
     'fiche.quantite': 1,
@@ -96,4 +105,4 @@ VERITE_7792: dict[str, object] = {
     'type_voile': 'Spi Asymétrique',
 }
 
-VERITE_7792_COMPLETE: dict[str, object] = VERITE_7792
+VERITE_REFERENCE_COMPLETE: dict[str, object] = VERITE_REFERENCE
