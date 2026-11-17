@@ -1293,6 +1293,14 @@ def worker_loop(
                         )
                         continue
                     statut = str(result.get("status", "unknown"))
+                    # Un doublon rend le statut du PREMIER passage (un état
+                    # terminal : « completed », « needs_review »…). Il n'est
+                    # donc ni « failed », ni « upload_incomplete », ni
+                    # « stale_worker » : il tombe dans l'acquittement tout en
+                    # bas de la chaîne. Aucun cas particulier n'est nécessaire,
+                    # et en écrire un serait du code mort — la boucle acquitte
+                    # déjà tout statut qui n'est ni un échec à rejouer ni une
+                    # déchéance.
                     # `max_task_attempts` compte le nombre TOTAL de tentatives :
                     # avec 3, un job est essayé 3 fois (attempt 0, 1, 2) puis va
                     # en lettre morte. La version précédente comparait
@@ -1304,21 +1312,7 @@ def worker_loop(
                     # juste au-dessus : un worker déchu n'écrit ni état terminal,
                     # ni acquittement, et ne peut pas escamoter la tâche du
                     # repreneur.)
-                    if result.get("duplicate_delivery") is True:
-                        # Un doublon n'est ni un échec à rejouer ni un travail à
-                        # refaire. Ce test est placé AVANT celui des échecs
-                        # exprès : sans lui, la redélivrance d'un job déjà
-                        # « failed » serait reprogrammée avec backoff jusqu'à
-                        # épuisement des tentatives, puis mise en lettre morte,
-                        # pour un travail qui n'a jamais eu lieu.
-                        if not redis_store.ack_task("imports", task, worker_id=identifiant):
-                            logger.warning(
-                                "Job %s : livraison dupliquée non acquittée ; le message restera en file.",
-                                job_id,
-                            )
-                        else:
-                            terminer_job(index, job_id, status=statut, expected_worker=identifiant)
-                    elif statut in ("failed", "upload_incomplete"):
+                    if statut in ("failed", "upload_incomplete"):
                         if tentatives_restantes:
                             delay = 2**attempt  # backoff exponentiel borné par le nombre de tentatives
                             logger.info(
