@@ -132,7 +132,11 @@ test.describe("Recherche — badge « Non vérifiée » et archive de confiance"
     await page.goto("/recherche")
 
     const saisie = page.getByTestId("recherche-saisie")
-    await saisie.fill("77")
+    // Préfixe du code de la fiche de référence semée (1042-EX) : il doit
+    // remonter une suggestion. Anciennement « 77 » — préfixe de l'ancien code
+    // client, purgé ; le laisser aurait fait attendre une suggestion qui ne
+    // pouvait plus venir.
+    await saisie.fill("1042")
     const suggestions = page.getByTestId("recherche-suggestions")
     await expect(suggestions).toBeVisible({ timeout: 15000 })
 

@@ -157,21 +157,29 @@ def _compter_liens(index: Any) -> int:  # noqa: ANN401
 
 
 @pytest.mark.ci_guard_dedup
-def test_doublons_exacts_le_pdf_reel_en_double(base_dedup: dict[str, Any]) -> None:
-    """LE cas réel : ``fiche-1042-EX_ffab.pdf`` (sha256 ``43afc51e…``) attaché à
-    DEUX fiches. Elles doivent former UN groupe exact — et un seul, portant la
-    VRAIE empreinte du fichier réel.
+def test_doublons_exacts_le_pdf_de_reference_en_double(base_dedup: dict[str, Any]) -> None:
+    """LE cas d'espèce : ``fiche-1042-EX_ffab.pdf`` attaché à DEUX fiches. Elles
+    doivent former UN groupe exact — et un seul, portant la VRAIE empreinte du
+    fichier.
 
     Une TROISIÈME fiche porte une pièce d'empreinte différente : si la clé de
     rapprochement était neutralisée (colonne remplacée par une constante), les
     trois fiches seraient agrégées ensemble et ce test ROUGIRAIT — c'est le
     sabotage du garde-fou CI « Garde-fou dédup ».
+
+    L'empreinte n'est plus ÉPINGLÉE à une valeur : la fiche est désormais
+    SYNTHÉTIQUE et régénérable, donc sans empreinte stable (ReportLab écrit des
+    métadonnées variables). On vérifie sa FORME, ce qui attrape un fichier
+    absent, vide ou tronqué — et non sa valeur, qui changera à la prochaine
+    régénération.
     """
     index = base_dedup["index"]
     empreinte_reelle = empreinte_fichier(PDF_SYNTHETIQUE_REFERENCE)
-    assert empreinte_reelle == "43afc51e55ae598d3eaffc3096f0e7ddaa00e8ddc579ae315bb31b4dbf1c1f40", (
-        "le fonds de test doit être le PDF réel 1042-EX (empreinte 43afc51e…)"
+    assert len(empreinte_reelle) == 64 and all(c in "0123456789abcdef" for c in empreinte_reelle), (
+        "la fiche de référence doit fournir un SHA-256 calculé (fichier absent, "
+        f"vide ou illisible ?) : {empreinte_reelle!r}"
     )
+    assert empreinte_reelle != SHA_AUTRE
 
     id_a = _creer_fiche(index, "L1-GV-001", "Grand-voile régate First 30")
     id_b = _creer_fiche(index, "L1-GV-002", "Grand-voile régate First 30")
