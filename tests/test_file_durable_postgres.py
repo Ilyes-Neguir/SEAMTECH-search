@@ -160,6 +160,14 @@ def _dossiers_traites(index: SearchIndex, id_lot: int) -> int:
 # réelle.
 
 
+def _compter_lignes_dossiers(index: Any, id_lot: int) -> int:
+    """Nombre de lignes ``lot_dossier`` : une redélivrance n'en ajoute aucune."""
+    with index.connect() as connexion:
+        with connexion.cursor() as cursor:
+            cursor.execute("SELECT COUNT(*) FROM lot_dossier WHERE id_lot = %s", (id_lot,))
+            return int(cursor.fetchone()[0])
+
+
 def test_supervision_des_jobs_sur_postgresql(base_durable: dict[str, Any], tmp_path: Path) -> None:
     """Claim, battement de cœur, remise en file, lettre morte et suivi du chemin."""
     from seamtech_search.jobs import (
@@ -421,12 +429,34 @@ def test_lot_interrompu_reprend_sans_refaire_les_dossiers_traites(
     )
 
     # --- Livraison dupliquée : le même lot est redélivré par Redis ---------
+    # Le lot est TERMINÉ (ici « needs_review », un dossier étant refusé par
+    # RG11). Sa redélivrance doit être reconnue comme un doublon et acquittée,
+    # jamais retraitée. Avant la règle générale, elle repartait dans
+    # _process_lot_task, qui ne peut plus revendiquer un job terminal : elle
+    # rendait « stale_worker », que worker_loop n'acquitte ni ne reprogramme —
+    # le message restait revendiqué jusqu'à l'expiration du TTL, puis était
+    # remis en file, et ainsi de suite.
+    nb_lignes_dossiers = _compter_lignes_dossiers(index, id_lot)
     assert magasin.enqueue_task("imports", charge)
     rejoue = process_import_task(
         charge, config, index, magasin, worker_id="worker-reprise", heartbeat=lambda: None
     )
+    assert rejoue.get("status") != "stale_worker", rejoue
     assert rejoue.get("duplicate_delivery") is True, rejoue
+    # Même état qu'au premier passage : RIEN n'a été refait.
+    assert rejoue.get("result") == resultat.get("etat"), (
+        f"la redélivrance doit rendre l'état du premier passage, pas le recalculer "
+        f"(relu={rejoue.get('result')!r})"
+    )
+    assert rejoue.get("status") == "needs_review", rejoue
+    # Acquittable, donc pas remis en file : worker_loop acquitte (ack_task)
+    # tout statut qui n'est ni un échec à rejouer ni « stale_worker ». C'est
+    # exactement ce contrat que la ligne ci-dessous verrouille.
+    assert rejoue["status"] not in {"failed", "upload_incomplete", "stale_worker"}
     assert _compter_fiches(index) == fiches_finales, "une redélivrance ne doit créer aucune fiche"
+    assert _compter_lignes_dossiers(index, id_lot) == nb_lignes_dossiers, (
+        "une redélivrance ne doit créer aucune ligne de dossier"
+    )
 
 
 # ---------------------------------------------------------------------------

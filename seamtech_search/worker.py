@@ -37,6 +37,7 @@ from .import_pipeline import (
     staging_root,
 )
 from .jobs import (
+    STATUTS_DEJA_TRAITES,
     acquerir_claim_job,
     clear_job_cancel,
     get_job,
@@ -97,26 +98,57 @@ def process_import_task(
     job_id = payload["job_id"]
 
     # --- Garde d'idempotence (redélivrance) -------------------------------
+    # RÈGLE GÉNÉRALE : un job parvenu dans un état terminal n'a plus rien à
+    # faire. La redélivrance du même message est donc un DOUBLON : reconnue,
+    # acquittée, jamais retraitée — quel qu'ait été le résultat du premier
+    # passage (succès, échec, ou lot partiellement en échec). La règle ignore
+    # la nature de la tâche : c'est ce qui la rend correcte pour un lot comme
+    # pour un import simple.
+    #
+    # Avant elle, seul « completed » était reconnu, plus deux sous-cas propres
+    # à l'import simple. Un lot terminé en « needs_review » — cas courant, un
+    # seul dossier refusé suffit — repartait dans ``_process_lot_task``, qui ne
+    # peut plus revendiquer un job terminal (le claim ne s'acquiert que sur
+    # « pending » ou « running ») et rendait « stale_worker » : ni acquitté, ni
+    # reprogrammé, ni clôturé.
     existant = get_job(index, job_id)
-    if existant is not None and existant.get("status") == "completed" and existant.get("result"):
+    if (
+        existant is not None
+        and existant.get("result")
+        and existant.get("status") in STATUTS_DEJA_TRAITES
+    ):
+        statut_existant = str(existant["status"])
+        if statut_existant == "completed":
+            logger.info(
+                "Livraison dupliquée du job %s ignorée : il est déjà terminé en base "
+                "(conséquence : aucun doublon d'objets, de rapports ni d'index).",
+                job_id,
+            )
+            return {"job_id": job_id, "status": "completed", "duplicate_delivery": True}
+        if statut_existant == "needs_review":
+            resultat_existant = existant.get("result")
+            if isinstance(resultat_existant, dict) and resultat_existant.get("publication_pending") is True:
+                return {"job_id": job_id, "status": "needs_review", "duplicate_delivery": True,
+                        "publication_pending": True}
+            if (isinstance(resultat_existant, dict)
+                    and isinstance(resultat_existant.get("preservation"), dict)
+                    and resultat_existant["preservation"].get("transport_verifie") is True
+                    and resultat_existant.get("all_verified") is False):
+                # Le transport est déjà réalisé ; la revue ne peut pas être
+                # résolue par une nouvelle livraison du même message.
+                return {"job_id": job_id, "status": "needs_review", "duplicate_delivery": True}
         logger.info(
-            "Livraison dupliquée du job %s ignorée : il est déjà terminé en base "
-            "(conséquence : aucun doublon d'objets, de rapports ni d'index).",
+            "Livraison dupliquée du job %s ignorée : il est déjà dans l'état terminal « %s » "
+            "(conséquence : aucun retraitement, le message peut être acquitté).",
             job_id,
+            statut_existant,
         )
-        return {"job_id": job_id, "status": "completed", "duplicate_delivery": True}
-    if existant is not None and existant.get("status") == "needs_review":
-        resultat_existant = existant.get("result")
-        if isinstance(resultat_existant, dict) and resultat_existant.get("publication_pending") is True:
-            return {"job_id": job_id, "status": "needs_review", "duplicate_delivery": True,
-                    "publication_pending": True}
-        if (isinstance(resultat_existant, dict)
-                and isinstance(resultat_existant.get("preservation"), dict)
-                and resultat_existant["preservation"].get("transport_verifie") is True
-                and resultat_existant.get("all_verified") is False):
-            # Le transport est déjà réalisé ; la revue ne peut pas être
-            # résolue par une nouvelle livraison du même message.
-            return {"job_id": job_id, "status": "needs_review", "duplicate_delivery": True}
+        return {
+            "job_id": job_id,
+            "status": statut_existant,
+            "duplicate_delivery": True,
+            "result": existant["result"],
+        }
 
     if payload.get("kind") == "lot":
         return _process_lot_task(payload, config, index, redis_store, worker_id=worker_id, heartbeat=heartbeat)
@@ -1272,7 +1304,21 @@ def worker_loop(
                     # juste au-dessus : un worker déchu n'écrit ni état terminal,
                     # ni acquittement, et ne peut pas escamoter la tâche du
                     # repreneur.)
-                    if statut in ("failed", "upload_incomplete"):
+                    if result.get("duplicate_delivery") is True:
+                        # Un doublon n'est ni un échec à rejouer ni un travail à
+                        # refaire. Ce test est placé AVANT celui des échecs
+                        # exprès : sans lui, la redélivrance d'un job déjà
+                        # « failed » serait reprogrammée avec backoff jusqu'à
+                        # épuisement des tentatives, puis mise en lettre morte,
+                        # pour un travail qui n'a jamais eu lieu.
+                        if not redis_store.ack_task("imports", task, worker_id=identifiant):
+                            logger.warning(
+                                "Job %s : livraison dupliquée non acquittée ; le message restera en file.",
+                                job_id,
+                            )
+                        else:
+                            terminer_job(index, job_id, status=statut, expected_worker=identifiant)
+                    elif statut in ("failed", "upload_incomplete"):
                         if tentatives_restantes:
                             delay = 2**attempt  # backoff exponentiel borné par le nombre de tentatives
                             logger.info(
