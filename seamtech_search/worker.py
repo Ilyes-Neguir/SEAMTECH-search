@@ -111,6 +111,14 @@ def process_import_task(
     # peut plus revendiquer un job terminal (le claim ne s'acquiert que sur
     # « pending » ou « running ») et rendait « stale_worker » : ni acquitté, ni
     # reprogrammé, ni clôturé.
+    #
+    # POLITIQUE, explicitement : **un lot partiellement en échec n'est JAMAIS
+    # rejoué à la redélivrance.** Il est acquitté comme terminé, point. Le lot
+    # garde son état (ses dossiers traités, ses échecs et leurs raisons), et
+    # c'est l'opérateur qui décide d'une reprise, depuis l'écran du lot. Une
+    # redélivrance automatique rejouerait à l'aveugle des dossiers déjà
+    # traités. Ce comportement est verrouillé par
+    # ``test_redelivraison_d_un_lot_termine_en_revue_n_est_pas_rejouee``.
     existant = get_job(index, job_id)
     if (
         existant is not None
@@ -1261,7 +1269,15 @@ def worker_loop(
                 if not marquer_job_claim(index, job_id, identifiant):
                     try:
                         existant = get_job(index, job_id)
-                        if existant and existant.get("status") in {"completed", "cancelled", "needs_review"}:
+                        # MÊME RÈGLE GÉNÉRALE que la garde d'idempotence : un
+                        # job parvenu dans un état terminal n'a plus rien à
+                        # faire, son message est donc acquitté. « failed »
+                        # manquait ici : le message d'un job échoué restait
+                        # revendiqué jusqu'à l'expiration du TTL, puis était
+                        # remis en file, et ainsi de suite — sans jamais rien
+                        # refaire de plus. ``upload_incomplete`` reste exclu :
+                        # un envoi resté en cours DOIT être repris.
+                        if existant and existant.get("status") in STATUTS_DEJA_TRAITES:
                             redis_store.ack_task("imports", task, worker_id=identifiant)
                         else:
                             logger.warning("Job %s impossible à revendiquer dans le registre ; livraison conservée.", job_id)
