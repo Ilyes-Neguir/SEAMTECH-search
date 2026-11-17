@@ -249,16 +249,22 @@ done
 # ---------------------------------------------------------------------------
 NB_SYNTH=0
 if [ "$NB_ZIP" -eq 0 ] && [ "$NB_EXTRA" -eq 0 ]; then
-    for jeu in "$RACINE"/sample_data/CLIENT-*; do
+    # Un corpus DÉDIÉ, pas les jeux de sample_data/ au petit bonheur : ceux-ci
+    # servent à d'autres tests, un seul porte une vraie fiche de fabrication,
+    # et la recette a besoin de plusieurs affaires (cohorte >= 3) pour que
+    # facettes, filtres et rejeu idempotent veuillent dire quelque chose.
+    # sample_data/recette/ est produit par
+    # scripts/generer_corpus_recette_synthetique.py.
+    for jeu in "$RACINE"/sample_data/recette/CLIENT-*; do
         [ -d "$jeu" ] || continue
         cp -r "$jeu" "$SOURCES_HOTE/"
         NB_SYNTH=$((NB_SYNTH + 1))
     done
     if [ "$NB_SYNTH" -eq 0 ]; then
-        controle "depot-archives" "FAIL" "ni archive du dépôt, ni chemin argument, ni jeu synthétique dans sample_data/ : la recette n'a rien à importer"
+        controle "depot-archives" "FAIL" "ni archive du dépôt, ni chemin argument, ni corpus synthétique dans sample_data/recette/ : la recette n'a rien à importer"
         exit 1
     fi
-    echo "REPLI : aucun ZIP du dépôt (corpus réel purgé) — $NB_SYNTH jeu(x) SYNTHÉTIQUE(S) de sample_data/ importés à la place. Le flux est prouvé, pas le corpus client."
+    echo "REPLI : aucun ZIP du dépôt (corpus réel purgé) — $NB_SYNTH affaire(s) SYNTHÉTIQUE(S) de sample_data/recette/ importée(s) à la place. Le flux est prouvé, pas le corpus client."
 fi
 
 # Le conteneur web (utilisateur seamtech) doit pouvoir LIRE les sources

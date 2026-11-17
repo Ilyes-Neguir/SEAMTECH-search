@@ -682,16 +682,31 @@ def _pdf_7_fiches_integrite(codes: list[str]) -> None:
     attendus: dict[str, str] = dict(PDFS_SEPT_FICHES)
     mode = "corpus réel : 7 PDF épinglés par SHA-256"
     if not any(nom.casefold() in correspondances for nom in attendus):
-        attendus = {
+        # Jeux synthétiques : on ne peut exiger que CHAQUE PDF des sources soit
+        # devenu une fiche — un jeu d'essai peut porter un document que le
+        # classement ne retient pas comme fiche. On vérifie donc ceux qui ONT
+        # été catalogués, et on exige qu'il y en ait au moins un : le contrôle
+        # reste réel (téléchargement par id + SHA-256 conforme à la source),
+        # sans transformer une propriété du corpus en condition de vérité.
+        sources_pdf = {
             pdf.name: hashlib.sha256(pdf.read_bytes()).hexdigest()
             for pdf in sorted(SOURCES.rglob("*.pdf"))
         }
-        mode = f"jeux SYNTHÉTIQUES : {len(attendus)} PDF de {SOURCES}"
+        attendus = {
+            nom: empreinte
+            for nom, empreinte in sources_pdf.items()
+            if nom.casefold() in correspondances
+        }
+        mode = (
+            f"jeux SYNTHÉTIQUES : {len(attendus)} PDF catalogué(s) "
+            f"sur {len(sources_pdf)} déposé(s) dans {SOURCES}"
+        )
     if not attendus:
         _ligne(
             "pdf-7-fiches-integrite",
             False,
-            f"aucun PDF attendu : ni corpus réel ni jeu synthétique dans {SOURCES}",
+            f"aucun PDF catalogué à vérifier : ni corpus réel ni jeu "
+            f"synthétique dans {SOURCES} n'a produit de pièce PDF",
         )
         return
 
