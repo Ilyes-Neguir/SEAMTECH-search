@@ -43,9 +43,9 @@ set -euo pipefail
 # docker.exe. Deux appels de ce script en pâtissent :
 #   * `docker cp "$tmpdir/politique-app.json" <conteneur>:/tmp/...` reçoit
 #     « C:/Program Files/Git/tmp/... » — la copie échoue ;
-#   * `docker exec <conteneur> mc admin policy create ... /tmp/seamtech-...`
-#     reçoit le même chemin réécrit, et `mc`, DANS le conteneur, ne trouve plus
-#     le fichier qu'on vient d'y copier (d'où le classique
+#   * l'appel `mc` qui crée les deux politiques reçoit le même chemin
+#     réécrit, et `mc`, DANS le conteneur, ne trouve plus le fichier qu'on
+#     vient d'y copier (d'où le classique
 #     « Unable to get policy: ... no such file or directory »).
 # Exporter ici couvre les deux, et n'affecte rien d'autre : tout argument de
 # docker dans ce script est un chemin à prendre littéralement.
