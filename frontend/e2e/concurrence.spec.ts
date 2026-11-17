@@ -211,7 +211,7 @@ test.describe("concurrence entre postes (sessions indépendantes)", () => {
     const { ctxA, ctxB, posteA, posteB } = await deuxPostes(browser)
     try {
       // Une fiche SYNTHÉTIQUE hors 1042-EX (d'autres épreuves vivent dessus) et
-      // hors BIS-1042-EX (sa copie) : le scénario constitue son jeu par l'API.
+      // hors BIS-1042 (sa copie) : le scénario constitue son jeu par l'API.
       const [code] = await fichesDeTravail(posteA, 1)
 
       // LES DEUX POSTES OUVRENT LA MÊME FICHE, À LA MÊME RÉVISION.

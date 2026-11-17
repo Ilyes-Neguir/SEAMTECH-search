@@ -21,7 +21,7 @@ import { APPROBATEUR, signInWith } from "./helpers"
  * serait signalé par le garde-fou de comptage de l'étape.
  */
 
-const CODE_DOUBLON = "BIS-1042-EX"
+const CODE_DOUBLON = "BIS-1042"
 const CODE_ORIGINAL = "1042-EX"
 
 test.describe("bandeau de doublon avant validation", () => {

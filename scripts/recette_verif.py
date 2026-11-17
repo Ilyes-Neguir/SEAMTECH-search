@@ -674,9 +674,30 @@ def _pdf_7_fiches_integrite(codes: list[str]) -> None:
                 continue
             correspondances.setdefault(str(piece.get("name", "")).casefold(), (code_fiche, int(piece["id"])))
 
+    # Quel corpus est au rendez-vous ? Depuis la purge, le corpus RÉEL vit hors
+    # Git : ses 7 PDF ne sont connus que par empreinte (PDFS_SEPT_FICHES). S'il
+    # n'est pas là, la recette a tourné sur les jeux synthétiques de
+    # sample_data/ — et l'on vérifie CEUX-LÀ, jamais « rien » : un contrôle
+    # qu'on saute est un contrôle qui finit par mentir.
+    attendus: dict[str, str] = dict(PDFS_SEPT_FICHES)
+    mode = "corpus réel : 7 PDF épinglés par SHA-256"
+    if not any(nom.casefold() in correspondances for nom in attendus):
+        attendus = {
+            pdf.name: hashlib.sha256(pdf.read_bytes()).hexdigest()
+            for pdf in sorted(SOURCES.rglob("*.pdf"))
+        }
+        mode = f"jeux SYNTHÉTIQUES : {len(attendus)} PDF de {SOURCES}"
+    if not attendus:
+        _ligne(
+            "pdf-7-fiches-integrite",
+            False,
+            f"aucun PDF attendu : ni corpus réel ni jeu synthétique dans {SOURCES}",
+        )
+        return
+
     controles: list[str] = []
     echec: list[str] = []
-    for nom, empreinte_attendue in PDFS_SEPT_FICHES.items():
+    for nom, empreinte_attendue in attendus.items():
         correspondance = correspondances.get(nom.casefold())
         if correspondance is None:
             echec.append(f"{nom}: absent du catalogue des fiches")
@@ -689,13 +710,12 @@ def _pdf_7_fiches_integrite(codes: list[str]) -> None:
         controles.append(f"{nom} [{code_fiche}] SHA-256={'OK' if empreinte_reelle == empreinte_attendue else 'DIFF'}")
         if not ok_pdf:
             echec.append(f"{nom}: HTTP {statut}, SHA-256={empreinte_reelle}")
-    ok = len(controles) == 7 and not echec
+    ok = len(controles) == len(attendus) and not echec
     _ligne(
         "pdf-7-fiches-integrite",
         ok,
-        f"{len(controles)}/7 PDF téléchargés par id et comparés à leur SHA-256 source; "
-        f"CORPUS-07 250108 AB inclus={any('CORPUS-07 250108 AB' in x for x in controles)}; "
-        f"écarts={echec[:4]}",
+        f"[{mode}] {len(controles)}/{len(attendus)} PDF téléchargés par id et "
+        f"comparés à leur SHA-256 source; écarts={echec[:4]}",
     )
 
 

@@ -32,10 +32,13 @@ VERROU = Path(__file__).resolve().parent / ".live-pg-seed.lock"
 NOMBRE_FICHES_ATTENDU = 3
 # Lot L.1 — la fiche supplémentaire qui partage le PDF de 1042-EX. Sans elle,
 # l'e2e du bandeau de doublon n'aurait rien à afficher (voir e2e/doublons.spec.ts).
-# « BIS-1042-EX » et non « 1042-EX-BIS » : le bandeau de la ligne cite l'autre
-# code, donc un code qui CONTIENT le code d'origine rendrait les deux lignes
-# indiscernables par leur texte (mesuré en CI avant data-code).
-CODE_DOUBLON = "BIS-1042-EX"
+# « BIS-1042 » et non « 1042-EX-BIS » ni « BIS-1042-EX » : le code du doublon
+# ne doit PAS contenir celui de la fiche d'origine. Le filtre des specs est une
+# recherche TEXTUELLE, pas une egalite : un doublon dont le code contiendrait
+# « 1042-EX » ferait remonter DEUX lignes la ou une seule est attendue
+# (lot3b-extractions) — mesuré en CI : un code qui CONTIENT celui de l'origine
+# rendait les deux lignes indiscernables par leur texte (d'où data-code).
+CODE_DOUBLON = "BIS-1042"
 
 
 @contextmanager

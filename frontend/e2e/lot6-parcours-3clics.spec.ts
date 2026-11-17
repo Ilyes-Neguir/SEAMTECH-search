@@ -299,7 +299,7 @@ test.describe("Lot 6 — parcours 3 clics et cohérence globale", () => {
       const corps = (await reponse.json()) as {
         extractions: { id_extraction: number; code_fiche: string | null }[]
       }
-      // Jeu dédié : sa population contient la fiche BIS-1042-EX ; elle reste
+      // Jeu dédié : sa population contient la fiche BIS-1042 ; elle reste
       // liée même si le scénario de correction Lot 3b modifie 1042-EX.
       const candidate = corps.extractions.find((e) => (e.code_fiche ?? "") === "LOT5-ISO-2")
       expect(candidate, "extraction LOT5-ISO-2 dans la base live").toBeTruthy()
@@ -334,8 +334,8 @@ test.describe("Lot 6 — parcours 3 clics et cohérence globale", () => {
       await expect(resultat).toBeVisible({ timeout: 30000 })
       // Une fiche source de la population ouvre la fiche métier.
       await resultat.getByText(/Fiches sources de la population/).click()
-      await resultat.getByRole("link", { name: /BIS-1042-EX/ }).first().click()
-      await expect(page.getByTestId("fiche-code")).toHaveText("BIS-1042-EX", { timeout: 30000 })
+      await resultat.getByRole("link", { name: /BIS-1042/ }).first().click()
+      await expect(page.getByTestId("fiche-code")).toHaveText("BIS-1042", { timeout: 30000 })
     } finally {
       for (const contexte of contextes) await contexte.close()
     }
