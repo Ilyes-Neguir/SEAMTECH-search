@@ -66,11 +66,39 @@ BATEAU_REFERENCE = "29er (15')"
 # bateau — trois fiches « champ_obligatoire_manquant » au lieu de trois
 # affaires exploitables. Morale : ce corpus doit rester dans le vocabulaire
 # que le gabarit sait lire, sinon il ne prouve plus rien du tout.
-AFFAIRES: tuple[tuple[str, str, str], ...] = (
-    ("1042-EX", VOILE_REFERENCE, BATEAU_REFERENCE),
-    ("1043-EX", VOILE_REFERENCE, BATEAU_REFERENCE),
-    ("1044-EX", VOILE_REFERENCE, BATEAU_REFERENCE),
+# Une affaire sur trois porte une INCOHERENCE volontaire : ses mesures finies
+# ne concordent pas avec la surface declaree (6,60 x 5,50 -> ~15,71 m2
+# attendus, mais un guindant fini a 9,90 m). C'est le cas d'atelier le plus
+# banal qui soit - une mesure reprise de travers - et surtout c'est ce qui
+# fait arriver la fiche EN REVUE HUMAINE plutot qu'auto-validee : l'anomalie
+# bloquante l'emporte sur le score, qui est la regle D4 elle-meme.
+#
+# Pourquoi en faut-il une : le controle « filtres-facettes » de la recette
+# prouve qu'une fiche EN ATTENTE est exclue de la recherche quand
+# inclure_a_valider=false. Avec trois fiches toutes impeccables, les trois
+# partaient en auto-validation et il ne restait RIEN a exclure : le controle
+# n'avait plus rien a demonstrer et tombait. Le corpus de repli doit donc
+# reproduire le MELANGE d'arrivee du corpus reel - des fiches propres et des
+# fiches a reprendre - et non un monde ou tout est parfait.
+#
+# Le seuil d'auto-validation n'est ni touche ni contourne : c'est lui qui
+# classe cette fiche, en appliquant sa regle des anomalies bloquantes.
+AFFAIRES: tuple[tuple[str, tuple[str, ...] | None], ...] = (
+    ("1042-EX", None),
+    ("1043-EX", None),
+    ("1044-EX", (" 9,90 m", " 8,80 m", " 3,08 m", " 3,14 m", " 15,71 m²")),
 )
+
+# Les textes des mesures finies de la fiche de reference, dans l'ordre des
+# colonnes. Servent d'ancre pour remplacer ceux d'une affaire incoherente.
+MESURES_FINIES_REFERENCE: tuple[str, ...] = (
+    " 6,60 m",
+    " 5,50 m",
+    " 3,08 m",
+    " 3,14 m",
+    " 15,71 m²",
+)
+ORDONNEE_MESURES_FINIES = 439.1
 
 # Les identifiants de la fiche de reference, tels qu'ils apparaissent dans
 # SPANS. Le generateur les remplace par ceux de chaque affaire.
@@ -78,16 +106,12 @@ CODE_REFERENCE = "1042-EX"
 CLIENT = "Exemplia"
 
 
-def _substituer(texte: str, code: str, voile: str, bateau: str) -> str:
+def _substituer(texte: str, code: str) -> str:
     """Remplace les identifiants de la fiche de reference par ceux de l'affaire."""
-    if BATEAU_REFERENCE in texte:
-        texte = texte.replace(BATEAU_REFERENCE, bateau)
-    if VOILE_REFERENCE in texte:
-        texte = texte.replace(VOILE_REFERENCE, voile)
     return texte.replace(CODE_REFERENCE, code)
 
 
-def generer_affaire(repertoire: Path, code: str, voile: str, bateau: str) -> Path:
+def generer_affaire(repertoire: Path, code: str, mesures_finies: tuple[str, ...] | None) -> Path:
     """Ecrit une affaire : un dossier, une fiche de fabrication dedans.
 
     Le nom du PDF porte le code pour que la recette retrouve ses petits, comme
@@ -102,9 +126,24 @@ def generer_affaire(repertoire: Path, code: str, voile: str, bateau: str) -> Pat
         c.line(x0, y, x1, y)
     for y0, y1, x in TRAITS_V:
         c.line(x, y0, x, y1)
+    if mesures_finies is not None:
+        # Remplacement COLONNE PAR COLONNE : les mesures finies de la fiche de
+        # reference, dans l'ordre, par celles de l'affaire incoherente.
+        compteur = 0
     for x, y, corps, texte in SPANS:
+        rendu = texte
+        if mesures_finies is not None and abs(y - ORDONNEE_MESURES_FINIES) < 0.6:
+            if texte in MESURES_FINIES_REFERENCE:
+                rendu = mesures_finies[MESURES_FINIES_REFERENCE.index(texte)]
+                compteur += 1
         c.setFont(POLICE, corps)
-        c.drawString(x, y, _substituer(texte, code, voile, bateau))
+        c.drawString(x, y, _substituer(rendu, code))
+    if mesures_finies is not None and compteur != len(MESURES_FINIES_REFERENCE):
+        raise SystemExit(
+            f"{code} : {compteur} mesure(s) finie(s) remplacee(s) sur "
+            f"{len(MESURES_FINIES_REFERENCE)} — la mise en page de la fiche de "
+            f"reference a change, le corpus incoherent ne veut plus rien dire."
+        )
     c.showPage()
     c.save()
     return sortie
@@ -116,9 +155,9 @@ def main() -> int:
     a = p.parse_args()
 
     racine = Path(a.sortie)
-    empreintes = {code: "" for code, _, _ in AFFAIRES}
-    for code, voile, bateau in AFFAIRES:
-        chemin = generer_affaire(racine / f"CLIENT-{code}", code, voile, bateau)
+    empreintes = {code: "" for code, _ in AFFAIRES}
+    for code, mesures_finies in AFFAIRES:
+        chemin = generer_affaire(racine / f"CLIENT-{code}", code, mesures_finies)
         print(f"ecrit {chemin.relative_to(RACINE)} ({chemin.stat().st_size} octets)")
 
     # Les affaires doivent etre DISTINCTES, sinon la deduplication par SHA-256

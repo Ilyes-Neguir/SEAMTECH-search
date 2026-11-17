@@ -47,8 +47,14 @@ DOSSIERS_PIECES_ADMISES = ("tests/fixtures/", "frontend/e2e/live-fixtures/")
 #: L'exemption porte sur l'EMPLACEMENT, jamais sur les noms, pour la même
 #: raison que les archives : transcrire ici le nom d'un bateau serait la fuite
 #: que l'on prétend colmater. Et comme pour les archives, le COMpte est figé :
-#: un quatrième PDF dans ce dossier fait échouer l'épreuve.
-NOMBRE_PDF_SAMPLE_DATA_ACCEPTES = 3
+#: un PDF de plus dans ce dossier fait échouer l'épreuve.
+#:
+#: Le compte est passé de 3 à 6 : aux trois PDF d'exemple s'ajoutent les
+#: trois affaires du corpus de repli de la recette locale
+#: (sample_data/recette/), rendues nécessaires par la purge des archives du
+#: corpus réel. Toutes synthétiques, toutes régénérées par un générateur
+#: versionné. Sept PDF, en revanche, serait une venue d'ailleurs.
+NOMBRE_PDF_SAMPLE_DATA_ACCEPTES = 6
 
 #: Motif de l'export qui avait produit les sept archives (horodatage
 #: Dropbox du 2026-09-28). Elles ont été purgées : ce motif ne désigne plus
@@ -133,7 +139,7 @@ def test_aucun_pdf_metier_n_est_consigne(fichiers_suivis: list[str]) -> None:
 def test_le_jeu_d_exemples_ne_gonfle_pas(fichiers_suivis: list[str]) -> None:
     """``sample_data/`` est une exemption ACCEPTÉE, pas une autorisation d'y verser.
 
-    Trois PDF, pas un de plus. Ajouter une fiche — RÉELLE surtout — dans ce
+    Six PDF, pas un de plus. Ajouter une fiche — RÉELLE surtout — dans ce
     dossier est exactement le geste que la décision de risque accepté n'a
     jamais couvert ; la fiche de référence qui s'y trouve est synthétique et
     régénérée par un générateur versionné.

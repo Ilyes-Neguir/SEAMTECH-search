@@ -121,6 +121,14 @@ _FIXTURES_SYNTHETIQUES = (
     # tests/test_extraction_fiche_reference.py. Changer le générateur casse
     # ce test — la nature du document est donc bien surveillée.
     "sample_data/CLIENT-1042-EX/",
+    # Corpus de repli de la recette locale : les 7 archives du corpus REEL ont
+    # ete purgees, la recette se rabat sur ces affaires synthetiques. Genere
+    # par scripts/generer_corpus_recette_synthetique.py, et verrouille sans
+    # empreinte — donc sans se casser a chaque regeneration — par
+    # tests/test_recette_locale.py : trois affaires minimum, PDF distincts
+    # (sinon la deduplication les fondrait en une seule), et un code extrait
+    # distinct par affaire. La nature du document est donc bien surveillee.
+    "sample_data/recette/",
 )
 
 

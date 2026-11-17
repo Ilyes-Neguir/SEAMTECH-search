@@ -639,6 +639,41 @@ def test_corpus_synthetique_chaque_affaire_donne_un_code_distinct() -> None:
     )
 
 
+def test_corpus_synthetique_laisse_une_fiche_en_revue() -> None:
+    """Le repli doit laisser AU MOINS une fiche en attente de revue.
+
+    Le contrôle « filtres-facettes » prouve qu'une fiche EN ATTENTE est
+    exclue de la recherche quand inclure_a_valider=false. Un corpus où les
+    trois fiches partent en auto-validation ne laisse plus rien à exclure :
+    le contrôle n'a plus rien à démontrer et tombe.
+
+    Ce n'est pas un défaut du seuil d'auto-validation (D4) qu'il faudrait
+    contourner — c'est le corpus qui doit reproduire le MÉLANGE d'arrivée du
+    corpus réel : des fiches propres ET des fiches à reprendre. Une affaire
+    porte donc une incohérence de mesures volontaire ; c'est la règle des
+    anomalies bloquantes de D4 qui la classe en revue.
+    """
+    pytest.importorskip("pdfplumber", reason="pdfplumber requis pour extraire")
+    from seamtech_search.fiches.auto_validation import decider_statut_arrivee
+    from seamtech_search.fiches.extraction import extraire_avec_filet
+    from seamtech_search.fiches.gabarits import GABARITS_EMBARQUES
+
+    statuts = {}
+    for affaire in sorted(p for p in CORPUS_SYNTH.iterdir() if p.is_dir()):
+        pdf = sorted(affaire.glob("*.pdf"))[0]
+        fiche = extraire_avec_filet(pdf, list(GABARITS_EMBARQUES))
+        statuts[affaire.name] = decider_statut_arrivee(
+            fiche.score_qualite(), fiche.anomalies or []
+        ).statut
+    assert "a_valider" in statuts.values(), (
+        f"aucune affaire du corpus de repli n'arrive en revue humaine : {statuts}. "
+        f"Sans fiche en attente, le contrôle filtres-facettes de la recette "
+        f"n'a plus rien à exclure et le job recette-locale tombe. Le seuil "
+        f"d'auto-validation ne doit PAS être abaissé pour autant : c'est le "
+        f"corpus qui doit porter une affaire à reprendre."
+    )
+
+
 def test_recette_locale_repli_utilise_le_corpus_dedie() -> None:
     """Le repli doit viser sample_data/recette/, pas tout sample_data/.
 
