@@ -98,6 +98,7 @@ done
 python - <<'PY'
 import json
 import os
+import re
 import statistics
 import sys
 from pathlib import Path
@@ -105,12 +106,30 @@ from pathlib import Path
 dossier = Path(os.environ.get("SEAMTECH_PERF_COMPARAISON_DIR", "/tmp/seamtech-perf-comparaison"))
 n_runs = int(os.environ.get("N_RUNS", "3"))
 seuil_ci = float(os.environ.get("SEAMTECH_PERF_P95_CI_MS", "250"))
+NOM_FONDS_REEL = "fonds réel 1042-EX (13 requêtes)"
+
 attendus = {
     "50 requêtes synthétique",
     "1 500 fiches (mi-échelle)",
-    "fonds réel 1042-EX (13 requêtes)",
+    NOM_FONDS_REEL,
     "recherche par dimension (Phase 1)",
 }
+
+# Une mesure publiée par une révision HISTORIQUE peut porter un autre libellé
+# que celui d'aujourd'hui : le « fonds réel » a été rebaptisé quand la fiche
+# de référence réelle a cédé la place à sa contrepartie synthétique (purge des
+# données du commanditaire). 8dd5ae7 et a3506c8 publient donc la MÊME série
+# sous l'ancien libellé, et la comparaison des trois révisions ne se
+# recollait plus — le job échouait sur « mesures absentes » pour les deux
+# révisions de référence.
+#
+# On rattache la série PAR MOTIF, jamais en réécrivant l'ancien libellé : le
+# transcrire ici serait réintroduire l'identifiant que la purge a retiré.
+_RE_SERIE_FONDS_REEL = re.compile(r"^fonds réel\b", re.IGNORECASE)
+
+
+def canonique(nom: str) -> str:
+    return NOM_FONDS_REEL if _RE_SERIE_FONDS_REEL.match(nom) else nom
 
 def charger(etiquette: str) -> list[dict]:
     runs = []
@@ -123,7 +142,7 @@ def charger(etiquette: str) -> list[dict]:
                     mesures.append(json.loads(ligne))
         rc_path = dossier / f"{etiquette}-run{i}.rc"
         rc = int(rc_path.read_text(encoding="utf-8").strip()) if rc_path.is_file() else 99
-        runs.append({"run": i, "rc": rc, "mesures": {m["nom"]: m for m in mesures}})
+        runs.append({"run": i, "rc": rc, "mesures": {canonique(m["nom"]): m for m in mesures}})
     return runs
 
 jeux = {k: charger(k) for k in ("baseline", "a3506c8", "head")}
