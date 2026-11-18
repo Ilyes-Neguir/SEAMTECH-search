@@ -38,6 +38,12 @@ const csp = [
 
 const enTetesSecurite = [
   { key: "Content-Security-Policy", value: csp },
+  // HSTS : l'application est exposée derrière un proxy TLS (Cloudflare) en
+  // production ; le navigateur doit refuser tout retour en HTTP clair. 2 ans,
+  // includeSubDomains, et preload pour verrouiller dès la première visite.
+  // Cloudflare peut aussi l'émettre au bord — ceci est la défense en
+  // profondeur, côté origine.
+  { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains; preload" },
   { key: "X-Content-Type-Options", value: "nosniff" },
   // X-Frame-Options ne sait pas exprimer « self + un hôte précis » : en
   // développement on laisse la CSP seule décider, sinon l'aperçu intégré est

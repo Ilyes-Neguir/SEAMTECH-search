@@ -95,6 +95,11 @@ class AppConfig(BaseModel):
     allow_network_access: bool = False
     auth_token: str | None = None
     behind_tls_proxy: bool = False
+    # Hôtes publics autorisés (validation de l'en-tête Host, défense contre
+    # l'injection d'hôte). Vide = aucun contrôle (développement local) ; en
+    # production derrière Cloudflare, renseigner le domaine public
+    # (SEAMTECH_ALLOWED_HOSTS, séparés par des virgules).
+    allowed_hosts: list[str] = Field(default_factory=list)
     rate_limit_per_minute: int = Field(default=600, ge=1)
 
     # Retention settings
@@ -259,6 +264,12 @@ class AppConfig(BaseModel):
 
         if os.environ.get("SEAMTECH_HOST"):
             data["host"] = os.environ["SEAMTECH_HOST"]
+        if os.environ.get("SEAMTECH_ALLOWED_HOSTS"):
+            data["allowed_hosts"] = [
+                hote.strip()
+                for hote in os.environ["SEAMTECH_ALLOWED_HOSTS"].split(",")
+                if hote.strip()
+            ]
         if os.environ.get("SEAMTECH_PORT"):
             data["port"] = int(os.environ["SEAMTECH_PORT"])
         if os.environ.get("SEAMTECH_ALLOW_NETWORK_ACCESS"):
