@@ -58,6 +58,15 @@ RUN groupadd -r seamtech && useradd -r -g seamtech -d /app -s /bin/false seamtec
 # supplémentaire dans la chaîne de construction de l'image.
 # Les commentaires restent HORS du bloc RUN : à l'intérieur d'une instruction
 # à continuation, le parseur ne les garantit pas.
+#
+# Le téléchargement de la clé est la seule étape de ce bloc qui ne passe pas
+# par un miroir Debian : `curl` est donc réessayé, comme `apt-get` l'est déjà
+# (Acquire::Retries). Sans ces réessais, une minute d'indisponibilité de
+# postgresql.org fait échouer la CONSTRUCTION DE L'IMAGE — donc les jobs
+# docker, integration et recette-locale — pour une panne sans rapport avec
+# le code ; constaté en CI le 2026-11-17. Les assertions qui suivent ne sont
+# PAS assouplies pour autant : une image incapable de prouver la majeure de
+# son client ne se construit toujours pas.
 RUN --mount=type=cache,target=/var/cache/apt,id=seamtech-apt-cache,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,id=seamtech-apt-lists,sharing=locked \
     rm -f /etc/apt/apt.conf.d/docker-clean \
@@ -68,7 +77,8 @@ RUN --mount=type=cache,target=/var/cache/apt,id=seamtech-apt-cache,sharing=locke
         curl \
         gnupg \
     && . /etc/os-release \
-    && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+    && curl -fsSL --retry ${APT_RETRIES} --retry-delay 2 --retry-all-errors \
+        https://www.postgresql.org/media/keys/ACCC4CF8.asc \
         | gpg --dearmor > /usr/share/keyrings/pgdg.gpg \
     && echo "deb [signed-by=/usr/share/keyrings/pgdg.gpg] https://apt.postgresql.org/pub/repos/apt \
         ${VERSION_CODENAME}-pgdg main" > /etc/apt/sources.list.d/pgdg.list \

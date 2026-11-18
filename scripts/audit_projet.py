@@ -6,8 +6,11 @@ Chaque contrôle ci-dessous correspond à un incident réel du projet (21/09/202
   1. `.github/workflows/ci.yml` présent          → le fichier avait été déplacé à la
      racine `workflows/ci.yml` : GitHub Actions ne tournait plus, et la fusion
      aurait retiré la CI de `main`.
-  2. Fixture 1042 = DOCUMENT RÉEL (SHA-256)      → le gabarit était réglé sur une
-     reconstruction ; 16,7 % de champs lus au lieu de 100 %.
+  2. Fixture 1042 = ÉQUIVALENT SYNTHÉTIQUE       → le gabarit était réglé sur une
+     reconstruction ; 16,7 % de champs lus au lieu de 100 %. Depuis la purge
+     (vague 1), le document réel du commanditaire ne doit plus revenir dans
+     le dépôt : le contrôle prouve son absence par son empreinte, et la
+     fixture synthétique régénérable par sa présence et sa validité PDF.
   3. Aucun `except: pass`                        → une faute de frappe avalée
      silencieusement a fait recréer des bases pendant toute une session.
   4. Verrou de calibration présent               → la validation groupée doit
@@ -37,7 +40,10 @@ RACINE = Path(__file__).resolve().parents[1]
 if str(RACINE) not in sys.path:
     sys.path.insert(0, str(RACINE))
 
-# Empreinte du document client réel (166 990 octets, 1 page).
+# Empreinte du document client réel du commanditaire (166 990 octets, 1 page),
+# PURGÉ du dépôt (vague 1, 2026-11-17). Elle n'est plus un critère d'identité
+# de la fixture — c'est un critère d'EXCLUSION : si un fichier du dépôt porte
+# cette empreinte, le document réel est revenu et la purge est à refaire.
 SHA_FICHE_REELLE = "43afc51e55ae598d3eaffc3096f0e7ddaa00e8ddc579ae315bb31b4dbf1c1f40"
 
 FICHIERS_DE_TEST_IMPOSES = (
@@ -72,16 +78,37 @@ def controle_ci() -> None:
 
 
 def controle_fixture() -> None:
-    print("\n2. Fixture = document client réel (et non une reconstruction)")
+    # Incident d'origine (21/09/2026) : le gabarit était réglé sur une
+    # reconstruction de la fiche ; 16,7 % des champs lus au lieu de 100 %.
+    # Le contrôle d'alors exigeait que la fixture SOIT le document réel.
+    #
+    # Depuis la purge (vague 1), le document réel du commanditaire ne doit
+    # plus être dans le dépôt du tout : l'exiger serait exiger une fuite de
+    # données. La fixture est l'ÉQUIVALENT SYNTHÉTIQUE régénérable
+    # (scripts/generer_fiche_reference_synthetique.py), et l'invariant
+    # « 100 % des champs lus » est prouvé par la suite de tests, qui tourne
+    # AVANT cet audit en CI (test_banc_etendu_74_cibles_100_pourcent, et la
+    # preuve de régénération 74/74). Ce contrôle garde donc ce qui reste
+    # vérifiable sans exécuter la suite : la fixture est là, elle est un PDF
+    # valide, et le document réel purgé n'est PAS revenu.
+    print("\n2. Fixture = équivalent synthétique (document réel purgé)")
     fixture = RACINE / "sample_data" / "CLIENT-1042-EX" / "fiche-1042-EX_ffab.pdf"
     if not fixture.is_file():
         controler("fixture 1042 présente", False, str(fixture))
         return
-    empreinte = hashlib.sha256(fixture.read_bytes()).hexdigest()
-    controler("SHA-256 = document réel", empreinte == SHA_FICHE_REELLE,
-              "" if empreinte == SHA_FICHE_REELLE else f"obtenu {empreinte[:16]}…")
-    controler("taille = 166 990 octets", fixture.stat().st_size == 166990,
-              f"{fixture.stat().st_size} octets")
+    contenu = fixture.read_bytes()
+    empreinte = hashlib.sha256(contenu).hexdigest()
+    controler(
+        "document réel du commanditaire purgé (empreinte ≠ document purgé)",
+        empreinte != SHA_FICHE_REELLE,
+        "le document client réel est revenu dans le dépôt — purge à refaire"
+        if empreinte == SHA_FICHE_REELLE else "empreinte différente du document purgé",
+    )
+    controler(
+        "fixture synthétique régénérable (PDF valide)",
+        contenu.startswith(b"%PDF"),
+        f"{len(contenu)} octets" + ("" if contenu.startswith(b"%PDF") else " — en-tête PDF absent"),
+    )
 
 
 def controle_exceptions() -> None:
