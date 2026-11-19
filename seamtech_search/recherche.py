@@ -2308,7 +2308,11 @@ def _details_fiches(
     # Comparaison : on expose l'id_extraction (la plus récente) de chaque
     # fiche, pour alimenter le bouton « Comparaison » de /recherche. Requête
     # indexée sur sail_extractions(id_fiche), limitée aux fiches de la page.
-    try:
+    # On vérifie l'existence de la table AVANT de la requêter : en PostgreSQL,
+    # une requête en échec (table absente) avorte la transaction, et les
+    # requêtes suivantes sur la même connexion échoueraient en cascade.
+    cursor.execute("SELECT to_regclass('public.sail_extractions') IS NOT NULL")
+    if cursor.fetchone()[0]:
         cursor.execute(
             """
             SELECT DISTINCT ON (id_fiche) id_fiche, id_extraction
@@ -2322,9 +2326,6 @@ def _details_fiches(
             id_f = int(ligne[0])
             if id_f in result:
                 result[id_f]["id_extraction"] = int(ligne[1])
-    except Exception:
-        # Table absente (base ancienne) — on garde sans id_extraction.
-        pass
 
     return result
 
