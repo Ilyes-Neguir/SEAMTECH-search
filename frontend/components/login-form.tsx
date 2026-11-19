@@ -23,9 +23,13 @@ import { rafraichirSessionGlobale } from "@/lib/use-session"
  */
 export function LoginForm() {
   const router = useRouter()
+  const [mode, setMode] = useState<"login" | "signup">("login")
   const [identifiant, setIdentifiant] = useState("")
+  const [nom, setNom] = useState("")
   const [password, setPassword] = useState("")
+  const [passwordConfirm, setPasswordConfirm] = useState("")
   const [error, setError] = useState<string | null>(null)
+  const [success, setSuccess] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [next, setNext] = useState("/")
 
@@ -42,7 +46,34 @@ export function LoginForm() {
     if (submitting) return
     setSubmitting(true)
     setError(null)
+    setSuccess(null)
     try {
+      if (mode === "signup") {
+        if (password !== passwordConfirm) {
+          setError("Les mots de passe ne correspondent pas.")
+          return
+        }
+        const response = await fetch("/api/auth/signup", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            identifiant: identifiant.trim(),
+            nom: nom.trim(),
+            mot_de_passe: password,
+          }),
+          cache: "no-store",
+        })
+        if (response.ok) {
+          setPassword("")
+          setPasswordConfirm("")
+          setMode("login")
+          setSuccess("Compte créé. Vous pouvez maintenant vous connecter.")
+          return
+        }
+        const body = await response.json().catch(() => ({}))
+        setError(body?.detail ?? `Inscription refusée (${response.status}).`)
+        return
+      }
       const response = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -61,7 +92,7 @@ export function LoginForm() {
       const body = await response.json().catch(() => ({}))
       setError(body?.detail ?? `Connexion refusée (${response.status}).`)
     } catch {
-      setError("Endpoint de connexion injoignable.")
+      setError(mode === "signup" ? "Endpoint d'inscription injoignable." : "Endpoint de connexion injoignable.")
     } finally {
       setSubmitting(false)
     }
@@ -109,13 +140,16 @@ export function LoginForm() {
         <form
           onSubmit={onSubmit}
           className="rounded-2xl border border-border bg-card p-6 shadow-[0_18px_50px_-18px_color-mix(in_srgb,var(--foreground)_30%,transparent)]"
-          aria-label="Connexion à SEAMTECH Search"
+          aria-label={mode === "signup" ? "Création de compte SEAMTECH Search" : "Connexion à SEAMTECH Search"}
         >
-          <h1 className="text-base font-semibold text-foreground">Connexion</h1>
+          <h1 className="text-base font-semibold text-foreground">
+            {mode === "signup" ? "Créer un compte" : "Connexion"}
+          </h1>
           <div className="couture my-3 w-32" aria-hidden />
           <p className="mt-1 text-xs text-muted-foreground">
-            SEAMTECH Search est un outil interne. Connectez-vous avec votre compte nominatif — les
-            validations sont tracées à votre nom.
+            {mode === "signup"
+              ? "Créez votre compte nominatif. Le rôle attribué est « lecture » (accès minimum) — un administrateur pourra vous élever ensuite."
+              : "SEAMTECH Search est un outil interne. Connectez-vous avec votre compte nominatif — les validations sont tracées à votre nom."}
           </p>
 
           <label htmlFor="identifiant" className="mt-4 block text-xs font-medium text-muted-foreground">
@@ -133,6 +167,24 @@ export function LoginForm() {
             className="mt-1"
           />
 
+          {mode === "signup" ? (
+            <>
+              <label htmlFor="nom" className="mt-3 block text-xs font-medium text-muted-foreground">
+                Nom (optionnel)
+              </label>
+              <Input
+                id="nom"
+                name="nom"
+                type="text"
+                autoComplete="name"
+                value={nom}
+                onChange={(event) => setNom(event.target.value)}
+                placeholder="Votre nom"
+                className="mt-1"
+              />
+            </>
+          ) : null}
+
           <label htmlFor="password" className="mt-3 block text-xs font-medium text-muted-foreground">
             Mot de passe
           </label>
@@ -140,15 +192,34 @@ export function LoginForm() {
             id="password"
             name="password"
             type="password"
-            autoComplete="current-password"
+            autoComplete={mode === "signup" ? "new-password" : "current-password"}
             required
             value={password}
             onChange={(event) => setPassword(event.target.value)}
-            placeholder="Votre mot de passe"
+            placeholder={mode === "signup" ? "8 caractères minimum" : "Votre mot de passe"}
             className="mt-1"
             aria-invalid={error ? true : undefined}
             aria-describedby={error ? "login-error" : undefined}
           />
+
+          {mode === "signup" ? (
+            <>
+              <label htmlFor="passwordConfirm" className="mt-3 block text-xs font-medium text-muted-foreground">
+                Confirmer le mot de passe
+              </label>
+              <Input
+                id="passwordConfirm"
+                name="passwordConfirm"
+                type="password"
+                autoComplete="new-password"
+                required
+                value={passwordConfirm}
+                onChange={(event) => setPasswordConfirm(event.target.value)}
+                placeholder="Répétez le mot de passe"
+                className="mt-1"
+              />
+            </>
+          ) : null}
 
           {error ? (
             <p id="login-error" role="alert" className="mt-3 text-xs text-destructive">
@@ -156,13 +227,61 @@ export function LoginForm() {
             </p>
           ) : null}
 
+          {success ? (
+            <p role="status" className="mt-3 text-xs text-foreground">
+              {success}
+            </p>
+          ) : null}
+
           <Button type="submit" size="lg" className="mt-4 w-full" disabled={submitting || password.length === 0}>
-            {submitting ? "Connexion…" : "Se connecter"}
+            {submitting
+              ? mode === "signup"
+                ? "Création…"
+                : "Connexion…"
+              : mode === "signup"
+                ? "Créer le compte"
+                : "Se connecter"}
           </Button>
 
-          <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">
-            Compte de secours : laissez l'identifiant vide et saisissez le mot de passe partagé de
-            l'atelier. Ses actions sont attribuées à « secours » et sa session n'est pas révocable.
+          {mode === "login" ? (
+            <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">
+              Compte de secours : laissez l'identifiant vide et saisissez le mot de passe partagé de
+              l'atelier. Ses actions sont attribuées à « secours » et sa session n'est pas révocable.
+            </p>
+          ) : null}
+
+          <p className="mt-4 text-center text-xs text-muted-foreground">
+            {mode === "login" ? (
+              <>
+                Pas encore de compte ?{" "}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode("signup")
+                    setError(null)
+                    setSuccess(null)
+                  }}
+                  className="font-medium text-foreground underline underline-offset-2"
+                >
+                  Créer un compte
+                </button>
+              </>
+            ) : (
+              <>
+                Déjà un compte ?{" "}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode("login")
+                    setError(null)
+                    setSuccess(null)
+                  }}
+                  className="font-medium text-foreground underline underline-offset-2"
+                >
+                  Se connecter
+                </button>
+              </>
+            )}
           </p>
         </form>
         <p className="mt-5 text-center text-[10px] uppercase tracking-[0.18em] text-muted-foreground">

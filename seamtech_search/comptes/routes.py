@@ -292,6 +292,44 @@ def enregistrer_routes_auth(app: Any, index: Any, config: Any, verifier_auth: An
         return {"ok": True, **resultat}
 
     # -----------------------------------------------------------------------
+    # Inscription publique (création de compte)
+    # -----------------------------------------------------------------------
+
+    @app.post("/auth/signup")
+    def route_inscription(
+        corps: dict[str, Any],
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+    ) -> dict[str, Any]:
+        """Inscription publique : crée un compte avec privilèges minimum.
+
+        Aucune session requise (seul le jeton de service est vérifié).
+        Le rôle est TOUJOURS ``lecture`` (ROLE_DEFAUT) — jamais admin.
+        Validation : identifiant non vide et unique, mot de passe ≥ 8 caractères.
+        """
+        verifier_auth(config, token)
+        _exiger_postgres(index)
+        identifiant = str(corps.get("identifiant") or "").strip()
+        mot_de_passe = str(corps.get("mot_de_passe") or "")
+        if not identifiant:
+            raise HTTPException(status_code=422, detail="Identifiant obligatoire.")
+        if len(mot_de_passe) < 8:
+            raise HTTPException(
+                status_code=422,
+                detail="Mot de passe trop court (minimum 8 caractères).",
+            )
+        # Rôle forcé à lecture — jamais admin, jamais configurable par le client.
+        resultat = creer_utilisateur(
+            index,
+            identifiant,
+            str(corps.get("nom") or ""),
+            mot_de_passe,
+            ROLE_DEFAUT,
+            doit_changer_mot_de_passe=False,
+        )
+        LOGGER.info("Inscription publique : compte créé (rôle %s).", resultat.get("role"))
+        return {"ok": True, "identifiant": resultat["identifiant"], "role": resultat["role"]}
+
+    # -----------------------------------------------------------------------
     # Gestion des comptes — admin uniquement
     # -----------------------------------------------------------------------
 
