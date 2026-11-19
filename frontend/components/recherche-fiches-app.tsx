@@ -7,7 +7,6 @@
 // L'écran Phase 0 de recherche fichiers vit désormais sur /fichiers.
 
 import Link from "next/link"
-import { useRouter } from "next/navigation"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { Search, X, Link as LinkIcon, Check, Scale } from "lucide-react"
 import { authedFetch } from "@/lib/authed-fetch"
@@ -352,7 +351,6 @@ function ExtraitDocumentResultat({ fiche }: { fiche: ResultatFiche }) {
 }
 
 export function RechercheFichesApp({ assistantActif = true }: { assistantActif?: boolean }) {
-  const router = useRouter()
   const [saisie, setSaisie] = useState("")
   const [requete, setRequete] = useState("")
   const [filtres, setFiltres] = useState<Record<string, string>>({})
@@ -377,8 +375,8 @@ export function RechercheFichesApp({ assistantActif = true }: { assistantActif?:
     .filter((id): id is number => typeof id === "number")
   const allerComparaison = useCallback(() => {
     if (idsComparables.length < 2) return
-    router.push(`/comparaison?ids=${idsComparables.join(",")}`)
-  }, [idsComparables, router])
+    window.location.href = `/comparaison?ids=${idsComparables.join(",")}`
+  }, [idsComparables])
 
   const lancer = useCallback(
     async (
