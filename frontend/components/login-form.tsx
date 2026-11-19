@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { RoseDesVents } from "@/components/rose-des-vents"
 import { SeamtechLogo } from "@/components/seamtech-logo"
+import { VoileDecor } from "@/components/voile-decor"
 import { resolveNextPath } from "@/lib/authed-fetch"
 import { rafraichirSessionGlobale } from "@/lib/use-session"
 
@@ -119,6 +120,11 @@ export function LoginForm() {
             Dix mille plans, cotes et gabarits de la voilerie — cousus, classés,
             retrouvés en un souffle. Montez à bord : le quart commence.
           </p>
+        </div>
+        {/* Phase 4 — voile 3D procédurale (WebGL brut, fallback SVG).
+            Purement décorative : aria-hidden, pointer-events none. */}
+        <div className="pointer-events-none absolute inset-x-0 bottom-24 flex justify-center">
+          <VoileDecor className="h-64 w-52 text-primary/60 xl:h-72 xl:w-60" />
         </div>
         <svg viewBox="0 0 600 60" preserveAspectRatio="none" className="vague-derive absolute bottom-0 left-0 h-14 w-[200%] text-primary/30">
           <path
