@@ -1,7 +1,11 @@
 # Rapport d'état — SEAMTECH Search (production / Cloudflare)
 
 **Date :** 2026-11-18 · **Branche :** `arena/765ebdcf-seamtech-search` (PR #44 ouverte)
-**HEAD :** `fd3f170` · **CI au HEAD :** 44/45 verts, 1 annulé (infrastructure, voir §5)
+**HEAD vérifié :** `4d05d89f1ac873c05e077fb4a1ad3bde1145d9bb`
+**CI à ce SHA :** 45 check-runs terminés — **43 success, 2 skipped, 0 failure,
+0 cancelled** (run CI : https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/44487327735).
+Les 2 `skipped` sont `recette-corpus-reel`, sauté par conception (corpus réel
+purgé, repli synthétique utilisé).
 
 Ce rapport dit, point par point : **ce qui est fait**, **ce qui manque**, et
 **ce qu'il reste à faire** pour une mise en production derrière Cloudflare.
@@ -25,7 +29,8 @@ Règle appliquée : rien n'est déclaré terminé sans preuve (commande + résul
 
 Trois rouges, tous de mon fait, corrigés et prouvés verts : comparaison de
 performance (alias par motif), audit exigeant le document réel purgé
-(contrôle inversé), build Docker (curl réessayé). CI 44/45 verts à `767b1c6`.
+(contrôle inversé), build Docker (curl réessayé). CI entièrement verte à
+`4d05d89` : 43 success, 2 skipped attendus, 0 échec.
 
 ### 1.3 Production Cloudflare (choix : conteneurs + Cloudflare devant, internet public)
 
@@ -54,7 +59,7 @@ performance (alias par motif), audit exigeant le document réel purgé
 |---|---|---|
 | M1 | **`push --force` réel de la purge** | **Volontairement en attente** : décision explicite de l'utilisateur (« attendu, pas maintenant »). Commande exacte prête dans le rapport d'épreuve à blanc. |
 | M2 | **Vagues 2 à 5 du plan** | Non entamées ; détail non disponible dans cette session. |
-| M3 | **Job CI `backend (3.13)`** | Annulé après ~2 h bloqué sur `apt-get install redis-server` (panne d'infrastructure GitHub, pas du code). `3.11` et `3.12` verts avec la même suite. |
+| M3 | ~~Job CI `backend (3.13)`~~ **RÉSOLU** | À `fd3f170`, le job avait été annulé après ~2 h bloqué sur `apt-get` (infra). Au SHA vérifié `4d05d89`, il est **success** : 0 annulation. |
 | M4 | **Déploiement réel chez Cloudflare** | Le guide est rédigé, mais aucune infrastructure n'a été provisionnée (domaine, tunnel, hôte). Action de l'exploitant. |
 | M5 | **Fichier local non suivi** `docs/RECETTE_EXHAUSTIVE_2026-11-18.md` | Artefact local, sans effet sur les tests. Non commité. |
 
@@ -81,7 +86,6 @@ performance (alias par motif), audit exigeant le document réel purgé
 
 ### 3.3 Hygiène (recommandé, non bloquant)
 
-- Relancer le job `backend (3.13)` depuis l'interface GitHub pour un 45/45.
 - Décider du sort de `docs/RECETTE_EXHAUSTIVE_2026-11-18.md` (committer ou supprimer).
 - Si les vagues 2 à 5 sont requises : en redonner le contenu pour les traiter.
 
@@ -91,7 +95,8 @@ performance (alias par motif), audit exigeant le document réel purgé
 
 **L'application est prête pour un déploiement Cloudflare** (conteneurs +
 façade Cloudflare, internet public) : code durci et prouvé, guide rédigé,
-sauvegarde prouvée, CI verte à une annulation d'infrastructure près.
+sauvegarde prouvée, **CI entièrement verte à `4d05d89`** (43 success,
+2 skipped attendus, 0 échec).
 
 **Le seul geste irréversible restant est le `push --force` de la purge**, qui
 attend votre décision explicite. Aucune fusion vers `main` n'a été faite.
