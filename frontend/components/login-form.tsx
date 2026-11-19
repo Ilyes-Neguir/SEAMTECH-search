@@ -124,7 +124,7 @@ export function LoginForm() {
         {/* Phase 4 — voile 3D procédurale (WebGL brut, fallback SVG).
             Purement décorative : aria-hidden, pointer-events none. */}
         <div className="pointer-events-none absolute inset-x-0 bottom-24 flex justify-center">
-          <VoileDecor className="h-64 w-52 text-primary/60 xl:h-72 xl:w-60" />
+          <VoileDecor className="h-64 w-52 text-primary xl:h-72 xl:w-60" />
         </div>
         <svg viewBox="0 0 600 60" preserveAspectRatio="none" className="vague-derive absolute bottom-0 left-0 h-14 w-[200%] text-primary/30">
           <path
