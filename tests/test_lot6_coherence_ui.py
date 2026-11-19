@@ -69,7 +69,8 @@ def test_matrice_visibilite_navigation_par_role() -> None:
         '"/validation"': "nominatif && estApprobateur(role)",
         '"/extractions"': "nominatif && estApprobateur(role)",
         # Écrans voiles et demandes : identité nominative exigée.
-        '"/comparaison"': "nominatif",
+        # (/comparaison n'est plus dans la nav : accès via le bouton
+        # « Comparaison » de /recherche, page conservée pré-remplie.)
         '"/confiance"': "nominatif",
         '"/approvals"': "nominatif",
         # Administration technique.
