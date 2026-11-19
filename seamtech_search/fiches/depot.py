@@ -509,7 +509,47 @@ def _est_planche_sailpack(chemin: Path) -> bool:
     return bool(_MOTIF_PANEL_LAYOUT.search(texte) and _MOTIF_PLANCHE_SAILPACK.search(texte))
 
 
+# Plans de fabrication (croquis) : documents de dessin portant un NUMÉRO DE
+# PLAN (« Plan number: PLAN-2026-001 », voir sample_data/CLIENT-123/
+# plan-notes.txt et CLIENT-456/fabrication-notes.txt), pas un code de fiche.
+# Ce ne sont PAS des fiches de fabrication : ni code commande, ni cotes
+# structurées — un croquis ne s'accepte pas en validation, il se rejette.
+# Garde : la présence de « fiche de fabrication » ou d'un code commande
+# (motif des formulaires) exclut le classement « plan » — une vraie fiche
+# qui mentionnerait un plan en marge reste une fiche.
+# Signal fort et spécifique : un numéro/libellé de plan explicite. Les mots
+# seuls (« croquis », « dessin ») sont volontairement exclus : une vraie
+# fiche peut les mentionner (« voir croquis ci-joint ») sans être un plan.
+_MOTIF_PLAN_FABRICATION = re.compile(
+    r"plan\s+(?:number|de\s+fabrication|n[°o]\s*[:\-]?|ref(?:erence)?\s*[:\-]?)",
+    re.IGNORECASE,
+)
+_MOTIF_FICHE_GARDE_PLAN = re.compile(r"fiche\s+de\s+fabrication", re.IGNORECASE)
+
+
+def _est_plan_fabrication(chemin: Path) -> bool:
+    """Vrai si le PDF est un plan de fabrication / croquis (jamais une fiche).
+
+    Lecture seule, jamais d'exception propagée : un PDF illisible n'est pas
+    classé ici, l'appelant garde alors sa raison de refus habituelle.
+    """
+    try:
+        texte = texte_normalise(analyser_pdf(chemin))
+    except Exception:  # PDF illisible : ce n'est pas à cette fonction de le dire
+        return False
+    if not _MOTIF_PLAN_FABRICATION.search(texte):
+        return False
+    # Garde : une vraie fiche (« fiche de fabrication » ou code commande)
+    # qui mentionnerait un plan en marge reste une fiche.
+    if _MOTIF_FICHE_GARDE_PLAN.search(texte):
+        return False
+    if _MOTIF_CODE_DANS_FORMULAIRE.search(texte.replace("ST ", "ST ")):
+        return False
+    return True
+
+
 CLASSEMENT_FORMULAIRE = "formulaire de prise de cotes"
+CLASSEMENT_PLAN = "plan de fabrication (croquis)"
 CLASSEMENT_PLANCHE = "planche de tracé SailPack (plan de panneaux BSG)"
 CLASSEMENT_SANS_TEXTE = "PDF sans couche texte (image ou plan exporté)"
 
@@ -537,6 +577,12 @@ def _raison_documents_non_fiche(classements: dict[str, str]) -> str:
         suite += (
             " Un formulaire de prise de cotes sert à recueillir les mesures du client : "
             "il ne porte ni code commande ni cote de fabrication."
+        )
+    if CLASSEMENT_PLAN in par_classe:
+        suite += (
+            " Un plan de fabrication (croquis) est un dessin, pas une fiche : "
+            "il ne porte ni code commande ni cotes structurées, il ne s'accepte "
+            "pas en validation."
         )
     return (
         "aucune fiche de fabrication dans ce dossier — contenu réellement reconnu : "
@@ -880,6 +926,16 @@ def scanner_dossier(dossier: Path, gabarits: list[GabaritDef]) -> PlanDossier:
             # faiblement. Mesuré sur `/VOILES 2024/NS44 ST88` : le formulaire
             # « NS44 GV.pdf » était retenu par le gabarit accessoire et une
             # fiche « pour » (mot lu dans le formulaire) apparaissait en base.
+            candidats = [paire for paire in candidats if paire[0] != pdf]
+            scores[pdf.name] = 0
+            continue
+        if _est_plan_fabrication(pdf):
+            classements[pdf.name] = CLASSEMENT_PLAN
+            # Un plan de fabrication (croquis) n'est JAMAIS une fiche : il ne
+            # doit donc pas rester candidat, même quand un gabarit le reconnaît
+            # faiblement (cotes et libellés de voilerie d'un dessin). Sans ce
+            # retrait, le plan devenait le PDF principal, une fiche « pour »
+            # rien apparaissait en base, et le dossier encombrait /validation.
             candidats = [paire for paire in candidats if paire[0] != pdf]
             scores[pdf.name] = 0
             continue
