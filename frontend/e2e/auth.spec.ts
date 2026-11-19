@@ -387,4 +387,91 @@ test.describe("Comptes nominatifs (rôles canoniques)", () => {
       await context.dispose()
     }
   })
+
+  // -------------------------------------------------------------------------
+  // Inscription publique (création de compte) — Phase 3/5.
+  //
+  // Le rôle est TOUJOURS « lecture » (jamais admin, jamais configurable par
+  // le client). L'identifiant est unique par run pour rester rejouable.
+  // -------------------------------------------------------------------------
+
+  test("l'inscription crée un compte au rôle lecture, puis la connexion fonctionne", async () => {
+    const identifiant = `e2e-inscription-${Date.now()}`
+    const motDePasse = "e2e-inscription-password"
+    const context = await anonymousContext()
+    try {
+      const inscription = await context.fetch("/api/auth/signup", {
+        method: "POST",
+        data: { identifiant, nom: "Compte E2E", mot_de_passe: motDePasse },
+        failOnStatusCode: false,
+      })
+      expect(inscription.status()).toBe(200)
+      const corps = await inscription.json()
+      expect(corps).toMatchObject({ ok: true, identifiant, role: "lecture" })
+      // Jamais d'empreinte ni de mot de passe dans la réponse.
+      expect(JSON.stringify(corps)).not.toMatch(/scrypt\$/)
+      expect(JSON.stringify(corps)).not.toContain(motDePasse)
+
+      // Le compte créé peut se connecter immédiatement.
+      const connexion = await context.fetch("/api/auth/login", {
+        method: "POST",
+        data: { identifiant, mot_de_passe: motDePasse },
+        failOnStatusCode: false,
+      })
+      expect(connexion.status()).toBe(200)
+      const session = await context.fetch("/api/auth/session", { failOnStatusCode: false })
+      expect(await session.json()).toMatchObject({
+        authenticated: true,
+        identifiant,
+        role: "lecture",
+      })
+    } finally {
+      await context.dispose()
+    }
+  })
+
+  test("l'inscription refuse un mot de passe trop court (422)", async () => {
+    const context = await anonymousContext()
+    try {
+      const reponse = await context.fetch("/api/auth/signup", {
+        method: "POST",
+        data: { identifiant: `e2e-court-${Date.now()}`, mot_de_passe: "court" },
+        failOnStatusCode: false,
+      })
+      expect(reponse.status()).toBe(422)
+      expect((await reponse.json()).detail).toMatch(/8 caractères/i)
+    } finally {
+      await context.dispose()
+    }
+  })
+
+  test("l'inscription refuse un identifiant vide (422)", async () => {
+    const context = await anonymousContext()
+    try {
+      const reponse = await context.fetch("/api/auth/signup", {
+        method: "POST",
+        data: { identifiant: "   ", mot_de_passe: "e2e-inscription-password" },
+        failOnStatusCode: false,
+      })
+      expect(reponse.status()).toBe(422)
+      expect((await reponse.json()).detail).toMatch(/Identifiant obligatoire/i)
+    } finally {
+      await context.dispose()
+    }
+  })
+
+  test("l'inscription refuse un identifiant déjà pris (409)", async () => {
+    const context = await anonymousContext()
+    try {
+      // Un compte seedé existe déjà : réinscrire son identifiant doit échouer.
+      const reponse = await context.fetch("/api/auth/signup", {
+        method: "POST",
+        data: { identifiant: UTILISATEUR.identifiant, mot_de_passe: "e2e-inscription-password" },
+        failOnStatusCode: false,
+      })
+      expect(reponse.status()).toBe(409)
+    } finally {
+      await context.dispose()
+    }
+  })
 })

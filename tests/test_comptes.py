@@ -463,6 +463,102 @@ def test_api_mauvais_mot_de_passe_et_jeton_de_service(
     assert sans_jeton.status_code == 401
 
 
+# ---------------------------------------------------------------------------
+# Inscription publique (création de compte) — Phase 3/5.
+#
+# Le rôle est TOUJOURS « lecture » (jamais admin, jamais configurable par le
+# client). Validation : identifiant non vide, mot de passe ≥ 8 caractères.
+# ---------------------------------------------------------------------------
+
+
+def test_api_inscription_cree_compte_lecture(
+    base_comptes: dict[str, Any], client_comptes: TestClient
+) -> None:
+    inscription = client_comptes.post(
+        "/auth/signup",
+        json={"identifiant": "nouveau", "nom": "Nouveau", "mot_de_passe": "Secret!2026"},
+        headers={"X-SEAMTECH-TOKEN": JETON_SERVICE},
+    )
+    assert inscription.status_code == 200, inscription.text
+    corps = inscription.json()
+    assert corps == {"ok": True, "identifiant": "nouveau", "role": "lecture"}
+    # Aucune empreinte ni mot de passe dans la réponse.
+    assert "scrypt$" not in inscription.text
+    assert "Secret!2026" not in inscription.text
+
+    # Le compte créé peut se connecter immédiatement.
+    connexion = client_comptes.post(
+        "/auth/connexion",
+        json={"identifiant": "nouveau", "mot_de_passe": "Secret!2026"},
+        headers={"X-SEAMTECH-TOKEN": JETON_SERVICE},
+    )
+    assert connexion.status_code == 200, connexion.text
+    assert connexion.json()["identifiant"] == "nouveau"
+
+
+def test_api_inscription_role_jamais_admin(
+    base_comptes: dict[str, Any], client_comptes: TestClient
+) -> None:
+    """Même si le client demande le rôle admin, il reçoit lecture."""
+    inscription = client_comptes.post(
+        "/auth/signup",
+        json={
+            "identifiant": "malin",
+            "mot_de_passe": "Secret!2026",
+            "role": "admin",
+        },
+        headers={"X-SEAMTECH-TOKEN": JETON_SERVICE},
+    )
+    assert inscription.status_code == 200, inscription.text
+    assert inscription.json()["role"] == "lecture"
+
+
+def test_api_inscription_refuse_mot_de_passe_court(
+    base_comptes: dict[str, Any], client_comptes: TestClient
+) -> None:
+    reponse = client_comptes.post(
+        "/auth/signup",
+        json={"identifiant": "court", "mot_de_passe": "court"},
+        headers={"X-SEAMTECH-TOKEN": JETON_SERVICE},
+    )
+    assert reponse.status_code == 422, reponse.text
+    assert "8 caractères" in reponse.json()["detail"]
+
+
+def test_api_inscription_refuse_identifiant_vide(
+    base_comptes: dict[str, Any], client_comptes: TestClient
+) -> None:
+    reponse = client_comptes.post(
+        "/auth/signup",
+        json={"identifiant": "   ", "mot_de_passe": "Secret!2026"},
+        headers={"X-SEAMTECH-TOKEN": JETON_SERVICE},
+    )
+    assert reponse.status_code == 422, reponse.text
+    assert "Identifiant obligatoire" in reponse.json()["detail"]
+
+
+def test_api_inscription_refuse_doublon(
+    base_comptes: dict[str, Any], client_comptes: TestClient
+) -> None:
+    _creer(base_comptes, "imrane", "Secret!2026")
+    reponse = client_comptes.post(
+        "/auth/signup",
+        json={"identifiant": "imrane", "mot_de_passe": "Secret!2026"},
+        headers={"X-SEAMTECH-TOKEN": JETON_SERVICE},
+    )
+    assert reponse.status_code == 409, reponse.text
+
+
+def test_api_inscription_sans_jeton_refusee(
+    base_comptes: dict[str, Any], client_comptes: TestClient
+) -> None:
+    reponse = client_comptes.post(
+        "/auth/signup",
+        json={"identifiant": "sansjeton", "mot_de_passe": "Secret!2026"},
+    )
+    assert reponse.status_code == 401, reponse.text
+
+
 def test_gestion_des_comptes_reservee_administrateur(
     base_comptes: dict[str, Any], client_comptes: TestClient
 ) -> None:
