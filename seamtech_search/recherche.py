@@ -2311,8 +2311,15 @@ def _details_fiches(
     # On vérifie l'existence de la table AVANT de la requêter : en PostgreSQL,
     # une requête en échec (table absente) avorte la transaction, et les
     # requêtes suivantes sur la même connexion échoueraient en cascade.
-    cursor.execute("SELECT to_regclass('public.sail_extractions') IS NOT NULL")
-    if cursor.fetchone()[0]:
+    # Le try/except protège aussi le cas SQLite (to_regclass inexistant) :
+    # la fonctionnalité comparaison est optionnelle, la recherche ne doit
+    # jamais échouer à cause d'elle.
+    try:
+        cursor.execute("SELECT to_regclass('public.sail_extractions') IS NOT NULL")
+        table_existe = bool(cursor.fetchone()[0])
+    except Exception:
+        table_existe = False
+    if table_existe:
         cursor.execute(
             """
             SELECT DISTINCT ON (id_fiche) id_fiche, id_extraction
