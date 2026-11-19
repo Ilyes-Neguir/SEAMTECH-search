@@ -7,8 +7,9 @@
 // L'écran Phase 0 de recherche fichiers vit désormais sur /fichiers.
 
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { useCallback, useEffect, useRef, useState } from "react"
-import { Search, X, Link as LinkIcon, Check } from "lucide-react"
+import { Search, X, Link as LinkIcon, Check, Scale } from "lucide-react"
 import { authedFetch } from "@/lib/authed-fetch"
 import { LIBELLES_VALEURS_FACETTES, libelleFiltreActif } from "@/lib/filtres-recherche"
 import { cn } from "@/lib/utils"
@@ -49,6 +50,7 @@ interface ExtraitDocument {
 
 interface ResultatFiche {
   code: string | null
+  id_extraction?: number | null
   titre: string | null
   type_voile: string | null
   client: string | null
@@ -350,6 +352,7 @@ function ExtraitDocumentResultat({ fiche }: { fiche: ResultatFiche }) {
 }
 
 export function RechercheFichesApp({ assistantActif = true }: { assistantActif?: boolean }) {
+  const router = useRouter()
   const [saisie, setSaisie] = useState("")
   const [requete, setRequete] = useState("")
   const [filtres, setFiltres] = useState<Record<string, string>>({})
@@ -366,6 +369,16 @@ export function RechercheFichesApp({ assistantActif = true }: { assistantActif?:
   const [copieOk, setCopieOk] = useState(false)
   const rechercheRef = useRef(0)
   const initialLoadRef = useRef(true)
+
+  // Comparaison : on transmet les extractions de TOUS les résultats affichés
+  // (pas de sélection manuelle) vers /comparaison, qui les compare.
+  const idsComparables = (reponse?.resultats ?? [])
+    .map((f) => f.id_extraction)
+    .filter((id): id is number => typeof id === "number")
+  const allerComparaison = useCallback(() => {
+    if (idsComparables.length < 2) return
+    router.push(`/comparaison?ids=${idsComparables.join(",")}`)
+  }, [idsComparables, router])
 
   const lancer = useCallback(
     async (
@@ -907,6 +920,18 @@ export function RechercheFichesApp({ assistantActif = true }: { assistantActif?:
                 {reponse.sources_actives.map((s) => LIBELLE_SOURCE[s] ?? s).join(", ") || "—"} · page {reponse.page ?? page}/
                 {totalPages}
               </p>
+              <div className="mb-4 flex justify-end">
+                <button
+                  type="button"
+                  onClick={allerComparaison}
+                  disabled={idsComparables.length < 2}
+                  title={idsComparables.length < 2 ? "Il faut au moins 2 fiches avec extraction dans les résultats" : `Comparer les ${idsComparables.length} voiles affichées`}
+                  className="inline-flex items-center gap-1.5 rounded bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:opacity-90 disabled:opacity-40"
+                  data-testid="bouton-comparaison-recherche"
+                >
+                  <Scale className="size-3.5" /> Comparaison{idsComparables.length >= 2 ? ` (${idsComparables.length})` : ""}
+                </button>
+              </div>
               {(reponse.modeles_bateaux_detectes ?? []).length > 0 && (
                 <div
                   className="mb-4 flex flex-wrap items-center gap-2 rounded border border-border bg-background/60 px-3 py-2"

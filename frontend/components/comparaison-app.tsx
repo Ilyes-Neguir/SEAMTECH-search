@@ -89,11 +89,6 @@ interface Comparaison {
   }
 }
 
-interface CandidatComparaison {
-  extraction: ResumeExtraction
-  dimensions_communes: number
-}
-
 async function jsonFetch<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await authedFetch(url, init)
   const body = await res.json().catch(() => ({}))
@@ -155,63 +150,12 @@ function classeEcart(pct: number | null): string {
   return "bg-red-500/20 text-red-800 dark:text-red-200"
 }
 
-function ListeChoix({
-  titre,
-  cote,
-  elements,
-  idChoisi,
-  onChoisir,
-  testId,
-}: {
-  titre: string
-  cote: "a" | "b"
-  elements: ResumeExtraction[]
-  idChoisi: number | null
-  onChoisir: (id: number) => void
-  testId: string
-}) {
-  return (
-    <div>
-      <h3 className="mb-1 text-xs font-semibold">{titre}</h3>
-      <ul className="max-h-44 overflow-auto rounded border border-border" data-testid={testId}>
-        {elements.length === 0 && <li className="p-2 text-xs text-muted-foreground">Aucune extraction.</li>}
-        {elements.map((element) => (
-          <li key={element.id_extraction}>
-            <button
-              type="button"
-              onClick={() => onChoisir(element.id_extraction)}
-              className={cn(
-                "block w-full border-b border-border/50 px-2 py-1.5 text-left text-xs hover:bg-accent/40",
-                idChoisi === element.id_extraction && "bg-accent",
-              )}
-              data-testid="extraction-choix"
-              data-cote={cote}
-              data-id={element.id_extraction}
-            >
-              <span className="block truncate font-mono font-semibold">
-                {element.code_fiche ?? `#${element.id_extraction}`}
-              </span>
-              <span className="block truncate text-muted-foreground">
-                {element.type_voile ?? "type non lu"} · {nomModele(element)}
-              </span>
-            </button>
-          </li>
-        ))}
-      </ul>
-    </div>
-  )
-}
-
 function ComparaisonAppInterne() {
   const [extractions, setExtractions] = useState<ResumeExtraction[]>([])
-  const [rechercheA, setRechercheA] = useState("")
-  const [idA, setIdA] = useState<number | null>(null)
-  const [idB, setIdB] = useState<number | null>(null)
-  const [candidats, setCandidats] = useState<CandidatComparaison[]>([])
-  const [raisonSansCandidat, setRaisonSansCandidat] = useState<string | null>(null)
+  const [idsInitiaux, setIdsInitiaux] = useState<number[]>([])
   const [comparaison, setComparaison] = useState<Comparaison | null>(null)
   const [erreur, setErreur] = useState<string | null>(null)
-  const [mode, setMode] = useState<"deux" | "groupe">("deux")
+  const [mode, setMode] = useState<"deux" | "groupe">("groupe")
   const generation = useRef(0)
 
   const chargerListe = useCallback(async () => {
@@ -220,19 +164,6 @@ function ComparaisonAppInterne() {
       setExtractions(corps.extractions)
     } catch (e) {
       setErreur(e instanceof Error ? e.message : "Extractions illisibles.")
-    }
-  }, [])
-
-  const chargerCandidats = useCallback(async (idExtraction: number) => {
-    try {
-      const corps = await jsonFetch<{
-        candidats: CandidatComparaison[]
-        raison: string | null
-      }>(`/api/comparaison-voiles/candidats?id_extraction=${idExtraction}`)
-      setCandidats(corps.candidats)
-      setRaisonSansCandidat(corps.raison)
-    } catch (e) {
-      setErreur(e instanceof Error ? e.message : "Candidats illisibles.")
     }
   }, [])
 
@@ -254,34 +185,39 @@ function ComparaisonAppInterne() {
   useEffect(() => {
     void chargerListe()
     const parametres = new URLSearchParams(window.location.search)
-    const aInitial = Number(parametres.get("a")) || null
-    const bInitial = Number(parametres.get("b")) || null
-    if (aInitial) {
-      setIdA(aInitial)
-      void chargerCandidats(aInitial)
+    // Les ids viennent de /recherche (toutes les voiles affichées). Repli a/b.
+    const idsParam = parametres.get("ids")
+    let ids: number[] = []
+    if (idsParam) {
+      ids = idsParam
+        .split(",")
+        .map((s) => Number(s))
+        .filter((n) => Number.isFinite(n) && n > 0)
+    } else {
+      const a = Number(parametres.get("a")) || null
+      const b = Number(parametres.get("b")) || null
+      if (a) ids.push(a)
+      if (b && b !== a) ids.push(b)
     }
-    if (bInitial) setIdB(bInitial)
-    if (aInitial && bInitial && aInitial !== bInitial) void chargerComparaison(aInitial, bInitial)
-  }, [chargerListe, chargerCandidats, chargerComparaison])
+    ids = [...new Set(ids)]
+    setIdsInitiaux(ids)
+    if (ids.length === 2) {
+      setMode("deux")
+      void chargerComparaison(ids[0], ids[1])
+    } else if (ids.length > 2) {
+      setMode("groupe")
+    } else if (ids.length === 0) {
+      setErreur("Aucune voile à comparer : revenez à la recherche et utilisez le bouton « Comparaison ».")
+    }
+  }, [chargerListe, chargerComparaison])
 
-  function choisirA(id: number) {
-    setIdA(id)
-    setComparaison(null)
-    setIdB(null)
-    void chargerCandidats(id)
-  }
-
-  function choisirB(id: number) {
-    setIdB(id)
-    if (idA !== null && id !== idA) void chargerComparaison(idA, id)
-  }
-
-  const listeA = extractions.filter((e) => {
-    if (!rechercheA.trim()) return true
-    const texte = `${e.code_fiche ?? ""} ${e.type_voile ?? ""} ${e.modele_bateau_brut ?? ""}`.toLowerCase()
-    return texte.includes(rechercheA.trim().toLowerCase())
-  })
-  const listeBToutes = extractions.filter((e) => e.id_extraction !== idA)
+  // Bascule manuelle en mode « deux » avec ≥2 ids (cas >2 au départ) : on
+  // charge la comparaison des deux premières, sinon rien ne s'afficherait.
+  useEffect(() => {
+    if (mode === "deux" && idsInitiaux.length >= 2 && comparaison === null && !erreur) {
+      void chargerComparaison(idsInitiaux[0], idsInitiaux[1])
+    }
+  }, [mode, idsInitiaux, comparaison, erreur, chargerComparaison])
 
   return (
     <div className="mx-auto min-h-[calc(100vh-3.5rem)] max-w-6xl p-4">
@@ -325,68 +261,13 @@ function ComparaisonAppInterne() {
         </button>
       </div>
 
-      {mode === "deux" && erreur && (
+      {erreur && (
         <div className="mb-3 rounded border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive" role="alert" data-testid="erreur-comparaison">
           {erreur}
         </div>
       )}
 
-      {mode === "deux" && (
-        <>
-      <section className="grid gap-4 rounded border border-border p-3 md:grid-cols-2" data-testid="selecteurs">
-        <div>
-          <input
-            value={rechercheA}
-            onChange={(e) => setRechercheA(e.target.value)}
-            placeholder="Filtrer la voile A (code, type, bateau)…"
-            className="mb-2 w-full rounded border border-border bg-input px-2 py-1 text-xs"
-            data-testid="recherche-a"
-          />
-          <ListeChoix titre="Voile A (référence)" cote="a" elements={listeA} idChoisi={idA} onChoisir={choisirA} testId="liste-a" />
-        </div>
-        <div className="space-y-3">
-          <div>
-            <h3 className="mb-1 text-xs font-semibold">Voile B — même modèle + même type</h3>
-            {idA === null && <p className="text-xs text-muted-foreground">Choisissez d’abord la voile A.</p>}
-            {idA !== null && raisonSansCandidat === "non_liee" && (
-              <p className="text-xs text-amber-700 dark:text-amber-300" data-testid="raison-sans-candidat">
-                La voile A n’est pas liée à un modèle canonique : aucun candidat « même modèle »
-                garanti. Liez-la dans l’écran Extractions, ou choisissez B librement ci-dessous
-                (comparaison indicative).
-              </p>
-            )}
-            {idA !== null && raisonSansCandidat !== "non_liee" && candidats.length === 0 && (
-              <p className="text-xs text-muted-foreground">Aucune autre extraction du même modèle et du même type pour l’instant.</p>
-            )}
-            <ul className="space-y-1" data-testid="candidats-b">
-              {candidats.map((candidat) => (
-                <li key={candidat.extraction.id_extraction}>
-                  <button
-                    type="button"
-                    onClick={() => choisirB(candidat.extraction.id_extraction)}
-                    className={cn(
-                      "block w-full rounded border border-border px-2 py-1.5 text-left text-xs hover:bg-accent/40",
-                      idB === candidat.extraction.id_extraction && "bg-accent",
-                    )}
-                    data-testid="candidat-b"
-                    data-id={candidat.extraction.id_extraction}
-                  >
-                    <span className="font-mono font-semibold">
-                      {candidat.extraction.code_fiche ?? `#${candidat.extraction.id_extraction}`}
-                    </span>{" "}
-                    <span className="text-muted-foreground">
-                      {candidat.extraction.type_voile ?? ""} · {candidat.dimensions_communes} dimension(s) commune(s)
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </div>
-          <ListeChoix titre="Voile B — toutes les extractions" cote="b" elements={listeBToutes} idChoisi={idB} onChoisir={choisirB} testId="liste-b" />
-        </div>
-      </section>
-
-      {comparaison && (
+      {mode === "deux" && comparaison && (
         <section className="mt-4 space-y-4" data-testid="resultat-comparaison">
           <div className="flex flex-wrap items-center gap-2">
             <span
@@ -508,10 +389,8 @@ function ComparaisonAppInterne() {
           </div>
         </section>
       )}
-        </>
-      )}
 
-      {mode === "groupe" && <ComparaisonGroupe extractions={extractions} />}
+      {mode === "groupe" && <ComparaisonGroupe extractions={extractions} idsInitiaux={idsInitiaux} />}
     </div>
   )
 }
